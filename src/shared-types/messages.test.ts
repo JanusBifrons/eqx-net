@@ -24,6 +24,7 @@ import {
   ActivateMountSchema,
   MountActivatedEventSchema,
   StatIdSchema,
+  UpgradeStructureSchema,
   WarpWarningSchema,
   WarpWarningClearSchema,
   BaseReadySchema,
@@ -672,6 +673,25 @@ describe('Dynamic weapon mount messages (Phase 4 WS-B3)', () => {
       expect(
         MountActivatedEventSchema.safeParse({ ...valid, mounts: [{ slotId: 'x', weaponId: 'death-ray' }] }).success,
       ).toBe(false);
+    });
+  });
+});
+
+describe('Structure leveling message (Phase 4 WS-B4)', () => {
+  describe('UpgradeStructureSchema', () => {
+    const valid = { type: 'upgrade_structure' as const, entityId: 7 };
+    it('accepts a valid upgrade request', () => {
+      expect(UpgradeStructureSchema.safeParse(valid).success).toBe(true);
+    });
+    it('rejects a negative / non-integer entityId', () => {
+      expect(UpgradeStructureSchema.safeParse({ ...valid, entityId: -1 }).success).toBe(false);
+      expect(UpgradeStructureSchema.safeParse({ ...valid, entityId: 1.5 }).success).toBe(false);
+    });
+    it('rejects a missing entityId', () => {
+      expect(UpgradeStructureSchema.safeParse({ type: 'upgrade_structure' }).success).toBe(false);
+    });
+    it('rejects extra unknown fields (strict)', () => {
+      expect(UpgradeStructureSchema.safeParse({ ...valid, extra: 1 }).success).toBe(false);
     });
   });
 });

@@ -143,6 +143,9 @@ export async function bootSectorTestServer(opts: {
   structurePoses?: ReadonlyArray<{ id?: string; x: number; y: number; radius?: number; mass?: number }>;
   /** Structures plan (Phase 3-5) — pre-built, auto-connected scenario grid. */
   prebuiltStructures?: ReadonlyArray<{ kind: string; x: number; y: number }>;
+  /** Owner the prebuilt scenario structures belong to (default `scenario`). Set
+   *  to the joining playerId so an owner-gated action (Upgrade, WS-B4) applies. */
+  prebuiltStructuresOwner?: string;
   scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
   scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
   /** Override the default ambient asteroid field. Pass `[]` for a clean scene
@@ -184,6 +187,7 @@ export async function bootSectorTestServer(opts: {
     testMode: opts.testMode ?? true,
     structurePoses: opts.structurePoses,
     prebuiltStructures: opts.prebuiltStructures,
+    prebuiltStructuresOwner: opts.prebuiltStructuresOwner,
     scenarioDrones: opts.scenarioDrones,
     scenarioAsteroids: opts.scenarioAsteroids,
     asteroidConfig: opts.asteroidConfig,

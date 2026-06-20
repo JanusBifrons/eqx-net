@@ -3183,6 +3183,7 @@ export class ColyseusGameClient {
           ...(s.wallActive !== undefined ? { wallActive: s.wallActive } : {}),
           ...(s.owner !== undefined ? { owner: s.owner } : {}),
           ...(s.ownerName !== undefined ? { ownerName: s.ownerName } : {}),
+          ...(s.level !== undefined ? { level: s.level } : {}), // WS-B4 — structure level (absent ⇒ 1)
         });
       }
     } else {

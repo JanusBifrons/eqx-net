@@ -67,6 +67,7 @@ import { StructurePlacementSubsystem } from '../structures/StructurePlacementSub
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
 import type { GridObstacle } from '../../core/structures/Grid.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
@@ -147,6 +148,7 @@ import {
   PlaceStructureSchema,
   RemoveStructureSchema,
   StructureActionSchema,
+  UpgradeStructureSchema,
   PilotShipSchema,
   ApplyShipUpgradeSchema,
   RespecShipSchema,
@@ -789,6 +791,10 @@ export class SectorRoom extends Room<SectorState> {
      *  wall-clock wait) + read the cached snapshot slice. */
     pulseStructureGrid: () => void;
     getStructuresSlice: () => SnapshotMessage['structures'];
+    /** Phase 4 WS-B4 — drive a structure UPGRADE build phase directly (no
+     *  message round-trip) for the leveling integration test. Returns whether
+     *  the upgrade started (the subsystem's owner-agnostic gate). */
+    upgradeStructure: (id: string) => boolean;
     /** Phase 4 — seed a mineable asteroid for the mining integration test. */
     spawnTestAsteroid: (id: string, x: number, y: number, radius: number) => boolean;
     /** Phase 5 — seed a drone + drive the turret tick for the turret test.
@@ -819,6 +825,7 @@ export class SectorRoom extends Room<SectorState> {
       structureRegistry: this.structureRegistry,
       pulseStructureGrid: () => this.structureGridTick(),
       getStructuresSlice: () => this.structuresSlice,
+      upgradeStructure: (id) => this.structureGrid.upgradeStructure(id),
       spawnTestAsteroid: (id, x, y, radius) =>
         this.swarmSpawner.spawnAsteroid({ id, x, y, vx: 0, vy: 0, radius, mass: 1 }),
       spawnTestDrone: (id, x, y, kind = 'fighter') => {
@@ -2074,6 +2081,31 @@ export class SectorRoom extends Room<SectorState> {
       this.rebuildStructuresSlice();
     });
 
+    // ── Phase 4 WS-B4 — structure leveling (paid Upgrade build phase) ──────
+    // The client references the structure by its numeric swarm entityId (the
+    // selected id); resolve → registry record → OWNER-gate, then start a paid
+    // build phase (charges drained during the build by the grid pulse). On the
+    // build's completion the level increments + the per-level stat grant applies.
+    this.onMessage('upgrade_structure', (client: Client, raw: unknown) => {
+      const parsed = UpgradeStructureSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed upgrade_structure');
+        return;
+      }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      const swarmRec = this.swarmRegistry.getByEntityId(parsed.data.entityId);
+      if (!swarmRec) return;
+      const rec = this.structureRegistry.get(swarmRec.id);
+      if (!rec || rec.owner !== owner) return; // own-only
+      if (this.structureGrid.upgradeStructure(rec.id)) {
+        // Refresh the slice so the blueprint state + the LVL line update on the
+        // next snapshot without waiting for the 1 Hz pulse. The build's
+        // COMPLETION is audited via `onConstructed` (`structure_built`).
+        this.rebuildStructuresSlice();
+      }
+    });
+
     // ── Phase 4 WS-A2 — same-sector instant pilot swap ─────────────────────
     // The player (a spectator after death, or piloting another hull) reclaims
     // one of their OWN lingering hulls parked in THIS sector and resumes control
@@ -2935,6 +2967,10 @@ export class SectorRoom extends Room<SectorState> {
         rec.constructionProgress = r.constructionProgress;
         rec.minerals = r.minerals;
         rec.storedPower = r.storedPower;
+        // Phase 4 (Leveling & XP, WS-B4) — restore the persisted level (default
+        // 1 for a pre-v6 / un-levelled row). The hydrated HP below is the
+        // persisted (already-leveled) value, so no re-seed is needed.
+        rec.level = r.level ?? 1;
       }
       this.swarmHealth.set(id, r.health);
       restored += 1;
@@ -3310,7 +3346,10 @@ export class SectorRoom extends Room<SectorState> {
       // C3 — hull percent (0-100 int) so the client inspector renders hull on
       // the first frame after selection, no entity_stats round-trip. Off the
       // 60 Hz tick (1 Hz pulse + on placement), so the integer math is free.
-      const hpMax = getStructureKind(rec.kind).maxHealth;
+      // WS-B4 — a leveled structure's hull cap grows, so the %-denominator is
+      // the LEVELED effective max (so a full-health leveled structure reads
+      // 100 %, not >100 %).
+      const hpMax = effectiveStructureMaxHealth(getStructureKind(rec.kind).maxHealth, rec.level);
       const hp = this.swarmHealth.get(rec.id) ?? hpMax;
       const entry: NonNullable<SnapshotMessage['structures']>[number] = {
         id: entityId,
@@ -3322,6 +3361,9 @@ export class SectorRoom extends Room<SectorState> {
         owner: rec.owner,
         built: rec.isConstructed,
       };
+      // WS-B4 — emit the level ONLY when > 1 (un-levelled grids pay zero extra
+      // bytes; absent ⇒ the client treats it as level 1).
+      if (rec.level > 1) entry.level = rec.level;
       // Owner DISPLAY NAME for the inspector (DB-resolved + cached; absent ⇒
       // orphaned owner, already logged, client shows "Unknown").
       const ownerName = this.resolveOwnerName(rec.owner);

@@ -400,6 +400,117 @@ describe('EntityStatsPanel', () => {
     expect(screen.queryByTestId('entity-stats-actions')).toBeNull();
   });
 
+  // ── Phase 4 WS-B4 — structure leveling: the LVL line + the Upgrade action ──
+  // The level rides the client-resident structures slice (`level`); the inspector
+  // shows a `LVL n` line for a LEVELED structure (>1) and an Upgrade action on an
+  // OWNED, BUILT, below-cap structure. Detection of "structure" is the swarm
+  // subtype byte (kind === 2).
+  it('shows a LVL n line for a leveled structure', () => {
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me-123',
+        structures: new Map([
+          [9, { powered: true, netPower: 0, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: 'me-123', level: 3 }],
+        ]),
+        swarm: new Map([[9, { kind: 2, shipKind: 'turret', radius: 36, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
+    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-level')).toHaveTextContent('LVL 3');
+    expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-structure-level', '3');
+  });
+
+  it('does NOT show a LVL line for a level-1 (un-levelled) structure', () => {
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me-123',
+        structures: new Map([
+          [9, { powered: true, netPower: 0, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: 'me-123' }],
+        ]),
+        swarm: new Map([[9, { kind: 2, shipKind: 'turret', radius: 36, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
+    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.queryByTestId('entity-stats-level')).toBeNull();
+  });
+
+  it('shows an Upgrade action on an OWNED, BUILT structure + sends upgrade_structure on click', () => {
+    const sendSpy = vi.fn();
+    setGameClient({
+      mirror: {
+        localPlayerId: 'me-123',
+        structures: new Map([
+          [9, { powered: true, netPower: 0, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: 'me-123' }],
+        ]),
+        swarm: new Map([[9, { kind: 2, shipKind: 'turret', radius: 36, x: 0, y: 0 }]]),
+      },
+      getRoom: () => ({ send: sendSpy }),
+    } as unknown as ColyseusGameClient);
+    applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
+    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    const btn = screen.getByTestId('structure-action-upgrade');
+    fireEvent.click(btn);
+    expect(sendSpy).toHaveBeenCalledWith('upgrade_structure', {
+      type: 'upgrade_structure',
+      entityId: 9,
+    });
+  });
+
+  it('does NOT show the Upgrade action while a structure is still UNDER CONSTRUCTION', () => {
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me-123',
+        structures: new Map([
+          [9, { powered: true, netPower: 0, connTo: [], built: false, buildPct: 0.5, deconstructPct: 0, owner: 'me-123' }],
+        ]),
+        swarm: new Map([[9, { kind: 2, shipKind: 'turret', radius: 36, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
+    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.queryByTestId('structure-action-upgrade')).toBeNull();
+  });
+
+  it('does NOT show the Upgrade action at the level cap', () => {
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me-123',
+        structures: new Map([
+          // level 5 = STRUCTURE_LEVEL_CAP → no further upgrade.
+          [9, { powered: true, netPower: 0, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: 'me-123', level: 5 }],
+        ]),
+        swarm: new Map([[9, { kind: 2, shipKind: 'turret', radius: 36, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
+    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-level')).toHaveTextContent('LVL 5');
+    expect(screen.queryByTestId('structure-action-upgrade')).toBeNull();
+  });
+
+  it("does NOT show the Upgrade action on ANOTHER player's structure", () => {
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me-123',
+        structures: new Map([
+          [9, { powered: true, netPower: 0, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: 'other-1', ownerName: 'Nova' }],
+        ]),
+        swarm: new Map([[9, { kind: 2, shipKind: 'turret', radius: 36, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
+    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.queryByTestId('structure-action-upgrade')).toBeNull();
+  });
+
   it('the Deconstruct button shows Cancel state + sends the toggle action with the entityId', () => {
     const sendSpy = vi.fn();
     setGameClient({

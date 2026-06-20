@@ -5,14 +5,16 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import HubIcon from '@mui/icons-material/Hub';
 import LinkOffIcon from '@mui/icons-material/LinkOff';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
+import UpgradeIcon from '@mui/icons-material/Upgrade';
 import { useUIStore } from '../state/store';
 import { selectionStats } from '../net/selectionStats';
 import { toSelectWire } from '../net/selectionClient';
 import { getGameClient } from '../net/clientSingleton';
-import { sendStructureAction } from '../structures/structureActionsClient';
+import { sendStructureAction, sendUpgradeStructure } from '../structures/structureActionsClient';
 import { sendPilotShip } from '../ships/shipActionsClient';
 import { hullColor } from './ShieldHullBar';
 import { getStructureKind } from '@shared-types/structureKinds';
+import { canUpgradeStructure } from '@core/leveling/structureLevel';
 import type { PickedEntityKind } from '../render/pickEntity';
 import type { StructureRenderState } from '@core/contracts/IRenderer';
 
@@ -81,6 +83,13 @@ interface PanelData {
   isOwn?: boolean;
   isDeconstructing?: boolean;
   isConnector?: boolean;
+  /** Phase 4 WS-B4 — the structure's level (≥ 1). Drives the `LVL n` line (shown
+   *  only when > 1) + the Upgrade affordance. */
+  level?: number;
+  /** Phase 4 WS-B4 — true when the Upgrade action should render: the structure is
+   *  OWNED, fully BUILT (not a blueprint / mid-upgrade), not deconstructing, and
+   *  below the level cap. Gates the 4th action button. */
+  canUpgrade?: boolean;
   /** Phase 4 WS-A2 — set for an OWNED in-sector lingering hull (the local
    *  player's own parked ship). Drives the in-world "Pilot" action; the value is
    *  the shipInstanceId to `pilot_ship`. Absent for another player's hull / a
@@ -121,6 +130,7 @@ export function EntityStatsPanel(): JSX.Element | null {
       {...(hasCharge ? { 'data-charge-pct': Math.round(chargePct) } : {})}
       {...(data.connCount !== undefined ? { 'data-conn-count': data.connCount } : {})}
       {...(data.owner !== undefined ? { 'data-structure-owner': data.owner } : {})}
+      {...(data.level !== undefined && data.level > 1 ? { 'data-structure-level': data.level } : {})}
       {...(data.pending ? { 'data-stats-pending': '1' } : {})}
       {...(data.infoLine !== undefined ? { 'data-entity-info': data.infoLine } : {})}
       sx={ROOT_SX}
@@ -171,6 +181,13 @@ export function EntityStatsPanel(): JSX.Element | null {
           {`CONN ${data.connCount} / ${data.connMax ?? 0}`}
         </Box>
       )}
+      {data.level !== undefined && data.level > 1 && (
+        // WS-B4 — the structure's level. Shown only when leveled (>1); a fresh
+        // level-1 structure pays no extra line.
+        <Box sx={POWER_SX} data-testid="entity-stats-level">
+          {`LVL ${data.level}`}
+        </Box>
+      )}
       {data.owner !== undefined && (
         // Owner readout — identifies whose base this is ("you" vs a truncated id).
         <Box sx={POWER_SX} data-testid="entity-stats-owner">
@@ -211,6 +228,20 @@ export function EntityStatsPanel(): JSX.Element | null {
                 onClick={() => sendStructureAction(data.entityId!, 'clear_connections')}
               >
                 <LinkOffIcon sx={ICON_SX} />
+              </IconButton>
+            </Tooltip>
+          )}
+          {data.canUpgrade && (
+            // WS-B4 — the 4th action: a paid Upgrade (level-up build phase).
+            // Gated to OWNED + BUILT + below-cap (set in readData).
+            <Tooltip title="Upgrade (paid level-up: boosts this structure's key stat)">
+              <IconButton
+                data-testid="structure-action-upgrade"
+                size="small"
+                sx={ACTION_BTN_SX}
+                onClick={() => sendUpgradeStructure(data.entityId!)}
+              >
+                <UpgradeIcon sx={ICON_SX} />
               </IconButton>
             </Tooltip>
           )}
@@ -308,6 +339,13 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       if (eid !== undefined) data.entityId = eid;
       data.isDeconstructing = st.isDeconstructing === true;
       data.isConnector = subtype === 'connector';
+      // WS-B4 — the level (≥ 1; absent on the slice ⇒ level 1) drives the LVL
+      // line + the Upgrade affordance. Upgrade is OWN-only, BUILT-only,
+      // not-deconstructing, below the cap.
+      const level = st.level ?? 1;
+      data.level = level;
+      data.canUpgrade =
+        st.built === true && st.isDeconstructing !== true && canUpgradeStructure(level);
     }
     return data;
   }

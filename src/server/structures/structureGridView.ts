@@ -8,6 +8,7 @@
  * half-built node's power.
  */
 import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { structureLevelFactor } from '../../core/leveling/structureLevel.js';
 import {
   canConnect,
   edgeDistance,
@@ -22,6 +23,11 @@ import type { StructureRecord, StructureRegistry } from './StructureRegistry.js'
 
 export function structureToGridNode(rec: StructureRecord): GridNode {
   const kind = getStructureKind(rec.kind);
+  // Phase 4 WS-B4 — a leveled generator (solar / capital) outputs MORE power.
+  // The single scalar factor scales `powerOutput`; consumption is unscaled
+  // (a leveled consumer still draws its base, so the leveled grant is a pure
+  // surplus boost). Level 1 is the identity (factor 1).
+  const lvlMul = structureLevelFactor(rec.level);
   return {
     id: rec.id,
     x: rec.x,
@@ -33,7 +39,7 @@ export function structureToGridNode(rec: StructureRecord): GridNode {
     maxConnections: kind.maxConnections,
     connectionRange: kind.connectionRange,
     // The isConstructed gate: a blueprint is inert (0 power) until built.
-    powerOutput: rec.isConstructed ? kind.powerOutput : 0,
+    powerOutput: rec.isConstructed ? kind.powerOutput * lvlMul : 0,
     powerConsumption: rec.isConstructed ? kind.powerConsumption : 0,
     isConstructed: rec.isConstructed,
   };

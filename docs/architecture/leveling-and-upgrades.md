@@ -224,3 +224,81 @@ The physics multipliers touch client prediction (the snapshot reconcile path), s
   **The full architecture (the three pure resolvers, the lockstep aim/fire seam,
   the renderer + UI) lives in [docs/architecture/weapon-mounts.md](weapon-mounts.md)
   "Dynamic weapon mounts — latent slots".**
+
+## WS-B4 — structure leveling (paid Upgrade + visible build phase) — SHIPPED
+
+Structures level via a PAID Upgrade that runs a **visible build phase** — the
+same construction-pulse machinery the initial build uses (D14). It's the
+structure analogue of ship XP, but **player-economy-driven, not kill-driven**:
+there is no structure XP, only a resource cost.
+
+### The pure curve (zone-blind)
+
+`src/core/leveling/structureLevel.ts` is the single source of truth, mirroring
+`shipStats.ts`:
+
+- `STRUCTURE_LEVEL_CAP = 5` — `canUpgradeStructure(level)` is false at the cap
+  (the client hides the Upgrade affordance; the server drops the request).
+- `structureUpgradeCost(baseConstructionCost, level)` = `base · (1 + level·FRAC)`
+  rounded — escalating per level (`STRUCTURE_UPGRADE_COST_FRAC = 1.0`). 0 at the cap.
+- `structureLevelMultipliers(level)` / `structureLevelFactor(level)` = a single
+  scalar `1 + (level-1)·STRUCTURE_LEVEL_FRAC` (`0.25`) applied to the kind's KEY
+  stats: **maxHealth** (universal), **weaponRange + weaponDamage** (turrets),
+  **powerOutput** (generators). (Storage is a documented future grant — its read
+  sites span the mineral economy; deferred to keep WS-B4 surgical.) Level 1 is the
+  identity (byte-identical to pre-WS-B4). All are **balance knobs** — tune on-device.
+- `effectiveStructureMaxHealth(baseMaxHealth, level)` — the ONE helper both the
+  HP seed on (re)build AND the snapshot `hpPct` denominator read, so a leveled
+  structure's bar is consistent (a full-HP leveled structure reads 100 %).
+
+### The upgrade build phase (server)
+
+`StructureGridSubsystem.upgradeStructure(id)` (owner-gated by the CALLER, like
+`reconnect`/`clearConnections`) validates BUILT + not-deconstructing + below-cap +
+not-already-upgrading, then **reuses the construction machinery**: flips
+`isConstructed=false`, resets `constructionProgress=0`, sets `constructionCost`
+to the upgrade cost, and stashes `upgradeTargetLevel = level+1` on the
+`StructureRecord`. The cost is NOT pre-charged — it's **drained DURING the build
+by the grid pulse** (`processConstruction`), exactly like a fresh blueprint, so an
+upgrade started against an empty bank simply waits for minerals. On the build's
+completion `processConstruction` increments `level` to `upgradeTargetLevel`,
+clears it, restores `constructionCost` to the kind base (so a SUBSEQUENT upgrade
+re-derives cleanly), and seeds HP to the LEVELED effective max. The leveled
+turret range/damage (`tickTurrets`) + power output (`structureToGridNode`) read
+the level factor at their catalogue read-sites.
+
+### The wire + the UI
+
+- `level` rides the `StructureRecord` → persists in the sector snapshot
+  (`SectorSnapshotStructure.level`, WS-0; `restoreStructuresFromSnapshot` restores
+  it) → rides the live `SnapshotMessage.structures[].level` wire slice (emit-when
+  `> 1`, the same slim-JSON discipline as `states[].level`; absent ⇒ level 1; **no
+  `SWARM_WIRE_VERSION` bump**) → `StructureRenderState.level` on the client mirror.
+- `EntityStatsPanel` shows a `LVL n` line (`data-testid="entity-stats-level"`,
+  level > 1 only) + a 4th **Upgrade** action button
+  (`data-testid="structure-action-upgrade"`) in the owned-structure action row,
+  gated OWNED + BUILT + below-cap (`canUpgradeStructure`). It sends
+  `upgrade_structure { entityId }` via `structureActionsClient.sendUpgradeStructure`.
+- Message `upgrade_structure { entityId }` (strict zod, `clientMessages.ts`) →
+  `SectorRoom` resolves the swarm entityId → registry record → OWNER-gate →
+  `structureGrid.upgradeStructure`.
+
+### Regression locks (WS-B4)
+
+- `structureLevel.test.ts` — the curve (clamp / cap gate / escalating cost /
+  multipliers / effective HP).
+- `messages.test.ts` "Structure leveling message" — `UpgradeStructureSchema`.
+- `EntityStatsPanel.test.tsx` — the LVL line (shown > 1, hidden at level 1), the
+  Upgrade action gating (owned + built + below-cap; hidden under-construction /
+  foreign / at-cap), and the `upgrade_structure` send on click.
+- `tests/integration/sectorRoom/structureUpgrade.test.ts` — the real
+  `upgrade_structure` message end-to-end on a player-owned scenario grid: charges
+  resources (Capital bank drains), the build phase runs via the deterministic
+  pulse, level increments 1→2, the effective max HP rises; plus the foreign-owner
+  silent no-op.
+
+### Netgate (WS-B4)
+
+The structures `level` rides the 20 Hz snapshot, so **`pnpm e2e:netgate` is
+required** (invariant #8) — deferred to the human gate. (The wire change is a
+slim emit-when-`>1` JSON field; characterise, don't widen margins.)

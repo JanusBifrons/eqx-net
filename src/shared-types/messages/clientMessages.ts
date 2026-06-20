@@ -152,6 +152,21 @@ export const StructureActionSchema = z
   })
   .strict();
 
+/** Client → server (Phase 4 WS-B4): "upgrade the structure I OWN with this
+ *  numeric swarm `entityId`" — a paid level-up. The server validates ownership
+ *  (the requester owns the structure) + that it's BUILT, not deconstructing, and
+ *  below the level cap, then starts a NEW construction phase (reusing the grid
+ *  pulse) whose cost is drained from the owner's Capital bank. On completion the
+ *  level increments and the per-level stat grant (HP / turret range+damage /
+ *  power output) applies. A foreign / unbuilt / capped / unknown request is a
+ *  silent no-op. Strict — no extra keys. */
+export const UpgradeStructureSchema = z
+  .object({
+    type: z.literal('upgrade_structure'),
+    entityId: z.number().int().nonnegative(),
+  })
+  .strict();
+
 /** Client → server (Phase 4 WS-A2): "pilot the OWNED in-sector ship with this
  *  shipInstanceId". The SAME-SECTOR INSTANT swap — the player (a spectator after
  *  death, or piloting another hull) reclaims one of their own lingering hulls
@@ -241,6 +256,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   PlaceStructureSchema,
   RemoveStructureSchema,
   StructureActionSchema,
+  UpgradeStructureSchema,
   PilotShipSchema,
   ApplyShipUpgradeSchema,
   RespecShipSchema,
@@ -258,6 +274,7 @@ export type ClientReadyMessage = z.infer<typeof ClientReadyMessageSchema>;
 export type PlaceStructureMessage = z.infer<typeof PlaceStructureSchema>;
 export type RemoveStructureMessage = z.infer<typeof RemoveStructureSchema>;
 export type StructureActionMessage = z.infer<typeof StructureActionSchema>;
+export type UpgradeStructureMessage = z.infer<typeof UpgradeStructureSchema>;
 export type PilotShipMessage = z.infer<typeof PilotShipSchema>;
 export type StatId = z.infer<typeof StatIdSchema>;
 export type WireStatAlloc = z.infer<typeof StatAllocSchema>;

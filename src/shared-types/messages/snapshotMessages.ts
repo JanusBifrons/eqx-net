@@ -310,5 +310,12 @@ export interface SnapshotMessage {
      *  owner doesn't map to a DB user — an orphaned structure (the server logs
      *  it). The client shows the name, "you" for the local player, else "Unknown". */
     ownerName?: string;
+    /** Phase 4 (Leveling & XP, WS-B4) — this structure's level (≥ 1). Drives the
+     *  inspector's `LVL n` line + the Upgrade affordance (an at-cap structure
+     *  hides the button). Emitted ONLY when > 1 (un-levelled grids pay zero extra
+     *  bytes; absent ⇒ the client treats it as level 1), the same emit-if-> 1
+     *  discipline as `states[].level`. Slim JSON field, no SWARM_WIRE_VERSION bump
+     *  (pose flows on the binary channel). */
+    level?: number;
   }>;
 }

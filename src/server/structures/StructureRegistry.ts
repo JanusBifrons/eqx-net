@@ -41,6 +41,19 @@ export interface StructureRecord {
    *  component `powered` through a deficit, and is drained first by shield-wall
    *  hits. 0 on every non-battery kind (they have no `powerStorageCapacity`). */
   storedPower: number;
+  /** Phase 4 (Leveling & XP, WS-B4) — structure level (≥ 1). A fresh structure
+   *  is level 1; a paid Upgrade build phase increments it and applies the
+   *  per-level stat grant (HP / turret range+damage / power output / storage).
+   *  Persisted in the sector snapshot; rides the live `structures[]` wire slice
+   *  so the client shows the `LVL n` line + gates the Upgrade affordance. */
+  level: number;
+  /** Phase 4 (Leveling & XP, WS-B4) — while an UPGRADE build phase is running,
+   *  the level being built TOWARD (`level + 1`). Set when the upgrade starts
+   *  (which flips `isConstructed` false + resets `constructionProgress`); on the
+   *  build's completion the subsystem increments `level` to this and clears it.
+   *  Undefined for a normal (initial) construction — that completes without
+   *  bumping the level. */
+  upgradeTargetLevel?: number;
   /** Phase 4 — the asteroid entityId this Miner is currently extracting from
    *  (for the client beam). Transient; recomputed each pulse, undefined when
    *  not a miner / unpowered / no asteroid in range. */
