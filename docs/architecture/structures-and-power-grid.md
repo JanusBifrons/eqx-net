@@ -149,19 +149,47 @@ so it unit-tests like `TransitOrchestrator`):
   → repair → deconstruction → connection flashes. `SectorRoom` runs the timer,
   rebuilds the `structures[]` slice, broadcasts `grid_pulse`, and severs on
   structure death via `evictSwarmEntity`.
+  - **WS-D (#12) — connectors return to IDLE after repair + per-edge MATERIAL.**
+    `processRepair` flashes (and spends) ONLY when `hpGain > 0` — a stalled /
+    zero-progress / full-HP repair no longer keeps the route lit forever (the
+    "connectors never return to idle after repair" bug). Each flow step now tags
+    its flashed edges with a `FlowMaterial` (`Connection.ts`, append-only:
+    `minerals` haul/reclaim, `repair` healing, `construction` building, `power`
+    reserved). `pulse()` returns `flashed: [aId, bId, FlowMaterial][]` (per-edge,
+    so a repair route + a haul route can light in the SAME pulse) plus a dominant
+    `material` for the back-compat single field.
 
 **Wire** — `SnapshotMessage.structures[]` (slim, low-cadence, same array ref per
 recipient, entityId-keyed → joins the swarm mirror for pose) +
-`grid_pulse { flashed: [entityId,entityId][], material }` (discrete ≤ 1 Hz
-flash event). **Netgate territory** (invariant #8) — these touch the
-snapshot/broadcast path.
+`grid_pulse { flashed: [aId, bId, GridFlowMaterial][], material }` (discrete
+≤ 1 Hz flash event; the per-edge 3-tuple is WS-D #12 — a legacy 2-tuple is
+tolerated and defaults to the top-level `material`). **Netgate territory**
+(invariant #8) — these touch the snapshot/broadcast path.
 
 **Client** — `ColyseusClient.syncStructures` mirrors the slice into
 `mirror.structures` + dispatches `gridNetPower` to Zustand; the `grid_pulse`
-handler records `mirror.gridFlashes` (numeric pair key, alloc-free).
-`render/pixi/ConnectorRenderer` draws the web (idle vs flowing alpha/width
-pulse + glow, `connectorVisual.ts` pure params) + scaffolding/deconstruct bars;
-`swarmSpriteUpdater` dims unbuilt blueprints; `GridPowerReadout` is the HUD chip.
+handler records `mirror.gridFlashes` (numeric pair key, alloc-free), the flow
+direction (`gridFlowSrc`), AND the per-edge material code (`gridFlowMaterial`,
+numeric via `flowMaterialToCode` — cheap clone across the worker boundary).
+`render/pixi/ConnectorRenderer` draws the web (idle muted-blue vs flowing
+alpha/width pulse + glow, tinted per-edge by material: **green = repair,
+orange = minerals, cyan = construction** — `connectorVisual.ts`
+`connectorVisualInto(..., material)` pure params) + scaffolding/deconstruct
+bars; `swarmSpriteUpdater` dims unbuilt blueprints; `GridPowerReadout` is the
+HUD chip.
+
+**Placement preview (WS-D #6) — solid vs dotted.** `ConnectorRenderer.drawPlacement-
+Preview` draws **SOLID green** (`'selected'`) to the hub(s) the blueprint WILL
+connect to on confirm (capped at the kind's `maxConnections` AND the global
+`PLACEMENT_MAX_CONNECTIONS`) and **DOTTED green** (`'deferred'`) to in-range,
+legal hubs that lost the multi-connect cap race (could-but-won't). RED stays for
+hubs that CAN'T connect (LOS / range / capacity). Pixi v8 has no native dash, so
+a `'deferred'` line is emitted as short segments from a scale-aware
+`ConnectorVisual.dash {on, off}` pattern (`connectorVisual.ts`). Replaces the old
+"green chosen + RED overflow" (the over-cap RED read as errors). Test hooks:
+`placementPreviewSelectedCount` / `placementPreviewDeferredCount`
+(`placementPreviewConnectionCount` / `placementPreviewOverflowCount` kept as the
+back-compat aliases).
 
 ## Batteries — stored-power buffer (batteries plan — shipped)
 

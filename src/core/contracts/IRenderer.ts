@@ -329,6 +329,14 @@ export interface RenderMirror {
    *  Absent ⇒ the comet defaults to running lower-id → higher-id. Plain numbers,
    *  so it crosses the worker boundary like `gridFlashes`. */
   gridFlowSrc?: Map<number, number>;
+  /** WS-D (#12) — per-edge flow MATERIAL for the connector tint. Same packed
+   *  `min * 65536 + max` key as `gridFlashes`; value is the numeric material code
+   *  (`flowMaterialToCode` in `connectorVisual.ts`: 0=minerals, 1=repair,
+   *  2=construction, 3=power) so the renderer tints a repair route green, a haul
+   *  route orange, a build route cyan — all in the SAME pulse. Numeric (not a
+   *  string) ⇒ no per-frame alloc + cheap structured-clone across the worker
+   *  boundary. Absent ⇒ the renderer defaults to minerals (back-compat). */
+  gridFlowMaterial?: Map<number, number>;
   /** Projectiles: both server-authoritative and client ghost entries. */
   projectiles?: Map<string, ProjectileRenderState>;
   /** In-flight heat-seeking missiles. Server-authoritative pose mirrored

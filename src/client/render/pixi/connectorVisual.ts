@@ -14,10 +14,55 @@ import { FLASH_DURATION_MS } from '../../../core/structures/structureGridConstan
 
 /** Idle (non-flowing) line tint — muted blue. */
 export const CONNECTOR_IDLE_COLOR = 0x4488aa;
-/** Mineral-flow tint (the single Phase-3 flow material). */
+/** Mineral-flow tint (hauling ore / reclaiming) — orange. */
 export const CONNECTOR_MINERAL_COLOR = 0xee8844;
+/** WS-D (#12) — repair / healing flow tint — green. */
+export const CONNECTOR_REPAIR_COLOR = 0x55dd66;
+/** WS-D (#12) — construction / build flow tint — cyan. */
+export const CONNECTOR_CONSTRUCTION_COLOR = 0x44ccdd;
 /** Power-flow tint (reserved — power is aggregated, not flashed, in Phase 3). */
 export const CONNECTOR_POWER_COLOR = 0x44ddff;
+
+/** WS-D (#12) — the per-edge flow material a `grid_pulse` carries. Mirrors the
+ *  wire `GridFlowMaterial` (kept local so `connectorVisual` stays import-light;
+ *  the renderer maps the wire string into this). */
+export type ConnectorFlowMaterial = 'power' | 'minerals' | 'repair' | 'construction';
+
+/** WS-D (#12) — pack a flow material into the numeric code stored on
+ *  `RenderMirror.gridFlowMaterial` (no per-frame string handling / cheap
+ *  structured-clone across the worker boundary). */
+export function flowMaterialToCode(material: ConnectorFlowMaterial): number {
+  switch (material) {
+    case 'repair': return 1;
+    case 'construction': return 2;
+    case 'power': return 3;
+    case 'minerals':
+    default: return 0;
+  }
+}
+
+/** WS-D (#12) — unpack the numeric mirror code back to a flow material (renderer
+ *  read path). Unknown / absent ⇒ minerals (back-compat default). */
+export function codeToFlowMaterial(code: number | undefined): ConnectorFlowMaterial {
+  switch (code) {
+    case 1: return 'repair';
+    case 2: return 'construction';
+    case 3: return 'power';
+    default: return 'minerals';
+  }
+}
+
+/** WS-D (#12) — the ACTIVE (flowing) base tint for a flow material. Idle is the
+ *  muted blue (the absence of a flash), handled by the idle branch — never here. */
+function activeColorFor(material: ConnectorFlowMaterial): number {
+  switch (material) {
+    case 'repair': return CONNECTOR_REPAIR_COLOR;
+    case 'construction': return CONNECTOR_CONSTRUCTION_COLOR;
+    case 'power': return CONNECTOR_POWER_COLOR;
+    case 'minerals':
+    default: return CONNECTOR_MINERAL_COLOR;
+  }
+}
 /** R2.2 — the travelling flow-pulse "packet" tint: a bright warm gold, distinct
  *  from both the idle wire and the mineral brighten so it reads as a moving
  *  energy packet, not just a brighter line. */
@@ -220,6 +265,7 @@ export function connectorVisualInto(
   nowMs: number,
   scale: number,
   phaseOffset = 0,
+  material: ConnectorFlowMaterial = 'minerals',
 ): ConnectorVisual {
   const safeScale = scale > 0 ? scale : 1;
   if (flashUntilMs <= 0 || nowMs >= flashUntilMs + FLOW_ACTIVE_GRACE_MS) {
@@ -244,7 +290,7 @@ export function connectorVisualInto(
   const flashProgress = Math.min(1, Math.max(0, 1 - (flashUntilMs - nowMs) / FLASH_DURATION_MS));
   const beat = 1 - flashProgress;
   const width = Math.max(1 / safeScale, 2.5);
-  out.color = CONNECTOR_MINERAL_COLOR;
+  out.color = activeColorFor(material);
   out.alpha = 0.6 + 0.3 * beat; // 0.6 floor → 0.9 on the beat
   out.width = width;
   out.glowAlpha = 0.15 + 0.15 * beat; // 0.15 floor → 0.30 on the beat

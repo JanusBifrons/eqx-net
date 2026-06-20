@@ -15,6 +15,7 @@ import type { RenderMirror, SwarmRenderState } from '../../../core/contracts/IRe
 import { interpBuildPct } from './buildBarInterp.js';
 import {
   connectorVisualInto,
+  codeToFlowMaterial,
   previewLineVisualParams,
   rangeCircleVisualParams,
   cometSegment,
@@ -177,6 +178,7 @@ export class ConnectorRenderer {
     }
     const flashes = mirror.gridFlashes;
     const flowSrc = mirror.gridFlowSrc;
+    const flowMat = mirror.gridFlowMaterial;
 
     for (const [id, st] of structures) {
       const a = swarm.get(id);
@@ -197,7 +199,10 @@ export class ConnectorRenderer {
         // R2.2 — desync edges by source id so the grid reads as organic flow,
         // not a global strobe (a coherent hop-distance wavefront is future polish).
         const phaseOffset = src !== undefined ? (src & 7) / 8 : 0;
-        const v = connectorVisualInto(this._edgeVisual, flashUntil, nowMs, scale, phaseOffset);
+        // WS-D (#12) — per-edge flow material drives the active tint
+        // (repair→green / minerals→orange / construction→cyan). Absent ⇒ minerals.
+        const material = codeToFlowMaterial(flowMat ? flowMat.get(key) : undefined);
+        const v = connectorVisualInto(this._edgeVisual, flashUntil, nowMs, scale, phaseOffset, material);
         const bx = b.x;
         const by = -b.y;
         // Glow underlay first (so the core line sits on top).

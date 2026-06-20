@@ -26,7 +26,7 @@ import { getWeapon, isWeaponId, type WeaponDef, type WeaponId, type MissileWeapo
 import { MINING_BEAM_PLAYER_DPS, resolveMiningBeamEndpoint, type MiningBeamObstacle } from '../../core/combat/miningBeamHazard.js';
 import { Grid, type GridObstacle } from '../../core/structures/Grid.js';
 import { chargeStep, dischargeStep, drainPower } from '../../core/structures/batteryPower.js';
-import type { Connection } from '../../core/structures/Connection.js';
+import type { Connection, FlowMaterial } from '../../core/structures/Connection.js';
 import {
   CONSTRUCTION_PULSE_AMOUNT,
   REPAIR_PULSE_AMOUNT,
@@ -120,10 +120,16 @@ export interface StructureGridHooks {
 }
 
 export interface GridPulseResult {
-  /** Connection endpoint pairs that carried flow this pulse (for `grid_pulse`). */
-  flashed: Array<[string, string]>;
-  /** The flow material (Phase 3: always 'minerals'). */
-  material: 'minerals';
+  /** Connection endpoints + the flow MATERIAL that crossed them this pulse (for
+   *  `grid_pulse`). WS-D (#12) — each edge is tagged with its own material
+   *  (`repair` / `minerals` / `construction`) so the client tints per-edge: a
+   *  repair route greens, a haul route oranges, a build route cyans, all in the
+   *  SAME pulse. Idle edges are simply absent (the client renders muted-blue). */
+  flashed: Array<[string, string, FlowMaterial]>;
+  /** The DOMINANT pulse material — kept for the back-compat single-material wire
+   *  field; `'minerals'` when anything mineral-ish flowed, else the first flashed
+   *  edge's material. Per-edge material on `flashed` is the authoritative tint. */
+  material: FlowMaterial;
 }
 
 export class StructureGridSubsystem {
@@ -286,13 +292,22 @@ export class StructureGridSubsystem {
     // mining/turret gating sees the battery-backed power state.
     this.processBatteryPower();
 
-    const flashed: Array<[string, string]> = [];
+    const flashed: Array<[string, string, FlowMaterial]> = [];
     this.processMining();
     this.processTransfer(nowMs, flashed);
     this.processConstruction(nowMs, flashed);
     this.processRepair(nowMs, flashed);
     this.processDeconstruction(nowMs, flashed);
-    return { flashed, material: 'minerals' };
+    // Dominant pulse material (back-compat single field): prefer 'minerals' when
+    // any haul/reclaim flowed (the common steady-state), else the first edge's.
+    let material: FlowMaterial = 'minerals';
+    if (flashed.length > 0) {
+      material = flashed[0]![2];
+      for (let i = 0; i < flashed.length; i++) {
+        if (flashed[i]![2] === 'minerals') { material = 'minerals'; break; }
+      }
+    }
+    return { flashed, material };
   }
 
   /**
@@ -539,7 +554,7 @@ export class StructureGridSubsystem {
 
   /** Phase 4 — haul buffered minerals from non-Capital structures toward a
    *  Capital with free storage, along the A* route (capped by throughput). */
-  private processTransfer(nowMs: number, flashed: Array<[string, string]>): void {
+  private processTransfer(nowMs: number, flashed: Array<[string, string, FlowMaterial]>): void {
     for (const rec of this.hooks.registry.all()) {
       if (rec.kind === 'capital' || !rec.isConstructed || rec.minerals <= 0) continue;
       const dest = this.findCapitalWithSpace(rec.id);
@@ -551,7 +566,7 @@ export class StructureGridSubsystem {
       if (move <= 0) continue;
       rec.minerals -= move;
       dest.capital.minerals += move;
-      this.flashRoute(dest.route, nowMs, flashed);
+      this.flashRoute(dest.route, nowMs, flashed, 'minerals');
     }
   }
 
@@ -619,14 +634,19 @@ export class StructureGridSubsystem {
     return null;
   }
 
-  private flashRoute(route: readonly string[], nowMs: number, flashed: Array<[string, string]>): void {
+  private flashRoute(
+    route: readonly string[],
+    nowMs: number,
+    flashed: Array<[string, string, FlowMaterial]>,
+    material: FlowMaterial,
+  ): void {
     for (let i = 0; i < route.length - 1; i++) {
       const a = route[i]!;
       const b = route[i + 1]!;
       const conn = this.findConnection(a, b);
       if (conn) {
-        conn.flash(nowMs, 'minerals');
-        flashed.push([a, b]);
+        conn.flash(nowMs, material);
+        flashed.push([a, b, material]);
       }
     }
   }
@@ -638,7 +658,7 @@ export class StructureGridSubsystem {
     return null;
   }
 
-  private processConstruction(nowMs: number, flashed: Array<[string, string]>): void {
+  private processConstruction(nowMs: number, flashed: Array<[string, string, FlowMaterial]>): void {
     for (const bp of this.hooks.registry.all()) {
       if (bp.isConstructed || bp.isDeconstructing) continue;
       const source = this.findStorageRoute(bp.id);
@@ -647,7 +667,7 @@ export class StructureGridSubsystem {
       if (amount <= 0) continue;
       source.capital.minerals -= amount;
       bp.constructionProgress += amount;
-      this.flashRoute(source.route, nowMs, flashed);
+      this.flashRoute(source.route, nowMs, flashed, 'construction');
       if (bp.constructionProgress >= bp.constructionCost) {
         bp.constructionProgress = bp.constructionCost;
         bp.isConstructed = true;
@@ -658,7 +678,7 @@ export class StructureGridSubsystem {
     }
   }
 
-  private processRepair(nowMs: number, flashed: Array<[string, string]>): void {
+  private processRepair(nowMs: number, flashed: Array<[string, string, FlowMaterial]>): void {
     for (const rec of this.hooks.registry.all()) {
       if (!rec.isConstructed || rec.isDeconstructing) continue;
       const max = getStructureKind(rec.kind).maxHealth;
@@ -669,14 +689,20 @@ export class StructureGridSubsystem {
       const spend = Math.min(REPAIR_PULSE_AMOUNT, source.capital.minerals);
       if (spend <= 0) continue;
       const hpGain = Math.min(max - hp, spend / REPAIR_COST_PER_HP);
+      // WS-D (#12) — flash + spend ONLY when the repair actually heals. A stalled
+      // / zero-progress repair must NOT keep the route lit forever (the
+      // "connectors never return to idle after repair" bug). The route is tagged
+      // 'repair' so the client tints it green (healing), distinct from the orange
+      // mineral haul that ALSO routes from the same Capital.
+      if (hpGain <= 0) continue;
       const actualSpend = hpGain * REPAIR_COST_PER_HP;
       source.capital.minerals -= actualSpend;
       this.hooks.setHealth(rec.id, hp + hpGain);
-      this.flashRoute(source.route, nowMs, flashed);
+      this.flashRoute(source.route, nowMs, flashed, 'repair');
     }
   }
 
-  private processDeconstruction(nowMs: number, flashed: Array<[string, string]>): void {
+  private processDeconstruction(nowMs: number, flashed: Array<[string, string, FlowMaterial]>): void {
     // Snapshot the list — we may remove entries mid-iteration.
     const decon: StructureRecord[] = [];
     for (const rec of this.hooks.registry.all()) {
@@ -691,7 +717,7 @@ export class StructureGridSubsystem {
         if (source) {
           const cap = getStructureKind(source.capital.kind).storageCapacity;
           source.capital.minerals = Math.min(cap, source.capital.minerals + reclaim);
-          this.flashRoute(source.route, nowMs, flashed);
+          this.flashRoute(source.route, nowMs, flashed, 'minerals');
         }
       }
       if (rec.constructionProgress <= 0) {
