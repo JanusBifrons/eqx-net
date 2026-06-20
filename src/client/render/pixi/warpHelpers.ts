@@ -68,6 +68,22 @@ export function warpEventFiresBurst(event: WarpBurstEvent): boolean {
 }
 
 /**
+ * #7 — should a REMOTE-warp ripple fire given the galaxy map's open state?
+ *
+ * The WarpFilterChain attaches to the shared `app.stage`, and the
+ * `GalaxyMapLayer` (full-screen selector OR in-game additive overlay) is a child
+ * of that SAME stage. A stage-level warp filter therefore distorts the galaxy
+ * overlay the player is reading whenever a remote ship warps in/out — a ripple
+ * bleeding across the hexes. Skip the visual entirely while the map is open; the
+ * effect is purely cosmetic and the player isn't looking at the gameplay scene
+ * anyway. Pure (mirrors `warpEventFiresBurst`); locked by
+ * `PixiRenderer.warpGalaxyGate.test.ts`.
+ */
+export function shouldFireRemoteWarpVisual(state: { galaxyMapOpen: boolean }): boolean {
+  return !state.galaxyMapOpen;
+}
+
+/**
  * Resolve the warp filter centre, in the renderer's screen-pixel
  * frame (the same frame `world.toGlobal` / `camera.screenWidth`
  * report — NO resolution rescale; see history note below).

@@ -4,6 +4,7 @@ import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/
 import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
 import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/protocol';
 import { WarpFilterChain } from './pixi/WarpFilterChain.js';
+import { shouldFireRemoteWarpVisual } from './pixi/warpHelpers.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
 import { entityPoseFromSprite, type EntityPose } from './pixi/entityPoseFromSprite.js';
@@ -82,6 +83,9 @@ export {
   resolveWarpFilterCenter,
   type WarpBurstEvent,
 } from './pixi/warpHelpers.js';
+// `shouldFireRemoteWarpVisual` is imported above for in-module use (#7); the
+// test imports it directly from `./pixi/warpHelpers`.
+export { shouldFireRemoteWarpVisual };
 
 
 // Sprite/Graphics builders moved to ./pixi/spriteBuilders.ts — pure
@@ -1094,6 +1098,18 @@ export class PixiRenderer implements IRenderer {
     return this._hoveredId;
   }
 
+  /**
+   * DEV/E2E-only (#7): would a queued REMOTE-warp event fire its ripple right
+   * now, given the live galaxy-map state? Returns the EXACT gate the
+   * `pendingWarpEvents` drain applies (`shouldFireRemoteWarpVisual` against
+   * `_galaxyLayer.visible`), so a spec can assert the warp ripple is suppressed
+   * while the galaxy map is open without injecting a server warp broadcast.
+   */
+  devRemoteWarpVisualWouldFire(): boolean {
+    const galaxyMapOpen = this._galaxyLayer?.visible === true;
+    return shouldFireRemoteWarpVisual({ galaxyMapOpen });
+  }
+
   /** True while the galaxy layer should swallow gameplay taps — either the
    *  full-screen selector (pan/zoom active) OR the in-game additive overlay is
    *  up (a tap there warps to a neighbour). Selection must not fire in either. */
@@ -1732,8 +1748,14 @@ export class PixiRenderer implements IRenderer {
     // the multi-pass filter chain every frame → frame rate collapses
     // (the late-onset spiral pattern in captures `af742v` / `ecat41`).
     if (mirror.pendingWarpEvents && mirror.pendingWarpEvents.length > 0) {
+      // #7 — the WarpFilterChain lives on the shared `app.stage`, and the
+      // GalaxyMapLayer is a child of that same stage, so a remote-warp ripple
+      // bleeds across the galaxy overlay the player is reading. Skip the cosmetic
+      // visual entirely while the map is open (the gameplay scene isn't the focus
+      // anyway). Still drain the queue so it doesn't back up.
+      const galaxyMapOpen = this._galaxyLayer?.visible === true;
       const burstInFlight = this.warp.isBurstInFlight();
-      if (!burstInFlight) {
+      if (shouldFireRemoteWarpVisual({ galaxyMapOpen }) && !burstInFlight) {
         // Fire ONLY the first queued event this frame. Subsequent
         // events get visually skipped — at 1-2 warps/sec from drones
         // plus a 1.5 s burst window, the visible duty cycle is close
