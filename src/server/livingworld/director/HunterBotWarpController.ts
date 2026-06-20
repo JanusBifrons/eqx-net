@@ -49,6 +49,17 @@ export interface HunterBotWarpControllerOptions {
     botId: string,
     sectorKey: string,
   ) => { hostileToFaction?: { playerId: string; structureIds: readonly string[] } };
+  /** WS-E #13/#19 — resolve the ARRIVAL pose for a hopping member. Returns the
+   *  CARRY-derived (clamped) pose for a WAVE hop (so attackers arrive spread out
+   *  near where they left, not stacked at one edge anchor) or `null` to fall back
+   *  to the EDGE spawn (roam hops + back-compat — roamers must enter from the
+   *  edge, never pop in on top of a player at the centre, the 2026-06-19 fix).
+   *  Absent ⇒ always edge spawn (back-compat for tests). */
+  arrivalPoseFor?: (
+    botId: string,
+    to: string,
+    carry: BotCarry,
+  ) => { x: number; y: number; vx: number; vy: number } | null;
 }
 
 export class HunterBotWarpController {
@@ -62,6 +73,11 @@ export class HunterBotWarpController {
     botId: string,
     sectorKey: string,
   ) => { hostileToFaction?: { playerId: string; structureIds: readonly string[] } };
+  private readonly arrivalPoseFor?: (
+    botId: string,
+    to: string,
+    carry: BotCarry,
+  ) => { x: number; y: number; vx: number; vy: number } | null;
   /** botId → pending arrival timer (the in-flight window). Cleared on
    *  `disposePending` (director stop) so no timer fires into a torn-down room. */
   private readonly pending = new Map<string, ReturnType<typeof setTimeout>>();
@@ -74,6 +90,7 @@ export class HunterBotWarpController {
     this.hopTravelMs = opts.hopTravelMs;
     this.squadKeyOf = opts.squadKeyOf;
     this.hostileSpecFor = opts.hostileSpecFor;
+    this.arrivalPoseFor = opts.arrivalPoseFor;
   }
 
   /** Spool-end half of the hop: pre-check the dest slot, despawn the bot from
@@ -114,18 +131,35 @@ export class HunterBotWarpController {
       this.pool.scheduleRespawn(rec, this.respawnDelayMs);
       return;
     }
-    // Arrive CLUSTERED with squadmates (a herd hops together) at the destination
-    // EDGE — drones enter a sector from outside and fly in (never popping in on
-    // top of a player at the centre). Squad anchor if known, else per-bot random.
-    const squadKey = this.squadKeyOf?.(rec.botId);
-    const pose = squadKey ? squadEdgePose(squadKey, to, rec.botId) : sectorEdgePose(this.rng);
+    // Arrival pose. WS-E #13/#19: a WAVE hop carries the bot's pre-despawn world
+    // pose (clamped) so attackers arrive SPREAD near where they left, instead of
+    // all stacking at one clustered edge anchor (the "all attacking drones appear
+    // in exactly the same place" report). A ROAM hop (or no resolver) falls back
+    // to the EDGE spawn — drones enter from outside the sector and fly in, never
+    // popping in on top of a player at the centre (the 2026-06-19 invariant). The
+    // edge fallback still clusters squadmates via the shared squad anchor.
+    const carryPose = this.arrivalPoseFor?.(rec.botId, to, carry) ?? null;
+    let px: number, py: number, pvx: number, pvy: number;
+    if (carryPose) {
+      px = carryPose.x;
+      py = carryPose.y;
+      pvx = carryPose.vx;
+      pvy = carryPose.vy;
+    } else {
+      const squadKey = this.squadKeyOf?.(rec.botId);
+      const pose = squadKey ? squadEdgePose(squadKey, to, rec.botId) : sectorEdgePose(this.rng);
+      px = pose.x;
+      py = pose.y;
+      pvx = pose.vx;
+      pvy = pose.vy;
+    }
     const ok = dest.spawnLivingWorldBot({
       botId: rec.botId,
       kind: carry.kind,
-      x: pose.x,
-      y: pose.y,
-      vx: pose.vx,
-      vy: pose.vy,
+      x: px,
+      y: py,
+      vx: pvx,
+      vy: pvy,
       health: carry.health,
       // WS-E #15 — if this arrival lands in the squad's TARGET (base) sector,
       // mark hostility INLINE so the just-spawned record is hostile in the same

@@ -18,6 +18,12 @@ import type { ShipKindId } from '../../shared-types/shipKinds.js';
 export interface BotCarry {
   kind: ShipKindId;
   health: number;
+  /** WS-E #13/#19 — the bot's pre-despawn WORLD position in the SOURCE sector.
+   *  Carried so a hop ARRIVES near where it left (clamped to the destination
+   *  bounds), instead of all attackers snapping to one clustered edge anchor.
+   *  Captured in `LivingWorldBotHooks.despawnBot` from the live SAB pose. */
+  x: number;
+  y: number;
   vx: number;
   vy: number;
   angle: number;

@@ -36,6 +36,8 @@ import {
   type Rng,
 } from './population.js';
 import { getSector, isEntrySector } from '../../core/galaxy/galaxy.js';
+import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
+import type { BotCarry } from './botTypes.js';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import type { SectorStructurePresence } from '../../shared-types/galaxyPresence.js';
 import { LivingWorldRoom } from './LivingWorldRoom.js';
@@ -350,6 +352,10 @@ export class LivingWorldDirector {
       // as spawn — closing the warp-arrive race that left it neutral until the
       // next ~1.5 s control-tick `markSquadHostileToFaction` pulse.
       hostileSpecFor: (botId, sectorKey) => this.hostileSpecFor(botId, sectorKey),
+      // WS-E #13/#19 — a WAVE hop arrives at its CARRY pose (clamped) so attackers
+      // arrive spread near where they left, not stacked at one edge anchor; roam
+      // hops return null → the edge spawn (enter from outside, never on-top).
+      arrivalPoseFor: (botId, to, carry) => this.arrivalPoseFor(botId, to, carry),
     });
     this.squadPool = new SquadPool();
     this.waveDirector = new WaveDirector({
@@ -1049,6 +1055,28 @@ export class LivingWorldDirector {
     const room = this.rooms.get(sectorKey);
     if (!room || !room.factionHostility) return {};
     return { hostileToFaction: room.factionHostility(squad.targetFactionId) };
+  }
+
+  /**
+   * WS-E #13/#19 — the ARRIVAL pose for a hopping member. A WAVE hop (squad has a
+   * `targetFactionId`) carries the bot's pre-despawn SAB pose (CLAMPED to the
+   * destination bounds — the same defense-in-depth `clampToSectorBounds` the
+   * player `TransitOrchestrator.commitTransit` uses), so a squad's members arrive
+   * SPREAD near where they each were in the source sector instead of all snapping
+   * to one clustered edge anchor (the "all attacking drones appear in exactly the
+   * same place" report). A ROAM hop (no target) returns null ⇒ the controller
+   * falls back to the EDGE spawn, preserving the "roamers enter from the edge,
+   * never pop in on top of a player at the centre" invariant (2026-06-19).
+   */
+  private arrivalPoseFor(
+    botId: string,
+    _to: string,
+    carry: BotCarry,
+  ): { x: number; y: number; vx: number; vy: number } | null {
+    const squad = this.squadPool.squadOf(botId);
+    if (!squad || squad.targetFactionId === null) return null; // roaming ⇒ edge spawn
+    const { x, y } = clampToSectorBounds(carry.x, carry.y);
+    return { x, y, vx: carry.vx, vy: carry.vy };
   }
 
   /** Step 1 of `tick`: warp-in respawning bots when their delay elapses

@@ -41,7 +41,8 @@ function makeRoom(
       spawns.push(spec);
       return true;
     },
-    despawnLivingWorldBot: () => over.carry ?? ({ kind: DEFAULT_SHIP_KIND, health: 40, vx: 0, vy: 0, angle: 0, angvel: 0 } as BotCarry),
+    despawnLivingWorldBot: () =>
+      over.carry ?? ({ kind: DEFAULT_SHIP_KIND, health: 40, x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 } as BotCarry),
     markBotHostile: () => {},
     factionHostility: (id: string) => ({ playerId: id, structureIds: [`pstruct-${id}`] }),
     factionBaseReadiness: () => [],
@@ -140,5 +141,77 @@ describe('HunterBotWarpController.arrive — inline hostility (WS-E #15)', () =>
 
     expect(spawns).toHaveLength(1);
     expect(spawns[0]!.hostileToFaction).toBeUndefined();
+  });
+});
+
+describe('HunterBotWarpController.arrive — carry-over spawn position (WS-E #13/#19)', () => {
+  it('arrives at the CARRY pose (clamped) when arrivalPoseFor returns one (wave hop)', async () => {
+    const { pool, rec } = makePool();
+    // The bot departed from world (1234, -987) in the source sector.
+    const carry: BotCarry = {
+      kind: DEFAULT_SHIP_KIND,
+      health: 33,
+      x: 1234,
+      y: -987,
+      vx: 7,
+      vy: -3,
+      angle: 0,
+      angvel: 0,
+    };
+    const src = makeRoom({ carry });
+    const { room: dest, spawns } = makeRoom();
+    const rooms = new Map<string, LivingWorldRoom>([['src', src.room], ['dest', dest]]);
+    const controller = new HunterBotWarpController({
+      rooms,
+      pool,
+      rng: makeSeededRng(1),
+      respawnDelayMs: 100,
+      hopTravelMs: 0,
+      // A WAVE hop: carry the (clamped) pose forward.
+      arrivalPoseFor: (_botId, _to, c) => ({ x: c.x, y: c.y, vx: c.vx, vy: c.vy }),
+    });
+
+    await hop({ controller, rec, from: 'src', to: 'dest' });
+
+    expect(spawns).toHaveLength(1);
+    // Arrives near where it left — NOT at the ~4600 u edge anchor (the old bug).
+    expect(spawns[0]!.x).toBe(1234);
+    expect(spawns[0]!.y).toBe(-987);
+    expect(spawns[0]!.vx).toBe(7);
+    expect(spawns[0]!.vy).toBe(-3);
+    expect(spawns[0]!.health).toBe(33);
+  });
+
+  it('falls back to the EDGE spawn when arrivalPoseFor returns null (roam hop)', async () => {
+    const { pool, rec } = makePool();
+    const carry: BotCarry = {
+      kind: DEFAULT_SHIP_KIND,
+      health: 40,
+      x: 100,
+      y: 100,
+      vx: 0,
+      vy: 0,
+      angle: 0,
+      angvel: 0,
+    };
+    const src = makeRoom({ carry });
+    const { room: dest, spawns } = makeRoom();
+    const rooms = new Map<string, LivingWorldRoom>([['src', src.room], ['dest', dest]]);
+    const controller = new HunterBotWarpController({
+      rooms,
+      pool,
+      rng: makeSeededRng(1),
+      respawnDelayMs: 100,
+      hopTravelMs: 0,
+      squadKeyOf: () => 'squad-0',
+      arrivalPoseFor: () => null, // roaming ⇒ edge spawn
+    });
+
+    await hop({ controller, rec, from: 'src', to: 'dest' });
+
+    expect(spawns).toHaveLength(1);
+    // Edge spawn radius is ~0.92 × 5000 ≈ 4600 — far from the carry pose (100,100).
+    const r = Math.hypot(spawns[0]!.x, spawns[0]!.y);
+    expect(r).toBeGreaterThan(2000);
   });
 });

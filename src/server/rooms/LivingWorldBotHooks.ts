@@ -154,16 +154,20 @@ export class LivingWorldBotHooks {
     const rec = d.swarmRegistry.get(botId);
     if (!rec) return null;
     const b = slotBase(rec.slot);
+    const x = d.sabF32[b + SLOT_X_OFF]!;
+    const y = d.sabF32[b + SLOT_Y_OFF]!;
     const carry: BotCarry = {
       kind: (rec.shipKind as ShipKindId | undefined) ?? DEFAULT_SHIP_KIND,
       health: d.swarmHealth.get(botId) ?? getDroneMaxHealth(rec.shipKind) ?? 40,
+      // WS-E #13/#19 — carry the live SAB world pose so the hop arrives near
+      // where the bot left (clamped to dest bounds), not at one clustered edge.
+      x,
+      y,
       vx: d.sabF32[b + SLOT_VX_OFF]!,
       vy: d.sabF32[b + SLOT_VY_OFF]!,
       angle: d.sabF32[b + SLOT_ANGLE_OFF]!,
       angvel: d.sabF32[b + SLOT_ANGVEL_OFF]!,
     };
-    const x = d.sabF32[b + SLOT_X_OFF]!;
-    const y = d.sabF32[b + SLOT_Y_OFF]!;
     d.broadcastWarpOut({ type: 'warp_out', playerId: botId, x, y });
     d.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false });
     d.bus.emit('BOT_DESPAWNED', {
