@@ -217,6 +217,15 @@ describe('lookups', () => {
       expect(isNeighbour('sol-prime', 'greenfall')).toBe(false);
     });
 
+    it('#17 — Thornfield and Cygnus-Arm are NOT neighbours (different regions, no shared edge)', () => {
+      // Smoke-report regression lock: a Thornfield → Cygnus-Arm jump was reported.
+      // They share no galaxy-graph edge, so a same-tick jump is impossible; the
+      // server rejects it (TransitOrchestrator not_neighbour). If anyone ever
+      // links these two sectors this fails loudly, alongside the orchestrator lock.
+      expect(isNeighbour('thornfield', 'cygnus-arm')).toBe(false);
+      expect(isNeighbour('cygnus-arm', 'thornfield')).toBe(false);
+    });
+
     it('returns false for unknown source', () => {
       expect(isNeighbour('nonexistent', 'sol-prime')).toBe(false);
     });
