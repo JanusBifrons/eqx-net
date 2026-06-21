@@ -24,6 +24,7 @@ import { SelectionBracket } from './SelectionBracket';
 import { HoverBracket } from './HoverBracket';
 import { pickEntityAt, type PickedEntityKind } from './pickEntity';
 import { decideLingeringSpriteAction, decideExplosionPosition } from './spriteUpdateDecisions';
+import { shouldLatchFirstFrame } from './firstFrameLatch.js';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
 import { readFxKillSwitches } from './fxKillSwitches';
 import { BeamSpritePool } from './BeamSpritePool';
@@ -1887,18 +1888,18 @@ export class PixiRenderer implements IRenderer {
     }
     this.feedback.haloArrowCount = this.halo.getDebugVisibleArrowCount();
     this.feedback.damageNumberActiveCount = this.damageNumbers?.getActiveCount() ?? 0;
-    // Join-render readiness signal: latch true once we've painted at
-    // least one frame that includes the LOCAL player's mirror entry
-    // (not just any ship). The main thread reads this via
-    // `getFeedback()`, fires the `pixi_first_frame` diagnostic, and
-    // drives `gameReady`/`<WarpScreen>` off it. Requiring `mirror.
-    // ships.has(localPlayerId)` (not just `size > 0`) is what makes
-    // this a true "the player can see themselves" signal — strict
-    // enough that idle sectors with only remote ships visible don't
-    // flip the gate early.
-    if (!this.feedback.firstFrameRendered
-        && mirror.localPlayerId !== null
-        && mirror.ships.has(mirror.localPlayerId)) {
+    // Join-render readiness signal: latch true once we've painted a frame the
+    // player can see. Piloting → require the LOCAL player's own ship in the
+    // mirror (not just any remote ship). SPECTATING → there is no own ship, so a
+    // painted frame of the sector IS the signal (the shipless-spectator join-hang
+    // fix — Equinox Phase-5 audit). Decision is pure + unit-locked
+    // (`firstFrameLatch.ts`), per the Phase A3 extract-renderer-decisions rule.
+    if (shouldLatchFirstFrame(
+          this.feedback.firstFrameRendered,
+          mirror.localPlayerId,
+          mirror.localPlayerId !== null && mirror.ships.has(mirror.localPlayerId),
+          this._spectator,
+        )) {
       this.feedback.firstFrameRendered = true;
     }
 
