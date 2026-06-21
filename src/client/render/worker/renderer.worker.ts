@@ -218,6 +218,12 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'PAN_CAMERA': {
+        if (!renderer) return;
+        renderer.setPanVelocity(msg.vx, msg.vy);
+        break;
+      }
+
       case 'SET_VISIBLE': {
         galaxyLayer?.setVisible(msg.visible);
         break;

@@ -338,6 +338,12 @@ export class StructureGridSubsystem {
     for (const rec of registry.all()) {
       if (attempts >= MAX_RECONNECT_ATTEMPTS_PER_PULSE) break;
       if (registry.connectionCount(rec.id) > 0) continue;
+      // Phase 5 — a structure that has EVER connected and is now at 0 was either
+      // deliberately CLEARED by the player or ORPHANED by its hub's destruction.
+      // Leave it orphaned until the player manually reconnects (the sweep used to
+      // re-wire it instantly, making the Clear button pointless). Only NEVER-
+      // connected placements (temporal strandings, Issue 2) auto-connect here.
+      if (registry.hasEverConnected(rec.id)) continue;
       attempts++;
       autoConnectStructure(registry, rec.id, obstacles);
     }

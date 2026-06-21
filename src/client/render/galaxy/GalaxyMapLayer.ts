@@ -23,10 +23,10 @@ import {
 import { resolveSectorOwner } from './sectorOwnership';
 import {
   GALAXY_STAR_LAYERS,
-  STAR_MAX_TILE_HALF,
   starHash,
   starLayerAlphaAt,
   starRadiusAt,
+  starTileHalfRange,
 } from './galaxyStarfield';
 import {
   ENTITY_VISUALS,
@@ -868,8 +868,8 @@ export class GalaxyMapLayer extends Container {
       const bgCy = camY * p;
       const cTX = Math.round(bgCx / T);
       const cTY = Math.round(bgCy / T);
-      const halfX = Math.min(STAR_MAX_TILE_HALF, Math.ceil(hw / T) + 1);
-      const halfY = Math.min(STAR_MAX_TILE_HALF, Math.ceil(hh / T) + 1);
+      const halfX = starTileHalfRange(hw, T);
+      const halfY = starTileHalfRange(hh, T);
       // Batch the whole layer into one fill call (one colour + alpha). Each
       // star's radius varies (mostly fine dust, a few brighter) so the field
       // never reads as uniform chunky dots.
