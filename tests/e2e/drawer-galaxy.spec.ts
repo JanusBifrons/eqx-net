@@ -32,7 +32,7 @@ interface StoreWindow extends Window {
 }
 
 async function waitForLocalShip(page: Page, timeoutMs = 20_000): Promise<void> {
-  await expect(page.locator('[data-testid="ship-stats-card"]')).toBeVisible({ timeout: timeoutMs });
+  await expect(page.locator('[data-testid="sector-info-panel"]')).toBeVisible({ timeout: timeoutMs });
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
@@ -148,7 +148,7 @@ test('drawer → Show galaxy map → X close: stays interactive, no double-mount
   await page.locator('[data-testid="galaxy-warp-close"]').click();
   stamp('clicked X close');
   await expect(page.locator('[data-testid="galaxy-map-screen"]')).toHaveCount(0, { timeout: 5_000 });
-  await expect(page.locator('[data-testid="ship-stats-card"]')).toBeVisible({ timeout: 5_000 });
+  await expect(page.locator('[data-testid="sector-info-panel"]')).toBeVisible({ timeout: 5_000 });
 
   // === 5. Confirm the game surface is still ALIVE after the cycle ===
   const shipCount = await page.evaluate(() => {

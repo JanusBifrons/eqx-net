@@ -20,10 +20,10 @@ async function bootGame(page: import('@playwright/test').Page): Promise<void> {
   // describe timeout below) covers a cold compile + Colyseus join + spawn on a
   // contended runner; warm boots finish in ~3 s and never approach it.
   await page.waitForSelector('[data-testid="game-surface"]', { timeout: 30_000 });
-  // Wait for ShipStatsCard so layout has settled. The Hull/Ammo chip pills
-  // that used to live in the HUD were removed in Phase 2 — ShipStatsCard
-  // is now the canonical "the game has rendered" signal.
-  await page.locator('[data-testid="ship-stats-card"]').waitFor({ timeout: 30_000 });
+  // Wait for the top-left sector-info panel so layout has settled. The Phase-5
+  // removal of the top-right ShipStatsCard made the always-present top-left
+  // SectorInfoPanel the canonical "the game has rendered" signal.
+  await page.locator('[data-testid="sector-info-panel"]').waitFor({ timeout: 30_000 });
 }
 
 test.describe('layout-slots', () => {
@@ -37,12 +37,15 @@ test.describe('layout-slots', () => {
   // Phase 1 regressions
   // ───────────────────────────────────────────────────────────
 
-  test('ShipStatsCard clears the AppBar (safe-area-top regression)', async ({ browser }) => {
+  test('top-left sector panel clears the AppBar (safe-area-top regression)', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     await bootGame(page);
 
-    const card = page.locator('[data-testid="ship-stats-card"]');
+    // Phase 5 — the top-right ShipStatsCard was removed; the always-present
+    // top-left SectorInfoPanel is now the canonical top-anchored element that
+    // must sit BELOW the AppBar (the safe-area-top regression this guards).
+    const card = page.locator('[data-testid="sector-info-panel"]');
     const box = await card.boundingBox();
     expect(box).not.toBeNull();
     expect(box!.y).toBeGreaterThanOrEqual(APP_BAR_HEIGHT);

@@ -47,7 +47,6 @@ import { logEvent } from './debug/ClientLogger';
 import { captureDeviceInfo } from './debug/deviceInfo';
 import { useMountLog } from './debug/useMountLog';
 import { useWarpOrchestration } from './useWarpOrchestration';
-import { ShipStatsCard } from './components/ShipStatsCard';
 import { EnergyBar } from './components/EnergyBar';
 import { SpeedDialMenu } from './components/SpeedDialMenu';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
@@ -301,14 +300,6 @@ function GameSurface({
   // Map toggle leaves the room + rejoins) or, in WS-A2, an owned ship's
   // in-world Pilot action. The in-place `respawnShip` RPC stays on
   // `ColyseusGameClient` for engineering rooms / tests.
-
-  const getLocalShip = useCallback(() => {
-    const c = clientRef.current;
-    if (!c) return null;
-    const id = c.mirror.localPlayerId;
-    if (!id) return null;
-    return c.mirror.ships.get(id) ?? null;
-  }, []);
 
   // Phase 2 — galaxy-map open state lives in Zustand so the drawer's Galaxy
   // tab can open the overlay without prop drilling. The keyboard `M`
@@ -764,11 +755,13 @@ function GameSurface({
       <Slot anchor="top-left" order={10}><Hud /></Slot>
       <Slot anchor="top-center" order={1}><EnergyBar /></Slot>
       <Slot anchor="top-center" order={2}><WarpInWarningBanner /></Slot>
+      {/* Phase 5 — the top-right X/Y · hull · ammo · speed · heading stat card
+       *  (ShipStatsCard) was REMOVED entirely (user request); the hull/shield
+       *  HUD bars + the in-world stat panel carry that info. */}
       {/* Phase 5 — always-visible Pilot/Spectate toggle (out of the speed-dial)
        *  + a spectator-mode status badge. */}
       <Slot anchor="top-center" order={3}><PilotSpectatorToggle /></Slot>
       <Slot anchor="top-center" order={4}><SpectatorIndicator /></Slot>
-      <Slot anchor="top-right" order={2}><ShipStatsCard getLocalShip={getLocalShip} /></Slot>
       <AdvancedDrawer />
       {/* Phase 4 WS-A1 (D3) — the blocking DeathOverlay "You Died/Respawn" modal
        *  is removed. Death transitions INSTANTLY into spectator (free-roam
