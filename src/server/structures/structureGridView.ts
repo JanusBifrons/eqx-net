@@ -8,7 +8,7 @@
  * half-built node's power.
  */
 import { getStructureKind } from '../../shared-types/structureKinds.js';
-import { structureLevelFactor } from '../../core/leveling/structureLevel.js';
+import { structureLevelFactor, effectiveStructureMaxConnections } from '../../core/leveling/structureLevel.js';
 import {
   canConnect,
   edgeDistance,
@@ -49,7 +49,10 @@ export function structureToGridNode(rec: StructureRecord): GridNode {
     isCapital: rec.kind === 'capital',
     isConnector: rec.kind === 'connector',
     isShieldPylon: rec.kind === 'shield_pylon',
-    maxConnections: kind.maxConnections,
+    // Leveled connection cap — an upgraded connector holds MORE links (Equinox
+    // Phase-5 audit). Matches the client `structureMirrorToGridNode` so the
+    // preview + live grid agree on the cap.
+    maxConnections: effectiveStructureMaxConnections(kind.maxConnections, rec.level),
     connectionRange: kind.connectionRange,
     // The isConstructed gate: a blueprint is inert (0 power) until built. A
     // mid-upgrade Capital (see above) is treated as operational so it keeps

@@ -8,6 +8,7 @@ import {
   rangeCircleVisualParams,
   RANGE_CIRCLE_COLOR,
   CONNECTOR_IDLE_COLOR,
+  CONNECTOR_IDLE_ALPHA,
   CONNECTOR_MINERAL_COLOR,
   CONNECTOR_FLOW_PULSE_COLOR,
   CONNECTOR_PULSE_PERIOD_MS,
@@ -55,10 +56,15 @@ describe('rangeCircleVisualParams (WS-10 R2.3)', () => {
 });
 
 describe('connectorVisualParams', () => {
-  it('idle (no flash) → steady muted-blue line, NO comet (Phase-8: idle does not pulse)', () => {
+  it('idle (no flash) → FAINT muted-blue line, NO comet (reads as connected, NOT lit)', () => {
     const v = connectorVisualParams(/*flashUntil*/ 0, /*now*/ 1000, /*scale*/ 1);
     expect(v.color).toBe(CONNECTOR_IDLE_COLOR);
-    expect(v.alpha).toBeCloseTo(0.3, 6); // steady idle line (as before Phase 7)
+    // Equinox Phase-5 audit ("lines lit up for no reason"): an idle edge must read
+    // as a SUBTLE hint, clearly below a "lit" threshold (and far below the ACTIVE
+    // floor of 0.6). The old 0.3 read as lit; this asserts the dimming so a revert
+    // to 0.3 fails.
+    expect(v.alpha).toBeCloseTo(CONNECTOR_IDLE_ALPHA, 6);
+    expect(v.alpha).toBeLessThan(0.2); // below the "reads as lit" threshold
     expect(v.glowAlpha).toBe(0); // no glow when idle
     expect(v.width).toBeGreaterThanOrEqual(1);
     expect(v.pulseActive).toBe(false); // idle connectors must NOT pulse
@@ -126,7 +132,7 @@ describe('connectorVisualInto — directional flow pulse (R2.2)', () => {
   it('idle is a steady muted line — no glow, no comet (Phase-8)', () => {
     const idle = connectorVisualInto(blankVisual(), /*flashUntil*/ 0, /*now*/ 1000, 1);
     expect(idle.color).toBe(CONNECTOR_IDLE_COLOR);
-    expect(idle.alpha).toBeCloseTo(0.3, 6);
+    expect(idle.alpha).toBeCloseTo(CONNECTOR_IDLE_ALPHA, 6); // faint, not "lit" (Phase-5 audit)
     expect(idle.glowAlpha).toBe(0);
     expect(idle.pulseActive).toBe(false);
     expect(idle.pulseAlpha).toBe(0);
