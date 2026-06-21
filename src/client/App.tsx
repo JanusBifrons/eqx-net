@@ -120,6 +120,8 @@ interface GameSurfaceProps {
   onSelectRoom?: (roomName: string) => void;
   onSpawnExistingShip?: (shipId: string, sectorKey: string) => void;
   onSpawnNewShip?: (kind: unknown, sectorKey: string) => void;
+  /** Equinox Phase 5 (WS-3) — join a sector as a spectator (no ship picker). */
+  onSpawnSpectator?: (sectorKey: string) => void;
   onSelectLocal?: () => void;
 }
 
@@ -130,6 +132,7 @@ function GameSurface({
   onSelectRoom,
   onSpawnExistingShip,
   onSpawnNewShip,
+  onSpawnSpectator,
   onSelectLocal,
 }: GameSurfaceProps): JSX.Element {
   const idle = surfaceMode === 'idle';
@@ -740,6 +743,7 @@ function GameSurface({
           onSelectRoom={onSelectRoom}
           onSpawnExistingShip={onSpawnExistingShip}
           onSpawnNewShip={onSpawnNewShip}
+          onSpawnSpectator={onSpawnSpectator}
           onSelectLocal={onSelectLocal}
         />
       ) : (
@@ -930,6 +934,18 @@ export function App(): JSX.Element {
     setPhase('game');
   }, [setPhase]);
 
+  const handleSpawnSpectator = useCallback((sectorKey: string) => {
+    // Equinox Phase 5 (WS-3) — join the sector as a SPECTATOR, skipping the
+    // ship-kind picker. The server spawns the hull through the normal handshake
+    // then parks it as a lingering hull (no active hull); the client enters
+    // spectator mode off `welcome.spectator`. `isNewShip` forces a fresh roster
+    // row rather than resuming the most-recent (the parked hull is a clean one
+    // they can pilot via the in-world Pilot dropdown).
+    setRoomNameOverride(`galaxy-${sectorKey}`);
+    setJoinOptionsOverride({ spectator: true, isNewShip: true });
+    setPhase('game');
+  }, [setPhase]);
+
   const handleSelectLocal = useCallback(() => {
     setPhase('local');
   }, [setPhase]);
@@ -967,6 +983,7 @@ export function App(): JSX.Element {
               onSelectRoom={handleSelectRoom}
               onSpawnExistingShip={handleSpawnExistingShip}
               onSpawnNewShip={handleSpawnNewShip}
+              onSpawnSpectator={handleSpawnSpectator}
               onSelectLocal={handleSelectLocal}
             />
           }
