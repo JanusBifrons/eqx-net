@@ -57,6 +57,7 @@ export function structureMirrorToGridNode(
   out.isHub = kind.isHub;
   out.isCapital = swarmEntry.shipKind === 'capital';
   out.isConnector = swarmEntry.shipKind === 'connector';
+  out.isShieldPylon = swarmEntry.shipKind === 'shield_pylon';
   out.maxConnections = kind.maxConnections;
   out.connectionRange = kind.connectionRange;
   out.powerOutput = structureState.built ? kind.powerOutput : 0;
@@ -90,6 +91,7 @@ export function ghostToGridNode(
   out.isHub = kind.isHub;
   out.isCapital = preview.kind === 'capital';
   out.isConnector = preview.kind === 'connector';
+  out.isShieldPylon = preview.kind === 'shield_pylon';
   out.maxConnections = kind.maxConnections;
   out.connectionRange = kind.connectionRange;
   // A blueprint is inert until built; the ghost isn't placed yet.

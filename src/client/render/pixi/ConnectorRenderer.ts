@@ -56,6 +56,7 @@ function blankGridNode(): GridNode {
     isHub: false,
     isCapital: false,
     isConnector: false,
+    isShieldPylon: false,
     maxConnections: 0,
     powerOutput: 0,
     powerConsumption: 0,
