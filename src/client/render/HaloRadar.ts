@@ -28,6 +28,7 @@ import {
   type WorldBounds,
 } from './halo/visibility.js';
 import { ENTITY_VISUALS, type EntityKind } from './entityVisuals.js';
+import { resolveRadarReference } from './halo/radarReference.js';
 
 // Re-export for the radar test suite (the include/exclude + classification lock).
 export { haloContactKind } from './halo/arrowGraphics.js';
@@ -175,6 +176,9 @@ export class HaloRadar {
    *  bounds. Reused every update() (invariant #14): the on-screen-exclusion
    *  test reads it during candidate build. */
   private readonly _deadZoneBounds: WorldBounds = { x: 0, y: 0, width: 0, height: 0 };
+  /** Phase 5 — reused ring reference point (local ship OR camera centre in
+   *  spectator), written in place each update() (invariant #14). */
+  private readonly _refScratch = { x: 0, y: 0 };
   /** Monotonic per-`update()` counter for the generation-counter
    *  sweep over `arrows`. Bumped at the top of `update()`. */
   private _radarFrameId = 0;
@@ -239,13 +243,31 @@ export class HaloRadar {
 
     const localId = mirror.localPlayerId;
     const local = localId ? mirror.ships.get(localId) : null;
-    if (!local) {
+    // Phase 5 — the reference point the ring orbits + measures distance from. In
+    // SPECTATOR the ring is CAMERA-relative — decoupled from any ship (the user's
+    // "ring icons still function in spectator but go to the ship I was previously
+    // piloting" half-way-house bug). `camera.center` is the world point under the
+    // screen centre in the pixi (Y-down) frame; the radar works in game space
+    // (Y-up), so un-flip Y. Otherwise the ring orbits the local ship as before.
+    const spectating = useUIStore.getState().pilotMode === 'spectator';
+    const hasRef = resolveRadarReference(
+      spectating,
+      local ? local.x : null,
+      local ? local.y : null,
+      camera.center.x,
+      camera.center.y,
+      this._refScratch,
+    );
+    if (!hasRef) {
+      // Not spectating + no local ship (between rooms / pre-spawn): hide all.
       for (const entry of this.arrows.values()) {
         entry.gfx.visible = false;
         entry.lastVisible = false;
       }
       return;
     }
+    const refX = this._refScratch.x;
+    const refY = this._refScratch.y;
 
     // Phase E — adaptive screen-space radii. Compute against the shorter
     // viewport dimension so the ring stays comfortably inside the screen in
@@ -288,7 +310,7 @@ export class HaloRadar {
     // Phase E — player's actual SCREEN position. Arrows orbit this point at
     // a fixed pixel offset, so they always sit at the right place on the
     // halo regardless of camera state (follow lag, zoom, etc.).
-    const playerScreen = camera.toScreen(local.x, -local.y);
+    const playerScreen = camera.toScreen(refX, -refY);
     // Phase H — radius for the "come in from off-screen" spawn point. A
     // circle of `screenCornerRadius + 30` px from playerScreen sits just
     // outside any corner of the visible viewport at any bearing, so a
@@ -337,7 +359,7 @@ export class HaloRadar {
         // contact already visible in the (dead-zone-inset) viewport needs no
         // off-screen indicator, so it never becomes a ring icon.
         if (isEntityOnScreen(xExtrap, yExtrap, onScreenBounds)) continue;
-        const dist = Math.hypot(xExtrap - local.x, yExtrap - local.y);
+        const dist = Math.hypot(xExtrap - refX, yExtrap - refY);
         if (dist < closestDist) closestDist = dist;
         // Cache the template-literal key so subsequent observations of
         // the same id are allocation-free.
@@ -357,7 +379,7 @@ export class HaloRadar {
       if (id === localId) continue;
       // WS-B #2 — exclude on-screen remote ships at candidate-build time.
       if (isEntityOnScreen(s.x, s.y, onScreenBounds)) continue;
-      const dist = Math.hypot(s.x - local.x, s.y - local.y);
+      const dist = Math.hypot(s.x - refX, s.y - refY);
       if (dist < closestDist) closestDist = dist;
       let key = this._shipKeyCache.get(id);
       if (key === undefined) {
@@ -384,7 +406,7 @@ export class HaloRadar {
     // mid/long-range targets keep singleton arrows).
     const groupingDistance = groupingDistanceForBand(closestDist);
     const candidates = partitionAndGroupCandidates(
-      { x: local.x, y: local.y },
+      { x: refX, y: refY },
       rawCandidates,
       groupingDistance,
       RADAR_MAX_DISTANCE,
@@ -401,7 +423,7 @@ export class HaloRadar {
     const frameId = ++this._radarFrameId;
 
     for (const c of candidates) {
-      const proj = projectArrow({ x: local.x, y: local.y }, { x: c.x, y: c.y }, params);
+      const proj = projectArrow({ x: refX, y: refY }, { x: c.x, y: c.y }, params);
       let entry = this.arrows.get(c.key);
       if (entry) entry.presentAtFrame = frameId;
       if (proj.hidden) {
