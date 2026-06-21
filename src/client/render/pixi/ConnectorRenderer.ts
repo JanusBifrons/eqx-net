@@ -45,6 +45,28 @@ import {
   asteroidObstaclesFromSwarm,
 } from '../../structures/mirrorToGridNode.js';
 
+/** A pooled, mutable stand-in for a {@link Connection} used ONLY by the placement
+ *  preview's `canConnect`/`shieldPylonRejection` calls (which read `getOtherNode`
+ *  + the array `.length`). Reused across frames so the per-frame pass allocates
+ *  nothing (#14); cast to `Connection` at the adjacency boundary. */
+interface PreviewConn {
+  aId: string;
+  bId: string;
+  getOtherNode(id: string): string | null;
+}
+
+/** Allocate one pooled preview-connection (the only `new` for the pool, paid once
+ *  as the pool grows; rewritten in place thereafter). */
+function makePreviewConn(): PreviewConn {
+  return {
+    aId: '',
+    bId: '',
+    getOtherNode(id: string): string | null {
+      return id === this.aId ? this.bId : id === this.bId ? this.aId : null;
+    },
+  };
+}
+
 /** A blank `GridNode` — fields are overwritten in place by the projection
  *  helpers. */
 function blankGridNode(): GridNode {
@@ -144,13 +166,22 @@ export class ConnectorRenderer {
   /** Growable pool backing `_previewNodes` — never shrinks; objects are
    *  rewritten in place by `structureMirrorToGridNode`. */
   private readonly _nodePool: GridNode[] = [];
-  /** Reused adjacency map for `canConnect` — value arrays carry only the right
-   *  `.length` (the per-structure connection count) so the `b-full` check is
-   *  faithful; the ghost (`a`) has no entry so it's never a duplicate. The
-   *  array contents are never read, so a shared frozen dummy fill is safe. */
+  /** Reused adjacency map for `canConnect`. The value arrays carry REAL
+   *  connection-like entries (one per `st.connTo` link) — NOT length-only holes.
+   *  The shield-pylon dual-cap (`shieldPylonRejection`) ITERATES these and calls
+   *  `c.getOtherNode(...)`, so a sparse `undefined` element threw a TypeError and
+   *  wiped the whole web (the 2026-06-21 placement showstopper). Entries are
+   *  pooled (`_connPool`) + rewritten in place so the per-frame preview pass still
+   *  allocates nothing (#14). */
   private readonly _previewAdjacency = new Map<string, readonly Connection[]>();
-  /** Growable pool of length-only adjacency arrays (one per structure). */
+  /** Growable pool of per-structure adjacency arrays (one per structure). */
   private readonly _adjPool: Connection[][] = [];
+  /** Flat growable pool of preview-connection objects (one per existing
+   *  structure→structure link across the whole frame). Reused; `aId`/`bId`
+   *  rewritten in place. Only `getOtherNode` + `.length` are read by
+   *  `canConnect`/`shieldPylonRejection`, so a structural object cast to
+   *  `Connection` is sufficient (and keeps the pass alloc-free, #14). */
+  private readonly _connPool: PreviewConn[] = [];
   /** WS-5 (R2.17) — reused scratch for the 'ok' hubs of the current preview
    *  frame, sorted by edge-distance so the nearest `PLACEMENT_MAX_CONNECTIONS`
    *  draw GREEN and the rest draw RED overflow. Parallel arrays (node refs +
@@ -472,6 +503,7 @@ export class ConnectorRenderer {
     const structures = mirror.structures;
     const localOwner = mirror.localPlayerId;
     let poolIdx = 0;
+    let connPoolIdx = 0;
     if (structures) {
       for (const [id, st] of structures) {
         const entry = swarm.get(id);
@@ -489,14 +521,28 @@ export class ConnectorRenderer {
         const sid = String(id);
         structureMirrorToGridNode(sid, st, entry, node);
         nodes.set(sid, node);
-        // Length-only adjacency: the value array carries the structure's current
-        // connection count so the `b-full` check is faithful. Contents unread.
+        // REAL adjacency: one pooled connection-like entry per `st.connTo` link,
+        // carrying `aId`/`bId` so `shieldPylonRejection`'s `c.getOtherNode(...)`
+        // resolves (a sparse length-only array threw on the `undefined` element —
+        // the placement showstopper). `.length` stays == connTo.length so the
+        // `b-full` cap check is unchanged; the dual-cap counts are now ACCURATE.
         let adj = this._adjPool[poolIdx];
         if (adj === undefined) {
           adj = [];
           this._adjPool[poolIdx] = adj;
         }
-        adj.length = st.connTo.length;
+        adj.length = 0;
+        for (const otherId of st.connTo) {
+          let pc = this._connPool[connPoolIdx];
+          if (pc === undefined) {
+            pc = makePreviewConn();
+            this._connPool[connPoolIdx] = pc;
+          }
+          pc.aId = sid;
+          pc.bId = String(otherId);
+          adj.push(pc as unknown as Connection);
+          connPoolIdx++;
+        }
         adjacency.set(sid, adj as readonly Connection[]);
         poolIdx++;
       }
