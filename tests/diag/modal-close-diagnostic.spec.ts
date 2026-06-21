@@ -67,7 +67,7 @@ test('modal close diagnostic — DOM dump at each step', async ({ page }) => {
     waitUntil: 'domcontentloaded',
     timeout: 30_000,
   });
-  await page.locator('[data-testid="ship-stats-card"]').waitFor({ timeout: 25_000 });
+  await page.locator('[data-testid="sector-info-panel"]').waitFor({ timeout: 25_000 });
   // Wait for ship count > 0 + localShipInstanceId populated.
   await page.waitForFunction(
     () => {

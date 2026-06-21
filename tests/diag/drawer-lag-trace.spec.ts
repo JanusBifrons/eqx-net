@@ -31,7 +31,7 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 const OUTPUT_DIR = path.resolve(process.cwd(), 'diag', 'drawer-lag-trace');
 
 async function waitForLocalShip(page: Page, timeoutMs = 25_000): Promise<void> {
-  await expect(page.locator('[data-testid="ship-stats-card"]')).toBeVisible({ timeout: timeoutMs });
+  await expect(page.locator('[data-testid="sector-info-panel"]')).toBeVisible({ timeout: timeoutMs });
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');

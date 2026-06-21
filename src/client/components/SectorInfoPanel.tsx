@@ -34,25 +34,36 @@ const POLL_MS = 100;
 // engelbart Step 4 — wb1al4 heap-leak hunt). The component re-renders
 // at 10 Hz via the polling tick; without hoisting each render produced
 // 9 fresh sx literals (1 grid + 4 labels + 4 values) → ~90 sx allocs/s.
+// Phase 5 — responsive: stays a tiny bare overlay on MOBILE (the "start tiny"
+// sizing default) but becomes a LARGER, semi-transparent MUI card on DESKTOP
+// (sm+), where the panel "is absolutely tiny" and has room. Breakpoint objects
+// are literal-stable at module scope, so hoisting (the 10 Hz re-render alloc
+// guard) is preserved.
 const GRID_SX = {
   display: 'grid',
   gridTemplateColumns: 'auto 1fr',
-  columnGap: 1,
-  rowGap: '2px',
+  columnGap: { xs: 1, sm: 1.5 },
+  rowGap: { xs: '2px', sm: '4px' },
   color: '#dde',
   pointerEvents: 'none' as const,
   userSelect: 'none' as const,
   fontFamily: 'system-ui, sans-serif',
+  // Desktop: a transparent dark card with padding; mobile: no chrome.
+  bgcolor: { xs: 'transparent', sm: 'rgba(8,12,22,0.42)' },
+  border: { xs: 'none', sm: '1px solid rgba(255,255,255,0.08)' },
+  borderRadius: { xs: 0, sm: 1 },
+  p: { xs: 0, sm: 1.25 },
+  backdropFilter: { xs: 'none', sm: 'blur(2px)' },
 };
 const LABEL_SX = {
-  fontSize: 9,
+  fontSize: { xs: 9, sm: 12 },
   letterSpacing: 0.5,
   color: 'rgba(255,255,255,0.45)',
   textTransform: 'uppercase' as const,
   alignSelf: 'baseline',
 };
 const VALUE_SX = {
-  fontSize: 11,
+  fontSize: { xs: 11, sm: 15 },
   color: '#dde',
   alignSelf: 'baseline',
 };

@@ -91,7 +91,8 @@ const CLOSE_BTN_SX = { color: '#9aa0b4' } as const;
 const BODY_SX = { display: 'flex', flex: 1, minHeight: 0 } as const;
 
 const TAB_RAIL_SX = {
-  width: RAIL_WIDTH,
+  // Phase 5 — wider rail on desktop (the sidebar icons "way too small on desktop").
+  width: { xs: RAIL_WIDTH, sm: RAIL_WIDTH + 8 },
   flexShrink: 0,
   display: 'flex',
   flexDirection: 'column',
@@ -236,9 +237,11 @@ interface RailButtonProps {
 // Pre-computed sx for the two visual states. Stable identity across
 // renders → emotion cache hit, no per-render `styleFunctionSx2`.
 const RAIL_BTN_BASE = {
-  width: RAIL_WIDTH - 12,
-  height: RAIL_WIDTH - 12,
+  // Phase 5 — bigger touch target + icon on desktop (mobile stays compact).
+  width: { xs: RAIL_WIDTH - 12, sm: RAIL_WIDTH - 4 },
+  height: { xs: RAIL_WIDTH - 12, sm: RAIL_WIDTH - 4 },
   borderRadius: 1,
+  '& .MuiSvgIcon-root': { fontSize: { xs: 22, sm: 28 } },
 } as const;
 
 const RAIL_BTN_ACTIVE_SX = {

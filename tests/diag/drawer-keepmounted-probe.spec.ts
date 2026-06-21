@@ -44,7 +44,7 @@ test('keepMounted contract: drawer-panel-galaxy is in DOM before any drawer clic
   });
 
   // Auto-spawned via ?galaxy URL param. Wait for proof we're in game.
-  await expect(page.locator('[data-testid="ship-stats-card"]')).toBeVisible({
+  await expect(page.locator('[data-testid="sector-info-panel"]')).toBeVisible({
     timeout: 25_000,
   });
 
