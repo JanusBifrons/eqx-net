@@ -44,14 +44,26 @@ export function decidePlacementPointer(
       // Touch drag begins (or a mouse press) — start following + anchor.
       return { following: true, updateChosen: true, commit: false };
     case 'pointermove':
-      // Track only while following (false after a touch park, true on desktop
-      // hover — which `pointerleave` no longer clears).
-      return { following: null, updateChosen: following, commit: false };
+      // Desktop mouse is PURE hover-follow — a move ALWAYS tracks the ghost
+      // (there is no parked desktop state; the spectator centre-seed must not
+      // freeze it). Touch tracks only WHILE following, so the post-tap park holds
+      // until Confirm. (Equinox Phase-5 audit: "the ghost doesn't follow my
+      // cursor" — desktop builds, esp. as a spectator, never tracked because the
+      // centre-seed/commit left `following=false`.)
+      return {
+        following: null,
+        updateChosen: pointerType === 'mouse' ? true : following,
+        commit: false,
+      };
     case 'pointerup':
-      // Desktop mouse LEFT-release = one-click place (commit). Touch release =
-      // park (following → false) so the Confirm banner is hit-testable.
+      // Desktop mouse LEFT-release = one-click place (commit). KEEP following so
+      // the NEXT multi-place ghost immediately tracks the cursor again (the
+      // "multi-placing doesn't spawn a new ghost at your cursor / doesn't follow"
+      // fix — desktop is a pure hover-follow model, there's nothing to park).
+      // Touch release = park (following → false) so the Confirm banner is
+      // hit-testable at the parked point.
       return pointerType === 'mouse' && button === 0
-        ? { following: false, updateChosen: true, commit: true }
+        ? { following: true, updateChosen: true, commit: true }
         : { following: false, updateChosen: true, commit: false };
     case 'pointercancel':
       // A genuine pointer cancellation (touch aborted by the OS/browser) parks.

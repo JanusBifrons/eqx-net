@@ -1677,7 +1677,12 @@ export class PixiRenderer implements IRenderer {
       const c = this.camera.center; // world coord (pixi-down) currently at screen centre
       this._placementChosenX = c.x;
       this._placementChosenY = -c.y; // game Y = -worldY
-      this._placementFollowing = false;
+      // Park ONLY on touch (no hover → the Confirm banner waits at centre). On
+      // DESKTOP (incl. desktop SPECTATOR, which also centre-seeds because there's
+      // no ship to anchor) keep hover-follow ON so the ghost snaps to the cursor
+      // on the first move — otherwise the spectator build ghost sat at centre and
+      // never tracked the mouse (Equinox Phase-5 audit: "doesn't follow").
+      this._placementFollowing = !this._isTouch;
     }
     if (preview) {
       if (!this._placementGhost || this._placementGhostKind !== preview.kind) {
