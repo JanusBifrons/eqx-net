@@ -18,3 +18,16 @@ export function sendPilotShip(shipId: string): boolean {
   if (!client) return false;
   return client.pilotInSectorShip(shipId);
 }
+
+/**
+ * STOP PILOTING → spectate (Equinox Phase-5 audit). The inverse of
+ * {@link sendPilotShip}: tell the server to displace our active hull into a
+ * lingering hull so it parks in-world AND appears in our own `lingeringShips`
+ * for the Pilot dropdown. No-op server-side when we have no active hull
+ * (death-spectator / join-as-spectator). Returns true when dispatched.
+ */
+export function sendSpectate(): boolean {
+  const client = getGameClient();
+  if (!client) return false;
+  return client.sendSpectate();
+}

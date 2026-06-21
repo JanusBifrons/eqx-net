@@ -5,7 +5,7 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import { useUIStore } from '../state/store';
 import { getGameClient } from '../net/clientSingleton';
 import { getShipKind } from '@shared-types/shipKinds';
-import { sendPilotShip } from '../ships/shipActionsClient';
+import { sendPilotShip, sendSpectate } from '../ships/shipActionsClient';
 import type { PilotMode } from '../state/storeTypes';
 
 /**
@@ -86,7 +86,14 @@ export function PilotSpectatorToggle(): JSX.Element | null {
   const onChange = (_e: React.MouseEvent<HTMLElement>, next: PilotMode | null): void => {
     // 'pilot' is handled by the Pilot button's onClick (opens the ship dropdown
     // when spectating) — you never directly flip to 'pilot', you pilot a SHIP.
-    if (next === 'spectator') setPilotMode('spectator');
+    if (next === 'spectator') {
+      setPilotMode('spectator');
+      // Tell the server to DISPLACE our active hull into a lingering hull, so the
+      // ship we just left parks in-world AND shows up in the Pilot dropdown (the
+      // "no ships to pilot — I just spawned one" fix). No-op server-side when
+      // there's no active hull (death / join-as-spectator).
+      sendSpectate();
+    }
   };
 
   const onPilotClick = (e: React.MouseEvent<HTMLElement>): void => {
