@@ -2,6 +2,7 @@ import { Container, Graphics } from 'pixi.js';
 import type { Camera } from './worker/Camera';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
+import { haloAppearFadeStep } from './haloAppear.js';
 import { useUIStore } from '../state/store';
 import {
   projectArrow,
@@ -157,6 +158,10 @@ interface ArrowEntry {
    *  render this frame; otherwise hide. */
   presentAtFrame: number;
   renderedAtFrame: number;
+  /** Appear-fade progress [0,1] — eased in on first-visible (replaces the
+   *  off-screen fly-in pop-in). Reset to 0 when the glyph is swept so a
+   *  re-appearance fades again. */
+  fade: number;
 }
 
 export class HaloRadar {
@@ -311,14 +316,6 @@ export class HaloRadar {
     // a fixed pixel offset, so they always sit at the right place on the
     // halo regardless of camera state (follow lag, zoom, etc.).
     const playerScreen = camera.toScreen(refX, -refY);
-    // Phase H — radius for the "come in from off-screen" spawn point. A
-    // circle of `screenCornerRadius + 30` px from playerScreen sits just
-    // outside any corner of the visible viewport at any bearing, so a
-    // fresh arrow's spring starts genuinely off-screen and flies inward
-    // to its halo ring target instead of popping into existence on the
-    // ring.
-    const screenCornerRadius = Math.hypot(camera.screenWidth, camera.screenHeight) / 2;
-    const offScreenSpawnPx = screenCornerRadius + 30;
 
     // Pooled scratch — slot-reuse pattern (Phase 5f, invariant #14).
     const rawCandidates = this._rawCandidatesScratch;
@@ -461,6 +458,7 @@ export class HaloRadar {
           lastVisible: false,
           presentAtFrame: frameId,
           renderedAtFrame: 0, // stamped a few lines below at the render tail
+          fade: 0, // eases in at the ring target (no off-screen fly-in)
         };
         this.arrows.set(c.key, entry);
       } else if (entry.kind !== wantKind || entry.grouped !== wantGrouped) {
@@ -473,17 +471,16 @@ export class HaloRadar {
       }
       entry.renderedAtFrame = frameId;
 
-      // Phase H — first-visible: snap the spring to a point just outside
-      // the screen edge along the arrow's bearing, then let the spring
-      // carry it to the halo ring target. Produces the "come in from
-      // off-screen" feel the user asked for. Within the same arrow,
-      // `lastVisible` stays true and the spring smoothly "flies" between
-      // successive targets — that's the wedge-handoff cosmetic kept from
-      // Phase D.
+      // Equinox Phase-5 audit — first-visible: place the glyph AT its ring
+      // target (no off-screen "fly-in"; the user's "halo radar popping in!").
+      // The spring was seeded at the target on creation, so we just hold it
+      // there and EASE the glyph in via `fade` below. Within the same arrow
+      // (`lastVisible` true) the spring smoothly "flies" between successive
+      // targets — the wedge-handoff cosmetic kept from Phase D.
       if (!entry.lastVisible) {
-        entry.sx.x = playerScreen.x + Math.cos(proj.theta) * offScreenSpawnPx;
+        entry.sx.x = targetX;
         entry.sx.v = 0;
-        entry.sy.x = playerScreen.y - Math.sin(proj.theta) * offScreenSpawnPx;
+        entry.sy.x = targetY;
         entry.sy.v = 0;
       } else {
         springStep(entry.sx, targetX, ARROW_SMOOTH_HALF_LIFE_MS, dtMs);
@@ -493,6 +490,9 @@ export class HaloRadar {
       entry.gfx.visible = true;
       entry.gfx.x = entry.sx.x;
       entry.gfx.y = entry.sy.x;
+      // Alpha fade-in at the ring target (replaces the off-screen fly-in).
+      entry.fade = haloAppearFadeStep(entry.fade, dtMs);
+      entry.gfx.alpha = entry.fade;
       // Glyphs are UPRIGHT (Phase 2 #4) — the bearing is conveyed by the
       // marker's POSITION on the ring, not by rotating a needle (a rotated
       // ★/⬢ reads as broken). The old code set `rotation = -proj.theta`.
@@ -505,6 +505,7 @@ export class HaloRadar {
       if (entry.renderedAtFrame !== frameId) {
         entry.gfx.visible = false;
         entry.lastVisible = false;
+        entry.fade = 0; // re-appearance fades in again (no fly-in)
       }
       if (entry.presentAtFrame !== frameId) {
         this.container.removeChild(entry.gfx);
