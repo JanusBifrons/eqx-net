@@ -20,6 +20,7 @@
  */
 
 import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { Unpackr } from '@colyseus/msgpackr';
 import { WebRtcChannelManager, type PeerConnectionFactory, type WebRtcPeerConnection, type WebRtcDataChannel } from './webrtcChannel.js';
 import type { SnapshotMessage } from '../../shared-types/messages.js';
 
@@ -217,6 +218,47 @@ describe('WebRtcChannelManager', () => {
     expect(dc.sentMessages.length).toBe(1);
     expect(dc.sentMessages[0]?.byteLength).toBeGreaterThan(0);
     expect(onFallback).not.toHaveBeenCalled();
+  });
+
+  // Encoder lock (regression: capture 2026-06-21T09-56-39Z-z0838y). The DC Packr
+  // must NOT use `encodeUndefinedAsNil` — an ABSENT optional field has to
+  // round-trip as `undefined` (matching the WS path's notepack skip-undefined),
+  // NOT as `null`. With `encodeUndefinedAsNil: true`, an un-upgraded ship's
+  // `statAlloc`/`mounts` (server-side `undefined`) decoded as `null` on the
+  // client, and `!== undefined`-guarded readers crashed (`Object.keys(null)` /
+  // `null.length`) — but ONLY on the DataChannel, never on WebSocket, so a
+  // load→spawn showstopper sailed through a full-green E2E suite (every E2E runs
+  // WS). This packs through the REAL manager Packr + decodes with the client's
+  // Unpackr config; `.not.toBeNull()` fails if the option is ever re-introduced.
+  it('packs absent optional fields as undefined, NOT null (no encodeUndefinedAsNil)', () => {
+    const { manager, pcs } = makeManager();
+    manager.handleOffer('s1', 'sdp');
+    const dc = makeFakeDataChannel();
+    pcs.get('s1')!._emitDataChannel(dc);
+    dc._emitOpen();
+
+    // The shape the broadcaster emits for an un-upgraded ship: optional fields
+    // are present-but-undefined on the pooled entry.
+    const snap = {
+      type: 'snapshot', serverTick: 1, ackedTick: 0,
+      states: {
+        s1: {
+          x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0,
+          playerId: 'p1', isActive: true,
+          statAlloc: undefined, mounts: undefined, energy: undefined, level: undefined,
+        },
+      },
+    } as unknown as SnapshotMessage;
+    manager.sendSnapshot('s1', snap, vi.fn());
+
+    const buf = dc.sentMessages[0];
+    expect(buf).toBeDefined();
+    const decoded = new Unpackr({}).unpack(buf!) as SnapshotMessage;
+    const e = decoded.states['s1'] as Record<string, unknown>;
+    expect(e['statAlloc']).toBeUndefined();
+    expect(e['statAlloc']).not.toBeNull();
+    expect(e['mounts']).toBeUndefined();
+    expect(e['mounts']).not.toBeNull();
   });
 
   it('sendSnapshot falls back to WS when not yet sendable', () => {

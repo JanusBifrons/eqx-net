@@ -206,7 +206,11 @@ export class DataChannelTransport {
   // The msgpackr packr is unused on the receive-only client path today,
   // but stays available so a future Phase 2c bidirectional channel can
   // pack outgoing acks without a second module import.
-  private readonly _packr = new Packr({ encodeUndefinedAsNil: true });
+  // encodeUndefinedAsNil:false to match the server (webrtcChannel.ts) + the WS
+  // path — absent optional fields must round-trip as undefined, NOT null. Unused
+  // on the receive-only client path today; kept consistent so a future
+  // bidirectional channel can't re-introduce the undefined→null asymmetry.
+  private readonly _packr = new Packr({ encodeUndefinedAsNil: false });
 
   constructor(opts: DataChannelTransportOpts) {
     this._opts = opts;

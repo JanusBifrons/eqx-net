@@ -65,3 +65,80 @@ test('real spawn flow: galaxy → pick sector → spawn → no uncaught error fo
   expect(shipCount).toBeGreaterThan(0);
   expect(errors, errors.join('\n')).toEqual([]);
 });
+
+/**
+ * THE missing coverage (P0): the real flow over the REAL transport.
+ *
+ * Real players default to the WebRTC DataChannel; every E2E runs over WebSocket
+ * because Playwright's `navigator.webdriver` gates the DataChannel OFF. The two
+ * encoders disagree on absent optional fields — the WS path (Colyseus notepack)
+ * SKIPS undefined → `undefined`; the DC path (`@colyseus/msgpackr` with
+ * `encodeUndefinedAsNil:true`) encodes undefined → nil → decodes as `null`. So a
+ * reader guarded with `!== undefined` (e.g. `statAllocKey` → `Object.keys(null)`,
+ * `applyActivatedMounts` → `null.length`) throws an Uncaught TypeError on the
+ * DataChannel but NEVER on WebSocket. That asymmetry is why a load → login →
+ * select-sector → spawn showstopper sailed through a full-green E2E suite.
+ *
+ * This test forces the DataChannel ON (`?webrtc=1`), waits until it actually
+ * carries a snapshot (`snapshot_received via='dc'` in `__eqxLogs`), and asserts
+ * no uncaught error — i.e. it exercises the SAME transport a real player uses.
+ */
+type DiagEntry = { tag: string; data?: Record<string, unknown> };
+const hasDiag = (page: import('@playwright/test').Page, pred: (e: DiagEntry) => boolean) =>
+  page.evaluate(
+    (predStr) => {
+      const fn = new Function('e', `return (${predStr})(e)`) as (e: DiagEntry) => boolean;
+      const logs = (window as unknown as { __eqxLogs?: DiagEntry[] }).__eqxLogs ?? [];
+      return logs.some(fn);
+    },
+    pred.toString(),
+  );
+
+test('DataChannel path (?webrtc=1): real spawn flow → no uncaught error over DC', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (err) => errors.push(`PAGEERROR: ${err.message}`));
+
+  // ?webrtc=1 forces the DataChannel on even under automation.
+  await page.goto(`${BASE_URL}?webrtc=1`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
+  await page.waitForFunction(
+    () => typeof (window as unknown as { __eqxGalaxyPick?: unknown }).__eqxGalaxyPick === 'function',
+    null,
+    { timeout: 8_000 },
+  );
+  await page.evaluate(() => {
+    (window as unknown as { __eqxGalaxyPick?: (k: string) => void }).__eqxGalaxyPick?.('sol-prime');
+  });
+  await page.getByTestId('sector-drawer-join').click();
+  await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 8_000 });
+  await page.getByTestId('ship-picker-spawn').click();
+
+  // The DataChannel must actually establish AND carry a snapshot — otherwise the
+  // session silently ran over WS and this test proved nothing. (snapshot_received
+  // via='dc' is logged on ARRIVAL, before the apply where the crash fires, so this
+  // resolves even when the crash then breaks the snapshot loop + HUD.)
+  await expect
+    .poll(() => hasDiag(page, (e) => e.tag === 'webrtc_connected'), { timeout: 15_000, message: 'DataChannel never connected (webrtc_connected)' })
+    .toBe(true);
+  await expect
+    .poll(() => hasDiag(page, (e) => e.tag === 'snapshot_received' && e.data?.['via'] === 'dc'), {
+      timeout: 10_000,
+      message: 'no snapshot was delivered over the DataChannel (via=dc)',
+    })
+    .toBe(true);
+
+  // A DC snapshot has now arrived + been applied — the crash (if present) fired.
+  await page.waitForTimeout(500);
+
+  // PRIMARY assertion: no uncaught error on the DataChannel apply path. The buggy
+  // code throws "Cannot convert undefined or null to object" (statAllocKey →
+  // Object.keys(null)) / "Cannot read properties of null" (applyActivatedMounts).
+  const crashes = errors.filter((m) =>
+    /Cannot convert undefined or null to object|Cannot read properties of null/.test(m),
+  );
+  expect(crashes, `Uncaught crash on the DataChannel snapshot path:\n${errors.join('\n') || '(none)'}`).toEqual([]);
+
+  // Liveness: the HUD mounted + the snapshot loop stayed alive (it would not have
+  // if handleSnapshot threw itself dead on the first DC snapshot).
+  await expect(page.locator('[data-testid="ship-stats-card"]')).toBeVisible({ timeout: 10_000 });
+});

@@ -18,6 +18,23 @@ describe('localStatAlloc — statAllocKey', () => {
   it('a non-empty allocation keys to its JSON', () => {
     expect(statAllocKey({ hull: 2 })).toBe(JSON.stringify({ hull: 2 }));
   });
+
+  // Regression: smoke-test crash on sector join over the WebRTC DataChannel
+  // (capture 2026-06-21T09-56-39Z-z0838y). The DC encoder (encodeUndefinedAsNil)
+  // decoded an absent statAlloc as `null` (the WS path gives `undefined`), and the
+  // old `alloc !== undefined` guard let `null` reach `Object.keys(null)`, which
+  // throws "Cannot convert undefined or null to object" inside handleSnapshot and
+  // broke the whole inbound snapshot loop. The reader must treat null like absent.
+  it('a NULL allocation (DataChannel decode of absent) keys to "" without throwing', () => {
+    expect(() => statAllocKey(null)).not.toThrow();
+    expect(statAllocKey(null)).toBe('');
+  });
+  it('decideStatAllocReanchor handles a NULL slice (resets, no throw)', () => {
+    let d!: ReturnType<typeof decideStatAllocReanchor>;
+    expect(() => { d = decideStatAllocReanchor(null, JSON.stringify({ hull: 3 })); }).not.toThrow();
+    expect(d.key).toBe('');
+    expect(d.mul).toBeUndefined();
+  });
 });
 
 describe('localStatAlloc — decideStatAllocReanchor', () => {
