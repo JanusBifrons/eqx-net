@@ -943,13 +943,12 @@ export function App(): JSX.Element {
 
   const handleSpawnSpectator = useCallback((sectorKey: string) => {
     // Equinox Phase 5 (WS-3) — join the sector as a SPECTATOR, skipping the
-    // ship-kind picker. The server spawns the hull through the normal handshake
-    // then parks it as a lingering hull (no active hull); the client enters
-    // spectator mode off `welcome.spectator`. `isNewShip` forces a fresh roster
-    // row rather than resuming the most-recent (the parked hull is a clean one
-    // they can pilot via the in-world Pilot dropdown).
+    // ship-kind picker. The server spawns NO ship at all (no hull, no slot, no
+    // roster row); the client enters spectator mode off `welcome.spectator` and
+    // free-roams. You pilot a ship later via the galaxy map or the in-world
+    // Pilot dropdown (if you have a lingering hull in the sector).
     setRoomNameOverride(`galaxy-${sectorKey}`);
-    setJoinOptionsOverride({ spectator: true, isNewShip: true });
+    setJoinOptionsOverride({ spectator: true });
     setPhase('game');
   }, [setPhase]);
 
