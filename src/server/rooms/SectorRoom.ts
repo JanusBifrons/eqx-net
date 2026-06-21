@@ -3878,32 +3878,25 @@ export class SectorRoom extends Room<SectorState> {
     for (const [playerId, rec] of this.pendingJoin) {
       // Activation branch: arrivalTick set and reached.
       if (rec.arrivalTick !== null && currentTick >= rec.arrivalTick) {
-        if (rec.spectator === true) {
-          // Equinox Phase 5 (WS-3) — join-as-spectator. Instead of flipping the
-          // hull active, PARK it as a lingering hull (the exact inverse of the
-          // onJoin fresh-spawn-displaces branch, reused via WS-A2's
-          // `displaceActiveHullToLingering`). The player now has NO active hull
-          // and the client (already in `pilotMode = 'spectator'` from
-          // `welcome.spectator`) free-roams; the parked hull is theirs to pilot
-          // later via the in-world Pilot dropdown. The handshake already lifted
-          // the client's load curtain by this point, so the seam is seamless.
-          this.displaceActiveHullToLingering(playerId);
-          serverLogEvent('spectator_join_parked', {
+        const ship = this.getActiveShip(playerId);
+        if (ship) {
+          ship.isActive = true;
+          serverLogEvent('ship_activated', {
+            playerId,
+            entityId: ship.shipInstanceId,
+            arrivalTick: rec.arrivalTick,
+            currentTick,
+          });
+        } else if (rec.spectator === true) {
+          // Equinox Phase 5 (WS-3) — join-as-spectator: there is NO hull to
+          // activate (the player joined with no ship at all). The warp-in
+          // handshake already fired at `client_ready` (so the client's curtain
+          // lifts); this just completes the pending-join lifecycle.
+          serverLogEvent('spectator_join_ready', {
             playerId,
             arrivalTick: rec.arrivalTick,
             currentTick,
           });
-        } else {
-          const ship = this.getActiveShip(playerId);
-          if (ship) {
-            ship.isActive = true;
-            serverLogEvent('ship_activated', {
-              playerId,
-              entityId: ship.shipInstanceId,
-              arrivalTick: rec.arrivalTick,
-              currentTick,
-            });
-          }
         }
         this.pendingJoin.delete(playerId);
         continue;
@@ -4119,6 +4112,19 @@ export class SectorRoom extends Room<SectorState> {
     // sharing the same localStorage), assign a fresh UUID.
     if (this.playerToSession.has(playerId)) {
       playerId = assignPlayerId(null);
+    }
+
+    // ── Equinox Phase 5 (WS-3) — JOIN-AS-SPECTATOR ─────────────────────────
+    // The galaxy "Spectate" CTA joins with `{ spectator: true }`. The player
+    // drops into the sector as a free-roam camera with NO ship at all — no
+    // hull, no slot, no roster row, nothing in the world (the user's "there
+    // should be no hull or wreck or ship involved"). Short-circuit BEFORE the
+    // rebind / fresh-spawn paths so a spectator never spawns or displaces a
+    // hull. Galaxy rooms only (engineering rooms have no roster/persistence;
+    // they fall through to the normal pilot join).
+    if (parsed.success && parsed.data.spectator === true && this.sectorKey !== null) {
+      this.joinAsSpectator(client, playerId, userId);
+      return;
     }
 
     // ── Phase 8 sub-phase B — REBIND PATH ──────────────────────────────────
@@ -4665,22 +4671,12 @@ export class SectorRoom extends Room<SectorState> {
     if (resumedLastFireTick !== null && shouldHonourResumedCooldown(resumedLastFireTick, currentServerTick)) {
       this.lastFireClientTick.set(playerId, resumedLastFireTick);
     }
-    // Equinox Phase 5 (WS-3) — join-as-spectator. The hull spawns through the
-    // normal handshake (so the client's join readiness — first snapshot,
-    // arrival ack, local-pose-resolved — lifts the load curtain the proven
-    // way); `drainPendingJoin` then PARKS it as a lingering hull at the arrival
-    // flip instead of activating it (see the `spectator` branch there). Galaxy
-    // rooms only — an engineering room has no roster to park a lingering hull
-    // into, so the flag is ignored and the player joins as a normal pilot.
-    const spectatorJoin =
-      parsed.success && parsed.data.spectator === true && this.sectorKey !== null;
     const welcome: WelcomeMessage = {
       type: 'welcome',
       playerId,
       serverTick: currentServerTick,
       sectorKey: this.sectorKey,
       shipInstanceId: ship.shipInstanceId,
-      ...(spectatorJoin ? { spectator: true } : {}),
     };
     client.send('welcome', welcome);
 
@@ -4748,7 +4744,6 @@ export class SectorRoom extends Room<SectorState> {
       spawnX,
       spawnY,
       sessionId: client.sessionId,
-      ...(spectatorJoin ? { spectator: true } : {}),
     });
     serverLogEvent('pending_join_registered', {
       playerId,
@@ -4761,6 +4756,83 @@ export class SectorRoom extends Room<SectorState> {
     // handshake broadcasts `warp_in` from the `client_ready` handler
     // (or the watchdog) to ALL clients with an `arrivalTick`, so the
     // flash fires in sync everywhere.
+  }
+
+  /**
+   * Equinox Phase 5 (WS-3) — JOIN-AS-SPECTATOR. The player joins the sector as
+   * a free-roam camera with NO ship at all: no `state.ships` entry, no slot, no
+   * roster row — nothing in the world. They still receive snapshots (to watch
+   * the sector) and can `place_structure` (construction-without-a-ship). Galaxy
+   * rooms only (gated by the caller).
+   *
+   * The only seam that assumes a connected client has a ship is the
+   * `SnapshotBroadcaster` recipient gate (it SKIPs a recipient with no
+   * `shipPoseCache` entry), so we seed a FIXED origin pose-cache entry — the
+   * spectator's snapshot interest is then culled around the sector centre (the
+   * binary swarm channel sends all drones/asteroids unculled, since there's no
+   * slot ⇒ no interest set ⇒ broadcast-all). Camera-relative interest is a
+   * follow-up; origin covers the common case (action clusters near centre).
+   * `shipPoseCache` is cleaned up by `LeaveHandler` on leave (the despawn path,
+   * which a shipless session takes since `shouldLinger` is false).
+   *
+   * Readiness: we still drive the unified warp-in handshake (`client_ready` →
+   * `warp_in` → `arrivalAcked`) off a SHIPLESS `pendingJoin` entry so the
+   * client's load curtain lifts the proven way; `drainPendingJoin`'s activation
+   * branch no-ops for a shipless entry (`getActiveShip` is undefined).
+   */
+  private joinAsSpectator(client: Client, playerId: string, userId: string | null): void {
+    this.sessionToPlayer.set(client.sessionId, playerId);
+    this.playerToSession.set(playerId, client.sessionId);
+    // Presence — mark connected (push-offline gate); decremented in onLeave.
+    registerConnectedPlayer(playerId);
+    this.playerToUser.set(playerId, userId);
+
+    // Seed a fixed origin pose so the per-recipient snapshot broadcaster does
+    // not skip this shipless spectator (see the method doc).
+    this.shipPoseCache.set(playerId, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 });
+
+    const currentServerTick = Atomics.load(this.sabU32, TICK_IDX);
+    const welcome: WelcomeMessage = {
+      type: 'welcome',
+      playerId,
+      serverTick: currentServerTick,
+      sectorKey: this.sectorKey,
+      shipInstanceId: '',
+      spectator: true,
+    };
+    client.send('welcome', welcome);
+
+    setSession(client.sessionId, {
+      roomId: this.roomId,
+      playerId,
+      sectorKey: this.sectorKey,
+    });
+    recordGameJoin(userId, playerId, this.sectorKey ?? this.roomId);
+
+    // Force snapshot broadcasts for the grace window so `firstSnapshotApplied`
+    // fires on the client (curtain readiness) even in a quiet sector.
+    this.forceBroadcastUntilTick = currentServerTick + JOIN_BROADCAST_GRACE_TICKS;
+
+    // Shipless pending-join: drives `client_ready` → `warp_in` → `arrivalAcked`
+    // exactly as a normal join, but there's no hull to activate at the arrival
+    // flip (drainPendingJoin's `else if (rec.spectator)` branch).
+    this.pendingJoin.set(playerId, {
+      joinTick: currentServerTick,
+      watchdogTick: currentServerTick + CLIENT_READY_TIMEOUT_TICKS,
+      arrivalTick: null,
+      spawnX: 0,
+      spawnY: 0,
+      sessionId: client.sessionId,
+      spectator: true,
+    });
+
+    serverLogEvent('spectator_join', {
+      playerId,
+      sessionId: client.sessionId,
+      sectorKey: this.sectorKey,
+    });
+    auditEvent({ event: 'player_joined', sector: this.sectorKey ?? undefined, playerId });
+    logger.info({ playerId, sessionId: client.sessionId }, 'player joined as spectator (no hull)');
   }
 
   override onLeave(client: Client, consented: boolean): void {
