@@ -177,6 +177,11 @@ export function buildJoinSpec(
   // server validates via `isShipKindId` and falls back to the catalogue
   // default on unknown ids, so a malformed value is harmless.
   if (urlParams.has('shipKind')) extraJoinOptions['shipKind'] = urlParams.get('shipKind')!;
+  // Equinox Phase 5 (WS-3) — `?spectator=1` joins as a spectator (no active
+  // hull; the server parks it as a lingering hull). Galaxy rooms only server-
+  // side. Lets the spectator-join E2E drive the flow deterministically without
+  // clicking the SectorInfoDrawer "Spectate" CTA.
+  if (urlParams.has('spectator')) extraJoinOptions['spectator'] = urlParams.get('spectator') === '1';
 
   // Display name for the HUD.
   const builtin: Record<string, string> = {
