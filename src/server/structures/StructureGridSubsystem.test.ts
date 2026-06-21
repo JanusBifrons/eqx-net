@@ -175,6 +175,42 @@ describe('StructureGridSubsystem — action helpers (Phase-1 issue 6)', () => {
     expect(h.grid.clearConnections('nope')).toBe(false);
     expect(h.grid.reconnect('nope')).toBe(false);
   });
+
+  // Phase 5 — "Clearing all connections instantly reconnects, so it's pointless."
+  // The 1 Hz `processReconnect` sweep re-wired ANY structure at 0 connections,
+  // so a deliberately-cleared (or hub-death-orphaned) structure was instantly
+  // re-linked. A structure that has EVER connected must stay orphaned until the
+  // player manually reconnects.
+  it('a CLEARED structure stays orphaned across pulses — the sweep must NOT auto-reconnect it', () => {
+    h.placement.place(OWNER, 'capital', 0, 0)!;
+    const conn = h.placement.place(OWNER, 'connector', 0, 140)!; // auto-connects to capital on place
+    expect(h.registry.connectionCount(conn)).toBeGreaterThan(0);
+
+    h.grid.clearConnections(conn);
+    expect(h.registry.connectionCount(conn)).toBe(0);
+
+    // Pre-fix: the next pulse's processReconnect re-wires it instantly.
+    h.pulse();
+    h.pulse();
+    expect(h.registry.connectionCount(conn)).toBe(0); // STAYS orphaned
+
+    // The player's explicit manual reconnect still works.
+    expect(h.grid.reconnect(conn)).toBe(true);
+    expect(h.registry.connectionCount(conn)).toBeGreaterThan(0);
+  });
+
+  // Guard the OTHER direction (Issue 2, 2026-06-10): a structure that has NEVER
+  // connected is still eligible for the auto-connect sweep — the cleared-skip
+  // keys off `hasEverConnected`, which is false until the first link is made.
+  it('tracks hasEverConnected — false until the first link, true after, surviving a clear', () => {
+    h.placement.place(OWNER, 'capital', 0, 0)!;
+    const sol = h.placement.place(OWNER, 'solar', 0, 5000)!; // far away → strands at placement
+    expect(h.registry.hasEverConnected(sol)).toBe(false); // never connected ⇒ sweep-eligible
+    const conn = h.placement.place(OWNER, 'connector', 0, 140)!; // connects to capital on place
+    expect(h.registry.hasEverConnected(conn)).toBe(true);
+    h.grid.clearConnections(conn);
+    expect(h.registry.hasEverConnected(conn)).toBe(true); // clear does NOT reset it ⇒ sweep skips it
+  });
 });
 
 describe('StructureGridSubsystem — batteries (full power buffer)', () => {

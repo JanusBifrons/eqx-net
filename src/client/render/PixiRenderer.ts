@@ -1323,6 +1323,14 @@ export class PixiRenderer implements IRenderer {
     // the would-connect count back into the feedback channel.
     this.connectorRenderer.ghostWorldX = this._placementChosenX;
     this.connectorRenderer.ghostWorldY = this._placementChosenY;
+    // Phase 5 — bolder defensive range ring on the hovered/selected turret. The
+    // selection/hover ids are `swarm-<entityId>` (structures ride the swarm
+    // channel); prefer the selected one.
+    const highlightedSel = this._selectedId ?? this._hoveredId;
+    this.connectorRenderer.highlightedStructureId =
+      highlightedSel !== null && highlightedSel.startsWith('swarm-')
+        ? parseInt(highlightedSel.slice('swarm-'.length), 10)
+        : null;
     this.connectorRenderer.update(mirror, this.world.scale.x, performance.now());
     this.feedback.placementPreviewConnectionCount =
       this.connectorRenderer.placementPreviewConnectionCount;
