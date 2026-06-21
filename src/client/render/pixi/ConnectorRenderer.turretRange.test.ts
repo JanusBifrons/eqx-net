@@ -112,6 +112,25 @@ describe('ConnectorRenderer — built-turret range circles (WS-D #21)', () => {
     expect(r.builtTurretRangeCount).toBe(3);
   });
 
+  it('Phase 5 — the range ring is BOLDER (≥2× width) when the turret is hovered/selected', () => {
+    const swarm = new Map<number, SwarmRenderState>([[1, structureEntry('turret', 100, 200)]]);
+    const structures = new Map<number, StructureRenderState>([[1, structureState({ built: true })]]);
+    const mirror = { swarm, structures } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+    const baseWidth = r.lastBuiltTurretRangeWidth;
+    expect(baseWidth).toBeGreaterThan(0);
+
+    r.highlightedStructureId = 1; // this turret is now selected/hovered
+    r.update(mirror, 1, 0);
+    expect(r.lastBuiltTurretRangeWidth).toBeGreaterThanOrEqual(baseWidth * 2);
+
+    r.highlightedStructureId = 999; // a different structure highlighted → back to faint
+    r.update(mirror, 1, 0);
+    expect(r.lastBuiltTurretRangeWidth).toBe(baseWidth);
+  });
+
   it('count resets to 0 when there are no structures', () => {
     const r = new ConnectorRenderer();
     r.update({ swarm: new Map(), structures: new Map() } as unknown as RenderMirror, 1, 0);

@@ -37,6 +37,12 @@ export interface GridNode {
    *  NOT a sufficient test because Shield Pylons are also non-capital hubs, and
    *  the rule is Connectors-ONLY. Projected from the kind by each view. */
   isConnector: boolean;
+  /** Phase 5 — true for the Shield Pylon kind. A pylon obeys a DUAL connection
+   *  budget instead of the single `maxConnections` cap: ≤1 connector AND ≤3 OTHER
+   *  shield pylons (two discrete checks), and it links ONLY to connectors +
+   *  pylons. Optional (absent ⇒ not a pylon) so existing `GridNode` builders are
+   *  unaffected. Projected from the kind by each view. */
+  isShieldPylon?: boolean;
   /** Per-kind connection cap (Connector 6, Capital 4, leaves 1). */
   maxConnections: number;
   /** WS-5 (R2.10) — per-kind max edge-to-edge connection range (world units).
@@ -59,7 +65,10 @@ export type CanConnectReason =
   | 'a-full'
   | 'b-full'
   | 'out-of-range'
-  | 'blocked';
+  | 'blocked'
+  /** Phase 5 — a shield-pylon dual-cap violation: a 2nd connector, a 4th pylon,
+   *  or a pylon↔non-(connector|pylon) target. */
+  | 'pylon-rule';
 
 export type CanConnectResult = { ok: true } | { ok: false; reason: CanConnectReason };
 
@@ -154,6 +163,38 @@ export function isConnectionLineBlocked(
 }
 
 /**
+ * Phase 5 — the shield-pylon DUAL-cap. A pylon (`P`) links ONLY to a connector
+ * (≤1) or another shield pylon (≤3) — two discrete budgets, NOT one
+ * `maxConnections`. Counts P's existing links by the OTHER endpoint's type, then
+ * gates the proposed link to `O`. Returns a `'pylon-rule'` rejection or null.
+ * (The Capital is already excluded for a pylon by the `capital-only` rule.)
+ */
+function shieldPylonRejection(
+  P: GridNode,
+  O: GridNode,
+  adjacency: ReadonlyMap<string, readonly Connection[]>,
+  nodes: ReadonlyMap<string, GridNode>,
+): CanConnectReason | null {
+  const oIsConnector = O.isConnector;
+  const oIsPylon = O.isShieldPylon === true;
+  // A pylon connects ONLY to connectors + other pylons (never a leaf).
+  if (!oIsConnector && !oIsPylon) return 'pylon-rule';
+  let connectorCount = 0;
+  let pylonCount = 0;
+  for (const c of adjacency.get(P.id) ?? []) {
+    const otherId = c.getOtherNode(P.id);
+    if (otherId === null) continue;
+    const on = nodes.get(otherId);
+    if (!on) continue;
+    if (on.isConnector) connectorCount++;
+    else if (on.isShieldPylon === true) pylonCount++;
+  }
+  if (oIsConnector && connectorCount >= 1) return 'pylon-rule'; // already has its 1 connector
+  if (oIsPylon && pylonCount >= 3) return 'pylon-rule'; // already has its 3 pylons
+  return null;
+}
+
+/**
  * The hub model — who may connect to whom. Ports eqx-peri's rules exactly:
  * hub-required, per-kind connection cap, edge-to-edge range, no self / no
  * duplicate, line-of-sight.
@@ -183,9 +224,25 @@ export function canConnect(
   if (aConns.some((c) => c.getOtherNode(a.id) === b.id)) {
     return { ok: false, reason: 'duplicate' };
   }
-  if (aConns.length >= a.maxConnections) return { ok: false, reason: 'a-full' };
+
+  // Phase 5 — shield-pylon dual-cap (≤1 connector AND ≤3 other pylons; links only
+  // to connectors + pylons). Governs a pylon endpoint INSTEAD of the single
+  // `maxConnections` cap below (which would wrongly block the 4th link a valid
+  // 1-connector+3-pylon pylon is allowed). Checked per pylon endpoint.
+  if (a.isShieldPylon === true) {
+    const r = shieldPylonRejection(a, b, adjacency, nodes);
+    if (r) return { ok: false, reason: r };
+  }
+  if (b.isShieldPylon === true) {
+    const r = shieldPylonRejection(b, a, adjacency, nodes);
+    if (r) return { ok: false, reason: r };
+  }
+
+  // Generic per-kind cap — SKIPPED for a pylon endpoint (its dual-cap above is the
+  // authority; the pylon's `maxConnections` of 3 is less than its true 1+3=4 max).
+  if (a.isShieldPylon !== true && aConns.length >= a.maxConnections) return { ok: false, reason: 'a-full' };
   const bConns = adjacency.get(b.id) ?? [];
-  if (bConns.length >= b.maxConnections) return { ok: false, reason: 'b-full' };
+  if (b.isShieldPylon !== true && bConns.length >= b.maxConnections) return { ok: false, reason: 'b-full' };
 
   // P3.2 — UNIFORM range: every kind uses the global CONNECTION_MAX_RANGE (the
   // R2.10 Capital short-reach was reverted, "everything has the same range").
