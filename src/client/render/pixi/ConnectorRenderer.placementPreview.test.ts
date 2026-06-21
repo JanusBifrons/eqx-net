@@ -383,6 +383,64 @@ describe('ConnectorRenderer — placement connection preview', () => {
     expect(r.placementPreviewOverflowCount).toBe(0);
   });
 
+  // ── SHOWSTOPPER (Equinox Phase-5 audit, 2026-06-21) — placing a connector or
+  // shield_pylon near a CONNECTED shield_pylon crashed the whole renderer. The
+  // preview adjacency was LENGTH-ONLY (`adj.length = st.connTo.length`, a sparse
+  // array of `undefined` holes). The shield-pylon dual-cap check iterates that
+  // array (`for (const c of adjacency.get(P.id)) c.getOtherNode(...)`) → TypeError
+  // on the `undefined` element, thrown AFTER `gfx.clear()` → every connection line
+  // vanished, no ghost drew, placement was impossible (the lines only reappeared on
+  // right-click, which cancels placement). EVERY existing test above uses
+  // `connTo: []`, so the hole is never iterated — the canonical FALSE-GREEN. These
+  // two cases put a CONNECTED pylon (connTo length > 0) in the scene; they FAIL
+  // (throw) on the pre-fix code.
+  it('does NOT throw placing a CONNECTOR ghost near a connected shield_pylon (showstopper)', () => {
+    const pylonId = 1;
+    const connectorId = 2;
+    const swarm = new Map<number, SwarmRenderState>([
+      [pylonId, structureEntry('shield_pylon', 0, 0)],
+      [connectorId, structureEntry('connector', 0, 200)],
+    ]);
+    const structures = new Map<number, StructureRenderState>([
+      // The pylon ALREADY has a link (to the connector) → connTo length 1 = the
+      // sparse-hole the dual-cap check iterates.
+      [pylonId, structureState({ connTo: [connectorId] })],
+      [connectorId, structureState({ connTo: [pylonId] })],
+    ]);
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      pendingPlacementPreview: { kind: 'connector', x: 120, y: 0, angle: 0 },
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    expect(() => r.update(mirror, 1, 0)).not.toThrow();
+    // The pass completed (count published, not aborted mid-clear).
+    expect(typeof r.placementPreviewConnectionCount).toBe('number');
+  });
+
+  it('does NOT throw placing a SHIELD_PYLON ghost near a connected shield_pylon (showstopper)', () => {
+    const pylonId = 1;
+    const connectorId = 2;
+    const swarm = new Map<number, SwarmRenderState>([
+      [pylonId, structureEntry('shield_pylon', 0, 0)],
+      [connectorId, structureEntry('connector', 0, 200)],
+    ]);
+    const structures = new Map<number, StructureRenderState>([
+      [pylonId, structureState({ connTo: [connectorId] })],
+      [connectorId, structureState({ connTo: [pylonId] })],
+    ]);
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      pendingPlacementPreview: { kind: 'shield_pylon', x: 150, y: 0, angle: 0 },
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    expect(() => r.update(mirror, 1, 0)).not.toThrow();
+    expect(typeof r.placementPreviewConnectionCount).toBe('number');
+  });
+
   it("STILL previews a SAME-owner hub (control for the cross-owner skip)", () => {
     const capitalId = 1;
     const swarm = new Map<number, SwarmRenderState>([[capitalId, structureEntry('capital', 0, 0)]]);
