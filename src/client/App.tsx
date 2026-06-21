@@ -30,6 +30,7 @@ import { useGalaxyPresence } from './app/useGalaxyPresence';
 import { mergePlayerPresence } from './app/galaxyPresence';
 import { loadStoredPlayerId } from './identity/token';
 import { Keyboard } from './input/Keyboard';
+import { SpectatorPanInput } from './input/SpectatorPanInput';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
 import { useUIStore, useGameReady, useIsLoadingActive } from './state/store';
 import { useAuthStore } from './auth/authStore';
@@ -146,6 +147,10 @@ function GameSurface({
   const rendererRef = useRef<IRenderer | null>(null);
   const galaxyLayerRef = useRef<GalaxyMapLayer | null>(null);
   const keyboardRef = useRef<Keyboard | null>(null);
+  // Phase 5 — WASD free-pan for spectator (desktop). Separate from the gameplay
+  // Keyboard (which is disabled in spectator) so W pans the camera but never
+  // thrusts a ship.
+  const spectatorPanRef = useRef<SpectatorPanInput | null>(null);
   const animFrameRef = useRef<number>(0);
   const isTouchRef = useRef<boolean>(isTouchDevice());
   const touchInputRef = useRef<TouchInput | null>(
@@ -207,6 +212,10 @@ function GameSurface({
       keyboard?.setEnabled(true);
       touch?.setEnabled(true);
     }
+    // Phase 5 — WASD free-pan is the spectator's camera control on DESKTOP. Arm
+    // it ONLY while spectating + not loading + not touch (mobile pans by drag);
+    // disabling it emits a (0,0) stop so the camera doesn't keep drifting.
+    spectatorPanRef.current?.setEnabled(spectating && !isLoadingActive && !isTouchRef.current);
   }, [isLoadingActive, spectating]);
 
   // Phase 4 WS-A1 — drive the renderer's free-roam camera off `pilotMode`.
@@ -407,6 +416,12 @@ function GameSurface({
     // gameSurfaceBootstrap.ts — full rationale lives there.
     const { renderer, useWorker } = selectRenderer();
     rendererRef.current = renderer;
+    // Phase 5 — spectator WASD free-pan: feed the held-key velocity to the
+    // renderer's camera. Self-gated by setEnabled (the spectating effect arms it
+    // only on desktop while spectating).
+    spectatorPanRef.current = new SpectatorPanInput((vx, vy) =>
+      rendererRef.current?.setPanVelocity(vx, vy),
+    );
     installProfileWindow();
 
     const gameClient = new ColyseusGameClient();
@@ -599,6 +614,7 @@ function GameSurface({
       };
       try { setGameClient(null); } catch (e) { stepLog('setGameClient(null)', e); }
       try { keyboard.dispose(); } catch (e) { stepLog('keyboard.dispose', e); }
+      try { spectatorPanRef.current?.dispose(); spectatorPanRef.current = null; } catch (e) { stepLog('spectatorPan.dispose', e); }
       // Layer is a child of renderer.app.stage — the renderer's destroy({
       // children: true }) frees it. Nulling the ref so the React-side
       // subscriptions short-circuit on the post-unmount tail.

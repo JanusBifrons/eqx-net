@@ -487,6 +487,15 @@ export class WorkerRendererClient implements IRenderer {
   }
 
   /**
+   * Phase 5 — set the spectator WASD free-pan velocity (SCREEN px/sec). Posted
+   * on a key state change (not per frame); the worker integrates it in
+   * `Camera.tick`. See `IRenderer.setPanVelocity`.
+   */
+  setPanVelocity(vx: number, vy: number): void {
+    this.post({ type: 'PAN_CAMERA', vx, vy });
+  }
+
+  /**
    * Effects subsystem (plan `wiggly-puppy` M2): trigger a one-shot effect.
    * Production code rarely calls this directly — most triggers ride
    * `RenderMirror.pendingEffectTriggers` (drained renderer-side per

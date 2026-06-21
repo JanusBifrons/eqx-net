@@ -157,6 +157,7 @@ describe('renderer-worker protocol', () => {
       { name: 'RESET_EFFECTS_HANDOFF', msg: { type: 'RESET_EFFECTS_HANDOFF' } },
       { name: 'SET_SPECTATOR on', msg: { type: 'SET_SPECTATOR', active: true } },
       { name: 'GLIDE_CAMERA', msg: { type: 'GLIDE_CAMERA', gameX: 1000, gameY: -250, durationMs: 320 } },
+      { name: 'PAN_CAMERA', msg: { type: 'PAN_CAMERA', vx: -800, vy: 565.7 } },
       { name: 'DISPOSE', msg: { type: 'DISPOSE' } },
     ])('$name survives structuredClone', ({ msg }) => {
       const back = roundtrip(msg);
