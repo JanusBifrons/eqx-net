@@ -14,6 +14,26 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-21 — Phase 4 (leveling) — the WebRTC DataChannel decodes absent optional fields as `null` (WS gives `undefined`); the E2E suite never tested the transport real users run
+Commit: fix/snapshot-activated-mounts-null (PR TBD)
+
+Two crash-on-join showstoppers on `main` (Phase 4 merge PR #126), back to back, on a fresh play test. (1) `Uncaught TypeError: Cannot read properties of null (reading 'length')` at `applyActivatedMounts` (capture `…-ypqf1a`). (2) After fixing that: `Cannot convert undefined or null to object` at `statAllocKey → Object.keys(null)` (capture `…-z0838y`). Each broke the **entire inbound snapshot loop** inside `handleSnapshot` and disconnected the client ~40 s later. The flow that hit it is the most basic one there is: **load → login → select sector → spawn.**
+
+**Root cause — a transport asymmetry that's invisible to every E2E.** EQX has TWO snapshot transports:
+- **WebSocket** (Colyseus `room.send`, encoder = notepack): **SKIPS** `undefined` object values → the client reads an absent optional field as `undefined`.
+- **WebRTC DataChannel** (`@colyseus/msgpackr`, `WebRtcChannelManager`): was constructed `new Packr({ encodeUndefinedAsNil: true })`, which encodes every `undefined` field as msgpack **nil** → the client decodes it as **`null`**.
+
+So an un-upgraded ship's `mounts`/`statAlloc`/`energy`/… (server-side `undefined`) arrive as `undefined` on WS but `null` on the DataChannel. Any reader guarded with `!== undefined` (then `Object.keys` / `.length` / `.map`) crashes on the DataChannel and **never** on WebSocket. **The DataChannel is DEFAULT-ON for real users but OFF under `navigator.webdriver`, so every Playwright E2E runs WebSocket.** That's the whole reason a massive, trivially-reachable P0 sailed through a full-green CI — *the E2E suite has been exercising a code path real players never hit.* (This is also why my first round — probes in `test-sector`, the live `eqx.db`, the broadcaster's `array|undefined` emit — all showed `undefined` and I wrongly concluded the null source was "unpinned": I was looking at the WS path the whole time.)
+
+**Fix (three layers):**
+1. **Root cause** — server `webrtcChannel.ts` + client `dataChannelTransport.ts` now `new Packr({ encodeUndefinedAsNil: false })`. msgpackr's default round-trips `undefined → undefined` via its undefined-extension, so the DataChannel now matches WS. One option flip kills the whole class.
+2. **Defensive readers** — `applyActivatedMounts` (`mounts && …`) and `statAllocKey` (`alloc != null && …`) are null-safe regardless of transport. A reader of network data must never crash on `null`.
+3. **The missing test** — `sector-join-no-snapshot-crash.spec.ts` gained a `?webrtc=1` test that drives the real galaxy spawn flow over the **DataChannel** (waits for `webrtc_connected` + a `snapshot_received via='dc'` so it can't silently fall back to WS) and asserts no uncaught error. It FAILS on the pre-fix code and passes after. The encoder fix itself is locked deterministically in `webrtcChannel.test.ts` (pack through the real manager Packr → decode with the client Unpackr → assert absent fields are `undefined`, not `null`) — the E2E alone can't catch an encoder regression because the null-safe readers mask it.
+
+**The standing lesson: any test that exercises the netcode MUST cover BOTH transports — at minimum one `?webrtc=1` E2E through the real spawn flow.** WS-only E2Es are testing a transport most users don't use. When you add a new optional snapshot field + reader, the `?webrtc=1` path is where a `null`-vs-`undefined` mismatch shows up.
+
+---
+
 ## 2026-06-17 — Equinox Phase 9 (item 2 drawer) — a z-1200 Paper can't beat a z-15 HUD: persistent-Drawer no-z-index + body-level slot hosts → Portal
 Commit: feat/galaxy-phase9 (PR TBD)
 The new docked `SectorInfoDrawer` rendered visually ON TOP of the gameplay HUD (its action bar painted over the bottom-right `AUTO`/`FIRE` cluster), yet Playwright reported the HUD buttons **intercepting** the drawer's ✕/Warp clicks — `elementFromPoint` returned the HUD, not the drawer. Two compounding CSS facts:

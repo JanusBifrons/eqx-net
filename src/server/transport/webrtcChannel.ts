@@ -121,7 +121,15 @@ export class WebRtcChannelManager {
 
   constructor(opts: WebRtcChannelManagerOptions) {
     this._opts = opts;
-    this._packr = new Packr({ encodeUndefinedAsNil: true });
+    // Match the WebSocket path's notepack semantics: an ABSENT optional snapshot
+    // field must decode as `undefined`, NOT `null`. `encodeUndefinedAsNil: true`
+    // encoded every `undefined` field (mounts/statAlloc/energy/level/...) as
+    // msgpack nil, so the client decoded it as `null` — and readers guarded with
+    // `!== undefined` then crashed (Object.keys(null) / null.length) on the
+    // DataChannel but NEVER on WebSocket. That asymmetry was a load→spawn
+    // showstopper that no E2E caught (every E2E runs WS; real users run DC).
+    // msgpackr's default round-trips undefined→undefined via its undefined-ext.
+    this._packr = new Packr({ encodeUndefinedAsNil: false });
     this._nowMs = opts.nowMs ?? (() => Date.now());
     this._iceDeadlineMs = opts.iceDeadlineMs ?? 5_000;
     this._bufferedAmountDegradeBytes =

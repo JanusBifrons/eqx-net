@@ -27,8 +27,13 @@ export interface StatAllocReanchor {
 }
 
 /** Canonical stable key for an allocation (`''` when empty / absent). */
-export function statAllocKey(alloc: Record<string, number> | undefined): string {
-  return alloc !== undefined && Object.keys(alloc).length > 0 ? JSON.stringify(alloc) : '';
+export function statAllocKey(alloc: Record<string, number> | undefined | null): string {
+  // `!= null` (NOT `!== undefined`): the DataChannel transport could decode an
+  // absent statAlloc as `null` (capture 2026-06-21T09-56-39Z-z0838y), and
+  // Object.keys(null) throws — breaking the whole inbound snapshot loop. Defensive
+  // even now that the encoder delivers undefined: a reader of network data must
+  // never crash on null.
+  return alloc != null && Object.keys(alloc).length > 0 ? JSON.stringify(alloc) : '';
 }
 
 /**
@@ -36,7 +41,7 @@ export function statAllocKey(alloc: Record<string, number> | undefined): string 
  * the authoritative `alloc` slice and the previously-applied `prevKey`.
  */
 export function decideStatAllocReanchor(
-  alloc: Record<string, number> | undefined,
+  alloc: Record<string, number> | undefined | null,
   prevKey: string,
 ): StatAllocReanchor {
   const key = statAllocKey(alloc);
