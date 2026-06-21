@@ -273,8 +273,13 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
         _lastPlacementConfirmSeq = feedback.placementConfirmSeq;
         const kind = useUIStore.getState().placementKind;
         if (kind) {
+          // Phase 5 — KEEP `placementKind` after a desktop click-place so the
+          // player can place MULTIPLE in a row (the user: "don't unselect a
+          // building once you've placed one"). The renderer cycles pending →
+          // active once the server echoes, re-arming the hover-follow ghost for
+          // the next click. The deliberate EXIT is Escape / right-click (App.tsx
+          // → setPlacementKind(null)). (Was: cleared on every place — WS-10.)
           commitChosenPlacement(kind);
-          useUIStore.getState().setPlacementKind(null);
         }
       }
       // Anchor the Confirm banner over the ghost's projected screen position.

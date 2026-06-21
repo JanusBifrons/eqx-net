@@ -239,8 +239,16 @@ async function clickPlaceAssertAtClick(browser: Browser, useWorker: boolean): Pr
     console.log('PLACEMENT-DEBUG', JSON.stringify({ worker: useWorker, chosen: [chosenX, chosenY], placed: pos }));
     const distToChosen = Math.hypot(pos.x - chosenX, pos.y - chosenY);
     expect(distToChosen, `structure should be at the clicked point, not ${JSON.stringify(pos)}`).toBeLessThan(60);
-    // Placement mode exited on the one-click place — the placement-active signal
-    // clears (the touch-only banner was never shown on desktop — P3.6).
+    // Phase 5 — placement mode now STAYS ACTIVE after a desktop place so the
+    // player can place MULTIPLE in a row ("don't unselect a building once you've
+    // placed one"). The ghost is still projected (data-placement-screen-x
+    // present); the deliberate EXIT is Escape (asserted next). (Was: cleared on
+    // the one-click place — WS-10.)
+    await page.waitForTimeout(400); // let the server echo land + the ghost re-arm
+    const stillActive = await surfaceAttr(page, 'data-placement-screen-x');
+    expect(stillActive !== null && stillActive !== '', 'placement stays active after a desktop place (place-multiple)').toBe(true);
+    // Escape is the deliberate exit.
+    await page.keyboard.press('Escape');
     await waitPlacementCleared(page);
   } finally {
     await ctx.close();
