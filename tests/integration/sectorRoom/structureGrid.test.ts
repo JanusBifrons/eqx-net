@@ -152,16 +152,15 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     expect(entry.storedPower!).toBeGreaterThan(0); // charged from surplus
   }, 25_000);
 
-  it('destroying a relay HEALS a downstream leaf onto an in-range hub (reconnect sweep, Issue 2)', async () => {
+  it('Phase 5 — destroying a relay ORPHANS a downstream leaf; it heals only on a MANUAL reconnect', async () => {
     harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 
     await placeAndWait(harness, room, 'capital', 0, 0);
-    // WS-5 capital-only-connectors: a leaf can no longer heal onto the Capital
-    // directly — it heals onto ANOTHER Connector. con1 is the solar's nearest
-    // hub at placement; con2 (also Capital-connected, so it survives con1's
-    // death) is the backup the reconnect sweep re-wires onto.
+    // con1 is the solar's nearest hub at placement; con2 (also Capital-connected,
+    // so it survives con1's death) is the in-range backup the player CAN reconnect
+    // onto — but only deliberately, never via the auto-sweep (Phase 5).
     const con1 = await placeAndWait(harness, room, 'connector', 200, 0);
     const con2 = await placeAndWait(harness, room, 'connector', 0, 250);
     const sol = await placeAndWait(harness, room, 'solar', 250, 150);
@@ -169,14 +168,22 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     for (let i = 0; i < 60; i++) internals.pulseStructureGrid();
     expect(sliceEntry(internals.getStructuresSlice(), solE)?.powered).toBe(true);
 
+    // Destroy the solar's hub. Phase 5: "if the connector a structure is connected
+    // to is destroyed then it's just orphaned, the player must notice and manually
+    // click reconnect" — the auto-sweep must NOT silently re-wire it (the old
+    // behaviour, reversed here; the sweep now only links NEVER-connected nodes).
     internals.applyDamage(con1, 'player-1', 99999);
     expect(internals.structureRegistry.has(con1)).toBe(false);
-    // The reconnect sweep runs on the pulse; one pulse re-wires + the topology
-    // rebuild re-powers it.
-    for (let i = 0; i < 3; i++) internals.pulseStructureGrid();
+    for (let i = 0; i < 5; i++) internals.pulseStructureGrid();
 
-    const slice = internals.getStructuresSlice();
-    // Healed: the solar now connects to the SURVIVING Connector and is powered.
+    let slice = internals.getStructuresSlice();
+    expect(sliceEntry(slice, solE)?.connTo ?? []).not.toContain(con2E); // NOT auto-healed
+    expect(sliceEntry(slice, solE)?.powered).toBe(false); // orphaned ⇒ unpowered
+
+    // The player MANUALLY reconnects → it heals onto the surviving Connector.
+    expect(internals.reconnectStructure(sol)).toBe(true);
+    for (let i = 0; i < 3; i++) internals.pulseStructureGrid();
+    slice = internals.getStructuresSlice();
     expect(sliceEntry(slice, solE)?.connTo).toContain(con2E);
     expect(sliceEntry(slice, solE)?.powered).toBe(true);
   }, 20_000);

@@ -174,6 +174,12 @@ export class Camera {
   private zoomAnchorY = 0;
   private hasZoomTarget = false;
 
+  // Phase 5 — WASD free-pan velocity in SCREEN px/sec (spectator). Set on key
+  // state changes (event-driven, never per-frame) via `setPanVelocity`; `tick`
+  // integrates it into the camera transform. Both 0 ⇒ no pan (the common case).
+  private panVx = 0;
+  private panVy = 0;
+
   constructor(
     private readonly target: CameraTarget,
     opts: CameraOptions = {},
@@ -434,6 +440,29 @@ export class Camera {
       this.target.x += (targetX - this.target.x) * this.opts.followLerpFactor;
       this.target.y += (targetY - this.target.y) * this.opts.followLerpFactor;
     }
+
+    // Phase 5 — WASD free-pan (spectator). Integrated each tick (px/sec →
+    // px-this-frame). Skipped while a pointer drag owns the camera so the two
+    // pan sources don't fight; in spectator `followTarget` is null, so this is
+    // the only camera driver.
+    if ((this.panVx !== 0 || this.panVy !== 0) && !this.drag.isPanning() && this.pointers.size === 0) {
+      const f = dtMs / 1000;
+      this.target.x += this.panVx * f;
+      this.target.y += this.panVy * f;
+    }
+  }
+
+  /**
+   * Phase 5 — set the WASD free-pan velocity in SCREEN px/sec (spectator). The
+   * main thread computes this from the held WASD/arrow keys and posts it ONLY on
+   * a key state change (not per frame); `tick` integrates it. (0, 0) stops the
+   * pan. Cleared when leaving spectator. Convention: +vy pans the VIEW up (the
+   * world container moves down to reveal content above), matching the drag-pan
+   * sign (`target.y += dy`).
+   */
+  setPanVelocity(vx: number, vy: number): void {
+    this.panVx = vx;
+    this.panVy = vy;
   }
 
   // ---------- Coord conversion ----------

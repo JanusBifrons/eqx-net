@@ -808,6 +808,13 @@ export interface IRenderer {
    */
   glideCameraTo(gameX: number, gameY: number, durationMs: number): void;
   /**
+   * Phase 5 — set the SPECTATOR WASD free-pan velocity in SCREEN px/sec. The
+   * main thread computes it from the held WASD/arrow keys and calls this ONLY on
+   * a key state change (not per frame); the `Camera.tick` integrates it. (0, 0)
+   * stops the pan. Only meaningful while spectating (follow is detached).
+   */
+  setPanVelocity(vx: number, vy: number): void;
+  /**
    * Effects subsystem (plan `wiggly-puppy` M9): drop per-entity
    * continuous emitters + in-flight bursts on sector handoff. Called
    * from `ColyseusClient.resetPredictionState()`'s sibling-line in the

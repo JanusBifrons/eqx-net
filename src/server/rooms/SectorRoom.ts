@@ -795,6 +795,10 @@ export class SectorRoom extends Room<SectorState> {
      *  message round-trip) for the leveling integration test. Returns whether
      *  the upgrade started (the subsystem's owner-agnostic gate). */
     upgradeStructure: (id: string) => boolean;
+    /** Phase 5 — drive a MANUAL reconnect (the player's structure-action) so the
+     *  integration test can prove an orphaned leaf heals only on an explicit
+     *  reconnect, not via the auto-sweep. Returns the subsystem's gate result. */
+    reconnectStructure: (id: string) => boolean;
     /** Phase 4 — seed a mineable asteroid for the mining integration test. */
     spawnTestAsteroid: (id: string, x: number, y: number, radius: number) => boolean;
     /** Phase 5 — seed a drone + drive the turret tick for the turret test.
@@ -826,6 +830,7 @@ export class SectorRoom extends Room<SectorState> {
       pulseStructureGrid: () => this.structureGridTick(),
       getStructuresSlice: () => this.structuresSlice,
       upgradeStructure: (id) => this.structureGrid.upgradeStructure(id),
+      reconnectStructure: (id) => this.structureGrid.reconnect(id),
       spawnTestAsteroid: (id, x, y, radius) =>
         this.swarmSpawner.spawnAsteroid({ id, x, y, vx: 0, vy: 0, radius, mass: 1 }),
       spawnTestDrone: (id, x, y, kind = 'fighter') => {

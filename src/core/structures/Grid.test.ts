@@ -29,6 +29,7 @@ function node(id: string, opts: Partial<GridNode> = {}): GridNode {
     powerConsumption: opts.powerConsumption ?? 0,
     isConstructed: opts.isConstructed ?? true,
     ...(opts.connectionRange !== undefined ? { connectionRange: opts.connectionRange } : {}),
+    ...(opts.isShieldPylon !== undefined ? { isShieldPylon: opts.isShieldPylon } : {}),
   };
 }
 const capital = (id: string, x: number, y: number, built = true): GridNode =>
@@ -37,6 +38,8 @@ const connector = (id: string, x: number, y: number, built = true): GridNode =>
   node(id, { x, y, radius: 10, isHub: true, isConnector: true, maxConnections: 6, isConstructed: built });
 const solar = (id: string, x: number, y: number, built = true): GridNode =>
   node(id, { x, y, radius: 40, maxConnections: 1, powerOutput: 30, isConstructed: built });
+const pylon = (id: string, x: number, y: number, built = true): GridNode =>
+  node(id, { x, y, radius: 12, isHub: true, isShieldPylon: true, maxConnections: 3, isConstructed: built });
 
 /** Build an adjacency map from a flat connection list. */
 function adjacencyFrom(conns: Connection[]): Map<string, Connection[]> {
@@ -164,6 +167,60 @@ describe('canConnect — the hub model (eqx-peri rules)', () => {
     const blocker = connector('blk', 0, 0, true);
     const nodes = new Map([['a', a], ['b', b], ['blk', blocker]]);
     expect(canConnect(a, b, new Map(), nodes)).toEqual({ ok: false, reason: 'blocked' });
+  });
+});
+
+// ── Phase 5 — shield-pylon dual-cap ("shield pylons broke") ─────────────────
+// Spec: a shield pylon connects to a MAX of 1 connector AND up to 3 OTHER shield
+// pylons — TWO DISCRETE budgets (so a pylon can hold 1 connector + 3 pylons = 4,
+// which the old single `maxConnections: 3` cap wrongly blocked). A pylon links
+// ONLY to connectors + pylons (never a leaf; the Capital is already capital-only).
+describe('canConnect — shield-pylon dual-cap (Phase 5)', () => {
+  const link = (a: string, b: string): Connection =>
+    new Connection(0, a, b, CONNECTION_THROUGHPUT);
+  const nodeMap = (...ns: GridNode[]): Map<string, GridNode> => {
+    const m = new Map<string, GridNode>();
+    for (const n of ns) m.set(n.id, n);
+    return m;
+  };
+
+  it('a pylon links to a connector AND to other pylons (its two valid targets)', () => {
+    const p = pylon('p', 0, 0);
+    const c = connector('c', 0, 40);
+    const p2 = pylon('p2', 40, 0);
+    const nodes = nodeMap(p, c, p2);
+    expect(canConnect(p, c, new Map(), nodes).ok).toBe(true);
+    expect(canConnect(p, p2, new Map(), nodes).ok).toBe(true);
+  });
+
+  it('rejects a SECOND connector on a pylon (max 1 connector)', () => {
+    const p = pylon('p', 0, 0);
+    const c1 = connector('c1', 0, 40);
+    const c2 = connector('c2', 0, -40);
+    const adj = new Map<string, Connection[]>([['p', [link('p', 'c1')]], ['c1', [link('p', 'c1')]]]);
+    expect(canConnect(p, c2, adj, nodeMap(p, c1, c2))).toEqual({ ok: false, reason: 'pylon-rule' });
+  });
+
+  it('rejects a FOURTH pylon on a pylon (max 3 other pylons)', () => {
+    const p = pylon('p', 0, 0);
+    const a = pylon('a', 30, 0), b = pylon('b', 60, 0), c = pylon('c', 90, 0);
+    const p4 = pylon('p4', 0, 30);
+    const adj = new Map<string, Connection[]>([['p', [link('p', 'a'), link('p', 'b'), link('p', 'c')]]]);
+    expect(canConnect(p, p4, adj, nodeMap(p, a, b, c, p4))).toEqual({ ok: false, reason: 'pylon-rule' });
+  });
+
+  it('DUAL budget — a pylon with 3 pylons can STILL add 1 connector (old single cap blocked this)', () => {
+    const p = pylon('p', 0, 0);
+    const a = pylon('a', 30, 0), b = pylon('b', 60, 0), c = pylon('c', 90, 0);
+    const conn = connector('conn', 0, 30);
+    const adj = new Map<string, Connection[]>([['p', [link('p', 'a'), link('p', 'b'), link('p', 'c')]]]);
+    expect(canConnect(p, conn, adj, nodeMap(p, a, b, c, conn)).ok).toBe(true);
+  });
+
+  it('a pylon does NOT link to a leaf (solar) — pylons link only to connectors + pylons', () => {
+    const p = pylon('p', 0, 0);
+    const s = solar('s', 0, 40);
+    expect(canConnect(p, s, new Map(), nodeMap(p, s))).toEqual({ ok: false, reason: 'pylon-rule' });
   });
 });
 

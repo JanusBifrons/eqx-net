@@ -100,6 +100,15 @@ export class StructureRegistry {
   /** Flat connectionId → Connection (for the wire + flash lookups). */
   private readonly connById = new Map<number, Connection>();
   private connCounter = 0;
+  /** Phase 5 — ids of structures that have had at least one connection at some
+   *  point. The 1 Hz auto-reconnect sweep (`processReconnect`) skips these so a
+   *  DELIBERATELY-cleared or hub-death-orphaned structure stays orphaned until
+   *  the player manually reconnects ("clearing connections instantly reconnects,
+   *  so it's pointless"). A NEVER-connected placement (a leaf placed before its
+   *  hub, Issue 2 2026-06-10) is absent here and stays sweep-eligible. Session-
+   *  scoped: a server restart re-derives the whole grid via the restore sweep,
+   *  which is the intended cold-start behaviour. */
+  private readonly everConnected = new Set<string>();
   /** Set whenever topology changes (add/sever/construct); the grid subsystem
    *  rebuilds components + drops the route cache only when this is true. */
   topologyDirty = true;
@@ -124,6 +133,7 @@ export class StructureRegistry {
     const rec = this.byId.get(id);
     if (rec) {
       this.byId.delete(id);
+      this.everConnected.delete(id); // structure gone — no leak
       this.topologyDirty = true;
     }
     return rec;
@@ -148,6 +158,15 @@ export class StructureRegistry {
     return this.adjacency.get(id)?.length ?? 0;
   }
 
+  /** Phase 5 — true once a structure has had ≥1 connection. The auto-reconnect
+   *  sweep skips these (a cleared/orphaned established structure stays orphaned);
+   *  a never-connected placement stays sweep-eligible. NOT reset by `disconnect`/
+   *  `clearConnections` (that's the whole point) — only by `remove` (structure
+   *  gone). */
+  hasEverConnected(id: string): boolean {
+    return this.everConnected.has(id);
+  }
+
   hasConnection(aId: string, bId: string): boolean {
     return (this.adjacency.get(aId) ?? []).some((c) => c.getOtherNode(aId) === bId);
   }
@@ -167,6 +186,9 @@ export class StructureRegistry {
 
   /** Create + register a connection between two structures. */
   addConnection(aId: string, bId: string, throughput: number): Connection {
+    // Phase 5 — both endpoints have now connected at least once (sweep-skip).
+    this.everConnected.add(aId);
+    this.everConnected.add(bId);
     const c = new Connection(this.connCounter++, aId, bId, throughput);
     let aList = this.adjacency.get(aId);
     if (!aList) { aList = []; this.adjacency.set(aId, aList); }
