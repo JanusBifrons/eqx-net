@@ -335,8 +335,26 @@ export function computeBootstrapReadyFromState(
     | 'firstSnapshotApplied'
     | 'joinMinimumElapsed'
     | 'localPoseResolved'
+    | 'pilotMode'
   >,
 ): boolean {
+  // Equinox Phase 5 (WS-3) — JOIN-AS-SPECTATOR readiness. A spectator joins with
+  // NO ship (`localShipInstanceId === null`, no predWorld pose), so the two
+  // ship-dependent gates (`localShipInstanceId !== null`, `localPoseResolved`)
+  // can never fire — and `client_ready` is gated on bootstrap-ready, so without
+  // this branch a spectator's curtain would hang forever. They are "ready" once
+  // connected + rendered + first snapshot + minimum-display elapsed. The
+  // discriminator (`pilotMode === 'spectator'` AND no ship) EXCLUDES the
+  // death→spectator case (which keeps its original `localShipInstanceId`), so
+  // that path is unchanged.
+  if (s.pilotMode === 'spectator' && s.localShipInstanceId === null) {
+    return (
+      s.connectionStatus === 'connected'
+      && s.rendererFirstFrameRendered
+      && s.firstSnapshotApplied
+      && s.joinMinimumElapsed
+    );
+  }
   return (
     s.connectionStatus === 'connected'
     && s.localShipInstanceId !== null
@@ -377,6 +395,7 @@ export function computeGameReadyFromState(
     | 'clientReadySent'
     | 'arrivalTickFromServer'
     | 'arrivalAcked'
+    | 'pilotMode'
   >,
 ): boolean {
   return (
