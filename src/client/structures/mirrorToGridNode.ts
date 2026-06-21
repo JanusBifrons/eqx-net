@@ -22,6 +22,7 @@ import {
   getStructureKind,
   type StructureKindId,
 } from '../../shared-types/structureKinds.js';
+import { effectiveStructureMaxConnections } from '../../core/leveling/structureLevel.js';
 import type { GridNode, GridObstacle } from '../../core/structures/Grid.js';
 import type {
   StructureRenderState,
@@ -58,7 +59,10 @@ export function structureMirrorToGridNode(
   out.isCapital = swarmEntry.shipKind === 'capital';
   out.isConnector = swarmEntry.shipKind === 'connector';
   out.isShieldPylon = swarmEntry.shipKind === 'shield_pylon';
-  out.maxConnections = kind.maxConnections;
+  // Leveled connection cap — an upgraded connector holds MORE links (Equinox
+  // Phase-5 audit). Must match the server's `structureToGridNode` so the preview
+  // + the live grid agree.
+  out.maxConnections = effectiveStructureMaxConnections(kind.maxConnections, structureState.level);
   out.connectionRange = kind.connectionRange;
   out.powerOutput = structureState.built ? kind.powerOutput : 0;
   out.powerConsumption = structureState.built ? kind.powerConsumption : 0;
