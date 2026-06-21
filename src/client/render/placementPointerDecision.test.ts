@@ -21,10 +21,16 @@ describe('decidePlacementPointer', () => {
     expect(decidePlacementPointer('pointerleave', 'mouse', -1, false).following).toBeNull();
   });
 
-  it('pointermove tracks the ghost while following (desktop hover keeps it true)', () => {
+  it('DESKTOP mouse pointermove ALWAYS tracks the ghost — even when following=false', () => {
+    // Pure hover-follow: a desktop mouse move tracks regardless of the follow
+    // flag, so the spectator centre-seed / post-commit (which leave following
+    // false) can never freeze the ghost. Pre-fix this returned updateChosen =
+    // following, so a false flag froze it → "the ghost doesn't follow my cursor".
     expect(decidePlacementPointer('pointermove', 'mouse', -1, true).updateChosen).toBe(true);
+    expect(decidePlacementPointer('pointermove', 'mouse', -1, false).updateChosen).toBe(true);
     // After a touch park (following=false), a move does NOT move the ghost.
     expect(decidePlacementPointer('pointermove', 'touch', -1, false).updateChosen).toBe(false);
+    expect(decidePlacementPointer('pointermove', 'touch', -1, true).updateChosen).toBe(true);
     // pointermove never changes the follow flag itself.
     expect(decidePlacementPointer('pointermove', 'mouse', -1, true).following).toBeNull();
   });
@@ -36,11 +42,16 @@ describe('decidePlacementPointer', () => {
     expect(d.commit).toBe(false);
   });
 
-  it('DESKTOP mouse left-release commits (one-click place)', () => {
+  it('DESKTOP mouse left-release commits AND KEEPS following (multi-place hover-follow)', () => {
+    // Equinox Phase-5 audit: after a desktop click-place the ghost must keep
+    // tracking the cursor so the NEXT multi-place ghost follows immediately
+    // ("multi-placing doesn't spawn a new ghost at your cursor / doesn't
+    // follow"). Pre-fix this returned following:false → the next ghost was
+    // frozen at the last click point.
     const up = decidePlacementPointer('pointerup', 'mouse', 0, true);
     expect(up.commit).toBe(true);
     expect(up.updateChosen).toBe(true);
-    expect(up.following).toBe(false);
+    expect(up.following).toBe(true);
   });
 
   it('TOUCH release PARKS (no commit) — the two-step Confirm-banner flow', () => {
