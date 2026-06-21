@@ -195,6 +195,17 @@ export interface GlideCameraMsg {
 }
 
 /**
+ * Phase 5 — set the spectator WASD free-pan velocity (SCREEN px/sec). Posted on
+ * a key state change, NOT per frame; the worker `Camera.tick` integrates it.
+ * Drives `PixiRenderer.setPanVelocity` → `Camera.setPanVelocity`.
+ */
+export interface PanCameraMsg {
+  type: 'PAN_CAMERA';
+  vx: number;
+  vy: number;
+}
+
+/**
  * Native pointer event, forwarded from the main thread because
  * `OffscreenCanvas` has no DOM event source in the worker (per
  * pixijs/pixijs#9132). The worker hand-rolled camera consumes these
@@ -311,6 +322,7 @@ export type MainToWorkerMsg =
   | SetLoadCurtainMsg
   | SetSpectatorMsg
   | GlideCameraMsg
+  | PanCameraMsg
   | SetDiagMarkersMsg
   | TriggerEffectMsg
   | SetEffectQualityMsg

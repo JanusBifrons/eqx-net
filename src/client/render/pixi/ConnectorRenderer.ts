@@ -56,6 +56,7 @@ function blankGridNode(): GridNode {
     isHub: false,
     isCapital: false,
     isConnector: false,
+    isShieldPylon: false,
     maxConnections: 0,
     powerOutput: 0,
     powerConsumption: 0,
@@ -125,6 +126,9 @@ export class ConnectorRenderer {
   /** WS-D (#21) — the world-unit radius of the LAST built-turret range circle
    *  drawn (the kind's catalogue `weaponRange`), or 0 when none. Test hook. */
   lastBuiltTurretRangeRadius = 0;
+  /** Phase 5 — the stroke width of the LAST built-turret range ring drawn
+   *  (bolder when the turret is hovered/selected). Test hook. */
+  lastBuiltTurretRangeWidth = 0;
 
   // ── Item C preview-pass module-scratch (invariant #14) ────────────────────
   // All reused in place; the preview pass runs ONLY while a ghost is up, so
@@ -190,6 +194,7 @@ export class ConnectorRenderer {
     this.lastRangeCircleRadius = 0;
     this.builtTurretRangeCount = 0;
     this.lastBuiltTurretRangeRadius = 0;
+    this.lastBuiltTurretRangeWidth = 0;
     if (swarm) this.drawPlacementPreview(mirror, swarm, scale);
     if (!structures || !swarm || structures.size === 0) {
       if (this._buildAnchors.size > 0) this._buildAnchors.clear();
@@ -216,10 +221,18 @@ export class ConnectorRenderer {
         const wr = getStructureKind(a.shipKind).weaponRange;
         if (wr !== undefined && wr > 0) {
           const rc = builtRangeCircleVisualInto(this._builtRangeVisual, scale);
+          // Phase 5 — bolder ring when this turret is hovered/selected.
+          const highlighted = id === this.highlightedStructureId;
+          const ringWidth = highlighted ? rc.width * 3 : rc.width;
           g.circle(ax, ay, wr);
-          g.stroke({ color: rc.color, alpha: rc.alpha, width: rc.width });
+          g.stroke({
+            color: rc.color,
+            alpha: highlighted ? Math.min(1, rc.alpha * 2.6) : rc.alpha,
+            width: ringWidth,
+          });
           this.builtTurretRangeCount++;
           this.lastBuiltTurretRangeRadius = wr;
+          this.lastBuiltTurretRangeWidth = ringWidth;
         }
       }
 
@@ -371,17 +384,31 @@ export class ConnectorRenderer {
         g.fill({ color: 0xcc8844, alpha: 0.9 });
       }
 
-      // WS-9 (R2.20) — out-of-power indicator: a red "disabled" ring (circle +
-      // slash) above a BUILT but UNPOWERED structure. Immediate-mode, zero-alloc.
-      if (st.built && st.powered === false) {
+      // WS-9 (R2.20) + Phase 5 — out-of-power indicator above a BUILT, UNPOWERED
+      // structure that ACTUALLY DRAWS POWER. Gated to CONSUMERS (powerConsumption
+      // > 0): a connector (0 draw) / solar / capital / battery never shows it —
+      // the user's "connectors don't drain power yet show the no-power icon, and
+      // EVERY structure shows it" report. The glyph is now a red LIGHTNING BOLT
+      // with a slash (clearer it's about POWER, not a generic "disabled" ring).
+      // Immediate-mode, zero-alloc.
+      const consumesPower =
+        a.shipKind !== undefined &&
+        isStructureKindId(a.shipKind) &&
+        getStructureKind(a.shipKind).powerConsumption > 0;
+      if (st.built && st.powered === false && consumesPower) {
         const r = a.radius;
         const cx = ax;
         const cy = ay - r - 12;
-        const ir = Math.max(4, r * 0.22);
+        const h = Math.max(5, r * 0.28); // bolt half-height
         const w = Math.max(1.5 / scale, 2);
-        g.circle(cx, cy, ir);
+        // Lightning bolt: a zigzag from top to bottom (energy/power glyph).
+        g.moveTo(cx + h * 0.25, cy - h);
+        g.lineTo(cx - h * 0.3, cy + h * 0.1);
+        g.lineTo(cx + h * 0.1, cy + h * 0.1);
+        g.lineTo(cx - h * 0.25, cy + h);
         g.stroke({ color: 0xff4444, width: w, alpha: 0.95 });
-        const d = ir * 0.7;
+        // Slash through it = negation ("no power").
+        const d = h * 0.85;
         g.moveTo(cx - d, cy - d);
         g.lineTo(cx + d, cy + d);
         g.stroke({ color: 0xff4444, width: w, alpha: 0.95 });
@@ -605,6 +632,13 @@ export class ConnectorRenderer {
    *  `connectorRenderer.update(...)`. */
   ghostWorldX: number | null = null;
   ghostWorldY: number | null = null;
+
+  /** Phase 5 — the entityId of the hovered/selected structure (prefer selected),
+   *  so its defensive RANGE ring draws SIGNIFICANTLY BOLDER (gauge the reach of
+   *  the turret you're inspecting). Set by `PixiRenderer.update` from
+   *  `_selectedId`/`_hoveredId` before `update(...)`; null ⇒ no structure
+   *  highlighted (every range ring stays the faint underlay). */
+  highlightedStructureId: number | null = null;
 
   /** Phase-1 issue 1 — per-blueprint build-bar interpolation anchors, keyed by
    *  entityId. The server's `buildPct` arrives in 1 Hz steps; we re-anchor on

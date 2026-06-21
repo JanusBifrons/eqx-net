@@ -134,6 +134,38 @@ describe('EntityStatsPanel', () => {
     expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-self-power', '-15');
   });
 
+  // Phase 5 — "you can't see how much power a SOLAR gives". A GENERATOR shows its
+  // output ALWAYS, even when the grid is net-negative (unpowered) — pre-fix it
+  // read "UNPOWERED", hiding the +30 the solar still generates.
+  it('a GENERATOR (solar) shows its output even when the grid is UNPOWERED — not "UNPOWERED"', () => {
+    setGameClient(
+      fakeClient({
+        structures: new Map([[7, { powered: false, netPower: -10, connTo: [3], built: true, buildPct: 1, deconstructPct: 0 }]]),
+        swarm: new Map([[7, { kind: 2, shipKind: 'solar', radius: 40, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '7', name: 'Solar', hp: 300, hpMax: 300 });
+    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR +30');
+    expect(screen.getByTestId('entity-stats-power')).not.toHaveTextContent('UNPOWERED');
+  });
+
+  // Phase 5 — "connectors don't drain power, so why do they show the no-power
+  // state?". A passive relay (selfPower 0) shows NO power line at all.
+  it('a CONNECTOR (no draw) shows NO power line even when unpowered', () => {
+    setGameClient(
+      fakeClient({
+        structures: new Map([[7, { powered: false, netPower: -10, connTo: [3], built: true, buildPct: 1, deconstructPct: 0 }]]),
+        swarm: new Map([[7, { kind: 2, shipKind: 'connector', radius: 10, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '7', name: 'Connector', hp: 200, hpMax: 200 });
+    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.queryByTestId('entity-stats-power')).toBeNull();
+  });
+
   it('shows the Capital its own generation — PWR +50 (C5)', () => {
     setGameClient(
       fakeClient({

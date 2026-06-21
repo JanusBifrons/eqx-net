@@ -168,11 +168,20 @@ export function EntityStatsPanel(): JSX.Element | null {
           <Bar pct={chargePct} color={CHARGE_COLOR} />
         </>
       )}
-      {data.powered !== undefined && (
-        // C5 — the PWR line is this BUILDING's own gen/drain (`selfPower`), not
-        // the grid aggregate. UNPOWERED (grid-unreachable) is orthogonal + kept.
+      {data.selfPower !== undefined && data.selfPower !== 0 && (
+        // C5 + Phase 5 — this BUILDING's own gen/drain (`selfPower`), not the grid
+        // aggregate. A GENERATOR (solar/capital, +out) ALWAYS shows its output —
+        // it generates regardless of the grid running net-negative (you "couldn't
+        // see how much power a SOLAR gives"). A CONSUMER (turret/miner/pylon, −draw)
+        // shows its draw when powered, else UNPOWERED. A passive relay (connector,
+        // selfPower 0) shows NOTHING — it doesn't draw power, so "UNPOWERED" on it
+        // was wrong (it never appears now: the `!== 0` gate skips it).
         <Box sx={POWER_SX} data-testid="entity-stats-power">
-          {data.powered ? `PWR ${(data.selfPower ?? 0) >= 0 ? '+' : ''}${Math.round(data.selfPower ?? 0)}` : 'UNPOWERED'}
+          {data.selfPower > 0
+            ? `PWR +${Math.round(data.selfPower)}`
+            : data.powered
+              ? `PWR ${Math.round(data.selfPower)}`
+              : 'UNPOWERED'}
         </Box>
       )}
       {data.connCount !== undefined && (

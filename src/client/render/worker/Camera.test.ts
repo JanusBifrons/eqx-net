@@ -426,3 +426,38 @@ describe('Camera — one-shot glide (Phase 4 WS-A2 smooth ship-switch)', () => {
     expect(cam.isGliding()).toBe(false);
   });
 });
+
+describe('Camera — WASD free-pan velocity (Phase 5 spectator)', () => {
+  it('integrates the pan velocity into the target each tick (px/sec × dt)', () => {
+    const target = makeTarget();
+    const cam = new Camera(target);
+    cam.setScreenSize(800, 600);
+    cam.setPanVelocity(-800, 565.7);
+    cam.tick(1000); // 1 s → the full velocity is applied
+    expect(target.x).toBeCloseTo(-800, 3);
+    expect(target.y).toBeCloseTo(565.7, 3);
+    cam.tick(500); // +0.5 s → half again
+    expect(target.x).toBeCloseTo(-1200, 3);
+    expect(target.y).toBeCloseTo(565.7 + 282.85, 2);
+  });
+
+  it('a zero velocity does not move the camera', () => {
+    const target = makeTarget();
+    const cam = new Camera(target);
+    cam.setScreenSize(800, 600);
+    cam.setPanVelocity(0, 0);
+    cam.tick(1000);
+    expect(target.x).toBe(0);
+    expect(target.y).toBe(0);
+  });
+
+  it('does NOT pan while a pointer drag owns the camera (the two sources do not fight)', () => {
+    const target = makeTarget();
+    const cam = new Camera(target);
+    cam.setScreenSize(800, 600);
+    cam.setPanVelocity(-800, 0);
+    cam.onPointerDown(1, 100, 100, 0); // a drag is now active
+    cam.tick(1000);
+    expect(target.x).toBe(0); // WASD pan suppressed while dragging
+  });
+});
