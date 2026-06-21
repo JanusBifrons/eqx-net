@@ -17,7 +17,7 @@ import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import { sendPilotShip } from '../ships/shipActionsClient.js';
 import { PilotSpectatorToggle } from './PilotSpectatorToggle.js';
 
-vi.mock('../ships/shipActionsClient.js', () => ({ sendPilotShip: vi.fn() }));
+vi.mock('../ships/shipActionsClient.js', () => ({ sendPilotShip: vi.fn(), sendSpectate: vi.fn() }));
 
 function fakeClient(mirror: Record<string, unknown>): ColyseusGameClient {
   return { mirror } as unknown as ColyseusGameClient;

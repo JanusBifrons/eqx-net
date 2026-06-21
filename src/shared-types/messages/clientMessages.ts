@@ -182,6 +182,21 @@ export const PilotShipSchema = z
   })
   .strict();
 
+/** Equinox Phase-5 audit — STOP PILOTING → spectate. The inverse of `pilot_ship`:
+ *  the player toggles Spectate while flying an active hull, and the server
+ *  DISPLACES that hull into a lingering hull (via `displaceActiveHullToLingering`)
+ *  so the just-left ship is parked in-world AND re-appears in the player's own
+ *  `lingeringShips` — which is what the in-world Pilot dropdown lists. Without
+ *  this, Spectate was a pure client flip, the active hull stayed `isActive=true`
+ *  (never in `lingeringShips`), and the Pilot dropdown was always empty ("no
+ *  ships to pilot… I just spawned one"). No-op server-side when the player has no
+ *  active hull (death-spectator / join-as-spectator). Strict, no payload. */
+export const SpectateSchema = z
+  .object({
+    type: z.literal('spectate'),
+  })
+  .strict();
+
 /** Stat-pool ids spendable by the upgrade modal (Phase 4 WS-B2). Mirrors
  *  `STAT_IDS` in `src/core/leveling/shipStats.ts` — kept as a local zod enum so
  *  `src/shared-types/` stays self-contained (the parity is asserted in
@@ -258,6 +273,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   StructureActionSchema,
   UpgradeStructureSchema,
   PilotShipSchema,
+  SpectateSchema,
   ApplyShipUpgradeSchema,
   RespecShipSchema,
   ActivateMountSchema,
@@ -276,6 +292,7 @@ export type RemoveStructureMessage = z.infer<typeof RemoveStructureSchema>;
 export type StructureActionMessage = z.infer<typeof StructureActionSchema>;
 export type UpgradeStructureMessage = z.infer<typeof UpgradeStructureSchema>;
 export type PilotShipMessage = z.infer<typeof PilotShipSchema>;
+export type SpectateMessage = z.infer<typeof SpectateSchema>;
 export type StatId = z.infer<typeof StatIdSchema>;
 export type WireStatAlloc = z.infer<typeof StatAllocSchema>;
 export type ApplyShipUpgradeMessage = z.infer<typeof ApplyShipUpgradeSchema>;
