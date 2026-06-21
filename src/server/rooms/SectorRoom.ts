@@ -150,6 +150,7 @@ import {
   StructureActionSchema,
   UpgradeStructureSchema,
   PilotShipSchema,
+  SpectateSchema,
   ApplyShipUpgradeSchema,
   RespecShipSchema,
   ActivateMountSchema,
@@ -2145,6 +2146,23 @@ export class SectorRoom extends Room<SectorState> {
       const playerId = this.sessionToPlayer.get(client.sessionId);
       if (!playerId) return;
       this.reclaimLingeringHull(client, playerId, parsed.data.shipId);
+    });
+
+    // Equinox Phase-5 audit — STOP PILOTING → spectate (the inverse of
+    // `pilot_ship`). The player toggled Spectate while flying an active hull;
+    // DISPLACE it into a lingering hull so it's parked in-world AND surfaces in
+    // the player's own `lingeringShips` for the in-world Pilot dropdown. Owner-
+    // gated by construction (`displaceActiveHullToLingering` only touches the
+    // CALLER's own active hull) + no-op when they have none (already spectating).
+    this.onMessage('spectate', (client: Client, raw: unknown) => {
+      const parsed = SpectateSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed spectate');
+        return;
+      }
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      this.displaceActiveHullToLingering(playerId);
     });
 
     // ── Phase 4 WS-B2 — ship stat upgrades (free allocation + respec) ──────

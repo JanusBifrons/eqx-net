@@ -497,6 +497,27 @@ export class ColyseusGameClient {
   }
 
   /**
+   * Equinox Phase-5 audit — STOP PILOTING → spectate. The inverse of
+   * {@link pilotInSectorShip}: tell the server to displace our active hull into a
+   * lingering hull (so it parks in-world AND surfaces in our own `lingeringShips`
+   * for the Pilot dropdown). Drop the local predWorld body — same one-ownership-
+   * site discipline as the pilot swap / death — so prediction doesn't fight the
+   * now-parked hull; re-piloting re-anchors via the fresh `welcome`. No-op
+   * server-side when we have no active hull. Returns true when dispatched.
+   */
+  sendSpectate(): boolean {
+    if (!this.room) return false;
+    this.room.send('spectate', { type: 'spectate' });
+    const localId = this.mirror.localPlayerId;
+    if (localId && this.predWorld?.hasShip(localId)) {
+      this.predWorld.despawnShip(localId);
+      this.reconciler = null;
+    }
+    logEvent('spectate_requested', {});
+    return true;
+  }
+
+  /**
    * Phase 4 WS-B2 — send a free stat allocation for a ship instance. The server
    * validates ownership + the point budget, persists, applies the multipliers,
    * and echoes `ship_upgrade_applied`. The physics re-anchor happens off the
