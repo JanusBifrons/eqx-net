@@ -507,30 +507,33 @@ const ROOT_SX = {
   userSelect: 'none' as const,
   fontFamily: 'system-ui, sans-serif',
 };
+// Equinox Phase-5 audit — the in-world entity inspector read "WAY too small" on
+// desktop. The sm breakpoint scales fonts + the bar + icons ~2x on desktop (the
+// user's "2x-3x"); mobile (xs) is untouched. Tune the sm numbers on-device.
 const NAME_SX = {
   gridColumn: '1 / -1',
-  fontSize: 10,
+  fontSize: { xs: 10, sm: 20 },
   fontWeight: 700,
   color: '#cde',
   letterSpacing: 0.3,
   whiteSpace: 'nowrap' as const,
 };
 const BAR_TRACK_SX = {
-  width: TRACK_W,
-  height: BAR_H,
+  width: { xs: TRACK_W, sm: TRACK_W * 2 },
+  height: { xs: BAR_H, sm: BAR_H * 2 },
   borderRadius: '2px',
   backgroundColor: 'rgba(255,255,255,0.12)',
   overflow: 'hidden' as const,
 };
 const CAP_SX = {
-  fontSize: 8,
+  fontSize: { xs: 8, sm: 16 },
   letterSpacing: 0.5,
   color: 'rgba(255,255,255,0.45)',
   textTransform: 'uppercase' as const,
 };
 const POWER_SX = {
   gridColumn: '1 / -1',
-  fontSize: 8,
+  fontSize: { xs: 8, sm: 16 },
   fontWeight: 700,
   letterSpacing: 0.4,
   color: 'rgba(180,220,255,0.85)',
@@ -538,7 +541,7 @@ const POWER_SX = {
 };
 const INFO_SX = {
   gridColumn: '1 / -1',
-  fontSize: 9,
+  fontSize: { xs: 9, sm: 18 },
   fontWeight: 600,
   letterSpacing: 0.3,
   color: 'rgba(200,225,255,0.9)',
@@ -571,4 +574,4 @@ const ACTION_BTN_WARN_SX = {
   color: '#ff9b6b',
   '&:hover': { color: '#ffb892', bgcolor: 'rgba(255,120,80,0.15)' },
 };
-const ICON_SX = { fontSize: 16 };
+const ICON_SX = { fontSize: { xs: 16, sm: 28 } };

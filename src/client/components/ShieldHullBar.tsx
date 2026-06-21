@@ -29,25 +29,27 @@ const SHIELD_COLOR = '#36c8ff';
 // re-renders when shieldPct OR hullPct change (1 Hz under combat per
 // the 2026-05-25 HUD-dispatch cadence); without hoist each render
 // produced 6 fresh sx literals.
+// Equinox Phase-5 audit — desktop was 1.0x (too small). The sm breakpoint scales
+// the bar track + caps ~2x on desktop (the user's "2x-3x"); mobile (xs) untouched.
 const ROOT_SX = {
   display: 'grid',
   gridTemplateColumns: 'auto auto',
   alignItems: 'center',
-  columnGap: 0.75,
-  rowGap: '3px',
+  columnGap: { xs: 0.75, sm: 1.25 },
+  rowGap: { xs: '3px', sm: '6px' },
   pointerEvents: 'none' as const,
   userSelect: 'none' as const,
   fontFamily: 'system-ui, sans-serif',
 };
 const BAR_TRACK_SX = {
-  width: TRACK_W,
-  height: BAR_H,
+  width: { xs: TRACK_W, sm: TRACK_W * 2.2 },
+  height: { xs: BAR_H, sm: BAR_H * 2 },
   borderRadius: '2px',
   backgroundColor: 'rgba(255,255,255,0.12)',
   overflow: 'hidden' as const,
 };
 const CAP_SX = {
-  fontSize: 8,
+  fontSize: { xs: 8, sm: 16 },
   letterSpacing: 0.5,
   color: 'rgba(255,255,255,0.45)',
   textTransform: 'uppercase' as const,
