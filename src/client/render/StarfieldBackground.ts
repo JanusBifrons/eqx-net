@@ -1,10 +1,10 @@
 import { Application, Graphics } from 'pixi.js';
 import type { Camera } from './worker/Camera';
 import {
-  STAR_MAX_TILE_HALF,
   starHash,
   starLayerAlphaAt,
   starRadiusAt,
+  starTileHalfRange,
   type LodStarLayer,
 } from './lodStarfield';
 
@@ -101,8 +101,8 @@ export class StarfieldBackground {
       const bgCy = camY * p;
       const cTX = Math.round(bgCx / T);
       const cTY = Math.round(bgCy / T);
-      const halfX = Math.min(STAR_MAX_TILE_HALF, Math.ceil(hw / T) + 1);
-      const halfY = Math.min(STAR_MAX_TILE_HALF, Math.ceil(hh / T) + 1);
+      const halfX = starTileHalfRange(hw, T);
+      const halfY = starTileHalfRange(hh, T);
       // One fill per layer (single colour + alpha); each star's radius varies so
       // the field reads as fine dust with a few brighter highlights.
       for (let atx = cTX - halfX; atx <= cTX + halfX; atx++) {

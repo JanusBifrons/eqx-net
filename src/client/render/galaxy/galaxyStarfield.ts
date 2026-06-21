@@ -17,6 +17,7 @@ export {
   starHash,
   starLayerAlphaAt,
   starRadiusAt,
+  starTileHalfRange,
 } from '../lodStarfield';
 // Back-compat alias: the galaxy map's historical type name for a star layer.
 export type { LodStarLayer as GalaxyStarLayer } from '../lodStarfield';
