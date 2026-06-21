@@ -182,6 +182,10 @@ function shieldPylonRejection(
   let connectorCount = 0;
   let pylonCount = 0;
   for (const c of adjacency.get(P.id) ?? []) {
+    // Defensive: a caller that builds adjacency from a pooled/sparse array must
+    // never yield a hole here, but guard so a malformed entry degrades the count
+    // instead of throwing mid-render (the 2026-06-21 placement-preview crash).
+    if (!c) continue;
     const otherId = c.getOtherNode(P.id);
     if (otherId === null) continue;
     const on = nodes.get(otherId);
