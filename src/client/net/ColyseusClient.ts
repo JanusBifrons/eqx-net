@@ -1387,22 +1387,25 @@ export class ColyseusGameClient {
         logEvent('pilot_swap_welcomed', { shipInstanceId: msg.shipInstanceId });
       }
 
-      // Equinox Phase 5 (WS-3) — JOIN-AS-SPECTATOR. The server spawned our hull
-      // through the normal handshake (so `tryInitPredWorld` below resolves the
-      // local pose + lifts the load curtain the proven way), then PARKS it as a
-      // lingering hull at the arrival flip. Enter spectator mode now: the
-      // spectating effects (camera free-roam + input disable + `setSpectator`)
-      // are already wired off `pilotMode` (the death→spectator path), and the
-      // parked hull surfaces in `lingeringShips` for the in-world Pilot dropdown.
-      // A pilot-swap welcome (handled just above) never carries `spectator`, so
-      // the two never collide.
+      // Equinox Phase 5 (WS-3) — JOIN-AS-SPECTATOR. The player joins with NO
+      // ship at all (free-roam camera). There is no local hull to bootstrap, so
+      // SKIP `tryInitPredWorld` and mark `localPoseResolved` vacuously true (no
+      // pose to resolve) — the load curtain instead lifts via the spectator
+      // branch in `computeBootstrapReadyFromState` (which drops the
+      // `localShipInstanceId`/`localPoseResolved` ship gates) + the normal
+      // `client_ready` → `warp_in` → `arrivalAcked` handshake. The spectating
+      // effects (camera free-roam + input disable + `setSpectator`) are already
+      // wired off `pilotMode` (the death→spectator path). A pilot-swap welcome
+      // (handled just above) never carries `spectator`, so the two never collide.
       if (msg.spectator === true) {
-        useUIStore.getState().setPilotMode('spectator');
+        const ui = useUIStore.getState();
+        ui.setPilotMode('spectator');
+        ui.setLocalPoseResolved(true);
         logEvent('joined_as_spectator', { playerId: msg.playerId, sectorKey: msg.sectorKey });
+      } else {
+        // If state already arrived, bootstrap the prediction world now.
+        this.tryInitPredWorld(msg.playerId);
       }
-
-      // If state already arrived, bootstrap the prediction world now.
-      this.tryInitPredWorld(msg.playerId);
       // Phase 2 swift-otter — kick off the DC handshake after welcome.
       // The transport's start() is idempotent so a stale call from a
       // pre-welcome retry is safe.
