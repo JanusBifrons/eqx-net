@@ -57,6 +57,8 @@ import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
 import { ShieldHullBar } from './components/ShieldHullBar';
 import { WarpInWarningBanner } from './components/WarpInWarningBanner';
+import { PilotSpectatorToggle } from './components/PilotSpectatorToggle';
+import { SpectatorIndicator } from './components/SpectatorIndicator';
 import { GalaxyPickerChrome, type GalaxyPickerApi } from './components/GalaxyPickerChrome';
 import { GalaxyOverviewSelectChrome } from './components/GalaxyOverviewSelectChrome';
 import { LayoutProvider } from './layout/LayoutProvider';
@@ -756,6 +758,10 @@ function GameSurface({
       {/* Phase 5 — the top-right X/Y · hull · ammo · speed · heading stat card
        *  (ShipStatsCard) was REMOVED entirely (user request); the hull/shield
        *  HUD bars + the in-world stat panel carry that info. */}
+      {/* Phase 5 — always-visible Pilot/Spectate toggle (out of the speed-dial)
+       *  + a spectator-mode status badge. */}
+      <Slot anchor="top-center" order={3}><PilotSpectatorToggle /></Slot>
+      <Slot anchor="top-center" order={4}><SpectatorIndicator /></Slot>
       <AdvancedDrawer />
       {/* Phase 4 WS-A1 (D3) — the blocking DeathOverlay "You Died/Respawn" modal
        *  is removed. Death transitions INSTANTLY into spectator (free-roam
