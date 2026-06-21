@@ -42,8 +42,8 @@ const POLL_MS = 100;
 const GRID_SX = {
   display: 'grid',
   gridTemplateColumns: 'auto 1fr',
-  columnGap: { xs: 1, sm: 1.5 },
-  rowGap: { xs: '2px', sm: '4px' },
+  columnGap: { xs: 1, sm: 2.5 },
+  rowGap: { xs: '2px', sm: '7px' },
   color: '#dde',
   pointerEvents: 'none' as const,
   userSelect: 'none' as const,
@@ -52,18 +52,21 @@ const GRID_SX = {
   bgcolor: { xs: 'transparent', sm: 'rgba(8,12,22,0.42)' },
   border: { xs: 'none', sm: '1px solid rgba(255,255,255,0.08)' },
   borderRadius: { xs: 0, sm: 1 },
-  p: { xs: 0, sm: 1.25 },
+  p: { xs: 0, sm: 2 },
   backdropFilter: { xs: 'none', sm: 'blur(2px)' },
 };
+// Equinox Phase-5 audit — desktop sizing was "WAY too small". Bumped the sm
+// (desktop) font sizes to ~2x the mobile values (the user's "2x-3x" ask); mobile
+// (xs) is untouched. Tune the sm numbers on-device.
 const LABEL_SX = {
-  fontSize: { xs: 9, sm: 12 },
+  fontSize: { xs: 9, sm: 20 },
   letterSpacing: 0.5,
   color: 'rgba(255,255,255,0.45)',
   textTransform: 'uppercase' as const,
   alignSelf: 'baseline',
 };
 const VALUE_SX = {
-  fontSize: { xs: 11, sm: 15 },
+  fontSize: { xs: 11, sm: 24 },
   color: '#dde',
   alignSelf: 'baseline',
 };
