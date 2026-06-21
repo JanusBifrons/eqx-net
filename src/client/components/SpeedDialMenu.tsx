@@ -325,7 +325,9 @@ function fab(base: object, extra: Record<string, unknown>): Partial<FabProps> {
 }
 
 /** Per-kind Build icon. */
-const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
+/** Per-structure-kind build icon. Exported so the desktop RTS BottomControlPanel
+ *  (Phase 5 WS-4) renders the same building glyphs as the speed-dial build drill. */
+export const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
   capital: <HexagonIcon />,
   connector: <HubIcon />,
   solar: <SolarPowerIcon />,
