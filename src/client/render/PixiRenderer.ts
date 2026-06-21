@@ -2274,6 +2274,12 @@ export class PixiRenderer implements IRenderer {
     this.camera.glideTo(gameX, -gameY, durationMs);
   }
 
+  /** Phase 5 — set the spectator WASD free-pan velocity (SCREEN px/sec). */
+  setPanVelocity(vx: number, vy: number): void {
+    if (!this.initialized) return;
+    this.camera.setPanVelocity(vx, vy);
+  }
+
   /**
    * Test-only (Phase 4 WS-A1) — the world point currently at screen centre, in
    * GAME space (Y-up). The renderer's `Camera.center` is in pixi-world space
