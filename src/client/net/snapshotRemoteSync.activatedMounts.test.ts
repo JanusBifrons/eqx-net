@@ -48,6 +48,22 @@ describe('applyActivatedMounts — states[].mounts → mirror.ships[id].activate
     expect(mirror.ships.get('p1')!.activatedMounts).toBeUndefined();
   });
 
+  // Regression: smoke-test crash on sector join (capture 2026-06-21T09-10-53Z-ypqf1a).
+  // The server sets `entry.mounts = undefined` on its POOLED snapshot entry for an
+  // un-upgraded ship (SnapshotBroadcaster). notepack (Colyseus's wire encoder)
+  // encodes the `undefined` VALUE as nil, which the client decodes back as `null`
+  // (NOT undefined). The old guard `mounts !== undefined` let `null` through and
+  // crashed on `null.length` — an Uncaught TypeError in handleSnapshot that broke
+  // the entire inbound snapshot loop. Every sibling reader (applyDroneMountAngles,
+  // preResetRemoteShips) already uses a null-safe truthy check; this one didn't.
+  it('does not crash when the wire decodes mounts as null (notepack undefined→null)', () => {
+    const mirror = mirrorWith(['p1']);
+    mirror.ships.get('p1')!.activatedMounts = [{ slotId: 'latent-wing-l', weaponId: 'laser' }]; // stale
+    const snap = { states: { p1: { mounts: null } } } as unknown as SnapshotMessage;
+    expect(() => applyActivatedMounts(snap, mirror)).not.toThrow();
+    expect(mirror.ships.get('p1')!.activatedMounts).toBeUndefined();
+  });
+
   it('skips a state whose key is not in the mirror (out of interest)', () => {
     const mirror = mirrorWith(['p1']);
     expect(() => applyActivatedMounts(snapWith({ ghost: { mounts: [{ slotId: 'x', weaponId: 'laser' }] } }), mirror)).not.toThrow();

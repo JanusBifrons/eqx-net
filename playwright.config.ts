@@ -49,6 +49,7 @@ const SMOKE_SPECS: string[] = [
   '**/persistence-kill.spec.ts',
   '**/scenarios/combat-lifecycle.spec.ts',
   '**/sector-alpha.spec.ts',
+  '**/sector-join-no-snapshot-crash.spec.ts',
   '**/shield-hud.spec.ts',
   '**/ship-selection.spec.ts',
   '**/spawn-handshake.spec.ts',

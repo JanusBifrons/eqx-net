@@ -203,8 +203,22 @@ export function applyActivatedMounts(snap: SnapshotMessage, mirror: RenderMirror
   for (const id in snap.states) {
     const ship = mirror.ships.get(id);
     if (!ship) continue;
+    // Truthy (NOT `!== undefined`): the server sets `entry.mounts = undefined`
+    // on its pooled snapshot entry for an un-upgraded ship, and notepack encodes
+    // that `undefined` VALUE as nil → the client decodes it as `null` (not
+    // undefined). A `!== undefined` guard let `null` through and crashed on
+    // `null.length`, breaking the whole inbound snapshot loop (capture
+    // 2026-06-21T09-10-53Z-ypqf1a). Match the null-safe sibling readers
+    // (`applyDroneMountAngles`, `preResetRemoteShips`).
+    // Truthy (NOT `!== undefined`): the client decodes this hull's wire `mounts`
+    // as `null` for an un-upgraded ship in some live-sector states (capture
+    // 2026-06-21T09-10-53Z-ypqf1a). A `!== undefined` guard let `null` through
+    // and crashed on `null.length`, breaking the whole inbound snapshot loop.
+    // Match the null-safe sibling readers (`applyDroneMountAngles`,
+    // `preResetRemoteShips`). The unit lock for this is in
+    // `snapshotRemoteSync.activatedMounts.test.ts`.
     const mounts = snap.states[id]!.mounts;
-    if (mounts !== undefined && mounts.length > 0) {
+    if (mounts && mounts.length > 0) {
       // Copy the slim id/weapon pairs (the slice is small + only on a change).
       ship.activatedMounts = mounts.map((m) => ({ slotId: m.slotId, weaponId: m.weaponId }));
     } else if (ship.activatedMounts !== undefined) {

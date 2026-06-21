@@ -14,6 +14,19 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-21 — Phase 4 (leveling) — optional ARRAY wire fields can decode as `null` on the client; guard truthy, never `!== undefined`
+Commit: fix/snapshot-activated-mounts-null (PR TBD)
+
+Smoke test, fresh play test on `main` (Phase 4 merge PR #126): joining a sector threw `Uncaught TypeError: Cannot read properties of null (reading 'length')` at `applyActivatedMounts` (`snapshotRemoteSync.ts`), inside `handleSnapshot` → which broke the **entire inbound snapshot loop** (the client could not apply any further snapshot; it disconnected ~40 s later). Capture `2026-06-21T09-10-53Z-ypqf1a`.
+
+The crash line was `if (mounts !== undefined && mounts.length > 0)` on `snap.states[id].mounts`. The wire delivered **`null`**, which passes `!== undefined`, then `null.length` throws. The fix is one char-class wider: `if (mounts && mounts.length > 0)` — the same null-safe truthy check every SIBLING reader already used (`applyDroneMountAngles`, `preResetRemoteShips`). `applyActivatedMounts` + `applyShipLevels` (the two Phase-4 WS-B additions) were the only readers that used `!== undefined`.
+
+**The provenance of the `null` is NOT pinned, and that's worth knowing for next time.** We chased it hard and it stayed elusive: notepack.io (Colyseus's message encoder) **skips `undefined` object values** (documented in `SnapshotBroadcaster.ts`), so the server's `entry.mounts = … : undefined` for an un-upgraded ship arrives as an ABSENT key → the client reads `undefined`, which is null-safe. We verified by probe that `test-sector` (single + two-client) AND the real `sol-prime` galaxy spawn flow all deliver `undefined`, never `null`; the live `eqx.db` roster has zero null `mounts` (all `'[]'`); and the broadcaster's wire-states loop emits `array | undefined`, never `null`. So a fresh sector does NOT reproduce it — the `null` only appears in some live-sector state we couldn't recreate offline. **Lesson: don't trust the "notepack skips undefined → you'll only ever see undefined" reasoning for inbound array fields. Decode defensively (truthy) and move on; the exact null source is not worth blocking a one-char fix.**
+
+**Testing (invariant #13):** the regression lock is the UNIT test `snapshotRemoteSync.activatedMounts.test.ts` ("notepack undefined→null" case) — it feeds `mounts: null` and reproduces the exact `TypeError` pre-fix, passes post-fix. We could NOT build a faithful E2E repro (fresh sectors emit `undefined`), so the E2E `sector-join-no-snapshot-crash.spec.ts` is an honest **general join-health guard** (real galaxy spawn flow → hold 3 s → assert no uncaught `pageerror` + snapshot loop still alive), documented as such. **The deeper gap it closes: no E2E asserted on uncaught page errors across a live session, which is why a full-green CI shipped a crash-on-join.** The existing `spawn-select-flow` specs do the flow but only check `pageerror` once, right after the HUD mounts — too early to catch a per-frame snapshot crash.
+
+---
+
 ## 2026-06-17 — Equinox Phase 9 (item 2 drawer) — a z-1200 Paper can't beat a z-15 HUD: persistent-Drawer no-z-index + body-level slot hosts → Portal
 Commit: feat/galaxy-phase9 (PR TBD)
 The new docked `SectorInfoDrawer` rendered visually ON TOP of the gameplay HUD (its action bar painted over the bottom-right `AUTO`/`FIRE` cluster), yet Playwright reported the HUD buttons **intercepting** the drawer's ✕/Warp clicks — `elementFromPoint` returned the HUD, not the drawer. Two compounding CSS facts:
