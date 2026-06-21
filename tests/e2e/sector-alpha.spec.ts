@@ -18,7 +18,7 @@ async function joinSector(page: import('@playwright/test').Page): Promise<void> 
   await page.locator('[data-testid="engineering-rooms-button"]').click();
   await page.locator('[data-testid="engineering-room-test-sector"]').click();
   // Wait for the in-game HUD to mount + the local ship to broadcast.
-  await page.locator('[data-testid="ship-stats-card"]').waitFor({ timeout: 20_000 });
+  await page.locator('[data-testid="sector-info-panel"]').waitFor({ timeout: 20_000 });
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
@@ -298,7 +298,7 @@ test.describe('movement', () => {
     // No crashes or disconnects. (The old "connected" indicator text moved
     // into the drawer's Debug tab — but if either client had disconnected,
     // the game-surface's data-local-player-id would have been cleared and
-    // the ship-stats-card unmounted, both of which we already covered via
+    // the sector-info-panel unmounted, both of which we already covered via
     // joinSector. Re-assert the playerId is still present on both.)
     expect(
       await page1.locator('[data-testid="game-surface"]').getAttribute('data-local-player-id'),

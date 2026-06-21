@@ -48,7 +48,7 @@ test('real spawn flow: galaxy → pick sector → spawn → no uncaught error fo
   await page.getByTestId('ship-picker-spawn').click();
 
   // HUD mounts only once the room is connected + welcomed + first snapshot applied.
-  await expect(page.locator('[data-testid="ship-stats-card"]')).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('[data-testid="sector-info-panel"]')).toBeVisible({ timeout: 20_000 });
 
   // Hold through ~60 snapshots (20 Hz). The crash this guards recurred every
   // frame, so any uncaught snapshot-loop error surfaces within this window.
@@ -140,5 +140,5 @@ test('DataChannel path (?webrtc=1): real spawn flow → no uncaught error over D
 
   // Liveness: the HUD mounted + the snapshot loop stayed alive (it would not have
   // if handleSnapshot threw itself dead on the first DC snapshot).
-  await expect(page.locator('[data-testid="ship-stats-card"]')).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('[data-testid="sector-info-panel"]')).toBeVisible({ timeout: 10_000 });
 });

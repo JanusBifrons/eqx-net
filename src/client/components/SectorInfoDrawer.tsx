@@ -270,7 +270,20 @@ export function SectorInfoDrawer({
         data-testid="sector-drawer-handle"
         aria-label="Drag to close"
       >
-        <Box sx={{ width: anchor === 'bottom' ? 40 : 4, height: anchor === 'bottom' ? 4 : 40, borderRadius: 2, bgcolor: '#3a4660' }} />
+        {/* Phase 5 — the visible grabber pill ("weird grey line… shouldn't be
+            adjustable") reads as a resize handle. The drawer is a fixed-size
+            MUI `persistent` drawer (never resizable); swipe-to-close is a TOUCH
+            gesture only, so hide the pill on fine-pointer (desktop) devices —
+            there the ✕ button closes it — and make it subtler on touch. */}
+        <Box
+          sx={{
+            width: anchor === 'bottom' ? 40 : 4,
+            height: anchor === 'bottom' ? 4 : 40,
+            borderRadius: 2,
+            bgcolor: 'rgba(255,255,255,0.16)',
+            '@media (pointer: fine)': { display: 'none' },
+          }}
+        />
       </Box>
 
       {!tip || !sectorKey ? (

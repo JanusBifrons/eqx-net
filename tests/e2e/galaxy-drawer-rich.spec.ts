@@ -19,7 +19,7 @@ declare global {
 async function bootInGame(page: Page): Promise<void> {
   await page.goto(`${BASE_URL}/?galaxy=sol-prime`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForSelector('[data-testid="game-surface"]', { timeout: 30_000 });
-  await page.locator('[data-testid="ship-stats-card"]').waitFor({ timeout: 30_000 });
+  await page.locator('[data-testid="sector-info-panel"]').waitFor({ timeout: 30_000 });
   await page.waitForFunction(() => typeof window.__eqxGalaxyPick === 'function', null, { timeout: 10_000 });
 }
 

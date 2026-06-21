@@ -85,7 +85,7 @@ test('wave attack: a ready base draws an 8 × Legionnaires squad that warps in a
   });
 
   // Joined + active (the ship-stats card means we're in-game; ownerPresent now true).
-  await expect(page.locator('[data-testid="ship-stats-card"]')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('[data-testid="sector-info-panel"]')).toBeVisible({ timeout: 30_000 });
 
   // 1. The headline: the sector-wide warp-in WARNING banner for the incoming
   //    squad — "8 × Legionnaires". Appears on the first director tick after the

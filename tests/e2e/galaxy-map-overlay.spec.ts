@@ -34,7 +34,7 @@ async function bootGame(page: import('@playwright/test').Page): Promise<void> {
   // chunk finishing, and bump the timeout for the cold path.
   await page.goto(BOOT_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForSelector('[data-testid="game-surface"]', { timeout: 30_000 });
-  await page.locator('[data-testid="ship-stats-card"]').waitFor({ timeout: 30_000 });
+  await page.locator('[data-testid="sector-info-panel"]').waitFor({ timeout: 30_000 });
 }
 
 /**

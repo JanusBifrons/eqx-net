@@ -41,7 +41,7 @@ test('CDP roundtrip under steady-state Pixi load', async ({ page }) => {
     waitUntil: 'domcontentloaded',
     timeout: 30_000,
   });
-  await expect(page.locator('[data-testid="ship-stats-card"]')).toBeVisible({
+  await expect(page.locator('[data-testid="sector-info-panel"]')).toBeVisible({
     timeout: 25_000,
   });
 
