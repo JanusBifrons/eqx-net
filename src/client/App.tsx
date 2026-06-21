@@ -49,6 +49,7 @@ import { useWarpOrchestration } from './useWarpOrchestration';
 import { ShipStatsCard } from './components/ShipStatsCard';
 import { EnergyBar } from './components/EnergyBar';
 import { SpeedDialMenu } from './components/SpeedDialMenu';
+import { BottomControlPanel } from './components/BottomControlPanel';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
 import { EntityStatsPanel } from './components/EntityStatsPanel';
 import { UpgradeModalHost } from './components/UpgradeModalHost';
@@ -769,6 +770,9 @@ function GameSurface({
        *  (5) and FIRE/BOOST (10/20). Smoke handoff 2026-06-06, Issue 3:
        *  "the speed dial is in the wrong place" → bottom-right corner. */}
       <Slot anchor="bottom-right" order={1}><SpeedDialMenu /></Slot>
+      {/* Phase 5 WS-4 — desktop RTS control strip (weapons when piloting,
+       *  buildings when spectating). Self-gates to desktop + in-game. */}
+      <Slot anchor="bottom-center" order={1}><BottomControlPanel /></Slot>
       {/* Click-to-inspect live stats (structures follow-up Item B6). Visible
        *  only while an entity is selected. WS-9 (R2.30) — WORLD-ANCHORED: rendered
        *  OUTSIDE the Slot system as a `position:fixed` element that gameRafLoop
