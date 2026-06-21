@@ -273,6 +273,16 @@ const JoinOptionsSchema = z
      *  wall-clock pulse (which `testTimeScale` can't, being physics-tick-only).
      *  testMode-gated. */
     structureGridPulseMs: z.number().int().min(20).max(2000).optional(),
+    /** Equinox Phase 5 (WS-3) — join the sector as a SPECTATOR. The galaxy
+     *  "Join as spectator" CTA sends this (skipping the ship-kind picker). The
+     *  hull still spawns through the normal handshake (so the client's join
+     *  readiness lifts the load curtain the proven way), but at the arrival
+     *  flip it is PARKED as a lingering hull — the player has NO active hull
+     *  and arrives in free-roam spectator mode (pilotable later via the in-
+     *  world Pilot dropdown). Galaxy rooms only (`sectorKey !== null`); ignored
+     *  on engineering rooms which have no roster to park a lingering hull into.
+     *  NOT testMode-gated — it's a real player-facing entry mode. */
+    spectator: z.boolean().optional(),
   })
   .passthrough();
 
@@ -362,6 +372,12 @@ interface PendingJoinRecord {
   spawnX: number;
   spawnY: number;
   sessionId: string;
+  /** Equinox Phase 5 (WS-3) — join-as-spectator. When `true`, `drainPendingJoin`
+   *  PARKS the hull as a lingering hull at the arrival flip (via
+   *  `displaceActiveHullToLingering`) instead of flipping `isActive = true`, so
+   *  the player arrives with no active hull. Only set on a galaxy-room fresh
+   *  spawn whose join carried `spectator: true`. */
+  spectator?: boolean;
 }
 
 /** Stage 5 — motion epsilon. A ship is considered "moving" if its speed
@@ -3862,15 +3878,32 @@ export class SectorRoom extends Room<SectorState> {
     for (const [playerId, rec] of this.pendingJoin) {
       // Activation branch: arrivalTick set and reached.
       if (rec.arrivalTick !== null && currentTick >= rec.arrivalTick) {
-        const ship = this.getActiveShip(playerId);
-        if (ship) {
-          ship.isActive = true;
-          serverLogEvent('ship_activated', {
+        if (rec.spectator === true) {
+          // Equinox Phase 5 (WS-3) — join-as-spectator. Instead of flipping the
+          // hull active, PARK it as a lingering hull (the exact inverse of the
+          // onJoin fresh-spawn-displaces branch, reused via WS-A2's
+          // `displaceActiveHullToLingering`). The player now has NO active hull
+          // and the client (already in `pilotMode = 'spectator'` from
+          // `welcome.spectator`) free-roams; the parked hull is theirs to pilot
+          // later via the in-world Pilot dropdown. The handshake already lifted
+          // the client's load curtain by this point, so the seam is seamless.
+          this.displaceActiveHullToLingering(playerId);
+          serverLogEvent('spectator_join_parked', {
             playerId,
-            entityId: ship.shipInstanceId,
             arrivalTick: rec.arrivalTick,
             currentTick,
           });
+        } else {
+          const ship = this.getActiveShip(playerId);
+          if (ship) {
+            ship.isActive = true;
+            serverLogEvent('ship_activated', {
+              playerId,
+              entityId: ship.shipInstanceId,
+              arrivalTick: rec.arrivalTick,
+              currentTick,
+            });
+          }
         }
         this.pendingJoin.delete(playerId);
         continue;
@@ -4632,12 +4665,22 @@ export class SectorRoom extends Room<SectorState> {
     if (resumedLastFireTick !== null && shouldHonourResumedCooldown(resumedLastFireTick, currentServerTick)) {
       this.lastFireClientTick.set(playerId, resumedLastFireTick);
     }
+    // Equinox Phase 5 (WS-3) — join-as-spectator. The hull spawns through the
+    // normal handshake (so the client's join readiness — first snapshot,
+    // arrival ack, local-pose-resolved — lifts the load curtain the proven
+    // way); `drainPendingJoin` then PARKS it as a lingering hull at the arrival
+    // flip instead of activating it (see the `spectator` branch there). Galaxy
+    // rooms only — an engineering room has no roster to park a lingering hull
+    // into, so the flag is ignored and the player joins as a normal pilot.
+    const spectatorJoin =
+      parsed.success && parsed.data.spectator === true && this.sectorKey !== null;
     const welcome: WelcomeMessage = {
       type: 'welcome',
       playerId,
       serverTick: currentServerTick,
       sectorKey: this.sectorKey,
       shipInstanceId: ship.shipInstanceId,
+      ...(spectatorJoin ? { spectator: true } : {}),
     };
     client.send('welcome', welcome);
 
@@ -4705,6 +4748,7 @@ export class SectorRoom extends Room<SectorState> {
       spawnX,
       spawnY,
       sessionId: client.sessionId,
+      ...(spectatorJoin ? { spectator: true } : {}),
     });
     serverLogEvent('pending_join_registered', {
       playerId,
