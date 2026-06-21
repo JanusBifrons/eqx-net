@@ -23,7 +23,7 @@ const BOOT_URL = `${BASE_URL}/?room=test-sector`;
 async function bootGame(page: import('@playwright/test').Page): Promise<void> {
   await page.goto(BOOT_URL);
   await page.waitForSelector('[data-testid="game-surface"]', { timeout: 10_000 });
-  await page.locator('[data-testid="ship-stats-card"]').waitFor({ timeout: 10_000 });
+  await page.locator('[data-testid="sector-info-panel"]').waitFor({ timeout: 10_000 });
 }
 
 test.describe('avatar-menu logout (desktop)', () => {

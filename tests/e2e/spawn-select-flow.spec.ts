@@ -33,7 +33,7 @@ test('post-auth spawn-select → click sector → game surface mounts', async ({
   // Ship stats card mounts only when the game surface has actually
   // connected and welcomed; if we hit a black-screen regression, this
   // assertion times out.
-  await expect(page.locator('[data-testid="ship-stats-card"]')).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('[data-testid="sector-info-panel"]')).toBeVisible({ timeout: 20_000 });
 
   // Sanity: no JS runtime errors fired during the transition.
   expect(errors, errors.join('\n')).toEqual([]);
@@ -76,6 +76,6 @@ test('post-auth spawn-select → pick galaxy sector → game surface mounts', as
   await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 5_000 });
   await page.getByTestId('ship-picker-spawn').click();
 
-  await expect(page.locator('[data-testid="ship-stats-card"]')).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('[data-testid="sector-info-panel"]')).toBeVisible({ timeout: 20_000 });
   expect(errors, errors.join('\n')).toEqual([]);
 });

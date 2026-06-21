@@ -76,9 +76,9 @@ test.describe('spawn handshake — curtain must drop within a reasonable window'
     // is well under 8s. Anything over 20s indicates a real stall.
     await expect(hudAttrs).toHaveAttribute('data-loading-active', '0', { timeout: 20_000 });
 
-    // Sanity: the ship-stats-card paints after the curtain drops
+    // Sanity: the sector-info-panel paints after the curtain drops
     // (existing spawn-select-flow.spec.ts contract).
-    await expect(page.locator('[data-testid="ship-stats-card"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="sector-info-panel"]')).toBeVisible({ timeout: 5_000 });
 
     // No JS runtime errors during the join.
     expect(errors, errors.join('\n')).toEqual([]);

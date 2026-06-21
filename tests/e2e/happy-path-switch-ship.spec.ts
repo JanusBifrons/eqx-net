@@ -8,7 +8,7 @@ import { test, expect, type Page } from '@playwright/test';
  * The path under test:
  *   1. Auto-join `galaxy-sol-prime` (auth via Playwright storageState,
  *      sector via `?galaxy=` URL param — bypasses Meta + GalaxyOverview).
- *   2. Wait for the local ship to render (ship-stats-card visible AND
+ *   2. Wait for the local ship to render (sector-info-panel visible AND
  *      `ship-count` >= 1).
  *   3. Wait for the roster to populate with the current ship.
  *   4. Trigger an in-game ship swap to the SAME ship (rebind path)
@@ -37,7 +37,7 @@ import { test, expect, type Page } from '@playwright/test';
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
 async function waitForLocalShip(page: Page, timeoutMs = 20_000): Promise<void> {
-  await expect(page.locator('[data-testid="ship-stats-card"]')).toBeVisible({ timeout: timeoutMs });
+  await expect(page.locator('[data-testid="sector-info-panel"]')).toBeVisible({ timeout: timeoutMs });
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
