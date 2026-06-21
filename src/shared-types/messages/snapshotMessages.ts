@@ -14,6 +14,14 @@ export interface WelcomeMessage {
    *  linger window. Empty string in engineering rooms that don't have
    *  a roster row. */
   shipInstanceId: string;
+  /** Equinox Phase 5 (WS-3) — join-as-spectator. When `true`, this player
+   *  joined the sector as a SPECTATOR: the server spawned their hull through
+   *  the normal handshake but PARKED it as a lingering hull at the arrival
+   *  flip (so there is no ACTIVE hull), and the client enters `pilotMode =
+   *  'spectator'` (free-roam camera + construction; the parked hull is
+   *  pilotable via the in-world Pilot dropdown). Absent / `false` ⇒ the
+   *  normal pilot join. Back-compat: pre-Phase-5 servers omit it. */
+  spectator?: boolean;
 }
 
 /** Authoritative snapshot broadcast by the server at 20 Hz for client-side

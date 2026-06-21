@@ -1387,6 +1387,20 @@ export class ColyseusGameClient {
         logEvent('pilot_swap_welcomed', { shipInstanceId: msg.shipInstanceId });
       }
 
+      // Equinox Phase 5 (WS-3) — JOIN-AS-SPECTATOR. The server spawned our hull
+      // through the normal handshake (so `tryInitPredWorld` below resolves the
+      // local pose + lifts the load curtain the proven way), then PARKS it as a
+      // lingering hull at the arrival flip. Enter spectator mode now: the
+      // spectating effects (camera free-roam + input disable + `setSpectator`)
+      // are already wired off `pilotMode` (the death→spectator path), and the
+      // parked hull surfaces in `lingeringShips` for the in-world Pilot dropdown.
+      // A pilot-swap welcome (handled just above) never carries `spectator`, so
+      // the two never collide.
+      if (msg.spectator === true) {
+        useUIStore.getState().setPilotMode('spectator');
+        logEvent('joined_as_spectator', { playerId: msg.playerId, sectorKey: msg.sectorKey });
+      }
+
       // If state already arrived, bootstrap the prediction world now.
       this.tryInitPredWorld(msg.playerId);
       // Phase 2 swift-otter — kick off the DC handshake after welcome.

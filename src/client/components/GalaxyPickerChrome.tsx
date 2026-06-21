@@ -94,6 +94,10 @@ export interface GalaxyPickerChromeProps {
   onSelectRoom?: (roomName: string) => void;
   onSpawnExistingShip?: (shipId: string, sectorKey: string) => void;
   onSpawnNewShip?: (kind: ShipKindId, sectorKey: string) => void;
+  /** Equinox Phase 5 (WS-3) — join a sector as a SPECTATOR (no ship picker;
+   *  free-roam camera + construction, hull parks as a pilotable lingering
+   *  hull). Landing context only. */
+  onSpawnSpectator?: (sectorKey: string) => void;
   onSelectLocal?: () => void;
   /** Pre-resolved limbo sector; when omitted the chrome runs its own
    *  /dev/limbo lookup (matches the legacy spawn-screen behaviour). */
@@ -130,6 +134,7 @@ export function GalaxyPickerChrome({
   onSelectRoom,
   onSpawnExistingShip,
   onSpawnNewShip,
+  onSpawnSpectator,
   onSelectLocal,
   activeLimboSectorKey,
   context = 'landing',
@@ -529,6 +534,17 @@ export function GalaxyPickerChrome({
           setPendingSpawnSector(sector);
           setSelectedSectorKey(null);
         }}
+        onSpectate={
+          context === 'landing' && onSpawnSpectator
+            ? (sector) => {
+                // Equinox Phase 5 (WS-3) — join as spectator, SKIPPING the ship
+                // picker entirely (go straight to the room with spectator:true).
+                logEvent('galaxy_drawer_spectate', { sector });
+                onSpawnSpectator(sector);
+                setSelectedSectorKey(null);
+              }
+            : undefined
+        }
         onWarp={(sector) => {
           logEvent('galaxy_drawer_warp', { sector });
           onWarp?.(sector);
