@@ -14,6 +14,12 @@ import { FLASH_DURATION_MS } from '../../../core/structures/structureGridConstan
 
 /** Idle (non-flowing) line tint — muted blue. */
 export const CONNECTOR_IDLE_COLOR = 0x4488aa;
+/** Idle line ALPHA (Equinox Phase-5 audit — "connection lines lit up for no
+ *  reason"). Power flow is aggregated, never flashed, so a working grid sits at
+ *  IDLE — and 0.3 read as fully "lit". Dropped to a faint 0.14 so an idle edge is
+ *  a subtle "this is connected" hint, and only an edge carrying minerals / repair
+ *  / construction flow (the ACTIVE branch, alpha ≥ 0.6 + glow) reads as LIT. */
+export const CONNECTOR_IDLE_ALPHA = 0.14;
 /** Mineral-flow tint (hauling ore / reclaiming) — orange. */
 export const CONNECTOR_MINERAL_COLOR = 0xee8844;
 /** WS-D (#12) — repair / healing flow tint — green. */
@@ -307,7 +313,7 @@ export function connectorVisualInto(
     // IDLE — never flowed, or flow stopped + grace elapsed. Steady muted-blue
     // line, NO travelling comet (Phase-8: idle connectors must not pulse).
     out.color = CONNECTOR_IDLE_COLOR;
-    out.alpha = 0.3;
+    out.alpha = CONNECTOR_IDLE_ALPHA;
     out.width = Math.max(1 / safeScale, 1);
     out.glowAlpha = 0;
     out.glowWidth = 0;

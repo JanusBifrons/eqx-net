@@ -7,6 +7,8 @@ import {
   structureUpgradeCost,
   structureLevelMultipliers,
   effectiveStructureMaxHealth,
+  effectiveStructureMaxConnections,
+  STRUCTURE_CONNECTIONS_PER_LEVEL,
   NEUTRAL_STRUCTURE_LEVEL_MULTIPLIERS,
 } from './structureLevel.js';
 
@@ -88,5 +90,24 @@ describe('structureLevel — effective max health', () => {
   it('a level-2 structure has more HP than base', () => {
     expect(effectiveStructureMaxHealth(600, 2)).toBeGreaterThan(600);
     expect(effectiveStructureMaxHealth(600, 2)).toBeCloseTo(600 * (1 + STRUCTURE_LEVEL_FRAC));
+  });
+});
+
+describe('structureLevel — effective connection cap (Equinox Phase-5 audit)', () => {
+  it('a level-1 connector keeps its base slot count', () => {
+    expect(effectiveStructureMaxConnections(6, 1)).toBe(6);
+    expect(effectiveStructureMaxConnections(6, undefined)).toBe(6);
+  });
+  it('UPGRADING adds slots — each level grants STRUCTURE_CONNECTIONS_PER_LEVEL more', () => {
+    // The whole point of the bug fix: an upgraded connector can hold MORE links.
+    expect(effectiveStructureMaxConnections(6, 2)).toBe(6 + STRUCTURE_CONNECTIONS_PER_LEVEL);
+    expect(effectiveStructureMaxConnections(6, 3)).toBe(6 + 2 * STRUCTURE_CONNECTIONS_PER_LEVEL);
+    // A maxed connector (cap 5) reaches base + 4 grants.
+    expect(effectiveStructureMaxConnections(6, 5)).toBe(6 + 4 * STRUCTURE_CONNECTIONS_PER_LEVEL);
+    expect(effectiveStructureMaxConnections(6, 5)).toBeGreaterThan(6);
+  });
+  it('clamps an out-of-range level (never below the base cap)', () => {
+    expect(effectiveStructureMaxConnections(6, 0)).toBe(6);
+    expect(effectiveStructureMaxConnections(6, 99)).toBe(effectiveStructureMaxConnections(6, STRUCTURE_LEVEL_CAP));
   });
 });

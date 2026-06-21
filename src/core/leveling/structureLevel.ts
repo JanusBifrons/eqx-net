@@ -50,6 +50,15 @@ export const STRUCTURE_LEVEL_FRAC = 0.25;
  */
 export const STRUCTURE_UPGRADE_COST_FRAC = 1.0;
 
+/**
+ * Extra connection SLOTS granted per level above 1 (Equinox Phase-5 audit —
+ * "upgrading a connector doesn't add more connection slots"). ADDITIVE, not a
+ * multiplier: `maxConnections` is an integer count, so a level-L structure's cap
+ * is `base + (L-1)·STRUCTURE_CONNECTIONS_PER_LEVEL`. A balance knob — a level-5
+ * connector (base 6) reaches 6 + 4 = 10 slots. Level 1 ⇒ +0 (byte-identical).
+ */
+export const STRUCTURE_CONNECTIONS_PER_LEVEL = 1;
+
 /** A structure's level, clamped to `[1, STRUCTURE_LEVEL_CAP]`. Defensive against
  *  a corrupt / out-of-range persisted value (always returns a valid level). */
 export function clampStructureLevel(level: number | undefined): number {
@@ -143,4 +152,19 @@ export function structureLevelFactor(level: number | undefined): number {
  *  slice (`hpPct` denominator) read so a leveled structure's bar is consistent. */
 export function effectiveStructureMaxHealth(baseMaxHealth: number, level: number | undefined): number {
   return baseMaxHealth * structureLevelMultipliers(level).maxHealth;
+}
+
+/**
+ * Leveled effective connection cap (`base + (level-1)·STRUCTURE_CONNECTIONS_PER_LEVEL`).
+ * ADDITIVE (slots are whole). The single helper that BOTH the server GridNode
+ * projection (`structureToGridNode`) and the client preview projection
+ * (`mirrorToGridNode`) read, so the live grid + the placement preview agree on
+ * how many links a leveled structure can hold (Equinox Phase-5 audit: upgrading a
+ * connector now actually adds slots). Level ≤ 1 ⇒ the base cap, unchanged.
+ */
+export function effectiveStructureMaxConnections(
+  baseMaxConnections: number,
+  level: number | undefined,
+): number {
+  return baseMaxConnections + (clampStructureLevel(level) - 1) * STRUCTURE_CONNECTIONS_PER_LEVEL;
 }
