@@ -153,6 +153,11 @@ export interface SectorInfoDrawerProps {
   onJoin: (sectorKey: string) => void;
   /** Warp CTA — engage transit to this (adjacent) sector. */
   onWarp: (sectorKey: string) => void;
+  /** Equinox Phase 5 (WS-3) — landing CTA to join this sector as a SPECTATOR,
+   *  SKIPPING the ship-kind picker (free-roam camera + construction; the hull
+   *  parks as a lingering hull you can pilot later). Omitted ⇒ no Spectate
+   *  button (back-compat / warp context). */
+  onSpectate?: (sectorKey: string) => void;
 }
 
 function kindLabel(k: string): string {
@@ -191,6 +196,7 @@ export function SectorInfoDrawer({
   onSpawnExistingShip,
   onJoin,
   onWarp,
+  onSpectate,
 }: SectorInfoDrawerProps): JSX.Element {
   const portrait = useMediaQuery('(orientation: portrait)');
   const anchor: 'bottom' | 'right' = portrait ? 'bottom' : 'right';
@@ -426,16 +432,32 @@ export function SectorInfoDrawer({
                 </Typography>
               )
             ) : (
-              <Button
-                fullWidth
-                size="small"
-                variant="contained"
-                data-testid="sector-drawer-join"
-                onClick={() => sectorKey && onJoin(sectorKey)}
-                sx={{ flex: 1, bgcolor: '#00aa55', color: '#04140b', fontWeight: 700, fontSize: 12, '&:hover': { bgcolor: '#00cc66' } }}
-              >
-                Join sector
-              </Button>
+              <>
+                <Button
+                  fullWidth
+                  size="small"
+                  variant="contained"
+                  data-testid="sector-drawer-join"
+                  onClick={() => sectorKey && onJoin(sectorKey)}
+                  sx={{ flex: 1, bgcolor: '#00aa55', color: '#04140b', fontWeight: 700, fontSize: 12, '&:hover': { bgcolor: '#00cc66' } }}
+                >
+                  Join sector
+                </Button>
+                {onSpectate && (
+                  // Equinox Phase 5 (WS-3) — join as a SPECTATOR, skipping the
+                  // ship-kind picker (free-roam + construction; hull parks as a
+                  // pilotable lingering hull).
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    data-testid="sector-drawer-spectate"
+                    onClick={() => sectorKey && onSpectate(sectorKey)}
+                    sx={{ flex: '0 0 auto', color: '#9ad8ff', borderColor: '#2c6a8f', fontWeight: 600, fontSize: 11, '&:hover': { borderColor: '#33bbff', bgcolor: 'rgba(51,187,255,0.08)' } }}
+                  >
+                    Spectate
+                  </Button>
+                )}
+              </>
             )}
           </Box>
         </>

@@ -1387,8 +1387,25 @@ export class ColyseusGameClient {
         logEvent('pilot_swap_welcomed', { shipInstanceId: msg.shipInstanceId });
       }
 
-      // If state already arrived, bootstrap the prediction world now.
-      this.tryInitPredWorld(msg.playerId);
+      // Equinox Phase 5 (WS-3) — JOIN-AS-SPECTATOR. The player joins with NO
+      // ship at all (free-roam camera). There is no local hull to bootstrap, so
+      // SKIP `tryInitPredWorld` and mark `localPoseResolved` vacuously true (no
+      // pose to resolve) — the load curtain instead lifts via the spectator
+      // branch in `computeBootstrapReadyFromState` (which drops the
+      // `localShipInstanceId`/`localPoseResolved` ship gates) + the normal
+      // `client_ready` → `warp_in` → `arrivalAcked` handshake. The spectating
+      // effects (camera free-roam + input disable + `setSpectator`) are already
+      // wired off `pilotMode` (the death→spectator path). A pilot-swap welcome
+      // (handled just above) never carries `spectator`, so the two never collide.
+      if (msg.spectator === true) {
+        const ui = useUIStore.getState();
+        ui.setPilotMode('spectator');
+        ui.setLocalPoseResolved(true);
+        logEvent('joined_as_spectator', { playerId: msg.playerId, sectorKey: msg.sectorKey });
+      } else {
+        // If state already arrived, bootstrap the prediction world now.
+        this.tryInitPredWorld(msg.playerId);
+      }
       // Phase 2 swift-otter — kick off the DC handshake after welcome.
       // The transport's start() is idempotent so a stale call from a
       // pre-welcome retry is safe.

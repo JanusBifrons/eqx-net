@@ -37,9 +37,32 @@ export interface LodStarLayer {
   readonly fadedAt: number;
 }
 
-/** Safety cap on the per-axis tile half-range (prevents runaway iteration if a
- *  layer is evaluated far outside its intended zoom window). */
-export const STAR_MAX_TILE_HALF = 12;
+/** Absolute backstop on the per-axis tile half-range — a runaway-iteration guard
+ *  for the degenerate case (a layer somehow evaluated far outside its zoom
+ *  window, where `alpha <= 0` would already have skipped it). It is NOT the
+ *  coverage limiter: `starTileHalfRange` sizes the range to the live viewport and
+ *  only clamps to this backstop, which sits comfortably above any real device at
+ *  the zoom-out floor (a 4K screen needs ~39 half-tiles for the coarsest layer). */
+export const STAR_MAX_TILE_HALF = 64;
+
+/**
+ * Per-axis tile half-range needed to TILE `halfViewportWorld` world-units with
+ * `tileSize`-sized tiles, plus a one-tile pad so the field never shows a hard
+ * edge, clamped to the `STAR_MAX_TILE_HALF` backstop. This is the single source
+ * of truth for BOTH starfield draw loops (gameplay `StarfieldBackground` + the
+ * galaxy map `GalaxyMapLayer.drawStarfield`).
+ *
+ * The square-cutoff bug (Phase 5; the user's "literally zero change" report): a
+ * static `STAR_MAX_TILE_HALF = 12` clamped coverage to ±12 tiles, which at the
+ * zoom-out floor is far narrower than a wide/tall viewport in world units — so
+ * tiles stopped and a hard square edge appeared. The prior fix (#11) only raised
+ * the layer *alpha* at the floor; it never touched tile COVERAGE. Sizing the
+ * range to the viewport (and only clamping to a generous backstop) is the
+ * coverage fix. Pure; unit-locked.
+ */
+export function starTileHalfRange(halfViewportWorld: number, tileSize: number): number {
+  return Math.min(STAR_MAX_TILE_HALF, Math.ceil(halfViewportWorld / tileSize) + 1);
+}
 
 /** Fast deterministic 32-bit Murmur-style hash of four ints → float in [0, 1). */
 export function starHash(a: number, b: number, c: number, d: number): number {
