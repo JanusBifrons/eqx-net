@@ -150,8 +150,13 @@ Long uncommitted sessions are a recovery hazard. If Vite HMR cycles go wrong, th
 ```
 git push -u origin <branch>
 gh pr create --base main --head <branch> --title "…" --body-file diag/_pr-body-<x>.md
+gh pr merge <n> --auto --merge   # ALWAYS — enable auto-merge the instant the PR exists (see below)
 gh pr checks <n>   # CI status; gh pr view/edit/list/diff also fine
 ```
+
+**ALWAYS enable auto-merge the instant a PR is created — unprompted, every time (2026-06-21, standing user directive).** The push→PR step is NOT complete until `gh pr merge <n> --auto --merge` has run. Repo facts: default merge method is `--merge` (`viewerDefaultMergeMethod=MERGE`), `deleteBranchOnMerge=true` (branch auto-cleaned), and `--auto` HOLDS the PR until the required CI checks pass, then merges — so this is safe, not a blind merge (verified on #127: it waited for e2e-smoke/integration/netgate-run/unit/verify to go green, then merged). **Why this is a hard rule and not a nicety:** the user runs Claude Code on **two machines**, so a per-machine local memory of "set auto-merge" does NOT follow them between boxes — it kept getting dropped and they had to remind me on every PR. This lives in CLAUDE.md (in git → both machines) precisely so it can't break down that way. Don't stop at `gh pr create`; chain the auto-merge and report "auto-merge on" alongside the PR URL.
+
+**Auto-memory is PER-MACHINE — durable/shared rules belong HERE, not in a memory (2026-06-21, standing user directive).** The file-based auto-memory at `~/.claude/projects/<project>/memory/` lives on a SINGLE machine's disk and does **not** sync across machines. The user runs Claude Code on **two machines**, so any rule recorded only as a memory silently fails to apply on the other box — which is exactly how the auto-merge rule above kept breaking down. **Routing rule for where a learning goes:** machine-specific facts (a local path, a per-box workaround, e.g. [the WMI dev-server relaunch]) or genuinely private notes → a memory is appropriate. Anything that must hold on EVERY machine / for any contributor — process rules, conventions, standing directives, project gotchas — → write it in CLAUDE.md (or `docs/LESSONS.md`), because it's in git and travels with the repo. When in doubt, prefer CLAUDE.md: a memory that *should* have been a repo doc is invisible the moment the user switches machines.
 
 **Keep the branch synced with `main` — sync BEFORE every push + PR (2026-06-18, user process directive).** A branch cut off an older `main` goes stale the instant another PR merges, so the user repeatedly hits GitHub's "Update branch" gate before merge. Avoid it:
 
