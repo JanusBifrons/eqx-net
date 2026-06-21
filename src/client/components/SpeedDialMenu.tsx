@@ -17,8 +17,6 @@ import BatteryChargingFullIcon from '@mui/icons-material/BatteryChargingFull';
 import SecurityIcon from '@mui/icons-material/Security';
 import BoltIcon from '@mui/icons-material/Bolt';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
-import VisibilityIcon from '@mui/icons-material/Visibility';
-import FlightIcon from '@mui/icons-material/Flight';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
 import { getStructureKind, type StructureKindId } from '@shared-types/structureKinds';
@@ -80,9 +78,6 @@ import { useTouchClickActivate } from './touchClickActivate';
 export function SpeedDialMenu(): JSX.Element | null {
   const shouldRender = useShouldRenderHud();
   const isDead = useUIStore((s) => s.isDead);
-  const phase = useUIStore((s) => s.phase);
-  const pilotMode = useUIStore((s) => s.pilotMode);
-  const setPilotMode = useUIStore((s) => s.setPilotMode);
   const isGalaxyMapOpen = useUIStore((s) => s.isGalaxyMapOpen);
   const setDrawerOpen = useUIStore((s) => s.setDrawerOpen);
   const toggleGalaxyMapOpen = useUIStore((s) => s.toggleGalaxyMapOpen);
@@ -124,15 +119,6 @@ export function SpeedDialMenu(): JSX.Element | null {
     close();
     toggleGalaxyMapOpen();
   }, [close, toggleGalaxyMapOpen]);
-
-  // Phase 4 WS-A1 (D7) — pilot↔spectator toggle. Spectator is a CLIENT-LOCAL
-  // free-roam construction camera (D4/D5); the death→spectator transition fires
-  // elsewhere (ColyseusClient.killEntity). This is the deliberate toggle. Gated
-  // to phase==='game' below (it makes no sense on the galaxy/connecting screens).
-  const handleSpectatorToggle = useCallback(() => {
-    close();
-    setPilotMode(useUIStore.getState().pilotMode === 'spectator' ? 'pilot' : 'spectator');
-  }, [close, setPilotMode]);
 
   const handleWeapon = useCallback(() => {
     close();
@@ -274,26 +260,10 @@ export function SpeedDialMenu(): JSX.Element | null {
         })}
       />,
     ];
-    // Phase 4 WS-A1 (D7) — the pilot↔spectator toggle is gated to the in-game
-    // phase only (a free-roam construction camera makes no sense on the
-    // galaxy-map / connecting screens, where the dial can still mount).
-    if (phase === 'game') {
-      const spectating = pilotMode === 'spectator';
-      (actions as ReactNode[]).push(
-        <SpeedDialAction
-          key="spectator"
-          icon={spectating ? <FlightIcon /> : <VisibilityIcon />}
-          tooltipTitle={spectating ? 'Pilot ship' : 'Spectate'}
-          tooltipOpen
-          FabProps={fab(ACTION_FAB_BASE, {
-            'data-testid': 'spectator-toggle',
-            'aria-pressed': spectating,
-            onClick: clickActivate(handleSpectatorToggle),
-            onTouchStart: touchActivate(handleSpectatorToggle),
-          })}
-        />,
-      );
-    }
+    // Phase 5 — the pilot↔spectator toggle MOVED OUT of the speed-dial into the
+    // always-visible `PilotSpectatorToggle` (the user: it "was NOT designed to be
+    // part of the speeddial… visible at all times"). The speed-dial no longer
+    // carries a spectator action.
   }
 
   // The FAB reflects the drilled-into category at the `kinds` level (the dial

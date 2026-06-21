@@ -132,8 +132,8 @@ test('spectator input is pan, not thrust — the ship does NOT move on W', async
     { timeout: 10_000 },
   );
 
-  // Enter spectator via the toggle (the ship persists server-side; input gates).
-  await page.locator('[data-testid="speed-dial-fab"]').click();
+  // Enter spectator via the always-visible toggle (Phase 5 — moved out of the
+  // speed-dial). The ship persists server-side; input gates.
   await page.locator('[data-testid="spectator-toggle"]').click();
   await page.waitForFunction(
     () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator',
@@ -205,20 +205,21 @@ test('construction works while spectating (place a structure with no ship)', asy
   expect(await swarmCount()).toBeGreaterThan(before);
 });
 
-test('speed-dial toggle round-trips pilot↔spectator', async ({ page }) => {
+test('pilot/spectate toggle round-trips pilot↔spectator', async ({ page }) => {
   test.setTimeout(45_000);
   await join(page);
   expect(await pilotMode(page)).toBe('pilot');
 
-  await page.locator('[data-testid="speed-dial-fab"]').click();
+  // Phase 5 — the always-visible two-button toggle (out of the speed-dial). Click
+  // Spectate to detach, Pilot to return (re-clicking an active exclusive toggle
+  // is a no-op, so the round-trip uses the OTHER button).
   await page.locator('[data-testid="spectator-toggle"]').click();
   await page.waitForFunction(
     () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator',
     { timeout: 5_000 },
   );
 
-  await page.locator('[data-testid="speed-dial-fab"]').click();
-  await page.locator('[data-testid="spectator-toggle"]').click();
+  await page.locator('[data-testid="pilot-toggle"]').click();
   await page.waitForFunction(
     () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'pilot',
     { timeout: 5_000 },
