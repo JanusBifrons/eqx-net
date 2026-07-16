@@ -226,7 +226,7 @@ Updated as each PR merges. Wave assignment per the approved campaign plan; PRs r
 | 15 error boundaries | 1.1 | pending |
 | 3 zero-damage guard (both sides) | 1.2 | pending |
 | 16 sampled-warn wrapper | 1.3 | pending |
-| 17 physics-worker scratch | 1.4 | pending |
+| 17 physics-worker scratch | 1.4 | ✅ landed |
 | 1 hostility bit on snapshot | 2.1 | pending |
 | 5 lingering liveness audit | 2.2 | pending |
 | 9 incoming-warp reliability | 2.3 | pending |
