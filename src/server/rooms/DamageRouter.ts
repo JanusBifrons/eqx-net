@@ -170,20 +170,32 @@ export class DamageRouter {
     leaf.health.applyLayered(leaf.target, damage, tick, out);
     if (!out.applied) return; // immune target — no event
 
-    const dmgEvent: DamageEvent = {
-      type: 'damage',
-      targetId: wireTargetId,
-      damage,
-      newHealth: out.newHealth,
-      shooterId,
-      hitX: hitX ?? this.resolver.poseX,
-      hitY: hitY ?? this.resolver.poseY,
-      newShield: out.newShield,
-      shieldMax: out.shieldMax,
-      hullMax: out.hullMax,
-      hitLayer: out.hitLayer,
-    };
-    this.deps.broadcastDamage(dmgEvent);
+    // Campaign 1.2 (invariant #15 — the ram path's P3.3 rounds-before-emit,
+    // applied at the ONE wire emit site so missile splash / mining chips are
+    // covered too): the wire reports INTEGER damage, and an event whose
+    // rounded damage is 0 is FX-noise the client would render as a "0"
+    // number + sparks — skip the broadcast UNLESS it carries a state edge
+    // the client keys off this event for: a shield 0-cross (collider swap)
+    // or a destruction. Internal application above stays FRACTIONAL, so
+    // sub-1 chip damage (mining DPS) keeps accumulating server-side.
+    const wireDamage = Math.round(damage);
+    const shieldBroke = out.hitLayer === 'shield' && out.newShield <= 0;
+    if (wireDamage > 0 || shieldBroke || out.destroyed) {
+      const dmgEvent: DamageEvent = {
+        type: 'damage',
+        targetId: wireTargetId,
+        damage: wireDamage,
+        newHealth: out.newHealth,
+        shooterId,
+        hitX: hitX ?? this.resolver.poseX,
+        hitY: hitY ?? this.resolver.poseY,
+        newShield: out.newShield,
+        shieldMax: out.shieldMax,
+        hullMax: out.hullMax,
+        hitLayer: out.hitLayer,
+      };
+      this.deps.broadcastDamage(dmgEvent);
+    }
 
     leaf.perHit?.onApplied(leaf.target, targetId, wireTargetId, shooterId, damage, out, tick);
 

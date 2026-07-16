@@ -2290,6 +2290,13 @@ export class ColyseusGameClient {
   }
 
   private handleDamage(evt: DamageEvent, suppressNumber = false): void {
+    // Campaign 1.2 — a 0-damage event is a STATE carrier only (the server
+    // emits one solely for a shield 0-cross or a destruction; this is also
+    // defense-in-depth against fractional damage from a pre-guard server).
+    // State below (HUD stash, collider swap, shieldDown bit, hostility)
+    // still applies; the FX pipeline (flash / floating number / health-bar
+    // hit / impact spark) is gated so the player never sees a "0" + sparks.
+    const showFx = evt.damage > 0;
     const localId = this.mirror.localPlayerId;
     if (evt.targetId === localId) {
       // Phase 7 — use the event-provided PER-KIND maxes, not the global
@@ -2311,14 +2318,14 @@ export class ColyseusGameClient {
       }
     }
     // Flash the damaged ship for 6 frames.
-    this._damageFlashFrames.set(evt.targetId, 6);
+    if (showFx) this._damageFlashFrames.set(evt.targetId, 6);
 
     // Floating damage number at hit location. weapon-hit-prediction
     // Phase 3 — suppressed when a confirmed/settled prediction already
     // showed this number (de-dupe: exactly one number per confirmed hit).
     // Everything else in handleDamage stays unconditional — this remains
     // the SOLE HP/HUD/flash/healthbar/hostility authority.
-    if (!suppressNumber && this.mirror.pendingDamageNumbers) {
+    if (showFx && !suppressNumber && this.mirror.pendingDamageNumbers) {
       const targetShip = this.mirror.ships.get(evt.targetId);
       const x = evt.hitX ?? targetShip?.x ?? 0;
       const y = evt.hitY ?? targetShip?.y ?? 0;
@@ -2331,7 +2338,7 @@ export class ColyseusGameClient {
     // looks like zero damage: the hull bar stays at 100% while shield
     // absorbs (no-spillover) the first N hits, and drones have no other
     // shield-feedback surface (only player ships have a HUD ShieldHullBar).
-    if (evt.shooterId === localId && this.mirror.pendingHealthBarHits) {
+    if (showFx && evt.shooterId === localId && this.mirror.pendingHealthBarHits) {
       const healthPct = evt.hullMax > 0 ? Math.max(0, evt.newHealth / evt.hullMax) : 0;
       const shieldPct = evt.shieldMax > 0 ? Math.max(0, evt.newShield / evt.shieldMax) : 0;
       // Pre-hit HULL fraction for the chip-damage band: a HULL hit removed
@@ -2352,7 +2359,7 @@ export class ColyseusGameClient {
     // (predicted hits get the number immediately but sparks follow the
     // server's DamageEvent — RTT/2 lag is acceptable for the decorative
     // spark vs the load-bearing damage number).
-    if (this.mirror.pendingEffectTriggers) {
+    if (showFx && this.mirror.pendingEffectTriggers) {
       const targetShipForFallback = this.mirror.ships.get(evt.targetId);
       const sparkX = evt.hitX ?? targetShipForFallback?.x ?? 0;
       const sparkY = evt.hitY ?? targetShipForFallback?.y ?? 0;
