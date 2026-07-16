@@ -213,3 +213,35 @@ Ranked by user pain × recurrence × confidence. Each row is one PR-sized unit; 
 | 21 | Zustand lint: match `*X`/`*Y` coordinate suffixes (C-client 3) | `eslint.config.js` | lint fixture | XS |
 
 Process recommendations (no code): adopt B1's two-sided-contract rule and B3's liveness-predicate enumeration as CLAUDE.md invariants; when a bug report survives a fix attempt, the *second* attempt must start by writing the failing test at a **different level** than the first attempt's tests (the missile/beam/incoming histories all show repeated same-level testing).
+
+---
+
+## Campaign ledger (2026-07-16 fix campaign, waves 0–6)
+
+Updated as each PR merges. Wave assignment per the approved campaign plan; PRs run serially, stability first.
+
+| Part D # | Wave/PR | Status |
+|---|---|---|
+| process rules → invariants #15-17 + #13 amendment | 0 | ✅ merged |
+| 15 error boundaries | 1.1 | pending |
+| 3 zero-damage guard (both sides) | 1.2 | pending |
+| 16 sampled-warn wrapper | 1.3 | pending |
+| 17 physics-worker scratch | 1.4 | pending |
+| 1 hostility bit on snapshot | 2.1 | pending |
+| 5 lingering liveness audit | 2.2 | pending |
+| 9 incoming-warp reliability | 2.3 | pending |
+| 2 spectator severs dead-ship ref | 3.1 | pending |
+| 4 sprite-cache composite key | 3.2 | pending |
+| 11 stats-panel ship hull | 3.3 | pending |
+| 21 Zustand lint suffixes | 3.4 | pending |
+| 6 respawn carries pose | 4.1 | pending |
+| 6 rally-before-breach | 4.2 | pending |
+| 8 repair-flash idle | 4.3 | pending |
+| 13 resolveSectorOwner live | 4.4 | pending |
+| 7 missile robustness | 5.1 | pending |
+| 10 beam band from catalogue | 5.2 | pending |
+| 20 shared radius/muzzle constants | 5.3 | pending |
+| 18 Welcome/Roster schemas | 6.1 | pending |
+| 19 structure catalogue version gate | 6.2 | pending |
+| 14 persist-on-place | 6.3 | pending |
+| 12 scrap prediction redesign | — | **deferred** (user decision 2026-07-16; future design-first effort) |
