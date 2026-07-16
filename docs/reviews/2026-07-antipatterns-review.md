@@ -223,7 +223,7 @@ Updated as each PR merges. Wave assignment per the approved campaign plan; PRs r
 | Part D # | Wave/PR | Status |
 |---|---|---|
 | process rules → invariants #15-17 + #13 amendment | 0 | ✅ merged |
-| 15 error boundaries | 1.1 | pending |
+| 15 error boundaries | 1.1 | ✅ landed |
 | 3 zero-damage guard (both sides) | 1.2 | ✅ landed |
 | 16 sampled-warn wrapper | 1.3 | ✅ landed |
 | 17 physics-worker scratch | 1.4 | pending |
