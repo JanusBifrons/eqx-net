@@ -271,6 +271,22 @@ export default [
           selector: "Property[key.name=/^(x|y|vx|vy|angle|rotation|position|velocity)$/]",
           message: 'Spatial fields (x, y, vx, vy, angle, rotation, position, velocity) must NEVER appear in the Zustand store. They belong in the render state mirror polled by Pixi. See root CLAUDE.md invariant #2.',
         },
+        {
+          // Campaign 3.4 (anti-patterns review C-client 3): SUFFIXED coordinates
+          // (`ghostX`, `targetY`, ...) used to slide past the exact-match rule
+          // above. Requires a camelCase boundary ([a-z0-9] before X/Y) so
+          // UPPERCASE constants don't false-positive. The named allowlist is
+          // every discrete/gated coordinate the store legitimately holds:
+          //   - arrivalTargetX/Y + homePosX/Y — persisted arrival-picker
+          //     SETTINGS, written on input blur, never per-frame.
+          //   - serverX/Y, beforeX/Y, afterX/Y — `devData` reconciliation
+          //     diagnostics, drawer-Debug-tab-gated, snapshot cadence at worst.
+          // Adding a new coordinate to the store means arguing it onto this
+          // list — not silently naming it around the lint.
+          selector:
+            "Property[key.name=/^(?!(arrivalTarget|homePos|server|before|after)[XY]$)[A-Za-z0-9_$]*[a-z0-9][XY]$/]",
+          message: 'Suffixed coordinate fields (*X/*Y) must not appear in the Zustand store — per-frame spatial state belongs in the render state mirror polled by Pixi (root CLAUDE.md invariant #2). If this key is genuinely discrete (a persisted setting, a gated diagnostic), add it to the named allowlist in eslint.config.js with a justification.',
+        },
       ],
     },
   },
