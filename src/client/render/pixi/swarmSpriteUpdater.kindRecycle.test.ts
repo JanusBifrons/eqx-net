@@ -83,6 +83,7 @@ function makeCtx(): SwarmSpriteCtx {
     seenScratch: new Set<string>(),
     structureMountAngles: new Map<string, number[]>(),
     spriteKinds: new Map<string, number>(),
+    spriteBuildSigs: new Map(),
     slewDtSec: 1 / 60,
   };
 }
