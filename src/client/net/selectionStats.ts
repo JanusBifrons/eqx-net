@@ -6,7 +6,8 @@
  * pushes `entity_stats` at ~5 Hz while an entity is selected. Routing those
  * numbers through Zustand would trigger a React re-render 5×/sec. Instead the
  * `entity_stats` handler mutates THIS singleton in place, and the
- * `EntityStatsPanel` POLLS it (~1 Hz) for the numbers. Only the discrete
+ * `EntityStatsPanel` POLLS it (every 150 ms, committing a re-render only on
+ * change) for the numbers. Only the discrete
  * `selectedEntityId` lives in Zustand (panel visibility) — invariant #2: the
  * id is a discrete string, and hp/shield are non-spatial scalars.
  *
