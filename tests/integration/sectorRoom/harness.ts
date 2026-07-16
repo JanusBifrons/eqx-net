@@ -141,6 +141,10 @@ export async function bootSectorTestServer(opts: {
    *  into swarmHealth so they're damageable). testMode-only; forwarded to the
    *  `structurePoses` room option. */
   structurePoses?: ReadonlyArray<{ id?: string; x: number; y: number; radius?: number; mass?: number }>;
+  /** Deterministic drone placement at hand-authored world poses (the root
+   *  CLAUDE.md bespoke trigger). testMode-only; forwarded to the room's
+   *  `dronePoses` option. */
+  dronePoses?: ReadonlyArray<{ kind: string; x: number; y: number; angle?: number; hullExposed?: boolean }>;
   /** Structures plan (Phase 3-5) — pre-built, auto-connected scenario grid. */
   prebuiltStructures?: ReadonlyArray<{ kind: string; x: number; y: number }>;
   /** Owner the prebuilt scenario structures belong to (default `scenario`). Set
@@ -186,6 +190,7 @@ export async function bootSectorTestServer(opts: {
     droneCount: opts.droneCount ?? 0,
     testMode: opts.testMode ?? true,
     structurePoses: opts.structurePoses,
+    dronePoses: opts.dronePoses,
     prebuiltStructures: opts.prebuiltStructures,
     prebuiltStructuresOwner: opts.prebuiltStructuresOwner,
     scenarioDrones: opts.scenarioDrones,
