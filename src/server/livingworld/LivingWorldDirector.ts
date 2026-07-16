@@ -23,6 +23,7 @@
  */
 import type { Bus } from '../../core/events/Bus.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
+import { guarded } from '../rooms/guardedLoop.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { BotTransitController } from './BotTransitController.js';
 import {
@@ -367,7 +368,14 @@ export class LivingWorldDirector {
       dispatchIntervalMs: this.opts.dispatchIntervalMs,
       waveMaxAttackMs: this.opts.waveMaxAttackMs,
     });
-    this.incoming = new IncomingRegistry(this.rooms);
+    this.incoming = new IncomingRegistry(this.rooms, {
+      // Campaign 2.3 — a warning whose destination has no live room was a
+      // fully silent drop (the review's prime "STILL says nothing incoming"
+      // suspect). Surface it in the diag ring so a live session shows the
+      // hole instead of nothing.
+      onUnknownDest: (destSectorKey, id) =>
+        serverLogEvent('warp_warning_no_room', { destSectorKey, id }),
+    });
   }
 
   /** Begin the control loop. Idempotent. The interval is `unref`'d so it
@@ -423,7 +431,9 @@ export class LivingWorldDirector {
       bus.on('ENTITY_SHED', onShed);
       this.subs.push({ bus, onDestroyed, onShed });
     }
-    const timer = setInterval(() => this.tick(), this.opts.controlIntervalMs);
+    // Error boundary (campaign 1.1): a throw escaping tick() was an uncaught
+    // exception on the single-process host. Log-and-continue instead.
+    const timer = setInterval(guarded('director-tick', () => this.tick()), this.opts.controlIntervalMs);
     (timer as unknown as { unref?: () => void }).unref?.();
     this.timer = timer;
     // Populate the snapshot cache once so `/galaxy/snapshot` answers with live
