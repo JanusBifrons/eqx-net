@@ -442,6 +442,32 @@ describe('squadEdgePose — a squad warps in CLUSTERED (a herd from birth)', () 
     expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThan(500);
     expect(Math.hypot(a.x - c.x, a.y - c.y)).toBeGreaterThan(500);
   });
+
+  // Campaign 4.1 — the RESPAWN EPOCH rotates the shared anchor across respawn
+  // windows (no permanent farmable spawn point) while epoch 0 stays
+  // byte-identical to the pre-4.1 pose (the hop-arrival path passes no epoch).
+  it('rotates the shared anchor per respawn epoch; epoch 0 is the legacy pose', () => {
+    const legacy = squadEdgePose('squad-0', 'greenfall', 'lwbot-0');
+    const epoch0 = squadEdgePose('squad-0', 'greenfall', 'lwbot-0', 0);
+    expect(epoch0).toEqual(legacy);
+
+    const epoch1 = squadEdgePose('squad-0', 'greenfall', 'lwbot-0', 1);
+    const epoch2 = squadEdgePose('squad-0', 'greenfall', 'lwbot-0', 2);
+    expect(Math.hypot(epoch1.x - epoch0.x, epoch1.y - epoch0.y)).toBeGreaterThan(1);
+    expect(Math.hypot(epoch2.x - epoch1.x, epoch2.y - epoch1.y)).toBeGreaterThan(1);
+
+    // Squadmates SHARE the epoch anchor — clustering survives the rotation.
+    const mates = Array.from({ length: 8 }, (_, i) =>
+      squadEdgePose('squad-0', 'greenfall', `lwbot-${i}`, 1),
+    );
+    let maxGap = 0;
+    for (let i = 0; i < mates.length; i++) {
+      for (let j = i + 1; j < mates.length; j++) {
+        maxGap = Math.max(maxGap, Math.hypot(mates[i]!.x - mates[j]!.x, mates[i]!.y - mates[j]!.y));
+      }
+    }
+    expect(maxGap).toBeLessThan(1200);
+  });
 });
 
 describe('makeSeededRng', () => {
