@@ -5529,6 +5529,12 @@ export class SectorRoom extends Room<SectorState> {
         const ship = this.getActiveShip(playerId);
         return ship?.kind ?? DEFAULT_SHIP_KIND;
       },
+      // Campaign 3.1 — warp requires a live ACTIVE hull (isActive + alive;
+      // the shared shipLiveness predicate once 2.2 lands).
+      hasLiveActiveHull: (playerId: string): boolean => {
+        const ship = this.getActiveShip(playerId);
+        return !!ship && ship.alive && ship.isActive;
+      },
       playerToTransitInFlight: this.playerToTransitInFlight,
       clientForPlayer: (playerId: string): Client | null => {
         const sessionId = this.playerToSession.get(playerId);

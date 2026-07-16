@@ -60,6 +60,11 @@ export interface TransitHostRoom {
   readonly lastFireClientTick: ReadonlyMap<string, number>;
   /** Per-room schema map — used to read live health (not in SAB). */
   getShipHealth(playerId: string): number;
+  /** Campaign 3.1 — does this player currently have a LIVE, ACTIVE hull?
+   *  A warp needs one: the SHIP_DESTROYED abort only covers death DURING
+   *  the spool, so without this gate an already-dead (spectating) player
+   *  could start spooling a warp for a hull that doesn't exist. */
+  hasLiveActiveHull(playerId: string): boolean;
   /** Per-room schema lookup — used to preserve the player's chosen ship kind
    *  across the transit hop. */
   getShipKind(playerId: string): string;
@@ -183,6 +188,19 @@ export class TransitOrchestrator {
     }
     if (!isNeighbour(src, targetSectorKey)) {
       this.sendState(playerId, { type: 'transit_state', state: 'DOCKED', reason: 'not_neighbour' });
+      return false;
+    }
+    // Campaign 3.1 (anti-patterns review A14) — a warp needs a live, ACTIVE
+    // hull. The SHIP_DESTROYED subscription below only aborts a death DURING
+    // the spool; an already-dead (spectating) player used to sail straight
+    // into SPOOLING ("I'm dead!!! How can I warp?", Equinox Phase 6).
+    if (!this.room.hasLiveActiveHull(playerId)) {
+      this.sendState(playerId, {
+        type: 'transit_state',
+        state: 'DOCKED',
+        targetSectorKey,
+        reason: 'destroyed',
+      });
       return false;
     }
     if (this.inFlight.has(playerId)) {
