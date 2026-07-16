@@ -97,6 +97,7 @@ import {
 } from '../../shared-types/messages/webrtcSignalingMessages.js';
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
 import { EntitySyncRouter } from './EntitySyncRouter.js';
+import { guarded } from './guardedLoop.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
@@ -1740,10 +1741,10 @@ export class SectorRoom extends Room<SectorState> {
     const pulseMs = this.testMode && roomOpts.structureGridPulseMs
       ? Math.max(20, roomOpts.structureGridPulseMs)
       : TRANSFER_PULSE_MS;
-    this.structureGridTimer = setInterval(() => this.structureGridTick(), pulseMs);
+    this.structureGridTimer = setInterval(guarded('structure-grid-tick', () => this.structureGridTick()), pulseMs);
     this.structureGridTimer.unref?.();
     // Phase 5 — turret aim/fire on a faster cadence than the grid pulse.
-    this.structureTurretTimer = setInterval(() => this.structureTurretTick(), TURRET_TICK_MS);
+    this.structureTurretTimer = setInterval(guarded('structure-turret-tick', () => this.structureTurretTick()), TURRET_TICK_MS);
     this.structureTurretTimer.unref?.();
 
     // Click-to-inspect live-stats channel (structures follow-up Item B5). Its
@@ -1756,7 +1757,7 @@ export class SectorRoom extends Room<SectorState> {
         client?.send('entity_stats', msg);
       },
     });
-    this.selectionStatsTimer = setInterval(() => this.selectionStats.tick(), SELECTION_STATS_INTERVAL_MS);
+    this.selectionStatsTimer = setInterval(guarded('selection-stats-tick', () => this.selectionStats.tick()), SELECTION_STATS_INTERVAL_MS);
     this.selectionStatsTimer.unref?.();
 
     // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
@@ -2383,11 +2384,15 @@ export class SectorRoom extends Room<SectorState> {
     // granularity and lets us hit 60 Hz reliably across platforms.
     const TICK_MS_HR = 1000 / 60;
     let nextTickAt = performance.now();
+    // Error boundary (campaign 1.1): a throw escaping update() used to kill
+    // the whole single-process host AND end this loop (the tail setImmediate
+    // never ran). One bad tick is skipped-and-logged; the loop continues.
+    const guardedUpdate = guarded(`sim-update:${this.sectorKey ?? this.roomId}`, () => this.update());
     const loop = (): void => {
       if (this.simLoopStopped) return;
       const now = performance.now();
       if (now >= nextTickAt) {
-        this.update();
+        guardedUpdate();
         nextTickAt += TICK_MS_HR;
         // Catch-up cap: if we're more than 5 ticks behind (e.g. GC pause),
         // jump forward so we don't spiral.
