@@ -55,6 +55,16 @@ import {
 } from '../../net/swarmInterpolation';
 import { resolveEntityDisplayPose } from '../../net/swarmDisplayPose';
 
+/** Campaign 3.2 — everything (besides the pose-core kind, tracked separately
+ *  in `spriteKinds` for #20 back-compat) that a swarm sprite's VISUAL is built
+ *  from. Any component changing under a recycled entityId means the cached
+ *  sprite is the wrong picture. */
+export interface SpriteBuildSig {
+  shipKind: string | null;
+  componentIndex: number;
+  radius: number;
+}
+
 export interface SwarmSpriteCtx {
   shipContainer: Container;
   sprites: Map<string, Graphics>;
@@ -78,6 +88,15 @@ export interface SwarmSpriteCtx {
    *  updater tears the sprite down + rebuilds. Owned + swept by the renderer
    *  (deleted with the sprite on despawn), like `structureMountAngles`. */
   spriteKinds: Map<string, number>;
+  /** Campaign 3.2 (review B4) — the FULL build signature each cached sprite
+   *  was constructed from. #20's `spriteKinds` guard catches a pose-core kind
+   *  flip, but the sprite is BUILT from `(kind, shipKind, componentIndex,
+   *  radius)`: a recycled id keeping the same kind while changing SUBTYPE
+   *  (connector→turret, fighter→heavy, another scrap component) kept the
+   *  stale silhouette. Record allocated ONCE on the create path (#14 — the
+   *  per-frame check is a map get + scalar compares); deleted with the
+   *  sprite (guard teardown + renderer reaper sweep). */
+  spriteBuildSigs: Map<string, SpriteBuildSig>;
   /** P3.8 — seconds since the previous call; the structure-mount slew rate input
    *  (`rotateMountToward` advances ≤ `rotationSpeed * slewDtSec` per call). The
    *  renderer computes it (clamped) from wall-clock; tests inject a fixed value
@@ -113,10 +132,23 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // type — tear it down (sprite + barrel cluster + slew state) so the create
     // path below rebuilds it. Without this the drone renders as the connector/
     // turret it recycled.
-    if (sprite && ctx.spriteKinds.get(spriteKey) !== entry.kind) {
+    // Campaign 3.2 (review B4) — the rebuild guard compares the FULL build
+    // signature, not just the pose-core kind: a recycled id that stays the
+    // same kind but flips SUBTYPE (connector→turret, fighter→heavy, another
+    // scrap componentIndex) or radius is equally the wrong picture.
+    const sig = ctx.spriteBuildSigs.get(spriteKey);
+    if (
+      sprite &&
+      (ctx.spriteKinds.get(spriteKey) !== entry.kind ||
+        sig === undefined ||
+        sig.shipKind !== (entry.shipKind ?? null) ||
+        sig.componentIndex !== (entry.componentIndex ?? 0) ||
+        sig.radius !== entry.radius)
+    ) {
       ctx.shipContainer.removeChild(sprite);
       ctx.mountVisuals.removeShip(spriteKey);
       ctx.structureMountAngles.delete(spriteKey);
+      ctx.spriteBuildSigs.delete(spriteKey);
       sprite.destroy({ children: true });
       ctx.sprites.delete(spriteKey);
       sprite = undefined;
@@ -163,6 +195,12 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       ctx.shipContainer.addChild(sprite);
       ctx.sprites.set(spriteKey, sprite);
       ctx.spriteKinds.set(spriteKey, entry.kind); // #20 — track kind for recycle detection
+      // Campaign 3.2 — full build signature (create-path alloc only, #14).
+      ctx.spriteBuildSigs.set(spriteKey, {
+        shipKind: entry.shipKind ?? null,
+        componentIndex: entry.componentIndex ?? 0,
+        radius: entry.radius,
+      });
     }
     // Drones (kind 1) AND scrap (kind 3): read the already-resolved
     // single-per-frame pose that `ColyseusClient.updateMirror` wrote (the
