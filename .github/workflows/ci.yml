@@ -100,9 +100,15 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         run: pnpm exec knip --no-exit-code
       # C4: dependency vulnerability scan. Fails only on high+ severity.
-      - name: Dependency audit (high+)
+      # 2026-07-16 (user-approved): npm RETIRED the classic audit endpoint
+      # `pnpm audit` calls (410 "use the bulk advisory endpoint"; latest pnpm
+      # 10 still calls the old one — verified). scripts/audit-bulk.mjs
+      # reproduces the SAME gate (fail on high/critical advisories in PROD
+      # dependencies) against the supported bulk endpoint. Swap back to
+      # `pnpm audit --prod --audit-level=high` once pnpm speaks it.
+      - name: Dependency audit (high+, bulk advisory endpoint)
         if: needs.changes.outputs.code == 'true'
-        run: pnpm audit --prod --audit-level=high
+        run: node scripts/audit-bulk.mjs
       - name: Build
         if: needs.changes.outputs.code == 'true'
         run: pnpm run build
