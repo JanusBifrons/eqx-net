@@ -45,11 +45,40 @@ export interface IncomingEntry {
   player?: boolean;
 }
 
+/** Campaign 2.3 — the identical-entry dedup is TIME-BOUNDED: a re-register
+ *  re-broadcasts once this window has elapsed. Heals a missed clear (a squad
+ *  object gone before `reconcileIncoming` swept ⇒ the stale entry used to
+ *  suppress every later identical warning FOREVER) and refreshes the banner
+ *  for players who joined the destination mid-approach. Well above the
+ *  ~1.5 s control-tick re-register cadence, so the 8-members-one-banner
+ *  spam guard is preserved. */
+export const INCOMING_REBROADCAST_MS = 10_000;
+
+export interface IncomingRegistryOpts {
+  /** Injectable clock (deterministic tests). */
+  nowMs?: () => number;
+  /** Campaign 2.3 — fired when a warning's destination sector has NO live
+   *  room in the director's map (room created later / engineering room /
+   *  living world disabled). Previously a fully silent drop — the review's
+   *  prime suspect for "it STILL says nothing incoming". */
+  onUnknownDest?: (destSectorKey: string, id: string) => void;
+}
+
 export class IncomingRegistry {
   /** `${destSectorKey}|${id}` → entry. */
   private readonly entries = new Map<string, IncomingEntry>();
+  /** `${destSectorKey}|${id}` → last warp_warning broadcast time (ms). */
+  private readonly lastBroadcastAt = new Map<string, number>();
+  private readonly nowMs: () => number;
+  private readonly onUnknownDest: ((destSectorKey: string, id: string) => void) | undefined;
 
-  constructor(private readonly rooms: Map<string, LivingWorldRoom>) {}
+  constructor(
+    private readonly rooms: Map<string, LivingWorldRoom>,
+    opts: IncomingRegistryOpts = {},
+  ) {
+    this.nowMs = opts.nowMs ?? Date.now;
+    this.onUnknownDest = opts.onUnknownDest;
+  }
 
   private keyOf(id: string, destSectorKey: string): string {
     return `${destSectorKey}|${id}`;
@@ -65,6 +94,7 @@ export class IncomingRegistry {
     for (const [k, e] of this.entries) {
       if (e.id === entry.id && e.destSectorKey !== entry.destSectorKey) {
         this.entries.delete(k);
+        this.lastBroadcastAt.delete(k);
         this.rooms.get(e.destSectorKey)?.broadcastWarpWarningClear({ type: 'warp_warning_clear', id: e.id });
       }
     }
@@ -75,16 +105,31 @@ export class IncomingRegistry {
     // destination in one control tick calls register() 8 times — broadcast once.
     // Only a NEW inbound or a meaningfully CHANGED one (count/label/disposition)
     // re-broadcasts; the per-leg countdown self-expires client-side and the
-    // arrival/retreat clear fires regardless.
+    // arrival/retreat clear fires regardless. Campaign 2.3: the dedup is
+    // TIME-BOUNDED (INCOMING_REBROADCAST_MS) — an identical inbound
+    // re-broadcasts after the window, healing a missed clear and refreshing
+    // players who joined the destination mid-approach.
+    const now = this.nowMs();
+    const lastAt = this.lastBroadcastAt.get(key);
     if (
       existing &&
+      lastAt !== undefined &&
+      now - lastAt < INCOMING_REBROADCAST_MS &&
       existing.count === entry.count &&
       existing.label === entry.label &&
       existing.disposition === entry.disposition
     ) {
       return;
     }
-    this.rooms.get(entry.destSectorKey)?.broadcastWarpWarning({
+    const destRoom = this.rooms.get(entry.destSectorKey);
+    if (!destRoom) {
+      // Campaign 2.3 — previously a silent optional-chain no-op: the warning
+      // vanished with no trace when the destination had no live room.
+      this.onUnknownDest?.(entry.destSectorKey, entry.id);
+    } else {
+      this.lastBroadcastAt.set(key, now);
+    }
+    destRoom?.broadcastWarpWarning({
       type: 'warp_warning',
       id: entry.id,
       label: entry.label,
@@ -107,7 +152,9 @@ export class IncomingRegistry {
   /** Clear an inbound (arrival / retreat / cancel) and broadcast the clear.
    *  Idempotent — clearing an unknown (id, dest) is a no-op (no broadcast). */
   clear(id: string, destSectorKey: string): void {
-    if (!this.entries.delete(this.keyOf(id, destSectorKey))) return;
+    const key = this.keyOf(id, destSectorKey);
+    if (!this.entries.delete(key)) return;
+    this.lastBroadcastAt.delete(key); // next register broadcasts immediately
     this.rooms.get(destSectorKey)?.broadcastWarpWarningClear({ type: 'warp_warning_clear', id });
   }
 
