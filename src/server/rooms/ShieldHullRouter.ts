@@ -67,6 +67,7 @@ import type { Bus } from '../../core/events/Bus.js';
 import type { MapSchema } from '@colyseus/schema';
 import type { ShipState } from './schema/SectorState.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
+import { isPilotedActive } from './shipLiveness.js';
 
 /** Result of a layered damage application (ship or drone). */
 export interface LayeredDamageResult {
@@ -233,7 +234,13 @@ export class ShieldHullRouter {
     const d = this.deps;
     const t = d.serverTick();
     for (const [, ship] of d.shipsMap) {
-      if (!ship.alive) continue;
+      // Covers ACTIVE hulls only (invariant #17, campaign 2.2). A LINGERING
+      // hull keeps the shield it parked with and does NOT regenerate: the
+      // collider restore + broadcast below are isActive-gated, so regen for
+      // a parked hull produced an INVISIBLE shield the physics body didn't
+      // have (the "lingering ships still have shields, but it's not
+      // visible" playtest family). Regen resumes when the hull is reclaimed.
+      if (!isPilotedActive(ship)) continue;
       const kind = getShipKind(ship.kind);
       // Effective shield cap = kind base × per-instance shield upgrade (review
       // must-fix #1). The regen cap, the 0-cross-up restore broadcast, and the
