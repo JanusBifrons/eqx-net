@@ -331,6 +331,15 @@ export class ColyseusGameClient {
    */
   private readonly _aiSink: AiIntentSink = { postIntent: () => {} };
   private readonly _aiController = new AiController(this._aiSink);
+  /** Campaign 2.1 — snapshot-carried hostility → the client ledger. The
+   *  slice's `hostile` bit is already recipient-relative, so the mark is
+   *  against the local player. Bound once (handleSnapshot is hot, #14).
+   *  Ledger key = the bare numeric entityId string, exactly matching the
+   *  `bot_aggro` / `damage` event paths and the swarm register key. */
+  private readonly _snapshotHostileMark = (entityId: number): void => {
+    const localId = this.mirror.localPlayerId;
+    if (localId) this._aiController.markHostile(String(entityId), localId, this.inputTick);
+  };
   /** Numeric entityIds currently registered with `_aiController`. Post the
    *  drone-snapshot-interpolation pivot (2026-05-18) `_aiController` is a
    *  HOSTILITY LEDGER ONLY — its brain is never ticked client-side. The
@@ -2917,8 +2926,13 @@ export class ColyseusGameClient {
       this.applyLocalStatAlloc(localId, serverState.statAlloc);
 
       // Drone snapshot slice (slim turret/shield slice; pose flows on the
-      // binary swarm wire). See snapshotRemoteSync.ts.
-      applyDroneMountAngles(snap, this.mirror);
+      // binary swarm wire). See snapshotRemoteSync.ts. Campaign 2.1: the
+      // per-recipient `hostile` bit feeds the client hostility ledger — the
+      // snapshot backstop for the discrete `bot_aggro` accelerant (invariant
+      // #16), so a mid-wave joiner renders hostiles red from the FIRST
+      // snapshot. `_snapshotHostileMark` is a bound field, not a closure —
+      // handleSnapshot is a hot path (invariant #14, no per-call alloc).
+      applyDroneMountAngles(snap, this.mirror, this._snapshotHostileMark);
       // WS-4 Phase 6 — slim MINED-asteroid resource slice → swarm mirror (R2.23
       // enabler; feeds the WS-9 inspector). Pose stays on the binary channel.
       applyAsteroidResources(snap, this.mirror);
