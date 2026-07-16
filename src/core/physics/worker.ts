@@ -298,11 +298,19 @@ async function main(): Promise<void> {
   // setImmediate has ~1 ms granularity and lets us hit 60 Hz reliably.
   const TICK_MS_HR = 1000 / 60;
   let nextTickAt = performance.now();
+  // Per-step scratch (campaign 1.4, invariant #14): `step()` is the 60 Hz hot
+  // loop — these were `new Map()` / `[]` + per-transition literals allocated
+  // EVERY step. Reused across steps: the map clears at step top; the
+  // transition records pool grows to the (tiny) high-water mark of
+  // simultaneous sleep flips and is length-tracked by `transitionCount`.
+  const appliedTicks = new Map<number, number>(); // slot → inputTick
+  const transitionScratch: Array<{ id: string; sleeping: boolean }> = [];
+  let transitionCount = 0;
   const step = (): void => {
     const tStepStart = performance.now();
     // Per-slot input dequeue + held-input synthesis. The pure logic lives in
     // `inputQueue.ts` so the contract is unit-testable.
-    const appliedTicks = new Map<number, number>(); // slot → inputTick
+    appliedTicks.clear();
     for (const [slot, q] of inputQueues) {
       const playerId = slotToPlayer.get(slot);
       if (!playerId) continue;
@@ -358,7 +366,7 @@ async function main(): Promise<void> {
 
     // Compute sleep transitions before SAB write so the flag word is current.
     // SLEEP_TRANSITION messages buffer here; flushed after the seqlock window.
-    const transitions: Array<{ id: string; sleeping: boolean }> = [];
+    transitionCount = 0;
     for (const [slot, id] of slotToPlayer) {
       const sleeping = physics.isSleeping(id);
       const prev = sleepCount.get(slot) ?? 0;
@@ -369,7 +377,14 @@ async function main(): Promise<void> {
       const lastReported = sleepState.get(slot) ?? false;
       if (effectiveSleeping !== lastReported) {
         sleepState.set(slot, effectiveSleeping);
-        transitions.push({ id, sleeping: effectiveSleeping });
+        let rec = transitionScratch[transitionCount];
+        if (!rec) {
+          rec = { id: '', sleeping: false };
+          transitionScratch.push(rec);
+        }
+        rec.id = id;
+        rec.sleeping = effectiveSleeping;
+        transitionCount++;
       }
     }
 
@@ -422,7 +437,8 @@ async function main(): Promise<void> {
 
     // Flush sleep transitions after the seqlock window so the SAB and the
     // discrete event arrive in a consistent order on the main thread.
-    for (const t of transitions) {
+    for (let i = 0; i < transitionCount; i++) {
+      const t = transitionScratch[i]!;
       parentPort!.postMessage({ type: 'SLEEP_TRANSITION', entityId: t.id, sleeping: t.sleeping, tick });
     }
 
