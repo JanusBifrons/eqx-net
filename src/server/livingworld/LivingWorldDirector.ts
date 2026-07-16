@@ -29,6 +29,7 @@ import { BotTransitController } from './BotTransitController.js';
 import {
   sectorEdgePose,
   squadEdgePose,
+  SQUAD_RESPAWN_EPOCH_MS,
   nextHopToward,
   pickEntrySector,
   liveEntrySectors,
@@ -1172,8 +1173,15 @@ export class LivingWorldDirector {
       // Spawn CLUSTERED with squadmates (the herd warps in together) when the
       // bot belongs to a squad; the per-squad+sector anchor means a whole squad
       // seeding/respawning into the same sector lands as one tight group.
+      // Campaign 4.1: the anchor bearing rotates per RESPAWN EPOCH (time
+      // bucket) — same-window respawns still cluster, but the same bot never
+      // rematerialises at one fixed, farmable point forever (the "all
+      // attackers appear at the exact same spot NE of 0,0" report).
       const squadKey = this.squadPool.squadOf(rec.botId)?.squadId;
-      const pose = squadKey ? squadEdgePose(squadKey, sector, rec.botId) : sectorEdgePose(this.rng);
+      const epoch = Math.floor(now / SQUAD_RESPAWN_EPOCH_MS);
+      const pose = squadKey
+        ? squadEdgePose(squadKey, sector, rec.botId, epoch)
+        : sectorEdgePose(this.rng);
       const ok = room.spawnLivingWorldBot({
         botId: rec.botId,
         kind: rec.kind,
