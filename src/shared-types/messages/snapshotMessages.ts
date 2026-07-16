@@ -181,6 +181,15 @@ export interface SnapshotMessage {
      *  channel with the binary recordFlags bit; the client applies the
      *  collider swap from ONE site (syncSwarmIntoPredWorld). */
     shieldDown?: boolean;
+    /** Campaign 2.1 (invariant #16) — true while this drone is hostile TO
+     *  THE RECIPIENT (the slice is per-recipient, so the bit is viewer-
+     *  relative, matching the render tint semantics). The SNAPSHOT BACKSTOP
+     *  for the discrete `bot_aggro` accelerant: a mid-wave joiner or a
+     *  dropped packet still converges to the correct hostility from the
+     *  snapshot stream alone. Emit-when-true — neutral drones add zero
+     *  bytes; absence does NOT force-clear (the client ledger's time-decay
+     *  owns forgetting, exactly as with the event path). */
+    hostile?: boolean;
     /** Hull health PERCENT (0-100 integer) for health-weighted player turret
      *  aim (Part C — the player turret + auto-fire focus the wounded). Emitted
      *  only for DAMAGED in-interest drones (full-HP omit it → client treats

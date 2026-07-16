@@ -1420,6 +1420,9 @@ export class SectorRoom extends Room<SectorState> {
       thrustingPlayers: this.thrustingPlayers,
       swarmRegistry: this.swarmRegistry,
       swarmHealth: this.swarmHealth,
+      // Campaign 2.1 — the per-recipient `drones[].hostile` bit reads the
+      // same hostility ledger the AI tick + liveCounts use (one truth).
+      isDroneHostileTo: (droneId, playerId) => this.aiController.isEntityHostileToPlayer(droneId, playerId),
       playerMountAngles: this.mountTicker.playerMountAngles,
       droneMountAngles: this.mountTicker.droneMountAngles,
       missileSim: this.missileSim,

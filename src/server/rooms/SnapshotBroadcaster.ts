@@ -129,6 +129,10 @@ export interface SnapshotBroadcasterDeps {
   /** Drone hull health, keyed by swarm id — for the per-drone `hp` percent in
    *  the slice (Part C health-weighted player aim). */
   swarmHealth: Map<string, number>;
+  /** Campaign 2.1 (invariant #16) — hostility probe for the per-recipient
+   *  `drones[].hostile` bit: is this drone (swarm string id) hostile to this
+   *  player? Wired to the room's AI hostility ledger. */
+  isDroneHostileTo: (droneId: string, playerId: string) => boolean;
   playerMountAngles: Map<string, Float32Array>;
   droneMountAngles: Map<string, Float32Array>;
   /** Missile simulation — per-recipient AOI-filtered missile pose slice. */
@@ -237,6 +241,7 @@ type MutableDroneEntry = {
   mountAngles?: number[];
   shieldDown?: boolean;
   hp?: number;
+  hostile?: boolean;
 };
 
 type MutableAsteroidEntry = {
@@ -426,13 +431,14 @@ export class SnapshotBroadcaster {
   private static writeDroneSlot(
     arr: MutableDroneEntry[], i: number,
     id: number, mountAngles: number[] | undefined, shieldDown: boolean,
-    hp: number | undefined,
+    hp: number | undefined, hostile: boolean,
   ): void {
     const slot = arr[i];
     if (!slot) {
       const fresh: MutableDroneEntry = { id, mountAngles };
       if (shieldDown) fresh.shieldDown = true;
       if (hp !== undefined) fresh.hp = hp;
+      if (hostile) fresh.hostile = true;
       arr[i] = fresh;
       return;
     }
@@ -444,6 +450,8 @@ export class SnapshotBroadcaster {
     else delete slot.shieldDown;
     if (hp !== undefined) slot.hp = hp;
     else delete slot.hp;
+    if (hostile) slot.hostile = true;
+    else delete slot.hostile;
   }
 
   /** WS-4 Phase 6 — write a MINED-asteroid resource slot (pooled, mutate-in-
@@ -769,10 +777,13 @@ export class SnapshotBroadcaster {
               hpPct = pct;
             }
           }
-          if (!droneMountAnglesArr && !rec.shieldDown && hpPct === undefined) continue;
+          // Campaign 2.1 — per-recipient hostility bit (invariant #16: the
+          // snapshot backstop for the bot_aggro accelerant). Emit-when-true.
+          const hostile = d.isDroneHostileTo(rec.id, recipientPlayerId);
+          if (!droneMountAnglesArr && !rec.shieldDown && hpPct === undefined && !hostile) continue;
           SnapshotBroadcaster.writeDroneSlot(
             dronesScratch, dronesCount,
-            eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct,
+            eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct, hostile,
           );
           dronesCount++;
         }
