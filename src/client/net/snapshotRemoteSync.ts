@@ -123,9 +123,19 @@ export function preResetRemoteShips(
  * Out-of-interest drones never appear here, so their mountAngles stays
  * undefined (renderer falls back to baseAngle) — unchanged.
  */
-export function applyDroneMountAngles(snap: SnapshotMessage, mirror: RenderMirror): void {
+export function applyDroneMountAngles(
+  snap: SnapshotMessage,
+  mirror: RenderMirror,
+  // Campaign 2.1 (invariant #16) — invoked for every drone whose slice entry
+  // carries `hostile: true` (hostile TO THE RECIPIENT). The caller feeds the
+  // client hostility ledger so a mid-wave joiner / dropped `bot_aggro`
+  // converges from the snapshot stream alone. Absence of the flag does NOT
+  // clear — the ledger's time-decay owns forgetting (same as the event path).
+  onHostile?: (entityId: number) => void,
+): void {
   if (!snap.drones || snap.drones.length === 0) return;
   for (const d of snap.drones) {
+    if (d.hostile === true && onHostile) onHostile(d.id);
     const sw = mirror.swarm?.get(d.id);
     if (!sw) continue;
     if (d.mountAngles && d.mountAngles.length > 0) {
