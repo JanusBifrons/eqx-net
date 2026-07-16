@@ -313,6 +313,9 @@ export class PixiRenderer implements IRenderer {
    *  the stale sprite is rebuilt (see swarmSpriteUpdater `spriteKinds`). Swept
    *  alongside `sprites` in the teardown loop so it can't leak across despawns. */
   private readonly _swarmSpriteKinds = new Map<string, number>();
+  /** Campaign 3.2 — full build signature per cached swarm sprite (subtype-
+   *  level recycle detection; see swarmSpriteUpdater `spriteBuildSigs`). */
+  private readonly _swarmSpriteSigs = new Map<string, import('./pixi/swarmSpriteUpdater.js').SpriteBuildSig>();
   /** Wall-clock (performance.now) of the previous swarm-sprite update — the dt
    *  source for the structure mount slew (P3.8). 0 ⇒ first frame (one 60 Hz step). */
   private _lastSwarmUpdateNow = 0;
@@ -630,6 +633,7 @@ export class PixiRenderer implements IRenderer {
       seenScratch: this._updateSeenScratch,
       structureMountAngles: this._structureMountSlew,
       spriteKinds: this._swarmSpriteKinds,
+      spriteBuildSigs: this._swarmSpriteSigs,
       slewDtSec: 1 / 60, // overwritten per frame before updateSwarmSprites
     };
     this._projectileUpdaterCtx = {
@@ -1365,6 +1369,7 @@ export class PixiRenderer implements IRenderer {
         this.sprites.delete(id);
         this._structureMountSlew.delete(id); // P3.8 — drop slew state with the sprite
         this._swarmSpriteKinds.delete(id); // #20 — drop kind tracker with the sprite
+        this._swarmSpriteSigs.delete(id); // campaign 3.2 — drop build signature with the sprite
       }
     }
 

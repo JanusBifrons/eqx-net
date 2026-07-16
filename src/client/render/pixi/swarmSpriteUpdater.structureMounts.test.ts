@@ -95,6 +95,7 @@ function makeCtx(): SwarmSpriteCtx {
     seenScratch: new Set<string>(),
     structureMountAngles: new Map<string, number[]>(),
     spriteKinds: new Map<string, number>(),
+    spriteBuildSigs: new Map(),
     // P3.8 — a LARGE default dt so a single updateSwarmSprites call slews all the
     // way to the target (the dead-ahead aim tests below assert the converged
     // angle); the dedicated slew test overrides this with a small per-frame dt.
