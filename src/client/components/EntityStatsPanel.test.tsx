@@ -8,7 +8,8 @@
  *   - is HIDDEN when `selectedEntityId` is null
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { Profiler } from 'react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
 import { EntityStatsPanel } from './EntityStatsPanel.js';
 import { selectionStats, applySelectionStats, resetSelectionStats } from '../net/selectionStats.js';
@@ -565,6 +566,52 @@ describe('EntityStatsPanel', () => {
       type: 'structure_action',
       id: 8,
       action: 'toggle_deconstruct',
+    });
+  });
+
+  // ── Wave-3 3.3 (anti-patterns review C-client 5) — the 150 ms poll must NOT
+  // force a React re-render when the polled data is UNCHANGED. Pre-fix, `tick`
+  // called `setData(readData(...))` with a FRESH object every poll, so the
+  // panel re-rendered ~6.7×/s while the numbers sat still. The fix diffs the
+  // fresh read against the previous PanelData and returns the SAME reference
+  // when equal, letting React bail out of the commit. ──
+  describe('poll re-render discipline (Wave-3 3.3)', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it('does not commit new renders across poll ticks when stats are unchanged', () => {
+      applySelectionStats({ id: 'p1', name: 'Ada', hp: 75, hpMax: 100, shield: 30, shieldMax: 60 });
+      useUIStore.setState({ selectedEntityId: 'p1', selectedEntityKind: 'ship' });
+      const onRender = vi.fn();
+      render(
+        <Profiler id="esp" onRender={onRender}>
+          <EntityStatsPanel />
+        </Profiler>,
+      );
+      const commitsAfterMount = onRender.mock.calls.length;
+      // 10 poll ticks with byte-identical data — each advanced in its OWN
+      // act() so React flushes per tick (one act over all 10 would batch them
+      // into a single commit and mask the churn). Allow at most 1 bail-out
+      // commit; the pre-fix code commits on EVERY tick (+10).
+      for (let i = 0; i < 10; i++) {
+        act(() => {
+          vi.advanceTimersByTime(150);
+        });
+      }
+      expect(onRender.mock.calls.length - commitsAfterMount).toBeLessThanOrEqual(1);
+    });
+
+    it('still re-renders when the polled stats actually change', () => {
+      applySelectionStats({ id: 'p1', name: 'Ada', hp: 75, hpMax: 100, shield: 30, shieldMax: 60 });
+      useUIStore.setState({ selectedEntityId: 'p1', selectedEntityKind: 'ship' });
+      render(<EntityStatsPanel />);
+      expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-hull-pct', '75');
+      // A fresh server packet lands between polls → the next tick must surface it.
+      applySelectionStats({ id: 'p1', name: 'Ada', hp: 40, hpMax: 100, shield: 30, shieldMax: 60 });
+      act(() => {
+        vi.advanceTimersByTime(150);
+      });
+      expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-hull-pct', '40');
     });
   });
 });
