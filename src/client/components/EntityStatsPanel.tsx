@@ -28,8 +28,9 @@ import type { StructureRenderState } from '@core/contracts/IRenderer';
  *
  * Number source by kind:
  *   - SHIP / STRUCTURE → the `selectionStats` MODULE SINGLETON, pushed by the
- *     server at ~5 Hz and POLLED here at ~1 Hz (no 5 Hz React re-renders;
- *     invariant #2 — only the discrete id lives in Zustand).
+ *     server at ~5 Hz and POLLED here every `POLL_MS` (150 ms ≈ 6.7 Hz — the
+ *     poll only COMMITS a re-render when the data actually changed, see
+ *     `panelDataEqual`; invariant #2 — only the discrete id lives in Zustand).
  *   - DRONE → read directly from the render mirror (sanctioned
  *     low-cadence `getGameClient().mirror` read, like `SectorInfoPanel`): the
  *     snapshot already carries drone `healthFrac`, so no server
@@ -107,7 +108,15 @@ export function EntityStatsPanel(): JSX.Element | null {
       setData(null);
       return;
     }
-    const tick = (): void => setData(readData(selectedId, selectedKind));
+    // Wave-3 3.3 — diff before committing: `readData` builds a FRESH object
+    // every poll, so an unconditional `setData` re-rendered the panel ~6.7×/s
+    // even while the numbers sat still. Returning the PREVIOUS reference when
+    // shallow-equal lets React bail out of the commit entirely.
+    const tick = (): void =>
+      setData((prev) => {
+        const next = readData(selectedId, selectedKind);
+        return prev !== null && next !== null && panelDataEqual(prev, next) ? prev : next;
+      });
     tick();
     const handle = window.setInterval(tick, POLL_MS);
     return () => window.clearInterval(handle);
@@ -276,6 +285,24 @@ export function EntityStatsPanel(): JSX.Element | null {
       )}
     </Box>
   );
+}
+
+// Every PanelData field is a primitive, so a keyed shallow compare is an exact
+// equality check. Listed explicitly (not Object.keys) so a future non-primitive
+// field forces a deliberate decision here instead of silently mis-comparing.
+const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
+  'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'powered',
+  'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
+  'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
+];
+
+/** True when two polled PanelData reads carry identical values (Wave-3 3.3 —
+ *  gates the poll's setState so unchanged data never commits a re-render). */
+export function panelDataEqual(a: PanelData, b: PanelData): boolean {
+  for (const k of PANEL_DATA_KEYS) {
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
 }
 
 /** Resolve the display data for the current selection (pure-ish read). */
@@ -471,11 +498,16 @@ const CHARGE_COLOR = '#cc8844';
 const TRACK_W = 72;
 const BAR_H = 4;
 
+// Static fill styling hoisted (drawer-perf sx rule); the two per-render
+// dynamics (width %, colour) go through the plain `style` prop — no per-render
+// emotion serialisation.
+const BAR_FILL_SX = { height: '100%', transition: 'width 1000ms linear' };
+
 function Bar({ pct, color }: { pct: number; color: string }): JSX.Element {
   const clamped = Math.max(0, Math.min(100, pct));
   return (
     <Box sx={BAR_TRACK_SX}>
-      <Box sx={{ width: `${clamped}%`, height: '100%', backgroundColor: color, transition: 'width 1000ms linear' }} />
+      <Box sx={BAR_FILL_SX} style={{ width: `${clamped}%`, backgroundColor: color }} />
     </Box>
   );
 }
