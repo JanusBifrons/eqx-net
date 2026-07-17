@@ -49,6 +49,7 @@
  */
 
 import { pickTarget, type MountTargetView } from '../../core/ai/WeaponMountController.js';
+import { SHIP_COLLISION_RADIUS } from '../../core/combat/Weapons.js';
 import {
   SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF,
   slotBase,
@@ -652,7 +653,7 @@ export class MissileSimulation {
       if (!pose) continue;
       const dx = pose.x - m.x;
       const dy = pose.y - m.y;
-      const shipR = 12; // SHIP_COLLISION_RADIUS (approx)
+      const shipR = SHIP_COLLISION_RADIUS;
       const combined = (m.weaponDef.radius + shipR);
       if (dx * dx + dy * dy <= combined * combined) {
         return { id: playerId, kind: 'ship', x: m.x, y: m.y };
@@ -670,7 +671,7 @@ export class MissileSimulation {
       if (!pose) continue;
       const dx = pose.x - m.x;
       const dy = pose.y - m.y;
-      const shipR = 12;
+      const shipR = SHIP_COLLISION_RADIUS;
       const combined = m.weaponDef.radius + shipR;
       if (dx * dx + dy * dy <= combined * combined) {
         return { id: shipInstanceId, kind: 'ship', x: m.x, y: m.y };
