@@ -3,7 +3,8 @@ import type { RenderMirror, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
 import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 import { SPOOL_DURATION_MS } from '@core/transit/TransitStateMachine';
-import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
+import type { SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
+import { parseWelcome } from './parseWelcome';
 import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { decideStatAllocReanchor } from './localStatAlloc';
@@ -1319,7 +1320,12 @@ export class ColyseusGameClient {
     // to the pre-extraction version. Called once below for the initial
     // room, and again from the `transit_ready` handler for the destination.
     const bindRoomHandlers = (room: Room): void => {
-      room.onMessage('welcome', (msg: WelcomeMessage) => {
+      // Campaign 6.1 (invariant #3): `welcome` was the last load-bearing
+      // handler consuming a raw cast — parse-and-drop via the pure guard
+      // before anything reaches prediction anchoring / the phase machine.
+      room.onMessage('welcome', (raw: unknown) => {
+      const msg = parseWelcome(raw);
+      if (msg === null) return;
       const idChanged = storedPlayerId && msg.playerId !== storedPlayerId;
       logEvent('cc_welcome', {
         playerId: msg.playerId,

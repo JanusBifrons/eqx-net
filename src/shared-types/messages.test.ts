@@ -29,7 +29,8 @@ import {
   WarpWarningClearSchema,
   BaseReadySchema,
 } from './messages.js';
-import type { SnapshotMessage, WelcomeMessage, HitAckMessage, DamageEvent, ShipLevelUpEvent } from './messages.js';
+import type { SnapshotMessage, WelcomeMessage, ShipRosterMessage, HitAckMessage, DamageEvent, ShipLevelUpEvent } from './messages.js';
+import { WelcomeSchema, ShipRosterSchema } from './messages.js';
 
 describe('CollisionResolvedMessageSchema', () => {
   const valid = {
@@ -693,5 +694,99 @@ describe('Structure leveling message (Phase 4 WS-B4)', () => {
     it('rejects extra unknown fields (strict)', () => {
       expect(UpgradeStructureSchema.safeParse({ ...valid, extra: 1 }).success).toBe(false);
     });
+  });
+});
+
+// ── Campaign 6.1 (anti-patterns review C-core 3 / Part D #18) ────────────────
+// The two remaining inbound server→client messages with NO zod schema:
+// `welcome` (consumed by a raw cast at the ColyseusClient handler) and
+// `ship_roster`. Both now parse defensively on the client; the 20 Hz
+// `snapshot` stays a DOCUMENTED perf carve-out (see snapshotMessages.ts).
+
+describe('WelcomeSchema (campaign 6.1)', () => {
+  const valid = {
+    type: 'welcome' as const,
+    playerId: 'player-1',
+    serverTick: 1234,
+    sectorKey: 'sol-prime',
+    shipInstanceId: 'ship-uuid-1',
+  };
+
+  it('accepts a valid galaxy welcome', () => {
+    expect(WelcomeSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('accepts the engineering-room shape (null sectorKey, empty shipInstanceId)', () => {
+    expect(
+      WelcomeSchema.safeParse({ ...valid, sectorKey: null, shipInstanceId: '' }).success,
+    ).toBe(true);
+  });
+
+  it('accepts the optional spectator flag', () => {
+    expect(WelcomeSchema.safeParse({ ...valid, spectator: true }).success).toBe(true);
+  });
+
+  it('rejects a missing playerId / non-numeric serverTick', () => {
+    const { playerId: _p, ...noPlayer } = valid;
+    expect(WelcomeSchema.safeParse(noPlayer).success).toBe(false);
+    expect(WelcomeSchema.safeParse({ ...valid, serverTick: 'soon' }).success).toBe(false);
+  });
+
+  it('rejects an oversized playerId (S5 inbound-id bound)', () => {
+    expect(WelcomeSchema.safeParse({ ...valid, playerId: 'x'.repeat(65) }).success).toBe(false);
+  });
+
+  it('rejects extra unknown fields (strict)', () => {
+    expect(WelcomeSchema.safeParse({ ...valid, extra: 1 }).success).toBe(false);
+  });
+
+  it('z.infer<WelcomeSchema> ↔ WelcomeMessage are bidirectionally assignable', () => {
+    type SchemaT = z.infer<typeof WelcomeSchema>;
+    const schemaToIface: WelcomeMessage = null as unknown as SchemaT;
+    const ifaceToSchema: SchemaT = null as unknown as WelcomeMessage;
+    void schemaToIface;
+    void ifaceToSchema;
+    const parsed: WelcomeMessage = WelcomeSchema.parse(valid);
+    expect(parsed.playerId).toBe('player-1');
+  });
+});
+
+describe('ShipRosterSchema (campaign 6.1)', () => {
+  const entry = {
+    shipId: 'ship-uuid-1',
+    kind: 'fighter',
+    kindVersion: 12,
+    health: 500,
+    sectorKey: 'sol-prime',
+    x: 10,
+    y: -20,
+    isActive: false,
+  };
+  const valid = { type: 'ship_roster' as const, ships: [entry] };
+
+  it('accepts a valid roster (and an empty one)', () => {
+    expect(ShipRosterSchema.safeParse(valid).success).toBe(true);
+    expect(ShipRosterSchema.safeParse({ type: 'ship_roster', ships: [] }).success).toBe(true);
+  });
+
+  it('rejects a malformed entry (missing shipId / non-finite x)', () => {
+    const { shipId: _s, ...noShipId } = entry;
+    expect(ShipRosterSchema.safeParse({ ...valid, ships: [noShipId] }).success).toBe(false);
+    expect(ShipRosterSchema.safeParse({ ...valid, ships: [{ ...entry, x: Infinity }] }).success).toBe(false);
+  });
+
+  it('rejects extra unknown fields on message and entry (strict)', () => {
+    expect(ShipRosterSchema.safeParse({ ...valid, extra: 1 }).success).toBe(false);
+    expect(ShipRosterSchema.safeParse({ ...valid, ships: [{ ...entry, extra: 1 }] }).success).toBe(false);
+  });
+
+  it('z.infer<ShipRosterSchema> ↔ ShipRosterMessage are bidirectionally assignable', () => {
+    type SchemaT = z.infer<typeof ShipRosterSchema>;
+    const schemaToIface: ShipRosterMessage = null as unknown as SchemaT;
+    const ifaceToSchema: SchemaT = null as unknown as ShipRosterMessage;
+    void schemaToIface;
+    void ifaceToSchema;
+    const parsed: ShipRosterMessage = ShipRosterSchema.parse(valid);
+    expect(parsed.ships).toHaveLength(1);
   });
 });
