@@ -1,28 +1,34 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * Living Galaxy Phase 4a + Equinox Phase 9 (item 1) + Phase 3 (#1 single-owner
- * gate) — DYNAMIC contiguous-territory hover-shrink. Drives the selector
- * (spawn/warp picker) galaxy map and asserts the REAL drawn per-territory scale
- * (`window.__eqxGalaxyTerritoryScale()` → `clusterRoot`'s per-territory
- * sub-container `scale.x`, NOT a recompute). Grouping is owner-driven
- * (`resolveSectorOwner`), and with no capture mechanics yet EVERY sector is
- * NEUTRAL, so the whole connected galaxy is ONE territory keyed `neutral`.
+ * Living Galaxy Phase 4a + Equinox Phase 9 (item 1) + campaign 4.4 (review
+ * A15 / Part D #13) — DYNAMIC contiguous-territory grouping from LIVE
+ * ownership. Drives the selector (spawn/warp picker) galaxy map and asserts
+ * the REAL drawn per-territory scale (`window.__eqxGalaxyTerritoryScale()` →
+ * `clusterRoot`'s per-territory sub-container `scale.x`, NOT a recompute).
  *
- * Phase 3 #1: when there is only ONE territory, hovering must NOT shrink it —
- * shrinking the sole territory shrinks the entire map under the pointer, which
- * read as a janky global flinch on every hover (the bug report). So on today's
- * all-neutral graph the hovered scale must stay at rest (~1.0). The shrink only
- * engages once 2+ territories exist (locked at the unit level by
- * `hoverShrinkTargetScale`, which can't depend on a live multi-owner galaxy).
+ * Campaign 4.4: `resolveSectorOwner` now derives ownership from the live
+ * `/galaxy/snapshot` state (v1 producers stamp each sector's REGION faction),
+ * so once the landing stats arrive the map groups into the REGION territories
+ * (core + the three frontier regions) instead of one flat NEUTRAL blob — the
+ * pre-fix state this spec used to lock, in which the map could never show two
+ * owners as two territories.
+ *
+ * With 2+ territories the per-territory hover-shrink ENGAGES (the designed
+ * behaviour `hoverShrinkTargetScale` locks at the unit level): hovering the
+ * core shrinks ONLY the core territory; the frontier regions stay at rest —
+ * the Phase-3 #1 "global flinch" can't recur because the shrink is scoped to
+ * one territory. (The "sole territory must not shrink" rule remains
+ * unit-locked in `hoverShrinkTargetScale`; it simply no longer describes the
+ * live map.)
  *
  * `?worker=0` forces the MAIN-THREAD PixiRenderer (the OffscreenCanvas worker
  * path screenshots black); the DOM galaxy layer installs the debug hooks. The
  * renderer forwards bare `pointermove` to the layer while the selector is
  * pan-zoom-active (PixiRenderer ~:782), so desktop hover reaches the shrink.
  *
- * FAIL on pre-#1 code: a single neutral territory DID shrink on hover, so the
- * post-hover scale dropped below 0.97 — this spec now asserts it stays ≥ 0.97.
+ * FAIL on pre-4.4 code: the resolver ignored live state, so the only territory
+ * key was 'neutral' — the multi-territory wait below timed out.
  */
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
@@ -33,7 +39,7 @@ declare global {
   }
 }
 
-test('galaxy selector does NOT shrink the sole (all-neutral) territory on hover (#1)', async ({ page }) => {
+test('galaxy selector groups LIVE region owners into territories; hover shrinks ONLY the hovered one (campaign 4.4)', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (err) => errors.push(`PAGEERROR: ${err.message}`));
 
@@ -48,6 +54,17 @@ test('galaxy selector does NOT shrink the sole (all-neutral) territory on hover 
     null,
     { timeout: 6_000 },
   );
+  // Campaign 4.4 — once the landing stats poll lands, live ownership re-groups
+  // the map into the region territories. Pre-fix this never happened: the only
+  // key was 'neutral' and this wait TIMED OUT.
+  await page.waitForFunction(
+    () => {
+      const scales = window.__eqxGalaxyTerritoryScale!();
+      return Object.keys(scales).length >= 2 && 'core' in scales;
+    },
+    null,
+    { timeout: 8_000 },
+  );
   // Let the layer fit + paint a few frames so the baseline is the steady fit.
   await page.waitForTimeout(500);
 
@@ -55,13 +72,11 @@ test('galaxy selector does NOT shrink the sole (all-neutral) territory on hover 
   const box = await surface.boundingBox();
   if (!box) throw new Error('game-surface bounding box not found');
 
-  // One dynamic NEUTRAL territory exists (everything is neutral today) and sits at
-  // rest (~1.0) before any hover.
+  // Every territory sits at rest (~1.0) before any hover.
   const restScales = await page.evaluate(() => window.__eqxGalaxyTerritoryScale!());
-  expect(
-    restScales['neutral'],
-    `the neutral territory should exist (scales=${JSON.stringify(restScales)})`,
-  ).toBeGreaterThan(0.97);
+  for (const [owner, scale] of Object.entries(restScales)) {
+    expect(scale, `territory ${owner} at rest (scales=${JSON.stringify(restScales)})`).toBeGreaterThan(0.97);
+  }
 
   await page.screenshot({ path: 'diag/e2e-screenshots/galaxy-living/01-rest.png' });
 
@@ -77,13 +92,19 @@ test('galaxy selector does NOT shrink the sole (all-neutral) territory on hover 
   await page.waitForTimeout(700); // lerp ease toward HOVER_SCALE (0.94)
 
   const hoverScales = await page.evaluate(() => window.__eqxGalaxyTerritoryScale!());
-  // #1: with only ONE territory (everything neutral today), hovering must NOT
-  // shrink it — shrinking the sole territory shrinks the whole map under the
-  // pointer (the global-flinch bug). The scale stays at rest.
+  // With multiple territories, the hovered CORE territory shrinks…
   expect(
-    hoverScales['neutral'],
-    `the sole neutral territory should NOT shrink on hover (scales=${JSON.stringify(hoverScales)})`,
-  ).toBeGreaterThan(0.97);
+    hoverScales['core'],
+    `the hovered core territory shrinks (scales=${JSON.stringify(hoverScales)})`,
+  ).toBeLessThan(0.99);
+  // …while the un-hovered frontier regions stay at rest (no global flinch).
+  for (const owner of ['verdant-reach', 'crimson-expanse', 'azure-deep']) {
+    if (hoverScales[owner] === undefined) continue;
+    expect(
+      hoverScales[owner],
+      `un-hovered territory ${owner} stays at rest (scales=${JSON.stringify(hoverScales)})`,
+    ).toBeGreaterThan(0.97);
+  }
 
   await page.screenshot({ path: 'diag/e2e-screenshots/galaxy-living/02-hover-centre.png' });
 
