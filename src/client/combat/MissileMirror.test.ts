@@ -255,6 +255,66 @@ describe('MissileMirror.applyMissileSnapshot', () => {
     expect(mirror.missiles!.has(2)).toBe(true);
   });
 
+  // ── Campaign 5.1c (review A1 residual b) — SLICE-DRIVEN removal. The
+  // `missile_detonated` event is AOI-filtered INDEPENDENTLY of the pose slice,
+  // so a viewer could hold a live mirror entry whose removal event was
+  // filtered away: the sprite dead-reckoned to the extrapolation cap then
+  // FROZE for the remaining ~750 ms of the old 1 s stale window — the exact
+  // "missile stops moving, then fades" report. Absence from the slice is now
+  // the authoritative removal signal (the event stays as the fast/VFX path):
+  // a missile the slice stopped carrying despawns within the extrapolation
+  // cap, so the frozen-ghost phase cannot exist. ──
+  it('a missile ABSENT from the slice despawns within the extrapolation cap (failed pre-fix: 1 s frozen ghost)', () => {
+    const mirror = makeMirror();
+    applyMissileSnapshot(makeSlice([{ id: 7, x: 0, y: 0 }]), mirror, 1, 1000);
+    expect(mirror.missiles!.has(7)).toBe(true);
+    // 300 ms of slice absence (~6 snapshot cadences) — gone or out of view.
+    applyMissileSnapshot(undefined, mirror, 7, 1300);
+    expect(mirror.missiles!.has(7)).toBe(false);
+  });
+
+  it('a missile survives a couple of dropped/coalesced snapshots (150 ms slice gap)', () => {
+    const mirror = makeMirror();
+    applyMissileSnapshot(makeSlice([{ id: 7, x: 0, y: 0 }]), mirror, 1, 1000);
+    applyMissileSnapshot(undefined, mirror, 2, 1150);
+    expect(mirror.missiles!.has(7)).toBe(true);
+  });
+});
+
+// ── Campaign 5.1b (review A1 residual a) — a SINGLE-sample missile must MOVE.
+// `resolveMissileDisplayPose` pinned to the sole sample while `count === 1`,
+// so every missile's first ~display-delay (and every AOI re-entry) rendered
+// FROZEN at its first pose, then jumped when interpolation began — drones
+// never showed this because their cadence is 3× higher. The pose is now
+// reconstructed along the sample's own velocity/homing curve (dt clamped to
+// [−display-delay, +extrapolation-cap]), so the missile flies smoothly from
+// its very first rendered frame. A zero-velocity sample still resolves to the
+// sample point (the legacy seeded-pose case is unchanged). ──
+describe('MissileMirror — single-sample reconstruction (campaign 5.1b)', () => {
+  it('a single-sample missile MOVES between its first frames (failed pre-fix: pinned frozen)', () => {
+    const mirror = makeMirror();
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0, vx: 0, vy: 400 }]), mirror, 1, 1000);
+    // Render targets predate the only sample (display delay 100 ms): the pose
+    // reconstructs BACKWARD along the flight line instead of pinning.
+    const early = resolveMissileDisplayPose(mirror, 1, 1040)!; // target 940 → dt −60 ms
+    const later = resolveMissileDisplayPose(mirror, 1, 1090)!; // target 990 → dt −10 ms
+    expect(later.y).toBeGreaterThan(early.y); // it MOVES frame to frame
+    expect(early.y).toBeCloseTo(-400 * 0.06, 1);
+    expect(later.y).toBeCloseTo(-400 * 0.01, 1);
+  });
+
+  it('single-sample reconstruction is clamped on both sides (display delay back, cap forward)', () => {
+    const mirror = makeMirror();
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0, vx: 0, vy: 400 }]), mirror, 1, 1000);
+    // Instant render: target 900 → dt clamped to −display-delay (−100 ms).
+    const instant = resolveMissileDisplayPose(mirror, 1, 1000)!;
+    expect(instant.y).toBeCloseTo(-400 * (MISSILE_DISPLAY_DELAY_MS / 1000), 1);
+    // Long after with no further samples: forward reconstruction caps like the
+    // past-newest branch (then the slice-absence despawn reaps it anyway).
+    const far = resolveMissileDisplayPose(mirror, 1, 1000 + 5000)!;
+    expect(far.y).toBeCloseTo(400 * (MISSILE_EXTRAPOLATION_CAP_MS / 1000), 1);
+  });
+
   it('resolveMissileDisplayPose returns null for unknown ids', () => {
     const mirror = makeMirror();
     expect(resolveMissileDisplayPose(mirror, 999, 1000)).toBeNull();
