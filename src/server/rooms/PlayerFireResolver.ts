@@ -172,8 +172,11 @@ export interface PlayerFireResolverDeps {
   broadcast: (type: 'laser_fired', msg: LaserFiredEvent) => void;
   /** Diagnostic log sink. */
   serverLogEvent: (tag: string, data: Record<string, unknown>) => void;
-  /** Pino logger for the malformed-fire warning + the 1% sample line. */
+  /** Pino logger for the 1% sample line. */
   logger: Logger;
+  /** Per-connection malformed-packet counter + sampled warn (campaign 1.3 —
+   *  fire is an unbounded message-rate channel, so it must not warn per packet). */
+  malformed: { record(sessionId: string, messageType: string): void };
 }
 
 export class PlayerFireResolver implements WeaponFireSink {
@@ -212,7 +215,7 @@ export class PlayerFireResolver implements WeaponFireSink {
     const d = this.deps;
     const parsed = FireMessageSchema.safeParse(raw);
     if (!parsed.success) {
-      d.logger.warn({ sessionId: client.sessionId }, 'malformed fire message');
+      d.malformed.record(client.sessionId, 'fire');
       return;
     }
     const { tick, clientShotId, weapon, dirAngle, slotId } = parsed.data;

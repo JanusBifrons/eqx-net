@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 export interface WelcomeMessage {
   type: 'welcome';
   playerId: string;
@@ -24,10 +26,46 @@ export interface WelcomeMessage {
   spectator?: boolean;
 }
 
+/** Campaign 6.1 (anti-patterns review C-core 3) — defensive ingest schema for
+ *  `welcome`. The server builds this itself (never parses through it); the
+ *  CLIENT `safeParse`s on receipt via `parseWelcome` and drops malformed
+ *  payloads before they reach prediction anchoring (`inputTick`, clock
+ *  anchor) or the Zustand phase machine — invariant #3's parse-and-drop
+ *  contract, previously satisfied by a raw cast. Mirrors the hand-written
+ *  `WelcomeMessage` interface exactly; the bidirectional `z.infer` ↔
+ *  interface assignability lock in `messages.test.ts` fails `pnpm typecheck`
+ *  if they drift. String ids carry the S5 inbound bound (max 64). */
+export const WelcomeSchema = z
+  .object({
+    type: z.literal('welcome'),
+    playerId: z.string().min(1).max(64),
+    serverTick: z.number(),
+    sectorKey: z.string().min(1).max(64).nullable(),
+    /** Empty string in engineering rooms — so max-only, no min. */
+    shipInstanceId: z.string().max(64),
+    spectator: z.boolean().optional(),
+  })
+  .strict();
+
 /** Authoritative snapshot broadcast by the server at 20 Hz for client-side
  *  reconciliation. Phase 5c: `obstacles` removed — asteroids and drones now
  *  flow through the binary swarm channel (see `client.send('swarm', buf)`)
- *  instead of being carried on every snapshot. */
+ *  instead of being carried on every snapshot.
+ *
+ *  ── DELIBERATE invariant-#3 CARVE-OUT (campaign 6.1 documents it): this is
+ *  the ONE inbound server→client message the client does NOT zod-parse on
+ *  ingest. It arrives at 20 Hz carrying the largest payload on the wire
+ *  (states map + drones/missiles/structures slices); a full `safeParse`
+ *  every 50 ms would allocate + deep-walk the whole object inside the
+ *  message-dispatch frame the snapshot coalescer exists to keep light
+ *  (invariant #14). The trust argument: the payload is produced by our own
+ *  server's `SnapshotBroadcaster` (same repo, schema drift is caught by the
+ *  shared TS interface at compile time), and the translator in
+ *  `ColyseusClient.handleSnapshot` does defensive per-field reads (optional
+ *  chaining + back-fills) rather than trusting deep structure. Anything
+ *  LOW-frequency (welcome, roster, combat events, warp warnings) MUST have a
+ *  zod schema — do not cite this carve-out for a new message unless it is
+ *  both high-cadence AND translator-guarded. */
 export interface SnapshotMessage {
   type: 'snapshot';
   serverTick: number;
