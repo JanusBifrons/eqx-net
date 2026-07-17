@@ -60,7 +60,18 @@ export const MISSILE_EXTRAPOLATION_CAP_MS = 250;
 const TELEPORT_MAX_PLAUSIBLE_SPEED = 2500; // u/s — above any missile speed
 const TELEPORT_FLOOR_U = 64;
 
-const STALE_THRESHOLD_MS = 1000;
+/** Campaign 5.1c — SLICE-DRIVEN removal. Absence from the pose slice is the
+ *  authoritative despawn signal: the `missile_detonated` event is AOI-filtered
+ *  independently of the slice, so a viewer could hold a live entry whose
+ *  removal event was filtered away — the sprite dead-reckoned to the
+ *  extrapolation cap then FROZE for the remainder of the old 1 s stale window
+ *  (the "missile stops moving, then fades" report). 250 ms = the extrapolation
+ *  cap (~5 snapshot cadences; tolerant of a couple of dropped/coalesced
+ *  snapshots — any connected client forces the sector non-idle, so the slice
+ *  stream never legitimately pauses): the entry is reaped right as its
+ *  dead-reckoning caps, so a frozen phase cannot exist. The event stays as the
+ *  same-frame fast path for the explosion VFX. */
+const MISSILE_ABSENT_DESPAWN_MS = 250;
 
 /** Allocate a fresh, empty pose ring for a newly-sighted missile. */
 function newRing(): PoseRingEntry[] {
@@ -134,10 +145,11 @@ export function applyMissileSnapshot(
     }
   }
 
-  // Stale-eviction backstop: missiles that left the AOI without a
-  // `missile_detonated` arriving get reaped after STALE_THRESHOLD_MS.
+  // Slice-driven despawn (campaign 5.1c): a missile the slice stopped
+  // carrying — detonated with its event AOI-filtered away, or out of the
+  // recipient's view — is reaped within the extrapolation cap.
   for (const [id, m] of map) {
-    if (nowMs - m.latestArrivalMs > STALE_THRESHOLD_MS) {
+    if (nowMs - m.latestArrivalMs > MISSILE_ABSENT_DESPAWN_MS) {
       map.delete(id);
     }
   }
@@ -240,9 +252,20 @@ export function resolveMissileDisplayPose(
   const newest = _populated[count - 1]!;
   const oldest = _populated[0]!;
 
-  // Single sample, or render time before our oldest sample: pin to oldest.
+  // Single sample, or render time before our oldest sample (campaign 5.1b).
+  // The old pin froze every missile at its first pose for ~display-delay
+  // (and on every AOI re-entry), then JUMPED when interpolation began —
+  // drones never showed this because their cadence is 3× higher. Reconstruct
+  // along the sample's own velocity/homing curve instead: dt is clamped to
+  // [−display-delay, +extrapolation-cap], so the pose flies smoothly from
+  // the very first rendered frame (backward reconstruction retraces the
+  // path the missile actually flew before the sample; a zero-velocity
+  // sample still resolves to the sample point — the legacy behaviour).
   if (count === 1 || targetMs <= oldest.arrivalMs) {
-    return { x: oldest.x, y: oldest.y, angle: oldest.angle, lifePct: m.lifePct };
+    const rawDtMs = targetMs - oldest.arrivalMs;
+    const dtMs = Math.max(-MISSILE_DISPLAY_DELAY_MS, Math.min(MISSILE_EXTRAPOLATION_CAP_MS, rawDtMs));
+    const c = curveDeadReckon(oldest.x, oldest.y, oldest.vx, oldest.vy, oldest.angle, oldest.angvel, dtMs / 1000);
+    return { x: c.x, y: c.y, angle: c.angle, lifePct: m.lifePct };
   }
 
   // Render time past the newest arrival: dead-reckon forward along the HOMING
