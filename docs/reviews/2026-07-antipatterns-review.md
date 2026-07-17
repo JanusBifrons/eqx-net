@@ -87,7 +87,7 @@ Ramming tuning landed (`RAM_DAMAGE_MAX` 50→10, min-speed floor, mass-different
 ### A11. Lingering ships ⚠️ (two confirmed server bugs)
 
 - **Invisible shield — confirmed.** `tickShieldRegen` regenerates `ship.shield` gated only on `ship.alive` — `isActive` gates the collider swap and the broadcast but **not the regen** (`ShieldHullRouter.ts:232-252`). A lingering hull silently regenerates to full shield; hits land on a shield no one can see. One-line predicate fix.
-- **Weapons never render — confirmed.** Mount ticking iterates `playerToSlot` only (`WeaponMountTicker.ts:195`); lingering hulls live in `lingeringSlots` and their snapshot entries emit `mounts` but never `mountAngles` (`SnapshotBroadcaster.ts:560-588`) — barrels sit at base angle, beams never draw.
+- **Weapons never render — AMENDED during campaign 2.2 (2026-07-16): already fixed at head, by design.** Mount ticking does skip lingering hulls (they're in `lingeringSlots`, not `playerToSlot`) and no `mountAngles` are emitted — but that is CORRECT: a parked hull has no pilot and must not aim. The render half was fixed by R2.32: `PixiRenderer.updateLingeringShips` gives every parked hull its barrel cluster via `mountVisuals.ensureForShip`, frozen at baseAngle. The original review bullet over-claimed; no fix needed.
 - Scrap-on-death for lingering hulls IS wired (`lingeringScrapOnDeath.test.ts`); the residual report likely hits the roster-row-deleted edge.
 - Re-board position is live server-side (`lingeringPoseCache` updated per tick from SAB, `SabPoseMirror.ts:83`; `reclaimLingeringHull` re-anchors at it). If the stale-position symptom recurs it is client-side (camera glide target read from the throttled snapshot pose).
 
@@ -228,7 +228,7 @@ Updated as each PR merges. Wave assignment per the approved campaign plan; PRs r
 | 16 sampled-warn wrapper | 1.3 | ✅ landed (#150) |
 | 17 physics-worker scratch | 1.4 | ✅ landed (#152) |
 | 1 hostility bit on snapshot | 2.1 | ✅ landed (#153) |
-| 5 lingering liveness audit | 2.2 | 🔄 CI (auto-merge armed, #154; A11 mountAngles half amended — see below) |
+| 5 lingering liveness audit | 2.2 | ✅ landed (#154; A11 mountAngles half amended — see below) |
 | 9 incoming-warp reliability | 2.3 | ✅ landed (#155) |
 | 2 spectator severs dead-ship ref | 3.1 | ⚠️ partial — server slice (3.1a dead-warp gate) landed (#156); client `localPlayerId` sever still open (see below) |
 | 4 sprite-cache composite key | 3.2 | ✅ landed (#157) |
