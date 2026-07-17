@@ -49,6 +49,7 @@
  */
 
 import { pickTarget, type MountTargetView } from '../../core/ai/WeaponMountController.js';
+import { projectileSweepCircle, SHIP_COLLISION_RADIUS } from '../../core/combat/Weapons.js';
 import {
   SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF,
   slotBase,
@@ -457,17 +458,23 @@ export class MissileSimulation {
       }
       m.angvel = wrapPi(m.angle - angleBefore) / DT_SEC;
 
-      // 4. Integrate position.
-      m.x += m.vx * DT_SEC;
-      m.y += m.vy * DT_SEC;
-
-      // 5. Sweep collision — direct-hit against players + swarm.
-      const hit = this.sweepCollision(m);
+      // 4+5. SWEPT integrate (campaign 5.1a) — test the FULL step segment
+      // against every collider BEFORE moving, so a fast missile can never
+      // jump across a target between samples (the "missiles pass through
+      // lingering ships" tunnelling hole; the projectile pipeline has used
+      // the same swept-circle since its own tunnelling fix). On hit the
+      // missile detonates at the parametric ENTRY point, not the tunnelled
+      // post-step position.
+      const stepX = m.vx * DT_SEC;
+      const stepY = m.vy * DT_SEC;
+      const hit = this.sweepCollision(m, stepX, stepY);
       if (hit !== null) {
         this.detonate(m, hit.x, hit.y, hit.id, hit.kind, 'sweep');
         this.releaseAtPos(i);
         continue;
       }
+      m.x += stepX;
+      m.y += stepY;
 
       // 6. Lifetime decrement / expiry. Impact-only DAMAGE is preserved (smoke
       // handoff 2026-06-06, Issue 2): a missile that never lands a direct hit
@@ -636,12 +643,25 @@ export class MissileSimulation {
   }
 
   /**
-   * Sweep against players + swarm; return the first hit (any order — these
-   * are short-step circles, ties are rare). Excludes the owner. Returns
-   * `null` when no hit.
+   * SWEPT collision against players + lingering hulls + swarm (campaign
+   * 5.1a). Tests the missile's full per-tick step segment `(m.x, m.y) →
+   * (m.x + stepX, m.y + stepY)` via the shared `projectileSweepCircle`
+   * (the projectile pipeline's tunnel-proof Minkowski sweep), keeping the
+   * EARLIEST entry across all colliders — so a fast missile can never jump
+   * across a target between samples, and two colliders in one step resolve
+   * to the first one crossed. Excludes the owner. Returns `null` on no hit.
    */
-  private sweepCollision(m: MissileRecord): { id: string; kind: SplashKind; x: number; y: number } | null {
-    const r2 = m.weaponDef.radius * m.weaponDef.radius;
+  private sweepCollision(
+    m: MissileRecord,
+    stepX: number,
+    stepY: number,
+  ): { id: string; kind: SplashKind; x: number; y: number } | null {
+    const mr = m.weaponDef.radius;
+    let bestEntry = Infinity;
+    let bestId: string | null = null;
+    let bestKind: SplashKind = 'ship';
+    let bestX = 0;
+    let bestY = 0;
 
     // Players (sphere-only; missiles don't refine to hull polygons today).
     for (const [playerId] of this.deps.playerToSlot) {
@@ -650,12 +670,13 @@ export class MissileSimulation {
       if (!ship || !ship.alive || !ship.isActive) continue;
       const pose = this.deps.shipPoseCache.get(playerId);
       if (!pose) continue;
-      const dx = pose.x - m.x;
-      const dy = pose.y - m.y;
-      const shipR = 12; // SHIP_COLLISION_RADIUS (approx)
-      const combined = (m.weaponDef.radius + shipR);
-      if (dx * dx + dy * dy <= combined * combined) {
-        return { id: playerId, kind: 'ship', x: m.x, y: m.y };
+      const sweep = projectileSweepCircle(m.x, m.y, stepX, stepY, mr, pose.x, pose.y, SHIP_COLLISION_RADIUS);
+      if (sweep && sweep.entry < bestEntry) {
+        bestEntry = sweep.entry;
+        bestId = playerId;
+        bestKind = 'ship';
+        bestX = sweep.hitX;
+        bestY = sweep.hitY;
       }
     }
 
@@ -668,12 +689,13 @@ export class MissileSimulation {
     for (const [shipInstanceId] of this.deps.lingeringSlots) {
       const pose = this.deps.lingeringPoseCache.get(shipInstanceId);
       if (!pose) continue;
-      const dx = pose.x - m.x;
-      const dy = pose.y - m.y;
-      const shipR = 12;
-      const combined = m.weaponDef.radius + shipR;
-      if (dx * dx + dy * dy <= combined * combined) {
-        return { id: shipInstanceId, kind: 'ship', x: m.x, y: m.y };
+      const sweep = projectileSweepCircle(m.x, m.y, stepX, stepY, mr, pose.x, pose.y, SHIP_COLLISION_RADIUS);
+      if (sweep && sweep.entry < bestEntry) {
+        bestEntry = sweep.entry;
+        bestId = shipInstanceId;
+        bestKind = 'ship';
+        bestX = sweep.hitX;
+        bestY = sweep.hitY;
       }
     }
 
@@ -689,16 +711,18 @@ export class MissileSimulation {
       const b = slotBase(rec.slot);
       const cx = this.deps.sabF32[b + SLOT_X_OFF]!;
       const cy = this.deps.sabF32[b + SLOT_Y_OFF]!;
-      const dx = cx - m.x;
-      const dy = cy - m.y;
-      const combined = m.weaponDef.radius + rec.radius;
-      if (dx * dx + dy * dy <= combined * combined) {
-        return { id: rec.id, kind: 'swarm', x: m.x, y: m.y };
+      const sweep = projectileSweepCircle(m.x, m.y, stepX, stepY, mr, cx, cy, rec.radius);
+      if (sweep && sweep.entry < bestEntry) {
+        bestEntry = sweep.entry;
+        bestId = rec.id;
+        bestKind = 'swarm';
+        bestX = sweep.hitX;
+        bestY = sweep.hitY;
       }
     }
 
-    void r2;
-    return null;
+    if (bestId === null) return null;
+    return { id: bestId, kind: bestKind, x: bestX, y: bestY };
   }
 
   /**

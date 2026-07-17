@@ -3,7 +3,8 @@ import type { RenderMirror, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
 import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 import { SPOOL_DURATION_MS } from '@core/transit/TransitStateMachine';
-import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
+import type { SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
+import { parseWelcome } from './parseWelcome';
 import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { decideStatAllocReanchor } from './localStatAlloc';
@@ -64,7 +65,7 @@ import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { installPageLifecycleObserver } from '../debug/pageLifecycleObserver';
 import { recordServerGcPause, startHealthStatsPublisher } from '../debug/healthStats';
 import { GhostManager } from '../combat/GhostProjectile';
-import { HITSCAN_RANGE, rayHitsSphere } from '@core/combat/Weapons';
+import { HITSCAN_RANGE, MUZZLE_CLEARANCE, rayHitsSphere } from '@core/combat/Weapons';
 import { getWeapon, weaponAutoFireRange, type WeaponDef } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
 import { resolveSlotMounts, resolveInstanceMounts, resolveInstanceFireMounts } from '@shared-types/shipKinds/slots';
@@ -1316,7 +1317,12 @@ export class ColyseusGameClient {
     // to the pre-extraction version. Called once below for the initial
     // room, and again from the `transit_ready` handler for the destination.
     const bindRoomHandlers = (room: Room): void => {
-      room.onMessage('welcome', (msg: WelcomeMessage) => {
+      // Campaign 6.1 (invariant #3): `welcome` was the last load-bearing
+      // handler consuming a raw cast — parse-and-drop via the pure guard
+      // before anything reaches prediction anchoring / the phase machine.
+      room.onMessage('welcome', (raw: unknown) => {
+      const msg = parseWelcome(raw);
+      if (msg === null) return;
       const idChanged = storedPlayerId && msg.playerId !== storedPlayerId;
       logEvent('cc_welcome', {
         playerId: msg.playerId,
@@ -4932,8 +4938,8 @@ export class ColyseusGameClient {
       const mountAngle = ship.angle + mount.baseAngle + currentMountAngle;
       const fwdX = -Math.sin(mountAngle);
       const fwdY = Math.cos(mountAngle);
-      const fromX = mountWorldX + fwdX * 20;
-      const fromY = mountWorldY + fwdY * 20;
+      const fromX = mountWorldX + fwdX * MUZZLE_CLEARANCE;
+      const fromY = mountWorldY + fwdY * MUZZLE_CLEARANCE;
       // P3.13 / campaign 5.2 — the beam bands DERIVE from the catalogue def
       // via the unit-locked `beamBands` seam (the SAME numbers the server
       // damage falloff reads, so the visible taper == the damage band by
@@ -5134,8 +5140,8 @@ export class ColyseusGameClient {
       // shipped kind today.
       const fwdX = -Math.sin(state.angle);
       const fwdY = Math.cos(state.angle);
-      const fromX = state.x + fwdX * 20;
-      const fromY = state.y + fwdY * 20;
+      const fromX = state.x + fwdX * MUZZLE_CLEARANCE;
+      const fromY = state.y + fwdY * MUZZLE_CLEARANCE;
       if (spawnGhost) {
         this.ghostManager.spawn(shotId, localId, fromX, fromY, fwdX, fwdY, slotWeapon, state.vx, state.vy);
       }
@@ -5152,8 +5158,8 @@ export class ColyseusGameClient {
         const mountFireAngle = state.angle + mount.baseAngle + currentMountAngle;
         const fwdX = -Math.sin(mountFireAngle);
         const fwdY = Math.cos(mountFireAngle);
-        const fromX = mountWorldX + fwdX * 20;
-        const fromY = mountWorldY + fwdY * 20;
+        const fromX = mountWorldX + fwdX * MUZZLE_CLEARANCE;
+        const fromY = mountWorldY + fwdY * MUZZLE_CLEARANCE;
         if (spawnGhost) {
           this.ghostManager.spawn(
             shotId,
