@@ -167,9 +167,12 @@ import {
   rayHitsShipPolygon,
   sweptSegmentHitsShipPolygon,
   // WEAPON_COOLDOWN_TICKS now used inside PlayerFireResolver + AiFireResolver
-  // SHIP_COLLISION_RADIUS retired 2026-05-27 — hit-tests now derive per-kind
-  // bounding-circle from `getShipKind(ship.kind).radius + SHIELD_RADIUS_PAD`
-  // so the system matches the visible ShieldAura on every ship kind.
+  // Player-hull HIT-tests derive a per-kind bounding-circle from
+  // `getShipKind(ship.kind).radius + SHIELD_RADIUS_PAD` (2026-05-27) so they
+  // match the visible ShieldAura; SHIP_COLLISION_RADIUS remains the shared
+  // broad-phase radius for the scalar sweeps/rays that haven't gone per-kind
+  // (mining beam here; missile sweep; lingering ray — campaign 5.3).
+  SHIP_COLLISION_RADIUS,
   SHIP_MAX_HEALTH,
 } from '../../core/combat/Weapons.js';
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
@@ -3312,7 +3315,7 @@ export class SectorRoom extends Room<SectorState> {
     fromX: number, fromY: number, toX: number, toY: number,
     perHit: number,
   ): void {
-    const shipR = 12; // approx ship collision radius (SHIP_COLLISION_RADIUS retired)
+    const shipR = SHIP_COLLISION_RADIUS; // shared broad-phase radius (campaign 5.3)
     for (const [playerId] of this.playerToSlot) {
       const ship = this.getActiveShip(playerId);
       if (!ship || !ship.alive || !ship.isActive) continue;

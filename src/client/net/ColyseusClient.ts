@@ -64,7 +64,7 @@ import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { installPageLifecycleObserver } from '../debug/pageLifecycleObserver';
 import { recordServerGcPause, startHealthStatsPublisher } from '../debug/healthStats';
 import { GhostManager } from '../combat/GhostProjectile';
-import { HITSCAN_RANGE, rayHitsSphere } from '@core/combat/Weapons';
+import { HITSCAN_RANGE, MUZZLE_CLEARANCE, rayHitsSphere } from '@core/combat/Weapons';
 import { getWeapon, weaponAutoFireRange, type WeaponDef } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
 import { resolveSlotMounts, resolveInstanceMounts, resolveInstanceFireMounts } from '@shared-types/shipKinds/slots';
@@ -4941,8 +4941,8 @@ export class ColyseusGameClient {
       const mountAngle = ship.angle + mount.baseAngle + currentMountAngle;
       const fwdX = -Math.sin(mountAngle);
       const fwdY = Math.cos(mountAngle);
-      const fromX = mountWorldX + fwdX * 20;
-      const fromY = mountWorldY + fwdY * 20;
+      const fromX = mountWorldX + fwdX * MUZZLE_CLEARANCE;
+      const fromY = mountWorldY + fwdY * MUZZLE_CLEARANCE;
       // P3.13 — the beam VISUALLY reaches the weapon's MAX range (optimal ×
       // maxRangeMul), so the gradient texture (A3b) fades it to nothing at the
       // tip beyond the optimal/aim-line range. Server damage falloff matches
@@ -5150,8 +5150,8 @@ export class ColyseusGameClient {
       // shipped kind today.
       const fwdX = -Math.sin(state.angle);
       const fwdY = Math.cos(state.angle);
-      const fromX = state.x + fwdX * 20;
-      const fromY = state.y + fwdY * 20;
+      const fromX = state.x + fwdX * MUZZLE_CLEARANCE;
+      const fromY = state.y + fwdY * MUZZLE_CLEARANCE;
       if (spawnGhost) {
         this.ghostManager.spawn(shotId, localId, fromX, fromY, fwdX, fwdY, slotWeapon, state.vx, state.vy);
       }
@@ -5168,8 +5168,8 @@ export class ColyseusGameClient {
         const mountFireAngle = state.angle + mount.baseAngle + currentMountAngle;
         const fwdX = -Math.sin(mountFireAngle);
         const fwdY = Math.cos(mountFireAngle);
-        const fromX = mountWorldX + fwdX * 20;
-        const fromY = mountWorldY + fwdY * 20;
+        const fromX = mountWorldX + fwdX * MUZZLE_CLEARANCE;
+        const fromY = mountWorldY + fwdY * MUZZLE_CLEARANCE;
         if (spawnGhost) {
           this.ghostManager.spawn(
             shotId,
