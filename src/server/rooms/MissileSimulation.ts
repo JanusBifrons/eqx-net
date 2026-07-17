@@ -49,7 +49,7 @@
  */
 
 import { pickTarget, type MountTargetView } from '../../core/ai/WeaponMountController.js';
-import { projectileSweepCircle } from '../../core/combat/Weapons.js';
+import { projectileSweepCircle, SHIP_COLLISION_RADIUS } from '../../core/combat/Weapons.js';
 import {
   SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF,
   slotBase,
@@ -670,8 +670,7 @@ export class MissileSimulation {
       if (!ship || !ship.alive || !ship.isActive) continue;
       const pose = this.deps.shipPoseCache.get(playerId);
       if (!pose) continue;
-      const shipR = 12; // SHIP_COLLISION_RADIUS (approx; shared constant is campaign 5.3)
-      const sweep = projectileSweepCircle(m.x, m.y, stepX, stepY, mr, pose.x, pose.y, shipR);
+      const sweep = projectileSweepCircle(m.x, m.y, stepX, stepY, mr, pose.x, pose.y, SHIP_COLLISION_RADIUS);
       if (sweep && sweep.entry < bestEntry) {
         bestEntry = sweep.entry;
         bestId = playerId;
@@ -690,8 +689,7 @@ export class MissileSimulation {
     for (const [shipInstanceId] of this.deps.lingeringSlots) {
       const pose = this.deps.lingeringPoseCache.get(shipInstanceId);
       if (!pose) continue;
-      const shipR = 12;
-      const sweep = projectileSweepCircle(m.x, m.y, stepX, stepY, mr, pose.x, pose.y, shipR);
+      const sweep = projectileSweepCircle(m.x, m.y, stepX, stepY, mr, pose.x, pose.y, SHIP_COLLISION_RADIUS);
       if (sweep && sweep.entry < bestEntry) {
         bestEntry = sweep.entry;
         bestId = shipInstanceId;

@@ -40,6 +40,7 @@ import { Container, Graphics } from 'pixi.js';
 import { getShipKind, type WeaponMount } from '../../shared-types/shipKinds';
 import { shipPrimaryColor } from '@core/geometry/shipHullOutline';
 import { aimLineLengthForMount } from './aimLineLength';
+import { MUZZLE_CLEARANCE } from '@core/combat/Weapons';
 
 /** Shared frozen empty mount-list. The `?? EMPTY_MOUNTS` fallback for a
  *  mountless kind avoids allocating a fresh `[]` literal every time
@@ -85,15 +86,16 @@ const AIM_LINE_DASH_OFF = 4;
 /** Half-width of the barrel rectangle (mount sprite is `2 * BARREL_HALF_WIDTH`
  *  wide and `BARREL_LENGTH` long).
  *
- *  `BARREL_LENGTH` deliberately matches the 20 u server-side self-hit
- *  clearance offset used in `SectorRoom.handleFire` and the client's
- *  `updateLiveBeam` — so the beam emerges from the *visible* barrel tip
- *  rather than a point in space 12 u beyond it. Earlier the barrel was
- *  drawn 8 u long and beams emerged 20 u from the mount pivot, leaving a
- *  visible 12 u gap that user-test feedback flagged as "lasers don't
- *  come out of the exact tip of the barrel". */
+ *  `BARREL_LENGTH` IS the shared `MUZZLE_CLEARANCE` (campaign 5.3) — the same
+ *  constant the server's fire-ray self-hit offset and the client's
+ *  `updateLiveBeam` origin use — so the beam emerges from the *visible*
+ *  barrel tip rather than a point in space beyond it. Pre-5.3 these were two
+ *  hand-synchronised `20`s ("don't change one without the other"); now they
+ *  cannot drift (invariant #15). Earlier still the barrel was drawn 8 u long
+ *  and beams emerged 20 u from the mount pivot, leaving a visible 12 u gap
+ *  ("lasers don't come out of the exact tip of the barrel"). */
 const BARREL_HALF_WIDTH = 1.2;
-const BARREL_LENGTH = 20;
+const BARREL_LENGTH = MUZZLE_CLEARANCE;
 
 export class MountVisualManager {
   private readonly clusters = new Map<string, MountCluster>();
