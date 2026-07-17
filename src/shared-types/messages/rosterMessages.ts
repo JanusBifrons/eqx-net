@@ -6,6 +6,8 @@
  * canonical x/y for an active ship still flows over the per-frame render
  * mirror — this message is for the discrete card UI.
  */
+import { z } from 'zod';
+
 export interface ShipRosterEntry {
   shipId: string;
   kind: string;
@@ -30,3 +32,29 @@ export interface ShipRosterMessage {
   type: 'ship_roster';
   ships: ShipRosterEntry[];
 }
+
+/** Campaign 6.1 (anti-patterns review C-core 3) — defensive ingest schemas
+ *  for the roster push. Same contract as `WelcomeSchema`: the server trusts
+ *  its own construction; a client consumer `safeParse`s on receipt and drops
+ *  malformed payloads (invariant #3). Mirrors the hand-written interfaces
+ *  exactly — the assignability lock in `messages.test.ts` catches drift.
+ *  Poses are `.finite()` (an Infinity/NaN x/y would poison card UI maths). */
+export const ShipRosterEntrySchema = z
+  .object({
+    shipId: z.string().min(1).max(64),
+    kind: z.string().min(1).max(64),
+    kindVersion: z.number().int(),
+    health: z.number().finite(),
+    sectorKey: z.string().min(1).max(64),
+    x: z.number().finite(),
+    y: z.number().finite(),
+    isActive: z.boolean(),
+  })
+  .strict();
+
+export const ShipRosterSchema = z
+  .object({
+    type: z.literal('ship_roster'),
+    ships: z.array(ShipRosterEntrySchema),
+  })
+  .strict();
