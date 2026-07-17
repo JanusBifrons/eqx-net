@@ -36,6 +36,7 @@ import type { Connection, FlowMaterial } from '../../core/structures/Connection.
 import {
   CONSTRUCTION_PULSE_AMOUNT,
   REPAIR_PULSE_AMOUNT,
+  REPAIR_MIN_HP_QUANTUM,
   REPAIR_COST_PER_HP,
   DECONSTRUCTION_RATE_KG,
   CONNECTION_THROUGHPUT,
@@ -779,19 +780,25 @@ export class StructureGridSubsystem {
       if (!rec.isConstructed || rec.isDeconstructing) continue;
       const max = getStructureKind(rec.kind).maxHealth;
       const hp = this.hooks.getHealth(rec.id);
-      if (hp >= max) continue;
+      // Campaign 4.3 (review A8) — repair in MEANINGFUL QUANTA. A structure
+      // under sustained sub-quantum chip damage used to find `hp < max` + a
+      // funded route EVERY 1 Hz pulse, so its repair route flashed forever
+      // ("power lines STILL lit up constantly to defensive turrets"). The
+      // deficit now accumulates silently until a whole quantum can land; the
+      // route flashes on the quantum and reads idle between. Also covers the
+      // float-dust case (hp a rounding-sliver below max never re-flashes).
+      if (max - hp < REPAIR_MIN_HP_QUANTUM) continue;
       const source = this.findStorageRoute(rec.id);
       if (!source) continue;
       const spend = Math.min(REPAIR_PULSE_AMOUNT, source.capital.minerals);
       if (spend <= 0) continue;
       const hpGain = Math.min(max - hp, spend / REPAIR_COST_PER_HP);
-      // WS-D (#12) — the stalled / zero-progress case is ALREADY handled by the
-      // guards above: `hp >= max` (nothing to heal) and `findStorageRoute`'s
-      // `minerals <= 0` filter / `spend <= 0` (nothing to spend) both `continue`
-      // before we get here, so `hpGain` is the min of two strictly-positive values
-      // and is always > 0 — an idle/stalled repair never reaches `flashRoute`. The
-      // route is tagged 'repair' so the client tints it green (healing), distinct
-      // from the orange mineral haul that ALSO routes from the same Capital.
+      // A starved bank that can only afford sub-quantum dust waits for a
+      // fuller one — no dust-heal, no flash (the WS-D stalled case, tightened
+      // from `> 0` to the quantum).
+      if (hpGain < REPAIR_MIN_HP_QUANTUM) continue;
+      // The route is tagged 'repair' so the client tints it green (healing),
+      // distinct from the orange mineral haul off the same Capital (WS-D #12).
       const actualSpend = hpGain * REPAIR_COST_PER_HP;
       source.capital.minerals -= actualSpend;
       this.hooks.setHealth(rec.id, hp + hpGain);
