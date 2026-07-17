@@ -98,6 +98,7 @@ import {
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
 import { EntitySyncRouter } from './EntitySyncRouter.js';
 import { isPilotedActive } from './shipLiveness.js';
+import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
@@ -587,6 +588,10 @@ export class SectorRoom extends Room<SectorState> {
    *  its ~5 Hz emit timer (unref'd; OFF the snapshot/physics hot path). */
   private selectionStats!: SelectionStatsSubsystem;
   private selectionStatsTimer: ReturnType<typeof setInterval> | undefined;
+  /** Per-connection malformed-packet counter + sampled warn (campaign 1.3 —
+   *  invariant #3's second half). Every onMessage parse failure routes
+   *  through it; cleared per session in onLeave. */
+  private readonly malformed = new MalformedMessageTracker(logger);
   /** Cached low-cadence structures snapshot slice (rebuilt on pulse / place;
    *  attached by reference to every recipient). Undefined ⇒ no structures. */
   private structuresSlice: SnapshotMessage['structures'] = undefined;
@@ -1205,6 +1210,7 @@ export class SectorRoom extends Room<SectorState> {
       broadcast: (type, msg) => this.broadcast(type, msg),
       serverLogEvent,
       logger,
+      malformed: this.malformed,
     });
 
     // AI drone weapon-fire resolver. Composes the per-mount hitscan +
@@ -1973,7 +1979,7 @@ export class SectorRoom extends Room<SectorState> {
       if (!playerId || !this.transitOrchestrator) return;
       const parsed = EngageTransitSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed engage_transit message');
+        this.malformed.record(client.sessionId, 'engage_transit');
         return;
       }
       this.transitOrchestrator.beginTransit(
@@ -1988,7 +1994,10 @@ export class SectorRoom extends Room<SectorState> {
       const playerId = this.sessionToPlayer.get(client.sessionId);
       if (!playerId || !this.transitOrchestrator) return;
       const parsed = CancelTransitSchema.safeParse(raw);
-      if (!parsed.success) return;
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, 'cancel_transit');
+        return;
+      }
       this.transitOrchestrator.cancelTransit(playerId, 'manual');
     });
 
@@ -2003,6 +2012,7 @@ export class SectorRoom extends Room<SectorState> {
       serverTick: () => this.serverTick,
       shipEnergyOf: (playerId) => this.getActiveShip(playerId)?.energy,
       logger,
+      malformed: this.malformed,
     }));
 
     this.onMessage('fire', (client: Client, raw: unknown) => {
@@ -2021,7 +2031,7 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('client_ready', (client: Client, raw: unknown) => {
       const parsed = ClientReadyMessageSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed client_ready');
+        this.malformed.record(client.sessionId, 'client_ready');
         return;
       }
       this.handleClientReady(client);
@@ -2031,7 +2041,7 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('place_structure', (client: Client, raw: unknown) => {
       const parsed = PlaceStructureSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed place_structure');
+        this.malformed.record(client.sessionId, 'place_structure');
         return;
       }
       const owner = this.sessionToPlayer.get(client.sessionId);
@@ -2062,7 +2072,7 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('remove_structure', (client: Client, raw: unknown) => {
       const parsed = RemoveStructureSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed remove_structure');
+        this.malformed.record(client.sessionId, 'remove_structure');
         return;
       }
       const owner = this.sessionToPlayer.get(client.sessionId);
@@ -2086,7 +2096,7 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('structure_action', (client: Client, raw: unknown) => {
       const parsed = StructureActionSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed structure_action');
+        this.malformed.record(client.sessionId, 'structure_action');
         return;
       }
       const owner = this.sessionToPlayer.get(client.sessionId);
@@ -2119,7 +2129,7 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('upgrade_structure', (client: Client, raw: unknown) => {
       const parsed = UpgradeStructureSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed upgrade_structure');
+        this.malformed.record(client.sessionId, 'upgrade_structure');
         return;
       }
       const owner = this.sessionToPlayer.get(client.sessionId);
@@ -2148,7 +2158,7 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('pilot_ship', (client: Client, raw: unknown) => {
       const parsed = PilotShipSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed pilot_ship');
+        this.malformed.record(client.sessionId, 'pilot_ship');
         return;
       }
       const playerId = this.sessionToPlayer.get(client.sessionId);
@@ -2165,7 +2175,7 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('spectate', (client: Client, raw: unknown) => {
       const parsed = SpectateSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed spectate');
+        this.malformed.record(client.sessionId, 'spectate');
         return;
       }
       const playerId = this.sessionToPlayer.get(client.sessionId);
@@ -2182,7 +2192,7 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('apply_ship_upgrade', (client: Client, raw: unknown) => {
       const parsed = ApplyShipUpgradeSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed apply_ship_upgrade');
+        this.malformed.record(client.sessionId, 'apply_ship_upgrade');
         return;
       }
       const playerId = this.sessionToPlayer.get(client.sessionId);
@@ -2193,7 +2203,7 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('respec_ship', (client: Client, raw: unknown) => {
       const parsed = RespecShipSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed respec_ship');
+        this.malformed.record(client.sessionId, 'respec_ship');
         return;
       }
       const playerId = this.sessionToPlayer.get(client.sessionId);
@@ -2212,7 +2222,7 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('activate_mount', (client: Client, raw: unknown) => {
       const parsed = ActivateMountSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed activate_mount');
+        this.malformed.record(client.sessionId, 'activate_mount');
         return;
       }
       const playerId = this.sessionToPlayer.get(client.sessionId);
@@ -2229,7 +2239,7 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('select_entity', (client: Client, raw: unknown) => {
       const parsed = SelectEntitySchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed select_entity');
+        this.malformed.record(client.sessionId, 'select_entity');
         return;
       }
       this.selectionStats.select(client.sessionId, parsed.data.id, parsed.data.kind);
@@ -2238,7 +2248,7 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('deselect_entity', (client: Client, raw: unknown) => {
       const parsed = DeselectEntitySchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed deselect_entity');
+        this.malformed.record(client.sessionId, 'deselect_entity');
         return;
       }
       this.selectionStats.deselect(client.sessionId);
@@ -2254,7 +2264,7 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('webrtc_offer', (client: Client, raw: unknown) => {
       const parsed = WebRtcOfferMessageSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed webrtc_offer');
+        this.malformed.record(client.sessionId, 'webrtc_offer');
         return;
       }
       this.webrtcChannelManager?.handleOffer(client.sessionId, parsed.data.sdp);
@@ -2263,7 +2273,7 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('webrtc_ice', (client: Client, raw: unknown) => {
       const parsed = WebRtcIceMessageSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed webrtc_ice');
+        this.malformed.record(client.sessionId, 'webrtc_ice');
         return;
       }
       this.webrtcChannelManager?.handleIce(
@@ -2279,7 +2289,7 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('webrtc_fallback', (client: Client, raw: unknown) => {
       const parsed = WebRtcFallbackMessageSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed webrtc_fallback');
+        this.malformed.record(client.sessionId, 'webrtc_fallback');
         return;
       }
       serverLogEvent('webrtc_client_fallback', {
@@ -4884,6 +4894,9 @@ export class SectorRoom extends Room<SectorState> {
     // ~5 Hz stats emitter doesn't keep resolving for a gone session (covers
     // disconnect AND inter-sector transit, both of which fire onLeave).
     this.selectionStats?.clearSession(client.sessionId);
+
+    // Campaign 1.3 — forget this connection's malformed-packet counter.
+    this.malformed.clear(client.sessionId);
 
     // Phase 1 swift-otter — tear down the WebRTC peer connection BEFORE
     // running the existing leave handler. The leaveHandler does the

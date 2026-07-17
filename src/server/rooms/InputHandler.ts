@@ -23,6 +23,7 @@ import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { canAfford, BOOST_TICK_COST } from '../../core/combat/Energy.js';
 import type pino from 'pino';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
+import type { MalformedMessageTracker } from './MalformedMessageTracker.js';
 
 export interface InputHandlerCtx {
   sessionToPlayer: Map<string, string>;
@@ -40,6 +41,10 @@ export interface InputHandlerCtx {
    *  command, no SAB field). */
   shipEnergyOf: (playerId: string) => number | undefined;
   logger: pino.Logger;
+  /** Per-connection malformed-packet counter + sampled warn (campaign 1.3;
+   *  invariant #3's second half). The input channel is the flood vector —
+   *  up to 3 accepted messages/tick — so it MUST NOT warn per packet. */
+  malformed: MalformedMessageTracker;
 }
 
 export function makeInputHandler(
@@ -55,7 +60,7 @@ export function makeInputHandler(
 
     const result = InputMessageSchema.safeParse(raw);
     if (!result.success) {
-      ctx.logger.warn({ sessionId: client.sessionId }, 'malformed input message');
+      ctx.malformed.record(client.sessionId, 'input');
       return;
     }
     const { tick, thrust, turnLeft, turnRight } = result.data;
