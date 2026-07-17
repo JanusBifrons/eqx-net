@@ -105,22 +105,55 @@ describe('StructureGridSubsystem — repair returns to idle + material tagging (
     expect(h.health.get(con)).toBe(50); // unchanged — no repair happened
   });
 
-  it('whenever processRepair reaches a damaged+routable structure it ALWAYS heals (hpGain > 0)', () => {
-    // The "idle after repair" behaviour is NOT owned by any per-edge hpGain<=0
-    // guard — the earlier guards (`hp >= max` skips full-HP; `findStorageRoute`
-    // only returns a capital with minerals > 0, and `spend <= 0` skips a dry
-    // bank) mean control only ever reaches the heal with hpGain strictly > 0.
-    // A 1-HP-below-max structure (the minimal heal) still makes positive
-    // progress AND flashes — locking that no zero-progress repair flash exists.
+  it('a ≥1-HP-damaged routable structure heals a FULL quantum and flashes (campaign 4.3 semantics)', () => {
+    // Supersedes the WS-D "sliver below max still heals" case: repairs now land
+    // in ≥ REPAIR_MIN_HP_QUANTUM (1 HP) quanta — a sub-quantum deficit
+    // accumulates silently (see the chipped/sliver cases below), while a real
+    // deficit heals AND flashes exactly as before.
     const { cap, con } = builtConnector(h);
     const max = getStructureKind('connector').maxHealth;
-    h.health.set(con, max - 0.05); // a sliver below full → tiny but POSITIVE heal
+    h.health.set(con, max - 5); // a real (≥ 1 HP) deficit
     expect(h.registry.get(cap)!.minerals).toBeGreaterThan(0); // routable bank
     const result = h.pulse();
     const edge = edgeIn(result.flashed, cap, con);
     expect(edge, 'a damaged+routable structure flashes its repair route').not.toBeNull();
     expect(edge![2]).toBe('repair');
-    expect(h.health.get(con)!).toBeGreaterThan(max - 0.05); // healed (hpGain > 0)
+    expect(h.health.get(con)!).toBeGreaterThanOrEqual(max - 5 + 1); // ≥ one quantum healed
+  });
+
+  // ── Campaign 4.3 (anti-patterns review A8 / Part D #8) — the WS-D cases above
+  // guard the hpGain ≤ 0 boundary, but the live symptom was a structure under
+  // SUSTAINED sub-1-HP chip damage: every 1 Hz pulse found `hp < max` + a funded
+  // route, so the repair route flashed FOREVER ("power lines STILL lit up
+  // constantly to defensive turrets"). Repairs now land in MEANINGFUL QUANTA
+  // (≥ REPAIR_MIN_HP_QUANTUM = 1 HP): the deficit accumulates silently and the
+  // route flashes only when a whole quantum is repaired — idle between. ──
+  it('a perpetually-chipped structure goes IDLE between meaningful repairs (failed pre-fix: flashed all 10 pulses)', () => {
+    const { cap, con } = builtConnector(h);
+    const max = getStructureKind('connector').maxHealth;
+    h.health.set(con, max);
+    let flashes = 0;
+    for (let i = 0; i < 10; i++) {
+      // Sustained chip: lose 0.3 HP per pulse (a drone plinking a turret).
+      h.health.set(con, h.health.get(con)! - 0.3);
+      const result = h.pulse();
+      if (edgeIn(result.flashed, cap, con)) flashes++;
+    }
+    // Pre-fix: 10/10 pulses flashed (permanent strobe). Quantum repair flashes
+    // at most every ~4th pulse at this chip rate.
+    expect(flashes).toBeLessThanOrEqual(4);
+    expect(flashes).toBeGreaterThan(0); // still repairs — just in quanta
+    // The structure stays essentially topped up (within one quantum + a chip).
+    expect(h.health.get(con)!).toBeGreaterThan(max - 2);
+  });
+
+  it('a sliver-below-max structure (deficit < 1 HP) neither repairs nor flashes — no float-dust strobe', () => {
+    const { cap, con } = builtConnector(h);
+    const max = getStructureKind('connector').maxHealth;
+    h.health.set(con, max - 0.05);
+    const result = h.pulse();
+    expect(edgeIn(result.flashed, cap, con)).toBeNull();
+    expect(h.health.get(con)).toBe(max - 0.05); // deficit accumulates silently
   });
 
   it('a construction route is TAGGED "construction", a transfer route "minerals"', () => {

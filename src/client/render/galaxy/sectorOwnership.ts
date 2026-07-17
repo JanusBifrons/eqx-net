@@ -30,16 +30,21 @@ export type OwnerId = string;
 export const NEUTRAL_OWNER: OwnerId = 'neutral';
 
 /**
- * Resolve a sector's current owner. v1: {@link NEUTRAL_OWNER} for all.
+ * Resolve a sector's current owner from the LIVE `/galaxy/snapshot` state
+ * (campaign 4.4 — the body the seam was signposted for). A sector with a live
+ * `owner` resolves to its `factionId`; a null owner / missing sector / absent
+ * live map resolves to {@link NEUTRAL_OWNER} (the pre-4.4 behaviour, and the
+ * pre-first-poll state of the map).
  *
- * `liveStateByKey` (the per-sector `/galaxy/snapshot` state, keyed by sector key)
- * is accepted but unused today — it is the future input for derived ownership
- * (see the file header). Keeping it in the signature now means future ownership
- * is a one-line body change, not an API change rippling through callers.
+ * v1 producers stamp `owner` with the sector's static region faction, so the
+ * map now groups into the region territories; when the server derives owner
+ * from the dominant Capital holder, real player territories light up through
+ * this same line with no further client change.
  */
 export function resolveSectorOwner(
-  _sectorKey: string,
-  _liveStateByKey?: ReadonlyMap<string, SectorLiveState> | null,
+  sectorKey: string,
+  liveStateByKey?: ReadonlyMap<string, SectorLiveState> | null,
 ): OwnerId {
-  return NEUTRAL_OWNER;
+  const owner = liveStateByKey?.get(sectorKey)?.owner;
+  return owner ? owner.factionId : NEUTRAL_OWNER;
 }
