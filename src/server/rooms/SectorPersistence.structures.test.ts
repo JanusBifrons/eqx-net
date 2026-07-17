@@ -21,6 +21,7 @@ import type {
   SectorSnapshotLingeringHull,
 } from './SectorSnapshot.js';
 import { CURRENT_SCHEMA_VERSION } from './SectorSnapshot.js';
+import { STRUCTURE_KIND_CATALOGUE_VERSION } from '../../shared-types/structureKinds.js';
 
 const noopLogger = { info: () => undefined, warn: () => undefined } as unknown as Logger;
 
@@ -222,5 +223,59 @@ describe('SectorPersistence — lingering hulls survive a server restart (v5)', 
     new SectorPersistence(deps).persist();
     const payload = JSON.parse(readStored()!.snapshot) as SectorSnapshotPayload;
     expect(payload.lingeringHulls).toBeUndefined();
+  });
+});
+
+describe('SectorPersistence — structure-catalogue version gate (campaign 6.2)', () => {
+  // Anti-patterns review C-core 4 / Part D #19: STRUCTURE_KIND_CATALOGUE_VERSION
+  // was write-only — nothing validated it at hydrate, unlike the roster's
+  // SHIP_KIND_CATALOGUE_VERSION drift handling. A catalogue change between save
+  // and restart could hydrate structure rows whose stats (health vs maxHealth,
+  // constructionProgress vs constructionCost) were minted under a different
+  // catalogue. The snapshot now stamps the version at persist; hydrate discards
+  // ONLY the structures[] portion on mismatch (asteroid health / scrap /
+  // lingering hulls are not structure-catalogue-coupled and still restore).
+
+  it('persist stamps the LIVE structure catalogue version onto the payload', () => {
+    const { deps, readStored } = makeDeps([makeStructure()], () => undefined);
+    new SectorPersistence(deps).persist();
+    const row = readStored();
+    expect(row).toBeDefined();
+    const payload = JSON.parse(row!.snapshot) as SectorSnapshotPayload;
+    expect(payload.structureCatalogueVersion).toBe(STRUCTURE_KIND_CATALOGUE_VERSION);
+  });
+
+  it('hydrate restores structures when the stamped version matches (round-trip)', () => {
+    const restored: SectorSnapshotStructure[][] = [];
+    const { deps } = makeDeps([makeStructure()], (rows) => restored.push([...rows]));
+    const p = new SectorPersistence(deps);
+    p.persist();
+    p.hydrate();
+    expect(restored).toHaveLength(1);
+    expect(restored[0]![0]!.kind).toBe('capital');
+  });
+
+  it('hydrate DISCARDS structures on a mismatched catalogue version — but still restores lingering hulls', () => {
+    const restoredStructures = vi.fn();
+    const restoredHulls = vi.fn();
+    const { deps } = makeDeps(
+      [makeStructure()],
+      restoredStructures,
+      [],
+      () => undefined,
+      [makeLingeringHull()],
+      restoredHulls,
+    );
+    const p = new SectorPersistence(deps);
+    p.persist();
+    // Simulate a catalogue bump between save and restart: rewrite the stored
+    // row with a STALE stamped version (everything else untouched).
+    const row = deps.loadRow('galaxy-sol')!;
+    const payload = JSON.parse(row.snapshot) as SectorSnapshotPayload;
+    payload.structureCatalogueVersion = STRUCTURE_KIND_CATALOGUE_VERSION - 1;
+    deps.saveRow('galaxy-sol', payload);
+    p.hydrate();
+    expect(restoredStructures).not.toHaveBeenCalled();
+    expect(restoredHulls).toHaveBeenCalledTimes(1);
   });
 });
