@@ -211,6 +211,14 @@ export class GalaxyMapLayer extends Container {
    *  null; drives the per-hex hover highlight + the deduped onHover emit. */
   private hoveredSectorKey: string | null = null;
   private currentSectorKey: string | null = null;
+  /** Campaign 4.4 — the latest per-sector live state (from `setGalaxyStats`),
+   *  fed to `resolveSectorOwner` so territories group by LIVE ownership. */
+  private liveStateByKey: Map<string, SectorLiveState> | null = null;
+  /** Ownership signature of the last territory grouping (`key:factionId`
+   *  joined). `setGalaxyStats` re-groups ONLY when this changes — v1 owners are
+   *  static (region factions), so that is one rebuild on the first stats push
+   *  (behind the opaque landing gate) and none after. */
+  private ownershipSig = '';
   private isDocked = true;
   private mode: GalaxyLayerMode = 'overlay';
   private pulsePhase = 0;
@@ -369,6 +377,16 @@ export class GalaxyMapLayer extends Container {
   setGalaxyStats(stats: readonly SectorLiveState[]): void {
     const byKey = new Map<string, SectorLiveState>();
     for (const s of stats) byKey.set(s.key, s);
+    // Campaign 4.4 — territories group by LIVE ownership. Re-group only when
+    // the ownership signature actually changes (poll cadence, tiny alloc). The
+    // rebuild preserves per-entry presence counts; the loop below then applies
+    // this push's enemy/neutral counts to the fresh entries.
+    this.liveStateByKey = byKey;
+    const sig = ownershipSignature(byKey);
+    if (sig !== this.ownershipSig) {
+      this.ownershipSig = sig;
+      this.rebuildTerritoryGrouping();
+    }
     for (const entry of this.entries) {
       const st = byKey.get(entry.sector.key);
       // Equinox Phase 9 (item 5) — recent-combat glyph (independent of the live
@@ -670,12 +688,15 @@ export class GalaxyMapLayer extends Container {
     // item 1 — DYNAMIC, via the `resolveSectorOwner` seam, NOT the baked region).
     // Each territory becomes a sub-container at its centroid; member hexes hang
     // off it at an offset, so scaling the container shrinks the region toward its
-    // centre. Today every sector is NEUTRAL ⇒ one contiguous territory.
+    // centre. Campaign 4.4: ownership resolves from the LIVE snapshot state
+    // (`liveStateByKey`, absent pre-first-poll ⇒ all NEUTRAL ⇒ one territory);
+    // `setGalaxyStats` re-runs this via `rebuildTerritoryGrouping` when the
+    // ownership signature changes.
     for (const s of GALAXY_SECTORS) {
-      this.ownerByHexKey.set(`${s.hex.q},${s.hex.r}`, resolveSectorOwner(s.key));
+      this.ownerByHexKey.set(`${s.hex.q},${s.hex.r}`, resolveSectorOwner(s.key, this.liveStateByKey));
     }
     this.territories = computeTerritories(GALAXY_SECTORS, HEX_SIZE_BASE, (s) =>
-      resolveSectorOwner(s.key),
+      resolveSectorOwner(s.key, this.liveStateByKey),
     );
     const territoryOf = new Map<string, number>();
     for (let i = 0; i < this.territories.length; i++) {
@@ -785,6 +806,36 @@ export class GalaxyMapLayer extends Container {
     }
     this.buildTerritoryOutlines();
     this.repaint();
+  }
+
+  /**
+   * Campaign 4.4 — re-group territories after an ownership change. Tears down
+   * every per-territory container (hexes, labels, glyphs, badge rows, combat
+   * icons, outlines are all its children) and re-runs `buildHexes` against the
+   * current `liveStateByKey`, preserving each sector's badge counts (the
+   * presence slice arrives on a DIFFERENT poll and must survive the rebuild;
+   * the caller re-applies the enemy/neutral slice right after). The pan/zoom
+   * transform lives on `clusterRoot` (not rebuilt) so the camera is untouched.
+   */
+  private rebuildTerritoryGrouping(): void {
+    const savedCounts = new Map<string, number[]>();
+    for (const e of this.entries) savedCounts.set(e.sector.key, e.counts);
+    for (const c of this.territoryContainers) c.destroy({ children: true });
+    this.territoryContainers.length = 0;
+    this.territoryOutlines.length = 0;
+    this.territories = [];
+    this.territoryScale.length = 0;
+    this.territoryTarget.length = 0;
+    this.ownerByHexKey.clear();
+    this.entries.length = 0;
+    this.hoveredTerritory = -1;
+    this.buildHexes();
+    for (const e of this.entries) {
+      const saved = savedCounts.get(e.sector.key);
+      if (!saved) continue;
+      for (let i = 0; i < e.counts.length; i++) e.counts[i] = saved[i] ?? 0;
+      this.layoutCountBadges(e);
+    }
   }
 
   /**
@@ -1022,4 +1073,16 @@ export class GalaxyMapLayer extends Container {
       entry.hex.alpha = entry.sector.key === this.currentSectorKey ? pulse : 1;
     }
   };
+}
+
+/** Campaign 4.4 — a stable fingerprint of per-sector ownership, so
+ *  `setGalaxyStats` re-groups territories ONLY on a real ownership change.
+ *  Iterates the static galaxy order (stable) — poll cadence, tiny alloc. */
+function ownershipSignature(liveStateByKey: ReadonlyMap<string, SectorLiveState>): string {
+  let sig = '';
+  for (const s of GALAXY_SECTORS) {
+    sig += resolveSectorOwner(s.key, liveStateByKey);
+    sig += '|';
+  }
+  return sig;
 }
