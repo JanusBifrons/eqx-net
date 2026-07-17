@@ -44,6 +44,7 @@ import { webrtcEnabledFromSearch } from './webrtcEnable.js';
 import { HudDispatcher } from './HudDispatcher.js';
 import { syncProjectiles } from './SnapshotSyncHelpers.js';
 import { applyMissileSnapshot, removeMissile } from '../combat/MissileMirror.js';
+import { beamOptimalDist, beamMaxDist, beamNoHitSolidDist } from '../combat/beamBands.js';
 import { RafStallDetector } from './RafStallDetector.js';
 import {
   routeSnapshotShipStates,
@@ -173,13 +174,9 @@ function nextShotId(): string {
  *  drop on idle. */
 const INPUT_HEARTBEAT_MS = 250;
 
-/** Visual-only (Equinox laser issue): in EMPTY SPACE (no hit) the live beam's
- *  full-strength SOLID core is only this fraction of the optimal range; beyond
- *  it the beam fades to nothing at maxRange. A small fraction ⇒ a long, gradual
- *  visual taper (the "more taper" the user asked for). PURELY visual — `solidDist`
- *  feeds only the `BeamSpritePool` solid/fade split, never damage (which stays
- *  server-authoritative). A real hit ignores this and stays solid to the target. */
-const VISUAL_BEAM_SOLID_FRAC = 0.4;
+// Beam draw bands moved to the pure, unit-locked `combat/beamBands.ts` seam
+// (campaign 5.2): optimal/max derive from the weapon catalogue def (the SAME
+// numbers the server damage falloff reads), VISUAL_BEAM_SOLID_FRAC lives there.
 
 // Pure rounding helpers used in the per-snapshot replay-grade capture
 // block. Pre-fix these were declared as `const px = (n) => ...` closures
@@ -4937,21 +4934,14 @@ export class ColyseusGameClient {
       const fwdY = Math.cos(mountAngle);
       const fromX = mountWorldX + fwdX * 20;
       const fromY = mountWorldY + fwdY * 20;
-      // P3.13 — the beam VISUALLY reaches the weapon's MAX range (optimal ×
-      // maxRangeMul), so the gradient texture (A3b) fades it to nothing at the
-      // tip beyond the optimal/aim-line range. Server damage falloff matches
-      // (A3a). Alloc-free: getWeapon is a cached lookup + scalar maths (#14).
+      // P3.13 / campaign 5.2 — the beam bands DERIVE from the catalogue def
+      // via the unit-locked `beamBands` seam (the SAME numbers the server
+      // damage falloff reads, so the visible taper == the damage band by
+      // construction). SOLID to optimal (== the aim guide), fading to nothing
+      // across optimal→max. Alloc-free: cached lookup + scalar helpers (#14).
       const wdef = getWeapon(mount.weaponId);
-      // The OPTIMAL range = the full-strength solid length (== the aim guide).
-      // The MAX range = optimal × maxRangeMul = how far the ray reaches (the
-      // reverse-square falloff band). The visual is SOLID to optimal, then fades
-      // to nothing across optimal→max (P1a — the beam used to draw SOLID all the
-      // way to max, reading as "goes forever and doesn't hit past the guide").
-      const optimalDist = wdef.mode === 'hitscan' ? wdef.range : HITSCAN_RANGE;
-      const beamMax =
-        wdef.mode === 'hitscan' && wdef.falloff?.maxRangeMul && wdef.falloff.maxRangeMul > 1
-          ? wdef.range * wdef.falloff.maxRangeMul
-          : optimalDist;
+      const optimalDist = beamOptimalDist(wdef);
+      const beamMax = beamMaxDist(wdef);
       const hit = skipHitscan ? null : this.predWorld.hitscan(fromX, fromY, fwdX, fwdY, beamMax, localId);
       // `?probe=ghost` diagnostic (laser "ghost at (0,0)" investigation,
       // 2026-06-03). When the beam stops on a body whose pose is within
@@ -4976,7 +4966,7 @@ export class ColyseusGameClient {
         // No hit ⇒ the SOLID core is only VISUAL_BEAM_SOLID_FRAC of the optimal
         // range so the beam fades over a long, gradual tail to nothing at maxRange
         // (visual taper only — never affects damage). A hit stays solid to target.
-        solidDist: hit ? drawDist : Math.min(optimalDist * VISUAL_BEAM_SOLID_FRAC, drawDist),
+        solidDist: hit ? drawDist : beamNoHitSolidDist(optimalDist, drawDist),
         hitId: hit?.hitId,
       });
     }
