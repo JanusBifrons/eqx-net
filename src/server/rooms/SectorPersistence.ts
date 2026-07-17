@@ -86,8 +86,46 @@ export interface SectorPersistenceDeps {
   logger: Logger;
 }
 
+/** Campaign 6.3 — coalesce window for event-driven persists (`persistSoon`).
+ *  A burst of placements rides ONE snapshot write, and the structure-loss
+ *  crash window shrinks from the 60 s cadence to ~this value. */
+export const STRUCTURE_PERSIST_COALESCE_MS = 2_000;
+
 export class SectorPersistence {
+  /** Pending schedule-once coalesce timer (campaign 6.3). */
+  private persistSoonTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(private readonly deps: SectorPersistenceDeps) {}
+
+  /**
+   * Campaign 6.3 (anti-patterns review Part D #14) — event-driven persist.
+   * Called on discrete durable-state changes (structure place / remove /
+   * construction complete) so a crash no longer erases up to 60 s of placed
+   * structures (the cadence timer + onDispose were the only writers, and a
+   * crash runs neither). Schedule-once coalesce: the write fires
+   * `STRUCTURE_PERSIST_COALESCE_MS` after the FIRST event of a burst; later
+   * events inside the window ride the same write (`persist()` reads live
+   * registries at fire time). NOT for per-tick state — discrete events only
+   * (the Event Bus rule's persistence cousin).
+   */
+  persistSoon(): void {
+    if (this.deps.sectorKey() === null) return;
+    if (this.persistSoonTimer !== null) return;
+    this.persistSoonTimer = setTimeout(() => {
+      this.persistSoonTimer = null;
+      this.persist();
+    }, STRUCTURE_PERSIST_COALESCE_MS);
+    this.persistSoonTimer.unref?.();
+  }
+
+  /** Cancel any pending scheduled persist (room teardown owns the final
+   *  onDispose write; a fire-after-teardown would read torn-down registries). */
+  dispose(): void {
+    if (this.persistSoonTimer !== null) {
+      clearTimeout(this.persistSoonTimer);
+      this.persistSoonTimer = null;
+    }
+  }
 
   /** Galaxy-only — engineering rooms have no persistent identity. */
   persist(): void {

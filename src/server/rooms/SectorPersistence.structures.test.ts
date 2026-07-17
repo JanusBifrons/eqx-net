@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import type { Logger } from 'pino';
-import { SectorPersistence, type PersistableStructure } from './SectorPersistence.js';
+import { SectorPersistence, STRUCTURE_PERSIST_COALESCE_MS, type PersistableStructure } from './SectorPersistence.js';
 import type {
   SectorSnapshotPayload,
   SectorSnapshotStructure,
@@ -277,5 +277,68 @@ describe('SectorPersistence — structure-catalogue version gate (campaign 6.2)'
     p.hydrate();
     expect(restoredStructures).not.toHaveBeenCalled();
     expect(restoredHulls).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('SectorPersistence — event-driven throttled persist (campaign 6.3)', () => {
+  // Part D #14: snapshots were written only by the 60 s cadence (+ onDispose),
+  // so a structure placed then lost to a CRASH inside that window vanished.
+  // `persistSoon()` closes it: schedule-once coalesce — the persist fires
+  // STRUCTURE_PERSIST_COALESCE_MS after the FIRST event of a burst (later
+  // events in the window ride the same write), bounding the crash window at
+  // ~the coalesce window instead of 60 s.
+
+  it('persistSoon coalesces a burst into ONE persist after the window', () => {
+    vi.useFakeTimers();
+    try {
+      let saves = 0;
+      const { deps } = makeDeps([makeStructure()], () => undefined);
+      const origSave = deps.saveRow;
+      deps.saveRow = (key, payload) => { saves += 1; origSave(key, payload); };
+      const p = new SectorPersistence(deps);
+      p.persistSoon();
+      p.persistSoon();
+      p.persistSoon();
+      expect(saves).toBe(0);
+      vi.advanceTimersByTime(STRUCTURE_PERSIST_COALESCE_MS + 10);
+      expect(saves).toBe(1);
+      // A later event schedules a fresh write.
+      p.persistSoon();
+      vi.advanceTimersByTime(STRUCTURE_PERSIST_COALESCE_MS + 10);
+      expect(saves).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('persistSoon is a no-op for engineering rooms (sectorKey null)', () => {
+    vi.useFakeTimers();
+    try {
+      let saves = 0;
+      const { deps } = makeDeps([makeStructure()], () => undefined);
+      deps.sectorKey = () => null;
+      deps.saveRow = () => { saves += 1; };
+      new SectorPersistence(deps).persistSoon();
+      vi.advanceTimersByTime(STRUCTURE_PERSIST_COALESCE_MS * 2);
+      expect(saves).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('dispose cancels a pending scheduled persist (room teardown owns the final write)', () => {
+    vi.useFakeTimers();
+    try {
+      let saves = 0;
+      const { deps } = makeDeps([makeStructure()], () => undefined);
+      deps.saveRow = () => { saves += 1; };
+      const p = new SectorPersistence(deps);
+      p.persistSoon();
+      p.dispose();
+      vi.advanceTimersByTime(STRUCTURE_PERSIST_COALESCE_MS * 2);
+      expect(saves).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
