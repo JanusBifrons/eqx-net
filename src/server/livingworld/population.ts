@@ -503,12 +503,33 @@ export const SQUAD_SPAWN_RADIAL_JITTER = 250;
  * spawn (radius unchanged), so the entry-only-ingress invariant is preserved —
  * only the BEARING is shared. Deterministic ⇒ no RNG, replay-safe, testable.
  */
-export function squadEdgePose(squadKey: string, sectorKey: string, botKey: string): EdgePose {
-  const base = (hashStr(`${squadKey}:${sectorKey}`) / 0xffffffff) * Math.PI * 2;
+export function squadEdgePose(
+  squadKey: string,
+  sectorKey: string,
+  botKey: string,
+  epoch = 0,
+): EdgePose {
+  // Campaign 4.1 — `epoch` folds a respawn generation into the SHARED anchor:
+  // squadmates spawning in the same window still cluster (same epoch ⇒ same
+  // bearing), but successive respawn windows rotate the entry bearing so the
+  // same bot never rematerialises at one fixed, farmable point forever.
+  // `epoch === 0` keeps the pre-4.1 hash key so hop-arrival poses (the
+  // HunterBotWarpController path, which doesn't pass an epoch) are unchanged.
+  const anchorKey = epoch === 0 ? `${squadKey}:${sectorKey}` : `${squadKey}:${sectorKey}:${epoch}`;
+  const base = (hashStr(anchorKey) / 0xffffffff) * Math.PI * 2;
   const aJit = (hashStr(`${botKey}:a`) / 0xffffffff - 0.5) * 2 * SQUAD_SPAWN_ANGULAR_JITTER;
   const rJit = (hashStr(`${botKey}:r`) / 0xffffffff - 0.5) * 2 * SQUAD_SPAWN_RADIAL_JITTER;
   return edgePoseAtBearing(base + aJit, SECTOR_PLAYABLE_HALF_EXTENT * RESPAWN_EDGE_FRACTION + rJit);
 }
+
+/**
+ * Width of one respawn epoch (campaign 4.1). Respawns whose `nowMs` falls in
+ * the same bucket share the squad anchor bearing (herd clustering + retry
+ * stability); the next bucket rotates it. 60 s ≈ several respawn cycles at the
+ * default 12 s `respawnDelayMs`, so a wiped squad re-enters together, while a
+ * camped spawn point goes stale within a minute. Feel knob — tune on-device.
+ */
+export const SQUAD_RESPAWN_EPOCH_MS = 60_000;
 
 /**
  * Deterministic `mulberry32` PRNG factory for tests. Same seed ⇒ same
