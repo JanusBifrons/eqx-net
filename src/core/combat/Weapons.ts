@@ -12,7 +12,20 @@ export const HITSCAN_RANGE = _hitscan.range;
 export const PROJECTILE_SPEED = _laser.speed;
 export const WEAPON_COOLDOWN_TICKS = _hitscan.cooldownTicks;
 export const PROJECTILE_RADIUS = _laser.radius;
+/** Approximate ship broad-phase collision radius for scalar hit tests
+ *  (missile sweep, projectile sweep, lingering-hull ray, mining-beam ray).
+ *  Campaign 5.3: the SINGLE source — the former bare `12`s in
+ *  MissileSimulation / SectorRoom silently drifted from this the moment
+ *  either side was tuned (invariant #15). Per-kind radii at these sites are
+ *  a future refinement; every site at least agrees on ONE number now. */
 export const SHIP_COLLISION_RADIUS = 12;
+/** Muzzle clearance (u): the fire ray starts this far ahead of the mount so
+ *  a shot never self-hits — AND the client's visible barrel is exactly this
+ *  long (`MountVisualManager` BARREL_LENGTH), so beams emerge from the drawn
+ *  barrel tip. TWO-SIDED CONTRACT (invariant #15): the server ray offset and
+ *  the client barrel/beam origin must move together — that is why both now
+ *  import THIS constant instead of carrying their own `20`s. */
+export const MUZZLE_CLEARANCE = 20;
 /** Initial and max hull HP. Bumped during sub-phase B testing — 25 hitscan
  *  hits to die was too brittle for "fly around and watch a remote laser
  *  flash without dying every 5 s". Tune at balance pass. */

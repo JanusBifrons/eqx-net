@@ -37,6 +37,7 @@ import {
   rayHitsSphere,
   rayHitsConvexPolygon,
   SHIP_COLLISION_RADIUS,
+  MUZZLE_CLEARANCE,
 } from '../../core/combat/Weapons.js';
 import { getWeaponObject } from '../../core/combat/weapons/index.js';
 import type { WeaponFireContext, WeaponFireSink } from '../../core/combat/weapons/Weapon.js';
@@ -319,8 +320,8 @@ export class PlayerFireResolver implements WeaponFireSink {
       const mountFireAngle = shipAngleAtFireTick + mount.baseAngle + currentMountAngle;
       const ndx = -Math.sin(mountFireAngle);
       const ndy = Math.cos(mountFireAngle);
-      const rayFromX = mountWorld.x + ndx * 20;
-      const rayFromY = mountWorld.y + ndy * 20;
+      const rayFromX = mountWorld.x + ndx * MUZZLE_CLEARANCE;
+      const rayFromY = mountWorld.y + ndy * MUZZLE_CLEARANCE;
 
       d.serverLogEvent('fire_received', {
         shooterId,
