@@ -222,26 +222,35 @@ Updated as each PR merges. Wave assignment per the approved campaign plan; PRs r
 
 | Part D # | Wave/PR | Status |
 |---|---|---|
-| process rules → invariants #15-17 + #13 amendment | 0 | ✅ merged |
-| 15 error boundaries | 1.1 | ✅ landed |
-| 3 zero-damage guard (both sides) | 1.2 | ✅ landed |
-| 16 sampled-warn wrapper | 1.3 | ✅ landed |
-| 17 physics-worker scratch | 1.4 | ✅ landed |
-| 1 hostility bit on snapshot | 2.1 | ✅ landed |
-| 5 lingering liveness audit | 2.2 | pending |
-| 9 incoming-warp reliability | 2.3 | pending |
-| 2 spectator severs dead-ship ref | 3.1 | pending |
-| 4 sprite-cache composite key | 3.2 | pending |
-| 11 stats-panel ship hull | 3.3 | pending |
-| 21 Zustand lint suffixes | 3.4 | pending |
-| 6 respawn carries pose | 4.1 | pending |
-| 6 rally-before-breach | 4.2 | pending |
-| 8 repair-flash idle | 4.3 | pending |
-| 13 resolveSectorOwner live | 4.4 | pending |
-| 7 missile robustness | 5.1 | pending |
-| 10 beam band from catalogue | 5.2 | pending |
-| 20 shared radius/muzzle constants | 5.3 | pending |
-| 18 Welcome/Roster schemas | 6.1 | pending |
-| 19 structure catalogue version gate | 6.2 | pending |
-| 14 persist-on-place | 6.3 | pending |
+| process rules → invariants #15-17 + #13 amendment | 0 | ✅ merged (#147) |
+| 15 error boundaries | 1.1 | ✅ landed (#148) |
+| 3 zero-damage guard (both sides) | 1.2 | ✅ landed (#149) |
+| 16 sampled-warn wrapper | 1.3 | ✅ landed (#150) |
+| 17 physics-worker scratch | 1.4 | ✅ landed (#152) |
+| 1 hostility bit on snapshot | 2.1 | ✅ landed (#153) |
+| 5 lingering liveness audit | 2.2 | 🔄 CI (auto-merge armed, #154; A11 mountAngles half amended — see below) |
+| 9 incoming-warp reliability | 2.3 | ✅ landed (#155) |
+| 2 spectator severs dead-ship ref | 3.1 | ⚠️ partial — server slice (3.1a dead-warp gate) landed (#156); client `localPlayerId` sever still open (see below) |
+| 4 sprite-cache composite key | 3.2 | ✅ landed (#157) |
+| 11 stats-panel ship hull | 3.3 | ✅ landed (#158; re-scoped — see amendment) |
+| 21 Zustand lint suffixes | 3.4 | ✅ landed (#159) |
+| 6 respawn carries pose | 4.1 | ✅ landed (#160; epoch rotation, not carry — see amendment) |
+| 6 rally-before-breach | 4.2 | ✅ landed (#161) |
+| 8 repair-flash idle | 4.3 | ✅ landed (#162; flowKind half pre-landed — see amendment) |
+| 13 resolveSectorOwner live | 4.4 | ✅ landed (#163) |
+| 7 missile robustness | 5.1 | ✅ landed (#164) |
+| 10 beam band from catalogue | 5.2 | 🔄 CI (auto-merge armed, #165; derivation pre-landed — see amendment) |
+| 20 shared radius/muzzle constants | 5.3 | ✅ landed (#166) |
+| 18 Welcome/Roster schemas | 6.1 | ✅ landed (#167) |
+| 19 structure catalogue version gate | 6.2 | 🔄 CI (auto-merge armed, #168) |
+| 14 persist-on-place | 6.3 | 🔄 CI (auto-merge armed, #169) |
 | 12 scrap prediction redesign | — | **deferred** (user decision 2026-07-16; future design-first effort) |
+
+### Campaign amendments (discoveries made while fixing — review corrections, per campaign principle 7)
+
+- **#2 / 3.1 (spectator dead-ship ref) — split; client half open.** The severe, server-authoritative symptom ("I'm dead and it let me warp!") landed as 3.1a: `TransitOrchestrator` refuses a dead player's `engage_transit` via the `hasLiveHull` seam (#156, incl. the follow-up that relaxed the gate to alive-only — the first cut's `isActive` requirement broke PENDING pre-`client_ready` hulls, caught by a netgate-surviving CI failure). The review's client-side ask — clear/generation-stamp `mirror.localPlayerId` in `killEntity` — remains OPEN: it stays masked by the defensive `mirror.ships.has()` checks, still a trap for future readers. It needs its own pass over every `localPlayerId` consumer (camera pose, ring centre, pilot button, placement origin) and is the one Part D row the campaign leaves genuinely unfinished.
+- **#11 / 3.3 (stats-panel ship hull) — re-scoped.** "Read ship hull from replicated state" is not implementable as written: `ShipRenderState` (the mirror the panel reads) carries no hull field for ships — hull % flows via `DamageEvent` → Zustand `hullPct` for the LOCAL ship only; there is no per-remote-ship replicated hull on the client. The panel's actual defects were re-render churn + per-render sx allocation: #158 landed diff-before-setState (`panelDataEqual`), hoisted sx, and an honest poll-cadence docstring.
+- **#6 / 4.1 (respawn carries pose) — mechanism corrected.** The review proposed routing respawns through the live-hop `arrivalPoseFor` carry path, but respawns have no `BotCarry` (the bot died; entry-only-ingress means a fresh edge spawn, not a traversal arrival). The actual fix: `squadEdgePose` gains a time-epoch (`SQUAD_RESPAWN_EPOCH_MS` = 60 s) that rotates the squad's anchor bearing per epoch — the farmable fixed spawn point moves each minute while intra-epoch squad clustering is preserved (#160).
+- **#8 / 4.3 (repair flash) — half pre-landed.** The `flowKind` green-repair-tint wire field had already landed with WS-D; the remaining defect was sub-1-HP repair slivers strobing the flash forever. #162 shipped `REPAIR_MIN_HP_QUANTUM` (repairs land in ≥1 HP quanta; below-quantum links go idle) and rewrote the WS-D "sliver always heals" lock to quantum semantics — a deliberate behaviour change.
+- **#10 / 5.2 (beam band from catalogue) — derivation pre-landed.** `updateLiveBeam` already read `wdef.range` + `wdef.falloff.maxRangeMul` off the catalogue since P3.13; the real gap was that the derivation lived inline where no unit test could lock it. #165 extracts the `beamBands.ts` seam + the lock so a parallel constant can't silently return.
+- **#5 / 2.2 (A11 lingering mountAngles) — half found already fixed.** R2.32 already gives parked hulls barrel clusters frozen at baseAngle (`updateLingeringShips` → `mountVisuals.ensureForShip`), and no `mountAngles` for a parked hull is CORRECT (no pilot ⇒ no aiming). #154 fixes the real A11 defect — invisible shield regen on lingering hulls — and amends A11 rather than re-fixing the render half.
