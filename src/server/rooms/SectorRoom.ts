@@ -97,6 +97,7 @@ import {
 } from '../../shared-types/messages/webrtcSignalingMessages.js';
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
 import { EntitySyncRouter } from './EntitySyncRouter.js';
+import { isPilotedActive } from './shipLiveness.js';
 import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
 import { SectorPersistence } from './SectorPersistence.js';
@@ -2724,7 +2725,9 @@ export class SectorRoom extends Room<SectorState> {
    */
   private tickEnergy(): void {
     for (const [, ship] of this.state.ships) {
-      if (!ship.isActive || !ship.alive) continue;
+      // Covers ACTIVE hulls only (invariant #17) — semantics unchanged,
+      // now via the named shared predicate.
+      if (!isPilotedActive(ship)) continue;
       const kind = getShipKind(ship.kind);
       // Effective energy cap = kind base × per-instance energy upgrade (review
       // must-fix #1) so an energy-upgraded ship regenerates to its larger pool.
