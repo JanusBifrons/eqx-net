@@ -67,8 +67,8 @@ function makeRoom(opts: { sectorKey: string | null; playerId: string }): {
     playerToActiveShipInstance,
     lastFireClientTick,
     getShipHealth: () => health,
-    // Campaign 3.1 — default alive+active; the dead-player gate has its own case.
-    hasLiveActiveHull: () => true,
+    // Campaign 3.1 — default alive; the dead-player gate has its own case.
+    hasLiveHull: () => true,
     getShipKind: () => 'fighter',
     playerToTransitInFlight,
     clientForPlayer: () => fc.client as unknown as Parameters<TransitHostRoom['clientForPlayer']>[0] extends never ? never : ReturnType<TransitHostRoom['clientForPlayer']>,
@@ -105,7 +105,7 @@ describe('TransitOrchestrator', () => {
 
     it('rejects a DEAD/spectating requester with reason destroyed (campaign 3.1)', () => {
       const { room, sent } = makeRoom({ sectorKey: 'sol-prime', playerId: 'p1' });
-      room.hasLiveActiveHull = () => false;
+      room.hasLiveHull = () => false;
       const orch = new TransitOrchestrator(room);
       const ok = orch.beginTransit('p1', 'vega-reach');
       expect(ok).toBe(false);

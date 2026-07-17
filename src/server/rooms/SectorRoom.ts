@@ -5529,11 +5529,15 @@ export class SectorRoom extends Room<SectorState> {
         const ship = this.getActiveShip(playerId);
         return ship?.kind ?? DEFAULT_SHIP_KIND;
       },
-      // Campaign 3.1 — warp requires a live ACTIVE hull (isActive + alive;
-      // the shared shipLiveness predicate once 2.2 lands).
-      hasLiveActiveHull: (playerId: string): boolean => {
+      // Campaign 3.1 — warp requires a LIVE hull. Alive-only, NOT isActive:
+      // a dead player has no state.ships entry under their playerId (removed
+      // or rekeyed to linger-<id>), so `!!ship && ship.alive` fully blocks the
+      // dead-warp bug, while a PENDING hull (joined, pre-client_ready —
+      // isActive still false) keeps its long-standing ability to engage
+      // transit (the Phase-A9 transitShipIdBinding wiring contract).
+      hasLiveHull: (playerId: string): boolean => {
         const ship = this.getActiveShip(playerId);
-        return !!ship && ship.alive && ship.isActive;
+        return !!ship && ship.alive;
       },
       playerToTransitInFlight: this.playerToTransitInFlight,
       clientForPlayer: (playerId: string): Client | null => {
