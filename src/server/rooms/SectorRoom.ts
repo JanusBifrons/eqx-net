@@ -1732,8 +1732,12 @@ export class SectorRoom extends Room<SectorState> {
       // Reconnect sweep honours current asteroid LOS (playtest 2026-06-10 Issue 2).
       getObstacles: () => this.gatherStructureObstacles(),
       // Gameplay audit — a blueprint finished construction (1 Hz pulse, off-tick).
-      onConstructed: (owner, kind) =>
-        auditEvent({ event: 'structure_built', sector: this.sectorKey ?? undefined, owner, kind }),
+      // Campaign 6.3 — completion is durable state (isConstructed + full HP);
+      // persist event-driven so a crash keeps the built structure built.
+      onConstructed: (owner, kind) => {
+        auditEvent({ event: 'structure_built', sector: this.sectorKey ?? undefined, owner, kind });
+        this.sectorPersistence.persistSoon();
+      },
     });
     // ── Shield-wall lifecycle (shield-fence plan) ──────────────────────────
     // Forms the blocking span between paired pylons + drives its physics
@@ -2058,6 +2062,9 @@ export class SectorRoom extends Room<SectorState> {
         // Refresh the slice so the new blueprint + its auto-connection appear on
         // the next snapshot without waiting for the 1 Hz pulse.
         this.rebuildStructuresSlice();
+        // Campaign 6.3 — event-driven persist so a crash can't erase the
+        // placement (the 60 s cadence + onDispose never run on a crash).
+        this.sectorPersistence.persistSoon();
         auditEvent({
           event: 'structure_placed',
           sector: this.sectorKey ?? undefined,
@@ -2081,6 +2088,9 @@ export class SectorRoom extends Room<SectorState> {
       const removedKind = this.structureRegistry.get(parsed.data.id)?.kind;
       if (this.structurePlacement.remove(owner, parsed.data.id)) {
         this.rebuildStructuresSlice();
+        // Campaign 6.3 — a removal is durable state too (a crash must not
+        // resurrect a removed structure from a stale snapshot).
+        this.sectorPersistence.persistSoon();
         auditEvent({
           event: 'structure_removed',
           sector: this.sectorKey ?? undefined,
@@ -5488,7 +5498,10 @@ export class SectorRoom extends Room<SectorState> {
     this.ownerlessShips.clear();
     // Phase 8 — final snapshot before tear-down so swarm health survives
     // a graceful shutdown. `persistence.shutdown` (called from index.ts on
-    // SIGINT/SIGTERM) drains the CRITICAL queue afterwards.
+    // SIGINT/SIGTERM) drains the CRITICAL queue afterwards. Campaign 6.3:
+    // cancel any pending event-driven persist first — this final write
+    // supersedes it, and a fire-after-teardown would read torn-down state.
+    this.sectorPersistence.dispose();
     if (this.sectorKey !== null) {
       try { this.persistSectorSnapshot(); } catch { /* non-critical */ }
     }
