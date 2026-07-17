@@ -60,6 +60,14 @@ export const REPAIR_PULSE_AMOUNT = 3;
 /** Minerals consumed per hull point repaired. */
 export const REPAIR_COST_PER_HP = 0.1;
 
+/** Campaign 4.3 (review A8) — the smallest repair that LANDS (and flashes the
+ *  route). A deficit below this accumulates silently, so a structure under
+ *  sustained sub-quantum chip damage repairs in visible bursts (the route
+ *  reads idle between) instead of strobing the green line every 1 Hz pulse
+ *  forever. Also kills the float-dust re-flash (hp a rounding-sliver below
+ *  max). Feel knob — tune on-device. */
+export const REPAIR_MIN_HP_QUANTUM = 1;
+
 /** Minerals reclaimed per pulse while a structure is being deconstructed. */
 export const DECONSTRUCTION_RATE_KG = 100;
 
