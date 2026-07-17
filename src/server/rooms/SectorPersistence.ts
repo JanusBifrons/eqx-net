@@ -25,6 +25,7 @@ import {
   slotBase,
 } from '../../shared-types/sabLayout.js';
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
+import { STRUCTURE_KIND_CATALOGUE_VERSION } from '../../shared-types/structureKinds.js';
 import {
   CURRENT_SCHEMA_VERSION,
   SNAPSHOT_STALENESS_MS,
@@ -142,6 +143,9 @@ export class SectorPersistence {
     for (const h of d.lingeringHulls()) lingeringHulls.push(h);
     const payload: SectorSnapshotPayload = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
+      // Campaign 6.2 — stamp the live structure catalogue so hydrate can
+      // detect a catalogue bump between save and restart (C-core 4).
+      structureCatalogueVersion: STRUCTURE_KIND_CATALOGUE_VERSION,
       sectorKey,
       savedAtMs: Date.now(),
       swarm,
@@ -199,7 +203,25 @@ export class SectorPersistence {
         restored += 1;
       }
     }
-    const structures = payload.structures ?? [];
+    // Campaign 6.2 (C-core 4): the catalogue-version gate. Structure rows
+    // couple to catalogue stats (maxHealth, constructionCost) beyond the
+    // append-only `kind` id, so rows minted under a different catalogue are
+    // discarded — structures fresh-spawn while the rest of the snapshot
+    // (asteroid health / scrap / lingering hulls) restores normally.
+    const structureVersionOk =
+      payload.structureCatalogueVersion === STRUCTURE_KIND_CATALOGUE_VERSION;
+    const structures = structureVersionOk ? (payload.structures ?? []) : [];
+    if (!structureVersionOk && (payload.structures?.length ?? 0) > 0) {
+      d.logger.warn(
+        {
+          sectorKey,
+          stored: payload.structureCatalogueVersion,
+          live: STRUCTURE_KIND_CATALOGUE_VERSION,
+          discarded: payload.structures!.length,
+        },
+        'structure catalogue version mismatch — structures fresh-spawn',
+      );
+    }
     if (structures.length > 0) {
       try {
         d.restoreStructures(structures);

@@ -20,7 +20,13 @@
 // v6 (Phase 4 leveling/XP, WS-0): structures[] gain a `level` (default 1) — the
 // per-structure progression an Upgrade build phase increments (WS-B4). Tear-down
 // on the bump: every v5 snapshot is discarded and all sectors fresh-spawn.
-export const CURRENT_SCHEMA_VERSION = 6;
+// v7 (campaign 6.2, anti-patterns review C-core 4): the payload gains a REQUIRED
+// `structureCatalogueVersion` stamp (the STRUCTURE_KIND_CATALOGUE_VERSION live
+// at persist time). Hydrate validates it — a mismatch discards ONLY the
+// structures[] portion (asteroid health / scrap / lingering hulls are not
+// structure-catalogue-coupled and still restore). Tear-down on the bump itself:
+// every v6 snapshot is discarded and all sectors fresh-spawn.
+export const CURRENT_SCHEMA_VERSION = 7;
 
 /** Maximum age of a hydrated snapshot before it's discarded (24 h). */
 export const SNAPSHOT_STALENESS_MS = 24 * 60 * 60 * 1000;
@@ -119,6 +125,15 @@ export interface SectorSnapshotLingeringHull {
 
 export interface SectorSnapshotPayload {
   schemaVersion: number;
+  /** Campaign 6.2 (v7) — the `STRUCTURE_KIND_CATALOGUE_VERSION` live when this
+   *  snapshot was written. Hydrate compares it against the running catalogue:
+   *  a mismatch means the structures[] rows were minted under different kind
+   *  stats (health vs maxHealth, constructionProgress vs constructionCost), so
+   *  ONLY that portion is discarded (structures fresh-spawn) while the rest of
+   *  the snapshot restores. The sibling of the roster's
+   *  `SHIP_KIND_CATALOGUE_VERSION` drift handling — but tear-down rather than
+   *  clamp, because structure rows couple to more catalogue fields than HP. */
+  structureCatalogueVersion: number;
   sectorKey: string;
   savedAtMs: number;
   swarm: SectorSnapshotEntity[];
@@ -150,6 +165,15 @@ export function migrateSnapshot(_snap: unknown, fromV: number, toV: number): Sec
     throw new Error(
       `No migration from sector-snapshot schema v5 to v6 (structures[].level added). ` +
       `Tear-down-on-change: every v5 snapshot is discarded and all sectors fresh-spawn.`,
+    );
+  }
+  // v6 → v7 (campaign 6.2): the payload gained the required
+  // `structureCatalogueVersion` stamp. A v6 row has no stamp to validate, so
+  // this stays a tear-down arm — throw, and the hydrate caller fresh-spawns.
+  if (fromV === 6 && toV === 7) {
+    throw new Error(
+      `No migration from sector-snapshot schema v6 to v7 (structureCatalogueVersion added). ` +
+      `Tear-down-on-change: every v6 snapshot is discarded and all sectors fresh-spawn.`,
     );
   }
   throw new Error(
