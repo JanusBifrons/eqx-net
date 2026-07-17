@@ -29,6 +29,7 @@ import { BotTransitController } from './BotTransitController.js';
 import {
   sectorEdgePose,
   squadEdgePose,
+  SQUAD_RESPAWN_EPOCH_MS,
   nextHopToward,
   pickEntrySector,
   liveEntrySectors,
@@ -128,6 +129,34 @@ export function hopSpoolMs(
   return isWave && isFinalApproach ? waveApproachMs : normalMs;
 }
 
+/**
+ * Campaign 4.2 — rally-before-breach (pure decision). While a WAVE squad is in
+ * its `warping` phase, members whose next hop IS the goal (they sit at the
+ * "rally ring" — a sector adjacent to the target) are HELD there until every
+ * other traversing member has reached the ring too, then all begin the final
+ * approach in the SAME control tick — the squad breaches together instead of
+ * trickling in 1-2 at a time ("squads of 8 but only 1-2 ever seen").
+ *
+ * @param atRing   active members whose next hop is the goal (held candidates)
+ * @param pending  members still traversing toward the ring (active mid-route +
+ *                 in-transit); respawning members never count — a perpetual
+ *                 respawn-straggler cycle must not stall the wave, hence:
+ * @param heldSinceMs  when this squad's hold window opened (null = not held yet)
+ * @param rallyMaxMs   time-box: past this, the staged members breach anyway
+ */
+export function decideRallyRelease(
+  atRing: number,
+  pending: number,
+  heldSinceMs: number | null,
+  nowMs: number,
+  rallyMaxMs: number,
+): boolean {
+  if (atRing === 0) return true; // nothing at the ring — nothing to hold
+  if (pending === 0) return true; // fully staged — breach together
+  if (heldSinceMs === null) return false; // open the hold window
+  return nowMs - heldSinceMs >= rallyMaxMs; // time-boxed release
+}
+
 export interface LivingWorldOptions {
   /** Total bots the director keeps alive. */
   botCount: number;
@@ -178,6 +207,10 @@ export interface LivingWorldOptions {
    *  back (a discrete assault PHASE), freeing the faction for a fresh squad on
    *  the next dispatch. Must be < `dispatchIntervalMs` for a lull between phases. */
   waveMaxAttackMs: number;
+  /** Campaign 4.2 — max ms a WAVE squad's staged members wait at the rally ring
+   *  (the sector adjacent to the target) for traversing squadmates before
+   *  breaching anyway. See `decideRallyRelease`. Feel knob — tune on-device. */
+  rallyMaxMs: number;
 }
 
 /** Display label for a squad's homogeneous hull in the warp-in warning
@@ -243,6 +276,12 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   // A wave falls back after 3 min of attacking (a discrete phase) so the faction
   // is freed for a fresh squad next dispatch — phased assaults, not one grind.
   waveMaxAttackMs: 180_000,
+  // Campaign 4.2 — staged wave members wait up to this long at the rally ring
+  // for traversing squadmates before breaching anyway. Long enough for a
+  // several-hop traversal (2.5 s dwell per hop) yet well under the 3 min attack
+  // time-box, so a straggler cycle can't consume the whole assault phase. FEEL
+  // knob — confirm on-device.
+  rallyMaxMs: 90_000,
 };
 
 /** Leader-course tunables (non-combat herding). Radius (game units) of the ring
@@ -296,6 +335,10 @@ export class LivingWorldDirector {
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastShedAtMs = -Infinity;
+  /** Campaign 4.2 — per-squad rally-hold window open time (squadId → nowMs).
+   *  Entry exists only while a warping wave squad is actively held at the rally
+   *  ring; cleared on release, attack, retreat, or losing the wave assignment. */
+  private readonly rallyHeldSince = new Map<string, number>();
   /** Wall-clock of the last in-loop crash-defence persist (throttle anchor). */
   private lastPersistAtMs = -Infinity;
   /** Phase-3 — cached live per-sector snapshot for `GET /galaxy/snapshot`,
@@ -951,6 +994,8 @@ export class LivingWorldDirector {
    * this tick — the trigger for the one-shot warp-in warning.
    */
   private advanceMembersTowardGoal(squad: {
+    squadId?: string;
+    state?: string;
     botIds: readonly string[];
     sectorKey: string;
     targetFactionId?: string | null;
@@ -961,6 +1006,39 @@ export class LivingWorldDirector {
     // hops) stays fast so traversal still converges. `targetFactionId` is unset
     // for roaming squads ⇒ they never get the slow approach.
     const isWave = squad.targetFactionId != null;
+
+    // Campaign 4.2 — rally-before-breach: pre-breach (`warping` phase only), a
+    // wave member whose next hop IS the goal holds at that rally-ring sector
+    // until every traversing squadmate reaches the ring too — then the whole
+    // group begins the (long, telegraphed) final approach in ONE control tick
+    // and breaches together. Time-boxed via `decideRallyRelease` so a perpetual
+    // respawn-straggler cycle can't stall the wave. An ATTACKING squad is never
+    // held — reinforcements flow into the fight exactly as before.
+    let releaseFinal = true;
+    if (isWave && squad.state === 'warping' && squad.squadId !== undefined) {
+      let atRing = 0;
+      let pending = 0;
+      for (const botId of squad.botIds) {
+        const rec = this.pool.get(botId);
+        if (!rec) continue;
+        if (rec.state === 'in-transit') {
+          pending++;
+          continue;
+        }
+        if (rec.state !== 'active' || rec.sectorKey === goal) continue; // respawning never blocks
+        const hop = nextHopToward(rec.sectorKey, goal);
+        if (hop === goal || (hop === null && this.rooms.has(goal))) atRing++;
+        else if (hop !== null) pending++;
+        // hop === null && goal unreachable: the member can't route — never blocks.
+      }
+      const held = this.rallyHeldSince.get(squad.squadId) ?? null;
+      releaseFinal = decideRallyRelease(atRing, pending, held, this.nowMs(), this.opts.rallyMaxMs);
+      if (releaseFinal) this.rallyHeldSince.delete(squad.squadId);
+      else if (held === null) this.rallyHeldSince.set(squad.squadId, this.nowMs());
+    } else if (squad.squadId !== undefined) {
+      this.rallyHeldSince.delete(squad.squadId);
+    }
+
     let finalApproach = 0;
     for (const botId of squad.botIds) {
       const rec = this.pool.get(botId);
@@ -977,6 +1055,7 @@ export class LivingWorldDirector {
         else continue;
       }
       const isFinalApproach = hop === goal;
+      if (isFinalApproach && !releaseFinal) continue; // 4.2 — hold at the rally ring
       const spoolMs = hopSpoolMs(isWave, isFinalApproach, this.opts.spoolMs, this.opts.waveApproachSpoolMs);
       this.startSquadMemberTransit(rec, rec.sectorKey, hop, spoolMs);
       if (isFinalApproach) finalApproach++;
@@ -1172,8 +1251,15 @@ export class LivingWorldDirector {
       // Spawn CLUSTERED with squadmates (the herd warps in together) when the
       // bot belongs to a squad; the per-squad+sector anchor means a whole squad
       // seeding/respawning into the same sector lands as one tight group.
+      // Campaign 4.1: the anchor bearing rotates per RESPAWN EPOCH (time
+      // bucket) — same-window respawns still cluster, but the same bot never
+      // rematerialises at one fixed, farmable point forever (the "all
+      // attackers appear at the exact same spot NE of 0,0" report).
       const squadKey = this.squadPool.squadOf(rec.botId)?.squadId;
-      const pose = squadKey ? squadEdgePose(squadKey, sector, rec.botId) : sectorEdgePose(this.rng);
+      const epoch = Math.floor(now / SQUAD_RESPAWN_EPOCH_MS);
+      const pose = squadKey
+        ? squadEdgePose(squadKey, sector, rec.botId, epoch)
+        : sectorEdgePose(this.rng);
       const ok = room.spawnLivingWorldBot({
         botId: rec.botId,
         kind: rec.kind,
