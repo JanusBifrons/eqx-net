@@ -58,8 +58,8 @@ describe('SectorSnapshot', () => {
 
   // ── Phase 4 WS-0 — structures[].level + schema 5→6 ─────────────────
   describe('Phase 4 WS-0 — structures[].level + schema bump', () => {
-    it('CURRENT_SCHEMA_VERSION bumped to 6', () => {
-      expect(CURRENT_SCHEMA_VERSION).toBe(6);
+    it('CURRENT_SCHEMA_VERSION bumped to 7 (campaign 6.2: structureCatalogueVersion stamp)', () => {
+      expect(CURRENT_SCHEMA_VERSION).toBe(7);
     });
 
     it('round-trips a payload carrying structures[].level', () => {
@@ -88,14 +88,26 @@ describe('SectorSnapshot', () => {
       expect(out.structures?.[0]?.level).toBe(3);
     });
 
-    it('migrateSnapshot(v5 → v6) drops every prior snapshot (tear-down-on-change)', () => {
+    it('migrateSnapshot(v5 → current) drops every prior snapshot (tear-down-on-change)', () => {
       const v5 = {
         schemaVersion: 5,
         sectorKey: 'sol-prime',
         savedAtMs: 0,
         swarm: [],
       };
-      expect(() => parseSnapshot(v5)).toThrow(/No migration from sector-snapshot schema v5 to v6/);
+      expect(() => parseSnapshot(v5)).toThrow(/No migration from sector-snapshot schema v5/);
+    });
+
+    it('migrateSnapshot(v6 → v7) drops every prior snapshot (campaign 6.2 tear-down)', () => {
+      const v6 = {
+        schemaVersion: 6,
+        sectorKey: 'sol-prime',
+        savedAtMs: 0,
+        swarm: [],
+      };
+      expect(() => parseSnapshot(v6)).toThrow(
+        /No migration from sector-snapshot schema v6 to v7 \(structureCatalogueVersion added\)/,
+      );
     });
   });
 });
