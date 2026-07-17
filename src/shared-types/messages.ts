@@ -53,6 +53,10 @@ export type {
 
 // Authoritative state (server → client)
 export type { WelcomeMessage, SnapshotMessage } from './messages/snapshotMessages.js';
+// Campaign 6.1 — defensive ingest schema for `welcome` (client-side safeParse;
+// the 20 Hz `snapshot` is the documented invariant-#3 carve-out — see the
+// SnapshotMessage docstring).
+export { WelcomeSchema } from './messages/snapshotMessages.js';
 
 // Combat outcomes (server → client)
 export {
@@ -125,6 +129,8 @@ export type {
 
 // Multi-ship roster (server → client)
 export type { ShipRosterEntry, ShipRosterMessage } from './messages/rosterMessages.js';
+// Campaign 6.1 — defensive ingest schemas (client-side safeParse; invariant #3).
+export { ShipRosterEntrySchema, ShipRosterSchema } from './messages/rosterMessages.js';
 
 // Server → client diagnostic broadcasts (paradigm plan: quirky-rabbit, Phase 6).
 export type { GcPauseEventMessage } from './messages/diagMessages.js';
