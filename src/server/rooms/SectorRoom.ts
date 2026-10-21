@@ -2412,17 +2412,53 @@ export class SectorRoom extends Room<SectorState> {
     // the whole single-process host AND end this loop (the tail setImmediate
     // never ran). One bad tick is skipped-and-logged; the loop continues.
     const guardedUpdate = guarded(`sim-update:${this.sectorKey ?? this.roomId}`, () => this.update());
+    // Dormant sectors (see isDormantCandidate): pause the physics worker and
+    // poll at DORMANT_POLL_MS instead of ticking at 60 Hz. Wakes within one
+    // poll of a player joining or anything mobile (drone, scrap) arriving.
+    const DORMANT_POLL_MS = 250;
+    const DORMANT_ENTER_MS = 2000;
+    let dormant = false;
+    let quietSince = -1;
     const loop = (): void => {
       if (this.simLoopStopped) return;
       const now = performance.now();
+      const candidate = this.isDormantCandidate();
+      if (!candidate) quietSince = -1;
+      else if (quietSince < 0) quietSince = now;
+      if (dormant && !candidate) {
+        dormant = false;
+        this.postToWorker({ type: 'SET_PAUSED', paused: false });
+        nextTickAt = now;
+      } else if (!dormant && candidate && now - quietSince >= DORMANT_ENTER_MS) {
+        dormant = true;
+        this.postToWorker({ type: 'SET_PAUSED', paused: true });
+      }
+      if (dormant) {
+        // Keep the 60 s persistence cadence while asleep: structures still
+        // mine and charge on their own wall-clock timers.
+        this.ticksSinceSnapshot += Math.round(DORMANT_POLL_MS / TICK_MS_HR);
+        if (this.ticksSinceSnapshot >= 3600) {
+          this.ticksSinceSnapshot = 0;
+          this.persistSectorSnapshot();
+        }
+        setTimeout(loop, DORMANT_POLL_MS);
+        return;
+      }
       if (now >= nextTickAt) {
         guardedUpdate();
         nextTickAt += TICK_MS_HR;
         // Catch-up cap: if we're more than 5 ticks behind (e.g. GC pause),
         // jump forward so we don't spiral.
         if (now > nextTickAt + 5 * TICK_MS_HR) nextTickAt = now + TICK_MS_HR;
+        // Tick ran: drain any backlog in the same event-loop turn.
+        setImmediate(loop);
+        return;
       }
-      setImmediate(loop);
+      // Not yet due: yield the CPU instead of busy-polling. Same schedule as
+      // the physics worker (src/core/physics/worker.ts) — the unconditional
+      // setImmediate here burned most of a core per room at idle.
+      // Sleep until ~1 ms before the tick is due (not a fixed 1 ms poll).
+      setTimeout(loop, Math.max(1, Math.floor(nextTickAt - now) - 1));
     };
     loop();
     logger.info('SectorRoom created');
@@ -2430,6 +2466,23 @@ export class SectorRoom extends Room<SectorState> {
 
   /** Set in onDispose() so the setImmediate loop exits cleanly. */
   private simLoopStopped = false;
+
+  /**
+   * True when stepping this sector can't change anything a player could see:
+   * a galaxy sector with no clients, no joins in flight, no ships (active OR
+   * lingering), no drones or scrap, and nothing in flight. Asteroids and
+   * structures are static until something hits them; structure mining /
+   * turrets / power run on their own wall-clock timers and are unaffected.
+   */
+  private isDormantCandidate(): boolean {
+    return this.sectorKey !== null
+      && this.clients.length === 0
+      && this.pendingJoin.size === 0
+      && this.state.ships.size === 0
+      && this.swarmRegistry.mobileCount() === 0
+      && this.liveProjectiles.size === 0
+      && this.missileSim.size() === 0;
+  }
 
   // ── Phase 6a — playerId → shipInstanceId indirection ──────────────────────
 

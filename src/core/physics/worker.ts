@@ -104,7 +104,9 @@ interface MissileImpulseCmd { type: 'MISSILE_IMPULSE'; entityId: string; fx: num
 interface SpawnWallCmd      { type: 'SPAWN_WALL';      id: string; ax: number; ay: number; bx: number; by: number; thickness: number }
 interface SetWallActiveCmd  { type: 'SET_WALL_ACTIVE'; id: string; active: boolean }
 interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd;
+/** Dormant-sector pause: stop stepping (no players, nothing moving). */
+interface SetPausedCmd { type: 'SET_PAUSED'; paused: boolean }
+type WorkerCommand = SetPausedCmd | SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd;
 
 async function main(): Promise<void> {
   const { sab } = workerData as { sab: SharedArrayBuffer };
@@ -143,6 +145,8 @@ async function main(): Promise<void> {
    *  of every tick; value objects are reused (no per-tick allocation, #14). */
   const prevVel = new Map<string, { vx: number; vy: number }>();
   let tick = 0;
+  let paused = false;
+  let nextTickAt = performance.now();
 
   // Register command handler BEFORE signalling READY so commands sent
   // immediately after READY are not dropped.
@@ -287,6 +291,13 @@ async function main(): Promise<void> {
         physics.removeWall(cmd.id);
         break;
       }
+      case 'SET_PAUSED': {
+        // On resume, restart the schedule from now so a long pause doesn't
+        // read as a backlog of missed ticks.
+        if (paused && !cmd.paused) nextTickAt = performance.now();
+        paused = cmd.paused;
+        break;
+      }
     }
   });
 
@@ -297,7 +308,7 @@ async function main(): Promise<void> {
   // which is what made the May 2026 capture show 37–46 Hz instead of 60.
   // setImmediate has ~1 ms granularity and lets us hit 60 Hz reliably.
   const TICK_MS_HR = 1000 / 60;
-  let nextTickAt = performance.now();
+  nextTickAt = performance.now();
   // Per-step scratch (campaign 1.4, invariant #14): `step()` is the 60 Hz hot
   // loop — these were `new Map()` / `[]` + per-transition literals allocated
   // EVERY step. Reused across steps: the map clears at step top; the
@@ -490,6 +501,12 @@ async function main(): Promise<void> {
   // the original `setInterval(16.67)` approach. The catch-up cap below
   // absorbs any single-iteration slip so cumulative drift cannot grow.
   const loop = (): void => {
+    if (paused) {
+      // Dormant sector: no stepping. Commands still apply via the message
+      // handler; the room un-pauses before anything needs to move.
+      setTimeout(loop, 50);
+      return;
+    }
     const now = performance.now();
     if (now >= nextTickAt) {
       step();
@@ -505,7 +522,8 @@ async function main(): Promise<void> {
       // Not yet at next tick — yield the CPU. Replaces the unconditional
       // `setImmediate(loop)` busy-poll that was burning ~100 % of one core
       // per worker (×7 sectors = ~700 % parent-process CPU at idle).
-      setTimeout(loop, 1);
+      // Sleep until ~1 ms before the tick is due (not a fixed 1 ms poll).
+      setTimeout(loop, Math.max(1, Math.floor(nextTickAt - now) - 1));
     }
   };
   loop();

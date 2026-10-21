@@ -113,6 +113,7 @@ export class SwarmEntityRegistry {
     };
     this.byId.set(id, record);
     this.byEntityId.set(entityId, record);
+    if (kind === 1 || kind === 3) this.mobile++;
     return record;
   }
 
@@ -122,6 +123,7 @@ export class SwarmEntityRegistry {
     this.byId.delete(id);
     this.byEntityId.delete(rec.entityId);
     this.freeEntityIds.push(rec.entityId);
+    if (rec.kind === 1 || rec.kind === 3) this.mobile--;
     return rec;
   }
 
@@ -139,6 +141,14 @@ export class SwarmEntityRegistry {
 
   size(): number {
     return this.byId.size;
+  }
+
+  /** Drones + scrap currently registered: the swarm kinds that move on their
+   *  own. Zero means nothing in the sector can change without outside input
+   *  (asteroids and structures are static until something hits them). */
+  private mobile = 0;
+  mobileCount(): number {
+    return this.mobile;
   }
 
   /** Iterate all registered records in registration order. */

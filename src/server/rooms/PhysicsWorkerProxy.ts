@@ -60,7 +60,9 @@ export type WorkerCmd =
    *  stun / power loss without churning the body. See PhysicsWorld.spawnWall. */
   | { type: 'SPAWN_WALL';      id: string; ax: number; ay: number; bx: number; by: number; thickness: number }
   | { type: 'SET_WALL_ACTIVE'; id: string; active: boolean }
-  | { type: 'REMOVE_WALL';     id: string };
+  | { type: 'REMOVE_WALL';     id: string }
+  /** Dormant-sector pause/resume (see SectorRoom.isDormant). */
+  | { type: 'SET_PAUSED';      paused: boolean };
 
 /** Per-tick contact payload extracted from the worker's CONTACT_BATCH message.
  *  Mirrors `core/physics/contactDrain.ts` `Contact` across the postMessage
@@ -124,6 +126,10 @@ export class PhysicsWorkerProxy {
       this.worker = new Worker(workerCode, {
         eval: true,
         workerData: { sab: this.deps.sab },
+        // The worker's JS heap is tiny (physics state lives in Rapier's WASM
+        // memory + the SAB), so cap V8's young generation — the default
+        // lets each of the 21 sector workers reserve far more than it uses.
+        resourceLimits: { maxYoungGenerationSizeMb: 4 },
       });
 
       let ready = false;

@@ -11,7 +11,27 @@ import { build } from 'esbuild';
  * loader entirely. See `docs/LESSONS.md` and the `feedback_worker_tsx.md`
  * memory entry for the full incident report.
  */
-export async function bundleWorker(opts: {
+// One bundle per (entry, externals): every SectorRoom spawns the same physics
+// worker, so re-running esbuild per room only cost boot time and held one more
+// copy of the code string. Caching the PROMISE also dedupes concurrent calls.
+const bundleCache = new Map<string, Promise<string>>();
+
+export function bundleWorker(opts: {
+  entryPoint: string;
+  external?: string[];
+}): Promise<string> {
+  const key = `${opts.entryPoint}|${(opts.external ?? []).join(',')}`;
+  let cached = bundleCache.get(key);
+  if (!cached) {
+    cached = buildWorker(opts);
+    bundleCache.set(key, cached);
+    // A failed build must not poison the cache for later callers.
+    cached.catch(() => bundleCache.delete(key));
+  }
+  return cached;
+}
+
+async function buildWorker(opts: {
   entryPoint: string;
   external?: string[];
 }): Promise<string> {
@@ -22,7 +42,9 @@ export async function bundleWorker(opts: {
     format: 'cjs',
     write: false,
     external: opts.external ?? [],
-    sourcemap: 'inline',
+    // Inline maps are ~75% of the bundle and are held in every worker's
+    // memory; keep them for dev stack traces only.
+    sourcemap: process.env['NODE_ENV'] === 'production' ? false : 'inline',
   });
   return result.outputFiles[0]!.text;
 }
