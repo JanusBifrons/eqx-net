@@ -41,7 +41,8 @@ import {
   type LastInputCache,
   type IdleTracker,
 } from '../net/snapshotScheduler.js';
-import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
+import { SwarmSpawner, DRONE_DEFAULT_MASS, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
+import { ScriptedPathBehaviour } from '../../core/ai/ScriptedPathBehaviour.js';
 import { ScrapSpawner } from '../spawn/ScrapSpawner.js';
 // Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
 import type { ShipPhysicsState } from '../../core/physics/World.js';
@@ -785,9 +786,24 @@ export class SectorRoom extends Room<SectorState> {
       b.size = d.size;
       (this.state as SectorState).bases.set(id, b);
     },
+    onDestroyed: (id, dead) => {
+      // Room state is the source of truth (late joiners see the hole —
+      // Invariant #16); the worker rebuilds the colliders from the same mask.
+      const st = (this.state as SectorState).bases.get(id);
+      if (st) {
+        for (let w = 0; w < dead.length; w++) {
+          if (w < st.dead.length) { if (st.dead[w] !== dead[w]) st.dead[w] = dead[w]!; }
+          else st.dead.push(dead[w]!);
+        }
+      }
+      this.postToWorker({ type: 'SET_BASE_DEAD', id, dead: Array.from(dead) });
+    },
   });
   private readonly spawnClearScratch = { x: 0, y: 0 };
   private defaultSpawnY: number | null = null;
+  /** Radar sandbox — `dronePoses` entries flagged `hostile`; marked hostile to
+   *  every joining player (testMode only). */
+  private readonly sandboxHostileDroneIds: string[] = [];
   /** Phase 8 — counter for the 60-second snapshot cadence (galaxy sectors only). */
   private ticksSinceSnapshot = 0;
   /** Phase 8 sub-phase B — set when an in-flight transit has committed (Limbo
@@ -1128,6 +1144,14 @@ export class SectorRoom extends Room<SectorState> {
         y: number;
         angle?: number;
         hullExposed?: boolean;
+        /** Radar sandbox (plan sparkling-wondering-rose) — fly a scripted
+         *  straight line from the pose to `(toX, toY)` at `speed` u/s,
+         *  ping-ponging unless `loop:false`. Replaces this drone's AI with
+         *  `ScriptedPathBehaviour` (no combat). */
+        path?: { toX: number; toY: number; speed: number; loop?: boolean };
+        /** Radar sandbox — mark this drone hostile to every joining player (so
+         *  it renders as a hostile contact) without it attacking anything. */
+        hostile?: boolean;
       }>;
       /**
        * Generic Entity Pipeline P4 — deterministic STRUCTURE placement. Each
@@ -1159,6 +1183,9 @@ export class SectorRoom extends Room<SectorState> {
        *  sector. A room-DEFINITION option (server-authored, never client
        *  input), so it is not testMode-gated — galaxy sectors use it too. */
       bases?: ReadonlyArray<BaseSpec>;
+      /** testMode bespoke trigger (PR-D): multiplies base piece hit points
+       *  (0.001 ⇒ one shot breaks a piece) so destruction E2Es run in seconds. */
+      baseHpScale?: number;
       /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
@@ -1432,7 +1459,7 @@ export class SectorRoom extends Room<SectorState> {
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
       wallBlocksProjectile: (x, y, sx, sy, damage) =>
-        this.bases.segmentBlocked(x, y, sx, sy) ||
+        this.bases.projectileHit(x, y, sx, sy, damage) ||
         this.shieldWalls.blockProjectile(x, y, sx, sy, damage, Date.now()),
       // Allegiances P0 — AI bolts pass through their own allegiance's ships.
       ownerAllegianceOf: (ownerId) => {
@@ -1931,6 +1958,7 @@ export class SectorRoom extends Room<SectorState> {
     }
     // Procedural bases: generate, publish the descriptor in room state, spawn
     // the worker colliders. Before any join, so spawns can avoid geometry.
+    if (this.testMode && roomOpts.baseHpScale !== undefined) this.bases.setHpScale(roomOpts.baseHpScale);
     const baseSpecs = roomOpts.bases ?? [];
     for (let i = 0; i < baseSpecs.length; i++) this.bases.add('b' + i, baseSpecs[i]!);
 
@@ -1982,6 +2010,17 @@ export class SectorRoom extends Room<SectorState> {
         }
         const rec = this.swarmRegistry.get(droneId);
         if (!rec) continue;
+        if (pose.path) {
+          // Radar sandbox — scripted fly-in / fly-out / tangential pass.
+          const mass = getShipKind(pose.kind).mass ?? DRONE_DEFAULT_MASS;
+          this.aiController.register(droneId, rec.slot, new ScriptedPathBehaviour({
+            from: { x: pose.x, y: pose.y },
+            to: { x: pose.path.toX, y: pose.path.toY },
+            speed: pose.path.speed,
+            loop: pose.path.loop ?? true,
+          }, mass));
+        }
+        if (pose.hostile) this.sandboxHostileDroneIds.push(droneId);
         this.swarmHealth.set(droneId, getDroneMaxHealth(rec.shipKind) ?? 40);
         this.swarmShield.set(droneId, getDroneShieldMax(rec.shipKind));
         this.swarmShieldLastDmg.set(droneId, this.serverTick);
@@ -3617,7 +3656,7 @@ export class SectorRoom extends Room<SectorState> {
     // A base wall in front of the shot stops it first — and caps the range
     // passed to the shield walls so a shield span BEHIND base geometry never
     // takes the hit.
-    const baseDist = this.bases.rayFirst(fromX, fromY, dirX, dirY, maxDist);
+    const baseDist = this.bases.shotHit(fromX, fromY, dirX, dirY, maxDist, damage);
     const wallDist = this.shieldWalls.blockShot(
       fromX, fromY, dirX, dirY, baseDist >= 0 ? baseDist : maxDist, damage, Date.now(),
     );
@@ -5116,6 +5155,23 @@ export class SectorRoom extends Room<SectorState> {
     // Mirrors the `markBotHostile` pattern in LivingWorldBotHooks: per-player
     // `aiController.markHostile` + `bot_aggro` broadcast so the client's
     // hostility ledger stays in lockstep. testMode-gated for safety.
+    // Radar sandbox — pose drones flagged `hostile` render as hostile contacts
+    // for every joiner (same channel as startHostile: ledger + bot_aggro).
+    if (this.testMode && this.sandboxHostileDroneIds.length > 0) {
+      const tick = this.serverTick;
+      for (const id of this.sandboxHostileDroneIds) {
+        const rec = this.swarmRegistry.get(id);
+        if (!rec) continue;
+        this.aiController.markHostile(rec.id, playerId, tick);
+        this.broadcast('bot_aggro', {
+          type: 'bot_aggro',
+          botEntityId: `swarm-${rec.entityId}`,
+          targetPlayerId: playerId,
+          tick,
+        });
+      }
+    }
+
     if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.startHostile === true) {
       const tick = this.serverTick;
       for (const rec of this.swarmRegistry.all()) {

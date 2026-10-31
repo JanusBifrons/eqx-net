@@ -212,3 +212,44 @@ export function cullChunks(
 export function useSilhouette(zoom: number, lodZoom: number): boolean {
   return zoom < lodZoom;
 }
+
+/** Debris fragment fields per entry in a flat Float32Array. */
+export const DEBRIS_STRIDE = 8; // x, y, vx, vy, size, color, life, spin
+export const DEBRIS_LIFE_MS = 1400;
+
+/**
+ * Debris for newly destroyed pieces (PR-D): fragments scattered over each
+ * piece's area flying outward, count scaled by area (6–24 per piece), colour
+ * from the piece's palette. Deterministic (hash of piece index), pixi space.
+ * Writes into `out` starting at fragment `start`; returns the next free slot
+ * (stops at capacity).
+ */
+export function spawnDebris(l: BaseLayout, pieces: readonly number[], out: Float32Array, start: number): number {
+  const cap = Math.floor(out.length / DEBRIS_STRIDE);
+  let n = start;
+  for (const i of pieces) {
+    const kind = basePieceKindAt(l.kind[i]!);
+    const w = l.w[i]!, h = l.h[i]!;
+    const gx = l.descriptor.x + l.x[i]!, gy = l.descriptor.y + l.y[i]!;
+    const cx = gx + w / 2, cy = -(gy + h / 2); // pixi space centre
+    const count = Math.max(6, Math.min(24, Math.round((w * h) / 20000)));
+    for (let k = 0; k < count && n < cap; k++, n++) {
+      let hh = fnvMixU32(fnvMixU32(0x811c9dc5, i), k);
+      const r1 = (hh & 0xffff) / 0xffff; hh = fnvMixU32(hh, 7);
+      const r2 = (hh & 0xffff) / 0xffff; hh = fnvMixU32(hh, 11);
+      const r3 = (hh & 0xffff) / 0xffff;
+      const px = gx + r1 * w, py = -(gy + r2 * h);
+      const dx = px - cx, dy = py - cy;
+      const d = Math.hypot(dx, dy) || 1;
+      const speed = 60 + r3 * 220;
+      const o = n * DEBRIS_STRIDE;
+      out[o] = px; out[o + 1] = py;
+      out[o + 2] = (dx / d) * speed; out[o + 3] = (dy / d) * speed;
+      out[o + 4] = 10 + r3 * Math.min(60, Math.min(w, h) * 0.4);
+      out[o + 5] = BASE_PALETTE[kind.palette];
+      out[o + 6] = DEBRIS_LIFE_MS;
+      out[o + 7] = (r1 - 0.5) * 6;
+    }
+  }
+  return n;
+}
