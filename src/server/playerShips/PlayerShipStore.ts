@@ -385,6 +385,27 @@ export class PlayerShipStore {
   size(): number {
     return this.byShip.size;
   }
+
+  /** Every record (boot-time identity merge only — never a hot path). */
+  all(): PlayerShipRecord[] {
+    return [...this.byShip.values()];
+  }
+
+  /**
+   * PR 3a (account-bound identity) — move every ship owned by `fromPlayerId`
+   * to `toPlayerId`, stamping `userId`. Goes through `put` so the secondary
+   * index + the CRITICAL write-through stay in lockstep. The roster cap is
+   * deliberately NOT enforced: a merge must never delete a player's ships.
+   * Returns the number of rows moved.
+   */
+  reassignPlayer(fromPlayerId: string, toPlayerId: string, userId: string): number {
+    if (fromPlayerId === toPlayerId) return 0;
+    const moved = this.listByPlayer(fromPlayerId);
+    for (const rec of moved) {
+      this.put({ ...rec, playerId: toPlayerId, userId });
+    }
+    return moved.length;
+  }
 }
 
 /**

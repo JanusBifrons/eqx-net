@@ -30,6 +30,10 @@ export const AuthUserSchema = z.object({
   id: z.string(),
   email: z.string(),
   displayName: z.string().nullable(),
+  /** PR 3a — the account's canonical in-game playerId (owner of its ships /
+   *  structures). `null` until the account's first logged-in join binds one
+   *  (that join adopts the browser's current id). Optional for back-compat. */
+  playerId: z.string().nullable().optional(),
 });
 
 export const AuthResponseSchema = z.object({

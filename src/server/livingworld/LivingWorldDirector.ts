@@ -23,6 +23,7 @@
  */
 import type { Bus } from '../../core/events/Bus.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
+import { canonicalPlayerId } from '../identity/AccountPlayerRegistry.js';
 import { guarded } from '../rooms/guardedLoop.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { BotTransitController } from './BotTransitController.js';
@@ -526,8 +527,16 @@ export class LivingWorldDirector {
   private restoreFromPersistence(): void {
     const p = this.directorPersistence?.hydrate();
     if (!p) return;
-    this.squadPool.restoreStates(p.squads);
-    this.waveDirector.restore({ waveCount: p.waveCount, lastDispatchAtMs: p.lastDispatchAtMs });
+    // PR 3a — a wave target (faction id == owner playerId) persisted under one
+    // of the account's historical per-browser ids maps to the canonical id.
+    this.squadPool.restoreStates(p.squads.map((s) => ({
+      ...s,
+      targetFactionId: s.targetFactionId === null ? null : canonicalPlayerId(s.targetFactionId),
+    })));
+    this.waveDirector.restore({
+      waveCount: p.waveCount.map(([k, v]) => [canonicalPlayerId(k), v] as [string, number]),
+      lastDispatchAtMs: p.lastDispatchAtMs.map(([k, v]) => [canonicalPlayerId(k), v] as [string, number]),
+    });
     serverLogEvent('director_state_restored', { squads: p.squads.length });
   }
 

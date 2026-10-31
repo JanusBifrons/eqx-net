@@ -111,6 +111,24 @@ CREATE TABLE IF NOT EXISTS director_state (
   updated_at   INTEGER NOT NULL
 );
 
+-- PR 3a — account-bound player identity. Each account has ONE canonical
+-- playerId (the in-game identity that owns ships / structures / hulls), so
+-- logging in on any device finds the same world. player_aliases records the
+-- historical per-browser ids that belonged to an account; data persisted under
+-- an alias is mapped to the canonical id when loaded.
+CREATE TABLE IF NOT EXISTS account_players (
+  user_id    TEXT PRIMARY KEY REFERENCES users(id),
+  player_id  TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS player_aliases (
+  alias_player_id     TEXT PRIMARY KEY,
+  canonical_player_id TEXT NOT NULL,
+  user_id             TEXT NOT NULL,
+  created_at          INTEGER NOT NULL
+);
+
 -- Web Push subscriptions (PWA notifications, e.g. "your base is under attack").
 -- One row per browser push endpoint; a user may have several (phone + desktop).
 -- Keyed on the unique endpoint URL so a re-subscribe from the same device is an

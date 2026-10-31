@@ -329,8 +329,9 @@ test.describe('server-authoritative broadcast', () => {
     await joinSector(page1);
     await joinSector(page2);
 
-    // Get P1's durable playerId from localStorage.
-    const p1Id = await page1.evaluate(() => localStorage.getItem('eqxPlayerId'));
+    // Get P1's playerId: the account id while logged in (PR 3a), else the
+    // anonymous browser id — mirrors loadStoredPlayerId().
+    const p1Id = await page1.evaluate(() => localStorage.getItem('eqxAccountPlayerId') ?? localStorage.getItem('eqxPlayerId'));
     expect(p1Id).not.toBeNull();
 
     // Thrust P1 so the position is clearly non-zero.

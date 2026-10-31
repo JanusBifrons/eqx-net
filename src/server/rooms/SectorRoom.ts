@@ -17,6 +17,15 @@ import {
 import type { GcPauseEventMessage } from '../../shared-types/messages.js';
 import type { WarpWarningEvent, WarpWarningClearEvent } from '../../shared-types/messages.js';
 import type { GridFlowMaterial } from '../../shared-types/messages.js';
+import { SESSION_REPLACED_CLOSE_CODE, type SessionReplacedMessage } from '../../shared-types/messages.js';
+import { getAccountPlayerRegistry, canonicalPlayerId } from '../identity/AccountPlayerRegistry.js';
+import { consumeTransitIdentity } from '../identity/TransitIdentityTokens.js';
+import {
+  registerPlayerSession,
+  unregisterPlayerSession,
+  getPlayerSession,
+  takeOverPlayerSession,
+} from '../identity/PlayerSessionRegistry.js';
 import { getIncomingPlayerSink } from '../livingworld/incomingPlayerSink.js';
 import { SectorState, ShipState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
@@ -206,6 +215,9 @@ const JoinOptionsSchema = z
   .object({
     playerId: z.string().nullable().optional(),
     authToken: z.string().optional(),
+    /** PR 3a — server-issued single-use transit proof (set by the source
+     *  room's TransitOrchestrator in the seat reservation, never by a client). */
+    transitToken: z.string().max(64).optional(),
     spawnX: z.number().optional(),
     spawnY: z.number().optional(),
     /** Test-only initial hull override. Honoured only when the room has
@@ -791,6 +803,9 @@ export class SectorRoom extends Room<SectorState> {
    */
   get _internals(): {
     serverTick: number;
+    /** PR 3a — which playerId each connected session was bound to (the
+     *  account-bound identity integration test asserts on it). */
+    sessionToPlayer: ReadonlyMap<string, string>;
     ownerlessShips: Map<string, ReturnType<typeof setTimeout> | null>;
     /** Lingering-hull slot map (shipInstanceId → slot). Lets the resume-as-
      *  existing-ship integration test assert a lingering hull was evicted
@@ -848,6 +863,7 @@ export class SectorRoom extends Room<SectorState> {
   } {
     return {
       serverTick: this.serverTick,
+      sessionToPlayer: this.sessionToPlayer,
       ownerlessShips: this.ownerlessShips,
       lingeringSlots: this.lingeringSlots,
       restoreLingeringHulls: (rows) => this.restoreLingeringHullsFromSnapshot(rows),
@@ -3055,7 +3071,9 @@ export class SectorRoom extends Room<SectorState> {
   private restoreStructuresFromSnapshot(rows: readonly SectorSnapshotStructure[]): void {
     let restored = 0;
     for (const r of rows) {
-      const id = this.structurePlacement.place(r.owner, r.kind, r.x, r.y);
+      // PR 3a — a structure saved under one of the account's historical
+      // per-browser ids belongs to the account's canonical playerId now.
+      const id = this.structurePlacement.place(canonicalPlayerId(r.owner), r.kind, r.x, r.y);
       if (id === null) {
         logger.warn({ kind: r.kind, x: r.x, y: r.y }, 'persisted structure rejected on hydrate');
         continue;
@@ -3215,7 +3233,9 @@ export class SectorRoom extends Room<SectorState> {
       }
       // Schema entry — a lingering (isActive=false) hull.
       const ship = new ShipState();
-      ship.playerId = r.playerId;
+      // PR 3a — owner mapped to the account's canonical playerId (the roster
+      // row was re-keyed by the boot merge; the snapshot blob was not).
+      ship.playerId = canonicalPlayerId(r.playerId);
       ship.shipInstanceId = r.shipInstanceId;
       ship.kind = r.kind;
       // WS-B1/B2/B3 — seed the per-instance progression from the roster so a
@@ -4168,10 +4188,43 @@ export class SectorRoom extends Room<SectorState> {
     logger.info({ sessionId: client.sessionId, options }, 'onJoin called');
     const parsed = JoinOptionsSchema.safeParse(options);
     const requestedId = parsed.success ? parsed.data.playerId : null;
-    let playerId = assignPlayerId(requestedId);
 
     const authToken = parsed.success ? parsed.data.authToken : undefined;
-    const userId = authToken ? await validateToken(authToken) : null;
+    let userId = authToken ? await validateToken(authToken) : null;
+
+    // ── PR 3a — account-bound identity ────────────────────────────────────
+    // The playerId (owner of ships / structures / hulls) belongs to the
+    // ACCOUNT, not the browser. See identity/AccountPlayerRegistry.ts.
+    const identity = getAccountPlayerRegistry();
+    const transitToken = parsed.success ? parsed.data.transitToken : undefined;
+    let playerId: string;
+    // Test-fixture accounts (the shared E2E login) keep per-browser ids.
+    const accountBound = userId !== null && !identity.isExempt(userId);
+    if (accountBound) {
+      // Logged in → always the account's canonical id (the claim is ignored
+      // once the account is bound; a first login adopts this browser's id).
+      playerId = identity.resolveForUser(userId as string, requestedId);
+    } else if (transitToken !== undefined && consumeTransitIdentity(transitToken, requestedId)) {
+      // Server-reserved transit arrival — the token proves the identity; the
+      // account (if any) is recovered from the registry.
+      playerId = requestedId as string;
+      userId = userId ?? identity.userForPlayer(playerId);
+    } else {
+      // Anonymous → may NOT claim an id that belongs to an account (that would
+      // let a logged-out browser pilot the account's ships). Historical alias
+      // ids are account-bound too.
+      playerId = assignPlayerId(requestedId);
+      if (identity.isAccountBound(playerId)) playerId = assignPlayerId(null);
+    }
+
+    // Same id already piloted by another session. A logged-in (or transiting)
+    // player TAKES OVER — the old session, in whichever room it lives, is
+    // told `session_replaced` and disconnected first, then this join rebinds
+    // to the hull like a normal reconnect. An anonymous duplicate (two tabs
+    // sharing one localStorage) keeps the legacy behaviour: a fresh identity.
+    if ((accountBound || identity.isAccountBound(playerId)) && getPlayerSession(playerId) !== undefined) {
+      await takeOverPlayerSession(playerId);
+    }
 
     // Validated ship-kind id from JoinOptions, or the catalogue default. Used
     // by the fresh-spawn and Limbo paths below; explicitly NOT consulted on
@@ -4183,11 +4236,22 @@ export class SectorRoom extends Room<SectorState> {
       ? parsed.data.shipKind
       : DEFAULT_SHIP_KIND;
 
-    // If the requested ID is already held by an active session (e.g. two tabs
-    // sharing the same localStorage), assign a fresh UUID.
+    // If the requested ID is STILL held by an active session in this room
+    // (anonymous two-tabs case, or a takeover that timed out), assign a fresh
+    // UUID — two sessions must never pilot one id.
     if (this.playerToSession.has(playerId)) {
       playerId = assignPlayerId(null);
     }
+
+    // PR 3a — register this session as the current pilot of `playerId` so a
+    // later login on another device can take it over (any room, this server).
+    const joinSessionId = client.sessionId;
+    this.sessionRegisteredPlayer.set(joinSessionId, playerId);
+    registerPlayerSession(playerId, {
+      roomId: this.roomId,
+      sessionId: joinSessionId,
+      evict: () => this.evictSessionForTakeover(joinSessionId),
+    });
 
     // ── Equinox Phase 5 (WS-3) — JOIN-AS-SPECTATOR ─────────────────────────
     // The galaxy "Spectate" CTA joins with `{ spectator: true }`. The player
@@ -4956,6 +5020,42 @@ export class SectorRoom extends Room<SectorState> {
     // session). Idempotent: cleanup() is a no-op when no entry exists.
     this.webrtcChannelManager?.cleanup(client.sessionId);
     this.leaveHandler.handle(client, consented);
+
+    // PR 3a — drop this session's pilot registration (only if a takeover
+    // hasn't already replaced it), then release any takeover waiting on us.
+    const registeredPlayer = this.sessionRegisteredPlayer.get(client.sessionId);
+    if (registeredPlayer !== undefined) {
+      unregisterPlayerSession(registeredPlayer, client.sessionId);
+      this.sessionRegisteredPlayer.delete(client.sessionId);
+    }
+    const releaseTakeover = this.pendingTakeoverLeaves.get(client.sessionId);
+    if (releaseTakeover !== undefined) {
+      this.pendingTakeoverLeaves.delete(client.sessionId);
+      releaseTakeover();
+    }
+  }
+
+  /** PR 3a — sessionId → the playerId it registered as pilot of. */
+  private readonly sessionRegisteredPlayer = new Map<string, string>();
+  /** PR 3a — sessionId → resolver for a takeover awaiting this session's onLeave. */
+  private readonly pendingTakeoverLeaves = new Map<string, () => void>();
+
+  /**
+   * PR 3a — another device logged into the same account is joining: tell
+   * this session it has been replaced and disconnect it. Resolves once this
+   * room's `onLeave` for the session has run (the hull lingers exactly like
+   * a normal disconnect, so the new session rebinds to it).
+   */
+  private evictSessionForTakeover(sessionId: string): Promise<void> {
+    const target = this.clients.find((c) => c.sessionId === sessionId);
+    if (target === undefined) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.pendingTakeoverLeaves.set(sessionId, resolve);
+      const msg: SessionReplacedMessage = { type: 'session_replaced' };
+      target.send('session_replaced', msg);
+      serverLogEvent('session_replaced', { sessionId, roomId: this.roomId });
+      target.leave(SESSION_REPLACED_CLOSE_CODE);
+    });
   }
 
   /**

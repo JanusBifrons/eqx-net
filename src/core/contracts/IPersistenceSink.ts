@@ -65,6 +65,12 @@ export type PersistOp =
   // `payloadJson` is JSON.stringify'd DirectorStatePayload. Boot hydration reads
   // via the read-only main-thread connection, never through the worker.
   | { type: 'DIRECTOR_STATE_PUT'; payloadJson: string; ts: number }
+  // PR 3a — account-bound player identity. One canonical playerId per account
+  // (`account_players`, UPSERT on user_id) + historical per-browser ids folded
+  // into it (`player_aliases`, keyed on the alias id). Boot hydration reads via
+  // the read-only main-thread connection, never through the worker.
+  | { type: 'ACCOUNT_PLAYER_PUT'; userId: string; playerId: string; ts: number }
+  | { type: 'PLAYER_ALIAS_PUT'; aliasPlayerId: string; canonicalPlayerId: string; userId: string; ts: number }
   // Web Push subscriptions (PWA notifications). `PUT` is an UPSERT keyed on the
   // unique `endpoint`; `DELETE` prunes an endpoint the push service reported as
   // gone (HTTP 404/410). The hot path is a per-user read via the read-only
