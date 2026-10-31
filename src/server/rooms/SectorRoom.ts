@@ -1377,6 +1377,11 @@ export class SectorRoom extends Room<SectorState> {
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
       wallBlocksProjectile: (x, y, sx, sy, damage) =>
         this.shieldWalls.blockProjectile(x, y, sx, sy, damage, Date.now()),
+      // Allegiances P0 — AI bolts pass through their own allegiance's ships.
+      ownerAllegianceOf: (ownerId) => {
+        const rec = this.swarmRegistry.get(ownerId);
+        return rec != null && rec.kind === SWARM_KIND_DRONE ? allegianceOfKind(rec.shipKind) : undefined;
+      },
     });
 
     // Missile subsystem — guidance, splash damage, impulse queue. The
