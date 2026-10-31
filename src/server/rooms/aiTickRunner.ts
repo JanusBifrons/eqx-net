@@ -20,7 +20,7 @@
  */
 
 import type { AiController } from '../../core/ai/AiController.js';
-import type { AiPlayerView, AiStructureView, AiEntity, AiEntityPoseOut } from '../../core/contracts/IAiBehaviour.js';
+import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut } from '../../core/contracts/IAiBehaviour.js';
 import type { PoseRecord } from './SabPoseMirror.js';
 
 export interface AiFireRequest {
@@ -45,6 +45,12 @@ export interface AiTickCtx {
    *  Built ONCE per tick here (not per drone — #14). Omitted ⇒ no structure
    *  targeting (byte-identical to pre-wave). */
   fillStructureTargets?: (out: AiStructureView[]) => void;
+  /** Allegiances P0 — reused per-tick buffer of OTHER-allegiance swarm
+   *  combatants, filled ONCE per tick by `fillSwarmTargets` (never per drone,
+   *  #14). Left empty in a single-allegiance sector ⇒ `view.swarms` absent ⇒
+   *  byte-identical to pre-P0. */
+  aiSwarmScratch?: AiSwarmView[];
+  fillSwarmTargets?: (out: AiSwarmView[]) => void;
   swarmEntitySnapshot: (id: string) => AiEntity | null;
   /** Leader-led flocking — resolve ANY swarm entity's live pose into a caller-
    *  owned buffer (server-only; no client brain). Feeds a follower its leader's
@@ -79,9 +85,14 @@ export function runAiTick(ctx: AiTickCtx): void {
     ctx.fillStructureTargets(ctx.aiStructureScratch);
     if (ctx.aiStructureScratch.length > 0) structures = ctx.aiStructureScratch;
   }
+  let swarms: AiSwarmView[] | undefined;
+  if (ctx.fillSwarmTargets && ctx.aiSwarmScratch) {
+    ctx.fillSwarmTargets(ctx.aiSwarmScratch);
+    if (ctx.aiSwarmScratch.length > 0) swarms = ctx.aiSwarmScratch;
+  }
   ctx.aiController.tick(
     ctx.serverTick, 1 / 60, ctx.aiPlayerScratch, ctx.swarmEntitySnapshot, structures,
-    ctx.resolveEntityInto,
+    ctx.resolveEntityInto, swarms,
   );
   ctx.phaseTime('aiTick');
 

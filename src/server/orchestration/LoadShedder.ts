@@ -12,6 +12,7 @@
  * kill-feed or explosion SFX. The `ENTITY_SHED` bus event is the
  * persistence/telemetry hook that distinguishes shed from combat-kill.
  */
+import { getShipKind } from '../../shared-types/shipKinds.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { Bus } from '../../core/events/Bus.js';
 import { OVER_BUDGET_MS, TIDI_FLOOR } from '../../core/clock/SimulationClock.js';
@@ -55,6 +56,9 @@ export class LoadShedder {
     const candidates: Array<{ rec: SwarmEntityRecord; d2: number }> = [];
     for (const rec of this.deps.registry.all()) {
       if (rec.kind !== 1) continue; // drone only
+      // Allegiances P0: shed-immune kinds (haulers, nexi, elites) are never
+      // silently evicted — that would destroy value / break a world state machine.
+      if (getShipKind(rec.shipKind).shedImmune) continue;
       const pos = this.deps.getPosition(rec);
       let best = Infinity;
       for (const p of players) {
