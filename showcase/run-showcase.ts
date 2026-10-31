@@ -117,6 +117,7 @@ async function main(): Promise<void> {
         if (group.length === 0) continue;
         log(`server profile '${profile}' (${group.length} shot(s))…`);
         await servers.ensure(profile);
+        await recorder.warmUp(profile === 'lean' ? 4000 : 12_000);
         for (const shot of group) {
           manifest[shot.id] = await takeWithRetry(shot, recorder, servers, capBrowser, out, sha, args.fps);
           writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));

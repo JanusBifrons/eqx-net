@@ -56,6 +56,26 @@ export class Recorder {
     this.browser = null;
   }
 
+  /**
+   * Warm-up after a server boot: load the app once in a throwaway tab so Vite
+   * compiles the client and the server settles (living-world squads spawning)
+   * before anything is filmed. Without it the first take of a batch is often a
+   * cold-start stutter or a join timeout.
+   */
+  async warmUp(settleMs = 8000): Promise<void> {
+    const ctx = await this.browser!.newContext({ viewport: { width: 1280, height: 720 } });
+    const page = await ctx.newPage();
+    try {
+      await page.goto(`${this.baseUrl}/?worker=0&diag=0`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
+      await page.locator('canvas').first().waitFor({ timeout: 120_000 });
+      await sleep(settleMs);
+    } catch (e) {
+      this.log(`  [warm-up] ${(e as Error).message.split('\n')[0]}`);
+    } finally {
+      await ctx.close();
+    }
+  }
+
   /** Real GPU check — a SwiftShader fallback renders filters black. */
   async gpuName(): Promise<string> {
     const ctx = await this.browser!.newContext();
