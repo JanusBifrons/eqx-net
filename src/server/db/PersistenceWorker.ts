@@ -21,6 +21,12 @@ type LegacyLimboPayload = {
 };
 import { SHIP_KIND_CATALOGUE_VERSION } from '../../shared-types/shipKinds.js';
 import { db } from './Database.js';
+import {
+  getAccountPlayerRegistry,
+  type AccountPlayerBinding,
+  type PlayerAlias,
+} from '../identity/AccountPlayerRegistry.js';
+import { mergeAccountPlayerIds, type AccountMergeResult } from '../identity/accountPlayerMerge.js';
 
 /**
  * Process-global persistence singleton. `initWorker()` constructs a
@@ -337,6 +343,43 @@ export function initPlayerShipStore(): { hydrated: number } {
   }
 
   return { hydrated: records.length + backfilled };
+}
+
+/**
+ * PR 3a — boot hydrate of the account-bound identity tables + the one-off
+ * (idempotent) merge that folds each account's historical per-browser
+ * playerIds into one canonical id. MUST run after `initPlayerShipStore` (the
+ * merge reads + re-keys roster rows) and BEFORE any sector room is created
+ * (rooms map persisted owners through the registry on hydrate).
+ */
+export function initAccountPlayerRegistry(): AccountMergeResult & { bindings: number; aliases: number; exempt: number } {
+  // Hydrate INTO the existing singleton (not a replacement): the HTTP server
+  // listens before this runs, so an early `/auth/dev/test-token` may already
+  // have marked a fixture account exempt on it.
+  const registry = getAccountPlayerRegistry();
+  registry.attachPersistence(persistence);
+  let bindings: AccountPlayerBinding[] = [];
+  let aliases: PlayerAlias[] = [];
+  let exempt: string[] = [];
+  try {
+    exempt = (db.prepare("SELECT user_id FROM auth_providers WHERE provider = 'e2e'").all() as Array<{
+      user_id: string;
+    }>).map((r) => r.user_id);
+    bindings = (db.prepare('SELECT user_id, player_id FROM account_players').all() as Array<{
+      user_id: string; player_id: string;
+    }>).map((r) => ({ userId: r.user_id, playerId: r.player_id }));
+    aliases = (db.prepare(
+      'SELECT alias_player_id, canonical_player_id, user_id FROM player_aliases',
+    ).all() as Array<{ alias_player_id: string; canonical_player_id: string; user_id: string }>)
+      .map((r) => ({ aliasPlayerId: r.alias_player_id, canonicalPlayerId: r.canonical_player_id, userId: r.user_id }));
+  } catch (err) {
+    // First boot may race the worker's schema creation; treat as empty.
+    _hydrateHealth.selectFailures += 1;
+    _hydrateLogger.warn({ err }, 'account_players / player_aliases hydrate SELECT failed (treating as empty)');
+  }
+  registry.hydrate(bindings, aliases, exempt);
+  const merge = mergeAccountPlayerIds(registry, getPlayerShipStore());
+  return { ...merge, bindings: bindings.length, aliases: aliases.length, exempt: exempt.length };
 }
 
 /** crypto.randomUUID is available on Node 19+ (we target Node 20+). */

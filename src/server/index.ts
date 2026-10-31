@@ -14,7 +14,13 @@ import { galaxyRouter } from './routes/galaxyRouter.js';
 import { pushRouter } from './routes/pushRouter.js';
 import { devAuditHandler } from './audit/auditRoute.js';
 import { flushAudit } from './audit/GameplayAuditLog.js';
-import { initWorker, persistence, initPlayerShipStore, getPersistenceHealth } from './db/PersistenceWorker.js';
+import {
+  initWorker,
+  persistence,
+  initPlayerShipStore,
+  initAccountPlayerRegistry,
+  getPersistenceHealth,
+} from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled, resolveBotSpoolMs, resolveBotHopMs, type LivingWorldOptions } from './livingworld/LivingWorldDirector.js';
@@ -832,6 +838,13 @@ async function main(): Promise<void> {
   // galaxy room's onJoin can resolve a shipId without a race.
   const { hydrated: rosterHydrated } = initPlayerShipStore();
   logger.info({ hydrated: rosterHydrated }, 'Player-ship roster hydrated from disk');
+
+  // PR 3a — account-bound player identity. Hydrate the account→playerId
+  // bindings + aliases and fold each account's historical per-browser ids
+  // into one canonical playerId. AFTER the roster (re-keys rows), BEFORE the
+  // galaxy rooms (they map persisted owners through the registry on hydrate).
+  const identity = initAccountPlayerRegistry();
+  logger.info(identity, 'Account-bound player identity hydrated + merged');
 
   // Phase 8 — eagerly instantiate each galaxy room so they hydrate from
   // snapshots at boot (not on first traveller) and so future transit

@@ -61,7 +61,7 @@ test('after spawning in sol-prime, the drawer Galaxy tab panel shows the new shi
   // Verify the server-side row exists. If this fails, the regression
   // is in A3's spawn → bindRosterRow path; the E2E surface is fine.
   const rosterCount = await page.evaluate(async () => {
-    const pid = window.localStorage.getItem('eqxPlayerId') ?? '';
+    const pid = window.localStorage.getItem('eqxAccountPlayerId') ?? window.localStorage.getItem('eqxPlayerId') ?? '';
     if (pid === '') return -1;
     const res = await fetch(`/dev/player-ships?playerId=${encodeURIComponent(pid)}`);
     if (!res.ok) return -2;

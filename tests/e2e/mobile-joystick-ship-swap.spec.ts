@@ -114,7 +114,7 @@ test('in-game ship swap does NOT leave a stale joystick (two thumbsticks bug)', 
   // The roster fetch may not have populated yet — sync via the
   // /dev/player-ships endpoint and write into the store ourselves.
   const playerId = await page.evaluate(() => {
-    return window.localStorage.getItem('eqxPlayerId') ?? '';
+    return window.localStorage.getItem('eqxAccountPlayerId') ?? window.localStorage.getItem('eqxPlayerId') ?? '';
   });
   expect(playerId, 'eqxPlayerId persisted post-spawn').not.toBe('');
 
