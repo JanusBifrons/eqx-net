@@ -880,6 +880,34 @@ gameServer
     ],
   })
   .filterBy(['testId']);
+// Living World P1b showcase — one full mixed-tier ROBOT squad (hexagon lead,
+// two circles, three cubes) vs six drones, the pilot spawning between them.
+// Robots are hostile to the pilot too, so the recording shows a real three-way
+// fight. testMode, filterBy testId (one room per recording).
+gameServer
+  .define('robots-showcase', SectorRoom, {
+    sectorKey: 'robots-showcase',
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    maxClients: 4,
+    dronePoses: [
+      // Shields start DOWN (hullExposed) so kills land within a short recording.
+      { kind: 'fighter', x: -420, y: 380, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'fighter', x: -470, y: 500, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'fighter', x: -420, y: 620, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'scout', x: -520, y: 440, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'scout', x: -520, y: 580, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'heavy', x: -600, y: 510, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'robot-hexagon', x: 560, y: 510, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-circle', x: 470, y: 420, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-circle', x: 470, y: 600, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-square', x: 400, y: 360, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-square', x: 380, y: 510, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-square', x: 400, y: 660, angle: Math.PI / 2, hullExposed: true },
+    ],
+  })
+  .filterBy(['testId']);
 // Phase 6 TiDi acceptance gate. 4000 entities (3200 asteroids + 800 active
 // drones at the 0.8 ratio). Diagnostic captures show this only consumes
 // ~1.5 ms/tick on a typical dev machine — well under the 14 ms TiDi
