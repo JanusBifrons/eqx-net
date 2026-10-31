@@ -26,6 +26,18 @@ export interface WelcomeMessage {
   spectator?: boolean;
 }
 
+/** PR 3a (account-bound identity) — sent to a session immediately before the
+ *  server disconnects it because the SAME account logged in from another
+ *  device / tab (the newest session takes over the account's playerId). The
+ *  client must NOT auto-reconnect on this — it would steal the session back. */
+export interface SessionReplacedMessage {
+  type: 'session_replaced';
+}
+
+/** WebSocket close code used for a `session_replaced` disconnect (4000-4999
+ *  is the application range). */
+export const SESSION_REPLACED_CLOSE_CODE = 4002;
+
 /** Campaign 6.1 (anti-patterns review C-core 3) — defensive ingest schema for
  *  `welcome`. The server builds this itself (never parses through it); the
  *  CLIENT `safeParse`s on receipt via `parseWelcome` and drops malformed

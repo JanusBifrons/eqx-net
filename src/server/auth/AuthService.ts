@@ -4,6 +4,7 @@ import { db } from '../db/Database.js';
 import { persistence } from '../db/PersistenceWorker.js';
 import { signToken, verifyToken } from './jwt.js';
 import type { GoogleProfile } from './GoogleOAuth.js';
+import { getAccountPlayerRegistry } from '../identity/AccountPlayerRegistry.js';
 
 export interface AuthUser {
   id: string;
@@ -104,11 +105,15 @@ export async function findOrCreateTestUser(email: string): Promise<{ token: stri
     .get(email.toLowerCase()) as Pick<UserRow, 'id' | 'email' | 'display_name'> | undefined;
 
   if (existing) {
+    // PR 3a — a shared E2E fixture login stands in for many independent
+    // players; it keeps per-browser identities (see AccountPlayerRegistry).
+    getAccountPlayerRegistry().markExempt(existing.id);
     const token = await signToken(existing.id);
     return { token, user: { id: existing.id, email: existing.email, displayName: existing.display_name } };
   }
 
   const id = randomUUID();
+  getAccountPlayerRegistry().markExempt(id);
   const now = Date.now();
   await persistence.enqueueCriticalAwaitable({
     type: 'USER_REGISTER',

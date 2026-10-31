@@ -241,6 +241,7 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 ## Durable Identity
 
 - `playerId` is persisted in `localStorage` as `eqxPlayerId`. Read at bootstrap, sent in the `identify` handshake.
+- **PR 3a (2026-10-31): while logged in, the playerId is the ACCOUNT's** (`eqxAccountPlayerId`, from auth responses' `user.playerId` + the room `welcome`). `loadStoredPlayerId()` returns it while a token is stored, else the anonymous `eqxPlayerId`; logout clears it. Always go through `identity/token.ts` — never read `eqxPlayerId` directly. The server ignores the claim for a logged-in join anyway. See [docs/architecture/player-identity.md](../../docs/architecture/player-identity.md).
 - Never reuse Colyseus `sessionId` as a durable identifier — it rotates on every reconnect. `playerId` is what lets Phase 8 Limbo reconciliation work.
 
 ---
