@@ -38,9 +38,29 @@ export const LIVING_WORLD_SQUAD_COUNT = 7;
  */
 export type SquadState = 'forming' | 'idle' | 'warping' | 'attacking' | 'retreating';
 
+/** Squad layout for one director (Living World P1b). Defaults = the drone
+ *  director's 7 × 8 homogeneous squads, so existing callers are unchanged. */
+export interface SquadLayout {
+  squadCount: number;
+  squadSize: number;
+  /** Prefix for squad ids (`squad-` for drones, `rsquad-` for robots) — distinct
+   *  per director so persisted rows + incoming banners never collide. */
+  squadIdPrefix: string;
+  /** Per-SLOT hull: robots mix tiers inside one squad. Absent ⇒ every member
+   *  takes the squad's `pickKind()` hull (homogeneous, the drone default). */
+  memberKind?: (squadIndex: number, memberIndex: number) => ShipKindId;
+}
+
+export const DEFAULT_SQUAD_LAYOUT: SquadLayout = {
+  squadCount: LIVING_WORLD_SQUAD_COUNT,
+  squadSize: SQUAD_SIZE,
+  squadIdPrefix: 'squad-',
+};
+
 export interface SquadRecord {
   squadId: string;
-  /** Homogeneous ship kind for every member (the "Legionnaire" hull in v1). */
+  /** The squad's LEAD hull (the "Legionnaire" in v1; the label in the warp
+   *  warning). Per-member hulls may differ — see `SquadPool.memberKindOf`. */
   kind: ShipKindId;
   /** Member bot ids. Length ≤ SQUAD_SIZE (shrinks on shed; refilled on respawn). */
   botIds: string[];
@@ -67,6 +87,8 @@ export class SquadPool {
   private readonly squads = new Map<string, SquadRecord>();
   /** botId → squadId reverse index (for death/respawn routing). */
   private readonly botToSquad = new Map<string, string>();
+  /** botId → its seeded hull (per-slot; equals the squad kind when homogeneous). */
+  private readonly botKind = new Map<string, ShipKindId>();
 
   /**
    * Partition `botIds` into `LIVING_WORLD_SQUAD_COUNT` homogeneous squads of
@@ -80,21 +102,25 @@ export class SquadPool {
     botIds: readonly string[],
     sectorForSquad: (squadIndex: number) => string,
     pickKind: () => ShipKindId,
+    layout: SquadLayout = DEFAULT_SQUAD_LAYOUT,
   ): void {
     this.squads.clear();
     this.botToSquad.clear();
+    this.botKind.clear();
     let idx = 0;
-    for (let s = 0; s < LIVING_WORLD_SQUAD_COUNT; s++) {
-      const squadId = `squad-${s}`;
+    for (let s = 0; s < layout.squadCount; s++) {
+      const squadId = `${layout.squadIdPrefix}${s}`;
+      const squadKind = pickKind() ?? DEFAULT_SHIP_KIND;
       const members: string[] = [];
-      for (let m = 0; m < SQUAD_SIZE && idx < botIds.length; m++, idx++) {
+      for (let m = 0; m < layout.squadSize && idx < botIds.length; m++, idx++) {
         const botId = botIds[idx]!;
         members.push(botId);
         this.botToSquad.set(botId, squadId);
+        this.botKind.set(botId, layout.memberKind ? layout.memberKind(s, m) : squadKind);
       }
       this.squads.set(squadId, {
         squadId,
-        kind: pickKind() ?? DEFAULT_SHIP_KIND,
+        kind: layout.memberKind ? layout.memberKind(s, 0) : squadKind,
         botIds: members,
         state: 'forming',
         sectorKey: sectorForSquad(s),
@@ -110,6 +136,11 @@ export class SquadPool {
 
   all(): IterableIterator<SquadRecord> {
     return this.squads.values();
+  }
+
+  /** The hull a bot was seeded with (per-slot), or undefined (unassigned bot). */
+  memberKindOf(botId: string): ShipKindId | undefined {
+    return this.botKind.get(botId);
   }
 
   /** The squad a bot belongs to, or undefined (unassigned bot). */

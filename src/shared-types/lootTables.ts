@@ -29,6 +29,23 @@ const TABLES: Readonly<Record<string, LootTable>> = {
       { good: 'alloy', chance: 0.35, min: 1, max: 2 },
     ],
   },
+  // P1b — robot tiers drop progressively better loot (the reason to hunt them).
+  'robot-circle': {
+    credits: [20, 45],
+    entries: [
+      { good: 'salvage', chance: 1, min: 8, max: 18 },
+      { good: 'alloy', chance: 0.6, min: 1, max: 3 },
+      { good: 'core', chance: 0.08, min: 1, max: 1 },
+    ],
+  },
+  'robot-hexagon': {
+    credits: [45, 90],
+    entries: [
+      { good: 'salvage', chance: 1, min: 15, max: 30 },
+      { good: 'alloy', chance: 1, min: 2, max: 5 },
+      { good: 'core', chance: 0.3, min: 1, max: 1 },
+    ],
+  },
 };
 
 /** Fallback: scale with the victim's toughness (like XP). */

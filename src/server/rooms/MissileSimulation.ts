@@ -49,6 +49,7 @@
  */
 
 import { pickTarget, type MountTargetView } from '../../core/ai/WeaponMountController.js';
+import { isDirectorBotId } from '../livingworld/directorBotIds.js';
 import { projectileSweepCircle, SHIP_COLLISION_RADIUS } from '../../core/combat/Weapons.js';
 import {
   SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF,
@@ -600,7 +601,7 @@ export class MissileSimulation {
         hostileCandidateCount: hostileCount,
       };
     }
-    const kind: SplashKind = picked.id.startsWith('swarm-') || /^lwbot-/.test(picked.id)
+    const kind: SplashKind = picked.id.startsWith('swarm-') || isDirectorBotId(picked.id)
       ? 'swarm'
       : 'ship';
     return {

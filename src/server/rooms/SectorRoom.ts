@@ -29,6 +29,7 @@ import {
   takeOverPlayerSession,
 } from '../identity/PlayerSessionRegistry.js';
 import { getIncomingPlayerSink } from '../livingworld/incomingPlayerSink.js';
+import { isDirectorBotId } from '../livingworld/directorBotIds.js';
 import { BaseState, SectorState, ShipState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
@@ -488,7 +489,7 @@ const STRUCTURE_ATTACK_PUSH_WINDOW_MS = 15 * 60_000;
 function classifyAttacker(id?: string): string | undefined {
   if (!id) return undefined;
   if (id.startsWith('pstruct-')) return 'structure';
-  if (id.startsWith('swarm-') || id.startsWith('lwbot-') || id.startsWith('scenario-drone')) return 'drone';
+  if (id.startsWith('swarm-') || isDirectorBotId(id) || id.startsWith('scenario-drone')) return 'drone';
   return 'player';
 }
 
@@ -2904,7 +2905,7 @@ export class SectorRoom extends Room<SectorState> {
     // swarm entity is an AI shooter whatever its id prefix), not by prefix.
     const ownerRec = this.swarmRegistry.get(ownerId);
     const isAiShooter = (ownerRec != null && ownerRec.kind === 1)
-      || ownerId.startsWith('swarm-') || ownerId.startsWith('lwbot-');
+      || ownerId.startsWith('swarm-') || isDirectorBotId(ownerId);
     if (!isAiShooter) {
       return (id) => id !== ownerId;
     }

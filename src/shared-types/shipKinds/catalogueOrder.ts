@@ -27,7 +27,7 @@ import { MISSILE_FRIGATE } from './missileFrigate.js';
 import { CROSSGUARD } from './crossguard.js';
 import { L_SHAPE } from './lShape.js';
 import { HAVOK } from './composite/havok.js';
-import { ROBOT_SQUARE } from './robots.js';
+import { ROBOT_SQUARE, ROBOT_CIRCLE, ROBOT_HEXAGON } from './robots.js';
 import { CARGO_POD } from './cargoPod.js';
 
 /**
@@ -51,4 +51,7 @@ export const SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze([
   ROBOT_SQUARE,
   // Living World P1a: loot pod (rides the scrap wire; componentIndex = tier). APPEND ONLY.
   CARGO_POD,
+  // Living World P1b: robot tiers 2 + 3. APPEND ONLY.
+  ROBOT_CIRCLE,
+  ROBOT_HEXAGON,
 ]);

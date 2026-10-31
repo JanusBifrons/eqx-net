@@ -74,7 +74,9 @@ describe('ship-kind tuning lock (2026-05-18 slow-down pass)', () => {
     // 11 → 12 on Phase 4 WS-B3 (dynamic mounts): added the `latentMounts` field
     // to the ship-kind record + two latent wing hardpoints on the fighter. A
     // record-SHAPE change (not a physics edit), so the cruise/hull literals hold.
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(14);
+    // 14 → 15 on Living World P1b: appended robot-circle + robot-hexagon (pure
+    // append — existing kinds unchanged).
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(15);
   });
 
   for (const kindKey of Object.keys(EXPECTED) as (keyof typeof EXPECTED)[]) {
