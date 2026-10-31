@@ -6,7 +6,7 @@ import { generateBase } from '../../../core/procgen/generateBase.js';
 import { BASE_GENERATOR_VERSION } from '../../../core/procgen/baseLayout.js';
 import { chunkCount } from '../../../core/procgen/baseChunkMesh.js';
 import { BASE_LOD_ZOOM, MAX_VISIBLE_CHUNKS } from '../../../shared-types/baseBudgets.js';
-import { buildChunkVisual, cullChunks, useSilhouette } from './baseVisuals.js';
+import { buildChunkVisual, cullChunks, useSilhouette, spawnDebris, DEBRIS_STRIDE } from './baseVisuals.js';
 
 const l = generateBase({ ver: BASE_GENERATOR_VERSION, archetype: 'warehouse', seed: 42, x: 300, y: -200, size: 8000 });
 
@@ -60,5 +60,18 @@ describe('baseVisuals', () => {
   it('switches to the silhouette below the LOD zoom', () => {
     expect(useSilhouette(BASE_LOD_ZOOM - 0.01, BASE_LOD_ZOOM)).toBe(true);
     expect(useSilhouette(BASE_LOD_ZOOM + 0.01, BASE_LOD_ZOOM)).toBe(false);
+  });
+
+  it('debris: deterministic, bounded by the pool, scaled by piece area', () => {
+    const pool = new Float32Array(64 * DEBRIS_STRIDE);
+    const a = spawnDebris(l, [0, 1, 2], pool, 0);
+    const copy = pool.slice();
+    const b = spawnDebris(l, [0, 1, 2], new Float32Array(64 * DEBRIS_STRIDE), 0);
+    expect(a).toBe(b);
+    expect(a).toBeGreaterThanOrEqual(18); // ≥ 6 per piece
+    expect(Array.from(spawnDebris(l, [0, 1, 2], new Float32Array(64 * DEBRIS_STRIDE), 0) && copy)).toEqual(Array.from(copy));
+    // A tiny pool never overflows.
+    const small = new Float32Array(5 * DEBRIS_STRIDE);
+    expect(spawnDebris(l, [0, 1, 2, 3, 4, 5], small, 0)).toBe(5);
   });
 });

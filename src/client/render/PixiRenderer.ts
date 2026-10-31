@@ -1350,7 +1350,8 @@ export class PixiRenderer implements IRenderer {
     }
     // Procedural-base DEV hooks (scalars — no per-frame alloc; not a
     // RendererFeedback field). Main-thread render path only (E2E runs ?worker=0).
-    const bg = globalThis as { __eqxBaseCount?: number; __eqxBaseVisibleChunks?: number; __eqxBaseSilhouette?: boolean };
+    const bg = globalThis as { __eqxBaseCount?: number; __eqxBaseVisibleChunks?: number; __eqxBaseSilhouette?: boolean; __eqxBaseDebris?: number };
+    bg.__eqxBaseDebris = this.baseRenderer.lastDebrisCount;
     bg.__eqxBaseCount = this.baseRenderer.baseCount;
     bg.__eqxBaseVisibleChunks = this.baseRenderer.lastVisibleChunks;
     bg.__eqxBaseSilhouette = this.baseRenderer.lastSilhouette;

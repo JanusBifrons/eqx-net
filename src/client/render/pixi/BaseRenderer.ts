@@ -20,10 +20,15 @@ import { chunkCount, isPieceDead } from '../../../core/procgen/baseChunkMesh.js'
 import { basePieceKindAt } from '../../../shared-types/basePieceKinds.js';
 import { BASE_LOD_ZOOM } from '../../../shared-types/baseBudgets.js';
 import type { BaseRenderDescriptor } from '../../../core/contracts/IRenderer.js';
-import { BASE_PALETTE, buildChunkVisual, cullChunks, mixColor, useSilhouette } from './baseVisuals.js';
+import { BASE_PALETTE, DEBRIS_LIFE_MS, DEBRIS_STRIDE, buildChunkVisual, cullChunks, mixColor, spawnDebris, useSilhouette } from './baseVisuals.js';
+
+/** Max live debris fragments (fixed pool — the per-frame update allocates nothing). */
+const DEBRIS_CAP = 1024;
 
 interface DrawnBase {
   readonly key: string;
+  readonly id: string;
+  readonly dead: Uint32Array | null;
   readonly layout: BaseLayout;
   readonly root: Container;
   readonly chunks: Graphics[];
@@ -35,6 +40,17 @@ interface DrawnBase {
 export class BaseRenderer {
   readonly container = new Container();
   private bases: DrawnBase[] = [];
+  /** Debris fragments (PR-D): flat pool, see DEBRIS_STRIDE. */
+  private readonly debris = new Float32Array(DEBRIS_CAP * DEBRIS_STRIDE);
+  private debrisCount = 0;
+  private readonly debrisGfx = new Graphics();
+  private lastDebrisMs = -1;
+  /** Live debris fragments last frame (E2E / budget seam). */
+  lastDebrisCount = 0;
+
+  constructor() {
+    this.container.addChild(this.debrisGfx);
+  }
   /** Visible chunks last frame (budget-lock / E2E seam). */
   lastVisibleChunks = 0;
   /** True while bases drew as silhouettes last frame. */
@@ -43,9 +59,22 @@ export class BaseRenderer {
   /** Replace the drawn bases. Rebuilds only bases whose descriptor changed. */
   setBases(descs: readonly BaseRenderDescriptor[]): void {
     const keep = new Map<string, DrawnBase>();
-    for (const b of this.bases) keep.set(b.key, b);
+    const byId = new Map<string, DrawnBase>();
+    for (const b of this.bases) { keep.set(b.key, b); byId.set(b.id, b); }
     const next: DrawnBase[] = [];
     for (const d of descs) {
+      // PR-D: same base, more destroy bits → debris where the pieces were.
+      const prev = byId.get(d.id);
+      if (prev && d.dead) {
+        const fresh: number[] = [];
+        for (let i = 0; i < prev.layout.count; i++) {
+          const w = i >>> 5, bit = 1 << (i & 31);
+          const now = ((d.dead[w] ?? 0) & bit) !== 0;
+          const before = prev.dead !== null && ((prev.dead[w] ?? 0) & bit) !== 0;
+          if (now && !before) fresh.push(i);
+        }
+        if (fresh.length > 0) this.debrisCount = spawnDebris(prev.layout, fresh, this.debris, this.debrisCount);
+      }
       const key = `${d.id}|${d.ver}|${d.archetype}|${d.seed}|${d.x}|${d.y}|${d.size}|${d.dead?.join(',') ?? ''}`;
       const existing = keep.get(key);
       if (existing) {
@@ -95,8 +124,8 @@ export class BaseRenderer {
     }
     silhouette.visible = false;
     root.addChild(silhouette);
-    this.container.addChild(root);
-    return { key, layout, root, chunks, lights, silhouette, visible: new Uint8Array(chunks.length) };
+    this.container.addChildAt(root, 0); // debris stays on top
+    return { key, id: d.id, dead, layout, root, chunks, lights, silhouette, visible: new Uint8Array(chunks.length) };
   }
 
   /**
@@ -128,7 +157,41 @@ export class BaseRenderer {
       }
     }
     this.lastVisibleChunks = visibleTotal;
+    this.updateDebris(nowMs);
     this.lastSilhouette = silhouette && this.bases.length > 0;
+  }
+
+  /** Advance + redraw debris; compacts the pool in place. Allocation-free. */
+  private updateDebris(nowMs: number): void {
+    const dt = this.lastDebrisMs < 0 ? 0 : Math.min(50, nowMs - this.lastDebrisMs);
+    this.lastDebrisMs = nowMs;
+    const g = this.debrisGfx;
+    if (this.debrisCount === 0) {
+      if (this.lastDebrisCount !== 0) g.clear();
+      this.lastDebrisCount = 0;
+      return;
+    }
+    g.clear();
+    const f = this.debris;
+    let live = 0;
+    for (let n = 0; n < this.debrisCount; n++) {
+      const o = n * DEBRIS_STRIDE;
+      const life = f[o + 6]! - dt;
+      if (life <= 0) continue;
+      const d = live * DEBRIS_STRIDE;
+      if (d !== o) for (let k = 0; k < DEBRIS_STRIDE; k++) f[d + k] = f[o + k]!;
+      f[d + 6] = life;
+      f[d] = f[d]! + (f[d + 2]! * dt) / 1000;
+      f[d + 1] = f[d + 1]! + (f[d + 3]! * dt) / 1000;
+      f[d + 2] = f[d + 2]! * 0.985; // drag
+      f[d + 3] = f[d + 3]! * 0.985;
+      const a = life / DEBRIS_LIFE_MS;
+      const sz = f[d + 4]!;
+      g.rect(f[d]! - sz / 2, f[d + 1]! - sz / 2, sz, sz * 0.6).fill({ color: f[d + 5]!, alpha: a });
+      live++;
+    }
+    this.debrisCount = live;
+    this.lastDebrisCount = live;
   }
 
   get baseCount(): number {

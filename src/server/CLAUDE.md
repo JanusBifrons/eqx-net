@@ -124,7 +124,14 @@ Update this section when a threshold is set.
 - **Weapon blocking:** `blockShotAtWall` (used by both fire resolvers) takes the nearest of base and shield wall, and caps the shield-wall range at the base hit so a shield span BEHIND base geometry never takes damage. `wallBlocksProjectile` checks bases first.
   - **Not yet blocked:** turret beams and missiles (PR-M).
 - **Spawn safety:** `onJoin` nudges a spawn inside solid geometry to the nearest clear point (`findClearSpawn`). The colliders are hollow outlines, so a ship placed inside would be trapped.
-- **Showcase room:** `base-warehouse-showcase` (testMode, filterBy testId).
+- **Destructible pieces (PR-D).** `shotHit` / `projectileHit` apply damage to the solid piece at the impact point. Hit points live per GROUP: `groupSplitPieces` reunites halves the builder split at chunk lines, so a rack breaks whole. At 0 HP:
+  - the destroy bits go into `state.bases[id].dead` (schema ArraySchema → deltas, so late joiners see holes; Invariant #16);
+  - `SET_BASE_DEAD` makes the worker rebuild that base's outline colliders from its stored layout;
+  - the ray grid is rebuilt.
+  Per-hit work is allocation-free; only a destroy allocates.
+  - **Test trigger:** testMode room option `baseHpScale` (`base-warehouse-destructible` = 2%).
+  - **Persistence:** destroy bits for galaxy sectors are NOT yet persisted. They only matter once bases are seeded into galaxy sectors (PR-P).
+- **Showcase rooms:** `base-warehouse-showcase`, `base-warehouse-destructible` (testMode, filterBy testId).
 - **Locks:** `tests/integration/sectorRoom/proceduralBase.test.ts` (state descriptor, spawn nudge, real-worker wall stop with a moved-then-stopped assertion, beam block) and `tests/e2e/base-warehouse-showcase.spec.ts`.
 - **Netgate required** (touches `SectorRoom` join + fire paths).
 
