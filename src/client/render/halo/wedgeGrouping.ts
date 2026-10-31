@@ -6,6 +6,7 @@
  */
 
 import type { EntityKind } from '../entityVisuals.js';
+import type { RadarCategory } from '../../../shared-types/settings/radar.js';
 
 // Phase D: angular bucket size for wedge grouping. 24 wedges around the
 // full ring at 15° each.
@@ -73,6 +74,12 @@ export interface Candidate {
    *  structure). Optional so non-radar callers + the unit tests can omit it; the
    *  radar always sets it and the wedge representative inherits it. */
   kind?: EntityKind;
+  /** Radar category (plan sparkling-wondering-rose) — drives the per-player
+   *  shape / colour / size / opacity preferences. A wedge representative
+   *  inherits its nearest member's category. */
+  cat?: RadarCategory;
+  /** Screen-relevant body radius (world units) for the any-part-visible test. */
+  radius?: number;
   /** Whether this entry should render with the hostile glow + bright
    *  stroke. Defaults to false; set true by the radar for drones the
    *  client AI currently treats as hostile to the local player. */
@@ -110,6 +117,9 @@ export interface PartitionScratch {
  *  re-tuning. */
 const _wedgeKeys: string[] = [];
 for (let i = 0; i < 64; i++) _wedgeKeys.push(`wedge:${i}`);
+
+/** Per-call member count per wedge (module scratch — invariant #14). */
+const _wedgeCounts = new Int32Array(64);
 
 function wedgeKey(idx: number): string {
   return _wedgeKeys[idx] ?? `wedge:${idx}`;
@@ -159,6 +169,7 @@ export function partitionAndGroupCandidates(
     result.length = 0;
     wedges.clear();
   }
+  _wedgeCounts.fill(0);
   for (const c of candidates) {
     if (c.dist > maxDistance) continue;
     if (c.dist <= groupingDistance) {
@@ -166,6 +177,7 @@ export function partitionAndGroupCandidates(
       continue;
     }
     const idx = wedgeIndex(c.x - local.x, c.y - local.y, wedgeCount);
+    if (idx < _wedgeCounts.length) _wedgeCounts[idx]! += 1;
     const existing = wedges.get(idx);
     if (!existing || c.dist < existing.dist) {
       wedges.set(idx, c);
@@ -177,6 +189,13 @@ export function partitionAndGroupCandidates(
   // allocate fresh literals.
   let repIdx = 0;
   for (const [idx, c] of wedges) {
+    // A wedge holding a SINGLE contact is not a group — emit the contact itself
+    // (its own key + normal size) rather than an aggregate icon (plan
+    // sparkling-wondering-rose: a lone far contact read as a bigger "group").
+    if ((_wedgeCounts[idx] ?? 2) < 2) {
+      result.push(c);
+      continue;
+    }
     if (scratch) {
       let rep = scratch.wedgeReps[repIdx];
       if (!rep) {
@@ -194,6 +213,8 @@ export function partitionAndGroupCandidates(
       // stale value from a prior tick doesn't leak through the reused slot).
       rep.hostile = c.hostile ?? false;
       rep.kind = c.kind;
+      rep.cat = c.cat;
+      rep.radius = c.radius;
       result.push(rep);
       repIdx++;
     } else {
@@ -204,6 +225,8 @@ export function partitionAndGroupCandidates(
         color: c.color,
         dist: c.dist,
         kind: c.kind,
+        cat: c.cat,
+        radius: c.radius,
         hostile: c.hostile,
         grouped: true,
       });

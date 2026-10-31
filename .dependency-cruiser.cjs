@@ -53,6 +53,14 @@ module.exports = {
       to: { path: 'node_modules/(react|react-dom|@mui|@emotion|zustand)' },
     },
     {
+      name: 'render-worker-no-store',
+      severity: 'error',
+      comment:
+        'Nothing the render WORKER loads may reach the Zustand UI store — inside the worker it is an isolated, never-updated copy (the radar transit-clear / spectator bug, plan sparkling-wondering-rose). Push state in via renderer setters / worker messages instead.',
+      from: { path: '^src/client/render/worker/renderer\\.worker\\.ts$' },
+      to: { path: '^src/client/state/store\\.ts$', reachable: true },
+    },
+    {
       name: 'no-circular',
       severity: 'warn',
       comment: 'Circular dependencies make the graph hard to reason about; flagged as a warning.',

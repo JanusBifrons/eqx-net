@@ -41,7 +41,8 @@ import {
   type LastInputCache,
   type IdleTracker,
 } from '../net/snapshotScheduler.js';
-import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
+import { SwarmSpawner, DRONE_DEFAULT_MASS, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
+import { ScriptedPathBehaviour } from '../../core/ai/ScriptedPathBehaviour.js';
 import { ScrapSpawner } from '../spawn/ScrapSpawner.js';
 // Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
 import type { ShipPhysicsState } from '../../core/physics/World.js';
@@ -790,6 +791,9 @@ export class SectorRoom extends Room<SectorState> {
   });
   private readonly spawnClearScratch = { x: 0, y: 0 };
   private defaultSpawnY: number | null = null;
+  /** Radar sandbox — `dronePoses` entries flagged `hostile`; marked hostile to
+   *  every joining player (testMode only). */
+  private readonly sandboxHostileDroneIds: string[] = [];
   /** Phase 8 — counter for the 60-second snapshot cadence (galaxy sectors only). */
   private ticksSinceSnapshot = 0;
   /** Phase 8 sub-phase B — set when an in-flight transit has committed (Limbo
@@ -1130,6 +1134,14 @@ export class SectorRoom extends Room<SectorState> {
         y: number;
         angle?: number;
         hullExposed?: boolean;
+        /** Radar sandbox (plan sparkling-wondering-rose) — fly a scripted
+         *  straight line from the pose to `(toX, toY)` at `speed` u/s,
+         *  ping-ponging unless `loop:false`. Replaces this drone's AI with
+         *  `ScriptedPathBehaviour` (no combat). */
+        path?: { toX: number; toY: number; speed: number; loop?: boolean };
+        /** Radar sandbox — mark this drone hostile to every joining player (so
+         *  it renders as a hostile contact) without it attacking anything. */
+        hostile?: boolean;
       }>;
       /**
        * Generic Entity Pipeline P4 — deterministic STRUCTURE placement. Each
@@ -1978,6 +1990,17 @@ export class SectorRoom extends Room<SectorState> {
         }
         const rec = this.swarmRegistry.get(droneId);
         if (!rec) continue;
+        if (pose.path) {
+          // Radar sandbox — scripted fly-in / fly-out / tangential pass.
+          const mass = getShipKind(pose.kind).mass ?? DRONE_DEFAULT_MASS;
+          this.aiController.register(droneId, rec.slot, new ScriptedPathBehaviour({
+            from: { x: pose.x, y: pose.y },
+            to: { x: pose.path.toX, y: pose.path.toY },
+            speed: pose.path.speed,
+            loop: pose.path.loop ?? true,
+          }, mass));
+        }
+        if (pose.hostile) this.sandboxHostileDroneIds.push(droneId);
         this.swarmHealth.set(droneId, getDroneMaxHealth(rec.shipKind) ?? 40);
         this.swarmShield.set(droneId, getDroneShieldMax(rec.shipKind));
         this.swarmShieldLastDmg.set(droneId, this.serverTick);
@@ -4993,6 +5016,23 @@ export class SectorRoom extends Room<SectorState> {
     // Mirrors the `markBotHostile` pattern in LivingWorldBotHooks: per-player
     // `aiController.markHostile` + `bot_aggro` broadcast so the client's
     // hostility ledger stays in lockstep. testMode-gated for safety.
+    // Radar sandbox — pose drones flagged `hostile` render as hostile contacts
+    // for every joiner (same channel as startHostile: ledger + bot_aggro).
+    if (this.testMode && this.sandboxHostileDroneIds.length > 0) {
+      const tick = this.serverTick;
+      for (const id of this.sandboxHostileDroneIds) {
+        const rec = this.swarmRegistry.get(id);
+        if (!rec) continue;
+        this.aiController.markHostile(rec.id, playerId, tick);
+        this.broadcast('bot_aggro', {
+          type: 'bot_aggro',
+          botEntityId: `swarm-${rec.entityId}`,
+          targetPlayerId: playerId,
+          tick,
+        });
+      }
+    }
+
     if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.startHostile === true) {
       const tick = this.serverTick;
       for (const rec of this.swarmRegistry.all()) {

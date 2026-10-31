@@ -77,7 +77,7 @@ export interface SpawnerHooks {
 }
 
 const DRONE_DEFAULT_RADIUS = 14;
-const DRONE_DEFAULT_MASS = 2;
+export const DRONE_DEFAULT_MASS = 2;
 
 /**
  * Owns swarm entity creation. Allocates a slot, primes the SAB, posts a

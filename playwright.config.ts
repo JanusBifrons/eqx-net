@@ -67,6 +67,7 @@ const SMOKE_SPECS: string[] = [
 const FEATURE_SPECS: string[] = [
   '**/account-bound-identity.spec.ts',
   '**/asteroid-shape.spec.ts',
+  '**/radar-sandbox.spec.ts',
   '**/base-warehouse-showcase.spec.ts',
   '**/base-destruction.spec.ts',
   '**/auto-fire.spec.ts',

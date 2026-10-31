@@ -68,9 +68,13 @@ describe('partitionAndGroupCandidates', () => {
   });
 
   it('scratch path reuses wedgeReps instances across calls', () => {
+    // Two contacts per wedge so each wedge is a real group (a single-member
+    // wedge now emits the contact itself).
     const cs = [
       c('far-a', 5000, 0, 5000),
+      c('far-a2', 5400, 40, 5400),
       c('far-b', 0, 5000, 5000),
+      c('far-b2', -40, 5400, 5400),
     ];
     const scratch = makeScratch();
     partitionAndGroupCandidates({ x: 0, y: 0 }, cs, undefined, undefined, undefined, scratch);

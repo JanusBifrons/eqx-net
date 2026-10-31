@@ -34,6 +34,7 @@ import type {
   SetEffectParamsMsg,
 } from './protocol';
 import type { EffectQuality } from '@core/contracts/IEffects';
+import type { RadarInsets, RadarPrefs } from '../../../shared-types/settings/radar.js';
 import { logEvent, isDiagEnabled, isAutoCaptureEnabled } from '../../debug/ClientLogger';
 import { serialisePointerEvent, serialiseWheelEvent } from './eventSerialisation.js';
 import { setCanvasPointerCapture } from '../pointerCapture.js';
@@ -476,6 +477,21 @@ export class WorkerRendererClient implements IRenderer {
    */
   setSpectator(active: boolean): void {
     this.post({ type: 'SET_SPECTATOR', active });
+  }
+
+  /** See `IRenderer.setRadarPrefs`. */
+  setRadarPrefs(prefs: RadarPrefs): void {
+    this.post({ type: 'SET_RADAR_PREFS', prefs });
+  }
+
+  /** See `IRenderer.setRadarInsets`. */
+  setRadarInsets(insets: RadarInsets): void {
+    this.post({ type: 'SET_RADAR_INSETS', insets });
+  }
+
+  /** See `IRenderer.setRadarSuppressed`. */
+  setRadarSuppressed(suppressed: boolean): void {
+    this.post({ type: 'SET_RADAR_SUPPRESSED', suppressed });
   }
 
   /** Procedural bases — see `IRenderer.setBases`. Posted only on change. */
