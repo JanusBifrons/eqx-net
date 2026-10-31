@@ -1,3 +1,5 @@
+import type { BaseArchetype } from '../procgen/baseLayout.js';
+
 export interface ShipRenderState {
   x: number;
   y: number;
@@ -316,7 +318,7 @@ export interface ProjectileRenderState {
 export interface BaseRenderDescriptor {
   id: string;
   ver: number;
-  archetype: 'warehouse';
+  archetype: BaseArchetype;
   seed: number;
   x: number;
   y: number;

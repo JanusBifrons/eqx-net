@@ -131,7 +131,7 @@ Update this section when a threshold is set.
   Per-hit work is allocation-free; only a destroy allocates.
   - **Test trigger:** testMode room option `baseHpScale` (`base-warehouse-destructible` = 2%).
   - **Persistence:** destroy bits for galaxy sectors are NOT yet persisted. They only matter once bases are seeded into galaxy sectors (PR-P).
-- **Showcase rooms:** `base-warehouse-showcase`, `base-warehouse-destructible` (testMode, filterBy testId).
+- **Showcase rooms:** `base-warehouse-showcase`, `base-warehouse-destructible`, `base-city-showcase` (testMode, filterBy testId).
 - **Locks:** `tests/integration/sectorRoom/proceduralBase.test.ts` (state descriptor, spawn nudge, real-worker wall stop with a moved-then-stopped assertion, beam block) and `tests/e2e/base-warehouse-showcase.spec.ts`.
 - **Netgate required** (touches `SectorRoom` join + fire paths).
 

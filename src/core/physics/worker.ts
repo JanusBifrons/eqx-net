@@ -29,7 +29,7 @@ import { tickInputQueue, type QueuedInput } from './inputQueue.js';
 import { drainContacts } from './contactDrain.js';
 import { generateBase } from '../procgen/generateBase.js';
 import { buildChunkOutlines } from '../procgen/baseChunkMesh.js';
-import type { BaseLayout } from '../procgen/baseLayout.js';
+import type { BaseArchetype, BaseLayout } from '../procgen/baseLayout.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import {
   SEQLOCK_IDX,
@@ -111,7 +111,7 @@ interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
  *  base from its descriptor with the shared core generator (no geometry crosses
  *  the thread boundary) and spawns one union-outline polyline body per chunk.
  *  `dead` = destroy-bit words (omitted = nothing destroyed). */
-interface SpawnBaseCmd      { type: 'SPAWN_BASE'; id: string; ver: number; archetype: 'warehouse'; seed: number; x: number; y: number; size: number; dead?: number[] }
+interface SpawnBaseCmd      { type: 'SPAWN_BASE'; id: string; ver: number; archetype: BaseArchetype; seed: number; x: number; y: number; size: number; dead?: number[] }
 /** Procedural bases (PR-D) — a piece group was destroyed: rebuild this base's
  *  outline colliders from the stored layout + the new destroy mask. */
 interface SetBaseDeadCmd    { type: 'SET_BASE_DEAD'; id: string; dead: number[] }

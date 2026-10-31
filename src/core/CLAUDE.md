@@ -78,6 +78,9 @@ When a new phase needs a new concretion (e.g., persistence), add it as a new con
   - **Cost and tunnelling.** Broad-phase cost is the same as trimesh; soft CCD stops tunnelling.
 - **Weapon blocking** uses `BaseRayGrid.rayFirst`: a DDA over a 128 u cell grid of the same outline segments. It is allocation-free (heapDelta-locked), matches brute force (5000-ray test), and is op-count bounded.
 - **Budgets:** every number lives in `src/shared-types/baseBudgets.ts` (consistency-locked against the live game). See docs/architecture/procedural-bases.md.
+- **Archetypes:** `warehouse` and `city` (each one file in `procgen/archetypes/`, dispatched by `generateBase`). Each ships its own lock file: determinism, pinned hashes, a 200-seed budget and fly-through sweep, and a QUALITY floor (coverage + character). Valid-but-empty layouts passed every other lock twice, so the quality floor is required, not optional.
+  - **Massing:** build multi-mass buildings from TOUCHING rects (the union outline merges them). Never leave sub-corridor slits between masses: they are unflyable pockets.
+  - **Catalogue:** the piece catalogue is append-only (`BASE_PIECE_CATALOGUE_VERSION`); appending kinds did not change warehouse hashes.
 
 ## Physics Worker — Input Queue Contract
 

@@ -643,6 +643,21 @@ gameServer
     maxClients: 8,
   })
   .filterBy(['testId']);
+// PR-K2 — the CITY showcase: one max-size city at the origin, alone in the
+// sector. A city has no perimeter wall; spawn sits south of the footprint
+// (half-side ≈ 2824 u) facing up an avenue.
+gameServer
+  .define('base-city-showcase', SectorRoom, {
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    bases: [{ archetype: 'city', seed: 7, x: 0, y: 0, size: 8000 }],
+    defaultSpawnX: 0,
+    defaultSpawnY: -3400,
+    maxClients: 8,
+  })
+  .filterBy(['testId']);
 // Wave-system E2E (tests/e2e/wave-attack.spec.ts) — a DIRECTOR-MANAGED galaxy
 // room (real sectorKey) seeded with a PRE-BUILT, player-owned READY base
 // (Capital + Miner + Solar + Turret, owner `wave-tester`). Single eager

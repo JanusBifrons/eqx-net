@@ -33,10 +33,16 @@ export const BASE_PIECE_KINDS_LIST: readonly BasePieceKind[] = Object.freeze([
   { id: 'container_stack', role: 'industrial', solid: true, hp: 800, palette: 'cargo' },
   { id: 'loading_bay', role: 'industrial', solid: false, hp: 0, palette: 'floor' },
   { id: 'gate_post', role: 'structural', solid: true, hp: 3000, palette: 'accent' },
+  // ── v2: city kit ─────────────────────────────────────────────────────────
+  { id: 'habitat_block', role: 'city', solid: true, hp: 2500, palette: 'habitat' },
+  { id: 'tower', role: 'city', solid: true, hp: 3500, palette: 'tower' },
+  { id: 'plaza', role: 'city', solid: false, hp: 0, palette: 'floor' },
+  { id: 'spire', role: 'city', solid: true, hp: 6000, palette: 'accent' },
+  { id: 'light_pylon', role: 'city', solid: true, hp: 400, palette: 'accent' },
 ]);
 
 /** Bump on ANY append or numeric change to a record above. */
-export const BASE_PIECE_CATALOGUE_VERSION = 1;
+export const BASE_PIECE_CATALOGUE_VERSION = 2;
 
 const INDEX = new Map(BASE_PIECE_KINDS_LIST.map((k, i) => [k.id, i] as const));
 
