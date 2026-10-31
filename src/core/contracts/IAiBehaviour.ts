@@ -44,6 +44,24 @@ export interface AiStructureView {
 }
 
 /**
+ * Another swarm COMBATANT (kind-1 entity) the AI may treat as a target —
+ * allegiances P0 (plan peppy-jumping-pinwheel). Drones vs robots (vs traders)
+ * fight each other on sight per the shared stance table; this is how one swarm
+ * brain sees the others. Server-populated only (the client runs no drone brain).
+ */
+export interface AiSwarmView {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+  readonly vx: number;
+  readonly vy: number;
+  /** The entity's NPC allegiance (derived from its ship kind). */
+  readonly allegiance: string;
+  readonly health?: number;
+  readonly maxHealth?: number;
+}
+
+/**
  * Read-only snapshot the AI controller hands to each behaviour. Behaviours
  * may not retain references past the call — the server may reuse the array.
  */
@@ -65,6 +83,14 @@ export interface AiWorldView {
    * of structures is resolved entirely server-side.
    */
   readonly structures?: ReadonlyArray<AiStructureView>;
+  /**
+   * Swarm combatants of OTHER allegiances present in this sector (allegiances
+   * P0). Built ONCE per tick by the server, and ONLY when ≥ 2 allegiances are
+   * present — a drones-only sector leaves it absent (byte-identical to pre-P0,
+   * zero cost). Each behaviour filters it through the shared stance table.
+   * SERVER-ONLY, no wire surface (same rationale as `structures`).
+   */
+  readonly swarms?: ReadonlyArray<AiSwarmView>;
   /** Current server tick. Behaviours use this for cooldowns. */
   readonly tick: number;
   readonly dtSec: number;

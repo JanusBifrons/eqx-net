@@ -599,6 +599,18 @@ export class Camera {
     return this.target.scale;
   }
 
+  /** Visible world rect [minX, minY, maxX, maxY] (pixi space) written into
+   *  `out` — the allocation-free variant for per-frame culling (#14). */
+  visibleBoundsInto(out: Float64Array): Float64Array {
+    const sx = this.target.scale.x > 0 ? this.target.scale.x : 1;
+    const sy = this.target.scale.y > 0 ? this.target.scale.y : 1;
+    out[0] = -this.target.x / sx;
+    out[1] = -this.target.y / sy;
+    out[2] = (this.screenW - this.target.x) / sx;
+    out[3] = (this.screenH - this.target.y) / sy;
+    return out;
+  }
+
   getVisibleBounds(): { x: number; y: number; width: number; height: number } {
     const halfW = this.worldScreenWidth * 0.5;
     const halfH = this.worldScreenHeight * 0.5;

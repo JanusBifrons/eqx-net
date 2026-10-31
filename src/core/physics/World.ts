@@ -36,6 +36,11 @@ export { BOOST_MULTIPLIER } from '../../shared-types/shipKinds.js';
  */
 export const SOFT_CCD_PREDICTION = 48;
 
+/** Static-sentinel id for a base chunk body (also the hitscan hit id). */
+export function baseChunkKey(baseId: string, chunk: number): string {
+  return 'base-' + baseId + '-' + chunk;
+}
+
 export interface ShipPhysicsState {
   x: number;
   y: number;
@@ -95,6 +100,11 @@ export class PhysicsWorld {
    *  ship id elsewhere. Cleared in `removeWall`; a disabled (down) wall is
    *  excluded from `castRay` by Rapier so it stays passable without a map edit. */
   private readonly wallHandleToId = new Map<number, string>();
+  /** Procedural-base chunk bodies (plan soft-leaping-truffle). Like walls,
+   *  they live OUTSIDE `this.bodies` (no SAB slot) and resolve through the
+   *  static-sentinel map `wallHandleToId` as `base-<baseId>-<chunk>`, so a
+   *  predicted beam stops at a base wall instead of reading as a miss. */
+  private readonly baseChunkBodies = new Map<string, RAPIER.RigidBody>();
   /** 2026-05-25 heap-growth fix — per-tick pooled scratches for the
    *  Rapier `setTranslation` / `setLinvel` Vector2 arguments. `setShipState`
    *  is called per-drone per-RAF on the client (kinematic follower for
@@ -361,6 +371,48 @@ export class PhysicsWorld {
     this.world.removeRigidBody(body); // removes the body AND its collider
     this.wallBodies.delete(id);
     this.wallColliders.delete(id);
+  }
+
+  /**
+   * Spawn one chunk of a procedural base as ONE fixed body carrying ONE
+   * polyline collider: the chunk's share of the OUTLINE of the union of the
+   * base's solid pieces (geometry from the shared `buildChunkOutlines`,
+   * world-space). An outline has no internal edges, so ships slide along walls
+   * without snagging at piece seams; soft CCD stops tunnelling (measurements in
+   * src/core/procgen/baseChunkMesh.ts). Idempotent per (baseId, chunk); an
+   * empty chunk spawns nothing. Server worker: every chunk. Client
+   * predWorld: only chunks near the local ship (chunk streaming).
+   */
+  spawnBaseChunk(baseId: string, chunk: number, vertices: Float32Array, indices: Uint32Array): void {
+    const key = baseChunkKey(baseId, chunk);
+    if (this.baseChunkBodies.has(key) || indices.length === 0) return;
+    const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    this.world.createCollider(
+      RAPIER.ColliderDesc.polyline(vertices, indices).setRestitution(0.2).setFriction(0),
+      body,
+    );
+    this.baseChunkBodies.set(key, body);
+    this.wallHandleToId.set(body.handle, key);
+  }
+
+  /** Remove one base chunk (client streaming out / a destroy-rebuild). */
+  removeBaseChunk(baseId: string, chunk: number): void {
+    const key = baseChunkKey(baseId, chunk);
+    const body = this.baseChunkBodies.get(key);
+    if (!body) return;
+    this.wallHandleToId.delete(body.handle);
+    this.world.removeRigidBody(body);
+    this.baseChunkBodies.delete(key);
+  }
+
+  /** Whether a base chunk is currently instantiated (test + streaming seam). */
+  hasBaseChunk(baseId: string, chunk: number): boolean {
+    return this.baseChunkBodies.has(baseChunkKey(baseId, chunk));
+  }
+
+  /** Number of base chunk bodies held (the client active-set budget seam). */
+  baseChunkBodyCount(): number {
+    return this.baseChunkBodies.size;
   }
 
   /**

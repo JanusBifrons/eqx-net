@@ -2504,3 +2504,22 @@ Expanding the netgate to cover the new structures + scrap features looked obviou
 - Both turned into **hard** preconditions.
 
 **Rule.** A measurement harness that can produce "no data" must fail on it, never warn. Silent nulls are how budgets end up ungrounded.
+
+## 2026-10-31 — "Two sides" was hard-coded in seven places, and two of them keyed on id prefixes (plan peppy-jumping-pinwheel P0)
+
+**Finding.** Adding a third AI side (robots) meant auditing every place that assumed "drones vs players". There were seven:
+- the brain's candidate list
+- the AI beam
+- the projectile sweep
+- missile lock-on
+- turret targeting
+- attacker labels
+- the drone-war escalation hook
+
+Two of them, missile lock-on and attacker labels, decided "is this an AI?" from the **id prefix** (`swarm-` / `lwbot-`). Any new id scheme (`rbot-`, `pose-drone-`) would have been silently treated as a player shooter.
+
+**Rule.** Classify an entity by what the REGISTRY says it is (`swarmRegistry.get(id)?.kind`), never by its id string. Derive per-entity side data from the ship KIND (a catalogue field). That costs zero wire bytes, and the client agrees automatically because it builds the same object from the same kind.
+
+**Also.** The cross-allegiance view is built only when ≥ 2 allegiances are present in the sector. That keeps the common drones-only case byte-identical and free, which is why the existing AI, wave and turret integration suites passed unchanged.
+
+**Harness note.** On a loaded Windows box `connectActive` took up to 13 s. A test that only needs to *observe* broadcasts should join with `connectAs`. That gives a pending hull, which the AI also ignores. It took the fight test from flaky 20 s timeouts to a stable ~1.3 s.

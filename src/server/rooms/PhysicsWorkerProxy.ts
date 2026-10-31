@@ -60,7 +60,10 @@ export type WorkerCmd =
    *  stun / power loss without churning the body. See PhysicsWorld.spawnWall. */
   | { type: 'SPAWN_WALL';      id: string; ax: number; ay: number; bx: number; by: number; thickness: number }
   | { type: 'SET_WALL_ACTIVE'; id: string; active: boolean }
-  | { type: 'REMOVE_WALL';     id: string };
+  | { type: 'REMOVE_WALL';     id: string }
+  /** Procedural bases — regenerate + spawn a base's chunk colliders in the
+   *  worker from its descriptor (see core worker.ts SpawnBaseCmd). */
+  | { type: 'SPAWN_BASE'; id: string; ver: number; archetype: 'warehouse'; seed: number; x: number; y: number; size: number; dead?: number[] };
 
 /** Per-tick contact payload extracted from the worker's CONTACT_BATCH message.
  *  Mirrors `core/physics/contactDrain.ts` `Contact` across the postMessage

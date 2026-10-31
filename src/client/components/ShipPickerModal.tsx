@@ -1,7 +1,7 @@
 import { Box, Button, Card, CardActionArea, Dialog, DialogActions, DialogContent, DialogTitle, Typography } from '@mui/material';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { useEffect, useState } from 'react';
-import { SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds';
+import { PLAYABLE_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds';
 import { ShipSilhouette } from '../render/shipShapeSvg';
 
 interface ShipPickerModalProps {
@@ -63,7 +63,7 @@ export function ShipPickerModal({ open, onClose, selectedKind, onSelect, title, 
       </DialogTitle>
       <DialogContent sx={{ bgcolor: '#0c1020', color: '#ccc', px: 1, py: 1 }}>
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 0.75 }}>
-          {SHIP_KINDS_LIST.map((kind) => (
+          {PLAYABLE_SHIP_KINDS_LIST.map((kind) => (
             <ShipCard
               key={kind.id}
               kind={kind}

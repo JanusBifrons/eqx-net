@@ -1,3 +1,5 @@
+import { BaseSubsystem, type BaseSpec } from '../bases/BaseSubsystem.js';
+import { MAX_FLYABLE_RADIUS } from '../../core/procgen/corridor.js';
 import { Room, Client } from 'colyseus';
 import { randomUUID } from 'node:crypto';
 import { aggregateRamming } from '../../core/combat/Ramming.js';
@@ -27,7 +29,7 @@ import {
   takeOverPlayerSession,
 } from '../identity/PlayerSessionRegistry.js';
 import { getIncomingPlayerSink } from '../livingworld/incomingPlayerSink.js';
-import { SectorState, ShipState } from './schema/SectorState.js';
+import { BaseState, SectorState, ShipState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
@@ -48,10 +50,11 @@ import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // pickTarget / rotateMountToward / wrapPi / MountTargetView now used
 // inside WeaponMountTicker.ts; this file no longer imports them.
-import type { AiPlayerView, AiStructureView, AiEntity, AiEntityPoseOut } from '../../core/contracts/IAiBehaviour.js';
+import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
-import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, SHIELD_RADIUS_PAD, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isPlayableShipKindId, SHIELD_RADIUS_PAD, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { isOnSightHostile } from '../../shared-types/allegiances.js';
 import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
 import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
@@ -149,7 +152,11 @@ import type {
   SectorSnapshotLingeringHull,
 } from './SectorSnapshot.js';
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
-import { getPlayerShipStore } from '../db/PersistenceWorker.js';
+import { getPlayerShipStore, getHoldStore } from '../db/PersistenceWorker.js';
+import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
+import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
+import { cargoCapacityForMaxHealth, HoldSchema, type Hold } from '../../shared-types/goods.js';
+import { rollLoot } from '../../shared-types/lootTables.js';
 // RosterFullError is handled inside RosterPersistence.ts
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
 import { setSession } from '../transit/sessionRegistry.js';
@@ -228,6 +235,9 @@ const JoinOptionsSchema = z
     /** Test-only initial shield override; same testMode gate. 0 lets the
      *  first beam hit hull immediately. */
     initialShield: z.number().int().min(0).optional(),
+    /** Living World P1a — test-only: seed the joining ship's carried hold (so
+     *  spill / deposit specs don't have to farm loot first). testMode-gated. */
+    initialCargo: HoldSchema.optional(),
     /** Test-only initial energy override; same testMode gate. Lets energy
      *  specs start near-empty so the fire-gate / regen flow resolves in a
      *  few ticks. (weapons/energy/AI overhaul §3) */
@@ -567,6 +577,11 @@ export class SectorRoom extends Room<SectorState> {
   /** Scrap-on-death (Phase 2b-ii) — breaks a dying composite ship/drone into
    *  floating scrap pieces; owns the global FIFO cap. */
   private scrapSpawner!: ScrapSpawner;
+  /** Living World P1a — loot pods, pickup, spill-on-death (see LootSubsystem). */
+  private loot!: LootSubsystem;
+  private readonly _podPoseScratch = { x: 0, y: 0 };
+  /** Reused per-collector scratch (forEachLootCollector — no per-tick alloc, #14). */
+  private readonly _collectorScratch: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, capacity: 0 };
   /** Placed-structure bookkeeping (structures plan, Phase 2). */
   private readonly structureRegistry = new StructureRegistry();
   /** Equinox Phase 9 (item 5) — sliding-window tally of recent destruction
@@ -746,6 +761,22 @@ export class SectorRoom extends Room<SectorState> {
    *  URL-param `spawnX`/`spawnY` overrides this — set in `feel-test` so a
    *  player joining without params still lands at the known anchor. */
   private defaultSpawnX: number | null = null;
+  /** Procedural bases in this sector (plan soft-leaping-truffle). */
+  private readonly bases = new BaseSubsystem({
+    spawnInWorker: (id, d) =>
+      this.postToWorker({ type: 'SPAWN_BASE', id, ver: d.ver, archetype: d.archetype, seed: d.seed, x: d.x, y: d.y, size: d.size }),
+    writeState: (id, d) => {
+      const b = new BaseState();
+      b.ver = d.ver;
+      b.archetype = d.archetype;
+      b.seed = d.seed;
+      b.originX = d.x;
+      b.originY = d.y;
+      b.size = d.size;
+      (this.state as SectorState).bases.set(id, b);
+    },
+  });
+  private readonly spawnClearScratch = { x: 0, y: 0 };
   private defaultSpawnY: number | null = null;
   /** Phase 8 — counter for the 60-second snapshot cadence (galaxy sectors only). */
   private ticksSinceSnapshot = 0;
@@ -799,6 +830,10 @@ export class SectorRoom extends Room<SectorState> {
    */
   get _internals(): {
     serverTick: number;
+    /** Procedural bases (plan soft-leaping-truffle) — subsystem + the beam
+     *  block the player/AI fire resolvers call. */
+    bases: BaseSubsystem;
+    blockShotAtWall: (fx: number, fy: number, dx: number, dy: number, maxDist: number, damage: number) => number | null;
     /** PR 3a — which playerId each connected session was bound to (the
      *  account-bound identity integration test asserts on it). */
     sessionToPlayer: ReadonlyMap<string, string>;
@@ -856,8 +891,11 @@ export class SectorRoom extends Room<SectorState> {
       rec: { id: string; entityId: number; kind?: number; shipKind?: ShipKindId | null; shieldDown?: boolean },
       damage: number,
     ) => { newShield: number; shieldMax: number; hullMax: number; hitLayer: 'shield' | 'hull' } | null;
+    /** Living World P1a — the loot subsystem (seed pods, read holds, drive pickup). */
+    loot: LootSubsystem;
   } {
     return {
+      loot: this.loot,
       serverTick: this.serverTick,
       sessionToPlayer: this.sessionToPlayer,
       ownerlessShips: this.ownerlessShips,
@@ -865,6 +903,8 @@ export class SectorRoom extends Room<SectorState> {
       restoreLingeringHulls: (rows) => this.restoreLingeringHullsFromSnapshot(rows),
       aiPlayerScratch: this.aiPlayerScratch,
       postToWorker: (cmd) => this.postToWorker(cmd),
+      bases: this.bases,
+      blockShotAtWall: (fx, fy, dx, dy, maxDist, damage) => this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
       swarmRegistry: this.swarmRegistry,
@@ -1105,6 +1145,10 @@ export class SectorRoom extends Room<SectorState> {
        *  place-ahead UI (which stacks/overlaps multiple placements) or the
        *  construction wait. Each is born `isConstructed` at full HP. */
       prebuiltStructures?: ReadonlyArray<{ kind: StructureKindId; x: number; y: number }>;
+      /** Procedural bases (plan soft-leaping-truffle) to generate in this
+       *  sector. A room-DEFINITION option (server-authored, never client
+       *  input), so it is not testMode-gated — galaxy sectors use it too. */
+      bases?: ReadonlyArray<BaseSpec>;
       /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
@@ -1250,6 +1294,9 @@ export class SectorRoom extends Room<SectorState> {
       // faction-filtered set the drone's body target chose among, so the beam
       // lands on the structure it's pointed at.
       structureHitTargets: () => this.hostileStructureCircles,
+      // Allegiances P0: the beam also tests other-allegiance swarm combatants
+      // (empty in a single-allegiance sector ⇒ byte-identical).
+      swarmHitTargets: () => this.swarmCombatCircles,
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) =>
         this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
@@ -1301,6 +1348,9 @@ export class SectorRoom extends Room<SectorState> {
       // polygon kinds + spawn, mirroring the active-hull SHIP_DESTROYED path.
       spawnScrapFromLingeringHull: (kind, pose, shipInstanceId) =>
         this.spawnHullScrap(kind, pose, shipInstanceId),
+      // A1 — a lingering hull died in combat: the SHIP_DESTROYED handler can't
+      // find it (already out of shipsMap), so the roster wipe + XP happen here.
+      onLingeringHullDeath: (ship, pose, sourceId) => this.onLingeringHullDeath(ship, pose, sourceId),
       bus: this.bus,
       broadcastDamage: (msg) => this.broadcast('damage', msg),
       broadcastDestroy: (msg) => this.broadcast('destroy', msg),
@@ -1372,7 +1422,13 @@ export class SectorRoom extends Room<SectorState> {
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
       wallBlocksProjectile: (x, y, sx, sy, damage) =>
+        this.bases.segmentBlocked(x, y, sx, sy) ||
         this.shieldWalls.blockProjectile(x, y, sx, sy, damage, Date.now()),
+      // Allegiances P0 — AI bolts pass through their own allegiance's ships.
+      ownerAllegianceOf: (ownerId) => {
+        const rec = this.swarmRegistry.get(ownerId);
+        return rec != null && rec.kind === SWARM_KIND_DRONE ? allegianceOfKind(rec.shipKind) : undefined;
+      },
     });
 
     // Missile subsystem — guidance, splash damage, impulse queue. The
@@ -1450,6 +1506,8 @@ export class SectorRoom extends Room<SectorState> {
       // Campaign 2.1 — the per-recipient `drones[].hostile` bit reads the
       // same hostility ledger the AI tick + liveCounts use (one truth).
       isDroneHostileTo: (droneId, playerId) => this.aiController.isEntityHostileToPlayer(droneId, playerId),
+      // Living World P1a (#16) — own-ship cargo slice source.
+      shipHoldOf: (shipInstanceId) => this.loot.shipHold(shipInstanceId),
       playerMountAngles: this.mountTicker.playerMountAngles,
       droneMountAngles: this.mountTicker.droneMountAngles,
       missileSim: this.missileSim,
@@ -1674,6 +1732,56 @@ export class SectorRoom extends Room<SectorState> {
       },
     });
 
+    // ── Living World P1a — loot pods + fly-over pickup + spill-on-death ──
+    // Pods are scrap-kind swarm entities (parentShipKind 'cargo-pod',
+    // componentIndex = glow tier) spawned DIRECTLY (never through the
+    // ScrapSpawner FIFO, whose eviction would delete value) and persisted only
+    // via the holds table (never the sector snapshot) — hostile-review A3.
+    this.loot = new LootSubsystem({
+      holdStore: getHoldStore(),
+      sectorKey: () => this.sectorKey,
+      now: () => Date.now(),
+      spawnPodEntity: (id, x, y, vx, vy, tier) => {
+        if (this.swarmRegistry.has(id)) return false;
+        const geom = scrapColliderFor('cargo-pod', tier);
+        if (geom === null) return false;
+        const ok = this.swarmSpawner.spawnScrap({
+          id, x, y, vx, vy, angle: 0, radius: geom.radius,
+          parentShipKind: 'cargo-pod', componentIndex: tier, vertices: geom.vertices,
+        });
+        if (ok) {
+          this.swarmHealth.set(id, SCRAP_HP);
+          this.swarmShield.set(id, 0);
+        }
+        return ok;
+      },
+      despawnPodEntity: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        if (rec) this.evictSwarmEntity(rec, { broadcast: true, emitDestroyed: false });
+      },
+      setPodTier: (id, tier) => {
+        const rec = this.swarmRegistry.get(id);
+        if (rec) rec.componentIndex = tier;
+      },
+      podPose: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        if (rec == null) return null;
+        const b = slotBase(rec.slot);
+        const p = this._podPoseScratch;
+        p.x = this.sabF32[b + SLOT_X_OFF]!;
+        p.y = this.sabF32[b + SLOT_Y_OFF]!;
+        return p;
+      },
+      forEachCollector: (visit) => this.forEachLootCollector(visit),
+      onCollected: (c, moved, podId) => this.onLootCollected(c, moved, podId),
+      onDropped: (podId, hold, cause) => {
+        auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, credits: hold.credits });
+      },
+      onDestroyed: (podId, hold, cause) => {
+        auditEvent({ event: 'loot_destroyed', sector: this.sectorKey ?? undefined, podId, cause, credits: hold.credits });
+      },
+    });
+
     // ── Structure placement (structures plan, Phase 2) ──────────────────
     // Decision logic over injected concretions (spawn / health-seed / despawn /
     // clamp / id). A placed structure rides the existing kind=2 swarm path, so
@@ -1720,7 +1828,9 @@ export class SectorRoom extends Room<SectorState> {
       },
       findNearestAsteroid: (x, y, range) => this.findNearestAsteroid(x, y, range),
       drawAsteroidResources: (entityId, amount) => this.drawAsteroidResources(entityId, amount),
-      findNearestDrone: (x, y, range) => this.findNearestSwarmOfKind(x, y, range, 1),
+      // Allegiances P0: base turrets defend against combat allegiances (drones,
+      // robots) but never open fire on NEUTRAL traders (their haulers).
+      findNearestDrone: (x, y, range) => this.findNearestSwarmOfKind(x, y, range, 1, this._isTurretTargetable),
       applyDamage: (targetId, shooterId, damage) => this.applyDamage(targetId, shooterId, damage),
       broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) => {
         this.broadcast('laser_fired', {
@@ -1799,6 +1909,10 @@ export class SectorRoom extends Room<SectorState> {
     if (this.testMode && (roomOpts.scenarioScrapCount ?? 0) > 0) {
       this.seedScenarioScrap(roomOpts.scenarioScrapCount!);
     }
+    // Procedural bases: generate, publish the descriptor in room state, spawn
+    // the worker colliders. Before any join, so spawns can avoid geometry.
+    const baseSpecs = roomOpts.bases ?? [];
+    for (let i = 0; i < baseSpecs.length; i++) this.bases.add('b' + i, baseSpecs[i]!);
 
     // Living World bot lifecycle hooks (spawn/despawn/markHostile).
     // These satisfy the LivingWorldRoom contract; bots are server-
@@ -2378,6 +2492,16 @@ export class SectorRoom extends Room<SectorState> {
       // whole roster row (level / xp / statAlloc / mounts) is dropped together
       // here, so a destroyed ship's progression is gone atomically.
       if (destroyedShip !== undefined) {
+        // Living World P1a — hardcore: an ACTIVE hull's carried hold spills where
+        // it died. (A LINGERING hull is handled by onLingeringHullDeath — it never
+        // reaches here with `activeHull` set.) Read BEFORE the roster wipe.
+        if (activeHull !== undefined) {
+          const slot = this.playerToSlot.get(evt.targetId);
+          const b = slot !== undefined ? slotBase(slot) : -1;
+          const pose = this.shipPoseCache.get(evt.targetId)
+            ?? (b >= 0 ? { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, vx: this.sabF32[b + SLOT_VX_OFF]!, vy: this.sabF32[b + SLOT_VY_OFF]! } : undefined);
+          this.spillOrLoseShipHold(destroyedShip.shipInstanceId, evt.targetId, pose, 'death');
+        }
         this.deleteRosterRow(destroyedShip.shipInstanceId);
       }
       // Phase 8 sub-phase B (lingering ships) — if a hull was destroyed
@@ -2639,6 +2763,60 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
+  /** Allegiances P0 — pooled per-tick swarm-combatant views (never reallocated
+   *  once grown, #14) + the matching fire-resolver hit circles. */
+  private readonly _swarmViewPool: Array<{
+    id: string; x: number; y: number; vx: number; vy: number;
+    allegiance: string; health?: number; maxHealth?: number; radius: number;
+  }> = [];
+  private readonly aiSwarmScratch: AiSwarmView[] = [];
+  private readonly swarmCombatCircles: Array<{ id: string; x: number; y: number; radius: number; allegiance: string }> = [];
+
+  /**
+   * Allegiances P0 — rebuild this tick's swarm-combatant set (kind-1 entities),
+   * ONCE per tick (#14). Only populated when ≥ 2 allegiances are present in the
+   * sector: a drones-only sector leaves `out` empty, so the AI view's `swarms`
+   * is absent and the brain takes its pre-P0 fast path (byte-identical, zero
+   * per-drone cost). Also fills `swarmCombatCircles` for the AI beam pass.
+   */
+  private fillSwarmTargets(out: AiSwarmView[]): void {
+    const circles = this.swarmCombatCircles;
+    circles.length = 0;
+    out.length = 0;
+    let first: string | null = null;
+    let mixed = false;
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== SWARM_KIND_DRONE) continue;
+      const a = allegianceOfKind(rec.shipKind);
+      if (first === null) first = a;
+      else if (a !== first) { mixed = true; break; }
+    }
+    if (!mixed) return;
+    const pool = this._swarmViewPool;
+    let n = 0;
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== SWARM_KIND_DRONE) continue;
+      const b = slotBase(rec.slot);
+      let v = pool[n];
+      if (!v) {
+        v = { id: '', x: 0, y: 0, vx: 0, vy: 0, allegiance: 'drones', radius: 0 };
+        pool[n] = v;
+      }
+      v.id = rec.id;
+      v.x = this.sabF32[b + SLOT_X_OFF]!;
+      v.y = this.sabF32[b + SLOT_Y_OFF]!;
+      v.vx = this.sabF32[b + SLOT_VX_OFF]!;
+      v.vy = this.sabF32[b + SLOT_VY_OFF]!;
+      v.allegiance = allegianceOfKind(rec.shipKind);
+      v.health = this.swarmHealth.get(rec.id);
+      v.maxHealth = getShipKind(rec.shipKind).maxHealth;
+      v.radius = rec.radius;
+      out.push(v);
+      circles.push(v);
+      n++;
+    }
+  }
+
   /**
    * AI fire path. Mirrors the player hitscan logic but skips the message
    * parser, the per-session hit_ack, and the temporal-plausibility window
@@ -2678,13 +2856,27 @@ export class SectorRoom extends Room<SectorState> {
     // friendly structures (the candidate set includes kind 1 AND kind 2). Kind
     // is the source of truth (lwbot drones are kind 1 too, swarm-/lwbot-prefixed).
     if (ownerId.startsWith('pstruct-')) {
-      return (id) => this.swarmRegistry.get(id)?.kind === 1;
+      return (id) => {
+        const rec = this.swarmRegistry.get(id);
+        return rec != null && rec.kind === 1 && this._isTurretTargetable(rec);
+      };
     }
-    const isPlayerShooter = !ownerId.startsWith('swarm-') && !ownerId.startsWith('lwbot-');
-    if (isPlayerShooter) {
+    // Allegiances P0 — classify the shooter by the REGISTRY (a live kind-1
+    // swarm entity is an AI shooter whatever its id prefix), not by prefix.
+    const ownerRec = this.swarmRegistry.get(ownerId);
+    const isAiShooter = (ownerRec != null && ownerRec.kind === 1)
+      || ownerId.startsWith('swarm-') || ownerId.startsWith('lwbot-');
+    if (!isAiShooter) {
       return (id) => id !== ownerId;
     }
-    return (id) => this.aiController.isEntityHostileToPlayer(ownerId, id);
+    const ownerAllegiance = allegianceOfKind(ownerRec?.shipKind);
+    return (id) => {
+      if (this.aiController.isEntityHostileToPlayer(ownerId, id)) return true;
+      // Cross-allegiance swarm targets (drones ↔ robots ↔ traders) by stance.
+      const rec = this.swarmRegistry.get(id);
+      if (rec == null || rec.kind !== 1 || id === ownerId) return false;
+      return isOnSightHostile(ownerAllegiance, allegianceOfKind(rec.shipKind));
+    };
   }
 
   private spawnServerMissile(
@@ -2912,6 +3104,16 @@ export class SectorRoom extends Room<SectorState> {
     // (combat death OR FIFO cap) must drop out of the ScrapSpawner's live list
     // so the global cap accounting stays correct. Harmless no-op when this
     // eviction IS the FIFO path (the id was already shifted off the list).
+    // Living World P1a — a combat-killed NPC drops its loot where it died (the
+    // SAB pose is still live here; the evictor below frees the slot). A pod
+    // destroyed in combat loses its contents. A pod the LootSubsystem despawns
+    // itself (pickup / TTL) is already off its books, so `isPod` is false then.
+    if (opts.emitDestroyed && rec.kind === SWARM_KIND_DRONE) {
+      this.dropKillLoot(rec);
+    }
+    if (rec.kind === SWARM_KIND_SCRAP && this.loot.isPod(rec.id) && opts.emitDestroyed) {
+      this.loot.onPodDestroyed(rec.id);
+    }
     if (rec.kind === SWARM_KIND_SCRAP) {
       this.scrapSpawner.notifyRemoved(rec.id);
     }
@@ -3083,6 +3285,9 @@ export class SectorRoom extends Room<SectorState> {
   private *scrapEntitiesForSnapshot(): Iterable<SectorSnapshotScrap> {
     for (const rec of this.swarmRegistry.all()) {
       if (rec.kind !== SWARM_KIND_SCRAP) continue;
+      // A3 — loot pods persist ONLY via the holds table; including them here
+      // would restore every pod twice (once as value-less scrap).
+      if (this.loot.isPod(rec.id) || rec.shipKind === 'cargo-pod') continue;
       if (rec.shipKind === undefined || rec.componentIndex === undefined) continue;
       const b = slotBase(rec.slot);
       yield {
@@ -3291,7 +3496,15 @@ export class SectorRoom extends Room<SectorState> {
   private blockShotAtWall(
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, damage: number,
   ): number | null {
-    return this.shieldWalls.blockShot(fromX, fromY, dirX, dirY, maxDist, damage, Date.now());
+    // A base wall in front of the shot stops it first — and caps the range
+    // passed to the shield walls so a shield span BEHIND base geometry never
+    // takes the hit.
+    const baseDist = this.bases.rayFirst(fromX, fromY, dirX, dirY, maxDist);
+    const wallDist = this.shieldWalls.blockShot(
+      fromX, fromY, dirX, dirY, baseDist >= 0 ? baseDist : maxDist, damage, Date.now(),
+    );
+    if (wallDist !== null) return wallDist;
+    return baseDist >= 0 ? baseDist : null;
   }
 
   /** Live asteroid obstacles (swarm kind=0) for connection line-of-sight, read
@@ -3374,6 +3587,13 @@ export class SectorRoom extends Room<SectorState> {
    *  of (x, y). Reads authoritative poses from the SAB via each record's slot.
    *  Low-frequency (1 Hz pulse / 100 ms turret tick), so the linear scan is
    *  fine. Returns the registry id (for damage) + entityId + pose. */
+  /** Allegiances P0 — a player structure turret engages any swarm combatant
+   *  that is not NEUTRAL to players by stance... except it also engages drones,
+   *  which are stance-neutral but wave-hostile (pre-P0 behaviour: turrets shoot
+   *  every drone). So: everything except traders. Built once (no per-call alloc). */
+  private readonly _isTurretTargetable = (rec: SwarmEntityRecord): boolean =>
+    allegianceOfKind(rec.shipKind) !== 'traders';
+
   private findNearestSwarmOfKind(
     x: number,
     y: number,
@@ -3845,6 +4065,11 @@ export class SectorRoom extends Room<SectorState> {
    * one `factionOf` scan + one faction-mark per applied drone hit.
    */
   private escalateFactionOnDroneHit(droneId: string, sourceId: string, atTick: number): void {
+    // Allegiances P0 (hostile-review B1): the FactionLedger tracks war with the
+    // DRONES. Shooting a robot or a trader hauler must not declare war on the
+    // drones (the victim itself still retaliates via its own `markHostile`).
+    const victim = this.swarmRegistry.get(droneId);
+    if (victim != null && allegianceOfKind(victim.shipKind) !== 'drones') return;
     const factionId = this.factionLedger.factionOf(sourceId);
     if (factionId === null) return;
     this.factionLedger.recordFactionDealtDamage(factionId, atTick);
@@ -4209,7 +4434,7 @@ export class SectorRoom extends Room<SectorState> {
     // swap kind by reconnecting — the existing ShipState.kind is preserved).
     const requestedKind = parsed.success
         && typeof parsed.data.shipKind === 'string'
-        && isShipKindId(parsed.data.shipKind)
+        && isPlayableShipKindId(parsed.data.shipKind)
       ? parsed.data.shipKind
       : DEFAULT_SHIP_KIND;
 
@@ -4472,6 +4697,13 @@ export class SectorRoom extends Room<SectorState> {
     let spawnY = parsed.success && parsed.data.spawnY !== undefined
       ? parsed.data.spawnY
       : (this.defaultSpawnY ?? (Math.random() - 0.5) * 400);
+    // Procedural-base colliders are hollow outlines: never place a ship inside
+    // solid geometry (it would be trapped). Nudge to the nearest clear point.
+    if (this.bases.count > 0) {
+      const clear = this.bases.findClearSpawn(spawnX, spawnY, MAX_FLYABLE_RADIUS + 8, this.spawnClearScratch);
+      spawnX = clear.x;
+      spawnY = clear.y;
+    }
     let resumedHealth: number | null = null;
     let resumedUserId: string | null = null;
     let resumedLastFireTick: number | null = null;
@@ -4714,6 +4946,17 @@ export class SectorRoom extends Room<SectorState> {
       // gate/regen flow is testable in a few ticks instead of seconds.
       if (typeof parsed.data.initialEnergy === 'number') {
         ship.energy = Math.max(0, parsed.data.initialEnergy);
+      }
+      // Living World P1a — seed the hull's carried hold (needs a roster-bound
+      // shipInstanceId; engineering rooms have none ⇒ no-op).
+      if (parsed.data.initialCargo !== undefined && ship.shipInstanceId !== '' && this.sectorKey !== null) {
+        const c = parsed.data.initialCargo;
+        getHoldStore().put({
+          holderUid: ship.shipInstanceId, holderType: 'ship', ownerId: playerId,
+          sectorKey: null, x: null, y: null,
+          hold: { goods: { ...c.goods }, credits: c.credits, blueprints: [...c.blueprints] },
+          expiresAt: null,
+        });
       }
       // initialAngle is applied below — the angle lives in
       // `shipPoseCache` + the Rapier body (via SET_POSITION post-SPAWN),
@@ -5268,6 +5511,9 @@ export class SectorRoom extends Room<SectorState> {
       angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
     };
     this.spawnHullScrap(ship.kind as ShipKindId, pose, shipInstanceId);
+    // Living World P1a — an abandoned hull's hold spills where it sat (P1a-2
+    // turns this into a salvageable hulk).
+    this.spillOrLoseShipHold(shipInstanceId, playerId, pose, 'abandoned');
 
     // Free the slot + DESPAWN the playerId body (no wreck rekey).
     this.freeSlots.push(slot);
@@ -5327,6 +5573,7 @@ export class SectorRoom extends Room<SectorState> {
       angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
     };
     this.spawnHullScrap(ship.kind as ShipKindId, pose, shipInstanceId);
+    this.spillOrLoseShipHold(shipInstanceId, ship.playerId, pose, 'abandoned');
 
     this.lingeringSlots.delete(shipInstanceId);
     this.lingeringPoseCache.delete(shipInstanceId);
@@ -5365,6 +5612,103 @@ export class SectorRoom extends Room<SectorState> {
 
   private deleteRosterRow(shipInstanceId: string): void {
     this.rosterPersistence.delete(shipInstanceId);
+  }
+
+  /**
+   * Hostile-review A1 — a LINGERING hull died in combat. Runs inside the
+   * lingering death policy BEFORE its teardown (see `LeafDeps.onLingeringHullDeath`).
+   * Mirrors what the `SHIP_DESTROYED` handler does for an ACTIVE hull — that
+   * handler can't resolve a lingering hull (it has left `shipsMap` by emit time):
+   *  - award the killer's XP (victim toughness from the catalogue);
+   *  - wipe the roster row (D9 — and with it the ship's carried hold);
+   *  - drop the persist-forever ownerless marker (the hull is gone).
+   */
+  private onLingeringHullDeath(
+    ship: { shipInstanceId: string; playerId: string; kind: string },
+    pose: { x: number; y: number; vx: number; vy: number } | undefined,
+    sourceId: string,
+  ): void {
+    this.awardKillXp(sourceId, getShipKind(ship.kind).maxHealth);
+    // Hardcore: the dead hull's hold spills where it died (atomic with the
+    // ship-hold delete). With no pose the hold is simply lost.
+    this.spillOrLoseShipHold(ship.shipInstanceId, ship.playerId, pose, 'lingering_death');
+    this.deleteRosterRow(ship.shipInstanceId);
+    const timer = this.ownerlessShips.get(ship.shipInstanceId);
+    if (timer) clearTimeout(timer);
+    this.ownerlessShips.delete(ship.shipInstanceId);
+  }
+
+  // ── Living World P1a — loot hooks ────────────────────────────────────────
+
+  /** Spill a ship's carried hold at `pose` (one atomic group). Without a pose
+   *  the hold is deleted and audited as lost — never left orphaned. */
+  private spillOrLoseShipHold(
+    shipInstanceId: string,
+    playerId: string,
+    pose: { x: number; y: number; vx: number; vy: number } | undefined,
+    cause: string,
+  ): void {
+    if (shipInstanceId === '' || this.loot.shipHold(shipInstanceId) === undefined) return;
+    if (pose !== undefined) {
+      this.loot.spillShipHold(shipInstanceId, pose.x, pose.y, pose.vx, pose.vy, cause);
+    } else {
+      getHoldStore().delete(shipInstanceId, this.sectorKey !== null);
+    }
+    auditEvent({ event: 'cargo_lost', sector: this.sectorKey ?? undefined, playerId, shipInstanceId, cause });
+  }
+
+  /**
+   * Visit every hull allowed to collect loot this tick (#17 liveness: ACTIVE +
+   * alive hulls only — lingering and dead hulls never collect; and only hulls
+   * WITH a roster row, since a ship with no roster row has nowhere to keep a
+   * hold — hostile-review A2). Reuses one scratch object (no per-tick alloc).
+   */
+  private forEachLootCollector(visit: (c: LootCollector) => void): void {
+    if (this.sectorKey === null) return; // engineering rooms: no roster ⇒ no holds
+    const store = getPlayerShipStore();
+    const c = this._collectorScratch;
+    for (const [pid] of this.playerToSlot) {
+      const ship = this.getActiveShip(pid);
+      if (!ship?.alive || !ship.isActive || ship.shipInstanceId === '') continue;
+      if (store.get(ship.shipInstanceId) === null) continue;
+      const pose = this.shipPoseCache.get(pid);
+      if (!pose) continue;
+      c.playerId = pid;
+      c.shipInstanceId = ship.shipInstanceId;
+      c.x = pose.x;
+      c.y = pose.y;
+      c.capacity = cargoCapacityForMaxHealth(getShipKind(ship.kind).maxHealth);
+      visit(c);
+    }
+  }
+
+  /** A pickup landed: tell the collector (UI accelerator — the authoritative
+   *  cargo rides the own-ship snapshot slice) + audit. */
+  private onLootCollected(c: LootCollector, moved: Hold, podId: string): void {
+    const sessionId = this.playerToSession.get(c.playerId);
+    const client = sessionId !== undefined ? this.clients.find((cl) => cl.sessionId === sessionId) : undefined;
+    if (client) {
+      try {
+        client.send('loot_collected', { type: 'loot_collected', goods: moved.goods, credits: moved.credits, blueprints: moved.blueprints.length });
+      } catch { /* socket closing */ }
+    }
+    auditEvent({
+      event: 'loot_collected', sector: this.sectorKey ?? undefined, podId,
+      playerId: c.playerId, shipInstanceId: c.shipInstanceId, credits: moved.credits,
+    });
+  }
+
+  /** A destroyed NPC drops its loot table where it died (every kill — AI-vs-AI
+   *  included, user decision 6). Reads the live SAB pose (still allocated). */
+  private dropKillLoot(rec: SwarmEntityRecord): void {
+    const hold = rollLoot(rec.shipKind, Math.random);
+    const b = slotBase(rec.slot);
+    this.loot.drop(
+      hold,
+      this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!,
+      this.sabF32[b + SLOT_VX_OFF]! * 0.3, this.sabF32[b + SLOT_VY_OFF]! * 0.3,
+      { cause: 'kill' },
+    );
   }
 
   /**
@@ -5696,6 +6040,8 @@ export class SectorRoom extends Room<SectorState> {
 
   private hydrateFromSnapshot(): void {
     this.sectorPersistence.hydrate();
+    // Living World P1a — respawn this sector's persisted loot pods (holds table).
+    this.loot.restore();
   }
 
   // ── Simulation loop (main thread — reads SAB, updates Colyseus schema) ──
@@ -5847,6 +6193,12 @@ export class SectorRoom extends Room<SectorState> {
       this.webrtcChannelManager.expireStale();
     }
 
+    // Living World P1a — fly-over loot pickup every 6 ticks (~10 Hz; pickup
+    // needs no prediction), pod TTL + drift re-save at ~1 Hz. Both early-out
+    // when there are no pods (zero cost in a loot-free sector).
+    if (this.broadcastCounter % 6 === 0) this.loot.collectTick();
+    if (this.broadcastCounter % 60 === 0) this.loot.sweep();
+
     // Tick AI AT THE END of update() so posted impulses reach the
     // worker BEFORE the next SAB read. See aiTickRunner.ts.
     runAiTick({
@@ -5858,6 +6210,8 @@ export class SectorRoom extends Room<SectorState> {
       aiPlayerScratch: this.aiPlayerScratch,
       aiStructureScratch: this.aiStructureScratch,
       fillStructureTargets: (out) => this.fillStructureTargets(out),
+      aiSwarmScratch: this.aiSwarmScratch,
+      fillSwarmTargets: (out) => this.fillSwarmTargets(out),
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       resolveEntityInto: (id, out) => this.swarmEntityPoseInto(id, out),
       handleAiFire: (shooterId, dirX, dirY, tick) => this.handleAiFire(shooterId, dirX, dirY, tick),

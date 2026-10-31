@@ -27,6 +27,8 @@ import { MISSILE_FRIGATE } from './missileFrigate.js';
 import { CROSSGUARD } from './crossguard.js';
 import { L_SHAPE } from './lShape.js';
 import { HAVOK } from './composite/havok.js';
+import { ROBOT_SQUARE } from './robots.js';
+import { CARGO_POD } from './cargoPod.js';
 
 /**
  * Insertion order = canonical catalogue order. Fighter is first so it
@@ -45,4 +47,8 @@ export const SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze([
   L_SHAPE,
   // composite-ships Phase 1: first composite kind. APPEND ONLY — never reorder.
   HAVOK,
+  // Allegiances P0 (plan peppy-jumping-pinwheel): first robot kind. APPEND ONLY.
+  ROBOT_SQUARE,
+  // Living World P1a: loot pod (rides the scrap wire; componentIndex = tier). APPEND ONLY.
+  CARGO_POD,
 ]);

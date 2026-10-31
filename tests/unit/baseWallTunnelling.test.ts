@@ -5,8 +5,8 @@
  * beat per-tick travel with a 2× margin). This test proves it in the real
  * physics: the SMALLEST player-flyable hull, at the maximum per-tick speed any
  * flyable ship can reach (×2 margin), is fired into a wall of exactly
- * `MIN_WALL_THICKNESS` built the way Tier A builds geometry (one fixed body +
- * one solid trimesh collider per chunk). It must never come out the far side —
+ * `MIN_WALL_THICKNESS` built the way Tier A builds geometry (layout piece →
+ * union-outline polyline per chunk → World.spawnBaseChunk). It must never come out the far side —
  * head-on, at shallow grazing angles, from many sub-tick start offsets, with
  * shields up (circle collider) and down (hull triangles).
  *
@@ -15,12 +15,14 @@
  * floor, or ships sped up past the look-ahead, this goes red.
  */
 import { describe, expect, it } from 'vitest';
-import RAPIER from '@dimforge/rapier2d-compat';
 import { PhysicsWorld } from '../../src/core/physics/World.js';
 import { MIN_WALL_THICKNESS } from '../../src/shared-types/baseBudgets.js';
 import { GAMEPLAY_SHIP_KINDS_LIST, getShipKind } from '../../src/shared-types/shipKinds.js';
 import { deriveStatMultipliers, pointBudget } from '../../src/core/leveling/shipStats.js';
 import { LEVEL_CAP } from '../../src/core/leveling/shipXp.js';
+import { BASE_GENERATOR_VERSION, LayoutBuilder } from '../../src/core/procgen/baseLayout.js';
+import { buildChunkOutlines } from '../../src/core/procgen/baseChunkMesh.js';
+import { basePieceIndex } from '../../src/shared-types/basePieceKinds.js';
 
 // Long enough that a grazing ship sliding along it for 60 ticks never rounds an
 // end (at 15° a slide covers ~2600 u) — the test measures tunnelling only.
@@ -40,15 +42,16 @@ function maxPerTickTravel(): number {
   return m;
 }
 
-/** A horizontal wall centred on y=0, built as Tier A will build it. */
-function addTrimeshWall(world: PhysicsWorld, thickness: number): void {
-  const raw = (world as unknown as { world: RAPIER.World }).world;
-  const hw = WALL_LEN / 2;
-  const ht = thickness / 2;
-  const verts = new Float32Array([-hw, -ht, hw, -ht, hw, ht, -hw, ht]);
-  const idx = new Uint32Array([0, 1, 2, 0, 2, 3]);
-  const body = raw.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  raw.createCollider(RAPIER.ColliderDesc.trimesh(verts, idx), body);
+/** A horizontal wall centred on y=0, built EXACTLY as base geometry is built in
+ *  production: a layout piece → the union-outline polyline (buildChunkOutlines)
+ *  → World.spawnBaseChunk. */
+function addBaseWall(world: PhysicsWorld, thickness: number): void {
+  const half = WALL_LEN / 2;
+  const b = new LayoutBuilder(half);
+  b.addRect(basePieceIndex('wall'), -half, -thickness / 2, half, thickness / 2);
+  const l = b.build({ ver: BASE_GENERATOR_VERSION, archetype: 'warehouse', seed: 0, x: 0, y: 0, size: WALL_LEN }, 0);
+  const outlines = buildChunkOutlines(l);
+  for (let c = 0; c < outlines.length; c++) world.spawnBaseChunk('t', c, outlines[c]!.vertices, outlines[c]!.indices);
 }
 
 async function firesThrough(opts: {
@@ -57,7 +60,7 @@ async function firesThrough(opts: {
   hullExposed: boolean;
 }): Promise<boolean> {
   const world = await PhysicsWorld.create();
-  addTrimeshWall(world, MIN_WALL_THICKNESS);
+  addBaseWall(world, MIN_WALL_THICKNESS);
   const kindId = smallestFlyableKind();
   world.spawnShip('s', 0, -200 - opts.startOffset, kindId as never);
   if (opts.hullExposed) world.setHullExposed('s', true, getShipKind(kindId));
