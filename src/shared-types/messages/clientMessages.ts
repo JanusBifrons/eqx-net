@@ -207,7 +207,7 @@ export const StatIdSchema = z.enum(['hull', 'energy', 'damage', 'topSpeed', 'tur
  *  Bounded server-side against the ship instance's point budget (the budget
  *  can't be exceeded); per-entry capped at 64 so a malformed map can't bloat. */
 export const StatAllocSchema = z
-  .record(StatIdSchema, z.number().int().min(0).max(64))
+  .partialRecord(StatIdSchema, z.number().int().min(0).max(64))
   .refine((a) => Object.keys(a).length <= 6, { message: 'too many stat entries' });
 
 /** Client → server (Phase 4 WS-B2): "spend my ship instance's upgrade points
