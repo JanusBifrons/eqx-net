@@ -172,17 +172,20 @@ export class LootSubsystem {
   /** Fly-over pickup pass — call every few ticks from the room update. */
   collectTick(): void {
     if (this.pods.size === 0) return;
-    this.d.forEachCollector((c) => {
-      for (const [podId] of this.pods) {
-        const pose = this.d.podPose(podId);
-        if (pose === null) continue;
-        const dx = pose.x - c.x;
-        const dy = pose.y - c.y;
-        if (dx * dx + dy * dy > LOOT_PICKUP_RADIUS * LOOT_PICKUP_RADIUS) continue;
-        this.pickUp(c, podId);
-      }
-    });
+    this.d.forEachCollector(this.visitCollector);
   }
+
+  /** Bound once (no per-tick closure allocation, #14). */
+  private readonly visitCollector = (c: LootCollector): void => {
+    for (const [podId] of this.pods) {
+      const pose = this.d.podPose(podId);
+      if (pose === null) continue;
+      const dx = pose.x - c.x;
+      const dy = pose.y - c.y;
+      if (dx * dx + dy * dy > LOOT_PICKUP_RADIUS * LOOT_PICKUP_RADIUS) continue;
+      this.pickUp(c, podId);
+    }
+  };
 
   private pickUp(c: LootCollector, podId: string): void {
     const podRec = this.d.holdStore.get(podId);

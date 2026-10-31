@@ -17,6 +17,9 @@ import {
   type CollisionGuardState,
 } from './applyCollisionResolved';
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
+import { LootCollectedEventSchema } from '@shared-types/messages/lootMessages';
+import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
+import { cargoCapacityForMaxHealth } from '@shared-types/goods';
 import { applySelectionStats } from './selectionStats.js';
 import {
   createRemotePredictionGuard,
@@ -1973,6 +1976,16 @@ export class ColyseusGameClient {
               : undefined;
       useUIStore.getState().addWarpWarning({ id, label, count, countdownMs, ...(relation ? { relation } : {}) });
     });
+    // Living World P1a — pickup popup (UI accelerator only; cargo truth rides
+    // the own-ship snapshot slice). zod-validated (invariant #3).
+    room.onMessage('loot_collected', (raw: unknown) => {
+      const parsed = LootCollectedEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const text = formatLootPickup(parsed.data);
+      if (text === '') return;
+      const id = useUIStore.getState().pushLootFeed(text);
+      setTimeout(() => useUIStore.getState().expireLootFeed(id), LOOT_FEED_TTL_MS);
+    });
     room.onMessage('warp_warning_clear', (raw: unknown) => {
       const parsed = WarpWarningClearSchema.safeParse(raw);
       if (!parsed.success) return;
@@ -2935,6 +2948,8 @@ export class ColyseusGameClient {
       // truth, so an upgrade applied while the player is in another sector still
       // takes effect the moment its own-ship slice arrives.
       this.applyLocalStatAlloc(localId, serverState.statAlloc);
+      // Living World P1a (#16) — the authoritative own-ship cargo slice.
+      this.applyLocalCargo(localId, serverState.cargo);
 
       // Drone snapshot slice (slim turret/shield slice; pose flows on the
       // binary swarm wire). See snapshotRemoteSync.ts. Campaign 2.1: the
@@ -5071,6 +5086,25 @@ export class ColyseusGameClient {
    * #12). Guarded by a stable JSON key so identical allocations don't re-push
    * every snapshot. An absent / empty alloc resets to the neutral path.
    */
+  /**
+   * Living World P1a (#16) — mirror the AUTHORITATIVE own-ship cargo slice into
+   * the discrete Zustand `cargo`. Called per applied snapshot, so it writes the
+   * store ONLY when the contents actually changed (`cargoChanged` compares
+   * field-by-field without allocating) — a steady hold costs zero renders.
+   */
+  private applyLocalCargo(
+    localId: string,
+    cargo: { goods: Partial<Record<string, number>>; credits: number; blueprints: string[] } | undefined,
+  ): void {
+    const s = useUIStore.getState();
+    const capacity = cargoCapacityForMaxHealth(getShipKind(this.mirror.ships.get(localId)?.kind ?? null).maxHealth);
+    if (!cargoChanged(s.cargo, cargo) && s.cargoCapacity === capacity) return;
+    s.setCargo(
+      cargo === undefined ? null : { goods: { ...cargo.goods }, credits: cargo.credits, blueprints: cargo.blueprints.length },
+      capacity,
+    );
+  }
+
   private applyLocalStatAlloc(localId: string, alloc: Record<string, number> | undefined): void {
     if (!this.predWorld || !this.predWorld.hasShip(localId)) return;
     const decision = decideStatAllocReanchor(alloc, this._lastStatAllocKey);
