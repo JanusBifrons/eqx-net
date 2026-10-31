@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
+import { HOLD_PUT_SQL, HOLD_DELETE_SQL, holdPutArgs, applyGroupAtomically } from './holdsSql.js';
 
 /**
  * Sub-phase A bridge: implements IPersistenceSink against a synchronous
@@ -27,10 +28,16 @@ export class SyncSinkAdapter implements IPersistenceSink {
     PUSH_SUBSCRIPTION_DELETE: ReturnType<DatabaseSync['prepare']>;
     ACCOUNT_PLAYER_PUT: ReturnType<DatabaseSync['prepare']>;
     PLAYER_ALIAS_PUT: ReturnType<DatabaseSync['prepare']>;
+    HOLD_PUT: ReturnType<DatabaseSync['prepare']>;
+    HOLD_DELETE: ReturnType<DatabaseSync['prepare']>;
   };
+  /** A5 — atomic groups that rolled back (test observability). */
+  groupFailures = 0;
 
   constructor(private readonly db: DatabaseSync) {
     this.stmts = {
+      HOLD_PUT: db.prepare(HOLD_PUT_SQL),
+      HOLD_DELETE: db.prepare(HOLD_DELETE_SQL),
       KILL: db.prepare(
         'INSERT INTO player_kills (killer_user_id, victim_user_id, weapon, sector_id, created_at) VALUES (?, ?, ?, ?, ?)',
       ),
@@ -228,6 +235,20 @@ export class SyncSinkAdapter implements IPersistenceSink {
       }
       case 'PUSH_SUBSCRIPTION_DELETE': {
         this.stmts.PUSH_SUBSCRIPTION_DELETE.run(op.endpoint);
+        return {};
+      }
+      case 'HOLD_PUT': {
+        this.stmts.HOLD_PUT.run(...holdPutArgs(op));
+        return {};
+      }
+      case 'HOLD_DELETE': {
+        this.stmts.HOLD_DELETE.run(op.holderUid);
+        return {};
+      }
+      case 'GROUP': {
+        applyGroupAtomically(this.db, op.ops, (sub) => { this.applyOp(sub); }, () => {
+          this.groupFailures += 1;
+        });
         return {};
       }
     }

@@ -117,7 +117,7 @@ describe('ShipShapeSchema — discriminated union (composite-ships Phase 0)', ()
       expect(result.success, `${kind.id} shape parses`).toBe(true);
       // Phase 1: havok is the first (and only) composite kind; the original
       // eight stay polygon (the union is otherwise additive).
-      const expected = kind.id === 'havok' ? 'composite' : 'polygon';
+      const expected = kind.id === 'havok' || kind.id === 'cargo-pod' ? 'composite' : 'polygon'; // cargo-pod: P1a loot pod (one silhouette per glow tier)
       expect(kind.shape.kind, `${kind.id} shape kind`).toBe(expected);
     }
   });
@@ -162,6 +162,7 @@ describe('getShipKind / isShipKindId', () => {
 describe('weapon mounts + slots (Phase 1, 2026-05-11)', () => {
   it('every catalogue kind defines at least one mount and one slot', () => {
     for (const kind of SHIP_KINDS_LIST) {
+      if (kind.id === 'cargo-pod') continue; // a loot pod, not a combatant (never spawned as a drone)
       expect(kind.mounts, `${kind.id} mounts`).toBeDefined();
       expect(kind.slots, `${kind.id} slots`).toBeDefined();
       expect(kind.mounts!.length).toBeGreaterThanOrEqual(1);
@@ -427,8 +428,8 @@ describe('havok composite kind — catalogue registration (composite-ships Phase
     expect(SHIP_KINDS_LIST[8]!.id).toBe('havok'); // index 8 is wire-stable; robots append after (allegiances P0)
   });
 
-  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 13 (allegiances P0 allegiance/npcOnly/shedImmune shape add)', () => {
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(13);
+  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 14 (P1a cargo-pod append; 13 = P0 allegiance fields)', () => {
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(14);
   });
 
   it('HAVOK is registered in SHIP_KINDS and parses its own schema', () => {
