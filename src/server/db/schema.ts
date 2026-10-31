@@ -144,6 +144,25 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
+
+-- Living World P1a (plan peppy-jumping-pinwheel) — the unified HOLD table.
+-- Every unit of value (goods / credits / blueprints) lives in exactly one
+-- holder's row: a ship instance, a loot pod, a storage structure, a hauler run.
+-- holder_type: 'ship' | 'pod' | 'structure' | 'hauler'. Pods also persist their
+-- sector + pose here (they are NOT in the sector snapshot — A3). Rows are
+-- written as ABSOLUTE state (upsert), never deltas, so a replay is idempotent.
+CREATE TABLE IF NOT EXISTS holds (
+  holder_uid   TEXT PRIMARY KEY,
+  holder_type  TEXT NOT NULL,
+  owner_id     TEXT,
+  sector_key   TEXT,
+  x            REAL,
+  y            REAL,
+  payload_json TEXT NOT NULL,
+  expires_at   INTEGER,
+  updated_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_holds_sector ON holds(sector_key, holder_type);
 `;
 
 /**

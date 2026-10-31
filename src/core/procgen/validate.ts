@@ -142,16 +142,40 @@ export function validateLayout(l: BaseLayout): ValidationResult {
   }
 
   // Fly-through reachability.
+  const f = floodReachable(l);
+  if (f.sealed > 0) reasons.push(`${f.sealed} flyable cells sealed off from every gate`);
+
+  return { ok: reasons.length === 0, reasons, sealedCells: f.sealed, reachableCells: f.reachedCount };
+}
+
+export interface ReachResult {
+  readonly grid: OccupancyGrid;
+  /** 1 = reachable from outside the base by the largest flyable ship. */
+  readonly reached: Uint8Array;
+  readonly reachedCount: number;
+  /** Flyable cells NOT reachable (sealed pockets). */
+  readonly sealed: number;
+  readonly need: number;
+}
+
+/** Flood fill from the grid rim over cells with flyable clearance. */
+export function floodReachable(l: BaseLayout): ReachResult {
   const g = buildOccupancy(l);
   const need = requiredClearance();
   const reached = new Uint8Array(g.n * g.n);
   const queue = new Int32Array(g.n * g.n);
   let qh = 0, qt = 0;
+  const visit = (j: number): void => {
+    if (reached[j] || g.clearance[j]! < need) return;
+    reached[j] = 1;
+    queue[qt++] = j;
+  };
   // Seed: every flyable cell on the grid rim (outside the base).
   for (let i = 0; i < g.n; i++) {
-    for (const idx of [i, (g.n - 1) * g.n + i, i * g.n, i * g.n + g.n - 1]) {
-      if (!reached[idx] && g.clearance[idx]! >= need) { reached[idx] = 1; queue[qt++] = idx; }
-    }
+    visit(i);
+    visit((g.n - 1) * g.n + i);
+    visit(i * g.n);
+    visit(i * g.n + g.n - 1);
   }
   while (qh < qt) {
     const idx = queue[qh++]!;
@@ -161,14 +185,7 @@ export function validateLayout(l: BaseLayout): ValidationResult {
     if (y > 0) visit(idx - g.n);
     if (y < g.n - 1) visit(idx + g.n);
   }
-  function visit(j: number): void {
-    if (reached[j] || g.clearance[j]! < need) return;
-    reached[j] = 1;
-    queue[qt++] = j;
-  }
   let sealed = 0;
   for (let i = 0; i < reached.length; i++) if (!reached[i] && g.clearance[i]! >= need) sealed++;
-  if (sealed > 0) reasons.push(`${sealed} flyable cells sealed off from every gate`);
-
-  return { ok: reasons.length === 0, reasons, sealedCells: sealed, reachableCells: qt };
+  return { grid: g, reached, reachedCount: qt, sealed, need };
 }

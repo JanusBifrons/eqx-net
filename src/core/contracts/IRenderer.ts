@@ -314,6 +314,19 @@ export interface ProjectileRenderState {
   weaponId?: string;
 }
 
+/** A procedural base to draw (structured-cloneable; geometry NOT included). */
+export interface BaseRenderDescriptor {
+  id: string;
+  ver: number;
+  archetype: 'warehouse';
+  seed: number;
+  x: number;
+  y: number;
+  size: number;
+  /** Destroy-bit words; omitted = intact. */
+  dead?: number[];
+}
+
 export interface RenderMirror {
   ships: Map<string, ShipRenderState>;
   /** Phase 6b — lingering player hulls (isActive=false on the wire).
@@ -810,6 +823,13 @@ export interface IRenderer {
   /** Clear the radar while IN_TRANSIT / ARRIVED (the mirror still holds the
    *  old sector). NOT during SPOOLING — the player can still be attacked. */
   setRadarSuppressed(suppressed: boolean): void;
+  /**
+   * Procedural bases (plan soft-leaping-truffle) — the bases to draw, as
+   * DESCRIPTORS only (the renderer regenerates geometry with the shared core
+   * generator, on either render path). Called only when the set or a destroy
+   * mask changes — never per frame (it is not part of RenderMirror).
+   */
+  setBases(bases: readonly BaseRenderDescriptor[]): void;
   /**
    * Phase 4 WS-A2 (Ship entry / switch) — kick off a ONE-SHOT eased camera glide
    * from the current view to the GAME-space point `(gameX, gameY)` over

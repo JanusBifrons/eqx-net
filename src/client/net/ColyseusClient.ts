@@ -1,5 +1,6 @@
+import { PredBaseStreamer, deadMaskHash, type BaseStateView } from './predBaseStreamer.js';
 import { Client, Room } from 'colyseus.js';
-import type { RenderMirror, ShipRenderState } from '@core/contracts/IRenderer';
+import type { BaseRenderDescriptor, RenderMirror, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
 import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 import { SPOOL_DURATION_MS } from '@core/transit/TransitStateMachine';
@@ -17,6 +18,9 @@ import {
   type CollisionGuardState,
 } from './applyCollisionResolved';
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
+import { LootCollectedEventSchema } from '@shared-types/messages/lootMessages';
+import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
+import { cargoCapacityForMaxHealth } from '@shared-types/goods';
 import { applySelectionStats } from './selectionStats.js';
 import {
   createRemotePredictionGuard,
@@ -112,6 +116,10 @@ export interface ColyseusClientCallbacks {
    *  `EffectsService.resetForSectorHandoff()`. Optional — callers that
    *  don't render (LocalGameClient, headless tests) can omit. */
   onSectorHandoff?: () => void;
+  /** Procedural bases (plan soft-leaping-truffle) — fired when the bases in
+   *  room state change (add / remove / destroy mask). Wired to
+   *  `renderer.setBases`. Never per frame. */
+  onBasesChanged?: (bases: BaseRenderDescriptor[]) => void;
 }
 
 /** Timestamped remote-ship state snapshot for 100 ms display-delay interpolation. */
@@ -455,6 +463,8 @@ export class ColyseusGameClient {
   };
 
   private room: Room | null = null;
+  /** Procedural-base chunk streaming into predWorld (plan soft-leaping-truffle). */
+  private readonly _predBases = new PredBaseStreamer();
 
   /** Phase 8 sub-phase B — exposed for the in-game galaxy maps (Pixi
    *  GalaxyMapLayer + GalaxyOverviewScreen warp-mode) to call
@@ -1228,6 +1238,8 @@ export class ColyseusGameClient {
     // client-receive gaps with the server emitting cleanly throughout).
     // Idempotent; safe to call again on reconnect.
     installLongtaskObserver();
+    this._onBasesChanged = callbacks.onBasesChanged;
+    this._basesSig = '';
     // r2 evidence pass — visibility / freeze / resume / connection
     // change listeners. Distinguishes "page backgrounded" throttle
     // from "phone CPU throttle" in effectiveHz drops.
@@ -1242,6 +1254,7 @@ export class ColyseusGameClient {
     // Init client-side prediction world before joining so it is ready as soon as
     // we receive our playerId.
     this.predWorld = await PhysicsWorld.create();
+    this._predBases.reset();
 
     callbacks.onConnectionStatus('connecting');
     logEvent('cc_connecting', { wsUrl, playerId: storedPlayerId ?? null });
@@ -1972,6 +1985,16 @@ export class ColyseusGameClient {
               ? 'neutral'
               : undefined;
       useUIStore.getState().addWarpWarning({ id, label, count, countdownMs, ...(relation ? { relation } : {}) });
+    });
+    // Living World P1a — pickup popup (UI accelerator only; cargo truth rides
+    // the own-ship snapshot slice). zod-validated (invariant #3).
+    room.onMessage('loot_collected', (raw: unknown) => {
+      const parsed = LootCollectedEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const text = formatLootPickup(parsed.data);
+      if (text === '') return;
+      const id = useUIStore.getState().pushLootFeed(text);
+      setTimeout(() => useUIStore.getState().expireLootFeed(id), LOOT_FEED_TTL_MS);
     });
     room.onMessage('warp_warning_clear', (raw: unknown) => {
       const parsed = WarpWarningClearSchema.safeParse(raw);
@@ -2935,6 +2958,8 @@ export class ColyseusGameClient {
       // truth, so an upgrade applied while the player is in another sector still
       // takes effect the moment its own-ship slice arrives.
       this.applyLocalStatAlloc(localId, serverState.statAlloc);
+      // Living World P1a (#16) — the authoritative own-ship cargo slice.
+      this.applyLocalCargo(localId, serverState.cargo);
 
       // Drone snapshot slice (slim turret/shield slice; pose flows on the
       // binary swarm wire). See snapshotRemoteSync.ts. Campaign 2.1: the
@@ -3260,6 +3285,59 @@ export class ColyseusGameClient {
       if (this.mirror.structures && this.mirror.structures.size > 0) this.mirror.structures.clear();
     }
     this.syncPredWalls();
+    this.syncPredBases();
+  }
+
+  /**
+   * Procedural bases (plan soft-leaping-truffle) — stream the local predWorld's
+   * base chunk colliders around the local ship from the room-state
+   * descriptors, so the player's predicted flight is blocked by the SAME
+   * walls the server worker blocks (Invariant #15; "every collidable entity
+   * must be in predWorld"). Per snapshot; allocation-free in steady state.
+   */
+  private syncPredBases(): void {
+    if (!this.predWorld) return;
+    const state = this.room?.state as { bases?: { forEach(cb: (v: BaseStateView, k: string) => void): void } } | undefined;
+    const localId = this.mirror.localPlayerId;
+    const ship = localId !== null ? this.mirror.ships.get(localId) : undefined;
+    if (!ship) return;
+    this._predBases.sync(this.predWorld, state?.bases, ship.x, ship.y);
+    this.publishBasesIfChanged(state?.bases);
+  }
+
+  /** Signature of the room-state bases last handed to the renderer. */
+  private _basesSig = '';
+  /** Set in connect() from ColyseusClientCallbacks.onBasesChanged. */
+  private _onBasesChanged: ((bases: BaseRenderDescriptor[]) => void) | undefined;
+
+  /** Hand the renderer the base descriptors when (and only when) they change.
+   *  The signature string is built per snapshot only while bases exist — a
+   *  handful of scalars per base; fine at 20 Hz and zero cost in base-free
+   *  sectors. */
+  private publishBasesIfChanged(
+    bases: { forEach(cb: (v: BaseStateView & { dead?: ArrayLike<number> }, k: string) => void): void } | undefined,
+  ): void {
+    let sig = '';
+    // TODO: alloc-debt — per-snapshot signature string while bases exist.
+    bases?.forEach((v, k) => {
+      sig += k + ':' + v.seed + ':' + v.originX + ':' + v.originY + ':' + v.size + ':' + deadMaskHash(v.dead) + ';';
+    });
+    if (sig === this._basesSig) return;
+    this._basesSig = sig;
+    const out: BaseRenderDescriptor[] = [];
+    bases?.forEach((v, k) => {
+      out.push({
+        id: k,
+        ver: v.ver,
+        archetype: v.archetype as BaseRenderDescriptor['archetype'],
+        seed: v.seed,
+        x: v.originX,
+        y: v.originY,
+        size: v.size,
+        ...(v.dead && v.dead.length > 0 ? { dead: Array.from(v.dead) } : {}),
+      });
+    });
+    this._onBasesChanged?.(out);
   }
 
   /**
@@ -5071,6 +5149,25 @@ export class ColyseusGameClient {
    * #12). Guarded by a stable JSON key so identical allocations don't re-push
    * every snapshot. An absent / empty alloc resets to the neutral path.
    */
+  /**
+   * Living World P1a (#16) — mirror the AUTHORITATIVE own-ship cargo slice into
+   * the discrete Zustand `cargo`. Called per applied snapshot, so it writes the
+   * store ONLY when the contents actually changed (`cargoChanged` compares
+   * field-by-field without allocating) — a steady hold costs zero renders.
+   */
+  private applyLocalCargo(
+    localId: string,
+    cargo: { goods: Partial<Record<string, number>>; credits: number; blueprints: string[] } | undefined,
+  ): void {
+    const s = useUIStore.getState();
+    const capacity = cargoCapacityForMaxHealth(getShipKind(this.mirror.ships.get(localId)?.kind ?? null).maxHealth);
+    if (!cargoChanged(s.cargo, cargo) && s.cargoCapacity === capacity) return;
+    s.setCargo(
+      cargo === undefined ? null : { goods: { ...cargo.goods }, credits: cargo.credits, blueprints: cargo.blueprints.length },
+      capacity,
+    );
+  }
+
   private applyLocalStatAlloc(localId: string, alloc: Record<string, number> | undefined): void {
     if (!this.predWorld || !this.predWorld.hasShip(localId)) return;
     const decision = decideStatAllocReanchor(alloc, this._lastStatAllocKey);

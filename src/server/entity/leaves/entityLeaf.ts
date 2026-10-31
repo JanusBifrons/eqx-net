@@ -178,4 +178,16 @@ export interface LeafDeps {
    *  first), and `getActiveShip(shipInstanceId)` returns undefined. Optional ⇒
    *  no scrap (test fixtures / engineering rooms without a ScrapSpawner). */
   spawnScrapFromLingeringHull?: (kind: ShipKindId, pose: ShipPhysicsState, shipInstanceId: string) => void;
+  /** Hostile-review A1 (plan peppy-jumping-pinwheel P1a-1) — a LINGERING hull is
+   *  about to be torn down after combat death. Called BEFORE the teardown (the
+   *  ship is still in `shipsMap`, its pose still in `lingeringPoseCache`), so the
+   *  room can do what the `SHIP_DESTROYED` handler cannot for a lingering hull
+   *  (the handler's lookup misses once the ship leaves `shipsMap`): delete the
+   *  roster row (D9), award kill XP, clear the ownerless marker, and spill the
+   *  ship's hold. `pose` is undefined if the pose cache had no entry. */
+  onLingeringHullDeath?: (
+    ship: { shipInstanceId: string; playerId: string; kind: string },
+    pose: ShipPhysicsState | undefined,
+    sourceId: string,
+  ) => void;
 }
