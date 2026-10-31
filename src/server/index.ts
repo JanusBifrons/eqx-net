@@ -859,6 +859,27 @@ gameServer
     maxClients: 8,
   })
   .filterBy(['testId']);
+// Living World showcase (plan peppy-jumping-pinwheel) — the scripted video's
+// scene: a ROBOT squad and a DRONE squad parked to fight just north of spawn
+// (they engage each other on sight — allegiances P0), so loot pods rain down.
+// A real sectorKey so roster + holds work (pickup / deposit). Test-only room.
+gameServer
+  .define('living-world-showcase', SectorRoom, {
+    sectorKey: 'living-world-showcase',
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    maxClients: 4,
+    dronePoses: [
+      { kind: 'fighter', x: -260, y: 520, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'fighter', x: -300, y: 620, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'scout', x: -240, y: 720, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'robot-square', x: 260, y: 540, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-square', x: 300, y: 640, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-square', x: 240, y: 740, angle: Math.PI / 2, hullExposed: true },
+    ],
+  })
+  .filterBy(['testId']);
 // Phase 6 TiDi acceptance gate. 4000 entities (3200 asteroids + 800 active
 // drones at the 0.8 ratio). Diagnostic captures show this only consumes
 // ~1.5 ms/tick on a typical dev machine — well under the 14 ms TiDi

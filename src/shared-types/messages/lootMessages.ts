@@ -18,3 +18,23 @@ export const LootCollectedEventSchema = z
   })
   .strict();
 export type LootCollectedEvent = z.infer<typeof LootCollectedEventSchema>;
+
+/** Living World P1a-2 — a short player-facing notice (e.g. "Repaired for 40 cr",
+ *  "not enough banked credits"). Rendered as a HUD popup line. */
+export const NoticeEventSchema = z
+  .object({
+    type: z.literal('notice'),
+    text: z.string().min(1).max(200),
+  })
+  .strict();
+
+/** Living World P1a-2 — an auto-deposit landed (UI accelerator: the "Banked …"
+ *  popup). Cargo truth is still the own-ship snapshot slice. */
+export const CargoDepositedEventSchema = z
+  .object({
+    type: z.literal('cargo_deposited'),
+    goods: z.partialRecord(z.enum(GOOD_IDS), z.number().int().nonnegative()),
+    credits: z.number().int().nonnegative(),
+    blueprints: z.number().int().nonnegative(),
+  })
+  .strict();

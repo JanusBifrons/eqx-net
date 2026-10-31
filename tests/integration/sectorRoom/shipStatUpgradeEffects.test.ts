@@ -22,6 +22,7 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import { getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
+import { seedBankCredits } from './bankSeed.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import {
   effectiveShipMaxHealth,
@@ -142,6 +143,8 @@ describe('SectorRoom integration — non-physics stat upgrades move the value', 
     upgraded.shield = effectiveShipShieldMax(kind.shieldMax, { shield: 2 });
     upgraded.energy = effectiveShipEnergyMax(kind.energyMax ?? 100, { energy: 2 });
 
+    // Living World P1a-2 — a respec costs banked credits; seed them.
+    seedBankCredits(room, player, 500);
     // Respec — caps drop back to the kind base; current values must clamp DOWN.
     const echo2 = nextEcho(cr, shipId);
     cr.send('respec_ship', { type: 'respec_ship', shipId });

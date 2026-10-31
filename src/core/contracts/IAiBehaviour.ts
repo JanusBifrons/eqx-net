@@ -23,6 +23,10 @@ export interface AiPlayerView {
    *  (drones are snapshot-interpolated, no client brain). */
   readonly health?: number;
   readonly maxHealth?: number;
+  /** Living World P1a-2 — set for a displaced LINGERING hull (whose `id` is its
+   *  shipInstanceId): the owning player's id, so a drone hostile to that player
+   *  (its `hostileTo` holds playerIds) treats the parked hull as hostile too. */
+  readonly ownerId?: string;
 }
 
 /**

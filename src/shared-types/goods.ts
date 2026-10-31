@@ -63,6 +63,13 @@ export function parseHoldJson(json: string | null | undefined): Hold {
   return { goods: {}, credits: 0, blueprints: [] };
 }
 
+/** Living World P1a-2 credit sinks (balance knobs — tune on-device). Shared so
+ *  the UI labels and the server charge read the SAME numbers (#15). Instant
+ *  repair costs this many credits per missing hull point (rounded up); a stat
+ *  respec is flat. */
+export const REPAIR_CREDITS_PER_HP = 0.5;
+export const RESPEC_CREDIT_COST = 100;
+
 /** Cargo capacity (weight units) of a ship kind — derived, so it needs no
  *  catalogue field: tougher hulls haul more. Shared by the HUD + server clamp. */
 export function cargoCapacityForMaxHealth(maxHealth: number): number {

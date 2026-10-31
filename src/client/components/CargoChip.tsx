@@ -43,6 +43,20 @@ const DETAIL_SX = {
   color: 'rgba(255,255,255,0.7)',
   pointerEvents: 'none' as const,
 };
+const DEPOSIT_TRACK_SX = {
+  width: { xs: 64, sm: 140 },
+  height: { xs: 3, sm: 5 },
+  ml: 0.75,
+  borderRadius: '2px',
+  backgroundColor: 'rgba(255,255,255,0.12)',
+  overflow: 'hidden' as const,
+  pointerEvents: 'none' as const,
+};
+const DEPOSIT_FILL_SX = {
+  height: '100%',
+  backgroundColor: '#5fd6c4',
+  transition: 'width 250ms linear',
+};
 const FEED_SX = {
   px: 0.75,
   fontSize: { xs: 9, sm: 12 },
@@ -56,6 +70,7 @@ export function CargoChip(): JSX.Element | null {
   const cargo = useUIStore((s) => s.cargo);
   const capacity = useUIStore((s) => s.cargoCapacity);
   const feed = useUIStore((s) => s.lootFeed);
+  const depositPct = useUIStore((s) => s.depositPct);
   const [open, setOpen] = useState(false);
   if (!shouldRender) return null;
   if (cargo === null && feed.length === 0) return null;
@@ -77,6 +92,13 @@ export function CargoChip(): JSX.Element | null {
           <span style={{ color: FILL_COLOR[fill] }}>▣ {weight}/{capacity}</span>
           <span style={{ color: '#ffd060' }}>¢{cargo.credits.toLocaleString()}</span>
           {cargo.blueprints > 0 && <span style={{ color: '#ffc83a' }}>★{cargo.blueprints}</span>}
+        </Box>
+      )}
+      {depositPct !== null && cargo !== null && (
+        // Living World P1a-2 — auto-deposit progress (hold position by your
+        // storage). The CSS transition smooths the 10 % steps.
+        <Box data-testid="cargo-depositing" data-deposit-pct={depositPct} sx={DEPOSIT_TRACK_SX}>
+          <Box sx={{ ...DEPOSIT_FILL_SX, width: `${depositPct}%` }} />
         </Box>
       )}
       {open && cargo !== null && (

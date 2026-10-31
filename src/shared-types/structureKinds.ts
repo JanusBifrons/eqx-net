@@ -45,6 +45,7 @@ export const StructureKindIdSchema = z.enum([
   // WS-8 (R2.15) — two new defence turrets. APPEND-ONLY (wire subtype index).
   'laser_bolt_turret',
   'missile_turret',
+  'cargo_bay', // Living World P1a-2 — APPEND ONLY
 ]);
 export type StructureKindId = z.infer<typeof StructureKindIdSchema>;
 
@@ -106,6 +107,11 @@ export const StructureKindSchema = z
      *  grid's surplus and discharges to keep its component `powered` through a
      *  deficit; the shield-wall damage model drains it first. */
     powerStorageCapacity: z.number().nonnegative().optional(),
+    /** Living World P1a-2 (plan peppy-jumping-pinwheel) — cargo HOLD capacity
+     *  (goods weight units, `GOOD_DEFS` weights) for deposited loot. ABSENT ⇒
+     *  the kind is not a storage structure. Minerals delivered to a Capital
+     *  still go to its `storageCapacity` bank (they fund construction). */
+    holdCapacity: z.number().nonnegative().optional(),
 
     // -- Construction ------------------------------------------------------
     /** Total minerals to fully build from a blueprint (drained gradually by
@@ -158,8 +164,29 @@ export const CAPITAL: StructureKind = {
   powerOutput: 50,
   powerConsumption: 0,
   storageCapacity: 2_000_000,
+  // Living World P1a-2 — the Capital is the largest cargo hold.
+  holdCapacity: 5_000,
   constructionCost: 0,
   color: 0xffcc44,
+};
+
+/** Living World P1a-2 — a cheap forward drop-off: a leaf storage structure you
+ *  can build at an outpost so a long haul doesn't have to reach the Capital.
+ *  Connected storage forms one network (deposit overflows across it). */
+export const CARGO_BAY: StructureKind = {
+  id: 'cargo_bay',
+  displayName: 'Cargo Bay',
+  description: 'A forward drop-off. Fly close to deposit loot; it joins your base storage network.',
+  radius: 26,
+  maxHealth: 900,
+  maxConnections: 1,
+  isHub: false,
+  powerOutput: 0,
+  powerConsumption: 0,
+  storageCapacity: 0,
+  holdCapacity: 2_000,
+  constructionCost: 300,
+  color: 0x5fd6c4,
 };
 
 /** The Relay — a cheap, low-HP pure hub node. The linking mechanism. */
@@ -390,6 +417,8 @@ export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   // WS-8 (R2.15) — APPENDED at the tail (wire indices 7, 8). Never reorder.
   LASER_BOLT_TURRET,
   MISSILE_TURRET,
+  // Living World P1a-2 — APPENDED (wire index 9). Never reorder.
+  CARGO_BAY,
 ]);
 
 /** Id-keyed lookup, derived from the canonical list (the list is the source of
@@ -407,7 +436,8 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
  *  4→5 (WS-6): shrank CONNECTOR.radius 24→10 + SHIELD_PYLON.radius 30→12 (R2.11/R2.18).
  *  5→6 (WS-8): appended LASER_BOLT_TURRET + MISSILE_TURRET defence kinds (R2.15).
  *  6→7 (P3.2): removed CAPITAL.connectionRange — uniform connection range. */
-export const STRUCTURE_KIND_CATALOGUE_VERSION = 7;
+export const STRUCTURE_KIND_CATALOGUE_VERSION = 8;
+// 7→8 (Living World P1a-2): appended CARGO_BAY + the `holdCapacity` field.
 
 /** The pre-built anchor every base starts from. */
 export const DEFAULT_STRUCTURE_KIND: StructureKindId = 'capital';
@@ -461,6 +491,7 @@ export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
   // beam turret by SHAPE + tint: bolt = orange square, missile = teal hexagon.
   laser_bolt_turret: 4,
   missile_turret: 6,
+  cargo_bay: 4, // boxy crate, told apart from solar/battery by its teal tint
 };
 
 /**

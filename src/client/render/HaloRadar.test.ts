@@ -17,6 +17,9 @@ describe('radarCategoryForSwarm — contact → radar category', () => {
     expect(radarCategoryForSwarm(0, false)).toBe('asteroid');
     expect(radarCategoryForSwarm(2, false)).toBe('structure');
     expect(radarCategoryForSwarm(3, false)).toBe('scrap');
+    // Living World P1a-2: loot pods / derelicts ride scrap but show as 'loot'.
+    expect(radarCategoryForSwarm(3, false, 'cargo-pod')).toBe('loot');
+    expect(radarCategoryForSwarm(3, false, 'fighter')).toBe('scrap');
   });
   it('classifies a drone by hostility to the local player', () => {
     expect(radarCategoryForSwarm(1, true)).toBe('hostile');

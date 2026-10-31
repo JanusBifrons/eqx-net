@@ -190,6 +190,9 @@ export interface SnapshotMessage {
        *  accelerator. Shared reference, replaced only on a discrete transfer.
        *  No `SWARM_WIRE_VERSION` bump (slim JSON field). */
       cargo?: { goods: Partial<Record<string, number>>; credits: number; blueprints: string[] };
+      /** Living World P1a-2 — auto-deposit progress 0..100 (own active ship only;
+       *  absent ⇒ not depositing). Drives the HUD deposit ring. */
+      depositing?: number;
       /** Phase 4 (Dynamic weapon mounts, WS-B3) — the hull's ACTIVATED latent
        *  mount slots (`{ slotId, weaponId }[]`). PUBLIC (unlike `statAlloc`):
        *  emitted for EVERY ship (active + lingering) that has ≥ 1 activated

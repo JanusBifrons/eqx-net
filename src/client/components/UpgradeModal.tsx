@@ -1,3 +1,4 @@
+import { RESPEC_CREDIT_COST } from '../../shared-types/goods';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Box,
@@ -239,7 +240,7 @@ export function UpgradeModal({ ship, open, onClose, onApply, onRespec, onActivat
           data-testid="upgrade-respec"
           sx={{ color: '#ffb347', border: '1px solid #5a4520', '&:hover': { bgcolor: 'rgba(255,179,71,0.08)' } }}
         >
-          Respec
+          {`Respec (${RESPEC_CREDIT_COST} cr)`}
         </Button>
         <Box sx={{ display: 'flex', gap: 1 }}>
           <Button onClick={onClose} sx={{ color: '#9aa0b4' }} data-testid="upgrade-close">Close</Button>

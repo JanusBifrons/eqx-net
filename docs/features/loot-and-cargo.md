@@ -81,8 +81,71 @@ accelerator. A lost message loses a popup, never value.
 Fixing the lingering seam exposed a pre-existing bug (hostile-review A1): a
 killed lingering hull never deleted its roster row. See `docs/LESSONS.md`.
 
+## Part 2 (P1a-2): base storage, auto-deposit, derelicts, credit sinks
+
+### What the player sees
+- **Bring it home.** Fly within 400 u of your own Capital or **Cargo Bay** and
+  hold position for 2 s. A bar under the cargo chip fills, then everything you
+  carry is banked ("Banked +9 Salvage · +77 cr").
+  - Minerals go to the Capital's construction bank, so loot funds building.
+  - Everything else fills the storage hold by weight. Capital 5000, Cargo Bay
+    2000.
+- **Storage is a network.** Same-owner storage connected by your grid forms one
+  network: a deposit fills the nearest storage, then overflows across it.
+  Whatever doesn't fit stays aboard.
+- **Cargo Bay.** A cheap leaf structure (Economy build category) you can put at
+  an outpost as a forward drop-off.
+- **Inspector.** Selecting your own storage shows `HOLD 12/5000 · Salvage 9 ·
+  ¢77`. Only the owner sees the contents; the server strips them for everyone
+  else. A Capital with salvage gets a **Refine** action (1 salvage → 10
+  minerals). Any owned storage has **Repair** (fix your ship to full here).
+- **Credits have uses.**
+  - Instant repair costs 0.5 cr per missing hull point.
+  - A stat respec costs 100 cr.
+  - Both are paid from credits banked in that sector. Not enough credits or not
+    near your storage gives a short HUD notice.
+- **Lose it like you earned it.** A storage structure that is razed (or
+  deconstructed) spills its whole payload as a pod.
+- **Derelicts.** An abandoned ship's cargo becomes a bright *derelict* hulk that
+  lasts an hour. Fly alongside to salvage it over time (15 weight units per
+  step), and anyone else alongside it competes for the haul.
+- **Logging off is risky.** A ship whose pilot disconnected is AI-targetable.
+  You can't combat-log a full hold to safety. A just-joined ship still being set
+  up is NOT targetable.
+- **Radar.** Loot pods and derelicts show as gold diamonds on the off-screen
+  ring.
+
+### How it works
+- **Stable structure identity.** Entity ids are re-minted on restart, so each
+  structure has a `uid`: a deterministic hash of sector, owner, kind and
+  rounded pose. All four are persisted, so a restore recomputes the same uid
+  with no snapshot change.
+- **One store of value (hostile-review A4).** Each storage structure's payload
+  (goods hold + the Capital's mineral bank) is a `holds` row keyed by `uid`.
+  - Player transfers (deposit, refine, credit spends) commit the ship side and
+    every touched structure as one atomic group.
+  - Server-internal mineral flows (mining, hauling, construction) are
+    dirty-flushed on the 1 Hz grid pulse. A crash can lose about a second of
+    mining but never duplicate player value.
+  - On hydrate the fresher holds row overlays the snapshot.
+- **Derelicts** are pods with holder type `derelict`. They are never merge
+  targets and are rate-limited per collect step. Popups are throttled.
+
+### Deferred
+- **Buy ship** (decision 8) moves to P2. Spawning happens from the galaxy
+  picker, outside any sector's bank, so it needs P2's player-wide economy view.
+- **Ownerless storage** becomes derelict when a base loses its owner. Nothing
+  in the game removes an owner yet, so there is no trigger.
+
 ## Tests
 
+- Part 2: `src/server/cargo/StorageService.test.ts` (uid determinism, atomic
+  deposit, network overflow, rejection cases, refine, restore overlay, dirty
+  flush, spill), `tests/integration/sectorRoom/storageDeposit.test.ts`
+  (deposit → refine → raze spill; repair at your storage spends credits),
+  `lingeringAiTargetable.test.ts` (an offline hull is in the AI view; RED with
+  the change reverted), the derelict cases in `LootSubsystem.test.ts` +
+  `lootLoop.test.ts`, the respec credit cases in `shipUpgradeApply.test.ts`.
 - Unit: `src/core/cargo/hold.test.ts` (conservation, capacity, tiers, loot
   rolls), `src/server/cargo/LootSubsystem.test.ts` (pickup group, merge,
   cap, TTL, spill, restore), `src/server/db/holdsGroup.test.ts` (atomic

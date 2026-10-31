@@ -27,6 +27,7 @@ import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import { getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
 import type { ShipUpgradeAppliedEvent } from '../../../src/shared-types/messages.js';
+import { seedBankCredits } from './bankSeed.js';
 
 function getRoomById(roomId: string): SectorRoom {
   return matchMaker.getLocalRoomById(roomId) as unknown as SectorRoom;
@@ -119,6 +120,8 @@ describe('SectorRoom integration — ship stat upgrade (Phase 4 WS-B2)', () => {
     const shipId = shipInstanceFor(room, player);
 
     getPlayerShipStore().setProgress(shipId, { level: 6, statAlloc: { damage: 4 } });
+    // Living World P1a-2 — a respec costs RESPEC_CREDIT_COST banked credits.
+    seedBankCredits(room, player, 500);
 
     const echoP = nextEcho(cr, shipId);
     cr.send('respec_ship', { type: 'respec_ship', shipId });
@@ -128,6 +131,19 @@ describe('SectorRoom integration — ship stat upgrade (Phase 4 WS-B2)', () => {
     expect(echo.spent).toBe(0);
     expect(echo.budget).toBe(5);
     expect(getPlayerShipStore().get(shipId)!.statAlloc).toEqual({});
+  });
+
+  it('Living World P1a-2: a respec with no banked credits is refused (credit sink)', async () => {
+    const player = randomUUID();
+    const cr = await harness.connectActive(player, { shipKind: 'fighter' });
+    await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === player });
+    const room = getRoomById(cr.roomId);
+    const shipId = shipInstanceFor(room, player);
+    getPlayerShipStore().setProgress(shipId, { level: 6, statAlloc: { damage: 4 } });
+
+    cr.send('respec_ship', { type: 'respec_ship', shipId });
+    await new Promise((r) => setTimeout(r, 500));
+    expect(getPlayerShipStore().get(shipId)!.statAlloc).toEqual({ damage: 4 }); // unchanged
   });
 
   it('a FOREIGN ship id is dropped (no cross-player upgrade)', async () => {
