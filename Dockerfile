@@ -15,6 +15,8 @@ FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 COPY package.json pnpm-lock.yaml ./
+# pnpm patches (patchedDependencies) must exist before install — see patches/.
+COPY patches ./patches
 RUN pnpm install --frozen-lockfile
 
 # ── runtime stage ───────────────────────────────────────────────────────────
