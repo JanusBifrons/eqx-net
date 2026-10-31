@@ -2803,6 +2803,29 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
+  /** Living World P1a-2 — liveness for AI targeting (#17): a player with a
+   *  live session. Bound once (no per-tick closure, #14). */
+  private readonly _isPlayerConnected = (pid: string): boolean => this.playerToSession.has(pid);
+
+  /** Living World P1a-2 (decision 7) — append every alive, displaced LINGERING
+   *  hull (id = shipInstanceId, ownerId = its player) to the AI player view.
+   *  Small set (parked hulls); bound once. The object literal per hull mirrors
+   *  the existing `aiPlayerScratch` push pattern. // TODO: alloc-debt */
+  private readonly _visitLingeringTargets = (out: AiPlayerView[]): void => {
+    if (this.lingeringSlots.size === 0) return;
+    for (const [shipInstanceId] of this.lingeringSlots) {
+      const ship = this.state.ships.get(shipInstanceId);
+      if (!ship?.alive) continue;
+      const pose = this.lingeringPoseCache.get(shipInstanceId);
+      if (!pose) continue;
+      out.push({
+        id: shipInstanceId, ownerId: ship.playerId,
+        x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy,
+        health: ship.health, maxHealth: ship.maxHealth,
+      });
+    }
+  };
+
   /** Allegiances P0 — pooled per-tick swarm-combatant views (never reallocated
    *  once grown, #14) + the matching fire-resolver hit circles. */
   private readonly _swarmViewPool: Array<{
@@ -6341,6 +6364,9 @@ export class SectorRoom extends Room<SectorState> {
       fillStructureTargets: (out) => this.fillStructureTargets(out),
       aiSwarmScratch: this.aiSwarmScratch,
       fillSwarmTargets: (out) => this.fillSwarmTargets(out),
+      // Living World P1a-2 (decision 7) — offline hulls are fair game.
+      isPlayerConnected: this._isPlayerConnected,
+      visitLingeringTargets: this._visitLingeringTargets,
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       resolveEntityInto: (id, out) => this.swarmEntityPoseInto(id, out),
       handleAiFire: (shooterId, dirX, dirY, tick) => this.handleAiFire(shooterId, dirX, dirY, tick),
