@@ -132,3 +132,39 @@ So `buildChunkOutlines` (`src/core/procgen/baseChunkMesh.ts`) computes the bound
 | Stage / PR | Pieces (max base) | Step overhead (ms) | 20-tick replay overhead (ms) | Server tick added (ms) | Frame p99 Δ | Wire join (B/base) | Notes |
 |---|---|---|---|---|---|---|---|
 | PR-V1 (physics layer) | 223 | ≈ trimesh (0.088 vs 0.086 @ 4k) | — | — | — | — | seam-free slide 565/565; tunnelling 0/184 |
+
+## Vertical slice (PR-V2): server + client end to end
+
+- **Server:** the room option `bases` → `BaseSubsystem`. It writes the descriptor to room state, the worker regenerates colliders via `SPAWN_BASE`, and the subsystem handles beam and projectile blocking plus the spawn nudge.
+- **Client:** `PredBaseStreamer` handles predWorld chunk streaming; `BaseRenderer` handles rendering (per-chunk retained Graphics, culling, LOD).
+- **E2E (`base-warehouse-showcase.spec.ts`):** a ship holding thrust into the south wall is stopped, and the PREDICTED pose never enters the wall. That is the two-sided-contract check.
+
+Known visual nits for the kit/visual pass:
+- **Chunk-line seams.** The lit and shadow edges are drawn per split piece, so a faint line shows where a wall or rack crosses a chunk line. Draw edges from the unsplit rectangle.
+- **Sparse small bases.** Footprints below ~5000 u read sparse (noted earlier).
+
+| Stage / PR | Pieces (max base) | Step overhead (ms) | 20-tick replay overhead (ms) | Server tick added (ms) | Frame p99 Δ | Wire join (B/base) | Notes |
+|---|---|---|---|---|---|---|---|
+| PR-V2 (slice) | 223 | outline ≈ 0.09 @ 8k (bench) | client streams ≤ 2000 active pieces (locked) | not yet measured (perf arm = PR-P) | not yet measured | ~60 B descriptor + empty dead[] | ray query ≤ 100 cells / 400 segs, 0 alloc |
+
+### Scale pass (generator v2, user feedback: "structures should be a lot larger than the normal ship")
+
+A fighter is ~30 u long, and v1 racks (112–176 u) read as crates beside it. v2 scales every architectural dimension. Aisles stay ≥ the locked fly-through floor; at 2–3× it, the yard is also easier to fly.
+
+| Dimension | v2 value |
+|---|---|
+| Walls | 96 u |
+| Racks | 320–480 u deep, 2000–3600 u runs |
+| Aisles | 2–3× corridor |
+| Cross-aisles | 2× corridor |
+| Main aisles | 4× corridor, every ~4500 u |
+| Gates | 5× corridor |
+| Bays | 1400 u deep, 400 u margins |
+| Container stacks | 240–400 × 140–220 u |
+| Minimum size | 5000 u |
+
+Visual detail (edge shading, bay slots, conduits, lamps, hazard stripes) scales with it. `BASE_GENERATOR_VERSION` 1 → 2; hashes re-pinned.
+
+**Generate → REPAIR → curate.** Bigger pieces made sealed pockets common: up to 44% of first attempts, from bay container rows, wall corners and trimmed rack ends. `carve.ts` removes the carvable pieces (racks, containers; never walls or gate posts) that border both a sealed pocket and reachable space, then re-validates. First-attempt validity after repair: 200/200 at 5000–7000 u and 199/200 at 8000 u. Generation stays at ~2.5 ms mean, p99 < 10 ms (budget 50).
+
+**Chunk-line seams fixed.** Edge shading is skipped on piece sides that lie on an interior chunk line, where the builder split one continuous wall or rack.

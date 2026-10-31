@@ -1,3 +1,5 @@
+import { BaseSubsystem, type BaseSpec } from '../bases/BaseSubsystem.js';
+import { MAX_FLYABLE_RADIUS } from '../../core/procgen/corridor.js';
 import { Room, Client } from 'colyseus';
 import { randomUUID } from 'node:crypto';
 import { aggregateRamming } from '../../core/combat/Ramming.js';
@@ -18,7 +20,7 @@ import type { GcPauseEventMessage } from '../../shared-types/messages.js';
 import type { WarpWarningEvent, WarpWarningClearEvent } from '../../shared-types/messages.js';
 import type { GridFlowMaterial } from '../../shared-types/messages.js';
 import { getIncomingPlayerSink } from '../livingworld/incomingPlayerSink.js';
-import { SectorState, ShipState } from './schema/SectorState.js';
+import { BaseState, SectorState, ShipState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
@@ -734,6 +736,22 @@ export class SectorRoom extends Room<SectorState> {
    *  URL-param `spawnX`/`spawnY` overrides this — set in `feel-test` so a
    *  player joining without params still lands at the known anchor. */
   private defaultSpawnX: number | null = null;
+  /** Procedural bases in this sector (plan soft-leaping-truffle). */
+  private readonly bases = new BaseSubsystem({
+    spawnInWorker: (id, d) =>
+      this.postToWorker({ type: 'SPAWN_BASE', id, ver: d.ver, archetype: d.archetype, seed: d.seed, x: d.x, y: d.y, size: d.size }),
+    writeState: (id, d) => {
+      const b = new BaseState();
+      b.ver = d.ver;
+      b.archetype = d.archetype;
+      b.seed = d.seed;
+      b.originX = d.x;
+      b.originY = d.y;
+      b.size = d.size;
+      (this.state as SectorState).bases.set(id, b);
+    },
+  });
+  private readonly spawnClearScratch = { x: 0, y: 0 };
   private defaultSpawnY: number | null = null;
   /** Phase 8 — counter for the 60-second snapshot cadence (galaxy sectors only). */
   private ticksSinceSnapshot = 0;
@@ -787,6 +805,10 @@ export class SectorRoom extends Room<SectorState> {
    */
   get _internals(): {
     serverTick: number;
+    /** Procedural bases (plan soft-leaping-truffle) — subsystem + the beam
+     *  block the player/AI fire resolvers call. */
+    bases: BaseSubsystem;
+    blockShotAtWall: (fx: number, fy: number, dx: number, dy: number, maxDist: number, damage: number) => number | null;
     ownerlessShips: Map<string, ReturnType<typeof setTimeout> | null>;
     /** Lingering-hull slot map (shipInstanceId → slot). Lets the resume-as-
      *  existing-ship integration test assert a lingering hull was evicted
@@ -849,6 +871,8 @@ export class SectorRoom extends Room<SectorState> {
       restoreLingeringHulls: (rows) => this.restoreLingeringHullsFromSnapshot(rows),
       aiPlayerScratch: this.aiPlayerScratch,
       postToWorker: (cmd) => this.postToWorker(cmd),
+      bases: this.bases,
+      blockShotAtWall: (fx, fy, dx, dy, maxDist, damage) => this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
       swarmRegistry: this.swarmRegistry,
@@ -1089,6 +1113,10 @@ export class SectorRoom extends Room<SectorState> {
        *  place-ahead UI (which stacks/overlaps multiple placements) or the
        *  construction wait. Each is born `isConstructed` at full HP. */
       prebuiltStructures?: ReadonlyArray<{ kind: StructureKindId; x: number; y: number }>;
+      /** Procedural bases (plan soft-leaping-truffle) to generate in this
+       *  sector. A room-DEFINITION option (server-authored, never client
+       *  input), so it is not testMode-gated — galaxy sectors use it too. */
+      bases?: ReadonlyArray<BaseSpec>;
       /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
@@ -1356,6 +1384,7 @@ export class SectorRoom extends Room<SectorState> {
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
       wallBlocksProjectile: (x, y, sx, sy, damage) =>
+        this.bases.segmentBlocked(x, y, sx, sy) ||
         this.shieldWalls.blockProjectile(x, y, sx, sy, damage, Date.now()),
     });
 
@@ -1783,6 +1812,10 @@ export class SectorRoom extends Room<SectorState> {
     if (this.testMode && (roomOpts.scenarioScrapCount ?? 0) > 0) {
       this.seedScenarioScrap(roomOpts.scenarioScrapCount!);
     }
+    // Procedural bases: generate, publish the descriptor in room state, spawn
+    // the worker colliders. Before any join, so spawns can avoid geometry.
+    const baseSpecs = roomOpts.bases ?? [];
+    for (let i = 0; i < baseSpecs.length; i++) this.bases.add('b' + i, baseSpecs[i]!);
 
     // Living World bot lifecycle hooks (spawn/despawn/markHostile).
     // These satisfy the LivingWorldRoom contract; bots are server-
@@ -3271,7 +3304,15 @@ export class SectorRoom extends Room<SectorState> {
   private blockShotAtWall(
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, damage: number,
   ): number | null {
-    return this.shieldWalls.blockShot(fromX, fromY, dirX, dirY, maxDist, damage, Date.now());
+    // A base wall in front of the shot stops it first — and caps the range
+    // passed to the shield walls so a shield span BEHIND base geometry never
+    // takes the hit.
+    const baseDist = this.bases.rayFirst(fromX, fromY, dirX, dirY, maxDist);
+    const wallDist = this.shieldWalls.blockShot(
+      fromX, fromY, dirX, dirY, baseDist >= 0 ? baseDist : maxDist, damage, Date.now(),
+    );
+    if (wallDist !== null) return wallDist;
+    return baseDist >= 0 ? baseDist : null;
   }
 
   /** Live asteroid obstacles (swarm kind=0) for connection line-of-sight, read
@@ -4408,6 +4449,13 @@ export class SectorRoom extends Room<SectorState> {
     let spawnY = parsed.success && parsed.data.spawnY !== undefined
       ? parsed.data.spawnY
       : (this.defaultSpawnY ?? (Math.random() - 0.5) * 400);
+    // Procedural-base colliders are hollow outlines: never place a ship inside
+    // solid geometry (it would be trapped). Nudge to the nearest clear point.
+    if (this.bases.count > 0) {
+      const clear = this.bases.findClearSpawn(spawnX, spawnY, MAX_FLYABLE_RADIUS + 8, this.spawnClearScratch);
+      spawnX = clear.x;
+      spawnY = clear.y;
+    }
     let resumedHealth: number | null = null;
     let resumedUserId: string | null = null;
     let resumedLastFireTick: number | null = null;
