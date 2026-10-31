@@ -30,7 +30,7 @@ const PER_TICK = 46;
 function addThinWall(world: PhysicsWorld, kind: 'cuboid' | 'trimesh'): void {
   const raw = (world as unknown as { world: RAPIER.World }).world;
   const body = raw.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  const hw = 1000;
+  const hw = 10000; // long: a sliding body must never round the wall end
   const ht = WALL_THICKNESS / 2;
   const desc =
     kind === 'cuboid'
