@@ -42,7 +42,13 @@
 import { test, type CDPSession, type Page, type BrowserContext, expect } from '@playwright/test';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { aggregateSamples, type PerSampleArm, type TickBudgetSample } from './perfCapture.js';
+import {
+  aggregateSamples,
+  framePercentile,
+  parseTickBudgetEvent,
+  type PerSampleArm,
+  type TickBudgetSample,
+} from './perfCapture.js';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 const SERVER_BASE = process.env['EQX_SERVER_URL'] ?? 'http://localhost:2567';
@@ -84,42 +90,69 @@ async function readDiagFlag(page: Page): Promise<boolean> {
   });
 }
 
-interface TickBudgetEvent {
-  total: number;
-  overBudgetCount: number;
-  sampleCount: number;
-  serverTick: number;
-}
 interface DevEvent {
   tag: string;
   ts: number;
   data: Record<string, unknown>;
 }
 
+/** Drain `tick_budget` events for the room under test (the only room with a
+ *  live player) newer than `seenLatestTick`. The /dev/events ring is GLOBAL
+ *  (~21 eager galaxy rooms emit one each per second), so the spec drains every
+ *  `TICK_DRAIN_INTERVAL_MS` instead of once at the end — a single end-of-window
+ *  read only ever saw the last few seconds. Parsing lives in the pure
+ *  `parseTickBudgetEvent` (unit-locked against the real server shape). */
 async function fetchTickBudgets(seenLatestTick: number): Promise<{
   newSamples: TickBudgetSample[];
   latestTick: number;
 }> {
-  const res = await fetch(`${SERVER_BASE}/dev/events?limit=200`);
+  const res = await fetch(`${SERVER_BASE}/dev/events?limit=500`);
   if (!res.ok) return { newSamples: [], latestTick: seenLatestTick };
   const body = (await res.json()) as { events?: DevEvent[] };
   const out: TickBudgetSample[] = [];
   let latest = seenLatestTick;
   for (const ev of body.events ?? []) {
     if (ev.tag !== 'tick_budget') continue;
-    const d = ev.data as Partial<TickBudgetEvent>;
-    if (typeof d.serverTick !== 'number') continue;
-    if (d.serverTick <= seenLatestTick) continue;
-    if (typeof d.total !== 'number' || typeof d.overBudgetCount !== 'number' || typeof d.sampleCount !== 'number') continue;
-    out.push({
-      serverTick: d.serverTick,
-      total: d.total,
-      overBudgetCount: d.overBudgetCount,
-      sampleCount: d.sampleCount,
-    });
-    if (d.serverTick > latest) latest = d.serverTick;
+    const sample = parseTickBudgetEvent(ev.data);
+    if (sample === null || sample.serverTick <= seenLatestTick) continue;
+    out.push(sample);
+    if (sample.serverTick > latest) latest = sample.serverTick;
   }
   return { newSamples: out, latestTick: latest };
+}
+
+/** Page-side frame sampler, installed before navigation. It records rAF deltas
+ *  into a fixed ring independent of `?diag` — the client's own `rafP50Ms` is
+ *  derived from the diag log ring, which is EMPTY on the production path the
+ *  perf gate must measure (`?diag=0`), so every baseline recorded null frame
+ *  times. Cost: one rAF callback + one typed-array write per frame. */
+const FRAME_SAMPLER_SCRIPT = `(() => {
+  const N = 600;
+  const ring = new Float64Array(N);
+  let i = 0, n = 0, last = 0;
+  const loop = (t) => {
+    if (last > 0) { ring[i] = t - last; i = (i + 1) % N; if (n < N) n++; }
+    last = t;
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+  window.__eqxPerfFrames = () => {
+    const out = [];
+    for (let k = 0; k < n; k++) out.push(ring[(i - 1 - k + N) % N]);
+    return out;
+  };
+})();`;
+
+const TICK_DRAIN_INTERVAL_MS = 5_000;
+/** Frames per ~5 s window at 60 Hz — the rolling window the p50/p99 cover. */
+const FRAME_WINDOW = 300;
+
+async function readFramePercentiles(page: Page): Promise<{ p50: number; p99: number }> {
+  const deltas = await page.evaluate((w) => {
+    const f = (window as unknown as { __eqxPerfFrames?: () => number[] }).__eqxPerfFrames;
+    return f ? f().slice(0, w) : [];
+  }, FRAME_WINDOW);
+  return { p50: framePercentile(deltas, 0.5), p99: framePercentile(deltas, 0.99) };
 }
 
 async function fetchPopulation(): Promise<{ hunters: number; totalDrones: number } | undefined> {
@@ -153,6 +186,7 @@ async function captureArm(args: {
       cdp = await context.newCDPSession(page);
       await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
     }
+    await page.addInitScript(FRAME_SAMPLER_SCRIPT);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
     // Wait for game-surface mount + warp curtain to lift (room joined,
@@ -188,16 +222,34 @@ async function captureArm(args: {
     try { await fetch(`${SERVER_BASE}/dev/events/clear`, { method: 'POST' }); } catch { /* ignore */ }
 
     const samples: PerSampleArm[] = [];
+    const tickBudgets: TickBudgetSample[] = [];
+    let latestTick = 0;
+    let lastDrainAt = Date.now();
+    let lastFrameReadAt = 0;
     const start = Date.now();
 
     while (Date.now() - start < MEASURE_MS) {
       const tMs = Date.now() - start;
       const stats = await readPredStats(page);
+      // Frame percentiles from the page-side sampler (diag-independent), read
+      // ~1 Hz — each read covers the last ~5 s of frames. NaN on the other
+      // samples; the aggregate drops NaN.
+      let frames = { p50: Number.NaN, p99: Number.NaN };
+      if (Date.now() - lastFrameReadAt >= 1_000) {
+        frames = await readFramePercentiles(page);
+        lastFrameReadAt = Date.now();
+      }
+      if (Date.now() - lastDrainAt >= TICK_DRAIN_INTERVAL_MS) {
+        const drained = await fetchTickBudgets(latestTick);
+        tickBudgets.push(...drained.newSamples);
+        latestTick = drained.latestTick;
+        lastDrainAt = Date.now();
+      }
       if (stats) {
         samples.push({
           tMs,
-          rafP50Ms: stats.rafP50Ms,
-          rafP99Ms: stats.rafP99Ms,
+          rafP50Ms: frames.p50,
+          rafP99Ms: frames.p99,
           longtaskCount30s: stats.longtaskCount30s,
           rafGapCount30s: stats.rafGapCount30s,
           heapUsedMb: stats.heapUsedMb,
@@ -212,12 +264,10 @@ async function captureArm(args: {
       await page.waitForTimeout(SAMPLE_INTERVAL_MS);
     }
 
-    // Drain tick_budget events from the server ring at the END of the
-    // measure window (not per-second during it — the fetch latency was
-    // starving the sample loop, dropping us from ~125 expected samples
-    // to ~10). The /dev/events ring holds 200 entries and tick_budget
-    // events emit at ~1 Hz, so a 25 s window fits comfortably.
-    const { newSamples: tickBudgets } = await fetchTickBudgets(0);
+    // Final drain for the tail of the window. Drains run every
+    // TICK_DRAIN_INTERVAL_MS (not per-second — per-second fetches starved the
+    // sample loop, dropping ~125 expected samples to ~10).
+    tickBudgets.push(...(await fetchTickBudgets(latestTick)).newSamples);
 
     const agg = aggregateSamples({
       scenario,
@@ -245,11 +295,17 @@ async function captureArm(args: {
           `Phase 5 budget will treat this as a precondition fail. Re-run on a quiet box.`,
       );
     }
-    if (agg.tickBudget.sampleCount === 0) {
-      console.warn(
-        `[perf] ${scenario}/${arm} no tick_budget events captured — /dev/events drain may need a longer warmup or the server isn't emitting them in this scenario.`,
-      );
-    }
+    // HARD preconditions (2026-10-31): a capture with no server tick samples or
+    // no frame-time samples is not a baseline — it previously wrote nulls/zeros
+    // silently and every budget derived from it would have been ungrounded.
+    expect(
+      agg.tickBudget.sampleCount,
+      `${scenario}/${arm}: no tick_budget samples for the room under test`,
+    ).toBeGreaterThan(0);
+    expect(
+      agg.metrics['rafP50Ms']?.sampleCount ?? 0,
+      `${scenario}/${arm}: no frame-time samples from the page sampler`,
+    ).toBeGreaterThan(0);
   } finally {
     try { await cdp?.detach(); } catch { /* ignore */ }
     await page.close();

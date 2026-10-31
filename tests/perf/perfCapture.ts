@@ -31,9 +31,54 @@ export interface PerSampleArm {
 export interface TickBudgetSample {
   /** Server-side `tick_budget` event payload, polled from /dev/events. */
   serverTick: number;
+  /** Mean total tick ms over the event's ~60-tick window (`avgMs.total`). */
   total: number;
+  /** Worst single tick in the window (`maxTotalMs`); falls back to `total`. */
+  maxTotalMs?: number;
   overBudgetCount: number;
   sampleCount: number;
+}
+
+/**
+ * Parse one server `tick_budget` event (`TickBudgetTelemetry.endTick`) into a
+ * sample. Returns null for an event that isn't from a room with a live player
+ * (`playerCount >= minPlayers`) — the /dev/events ring is GLOBAL, so without
+ * this filter the ~21 eager galaxy rooms' idle ticks swamp the room under test.
+ *
+ * Regression (2026-10-31, plan soft-leaping-truffle PR-B): the spec used to
+ * read a top-level `total` field the server never emits (the real shape is
+ * `avgMs.total` + `maxTotalMs`), so EVERY sample was dropped and every
+ * capture recorded `tickBudget.sampleCount: 0` silently.
+ */
+export function parseTickBudgetEvent(
+  data: Record<string, unknown>,
+  minPlayers = 1,
+): TickBudgetSample | null {
+  const serverTick = data['serverTick'];
+  const sampleCount = data['sampleCount'];
+  const overBudgetCount = data['overBudgetCount'];
+  const playerCount = data['playerCount'];
+  const avg = data['avgMs'] as Record<string, unknown> | undefined;
+  const total = avg?.['total'];
+  const maxTotalMs = data['maxTotalMs'];
+  if (typeof serverTick !== 'number' || typeof sampleCount !== 'number') return null;
+  if (typeof overBudgetCount !== 'number' || typeof total !== 'number') return null;
+  if (typeof playerCount !== 'number' || playerCount < minPlayers) return null;
+  return {
+    serverTick,
+    total,
+    ...(typeof maxTotalMs === 'number' ? { maxTotalMs } : {}),
+    overBudgetCount,
+    sampleCount,
+  };
+}
+
+/** Nearest-rank percentile over an UNSORTED list (copy-sorts). NaN if empty. */
+export function framePercentile(deltas: readonly number[], q: number): number {
+  if (deltas.length === 0) return Number.NaN;
+  const sorted = [...deltas].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1));
+  return sorted[idx]!;
 }
 
 export interface PerfAggregate {
@@ -125,7 +170,8 @@ export function aggregateSamples(args: {
   for (const tb of tickBudgets) {
     totalAvgSum += tb.total * tb.sampleCount;
     totalAvgWeight += tb.sampleCount;
-    if (tb.total > totalMax) totalMax = tb.total;
+    const tbMax = tb.maxTotalMs ?? tb.total;
+    if (tbMax > totalMax) totalMax = tbMax;
     overBudgetSum += tb.overBudgetCount;
     tickSampleSum += tb.sampleCount;
   }
