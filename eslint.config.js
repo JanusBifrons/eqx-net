@@ -133,6 +133,7 @@ export default [
       '**/*.test.{ts,tsx}',
       '*.config.{ts,js}',
       'tests/**',
+      'showcase/**',
       'scripts/**',
       'benchmarks/**',
       'src/client/debug/**',

@@ -9,6 +9,7 @@ import {
 } from './CameraDirector.js';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript.js';
 import { smoothDamp } from './smoothDamp.js';
+import { Camera, type CameraTarget } from '../worker/Camera.js';
 
 /** Fake lookup over a plain pixi-space pose table. */
 function makeLookup(poses: Record<string, { x: number; y: number; group?: CameraGroup }>, vw = 1000, vh = 500): CameraTargetLookup {
@@ -97,9 +98,27 @@ describe('CameraDirector', () => {
     expect(o).toMatchObject({ x: 310, y: -60, zoom: 1.2 });
   });
 
+  it('track feed-forward cancels spring lag: a moving subject stays centred on screen', () => {
+    const target: CameraTarget = { x: 0, y: 0, scale: { x: 1, y: 1, set(s: number) { this.x = s; this.y = s; } } };
+    const cam = new Camera(target, { minScale: 0.15, maxScale: 3 });
+    cam.setScreenSize(1000, 500);
+    const d = new CameraDirector();
+    d.play([{ atMs: 0, shot: { kind: 'track', target: 'a', zoom: 1 }, smoothMs: 300 }], 0);
+    const poses = { a: { x: 0, y: 0 } };
+    const lookup = makeLookup(poses);
+    const o = out();
+    for (let t = 0; t <= 4000; t += 16) {
+      poses.a.x = t * 0.5; // 0.5 u/ms
+      if (d.update(t, lookup, o) === 'active') cam.setDirectorTarget(o.x, o.y, o.zoom, o.smoothMs);
+      cam.tick(16);
+    }
+    // Without feed-forward the camera trails by ≈ v × smoothTime = 150 u.
+    expect(Math.abs(cam.center.x - poses.a.x)).toBeLessThan(20);
+  });
+
   it('track lead looks ahead along measured velocity', () => {
     const d = new CameraDirector();
-    d.play([{ atMs: 0, shot: { kind: 'track', target: 'a', zoom: 1, leadMs: 500 } }], 0);
+    d.play([{ atMs: 0, shot: { kind: 'track', target: 'a', zoom: 1, leadMs: 500 }, smoothMs: 0 }], 0);
     const o = out();
     const poses = { a: { x: 0, y: 0 } };
     const lookup = makeLookup(poses);

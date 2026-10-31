@@ -2,7 +2,11 @@
  * Cinematic HUD mode — how much of the DOM HUD is visible over the canvas.
  *
  *  - `full`    normal play (default).
- *  - `minimal` keeps the top status bars (shield/hull, energy, grid power) and
+ *  - `clean`   the full interactive HUD (speed-dial, inspector, banners) minus
+ *              debug-ish chrome: the sector-info panel (shows raw engineering
+ *              room names), the pilot/spectate toggle and the idle
+ *              "Nothing incoming" chip — the look for UI-driven footage.
+ *  - `minimal` `clean`, and also keeps only the top status bars (shield/hull, energy, grid power) and
  *              the transit overlay; hides the header, thumb controls, speed-dial
  *              and drawer — the look for gameplay footage.
  *  - `none`    a clean frame: only the canvas (plus the transit/warp overlay,
@@ -12,9 +16,9 @@
  * `index.html`. No store field, no React re-render — the capture pipeline flips
  * it mid-take via `__eqxCinema.setHud`. Pure helpers below are unit-locked.
  */
-export type HudMode = 'full' | 'minimal' | 'none';
+export type HudMode = 'full' | 'clean' | 'minimal' | 'none';
 
-const HUD_MODES: readonly HudMode[] = ['full', 'minimal', 'none'];
+const HUD_MODES: readonly HudMode[] = ['full', 'clean', 'minimal', 'none'];
 
 export function isHudMode(v: unknown): v is HudMode {
   return typeof v === 'string' && (HUD_MODES as readonly string[]).includes(v);

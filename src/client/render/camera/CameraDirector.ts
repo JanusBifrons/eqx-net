@@ -150,7 +150,7 @@ export class CameraDirector {
       this.stop();
       return 'released';
     }
-    const resolved = this.resolveShot(shot, nowMs, nowMs - this.cueStartMs, lookup);
+    const resolved = this.resolveShot(shot, nowMs, nowMs - this.cueStartMs, lookup, smoothMs);
     if (!resolved) {
       return this.emitLast(out, smoothMs) ? 'active' : 'idle';
     }
@@ -179,6 +179,7 @@ export class CameraDirector {
     nowMs: number,
     cueElapsedMs: number,
     lookup: CameraTargetLookup,
+    smoothMs: number,
   ): boolean {
     switch (shot.kind) {
       case 'hold':
@@ -203,7 +204,10 @@ export class CameraDirector {
         const px = this._pt.x;
         const py = this._pt.y;
         this.updateTrackVelocity(shot.target, px, py, nowMs);
-        const lead = shot.leadMs ?? 0;
+        // Feed-forward: a critically-damped spring trails a constant-velocity
+        // target by ≈ v × smoothTime, so aim that far ahead to cancel the lag;
+        // `leadMs` is then a genuine look-ahead on top.
+        const lead = (shot.leadMs ?? 0) + smoothMs;
         this._pt.x = px + (shot.offsetX ?? 0) + this.trackVx * lead;
         this._pt.y = py - (shot.offsetY ?? 0) + this.trackVy * lead;
         this.lastZoom = shot.zoom;

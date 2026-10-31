@@ -204,6 +204,7 @@ export class PixiRenderer implements IRenderer {
   // bars). Same pattern as `filtersDisabled` / `particlesDisabled`.
   private _beamsDisabled = false;
   private _dmgNumbersDisabled = false;
+  private _selfDmgNumbersDisabled = false;
   private _healthBarsDisabled = false;
   private sprites = new Map<string, Graphics>();
   /** Per-ship turret sprites + aim lines (multi-mount/turret refactor,
@@ -561,6 +562,7 @@ export class PixiRenderer implements IRenderer {
     const fxKillSwitches = readFxKillSwitches();
     this._beamsDisabled = fxKillSwitches.beamsDisabled;
     this._dmgNumbersDisabled = fxKillSwitches.dmgNumbersDisabled;
+    this._selfDmgNumbersDisabled = fxKillSwitches.selfDmgNumbersDisabled;
     this._healthBarsDisabled = fxKillSwitches.healthBarsDisabled;
 
     // Default gameplay zoom. Historically the gameplay camera ran at the
@@ -1765,6 +1767,7 @@ export class PixiRenderer implements IRenderer {
     // tick every frame to advance lifetime + counter-scale.
     if (!this._dmgNumbersDisabled && this.damageNumbers && mirror.pendingDamageNumbers) {
       for (const dn of mirror.pendingDamageNumbers) {
+        if (this._selfDmgNumbersDisabled && dn.targetId === mirror.localPlayerId) continue;
         this.damageNumbers.spawn(dn.targetId, dn.x, dn.y, dn.damage, dn.tag);
       }
       mirror.pendingDamageNumbers.length = 0;

@@ -13,6 +13,7 @@ describe('hudMode', () => {
 
   it('?hud= wins over ?cinematic', () => {
     expect(hudModeFromSearch('?cinematic=1&hud=minimal')).toBe('minimal');
+    expect(hudModeFromSearch('?hud=clean')).toBe('clean');
     expect(hudModeFromSearch('?hud=full&cinematic=1')).toBe('full');
   });
 

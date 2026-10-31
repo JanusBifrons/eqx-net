@@ -54,8 +54,15 @@
       }
       canvas { display: block; touch-action: none; -webkit-user-select: none; user-select: none; }
       /* Cinematic HUD modes (src/client/cinematic/hudMode.ts) — `?cinematic=1`
-         / `?hud=minimal|none`, or `__eqxCinema.setHud()` mid-capture. The
+         / `?hud=clean|minimal|none`, or `__eqxCinema.setHud()` mid-capture. The
          transit + fullscreen anchors (warp overlay, load curtain) stay visible. */
+      html.eqx-hud-clean [data-testid="app-header"],
+      html.eqx-hud-clean [data-testid="sector-info-panel"],
+      html.eqx-hud-clean [data-testid="pilot-spectator-toggle"],
+      html.eqx-hud-clean [data-testid="warp-warning-idle"],
+      html.eqx-hud-minimal [data-testid="sector-info-panel"],
+      html.eqx-hud-minimal [data-testid="pilot-spectator-toggle"],
+      html.eqx-hud-minimal [data-testid="warp-warning-idle"],
       html.eqx-hud-minimal [data-testid="app-header"],
       html.eqx-hud-minimal [data-anchor="top-right"],
       html.eqx-hud-minimal [data-anchor^="middle-"],

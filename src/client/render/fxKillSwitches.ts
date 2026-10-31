@@ -30,6 +30,10 @@ export interface FxKillSwitches {
   dmgNumbersDisabled: boolean;
   /** `?nohealthbars=1` — skip health-bar Graphics draws. */
   healthBarsDisabled: boolean;
+  /** `?noselfdmg=1` — skip damage numbers over the LOCAL ship only (target
+   *  numbers still show). Showcase capture: an invulnerable test pilot
+   *  (huge `initialHull`) would otherwise accumulate absurd totals. */
+  selfDmgNumbersDisabled: boolean;
 }
 
 export function readFxKillSwitches(
@@ -55,5 +59,6 @@ export function readFxKillSwitches(
     beamsDisabled: /\bnobeams=1\b/.test(search),
     dmgNumbersDisabled: /\bnodmgnumbers=1\b/.test(search),
     healthBarsDisabled: /\bnohealthbars=1\b/.test(search),
+    selfDmgNumbersDisabled: /\bnoselfdmg=1\b/.test(search),
   };
 }

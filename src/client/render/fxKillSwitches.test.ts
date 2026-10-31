@@ -7,6 +7,7 @@ const ALL_FALSE = {
   beamsDisabled: false,
   dmgNumbersDisabled: false,
   healthBarsDisabled: false,
+  selfDmgNumbersDisabled: false,
 };
 
 describe('readFxKillSwitches', () => {
@@ -25,6 +26,10 @@ describe('readFxKillSwitches', () => {
 
   it('reads ?nobeams=1', () => {
     expect(readFxKillSwitches('?nobeams=1')).toEqual({ ...ALL_FALSE, beamsDisabled: true });
+  });
+
+  it('reads ?noselfdmg=1 (local-ship numbers only)', () => {
+    expect(readFxKillSwitches('?noselfdmg=1')).toEqual({ ...ALL_FALSE, selfDmgNumbersDisabled: true });
   });
 
   it('reads ?nodmgnumbers=1', () => {

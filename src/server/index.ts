@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createServer } from 'node:http';
 import { pino } from 'pino';
 import { SectorRoom } from './rooms/SectorRoom.js';
+import { SHOWCASE_ROOMS } from './rooms/showcaseRooms.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
 import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
@@ -611,6 +612,12 @@ gameServer
     maxClients: 4,
   })
   .filterBy(['testId']);
+// Showcase capture rooms — staged scenes for the repeatable showcase video
+// (docs/architecture/showcase-pipeline.md). Options live in
+// rooms/showcaseRooms.ts so the integration test boots exactly these.
+for (const [name, opts] of Object.entries(SHOWCASE_ROOMS)) {
+  gameServer.define(name, SectorRoom, opts).filterBy(['testId']);
+}
 // Wave-system E2E (tests/e2e/wave-attack.spec.ts) — a DIRECTOR-MANAGED galaxy
 // room (real sectorKey) seeded with a PRE-BUILT, player-owned READY base
 // (Capital + Miner + Solar + Turret, owner `wave-tester`). Single eager
