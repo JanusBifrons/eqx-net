@@ -93,4 +93,35 @@ describe('SectorRoom integration — base storage (P1a-2)', () => {
     for (const id of internal.loot.podIds()) spilledCredits += getHoldStore().get(id)?.hold.credits ?? 0;
     expect(spilledCredits).toBe(77);
   });
+
+  it('credit sinks: instant repair at your storage spends banked credits; short balance is refused', { timeout: 40_000 }, async () => {
+    const pid = randomUUID();
+    const cr = await harness.connectActive(pid, {
+      spawnX: 0, spawnY: 0, initialHull: 50,
+      initialCargo: { goods: {}, credits: 1000, blueprints: [] },
+    });
+    const r = room(cr.roomId);
+    const internal = r._internals;
+    const state = r.state as SectorState;
+    let shipId = '';
+    for (const [, s] of state.ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
+    const ship = state.ships.get(shipId)!;
+
+    // Repair with NO base nearby → refused (nothing changes).
+    cr.send('repair_ship', { type: 'repair_ship' });
+    await new Promise((res) => setTimeout(res, 300));
+    expect(ship.health).toBe(50);
+
+    // Bank the credits at a Capital, then repair there.
+    cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 150, y: 0 });
+    expect(await until(() => [...internal.structureRegistry.all()].some((s) => s.owner === pid), 5_000)).toBe(true);
+    const cap = [...internal.structureRegistry.all()].find((s) => s.owner === pid)!;
+    harness.sendThrust(cr);
+    expect(await until(() => (cap.hold?.credits ?? 0) === 1000, 10_000)).toBe(true);
+
+    const missing = ship.maxHealth - ship.health;
+    cr.send('repair_ship', { type: 'repair_ship' });
+    expect(await until(() => ship.health === ship.maxHealth, 5_000), 'repair at your storage restores full hull').toBe(true);
+    expect(cap.hold!.credits).toBe(1000 - Math.ceil(missing * 0.5));
+  });
 });

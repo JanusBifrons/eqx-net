@@ -154,7 +154,7 @@ import type {
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { getPlayerShipStore, getHoldStore } from '../db/PersistenceWorker.js';
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
-import { StorageService, structureUid, DEPOSIT_DWELL_TICKS } from '../cargo/StorageService.js';
+import { StorageService, structureUid, DEPOSIT_DWELL_TICKS, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { isHoldEmpty } from '../../core/cargo/hold.js';
 import { cargoCapacityForMaxHealth, HoldSchema, type Hold } from '../../shared-types/goods.js';
@@ -171,6 +171,7 @@ import {
   StructureActionSchema,
   UpgradeStructureSchema,
   RefineSalvageSchema,
+  RepairShipSchema,
   PilotShipSchema,
   SpectateSchema,
   ApplyShipUpgradeSchema,
@@ -2388,8 +2389,49 @@ export class SectorRoom extends Room<SectorState> {
       }
       const playerId = this.sessionToPlayer.get(client.sessionId);
       if (!playerId) return;
+      // Living World P1a-2 — a respec is a CREDIT SINK: it costs
+      // RESPEC_CREDIT_COST from the credits banked in this sector's storage.
+      // Charged only for an OWNED ship that actually has points to refund.
+      const row = this.sectorKey !== null ? getPlayerShipStore().get(parsed.data.shipId) : null;
+      if (row === null || row.playerId !== playerId || Object.keys(row.statAlloc).length === 0) return;
+      if (!this.storage.spendCredits(playerId, RESPEC_CREDIT_COST)) {
+        this.sendNotice(client, `Respec costs ${RESPEC_CREDIT_COST} cr — bank credits in your base storage first`);
+        return;
+      }
+      auditEvent({ event: 'credits_spent', sector: this.sectorKey ?? undefined, playerId, amount: RESPEC_CREDIT_COST, reason: 'respec' });
       // A respec is "apply the empty allocation" — refund every spent point.
       this.applyShipUpgrade(client, playerId, parsed.data.shipId, {});
+    });
+
+    // ── Living World P1a-2 — instant repair at your own storage (credit sink) ──
+    // Repairs the sender's ACTIVE hull to full while it sits within
+    // DEPOSIT_RANGE of its own operational storage; costs REPAIR_CREDITS_PER_HP
+    // per missing hull point from the credits banked in this sector.
+    this.onMessage('repair_ship', (client: Client, raw: unknown) => {
+      const parsed = RepairShipSchema.safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, 'repair_ship');
+        return;
+      }
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      const ship = this.getActiveShip(playerId);
+      const pose = this.shipPoseCache.get(playerId);
+      if (!ship?.alive || !ship.isActive || !pose) return;
+      const missing = ship.maxHealth - ship.health;
+      if (missing <= 0) return;
+      if (this.storage.nearestOwnStorage(playerId, pose.x, pose.y) === null) {
+        this.sendNotice(client, 'Fly to your own Capital or Cargo Bay to repair');
+        return;
+      }
+      const cost = Math.ceil(missing * REPAIR_CREDITS_PER_HP);
+      if (!this.storage.spendCredits(playerId, cost)) {
+        this.sendNotice(client, `Repair costs ${cost} cr — not enough banked credits`);
+        return;
+      }
+      ship.health = ship.maxHealth;
+      auditEvent({ event: 'credits_spent', sector: this.sectorKey ?? undefined, playerId, amount: cost, reason: 'repair' });
+      this.sendNotice(client, `Repaired for ${cost} cr`);
     });
 
     // ── Phase 4 WS-B3 — dynamic weapon mounts (activate a latent slot) ──────
@@ -5793,6 +5835,11 @@ export class SectorRoom extends Room<SectorState> {
       event: 'loot_collected', sector: this.sectorKey ?? undefined, podId,
       playerId: c.playerId, shipInstanceId: c.shipInstanceId, credits: moved.credits,
     });
+  }
+
+  /** Living World P1a-2 — a short player-facing notice (HUD popup line). */
+  private sendNotice(client: Client, text: string): void {
+    try { client.send('notice', { type: 'notice', text }); } catch { /* socket closing */ }
   }
 
   /** A destroyed NPC drops its loot table where it died (every kill — AI-vs-AI

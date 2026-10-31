@@ -178,6 +178,15 @@ export const RefineSalvageSchema = z
   })
   .strict();
 
+/** Living World P1a-2 — client → server: instantly repair MY active ship to full
+ *  while it sits by my own storage (a credit sink; cost scales with missing
+ *  hull). Targets the sender's active hull — no id needed (or trusted). */
+export const RepairShipSchema = z
+  .object({
+    type: z.literal('repair_ship'),
+  })
+  .strict();
+
 /** Client → server (Phase 4 WS-A2): "pilot the OWNED in-sector ship with this
  *  shipInstanceId". The SAME-SECTOR INSTANT swap — the player (a spectator after
  *  death, or piloting another hull) reclaims one of their own lingering hulls
@@ -284,6 +293,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   StructureActionSchema,
   UpgradeStructureSchema,
   RefineSalvageSchema,
+  RepairShipSchema,
   PilotShipSchema,
   SpectateSchema,
   ApplyShipUpgradeSchema,

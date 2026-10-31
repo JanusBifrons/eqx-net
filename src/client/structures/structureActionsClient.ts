@@ -31,6 +31,17 @@ export function sendUpgradeStructure(entityId: number): boolean {
   return true;
 }
 
+/** Living World P1a-2 — send `repair_ship` (repair MY active ship to full at my
+ *  own storage, paid from banked credits; the server checks range + balance). */
+export function sendRepairShip(): boolean {
+  const client = getGameClient();
+  if (!client) return false;
+  const room = client.getRoom();
+  if (!room) return false;
+  room.send('repair_ship', { type: 'repair_ship' });
+  return true;
+}
+
 /** Living World P1a-2 — send `refine_salvage` (salvage from the base storage
  *  network → this Capital's mineral bank; owner-gated server-side). Returns
  *  true if the message was sent (false when there's no live room). */

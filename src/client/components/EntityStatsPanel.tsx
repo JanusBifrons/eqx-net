@@ -7,11 +7,12 @@ import LinkOffIcon from '@mui/icons-material/LinkOff';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import UpgradeIcon from '@mui/icons-material/Upgrade';
 import RecyclingIcon from '@mui/icons-material/Recycling';
+import BuildIcon from '@mui/icons-material/Build';
 import { useUIStore } from '../state/store';
 import { selectionStats } from '../net/selectionStats';
 import { toSelectWire } from '../net/selectionClient';
 import { getGameClient } from '../net/clientSingleton';
-import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage } from '../structures/structureActionsClient';
+import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip } from '../structures/structureActionsClient';
 import { sendPilotShip } from '../ships/shipActionsClient';
 import { hullColor } from './ShieldHullBar';
 import { getStructureKind } from '@shared-types/structureKinds';
@@ -258,6 +259,19 @@ export function EntityStatsPanel(): JSX.Element | null {
                 onClick={() => sendStructureAction(data.entityId!, 'clear_connections')}
               >
                 <LinkOffIcon sx={ICON_SX} />
+              </IconButton>
+            </Tooltip>
+          )}
+          {data.holdLine !== undefined && (
+            // Living World P1a-2 — instant repair of MY ship here (credit sink).
+            <Tooltip title="Repair your ship here (costs banked credits)">
+              <IconButton
+                data-testid="structure-action-repair-ship"
+                size="small"
+                sx={ACTION_BTN_SX}
+                onClick={() => sendRepairShip()}
+              >
+                <BuildIcon sx={ICON_SX} />
               </IconButton>
             </Tooltip>
           )}

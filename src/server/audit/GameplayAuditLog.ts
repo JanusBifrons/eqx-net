@@ -111,7 +111,8 @@ export type AuditEvent =
   | (AuditEventBase & { event: 'loot_destroyed'; podId: string; cause: string; credits: number })
   | (AuditEventBase & { event: 'cargo_lost'; playerId?: string; shipInstanceId: string; cause: string })
   | (AuditEventBase & { event: 'cargo_deposited'; playerId: string; shipInstanceId: string; structureKind: string; credits: number })
-  | (AuditEventBase & { event: 'salvage_refined'; owner: string; salvage: number });
+  | (AuditEventBase & { event: 'salvage_refined'; owner: string; salvage: number })
+  | (AuditEventBase & { event: 'credits_spent'; playerId: string; amount: number; reason: string });
 
 /** Distributive `Omit` so the union is preserved across the stamped fields. */
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;

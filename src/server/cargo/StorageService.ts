@@ -28,6 +28,9 @@ export const DEPOSIT_RANGE = 400;
 export const DEPOSIT_DWELL_TICKS = 120;
 /** Refine: 1 salvage → this many minerals (weight-neutral: 1 vs 10 × 0.1). */
 export const SALVAGE_TO_MINERALS = 10;
+/** Credit sinks — re-exported from shared-types/goods (#15: the UI labels read the
+ *  same numbers). */
+export { REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../../shared-types/goods.js';
 
 export interface StorageServiceDeps {
   holdStore: HoldStore;
@@ -210,6 +213,39 @@ export class StorageService {
     if (!touched.includes(capital)) touched.push(capital);
     this.commitStructures(touched);
     return refined;
+  }
+
+  /** Credits banked across ALL of `owner`'s storage in this sector. */
+  creditsOf(owner: string): number {
+    let c = 0;
+    for (const rec of this.d.registry.all()) {
+      if (rec.owner === owner && isOperationalStorage(rec)) c += rec.hold?.credits ?? 0;
+    }
+    return c;
+  }
+
+  /**
+   * Spend `amount` credits from `owner`'s banked storage in this sector
+   * (a credit SINK: repairs, respecs). All-or-nothing — returns false and
+   * changes nothing when the balance is short. One atomic group.
+   */
+  spendCredits(owner: string, amount: number): boolean {
+    if (amount <= 0) return true;
+    if (this.creditsOf(owner) < amount) return false;
+    let left = amount;
+    const touched: StructureRecord[] = [];
+    for (const rec of this.d.registry.all()) {
+      if (left <= 0) break;
+      if (rec.owner !== owner || !isOperationalStorage(rec)) continue;
+      const have = rec.hold?.credits ?? 0;
+      if (have <= 0) continue;
+      const take = Math.min(have, left);
+      rec.hold!.credits = have - take;
+      left -= take;
+      touched.push(rec);
+    }
+    this.commitStructures(touched);
+    return true;
   }
 
   /** A storage structure left the world (razed / deconstructed): return its

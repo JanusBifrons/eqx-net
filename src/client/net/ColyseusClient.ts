@@ -18,7 +18,7 @@ import {
   type CollisionGuardState,
 } from './applyCollisionResolved';
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
-import { LootCollectedEventSchema, CargoDepositedEventSchema } from '@shared-types/messages/lootMessages';
+import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
 import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
 import { cargoCapacityForMaxHealth } from '@shared-types/goods';
 import { applySelectionStats } from './selectionStats.js';
@@ -1988,6 +1988,12 @@ export class ColyseusGameClient {
     });
     // Living World P1a — pickup popup (UI accelerator only; cargo truth rides
     // the own-ship snapshot slice). zod-validated (invariant #3).
+    room.onMessage('notice', (raw: unknown) => {
+      const parsed = NoticeEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const id = useUIStore.getState().pushLootFeed(parsed.data.text);
+      setTimeout(() => useUIStore.getState().expireLootFeed(id), LOOT_FEED_TTL_MS);
+    });
     room.onMessage('cargo_deposited', (raw: unknown) => {
       const parsed = CargoDepositedEventSchema.safeParse(raw);
       if (!parsed.success) return;
