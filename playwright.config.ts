@@ -65,6 +65,7 @@ const SMOKE_SPECS: string[] = [
 // investigation/bisect/repro captures were deleted. See
 // docs/refactors/test-coverage-audit.md.
 const FEATURE_SPECS: string[] = [
+  '**/account-bound-identity.spec.ts',
   '**/asteroid-shape.spec.ts',
   '**/auto-fire.spec.ts',
   '**/avatar-menu-logout.spec.ts',

@@ -40,6 +40,7 @@ import {
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import { SHIP_MAX_HEALTH } from '../../core/combat/Weapons.js';
 import { getIncomingPlayerSink } from '../livingworld/incomingPlayerSink.js';
+import { issueTransitIdentity } from '../identity/TransitIdentityTokens.js';
 
 /**
  * Narrow interface the orchestrator needs from its host room. SectorRoom
@@ -343,6 +344,11 @@ export class TransitOrchestrator {
         transitToken: inFlight.transitToken,
       };
       if (shipInstanceId !== null) reserveOpts.shipId = shipInstanceId;
+      // PR 3a — the reservation carries no auth token, so register the
+      // transit token as a single-use server proof that this join IS
+      // `playerId` (lets an account-bound id cross sectors; see
+      // identity/TransitIdentityTokens.ts).
+      issueTransitIdentity(inFlight.transitToken, playerId);
       reservation = await this.reserveByNameFn(
         `galaxy-${inFlight.targetSectorKey}`,
         reserveOpts,

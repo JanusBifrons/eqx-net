@@ -16,6 +16,8 @@ import {
   UpdateProfileBodySchema,
 } from '../../shared-types/auth.js';
 import { createRateLimiter, clientIp } from '../net/HttpRateLimit.js';
+import { getAccountPlayerRegistry } from '../identity/AccountPlayerRegistry.js';
+import type { AuthUser } from '../auth/AuthService.js';
 import { resolveJwtSecret } from '../auth/jwt.js';
 import { createOAuthState, verifyOAuthState } from '../auth/oauthState.js';
 import { AuthCodeStore } from '../auth/authCodeStore.js';
@@ -37,6 +39,13 @@ const OAUTH_MAX = 30; // /auth/google* per IP per minute
 const authWriteLimiter = createRateLimiter({ windowMs: AUTH_WRITE_WINDOW_MS, max: AUTH_WRITE_MAX });
 const oauthLimiter = createRateLimiter({ windowMs: OAUTH_WINDOW_MS, max: OAUTH_MAX });
 
+/** PR 3a — every auth response carries the account's canonical playerId so the
+ *  client can find the account's ships / structures BEFORE joining a room (the
+ *  galaxy landing roster poll). `null` = not yet bound. */
+function withPlayerId<U extends AuthUser>(user: U): U & { playerId: string | null } {
+  return { ...user, playerId: getAccountPlayerRegistry().canonicalForUser(user.id) };
+}
+
 function bearerToken(req: Request): string | null {
   const auth = req.headers['authorization'];
   if (!auth?.startsWith('Bearer ')) return null;
@@ -56,7 +65,7 @@ authRouter.post('/register', authWriteLimiter, async (req: Request, res: Respons
       parsed.data.displayName,
     );
     recordLoginEvent(parsed.data.email, user.id, true, 'local', clientIp(req));
-    res.json({ token, user });
+    res.json({ token, user: withPlayerId(user) });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'UNKNOWN';
     if (msg === 'EMAIL_TAKEN') {
@@ -76,7 +85,7 @@ authRouter.post('/login', authWriteLimiter, async (req: Request, res: Response) 
   try {
     const { token, user } = await login(parsed.data.email, parsed.data.password);
     recordLoginEvent(parsed.data.email, user.id, true, 'local', clientIp(req));
-    res.json({ token, user });
+    res.json({ token, user: withPlayerId(user) });
   } catch {
     recordLoginEvent(parsed.data.email, null, false, 'local', clientIp(req));
     res.status(401).json({ error: 'Invalid email or password' });
@@ -90,7 +99,7 @@ authRouter.get('/me', async (req: Request, res: Response) => {
   if (!userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   const user = getUser(userId);
   if (!user) { res.status(404).json({ error: 'User not found' }); return; }
-  res.json({ user });
+  res.json({ user: withPlayerId(user) });
 });
 
 authRouter.patch('/profile', async (req: Request, res: Response) => {
@@ -105,7 +114,7 @@ authRouter.patch('/profile', async (req: Request, res: Response) => {
     return;
   }
   const user = updateDisplayName(userId, parsed.data.displayName);
-  res.json({ user });
+  res.json({ user: user === null ? null : withPlayerId(user) });
 });
 
 // Stateless signed CSRF state for the OAuth round-trip (S4). Replaces the
@@ -133,7 +142,7 @@ if (process.env['NODE_ENV'] !== 'production') {
         ? emailRaw.toLowerCase()
         : 'e2e@test.local';
       const { token, user } = await findOrCreateTestUser(email);
-      res.json({ token, user });
+      res.json({ token, user: withPlayerId(user) });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'unknown';
       authLogger.error({ msg }, 'dev test-token mint failed');
@@ -181,5 +190,5 @@ authRouter.post('/exchange', oauthLimiter, (req: Request, res: Response) => {
   if (!parsed.success) { res.status(400).json({ error: 'Invalid code' }); return; }
   const payload = authCodes.redeem(parsed.data.code);
   if (!payload) { res.status(401).json({ error: 'Invalid or expired code' }); return; }
-  res.json(payload);
+  res.json({ ...payload, user: withPlayerId(payload.user) });
 });
