@@ -156,6 +156,7 @@ describe('renderer-worker protocol', () => {
       { name: 'SET_EFFECT_PARAMS shield', msg: { type: 'SET_EFFECT_PARAMS', effect: 'shield', params: { baseAlpha: 0.18, breatheAmplitude: 0.08 } } },
       { name: 'RESET_EFFECTS_HANDOFF', msg: { type: 'RESET_EFFECTS_HANDOFF' } },
       { name: 'SET_SPECTATOR on', msg: { type: 'SET_SPECTATOR', active: true } },
+      { name: 'SET_BASES', msg: { type: 'SET_BASES', bases: [{ id: 'b0', ver: 1, archetype: 'warehouse', seed: 42, x: 0, y: 0, size: 8000, dead: [0, 4] }] } },
       { name: 'GLIDE_CAMERA', msg: { type: 'GLIDE_CAMERA', gameX: 1000, gameY: -250, durationMs: 320 } },
       { name: 'PAN_CAMERA', msg: { type: 'PAN_CAMERA', vx: -800, vy: 565.7 } },
       { name: 'DISPOSE', msg: { type: 'DISPOSE' } },

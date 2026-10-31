@@ -232,6 +232,23 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 
 `BeamSpritePool` draws each beam segment as a stretched `Sprite`. A Pixi sprite renders `worldLen = scale.x × texture.width`, so the world length must be set as **`scale.x = worldLen / texture.width`**. The solid core uses the 1×1 `Texture.WHITE` (÷1, fine), but the **gradient + fade textures are 256 px WIDE** (they have to be — that's where the horizontal fade lives). Setting `scale.x = worldLen` on those rendered the fade tail **256× too long** (a 75 u tail → ~19 200 u): the "fade" stretched off any screen at any zoom, so in empty space the beam looked SOLID to infinity and "never tapered" — the long-standing "laser renders infinitely / flies off the screen" bug. **Headless unit tests fall back to `Texture.WHITE` (1×1) for the canvas textures, so they could NEVER see this** — the fix had "passed" four rounds of screenshots while staying broken on-device. Lock: `BeamSpritePool.solidTaper.test.ts` now injects a genuine 256-px `Texture` and asserts the DRAWN world length (`scale.x × texture.width`, exposed by `solidLenAt`/`fadeTailAt`) equals the intended length. **The damage falloff is LINEAR + bounded at `range × maxRangeMul` (interceptor 250 → 325); the matching visual is solid to `optimalRange × VISUAL_BEAM_SOLID_FRAC` (`ColyseusClient`, default 0.4 = inner 100 u) then a long gradual fade to nothing at maxRange — purely visual, `solidDist` never feeds damage.** Verified end-to-end (no-hit empty-space + hit cases) by `tests/e2e/laser-falloff-probe.spec.ts`, which forces `?zoom=` for a deterministic capture (the spawn camera-zoom ease otherwise lands before/after screenshots at different scales — a real comparison trap that masked the bug, see `docs/LESSONS.md` 2026-06-14).
 
+## Procedural bases — client (plan soft-leaping-truffle)
+
+- **Prediction ("every collidable entity must be in predWorld"):**
+  - `PredBaseStreamer` (`net/predBaseStreamer.ts`) regenerates each base once from the room-state descriptor, using the SAME `generateBase` → `buildChunkOutlines` the server worker uses.
+  - Per snapshot (`syncPredBases`, beside `syncPredWalls`), it streams in ONLY the chunks within `PREDWORLD_ACTIVE_RADIUS` of the local ship. Every reconcile replays ~20 ticks and phones are ~4× slower, so the client must not carry a whole sector of colliders.
+  - `reset()` runs whenever the predWorld instance is created.
+- **Rendering:**
+  - `ColyseusClient` hands descriptors to the renderer ONLY when the room-state bases change (`onBasesChanged` → `IRenderer.setBases` → worker `SET_BASES`). They are never on `RenderMirror`.
+  - `render/pixi/BaseRenderer.ts` draws one retained `Graphics` per chunk plus a light layer, built once from the pure plan in `pixi/baseVisuals.ts` (three flat tones, functional detail, hashed weathering, pulsing lights).
+  - Chunks are culled per frame via `Camera.visibleBoundsInto` (allocation-free).
+  - Below `BASE_LOD_ZOOM`, one silhouette per base replaces the chunks. No `cacheAsTexture` (memory + blur).
+- **DEV hooks** (`?worker=0` only): `__eqxBaseCount`, `__eqxBaseVisibleChunks`, `__eqxBaseSilhouette`.
+- **Locks:**
+  - `predBaseStreamer.test.ts`: streaming, the client active-piece budget, teardown, and client/server collider parity.
+  - `baseVisuals.test.ts`: determinism, the pixi Y-flip rule, culling within `MAX_VISIBLE_CHUNKS`, LOD.
+  - `tests/e2e/base-warehouse-showcase.spec.ts`: renders; the predicted pose never overshoots into a wall.
+
 ## Damage numbers and health bars
 
 - `mirror.pendingDamageNumbers` and `mirror.pendingHealthBarHits` are per-frame **drain queues** populated by `ColyseusClient.handleDamage()` and consumed by `PixiRenderer.update()`. They are arrays, not maps — every entry is consumed once per frame.
