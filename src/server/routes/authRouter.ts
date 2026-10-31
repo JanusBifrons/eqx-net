@@ -55,7 +55,7 @@ function bearerToken(req: Request): string | null {
 authRouter.post('/register', authWriteLimiter, async (req: Request, res: Response) => {
   const parsed = RegisterBodySchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.errors[0]?.message ?? 'Invalid input' });
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid input' });
     return;
   }
   try {
@@ -110,7 +110,7 @@ authRouter.patch('/profile', async (req: Request, res: Response) => {
 
   const parsed = UpdateProfileBodySchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.errors[0]?.message ?? 'Invalid input' });
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid input' });
     return;
   }
   const user = updateDisplayName(userId, parsed.data.displayName);

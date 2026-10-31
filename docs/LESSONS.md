@@ -2466,3 +2466,16 @@ Expanding the netgate to cover the new structures + scrap features looked obviou
 2. **Never trust a client-claimed identity once an authenticated one is available.** The join validated the JWT and then used the client's `playerId` claim anyway. The fix derives `playerId` from the account server-side, refuses anonymous claims of account-bound ids, and needs a server-issued token for the one join that legitimately has no auth (a transit seat reservation).
 3. **Shared test-fixture logins break under per-account identity.** The whole parallel E2E suite + netgate log in as ONE fixture account to simulate MANY independent players. Binding identity to the account would have made every concurrent test the same player (and, with takeover, kick each other). Found by booting against a COPY of the real DB before shipping — the merge stats (394 aliases for one account) exposed it. Fixture accounts (`provider='e2e'`) are now explicitly exempt; tests of binding register a real account.
 4. **Harness gotcha:** an engineering test room auto-disposes when its last client leaves, and `getServerRoom()` caches the first room — a disconnect→rejoin test silently reads a dead room unless an anchor client stays connected. And `room.leave()` on a connection the SERVER closed never resolves; harness cleanup now bounds it.
+
+## 2026-10-31 — Prod-audit gate went red on main with no code change: zod 4 + a colyseus nanoid patch
+
+**Symptom.** `verify` (the `scripts/audit-bulk.mjs` prod-dependency audit) failed on `main` and every open PR at once. Nothing in the repo had changed: new advisories had been published against transitive deps (`@xmldom/xmldom` via pixi.js, `proxy-addr`/`body-parser` via express, `nanoid@2` via `@colyseus/core`) and against `zod` itself (GHSA-mrhx-c7xc-m3w5, fixed only in zod ≥ 4.6.6).
+
+**Fix.**
+- **In-line patch releases:** `pnpm.overrides` move each transitive dep to its patched release in the same minor line.
+- **`nanoid` is the trap.** `@colyseus/core@0.16.x` calls nanoid 2's **default export**, and nanoid 3 has none. A plain override silently breaks `generateId` (room/session ids), and no 0.16 release fixes it. So `patches/@colyseus__core@0.16.24.patch` (`pnpm patch`) switches both the CJS and ESM builds to the named `nanoid` export. **Re-check this patch whenever `@colyseus/core` is bumped** (pnpm fails install if the patch no longer applies, which is the desired loud failure).
+- **zod 3 → 4.** zod validates every inbound packet (Invariant #3), so the advisory was real and an override wasn't enough.
+  - API changes were small: `ZodError.errors` became `.issues`, and single-arg `z.record(v)` became `z.record(z.string(), v)`.
+  - **The silent runtime change: `z.record(enumSchema, v)` is now EXHAUSTIVE** (every enum key is required). The partial stat-upgrade allocation (`StatAllocSchema`) started rejecting valid `{hull: 2}` payloads. Typecheck was green; only `messages.test.ts` caught it. Use `z.partialRecord(enumSchema, v)` for "any subset of these keys".
+
+**Rule.** When a zod major lands, grep `z.record(` for enum-keyed records and decide partial vs exhaustive for each one. Typecheck will not flag it.

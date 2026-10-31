@@ -28,11 +28,11 @@ export const captureSchema = z.object({
   note: z.string().max(500).optional(),
   userAgent: z.string().max(500).optional(),
   viewport: z.object({ w: z.number(), h: z.number() }).optional(),
-  stats: z.record(z.unknown()).optional(),
+  stats: z.record(z.string(), z.unknown()).optional(),
   /** Wall-clock ms epoch at client boot, so client `ts` (perf.now) and server `ts` (wall) can be aligned. */
   clientEpochMs: z.number().optional(),
   /** Ring-buffer entries from `window.__eqxLogs`. Free-shape per entry. */
-  logs: z.array(z.record(z.unknown())).max(DIAG_CAPTURE_MAX_LOG_ENTRIES),
+  logs: z.array(z.record(z.string(), z.unknown())).max(DIAG_CAPTURE_MAX_LOG_ENTRIES),
 }).strict();
 
 export type CaptureBody = z.infer<typeof captureSchema>;
@@ -63,7 +63,7 @@ export const streamingBatchSchema = z.object({
   userAgent: z.string().max(500).optional(),
   viewport: z.object({ w: z.number(), h: z.number() }).optional(),
   clientEpochMs: z.number().optional(),
-  entries: z.array(z.record(z.unknown())).max(5_000),
+  entries: z.array(z.record(z.string(), z.unknown())).max(5_000),
 }).strict();
 
 export type StreamingBatchBody = z.infer<typeof streamingBatchSchema>;
