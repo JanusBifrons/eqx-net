@@ -2469,3 +2469,13 @@ Expanding the netgate to cover the new structures + scrap features looked obviou
   - **The silent runtime change: `z.record(enumSchema, v)` is now EXHAUSTIVE** (every enum key is required). The partial stat-upgrade allocation (`StatAllocSchema`) started rejecting valid `{hull: 2}` payloads. Typecheck was green; only `messages.test.ts` caught it. Use `z.partialRecord(enumSchema, v)` for "any subset of these keys".
 
 **Rule.** When a zod major lands, grep `z.record(` for enum-keyed records and decide partial vs exhaustive for each one. Typecheck will not flag it.
+
+## 2026-10-31 — Ship movement had no swept collision; soft CCD (not full CCD) is the fix (plan soft-leaping-truffle PR-C)
+
+**Finding.** Raycasts in this codebase are hitscan-weapon only and no dynamic body enabled Rapier CCD, so only the 60 Hz step stopped a body tunnelling static geometry. The real mechanism, measured in physics rather than reasoned on paper: when a body's **centre crosses a wall's midline within one step, penetration resolution ejects it out the far side**. So safety is `travel/tick < thickness/2 + radius`, not "thickness > travel". Today's game was safe: real capped speeds against today's 20 u shield walls gave 0/48 pass-throughs. But anything past the speed clamp (rams, impulses) and thin trimesh base walls were not: at ~46 u/tick a shields-down scout passed a **76 u** wall 12/48 times.
+
+**Full CCD is the wrong tool here.** `setCcdEnabled(true)` stopped tunnelling but broke two things: it silenced the static-overlap `CONTACT_FORCE_EVENTS` that stationary-collision telemetry relies on, and it under-resolved interpenetration (hulls separated 2.5 u instead of 10 u). `hullCollisionNoTouch`'s positive control caught it.
+
+**Soft CCD is right.** `RigidBodyDesc.setSoftCcdPrediction(48)` on every dynamic body (`spawnShip` + `spawnObstacle`) gives 0 pass-throughs on 16 u walls (cuboid + trimesh, shields up and down, 90/60/30°, 2× top speed) and leaves overlap behaviour byte-for-byte as before. Cost: ≤ +0.06 ms/step at 100 ships + 4k static pieces. `SOFT_CCD_PREDICTION` documents the measurement; raise it only with a re-measure.
+
+**Process note.** The wall-thickness rule went 40 → 48 → 28 → 76 on paper before a physics test showed thickness alone can't guarantee it (triangle hulls tunnel thick walls). The user pushed for swept collision on all moving objects, and they were right. Measure in the real engine before locking a physics budget.
