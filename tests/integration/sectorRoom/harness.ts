@@ -158,6 +158,8 @@ export async function bootSectorTestServer(opts: {
   asteroidConfig?: ReadonlyArray<{ x: number; y: number; vx: number; vy: number; radius: number; mass: number }>;
   /** Procedural bases to generate (plan soft-leaping-truffle). */
   bases?: ReadonlyArray<{ archetype: 'warehouse'; seed: number; x: number; y: number; size: number }>;
+  /** testMode base hit-point multiplier (PR-D bespoke trigger). */
+  baseHpScale?: number;
   /** Room-level default spawn point (forwarded to `defaultSpawnX/Y`). */
   defaultSpawnX?: number;
   defaultSpawnY?: number;
@@ -202,6 +204,7 @@ export async function bootSectorTestServer(opts: {
     scenarioAsteroids: opts.scenarioAsteroids,
     asteroidConfig: opts.asteroidConfig,
     bases: opts.bases,
+    baseHpScale: opts.baseHpScale,
     defaultSpawnX: opts.defaultSpawnX,
     defaultSpawnY: opts.defaultSpawnY,
   });

@@ -762,6 +762,18 @@ export class SectorRoom extends Room<SectorState> {
       b.size = d.size;
       (this.state as SectorState).bases.set(id, b);
     },
+    onDestroyed: (id, dead) => {
+      // Room state is the source of truth (late joiners see the hole —
+      // Invariant #16); the worker rebuilds the colliders from the same mask.
+      const st = (this.state as SectorState).bases.get(id);
+      if (st) {
+        for (let w = 0; w < dead.length; w++) {
+          if (w < st.dead.length) { if (st.dead[w] !== dead[w]) st.dead[w] = dead[w]!; }
+          else st.dead.push(dead[w]!);
+        }
+      }
+      this.postToWorker({ type: 'SET_BASE_DEAD', id, dead: Array.from(dead) });
+    },
   });
   private readonly spawnClearScratch = { x: 0, y: 0 };
   private defaultSpawnY: number | null = null;
@@ -1133,6 +1145,9 @@ export class SectorRoom extends Room<SectorState> {
        *  sector. A room-DEFINITION option (server-authored, never client
        *  input), so it is not testMode-gated — galaxy sectors use it too. */
       bases?: ReadonlyArray<BaseSpec>;
+      /** testMode bespoke trigger (PR-D): multiplies base piece hit points
+       *  (0.001 ⇒ one shot breaks a piece) so destruction E2Es run in seconds. */
+      baseHpScale?: number;
       /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
@@ -1400,7 +1415,7 @@ export class SectorRoom extends Room<SectorState> {
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
       wallBlocksProjectile: (x, y, sx, sy, damage) =>
-        this.bases.segmentBlocked(x, y, sx, sy) ||
+        this.bases.projectileHit(x, y, sx, sy, damage) ||
         this.shieldWalls.blockProjectile(x, y, sx, sy, damage, Date.now()),
     });
 
@@ -1830,6 +1845,7 @@ export class SectorRoom extends Room<SectorState> {
     }
     // Procedural bases: generate, publish the descriptor in room state, spawn
     // the worker colliders. Before any join, so spawns can avoid geometry.
+    if (this.testMode && roomOpts.baseHpScale !== undefined) this.bases.setHpScale(roomOpts.baseHpScale);
     const baseSpecs = roomOpts.bases ?? [];
     for (let i = 0; i < baseSpecs.length; i++) this.bases.add('b' + i, baseSpecs[i]!);
 
@@ -3327,7 +3343,7 @@ export class SectorRoom extends Room<SectorState> {
     // A base wall in front of the shot stops it first — and caps the range
     // passed to the shield walls so a shield span BEHIND base geometry never
     // takes the hit.
-    const baseDist = this.bases.rayFirst(fromX, fromY, dirX, dirY, maxDist);
+    const baseDist = this.bases.shotHit(fromX, fromY, dirX, dirY, maxDist, damage);
     const wallDist = this.shieldWalls.blockShot(
       fromX, fromY, dirX, dirY, baseDist >= 0 ? baseDist : maxDist, damage, Date.now(),
     );

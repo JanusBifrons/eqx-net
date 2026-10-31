@@ -1,4 +1,4 @@
-import { PredBaseStreamer, type BaseStateView } from './predBaseStreamer.js';
+import { PredBaseStreamer, deadMaskHash, type BaseStateView } from './predBaseStreamer.js';
 import { Client, Room } from 'colyseus.js';
 import type { BaseRenderDescriptor, RenderMirror, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
@@ -3305,7 +3305,7 @@ export class ColyseusGameClient {
     let sig = '';
     // TODO: alloc-debt — per-snapshot signature string while bases exist.
     bases?.forEach((v, k) => {
-      sig += k + ':' + v.seed + ':' + v.originX + ':' + v.originY + ':' + v.size + ':' + (v.dead?.length ?? 0) + ';';
+      sig += k + ':' + v.seed + ':' + v.originX + ':' + v.originY + ':' + v.size + ':' + deadMaskHash(v.dead) + ';';
     });
     if (sig === this._basesSig) return;
     this._basesSig = sig;

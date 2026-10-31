@@ -91,4 +91,33 @@ describe('PredBaseStreamer', () => {
     const yc = run(client);
     expect(Math.abs(ys - yc)).toBeLessThan(0.5);
   });
+
+  it('a destroy-mask change rebuilds the active chunks — the predicted ship flies through the hole', async () => {
+    const l = generateBase({ ver: VIEW.ver, archetype: 'warehouse', seed: VIEW.seed, x: 0, y: 0, size: VIEW.size });
+    // Pick a rack and fly straight at it along +x from just outside its left edge.
+    let i = 0;
+    while (l.kind[i] !== 1) i++;
+    const y = l.y[i]! + l.h[i]! / 2;
+    const x0 = l.x[i]! - 120;
+    const fly = async (dead?: number[]): Promise<number> => {
+      const world = await PhysicsWorld.create();
+      const s = new PredBaseStreamer();
+      const view = dead ? { ...VIEW, dead } : VIEW;
+      s.sync(world, states([['b0', VIEW]]), x0, y);
+      if (dead) s.sync(world, states([['b0', view]]), x0, y); // mask arrives later, as in play
+      world.spawnShip('s', x0, y, 'scout');
+      world.tick(1 / 60);
+      world.setShipState('s', { x: x0, y, angle: -Math.PI / 2, vx: 600, vy: 0, angvel: 0 });
+      for (let t = 0; t < 40; t++) world.tick(1 / 60);
+      return world.getShipState('s')!.x;
+    };
+    // Intact: stopped at the rack face.
+    expect(await fly()).toBeLessThan(l.x[i]!);
+    // Every piece of the rack's group destroyed: flies into where it was.
+    const dead = new Array<number>(Math.ceil(l.count / 32)).fill(0);
+    for (let k = 0; k < l.count; k++) {
+      if (l.kind[k] === 1 && l.y[k] === l.y[i] && l.h[k] === l.h[i]) dead[k >>> 5] |= 1 << (k & 31);
+    }
+    expect(await fly(dead)).toBeGreaterThan(l.x[i]! + 50);
+  });
 });

@@ -202,3 +202,22 @@ Results:
 - **Clip:** `scripts/showcase/base-cinematic.ts` (canvas render of the same draw plan, Playwright recordVideo).
 - **Page:** `scripts/showcase/warehouse-page.template.html`.
 - **Media:** `diag/showcase/warehouse/`.
+
+## PR-D: destructible pieces
+
+- **Server.** Beams and projectiles hit the piece at the impact point. Hit points are kept per group (split halves reunited), and a broken group sets bits in `state.bases[id].dead`. The worker rebuilds that base's colliders (`SET_BASE_DEAD`) and the ray grid is rebuilt.
+- **Client.** Prediction rebuilds its active chunks from the mask, and the renderer diffs masks to spawn pooled debris.
+- **Tests:**
+  - **Unit:** groups, damage → destroy, shots pass through after, projectiles, spawn check, hp-scale guard.
+  - **Streamer:** the predicted ship passes through after the mask change.
+  - **Debris:** deterministic and bounded.
+  - **Integration:** destroy → room state → the worker opens the hole → a late joiner sees it.
+  - **E2E:** beam a rack → debris → fly through.
+- **Test room:** `base-warehouse-destructible` (`baseHpScale` 0.02).
+- **Showcase 2:** `scripts/showcase/base-destruction-cinematic.ts`. A mixed fleet of every flyable kind flies lanes computed from the layout; a gunship beams a rack and flies through. Media is in `diag/showcase/destruction/`.
+
+**Not yet:** persisting destroy bits for galaxy sectors (PR-P), and turret/missile hits on bases (PR-M).
+
+| Stage / PR | Pieces (max base) | Step overhead (ms) | 20-tick replay overhead (ms) | Server tick added (ms) | Frame p99 Δ | Wire join (B/base) | Notes |
+|---|---|---|---|---|---|---|---|
+| PR-D (destructible) | 139 | unchanged when intact; a destroy rebuilds the base's colliders once | unchanged | per hit: O(pieces in 3×3 chunks), 0 alloc | debris pool fixed (1024) | ~60 B + ⌈pieces/32⌉ words | destroy delta: one u32 word |

@@ -63,7 +63,9 @@ export type WorkerCmd =
   | { type: 'REMOVE_WALL';     id: string }
   /** Procedural bases — regenerate + spawn a base's chunk colliders in the
    *  worker from its descriptor (see core worker.ts SpawnBaseCmd). */
-  | { type: 'SPAWN_BASE'; id: string; ver: number; archetype: 'warehouse'; seed: number; x: number; y: number; size: number; dead?: number[] };
+  | { type: 'SPAWN_BASE'; id: string; ver: number; archetype: 'warehouse'; seed: number; x: number; y: number; size: number; dead?: number[] }
+  /** PR-D — rebuild a base's colliders after a piece group was destroyed. */
+  | { type: 'SET_BASE_DEAD'; id: string; dead: number[] };
 
 /** Per-tick contact payload extracted from the worker's CONTACT_BATCH message.
  *  Mirrors `core/physics/contactDrain.ts` `Contact` across the postMessage
