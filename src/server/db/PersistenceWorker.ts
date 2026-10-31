@@ -27,6 +27,8 @@ import {
   type PlayerAlias,
 } from '../identity/AccountPlayerRegistry.js';
 import { mergeAccountPlayerIds, type AccountMergeResult } from '../identity/accountPlayerMerge.js';
+import { HoldStore, type HoldRecord } from '../cargo/HoldStore.js';
+import { parseHoldJson } from '../../shared-types/goods.js';
 
 /**
  * Process-global persistence singleton. `initWorker()` constructs a
@@ -121,6 +123,57 @@ export async function initWorker(opts: { dbPath: string }): Promise<void> {
   const sink = new WorkerBackedSink();
   await sink.attach(worker as unknown as WorkerHandle);
   setPersistence(sink);
+}
+
+// ── Living World P1a — HoldStore singleton (plan peppy-jumping-pinwheel) ──
+
+let _holdStore: HoldStore | null = null;
+
+export function getHoldStore(): HoldStore {
+  if (_holdStore === null) _holdStore = new HoldStore({ persistence: () => _sink });
+  return _holdStore;
+}
+
+/** Test seam — replace the store with an injected one. */
+export function setHoldStore(store: HoldStore): void {
+  _holdStore = store;
+}
+
+/** Boot hydrate of the unified `holds` table (read-only main-thread connection). */
+export function initHoldStore(): { hydrated: number } {
+  const store = getHoldStore();
+  let rows: Array<{
+    holder_uid: string; holder_type: string; owner_id: string | null; sector_key: string | null;
+    x: number | null; y: number | null; payload_json: string; expires_at: number | null;
+  }> = [];
+  try {
+    rows = db.prepare(
+      'SELECT holder_uid, holder_type, owner_id, sector_key, x, y, payload_json, expires_at FROM holds',
+    ).all() as typeof rows;
+  } catch (err) {
+    _hydrateHealth.selectFailures += 1;
+    _hydrateLogger.warn({ err, table: 'holds' }, 'holds hydrate SELECT failed (treating as empty)');
+    rows = [];
+  }
+  const records: HoldRecord[] = [];
+  for (const row of rows) {
+    if (row.holder_type !== 'ship' && row.holder_type !== 'pod' && row.holder_type !== 'structure' && row.holder_type !== 'hauler') {
+      _hydrateHealth.corruptRowsSkipped += 1;
+      continue;
+    }
+    records.push({
+      holderUid: row.holder_uid,
+      holderType: row.holder_type,
+      ownerId: row.owner_id,
+      sectorKey: row.sector_key,
+      x: row.x,
+      y: row.y,
+      hold: parseHoldJson(row.payload_json),
+      expiresAt: row.expires_at,
+    });
+  }
+  store.hydrate(records);
+  return { hydrated: records.length };
 }
 
 // ── Phase 2 — PlayerShipStore singleton ────────────────────────────────

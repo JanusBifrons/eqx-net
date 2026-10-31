@@ -35,6 +35,8 @@ export type {
 // `useAuthStore.user` is known and re-reads from the per-user slot. If you
 // log in for the first time on a device, the legacy `eqxSettings` global key
 // migrates into the per-user slot on that re-read (see `userPrefs.ts`).
+/** Living World P1a — monotonic id for pickup popups. */
+let lootFeedSeq = 0;
 const initialPersisted     = loadSettings(null);
 const initialShipKind      = loadShipKind(null);
 const initialDevOverlay    = initialPersisted.showDevOverlay   ?? true;
@@ -153,6 +155,9 @@ export const useUIStore = create<UIStore>((set, get) => ({
   selectedEntityId: null,
   selectedEntityKind: null,
   energyMax: 100,
+  cargo: null,
+  cargoCapacity: 0,
+  lootFeed: [],
   pendingLevelUp: null,
   upgradeAck: null,
   lastFireMs: null,
@@ -245,6 +250,14 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setPlacementKind: (k) => set({ placementKind: k }),
   setSelectedEntity: (id, kind) => set({ selectedEntityId: id, selectedEntityKind: kind }),
   setEnergyMax: (max) => set({ energyMax: max }),
+  setCargo: (cargo, capacity) => set({ cargo, cargoCapacity: capacity }),
+  pushLootFeed: (text) => {
+    const id = ++lootFeedSeq;
+    // Cap the feed at 4 lines so a vacuum-run over many pods can't grow it.
+    set((s) => ({ lootFeed: [...s.lootFeed.slice(-3), { id, text }] }));
+    return id;
+  },
+  expireLootFeed: (id) => set((s) => ({ lootFeed: s.lootFeed.filter((e) => e.id !== id) })),
   setPendingLevelUp: (level) => set({ pendingLevelUp: level }),
   setUpgradeAck: (ack) => set({ upgradeAck: ack }),
   setLastFireMs: (ms) => set({ lastFireMs: ms }),

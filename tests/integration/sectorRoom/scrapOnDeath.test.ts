@@ -38,7 +38,8 @@ describe('SectorRoom integration — scrap-on-death (Phase 2b-ii)', () => {
   }, 10_000);
 
   function scrapRecs(internal: SectorRoom['_internals']) {
-    return [...internal.swarmRegistry.all()].filter((r) => r.kind === SWARM_KIND_SCRAP);
+    // Living World P1a: loot pods ride the scrap kind too (parent 'cargo-pod') — not debris.
+    return [...internal.swarmRegistry.all()].filter((r) => r.kind === SWARM_KIND_SCRAP && r.shipKind !== 'cargo-pod');
   }
 
   it('a destroyed COMPOSITE drone breaks into one damageable scrap piece per component', async () => {

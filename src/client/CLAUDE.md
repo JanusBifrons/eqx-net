@@ -255,6 +255,13 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 - `DamageNumberManager` ([render/DamageNumbers.ts](render/DamageNumbers.ts)) — **accumulator model (2026-05-30, plan melodic-engelbart Step 4).** One floating-number bucket per `targetId` at any time. Each `spawn(targetId, x, y, damage, tag?)` either adds to the existing bucket (running total grows, font scales via `fontScaleForTotal`, stay-window resets, text re-anchors at the new hit coord) OR opens a fresh bucket (evicting the bucket with least life remaining if at `POOL_CAP=20`). After `STAY_FRAMES` (~1 s @ 60 Hz) with no new hits the bucket fades over `FADE_FRAMES` (~0.5 s) and is destroyed. Pre-accumulator the manager `new Text(...)`-ed per hit at ~30 Hz under held fire — aggregating into ~1 bucket per active target reduces text-construction churn by an order of magnitude (the dominant non-FX allocation cost surfaced by the imperative-taco hostile CDP profile). `cancelByTag(tag)` subtracts the predicted contribution from each bucket the tag touched and destroys buckets whose total drops to zero; per-tag contributions are tracked in a lazy `Map` allocated only on tagged adds (auth-only buckets — the common case — never allocate it). Server provides `hitX`/`hitY` in `DamageEvent`; falls back to entity-pose if absent.
 - `HealthBarManager` ([render/HealthBars.ts](render/HealthBars.ts)) shows a bar above an entity only when the local player has just hit it (`evt.shooterId === localId`). Bar fades after 2 s with no consecutive hits and removes after 2.5 s. Position is read from `mirror.ships` or `mirror.swarm` each frame so the bar tracks moving targets.
 
+## Cargo HUD (Living World P1a-1, plan peppy-jumping-pinwheel)
+
+- The local ship's hold is decoded ONLY from the authoritative own-ship `SnapshotMessage.states[].cargo` slice (`ColyseusClient.applyLocalCargo`, invariant #16). It writes the discrete Zustand `cargo`/`cargoCapacity` ONLY when the contents changed (`net/lootView.ts` `cargoChanged`, field-by-field, alloc-free), so a steady hold costs zero React renders.
+- `loot_collected` (zod-validated) only pushes a short-lived popup line (`lootFeed`, capped at 4, `LOOT_FEED_TTL_MS`). Never derive cargo from it.
+- `CargoChip` lives in the `top-left` slot at `order={3}` (under `ShieldHullBar`). Testids: `cargo-chip` (`data-cargo-weight/capacity/credits/fill`), `cargo-breakdown`, `loot-feed-line`.
+- Loot pods render through the EXISTING scrap path (`parentShipKind 'cargo-pod'`, `componentIndex` = tier colour). There's no separate pod renderer.
+
 ## Durable Identity
 
 - `playerId` is persisted in `localStorage` as `eqxPlayerId`. Read at bootstrap, sent in the `identify` handshake.

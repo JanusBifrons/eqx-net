@@ -146,6 +146,13 @@ export function createLingeringHullEntity(
       if (scrapPose !== undefined) {
         deps.spawnScrapFromLingeringHull?.(ship.kind as ShipKindId, scrapPose, targetId);
       }
+      // A1 — roster wipe / XP / hold spill BEFORE the teardown below removes
+      // the ship from `shipsMap` (the SHIP_DESTROYED handler can't see it after).
+      deps.onLingeringHullDeath?.(
+        { shipInstanceId: ship.shipInstanceId || targetId, playerId: ship.playerId, kind: ship.kind },
+        scrapPose,
+        sourceId,
+      );
       const slot = deps.lingeringSlots.get(targetId);
       if (slot !== undefined) {
         deps.lingeringSlots.delete(targetId);
