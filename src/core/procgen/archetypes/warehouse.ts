@@ -32,13 +32,15 @@ const POST = basePieceIndex('gate_post');
 // floor) — aisles are now 2–3× it, so the bigger yard is also easier to fly.
 /** Perimeter wall thickness. */
 const WALL_T = Math.max(MIN_WALL_THICKNESS, 96);
-const GATE_W = 5 * CORRIDOR_WIDTH;
-const MAIN_AISLE = 4 * CORRIDOR_WIDTH;
-const BAY_DEPTH = 1400;
+const GATE_W = 4 * CORRIDOR_WIDTH;
+const MAIN_AISLE = Math.round(2.5 * CORRIDOR_WIDTH);
+const BAY_DEPTH = 900;
 /** Bay overhang either side of a gate (where container stacks line up). */
-const BAY_MARGIN = 400;
+const BAY_MARGIN = 280;
 /** Perimeter road between the wall and the racks. */
-const PERIMETER_ROAD = 2 * CORRIDOR_WIDTH;
+const PERIMETER_ROAD = Math.round(1.5 * CORRIDOR_WIDTH);
+/** Clearance kept between rack rows and a loading bay. */
+const BAY_KEEPOUT = Math.round(1.5 * CORRIDOR_WIDTH);
 
 /** Smallest footprint the warehouse layout reads well at (and validates). */
 export const WAREHOUSE_MIN_SIZE = 5000;
@@ -64,7 +66,9 @@ export function generateWarehouse(desc: BaseDescriptor, seed: number): LayoutBui
 
   // ── 1. Perimeter + gates ───────────────────────────────────────────────
   // Sides: 0 = bottom (-y), 1 = right (+x), 2 = top (+y), 3 = left (-x).
-  const gateCount = gatesRng.int(2, 4);
+  // Small yards get 2 gates (bays would otherwise eat the floor).
+  const gateCount = desc.size >= 6500 ? gatesRng.int(2, 4) : 2;
+  const bayDepth = Math.min(BAY_DEPTH, Math.floor((desc.size * 12) / 100 / 8) * 8);
   const sides = [0, 1, 2, 3];
   for (let i = sides.length - 1; i > 0; i--) {
     const j = gatesRng.int(0, i);
@@ -100,16 +104,16 @@ export function generateWarehouse(desc: BaseDescriptor, seed: number): LayoutBui
       b.addRect(POST, gLo - post, fixed0 - (s === 2 ? WALL_T : 0), gLo, fixed0 + WALL_T + (s === 0 ? WALL_T : 0));
       b.addRect(POST, gHi, fixed0 - (s === 2 ? WALL_T : 0), gHi + post, fixed0 + WALL_T + (s === 0 ? WALL_T : 0));
       b.addGate(g, s === 0 ? -half : half);
-      const by0 = s === 0 ? -half + WALL_T : half - WALL_T - BAY_DEPTH;
-      bays.push({ x0: gLo - BAY_MARGIN, y0: by0, x1: gHi + BAY_MARGIN, y1: by0 + BAY_DEPTH, travelAlongY: true });
+      const by0 = s === 0 ? -half + WALL_T : half - WALL_T - bayDepth;
+      bays.push({ x0: gLo - BAY_MARGIN, y0: by0, x1: gHi + BAY_MARGIN, y1: by0 + bayDepth, travelAlongY: true });
     } else {
       b.addRect(WALL, fixed0, -half + WALL_T, fixed0 + WALL_T, gLo - post);
       b.addRect(WALL, fixed0, gHi + post, fixed0 + WALL_T, half - WALL_T);
       b.addRect(POST, fixed0 - (s === 1 ? WALL_T : 0), gLo - post, fixed0 + WALL_T + (s === 3 ? WALL_T : 0), gLo);
       b.addRect(POST, fixed0 - (s === 1 ? WALL_T : 0), gHi, fixed0 + WALL_T + (s === 3 ? WALL_T : 0), gHi + post);
       b.addGate(s === 3 ? -half : half, g);
-      const bx0 = s === 3 ? -half + WALL_T : half - WALL_T - BAY_DEPTH;
-      bays.push({ x0: bx0, y0: gLo - BAY_MARGIN, x1: bx0 + BAY_DEPTH, y1: gHi + BAY_MARGIN, travelAlongY: false });
+      const bx0 = s === 3 ? -half + WALL_T : half - WALL_T - bayDepth;
+      bays.push({ x0: bx0, y0: gLo - BAY_MARGIN, x1: bx0 + bayDepth, y1: gHi + BAY_MARGIN, travelAlongY: false });
     }
   }
 
@@ -124,7 +128,7 @@ export function generateWarehouse(desc: BaseDescriptor, seed: number): LayoutBui
       travelAlongY: raw.travelAlongY,
     };
     b.addRect(BAY, bay.x0, bay.y0, bay.x1, bay.y1);
-    bayKeepOut.push({ x0: bay.x0 - CORRIDOR_WIDTH, y0: bay.y0 - CORRIDOR_WIDTH, x1: bay.x1 + CORRIDOR_WIDTH, y1: bay.y1 + CORRIDOR_WIDTH });
+    bayKeepOut.push({ x0: bay.x0 - BAY_KEEPOUT, y0: bay.y0 - BAY_KEEPOUT, x1: bay.x1 + BAY_KEEPOUT, y1: bay.y1 + BAY_KEEPOUT });
     // Container stacks line the two bay edges PARALLEL to the travel
     // direction (inside the BAY_MARGIN either side of the gate), so the
     // gate → interior lane stays clear.
@@ -216,7 +220,7 @@ function emitSeg(b: LayoutBuilder, alongX: boolean, s: number, e: number, a0: nu
 /** Seeded main cross-aisle positions across [lo, hi): one per ~2400 u. */
 function cuts(lo: number, hi: number, rng: ReturnType<typeof stream>): number[] {
   const len = hi - lo;
-  const n = Math.max(0, Math.floor(len / 4500));
+  const n = Math.max(0, Math.floor(len / 3200));
   const out: number[] = [];
   for (let i = 1; i <= n; i++) {
     const centre = lo + Math.floor((len * i) / (n + 1));
@@ -235,21 +239,22 @@ function fillZone(
 ): void {
   const zw = z.x1 - z.x0;
   const zh = z.y1 - z.y0;
-  if (zw < 4 * CORRIDOR_WIDTH || zh < 4 * CORRIDOR_WIDTH) return;
+  if (zw < 3 * CORRIDOR_WIDTH || zh < 3 * CORRIDOR_WIDTH) return;
   // Double-depth racks with aisles held just above fly-through width: storage
   // dominates the floor, which is what reads as a warehouse.
-  const depth = rng.int(320, 480);
-  const aisle = rng.int(2 * CORRIDOR_WIDTH, 3 * CORRIDOR_WIDTH);
-  const pitch = rng.int(2000, 3600);
-  const cross = 2 * CORRIDOR_WIDTH;
+  const depth = rng.int(280, 400);
+  const aisle = rng.int(Math.round(1.5 * CORRIDOR_WIDTH), Math.round(2.2 * CORRIDOR_WIDTH));
+  const pitch = rng.int(1800, 3200);
+  const cross = Math.round(1.5 * CORRIDOR_WIDTH);
 
   const along0 = rowsAlongX ? z.x0 : z.y0;
   const along1 = rowsAlongX ? z.x1 : z.y1;
   const acr0 = rowsAlongX ? z.y0 : z.x0;
   const acr1 = rowsAlongX ? z.y1 : z.x1;
 
-  // Rows start one aisle in, so the zone edge (next to a road) stays open.
-  for (let a = acr0 + aisle; a + depth <= acr1 - aisle; a += depth + aisle) {
+  // Zone edges already border roads (perimeter road / main aisle, both
+  // ≥ 1.5 corridors), so rows run edge to edge — no dead strip.
+  for (let a = acr0; a + depth <= acr1; a += depth + aisle) {
     for (let s = along0; s < along1; s += pitch + cross) {
       const e = Math.min(s + pitch, along1);
       if (e - s < 2 * CORRIDOR_WIDTH) continue; // stub too short to read as a rack
