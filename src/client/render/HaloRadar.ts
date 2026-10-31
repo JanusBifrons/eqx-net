@@ -57,8 +57,10 @@ import {
   pointViewportDistance,
   rampNearFar,
   rangeFade,
-  slideOutOfExclusions,
+  buildBlockedIntervals,
+  resolveBlocked,
   trackParam,
+  trackPerimeter,
   trackPoint,
   type TrackRect,
 } from './halo/edgeRadar.js';
@@ -170,6 +172,13 @@ export class HaloRadar {
   private readonly alpha = new Float64Array(MAX_CANDIDATES);
   private readonly order = new Int32Array(MAX_CANDIDATES);
   private readonly drawn: Candidate[] = [];
+  /** HUD-blocked perimeter intervals [s0,e0,s1,e1,…] + their cache key. */
+  private readonly blocked = new Float64Array(128);
+  private blockedCount = 0;
+  private blockedW = -1;
+  private blockedH = -1;
+  private blockedInsets: RadarInsets | null = null;
+  private blockedPrefs: RadarPrefs | null = null;
 
   constructor(isTouch = false) {
     this.prefs = defaultRadarPrefs(isTouch ? 'touch' : 'desktop');
@@ -334,7 +343,19 @@ export class HaloRadar {
     // ── 3. Distance → size / opacity; direction → track position ───────
     const drawn = this.drawn;
     drawn.length = 0;
-    const excl = ins.exclusions;
+    // HUD-blocked stretches of the track: rebuilt only when the screen, the
+    // HUD layout or the preferences change (never per frame in steady state).
+    if (W !== this.blockedW || H !== this.blockedH || ins !== this.blockedInsets || prefs !== this.blockedPrefs) {
+      this.blockedW = W;
+      this.blockedH = H;
+      this.blockedInsets = ins;
+      this.blockedPrefs = prefs;
+      // Pad = the largest icon's half-size + a breathing gap, so no icon
+      // sits on, or flush against, a HUD widget.
+      const pad = prefs.sizeNearPx * GROUPED_SIZE_MUL * 0.5 + HUD_GAP_PX;
+      this.blockedCount = buildBlockedIntervals(track, ins.exclusions, pad, this.blocked);
+    }
+    const perimeter = trackPerimeter(track);
     for (let i = 0; i < count; i++) {
       const c = grouped[i]!;
       const cat = c.cat ?? 'neutral';
@@ -351,16 +372,14 @@ export class HaloRadar {
       if (a > 1) a = 1;
       placeOnTrack(this.pt.x, this.pt.y, W, H, track, this.pt2);
       let p = trackParam(this.pt2.x, this.pt2.y, track);
-      // Half the icon + a small breathing gap, so an icon never sits flush
-      // against a HUD widget's edge.
-      if (excl.length > 0) p = slideOutOfExclusions(p, track, excl, size * 0.5 + HUD_GAP_PX, this.pt2);
+      if (this.blockedCount > 0) p = resolveBlocked(p, this.blocked, this.blockedCount, perimeter);
       const k = drawn.length;
       this.param[k] = p;
       this.sizePx[k] = size;
       this.alpha[k] = a;
       drawn.push(c);
     }
-    deOverlapAlongTrack(this.param, drawn.length, prefs.minSpacingPx, this.order, this.sizePx);
+    deOverlapAlongTrack(this.param, drawn.length, prefs.minSpacingPx, this.order, this.sizePx, perimeter);
 
     // ── 4. Draw ─────────────────────────────────────────────────────────
     for (let k = 0; k < drawn.length; k++) {

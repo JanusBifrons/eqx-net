@@ -11,7 +11,8 @@ import {
   pointViewportDistance,
   rampNearFar,
   rangeFade,
-  slideOutOfExclusions,
+  buildBlockedIntervals,
+  resolveBlocked,
   trackParam,
   trackPerimeter,
   trackPoint,
@@ -106,20 +107,42 @@ describe('track perimeter parameterisation', () => {
   });
 });
 
-describe('HUD avoidance — slide out of exclusion zones along the track', () => {
-  it('an icon under a bottom-right HUD cluster slides out of it', () => {
+describe('HUD avoidance — blocked track intervals', () => {
+  const insideAny = (pt: { x: number; y: number }, rects: Array<{ x: number; y: number; w: number; h: number }>, pad: number): boolean =>
+    rects.some((r) => pt.x >= r.x - pad && pt.x <= r.x + r.w + pad && pt.y >= r.y - pad && pt.y <= r.y + r.h + pad);
+
+  it('an icon under a bottom-right HUD cluster moves out of it', () => {
     const pt = { x: 0, y: 0 };
-    const hud = [{ x: 600, y: 480, w: 200, h: 120 }]; // bottom-right corner widgets
-    const p0 = trackParam(780, 540, TRACK); // right edge, inside the HUD box
-    const p = slideOutOfExclusions(p0, TRACK, hud, 6, pt);
+    const hud = [{ x: 600, y: 480, w: 200, h: 120 }];
+    const blocked = new Float64Array(64);
+    const n = buildBlockedIntervals(TRACK, hud, 6, blocked);
+    const p = resolveBlocked(trackParam(780, 540, TRACK), blocked, n, trackPerimeter(TRACK));
     trackPoint(p, TRACK, pt);
-    const inside = pt.x >= 594 && pt.x <= 806 && pt.y >= 474 && pt.y <= 606;
-    expect(inside).toBe(false);
+    expect(insideAny(pt, hud, 5.9)).toBe(false);
   });
+
   it('an icon clear of every exclusion is untouched', () => {
-    const pt = { x: 0, y: 0 };
+    const blocked = new Float64Array(64);
+    const n = buildBlockedIntervals(TRACK, [{ x: 600, y: 480, w: 200, h: 120 }], 6, blocked);
     const p0 = trackParam(400, 20, TRACK);
-    expect(slideOutOfExclusions(p0, TRACK, [{ x: 600, y: 480, w: 200, h: 120 }], 6, pt)).toBe(p0);
+    expect(resolveBlocked(p0, blocked, n, trackPerimeter(TRACK))).toBe(p0);
+  });
+
+  it('STACKED HUD boxes (phone top-left: sector card above the shield bars) — the icon ends outside BOTH', () => {
+    // Exact geometry measured on a Pixel 5 (393×727, edge inset 14): the old
+    // per-rect slide ping-ponged between these two touching boxes and left
+    // the icon on top of the sector-info text (user: "couldn't see the radar").
+    const track: TrackRect = { left: 14, top: 14, right: 379, bottom: 713 };
+    const hud = [{ x: 16, y: 16, w: 131, h: 72 }, { x: 16, y: 96, w: 91, h: 27 }];
+    const pad = 10 * 1.25 * 0.5 + 6;
+    const blocked = new Float64Array(64);
+    const n = buildBlockedIntervals(track, hud, pad, blocked);
+    const per = trackPerimeter(track);
+    const pt = { x: 0, y: 0 };
+    for (const [x, y] of [[14, 86], [14, 30], [14, 100], [60, 14], [140, 14]] as const) {
+      trackPoint(resolveBlocked(trackParam(x, y, track), blocked, n, per), track, pt);
+      expect(insideAny(pt, hud, pad - 0.1), `(${x},${y}) → (${pt.x.toFixed(1)},${pt.y.toFixed(1)})`).toBe(false);
+    }
   });
 });
 
@@ -131,6 +154,14 @@ describe('de-overlap along the edge', () => {
     const sorted = [...p].sort((a, b) => a - b);
     for (let i = 1; i < sorted.length; i++) expect(sorted[i]! - sorted[i - 1]!).toBeGreaterThanOrEqual(12 - 1e-9);
     expect(p[3]).toBe(300); // far one untouched
+  });
+  it('treats the track as a loop: icons either side of the top-left seam do not touch', () => {
+    const per = trackPerimeter(TRACK);
+    const p = new Float64Array([0.5, per - 0.5]);
+    const order = new Int32Array(2);
+    deOverlapAlongTrack(p, 2, 4, order, new Float64Array([12, 12]), per);
+    const seamGap = p[0]! + per - p[1]!;
+    expect(seamGap).toBeGreaterThanOrEqual(12 + 2 - 1e-9);
   });
   it('never lets two icons touch, even when their sizes exceed the spacing preference', () => {
     const p = new Float64Array([100, 101]);

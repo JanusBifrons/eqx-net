@@ -148,48 +148,121 @@ export function trackPoint(p: number, track: TrackRect, out: ScreenPoint): Scree
 }
 
 /**
- * Slide a track point out of any HUD exclusion rect it falls in, ALONG the
- * track (to whichever side of the rect is closer), so the icon is never hidden
- * under a HUD widget. `pad` keeps the icon's own half-size clear. Returns the
- * (possibly) moved perimeter parameter.
+ * HUD avoidance, robust version. Project every exclusion rect (grown by `pad`)
+ * onto the track as intervals of the perimeter parameter, MERGE overlapping /
+ * touching intervals, and write them as [start0, end0, start1, end1, …] into
+ * `out`. Returns the interval count. Build this only when the HUD layout /
+ * screen / prefs change (not per icon) — `resolveBlocked` is the per-icon step.
+ *
+ * Why merge: adjacent HUD widgets (e.g. the sector card stacked on the shield
+ * bars) form one blocked stretch. Sliding out of each rect independently
+ * ping-pongs between them and can leave an icon on top of the HUD.
  */
-export function slideOutOfExclusions(
-  p: number,
+export function buildBlockedIntervals(
   track: TrackRect,
   exclusions: readonly ExclusionRect[],
   pad: number,
-  scratch: ScreenPoint,
+  out: Float64Array,
 ): number {
-  let param = p;
-  // Two passes: sliding out of one rect can land in a neighbour.
-  for (let pass = 0; pass < 2; pass++) {
+  const w = track.right - track.left;
+  const h = track.bottom - track.top;
+  const maxPairs = out.length >> 1;
+  let n = 0;
+  const push = (a: number, b: number): void => {
+    if (b <= a || n >= maxPairs) return;
+    out[n * 2] = a;
+    out[n * 2 + 1] = b;
+    n++;
+  };
+  for (let i = 0; i < exclusions.length; i++) {
+    const e = exclusions[i]!;
+    const x0 = e.x - pad;
+    const y0 = e.y - pad;
+    const x1 = e.x + e.w + pad;
+    const y1 = e.y + e.h + pad;
+    if (y0 <= track.top && track.top <= y1) {
+      const a = Math.max(x0, track.left), b = Math.min(x1, track.right);
+      push(a - track.left, b - track.left);
+    }
+    if (x0 <= track.right && track.right <= x1) {
+      const a = Math.max(y0, track.top), b = Math.min(y1, track.bottom);
+      push(w + (a - track.top), w + (b - track.top));
+    }
+    if (y0 <= track.bottom && track.bottom <= y1) {
+      const a = Math.max(x0, track.left), b = Math.min(x1, track.right);
+      push(w + h + (track.right - b), w + h + (track.right - a));
+    }
+    if (x0 <= track.left && track.left <= x1) {
+      const a = Math.max(y0, track.top), b = Math.min(y1, track.bottom);
+      push(2 * w + h + (track.bottom - b), 2 * w + h + (track.bottom - a));
+    }
+  }
+  // Insertion sort by start (n is small), then merge in place.
+  for (let i = 1; i < n; i++) {
+    const s = out[i * 2]!, t = out[i * 2 + 1]!;
+    let j = i - 1;
+    while (j >= 0 && out[j * 2]! > s) {
+      out[(j + 1) * 2] = out[j * 2]!;
+      out[(j + 1) * 2 + 1] = out[j * 2 + 1]!;
+      j--;
+    }
+    out[(j + 1) * 2] = s;
+    out[(j + 1) * 2 + 1] = t;
+  }
+  let m = 0;
+  for (let i = 0; i < n; i++) {
+    const s = out[i * 2]!, t = out[i * 2 + 1]!;
+    if (m > 0 && s <= out[(m - 1) * 2 + 1]!) {
+      if (t > out[(m - 1) * 2 + 1]!) out[(m - 1) * 2 + 1] = t;
+    } else {
+      out[m * 2] = s;
+      out[m * 2 + 1] = t;
+      m++;
+    }
+  }
+  // Join a stretch that wraps the top-left corner (the last interval runs to
+  // the end of the perimeter and the first starts at 0) into ONE interval
+  // [lastStart, per + firstEnd] — otherwise an icon ping-pongs across the seam.
+  const per = 2 * (w + h);
+  if (m >= 2 && out[0]! <= 0.5 && out[(m - 1) * 2 + 1]! >= per - 0.5) {
+    out[(m - 1) * 2 + 1] = per + out[1]!;
+    for (let i = 1; i < m; i++) {
+      out[(i - 1) * 2] = out[i * 2]!;
+      out[(i - 1) * 2 + 1] = out[i * 2 + 1]!;
+    }
+    m--;
+  }
+  return m;
+}
+
+/**
+ * Move perimeter parameter `p` out of any blocked interval to the NEAREST free
+ * end. Handles the wrap at the top-left corner (an interval ending at the
+ * perimeter length continues at 0). Returns the resolved parameter.
+ */
+export function resolveBlocked(p: number, intervals: Float64Array, count: number, per: number): number {
+  if (count === 0 || per <= 0) return p;
+  let q = p % per;
+  if (q < 0) q += per;
+  for (let pass = 0; pass < 3; pass++) {
     let moved = false;
-    for (let i = 0; i < exclusions.length; i++) {
-      const e = exclusions[i]!;
-      trackPoint(param, track, scratch);
-      const x0 = e.x - pad;
-      const y0 = e.y - pad;
-      const x1 = e.x + e.w + pad;
-      const y1 = e.y + e.h + pad;
-      if (scratch.x < x0 || scratch.x > x1 || scratch.y < y0 || scratch.y > y1) continue;
-      // Candidate exits along the current edge direction.
-      const w = track.right - track.left;
-      const h = track.bottom - track.top;
-      const onTop = param < w;
-      const onRight = !onTop && param < w + h;
-      const onBottom = !onTop && !onRight && param < 2 * w + h;
-      let back: number;
-      let fwd: number;
-      if (onTop) { back = param - (scratch.x - x0); fwd = param + (x1 - scratch.x); }
-      else if (onRight) { back = param - (scratch.y - y0); fwd = param + (y1 - scratch.y); }
-      else if (onBottom) { back = param - (x1 - scratch.x); fwd = param + (scratch.x - x0); }
-      else { back = param - (y1 - scratch.y); fwd = param + (scratch.y - y0); }
-      param = param - back <= fwd - param ? back - 0.01 : fwd + 0.01;
+    for (let i = 0; i < count; i++) {
+      const a = intervals[i * 2]!;
+      const b = intervals[i * 2 + 1]!;
+      // A corner-wrapping interval extends past `per`; test the wrapped q too.
+      let qq = q;
+      if (qq < a || qq > b) {
+        qq = q + per;
+        if (qq < a || qq > b) continue;
+      }
+      q = qq - a <= b - qq ? a - 0.01 : b + 0.01;
+      if (q < 0) q += per;
+      if (q >= per) q -= per;
       moved = true;
     }
     if (!moved) break;
   }
-  return param;
+  return q;
 }
 
 /**
@@ -201,7 +274,7 @@ export function slideOutOfExclusions(
  * One forward sweep (good enough at the icon caps in use; no wrap fix-up).
  */
 export function deOverlapAlongTrack(
-  p: Float64Array, n: number, minSpacing: number, order: Int32Array, sizes?: Float64Array,
+  p: Float64Array, n: number, minSpacing: number, order: Int32Array, sizes?: Float64Array, perimeter?: number,
 ): void {
   for (let i = 0; i < n; i++) order[i] = i;
   // Insertion sort by p (n ≤ 64).
@@ -225,5 +298,18 @@ export function deOverlapAlongTrack(
       if (touch > gap) gap = touch;
     }
     if (p[cur]! < prev + gap) p[cur] = prev + gap;
+  }
+  // The track is a LOOP: the last icon and the first (across the top-left
+  // seam) are neighbours too. If they crowd, pull the last one back.
+  if (perimeter !== undefined && n >= 2) {
+    const first = order[0]!;
+    const last = order[n - 1]!;
+    let gap = minSpacing;
+    if (sizes) {
+      const touch = (sizes[first]! + sizes[last]!) * 0.5 + 2;
+      if (touch > gap) gap = touch;
+    }
+    const wrapped = p[first]! + perimeter;
+    if (p[last]! > wrapped - gap) p[last] = wrapped - gap;
   }
 }
