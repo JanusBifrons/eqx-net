@@ -107,6 +107,15 @@ const stmts = {
     'user_id=excluded.user_id, p256dh=excluded.p256dh, auth=excluded.auth, updated_at=excluded.updated_at',
   ),
   PUSH_SUBSCRIPTION_DELETE: db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?'),
+  // PR 3a — account-bound player identity.
+  ACCOUNT_PLAYER_PUT: db.prepare(
+    'INSERT INTO account_players (user_id, player_id, created_at, updated_at) VALUES (?, ?, ?, ?) ' +
+    'ON CONFLICT(user_id) DO UPDATE SET player_id=excluded.player_id, updated_at=excluded.updated_at',
+  ),
+  PLAYER_ALIAS_PUT: db.prepare(
+    'INSERT INTO player_aliases (alias_player_id, canonical_player_id, user_id, created_at) VALUES (?, ?, ?, ?) ' +
+    'ON CONFLICT(alias_player_id) DO UPDATE SET canonical_player_id=excluded.canonical_player_id, user_id=excluded.user_id',
+  ),
 };
 
 let drainedCount = 0;
@@ -193,6 +202,14 @@ function applyOp(op: PersistOp): { rowId?: number } {
     }
     case 'DIRECTOR_STATE_PUT': {
       stmts.DIRECTOR_STATE_PUT.run(op.payloadJson, op.ts, op.ts);
+      return {};
+    }
+    case 'ACCOUNT_PLAYER_PUT': {
+      stmts.ACCOUNT_PLAYER_PUT.run(op.userId, op.playerId, op.ts, op.ts);
+      return {};
+    }
+    case 'PLAYER_ALIAS_PUT': {
+      stmts.PLAYER_ALIAS_PUT.run(op.aliasPlayerId, op.canonicalPlayerId, op.userId, op.ts);
       return {};
     }
     case 'PUSH_SUBSCRIPTION_PUT': {

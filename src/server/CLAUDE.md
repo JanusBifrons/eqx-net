@@ -125,6 +125,20 @@ Update this section when a threshold is set.
 - **Locks:** `tests/integration/sectorRoom/proceduralBase.test.ts` (state descriptor, spawn nudge, real-worker wall stop with a moved-then-stopped assertion, beam block) and `tests/e2e/base-warehouse-showcase.spec.ts`.
 - **Netgate required** (touches `SectorRoom` join + fire paths).
 
+## Player identity is ACCOUNT-bound (PR 3a, 2026-10-31)
+
+`playerId` (owner of ships / structures / hulls / wave targets) belongs to the **account**, not the browser. Rules (full story: [docs/architecture/player-identity.md](../../docs/architecture/player-identity.md)):
+
+- **Logged-in join** → `getAccountPlayerRegistry().resolveForUser(userId, claimedId)` — the account's canonical id; the client's claim is ignored once bound (first join adopts the browser's id). **Never** trust a client-claimed `playerId` for a logged-in session.
+- **Anonymous join** may not claim an account-bound id (canonical or alias) → fresh id.
+- **Transit arrival** carries no auth token → the source `TransitOrchestrator` issues a single-use `issueTransitIdentity(transitToken, playerId)`; the destination honours the id only via `consumeTransitIdentity`. Any NEW server-side seat reservation for a player must do the same.
+- **Second session, same account** → takeover via `PlayerSessionRegistry` (`session_replaced` + close 4002, awaits the old `onLeave`, bounded 3 s). Anonymous duplicates still get a fresh id.
+- **Test-fixture accounts** (`provider='e2e'`, the shared `/auth/dev/test-token` login) are EXEMPT and keep per-browser ids — otherwise every parallel E2E / netgate client would be the same player. Tests of binding use `/auth/register` or a directly signed token.
+- **Persisted playerIds** loaded from JSON snapshots (structure `owner`, lingering `playerId`, director `targetFactionId`) go through `canonicalPlayerId()`; the boot `mergeAccountPlayerIds` re-keys roster rows. Adding a new place that persists a playerId? Map it through `canonicalPlayerId()` on load.
+- Locks: `accountBoundPlayerId.test.ts` (integration), `account-bound-identity.spec.ts` (E2E), `identity/accountIdentity.test.ts`.
+
+---
+
 ## Pino Sampling Policy
 
 - Dev: `pino-pretty` transport.

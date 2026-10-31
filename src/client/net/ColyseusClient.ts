@@ -2234,6 +2234,14 @@ export class ColyseusGameClient {
       }
     });
 
+    // PR 3a — the same account logged in from another device/tab; the server
+    // is about to disconnect this session (it took over the account's
+    // playerId). Logged so a capture explains the disconnect; there is no
+    // auto-reconnect, so this session simply ends.
+    room.onMessage('session_replaced', () => {
+      logEvent('session_replaced', {});
+    });
+
     room.onLeave((code) => {
       logEvent('cc_left_room', { code });
       logEvent('disconnected', { code });

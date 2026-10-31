@@ -307,7 +307,11 @@ export async function bootSectorTestServer(opts: {
     events,
     async cleanup() {
       for (const r of [...connectedRooms]) {
-        try { await r.leave(); } catch { /* ignore */ }
+        // Bounded: `leave()` on a connection the SERVER already closed (e.g. a
+        // PR 3a `session_replaced` takeover) never resolves.
+        try {
+          await Promise.race([r.leave(), new Promise((resolve) => setTimeout(resolve, 500))]);
+        } catch { /* ignore */ }
       }
       connectedRooms.length = 0;
       try { await gameServer.gracefullyShutdown(false); } catch { /* ignore */ }

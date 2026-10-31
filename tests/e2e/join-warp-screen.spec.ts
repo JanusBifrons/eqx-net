@@ -46,8 +46,10 @@ async function readShipPose(page: Page): Promise<{ x: number; y: number } | null
     if (!raw) return null;
     try {
       const all = JSON.parse(raw) as Record<string, { x: number; y: number }>;
-      // The local ship is the only entry with key === stored eqxPlayerId.
-      const pid = window.localStorage.getItem('eqxPlayerId') ?? '';
+      // The local ship is the only entry keyed by this client's playerId —
+      // the account id while logged in (PR 3a), else the anonymous one
+      // (mirrors loadStoredPlayerId in src/client/identity/token.ts).
+      const pid = window.localStorage.getItem('eqxAccountPlayerId') ?? window.localStorage.getItem('eqxPlayerId') ?? '';
       return all[pid] ?? null;
     } catch {
       return null;
