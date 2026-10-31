@@ -156,6 +156,11 @@ export async function bootSectorTestServer(opts: {
    *  (no rocks) so a test can seed its own asteroids deterministically. When
    *  omitted, the room spawns the production `ASTEROIDS` roster. */
   asteroidConfig?: ReadonlyArray<{ x: number; y: number; vx: number; vy: number; radius: number; mass: number }>;
+  /** Procedural bases to generate (plan soft-leaping-truffle). */
+  bases?: ReadonlyArray<{ archetype: 'warehouse'; seed: number; x: number; y: number; size: number }>;
+  /** Room-level default spawn point (forwarded to `defaultSpawnX/Y`). */
+  defaultSpawnX?: number;
+  defaultSpawnY?: number;
 } = {}): Promise<SectorTestHarness> {
   // 1. Stub the persistence singletons FIRST. SectorRoom.onCreate
   //    reads these via module-level singletons, so the injection has
@@ -196,6 +201,9 @@ export async function bootSectorTestServer(opts: {
     scenarioDrones: opts.scenarioDrones,
     scenarioAsteroids: opts.scenarioAsteroids,
     asteroidConfig: opts.asteroidConfig,
+    bases: opts.bases,
+    defaultSpawnX: opts.defaultSpawnX,
+    defaultSpawnY: opts.defaultSpawnY,
   });
   await gameServer.listen(port);
 

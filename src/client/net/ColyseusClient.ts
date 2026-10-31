@@ -1,5 +1,6 @@
+import { PredBaseStreamer, type BaseStateView } from './predBaseStreamer.js';
 import { Client, Room } from 'colyseus.js';
-import type { RenderMirror, ShipRenderState } from '@core/contracts/IRenderer';
+import type { BaseRenderDescriptor, RenderMirror, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
 import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 import { SPOOL_DURATION_MS } from '@core/transit/TransitStateMachine';
@@ -112,6 +113,10 @@ export interface ColyseusClientCallbacks {
    *  `EffectsService.resetForSectorHandoff()`. Optional — callers that
    *  don't render (LocalGameClient, headless tests) can omit. */
   onSectorHandoff?: () => void;
+  /** Procedural bases (plan soft-leaping-truffle) — fired when the bases in
+   *  room state change (add / remove / destroy mask). Wired to
+   *  `renderer.setBases`. Never per frame. */
+  onBasesChanged?: (bases: BaseRenderDescriptor[]) => void;
 }
 
 /** Timestamped remote-ship state snapshot for 100 ms display-delay interpolation. */
@@ -455,6 +460,8 @@ export class ColyseusGameClient {
   };
 
   private room: Room | null = null;
+  /** Procedural-base chunk streaming into predWorld (plan soft-leaping-truffle). */
+  private readonly _predBases = new PredBaseStreamer();
 
   /** Phase 8 sub-phase B — exposed for the in-game galaxy maps (Pixi
    *  GalaxyMapLayer + GalaxyOverviewScreen warp-mode) to call
@@ -1228,6 +1235,8 @@ export class ColyseusGameClient {
     // client-receive gaps with the server emitting cleanly throughout).
     // Idempotent; safe to call again on reconnect.
     installLongtaskObserver();
+    this._onBasesChanged = callbacks.onBasesChanged;
+    this._basesSig = '';
     // r2 evidence pass — visibility / freeze / resume / connection
     // change listeners. Distinguishes "page backgrounded" throttle
     // from "phone CPU throttle" in effectiveHz drops.
@@ -1242,6 +1251,7 @@ export class ColyseusGameClient {
     // Init client-side prediction world before joining so it is ready as soon as
     // we receive our playerId.
     this.predWorld = await PhysicsWorld.create();
+    this._predBases.reset();
 
     callbacks.onConnectionStatus('connecting');
     logEvent('cc_connecting', { wsUrl, playerId: storedPlayerId ?? null });
@@ -3260,6 +3270,59 @@ export class ColyseusGameClient {
       if (this.mirror.structures && this.mirror.structures.size > 0) this.mirror.structures.clear();
     }
     this.syncPredWalls();
+    this.syncPredBases();
+  }
+
+  /**
+   * Procedural bases (plan soft-leaping-truffle) — stream the local predWorld's
+   * base chunk colliders around the local ship from the room-state
+   * descriptors, so the player's predicted flight is blocked by the SAME
+   * walls the server worker blocks (Invariant #15; "every collidable entity
+   * must be in predWorld"). Per snapshot; allocation-free in steady state.
+   */
+  private syncPredBases(): void {
+    if (!this.predWorld) return;
+    const state = this.room?.state as { bases?: { forEach(cb: (v: BaseStateView, k: string) => void): void } } | undefined;
+    const localId = this.mirror.localPlayerId;
+    const ship = localId !== null ? this.mirror.ships.get(localId) : undefined;
+    if (!ship) return;
+    this._predBases.sync(this.predWorld, state?.bases, ship.x, ship.y);
+    this.publishBasesIfChanged(state?.bases);
+  }
+
+  /** Signature of the room-state bases last handed to the renderer. */
+  private _basesSig = '';
+  /** Set in connect() from ColyseusClientCallbacks.onBasesChanged. */
+  private _onBasesChanged: ((bases: BaseRenderDescriptor[]) => void) | undefined;
+
+  /** Hand the renderer the base descriptors when (and only when) they change.
+   *  The signature string is built per snapshot only while bases exist — a
+   *  handful of scalars per base; fine at 20 Hz and zero cost in base-free
+   *  sectors. */
+  private publishBasesIfChanged(
+    bases: { forEach(cb: (v: BaseStateView & { dead?: ArrayLike<number> }, k: string) => void): void } | undefined,
+  ): void {
+    let sig = '';
+    // TODO: alloc-debt — per-snapshot signature string while bases exist.
+    bases?.forEach((v, k) => {
+      sig += k + ':' + v.seed + ':' + v.originX + ':' + v.originY + ':' + v.size + ':' + (v.dead?.length ?? 0) + ';';
+    });
+    if (sig === this._basesSig) return;
+    this._basesSig = sig;
+    const out: BaseRenderDescriptor[] = [];
+    bases?.forEach((v, k) => {
+      out.push({
+        id: k,
+        ver: v.ver,
+        archetype: v.archetype as BaseRenderDescriptor['archetype'],
+        seed: v.seed,
+        x: v.originX,
+        y: v.originY,
+        size: v.size,
+        ...(v.dead && v.dead.length > 0 ? { dead: Array.from(v.dead) } : {}),
+      });
+    });
+    this._onBasesChanged?.(out);
   }
 
   /**
