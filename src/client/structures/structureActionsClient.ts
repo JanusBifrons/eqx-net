@@ -30,3 +30,15 @@ export function sendUpgradeStructure(entityId: number): boolean {
   room.send('upgrade_structure', { type: 'upgrade_structure', entityId });
   return true;
 }
+
+/** Living World P1a-2 — send `refine_salvage` (salvage from the base storage
+ *  network → this Capital's mineral bank; owner-gated server-side). Returns
+ *  true if the message was sent (false when there's no live room). */
+export function sendRefineSalvage(entityId: number, qty: number): boolean {
+  const client = getGameClient();
+  if (!client) return false;
+  const room = client.getRoom();
+  if (!room) return false;
+  room.send('refine_salvage', { type: 'refine_salvage', entityId, qty });
+  return true;
+}

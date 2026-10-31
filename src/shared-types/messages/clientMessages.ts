@@ -167,6 +167,17 @@ export const UpgradeStructureSchema = z
   })
   .strict();
 
+/** Living World P1a-2 — client → server: refine SALVAGE from the base storage
+ *  network into this Capital's mineral bank. Owner-gated server-side; a
+ *  foreign / non-Capital / empty request is a silent no-op. */
+export const RefineSalvageSchema = z
+  .object({
+    type: z.literal('refine_salvage'),
+    entityId: z.number().int().nonnegative(),
+    qty: z.number().int().positive().max(1_000_000),
+  })
+  .strict();
+
 /** Client → server (Phase 4 WS-A2): "pilot the OWNED in-sector ship with this
  *  shipInstanceId". The SAME-SECTOR INSTANT swap — the player (a spectator after
  *  death, or piloting another hull) reclaims one of their own lingering hulls
@@ -272,6 +283,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   RemoveStructureSchema,
   StructureActionSchema,
   UpgradeStructureSchema,
+  RefineSalvageSchema,
   PilotShipSchema,
   SpectateSchema,
   ApplyShipUpgradeSchema,

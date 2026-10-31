@@ -21,6 +21,7 @@ export {
   RemoveStructureSchema,
   StructureActionSchema,
   UpgradeStructureSchema,
+  RefineSalvageSchema,
   PilotShipSchema,
   SpectateSchema,
   StatIdSchema,

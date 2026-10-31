@@ -262,6 +262,9 @@ export interface UIStore {
   cargoCapacity: number;
   /** Short-lived pickup popups ("+7 Salvage"). Newest last; auto-expired. */
   lootFeed: ReadonlyArray<{ id: number; text: string }>;
+  /** Living World P1a-2 — auto-deposit progress 0..100 (10 % steps), null when
+   *  not depositing. Drives the chip's deposit bar. */
+  depositPct: number | null;
   /** Phase 4 (Leveling & XP, WS-B1) — the level the LOCAL player's ship just
    *  reached, set on a `ship_level_up` for the own hull. Discrete scalar
    *  (purity-clean, #2). The upgrade-modal trigger (WS-B2) reads + clears this;
@@ -445,6 +448,7 @@ export interface UIStore {
   setCargo: (cargo: CargoView | null, capacity: number) => void;
   pushLootFeed: (text: string) => number;
   expireLootFeed: (id: number) => void;
+  setDepositPct: (pct: number | null) => void;
   setLastFireMs: (ms: number | null) => void;
   setDrawerOpen: (v: boolean) => void;
   setDrawerTab: (id: string) => void;

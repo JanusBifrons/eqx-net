@@ -26,6 +26,7 @@ describe('structureKinds catalogue', () => {
       'shield_pylon',
       'laser_bolt_turret', // WS-8 (R2.15) — appended at the tail
       'missile_turret',
+      'cargo_bay', // Living World P1a-2 — appended at the tail
     ]);
   });
 

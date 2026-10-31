@@ -158,6 +158,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   cargo: null,
   cargoCapacity: 0,
   lootFeed: [],
+  depositPct: null,
   pendingLevelUp: null,
   upgradeAck: null,
   lastFireMs: null,
@@ -258,6 +259,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
     return id;
   },
   expireLootFeed: (id) => set((s) => ({ lootFeed: s.lootFeed.filter((e) => e.id !== id) })),
+  setDepositPct: (pct) => set({ depositPct: pct }),
   setPendingLevelUp: (level) => set({ pendingLevelUp: level }),
   setUpgradeAck: (ack) => set({ upgradeAck: ack }),
   setLastFireMs: (ms) => set({ lastFireMs: ms }),

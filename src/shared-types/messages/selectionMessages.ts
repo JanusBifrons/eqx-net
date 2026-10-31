@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { GOOD_IDS } from '../goods.js';
 
 /**
  * Click-to-inspect selection-scoped stats channel (structures follow-up
@@ -54,6 +55,15 @@ export const EntityStatsSchema = z
     hpMax: z.number(),
     shield: z.number().optional(),
     shieldMax: z.number().optional(),
+    /** Living World P1a-2 — a storage structure's deposited cargo. OWNER-ONLY:
+     *  the server strips it before sending to anyone else. */
+    hold: z.object({
+      goods: z.partialRecord(z.enum(GOOD_IDS), z.number().int().nonnegative()),
+      credits: z.number().int().nonnegative(),
+      blueprints: z.number().int().nonnegative(),
+    }).strict().optional(),
+    /** Weight capacity of that storage (with `hold`). */
+    holdCapacity: z.number().nonnegative().optional(),
   })
   .strict();
 
