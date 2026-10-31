@@ -29,6 +29,13 @@ export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'er
  *  live warning is a hostile drone wave, so the store defaults absent → 'hostile'. */
 export type WarpRelation = 'hostile' | 'neutral' | 'friendly';
 
+/** Living World P1a — the local ship's carried hold, as the HUD sees it. */
+export interface CargoView {
+  goods: Partial<Record<string, number>>;
+  credits: number;
+  blueprints: number;
+}
+
 export interface WarpWarning {
   id: string;
   label: string;
@@ -246,6 +253,15 @@ export interface UIStore {
    *  ship-kind catalogue; constant per kind, so it lives safely in Zustand
    *  (no per-frame churn). */
   energyMax: number;
+  /** Living World P1a — the LOCAL active ship's carried hold, decoded from the
+   *  authoritative own-ship snapshot slice (#16). Discrete (changes only on a
+   *  pickup / deposit / spill), purity-clean (no spatial keys, #2). null ⇒
+   *  carrying nothing. */
+  cargo: CargoView | null;
+  /** Cargo capacity (weight units) of the local ship's kind. */
+  cargoCapacity: number;
+  /** Short-lived pickup popups ("+7 Salvage"). Newest last; auto-expired. */
+  lootFeed: ReadonlyArray<{ id: number; text: string }>;
   /** Phase 4 (Leveling & XP, WS-B1) — the level the LOCAL player's ship just
    *  reached, set on a `ship_level_up` for the own hull. Discrete scalar
    *  (purity-clean, #2). The upgrade-modal trigger (WS-B2) reads + clears this;
@@ -426,6 +442,9 @@ export interface UIStore {
     kind: 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | null,
   ) => void;
   setEnergyMax: (max: number) => void;
+  setCargo: (cargo: CargoView | null, capacity: number) => void;
+  pushLootFeed: (text: string) => number;
+  expireLootFeed: (id: number) => void;
   setLastFireMs: (ms: number | null) => void;
   setDrawerOpen: (v: boolean) => void;
   setDrawerTab: (id: string) => void;

@@ -19,6 +19,7 @@
 
 import type {
   IRenderer,
+  BaseRenderDescriptor,
   RenderMirror,
   RendererFeedback,
 } from '@core/contracts/IRenderer';
@@ -476,6 +477,11 @@ export class WorkerRendererClient implements IRenderer {
    */
   setSpectator(active: boolean): void {
     this.post({ type: 'SET_SPECTATOR', active });
+  }
+
+  /** Procedural bases — see `IRenderer.setBases`. Posted only on change. */
+  setBases(bases: readonly BaseRenderDescriptor[]): void {
+    this.post({ type: 'SET_BASES', bases: bases.slice() });
   }
 
   /**

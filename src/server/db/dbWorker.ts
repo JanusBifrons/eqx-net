@@ -19,6 +19,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { SCHEMA_SQL, PLAYER_SHIPS_MIGRATIONS } from './schema.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import type { WorkerInbound, WorkerOutbound } from './workerProtocol.js';
+import { HOLD_PUT_SQL, HOLD_DELETE_SQL, holdPutArgs, applyGroupAtomically } from './holdsSql.js';
 
 interface WorkerData {
   dbPath: string;
@@ -112,6 +113,8 @@ const stmts = {
     'INSERT INTO account_players (user_id, player_id, created_at, updated_at) VALUES (?, ?, ?, ?) ' +
     'ON CONFLICT(user_id) DO UPDATE SET player_id=excluded.player_id, updated_at=excluded.updated_at',
   ),
+  HOLD_PUT: db.prepare(HOLD_PUT_SQL),
+  HOLD_DELETE: db.prepare(HOLD_DELETE_SQL),
   PLAYER_ALIAS_PUT: db.prepare(
     'INSERT INTO player_aliases (alias_player_id, canonical_player_id, user_id, created_at) VALUES (?, ?, ?, ?) ' +
     'ON CONFLICT(alias_player_id) DO UPDATE SET canonical_player_id=excluded.canonical_player_id, user_id=excluded.user_id',
@@ -226,6 +229,20 @@ function applyOp(op: PersistOp): { rowId?: number } {
     }
     case 'PUSH_SUBSCRIPTION_DELETE': {
       stmts.PUSH_SUBSCRIPTION_DELETE.run(op.endpoint);
+      return {};
+    }
+    case 'HOLD_PUT': {
+      stmts.HOLD_PUT.run(...holdPutArgs(op));
+      return {};
+    }
+    case 'HOLD_DELETE': {
+      stmts.HOLD_DELETE.run(op.holderUid);
+      return {};
+    }
+    case 'GROUP': {
+      applyGroupAtomically(db, op.ops, (sub) => { applyOp(sub); }, (message) => {
+        post({ type: 'GROUP_ERROR', message });
+      });
       return {};
     }
   }

@@ -4,7 +4,7 @@
  * no class instances). Locked by `protocol.test.ts`.
  */
 
-import type { RenderMirror, WarpCenter } from '@core/contracts/IRenderer';
+import type { BaseRenderDescriptor, RenderMirror, WarpCenter } from '@core/contracts/IRenderer';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import type { CameraCue } from '@core/contracts/cameraScript';
 import type { WarpParams } from './warpParams.js';
@@ -182,6 +182,13 @@ export interface SetSpectatorMsg {
   active: boolean;
 }
 
+/** Procedural bases — the descriptors to draw (see IRenderer.setBases).
+ *  Posted only on change. */
+export interface SetBasesMsg {
+  type: 'SET_BASES';
+  bases: BaseRenderDescriptor[];
+}
+
 /**
  * Phase 4 WS-A2 — kick off a one-shot eased camera glide to a GAME-space point
  * over `durationMs`. Drives `PixiRenderer.glideCameraTo` → `Camera.glideTo`. The
@@ -332,6 +339,7 @@ export type MainToWorkerMsg =
   | TriggerWarpInMsg
   | SetLoadCurtainMsg
   | SetSpectatorMsg
+  | SetBasesMsg
   | GlideCameraMsg
   | SetCameraScriptMsg
   | PanCameraMsg

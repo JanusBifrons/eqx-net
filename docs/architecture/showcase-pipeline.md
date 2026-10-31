@@ -125,5 +125,7 @@ window.
   non-deterministically. Use `startWhen` to wait for the action rather than a
   fixed delay.
 - **WebRTC is off under automation,** so footage runs over WebSocket.
-- **Procedural bases and soft CCD** are pending until the bases vertical slice
-  merges (see `SHOWCASE_PENDING`).
+- **Not yet filmed** (see `SHOWCASE_PENDING`): AI-vs-AI allegiances, which need a
+  staged two-faction room. **Wave attacks** are catalogue-only: the squad holds
+  at the sector edge for more than 45 s before committing, so the assault needs
+  a fast-approach trigger to land inside a take.

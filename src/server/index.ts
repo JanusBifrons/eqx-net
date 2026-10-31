@@ -19,6 +19,7 @@ import {
   initWorker,
   persistence,
   initPlayerShipStore,
+  initHoldStore,
   initAccountPlayerRegistry,
   getPersistenceHealth,
 } from './db/PersistenceWorker.js';
@@ -618,6 +619,22 @@ gameServer
 for (const [name, opts] of Object.entries(SHOWCASE_ROOMS)) {
   gameServer.define(name, SectorRoom, opts).filterBy(['testId']);
 }
+// Procedural bases (plan soft-leaping-truffle, PR-V2) — the WAREHOUSE showcase:
+// one max-size (8000 u) warehouse at the origin, nothing else in the sector, so
+// screenshots/videos/E2Es see the base alone. Spawn sits OUTSIDE the south wall
+// (half-side ≈ 2824 u). filterBy(['testId']) isolates parallel specs.
+gameServer
+  .define('base-warehouse-showcase', SectorRoom, {
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    bases: [{ archetype: 'warehouse', seed: 42, x: 0, y: 0, size: 8000 }],
+    defaultSpawnX: 0,
+    defaultSpawnY: -3400,
+    maxClients: 8,
+  })
+  .filterBy(['testId']);
 // Wave-system E2E (tests/e2e/wave-attack.spec.ts) — a DIRECTOR-MANAGED galaxy
 // room (real sectorKey) seeded with a PRE-BUILT, player-owned READY base
 // (Capital + Miner + Solar + Turret, owner `wave-tester`). Single eager
@@ -845,6 +862,11 @@ async function main(): Promise<void> {
   // galaxy room's onJoin can resolve a shipId without a race.
   const { hydrated: rosterHydrated } = initPlayerShipStore();
   logger.info({ hydrated: rosterHydrated }, 'Player-ship roster hydrated from disk');
+
+  // Living World P1a — the unified hold table (ship cargo, loot pods, storage).
+  // BEFORE the galaxy rooms: their hydrate respawns this sector's loot pods.
+  const { hydrated: holdsHydrated } = initHoldStore();
+  logger.info({ hydrated: holdsHydrated }, 'Holds hydrated from disk');
 
   // PR 3a — account-bound player identity. Hydrate the account→playerId
   // bindings + aliases and fold each account's historical per-browser ids

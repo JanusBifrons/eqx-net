@@ -27,6 +27,8 @@ import { PhysicsWorld } from './World.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { tickInputQueue, type QueuedInput } from './inputQueue.js';
 import { drainContacts } from './contactDrain.js';
+import { generateBase } from '../procgen/generateBase.js';
+import { buildChunkOutlines } from '../procgen/baseChunkMesh.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import {
   SEQLOCK_IDX,
@@ -104,7 +106,12 @@ interface MissileImpulseCmd { type: 'MISSILE_IMPULSE'; entityId: string; fx: num
 interface SpawnWallCmd      { type: 'SPAWN_WALL';      id: string; ax: number; ay: number; bx: number; by: number; thickness: number }
 interface SetWallActiveCmd  { type: 'SET_WALL_ACTIVE'; id: string; active: boolean }
 interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd;
+/** Procedural bases (plan soft-leaping-truffle) — the worker REGENERATES the
+ *  base from its descriptor with the shared core generator (no geometry crosses
+ *  the thread boundary) and spawns one union-outline polyline body per chunk.
+ *  `dead` = destroy-bit words (omitted = nothing destroyed). */
+interface SpawnBaseCmd      { type: 'SPAWN_BASE'; id: string; ver: number; archetype: 'warehouse'; seed: number; x: number; y: number; size: number; dead?: number[] }
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SpawnBaseCmd;
 
 async function main(): Promise<void> {
   const { sab } = workerData as { sab: SharedArrayBuffer };
@@ -285,6 +292,12 @@ async function main(): Promise<void> {
       }
       case 'REMOVE_WALL': {
         physics.removeWall(cmd.id);
+        break;
+      }
+      case 'SPAWN_BASE': {
+        const layout = generateBase({ ver: cmd.ver, archetype: cmd.archetype, seed: cmd.seed, x: cmd.x, y: cmd.y, size: cmd.size });
+        const outlines = buildChunkOutlines(layout, cmd.dead ? Uint32Array.from(cmd.dead) : null);
+        for (let c = 0; c < outlines.length; c++) physics.spawnBaseChunk(cmd.id, c, outlines[c]!.vertices, outlines[c]!.indices);
         break;
       }
     }

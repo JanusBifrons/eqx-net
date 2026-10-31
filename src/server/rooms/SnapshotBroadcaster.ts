@@ -54,6 +54,8 @@ import type { SnapshotMessage } from '../../shared-types/messages.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import type { ShipState } from './schema/SectorState.js';
 import type { ProjectileRecord } from './ProjectilePipeline.js';
+import type { Hold } from '../../shared-types/goods.js';
+import { isHoldEmpty } from '../../core/cargo/hold.js';
 
 /** Shared empty stat-allocation reference (Phase 4 WS-B2). A frozen singleton so
  *  the per-broadcast scratch initializer + every un-upgraded ship reuse ONE
@@ -133,6 +135,10 @@ export interface SnapshotBroadcasterDeps {
    *  `drones[].hostile` bit: is this drone (swarm string id) hostile to this
    *  player? Wired to the room's AI hostility ledger. */
   isDroneHostileTo: (droneId: string, playerId: string) => boolean;
+  /** Living World P1a — the carried hold of a ship instance (a SHARED reference
+   *  from the HoldStore, replaced only on a discrete transfer — #14 safe), or
+   *  undefined when it carries nothing. Absent dep ⇒ no cargo slice. */
+  shipHoldOf?: (shipInstanceId: string) => Hold | undefined;
   playerMountAngles: Map<string, Float32Array>;
   droneMountAngles: Map<string, Float32Array>;
   /** Missile simulation — per-recipient AOI-filtered missile pose slice. */
@@ -216,6 +222,7 @@ type MutableStateEntry = {
   shieldDown?: boolean;
   level?: number;
   statAlloc?: Record<string, number>;
+  cargo?: Hold;
   // Typed mutable to match the wire `SnapshotMessage['states'][...].mounts`; the
   // value assigned is a SHARED reference to `ShipState.mounts` (the encoder
   // reads it synchronously and never mutates it).
@@ -686,6 +693,12 @@ export class SnapshotBroadcaster {
         const ownActive = ship.playerId === recipientPlayerId && ship.isActive;
         entry.statAlloc =
           ownActive && hasAnyStatAlloc(ship.statAlloc) ? ship.statAlloc : undefined;
+        // Living World P1a (#16) — the own ACTIVE hull's carried hold, only when
+        // non-empty (zero bytes otherwise). Shared reference (no per-tick alloc).
+        const hold = ownActive && this.deps.shipHoldOf !== undefined
+          ? this.deps.shipHoldOf(ship.shipInstanceId)
+          : undefined;
+        entry.cargo = hold !== undefined && !isHoldEmpty(hold) ? hold : undefined;
         // WS-B3 — activated mounts are PUBLIC (every recipient, active +
         // lingering), emit-when-non-empty. Shared reference (no per-tick alloc,
         // #14); the renderer looks up geometry by (shipKind, slotId). Clear the

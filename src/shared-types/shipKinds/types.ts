@@ -253,6 +253,19 @@ export const ShipKindSchema = z
      *  kinds were leaking into Sol Prime as hunter bots, producing the
      *  "square ship bigger than its shield" smoke report. */
     engineeringOnly: z.boolean().optional(),
+    /** Allegiance (plan peppy-jumping-pinwheel P0) — which NPC side a swarm
+     *  entity of this kind fights for. Absent ⇒ `'drones'` (every pre-P0 kind).
+     *  Derived from the kind so it costs zero wire bytes (the client already
+     *  has the kind from the swarm record). See `src/shared-types/allegiances.ts`. */
+    allegiance: z.enum(['drones', 'robots', 'traders']).optional(),
+    /** NPC-only kind (robots, haulers, loot pods). Excluded from
+     *  `GAMEPLAY_SHIP_KINDS_LIST` (random drone pickers) AND rejected as a
+     *  PLAYER ship kind server-side (`isPlayableShipKindId`). Default `false`. */
+    npcOnly: z.boolean().optional(),
+    /** Immune to `LoadShedder` eviction (haulers, nexi, elites — entities whose
+     *  silent removal would destroy value or break a world state machine).
+     *  Default `false`. */
+    shedImmune: z.boolean().optional(),
     /** Initial (and `ShipState.maxHealth`) health value. */
     maxHealth: z.number().positive(),
 

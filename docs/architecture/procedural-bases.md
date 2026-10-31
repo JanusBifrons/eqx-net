@@ -104,3 +104,101 @@ Visual review notes (for the kit / visual pass):
 - 8000 u warehouses read well: dense parallel rows.
 - Below ~5000 u the double-depth racks leave zones sparse. Scale rack depth with footprint.
 - Small footprints form sealed pockets between a bay's container column, the wall and a row end. The validator rejects them (min size 4000). Carve them at the source.
+
+## Collider representation: union OUTLINE, not trimesh (PR-V1, measured)
+
+The research doc proposed one trimesh per chunk plus `FIX_INTERNAL_EDGES`. Measurement overturned the second half:
+
+**Test.** A ship slides along 30 adjacent pieces at 600 u/s, pressed into the face. On one seamless piece, damping alone leaves 565 u/s.
+
+| Collider | Min speed (u/s) |
+|---|---|
+| trimesh (with or without `FIX_INTERNAL_EDGES`, identical) | 340 |
+| trimesh, soft CCD off | 435 |
+| compound cuboids | 215 |
+| **polyline outline of the union** | **565** |
+
+Every representation with internal edges snags at piece seams. The union outline has none.
+
+| Property | Trimesh | Outline |
+|---|---|---|
+| Broad-phase cost (25 ships + 4000 pieces) | 0.086 ms | 0.088 ms (same) |
+| Tunnelling with soft CCD, 2× top speed, 16 u wall | — | 0 / 184 |
+
+So `buildChunkOutlines` (`src/core/procgen/baseChunkMesh.ts`) computes the boundary of the union of solid pieces over the WHOLE base. It uses an integer sweep, so edges are maximal and never break at chunk lines. Each edge belongs to the chunk of its start point, and `World.spawnBaseChunk` builds one polyline collider per chunk.
+
+**Caveat.** An outline is hollow, so a body spawned inside solid geometry would be trapped. Spawn and arrival paths must use `isPointClear` (PR-V2).
+
+| Stage / PR | Pieces (max base) | Step overhead (ms) | 20-tick replay overhead (ms) | Server tick added (ms) | Frame p99 Δ | Wire join (B/base) | Notes |
+|---|---|---|---|---|---|---|---|
+| PR-V1 (physics layer) | 223 | ≈ trimesh (0.088 vs 0.086 @ 4k) | — | — | — | — | seam-free slide 565/565; tunnelling 0/184 |
+
+## Vertical slice (PR-V2): server + client end to end
+
+- **Server:** the room option `bases` → `BaseSubsystem`. It writes the descriptor to room state, the worker regenerates colliders via `SPAWN_BASE`, and the subsystem handles beam and projectile blocking plus the spawn nudge.
+- **Client:** `PredBaseStreamer` handles predWorld chunk streaming; `BaseRenderer` handles rendering (per-chunk retained Graphics, culling, LOD).
+- **E2E (`base-warehouse-showcase.spec.ts`):** a ship holding thrust into the south wall is stopped, and the PREDICTED pose never enters the wall. That is the two-sided-contract check.
+
+Known visual nits for the kit/visual pass:
+- **Chunk-line seams.** The lit and shadow edges are drawn per split piece, so a faint line shows where a wall or rack crosses a chunk line. Draw edges from the unsplit rectangle.
+- **Sparse small bases.** Footprints below ~5000 u read sparse (noted earlier).
+
+| Stage / PR | Pieces (max base) | Step overhead (ms) | 20-tick replay overhead (ms) | Server tick added (ms) | Frame p99 Δ | Wire join (B/base) | Notes |
+|---|---|---|---|---|---|---|---|
+| PR-V2 (slice) | 223 | outline ≈ 0.09 @ 8k (bench) | client streams ≤ 2000 active pieces (locked) | not yet measured (perf arm = PR-P) | not yet measured | ~60 B descriptor + empty dead[] | ray query ≤ 100 cells / 400 segs, 0 alloc |
+
+### Scale pass (generator v2, user feedback: "structures should be a lot larger than the normal ship")
+
+A fighter is ~30 u long, and v1 racks (112–176 u) read as crates beside it. v2 scales every architectural dimension. Aisles stay ≥ the locked fly-through floor; at 2–3× it, the yard is also easier to fly.
+
+| Dimension | v2 value |
+|---|---|
+| Walls | 96 u |
+| Racks | 320–480 u deep, 2000–3600 u runs |
+| Aisles | 2–3× corridor |
+| Cross-aisles | 2× corridor |
+| Main aisles | 4× corridor, every ~4500 u |
+| Gates | 5× corridor |
+| Bays | 1400 u deep, 400 u margins |
+| Container stacks | 240–400 × 140–220 u |
+| Minimum size | 5000 u |
+
+Visual detail (edge shading, bay slots, conduits, lamps, hazard stripes) scales with it. `BASE_GENERATOR_VERSION` 1 → 2; hashes re-pinned.
+
+**Generate → REPAIR → curate.** Bigger pieces made sealed pockets common: up to 44% of first attempts, from bay container rows, wall corners and trimmed rack ends. `carve.ts` removes the carvable pieces (racks, containers; never walls or gate posts) that border both a sealed pocket and reachable space, then re-validates. First-attempt validity after repair: 200/200 at 5000–7000 u and 199/200 at 8000 u. Generation stays at ~2.5 ms mean, p99 < 10 ms (budget 50).
+
+**Chunk-line seams fixed.** Edge shading is skipped on piece sides that lie on an interior chunk line, where the builder split one continuous wall or rack.
+
+## Process: a small showcase per feature (user directive, 2026-10-31)
+
+Every feature PR in this plan ships its OWN small showcase as it lands, not one big trailer at the end:
+- **Clips:** 1–3 short clips (spectator camera or scripted flight) recorded from the feature's showcase room.
+- **Stills:** a few screenshots.
+- **Page:** a compact artifact page showing what's new, plus its budget-ledger numbers.
+
+The final "Factorio-style" trailer (PR-T) becomes a cut of these per-feature clips, not a separate production.
+
+### Density pass (generator v3) + first per-feature showcase
+
+v2's 3× scale passed every lock but read as an empty yard. Racks covered 3.5% of the floor on average at 5000 u (some bases had none) and 10% at 8000 u. Large main aisles split the yard into small zones, and big loading bays ate the corners.
+
+v3 changes:
+- **Zones and aisles:** cross-aisles every ~3200 u; main aisles 2.5× corridor, rack aisles 1.5–2.2×, perimeter road 1.5×.
+- **Rows:** run edge to edge in each zone.
+- **Gates and bays:** small yards get 2 gates; bays are sized to the footprint (≤ 900 u).
+
+Results:
+
+| Size | Mean coverage | Worst | First-try valid |
+|---|---|---|---|
+| 5000 u | 22.8% | 16.4% | 200/200 |
+| 8000 u | 25.2% | 19.5% | 200/200 |
+
+**New lock:** `generateBase.test.ts` "storage density" requires mean ≥ 20% and worst ≥ 12%. A layout can be valid and in budget yet not read as a warehouse, so quality is locked too.
+
+**Weathering:** tone is keyed on the unsplit parent piece, so a rack crossing a chunk line keeps one tone.
+
+**Showcase:**
+- **Clip:** `scripts/showcase/base-cinematic.ts` (canvas render of the same draw plan, Playwright recordVideo).
+- **Page:** `scripts/showcase/warehouse-page.template.html`.
+- **Media:** `diag/showcase/warehouse/`.

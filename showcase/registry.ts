@@ -23,6 +23,8 @@ import { spectator } from './shots/spectator.js';
 import { warp } from './shots/warp.js';
 import { scale } from './shots/scale.js';
 import { mobile } from './shots/mobile.js';
+import { loot } from './shots/loot.js';
+import { proceduralBase } from './shots/proceduralBase.js';
 
 /** Every shot, in reel order. Catalogue = all of them; reel = `reel: true`. */
 export const SHOTS: readonly Shot[] = [
@@ -35,6 +37,7 @@ export const SHOTS: readonly Shot[] = [
   missiles,
   packBattle,
   scrap,
+  loot,
   buildBase,
   gridAlive,
   defence,
@@ -43,6 +46,7 @@ export const SHOTS: readonly Shot[] = [
   spectator,
   warp,
   scale,
+  proceduralBase,
   mobile,
 ];
 
@@ -96,5 +100,5 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 
 /** Docs whose feature exists but cannot be staged on main yet — with what unblocks it. */
 export const SHOWCASE_PENDING: Record<string, string> = {
-  'procedural-bases': 'Generator core only on main; needs the bases vertical slice (room + render + colliders).',
+  allegiances: 'AI-vs-AI sides fight in the living galaxy but not on cue; needs a staged two-faction room.',
 };
