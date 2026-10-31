@@ -2456,3 +2456,16 @@ Expanding the netgate to cover the new structures + scrap features looked obviou
 - **Performance under load** → the netgate, but only as the thing it *can* sense: does a heavy structures/scrap workload degrade the local player's feel via the **server tick/broadcast budget** (server falls behind → real tick-sequence gaps + climbing `ticksAhead`/drift)? That IS local-player-observable — but only if the load is heavy enough to actually stress the budget, which must be **characterised**, not assumed. So `structures-load`/`scrap-load` ship **print-only and off the per-PR path** until a server-side tick-burn fault-injection demonstrates their metrics move; only then do they get a calibrated budget and gate.
 
 **General rule.** Before adding any gate scenario, answer: *what fault in the path I claim to gate would make this RED, and have I proven it does — by injecting THAT fault, not a proxy for it?* If you can't make it fail on a real fault in its own path, it is not a gate; it is a green light that manufactures false confidence — exactly the 2026-05-19 failure class the netgate exists to prevent. (Separately: the netgate's old hand-maintained path-filter regex omitted the structure-grid/`ScrapSpawner`/`structureKinds` server paths, so a pure structures/scrap change SKIPPED the gate entirely — a *false-negative hole*. The trigger globs now live in `tests/netgate/scenarios.ts` and CI selection is fail-closed in `select-scenarios.mjs`.)
+
+## 2026-10-31 — Prod-audit gate went red on main with no code change: zod 4 + a colyseus nanoid patch
+
+**Symptom.** `verify` (the `scripts/audit-bulk.mjs` prod-dependency audit) failed on `main` and every open PR at once. Nothing in the repo had changed: new advisories had been published against transitive deps (`@xmldom/xmldom` via pixi.js, `proxy-addr`/`body-parser` via express, `nanoid@2` via `@colyseus/core`) and against `zod` itself (GHSA-mrhx-c7xc-m3w5, fixed only in zod ≥ 4.6.6).
+
+**Fix.**
+- **In-line patch releases:** `pnpm.overrides` move each transitive dep to its patched release in the same minor line.
+- **`nanoid` is the trap.** `@colyseus/core@0.16.x` calls nanoid 2's **default export**, and nanoid 3 has none. A plain override silently breaks `generateId` (room/session ids), and no 0.16 release fixes it. So `patches/@colyseus__core@0.16.24.patch` (`pnpm patch`) switches both the CJS and ESM builds to the named `nanoid` export. **Re-check this patch whenever `@colyseus/core` is bumped** (pnpm fails install if the patch no longer applies, which is the desired loud failure).
+- **zod 3 → 4.** zod validates every inbound packet (Invariant #3), so the advisory was real and an override wasn't enough.
+  - API changes were small: `ZodError.errors` became `.issues`, and single-arg `z.record(v)` became `z.record(z.string(), v)`.
+  - **The silent runtime change: `z.record(enumSchema, v)` is now EXHAUSTIVE** (every enum key is required). The partial stat-upgrade allocation (`StatAllocSchema`) started rejecting valid `{hull: 2}` payloads. Typecheck was green; only `messages.test.ts` caught it. Use `z.partialRecord(enumSchema, v)` for "any subset of these keys".
+
+**Rule.** When a zod major lands, grep `z.record(` for enum-keyed records and decide partial vs exhaustive for each one. Typecheck will not flag it.

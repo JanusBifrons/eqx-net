@@ -1,0 +1,24 @@
+diff --git a/build/utils/Utils.js b/build/utils/Utils.js
+index 51c80f2fb10e32fe00d52335f4654c798318b756..2baa7a9bc74d73cb9336a88972c301ed9bc3cd69 100644
+--- a/build/utils/Utils.js
++++ b/build/utils/Utils.js
+@@ -46,7 +46,7 @@ var import_Debug = require("../Debug.js");
+ const REMOTE_ROOM_SHORT_TIMEOUT = Number(process.env.COLYSEUS_PRESENCE_SHORT_TIMEOUT || 2e3);
+ const MAX_CONCURRENT_CREATE_ROOM_WAIT_TIME = Number(process.env.COLYSEUS_MAX_CONCURRENT_CREATE_ROOM_WAIT_TIME || 0.5);
+ function generateId(length = 9) {
+-  return (0, import_nanoid.default)(length);
++  return (0, import_nanoid.nanoid)(length);
+ }
+ function getBearerToken(authHeader) {
+   return authHeader && authHeader.startsWith("Bearer ") && authHeader.substring(7, authHeader.length) || void 0;
+diff --git a/build/utils/Utils.mjs b/build/utils/Utils.mjs
+index d4ae4d99fe25af6c4e11b4059d667ee1f0d83663..a3306a497b5e69d1e39e05dbaa7904e7658ba4a6 100644
+--- a/build/utils/Utils.mjs
++++ b/build/utils/Utils.mjs
+@@ -1,5 +1,5 @@
+ // packages/core/src/utils/Utils.ts
+-import nanoid from "nanoid";
++import { nanoid } from "nanoid";
+ import { EventEmitter } from "events";
+ import { debugAndPrintError } from "../Debug.mjs";
+ var REMOTE_ROOM_SHORT_TIMEOUT = Number(process.env.COLYSEUS_PRESENCE_SHORT_TIMEOUT || 2e3);
