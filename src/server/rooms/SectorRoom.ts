@@ -1305,6 +1305,9 @@ export class SectorRoom extends Room<SectorState> {
       // polygon kinds + spawn, mirroring the active-hull SHIP_DESTROYED path.
       spawnScrapFromLingeringHull: (kind, pose, shipInstanceId) =>
         this.spawnHullScrap(kind, pose, shipInstanceId),
+      // A1 — a lingering hull died in combat: the SHIP_DESTROYED handler can't
+      // find it (already out of shipsMap), so the roster wipe + XP happen here.
+      onLingeringHullDeath: (ship, _pose, sourceId) => this.onLingeringHullDeath(ship, sourceId),
       bus: this.bus,
       broadcastDamage: (msg) => this.broadcast('damage', msg),
       broadcastDestroy: (msg) => this.broadcast('destroy', msg),
@@ -5456,6 +5459,26 @@ export class SectorRoom extends Room<SectorState> {
 
   private deleteRosterRow(shipInstanceId: string): void {
     this.rosterPersistence.delete(shipInstanceId);
+  }
+
+  /**
+   * Hostile-review A1 — a LINGERING hull died in combat. Runs inside the
+   * lingering death policy BEFORE its teardown (see `LeafDeps.onLingeringHullDeath`).
+   * Mirrors what the `SHIP_DESTROYED` handler does for an ACTIVE hull — that
+   * handler can't resolve a lingering hull (it has left `shipsMap` by emit time):
+   *  - award the killer's XP (victim toughness from the catalogue);
+   *  - wipe the roster row (D9 — and with it the ship's carried hold);
+   *  - drop the persist-forever ownerless marker (the hull is gone).
+   */
+  private onLingeringHullDeath(
+    ship: { shipInstanceId: string; playerId: string; kind: string },
+    sourceId: string,
+  ): void {
+    this.awardKillXp(sourceId, getShipKind(ship.kind).maxHealth);
+    this.deleteRosterRow(ship.shipInstanceId);
+    const timer = this.ownerlessShips.get(ship.shipInstanceId);
+    if (timer) clearTimeout(timer);
+    this.ownerlessShips.delete(ship.shipInstanceId);
   }
 
   /**
