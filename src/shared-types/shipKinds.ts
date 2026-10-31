@@ -69,7 +69,9 @@ import { MISSILE_FRIGATE } from './shipKinds/missileFrigate.js';
 import { CROSSGUARD } from './shipKinds/crossguard.js';
 import { L_SHAPE } from './shipKinds/lShape.js';
 import { HAVOK } from './shipKinds/composite/havok.js';
+import { ROBOT_SQUARE } from './shipKinds/robots.js';
 import { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
+import type { NpcAllegianceId } from './allegiances.js';
 import type { ShipKind, ShipKindId } from './shipKinds/types.js';
 
 /**
@@ -89,7 +91,18 @@ import type { ShipKind, ShipKindId } from './shipKinds/types.js';
  * heavy-chassis ramming-probe logging.
  */
 export const GAMEPLAY_SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze(
-  SHIP_KINDS_LIST.filter((k) => !k.engineeringOnly),
+  SHIP_KINDS_LIST.filter((k) => !k.engineeringOnly && !k.npcOnly),
+);
+
+/**
+ * Kinds a PLAYER may pilot — the full catalogue minus `npcOnly` kinds (robots,
+ * haulers, loot pods). Engineering kinds stay pickable (smoke-test rooms rely on
+ * them). The ship picker lists this; the server's join validation
+ * (`isPlayableShipKindId`) enforces it (plan peppy-jumping-pinwheel P0 —
+ * hiding NPC kinds in the UI alone would let a forged join pilot a robot).
+ */
+export const PLAYABLE_SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze(
+  SHIP_KINDS_LIST.filter((k) => !k.npcOnly),
 );
 
 /**
@@ -110,6 +123,7 @@ export const SHIP_KINDS = Object.freeze({
   crossguard: CROSSGUARD,
   el: L_SHAPE,
   havok: HAVOK,
+  'robot-square': ROBOT_SQUARE,
 } as const) satisfies Readonly<Record<string, ShipKind>>;
 
 /**
@@ -131,7 +145,7 @@ export const SHIP_KINDS = Object.freeze({
  * MUST bump this value by 1 in the same PR. Mount-layout changes are not
  * auto-handled — they require a separate migration story.
  */
-export const SHIP_KIND_CATALOGUE_VERSION = 12;
+export const SHIP_KIND_CATALOGUE_VERSION = 13;
 
 /** Shield bubble pad — how far PAST each kind's hull `radius` the shield
  *  bubble extends. Shared across:
@@ -177,6 +191,18 @@ export function getShipKind(id: string | null | undefined): ShipKind {
 /** Type guard — narrows a string to `ShipKindId` if it's a known kind. */
 export function isShipKindId(id: string): id is ShipKindId {
   return Object.prototype.hasOwnProperty.call(SHIP_KINDS, id);
+}
+
+/** A known kind a PLAYER may pilot (not `npcOnly`). The server's join path
+ *  MUST use this, never bare `isShipKindId` (a forged join could otherwise
+ *  pilot a robot / hauler / loot pod). */
+export function isPlayableShipKindId(id: string): id is ShipKindId {
+  return isShipKindId(id) && !getShipKind(id).npcOnly;
+}
+
+/** The allegiance a swarm entity of this kind fights for (default `'drones'`). */
+export function allegianceOfKind(id: string | null | undefined): NpcAllegianceId {
+  return getShipKind(id).allegiance ?? 'drones';
 }
 
 /**

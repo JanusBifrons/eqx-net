@@ -4,6 +4,7 @@ import type {
   AiEntityPoseOut,
   AiPlayerView,
   AiStructureView,
+  AiSwarmView,
   AiWorldView,
 } from '../contracts/IAiBehaviour.js';
 
@@ -190,6 +191,9 @@ export class AiController {
      *  + neighbours' poses each tick. SERVER-ONLY (no client brain). Omitted ⇒
      *  followers fall back to orbit. */
     resolveEntityInto?: (id: string, out: AiEntityPoseOut) => boolean,
+    /** Allegiances P0 — other-allegiance swarm combatants (server-only; built
+     *  once per tick, absent in a single-allegiance sector ⇒ byte-identical). */
+    swarms?: ReadonlyArray<AiSwarmView>,
   ): void {
     if (this.entities.size === 0) return;
     // NOTE: this `{ players, tick, dtSec }` literal is the ONE remaining
@@ -201,7 +205,7 @@ export class AiController {
     // every behaviour. The 60/sec rate is negligible vs the rest of
     // the engine; leave as-is. See `swarmEntitySnapshot` doc for the
     // full GC-pressure story.
-    const view: AiWorldView = { players, structures, tick, dtSec, resolveEntityInto };
+    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto };
     for (const [id, reg] of this.entities) {
       this.runEntity(id, reg, view, tick, entitySnapshot);
     }

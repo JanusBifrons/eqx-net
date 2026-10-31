@@ -6,6 +6,13 @@ import {
 } from '../contracts/IAiBehaviour.js';
 import { getWeapon, type WeaponMode } from '../combat/WeaponCatalogue.js';
 import { getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
+import {
+  isOnSightHostile,
+  isNpcAllegianceId,
+  ON_SIGHT_ENGAGE_RANGE,
+  PLAYERS_SIDE,
+  type NpcAllegianceId,
+} from '../../shared-types/allegiances.js';
 import { pickTarget, type MountTargetView } from './WeaponMountController.js';
 import { arrive, makeSteerOutput, type SteerOutput } from './steering.js';
 import {
@@ -179,7 +186,16 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     health?: number;
     maxHealth?: number;
     priority: number;
+    /** Per-candidate hostility (allegiances P0) — ALWAYS set before the pick,
+     *  so `pickTarget` reads it instead of the callback. For a drones-only view
+     *  it equals `hostileTo.has(id)` ⇒ byte-identical to pre-P0. */
+    hostile: boolean;
   }> = [];
+  /** Allegiances P0 — this entity's NPC side (from its kind) and whether that
+   *  side attacks players ON SIGHT (robots do; drones don't — drones are driven
+   *  by waves + retaliation through `hostileTo`). */
+  private readonly allegiance: NpcAllegianceId;
+  private readonly onSightPlayers: boolean;
   /** Phase 4c (2026-05-11) — half-arc of the widest rotating mount in
    *  this kind's primary slot, used to widen the body-aim fire gate so
    *  drones with turrets fire even when the body is off-aim by less than
@@ -238,6 +254,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this.kind = typeof kind === 'object' && kind !== null
       ? kind
       : getShipKind(typeof kind === 'string' ? kind : null);
+    const a = this.kind.allegiance;
+    this.allegiance = a !== undefined && isNpcAllegianceId(a) ? a : 'drones';
+    this.onSightPlayers = isOnSightHostile(this.allegiance, PLAYERS_SIDE);
     // Compute the half-arc of the widest rotating mount across the kind's
     // mounts. `arcMax - arcMin` is the FULL arc; halving it gives the
     // distance the mount can swing from `baseAngle` in either direction.
@@ -303,7 +322,12 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Render-side query: is this drone currently treating `playerId` as
    *  a hostile target? Pure, side-effect-free — safe to poll every frame. */
   isHostileToPlayer(playerId: string): boolean {
-    return this.hostileTo.has(playerId);
+    // Allegiances P0 (hostile-review A6): an on-sight-hostile allegiance (robots)
+    // is hostile to every player by STANCE, not only once it has been hit — so
+    // the snapshot `drones[].hostile` bit, liveCounts, and player turret aim all
+    // see a robot as hostile from first sight. Derived from the kind, so the
+    // client's own ledger (same kind, same table) agrees (invariant #15).
+    return this.onSightPlayers || this.hostileTo.has(playerId);
   }
 
   /**
@@ -342,7 +366,12 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     //    continuous flocking; everyone else patrols (the leader follows its
     //    `moveTarget` course; a lone drone orbits). Server-only — the client
     //    never ticks the drone brain.
-    if (this.state === 'IDLE') {
+    //    Allegiances P0: an IDLE entity may still engage ON SIGHT (robots vs
+    //    players; drones vs robots) — only when the view could contain such a
+    //    target. A drones-only sector (`view.swarms` absent, drones not on-sight
+    //    to players) takes the pre-P0 fast path, byte-identical.
+    const canEngageOnSight = this.onSightPlayers || (view.swarms !== undefined && view.swarms.length > 0);
+    if (this.state === 'IDLE' && !canEngageOnSight) {
       return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
     }
 
@@ -365,11 +394,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // appear here when the server's faction-filtered view includes them AND
     // they're in this drone's `hostileTo` set (so a neutral base is never hit).
     const cand = this._combatTargets;
+    const engageR2 = ON_SIGHT_ENGAGE_RANGE * ON_SIGHT_ENGAGE_RANGE;
     let n = 0;
+    let anyHostile = false;
     for (const p of view.players) {
       let c = cand[n];
       if (!c) {
-        c = { id: '', x: 0, y: 0, vx: 0, vy: 0, priority: 0 };
+        c = { id: '', x: 0, y: 0, vx: 0, vy: 0, priority: 0, hostile: false };
         cand[n] = c;
       }
       c.id = p.id;
@@ -380,6 +411,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       c.health = p.health;
       c.maxHealth = p.maxHealth;
       c.priority = 0;
+      let h = this.hostileTo.has(p.id);
+      if (!h && this.onSightPlayers) {
+        const dx = p.x - self.x;
+        const dy = p.y - self.y;
+        h = dx * dx + dy * dy <= engageR2;
+      }
+      c.hostile = h;
+      if (h) anyHostile = true;
       n++;
     }
     const structs = view.structures;
@@ -387,7 +426,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       for (const s of structs) {
         let c = cand[n];
         if (!c) {
-          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, priority: 0 };
+          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, priority: 0, hostile: false };
           cand[n] = c;
         }
         c.id = s.id;
@@ -398,10 +437,50 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         c.health = s.health;
         c.maxHealth = s.maxHealth;
         c.priority = s.priority;
+        c.hostile = this.hostileTo.has(s.id);
+        if (c.hostile) anyHostile = true;
+        n++;
+      }
+    }
+    // Allegiances P0 — other-allegiance swarm combatants. Only HOSTILE ones are
+    // appended (stance on-sight within range, or retaliation via `hostileTo`),
+    // keeping the candidate list small in a mixed sector.
+    const swarms = view.swarms;
+    if (swarms) {
+      for (const s of swarms) {
+        if (s.id === self.id) continue;
+        let h = this.hostileTo.has(s.id);
+        if (!h && isNpcAllegianceId(s.allegiance) && isOnSightHostile(this.allegiance, s.allegiance)) {
+          const dx = s.x - self.x;
+          const dy = s.y - self.y;
+          h = dx * dx + dy * dy <= engageR2;
+        }
+        if (!h) continue;
+        let c = cand[n];
+        if (!c) {
+          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, priority: 0, hostile: false };
+          cand[n] = c;
+        }
+        c.id = s.id;
+        c.x = s.x;
+        c.y = s.y;
+        c.vx = s.vx;
+        c.vy = s.vy;
+        c.health = s.health;
+        c.maxHealth = s.maxHealth;
+        c.priority = 0;
+        c.hostile = true;
+        anyHostile = true;
         n++;
       }
     }
     if (cand.length !== n) cand.length = n;
+
+    // An IDLE entity with nothing on-sight-hostile in range keeps patrolling /
+    // flocking (it never entered COMBAT; no state change).
+    if (this.state === 'IDLE' && !anyHostile) {
+      return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
+    }
 
     const target = pickTarget(
       self.x, self.y, cand, this.prevTargetId, (id) => this.hostileTo.has(id),

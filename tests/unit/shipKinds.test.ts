@@ -424,11 +424,11 @@ describe('engineeringOnly flag — keep test fixtures out of galaxy spawn pool (
 
 describe('havok composite kind — catalogue registration (composite-ships Phase 1)', () => {
   it('SHIP_KINDS_LIST now ends with havok (append-only)', () => {
-    expect(SHIP_KINDS_LIST[SHIP_KINDS_LIST.length - 1]!.id).toBe('havok');
+    expect(SHIP_KINDS_LIST[8]!.id).toBe('havok'); // index 8 is wire-stable; robots append after (allegiances P0)
   });
 
-  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 12 (WS-B3 latentMounts shape add)', () => {
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(12);
+  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 13 (allegiances P0 allegiance/npcOnly/shedImmune shape add)', () => {
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(13);
   });
 
   it('HAVOK is registered in SHIP_KINDS and parses its own schema', () => {
@@ -448,7 +448,7 @@ describe('havok composite kind — catalogue registration (composite-ships Phase
   });
 
   it('havok round-trips through the swarm wire index at the end of the list', () => {
-    expect(shipKindToIndex('havok')).toBe(SHIP_KINDS_LIST.length - 1);
+    expect(shipKindToIndex('havok')).toBe(8);
     expect(shipKindFromIndex(shipKindToIndex('havok'))).toBe('havok');
   });
 });

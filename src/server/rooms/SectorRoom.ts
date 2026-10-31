@@ -48,10 +48,11 @@ import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // pickTarget / rotateMountToward / wrapPi / MountTargetView now used
 // inside WeaponMountTicker.ts; this file no longer imports them.
-import type { AiPlayerView, AiStructureView, AiEntity, AiEntityPoseOut } from '../../core/contracts/IAiBehaviour.js';
+import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
-import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, SHIELD_RADIUS_PAD, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isPlayableShipKindId, SHIELD_RADIUS_PAD, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { isOnSightHostile } from '../../shared-types/allegiances.js';
 import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
 import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
@@ -1250,6 +1251,9 @@ export class SectorRoom extends Room<SectorState> {
       // faction-filtered set the drone's body target chose among, so the beam
       // lands on the structure it's pointed at.
       structureHitTargets: () => this.hostileStructureCircles,
+      // Allegiances P0: the beam also tests other-allegiance swarm combatants
+      // (empty in a single-allegiance sector ⇒ byte-identical).
+      swarmHitTargets: () => this.swarmCombatCircles,
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) =>
         this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
@@ -1720,7 +1724,9 @@ export class SectorRoom extends Room<SectorState> {
       },
       findNearestAsteroid: (x, y, range) => this.findNearestAsteroid(x, y, range),
       drawAsteroidResources: (entityId, amount) => this.drawAsteroidResources(entityId, amount),
-      findNearestDrone: (x, y, range) => this.findNearestSwarmOfKind(x, y, range, 1),
+      // Allegiances P0: base turrets defend against combat allegiances (drones,
+      // robots) but never open fire on NEUTRAL traders (their haulers).
+      findNearestDrone: (x, y, range) => this.findNearestSwarmOfKind(x, y, range, 1, this._isTurretTargetable),
       applyDamage: (targetId, shooterId, damage) => this.applyDamage(targetId, shooterId, damage),
       broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) => {
         this.broadcast('laser_fired', {
@@ -2639,6 +2645,60 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
+  /** Allegiances P0 — pooled per-tick swarm-combatant views (never reallocated
+   *  once grown, #14) + the matching fire-resolver hit circles. */
+  private readonly _swarmViewPool: Array<{
+    id: string; x: number; y: number; vx: number; vy: number;
+    allegiance: string; health?: number; maxHealth?: number; radius: number;
+  }> = [];
+  private readonly aiSwarmScratch: AiSwarmView[] = [];
+  private readonly swarmCombatCircles: Array<{ id: string; x: number; y: number; radius: number; allegiance: string }> = [];
+
+  /**
+   * Allegiances P0 — rebuild this tick's swarm-combatant set (kind-1 entities),
+   * ONCE per tick (#14). Only populated when ≥ 2 allegiances are present in the
+   * sector: a drones-only sector leaves `out` empty, so the AI view's `swarms`
+   * is absent and the brain takes its pre-P0 fast path (byte-identical, zero
+   * per-drone cost). Also fills `swarmCombatCircles` for the AI beam pass.
+   */
+  private fillSwarmTargets(out: AiSwarmView[]): void {
+    const circles = this.swarmCombatCircles;
+    circles.length = 0;
+    out.length = 0;
+    let first: string | null = null;
+    let mixed = false;
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== SWARM_KIND_DRONE) continue;
+      const a = allegianceOfKind(rec.shipKind);
+      if (first === null) first = a;
+      else if (a !== first) { mixed = true; break; }
+    }
+    if (!mixed) return;
+    const pool = this._swarmViewPool;
+    let n = 0;
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== SWARM_KIND_DRONE) continue;
+      const b = slotBase(rec.slot);
+      let v = pool[n];
+      if (!v) {
+        v = { id: '', x: 0, y: 0, vx: 0, vy: 0, allegiance: 'drones', radius: 0 };
+        pool[n] = v;
+      }
+      v.id = rec.id;
+      v.x = this.sabF32[b + SLOT_X_OFF]!;
+      v.y = this.sabF32[b + SLOT_Y_OFF]!;
+      v.vx = this.sabF32[b + SLOT_VX_OFF]!;
+      v.vy = this.sabF32[b + SLOT_VY_OFF]!;
+      v.allegiance = allegianceOfKind(rec.shipKind);
+      v.health = this.swarmHealth.get(rec.id);
+      v.maxHealth = getShipKind(rec.shipKind).maxHealth;
+      v.radius = rec.radius;
+      out.push(v);
+      circles.push(v);
+      n++;
+    }
+  }
+
   /**
    * AI fire path. Mirrors the player hitscan logic but skips the message
    * parser, the per-session hit_ack, and the temporal-plausibility window
@@ -2678,13 +2738,27 @@ export class SectorRoom extends Room<SectorState> {
     // friendly structures (the candidate set includes kind 1 AND kind 2). Kind
     // is the source of truth (lwbot drones are kind 1 too, swarm-/lwbot-prefixed).
     if (ownerId.startsWith('pstruct-')) {
-      return (id) => this.swarmRegistry.get(id)?.kind === 1;
+      return (id) => {
+        const rec = this.swarmRegistry.get(id);
+        return rec != null && rec.kind === 1 && this._isTurretTargetable(rec);
+      };
     }
-    const isPlayerShooter = !ownerId.startsWith('swarm-') && !ownerId.startsWith('lwbot-');
-    if (isPlayerShooter) {
+    // Allegiances P0 — classify the shooter by the REGISTRY (a live kind-1
+    // swarm entity is an AI shooter whatever its id prefix), not by prefix.
+    const ownerRec = this.swarmRegistry.get(ownerId);
+    const isAiShooter = (ownerRec != null && ownerRec.kind === 1)
+      || ownerId.startsWith('swarm-') || ownerId.startsWith('lwbot-');
+    if (!isAiShooter) {
       return (id) => id !== ownerId;
     }
-    return (id) => this.aiController.isEntityHostileToPlayer(ownerId, id);
+    const ownerAllegiance = allegianceOfKind(ownerRec?.shipKind);
+    return (id) => {
+      if (this.aiController.isEntityHostileToPlayer(ownerId, id)) return true;
+      // Cross-allegiance swarm targets (drones ↔ robots ↔ traders) by stance.
+      const rec = this.swarmRegistry.get(id);
+      if (rec == null || rec.kind !== 1 || id === ownerId) return false;
+      return isOnSightHostile(ownerAllegiance, allegianceOfKind(rec.shipKind));
+    };
   }
 
   private spawnServerMissile(
@@ -3374,6 +3448,13 @@ export class SectorRoom extends Room<SectorState> {
    *  of (x, y). Reads authoritative poses from the SAB via each record's slot.
    *  Low-frequency (1 Hz pulse / 100 ms turret tick), so the linear scan is
    *  fine. Returns the registry id (for damage) + entityId + pose. */
+  /** Allegiances P0 — a player structure turret engages any swarm combatant
+   *  that is not NEUTRAL to players by stance... except it also engages drones,
+   *  which are stance-neutral but wave-hostile (pre-P0 behaviour: turrets shoot
+   *  every drone). So: everything except traders. Built once (no per-call alloc). */
+  private readonly _isTurretTargetable = (rec: SwarmEntityRecord): boolean =>
+    allegianceOfKind(rec.shipKind) !== 'traders';
+
   private findNearestSwarmOfKind(
     x: number,
     y: number,
@@ -3845,6 +3926,11 @@ export class SectorRoom extends Room<SectorState> {
    * one `factionOf` scan + one faction-mark per applied drone hit.
    */
   private escalateFactionOnDroneHit(droneId: string, sourceId: string, atTick: number): void {
+    // Allegiances P0 (hostile-review B1): the FactionLedger tracks war with the
+    // DRONES. Shooting a robot or a trader hauler must not declare war on the
+    // drones (the victim itself still retaliates via its own `markHostile`).
+    const victim = this.swarmRegistry.get(droneId);
+    if (victim != null && allegianceOfKind(victim.shipKind) !== 'drones') return;
     const factionId = this.factionLedger.factionOf(sourceId);
     if (factionId === null) return;
     this.factionLedger.recordFactionDealtDamage(factionId, atTick);
@@ -4209,7 +4295,7 @@ export class SectorRoom extends Room<SectorState> {
     // swap kind by reconnecting — the existing ShipState.kind is preserved).
     const requestedKind = parsed.success
         && typeof parsed.data.shipKind === 'string'
-        && isShipKindId(parsed.data.shipKind)
+        && isPlayableShipKindId(parsed.data.shipKind)
       ? parsed.data.shipKind
       : DEFAULT_SHIP_KIND;
 
@@ -5858,6 +5944,8 @@ export class SectorRoom extends Room<SectorState> {
       aiPlayerScratch: this.aiPlayerScratch,
       aiStructureScratch: this.aiStructureScratch,
       fillStructureTargets: (out) => this.fillStructureTargets(out),
+      aiSwarmScratch: this.aiSwarmScratch,
+      fillSwarmTargets: (out) => this.fillSwarmTargets(out),
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       resolveEntityInto: (id, out) => this.swarmEntityPoseInto(id, out),
       handleAiFire: (shooterId, dirX, dirY, tick) => this.handleAiFire(shooterId, dirX, dirY, tick),
