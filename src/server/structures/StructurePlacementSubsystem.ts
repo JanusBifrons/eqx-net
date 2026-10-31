@@ -43,6 +43,9 @@ export interface StructurePlacementHooks {
   clamp(x: number, y: number): { x: number; y: number };
   /** Allocate a fresh, unique structure id. */
   nextId(): string;
+  /** Living World P1a-2 — stable structure uid for (owner, kind, pose). Optional
+   *  (test fixtures omit it ⇒ the record has no uid and no persisted hold). */
+  structureUid?(owner: string, kind: string, x: number, y: number): string;
   /** Shared registry. */
   registry: StructureRegistry;
   /** Item D — live non-structure obstacles (asteroids) that block a connection's
@@ -112,6 +115,8 @@ export class StructurePlacementSubsystem {
       // Phase 4 (Leveling & XP, WS-B4) — every fresh structure starts at level 1.
       // A paid Upgrade build phase increments it (restore overrides on hydrate).
       level: 1,
+      // Living World P1a-2 — stable identity for the holds table.
+      ...(this.hooks.structureUid ? { uid: this.hooks.structureUid(owner, kindId, pos.x, pos.y) } : {}),
     };
     this.hooks.registry.add(rec);
     // Auto-wire into the owner's grid: nearest in-range hub with a free slot

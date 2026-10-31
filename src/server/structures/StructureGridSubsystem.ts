@@ -417,6 +417,12 @@ export class StructureGridSubsystem {
     }
   }
 
+  /** Living World P1a-2 — every structure id in the connected grid component
+   *  containing `id` (incl. `id`). The base storage network is a component. */
+  componentMembersOf(id: string): readonly string[] {
+    return [...this.grid.componentMembers(id)];
+  }
+
   /** Total stored battery charge in the connected component containing `id`
    *  (shield-fence plan — the wall's depletable buffer). 0 if `id` is unbuilt. */
   componentBatteryCharge(id: string): number {

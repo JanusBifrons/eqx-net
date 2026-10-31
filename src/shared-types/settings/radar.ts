@@ -27,6 +27,8 @@ export const RADAR_CATEGORIES = [
   'asteroid',
   'scrap',
   'lingering',
+  // Living World P1a-2: loot pods + derelicts (cargo-pod scrap). ON by default.
+  'loot',
 ] as const;
 export type RadarCategory = (typeof RADAR_CATEGORIES)[number];
 
@@ -85,6 +87,7 @@ export const RadarPrefsSchema = z
         asteroid: CategorySchema,
         scrap: CategorySchema,
         lingering: CategorySchema,
+        loot: CategorySchema,
       })
       .strict(),
   })
@@ -100,6 +103,7 @@ function categories(touch: boolean): RadarPrefs['categories'] {
     asteroid: { enabled: false, shape: 'circle', color: 0x9a8f80, sizeMul: 0.8, opacityMul: 0.7 },
     scrap: { enabled: false, shape: 'square', color: 0xb8b8b8, sizeMul: 0.7, opacityMul: 0.7 },
     lingering: { enabled: false, shape: 'triangle', color: 0x6b9b7b, sizeMul: 0.9, opacityMul: 0.7 },
+    loot: { enabled: true, shape: 'circle', color: 0xffc94a, sizeMul: touch ? 0.8 : 0.9, opacityMul: 0.9 },
   };
 }
 

@@ -15,6 +15,8 @@
  * that arrived for a just-changed selection (it renders `--` until the matching
  * id arrives).
  */
+import { GOOD_DEFS, GOOD_IDS } from '../../shared-types/goods';
+
 export interface SelectionStats {
   /** Echoes the entity id these stats are for, or null when none received. */
   id: string | null;
@@ -24,6 +26,13 @@ export interface SelectionStats {
   /** Undefined for entities without a shield layer (structures). */
   shield: number | undefined;
   shieldMax: number | undefined;
+  /** Living World P1a-2 — an OWNED storage structure's contents, flattened to
+   *  PRIMITIVES so the panel's keyed shallow compare stays exact: a contents
+   *  line ("Salvage 7 · ¢30"), weight use ("12/5000") and the salvage count
+   *  (the Refine gate). Undefined / 0 for everything else (owner-only on wire). */
+  holdLine: string | undefined;
+  holdUse: string | undefined;
+  holdSalvage: number;
 }
 
 export const selectionStats: SelectionStats = {
@@ -33,9 +42,19 @@ export const selectionStats: SelectionStats = {
   hpMax: 0,
   shield: undefined,
   shieldMax: undefined,
+  holdLine: undefined,
+  holdUse: undefined,
+  holdSalvage: 0,
 };
 
-/** Apply a fresh `entity_stats` packet (mutated in place — no alloc). */
+interface HoldWire {
+  goods: Partial<Record<string, number>>;
+  credits: number;
+  blueprints: number;
+}
+
+/** Apply a fresh `entity_stats` packet (mutated in place — no alloc on the
+ *  common no-storage path; storage formatting runs at the ~5 Hz push only). */
 export function applySelectionStats(s: {
   id: string;
   name: string;
@@ -43,6 +62,8 @@ export function applySelectionStats(s: {
   hpMax: number;
   shield?: number;
   shieldMax?: number;
+  hold?: HoldWire;
+  holdCapacity?: number;
 }): void {
   selectionStats.id = s.id;
   selectionStats.name = s.name;
@@ -50,6 +71,15 @@ export function applySelectionStats(s: {
   selectionStats.hpMax = s.hpMax;
   selectionStats.shield = s.shield;
   selectionStats.shieldMax = s.shieldMax;
+  if (s.hold !== undefined && s.holdCapacity !== undefined) {
+    selectionStats.holdLine = formatHoldLine(s.hold);
+    selectionStats.holdUse = `${Math.round(holdViewWeight(s.hold))}/${s.holdCapacity}`;
+    selectionStats.holdSalvage = s.hold.goods.salvage ?? 0;
+  } else {
+    selectionStats.holdLine = undefined;
+    selectionStats.holdUse = undefined;
+    selectionStats.holdSalvage = 0;
+  }
 }
 
 /** Clear on deselect / selection change so the panel doesn't show stale data. */
@@ -60,4 +90,25 @@ export function resetSelectionStats(): void {
   selectionStats.hpMax = 0;
   selectionStats.shield = undefined;
   selectionStats.shieldMax = undefined;
+  selectionStats.holdLine = undefined;
+  selectionStats.holdUse = undefined;
+  selectionStats.holdSalvage = 0;
+}
+
+/** "Salvage 7 · Alloy 3 · ¢30 · ★1" ("Empty" when nothing is stored). */
+export function formatHoldLine(h: HoldWire): string {
+  const parts: string[] = [];
+  for (const id of GOOD_IDS) {
+    const n = h.goods[id];
+    if (n) parts.push(`${GOOD_DEFS[id].displayName} ${n}`);
+  }
+  if (h.credits > 0) parts.push(`¢${h.credits}`);
+  if (h.blueprints > 0) parts.push(`★${h.blueprints}`);
+  return parts.length > 0 ? parts.join(' · ') : 'Empty';
+}
+
+function holdViewWeight(h: HoldWire): number {
+  let w = 0;
+  for (const id of GOOD_IDS) w += (h.goods[id] ?? 0) * GOOD_DEFS[id].weight;
+  return w;
 }

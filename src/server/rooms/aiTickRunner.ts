@@ -50,6 +50,13 @@ export interface AiTickCtx {
    *  #14). Left empty in a single-allegiance sector ⇒ `view.swarms` absent ⇒
    *  byte-identical to pre-P0. */
   aiSwarmScratch?: AiSwarmView[];
+  /** Living World P1a-2 — is this player's session connected? A disconnected
+   *  player's (inactive) hull becomes AI-targetable. Absent ⇒ treated as
+   *  connected (pre-P1a-2 behaviour: inactive hulls never targeted). */
+  isPlayerConnected?: (playerId: string) => boolean;
+  /** Living World P1a-2 — append displaced lingering hulls (id =
+   *  shipInstanceId, `ownerId` = owning player) to the AI player view. */
+  visitLingeringTargets?: (out: AiPlayerView[]) => void;
   fillSwarmTargets?: (out: AiSwarmView[]) => void;
   swarmEntitySnapshot: (id: string) => AiEntity | null;
   /** Leader-led flocking — resolve ANY swarm entity's live pose into a caller-
@@ -68,7 +75,11 @@ export function runAiTick(ctx: AiTickCtx): void {
   for (const [pid] of ctx.playerToSlot) {
     const ship = ctx.getActiveShip(pid);
     if (!ship?.alive) continue;
-    if (!ship.isActive) continue;
+    // Liveness (#17) — `isAiTargetableHull`: ACTIVE hulls, PLUS (Living World
+    // P1a-2, user decision 7 — hardcore) a hull whose pilot has DISCONNECTED
+    // (lingering in the field is a real risk). A CONNECTED-but-inactive hull is
+    // a just-joined, still-PENDING ship and stays untargetable (Phase 6c lock).
+    if (!ship.isActive && (ctx.isPlayerConnected?.(pid) ?? true)) continue;
     const pose = ctx.shipPoseCache.get(pid);
     if (!pose) continue;
     ctx.aiPlayerScratch.push({
@@ -76,6 +87,9 @@ export function runAiTick(ctx: AiTickCtx): void {
       health: ship.health, maxHealth: ship.maxHealth,
     });
   }
+  // Displaced lingering hulls (keyed by shipInstanceId, owner on `ownerId`) are
+  // also fair game (decision 7). Visitor fills the scratch directly.
+  ctx.visitLingeringTargets?.(ctx.aiPlayerScratch);
   // Build the faction-filtered structure target list ONCE per tick (shared by
   // every drone via the AiWorldView — never per-drone, #14). Empty/absent ⇒
   // drones target players only.

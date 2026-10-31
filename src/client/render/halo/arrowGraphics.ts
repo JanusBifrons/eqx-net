@@ -63,12 +63,14 @@ export function buildRadarGlyph(shape: RadarShape, color: number, glow: boolean)
  *   - 0 asteroid → 'asteroid'
  *   - 1 drone    → hostile ? 'hostile' : 'neutral'
  *   - 2 structure→ 'structure'
- *   - 3 scrap    → 'scrap'
+ *   - 3 scrap    → 'scrap' — EXCEPT a loot pod / derelict
+ *                  (`shipKind === 'cargo-pod'`) → 'loot' (Living World P1a-2:
+ *                  spot drops after a fight)
  *   - other      → null (unknown kinds never show)
  * Remote player ships are 'player' and lingering hulls 'lingering' via their own
  * mirror maps.
  */
-export function radarCategoryForSwarm(swarmKind: number, hostile: boolean): RadarCategory | null {
+export function radarCategoryForSwarm(swarmKind: number, hostile: boolean, shipKind?: string): RadarCategory | null {
   switch (swarmKind) {
     case 0:
       return 'asteroid';
@@ -77,7 +79,7 @@ export function radarCategoryForSwarm(swarmKind: number, hostile: boolean): Rada
     case 2:
       return 'structure';
     case 3:
-      return 'scrap';
+      return shipKind === 'cargo-pod' ? 'loot' : 'scrap';
     default:
       return null;
   }

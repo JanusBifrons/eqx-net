@@ -89,6 +89,7 @@ const CATEGORY_RANK: Record<RadarCategory, number> = {
   lingering: 4,
   scrap: 5,
   asteroid: 6,
+  loot: 4,
 };
 
 function compareCandidates(a: Candidate, b: Candidate): number {
@@ -274,7 +275,7 @@ export class HaloRadar {
       for (const [id, e] of mirror.swarm) {
         if (n >= MAX_CANDIDATES * 4) break;
         const hostile = e.kind === 1 && (e.isHostileToLocal ?? false);
-        const cat = radarCategoryForSwarm(e.kind, hostile);
+        const cat = radarCategoryForSwarm(e.kind, hostile, e.shipKind);
         if (cat === null || !cats[cat].enabled) continue;
         // NO staleness drop: the server only re-sends a pose when it CHANGES,
         // so a parked / sleeping contact legitimately goes un-updated forever.
