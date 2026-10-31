@@ -28,6 +28,14 @@ import { shouldLatchFirstFrame } from './firstFrameLatch.js';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
 import { readFxKillSwitches } from './fxKillSwitches';
 import { BeamSpritePool } from './BeamSpritePool';
+import {
+  CameraDirector,
+  type CameraTargetLookup,
+  type DirectorTarget,
+  type MutableBounds,
+  type MutablePoint,
+} from './camera/CameraDirector';
+import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
 import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
@@ -329,6 +337,12 @@ export class PixiRenderer implements IRenderer {
    *  first statement of `update`; the effects tick at the tail of the same
    *  call reads it, so it's always this frame's mirror. */
   private _lastMirror: RenderMirror | null = null;
+  /** Cinematic camera (docs/architecture/cinematic-camera.md). While a script
+   *  plays the director is the sole camera driver: `update()` stops re-issuing
+   *  the local-ship follow and feeds `Camera.setDirectorTarget` instead. */
+  private readonly _director = new CameraDirector();
+  private readonly _directorOut: DirectorTarget = { x: 0, y: 0, zoom: 1, smoothMs: 0 };
+  private readonly _directorLookup: CameraTargetLookup = this.createDirectorLookup();
   private readonly _updateRemoteHitTargetsScratch = new Set<string>();
   private readonly _updateLocalHitTargetsScratch = new Set<string>();
   private readonly _updateLingeringPosesView = new Map<string, { x: number; y: number }>();
@@ -1648,7 +1662,18 @@ export class PixiRenderer implements IRenderer {
     // NOT re-issue the local-ship follow (which would yank the view back / snap
     // to a ship that no longer exists). `setSpectator(true)` already detached
     // the follow target; the gameplay pointer path keeps panning/zooming it.
-    if (local && !this._spectator) {
+    if (this._director.isActive()) {
+      // Cinematic script owns the camera — resolved from THIS frame's rendered
+      // sprites (updated above), smoothed by the Camera's spring in tick().
+      const status = this._director.update(performance.now(), this._directorLookup, this._directorOut);
+      if (status === 'active') {
+        const d = this._directorOut;
+        this.camera.setDirectorTarget(d.x, d.y, d.zoom, d.smoothMs);
+      } else if (status === 'released') {
+        this.camera.clearDirector();
+        this.halo.setCameraRelative(false);
+      }
+    } else if (local && !this._spectator) {
       // `follow` (not `moveCenter`) — the camera's per-tick interpolator
       // applies this target every Pixi frame (60 Hz), independent of
       // `update()` cadence. With `followLerpFactor: 1` the follow is
@@ -2291,6 +2316,96 @@ export class PixiRenderer implements IRenderer {
   glideCameraTo(gameX: number, gameY: number, durationMs: number): void {
     if (!this.initialized) return;
     this.camera.glideTo(gameX, -gameY, durationMs);
+  }
+
+  /**
+   * Cinematic camera — play a cue script, or `null` to stop and hand the camera
+   * back to gameplay. See `IRenderer.setCameraScript`. The halo ring re-anchors
+   * on the camera centre while a script plays (the subject may not be the ship).
+   */
+  setCameraScript(cues: readonly CameraCue[] | null): void {
+    if (cues === null || cues.length === 0) {
+      this._director.stop();
+      if (this.initialized) this.camera.clearDirector();
+      this.halo.setCameraRelative(false);
+      return;
+    }
+    this._director.play(cues, performance.now());
+    this.halo.setCameraRelative(true);
+  }
+
+  /** Test/automation — true while a cinematic script owns the camera. */
+  isCameraScripted(): boolean {
+    return this._director.isActive();
+  }
+
+  /** Lookup over the sprite map for the director (pixi space). Built once. */
+  private createDirectorLookup(): CameraTargetLookup {
+    // Group-bounds accumulator state, shared by a single bound callback so the
+    // per-frame Map.forEach scan allocates nothing (invariant #14).
+    let group: CameraGroup = 'all';
+    let count = 0;
+    let acc: MutableBounds = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+    const add = (x: number, y: number): void => {
+      if (count === 0) {
+        acc.minX = acc.maxX = x;
+        acc.minY = acc.maxY = y;
+      } else {
+        if (x < acc.minX) acc.minX = x;
+        if (x > acc.maxX) acc.maxX = x;
+        if (y < acc.minY) acc.minY = y;
+        if (y > acc.maxY) acc.maxY = y;
+      }
+      count++;
+    };
+    const visit = (sprite: Graphics, key: string): void => {
+      if (!sprite.visible) return;
+      if (group !== 'all') {
+        const isSwarm = key.startsWith('swarm-');
+        if (group === 'ships') {
+          if (isSwarm) return;
+        } else {
+          if (!isSwarm) return;
+          const k = this._swarmSpriteKinds.get(key);
+          const want = group === 'asteroids' ? 0 : group === 'drones' ? 1 : group === 'structures' ? 2 : 3;
+          if (k !== want) return;
+        }
+      }
+      add(sprite.x, sprite.y);
+    };
+    return {
+      pose: (id: string, out: MutablePoint): boolean => {
+        const key = id === 'local' ? this._lastMirror?.localPlayerId ?? null : id;
+        if (key === null) return false;
+        const sp = this.sprites.get(key);
+        if (!sp || !sp.visible) return false;
+        out.x = sp.x;
+        out.y = sp.y;
+        return true;
+      },
+      groupBounds: (g: CameraGroup, out: MutableBounds): number => {
+        group = g;
+        count = 0;
+        acc = out;
+        this.sprites.forEach(visit);
+        return count;
+      },
+      idsBounds: (ids: readonly string[], out: MutableBounds): number => {
+        count = 0;
+        acc = out;
+        const localId = this._lastMirror?.localPlayerId ?? null;
+        for (let i = 0; i < ids.length; i++) {
+          const id = ids[i]!;
+          const sp = this.sprites.get(id === 'local' && localId !== null ? localId : id);
+          if (sp && sp.visible) add(sp.x, sp.y);
+        }
+        return count;
+      },
+      viewport: (out: MutablePoint): void => {
+        out.x = this.camera ? this.camera.screenWidth : 0;
+        out.y = this.camera ? this.camera.screenHeight : 0;
+      },
+    };
   }
 
   /** Phase 5 — set the spectator WASD free-pan velocity (SCREEN px/sec). */

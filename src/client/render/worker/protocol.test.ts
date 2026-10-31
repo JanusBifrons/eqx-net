@@ -158,6 +158,19 @@ describe('renderer-worker protocol', () => {
       { name: 'SET_SPECTATOR on', msg: { type: 'SET_SPECTATOR', active: true } },
       { name: 'GLIDE_CAMERA', msg: { type: 'GLIDE_CAMERA', gameX: 1000, gameY: -250, durationMs: 320 } },
       { name: 'PAN_CAMERA', msg: { type: 'PAN_CAMERA', vx: -800, vy: 565.7 } },
+      {
+        name: 'SET_CAMERA_SCRIPT',
+        msg: {
+          type: 'SET_CAMERA_SCRIPT',
+          cues: [
+            { atMs: 0, shot: { kind: 'track', target: 'local', zoom: 0.8, leadMs: 300 } },
+            { atMs: 2000, shot: { kind: 'path', keys: [{ t: 0, x: 0, y: 0, zoom: 1 }, { t: 1500, x: 400, y: -200, zoom: 0.4 }] }, smoothMs: 0 },
+            { atMs: 4000, shot: { kind: 'frame', group: 'drones', padding: 0.3 } },
+            { atMs: 6000, shot: { kind: 'release' } },
+          ],
+        },
+      },
+      { name: 'SET_CAMERA_SCRIPT stop', msg: { type: 'SET_CAMERA_SCRIPT', cues: null } },
       { name: 'DISPOSE', msg: { type: 'DISPOSE' } },
     ])('$name survives structuredClone', ({ msg }) => {
       const back = roundtrip(msg);
