@@ -337,7 +337,7 @@ export class HaloRadar {
         // Map to the shared visual language (hostile ★ / neutral ◆ / structure ⬢)
         // — null EXCLUDES the contact (asteroids kind 0, scrap kind 3) per the
         // user's "asteroids, scrap and lingering ships shouldn't even show".
-        const kind = haloContactKind(e.kind, hostile);
+        const kind = haloContactKind(e.kind, hostile, e.shipKind);
         if (kind === null) continue;
         // Velocity-extrapolate the swarm entry forward from its last-known
         // pose. Out-of-interest drones ship at 6 Hz (167 ms between

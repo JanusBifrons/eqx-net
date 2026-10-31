@@ -89,17 +89,21 @@ export function buildHaloGlyph(kind: EntityKind, grouped: boolean, isTouch = fal
  *   - 0 asteroid → null (excluded)
  *   - 1 drone    → hostile ? 'hostile' : 'neutral'
  *   - 2 structure→ 'structure'
- *   - 3 scrap    → null (excluded)
+ *   - 3 scrap    → null (excluded) — EXCEPT a loot pod / derelict
+ *                  (`shipKind === 'cargo-pod'`) → 'loot' (Living World P1a-2:
+ *                  spot drops after a fight)
  *   - other      → null
  * (Remote PLAYER ships are 'ship' via a separate path; lingering hulls are never
  * iterated, so both are handled outside this helper.)
  */
-export function haloContactKind(swarmKind: number, hostile: boolean): EntityKind | null {
+export function haloContactKind(swarmKind: number, hostile: boolean, shipKind?: string): EntityKind | null {
   switch (swarmKind) {
     case 1:
       return hostile ? 'hostile' : 'neutral';
     case 2:
       return 'structure';
+    case 3:
+      return shipKind === 'cargo-pod' ? 'loot' : null;
     default:
       return null;
   }

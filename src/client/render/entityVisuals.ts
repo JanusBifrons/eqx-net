@@ -9,7 +9,7 @@
  * When a new entity type needs an icon, add it HERE and every surface inherits it.
  */
 
-export type EntityKind = 'hostile' | 'neutral' | 'ship' | 'structure';
+export type EntityKind = 'hostile' | 'neutral' | 'ship' | 'structure' | 'loot';
 export type EntityShape = 'star' | 'diamond' | 'triangle' | 'hexagon';
 
 export interface EntityVisual {
@@ -66,6 +66,12 @@ export const ENTITY_VISUALS: Record<EntityKind, EntityVisual> = {
   structure: {
     kind: 'structure', shape: 'hexagon', color: 0x9ab4dd, cssColor: '#9ab4dd',
     singular: 'structure', plural: 'structures', numCenterYFrac: 0.0, numScale: 1,
+  },
+  // Living World P1a-2 — loot pods / derelicts on the off-screen radar (NOT in
+  // ENTITY_KIND_ORDER: the galaxy map doesn't count loot).
+  loot: {
+    kind: 'loot', shape: 'diamond', color: 0xffc83a, cssColor: '#ffc83a',
+    singular: 'loot', plural: 'loot', numCenterYFrac: 0.0, numScale: 1,
   },
 };
 

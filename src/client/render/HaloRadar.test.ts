@@ -135,6 +135,10 @@ describe('HaloRadar haloContactKind (Phase 2 #4 — include/exclude + classify)'
   it('classifies a structure (kind 2) as structure', () => {
     expect(haloContactKind(2, false)).toBe('structure');
   });
+  it('Living World P1a-2: a loot pod (scrap of cargo-pod) shows as loot; ordinary scrap stays excluded', () => {
+    expect(haloContactKind(3, false, 'cargo-pod')).toBe('loot');
+    expect(haloContactKind(3, false, 'havok')).toBeNull();
+  });
   it('excludes any unknown kind by default', () => {
     expect(haloContactKind(7, false)).toBeNull();
   });
