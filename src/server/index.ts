@@ -605,6 +605,52 @@ gameServer
     maxClients: 4,
   })
   .filterBy(['testId']);
+// Off-screen radar SANDBOX (plan sparkling-wondering-rose) — `?room=radar-sandbox`.
+// The ship spawns at a FIXED point S=(-3000,-3000) (off-centre so contacts can sit
+// beyond the 10 000 u radar range while staying inside the drone ±10 000 /
+// structure ±5 000 world bounds). Every contact is at a MEASURED offset from S:
+// one drone ON screen (must get no icon), static contacts at graded distances +
+// bearings (incl. diagonals/corners), one beyond range (must get no icon),
+// hostile vs neutral, structures + an asteroid, and three drones on scripted
+// paths — flying in/out of view, a tangential pass and a corner crossing.
+// Peaceful (nothing attacks). Join with a testId to isolate parallel specs.
+const RADAR_S = { x: -3000, y: -3000 };
+const rs = (dx: number, dy: number): { x: number; y: number } => ({ x: RADAR_S.x + dx, y: RADAR_S.y + dy });
+const RADAR_SANDBOX_LAYOUT = {
+  spawn: RADAR_S,
+  dronePoses: [
+    { kind: 'fighter' as const, ...rs(350, 0) },                 // 0 on screen at zoom 1 → no icon
+    { kind: 'fighter' as const, ...rs(900, 0), hostile: true },   // 1 east, near, hostile
+    { kind: 'fighter' as const, ...rs(0, 1800) },                 // 2 north, mid
+    { kind: 'fighter' as const, ...rs(-2500, 0), hostile: true }, // 3 west, far-ish, hostile
+    { kind: 'fighter' as const, ...rs(2475, -2475) },             // 4 SE diagonal ~3500
+    { kind: 'fighter' as const, ...rs(4950, 4950) },              // 5 NE ~7000 (far)
+    { kind: 'fighter' as const, ...rs(7780, 7780) },              // 6 ~11 000 → beyond range, no icon
+    { kind: 'fighter' as const, ...rs(-1500, -1100), hostile: true }, // 7 SW
+    // Scripted movers.
+    { kind: 'fighter' as const, ...rs(300, 250), path: { toX: RADAR_S.x + 3300, toY: RADAR_S.y + 250, speed: 260 } },           // 8 fly in/out east
+    { kind: 'fighter' as const, ...rs(-2200, 1100), path: { toX: RADAR_S.x + 2200, toY: RADAR_S.y + 1100, speed: 320 }, hostile: true }, // 9 tangential north
+    { kind: 'fighter' as const, ...rs(500, -500), path: { toX: RADAR_S.x + 2500, toY: RADAR_S.y - 2500, speed: 200 } },          // 10 corner crossing SE
+  ],
+  prebuiltStructures: [
+    { kind: 'capital' as const, ...rs(-1200, 1400) },
+    { kind: 'solar' as const, ...rs(1600, -1200) },
+  ],
+  scenarioAsteroids: [{ ...rs(-700, -1500), radius: 40 }],
+};
+gameServer
+  .define('radar-sandbox', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    dronePoses: RADAR_SANDBOX_LAYOUT.dronePoses,
+    prebuiltStructures: RADAR_SANDBOX_LAYOUT.prebuiltStructures,
+    scenarioAsteroids: RADAR_SANDBOX_LAYOUT.scenarioAsteroids,
+    defaultSpawnX: RADAR_S.x,
+    defaultSpawnY: RADAR_S.y,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
 // Wave-system E2E (tests/e2e/wave-attack.spec.ts) — a DIRECTOR-MANAGED galaxy
 // room (real sectorKey) seeded with a PRE-BUILT, player-owned READY base
 // (Capital + Miner + Solar + Turret, owner `wave-tester`). Single eager

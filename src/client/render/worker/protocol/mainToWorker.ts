@@ -10,6 +10,7 @@ import type { WarpParams } from './warpParams.js';
 import type { SerialisedPointerEvent, SerialisedWheelEvent } from './serialisedEvents.js';
 import type { SectorLiveState } from '../../../../shared-types/galaxySnapshot.js';
 import type { SectorPresence } from '../../../../shared-types/galaxyPresence.js';
+import type { RadarInsets, RadarPrefs } from '../../../../shared-types/settings/radar.js';
 
 /**
  * Initialise the worker. Sent once after `new Worker(...)`.
@@ -181,6 +182,27 @@ export interface SetSpectatorMsg {
   active: boolean;
 }
 
+/** Off-screen indicator radar (plan sparkling-wondering-rose) — the active
+ *  preferences. Posted on change only (the live settings modal coalesces to
+ *  ≤ one post per animation frame). */
+export interface SetRadarPrefsMsg {
+  type: 'SET_RADAR_PREFS';
+  prefs: RadarPrefs;
+}
+
+/** HUD geometry the radar must keep clear of (measured on the main thread —
+ *  the worker has no DOM). Posted on resize / orientation / layout change. */
+export interface SetRadarInsetsMsg {
+  type: 'SET_RADAR_INSETS';
+  insets: RadarInsets;
+}
+
+/** Clear the radar while IN_TRANSIT / ARRIVED (not during the spool-up). */
+export interface SetRadarSuppressedMsg {
+  type: 'SET_RADAR_SUPPRESSED';
+  suppressed: boolean;
+}
+
 /**
  * Phase 4 WS-A2 — kick off a one-shot eased camera glide to a GAME-space point
  * over `durationMs`. Drives `PixiRenderer.glideCameraTo` → `Camera.glideTo`. The
@@ -321,6 +343,9 @@ export type MainToWorkerMsg =
   | TriggerWarpInMsg
   | SetLoadCurtainMsg
   | SetSpectatorMsg
+  | SetRadarPrefsMsg
+  | SetRadarInsetsMsg
+  | SetRadarSuppressedMsg
   | GlideCameraMsg
   | PanCameraMsg
   | SetDiagMarkersMsg

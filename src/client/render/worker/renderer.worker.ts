@@ -212,6 +212,24 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'SET_RADAR_PREFS': {
+        if (!renderer) return;
+        renderer.setRadarPrefs(msg.prefs);
+        break;
+      }
+
+      case 'SET_RADAR_INSETS': {
+        if (!renderer) return;
+        renderer.setRadarInsets(msg.insets);
+        break;
+      }
+
+      case 'SET_RADAR_SUPPRESSED': {
+        if (!renderer) return;
+        renderer.setRadarSuppressed(msg.suppressed);
+        break;
+      }
+
       case 'GLIDE_CAMERA': {
         if (!renderer) return;
         renderer.glideCameraTo(msg.gameX, msg.gameY, msg.durationMs);

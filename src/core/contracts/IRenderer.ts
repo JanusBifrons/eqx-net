@@ -1,3 +1,5 @@
+import type { RadarInsets, RadarPrefs } from '../../shared-types/settings/radar.js';
+
 export interface ShipRenderState {
   x: number;
   y: number;
@@ -796,6 +798,18 @@ export interface IRenderer {
    * discrete `pilotMode` enum is mirrored in the store (Invariant #2).
    */
   setSpectator(active: boolean): void;
+  /**
+   * Off-screen indicator radar (plan sparkling-wondering-rose). The active
+   * preferences — the device-class defaults until the player's saved overrides
+   * load. Plain structured-cloneable data (crosses the worker boundary).
+   */
+  setRadarPrefs(prefs: RadarPrefs): void;
+  /** HUD geometry the radar must keep clear of, measured on the main thread
+   *  from the layout slot hosts (the worker has no DOM). */
+  setRadarInsets(insets: RadarInsets): void;
+  /** Clear the radar while IN_TRANSIT / ARRIVED (the mirror still holds the
+   *  old sector). NOT during SPOOLING — the player can still be attacked. */
+  setRadarSuppressed(suppressed: boolean): void;
   /**
    * Phase 4 WS-A2 (Ship entry / switch) — kick off a ONE-SHOT eased camera glide
    * from the current view to the GAME-space point `(gameX, gameY)` over
