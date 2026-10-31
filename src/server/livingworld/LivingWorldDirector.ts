@@ -46,7 +46,15 @@ import type { SectorStructurePresence } from '../../shared-types/galaxyPresence.
 import { LivingWorldRoom } from './LivingWorldRoom.js';
 import { HunterBotPool, type BotRecord, type DirectorSnapshot } from './director/HunterBotPool.js';
 import { HunterBotWarpController } from './director/HunterBotWarpController.js';
-import { SquadPool, SQUAD_SIZE, LIVING_WORLD_SQUAD_COUNT, type SquadRecord } from './director/SquadPool.js';
+import {
+  SquadPool,
+  SQUAD_SIZE,
+  LIVING_WORLD_SQUAD_COUNT,
+  DEFAULT_SQUAD_LAYOUT,
+  type SquadLayout,
+  type SquadRecord,
+} from './director/SquadPool.js';
+import { DRONE_BOT_ID_PREFIX } from './directorBotIds.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import { WaveSquadBehaviour } from './director/SquadBehaviour.js';
 import { EscalatingWavePattern } from './director/WavePattern.js';
@@ -212,6 +220,27 @@ export interface LivingWorldOptions {
    *  (the sector adjacent to the target) for traversing squadmates before
    *  breaching anyway. See `decideRallyRelease`. Feel knob — tune on-device. */
   rallyMaxMs: number;
+  /** Living World P1b — the side this director runs. `drones` (the default)
+   *  is the wave director; `robots` roams the galaxy and fights ON SIGHT via
+   *  the shared stance table (no waves, so `wavesEnabled` is false). */
+  allegiance: 'drones' | 'robots';
+  /** Bot id prefix — must be one of `directorBotIds.ts`'s prefixes. */
+  botIdPrefix: string;
+  /** Squad count / size / id prefix / per-slot hulls. */
+  squadLayout: SquadLayout;
+  /** Squad lead hull (homogeneous squads use it for every member). */
+  leadKind: ShipKindId;
+  /** false ⇒ never dispatch waves at bases (robots). Roam + flock still run. */
+  wavesEnabled: boolean;
+}
+
+/** Optional cross-director hooks (not tuning knobs, so not in the options
+ *  record). */
+export interface LivingWorldHooks {
+  /** Extra per-sector ENEMY counts folded into `/galaxy/snapshot` — the drone
+   *  director (the snapshot provider) counts the robot director's active bots
+   *  as enemies, since robots are hostile to every player on sight. */
+  extraEnemyCounts?: () => ReadonlyMap<string, number>;
 }
 
 /** Display label for a squad's homogeneous hull in the warp-in warning
@@ -219,7 +248,10 @@ export interface LivingWorldOptions {
  *  (a flavour codename, NOT a ship-kind — invariant #11; the wire `shipKind`
  *  stays `fighter`). A future mixed-kind WavePattern extends this map. */
 export function squadDisplayLabel(kind: ShipKindId): string {
-  return kind === 'fighter' ? 'Legionnaire' : kind;
+  if (kind === 'fighter') return 'Legionnaire';
+  // P1b — a mixed robot squad reads as one threat ("6 × Robots").
+  if (kind.startsWith('robot-')) return 'Robot';
+  return kind;
 }
 
 /** Visible per-hop dwell (ms) for a DRONE squad's inter-sector hop — the drone
@@ -283,6 +315,11 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   // time-box, so a straggler cycle can't consume the whole assault phase. FEEL
   // knob — confirm on-device.
   rallyMaxMs: 90_000,
+  allegiance: 'drones',
+  botIdPrefix: DRONE_BOT_ID_PREFIX,
+  squadLayout: DEFAULT_SQUAD_LAYOUT,
+  leadKind: 'fighter',
+  wavesEnabled: true,
 };
 
 /** Leader-course tunables (non-combat herding). Radius (game units) of the ring
@@ -333,6 +370,7 @@ export class LivingWorldDirector {
   /** Phase 5 — optional director-state persistence ("restart from any state").
    *  Null in tests / when no sink is injected (⇒ today's fresh seed every boot). */
   private readonly directorPersistence: DirectorPersistence | null;
+  private readonly hooks: LivingWorldHooks;
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastShedAtMs = -Infinity;
@@ -369,6 +407,7 @@ export class LivingWorldDirector {
       /** Phase 5 — inject to make the director persist + restore its squad
        *  continuity across a restart. Omit ⇒ stateless (today's fresh seed). */
       directorPersistence?: DirectorPersistence;
+      hooks?: LivingWorldHooks;
     } = {},
   ) {
     this.rooms = rooms;
@@ -377,11 +416,13 @@ export class LivingWorldDirector {
     this.rng = options.rng ?? Math.random;
     this.nowMs = options.nowMs ?? Date.now;
     this.directorPersistence = options.directorPersistence ?? null;
+    this.hooks = options.hooks ?? {};
     this.pool = new HunterBotPool({
       botCount: this.opts.botCount,
       initialStaggerMs: this.opts.initialStaggerMs,
       rng: this.rng,
       nowMs: this.nowMs,
+      botIdPrefix: this.opts.botIdPrefix,
     });
     this.warp = new HunterBotWarpController({
       rooms: this.rooms,
@@ -435,21 +476,23 @@ export class LivingWorldDirector {
     const entryKeys = liveEntrySectors(this.sectorKeys);
     const homeSector = entryKeys[0] ?? this.sectorKeys[0] ?? '';
     this.pool.seed(homeSector);
-    // Group the pool into homogeneous squads (v1: all 'fighter', shown as
-    // "8 × Legionnaires" in the warp warning). Each member's hull is forced to
-    // its squad's kind so the squad is visually homogeneous and the warning
-    // label is honest (a future WavePattern can vary the kind per squad).
+    // Group the pool into squads. Drones: homogeneous 'fighter' squads (shown as
+    // "8 × Legionnaires" in the warp warning). Robots (P1b): mixed-tier squads
+    // via the layout's per-slot `memberKind`. Each member's hull is forced to its
+    // seeded slot kind so the squad renders exactly as laid out.
     const botIds = [...this.pool.values()].map((r) => r.botId);
     // Spread squad homes across the entry sectors so they don't all pile into
     // one edge; each squad gathers at its home entry until a wave routes it.
+    const leadKind = this.opts.leadKind;
     this.squadPool.seed(
       botIds,
       (i) => entryKeys[i % entryKeys.length] ?? homeSector,
-      () => 'fighter',
+      () => leadKind,
+      this.opts.squadLayout,
     );
     for (const rec of this.pool.values()) {
-      const squad = this.squadPool.squadOf(rec.botId);
-      if (squad) rec.kind = squad.kind;
+      const kind = this.squadPool.memberKindOf(rec.botId);
+      if (kind !== undefined) rec.kind = kind;
     }
     // Phase 5 — "restart from any state": overlay persisted squad continuity onto
     // the fresh seed (sectors / targets / states + wave bookkeeping). Bots stay
@@ -573,7 +616,10 @@ export class LivingWorldDirector {
     this.promoteSquads();
 
     // ── 2. wave planning + squad advancement ─────────────────────────────
-    for (const step of this.waveDirector.plan(now)) this.executeWaveStep(step);
+    // Robots (P1b) never wave: they roam and fight on sight via the stance table.
+    if (this.opts.wavesEnabled) {
+      for (const step of this.waveDirector.plan(now)) this.executeWaveStep(step);
+    }
 
     // ── 2b. roam idle/unassigned squads (the ambient floor replacement) ──
     this.roamStep(now);
@@ -589,6 +635,7 @@ export class LivingWorldDirector {
     const snap = this.snapshot();
     const squads = this.squadPool.snapshot();
     serverLogEvent('population_report', {
+      allegiance: this.opts.allegiance,
       total: snap.total,
       active: snap.active,
       inTransit: snap.inTransit,
@@ -624,6 +671,8 @@ export class LivingWorldDirector {
    *  is fine. */
   private recomputeGalaxyStats(): void {
     const enemyBySector = enemyBotCountsBySector(this.squadPool.all(), (id) => this.pool.get(id));
+    // P1b — robots (another director) are enemies of every player on sight.
+    const extraEnemies = this.hooks.extraEnemyCounts?.();
     const out: SectorLiveState[] = [];
     for (const [key, room] of this.rooms) {
       const counts = room.liveCounts?.() ?? {
@@ -635,7 +684,10 @@ export class LivingWorldDirector {
       // Total drones actually present in the sector (the room is ground truth
       // for "how many"); the director decides the enemy/neutral SPLIT by wave.
       const totalDrones = counts.enemies + counts.neutrals;
-      const enemies = Math.min(enemyBySector.get(key) ?? 0, totalDrones);
+      const enemies = Math.min(
+        (enemyBySector.get(key) ?? 0) + (extraEnemies?.get(key) ?? 0),
+        totalDrones,
+      );
       const neutrals = Math.max(0, totalDrones - enemies);
       const region = getSector(key)?.region ?? null;
       out.push({
@@ -653,6 +705,18 @@ export class LivingWorldDirector {
       });
     }
     this.galaxyStatsCache = out;
+  }
+
+  /** P1b — this director's ACTIVE bots per sector (control-cadence callers only;
+   *  allocates). The robot director feeds this to the drone director's
+   *  `extraEnemyCounts` hook so robots show red on the galaxy map. */
+  activeBotCountsBySector(): Map<string, number> {
+    const out = new Map<string, number>();
+    for (const rec of this.pool.values()) {
+      if (rec.state !== 'active') continue;
+      out.set(rec.sectorKey, (out.get(rec.sectorKey) ?? 0) + 1);
+    }
+    return out;
   }
 
   /** Phase-3 — the cached live per-sector snapshot (structurally satisfies
@@ -1125,6 +1189,8 @@ export class LivingWorldDirector {
    *  squad is bearing down on that faction's base, so coarse `enemy` is correct
    *  in practice. */
   private dispositionForSquad(squad: SquadRecord | undefined): WarpDisposition {
+    // Robots are hostile to every player on sight — always a red warning.
+    if (this.opts.allegiance === 'robots') return 'enemy';
     return squad && squad.targetFactionId !== null ? 'enemy' : 'neutral';
   }
 

@@ -65,6 +65,8 @@ export type PersistOp =
   // `payloadJson` is JSON.stringify'd DirectorStatePayload. Boot hydration reads
   // via the read-only main-thread connection, never through the worker.
   | { type: 'DIRECTOR_STATE_PUT'; payloadJson: string; ts: number }
+  // Living World P1b — a non-drone allegiance director's state (robots).
+  | { type: 'ALLEGIANCE_DIRECTOR_STATE_PUT'; allegiance: string; payloadJson: string; ts: number }
   // PR 3a — account-bound player identity. One canonical playerId per account
   // (`account_players`, UPSERT on user_id) + historical per-browser ids folded
   // into it (`player_aliases`, keyed on the alias id). Boot hydration reads via

@@ -24,6 +24,7 @@ export class SyncSinkAdapter implements IPersistenceSink {
     PLAYER_SHIP_PUT: ReturnType<DatabaseSync['prepare']>;
     PLAYER_SHIP_DELETE: ReturnType<DatabaseSync['prepare']>;
     DIRECTOR_STATE_PUT: ReturnType<DatabaseSync['prepare']>;
+    ALLEGIANCE_DIRECTOR_STATE_PUT: ReturnType<DatabaseSync['prepare']>;
     PUSH_SUBSCRIPTION_PUT: ReturnType<DatabaseSync['prepare']>;
     PUSH_SUBSCRIPTION_DELETE: ReturnType<DatabaseSync['prepare']>;
     ACCOUNT_PLAYER_PUT: ReturnType<DatabaseSync['prepare']>;
@@ -83,6 +84,10 @@ export class SyncSinkAdapter implements IPersistenceSink {
       DIRECTOR_STATE_PUT: db.prepare(
         'INSERT INTO director_state (id, payload_json, created_at, updated_at) VALUES (1, ?, ?, ?) ' +
         'ON CONFLICT(id) DO UPDATE SET payload_json=excluded.payload_json, updated_at=excluded.updated_at',
+      ),
+      ALLEGIANCE_DIRECTOR_STATE_PUT: db.prepare(
+        'INSERT INTO allegiance_director_state (allegiance, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?) ' +
+        'ON CONFLICT(allegiance) DO UPDATE SET payload_json=excluded.payload_json, updated_at=excluded.updated_at',
       ),
       PUSH_SUBSCRIPTION_PUT: db.prepare(
         'INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, created_at, updated_at) ' +
@@ -211,6 +216,10 @@ export class SyncSinkAdapter implements IPersistenceSink {
       }
       case 'DIRECTOR_STATE_PUT': {
         this.stmts.DIRECTOR_STATE_PUT.run(op.payloadJson, op.ts, op.ts);
+        return {};
+      }
+      case 'ALLEGIANCE_DIRECTOR_STATE_PUT': {
+        this.stmts.ALLEGIANCE_DIRECTOR_STATE_PUT.run(op.allegiance, op.payloadJson, op.ts, op.ts);
         return {};
       }
       case 'ACCOUNT_PLAYER_PUT': {

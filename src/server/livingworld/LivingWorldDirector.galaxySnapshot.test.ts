@@ -45,6 +45,26 @@ const OPTS: Partial<LivingWorldOptions> & { rng: () => number; nowMs: () => numb
 };
 
 describe('LivingWorldDirector.galaxySnapshot', () => {
+  it('P1b — extraEnemyCounts (robots) are counted as ENEMIES, capped at present drones', () => {
+    // 5 swarm combatants present in orion-belt: 3 are robots (the robot
+    // director's active bots), 2 are roaming neutral drones. Robots are hostile
+    // to every player on sight, so the map must show them red.
+    const rooms = new Map<string, LivingWorldRoom>([
+      ['orion-belt', withCounts({ players: 0, enemies: 0, neutrals: 5, structures: 0 })],
+      ['sol-prime', withCounts({ players: 0, enemies: 0, neutrals: 1, structures: 0 })],
+    ]);
+    const robots = new Map([['orion-belt', 3], ['sol-prime', 9]]); // 9 > present ⇒ capped
+    const director = new LivingWorldDirector(rooms, { ...OPTS, hooks: { extraEnemyCounts: () => robots } });
+    director.start();
+    try {
+      const snap = director.galaxySnapshot();
+      expect(snap.find((s) => s.key === 'orion-belt')).toMatchObject({ enemies: 3, neutrals: 2 });
+      expect(snap.find((s) => s.key === 'sol-prime')).toMatchObject({ enemies: 1, neutrals: 0 });
+    } finally {
+      director.stop();
+    }
+  });
+
   it('aggregates per-room counts; enemies are FACTION-derived (no waves ⇒ all present drones are neutral)', () => {
     // The director re-splits enemies vs neutrals by squad faction-hostility, NOT
     // the room's present-player view. With botCount:0 there are no squads/waves,

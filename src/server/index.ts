@@ -27,6 +27,7 @@ import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled, resolveBotSpoolMs, resolveBotHopMs, type LivingWorldOptions } from './livingworld/LivingWorldDirector.js';
 import { setIncomingPlayerSink } from './livingworld/incomingPlayerSink.js';
 import { setGalaxyStatsProvider } from './livingworld/galaxyStatsProvider.js';
+import { ROBOT_DIRECTOR_OPTIONS, ROBOT_BOT_COUNT, isRobotsDisabled } from './livingworld/robotDirector.js';
 import { DirectorPersistence, type DirectorStatePayload } from './livingworld/DirectorPersistence.js';
 import { db } from './db/Database.js';
 import { resolveCorsPolicy, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
@@ -94,6 +95,9 @@ let serverReady = false;
 /** Process-global Living World population brain. Constructed in `main()`
  *  after the eager galaxy rooms exist; stopped on shutdown. */
 let livingWorldDirector: LivingWorldDirector | null = null;
+/** Living World P1b — the robot-side director (null when disarmed). */
+let robotDirector: LivingWorldDirector | null = null;
+const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
 app.get('/healthz', (_req, res) => {
   res.json({
     status: 'ok',
@@ -164,8 +168,10 @@ if (process.env['NODE_ENV'] !== 'production') {
   // GET /dev/population — Living World director snapshot (per-sector
   // players/bots, totals, in-transit/respawning) for E2E + diagnostics.
   // Read-only; mirrors /dev/limbo's inspection-only shape.
-  app.get('/dev/population', (_req, res) => {
-    res.json(livingWorldDirector ? livingWorldDirector.snapshot() : { ready: false });
+  app.get('/dev/population', (req, res) => {
+    // `?allegiance=robots` inspects the robot director (Living World P1b).
+    const d = req.query['allegiance'] === 'robots' ? robotDirector : livingWorldDirector;
+    res.json(d ? d.snapshot() : { ready: false });
   });
 
   // GET /dev/audit?player=&owner=&sector=&event=&since=&until=&limit=&source=&format=
@@ -874,6 +880,34 @@ gameServer
     ],
   })
   .filterBy(['testId']);
+// Living World P1b showcase — one full mixed-tier ROBOT squad (hexagon lead,
+// two circles, three cubes) vs six drones, the pilot spawning between them.
+// Robots are hostile to the pilot too, so the recording shows a real three-way
+// fight. testMode, filterBy testId (one room per recording).
+gameServer
+  .define('robots-showcase', SectorRoom, {
+    sectorKey: 'robots-showcase',
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    maxClients: 4,
+    dronePoses: [
+      // Shields start DOWN (hullExposed) so kills land within a short recording.
+      { kind: 'fighter', x: -420, y: 380, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'fighter', x: -470, y: 500, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'fighter', x: -420, y: 620, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'scout', x: -520, y: 440, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'scout', x: -520, y: 580, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'heavy', x: -600, y: 510, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'robot-hexagon', x: 560, y: 510, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-circle', x: 470, y: 420, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-circle', x: 470, y: 600, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-square', x: 400, y: 360, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-square', x: 380, y: 510, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-square', x: 400, y: 660, angle: Math.PI / 2, hullExposed: true },
+    ],
+  })
+  .filterBy(['testId']);
 // Phase 6 TiDi acceptance gate. 4000 entities (3200 asteroids + 800 active
 // drones at the 0.8 ratio). Diagnostic captures show this only consumes
 // ~1.5 ms/tick on a typical dev machine — well under the 14 ms TiDi
@@ -1024,9 +1058,40 @@ async function main(): Promise<void> {
           .get() as { payload_json: string; created_at: number } | undefined,
       logger,
     });
+    // Living World P1b — the ROBOT side: a second director instance (mixed-tier
+    // `rbot-` squads, roam-only, hostile on sight via the stance table). Its
+    // own persistence row lives in `allegiance_director_state`.
+    if (isRobotsDisabled()) {
+      logger.warn('robot director DISARMED (EQX_DISABLE_ROBOTS set)');
+    } else {
+      const robotPersistence = new DirectorPersistence({
+        saveRow: (payload: DirectorStatePayload) => {
+          persistence.enqueueCritical({
+            type: 'ALLEGIANCE_DIRECTOR_STATE_PUT',
+            allegiance: 'robots',
+            payloadJson: JSON.stringify(payload),
+            ts: Date.now(),
+          });
+        },
+        loadRow: () =>
+          db
+            .prepare("SELECT payload_json, created_at FROM allegiance_director_state WHERE allegiance = 'robots'")
+            .get() as { payload_json: string; created_at: number } | undefined,
+        logger,
+      });
+      robotDirector = new LivingWorldDirector(galaxyRooms, {
+        ...directorOpts,
+        ...ROBOT_DIRECTOR_OPTIONS,
+        directorPersistence: robotPersistence,
+      });
+      robotDirector.start();
+      logger.info({ bots: ROBOT_BOT_COUNT }, 'robot director started');
+    }
     livingWorldDirector = new LivingWorldDirector(galaxyRooms, {
       ...directorOpts,
       directorPersistence,
+      // Robots are enemies of every player on the galaxy map.
+      hooks: { extraEnemyCounts: () => robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS },
     });
     livingWorldDirector.start();
     // Phase-4 P0 — let the per-room TransitOrchestrator + destination rooms feed
@@ -1081,6 +1146,8 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
     // off (the throttled in-loop persist only bounds loss on an unclean kill).
     livingWorldDirector?.persistState();
     livingWorldDirector?.stop();
+    robotDirector?.persistState();
+    robotDirector?.stop();
   } catch (err) {
     logger.warn({ err }, 'livingWorldDirector.persistState/stop threw');
   }

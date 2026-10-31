@@ -428,8 +428,8 @@ describe('havok composite kind — catalogue registration (composite-ships Phase
     expect(SHIP_KINDS_LIST[8]!.id).toBe('havok'); // index 8 is wire-stable; robots append after (allegiances P0)
   });
 
-  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 14 (P1a cargo-pod append; 13 = P0 allegiance fields)', () => {
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(14);
+  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 15 (P1b robot circle+hexagon; 14 = P1a cargo-pod; 13 = P0 allegiance)', () => {
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(15);
   });
 
   it('HAVOK is registered in SHIP_KINDS and parses its own schema', () => {

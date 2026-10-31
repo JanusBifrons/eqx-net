@@ -14,6 +14,7 @@ import { serverLogEvent } from '../../debug/ServerEventLog.js';
 import { GAMEPLAY_SHIP_KINDS_LIST, type ShipKindId } from '../../../shared-types/shipKinds.js';
 import type { BotTransitController } from '../BotTransitController.js';
 import type { Rng } from '../population.js';
+import { DRONE_BOT_ID_PREFIX } from '../directorBotIds.js';
 
 export type BotState = 'active' | 'in-transit' | 'respawning';
 
@@ -46,6 +47,10 @@ export interface HunterBotPoolOptions {
   initialStaggerMs: number;
   rng: Rng;
   nowMs: () => number;
+  /** Bot id prefix (`lwbot-` drones, `rbot-` robots — Living World P1b). The
+   *  prefix must be registered in `directorBotIds.ts` so attacker
+   *  classification treats it as an NPC. */
+  botIdPrefix?: string;
 }
 
 /**
@@ -65,7 +70,7 @@ export class HunterBotPool {
   seed(initialSectorKey: string): void {
     const now = this.opts.nowMs();
     for (let i = 0; i < this.opts.botCount; i++) {
-      const botId = `lwbot-${i}`;
+      const botId = `${this.opts.botIdPrefix ?? DRONE_BOT_ID_PREFIX}${i}`;
       // Engineering-only kinds (crossguard, el) are scale-10 test
       // fixtures and must not seed into ambient hunter bots — capture
       // ilhqk6 had them leaking into Sol Prime ("square ship bigger than
