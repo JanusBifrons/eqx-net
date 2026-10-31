@@ -3,7 +3,13 @@
  * Pure aggregator, deterministic over synthetic samples.
  */
 import { describe, it, expect } from 'vitest';
-import { aggregateSamples, type PerSampleArm, type TickBudgetSample } from './perfCapture.js';
+import {
+  aggregateSamples,
+  framePercentile,
+  parseTickBudgetEvent,
+  type PerSampleArm,
+  type TickBudgetSample,
+} from './perfCapture.js';
 
 function s(over: Partial<PerSampleArm> = {}): PerSampleArm {
   return {
@@ -162,5 +168,65 @@ describe('aggregateSamples', () => {
     expect(agg.arm).toBe('mobile-shaped');
     expect(agg.durationMs).toBe(25_000);
     expect(agg.capturedAt).toBe(NOW);
+  });
+});
+
+// The EXACT payload `TickBudgetTelemetry.endTick` emits (src/server/rooms/
+// TickBudgetTelemetry.ts — serverLogEvent('tick_budget', …)). Kept literal so a
+// drift in either side fails here rather than silently zeroing the baseline.
+const REAL_TICK_BUDGET_EVENT = {
+  serverTick: 1200,
+  sampleCount: 60,
+  avgMs: { total: 3.25, physics: 1.1, broadcast: 0.9 },
+  maxTotalMs: 8.5,
+  overBudgetCount: 0,
+  playerCount: 1,
+  swarmCount: 25,
+  aiSize: 25,
+};
+
+describe('parseTickBudgetEvent', () => {
+  it('reads avgMs.total + maxTotalMs from the real server event shape', () => {
+    // Regression: the old parser required a top-level `total` (never emitted)
+    // so every real event was dropped → baselines recorded sampleCount 0.
+    expect(parseTickBudgetEvent(REAL_TICK_BUDGET_EVENT)).toEqual({
+      serverTick: 1200,
+      total: 3.25,
+      maxTotalMs: 8.5,
+      overBudgetCount: 0,
+      sampleCount: 60,
+    });
+  });
+
+  it('drops events from rooms with no live player (the global ring mixes ~21 galaxy rooms)', () => {
+    expect(parseTickBudgetEvent({ ...REAL_TICK_BUDGET_EVENT, playerCount: 0 })).toBeNull();
+  });
+
+  it('rejects malformed events', () => {
+    expect(parseTickBudgetEvent({ ...REAL_TICK_BUDGET_EVENT, avgMs: {} })).toBeNull();
+    expect(parseTickBudgetEvent({ serverTick: 1 })).toBeNull();
+  });
+
+  it('aggregate uses maxTotalMs for the worst tick, not the window average', () => {
+    const tb = parseTickBudgetEvent(REAL_TICK_BUDGET_EVENT)!;
+    const agg = aggregateSamples({
+      scenario: 's',
+      arm: 'desktop',
+      durationMs: 1000,
+      samples: [],
+      tickBudgets: [tb],
+      capturedAt: '2026-10-31T00:00:00.000Z',
+    });
+    expect(agg.tickBudget.totalAvgMs).toBe(3.25);
+    expect(agg.tickBudget.totalMaxMs).toBe(8.5);
+  });
+});
+
+describe('framePercentile', () => {
+  it('nearest-rank p50/p99 over unsorted frame deltas', () => {
+    const d = [16, 17, 16, 33, 16, 16, 17, 16, 16, 100];
+    expect(framePercentile(d, 0.5)).toBe(16);
+    expect(framePercentile(d, 0.99)).toBe(100);
+    expect(Number.isNaN(framePercentile([], 0.5))).toBe(true);
   });
 });

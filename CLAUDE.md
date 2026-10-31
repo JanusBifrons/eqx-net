@@ -73,6 +73,7 @@ Rules:
 | Drawer click → visible | ≤ 500 ms | Current floor 1.22 s; see `docs/LESSONS.md` 2026-05-13 "Drawer perf paradigm + MUI sx-hoist rules" |
 | Inline `sx={{...}}` allocation | Avoid per-render | Hoist static sx to module-level const; `useMemo` for dynamic; see [src/client/layout/Drawer/AdvancedDrawer.tsx](src/client/layout/Drawer/AdvancedDrawer.tsx) |
 | GC pauses | < 2 ms | Captured via `diag/drawer-lag-trace/cdp-perf.json` + `scripts/analyze-cdp-profile.mjs` |
+| Procedural bases (static geometry, Tier B entities, wire, render) | Every number in [src/shared-types/baseBudgets.ts](src/shared-types/baseBudgets.ts), each with its measurement | Locked by `tests/unit/baseBudgets.test.ts` (consistency vs the live game) + `baseWallTunnelling` + the `base-static-colliders` bench. Static geometry = ONE trimesh collider per chunk (per-piece colliders measured ~10× dearer). A budget is raised only by a reviewed change citing a NEW measurement — never widened to get green; shrink the design instead. Ledger: [docs/architecture/procedural-bases.md](docs/architecture/procedural-bases.md) |
 | SectorRoom `update()` per-tick | Per the budgets in [src/server/CLAUDE.md](src/server/CLAUDE.md) (interest grid, lag-comp buffer, backpressure) | |
 
 ---

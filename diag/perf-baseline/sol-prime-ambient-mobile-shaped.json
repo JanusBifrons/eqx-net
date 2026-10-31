@@ -1,0 +1,74 @@
+{
+  "capturedAt": "2026-10-31T18:19:44.134Z",
+  "scenario": "sol-prime-ambient",
+  "arm": "mobile-shaped",
+  "durationMs": 25000,
+  "sampleCount": 76,
+  "diagEnabledAtCapture": false,
+  "metrics": {
+    "rafP50Ms": {
+      "median": 16.69999999999891,
+      "p95": 16.700000000000728,
+      "p99": 16.700000000000728,
+      "sampleCount": 20
+    },
+    "rafP99Ms": {
+      "median": 33.400000000001455,
+      "p95": 266.59999999999945,
+      "p99": 799.9000000000005,
+      "sampleCount": 20
+    },
+    "longtaskCount30s": {
+      "median": 15,
+      "p95": 18,
+      "p99": 18,
+      "sampleCount": 76
+    },
+    "rafGapCount30s": {
+      "median": 12,
+      "p95": 13,
+      "p99": 13,
+      "sampleCount": 76
+    },
+    "rollingCorrRate": {
+      "median": 0,
+      "p95": 0,
+      "p99": 0,
+      "sampleCount": 76
+    },
+    "maxDriftUnits": {
+      "median": 198.3858925152852,
+      "p95": 198.3858925152852,
+      "p99": 198.3858925152852,
+      "sampleCount": 76
+    },
+    "meanDriftUnits": {
+      "median": 0.6104181308162622,
+      "p95": 2.0665197137008877,
+      "p99": 2.5112138293074078,
+      "sampleCount": 76
+    },
+    "ticksAhead": {
+      "median": 4,
+      "p95": 8,
+      "p99": 11,
+      "sampleCount": 76
+    },
+    "heapUsedMb": {
+      "median": 48.065185546875,
+      "p95": 48.065185546875,
+      "p99": 48.065185546875,
+      "sampleCount": 76
+    }
+  },
+  "tickBudget": {
+    "sampleCount": 25,
+    "totalAvgMs": 0.45588,
+    "totalMaxMs": 21.508,
+    "overBudgetRatio": 0.0006666666666666666
+  },
+  "population": {
+    "hunters": 0,
+    "totalDrones": 56
+  }
+}
