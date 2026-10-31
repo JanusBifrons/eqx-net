@@ -57,8 +57,8 @@ export function mixColor(c: number, target: number, t: number): number {
 }
 
 /** Deterministic per-piece weathering: ±6 % tone shift from the layout seed. */
-function weathered(color: number, seed: number, i: number): number {
-  const h = fnvMixU32(fnvMixU32(0x811c9dc5, seed), i);
+function weathered(color: number, seed: number, key: number): number {
+  const h = fnvMixU32(fnvMixU32(0x811c9dc5, seed), key);
   const t = ((h & 0xff) / 255) * 0.12 - 0.06;
   return t >= 0 ? mixColor(color, 0xffffff, t) : mixColor(color, 0x000000, -t);
 }
@@ -78,7 +78,7 @@ export function buildChunkVisual(l: BaseLayout, chunk: number, dead?: Uint32Arra
     const h = l.h[i]!;
     const px = gx;
     const py = -(gy + h);
-    const base = weathered(BASE_PALETTE[kind.palette], l.descriptor.seed, i);
+    const base = weathered(BASE_PALETTE[kind.palette], l.descriptor.seed, weatherKey(l, i));
 
     if (!kind.solid) {
       // Floors: flat + a hazard-striped rim.
@@ -104,6 +104,21 @@ export function buildChunkVisual(l: BaseLayout, chunk: number, dead?: Uint32Arra
     detail(kind.id, rects, lights, px, py, w, h, base);
   }
   return { rects, lights };
+}
+
+/**
+ * Weathering key shared by every split half of one parent piece: a piece cut
+ * at a chunk line keys on its UNCUT axis only (both halves share it), so a
+ * continuous rack/wall gets one tone instead of a visible tone seam.
+ */
+function weatherKey(l: BaseLayout, i: number): number {
+  const x0 = l.x[i]!, y0 = l.y[i]!, x1 = x0 + l.w[i]!, y1 = y0 + l.h[i]!;
+  const cutY = isChunkCut(y0, l.half) || isChunkCut(y1, l.half);
+  const cutX = isChunkCut(x0, l.half) || isChunkCut(x1, l.half);
+  let h = fnvMixU32(0x811c9dc5, l.kind[i]!);
+  if (!cutX) { h = fnvMixU32(h, x0 >>> 0); h = fnvMixU32(h, x1 >>> 0); }
+  if (!cutY) { h = fnvMixU32(h, y0 >>> 0); h = fnvMixU32(h, y1 >>> 0); }
+  return h;
 }
 
 /** True when a base-local coordinate lies on an interior chunk line. */

@@ -168,3 +168,37 @@ Visual detail (edge shading, bay slots, conduits, lamps, hazard stripes) scales 
 **Generate → REPAIR → curate.** Bigger pieces made sealed pockets common: up to 44% of first attempts, from bay container rows, wall corners and trimmed rack ends. `carve.ts` removes the carvable pieces (racks, containers; never walls or gate posts) that border both a sealed pocket and reachable space, then re-validates. First-attempt validity after repair: 200/200 at 5000–7000 u and 199/200 at 8000 u. Generation stays at ~2.5 ms mean, p99 < 10 ms (budget 50).
 
 **Chunk-line seams fixed.** Edge shading is skipped on piece sides that lie on an interior chunk line, where the builder split one continuous wall or rack.
+
+## Process: a small showcase per feature (user directive, 2026-10-31)
+
+Every feature PR in this plan ships its OWN small showcase as it lands, not one big trailer at the end:
+- **Clips:** 1–3 short clips (spectator camera or scripted flight) recorded from the feature's showcase room.
+- **Stills:** a few screenshots.
+- **Page:** a compact artifact page showing what's new, plus its budget-ledger numbers.
+
+The final "Factorio-style" trailer (PR-T) becomes a cut of these per-feature clips, not a separate production.
+
+### Density pass (generator v3) + first per-feature showcase
+
+v2's 3× scale passed every lock but read as an empty yard. Racks covered 3.5% of the floor on average at 5000 u (some bases had none) and 10% at 8000 u. Large main aisles split the yard into small zones, and big loading bays ate the corners.
+
+v3 changes:
+- **Zones and aisles:** cross-aisles every ~3200 u; main aisles 2.5× corridor, rack aisles 1.5–2.2×, perimeter road 1.5×.
+- **Rows:** run edge to edge in each zone.
+- **Gates and bays:** small yards get 2 gates; bays are sized to the footprint (≤ 900 u).
+
+Results:
+
+| Size | Mean coverage | Worst | First-try valid |
+|---|---|---|---|
+| 5000 u | 22.8% | 16.4% | 200/200 |
+| 8000 u | 25.2% | 19.5% | 200/200 |
+
+**New lock:** `generateBase.test.ts` "storage density" requires mean ≥ 20% and worst ≥ 12%. A layout can be valid and in budget yet not read as a warehouse, so quality is locked too.
+
+**Weathering:** tone is keyed on the unsplit parent piece, so a rack crossing a chunk line keeps one tone.
+
+**Showcase:**
+- **Clip:** `scripts/showcase/base-cinematic.ts` (canvas render of the same draw plan, Playwright recordVideo).
+- **Page:** `scripts/showcase/warehouse-page.template.html`.
+- **Media:** `diag/showcase/warehouse/`.
