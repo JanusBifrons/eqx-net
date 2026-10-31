@@ -18,7 +18,7 @@ import { fnvMixU32 } from './rng.js';
 export type BaseArchetype = 'warehouse';
 
 /** Bump on ANY change to generator output (the layout-hash lock enforces it). */
-export const BASE_GENERATOR_VERSION = 1;
+export const BASE_GENERATOR_VERSION = 2; // v2: warehouse scaled ~3× (user feedback)
 
 export interface BaseDescriptor {
   /** Generator version the layout was produced with. */

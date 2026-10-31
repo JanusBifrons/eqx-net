@@ -112,6 +112,19 @@ Update this section when a threshold is set.
 
 ---
 
+## Procedural bases (`src/server/bases/BaseSubsystem.ts`, plan soft-leaping-truffle)
+
+- **The `bases` room-definition option** (server-authored, so NOT testMode-gated) → `BaseSubsystem.add`. That call:
+  - generates the layout with the shared core;
+  - writes a `BaseState` descriptor into `state.bases` (a schema MapSchema), so joiners regenerate from it (Invariant #16);
+  - posts `SPAWN_BASE` so the worker regenerates and spawns the outline colliders. No geometry crosses the thread boundary.
+- **Weapon blocking:** `blockShotAtWall` (used by both fire resolvers) takes the nearest of base and shield wall, and caps the shield-wall range at the base hit so a shield span BEHIND base geometry never takes damage. `wallBlocksProjectile` checks bases first.
+  - **Not yet blocked:** turret beams and missiles (PR-M).
+- **Spawn safety:** `onJoin` nudges a spawn inside solid geometry to the nearest clear point (`findClearSpawn`). The colliders are hollow outlines, so a ship placed inside would be trapped.
+- **Showcase room:** `base-warehouse-showcase` (testMode, filterBy testId).
+- **Locks:** `tests/integration/sectorRoom/proceduralBase.test.ts` (state descriptor, spawn nudge, real-worker wall stop with a moved-then-stopped assertion, beam block) and `tests/e2e/base-warehouse-showcase.spec.ts`.
+- **Netgate required** (touches `SectorRoom` join + fire paths).
+
 ## Player identity is ACCOUNT-bound (PR 3a, 2026-10-31)
 
 `playerId` (owner of ships / structures / hulls / wave targets) belongs to the **account**, not the browser. Rules (full story: [docs/architecture/player-identity.md](../../docs/architecture/player-identity.md)):
