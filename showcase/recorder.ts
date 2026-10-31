@@ -178,7 +178,8 @@ interface CinemaWindow {
 }
 
 export function targetUrl(baseUrl: string, target: ShotTarget, testId: string, hud: HudMode): string {
-  const p = new URLSearchParams({ worker: '0', diag: '0', hud });
+  // cleanworld=1: no debug world overlays (spatial grid, aim guides, NPC callsigns).
+  const p = new URLSearchParams({ worker: '0', diag: '0', hud, cleanworld: '1' });
   if (target.room) {
     p.set('room', target.room);
     p.set('testId', testId);

@@ -35,7 +35,8 @@ Output (gitignored) lands in `showcase-out/`:
    profile, then cut back into reel order.
 3. **Browser.** Headless Chromium on the **real GPU** (`--use-angle=d3d11`).
    SwiftShader renders the warp/shockwave filters black, so the recorder logs
-   the GPU name. Every URL carries `worker=0&diag=0`, and the take aborts if
+   the GPU name. Every URL carries `worker=0&diag=0&cleanworld=1` (no debug
+   world overlays: spatial grid, turret aim guides, NPC callsigns), and the take aborts if
    diag is on or `window.__eqxCinema` is missing at that ref.
 4. **Enter, prepare, wait, record.**
    - Wait until in-game (store join flags), then 1.2 s more for the arrival flash.

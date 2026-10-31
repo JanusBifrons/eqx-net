@@ -11,7 +11,7 @@ export const galaxyLanding: Shot = {
   reel: true,
   server: 'living',
   target: { landing: true },
-  hud: 'full',
+  hud: 'clean',
   durationMs: 12_000,
   async run(ctx) {
     const { page } = ctx;

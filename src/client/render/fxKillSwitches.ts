@@ -34,6 +34,10 @@ export interface FxKillSwitches {
    *  numbers still show). Showcase capture: an invulnerable test pilot
    *  (huge `initialHull`) would otherwise accumulate absurd totals. */
   selfDmgNumbersDisabled: boolean;
+  /** `?cleanworld=1` — hide debug-flavoured world overlays for showcase
+   *  footage: the background spatial grid, the turret aim-guide lines and the
+   *  NPC callsign labels (`AI 00F`). Gameplay visuals are untouched. */
+  cleanWorld: boolean;
 }
 
 export function readFxKillSwitches(
@@ -60,5 +64,6 @@ export function readFxKillSwitches(
     dmgNumbersDisabled: /\bnodmgnumbers=1\b/.test(search),
     healthBarsDisabled: /\bnohealthbars=1\b/.test(search),
     selfDmgNumbersDisabled: /\bnoselfdmg=1\b/.test(search),
+    cleanWorld: /\bcleanworld=1\b/.test(search),
   };
 }

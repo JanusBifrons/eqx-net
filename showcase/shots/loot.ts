@@ -11,14 +11,15 @@ export const loot: Shot = {
   docs: ['loot-and-cargo'],
   reel: true,
   server: 'lean',
-  // The room's heavy is peaceful + hull-exposed: auto-fire kills it fast,
-  // then the ship flies through the pod it drops.
-  target: { room: 'combat-drone-test', params: { shipKind: 'interceptor', ...SURVIVE } },
-  hud: 'minimal',
+  // Pickup needs a roster row, so a roster-backed room (engineering rooms have
+  // none). Its heavy is peaceful + hull-exposed: auto-fire kills it fast, then
+  // the ship flies through the pod it drops.
+  target: { room: 'showcase-levelup', params: { shipKind: 'interceptor', ...SURVIVE } },
+  hud: 'clean',
   durationMs: 10_000,
-  camera: [{ atMs: 0, smoothMs: 250, shot: { kind: 'track', target: 'local', zoom: 1.8, offsetY: 60 } }],
+  camera: [{ atMs: 0, smoothMs: 250, shot: { kind: 'track', target: 'local', zoom: 1.8, offsetY: 80 } }],
   async run(ctx) {
     await ctx.sleep(3500);
-    await ctx.hold(['w'], 1800);
+    await ctx.hold(['w'], 1300);
   },
 };

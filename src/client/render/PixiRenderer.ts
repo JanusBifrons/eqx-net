@@ -210,6 +210,7 @@ export class PixiRenderer implements IRenderer {
   private _beamsDisabled = false;
   private _dmgNumbersDisabled = false;
   private _selfDmgNumbersDisabled = false;
+  private _cleanWorld = false;
   private _healthBarsDisabled = false;
   private sprites = new Map<string, Graphics>();
   /** Per-ship turret sprites + aim lines (multi-mount/turret refactor,
@@ -618,8 +619,14 @@ export class PixiRenderer implements IRenderer {
       this.warp.forceDisable();
     }
 
-    this.backgroundGrid = new BackgroundGrid();
-    this.backgroundGrid.attach(this.camera);
+    // `?cleanworld=1` (showcase capture) drops debug-flavoured world overlays:
+    // the spatial grid, turret aim-guides and NPC callsign labels.
+    this._cleanWorld = fxKillSwitches.cleanWorld;
+    this.mountVisuals.setAimLinesVisible(!this._cleanWorld);
+    if (!this._cleanWorld) {
+      this.backgroundGrid = new BackgroundGrid();
+      this.backgroundGrid.attach(this.camera);
+    }
 
     this.shipContainer = new Container();
     this.camera.addChild(this.shipContainer);
@@ -744,7 +751,7 @@ export class PixiRenderer implements IRenderer {
     this.damageNumbers = new DamageNumberManager(this.world, this.camera);
     this.levelUpIcons = new LevelUpIconManager(this.world, this.camera);
     this.healthBars = new HealthBarManager(this.world);
-    this.labels = new LabelManager(this.world);
+    this.labels = new LabelManager(this.world, !this._cleanWorld);
     // Click-to-inspect selection bracket (Item B4). Parented to the world
     // container (camera-transformed, world space like the health bars) so the
     // 4-corner bracket tracks the selected entity as it (and the camera) moves.
