@@ -221,3 +221,41 @@ Results:
 | Stage / PR | Pieces (max base) | Step overhead (ms) | 20-tick replay overhead (ms) | Server tick added (ms) | Frame p99 Δ | Wire join (B/base) | Notes |
 |---|---|---|---|---|---|---|---|
 | PR-D (destructible) | 139 | unchanged when intact; a destroy rebuilds the base's colliders once | unchanged | per hit: O(pieces in 3×3 chunks), 0 alloc | debris pool fixed (1024) | ~60 B + ⌈pieces/32⌉ words | destroy delta: one u32 word |
+
+## PR-K2: the city archetype + city kit
+
+**Kit.** The append-only piece catalogue (`basePieceKinds.ts`, now v2) gains five city kinds: `habitat_block`, `tower`, `plaza` (floor), `spire` (landmark) and `light_pylon`. Warehouse layouts and their pinned hashes are unchanged.
+
+**Generator** (`archetypes/city.ts`). In order:
+1. A grid-blend street network grows outward from a central plaza block.
+2. Blocks are subdivided Parish–Müller style, with alleys exactly one corridor wide.
+3. Buildings are inset into their lots.
+4. Districts are measured from the plaza's edge: a tower core, then a habitat ring, then low outskirts.
+
+**Building massing.** Buildings are composed of TOUCHING masses: a tower section with habitat wings. The union outline makes them one collider and a stepped skyline. A city has no perimeter wall.
+
+**Small cities.** Two first cuts failed visibly, and both are now locked:
+
+| Problem | Symptom | Fix |
+|---|---|---|
+| Plaza + avenue consumed the whole inner area at 5000 u | One block, 3.4 % coverage | Small cities (inner < 2000 u) use a smaller plaza and 700–1000 u blocks |
+| The tower-core radius sat inside the plaza | No towers at all | Core is measured from the plaza's edge |
+
+**Measured (200 seeds per size):**
+
+| Size | Mean building coverage | Worst | First-try valid | Max pieces |
+|---|---|---|---|---|
+| 5000 u | 19.2 % | 8.1 % | 200/200 | 55 |
+| 5800 u | 20.6 % | 11.2 % | 200/200 | 77 |
+| 6500 u | 17.0 % | 10.9 % | 200/200 | 60 |
+| 8000 u | 24.4 % | 19.8 % | 200/200 | 158 |
+
+**Locks:**
+- **Unit** (`generateCity.test.ts`): determinism, pinned hashes, the 200-seed × 4-size budget and fly-through sweep, ≥ 80 % first-try validity, a coverage floor (mean ≥ 15 %, worst ≥ 7 %), and city character (a central spire, towers, no walls).
+- **Integration** (`proceduralBase.test.ts`): a city descriptor reaches room state, the worker's colliders stop a ship flown at a tower, and a beam stops at a tower.
+
+**Room:** `base-city-showcase` (seed 7, 8000 u, spawn south of the city).
+
+| Stage / PR | Pieces (max base) | Step overhead (ms) | 20-tick replay overhead (ms) | Server tick added (ms) | Frame p99 Δ | Wire join (B/base) | Notes |
+|---|---|---|---|---|---|---|---|
+| PR-K2 (city) | 158 | same outline path as the warehouse (≤ 223 pieces measured) | unchanged | unchanged (same ray grid) | not yet measured (PR-P) | ~60 B descriptor | 11 pieces/chunk worst, 3.0 KB layout, 0 re-seeds |

@@ -19,7 +19,7 @@
  * is unit-testable without a room. Per-hit work allocates nothing except on
  * the (rare) destroy path.
  */
-import { BASE_GENERATOR_VERSION, type BaseDescriptor, type BaseLayout } from '../../core/procgen/baseLayout.js';
+import { BASE_GENERATOR_VERSION, type BaseArchetype, type BaseDescriptor, type BaseLayout } from '../../core/procgen/baseLayout.js';
 import { generateBase } from '../../core/procgen/generateBase.js';
 import { BaseRayGrid } from '../../core/procgen/baseRayGrid.js';
 import { isPieceDead } from '../../core/procgen/baseChunkMesh.js';
@@ -27,7 +27,7 @@ import { basePieceKindAt } from '../../shared-types/basePieceKinds.js';
 import { BASE_CHUNK_SIZE, MAX_PIECES_PER_SECTOR } from '../../shared-types/baseBudgets.js';
 
 export interface BaseSpec {
-  readonly archetype: 'warehouse';
+  readonly archetype: BaseArchetype;
   readonly seed: number;
   readonly x: number;
   readonly y: number;

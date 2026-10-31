@@ -15,7 +15,7 @@
 import { BASE_CHUNK_SIZE } from '../../shared-types/baseBudgets.js';
 import { fnvMixU32 } from './rng.js';
 
-export type BaseArchetype = 'warehouse';
+export type BaseArchetype = 'warehouse' | 'city';
 
 /** Bump on ANY change to generator output (the layout-hash lock enforces it). */
 export const BASE_GENERATOR_VERSION = 3; // v3: density retune (v2 scale read sparse)

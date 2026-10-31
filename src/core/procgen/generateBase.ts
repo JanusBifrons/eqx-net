@@ -10,6 +10,7 @@
 import type { BaseDescriptor, BaseLayout } from './baseLayout.js';
 import { BASE_GENERATOR_VERSION } from './baseLayout.js';
 import { generateWarehouse } from './archetypes/warehouse.js';
+import { generateCity } from './archetypes/city.js';
 import { fnvMixU32 } from './rng.js';
 import { validateLayout } from './validate.js';
 import { carveSealedPockets } from './carve.js';
@@ -25,7 +26,7 @@ export function generateBase(desc: BaseDescriptor): BaseLayout {
   let lastReasons: string[] = [];
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const seed = attempt === 0 ? desc.seed >>> 0 : fnvMixU32(desc.seed >>> 0, attempt);
-    const builder = generateWarehouse(desc, seed);
+    const builder = desc.archetype === 'city' ? generateCity(desc, seed) : generateWarehouse(desc, seed);
     // Generate, then REPAIR (open any sealed pockets), then curate.
     const layout = carveSealedPockets(builder.build(desc, attempt), desc);
     const v = validateLayout(layout);

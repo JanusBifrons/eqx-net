@@ -69,6 +69,7 @@ const FEATURE_SPECS: string[] = [
   '**/asteroid-shape.spec.ts',
   '**/base-warehouse-showcase.spec.ts',
   '**/base-destruction.spec.ts',
+  '**/base-city-showcase.spec.ts',
   '**/auto-fire.spec.ts',
   '**/avatar-menu-logout.spec.ts',
   '**/boost-facing.spec.ts',

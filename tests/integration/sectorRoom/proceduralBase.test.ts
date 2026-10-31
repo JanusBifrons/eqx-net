@@ -173,3 +173,71 @@ describe('SectorRoom integration — destructible base pieces (PR-D)', () => {
     expect(deadOn(late.state as unknown as SectorState)).toBe(true);
   });
 });
+
+// PR-K2 — the CITY archetype rides the same pipeline (descriptor → worker
+// regenerates → outline colliders). Lock that city pieces really collide and
+// block beams on the authoritative side, not just render.
+describe('SectorRoom integration — city base (PR-K2)', () => {
+  const CITY = { archetype: 'city' as const, seed: 42, x: 0, y: 0, size: 6000 };
+  const city = generateBase({ ver: BASE_GENERATOR_VERSION, ...CITY });
+  const tower = basePieceIndex('tower');
+  /** The largest tower piece (a solid target well clear of the spawn). */
+  function bigTower(): number {
+    let best = -1;
+    let area = 0;
+    for (let i = 0; i < city.count; i++) {
+      if (city.kind[i] === tower && city.w[i]! * city.h[i]! > area) {
+        area = city.w[i]! * city.h[i]!;
+        best = i;
+      }
+    }
+    if (best < 0) throw new Error('no tower in city');
+    return best;
+  }
+  /**
+   * A start point in the street west of the big tower's building: scan west
+   * from the tower's west face until the ship fits and has ≥ 300 u of run-up
+   * before the first solid piece east of it.
+   */
+  function streetStart(bases: SectorRoom['_internals']['bases']): { x0: number; y: number } {
+    const t = bigTower();
+    const y = city.y[t]! + city.h[t]! / 2;
+    for (let x0 = city.x[t]! - 32; x0 > -city.half - 600; x0 -= 16) {
+      if (bases.isPointClear(x0, y, 40) && bases.rayFirst(x0, y, 1, 0, 2000) >= 300) return { x0, y };
+    }
+    throw new Error('no street start west of the tower');
+  }
+  let h: SectorTestHarness;
+  beforeEach(async () => {
+    h = await bootSectorTestServer({ droneCount: 0, asteroidConfig: [], bases: [CITY], defaultSpawnX: 0, defaultSpawnY: -3400 });
+  }, 20_000);
+  afterEach(async () => {
+    if (h) await h.cleanup();
+  }, 10_000);
+
+  it('publishes a city descriptor, and a ship flown at a tower is stopped by it', async () => {
+    const pid = randomUUID();
+    const cr = await h.connectActive(pid);
+    expect((cr.state as unknown as SectorState).bases.get('b0')!.archetype).toBe('city');
+    const internal = room(cr.roomId)._internals;
+    const { x0, y } = streetStart(internal.bases);
+    // Distance to the first solid thing east of the start (the tower or a
+    // building wing in front of it): the ship must stop before it.
+    const hitD = internal.bases.rayFirst(x0, y, 1, 0, 2000);
+    expect(hitD).toBeGreaterThan(250);
+    internal.postToWorker({ type: 'SET_POSITION', entityId: pid, x: x0, y, angle: -Math.PI / 2, vx: 900, vy: 0, angvel: 0 });
+    await h.advance(1500);
+    const pose = await poseOf(h, cr, pid);
+    expect(pose.x).toBeGreaterThan(x0 + 150); // it flew…
+    expect(pose.x).toBeLessThan(x0 + hitD); // …and the building stopped it
+  });
+
+  it('beams stop at a city tower', async () => {
+    const cr = await h.connectActive(randomUUID());
+    const internal = room(cr.roomId)._internals;
+    const { x0, y } = streetStart(internal.bases);
+    const d = internal.blockShotAtWall(x0, y, 1, 0, 2000, 10);
+    expect(d).not.toBeNull();
+    expect(d!).toBeLessThanOrEqual(city.x[bigTower()]! - x0 + 1e-6);
+  });
+});

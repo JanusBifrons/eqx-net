@@ -16,7 +16,13 @@ import type { BaseDescriptor, BaseLayout } from './baseLayout.js';
 import { LayoutBuilder } from './baseLayout.js';
 import { floodReachable, OCCUPANCY_CELL } from './validate.js';
 
-const CARVABLE = new Set([basePieceIndex('rack_row'), basePieceIndex('container_stack')]);
+const CARVABLE = new Set([
+  basePieceIndex('rack_row'),
+  basePieceIndex('container_stack'),
+  basePieceIndex('habitat_block'),
+  basePieceIndex('tower'),
+  basePieceIndex('light_pylon'),
+]);
 export const MAX_CARVE_PASSES = 6;
 
 export function carveSealedPockets(l: BaseLayout, desc: BaseDescriptor): BaseLayout {

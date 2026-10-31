@@ -38,8 +38,8 @@ export const BASE_PALETTE: Record<BasePieceKind['palette'], number> = {
   hullDark: 0x4a5668,
   rack: 0xb9772f,
   cargo: 0x3f8f92,
-  habitat: 0x8d9bb3,
-  tower: 0x9fb0c9,
+  habitat: 0x6c7a92,
+  tower: 0xb9cbe4,
   military: 0x7a4a46,
   floor: 0x1d2433,
   accent: 0xe8c547,
@@ -81,9 +81,16 @@ export function buildChunkVisual(l: BaseLayout, chunk: number, dead?: Uint32Arra
     const base = weathered(BASE_PALETTE[kind.palette], l.descriptor.seed, weatherKey(l, i));
 
     if (!kind.solid) {
-      // Floors: flat + a hazard-striped rim.
       rects.push({ x: px, y: py, w, h, color: base, alpha: 0.85 });
-      hazardRim(rects, px, py, w, h);
+      if (kind.id === 'plaza') {
+        // Paving grid.
+        const tile = 120;
+        for (let s = tile; s < w; s += tile) rects.push({ x: px + s, y: py, w: 3, h, color: mixColor(base, 0xffffff, 0.08), alpha: 0.9 });
+        for (let s = tile; s < h; s += tile) rects.push({ x: px, y: py + s, w, h: 3, color: mixColor(base, 0xffffff, 0.08), alpha: 0.9 });
+      } else {
+        // Loading bays: a hazard-striped rim.
+        hazardRim(rects, px, py, w, h);
+      }
       continue;
     }
 
@@ -175,6 +182,36 @@ function detail(id: string, rects: RectOp[], lights: LightOp[], x: number, y: nu
       if (along) rects.push({ x: x + s, y: y + h / 2 - 5, w: dash, h: 10, color: dark, alpha: 0.7 });
       else rects.push({ x: x + w / 2 - 5, y: y + s, w: 10, h: dash, color: dark, alpha: 0.7 });
     }
+  } else if (id === 'habitat_block') {
+    // Window rows: a lit grid, a few panes warm (lived-in), most cool.
+    const pitch = 34;
+    for (let wy = y + 22; wy < y + h - 20; wy += pitch) {
+      for (let wx = x + 20; wx < x + w - 24; wx += pitch) {
+        const warm = ((wx * 73856093) ^ (wy * 19349663)) & 7;
+        rects.push({ x: wx, y: wy, w: 14, h: 9, color: warm === 0 ? 0xffd27a : mixColor(base, 0xffffff, 0.35), alpha: warm === 0 ? 0.95 : 0.55 });
+      }
+    }
+  } else if (id === 'tower') {
+    // Stepped crown + landing pad + corner beacons.
+    const s1 = Math.floor(Math.min(w, h) * 0.16);
+    rects.push({ x: x + s1, y: y + s1, w: w - 2 * s1, h: h - 2 * s1, color: mixColor(base, 0xffffff, 0.12), alpha: 1 });
+    const s2 = Math.floor(Math.min(w, h) * 0.32);
+    if (w - 2 * s2 > 40 && h - 2 * s2 > 40) {
+      rects.push({ x: x + s2, y: y + s2, w: w - 2 * s2, h: h - 2 * s2, color: dark, alpha: 1 });
+      const pad = Math.min(w - 2 * s2, h - 2 * s2) * 0.5;
+      rects.push({ x: x + w / 2 - pad / 2, y: y + h / 2 - 3, w: pad, h: 6, color: 0xe8edf6, alpha: 0.8 });
+      rects.push({ x: x + w / 2 - 3, y: y + h / 2 - pad / 2, w: 6, h: pad, color: 0xe8edf6, alpha: 0.8 });
+    }
+    lights.push({ x: x + 12, y: y + 12, r: 7, color: 0xff4d5e });
+    lights.push({ x: x + w - 12, y: y + h - 12, r: 7, color: 0xff4d5e });
+  } else if (id === 'spire') {
+    for (let k = 1; k <= 3; k++) {
+      const s = Math.floor((Math.min(w, h) * k) / 8);
+      rects.push({ x: x + s, y: y + s, w: w - 2 * s, h: h - 2 * s, color: mixColor(base, k % 2 ? 0x000000 : 0xffffff, 0.25), alpha: 1 });
+    }
+    lights.push({ x: x + w / 2, y: y + h / 2, r: 22, color: 0x7cf7ff });
+  } else if (id === 'light_pylon') {
+    lights.push({ x: x + w / 2, y: y + h / 2, r: 14, color: 0x7cf7ff });
   } else if (id === 'gate_post') {
     lights.push({ x: x + w / 2, y: y + h / 2, r: Math.max(6, Math.min(w, h) / 3), color: 0x7cf7ff });
   }
