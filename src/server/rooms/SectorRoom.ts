@@ -5789,7 +5789,9 @@ export class SectorRoom extends Room<SectorState> {
   ): void {
     if (shipInstanceId === '' || this.loot.shipHold(shipInstanceId) === undefined) return;
     if (pose !== undefined) {
-      this.loot.spillShipHold(shipInstanceId, pose.x, pose.y, pose.vx, pose.vy, cause);
+      // Living World P1a-2 — an ABANDONED hull becomes a salvageable derelict
+      // (fly alongside to salvage over time); a death spills an instant pod.
+      this.loot.spillShipHold(shipInstanceId, pose.x, pose.y, pose.vx, pose.vy, cause, cause === 'abandoned');
     } else {
       getHoldStore().delete(shipInstanceId, this.sectorKey !== null);
     }

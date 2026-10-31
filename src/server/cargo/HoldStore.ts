@@ -12,7 +12,7 @@
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import type { Hold } from '../../shared-types/goods.js';
 
-export type HolderType = 'ship' | 'pod' | 'structure' | 'hauler';
+export type HolderType = 'ship' | 'pod' | 'derelict' | 'structure' | 'hauler';
 
 export interface HoldRecord {
   readonly holderUid: string;

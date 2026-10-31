@@ -18,7 +18,7 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SnapshotMessage } from '../../../src/shared-types/messages/snapshotMessages.js';
-import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
+import { getHoldStore, getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
 
 function room(id: string): SectorRoom {
   return matchMaker.getLocalRoomById(id) as unknown as SectorRoom;
@@ -99,5 +99,27 @@ describe('SectorRoom integration — loot loop (P1a-1)', () => {
     let spilled = 0;
     for (const id of internal.loot.podIds()) spilled += getHoldStore().get(id)?.hold.credits ?? 0;
     expect(spilled).toBe(120);
+  });
+
+  it('P1a-2: abandoning a ship carrying cargo leaves a salvageable DERELICT', { timeout: 40_000 }, async () => {
+    const pid = randomUUID();
+    const cr = await harness.connectActive(pid, {
+      spawnX: -600, spawnY: 300,
+      initialCargo: { goods: { salvage: 12 }, credits: 40, blueprints: [] },
+    });
+    const r = room(cr.roomId);
+    const internal = r._internals;
+    const state = r.state as SectorState;
+    let shipId = '';
+    for (const [, s] of state.ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
+
+    // Abandon = the roster row is deleted while the hull is alive (the poll reaps it).
+    getPlayerShipStore().delete(shipId);
+    const reaped = await until(() => state.ships.get(shipId) === undefined, 8_000);
+    expect(reaped).toBe(true);
+    expect(getHoldStore().get(shipId), 'the abandoned ship keeps nothing').toBeUndefined();
+    const derelicts = [...internal.loot.podIds()].filter((id) => internal.loot.isDerelict(id));
+    expect(derelicts, 'its hold becomes a derelict hulk').toHaveLength(1);
+    expect(getHoldStore().get(derelicts[0]!)?.hold.credits).toBe(40);
   });
 });

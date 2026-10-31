@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LootSubsystem, LOOT_POD_TTL_MS, MAX_LIVE_LOOT_PER_SECTOR, type LootCollector } from './LootSubsystem.js';
+import { LootSubsystem, LOOT_POD_TTL_MS, MAX_LIVE_LOOT_PER_SECTOR, DERELICT_SALVAGE_STEP, type LootCollector } from './LootSubsystem.js';
 import { HoldStore } from './HoldStore.js';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import type { Hold } from '../../shared-types/goods.js';
@@ -135,6 +135,32 @@ describe('LootSubsystem (P1a-1)', () => {
     expect(t.loot.restore()).toBe(1);
     expect(t.loot.isPod('pod-a')).toBe(true);
     expect(t.loot.isPod('pod-b')).toBe(false);
+  });
+
+  it('a DERELICT is salvaged over time (bounded per step), never merged into, and persisted as derelict', () => {
+    const t = setup({ collectors: [{ ...SHIP, capacity: 1000 }] });
+    t.store.put({ holderUid: 'ship-9', holderType: 'ship', ownerId: 'p9', sectorKey: null, x: null, y: null, hold: h({ salvage: 40 }), expiresAt: null });
+    const hulk = t.loot.spillShipHold('ship-9', 10, 0, 0, 0, 'abandoned', true)!;
+    expect(t.loot.isDerelict(hulk)).toBe(true);
+    expect(t.store.get(hulk)!.holderType).toBe('derelict');
+    // A normal drop beside it does NOT merge into the hulk.
+    const other = t.loot.drop(h({ alloy: 1 }), 20, 0)!;
+    expect(other).not.toBe(hulk);
+    // One collect step moves at most DERELICT_SALVAGE_STEP weight from the hulk.
+    t.loot.collectTick();
+    const after1 = t.store.get(hulk)!.hold.goods.salvage!;
+    expect(after1).toBe(40 - DERELICT_SALVAGE_STEP);
+    // Keep salvaging until the hulk is empty, then it's gone.
+    for (let i = 0; i < 10 && t.store.get(hulk); i++) t.loot.collectTick();
+    expect(t.store.get(hulk)).toBeUndefined();
+    expect(t.store.get('ship-1')!.hold.goods.salvage).toBe(40);
+  });
+
+  it('restore() brings derelicts back as derelicts', () => {
+    const t = setup();
+    t.store.hydrate([{ holderUid: 'pod-d', holderType: 'derelict', ownerId: null, sectorKey: 'sol-prime', x: 1, y: 1, hold: h({ salvage: 5 }), expiresAt: null }]);
+    expect(t.loot.restore()).toBe(1);
+    expect(t.loot.isDerelict('pod-d')).toBe(true);
   });
 
   it('engineering rooms (no sector key) never persist', () => {
