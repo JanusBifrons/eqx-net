@@ -104,3 +104,31 @@ Visual review notes (for the kit / visual pass):
 - 8000 u warehouses read well: dense parallel rows.
 - Below ~5000 u the double-depth racks leave zones sparse. Scale rack depth with footprint.
 - Small footprints form sealed pockets between a bay's container column, the wall and a row end. The validator rejects them (min size 4000). Carve them at the source.
+
+## Collider representation: union OUTLINE, not trimesh (PR-V1, measured)
+
+The research doc proposed one trimesh per chunk plus `FIX_INTERNAL_EDGES`. Measurement overturned the second half:
+
+**Test.** A ship slides along 30 adjacent pieces at 600 u/s, pressed into the face. On one seamless piece, damping alone leaves 565 u/s.
+
+| Collider | Min speed (u/s) |
+|---|---|
+| trimesh (with or without `FIX_INTERNAL_EDGES`, identical) | 340 |
+| trimesh, soft CCD off | 435 |
+| compound cuboids | 215 |
+| **polyline outline of the union** | **565** |
+
+Every representation with internal edges snags at piece seams. The union outline has none.
+
+| Property | Trimesh | Outline |
+|---|---|---|
+| Broad-phase cost (25 ships + 4000 pieces) | 0.086 ms | 0.088 ms (same) |
+| Tunnelling with soft CCD, 2× top speed, 16 u wall | — | 0 / 184 |
+
+So `buildChunkOutlines` (`src/core/procgen/baseChunkMesh.ts`) computes the boundary of the union of solid pieces over the WHOLE base. It uses an integer sweep, so edges are maximal and never break at chunk lines. Each edge belongs to the chunk of its start point, and `World.spawnBaseChunk` builds one polyline collider per chunk.
+
+**Caveat.** An outline is hollow, so a body spawned inside solid geometry would be trapped. Spawn and arrival paths must use `isPointClear` (PR-V2).
+
+| Stage / PR | Pieces (max base) | Step overhead (ms) | 20-tick replay overhead (ms) | Server tick added (ms) | Frame p99 Δ | Wire join (B/base) | Notes |
+|---|---|---|---|---|---|---|---|
+| PR-V1 (physics layer) | 223 | ≈ trimesh (0.088 vs 0.086 @ 4k) | — | — | — | — | seam-free slide 565/565; tunnelling 0/184 |
