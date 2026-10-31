@@ -106,11 +106,17 @@ export const BASE_LOD_ZOOM = 0.4;
 
 // ── Game design (grounded to the ship catalogue + physics) ───────────────────
 
-/** Minimum wall/piece thickness (u). CCD is off. The fastest flyable ship at
- *  max topSpeed upgrade moves ~23 u per tick (maxSpeed clamp × 1.45 / 60), and
- *  walls keep a 2× margin over that. A first draft said 40 from an assumed
- *  ~16 u/tick; the consistency lock measured the catalogue and caught it. */
-export const MIN_WALL_THICKNESS = 48;
+/** Minimum wall/piece thickness (u) — a VISUAL/readability floor.
+ *
+ *  Tunnelling is NOT solved by thickness: every dynamic body runs Rapier soft
+ *  CCD (`SOFT_CCD_PREDICTION` in src/core/physics/World.ts, PR-C), a look-ahead
+ *  along the body's velocity. Measured 2026-10-31: 0 pass-throughs on 16 u
+ *  walls at 2× the fastest ship's top speed. Without CCD, thickness alone
+ *  could not be made safe (a shields-down hull passed a 76 u wall 12/48).
+ *  16 is the thinnest piece that still reads as a solid wall at zoom 1.
+ *  Locks: tests/unit/baseWallTunnelling.test.ts (real physics at this
+ *  thickness) + the CCD-coverage assertion in baseBudgets.test.ts. */
+export const MIN_WALL_THICKNESS = 16;
 
 /** Corridor clearance multiple of the largest player-flyable ship radius
  *  (`engineeringOnly` kinds excluded). The lock test derives the absolute

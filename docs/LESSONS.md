@@ -2479,3 +2479,18 @@ Expanding the netgate to cover the new structures + scrap features looked obviou
 **Soft CCD is right.** `RigidBodyDesc.setSoftCcdPrediction(48)` on every dynamic body (`spawnShip` + `spawnObstacle`) gives 0 pass-throughs on 16 u walls (cuboid + trimesh, shields up and down, 90/60/30°, 2× top speed) and leaves overlap behaviour byte-for-byte as before. Cost: ≤ +0.06 ms/step at 100 ships + 4k static pieces. `SOFT_CCD_PREDICTION` documents the measurement; raise it only with a re-measure.
 
 **Process note.** The wall-thickness rule went 40 → 48 → 28 → 76 on paper before a physics test showed thickness alone can't guarantee it (triangle hulls tunnel thick walls). The user pushed for swept collision on all moving objects, and they were right. Measure in the real engine before locking a physics budget.
+
+## 2026-10-31 — The perf baseline spec had never recorded a server tick or a production frame time (plan soft-leaping-truffle PR-B)
+
+**Symptom.** Every `diag/perf-baseline/*.json` had `tickBudget.sampleCount: 0` and `rafP50Ms: null`. The spec only *warned*, so it looked like a working baseline.
+
+**Causes.**
+1. `fetchTickBudgets` read a top-level `total` field, but `TickBudgetTelemetry` emits `avgMs.total` + `maxTotalMs`. Every event was silently dropped. The `/dev/events` ring is also global, so ~21 eager galaxy rooms' idle ticks swamp the room under test.
+2. The client's `rafP50Ms` is computed from `rafTick` entries in the diag log ring, which is empty on `?diag=0`. That is the very production path the perf gate must measure.
+
+**Fix.**
+- A pure `parseTickBudgetEvent` (unit-locked against the literal server payload) filtered to `playerCount ≥ 1`, with drains every 5 s.
+- A page-side rAF sampler installed via `addInitScript` (diag-independent).
+- Both turned into **hard** preconditions.
+
+**Rule.** A measurement harness that can produce "no data" must fail on it, never warn. Silent nulls are how budgets end up ungrounded.

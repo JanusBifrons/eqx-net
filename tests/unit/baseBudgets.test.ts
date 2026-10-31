@@ -38,6 +38,7 @@ import { MAX_ENTITIES } from '../../src/shared-types/sabLayout.js';
 import { FORMATION_DEST_RANGE } from '../../src/server/livingworld/LivingWorldDirector.js';
 import { deriveStatMultipliers, pointBudget } from '../../src/core/leveling/shipStats.js';
 import { LEVEL_CAP } from '../../src/core/leveling/shipXp.js';
+import { SOFT_CCD_PREDICTION } from '../../src/core/physics/World.js';
 
 /** Bytes per stored piece in the planned flat layout:
  *  kind u8 + x/y/w/h i32 (16) + rot90 u8 + chunk u16 = 20. */
@@ -92,17 +93,18 @@ describe('base budgets — grounded to the live game', () => {
     expect(MIN_CORRIDOR_WIDTH).toBeGreaterThanOrEqual(CORRIDOR_RADIUS_MULTIPLE * maxRadius);
   });
 
-  it('walls are thick enough that no flyable ship can tunnel through in one tick (CCD is off)', () => {
-    // The real speed ceiling is the per-tick `maxSpeed` clamp in
-    // applyShipInput (it binds while boosting too), scaled by the largest
-    // possible topSpeed upgrade (every point at the level cap).
+  it('soft-CCD look-ahead covers 2× the fastest flyable ship’s per-tick travel', () => {
+    // Tunnelling is prevented by soft CCD (PR-C), not wall thickness. The
+    // real speed ceiling is the per-tick `maxSpeed` clamp in applyShipInput
+    // (binds while boosting too) × the largest topSpeed upgrade at level cap.
+    // The physics proof at MIN_WALL_THICKNESS is baseWallTunnelling.test.ts.
     const topSpeedMul = deriveStatMultipliers({ topSpeed: pointBudget(LEVEL_CAP) }).topSpeed;
     let maxPerTick = 0;
     for (const k of GAMEPLAY_SHIP_KINDS_LIST) {
       maxPerTick = Math.max(maxPerTick, (k.maxSpeed * topSpeedMul) / PHYSICS_HZ);
     }
-    // 2× margin: a ship can't skip a wall of this thickness between steps.
-    expect(MIN_WALL_THICKNESS).toBeGreaterThanOrEqual(2 * maxPerTick);
+    expect(SOFT_CCD_PREDICTION).toBeGreaterThanOrEqual(2 * maxPerTick);
+    expect(MIN_WALL_THICKNESS).toBeGreaterThan(0);
   });
 
   it('showcase bases fit the playable sector', () => {
