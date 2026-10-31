@@ -85,3 +85,22 @@ The perf baseline spec had silently been recording nothing useful:
 | Budget | ≤ 4000 | ≤ 0.25 | ≤ 2.5 | ≤ 1.0 | ≤ +10 % | ≤ 1024 | from `baseBudgets.ts` |
 | PR-B (harness) | — | 0.09 (8k trimesh, bench) | 1.5 (8k trimesh, bench) | — | — | — | baseline captured; no base code yet |
 | PR-C (soft CCD) | — | ≤ +0.06 (100 ships + 4k) | — | — | — | — | tunnelling: 0 at 16 u walls |
+| Generator core (warehouse) | 223 worst (800-layout sweep) | — (no runtime yet) | — | — | — | — | 21 pieces/chunk worst, 4.2 KB layout, 0.88 ms generate (p99 2.1), ≤ 3 re-seeds, ≥ 80 % first-attempt validity |
+
+## Generator (`src/core/procgen/`)
+
+- `rng.ts`: integer-only mulberry32 streams, one per sub-generator (`stream(seed, name)`).
+- `baseLayout.ts`: flat typed-array layout. Pieces are split at chunk lines, with a stable `layoutHash` and `BASE_GENERATOR_VERSION`.
+- `archetypes/warehouse.ts`: aisle carving.
+  - perimeter wall with 2–4 gates and loading bays lined with container stacks;
+  - main cross-aisles every ~3000 u;
+  - double-depth rack rows in ONE seeded direction (about 1 zone in 8 turns 90° as an accent);
+  - rows trimmed, not dropped, around bay keep-outs.
+- `validate.ts`: budgets, thickness, bounds, and **fly-through**. A coarse 32 u occupancy grid gets a 3-4 chamfer distance transform, then a flood fill from outside the base. Every cell with enough clearance for the largest flyable ship must be reachable. The same grid seeds the obstacle field for PR-N roaming.
+- `generateBase.ts`: generate-then-curate, with deterministic re-seeds (`hash(seed, attempt)`, cap 8).
+- **Locks** (`generateBase.test.ts`): determinism, origin-independence, version check, pinned hashes, a 200-seed × 4-size budget sweep, and a first-attempt-quality floor. Bench: `benchmarks/base-generator.bench.ts`.
+
+Visual review notes (for the kit / visual pass):
+- 8000 u warehouses read well: dense parallel rows.
+- Below ~5000 u the double-depth racks leave zones sparse. Scale rack depth with footprint.
+- Small footprints form sealed pockets between a bay's container column, the wall and a row end. The validator rejects them (min size 4000). Carve them at the source.
