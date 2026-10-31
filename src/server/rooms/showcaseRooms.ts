@@ -118,14 +118,14 @@ export const SHOWCASE_LEVELUP_OPTS = {
 } as const;
 
 /**
- * A dense field for the scale shot: 800 bodies (60 % asteroids, the rest
+ * A dense field for the scale shot: 500 bodies (60 % asteroids, the rest
  * peaceful drones) packed into a 2500 u radius — inside one client's interest
  * window, so it reads as dense on screen. (`swarm-tidi`'s 4000 are spread over
  * 32 000 u, so they look sparse and cost ~5 fps to film on a laptop.)
  */
 export const SHOWCASE_SWARM_OPTS = {
   testMode: true,
-  swarmCount: 800,
+  swarmCount: 500,
   swarmRatio: 0.6,
   swarmRadius: 2500,
   peacefulDrones: true,

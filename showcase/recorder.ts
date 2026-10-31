@@ -217,6 +217,7 @@ async function waitForInGame(page: Page): Promise<void> {
 async function waitForLanding(page: Page): Promise<void> {
   await page.locator('canvas').first().waitFor({ timeout: 120_000 });
   await page.locator('[data-testid="galaxy-loading"]').waitFor({ state: 'detached', timeout: 120_000 });
+  await page.locator('[data-testid="server-health-banner"]').waitFor({ state: 'detached', timeout: 120_000 });
   await sleep(800);
 }
 

@@ -11,7 +11,7 @@
  * Output (gitignored): showcase-out/{clips/<id>/clip.mp4, contact-sheets/,
  * reel-1080p.mp4, reel-720p.mp4, manifest.json}.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { chromium } from '@playwright/test';
@@ -103,6 +103,9 @@ async function main(): Promise<void> {
   }
 
   if (!args.composeOnly && wanted.length > 0) {
+    // Fresh world every run: a previous run's razed base / lingering hulls must
+    // not leak into this one's footage.
+    for (const f of ['eqx.db', 'eqx.db-wal', 'eqx.db-shm']) rmSync(path.join(runDir, f), { force: true });
     const servers = new CaptureServers(appDir, runDir);
     const recorder = new Recorder(servers.baseUrl, servers.serverUrl, log, () => servers.restartServer(), args.headed);
     const capBrowser = await chromium.launch();

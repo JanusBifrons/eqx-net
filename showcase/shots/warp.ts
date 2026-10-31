@@ -13,7 +13,7 @@ export const warp: Shot = {
   server: 'living',
   target: { galaxy: 'sol-prime', params: { spawnX: 400, spawnY: -200 } },
   hud: 'full',
-  durationMs: 44_000,
+  durationMs: 38_000,
   // The 30 s spool is real; the edit keeps its start and end.
   cuts: [{ fromMs: 5000, toMs: 27_500, label: 'spool' }],
   async run(ctx) {

@@ -17,13 +17,13 @@ export const galaxyLanding: Shot = {
     const { page } = ctx;
     await page.mouse.move(960, 540);
     // Slow push-in toward the core, then drift across the map, hovering hexes.
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 3; i++) {
       await page.mouse.wheel(0, -120);
       await ctx.sleep(260);
     }
     await ctx.sleep(800);
     await page.mouse.down();
-    await page.mouse.move(760, 600, { steps: 60 });
+    await page.mouse.move(860, 560, { steps: 60 });
     await page.mouse.up();
     await ctx.sleep(600);
     const hovers: Array<[number, number]> = [

@@ -24,7 +24,7 @@ export function profileEnv(profile: ServerProfile): Record<string, string> {
     case 'living':
       return {};
     case 'wave':
-      return { EQX_E2E_WAVE: '1', EQX_BOT_SPOOL_MS: '5000' };
+      return { EQX_E2E_WAVE: '1', EQX_BOT_SPOOL_MS: '5000', EQX_BOT_HOP_MS: '500' };
   }
 }
 
@@ -109,6 +109,15 @@ export class CaptureServers {
     );
     this.profile = profile;
     await waitForHttp(`${this.serverUrl}/healthz`, 120_000);
+    // Up is not ready: the galaxy rooms hydrate after the port opens, and the
+    // landing page shows a "Server is starting up" banner until they have.
+    const end = Date.now() + 180_000;
+    for (;;) {
+      const r = await fetch(`${this.serverUrl}/healthz`).then((x) => x.json() as Promise<{ ready?: boolean }>).catch(() => null);
+      if (r?.ready) break;
+      if (Date.now() > end) throw new Error('server never reported ready');
+      await new Promise((res) => setTimeout(res, 1000));
+    }
   }
 
   private async startVite(): Promise<void> {
