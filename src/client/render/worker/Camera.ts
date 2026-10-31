@@ -4,6 +4,7 @@ import { PinchGesture } from './camera/pinchGesture.js';
 import { MomentumDecay } from './camera/momentumDecay.js';
 import { classifyTap } from './camera/tapVsDrag.js';
 import { zoomAround, wheelZoomFactor } from './camera/zoomAround.js';
+import { smoothDamp, type DampState } from '../camera/smoothDamp.js';
 
 /**
  * Pure camera math, designed to be a drop-in replacement for the
@@ -180,6 +181,20 @@ export class Camera {
   private panVx = 0;
   private panVy = 0;
 
+  // Cinematic director target (CameraDirector — docs/architecture/cinematic-camera.md).
+  // When set it has TOP precedence in tick(): director > glide > follow > pan.
+  // Centre is pixi-world space; each axis is a critically-damped spring, zoom
+  // damped in log space so zooming in and out feel symmetric. Alloc-free.
+  private directed = false;
+  private dirX = 0;
+  private dirY = 0;
+  private dirZoom = 1;
+  private dirSmoothMs = 0;
+  private dirSnapNext = false;
+  private readonly dampX: DampState = { v: 0 };
+  private readonly dampY: DampState = { v: 0 };
+  private readonly dampZ: DampState = { v: 0 };
+
   constructor(
     private readonly target: CameraTarget,
     opts: CameraOptions = {},
@@ -251,6 +266,41 @@ export class Camera {
     this.glideDurMs = Math.max(1, durationMs);
     this.glideElapsedMs = 0;
     this.gliding = true;
+  }
+
+  /**
+   * Cinematic director — set this frame's target (pixi-world centre + zoom).
+   * The first call after activation detaches follow, cancels any glide and
+   * clears momentum so the director is the sole driver. `smoothMs` 0 = hard cut.
+   */
+  setDirectorTarget(worldX: number, worldY: number, zoom: number, smoothMs: number): void {
+    if (!this.directed) {
+      this.directed = true;
+      this.followTarget = null;
+      this.gliding = false;
+      this.hasZoomTarget = false;
+      this.momentum.clear();
+      this.dampX.v = 0;
+      this.dampY.v = 0;
+      this.dampZ.v = 0;
+    }
+    if (smoothMs <= 0) this.dirSnapNext = true;
+    this.dirX = worldX;
+    this.dirY = worldY;
+    this.dirZoom = this.clampScale(zoom);
+    this.dirSmoothMs = smoothMs;
+  }
+
+  /** Hand the camera back to gameplay control (the renderer re-issues follow). */
+  clearDirector(): void {
+    if (!this.directed) return;
+    this.directed = false;
+    this.targetScale = this.target.scale.x;
+  }
+
+  /** True while a cinematic director target owns the camera. */
+  isDirected(): boolean {
+    return this.directed;
   }
 
   /** True while a one-shot glide is in progress. */
@@ -398,6 +448,11 @@ export class Camera {
    * follow remain per-frame factors (unchanged behaviour).
    */
   tick(dtMs: number = 16.67): void {
+    // Cinematic director owns the camera outright while active.
+    if (this.directed) {
+      this.tickDirector(dtMs);
+      return;
+    }
     // Zoom ease toward targetScale (framerate-independent via dtMs). Runs
     // first so the follow/momentum below use this frame's scale. zoomAround
     // keeps the stored anchor's world point fixed as the scale changes.
@@ -450,6 +505,36 @@ export class Camera {
       this.target.x += this.panVx * f;
       this.target.y += this.panVy * f;
     }
+  }
+
+  private tickDirector(dtMs: number): void {
+    if (this.screenW <= 0 || this.screenH <= 0) return;
+    const curScale = this.target.scale.x;
+    let cx: number;
+    let cy: number;
+    let scale: number;
+    if (this.dirSnapNext) {
+      this.dirSnapNext = false;
+      cx = this.dirX;
+      cy = this.dirY;
+      scale = this.dirZoom;
+      this.dampX.v = 0;
+      this.dampY.v = 0;
+      this.dampZ.v = 0;
+    } else {
+      // Current centre computed inline (the `center` getter allocates).
+      const curX = (this.screenW / 2 - this.target.x) / curScale;
+      const curY = (this.screenH / 2 - this.target.y) / curScale;
+      cx = smoothDamp(curX, this.dirX, this.dampX, this.dirSmoothMs, dtMs);
+      cy = smoothDamp(curY, this.dirY, this.dampY, this.dirSmoothMs, dtMs);
+      scale = Math.exp(
+        smoothDamp(Math.log(curScale), Math.log(this.dirZoom), this.dampZ, this.dirSmoothMs, dtMs),
+      );
+    }
+    this.target.scale.set(scale);
+    this.targetScale = scale;
+    this.target.x = this.screenW / 2 - cx * scale;
+    this.target.y = this.screenH / 2 - cy * scale;
   }
 
   /**

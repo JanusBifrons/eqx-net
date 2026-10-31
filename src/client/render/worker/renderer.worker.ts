@@ -224,6 +224,12 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'SET_CAMERA_SCRIPT': {
+        if (!renderer) return;
+        renderer.setCameraScript(msg.cues);
+        break;
+      }
+
       case 'PAN_CAMERA': {
         if (!renderer) return;
         renderer.setPanVelocity(msg.vx, msg.vy);

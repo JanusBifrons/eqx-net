@@ -1,3 +1,5 @@
+import type { CameraCue } from './cameraScript.js';
+
 export interface ShipRenderState {
   x: number;
   y: number;
@@ -834,6 +836,14 @@ export interface IRenderer {
    * stops the pan. Only meaningful while spectating (follow is detached).
    */
   setPanVelocity(vx: number, vy: number): void;
+  /**
+   * Cinematic camera — play a cue script (`null` stops it and hands the camera
+   * back to gameplay follow). While a script plays the `CameraDirector` is the
+   * sole camera driver (precedence director > glide > follow > pan) and the halo
+   * ring anchors on the camera centre. Used by the showcase capture pipeline;
+   * inert in normal play. See docs/architecture/cinematic-camera.md.
+   */
+  setCameraScript(cues: readonly CameraCue[] | null): void;
   /**
    * Effects subsystem (plan `wiggly-puppy` M9): drop per-entity
    * continuous emitters + in-flight bursts on sector handoff. Called

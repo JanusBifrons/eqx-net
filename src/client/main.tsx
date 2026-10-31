@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 import { registerSW } from 'virtual:pwa-register';
 import { App } from './App';
+import { applyHudMode, hudModeFromSearch } from './cinematic/hudMode';
 import { useAuthStore } from './auth/authStore';
 import { useUIStore } from './state/store';
 import { loadToken, saveToken } from './auth/tokenStorage';
@@ -88,6 +89,9 @@ async function bootstrapAuth(): Promise<void> {
     useAuthStore.getState().clearAuth();
   }
 }
+
+// Cinematic HUD mode from the URL (showcase capture). Default 'full' is a no-op look.
+applyHudMode(hudModeFromSearch(window.location.search));
 
 const root = document.getElementById('root');
 if (!root) throw new Error('No #root element found');

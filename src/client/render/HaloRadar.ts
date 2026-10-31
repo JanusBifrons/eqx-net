@@ -184,6 +184,13 @@ export class HaloRadar {
   /** Phase 5 — reused ring reference point (local ship OR camera centre in
    *  spectator), written in place each update() (invariant #14). */
   private readonly _refScratch = { x: 0, y: 0 };
+  /** Cinematic camera script active — anchor the ring on the camera centre
+   *  (like spectator), since the framed subject may not be the local ship. */
+  private _cameraRelative = false;
+
+  setCameraRelative(active: boolean): void {
+    this._cameraRelative = active;
+  }
   /** Monotonic per-`update()` counter for the generation-counter
    *  sweep over `arrows`. Bumped at the top of `update()`. */
   private _radarFrameId = 0;
@@ -254,7 +261,7 @@ export class HaloRadar {
     // piloting" half-way-house bug). `camera.center` is the world point under the
     // screen centre in the pixi (Y-down) frame; the radar works in game space
     // (Y-up), so un-flip Y. Otherwise the ring orbits the local ship as before.
-    const spectating = useUIStore.getState().pilotMode === 'spectator';
+    const spectating = this._cameraRelative || useUIStore.getState().pilotMode === 'spectator';
     const hasRef = resolveRadarReference(
       spectating,
       local ? local.x : null,
