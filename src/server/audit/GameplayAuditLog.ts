@@ -103,7 +103,13 @@ export type AuditEvent =
       adjacent?: boolean;
     })
   | (AuditEventBase & { event: 'ship_lingered'; playerId: string; shipInstanceId: string })
-  | (AuditEventBase & { event: 'ship_abandoned'; playerId?: string; shipInstanceId: string });
+  | (AuditEventBase & { event: 'ship_abandoned'; playerId?: string; shipInstanceId: string })
+  // Living World P1a (plan peppy-jumping-pinwheel) — loot lifecycle. Discrete
+  // boundaries only (a drop, a pickup, a pod lost), never per-tick.
+  | (AuditEventBase & { event: 'loot_dropped'; podId: string; cause: string; credits: number })
+  | (AuditEventBase & { event: 'loot_collected'; podId: string; playerId: string; shipInstanceId: string; credits: number })
+  | (AuditEventBase & { event: 'loot_destroyed'; podId: string; cause: string; credits: number })
+  | (AuditEventBase & { event: 'cargo_lost'; playerId?: string; shipInstanceId: string; cause: string });
 
 /** Distributive `Omit` so the union is preserved across the stamped fields. */
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;

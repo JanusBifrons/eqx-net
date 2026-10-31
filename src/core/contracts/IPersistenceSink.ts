@@ -76,7 +76,27 @@ export type PersistOp =
   // gone (HTTP 404/410). The hot path is a per-user read via the read-only
   // main-thread connection; only mutations go through the worker writer.
   | { type: 'PUSH_SUBSCRIPTION_PUT'; subscriptionId: string; userId: string; endpoint: string; p256dh: string; auth: string; ts: number }
-  | { type: 'PUSH_SUBSCRIPTION_DELETE'; endpoint: string; ts: number };
+  | { type: 'PUSH_SUBSCRIPTION_DELETE'; endpoint: string; ts: number }
+  // Living World P1a (plan peppy-jumping-pinwheel) — the unified hold table.
+  // ABSOLUTE-state upsert (never a delta) so replays are idempotent.
+  | {
+      type: 'HOLD_PUT';
+      holderUid: string;
+      holderType: 'ship' | 'pod' | 'structure' | 'hauler';
+      ownerId: string | null;
+      sectorKey: string | null;
+      x: number | null;
+      y: number | null;
+      payloadJson: string;
+      expiresAt: number | null;
+      ts: number;
+    }
+  | { type: 'HOLD_DELETE'; holderUid: string; ts: number }
+  // Hostile-review A5 — an ATOMIC group. Enqueued as ONE op so the write-ahead
+  // buffer can never split it across two flushes; applied inside a SAVEPOINT so
+  // a failing group rolls back alone (other ops in the batch still commit).
+  // Every value transfer (pickup, deposit, spill, escrow) is one GROUP.
+  | { type: 'GROUP'; ops: PersistOp[] };
 
 export type PersistOpType = PersistOp['type'];
 

@@ -183,6 +183,13 @@ export interface SnapshotMessage {
        *  authoritative re-anchor; the `ship_upgrade_applied` echo is just UI
        *  confirmation). No `SWARM_WIRE_VERSION` bump (slim JSON field). */
       statAlloc?: Record<string, number>;
+      /** Living World P1a (plan peppy-jumping-pinwheel) — the hull's carried
+       *  HOLD (goods / credits / blueprints). OWN active ship only, and only when
+       *  non-empty (zero bytes otherwise). This is the AUTHORITATIVE cargo
+       *  carrier (invariant #16) — the `loot_collected` message is only a UI
+       *  accelerator. Shared reference, replaced only on a discrete transfer.
+       *  No `SWARM_WIRE_VERSION` bump (slim JSON field). */
+      cargo?: { goods: Partial<Record<string, number>>; credits: number; blueprints: string[] };
       /** Phase 4 (Dynamic weapon mounts, WS-B3) — the hull's ACTIVATED latent
        *  mount slots (`{ slotId, weaponId }[]`). PUBLIC (unlike `statAlloc`):
        *  emitted for EVERY ship (active + lingering) that has ≥ 1 activated

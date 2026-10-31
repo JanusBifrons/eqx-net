@@ -30,6 +30,7 @@ import {
   slotBase,
 } from '../../shared-types/sabLayout.js';
 import type { WeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { allegianceOfKind } from '../../shared-types/shipKinds.js';
 import type { ShipState } from './schema/SectorState.js';
 
 export interface ProjectileRecord {
@@ -43,6 +44,10 @@ export interface ProjectileRecord {
   radius: number;
   maxTicks: number;
   weaponId: WeaponId;
+  /** Allegiances P0 — the firing NPC's allegiance (resolved once at spawn), or
+   *  undefined for a player / structure shooter. A bolt passes THROUGH swarm
+   *  combatants of the same allegiance (no friendly fire between AI allies). */
+  ownerAllegiance?: string;
 }
 
 /** A successful projectile-sweep result. */
@@ -61,7 +66,7 @@ export interface ShipPose {
 
 /** Narrow view of the swarm registry the pipeline iterates. */
 export interface SwarmCandidateSource {
-  all(): Iterable<{ id: string; slot: number; radius: number }>;
+  all(): Iterable<{ id: string; slot: number; radius: number; kind?: number; shipKind?: string }>;
 }
 
 export interface ProjectilePipelineDeps {
@@ -99,6 +104,10 @@ export interface ProjectilePipelineDeps {
   wallBlocksProjectile?: (
     x: number, y: number, stepX: number, stepY: number, damage: number,
   ) => boolean;
+  /** Allegiances P0 — the allegiance of an NPC (kind-1 swarm) shooter, or
+   *  undefined for a player / structure owner. Called once per SPAWN (fire is
+   *  low-frequency), never per tick. Absent ⇒ no friendly-fire filter. */
+  ownerAllegianceOf?: (ownerId: string) => string | undefined;
 }
 
 const DT_SEC = 1 / 60;
@@ -131,6 +140,7 @@ export class ProjectilePipeline {
       x, y, vx, vy, ownerId,
       birthTick: this.deps.serverTick(),
       damage, radius, maxTicks, weaponId,
+      ownerAllegiance: this.deps.ownerAllegianceOf?.(ownerId),
     });
   }
 
@@ -179,6 +189,10 @@ export class ProjectilePipeline {
         // the lingering-hull owner skip below. Sibling structures in the line of
         // fire are still hit (realistic — place defence turrets at the perimeter).
         if (rec.id === proj.ownerId) continue;
+        // Allegiances P0 — an AI bolt passes through its own allegiance's
+        // combatants (drones no longer shoot down fellow drones in the way).
+        if (proj.ownerAllegiance !== undefined && rec.kind === 1
+          && allegianceOfKind(rec.shipKind) === proj.ownerAllegiance) continue;
         const b = slotBase(rec.slot);
         const cx = d.sabF32[b + SLOT_X_OFF]!;
         const cy = d.sabF32[b + SLOT_Y_OFF]!;

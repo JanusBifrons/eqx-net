@@ -57,8 +57,10 @@ import type { SectorState } from '../../../src/server/rooms/schema/SectorState.j
 import {
   setPersistence,
   setPlayerShipStore,
+  setHoldStore,
 } from '../../../src/server/db/PersistenceWorker.js';
 import { PlayerShipStore } from '../../../src/server/playerShips/PlayerShipStore.js';
+import { HoldStore } from '../../../src/server/cargo/HoldStore.js';
 import type {
   IPersistenceSink,
   PersistOp,
@@ -169,6 +171,9 @@ export async function bootSectorTestServer(opts: {
   //    to land before the room is constructed.
   const sink = new CaptureSink();
   setPersistence(sink);
+  // Living World P1a — fresh hold store per boot (process singleton; a stale
+  // one would restore a previous test's loot pods into this room).
+  setHoldStore(new HoldStore({ persistence: () => sink }));
   setPlayerShipStore(new PlayerShipStore({
     generateShipId: ((): () => string => {
       let n = 0;
@@ -391,6 +396,9 @@ export async function bootLivingWorldTestServer(opts: {
 }): Promise<LivingWorldTestHarness> {
   const sink = new CaptureSink();
   setPersistence(sink);
+  // Living World P1a — fresh hold store per boot (process singleton; a stale
+  // one would restore a previous test's loot pods into this room).
+  setHoldStore(new HoldStore({ persistence: () => sink }));
   setPlayerShipStore(new PlayerShipStore({
     generateShipId: ((): () => string => {
       let n = 0;

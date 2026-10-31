@@ -18,6 +18,7 @@ import {
   initWorker,
   persistence,
   initPlayerShipStore,
+  initHoldStore,
   initAccountPlayerRegistry,
   getPersistenceHealth,
 } from './db/PersistenceWorker.js';
@@ -869,6 +870,11 @@ async function main(): Promise<void> {
   // galaxy room's onJoin can resolve a shipId without a race.
   const { hydrated: rosterHydrated } = initPlayerShipStore();
   logger.info({ hydrated: rosterHydrated }, 'Player-ship roster hydrated from disk');
+
+  // Living World P1a — the unified hold table (ship cargo, loot pods, storage).
+  // BEFORE the galaxy rooms: their hydrate respawns this sector's loot pods.
+  const { hydrated: holdsHydrated } = initHoldStore();
+  logger.info({ hydrated: holdsHydrated }, 'Holds hydrated from disk');
 
   // PR 3a — account-bound player identity. Hydrate the account→playerId
   // bindings + aliases and fold each account's historical per-browser ids

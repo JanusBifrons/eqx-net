@@ -110,6 +110,14 @@ export class WorkerBackedSink implements IPersistenceSink {
           }
           return;
         }
+        if (msg.type === 'GROUP_ERROR') {
+          // A5 — one atomic group rolled back alone; the rest of its batch
+          // committed. In-memory state stays authoritative (every hold op is
+          // an absolute upsert, so the NEXT write of that holder heals disk).
+          this.criticalFailures += 1;
+          logger.error({ message: msg.message }, 'atomic persistence group failed (rolled back alone)');
+          return;
+        }
         if (msg.type === 'SHUTDOWN_ACK') {
           if (this.shutdownAck) {
             this.shutdownAck({ drained: msg.drained });

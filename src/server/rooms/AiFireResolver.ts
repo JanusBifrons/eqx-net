@@ -29,6 +29,7 @@ import { rayHitsSphere } from '../../core/combat/Weapons.js';
 import type { AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import type { LaserFiredEvent } from '../../shared-types/messages.js';
 import type { ShipState } from './schema/SectorState.js';
+import { isFriendly, isNpcAllegianceId, type NpcAllegianceId } from '../../shared-types/allegiances.js';
 
 /** Per-player pose the resolver reads to test target hits. */
 export interface ShipPose {
@@ -78,6 +79,10 @@ export interface AiFireResolverDeps {
    *  among. A structure beam hit routes through `applyDamage(structureId,
    *  shooterId, …)` → the StructureEntity leaf (no new damage branch). */
   structureHitTargets?: () => Iterable<{ id: string; x: number; y: number; radius: number }>;
+  /** Allegiances P0 — other swarm combatants as circles (built once per tick;
+   *  EMPTY in a single-allegiance sector ⇒ byte-identical). The beam skips the
+   *  shooter itself and any FRIENDLY (same-allegiance) entity. */
+  swarmHitTargets?: () => Iterable<{ id: string; x: number; y: number; radius: number; allegiance: string }>;
   /** Shield-fence plan — if an ACTIVE shield wall lies along the beam within
    *  `maxDist`, absorb the shot (apply the wall's grid-power damage model) and
    *  return the crossing distance; else null. Absent ⇒ no walls in the sector
@@ -117,6 +122,7 @@ export class AiFireResolver implements WeaponFireSink {
   // Per-fire-event sink state — set in resolve() before the salvo.
   private _shooterId = '';
   private _wireShooterId = '';
+  private _shooterAllegiance: NpcAllegianceId = 'drones';
 
   /**
    * Resolve an AI fire claim. Cooldown-rejected → silent no-op.
@@ -168,6 +174,7 @@ export class AiFireResolver implements WeaponFireSink {
     const droneAngles = d.droneMountAngles.get(shooterId);
     this._shooterId = shooterId;
     this._wireShooterId = wireShooterId;
+    this._shooterAllegiance = droneKind.allegiance ?? 'drones';
     const ctx = this._fireCtx;
 
     // Per-mount weapon resolution (weapons/energy/AI overhaul §1). Each barrel
@@ -230,6 +237,21 @@ export class AiFireResolver implements WeaponFireSink {
     const structs = d.structureHitTargets?.();
     if (structs) {
       for (const s of structs) {
+        const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, s.x, s.y, s.radius);
+        if (dist !== null && dist < hitDist) {
+          hitDist = dist;
+          hitId = s.id;
+        }
+      }
+    }
+
+    // Allegiances P0: third pass against other swarm combatants (drones vs
+    // robots vs traders). Same closest-wins rule. Skips self + friendlies.
+    const swarms = d.swarmHitTargets?.();
+    if (swarms) {
+      for (const s of swarms) {
+        if (s.id === this._shooterId) continue;
+        if (isNpcAllegianceId(s.allegiance) && isFriendly(this._shooterAllegiance, s.allegiance)) continue;
         const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, s.x, s.y, s.radius);
         if (dist !== null && dist < hitDist) {
           hitDist = dist;

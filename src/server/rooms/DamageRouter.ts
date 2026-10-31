@@ -108,6 +108,12 @@ export interface DamageRouterDeps {
    *  is read from lingeringPoseCache before deletion. Optional (test fixtures /
    *  engineering rooms without a ScrapSpawner omit it). */
   spawnScrapFromLingeringHull?: (kind: ShipKindId, pose: ShipPhysicsState, shipInstanceId: string) => void;
+  /** A1 — see `LeafDeps.onLingeringHullDeath`. */
+  onLingeringHullDeath?: (
+    ship: { shipInstanceId: string; playerId: string; kind: string },
+    pose: ShipPhysicsState | undefined,
+    sourceId: string,
+  ) => void;
   /** Event bus — emits PLAYER_DAMAGED + SHIP_DESTROYED. */
   bus: Bus;
   /** Broadcast a damage / destroy event to every client. */
