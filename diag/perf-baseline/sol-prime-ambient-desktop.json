@@ -1,0 +1,70 @@
+{
+  "capturedAt": "2026-10-31T18:19:05.712Z",
+  "scenario": "sol-prime-ambient",
+  "arm": "desktop",
+  "durationMs": 25000,
+  "sampleCount": 103,
+  "diagEnabledAtCapture": false,
+  "metrics": {
+    "rafP50Ms": {
+      "median": 16.69999999999709,
+      "p95": 16.700000000000728,
+      "p99": 16.700000000000728,
+      "sampleCount": 21
+    },
+    "rafP99Ms": {
+      "median": 16.80000000000291,
+      "p95": 16.80000000000291,
+      "p99": 50,
+      "sampleCount": 21
+    },
+    "longtaskCount30s": {
+      "median": 4,
+      "p95": 4,
+      "p99": 4,
+      "sampleCount": 103
+    },
+    "rafGapCount30s": {
+      "median": 3,
+      "p95": 3,
+      "p99": 3,
+      "sampleCount": 103
+    },
+    "rollingCorrRate": {
+      "median": 0,
+      "p95": 0,
+      "p99": 0,
+      "sampleCount": 103
+    },
+    "maxDriftUnits": {
+      "median": 133.42753874081913,
+      "p95": 133.42753874081913,
+      "p99": 133.42753874081913,
+      "sampleCount": 103
+    },
+    "meanDriftUnits": {
+      "median": 0.4222390466481618,
+      "p95": 1.4502993341393384,
+      "p99": 1.7328251784521964,
+      "sampleCount": 103
+    },
+    "ticksAhead": {
+      "median": 5,
+      "p95": 13,
+      "p99": 17,
+      "sampleCount": 103
+    },
+    "heapUsedMb": {
+      "median": 51.021575927734375,
+      "p95": 51.021575927734375,
+      "p99": 51.021575927734375,
+      "sampleCount": 103
+    }
+  },
+  "tickBudget": {
+    "sampleCount": 24,
+    "totalAvgMs": 0.49483333333333335,
+    "totalMaxMs": 18.903,
+    "overBudgetRatio": 0.0006944444444444445
+  }
+}

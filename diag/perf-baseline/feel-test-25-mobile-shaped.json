@@ -1,0 +1,70 @@
+{
+  "capturedAt": "2026-10-31T18:21:01.712Z",
+  "scenario": "feel-test-25",
+  "arm": "mobile-shaped",
+  "durationMs": 25000,
+  "sampleCount": 13,
+  "diagEnabledAtCapture": false,
+  "metrics": {
+    "rafP50Ms": {
+      "median": 16.700000000000728,
+      "p95": 16.700000000000728,
+      "p99": 16.700000000000728,
+      "sampleCount": 12
+    },
+    "rafP99Ms": {
+      "median": 600,
+      "p95": 883.2999999999997,
+      "p99": 883.2999999999997,
+      "sampleCount": 12
+    },
+    "longtaskCount30s": {
+      "median": 31,
+      "p95": 38,
+      "p99": 38,
+      "sampleCount": 13
+    },
+    "rafGapCount30s": {
+      "median": 37,
+      "p95": 54,
+      "p99": 54,
+      "sampleCount": 13
+    },
+    "rollingCorrRate": {
+      "median": 0,
+      "p95": 0,
+      "p99": 0,
+      "sampleCount": 13
+    },
+    "maxDriftUnits": {
+      "median": 0,
+      "p95": 0,
+      "p99": 0,
+      "sampleCount": 13
+    },
+    "meanDriftUnits": {
+      "median": 0,
+      "p95": 0,
+      "p99": 0,
+      "sampleCount": 13
+    },
+    "ticksAhead": {
+      "median": 28,
+      "p95": 52,
+      "p99": 52,
+      "sampleCount": 13
+    },
+    "heapUsedMb": {
+      "median": 51.021575927734375,
+      "p95": 51.021575927734375,
+      "p99": 51.021575927734375,
+      "sampleCount": 13
+    }
+  },
+  "tickBudget": {
+    "sampleCount": 11,
+    "totalAvgMs": 0.9849999999999999,
+    "totalMaxMs": 449.193,
+    "overBudgetRatio": 0.0015151515151515152
+  }
+}
