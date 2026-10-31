@@ -23,6 +23,19 @@ const FIXED_DT = 1 / 60;
  */
 export { BOOST_MULTIPLIER } from '../../shared-types/shipKinds.js';
 
+/**
+ * Soft-CCD prediction distance (u) for every dynamic body (plan
+ * soft-leaping-truffle PR-C). Ship movement has no ray-projection, so without
+ * this a body whose centre crossed a thin wall's midline within one 60 Hz step
+ * was ejected out the far side. Measured 2026-10-31 (16 u walls, cuboid +
+ * trimesh, shields up/down, 90/60/30°, ~46 u/tick = 2× the fastest flyable
+ * ship at max topSpeed upgrade): prediction 0 → 10–27 pass-throughs per sweep;
+ * 32 / 64 / 96 → 0. 48 = 2× max per-tick travel. Larger values widen the
+ * broad-phase (Rapier docs), so this is kept tight; raise only with a
+ * re-measurement (World.ccd.test.ts + the base-static-colliders bench).
+ */
+export const SOFT_CCD_PREDICTION = 48;
+
 export interface ShipPhysicsState {
   x: number;
   y: number;
@@ -155,7 +168,14 @@ export class PhysicsWorld {
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(x, y)
       .setLinearDamping(kind.linearDamping)
-      .setAngularDamping(kind.angularDamping);
+      .setAngularDamping(kind.angularDamping)
+      // Soft CCD (plan soft-leaping-truffle PR-C): predictive contacts along
+      // the body's path so it can't tunnel thin static geometry between 60 Hz
+      // steps. NOT full CCD — full CCD suppressed static-overlap contact events
+      // + under-resolved interpenetration (hullCollisionNoTouch positive
+      // control). Lock: World.ccd.test.ts. Same path on server worker + client
+      // predWorld (Invariant #15).
+      .setSoftCcdPrediction(SOFT_CCD_PREDICTION);
     const body = this.world.createRigidBody(bodyDesc);
     // Mass + inertia are pinned ONCE to the legacy disc-equivalent so the
     // shield 0-cross collider swap (setHullExposed) is DYNAMICALLY
@@ -226,7 +246,9 @@ export class PhysicsWorld {
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(x, y)
       .setLinearDamping(linearDamping)
-      .setAngularDamping(0);
+      .setAngularDamping(0)
+      // Soft CCD for every moving obstacle (drones, asteroids, scrap) — see spawnShip.
+      .setSoftCcdPrediction(SOFT_CCD_PREDICTION);
     const body = this.world.createRigidBody(bodyDesc);
 
     let collider: RAPIER.ColliderDesc | null = null;
