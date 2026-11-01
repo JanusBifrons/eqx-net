@@ -67,18 +67,6 @@ When a new phase needs a new concretion (e.g., persistence), add it as a new con
 
 ---
 
-## Procedural bases (`src/core/procgen/`, plan soft-leaping-truffle)
-
-- **Geometry is regenerated from a descriptor on EVERY side** (server worker, client predWorld, render worker) and never sent over the wire.
-  - **Inputs:** `generateBase(desc)`, with integer-only RNG streams and a version-locked layout hash. Bump `BASE_GENERATOR_VERSION` on ANY output change; `generateBase.test.ts` pins hashes.
-  - **Worker command:** `SPAWN_BASE {id, ver, archetype, seed, x, y, size, dead?}` makes the worker regenerate the layout and spawn the chunks itself.
-- **Colliders are union OUTLINES** (`buildChunkOutlines`, one polyline per chunk), NOT trimesh or cuboids.
-  - **Seams snag.** Measured sliding along 30 adjacent pieces: trimesh 340 u/s, cuboids 215, outline 565 (the damping-only floor). `FIX_INTERNAL_EDGES` made no difference.
-  - **Hollow by design.** Outlines have no interior, so spawns/arrivals must go through `isPointClear` / `findClearSpawn` (server `BaseSubsystem`).
-  - **Cost and tunnelling.** Broad-phase cost is the same as trimesh; soft CCD stops tunnelling.
-- **Weapon blocking** uses `BaseRayGrid.rayFirst`: a DDA over a 128 u cell grid of the same outline segments. It is allocation-free (heapDelta-locked), matches brute force (5000-ray test), and is op-count bounded.
-- **Budgets:** every number lives in `src/shared-types/baseBudgets.ts` (consistency-locked against the live game). See docs/architecture/procedural-bases.md.
-
 ## Structure footprints (phase V, plan soft-leaping-truffle v2)
 
 - **Every structure kind has a rectangular `footprint`** (catalogue v9). `radius` is its bounding circle, used for broad checks only.
@@ -133,7 +121,7 @@ The worker posts three discrete message types to the main thread:
 
 Adding a fourth variant: extend the worker's `parentPort!.postMessage` site, the SectorRoom message handler's discriminator (`msg.type`), and update this list. The main→worker direction has its own discriminated union (`WorkerCommand`); the reverse direction is informally typed because the message handler does explicit type narrowing on receive.
 
-**Main → Worker commands (current set):** `SPAWN`, `DESPAWN`, `INPUT`, `SPAWN_OBSTACLE`, `AI_INTENT`, `CLOCK_RATE`, `SET_POSITION`, `REKEY_SHIP`, `SET_HULL_EXPOSED`, `SET_STAT_MUL`, `MISSILE_IMPULSE`, `SPAWN_WALL`, `SET_WALL_ACTIVE`, `REMOVE_WALL`, `SPAWN_BASE`, `SET_BASE_DEAD`. `SET_HULL_EXPOSED { id, exposed, kindId, tick }` (shield/hull refactor) swaps a body between its cheap circle collider and its exact hull-polygon compound on the shield 0-cross; `kindId` is carried in the command (server-authoritative — no worker-side kind map). `SET_STAT_MUL { id, topSpeed?, turnRate? }` (Equinox Phase 4 WS-B2) sets a ship instance's per-instance PHYSICS stat multipliers on its worker body so `applyShipInput` scales movement by the upgraded factors; both undefined ⇒ reset. The client predWorld runs the SAME `World.setStatMultipliers` directly, so prediction stays in lockstep (risk #1). `SPAWN_WALL { id, ax, ay, bx, by, thickness }` / `SET_WALL_ACTIVE { id, active }` / `REMOVE_WALL { id }` (shield-fence plan) manage a **shield-wall span** — a STATIC cuboid between two pylon poses that blocks ships; `SET_WALL_ACTIVE` toggles its collider (`setEnabled`) on stun / power loss without churning the body. The wall is NOT a swarm entity (no SAB slot) — it's a derived collider; the same `PhysicsWorld.spawnWall` runs in the client predWorld so local-player blocking is predicted. The authoritative list is the `WorkerCommand` union + the header docstring in [physics/worker.ts](physics/worker.ts); keep all three (worker union, `SectorRoom.WorkerCmd`, this note) in sync.
+**Main → Worker commands (current set):** `SPAWN`, `DESPAWN`, `INPUT`, `SPAWN_OBSTACLE`, `AI_INTENT`, `CLOCK_RATE`, `SET_POSITION`, `REKEY_SHIP`, `SET_HULL_EXPOSED`, `SET_STAT_MUL`, `MISSILE_IMPULSE`, `SPAWN_WALL`, `SET_WALL_ACTIVE`, `REMOVE_WALL`. (`SPAWN_BASE` / `SET_BASE_DEAD` were removed with the Tier A base geometry in phase E.) `SET_HULL_EXPOSED { id, exposed, kindId, tick }` (shield/hull refactor) swaps a body between its cheap circle collider and its exact hull-polygon compound on the shield 0-cross; `kindId` is carried in the command (server-authoritative — no worker-side kind map). `SET_STAT_MUL { id, topSpeed?, turnRate? }` (Equinox Phase 4 WS-B2) sets a ship instance's per-instance PHYSICS stat multipliers on its worker body so `applyShipInput` scales movement by the upgraded factors; both undefined ⇒ reset. The client predWorld runs the SAME `World.setStatMultipliers` directly, so prediction stays in lockstep (risk #1). `SPAWN_WALL { id, ax, ay, bx, by, thickness }` / `SET_WALL_ACTIVE { id, active }` / `REMOVE_WALL { id }` (shield-fence plan) manage a **shield-wall span** — a STATIC cuboid between two pylon poses that blocks ships; `SET_WALL_ACTIVE` toggles its collider (`setEnabled`) on stun / power loss without churning the body. The wall is NOT a swarm entity (no SAB slot) — it's a derived collider; the same `PhysicsWorld.spawnWall` runs in the client predWorld so local-player blocking is predicted. The authoritative list is the `WorkerCommand` union + the header docstring in [physics/worker.ts](physics/worker.ts); keep all three (worker union, `SectorRoom.WorkerCmd`, this note) in sync.
 
 ## WeaponMountController contract (Phase 4, 2026-05-11)
 

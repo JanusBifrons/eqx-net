@@ -12,8 +12,6 @@ import { decidePlacementPointer, shouldCentreGhostOnActivate } from './placement
 import { engineProfileForKind } from './pixi/engineGeometry.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdater.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
-import { BaseRenderer } from './pixi/BaseRenderer.js';
-import type { BaseRenderDescriptor } from '../../core/contracts/IRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
@@ -166,9 +164,6 @@ export class PixiRenderer implements IRenderer {
   private _hoveredId: string | null = null;
   /** Structures plan, Phase 3 — grid connector web renderer. */
   private connectorRenderer!: ConnectorRenderer;
-  /** Procedural bases (plan soft-leaping-truffle) — behind everything in the ship layer. */
-  private baseRenderer!: BaseRenderer;
-  private readonly _baseViewScratch = new Float64Array(4);
   /** A3 — visible rect for culling structure sprites (reused per frame). */
   private readonly _swarmViewScratch = new Float64Array(4);
   /**
@@ -636,9 +631,6 @@ export class PixiRenderer implements IRenderer {
 
     // Structures plan, Phase 3 — the grid connector web. Added FIRST so the
     // lines render BEHIND the structure/ship sprites added later.
-    // Procedural bases render BEHIND the connector web and every sprite.
-    this.baseRenderer = new BaseRenderer();
-    this.shipContainer.addChild(this.baseRenderer.container);
     this.connectorRenderer = new ConnectorRenderer();
     // A3 — the static layer (idle web, range rings, wall rails) sits behind the
     // per-frame layer.
@@ -1374,16 +1366,6 @@ export class PixiRenderer implements IRenderer {
         ? parseInt(highlightedSel.slice('swarm-'.length), 10)
         : null;
     this.connectorRenderer.update(mirror, this.world.scale.x, performance.now());
-    if (this.baseRenderer.baseCount > 0) {
-      this.baseRenderer.update(this.camera.visibleBoundsInto(this._baseViewScratch), this.world.scale.x, performance.now());
-    }
-    // Procedural-base DEV hooks (scalars — no per-frame alloc; not a
-    // RendererFeedback field). Main-thread render path only (E2E runs ?worker=0).
-    const bg = globalThis as { __eqxBaseCount?: number; __eqxBaseVisibleChunks?: number; __eqxBaseSilhouette?: boolean; __eqxBaseDebris?: number };
-    bg.__eqxBaseDebris = this.baseRenderer.lastDebrisCount;
-    bg.__eqxBaseCount = this.baseRenderer.baseCount;
-    bg.__eqxBaseVisibleChunks = this.baseRenderer.lastVisibleChunks;
-    bg.__eqxBaseSilhouette = this.baseRenderer.lastSilhouette;
     this.feedback.placementPreviewConnectionCount =
       this.connectorRenderer.placementPreviewConnectionCount;
     // WS-D (#21) — built-turret defensive range-circle count. DEV hook only (not
@@ -2337,11 +2319,6 @@ export class PixiRenderer implements IRenderer {
    * The gameplay pointer path already pans/zooms the same `Camera` (drag +
    * wheel/pinch), so free-roam needs no new event routing.
    */
-  /** Procedural bases — see `IRenderer.setBases`. */
-  setBases(bases: readonly BaseRenderDescriptor[]): void {
-    this.baseRenderer.setBases(bases);
-  }
-
   setSpectator(active: boolean): void {
     this._spectator = active;
     // The radar is camera-relative while spectating. Pushed here (not read

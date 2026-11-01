@@ -42,9 +42,14 @@ export const MAX_STRUCTURES_PER_SECTOR = 650;
  *  35 278 B at the citadel. */
 export const STRUCTURE_SNAPSHOT_SLICE_MAX_BYTES = 512;
 
+/** Added steady-state downstream bytes/s per client with a full NPC base in
+ *  the sector and nothing being destroyed. The ceiling the idle-patch and
+ *  binary budgets below must fit under (carried over from the retired Tier A
+ *  base budget). */
+export const STRUCTURE_STEADY_EXTRA_MAX_BYTES_PER_SEC = 2048;
+
 /** Steady structure state patches (room-state deltas) for an idle citadel,
- *  per client. Matches the bases' steady-extra budget (baseBudgets
- *  MAX_STEADY_EXTRA_BYTES_PER_SEC = 2048) with room left for combat. */
+ *  per client. Half the steady-extra ceiling, leaving room for combat. */
 export const STRUCTURE_PATCH_IDLE_MAX_BYTES_PER_SEC = 1024;
 
 /** Structure patches while the citadel is under sustained fire (hp/shield
@@ -87,6 +92,5 @@ export const PREDWORLD_STRUCTURE_RADIUS = 1500;
  *  a ship hovering at the edge doesn't churn bodies. */
 export const PREDWORLD_STRUCTURE_HYSTERESIS = 300;
 
-/** Frame-time p99 regression allowed with a citadel on screen (mirrors
- *  baseBudgets CLIENT_FRAME_P99_REL_MAX). */
+/** Frame-time p99 regression allowed with a citadel on screen. */
 export const STRUCTURE_CLIENT_FRAME_P99_REL_MAX = 0.1;

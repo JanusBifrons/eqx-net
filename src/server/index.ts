@@ -780,37 +780,6 @@ gameServer
     maxClients: 8,
   })
   .filterBy(['testId']);
-// Procedural bases (plan soft-leaping-truffle, PR-V2) — the WAREHOUSE showcase:
-// one max-size (8000 u) warehouse at the origin, nothing else in the sector, so
-// screenshots/videos/E2Es see the base alone. Spawn sits OUTSIDE the south wall
-// (half-side ≈ 2824 u). filterBy(['testId']) isolates parallel specs.
-gameServer
-  .define('base-warehouse-showcase', SectorRoom, {
-    testMode: true,
-    droneCount: 0,
-    asteroidConfig: [],
-    peacefulDrones: true,
-    bases: [{ archetype: 'warehouse', seed: 42, x: 0, y: 0, size: 8000 }],
-    defaultSpawnX: 0,
-    defaultSpawnY: -3400,
-    maxClients: 8,
-  })
-  .filterBy(['testId']);
-// PR-D — the same warehouse with WEAK pieces (2 % hit points: a few beam hits
-// break a rack) for the destruction E2E + showcase. Spawn inside the yard.
-gameServer
-  .define('base-warehouse-destructible', SectorRoom, {
-    testMode: true,
-    droneCount: 0,
-    asteroidConfig: [],
-    peacefulDrones: true,
-    bases: [{ archetype: 'warehouse', seed: 42, x: 0, y: 0, size: 8000 }],
-    baseHpScale: 0.02,
-    defaultSpawnX: 0,
-    defaultSpawnY: -3400,
-    maxClients: 8,
-  })
-  .filterBy(['testId']);
 // Wave-system E2E (tests/e2e/wave-attack.spec.ts) — a DIRECTOR-MANAGED galaxy
 // room (real sectorKey) seeded with a PRE-BUILT, player-owned READY base
 // (Capital + Miner + Solar + Turret, owner `wave-tester`). Single eager

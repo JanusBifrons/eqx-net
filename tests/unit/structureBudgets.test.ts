@@ -6,7 +6,6 @@
 import { describe, expect, it } from 'vitest';
 import * as B from '../../src/shared-types/structureBudgets.js';
 import { MAX_ENTITIES } from '../../src/shared-types/sabLayout.js';
-import { MAX_STEADY_EXTRA_BYTES_PER_SEC } from '../../src/shared-types/baseBudgets.js';
 import { buildStructureLattice } from '../../src/core/structures/structureLattice.js';
 
 describe('structure budgets', () => {
@@ -16,8 +15,8 @@ describe('structure budgets', () => {
   });
 
   it('steady structure traffic fits the bases steady-extra ceiling', () => {
-    expect(B.STRUCTURE_PATCH_IDLE_MAX_BYTES_PER_SEC).toBeLessThanOrEqual(MAX_STEADY_EXTRA_BYTES_PER_SEC);
-    expect(B.STRUCTURE_BINARY_MAX_BYTES_PER_SEC).toBeLessThanOrEqual(MAX_STEADY_EXTRA_BYTES_PER_SEC);
+    expect(B.STRUCTURE_PATCH_IDLE_MAX_BYTES_PER_SEC).toBeLessThanOrEqual(B.STRUCTURE_STEADY_EXTRA_MAX_BYTES_PER_SEC);
+    expect(B.STRUCTURE_BINARY_MAX_BYTES_PER_SEC).toBeLessThanOrEqual(B.STRUCTURE_STEADY_EXTRA_MAX_BYTES_PER_SEC);
     expect(B.STRUCTURE_PATCH_IDLE_MAX_BYTES_PER_SEC).toBeLessThan(B.STRUCTURE_PATCH_COMBAT_MAX_BYTES_PER_SEC);
   });
 

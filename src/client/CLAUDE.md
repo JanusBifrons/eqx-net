@@ -259,28 +259,6 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 - **Lifetime.** The binary full refresh NO LONGER deletes structures (`BinarySwarmDecoder` skips kind 2). The room-state row owns their lifetime: when a row goes, `syncStructures` drops both the mirror row and the swarm pose entry.
 - **Locks:** `tests/integration/wire/structureStateWire.test.ts` (#15) and `BinarySwarmDecoder.test.ts`.
 
-## Procedural bases — client (plan soft-leaping-truffle)
-
-- **Prediction ("every collidable entity must be in predWorld"):**
-  - `PredBaseStreamer` (`net/predBaseStreamer.ts`) regenerates each base once from the room-state descriptor, using the SAME `generateBase` → `buildChunkOutlines` the server worker uses.
-  - Per snapshot (`syncPredBases`, beside `syncPredWalls`), it streams in ONLY the chunks within `PREDWORLD_ACTIVE_RADIUS` of the local ship. Every reconcile replays ~20 ticks and phones are ~4× slower, so the client must not carry a whole sector of colliders.
-  - `reset()` runs whenever the predWorld instance is created.
-- **Rendering:**
-  - `ColyseusClient` hands descriptors to the renderer ONLY when the room-state bases change (`onBasesChanged` → `IRenderer.setBases` → worker `SET_BASES`). They are never on `RenderMirror`.
-  - `render/pixi/BaseRenderer.ts` draws one retained `Graphics` per chunk plus a light layer, built once from the pure plan in `pixi/baseVisuals.ts` (three flat tones, functional detail, hashed weathering, pulsing lights).
-  - Chunks are culled per frame via `Camera.visibleBoundsInto` (allocation-free).
-  - Below `BASE_LOD_ZOOM`, one silhouette per base replaces the chunks. No `cacheAsTexture` (memory + blur).
-- **Destruction (PR-D):**
-  - The streamer hashes each base's destroy mask (`deadMaskHash`); on change it rebuilds the outlines and swaps every ACTIVE predWorld chunk.
-  - The renderer signature hashes mask contents (not just length).
-  - `BaseRenderer` diffs old and new masks per base and spawns debris (`spawnDebris`, pure). The debris lives in a fixed 1024-fragment pool on one Graphics, redrawn only while alive and allocation-free per frame.
-  - Lock: `base-destruction.spec.ts` (beam a rack → debris → fly through the hole).
-- **DEV hooks** (`?worker=0` only): `__eqxBaseCount`, `__eqxBaseVisibleChunks`, `__eqxBaseSilhouette`, `__eqxBaseDebris`.
-- **Locks:**
-  - `predBaseStreamer.test.ts`: streaming, the client active-piece budget, teardown, and client/server collider parity.
-  - `baseVisuals.test.ts`: determinism, the pixi Y-flip rule, culling within `MAX_VISIBLE_CHUNKS`, LOD.
-  - `tests/e2e/base-warehouse-showcase.spec.ts`: renders; the predicted pose never overshoots into a wall.
-
 ## Damage numbers and health bars
 
 - `mirror.pendingDamageNumbers` and `mirror.pendingHealthBarHits` are per-frame **drain queues** populated by `ColyseusClient.handleDamage()` and consumed by `PixiRenderer.update()`. They are arrays, not maps — every entry is consumed once per frame.
