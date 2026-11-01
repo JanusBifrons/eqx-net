@@ -47,6 +47,7 @@ import {
   STRUCTURE_FLAG_POWERED,
   STRUCTURE_FLAG_WALL_ACTIVE,
   STRUCTURE_FLAG_NO_AMMO,
+  STRUCTURE_FLAG_NO_FUEL,
   STRUCTURE_TARGET_NONE,
   STRUCTURE_DEFAULTS as SD,
 } from '../../shared-types/structureStateWire.js';
@@ -4547,6 +4548,7 @@ export class SectorRoom extends Room<SectorState> {
         // emitter's walls are up). `shieldWallTo` stays for a pylon's first wall.
         if (this.shieldWalls.wallsUpFor(rec.id, nowMs)) flags |= STRUCTURE_FLAG_WALL_ACTIVE;
         if (rec.noAmmo === true) flags |= STRUCTURE_FLAG_NO_AMMO;
+        if (rec.isConstructed && getStructureKind(rec.kind).fuelEveryPulses != null && rec.fueled !== true) flags |= STRUCTURE_FLAG_NO_FUEL;
         if (rec.kind === 'shield_pylon') {
           const wall = this.shieldWalls.wallStateFor(rec.id, nowMs);
           const other = wall ? this.swarmRegistry.get(wall.otherPost)?.entityId : undefined;

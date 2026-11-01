@@ -27,6 +27,8 @@ export const STRUCTURE_FLAG_DECONSTRUCTING = 4;
 export const STRUCTURE_FLAG_WALL_ACTIVE = 8;
 /** P2d — an ammo-using turret found no munitions for its last shot. */
 export const STRUCTURE_FLAG_NO_AMMO = 16;
+/** D1 — a built Reactor has no fuel (it produces no power). */
+export const STRUCTURE_FLAG_NO_FUEL = 32;
 
 /** `StructureState.etaMs` sentinels: ≥ 0 is a real ETA. */
 export const STRUCTURE_ETA_NONE = -1;

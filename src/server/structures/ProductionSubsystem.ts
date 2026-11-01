@@ -118,6 +118,7 @@ export class ProductionSubsystem {
   }
 
   pulse(): void {
+    this.burnFuel();
     const procs = this.procs;
     procs.length = 0;
     for (const rec of this.d.registry.all()) if (isProcessorKind(rec.kind)) procs.push(rec);
@@ -126,6 +127,28 @@ export class ProductionSubsystem {
     const start = this.pulses++ % n;
     this.netComponent = null;
     for (let k = 0; k < n; k++) this.step(procs[(start + k) % n]!);
+  }
+
+  /**
+   * D1 — each built Reactor burns ONE unit of fuel from its network every
+   * `fuelEveryPulses` pulses; without fuel it stops producing power. A change
+   * in fuelled state marks the grid topology dirty so power is recomputed.
+   */
+  private burnFuel(): void {
+    for (const rec of this.d.registry.all()) {
+      const every = getStructureKind(rec.kind).fuelEveryPulses;
+      if (every == null || !rec.isConstructed) continue;
+      const before = rec.fueled === true;
+      const t = (rec.fuelTimer ?? 0) - 1;
+      if (t > 0) {
+        rec.fuelTimer = t;
+        continue;
+      }
+      const ok = this.takeGoods(rec, ONE_FUEL);
+      rec.fueled = ok;
+      rec.fuelTimer = ok ? every : 0;
+      if (ok !== before) this.d.registry.topologyDirty = true;
+    }
   }
 
   /**
@@ -398,6 +421,7 @@ export class ProductionSubsystem {
 }
 
 const EMPTY = { goods: {}, blueprints: [] };
+const ONE_FUEL: Readonly<Partial<Record<GoodId, number>>> = Object.freeze({ fuel: 1 });
 
 /** A cycle's inputs as outputs (handing a loaded cycle back). Rare (recipe or
  *  blueprint change), so it may allocate. */

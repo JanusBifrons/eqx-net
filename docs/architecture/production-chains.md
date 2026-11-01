@@ -149,4 +149,21 @@ Code: [src/core/bases/baseProfile.ts](../../src/core/bases/baseProfile.ts) and [
   It runs a sweep over every galaxy sector.
 - **`baseProfile.test.ts`** covers the profiles.
 
-**Known gap:** fences dominate small bases. A Shield Pylon draws 20 power and a Solar makes 30, so a fenced outpost is about 80 structures, against the plan's target of 10–30. The consolidated Reactor is the fix, and `TIER_MAX_STRUCTURES` comes down with it.
+**Consolidated kinds (D1).** Each is priced above the standard units it replaces, so only wealthy bases have many.
+
+| Kind | Replaces | Footprint |
+|---|---|---|
+| **Reactor** | ~8 Solars of power (240). It burns one unit of fuel from base storage every 10 pulses, and only produces while fuelled; out of fuel, it shows "NO FUEL" | 400 × 400 |
+| **Battery Bank** | 10 Batteries | 360 × 360 |
+| **Storage Vault** | 8 Cargo Bays | 480 × 320 |
+
+The generator powers bases with Reactors first, then Solars, and uses a Battery Bank where it would otherwise need five or more Batteries. Fences used to dominate small bases (a Shield Pylon draws 20 power, a Solar makes 30).
+
+| Tier | Before the Reactor | After |
+|---|---|---|
+| Fenced outpost | 78 | 43 |
+| Settlement | 99 | 60 |
+| Stronghold | 198 | 116 |
+| Citadel | 236 | 123 |
+
+`TIER_MAX_STRUCTURES` is now 50 / 80 / 160 / 260. NPC bases need fuel stock for their Reactors, so D2 seeds it and trade (T) keeps them supplied.

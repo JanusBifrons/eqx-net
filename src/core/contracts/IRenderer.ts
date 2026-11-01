@@ -258,6 +258,8 @@ export interface StructureRenderState {
   prodMissing?: number;
   /** P2d — an ammo-using turret has no munitions. */
   noAmmo?: boolean;
+  /** D1 — a Reactor has no fuel (no power). */
+  noFuel?: boolean;
   /** The slot blueprint (P2b): runs (BP_RUNS_ORIGINAL = original) + quality. */
   bpRuns?: number;
   bpQuality?: number;

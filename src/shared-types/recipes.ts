@@ -52,6 +52,9 @@ export const RECIPE_IDS = [
   // Living World W3 kind (appended after assembly_plant).
   'pack_research_lab',
   'pack_autocannon_turret',
+  'pack_reactor',
+  'pack_battery_bank',
+  'pack_storage_vault',
 ] as const;
 export type RecipeId = (typeof RECIPE_IDS)[number];
 
@@ -250,6 +253,21 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
     id: 'pack_autocannon_turret', displayName: packName('autocannon_turret'),
     inputs: { alloy: 8, components: 2 }, outputs: [{ packed: 'autocannon_turret' }],
     cyclePulses: 12, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_reactor: r({
+    id: 'pack_reactor', displayName: packName('reactor'),
+    inputs: { alloy: 20, components: 6, electronics: 4, machinery: 1 }, outputs: [{ packed: 'reactor' }],
+    cyclePulses: 40, processors: ['assembly_plant'], blueprintRequired: true,
+  }),
+  pack_battery_bank: r({
+    id: 'pack_battery_bank', displayName: packName('battery_bank'),
+    inputs: { alloy: 20, components: 4, electronics: 6 }, outputs: [{ packed: 'battery_bank' }],
+    cyclePulses: 30, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_storage_vault: r({
+    id: 'pack_storage_vault', displayName: packName('storage_vault'),
+    inputs: { alloy: 30, components: 4 }, outputs: [{ packed: 'storage_vault' }],
+    cyclePulses: 24, processors: ['fabricator'], blueprintRequired: true,
   }),
   pack_assembly_plant: r({
     id: 'pack_assembly_plant', displayName: packName('assembly_plant'),
