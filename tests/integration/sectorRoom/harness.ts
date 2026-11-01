@@ -166,10 +166,6 @@ export async function bootSectorTestServer(opts: {
   npcBases?: ReadonlyArray<Record<string, unknown>>;
   /** P2c — sector features for the room (asteroid mix, nebula). */
   sectorFeatures?: string[];
-  /** Procedural bases to generate (plan soft-leaping-truffle). */
-  bases?: ReadonlyArray<{ archetype: 'warehouse'; seed: number; x: number; y: number; size: number }>;
-  /** testMode base hit-point multiplier (PR-D bespoke trigger). */
-  baseHpScale?: number;
   /** Room-level default spawn point (forwarded to `defaultSpawnX/Y`). */
   defaultSpawnX?: number;
   defaultSpawnY?: number;
@@ -227,8 +223,6 @@ export async function bootSectorTestServer(opts: {
     asteroidConfig: opts.asteroidConfig,
     sectorFeatures: opts.sectorFeatures,
     npcBases: opts.npcBases,
-    bases: opts.bases,
-    baseHpScale: opts.baseHpScale,
     tradeEnabled: opts.tradeEnabled,
     seedStorageHold: opts.seedStorageHold,
     haulerRaiders: opts.haulerRaiders,
