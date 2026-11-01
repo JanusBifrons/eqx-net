@@ -373,3 +373,12 @@ reintroduces the spiral the 500-target cannot afford. Full story:
 - **`recipes.test.ts` is the authority over balance.** Every recipe returns 1.2–1.6× its input value at `BASE_PRICES`, value per weight rises by stage, and no good is an orphan. Change a price or a recipe and that test must still pass; don't loosen it.
 - **`GOOD_IDS`, `RECIPE_IDS` and `ASTEROID_RESOURCE_IDS` are append-only** (persisted or on the wire).
 - Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).
+
+## Base generator (plan soft-leaping-truffle v3, D1)
+
+- **`src/core/bases/`** turns a galaxy sector into an NPC base:
+  - `contextForSector` → `baseProfileFor` (tier, role, wealth, level cap, fence);
+  - then `growBase` (placements, edges, recipes, levels).
+- **Every placement and edge is checked with the real rules AS the base is built** (`placementRejection`, `canConnect`); a slot that fails is skipped. Never bypass them; `growBase.test.ts` re-checks independently.
+- **Deterministic per seed.** NPC bases regenerate from their seed, so bump `BASE_GROWTH_VERSION` on any output change.
+- Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).

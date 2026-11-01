@@ -193,7 +193,8 @@ export const CAPITAL: StructureKind = {
   // pair uses the global CONNECTION_MAX_RANGE.
   powerOutput: 50,
   powerConsumption: 0,
-  storageCapacity: 2_000_000,
+  // P2e — the bank holds minerals at the goods scale (50k minerals = 5000 weight).
+  storageCapacity: 50_000,
   // Living World P1a-2 — the Capital is the largest cargo hold.
   holdCapacity: 5_000,
   constructionCost: 0,
@@ -268,10 +269,12 @@ export const MINER: StructureKind = {
   isHub: false,
   powerOutput: 0,
   powerConsumption: 60,
-  storageCapacity: 200_000,
+  // P2e — retuned to the goods scale: 20 minerals a pulse (was 1000, which
+  // made minerals effectively unlimited), a 2000-mineral buffer.
+  storageCapacity: 2_000,
   constructionCost: 400,
   color: 0xee8844,
-  miningRate: 1000,
+  miningRate: 20,
   miningRange: 800,
   mounts: [
     {
@@ -648,8 +651,8 @@ export const DEEP_CORE_RIG: StructureKind = {
   isHub: true,
   powerOutput: 0,
   powerConsumption: 150,
-  storageCapacity: 600_000,
-  miningRate: 6000,
+  storageCapacity: 6_000,
+  miningRate: 120,
   miningRange: 1000,
   mounts: [
     {
@@ -797,8 +800,10 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
  *  3→4 (WS-5): added `CAPITAL.connectionRange = 300` (R2.10).
  *  4→5 (WS-6): shrank CONNECTOR.radius 24→10 + SHIELD_PYLON.radius 30→12 (R2.11/R2.18).
  *  5→6 (WS-8): appended LASER_BOLT_TURRET + MISSILE_TURRET defence kinds (R2.15).
- *  6→7 (P3.2): removed CAPITAL.connectionRange — uniform connection range. */
-export const STRUCTURE_KIND_CATALOGUE_VERSION = 9;
+ *  6→7 (P3.2): removed CAPITAL.connectionRange — uniform connection range.
+ *  9→10 (P2e, plan soft-leaping-truffle v3): mining + bank retuned to the goods
+ *  scale (Miner 1000→20 a pulse, Capital bank 2M→50k, Deep Core Rig 6000→120). */
+export const STRUCTURE_KIND_CATALOGUE_VERSION = 10;
 // Gates (SHIELD_GATE, SHIELD_AIRLOCK) were APPENDED without a bump: a bump
 // discards every saved structure on the next boot (SectorPersistence's version
 // gate), and appending a kind leaves every existing record — and so every saved

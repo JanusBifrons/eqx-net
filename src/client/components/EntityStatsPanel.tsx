@@ -27,7 +27,8 @@ import { BlueprintInstall } from './BlueprintInstall';
 import { ResearchLabPanel } from './ResearchLabPanel';
 import { hullColor } from './ShieldHullBar';
 import { getStructureKind } from '@shared-types/structureKinds';
-import { canUpgradeStructure } from '@core/leveling/structureLevel';
+import { canUpgradeStructure, structureUpgradeGoods } from '@core/leveling/structureLevel';
+import { GOOD_DEFS, type GoodId } from '@shared-types/goods';
 import type { PickedEntityKind } from '../render/pickEntity';
 import type { StructureRenderState } from '@core/contracts/IRenderer';
 
@@ -112,6 +113,8 @@ interface PanelData {
   prodStatus?: string;
   /** P2b — the processor can switch between more than one recipe. */
   canChangeRecipe?: boolean;
+  /** P2e — goods the next upgrade takes from base storage ("3 Alloy, 1 Components"). */
+  upgradeGoods?: string;
   /** P2d — an ammo-using turret is out of munitions. */
   noAmmo?: boolean;
   /** P2b — the recipe needs a blueprint. */
@@ -396,7 +399,7 @@ export function EntityStatsPanel(): JSX.Element | null {
           {data.canUpgrade && (
             // WS-B4 — the 4th action: a paid Upgrade (level-up build phase).
             // Gated to OWNED + BUILT + below-cap (set in readData).
-            <Tooltip title="Upgrade (paid level-up: boosts this structure's key stat)">
+            <Tooltip title={data.upgradeGoods !== undefined ? `Upgrade (minerals + ${data.upgradeGoods} from base storage)` : 'Upgrade (paid level-up: boosts this structure\x27s key stat)'}>
               <IconButton
                 data-testid="structure-action-upgrade"
                 size="small"
@@ -444,7 +447,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
-  'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'noAmmo',
+  'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'noAmmo', 'upgradeGoods',
   'isLab',
 ];
 
@@ -554,6 +557,12 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       data.level = level;
       data.canUpgrade =
         st.built === true && st.isDeconstructing !== true && canUpgradeStructure(level);
+      if (data.canUpgrade && subtype !== undefined) {
+        // P2e — level 3+ also costs goods, taken from base storage when it starts.
+        const bill = structureUpgradeGoods(getStructureKind(subtype).constructionCost, level);
+        const parts = (Object.keys(bill) as GoodId[]).map((g) => `${bill[g]} ${GOOD_DEFS[g].displayName}`);
+        if (parts.length > 0) data.upgradeGoods = parts.join(', ');
+      }
       if (subtype === 'research_lab' && data.isOwn === true && st.built === true) data.isLab = true;
       // Living World P1a-2 — owned storage contents (the server only sends them
       // to the owner) + the Refine gate (a Capital with salvage in its network
