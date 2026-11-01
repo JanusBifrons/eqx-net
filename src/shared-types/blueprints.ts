@@ -314,6 +314,44 @@ export function rollPackedStructure(rng: () => number, chance: number): PackedIt
   return { product, quality: LOOT_PACKED_QUALITY_MIN + Math.floor(rng() * LOOT_PACKED_QUALITY_SPAN) };
 }
 
+// ── Packed hulls (economy v2 W5a) ───────────────────────────────────────────
+// A packed hull is a ship in a crate: UNPACK it at your storage and it joins
+// your roster. Starter hulls (scout, fighter) are always free.
+
+/** Packed-hull drop chances (elite / incursion cache). */
+export const ELITE_HULL_CHANCE = 0.15;
+export const INCURSION_HULL_CHANCE = 0.15;
+
+/** Every hull that can be packed (non-starter, non-engineering). Allocates. */
+export function packedHullProducts(): string[] {
+  const out: string[] = [];
+  for (const k of PLAYABLE_SHIP_KINDS_LIST) {
+    if (!STARTER_HULL_KINDS.includes(k.id) && !k.engineeringOnly) out.push(`hull:${k.id}`);
+  }
+  return out;
+}
+
+/** Roll a packed-hull drop with probability `chance` (`rng` ∈ [0, 1)). */
+export function rollPackedHull(rng: () => number, chance: number): PackedItem | null {
+  if (chance <= 0 || rng() >= chance) return null;
+  const products = packedHullProducts();
+  const product = products[Math.floor(rng() * products.length)]!;
+  return { product, quality: LOOT_PACKED_QUALITY_MIN + Math.floor(rng() * LOOT_PACKED_QUALITY_SPAN) };
+}
+
+/** Client → server: unpack one packed `kind` hull from my storage at
+ *  `networkEntityId` into my roster (a parked ship there). */
+export const UnpackHullSchema = z
+  .object({
+    // The client's send() always adds `type` (a strict schema without it drops
+    // every real request — the bug #227 fixed for the other messages).
+    type: z.literal('unpack_hull'),
+    networkEntityId: z.number().int().nonnegative(),
+    kind: z.string().min(1).max(40),
+  })
+  .strict();
+export type UnpackHull = z.infer<typeof UnpackHullSchema>;
+
 // ── Messages (P5 module install; W3 adds the Research Lab jobs) ──────────────
 
 /** Client → server: install a MODULE blueprint from my storage at

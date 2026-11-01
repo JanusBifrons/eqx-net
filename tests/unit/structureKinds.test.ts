@@ -48,6 +48,7 @@ describe('structureKinds catalogue', () => {
       'reactor', // D1 consolidated kinds — appended at the tail
       'battery_bank',
       'storage_vault',
+      'shipyard', // economy v2 W5b — appended at the tail
     ]);
   });
 
@@ -76,7 +77,7 @@ describe('structureKinds catalogue', () => {
     // P2a — the huge production kinds are hubs (4 links) that anchor a district.
     expect(hubs.sort()).toEqual([
       'assembly_plant', 'capital', 'connector', 'deep_core_rig', 'ore_processing_complex',
-      'shield_airlock', 'shield_gate', 'shield_pylon',
+      'shield_airlock', 'shield_gate', 'shield_pylon', 'shipyard',
     ]);
     for (const huge of ['deep_core_rig', 'ore_processing_complex', 'assembly_plant'] as const) {
       expect(STRUCTURE_KINDS[huge].maxConnections).toBe(4);

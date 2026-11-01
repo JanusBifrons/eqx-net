@@ -26,7 +26,7 @@ describe('SectorRoom integration — trade messages (P2)', () => {
     if (h) await h.cleanup();
   }, 10_000);
 
-  it('accept_offer from a signed-in owner of a placed Capital is accepted and sends a hauler', { timeout: 30_000 }, async () => {
+  it('accept_offer from a GUEST owner of a placed Capital is accepted and sends a hauler (guests are full players)', { timeout: 30_000 }, async () => {
     // The director exists BEFORE the room (as in production), so the testMode
     // `tradeEnabled` room registers itself at onCreate.
     dir = new TradeDirector(new Map<string, TradeRoom>(), new EconomyStore({ persistence: getPersistence }), getHoldStore(), {
@@ -41,7 +41,7 @@ describe('SectorRoom integration — trade messages (P2)', () => {
     const pid = randomUUID();
     const cr = await h.connectActive(pid);
     const room = h.getServerRoom() as unknown as SectorRoom & { playerToUser: Map<string, string | null> };
-    room.playerToUser.set(pid, 'user-1'); // trade requires an account
+    // Economy v2 — no account needed: guests are full players (no sign-in gate).
 
     const notices: TradeNotice[] = [];
     cr.onMessage('trade_notice', (n: TradeNotice) => notices.push(n));

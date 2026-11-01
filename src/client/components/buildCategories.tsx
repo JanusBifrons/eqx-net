@@ -56,6 +56,7 @@ export const BUILD_CATEGORIES: readonly BuildCategory[] = [
       'ore_processing_complex',
       'assembly_plant',
       'research_lab',
+      'shipyard',
     ],
   },
   {

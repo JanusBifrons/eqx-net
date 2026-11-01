@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BPC_RUNS_REF, MATERIAL_MAX, OUTPUT_YIELD_MAX, STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS,
   applyBlueprint, blueprintName, blueprintProducts, blueprintQuality, fittedCargoMul, fittedHullMul, fittedUid,
-  isBlueprintUsedUp, makeBlueprint, packedStructureProducts, parseProduct, productName, rollBlueprint, rollPackedStructure,
+  isBlueprintUsedUp, makeBlueprint, packedHullProducts, packedStructureProducts, parseProduct, productName, rollBlueprint, rollPackedHull, rollPackedStructure,
   spendBlueprintRun, weaponGate, weaponUnlocked,
 } from './blueprints.js';
 import { rollLoot } from './lootTables.js';
@@ -72,6 +72,23 @@ describe('packed-structure drops (economy v2 W4a)', () => {
     expect(elite).toBeLessThan(110);
     expect(cache).toBeGreaterThan(60);
     expect(cache).toBeLessThan(140);
+  });
+});
+
+describe('packed-hull drops (economy v2 W5a)', () => {
+  it('only non-starter, non-engineering hulls; elites and caches sometimes', () => {
+    const products = packedHullProducts();
+    for (const k of STARTER_HULL_KINDS) expect(products).not.toContain(`hull:${k}`);
+    expect(products).toContain('hull:gunship');
+    const h = rollPackedHull(seeded(9), 1)!;
+    expect(products).toContain(h.product);
+    expect(rollPackedHull(() => 0.99, 0.15)).toBeNull();
+    let elite = 0;
+    for (let s = 1; s <= 300; s++) {
+      if ((rollEliteLoot('gunship', seeded(s)).packed ?? []).some((p) => p.product.startsWith('hull:'))) elite++;
+    }
+    expect(elite).toBeGreaterThan(15);
+    expect(elite).toBeLessThan(90);
   });
 });
 
