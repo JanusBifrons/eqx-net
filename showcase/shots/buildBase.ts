@@ -30,9 +30,9 @@ export const buildBase: Shot = {
     await page.getByTestId('build-solar').click();
     await ctx.sleep(600);
     // Sweep the ghost across the base so the connection preview re-forms.
-    const a = toScreen(520, 380, CAM.x, CAM.y, CAM.zoom);
-    const b = toScreen(-260, 300, CAM.x, CAM.y, CAM.zoom);
-    const c = toScreen(-80, 420, CAM.x, CAM.y, CAM.zoom);
+    const a = toScreen(520, 380, CAM.x, CAM.y, CAM.zoom, ctx.viewport);
+    const b = toScreen(-260, 300, CAM.x, CAM.y, CAM.zoom, ctx.viewport);
+    const c = toScreen(-80, 420, CAM.x, CAM.y, CAM.zoom, ctx.viewport);
     await page.mouse.move(a.x, a.y, { steps: 30 });
     await ctx.sleep(900);
     await page.mouse.move(b.x, b.y, { steps: 60 });

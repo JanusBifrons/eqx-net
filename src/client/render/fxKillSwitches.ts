@@ -36,7 +36,8 @@ export interface FxKillSwitches {
   selfDmgNumbersDisabled: boolean;
   /** `?cleanworld=1` — hide debug-flavoured world overlays for showcase
    *  footage: the background spatial grid, the turret aim-guide lines and the
-   *  NPC callsign labels (`AI 00F`). Gameplay visuals are untouched. */
+   *  NPC callsign labels (`AI 00F`) and the server-position ghost. Gameplay
+   *  visuals are untouched. */
   cleanWorld: boolean;
 }
 

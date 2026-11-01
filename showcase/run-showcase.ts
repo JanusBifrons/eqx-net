@@ -11,14 +11,15 @@
  * Output (gitignored): showcase-out/{clips/<id>/clip.mp4, contact-sheets/,
  * reel-1080p.mp4, reel-720p.mp4, manifest.json}.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { chromium } from '@playwright/test';
 import { SHOTS, SECTION_CARDS, TITLE_SUB, END_CARD_POINTS } from './registry.js';
 import type { ClipRecord, ServerProfile, Shot } from './types.js';
 import { CaptureServers } from './servers.js';
-import { Recorder } from './recorder.js';
+import { Recorder, type RecordResult } from './recorder.js';
+import { smoothnessProblems, smoothScore, type TakeStats } from './smoothness.js';
 import { encodeClip, encodeCard, assemble, qaClip } from './compositor.js';
 import { captionOverlay, endCard, sectionCard, titleCard } from './cards.js';
 import { gitSha, resolveFfmpeg } from './tools.js';
@@ -31,10 +32,27 @@ interface Args {
   fps: number;
   headed: boolean;
   out: string;
+  /** Browser render size for desktop takes (see Recorder `capture`). */
+  capture: { width: number; height: number };
 }
 
+const CAPTURE_SIZES: Record<string, { width: number; height: number }> = {
+  '720p': { width: 1280, height: 720 },
+  '900p': { width: 1600, height: 900 },
+  '1080p': { width: 1920, height: 1080 },
+};
+
 function parseArgs(argv: string[]): Args {
-  const a: Args = { shots: null, catalogue: false, composeOnly: false, ref: null, fps: 30, headed: false, out: 'showcase-out' };
+  const a: Args = {
+    shots: null,
+    catalogue: false,
+    composeOnly: false,
+    ref: null,
+    fps: 60,
+    headed: false,
+    out: 'showcase-out',
+    capture: CAPTURE_SIZES['720p']!,
+  };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const v = (): string => {
@@ -49,6 +67,11 @@ function parseArgs(argv: string[]): Args {
     else if (k === '--fps') a.fps = Number(v());
     else if (k === '--headed') a.headed = true;
     else if (k === '--out') a.out = v();
+    else if (k === '--capture') {
+      const size = CAPTURE_SIZES[v()];
+      if (!size) throw new Error('--capture must be 720p, 900p or 1080p');
+      a.capture = size;
+    }
     else throw new Error(`unknown arg ${k}`);
   }
   if (a.fps !== 30 && a.fps !== 60) throw new Error('--fps must be 30 or 60');
@@ -107,7 +130,14 @@ async function main(): Promise<void> {
     // not leak into this one's footage.
     for (const f of ['eqx.db', 'eqx.db-wal', 'eqx.db-shm']) rmSync(path.join(runDir, f), { force: true });
     const servers = new CaptureServers(appDir, runDir);
-    const recorder = new Recorder(servers.baseUrl, servers.serverUrl, log, () => servers.restartServer(), args.headed);
+    const recorder = new Recorder(
+      servers.baseUrl,
+      servers.serverUrl,
+      log,
+      () => servers.restartServer(),
+      args.headed,
+      args.capture,
+    );
     const capBrowser = await chromium.launch();
     try {
       await recorder.open();
@@ -130,10 +160,31 @@ async function main(): Promise<void> {
     }
   }
 
-  await compose(args, out, manifest, args.catalogue);
+  if (args.shots && !args.composeOnly) {
+    // Re-takes / test clips: cut just these shots together (no cards) so they
+    // can be reviewed without touching the full reel.
+    const parts = SHOTS.filter((s) => args.shots!.includes(s.id)).map((s) => path.join(out, 'clips', s.id, 'clip.mp4'));
+    const { master } = await assemble(parts, out, 'shots');
+    log(`wrote ${master}`);
+  } else {
+    await compose(args, out, manifest, args.catalogue);
+  }
   printSummary(manifest, wanted);
 }
 
+const MAX_TAKES = 3;
+
+const takeStats = (rec: RecordResult): TakeStats => ({
+  frames: rec.index.frames.length,
+  deliveredFps: rec.deliveredFps,
+  gapMaxMs: rec.gapMaxMs,
+});
+
+/**
+ * Best-of-N takes: record until a take passes the smoothness gate (at most
+ * `MAX_TAKES`), keep the smoothest, and encode only that one. A take that
+ * crashes restarts the server first (a broken room is the usual cause).
+ */
 async function takeWithRetry(
   shot: Shot,
   recorder: Recorder,
@@ -143,41 +194,52 @@ async function takeWithRetry(
   sha: string,
   fps: number,
 ): Promise<ClipRecord> {
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  const clipDir = path.join(out, 'clips', shot.id);
+  let best: { rec: RecordResult; dir: string; problems: string[] } | null = null;
+  let lastError: Error | null = null;
+  for (let take = 1; take <= MAX_TAKES; take++) {
+    const dir = `${clipDir}.take${take}`;
     try {
-      log(`▶ ${shot.id} (take ${attempt})`);
-      const clipDir = path.join(out, 'clips', shot.id);
-      const rec = await recorder.record(shot, clipDir);
-      const caption = path.join(clipDir, 'caption.png');
-      await captionOverlay(capBrowser, caption, shot.title, shot.caption, shot.viewport === 'phone' ? 'side' : 'lower-third');
-      const mp4 = await encodeClip(clipDir, rec.index, shot.durationMs, caption, { fps, cuts: shot.cuts });
-      const qa = await qaClip(mp4, path.join(out, 'contact-sheets', `${shot.id}.png`));
-      const problems: string[] = [];
-      if (rec.index.frames.length < 30) problems.push(`only ${rec.index.frames.length} frames captured`);
-      if (rec.deliveredFps < 20) problems.push(`delivered ${rec.deliveredFps} fps (< 20) — host under load?`);
-      if (rec.gapMaxMs > 1500) problems.push(`a ${rec.gapMaxMs} ms freeze`);
-      if (qa.blankSeconds >= 1) problems.push(`${qa.blankSeconds}s of blank frames`);
-      const record: ClipRecord = {
-        id: shot.id,
-        sha,
-        recordedAt: new Date().toISOString(),
-        frames: rec.index.frames.length,
-        durationMs: qa.durationMs,
-        deliveredFps: rec.deliveredFps,
-        gapP95Ms: rec.gapP95Ms,
-        gapMaxMs: rec.gapMaxMs,
-        qa: { ok: problems.length === 0, problems },
-      };
-      log(`  ${record.qa.ok ? '✓' : '⚠'} ${rec.deliveredFps} fps, p95 gap ${rec.gapP95Ms} ms${problems.length ? ' — ' + problems.join('; ') : ''}`);
-      return record;
+      log(`▶ ${shot.id} (take ${take})`);
+      const rec = await recorder.record(shot, dir);
+      const problems = smoothnessProblems(takeStats(rec), fps);
+      const verdict = problems.length ? ` — ${problems.join('; ')}` : '';
+      log(`  ${problems.length ? '·' : '✓'} ${rec.deliveredFps} fps, worst gap ${rec.gapMaxMs} ms${verdict}`);
+      if (!best || smoothScore(takeStats(rec)) > smoothScore(takeStats(best.rec))) {
+        if (best) rmSync(best.dir, { recursive: true, force: true });
+        best = { rec, dir, problems };
+      } else {
+        rmSync(dir, { recursive: true, force: true });
+      }
+      if (problems.length === 0) break;
     } catch (e) {
-      log(`  ✗ ${shot.id}: ${(e as Error).message.split('\n')[0]}`);
-      if (attempt === 2) throw e;
-      // A broken room/server state is the usual cause — restart before the retry.
+      lastError = e as Error;
+      log(`  ✗ ${shot.id}: ${lastError.message.split('\n')[0]}`);
+      rmSync(dir, { recursive: true, force: true });
       await servers.restartServer().catch(() => {});
     }
   }
-  throw new Error('unreachable');
+  if (!best) throw lastError ?? new Error(`no usable take for ${shot.id}`);
+
+  rmSync(clipDir, { recursive: true, force: true });
+  renameSync(best.dir, clipDir);
+  const caption = path.join(clipDir, 'caption.png');
+  await captionOverlay(capBrowser, caption, shot.title, shot.caption, shot.viewport === 'phone' ? 'side' : 'lower-third');
+  const mp4 = await encodeClip(clipDir, best.rec.index, shot.durationMs, caption, { fps, cuts: shot.cuts });
+  const qa = await qaClip(mp4, path.join(out, 'contact-sheets', `${shot.id}.png`));
+  const problems = [...best.problems];
+  if (qa.blankSeconds >= 1) problems.push(`${qa.blankSeconds}s of blank frames`);
+  return {
+    id: shot.id,
+    sha,
+    recordedAt: new Date().toISOString(),
+    frames: best.rec.index.frames.length,
+    durationMs: qa.durationMs,
+    deliveredFps: best.rec.deliveredFps,
+    gapP95Ms: best.rec.gapP95Ms,
+    gapMaxMs: best.rec.gapMaxMs,
+    qa: { ok: problems.length === 0, problems },
+  };
 }
 
 async function compose(args: Args, out: string, manifest: Record<string, ClipRecord>, catalogue: boolean): Promise<void> {

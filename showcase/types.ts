@@ -43,6 +43,10 @@ export interface ShotContext {
   testId: string;
   log(msg: string): void;
   sleep(ms: number): Promise<void>;
+  /** Browser viewport the take renders at (capture resolution). */
+  viewport: { width: number; height: number };
+  /** Map a point authored against a 1920×1080 frame onto this viewport. */
+  px(x: number, y: number): { x: number; y: number };
   /** Hold keys down for `ms` (e.g. ['w', 'a']). */
   hold(keys: string[], ms: number): Promise<void>;
   cinema: {

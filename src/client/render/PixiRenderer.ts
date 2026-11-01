@@ -1425,7 +1425,8 @@ export class PixiRenderer implements IRenderer {
     // put the ship, before any client-side prediction replay.
     // `showServerGhost` defaults to true when undefined so older mirrors and
     // the LocalGameClient diagnostic surface keep working.
-    const ghostEnabled = mirror.showServerGhost !== false;
+    // `?cleanworld=1` (showcase capture) never shows it — it is a debug overlay.
+    const ghostEnabled = !this._cleanWorld && mirror.showServerGhost !== false;
     if (ghostEnabled && mirror.serverGhostPos) {
       if (!this.serverGhost) {
         this.serverGhost = buildGhostGfx();

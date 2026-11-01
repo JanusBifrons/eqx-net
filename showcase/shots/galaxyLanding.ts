@@ -15,7 +15,8 @@ export const galaxyLanding: Shot = {
   durationMs: 12_000,
   async run(ctx) {
     const { page } = ctx;
-    await page.mouse.move(960, 540);
+    const c = ctx.px(960, 540);
+    await page.mouse.move(c.x, c.y);
     // Slow push-in toward the core, then drift across the map, hovering hexes.
     for (let i = 0; i < 3; i++) {
       await page.mouse.wheel(0, -120);
@@ -23,7 +24,8 @@ export const galaxyLanding: Shot = {
     }
     await ctx.sleep(800);
     await page.mouse.down();
-    await page.mouse.move(860, 560, { steps: 60 });
+    const drag = ctx.px(860, 560);
+    await page.mouse.move(drag.x, drag.y, { steps: 60 });
     await page.mouse.up();
     await ctx.sleep(600);
     const hovers: Array<[number, number]> = [
@@ -33,7 +35,8 @@ export const galaxyLanding: Shot = {
       [940, 640],
     ];
     for (const [x, y] of hovers) {
-      await page.mouse.move(x, y, { steps: 25 });
+      const h = ctx.px(x, y);
+      await page.mouse.move(h.x, h.y, { steps: 25 });
       await ctx.sleep(700);
     }
   },

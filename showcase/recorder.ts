@@ -5,6 +5,7 @@
  * timestamps, so dropped frames hold rather than speed the clip up.
  */
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { chromium, devices, type Browser, type BrowserContext, type Page } from '@playwright/test';
@@ -45,6 +46,13 @@ export class Recorder {
     private readonly log: (m: string) => void,
     private readonly restartServer: () => Promise<void>,
     private readonly headed = false,
+    /**
+     * Browser viewport the game renders at. Default 1280×720: measured on the
+     * laptop GPU (Iris Xe), the game holds 60 fps at 720p but only ~47 at 1080p
+     * BEFORE any capture, and CDP screencast at 1080p dragged it to ~20. The
+     * compositor upscales to the 1080p output. See `showcase/bench-capture.ts`.
+     */
+    private readonly capture: { width: number; height: number } = { width: 1280, height: 720 },
   ) {}
 
   async open(): Promise<void> {
@@ -96,7 +104,7 @@ export class Recorder {
 
     const phone = shot.viewport === 'phone';
     const context = await this.browser.newContext(
-      phone ? { ...devices['Pixel 5'] } : { viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 },
+      phone ? { ...devices['Pixel 5'] } : { viewport: this.capture, deviceScaleFactor: 1 },
     );
     try {
       return await this.recordIn(context, shot, clipDir, phone);
@@ -117,7 +125,7 @@ export class Recorder {
     const page = await context.newPage();
     page.on('pageerror', (e) => this.log(`  [pageerror] ${e.message}`));
 
-    const ctx = this.makeContext(page, shot.hud ?? 'minimal');
+    const ctx = this.makeContext(page, shot.hud ?? 'minimal', page.viewportSize() ?? this.capture);
     await ctx.enter(shot.target);
     await assertProductionPath(page, shot.target);
     if (shot.prepare) await shot.prepare(ctx);
@@ -132,13 +140,15 @@ export class Recorder {
       const t = (f.metadata.timestamp ?? Date.now() / 1000) * 1000;
       const file = `frames/${String(n++).padStart(6, '0')}.jpg`;
       index.frames.push({ file, t });
-      writing = writing.then(() => writeFileSync(path.join(clipDir, file), Buffer.from(f.data, 'base64')));
+      // Async write: a sync write here blocks the Node event loop that also
+      // carries the Playwright protocol, which throttles the frame stream.
+      writing = writing.then(() => writeFile(path.join(clipDir, file), Buffer.from(f.data, 'base64')));
       void cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {});
     });
-    const size = phone ? { maxWidth: 1080, maxHeight: 2340 } : { maxWidth: 1920, maxHeight: 1080 };
-    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 92, everyNthFrame: 1, ...size });
+    const size = phone ? { maxWidth: 1080, maxHeight: 2340 } : { maxWidth: this.capture.width, maxHeight: this.capture.height };
+    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 80, everyNthFrame: 1, ...size });
     index.startT = Date.now();
-    if (shot.camera) await ctx.cinema.play(shot.camera);
+    if (shot.camera) await ctx.cinema.play(scaleCues(shot.camera, phone ? 1 : ctx.viewport.width / 1920));
     const actions = shot.run ? shot.run(ctx).catch((e: Error) => this.log(`  [action error] ${e.message}`)) : null;
     await sleep(shot.durationMs);
     await cdp.send('Page.stopScreencast');
@@ -155,7 +165,7 @@ export class Recorder {
     return { clipDir, index, ...frameStats(index, shot.durationMs) };
   }
 
-  private makeContext(page: Page, hud: HudMode): ShotContext {
+  private makeContext(page: Page, hud: HudMode, viewport: { width: number; height: number }): ShotContext {
     const testId = `showcase-${randomUUID()}`;
     const baseUrl = this.baseUrl;
     const ctx: ShotContext = {
@@ -163,6 +173,8 @@ export class Recorder {
       baseUrl,
       serverUrl: this.serverUrl,
       testId,
+      viewport,
+      px: (x, y) => ({ x: (x * viewport.width) / 1920, y: (y * viewport.height) / 1080 }),
       log: this.log,
       sleep,
       hold: async (keys, ms) => {
@@ -195,6 +207,36 @@ interface CinemaWindow {
     stop(): void;
     setHud(m: string): void;
   };
+}
+
+/**
+ * Shot zooms are authored against a 1920-wide frame. Scale them by the capture
+ * width so a take frames the same world area at any capture resolution.
+ */
+export function scaleCues(cues: readonly CameraCue[], k: number): CameraCue[] {
+  if (k === 1) return [...cues];
+  return cues.map((c) => {
+    const s = c.shot;
+    switch (s.kind) {
+      case 'hold':
+      case 'track':
+      case 'orbit':
+        return { ...c, shot: { ...s, zoom: s.zoom * k } };
+      case 'path':
+        return { ...c, shot: { ...s, keys: s.keys.map((key) => ({ ...key, zoom: key.zoom * k })) } };
+      case 'frame':
+        return {
+          ...c,
+          shot: {
+            ...s,
+            ...(s.minZoom !== undefined ? { minZoom: s.minZoom * k } : {}),
+            ...(s.maxZoom !== undefined ? { maxZoom: s.maxZoom * k } : {}),
+          },
+        };
+      default:
+        return c;
+    }
+  });
 }
 
 export function targetUrl(baseUrl: string, target: ShotTarget, testId: string, hud: HudMode): string {

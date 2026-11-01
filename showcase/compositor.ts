@@ -61,7 +61,7 @@ export async function encodeClip(
   const total = writeConcatList(clipDir, index, durationMs, opts.cuts);
   const fadeOut = Math.max(0, total - FADE);
   const base =
-    `[0:v]fps=${opts.fps},scale=${W}:${H}:force_original_aspect_ratio=decrease,` +
+    `[0:v]fps=${opts.fps},scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=lanczos,` +
     `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=${BG},setsar=1,format=yuv420p,` +
     `fade=t=in:st=0:d=${FADE},fade=t=out:st=${fadeOut.toFixed(3)}:d=${FADE}`;
   const args = ['-f', 'concat', '-safe', '0', '-i', path.join(clipDir, 'frames.ffconcat')];

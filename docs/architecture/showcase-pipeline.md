@@ -10,7 +10,8 @@ pnpm showcase --ref origin/main     # film a snapshot of main (worktree at that 
 pnpm showcase --shot flight,scrap   # re-take specific shots; the rest are reused
 pnpm showcase --catalogue           # every shot, not just the reel
 pnpm showcase --compose-only        # rebuild the reel from existing clips
-pnpm showcase --fps 60              # output frame rate (default 30)
+pnpm showcase --capture 900p          # render size (default 720p; see "Frame rate")
+pnpm exec tsx showcase/bench-capture.ts out/  # can this machine film smoothly right now?
 ```
 
 Output (gitignored) lands in `showcase-out/`:
@@ -49,14 +50,14 @@ Output (gitignored) lands in `showcase-out/`:
 5. **Encode.**
    - **Frame timing:** each frame holds until the next one's capture time, so
      a dropped frame freezes for a beat instead of speeding the clip up. Output
-     is constant 30 or 60 fps H.264.
+     is constant 60 fps H.264 (`--fps 30` available).
    - **Cuts:** `cuts` windows (e.g. the 30 s warp spool) are removed by
      dropping their frames.
    - **Phone shots** are pillarboxed into the 16:9 frame.
    - **Captions:** a lower-third, rendered from HTML, fades in and out.
-6. **QA.** A clip is flagged for a re-take, never silently used, if:
-   - it delivered < 20 fps;
-   - it froze for > 1.5 s;
+6. **QA.** Each shot gets up to 3 takes and keeps the smoothest (see "Frame
+   rate" below). A clip is flagged, never silently used, if its best take:
+   - delivered < 55 fps or had a frame gap > 100 ms (at 60 fps output);
    - it has ≥ 1 s of blank frames (judged by the brightest pixel, since space
      is dark);
    - it captured < 30 frames.
@@ -67,6 +68,36 @@ Output (gitignored) lands in `showcase-out/`:
      copy.
    - **SHA check:** composing refuses to mix clips from different snapshot
      SHAs.
+
+## Frame rate — why 720p, and the smoothness gate
+
+Capture is real time: the game runs while frames are grabbed, so the machine
+must render AND capture at 60 fps. `showcase/bench-capture.ts` measures it.
+On the dev laptop (Iris Xe):
+
+| Mode | Game fps | Captured fps |
+|---|---|---|
+| 1080p, no capture | 47 | — |
+| 1080p, CDP screencast | 20 | 19 |
+| 720p, no capture | 59 | — |
+| 720p, CDP screencast (JPEG q80) | 53 | 52 |
+| 720p, canvas MediaRecorder (VP8) | 53 | 49 |
+
+The GPU cannot render the game at 1080p60 even before capture, and 1080p
+screencasting halves it. **Takes render at 1280×720** (`--capture`), are
+upscaled to 1080p with Lanczos, and output at **60 fps**. Shot zooms are
+authored against a 1920-wide frame and scaled to the capture width
+(`scaleCues`), so framing is identical at any capture size; mouse positions go
+through `ctx.px()` / `toScreen(..., ctx.viewport)`.
+
+**Smoothness gate** (`showcase/smoothness.ts`): a take must deliver ≥ 55 fps
+with no frame gap over 100 ms. Each shot gets **up to 3 takes**; the smoothest
+is kept and only it is encoded. A clip that never passes is flagged in the
+manifest. (The first gate, ≥ 20 fps, let visibly choppy clips through.)
+
+**Debug overlays never reach footage**: the recorder always adds
+`cleanworld=1` (no spatial grid, turret aim guides, NPC callsigns or
+server-position ghost) and `noselfdmg=1` on invulnerable takes.
 
 ## Adding a shot (the repeatable part)
 
@@ -119,9 +150,9 @@ window.
 
 ## Known limits
 
-- **Real-time capture is host-load sensitive.** The game and the encoder share
-  the machine, so record on a quiet box. QA flags clips that dropped too many
-  frames; re-take them with `--shot`.
+- **Real-time capture is host-load sensitive.** Memory pressure and other
+  sessions cause hitches; the smoothness gate and best-of-3 takes absorb some
+  of it, but record on a quiet machine. Run `bench-capture.ts` first if unsure.
 - **Galaxy shots run against the living world,** whose squads move
   non-deterministically. Use `startWhen` to wait for the action rather than a
   fixed delay.

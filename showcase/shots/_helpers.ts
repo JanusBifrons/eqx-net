@@ -30,9 +30,16 @@ export async function selectAt(ctx: ShotContext, x: number, y: number): Promise<
   );
 }
 
-/** World (game, Y-up) → screen px, for a camera held at (cx, cy) with `zoom` on a 1920×1080 frame. */
-export function toScreen(x: number, y: number, cx: number, cy: number, zoom: number): { x: number; y: number } {
-  return { x: 960 + (x - cx) * zoom, y: 540 - (y - cy) * zoom };
+/** World (game, Y-up) → screen px for a camera held at (cx, cy) with `zoom`, on the take's viewport. */
+export function toScreen(
+  x: number,
+  y: number,
+  cx: number,
+  cy: number,
+  zoom: number,
+  viewport: { width: number; height: number },
+): { x: number; y: number } {
+  return { x: viewport.width / 2 + (x - cx) * zoom, y: viewport.height / 2 - (y - cy) * zoom };
 }
 
 /**
