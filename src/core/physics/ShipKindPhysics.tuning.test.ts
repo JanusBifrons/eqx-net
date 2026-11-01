@@ -75,8 +75,8 @@ describe('ship-kind tuning lock (2026-05-18 slow-down pass)', () => {
     // to the ship-kind record + two latent wing hardpoints on the fighter. A
     // record-SHAPE change (not a physics edit), so the cruise/hull literals hold.
     // 14 → 15 on Living World P1b: appended robot-circle + robot-hexagon (pure
-    // append — existing kinds unchanged).
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(15);
+    // append — existing kinds unchanged). 15 → 16 on P2: appended trader-hauler.
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(16);
   });
 
   for (const kindKey of Object.keys(EXPECTED) as (keyof typeof EXPECTED)[]) {

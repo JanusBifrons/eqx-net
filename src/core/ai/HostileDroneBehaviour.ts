@@ -321,13 +321,15 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   /** Render-side query: is this drone currently treating `playerId` as
    *  a hostile target? Pure, side-effect-free — safe to poll every frame. */
-  isHostileToPlayer(playerId: string): boolean {
+  isHostileToPlayer(playerId: string, truce = false): boolean {
     // Allegiances P0 (hostile-review A6): an on-sight-hostile allegiance (robots)
     // is hostile to every player by STANCE, not only once it has been hit — so
     // the snapshot `drones[].hostile` bit, liveCounts, and player turret aim all
     // see a robot as hostile from first sight. Derived from the kind, so the
     // client's own ledger (same kind, same table) agrees (invariant #15).
-    return this.onSightPlayers || this.hostileTo.has(playerId);
+    // P2 — a player with a TRUCE (robot rep ≥ ROBOT_TRUCE_AT) is only hostile
+    // via the retaliation ledger, never on sight.
+    return (this.onSightPlayers && !truce) || this.hostileTo.has(playerId);
   }
 
   /**
@@ -412,7 +414,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       c.maxHealth = p.maxHealth;
       c.priority = 0;
       let h = this.hostileTo.has(p.id) || (p.ownerId !== undefined && this.hostileTo.has(p.ownerId));
-      if (!h && this.onSightPlayers) {
+      if (!h && this.onSightPlayers && p.truce !== true) {
         const dx = p.x - self.x;
         const dy = p.y - self.y;
         h = dx * dx + dy * dy <= engageR2;

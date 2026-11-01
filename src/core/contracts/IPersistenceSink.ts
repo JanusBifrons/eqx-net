@@ -67,6 +67,11 @@ export type PersistOp =
   | { type: 'DIRECTOR_STATE_PUT'; payloadJson: string; ts: number }
   // Living World P1b — a non-drone allegiance director's state (robots).
   | { type: 'ALLEGIANCE_DIRECTOR_STATE_PUT'; allegiance: string; payloadJson: string; ts: number }
+  // Living World P2 — economy (absolute upserts; memory is the authority).
+  | { type: 'ECON_PLAYER_PUT'; playerId: string; payloadJson: string; ts: number }
+  | { type: 'TRADE_DEAL_PUT'; dealId: string; ownerId: string; payloadJson: string; ts: number }
+  | { type: 'TRADE_DEAL_DELETE'; dealId: string; ts: number }
+  | { type: 'ECON_STATE_PUT'; key: string; payloadJson: string; ts: number }
   // PR 3a — account-bound player identity. One canonical playerId per account
   // (`account_players`, UPSERT on user_id) + historical per-browser ids folded
   // into it (`player_aliases`, keyed on the alias id). Boot hydration reads via

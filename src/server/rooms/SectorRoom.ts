@@ -5955,14 +5955,18 @@ export class SectorRoom extends Room<SectorState> {
   };
 
   private dropKillLoot(rec: SwarmEntityRecord): void {
-    const hold = rollLoot(rec.shipKind, Math.random);
     const b = slotBase(rec.slot);
-    this.loot.drop(
-      hold,
-      this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!,
-      this.sabF32[b + SLOT_VX_OFF]! * 0.3, this.sabF32[b + SLOT_VY_OFF]! * 0.3,
-      { cause: 'kill' },
-    );
+    const x = this.sabF32[b + SLOT_X_OFF]!;
+    const y = this.sabF32[b + SLOT_Y_OFF]!;
+    const vx = this.sabF32[b + SLOT_VX_OFF]! * 0.3;
+    const vy = this.sabF32[b + SLOT_VY_OFF]! * 0.3;
+    // P2 — an NPC that CARRIES a hold (a trade hauler) spills it where it died:
+    // anything with a hold spills on death (the deal cargo is up for grabs).
+    if (getHoldStore().get(rec.id)?.holderType === 'hauler') {
+      this.loot.spillShipHold(rec.id, x, y, vx, vy, 'hauler-raided');
+    }
+    const hold = rollLoot(rec.shipKind, Math.random);
+    this.loot.drop(hold, x, y, vx, vy, { cause: 'kill' });
   }
 
   /**

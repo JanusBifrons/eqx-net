@@ -1,0 +1,650 @@
+/**
+ * TradeDirector — trade deals carried out by physical haulers (plan
+ * peppy-jumping-pinwheel P2). Process-global, like the LivingWorldDirector; an
+ * unref'd ~1 s control loop (discrete low-frequency logic, never the 60 Hz tick).
+ *
+ * A VISIT (one run of a deal):
+ *   scheduled ──plan──▶ inbound: a `trader-hauler` spawns at the sector edge and
+ *     flies to the base. (A BUY's goods ride in the hauler's hold from spawn.)
+ *   inbound ──arrives──▶ docked: the player's side moves into ESCROW in one
+ *     atomic group with the deal state — a SELL's goods into the hauler's hold,
+ *     a BUY's or GIFT's credits/goods into an escrow hold.
+ *   docked ──dockMs──▶ departing (spooling out) ──departMs──▶ SETTLED: value
+ *     changes hands only now, in one atomic group (proceeds minted / goods
+ *     released into the network / escrow destroyed), then the hauler leaves.
+ *   Hauler killed at any point ⇒ RAIDED: the room spills the hauler's hold where
+ *     it died (anything with a hold spills); the player's escrow is refunded —
+ *     unless the deal owner damaged their own hauler (forfeit + rep hit).
+ *
+ * Every value move goes through `TradeRoom.tradeTransfer` (one `HoldStore`
+ * group) with the deal's `TRADE_DEAL_PUT` riding the same group, so a crash can
+ * never leave escrow and deal state disagreeing. `reconcile()` on boot unwinds
+ * any run that was in flight (haulers are not persisted).
+ */
+import { randomUUID } from 'node:crypto';
+import type { Bus } from '../../core/events/Bus.js';
+import type { Hold, GoodId } from '../../shared-types/goods.js';
+import { GOOD_IDS } from '../../shared-types/goods.js';
+import {
+  ECON_ALLEGIANCES,
+  MAX_DEALS_PER_NETWORK,
+  MAX_OFFER_QTY,
+  REP_ATTACK_ROBOT,
+  REP_DEAL_COMPLETED,
+  REP_PARTIAL_FILL,
+  REP_PIRACY_HIT,
+  REP_SELF_RAID,
+  type EconAllegiance,
+  type TradeNotice,
+  type TradeOffer,
+} from '../../shared-types/economy.js';
+import { cloneHold, emptyHold, isHoldEmpty } from '../../core/cargo/hold.js';
+import { applyFill, driftMarket, quoteBuy, quoteSell } from '../../core/economy/market.js';
+import { giftRepGain, robotTruce, tradersRefuse, waveIntervalFactor } from '../../core/economy/reputation.js';
+import {
+  afterVisit,
+  buyCost,
+  planVisit,
+  sellProceeds,
+  visitValue,
+  type TradeDeal,
+  type TradeRun,
+} from '../../core/economy/deals.js';
+import type { ShipKindId } from '../../shared-types/shipKinds.js';
+import type { BotCarry } from '../livingworld/botTypes.js';
+import { sectorEdgePose, type Rng } from '../livingworld/population.js';
+import { HAULER_ID_PREFIX } from '../livingworld/directorBotIds.js';
+import { serverLogEvent } from '../debug/ServerEventLog.js';
+import { guarded } from '../rooms/guardedLoop.js';
+import type { HoldStore } from '../cargo/HoldStore.js';
+import type { TradeNetworkSnapshot, TradeTransferResult, TradeTransferSpec } from '../cargo/StorageService.js';
+import type { EconomyStore } from './EconomyStore.js';
+import type { AcceptOfferMsg, SendGiftMsg, TradeSink, TradeVerdict } from './tradeSink.js';
+
+/** The room surface the trade director drives (SectorRoom implements it). */
+export interface TradeRoom {
+  eventBus(): Bus;
+  hasFreeSlot(): boolean;
+  spawnLivingWorldBot(spec: { botId: string; kind: ShipKindId; x: number; y: number }): boolean;
+  despawnLivingWorldBot(botId: string): BotCarry | null;
+  getBotPose(botId: string): { x: number; y: number; angle: number } | null;
+  setBotMoveTarget(botId: string, x: number, y: number): void;
+  tradeSnapshot(ownerId: string, networkUid: string): TradeNetworkSnapshot | null;
+  tradeTransfer(ownerId: string, networkUid: string, spec: TradeTransferSpec): TradeTransferResult | null;
+  tradeBaseUnderAttack(ownerId: string): boolean;
+  /** Drop a hold as a loot pod at (x, y) (overflow / orphaned escrow). */
+  tradeDropAt(hold: Hold, x: number, y: number): void;
+  /** Send a trade notice to `playerId` if they are connected to this room. */
+  tradeNotify(playerId: string, notice: TradeNotice): void;
+}
+
+export interface TradeDirectorOptions {
+  controlIntervalMs: number;
+  /** Docked (escrow) dwell before the hauler starts spooling out. */
+  dockMs: number;
+  /** Departure spool: settles when it completes. */
+  departMs: number;
+  /** An inbound hauler that hasn't docked by now aborts (visit skipped). */
+  inboundTimeoutMs: number;
+  /** Offers board rotation. */
+  offerTtlMs: number;
+  /** Market drift cadence. */
+  marketDriftMs: number;
+  /** A hauler counts as docked within this distance of its dock point. */
+  dockRadius: number;
+  /** Dock point distance from the network's anchor storage. */
+  dockOffset: number;
+  /** One robot-attack rep hit per player per this window. */
+  robotHitThrottleMs: number;
+}
+
+export const DEFAULT_TRADE_OPTIONS: TradeDirectorOptions = {
+  controlIntervalMs: 1000,
+  dockMs: 20_000,
+  departMs: 8_000,
+  inboundTimeoutMs: 180_000,
+  offerTtlMs: 10 * 60_000,
+  marketDriftMs: 5 * 60_000,
+  dockRadius: 260,
+  dockOffset: 220,
+  robotHitThrottleMs: 10_000,
+};
+
+interface BoardOffer {
+  offerId: string;
+  kind: 'sell' | 'buy';
+  good: GoodId;
+  maxQty: number;
+  expiresAtMs: number;
+}
+
+const escrowUid = (runId: string): string => `escrow-${runId}`;
+
+export class TradeDirector implements TradeSink {
+  private readonly opts: TradeDirectorOptions;
+  private readonly rng: Rng;
+  private readonly now: () => number;
+  private offers: BoardOffer[] = [];
+  private lastDriftAtMs: number;
+  private readonly robotHitAt = new Map<string, number>();
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private readonly subs: Array<{ bus: Bus; fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void }> = [];
+
+  constructor(
+    private readonly rooms: Map<string, TradeRoom>,
+    private readonly store: EconomyStore,
+    private readonly holds: HoldStore,
+    options: Partial<TradeDirectorOptions> & { rng?: Rng; nowMs?: () => number } = {},
+  ) {
+    this.opts = { ...DEFAULT_TRADE_OPTIONS, ...options };
+    this.rng = options.rng ?? Math.random;
+    this.now = options.nowMs ?? Date.now;
+    this.lastDriftAtMs = this.now();
+  }
+
+  // ── Lifecycle ────────────────────────────────────────────────────────────
+
+  start(): void {
+    if (this.timer) return;
+    this.reconcile();
+    this.rotateOffers();
+    for (const room of this.rooms.values()) {
+      const bus = room.eventBus();
+      const fn = (e: { type: 'ENTITY_DESTROYED'; entityId: string }): void => {
+        if (e.entityId.startsWith(HAULER_ID_PREFIX)) this.onHaulerDestroyed(e.entityId);
+      };
+      bus.on('ENTITY_DESTROYED', fn);
+      this.subs.push({ bus, fn });
+    }
+    const timer = setInterval(guarded('trade-tick', () => this.tick()), this.opts.controlIntervalMs);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    this.timer = timer;
+  }
+
+  stop(): void {
+    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+    for (const s of this.subs) s.bus.off('ENTITY_DESTROYED', s.fn);
+    this.subs.length = 0;
+  }
+
+  /**
+   * Boot: haulers are not persisted, so any run that was in flight is unwound —
+   * escrow back to the network (a SELL's goods ride in the hauler's hold, so
+   * they go back too; a BUY's trader goods are discarded) — and the visit is
+   * re-scheduled shortly. No value is created or lost.
+   */
+  reconcile(): void {
+    for (const deal of [...this.store.allDeals()]) {
+      const run = deal.run;
+      if (run === null) continue;
+      const room = this.rooms.get(deal.sectorKey);
+      const release: string[] = [escrowUid(run.runId)];
+      const destroy: string[] = [];
+      if (deal.kind === 'sell') release.push(run.haulerId);
+      else destroy.push(run.haulerId);
+      const next: TradeDeal = { ...deal, run: null, state: 'scheduled', nextVisitAtMs: this.now() + 30_000 };
+      const op = this.store.dealOp(next);
+      const res = room?.tradeTransfer(deal.ownerId, deal.networkUid, { release, destroy, extraOps: [op] }) ?? null;
+      if (res === null) {
+        // Base gone: keep the value as pods at the old dock rather than lose it.
+        for (const uid of release) this.dropHolder(room, uid, run.dockX, run.dockY);
+        for (const uid of destroy) this.holds.delete(uid);
+        this.store.saveDeal(next);
+      } else if (!isHoldEmpty(res.overflow)) {
+        room!.tradeDropAt(res.overflow, res.x, res.y);
+      }
+      serverLogEvent('trade_reconciled', { dealId: deal.dealId, phase: run.phase });
+    }
+  }
+
+  // ── Offers board ─────────────────────────────────────────────────────────
+
+  private rotateOffers(): void {
+    const now = this.now();
+    this.offers = this.offers.filter((o) => o.expiresAtMs > now && o.maxQty > 0);
+    // Keep one SELL and one BUY offer per good on the board.
+    for (const good of GOOD_IDS) {
+      for (const kind of ['sell', 'buy'] as const) {
+        if (this.offers.some((o) => o.good === good && o.kind === kind)) continue;
+        const cap = good === 'core' ? 20 : good === 'alloy' ? 120 : MAX_OFFER_QTY;
+        this.offers.push({
+          offerId: `of-${randomUUID().slice(0, 10)}`,
+          kind,
+          good,
+          maxQty: Math.max(5, Math.round(cap * (0.4 + this.rng() * 0.6))),
+          expiresAtMs: now + this.opts.offerTtlMs * (0.7 + this.rng() * 0.6),
+        });
+      }
+    }
+  }
+
+  /** The board as `playerId` sees it (prices at their trader reputation). */
+  offersFor(playerId: string): TradeOffer[] {
+    const rep = this.store.rep(playerId, 'traders');
+    return this.offers.map((o) => ({
+      offerId: o.offerId,
+      kind: o.kind,
+      good: o.good,
+      unitPrice: this.quote(o.kind, o.good, rep),
+      maxQty: o.maxQty,
+      expiresAtMs: o.expiresAtMs,
+    }));
+  }
+
+  private quote(kind: 'sell' | 'buy', good: GoodId, traderRep: number): number {
+    return kind === 'sell' ? quoteSell(this.store.market, good, traderRep) : quoteBuy(this.store.market, good, traderRep);
+  }
+
+  // ── Requests (TradeSink) ─────────────────────────────────────────────────
+
+  acceptOffer(playerId: string, sectorKey: string, msg: AcceptOfferMsg): TradeVerdict {
+    const offer = this.offers.find((o) => o.offerId === msg.offerId);
+    if (!offer || offer.expiresAtMs <= this.now()) return reject('That offer has expired.');
+    if (msg.qty > offer.maxQty) return reject(`That offer only covers ${offer.maxQty}.`);
+    const traderRep = this.store.rep(playerId, 'traders');
+    if (tradersRefuse(traderRep)) return reject('Traders refuse to deal with you.');
+    const room = this.rooms.get(sectorKey);
+    if (!room || room.tradeSnapshot(playerId, msg.networkUid) === null) return reject('No storage of yours here.');
+    if (this.store.activeDealsForNetwork(msg.networkUid) >= MAX_DEALS_PER_NETWORK) {
+      return reject(`A base can run at most ${MAX_DEALS_PER_NETWORK} deals.`);
+    }
+    const unitPrice = this.quote(offer.kind, offer.good, traderRep);
+    if (msg.qty * unitPrice > this.store.volumeLeft(playerId)) return reject('Hourly trade limit reached.');
+    const recurring = msg.recurrenceMin !== null;
+    const deal: TradeDeal = {
+      dealId: `deal-${randomUUID().slice(0, 12)}`,
+      ownerId: playerId,
+      kind: offer.kind,
+      allegiance: 'traders',
+      good: offer.good,
+      qty: msg.qty,
+      credits: 0,
+      sectorKey,
+      networkUid: msg.networkUid,
+      unitPrice,
+      priceBandPct: recurring ? msg.priceBandPct : 0,
+      recurrenceMin: msg.recurrenceMin,
+      visitsLeft: recurring ? msg.visits : 1,
+      state: 'scheduled',
+      nextVisitAtMs: this.now(),
+      createdAtMs: this.now(),
+      attempts: 0,
+      run: null,
+    };
+    if (!recurring) offer.maxQty -= msg.qty;
+    this.store.saveDeal(deal);
+    serverLogEvent('trade_deal_accepted', { dealId: deal.dealId, playerId, kind: deal.kind, good: deal.good, qty: deal.qty });
+    return { ok: true, dealId: deal.dealId, message: `Deal agreed: a hauler is on its way.` };
+  }
+
+  cancelDeal(playerId: string, dealId: string): TradeVerdict {
+    const deal = this.store.getDeal(dealId);
+    if (!deal || deal.ownerId !== playerId) return reject('No such deal.');
+    if (deal.state === 'scheduled') {
+      this.store.saveDeal({ ...deal, state: 'cancelled', nextVisitAtMs: null });
+      this.history(deal, 'cancelled', 0, 0, 'Cancelled');
+      return { ok: true, dealId, message: 'Deal cancelled.' };
+    }
+    if (deal.run !== null) {
+      // Mid-visit: let this visit finish, then stop.
+      this.store.saveDeal({ ...deal, recurrenceMin: null, visitsLeft: 1 });
+      return { ok: true, dealId, message: 'Deal will end after the current visit.' };
+    }
+    return reject('That deal has already ended.');
+  }
+
+  sendGift(playerId: string, sectorKey: string, msg: SendGiftMsg): TradeVerdict {
+    const room = this.rooms.get(sectorKey);
+    if (!room || room.tradeSnapshot(playerId, msg.networkUid) === null) return reject('No storage of yours here.');
+    if (this.store.activeDealsForNetwork(msg.networkUid) >= MAX_DEALS_PER_NETWORK) {
+      return reject(`A base can run at most ${MAX_DEALS_PER_NETWORK} deals.`);
+    }
+    const deal: TradeDeal = {
+      dealId: `deal-${randomUUID().slice(0, 12)}`,
+      ownerId: playerId,
+      kind: 'gift',
+      allegiance: msg.allegiance,
+      good: msg.good,
+      qty: msg.good !== null ? msg.qty : 0,
+      credits: msg.credits,
+      sectorKey,
+      networkUid: msg.networkUid,
+      unitPrice: 0,
+      priceBandPct: 0,
+      recurrenceMin: null,
+      visitsLeft: 1,
+      state: 'scheduled',
+      nextVisitAtMs: this.now(),
+      createdAtMs: this.now(),
+      attempts: 0,
+      run: null,
+    };
+    this.store.saveDeal(deal);
+    return { ok: true, dealId: deal.dealId, message: 'Gift arranged: a hauler will collect it.' };
+  }
+
+  onHaulerDamaged(haulerId: string, attackerPlayerId: string): void {
+    for (const deal of this.store.allDeals()) {
+      const run = deal.run;
+      if (run === null || run.haulerId !== haulerId) continue;
+      if (!run.attackers.includes(attackerPlayerId)) {
+        // Memory only — the attacker list is consulted when the run ends, and a
+        // restart unwinds the run anyway.
+        run.attackers.push(attackerPlayerId);
+      }
+      return;
+    }
+  }
+
+  onRobotDamaged(attackerPlayerId: string): void {
+    const now = this.now();
+    const last = this.robotHitAt.get(attackerPlayerId) ?? -Infinity;
+    if (now - last < this.opts.robotHitThrottleMs) return;
+    this.robotHitAt.set(attackerPlayerId, now);
+    this.store.addRep(attackerPlayerId, 'robots', REP_ATTACK_ROBOT);
+  }
+
+  robotTruce(playerId: string): boolean {
+    return robotTruce(this.store.rep(playerId, 'robots'));
+  }
+
+  waveIntervalFactor(playerId: string): number {
+    return waveIntervalFactor(this.store.rep(playerId, 'drones'));
+  }
+
+  // ── Control loop ─────────────────────────────────────────────────────────
+
+  /** One control step (public for deterministic tests). */
+  tick(): void {
+    const now = this.now();
+    if (now - this.lastDriftAtMs >= this.opts.marketDriftMs) {
+      driftMarket(this.store.market, now, this.rng);
+      this.store.saveMarket();
+      this.lastDriftAtMs = now;
+    }
+    this.rotateOffers();
+    for (const deal of [...this.store.allDeals()]) {
+      if (deal.state === 'scheduled' && deal.nextVisitAtMs !== null && deal.nextVisitAtMs <= now) {
+        this.startVisit(deal);
+      } else if (deal.run !== null) {
+        this.advanceRun(deal, deal.run, now);
+      }
+    }
+  }
+
+  private startVisit(deal: TradeDeal): void {
+    const room = this.rooms.get(deal.sectorKey);
+    const snap = room?.tradeSnapshot(deal.ownerId, deal.networkUid) ?? null;
+    const traderRep = this.store.rep(deal.ownerId, 'traders');
+    const quoteNow = deal.kind === 'gift' || !deal.good ? 0 : this.quote(deal.kind, deal.good, traderRep);
+    const plan = planVisit(
+      deal,
+      {
+        exists: snap !== null,
+        underAttack: snap !== null && room!.tradeBaseUnderAttack(deal.ownerId),
+        goods: snap?.goods ?? {},
+        credits: snap?.credits ?? 0,
+        freeCapacity: snap?.freeCapacity ?? 0,
+      },
+      quoteNow,
+      traderRep,
+    );
+    if (!plan.go) {
+      this.skipVisit(deal, plan.reason === 'refused' ? 'Traders refused the visit' : `Visit skipped: ${plan.reason.replace(/-/g, ' ')}`);
+      return;
+    }
+    if (deal.kind !== 'gift' && visitValue(deal, plan.qty, 0, plan.unitPrice) > this.store.volumeLeft(deal.ownerId)) {
+      this.skipVisit(deal, 'Visit skipped: hourly trade limit');
+      return;
+    }
+    if (!room!.hasFreeSlot()) {
+      this.skipVisit(deal, 'Visit skipped: sector traffic is full');
+      return;
+    }
+    const runId = randomUUID().slice(0, 12);
+    const haulerId = `${HAULER_ID_PREFIX}${runId}`;
+    const edge = sectorEdgePose(this.rng);
+    if (!room!.spawnLivingWorldBot({ botId: haulerId, kind: 'trader-hauler', x: edge.x, y: edge.y })) {
+      this.skipVisit(deal, 'Visit skipped: the hauler could not enter the sector');
+      return;
+    }
+    // Dock beside the storage, on the side the hauler arrives from.
+    const ax = edge.x - snap!.x;
+    const ay = edge.y - snap!.y;
+    const len = Math.max(1, Math.hypot(ax, ay));
+    const run: TradeRun = {
+      runId,
+      haulerId,
+      phase: 'inbound',
+      qty: plan.qty,
+      credits: plan.credits,
+      unitPrice: plan.unitPrice,
+      partial: plan.partial,
+      phaseStartedAtMs: this.now(),
+      attackers: [],
+      dockX: snap!.x + (ax / len) * this.opts.dockOffset,
+      dockY: snap!.y + (ay / len) * this.opts.dockOffset,
+    };
+    const next: TradeDeal = { ...deal, state: 'inbound', run };
+    const op = this.store.dealOp(next);
+    if (deal.kind === 'buy' && deal.good) {
+      // The trader's goods ride in the hauler's hold from spawn.
+      const hold = emptyHold();
+      hold.goods[deal.good] = plan.qty;
+      this.holds.commit(
+        [{ holderUid: haulerId, holderType: 'hauler', ownerId: null, sectorKey: deal.sectorKey, x: null, y: null, hold, expiresAt: null }],
+        [],
+        true,
+        [op],
+      );
+    } else {
+      this.store.saveDeal(next);
+    }
+    room!.setBotMoveTarget(haulerId, run.dockX, run.dockY);
+    this.notify(next, 'inbound', `A trade hauler is inbound to your base in ${deal.sectorKey}.`);
+    serverLogEvent('trade_run_start', { dealId: deal.dealId, haulerId, sectorKey: deal.sectorKey });
+  }
+
+  private advanceRun(deal: TradeDeal, run: TradeRun, now: number): void {
+    const room = this.rooms.get(deal.sectorKey);
+    if (!room) return;
+    const elapsed = now - run.phaseStartedAtMs;
+    if (run.phase === 'inbound') {
+      const pose = room.getBotPose(run.haulerId);
+      if (pose === null) return; // destroyed — the bus handler settles it
+      if (Math.hypot(pose.x - run.dockX, pose.y - run.dockY) <= this.opts.dockRadius) {
+        this.dock(deal, run, room);
+      } else if (elapsed >= this.opts.inboundTimeoutMs) {
+        this.abortRun(deal, run, room, 'Visit aborted: the hauler never reached the base');
+      } else {
+        room.setBotMoveTarget(run.haulerId, run.dockX, run.dockY);
+      }
+    } else if (run.phase === 'docked') {
+      room.setBotMoveTarget(run.haulerId, run.dockX, run.dockY);
+      if (elapsed >= this.opts.dockMs) {
+        this.store.saveDeal({ ...deal, state: 'departing', run: { ...run, phase: 'departing', phaseStartedAtMs: now } });
+      }
+    } else if (elapsed >= this.opts.departMs) {
+      this.settle(deal, run, room);
+    }
+  }
+
+  /** Docked: the player's side of the trade moves into escrow. */
+  private dock(deal: TradeDeal, run: TradeRun, room: TradeRoom): void {
+    const docked: TradeRun = { ...run, phase: 'docked', phaseStartedAtMs: this.now() };
+    const want = emptyHold();
+    let into = escrowUid(run.runId);
+    if (deal.kind === 'sell' && deal.good) {
+      want.goods[deal.good] = run.qty;
+      into = run.haulerId; // the goods physically ride in the hauler
+    } else if (deal.kind === 'buy') {
+      want.credits = buyCost(run.qty, run.unitPrice);
+    } else {
+      if (deal.good && run.qty > 0) want.goods[deal.good] = run.qty;
+      want.credits = run.credits;
+    }
+    const next: TradeDeal = { ...deal, state: 'docked', run: docked };
+    const res = room.tradeTransfer(deal.ownerId, deal.networkUid, { take: { want, intoUid: into }, extraOps: [this.store.dealOp(next)] });
+    if (res === null) {
+      this.abortRun(deal, run, room, 'Visit aborted: your storage is gone');
+      return;
+    }
+    // The base may hold less than at planning time — adjust to what moved.
+    if (deal.kind === 'sell' && deal.good) {
+      const got = res.taken.goods[deal.good] ?? 0;
+      if (got <= 0) { this.abortRun(next, docked, room, 'Visit aborted: nothing left to sell'); return; }
+      if (got < run.qty) this.store.saveDeal({ ...next, run: { ...docked, qty: got, partial: true } });
+    } else if (deal.kind === 'buy') {
+      if (res.taken.credits < want.credits) { this.abortRun(next, docked, room, 'Visit aborted: not enough credits banked'); return; }
+    } else {
+      const got = deal.good ? res.taken.goods[deal.good] ?? 0 : 0;
+      if (got <= 0 && res.taken.credits <= 0) { this.abortRun(next, docked, room, 'Visit aborted: nothing left to give'); return; }
+      this.store.saveDeal({ ...next, run: { ...docked, qty: got, credits: res.taken.credits, partial: got < run.qty || res.taken.credits < run.credits } });
+    }
+    this.notify(next, 'docked', 'The trade hauler has docked. Keep it safe until it leaves.');
+  }
+
+  /** Safe departure: value changes hands now, atomically. */
+  private settle(deal: TradeDeal, run: TradeRun, room: TradeRoom): void {
+    const outcome = afterVisit(deal, 'completed', this.now());
+    const next: TradeDeal = { ...deal, ...outcome, run: null };
+    const op = this.store.dealOp(next);
+    const escrow = escrowUid(run.runId);
+    let res: TradeTransferResult | null;
+    let credits = 0;
+    if (deal.kind === 'sell') {
+      credits = sellProceeds(run.qty, run.unitPrice);
+      res = room.tradeTransfer(deal.ownerId, deal.networkUid, { destroy: [run.haulerId], mintCredits: credits, extraOps: [op] });
+      if (res !== null && deal.good) applyFill(this.store.market, deal.good, run.qty, 'sell');
+    } else if (deal.kind === 'buy') {
+      credits = buyCost(run.qty, run.unitPrice);
+      res = room.tradeTransfer(deal.ownerId, deal.networkUid, { release: [run.haulerId], destroy: [escrow], extraOps: [op] });
+      if (res !== null && deal.good) applyFill(this.store.market, deal.good, run.qty, 'buy');
+    } else {
+      credits = run.credits;
+      res = room.tradeTransfer(deal.ownerId, deal.networkUid, { destroy: [escrow], extraOps: [op] });
+    }
+    if (res === null) {
+      // Base razed while docked: nothing is owed or paid — the escrow and the
+      // hauler's cargo stay in the world as pods at the dock.
+      this.dropHolder(room, escrow, run.dockX, run.dockY);
+      this.dropHolder(room, run.haulerId, run.dockX, run.dockY);
+      this.store.saveDeal(next);
+    } else if (!isHoldEmpty(res.overflow)) {
+      room.tradeDropAt(res.overflow, res.x, res.y);
+    }
+    room.despawnLivingWorldBot(run.haulerId);
+
+    if (deal.kind === 'gift') {
+      const value = visitValue(deal, run.qty, run.credits, deal.good ? quoteSell(this.store.market, deal.good, 0) : 0);
+      const gain = giftRepGain(value, this.store.recentGiftValue(deal.ownerId, deal.allegiance));
+      this.store.recordGift(deal.ownerId, deal.allegiance, value);
+      this.store.addRep(deal.ownerId, deal.allegiance, gain);
+      this.history(deal, 'settled', run.qty, run.credits, `Gift delivered to the ${deal.allegiance} (+${gain} standing)`);
+      this.notify(next, 'settled', `Your gift reached the ${deal.allegiance}: +${gain} standing.`);
+    } else {
+      this.store.recordVolume(deal.ownerId, Math.floor(run.qty * run.unitPrice));
+      this.store.addRep(deal.ownerId, 'traders', run.partial ? REP_PARTIAL_FILL : REP_DEAL_COMPLETED);
+      const verb = deal.kind === 'sell' ? 'Sold' : 'Bought';
+      const note = `${verb} ${run.qty} ${deal.good} for ${credits} cr${run.partial ? ' (partial)' : ''}`;
+      this.history(deal, run.partial ? 'partial' : 'settled', run.qty, credits, note);
+      this.notify(next, run.partial ? 'partial' : 'settled', note);
+    }
+    this.store.saveMarket();
+    serverLogEvent('trade_settled', { dealId: deal.dealId, kind: deal.kind, qty: run.qty, credits });
+  }
+
+  /** The hauler was destroyed. The room already spilled its hold. */
+  private onHaulerDestroyed(haulerId: string): void {
+    let deal: TradeDeal | undefined;
+    for (const d of this.store.allDeals()) if (d.run?.haulerId === haulerId) { deal = d; break; }
+    if (!deal || !deal.run) return;
+    const run = deal.run;
+    const room = this.rooms.get(deal.sectorKey);
+    const forfeit = run.attackers.includes(deal.ownerId);
+    const next: TradeDeal = { ...deal, ...afterVisit(deal, 'raided', this.now()), run: null };
+    const op = this.store.dealOp(next);
+    const escrow = escrowUid(run.runId);
+    const spec: TradeTransferSpec = forfeit
+      ? { destroy: [escrow], extraOps: [op] }
+      : { release: [escrow], extraOps: [op] };
+    const res = room?.tradeTransfer(deal.ownerId, deal.networkUid, spec) ?? null;
+    if (res === null) {
+      this.dropHolder(room, escrow, run.dockX, run.dockY);
+      this.store.saveDeal(next);
+    } else if (!isHoldEmpty(res.overflow)) {
+      room!.tradeDropAt(res.overflow, res.x, res.y);
+    }
+    for (const a of run.attackers) {
+      this.store.addRep(a, 'traders', a === deal.ownerId ? REP_SELF_RAID : REP_PIRACY_HIT);
+    }
+    const why = forfeit
+      ? 'You attacked your own hauler: escrow forfeited.'
+      : run.phase === 'inbound'
+        ? 'Your trade hauler was destroyed on the way in.'
+        : 'Your trade hauler was destroyed while docked. Escrow refunded.';
+    this.history(deal, 'raided', run.qty, 0, why);
+    this.notify(next, 'raided', why);
+    serverLogEvent('trade_raided', { dealId: deal.dealId, haulerId, phase: run.phase, forfeit, attackers: run.attackers.length });
+  }
+
+  private abortRun(deal: TradeDeal, run: TradeRun, room: TradeRoom, why: string): void {
+    const next: TradeDeal = { ...deal, ...afterVisit(deal, 'skipped', this.now()), run: null };
+    const op = this.store.dealOp(next);
+    // Unwind: the player's escrow (and a sell's goods in the hauler) go back;
+    // a buy's trader goods leave with the hauler.
+    const release = [escrowUid(run.runId)];
+    const destroy: string[] = [];
+    if (deal.kind === 'sell') release.push(run.haulerId);
+    else destroy.push(run.haulerId);
+    const res = room.tradeTransfer(deal.ownerId, deal.networkUid, { release, destroy, extraOps: [op] });
+    if (res === null) {
+      for (const uid of release) this.dropHolder(room, uid, run.dockX, run.dockY);
+      for (const uid of destroy) this.holds.delete(uid);
+      this.store.saveDeal(next);
+    } else if (!isHoldEmpty(res.overflow)) {
+      room.tradeDropAt(res.overflow, res.x, res.y);
+    }
+    room.despawnLivingWorldBot(run.haulerId);
+    this.history(deal, 'skipped', 0, 0, why);
+    this.notify(next, 'skipped', why);
+  }
+
+  private skipVisit(deal: TradeDeal, why: string): void {
+    const next: TradeDeal = { ...deal, ...afterVisit(deal, 'skipped', this.now()), run: null };
+    this.store.saveDeal(next);
+    if (why.includes('refused')) this.history(deal, 'refused', 0, 0, why);
+    else this.history(deal, 'skipped', 0, 0, why);
+    this.notify(next, 'skipped', why);
+  }
+
+  /** Drop a holder's whole hold as a pod and delete the holder. */
+  private dropHolder(room: TradeRoom | undefined, uid: string, x: number, y: number): void {
+    const rec = this.holds.get(uid);
+    if (rec === undefined) return;
+    if (room && !isHoldEmpty(rec.hold)) room.tradeDropAt(cloneHold(rec.hold), x, y);
+    this.holds.delete(uid);
+  }
+
+  private history(deal: TradeDeal, outcome: 'settled' | 'partial' | 'skipped' | 'raided' | 'refused' | 'cancelled', qty: number, credits: number, note: string): void {
+    this.store.pushHistory(deal.ownerId, { atMs: this.now(), dealId: deal.dealId, outcome, kind: deal.kind, good: deal.good, qty, credits, note });
+  }
+
+  private notify(deal: TradeDeal, event: TradeNotice['event'], message: string): void {
+    const notice: TradeNotice = {
+      type: 'trade_notice',
+      dealId: deal.dealId,
+      event,
+      message,
+      econVersion: this.store.player(deal.ownerId).econVersion,
+    };
+    for (const room of this.rooms.values()) room.tradeNotify(deal.ownerId, notice);
+  }
+}
+
+function reject(message: string): TradeVerdict {
+  return { ok: false, dealId: null, message };
+}
+
+/** Exposed for tests: every allegiance a gift may target. */
+export const GIFT_ALLEGIANCES: readonly EconAllegiance[] = ECON_ALLEGIANCES;

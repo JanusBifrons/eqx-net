@@ -121,6 +121,29 @@ CREATE TABLE IF NOT EXISTS allegiance_director_state (
   updated_at   INTEGER NOT NULL
 );
 
+-- Living World P2 — economy. Memory (EconomyStore) is the authority; every
+-- mutation is an absolute upsert. Per-player standing + trade history:
+CREATE TABLE IF NOT EXISTS player_economy (
+  player_id    TEXT PRIMARY KEY,
+  payload_json TEXT NOT NULL,
+  updated_at   INTEGER NOT NULL
+);
+-- One row per trade deal (its in-flight run rides inside the payload; escrow
+-- value lives in the holds table, written in the SAME atomic group):
+CREATE TABLE IF NOT EXISTS trade_deals (
+  deal_id      TEXT PRIMARY KEY,
+  owner_id     TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  updated_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_trade_deals_owner ON trade_deals(owner_id);
+-- Galaxy-wide economy singletons (the market):
+CREATE TABLE IF NOT EXISTS economy_state (
+  key          TEXT PRIMARY KEY,
+  payload_json TEXT NOT NULL,
+  updated_at   INTEGER NOT NULL
+);
+
 -- PR 3a — account-bound player identity. Each account has ONE canonical
 -- playerId (the in-game identity that owns ships / structures / hulls), so
 -- logging in on any device finds the same world. player_aliases records the

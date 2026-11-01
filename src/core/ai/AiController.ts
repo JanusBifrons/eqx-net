@@ -158,10 +158,10 @@ export class AiController {
    * asteroid drift behaviour, which has no notion of hostility). Pure /
    * side-effect-free; safe to call every frame.
    */
-  isEntityHostileToPlayer(entityId: string, playerId: string): boolean {
+  isEntityHostileToPlayer(entityId: string, playerId: string, truce = false): boolean {
     if (!playerId) return false;
     const reg = this.entities.get(entityId);
-    return reg?.behaviour.isHostileToPlayer?.(playerId) ?? false;
+    return reg?.behaviour.isHostileToPlayer?.(playerId, truce) ?? false;
   }
 
   /**
