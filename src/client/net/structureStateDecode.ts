@@ -51,13 +51,14 @@ export function decodeStructureState(v: StructureStateView, owners: StructureOwn
     out.storedPowerMax = undefined;
   }
   const wallTo = v.shieldWallTo ?? D.shieldWallTo;
-  if (wallTo >= 0) {
-    out.shieldWallTo = wallTo;
-    out.wallActive = (flags & STRUCTURE_FLAG_WALL_ACTIVE) !== 0;
-  } else {
-    out.shieldWallTo = undefined;
-    out.wallActive = undefined;
-  }
+  out.shieldWallTo = wallTo >= 0 ? wallTo : undefined;
+  // Every shield emitter: are all of its walls up? Walls themselves are derived
+  // from connections (structures/derivedWalls.ts).
+  out.wallActive = (flags & STRUCTURE_FLAG_WALL_ACTIVE) !== 0 ? true : undefined;
+  const gateOpen = v.gateOpen ?? D.gateOpen;
+  out.gateOpen = gateOpen !== 0 ? gateOpen : undefined;
+  const gateAccess = v.gateAccess ?? D.gateAccess;
+  out.gateAccess = gateAccess !== 0 ? gateAccess : undefined;
   const oi = v.ownerIdx ?? D.ownerIdx;
   out.owner = owners.ids[oi] ?? '';
   const name = owners.names[oi] ?? '';

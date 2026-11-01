@@ -39,6 +39,7 @@ import {
   CONNECTION_MAX_RANGE,
 } from '../../../core/structures/structureGridConstants.js';
 import type { Connection } from '../../../core/structures/Connection.js';
+import { visitDerivedWalls, type DerivedWallVisitor } from '../../structures/derivedWalls.js';
 import {
   structureMirrorToGridNode,
   ghostToGridNode,
@@ -209,6 +210,71 @@ export class ConnectorRenderer {
   private readonly _builtRangeVisual: RingVisual = { color: 0, alpha: 0, width: 0 };
 
   /** Redraw the web for this frame. `scale` is the viewport zoom. */
+  /** Per-frame inputs for the wall visitor (set before each walk). */
+  private _wallNow = 0;
+  private _wallScale = 1;
+  /** Draws each derived shield wall (fence walls + gate spans). Created once. */
+  private readonly _wallVisitor: DerivedWallVisitor = {
+    wall: (_key, ax, ay, bx, by, blocking, _thickness, open) =>
+      this.drawShieldWall(ax, -ay, bx, -by, blocking, open),
+  };
+
+  /**
+   * One shield wall in pixi space. R2.19: a distinct cyan-white energy BARRIER
+   * — a glow field + two parallel rails (the band slab) + a sweeping shimmer —
+   * so it never reads as a connector link. Down = the dim red flicker. An open
+   * gate end = a faint dashed guide across the gap.
+   */
+  private drawShieldWall(ax: number, ay: number, wx: number, wy: number, blocking: boolean, open: boolean): void {
+    const g = this.gfx;
+    const scale = this._wallScale;
+    if (open) {
+      const dx = wx - ax;
+      const dy = wy - ay;
+      const len = Math.hypot(dx, dy);
+      if (len < 0.001) return;
+      const step = 28;
+      const dash = 12;
+      for (let t = 0; t < len; t += step) {
+        const t1 = Math.min(len, t + dash);
+        g.moveTo(ax + (dx * t) / len, ay + (dy * t) / len);
+        g.lineTo(ax + (dx * t1) / len, ay + (dy * t1) / len);
+      }
+      g.stroke({ color: 0x7fe0a4, alpha: 0.45, width: Math.max(1 / scale, 2) });
+      return;
+    }
+    const sv = shieldWallVisualParams(this._shieldVisual, blocking, this._wallNow, scale);
+    // Glow field down the centreline (drawn first, behind the rails).
+    if (sv.glowAlpha > 0) {
+      g.moveTo(ax, ay); g.lineTo(wx, wy);
+      g.stroke({ color: sv.glowColor, alpha: sv.glowAlpha, width: sv.glowWidth });
+    }
+    if (sv.halfThickness > 0) {
+      // Band: two rails offset by ±halfThickness along the span NORMAL.
+      const dx = wx - ax;
+      const dy = wy - ay;
+      const len = Math.hypot(dx, dy);
+      if (len > 0.001) {
+        const nx = (-dy / len) * sv.halfThickness;
+        const ny = (dx / len) * sv.halfThickness;
+        g.moveTo(ax + nx, ay + ny); g.lineTo(wx + nx, wy + ny);
+        g.stroke({ color: sv.railColor, alpha: sv.railAlpha, width: sv.railWidth });
+        g.moveTo(ax - nx, ay - ny); g.lineTo(wx - nx, wy - ny);
+        g.stroke({ color: sv.railColor, alpha: sv.railAlpha, width: sv.railWidth });
+      }
+      // Travelling shimmer along the centreline (the "live energy" sweep).
+      if (sv.shimmerAlpha > 0) {
+        const c = cometSegment(this._comet, sv.shimmerT, true, ax, ay, wx, wy, scale);
+        g.moveTo(c.x0, c.y0); g.lineTo(c.x1, c.y1);
+        g.stroke({ color: sv.shimmerColor, alpha: sv.shimmerAlpha, width: sv.shimmerWidth });
+      }
+    } else {
+      // Down: a single dim flickering red line ships can pass.
+      g.moveTo(ax, ay); g.lineTo(wx, wy);
+      g.stroke({ color: sv.railColor, alpha: sv.railAlpha, width: sv.railWidth });
+    }
+  }
+
   update(mirror: RenderMirror, scale: number, nowMs: number): void {
     const g = this.gfx;
     g.clear();
@@ -234,6 +300,12 @@ export class ConnectorRenderer {
     const flashes = mirror.gridFlashes;
     const flowSrc = mirror.gridFlowSrc;
     const flowMat = mirror.gridFlowMaterial;
+
+    // Shield walls: fence walls between emitters + each gate's spans, from the
+    // same derived-wall rules the prediction world collides with (#15).
+    this._wallNow = nowMs;
+    this._wallScale = scale;
+    visitDerivedWalls(structures, swarm, this._wallVisitor);
 
     for (const [id, st] of structures) {
       const a = swarm.get(id);
@@ -303,49 +375,6 @@ export class ConnectorRenderer {
           g.moveTo(c.x0, c.y0);
           g.lineTo(c.x1, c.y1);
           g.stroke({ color: v.pulseColor ?? 0, alpha: v.pulseAlpha ?? 0, width: v.pulseWidth ?? 0 });
-        }
-      }
-
-      // Shield-fence — the blocking shield-wall span between this pylon and its
-      // pair. Drawn ONCE from the lower-entityId side (both pylons carry the
-      // reciprocal `shieldWallTo`). R2.19: a distinct cyan-white energy BARRIER
-      // — a glow field + two parallel rails (the band slab) + a sweeping shimmer
-      // — so it never reads as a connector link. Down = the dim red flicker.
-      if (st.shieldWallTo !== undefined && id < st.shieldWallTo) {
-        const wb = swarm.get(st.shieldWallTo);
-        if (wb) {
-          const wx = wb.x;
-          const wy = -wb.y;
-          const sv = shieldWallVisualParams(this._shieldVisual, st.wallActive === true, nowMs, scale);
-          // Glow field down the centreline (drawn first, behind the rails).
-          if (sv.glowAlpha > 0) {
-            g.moveTo(ax, ay); g.lineTo(wx, wy);
-            g.stroke({ color: sv.glowColor, alpha: sv.glowAlpha, width: sv.glowWidth });
-          }
-          if (sv.halfThickness > 0) {
-            // Band: two rails offset by ±halfThickness along the span NORMAL.
-            const dx = wx - ax;
-            const dy = wy - ay;
-            const len = Math.hypot(dx, dy);
-            if (len > 0.001) {
-              const nx = (-dy / len) * sv.halfThickness;
-              const ny = (dx / len) * sv.halfThickness;
-              g.moveTo(ax + nx, ay + ny); g.lineTo(wx + nx, wy + ny);
-              g.stroke({ color: sv.railColor, alpha: sv.railAlpha, width: sv.railWidth });
-              g.moveTo(ax - nx, ay - ny); g.lineTo(wx - nx, wy - ny);
-              g.stroke({ color: sv.railColor, alpha: sv.railAlpha, width: sv.railWidth });
-            }
-            // Travelling shimmer along the centreline (the "live energy" sweep).
-            if (sv.shimmerAlpha > 0) {
-              const c = cometSegment(this._comet, sv.shimmerT, true, ax, ay, wx, wy, scale);
-              g.moveTo(c.x0, c.y0); g.lineTo(c.x1, c.y1);
-              g.stroke({ color: sv.shimmerColor, alpha: sv.shimmerAlpha, width: sv.shimmerWidth });
-            }
-          } else {
-            // Down: a single dim flickering red line ships can pass.
-            g.moveTo(ax, ay); g.lineTo(wx, wy);
-            g.stroke({ color: sv.railColor, alpha: sv.railAlpha, width: sv.railWidth });
-          }
         }
       }
 

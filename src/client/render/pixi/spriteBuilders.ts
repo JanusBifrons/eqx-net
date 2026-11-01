@@ -260,7 +260,7 @@ export function buildStructureGfx(structureKindId: string | undefined, _radius?:
   const kindless = !structureKindId || !isStructureKindId(structureKindId);
   const plan = kindless && _radius
     ? buildStructureVisual('__kindless__', { accent: kind.color, seed, size: { w: _radius * 2, h: _radius * 2 } })
-    : buildStructureVisual(kind.id, { accent: kind.color, seed });
+    : buildStructureVisual(kind.id, { accent: kind.color, seed, omitSpans: true });
   for (const r of plan.rects) {
     g.rect(r.x, r.y, r.w, r.h);
     g.fill({ color: r.color, alpha: r.alpha });
