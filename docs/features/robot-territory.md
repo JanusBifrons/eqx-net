@@ -60,7 +60,26 @@ back after it leaves; the nexus sector stays held.
 - `LivingWorldDirector.galaxySnapshot.test.ts` — robot owner stamping.
 - `galaxyTooltip.test.ts` — "Robot Dominion".
 
-## Next (P3b)
+## Harvesters (P3b)
 
-Harvesters (drain asteroids, collect loot pods, raid storage and haulers),
+- Each nexus keeps **two robot harvesters** (gold, scoop-bowed). They chase the
+  nearest loot pod in the nexus sector, scoop it up, and fly home once three
+  quarters full (or as soon as nothing is left to chase).
+- At the nexus they **bank** their cargo into the nexus's own hold. Everything
+  the robots hoard comes out when the nexus dies, on top of its loot table, so
+  a nexus near a busy battlefield gets richer over time.
+- A killed harvester **spills what it carries**. Harvesters respawn at the
+  nexus 90 seconds later, and follow the nexus when it relocates.
+- They collect through the same atomic pickup path as players
+  (`LootCollector.npc`); their hold is an ownerless record keyed by their id.
+
+| | Harvester |
+|---|---|
+| Hull / shield | 300 / 150 |
+| Weapon | bolts |
+| Carries | 400 weight |
+
+## Next (P3c)
+
+Harvesters mining asteroids and raiding player storage and trade haulers,
 merge clusters, and a charging robot laser with a visible telegraph.

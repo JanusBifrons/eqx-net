@@ -32,6 +32,11 @@ const TABLES: Readonly<Record<string, LootTable>> = {
   // P2 — a hauler drops NOTHING from a table: its cargo hold (the deal goods)
   // spills instead, so killing one never mints value.
   'trader-hauler': { credits: [0, 0], entries: [] },
+  // P3b — a harvester's real prize is the cargo it SPILLS; its own table is small.
+  'robot-harvester': {
+    credits: [10, 25],
+    entries: [{ good: 'salvage', chance: 1, min: 4, max: 10 }],
+  },
   // P3 — the robot nexus: the richest single kill in the game.
   'robot-nexus': {
     credits: [400, 800],

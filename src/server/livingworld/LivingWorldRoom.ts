@@ -78,6 +78,14 @@ export interface LivingWorldRoom {
    *  Off the 60 Hz tick (the ~4 s presence poll). */
   ownedStructureCount?(playerId: string): number;
   hasFreeSlot(): boolean;
+  /** Living World P3b — nearest live loot pod (not a derelict) to (x, y), or
+   *  null. Control cadence only (allocates). OPTIONAL for mock rooms. */
+  nearestLootPod?(x: number, y: number): { x: number; y: number } | null;
+  /** P3b — cargo weight carried in the hold keyed `uid` (0 when none). */
+  holdWeight?(uid: string): number;
+  /** P3b — move the whole hold `fromUid` into `toUid` (an ownerless
+   *  `hauler`-type hold) as ONE atomic group. Returns the weight moved. */
+  bankHold?(fromUid: string, toUid: string): number;
   spawnLivingWorldBot(spec: {
     botId: string;
     kind: ShipKindId;
