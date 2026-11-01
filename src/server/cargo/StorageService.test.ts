@@ -110,3 +110,59 @@ describe('StorageService (P1a-2)', () => {
     expect(t.holdStore.get(cap.uid!)).toBeUndefined();
   });
 });
+
+describe('StorageService cargo access (C1)', () => {
+  it('take: moves only the asked items, up to ship capacity, in ONE atomic group', () => {
+    const t = setup();
+    const bay = rec('b', 'cargo_bay', 0, 0, { hold: { goods: { alloy: 10, ice: 5 }, blueprints: [] } });
+    t.registry.add(bay);
+    t.ship({ salvage: 1 });
+    t.ops.length = 0;
+    const moved = t.svc.cargoTake('ship-1', 'visitor', bay, { goods: { alloy: 10 } }, 1 + 2 * 4); // room for 4 alloy
+    expect(moved.goods).toEqual({ alloy: 4 });
+    expect(bay.hold!.goods).toEqual({ alloy: 6, ice: 5 });
+    expect(t.holdStore.get('ship-1')!.hold.goods).toEqual({ salvage: 1, alloy: 4 });
+    expect(t.holdStore.get('ship-1')!.ownerId).toBe('visitor');
+    expect(t.ops).toHaveLength(1);
+    expect(t.ops[0]!.type).toBe('GROUP');
+  });
+
+  it("take: minerals come from the goods hold first, then the Capital's bank", () => {
+    const t = setup();
+    const cap = rec('c', 'capital', 0, 0, { minerals: 100, hold: { goods: { minerals: 30 }, blueprints: [] } });
+    t.registry.add(cap);
+    expect(t.svc.cargoView(cap).hold.goods.minerals).toBe(130);
+    const moved = t.svc.cargoTake('ship-1', 'p1', cap, { goods: { minerals: 50 } }, 1000);
+    expect(moved.goods.minerals).toBe(50);
+    expect(cap.hold!.goods.minerals).toBeUndefined();
+    expect(cap.minerals).toBe(80);
+  });
+
+  it("put: minerals fill a Capital's bank first; what doesn't fit stays aboard", () => {
+    const t = setup();
+    const bay = rec('b', 'cargo_bay', 0, 0);
+    const cap = rec('c', 'capital', 50, 0);
+    t.registry.add(bay);
+    t.registry.add(cap);
+    t.ship({ minerals: 40, core: 1000 }); // core weighs 5: 5000 > the bay's 2000
+    const toCap = t.svc.cargoPut('ship-1', 'p1', cap, { goods: { minerals: 40 } });
+    expect(toCap.goods.minerals).toBe(40);
+    expect(cap.minerals).toBe(40);
+    const toBay = t.svc.cargoPut('ship-1', 'p1', bay, { goods: { core: 1000 } });
+    expect(toBay.goods.core).toBe(400);
+    expect(bay.hold!.goods.core).toBe(400);
+    expect(t.holdStore.get('ship-1')!.hold.goods).toEqual({ core: 600 });
+  });
+
+  it('nothing moves (and nothing is persisted) when the ship is full or the item is absent', () => {
+    const t = setup();
+    const bay = rec('b', 'cargo_bay', 0, 0, { hold: { goods: { alloy: 3 }, blueprints: [] } });
+    t.registry.add(bay);
+    t.ship({ core: 2 });
+    t.ops.length = 0;
+    expect(Object.keys(t.svc.cargoTake('ship-1', 'p1', bay, { goods: { alloy: 3 } }, 10).goods)).toHaveLength(0);
+    expect(Object.keys(t.svc.cargoPut('ship-1', 'p1', bay, { goods: { fuel: 3 } }).goods)).toHaveLength(0);
+    expect(bay.hold!.goods).toEqual({ alloy: 3 });
+    expect(t.ops).toHaveLength(0);
+  });
+});

@@ -178,6 +178,17 @@ Update this section when a threshold is set.
   - **Wire:** `STRUCTURE_FLAG_DRAW_FULL` (64) in the room-state flags byte.
 - Locks: `ProductionSubsystem.test.ts` and `tests/integration/sectorRoom/production.test.ts`. Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).
 
+## Cargo access (plan soft-leaping-truffle v3, C1)
+
+- **Gate:** `SectorRoom.cargoAccess` opens a structure's cargo only when ALL of these hold. Every `cargo_query` / `cargo_move` re-checks it.
+  - `cargoOpensFor(relationOf(…))` passes: own and friendly; neutral and hostile are locked until the C2 break-in.
+  - The pilot has a live ship: ACTIVE, alive, with a roster row (#17).
+  - The ship is within `CARGO_ACCESS_RANGE` of the footprint edge.
+- **Moves:** `StorageService.cargoTake` / `cargoPut`, each ONE hold group with the ship row. Never move items between a ship and a structure any other way.
+- **A manual move switches auto-deposit off for that pilot** (`manualCargo`) until they leave deposit range. Without it, a withdrawal from your own storage is banked straight back.
+- **`entity_stats` holds** show to anyone the cargo opens for (`ownerGateStats`).
+- Lock: `tests/integration/sectorRoom/cargoAccess.test.ts`. Story: [docs/features/loot-and-cargo.md](../../docs/features/loot-and-cargo.md) Part 3.
+
 ## NPC bases from the generator (plan soft-leaping-truffle v3, D2)
 
 - **Seeding:** the `npcBases` room option → `seedNpcBases` → `NpcBaseSubsystem.seed`.

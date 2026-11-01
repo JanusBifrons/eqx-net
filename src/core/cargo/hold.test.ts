@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addPacked, emptyHold, holdBestTier, holdWeight, isHoldEmpty, mergeInto, packedCount, packedWeightOf, takePacked, transferInto, transferUpTo } from './hold.js';
+import { addPacked, emptyHold, extractRequested, holdBestTier, holdWeight, isHoldEmpty, mergeInto, packedCount, packedWeightOf, takePacked, transferInto, transferUpTo } from './hold.js';
 import { legacyHoldCredits, parseHoldJson, type Hold } from '../../shared-types/goods.js';
 import { legacyBlueprintItem } from '../../shared-types/items.js';
 import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
@@ -117,5 +117,44 @@ describe('hold arithmetic (P1a-1)', () => {
     expect(b).toBeLessThanOrEqual(20);
     s = 1;
     expect(rollLoot('robot-square', rng)).toEqual(a);
+  });
+});
+
+describe('extractRequested (C1 cargo transfer)', () => {
+  function stocked(): Hold {
+    const h: Hold = { goods: { alloy: 10, ice: 4 }, blueprints: [legacyBlueprintItem('a'), legacyBlueprintItem('b')] };
+    addPacked(h, 'structure:smelter', 60);
+    addPacked(h, 'structure:smelter', 90);
+    return h;
+  }
+
+  it('takes exactly what was asked, clamped to what is there', () => {
+    const src = stocked();
+    const [bpA, bpB] = src.blueprints.map((b) => b.uid);
+    const out = extractRequested(src, { goods: { alloy: 3, ice: 99, fuel: 5 }, blueprints: [bpB!, 'missing'], packed: ['structure:smelter'] });
+    expect(out.goods).toEqual({ alloy: 3, ice: 4 });
+    expect(out.blueprints.map((b) => b.uid)).toEqual([bpB]);
+    expect(out.packed).toEqual([{ product: 'structure:smelter', quality: 90 }]);
+    expect(src.goods).toEqual({ alloy: 7 });
+    expect(src.blueprints.map((b) => b.uid)).toEqual([bpA]);
+    expect(packedCount(src, 'structure:smelter')).toBe(1);
+  });
+
+  it('conserves value through a capacity-limited move (leftover goes back)', () => {
+    const src = stocked();
+    const before = holdWeight(src);
+    const picked = extractRequested(src, { goods: { alloy: 10 } });
+    const dst = emptyHold();
+    transferInto(dst, picked, 6); // alloy weighs 2: room for only 3 of the 10
+    mergeInto(src, picked);
+    expect(holdWeight(dst) + holdWeight(src)).toBeCloseTo(before, 9);
+    expect((dst.goods.alloy ?? 0) + (src.goods.alloy ?? 0)).toBe(10);
+  });
+
+  it('ignores zero, negative and fractional junk counts safely', () => {
+    const src = stocked();
+    const out = extractRequested(src, { goods: { alloy: 0, ice: -2 } });
+    expect(isHoldEmpty(out)).toBe(true);
+    expect(extractRequested(src, { goods: { alloy: 2.9 } }).goods).toEqual({ alloy: 2 });
   });
 });

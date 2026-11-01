@@ -65,7 +65,7 @@ describe('SectorRoom integration — blueprints (P5)', () => {
     });
     const install = async (entityId: number, blueprintId: string): Promise<BlueprintResult> => {
       const n = results.length;
-      cr.send('install_blueprint', { networkEntityId: entityId, blueprintId });
+      cr.send('install_blueprint', { type: 'install_blueprint', networkEntityId: entityId, blueprintId });
       expect(await until(() => results.length > n, 4000)).toBe(true);
       return results[results.length - 1]!;
     };
