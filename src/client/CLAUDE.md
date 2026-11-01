@@ -233,6 +233,14 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 
 `BeamSpritePool` draws each beam segment as a stretched `Sprite`. A Pixi sprite renders `worldLen = scale.x × texture.width`, so the world length must be set as **`scale.x = worldLen / texture.width`**. The solid core uses the 1×1 `Texture.WHITE` (÷1, fine), but the **gradient + fade textures are 256 px WIDE** (they have to be — that's where the horizontal fade lives). Setting `scale.x = worldLen` on those rendered the fade tail **256× too long** (a 75 u tail → ~19 200 u): the "fade" stretched off any screen at any zoom, so in empty space the beam looked SOLID to infinity and "never tapered" — the long-standing "laser renders infinitely / flies off the screen" bug. **Headless unit tests fall back to `Texture.WHITE` (1×1) for the canvas textures, so they could NEVER see this** — the fix had "passed" four rounds of screenshots while staying broken on-device. Lock: `BeamSpritePool.solidTaper.test.ts` now injects a genuine 256-px `Texture` and asserts the DRAWN world length (`scale.x × texture.width`, exposed by `solidLenAt`/`fadeTailAt`) equals the intended length. **The damage falloff is LINEAR + bounded at `range × maxRangeMul` (interceptor 250 → 325); the matching visual is solid to `optimalRange × VISUAL_BEAM_SOLID_FRAC` (`ColyseusClient`, default 0.4 = inner 100 u) then a long gradual fade to nothing at maxRange — purely visual, `solidDist` never feeds damage.** Verified end-to-end (no-hit empty-space + hit cases) by `tests/e2e/laser-falloff-probe.spec.ts`, which forces `?zoom=` for a deterministic capture (the spawn camera-zoom ease otherwise lands before/after screenshots at different scales — a real comparison trap that masked the bug, see `docs/LESSONS.md` 2026-06-14).
 
+## Structure state from ROOM STATE (plan soft-leaping-truffle v2, A2)
+
+- **Where structures come from.** `mirror.structures` is filled from Colyseus room state (`room.state.structures`, join payload + delta patches) by `ColyseusClient.syncStructures`. It decodes each row IN PLACE via `net/structureStateDecode.ts` `decodeStructureState`, applying `STRUCTURE_DEFAULTS` for unset fields and resolving the owner through the interned owner tables.
+- **What the snapshot carries:** only `structureTargets` (turret / mining targets). There is no per-snapshot structures slice anymore.
+- **Shape unchanged.** The mirror row shape is the same, so the renderer, inspector and E2E hooks are untouched.
+- **Lifetime.** The binary full refresh NO LONGER deletes structures (`BinarySwarmDecoder` skips kind 2). The room-state row owns their lifetime: when a row goes, `syncStructures` drops both the mirror row and the swarm pose entry.
+- **Locks:** `tests/integration/wire/structureStateWire.test.ts` (#15) and `BinarySwarmDecoder.test.ts`.
+
 ## Procedural bases — client (plan soft-leaping-truffle)
 
 - **Prediction ("every collidable entity must be in predWorld"):**

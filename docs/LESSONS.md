@@ -2532,3 +2532,13 @@ Two of them, missile lock-on and attacker labels, decided "is this an AI?" from 
 **Why nobody noticed.** Player bases have so far been a handful of structures, and the netgate scenarios measure the LOCAL player's prediction, not bytes. The cost grows linearly and silently with structure count.
 
 **Rule.** Any per-entity state that rides the 20 Hz snapshot must be budgeted per entity × entity count × clients. Slow-changing per-structure state belongs in Colyseus room state (sent once on join, then delta patches); the snapshot carries only fast cosmetics for in-interest entities. Measure the scale case before adding content that multiplies entity counts: `scaleGrid` + `structureScale.measure.test.ts` is the harness.
+
+## 2026-11-01 — Colyseus schema field initialisers are encoded on join: a 14-field row cost 70 B even when idle (plan soft-leaping-truffle v2, A2)
+
+**Context.** We moved per-structure grid state out of the 20 Hz snapshot into Colyseus room state. The first cut declared `StructureState` fields with initialisers (`@type('uint8') hpPct = 100`, and so on). The join payload for a 448-structure base came out at 36 KB, over its 25 KB budget. Interning the owner strings only brought it down to 31.8 KB.
+
+**Cause.** In @colyseus/schema v3, a field initialiser IS an assignment, so it is change-tracked and encoded in the full state. Every row carried all 14 fields: index bytes plus values, ~70 B per row, mostly at their defaults.
+
+**Fix.** Declare the fields optional with NO initialiser. Assign only when the value differs from `(current ?? DEFAULT)`, and have the decoder apply the shared defaults. That gave 16.7 KB for the same base, with no change to the client mirror shape.
+
+**Rule.** For a per-entity schema that scales with entity count, leave defaults unset and decode with shared defaults. Measure the join payload with the server serializer (`room._serializer.getFullState()`) at the target scale before shipping.

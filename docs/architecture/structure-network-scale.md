@@ -71,6 +71,39 @@ Each phase appends a row with its measured numbers against the budgets in `struc
 | A0 (today) | 35,278 | n/a (no patches) | ~0 | 15,232 | 5.1 / 12.6 max | 1.2 / 2.5 max | Baseline; no behaviour change |
 | A1 (server cost) | 35,278 (A2) | n/a (A2) | ~0 | 15,232 (A2) | ~1.7 (parts: slice rebuild 1.07, firing + targeting 0.35, walls 0.25) | routes: one BFS per source, ~0.17 ms incl. rebuild | Targeting 4× faster in a same-run A/B; slice rebuild is now the dominant turret-tick cost and the GC-spike source; A2 removes it |
 
+| A2 (wire split) | ~0 (targets only) | 733 / 1,825 | 16,711 | ~3,000 worst case (out of interest, every 5th refresh) | 0.82 | (A1) | Measured at 448 structures (loaded host) |
+
+## A2: structure state moved to room state
+
+**Before.** Every structure's full row rode every 20 Hz snapshot to every client: ~79 B × N × 20 Hz.
+
+**Now.** Structure grid state lives in Colyseus room state, `SectorState.structures` keyed by entityId.
+- **Delivery:** it arrives once in the join payload, then as delta patches.
+- **Schema:** `StructureState` is quantised. hp is a 0–100 percent; flags pack built / powered / deconstructing / wall-active.
+- **Unset defaults:** fields have no initialisers. A field still at its default is never assigned, so it is never encoded, and the decoder supplies `STRUCTURE_DEFAULTS`.
+- **Owners:** interned once per sector (`structureOwners` / `structureOwnerNames` plus a per-row `ownerIdx`).
+- **Snapshot:** keeps only the fast cosmetics as flat `structureTargets` triples (turret / mining targets), sent only while some structure has a target.
+
+**Binary pose channel.** A sleeping, out-of-interest structure now rides only every 5th full refresh, once per 5 s instead of every second. Room state now owns a structure's lifetime on the client: the decoder's full-refresh sweep no longer deletes structures, and `syncStructures` drops the pose entry when the row goes.
+
+**Client.** It decodes rows in place into the unchanged `mirror.structures` shape (`structureStateDecode.ts`), so the renderer, inspector and E2E hooks are untouched.
+
+**Locks:**
+- `tests/integration/wire/structureStateWire.test.ts`: real schema encode/decode round trip, server row → client mirror row (#15).
+- `tests/integration/sectorRoom/structureRoomState.test.ts`: the join payload carries every row, a hit patches live clients, a late joiner reads the changed value, and removal reaches everyone (#16).
+- `BinarySwarmBroadcast.test.ts` and `BinarySwarmDecoder.test.ts`: structure decimation, and structures survive a full refresh.
+
+**Measured at 448 structures:**
+
+| Measure | Before | After | Budget |
+|---|---|---|---|
+| Snapshot structure bytes | 35,278 B | ~0 | — |
+| Join payload | 0 | 16.7 KB | 25 KB |
+| Idle patches | 0 | 733 B/s | — |
+| Patches under ~30 hits/s | 0 | 1.8 KB/s | — |
+
+`_internals.getStructuresSlice` now returns the old per-structure row shape rebuilt from room state, so the existing structure integration tests read the same fields.
+
 ## A1: what changed and what the measurement corrected
 
 **Turret targeting.** The server now builds one [`NearestPointGrid`](../../src/core/spatial/NearestPointGrid.ts) (512 u cells) of turret-targetable drones per turret tick. It is rebuilt after any eviction, so a kill mid-tick can't leave a dead drone selectable. Each turret then queries only the cells its range covers.
