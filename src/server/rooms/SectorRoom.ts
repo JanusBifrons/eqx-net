@@ -38,7 +38,17 @@ import {
   SendGiftSchema,
   type TradeNotice,
 } from '../../shared-types/economy.js';
-import { BaseState, SectorState, ShipState } from './schema/SectorState.js';
+import { BaseState, SectorState, ShipState, StructureState } from './schema/SectorState.js';
+import {
+  STRUCTURE_ETA_NONE,
+  STRUCTURE_ETA_STALLED,
+  STRUCTURE_FLAG_BUILT,
+  STRUCTURE_FLAG_DECONSTRUCTING,
+  STRUCTURE_FLAG_POWERED,
+  STRUCTURE_FLAG_WALL_ACTIVE,
+  STRUCTURE_TARGET_NONE,
+  STRUCTURE_DEFAULTS as SD,
+} from '../../shared-types/structureStateWire.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
@@ -88,6 +98,9 @@ import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
 import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
+import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
+import { buildStructureLattice } from '../../core/structures/structureLattice.js';
+import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
@@ -510,6 +523,30 @@ function classifyAttacker(id?: string): string | undefined {
   return 'player';
 }
 
+/** The pre-A2 per-structure row (test view — see `structureRowsForTests`). */
+export interface StructureRowView {
+  id: number;
+  hpPct: number;
+  powered: boolean;
+  netPower: number;
+  owner: string;
+  built: boolean;
+  ownerName?: string;
+  level?: number;
+  connTo?: number[];
+  minerals?: number;
+  buildPct?: number;
+  etaMs?: number | null;
+  isDeconstructing?: boolean;
+  deconstructPct?: number;
+  miningTargetId?: number;
+  turretTargetId?: number;
+  storedPower?: number;
+  storedPowerMax?: number;
+  shieldWallTo?: number;
+  wallActive?: boolean;
+}
+
 export class SectorRoom extends Room<SectorState> {
   /** Owns the physics worker (lifecycle + message routing + typed
    *  postMessage facade). Extracted to PhysicsWorkerProxy.ts (commit 20
@@ -646,7 +683,16 @@ export class SectorRoom extends Room<SectorState> {
   private readonly malformed = new MalformedMessageTracker(logger);
   /** Cached low-cadence structures snapshot slice (rebuilt on pulse / place;
    *  attached by reference to every recipient). Undefined ⇒ no structures. */
-  private structuresSlice: SnapshotMessage['structures'] = undefined;
+  /** A2 — the snapshot's slim cosmetic slice (turret / mining targets only);
+   *  structure grid state itself lives in `state.structures`. */
+  private structuresSlice: SnapshotMessage['structureTargets'] = undefined;
+  /** A2 — entityId key → generation last synced (stale-row sweep, alloc-free). */
+  private readonly structureStateGen = new Map<string, number>();
+  private structureStateGeneration = 0;
+  /** A2 — owner id → interned index in `state.structureOwners`. */
+  private readonly structureOwnerIdx = new Map<string, number>();
+  /** Interned index keys ("0", "1", …), cached so syncing never allocates. */
+  private readonly structureOwnerKeys: string[] = [];
   private aiController!: AiController;
   /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
   private aiPlayerScratch: AiPlayerView[] = [];
@@ -907,7 +953,9 @@ export class SectorRoom extends Room<SectorState> {
     /** Structures plan, Phase 3 — drive the grid pulse deterministically (no
      *  wall-clock wait) + read the cached snapshot slice. */
     pulseStructureGrid: () => void;
-    getStructuresSlice: () => SnapshotMessage['structures'];
+    /** Test view: the pre-A2 per-structure row shape, rebuilt from room state
+     *  + the targets slice (structure state no longer rides the snapshot). */
+    getStructuresSlice: () => StructureRowView[] | undefined;
     /** Phase 4 WS-B4 — drive a structure UPGRADE build phase directly (no
      *  message round-trip) for the leveling integration test. Returns whether
      *  the upgrade started (the subsystem's owner-agnostic gate). */
@@ -923,6 +971,8 @@ export class SectorRoom extends Room<SectorState> {
      *  'havok') to exercise scrap-on-death (Phase 2b-ii). */
     spawnTestDrone: (id: string, x: number, y: number, kind?: ShipKindId) => boolean;
     tickStructureTurrets: () => void;
+    /** A0 scale measurement — rebuild the structures snapshot slice directly. */
+    rebuildStructuresSlice: () => void;
     /** Unified-hull plan, Phase 4 — assert a structure resolves its OWN
      *  shield/hull (generic optional shield) from the STRUCTURE catalogue, not
      *  the fighter fallback. Returns the layered-damage result (reported
@@ -951,7 +1001,7 @@ export class SectorRoom extends Room<SectorState> {
       swarmHealth: this.swarmHealth,
       structureRegistry: this.structureRegistry,
       pulseStructureGrid: () => this.structureGridTick(),
-      getStructuresSlice: () => this.structuresSlice,
+      getStructuresSlice: () => this.structureRowsForTests(),
       upgradeStructure: (id) => this.structureGrid.upgradeStructure(id),
       reconnectStructure: (id) => this.structureGrid.reconnect(id),
       spawnTestAsteroid: (id, x, y, radius) =>
@@ -965,6 +1015,7 @@ export class SectorRoom extends Room<SectorState> {
         return ok;
       },
       tickStructureTurrets: () => this.structureTurretTick(),
+      rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
       damageSwarmLayered: (rec, damage) => this.damageSwarmLayered(rec, damage),
     };
   }
@@ -1193,6 +1244,11 @@ export class SectorRoom extends Room<SectorState> {
        *  place-ahead UI (which stacks/overlaps multiple placements) or the
        *  construction wait. Each is born `isConstructed` at full HP. */
       prebuiltStructures?: ReadonlyArray<{ kind: StructureKindId; x: number; y: number }>;
+      /** Plan soft-leaping-truffle v2, A0 — seed a RULE-VALID structure lattice
+       *  of `n` structures (+ an optional closed pylon fence) for scale
+       *  measurement. Generated server-side from (n, seed), so it is not bound
+       *  by the 64-entry seed cap. testMode-only. */
+      scaleGrid?: { n: number; seed: number; fence?: boolean };
       /** Procedural bases (plan soft-leaping-truffle) to generate in this
        *  sector. A room-DEFINITION option (server-authored, never client
        *  input), so it is not testMode-gated — galaxy sectors use it too. */
@@ -1884,7 +1940,7 @@ export class SectorRoom extends Room<SectorState> {
       drawAsteroidResources: (entityId, amount) => this.drawAsteroidResources(entityId, amount),
       // Allegiances P0: base turrets defend against combat allegiances (drones,
       // robots) but never open fire on NEUTRAL traders (their haulers).
-      findNearestDrone: (x, y, range) => this.findNearestSwarmOfKind(x, y, range, 1, this._isTurretTargetable),
+      findNearestDrone: (x, y, range) => this.findNearestTurretTarget(x, y, range),
       applyDamage: (targetId, shooterId, damage) => this.applyDamage(targetId, shooterId, damage),
       broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) => {
         this.broadcast('laser_fired', {
@@ -1965,6 +2021,7 @@ export class SectorRoom extends Room<SectorState> {
     // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
     // overlap, no construction wait).
     if (this.testMode) this.seedStructureScenario(roomOpts);
+    if (this.testMode && roomOpts.scaleGrid) this.seedScaleGrid(roomOpts.scaleGrid);
     // Phase-1 issue 5 — scrap-stress seed: a dense corridor of free-floating
     // scrap ahead of spawn for the fly-through reconciliation E2E.
     if (this.testMode && (roomOpts.scenarioScrapCount ?? 0) > 0) {
@@ -3281,6 +3338,9 @@ export class SectorRoom extends Room<SectorState> {
     rec: SwarmEntityRecord,
     opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string },
   ): void {
+    // A turret's kill mid-tick must not leave the evicted drone selectable by
+    // the next turret in the same tick (the linear scan never saw it).
+    this.turretTargetGridFresh = false;
     // Gameplay audit log — record a REAL combat death (the `emitDestroyed`
     // signal that fires the kill-feed + bus ENTITY_DESTROYED; load-shedder /
     // quiet bot despawn / abandon use emitDestroyed:false and are excluded).
@@ -3404,6 +3464,43 @@ export class SectorRoom extends Room<SectorState> {
    *  auto-connected structures (owner `scenario`) + parked drones + asteroids.
    *  Gives E2E a fully-functional powered grid without the place-ahead UI
    *  (which overlaps stacked placements) or the construction wait. */
+  /**
+   * A0 scale lattice: place every structure WITHOUT greedy auto-connect, then
+   * apply the lattice's intended edges through `connectExplicit` (the real
+   * `canConnect` re-checked), force-build, and run one grid tick. Owner
+   * `scenario`. Rejections are counted and logged — the lattice is rule-valid
+   * by construction (structureLattice.test.ts), so any rejection is a bug.
+   */
+  private seedScaleGrid(opts: { n: number; seed: number; fence?: boolean }): void {
+    const n = Math.max(1, Math.min(4000, Math.floor(opts.n)));
+    const lat = buildStructureLattice({ n, seed: opts.seed, fence: opts.fence === true });
+    const ids: Array<string | null> = [];
+    let rejectedPlace = 0;
+    for (const p of lat.placements) {
+      const id = this.structurePlacement.place('scenario', p.kind, p.x, p.y, { skipAutoConnect: true });
+      if (id === null) rejectedPlace++;
+      ids.push(id);
+      const rec = id ? this.structureRegistry.get(id) : undefined;
+      if (rec && !rec.isConstructed) {
+        rec.isConstructed = true;
+        rec.constructionProgress = rec.constructionCost;
+        this.swarmHealth.set(rec.id, getStructureKind(rec.kind).maxHealth);
+      }
+    }
+    const nodes = buildGridNodes(this.structureRegistry);
+    let rejectedEdge = 0;
+    for (const [a, b] of lat.edges) {
+      const ia = ids[a], ib = ids[b];
+      if (!ia || !ib || !connectExplicit(this.structureRegistry, ia, ib, nodes)) rejectedEdge++;
+    }
+    this.structureRegistry.topologyDirty = true;
+    this.structureGridTick();
+    logger.info(
+      { n, placed: lat.placements.length - rejectedPlace, edges: lat.edges.length, rejectedPlace, rejectedEdge, fencePylons: lat.fencePylons },
+      'scale lattice seeded',
+    );
+  }
+
   private seedStructureScenario(roomOpts: {
     prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number }>;
     prebuiltStructuresOwner?: string;
@@ -3689,6 +3786,9 @@ export class SectorRoom extends Room<SectorState> {
   private structureTurretTick(): void {
     if (this.structureRegistry.size === 0) return;
     const nowMs = Date.now();
+    // A1 — the turret target grid is rebuilt (lazily, on the first query) once
+    // per turret tick, instead of every turret scanning every swarm entity.
+    this.turretTargetGridFresh = false;
     this.structureGrid.tickTurrets(nowMs);
     // WS-4 — re-broadcast each Miner's mining beam on the same fast cadence so
     // the continuous beam tracks + doesn't flicker (gated per-Miner internally).
@@ -3807,6 +3907,52 @@ export class SectorRoom extends Room<SectorState> {
   private readonly _isTurretTargetable = (rec: SwarmEntityRecord): boolean =>
     allegianceOfKind(rec.shipKind) !== 'traders';
 
+  /**
+   * A1 (plan soft-leaping-truffle v2) — turret targets via a uniform grid.
+   * The A0 measurement put the per-turret linear scan of EVERY swarm entity at
+   * 5 ms median / 12.6 ms max per 10 Hz tick at citadel scale. The grid holds
+   * the turret-targetable kind-1 records (same filter, same registry order, so
+   * `NearestPointGrid`'s tie rule reproduces the scan's winner exactly), built
+   * once per turret tick in O(E) and rebuilt after any eviction. Allocation-free
+   * in steady state: the result object is reused (callers consume it at once —
+   * `tickTurrets` keeps only the entityId).
+   */
+  private readonly turretTargetGrid = new NearestPointGrid(512, DRONE_MAX_BOUNDS, 512);
+  private readonly turretTargetRecs: SwarmEntityRecord[] = [];
+  private turretTargetGridFresh = false;
+  private readonly turretTargetOut = { id: '', entityId: 0, x: 0, y: 0, radius: 0 };
+
+  private findNearestTurretTarget(
+    x: number,
+    y: number,
+    range: number,
+  ): { id: string; entityId: number; x: number; y: number; radius: number } | null {
+    if (!this.turretTargetGridFresh) {
+      const g = this.turretTargetGrid;
+      const recs = this.turretTargetRecs;
+      g.reset();
+      recs.length = 0;
+      for (const rec of this.swarmRegistry.all()) {
+        if (rec.kind !== 1 || !this._isTurretTargetable(rec)) continue;
+        const base = slotBase(rec.slot);
+        g.add(this.sabF32[base + SLOT_X_OFF]!, this.sabF32[base + SLOT_Y_OFF]!);
+        recs.push(rec);
+      }
+      g.build();
+      this.turretTargetGridFresh = true;
+    }
+    const i = this.turretTargetGrid.nearest(x, y, range);
+    if (i < 0) return null;
+    const rec = this.turretTargetRecs[i]!;
+    const out = this.turretTargetOut;
+    out.id = rec.id;
+    out.entityId = rec.entityId;
+    out.x = this.turretTargetGrid.x(i);
+    out.y = this.turretTargetGrid.y(i);
+    out.radius = rec.radius;
+    return out;
+  }
+
   private findNearestSwarmOfKind(
     x: number,
     y: number,
@@ -3864,84 +4010,192 @@ export class SectorRoom extends Room<SectorState> {
     return name;
   }
 
+  /**
+   * A2 (plan soft-leaping-truffle v2) — sync every structure's grid state into
+   * ROOM STATE (`state.structures`, delta-patched to clients) and rebuild the
+   * slim snapshot targets slice. Fields are assigned only when they change, so
+   * an idle base produces no patch bytes. Replaces the pre-A2 slice that sent
+   * every row to every client in every 20 Hz snapshot (A0: ~689 KB/s per client
+   * at citadel scale). Name kept: it runs from the same 1 Hz pulse, 10 Hz
+   * turret tick and placement paths as before.
+   */
   private rebuildStructuresSlice(): void {
-    if (this.structureRegistry.size === 0) {
-      this.structuresSlice = undefined;
-      return;
-    }
-    const arr: NonNullable<SnapshotMessage['structures']> = [];
+    const map = (this.state as SectorState).structures;
+    const gen = ++this.structureStateGeneration;
+    let targets: number[] | undefined;
+    const nowMs = Date.now();
     for (const rec of this.structureRegistry.all()) {
       const entityId = this.swarmRegistry.get(rec.id)?.entityId;
       if (entityId === undefined) continue; // swarm entity gone — skip
+      const key = rec.stateKey ?? (rec.stateKey = String(entityId));
+      let st = map.get(key);
+      if (!st) {
+        st = new StructureState();
+        map.set(key, st);
+      }
+      this.structureStateGen.set(key, gen);
       const summary = this.structureGrid.powerSummaryFor(rec.id);
-      const conns = this.structureRegistry.connectionsOf(rec.id);
-      // C3 — hull percent (0-100 int) so the client inspector renders hull on
-      // the first frame after selection, no entity_stats round-trip. Off the
-      // 60 Hz tick (1 Hz pulse + on placement), so the integer math is free.
-      // WS-B4 — a leveled structure's hull cap grows, so the %-denominator is
-      // the LEVELED effective max (so a full-health leveled structure reads
-      // 100 %, not >100 %).
+      // Hull percent of the LEVELED max (a full-health leveled structure is 100).
       const hpMax = effectiveStructureMaxHealth(getStructureKind(rec.kind).maxHealth, rec.level);
       const hp = this.swarmHealth.get(rec.id) ?? hpMax;
-      const entry: NonNullable<SnapshotMessage['structures']>[number] = {
-        id: entityId,
-        hpPct: Math.round((Math.max(0, hp) / hpMax) * 100),
-        powered: summary.powered,
-        netPower: summary.netPower,
-        // Owning playerId — the client uses it for the "is this mine?" check +
-        // the same-owner connection/preview-line filter.
-        owner: rec.owner,
-        built: rec.isConstructed,
-      };
-      // WS-B4 — emit the level ONLY when > 1 (un-levelled grids pay zero extra
-      // bytes; absent ⇒ the client treats it as level 1).
-      if (rec.level > 1) entry.level = rec.level;
-      // Owner DISPLAY NAME for the inspector (DB-resolved + cached; absent ⇒
-      // orphaned owner, already logged, client shows "Unknown").
-      const ownerName = this.resolveOwnerName(rec.owner);
-      if (ownerName !== null) entry.ownerName = ownerName;
-      if (conns.length > 0) {
-        const connTo: number[] = [];
-        for (const c of conns) {
-          const other = c.getOtherNode(rec.id);
-          if (other === null) continue;
-          const otherEntityId = this.swarmRegistry.get(other)?.entityId;
-          if (otherEntityId !== undefined) connTo.push(otherEntityId);
-        }
-        if (connTo.length > 0) entry.connTo = connTo;
-      }
-      if (rec.minerals > 0) entry.minerals = rec.minerals;
-      if (!rec.isConstructed && rec.constructionCost > 0) {
-        entry.buildPct = rec.constructionProgress / rec.constructionCost;
-        // ETA at the steady delivery rate (null ⇒ stalled). Drives the smooth
-        // client build bar (issue 1) + the in-world countdown (issue 2).
-        entry.etaMs = this.structureGrid.estimateBuildEtaMs(rec);
-      }
-      if (rec.isDeconstructing) {
-        entry.isDeconstructing = true;
-        if (rec.constructionCost > 0) {
-          entry.deconstructPct = 1 - rec.constructionProgress / rec.constructionCost;
-        }
-      }
-      if (rec.miningTargetEntityId !== undefined) entry.miningTargetId = rec.miningTargetEntityId;
-      if (rec.turretTargetEntityId !== undefined) entry.turretTargetId = rec.turretTargetEntityId;
-      if (rec.kind === 'battery') {
-        entry.storedPower = rec.storedPower;
-        entry.storedPowerMax = getStructureKind('battery').powerStorageCapacity ?? 0;
-      }
+      const hpPct = Math.round((Math.max(0, hp) / hpMax) * 100);
+      let flags = 0;
+      if (rec.isConstructed) flags |= STRUCTURE_FLAG_BUILT;
+      if (summary.powered) flags |= STRUCTURE_FLAG_POWERED;
+      if (rec.isDeconstructing) flags |= STRUCTURE_FLAG_DECONSTRUCTING;
+      let wallTo = -1;
       if (rec.kind === 'shield_pylon') {
-        const wall = this.shieldWalls.wallStateFor(rec.id, Date.now());
+        const wall = this.shieldWalls.wallStateFor(rec.id, nowMs);
         if (wall) {
-          const otherEntityId = this.swarmRegistry.get(wall.otherPost)?.entityId;
-          if (otherEntityId !== undefined) {
-            entry.shieldWallTo = otherEntityId;
-            entry.wallActive = wall.active;
+          const other = this.swarmRegistry.get(wall.otherPost)?.entityId;
+          if (other !== undefined) {
+            wallTo = other;
+            if (wall.active) flags |= STRUCTURE_FLAG_WALL_ACTIVE;
           }
         }
       }
-      arr.push(entry);
+      const building = !rec.isConstructed && rec.constructionCost > 0;
+      const buildPct = building ? rec.constructionProgress / rec.constructionCost : 0;
+      let etaMs = STRUCTURE_ETA_NONE;
+      if (building) {
+        const eta = this.structureGrid.estimateBuildEtaMs(rec);
+        etaMs = eta === null ? STRUCTURE_ETA_STALLED : Math.max(0, Math.round(eta));
+      }
+      const deconstructPct = rec.isDeconstructing && rec.constructionCost > 0
+        ? 1 - rec.constructionProgress / rec.constructionCost
+        : 0;
+      const storageMax = getStructureKind(rec.kind).powerStorageCapacity ?? 0;
+      const ownerIdx = this.internStructureOwner(rec.owner);
+      // Assign only on change — Colyseus patches exactly what changed.
+      // (Unset fields read as STRUCTURE_DEFAULTS and are never encoded.)
+      if ((st.ownerIdx ?? SD.ownerIdx) !== ownerIdx) st.ownerIdx = ownerIdx;
+      if ((st.flags ?? SD.flags) !== flags) st.flags = flags;
+      if ((st.hpPct ?? SD.hpPct) !== hpPct) st.hpPct = hpPct;
+      if ((st.level ?? SD.level) !== rec.level) st.level = rec.level;
+      const net = Math.fround(summary.netPower);
+      if ((st.netPower ?? SD.netPower) !== net) st.netPower = net;
+      if ((st.minerals ?? SD.minerals) !== rec.minerals) st.minerals = rec.minerals;
+      const bp = Math.fround(buildPct);
+      if ((st.buildPct ?? SD.buildPct) !== bp) st.buildPct = bp;
+      if ((st.etaMs ?? SD.etaMs) !== etaMs) st.etaMs = etaMs;
+      const dp = Math.fround(deconstructPct);
+      if ((st.deconstructPct ?? SD.deconstructPct) !== dp) st.deconstructPct = dp;
+      const stored = storageMax > 0 ? Math.round(rec.storedPower) : 0;
+      if ((st.storedPower ?? SD.storedPower) !== stored) st.storedPower = stored;
+      if ((st.storedPowerMax ?? SD.storedPowerMax) !== storageMax) st.storedPowerMax = storageMax;
+      if ((st.shieldWallTo ?? SD.shieldWallTo) !== wallTo) st.shieldWallTo = wallTo;
+      this.syncConnTo(rec.id, st);
+      // Fast cosmetics stay on the snapshot (only structures with a target).
+      if (rec.turretTargetEntityId !== undefined || rec.miningTargetEntityId !== undefined) {
+        // TODO: alloc-debt — one small array per rebuild while any turret or
+        // miner has a target (bounded by their count); A3 may pool it.
+        targets ??= [];
+        targets.push(
+          entityId,
+          rec.turretTargetEntityId ?? STRUCTURE_TARGET_NONE,
+          rec.miningTargetEntityId ?? STRUCTURE_TARGET_NONE,
+        );
+      }
     }
-    this.structuresSlice = arr;
+    // Sweep rows whose structure is gone (generation stamp — no Set alloc).
+    for (const [key, g] of this.structureStateGen) {
+      if (g === gen) continue;
+      this.structureStateGen.delete(key);
+      map.delete(key);
+    }
+    this.structuresSlice = targets;
+  }
+
+  /** Intern a structure owner into the sector's owner tables (owners are few;
+   *  the table only grows). Refreshes the display name when it resolves. */
+  private internStructureOwner(owner: string): number {
+    const st = this.state as SectorState;
+    let idx = this.structureOwnerIdx.get(owner);
+    if (idx === undefined) {
+      idx = this.structureOwnerIdx.size;
+      this.structureOwnerIdx.set(owner, idx);
+      this.structureOwnerKeys[idx] = String(idx);
+      st.structureOwners.set(this.structureOwnerKeys[idx]!, owner);
+    }
+    const key = this.structureOwnerKeys[idx]!;
+    const name = this.resolveOwnerName(owner) ?? '';
+    if (st.structureOwnerNames.get(key) !== name) st.structureOwnerNames.set(key, name);
+    return idx;
+  }
+
+  /** Mirror a structure's connections into its room-state `connTo` only when
+   *  the set changed (compared in place — no allocation when unchanged). */
+  private syncConnTo(id: string, st: StructureState): void {
+    const conns = this.structureRegistry.connectionsOf(id);
+    let n = 0;
+    let same = true;
+    for (const c of conns) {
+      const other = c.getOtherNode(id);
+      if (other === null) continue;
+      const eid = this.swarmRegistry.get(other)?.entityId;
+      if (eid === undefined) continue;
+      if (n >= st.connTo.length || st.connTo.at(n) !== eid) same = false;
+      n++;
+    }
+    if (same && n === st.connTo.length) return;
+    st.connTo.clear();
+    for (const c of conns) {
+      const other = c.getOtherNode(id);
+      if (other === null) continue;
+      const eid = this.swarmRegistry.get(other)?.entityId;
+      if (eid !== undefined) st.connTo.push(eid);
+    }
+  }
+
+  /** Test view (`_internals.getStructuresSlice`): the pre-A2 row shape,
+   *  rebuilt from room state + the targets slice. Allocates; test-only. */
+  private structureRowsForTests(): StructureRowView[] | undefined {
+    const map = (this.state as SectorState).structures;
+    if (map.size === 0) return undefined;
+    const tgt = new Map<number, [number, number]>();
+    const t = this.structuresSlice ?? [];
+    for (let i = 0; i < t.length; i += 3) tgt.set(t[i]!, [t[i + 1]!, t[i + 2]!]);
+    const rows: StructureRowView[] = [];
+    map.forEach((st, key) => {
+      const id = Number(key);
+      const ownerKey = String(st.ownerIdx ?? SD.ownerIdx);
+      const flags = st.flags ?? SD.flags;
+      const row: StructureRowView = {
+        id,
+        hpPct: st.hpPct ?? SD.hpPct,
+        powered: (flags & STRUCTURE_FLAG_POWERED) !== 0,
+        netPower: st.netPower ?? SD.netPower,
+        owner: (this.state as SectorState).structureOwners.get(ownerKey) ?? '',
+        built: (flags & STRUCTURE_FLAG_BUILT) !== 0,
+      };
+      const ownerName = (this.state as SectorState).structureOwnerNames.get(ownerKey) ?? '';
+      if (ownerName !== '') row.ownerName = ownerName;
+      if ((st.level ?? SD.level) > 1) row.level = st.level;
+      if (st.connTo.length > 0) row.connTo = Array.from(st.connTo);
+      if ((st.minerals ?? SD.minerals) > 0) row.minerals = st.minerals;
+      const eta = st.etaMs ?? SD.etaMs;
+      if (eta !== STRUCTURE_ETA_NONE) {
+        row.buildPct = st.buildPct ?? SD.buildPct;
+        row.etaMs = eta === STRUCTURE_ETA_STALLED ? null : eta;
+      }
+      if ((flags & STRUCTURE_FLAG_DECONSTRUCTING) !== 0) {
+        row.isDeconstructing = true;
+        row.deconstructPct = st.deconstructPct ?? SD.deconstructPct;
+      }
+      const tg = tgt.get(id);
+      if (tg && tg[0] !== STRUCTURE_TARGET_NONE) row.turretTargetId = tg[0];
+      if (tg && tg[1] !== STRUCTURE_TARGET_NONE) row.miningTargetId = tg[1];
+      if ((st.storedPowerMax ?? SD.storedPowerMax) > 0) {
+        row.storedPower = st.storedPower ?? SD.storedPower;
+        row.storedPowerMax = st.storedPowerMax;
+      }
+      if ((st.shieldWallTo ?? SD.shieldWallTo) >= 0) {
+        row.shieldWallTo = st.shieldWallTo;
+        row.wallActive = (flags & STRUCTURE_FLAG_WALL_ACTIVE) !== 0;
+      }
+      rows.push(row);
+    });
+    return rows;
   }
 
   /**

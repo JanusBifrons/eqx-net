@@ -31,6 +31,7 @@ import { shipKindToIndex, isShipKindId } from '../../shared-types/shipKinds.js';
 import { structureKindToIndex, isStructureKindId } from '../../shared-types/structureKinds.js';
 import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE, SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from './SwarmEntityRegistry.js';
+import { STRUCTURE_OUT_OF_INTEREST_FULL_EVERY } from '../../shared-types/structureStateWire.js';
 
 /** Tick cadence at which a full snapshot is forced regardless of changes. */
 const FULL_SNAPSHOT_INTERVAL_TICKS = 60;
@@ -96,6 +97,9 @@ export class BinarySwarmBroadcast {
     if (registry.size() === 0) return null;
 
     const isFullSnapshot = serverTick % FULL_SNAPSHOT_INTERVAL_TICKS === 0;
+    // A2 — sleeping, out-of-interest STRUCTURES ride only every Nth full refresh.
+    const structureFullThisFrame = isFullSnapshot &&
+      Math.floor(serverTick / FULL_SNAPSHOT_INTERVAL_TICKS) % STRUCTURE_OUT_OF_INTEREST_FULL_EVERY === 0;
     const decimationTickThisFrame = serverTick % DECIMATION_TICKS === 0;
     let count = 0;
     let writeOffset = SWARM_HEADER_BYTES;
@@ -135,7 +139,7 @@ export class BinarySwarmBroadcast {
       // of subtle "stale pose" bugs around interest-window crossings.
       let include = false;
       if (isFullSnapshot) {
-        include = true;
+        include = rec.kind !== SWARM_KIND_STRUCTURE || !sleeping || inInterestForThisClient || structureFullThisFrame || sleepChanged;
       } else if (sleepChanged) {
         include = true;
       } else if (sleeping) {

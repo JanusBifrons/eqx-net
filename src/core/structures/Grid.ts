@@ -18,7 +18,7 @@
  * Rebuild is O(V+E) and runs ONLY when topology changes (`topologyDirty`), never
  * per physics tick. The route cache is dropped on every rebuild.
  */
-import { Connection, connectionLength } from './Connection.js';
+import { Connection } from './Connection.js';
 import { CONNECTION_MAX_RANGE } from './structureGridConstants.js';
 
 /** The grid's abstract view of a structure. The server projects each
@@ -280,6 +280,9 @@ export class Grid {
    *  shield-wall drain, which both operate over a whole component). */
   private readonly componentMembersMap = new Map<number, string[]>();
   private readonly routeCache = new Map<string, readonly string[] | null>();
+  /** source id → BFS parent map (A1): one O(V+E) search per source per
+   *  topology change answers every route from that source. */
+  private readonly treeCache = new Map<string, ReadonlyMap<string, string>>();
 
   /**
    * Recompute connected components over the BUILT subgraph (unbuilt nodes are
@@ -296,6 +299,7 @@ export class Grid {
     this.componentInfo.clear();
     this.componentMembersMap.clear();
     this.routeCache.clear();
+    this.treeCache.clear();
 
     let nextComp = 0;
     for (const node of nodes.values()) {
@@ -388,48 +392,39 @@ export class Grid {
     if (sourceId === targetId) return [sourceId];
     // The source must be traversable (a built storage root).
     if (!source.isConstructed) return null;
+    const parent = this.bfsTree(sourceId);
+    if (!parent.has(targetId)) return null;
+    return reconstruct(parent, targetId);
+  }
 
-    const heuristic = (id: string): number => {
-      const n = this.nodes.get(id)!;
-      return connectionLength(n, target) / CONNECTION_MAX_RANGE;
-    };
-
-    const gScore = new Map<string, number>([[sourceId, 0]]);
-    const cameFrom = new Map<string, string>();
-    const open = new Set<string>([sourceId]);
-
-    while (open.size > 0) {
-      // Pop the node with the lowest f = g + h (linear scan — grids are small).
-      let cur: string | null = null;
-      let bestF = Infinity;
-      for (const id of open) {
-        const f = (gScore.get(id) ?? Infinity) + heuristic(id);
-        if (f < bestF) {
-          bestF = f;
-          cur = id;
-        }
-      }
-      if (cur === null) break;
-      if (cur === targetId) return reconstruct(cameFrom, cur);
-      open.delete(cur);
-
-      const curG = gScore.get(cur) ?? Infinity;
+  /**
+   * Shortest-hop tree from `sourceId` (A1, plan soft-leaping-truffle v2 —
+   * replaces a per-pair A* with a linear open-set scan: 0.94 ms per route at
+   * citadel scale, re-run for every route after each topology change). Same
+   * rules as the old search: paths step THROUGH built nodes only; an unbuilt
+   * node is reachable as a destination but never expanded (dead-end rule).
+   * Hop count is the metric, so BFS is exact. Cached until the next rebuild.
+   */
+  private bfsTree(sourceId: string): ReadonlyMap<string, string> {
+    const cached = this.treeCache.get(sourceId);
+    if (cached) return cached;
+    const parent = new Map<string, string>();
+    const seen = new Set<string>([sourceId]);
+    const queue: string[] = [sourceId];
+    for (let head = 0; head < queue.length; head++) {
+      const cur = queue[head]!;
       for (const c of this.adjacency.get(cur) ?? []) {
         const next = c.getOtherNode(cur);
-        if (next === null) continue;
+        if (next === null || seen.has(next)) continue;
         const nn = this.nodes.get(next);
         if (!nn) continue;
-        // Can step onto `next` only if it's built OR it is the destination.
-        if (!nn.isConstructed && next !== targetId) continue;
-        const tentative = curG + 1;
-        if (tentative < (gScore.get(next) ?? Infinity)) {
-          cameFrom.set(next, cur);
-          gScore.set(next, tentative);
-          open.add(next);
-        }
+        seen.add(next);
+        parent.set(next, cur);
+        if (nn.isConstructed) queue.push(next);
       }
     }
-    return null;
+    this.treeCache.set(sourceId, parent);
+    return parent;
   }
 }
 

@@ -316,3 +316,23 @@ describe('decodeSwarmPacket', () => {
     expect(e.latestArrivalMs).toBe(1200);
   });
 });
+
+// A2 — a full refresh no longer removes STRUCTURES (their lifetime is owned by
+// the room-state `structures` row); other kinds are still swept.
+describe('decodeSwarmPacket — full refresh keeps structures (A2)', () => {
+  it('a structure missing from a full packet survives; a missing drone is removed', () => {
+    const mirror = { swarm: new Map() } as unknown as Parameters<typeof decodeSwarmPacket>[1];
+    const m = mirror as unknown as { swarm: Map<number, { kind: number }> };
+    m.swarm.set(7, { kind: 2 } as never);
+    m.swarm.set(8, { kind: 1 } as never);
+    const buf = new ArrayBuffer(SWARM_HEADER_BYTES);
+    const v = new DataView(buf);
+    v.setUint8(0, SWARM_WIRE_VERSION);
+    v.setUint8(1, SWARM_FLAG_FULL);
+    v.setUint16(2, 0, true);
+    v.setUint32(4, 60, true);
+    decodeSwarmPacket(new Uint8Array(buf), mirror);
+    expect(m.swarm.has(7)).toBe(true);
+    expect(m.swarm.has(8)).toBe(false);
+  });
+});
