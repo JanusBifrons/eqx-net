@@ -29,6 +29,7 @@ import { hullColor } from './ShieldHullBar';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { canUpgradeStructure, structureUpgradeGoods } from '@core/leveling/structureLevel';
 import { GOOD_DEFS, type GoodId } from '@shared-types/goods';
+import { structureDraw } from '@shared-types/structurePower';
 import type { PickedEntityKind } from '../render/pickEntity';
 import type { StructureRenderState } from '@core/contracts/IRenderer';
 
@@ -517,7 +518,8 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       // shares. Pure catalogue lookup → instant, no server round-trip.
       if (subtype) {
         const k = getStructureKind(subtype);
-        data.selfPower = k.powerOutput - k.powerConsumption;
+        // Active power — what it draws NOW (full while active, else idle).
+        data.selfPower = k.powerOutput - Math.round(structureDraw(k.powerConsumption, st.drawFull === true));
       }
       // C4 — connection count "N / 6", CONNECTORS ONLY. Client-resident (slice
       // connTo.length + catalogue maxConnections), so it renders instantly with

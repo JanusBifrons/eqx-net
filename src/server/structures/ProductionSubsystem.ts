@@ -58,6 +58,8 @@ export interface ProductionDeps {
   /** A processor's blueprint changed (a run was spent, or a used-up copy left
    *  the slot): persist the slot. */
   onBlueprintSpent?(rec: StructureRecord): void;
+  /** Active power: full draw while running, the idle trickle otherwise. */
+  setActive?(rec: StructureRecord, active: boolean): void;
 }
 
 interface AppliedCache {
@@ -137,7 +139,11 @@ export class ProductionSubsystem {
     if (n === 0) return;
     const start = this.pulses++ % n;
     this.netComponent = null;
-    for (let k = 0; k < n; k++) this.step(procs[(start + k) % n]!);
+    for (let k = 0; k < n; k++) {
+      const rec = procs[(start + k) % n]!;
+      this.step(rec);
+      this.d.setActive?.(rec, rec.prodState === PROD_STATE.running);
+    }
   }
 
   /**

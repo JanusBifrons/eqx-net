@@ -172,6 +172,10 @@ Update this section when a threshold is set.
   - Beam turrets never reach it: lasers are power-only.
   - No hook ⇒ unlimited (unit harnesses).
   - Test rooms with ammo turrets stock munitions via `prebuiltStorageGoods`.
+- **Active power (2026-11-01):** a structure draws its full consumption only while working, else `IDLE_DRAW_FRAC` (0.2) of it (`shared-types/structurePower.ts`, used by both sides).
+  - **The one switch** is `StructureGridSubsystem.setActive(rec, active)`, which adjusts the component's net power in O(1) via `Grid.adjustDraw`. Never write `rec.drawFull` directly, or the component's power goes stale until the next rebuild.
+  - **Callers:** drills and gas (StructureGridSubsystem), turrets (target or not), processors (`ProductionSubsystem` dep, running or not), Research Labs (`ResearchLabSubsystem` dep, job advancing or not). A new power consumer that "works" must call it too, or it draws idle forever.
+  - **Wire:** `STRUCTURE_FLAG_DRAW_FULL` (64) in the room-state flags byte.
 - Locks: `ProductionSubsystem.test.ts` and `tests/integration/sectorRoom/production.test.ts`. Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).
 
 ## NPC bases from the generator (plan soft-leaping-truffle v3, D2)

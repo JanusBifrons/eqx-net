@@ -48,6 +48,7 @@ import {
   STRUCTURE_FLAG_WALL_ACTIVE,
   STRUCTURE_FLAG_NO_AMMO,
   STRUCTURE_FLAG_NO_FUEL,
+  STRUCTURE_FLAG_DRAW_FULL,
   STRUCTURE_TARGET_NONE,
   STRUCTURE_DEFAULTS as SD,
 } from '../../shared-types/structureStateWire.js';
@@ -2113,6 +2114,7 @@ export class SectorRoom extends Room<SectorState> {
       storage: this.storage,
       registry: this.structureRegistry,
       powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
+      setActive: (lab, active) => this.structureGrid.setActive(lab, active),
       sectorKey: () => this.sectorKey,
     });
     // ── Shield-wall lifecycle (shield-fence plan) ──────────────────────────
@@ -2123,6 +2125,8 @@ export class SectorRoom extends Room<SectorState> {
       powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
       componentOf: (id) => this.structureGrid.componentMembersOf(id),
       onBlueprintSpent: (rec) => this.storage.persistSlot(rec),
+      // Active power: processors draw full only while running.
+      setActive: (rec, active) => this.structureGrid.setActive(rec, active),
     });
     this.gates = new GateController({
       registry: this.structureRegistry,
@@ -4569,6 +4573,7 @@ export class SectorRoom extends Room<SectorState> {
         // emitter's walls are up). `shieldWallTo` stays for a pylon's first wall.
         if (this.shieldWalls.wallsUpFor(rec.id, nowMs)) flags |= STRUCTURE_FLAG_WALL_ACTIVE;
         if (rec.noAmmo === true) flags |= STRUCTURE_FLAG_NO_AMMO;
+        if (rec.drawFull === true) flags |= STRUCTURE_FLAG_DRAW_FULL;
         if (rec.isConstructed && getStructureKind(rec.kind).fuelEveryPulses != null && rec.fueled !== true) flags |= STRUCTURE_FLAG_NO_FUEL;
         if (rec.kind === 'shield_pylon') {
           const wall = this.shieldWalls.wallStateFor(rec.id, nowMs);

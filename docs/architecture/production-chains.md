@@ -63,6 +63,27 @@ Other rules:
 - **Cost:** 60 smelters with 20 storages take under 0.3 ms per pulse, locked by `ProductionSubsystem.test.ts`. Processors in one component share a single network lookup.
 - **Wire:** room-state bytes `recipe`, `prodState` and `prodMissing`, sent only when not 0 (#16). Late joiners read them from the join payload.
 
+## Active power: full draw only while working
+
+User ruling (2026-11-01): "not everything should drain full power all of the time. Only when actively processing material should it draw full power. If it's idle it won't… They should draw a small amount when idle, just not full."
+
+- **The rule** lives in one shared function, `structureDraw(powerConsumption, drawFull)` in [src/shared-types/structurePower.ts](../../src/shared-types/structurePower.ts). A structure draws its full `powerConsumption` while ACTIVE and `IDLE_DRAW_FRAC` (0.2) of it otherwise. The server's grid view and the client's grid mirror both call it (#15).
+- **What counts as active:**
+
+  | Structure | Active while |
+  |---|---|
+  | Processor (Smelter, Fabricator, …) | its cycle is running (`prodState === running`) |
+  | Drill (Miner, Deep Core Rig) | it has an asteroid to mine |
+  | Gas Collector | it is gathering (nebula sector, powered) |
+  | Turret (every kind) | it has a target |
+  | Research Lab | its job is advancing |
+
+  Everything else (connectors, storage, shield pylons and gates) never becomes active, so it always draws the idle trickle. Pylons hold their walls on it; a hit on a wall is paid from the grid surplus and then from batteries, so batteries remain a real strategy.
+- **The server decides.** `StructureGridSubsystem.setActive(rec, active)` flips `rec.drawFull` and adjusts the structure's grid component by the difference with `Grid.adjustDraw`, an O(1) update with no topology rebuild. The flag rides room state as `STRUCTURE_FLAG_DRAW_FULL` (64), so the client's power readouts and the inspector match.
+- **Brown-outs alternate.** A grid that only affords its structures idle powers up, a structure starts working and draws full, the grid goes negative, the structure drops back to idle on the next pulse, and so on. Batteries cover the gap: that is what they are for.
+- **The generator sizes for expected use.** `growBase` prices power at `expectedDraw(kind) = cons × (u + (1 − u) × IDLE_DRAW_FRAC)`, with utilisation `u` from `EXPECTED_ACTIVE` (processors 0.6, drills 0.8, turrets 0.15), and adds two extra batteries to fenced bases. So NPC bases don't build power for every machine at 100 % at once (`BASE_GROWTH_VERSION` 3).
+- **Locks:** `StructureGridSubsystem.test.ts` (brown-out alternation, battery recovery, overdrawn turret), `structureMining.test.ts` and `structureTurret.test.ts` (integration: alternating drill, a drilling miner overdraws a turret), `researchLab.test.ts` (a lab draws full only while its job runs), `growBase.test.ts` (power ≥ 0 at expected draw).
+
 ## Packed structures
 
 User rulings (2026-11-01):
