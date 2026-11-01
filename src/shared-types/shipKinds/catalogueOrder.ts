@@ -27,7 +27,7 @@ import { MISSILE_FRIGATE } from './missileFrigate.js';
 import { CROSSGUARD } from './crossguard.js';
 import { L_SHAPE } from './lShape.js';
 import { HAVOK } from './composite/havok.js';
-import { ROBOT_SQUARE, ROBOT_CIRCLE, ROBOT_HEXAGON, ROBOT_NEXUS } from './robots.js';
+import { ROBOT_SQUARE, ROBOT_CIRCLE, ROBOT_HEXAGON, ROBOT_NEXUS, ROBOT_HARVESTER } from './robots.js';
 import { CARGO_POD } from './cargoPod.js';
 import { TRADER_HAULER } from './traders.js';
 
@@ -59,4 +59,6 @@ export const SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze([
   TRADER_HAULER,
   // Living World P3: the robot nexus. APPEND ONLY.
   ROBOT_NEXUS,
+  // Living World P3b: the robot harvester. APPEND ONLY.
+  ROBOT_HARVESTER,
 ]);

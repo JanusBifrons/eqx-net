@@ -39,6 +39,10 @@ export interface LootCollector {
   y: number;
   /** Cargo capacity (weight units) of the collecting hull's kind. */
   capacity: number;
+  /** Living World P3b — an NPC collector (robot harvester): its hold is an
+   *  ownerless `hauler`-type record keyed by its swarm id (spilled on death by
+   *  the kill path), and it gets no player popup. */
+  npc?: boolean;
 }
 
 export interface LootSubsystemDeps {
@@ -222,10 +226,9 @@ export class LootSubsystem {
       ? transferUpTo(shipHold, podHold, c.capacity, DERELICT_SALVAGE_STEP)
       : transferInto(shipHold, podHold, c.capacity);
     if (isHoldEmpty(moved)) return; // hold full — the pod stays
-    const shipNext: HoldRecord = {
-      holderUid: c.shipInstanceId, holderType: 'ship', ownerId: c.playerId,
-      sectorKey: null, x: null, y: null, hold: shipHold, expiresAt: null,
-    };
+    const shipNext: HoldRecord = c.npc === true
+      ? { holderUid: c.shipInstanceId, holderType: 'hauler', ownerId: null, sectorKey: this.d.sectorKey(), x: null, y: null, hold: shipHold, expiresAt: null }
+      : { holderUid: c.shipInstanceId, holderType: 'ship', ownerId: c.playerId, sectorKey: null, x: null, y: null, hold: shipHold, expiresAt: null };
     if (srcEmptied) {
       // ONE atomic group: ship gains + pod row deleted.
       this.d.holdStore.commit([shipNext], [podId], this.persist());

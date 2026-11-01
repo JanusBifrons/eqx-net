@@ -135,6 +135,54 @@ export const ROBOT_NEXUS: ShipKind = ShipKindSchema.parse({
   slots: [LEGACY_PRIMARY_SLOT],
 });
 
+export const ROBOT_COLOR_HARVESTER = 0xd9a441;
+
+/**
+ * Living World P3b — the robot HARVESTER. Scoops up loot pods (the same atomic
+ * pickup path players use), carries them in its own hold, and banks them into
+ * the nexus. A killed harvester spills its cargo. Lightly armed; never squad-
+ * flocked (the RobotTerritory steers it).
+ */
+export const ROBOT_HARVESTER: ShipKind = ShipKindSchema.parse({
+  id: 'robot-harvester',
+  displayName: 'Robot Harvester',
+  description: 'A robot scavenger. Collects loot and hoards it at the nexus.',
+  allegiance: 'robots',
+  npcOnly: true,
+  thrustImpulse: 2.4,
+  reverseFactor: 0.5,
+  boostMultiplier: 1.4,
+  maxAngvel: 2.0,
+  maxSpeed: 560,
+  linearDamping: 0.4,
+  angularDamping: 0,
+  lateralGrip: 0.03,
+  radius: 18,
+  maxHealth: 300,
+  shieldMax: 150,
+  shieldRegenDelayTicks: 360,
+  shieldRegenRate: 150 / 150,
+  energyMax: 150,
+  energyRegenRate: 0.25,
+  ai: { thrust: 0.9, turnKp: 6.0, maxTorque: 4.0 },
+  shape: {
+    kind: 'polygon',
+    color: ROBOT_COLOR_HARVESTER,
+    scale: 1,
+    // A wide scoop at the bow, narrow at the stern.
+    points: [
+      [-18, 16],
+      [-8, 6],
+      [8, 6],
+      [18, 16],
+      [12, -14],
+      [-12, -14],
+    ],
+  },
+  mounts: [{ ...LEGACY_FORWARD_MOUNT, weaponId: 'laser' }],
+  slots: [LEGACY_PRIMARY_SLOT],
+});
+
 /** T3 — the hexagon. Heavy and slow; launches homing missiles (P1b). */
 export const ROBOT_HEXAGON: ShipKind = ShipKindSchema.parse({
   id: 'robot-hexagon',

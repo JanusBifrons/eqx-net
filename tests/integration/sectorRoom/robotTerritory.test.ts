@@ -91,6 +91,58 @@ describe('SectorRoom integration — robot nexus + territory (P3)', () => {
     expect(t.nexusState()!.alive).toBe(true);
   }, 30_000);
 
+  /**
+   * P3b — harvesters: spawn at the nexus, scoop a loot pod, bank the cargo into
+   * the nexus; destroying the nexus spills the hoard (its hold + its table).
+   */
+  it('harvesters collect a pod, bank it into the nexus, and the hoard spills when the nexus dies', async () => {
+    let clock: { now: number };
+    ({ h, t, clock } = await boot());
+    const room = h.getRoom('greenfall');
+    clock.now += 1000;
+    t.tick(clock.now);
+    expect(t.liveHarvesters()).toHaveLength(2);
+    const hid = t.liveHarvesters()[0]!;
+    expect(room._internals.swarmRegistry.get(hid)?.shipKind).toBe('robot-harvester');
+
+    // A pod right under the harvester — the room's collector picks it up.
+    const pose = room.getBotPose(hid)!;
+    room.tradeDropAt({ goods: { alloy: 10 }, credits: 0, blueprints: [] }, pose.x, pose.y);
+    await h.waitUntil(() => room.holdWeight(hid) > 0, 4000, 'harvester scooped the pod');
+
+    // Nothing left to chase + cargo aboard ⇒ it banks at the (adjacent) nexus.
+    for (let i = 0; i < 3 && room.holdWeight(hid) > 0; i++) { clock.now += 1000; t.tick(clock.now); }
+    expect(room.holdWeight(hid)).toBe(0);
+    expect(getHoldStore().get(NEXUS_ID)?.hold.goods.alloy).toBe(10);
+
+    // Destroy the nexus: the hoard spills alongside its loot table.
+    for (let i = 0; i < 6 && room._internals.swarmRegistry.get(NEXUS_ID); i++) {
+      room._internals.applyDamage(NEXUS_ID, 'some-player', 50_000);
+    }
+    const alloy = getHoldStore().inSector('greenfall', 'pod').reduce((s, p) => s + (p.hold.goods.alloy ?? 0), 0);
+    expect(alloy).toBeGreaterThanOrEqual(10 + 20); // the hoard + the table's 20-40 alloy
+    expect(getHoldStore().get(NEXUS_ID)).toBeUndefined();
+  }, 30_000);
+
+  it('a killed harvester spills what it carries', async () => {
+    let clock: { now: number };
+    ({ h, t, clock } = await boot());
+    const room = h.getRoom('greenfall');
+    clock.now += 1000;
+    t.tick(clock.now);
+    const hid = t.liveHarvesters()[0]!;
+    const pose = room.getBotPose(hid)!;
+    room.tradeDropAt({ goods: { core: 3 }, credits: 0, blueprints: [] }, pose.x, pose.y);
+    await h.waitUntil(() => room.holdWeight(hid) > 0, 4000, 'scooped');
+    for (let i = 0; i < 6 && room._internals.swarmRegistry.get(hid); i++) {
+      room._internals.applyDamage(hid, 'some-player', 5_000);
+    }
+    expect(getHoldStore().get(hid)).toBeUndefined();
+    const cores = getHoldStore().inSector('greenfall', 'pod').reduce((s, p) => s + (p.hold.goods.core ?? 0), 0);
+    expect(cores).toBeGreaterThanOrEqual(3);
+    expect(t.liveHarvesters()).not.toContain(hid);
+  }, 30_000);
+
   it('the nexus sector is claimed by the robots (and held through a dip)', async () => {
     let clock: { now: number };
     ({ h, t, clock } = await boot());

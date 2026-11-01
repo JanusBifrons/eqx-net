@@ -36,12 +36,24 @@ export const NEXUS_RESPAWN_MS = 20 * 60_000;
 export const NEXUS_RADIUS = 2400;
 export const ROBOT_FACTION_ID = 'robots';
 
+/** P3b — harvesters: robot scavengers that bank loot into the nexus. */
+export const HARVESTERS_PER_NEXUS = 2;
+export const HARVESTER_ID_PREFIX = 'rbot-harv-';
+/** Cargo weight a harvester carries (the collector capacity). */
+export const HARVESTER_CAPACITY = 400;
+/** A harvester heads home once this full (or when no pod is left to chase). */
+export const HARVESTER_RETURN_FRAC = 0.75;
+/** Within this distance of the nexus, a harvester banks its whole hold. */
+export const HARVESTER_BANK_RADIUS = 260;
+export const HARVESTER_RESPAWN_MS = 90_000;
+
 export interface RobotTerritoryOptions {
   rng?: Rng;
   nowMs?: () => number;
   nexusRespawnMs?: number;
   /** First nexus sector (tests); default = a random live entry sector. */
   nexusSector?: string;
+  harvesterRespawnMs?: number;
 }
 
 export class RobotTerritory {
@@ -53,6 +65,9 @@ export class RobotTerritory {
   private lastTickMs: number;
   private readonly subs: Array<{ bus: Bus; fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void }> = [];
   private readonly scratch: ControlInputs = { robots: 0, nexus: false, playerStructures: 0, players: 0 };
+  /** P3b — harvester id → where it lives + when it may respawn. */
+  private readonly harvesters = new Map<string, { alive: boolean; sectorKey: string | null; respawnAtMs: number }>();
+  private readonly harvesterRespawnMs: number;
 
   constructor(
     private readonly rooms: ReadonlyMap<string, LivingWorldRoom>,
@@ -62,7 +77,11 @@ export class RobotTerritory {
     this.rng = opts.rng ?? Math.random;
     this.now = opts.nowMs ?? Date.now;
     this.nexusRespawnMs = opts.nexusRespawnMs ?? NEXUS_RESPAWN_MS;
+    this.harvesterRespawnMs = opts.harvesterRespawnMs ?? HARVESTER_RESPAWN_MS;
     this.lastTickMs = this.now();
+    for (let i = 0; i < HARVESTERS_PER_NEXUS; i++) {
+      this.harvesters.set(`${HARVESTER_ID_PREFIX}${i}`, { alive: false, sectorKey: null, respawnAtMs: 0 });
+    }
   }
 
   start(): void {
@@ -70,6 +89,7 @@ export class RobotTerritory {
       const bus = room.eventBus();
       const fn = (e: { type: 'ENTITY_DESTROYED'; entityId: string }): void => {
         if (e.entityId === NEXUS_ID) this.onNexusDestroyed();
+        else if (e.entityId.startsWith(HARVESTER_ID_PREFIX)) this.onHarvesterDestroyed(e.entityId);
       };
       bus.on('ENTITY_DESTROYED', fn);
       this.subs.push({ bus, fn });
@@ -104,6 +124,7 @@ export class RobotTerritory {
       // Placement failed earlier (no free slot) — retry.
       this.placeNexus(n.sectorKey);
     }
+    this.harvesterStep(nowMs);
     const dt = nowMs - this.lastTickMs;
     this.lastTickMs = nowMs;
     for (const key of this.rooms.keys()) {
@@ -159,6 +180,79 @@ export class RobotTerritory {
       && room.spawnLivingWorldBot({ botId: NEXUS_ID, kind: 'robot-nexus', x, y });
     this.nexus = { sectorKey, x, y, alive: ok, respawnAtMs: ok ? 0 : Infinity };
     serverLogEvent(ok ? 'robot_nexus_spawned' : 'robot_nexus_spawn_failed', { sectorKey });
+  }
+
+  /** Harvester ids that are alive right now (tests / dev). */
+  liveHarvesters(): string[] {
+    const out: string[] = [];
+    for (const [id, h] of this.harvesters) if (h.alive) out.push(id);
+    return out;
+  }
+
+  /**
+   * P3b — keep the harvesters alive and working. Each one:
+   *   - (re)spawns at a living nexus when due;
+   *   - follows the nexus to its new sector after a nexus respawn (its hold,
+   *     keyed by its id, travels with it);
+   *   - heads home once ≥ HARVESTER_RETURN_FRAC full (or when it carries
+   *     something and no pod is left), and banks the whole hold into the
+   *     nexus within HARVESTER_BANK_RADIUS;
+   *   - otherwise chases the nearest loot pod (the room's collector does the
+   *     actual pickup), or idles beside the nexus.
+   * Control cadence (~1.5 s); allocation here is fine.
+   */
+  private harvesterStep(nowMs: number): void {
+    const n = this.nexus;
+    const nexusAlive = n !== null && n.alive;
+    for (const [id, h] of this.harvesters) {
+      if (!h.alive) {
+        if (!nexusAlive || nowMs < h.respawnAtMs) continue;
+        const room = this.rooms.get(n.sectorKey);
+        if (!room || !room.hasFreeSlot()) continue;
+        const a = (id.charCodeAt(id.length - 1) % 6) * (Math.PI / 3);
+        if (room.spawnLivingWorldBot({ botId: id, kind: 'robot-harvester', x: n.x + Math.cos(a) * 180, y: n.y + Math.sin(a) * 180 })) {
+          h.alive = true;
+          h.sectorKey = n.sectorKey;
+          serverLogEvent('robot_harvester_spawned', { id, sectorKey: n.sectorKey });
+        }
+        continue;
+      }
+      if (!nexusAlive || h.sectorKey === null) continue;
+      if (h.sectorKey !== n.sectorKey) {
+        // The nexus moved: recall the harvester (quietly — its hold stays keyed by id).
+        this.rooms.get(h.sectorKey)?.despawnLivingWorldBot(id);
+        h.alive = false;
+        h.respawnAtMs = nowMs;
+        continue;
+      }
+      const room = this.rooms.get(h.sectorKey);
+      const pose = room?.getBotPose(id) ?? null;
+      if (!room || pose === null) continue;
+      const carried = room.holdWeight?.(id) ?? 0;
+      const pod = room.nearestLootPod?.(pose.x, pose.y) ?? null;
+      const goHome = carried >= HARVESTER_CAPACITY * HARVESTER_RETURN_FRAC || (carried > 0 && pod === null);
+      if (goHome) {
+        if (Math.hypot(pose.x - n.x, pose.y - n.y) <= HARVESTER_BANK_RADIUS) {
+          const moved = room.bankHold?.(id, NEXUS_ID) ?? 0;
+          if (moved > 0) serverLogEvent('robot_harvester_banked', { id, weight: moved });
+        } else {
+          room.setBotMoveTarget(id, n.x, n.y);
+        }
+      } else if (pod !== null) {
+        room.setBotMoveTarget(id, pod.x, pod.y);
+      } else {
+        room.setBotMoveTarget(id, n.x + 220, n.y);
+      }
+    }
+  }
+
+  private onHarvesterDestroyed(id: string): void {
+    const h = this.harvesters.get(id);
+    if (!h || !h.alive) return;
+    h.alive = false;
+    h.sectorKey = null;
+    h.respawnAtMs = this.now() + this.harvesterRespawnMs;
+    serverLogEvent('robot_harvester_destroyed', { id });
   }
 
   private onNexusDestroyed(): void {
