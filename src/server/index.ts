@@ -28,6 +28,7 @@ import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled, resolveBotSpoolMs, resolveBotHopMs, type LivingWorldOptions } from './livingworld/LivingWorldDirector.js';
 import { setIncomingPlayerSink } from './livingworld/incomingPlayerSink.js';
 import { setGalaxyStatsProvider } from './livingworld/galaxyStatsProvider.js';
+import { ROBOT_DIRECTOR_OPTIONS, ROBOT_BOT_COUNT, isRobotsDisabled } from './livingworld/robotDirector.js';
 import { DirectorPersistence, type DirectorStatePayload } from './livingworld/DirectorPersistence.js';
 import { db } from './db/Database.js';
 import { resolveCorsPolicy, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
@@ -95,6 +96,9 @@ let serverReady = false;
 /** Process-global Living World population brain. Constructed in `main()`
  *  after the eager galaxy rooms exist; stopped on shutdown. */
 let livingWorldDirector: LivingWorldDirector | null = null;
+/** Living World P1b — the robot-side director (null when disarmed). */
+let robotDirector: LivingWorldDirector | null = null;
+const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
 app.get('/healthz', (_req, res) => {
   res.json({
     status: 'ok',
@@ -165,8 +169,10 @@ if (process.env['NODE_ENV'] !== 'production') {
   // GET /dev/population — Living World director snapshot (per-sector
   // players/bots, totals, in-transit/respawning) for E2E + diagnostics.
   // Read-only; mirrors /dev/limbo's inspection-only shape.
-  app.get('/dev/population', (_req, res) => {
-    res.json(livingWorldDirector ? livingWorldDirector.snapshot() : { ready: false });
+  app.get('/dev/population', (req, res) => {
+    // `?allegiance=robots` inspects the robot director (Living World P1b).
+    const d = req.query['allegiance'] === 'robots' ? robotDirector : livingWorldDirector;
+    res.json(d ? d.snapshot() : { ready: false });
   });
 
   // GET /dev/audit?player=&owner=&sector=&event=&since=&until=&limit=&source=&format=
@@ -619,6 +625,52 @@ gameServer
 for (const [name, opts] of Object.entries(SHOWCASE_ROOMS)) {
   gameServer.define(name, SectorRoom, opts).filterBy(['testId']);
 }
+// Off-screen radar SANDBOX (plan sparkling-wondering-rose) — `?room=radar-sandbox`.
+// The ship spawns at a FIXED point S=(-3000,-3000) (off-centre so contacts can sit
+// beyond the 10 000 u radar range while staying inside the drone ±10 000 /
+// structure ±5 000 world bounds). Every contact is at a MEASURED offset from S:
+// one drone ON screen (must get no icon), static contacts at graded distances +
+// bearings (incl. diagonals/corners), one beyond range (must get no icon),
+// hostile vs neutral, structures + an asteroid, and three drones on scripted
+// paths — flying in/out of view, a tangential pass and a corner crossing.
+// Peaceful (nothing attacks). Join with a testId to isolate parallel specs.
+const RADAR_S = { x: -3000, y: -3000 };
+const rs = (dx: number, dy: number): { x: number; y: number } => ({ x: RADAR_S.x + dx, y: RADAR_S.y + dy });
+const RADAR_SANDBOX_LAYOUT = {
+  spawn: RADAR_S,
+  dronePoses: [
+    { kind: 'fighter' as const, ...rs(350, 0) },                 // 0 on screen at zoom 1 → no icon
+    { kind: 'fighter' as const, ...rs(900, 0), hostile: true },   // 1 east, near, hostile
+    { kind: 'fighter' as const, ...rs(0, 1800) },                 // 2 north, mid
+    { kind: 'fighter' as const, ...rs(-2500, 0), hostile: true }, // 3 west, far-ish, hostile
+    { kind: 'fighter' as const, ...rs(2475, -2475) },             // 4 SE diagonal ~3500
+    { kind: 'fighter' as const, ...rs(4950, 4950) },              // 5 NE ~7000 (far)
+    { kind: 'fighter' as const, ...rs(7780, 7780) },              // 6 ~11 000 → beyond range, no icon
+    { kind: 'fighter' as const, ...rs(-1500, -1100), hostile: true }, // 7 SW
+    // Scripted movers.
+    { kind: 'fighter' as const, ...rs(300, 250), path: { toX: RADAR_S.x + 3300, toY: RADAR_S.y + 250, speed: 260 } },           // 8 fly in/out east
+    { kind: 'fighter' as const, ...rs(-2200, 1100), path: { toX: RADAR_S.x + 2200, toY: RADAR_S.y + 1100, speed: 320 }, hostile: true }, // 9 tangential north
+    { kind: 'fighter' as const, ...rs(500, -500), path: { toX: RADAR_S.x + 2500, toY: RADAR_S.y - 2500, speed: 200 } },          // 10 corner crossing SE
+  ],
+  prebuiltStructures: [
+    { kind: 'capital' as const, ...rs(-1200, 1400) },
+    { kind: 'solar' as const, ...rs(1600, -1200) },
+  ],
+  scenarioAsteroids: [{ ...rs(-700, -1500), radius: 40 }],
+};
+gameServer
+  .define('radar-sandbox', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    dronePoses: RADAR_SANDBOX_LAYOUT.dronePoses,
+    prebuiltStructures: RADAR_SANDBOX_LAYOUT.prebuiltStructures,
+    scenarioAsteroids: RADAR_SANDBOX_LAYOUT.scenarioAsteroids,
+    defaultSpawnX: RADAR_S.x,
+    defaultSpawnY: RADAR_S.y,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
 // Procedural bases (plan soft-leaping-truffle, PR-V2) — the WAREHOUSE showcase:
 // one max-size (8000 u) warehouse at the origin, nothing else in the sector, so
 // screenshots/videos/E2Es see the base alone. Spawn sits OUTSIDE the south wall
@@ -630,6 +682,21 @@ gameServer
     asteroidConfig: [],
     peacefulDrones: true,
     bases: [{ archetype: 'warehouse', seed: 42, x: 0, y: 0, size: 8000 }],
+    defaultSpawnX: 0,
+    defaultSpawnY: -3400,
+    maxClients: 8,
+  })
+  .filterBy(['testId']);
+// PR-D — the same warehouse with WEAK pieces (2 % hit points: a few beam hits
+// break a rack) for the destruction E2E + showcase. Spawn inside the yard.
+gameServer
+  .define('base-warehouse-destructible', SectorRoom, {
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    bases: [{ archetype: 'warehouse', seed: 42, x: 0, y: 0, size: 8000 }],
+    baseHpScale: 0.02,
     defaultSpawnX: 0,
     defaultSpawnY: -3400,
     maxClients: 8,
@@ -799,6 +866,55 @@ gameServer
     maxClients: 8,
   })
   .filterBy(['testId']);
+// Living World showcase (plan peppy-jumping-pinwheel) — the scripted video's
+// scene: a ROBOT squad and a DRONE squad parked to fight just north of spawn
+// (they engage each other on sight — allegiances P0), so loot pods rain down.
+// A real sectorKey so roster + holds work (pickup / deposit). Test-only room.
+gameServer
+  .define('living-world-showcase', SectorRoom, {
+    sectorKey: 'living-world-showcase',
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    maxClients: 4,
+    dronePoses: [
+      { kind: 'fighter', x: -260, y: 520, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'fighter', x: -300, y: 620, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'scout', x: -240, y: 720, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'robot-square', x: 260, y: 540, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-square', x: 300, y: 640, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-square', x: 240, y: 740, angle: Math.PI / 2, hullExposed: true },
+    ],
+  })
+  .filterBy(['testId']);
+// Living World P1b showcase — one full mixed-tier ROBOT squad (hexagon lead,
+// two circles, three cubes) vs six drones, the pilot spawning between them.
+// Robots are hostile to the pilot too, so the recording shows a real three-way
+// fight. testMode, filterBy testId (one room per recording).
+gameServer
+  .define('robots-showcase', SectorRoom, {
+    sectorKey: 'robots-showcase',
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    maxClients: 4,
+    dronePoses: [
+      // Shields start DOWN (hullExposed) so kills land within a short recording.
+      { kind: 'fighter', x: -420, y: 380, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'fighter', x: -470, y: 500, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'fighter', x: -420, y: 620, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'scout', x: -520, y: 440, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'scout', x: -520, y: 580, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'heavy', x: -600, y: 510, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'robot-hexagon', x: 560, y: 510, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-circle', x: 470, y: 420, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-circle', x: 470, y: 600, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-square', x: 400, y: 360, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-square', x: 380, y: 510, angle: Math.PI / 2, hullExposed: true },
+      { kind: 'robot-square', x: 400, y: 660, angle: Math.PI / 2, hullExposed: true },
+    ],
+  })
+  .filterBy(['testId']);
 // Phase 6 TiDi acceptance gate. 4000 entities (3200 asteroids + 800 active
 // drones at the 0.8 ratio). Diagnostic captures show this only consumes
 // ~1.5 ms/tick on a typical dev machine — well under the 14 ms TiDi
@@ -949,9 +1065,40 @@ async function main(): Promise<void> {
           .get() as { payload_json: string; created_at: number } | undefined,
       logger,
     });
+    // Living World P1b — the ROBOT side: a second director instance (mixed-tier
+    // `rbot-` squads, roam-only, hostile on sight via the stance table). Its
+    // own persistence row lives in `allegiance_director_state`.
+    if (isRobotsDisabled()) {
+      logger.warn('robot director DISARMED (EQX_DISABLE_ROBOTS set)');
+    } else {
+      const robotPersistence = new DirectorPersistence({
+        saveRow: (payload: DirectorStatePayload) => {
+          persistence.enqueueCritical({
+            type: 'ALLEGIANCE_DIRECTOR_STATE_PUT',
+            allegiance: 'robots',
+            payloadJson: JSON.stringify(payload),
+            ts: Date.now(),
+          });
+        },
+        loadRow: () =>
+          db
+            .prepare("SELECT payload_json, created_at FROM allegiance_director_state WHERE allegiance = 'robots'")
+            .get() as { payload_json: string; created_at: number } | undefined,
+        logger,
+      });
+      robotDirector = new LivingWorldDirector(galaxyRooms, {
+        ...directorOpts,
+        ...ROBOT_DIRECTOR_OPTIONS,
+        directorPersistence: robotPersistence,
+      });
+      robotDirector.start();
+      logger.info({ bots: ROBOT_BOT_COUNT }, 'robot director started');
+    }
     livingWorldDirector = new LivingWorldDirector(galaxyRooms, {
       ...directorOpts,
       directorPersistence,
+      // Robots are enemies of every player on the galaxy map.
+      hooks: { extraEnemyCounts: () => robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS },
     });
     livingWorldDirector.start();
     // Phase-4 P0 — let the per-room TransitOrchestrator + destination rooms feed
@@ -1006,6 +1153,8 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
     // off (the throttled in-loop persist only bounds loss on an unclean kill).
     livingWorldDirector?.persistState();
     livingWorldDirector?.stop();
+    robotDirector?.persistState();
+    robotDirector?.stop();
   } catch (err) {
     logger.warn({ err }, 'livingWorldDirector.persistState/stop threw');
   }

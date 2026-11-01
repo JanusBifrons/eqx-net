@@ -1,105 +1,85 @@
 /**
- * Pixi `Graphics` painting for the halo radar markers. Extracted from the
- * monolithic `HaloRadar.ts` per the god-file refactor plan
- * (`docs/plans/refactor-god-files.md`, commit 7).
+ * Pixi `Graphics` painting for radar icons + the contact → category mapping.
  *
- * Equinox Tweaks Phase 2 (#4) — the ring used to draw a faint translucent
- * triangle for EVERYTHING (the "almost entirely broken arrows" the user meant);
- * it now draws the shared entity VISUAL LANGUAGE glyph per kind
- * (`src/client/render/entityVisuals.ts`: hostile ★ red, neutral ◆ amber, ship ▲
- * green, structure ⬢ blue) so the ring matches the galaxy map and hostile vs
- * neutral is obvious at a glance. The marker sits at the bearing position on the
- * ring (position encodes direction), drawn UPRIGHT — no rotating needle.
+ * Plan sparkling-wondering-rose (Wave 2): icons are painted ONCE at a fixed
+ * base diameter (`GLYPH_BASE_DIAMETER`) in the category's configured shape +
+ * colour; the per-frame distance-derived size and opacity are applied through
+ * the Graphics' `scale` + `alpha`, so a glyph is only repainted when its shape,
+ * colour or glow changes (bounded cost — never per frame). Upright: the icon's
+ * POSITION on the edge track carries the bearing.
  */
 
 import { Graphics } from 'pixi.js';
-import {
-  ENTITY_VISUALS,
-  entityBadgePolygon,
-  type EntityKind,
-} from '../entityVisuals.js';
+import { entityBadgePolygon } from '../entityVisuals.js';
+import type { RadarCategory, RadarShape } from '../../../shared-types/settings/radar.js';
 
-/** Marker glyph radius (screen px, before the per-arrow projection scale). A
- *  grouped wedge representative (N entities at one bearing) draws a touch larger
- *  so an aggregated group reads heavier than a single contact. */
-export const GLYPH_RADIUS = 7;
-export const GLYPH_RADIUS_GROUPED = 9;
+/** Diameter (CSS px) the glyph is painted at; `scale = sizePx / BASE`. */
+export const GLYPH_BASE_DIAMETER = 12;
+const GLYPH_BASE_RADIUS = GLYPH_BASE_DIAMETER / 2;
 
-/** WS-B #3 — on a touch device (smaller screen + smaller halo ring) the fixed
- *  desktop glyph radius reads too large, so the marker scales down to this
- *  fraction. 0.65 keeps the touch glyph 60-70% of desktop (the WS-B brief). */
-export const HALO_GLYPH_TOUCH_SCALE = 0.65;
+/** Grouped wedge representatives (N contacts at one bearing) draw this much
+ *  larger so an aggregate reads heavier than a single contact. */
+export const GROUPED_SIZE_MUL = 1.25;
 
-/** Pure helper (WS-B #3). The screen-px glyph radius for a singleton vs grouped
- *  marker, scaled down on touch. Single source of truth so the unit test and the
- *  painter never drift. */
-export function haloGlyphRadius(grouped: boolean, isTouch: boolean): number {
-  const base = grouped ? GLYPH_RADIUS_GROUPED : GLYPH_RADIUS;
-  return isTouch ? base * HALO_GLYPH_TOUCH_SCALE : base;
-}
-
-// Glow under the glyph. Hostile (★) gets a brighter, larger red menace ring;
-// everything else a subtle ring tinted by its own colour.
 const GLOW_COLOR_HOSTILE = 0xff5566;
-const GLOW_RADIUS_HOSTILE = 11;
-const GLOW_ALPHA_HOSTILE = 0.4;
-const GLOW_RADIUS_DEFAULT = 7;
-const GLOW_ALPHA_DEFAULT = 0.18;
+const GLOW_ALPHA = 0.28;
+const OUTLINE_COLOR = 0x05070d; // dark outline: contrast on bright backgrounds
+const OUTLINE_ALPHA = 0.7;
+const OUTLINE_WIDTH = 1.4; // at base size; ≥ ~0.7 px at the smallest icon
 
-// The glyph is mostly-opaque so it reads as a solid blip (the old 0.5 fill was
-// half the "broken / invisible" complaint); the white stroke crisps the edge.
-const GLYPH_FILL_ALPHA = 0.92;
-const STROKE_ALPHA = 0.85;
-
-/** Paint a ring marker for `kind` into `g` (clears first). Upright; the ring
- *  position carries the bearing. Hostile gets a stronger glow + stroke.
- *  `isTouch` scales the glyph + glow down on a phone (WS-B #3). */
-export function paintHaloGlyph(g: Graphics, kind: EntityKind, grouped: boolean, isTouch = false): void {
+/** Paint a radar icon (clears first). */
+export function paintRadarGlyph(g: Graphics, shape: RadarShape, color: number, glow: boolean): void {
   g.clear();
-  const v = ENTITY_VISUALS[kind];
-  const hostile = kind === 'hostile';
-  const touchScale = isTouch ? HALO_GLYPH_TOUCH_SCALE : 1;
-
-  const glowColor = hostile ? GLOW_COLOR_HOSTILE : v.color;
-  const glowRadius =
-    (hostile ? GLOW_RADIUS_HOSTILE : GLOW_RADIUS_DEFAULT) * (grouped ? 1.25 : 1) * touchScale;
-  const glowAlpha = hostile ? GLOW_ALPHA_HOSTILE : GLOW_ALPHA_DEFAULT;
-  g.circle(0, 0, glowRadius);
-  g.fill({ color: glowColor, alpha: glowAlpha });
-
-  const r = haloGlyphRadius(grouped, isTouch);
-  const poly = entityBadgePolygon(v.shape, r);
-  g.poly(poly);
-  g.fill({ color: v.color, alpha: GLYPH_FILL_ALPHA });
-  g.poly(poly);
-  g.stroke({ color: 0xffffff, width: hostile ? 1.4 : 1, alpha: STROKE_ALPHA });
+  if (glow) {
+    g.circle(0, 0, GLYPH_BASE_RADIUS * 1.6);
+    g.fill({ color: GLOW_COLOR_HOSTILE, alpha: GLOW_ALPHA });
+  }
+  const r = GLYPH_BASE_RADIUS;
+  if (shape === 'circle') {
+    g.circle(0, 0, r);
+  } else if (shape === 'square') {
+    const s = r * 0.85;
+    g.rect(-s, -s, 2 * s, 2 * s);
+  } else {
+    g.poly(entityBadgePolygon(shape, r));
+  }
+  g.fill({ color, alpha: 1 });
+  if (shape === 'circle') g.circle(0, 0, r);
+  else if (shape === 'square') { const s = r * 0.85; g.rect(-s, -s, 2 * s, 2 * s); }
+  else g.poly(entityBadgePolygon(shape, r));
+  g.stroke({ color: OUTLINE_COLOR, width: OUTLINE_WIDTH, alpha: OUTLINE_ALPHA });
 }
 
-export function buildHaloGlyph(kind: EntityKind, grouped: boolean, isTouch = false): Graphics {
+export function buildRadarGlyph(shape: RadarShape, color: number, glow: boolean): Graphics {
   const g = new Graphics();
-  paintHaloGlyph(g, kind, grouped, isTouch);
+  paintRadarGlyph(g, shape, color, glow);
   return g;
 }
 
 /**
- * Map a swarm entity's pose-core `kind` byte (+ hostility) to the radar's
- * visual-language kind, or `null` when the entity must NOT show on the ring
- * (Equinox Tweaks Phase 2 #4). Pure + unit-locked so the include/exclude policy
- * is explicit:
- *   - 0 asteroid → null (excluded)
+ * Map a swarm entity's pose-core `kind` byte (+ hostility to the local player)
+ * to its radar category. Pure + unit-locked. Whether the category is SHOWN is a
+ * per-player preference (`RadarPrefs.categories[cat].enabled`), not this map.
+ *   - 0 asteroid → 'asteroid'
  *   - 1 drone    → hostile ? 'hostile' : 'neutral'
  *   - 2 structure→ 'structure'
- *   - 3 scrap    → null (excluded)
- *   - other      → null
- * (Remote PLAYER ships are 'ship' via a separate path; lingering hulls are never
- * iterated, so both are handled outside this helper.)
+ *   - 3 scrap    → 'scrap' — EXCEPT a loot pod / derelict
+ *                  (`shipKind === 'cargo-pod'`) → 'loot' (Living World P1a-2:
+ *                  spot drops after a fight)
+ *   - other      → null (unknown kinds never show)
+ * Remote player ships are 'player' and lingering hulls 'lingering' via their own
+ * mirror maps.
  */
-export function haloContactKind(swarmKind: number, hostile: boolean): EntityKind | null {
+export function radarCategoryForSwarm(swarmKind: number, hostile: boolean, shipKind?: string): RadarCategory | null {
   switch (swarmKind) {
+    case 0:
+      return 'asteroid';
     case 1:
       return hostile ? 'hostile' : 'neutral';
     case 2:
       return 'structure';
+    case 3:
+      return shipKind === 'cargo-pod' ? 'loot' : 'scrap';
     default:
       return null;
   }

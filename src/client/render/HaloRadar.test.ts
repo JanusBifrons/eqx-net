@@ -1,156 +1,32 @@
+/**
+ * Radar unit locks. The ring-radius `projectArrow` tests were retired with the
+ * ring projection (plan sparkling-wondering-rose — distance is now size +
+ * opacity on an edge track; geometry locks live in `halo/edgeRadar.test.ts`).
+ * The contact → category map and the wedge grouping remain.
+ */
 import { describe, it, expect } from 'vitest';
 import {
-  projectArrow,
-  clamp,
-  lerp,
   wedgeIndex,
   partitionAndGroupCandidates,
-  haloContactKind,
-  type HaloProjectionParams,
   type Candidate,
-} from './HaloRadar';
+} from './halo/wedgeGrouping';
+import { radarCategoryForSwarm } from './halo/arrowGraphics';
 
-const baseParams: HaloProjectionParams = {
-  // Phase E — radii are in screen pixels now (not world units). The
-  // projection returns bearing + screen-pixel radius; the renderer composes
-  // arrow.x/y from the player's screen position + cos/sin offsets.
-  innerRadiusPx: 100,
-  outerRadiusPx: 300,
-  distMin: 200,
-  distMax: 1000,
-  scaleNear: 1.5,
-  scaleFar: 0.5,
-};
-
-describe('HaloRadar projectArrow', () => {
-  it('renders arrows for entities regardless of on-screen status (Phase O)', () => {
-    // Pre-Phase-O the projection hid arrows for on-screen POIs; the user
-    // explicitly wanted continuous tracking during fast flybys so the
-    // on-screen hide was removed. Any non-degenerate POI produces a
-    // visible arrow.
-    const proj = projectArrow({ x: 0, y: 0 }, { x: 10, y: 10 }, baseParams);
-    expect(proj.hidden).toBe(false);
+describe('radarCategoryForSwarm — contact → radar category', () => {
+  it('maps every pose-core kind to its category (visibility is a preference, not this map)', () => {
+    expect(radarCategoryForSwarm(0, false)).toBe('asteroid');
+    expect(radarCategoryForSwarm(2, false)).toBe('structure');
+    expect(radarCategoryForSwarm(3, false)).toBe('scrap');
+    // Living World P1a-2: loot pods / derelicts ride scrap but show as 'loot'.
+    expect(radarCategoryForSwarm(3, false, 'cargo-pod')).toBe('loot');
+    expect(radarCategoryForSwarm(3, false, 'fighter')).toBe('scrap');
   });
-
-  it('hides arrow when POI sits exactly on the player (degenerate)', () => {
-    const proj = projectArrow({ x: 0, y: 0 }, { x: 0, y: 0 }, baseParams);
-    expect(proj.hidden).toBe(true);
+  it('classifies a drone by hostility to the local player', () => {
+    expect(radarCategoryForSwarm(1, true)).toBe('hostile');
+    expect(radarCategoryForSwarm(1, false)).toBe('neutral');
   });
-
-  it('returns innerRadiusPx + scaleNear for a near-distance POI', () => {
-    // POI exactly at distMin world units east — bearing 0, radius lerps to
-    // innerRadiusPx (100 px), scale to scaleNear (1.5).
-    const proj = projectArrow({ x: 0, y: 0 }, { x: 200, y: 0 }, baseParams);
-    expect(proj.hidden).toBe(false);
-    expect(proj.theta).toBeCloseTo(0);
-    expect(proj.radiusPx).toBeCloseTo(100);
-    expect(proj.scale).toBeCloseTo(1.5);
-  });
-
-  it('returns outerRadiusPx + scaleFar for a far-distance POI', () => {
-    // POI well past distMax — clamps to t=1.
-    const proj = projectArrow({ x: 0, y: 0 }, { x: 5000, y: 0 }, baseParams);
-    expect(proj.hidden).toBe(false);
-    expect(proj.theta).toBeCloseTo(0);
-    expect(proj.radiusPx).toBeCloseTo(300);
-    expect(proj.scale).toBeCloseTo(0.5);
-  });
-
-  it('exponential curve saturates mid-band distance at outer ring', () => {
-    // Phase M — exp-saturation curve with k=12. The arithmetic mid-band
-    // (600 u for distMin=200/distMax=1000) is now essentially at outer
-    // (t > 0.99). Pre-M k=5 had this at 92 % of band, which still showed
-    // some visible "approaching outer" motion; the user's brief was that
-    // mid-range entities should be glued to the edge instead.
-    const proj = projectArrow({ x: 0, y: 0 }, { x: 600, y: 0 }, baseParams);
-    expect(proj.hidden).toBe(false);
-    expect(proj.radiusPx).toBeGreaterThan(295); // outerRadiusPx = 300
-  });
-
-  it('only entities very close to distMin land near the inner ring', () => {
-    // dist = 205 (just 5 u past distMin=200) — normalized ≈ 0.006 of the
-    // band. With the exp-saturation curve and k=12, t ≈ 0.072 and the
-    // arrow sits at radius ≈ 114 (innerRadiusPx = 100). This is the
-    // "inner is reserved for super-close" contract the user asked for.
-    const proj = projectArrow({ x: 0, y: 0 }, { x: 205, y: 0 }, baseParams);
-    expect(proj.hidden).toBe(false);
-    expect(proj.radiusPx).toBeLessThan(120);
-  });
-
-  it('produces +π/2 bearing for a north-bearing POI (world y up)', () => {
-    // World north = +y → theta = +π/2. The y-flip to screen space is the
-    // renderer's job; this function returns world bearing. The radius is
-    // covered by the curve-specific tests below.
-    const proj = projectArrow({ x: 0, y: 0 }, { x: 0, y: 600 }, baseParams);
-    expect(proj.hidden).toBe(false);
-    expect(proj.theta).toBeCloseTo(Math.PI / 2);
-  });
-
-  it('produces opposite-sign bearings for north vs south POIs', () => {
-    const north = projectArrow({ x: 0, y: 0 }, { x: 0, y: 600 }, baseParams);
-    const south = projectArrow({ x: 0, y: 0 }, { x: 0, y: -600 }, baseParams);
-    expect(north.theta).toBeCloseTo(Math.PI / 2);
-    expect(south.theta).toBeCloseTo(-Math.PI / 2);
-  });
-
-  it('clamps below-distMin distances to the inner ring (Phase O)', () => {
-    // POI at world (60, 0) — dist = 60, below distMin = 200. Phase O
-    // dropped the hide-below-distMin contract: the arrow now clamps to
-    // the inner ring instead of disappearing, so close-range entities
-    // are tracked continuously through the on-screen transition.
-    const proj = projectArrow({ x: 0, y: 0 }, { x: 60, y: 0 }, baseParams);
-    expect(proj.hidden).toBe(false);
-    expect(proj.radiusPx).toBeCloseTo(100); // innerRadiusPx
-    expect(proj.scale).toBeCloseTo(1.5);    // scaleNear
-  });
-
-  it('starts the lerp exactly at distMin (innerRadiusPx + scaleNear)', () => {
-    // POI exactly at distMin world units east — bearing 0, radius at
-    // innerRadiusPx, scale at scaleNear. Same case as the near-distance
-    // test above but stated as a lerp-boundary invariant.
-    const proj = projectArrow({ x: 0, y: 0 }, { x: 200, y: 0 }, baseParams);
-    expect(proj.hidden).toBe(false);
-    expect(proj.radiusPx).toBeCloseTo(100);
-    expect(proj.scale).toBeCloseTo(1.5);
-  });
-
-  it('returns bearing relative to the player, not the world origin', () => {
-    // Player at (1000, 500); POI 600 east of player. Asserts the
-    // bearing math is player-relative (not world-relative).
-    const proj = projectArrow({ x: 1000, y: 500 }, { x: 1600, y: 500 }, baseParams);
-    expect(proj.hidden).toBe(false);
-    expect(proj.theta).toBeCloseTo(0); // east bearing in world space
-  });
-});
-
-describe('HaloRadar haloContactKind (Phase 2 #4 — include/exclude + classify)', () => {
-  it('EXCLUDES asteroids (kind 0) and scrap (kind 3)', () => {
-    expect(haloContactKind(0, false)).toBeNull();
-    expect(haloContactKind(3, false)).toBeNull();
-  });
-  it('classifies a drone (kind 1) by hostility', () => {
-    expect(haloContactKind(1, true)).toBe('hostile');
-    expect(haloContactKind(1, false)).toBe('neutral');
-  });
-  it('classifies a structure (kind 2) as structure', () => {
-    expect(haloContactKind(2, false)).toBe('structure');
-  });
-  it('excludes any unknown kind by default', () => {
-    expect(haloContactKind(7, false)).toBeNull();
-  });
-});
-
-describe('HaloRadar math primitives', () => {
-  it('clamp respects the bounds', () => {
-    expect(clamp(0.5, 0, 1)).toBe(0.5);
-    expect(clamp(-1, 0, 1)).toBe(0);
-    expect(clamp(2, 0, 1)).toBe(1);
-  });
-
-  it('lerp interpolates linearly', () => {
-    expect(lerp(0, 10, 0)).toBe(0);
-    expect(lerp(0, 10, 1)).toBe(10);
-    expect(lerp(0, 10, 0.5)).toBe(5);
+  it('never shows an unknown kind', () => {
+    expect(radarCategoryForSwarm(7, false)).toBeNull();
   });
 });
 
@@ -230,10 +106,18 @@ describe('HaloRadar partitionAndGroupCandidates', () => {
   it('groups across separate wedges independently', () => {
     const candidates: Candidate[] = [
       mk('east',  4000, 0, 0xff0000),
+      mk('east2', 4500, 50, 0xff0000),
       mk('north', 0, 4000, 0x00ff00),
+      mk('north2', -50, 4500, 0x00ff00),
     ];
     const result = partitionAndGroupCandidates(local, candidates, 2500, 8000, 24);
     expect(result.map((c) => c.key).sort()).toEqual(['wedge:12', 'wedge:18']);
+  });
+
+  it('a wedge holding a SINGLE contact emits the contact itself, not a group', () => {
+    const result = partitionAndGroupCandidates(local, [mk('lone', 4000, 0, 0xff0000)], 2500, 8000, 24);
+    expect(result.map((c) => c.key)).toEqual(['lone']);
+    expect(result[0]!.grouped).not.toBe(true);
   });
 
   it('mixes near singletons + far wedge representatives in one frame', () => {
@@ -253,7 +137,8 @@ describe('HaloRadar partitionAndGroupCandidates', () => {
     // Player at (1000, 500); far POI 4000u east of player.
     const localOffset = { x: 1000, y: 500 };
     const c: Candidate = { key: 'p', x: 5000, y: 500, color: 0, dist: 4000 };
-    const result = partitionAndGroupCandidates(localOffset, [c], 2500, 8000, 24);
+    const c2: Candidate = { key: 'p2', x: 5500, y: 520, color: 0, dist: 4500 };
+    const result = partitionAndGroupCandidates(localOffset, [c, c2], 2500, 8000, 24);
     expect(result).toHaveLength(1);
     expect(result[0]!.key).toBe('wedge:12'); // east from the player's frame
   });

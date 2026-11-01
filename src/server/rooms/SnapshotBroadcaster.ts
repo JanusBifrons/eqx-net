@@ -139,6 +139,9 @@ export interface SnapshotBroadcasterDeps {
    *  from the HoldStore, replaced only on a discrete transfer — #14 safe), or
    *  undefined when it carries nothing. Absent dep ⇒ no cargo slice. */
   shipHoldOf?: (shipInstanceId: string) => Hold | undefined;
+  /** Living World P1a-2 — auto-deposit progress 0..100 for a ship instance
+   *  (undefined ⇒ not depositing). Own active ship only on the wire. */
+  depositProgressOf?: (shipInstanceId: string) => number | undefined;
   playerMountAngles: Map<string, Float32Array>;
   droneMountAngles: Map<string, Float32Array>;
   /** Missile simulation — per-recipient AOI-filtered missile pose slice. */
@@ -223,6 +226,7 @@ type MutableStateEntry = {
   level?: number;
   statAlloc?: Record<string, number>;
   cargo?: Hold;
+  depositing?: number;
   // Typed mutable to match the wire `SnapshotMessage['states'][...].mounts`; the
   // value assigned is a SHARED reference to `ShipState.mounts` (the encoder
   // reads it synchronously and never mutates it).
@@ -699,6 +703,7 @@ export class SnapshotBroadcaster {
           ? this.deps.shipHoldOf(ship.shipInstanceId)
           : undefined;
         entry.cargo = hold !== undefined && !isHoldEmpty(hold) ? hold : undefined;
+        entry.depositing = ownActive ? this.deps.depositProgressOf?.(ship.shipInstanceId) : undefined;
         // WS-B3 — activated mounts are PUBLIC (every recipient, active +
         // lingering), emit-when-non-empty. Shared reference (no per-tick alloc,
         // #14); the renderer looks up geometry by (shipKind, slotId). Clear the

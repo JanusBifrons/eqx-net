@@ -24,6 +24,7 @@ import { warp } from './shots/warp.js';
 import { scale } from './shots/scale.js';
 import { mobile } from './shots/mobile.js';
 import { loot } from './shots/loot.js';
+import { robots } from './shots/robots.js';
 import { proceduralBase } from './shots/proceduralBase.js';
 
 /** Every shot, in reel order. Catalogue = all of them; reel = `reel: true`. */
@@ -36,6 +37,7 @@ export const SHOTS: readonly Shot[] = [
   turrets,
   missiles,
   packBattle,
+  robots,
   scrap,
   loot,
   buildBase,

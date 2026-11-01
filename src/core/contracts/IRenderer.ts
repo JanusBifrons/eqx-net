@@ -1,4 +1,5 @@
 import type { CameraCue } from './cameraScript.js';
+import type { RadarInsets, RadarPrefs } from '../../shared-types/settings/radar.js';
 
 export interface ShipRenderState {
   x: number;
@@ -811,6 +812,18 @@ export interface IRenderer {
    * discrete `pilotMode` enum is mirrored in the store (Invariant #2).
    */
   setSpectator(active: boolean): void;
+  /**
+   * Off-screen indicator radar (plan sparkling-wondering-rose). The active
+   * preferences — the device-class defaults until the player's saved overrides
+   * load. Plain structured-cloneable data (crosses the worker boundary).
+   */
+  setRadarPrefs(prefs: RadarPrefs): void;
+  /** HUD geometry the radar must keep clear of, measured on the main thread
+   *  from the layout slot hosts (the worker has no DOM). */
+  setRadarInsets(insets: RadarInsets): void;
+  /** Clear the radar while IN_TRANSIT / ARRIVED (the mirror still holds the
+   *  old sector). NOT during SPOOLING — the player can still be attacked. */
+  setRadarSuppressed(suppressed: boolean): void;
   /**
    * Procedural bases (plan soft-leaping-truffle) — the bases to draw, as
    * DESCRIPTORS only (the renderer regenerates geometry with the shared core

@@ -111,6 +111,16 @@ CREATE TABLE IF NOT EXISTS director_state (
   updated_at   INTEGER NOT NULL
 );
 
+-- Living World P1b — per-allegiance director state for the NON-drone
+-- directors (robots). The drone director keeps the singleton row above
+-- (its CHECK can't be relaxed in place); every further side gets a row here.
+CREATE TABLE IF NOT EXISTS allegiance_director_state (
+  allegiance   TEXT PRIMARY KEY,
+  payload_json TEXT NOT NULL,
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL
+);
+
 -- PR 3a — account-bound player identity. Each account has ONE canonical
 -- playerId (the in-game identity that owns ships / structures / hulls), so
 -- logging in on any device finds the same world. player_aliases records the

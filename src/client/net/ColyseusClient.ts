@@ -1,4 +1,4 @@
-import { PredBaseStreamer, type BaseStateView } from './predBaseStreamer.js';
+import { PredBaseStreamer, deadMaskHash, type BaseStateView } from './predBaseStreamer.js';
 import { Client, Room } from 'colyseus.js';
 import type { BaseRenderDescriptor, RenderMirror, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
@@ -18,7 +18,7 @@ import {
   type CollisionGuardState,
 } from './applyCollisionResolved';
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
-import { LootCollectedEventSchema } from '@shared-types/messages/lootMessages';
+import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
 import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
 import { cargoCapacityForMaxHealth } from '@shared-types/goods';
 import { applySelectionStats } from './selectionStats.js';
@@ -1988,6 +1988,20 @@ export class ColyseusGameClient {
     });
     // Living World P1a — pickup popup (UI accelerator only; cargo truth rides
     // the own-ship snapshot slice). zod-validated (invariant #3).
+    room.onMessage('notice', (raw: unknown) => {
+      const parsed = NoticeEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const id = useUIStore.getState().pushLootFeed(parsed.data.text);
+      setTimeout(() => useUIStore.getState().expireLootFeed(id), LOOT_FEED_TTL_MS);
+    });
+    room.onMessage('cargo_deposited', (raw: unknown) => {
+      const parsed = CargoDepositedEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const text = formatLootPickup(parsed.data);
+      if (text === '') return;
+      const id = useUIStore.getState().pushLootFeed(`Banked ${text}`);
+      setTimeout(() => useUIStore.getState().expireLootFeed(id), LOOT_FEED_TTL_MS);
+    });
     room.onMessage('loot_collected', (raw: unknown) => {
       const parsed = LootCollectedEventSchema.safeParse(raw);
       if (!parsed.success) return;
@@ -2960,6 +2974,10 @@ export class ColyseusGameClient {
       this.applyLocalStatAlloc(localId, serverState.statAlloc);
       // Living World P1a (#16) — the authoritative own-ship cargo slice.
       this.applyLocalCargo(localId, serverState.cargo);
+      // Living World P1a-2 — auto-deposit progress ring (quantised to 10 % so
+      // the 2 s dwell costs ≤ 10 store writes, not one per snapshot).
+      const dep = serverState.depositing === undefined ? null : Math.floor(serverState.depositing / 10) * 10;
+      if (useUIStore.getState().depositPct !== dep) useUIStore.getState().setDepositPct(dep);
 
       // Drone snapshot slice (slim turret/shield slice; pose flows on the
       // binary swarm wire). See snapshotRemoteSync.ts. Campaign 2.1: the
@@ -3320,7 +3338,7 @@ export class ColyseusGameClient {
     let sig = '';
     // TODO: alloc-debt — per-snapshot signature string while bases exist.
     bases?.forEach((v, k) => {
-      sig += k + ':' + v.seed + ':' + v.originX + ':' + v.originY + ':' + v.size + ':' + (v.dead?.length ?? 0) + ';';
+      sig += k + ':' + v.seed + ':' + v.originX + ':' + v.originY + ':' + v.size + ':' + deadMaskHash(v.dead) + ';';
     });
     if (sig === this._basesSig) return;
     this._basesSig = sig;

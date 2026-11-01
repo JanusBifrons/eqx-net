@@ -17,7 +17,8 @@ import type { BaseRenderDescriptor } from '../../core/contracts/IRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
-import { HaloRadar } from './HaloRadar';
+import { HaloRadar, type RadarDebugIcon } from './HaloRadar';
+import type { RadarInsets, RadarPrefs } from '../../shared-types/settings/radar.js';
 import { DamageNumberManager } from './DamageNumbers';
 import { LevelUpIconManager } from './LevelUpIcons';
 import { HealthBarManager } from './HealthBars';
@@ -1373,7 +1374,8 @@ export class PixiRenderer implements IRenderer {
     }
     // Procedural-base DEV hooks (scalars — no per-frame alloc; not a
     // RendererFeedback field). Main-thread render path only (E2E runs ?worker=0).
-    const bg = globalThis as { __eqxBaseCount?: number; __eqxBaseVisibleChunks?: number; __eqxBaseSilhouette?: boolean };
+    const bg = globalThis as { __eqxBaseCount?: number; __eqxBaseVisibleChunks?: number; __eqxBaseSilhouette?: boolean; __eqxBaseDebris?: number };
+    bg.__eqxBaseDebris = this.baseRenderer.lastDebrisCount;
     bg.__eqxBaseCount = this.baseRenderer.baseCount;
     bg.__eqxBaseVisibleChunks = this.baseRenderer.lastVisibleChunks;
     bg.__eqxBaseSilhouette = this.baseRenderer.lastSilhouette;
@@ -2336,8 +2338,31 @@ export class PixiRenderer implements IRenderer {
 
   setSpectator(active: boolean): void {
     this._spectator = active;
+    // The radar is camera-relative while spectating. Pushed here (not read
+    // from the store) so it works on the worker path too.
+    this.halo.setSpectator(active);
     if (!this.initialized) return;
     if (active) this.camera.follow(null);
+  }
+
+  /** See `IRenderer.setRadarPrefs`. */
+  setRadarPrefs(prefs: RadarPrefs): void {
+    this.halo.setPrefs(prefs);
+  }
+
+  /** See `IRenderer.setRadarInsets`. */
+  setRadarInsets(insets: RadarInsets): void {
+    this.halo.setInsets(insets);
+  }
+
+  /** See `IRenderer.setRadarSuppressed`. */
+  setRadarSuppressed(suppressed: boolean): void {
+    this.halo.setSuppressed(suppressed);
+  }
+
+  /** Test-only (DEV hook `__eqxHaloDebug`, `?worker=0`) — drawn radar icons. */
+  getRadarDebugIcons(): RadarDebugIcon[] {
+    return this.halo.getDebugIcons();
   }
 
   /**

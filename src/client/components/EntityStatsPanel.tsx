@@ -6,11 +6,13 @@ import HubIcon from '@mui/icons-material/Hub';
 import LinkOffIcon from '@mui/icons-material/LinkOff';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import UpgradeIcon from '@mui/icons-material/Upgrade';
+import RecyclingIcon from '@mui/icons-material/Recycling';
+import BuildIcon from '@mui/icons-material/Build';
 import { useUIStore } from '../state/store';
 import { selectionStats } from '../net/selectionStats';
 import { toSelectWire } from '../net/selectionClient';
 import { getGameClient } from '../net/clientSingleton';
-import { sendStructureAction, sendUpgradeStructure } from '../structures/structureActionsClient';
+import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip } from '../structures/structureActionsClient';
 import { sendPilotShip } from '../ships/shipActionsClient';
 import { hullColor } from './ShieldHullBar';
 import { getStructureKind } from '@shared-types/structureKinds';
@@ -96,6 +98,11 @@ interface PanelData {
    *  the shipInstanceId to `pilot_ship`. Absent for another player's hull / a
    *  hull the local player can't reclaim. */
   pilotShipId?: string;
+  /** Living World P1a-2 — an OWNED storage structure's contents line + weight
+   *  use, and whether Refine (salvage → minerals, Capital only) is available. */
+  holdLine?: string;
+  holdUse?: string;
+  canRefine?: boolean;
 }
 
 export function EntityStatsPanel(): JSX.Element | null {
@@ -212,6 +219,12 @@ export function EntityStatsPanel(): JSX.Element | null {
           {`OWNER ${data.owner}`}
         </Box>
       )}
+      {data.holdLine !== undefined && (
+        // Living World P1a-2 — owned storage contents (owner-only on the wire).
+        <Box sx={POWER_SX} data-testid="entity-stats-hold" data-hold-use={data.holdUse}>
+          {`HOLD ${data.holdUse ?? ''} · ${data.holdLine}`}
+        </Box>
+      )}
       {data.isOwn && data.entityId !== undefined && (
         // Phase-1 issue 6 — owner-only action buttons. The panel root is
         // pointerEvents:none (passive readout), so this row re-enables pointers.
@@ -246,6 +259,33 @@ export function EntityStatsPanel(): JSX.Element | null {
                 onClick={() => sendStructureAction(data.entityId!, 'clear_connections')}
               >
                 <LinkOffIcon sx={ICON_SX} />
+              </IconButton>
+            </Tooltip>
+          )}
+          {data.holdLine !== undefined && (
+            // Living World P1a-2 — instant repair of MY ship here (credit sink).
+            <Tooltip title="Repair your ship here (costs banked credits)">
+              <IconButton
+                data-testid="structure-action-repair-ship"
+                size="small"
+                sx={ACTION_BTN_SX}
+                onClick={() => sendRepairShip()}
+              >
+                <BuildIcon sx={ICON_SX} />
+              </IconButton>
+            </Tooltip>
+          )}
+          {data.canRefine && (
+            // Living World P1a-2 — refine the network's salvage into this
+            // Capital's mineral bank (funds construction).
+            <Tooltip title="Refine salvage into minerals">
+              <IconButton
+                data-testid="structure-action-refine"
+                size="small"
+                sx={ACTION_BTN_SX}
+                onClick={() => sendRefineSalvage(data.entityId!, 1_000)}
+              >
+                <RecyclingIcon sx={ICON_SX} />
               </IconButton>
             </Tooltip>
           )}
@@ -294,6 +334,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'powered',
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
+  'holdLine', 'holdUse', 'canRefine',
 ];
 
 /** True when two polled PanelData reads carry identical values (Wave-3 3.3 —
@@ -382,6 +423,14 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       data.level = level;
       data.canUpgrade =
         st.built === true && st.isDeconstructing !== true && canUpgradeStructure(level);
+      // Living World P1a-2 — owned storage contents (the server only sends them
+      // to the owner) + the Refine gate (a Capital with salvage in its network
+      // view — the contents line reflects THIS structure's hold).
+      if (got && selectionStats.holdLine !== undefined) {
+        data.holdLine = selectionStats.holdLine;
+        data.holdUse = selectionStats.holdUse;
+        data.canRefine = data.isOwn === true && subtype === 'capital' && selectionStats.holdSalvage > 0;
+      }
     }
     return data;
   }

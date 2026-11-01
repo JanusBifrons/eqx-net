@@ -1,250 +1,232 @@
-import { Container, Graphics } from 'pixi.js';
+/**
+ * Off-screen indicator radar — EDGE-TRACK design (plan sparkling-wondering-rose,
+ * Wave 2). Research + rules: docs/architecture/off-screen-indicators.md.
+ *
+ *  - Icons sit on a track inset from the screen edge, at the bearing from the
+ *    screen centre to the contact (position = DIRECTION only).
+ *  - Distance is SIZE + OPACITY (log-compressed distance beyond the viewport
+ *    edge), with a fade-out approaching the range cutoff.
+ *  - Nothing with any part on screen gets an icon (bounding-circle test with
+ *    hysteresis).
+ *  - Icons avoid HUD exclusion zones and are de-overlapped along the edge.
+ *  - Which categories show and how they look come from `RadarPrefs`
+ *    (per-device defaults; per-player overrides pushed via `setPrefs`).
+ *
+ * State crosses into the radar ONLY via setters (prefs, insets, spectator,
+ * suppressed). It never reads the Zustand store: on the desktop worker path
+ * that store is an isolated, never-updated copy (the old transit-clear and
+ * spectator-centre behaviour silently never ran there).
+ *
+ * `update()` runs per RAF → invariant #14: no allocation in steady state
+ * (scratch arrays/points are class fields; key strings are cached per id).
+ */
+import { Container, type Graphics } from 'pixi.js';
 import type { Camera } from './worker/Camera';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
-import { haloAppearFadeStep } from './haloAppear.js';
-import { useUIStore } from '../state/store';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 import {
-  projectArrow,
-  type HaloProjectionParams,
-} from './halo/projection.js';
+  defaultRadarPrefs,
+  EMPTY_RADAR_INSETS,
+  type RadarCategory,
+  type RadarInsets,
+  type RadarPrefs,
+  type RadarShape,
+} from '../../shared-types/settings/radar.js';
+import { haloAppearFadeStep } from './haloAppear.js';
 import {
   partitionAndGroupCandidates,
   groupingDistanceForBand,
-  RADAR_MAX_DISTANCE,
   RADAR_WEDGE_COUNT,
   type Candidate,
   type PartitionScratch,
 } from './halo/wedgeGrouping.js';
 import {
-  paintHaloGlyph,
-  buildHaloGlyph,
-  haloContactKind,
+  buildRadarGlyph,
+  paintRadarGlyph,
+  radarCategoryForSwarm,
+  GLYPH_BASE_DIAMETER,
+  GROUPED_SIZE_MUL,
 } from './halo/arrowGraphics.js';
-import {
-  getVisibleBoundsWithDeadZone,
-  isEntityOnScreen,
-  DEAD_ZONE_PX_DESKTOP,
-  DEAD_ZONE_PX_MOBILE,
-  type WorldBounds,
-} from './halo/visibility.js';
-import { ENTITY_VISUALS, type EntityKind } from './entityVisuals.js';
 import { resolveRadarReference } from './halo/radarReference.js';
+import {
+  circleTouchesViewport,
+  deOverlapAlongTrack,
+  distanceT,
+  placeOnTrack,
+  pointViewportDistance,
+  rampNearFar,
+  rangeFade,
+  buildBlockedIntervals,
+  resolveBlocked,
+  trackParam,
+  trackPerimeter,
+  trackPoint,
+  type TrackRect,
+} from './halo/edgeRadar.js';
 
-// Re-export for the radar test suite (the include/exclude + classification lock).
-export { haloContactKind } from './halo/arrowGraphics.js';
+export { radarCategoryForSwarm } from './halo/arrowGraphics.js';
 
-// Re-export the surface the existing test suite imports from this file.
-// `src/client/render/HaloRadar.test.ts` consumes these by name; the
-// extraction is a pure refactor so the test signatures are preserved.
-export {
-  projectArrow,
-  clamp,
-  lerp,
-  type HaloProjectionParams,
-  type HaloProjection,
-} from './halo/projection.js';
-export {
-  wedgeIndex,
-  partitionAndGroupCandidates,
-  type Candidate,
-} from './halo/wedgeGrouping.js';
+/** Hard cap on candidates considered per frame (before grouping + the
+ *  per-device `maxIcons`). Also sizes the per-icon scratch arrays. */
+const MAX_CANDIDATES = 64;
+/** Dead-reckoning cap — a contact that hasn't updated for longer than this is
+ *  frozen at its last pose rather than extrapolated off into space. */
+const EXTRAP_CAP_MS = 400;
+/** Cosmetic spring on icon screen position (smooths wedge handoffs / snaps). */
+const SMOOTH_HALF_LIFE_MS = 110;
+/** Fallback body radius (world u) when a kind is unknown. */
+const DEFAULT_RADIUS = 20;
+/** Clear gap (CSS px) kept between an icon and any HUD widget. */
+const HUD_GAP_PX = 6;
 
-// Halo radii are specified as a fraction of the viewport's shorter screen
-// dimension. Phase P — inner ring pushed out so it's no longer right next
-// to the ship sprite. On a 375 px phone the inner ring now lands at
-// 0.24 × 375 ≈ 90 px from centre (was ~52 px) and the outer ring stays
-// ~7 px inside the screen edge — a ~90 px band still dominated by "at
-// the edge" thanks to the exp-saturation curve.
-const INNER_RADIUS_FRAC = 0.24;
-const OUTER_RADIUS_FRAC = 0.48;
-const INNER_RADIUS_MIN_PX = 70;
-const INNER_RADIUS_MAX_PX = 240;
-const OUTER_RADIUS_MIN_PX = 160;
-const OUTER_RADIUS_MAX_PX = 400;
-// Arrow scale at the near/far ends. Reverted in Phase G to big-near /
-// small-far (the original pre-F.1 sense) — closer entities deserve the
-// more attention-grabbing icon, while distant ones at the outer ring
-// stay quieter dots. Polygons + transparency were shrunk independently,
-// so the absolute sizes feel quite a bit subtler than pre-F.1 even at
-// scaleNear.
-const ARROW_SCALE_NEAR = 1.15;
-const ARROW_SCALE_FAR = 0.65;
-// World-unit distance band. Phase N — endpoints expanded so the curve has
-// more breathing room. The reactive zone (close-end portion of the band
-// where the arrow visibly moves with distance) now spans ~300 u of world
-// distance instead of feeling like a hard jump from outer to inner.
-//   - DIST_MIN doubles as the near-cutoff: entities closer than this
-//     get no arrow at all (after the Phase N grace fade plays out).
-const DIST_MIN = 1200;
-const DIST_MAX = 7500;
-// Hard cap so a swarm of 200 drones doesn't render 200 arrows. Closest first.
-const MAX_ARROWS = 64;
+/** Sort priority for the icon cap: lower = kept first. */
+const CATEGORY_RANK: Record<RadarCategory, number> = {
+  hostile: 0,
+  player: 1,
+  neutral: 2,
+  structure: 3,
+  lingering: 4,
+  scrap: 5,
+  asteroid: 6,
+  loot: 4,
+};
 
-/** Module-scope comparator hoisted out of the per-call `.sort()` site
- *  (Phase 5f — invariant #14). An inline arrow `(a, b) => a.dist -
- *  b.dist` is recreated per call by V8 in some contexts; hoisting
- *  eliminates the uncertainty. */
-function compareByDist(a: Candidate, b: Candidate): number {
-  return a.dist - b.dist;
+function compareCandidates(a: Candidate, b: Candidate): number {
+  const ra = a.cat ? CATEGORY_RANK[a.cat] : 9;
+  const rb = b.cat ? CATEGORY_RANK[b.cat] : 9;
+  return ra !== rb ? ra - rb : a.dist - b.dist;
 }
 
-/** Mutable view of Candidate for slot-reuse writes. The Candidate
- *  interface is already non-readonly so this is a name-only cast. */
-type MutableCandidate = Candidate;
-
-function writeCandidateSlot(
-  arr: MutableCandidate[], i: number,
-  key: string, x: number, y: number, kind: EntityKind, dist: number,
-  hostile: boolean,
+function writeCandidate(
+  arr: Candidate[], i: number, key: string, x: number, y: number,
+  cat: RadarCategory, color: number, dist: number, radius: number,
 ): void {
-  const color = ENTITY_VISUALS[kind].color;
   const slot = arr[i];
+  const hostile = cat === 'hostile';
   if (!slot) {
-    arr[i] = { key, x, y, color, kind, dist, hostile };
+    arr[i] = { key, x, y, color, cat, dist, radius, hostile, grouped: false };
     return;
   }
-  slot.key = key; slot.x = x; slot.y = y;
-  slot.color = color; slot.kind = kind; slot.dist = dist; slot.hostile = hostile;
-  // grouped is the partition-step's wedge marker; reset to undefined so
-  // a stale `true` from a prior tick doesn't leak through.
-  if (slot.grouped !== undefined) slot.grouped = false;
+  slot.key = key; slot.x = x; slot.y = y; slot.color = color; slot.cat = cat;
+  slot.dist = dist; slot.radius = radius; slot.hostile = hostile; slot.grouped = false;
 }
-// Cap on dead-reckoning extrapolation window. If a swarm entry hasn't
-// updated for longer than this, freeze at the last-reported pose instead
-// of letting the arrow fly off — a stale entity is more likely dead /
-// out-of-bounds than continuing at constant velocity forever.
-const ARROW_EXTRAP_CAP_MS = 400;
-// WS-B #2 — on-screen entities are excluded at CANDIDATE-BUILD time via a
-// pure isEntityOnScreen test against the dead-zone-inset viewport bounds
-// (visibility.ts), so a contact already visible on screen never gets a ring
-// icon. This replaces the old Phase-P ON_SCREEN_HIDE_MS=500 timer, which
-// let a just-placed on-screen structure's icon pop in, zoom, then vanish
-// half a second later.
-// Spring half-life for arrow screen-pixel position smoothing. Operates on
-// the screen-space target (not world-space) so player movement no longer
-// translates into apparent arrow lag — overtake is solved by the screen-
-// space architecture, not by the spring. The spring's remaining role is
-// purely cosmetic: smooth corrections when extrapolation snaps to a fresh
-// packet, and the "fly-in" feel when a wedge's representative changes.
-const ARROW_SMOOTH_HALF_LIFE_MS = 130;
 
-interface ArrowEntry {
+interface IconEntry {
   gfx: Graphics;
-  /** Current visual-language kind (hostile/neutral/ship/structure). Tracked so a
-   *  wedge representative that changes type (or a drone flipping hostile↔neutral)
-   *  detects the mismatch and repaints the glyph instead of leaving a stale one. */
-  kind: EntityKind;
-  /** Whether the entry uses the larger "grouped" glyph. Tracked alongside `kind`
-   *  so a singleton↔wedge-rep transition triggers a glyph repaint. */
-  grouped: boolean;
-  /** Critically-damped spring state for the arrow's screen-pixel x. */
+  /** Debug/E2E: category + the contact's GAME-space position. */
+  cat: RadarCategory;
+  wx: number;
+  wy: number;
+  shape: RadarShape;
+  color: number;
+  glow: boolean;
   sx: SpringState;
-  /** Critically-damped spring state for the arrow's screen-pixel y. */
   sy: SpringState;
-  /** True iff this arrow rendered on the previous frame. Used to snap the
-   *  springs to-target on a hidden → visible transition instead of letting
-   *  them spring in from the previous hidden position. WS-B #2: an entity
-   *  going on-screen now drops OUT of the candidate list, so its arrow is
-   *  swept (lastVisible → false); when it goes back off-screen it re-enters
-   *  the candidate list and springs in from off-screen via the
-   *  `!entry.lastVisible` branch — the off↔on-screen fly-in is preserved. */
   lastVisible: boolean;
-  /** Generation-counter stamps (invariant #14, R5). Replace the pre-
-   *  Phase-4 per-frame `presentKeys` and `renderedKeys` Sets at the
-   *  cleanup-loop seam below. `presentAtFrame === frameId` ⇒ the
-   *  candidate list still contains this key; otherwise destroy.
-   *  `renderedAtFrame === frameId` ⇒ the entry produced a visible
-   *  render this frame; otherwise hide. */
   presentAtFrame: number;
   renderedAtFrame: number;
-  /** Appear-fade progress [0,1] — eased in on first-visible (replaces the
-   *  off-screen fly-in pop-in). Reset to 0 when the glyph is swept so a
-   *  re-appearance fades again. */
   fade: number;
 }
 
+/** Debug snapshot of one drawn icon (E2E geometry assertions). */
+export interface RadarDebugIcon {
+  key: string;
+  cat: RadarCategory;
+  /** The contact's GAME-space position. */
+  wx: number;
+  wy: number;
+  x: number;
+  y: number;
+  size: number;
+  alpha: number;
+  grouped: boolean;
+}
+
 export class HaloRadar {
-  /** WS-B #3/#4 — true on touch devices: glyphs scale down (#3) and the
-   *  dead-zone band uses the tighter mobile inset (#4). Threaded from the
-   *  renderer (PixiRenderer already holds `_isTouch`). */
-  private readonly _isTouch: boolean;
-
-  constructor(isTouch = false) {
-    this._isTouch = isTouch;
-  }
-
   private readonly container = new Container();
   private camera: Camera | null = null;
-  private readonly arrows = new Map<string, ArrowEntry>();
-  /** WS-B #2/#4 — caller-owned scratch for the dead-zone-inset viewport
-   *  bounds. Reused every update() (invariant #14): the on-screen-exclusion
-   *  test reads it during candidate build. */
-  private readonly _deadZoneBounds: WorldBounds = { x: 0, y: 0, width: 0, height: 0 };
-  /** Phase 5 — reused ring reference point (local ship OR camera centre in
-   *  spectator), written in place each update() (invariant #14). */
-  private readonly _refScratch = { x: 0, y: 0 };
-  /** Cinematic camera script active — anchor the ring on the camera centre
-   *  (like spectator), since the framed subject may not be the local ship. */
-  private _cameraRelative = false;
+  private prefs: RadarPrefs;
+  private insets: RadarInsets = EMPTY_RADAR_INSETS;
+  private spectating = false;
+  private suppressed = false;
 
-  setCameraRelative(active: boolean): void {
-    this._cameraRelative = active;
-  }
-  /** Monotonic per-`update()` counter for the generation-counter
-   *  sweep over `arrows`. Bumped at the top of `update()`. */
-  private _radarFrameId = 0;
-  /** Per-call scratch for the rawCandidates build (Phase 5f). Reused
-   *  across update() calls; entries are mutated in place via
-   *  `writeCandidateSlot`. `arr.length = i` truncates the logical view;
-   *  slot instances persist. */
-  private readonly _rawCandidatesScratch: MutableCandidate[] = [];
-  /** Cache of `swarm:${id}` / `ship:${id}` key strings keyed by entity
-   *  id. Each lookup-or-create on a stable id is allocation-free after
-   *  the first observation. */
-  private readonly _swarmKeyCache = new Map<number, string>();
-  private readonly _shipKeyCache = new Map<string, string>();
-  /** Caller-owned scratch for `partitionAndGroupCandidates` (Phase 5c).
-   *  Reused across update() calls so the radar tick doesn't allocate
-   *  `result`, `wedges`, or per-wedge representative literals. */
-  private readonly _partitionScratch: PartitionScratch = {
-    result: [],
-    wedges: new Map<number, Candidate>(),
-    wedgeReps: [],
-  };
-  /** Wall-clock anchor for spring dt. Reset on transit cleanup so dt
-   *  across a warp gap doesn't blow up the spring's first post-arrival
-   *  step. */
+  private readonly icons = new Map<string, IconEntry>();
+  /** key → last frame the contact was (partly) on screen — hysteresis state. */
+  private readonly onScreenAt = new Map<string, number>();
+  private frameId = 0;
   private lastUpdateMs: number | null = null;
+
+  // ── scratch (invariant #14) ────────────────────────────────────────────
+  private readonly raw: Candidate[] = [];
+  private readonly partition: PartitionScratch = { result: [], wedges: new Map(), wedgeReps: [] };
+  private readonly swarmKeys = new Map<number, string>();
+  private readonly shipKeys = new Map<string, string>();
+  private readonly lingerKeys = new Map<string, string>();
+  private readonly ref = { x: 0, y: 0 };
+  private readonly camCentre = { x: 0, y: 0 };
+  private readonly pt = { x: 0, y: 0 };
+  private readonly pt2 = { x: 0, y: 0 };
+  private readonly track: TrackRect = { left: 0, top: 0, right: 0, bottom: 0 };
+  private readonly param = new Float64Array(MAX_CANDIDATES);
+  private readonly sizePx = new Float64Array(MAX_CANDIDATES);
+  private readonly alpha = new Float64Array(MAX_CANDIDATES);
+  private readonly order = new Int32Array(MAX_CANDIDATES);
+  private readonly drawn: Candidate[] = [];
+  /** HUD-blocked perimeter intervals [s0,e0,s1,e1,…] + their cache key. */
+  private readonly blocked = new Float64Array(128);
+  private blockedCount = 0;
+  private blockedW = -1;
+  private blockedH = -1;
+  private blockedInsets: RadarInsets | null = null;
+  private blockedPrefs: RadarPrefs | null = null;
+
+  constructor(isTouch = false) {
+    this.prefs = defaultRadarPrefs(isTouch ? 'touch' : 'desktop');
+  }
 
   init(camera: Camera): void {
     this.camera = camera;
-    // Phase E — attach to the camera's PARENT (the renderer's app.stage)
-    // so the container lives in screen-pixel space rather than world space.
-    // This is what makes the arrows orbit the player's screen position
-    // exactly, with no camera-follow transform pipeline in between.
+    // Screen-space layer: attach to the camera's PARENT (app.stage).
     const stage = camera.parent;
-    if (stage) {
-      stage.addChild(this.container);
-    }
+    if (stage) stage.addChild(this.container);
+  }
+
+  /** Replace the active preferences (device defaults or the player's saved
+   *  overrides). Glyphs whose shape / colour / glow changed repaint once. */
+  setPrefs(prefs: RadarPrefs): void {
+    this.prefs = prefs;
+  }
+
+  /** HUD geometry to keep clear of (measured on the main thread). */
+  setInsets(insets: RadarInsets): void {
+    this.insets = insets;
+  }
+
+  /** Spectator → the radar is camera-relative (no ship). */
+  setSpectator(active: boolean): void {
+    this.spectating = active;
+  }
+
+  /** Cinematic camera script active (CameraDirector) — also camera-relative,
+   *  since the framed subject may not be the local ship. */
+  private cameraRelative = false;
+  setCameraRelative(active: boolean): void {
+    this.cameraRelative = active;
+  }
+
+  /** In transit / arriving → clear the radar (the mirror holds the OLD sector).
+   *  Deliberately NOT during the spool-up: the player can still be attacked. */
+  setSuppressed(suppressed: boolean): void {
+    this.suppressed = suppressed;
   }
 
   update(mirror: RenderMirror): void {
     const camera = this.camera;
     if (!camera) return;
 
-    // During SPOOLING / IN_TRANSIT / ARRIVED the player is between rooms; the
-    // mirror may still hold the old sector's swarm/ships while the local ship
-    // moves to the new spawn. Drawing arrows for cross-sector ghosts is just
-    // visual noise — and the warp overlay covers the screen anyway. Destroy
-    // any pooled arrows so a fresh sector starts clean.
-    const transitState = useUIStore.getState().transitState;
-    if (transitState !== 'DOCKED') {
-      for (const entry of this.arrows.values()) {
-        this.container.removeChild(entry.gfx);
-        entry.gfx.destroy();
-      }
-      this.arrows.clear();
+    if (this.suppressed) {
+      this.clearAll();
       this.lastUpdateMs = null;
       return;
     }
@@ -252,286 +234,291 @@ export class HaloRadar {
     const now = performance.now();
     const dtMs = this.lastUpdateMs === null ? 0 : Math.max(0, Math.min(100, now - this.lastUpdateMs));
     this.lastUpdateMs = now;
+    const frameId = ++this.frameId;
+    const prefs = this.prefs;
+    const cats = prefs.categories;
 
     const localId = mirror.localPlayerId;
-    const local = localId ? mirror.ships.get(localId) : null;
-    // Phase 5 — the reference point the ring orbits + measures distance from. In
-    // SPECTATOR the ring is CAMERA-relative — decoupled from any ship (the user's
-    // "ring icons still function in spectator but go to the ship I was previously
-    // piloting" half-way-house bug). `camera.center` is the world point under the
-    // screen centre in the pixi (Y-down) frame; the radar works in game space
-    // (Y-up), so un-flip Y. Otherwise the ring orbits the local ship as before.
-    const spectating = this._cameraRelative || useUIStore.getState().pilotMode === 'spectator';
+    const local = localId ? mirror.ships.get(localId) : undefined;
+    camera.centerInto(this.camCentre);
     const hasRef = resolveRadarReference(
-      spectating,
+      this.spectating || this.cameraRelative,
       local ? local.x : null,
       local ? local.y : null,
-      camera.center.x,
-      camera.center.y,
-      this._refScratch,
+      this.camCentre.x,
+      this.camCentre.y,
+      this.ref,
     );
     if (!hasRef) {
-      // Not spectating + no local ship (between rooms / pre-spawn): hide all.
-      for (const entry of this.arrows.values()) {
-        entry.gfx.visible = false;
-        entry.lastVisible = false;
-      }
+      this.hideAll();
       return;
     }
-    const refX = this._refScratch.x;
-    const refY = this._refScratch.y;
+    const refX = this.ref.x;
+    const refY = this.ref.y;
 
-    // Phase E — adaptive screen-space radii. Compute against the shorter
-    // viewport dimension so the ring stays comfortably inside the screen in
-    // any orientation, then clamp to a sane min/max so arrows aren't tiny
-    // on a phone or absurdly far out on a 4K monitor.
-    const screenMin = Math.min(camera.screenWidth, camera.screenHeight);
-    const innerRadiusPx = Math.max(
-      INNER_RADIUS_MIN_PX,
-      Math.min(INNER_RADIUS_MAX_PX, INNER_RADIUS_FRAC * screenMin),
-    );
-    const outerRadiusPx = Math.max(
-      OUTER_RADIUS_MIN_PX,
-      Math.min(OUTER_RADIUS_MAX_PX, OUTER_RADIUS_FRAC * screenMin),
-    );
+    const W = camera.screenWidth;
+    const H = camera.screenHeight;
+    const s = camera.scale.x > 0 ? camera.scale.x : 1;
+    const ins = this.insets;
+    const edge = prefs.edgeInsetPx;
+    const track = this.track;
+    track.left = ins.left + edge;
+    track.top = ins.top + edge;
+    track.right = W - ins.right - edge;
+    track.bottom = H - ins.bottom - edge;
+    if (track.right <= track.left || track.bottom <= track.top) {
+      this.hideAll();
+      return;
+    }
 
-    const params: HaloProjectionParams = {
-      innerRadiusPx,
-      outerRadiusPx,
-      distMin: DIST_MIN,
-      distMax: DIST_MAX,
-      scaleNear: ARROW_SCALE_NEAR,
-      scaleFar: ARROW_SCALE_FAR,
-    };
-
-    // WS-B #2/#4 — viewport bounds for the candidate-build on-screen
-    // exclusion, INSET by the dead-zone band so an entity hovering at the
-    // exact viewport edge keeps its ring indicator (no on/off flicker as it
-    // jitters across the precise boundary). The inset is the touch-vs-desktop
-    // dead-zone px converted to world units (worldPerPx = 1 / camera.scale.x).
-    const rawBounds = camera.getVisibleBounds();
-    const worldPerPx = camera.scale.x > 0 ? 1 / camera.scale.x : 1;
-    const deadZonePx = this._isTouch ? DEAD_ZONE_PX_MOBILE : DEAD_ZONE_PX_DESKTOP;
-    const onScreenBounds = getVisibleBoundsWithDeadZone(
-      rawBounds,
-      deadZonePx,
-      worldPerPx,
-      this._deadZoneBounds,
-    );
-
-    // Phase E — player's actual SCREEN position. Arrows orbit this point at
-    // a fixed pixel offset, so they always sit at the right place on the
-    // halo regardless of camera state (follow lag, zoom, etc.).
-    const playerScreen = camera.toScreen(refX, -refY);
-
-    // Pooled scratch — slot-reuse pattern (Phase 5f, invariant #14).
-    const rawCandidates = this._rawCandidatesScratch;
-    let rawCount = 0;
-    // WS-B #2 — track the nearest off-screen contact so the grouping
-    // distance can be banded (close ⇒ tighter grouping). Updated in both
-    // candidate loops; seeded to +Inf so an empty frame yields the band
-    // floor.
-    let closestDist = Infinity;
+    // ── 1. Candidate build ─────────────────────────────────────────────
+    const raw = this.raw;
+    let n = 0;
+    let closest = Infinity;
+    const maxRange = prefs.maxRange;
+    const hyst = prefs.hysteresisPx;
 
     if (mirror.swarm) {
       for (const [id, e] of mirror.swarm) {
-        // Equinox Tweaks Phase 2 (#4) — the ring shows THREATS + bases, not
-        // clutter: asteroids (kind 0) and scrap (kind 3) are excluded entirely
-        // (the user: "asteroids, scrap and lingering ships shouldn't even show").
-        // Only drones (kind 1) and structures (kind 2) pass.
-        const isDrone = e.kind === 1;
-        const hostile = isDrone && (e.isHostileToLocal ?? false);
-        // Map to the shared visual language (hostile ★ / neutral ◆ / structure ⬢)
-        // — null EXCLUDES the contact (asteroids kind 0, scrap kind 3) per the
-        // user's "asteroids, scrap and lingering ships shouldn't even show".
-        const kind = haloContactKind(e.kind, hostile);
-        if (kind === null) continue;
-        // Velocity-extrapolate the swarm entry forward from its last-known
-        // pose. Out-of-interest drones ship at 6 Hz (167 ms between
-        // updates) and at-interest drones at 20 Hz (50 ms); without
-        // extrapolation the arrow lags behind the drone by up to one
-        // packet interval, which is enough for a fast-moving player to
-        // visibly overtake an arrow tracking a slower drone.
-        const sinceMs = Math.min(
-          ARROW_EXTRAP_CAP_MS,
-          Math.max(0, now - e.latestArrivalMs),
-        );
-        const dtSec = sinceMs / 1000;
-        const xExtrap = e.x + e.vx * dtSec;
-        const yExtrap = e.y + e.vy * dtSec;
-        // WS-B #2 — exclude on-screen contacts at CANDIDATE-BUILD time. A
-        // contact already visible in the (dead-zone-inset) viewport needs no
-        // off-screen indicator, so it never becomes a ring icon.
-        if (isEntityOnScreen(xExtrap, yExtrap, onScreenBounds)) continue;
-        const dist = Math.hypot(xExtrap - refX, yExtrap - refY);
-        if (dist < closestDist) closestDist = dist;
-        // Cache the template-literal key so subsequent observations of
-        // the same id are allocation-free.
-        let key = this._swarmKeyCache.get(id);
-        if (key === undefined) {
-          key = `swarm:${id}`;
-          this._swarmKeyCache.set(id, key);
+        if (n >= MAX_CANDIDATES * 4) break;
+        const hostile = e.kind === 1 && (e.isHostileToLocal ?? false);
+        const cat = radarCategoryForSwarm(e.kind, hostile, e.shipKind);
+        if (cat === null || !cats[cat].enabled) continue;
+        // NO staleness drop: the server only re-sends a pose when it CHANGES,
+        // so a parked / sleeping contact legitimately goes un-updated forever.
+        // Extrapolation is capped instead (a stale contact freezes in place).
+        const ageMs = now - e.latestArrivalMs;
+        const dtSec = Math.min(EXTRAP_CAP_MS, Math.max(0, ageMs)) / 1000;
+        const x = e.x + e.vx * dtSec;
+        const y = e.y + e.vy * dtSec;
+        let key = this.swarmKeys.get(id);
+        if (key === undefined) { key = `swarm:${id}`; this.swarmKeys.set(id, key); }
+        if (this.consider(key, x, y, e.radius > 0 ? e.radius : DEFAULT_RADIUS, refX, refY, W, H, s, maxRange, hyst, frameId)) {
+          const dist = Math.hypot(x - refX, y - refY);
+          if (dist < closest) closest = dist;
+          writeCandidate(raw, n++, key, x, y, cat, cats[cat].color, dist, e.radius);
         }
-        writeCandidateSlot(rawCandidates, rawCount, key, xExtrap, yExtrap, kind, dist, hostile);
-        rawCount++;
       }
     }
-    // Remote PLAYER ships → ▲ green. (mirror.ships holds only active remote
-    // players; lingering hulls live in mirror.lingeringShips and are NOT
-    // iterated, so they never show on the ring — per the user's request.)
-    for (const [id, s] of mirror.ships) {
-      if (id === localId) continue;
-      // WS-B #2 — exclude on-screen remote ships at candidate-build time.
-      if (isEntityOnScreen(s.x, s.y, onScreenBounds)) continue;
-      const dist = Math.hypot(s.x - refX, s.y - refY);
-      if (dist < closestDist) closestDist = dist;
-      let key = this._shipKeyCache.get(id);
-      if (key === undefined) {
-        key = `ship:${id}`;
-        this._shipKeyCache.set(id, key);
-      }
-      writeCandidateSlot(rawCandidates, rawCount, key, s.x, s.y, 'ship', dist, false);
-      rawCount++;
-    }
-    rawCandidates.length = rawCount;
-
-    // Closest-first so MAX_ARROWS truncation drops the farthest entities and
-    // wedge-grouping receives a deterministic input order.
-    rawCandidates.sort(compareByDist);
-    if (rawCandidates.length > MAX_ARROWS) {
-      rawCandidates.length = MAX_ARROWS;
-    }
-
-    // WS-B #2 — distance-banded grouping. The flat 2000 u grouping distance
-    // kept every close contact ungrouped, so a tight cluster at close range
-    // each got its own ring icon. Band the grouping distance by the nearest
-    // contact: close ⇒ tighter grouping (close clusters collapse to one
-    // wedge representative), far ⇒ the legacy flat distance (spread-out
-    // mid/long-range targets keep singleton arrows).
-    const groupingDistance = groupingDistanceForBand(closestDist);
-    const candidates = partitionAndGroupCandidates(
-      { x: refX, y: refY },
-      rawCandidates,
-      groupingDistance,
-      RADAR_MAX_DISTANCE,
-      RADAR_WEDGE_COUNT,
-      this._partitionScratch,
-    );
-
-    // Generation-counter sweep (invariant #14, R5). Pre-Phase-4 this
-    // tick allocated `presentKeys` + `renderedKeys` Sets every RAF; the
-    // two stamp fields on each ArrowEntry now carry the same signal
-    // with zero allocation. Entry resolution stamps `presentAtFrame`
-    // unconditionally at the head; the render-tail stamps
-    // `renderedAtFrame`; the cleanup compares both at frameId.
-    const frameId = ++this._radarFrameId;
-
-    for (const c of candidates) {
-      const proj = projectArrow({ x: refX, y: refY }, { x: c.x, y: c.y }, params);
-      let entry = this.arrows.get(c.key);
-      if (entry) entry.presentAtFrame = frameId;
-      if (proj.hidden) {
-        // Degenerate POI-overlaps-player case only. WS-B #2 moved the
-        // on-screen hide to candidate-build (an on-screen contact is never
-        // in `candidates`), so the only "hide me" case left here is the
-        // divide-by-zero one.
-        if (entry) {
-          entry.gfx.visible = false;
-          entry.lastVisible = false;
+    if (cats.player.enabled) {
+      for (const [id, sh] of mirror.ships) {
+        if (id === localId) continue;
+        let key = this.shipKeys.get(id);
+        if (key === undefined) { key = `ship:${id}`; this.shipKeys.set(id, key); }
+        const r = getShipKind(sh.kind).radius;
+        if (this.consider(key, sh.x, sh.y, r, refX, refY, W, H, s, maxRange, hyst, frameId)) {
+          const dist = Math.hypot(sh.x - refX, sh.y - refY);
+          if (dist < closest) closest = dist;
+          writeCandidate(raw, n++, key, sh.x, sh.y, 'player', cats.player.color, dist, r);
         }
-        continue;
       }
+    }
+    if (cats.lingering.enabled && mirror.lingeringShips) {
+      for (const [id, sh] of mirror.lingeringShips) {
+        let key = this.lingerKeys.get(id);
+        if (key === undefined) { key = `linger:${id}`; this.lingerKeys.set(id, key); }
+        const r = getShipKind(sh.kind).radius;
+        if (this.consider(key, sh.x, sh.y, r, refX, refY, W, H, s, maxRange, hyst, frameId)) {
+          const dist = Math.hypot(sh.x - refX, sh.y - refY);
+          if (dist < closest) closest = dist;
+          writeCandidate(raw, n++, key, sh.x, sh.y, 'lingering', cats.lingering.color, dist, r);
+        }
+      }
+    }
+    raw.length = n;
+    raw.sort(compareCandidates);
+    if (raw.length > MAX_CANDIDATES) raw.length = MAX_CANDIDATES;
 
-      // Compose the target screen position from the player's screen pos +
-      // the bearing/radius the projection returned. Screen y points down,
-      // so the world-bearing's sin component is negated. The arrow's
-      // rotation is also negated for the same y-flip — its triangular nose
-      // (local +x) ends up pointing along the screen-space bearing to the
-      // POI.
-      const targetX = playerScreen.x + Math.cos(proj.theta) * proj.radiusPx;
-      const targetY = playerScreen.y - Math.sin(proj.theta) * proj.radiusPx;
+    // ── 2. Aggregate far contacts into bearing wedges — ONLY when needed ──
+    // Grouping is clutter control (research R3): below the icon cap every
+    // contact keeps its own icon (de-overlap handles spacing), so same-bearing
+    // contacts at very different ranges keep their distinct size/opacity.
+    // Beyond the cap, far contacts collapse into per-wedge group icons.
+    const grouped = raw.length <= prefs.maxIcons
+      ? raw
+      : partitionAndGroupCandidates(
+        this.ref,
+        raw,
+        groupingDistanceForBand(closest),
+        maxRange,
+        RADAR_WEDGE_COUNT,
+        this.partition,
+      );
+    // Re-prioritise (wedge reps are appended after singletons) + cap.
+    grouped.sort(compareCandidates);
+    const count = Math.min(grouped.length, prefs.maxIcons, MAX_CANDIDATES);
 
-      const wantKind: EntityKind = c.kind ?? 'neutral';
-      const wantGrouped = c.grouped === true;
+    // ── 3. Distance → size / opacity; direction → track position ───────
+    const drawn = this.drawn;
+    drawn.length = 0;
+    // HUD-blocked stretches of the track: rebuilt only when the screen, the
+    // HUD layout or the preferences change (never per frame in steady state).
+    if (W !== this.blockedW || H !== this.blockedH || ins !== this.blockedInsets || prefs !== this.blockedPrefs) {
+      this.blockedW = W;
+      this.blockedH = H;
+      this.blockedInsets = ins;
+      this.blockedPrefs = prefs;
+      // Pad = the largest icon's half-size + a breathing gap, so no icon
+      // sits on, or flush against, a HUD widget.
+      const pad = prefs.sizeNearPx * GROUPED_SIZE_MUL * 0.5 + HUD_GAP_PX;
+      this.blockedCount = buildBlockedIntervals(track, ins.exclusions, pad, this.blocked);
+    }
+    const perimeter = trackPerimeter(track);
+    for (let i = 0; i < count; i++) {
+      const c = grouped[i]!;
+      const cat = c.cat ?? 'neutral';
+      const cp = cats[cat];
+      camera.toScreenInto(c.x, -c.y, this.pt);
+      const rPx = (c.radius ?? DEFAULT_RADIUS) * s;
+      const dOffPx = pointViewportDistance(this.pt.x, this.pt.y, W, H) - rPx;
+      const t = distanceT(dOffPx > 0 ? dOffPx / s : 0, prefs.nearDistance, prefs.farDistance);
+      let size = rampNearFar(t, prefs.sizeNearPx, prefs.sizeFarPx, prefs.sizeGamma) * cp.sizeMul;
+      if (c.grouped === true) size *= GROUPED_SIZE_MUL;
+      if (cat === 'hostile' && size < prefs.hostileMinSizePx) size = prefs.hostileMinSizePx;
+      let a = rampNearFar(t, prefs.opacityNear, prefs.opacityFar, prefs.sizeGamma)
+        * cp.opacityMul * rangeFade(c.dist, maxRange, prefs.fadeBand);
+      if (a > 1) a = 1;
+      placeOnTrack(this.pt.x, this.pt.y, W, H, track, this.pt2);
+      let p = trackParam(this.pt2.x, this.pt2.y, track);
+      if (this.blockedCount > 0) p = resolveBlocked(p, this.blocked, this.blockedCount, perimeter);
+      const k = drawn.length;
+      this.param[k] = p;
+      this.sizePx[k] = size;
+      this.alpha[k] = a;
+      drawn.push(c);
+    }
+    deOverlapAlongTrack(this.param, drawn.length, prefs.minSpacingPx, this.order, this.sizePx, perimeter);
+
+    // ── 4. Draw ─────────────────────────────────────────────────────────
+    for (let k = 0; k < drawn.length; k++) {
+      const c = drawn[k]!;
+      const cat = c.cat ?? 'neutral';
+      const cp = cats[cat];
+      const glow = cat === 'hostile' && prefs.hostileGlow;
+      trackPoint(this.param[k]!, track, this.pt);
+      let entry = this.icons.get(c.key);
       if (!entry) {
-        const gfx = buildHaloGlyph(wantKind, wantGrouped, this._isTouch);
+        const gfx = buildRadarGlyph(cp.shape, cp.color, glow);
         this.container.addChild(gfx);
         entry = {
-          gfx,
-          kind: wantKind,
-          grouped: wantGrouped,
-          sx: { x: targetX, v: 0 },
-          sy: { x: targetY, v: 0 },
-          lastVisible: false,
-          presentAtFrame: frameId,
-          renderedAtFrame: 0, // stamped a few lines below at the render tail
-          fade: 0, // eases in at the ring target (no off-screen fly-in)
+          gfx, cat, wx: c.x, wy: c.y, shape: cp.shape, color: cp.color, glow,
+          sx: { x: this.pt.x, v: 0 }, sy: { x: this.pt.y, v: 0 },
+          lastVisible: false, presentAtFrame: frameId, renderedAtFrame: 0, fade: 0,
         };
-        this.arrows.set(c.key, entry);
-      } else if (entry.kind !== wantKind || entry.grouped !== wantGrouped) {
-        // Wedge representative type changed (or a drone flipped hostile↔neutral,
-        // or singleton↔group) — repaint the glyph. Bounded cost: at most
-        // RADAR_WEDGE_COUNT + active hostility-flip count per frame.
-        paintHaloGlyph(entry.gfx, wantKind, wantGrouped, this._isTouch);
-        entry.kind = wantKind;
-        entry.grouped = wantGrouped;
+        this.icons.set(c.key, entry);
+      } else if (entry.shape !== cp.shape || entry.color !== cp.color || entry.glow !== glow) {
+        paintRadarGlyph(entry.gfx, cp.shape, cp.color, glow);
+        entry.shape = cp.shape; entry.color = cp.color; entry.glow = glow;
       }
+      entry.cat = cat;
+      entry.wx = c.x;
+      entry.wy = c.y;
+      entry.presentAtFrame = frameId;
       entry.renderedAtFrame = frameId;
-
-      // Equinox Phase-5 audit — first-visible: place the glyph AT its ring
-      // target (no off-screen "fly-in"; the user's "halo radar popping in!").
-      // The spring was seeded at the target on creation, so we just hold it
-      // there and EASE the glyph in via `fade` below. Within the same arrow
-      // (`lastVisible` true) the spring smoothly "flies" between successive
-      // targets — the wedge-handoff cosmetic kept from Phase D.
       if (!entry.lastVisible) {
-        entry.sx.x = targetX;
-        entry.sx.v = 0;
-        entry.sy.x = targetY;
-        entry.sy.v = 0;
+        entry.sx.x = this.pt.x; entry.sx.v = 0;
+        entry.sy.x = this.pt.y; entry.sy.v = 0;
       } else {
-        springStep(entry.sx, targetX, ARROW_SMOOTH_HALF_LIFE_MS, dtMs);
-        springStep(entry.sy, targetY, ARROW_SMOOTH_HALF_LIFE_MS, dtMs);
+        springStep(entry.sx, this.pt.x, SMOOTH_HALF_LIFE_MS, dtMs);
+        springStep(entry.sy, this.pt.y, SMOOTH_HALF_LIFE_MS, dtMs);
       }
-
+      entry.fade = haloAppearFadeStep(entry.fade, dtMs);
       entry.gfx.visible = true;
       entry.gfx.x = entry.sx.x;
       entry.gfx.y = entry.sy.x;
-      // Alpha fade-in at the ring target (replaces the off-screen fly-in).
-      entry.fade = haloAppearFadeStep(entry.fade, dtMs);
-      entry.gfx.alpha = entry.fade;
-      // Glyphs are UPRIGHT (Phase 2 #4) — the bearing is conveyed by the
-      // marker's POSITION on the ring, not by rotating a needle (a rotated
-      // ★/⬢ reads as broken). The old code set `rotation = -proj.theta`.
       entry.gfx.rotation = 0;
-      entry.gfx.scale.set(proj.scale);
+      entry.gfx.scale.set(this.sizePx[k]! / GLYPH_BASE_DIAMETER);
+      entry.gfx.alpha = this.alpha[k]! * entry.fade;
       entry.lastVisible = true;
     }
 
-    for (const [key, entry] of this.arrows) {
+    // ── 5. Sweep ─────────────────────────────────────────────────────────
+    for (const [key, entry] of this.icons) {
       if (entry.renderedAtFrame !== frameId) {
         entry.gfx.visible = false;
         entry.lastVisible = false;
-        entry.fade = 0; // re-appearance fades in again (no fly-in)
+        entry.fade = 0;
       }
       if (entry.presentAtFrame !== frameId) {
         this.container.removeChild(entry.gfx);
         entry.gfx.destroy();
-        this.arrows.delete(key);
+        this.icons.delete(key);
       }
+    }
+    if ((frameId & 127) === 0) {
+      for (const [key, f] of this.onScreenAt) if (f < frameId - 2) this.onScreenAt.delete(key);
     }
   }
 
-  /** Test-only — number of currently-visible arrows in the scene graph. */
+  /**
+   * Per-contact gate: in range, and NOT (partly) on screen. A contact that was
+   * on screen last frame must clear the viewport by the hysteresis margin
+   * before it re-appears on the radar (anti-flicker). Records the on-screen
+   * stamp as a side effect.
+   */
+  private consider(
+    key: string, x: number, y: number, radius: number,
+    refX: number, refY: number, W: number, H: number, s: number,
+    maxRange: number, hyst: number, frameId: number,
+  ): boolean {
+    const ddx = x - refX;
+    const ddy = y - refY;
+    if (ddx * ddx + ddy * ddy >= maxRange * maxRange) return false;
+    const cam = this.camera!;
+    cam.toScreenInto(x, -y, this.pt);
+    const wasOn = this.onScreenAt.get(key) === frameId - 1;
+    if (circleTouchesViewport(this.pt.x, this.pt.y, radius * s, W, H, wasOn ? hyst : 0)) {
+      this.onScreenAt.set(key, frameId);
+      return false;
+    }
+    return true;
+  }
+
+  private hideAll(): void {
+    for (const entry of this.icons.values()) {
+      entry.gfx.visible = false;
+      entry.lastVisible = false;
+      entry.fade = 0;
+    }
+  }
+
+  private clearAll(): void {
+    for (const entry of this.icons.values()) {
+      this.container.removeChild(entry.gfx);
+      entry.gfx.destroy();
+    }
+    this.icons.clear();
+  }
+
+  /** Test-only — number of currently-visible icons. */
   getDebugVisibleArrowCount(): number {
-    let n = 0;
-    for (const entry of this.arrows.values()) if (entry.gfx.visible) n++;
-    return n;
+    let k = 0;
+    for (const entry of this.icons.values()) if (entry.gfx.visible) k++;
+    return k;
+  }
+
+  /** Test-only (DEV hook `__eqxHaloDebug`, `?worker=0`) — the drawn icons. */
+  getDebugIcons(): RadarDebugIcon[] {
+    const out: RadarDebugIcon[] = [];
+    for (const [key, e] of this.icons) {
+      if (!e.gfx.visible) continue;
+      out.push({
+        key,
+        cat: e.cat,
+        wx: e.wx,
+        wy: e.wy,
+        x: e.gfx.x,
+        y: e.gfx.y,
+        size: e.gfx.scale.x * GLYPH_BASE_DIAMETER,
+        alpha: e.gfx.alpha,
+        grouped: key.startsWith('wedge:'),
+      });
+    }
+    return out;
   }
 
   destroy(): void {
-    for (const entry of this.arrows.values()) entry.gfx.destroy();
-    this.arrows.clear();
+    this.clearAll();
     if (this.container.parent) this.container.parent.removeChild(this.container);
     this.container.destroy({ children: true });
     this.camera = null;

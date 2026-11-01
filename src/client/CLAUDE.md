@@ -244,7 +244,12 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
   - `render/pixi/BaseRenderer.ts` draws one retained `Graphics` per chunk plus a light layer, built once from the pure plan in `pixi/baseVisuals.ts` (three flat tones, functional detail, hashed weathering, pulsing lights).
   - Chunks are culled per frame via `Camera.visibleBoundsInto` (allocation-free).
   - Below `BASE_LOD_ZOOM`, one silhouette per base replaces the chunks. No `cacheAsTexture` (memory + blur).
-- **DEV hooks** (`?worker=0` only): `__eqxBaseCount`, `__eqxBaseVisibleChunks`, `__eqxBaseSilhouette`.
+- **Destruction (PR-D):**
+  - The streamer hashes each base's destroy mask (`deadMaskHash`); on change it rebuilds the outlines and swaps every ACTIVE predWorld chunk.
+  - The renderer signature hashes mask contents (not just length).
+  - `BaseRenderer` diffs old and new masks per base and spawns debris (`spawnDebris`, pure). The debris lives in a fixed 1024-fragment pool on one Graphics, redrawn only while alive and allocation-free per frame.
+  - Lock: `base-destruction.spec.ts` (beam a rack → debris → fly through the hole).
+- **DEV hooks** (`?worker=0` only): `__eqxBaseCount`, `__eqxBaseVisibleChunks`, `__eqxBaseSilhouette`, `__eqxBaseDebris`.
 - **Locks:**
   - `predBaseStreamer.test.ts`: streaming, the client active-piece budget, teardown, and client/server collider parity.
   - `baseVisuals.test.ts`: determinism, the pixi Y-flip rule, culling within `MAX_VISIBLE_CHUNKS`, LOD.

@@ -14,6 +14,7 @@ import SolarPowerIcon from '@mui/icons-material/SolarPower';
 import DiamondIcon from '@mui/icons-material/Diamond';
 import ShieldIcon from '@mui/icons-material/Shield';
 import BatteryChargingFullIcon from '@mui/icons-material/BatteryChargingFull';
+import InventoryIcon from '@mui/icons-material/Inventory2';
 import SecurityIcon from '@mui/icons-material/Security';
 import BoltIcon from '@mui/icons-material/Bolt';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
@@ -337,6 +338,7 @@ export const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
   shield_pylon: <SecurityIcon />,
   laser_bolt_turret: <BoltIcon />, // WS-8 (R2.15)
   missile_turret: <RocketLaunchIcon />,
+  cargo_bay: <InventoryIcon />, // Living World P1a-2
 };
 
 // ── Hoisted static sx / props (no per-render allocation) ───────────────────

@@ -119,3 +119,57 @@ describe('SectorRoom integration — procedural bases', () => {
     expect(internal.blockShotAtWall(-layout.half - 300, y, -1, 0, 2000, 10)).toBeNull();
   });
 });
+
+describe('SectorRoom integration — destructible base pieces (PR-D)', () => {
+  let h: SectorTestHarness;
+  beforeEach(async () => {
+    h = await bootSectorTestServer({
+      droneCount: 0,
+      asteroidConfig: [],
+      bases: [BASE],
+      baseHpScale: 0.0001, // bespoke trigger: one shot breaks a piece
+      defaultSpawnX: 0,
+      defaultSpawnY: -layout.half - 600,
+    });
+  }, 20_000);
+  afterEach(async () => {
+    if (h) await h.cleanup();
+  }, 10_000);
+
+  it('a shot destroys a rack: room state carries the hole, the worker opens it, a late joiner sees it', async () => {
+    const pid = randomUUID();
+    const cr = await h.connectActive(pid);
+    const internal = room(cr.roomId)._internals;
+    // A rack and a firing line straight along +x into its middle.
+    let i = 0;
+    while (layout.kind[i] !== basePieceIndex('rack_row')) i++;
+    const y = layout.y[i]! + layout.h[i]! / 2;
+    const x0 = layout.x[i]! - 150;
+    expect(internal.bases.rayFirst(x0, y, 1, 0, 400)).toBeGreaterThan(0);
+    internal.blockShotAtWall(x0, y, 1, 0, 400, 50);
+
+    // Room state → the connected client.
+    const deadOn = (s: SectorState): boolean => {
+      const b = s.bases.get('b0');
+      return !!b && Array.from(b.dead).some((w) => w !== 0);
+    };
+    const t0 = Date.now();
+    while (!deadOn(cr.state as unknown as SectorState) && Date.now() - t0 < 3000) await h.advance(50);
+    expect(deadOn(cr.state as unknown as SectorState)).toBe(true);
+
+    // The worker rebuilt its colliders: a ship flies into where the rack was.
+    internal.postToWorker({ type: 'SET_POSITION', entityId: pid, x: x0, y, angle: -Math.PI / 2, vx: 700, vy: 0, angvel: 0 });
+    // Poll the condition with a deadline (a fixed sleep flaked on a loaded host).
+    let px = -Infinity;
+    const t1 = Date.now();
+    while (px <= layout.x[i]! + 60 && Date.now() - t1 < 4000) {
+      px = (await poseOf(h, cr, pid)).x;
+      if (px <= layout.x[i]! + 60) await h.advance(100);
+    }
+    expect(px).toBeGreaterThan(layout.x[i]! + 60);
+
+    // A late joiner reconstructs the same hole from room state alone.
+    const late = await h.connectActive(randomUUID());
+    expect(deadOn(late.state as unknown as SectorState)).toBe(true);
+  });
+});

@@ -79,6 +79,8 @@ interface EqxCinemaHook {
   /** null when the active renderer can't report (worker path). */
   isScripted(): boolean | null;
 }
+import { measureRadarInsets, radarInsetsEqual } from './layout/radarInsets';
+import type { RadarInsets } from '../shared-types/settings/radar.js';
 
 // Install window.__eqxLogs and window.__eqxClearLogs at module load time.
 installWindowLogger();
@@ -245,6 +247,43 @@ function GameSurface({
   useEffect(() => {
     rendererRef.current?.setSpectator(spectating);
   }, [spectating]);
+
+  // Radar (plan sparkling-wondering-rose) — clear the off-screen radar only
+  // while IN_TRANSIT / ARRIVED (the mirror still holds the OLD sector). It stays
+  // live through the SPOOLING window, when drones can still attack you. Pushed
+  // as a setter (not read from the store inside the renderer) so it works on
+  // the worker render path too.
+  const radarTransitState = useUIStore((s) => s.transitState);
+  useEffect(() => {
+    rendererRef.current?.setRadarSuppressed(
+      radarTransitState === 'IN_TRANSIT' || radarTransitState === 'ARRIVED',
+    );
+  }, [radarTransitState]);
+
+  // Radar — keep icons out from under the DOM HUD. Measures the slot-host
+  // widgets at a low cadence (2 Hz; widgets mount/unmount and the speed dial
+  // opens) and pushes only on change. Not a per-frame path.
+  useEffect(() => {
+    let last: RadarInsets | null = null;
+    const tick = (): void => {
+      const surface = document.querySelector('[data-testid="game-surface"]');
+      const renderer = rendererRef.current;
+      if (!surface || !renderer) return;
+      const next = measureRadarInsets(surface);
+      if (radarInsetsEqual(last, next)) return;
+      last = next;
+      renderer.setRadarInsets(next);
+    };
+    tick();
+    const id = window.setInterval(tick, 500);
+    window.addEventListener('resize', tick);
+    window.addEventListener('orientationchange', tick);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('resize', tick);
+      window.removeEventListener('orientationchange', tick);
+    };
+  }, []);
 
   // Fire `join_chain_complete` exactly once per GameSurface mount, when
   // all four readiness gates (connected + welcomed + first-snapshot OR
@@ -525,6 +564,15 @@ function GameSurface({
           return r?.isCameraScripted ? r.isCameraScripted() : null;
         },
       };
+      // Radar (plan sparkling-wondering-rose) — the drawn off-screen icons
+      // (screen position, size, alpha, category) for the geometry E2E. Main-
+      // thread renderer only (`?worker=0`); the worker path is asserted via
+      // `data-halo-arrow-count`.
+      (window as unknown as { __eqxHaloDebug?: () => unknown[] })
+        .__eqxHaloDebug = () => {
+          const r = rendererRef.current as unknown as { getRadarDebugIcons?: () => unknown[] };
+          return r?.getRadarDebugIcons ? r.getRadarDebugIcons() : [];
+        };
     }
 
     const onKey = (e: KeyboardEvent): void => {

@@ -6,6 +6,7 @@
  *
  * Session-scoped per `SectorRoom` (persistence is a noted follow-up).
  */
+import type { Hold } from '../../shared-types/goods.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import { Connection } from '../../core/structures/Connection.js';
 
@@ -36,6 +37,16 @@ export interface StructureRecord {
    *  `storageCapacity`; it is the bank the construction stream draws from.
    *  A Miner buffers locally here before hauling toward the Capital. */
   minerals: number;
+  /** Living World P1a-2 — a STABLE identity that survives a server restart
+   *  (entity ids are re-minted on restore). Deterministic hash of
+   *  (sector, owner, kind, rounded pose) — all persisted — so a restored
+   *  structure recomputes the same uid with no snapshot field. Keys the
+   *  structure's row in the `holds` table. Absent only on test fixtures. */
+  uid?: string;
+  /** Living World P1a-2 — deposited cargo (goods / credits / blueprints) for a
+   *  storage kind (`holdCapacity > 0`). Minerals DELIVERED to a Capital stay in
+   *  `minerals` (they fund construction). Absent ⇒ empty. */
+  hold?: Hold;
   /** Stored power for a Battery (0..the kind's `powerStorageCapacity`). It
    *  charges from the component's surplus each pulse, discharges to keep the
    *  component `powered` through a deficit, and is drained first by shield-wall

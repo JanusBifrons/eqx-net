@@ -29,11 +29,26 @@ export interface BaseStateView {
   readonly originX: number;
   readonly originY: number;
   readonly size: number;
+  /** Destroy-bit words (PR-D); absent/empty = intact. */
+  readonly dead?: ArrayLike<number>;
+}
+
+/** Cheap content hash of a destroy mask (FNV-1a over the words). */
+export function deadMaskHash(dead: ArrayLike<number> | undefined): number {
+  let h = 0x811c9dc5;
+  if (!dead) return h;
+  for (let i = 0; i < dead.length; i++) {
+    h ^= dead[i]! >>> 0;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
 }
 
 interface StreamedBase {
   readonly layout: BaseLayout;
-  readonly outlines: ChunkOutline[];
+  outlines: ChunkOutline[];
+  /** Hash of the destroy mask the outlines were built from. */
+  deadHash: number;
   readonly active: Uint8Array;
   /** Generation stamp — bases not seen this sync are torn down. */
   seen: number;
@@ -72,9 +87,24 @@ export class PredBaseStreamer {
             size: st.size,
           };
           const layout = generateBase(desc);
-          const outlines = buildChunkOutlines(layout);
-          b = { layout, outlines, active: new Uint8Array(outlines.length), seen: gen };
+          const hash = deadMaskHash(st.dead);
+          const outlines = buildChunkOutlines(layout, st.dead && st.dead.length > 0 ? Uint32Array.from(st.dead) : null);
+          b = { layout, outlines, deadHash: hash, active: new Uint8Array(outlines.length), seen: gen };
           this.bases.set(id, b);
+        } else {
+          // PR-D: a piece group was destroyed — rebuild the outlines and swap
+          // every ACTIVE chunk (the union outline of a row can change). Rare.
+          const hash = deadMaskHash(st.dead);
+          if (hash !== b.deadHash) {
+            b.deadHash = hash;
+            b.outlines = buildChunkOutlines(b.layout, st.dead && st.dead.length > 0 ? Uint32Array.from(st.dead) : null);
+            for (let c = 0; c < b.active.length; c++) {
+              if (!b.active[c]) continue;
+              world.removeBaseChunk(id, c);
+              const o = b.outlines[c]!;
+              world.spawnBaseChunk(id, c, o.vertices, o.indices);
+            }
+          }
         }
         b.seen = gen;
         this.streamChunks(world, id, b, shipX, shipY);

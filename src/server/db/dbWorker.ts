@@ -99,6 +99,10 @@ const stmts = {
     'INSERT INTO director_state (id, payload_json, created_at, updated_at) VALUES (1, ?, ?, ?) ' +
     'ON CONFLICT(id) DO UPDATE SET payload_json=excluded.payload_json, updated_at=excluded.updated_at',
   ),
+  ALLEGIANCE_DIRECTOR_STATE_PUT: db.prepare(
+    'INSERT INTO allegiance_director_state (allegiance, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?) ' +
+    'ON CONFLICT(allegiance) DO UPDATE SET payload_json=excluded.payload_json, updated_at=excluded.updated_at',
+  ),
   // Web Push subscriptions. UPSERT keyed on the unique endpoint so a device
   // re-subscribing (re-granted permission, rotated keys) updates in place.
   PUSH_SUBSCRIPTION_PUT: db.prepare(
@@ -205,6 +209,10 @@ function applyOp(op: PersistOp): { rowId?: number } {
     }
     case 'DIRECTOR_STATE_PUT': {
       stmts.DIRECTOR_STATE_PUT.run(op.payloadJson, op.ts, op.ts);
+      return {};
+    }
+    case 'ALLEGIANCE_DIRECTOR_STATE_PUT': {
+      stmts.ALLEGIANCE_DIRECTOR_STATE_PUT.run(op.allegiance, op.payloadJson, op.ts, op.ts);
       return {};
     }
     case 'ACCOUNT_PLAYER_PUT': {

@@ -560,6 +560,13 @@ export class Camera {
     };
   }
 
+  /** Allocation-free `center` (Pixi-space world point under the screen centre). */
+  centerInto(out: { x: number; y: number }): { x: number; y: number } {
+    out.x = (this.screenW / 2 - this.target.x) / this.target.scale.x;
+    out.y = (this.screenH / 2 - this.target.y) / this.target.scale.y;
+    return out;
+  }
+
   // ---------- IWorldView surface (viewport-API parity) ----------
   //
   // Sub-managers (HaloRadar, BackgroundGrid, StarfieldBackground) read

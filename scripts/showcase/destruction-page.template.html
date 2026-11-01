@@ -1,0 +1,113 @@
+<title>Base Destruction</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one narrow reading column; the clip leads, stills sit in a 3-up strip, numbers in a ledger table. Deliberately single dark theme (it is a space game). */
+:root {
+  --void: #070a12;
+  --hull: #111827;
+  --panel: #161f30;
+  --line: #26324a;
+  --text: #dbe3f0;
+  --muted: #8d9bb3;
+  --rack: #d08a3c;
+  --beacon: #7cf7ff;
+  --display: "Saira Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  color-scheme: dark;
+}
+body { background: var(--void); color: var(--text); font: 15px/1.6 var(--body); }
+.wrap { max-width: 980px; margin: 0 auto; padding-block: 28px 56px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 28px; }
+.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: .18em; color: var(--beacon); text-transform: uppercase; }
+h1 { font: 700 clamp(34px, 6vw, 56px)/1 var(--display); letter-spacing: .01em; margin: 8px 0 10px; text-wrap: balance; }
+h2 { font: 600 22px/1.2 var(--display); letter-spacing: .03em; margin: 0 0 10px; color: var(--text); }
+p { margin: 0; max-width: 65ch; }
+.lede { color: var(--muted); }
+.clip { position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #000; }
+.clip video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; max-width: 100%; }
+.cap { font: 12px/1.5 var(--mono); color: var(--muted); margin-top: 8px; }
+.stills { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.stills figure { margin: 0; display: grid; gap: 6px; min-width: 0; }
+.stills img { width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid var(--line); border-radius: 4px; }
+.stills figcaption { font: 12px/1.45 var(--body); color: var(--muted); }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; }
+ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+li::marker { color: var(--rack); }
+.ledger { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--hull); }
+table { width: 100%; border-collapse: collapse; font: 13px/1.4 var(--body); font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 500 11px/1.2 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); background: var(--panel); }
+td.num { font-family: var(--mono); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+.ok { color: #7fe0a4; }
+.note { font-size: 13px; color: var(--muted); }
+@media (max-width: 720px) { .stills { grid-template-columns: minmax(0, 1fr); } .cols { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { video { animation: none; } }
+</style>
+
+<main class="wrap">
+  <header>
+    <div class="eyebrow">Procedural bases · showcase 2</div>
+    <h1>Base Destruction</h1>
+    <p class="lede">Every rack, wall and container can now be shot apart. The hole is real: lasers pass through it, ships fly through it, and a player who joins later sees the same hole.</p>
+  </header>
+
+  <section>
+    <div class="clip">
+      <video src="{{VIDEO}}" autoplay muted loop playsinline controls aria-label="A mixed fleet flies the aisles; a gunship beams a rack until it breaks apart, then flies through the gap"></video>
+    </div>
+    <div class="cap">Seed 42 · 8000 u warehouse · ten ships, one of every flyable type · drawn with the in-game draw plan, piece groups and debris</div>
+  </section>
+
+  <section>
+    <h2>In the game</h2>
+    <div class="stills" style="grid-template-columns:minmax(0,1fr)">
+      <figure><img src="{{INGAME}}" alt="An interceptor beams the spot where a rack stood; debris chunks scatter outward" style="aspect-ratio:16/9"><figcaption>From the end-to-end test: an interceptor's beam has just broken the rack in front of it. Debris scatters, and the beam now runs on through the gap. The test then flies the ship through.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="cols">
+    <div>
+      <h2>What works now</h2>
+      <ul>
+        <li>Lasers and bolts damage the piece they hit; when it runs out of hit points it breaks.</li>
+        <li>A rack that crosses a map chunk breaks as one piece, not in halves.</li>
+        <li>The server and every player's prediction remove the walls together, so you fly through the gap without a stutter.</li>
+        <li>Debris bursts from the piece's own colours.</li>
+        <li>Late joiners rebuild the same holes from the room state.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>How it is built</h2>
+      <ul>
+        <li>Each broken group sets bits in a small mask (one bit per piece) carried in the room state.</li>
+        <li>Server, prediction and renderer each rebuild from that mask; no geometry is sent.</li>
+        <li>A test-only hit-point dial lets a test break a rack in a few shots.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Measured against budget</h2>
+    <div class="ledger">
+      <table>
+        <thead><tr><th>Measure</th><th>Result</th><th>Budget</th></tr></thead>
+        <tbody>
+          <tr><td>Network cost when a piece breaks</td><td class="num">a few bytes (one mask word)</td><td class="num">≤ 16 B</td></tr>
+          <tr><td>Weapon checks while intact</td><td class="num">0 allocations per hit</td><td class="num">locked</td></tr>
+          <tr><td>Debris pool</td><td class="num">fixed 1024 fragments, 0 per-frame allocations</td><td class="num">locked</td></tr>
+          <tr><td>Rack destroyed in the test room (2 % hit points)</td><td class="num">a few beam hits</td><td class="num">—</td></tr>
+          <tr><td>Late joiner sees the hole</td><td class="num ok">yes (integration test)</td><td class="num">required</td></tr>
+          <tr><td>Ship flies through the gap in the real game</td><td class="num ok">yes (end-to-end test)</td><td class="num">required</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Next</h2>
+    <p>Cities: avenues you can fly down, blocks of towers, plazas and landmarks, with the larger building kit. Then fortified military bases with turrets, shields and patrols.</p>
+  </section>
+</main>

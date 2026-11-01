@@ -411,7 +411,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       c.health = p.health;
       c.maxHealth = p.maxHealth;
       c.priority = 0;
-      let h = this.hostileTo.has(p.id);
+      let h = this.hostileTo.has(p.id) || (p.ownerId !== undefined && this.hostileTo.has(p.ownerId));
       if (!h && this.onSightPlayers) {
         const dx = p.x - self.x;
         const dy = p.y - self.y;
