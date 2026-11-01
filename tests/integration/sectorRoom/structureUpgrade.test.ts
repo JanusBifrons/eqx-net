@@ -14,7 +14,7 @@
  * Plus the owner gate: a foreign / capped / unknown request is a silent no-op.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../../../src/server/rooms/scenarioLayouts.js';
+import { SCENARIO } from '../../../src/server/rooms/scenarioLayouts.js';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { getStructureKind } from '../../../src/shared-types/structureKinds.js';
 import {

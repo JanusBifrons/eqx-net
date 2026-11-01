@@ -12,7 +12,7 @@
  * ship-restore path that never activates (the connectActive 3 s timeout).
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../../../src/server/rooms/scenarioLayouts.js';
+import { SCENARIO } from '../../../src/server/rooms/scenarioLayouts.js';
 import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 

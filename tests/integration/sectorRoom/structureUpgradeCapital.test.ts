@@ -26,7 +26,7 @@
  * never re-builds within the pulse budget) AND the turret never heals.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../../../src/server/rooms/scenarioLayouts.js';
+import { SCENARIO } from '../../../src/server/rooms/scenarioLayouts.js';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { getStructureKind } from '../../../src/shared-types/structureKinds.js';
 import {
