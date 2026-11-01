@@ -1,6 +1,13 @@
+import { decodeStructureState, emptyStructureRow } from './structureStateDecode.js';
+import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
+import {
+  STRUCTURE_TARGET_NONE,
+  STRUCTURE_TARGET_STRIDE,
+  type StructureStateView,
+} from '../../shared-types/structureStateWire.js';
 import { PredBaseStreamer, deadMaskHash, type BaseStateView } from './predBaseStreamer.js';
 import { Client, Room } from 'colyseus.js';
-import type { BaseRenderDescriptor, RenderMirror, ShipRenderState } from '@core/contracts/IRenderer';
+import type { BaseRenderDescriptor, RenderMirror, ShipRenderState, StructureRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
 import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 import { SPOOL_DURATION_MS } from '@core/transit/TransitStateMachine';
@@ -2845,7 +2852,7 @@ export class ColyseusGameClient {
 
     // Structures plan, Phase 3 — mirror the slim grid slice (web + power +
     // construction). Pose lives in `mirror.swarm` (kind=2); joined by entityId.
-    this.syncStructures(snap.structures);
+    this.syncStructures(snap.structureTargets);
 
     // Server-authoritative boost + thrust sets — exhaust-trail renderer.
     applyBoostingThrustingSets(snap, this.mirror);
@@ -3285,36 +3292,77 @@ export class ColyseusGameClient {
    *  removed; per-structure stats live in-world (capital minerals + battery
    *  charge Pixi Text) + the selection inspector, so nothing is dispatched to
    *  the HUD store here. */
-  private syncStructures(slice: SnapshotMessage['structures']): void {
-    if (slice && slice.length > 0) {
+  /** A2 — entityId → generation last seen in room state (stale sweep). */
+  private readonly _structureGen = new Map<number, number>();
+  private _structureGenN = 0;
+  private _structureMap: Map<number, StructureRenderState> | null = null;
+  /** Interned owner tables (index → id / name), refreshed from room state. */
+  private readonly _structureOwners: { ids: string[]; names: string[] } = { ids: [], names: [] };
+  private readonly _readStructureOwner = (v: string, k: string): void => { this._structureOwners.ids[Number(k)] = v; };
+  private readonly _readStructureOwnerName = (v: string, k: string): void => { this._structureOwners.names[Number(k)] = v; };
+  /** Bound once (no per-snapshot closure): decode one room-state row into
+   *  its mirror row in place. */
+  private readonly _decodeStructureRow = (v: StructureStateView, key: string): void => {
+    const id = Number(key);
+    const map = this._structureMap!;
+    let row = map.get(id);
+    if (!row) {
+      row = emptyStructureRow();
+      map.set(id, row);
+    }
+    decodeStructureState(v, this._structureOwners, row);
+    row.turretTargetId = undefined;
+    row.miningTargetId = undefined;
+    this._structureGen.set(id, this._structureGenN);
+  };
+
+  /**
+   * A2 (plan soft-leaping-truffle v2) — structure grid state arrives as ROOM
+   * STATE (`state.structures`: the join payload, then delta patches), not in
+   * every snapshot. Decode it into the unchanged `mirror.structures` shape in
+   * place, then overlay the snapshot's fast cosmetics (turret / mining targets).
+   * Allocation-free once every row exists.
+   */
+  private syncStructures(targets: SnapshotMessage['structureTargets']): void {
+    type StrMap = { forEach(cb: (v: string, k: string) => void): void };
+    const state = this.room?.state as
+      | {
+          structures?: { size: number; forEach(cb: (v: StructureStateView, k: string) => void): void };
+          structureOwners?: StrMap;
+          structureOwnerNames?: StrMap;
+        }
+      | undefined;
+    const rows = state?.structures;
+    // Owners are few (one per base): re-read the tables each sync (no alloc —
+    // writes into persistent arrays).
+    state?.structureOwners?.forEach(this._readStructureOwner);
+    state?.structureOwnerNames?.forEach(this._readStructureOwnerName);
+    if (!rows || rows.size === 0) {
+      if (this.mirror.structures && this.mirror.structures.size > 0) this.mirror.structures.clear();
+      this._structureGen.clear();
+    } else {
       let map = this.mirror.structures;
       if (!map) { map = new Map(); this.mirror.structures = map; }
-      map.clear();
-      for (const s of slice) {
-        map.set(s.id, {
-          powered: s.powered,
-          netPower: s.netPower ?? 0,
-          connTo: s.connTo ?? [],
-          ...(s.hpPct !== undefined ? { hpPct: s.hpPct / 100 } : {}), // C3 — 0-100 int → [0..1] fraction
-          built: s.built ?? false,
-          buildPct: s.built ? 1 : (s.buildPct ?? 0),
-          ...(s.etaMs !== undefined ? { etaMs: s.etaMs } : {}),
-          deconstructPct: s.deconstructPct ?? 0,
-          ...(s.isDeconstructing ? { isDeconstructing: true } : {}),
-          ...(s.miningTargetId !== undefined ? { miningTargetId: s.miningTargetId } : {}),
-          ...(s.turretTargetId !== undefined ? { turretTargetId: s.turretTargetId } : {}),
-          ...(s.storedPower !== undefined ? { storedPower: s.storedPower } : {}),
-          ...(s.storedPowerMax !== undefined ? { storedPowerMax: s.storedPowerMax } : {}),
-          ...(s.minerals !== undefined ? { minerals: s.minerals } : {}), // WS-9 R2.12 (capital readout)
-          ...(s.shieldWallTo !== undefined ? { shieldWallTo: s.shieldWallTo } : {}),
-          ...(s.wallActive !== undefined ? { wallActive: s.wallActive } : {}),
-          ...(s.owner !== undefined ? { owner: s.owner } : {}),
-          ...(s.ownerName !== undefined ? { ownerName: s.ownerName } : {}),
-          ...(s.level !== undefined ? { level: s.level } : {}), // WS-B4 — structure level (absent ⇒ 1)
-        });
+      this._structureMap = map;
+      this._structureGenN++;
+      rows.forEach(this._decodeStructureRow);
+      for (const [id, g] of this._structureGen) {
+        if (g === this._structureGenN) continue;
+        this._structureGen.delete(id);
+        map.delete(id);
+        // Room state owns a structure's lifetime: drop its pose entry too
+        // (the binary full refresh no longer sweeps structures).
+        const sw = this.mirror.swarm?.get(id);
+        if (sw && sw.kind === SWARM_KIND_STRUCTURE) this.mirror.swarm!.delete(id);
       }
-    } else {
-      if (this.mirror.structures && this.mirror.structures.size > 0) this.mirror.structures.clear();
+      if (targets) {
+        for (let i = 0; i + 2 < targets.length; i += STRUCTURE_TARGET_STRIDE) {
+          const row = map.get(targets[i]!);
+          if (!row) continue;
+          if (targets[i + 1] !== STRUCTURE_TARGET_NONE) row.turretTargetId = targets[i + 1];
+          if (targets[i + 2] !== STRUCTURE_TARGET_NONE) row.miningTargetId = targets[i + 2];
+        }
+      }
     }
     this.syncPredWalls();
     this.syncPredBases();

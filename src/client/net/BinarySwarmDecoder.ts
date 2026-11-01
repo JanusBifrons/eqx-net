@@ -194,8 +194,11 @@ export function decodeSwarmPacket(
 
   if (seen !== null) {
     // Full snapshot — entities not present anymore should be removed.
-    for (const id of swarm.keys()) {
-      if (!seen.has(id)) swarm.delete(id);
+    // EXCEPT structures (A2): a sleeping out-of-interest structure rides only
+    // every Nth full refresh, and its lifetime is owned by the room-state
+    // `structures` row (ColyseusClient.syncStructures removes its entry).
+    for (const [id, e] of swarm) {
+      if (!seen.has(id) && e.kind !== SWARM_KIND_STRUCTURE) swarm.delete(id);
     }
   }
 }

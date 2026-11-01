@@ -61,8 +61,12 @@ export class StructurePlacementSubsystem {
   /**
    * Place a structure for `owner`. Returns the new structure id, or `null` if
    * the request was rejected (unknown kind, overlap, or slot pool exhausted).
+   *
+   * `skipAutoConnect` — a generated base (or a scale lattice) supplies its own
+   * intended connection graph via `connectExplicit`; greedy auto-connect would
+   * link e.g. gate pylons and close a gate. Players never pass it.
    */
-  place(owner: string, kindId: string, x: number, y: number): string | null {
+  place(owner: string, kindId: string, x: number, y: number, opts?: { skipAutoConnect?: boolean }): string | null {
     if (!isStructureKindId(kindId)) return null;
     const kind = getStructureKind(kindId);
     const pos = this.hooks.clamp(x, y);
@@ -121,7 +125,9 @@ export class StructurePlacementSubsystem {
     this.hooks.registry.add(rec);
     // Auto-wire into the owner's grid: nearest in-range hub with a free slot
     // whose connecting segment isn't blocked by another structure OR an asteroid.
-    autoConnectStructure(this.hooks.registry, id, this.hooks.getObstacles?.());
+    if (opts?.skipAutoConnect !== true) {
+      autoConnectStructure(this.hooks.registry, id, this.hooks.getObstacles?.());
+    }
     return id;
   }
 

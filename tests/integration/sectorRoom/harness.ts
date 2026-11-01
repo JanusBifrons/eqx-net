@@ -169,6 +169,8 @@ export async function bootSectorTestServer(opts: {
   tradeEnabled?: boolean;
   seedStorageHold?: { goods: Partial<Record<'minerals' | 'salvage' | 'alloy' | 'core', number>>; credits: number };
   haulerRaiders?: number;
+  /** A0 scale lattice (plan soft-leaping-truffle v2). */
+  scaleGrid?: { n: number; seed: number; fence?: boolean };
 } = {}): Promise<SectorTestHarness> {
   // 1. Stub the persistence singletons FIRST. SectorRoom.onCreate
   //    reads these via module-level singletons, so the injection has
@@ -219,6 +221,7 @@ export async function bootSectorTestServer(opts: {
     haulerRaiders: opts.haulerRaiders,
     defaultSpawnX: opts.defaultSpawnX,
     defaultSpawnY: opts.defaultSpawnY,
+    scaleGrid: opts.scaleGrid,
   });
   await gameServer.listen(port);
 

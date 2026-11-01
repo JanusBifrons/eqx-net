@@ -349,3 +349,46 @@ describe('BinarySwarmBroadcast — encoder', () => {
     expect(view.getUint8(SWARM_HEADER_BYTES + SWARM_REC_COMPONENT_INDEX_OFF)).toBe(5);
   });
 });
+
+// A2 (plan soft-leaping-truffle v2) — sleeping, out-of-interest STRUCTURES ride
+// only every Nth full refresh (A0: the every-second resend was ~15 KB/s per
+// client for a citadel). Drones/asteroids and in-interest or awake structures
+// are unchanged.
+describe('BinarySwarmBroadcast — structure full-refresh decimation (A2)', () => {
+  function idsIn(packet: Uint8Array | null): number[] {
+    if (!packet) return [];
+    const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
+    const n = view.getUint16(2, true);
+    const out: number[] = [];
+    for (let i = 0; i < n; i++) out.push(view.getUint16(SWARM_HEADER_BYTES + i * SWARM_RECORD_BYTES, true));
+    return out;
+  }
+
+  it('omits a sleeping out-of-interest structure from most full refreshes, keeps drones', () => {
+    const registry = new SwarmEntityRegistry();
+    const encoder = new BinarySwarmBroadcast();
+    const { f32, u32 } = makeSab();
+    const st = registry.register('pstruct-1', SLOT_A, 2, 40, 1000, 0, 0);
+    const dr = registry.register('drone-1', SLOT_B, 1, 20, -1000, 0, 0);
+    setSlotPose(f32, SLOT_A, 1000, 0, 0, 0, 0);
+    setSlotPose(f32, SLOT_B, -1000, 0, 0, 0, 0);
+    setSlotSleeping(u32, SLOT_A, true);
+    setSlotSleeping(u32, SLOT_B, true);
+    const none = new Set<number>();
+    // Clear the sleep-transition ship on a non-full tick.
+    encoder.encode(registry, f32, u32, 1, none);
+
+    // Full refresh #1 (tick 60): the structure is skipped, the drone is not.
+    const p1 = idsIn(encoder.encode(registry, f32, u32, 60, none));
+    expect(p1).toContain(dr.entityId);
+    expect(p1).not.toContain(st.entityId);
+
+    // In interest ⇒ always in the full refresh.
+    const p2 = idsIn(encoder.encode(registry, f32, u32, 120, new Set([st.entityId])));
+    expect(p2).toContain(st.entityId);
+
+    // Every Nth full refresh carries it anyway (tick 300 = refresh #5).
+    const p3 = idsIn(encoder.encode(registry, f32, u32, 300, none));
+    expect(p3).toContain(st.entityId);
+  });
+});

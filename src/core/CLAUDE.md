@@ -79,6 +79,10 @@ When a new phase needs a new concretion (e.g., persistence), add it as a new con
 - **Weapon blocking** uses `BaseRayGrid.rayFirst`: a DDA over a 128 u cell grid of the same outline segments. It is allocation-free (heapDelta-locked), matches brute force (5000-ray test), and is op-count bounded.
 - **Budgets:** every number lives in `src/shared-types/baseBudgets.ts` (consistency-locked against the live game). See docs/architecture/procedural-bases.md.
 
+## Structure scale lattice (`src/core/structures/structureLattice.ts`, plan soft-leaping-truffle v2)
+
+`buildStructureLattice({n, seed, fence})` is a rule-valid N-structure base (Capital, connector spine + rows, 2–3 leaves per connector, optional closed pylon fence, Solars added until powered), used to MEASURE the structure system at base scale and as the seed of the base generator. Every placement + link passes the real `placementRejection` / `canConnect` (locked by `structureLattice.test.ts`). Budgets it measures against: `src/shared-types/structureBudgets.ts`; ledger: [docs/architecture/structure-network-scale.md](../../docs/architecture/structure-network-scale.md). **Any generated base must pass the same real rules — never bypass `canConnect`.**
+
 ## Physics Worker — Input Queue Contract
 
 Per-slot input handling lives in [physics/inputQueue.ts](physics/inputQueue.ts) and is invoked once per slot per physics step from [physics/worker.ts](physics/worker.ts). The contract has three equally-load-bearing rules:
