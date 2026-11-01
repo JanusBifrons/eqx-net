@@ -42,6 +42,24 @@ Every good has a use besides selling it:
 
   Append to these lists; never reorder or remove (the same contract as invariant #11).
 
+## How production runs (P2b)
+
+Code: [src/server/structures/ProductionSubsystem.ts](../../src/server/structures/ProductionSubsystem.ts), status bytes in [src/shared-types/production.ts](../../src/shared-types/production.ts).
+
+1. **The network's storage is the warehouse.** A processor draws from the same-owner operational storage in its grid component: the Capital bank (minerals), Cargo Bays and Freight Docks.
+2. **Start a cycle:** take the recipe's inputs, all or nothing. If one is missing, the processor is **starved**, and room state says which good it is waiting for.
+3. **Run:** one step per powered pulse. With no power it pauses (**unpowered**); inputs it already holds stay held.
+4. **Finish:** put the outputs into storage, all or nothing (minerals fill the Capital bank first, other goods fill holds by weight). With no room it stays **blocked** until there is space.
+
+Other rules:
+- **Scarce inputs are shared round-robin.** The starting processor rotates each pulse in a fixed order, so results are deterministic.
+- **Storage is updated in place,** like mining and construction, and `StorageService.flushDirty()` persists it on the same pulse.
+- **The recipe choice and a cycle in progress survive a restart.**
+- **Changing recipe mid-cycle** hands the loaded inputs back, or refuses the change if they no longer fit.
+- **Blueprints:** recipes that need one run only with a blueprint loaded, through the `blueprintFor` hook (Living World's `applyBlueprint`). Until that hook is wired, they run at base values.
+- **Cost:** 60 smelters with 20 storages take under 0.3 ms per pulse, locked by `ProductionSubsystem.test.ts`. Processors in one component share a single network lookup.
+- **Wire:** room-state bytes `recipe`, `prodState` and `prodMissing`, sent only when not 0 (#16). Late joiners read them from the join payload.
+
 ## Asteroids
 
 A sector's asteroid field mixes three kinds, weighted by the sector's galaxy `features`:
@@ -59,6 +77,7 @@ A sector's asteroid field mixes three kinds, weighted by the sector's galaxy `fe
 | Phase | Adds |
 |---|---|
 | P1 | This data and its tests. No live behaviour changes. |
+| P2b | Production runs. `ProductionSubsystem` steps every built processor once per 1 Hz grid pulse (see "How production runs" below). The inspector shows "MAKES <recipe> · <status>", and owners change a multi-recipe processor with `set_recipe`. |
 | P2a | The 12 production kinds join the structure catalogue (appended, no version bump), with footprints, drawings, build icons and a new Industry build category. The Deep Core Rig, Ore Processing Complex and Assembly Plant are hubs with 4 links. They can be placed but don't produce yet. |
 | P2 | The production structures, a processing step in the 1 Hz grid pulse, Miner yields by asteroid kind, ammo, the upgrade goods bill, one mineral pool. Packed structures arrive once Living World's packed items land. |
 | D1–D2 | The base generator grows a chain for each base's role (mining outpost, refinery, workshop, manufactory, assembly works, trade hub). |

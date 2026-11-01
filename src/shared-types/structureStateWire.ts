@@ -68,6 +68,9 @@ export const STRUCTURE_DEFAULTS = {
   shieldWallTo: -1,
   gateOpen: 0,
   gateAccess: 0,
+  recipe: 0,
+  prodState: 0,
+  prodMissing: 0,
 } as const;
 
 /** The fields the client reads from a room-state structure row (absent ⇒
@@ -90,5 +93,9 @@ export interface StructureStateView {
   gateOpen?: number;
   /** Gates: GATE_ACCESS_IDS index (shared-types/gateAccess.ts). */
   gateAccess?: number;
+  /** Production (P2b): encodings in shared-types/production.ts. */
+  recipe?: number;
+  prodState?: number;
+  prodMissing?: number;
   connTo: { readonly length: number; at(i: number): number | undefined };
 }

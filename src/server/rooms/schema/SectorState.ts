@@ -170,6 +170,12 @@ export class StructureState extends Schema {
   @type('uint8') gateOpen?: number;
   /** Gates: access setting (GATE_ACCESS_IDS index). */
   @type('uint8') gateAccess?: number;
+  /** Production (P2b): selected recipe as index + 1 (0 = the kind's default). */
+  @type('uint8') recipe?: number;
+  /** Production: PROD_STATE (shared-types/production.ts). */
+  @type('uint8') prodState?: number;
+  /** Production: the good a starved processor waits for, as index + 1. */
+  @type('uint8') prodMissing?: number;
   /** Connected structures' entityIds. */
   @type(['uint16']) connTo = new ArraySchema<number>();
 }
