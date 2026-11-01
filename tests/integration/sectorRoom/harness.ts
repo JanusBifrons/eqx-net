@@ -148,7 +148,7 @@ export async function bootSectorTestServer(opts: {
    *  `dronePoses` option. */
   dronePoses?: ReadonlyArray<{ kind: string; x: number; y: number; angle?: number; hullExposed?: boolean }>;
   /** Structures plan (Phase 3-5) — pre-built, auto-connected scenario grid. */
-  prebuiltStructures?: ReadonlyArray<{ kind: string; x: number; y: number }>;
+  prebuiltStructures?: ReadonlyArray<{ kind: string; x: number; y: number; rot?: number; gateAccess?: 'allies' | 'owner' | 'open' }>;
   /** Owner the prebuilt scenario structures belong to (default `scenario`). Set
    *  to the joining playerId so an owner-gated action (Upgrade, WS-B4) applies. */
   prebuiltStructuresOwner?: string;

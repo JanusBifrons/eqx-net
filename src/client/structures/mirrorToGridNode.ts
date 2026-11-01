@@ -24,6 +24,7 @@ import {
   structureHalfExtents,
 } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxConnections } from '../../core/leveling/structureLevel.js';
+import { isShieldEmitterKind } from '../../core/structures/gateGeometry.js';
 import type { GridNode, GridObstacle } from '../../core/structures/Grid.js';
 import type {
   StructureRenderState,
@@ -64,7 +65,7 @@ export function structureMirrorToGridNode(
   out.isHub = kind.isHub;
   out.isCapital = swarmEntry.shipKind === 'capital';
   out.isConnector = swarmEntry.shipKind === 'connector';
-  out.isShieldPylon = swarmEntry.shipKind === 'shield_pylon';
+  out.isShieldPylon = isShieldEmitterKind(swarmEntry.shipKind);
   // Leveled connection cap — an upgraded connector holds MORE links (Equinox
   // Phase-5 audit). Must match the server's `structureToGridNode` so the preview
   // + the live grid agree.
@@ -104,7 +105,7 @@ export function ghostToGridNode(
   out.isHub = kind.isHub;
   out.isCapital = preview.kind === 'capital';
   out.isConnector = preview.kind === 'connector';
-  out.isShieldPylon = preview.kind === 'shield_pylon';
+  out.isShieldPylon = isShieldEmitterKind(preview.kind);
   out.maxConnections = kind.maxConnections;
   out.connectionRange = kind.connectionRange;
   // A blueprint is inert until built; the ghost isn't placed yet.

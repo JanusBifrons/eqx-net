@@ -63,6 +63,8 @@ export interface SectorSnapshotStructure {
   y: number;
   /** Phase V — rotation in degrees (0/90/180/270). Absent ⇒ 0. */
   rot?: number;
+  /** Gates: who the gate opens for (GATE_ACCESS_IDS index). Absent ⇒ default. */
+  gateAccess?: number;
   /** Hull HP at save time. */
   health: number;
   /** Built vs blueprint. */
