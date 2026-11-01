@@ -29,6 +29,7 @@ import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema 
 import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
 import { toastForNotice } from './tradeView';
 import { TradeNoticeSchema } from '../../shared-types/economy.js';
+import { WorldNoticeSchema } from '../../shared-types/worldNotice.js';
 
 /** Living World P2 — how long a trade toast stays up. */
 const TRADE_TOAST_TTL_MS = 6_000;
@@ -2033,6 +2034,14 @@ export class ColyseusGameClient {
       if (!parsed.success) return;
       const { tone, unread } = toastForNotice(parsed.data);
       const id = useUIStore.getState().pushTradeToast(parsed.data.message, tone, unread);
+      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
+    });
+    // Living World P4 — galaxy-wide world notices (elite sighted / destroyed).
+    // An accelerator only (#16): the elite itself rides the snapshot + map.
+    room.onMessage('world_notice', (raw: unknown) => {
+      const parsed = WorldNoticeSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const id = useUIStore.getState().pushTradeToast(parsed.data.message, 'world', false);
       setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
     });
     room.onMessage('cargo_deposited', (raw: unknown) => {

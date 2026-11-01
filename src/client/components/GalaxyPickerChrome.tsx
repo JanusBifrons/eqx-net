@@ -502,6 +502,16 @@ export function GalaxyPickerChrome({
               <Typography sx={{ color: '#6b7280', fontSize: 10 }}>no activity</Typography>
             )}
           </Box>
+          {sectorTip.event !== null && (
+            <Typography sx={{ color: '#ff9f43', fontSize: 10, mt: 0.25 }} data-testid="galaxy-tooltip-event">
+              ⚑ {sectorTip.event} underway
+            </Typography>
+          )}
+          {sectorTip.elite !== null && (
+            <Typography sx={{ color: '#ffc850', fontSize: 10, mt: 0.25 }} data-testid="galaxy-tooltip-elite">
+              ★ {sectorTip.elite} sighted
+            </Typography>
+          )}
           {sectorTip.features.length > 0 && (
             <Typography sx={{ color: '#7a8499', fontSize: 9, mt: 0.25, textTransform: 'capitalize' }}>
               {sectorTip.features.join(' · ')}

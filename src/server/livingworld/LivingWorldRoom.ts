@@ -12,6 +12,8 @@ import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { WarpWarningEvent, WarpWarningClearEvent } from '../../shared-types/messages.js';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
 import type { BotCarry } from './botTypes.js';
+import type { WorldNotice } from '../../shared-types/worldNotice.js';
+import type { Hold } from '../../shared-types/goods.js';
 
 /**
  * Per-(owner, sector) faction base summary the `WaveDirector` polls (wave-system
@@ -86,6 +88,18 @@ export interface LivingWorldRoom {
   /** P3b — move the whole hold `fromUid` into `toUid` (an ownerless
    *  `hauler`-type hold) as ONE atomic group. Returns the weight moved. */
   bankHold?(fromUid: string, toUid: string): number;
+  /** P3c — nearest operational player storage to (x, y) within `range`. */
+  nearestPlayerStorage?(x: number, y: number, range: number): { uid: string; owner: string; x: number; y: number } | null;
+  /** P3c — a robot harvester steals up to `stepWeight` (best goods first, plus
+   *  some credits) from that storage's network into its own hold, as ONE atomic
+   *  group; the owner is warned (throttled). Returns the weight taken. */
+  raidStorage?(harvesterId: string, owner: string, uid: string, stepWeight: number): number;
+  /** P4a — promote a just-spawned bot to a named elite (boosted hull). */
+  markElite?(botId: string, name: string, healthMul?: number): boolean;
+  /** P4b — drop a world-event reward (a cache / a salvage-field pod) at (x, y). */
+  dropEventLoot?(hold: Hold, x: number, y: number): void;
+  /** P4 — a sector-wide world notice (accelerator only, #16). */
+  broadcastWorldNotice?(notice: WorldNotice): void;
   spawnLivingWorldBot(spec: {
     botId: string;
     kind: ShipKindId;

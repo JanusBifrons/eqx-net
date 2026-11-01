@@ -14,6 +14,7 @@
  * See docs/architecture/living-galaxy.md for the expansion ladder.
  */
 import { z } from 'zod';
+import { WorldEventViewSchema, type WorldEventView } from './worldEvents.js';
 
 /** Ownership/control of a sector. Cosmetic/static in v1 (see file header). */
 export interface SectorOwner {
@@ -59,6 +60,11 @@ export interface SectorLiveState {
   /** Recent-combat tally, or null/absent when the sector has been quiet within
    *  the window. Additive (optional) — pre-Phase-9 producers simply omit it. */
   recentCombat?: RecentCombat | null;
+  /** Living World P4a — the name of a named ELITE roaming this sector, or
+   *  null/absent. Additive (optional). */
+  elite?: string | null;
+  /** Living World P4b — the world event running in this sector, or null/absent. */
+  event?: WorldEventView | null;
 }
 
 export interface GalaxySnapshotResponse {
@@ -91,6 +97,10 @@ export const SectorLiveStateSchema = z
     // Additive (Equinox Phase 9 item 5) — optional + nullable so pre-Phase-9
     // producers (and the quiet case) validate unchanged.
     recentCombat: RecentCombatSchema.nullable().optional(),
+    // P4a — additive, optional.
+    elite: z.string().max(60).nullable().optional(),
+    // P4b — additive, optional.
+    event: WorldEventViewSchema.nullable().optional(),
   })
   .strict();
 

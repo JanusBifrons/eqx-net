@@ -34,7 +34,7 @@ import { effectiveShipShieldMax } from '../../core/leveling/shipStats.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import {
-  getDroneMaxHealth,
+  droneMaxHealthOf,
   getDroneShieldMax,
 } from './droneKindHelpers.js';
 
@@ -60,7 +60,7 @@ function resolveSwarmShieldHull(rec: SwarmDamageTarget): { shieldMax: number; hu
     const k = getStructureKind(rec.shipKind ?? undefined);
     return { shieldMax: k.shieldMax ?? 0, hullMax: k.maxHealth };
   }
-  return { shieldMax: getDroneShieldMax(rec.shipKind), hullMax: getDroneMaxHealth(rec.shipKind) ?? 40 };
+  return { shieldMax: getDroneShieldMax(rec.shipKind), hullMax: droneMaxHealthOf(rec) ?? 40 };
 }
 import type { ShieldEventMessage } from '../../shared-types/messages.js';
 import type { Bus } from '../../core/events/Bus.js';
@@ -90,6 +90,8 @@ export interface SwarmDamageTarget {
    *  catalogue — never cross-resolve. */
   shipKind?: ShipKindId | null;
   shieldDown?: boolean;
+  /** P4a — an elite's boosted hull max (see `droneMaxHealthOf`). */
+  elite?: { maxHealth: number };
 }
 
 /** Narrow view of swarmRegistry — only `get(id)` is needed for regen.
@@ -102,6 +104,8 @@ export interface SwarmLookup {
     shipKind?: ShipKindId | null;
     entityId?: number;
     shieldDown?: boolean;
+    /** P4a — an elite's boosted hull max (see `droneMaxHealthOf`). */
+    elite?: { maxHealth: number };
   } | null | undefined;
 }
 
