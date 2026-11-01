@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { bootLivingWorldTestServer, type LivingWorldTestHarness } from './harness.js';
 import { EliteDirector } from '../../../src/server/livingworld/EliteDirector.js';
 import { ELITE_HEALTH_MUL } from '../../../src/shared-types/elites.js';
+import { ELITE_BOUNTY_CREDITS } from '../../../src/shared-types/contracts.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 import type { LivingWorldRoom } from '../../../src/server/livingworld/LivingWorldRoom.js';
@@ -50,7 +51,9 @@ describe('SectorRoom integration — named elites (P4a)', () => {
     pilot.onMessage('world_notice', (n: WorldNotice) => notices.push(n));
 
     elites = new EliteDirector(rooms, {
-      maxElites: 1, firstSector: 'greenfall', kind: 'gunship', respawnMs: 500, nowMs: () => clock.now,
+      // Fixed rng ⇒ the elite spawns NE of the centre, inside the pilot's
+      // interest window (a random bearing can land outside it).
+      maxElites: 1, firstSector: 'greenfall', kind: 'gunship', respawnMs: 500, nowMs: () => clock.now, rng: () => 0.1,
     });
     elites.start();
 
@@ -85,5 +88,47 @@ describe('SectorRoom integration — named elites (P4a)', () => {
     clock.now += 1000;
     elites.tick(clock.now);
     expect(elites.elites()).toHaveLength(1);
+  });
+
+  /**
+   * P4c — the elite's BOUNTY goes into the killer's own ship hold, but only for
+   * a signed-in pilot (bounties need an account); a guest still gets the loot.
+   */
+  it('pays the bounty into a signed-in killer\'s hold, and not a guest\'s', { timeout: 40_000 }, async () => {
+    h = await bootLivingWorldTestServer({ sectors: ['greenfall', 'emerald-span'], botCount: 0, seed: 4 });
+    const clock = { now: 1_000_000 };
+    const rooms = new Map<string, LivingWorldRoom>([
+      ['greenfall', h.getRoom('greenfall') as unknown as LivingWorldRoom],
+      ['emerald-span', h.getRoom('emerald-span') as unknown as LivingWorldRoom],
+    ]);
+    const room = h.getRoom('greenfall');
+    const signedIn = randomUUID();
+    const guest = randomUUID();
+    await h.connectActive(signedIn, 'greenfall', { initialHull: 99999 });
+    await h.connectActive(guest, 'greenfall', { initialHull: 99999 });
+    (room as unknown as { playerToUser: Map<string, string | null> }).playerToUser.set(signedIn, 'user-bounty');
+    // `state.ships` is keyed by ship instance — find the pilot's active hull.
+    const creditsOf = (pid: string): number => {
+      let shipId = '';
+      room.state.ships.forEach((s) => { if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId; });
+      return getHoldStore().get(shipId)?.hold.credits ?? 0;
+    };
+
+    elites = new EliteDirector(rooms, { maxElites: 2, firstSector: 'greenfall', kind: 'heavy', respawnMs: 60_000, nowMs: () => clock.now });
+    elites.start();
+    const inGreenfall = (): string[] => elites!.elites().filter((e) => e.sectorKey === 'greenfall').map((e) => e.id);
+    expect(inGreenfall().length).toBeGreaterThanOrEqual(1);
+    const [first] = inGreenfall();
+
+    for (let i = 0; i < 30 && room._internals.swarmRegistry.get(first!); i++) room._internals.applyDamage(first!, signedIn, 5_000);
+    expect(creditsOf(signedIn)).toBe(ELITE_BOUNTY_CREDITS);
+
+    // A guest kill of another elite pays nothing into the guest's hold.
+    const second = 'elite-guest-target';
+    expect(room.spawnLivingWorldBot({ botId: second, kind: 'heavy', x: 600, y: 0 })).toBe(true);
+    expect(room.markElite(second, 'Grim Oruk')).toBe(true);
+    for (let i = 0; i < 30 && room._internals.swarmRegistry.get(second); i++) room._internals.applyDamage(second, guest, 5_000);
+    expect(room._internals.swarmRegistry.get(second)).toBeFalsy();
+    expect(creditsOf(guest)).toBe(0);
   });
 });

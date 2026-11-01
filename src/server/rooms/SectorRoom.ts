@@ -184,6 +184,7 @@ import { HARVESTER_CAPACITY, RAID_CREDITS_PER_STEP, RAID_NOTICE_THROTTLE_MS, RAI
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
 import { rollLoot } from '../../shared-types/lootTables.js';
 import { rollEliteLoot, ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
+import { ELITE_BOUNTY_CREDITS } from '../../shared-types/contracts.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
 // RosterFullError is handled inside RosterPersistence.ts
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
@@ -3489,6 +3490,8 @@ export class SectorRoom extends Room<SectorState> {
       // EliteDirector's, off ENTITY_DESTROYED).
       if (rec.elite !== undefined) {
         auditEvent({ event: 'elite_killed', sector, name: rec.elite.name, kind: rec.shipKind ?? '', attackerId: shooterId });
+        // P4c — the elite's bounty goes into the KILLER's hold (signed-in pilots).
+        if (shooterId) this.payEliteBounty(shooterId, rec.elite.name, rec.elite.bounty);
       }
       // Phase 4 (Leveling & XP, WS-B1) — a drone is the primary XP source. Award
       // XP to the KILLER SHIP INSTANCE, weighted by the drone's toughness
@@ -4492,6 +4495,34 @@ export class SectorRoom extends Room<SectorState> {
 
   /** Living World P4a — promote a just-spawned bot to a NAMED ELITE: its hull
    *  max becomes ELITE_HEALTH_MUL × its kind's and it is healed to full. */
+  /**
+   * Living World P4c — pay a world bounty into the killer's ACTIVE ship hold
+   * (credits are weightless, so it always fits) as one atomic hold write.
+   * Only a signed-in PLAYER collects (bounties need an account — guests still
+   * get the loot). Announced to the sector as a `world_notice`.
+   */
+  private payEliteBounty(killerId: string, targetName: string, credits: number): void {
+    if (credits <= 0 || classifyAttacker(killerId) !== 'player') return;
+    if (!this.playerToUser.get(killerId)) return;
+    const shipId = this.resolveActiveShipKey(killerId);
+    if (shipId === undefined || shipId === '' || this.sectorKey === null) return;
+    const store = getHoldStore();
+    const cur = store.get(shipId);
+    const hold = cur ? cloneHold(cur.hold) : emptyHold();
+    hold.credits += credits;
+    store.commit(
+      [{ holderUid: shipId, holderType: 'ship', ownerId: killerId, sectorKey: null, x: null, y: null, hold, expiresAt: null }],
+      [],
+      true,
+    );
+    auditEvent({ event: 'bounty_claimed', sector: this.sectorKey, playerId: killerId, target: targetName, credits });
+    const who = this.resolveOwnerName(killerId) ?? 'A pilot';
+    this.broadcastWorldNotice({
+      type: 'world_notice', kind: 'bounty',
+      message: `${who} claimed the ${credits}¢ bounty on ${targetName}!`,
+    });
+  }
+
   /** P4b — a world-event reward (cache / salvage pod), as an ordinary loot pod. */
   dropEventLoot(hold: Hold, x: number, y: number): void {
     this.loot.drop(hold, x, y, 0, 0, { cause: 'event' });
@@ -4501,11 +4532,11 @@ export class SectorRoom extends Room<SectorState> {
     this.broadcast('world_notice', notice);
   }
 
-  markElite(botId: string, name: string, healthMul = ELITE_HEALTH_MUL): boolean {
+  markElite(botId: string, name: string, healthMul = ELITE_HEALTH_MUL, bounty = ELITE_BOUNTY_CREDITS): boolean {
     const rec = this.swarmRegistry.get(botId);
     if (rec == null || rec.kind !== SWARM_KIND_DRONE) return false;
     const maxHealth = (getDroneMaxHealth(rec.shipKind) ?? 40) * healthMul;
-    rec.elite = { name, maxHealth };
+    rec.elite = { name, maxHealth, bounty };
     this.swarmHealth.set(botId, maxHealth);
     return true;
   }
