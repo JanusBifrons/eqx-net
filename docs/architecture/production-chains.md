@@ -1,0 +1,65 @@
+# Production chains
+
+Plan `soft-leaping-truffle` v3. Bases stop being power, storage and turrets in different sizes. Each base runs part of a chain from ore to machinery, and bases trade what they make. This page covers the chain's data (phase P1) and lists what each later phase adds.
+
+Code:
+- [src/shared-types/goods.ts](../../src/shared-types/goods.ts)
+- [src/shared-types/economy.ts](../../src/shared-types/economy.ts) (`BASE_PRICES`)
+- [src/shared-types/recipes.ts](../../src/shared-types/recipes.ts)
+- [src/shared-types/asteroidResources.ts](../../src/shared-types/asteroidResources.ts)
+- `structureUpgradeGoods` in [src/core/leveling/structureLevel.ts](../../src/core/leveling/structureLevel.ts)
+
+## The chain
+
+| Stage | Goods | Made from | Made at |
+|---|---|---|---|
+| 0 Raw | minerals, salvage, ice, gas, crystal | asteroids (rock / ice / crystal-veined), nebulae, wrecks | Miner, Gas Collector, Deep Core Rig |
+| 1 Refined | alloy, fuel, polymer, silicon, provisions | minerals → alloy; ice → fuel; gas → fuel + polymer; crystal + minerals → silicon; ice → provisions | Smelter, Reclaimer, Refinery, Silicon Works, Hydroponics, Ore Processing Complex |
+| 2 Components | components, electronics, munitions | alloy + polymer; silicon + alloy; alloy + fuel | Fabricator, Munitions Works |
+| 3 End products | machinery, consumer goods | components + electronics; electronics + polymer | Assembly Plant |
+| 4 Exotic | Robot Core | robot loot only | an input to the huge structures |
+
+Every good has a use besides selling it:
+
+| Good | Use |
+|---|---|
+| fuel | Reactors burn it for power |
+| provisions, consumer goods | Colonies and cities consume them |
+| munitions | Ammo for missile turrets, autocannons and mine layers. Lasers only use power. Munitions are light (0.1 per unit) and one unit covers many shots |
+| alloy, components, machinery | Upgrading a structure to level 3, 4 and 5 (`structureUpgradeGoods`) |
+| components, electronics, machinery, Robot Cores | Making packed structures |
+
+## Rules (locked by `src/shared-types/recipes.test.ts`)
+
+- **The value ladder.** Every recipe returns 1.2–1.6× the value of its inputs at `BASE_PRICES`. Each step is worth running, and none prints money. The test is the authority over the prices, not the table in `economy.ts`.
+- **Value per weight rises by stage.** The stage medians must not fall, and end products must be at least 4× raw goods. Hauling products pays more per trip than hauling ore.
+- **No orphans.** Every good is made by a recipe or comes from extraction or loot (`GOOD_SOURCES`). Every good is used by a recipe or has another use (`GOOD_SINKS`).
+- **Blueprints.** Recipes whose main output is stage 2 or later need a blueprint loaded in the processor; refining doesn't. Blueprints belong to the Living World plan (`peppy-jumping-pinwheel`). Its `applyBlueprint(recipe, bp)` scales inputs, outputs and cycle time.
+- **Append-only.**
+  - `GOOD_IDS` is persisted in hold JSON.
+  - `RECIPE_IDS` will be a structure's `recipe` byte.
+  - `ASTEROID_RESOURCE_IDS` will be an asteroid's wire byte.
+
+  Append to these lists; never reorder or remove (the same contract as invariant #11).
+
+## Asteroids
+
+A sector's asteroid field mixes three kinds, weighted by the sector's galaxy `features`:
+
+| Kind | A Miner gets (per 10 units) | More common in |
+|---|---|---|
+| Rock | 10 minerals | everywhere |
+| Ice | 10 ice | nebula sectors |
+| Crystal-veined | 8 minerals + 2 crystal | mineral sectors, black holes |
+
+`rollAsteroidResource(u, features)` picks a kind from an injected uniform roll.
+
+## What each phase adds
+
+| Phase | Adds |
+|---|---|
+| P1 | This data and its tests. No live behaviour changes. |
+| P2 | The production structures, a processing step in the 1 Hz grid pulse, Miner yields by asteroid kind, ammo, the upgrade goods bill, one mineral pool. Packed structures arrive once Living World's packed items land. |
+| D1–D2 | The base generator grows a chain for each base's role (mining outpost, refinery, workshop, manufactory, assembly works, trade hub). |
+| T | Trade between bases: convoys, regional prices, Freight Dock orders. Payments go through the Living World wallet. |
+| D3 | Cities: the main consumers of provisions and consumer goods. |

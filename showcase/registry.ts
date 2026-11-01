@@ -105,6 +105,7 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 
 /** Docs whose feature exists but cannot be staged on main yet — with what unblocks it. */
 export const SHOWCASE_PENDING: Record<string, string> = {
+  'production-chains': 'Production chains (plan soft-leaping-truffle v3) — P1 is data only; a production-line shot (ore flowing through processors to a Freight Dock) lands with P2.',
   'shield-gates': 'Gates (plan soft-leaping-truffle v2, phase V) — a fly-through shot in the gate-test room is next; the design sheet stills are in diag/showcase/structure-redesign.',
   'structure-network-scale': 'Structure-scale measurement (plan soft-leaping-truffle v2 A0) — filmed once NPC bases built from real structures are seeded (phase D2); stills are in diag/showcase/structure-scale.',
   allegiances: 'AI-vs-AI sides fight in the living galaxy but not on cue; needs a staged two-faction room.',

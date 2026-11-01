@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  structureUpgradeGoods,
   STRUCTURE_LEVEL_CAP,
   STRUCTURE_LEVEL_FRAC,
   clampStructureLevel,
@@ -109,5 +110,19 @@ describe('structureLevel — effective connection cap (Equinox Phase-5 audit)', 
   it('clamps an out-of-range level (never below the base cap)', () => {
     expect(effectiveStructureMaxConnections(6, 0)).toBe(6);
     expect(effectiveStructureMaxConnections(6, 99)).toBe(effectiveStructureMaxConnections(6, STRUCTURE_LEVEL_CAP));
+  });
+});
+
+describe('structureUpgradeGoods (P1: level 3+ upgrades cost goods)', () => {
+  it('level 2 needs no goods; 3, 4 and 5 need progressively later-stage goods', () => {
+    expect(structureUpgradeGoods(600, 1)).toEqual({});
+    expect(Object.keys(structureUpgradeGoods(600, 2))).toEqual(['alloy']);
+    expect(Object.keys(structureUpgradeGoods(600, 3)).sort()).toEqual(['alloy', 'components']);
+    expect(Object.keys(structureUpgradeGoods(600, 4)).sort()).toEqual(['components', 'machinery']);
+    expect(structureUpgradeGoods(600, STRUCTURE_LEVEL_CAP)).toEqual({});
+  });
+  it('dearer kinds need more, and zero-cost kinds still need at least one of each', () => {
+    expect(structureUpgradeGoods(1500, 2).alloy!).toBeGreaterThan(structureUpgradeGoods(300, 2).alloy!);
+    expect(structureUpgradeGoods(0, 4)).toEqual({ components: 1, machinery: 1 });
   });
 });
