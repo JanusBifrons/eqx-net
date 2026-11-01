@@ -51,7 +51,9 @@ export interface TradeNetworkSnapshot {
 }
 
 export interface TradeTransferSpec {
-  take?: { want: Hold; intoUid: string };
+  /** `intoOwner` overrides the receiving hold's owner (default: the network
+   *  owner — escrow). A robot raid passes null: stolen cargo is nobody's. */
+  take?: { want: Hold; intoUid: string; intoOwner?: string | null };
   release?: readonly string[];
   mintCredits?: number;
   destroy?: readonly string[];
@@ -373,7 +375,8 @@ export class StorageService {
       const into = existing ? cloneHold(existing.hold) : emptyHold();
       transferInto(into, cloneHold(taken), Infinity);
       puts.push({
-        holderUid: spec.take.intoUid, holderType: 'hauler', ownerId: owner,
+        holderUid: spec.take.intoUid, holderType: 'hauler',
+        ownerId: spec.take.intoOwner === undefined ? owner : spec.take.intoOwner,
         sectorKey: this.d.sectorKey(), x: null, y: null, hold: into, expiresAt: null,
       });
     }
@@ -421,6 +424,19 @@ export class StorageService {
     }
     this.d.holdStore.commit(puts, deletes, this.persist(), spec.extraOps ?? []);
     return { taken, overflow, x: target.x, y: target.y };
+  }
+
+  /** Living World P3c — the nearest OPERATIONAL storage (any player owner) to
+   *  (x, y) within `range`, for a robot raid. Control cadence (allocates). */
+  nearestAnyStorage(x: number, y: number, range: number): StructureRecord | null {
+    let best: StructureRecord | null = null;
+    let bestD2 = range * range;
+    for (const rec of this.d.registry.all()) {
+      if (rec.uid === undefined || !isOperationalStorage(rec)) continue;
+      const d2 = (rec.x - x) ** 2 + (rec.y - y) ** 2;
+      if (d2 <= bestD2) { bestD2 = d2; best = rec; }
+    }
+    return best;
   }
 
   /** Weight currently held across a target's network (inspector / tests). */

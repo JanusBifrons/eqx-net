@@ -79,7 +79,38 @@ back after it leaves; the nexus sector stays held.
 | Weapon | bolts |
 | Carries | 400 weight |
 
-## Next (P3c)
+## Raids and the charge laser (P3c)
 
-Harvesters mining asteroids and raiding player storage and trade haulers,
-merge clusters, and a charging robot laser with a visible telegraph.
+- **Raids.** When there is no loot pod to chase, a harvester heads for the
+  nearest player storage (Capital or Cargo Bay) within 3000 u of its nexus.
+  Parked beside it, it steals up to 30 weight per control tick (about every
+  1.5 s): Robot Cores first, then alloy, salvage, and minerals, plus up to 25
+  credits. Each step is one atomic `tradeTransfer` group. The stolen cargo sits
+  ownerless in the harvester's hold, so **killing the raider spills your goods
+  back as pods**. Once it is three quarters full it flies home and banks the
+  haul into the nexus.
+- The owner gets a red **"Robot harvesters are raiding your storage!"** toast,
+  at most once a minute (the existing `trade_notice` channel, event `raided`).
+  Every step writes a `storage_raided` audit event.
+- **Charge laser.** The robot orb now carries a `charge-laser`: a hard-hitting
+  beam (60 damage, 520 u range) that winds up for 1.2 s before it fires. While
+  it charges, the orb shows a pulsing red line along its aim, so you can dodge.
+  The beam fires along the direction locked at the start of the charge. The
+  `charging` bit rides the slim `drones[]` snapshot slice (sent only while
+  true; the client clears it when a drone drops out of the slice), so a late
+  joiner sees the telegraph too.
+
+| Tuning | Value |
+|---|---|
+| Raid range from the nexus | 3000 u |
+| Steal per step | 30 weight + 25 credits |
+| Owner warning | at most once a minute |
+| Charge laser | 60 damage, 520 u, 72-tick wind-up, 150-tick cooldown |
+
+Tests: `tests/integration/sectorRoom/robotTerritory.test.ts` (raid),
+`tests/integration/sectorRoom/chargeLaser.test.ts` (the telegraph lands before
+the beam; red with no wind-up), `src/client/net/snapshotRemoteSync.charging.test.ts`.
+
+## Next
+
+Harvesters raiding trade haulers and mining asteroids, and merge clusters.

@@ -17,6 +17,7 @@ import { ROBOT_DIRECTOR_OPTIONS, ROBOT_SQUAD_LAYOUT } from '../../../src/server/
 import { NEXUS_ID, RobotTerritory } from '../../../src/server/livingworld/RobotTerritory.js';
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 import type { LivingWorldRoom } from '../../../src/server/livingworld/LivingWorldRoom.js';
+import { structureKindToIndex } from '../../../src/shared-types/structureKinds.js';
 
 describe('SectorRoom integration — robot nexus + territory (P3)', () => {
   let h: LivingWorldTestHarness | undefined;
@@ -141,6 +142,47 @@ describe('SectorRoom integration — robot nexus + territory (P3)', () => {
     const cores = getHoldStore().inSector('greenfall', 'pod').reduce((s, p) => s + (p.hold.goods.core ?? 0), 0);
     expect(cores).toBeGreaterThanOrEqual(3);
     expect(t.liveHarvesters()).not.toContain(hid);
+  }, 30_000);
+
+  /**
+   * P3c — raids: with no pod to chase, a harvester flies to the nearest player
+   * storage near its nexus and steals from it (rarest goods first, plus some
+   * credits) in atomic steps; the loot sits ownerless in its hold.
+   */
+  it('a harvester with nothing to scoop raids nearby player storage', async () => {
+    let clock: { now: number };
+    ({ h, t, clock } = await boot());
+    const room = h.getRoom('greenfall');
+    clock.now += 1000;
+    t.tick(clock.now);
+    const hid = t.liveHarvesters()[0]!;
+    const pose = room.getBotPose(hid)!;
+    // A built Cargo Bay right beside the harvester (well inside RAID_RANGE of the nexus).
+    room._internals.structureRegistry.add({
+      id: 'test-raid-bay', uid: 'test-raid-bay-uid', owner: 'victim', kind: 'cargo_bay',
+      subtypeIndex: structureKindToIndex('cargo_bay'), x: pose.x + 40, y: pose.y, radius: 40,
+      isConstructed: true, constructionProgress: 0, constructionCost: 0, isDeconstructing: false,
+      minerals: 0, storedPower: 0, level: 1,
+      hold: { goods: { core: 2, salvage: 100 }, credits: 500, blueprints: [] },
+    });
+
+    clock.now += 1000;
+    t.tick(clock.now);
+    // Step 1 (30 weight): both cores (10) + 20 salvage, and 25 credits.
+    const loot = getHoldStore().get(hid)?.hold;
+    expect(loot?.goods.core).toBe(2);
+    expect(loot?.goods.salvage).toBe(20);
+    expect(loot?.credits).toBe(25);
+    expect(getHoldStore().get(hid)?.ownerId).toBeNull();
+    const bay = room._internals.structureRegistry.get('test-raid-bay')!;
+    expect(bay.hold?.goods.core ?? 0).toBe(0);
+    expect(bay.hold?.goods.salvage).toBe(80);
+    expect(bay.hold?.credits).toBe(475);
+
+    // It keeps raiding on later ticks.
+    clock.now += 1000;
+    t.tick(clock.now);
+    expect(getHoldStore().get(hid)?.hold.goods.salvage).toBe(50);
   }, 30_000);
 
   it('the nexus sector is claimed by the robots (and held through a dip)', async () => {

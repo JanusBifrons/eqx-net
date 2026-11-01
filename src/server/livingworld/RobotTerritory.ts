@@ -17,6 +17,7 @@
  * this module itself; the nexus rides the existing swarm wire.
  */
 import type { SectorOwner } from '../../shared-types/galaxySnapshot.js';
+import type { GoodId } from '../../shared-types/goods.js';
 import type { Bus } from '../../core/events/Bus.js';
 import {
   freshControl,
@@ -46,6 +47,17 @@ export const HARVESTER_RETURN_FRAC = 0.75;
 /** Within this distance of the nexus, a harvester banks its whole hold. */
 export const HARVESTER_BANK_RADIUS = 260;
 export const HARVESTER_RESPAWN_MS = 90_000;
+
+/** P3c — raids: with no pod to chase, a harvester raids player storage within
+ *  RAID_RANGE of its nexus, stealing up to RAID_STEP_WEIGHT per control tick
+ *  (rarest goods first, plus some credits) while within RAID_DOCK_RADIUS. */
+export const RAID_RANGE = 3000;
+export const RAID_DOCK_RADIUS = 200;
+export const RAID_STEP_WEIGHT = 30;
+export const RAID_CREDITS_PER_STEP = 25;
+export const RAID_PRIORITY: readonly GoodId[] = ['core', 'alloy', 'salvage', 'minerals'];
+/** The owner is warned at most this often per room. */
+export const RAID_NOTICE_THROTTLE_MS = 60_000;
 
 export interface RobotTerritoryOptions {
   rng?: Rng;
@@ -230,8 +242,19 @@ export class RobotTerritory {
       if (!room || pose === null) continue;
       const carried = room.holdWeight?.(id) ?? 0;
       const pod = room.nearestLootPod?.(pose.x, pose.y) ?? null;
-      const goHome = carried >= HARVESTER_CAPACITY * HARVESTER_RETURN_FRAC || (carried > 0 && pod === null);
-      if (goHome) {
+      const full = carried >= HARVESTER_CAPACITY * HARVESTER_RETURN_FRAC;
+      // P3c — nothing to scoop: raid the nearest player storage near the nexus.
+      const raid = !full && pod === null ? (room.nearestPlayerStorage?.(n.x, n.y, RAID_RANGE) ?? null) : null;
+      const goHome = full || (carried > 0 && pod === null && raid === null);
+      if (raid !== null) {
+        if (Math.hypot(pose.x - raid.x, pose.y - raid.y) <= RAID_DOCK_RADIUS) {
+          const step = Math.min(RAID_STEP_WEIGHT, HARVESTER_CAPACITY - carried);
+          const took = room.raidStorage?.(id, raid.owner, raid.uid, step) ?? 0;
+          if (took > 0) serverLogEvent('robot_harvester_raided', { id, owner: raid.owner, weight: took });
+        } else {
+          room.setBotMoveTarget(id, raid.x, raid.y);
+        }
+      } else if (goHome) {
         if (Math.hypot(pose.x - n.x, pose.y - n.y) <= HARVESTER_BANK_RADIUS) {
           const moved = room.bankHold?.(id, NEXUS_ID) ?? 0;
           if (moved > 0) serverLogEvent('robot_harvester_banked', { id, weight: moved });
