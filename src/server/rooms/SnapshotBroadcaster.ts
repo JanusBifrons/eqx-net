@@ -90,7 +90,7 @@ export interface SwarmDroneRec {
   resources?: number;
   resourcesMax?: number;
   /** P4a — a named elite (its name rides `drones[].elite`; its max drives hp%). */
-  elite?: { name: string; maxHealth: number };
+  elite?: { name: string; maxHealth: number; bounty?: number };
 }
 
 export interface SwarmLookupByEid {

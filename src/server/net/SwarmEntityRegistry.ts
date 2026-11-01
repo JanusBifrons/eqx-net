@@ -55,7 +55,7 @@ export interface SwarmEntityRecord {
   resourcesMax?: number;
   /** Living World P4a — a NAMED ELITE (kind 1 only): its display name and its
    *  boosted hull max (read via `droneMaxHealthOf`). Absent for ordinary NPCs. */
-  elite?: { name: string; maxHealth: number };
+  elite?: { name: string; maxHealth: number; bounty: number };
   /** Last pose actually included in a swarm packet, for delta detection.
    *  v3 (2026-05-09 AI lockstep) adds `angvel` so the encoder ships when a
    *  drone's spin rate changes even if its position is steady — the client AI

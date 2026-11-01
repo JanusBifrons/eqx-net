@@ -6,7 +6,8 @@ named targets worth chasing. It ships in parts:
 - **P4a — named elites** (this page, shipped).
 - **P4b — world events** (shipped): robot incursions, drone motherships,
   salvage fields.
-- **P4c — bounties and the Contracts tab.**
+- **P4c — bounties and the Contracts tab** (world bounties + the tab shipped;
+  player-placed bounties next).
 
 ## Named elites (P4a)
 
@@ -113,3 +114,39 @@ leave quietly and drop nothing.
   in real rooms (strike group → cache, mothership → haul + escorts leave,
   salvage pods), the fade and the lull, one event at a time, the galaxy hook,
   and the notices.
+
+## Bounties and the Contracts tab (P4c)
+
+### What the player sees
+
+- A **Contracts** tab in the sidebar lists what is worth hunting right now:
+  each named elite (★, with its bounty) and the running world event (⚑, with
+  time left). Each row shows the sector by name and the reward ("300¢ bounty"
+  or "Loot"). Tapping a row opens the galaxy map so you can warp there.
+- **World bounties.** Killing a named elite pays **300¢** and the Drone
+  Mothership pays **500¢**, straight into the killer's own ship hold. The
+  credits are carried, so they're lost if you die before banking them. The
+  sector sees "\<pilot\> claimed the 300¢ bounty on Dread Vexis!".
+- **Bounties need an account.** A guest who lands the kill still gets the
+  loot, but no bounty.
+
+### How it works
+
+- `GET /galaxy/contracts` (`ContractsResponseSchema`, zod) is the tab's only
+  source (#16). It is built by the pure `buildContracts` over the live elites
+  and the event, through the nullable `contractsProvider` singleton (an empty
+  board when the Living World is off). The tab polls it only while open
+  (drawer-perf rule).
+- The bounty rides the elite tag (`rec.elite.bounty`, set by `markElite`).
+  `SectorRoom.payEliteBounty` runs in the kill path. Only a signed-in player
+  (`playerToUser`) is paid: one atomic hold write on their active ship, plus a
+  `bounty_claimed` audit event and a sector `world_notice`.
+
+### Tests
+
+- `src/server/livingworld/contractsProvider.test.ts`: the board shape and
+  rewards.
+- `src/client/layout/Drawer/tabs/ContractsTab.test.tsx`: renders from the
+  endpoint, no raw ids, no polling while hidden, formatting.
+- `tests/integration/sectorRoom/eliteDirector.test.ts`: a signed-in killer is
+  paid exactly the bounty; a guest kill pays nothing.

@@ -40,6 +40,7 @@ import { ROBOT_DIRECTOR_OPTIONS, ROBOT_BOT_COUNT, isRobotsDisabled } from './liv
 import { RobotTerritory } from './livingworld/RobotTerritory.js';
 import { EliteDirector } from './livingworld/EliteDirector.js';
 import { EventDirector } from './livingworld/EventDirector.js';
+import { setContractsProvider } from './livingworld/contractsProvider.js';
 import { WORLD_EVENT_KINDS, type WorldEventKind } from '../shared-types/worldEvents.js';
 import { DirectorPersistence, type DirectorStatePayload } from './livingworld/DirectorPersistence.js';
 import { db } from './db/Database.js';
@@ -1195,6 +1196,10 @@ async function main(): Promise<void> {
     eliteDirector.start();
     eventDirector = new EventDirector(galaxyRooms);
     eventDirector.start();
+    // P4c — the Contracts board reads the live elites + event.
+    const ed = eliteDirector;
+    const evd = eventDirector;
+    setContractsProvider({ elites: () => ed.elites(), activeEvent: () => evd.activeEvent() });
     livingWorldDirector.start();
     // Phase-4 P0 — let the per-room TransitOrchestrator + destination rooms feed
     // inbound PLAYERS into the director's IncomingRegistry (the "incoming" banner)
@@ -1272,6 +1277,7 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
     robotTerritory?.stop();
     eliteDirector?.stop();
     eventDirector?.stop();
+    setContractsProvider(null);
     setTradeSink(null);
     setEconomyRouteProvider(null);
     tradeDirector?.stop();

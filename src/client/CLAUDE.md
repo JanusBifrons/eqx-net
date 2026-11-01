@@ -292,6 +292,12 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 - **Never add a top-level `src/client/trade/` dir:** it collides with the `/trade` Vite proxy. Trade client code lives in `net/trade*.ts`. The `clientDirProxyCollision.test.ts` guard locks this.
 - Locks: `tradeView.test.ts`, `TradeToasts.test.tsx`, `tests/e2e/trade-tab.spec.ts` (feature tier).
 
+## Contracts tab (Living World P4c, plan peppy-jumping-pinwheel)
+
+- `layout/Drawer/tabs/ContractsTab.tsx` rebuilds ONLY from `GET /galaxy/contracts` (#16), polled only while `drawerTab === 'contracts' && isDrawerOpen`. It lives under `/galaxy` on purpose, so no new Vite proxy path is needed (see the `/trade` collision rule above).
+- World notices (`world_notice`: elites, events, bounties) reuse the trade toast stack with the gold `world` tone, which is not tappable. They are accelerators; the truth is the snapshot (`drones[].elite`) and the galaxy snapshot (`SectorLiveState.elite` / `.event`).
+- Lock: `ContractsTab.test.tsx`.
+
 ## Durable Identity
 
 - `playerId` is persisted in `localStorage` as `eqxPlayerId`. Read at bootstrap, sent in the `identify` handshake.

@@ -95,7 +95,7 @@ export interface LivingWorldRoom {
    *  group; the owner is warned (throttled). Returns the weight taken. */
   raidStorage?(harvesterId: string, owner: string, uid: string, stepWeight: number): number;
   /** P4a — promote a just-spawned bot to a named elite (boosted hull). */
-  markElite?(botId: string, name: string, healthMul?: number): boolean;
+  markElite?(botId: string, name: string, healthMul?: number, bounty?: number): boolean;
   /** P4b — drop a world-event reward (a cache / a salvage-field pod) at (x, y). */
   dropEventLoot?(hold: Hold, x: number, y: number): void;
   /** P4 — a sector-wide world notice (accelerator only, #16). */
