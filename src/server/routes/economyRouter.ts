@@ -10,7 +10,7 @@
  * `playerId` is bounded to 64 chars (S5). Reads only — every state change goes
  * through the session-authenticated room messages.
  */
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type Response, type Router as ExpressRouter } from 'express';
 import type { PlayerEconomyView, TradeOffer } from '../../shared-types/economy.js';
 
 export interface EconomyRouteProvider {
@@ -30,7 +30,8 @@ function playerIdOf(req: Request): string | null {
   return id.length >= 1 && id.length <= 64 ? id : null;
 }
 
-export const economyRouter = Router();
+// Explicit type (TS2742 under declaration emit, like galaxyRouter).
+export const economyRouter: ExpressRouter = Router();
 
 economyRouter.get('/offers', (req: Request, res: Response) => {
   const pid = playerIdOf(req);
