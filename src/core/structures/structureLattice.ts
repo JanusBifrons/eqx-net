@@ -1,23 +1,23 @@
 /**
  * A deterministic, RULE-VALID structure lattice for scale measurement
- * (plan soft-leaping-truffle v2, phase A0).
+ * (plan soft-leaping-truffle v2, phase A0; re-laid for the phase-V footprints).
  *
  * Builds N structures the way a player could: a Capital at the origin, a grid
  * of Connector hubs (row chains + a vertical spine through the Capital), up to
- * four leaves per connector (Solar / Battery / Cargo Bay / Turret mix), and an
- * optional closed Shield Pylon fence ring tapped into the row ends. Every
- * placement passes the real `placementRejection`, and every edge passes the
- * real `canConnect` when the edges are applied in order — locked by
- * `structureLattice.test.ts`. It is the seed of the phase-D generator.
+ * two leaves per row connector (Solar / Battery / Cargo Bay / Turret mix) sat
+ * directly above and below it, and an optional closed Shield Pylon fence ring
+ * tapped into the row ends. Every placement passes the real
+ * `placementRejection`, and every edge passes the real `canConnect` when the
+ * edges are applied in order — locked by `structureLattice.test.ts`.
  *
- * Layout (S = connector pitch):
- *   - connectors at (i·S, j·S) for |i| ≤ M, |j| ≤ K, the Capital at (0, 0);
+ * Layout (P = connector pitch, both axes):
+ *   - connectors at (i·P, j·P) for |i| ≤ M, |j| ≤ K, the Capital at (0, 0);
  *   - row links (i,j)–(i±1,j); spine links (0,j)–(0,j±1); the Capital links
  *     its four neighbours (capital ↔ connectors only);
- *   - leaves sit at (±LEAF_DX, ±LEAF_DY) off their connector — clear of both
- *     the row line and the spine line, so no link's line of sight is blocked;
- *   - fence pylons ring the lattice at FENCE_MARGIN, aligned with rows on the
- *     left/right sides so each row-end connector taps one pylon.
+ *   - a row connector's leaves sit directly above / below it, clear of the
+ *     row line; spine connectors carry no leaves (the spine line stays clear);
+ *   - fence pylons ring the lattice, level with each row / column so each row
+ *     end taps the pylon beside it.
  *
  * Pure + zone-blind (no I/O). Not on a hot path (built once per room create).
  */
@@ -45,22 +45,17 @@ export interface LatticeOptions {
   fence?: boolean;
 }
 
-/** Connector pitch. Edge distance 400 − 2·10 = 380 < 600 range. */
-export const LATTICE_PITCH = 400;
-const LEAF_DX = 100;
-const LEAF_DY = 130;
-/** Fence ring distance beyond the outermost connector. */
-const FENCE_MARGIN = 300;
+/** Connector pitch. Connector edge distance 640 − 64 = 576 ≤ 600 range. */
+export const LATTICE_PITCH = 640;
+/** Gap between a connector's box and its leaf's box. */
+const LEAF_GAP = 20;
+/** Fence clearance beyond the outermost leaves. */
+const FENCE_MARGIN = 150;
 
-/** Leaf kind mix (per 20 leaves): 9 solar, 4 battery, 4 cargo bay, 3 turret.
- *  Net ≈ +11 power per leaf, so a fenced lattice stays powered. */
+/** Leaf kind mix (per 20 leaves): 9 solar, 4 battery, 4 cargo bay, 3 turret. */
 const LEAF_CYCLE: readonly StructureKindId[] = [
   'solar', 'battery', 'solar', 'cargo_bay', 'solar', 'turret', 'solar', 'battery', 'solar', 'cargo_bay',
   'solar', 'turret', 'solar', 'battery', 'solar', 'cargo_bay', 'solar', 'battery', 'cargo_bay', 'turret',
-];
-
-const LEAF_OFFSETS: ReadonlyArray<readonly [number, number]> = [
-  [-LEAF_DX, LEAF_DY], [LEAF_DX, LEAF_DY], [-LEAF_DX, -LEAF_DY], [LEAF_DX, -LEAF_DY],
 ];
 
 /** Integer mix (FNV-style) so the leaf-kind phase is seed-dependent. */
@@ -76,62 +71,64 @@ export function buildStructureLattice(opts: LatticeOptions): StructureLattice {
   const edges: Array<readonly [number, number]> = [];
   const at = new Map<string, number>(); // "i,j" → connector/capital index
   const key = (i: number, j: number): string => `${i},${j}`;
+  const connHalf = getStructureKind('connector').footprint.h / 2;
 
   placements.push({ kind: 'capital', x: 0, y: 0 });
   at.set(key(0, 0), 0);
   const phase = mix(opts.seed, n) % LEAF_CYCLE.length;
   let leafNo = 0;
+  let maxLeafReachY = 0;
+  let maxLeafReachX = 0;
 
-  // Grow ring by ring (Chebyshev radius) so any N is a compact, centred base.
-  // Within a ring, cells are visited in a fixed order; a cell is only added
-  // once a neighbour toward the centre exists (so every link is to an existing
-  // node — applying edges in order keeps the graph connected).
+  // Grow ring by ring (Chebyshev radius). Order matters: every cell's parent
+  // must already exist.
+  //  1. the spine cells (0, ±r) — parent (0, ±(r-1));
+  //  2. the row ends (±r, j) for |j| < r — parent (±(r-1), j), from ring r-1;
+  //  3. the new top/bottom rows (±i, ±r) by increasing |i| — parent (±(i-1), ±r).
   for (let r = 1; placements.length < n; r++) {
-    // Order matters: every cell's parent must already exist.
-    //  1. the spine cells (0, ±r) — parent (0, ±(r-1));
-    //  2. the row ends (±r, j) for |j| < r — parent (±(r-1), j), from ring r-1;
-    //  3. the new top/bottom rows (±i, ±r) by increasing |i| — parent (±(i-1), ±r).
     const ring: Array<[number, number]> = [[0, r], [0, -r]];
     for (let j = -(r - 1); j <= r - 1; j++) ring.push([r, j], [-r, j]);
     for (let i = 1; i <= r; i++) ring.push([i, r], [-i, r], [i, -r], [-i, -r]);
     for (const [i, j] of ring) {
       if (placements.length >= n) break;
-      // Parent: toward the centre along the row; the spine column links up/down.
       const parentKey = i === 0 ? key(0, j - Math.sign(j)) : key(i - Math.sign(i), j);
       const parent = at.get(parentKey);
-      if (parent === undefined) continue; // not reachable yet at this radius
+      if (parent === undefined) continue;
       const idx = placements.length;
-      placements.push({ kind: 'connector', x: i * LATTICE_PITCH, y: j * LATTICE_PITCH });
+      const cx = i * LATTICE_PITCH, cy = j * LATTICE_PITCH;
+      placements.push({ kind: 'connector', x: cx, y: cy });
       at.set(key(i, j), idx);
       edges.push([parent, idx]);
-      // Leaves: a spine connector carries up/down + left/right row links (4),
-      // so 2 leaves; a row connector carries ≤ 2 chain links + 3 leaves,
-      // keeping its 6th slot for a fence tap.
-      const maxLeaves = i === 0 ? 2 : 3;
-      for (let l = 0; l < maxLeaves && placements.length < n; l++) {
-        const [dx, dy] = LEAF_OFFSETS[l]!;
+      if (i === 0) continue; // spine connectors stay bare (keeps the spine line clear)
+      // Up to two leaves: directly above, then below. A row connector keeps a
+      // free slot for a fence tap (2 row links + 2 leaves + 1 tap ≤ 6).
+      for (const side of [1, -1]) {
+        if (placements.length >= n) break;
         const kind = LEAF_CYCLE[(phase + leafNo++) % LEAF_CYCLE.length]!;
+        const fp = getStructureKind(kind).footprint;
+        const dy = side * (connHalf + LEAF_GAP + fp.h / 2);
         const li = placements.length;
-        placements.push({ kind, x: i * LATTICE_PITCH + dx, y: j * LATTICE_PITCH + dy });
+        placements.push({ kind, x: cx, y: cy + dy });
         edges.push([idx, li]);
+        maxLeafReachY = Math.max(maxLeafReachY, Math.abs(cy + dy) + fp.h / 2);
+        maxLeafReachX = Math.max(maxLeafReachX, Math.abs(cx) + fp.w / 2);
       }
     }
   }
 
   let fencePylons = 0;
   if (opts.fence) {
-    // Bounds of the connector grid actually built.
     let maxI = 0, maxJ = 0;
     for (const k of at.keys()) {
       const [i, j] = k.split(',').map(Number) as [number, number];
       maxI = Math.max(maxI, Math.abs(i));
       maxJ = Math.max(maxJ, Math.abs(j));
     }
-    const fx = maxI * LATTICE_PITCH + FENCE_MARGIN;
-    const fy = maxJ * LATTICE_PITCH + FENCE_MARGIN;
+    const capHalf = getStructureKind('capital').footprint.w / 2;
+    const fx = Math.max(maxI * LATTICE_PITCH + connHalf, maxLeafReachX, capHalf) + FENCE_MARGIN;
+    const fy = Math.max(maxJ * LATTICE_PITCH + connHalf, maxLeafReachY, capHalf) + FENCE_MARGIN;
     // Ring points, counter-clockwise from the bottom-left corner: the corners
-    // plus one pylon per grid line, so side pylons sit level with each row
-    // (≤ 400 u apart — every adjacent pair is in connection range).
+    // plus one pylon per grid line (pylons level with each row / column).
     const ring: Array<[number, number]> = [];
     ring.push([-fx, -fy]);
     for (let i = -maxI; i <= maxI; i++) ring.push([i * LATTICE_PITCH, -fy]);
@@ -144,22 +141,18 @@ export function buildStructureLattice(opts: LatticeOptions): StructureLattice {
     const first = placements.length;
     for (const [x, y] of ring) placements.push({ kind: 'shield_pylon', x, y });
     fencePylons = ring.length;
-    // Pylon chain (closed loop).
     for (let p = 0; p < ring.length; p++) edges.push([first + p, first + ((p + 1) % ring.length)]);
-    // Taps: each row-end connector on the left/right edge links the pylon
-    // level with it (same y). One tap per pylon at most (pylon ≤ 1 connector).
+    // Taps: each row-end connector links the side pylon level with it.
     for (let p = 0; p < ring.length; p++) {
       const [x, y] = ring[p]!;
       if (Math.abs(x) !== fx || y % LATTICE_PITCH !== 0) continue;
-      const j = y / LATTICE_PITCH;
-      // Only a connector at the grid edge is within range of the fence.
-      const c = at.get(key(Math.sign(x) * maxI, j));
+      const c = at.get(key(Math.sign(x) * maxI, y / LATTICE_PITCH));
       if (c !== undefined) edges.push([c, first + p]);
     }
   }
 
-  // Power balance: a builder adds generation until the base runs. Convert
-  // non-solar leaves (latest first) to Solars until net power ≥ 0.
+  // Power balance: convert non-solar leaves (latest first) to Solars until the
+  // base runs.
   let net = 0;
   for (const p of placements) {
     const k = getStructureKind(p.kind);

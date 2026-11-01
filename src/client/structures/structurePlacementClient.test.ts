@@ -9,6 +9,8 @@ import {
   resolvePlacementPreviewStatus,
   type PendingPlacement,
   type PlacementPreview,
+  cyclePlacementRotation,
+  setPlacementRotationDeg,
 } from './structurePlacementClient.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { placementChosen, resetPlacementChosen } from './placementChosen.js';
@@ -181,9 +183,10 @@ describe('commitChosenPlacement', () => {
       kind: 'capital',
       x: 1234.5,
       y: -678.25,
+      rot: 0, // phase V — the ghost's rotation rides the message
     });
     // The dim pending ghost is recorded so it bridges the render gap (R2.1).
-    expect(notePendingPlacement).toHaveBeenCalledWith('capital', 1234.5, -678.25);
+    expect(notePendingPlacement).toHaveBeenCalledWith('capital', 1234.5, -678.25, 0);
   });
 
   it('falls back to ahead-of-ship only when the ghost was never positioned', () => {
@@ -197,6 +200,18 @@ describe('commitChosenPlacement', () => {
       kind: 'connector',
       x: ahead.x,
       y: ahead.y,
+      rot: 0,
     });
+  });
+
+  it('phase V: R rotates the ghost a quarter turn and the rotation is sent', () => {
+    setPlacementRotationDeg(0);
+    expect(cyclePlacementRotation()).toBe(90);
+    expect(cyclePlacementRotation()).toBe(180);
+    commitChosenPlacement('solar');
+    expect(send).toHaveBeenCalledWith('place_structure', expect.objectContaining({ kind: 'solar', rot: 180 }));
+    cyclePlacementRotation();
+    expect(cyclePlacementRotation()).toBe(0); // wraps
+    setPlacementRotationDeg(0);
   });
 });

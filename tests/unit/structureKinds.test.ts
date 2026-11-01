@@ -5,7 +5,8 @@ import {
   STRUCTURE_KIND_CATALOGUE_VERSION,
   DEFAULT_STRUCTURE_KIND,
   StructureKindSchema,
-  STRUCTURE_SIDES,
+  structureHalfExtents,
+  normaliseStructureRotation,
   structureHullPoints,
   getStructureKind,
   isStructureKindId,
@@ -112,13 +113,17 @@ describe('structureKinds catalogue', () => {
     expect(STRUCTURE_KIND_CATALOGUE_VERSION).toBeGreaterThanOrEqual(1);
   });
 
-  it('WS-6 (R2.11/R2.18) shrank the Connector + Shield Pylon to tiny nodes', () => {
-    // Intentional, version-pinned radii — the shrink is a behavioural change
-    // (radius drives the collider + grid edge-distance), so lock the values.
-    // The 4→5 catalogue bump rides these two edits.
-    expect(STRUCTURE_KINDS.connector.radius).toBe(10);
-    expect(STRUCTURE_KINDS.shield_pylon.radius).toBe(12);
-    expect(STRUCTURE_KIND_CATALOGUE_VERSION).toBeGreaterThanOrEqual(5);
+  it('phase V: every kind has a large footprint and radius is its bounding circle', () => {
+    // Plan soft-leaping-truffle v2 (user: "far larger and more like the other
+    // ones"). Connectors + pylons stay the smallest nodes; everything else is
+    // several times a ship's size. Version-pinned (8→9 rides these edits).
+    expect(STRUCTURE_KIND_CATALOGUE_VERSION).toBeGreaterThanOrEqual(9);
+    expect(STRUCTURE_KINDS.connector.footprint).toEqual({ w: 64, h: 64 });
+    expect(STRUCTURE_KINDS.shield_pylon.footprint).toEqual({ w: 72, h: 72 });
+    expect(STRUCTURE_KINDS.capital.footprint).toEqual({ w: 560, h: 560 });
+    for (const k of STRUCTURE_KINDS_LIST) {
+      expect(k.radius, k.id).toBe(Math.ceil(Math.hypot(k.footprint.w, k.footprint.h) / 2));
+    }
   });
 
   it('WS-8 (R2.15) added the two defence turrets, each binding the right weapon', () => {
@@ -141,29 +146,26 @@ describe('structureKinds catalogue', () => {
   });
 
   // ── Unified-hull plan — the single hull-points source (render + collider) ──
-  it('structureHullPoints emits the kind\'s regular N-gon at the given radius', () => {
-    for (const id of STRUCTURE_KINDS_LIST.map((k) => k.id)) {
-      const sides = STRUCTURE_SIDES[id];
-      const pts = structureHullPoints(id, 80);
-      expect(pts.length, `${id} vertex count == sides`).toBe(sides);
-      // Every vertex sits on the radius-80 circle (regular polygon).
-      for (const p of pts) {
-        expect(Math.hypot(p.x, p.y), `${id} vertex on radius`).toBeCloseTo(80, 6);
-      }
-      // First vertex at game (0, −radius) [GAME space, Y-up — the collider's
-      // frame]; the renderer applies pixiY=−gameY via `structureRenderVerts`
-      // before drawing (R2.13), so this is the collider point, not the drawn one.
-      expect(pts[0]!.x).toBeCloseTo(0, 6);
-      expect(pts[0]!.y).toBeCloseTo(-80, 6);
+  it('structureHullPoints is the footprint rectangle (collider == drawn box)', () => {
+    for (const k of STRUCTURE_KINDS_LIST) {
+      const pts = structureHullPoints(k.id);
+      expect(pts.length, k.id).toBe(4);
+      const xs = pts.map((p) => p.x);
+      const ys = pts.map((p) => p.y);
+      expect(Math.max(...xs) - Math.min(...xs), k.id).toBe(k.footprint.w);
+      expect(Math.max(...ys) - Math.min(...ys), k.id).toBe(k.footprint.h);
     }
+    // Unknown id ⇒ the Capital's box (forgiving, like getStructureKind).
+    expect(structureHullPoints('not-a-kind')).toEqual(structureHullPoints(DEFAULT_STRUCTURE_KIND));
   });
 
-  it('structureHullPoints scales with radius + falls back to the Capital for unknown ids', () => {
-    const cap = structureHullPoints('capital', 40);
-    expect(cap.length).toBe(STRUCTURE_SIDES.capital); // 8
-    for (const p of cap) expect(Math.hypot(p.x, p.y)).toBeCloseTo(40, 6);
-    // Unknown id ⇒ the Capital's silhouette (forgiving, like getStructureKind).
-    const unknown = structureHullPoints('not-a-kind', 40);
-    expect(unknown.length).toBe(STRUCTURE_SIDES[DEFAULT_STRUCTURE_KIND]);
+  it('structureHalfExtents swaps width and height on a quarter turn', () => {
+    expect(structureHalfExtents('solar', 0)).toEqual({ hw: 180, hh: 75 });
+    expect(structureHalfExtents('solar', 90)).toEqual({ hw: 75, hh: 180 });
+    expect(structureHalfExtents('solar', 180)).toEqual({ hw: 180, hh: 75 });
+    expect(structureHalfExtents('solar', 270)).toEqual({ hw: 75, hh: 180 });
+    expect(normaliseStructureRotation(-90)).toBe(270);
+    expect(normaliseStructureRotation(44)).toBe(0);
+    expect(normaliseStructureRotation(46)).toBe(90);
   });
 });

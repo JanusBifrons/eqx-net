@@ -705,6 +705,8 @@ export class SectorRoom extends Room<SectorState> {
     x: number;
     y: number;
     radius: number;
+    halfW?: number;
+    halfH?: number;
   }> = [];
 
   // ── Phase 4b.3 (multi-mount turret refactor, 2026-05-11) ────────────────
@@ -2307,6 +2309,7 @@ export class SectorRoom extends Room<SectorState> {
         parsed.data.kind,
         parsed.data.x,
         parsed.data.y,
+        { rot: parsed.data.rot },
       );
       if (id === null) {
         logger.warn({ sessionId: client.sessionId, kind: parsed.data.kind }, 'place_structure rejected');
@@ -2943,7 +2946,7 @@ export class SectorRoom extends Room<SectorState> {
         maxHealth: getStructureKind(rec.kind).maxHealth,
         priority: structurePriority(rec.kind),
       });
-      circles.push({ id: rec.id, x: rec.x, y: rec.y, radius: rec.radius });
+      circles.push({ id: rec.id, x: rec.x, y: rec.y, radius: rec.radius, halfW: rec.halfW, halfH: rec.halfH });
     }
   }
 
@@ -3465,7 +3468,7 @@ export class SectorRoom extends Room<SectorState> {
     const owner = roomOpts.prebuiltStructuresOwner ?? 'scenario';
     if (prebuilt && prebuilt.length > 0) {
       for (const ps of prebuilt) {
-        const id = this.structurePlacement.place(owner, ps.kind as string, ps.x, ps.y);
+        const id = this.structurePlacement.place(owner, ps.kind as string, ps.x, ps.y, { rot: (ps as { rot?: number }).rot });
         if (id === null) {
           logger.warn({ kind: ps.kind, x: ps.x, y: ps.y }, 'scenario prebuilt structure rejected');
           continue;
@@ -3509,7 +3512,7 @@ export class SectorRoom extends Room<SectorState> {
     for (const r of rows) {
       // PR 3a — a structure saved under one of the account's historical
       // per-browser ids belongs to the account's canonical playerId now.
-      const id = this.structurePlacement.place(canonicalPlayerId(r.owner), r.kind, r.x, r.y);
+      const id = this.structurePlacement.place(canonicalPlayerId(r.owner), r.kind, r.x, r.y, { rot: r.rot });
       if (id === null) {
         logger.warn({ kind: r.kind, x: r.x, y: r.y }, 'persisted structure rejected on hydrate');
         continue;

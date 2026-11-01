@@ -24,6 +24,11 @@ export interface StructureRecord {
   y: number;
   /** Collider + sprite radius (from the kind catalogue). */
   radius: number;
+  /** Phase V — rotation in degrees (0/90/180/270) and the rotated footprint's
+   *  half extents (cached at placement; the box every rule reads). */
+  rot?: number;
+  halfW?: number;
+  halfH?: number;
   /** False while a blueprint; flips true when the grid finishes building it.
    *  The Capital is born `true` (pre-built). */
   isConstructed: boolean;

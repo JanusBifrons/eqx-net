@@ -35,6 +35,7 @@ import {
 } from '../../core/combat/WeaponCatalogue.js';
 import {
   rayHitsSphere,
+  rayHitsBox,
   rayHitsConvexPolygon,
   SHIP_COLLISION_RADIUS,
   MUZZLE_CLEARANCE,
@@ -75,6 +76,9 @@ export interface SwarmHitTarget {
   entityId: number;
   radius: number;
   vertices?: ReadonlyArray<Vec2> | undefined;
+  /** Structures (phase V): footprint half extents for the box hit test. */
+  halfW?: number;
+  halfH?: number;
 }
 
 export interface SwarmHitSource {
@@ -425,6 +429,9 @@ export class PlayerFireResolver implements WeaponFireSink {
       let dist: number | null;
       if (rec.kind === 0 && rec.vertices) {
         dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, rec.vertices);
+      } else if (rec.halfW !== undefined && rec.halfH !== undefined) {
+        // Structures (phase V): the footprint box, not the bounding circle.
+        dist = rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.halfW, rec.halfH);
       } else {
         dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.radius);
       }

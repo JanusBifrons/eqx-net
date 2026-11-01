@@ -56,8 +56,14 @@ export const StructureKindSchema = z
     displayName: z.string().min(1),
     description: z.string().default(''),
 
-    /** Collider + sprite radius, world units. */
+    /** BOUNDING-CIRCLE radius (half the footprint diagonal, world units):
+     *  broad checks only (interest, sprite bounds, the wire record). Collision,
+     *  placement, connection range + line of sight use `footprint`. */
     radius: z.number().positive(),
+    /** Rectangular footprint (world units) at rotation 0 — the collider,
+     *  placement overlap, connection edge distance and line-of-sight box
+     *  (phase V, plan soft-leaping-truffle v2). Rotated in 90° steps. */
+    footprint: z.object({ w: z.number().positive(), h: z.number().positive() }).strict(),
     /** Full hull pool (and `swarmHealth` seed once built). */
     maxHealth: z.number().positive(),
 
@@ -153,7 +159,8 @@ export const CAPITAL: StructureKind = {
   id: 'capital',
   displayName: 'Capital',
   description: 'The Core. Pre-built root hub: baseline power output and the main mineral bank.',
-  radius: 80,
+  radius: 396, // bounding circle of the 560×560 footprint
+  footprint: { w: 560, h: 560 },
   maxHealth: 5000,
   maxConnections: 4,
   isHub: true,
@@ -177,7 +184,8 @@ export const CARGO_BAY: StructureKind = {
   id: 'cargo_bay',
   displayName: 'Cargo Bay',
   description: 'A forward drop-off. Fly close to deposit loot; it joins your base storage network.',
-  radius: 26,
+  radius: 189, // bounding circle of the 320×200 footprint
+  footprint: { w: 320, h: 200 },
   maxHealth: 900,
   maxConnections: 1,
   isHub: false,
@@ -196,7 +204,8 @@ export const CONNECTOR: StructureKind = {
   description: 'A relay. Tiny pure hub (≤6 links) that lets power + minerals flow between structures.',
   // WS-6 (R2.11) — shrunk 24→10: a relay should read as a small node, not a
   // building. Floored well above the ~8 u collider/core-dot degeneracy point.
-  radius: 10,
+  radius: 46, // bounding circle of the 64×64 footprint
+  footprint: { w: 64, h: 64 },
   maxHealth: 200,
   maxConnections: 6,
   isHub: true,
@@ -212,7 +221,8 @@ export const SOLAR: StructureKind = {
   id: 'solar',
   displayName: 'Solar Panel',
   description: 'Power generator. Attaches to a hub and feeds the grid once built.',
-  radius: 40,
+  radius: 195, // bounding circle of the 360×150 footprint
+  footprint: { w: 360, h: 150 },
   maxHealth: 300,
   maxConnections: 1,
   isHub: false,
@@ -228,7 +238,8 @@ export const MINER: StructureKind = {
   id: 'miner',
   displayName: 'Mining Tower',
   description: 'Drills asteroids in range for minerals (power-gated). A leaf node.',
-  radius: 50,
+  radius: 170, // bounding circle of the 240×240 footprint
+  footprint: { w: 240, h: 240 },
   maxHealth: 2000,
   maxConnections: 1,
   isHub: false,
@@ -258,7 +269,8 @@ export const TURRET: StructureKind = {
   id: 'turret',
   displayName: 'Turret',
   description: 'Defensive turret. Targets hostile drones in range (power-gated). A leaf node.',
-  radius: 36,
+  radius: 99, // bounding circle of the 140×140 footprint
+  footprint: { w: 140, h: 140 },
   maxHealth: 600,
   maxConnections: 1,
   isHub: false,
@@ -293,7 +305,8 @@ export const BATTERY: StructureKind = {
   displayName: 'Battery',
   description:
     'Stores surplus power and discharges to keep the grid running through a deficit. A leaf node.',
-  radius: 40,
+  radius: 135, // bounding circle of the 190×190 footprint
+  footprint: { w: 190, h: 190 },
   maxHealth: 800,
   maxConnections: 1,
   isHub: false,
@@ -318,7 +331,8 @@ export const SHIELD_PYLON: StructureKind = {
   // WS-6 (R2.18) — shrunk 30→12: the WALL SPAN is the visual, not the post; a
   // tiny pylon de-emphasises the node. The wall geometry is pose-to-pose
   // (ShieldWall.ts centre-to-centre), so a smaller post does NOT shrink the wall.
-  radius: 12,
+  radius: 51, // bounding circle of the 72×72 footprint
+  footprint: { w: 72, h: 72 },
   maxHealth: 800,
   maxConnections: 3,
   isHub: true,
@@ -338,7 +352,8 @@ export const LASER_BOLT_TURRET: StructureKind = {
   id: 'laser_bolt_turret',
   displayName: 'Bolt Turret',
   description: 'Fires travelling bolts at hostile drones in range (power-gated). A leaf node.',
-  radius: 36,
+  radius: 107, // bounding circle of the 150×150 footprint
+  footprint: { w: 150, h: 150 },
   maxHealth: 600,
   maxConnections: 1,
   isHub: false,
@@ -374,7 +389,8 @@ export const MISSILE_TURRET: StructureKind = {
   id: 'missile_turret',
   displayName: 'Missile Turret',
   description: 'Launches homing missiles at hostile drones in range (power-gated). A leaf node.',
-  radius: 44,
+  radius: 135, // bounding circle of the 190×190 footprint
+  footprint: { w: 190, h: 190 },
   maxHealth: 800,
   maxConnections: 1,
   isHub: false,
@@ -436,7 +452,11 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
  *  4→5 (WS-6): shrank CONNECTOR.radius 24→10 + SHIELD_PYLON.radius 30→12 (R2.11/R2.18).
  *  5→6 (WS-8): appended LASER_BOLT_TURRET + MISSILE_TURRET defence kinds (R2.15).
  *  6→7 (P3.2): removed CAPITAL.connectionRange — uniform connection range. */
-export const STRUCTURE_KIND_CATALOGUE_VERSION = 8;
+export const STRUCTURE_KIND_CATALOGUE_VERSION = 9;
+// 8→9 (plan soft-leaping-truffle v2, phase V): every kind gets a large
+// rectangular `footprint` (radius becomes its bounding circle); structures can
+// rotate in 90° steps. Persisted structures from v8 are discarded once (user
+// decision 2026-11-01: one-time reset, no migration).
 // 7→8 (Living World P1a-2): appended CARGO_BAY + the `holdCapacity` field.
 
 /** The pre-built anchor every base starts from. */
@@ -511,14 +531,40 @@ export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
  */
 export function structureHullPoints(
   kindId: string | null | undefined,
-  radius: number,
+  _radius?: number,
 ): Array<{ x: number; y: number }> {
   const id = kindId != null && isStructureKindId(kindId) ? kindId : DEFAULT_STRUCTURE_KIND;
-  const sides = STRUCTURE_SIDES[id];
-  const out: Array<{ x: number; y: number }> = [];
-  for (let i = 0; i < sides; i++) {
-    const a = -Math.PI / 2 + (i * 2 * Math.PI) / sides;
-    out.push({ x: Math.cos(a) * radius, y: Math.sin(a) * radius });
-  }
-  return out;
+  const { w, h } = getStructureKind(id).footprint;
+  const hw = w / 2, hh = h / 2;
+  return [
+    { x: -hw, y: -hh },
+    { x: hw, y: -hh },
+    { x: hw, y: hh },
+    { x: -hw, y: hh },
+  ];
+}
+
+/** Allowed structure rotations (degrees). Structures are rectangles, so a
+ *  quarter-turn swaps width and height; 180° is visually distinct only for
+ *  the draw plan (e.g. which side a turret's ammo racks sit on). */
+export const STRUCTURE_ROTATIONS = [0, 90, 180, 270] as const;
+export type StructureRotation = (typeof STRUCTURE_ROTATIONS)[number];
+
+/** Normalise any angle-ish input to one of the four allowed rotations. */
+export function normaliseStructureRotation(deg: number | null | undefined): StructureRotation {
+  const r = (((Math.round((deg ?? 0) / 90) * 90) % 360) + 360) % 360;
+  return r as StructureRotation;
+}
+
+/** Axis-aligned half extents of a kind's footprint at a rotation (a quarter
+ *  turn swaps width and height). The ONE place every rule reads the box from:
+ *  placement overlap, connection edge distance + line of sight, hit tests. */
+export function structureHalfExtents(
+  kindId: string | null | undefined,
+  rotDeg: number | null | undefined = 0,
+): { hw: number; hh: number } {
+  const id = kindId != null && isStructureKindId(kindId) ? kindId : DEFAULT_STRUCTURE_KIND;
+  const { w, h } = getStructureKind(id).footprint;
+  const quarter = normaliseStructureRotation(rotDeg) % 180 !== 0;
+  return quarter ? { hw: h / 2, hh: w / 2 } : { hw: w / 2, hh: h / 2 };
 }

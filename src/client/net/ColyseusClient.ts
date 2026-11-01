@@ -483,11 +483,12 @@ export class ColyseusGameClient {
   /** Record a confirmed structure placement so `updateMirror` keeps a dim ghost
    *  at the sent point until the structure lands (playtest 2026-06-10 Issue 7).
    *  Called from `placeStructureAt` right after `place_structure` is sent. */
-  notePendingPlacement(kind: StructureKindId, x: number, y: number): void {
+  notePendingPlacement(kind: StructureKindId, x: number, y: number, rot = 0): void {
     this._pendingPlacement = {
       kind,
       x,
       y,
+      rot,
       sentAtMs: Date.now(),
       baselineStructureCount: this.mirror.structures?.size ?? 0,
     };

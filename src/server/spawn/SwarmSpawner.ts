@@ -9,7 +9,7 @@ import { SCRAP_DEFAULT_MASS, SCRAP_LINEAR_DAMPING } from '../../core/swarm/scrap
 import { SCRAP_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
-import { structureHullPoints } from '../../shared-types/structureKinds.js';
+import { structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
 
 export interface AsteroidSpec {
   id: string;
@@ -202,7 +202,7 @@ export class SwarmSpawner {
    *  same point-set the renderer draws) → a convexHull collider matching the
    *  silhouette, replacing the old circular collider (unified-hull plan).
    *  Returns false if no free slot. */
-  spawnStructure(s: { id: string; x: number; y: number; radius: number; mass?: number; shipKind?: string }): boolean {
+  spawnStructure(s: { id: string; x: number; y: number; radius: number; mass?: number; shipKind?: string; angle?: number }): boolean {
     // The subtype rides the shared `shipKind` byte (set below). Compute the
     // hull polygon from it + the radius here so `spawnOne` can attach the
     // matching convexHull collider + hit-resolver vertices.
@@ -210,13 +210,18 @@ export class SwarmSpawner {
     const spec: AsteroidSpec = {
       id: s.id, x: s.x, y: s.y, vx: 0, vy: 0, radius: s.radius, mass: s.mass ?? STRUCTURE_DEFAULT_MASS,
     };
-    const ok = this.spawnOne(2, spec, undefined, undefined, structureVertices);
+    const ok = this.spawnOne(2, spec, undefined, undefined, structureVertices, s.angle ?? 0);
     // The structure SUBTYPE rides the shared `shipKind` byte (kind=2 path) so
     // the client decoder can pick the right silhouette + tint. Set it on the
     // freshly-registered record (spawnOne only auto-sets shipKind for drones).
     if (ok && s.shipKind) {
       const rec = this.registry.get(s.id);
-      if (rec) rec.shipKind = s.shipKind;
+      if (rec) {
+        rec.shipKind = s.shipKind;
+        const ext = structureHalfExtents(s.shipKind, ((s.angle ?? 0) * 180) / Math.PI);
+        rec.halfW = ext.hw;
+        rec.halfH = ext.hh;
+      }
     }
     return ok;
   }

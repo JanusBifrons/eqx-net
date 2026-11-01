@@ -22,6 +22,8 @@ import {
   isStructureKindId,
   structureKindToIndex,
   type StructureKindId,
+  normaliseStructureRotation,
+  structureHalfExtents,
 } from '../../shared-types/structureKinds.js';
 import {
   SCAFFOLDING_HP_FRACTION,
@@ -34,7 +36,7 @@ import { autoConnectStructure } from './structureGridView.js';
 
 export interface StructurePlacementHooks {
   /** Spawn the kind=2 swarm entity (returns false if the slot pool is full). */
-  spawnStructure(s: { id: string; x: number; y: number; radius: number; shipKind: string }): boolean;
+  spawnStructure(s: { id: string; x: number; y: number; radius: number; shipKind: string; angle?: number }): boolean;
   /** Seed the hull (and zero the shield) so the structure is damageable. */
   seedHealth(id: string, hp: number): void;
   /** Despawn a placed structure's swarm entity (broadcast the destroy). */
@@ -66,17 +68,25 @@ export class StructurePlacementSubsystem {
    * intended connection graph via `connectExplicit`; greedy auto-connect would
    * link e.g. gate pylons and close a gate. Players never pass it.
    */
-  place(owner: string, kindId: string, x: number, y: number, opts?: { skipAutoConnect?: boolean }): string | null {
+  place(
+    owner: string,
+    kindId: string,
+    x: number,
+    y: number,
+    opts?: { skipAutoConnect?: boolean; rot?: number },
+  ): string | null {
     if (!isStructureKindId(kindId)) return null;
     const kind = getStructureKind(kindId);
     const pos = this.hooks.clamp(x, y);
+    const rot = normaliseStructureRotation(opts?.rot);
+    const { hw, hh } = structureHalfExtents(kindId, rot);
 
     // No-overlap: reject if the new footprint would intersect an existing
     // structure's footprint OR an asteroid/obstacle (Phase-4 C2 — the obstacle
     // pass is the fix for "places on an asteroid"; the same `getObstacles` hook
     // the auto-connect LOS check already uses). Shared pure predicate so the
     // client ghost can validate identically.
-    if (placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.()) !== null) {
+    if (placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.(), rot) !== null) {
       return null;
     }
 
@@ -92,6 +102,8 @@ export class StructurePlacementSubsystem {
       y: pos.y,
       radius: kind.radius,
       shipKind: kindId,
+      // Game-space angle (Y-up, CCW) for a quarter-turn rotation.
+      angle: (rot * Math.PI) / 180,
     });
     if (!ok) return null;
 
@@ -110,6 +122,9 @@ export class StructurePlacementSubsystem {
       x: pos.x,
       y: pos.y,
       radius: kind.radius,
+      rot,
+      halfW: hw,
+      halfH: hh,
       isConstructed: preBuilt,
       constructionProgress: preBuilt ? kind.constructionCost : 0,
       constructionCost: kind.constructionCost,

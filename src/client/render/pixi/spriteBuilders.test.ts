@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { structureRenderVerts, formatResources } from './spriteBuilders.js';
-import { structureHullPoints, STRUCTURE_SIDES } from '../../../shared-types/structureKinds.js';
+import { buildStructureVisual } from './structureVisuals.js';
+import { structureHullPoints, STRUCTURE_KINDS_LIST } from '../../../shared-types/structureKinds.js';
 
 describe('formatResources (WS-9/R2.12 capital readout)', () => {
   it('is short-form so a 2,000,000-cap bank reads legibly', () => {
@@ -31,26 +32,26 @@ describe('structureRenderVerts (R2.13 — render matches collider)', () => {
     }
   });
 
-  it('the TRIANGLE turret apex flips Y sign — NOT a no-op (the upside-down bug)', () => {
-    expect(STRUCTURE_SIDES.turret).toBe(3); // odd ⇒ NOT Y-flip-invariant
-    // Collider apex is at game (0, -r); the render must put it at (0, +r) so the
-    // drawn silhouette coincides with the collider under pixiY=-gameY. Before the
-    // fix the render used (0, -r) too ⇒ mirrored ⇒ upside down.
-    const apex = structureRenderVerts('turret', 80)[0]!;
-    expect(apex.x).toBeCloseTo(0, 6);
-    expect(apex.y).toBeCloseTo(80, 6);
-  });
-
-  it('the PENTAGON miner apex flips Y sign too (same odd-sided bug)', () => {
-    expect(STRUCTURE_SIDES.miner).toBe(5);
-    expect(structureRenderVerts('miner', 80)[0]!.y).toBeCloseTo(80, 6);
-  });
-
-  it('even-sided structures keep every vertex on the radius circle (flip is a shape no-op)', () => {
-    for (const id of ['capital', 'connector', 'solar'] as const) {
-      const r = structureRenderVerts(id, 80);
-      expect(r.length).toBe(STRUCTURE_SIDES[id]);
-      for (const p of r) expect(Math.hypot(p.x, p.y)).toBeCloseTo(80, 6);
+  it('phase V: the drawn structure covers exactly its collider box (render == collision)', () => {
+    // Structures are footprint rectangles now (plan soft-leaping-truffle v2).
+    // The R2.13 class of bug (drawn shape mirrored vs collider) cannot recur for
+    // a rectangle, but the draw plan must still fill the collider's box: lock
+    // that every kind's plan stays inside the footprint and spans it.
+    for (const k of STRUCTURE_KINDS_LIST) {
+      const plan = buildStructureVisual(k.id, { accent: k.color });
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const r of plan.rects) {
+        minX = Math.min(minX, r.x); maxX = Math.max(maxX, r.x + r.w);
+        minY = Math.min(minY, r.y); maxY = Math.max(maxY, r.y + r.h);
+      }
+      const hw = k.footprint.w / 2, hh = k.footprint.h / 2;
+      expect(minX, k.id).toBeGreaterThanOrEqual(-hw - 0.5);
+      expect(maxX, k.id).toBeLessThanOrEqual(hw + 0.5);
+      expect(minY, k.id).toBeGreaterThanOrEqual(-hh - 0.5);
+      expect(maxY, k.id).toBeLessThanOrEqual(hh + 0.5);
+      // Spans the box (within the rim/inset slack of the plan).
+      expect(maxX - minX, k.id).toBeGreaterThanOrEqual(k.footprint.w * 0.9);
+      expect(maxY - minY, k.id).toBeGreaterThanOrEqual(k.footprint.h * 0.9);
     }
   });
 

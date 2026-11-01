@@ -16,6 +16,7 @@
  */
 import type { LightOp, RectOp } from './baseVisuals.js';
 import { mixColor } from './baseVisuals.js';
+import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 
 export interface StructureFootprint {
   /** Full width / height (u). */
@@ -116,7 +117,9 @@ function hazard(out: RectOp[], x: number, y: number, w: number, h: number): void
 }
 
 export function buildStructureVisual(kindId: string, opts: StructureVisualOpts): StructureVisual {
-  const fp = PROPOSED_FOOTPRINTS[kindId] ?? { w: 80, h: 80 };
+  // Catalogue kinds use the catalogue footprint (the collider's source);
+  // not-yet-catalogued designs (gates) use the proposal table.
+  const fp = isStructureKindId(kindId) ? getStructureKind(kindId).footprint : PROPOSED_FOOTPRINTS[kindId] ?? { w: 80, h: 80 };
   const rects: RectOp[] = [];
   const lights: LightOp[] = [];
   const W = fp.w, H = fp.h, x0 = -W / 2, y0 = -H / 2;
@@ -181,8 +184,9 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       for (const py of [y0, 12]) {
         box(rects, x0, py, W, panelH, mixColor(STEEL_DARK, 0x000000, 0.2));
         for (let cx = x0 + 6; cx < x0 + W - 6; cx += 30) {
-          box(rects, cx, py + 5, 26, panelH - 10, mixColor(0x1f4f9a, accent, 0.25), live ? 1 : 0.6);
-          box(rects, cx, py + 5, 26, 3, 0x9fc3ff, 0.5);
+          const cw = Math.min(26, x0 + W - 6 - cx); // last cell stays inside the footprint
+          box(rects, cx, py + 5, cw, panelH - 10, mixColor(0x1f4f9a, accent, 0.25), live ? 1 : 0.6);
+          box(rects, cx, py + 5, cw, 3, 0x9fc3ff, 0.5);
         }
       }
       box(rects, -16, -16, 32, 32, STEEL);
