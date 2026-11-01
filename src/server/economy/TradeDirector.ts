@@ -135,8 +135,13 @@ export class TradeDirector implements TradeSink {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly subs: Array<{ bus: Bus; fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void }> = [];
 
+  /** Its OWN copy of the room map: `registerRoom` must never add a testMode
+   *  room to the caller's map (in production that is the galaxy room map the
+   *  squad directors iterate — a test room would leak into /galaxy/snapshot). */
+  private readonly rooms: Map<string, TradeRoom>;
+
   constructor(
-    private readonly rooms: Map<string, TradeRoom>,
+    rooms: ReadonlyMap<string, TradeRoom>,
     private readonly store: EconomyStore,
     private readonly holds: HoldStore,
     options: Partial<TradeDirectorOptions> & {
@@ -146,6 +151,7 @@ export class TradeDirector implements TradeSink {
       push?: (ownerPlayerId: string, title: string, body: string, tag: string) => void;
     } = {},
   ) {
+    this.rooms = new Map(rooms);
     this.opts = { ...DEFAULT_TRADE_OPTIONS, ...options };
     this.rng = options.rng ?? Math.random;
     this.now = options.nowMs ?? Date.now;

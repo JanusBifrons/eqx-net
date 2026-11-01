@@ -1973,7 +1973,7 @@ export class SectorRoom extends Room<SectorState> {
       // Per-room key: testId-filtered rooms share a sectorKey, so the director
       // must not confuse two parallel tests' rooms.
       this.tradeRegisteredKey = `${this.sectorKey}#${this.roomId}`;
-      getTradeSink()?.registerRoom(this.tradeRegisteredKey, this);
+      this.ensureTradeRegistered();
     }
     if (this.testMode) {
       if (roomOpts.seedStorageHold) {
@@ -2418,6 +2418,9 @@ export class SectorRoom extends Room<SectorState> {
       const playerId = this.sessionToPlayer.get(client.sessionId);
       const sink = getTradeSink();
       if (!playerId || !sink) return;
+      // A testMode trade room may have been created before boot installed the
+      // director — join it now (idempotent).
+      this.ensureTradeRegistered();
       const reply = (ok: boolean, dealId: string | null, message: string): void => {
         try {
           client.send('trade_notice', {
@@ -6121,9 +6124,16 @@ export class SectorRoom extends Room<SectorState> {
     try { client?.send('trade_notice', notice); } catch { /* socket closing */ }
   }
 
-  /** testMode trade opt-in key (set when this room registered with the
-   *  TradeDirector, so dispose can unregister). */
+  /** testMode trade opt-in key: the key this room is known by to the
+   *  TradeDirector (null ⇒ not a testMode trade room). */
   private tradeRegisteredKey: string | null = null;
+
+  /** Join the TradeDirector if this room opted in. Idempotent; called at
+   *  onCreate AND on every trade request, because a room can be created before
+   *  boot installs the director (the trade-tab E2E race). */
+  private ensureTradeRegistered(): void {
+    if (this.tradeRegisteredKey !== null) getTradeSink()?.registerRoom(this.tradeRegisteredKey, this);
+  }
   /** P2 bespoke triggers (testMode only). */
   private testSeedStorageHold: { goods: Partial<Record<'minerals' | 'salvage' | 'alloy' | 'core', number>>; credits: number } | null = null;
   private testHaulerRaiders = 0;
