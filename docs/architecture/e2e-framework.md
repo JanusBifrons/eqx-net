@@ -240,6 +240,7 @@ The clustering means most fixes are mechanically similar — once `sector-alpha.
 | `testTimeScale: number` (room option) | Multiplies physics-tick dt at the worker level. `test-sector-fast` ticks 10×. Ghost TTL (500 ms) → 50 ms wall-clock; projectile lifetime (4 s) → 400 ms; warp spool (30 s) → 3 s; regen cycles likewise. Server-side `state.clockRate` stays unmultiplied so audio + TiDi UI don't show fake anomalies. | Set on the room definition in `src/server/index.ts`. Currently `test-sector-fast = 10×`. Use `launchTestClient({ room: 'test-sector-fast' })`. |
 | `testId: string` + `filterBy(['testId'])` | Per-test room isolation via Colyseus matchmaker. Each unique testId routes to its own room instance. | `launchTestClient` defaults to `randomUUID()` per call. Multi-client tests mint one testId at the test level and pass to every client. |
 | `injectLeak: number` | Mobile-perf gate regression-lock — retains `N` bytes per RAF tick on `window.__testLeak` so the `jsHeapGrowthMb` budget metric can be exercised end-to-end. DEV-build only (Vite tree-shakes the hook from prod via `import.meta.env.DEV`); the URL param alone does nothing in a production deploy. Used by `tests/mobile-perf/heap-budget-injected-leak.spec.ts`. | URL `?injectLeak=N` (e.g. `102400` = 100 KB/tick) or `launchTestClient({ injectLeak: N })`. Server-side accepts and ignores — the value is consumed client-side by `src/client/debug/testLeakHook.ts`. |
+| `initialXp: number` | Pre-load the joining ship's roster XP so ONE kill crosses a level threshold (the showcase level-up shot; ~8 kills otherwise). Needs a roster-backed room (real `sectorKey`, e.g. `showcase-levelup`). | URL `?initialXp=N`. testMode-gated; applied in `SectorRoom.onJoin` via `PlayerShipStore.setProgress`. Lock: `tests/integration/sectorRoom/showcaseRooms.test.ts`. |
 
 ### Adding a new primitive
 
@@ -269,6 +270,7 @@ When 3+ tests would benefit from the same skip, it's worth adding a new server-s
 ### Proof the philosophy pays off (2026-05-20 vanity stat)
 
 Smoke suite went from 31 pass / 19 fail / ~15 min → **41 pass / 3 fail / 6 skipped / 8.3 min** — same 50 tests, sequentially executed on the same box. Per-test repair work mostly meant "add the right primitive" (the `initialHull/initialShield` server-side override, the `testTimeScale` room option, the `filterBy(['testId'])` per-test rooms) — not "bump the timeout."
+
 
 ## Project-local skills (Phase 4c, 2026-05-20)
 

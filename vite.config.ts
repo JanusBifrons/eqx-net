@@ -6,6 +6,11 @@ import { createConnection } from 'node:net';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 
+// Backend port the dev proxy targets. Default 2567; the showcase capture
+// pipeline (showcase/) sets EQX_SERVER_PORT so it can run an isolated
+// server + Vite pair without colliding with a dev session on 2567/5173.
+const SERVER_PORT = Number(process.env['EQX_SERVER_PORT'] ?? 2567);
+
 export default defineConfig({
   root: 'src/client',
   publicDir: path.resolve(__dirname, 'public'),
@@ -30,10 +35,10 @@ export default defineConfig({
           const url = req.url ?? '/';
           console.log('[vite:colyseus-ws-proxy] proxying WS upgrade:', url);
 
-          const proxy = createConnection(2567, '127.0.0.1');
+          const proxy = createConnection(SERVER_PORT, '127.0.0.1');
 
           proxy.once('connect', () => {
-            let raw = `GET ${url} HTTP/1.1\r\nHost: localhost:2567\r\n`;
+            let raw = `GET ${url} HTTP/1.1\r\nHost: localhost:${SERVER_PORT}\r\n`;
             for (const [k, v] of Object.entries(req.headers)) {
               if (k.toLowerCase() === 'host') continue;
               raw += `${k}: ${Array.isArray(v) ? v.join(', ') : String(v ?? '')}\r\n`;
@@ -127,11 +132,11 @@ export default defineConfig({
         : { port: Number(process.env['VITE_HMR_PORT'] ?? 24678) },
     proxy: {
       '/matchmake': {
-        target: 'http://localhost:2567',
+        target: `http://localhost:${SERVER_PORT}`,
         changeOrigin: true,
       },
       '/auth': {
-        target: 'http://localhost:2567',
+        target: `http://localhost:${SERVER_PORT}`,
         changeOrigin: true,
         bypass(req) {
           // Let Vite serve TypeScript/JS source files; proxy everything else to backend
@@ -140,23 +145,23 @@ export default defineConfig({
         },
       },
       '/healthz': {
-        target: 'http://localhost:2567',
+        target: `http://localhost:${SERVER_PORT}`,
         changeOrigin: true,
       },
       '/diag': {
-        target: 'http://localhost:2567',
+        target: `http://localhost:${SERVER_PORT}`,
         changeOrigin: true,
       },
       '/dev': {
-        target: 'http://localhost:2567',
+        target: `http://localhost:${SERVER_PORT}`,
         changeOrigin: true,
       },
       '/galaxy': {
-        target: 'http://localhost:2567',
+        target: `http://localhost:${SERVER_PORT}`,
         changeOrigin: true,
       },
       '/push': {
-        target: 'http://localhost:2567',
+        target: `http://localhost:${SERVER_PORT}`,
         changeOrigin: true,
       },
       // Living World P2 economy reads. NOTE: never add a top-level

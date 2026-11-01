@@ -69,6 +69,18 @@ import { LayoutProvider } from './layout/LayoutProvider';
 import { Slot } from './layout/Slot';
 import { AdvancedDrawer } from './layout/Drawer/AdvancedDrawer';
 import { TopRightToolbar } from './layout/TopRightToolbar';
+import { applyHudMode, isHudMode } from './cinematic/hudMode';
+import type { CameraCue } from '@core/contracts/cameraScript';
+
+/** `window.__eqxCinema` — the showcase pipeline's control surface (DEV-only). */
+interface EqxCinemaHook {
+  version: 1;
+  play(cues: readonly CameraCue[]): void;
+  stop(): void;
+  setHud(mode: string): void;
+  /** null when the active renderer can't report (worker path). */
+  isScripted(): boolean | null;
+}
 import { measureRadarInsets, radarInsetsEqual } from './layout/radarInsets';
 import type { RadarInsets } from '../shared-types/settings/radar.js';
 
@@ -538,6 +550,22 @@ function GameSurface({
           };
           return r?.getCameraCenterGame ? r.getCameraCenterGame() : { x: NaN, y: NaN };
         };
+      // Cinematic camera + HUD control for the showcase capture pipeline
+      // (docs/architecture/showcase-pipeline.md). Calls the renderer DIRECTLY —
+      // shot keyframes carry x/y and must never touch Zustand (invariant #2).
+      // Works on both render paths (IRenderer.setCameraScript). DEV-only.
+      (window as unknown as { __eqxCinema?: EqxCinemaHook }).__eqxCinema = {
+        version: 1,
+        play: (cues) => rendererRef.current?.setCameraScript(cues),
+        stop: () => rendererRef.current?.setCameraScript(null),
+        setHud: (mode) => {
+          if (isHudMode(mode)) applyHudMode(mode);
+        },
+        isScripted: () => {
+          const r = rendererRef.current as unknown as { isCameraScripted?: () => boolean } | null;
+          return r?.isCameraScripted ? r.isCameraScripted() : null;
+        },
+      };
       // Radar (plan sparkling-wondering-rose) — the drawn off-screen icons
       // (screen position, size, alpha, category) for the geometry E2E. Main-
       // thread renderer only (`?worker=0`); the worker path is asserted via
