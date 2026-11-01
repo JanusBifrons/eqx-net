@@ -15,7 +15,7 @@
  */
 import { z } from 'zod';
 import type { Hold } from './goods.js';
-import { INCURSION_BLUEPRINT_CHANCE, rollBlueprint } from './blueprints.js';
+import { INCURSION_BLUEPRINT_CHANCE, INCURSION_PACKED_CHANCE, rollBlueprint, rollPackedStructure } from './blueprints.js';
 
 export const WORLD_EVENT_KINDS = ['incursion', 'mothership', 'salvage'] as const;
 export type WorldEventKind = (typeof WORLD_EVENT_KINDS)[number];
@@ -69,10 +69,14 @@ function randInt(rng: () => number, min: number, max: number): number {
 export function rollIncursionCache(rng: () => number): Hold {
   // P5 — an incursion cache often carries a blueprint.
   const bp = rollBlueprint(rng, INCURSION_BLUEPRINT_CHANCE);
-  return {
+  const cache: Hold = {
     goods: { salvage: randInt(rng, 40, 80), alloy: randInt(rng, 10, 20), core: randInt(rng, 1, 3) },
     blueprints: bp !== null ? [bp] : [],
   };
+  // Economy v2 W4a — robot stock: often a packed structure too.
+  const packed = rollPackedStructure(rng, INCURSION_PACKED_CHANCE);
+  if (packed !== null) cache.packed = [packed];
+  return cache;
 }
 
 /** One pod of a salvage field. */

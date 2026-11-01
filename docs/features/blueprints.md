@@ -69,6 +69,17 @@ agent's production chains (plan `soft-leaping-truffle` v3).
   manufactured items, a module blueprint still installs onto your active ship
   at your storage.
 
+**W4a: packed structures as loot.** The user's ruling: most packed structures
+are BOUGHT from NPC factions and traders, and some are LOOTED from ships.
+- A robot **nexus** always drops one packed structure, a **hexagon** 6 % of the
+  time and a **circle** 2 %. Squares never do.
+- Elites drop one ~30 % of the time and incursion caches ~50 %.
+- A drop is a random non-starter kind at middling quality (10–59).
+- It rides the pod → your hold (it has weight) → your base storage, like any
+  cargo. The popups name it: "+Packed Smelter".
+- Rolls: `rollPackedStructure` in `blueprints.ts`, wired through each loot
+  table's `packedChance`.
+
 ## Coming next
 
 - **W3 — Research Lab:** research, copy and combine (gacha). Shipped: see
