@@ -38,6 +38,7 @@ import { setIncomingPlayerSink } from './livingworld/incomingPlayerSink.js';
 import { setGalaxyStatsProvider } from './livingworld/galaxyStatsProvider.js';
 import { ROBOT_DIRECTOR_OPTIONS, ROBOT_BOT_COUNT, isRobotsDisabled } from './livingworld/robotDirector.js';
 import { RobotTerritory } from './livingworld/RobotTerritory.js';
+import { EliteDirector } from './livingworld/EliteDirector.js';
 import { DirectorPersistence, type DirectorStatePayload } from './livingworld/DirectorPersistence.js';
 import { db } from './db/Database.js';
 import { resolveCorsPolicy, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
@@ -110,6 +111,8 @@ let livingWorldDirector: LivingWorldDirector | null = null;
 let robotDirector: LivingWorldDirector | null = null;
 /** Living World P3 — robot territory + nexus (null when robots are disarmed). */
 let robotTerritory: RobotTerritory | null = null;
+/** Living World P4a — named elites (null when the Living World is disabled). */
+let eliteDirector: EliteDirector | null = null;
 const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
 /** Living World P2 — the economy (null until boot finishes). */
 let economyStore: EconomyStore | null = null;
@@ -1161,8 +1164,14 @@ async function main(): Promise<void> {
         extraEnemyCounts: () => robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS,
         // P3 — robot-held sectors show the robots as owner on the galaxy map.
         sectorOwner: (key) => robotTerritory?.sectorOwner(key) ?? null,
+        // P4a — named elites: ticked on the drone director's control loop and
+        // marked on the galaxy map.
+        onTick: (now) => eliteDirector?.tick(now),
+        sectorElite: (key) => eliteDirector?.sectorElite(key) ?? null,
       },
     });
+    eliteDirector = new EliteDirector(galaxyRooms);
+    eliteDirector.start();
     livingWorldDirector.start();
     // Phase-4 P0 — let the per-room TransitOrchestrator + destination rooms feed
     // inbound PLAYERS into the director's IncomingRegistry (the "incoming" banner)
@@ -1238,6 +1247,7 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
     robotDirector?.persistState();
     robotDirector?.stop();
     robotTerritory?.stop();
+    eliteDirector?.stop();
     setTradeSink(null);
     setEconomyRouteProvider(null);
     tradeDirector?.stop();

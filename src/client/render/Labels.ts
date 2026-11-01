@@ -27,6 +27,7 @@ const LABEL_OFFSET_PLAYER = 28;
 const LABEL_OFFSET_DRONE = 24;
 const LABEL_COLOR_PLAYER = 0xcccccc;
 const LABEL_COLOR_DRONE = 0xff8888;
+const LABEL_COLOR_ELITE = 0xffc850;
 
 interface LabelEntry {
   text: Text;
@@ -69,6 +70,28 @@ const DRONE_TEXT_STYLE = new TextStyle({
   letterSpacing: 1,
 });
 
+/** P4a — a named elite's label: the name, starred, in gold. */
+const ELITE_TEXT_STYLE = new TextStyle({
+  fontFamily: 'sans-serif',
+  fontSize: 13,
+  fontWeight: '800',
+  fill: LABEL_COLOR_ELITE,
+  align: 'center',
+  letterSpacing: 1,
+});
+
+type LabelStyle = 'player' | 'drone' | 'elite';
+const STYLES: Record<LabelStyle, TextStyle> = {
+  player: PLAYER_TEXT_STYLE,
+  drone: DRONE_TEXT_STYLE,
+  elite: ELITE_TEXT_STYLE,
+};
+
+/** The label for a named elite. Exported for `Labels.test.ts`. */
+export function formatEliteLabel(name: string): string {
+  return `★ ${name}`;
+}
+
 export class LabelManager {
   private readonly container: Container;
   private readonly labels = new Map<string, LabelEntry>();
@@ -98,20 +121,23 @@ export class LabelManager {
       const key = `p:${playerId}`;
       this.seen.add(key);
       const value = formatPlayerLabel(playerId, ship.displayName);
-      this.upsert(key, value, ship.x, -ship.y - LABEL_OFFSET_PLAYER, false);
+      this.upsert(key, value, ship.x, -ship.y - LABEL_OFFSET_PLAYER, 'player');
     }
 
-    // Drones — kind === 1. Asteroids skipped.
-    if (mirror.swarm && this.showDroneLabels) {
+    // Drones — kind === 1. Asteroids skipped. A named elite (P4a) is always
+    // labelled, even when NPC callsigns are off (showcase capture).
+    if (mirror.swarm) {
       for (const [entityId, sw] of mirror.swarm) {
         if (sw.kind !== 1) continue;
+        const elite = sw.eliteName;
+        if (elite === undefined && !this.showDroneLabels) continue;
         const key = `d:${entityId}`;
         this.seen.add(key);
-        const value = formatDroneName(entityId);
+        const value = elite !== undefined ? formatEliteLabel(elite) : formatDroneName(entityId);
         // Drones (kind=1) render from `sw.x/y` directly post the
         // 2026-05-09 AI lockstep reset (only asteroids need the lerp
         // path), and we've already filtered out asteroids above.
-        this.upsert(key, value, sw.x, -sw.y - LABEL_OFFSET_DRONE, true);
+        this.upsert(key, value, sw.x, -sw.y - LABEL_OFFSET_DRONE - (elite !== undefined ? 10 : 0), elite !== undefined ? 'elite' : 'drone');
       }
     }
 
@@ -135,12 +161,12 @@ export class LabelManager {
    *  the underlying string actually changes. `isDrone` picks the
    *  pre-built `TextStyle` so we share style objects across all labels
    *  of the same kind (Pixi caches atlases per style). */
-  private upsert(key: string, value: string, x: number, y: number, isDrone: boolean): void {
+  private upsert(key: string, value: string, x: number, y: number, style: LabelStyle): void {
     let entry = this.labels.get(key);
     if (!entry) {
       const text = new Text({
         text: value,
-        style: isDrone ? DRONE_TEXT_STYLE : PLAYER_TEXT_STYLE,
+        style: STYLES[style],
       });
       text.anchor.set(0.5, 1); // bottom-centred above the sprite
       this.container.addChild(text);
@@ -149,6 +175,9 @@ export class LabelManager {
     } else if (entry.lastValue !== value) {
       entry.text.text = value;
       entry.lastValue = value;
+      // A drone promoted to elite (its name arrives a snapshot after the
+      // label was made) swaps to the elite style — only on a value change.
+      entry.text.style = STYLES[style];
     }
     entry.text.x = x;
     entry.text.y = y;

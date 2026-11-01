@@ -114,7 +114,10 @@ export type AuditEvent =
   | (AuditEventBase & { event: 'salvage_refined'; owner: string; salvage: number })
   | (AuditEventBase & { event: 'credits_spent'; playerId: string; amount: number; reason: string })
   // P3c — a robot harvester stole from a player's storage network.
-  | (AuditEventBase & { event: 'storage_raided'; playerId: string; raider: string; weight: number; credits: number });
+  | (AuditEventBase & { event: 'storage_raided'; playerId: string; raider: string; weight: number; credits: number })
+  // P4a — named elites appear and fall.
+  | (AuditEventBase & { event: 'elite_spawned'; name: string; kind: string })
+  | (AuditEventBase & { event: 'elite_killed'; name: string; kind: string; attackerId?: string });
 
 /** Distributive `Omit` so the union is preserved across the stamped fields. */
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;

@@ -249,6 +249,8 @@ export interface LivingWorldHooks {
   /** P3 — a sector's live owner override for `/galaxy/snapshot` (robot-held
    *  territory), or null ⇒ the sector's static region. */
   sectorOwner?: (sectorKey: string) => SectorOwner | null;
+  /** P4a — the name of a named elite roaming a sector (galaxy snapshot), or null. */
+  sectorElite?: (sectorKey: string) => string | null;
 }
 
 /** Deterministic per-bot scatter around a respawn anchor (no pile-up on one point). */
@@ -730,6 +732,8 @@ export class LivingWorldDirector {
         // Equinox Phase 9 (item 5) — recent-combat tally (null when quiet); the
         // room owns the sliding window, the director just forwards it.
         recentCombat: room.recentCombat?.() ?? null,
+        // P4a — a named elite in this sector (the map's elite marker).
+        elite: this.hooks.sectorElite?.(key) ?? null,
       });
     }
     this.galaxyStatsCache = out;

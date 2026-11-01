@@ -337,6 +337,11 @@ export function SectorInfoDrawer({
                 No ships or structures here.
               </Typography>
             )}
+            {tip.elite !== null && (
+              <Typography sx={{ color: '#ffc850', fontSize: 10, mt: 0.5 }} data-testid="sector-drawer-elite">
+                ★ Elite: {tip.elite}
+              </Typography>
+            )}
             {tip.features.length > 0 && (
               <Typography sx={{ color: '#7a8499', fontSize: 9, mt: 0.25, textTransform: 'capitalize' }}>
                 {tip.features.join(' · ')}
