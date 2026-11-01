@@ -58,6 +58,8 @@ export interface ProductionDeps {
   /** A processor's blueprint changed (a run was spent, or a used-up copy left
    *  the slot): persist the slot. */
   onBlueprintSpent?(rec: StructureRecord): void;
+  /** Active power: full draw while running, the idle trickle otherwise. */
+  setActive?(rec: StructureRecord, active: boolean): void;
 }
 
 interface AppliedCache {
@@ -75,6 +77,17 @@ function packedProduct(kind: StructureKindId): string {
   if (p === undefined) {
     p = `structure:${kind}`;
     PACKED_PRODUCT.set(kind, p);
+  }
+  return p;
+}
+
+/** `hull:<kind>` product ids, built once per kind. */
+const HULL_PRODUCT = new Map<string, string>();
+function hullProduct(kind: string): string {
+  let p = HULL_PRODUCT.get(kind);
+  if (p === undefined) {
+    p = `hull:${kind}`;
+    HULL_PRODUCT.set(kind, p);
   }
   return p;
 }
@@ -126,7 +139,11 @@ export class ProductionSubsystem {
     if (n === 0) return;
     const start = this.pulses++ % n;
     this.netComponent = null;
-    for (let k = 0; k < n; k++) this.step(procs[(start + k) % n]!);
+    for (let k = 0; k < n; k++) {
+      const rec = procs[(start + k) % n]!;
+      this.step(rec);
+      this.d.setActive?.(rec, rec.prodState === PROD_STATE.running);
+    }
   }
 
   /**
@@ -376,8 +393,9 @@ export class ProductionSubsystem {
       bank[i] = NaN;
     }
     for (const o of outputs) {
-      if ('packed' in o) {
-        const product = packedProduct(o.packed);
+      if ('packed' in o || 'hull' in o) {
+        // A packed structure, or a packed hull (W5 Shipyard): one discrete item.
+        const product = 'packed' in o ? packedProduct(o.packed) : hullProduct(o.hull);
         const w = packedWeightOf(product);
         let placed = false;
         for (let i = 0; i < net.length && !placed; i++) {

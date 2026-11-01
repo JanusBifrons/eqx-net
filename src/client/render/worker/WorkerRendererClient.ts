@@ -19,7 +19,6 @@
 
 import type {
   IRenderer,
-  BaseRenderDescriptor,
   RenderMirror,
   RendererFeedback,
 } from '@core/contracts/IRenderer';
@@ -493,11 +492,6 @@ export class WorkerRendererClient implements IRenderer {
   /** See `IRenderer.setRadarSuppressed`. */
   setRadarSuppressed(suppressed: boolean): void {
     this.post({ type: 'SET_RADAR_SUPPRESSED', suppressed });
-  }
-
-  /** Procedural bases — see `IRenderer.setBases`. Posted only on change. */
-  setBases(bases: readonly BaseRenderDescriptor[]): void {
-    this.post({ type: 'SET_BASES', bases: bases.slice() });
   }
 
   /**

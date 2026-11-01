@@ -169,7 +169,6 @@ export async function runGameSurfaceConnectFlow(opts: ConnectFlowOpts): Promise<
     // (destruction particles, impact sparks) live at source-sector
     // world coords and would render in the wrong place — so we wipe.
     onSectorHandoff: () => renderer.resetEffectsForSectorHandoff(),
-    onBasesChanged: (bases) => renderer.setBases(bases),
   }, roomName, extraJoinOptions, touchInput ?? undefined);
 
   onSectorName(prettyName);

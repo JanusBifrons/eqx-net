@@ -15,6 +15,7 @@ import {
   STRUCTURE_FLAG_WALL_ACTIVE,
   STRUCTURE_FLAG_NO_AMMO,
   STRUCTURE_FLAG_NO_FUEL,
+  STRUCTURE_FLAG_DRAW_FULL,
   STRUCTURE_DEFAULTS as D,
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
@@ -59,6 +60,7 @@ export function decodeStructureState(v: StructureStateView, owners: StructureOwn
   out.wallActive = (flags & STRUCTURE_FLAG_WALL_ACTIVE) !== 0 ? true : undefined;
   out.noAmmo = (flags & STRUCTURE_FLAG_NO_AMMO) !== 0 ? true : undefined;
   out.noFuel = (flags & STRUCTURE_FLAG_NO_FUEL) !== 0 ? true : undefined;
+  out.drawFull = (flags & STRUCTURE_FLAG_DRAW_FULL) !== 0 ? true : undefined;
   const gateOpen = v.gateOpen ?? D.gateOpen;
   out.gateOpen = gateOpen !== 0 ? gateOpen : undefined;
   const gateAccess = v.gateAccess ?? D.gateAccess;

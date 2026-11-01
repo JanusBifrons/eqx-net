@@ -1,5 +1,3 @@
-import { BaseSubsystem, type BaseSpec } from '../bases/BaseSubsystem.js';
-import { MAX_FLYABLE_RADIUS } from '../../core/procgen/corridor.js';
 import { Room, Client } from 'colyseus';
 import { randomUUID } from 'node:crypto';
 import { aggregateRamming } from '../../core/combat/Ramming.js';
@@ -38,7 +36,7 @@ import {
   SendGiftSchema,
   type TradeNotice,
 } from '../../shared-types/economy.js';
-import { BaseState, SectorState, ShipState, StructureState } from './schema/SectorState.js';
+import { SectorState, ShipState, StructureState } from './schema/SectorState.js';
 import {
   STRUCTURE_ETA_NONE,
   STRUCTURE_ETA_STALLED,
@@ -48,6 +46,7 @@ import {
   STRUCTURE_FLAG_WALL_ACTIVE,
   STRUCTURE_FLAG_NO_AMMO,
   STRUCTURE_FLAG_NO_FUEL,
+  STRUCTURE_FLAG_DRAW_FULL,
   STRUCTURE_TARGET_NONE,
   STRUCTURE_DEFAULTS as SD,
 } from '../../shared-types/structureStateWire.js';
@@ -109,6 +108,7 @@ import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
 import { createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf } from '../../shared-types/relations.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
+import { NpcBaseSubsystem, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
 import { PROD_STATE, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import { blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
@@ -915,34 +915,6 @@ export class SectorRoom extends Room<SectorState> {
    *  URL-param `spawnX`/`spawnY` overrides this — set in `feel-test` so a
    *  player joining without params still lands at the known anchor. */
   private defaultSpawnX: number | null = null;
-  /** Procedural bases in this sector (plan soft-leaping-truffle). */
-  private readonly bases = new BaseSubsystem({
-    spawnInWorker: (id, d) =>
-      this.postToWorker({ type: 'SPAWN_BASE', id, ver: d.ver, archetype: d.archetype, seed: d.seed, x: d.x, y: d.y, size: d.size }),
-    writeState: (id, d) => {
-      const b = new BaseState();
-      b.ver = d.ver;
-      b.archetype = d.archetype;
-      b.seed = d.seed;
-      b.originX = d.x;
-      b.originY = d.y;
-      b.size = d.size;
-      (this.state as SectorState).bases.set(id, b);
-    },
-    onDestroyed: (id, dead) => {
-      // Room state is the source of truth (late joiners see the hole —
-      // Invariant #16); the worker rebuilds the colliders from the same mask.
-      const st = (this.state as SectorState).bases.get(id);
-      if (st) {
-        for (let w = 0; w < dead.length; w++) {
-          if (w < st.dead.length) { if (st.dead[w] !== dead[w]) st.dead[w] = dead[w]!; }
-          else st.dead.push(dead[w]!);
-        }
-      }
-      this.postToWorker({ type: 'SET_BASE_DEAD', id, dead: Array.from(dead) });
-    },
-  });
-  private readonly spawnClearScratch = { x: 0, y: 0 };
   private defaultSpawnY: number | null = null;
   /** Radar sandbox — `dronePoses` entries flagged `hostile`; marked hostile to
    *  every joining player (testMode only). */
@@ -999,9 +971,7 @@ export class SectorRoom extends Room<SectorState> {
    */
   get _internals(): {
     serverTick: number;
-    /** Procedural bases (plan soft-leaping-truffle) — subsystem + the beam
-     *  block the player/AI fire resolvers call. */
-    bases: BaseSubsystem;
+    /** The shield-wall beam block the player/AI fire resolvers call. */
     blockShotAtWall: (fx: number, fy: number, dx: number, dy: number, maxDist: number, damage: number) => number | null;
     /** PR 3a — which playerId each connected session was bound to (the
      *  account-bound identity integration test asserts on it). */
@@ -1080,7 +1050,6 @@ export class SectorRoom extends Room<SectorState> {
       restoreLingeringHulls: (rows) => this.restoreLingeringHullsFromSnapshot(rows),
       aiPlayerScratch: this.aiPlayerScratch,
       postToWorker: (cmd) => this.postToWorker(cmd),
-      bases: this.bases,
       blockShotAtWall: (fx, fy, dx, dy, maxDist, damage) => this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
@@ -1346,13 +1315,9 @@ export class SectorRoom extends Room<SectorState> {
        *  measurement. Generated server-side from (n, seed), so it is not bound
        *  by the 64-entry seed cap. testMode-only. */
       scaleGrid?: { n: number; seed: number; fence?: boolean };
-      /** Procedural bases (plan soft-leaping-truffle) to generate in this
-       *  sector. A room-DEFINITION option (server-authored, never client
-       *  input), so it is not testMode-gated — galaxy sectors use it too. */
-      bases?: ReadonlyArray<BaseSpec>;
-      /** testMode bespoke trigger (PR-D): multiplies base piece hit points
-       *  (0.001 ⇒ one shot breaks a piece) so destruction E2Es run in seconds. */
-      baseHpScale?: number;
+      /** D2 — NPC bases grown by the core generator (server-authored, never
+       *  client input). Galaxy seeding of these comes with trade (phase T). */
+      npcBases?: NpcBaseSpec[];
       /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
@@ -1646,7 +1611,6 @@ export class SectorRoom extends Room<SectorState> {
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
       wallBlocksProjectile: (x, y, sx, sy, damage) =>
-        this.bases.projectileHit(x, y, sx, sy, damage) ||
         this.shieldWalls.blockProjectile(x, y, sx, sy, damage, Date.now()),
       // Allegiances P0 — AI bolts pass through their own allegiance's ships.
       ownerAllegianceOf: (ownerId) => {
@@ -2123,6 +2087,7 @@ export class SectorRoom extends Room<SectorState> {
       storage: this.storage,
       registry: this.structureRegistry,
       powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
+      setActive: (lab, active) => this.structureGrid.setActive(lab, active),
       sectorKey: () => this.sectorKey,
     });
     // ── Shield-wall lifecycle (shield-fence plan) ──────────────────────────
@@ -2133,6 +2098,8 @@ export class SectorRoom extends Room<SectorState> {
       powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
       componentOf: (id) => this.structureGrid.componentMembersOf(id),
       onBlueprintSpent: (rec) => this.storage.persistSlot(rec),
+      // Active power: processors draw full only while running.
+      setActive: (rec, active) => this.structureGrid.setActive(rec, active),
     });
     this.gates = new GateController({
       registry: this.structureRegistry,
@@ -2178,6 +2145,8 @@ export class SectorRoom extends Room<SectorState> {
     // overlap, no construction wait).
     if (this.testMode) this.seedStructureScenario(roomOpts);
     if (this.testMode && roomOpts.scaleGrid) this.seedScaleGrid(roomOpts.scaleGrid);
+    // D2 (plan soft-leaping-truffle v3) — NPC bases grown from the generator.
+    if (roomOpts.npcBases && roomOpts.npcBases.length > 0) this.seedNpcBases(roomOpts.npcBases);
     if (this.testMode && roomOpts.tradeEnabled === true && this.sectorKey !== null) {
       // Per-room key: testId-filtered rooms share a sectorKey, so the director
       // must not confuse two parallel tests' rooms.
@@ -2198,12 +2167,6 @@ export class SectorRoom extends Room<SectorState> {
     if (this.testMode && (roomOpts.scenarioScrapCount ?? 0) > 0) {
       this.seedScenarioScrap(roomOpts.scenarioScrapCount!);
     }
-    // Procedural bases: generate, publish the descriptor in room state, spawn
-    // the worker colliders. Before any join, so spawns can avoid geometry.
-    if (this.testMode && roomOpts.baseHpScale !== undefined) this.bases.setHpScale(roomOpts.baseHpScale);
-    const baseSpecs = roomOpts.bases ?? [];
-    for (let i = 0; i < baseSpecs.length; i++) this.bases.add('b' + i, baseSpecs[i]!);
-
     // Living World bot lifecycle hooks (spawn/despawn/markHostile).
     // These satisfy the LivingWorldRoom contract; bots are server-
     // internal swarm entities, NOT Colyseus clients.
@@ -3874,6 +3837,21 @@ export class SectorRoom extends Room<SectorState> {
    * `scenario`. Rejections are counted and logged — the lattice is rule-valid
    * by construction (structureLattice.test.ts), so any rejection is a bug.
    */
+  /** D2 — seed NPC bases from the generator (built, stocked, recipes + bound
+   *  blueprints loaded), then run one grid pulse so power settles. */
+  private seedNpcBases(specs: readonly NpcBaseSpec[]): void {
+    const sub = new NpcBaseSubsystem({
+      registry: this.structureRegistry,
+      place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
+      setHealth: (id, hp) => this.swarmHealth.set(id, hp),
+    });
+    for (const spec of specs.slice(0, 8)) {
+      const r = sub.seed(spec);
+      logger.info({ baseId: spec.baseId, role: spec.role, tier: spec.tier, owner: r.owner, placed: r.placed, rejectedPlace: r.rejectedPlace, rejectedEdge: r.rejectedEdge }, 'npc base seeded');
+    }
+    this.structureGridTick();
+  }
+
   private seedScaleGrid(opts: { n: number; seed: number; fence?: boolean }): void {
     const n = Math.max(1, Math.min(4000, Math.floor(opts.n)));
     const lat = buildStructureLattice({ n, seed: opts.seed, fence: opts.fence === true });
@@ -4259,15 +4237,7 @@ export class SectorRoom extends Room<SectorState> {
   private blockShotAtWall(
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, damage: number,
   ): number | null {
-    // A base wall in front of the shot stops it first — and caps the range
-    // passed to the shield walls so a shield span BEHIND base geometry never
-    // takes the hit.
-    const baseDist = this.bases.shotHit(fromX, fromY, dirX, dirY, maxDist, damage);
-    const wallDist = this.shieldWalls.blockShot(
-      fromX, fromY, dirX, dirY, baseDist >= 0 ? baseDist : maxDist, damage, Date.now(),
-    );
-    if (wallDist !== null) return wallDist;
-    return baseDist >= 0 ? baseDist : null;
+    return this.shieldWalls.blockShot(fromX, fromY, dirX, dirY, maxDist, damage, Date.now());
   }
 
   /** Live asteroid obstacles (swarm kind=0) for connection line-of-sight, read
@@ -4580,6 +4550,7 @@ export class SectorRoom extends Room<SectorState> {
         // emitter's walls are up). `shieldWallTo` stays for a pylon's first wall.
         if (this.shieldWalls.wallsUpFor(rec.id, nowMs)) flags |= STRUCTURE_FLAG_WALL_ACTIVE;
         if (rec.noAmmo === true) flags |= STRUCTURE_FLAG_NO_AMMO;
+        if (rec.drawFull === true) flags |= STRUCTURE_FLAG_DRAW_FULL;
         if (rec.isConstructed && getStructureKind(rec.kind).fuelEveryPulses != null && rec.fueled !== true) flags |= STRUCTURE_FLAG_NO_FUEL;
         if (rec.kind === 'shield_pylon') {
           const wall = this.shieldWalls.wallStateFor(rec.id, nowMs);
@@ -5827,13 +5798,6 @@ export class SectorRoom extends Room<SectorState> {
     let spawnY = parsed.success && parsed.data.spawnY !== undefined
       ? parsed.data.spawnY
       : (this.defaultSpawnY ?? (Math.random() - 0.5) * 400);
-    // Procedural-base colliders are hollow outlines: never place a ship inside
-    // solid geometry (it would be trapped). Nudge to the nearest clear point.
-    if (this.bases.count > 0) {
-      const clear = this.bases.findClearSpawn(spawnX, spawnY, MAX_FLYABLE_RADIUS + 8, this.spawnClearScratch);
-      spawnX = clear.x;
-      spawnY = clear.y;
-    }
     let resumedHealth: number | null = null;
     let resumedUserId: string | null = null;
     let resumedLastFireTick: number | null = null;
