@@ -168,16 +168,26 @@ describe('ProductionSubsystem', () => {
     expect(theirs.hold!.goods.minerals).toBe(50);
   });
 
-  it('steady state allocates little: a 60-processor citadel pulse stays cheap', () => {
+  it('a citadel pulse scans each component storage once, not once per processor', () => {
+    // Deterministic work lock (the wall-clock budget lives in
+    // benchmarks/structures-scale.bench.ts — CI runs unit tests with coverage).
     const recs: StructureRecord[] = [rec('cap', 'capital', { minerals: 1_000_000 })];
     for (let i = 0; i < 20; i++) recs.push(rec(`bay${i}`, 'cargo_bay', { hold: { goods: { minerals: 500 }, blueprints: [] } }));
     for (let i = 0; i < 60; i++) recs.push(rec(`s${i}`, 'smelter'));
-    const { run } = world(recs);
-    run(20); // warm up
-    const t0 = performance.now();
-    run(200);
-    const perPulse = (performance.now() - t0) / 200;
-    // Budget (plan): ≤ 0.3 ms per pulse at a citadel with ~60 processors.
-    expect(perPulse).toBeLessThan(0.3);
+    const byId = new Map(recs.map((r) => [r.id, r]));
+    const ids = recs.map((r) => r.id);
+    let gets = 0;
+    let comps = 0;
+    const registry = {
+      all: () => byId.values(),
+      get: (id: string) => { gets++; return byId.get(id); },
+    } as unknown as StructureRegistry;
+    const prod = new ProductionSubsystem({ registry, powered: () => true, componentOf: () => { comps++; return ids; } });
+    for (let i = 0; i < 20; i++) prod.pulse(); // warm up
+    gets = 0;
+    comps = 0;
+    prod.pulse();
+    expect(comps).toBe(60); // one component lookup per processor (an array ref)
+    expect(gets).toBe(ids.length); // but the network itself is collected ONCE
   });
 });
