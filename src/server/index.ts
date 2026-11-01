@@ -36,6 +36,7 @@ import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled, res
 import { setIncomingPlayerSink } from './livingworld/incomingPlayerSink.js';
 import { setGalaxyStatsProvider } from './livingworld/galaxyStatsProvider.js';
 import { ROBOT_DIRECTOR_OPTIONS, ROBOT_BOT_COUNT, isRobotsDisabled } from './livingworld/robotDirector.js';
+import { RobotTerritory } from './livingworld/RobotTerritory.js';
 import { DirectorPersistence, type DirectorStatePayload } from './livingworld/DirectorPersistence.js';
 import { db } from './db/Database.js';
 import { resolveCorsPolicy, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
@@ -106,6 +107,8 @@ let serverReady = false;
 let livingWorldDirector: LivingWorldDirector | null = null;
 /** Living World P1b — the robot-side director (null when disarmed). */
 let robotDirector: LivingWorldDirector | null = null;
+/** Living World P3 — robot territory + nexus (null when robots are disarmed). */
+let robotTerritory: RobotTerritory | null = null;
 const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
 /** Living World P2 — the economy (null until boot finishes). */
 let economyStore: EconomyStore | null = null;
@@ -1146,13 +1149,27 @@ async function main(): Promise<void> {
         directorPersistence: robotPersistence,
       });
       robotDirector.start();
-      logger.info({ bots: ROBOT_BOT_COUNT }, 'robot director started');
+      // Living World P3 — robot territory + the nexus (reinforcements spawn at
+      // it; robot-held sectors show on the galaxy map).
+      const rd = robotDirector;
+      const territory = new RobotTerritory(galaxyRooms, () => rd.activeBotCountsBySector());
+      rd.setHooks({
+        respawnAnchor: () => territory.respawnAnchor(),
+        onTick: (now) => territory.tick(now),
+      });
+      territory.start();
+      robotTerritory = territory;
+      logger.info({ bots: ROBOT_BOT_COUNT, nexus: territory.nexusState() }, 'robot director started');
     }
     livingWorldDirector = new LivingWorldDirector(galaxyRooms, {
       ...directorOpts,
       directorPersistence,
       // Robots are enemies of every player on the galaxy map.
-      hooks: { extraEnemyCounts: () => robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS },
+      hooks: {
+        extraEnemyCounts: () => robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS,
+        // P3 — robot-held sectors show the robots as owner on the galaxy map.
+        sectorOwner: (key) => robotTerritory?.sectorOwner(key) ?? null,
+      },
     });
     livingWorldDirector.start();
     // Phase-4 P0 — let the per-room TransitOrchestrator + destination rooms feed
@@ -1228,6 +1245,7 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
     livingWorldDirector?.stop();
     robotDirector?.persistState();
     robotDirector?.stop();
+    robotTerritory?.stop();
     setTradeSink(null);
     setEconomyRouteProvider(null);
     tradeDirector?.stop();

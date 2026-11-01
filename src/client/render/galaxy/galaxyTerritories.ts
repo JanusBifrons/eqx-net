@@ -99,6 +99,8 @@ const FACTION_COLORS: Readonly<Record<string, number>> = {
   'verdant-reach': 0x2f9e54, // green — growth country
   'crimson-expanse': 0xc0392b, // red — ember void
   'azure-deep': 0x1f9e9e, // teal — the cold deep
+  // Living World P3 — robot-held territory (live, from /galaxy/snapshot).
+  robots: 0x6f4bff, // violet — the robot palette
 };
 
 export const DEFAULT_FACTION_COLOR = 0x8893a6;
@@ -118,6 +120,7 @@ const FACTION_BORDER_COLORS: Readonly<Record<string, number>> = {
   'verdant-reach': 0x4fdc7a,
   'crimson-expanse': 0xff6b5e,
   'azure-deep': 0x3fd6d6,
+  robots: 0xb08cff,
 };
 
 export const DEFAULT_FACTION_BORDER_COLOR = 0xb8c2d6;
