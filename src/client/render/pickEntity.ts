@@ -37,6 +37,7 @@
  * Among overlapping candidates the NEAREST centre wins.
  */
 import type { RenderMirror } from '@core/contracts/IRenderer';
+import { getStructureKind, isStructureKindId } from '../../shared-types/structureKinds.js';
 import { getShipKind } from '@shared-types/shipKinds';
 
 /** Selectable entity classes. `drone`/`asteroid`/`lingering` read from
@@ -94,8 +95,21 @@ export function pickEntityAt(
       const dx = sw.x - worldX;
       const dy = sw.y - worldY;
       const distSq = dx * dx + dy * dy;
-      const reach = sw.radius + TAP_SLOP;
-      if (distSq <= reach * reach && distSq < bestDistSq) {
+      let hit: boolean;
+      if (sw.kind === 2 && sw.shipKind && isStructureKindId(sw.shipKind)) {
+        // Phase V — a structure is its (quarter-turn) footprint box, not its
+        // bounding circle: a tap in the empty corner beside a long Solar must
+        // not select it. Inline (no allocation — runs on pointer-move hover).
+        const fp = getStructureKind(sw.shipKind).footprint;
+        const quarter = Math.round((sw.angle * 2) / Math.PI) % 2 !== 0;
+        const hw = (quarter ? fp.h : fp.w) / 2 + TAP_SLOP;
+        const hh = (quarter ? fp.w : fp.h) / 2 + TAP_SLOP;
+        hit = Math.abs(dx) <= hw && Math.abs(dy) <= hh;
+      } else {
+        const reach = sw.radius + TAP_SLOP;
+        hit = distSq <= reach * reach;
+      }
+      if (hit && distSq < bestDistSq) {
         bestDistSq = distSq;
         bestId = `swarm-${entityId}`;
         bestKind = sw.kind === 0 ? 'asteroid' : sw.kind === 1 ? 'drone' : 'structure';

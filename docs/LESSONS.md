@@ -2542,3 +2542,21 @@ Two of them, missile lock-on and attacker labels, decided "is this an AI?" from 
 **Fix.** Declare the fields optional with NO initialiser. Assign only when the value differs from `(current ?? DEFAULT)`, and have the decoder apply the shared defaults. That gave 16.7 KB for the same base, with no change to the client mirror shape.
 
 **Rule.** For a per-entity schema that scales with entity count, leave defaults unset and decode with shared defaults. Measure the join payload with the server serializer (`room._serializer.getFullState()`) at the target scale before shipping.
+
+
+## 2026-11-01 — Growing structures 3–6× broke every hand-placed layout, and a uniform rescale fixed most but not all (plan soft-leaping-truffle v2, phase V)
+
+**Context.** Structures went from small regular polygons (radius 10–80) to large rectangular footprints (up to 560 u) while the connection range stayed 600 u edge to edge. 52 unit tests and 33 integration tests failed. Each failure was a hand-placed layout whose structures now overlapped, fell out of range, or blocked each other's line of sight.
+
+**What worked.**
+- **Uniform scale.** A uniform 3.5× scale of the layout coordinates inside the unit-test harness kept most relationships intact (overlap, in range, line of sight), because sizes grew by roughly that factor. That fixed 30 of 43 grid tests with one wrapper.
+- **Hand re-layout for the rest.** The rest needed a re-layout in real units:
+  - turret and mining ranges are fixed, so they don't scale;
+  - the Solar's 360 × 150 aspect breaks a uniform scale along x.
+- **One source for repeated layouts.** The same scenario grid was hand-copied into three rooms, the showcase rooms and four tests. It now lives in `src/server/rooms/scenarioLayouts.ts`.
+
+**Surprises.**
+- **Kindless test structures.** A kindless test structure (`structurePoses`) fell back to the Capital's 560 u box and would have trapped the spawned player inside it. Kindless now means a radius-sized square.
+- **Sector capacity.** At the new sizes, 800 structures no longer fit in a sector. That is a budget finding (the ceiling was lowered 800 → 650), not a bug.
+
+**Rule.** When an entity's size changes, every hand-authored layout that references it is suspect. Derive layouts from the real footprint helpers, and keep repeated layouts in one shared module.

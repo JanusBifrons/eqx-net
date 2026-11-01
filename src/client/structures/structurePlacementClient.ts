@@ -13,7 +13,24 @@
  * The pure `computePlacementPose` is split out so the geometry is testable
  * without a live room.
  */
-import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { getStructureKind, normaliseStructureRotation, type StructureKindId } from '../../shared-types/structureKinds.js';
+
+/** Phase V — the placement ghost's rotation in degrees (0/90/180/270), cycled
+ *  with R. Module state (a discrete selection; renderer reads it through the
+ *  placement preview's `angle`). */
+let placementRotationDeg = 0;
+export function getPlacementRotationDeg(): number {
+  return placementRotationDeg;
+}
+export function setPlacementRotationDeg(deg: number): void {
+  placementRotationDeg = normaliseStructureRotation(deg);
+}
+/** Rotate the ghost a quarter turn (R). Returns the new rotation. */
+export function cyclePlacementRotation(): number {
+  placementRotationDeg = normaliseStructureRotation(placementRotationDeg + 90);
+  return placementRotationDeg;
+}
+const DEG = Math.PI / 180;
 import { getGameClient } from '../net/clientSingleton.js';
 import { placementChosen } from './placementChosen.js';
 import { logEvent } from '../debug/ClientLogger.js';
@@ -70,6 +87,8 @@ export interface PendingPlacement {
   kind: StructureKindId;
   x: number;
   y: number;
+  /** Rotation (degrees) the structure was sent with. */
+  rot?: number;
   /** `Date.now()` when `place_structure` was sent. */
   sentAtMs: number;
   /** `mirror.structures.size` at send time — the dim ghost clears once it grows
@@ -135,7 +154,7 @@ export function resolvePlacementPreviewStatus(
     out.kind = placementKind;
     out.x = pos.x;
     out.y = pos.y;
-    out.angle = 0;
+    out.angle = placementRotationDeg * DEG;
     out.pending = false;
     return 'active';
   }
@@ -146,7 +165,7 @@ export function resolvePlacementPreviewStatus(
     out.kind = pending.kind;
     out.x = pending.x;
     out.y = pending.y;
-    out.angle = 0;
+    out.angle = (pending.rot ?? 0) * DEG;
     out.pending = true;
     return 'pending';
   }
@@ -167,7 +186,7 @@ export function computePlacementPreview(
 ): PlacementPreview | null {
   if (!kindId) return null;
   const pos = computePlacementPose(ship, kindId);
-  return { kind: kindId, x: pos.x, y: pos.y, angle: 0 };
+  return { kind: kindId, x: pos.x, y: pos.y, angle: placementRotationDeg * DEG };
 }
 
 /**
@@ -195,10 +214,10 @@ export function placeStructureAt(kindId: StructureKindId, x: number, y: number):
   if (!client) return false;
   const room = client.getRoom();
   if (!room) return false;
-  room.send('place_structure', { type: 'place_structure', kind: kindId, x, y });
+  room.send('place_structure', { type: 'place_structure', kind: kindId, x, y, rot: placementRotationDeg });
   // Keep a dim ghost at the sent point until the structure lands, so the
   // blueprint doesn't vanish for ~1 s (playtest 2026-06-10 Issue 7).
-  client.notePendingPlacement(kindId, x, y);
+  client.notePendingPlacement(kindId, x, y, placementRotationDeg);
   return true;
 }
 

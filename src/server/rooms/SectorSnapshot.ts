@@ -61,6 +61,8 @@ export interface SectorSnapshotStructure {
   kind: string;
   x: number;
   y: number;
+  /** Phase V — rotation in degrees (0/90/180/270). Absent ⇒ 0. */
+  rot?: number;
   /** Hull HP at save time. */
   health: number;
   /** Built vs blueprint. */

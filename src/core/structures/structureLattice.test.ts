@@ -4,7 +4,7 @@
  * measurements would measure an impossible base.
  */
 import { describe, expect, it } from 'vitest';
-import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { getStructureKind, structureHalfExtents } from '../../shared-types/structureKinds.js';
 import { canConnect, type GridNode } from './Grid.js';
 import { Connection } from './Connection.js';
 import { placementRejection } from './placementRules.js';
@@ -14,6 +14,8 @@ function node(id: string, kind: string, x: number, y: number): GridNode {
   const k = getStructureKind(kind);
   return {
     id, x, y, radius: k.radius,
+    halfW: structureHalfExtents(kind).hw,
+    halfH: structureHalfExtents(kind).hh,
     isHub: k.isHub,
     isCapital: kind === 'capital',
     isConnector: kind === 'connector',
@@ -29,11 +31,11 @@ function node(id: string, kind: string, x: number, y: number): GridNode {
 function check(n: number, fence: boolean): { total: number; reached: number; net: number; pylons: number } {
   const lat = buildStructureLattice({ n, seed: 7, fence });
   const nodes = new Map<string, GridNode>();
-  const placed: Array<{ x: number; y: number; radius: number }> = [];
+  const placed: Array<{ x: number; y: number; radius: number; halfW: number; halfH: number }> = [];
   lat.placements.forEach((p, i) => {
     expect(placementRejection(p.kind, p.x, p.y, placed), `placement ${i} ${p.kind} @${p.x},${p.y}`).toBeNull();
     const nd = node('s' + i, p.kind, p.x, p.y);
-    placed.push({ x: p.x, y: p.y, radius: nd.radius });
+    placed.push({ x: p.x, y: p.y, radius: nd.radius, halfW: nd.halfW!, halfH: nd.halfH! });
     nodes.set(nd.id, nd);
   });
   const adj = new Map<string, Connection[]>();

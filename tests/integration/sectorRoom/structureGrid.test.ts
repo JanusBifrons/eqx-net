@@ -51,8 +51,8 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     const internals = harness.getServerRoom()!._internals;
 
     const cap = await placeAndWait(harness, room, 'capital', 0, 0);
-    const con = await placeAndWait(harness, room, 'connector', 300, 0);
-    const sol = await placeAndWait(harness, room, 'solar', 600, 0);
+    const con = await placeAndWait(harness, room, 'connector', 400, 0);
+    const sol = await placeAndWait(harness, room, 'solar', 650, 0);
     const [capE, conE, solE] = [eid(harness, cap), eid(harness, con), eid(harness, sol)];
 
     // The web forms on placement (connTo present immediately), even as blueprints.
@@ -80,7 +80,7 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     await placeAndWait(harness, room, 'capital', 0, 0);
     // Two solars far from the capital but near each other.
     const s1 = await placeAndWait(harness, room, 'solar', 3000, 0);
-    const s2 = await placeAndWait(harness, room, 'solar', 3120, 0);
+    const s2 = await placeAndWait(harness, room, 'solar', 3400, 0);
     const [s1E, s2E] = [eid(harness, s1), eid(harness, s2)];
     for (let i = 0; i < 5; i++) internals.pulseStructureGrid();
 
@@ -97,7 +97,7 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     const internals = harness.getServerRoom()!._internals;
 
     const cap = await placeAndWait(harness, room, 'capital', 0, 0);
-    const con = await placeAndWait(harness, room, 'connector', 300, 0);
+    const con = await placeAndWait(harness, room, 'connector', 400, 0);
     // Solar at 900: in range of the connector (edge 900−300−24−40 = 536 ≤ 600)
     // but OUT of direct capital range (edge 900−80−40 = 780 > CONNECTION_MAX_RANGE
     // 600). The connector is its SOLE path to a hub — so destroying the connector
@@ -132,8 +132,8 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     const internals = harness.getServerRoom()!._internals;
 
     await placeAndWait(harness, room, 'capital', 0, 0);
-    await placeAndWait(harness, room, 'connector', 0, 140); // WS-5: battery routes via a relay
-    const bat = await placeAndWait(harness, room, 'battery', 250, 0);
+    await placeAndWait(harness, room, 'connector', 0, 350); // WS-5: battery routes via a relay // phase V footprints
+    const bat = await placeAndWait(harness, room, 'battery', 150, 420);
     const batE = eid(harness, bat);
 
     // Blueprint first: the field is present (battery kind) but empty.
@@ -161,9 +161,9 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     // con1 is the solar's nearest hub at placement; con2 (also Capital-connected,
     // so it survives con1's death) is the in-range backup the player CAN reconnect
     // onto — but only deliberately, never via the auto-sweep (Phase 5).
-    const con1 = await placeAndWait(harness, room, 'connector', 200, 0);
-    const con2 = await placeAndWait(harness, room, 'connector', 0, 250);
-    const sol = await placeAndWait(harness, room, 'solar', 250, 150);
+    const con1 = await placeAndWait(harness, room, 'connector', 400, 0); // phase V footprints
+    const con2 = await placeAndWait(harness, room, 'connector', 0, 400);
+    const sol = await placeAndWait(harness, room, 'solar', 480, 330); // nearer con1 (edge 223) than con2 (268)
     const [con2E, solE] = [eid(harness, con2), eid(harness, sol)];
     for (let i = 0; i < 60; i++) internals.pulseStructureGrid();
     expect(sliceEntry(internals.getStructuresSlice(), solE)?.powered).toBe(true);

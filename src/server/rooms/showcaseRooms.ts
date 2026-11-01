@@ -6,6 +6,7 @@
  * the test-room gate (S6) with `filterBy(['testId'])`; exported here so the
  * integration test boots EXACTLY the options the server registers.
  */
+import { SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './scenarioLayouts.js';
 
 /**
  * The pilot identity base shots join as (anonymous join, seeded `eqxPlayerId`).
@@ -46,18 +47,23 @@ export const SHOWCASE_DEFENCE_OPTS = {
   structureGridPulseMs: 100,
   prebuiltStructuresOwner: SHOWCASE_PILOT_ID,
   prebuiltStructures: [
+    // Phase V footprints (Capital ±280): four relays round the Capital, a
+    // solar on each side relay + a solar and battery north, the two turrets on
+    // the south relay, and the shield wall across the southern approach (each
+    // pylon taps a side relay; the pair links across the gap).
     { kind: 'capital', x: 0, y: 0 },
-    { kind: 'connector', x: 140, y: -140 },
-    { kind: 'connector', x: -140, y: -140 },
-    { kind: 'connector', x: 0, y: 190 },
-    { kind: 'solar', x: 310, y: 40 },
-    { kind: 'solar', x: -310, y: 40 },
-    { kind: 'solar', x: -210, y: 330 },
-    { kind: 'battery', x: 210, y: 330 },
-    { kind: 'shield_pylon', x: -270, y: -400 },
-    { kind: 'shield_pylon', x: 270, y: -400 },
-    { kind: 'laser_bolt_turret', x: -110, y: -290 },
-    { kind: 'missile_turret', x: 110, y: -290 },
+    { kind: 'connector', x: 400, y: 0 },
+    { kind: 'connector', x: -400, y: 0 },
+    { kind: 'connector', x: 0, y: 400 },
+    { kind: 'connector', x: 0, y: -400 },
+    { kind: 'solar', x: 650, y: 0 },
+    { kind: 'solar', x: -650, y: 0 },
+    { kind: 'solar', x: -250, y: 470 },
+    { kind: 'battery', x: 230, y: 470 },
+    { kind: 'shield_pylon', x: -300, y: -560 },
+    { kind: 'shield_pylon', x: 300, y: -560 },
+    { kind: 'laser_bolt_turret', x: -150, y: -400 },
+    { kind: 'missile_turret', x: 170, y: -400 },
   ],
   dronePoses: [
     { kind: 'fighter', x: -350, y: -1000, angle: Math.PI },
@@ -67,7 +73,7 @@ export const SHOWCASE_DEFENCE_OPTS = {
     { kind: 'scout', x: 150, y: -1250, angle: Math.PI },
   ],
   defaultSpawnX: 0,
-  defaultSpawnY: -230,
+  defaultSpawnY: -490, // inside the wall, between the turrets
   maxClients: 4,
 } as const;
 
@@ -84,18 +90,13 @@ export const SHOWCASE_BASE_OPTS = {
   structureGridPulseMs: 250,
   prebuiltStructuresOwner: SHOWCASE_PILOT_ID,
   prebuiltStructures: [
-    { kind: 'capital', x: 0, y: 0 },
-    { kind: 'connector', x: 150, y: 60 },
-    { kind: 'connector', x: -100, y: -100 },
-    { kind: 'solar', x: 250, y: 0 },
-    { kind: 'solar', x: 0, y: 250 },
-    { kind: 'miner', x: -350, y: 0 },
-    { kind: 'turret', x: 0, y: -350 },
+    // Phase V footprints — the shared scenario grid (scenarioLayouts.ts).
+    ...STRUCTURE_SCENARIO_PREBUILT,
   ],
-  scenarioAsteroids: [{ x: -700, y: 0, radius: 30 }],
-  scenarioDrones: [{ x: 0, y: -550 }],
-  defaultSpawnX: 600,
-  defaultSpawnY: 600,
+  scenarioAsteroids: [{ ...SCENARIO.asteroid }],
+  scenarioDrones: [{ ...SCENARIO.drone }],
+  defaultSpawnX: 900,
+  defaultSpawnY: 900,
   maxClients: 4,
 } as const;
 

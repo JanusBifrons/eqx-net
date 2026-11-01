@@ -22,6 +22,8 @@ import { StructureGridSubsystem } from './StructureGridSubsystem.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 
 const OWNER = 'player-1';
+/** See the placement wrapper in makeHarness. */
+const LAYOUT_SCALE = 3.5;
 
 function makeHarness() {
   const registry = new StructureRegistry();
@@ -35,6 +37,12 @@ function makeHarness() {
     nextId: () => `s${counter++}`,
     registry,
   });
+  // Phase V (plan soft-leaping-truffle v2): structures grew ~3.5× (footprints)
+  // while the 600 u connection range stayed fixed. Scaling every layout
+  // coordinate by the same factor keeps each test's relationships (overlap,
+  // in-range, line of sight) intact without re-deriving every pose by hand.
+  const origPlace = placement.place.bind(placement);
+  placement.place = (owner, kind, x, y, opts) => origPlace(owner, kind, x * LAYOUT_SCALE, y * LAYOUT_SCALE, opts);
   const grid = new StructureGridSubsystem({
     registry,
     getHealth: (id) => health.get(id) ?? 0,

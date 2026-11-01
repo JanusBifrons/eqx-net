@@ -26,7 +26,9 @@ import { pack } from '@colyseus/msgpackr';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 
-const SIZES = [30, 100, 400, 800] as const;
+// Phase V: at the large footprints a fenced lattice stays inside a sector
+// (±5000 u) up to 600 structures (664 with the fence); 650+ runs past the edge.
+const SIZES = [30, 100, 400, 600] as const;
 const SNAPSHOT_HZ = 20;
 const DRONES = 300;
 
