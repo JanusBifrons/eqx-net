@@ -33,7 +33,7 @@ import { TradeNoticeSchema } from '../../shared-types/economy.js';
 import { WorldNoticeSchema } from '../../shared-types/worldNotice.js';
 import { BountyResultSchema } from '../../shared-types/contracts.js';
 import { LabStateSchema } from '../../shared-types/messages/labMessages.js';
-import { CargoStateSchema } from '../../shared-types/messages/cargoMessages.js';
+import { BreakInNoticeSchema, CargoStateSchema } from '../../shared-types/messages/cargoMessages.js';
 import { BpMarketStateSchema } from '../../shared-types/blueprintMarket.js';
 import { BlueprintResultSchema, fittedCargoMul } from '../../shared-types/blueprints.js';
 
@@ -2043,6 +2043,13 @@ export class ColyseusGameClient {
     });
     // Living World P2 — trade toasts + Trade-tab badge. An ACCELERATOR only:
     // the tab's truth is `GET /trade/economy` (it refetches on tradeNoticeSeq).
+    // C2 — a break-in alarm (owner) or result (actor). Accelerator only.
+    room.onMessage('break_in_notice', (raw: unknown) => {
+      const parsed = BreakInNoticeSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.tone, false);
+      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
+    });
     // Living World P5 — a blueprint install verdict (accelerator only).
     room.onMessage('blueprint_result', (raw: unknown) => {
       const parsed = BlueprintResultSchema.safeParse(raw);

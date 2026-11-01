@@ -166,6 +166,8 @@ export async function bootSectorTestServer(opts: {
   npcBases?: ReadonlyArray<Record<string, unknown>>;
   /** T1 — seed the sector's own NPC base (as galaxy rooms do). */
   galaxyBases?: boolean;
+  /** C2 — every break-in takes this long (bespoke trigger). */
+  breakInMs?: number;
   /** P2c — sector features for the room (asteroid mix, nebula). */
   sectorFeatures?: string[];
   /** Room-level default spawn point (forwarded to `defaultSpawnX/Y`). */
@@ -228,6 +230,7 @@ export async function bootSectorTestServer(opts: {
     sectorFeatures: opts.sectorFeatures,
     npcBases: opts.npcBases,
     galaxyBases: opts.galaxyBases,
+    breakInMs: opts.breakInMs,
     tradeEnabled: opts.tradeEnabled,
     enforceHullGate: opts.enforceHullGate,
     seedStorageHold: opts.seedStorageHold,

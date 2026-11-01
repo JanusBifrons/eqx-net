@@ -262,6 +262,8 @@ export interface StructureRenderState {
   noFuel?: boolean;
   /** Active power — drawing full consumption (else the idle trickle). */
   drawFull?: boolean;
+  /** C2 — someone is breaking into its cargo right now. */
+  breach?: boolean;
   /** The slot blueprint (P2b): runs (BP_RUNS_ORIGINAL = original) + quality. */
   bpRuns?: number;
   bpQuality?: number;

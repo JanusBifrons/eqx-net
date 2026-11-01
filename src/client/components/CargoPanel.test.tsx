@@ -92,6 +92,18 @@ describe('CargoPanel (C1)', () => {
     expect(screen.queryByTestId('freight-orders')).toBeNull();
   });
 
+  it('C2: locked cargo offers Break in, then shows progress with Stop', () => {
+    render(<CargoPanel entityId={9} />);
+    act(() => useUIStore.getState().setCargoState(state({ open: false, hold: null, ship: null, message: 'Locked. That cargo is not yours.', breakIn: { pct: null, durationMs: 12_000 } })));
+    expect(screen.getByTestId('cargo-break-in').textContent).toContain('Break in · 12s');
+    fireEvent.click(screen.getByTestId('cargo-break-in'));
+    expect(send).toHaveBeenLastCalledWith('break_in', { type: 'break_in', entityId: 9 });
+    act(() => useUIStore.getState().setCargoState(state({ open: false, hold: null, ship: null, message: 'Locked.', breakIn: { pct: 0.4, durationMs: 12_000 } })));
+    expect(screen.getByTestId('cargo-break-in-progress').getAttribute('data-pct')).toBe('40');
+    fireEvent.click(screen.getByTestId('cargo-break-in-cancel'));
+    expect(send).toHaveBeenLastCalledWith('break_in_cancel', { type: 'break_in_cancel' });
+  });
+
   it('ignores a reply for a different structure', () => {
     render(<CargoPanel entityId={9} />);
     act(() => useUIStore.getState().setCargoState(state({ entityId: 10 })));

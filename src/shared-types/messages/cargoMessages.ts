@@ -49,6 +49,16 @@ export const SetFreightOrdersSchema = z
   .strict();
 export type SetFreightOrders = z.infer<typeof SetFreightOrdersSchema>;
 
+/** C2 — start / stop breaking into cargo that doesn't open for you. */
+export const BreakInSchema = z.object({ type: z.literal('break_in'), entityId }).strict();
+export const BreakInCancelSchema = z.object({ type: z.literal('break_in_cancel') }).strict();
+/** C2 — server → client: an alarm (to the owner) or a result (to the actor).
+ *  Accelerator only: the truth is `cargo_state` and the BREACH flag (#16). */
+export const BreakInNoticeSchema = z
+  .object({ type: z.literal('break_in_notice'), tone: z.enum(['good', 'danger']), message: z.string().max(200) })
+  .strict();
+export type BreakInNotice = z.infer<typeof BreakInNoticeSchema>;
+
 export const CargoQuerySchema = z.object({ type: z.literal('cargo_query'), entityId }).strict();
 export type CargoQuery = z.infer<typeof CargoQuerySchema>;
 
@@ -72,6 +82,9 @@ export const CargoStateSchema = z
     /** The pilot's ship hold and its capacity, when open. */
     ship: HoldSchema.nullable(),
     shipCapacity: z.number().nonnegative(),
+    /** C2 — locked cargo you may break into: your progress (0..1, null =
+     *  not started) and how long it takes. */
+    breakIn: z.object({ pct: z.number().min(0).max(1).nullable(), durationMs: z.number().int().positive() }).strict().optional(),
     /** T4b — your own Freight Dock's standing orders (absent otherwise). */
     orders: z.array(FreightOrderSchema).max(MAX_FREIGHT_ORDERS).optional(),
     /** T4 — an NPC Freight Dock: a market, not free access. `hold` is the
