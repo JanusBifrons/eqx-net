@@ -109,3 +109,14 @@ export function decideExplosionPosition(args: {
   if (lingering) return { x: lingering.x, y: lingering.y };
   return null;
 }
+
+/**
+ * A3 (plan soft-leaping-truffle v2) — is a sprite at pixi-space (x, y) with
+ * bounding radius `r` inside the camera's visible rect `[minX, minY, maxX,
+ * maxY]` (`Camera.visibleBoundsInto`)? Used to stop drawing off-screen
+ * structures (a citadel is ~450 retained Graphics). No bounds ⇒ visible.
+ */
+export function isSpriteInView(x: number, y: number, r: number, bounds: Float64Array | undefined): boolean {
+  if (!bounds) return true;
+  return x + r >= bounds[0]! && x - r <= bounds[2]! && y + r >= bounds[1]! && y - r <= bounds[3]!;
+}

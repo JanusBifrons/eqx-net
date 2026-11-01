@@ -149,7 +149,7 @@ describe('decideLingeringSpriteAction — property tests', () => {
  * silhouette's position. Per Invariant #13, the failing test below
  * went in BEFORE the fix in `PixiRenderer.ts`.
  */
-import { decideExplosionPosition } from './spriteUpdateDecisions.js';
+import { decideExplosionPosition, isSpriteInView } from './spriteUpdateDecisions.js';
 
 describe('decideExplosionPosition', () => {
   const empty = new Map<string, { x: number; y: number }>();
@@ -193,5 +193,18 @@ describe('decideExplosionPosition', () => {
       lingeringShipsByShipInstanceId: new Map([['X', { x: 2, y: 2 }]]),
     });
     expect(pos).toEqual({ x: 1, y: 1 });
+  });
+});
+
+describe('isSpriteInView (A3 structure culling)', () => {
+  const view = new Float64Array([-100, -100, 100, 100]);
+  it('draws a structure whose box reaches into the view, culls one fully outside', () => {
+    expect(isSpriteInView(0, 0, 10, view)).toBe(true);
+    expect(isSpriteInView(150, 0, 60, view)).toBe(true); // edge pokes in
+    expect(isSpriteInView(250, 0, 60, view)).toBe(false);
+    expect(isSpriteInView(0, -300, 100, view)).toBe(false);
+  });
+  it('no bounds ⇒ always drawn', () => {
+    expect(isSpriteInView(1e6, 1e6, 1, undefined)).toBe(true);
   });
 });

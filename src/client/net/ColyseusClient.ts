@@ -17,6 +17,7 @@ import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/stru
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { decideStatAllocReanchor } from './localStatAlloc';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../structures/derivedWalls.js';
+import { pointSegmentDistance, wantPredBody } from '../structures/predStructureStreaming.js';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import {
@@ -726,11 +727,19 @@ export class ColyseusGameClient {
    *  a generation stamp when they leave (syncPredWalls). */
   private readonly _predWalls = new Map<number, { id: string; blocking: boolean; gen: number }>();
   private _predWallGen = 0;
+  /** A3 — the local ship's pose for distance-streaming walls (NaN ⇒ none). */
+  private _predWallShipX = NaN;
+  private _predWallShipY = NaN;
   private readonly _predWallVisitor: DerivedWallVisitor = {
     wall: (key, ax, ay, bx, by, blocking, thickness) => {
       const world = this.predWorld;
       if (!world) return;
       const w = this._predWalls.get(key);
+      // A3 — only walls near the local ship (unswept ⇒ released).
+      if (this._predWallShipX === this._predWallShipX) {
+        const d = pointSegmentDistance(this._predWallShipX, this._predWallShipY, ax, ay, bx, by);
+        if (!wantPredBody(w !== undefined, d)) return;
+      }
       if (!w) {
         const id = `predwall-${key}`; // once per wall (static structures)
         world.spawnWall(id, ax, ay, bx, by, thickness);
@@ -3274,6 +3283,10 @@ export class ColyseusGameClient {
     // collider / mass / AI-ledger / shield-swap details live in the leaves.
     const ctx = this._clientSpawnCtx;
     ctx.predWorld = this.predWorld;
+    // A3 — structures stream in by distance from the local ship (every
+    // correction replays the whole prediction world). No local ship ⇒ keep all.
+    const localId = this.mirror.localPlayerId;
+    const me = localId ? this.mirror.ships.get(localId) : undefined;
     for (const [entityId, entry] of this.mirror.swarm) {
       // HC#2: an unrecognised pose-core kind resolves to `null` and is SKIPPED —
       // it never falls through to the drone path (the old `else`-is-drone branch
@@ -3284,6 +3297,10 @@ export class ColyseusGameClient {
       if (key === undefined) {
         key = `swarm-${entityId}`;
         keyCache.set(entityId, key);
+      }
+      if (entry.kind === 2 && me) {
+        const edge = Math.hypot(entry.x - me.x, entry.y - me.y) - entry.radius;
+        if (!wantPredBody(this.predWorld.hasShip(key), edge)) continue; // unseen ⇒ swept below
       }
       seen.add(key);
       ctx.entityId = entityId;
@@ -3490,6 +3507,10 @@ export class ColyseusGameClient {
     const structures = this.mirror.structures;
     const swarm = this.mirror.swarm;
     const gen = ++this._predWallGen;
+    const localId = this.mirror.localPlayerId;
+    const me = localId ? this.mirror.ships.get(localId) : undefined;
+    this._predWallShipX = me ? me.x : NaN;
+    this._predWallShipY = me ? me.y : NaN;
     if (structures && swarm) visitDerivedWalls(structures, swarm, this._predWallVisitor);
     for (const [key, w] of this._predWalls) {
       if (w.gen === gen) continue;

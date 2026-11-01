@@ -239,6 +239,12 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 - **Placement rotation.** It is module state in `structures/structurePlacementClient.ts` (`cyclePlacementRotation`, the R key, main-thread in `App.tsx`), NOT Zustand: `rotation` is a lint-blocked spatial key and this is a discrete selection the renderer reads through the preview's `angle`. It rides `place_structure.rot`.
 - **Client rules use the box too.** The grid view (`mirrorToGridNode`: `halfW/halfH` from the swarm angle) and picking (`pickEntity.ts`) use the footprint box, matching the server.
 
+## Structures at base scale — client cost rules (plan soft-leaping-truffle v2, A3)
+
+- **The connector web has two layers.** `ConnectorRenderer.staticGfx` (behind) holds everything steady: idle edges, turret range rings, up-wall rails, open-gate guides. It rebuilds only when `staticSignature` changes or the zoom moves > 3 %. `gfx` (front) is cleared every frame and holds only what animates. New steady visuals go on the static layer; anything driven by `nowMs` goes on `gfx`, and anything the static layer draws must feed `staticSignature`.
+- **The prediction world streams structures and walls by distance** (`structures/predStructureStreaming.ts`, `PREDWORLD_STRUCTURE_RADIUS`). Don't add every structure to predWorld: each server correction replays the whole world (a citadel made that ~6× dearer). No local ship ⇒ no streaming (everything kept).
+- **Structure sprites off screen are hidden** (`isSpriteInView` with the camera rect).
+
 ## Shield walls are DERIVED, not read per pylon (gates, plan soft-leaping-truffle v2)
 
 - `structures/derivedWalls.ts` `visitDerivedWalls` is the ONE place the client works out shield walls: fence walls between any two connected built emitters (pylons + gates, anchored on the nearest gate post) and each gate's spans, blocking per `wallActive` and the `gateOpen` bits.

@@ -169,6 +169,8 @@ export class PixiRenderer implements IRenderer {
   /** Procedural bases (plan soft-leaping-truffle) — behind everything in the ship layer. */
   private baseRenderer!: BaseRenderer;
   private readonly _baseViewScratch = new Float64Array(4);
+  /** A3 — visible rect for culling structure sprites (reused per frame). */
+  private readonly _swarmViewScratch = new Float64Array(4);
   /**
    * Warp-mode render state — the "loading screen" rendered ON the same
    * canvas as gameplay (no separate Pixi Application). When `warpActive`
@@ -638,6 +640,9 @@ export class PixiRenderer implements IRenderer {
     this.baseRenderer = new BaseRenderer();
     this.shipContainer.addChild(this.baseRenderer.container);
     this.connectorRenderer = new ConnectorRenderer();
+    // A3 — the static layer (idle web, range rings, wall rails) sits behind the
+    // per-frame layer.
+    this.shipContainer.addChild(this.connectorRenderer.staticGfx);
     this.shipContainer.addChild(this.connectorRenderer.gfx);
 
     // 2026-05-26 heap-growth gate step 12 — pool ctx objects for the
@@ -1398,6 +1403,7 @@ export class PixiRenderer implements IRenderer {
         ? Math.min(0.05, Math.max(0, (swarmNow - this._lastSwarmUpdateNow) / 1000))
         : 1 / 60;
     this._lastSwarmUpdateNow = swarmNow;
+    this._swarmUpdaterCtx.viewBounds = this.camera.visibleBoundsInto(this._swarmViewScratch);
     updateSwarmSprites(mirror, this._swarmUpdaterCtx);
 
     for (const [id, sprite] of this.sprites) {
