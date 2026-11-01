@@ -10,6 +10,7 @@ import { SCRAP_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
+import { gateColliderPolygons, gateWorldAxisBoxes } from '../../core/structures/gateGeometry.js';
 
 export interface AsteroidSpec {
   id: string;
@@ -52,7 +53,7 @@ export interface SpawnerHooks {
    *  `angle` (scrap, kind=3) rotates the body at spawn so a recentred scrap
    *  collider is oriented to match the dying ship; every other caller passes 0
    *  / undefined (legacy axis-aligned spawn). */
-  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number, angle?: number) => void;
+  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>) => void;
   /** Direct write into the SAB so the first update() tick reads a sane pose. */
   sabF32: Float32Array;
   sabU32: Uint32Array;
@@ -207,10 +208,12 @@ export class SwarmSpawner {
     // hull polygon from it + the radius here so `spawnOne` can attach the
     // matching convexHull collider + hit-resolver vertices.
     const structureVertices = structureHullPoints(s.shipKind, s.radius);
+    // Gates: posts (and airlock walls) as separate parts, so the gap is open.
+    const parts = gateColliderPolygons(s.shipKind) ?? undefined;
     const spec: AsteroidSpec = {
       id: s.id, x: s.x, y: s.y, vx: 0, vy: 0, radius: s.radius, mass: s.mass ?? STRUCTURE_DEFAULT_MASS,
     };
-    const ok = this.spawnOne(2, spec, undefined, undefined, structureVertices, s.angle ?? 0);
+    const ok = this.spawnOne(2, spec, undefined, undefined, structureVertices, s.angle ?? 0, parts);
     // The structure SUBTYPE rides the shared `shipKind` byte (kind=2 path) so
     // the client decoder can pick the right silhouette + tint. Set it on the
     // freshly-registered record (spawnOne only auto-sets shipKind for drones).
@@ -221,6 +224,8 @@ export class SwarmSpawner {
         const ext = structureHalfExtents(s.shipKind, ((s.angle ?? 0) * 180) / Math.PI);
         rec.halfW = ext.hw;
         rec.halfH = ext.hh;
+        const boxes = gateWorldAxisBoxes(s.shipKind, s.angle ?? 0);
+        if (boxes) rec.boxes = boxes;
       }
     } else if (ok) {
       // Kindless (test fixture): its square collider is radius-sized.
@@ -283,6 +288,7 @@ export class SwarmSpawner {
     shipKind?: ShipKind,
     structureVertices?: ReadonlyArray<Vec2>,
     angle = 0,
+    structureParts?: ReadonlyArray<ReadonlyArray<Vec2>>,
   ): boolean {
     const slot = this.hooks.takeSlot();
     if (slot === undefined) return false;
@@ -369,7 +375,7 @@ export class SwarmSpawner {
     // match the dying ship. Other kinds pass 0 (legacy axis-aligned spawn).
     // Structures (kind 2) carry their quarter-turn rotation too (phase V).
     const spawnAngle = kind === SWARM_KIND_SCRAP || kind === 2 ? angle : 0;
-    this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, mass, vertices, linearDamping, staticBody, collisionGroups, spawnAngle);
+    this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, mass, vertices, linearDamping, staticBody, collisionGroups, spawnAngle, structureParts);
 
     // Phase 5d: insert into the interest grid so this entity participates in
     // per-client filtering. Indexed by the dense u16 entityId since that's

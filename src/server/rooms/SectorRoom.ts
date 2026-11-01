@@ -716,6 +716,7 @@ export class SectorRoom extends Room<SectorState> {
     radius: number;
     halfW?: number;
     halfH?: number;
+    boxes?: Float32Array;
   }> = [];
 
   // ── Phase 4b.3 (multi-mount turret refactor, 2026-05-11) ────────────────
@@ -1808,8 +1809,8 @@ export class SectorRoom extends Room<SectorState> {
       : undefined;
     this.swarmSpawner = new SwarmSpawner(this.swarmRegistry, {
       takeSlot: () => this.freeSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle) =>
-        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts) =>
+        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
@@ -3050,7 +3051,7 @@ export class SectorRoom extends Room<SectorState> {
         maxHealth: getStructureKind(rec.kind).maxHealth,
         priority: structurePriority(rec.kind),
       });
-      circles.push({ id: rec.id, x: rec.x, y: rec.y, radius: rec.radius, halfW: rec.halfW, halfH: rec.halfH });
+      circles.push({ id: rec.id, x: rec.x, y: rec.y, radius: rec.radius, halfW: rec.halfW, halfH: rec.halfH, boxes: this.swarmRegistry.get(rec.id)?.boxes });
     }
   }
 
