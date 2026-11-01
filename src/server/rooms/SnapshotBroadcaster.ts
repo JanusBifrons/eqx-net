@@ -135,6 +135,8 @@ export interface SnapshotBroadcasterDeps {
    *  `drones[].hostile` bit: is this drone (swarm string id) hostile to this
    *  player? Wired to the room's AI hostility ledger. */
   isDroneHostileTo: (droneId: string, playerId: string) => boolean;
+  /** P3c — the drone is winding up a charge weapon (the telegraph bit). */
+  isDroneCharging?: (droneId: string) => boolean;
   /** Living World P1a — the carried hold of a ship instance (a SHARED reference
    *  from the HoldStore, replaced only on a discrete transfer — #14 safe), or
    *  undefined when it carries nothing. Absent dep ⇒ no cargo slice. */
@@ -253,6 +255,7 @@ type MutableDroneEntry = {
   shieldDown?: boolean;
   hp?: number;
   hostile?: boolean;
+  charging?: boolean;
 };
 
 type MutableAsteroidEntry = {
@@ -442,7 +445,7 @@ export class SnapshotBroadcaster {
   private static writeDroneSlot(
     arr: MutableDroneEntry[], i: number,
     id: number, mountAngles: number[] | undefined, shieldDown: boolean,
-    hp: number | undefined, hostile: boolean,
+    hp: number | undefined, hostile: boolean, charging = false,
   ): void {
     const slot = arr[i];
     if (!slot) {
@@ -450,9 +453,12 @@ export class SnapshotBroadcaster {
       if (shieldDown) fresh.shieldDown = true;
       if (hp !== undefined) fresh.hp = hp;
       if (hostile) fresh.hostile = true;
+      if (charging) fresh.charging = true;
       arr[i] = fresh;
       return;
     }
+    if (charging) slot.charging = true;
+    else delete slot.charging;
     slot.id = id;
     // Always assign; undefined means "drop the field on the wire" via
     // notepack.io's encoder which skips undefined values.
@@ -798,10 +804,12 @@ export class SnapshotBroadcaster {
           // Campaign 2.1 — per-recipient hostility bit (invariant #16: the
           // snapshot backstop for the bot_aggro accelerant). Emit-when-true.
           const hostile = d.isDroneHostileTo(rec.id, recipientPlayerId);
-          if (!droneMountAnglesArr && !rec.shieldDown && hpPct === undefined && !hostile) continue;
+          // P3c — charge-weapon wind-up telegraph (emit-when-true, #16).
+          const charging = d.isDroneCharging?.(rec.id) === true;
+          if (!droneMountAnglesArr && !rec.shieldDown && hpPct === undefined && !hostile && !charging) continue;
           SnapshotBroadcaster.writeDroneSlot(
             dronesScratch, dronesCount,
-            eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct, hostile,
+            eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct, hostile, charging,
           );
           dronesCount++;
         }

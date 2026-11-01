@@ -132,7 +132,7 @@ export type ShipShape = z.infer<typeof ShipShapeSchema>;
 
 /** Catalogue-id of the weapon installed in a mount. Must match a
  *  `WeaponId` from `src/core/combat/WeaponCatalogue.ts`. */
-export const MountWeaponIdSchema = z.enum(['hitscan', 'laser', 'heat-seeker', 'pulse-orb']);
+export const MountWeaponIdSchema = z.enum(['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser']);
 
 export const WeaponMountSchema = z
   .object({

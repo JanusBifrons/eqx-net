@@ -1623,6 +1623,7 @@ export class SectorRoom extends Room<SectorState> {
       // Campaign 2.1 — the per-recipient `drones[].hostile` bit reads the
       // same hostility ledger the AI tick + liveCounts use (one truth).
       isDroneHostileTo: (droneId, playerId) => this.npcHostileTo(droneId, playerId),
+      isDroneCharging: (droneId) => this.aiFireResolver.isCharging(droneId),
       // Living World P1a (#16) — own-ship cargo slice source.
       shipHoldOf: (shipInstanceId) => this.loot.shipHold(shipInstanceId),
       depositProgressOf: (shipInstanceId) => this.depositProgress.get(shipInstanceId),
@@ -3388,6 +3389,8 @@ export class SectorRoom extends Room<SectorState> {
     // A turret's kill mid-tick must not leave the evicted drone selectable by
     // the next turret in the same tick (the linear scan never saw it).
     this.turretTargetGridFresh = false;
+    // P3c — a removed shooter's pending charge never fires.
+    this.aiFireResolver.forget(rec.id);
     // Gameplay audit log — record a REAL combat death (the `emitDestroyed`
     // signal that fires the kill-feed + bus ENTITY_DESTROYED; load-shedder /
     // quiet bot despawn / abandon use emitDestroyed:false and are excluded).
@@ -7003,6 +7006,8 @@ export class SectorRoom extends Room<SectorState> {
       handleAiFire: (shooterId, dirX, dirY, tick) => this.handleAiFire(shooterId, dirX, dirY, tick),
       phaseTime,
     });
+    // Living World P3c — fire every NPC charge weapon whose wind-up elapsed.
+    this.aiFireResolver.releaseCharges(this.serverTick);
 
     // Phase 4b.3 — server-authoritative turret rotation for player ships.
     // Mirrors the client's `tickLocalMountAim` so the server's hit-test

@@ -1,5 +1,5 @@
 export type WeaponMode = 'hitscan' | 'projectile' | 'missile';
-export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb';
+export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'charge-laser';
 
 interface WeaponDefBase {
   id: WeaponId;
@@ -28,6 +28,10 @@ export interface HitscanWeaponDef extends WeaponDefBase {
    *  falloff ⇒ flat damage. SERVER-AUTHORITATIVE — the client reads the scaled
    *  number off the `DamageEvent`, never predicts it (avoids desync). */
   falloff?: { minDamageFrac: number; maxRangeMul?: number };
+  /** Living World P3c — NPC wind-up: the shot fires `chargeTicks` after the
+   *  trigger, along the direction locked when the charge began (a dodgeable
+   *  telegraph; the charge state rides `drones[].charging`). Absent ⇒ instant. */
+  chargeTicks?: number;
 }
 
 export interface ProjectileWeaponDef extends WeaponDefBase {
@@ -220,14 +224,31 @@ const PULSE_ORB_DEF: ProjectileWeaponDef = {
   energyCost: 8,
 };
 
+/**
+ * Living World P3c — the robot orb's CHARGE LASER: a 1.2 s visible wind-up,
+ * then a heavy beam along the direction locked when the charge began (move and
+ * it misses). NPC-only. 60 damage, 2.5 s cooldown.
+ */
+const CHARGE_LASER_DEF: HitscanWeaponDef = {
+  id: 'charge-laser',
+  displayName: 'Charge Laser',
+  mode: 'hitscan',
+  damage: 60,
+  cooldownTicks: 150,
+  range: 520,
+  energyCost: 10,
+  chargeTicks: 72,
+};
+
 export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, WeaponDef>([
   ['hitscan', HITSCAN_DEF],
   ['laser', LASER_DEF],
   ['heat-seeker', HEAT_SEEKER_DEF],
   ['pulse-orb', PULSE_ORB_DEF],
+  ['charge-laser', CHARGE_LASER_DEF],
 ]);
 
-export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb'] as const;
+export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser'] as const;
 
 export const DEFAULT_WEAPON: WeaponId = 'hitscan';
 
@@ -236,7 +257,7 @@ export function getWeapon(id: WeaponId): WeaponDef {
 }
 
 export function isWeaponId(v: unknown): v is WeaponId {
-  return v === 'hitscan' || v === 'laser' || v === 'heat-seeker' || v === 'pulse-orb';
+  return v === 'hitscan' || v === 'laser' || v === 'heat-seeker' || v === 'pulse-orb' || v === 'charge-laser';
 }
 
 /**
