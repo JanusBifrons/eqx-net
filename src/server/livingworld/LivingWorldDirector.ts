@@ -42,6 +42,7 @@ import { getSector, getNeighbours, isEntrySector } from '../../core/galaxy/galax
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import type { BotCarry } from './botTypes.js';
 import type { SectorLiveState, SectorOwner } from '../../shared-types/galaxySnapshot.js';
+import type { WorldEventView } from '../../shared-types/worldEvents.js';
 import type { SectorStructurePresence } from '../../shared-types/galaxyPresence.js';
 import { LivingWorldRoom } from './LivingWorldRoom.js';
 import { HunterBotPool, type BotRecord, type DirectorSnapshot } from './director/HunterBotPool.js';
@@ -251,6 +252,8 @@ export interface LivingWorldHooks {
   sectorOwner?: (sectorKey: string) => SectorOwner | null;
   /** P4a — the name of a named elite roaming a sector (galaxy snapshot), or null. */
   sectorElite?: (sectorKey: string) => string | null;
+  /** P4b — the world event running in a sector (galaxy snapshot), or null. */
+  sectorEvent?: (sectorKey: string) => WorldEventView | null;
 }
 
 /** Deterministic per-bot scatter around a respawn anchor (no pile-up on one point). */
@@ -734,6 +737,8 @@ export class LivingWorldDirector {
         recentCombat: room.recentCombat?.() ?? null,
         // P4a — a named elite in this sector (the map's elite marker).
         elite: this.hooks.sectorElite?.(key) ?? null,
+        // P4b — a world event in this sector.
+        event: this.hooks.sectorEvent?.(key) ?? null,
       });
     }
     this.galaxyStatsCache = out;

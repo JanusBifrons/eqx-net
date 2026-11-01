@@ -15,11 +15,14 @@ export const HAULER_ID_PREFIX = 'hauler-';
 
 /** P4a — named elites (owned by the `EliteDirector`); mirrors `ELITE_ID_PREFIX`. */
 export const ELITE_BOT_ID_PREFIX = 'elite-';
+/** P4b — world-event NPCs (owned by the `EventDirector`); mirrors `EVENT_ID_PREFIX`. */
+export const EVENT_BOT_ID_PREFIX = 'event-';
 
-/** True for any director-owned NPC id (drone, robot, trade hauler or elite). Alloc-free. */
+/** True for any director-owned NPC id (drone, robot, trade hauler, elite or event NPC). Alloc-free. */
 export function isDirectorBotId(id: string): boolean {
   return id.startsWith(DRONE_BOT_ID_PREFIX) || id.startsWith(ROBOT_BOT_ID_PREFIX)
-    || id.startsWith(HAULER_ID_PREFIX) || id.startsWith(ELITE_BOT_ID_PREFIX);
+    || id.startsWith(HAULER_ID_PREFIX) || id.startsWith(ELITE_BOT_ID_PREFIX)
+    || id.startsWith(EVENT_BOT_ID_PREFIX);
 }
 
 export function isHaulerId(id: string): boolean {

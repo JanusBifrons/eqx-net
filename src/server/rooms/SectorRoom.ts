@@ -4492,14 +4492,19 @@ export class SectorRoom extends Room<SectorState> {
 
   /** Living World P4a — promote a just-spawned bot to a NAMED ELITE: its hull
    *  max becomes ELITE_HEALTH_MUL × its kind's and it is healed to full. */
+  /** P4b — a world-event reward (cache / salvage pod), as an ordinary loot pod. */
+  dropEventLoot(hold: Hold, x: number, y: number): void {
+    this.loot.drop(hold, x, y, 0, 0, { cause: 'event' });
+  }
+
   broadcastWorldNotice(notice: WorldNotice): void {
     this.broadcast('world_notice', notice);
   }
 
-  markElite(botId: string, name: string): boolean {
+  markElite(botId: string, name: string, healthMul = ELITE_HEALTH_MUL): boolean {
     const rec = this.swarmRegistry.get(botId);
     if (rec == null || rec.kind !== SWARM_KIND_DRONE) return false;
-    const maxHealth = (getDroneMaxHealth(rec.shipKind) ?? 40) * ELITE_HEALTH_MUL;
+    const maxHealth = (getDroneMaxHealth(rec.shipKind) ?? 40) * healthMul;
     rec.elite = { name, maxHealth };
     this.swarmHealth.set(botId, maxHealth);
     return true;
