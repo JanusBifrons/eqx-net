@@ -286,6 +286,24 @@ export class TradeDirector implements TradeSink {
     return kind === 'sell' ? quoteSell(this.store.market, good, traderRep, f) : quoteBuy(this.store.market, good, traderRep, f);
   }
 
+  // ── T4: an NPC Freight Dock trades with a visiting pilot ─────────────────
+
+  dockQuote(playerId: string, sectorKey: string | null, good: GoodId): { buy: number; sell: number } | null {
+    const rep = this.store.rep(playerId, 'traders');
+    if (tradersRefuse(rep)) return null;
+    return { buy: this.quote('buy', good, rep, sectorKey), sell: this.quote('sell', good, rep, sectorKey) };
+  }
+
+  volumeLeft(playerId: string): number {
+    return this.store.volumeLeft(playerId);
+  }
+
+  recordDockFill(playerId: string, good: GoodId, qty: number, side: 'buy' | 'sell', value: number): void {
+    // The pilot sold ⇒ supply up (price falls); bought ⇒ down. Same as a deal.
+    applyFill(this.store.market, good, qty, side);
+    this.store.recordVolume(playerId, Math.floor(value));
+  }
+
   // ── Requests (TradeSink) ─────────────────────────────────────────────────
 
   acceptOffer(playerId: string, sectorKey: string, networkUid: string, msg: AcceptOfferMsg): TradeVerdict {

@@ -53,6 +53,15 @@ export const CargoStateSchema = z
     /** The pilot's ship hold and its capacity, when open. */
     ship: HoldSchema.nullable(),
     shipCapacity: z.number().nonnegative(),
+    /** T4 — an NPC Freight Dock: a market, not free access. `hold` is the
+     *  base's stock; per-unit prices: `buy` = you pay, `sell` = you get. */
+    market: z
+      .object({
+        buy: z.partialRecord(z.enum(GOOD_IDS), z.number().nonnegative()),
+        sell: z.partialRecord(z.enum(GOOD_IDS), z.number().nonnegative()),
+      })
+      .strict()
+      .optional(),
     /** The verdict of the action this replies to, or why it's locked. */
     message: z.string().max(200).optional(),
     ok: z.boolean().optional(),

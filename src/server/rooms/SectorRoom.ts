@@ -2800,6 +2800,7 @@ export class SectorRoom extends Room<SectorState> {
         send({ type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message: access.message, ...(move ? { ok: false } : {}) });
         return;
       }
+      if (access.market) { send(this.dockMarket(playerId, entityId, access, move)); return; }
       let verdict: { ok: boolean; message: string } | undefined;
       if (move !== null) {
         const moved = move.dir === 'take'
@@ -6904,14 +6905,21 @@ export class SectorRoom extends Room<SectorState> {
    * Neutral or hostile cargo needs a break-in (C2).
    */
   private cargoAccess(playerId: string, entityId: number):
-    | { ok: true; rec: StructureRecord; shipInstanceId: string; capacity: number }
+    | { ok: true; rec: StructureRecord; shipInstanceId: string; capacity: number; market: boolean }
     | { ok: false; message: string } {
     const swarmRec = this.swarmRegistry.getByEntityId(entityId);
     const rec = swarmRec ? this.structureRegistry.get(swarmRec.id) ?? null : null;
     if (rec === null || !isOperationalStorage(rec)) return { ok: false, message: 'That has no cargo hold.' };
     // Allies may open only if the owner allows it; there is no owner setting yet.
-    if (!cargoOpensFor(relationOf(playerId, rec.owner, this.relationCtx), false)) {
-      return { ok: false, message: 'Locked. That cargo is not yours.' };
+    const relation = relationOf(playerId, rec.owner, this.relationCtx);
+    let market = false;
+    if (!cargoOpensFor(relation, false)) {
+      // T4 — an NPC Freight Dock trades with anyone who isn't hostile.
+      if (isNpcOwner(rec.owner) && rec.kind === 'freight_dock' && relation !== 'hostile' && getTradeSink() !== null) {
+        market = true;
+      } else {
+        return { ok: false, message: relation === 'hostile' ? 'Locked. They will not trade with you.' : 'Locked. That cargo is not yours.' };
+      }
     }
     if (this.sectorKey === null) return { ok: false, message: 'Cargo only moves in the galaxy.' };
     const ship = this.getActiveShip(playerId);
@@ -6924,7 +6932,91 @@ export class SectorRoom extends Room<SectorState> {
     if (dx * dx + dy * dy > CARGO_ACCESS_RANGE * CARGO_ACCESS_RANGE) {
       return { ok: false, message: 'Fly closer to open its cargo.' };
     }
-    return { ok: true, rec, shipInstanceId: ship.shipInstanceId, capacity: this.shipCargoCapacity(ship.kind, ship.shipInstanceId) };
+    return { ok: true, rec, shipInstanceId: ship.shipInstanceId, capacity: this.shipCargoCapacity(ship.kind, ship.shipInstanceId), market };
+  }
+
+  /**
+   * T4 — an NPC Freight Dock is a market: Take buys from the base's storage
+   * network, Put sells into the dock, at the trade board's regional price for
+   * this pilot. Each good is ONE atomic group (ship + storage + the wallet op),
+   * clamped first to stock, cargo space, the wallet and the hourly volume.
+   */
+  private dockMarket(
+    playerId: string,
+    entityId: number,
+    access: { rec: StructureRecord; shipInstanceId: string; capacity: number },
+    move: { dir: 'take' | 'put'; items: CargoRequest } | null,
+  ): CargoState {
+    const sink = getTradeSink();
+    const shipId = access.shipInstanceId;
+    const dock = access.rec;
+    const closed = (message: string): CargoState => ({
+      type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message, ...(move ? { ok: false } : {}),
+    });
+    if (sink === null) return closed('The traders are not here.');
+    if (sink.dockQuote(playerId, this.sectorKey, 'minerals') === null) return closed('The traders refuse to deal with you.');
+    const wallet = getWallet();
+    let verdict: { ok: boolean; message: string } | undefined;
+    if (move !== null) {
+      let total = 0;
+      let any = false;
+      for (const g of GOOD_IDS) {
+        const asked = move.items.goods?.[g] ?? 0;
+        if (!(asked > 0)) continue;
+        const q = sink.dockQuote(playerId, this.sectorKey, g);
+        if (q === null) continue;
+        const ship = getHoldStore().get(shipId)?.hold ?? emptyHold();
+        const w = GOOD_DEFS[g].weight;
+        if (move.dir === 'take') {
+          const unit = q.buy;
+          const space = Math.floor(Math.max(0, access.capacity - holdWeight(ship)) / Math.max(1e-9, w));
+          const afford = unit > 0 ? Math.floor(wallet.balance(playerId) / unit) : asked;
+          const volume = unit > 0 ? Math.floor(sink.volumeLeft(playerId) / unit) : asked;
+          const n = Math.min(asked, this.storage.networkStock(dock, g), space, afford, volume);
+          if (n <= 0) continue;
+          const cost = Math.ceil(n * unit);
+          const op = cost > 0 ? wallet.debitDeferred(playerId, cost, 'dock_buy') : null;
+          if (cost > 0 && op === null) continue;
+          const moved = this.storage.marketBuy(shipId, playerId, dock, g, n, op ? [op] : []);
+          if (moved <= 0) { if (cost > 0) wallet.credit(playerId, cost, 'dock_refund'); continue; }
+          sink.recordDockFill(playerId, g, moved, 'buy', cost);
+          total += cost;
+          any = true;
+        } else {
+          const unit = q.sell;
+          const fit = Math.floor(this.storage.dockFreeWeight(dock) / Math.max(1e-9, w));
+          const volume = unit > 0 ? Math.floor(sink.volumeLeft(playerId) / unit) : asked;
+          const n = Math.min(asked, ship.goods[g] ?? 0, fit, volume);
+          if (n <= 0) continue;
+          const pay = Math.floor(n * unit);
+          const op = pay > 0 ? wallet.creditDeferred(playerId, pay, 'dock_sell') : null;
+          const moved = this.storage.marketSell(shipId, playerId, dock, g, n, op ? [op] : []);
+          if (moved <= 0) continue;
+          sink.recordDockFill(playerId, g, moved, 'sell', pay);
+          total += pay;
+          any = true;
+        }
+      }
+      verdict = any
+        ? { ok: true, message: move.dir === 'take' ? `Bought for ${total}¢.` : `Sold for ${total}¢.` }
+        : { ok: false, message: move.dir === 'take' ? 'Nothing bought: out of stock, no room aboard, or not enough credits.' : 'Nothing sold: the dock is full or you hold none.' };
+      if (any) auditEvent({ event: 'dock_trade', sector: this.sectorKey ?? undefined, playerId, owner: dock.owner, dir: move.dir === 'take' ? 'buy' : 'sell', credits: total });
+    }
+    const stock: Hold = { goods: {}, blueprints: [] };
+    for (const g of GOOD_IDS) {
+      const n = this.storage.networkStock(dock, g);
+      if (n > 0) stock.goods[g] = n;
+    }
+    const ship = getHoldStore().get(shipId)?.hold ?? emptyHold();
+    const market: NonNullable<CargoState['market']> = { buy: {}, sell: {} };
+    for (const g of GOOD_IDS) {
+      if ((stock.goods[g] ?? 0) <= 0 && (ship.goods[g] ?? 0) <= 0) continue;
+      const q = sink.dockQuote(playerId, this.sectorKey, g);
+      if (q === null) continue;
+      market.buy[g] = q.buy;
+      market.sell[g] = q.sell;
+    }
+    return { type: 'cargo_state', entityId, open: true, hold: stock, used: 0, capacity: 0, ship, shipCapacity: access.capacity, market, ...(verdict ?? {}) };
   }
 
   /**

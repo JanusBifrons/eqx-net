@@ -34,14 +34,27 @@ const BTN_SX = {
 const EMPTY_SX = { color: '#7f958c', fontStyle: 'italic' as const };
 const WARN_SX = { color: '#ffb36b' };
 
-function Pane({ title, rows, verb, testPrefix, onMove }: {
+/** "12¢" (whole credits) or "1.5¢" (cheap goods). */
+function credits(n: number): string {
+  return n >= 10 ? `${Math.round(n)}¢` : `${Math.round(n * 10) / 10}¢`;
+}
+
+function Pane({ title, rows, verb, testPrefix, onMove, prices }: {
   title: string;
   rows: CargoRow[];
-  verb: 'Take' | 'Put';
+  verb: 'Take' | 'Put' | 'Buy' | 'Sell';
   testPrefix: 'here' | 'aboard';
   onMove: (items: CargoItems) => void;
+  /** T4 — a market: per-unit prices by good; only goods trade. */
+  prices?: Partial<Record<string, number>>;
 }): JSX.Element {
   const v = verb.toLowerCase();
+  const priceOf = (r: CargoRow, qty: number): string => {
+    if (prices === undefined) return '';
+    const unit = prices[r.key.slice(2)];
+    return unit === undefined ? '' : ` · ${credits(unit * qty)}`;
+  };
+  const tradable = (r: CargoRow): boolean => prices === undefined || (r.key.startsWith('g:') && prices[r.key.slice(2)] !== undefined);
   return (
     <Box>
       <Box sx={PANE_TITLE_SX}>{title}</Box>
@@ -50,10 +63,12 @@ function Pane({ title, rows, verb, testPrefix, onMove }: {
         {rows.map((r) => (
           <Box key={r.key} sx={ROW_SX} data-testid={`cargo-${testPrefix}-row`} data-key={r.key} data-count={r.count}>
             <Box sx={LABEL_SX}>{r.label}{r.count > 1 ? ` ×${r.count}` : ''}</Box>
-            {r.count > 1 && (
-              <Box sx={BTN_SX} data-testid={`cargo-${v}-one`} onClick={() => onMove(r.one)}>{verb} 1</Box>
+            {tradable(r) && r.count > 1 && (
+              <Box sx={BTN_SX} data-testid={`cargo-${v}-one`} onClick={() => onMove(r.one)}>{verb} 1{priceOf(r, 1)}</Box>
             )}
-            <Box sx={BTN_SX} data-testid={`cargo-${v}-all`} onClick={() => onMove(r.all)}>{r.count > 1 ? `${verb} all` : verb}</Box>
+            {tradable(r) && (
+              <Box sx={BTN_SX} data-testid={`cargo-${v}-all`} onClick={() => onMove(r.all)}>{r.count > 1 ? `${verb} all` : verb}{priceOf(r, r.count)}</Box>
+            )}
           </Box>
         ))}
       </Box>
@@ -85,18 +100,25 @@ export const CargoPanel = memo(function CargoPanel({ entityId }: { entityId: num
 
   const here = cargoRows(state?.hold ?? null);
   const aboard = cargoRows(state?.ship ?? null);
+  const market = state?.market;
 
   return (
-    <Box sx={ROOT_SX} data-testid="cargo-panel" data-open={state?.open === true ? '1' : '0'}>
+    <Box sx={ROOT_SX} data-testid="cargo-panel" data-open={state?.open === true ? '1' : '0'} data-market={market ? '1' : '0'}>
       <Box sx={TITLE_SX}>
-        Cargo{state?.open === true ? ` · ${Math.round(state.used)}/${state.capacity}` : ''}
+        {market ? 'Market' : 'Cargo'}{state?.open === true && !market ? ` · ${Math.round(state.used)}/${state.capacity}` : ''}
       </Box>
       {state === null && <Box>Opening…</Box>}
       {state !== null && !state.open && <Box sx={WARN_SX} data-testid="cargo-locked">{state.message ?? 'Locked.'}</Box>}
       {state?.open === true && (
         <>
-          <Pane title="Here" rows={here} verb="Take" testPrefix="here" onMove={(items) => sendCargoMove(entityId, 'take', items)} />
-          <Pane title={`Aboard · ${Math.round(state.shipCapacity)} capacity`} rows={aboard} verb="Put" testPrefix="aboard" onMove={(items) => sendCargoMove(entityId, 'put', items)} />
+          <Pane
+            title={market ? 'For sale' : 'Here'} rows={here} verb={market ? 'Buy' : 'Take'} testPrefix="here"
+            onMove={(items) => sendCargoMove(entityId, 'take', items)} prices={market?.buy}
+          />
+          <Pane
+            title={`Aboard · ${Math.round(state.shipCapacity)} capacity`} rows={aboard} verb={market ? 'Sell' : 'Put'} testPrefix="aboard"
+            onMove={(items) => sendCargoMove(entityId, 'put', items)} prices={market?.sell}
+          />
         </>
       )}
       {notice !== null && (

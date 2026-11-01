@@ -186,6 +186,17 @@ Locks:
 
 **Next (C1c):** holds on every structure kind (with "is a deposit target" separate), and NPC ship holds rolled from a seed.
 
+## Part 4 (T4): trade at an NPC Freight Dock
+
+Every generated NPC base has a Freight Dock, and its gates open for anyone not hostile. Fly in and open the dock (the same **Open cargo** button). If you aren't hostile to its side, it opens as a **market**, not free access:
+- **For sale:** the base's stock across its whole storage network. **Buy** moves goods aboard and the wallet pays.
+- **Aboard:** your hold. **Sell** moves goods into the dock and the wallet is paid.
+- **Prices:** the trade board's, for you, here. That means the regional factor (T3) and your trader standing: the dock charges more than it pays (the spread), and traders who refuse to deal with you keep it closed.
+- **Clamps:** each trade is clamped to the stock, your cargo space, your credits and your hourly trade volume.
+- **Atomic, and part of the economy.** Each good is ONE atomic group: the ship row, the storage and the wallet op. Every fill moves the galaxy market and counts toward volume, exactly like a deal.
+- **Code:** `SectorRoom.cargoAccess` (market mode) → `dockMarket`; `StorageService.marketBuy` / `marketSell`; the trade sink's `dockQuote` / `volumeLeft` / `recordDockFill`. Audit: `dock_trade`.
+- **Locks:** `tests/integration/sectorRoom/dockMarket.test.ts` (buy and sell at the board price; wallet, hold and base stock all move), `StorageService.test.ts` (the wallet op rides the same group), `CargoPanel.test.tsx` (market mode: priced Buy/Sell, goods only).
+
 ## Tests
 
 - Part 2: `src/server/cargo/StorageService.test.ts` (uid determinism, atomic

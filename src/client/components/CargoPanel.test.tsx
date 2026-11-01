@@ -51,6 +51,24 @@ describe('CargoPanel (C1)', () => {
     expect(screen.getByTestId('cargo-notice').textContent).toBe('No room aboard for that.');
   });
 
+  it('T4: an NPC Freight Dock shows a market — Buy/Sell with prices, goods only', () => {
+    render(<CargoPanel entityId={9} />);
+    act(() => useUIStore.getState().setCargoState(state({
+      hold: { goods: { alloy: 20 }, blueprints: [], packed: [{ product: 'structure:smelter', quality: 50 }] },
+      market: { buy: { alloy: 12, salvage: 3 }, sell: { alloy: 9, salvage: 2 } },
+    })));
+    expect(screen.getByTestId('cargo-panel').getAttribute('data-market')).toBe('1');
+    const alloy = screen.getAllByTestId('cargo-here-row').find((r) => r.getAttribute('data-key') === 'g:alloy')!;
+    expect(alloy.querySelector('[data-testid="cargo-buy-one"]')!.textContent).toBe('Buy 1 · 12¢');
+    expect(alloy.querySelector('[data-testid="cargo-buy-all"]')!.textContent).toBe('Buy all · 240¢');
+    // A packed item has no price here: no button.
+    const packed = screen.getAllByTestId('cargo-here-row').find((r) => r.getAttribute('data-key') === 'p:structure:smelter')!;
+    expect(packed.querySelector('[data-testid^="cargo-buy"]')).toBeNull();
+    const salvage = screen.getByTestId('cargo-aboard-row');
+    fireEvent.click(salvage.querySelector('[data-testid="cargo-sell-all"]')!);
+    expect(send).toHaveBeenLastCalledWith('cargo_move', { type: 'cargo_move', entityId: 9, dir: 'put', items: { goods: { salvage: 3 } } });
+  });
+
   it('ignores a reply for a different structure', () => {
     render(<CargoPanel entityId={9} />);
     act(() => useUIStore.getState().setCargoState(state({ entityId: 10 })));

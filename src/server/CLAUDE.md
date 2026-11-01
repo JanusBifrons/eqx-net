@@ -187,6 +187,11 @@ Update this section when a threshold is set.
 - **Moves:** `StorageService.cargoTake` / `cargoPut`, each ONE hold group with the ship row. Never move items between a ship and a structure any other way.
 - **A manual move switches auto-deposit off for that pilot** (`manualCargo`) until they leave deposit range. Without it, a withdrawal from your own storage is banked straight back.
 - **`entity_stats` holds** show to anyone the cargo opens for (`ownerGateStats`).
+- **Market mode (T4):** an NPC `freight_dock` opens as a market for a non-hostile pilot (`dockMarket`): Take buys, Put sells.
+  - **Prices:** the trade sink's `dockQuote`, the same quote as the board.
+  - **Clamped** to stock, space, wallet and volume.
+  - **Atomic:** one group per good, with the wallet op passed as `extraOps` to `StorageService.marketBuy` / `marketSell`.
+  - Never let a market fill skip `recordDockFill`: the galaxy market and volume must see it.
 - Lock: `tests/integration/sectorRoom/cargoAccess.test.ts`. Story: [docs/features/loot-and-cargo.md](../../docs/features/loot-and-cargo.md) Part 3.
 
 ## NPC bases from the generator (plan soft-leaping-truffle v3, D2)
