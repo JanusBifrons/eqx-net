@@ -19,6 +19,21 @@ export const BASE_PRICES: Readonly<Record<GoodId, number>> = Object.freeze({
   salvage: 6,
   alloy: 25,
   core: 120,
+  // Production chain (plan soft-leaping-truffle v3, P1). Each recipe adds
+  // 1.2–1.6× value and value per weight rises by stage — locked by
+  // recipes.test.ts, which is the authority over these numbers.
+  ice: 3,
+  gas: 4,
+  crystal: 18,
+  fuel: 8,
+  polymer: 15,
+  silicon: 30,
+  provisions: 8,
+  components: 90,
+  electronics: 120,
+  munitions: 60,
+  machinery: 420,
+  consumer_goods: 200,
 });
 
 /** Traders buy below mid and sell above it (the spread is an inflation sink). */

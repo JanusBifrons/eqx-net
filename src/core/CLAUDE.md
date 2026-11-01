@@ -366,3 +366,10 @@ reintroduces the spiral the 500-target cannot afford. Full story:
 - **Hostile acts go into `HostileActLedger`** (`src/core/relations/`). They are directional, per owner, and cool down after `HOSTILE_ACT_COOLDOWN_MS`.
 - **Keep one `RelationContext` per room** and update `nowMs` in place; the query allocates nothing.
 - Full story: [docs/architecture/relations.md](../../docs/architecture/relations.md).
+
+## Production chain data (plan soft-leaping-truffle v3, P1)
+
+- **Goods, recipes and asteroid kinds live in `src/shared-types/`:** `goods.ts` (with a `stage` per good), `recipes.ts` and `asteroidResources.ts`. The level 3+ upgrade goods bill is `structureUpgradeGoods` in `leveling/structureLevel.ts`.
+- **`recipes.test.ts` is the authority over balance.** Every recipe returns 1.2–1.6× its input value at `BASE_PRICES`, value per weight rises by stage, and no good is an orphan. Change a price or a recipe and that test must still pass; don't loosen it.
+- **`GOOD_IDS`, `RECIPE_IDS` and `ASTEROID_RESOURCE_IDS` are append-only** (persisted or on the wire).
+- Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).
