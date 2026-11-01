@@ -29,6 +29,8 @@ export interface TradeSink {
   onHaulerDamaged(haulerId: string, attackerPlayerId: string | null): void;
   /** A player damaged a robot — standing drops (ends any truce). Throttled inside. */
   onRobotDamaged(attackerPlayerId: string): void;
+  /** Economy v2 W6 — the player's standing with traders (blueprint prices). */
+  traderRep?(playerId: string): number;
   /** Robot reputation ≥ ROBOT_TRUCE_AT. Hot-path safe (one Map lookup). */
   robotTruce(playerId: string): boolean;
   /** Drone-reputation wave spacing multiplier (≥ 1). */

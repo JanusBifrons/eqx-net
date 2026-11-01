@@ -42,8 +42,9 @@ import {
 import { getSector } from '../../core/galaxy/galaxy.js';
 import { cloneHold, emptyHold, isHoldEmpty } from '../../core/cargo/hold.js';
 import { applyFill, driftMarket, quoteBuy, quotePacked, quoteSell } from '../../core/economy/market.js';
-import { packedStructureProducts, parseProduct, productName } from '../../shared-types/blueprints.js';
-import { packBillValue } from '../../shared-types/recipes.js';
+import { packedHullProducts, packedStructureProducts, parseProduct, productName } from '../../shared-types/blueprints.js';
+import { hullBillValue, packBillValue } from '../../shared-types/recipes.js';
+import { isPlayableShipKindId } from '../../shared-types/shipKinds.js';
 import { isStructureKindId } from '../../shared-types/structureKinds.js';
 import { giftRepGain, robotTruce, tradersRefuse, waveIntervalFactor } from '../../core/economy/reputation.js';
 import {
@@ -136,13 +137,17 @@ const escrowUid = (runId: string): string => `escrow-${runId}`;
 /** Economy v2 W4b — packed-structure offers kept on the board, and their size. */
 export const PACKED_OFFERS_ON_BOARD = 4;
 export const PACKED_OFFER_MAX_QTY = 3;
+/** Economy v2 W5b — packed-HULL offers kept on the board. */
+export const PACKED_HULL_OFFERS_ON_BOARD = 2;
 /** Trader-made packed items are solid mid quality. */
 export const TRADER_PACKED_QUALITY = 50;
 
 /** Goods value of a packed product's pack recipe (0 ⇒ not sellable). */
 function packedBillOf(product: string): number {
   const { ns, id } = parseProduct(product);
-  return ns === 'structure' && isStructureKindId(id) ? packBillValue(id) : 0;
+  if (ns === 'structure' && isStructureKindId(id)) return packBillValue(id);
+  if (ns === 'hull' && isPlayableShipKindId(id)) return hullBillValue(id);
+  return 0;
 }
 
 /** No wallet injected (tests that don't exercise credits): an empty balance
@@ -283,9 +288,17 @@ export class TradeDirector implements TradeSink {
     }
     // Economy v2 W4b — traders also SELL packed structures (the user's ruling:
     // most players buy them rather than make them). A rotating handful.
-    const products = packedStructureProducts().filter((p) => packedBillOf(p) > 0);
-    let onBoard = this.offers.filter((o) => o.product !== undefined).length;
-    for (let tries = 0; onBoard < PACKED_OFFERS_ON_BOARD && tries < 20 && products.length > 0; tries++) {
+    this.stockPacked('structure:', packedStructureProducts(), PACKED_OFFERS_ON_BOARD, now);
+    // Economy v2 W5b — and packed HULLS (their own slots, so ~25 structure
+    // kinds never crowd the 4 ships off the board).
+    this.stockPacked('hull:', packedHullProducts(), PACKED_HULL_OFFERS_ON_BOARD, now);
+  }
+
+  /** Keep `slots` packed offers whose product starts with `prefix`. */
+  private stockPacked(prefix: string, all: readonly string[], slots: number, now: number): void {
+    const products = all.filter((p) => packedBillOf(p) > 0);
+    let onBoard = this.offers.filter((o) => o.product?.startsWith(prefix) === true).length;
+    for (let tries = 0; onBoard < slots && tries < 20 && products.length > 0; tries++) {
       const product = products[Math.floor(this.rng() * products.length)]!;
       if (this.offers.some((o) => o.product === product)) continue;
       this.offers.push({
@@ -469,6 +482,10 @@ export class TradeDirector implements TradeSink {
     if (now - last < this.opts.robotHitThrottleMs) return;
     this.robotHitAt.set(attackerPlayerId, now);
     this.store.addRep(attackerPlayerId, 'robots', REP_ATTACK_ROBOT);
+  }
+
+  traderRep(playerId: string): number {
+    return this.store.rep(playerId, 'traders');
   }
 
   robotTruce(playerId: string): boolean {

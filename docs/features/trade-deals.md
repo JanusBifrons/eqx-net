@@ -28,6 +28,8 @@ something shoots it down on the way in or while it is docked, the deal fails.
   a visit the deal ends after it.
 - **History** — what happened, newest first.
 
+> **Economy v2 W6 — blueprints.** A **Blueprints** section buys traders' blueprints into the selected base and sells yours, instantly (no hauler: blueprints are weightless). See [blueprints.md](blueprints.md).
+
 > **Economy v2 W4b — packed structures.** The board also carries a rotating
 > handful of **Buy Packed \<structure\>** offers (1–3 each). Price: the pack
 > recipe's goods value × 1.3, shifted by your trader standing like goods.

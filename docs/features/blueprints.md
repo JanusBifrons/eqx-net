@@ -108,12 +108,32 @@ are BOUGHT from NPC factions and traders, and some are LOOTED from ships.
       you're full.
     - Elites (~15 %) and incursion caches (~15 %) can drop packed hulls.
     - Quality has no stat effect yet.
-  - **W5b, next:**
-    - the Shipyard structure and its `build_<ship>` recipes;
-    - traders selling packed hulls;
-    - the picker gate: starter hulls stay free, and any other kind needs a
-      hull you own.
-- **W6 — blueprint market:** buy and sell blueprints with traders.
+  - **W5b, shipped: the Shipyard and the hull gate.**
+    - **Shipyard:** a huge hub structure (Build ▸ Industry), 220 power while it
+      works. Give it a ship blueprint (`hull:<kind>`) and goods and it builds
+      a packed hull into your storage: `build_interceptor`, `build_gunship`,
+      `build_heavy` and `build_missile_frigate`. Set the recipe, then load the
+      blueprint, like any processor. It also comes packed (`pack_shipyard`).
+    - **Traders sell packed hulls:** two hull offers on the board at all times,
+      priced from the Shipyard recipe's goods value × 1.3 (`hullBillValue`).
+    - **The picker gate:** a NEW ship is always a scout or a fighter. Any other
+      kind is locked in the picker ("Buy & unpack"); you get one by buying or
+      looting a packed hull, unpacking it at your storage, and picking it from
+      your roster. A fresh spawn asking for another kind gets a fighter and a
+      notice. The server enforces this in galaxy rooms; test rooms opt in with
+      `enforceHullGate`.
+- **W6 — blueprint market. Shipped.** The Trade tab's **Blueprints** section:
+  - **Traders sell** four real blueprints at a time: mostly copies, an original
+    1 time in 10. Each is one item, pre-rolled, so what you see is what you get,
+    and it leaves the board once bought. Offers expire and restock.
+  - **You sell** any blueprint in the selected base back to traders.
+  - **Price** = the product's goods bill × 0.3 per run (an original counts as 40
+    runs), plus up to 50 % for good stats. Traders sell at × 1.25 and buy at
+    × 0.5, and your trader standing shifts both. NPC (bound) blueprints can't
+    be sold.
+  - **Instant:** a blueprint is weightless data, so buying puts it straight into
+    your storage and selling pays straight into your wallet. Each is one
+    atomic group with the wallet change.
 
 ## Tests
 

@@ -33,6 +33,7 @@ import { TradeNoticeSchema } from '../../shared-types/economy.js';
 import { WorldNoticeSchema } from '../../shared-types/worldNotice.js';
 import { BountyResultSchema } from '../../shared-types/contracts.js';
 import { LabStateSchema } from '../../shared-types/messages/labMessages.js';
+import { BpMarketStateSchema } from '../../shared-types/blueprintMarket.js';
 import { BlueprintResultSchema, fittedCargoMul } from '../../shared-types/blueprints.js';
 
 const EMPTY_IDS: readonly string[] = Object.freeze([]);
@@ -2057,6 +2058,12 @@ export class ColyseusGameClient {
     });
     // Economy v2 W3 — the Research Lab panel's view (a reply to lab_query /
     // lab_start / lab_cancel; the panel is rebuilt from it alone).
+    // Economy v2 W6 — the blueprint market view (the Trade tab rebuilds from it).
+    room.onMessage('bp_market_state', (raw: unknown) => {
+      const parsed = BpMarketStateSchema.safeParse(raw);
+      if (!parsed.success) return;
+      useUIStore.getState().setBpMarket(parsed.data);
+    });
     room.onMessage('lab_state', (raw: unknown) => {
       const parsed = LabStateSchema.safeParse(raw);
       if (!parsed.success) return;

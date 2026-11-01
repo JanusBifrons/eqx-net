@@ -18,7 +18,7 @@
 import type { GoodId } from './goods.js';
 import { getStructureKind, type StructureKindId } from './structureKinds.js';
 import { BASE_PRICES } from './economy.js';
-import type { ShipKindId } from './shipKinds.js';
+import { getShipKind, type ShipKindId } from './shipKinds.js';
 
 export const RECIPE_IDS = [
   'smelt_alloy',
@@ -56,6 +56,12 @@ export const RECIPE_IDS = [
   'pack_reactor',
   'pack_battery_bank',
   'pack_storage_vault',
+  // Economy v2 W5b (Living World) — the Shipyard + the ships it builds.
+  'pack_shipyard',
+  'build_interceptor',
+  'build_gunship',
+  'build_heavy',
+  'build_missile_frigate',
 ] as const;
 export type RecipeId = (typeof RECIPE_IDS)[number];
 
@@ -71,6 +77,7 @@ export const PROCESSOR_KIND_IDS = [
   'munitions_works',
   'assembly_plant',
   'ore_processing_complex',
+  'shipyard',
 ] as const satisfies readonly StructureKindId[];
 export type ProcessorKindId = (typeof PROCESSOR_KIND_IDS)[number];
 
@@ -106,6 +113,10 @@ function r(def: RecipeDef): RecipeDef {
 
 function packName(kind: StructureKindId): string {
   return `Pack ${getStructureKind(kind).displayName}`;
+}
+
+function buildName(kind: ShipKindId): string {
+  return `Build ${getShipKind(kind).displayName}`;
 }
 
 export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
@@ -278,6 +289,33 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
     inputs: { alloy: 50, components: 16, electronics: 8, machinery: 6, core: 3 }, outputs: [{ packed: 'assembly_plant' }],
     cyclePulses: 80, processors: ['assembly_plant'], blueprintRequired: true,
   }),
+  // Economy v2 W5b — the Shipyard, and the packed hulls it builds (each needs
+  // that ship's blueprint). Bills scale with the hull.
+  pack_shipyard: r({
+    id: 'pack_shipyard', displayName: packName('shipyard'),
+    inputs: { alloy: 50, components: 14, electronics: 6, machinery: 6, core: 3 }, outputs: [{ packed: 'shipyard' }],
+    cyclePulses: 80, processors: ['assembly_plant'], blueprintRequired: true,
+  }),
+  build_interceptor: r({
+    id: 'build_interceptor', displayName: buildName('interceptor'),
+    inputs: { alloy: 12, components: 4, electronics: 3 }, outputs: [{ hull: 'interceptor' }],
+    cyclePulses: 40, processors: ['shipyard'], blueprintRequired: true,
+  }),
+  build_gunship: r({
+    id: 'build_gunship', displayName: buildName('gunship'),
+    inputs: { alloy: 18, components: 6, electronics: 3, machinery: 1 }, outputs: [{ hull: 'gunship' }],
+    cyclePulses: 50, processors: ['shipyard'], blueprintRequired: true,
+  }),
+  build_heavy: r({
+    id: 'build_heavy', displayName: buildName('heavy'),
+    inputs: { alloy: 24, components: 6, machinery: 2 }, outputs: [{ hull: 'heavy' }],
+    cyclePulses: 55, processors: ['shipyard'], blueprintRequired: true,
+  }),
+  build_missile_frigate: r({
+    id: 'build_missile_frigate', displayName: buildName('missile-frigate'),
+    inputs: { alloy: 40, components: 10, electronics: 6, machinery: 4, core: 2 }, outputs: [{ hull: 'missile-frigate' }],
+    cyclePulses: 80, processors: ['shipyard'], blueprintRequired: true,
+  }),
 });
 
 export function isRecipeId(s: string): s is RecipeId {
@@ -350,8 +388,33 @@ export function packBillValue(kind: StructureKindId): number {
   return v;
 }
 
+/** Economy v2 W5b — the ship a recipe builds (a packed hull), or null. */
+export function hullKindOf(recipe: RecipeId): ShipKindId | null {
+  const o = RECIPES[recipe].outputs[0];
+  return o !== undefined && 'hull' in o ? o.hull : null;
+}
+
+/** The Shipyard recipe that builds a ship kind, or null (starter hulls are
+ *  free and never built). */
+export function buildRecipeFor(kind: ShipKindId): RecipeId | null {
+  for (const id of RECIPE_IDS) if (hullKindOf(id) === kind) return id;
+  return null;
+}
+
+/** The goods value of a packed hull's bill at `BASE_PRICES` (traders price
+ *  packed hulls from it, like `packBillValue`). 0 when no recipe builds it. */
+export function hullBillValue(kind: ShipKindId): number {
+  const id = buildRecipeFor(kind);
+  if (id === null) return 0;
+  let v = 0;
+  for (const [g, n] of Object.entries(RECIPES[id].inputs)) v += BASE_PRICES[g as GoodId] * (n ?? 0);
+  return v;
+}
+
 /** The blueprint product a recipe needs (Living World's namespaced ids). */
 export function blueprintProductFor(recipe: RecipeId): string {
   const kind = packedKindOf(recipe);
-  return kind !== null ? `structure:${kind}` : `recipe:${recipe}`;
+  if (kind !== null) return `structure:${kind}`;
+  const hull = hullKindOf(recipe);
+  return hull !== null ? `hull:${hull}` : `recipe:${recipe}`;
 }
