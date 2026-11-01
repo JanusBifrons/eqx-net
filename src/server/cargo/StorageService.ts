@@ -68,6 +68,10 @@ export interface TradeTransferSpec {
   release?: readonly string[];
   destroy?: readonly string[];
   extraOps?: readonly PersistOp[];
+  /** T4b — ops that depend on what the take actually moved (a wallet credit
+   *  for exactly the goods taken); built after the take, before the commit,
+   *  so they land in the SAME atomic group. */
+  extraOpsFor?: (taken: Hold) => readonly PersistOp[];
 }
 
 export interface TradeTransferResult {
@@ -522,7 +526,8 @@ export class StorageService {
       this.persistedSig.set(rec.uid!, sig(r.hold));
       puts.push(r);
     }
-    this.d.holdStore.commit(puts, deletes, this.persist(), spec.extraOps ?? []);
+    const ops = spec.extraOpsFor ? [...(spec.extraOps ?? []), ...spec.extraOpsFor(taken)] : (spec.extraOps ?? []);
+    this.d.holdStore.commit(puts, deletes, this.persist(), ops);
     return { taken, overflow, x: target.x, y: target.y };
   }
 
@@ -646,6 +651,76 @@ export class StorageService {
     return moved;
   }
 
+  // ── T4: buy from / sell to an NPC Freight Dock ──────────────────────────
+  // The room clamps `n` (stock, cargo space, wallet, volume) and builds the
+  // wallet op; each trade is ONE atomic group: ship row + touched storage +
+  // the wallet op.
+
+  /** Units of `good` the dock's whole storage network holds (incl. banks). */
+  networkStock(dock: StructureRecord, good: GoodId): number {
+    let n = 0;
+    for (const r of this.network(dock)) {
+      n += r.hold?.goods[good] ?? 0;
+      if (good === 'minerals') n += r.minerals;
+    }
+    return n;
+  }
+
+  /** Free goods-hold weight in the dock itself (sold goods land there). */
+  dockFreeWeight(dock: StructureRecord): number {
+    return Math.max(0, holdCapacityOf(dock) - holdWeight(dock.hold ?? emptyHold()));
+  }
+
+  /** Buy: move `n` of `good` from the dock's network into the ship. Returns
+   *  the units moved (the room pre-clamped `n`, so all of them). */
+  marketBuy(shipInstanceId: string, shipOwner: string, dock: StructureRecord, good: GoodId, n: number, extraOps: readonly PersistOp[]): number {
+    const ship = cloneHold(this.d.holdStore.get(shipInstanceId)?.hold ?? emptyHold());
+    let need = n;
+    const touched: StructureRecord[] = [];
+    for (const r of this.network(dock)) {
+      if (need <= 0) break;
+      const have = r.hold?.goods[good] ?? 0;
+      let took = 0;
+      if (have > 0) {
+        const t = Math.min(have, need);
+        if (have - t > 0) r.hold!.goods[good] = have - t;
+        else delete r.hold!.goods[good];
+        took += t;
+        need -= t;
+      }
+      if (good === 'minerals' && need > 0 && r.minerals > 0) {
+        const t = Math.min(r.minerals, need);
+        r.minerals -= t;
+        took += t;
+        need -= t;
+      }
+      if (took > 0) touched.push(r);
+    }
+    const moved = n - need;
+    if (moved <= 0) return 0;
+    ship.goods[good] = (ship.goods[good] ?? 0) + moved;
+    this.commitShipAndStructures(shipInstanceId, shipOwner, ship, touched, extraOps);
+    return moved;
+  }
+
+  /** Sell: move `n` of `good` from the ship into the dock. Returns the units
+   *  moved (pre-clamped by the room to what the ship holds and the dock fits). */
+  marketSell(shipInstanceId: string, shipOwner: string, dock: StructureRecord, good: GoodId, n: number, extraOps: readonly PersistOp[]): number {
+    const row = this.d.holdStore.get(shipInstanceId);
+    if (row === undefined || n <= 0) return 0;
+    const ship = cloneHold(row.hold);
+    const have = ship.goods[good] ?? 0;
+    const moved = Math.min(have, n);
+    if (moved <= 0) return 0;
+    if (have - moved > 0) ship.goods[good] = have - moved;
+    else delete ship.goods[good];
+    const hold = dock.hold ?? emptyHold();
+    hold.goods[good] = (hold.goods[good] ?? 0) + moved;
+    dock.hold = hold;
+    this.commitShipAndStructures(shipInstanceId, shipOwner, ship, [dock], extraOps);
+    return moved;
+  }
+
   /** Weight currently held across a target's network (inspector / tests). */
   networkWeight(target: StructureRecord): number {
     let w = 0;
@@ -653,7 +728,7 @@ export class StorageService {
     return w;
   }
 
-  private commitShipAndStructures(shipInstanceId: string, ownerId: string, ship: Hold, touched: StructureRecord[]): void {
+  private commitShipAndStructures(shipInstanceId: string, ownerId: string, ship: Hold, touched: StructureRecord[], extraOps: readonly PersistOp[] = []): void {
     const puts: HoldRecord[] = [];
     const deletes: string[] = [];
     if (isHoldEmpty(ship)) deletes.push(shipInstanceId);
@@ -664,7 +739,7 @@ export class StorageService {
       this.persistedSig.set(rec.uid!, sig(r.hold));
       puts.push(r);
     }
-    this.d.holdStore.commit(puts, deletes, this.persist());
+    this.d.holdStore.commit(puts, deletes, this.persist(), extraOps);
   }
 
   private commitStructures(touched: StructureRecord[]): void {

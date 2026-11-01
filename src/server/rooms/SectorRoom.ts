@@ -106,16 +106,22 @@ import { buildGridNodes, connectExplicit } from '../structures/structureGridView
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
 import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf } from '../../shared-types/relations.js';
-import { CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, type CargoState } from '../../shared-types/messages/cargoMessages.js';
+import { CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, MAX_FREIGHT_ORDERS, SetFreightOrdersSchema, type CargoState } from '../../shared-types/messages/cargoMessages.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
-import { NpcBaseSubsystem, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
-import { PROD_STATE, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
-import { blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
+import { NpcBaseSubsystem, isNpcBasesDisabled, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
+import { baseProfileFor, contextForSector, hashString } from '../../core/bases/baseProfile.js';
+import { chooseBaseSite, grownExtent, nearestClearPoint, type SiteBox, type SiteCircle } from '../../core/bases/baseSite.js';
+import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
+import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
+import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
+import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
+import { RECIPES, blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
+import { usesAmmo } from '../../shared-types/ammo.js';
 
 /** P2d — one unit of munitions (a turret's magazine reload). */
 const ONE_MUNITION = Object.freeze({ munitions: 1 });
@@ -279,6 +285,15 @@ import {
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
 import type { WeaponId, MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat/Energy.js';
+
+/** T1 — a fresh spawn stays at least this far from any structure's box. */
+const SPAWN_STRUCTURE_CLEARANCE = 120;
+/** T2 — an NPC ammo turret's assumed munitions use (it fires only when attacked). */
+const NPC_TURRET_MUNITIONS_PER_MIN = 0.2;
+/** T4b — the level of `good`'s order on a dock (0 when none). */
+function o_level(r: { freightOrders?: Array<{ good: GoodId; level: number }> }, good: GoodId): number {
+  return r.freightOrders?.find((o) => o.good === good)?.level ?? 0;
+}
 
 const logger = pino({
   name: 'SectorRoom',
@@ -1331,6 +1346,10 @@ export class SectorRoom extends Room<SectorState> {
       /** D2 — NPC bases grown by the core generator (server-authored, never
        *  client input). Galaxy seeding of these comes with trade (phase T). */
       npcBases?: NpcBaseSpec[];
+      /** T1 — grow this galaxy sector's own NPC base from its profile and
+       *  seed it AFTER the snapshot restore (saved player structures keep
+       *  their space). Set for every galaxy room by `resolveSectorConfig`. */
+      galaxyBases?: boolean;
       /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
@@ -2350,6 +2369,10 @@ export class SectorRoom extends Room<SectorState> {
     if (this.sectorKey !== null) {
       this.hydrateFromSnapshot();
     }
+    // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
+    if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {
+      this.seedGalaxyBase(this.sectorKey);
+    }
 
     // Phase 8 sub-phase B — explicit 15s seat-reservation TTL for incoming
     // hyperspace travellers. Default is already 15 in Colyseus 0.16; making
@@ -2834,9 +2857,10 @@ export class SectorRoom extends Room<SectorState> {
       const send = (st: CargoState): void => { try { client.send('cargo_state', st); } catch { /* closing */ } };
       const access = this.cargoAccess(playerId, entityId);
       if (!access.ok) {
-        send({ type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, message: access.message, ...(move ? { ok: false } : {}) });
+        send({ type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message: access.message, ...(move ? { ok: false } : {}) });
         return;
       }
+      if (access.market) { send(this.dockMarket(playerId, entityId, access, move)); return; }
       let verdict: { ok: boolean; message: string } | undefined;
       if (move !== null) {
         const moved = move.dir === 'take'
@@ -2856,8 +2880,31 @@ export class SectorRoom extends Room<SectorState> {
         }
       }
       const view = this.storage.cargoView(access.rec);
-      send({ type: 'cargo_state', entityId, open: true, hold: view.hold, used: view.used, capacity: view.capacity, ...(verdict ?? {}) });
+      const shipHold = getHoldStore().get(access.shipInstanceId)?.hold ?? emptyHold();
+      const own = access.rec.owner === playerId && access.rec.kind === 'freight_dock';
+      send({
+        type: 'cargo_state', entityId, open: true, hold: view.hold, used: view.used, capacity: view.capacity,
+        ship: shipHold, shipCapacity: access.capacity,
+        ...(own ? { orders: (access.rec.freightOrders ?? []).map((o) => ({ ...o })) } : {}),
+        ...(verdict ?? {}),
+      });
     };
+    // T4b — standing orders on the owner's own built Freight Dock (last
+    // order per good wins). Convoys fill them; the panel re-reads on its poll.
+    this.onMessage('set_freight_orders', (client: Client, raw: unknown) => {
+      const p = SetFreightOrdersSchema.safeParse(raw);
+      if (!p.success) { this.malformed.record(client.sessionId, 'set_freight_orders'); return; }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      const swarmRec = this.swarmRegistry.getByEntityId(p.data.entityId);
+      const rec = swarmRec ? this.structureRegistry.get(swarmRec.id) : undefined;
+      if (!rec || rec.owner !== owner || rec.kind !== 'freight_dock' || !rec.isConstructed) return;
+      const byGood = new Map<GoodId, { good: GoodId; mode: 'import' | 'export'; level: number }>();
+      for (const o of p.data.orders) byGood.set(o.good, { good: o.good, mode: o.mode, level: o.level });
+      rec.freightOrders = [...byGood.values()].slice(0, MAX_FREIGHT_ORDERS);
+      if (rec.freightOrders.length === 0) delete rec.freightOrders;
+      auditEvent({ event: 'freight_orders_set', sector: this.sectorKey ?? undefined, playerId: owner, orders: rec.freightOrders?.length ?? 0 });
+    });
     this.onMessage('cargo_query', (client: Client, raw: unknown) => cargoRequest(client, 'cargo_query', raw));
     this.onMessage('cargo_move', (client: Client, raw: unknown) => cargoRequest(client, 'cargo_move', raw));
 
@@ -3920,6 +3967,54 @@ export class SectorRoom extends Room<SectorState> {
    * `scenario`. Rejections are counted and logged — the lattice is rule-valid
    * by construction (structureLattice.test.ts), so any rejection is a bug.
    */
+  /**
+   * T1 — grow this galaxy sector's NPC base from its profile and seed it at a
+   * site that fits: clear of saved player structures and parked hulls (they
+   * always win the space), on the fewest asteroids (those under the footprint
+   * are cleared: the builders cleared the rock), as far from the spawn at the
+   * origin as it fits. Not persisted: a restart regrows it from the seed.
+   */
+  private seedGalaxyBase(sectorKey: string): void {
+    const seed = hashString(sectorKey);
+    const sector = getSector(sectorKey)!;
+    const profile = baseProfileFor(contextForSector(sectorKey), seed);
+    const spec: NpcBaseSpec = {
+      baseId: 'b0', role: profile.role, tier: profile.tier, seed, x: 0, y: 0,
+      side: profile.ownerSide, features: [...sector.features], profile,
+    };
+    const sub = new NpcBaseSubsystem({
+      registry: this.structureRegistry,
+      place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
+      setHealth: (id, hp) => this.swarmHealth.set(id, hp),
+    });
+    const grown = sub.grow(spec);
+    const hard: SiteBox[] = [];
+    for (const r of this.structureRegistry.all()) hard.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
+    for (const p of this.lingeringPoseCache.values()) hard.push({ x: p.x, y: p.y, hw: 150, hh: 150 });
+    const rocks: SwarmEntityRecord[] = [];
+    const soft: SiteCircle[] = [];
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== 0) continue;
+      const b = slotBase(rec.slot);
+      rocks.push(rec);
+      soft.push({ x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, r: rec.radius });
+    }
+    const site = chooseBaseSite(grownExtent(grown.placements), hard, soft, {
+      halfExtent: SECTOR_PLAYABLE_HALF_EXTENT, margin: 250, step: 250, seed,
+    });
+    if (site === null) {
+      logger.warn({ sectorKey, tier: profile.tier, role: profile.role }, 'npc base: no site fits; sector left without a base');
+      return;
+    }
+    for (const i of site.overlapped) this.evictSwarmEntity(rocks[i]!, { broadcast: false, emitDestroyed: false });
+    const r = sub.seed({ ...spec, x: site.x, y: site.y }, grown);
+    logger.info({
+      sectorKey, tier: profile.tier, role: profile.role, owner: r.owner, x: Math.round(site.x), y: Math.round(site.y),
+      placed: r.placed, rejectedPlace: r.rejectedPlace, rejectedEdge: r.rejectedEdge, asteroidsCleared: site.overlapped.length,
+    }, 'galaxy npc base seeded');
+    this.structureGridTick();
+  }
+
   /** D2 — seed NPC bases from the generator (built, stocked, recipes + bound
    *  blueprints loaded), then run one grid pulse so power settles. */
   private seedNpcBases(specs: readonly NpcBaseSpec[]): void {
@@ -4058,6 +4153,11 @@ export class SectorRoom extends Room<SectorState> {
         // P2b — the owner's recipe choice and a cycle in progress survive a restart.
         if (r.recipe !== undefined && isRecipeId(r.recipe)) rec.recipe = r.recipe;
         if (r.prepaid === true) rec.prepaid = true;
+        // T4b — a Freight Dock's standing orders survive a restart.
+        if (r.freightOrders) {
+          const ok = r.freightOrders.filter((o) => (GOOD_IDS as readonly string[]).includes(o.good) && (o.mode === 'import' || o.mode === 'export') && o.level > 0);
+          if (ok.length > 0) rec.freightOrders = ok.map((o) => ({ good: o.good as GoodId, mode: o.mode, level: Math.floor(o.level) })).slice(0, MAX_FREIGHT_ORDERS);
+        }
         if (typeof r.packedQuality === 'number') rec.packedQuality = r.packedQuality;
         if (r.prodLoaded === true) {
           rec.prodLoaded = true;
@@ -5990,6 +6090,16 @@ export class SectorRoom extends Room<SectorState> {
     // persists in-world via the sector snapshot (`lingeringHulls[]`). A join
     // without a resolvable owned shipId fresh-spawns.
 
+    // T1 — never spawn inside a structure (an NPC base can fill much of a
+    // sector): nudge to the nearest clear point. Join path, not the hot loop.
+    if (this.structureRegistry.size > 0) {
+      const boxes: SiteBox[] = [];
+      for (const r of this.structureRegistry.all()) boxes.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
+      const clear = nearestClearPoint(spawnX, spawnY, boxes, SPAWN_STRUCTURE_CLEARANCE);
+      spawnX = clear.x;
+      spawnY = clear.y;
+    }
+
     this.initialSpawnPositions.set(playerId, { x: spawnX, y: spawnY });
 
     // Pre-populate the SAB slot so the update() loop sees a sane position
@@ -6894,14 +7004,21 @@ export class SectorRoom extends Room<SectorState> {
    * Neutral or hostile cargo needs a break-in (C2).
    */
   private cargoAccess(playerId: string, entityId: number):
-    | { ok: true; rec: StructureRecord; shipInstanceId: string; capacity: number }
+    | { ok: true; rec: StructureRecord; shipInstanceId: string; capacity: number; market: boolean }
     | { ok: false; message: string } {
     const swarmRec = this.swarmRegistry.getByEntityId(entityId);
     const rec = swarmRec ? this.structureRegistry.get(swarmRec.id) ?? null : null;
     if (rec === null || !isOperationalStorage(rec)) return { ok: false, message: 'That has no cargo hold.' };
     // Allies may open only if the owner allows it; there is no owner setting yet.
-    if (!cargoOpensFor(relationOf(playerId, rec.owner, this.relationCtx), false)) {
-      return { ok: false, message: 'Locked. That cargo is not yours.' };
+    const relation = relationOf(playerId, rec.owner, this.relationCtx);
+    let market = false;
+    if (!cargoOpensFor(relation, false)) {
+      // T4 — an NPC Freight Dock trades with anyone who isn't hostile.
+      if (isNpcOwner(rec.owner) && rec.kind === 'freight_dock' && relation !== 'hostile' && getTradeSink() !== null) {
+        market = true;
+      } else {
+        return { ok: false, message: relation === 'hostile' ? 'Locked. They will not trade with you.' : 'Locked. That cargo is not yours.' };
+      }
     }
     if (this.sectorKey === null) return { ok: false, message: 'Cargo only moves in the galaxy.' };
     const ship = this.getActiveShip(playerId);
@@ -6914,7 +7031,91 @@ export class SectorRoom extends Room<SectorState> {
     if (dx * dx + dy * dy > CARGO_ACCESS_RANGE * CARGO_ACCESS_RANGE) {
       return { ok: false, message: 'Fly closer to open its cargo.' };
     }
-    return { ok: true, rec, shipInstanceId: ship.shipInstanceId, capacity: this.shipCargoCapacity(ship.kind, ship.shipInstanceId) };
+    return { ok: true, rec, shipInstanceId: ship.shipInstanceId, capacity: this.shipCargoCapacity(ship.kind, ship.shipInstanceId), market };
+  }
+
+  /**
+   * T4 — an NPC Freight Dock is a market: Take buys from the base's storage
+   * network, Put sells into the dock, at the trade board's regional price for
+   * this pilot. Each good is ONE atomic group (ship + storage + the wallet op),
+   * clamped first to stock, cargo space, the wallet and the hourly volume.
+   */
+  private dockMarket(
+    playerId: string,
+    entityId: number,
+    access: { rec: StructureRecord; shipInstanceId: string; capacity: number },
+    move: { dir: 'take' | 'put'; items: CargoRequest } | null,
+  ): CargoState {
+    const sink = getTradeSink();
+    const shipId = access.shipInstanceId;
+    const dock = access.rec;
+    const closed = (message: string): CargoState => ({
+      type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message, ...(move ? { ok: false } : {}),
+    });
+    if (sink === null) return closed('The traders are not here.');
+    if (sink.dockQuote(playerId, this.sectorKey, 'minerals') === null) return closed('The traders refuse to deal with you.');
+    const wallet = getWallet();
+    let verdict: { ok: boolean; message: string } | undefined;
+    if (move !== null) {
+      let total = 0;
+      let any = false;
+      for (const g of GOOD_IDS) {
+        const asked = move.items.goods?.[g] ?? 0;
+        if (!(asked > 0)) continue;
+        const q = sink.dockQuote(playerId, this.sectorKey, g);
+        if (q === null) continue;
+        const ship = getHoldStore().get(shipId)?.hold ?? emptyHold();
+        const w = GOOD_DEFS[g].weight;
+        if (move.dir === 'take') {
+          const unit = q.buy;
+          const space = Math.floor(Math.max(0, access.capacity - holdWeight(ship)) / Math.max(1e-9, w));
+          const afford = unit > 0 ? Math.floor(wallet.balance(playerId) / unit) : asked;
+          const volume = unit > 0 ? Math.floor(sink.volumeLeft(playerId) / unit) : asked;
+          const n = Math.min(asked, this.storage.networkStock(dock, g), space, afford, volume);
+          if (n <= 0) continue;
+          const cost = Math.ceil(n * unit);
+          const op = cost > 0 ? wallet.debitDeferred(playerId, cost, 'dock_buy') : null;
+          if (cost > 0 && op === null) continue;
+          const moved = this.storage.marketBuy(shipId, playerId, dock, g, n, op ? [op] : []);
+          if (moved <= 0) { if (cost > 0) wallet.credit(playerId, cost, 'dock_refund'); continue; }
+          sink.recordDockFill(playerId, g, moved, 'buy', cost);
+          total += cost;
+          any = true;
+        } else {
+          const unit = q.sell;
+          const fit = Math.floor(this.storage.dockFreeWeight(dock) / Math.max(1e-9, w));
+          const volume = unit > 0 ? Math.floor(sink.volumeLeft(playerId) / unit) : asked;
+          const n = Math.min(asked, ship.goods[g] ?? 0, fit, volume);
+          if (n <= 0) continue;
+          const pay = Math.floor(n * unit);
+          const op = pay > 0 ? wallet.creditDeferred(playerId, pay, 'dock_sell') : null;
+          const moved = this.storage.marketSell(shipId, playerId, dock, g, n, op ? [op] : []);
+          if (moved <= 0) continue;
+          sink.recordDockFill(playerId, g, moved, 'sell', pay);
+          total += pay;
+          any = true;
+        }
+      }
+      verdict = any
+        ? { ok: true, message: move.dir === 'take' ? `Bought for ${total}¢.` : `Sold for ${total}¢.` }
+        : { ok: false, message: move.dir === 'take' ? 'Nothing bought: out of stock, no room aboard, or not enough credits.' : 'Nothing sold: the dock is full or you hold none.' };
+      if (any) auditEvent({ event: 'dock_trade', sector: this.sectorKey ?? undefined, playerId, owner: dock.owner, dir: move.dir === 'take' ? 'buy' : 'sell', credits: total });
+    }
+    const stock: Hold = { goods: {}, blueprints: [] };
+    for (const g of GOOD_IDS) {
+      const n = this.storage.networkStock(dock, g);
+      if (n > 0) stock.goods[g] = n;
+    }
+    const ship = getHoldStore().get(shipId)?.hold ?? emptyHold();
+    const market: NonNullable<CargoState['market']> = { buy: {}, sell: {} };
+    for (const g of GOOD_IDS) {
+      if ((stock.goods[g] ?? 0) <= 0 && (ship.goods[g] ?? 0) <= 0) continue;
+      const q = sink.dockQuote(playerId, this.sectorKey, g);
+      if (q === null) continue;
+      market.buy[g] = q.buy;
+      market.sell[g] = q.sell;
+    }
+    return { type: 'cargo_state', entityId, open: true, hold: stock, used: 0, capacity: 0, ship, shipCapacity: access.capacity, market, ...(verdict ?? {}) };
   }
 
   /**
@@ -7312,6 +7513,86 @@ export class SectorRoom extends Room<SectorState> {
 
   tradeSnapshot(ownerId: string, networkUid: string): TradeNetworkSnapshot | null {
     return this.storage.tradeSnapshot(ownerId, networkUid);
+  }
+
+  /**
+   * T2 — this room's NPC bases for convoy planning (ConvoyDirector, every
+   * ~15 s; off-tick, so building arrays here is fine). Per base: its storage
+   * stock, free space, footprint box, and per-minute use/make rates read from
+   * its own structures (processor recipes, Reactor fuel, ammo turrets, drills,
+   * gas collectors).
+   */
+  npcBaseTrade(): NpcBaseTrade[] {
+    const byOwner = new Map<string, StructureRecord[]>();
+    for (const r of this.structureRegistry.all()) {
+      if (!r.isConstructed || !isNpcOwner(r.owner)) continue;
+      const list = byOwner.get(r.owner);
+      if (list) list.push(r); else byOwner.set(r.owner, [r]);
+    }
+    const out: NpcBaseTrade[] = [];
+    for (const [owner, recs] of byOwner) {
+      const anchor = recs.find((r) => r.kind === 'capital' && r.uid !== undefined)
+        ?? recs.find((r) => r.uid !== undefined && (getStructureKind(r.kind).holdCapacity ?? 0) > 0);
+      if (!anchor?.uid) continue;
+      const snap = this.storage.tradeSnapshot(owner, anchor.uid);
+      if (snap === null) continue;
+      const uses: Partial<Record<GoodId, number>> = {};
+      const makes: Partial<Record<GoodId, number>> = {};
+      const add = (m: Partial<Record<GoodId, number>>, g: GoodId, n: number): void => { m[g] = (m[g] ?? 0) + n; };
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const r of recs) {
+        const hw = r.halfW ?? r.radius, hh = r.halfH ?? r.radius;
+        x0 = Math.min(x0, r.x - hw); x1 = Math.max(x1, r.x + hw);
+        y0 = Math.min(y0, r.y - hh); y1 = Math.max(y1, r.y + hh);
+        const k = getStructureKind(r.kind);
+        if (isProcessorKind(r.kind)) {
+          const def = RECIPES[r.recipe ?? defaultRecipeFor(r.kind)];
+          const perMin = 60 / Math.max(1, def.cyclePulses);
+          for (const [g, n] of Object.entries(def.inputs)) add(uses, g as GoodId, (n ?? 0) * perMin);
+          for (const o of def.outputs) if ('good' in o) add(makes, o.good, o.n * perMin);
+        }
+        if (k.fuelEveryPulses) add(uses, 'fuel', 60 / k.fuelEveryPulses);
+        if (usesAmmo(r.kind)) add(uses, 'munitions', NPC_TURRET_MUNITIONS_PER_MIN);
+        if (k.miningRate) add(makes, 'minerals', k.miningRate * 60);
+        if (k.gasRate) add(makes, 'gas', k.gasRate * 60);
+      }
+      out.push({ owner, networkUid: anchor.uid, view: { stock: snap.goods, freeCapacity: snap.freeCapacity, uses, makes }, box: { x0, x1, y0, y1 } });
+    }
+    // T4b — a player's Freight Dock with standing orders trades too, but only
+    // in the goods it has orders for: "use" is shaped so an import keeps the
+    // network up to its level and an export offers anything above it.
+    for (const r of this.structureRegistry.all()) {
+      if (r.kind !== 'freight_dock' || !r.isConstructed || !r.freightOrders?.length || isNpcOwner(r.owner) || r.uid === undefined) continue;
+      const snap = this.storage.tradeSnapshot(r.owner, r.uid);
+      if (snap === null) continue;
+      const stock: Partial<Record<GoodId, number>> = {};
+      const uses: Partial<Record<GoodId, number>> = {};
+      const imports: GoodId[] = [];
+      const exports: GoodId[] = [];
+      for (const o of r.freightOrders) {
+        stock[o.good] = snap.goods[o.good] ?? 0;
+        uses[o.good] = o.level / CONVOY_TARGET_MINUTES;
+        (o.mode === 'import' ? imports : exports).push(o.good);
+      }
+      // Import goods are never offered (only exports are spare); export goods
+      // are never asked for.
+      for (const g of imports) if ((stock[g] ?? 0) > o_level(r, g)) stock[g] = o_level(r, g);
+      const hw = r.halfW ?? r.radius, hh = r.halfH ?? r.radius;
+      out.push({
+        owner: r.owner, networkUid: r.uid, player: { imports, exports },
+        view: { stock, freeCapacity: snap.freeCapacity, uses, makes: {} },
+        box: { x0: r.x - hw, x1: r.x + hw, y0: r.y - hh, y1: r.y + hh },
+      });
+    }
+    return out;
+  }
+
+  /** T2 — the nearest point clear of every structure (convoy hauler spawns). */
+  clearPointNear(x: number, y: number): { x: number; y: number } {
+    if (this.structureRegistry.size === 0) return { x, y };
+    const boxes: SiteBox[] = [];
+    for (const r of this.structureRegistry.all()) boxes.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
+    return nearestClearPoint(x, y, boxes, 150);
   }
 
   tradeTransfer(ownerId: string, networkUid: string, spec: TradeTransferSpec): TradeTransferResult | null {

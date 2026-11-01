@@ -7,6 +7,7 @@ import { getGameClient } from './clientSingleton.js';
 import type { EconAllegiance } from '../../shared-types/economy.js';
 import type { GoodId } from '../../shared-types/goods.js';
 import type { LabStart } from '../../shared-types/messages/labMessages.js';
+import type { CargoItems, FreightOrder } from '../../shared-types/messages/cargoMessages.js';
 
 function send(type: string, payload: Record<string, unknown>): boolean {
   const room = getGameClient()?.getRoom();
@@ -33,6 +34,20 @@ export function sendCancelDeal(dealId: string): boolean {
 /** P5 — install a stored blueprint onto my active ship (verdict: `blueprint_result`). */
 export function sendInstallBlueprint(networkEntityId: number, blueprintId: string): boolean {
   return send('install_blueprint', { networkEntityId, blueprintId });
+}
+
+/** C1 — open a structure's cargo / move items (each answered by `cargo_state`). */
+export function sendCargoQuery(entityId: number): boolean {
+  return send('cargo_query', { entityId });
+}
+
+export function sendCargoMove(entityId: number, dir: 'take' | 'put', items: CargoItems): boolean {
+  return send('cargo_move', { entityId, dir, items });
+}
+
+/** T4b — replace my Freight Dock's standing orders (re-read via `cargo_state`). */
+export function sendSetFreightOrders(entityId: number, orders: FreightOrder[]): boolean {
+  return send('set_freight_orders', { entityId, orders });
 }
 
 /** Economy v2 W6 — the blueprint market (each answered by `bp_market_state`). */

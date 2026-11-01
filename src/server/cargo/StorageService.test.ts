@@ -166,3 +166,38 @@ describe('StorageService cargo access (C1)', () => {
     expect(t.ops).toHaveLength(0);
   });
 });
+
+describe('StorageService NPC dock market (T4)', () => {
+  const walletOp = { type: 'WALLET_PUT', playerId: 'p2', balance: 1 } as unknown as PersistOp;
+
+  it('marketBuy takes from the whole network (incl. the bank) into the ship, with the wallet op in the SAME group', () => {
+    const dock = rec('d', 'freight_dock', 0, 0, { owner: 'npc:traders:b', hold: { goods: { minerals: 5 }, blueprints: [] } });
+    const cap = rec('c', 'capital', 400, 0, { owner: 'npc:traders:b', minerals: 100 });
+    const t = setup(['d', 'c']);
+    t.registry.add(dock);
+    t.registry.add(cap);
+    expect(t.svc.networkStock(dock, 'minerals')).toBe(105);
+    t.ops.length = 0;
+    expect(t.svc.marketBuy('ship-9', 'p2', dock, 'minerals', 20, [walletOp])).toBe(20);
+    expect(dock.hold!.goods.minerals).toBeUndefined();
+    expect(cap.minerals).toBe(85);
+    expect(t.holdStore.get('ship-9')!.hold.goods.minerals).toBe(20);
+    expect(t.ops).toHaveLength(1);
+    expect(t.ops[0]!.type).toBe('GROUP');
+    expect(JSON.stringify(t.ops[0])).toContain('WALLET_PUT');
+  });
+
+  it('marketSell moves ship goods into the dock, with the wallet op in the SAME group', () => {
+    const dock = rec('d', 'freight_dock', 0, 0, { owner: 'npc:traders:b' });
+    const t = setup();
+    t.registry.add(dock);
+    t.ship({ alloy: 4 });
+    t.ops.length = 0;
+    expect(t.svc.marketSell('ship-1', 'p1', dock, 'alloy', 3, [walletOp])).toBe(3);
+    expect(dock.hold!.goods.alloy).toBe(3);
+    expect(t.holdStore.get('ship-1')!.hold.goods.alloy).toBe(1);
+    expect(t.ops).toHaveLength(1);
+    expect(JSON.stringify(t.ops[0])).toContain('WALLET_PUT');
+    expect(t.svc.dockFreeWeight(dock)).toBe(3000 - 3 * 2);
+  });
+});

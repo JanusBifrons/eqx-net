@@ -164,6 +164,8 @@ export async function bootSectorTestServer(opts: {
   asteroidConfig?: ReadonlyArray<{ x: number; y: number; vx: number; vy: number; radius: number; mass: number }>;
   /** D2 — NPC bases grown by the generator. */
   npcBases?: ReadonlyArray<Record<string, unknown>>;
+  /** T1 — seed the sector's own NPC base (as galaxy rooms do). */
+  galaxyBases?: boolean;
   /** P2c — sector features for the room (asteroid mix, nebula). */
   sectorFeatures?: string[];
   /** Room-level default spawn point (forwarded to `defaultSpawnX/Y`). */
@@ -225,6 +227,7 @@ export async function bootSectorTestServer(opts: {
     asteroidConfig: opts.asteroidConfig,
     sectorFeatures: opts.sectorFeatures,
     npcBases: opts.npcBases,
+    galaxyBases: opts.galaxyBases,
     tradeEnabled: opts.tradeEnabled,
     enforceHullGate: opts.enforceHullGate,
     seedStorageHold: opts.seedStorageHold,

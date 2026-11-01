@@ -35,7 +35,7 @@ async function until(pred: () => boolean, ms: number): Promise<boolean> {
 /** Send a request and wait for the next `cargo_state` reply. */
 function ask(cr: Room, replies: CargoState[], type: 'cargo_query' | 'cargo_move', body: object): Promise<CargoState> {
   const n = replies.length;
-  cr.send(type, body);
+  cr.send(type, { type, ...body });
   return until(() => replies.length > n, 4000).then((ok) => {
     if (!ok) throw new Error(`no cargo_state reply to ${type}`);
     return replies[replies.length - 1]!;

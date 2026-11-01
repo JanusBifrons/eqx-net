@@ -14,7 +14,7 @@ import { Router, type Request, type Response, type Router as ExpressRouter } fro
 import type { PlayerEconomyView, TradeOffer } from '../../shared-types/economy.js';
 
 export interface EconomyRouteProvider {
-  offersFor(playerId: string): TradeOffer[];
+  offersFor(playerId: string, sectorKey?: string | null): TradeOffer[];
   view(playerId: string): PlayerEconomyView;
 }
 
@@ -35,7 +35,9 @@ export const economyRouter: ExpressRouter = Router();
 
 economyRouter.get('/offers', (req: Request, res: Response) => {
   const pid = playerIdOf(req);
-  res.json({ offers: pid && _provider ? _provider.offersFor(pid) : [] });
+  // T3 — prices are regional: the client says which sector it trades from.
+  const sector = typeof req.query['sector'] === 'string' && req.query['sector'].length <= 64 ? req.query['sector'] : null;
+  res.json({ offers: pid && _provider ? _provider.offersFor(pid, sector) : [] });
 });
 
 economyRouter.get('/economy', (req: Request, res: Response) => {

@@ -52,14 +52,15 @@ export function repPriceFactor(rep: number): number {
   return 1 + REP_PRICE_SWING * (r / REP_MAX);
 }
 
-/** What traders PAY the player per unit (player sells). Good rep pays more. */
-export function quoteSell(m: MarketState, good: GoodId, traderRep: number): number {
-  return round2(midPrice(m, good) * (1 - MARKET_SPREAD) * repPriceFactor(traderRep));
+/** What traders PAY the player per unit (player sells). Good rep pays more.
+ *  `regionFactor` (T3) scales the mid price by the region's supply. */
+export function quoteSell(m: MarketState, good: GoodId, traderRep: number, regionFactor = 1): number {
+  return round2(midPrice(m, good) * regionFactor * (1 - MARKET_SPREAD) * repPriceFactor(traderRep));
 }
 
 /** What the player PAYS per unit (player buys). Good rep pays less. */
-export function quoteBuy(m: MarketState, good: GoodId, traderRep: number): number {
-  return round2((midPrice(m, good) * (1 + MARKET_SPREAD)) / repPriceFactor(traderRep));
+export function quoteBuy(m: MarketState, good: GoodId, traderRep: number, regionFactor = 1): number {
+  return round2((midPrice(m, good) * regionFactor * (1 + MARKET_SPREAD)) / repPriceFactor(traderRep));
 }
 
 /** Economy v2 W4b — traders sell packed structures at the pack recipe's goods

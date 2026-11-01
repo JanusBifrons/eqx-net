@@ -112,6 +112,11 @@ export type AuditEvent =
   | (AuditEventBase & { event: 'cargo_lost'; playerId?: string; shipInstanceId: string; cause: string })
   | (AuditEventBase & { event: 'cargo_deposited'; playerId: string; shipInstanceId: string; structureKind: string; weight: number })
   | (AuditEventBase & { event: 'salvage_refined'; owner: string; salvage: number })
+  // T4b — standing orders on a player Freight Dock: set, and filled by a convoy.
+  | (AuditEventBase & { event: 'freight_orders_set'; playerId: string; orders: number })
+  | (AuditEventBase & { event: 'freight_order_filled'; playerId: string; good: string; qty: number; dir: 'import' | 'export'; credits: number })
+  // T4 — a pilot bought from / sold to an NPC Freight Dock.
+  | (AuditEventBase & { event: 'dock_trade'; playerId: string; owner: string; dir: 'buy' | 'sell'; credits: number })
   // C1 — a pilot moved items between their ship and a structure's cargo.
   | (AuditEventBase & { event: 'cargo_moved'; playerId: string; shipInstanceId: string; owner: string; structureKind: string; dir: 'take' | 'put'; weight: number })
   | (AuditEventBase & { event: 'credits_spent'; playerId: string; amount: number; reason: string })

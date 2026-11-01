@@ -33,6 +33,7 @@ import { TradeNoticeSchema } from '../../shared-types/economy.js';
 import { WorldNoticeSchema } from '../../shared-types/worldNotice.js';
 import { BountyResultSchema } from '../../shared-types/contracts.js';
 import { LabStateSchema } from '../../shared-types/messages/labMessages.js';
+import { CargoStateSchema } from '../../shared-types/messages/cargoMessages.js';
 import { BpMarketStateSchema } from '../../shared-types/blueprintMarket.js';
 import { BlueprintResultSchema, fittedCargoMul } from '../../shared-types/blueprints.js';
 
@@ -2058,6 +2059,12 @@ export class ColyseusGameClient {
     });
     // Economy v2 W3 — the Research Lab panel's view (a reply to lab_query /
     // lab_start / lab_cancel; the panel is rebuilt from it alone).
+    // C1 — a structure's cargo (and our hold) for the cargo panel (#16).
+    room.onMessage('cargo_state', (raw: unknown) => {
+      const parsed = CargoStateSchema.safeParse(raw);
+      if (!parsed.success) return;
+      useUIStore.getState().setCargoState(parsed.data);
+    });
     // Economy v2 W6 — the blueprint market view (the Trade tab rebuilds from it).
     room.onMessage('bp_market_state', (raw: unknown) => {
       const parsed = BpMarketStateSchema.safeParse(raw);
