@@ -32,6 +32,7 @@ import type { HunterBotPool } from './HunterBotPool.js';
 import { SquadPool, type SquadRecord } from './SquadPool.js';
 import type { SquadBehaviour } from './SquadBehaviour.js';
 import type { WavePattern } from './WavePattern.js';
+import { getTradeSink } from '../../economy/tradeSink.js';
 
 /** Why a wave stood down (WS-E #8) — tagged on the retreat step + audit log so a
  *  cadence audit can tell a healthy time-box phase-end from a de-escalation or a
@@ -210,7 +211,10 @@ export class WaveDirector {
       // design: "one squad per ~5 min"). The squad still TRAVERSES hop-by-hop
       // from wherever it is, so its arrival is further delayed by travel.
       const last = this.lastDispatchAtMs.get(factionId);
-      if (last !== undefined && nowMs - last < this.dispatchIntervalMs) continue;
+      // Living World P2 — good standing with the drones spaces waves out (up
+      // to 3×). The faction id IS the owning playerId.
+      const spacing = this.dispatchIntervalMs * (getTradeSink()?.waveIntervalFactor(factionId) ?? 1);
+      if (last !== undefined && nowMs - last < spacing) continue;
       const wave = (this.waveCount.get(factionId) ?? 0) + 1;
       const spec = this.pattern.nextWave(wave);
       // Dispatch the NEAREST idle squads (the user's directive: "review the

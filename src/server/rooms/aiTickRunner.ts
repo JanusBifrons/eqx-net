@@ -58,6 +58,8 @@ export interface AiTickCtx {
    *  shipInstanceId, `ownerId` = owning player) to the AI player view. */
   visitLingeringTargets?: (out: AiPlayerView[]) => void;
   fillSwarmTargets?: (out: AiSwarmView[]) => void;
+  /** Living World P2 — the player holds a truce with the on-sight sides. */
+  hasTruce?: (playerId: string) => boolean;
   swarmEntitySnapshot: (id: string) => AiEntity | null;
   /** Leader-led flocking — resolve ANY swarm entity's live pose into a caller-
    *  owned buffer (server-only; no client brain). Feeds a follower its leader's
@@ -85,6 +87,8 @@ export function runAiTick(ctx: AiTickCtx): void {
     ctx.aiPlayerScratch.push({
       id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy,
       health: ship.health, maxHealth: ship.maxHealth,
+      // P2 — robot truce (robot rep ≥ ROBOT_TRUCE_AT): no on-sight engagement.
+      truce: ctx.hasTruce?.(pid) === true,
     });
   }
   // Displaced lingering hulls (keyed by shipInstanceId, owner on `ownerId`) are

@@ -104,4 +104,6 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 export const SHOWCASE_PENDING: Record<string, string> = {
   'structure-network-scale': 'Structure-scale measurement (plan soft-leaping-truffle v2 A0) — filmed once NPC bases built from real structures are seeded (phase D2); stills are in diag/showcase/structure-scale.',
   allegiances: 'AI-vs-AI sides fight in the living galaxy but not on cue; needs a staged two-faction room.',
+  'economy-and-trade':
+    'Trade needs a SIGNED-IN pilot and shots join anonymously (AS_PILOT); needs a logged-in take (the Trade UI lands in P2b).',
 };

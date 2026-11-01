@@ -29,6 +29,7 @@ import { L_SHAPE } from './lShape.js';
 import { HAVOK } from './composite/havok.js';
 import { ROBOT_SQUARE, ROBOT_CIRCLE, ROBOT_HEXAGON } from './robots.js';
 import { CARGO_POD } from './cargoPod.js';
+import { TRADER_HAULER } from './traders.js';
 
 /**
  * Insertion order = canonical catalogue order. Fighter is first so it
@@ -54,4 +55,6 @@ export const SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze([
   // Living World P1b: robot tiers 2 + 3. APPEND ONLY.
   ROBOT_CIRCLE,
   ROBOT_HEXAGON,
+  // Living World P2: the trade hauler. APPEND ONLY.
+  TRADER_HAULER,
 ]);

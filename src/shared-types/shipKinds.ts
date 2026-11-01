@@ -71,6 +71,7 @@ import { L_SHAPE } from './shipKinds/lShape.js';
 import { HAVOK } from './shipKinds/composite/havok.js';
 import { ROBOT_SQUARE, ROBOT_CIRCLE, ROBOT_HEXAGON } from './shipKinds/robots.js';
 import { CARGO_POD } from './shipKinds/cargoPod.js';
+import { TRADER_HAULER } from './shipKinds/traders.js';
 import { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 import type { NpcAllegianceId } from './allegiances.js';
 import type { ShipKind, ShipKindId } from './shipKinds/types.js';
@@ -128,6 +129,7 @@ export const SHIP_KINDS = Object.freeze({
   'cargo-pod': CARGO_POD,
   'robot-circle': ROBOT_CIRCLE,
   'robot-hexagon': ROBOT_HEXAGON,
+  'trader-hauler': TRADER_HAULER,
 } as const) satisfies Readonly<Record<string, ShipKind>>;
 
 /**
@@ -149,7 +151,7 @@ export const SHIP_KINDS = Object.freeze({
  * MUST bump this value by 1 in the same PR. Mount-layout changes are not
  * auto-handled — they require a separate migration story.
  */
-export const SHIP_KIND_CATALOGUE_VERSION = 15;
+export const SHIP_KIND_CATALOGUE_VERSION = 16;
 
 /** Shield bubble pad — how far PAST each kind's hull `radius` the shield
  *  bubble extends. Shared across:

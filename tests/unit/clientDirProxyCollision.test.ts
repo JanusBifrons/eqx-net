@@ -26,7 +26,7 @@ const CLIENT_DIR = path.join(ROOT, 'src', 'client');
 // if a proxy is added/removed without updating this list (forcing a deliberate
 // "does a client dir collide?" decision). `/auth` is intentionally absent — it
 // has a `bypass`, so it does not hijack source modules.
-const NO_BYPASS_PROXY_PREFIXES = ['matchmake', 'healthz', 'diag', 'dev', 'galaxy', 'push'];
+const NO_BYPASS_PROXY_PREFIXES = ['matchmake', 'healthz', 'diag', 'dev', 'galaxy', 'push', 'trade'];
 const BYPASS_PROXY_PREFIXES = ['auth'];
 
 function parseProxyKeys(): string[] {

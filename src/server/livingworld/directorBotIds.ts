@@ -10,8 +10,14 @@
 
 export const DRONE_BOT_ID_PREFIX = 'lwbot-';
 export const ROBOT_BOT_ID_PREFIX = 'rbot-';
+/** P2 — trade haulers (owned by the `TradeDirector`, not a squad director). */
+export const HAULER_ID_PREFIX = 'hauler-';
 
-/** True for any director-owned bot id (drone or robot). Alloc-free. */
+/** True for any director-owned NPC id (drone, robot or trade hauler). Alloc-free. */
 export function isDirectorBotId(id: string): boolean {
-  return id.startsWith(DRONE_BOT_ID_PREFIX) || id.startsWith(ROBOT_BOT_ID_PREFIX);
+  return id.startsWith(DRONE_BOT_ID_PREFIX) || id.startsWith(ROBOT_BOT_ID_PREFIX) || id.startsWith(HAULER_ID_PREFIX);
+}
+
+export function isHaulerId(id: string): boolean {
+  return id.startsWith(HAULER_ID_PREFIX);
 }

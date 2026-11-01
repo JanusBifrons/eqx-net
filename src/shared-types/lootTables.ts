@@ -29,6 +29,9 @@ const TABLES: Readonly<Record<string, LootTable>> = {
       { good: 'alloy', chance: 0.35, min: 1, max: 2 },
     ],
   },
+  // P2 — a hauler drops NOTHING from a table: its cargo hold (the deal goods)
+  // spills instead, so killing one never mints value.
+  'trader-hauler': { credits: [0, 0], entries: [] },
   // P1b — robot tiers drop progressively better loot (the reason to hunt them).
   'robot-circle': {
     credits: [20, 45],

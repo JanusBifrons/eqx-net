@@ -27,6 +27,10 @@ export interface AiPlayerView {
    *  shipInstanceId): the owning player's id, so a drone hostile to that player
    *  (its `hostileTo` holds playerIds) treats the parked hull as hostile too. */
   readonly ownerId?: string;
+  /** Living World P2 — the player holds a TRUCE with the on-sight sides
+   *  (robot reputation ≥ ROBOT_TRUCE_AT): robots no longer engage them on sight.
+   *  Retaliation (`hostileTo`) still applies. Server-populated only. */
+  truce?: boolean;
 }
 
 /**
@@ -178,7 +182,7 @@ export interface IAiBehaviour {
    * want to colour entities differently based on their threat state.
    * Pure / side-effect-free; safe to call every frame.
    */
-  isHostileToPlayer?(playerId: string): boolean;
+  isHostileToPlayer?(playerId: string, truce?: boolean): boolean;
   /**
    * Optional in-sector MOVE target (roaming-formation system, Phase 5).
    * SERVER-ONLY: the `LivingWorldDirector` assigns each squad member a

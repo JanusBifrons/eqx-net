@@ -31,6 +31,17 @@ describe('HostileDroneBehaviour — allegiance on-sight stance', () => {
     expect(intent.fire).toBeDefined();
   });
 
+  it('P2 — a ROBOT holds fire on a player with a TRUCE (robot rep), but still retaliates', () => {
+    const b = new HostileDroneBehaviour(ROBOT);
+    const truced = { ...PLAYER_AHEAD, truce: true };
+    expect(b.tick(self('r1'), view({ players: [truced] })).fire).toBeUndefined();
+    expect(b.isHostileToPlayer('p1', true)).toBe(false);
+    expect(b.isHostileToPlayer('p1', false)).toBe(true);
+    b.markHostile('p1', 100); // the player shot it
+    expect(b.isHostileToPlayer('p1', true)).toBe(true);
+    expect(b.tick(self('r1'), view({ players: [truced] })).fire).toBeDefined();
+  });
+
   it('a DRONE does NOT fire at an unprovoked player (pre-P0 behaviour preserved)', () => {
     const b = new HostileDroneBehaviour(DRONE);
     const intent = b.tick(self('d1'), view({ players: [PLAYER_AHEAD] }));

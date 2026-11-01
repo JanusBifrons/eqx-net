@@ -29,7 +29,15 @@ import {
   takeOverPlayerSession,
 } from '../identity/PlayerSessionRegistry.js';
 import { getIncomingPlayerSink } from '../livingworld/incomingPlayerSink.js';
-import { isDirectorBotId } from '../livingworld/directorBotIds.js';
+import { isDirectorBotId, isHaulerId } from '../livingworld/directorBotIds.js';
+import { getTradeSink } from '../economy/tradeSink.js';
+import type { TradeNetworkSnapshot, TradeTransferResult, TradeTransferSpec } from '../cargo/StorageService.js';
+import {
+  AcceptOfferSchema,
+  CancelDealSchema,
+  SendGiftSchema,
+  type TradeNotice,
+} from '../../shared-types/economy.js';
 import { BaseState, SectorState, ShipState, StructureState } from './schema/SectorState.js';
 import {
   STRUCTURE_ETA_NONE,
@@ -1604,7 +1612,7 @@ export class SectorRoom extends Room<SectorState> {
       swarmHealth: this.swarmHealth,
       // Campaign 2.1 — the per-recipient `drones[].hostile` bit reads the
       // same hostility ledger the AI tick + liveCounts use (one truth).
-      isDroneHostileTo: (droneId, playerId) => this.aiController.isEntityHostileToPlayer(droneId, playerId),
+      isDroneHostileTo: (droneId, playerId) => this.npcHostileTo(droneId, playerId),
       // Living World P1a (#16) — own-ship cargo slice source.
       shipHoldOf: (shipInstanceId) => this.loot.shipHold(shipInstanceId),
       depositProgressOf: (shipInstanceId) => this.depositProgress.get(shipInstanceId),
@@ -2429,6 +2437,47 @@ export class SectorRoom extends Room<SectorState> {
       }
     });
 
+    // ── Living World P2 — trade deals (account required) ───────────────────
+    // Thin relays to the process-global TradeDirector (via the trade sink).
+    // The verdict comes straight back as a `trade_notice` (accelerator only —
+    // the Trade tab's truth is `GET /player/economy`, #16).
+    const tradeRequest = (
+      client: Client,
+      kind: 'accept_offer' | 'cancel_deal' | 'send_gift',
+      raw: unknown,
+    ): void => {
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      const sink = getTradeSink();
+      if (!playerId || !sink) return;
+      const reply = (ok: boolean, dealId: string | null, message: string): void => {
+        try {
+          client.send('trade_notice', {
+            type: 'trade_notice', dealId: dealId ?? '', event: ok ? 'accepted' : 'rejected', message, econVersion: 0,
+          } satisfies TradeNotice);
+        } catch { /* socket closing */ }
+      };
+      if (this.sectorKey === null) { reply(false, null, 'Trade is only available in the galaxy.'); return; }
+      if (!this.playerToUser.get(playerId)) { reply(false, null, 'Sign in to trade.'); return; }
+      let v;
+      if (kind === 'accept_offer') {
+        const p = AcceptOfferSchema.safeParse(raw);
+        if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
+        v = sink.acceptOffer(playerId, this.sectorKey, p.data);
+      } else if (kind === 'cancel_deal') {
+        const p = CancelDealSchema.safeParse(raw);
+        if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
+        v = sink.cancelDeal(playerId, p.data.dealId);
+      } else {
+        const p = SendGiftSchema.safeParse(raw);
+        if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
+        v = sink.sendGift(playerId, this.sectorKey, p.data);
+      }
+      reply(v.ok, v.dealId, v.message);
+    };
+    this.onMessage('accept_offer', (client: Client, raw: unknown) => tradeRequest(client, 'accept_offer', raw));
+    this.onMessage('cancel_deal', (client: Client, raw: unknown) => tradeRequest(client, 'cancel_deal', raw));
+    this.onMessage('send_gift', (client: Client, raw: unknown) => tradeRequest(client, 'send_gift', raw));
+
     // ── Phase 4 WS-A2 — same-sector instant pilot swap ─────────────────────
     // The player (a spectator after death, or piloting another hull) reclaims
     // one of their OWN lingering hulls parked in THIS sector and resumes control
@@ -3078,7 +3127,7 @@ export class SectorRoom extends Room<SectorState> {
     }
     const ownerAllegiance = allegianceOfKind(ownerRec?.shipKind);
     return (id) => {
-      if (this.aiController.isEntityHostileToPlayer(ownerId, id)) return true;
+      if (this.npcHostileTo(ownerId, id)) return true;
       // Cross-allegiance swarm targets (drones ↔ robots ↔ traders) by stance.
       const rec = this.swarmRegistry.get(id);
       if (rec == null || rec.kind !== 1 || id === ownerId) return false;
@@ -3157,6 +3206,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
+    if (damage > 0) this.noteEconomicHit(targetId, shooterId);
     // R2.18 — a Shield Pylon is undamageable while its wall is up: route the hit
     // into an active wall (drains the grid/batteries, can stun it) and skip the
     // pylon damage entirely (no damage event for the pylon). This single choke
@@ -4260,7 +4310,7 @@ export class SectorRoom extends Room<SectorState> {
       if (rec.kind !== SWARM_KIND_DRONE) continue;
       let hostile = false;
       for (const pid of present) {
-        if (this.aiController.isEntityHostileToPlayer(rec.id, pid)) {
+        if (this.npcHostileTo(rec.id, pid)) {
           hostile = true;
           break;
         }
@@ -6218,15 +6268,90 @@ export class SectorRoom extends Room<SectorState> {
     });
   };
 
+  /**
+   * Living World P2 — economy side of a hit: a player (or their turret) hitting
+   * a trade HAULER is piracy (the TradeDirector records the attacker for the
+   * run); hitting a ROBOT costs robot standing (ends a truce). Steady state is
+   * prefix checks + Map lookups, no allocation (#14).
+   */
+  private noteEconomicHit(targetId: string, shooterId: string): void {
+    const sink = getTradeSink();
+    if (sink === null) return;
+    const hauler = isHaulerId(targetId);
+    if (!hauler) {
+      const rec = this.swarmRegistry.get(targetId);
+      if (rec == null || rec.kind !== 1 || allegianceOfKind(rec.shipKind) !== 'robots') return;
+    }
+    const kind = classifyAttacker(shooterId);
+    const attacker = kind === 'player'
+      ? shooterId
+      : kind === 'structure' ? (this.structureRegistry.get(shooterId)?.owner ?? null) : null;
+    if (attacker === null) return;
+    if (hauler) sink.onHaulerDamaged(targetId, attacker);
+    else sink.onRobotDamaged(attacker);
+  }
+
+  // ── Living World P2 — TradeRoom hooks (driven by the TradeDirector) ──────
+
+  tradeSnapshot(ownerId: string, networkUid: string): TradeNetworkSnapshot | null {
+    return this.storage.tradeSnapshot(ownerId, networkUid);
+  }
+
+  tradeTransfer(ownerId: string, networkUid: string, spec: TradeTransferSpec): TradeTransferResult | null {
+    const res = this.storage.tradeTransfer(ownerId, networkUid, spec);
+    if (res !== null) this.rebuildStructuresSlice(); // the bank rides the slice
+    return res;
+  }
+
+  /** A base is "under attack" when its owner's faction has an active wave here,
+   *  or one of its structures was hit in the last 60 s. */
+  tradeBaseUnderAttack(ownerId: string): boolean {
+    if (this.factionLedger.get(ownerId)?.underWave === true) return true;
+    const now = Date.now();
+    for (const [sid, at] of this.structureAttackAuditAtMs) {
+      if (now - at > 60_000) continue;
+      if (this.structureRegistry.get(sid)?.owner === ownerId) return true;
+    }
+    return false;
+  }
+
+  tradeDropAt(hold: Hold, x: number, y: number): void {
+    this.loot.drop(hold, x, y, 0, 0, { cause: 'trade' });
+  }
+
+  tradeNotify(playerId: string, notice: TradeNotice): void {
+    const sessionId = this.playerToSession.get(playerId);
+    if (sessionId === undefined) return;
+    const client = this.clients.find((c) => c.sessionId === sessionId);
+    try { client?.send('trade_notice', notice); } catch { /* socket closing */ }
+  }
+
+  /** Living World P2 — robot reputation truce (no on-sight engagement). One Map
+   *  lookup; safe on the snapshot / AI hot paths. */
+  private playerTruce(playerId: string): boolean {
+    return getTradeSink()?.robotTruce(playerId) === true;
+  }
+
+  /** The ONE NPC→player hostility query (snapshot `drones[].hostile`, live
+   *  counts, missile homing): stance + retaliation ledger, minus on-sight
+   *  engagement for a player holding a truce (#15/#16 — every surface agrees). */
+  private npcHostileTo(entityId: string, playerId: string): boolean {
+    return this.aiController.isEntityHostileToPlayer(entityId, playerId, this.playerTruce(playerId));
+  }
+
   private dropKillLoot(rec: SwarmEntityRecord): void {
-    const hold = rollLoot(rec.shipKind, Math.random);
     const b = slotBase(rec.slot);
-    this.loot.drop(
-      hold,
-      this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!,
-      this.sabF32[b + SLOT_VX_OFF]! * 0.3, this.sabF32[b + SLOT_VY_OFF]! * 0.3,
-      { cause: 'kill' },
-    );
+    const x = this.sabF32[b + SLOT_X_OFF]!;
+    const y = this.sabF32[b + SLOT_Y_OFF]!;
+    const vx = this.sabF32[b + SLOT_VX_OFF]! * 0.3;
+    const vy = this.sabF32[b + SLOT_VY_OFF]! * 0.3;
+    // P2 — an NPC that CARRIES a hold (a trade hauler) spills it where it died:
+    // anything with a hold spills on death (the deal cargo is up for grabs).
+    if (getHoldStore().get(rec.id)?.holderType === 'hauler') {
+      this.loot.spillShipHold(rec.id, x, y, vx, vy, 'hauler-raided');
+    }
+    const hold = rollLoot(rec.shipKind, Math.random);
+    this.loot.drop(hold, x, y, vx, vy, { cause: 'kill' });
   }
 
   /**
@@ -6734,6 +6859,7 @@ export class SectorRoom extends Room<SectorState> {
       fillStructureTargets: (out) => this.fillStructureTargets(out),
       aiSwarmScratch: this.aiSwarmScratch,
       fillSwarmTargets: (out) => this.fillSwarmTargets(out),
+      hasTruce: (pid) => this.playerTruce(pid),
       // Living World P1a-2 (decision 7) — offline hulls are fair game.
       isPlayerConnected: this._isPlayerConnected,
       visitLingeringTargets: this._visitLingeringTargets,
