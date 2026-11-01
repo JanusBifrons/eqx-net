@@ -41,7 +41,7 @@ import {
 import { getSector, getNeighbours, isEntrySector } from '../../core/galaxy/galaxy.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import type { BotCarry } from './botTypes.js';
-import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
+import type { SectorLiveState, SectorOwner } from '../../shared-types/galaxySnapshot.js';
 import type { SectorStructurePresence } from '../../shared-types/galaxyPresence.js';
 import { LivingWorldRoom } from './LivingWorldRoom.js';
 import { HunterBotPool, type BotRecord, type DirectorSnapshot } from './director/HunterBotPool.js';
@@ -241,6 +241,23 @@ export interface LivingWorldHooks {
    *  director (the snapshot provider) counts the robot director's active bots
    *  as enemies, since robots are hostile to every player on sight. */
   extraEnemyCounts?: () => ReadonlyMap<string, number>;
+  /** P3 — where (re)spawning bots appear instead of the galaxy edge (the robot
+   *  nexus while it lives), or null ⇒ the normal edge ingress. */
+  respawnAnchor?: () => { sectorKey: string; x: number; y: number } | null;
+  /** P3 — called at the tail of every control tick (robot territory). */
+  onTick?: (nowMs: number) => void;
+  /** P3 — a sector's live owner override for `/galaxy/snapshot` (robot-held
+   *  territory), or null ⇒ the sector's static region. */
+  sectorOwner?: (sectorKey: string) => SectorOwner | null;
+}
+
+/** Deterministic per-bot scatter around a respawn anchor (no pile-up on one point). */
+function anchorJitter(botId: string): { x: number; y: number } {
+  let h = 2166136261;
+  for (let i = 0; i < botId.length; i++) h = Math.imul(h ^ botId.charCodeAt(i), 16777619) >>> 0;
+  const a = (h % 360) * (Math.PI / 180);
+  const r = 140 + (h % 120);
+  return { x: Math.cos(a) * r, y: Math.sin(a) * r };
 }
 
 /** Display label for a squad's homogeneous hull in the warp-in warning
@@ -416,7 +433,7 @@ export class LivingWorldDirector {
     this.rng = options.rng ?? Math.random;
     this.nowMs = options.nowMs ?? Date.now;
     this.directorPersistence = options.directorPersistence ?? null;
-    this.hooks = options.hooks ?? {};
+    this.hooks = { ...(options.hooks ?? {}) };
     this.pool = new HunterBotPool({
       botCount: this.opts.botCount,
       initialStaggerMs: this.opts.initialStaggerMs,
@@ -652,6 +669,15 @@ export class LivingWorldDirector {
       this.lastPersistAtMs = now;
       this.persistState();
     }
+
+    // ── 5. P3 — side-specific per-tick work (robot territory + nexus) ─────
+    this.hooks.onTick?.(now);
+  }
+
+  /** P3 — attach cross-director hooks after construction (the robot
+   *  territory is built from the director it hooks into). Merges. */
+  setHooks(hooks: LivingWorldHooks): void {
+    Object.assign(this.hooks, hooks);
   }
 
   /** Recompute the cached `/galaxy/snapshot` live state — one entry per galaxy
@@ -698,7 +724,9 @@ export class LivingWorldDirector {
         structures: counts.structures,
         // Cosmetic/static v1: ownership IS the sector's region faction; the shape
         // carries `null` for the FUTURE "unclaimed" case (shared-types/galaxySnapshot.ts).
-        owner: region ? { factionId: region, contested: false } : null,
+        // P3 — a robot-held sector shows the robots as its owner; otherwise the
+        // static region faction (cosmetic v1).
+        owner: this.hooks.sectorOwner?.(key) ?? (region ? { factionId: region, contested: false } : null),
         // Equinox Phase 9 (item 5) — recent-combat tally (null when quiet); the
         // room owns the sliding window, the director just forwards it.
         recentCombat: room.recentCombat?.() ?? null,
@@ -1313,6 +1341,27 @@ export class LivingWorldDirector {
       // entry), the bot rejoins there directly — cohesive; otherwise (the goal
       // is an interior base / roam target) it enters at a random edge sector and
       // traverses back hop-by-hop via `advanceMembersTowardGoal`.
+      // P3 — the robots-only ingress exception: while a respawn ANCHOR exists
+      // (a living robot nexus), reinforcements spawn AT it instead of entering
+      // from the galaxy edge.
+      const anchor = this.hooks.respawnAnchor?.() ?? null;
+      if (anchor !== null && this.rooms.has(anchor.sectorKey)) {
+        const aRoom = this.rooms.get(anchor.sectorKey)!;
+        if (!aRoom.hasFreeSlot()) { rec.respawnAtMs = now; continue; }
+        const j = anchorJitter(rec.botId);
+        const ok = aRoom.spawnLivingWorldBot({
+          botId: rec.botId, kind: rec.kind, x: anchor.x + j.x, y: anchor.y + j.y,
+        });
+        if (ok) {
+          rec.state = 'active';
+          rec.sectorKey = anchor.sectorKey;
+          rec.arrivedAtMs = now;
+          serverLogEvent('bot_spawn', { botId: rec.botId, sectorKey: anchor.sectorKey, kind: rec.kind, anchor: true });
+        } else {
+          rec.respawnAtMs = now;
+        }
+        continue;
+      }
       const goal = this.squadPool.respawnSectorFor(rec.botId);
       const sector =
         goal !== null && this.rooms.has(goal) && isEntrySector(goal)

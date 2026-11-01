@@ -97,6 +97,44 @@ export const ROBOT_CIRCLE: ShipKind = ShipKindSchema.parse({
   slots: [LEGACY_PRIMARY_SLOT],
 });
 
+export const ROBOT_COLOR_NEXUS = 0x4b2bd6;
+
+/**
+ * Living World P3 — the robot NEXUS. A huge stationary octagon that anchors a
+ * robot territory: while it lives, killed robots respawn AT the nexus instead
+ * of entering from the galaxy edge (the robots-only ingress exception), and its
+ * sector counts heavily toward robot control. It fires slow pulse orbs, never
+ * moves (token thrust, 5 u/s cap, heavy damping), is never load-shed, and drops
+ * the richest loot in the game when destroyed.
+ */
+export const ROBOT_NEXUS: ShipKind = ShipKindSchema.parse({
+  id: 'robot-nexus',
+  displayName: 'Robot Nexus',
+  description: 'The heart of a robot territory. Reinforcements spawn here.',
+  allegiance: 'robots',
+  npcOnly: true,
+  shedImmune: true,
+  thrustImpulse: 0.01,
+  reverseFactor: 0.5,
+  boostMultiplier: 1,
+  maxAngvel: 0.4,
+  maxSpeed: 5,
+  linearDamping: 3,
+  angularDamping: 0,
+  lateralGrip: 0.03,
+  radius: 55,
+  maxHealth: 6000,
+  shieldMax: 2500,
+  shieldRegenDelayTicks: 600,
+  shieldRegenRate: 2500 / 600,
+  energyMax: 400,
+  energyRegenRate: 0.5,
+  ai: { thrust: 0.01, turnKp: 2.0, maxTorque: 20.0 },
+  shape: { kind: 'polygon', color: ROBOT_COLOR_NEXUS, scale: 1, points: ngon(8, 52, Math.PI / 8) },
+  mounts: [{ ...LEGACY_FORWARD_MOUNT, weaponId: 'pulse-orb' }],
+  slots: [LEGACY_PRIMARY_SLOT],
+});
+
 /** T3 — the hexagon. Heavy and slow; launches homing missiles (P1b). */
 export const ROBOT_HEXAGON: ShipKind = ShipKindSchema.parse({
   id: 'robot-hexagon',

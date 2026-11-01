@@ -1,5 +1,5 @@
 export type WeaponMode = 'hitscan' | 'projectile' | 'missile';
-export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker';
+export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb';
 
 interface WeaponDefBase {
   id: WeaponId;
@@ -201,13 +201,33 @@ const HEAT_SEEKER_DEF: MissileWeaponDef = {
   proximityFuseRadius: 0,
 };
 
+/**
+ * Living World P3 — the robot NEXUS's weapon: a slow, fat, hard-hitting orb.
+ * Easy to see coming and dodge (speed 700, radius 10) but punishing to tank
+ * (45 per hit). NPC-only — not in the player mount/fire schemas. Range ≈
+ * 700 × 120 / 60 = 1400 u.
+ */
+const PULSE_ORB_DEF: ProjectileWeaponDef = {
+  id: 'pulse-orb',
+  displayName: 'Pulse Orb',
+  mode: 'projectile',
+  damage: 45,
+  cooldownTicks: 45,
+  speed: 700,
+  radius: 10,
+  maxTicks: 120,
+  // NPCs aren't energy-gated; the catalogue still requires a real cost.
+  energyCost: 8,
+};
+
 export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, WeaponDef>([
   ['hitscan', HITSCAN_DEF],
   ['laser', LASER_DEF],
   ['heat-seeker', HEAT_SEEKER_DEF],
+  ['pulse-orb', PULSE_ORB_DEF],
 ]);
 
-export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker'] as const;
+export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb'] as const;
 
 export const DEFAULT_WEAPON: WeaponId = 'hitscan';
 
@@ -216,7 +236,7 @@ export function getWeapon(id: WeaponId): WeaponDef {
 }
 
 export function isWeaponId(v: unknown): v is WeaponId {
-  return v === 'hitscan' || v === 'laser' || v === 'heat-seeker';
+  return v === 'hitscan' || v === 'laser' || v === 'heat-seeker' || v === 'pulse-orb';
 }
 
 /**

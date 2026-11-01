@@ -45,6 +45,15 @@ describe('buildSectorTooltip (Living Galaxy Phase 6)', () => {
     expect(buildSectorTooltip(sector.key, stats)!.status).toBe('Contested');
   });
 
+  it('P3 — a robot-held sector reads as Robot Dominion', () => {
+    const stats: SectorLiveState[] = [
+      { key: sector.key, players: 0, enemies: 6, neutrals: 0, structures: 0, owner: { factionId: 'robots', contested: false } },
+    ];
+    const tip = buildSectorTooltip(sector.key, stats)!;
+    expect(tip.faction).toBe('Robot Dominion');
+    expect(tip.status).toBe('Held');
+  });
+
   it('exposes a human-readable faction label, never a raw id (UI-scope rule)', () => {
     const tip = buildSectorTooltip(sector.key, [])!;
     expect(tip.faction.length).toBeGreaterThan(0);

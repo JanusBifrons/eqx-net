@@ -37,6 +37,7 @@ import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled, res
 import { setIncomingPlayerSink } from './livingworld/incomingPlayerSink.js';
 import { setGalaxyStatsProvider } from './livingworld/galaxyStatsProvider.js';
 import { ROBOT_DIRECTOR_OPTIONS, ROBOT_BOT_COUNT, isRobotsDisabled } from './livingworld/robotDirector.js';
+import { RobotTerritory } from './livingworld/RobotTerritory.js';
 import { DirectorPersistence, type DirectorStatePayload } from './livingworld/DirectorPersistence.js';
 import { db } from './db/Database.js';
 import { resolveCorsPolicy, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
@@ -107,6 +108,8 @@ let serverReady = false;
 let livingWorldDirector: LivingWorldDirector | null = null;
 /** Living World P1b — the robot-side director (null when disarmed). */
 let robotDirector: LivingWorldDirector | null = null;
+/** Living World P3 — robot territory + nexus (null when robots are disarmed). */
+let robotTerritory: RobotTerritory | null = null;
 const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
 /** Living World P2 — the economy (null until boot finishes). */
 let economyStore: EconomyStore | null = null;
@@ -913,6 +916,26 @@ gameServer
     haulerRaiders: 2,
   })
   .filterBy(['testId']);
+// Living World P3 showcase — a robot NEXUS (shields down) guarded by robot
+// cubes, with a drone pack drifting in. testMode, filterBy testId.
+gameServer
+  .define('nexus-showcase', SectorRoom, {
+    sectorKey: 'nexus-showcase',
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    maxClients: 4,
+    dronePoses: [
+      { kind: 'robot-nexus', x: 0, y: 700, angle: Math.PI, hullExposed: true },
+      { kind: 'robot-square', x: -260, y: 560, angle: Math.PI, hullExposed: true },
+      { kind: 'robot-square', x: 260, y: 560, angle: Math.PI, hullExposed: true },
+      { kind: 'robot-circle', x: 0, y: 480, angle: Math.PI, hullExposed: true },
+      { kind: 'fighter', x: -700, y: 200, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'fighter', x: -760, y: 320, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'heavy', x: -820, y: 140, angle: -Math.PI / 2, hullExposed: true },
+    ],
+  })
+  .filterBy(['testId']);
 // Living World P1b showcase — one full mixed-tier ROBOT squad (hexagon lead,
 // two circles, three cubes) vs six drones, the pilot spawning between them.
 // Robots are hostile to the pilot too, so the recording shows a real three-way
@@ -1118,13 +1141,27 @@ async function main(): Promise<void> {
         directorPersistence: robotPersistence,
       });
       robotDirector.start();
-      logger.info({ bots: ROBOT_BOT_COUNT }, 'robot director started');
+      // Living World P3 — robot territory + the nexus (reinforcements spawn at
+      // it; robot-held sectors show on the galaxy map).
+      const rd = robotDirector;
+      const territory = new RobotTerritory(galaxyRooms, () => rd.activeBotCountsBySector());
+      rd.setHooks({
+        respawnAnchor: () => territory.respawnAnchor(),
+        onTick: (now) => territory.tick(now),
+      });
+      territory.start();
+      robotTerritory = territory;
+      logger.info({ bots: ROBOT_BOT_COUNT, nexus: territory.nexusState() }, 'robot director started');
     }
     livingWorldDirector = new LivingWorldDirector(galaxyRooms, {
       ...directorOpts,
       directorPersistence,
       // Robots are enemies of every player on the galaxy map.
-      hooks: { extraEnemyCounts: () => robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS },
+      hooks: {
+        extraEnemyCounts: () => robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS,
+        // P3 — robot-held sectors show the robots as owner on the galaxy map.
+        sectorOwner: (key) => robotTerritory?.sectorOwner(key) ?? null,
+      },
     });
     livingWorldDirector.start();
     // Phase-4 P0 — let the per-room TransitOrchestrator + destination rooms feed
@@ -1200,6 +1237,7 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
     livingWorldDirector?.stop();
     robotDirector?.persistState();
     robotDirector?.stop();
+    robotTerritory?.stop();
     setTradeSink(null);
     setEconomyRouteProvider(null);
     tradeDirector?.stop();
