@@ -225,6 +225,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         sprite = buildScrapGfx(entry.shipKind, entry.componentIndex ?? 0);
       } else {
         sprite = buildAsteroidGfx(entityId, entry.radius);
+        // P2c — ice and crystal-veined rocks read apart from plain rock.
+        if (entry.asteroidResource === 'ice') sprite.tint = 0xa8dcff;
+        else if (entry.asteroidResource === 'crystal') sprite.tint = 0xd2a8ff;
       }
       ctx.shipContainer.addChild(sprite);
       ctx.sprites.set(spriteKey, sprite);

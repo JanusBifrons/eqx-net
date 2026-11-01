@@ -161,6 +161,23 @@ export class ProductionSubsystem {
     return true;
   }
 
+  /**
+   * P2c — put `n` of a good into `rec`'s owner network storage (extractors:
+   * ice and crystal from Miners, gas from Gas Collectors). All or nothing;
+   * returns what was stored.
+   */
+  deposit(rec: StructureRecord, good: GoodId, n: number): number {
+    if (n <= 0) return 0;
+    this.netComponent = null;
+    this.collectNetwork(rec);
+    const out = this.depositScratch;
+    out.good = good;
+    out.n = n;
+    return this.put(this.depositList, 0, 0) ? n : 0;
+  }
+  private readonly depositScratch: { good: GoodId; n: number } = { good: 'minerals', n: 0 };
+  private readonly depositList: readonly RecipeOutput[] = [this.depositScratch];
+
   private step(rec: StructureRecord): void {
     if (!rec.isConstructed) {
       rec.prodState = PROD_STATE.none;

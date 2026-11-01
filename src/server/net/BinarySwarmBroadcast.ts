@@ -28,6 +28,7 @@ import {
   swarmPacketSize,
 } from '../../shared-types/swarmWireFormat.js';
 import { shipKindToIndex, isShipKindId } from '../../shared-types/shipKinds.js';
+import { asteroidResourceIndex } from '../../shared-types/asteroidResources.js';
 import { structureKindToIndex, isStructureKindId } from '../../shared-types/structureKinds.js';
 import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE, SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from './SwarmEntityRegistry.js';
@@ -184,6 +185,9 @@ export class BinarySwarmBroadcast {
         shipKindIdx = structureKindToIndex(rec.shipKind);
       } else if (rec.kind === SWARM_KIND_SCRAP && rec.shipKind && isShipKindId(rec.shipKind)) {
         shipKindIdx = shipKindToIndex(rec.shipKind);
+      } else if (rec.kind === 0 && rec.asteroidResource !== undefined) {
+        // P2c — an asteroid's resource kind (rock = 0 is the default byte).
+        shipKindIdx = asteroidResourceIndex(rec.asteroidResource);
       }
       this.view.setUint8(writeOffset + SWARM_REC_SHIP_KIND_OFF, shipKindIdx);
       // v4: componentIndex — which scrap group of the parent ship-kind this

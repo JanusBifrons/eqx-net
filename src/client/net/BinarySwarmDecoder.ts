@@ -28,6 +28,7 @@ import {
 } from '../../shared-types/swarmWireFormat.js';
 import { shipKindFromIndex } from '../../shared-types/shipKinds.js';
 import { structureKindFromIndex } from '../../shared-types/structureKinds.js';
+import { asteroidResourceFromIndex } from '../../shared-types/asteroidResources.js';
 
 interface MutableMirror {
   swarm?: Map<number, SwarmRenderState>;
@@ -133,6 +134,8 @@ export function decodeSwarmPacket(
     // for every other kind so the render-state entry stays minimal.
     const componentIndexForEntry =
       kind === SWARM_KIND_SCRAP ? componentIndex : undefined;
+    // P2c — an asteroid's resource kind rides the same byte (0 = rock).
+    const asteroidResource = kind === 0 && shipKindByte !== 0 ? asteroidResourceFromIndex(shipKindByte) : undefined;
 
     let entry = swarm.get(entityId);
     if (!entry) {
@@ -149,6 +152,7 @@ export function decodeSwarmPacket(
         x, y, vx, vy, angle, angvel, radius, kind, sleeping, shieldDown, lastUpdateTick: tick,
         ...(shipKindId ? { shipKind: shipKindId } : {}),
         ...(componentIndexForEntry !== undefined ? { componentIndex: componentIndexForEntry } : {}),
+        ...(asteroidResource !== undefined ? { asteroidResource } : {}),
         prevX: x, prevY: y, prevAngle: angle,
         prevArrivalMs: nowMs, latestArrivalMs: nowMs,
         poseRing: ring,
@@ -175,6 +179,7 @@ export function decodeSwarmPacket(
       entry.kind = kind;
       if (shipKindId) entry.shipKind = shipKindId;
       if (componentIndexForEntry !== undefined) entry.componentIndex = componentIndexForEntry;
+      if (asteroidResource !== undefined) entry.asteroidResource = asteroidResource;
       entry.sleeping = sleeping;
       entry.shieldDown = shieldDown;
       entry.lastUpdateTick = tick;

@@ -1,3 +1,4 @@
+import type { AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_FLAGS_OFF, FLAG_IS_SWARM, FLAG_KIND_DRONE, slotBase } from '../../shared-types/sabLayout.js';
 import { SwarmEntityRegistry, type SwarmKind } from '../net/SwarmEntityRegistry.js';
 import type { IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
@@ -22,6 +23,8 @@ export interface AsteroidSpec {
   /** Optional — defaults to `ASTEROID_DEFAULT_MASS`. Asteroids are intentionally
    *  very heavy; per-spec overrides exist for tests and special-case rocks. */
   mass?: number;
+  /** P2c — what a Miner gets from it (absent ⇒ rock). Asteroids only. */
+  resource?: AsteroidResourceId;
 }
 
 export interface DroneSpec {
@@ -167,7 +170,12 @@ export class SwarmSpawner {
 
   /** Spawn one asteroid. Returns true on success, false if no free slot. */
   spawnAsteroid(a: AsteroidSpec): boolean {
-    return this.spawnOne(0, a, undefined);
+    const ok = this.spawnOne(0, a, undefined);
+    if (ok && a.resource !== undefined && a.resource !== 'rock') {
+      const rec = this.registry.get(a.id);
+      if (rec) rec.asteroidResource = a.resource;
+    }
+    return ok;
   }
 
   /** Spawn one drone. Returns true on success, false if no free slot.
