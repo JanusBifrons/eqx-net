@@ -416,6 +416,29 @@ export function buildProjectileGfx(isGhost: boolean): Graphics {
   return g;
 }
 
+/** Living World P3c — a charge weapon's wind-up telegraph: a hot ring round the
+ *  hull + a faint beam line out to the weapon's range along the facing
+ *  (Pixi-up local space; the parent sprite's rotation carries it). */
+export function buildChargeTelegraphGfx(radius: number, range: number): Graphics {
+  const g = new Graphics();
+  g.circle(0, 0, radius + 9);
+  g.stroke({ color: 0xff5ad1, width: 3, alpha: 0.9 });
+  g.moveTo(0, -(radius + 9)).lineTo(0, -range);
+  g.stroke({ color: 0xff5ad1, width: 2, alpha: 0.35 });
+  return g;
+}
+
+/** Living World P4a — a named elite's gold ring (two thin strokes, so it reads
+ *  as a "boss" marker without hiding the hull). Built once per sprite. */
+export function buildEliteRingGfx(radius: number): Graphics {
+  const g = new Graphics();
+  g.circle(0, 0, radius + 14);
+  g.stroke({ color: 0xffc850, width: 2, alpha: 0.9 });
+  g.circle(0, 0, radius + 19);
+  g.stroke({ color: 0xffc850, width: 1, alpha: 0.45 });
+  return g;
+}
+
 /** Living World P3 — the robot nexus's pulse orb: a slow, fat violet ball
  *  (radius matches the weapon's 10 u hit radius so the visual is honest). */
 export function buildPulseOrbGfx(): Graphics {

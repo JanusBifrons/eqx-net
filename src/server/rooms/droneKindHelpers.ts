@@ -16,6 +16,12 @@ export function getDroneMaxHealth(kindId: string | null | undefined): number | n
   return getShipKind(kindId).maxHealth;
 }
 
+/** A drone RECORD's hull max — an elite's boosted max wins over its kind's
+ *  (Living World P4a). Every per-entity max-health read goes through this. */
+export function droneMaxHealthOf(rec: { shipKind?: string | null; elite?: { maxHealth: number } }): number | null {
+  return rec.elite?.maxHealth ?? getDroneMaxHealth(rec.shipKind);
+}
+
 /** Per-kind shield pool for a drone (0 when the kind id is unknown). */
 export function getDroneShieldMax(kindId: string | null | undefined): number {
   if (!kindId) return 0;

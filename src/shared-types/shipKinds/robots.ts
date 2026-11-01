@@ -93,7 +93,8 @@ export const ROBOT_CIRCLE: ShipKind = ShipKindSchema.parse({
   energyRegenRate: 0.3,
   ai: { thrust: 0.8, turnKp: 6.5, maxTorque: 3.5 },
   shape: { kind: 'polygon', color: ROBOT_COLOR_T2, scale: 1, points: ngon(12, 13) },
-  mounts: [{ ...LEGACY_FORWARD_MOUNT, weaponId: 'hitscan' }],
+  // P3c — the orb's beam now CHARGES (a visible wind-up before a heavy shot).
+  mounts: [{ ...LEGACY_FORWARD_MOUNT, weaponId: 'charge-laser' }],
   slots: [LEGACY_PRIMARY_SLOT],
 });
 

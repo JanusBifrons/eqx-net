@@ -3,7 +3,8 @@
  * Salvage for 95 cr"). Top-centre, under the warp banner. Driven by the
  * discrete `tradeToasts` Zustand queue (pushed from `trade_notice`, auto-
  * expired) — never per frame. A DANGER toast (under fire / raided) is the
- * escort prompt: tapping it opens the Trade tab.
+ * escort prompt: tapping it opens the Trade tab. A gold `world` toast is a
+ * galaxy-wide world notice (P4 — an elite sighted / destroyed).
  */
 import { memo } from 'react';
 import { Box } from '@mui/material';
@@ -22,6 +23,7 @@ const TONE_SX: Record<TradeToastTone, object> = {
   good: { borderColor: 'rgba(95,214,160,0.7)', color: '#bff5d8' },
   info: { borderColor: 'rgba(255,255,255,0.25)', color: '#dde3ef' },
   danger: { borderColor: 'rgba(255,90,90,0.85)', color: '#ffd0d0', backgroundColor: 'rgba(60,0,0,0.7)' },
+  world: { borderColor: 'rgba(255,200,80,0.85)', color: '#ffe6a8', backgroundColor: 'rgba(40,28,0,0.7)' },
 };
 
 const BASE_SX = {
@@ -41,6 +43,7 @@ const SX_BY_TONE: Record<TradeToastTone, object> = {
   good: { ...BASE_SX, ...TONE_SX.good },
   info: { ...BASE_SX, ...TONE_SX.info },
   danger: { ...BASE_SX, ...TONE_SX.danger },
+  world: { ...BASE_SX, ...TONE_SX.world },
 };
 
 export const TradeToasts = memo(function TradeToasts(): JSX.Element | null {
@@ -59,7 +62,7 @@ export const TradeToasts = memo(function TradeToasts(): JSX.Element | null {
           sx={SX_BY_TONE[t.tone]}
           data-testid="trade-toast"
           data-tone={t.tone}
-          onClick={openTrade}
+          onClick={t.tone === 'world' ? undefined : openTrade}
         >
           {t.text}
         </Box>

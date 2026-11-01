@@ -46,8 +46,11 @@ import {
   buildBuildEtaText,
   formatResources,
   formatBuildEta,
+  buildChargeTelegraphGfx,
+  buildEliteRingGfx,
 } from './spriteBuilders.js';
 import type { Text } from 'pixi.js';
+import { getWeapon } from '../../../core/combat/WeaponCatalogue';
 import { minerRangeForKind } from '../minerRangeRing.js';
 import type { MountVisualManager } from '../MountVisualManager';
 import {
@@ -122,6 +125,24 @@ const _structureMountAngles: number[] = [];
  *  this render-loop hot path (invariant #14). */
 const EMPTY_MOUNTS: readonly WeaponMount[] = [];
 
+/** P3c — drone sprite → its charge telegraph child (weak: dies with the sprite). */
+const chargeTelegraphs = new WeakMap<Graphics, Graphics>();
+/** P4a — a named elite's gold ring, created lazily the first frame the sprite
+ *  is known to be an elite (once per sprite, #14), then shown/hidden. */
+const eliteRings = new WeakMap<Graphics, Graphics>();
+
+/** The longest charge weapon range a kind carries (0 ⇒ no charge weapon). */
+export function chargeRangeForKind(shipKind: string | undefined): number {
+  if (!shipKind) return 0;
+  let r = 0;
+  for (const m of getShipKind(shipKind).mounts ?? EMPTY_MOUNTS) {
+    const w = getWeapon(m.weaponId);
+    if (w.mode === 'hitscan' && (w.chargeTicks ?? 0) > 0 && w.range > r) r = w.range;
+  }
+  return r;
+}
+
+
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
   if (!mirror.swarm) return;
   const now = performance.now();
@@ -166,6 +187,15 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         sprite = entry.shipKind
           ? buildShipGfxFromShape(shapeForKind(entry.shipKind))
           : buildDroneGfx(entry.radius);
+        // P3c — a kind with a CHARGE weapon gets a (hidden) wind-up telegraph,
+        // built once here and toggled per frame from `entry.charging`.
+        const chargeRange = chargeRangeForKind(entry.shipKind);
+        if (chargeRange > 0) {
+          const tele = buildChargeTelegraphGfx(entry.radius, chargeRange);
+          tele.visible = false;
+          sprite.addChild(tele);
+          chargeTelegraphs.set(sprite, tele);
+        }
       } else if (entry.kind === 2) {
         // Structures (pose-core kind 2): a per-subtype tinted polygon read from
         // the shared shipKind byte (structures plan, Phase 2).
@@ -221,6 +251,26 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // radius is a safe margin; mount barrels are children and hide with it).
     if (entry.kind === 2) sprite.visible = isSpriteInView(sprite.x, sprite.y, entry.radius, ctx.viewBounds);
     sprite.rotation = -lerped.angle;
+    if (entry.kind === 1) {
+      // P3c — charge-weapon wind-up telegraph (pulses while charging).
+      const tele = chargeTelegraphs.get(sprite);
+      if (tele !== undefined) {
+        const on = entry.charging === true;
+        tele.visible = on;
+        if (on) tele.alpha = 0.45 + 0.4 * Math.sin(now / 70);
+      }
+      // P4a — a named elite wears a slowly-pulsing gold ring.
+      let ring = eliteRings.get(sprite);
+      if (entry.eliteName !== undefined && ring === undefined) {
+        ring = buildEliteRingGfx(entry.radius);
+        sprite.addChild(ring);
+        eliteRings.set(sprite, ring);
+      }
+      if (ring !== undefined) {
+        ring.visible = entry.eliteName !== undefined;
+        if (ring.visible) ring.alpha = 0.7 + 0.3 * Math.sin(now / 400);
+      }
+    }
     if (entry.kind === 1 && entry.shipKind) {
       ctx.mountVisuals.ensureForShip(spriteKey, entry.shipKind, sprite);
       const swarmKind = getShipKind(entry.shipKind);

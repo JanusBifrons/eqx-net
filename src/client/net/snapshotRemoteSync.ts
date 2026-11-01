@@ -123,6 +123,11 @@ export function preResetRemoteShips(
  * Out-of-interest drones never appear here, so their mountAngles stays
  * undefined (renderer falls back to baseAngle) — unchanged.
  */
+/** Entity ids marked `charging` by the previous snapshot (reused — #14). */
+const chargingIds = new Set<number>();
+/** Entity ids named as elites by the previous snapshot (reused — #14). */
+const eliteIds = new Set<number>();
+
 export function applyDroneMountAngles(
   snap: SnapshotMessage,
   mirror: RenderMirror,
@@ -133,11 +138,37 @@ export function applyDroneMountAngles(
   // clear — the ledger's time-decay owns forgetting (same as the event path).
   onHostile?: (entityId: number) => void,
 ): void {
+  // P3c — the charge telegraph: the server omits a drone with nothing to
+  // report, so last snapshot's chargers are cleared first and re-marked below.
+  if (chargingIds.size > 0) {
+    for (const id of chargingIds) {
+      const sw = mirror.swarm?.get(id);
+      if (sw) sw.charging = false;
+    }
+    chargingIds.clear();
+  }
+  // P4a — elite names clear on absence the same way (an elite always reports
+  // while in interest, so absence = gone / out of interest).
+  if (eliteIds.size > 0) {
+    for (const id of eliteIds) {
+      const sw = mirror.swarm?.get(id);
+      if (sw) sw.eliteName = undefined;
+    }
+    eliteIds.clear();
+  }
   if (!snap.drones || snap.drones.length === 0) return;
   for (const d of snap.drones) {
     if (d.hostile === true && onHostile) onHostile(d.id);
     const sw = mirror.swarm?.get(d.id);
     if (!sw) continue;
+    if (d.charging === true) {
+      sw.charging = true;
+      chargingIds.add(d.id);
+    }
+    if (d.elite !== undefined) {
+      sw.eliteName = d.elite;
+      eliteIds.add(d.id);
+    }
     if (d.mountAngles && d.mountAngles.length > 0) {
       sw.mountAngles = d.mountAngles.slice();
     } else if (sw.mountAngles) {

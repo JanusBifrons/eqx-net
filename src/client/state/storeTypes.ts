@@ -30,7 +30,8 @@ export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'er
 export type WarpRelation = 'hostile' | 'neutral' | 'friendly';
 
 /** Living World P2 — trade toast colouring: good news / neutral / danger. */
-export type TradeToastTone = 'good' | 'info' | 'danger';
+/** `world` (gold) = a galaxy-wide world notice (P4: elites, events, bounties). */
+export type TradeToastTone = 'good' | 'info' | 'danger' | 'world';
 
 /** Living World P1a — the local ship's carried hold, as the HUD sees it. */
 export interface CargoView {
