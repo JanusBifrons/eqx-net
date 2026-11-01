@@ -944,6 +944,26 @@ gameServer
     haulerRaiders: 2,
   })
   .filterBy(['testId']);
+// Living World P3 showcase — a robot NEXUS (shields down) guarded by robot
+// cubes, with a drone pack drifting in. testMode, filterBy testId.
+gameServer
+  .define('nexus-showcase', SectorRoom, {
+    sectorKey: 'nexus-showcase',
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    maxClients: 4,
+    dronePoses: [
+      { kind: 'robot-nexus', x: 0, y: 700, angle: Math.PI, hullExposed: true },
+      { kind: 'robot-square', x: -260, y: 560, angle: Math.PI, hullExposed: true },
+      { kind: 'robot-square', x: 260, y: 560, angle: Math.PI, hullExposed: true },
+      { kind: 'robot-circle', x: 0, y: 480, angle: Math.PI, hullExposed: true },
+      { kind: 'fighter', x: -700, y: 200, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'fighter', x: -760, y: 320, angle: -Math.PI / 2, hullExposed: true },
+      { kind: 'heavy', x: -820, y: 140, angle: -Math.PI / 2, hullExposed: true },
+    ],
+  })
+  .filterBy(['testId']);
 // Living World P1b showcase — one full mixed-tier ROBOT squad (hexagon lead,
 // two circles, three cubes) vs six drones, the pilot spawning between them.
 // Robots are hostile to the pilot too, so the recording shows a real three-way
