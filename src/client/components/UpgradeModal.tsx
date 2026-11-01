@@ -15,6 +15,8 @@ import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { getShipKind } from '../../shared-types/shipKinds';
+import { weaponUnlocked } from '../../shared-types/blueprints';
+import { useUIStore } from '../state/store';
 import { LevelBadge } from './LevelBadge';
 import {
   STAT_IDS,
@@ -99,6 +101,9 @@ export function UpgradeModal({ ship, open, onClose, onApply, onRespec, onActivat
     [ship.mounts],
   );
   const [mountWeapon, setMountWeapon] = useState<'hitscan' | 'laser' | 'heat-seeker'>('laser');
+  // Living World P5 — a gated weapon (Missile) needs its blueprint fitted to
+  // the local active ship; the server enforces it too (#15).
+  const fitted = useUIStore((s) => s.fittedBlueprints);
 
   return (
     <Dialog
@@ -186,6 +191,8 @@ export function UpgradeModal({ ship, open, onClose, onApply, onRespec, onActivat
                   size="small"
                   data-testid={`mount-weapon-${w.id}`}
                   data-selected={mountWeapon === w.id ? '1' : '0'}
+                  disabled={!weaponUnlocked(w.id, fitted)}
+                  title={weaponUnlocked(w.id, fitted) ? undefined : 'Needs the Missile Rack blueprint installed'}
                   onClick={() => setMountWeapon(w.id)}
                   sx={{
                     flex: 1,

@@ -15,6 +15,7 @@ import { getGameClient } from '../net/clientSingleton';
 import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip } from '../structures/structureActionsClient';
 import { sendPilotShip } from '../ships/shipActionsClient';
 import { BountyAction } from './BountyAction';
+import { BlueprintInstall } from './BlueprintInstall';
 import { hullColor } from './ShieldHullBar';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { canUpgradeStructure } from '@core/leveling/structureLevel';
@@ -107,6 +108,9 @@ interface PanelData {
   /** Living World P4c-2 — a selected REMOTE player ship: its playerId, the
    *  target of the Bounty action (never displayed). */
   bountyTarget?: string;
+  /** Living World P5 — an OWNED storage's blueprint ids, comma-joined (the
+   *  Install actions). Empty / absent when it holds none. */
+  blueprints?: string;
 }
 
 export function EntityStatsPanel(): JSX.Element | null {
@@ -310,6 +314,9 @@ export function EntityStatsPanel(): JSX.Element | null {
         </Box>
       )}
       {data.bountyTarget !== undefined && <BountyAction targetPlayerId={data.bountyTarget} />}
+      {data.blueprints !== undefined && data.entityId !== undefined && (
+        <BlueprintInstall entityId={data.entityId} blueprints={data.blueprints} />
+      )}
       {data.pilotShipId !== undefined && (
         // Phase 4 WS-A2 — in-world Pilot action on the local player's OWN
         // lingering hull. Same-sector instant swap (no spool/curtain); the camera
@@ -339,7 +346,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'powered',
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
-  'holdLine', 'holdUse', 'canRefine', 'bountyTarget',
+  'holdLine', 'holdUse', 'canRefine', 'bountyTarget', 'blueprints',
 ];
 
 /** True when two polled PanelData reads carry identical values (Wave-3 3.3 —
@@ -435,6 +442,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         data.holdLine = selectionStats.holdLine;
         data.holdUse = selectionStats.holdUse;
         data.canRefine = data.isOwn === true && subtype === 'capital' && selectionStats.holdSalvage > 0;
+        if (data.isOwn === true && selectionStats.holdBlueprints !== '') data.blueprints = selectionStats.holdBlueprints;
       }
     }
     return data;

@@ -177,7 +177,7 @@ import type {
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { getPlayerShipStore, getHoldStore } from '../db/PersistenceWorker.js';
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
-import { StorageService, structureUid, DEPOSIT_DWELL_TICKS, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
+import { StorageService, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto } from '../../core/cargo/hold.js';
 import { HARVESTER_CAPACITY, RAID_CREDITS_PER_STEP, RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
@@ -185,6 +185,11 @@ import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold }
 import { rollLoot } from '../../shared-types/lootTables.js';
 import { rollEliteLoot, ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS, PlaceBountySchema, type BountyResult } from '../../shared-types/contracts.js';
+import {
+  InstallBlueprintSchema, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, weaponUnlocked, type BlueprintResult,
+} from '../../shared-types/blueprints.js';
+
+const EMPTY_FITTED: readonly string[] = Object.freeze([]);
 import { getBountyBoard } from '../economy/BountyBoard.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
 // RosterFullError is handled inside RosterPersistence.ts
@@ -662,6 +667,9 @@ export class SectorRoom extends Room<SectorState> {
    *  first-hit allocates (invariant #14). Entry cleared on the structure's
    *  removal in `evictSwarmEntity`. */
   private readonly structureAttackAuditAtMs = new Map<string, number>();
+  /** P5 — fitted blueprints per ship instance (filled at hull seed / install;
+   *  read by the snapshot without allocating). */
+  private readonly fittedCache = new Map<string, readonly string[]>();
   /** P3c — last raid warning per owner (throttle). */
   private readonly raidNoticeAtMs = new Map<string, number>();
   /** Web Push throttle — structureId → wall-clock ms of the last "base under
@@ -1642,6 +1650,8 @@ export class SectorRoom extends Room<SectorState> {
       isDroneCharging: (droneId) => this.aiFireResolver.isCharging(droneId),
       // Living World P1a (#16) — own-ship cargo slice source.
       shipHoldOf: (shipInstanceId) => this.loot.shipHold(shipInstanceId),
+      // P5 — the own ship's fitted blueprints (cache read only — alloc-free).
+      fittedOf: (shipInstanceId) => this.fittedCache.get(shipInstanceId),
       depositProgressOf: (shipInstanceId) => this.depositProgress.get(shipInstanceId),
       playerMountAngles: this.mountTicker.playerMountAngles,
       droneMountAngles: this.mountTicker.droneMountAngles,
@@ -2542,6 +2552,36 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('accept_offer', (client: Client, raw: unknown) => tradeRequest(client, 'accept_offer', raw));
     this.onMessage('cancel_deal', (client: Client, raw: unknown) => tradeRequest(client, 'cancel_deal', raw));
     this.onMessage('send_gift', (client: Client, raw: unknown) => tradeRequest(client, 'send_gift', raw));
+
+    // ── Living World P5 — install a blueprint from my storage onto my ship ───
+    this.onMessage('install_blueprint', (client: Client, raw: unknown) => {
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      const p = InstallBlueprintSchema.safeParse(raw);
+      if (!p.success) { this.malformed.record(client.sessionId, 'install_blueprint'); return; }
+      const reply = (ok: boolean, message: string): void => {
+        try { client.send('blueprint_result', { type: 'blueprint_result', ok, message } satisfies BlueprintResult); } catch { /* closing */ }
+      };
+      const shipId = this.resolveActiveShipKey(playerId);
+      const ship = shipId ? this.state.ships.get(shipId) : undefined;
+      if (this.sectorKey === null || !shipId || !ship || !ship.alive || !ship.isActive) { reply(false, 'You need an active ship here.'); return; }
+      const rec = this.swarmRegistry.getByEntityId(p.data.networkEntityId);
+      const s = rec ? this.structureRegistry.get(rec.id) : undefined;
+      if (s === undefined || s.owner !== playerId || s.uid === undefined) { reply(false, 'Pick one of your storage structures.'); return; }
+      const pose = this.shipPoseCache.get(playerId);
+      if (!pose || Math.hypot(pose.x - s.x, pose.y - s.y) > DEPOSIT_RANGE) { reply(false, 'Fly your ship next to that storage to install.'); return; }
+      const id = p.data.blueprintId;
+      if (this.fittedOf(shipId).includes(id)) { reply(false, 'This ship already has that blueprint.'); return; }
+      const fitted = this.storage.installBlueprint(playerId, s.uid, id, shipId);
+      if (fitted === null) { reply(false, 'That blueprint isn\'t in this storage.'); return; }
+      this.fittedCache.set(shipId, fitted);
+      // A hull blueprint raises the max now (no free heal — the extra is empty).
+      const kind = getShipKind(ship.kind);
+      ship.maxHealth = this.shipHullMax(kind.maxHealth, ship.statAlloc, shipId);
+      this.rebuildStructuresSlice();
+      auditEvent({ event: 'blueprint_installed', sector: this.sectorKey, playerId, shipInstanceId: shipId, blueprint: id });
+      reply(true, `${blueprintName(id)} installed.`);
+    });
 
     // ── Living World P4c-2 — place a player bounty ───────────────────────────
     this.onMessage('place_bounty', (client: Client, raw: unknown) => {
@@ -3835,7 +3875,7 @@ export class SectorRoom extends Room<SectorState> {
       ship.level = lingerRow?.level ?? 1;
       ship.statAlloc = lingerRow?.statAlloc ?? {};
       ship.mounts = lingerRow?.mounts ?? [];
-      ship.maxHealth = effectiveShipMaxHealth(kind.maxHealth, ship.statAlloc);
+      ship.maxHealth = this.shipHullMax(kind.maxHealth, ship.statAlloc, ship.shipInstanceId);
       ship.health = r.health;
       ship.shield = r.shieldDown ? 0 : effectiveShipShieldMax(kind.shieldMax, ship.statAlloc);
       ship.shieldLastDamageTick = this.serverTick;
@@ -4346,7 +4386,11 @@ export class SectorRoom extends Room<SectorState> {
       hpMax: Math.round(kind.maxHealth),
       ...(holdCap > 0
         ? {
-            hold: { goods: h ? { ...h.goods } : {}, credits: h?.credits ?? 0, blueprints: h?.blueprints.length ?? 0 },
+            hold: {
+              goods: h ? { ...h.goods } : {}, credits: h?.credits ?? 0, blueprints: h?.blueprints.length ?? 0,
+              // P5 — the ids, for the owner's Install action (owner-only like the rest).
+              blueprintIds: h ? h.blueprints.slice(0, 64) : [],
+            },
             holdCapacity: holdCap,
           }
         : {}),
@@ -4553,6 +4597,29 @@ export class SectorRoom extends Room<SectorState> {
       true,
     );
     return true;
+  }
+
+  /** P5 — the blueprints fitted to a ship (cached; the hold row is the truth). */
+  private fittedOf(shipInstanceId: string): readonly string[] {
+    if (shipInstanceId === '') return EMPTY_FITTED;
+    let f = this.fittedCache.get(shipInstanceId);
+    if (f === undefined) {
+      f = getHoldStore().get(fittedUid(shipInstanceId))?.hold.blueprints ?? EMPTY_FITTED;
+      this.fittedCache.set(shipInstanceId, f);
+    }
+    return f;
+  }
+
+  /** P5 — the ship's max hull: kind base × stat upgrades × fitted blueprints. */
+  private shipHullMax(kindMax: number, alloc: CoreStatAlloc | undefined, shipInstanceId: string): number {
+    return Math.round(effectiveShipMaxHealth(kindMax, alloc) * fittedHullMul(this.fittedOf(shipInstanceId)));
+  }
+
+  /** P5 — destroy a ship's fitted blueprints (it died / was abandoned). */
+  private dropFitted(shipInstanceId: string): void {
+    if (shipInstanceId === '') return;
+    this.fittedCache.delete(shipInstanceId);
+    getHoldStore().delete(fittedUid(shipInstanceId), this.sectorKey !== null);
   }
 
   /** P4b — a world-event reward (cache / salvage pod), as an ordinary loot pod. */
@@ -5575,7 +5642,7 @@ export class SectorRoom extends Room<SectorState> {
     // Hull max — the active-spawn path never set ship.maxHealth before (it sat
     // at the schema default), so the hull-pct denominator was wrong; seed it
     // from the kind base × maxHull mul, matching the lingering-reconstruct path.
-    ship.maxHealth = effectiveShipMaxHealth(spawnKind.maxHealth, ship.statAlloc);
+    ship.maxHealth = this.shipHullMax(spawnKind.maxHealth, ship.statAlloc, ship.shipInstanceId);
     // A fresh spawn (no resumed roster health) seeds full hull at the upgraded
     // max; a resumed hull keeps its stored (already-clamped) health.
     if (resumedHealth === null) ship.health = ship.maxHealth;
@@ -6118,7 +6185,7 @@ export class SectorRoom extends Room<SectorState> {
     // a cap must not leave the current value above it). One source: the
     // `effectiveShip*` helpers.
     const reclaimKind = getShipKind(target.kind);
-    target.maxHealth = effectiveShipMaxHealth(reclaimKind.maxHealth, target.statAlloc);
+    target.maxHealth = this.shipHullMax(reclaimKind.maxHealth, target.statAlloc, target.shipInstanceId);
     if (target.health > target.maxHealth) target.health = target.maxHealth;
     const reclaimShieldMax = effectiveShipShieldMax(reclaimKind.shieldMax, target.statAlloc);
     if (target.shield > reclaimShieldMax) target.shield = reclaimShieldMax;
@@ -6326,6 +6393,8 @@ export class SectorRoom extends Room<SectorState> {
     pose: { x: number; y: number; vx: number; vy: number } | undefined,
     cause: string,
   ): void {
+    // P5 — installed blueprints are lost with the ship (death or abandon).
+    this.dropFitted(shipInstanceId);
     if (shipInstanceId === '' || this.loot.shipHold(shipInstanceId) === undefined) return;
     if (pose !== undefined) {
       // Living World P1a-2 — an ABANDONED hull becomes a salvageable derelict
@@ -6357,7 +6426,8 @@ export class SectorRoom extends Room<SectorState> {
       c.shipInstanceId = ship.shipInstanceId;
       c.x = pose.x;
       c.y = pose.y;
-      c.capacity = cargoCapacityForMaxHealth(getShipKind(ship.kind).maxHealth);
+      // P5 — a fitted Cargo Expander raises the capacity (shared helper, #15).
+      c.capacity = Math.floor(cargoCapacityForMaxHealth(getShipKind(ship.kind).maxHealth) * fittedCargoMul(this.fittedOf(ship.shipInstanceId)));
       c.npc = false;
       visit(c);
     }
@@ -6754,7 +6824,7 @@ export class SectorRoom extends Room<SectorState> {
         // agree). hpMax/shieldMax/energyMax all ride the OWN-ship snapshot
         // slice / discrete DamageEvent so the client re-reads the new caps.
         const upgKind = getShipKind(ship.kind);
-        ship.maxHealth = effectiveShipMaxHealth(upgKind.maxHealth, alloc);
+        ship.maxHealth = this.shipHullMax(upgKind.maxHealth, alloc, ship.shipInstanceId);
         if (ship.health > ship.maxHealth) ship.health = ship.maxHealth;
         const newShieldMax = effectiveShipShieldMax(upgKind.shieldMax, alloc);
         if (ship.shield > newShieldMax) ship.shield = newShieldMax;
@@ -6811,6 +6881,8 @@ export class SectorRoom extends Room<SectorState> {
     }
     // Already active ⇒ no-op (idempotent; never duplicate the index space).
     if (row.mounts.some((m) => m.slotId === slotId)) return;
+    // P5 — a gated weapon (heat-seeker) needs its blueprint fitted to THIS ship.
+    if (!weaponUnlocked(weaponId, this.fittedOf(shipId))) return;
 
     const nextMounts: ActivatedMount[] = [...row.mounts, { slotId, weaponId }];
     // Persist on the roster (the per-instance source of truth, D8).

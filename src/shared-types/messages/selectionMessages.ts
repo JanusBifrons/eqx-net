@@ -61,6 +61,8 @@ export const EntityStatsSchema = z
       goods: z.partialRecord(z.enum(GOOD_IDS), z.number().int().nonnegative()),
       credits: z.number().int().nonnegative(),
       blueprints: z.number().int().nonnegative(),
+      /** P5 — the stored blueprint ids (the Install action's list). */
+      blueprintIds: z.array(z.string().max(40)).max(64).optional(),
     }).strict().optional(),
     /** Weight capacity of that storage (with `hold`). */
     holdCapacity: z.number().nonnegative().optional(),

@@ -124,7 +124,9 @@ export type AuditEvent =
   // P4c — a bounty paid into a killer's hold.
   | (AuditEventBase & { event: 'bounty_claimed'; playerId: string; target: string; credits: number })
   // P4c-2 — a player bounty placed (the fee is burned on top).
-  | (AuditEventBase & { event: 'bounty_placed'; playerId: string; target: string; credits: number });
+  | (AuditEventBase & { event: 'bounty_placed'; playerId: string; target: string; credits: number })
+  // P5 — a blueprint moved from storage onto a ship.
+  | (AuditEventBase & { event: 'blueprint_installed'; playerId: string; shipInstanceId: string; blueprint: string });
 
 /** Distributive `Omit` so the union is preserved across the stamped fields. */
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;

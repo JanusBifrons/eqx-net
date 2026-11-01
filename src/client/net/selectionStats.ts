@@ -33,6 +33,8 @@ export interface SelectionStats {
   holdLine: string | undefined;
   holdUse: string | undefined;
   holdSalvage: number;
+  /** P5 — stored blueprint ids, comma-joined (a primitive for the shallow compare). */
+  holdBlueprints: string;
 }
 
 export const selectionStats: SelectionStats = {
@@ -45,12 +47,14 @@ export const selectionStats: SelectionStats = {
   holdLine: undefined,
   holdUse: undefined,
   holdSalvage: 0,
+  holdBlueprints: '',
 };
 
 interface HoldWire {
   goods: Partial<Record<string, number>>;
   credits: number;
   blueprints: number;
+  blueprintIds?: string[];
 }
 
 /** Apply a fresh `entity_stats` packet (mutated in place — no alloc on the
@@ -75,10 +79,12 @@ export function applySelectionStats(s: {
     selectionStats.holdLine = formatHoldLine(s.hold);
     selectionStats.holdUse = `${Math.round(holdViewWeight(s.hold))}/${s.holdCapacity}`;
     selectionStats.holdSalvage = s.hold.goods.salvage ?? 0;
+    selectionStats.holdBlueprints = (s.hold.blueprintIds ?? []).join(',');
   } else {
     selectionStats.holdLine = undefined;
     selectionStats.holdUse = undefined;
     selectionStats.holdSalvage = 0;
+    selectionStats.holdBlueprints = '';
   }
 }
 
@@ -93,6 +99,7 @@ export function resetSelectionStats(): void {
   selectionStats.holdLine = undefined;
   selectionStats.holdUse = undefined;
   selectionStats.holdSalvage = 0;
+  selectionStats.holdBlueprints = '';
 }
 
 /** "Salvage 7 · Alloy 3 · ¢30 · ★1" ("Empty" when nothing is stored). */

@@ -8,6 +8,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { UpgradeModal } from './UpgradeModal';
+import { useUIStore } from '../state/store';
 import type { RosterShipEntry } from './ShipRosterCard';
 
 function makeShip(over: Partial<RosterShipEntry> = {}): RosterShipEntry {
@@ -147,5 +148,21 @@ describe('UpgradeModal — dynamic weapon mounts (Phase 4 WS-B3)', () => {
     expect(screen.queryByTestId('mount-activate-latent-wing-l')).not.toBeInTheDocument();
     // The other slot is still activatable.
     expect(screen.getByTestId('mount-activate-latent-wing-r')).toBeInTheDocument();
+  });
+
+  it('P5 — Missile is locked until the Missile Rack blueprint is fitted', () => {
+    useUIStore.getState().setFittedBlueprints([]);
+    const { unmount } = render(
+      <UpgradeModal ship={makeShip()} open onClose={() => {}} onApply={() => {}} onRespec={() => {}} onActivateMount={() => {}} />,
+    );
+    expect(screen.getByTestId('mount-weapon-heat-seeker')).toBeDisabled();
+    expect(screen.getByTestId('mount-weapon-laser')).not.toBeDisabled();
+    unmount();
+    useUIStore.getState().setFittedBlueprints(['bp-missile-rack']);
+    render(
+      <UpgradeModal ship={makeShip()} open onClose={() => {}} onApply={() => {}} onRespec={() => {}} onActivateMount={() => {}} />,
+    );
+    expect(screen.getByTestId('mount-weapon-heat-seeker')).not.toBeDisabled();
+    useUIStore.getState().setFittedBlueprints([]);
   });
 });
