@@ -71,7 +71,8 @@ agent's production chains (plan `soft-leaping-truffle` v3).
 
 ## Coming next
 
-- **W3 — Research Lab:** research, copy and combine (gacha).
+- **W3 — Research Lab:** research, copy and combine (gacha). Shipped: see
+  [research-lab.md](research-lab.md).
 - **W4 — gates:**
   - packed structures for non-starter kinds;
   - the structures agent's `packedGateForBuild` placement seam;
