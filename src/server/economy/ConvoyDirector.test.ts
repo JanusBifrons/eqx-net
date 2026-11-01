@@ -11,6 +11,7 @@ import type { IPersistenceSink } from '../../core/contracts/IPersistenceSink.js'
 import type { GoodId, Hold } from '../../shared-types/goods.js';
 import { HoldStore } from '../cargo/HoldStore.js';
 import type { TradeTransferResult, TradeTransferSpec } from '../cargo/StorageService.js';
+import { regionalPriceFactor, resetRegionalPrices } from './regionalPrices.js';
 import { ConvoyDirector, DEFAULT_CONVOY_OPTIONS, dockPoint, edgeNear, type ConvoyRoom, type NpcBaseTrade } from './ConvoyDirector.js';
 
 const SINK: IPersistenceSink = {
@@ -111,6 +112,17 @@ describe('ConvoyDirector (T2)', () => {
     expect(dir.active()).toHaveLength(0);
     expect(importer.stock.alloy ?? 0).toBeGreaterThan(0);
     expect(rb.poses.size).toBe(0);
+  });
+
+  it('T3: the planning pass publishes regional price factors from base stock', () => {
+    const clock = { t: 0 };
+    const { dir } = setup(true, clock);
+    resetRegionalPrices();
+    dir.tick();
+    // sol-prime's region holds 1000 alloy against a 200 target: a glut, cheaper.
+    expect(regionalPriceFactor('sol-prime', 'alloy')).toBeLessThan(1);
+    expect(regionalPriceFactor('sol-prime', 'fuel')).toBe(1);
+    resetRegionalPrices();
   });
 
   it('a raided hauler ends its convoy (the room spills the hold)', () => {

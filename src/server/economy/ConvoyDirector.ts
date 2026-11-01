@@ -34,6 +34,9 @@ import type { HoldStore } from '../cargo/HoldStore.js';
 import type { TradeTransferResult, TradeTransferSpec } from '../cargo/StorageService.js';
 import { CONVOY_HAULER_ID_PREFIX } from '../livingworld/directorBotIds.js';
 import { hopDistance } from '../livingworld/population.js';
+import { getSector } from '../../core/galaxy/galaxy.js';
+import { regionPriceFactors, type RegionBase } from '../../core/economy/regionalPrices.js';
+import { setRegionalPrices } from './regionalPrices.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { guarded } from '../rooms/guardedLoop.js';
 
@@ -227,7 +230,39 @@ export class ConvoyDirector {
   }
 
   private plan(now: number): void {
+    const views = this.collect();
+    // T3 — the regional price factors follow the same stock and rates.
+    const regional: RegionBase[] = [];
+    for (const v of views) {
+      const region = getSector(v.sectorKey)?.region;
+      if (region !== undefined) regional.push({ region, stock: v.stock, uses: v.uses });
+    }
+    setRegionalPrices(regionPriceFactors(regional));
     if (this.convoys.size >= this.opts.maxActive) return;
+    const plans = this.match(views);
+    for (const p of plans) {
+      const from = this.bases.get(p.from)!, to = this.bases.get(p.to)!;
+      this.launch(p, from.sectorKey, from.base, to.sectorKey, to.base, now);
+    }
+  }
+
+  /** Every room's NPC bases as planning views (last pass kept in `bases`). */
+  private readonly bases = new Map<string, { sectorKey: string; base: NpcBaseTrade }>();
+
+  private collect(): BaseTradeView[] {
+    this.bases.clear();
+    const views: BaseTradeView[] = [];
+    for (const [sectorKey, room] of this.rooms) {
+      for (const b of room.npcBaseTrade()) {
+        const key = `${sectorKey}|${b.owner}`;
+        views.push({ key, sectorKey, ...b.view });
+        this.bases.set(key, { sectorKey, base: b });
+      }
+    }
+    return views;
+  }
+
+  private match(raw: readonly BaseTradeView[]): ConvoyPlan[] {
     // Goods promised to convoys that haven't loaded yet aren't spare.
     const promised = new Map<string, number>();
     for (const c of this.convoys.values()) {
@@ -235,32 +270,22 @@ export class ConvoyDirector {
       const k = `${c.plan.from}|${c.plan.good}`;
       promised.set(k, (promised.get(k) ?? 0) + c.plan.qty);
     }
-    const views: BaseTradeView[] = [];
-    const bases = new Map<string, { sectorKey: string; base: NpcBaseTrade }>();
-    for (const [sectorKey, room] of this.rooms) {
-      for (const b of room.npcBaseTrade()) {
-        const key = `${sectorKey}|${b.owner}`;
-        const stock = { ...b.view.stock };
-        for (const g of Object.keys(stock) as GoodId[]) {
-          const p = promised.get(`${key}|${g}`);
-          if (p !== undefined) stock[g] = Math.max(0, (stock[g] ?? 0) - p);
-        }
-        views.push({ key, sectorKey, ...b.view, stock });
-        bases.set(key, { sectorKey, base: b });
+    const views = raw.map((v) => {
+      const stock = { ...v.stock };
+      for (const g of Object.keys(stock) as GoodId[]) {
+        const p = promised.get(`${v.key}|${g}`);
+        if (p !== undefined) stock[g] = Math.max(0, (stock[g] ?? 0) - p);
       }
-    }
+      return { ...v, stock };
+    });
     const inFlight = new Set<string>();
     for (const c of this.convoys.values()) inFlight.add(`${c.plan.to}|${c.plan.good}`);
-    const plans = matchConvoys(views, {
+    return matchConvoys(views, {
       haulerCapacity: this.opts.haulerCapacity,
       maxConvoys: this.opts.maxActive - this.convoys.size,
       hops: hopDistance,
       inFlight,
     });
-    for (const p of plans) {
-      const from = bases.get(p.from)!, to = bases.get(p.to)!;
-      this.launch(p, from.sectorKey, from.base, to.sectorKey, to.base, now);
-    }
   }
 
   private inSectorCount(sectorKey: string): number {

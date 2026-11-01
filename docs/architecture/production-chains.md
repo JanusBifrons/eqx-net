@@ -125,6 +125,19 @@ Locks:
 - `ConvoyDirector.test.ts` (fake rooms): same-sector and cross-sector delivery with goods conserved and no hold left, a raid ends the convoy, crash holds discarded, entry outside the footprint, no double promise (fails without the fix);
 - `tests/integration/sectorRoom/convoys.test.ts`: a real seeded base reports itself, loads a convoy hold, and a killed convoy hauler spills it.
 
+## Regional prices (T3)
+
+Prices depend on where you trade:
+- **The factor** (`src/core/economy/regionalPrices.ts`, pure). For each galaxy region and good, the factor is `clamp(((stock + 50) / (target + 50)) ^ -0.35, 0.75, 1.5)`. `stock` is the region's NPC base stock; `target` is its 10 minutes of use (the convoy rates).
+- **What moves it.** A shortage (a refinery razed, convoys raided) makes a good dearer, and a producing region's glut makes it cheaper. Moving goods from a cheap region to a dear one pays.
+- **Publishing.** The ConvoyDirector recomputes the factors on its planning pass (~15 s) and publishes them (`server/economy/regionalPrices.ts`). Before the first pass, every factor is 1.
+- **Applying.** `TradeDirector.quote` scales the mid price by the deal's sector: the offers board (`GET /trade/offers?sector=`, which the Trade tab sends from `currentSectorKey`), accepting a deal, and a recurring deal's re-quote all quote the same way, so the price you see is the price you get. A sector outside the galaxy (test rooms) gets factor 1.
+
+Locks:
+- `regionalPrices.test.ts`: shortage dearer, glut cheaper, balance 1, clamps, a raided region gets dearer;
+- `TradeDirector.test.ts`: the board is quoted with the region's factor; an unknown sector is unchanged;
+- `ConvoyDirector.test.ts`: the planning pass publishes factors from real base stock.
+
 ## Packed structures
 
 User rulings (2026-11-01):

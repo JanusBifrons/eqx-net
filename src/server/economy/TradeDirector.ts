@@ -40,6 +40,7 @@ import {
   type TradeOffer,
 } from '../../shared-types/economy.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
+import { regionalPriceFactor } from './regionalPrices.js';
 import { cloneHold, emptyHold, isHoldEmpty } from '../../core/cargo/hold.js';
 import { applyFill, driftMarket, quoteBuy, quoteSell } from '../../core/economy/market.js';
 import { giftRepGain, robotTruce, tradersRefuse, waveIntervalFactor } from '../../core/economy/reputation.js';
@@ -265,21 +266,24 @@ export class TradeDirector implements TradeSink {
     }
   }
 
-  /** The board as `playerId` sees it (prices at their trader reputation). */
-  offersFor(playerId: string): TradeOffer[] {
+  /** The board as `playerId` sees it (prices at their trader reputation, in
+   *  the region of `sectorKey` — T3 — when the client says where it is). */
+  offersFor(playerId: string, sectorKey?: string | null): TradeOffer[] {
     const rep = this.store.rep(playerId, 'traders');
     return this.offers.map((o) => ({
       offerId: o.offerId,
       kind: o.kind,
       good: o.good,
-      unitPrice: this.quote(o.kind, o.good, rep),
+      unitPrice: this.quote(o.kind, o.good, rep, sectorKey),
       maxQty: o.maxQty,
       expiresAtMs: o.expiresAtMs,
     }));
   }
 
-  private quote(kind: 'sell' | 'buy', good: GoodId, traderRep: number): number {
-    return kind === 'sell' ? quoteSell(this.store.market, good, traderRep) : quoteBuy(this.store.market, good, traderRep);
+  /** T3 — prices carry the region's supply factor (`regionalPrices.ts`). */
+  private quote(kind: 'sell' | 'buy', good: GoodId, traderRep: number, sectorKey?: string | null): number {
+    const f = regionalPriceFactor(sectorKey, good);
+    return kind === 'sell' ? quoteSell(this.store.market, good, traderRep, f) : quoteBuy(this.store.market, good, traderRep, f);
   }
 
   // ── Requests (TradeSink) ─────────────────────────────────────────────────
@@ -295,7 +299,7 @@ export class TradeDirector implements TradeSink {
     if (this.store.activeDealsForNetwork(networkUid) >= MAX_DEALS_PER_NETWORK) {
       return reject(`A base can run at most ${MAX_DEALS_PER_NETWORK} deals.`);
     }
-    const unitPrice = this.quote(offer.kind, offer.good, traderRep);
+    const unitPrice = this.quote(offer.kind, offer.good, traderRep, sectorKey);
     if (msg.qty * unitPrice > this.store.volumeLeft(playerId)) return reject('Hourly trade limit reached.');
     const recurring = msg.recurrenceMin !== null;
     const deal: TradeDeal = {
@@ -459,7 +463,7 @@ export class TradeDirector implements TradeSink {
     const room = this.rooms.get(deal.sectorKey);
     const snap = room?.tradeSnapshot(deal.ownerId, deal.networkUid) ?? null;
     const traderRep = this.store.rep(deal.ownerId, 'traders');
-    const quoteNow = deal.kind === 'gift' || !deal.good ? 0 : this.quote(deal.kind, deal.good, traderRep);
+    const quoteNow = deal.kind === 'gift' || !deal.good ? 0 : this.quote(deal.kind, deal.good, traderRep, deal.sectorKey);
     const plan = planVisit(
       deal,
       {

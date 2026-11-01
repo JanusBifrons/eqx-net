@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { getSector } from '../../core/galaxy/galaxy.js';
+import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
+import { resetRegionalPrices, setRegionalPrices } from './regionalPrices.js';
+import { describe, expect, it, afterEach } from 'vitest';
 import { Bus } from '../../core/events/Bus.js';
 import { HoldStore } from '../cargo/HoldStore.js';
 import type { TradeNetworkSnapshot, TradeTransferResult, TradeTransferSpec } from '../cargo/StorageService.js';
@@ -118,6 +121,30 @@ function acceptFirst(t: ReturnType<typeof setup>, kind: 'sell' | 'buy', good: 's
   expect(v.ok).toBe(true);
   return offer;
 }
+
+describe('TradeDirector regional prices (T3)', () => {
+  afterEach(() => resetRegionalPrices());
+
+  it('quotes the board with the region of the sector the player trades from', () => {
+    const t = setup();
+    try {
+      const region = getSector('sol-prime')!.region;
+      const all: Partial<Record<GoodId, number>> = {};
+      for (const g of GOOD_IDS) all[g] = 1.4;
+      setRegionalPrices(new Map([[region, all]]));
+      const plain = t.dir.offersFor(OWNER);
+      const regional = t.dir.offersFor(OWNER, 'sol-prime');
+      expect(plain.length).toBeGreaterThan(0);
+      for (let i = 0; i < plain.length; i++) {
+        expect(regional[i]!.unitPrice / plain[i]!.unitPrice).toBeCloseTo(1.4, 1);
+      }
+      // A sector outside the galaxy (a test room) gets the plain price.
+      expect(t.dir.offersFor(OWNER, 'nowhere')).toEqual(plain);
+    } finally {
+      t.stop();
+    }
+  });
+});
 
 describe('TradeDirector', () => {
   it('SELL: goods go into the hauler at dock and credits arrive only on safe departure', () => {

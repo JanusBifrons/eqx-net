@@ -209,6 +209,9 @@ Update this section when a threshold is set.
 - **Every value move** is ONE `tradeTransfer` (take into the hauler's hold at pickup, release into the importer at delivery). Convoy haulers use `CONVOY_HAULER_ID_PREFIX` (`hauler-convoy-`), so a kill spills the hold.
 - **Haulers dock OUTSIDE a base's footprint** (fences block ships; gates open only for player ships) and enter and leave at the edge on the base's own side.
 - **Not persisted.** Crash leftovers (`hauler-convoy-*` holds) are discarded on `start()`. Kill switch `EQX_DISABLE_CONVOYS`; diagnostics `GET /dev/convoys`.
+- **Regional prices (T3).** The planning pass also publishes per-region price factors (`economy/regionalPrices.ts`).
+  - Every trade quote goes through `TradeDirector.quote(kind, good, rep, sectorKey)`, so the board, the accept and the re-quote agree. Never quote around it.
+  - The offers route takes `?sector=`.
 
 ## NPC ownership (plan soft-leaping-truffle v3, B2)
 

@@ -1320,7 +1320,7 @@ async function main(): Promise<void> {
   const store = economyStore;
   const director = tradeDirector;
   setEconomyRouteProvider({
-    offersFor: (pid) => director.offersFor(pid),
+    offersFor: (pid, sector) => director.offersFor(pid, sector),
     view: (pid) => store.view(pid),
   });
   logger.info(econ, 'trade director started');
