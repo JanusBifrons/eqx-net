@@ -2569,3 +2569,14 @@ Two of them, missile lock-on and attacker labels, decided "is this an AI?" from 
 **Rotated bodies.** Phase V added quarter-turn rotation for structures, but `SwarmSpawner` forwarded the spawn angle to the physics worker (and the SAB pose) for scrap only. A rotated structure therefore collided — and drew, since the client reads the pose angle — at 0°, while placement, connections and weapon hits used the rotated box. Unit tests on the box helpers all passed; only an integration test through the real `place_structure` message and worker caught it. Rule: when a new per-entity attribute (rotation) feeds several systems, test it where the systems meet, not in each helper.
 
 **Per-pylon wall state.** `shieldWallTo` reported only a pylon's FIRST wall, so a fence pylon's second wall was never drawn or predicted. Gates made this visible (a pylon beside a gate has two walls). The fix derives walls from connections on the client (`derivedWalls.ts`), with a per-emitter "all walls up" flag from the server.
+
+
+## 2026-11-01 — Hand-written test payloads hid a client/server wire mismatch (Research Lab, blueprint install, bounties)
+
+**Symptom (found while wiring the C1 cargo panel).** The client's `send()` helper in `src/client/net/tradeClient.ts` always adds a `type` field to the payload. `LabQuerySchema`, `LabStartSchema`, `LabCancelSchema`, `InstallBlueprintSchema` and `PlaceBountySchema` were `.strict()` with no `type`. Every real `lab_query` / `lab_start` / `lab_cancel` / `install_blueprint` / `place_bounty` from the game was dropped as malformed, so those three features could not work in play.
+
+**Why nothing caught it.** The integration tests sent hand-written payloads WITHOUT `type`, so the server schemas accepted them. Each side was tested against its own idea of the message, never against the other.
+
+**Fix and lock.** Those schemas now require their `type` literal, like every other client message. `tests/unit/tradeClientWireParity.test.ts` calls each real sender with a mocked room and parses the captured payload with the server's schema. It failed on the old schemas.
+
+**Rule (#15).** A client → server message is a two-sided contract. Lock it at the seam: the payload the real client helper produces must parse with the server's schema. An integration test that types the payload by hand only proves the server accepts what the test author wrote.
