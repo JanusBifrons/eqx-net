@@ -28,7 +28,7 @@
  *
  * Reference values mirror eqx-peri's `STRUCTURE_DEFINITIONS` + The Space Game
  * (see `docs/plans/speed-dial-resource-structures.md`); tune for eqx-net world
- * scale during the build. Any numeric edit MUST bump
+ * scale during the build. Any numeric edit to an existing kind MUST bump
  * `STRUCTURE_KIND_CATALOGUE_VERSION`.
  */
 import { z } from 'zod';
@@ -46,6 +46,9 @@ export const StructureKindIdSchema = z.enum([
   'laser_bolt_turret',
   'missile_turret',
   'cargo_bay', // Living World P1a-2 — APPEND ONLY
+  // Gates (plan soft-leaping-truffle v2, phase V follow-up) — APPEND ONLY.
+  'shield_gate',
+  'shield_airlock',
 ]);
 export type StructureKindId = z.infer<typeof StructureKindIdSchema>;
 
@@ -416,6 +419,47 @@ export const MISSILE_TURRET: StructureKind = {
   ],
 };
 
+/** Shield Gate — two posts placed as ONE structure, with a shield span between
+ *  them that opens when a ship the gate admits approaches (per-gate access
+ *  setting). Joins a fence like a pylon: a pylon-rule hub (one connector tap +
+ *  fence links). Geometry, approach zones and the open/close logic live in
+ *  `src/core/structures/gateGeometry.ts` + `gateLogic.ts`. */
+export const SHIELD_GATE: StructureKind = {
+  id: 'shield_gate',
+  displayName: 'Shield Gate',
+  description:
+    'Two posts with a shield span between them. Opens for ships it admits, closes behind them. Joins a fence like a pylon.',
+  radius: 164, // bounding circle of the 320×72 footprint
+  footprint: { w: 320, h: 72 },
+  maxHealth: 1200,
+  maxConnections: 3,
+  isHub: true,
+  powerOutput: 0,
+  powerConsumption: 30,
+  storageCapacity: 0,
+  constructionCost: 900,
+  color: 0x4488ff,
+};
+
+/** Shield Airlock — a chamber with a Shield Gate span at each end. It opens one
+ *  end or the other, never both, cycling a ship through. */
+export const SHIELD_AIRLOCK: StructureKind = {
+  id: 'shield_airlock',
+  displayName: 'Shield Airlock',
+  description:
+    'A chamber with a shield span at each end. Opens one end or the other, never both, to cycle a ship through.',
+  radius: 207, // bounding circle of the 320×260 footprint
+  footprint: { w: 320, h: 260 },
+  maxHealth: 1800,
+  maxConnections: 3,
+  isHub: true,
+  powerOutput: 0,
+  powerConsumption: 50,
+  storageCapacity: 0,
+  constructionCost: 1500,
+  color: 0x4488ff,
+};
+
 /**
  * Canonical catalogue order = wire subtype-byte index. APPEND-ONLY (invariant
  * #11). The structure subtype rides the shared `shipKind` u8 in the binary
@@ -435,6 +479,9 @@ export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   MISSILE_TURRET,
   // Living World P1a-2 — APPENDED (wire index 9). Never reorder.
   CARGO_BAY,
+  // Gates — APPENDED (wire indices 10, 11). Never reorder.
+  SHIELD_GATE,
+  SHIELD_AIRLOCK,
 ]);
 
 /** Id-keyed lookup, derived from the canonical list (the list is the source of
@@ -447,12 +494,18 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
   >,
 );
 
-/** Bump on every catalogue edit (add a kind OR change any numeric field).
+/** Bump when an EXISTING kind's record changes (any numeric field): a bump
+ *  discards saved structures on the next boot (they were minted under the old
+ *  stats). Appending a new kind does not need a bump.
  *  3→4 (WS-5): added `CAPITAL.connectionRange = 300` (R2.10).
  *  4→5 (WS-6): shrank CONNECTOR.radius 24→10 + SHIELD_PYLON.radius 30→12 (R2.11/R2.18).
  *  5→6 (WS-8): appended LASER_BOLT_TURRET + MISSILE_TURRET defence kinds (R2.15).
  *  6→7 (P3.2): removed CAPITAL.connectionRange — uniform connection range. */
 export const STRUCTURE_KIND_CATALOGUE_VERSION = 9;
+// Gates (SHIELD_GATE, SHIELD_AIRLOCK) were APPENDED without a bump: a bump
+// discards every saved structure on the next boot (SectorPersistence's version
+// gate), and appending a kind leaves every existing record — and so every saved
+// row — valid. The user agreed to exactly one reset (8→9).
 // 8→9 (plan soft-leaping-truffle v2, phase V): every kind gets a large
 // rectangular `footprint` (radius becomes its bounding circle); structures can
 // rotate in 90° steps. Persisted structures from v8 are discarded once (user
@@ -512,6 +565,8 @@ export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
   laser_bolt_turret: 4,
   missile_turret: 6,
   cargo_bay: 4, // boxy crate, told apart from solar/battery by its teal tint
+  shield_gate: 4,
+  shield_airlock: 4,
 };
 
 /**
