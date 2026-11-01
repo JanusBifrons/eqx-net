@@ -138,6 +138,10 @@ export interface StructureRecord {
   prodYield?: number;
   /** Cycles completed (seeds the deterministic yield roll). */
   prodCycles?: number;
+  /** P2d — shots left in the magazine (ammo-using turrets). */
+  ammo?: number;
+  /** P2d — the last shot found no munitions in storage. Rides room state. */
+  noAmmo?: boolean;
   /** Phase 5 — wall-clock ms of this Turret's last shot (fire-rate cooldown). */
   lastTurretFireMs?: number;
 }

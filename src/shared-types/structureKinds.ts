@@ -64,6 +64,8 @@ export const StructureKindIdSchema = z.enum([
   'assembly_plant',
   // Economy v2 W3 (plan peppy-jumping-pinwheel) — APPEND ONLY.
   'research_lab',
+  // P2d (plan soft-leaping-truffle v3) — APPEND ONLY.
+  'autocannon_turret',
 ]);
 export type StructureKindId = z.infer<typeof StructureKindIdSchema>;
 
@@ -713,6 +715,39 @@ export const RESEARCH_LAB: StructureKind = {
   color: 0x9b7bff,
 };
 
+/** P2d — a kinetic gun turret: fast, short-ranged shells that spend MUNITIONS
+ *  (one unit = `AMMO_SHOTS_PER_UNIT` bursts). A leaf node. */
+export const AUTOCANNON_TURRET: StructureKind = {
+  id: 'autocannon_turret',
+  displayName: 'Autocannon Turret',
+  description: 'Fires kinetic shells at hostiles in range. Uses munitions from base storage. A leaf node.',
+  radius: 114, // bounding circle of the 160×160 footprint
+  footprint: { w: 160, h: 160 },
+  maxHealth: 1400,
+  maxConnections: 1,
+  isHub: false,
+  powerOutput: 0,
+  powerConsumption: 12,
+  storageCapacity: 0,
+  constructionCost: 450,
+  color: 0xc9b18a,
+  weaponRange: 700,
+  fireRateMs: 250,
+  weaponDamage: 10,
+  mounts: [
+    {
+      id: 'barrel',
+      localX: 0,
+      localY: 0,
+      baseAngle: 0,
+      arcMin: -Math.PI,
+      arcMax: Math.PI,
+      rotationSpeed: 4,
+      weaponId: 'autocannon',
+    },
+  ],
+};
+
 export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   CAPITAL,
   CONNECTOR,
@@ -743,6 +778,7 @@ export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   ASSEMBLY_PLANT,
   // Economy v2 W3 — APPENDED. Never reorder.
   RESEARCH_LAB,
+  AUTOCANNON_TURRET,
 ]);
 
 /** Id-keyed lookup, derived from the canonical list (the list is the source of
@@ -841,6 +877,7 @@ export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
   ore_processing_complex: 4,
   assembly_plant: 4,
   research_lab: 4,
+  autocannon_turret: 4,
 };
 
 /**

@@ -162,6 +162,17 @@ Update this section when a threshold is set.
 - **Packed placement:** `StructurePlacementSubsystem.place(…, { requirePacked: true })` is passed ONLY by the player's `place_structure`.
   - **Generated builds never pass it:** scenario seeding, restore, lattices and NPC bases.
   - **The hook:** `packedGateForBuild` is optional; Living World injects it when packed structures can be bought.
+- **Extraction (P2c):**
+  - Drilling is data-driven: any built kind with a `miningRate` mines (Miner, Deep Core Rig).
+  - The asteroid's `asteroidResource` (swarm record + wire byte) splits the yield via `ASTEROID_YIELD`. Minerals go to the drill buffer; other goods go to network storage through `ProductionSubsystem.deposit`.
+  - Gas Collectors work only when `sectorFeatures` include `nebula`.
+  - Lock: `tests/integration/sectorRoom/extraction.test.ts`.
+- **Ammo (P2d):**
+  - `tickTurrets` calls `spendAmmo` before every projectile / missile shot. An empty magazine reloads `AMMO_SHOTS_PER_UNIT[kind]` shots from one munition, through the `takeMunition` hook (`ProductionSubsystem.takeGoods`).
+  - With none, `rec.noAmmo` is set (the room-state flag bit) and the turret holds fire.
+  - Beam turrets never reach it: lasers are power-only.
+  - No hook ⇒ unlimited (unit harnesses).
+  - Test rooms with ammo turrets stock munitions via `prebuiltStorageGoods`.
 - Locks: `ProductionSubsystem.test.ts` and `tests/integration/sectorRoom/production.test.ts`. Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).
 
 ## NPC ownership (plan soft-leaping-truffle v3, B2)

@@ -44,6 +44,7 @@ describe('structureKinds catalogue', () => {
       'ore_processing_complex',
       'assembly_plant',
       'research_lab', // economy v2 W3 — appended at the tail
+      'autocannon_turret', // P2d — appended at the tail
     ]);
   });
 

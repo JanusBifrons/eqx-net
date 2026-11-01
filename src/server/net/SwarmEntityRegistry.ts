@@ -10,6 +10,7 @@
  */
 
 import type { Vec2 } from '../../core/swarm/asteroidShape.js';
+import type { AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 
 export type SwarmKind =
   | 0 /* asteroid */
@@ -19,6 +20,9 @@ export type SwarmKind =
 
 export interface SwarmEntityRecord {
   id: string;
+  /** P2c — an asteroid's resource (rock / ice / crystal-veined); rides the
+   *  shared subtype byte for kind 0. Absent ⇒ rock. */
+  asteroidResource?: AsteroidResourceId;
   entityId: number;
   slot: number;
   kind: SwarmKind;

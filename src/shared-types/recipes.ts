@@ -51,6 +51,7 @@ export const RECIPE_IDS = [
   'pack_assembly_plant',
   // Living World W3 kind (appended after assembly_plant).
   'pack_research_lab',
+  'pack_autocannon_turret',
 ] as const;
 export type RecipeId = (typeof RECIPE_IDS)[number];
 
@@ -244,6 +245,11 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
     id: 'pack_research_lab', displayName: packName('research_lab'),
     inputs: { alloy: 10, components: 3, electronics: 4 }, outputs: [{ packed: 'research_lab' }],
     cyclePulses: 20, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_autocannon_turret: r({
+    id: 'pack_autocannon_turret', displayName: packName('autocannon_turret'),
+    inputs: { alloy: 8, components: 2 }, outputs: [{ packed: 'autocannon_turret' }],
+    cyclePulses: 12, processors: ['fabricator'], blueprintRequired: true,
   }),
   pack_assembly_plant: r({
     id: 'pack_assembly_plant', displayName: packName('assembly_plant'),

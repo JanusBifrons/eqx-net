@@ -46,6 +46,7 @@ import {
   STRUCTURE_FLAG_DECONSTRUCTING,
   STRUCTURE_FLAG_POWERED,
   STRUCTURE_FLAG_WALL_ACTIVE,
+  STRUCTURE_FLAG_NO_AMMO,
   STRUCTURE_TARGET_NONE,
   STRUCTURE_DEFAULTS as SD,
 } from '../../shared-types/structureStateWire.js';
@@ -110,6 +111,22 @@ import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
 import { PROD_STATE, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import { blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
+import { rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
+import { getSector } from '../../core/galaxy/galaxy.js';
+import type { GoodId } from '../../shared-types/goods.js';
+
+/** P2d — one unit of munitions (a turret's magazine reload). */
+const ONE_MUNITION = Object.freeze({ munitions: 1 });
+
+/** P2c — give each asteroid in a roster its resource kind, rolled from the
+ *  sector's features and seeded by the asteroid's id (stable across restarts). */
+function withAsteroidResources<T extends { id: string }>(roster: readonly T[], features: readonly AsteroidFieldFeature[]): Array<T & { resource: AsteroidResourceId }> {
+  return roster.map((a) => {
+    let h = 2166136261;
+    for (let i = 0; i < a.id.length; i++) h = Math.imul(h ^ a.id.charCodeAt(i), 16777619);
+    return { ...a, resource: rollAsteroidResource((h >>> 0) / 4294967296, features) };
+  });
+}
 import { ALLEGIANCE_DEFS, NPC_ALLEGIANCE_IDS, type NpcAllegianceId } from '../../shared-types/allegiances.js';
 import { encodePlayerTurretTarget } from '../../shared-types/structureStateWire.js';
 
@@ -719,6 +736,8 @@ export class SectorRoom extends Room<SectorState> {
   private shieldWalls!: ShieldWallManager;
   /** Gates: open/close on approach (phase V gates). */
   private gates!: GateController;
+  /** P2c — this sector's galaxy features (asteroid mix, nebula). */
+  private sectorFeatures: readonly AsteroidFieldFeature[] = [];
   /** P2b — processors on the grid pulse (take inputs, run, put outputs). */
   private production!: ProductionSubsystem;
   /** 1 Hz grid heartbeat timer (unref'd; off the physics tick). */
@@ -1026,7 +1045,7 @@ export class SectorRoom extends Room<SectorState> {
      *  reconnect, not via the auto-sweep. Returns the subsystem's gate result. */
     reconnectStructure: (id: string) => boolean;
     /** Phase 4 — seed a mineable asteroid for the mining integration test. */
-    spawnTestAsteroid: (id: string, x: number, y: number, radius: number) => boolean;
+    spawnTestAsteroid: (id: string, x: number, y: number, radius: number, resource?: AsteroidResourceId) => boolean;
     /** Phase 5 — seed a drone + drive the turret tick for the turret test.
      *  `kind` (default 'fighter') lets a test seed a COMPOSITE-kind drone (e.g.
      *  'havok') to exercise scrap-on-death (Phase 2b-ii). */
@@ -1069,8 +1088,8 @@ export class SectorRoom extends Room<SectorState> {
       getStructuresSlice: () => this.structureRowsForTests(),
       upgradeStructure: (id) => this.structureGrid.upgradeStructure(id),
       reconnectStructure: (id) => this.structureGrid.reconnect(id),
-      spawnTestAsteroid: (id, x, y, radius) =>
-        this.swarmSpawner.spawnAsteroid({ id, x, y, vx: 0, vy: 0, radius, mass: 1 }),
+      spawnTestAsteroid: (id, x, y, radius, resource) =>
+        this.swarmSpawner.spawnAsteroid({ id, x, y, vx: 0, vy: 0, radius, mass: 1, ...(resource ? { resource } : {}) }),
       spawnTestDrone: (id, x, y, kind = 'fighter') => {
         const ok = this.swarmSpawner.spawnDrone({ id, x, y, kind });
         if (ok) {
@@ -1172,6 +1191,9 @@ export class SectorRoom extends Room<SectorState> {
     const roomOpts = (options ?? {}) as {
       testMode?: boolean;
       asteroidConfig?: typeof ASTEROIDS;
+      /** P2c (testMode) — sector features for a non-galaxy room (asteroid mix,
+       *  nebula for Gas Collectors). Galaxy rooms use their sector's features. */
+      sectorFeatures?: AsteroidFieldFeature[];
       /** How many drones to seed at room start. 0 to skip. Defaults to 30 for non-test rooms. */
       droneCount?: number;
       /** Spawn-ring radius for the drone wave (legacy small-seed path —
@@ -1332,6 +1354,9 @@ export class SectorRoom extends Room<SectorState> {
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
       prebuiltStructuresOwner?: string;
+      /** P2d (testMode) — goods put into the prebuilt Capital's hold (e.g.
+       *  munitions so a showcase's missile turrets can fire). */
+      prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
       /** Living World P2 — testMode: join the TradeDirector so deals can be
        *  made in this (non-galaxy) room (showcase / E2E). */
       tradeEnabled?: boolean;
@@ -1390,8 +1415,16 @@ export class SectorRoom extends Room<SectorState> {
     const useSingleAsteroid = roomOpts.singleAsteroid === true;
     const useDronePoses = this.testMode && Array.isArray(roomOpts.dronePoses) && roomOpts.dronePoses.length > 0;
     const useStructurePoses = this.testMode && Array.isArray(roomOpts.structurePoses) && roomOpts.structurePoses.length > 0;
-    const asteroidRoster =
-      (useBulkSeed || useSingleAsteroid || useDronePoses || useStructurePoses) ? [] : (roomOpts.asteroidConfig ?? ASTEROIDS);
+    // P2c — the sector's features (galaxy sector, or a testMode override) decide
+    // its asteroid mix and whether Gas Collectors work here.
+    this.sectorFeatures =
+      (this.testMode ? roomOpts.sectorFeatures : undefined)
+      ?? (this.sectorKey !== null ? getSector(this.sectorKey)?.features : undefined)
+      ?? [];
+    const asteroidRoster = withAsteroidResources(
+      (useBulkSeed || useSingleAsteroid || useDronePoses || useStructurePoses) ? [] : (roomOpts.asteroidConfig ?? ASTEROIDS),
+      this.sectorFeatures,
+    );
 
     // Phase 5c: seed swarm via the spawner, which owns slot allocation,
     // SAB priming, registry registration, and the worker spawn-obstacle
@@ -2029,6 +2062,12 @@ export class SectorRoom extends Room<SectorState> {
       },
       findNearestAsteroid: (x, y, range) => this.findNearestAsteroid(x, y, range),
       drawAsteroidResources: (entityId, amount) => this.drawAsteroidResources(entityId, amount),
+      // P2c — asteroid kinds, extractor goods into network storage, nebulae.
+      asteroidResourceOf: (entityId) => this.swarmRegistry.getByEntityId(entityId)?.asteroidResource ?? 'rock',
+      depositGoods: (rec, good, n) => this.production.deposit(rec, good, n),
+      sectorHasNebula: () => this.sectorFeatures.includes('nebula'),
+      // P2d — missile and autocannon turrets load munitions from base storage.
+      takeMunition: (rec) => this.production.takeGoods(rec, ONE_MUNITION),
       // Allegiances P0: base turrets defend against combat allegiances (drones,
       // robots) but never open fire on NEUTRAL traders (their haulers).
       findNearestDrone: (x, y, range, owner) => this.findNearestTurretTarget(x, y, range, owner),
@@ -3851,6 +3890,7 @@ export class SectorRoom extends Room<SectorState> {
   private seedStructureScenario(roomOpts: {
     prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number; rot?: number; gateAccess?: GateAccess }>;
     prebuiltStructuresOwner?: string;
+    prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
     scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
     scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
   }): void {
@@ -3879,6 +3919,17 @@ export class SectorRoom extends Room<SectorState> {
         }
       }
       this.structureRegistry.topologyDirty = true;
+      // P2d — stock the prebuilt Capital (e.g. munitions for a showcase's
+      // missile turrets), so ammo-using turrets can fire.
+      const goods = roomOpts.prebuiltStorageGoods;
+      if (goods) {
+        for (const rec of this.structureRegistry.all()) {
+          if (rec.owner !== owner || rec.kind !== 'capital') continue;
+          rec.hold ??= { goods: {}, blueprints: [] };
+          for (const [g, n] of Object.entries(goods)) rec.hold.goods[g as GoodId] = (rec.hold.goods[g as GoodId] ?? 0) + (n ?? 0);
+          break;
+        }
+      }
       // One pulse rebuilds the grid (powered components) + refreshes the slice.
       this.structureGridTick();
     }
@@ -4511,6 +4562,7 @@ export class SectorRoom extends Room<SectorState> {
         // Clients derive every wall from connections + this flag (all of this
         // emitter's walls are up). `shieldWallTo` stays for a pylon's first wall.
         if (this.shieldWalls.wallsUpFor(rec.id, nowMs)) flags |= STRUCTURE_FLAG_WALL_ACTIVE;
+        if (rec.noAmmo === true) flags |= STRUCTURE_FLAG_NO_AMMO;
         if (rec.kind === 'shield_pylon') {
           const wall = this.shieldWalls.wallStateFor(rec.id, nowMs);
           const other = wall ? this.swarmRegistry.get(wall.otherPost)?.entityId : undefined;
