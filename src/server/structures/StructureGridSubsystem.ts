@@ -23,6 +23,7 @@
  */
 import { ASTEROID_YIELD, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
+import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import {
   canUpgradeStructure,
@@ -104,6 +105,9 @@ export interface StructureGridHooks {
   depositGoods?(rec: StructureRecord, good: GoodId, n: number): number;
   /** P2c — this sector has a nebula (Gas Collectors work). */
   sectorHasNebula?(): boolean;
+  /** P2d — take ONE unit of munitions from `rec`'s owner network storage;
+   *  false when there is none. Absent ⇒ unlimited ammo. */
+  takeMunition?(rec: StructureRecord): boolean;
   /** Phase 5 — nearest target within `range` of (x, y) for a turret owned by
    *  `owner`, or null. Returns the target's damage id + entityId + pose. B2: a
    *  player-owned turret engages drones and robots (unchanged); an NPC-owned
@@ -237,6 +241,8 @@ export class StructureGridSubsystem {
         // bolt off the `projectiles[]` slice (pose-authoritative).
         const cadence = kind.fireRateMs ?? 600;
         if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cadence) continue;
+        // P2d — physical ordnance spends munitions (lasers never reach here).
+        if (!this.spendAmmo(rec)) continue;
         rec.lastTurretFireMs = nowMs;
         this.fireTurretShot(rec, kind.radius, damage, def, target.x, target.y);
       } else if (def.mode === 'missile') {
@@ -247,10 +253,33 @@ export class StructureGridSubsystem {
         // (realistic, by user choice — no friendly-structure skip).
         const cadence = kind.fireRateMs ?? 1500;
         if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cadence) continue;
+        // P2d — physical ordnance spends munitions (lasers never reach here).
+        if (!this.spendAmmo(rec)) continue;
         rec.lastTurretFireMs = nowMs;
         this.fireTurretMissile(rec, kind.radius, def, target.x, target.y);
       }
     }
+  }
+
+  /**
+   * P2d — spend one shot. An empty magazine reloads AMMO_SHOTS_PER_UNIT shots
+   * from one unit of munitions in the owner's network storage; with none, the
+   * turret is flagged `noAmmo` and doesn't fire. Kinds that don't use ammo,
+   * and rooms without the `takeMunition` hook (unit harnesses), never block.
+   */
+  private spendAmmo(rec: StructureRecord): boolean {
+    const per = (AMMO_SHOTS_PER_UNIT as Record<string, number | undefined>)[rec.kind];
+    if (per === undefined || !this.hooks.takeMunition) return true;
+    if ((rec.ammo ?? 0) <= 0) {
+      if (!this.hooks.takeMunition(rec)) {
+        rec.noAmmo = true;
+        return false;
+      }
+      rec.ammo = per;
+    }
+    rec.ammo = (rec.ammo ?? 0) - 1;
+    rec.noAmmo = false;
+    return true;
   }
 
   /** WS-8 — spawn ONE bolt from a projectile turret toward (tx, ty), offset

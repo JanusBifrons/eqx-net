@@ -25,6 +25,8 @@ export const STRUCTURE_FLAG_DECONSTRUCTING = 4;
 /** A shield emitter's walls are up: it has at least one wall and every one of
  *  them is powered and not stunned (gates: the shield, not the open state). */
 export const STRUCTURE_FLAG_WALL_ACTIVE = 8;
+/** P2d — an ammo-using turret found no munitions for its last shot. */
+export const STRUCTURE_FLAG_NO_AMMO = 16;
 
 /** `StructureState.etaMs` sentinels: ≥ 0 is a real ETA. */
 export const STRUCTURE_ETA_NONE = -1;

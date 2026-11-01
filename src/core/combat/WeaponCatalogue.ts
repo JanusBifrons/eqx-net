@@ -1,5 +1,5 @@
 export type WeaponMode = 'hitscan' | 'projectile' | 'missile';
-export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'charge-laser';
+export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'charge-laser' | 'autocannon';
 
 interface WeaponDefBase {
   id: WeaponId;
@@ -148,6 +148,23 @@ const LASER_DEF: ProjectileWeaponDef = {
   energyCost: 2,
 };
 
+/** P2d (plan soft-leaping-truffle v3) — kinetic shells from the Autocannon
+ *  Turret. A physical projectile, so the turret spends MUNITIONS (lasers only
+ *  spend power — user ruling 2026-11-01). Range ≈ 1400 × 36 / 60 = 840 u. */
+const AUTOCANNON_DEF: ProjectileWeaponDef = {
+  id: 'autocannon',
+  displayName: 'Autocannon',
+  mode: 'projectile',
+  damage: 10,
+  cooldownTicks: 6,
+  speed: 1400,
+  radius: 3,
+  maxTicks: 36,
+  // Turret-only today (turrets are not energy-gated); a nominal cost keeps the
+  // catalogue rule (every weapon costs energy) for any future ship mount.
+  energyCost: 1,
+};
+
 const HEAT_SEEKER_DEF: MissileWeaponDef = {
   id: 'heat-seeker',
   displayName: 'Heat-Seeker',
@@ -246,9 +263,10 @@ export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, Weapo
   ['heat-seeker', HEAT_SEEKER_DEF],
   ['pulse-orb', PULSE_ORB_DEF],
   ['charge-laser', CHARGE_LASER_DEF],
+  ['autocannon', AUTOCANNON_DEF],
 ]);
 
-export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser'] as const;
+export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon'] as const;
 
 export const DEFAULT_WEAPON: WeaponId = 'hitscan';
 
@@ -257,7 +275,7 @@ export function getWeapon(id: WeaponId): WeaponDef {
 }
 
 export function isWeaponId(v: unknown): v is WeaponId {
-  return v === 'hitscan' || v === 'laser' || v === 'heat-seeker' || v === 'pulse-orb' || v === 'charge-laser';
+  return v === 'hitscan' || v === 'laser' || v === 'heat-seeker' || v === 'pulse-orb' || v === 'charge-laser' || v === 'autocannon';
 }
 
 /**

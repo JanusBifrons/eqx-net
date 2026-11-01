@@ -65,6 +65,8 @@ export const SHOWCASE_DEFENCE_OPTS = {
     { kind: 'laser_bolt_turret', x: -150, y: -400 },
     { kind: 'missile_turret', x: 170, y: -400 },
   ],
+  // P2d — missile turrets spend munitions; stock the Capital.
+  prebuiltStorageGoods: { munitions: 50 },
   dronePoses: [
     { kind: 'fighter', x: -350, y: -1000, angle: Math.PI },
     { kind: 'gunship', x: 0, y: -1100, angle: Math.PI },
