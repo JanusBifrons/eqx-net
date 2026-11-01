@@ -103,4 +103,9 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 /** Docs whose feature exists but cannot be staged on main yet — with what unblocks it. */
 export const SHOWCASE_PENDING: Record<string, string> = {
   allegiances: 'AI-vs-AI sides fight in the living galaxy but not on cue; needs a staged two-faction room.',
+  'trade-deals':
+    'Trade needs a SIGNED-IN pilot and shots join anonymously (AS_PILOT); needs a logged-in take. ' +
+    'Filmed standalone meanwhile: tests/showcase/trade-p2.spec.ts (room trade-showcase).',
+  'economy-and-trade':
+    'Same as trade-deals (signed-in take needed); standalone recording: tests/showcase/trade-p2.spec.ts.',
 };
