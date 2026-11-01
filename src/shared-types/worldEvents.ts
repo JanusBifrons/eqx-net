@@ -15,7 +15,7 @@
  */
 import { z } from 'zod';
 import type { Hold } from './goods.js';
-import { INCURSION_BLUEPRINT_CHANCE, INCURSION_PACKED_CHANCE, rollBlueprint, rollPackedStructure } from './blueprints.js';
+import { INCURSION_BLUEPRINT_CHANCE, INCURSION_HULL_CHANCE, INCURSION_PACKED_CHANCE, rollBlueprint, rollPackedHull, rollPackedStructure } from './blueprints.js';
 
 export const WORLD_EVENT_KINDS = ['incursion', 'mothership', 'salvage'] as const;
 export type WorldEventKind = (typeof WORLD_EVENT_KINDS)[number];
@@ -76,6 +76,9 @@ export function rollIncursionCache(rng: () => number): Hold {
   // Economy v2 W4a — robot stock: often a packed structure too.
   const packed = rollPackedStructure(rng, INCURSION_PACKED_CHANCE);
   if (packed !== null) cache.packed = [packed];
+  // Economy v2 W5a — and sometimes a packed hull.
+  const hull = rollPackedHull(rng, INCURSION_HULL_CHANCE);
+  if (hull !== null) (cache.packed ??= []).push(hull);
   return cache;
 }
 

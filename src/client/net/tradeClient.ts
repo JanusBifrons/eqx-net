@@ -35,6 +35,25 @@ export function sendInstallBlueprint(networkEntityId: number, blueprintId: strin
   return send('install_blueprint', { networkEntityId, blueprintId });
 }
 
+/** Economy v2 W6 — the blueprint market (each answered by `bp_market_state`). */
+export function sendBpMarketQuery(networkEntityId: number): boolean {
+  return send('bp_market_query', { networkEntityId });
+}
+
+export function sendBpBuy(networkEntityId: number, offerId: string): boolean {
+  return send('bp_buy', { networkEntityId, offerId });
+}
+
+export function sendBpSell(networkEntityId: number, uid: string): boolean {
+  return send('bp_sell', { networkEntityId, uid });
+}
+
+/** Economy v2 W5a — unpack a packed hull at my storage into my roster
+ *  (verdict: `blueprint_result`). */
+export function sendUnpackHull(networkEntityId: number, kind: string): boolean {
+  return send('unpack_hull', { networkEntityId, kind });
+}
+
 /** Economy v2 W3 — Research Lab requests (each answered by `lab_state`). */
 export function sendLabQuery(entityId: number): boolean {
   return send('lab_query', { entityId });

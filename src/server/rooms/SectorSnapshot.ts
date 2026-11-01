@@ -69,6 +69,8 @@ export interface SectorSnapshotStructure {
    *  (its inputs are already taken). Absent ⇒ default recipe, idle. */
   recipe?: string;
   prodLoaded?: boolean;
+  /** Economy v2 W4b — placed from a packed item. Absent ⇒ built from minerals. */
+  prepaid?: boolean;
   prodProgress?: number;
   /** Hull HP at save time. */
   health: number;
