@@ -190,6 +190,9 @@ export interface SnapshotMessage {
        *  accelerator. Shared reference, replaced only on a discrete transfer.
        *  No `SWARM_WIRE_VERSION` bump (slim JSON field). */
       cargo?: { goods: Partial<Record<string, number>>; credits: number; blueprints: string[] };
+      /** Living World P5 — the OWN active ship's fitted blueprint ids (emit-when-
+       *  non-empty). Drives the cargo capacity + the upgrade modal's weapon gate. */
+      fitted?: string[];
       /** Living World P1a-2 — auto-deposit progress 0..100 (own active ship only;
        *  absent ⇒ not depositing). Drives the HUD deposit ring. */
       depositing?: number;

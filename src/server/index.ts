@@ -30,7 +30,9 @@ import {
   getPersistenceHealth,
   getPersistence,
   getHoldStore,
+  getPlayerShipStore,
 } from './db/PersistenceWorker.js';
+import { getUser } from './auth/AuthService.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled, resolveBotSpoolMs, resolveBotHopMs, type LivingWorldOptions } from './livingworld/LivingWorldDirector.js';
@@ -40,6 +42,8 @@ import { ROBOT_DIRECTOR_OPTIONS, ROBOT_BOT_COUNT, isRobotsDisabled } from './liv
 import { RobotTerritory } from './livingworld/RobotTerritory.js';
 import { EliteDirector } from './livingworld/EliteDirector.js';
 import { EventDirector } from './livingworld/EventDirector.js';
+import { setContractsProvider } from './livingworld/contractsProvider.js';
+import { BountyBoard, setBountyBoard } from './economy/BountyBoard.js';
 import { WORLD_EVENT_KINDS, type WorldEventKind } from '../shared-types/worldEvents.js';
 import { DirectorPersistence, type DirectorStatePayload } from './livingworld/DirectorPersistence.js';
 import { db } from './db/Database.js';
@@ -1210,6 +1214,22 @@ async function main(): Promise<void> {
     eliteDirector.start();
     eventDirector = new EventDirector(galaxyRooms);
     eventDirector.start();
+    // P4c — the Contracts board reads the live elites + event.
+    const ed = eliteDirector;
+    const evd = eventDirector;
+    // P4c-2 — player bounties: escrow holds + the roster/auth for the rules.
+    const bounties = new BountyBoard(getHoldStore, {
+      userIdOf: (pid) => getPlayerShipStore().listByPlayer(pid).find((r) => r.userId !== null)?.userId ?? null,
+      maxShipLevel: (pid) => getPlayerShipStore().listByPlayer(pid).reduce((m, r) => Math.max(m, r.level), 0),
+      nameOf: (pid) => {
+        const uid = getPlayerShipStore().listByPlayer(pid).find((r) => r.userId !== null)?.userId ?? null;
+        const u = uid ? getUser(uid) : null;
+        return u ? (u.displayName ?? null) : null;
+      },
+      lastSectorOf: (pid) => getPlayerShipStore().listByPlayer(pid)[0]?.lastSectorKey ?? null,
+    });
+    setBountyBoard(bounties);
+    setContractsProvider({ elites: () => ed.elites(), activeEvent: () => evd.activeEvent(), bounties: () => bounties.open() });
     livingWorldDirector.start();
     // Phase-4 P0 — let the per-room TransitOrchestrator + destination rooms feed
     // inbound PLAYERS into the director's IncomingRegistry (the "incoming" banner)
@@ -1287,6 +1307,8 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
     robotTerritory?.stop();
     eliteDirector?.stop();
     eventDirector?.stop();
+    setContractsProvider(null);
+    setBountyBoard(null);
     setTradeSink(null);
     setEconomyRouteProvider(null);
     tradeDirector?.stop();

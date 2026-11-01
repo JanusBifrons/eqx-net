@@ -264,6 +264,9 @@ export interface UIStore {
   cargo: CargoView | null;
   /** Cargo capacity (weight units) of the local ship's kind. */
   cargoCapacity: number;
+  /** Living World P5 — blueprints fitted to the local ACTIVE ship (from the
+   *  own-ship snapshot slice; discrete, written only on change). */
+  fittedBlueprints: readonly string[];
   /** Short-lived pickup popups ("+7 Salvage"). Newest last; auto-expired. */
   lootFeed: ReadonlyArray<{ id: number; text: string }>;
   /** Living World P2 — short-lived trade toasts (from `trade_notice`). Newest
@@ -458,6 +461,7 @@ export interface UIStore {
   ) => void;
   setEnergyMax: (max: number) => void;
   setCargo: (cargo: CargoView | null, capacity: number) => void;
+  setFittedBlueprints: (ids: readonly string[]) => void;
   pushLootFeed: (text: string) => number;
   expireLootFeed: (id: number) => void;
   /** Push a trade toast; `unread` bumps the rail badge. Returns the toast id. */

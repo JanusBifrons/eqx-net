@@ -15,6 +15,7 @@
  */
 import { z } from 'zod';
 import type { Hold } from './goods.js';
+import { INCURSION_BLUEPRINT_CHANCE, rollBlueprint } from './blueprints.js';
 
 export const WORLD_EVENT_KINDS = ['incursion', 'mothership', 'salvage'] as const;
 export type WorldEventKind = (typeof WORLD_EVENT_KINDS)[number];
@@ -66,10 +67,12 @@ function randInt(rng: () => number, min: number, max: number): number {
 
 /** The cache dropped when an incursion is wiped out. */
 export function rollIncursionCache(rng: () => number): Hold {
+  // P5 — an incursion cache often carries a blueprint.
+  const bp = rollBlueprint(rng, INCURSION_BLUEPRINT_CHANCE);
   return {
     goods: { salvage: randInt(rng, 40, 80), alloy: randInt(rng, 10, 20), core: randInt(rng, 1, 3) },
     credits: randInt(rng, 250, 500),
-    blueprints: [],
+    blueprints: bp !== null ? [bp] : [],
   };
 }
 

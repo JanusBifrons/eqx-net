@@ -6,7 +6,8 @@ named targets worth chasing. It ships in parts:
 - **P4a — named elites** (this page, shipped).
 - **P4b — world events** (shipped): robot incursions, drone motherships,
   salvage fields.
-- **P4c — bounties and the Contracts tab.**
+- **P4c — bounties and the Contracts tab** (shipped: world bounties, the tab,
+  and player-placed bounties).
 
 ## Named elites (P4a)
 
@@ -113,3 +114,95 @@ leave quietly and drop nothing.
   in real rooms (strike group → cache, mothership → haul + escorts leave,
   salvage pods), the fade and the lull, one event at a time, the galaxy hook,
   and the notices.
+
+## Bounties and the Contracts tab (P4c)
+
+### What the player sees
+
+- A **Contracts** tab in the sidebar lists what is worth hunting right now:
+  each named elite (★, with its bounty) and the running world event (⚑, with
+  time left). Each row shows the sector by name and the reward ("300¢ bounty"
+  or "Loot"). Tapping a row opens the galaxy map so you can warp there.
+- **World bounties.** Killing a named elite pays **300¢** and the Drone
+  Mothership pays **500¢**, straight into the killer's own ship hold. The
+  credits are carried, so they're lost if you die before banking them. The
+  sector sees "\<pilot\> claimed the 300¢ bounty on Dread Vexis!".
+- **Bounties need an account.** A guest who lands the kill still gets the
+  loot, but no bounty.
+
+### How it works
+
+- `GET /galaxy/contracts` (`ContractsResponseSchema`, zod) is the tab's only
+  source (#16). It is built by the pure `buildContracts` over the live elites
+  and the event, through the nullable `contractsProvider` singleton (an empty
+  board when the Living World is off). The tab polls it only while open
+  (drawer-perf rule).
+- The bounty rides the elite tag (`rec.elite.bounty`, set by `markElite`).
+  `SectorRoom.payEliteBounty` runs in the kill path. Only a signed-in player
+  (`playerToUser`) is paid: one atomic hold write on their active ship, plus a
+  `bounty_claimed` audit event and a sector `world_notice`.
+
+### Tests
+
+- `src/server/livingworld/contractsProvider.test.ts`: the board shape and
+  rewards.
+- `src/client/layout/Drawer/tabs/ContractsTab.test.tsx`: renders from the
+  endpoint, no raw ids, no polling while hidden, formatting.
+- `tests/integration/sectorRoom/eliteDirector.test.ts`: a signed-in killer is
+  paid exactly the bounty; a guest kill pays nothing.
+
+## Player bounties (P4c-2)
+
+### What the player sees
+
+- Select another pilot's ship. The inspector shows a red **crosshair** button;
+  tap it for three prices: **100¢ / 500¢ / 1000¢**.
+- A bounty costs its price **plus a 25% fee that is burned** (100¢ costs
+  125¢). It's paid from your own storage in the current sector (your Capital
+  first). No storage here means a toast explains why nothing happened.
+- The whole galaxy hears "A 500¢ bounty has been placed on Vex!", and the
+  Contracts tab lists **☠ Wanted: Vex** with the total on their head and where
+  they were last seen.
+- Whoever destroys the target's active ship collects **every open bounty on
+  them except their own**, straight into the killer's ship hold (carried
+  credits, lost if they die before banking).
+- **Rules:**
+  - both pilots need an account;
+  - the target must own a ship of **level 3 or higher**;
+  - you can't target yourself;
+  - one open bounty per pilot on the same target;
+  - after it's claimed you wait **24 hours** before placing another on that
+    target.
+
+### How it works
+
+- `BountyBoard` (`src/server/economy/BountyBoard.ts`) is a process singleton,
+  wired at boot with the roster and auth lookups (account, max ship level,
+  display name, last sector).
+- **The escrow hold is the bounty.** It's a `bounty` holder (new
+  `HolderType`) keyed `bounty:<target>:<placer>`. Value lives in exactly one
+  hold, and the bounty survives a restart because holds are persisted and
+  hydrated.
+- **Placing** checks the network balance first, so a short balance moves
+  nothing. It is then ONE `tradeTransfer` group that takes bounty + fee from
+  the placer's network into the escrow; `take.burnCredits` drops the fee.
+- **Claiming** happens in the room's PvP branch of `SHIP_DESTROYED`. ONE hold
+  group deletes the escrows and credits the killer's ship
+  (`SectorRoom.creditKillerHold`, which world bounties also use).
+- The pair cooldown is in memory (best effort across restarts).
+- **Messages:** `place_bounty` (strict zod `PlaceBountySchema`) →
+  `bounty_result` (a toast; the Contracts board is the truth, #16).
+- **Audit events:** `bounty_placed`, `bounty_claimed`.
+
+### Tests
+
+- `tests/integration/sectorRoom/playerBounty.test.ts`, the whole flow through a
+  real room and real messages:
+  - the exact fee burn and escrow;
+  - every rule rejection (a short balance moves nothing);
+  - the placer can't self-claim;
+  - the killer is paid and the escrow deleted;
+  - the 24 h cooldown and its lapse.
+- `BountyBoard.test.ts`: uid parsing, cost, and the board row by name.
+- `BountyAction.test.tsx`: chips send from your own storage, or explain when
+  you have none.

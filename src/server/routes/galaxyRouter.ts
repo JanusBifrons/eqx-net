@@ -9,6 +9,7 @@ import {
   buildGalaxyPresence,
   getGalaxyStatsProvider,
 } from '../livingworld/galaxyStatsProvider.js';
+import { buildContracts, getContractsProvider } from '../livingworld/contractsProvider.js';
 
 export const galaxyRouter: ExpressRouter = Router();
 
@@ -45,4 +46,14 @@ galaxyRouter.get('/presence', (req: Request, res: Response) => {
     return;
   }
   res.json(buildGalaxyPresence(getGalaxyStatsProvider(), playerId));
+});
+
+/**
+ * Living World P4c — the Contracts board: live named elites (with their
+ * bounty) and the running world event. The client's Contracts tab polls it
+ * only while the tab is open; it is the tab's sole source of truth (#16).
+ * Off the 60 Hz tick — no netgate.
+ */
+galaxyRouter.get('/contracts', (_req: Request, res: Response) => {
+  res.json(buildContracts(getContractsProvider()));
 });
