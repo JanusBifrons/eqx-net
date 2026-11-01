@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { Hold } from '../goods.js';
 
 export interface WelcomeMessage {
   type: 'welcome';
@@ -189,7 +190,7 @@ export interface SnapshotMessage {
        *  carrier (invariant #16) — the `loot_collected` message is only a UI
        *  accelerator. Shared reference, replaced only on a discrete transfer.
        *  No `SWARM_WIRE_VERSION` bump (slim JSON field). */
-      cargo?: { goods: Partial<Record<string, number>>; blueprints: string[] };
+      cargo?: Hold;
       /** Economy v2 W1 — the OWN player's wallet balance (credits are virtual,
        *  one balance per player; emitted on the own active ship's entry). */
       wallet?: number;

@@ -12,11 +12,12 @@ describe('BlueprintInstall (P5)', () => {
   afterEach(() => send.mockReset());
 
   it('shows one Install chip per blueprint kind (by name) and sends install_blueprint', () => {
-    render(<BlueprintInstall entityId={9} blueprints="bp-missile-rack,bp-missile-rack,bp-cargo-expander,junk" />);
+    render(<BlueprintInstall entityId={9} blueprints="module:bp-missile-rack,module:bp-missile-rack,module:bp-cargo-expander,structure:smelter,junk" />);
     const chips = screen.getAllByTestId('blueprint-install-chip');
     expect(chips.map((c) => c.getAttribute('data-blueprint'))).toEqual(['bp-missile-rack', 'bp-cargo-expander']);
     expect(chips[0]!.textContent).toContain('Missile Rack');
     expect(document.body.textContent).not.toContain('bp-');
+    expect(document.body.textContent).not.toContain('module:');
     fireEvent.click(chips[1]!);
     expect(send).toHaveBeenCalledWith('install_blueprint', { type: 'install_blueprint', networkEntityId: 9, blueprintId: 'bp-cargo-expander' });
   });

@@ -10,6 +10,13 @@
  * server's capacity clamp read the same `GOOD_DEFS` weights.
  */
 import { z } from 'zod';
+import {
+  BlueprintItemSchema,
+  PackedItemSchema,
+  legacyBlueprintItem,
+  type BlueprintItem,
+  type PackedItem,
+} from './items.js';
 
 /** Tradable goods. APPEND-ONLY (persisted in hold JSON + audit). The goods
  *  after `core` are the production chain (plan soft-leaping-truffle v3, P1). */
@@ -81,7 +88,10 @@ export const GOOD_DEFS: Readonly<Record<GoodId, GoodDef>> = Object.freeze({
  *  (economy v2 W1, `src/server/economy/Wallet.ts`). */
 export interface Hold {
   goods: Partial<Record<GoodId, number>>;
-  blueprints: string[];
+  /** Economy v2 W2 — blueprint instances (originals + copies). Weightless. */
+  blueprints: BlueprintItem[];
+  /** Economy v2 W2 — packed structures / hulls (have weight). Absent ⇒ none. */
+  packed?: PackedItem[];
 }
 
 const nonNegInt = z.number().int().nonnegative();
@@ -91,7 +101,12 @@ const nonNegInt = z.number().int().nonnegative();
 export const HoldSchema = z
   .object({
     goods: z.partialRecord(z.enum(GOOD_IDS), nonNegInt),
-    blueprints: z.array(z.string().min(1).max(64)).max(64),
+    // A pre-W2 bare string id parses into a single-run copy (`legacyBlueprintItem`).
+    blueprints: z
+      .array(z.union([BlueprintItemSchema, z.string().min(1).max(64)]))
+      .max(64)
+      .transform((arr) => arr.map((b) => (typeof b === 'string' ? legacyBlueprintItem(b) : b))),
+    packed: z.array(PackedItemSchema).max(64).optional(),
   })
   .strict();
 
@@ -105,7 +120,11 @@ export function parseHoldJson(json: string | null | undefined): Hold {
     // (`legacyHoldCredits`) — never back into a hold.
     if (raw !== null && typeof raw === 'object') delete raw['credits'];
     const r = HoldSchema.safeParse(raw);
-    if (r.success) return { goods: { ...r.data.goods }, blueprints: [...r.data.blueprints] };
+    if (r.success) {
+      const h: Hold = { goods: { ...r.data.goods }, blueprints: r.data.blueprints.map((b) => ({ ...b })) };
+      if (r.data.packed && r.data.packed.length > 0) h.packed = r.data.packed.map((p) => ({ ...p }));
+      return h;
+    }
   } catch {
     /* fall through */
   }

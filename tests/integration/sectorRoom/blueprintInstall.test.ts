@@ -19,6 +19,9 @@ import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import { getHoldStore, getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
 import { fittedUid, type BlueprintResult } from '../../../src/shared-types/blueprints.js';
+import { legacyBlueprintItem } from '../../../src/shared-types/items.js';
+
+const products = (bps: Array<{ product: string }> | undefined): string[] => (bps ?? []).map((b) => b.product);
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import type { SnapshotMessage } from '../../../src/shared-types/messages.js';
 
@@ -71,7 +74,8 @@ describe('SectorRoom integration — blueprints (P5)', () => {
     cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 150, y: 0 });
     expect(await until(() => [...internal.structureRegistry.all()].some((s) => s.owner === pid), 5000)).toBe(true);
     const cap = [...internal.structureRegistry.all()].find((s) => s.owner === pid)!;
-    cap.hold = { goods: {}, blueprints: ['bp-reinforced-hull', 'bp-missile-rack'] };
+    // W2 — blueprints are ITEMS (module copies here).
+    cap.hold = { goods: {}, blueprints: [legacyBlueprintItem('bp-reinforced-hull'), legacyBlueprintItem('bp-missile-rack')] };
     const capEid = internal.swarmRegistry.get(cap.id)!.entityId;
 
     // A blueprint the storage doesn't have is refused.
@@ -82,12 +86,12 @@ describe('SectorRoom integration — blueprints (P5)', () => {
     expect(state.ships.get(shipId)!.maxHealth).toBe(base);
     const ok = await install(capEid, 'bp-reinforced-hull');
     expect(ok.ok, ok.message).toBe(true);
-    expect(cap.hold!.blueprints).toEqual(['bp-missile-rack']);
-    expect(getHoldStore().get(fittedUid(shipId))?.hold.blueprints).toEqual(['bp-reinforced-hull']);
+    expect(products(cap.hold!.blueprints)).toEqual(['module:bp-missile-rack']);
+    expect(products(getHoldStore().get(fittedUid(shipId))?.hold.blueprints)).toEqual(['module:bp-reinforced-hull']);
     expect(state.ships.get(shipId)!.maxHealth).toBe(Math.round(base * 1.25));
     expect(await until(() => ownFitted?.includes('bp-reinforced-hull') === true, 4000)).toBe(true);
     // Not twice on the same ship.
-    cap.hold!.blueprints.push('bp-reinforced-hull');
+    cap.hold!.blueprints.push(legacyBlueprintItem('bp-reinforced-hull'));
     expect((await install(capEid, 'bp-reinforced-hull')).ok).toBe(false);
 
     // The Missile Rack gates heat-seekers on a latent mount.
