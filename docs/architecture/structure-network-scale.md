@@ -69,3 +69,29 @@ Each phase appends a row with its measured numbers against the budgets in `struc
 |---|---|---|---|---|---|---|---|
 | Budget | ≤ 512 | ≤ 1024 / ≤ 4096 | ≤ 25,600 | ≤ 2048 | ≤ 1.0 | ≤ 2.0 (routes ≤ 0.5) | `structureBudgets.ts` |
 | A0 (today) | 35,278 | n/a (no patches) | ~0 | 15,232 | 5.1 / 12.6 max | 1.2 / 2.5 max | Baseline; no behaviour change |
+| A1 (server cost) | 35,278 (A2) | n/a (A2) | ~0 | 15,232 (A2) | ~1.7 (parts: slice rebuild 1.07, firing + targeting 0.35, walls 0.25) | routes: one BFS per source, ~0.17 ms incl. rebuild | Targeting 4× faster in a same-run A/B; slice rebuild is now the dominant turret-tick cost and the GC-spike source; A2 removes it |
+
+## A1: what changed and what the measurement corrected
+
+**Turret targeting.** The server now builds one [`NearestPointGrid`](../../src/core/spatial/NearestPointGrid.ts) (512 u cells) of turret-targetable drones per turret tick. It is rebuilt after any eviction, so a kill mid-tick can't leave a dead drone selectable. Each turret then queries only the cells its range covers.
+- **Same result as before.** It picks the same winner as the old linear scan, including exact ties and the inclusive range edge (20,000-query parity test).
+- **No allocation.** A heap-delta test confirms it.
+- **Op-count lock.** A 900 u query examines ≤ 5 % of the points.
+
+**Routes.** `Grid.route` now reads a cached shortest-hop tree, one BFS per source per topology change. Previously every route ran its own A* with a linear open-set scan. The rules are unchanged: paths only step through built nodes, and an unbuilt node can be a destination. `Grid.routeCost.test.ts` locks one search per source by counting adjacency reads: ≤ 1.1 × V, against 37,921 on the old code at 448 structures.
+
+**Correction to A0.** A0 attributed the 5 ms turret tick to the O(turrets × entities) target scan. Profiling the tick's parts showed otherwise.
+
+| Part of the turret tick (citadel, loaded host) | Median |
+|---|---|
+| Slice rebuild | 1.07 ms |
+| Firing + targeting | 0.35 ms |
+| Shield-wall upkeep | 0.25 ms |
+| Miners | ~0 |
+
+- The slice rebuild allocates a row object and a `connTo` array per structure every 100 ms. It is also the source of the 20–30 ms GC spikes.
+- In a same-run A/B (`benchmarks/structures-scale.bench.ts`), the old scan costs only ~0.09 ms for 44 turrets × 750 entities, and the grid is 4× faster.
+- So the A2 wire split, which removes the 10 Hz slice rebuild, matters more than targeting did.
+- A shield-wall index was planned for A1 but is not needed at these numbers.
+
+**Measurement note.** These A1 numbers were taken while another session ran a game server and a Playwright recording on the same machine (CPU ~64 %). The medians are noisy, so the locks are deterministic op counts and same-run A/B benches, not absolute times.
