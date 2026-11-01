@@ -9,6 +9,7 @@
 import type { RecipeId } from '../../shared-types/recipes.js';
 import type { ProdState } from '../../shared-types/production.js';
 import type { GoodId } from '../../shared-types/goods.js';
+import type { BlueprintItem } from '../../shared-types/items.js';
 import type { Hold } from '../../shared-types/goods.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import { Connection } from '../../core/structures/Connection.js';
@@ -126,6 +127,14 @@ export interface StructureRecord {
   prodState?: ProdState;
   /** The input a starved processor is waiting for. */
   prodMissing?: GoodId;
+  /** Blueprint loaded in the processor slot (Living World W2 item). Persisted
+   *  as the slot hold `bpslot:<uid>`. */
+  blueprint?: BlueprintItem;
+  /** Quality and yield bonus captured when the current cycle started. */
+  prodQuality?: number;
+  prodYield?: number;
+  /** Cycles completed (seeds the deterministic yield roll). */
+  prodCycles?: number;
   /** Phase 5 — wall-clock ms of this Turret's last shot (fire-rate cooldown). */
   lastTurretFireMs?: number;
 }

@@ -16,7 +16,8 @@
  * of weight rises by stage.
  */
 import type { GoodId } from './goods.js';
-import type { StructureKindId } from './structureKinds.js';
+import { getStructureKind, type StructureKindId } from './structureKinds.js';
+import { BASE_PRICES } from './economy.js';
 
 export const RECIPE_IDS = [
   'smelt_alloy',
@@ -32,6 +33,22 @@ export const RECIPE_IDS = [
   'assemble_consumer_goods',
   'opc_alloy',
   'opc_silicon',
+  // Packed structures (P2b): one per non-starter structure kind.
+  'pack_laser_bolt_turret',
+  'pack_missile_turret',
+  'pack_shield_airlock',
+  'pack_gas_collector',
+  'pack_reclaimer',
+  'pack_smelter',
+  'pack_refinery',
+  'pack_silicon_works',
+  'pack_hydroponics',
+  'pack_fabricator',
+  'pack_munitions_works',
+  'pack_freight_dock',
+  'pack_deep_core_rig',
+  'pack_ore_processing_complex',
+  'pack_assembly_plant',
 ] as const;
 export type RecipeId = (typeof RECIPE_IDS)[number];
 
@@ -75,6 +92,10 @@ export interface RecipeDef {
 
 function r(def: RecipeDef): RecipeDef {
   return def;
+}
+
+function packName(kind: StructureKindId): string {
+  return `Pack ${getStructureKind(kind).displayName}`;
 }
 
 export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
@@ -145,6 +166,83 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
     inputs: { crystal: 4, minerals: 6 }, outputs: [{ good: 'silicon', n: 4 }],
     cyclePulses: 16, processors: ['ore_processing_complex'], blueprintRequired: false,
   }),
+  // ── Packed structures (P2b; user ruling: NPC factions make them, players
+  // mostly buy them). The blueprint is the structure's own (`structure:<kind>`).
+  pack_laser_bolt_turret: r({
+    id: 'pack_laser_bolt_turret', displayName: packName('laser_bolt_turret'),
+    inputs: { alloy: 6, components: 2 }, outputs: [{ packed: 'laser_bolt_turret' }],
+    cyclePulses: 12, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_missile_turret: r({
+    id: 'pack_missile_turret', displayName: packName('missile_turret'),
+    inputs: { alloy: 8, components: 3, electronics: 2 }, outputs: [{ packed: 'missile_turret' }],
+    cyclePulses: 16, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_shield_airlock: r({
+    id: 'pack_shield_airlock', displayName: packName('shield_airlock'),
+    inputs: { alloy: 14, components: 4, electronics: 2 }, outputs: [{ packed: 'shield_airlock' }],
+    cyclePulses: 20, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_gas_collector: r({
+    id: 'pack_gas_collector', displayName: packName('gas_collector'),
+    inputs: { alloy: 8, components: 2 }, outputs: [{ packed: 'gas_collector' }],
+    cyclePulses: 12, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_reclaimer: r({
+    id: 'pack_reclaimer', displayName: packName('reclaimer'),
+    inputs: { alloy: 6, components: 1 }, outputs: [{ packed: 'reclaimer' }],
+    cyclePulses: 8, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_smelter: r({
+    id: 'pack_smelter', displayName: packName('smelter'),
+    inputs: { alloy: 8, components: 2 }, outputs: [{ packed: 'smelter' }],
+    cyclePulses: 10, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_refinery: r({
+    id: 'pack_refinery', displayName: packName('refinery'),
+    inputs: { alloy: 10, components: 2, polymer: 4 }, outputs: [{ packed: 'refinery' }],
+    cyclePulses: 12, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_silicon_works: r({
+    id: 'pack_silicon_works', displayName: packName('silicon_works'),
+    inputs: { alloy: 8, components: 3, electronics: 1 }, outputs: [{ packed: 'silicon_works' }],
+    cyclePulses: 14, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_hydroponics: r({
+    id: 'pack_hydroponics', displayName: packName('hydroponics'),
+    inputs: { alloy: 6, polymer: 6, components: 1 }, outputs: [{ packed: 'hydroponics' }],
+    cyclePulses: 10, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_fabricator: r({
+    id: 'pack_fabricator', displayName: packName('fabricator'),
+    inputs: { alloy: 12, components: 4, electronics: 2 }, outputs: [{ packed: 'fabricator' }],
+    cyclePulses: 18, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_munitions_works: r({
+    id: 'pack_munitions_works', displayName: packName('munitions_works'),
+    inputs: { alloy: 12, components: 3, electronics: 1 }, outputs: [{ packed: 'munitions_works' }],
+    cyclePulses: 16, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_freight_dock: r({
+    id: 'pack_freight_dock', displayName: packName('freight_dock'),
+    inputs: { alloy: 14, components: 3 }, outputs: [{ packed: 'freight_dock' }],
+    cyclePulses: 14, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_deep_core_rig: r({
+    id: 'pack_deep_core_rig', displayName: packName('deep_core_rig'),
+    inputs: { alloy: 40, components: 12, machinery: 4, core: 2 }, outputs: [{ packed: 'deep_core_rig' }],
+    cyclePulses: 60, processors: ['assembly_plant'], blueprintRequired: true,
+  }),
+  pack_ore_processing_complex: r({
+    id: 'pack_ore_processing_complex', displayName: packName('ore_processing_complex'),
+    inputs: { alloy: 40, components: 14, machinery: 5, electronics: 4, core: 2 }, outputs: [{ packed: 'ore_processing_complex' }],
+    cyclePulses: 60, processors: ['assembly_plant'], blueprintRequired: true,
+  }),
+  pack_assembly_plant: r({
+    id: 'pack_assembly_plant', displayName: packName('assembly_plant'),
+    inputs: { alloy: 50, components: 16, electronics: 8, machinery: 6, core: 3 }, outputs: [{ packed: 'assembly_plant' }],
+    cyclePulses: 80, processors: ['assembly_plant'], blueprintRequired: true,
+  }),
 });
 
 export function isRecipeId(s: string): s is RecipeId {
@@ -190,3 +288,35 @@ export const GOOD_SINKS: Readonly<Partial<Record<GoodId, readonly string[]>>> = 
   core: ['packed huge structures'],
   minerals: ['construction of starter structures'],
 });
+
+/** The pack recipe that makes a structure kind, or null for a starter kind
+ *  (those build from minerals and are never packed). */
+export function packRecipeFor(kind: StructureKindId): RecipeId | null {
+  const id = `pack_${kind}`;
+  return (RECIPE_IDS as readonly string[]).includes(id) ? (id as RecipeId) : null;
+}
+
+/** The structure a recipe packs, or null for a goods recipe. */
+export function packedKindOf(recipe: RecipeId): StructureKindId | null {
+  const o = RECIPES[recipe].outputs[0];
+  return o !== undefined && 'packed' in o ? o.packed : null;
+}
+
+/**
+ * The goods value of a packed structure's bill at `BASE_PRICES`: the basis for
+ * what traders charge for it (Living World W4 adds the markup). 0 for a
+ * starter kind.
+ */
+export function packBillValue(kind: StructureKindId): number {
+  const id = packRecipeFor(kind);
+  if (id === null) return 0;
+  let v = 0;
+  for (const [g, n] of Object.entries(RECIPES[id].inputs)) v += BASE_PRICES[g as GoodId] * (n ?? 0);
+  return v;
+}
+
+/** The blueprint product a recipe needs (Living World's namespaced ids). */
+export function blueprintProductFor(recipe: RecipeId): string {
+  const kind = packedKindOf(recipe);
+  return kind !== null ? `structure:${kind}` : `recipe:${recipe}`;
+}

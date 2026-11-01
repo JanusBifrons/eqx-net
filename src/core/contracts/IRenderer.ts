@@ -254,6 +254,9 @@ export interface StructureRenderState {
   recipe?: number;
   prodState?: number;
   prodMissing?: number;
+  /** The slot blueprint (P2b): runs (BP_RUNS_ORIGINAL = original) + quality. */
+  bpRuns?: number;
+  bpQuality?: number;
   /** Owning playerId. Drives the inspector's "is this mine?" check AND the
    *  same-owner filter on connection / placement-preview lines — a cross-owner
    *  structure is visible but never draws a connection line to the local grid. */

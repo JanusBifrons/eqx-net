@@ -56,9 +56,26 @@ Other rules:
 - **Storage is updated in place,** like mining and construction, and `StorageService.flushDirty()` persists it on the same pulse.
 - **The recipe choice and a cycle in progress survive a restart.**
 - **Changing recipe mid-cycle** hands the loaded inputs back, or refuses the change if they no longer fit.
-- **Blueprints:** recipes that need one run only with a blueprint loaded, through the `blueprintFor` hook (Living World's `applyBlueprint`). Until that hook is wired, they run at base values.
+- **Blueprints:** a recipe with `blueprintRequired` runs only with a matching blueprint in the processor's slot (`recipe:<id>`, or `structure:<kind>` for a pack recipe).
+  - **Load and unload:** the owner sends `load_blueprint`, which takes the best one from base storage (an original first, then the highest quality), or `unload_blueprint`. Each move is ONE hold group, and the slot persists as the `bpslot:<uid>` hold. Bound NPC blueprints can't be unloaded.
+  - **Effects:** Living World's `applyBlueprint` trims the inputs. A copy spends one run per cycle and leaves the slot when used up. Output quality gives a chance of one extra unit per goods output, rolled deterministically per processor and cycle. A packed structure carries the quality.
+  - **Destruction:** a destroyed processor spills its (unbound) blueprint.
 - **Cost:** 60 smelters with 20 storages take under 0.3 ms per pulse, locked by `ProductionSubsystem.test.ts`. Processors in one component share a single network lookup.
 - **Wire:** room-state bytes `recipe`, `prodState` and `prodMissing`, sent only when not 0 (#16). Late joiners read them from the join payload.
+
+## Packed structures
+
+User rulings (2026-11-01):
+- **Every non-starter structure is placed from a packed item.** Placing it costs only time.
+- **NPC factions make packed structures, and players mostly buy them.** Traders sell them (Living World W4, priced from `packBillValue` plus a markup).
+- **They can also be looted from ships:** raided haulers and convoys, and NPC loot.
+
+How it works:
+- **Pack recipes:** `pack_<kind>` recipes, one per non-starter kind, run on a Fabricator, or an Assembly Plant for the huge kinds. They need the structure's blueprint and pay its goods bill.
+- **Placement seam:** `StructurePlacementSubsystem`'s `packedGateForBuild` hook.
+  - **Who it checks:** only a player's `place_structure` of a non-starter kind (`requirePacked`).
+  - **Order:** it runs after the overlap rules. The packed item is consumed only after the structure is registered, so a failed spawn spends nothing.
+  - **Until it's on:** the hook is injected only when packed structures can be bought (W4). Until then, every kind still builds from minerals.
 
 ## Asteroids
 

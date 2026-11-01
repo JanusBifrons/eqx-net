@@ -71,6 +71,8 @@ export const STRUCTURE_DEFAULTS = {
   recipe: 0,
   prodState: 0,
   prodMissing: 0,
+  bpRuns: 0,
+  bpQuality: 0,
 } as const;
 
 /** The fields the client reads from a room-state structure row (absent ⇒
@@ -97,5 +99,7 @@ export interface StructureStateView {
   recipe?: number;
   prodState?: number;
   prodMissing?: number;
+  bpRuns?: number;
+  bpQuality?: number;
   connTo: { readonly length: number; at(i: number): number | undefined };
 }

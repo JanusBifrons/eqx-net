@@ -12,8 +12,10 @@ import { useUIStore } from '../state/store';
 import { selectionStats } from '../net/selectionStats';
 import { toSelectWire } from '../net/selectionClient';
 import { getGameClient } from '../net/clientSingleton';
-import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip, sendSetGateAccess, sendSetRecipe } from '../structures/structureActionsClient';
-import { decodeGood, effectiveRecipe, isProcessorKind, nextRecipe, prodStatusLine, type ProdState } from '@shared-types/production';
+import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip, sendSetGateAccess, sendSetRecipe, sendBlueprintSlot } from '../structures/structureActionsClient';
+import { BP_RUNS_ORIGINAL, decodeGood, effectiveRecipe, isProcessorKind, nextRecipe, prodStatusLine, type ProdState } from '@shared-types/production';
+import SchoolIcon from '@mui/icons-material/School';
+import EjectIcon from '@mui/icons-material/Eject';
 import { RECIPES, recipesFor, type RecipeId } from '@shared-types/recipes';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import { gateTypeOf } from '@core/structures/gateGeometry';
@@ -109,6 +111,10 @@ interface PanelData {
   prodStatus?: string;
   /** P2b — the processor can switch between more than one recipe. */
   canChangeRecipe?: boolean;
+  /** P2b — the recipe needs a blueprint. */
+  needsBlueprint?: boolean;
+  /** P2b — the loaded blueprint ("original" or "N runs", with its quality). */
+  blueprintLine?: string;
   /** Phase 4 WS-A2 — set for an OWNED in-sector lingering hull (the local
    *  player's own parked ship). Drives the in-world "Pilot" action; the value is
    *  the shipInstanceId to `pilot_ship`. Absent for another player's hull / a
@@ -247,6 +253,11 @@ export function EntityStatsPanel(): JSX.Element | null {
           {`MAKES ${RECIPES[data.recipe].displayName}${data.prodStatus ? ` · ${data.prodStatus}` : ''}`}
         </Box>
       )}
+      {data.recipe !== undefined && (data.needsBlueprint || data.blueprintLine !== undefined) && (
+        <Box sx={POWER_SX} data-testid="entity-stats-blueprint">
+          {data.blueprintLine ?? 'NO BLUEPRINT LOADED'}
+        </Box>
+      )}
       {data.owner !== undefined && (
         // Owner readout — identifies whose base this is ("you" vs a truncated id).
         <Box sx={POWER_SX} data-testid="entity-stats-owner">
@@ -284,6 +295,30 @@ export function EntityStatsPanel(): JSX.Element | null {
               <HubIcon sx={ICON_SX} />
             </IconButton>
           </Tooltip>
+          {data.recipe !== undefined && data.needsBlueprint && (
+            <Tooltip title={data.blueprintLine !== undefined ? 'Swap in the best blueprint from storage' : 'Load a blueprint from storage'}>
+              <IconButton
+                data-testid="structure-action-load-blueprint"
+                size="small"
+                sx={ACTION_BTN_SX}
+                onClick={() => sendBlueprintSlot(data.entityId!, 'load')}
+              >
+                <SchoolIcon sx={ICON_SX} />
+              </IconButton>
+            </Tooltip>
+          )}
+          {data.blueprintLine !== undefined && (
+            <Tooltip title="Put the blueprint back in storage">
+              <IconButton
+                data-testid="structure-action-unload-blueprint"
+                size="small"
+                sx={ACTION_BTN_SX}
+                onClick={() => sendBlueprintSlot(data.entityId!, 'unload')}
+              >
+                <EjectIcon sx={ICON_SX} />
+              </IconButton>
+            </Tooltip>
+          )}
           {data.recipe !== undefined && data.canChangeRecipe && (
             <Tooltip title="Change what this makes">
               <IconButton
@@ -397,7 +432,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
-  'recipe', 'prodStatus', 'canChangeRecipe',
+  'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine',
 ];
 
 /** The next gate access setting in the cycle (owner + allies → owner only →
@@ -492,6 +527,11 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         data.recipe = effectiveRecipe(subtype, st.recipe);
         data.prodStatus = prodStatusLine((st.prodState ?? 0) as ProdState, decodeGood(st.prodMissing));
         data.canChangeRecipe = recipesFor(subtype).length > 1;
+        data.needsBlueprint = RECIPES[data.recipe].blueprintRequired;
+        if (st.bpRuns !== undefined) {
+          const runs = st.bpRuns === BP_RUNS_ORIGINAL ? 'original' : `${st.bpRuns} run${st.bpRuns === 1 ? '' : 's'}`;
+          data.blueprintLine = `BLUEPRINT ${runs} · quality ${st.bpQuality ?? 0}`;
+        }
       }
       // WS-B4 — the level (≥ 1; absent on the slice ⇒ level 1) drives the LVL
       // line + the Upgrade affordance. Upgrade is OWN-only, BUILT-only,
