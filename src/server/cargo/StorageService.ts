@@ -180,6 +180,30 @@ export class StorageService {
     return out;
   }
 
+  /** Economy v2 W3 — the owner's operational storage in the same grid
+   *  component as ANY structure `rec` (a Research Lab is not storage itself). */
+  networkFor(rec: StructureRecord): StructureRecord[] {
+    const out: StructureRecord[] = [];
+    for (const id of this.d.componentOf(rec.id)) {
+      const r = this.d.registry.get(id);
+      if (r && r.owner === rec.owner && isOperationalStorage(r)) out.push(r);
+    }
+    return out;
+  }
+
+  /** Economy v2 W3 — persist the storage structures a caller changed directly,
+   *  in ONE atomic group with `extraOps` (a lab job record, a wallet fee). */
+  commitChanged(touched: readonly StructureRecord[], extraOps: readonly PersistOp[]): void {
+    const puts: HoldRecord[] = [];
+    for (const rec of touched) {
+      const r = this.recordFor(rec);
+      if (r === null) continue;
+      this.persistedSig.set(rec.uid!, sig(r.hold));
+      puts.push(r);
+    }
+    this.d.holdStore.commit(puts, [], this.persist(), extraOps);
+  }
+
   /**
    * Deposit a ship's whole carried hold into `target`'s storage network.
    * Minerals go to a Capital bank first (they fund construction); everything

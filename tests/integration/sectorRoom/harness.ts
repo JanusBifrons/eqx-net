@@ -59,10 +59,12 @@ import {
   setPlayerShipStore,
   setHoldStore,
   setWallet,
+  setLabBoard,
 } from '../../../src/server/db/PersistenceWorker.js';
 import { PlayerShipStore } from '../../../src/server/playerShips/PlayerShipStore.js';
 import { HoldStore } from '../../../src/server/cargo/HoldStore.js';
 import { Wallet } from '../../../src/server/economy/Wallet.js';
+import { LabBoard } from '../../../src/server/economy/LabBoard.js';
 import type {
   IPersistenceSink,
   PersistOp,
@@ -184,6 +186,7 @@ export async function bootSectorTestServer(opts: {
   setHoldStore(new HoldStore({ persistence: () => sink }));
   // Economy v2 W1 — fresh wallet per boot (process singleton).
   setWallet(new Wallet({ persistence: () => sink }));
+  setLabBoard(new LabBoard({ persistence: () => sink }));
   setPlayerShipStore(new PlayerShipStore({
     generateShipId: ((): () => string => {
       let n = 0;
@@ -415,6 +418,7 @@ export async function bootLivingWorldTestServer(opts: {
   setHoldStore(new HoldStore({ persistence: () => sink }));
   // Economy v2 W1 — fresh wallet per boot (process singleton).
   setWallet(new Wallet({ persistence: () => sink }));
+  setLabBoard(new LabBoard({ persistence: () => sink }));
   setPlayerShipStore(new PlayerShipStore({
     generateShipId: ((): () => string => {
       let n = 0;

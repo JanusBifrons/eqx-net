@@ -49,6 +49,8 @@ export const RECIPE_IDS = [
   'pack_deep_core_rig',
   'pack_ore_processing_complex',
   'pack_assembly_plant',
+  // Living World W3 kind (appended after assembly_plant).
+  'pack_research_lab',
 ] as const;
 export type RecipeId = (typeof RECIPE_IDS)[number];
 
@@ -237,6 +239,11 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
     id: 'pack_ore_processing_complex', displayName: packName('ore_processing_complex'),
     inputs: { alloy: 40, components: 14, machinery: 5, electronics: 4, core: 2 }, outputs: [{ packed: 'ore_processing_complex' }],
     cyclePulses: 60, processors: ['assembly_plant'], blueprintRequired: true,
+  }),
+  pack_research_lab: r({
+    id: 'pack_research_lab', displayName: packName('research_lab'),
+    inputs: { alloy: 10, components: 3, electronics: 4 }, outputs: [{ packed: 'research_lab' }],
+    cyclePulses: 20, processors: ['fabricator'], blueprintRequired: true,
   }),
   pack_assembly_plant: r({
     id: 'pack_assembly_plant', displayName: packName('assembly_plant'),
