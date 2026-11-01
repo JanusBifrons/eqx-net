@@ -976,6 +976,8 @@ export class SectorRoom extends Room<SectorState> {
     tickStructureTurrets: () => void;
     /** A0 scale measurement — rebuild the structures snapshot slice directly. */
     rebuildStructuresSlice: () => void;
+    /** The authoritative SAB pose of a swarm entity (null ⇒ unknown id). */
+    swarmPose: (id: string) => { x: number; y: number; angle: number } | null;
     /** Unified-hull plan, Phase 4 — assert a structure resolves its OWN
      *  shield/hull (generic optional shield) from the STRUCTURE catalogue, not
      *  the fighter fallback. Returns the layered-damage result (reported
@@ -1019,6 +1021,12 @@ export class SectorRoom extends Room<SectorState> {
       },
       tickStructureTurrets: () => this.structureTurretTick(),
       rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
+      swarmPose: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        if (!rec) return null;
+        const b = slotBase(rec.slot);
+        return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, angle: this.sabF32[b + SLOT_ANGLE_OFF]! };
+      },
       damageSwarmLayered: (rec, damage) => this.damageSwarmLayered(rec, damage),
     };
   }

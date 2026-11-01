@@ -297,7 +297,10 @@ export class SwarmSpawner {
     // first update() tick reads it (mirrors the x/y/vx/vy priming above). The
     // worker SET_HULL/setShipState in the SPAWN_OBSTACLE handler applies the
     // same angle to the Rapier body. Other kinds keep the angle-0 default.
-    if (kind === SWARM_KIND_SCRAP && angle !== 0) {
+    // STRUCTURES (kind 2) carry their quarter-turn rotation (phase V) the same
+    // way, so the body, the SAB pose (and so the client collider + sprite) and
+    // the cached hit box all agree.
+    if ((kind === SWARM_KIND_SCRAP || kind === 2) && angle !== 0) {
       this.hooks.sabF32[base + SLOT_ANGLE_OFF] = angle;
     }
     // Set IS_SWARM and KIND_DRONE flag bits on the SAB slot. These bits are
@@ -364,7 +367,8 @@ export class SwarmSpawner {
     const collisionGroups = kind === SWARM_KIND_SCRAP ? SCRAP_COLLISION_GROUPS : undefined;
     // SCRAP (kind 3) carries its spawn angle so the worker rotates the body to
     // match the dying ship. Other kinds pass 0 (legacy axis-aligned spawn).
-    const spawnAngle = kind === SWARM_KIND_SCRAP ? angle : 0;
+    // Structures (kind 2) carry their quarter-turn rotation too (phase V).
+    const spawnAngle = kind === SWARM_KIND_SCRAP || kind === 2 ? angle : 0;
     this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, mass, vertices, linearDamping, staticBody, collisionGroups, spawnAngle);
 
     // Phase 5d: insert into the interest grid so this entity participates in
