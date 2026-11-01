@@ -59,6 +59,7 @@ import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
 import { ShieldHullBar } from './components/ShieldHullBar';
 import { CargoChip } from './components/CargoChip';
+import { WalletChip } from './components/WalletChip';
 import { TradeToasts } from './components/TradeToasts';
 import { WhileAwayDialog } from './components/WhileAwayDialog';
 import { WarpInWarningBanner } from './components/WarpInWarningBanner';
@@ -840,6 +841,7 @@ function GameSurface({
       <Slot anchor="top-left" order={2}><ShieldHullBar /></Slot>
       {/* Living World P1a — carried cargo + pickup popups. */}
       <Slot anchor="top-left" order={3}><CargoChip /></Slot>
+      <Slot anchor="top-left" order={4}><WalletChip /></Slot>
       <Slot anchor="top-left" order={10}><Hud /></Slot>
       <Slot anchor="top-center" order={1}><EnergyBar /></Slot>
       <Slot anchor="top-center" order={2}><WarpInWarningBanner /></Slot>

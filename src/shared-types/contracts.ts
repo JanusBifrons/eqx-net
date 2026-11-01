@@ -58,11 +58,10 @@ export function pvpBountyCost(amount: number): number {
 }
 
 /** Client → server: put `amount` credits on `targetPlayerId`, paid from the
- *  placer's storage network at `networkEntityId` (in this sector). */
+ *  placer's WALLET (economy v2 — credits are virtual). */
 export const PlaceBountySchema = z
   .object({
     targetPlayerId: z.string().min(1).max(64),
-    networkEntityId: z.number().int().nonnegative(),
     amount: z.number().int().min(PVP_BOUNTY_MIN).max(PVP_BOUNTY_MAX),
   })
   .strict();

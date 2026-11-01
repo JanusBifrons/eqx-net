@@ -36,6 +36,10 @@ export interface TradeRun {
   phaseStartedAtMs: number;
   /** Players who damaged the hauler during this run (piracy / self-raid). */
   attackers: string[];
+  /** Economy v2 W1 — credits debited from the owner's WALLET at dock (a buy's
+   *  price / a gift's credits), held virtually until settlement; refunded to
+   *  the wallet if the visit unwinds. Absent ⇒ 0 (pre-W1 runs). */
+  paid?: number;
   dockX: number;
   dockY: number;
 }

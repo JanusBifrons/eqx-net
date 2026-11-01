@@ -37,20 +37,19 @@ export function eliteName(rng: () => number): string {
 
 /**
  * An elite's drop: its kind's table rolled three times, plus a guaranteed
- * 1–3 Robot Cores and 200–500 credits — the reason to hunt it.
+ * 1–3 Robot Cores (and, P5, a chance of a blueprint). The credits are the
+ * elite's wallet BOUNTY (`ELITE_BOUNTY_CREDITS`, paid to the killer).
  */
 export function rollEliteLoot(kindId: string | null | undefined, rng: () => number): Hold {
-  const out: Hold = { goods: {}, credits: 0, blueprints: [] };
+  const out: Hold = { goods: {}, blueprints: [] };
   for (let i = 0; i < 3; i++) {
     const h = rollLoot(kindId, rng);
-    out.credits += h.credits;
     for (const [g, n] of Object.entries(h.goods)) {
       const k = g as keyof Hold['goods'];
       out.goods[k] = (out.goods[k] ?? 0) + (n ?? 0);
     }
   }
   out.goods.core = (out.goods.core ?? 0) + 1 + Math.floor(rng() * 3);
-  out.credits += 200 + Math.floor(rng() * 301);
   // P5 — elites are the main blueprint source.
   const bp = rollBlueprint(rng, ELITE_BLUEPRINT_CHANCE);
   if (bp !== null) out.blueprints.push(bp);

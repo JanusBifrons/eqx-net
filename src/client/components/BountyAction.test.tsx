@@ -2,42 +2,36 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
 const send = vi.fn();
-let mirror: unknown = null;
 vi.mock('../net/clientSingleton', () => ({
-  getGameClient: () => (mirror === null ? null : { mirror, getRoom: () => ({ send }) }),
+  getGameClient: () => ({ getRoom: () => ({ send }) }),
 }));
 
 import { BountyAction } from './BountyAction';
 import { useUIStore } from '../state/store';
 
-describe('BountyAction (P4c-2)', () => {
+describe('BountyAction (P4c-2, economy v2 — paid from the wallet)', () => {
   afterEach(() => {
     send.mockReset();
-    mirror = null;
-    useUIStore.setState({ tradeToasts: [] });
+    useUIStore.setState({ tradeToasts: [], wallet: null });
   });
 
-  it('opens the price chips and sends place_bounty from the pilot\'s own storage', () => {
-    mirror = {
-      localPlayerId: 'me',
-      structures: new Map([[7, { owner: 'me', built: true }]]),
-      swarm: new Map([[7, { shipKind: 'capital' }]]),
-    };
+  it('opens the price chips and sends place_bounty (no storage needed)', () => {
+    useUIStore.getState().setWallet(1000);
     render(<BountyAction targetPlayerId="them" />);
     expect(screen.queryAllByTestId('bounty-preset')).toHaveLength(0);
     fireEvent.click(screen.getByTestId('ship-action-bounty'));
     const chips = screen.getAllByTestId('bounty-preset');
     expect(chips.map((c) => c.textContent)).toEqual(['100¢', '500¢', '1000¢']);
-    fireEvent.click(chips[1]!);
-    expect(send).toHaveBeenCalledWith('place_bounty', { type: 'place_bounty', targetPlayerId: 'them', networkEntityId: 7, amount: 500 });
+    fireEvent.click(chips[1]!); // 500 + 25 % fee = 625 ≤ 1000
+    expect(send).toHaveBeenCalledWith('place_bounty', { type: 'place_bounty', targetPlayerId: 'them', amount: 500 });
   });
 
-  it('with no own storage here it explains instead of sending', () => {
-    mirror = { localPlayerId: 'me', structures: new Map(), swarm: new Map() };
+  it('with too few credits it explains instead of sending', () => {
+    useUIStore.getState().setWallet(100); // a 100¢ bounty costs 125¢
     render(<BountyAction targetPlayerId="them" />);
     fireEvent.click(screen.getByTestId('ship-action-bounty'));
     fireEvent.click(screen.getAllByTestId('bounty-preset')[0]!);
     expect(send).not.toHaveBeenCalled();
-    expect(useUIStore.getState().tradeToasts.at(-1)?.text).toMatch(/storage/);
+    expect(useUIStore.getState().tradeToasts.at(-1)?.text).toMatch(/125¢/);
   });
 });

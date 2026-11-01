@@ -217,7 +217,7 @@ export class LootSubsystem {
     const podRec = this.d.holdStore.get(podId);
     if (podRec === undefined) return;
     const shipRec = this.d.holdStore.get(c.shipInstanceId);
-    const shipHold = shipRec ? cloneHold(shipRec.hold) : { goods: {}, credits: 0, blueprints: [] };
+    const shipHold = shipRec ? cloneHold(shipRec.hold) : { goods: {}, blueprints: [] };
     const podHold = cloneHold(podRec.hold);
     // A DERELICT is salvaged over time — a bounded weight per step, so two ships
     // alongside it genuinely contest the haul. A normal pod is taken at once.
@@ -241,7 +241,7 @@ export class LootSubsystem {
       // Throttle salvage popups: accumulate, notify on empty or every N steps.
       const key = `${c.playerId}|${podId}`;
       let acc = this.salvageAcc.get(key);
-      if (acc === undefined) { acc = { hold: { goods: {}, credits: 0, blueprints: [] }, steps: 0 }; this.salvageAcc.set(key, acc); }
+      if (acc === undefined) { acc = { hold: { goods: {}, blueprints: [] }, steps: 0 }; this.salvageAcc.set(key, acc); }
       transferInto(acc.hold, moved, Infinity);
       acc.steps++;
       if (srcEmptied || acc.steps >= DERELICT_NOTIFY_STEPS) {

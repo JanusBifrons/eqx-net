@@ -24,7 +24,8 @@ named targets worth chasing. It ships in parts:
 - On the galaxy map, the sector tooltip and the sector drawer name the elite
   that's roaming there ("★ Dread Vexis sighted").
 - Killing one drops a **guaranteed rare haul**: its kind's loot table rolled
-  three times, plus 1–3 Robot Cores and 200–500 credits. It also gives far more
+  three times, plus 1–3 Robot Cores. The killer's wallet gets the elite's
+  bounty (economy v2: credits are never in pods). It also gives far more
   XP, because XP scales with the victim's (boosted) max hull.
 - An elite keeps its kind's side. A drone elite is neutral until you shoot it;
   a robot elite attacks on sight.
@@ -61,7 +62,7 @@ named targets worth chasing. It ships in parts:
 | Hull | 4× the kind's |
 | Respawn | 8 min, different sector |
 | Spawn / roam radius | 2600 u / 3200 u from the sector centre |
-| Loot | kind table ×3 + 1–3 cores + 200–500 credits |
+| Loot | kind table ×3 + 1–3 cores (the credits are the wallet bounty) |
 
 ### Tests
 
@@ -124,9 +125,9 @@ leave quietly and drop nothing.
   time left). Each row shows the sector by name and the reward ("300¢ bounty"
   or "Loot"). Tapping a row opens the galaxy map so you can warp there.
 - **World bounties.** Killing a named elite pays **300¢** and the Drone
-  Mothership pays **500¢**, straight into the killer's own ship hold. The
-  credits are carried, so they're lost if you die before banking them. The
-  sector sees "\<pilot\> claimed the 300¢ bounty on Dread Vexis!".
+  Mothership pays **500¢**, straight into the killer's **wallet** (economy v2:
+  credits are virtual and can't be lost). Every pilot is paid, guests
+  included. The sector sees "\<pilot\> claimed the 300¢ bounty on Dread Vexis!".
 - **Bounties need an account.** A guest who lands the kill still gets the
   loot, but no bounty.
 
@@ -158,16 +159,15 @@ leave quietly and drop nothing.
 - Select another pilot's ship. The inspector shows a red **crosshair** button;
   tap it for three prices: **100¢ / 500¢ / 1000¢**.
 - A bounty costs its price **plus a 25% fee that is burned** (100¢ costs
-  125¢). It's paid from your own storage in the current sector (your Capital
-  first). No storage here means a toast explains why nothing happened.
+  125¢). It's paid from your **wallet**, from anywhere (economy v2). A toast
+  explains if you can't afford it.
 - The whole galaxy hears "A 500¢ bounty has been placed on Vex!", and the
   Contracts tab lists **☠ Wanted: Vex** with the total on their head and where
   they were last seen.
 - Whoever destroys the target's active ship collects **every open bounty on
-  them except their own**, straight into the killer's ship hold (carried
-  credits, lost if they die before banking).
+  them except their own**, straight into the killer's **wallet**.
 - **Rules:**
-  - both pilots need an account;
+  - guests are full players (no sign-in gate);
   - the target must own a ship of **level 3 or higher**;
   - you can't target yourself;
   - one open bounty per pilot on the same target;
@@ -177,18 +177,14 @@ leave quietly and drop nothing.
 ### How it works
 
 - `BountyBoard` (`src/server/economy/BountyBoard.ts`) is a process singleton,
-  wired at boot with the roster and auth lookups (account, max ship level,
-  display name, last sector).
-- **The escrow hold is the bounty.** It's a `bounty` holder (new
-  `HolderType`) keyed `bounty:<target>:<placer>`. Value lives in exactly one
-  hold, and the bounty survives a restart because holds are persisted and
-  hydrated.
-- **Placing** checks the network balance first, so a short balance moves
-  nothing. It is then ONE `tradeTransfer` group that takes bounty + fee from
-  the placer's network into the escrow; `take.burnCredits` drops the fee.
-- **Claiming** happens in the room's PvP branch of `SHIP_DESTROYED`. ONE hold
-  group deletes the escrows and credits the killer's ship
-  (`SectorRoom.creditKillerHold`, which world bounties also use).
+  wired at boot with the wallet and roster lookups (max ship level, display
+  name, last sector).
+- **Economy v2 W1: the bounty is a RECORD, paid through the wallet.**
+  - Open bounties are one persisted `economy_state` record (`bounties`).
+  - **Placing** debits bounty + fee from the placer's wallet. The fee is
+    burned, and the debit and the record are ONE atomic group.
+  - **Claiming** happens in the room's PvP branch of `SHIP_DESTROYED`. ONE
+    group updates the record and credits the killer's wallet.
 - The pair cooldown is in memory (best effort across restarts).
 - **Messages:** `place_bounty` (strict zod `PlaceBountySchema`) →
   `bounty_result` (a toast; the Contracts board is the truth, #16).

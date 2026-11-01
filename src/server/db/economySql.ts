@@ -16,6 +16,10 @@ export const ECON_STATE_PUT_SQL =
   'INSERT INTO economy_state (key, payload_json, updated_at) VALUES (?, ?, ?) ' +
   'ON CONFLICT(key) DO UPDATE SET payload_json=excluded.payload_json, updated_at=excluded.updated_at';
 
+export const WALLET_PUT_SQL =
+  'INSERT INTO player_wallets (player_id, balance, updated_at) VALUES (?, ?, ?) ' +
+  'ON CONFLICT(player_id) DO UPDATE SET balance=excluded.balance, updated_at=excluded.updated_at';
+
 type Stmt = ReturnType<DatabaseSync['prepare']>;
 
 export interface EconomyStatements {
@@ -23,6 +27,7 @@ export interface EconomyStatements {
   TRADE_DEAL_PUT: Stmt;
   TRADE_DEAL_DELETE: Stmt;
   ECON_STATE_PUT: Stmt;
+  WALLET_PUT: Stmt;
 }
 
 export function prepareEconomyStatements(db: DatabaseSync): EconomyStatements {
@@ -31,6 +36,7 @@ export function prepareEconomyStatements(db: DatabaseSync): EconomyStatements {
     TRADE_DEAL_PUT: db.prepare(TRADE_DEAL_PUT_SQL),
     TRADE_DEAL_DELETE: db.prepare(TRADE_DEAL_DELETE_SQL),
     ECON_STATE_PUT: db.prepare(ECON_STATE_PUT_SQL),
+    WALLET_PUT: db.prepare(WALLET_PUT_SQL),
   };
 }
 
@@ -48,6 +54,9 @@ export function applyEconomyOp(s: EconomyStatements, op: PersistOp): boolean {
       return true;
     case 'ECON_STATE_PUT':
       s.ECON_STATE_PUT.run(op.key, op.payloadJson, op.ts);
+      return true;
+    case 'WALLET_PUT':
+      s.WALLET_PUT.run(op.playerId, op.balance, op.ts);
       return true;
     default:
       return false;

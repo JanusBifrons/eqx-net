@@ -36,7 +36,6 @@ export type TradeToastTone = 'good' | 'info' | 'danger' | 'world';
 /** Living World P1a — the local ship's carried hold, as the HUD sees it. */
 export interface CargoView {
   goods: Partial<Record<string, number>>;
-  credits: number;
   blueprints: number;
 }
 
@@ -264,6 +263,9 @@ export interface UIStore {
   cargo: CargoView | null;
   /** Cargo capacity (weight units) of the local ship's kind. */
   cargoCapacity: number;
+  /** Economy v2 W1 — the player's WALLET balance (credits are virtual), from
+   *  the own-ship snapshot `wallet` field; null until the first snapshot. */
+  wallet: number | null;
   /** Living World P5 — blueprints fitted to the local ACTIVE ship (from the
    *  own-ship snapshot slice; discrete, written only on change). */
   fittedBlueprints: readonly string[];
@@ -461,6 +463,7 @@ export interface UIStore {
   ) => void;
   setEnergyMax: (max: number) => void;
   setCargo: (cargo: CargoView | null, capacity: number) => void;
+  setWallet: (credits: number | null) => void;
   setFittedBlueprints: (ids: readonly string[]) => void;
   pushLootFeed: (text: string) => number;
   expireLootFeed: (id: number) => void;

@@ -17,7 +17,7 @@ import { matchMaker } from 'colyseus';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
-import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
+import { getHoldStore, getWallet } from '../../../src/server/db/PersistenceWorker.js';
 
 function room(id: string): SectorRoom {
   return matchMaker.getLocalRoomById(id) as unknown as SectorRoom;
@@ -46,14 +46,14 @@ describe('SectorRoom integration — base storage (P1a-2)', () => {
     const pid = randomUUID();
     const cr = await harness.connectActive(pid, {
       spawnX: 0, spawnY: 0,
-      initialCargo: { goods: { salvage: 9, minerals: 40 }, credits: 77, blueprints: [] },
+      initialCargo: { goods: { salvage: 9, minerals: 40 }, blueprints: [] },
     });
     const r = room(cr.roomId);
     const internal = r._internals;
     const state = r.state as SectorState;
     let shipId = '';
     for (const [, s] of state.ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
-    expect(getHoldStore().get(shipId)?.hold.credits).toBe(77);
+    expect(getHoldStore().get(shipId)?.hold.goods.salvage).toBe(9);
 
     // A Capital 150 u away — pre-built, owned by the player.
     cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 150, y: 0 });
@@ -69,9 +69,8 @@ describe('SectorRoom integration — base storage (P1a-2)', () => {
     expect(banked, 'holding position by your own Capital must deposit the hold').toBe(true);
     expect(cap.minerals).toBe(bankBefore + 40);
     expect(cap.hold?.goods.salvage).toBe(9);
-    expect(cap.hold?.credits).toBe(77);
     // The Capital's payload is persisted under its stable uid.
-    expect(getHoldStore().get(cap.uid!)?.hold.credits).toBe(77);
+    expect(getHoldStore().get(cap.uid!)?.hold.goods.salvage).toBe(9);
 
     // 2) Refine 5 salvage → +50 minerals.
     const entityId = internal.swarmRegistry.get(cap.id)!.entityId;
@@ -89,16 +88,16 @@ describe('SectorRoom integration — base storage (P1a-2)', () => {
     expect(internal.structureRegistry.get(cap.id)).toBeUndefined();
     expect(getHoldStore().get(uid)).toBeUndefined();
     expect(internal.loot.podCount()).toBe(podsBefore + 1);
-    let spilledCredits = 0;
-    for (const id of internal.loot.podIds()) spilledCredits += getHoldStore().get(id)?.hold.credits ?? 0;
-    expect(spilledCredits).toBe(77);
+    let spilledSalvage = 0;
+    for (const id of internal.loot.podIds()) spilledSalvage += getHoldStore().get(id)?.hold.goods.salvage ?? 0;
+    expect(spilledSalvage).toBe(4);
   });
 
-  it('credit sinks: instant repair at your storage spends banked credits; short balance is refused', { timeout: 40_000 }, async () => {
+  it('credit sinks: instant repair at your storage is paid from the WALLET; short balance is refused', { timeout: 40_000 }, async () => {
     const pid = randomUUID();
     const cr = await harness.connectActive(pid, {
       spawnX: 0, spawnY: 0, initialHull: 50,
-      initialCargo: { goods: {}, credits: 1000, blueprints: [] },
+      initialWallet: 1000,
     });
     const r = room(cr.roomId);
     const internal = r._internals;
@@ -112,16 +111,22 @@ describe('SectorRoom integration — base storage (P1a-2)', () => {
     await new Promise((res) => setTimeout(res, 300));
     expect(ship.health).toBe(50);
 
-    // Bank the credits at a Capital, then repair there.
+    expect(getWallet().balance(pid)).toBe(1000);
+
+    // Next to your own Capital the repair is paid straight from the wallet.
     cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 150, y: 0 });
     expect(await until(() => [...internal.structureRegistry.all()].some((s) => s.owner === pid), 5_000)).toBe(true);
-    const cap = [...internal.structureRegistry.all()].find((s) => s.owner === pid)!;
-    harness.sendThrust(cr);
-    expect(await until(() => (cap.hold?.credits ?? 0) === 1000, 10_000)).toBe(true);
 
     const missing = ship.maxHealth - ship.health;
     cr.send('repair_ship', { type: 'repair_ship' });
     expect(await until(() => ship.health === ship.maxHealth, 5_000), 'repair at your storage restores full hull').toBe(true);
-    expect(cap.hold!.credits).toBe(1000 - Math.ceil(missing * 0.5));
+    expect(getWallet().balance(pid)).toBe(1000 - Math.ceil(missing * 0.5));
+
+    // A short wallet is refused: break the hull again with an empty wallet.
+    getWallet().debit(pid, getWallet().balance(pid), 'test_drain');
+    ship.health = 50;
+    cr.send('repair_ship', { type: 'repair_ship' });
+    await new Promise((res) => setTimeout(res, 300));
+    expect(ship.health).toBe(50);
   });
 });

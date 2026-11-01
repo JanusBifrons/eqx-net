@@ -15,8 +15,8 @@ function capture() {
   return { ops, sink };
 }
 
-function h(goods: Hold['goods'], credits = 0): Hold {
-  return { goods: { ...goods }, credits, blueprints: [] };
+function h(goods: Hold['goods']): Hold {
+  return { goods: { ...goods }, blueprints: [] };
 }
 
 function setup(opts: { sectorKey?: string | null; collectors?: LootCollector[] } = {}) {
@@ -46,11 +46,10 @@ const SHIP: LootCollector = { playerId: 'p1', shipInstanceId: 'ship-1', x: 0, y:
 describe('LootSubsystem (P1a-1)', () => {
   it('fly-over pickup moves the pod into the ship hold and deletes the pod in ONE atomic group', () => {
     const t = setup({ collectors: [{ ...SHIP }] });
-    const pod = t.loot.drop(h({ salvage: 10 }, 25), 30, 0)!;
+    const pod = t.loot.drop(h({ salvage: 10 }), 30, 0)!;
     t.ops.length = 0;
     t.loot.collectTick();
     expect(t.store.get('ship-1')!.hold.goods.salvage).toBe(10);
-    expect(t.store.get('ship-1')!.hold.credits).toBe(25);
     expect(t.store.get(pod)).toBeUndefined();
     expect(t.despawned).toEqual([pod]);
     // Exactly one persisted op, and it is an atomic GROUP (ship put + pod delete).
@@ -100,12 +99,11 @@ describe('LootSubsystem (P1a-1)', () => {
 
   it('spilling a ship hold creates a pod and deletes the ship hold atomically', () => {
     const t = setup();
-    t.store.put({ holderUid: 'ship-9', holderType: 'ship', ownerId: 'p9', sectorKey: null, x: null, y: null, hold: h({ alloy: 2 }, 40), expiresAt: null });
+    t.store.put({ holderUid: 'ship-9', holderType: 'ship', ownerId: 'p9', sectorKey: null, x: null, y: null, hold: h({ alloy: 2 }), expiresAt: null });
     t.ops.length = 0;
     const pod = t.loot.spillShipHold('ship-9', 100, 100, 0, 0, 'death')!;
     expect(t.store.get('ship-9')).toBeUndefined();
     expect(t.store.get(pod)!.hold.goods.alloy).toBe(2);
-    expect(t.store.get(pod)!.hold.credits).toBe(40);
     expect(t.ops).toHaveLength(1);
     expect(t.ops[0]!.type).toBe('GROUP');
   });

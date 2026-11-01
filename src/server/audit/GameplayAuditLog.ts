@@ -106,15 +106,15 @@ export type AuditEvent =
   | (AuditEventBase & { event: 'ship_abandoned'; playerId?: string; shipInstanceId: string })
   // Living World P1a (plan peppy-jumping-pinwheel) — loot lifecycle. Discrete
   // boundaries only (a drop, a pickup, a pod lost), never per-tick.
-  | (AuditEventBase & { event: 'loot_dropped'; podId: string; cause: string; credits: number })
-  | (AuditEventBase & { event: 'loot_collected'; podId: string; playerId: string; shipInstanceId: string; credits: number })
-  | (AuditEventBase & { event: 'loot_destroyed'; podId: string; cause: string; credits: number })
+  | (AuditEventBase & { event: 'loot_dropped'; podId: string; cause: string; weight: number })
+  | (AuditEventBase & { event: 'loot_collected'; podId: string; playerId: string; shipInstanceId: string; weight: number })
+  | (AuditEventBase & { event: 'loot_destroyed'; podId: string; cause: string; weight: number })
   | (AuditEventBase & { event: 'cargo_lost'; playerId?: string; shipInstanceId: string; cause: string })
-  | (AuditEventBase & { event: 'cargo_deposited'; playerId: string; shipInstanceId: string; structureKind: string; credits: number })
+  | (AuditEventBase & { event: 'cargo_deposited'; playerId: string; shipInstanceId: string; structureKind: string; weight: number })
   | (AuditEventBase & { event: 'salvage_refined'; owner: string; salvage: number })
   | (AuditEventBase & { event: 'credits_spent'; playerId: string; amount: number; reason: string })
   // P3c — a robot harvester stole from a player's storage network.
-  | (AuditEventBase & { event: 'storage_raided'; playerId: string; raider: string; weight: number; credits: number })
+  | (AuditEventBase & { event: 'storage_raided'; playerId: string; raider: string; weight: number })
   // P4a — named elites appear and fall.
   | (AuditEventBase & { event: 'elite_spawned'; name: string; kind: string })
   | (AuditEventBase & { event: 'elite_killed'; name: string; kind: string; attackerId?: string })
@@ -126,7 +126,9 @@ export type AuditEvent =
   // P4c-2 — a player bounty placed (the fee is burned on top).
   | (AuditEventBase & { event: 'bounty_placed'; playerId: string; target: string; credits: number })
   // P5 — a blueprint moved from storage onto a ship.
-  | (AuditEventBase & { event: 'blueprint_installed'; playerId: string; shipInstanceId: string; blueprint: string });
+  | (AuditEventBase & { event: 'blueprint_installed'; playerId: string; shipInstanceId: string; blueprint: string })
+  // Economy v2 W1 — every wallet change (credits are virtual; never in a hold).
+  | (AuditEventBase & { event: 'wallet_tx'; playerId: string; delta: number; balance: number; reason: string });
 
 /** Distributive `Omit` so the union is preserved across the stamped fields. */
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;

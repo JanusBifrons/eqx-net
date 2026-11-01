@@ -18,11 +18,11 @@ describe('elites (P4a)', () => {
     expect(a.split(' ')).toHaveLength(2);
   });
 
-  it('always drops at least one Robot Core and 200 credits', () => {
+  it('always drops at least one Robot Core, and never credits (those are its wallet bounty)', () => {
     for (let seed = 1; seed <= 200; seed++) {
       const h = rollEliteLoot('gunship', seeded(seed));
       expect(h.goods.core ?? 0).toBeGreaterThanOrEqual(1);
-      expect(h.credits).toBeGreaterThanOrEqual(200);
+      expect('credits' in h).toBe(false);
     }
   });
 

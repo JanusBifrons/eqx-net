@@ -9,6 +9,7 @@ import { EconomyStore } from './EconomyStore.js';
 import { TradeDirector, type TradeRoom } from './TradeDirector.js';
 import { REP_DEAL_COMPLETED, REP_PIRACY_HIT, REP_SELF_RAID, type TradeNotice } from '../../shared-types/economy.js';
 import { buyCost, sellProceeds } from '../../core/economy/deals.js';
+import { Wallet } from './Wallet.js';
 
 const OWNER = 'p1';
 const NET_UID = 'st-1';
@@ -43,7 +44,7 @@ class FakeRoom implements TradeRoom {
   setBotMoveTarget(): void {}
   tradeSnapshot(owner: string, uid: string): TradeNetworkSnapshot | null {
     if (!this.netExists || owner !== OWNER || uid !== NET_UID) return null;
-    return { goods: { ...this.net.goods }, credits: this.net.credits, freeCapacity: 10_000, x: 0, y: 0 };
+    return { goods: { ...this.net.goods }, freeCapacity: 10_000, x: 0, y: 0 };
   }
   tradeTransfer(owner: string, uid: string, spec: TradeTransferSpec): TradeTransferResult | null {
     if (this.tradeSnapshot(owner, uid) === null) return null;
@@ -52,9 +53,6 @@ class FakeRoom implements TradeRoom {
     const deletes: string[] = [];
     if (spec.take) {
       const w = spec.take.want;
-      const c = Math.min(w.credits, this.net.credits);
-      this.net.credits -= c;
-      taken.credits = c;
       for (const [g, n] of Object.entries(w.goods) as Array<[keyof Hold['goods'], number]>) {
         const have = this.net.goods[g] ?? 0;
         const t = Math.min(have, n);
@@ -71,7 +69,6 @@ class FakeRoom implements TradeRoom {
       if (h) transferInto(this.net, cloneHold(h), Infinity);
       deletes.push(r);
     }
-    this.net.credits += spec.mintCredits ?? 0;
     for (const d of spec.destroy ?? []) deletes.push(d);
     this.holds.commit(puts, deletes, true, spec.extraOps ?? []);
     return { taken, overflow: emptyHold(), x: 0, y: 0 };
@@ -94,8 +91,10 @@ function setup() {
   const holds = new HoldStore({ persistence: () => s, now: () => now });
   const store = new EconomyStore({ persistence: () => s, now: () => now });
   const room = new FakeRoom(holds);
+  // Economy v2 W1 — credits move through the virtual wallet.
+  const wallet = new Wallet({ persistence: () => s, now: () => now });
   const dir = new TradeDirector(new Map([['s', room]]), store, holds, {
-    rng: () => 0.5, nowMs: () => now, controlIntervalMs: 1_000_000, dockMs: 1000, departMs: 1000,
+    rng: () => 0.5, nowMs: () => now, controlIntervalMs: 1_000_000, dockMs: 1000, departMs: 1000, wallet,
   });
   dir.start();
   const advance = (ms: number): void => { now += ms; dir.tick(); };
@@ -106,7 +105,8 @@ function setup() {
     room.poses.set(run.haulerId, { x: run.dockX, y: run.dockY, angle: 0 });
     return run.haulerId;
   };
-  return { dir, store, holds, room, advance, arrive, sink: s, stop: () => dir.stop() };
+  const credits = (): number => wallet.balance(OWNER);
+  return { dir, store, holds, room, wallet, credits, advance, arrive, sink: s, stop: () => dir.stop() };
 }
 
 function acceptFirst(t: ReturnType<typeof setup>, kind: 'sell' | 'buy', good: 'salvage' | 'alloy', qty: number, recurrenceMin: 10 | null = null) {
@@ -130,10 +130,10 @@ describe('TradeDirector', () => {
     t.advance(1); // dock → escrow
     expect(t.room.net.goods.salvage).toBe(30);
     expect(t.holds.get(hauler)!.hold.goods.salvage).toBe(20);
-    expect(t.room.net.credits).toBe(0); // nothing paid while docked
+    expect(t.credits()).toBe(0); // nothing paid while docked
     t.advance(1000); // → departing
     t.advance(1000); // → settled
-    expect(t.room.net.credits).toBe(sellProceeds(20, offer.unitPrice));
+    expect(t.credits()).toBe(sellProceeds(20, offer.unitPrice));
     expect(t.holds.get(hauler)).toBeUndefined();
     expect([...t.store.allDeals()][0]!.state).toBe('settled');
     expect(t.store.rep(OWNER, 'traders')).toBe(REP_DEAL_COMPLETED);
@@ -141,33 +141,33 @@ describe('TradeDirector', () => {
     t.stop();
   });
 
-  it('BUY: credits sit in escrow while docked; goods land on departure', () => {
+  it('BUY: the wallet pays at dock (held virtually); goods land on departure', () => {
     const t = setup();
-    t.room.net.credits = 2000;
+    t.wallet.credit(OWNER, 2000, 'seed');
     const offer = acceptFirst(t, 'buy', 'alloy', 10);
     t.advance(1);
     t.arrive();
     t.advance(1);
     const cost = buyCost(10, offer.unitPrice);
-    expect(t.room.net.credits).toBe(2000 - cost);
+    expect(t.credits()).toBe(2000 - cost);
     expect(t.room.net.goods.alloy).toBeUndefined();
     t.advance(1000);
     t.advance(1000);
     expect(t.room.net.goods.alloy).toBe(10);
-    expect(t.room.net.credits).toBe(2000 - cost);
+    expect(t.credits()).toBe(2000 - cost);
     t.stop();
   });
 
-  it('RAID while docked: the hauler’s goods spill, the buyer’s escrow is refunded, pirates lose standing', () => {
+  it('RAID while docked: the hauler’s goods spill, the buyer’s credits are refunded, pirates lose standing', () => {
     const t = setup();
-    t.room.net.credits = 2000;
+    t.wallet.credit(OWNER, 2000, 'seed');
     acceptFirst(t, 'buy', 'alloy', 10);
     t.advance(1);
     const hauler = t.arrive();
     t.advance(1);
     t.dir.onHaulerDamaged(hauler, 'pirate');
     t.room.killHauler(hauler);
-    expect(t.room.net.credits).toBe(2000); // refunded in full
+    expect(t.credits()).toBe(2000); // refunded in full
     expect(t.room.pods.some((p) => p.goods.alloy === 10)).toBe(true); // trader's goods spilled
     expect(t.store.rep('pirate', 'traders')).toBe(REP_PIRACY_HIT);
     expect([...t.store.allDeals()][0]!.state).toBe('failed');
@@ -175,16 +175,16 @@ describe('TradeDirector', () => {
     t.stop();
   });
 
-  it('SELF-RAID: the owner shooting their own hauler forfeits the escrow', () => {
+  it('SELF-RAID: the owner shooting their own hauler forfeits the paid credits', () => {
     const t = setup();
-    t.room.net.credits = 2000;
+    t.wallet.credit(OWNER, 2000, 'seed');
     const offer = acceptFirst(t, 'buy', 'alloy', 10);
     t.advance(1);
     const hauler = t.arrive();
     t.advance(1);
     t.dir.onHaulerDamaged(hauler, OWNER);
     t.room.killHauler(hauler);
-    expect(t.room.net.credits).toBe(2000 - buyCost(10, offer.unitPrice));
+    expect(t.credits()).toBe(2000 - buyCost(10, offer.unitPrice));
     expect(t.store.rep(OWNER, 'traders')).toBe(REP_SELF_RAID);
     t.stop();
   });
@@ -199,7 +199,7 @@ describe('TradeDirector', () => {
     t.room.killHauler(hauler);
     expect(t.room.net.goods.salvage).toBe(30);
     expect(t.room.pods.some((p) => p.goods.salvage === 20)).toBe(true);
-    expect(t.room.net.credits).toBe(0);
+    expect(t.credits()).toBe(0);
     t.stop();
   });
 
@@ -254,6 +254,33 @@ describe('TradeDirector', () => {
     const d = [...t.store.allDeals()][0]!;
     expect(d.run).toBeNull();
     expect(d.state).toBe('scheduled');
+  });
+
+  it('a BUY with too few credits never docks (the wallet is untouched)', () => {
+    const t = setup();
+    t.wallet.credit(OWNER, 5, 'seed');
+    acceptFirst(t, 'buy', 'alloy', 10);
+    t.advance(1);
+    const deal = [...t.store.allDeals()][0]!;
+    // Planning sees the wallet balance: too poor ⇒ the visit doesn't happen.
+    expect(deal.run).toBeNull();
+    expect(t.credits()).toBe(5);
+    t.stop();
+  });
+
+  it('restart mid-BUY: reconcile refunds the credits the wallet paid at dock', () => {
+    const t = setup();
+    t.wallet.credit(OWNER, 2000, 'seed');
+    acceptFirst(t, 'buy', 'alloy', 10);
+    t.advance(1);
+    t.arrive();
+    t.advance(1);
+    expect(t.credits()).toBeLessThan(2000);
+    t.stop();
+    const dir2 = new TradeDirector(new Map([['s', t.room]]), t.store, t.holds, { controlIntervalMs: 1_000_000, wallet: t.wallet });
+    dir2.reconcile();
+    expect(t.credits()).toBe(2000);
+    expect([...t.store.allDeals()][0]!.run).toBeNull();
   });
 
   it('every escrow move persists the deal state in the SAME atomic group', () => {

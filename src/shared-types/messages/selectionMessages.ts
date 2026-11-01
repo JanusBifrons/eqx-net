@@ -59,7 +59,6 @@ export const EntityStatsSchema = z
      *  the server strips it before sending to anyone else. */
     hold: z.object({
       goods: z.partialRecord(z.enum(GOOD_IDS), z.number().int().nonnegative()),
-      credits: z.number().int().nonnegative(),
       blueprints: z.number().int().nonnegative(),
       /** P5 — the stored blueprint ids (the Install action's list). */
       blueprintIds: z.array(z.string().max(40)).max(64).optional(),

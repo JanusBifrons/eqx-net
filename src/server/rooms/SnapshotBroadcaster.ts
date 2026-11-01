@@ -149,6 +149,8 @@ export interface SnapshotBroadcasterDeps {
   /** Living World P5 — the blueprints fitted to a ship instance (own active
    *  ship only on the wire). A SHARED reference; undefined ⇒ none known. */
   fittedOf?: (shipInstanceId: string) => readonly string[] | undefined;
+  /** Economy v2 W1 — a player's wallet balance (own active ship only). */
+  walletOf?: (playerId: string) => number;
   playerMountAngles: Map<string, Float32Array>;
   droneMountAngles: Map<string, Float32Array>;
   /** Missile simulation — per-recipient AOI-filtered missile pose slice. */
@@ -235,6 +237,7 @@ type MutableStateEntry = {
   cargo?: Hold;
   depositing?: number;
   fitted?: string[];
+  wallet?: number;
   // Typed mutable to match the wire `SnapshotMessage['states'][...].mounts`; the
   // value assigned is a SHARED reference to `ShipState.mounts` (the encoder
   // reads it synchronously and never mutates it).
@@ -724,6 +727,8 @@ export class SnapshotBroadcaster {
         // (shared reference; the encoder never mutates it).
         const fitted = ownActive ? this.deps.fittedOf?.(ship.shipInstanceId) : undefined;
         entry.fitted = fitted !== undefined && fitted.length > 0 ? (fitted as string[]) : undefined;
+        // Economy v2 W1 (#16) — the own player's wallet balance (a number, no alloc).
+        entry.wallet = ownActive ? this.deps.walletOf?.(ship.playerId) : undefined;
         // WS-B3 — activated mounts are PUBLIC (every recipient, active +
         // lingering), emit-when-non-empty. Shared reference (no per-tick alloc,
         // #14); the renderer looks up geometry by (shipKind, slotId). Clear the

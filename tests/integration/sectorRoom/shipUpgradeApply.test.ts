@@ -120,7 +120,7 @@ describe('SectorRoom integration — ship stat upgrade (Phase 4 WS-B2)', () => {
     const shipId = shipInstanceFor(room, player);
 
     getPlayerShipStore().setProgress(shipId, { level: 6, statAlloc: { damage: 4 } });
-    // Living World P1a-2 — a respec costs RESPEC_CREDIT_COST banked credits.
+    // Living World P1a-2 — a respec costs RESPEC_CREDIT_COST from the wallet.
     seedBankCredits(room, player, 500);
 
     const echoP = nextEcho(cr, shipId);
@@ -133,7 +133,7 @@ describe('SectorRoom integration — ship stat upgrade (Phase 4 WS-B2)', () => {
     expect(getPlayerShipStore().get(shipId)!.statAlloc).toEqual({});
   });
 
-  it('Living World P1a-2: a respec with no banked credits is refused (credit sink)', async () => {
+  it('Living World P1a-2: a respec with an empty wallet is refused (credit sink)', async () => {
     const player = randomUUID();
     const cr = await harness.connectActive(player, { shipKind: 'fighter' });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === player });

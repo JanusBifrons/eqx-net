@@ -31,10 +31,11 @@ export const GOOD_DEFS: Readonly<Record<GoodId, GoodDef>> = Object.freeze({
   core: { id: 'core', displayName: 'Robot Core', weight: 5, tier: 2 },
 });
 
-/** A hold's contents. `goods` keys are optional (absent ⇒ 0). Integer counts. */
+/** A hold's contents. `goods` keys are optional (absent ⇒ 0). Integer counts.
+ *  Credits are NOT here: they are virtual and live in the player's wallet
+ *  (economy v2 W1, `src/server/economy/Wallet.ts`). */
 export interface Hold {
   goods: Partial<Record<GoodId, number>>;
-  credits: number;
   blueprints: string[];
 }
 
@@ -45,7 +46,6 @@ const nonNegInt = z.number().int().nonnegative();
 export const HoldSchema = z
   .object({
     goods: z.partialRecord(z.enum(GOOD_IDS), nonNegInt),
-    credits: nonNegInt,
     blueprints: z.array(z.string().min(1).max(64)).max(64),
   })
   .strict();
@@ -53,20 +53,36 @@ export const HoldSchema = z
 /** Parse persisted hold JSON defensively — corruption yields an empty hold
  *  (never a crash, never a fabricated value). */
 export function parseHoldJson(json: string | null | undefined): Hold {
-  if (!json) return { goods: {}, credits: 0, blueprints: [] };
+  if (!json) return { goods: {}, blueprints: [] };
   try {
-    const r = HoldSchema.safeParse(JSON.parse(json));
-    if (r.success) return { goods: { ...r.data.goods }, credits: r.data.credits, blueprints: [...r.data.blueprints] };
+    const raw = JSON.parse(json) as Record<string, unknown>;
+    // Pre-W1 rows carried `credits`; they migrate to the wallet at boot
+    // (`legacyHoldCredits`) — never back into a hold.
+    if (raw !== null && typeof raw === 'object') delete raw['credits'];
+    const r = HoldSchema.safeParse(raw);
+    if (r.success) return { goods: { ...r.data.goods }, blueprints: [...r.data.blueprints] };
   } catch {
     /* fall through */
   }
-  return { goods: {}, credits: 0, blueprints: [] };
+  return { goods: {}, blueprints: [] };
 }
 
-/** Living World P1a-2 credit sinks (balance knobs — tune on-device). Shared so
- *  the UI labels and the server charge read the SAME numbers (#15). Instant
- *  repair costs this many credits per missing hull point (rounded up); a stat
- *  respec is flat. */
+/** Economy v2 W1 — the credits a PRE-wallet persisted hold carried (0 if
+ *  none / corrupt). Read once at boot to move them into the owner's wallet. */
+export function legacyHoldCredits(json: string | null | undefined): number {
+  if (!json) return 0;
+  try {
+    const c = (JSON.parse(json) as { credits?: unknown }).credits;
+    return typeof c === 'number' && Number.isFinite(c) && c > 0 ? Math.floor(c) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Credit sinks (balance knobs — tune on-device), paid from the WALLET.
+ *  Shared so the UI labels and the server charge read the SAME numbers (#15).
+ *  Instant repair costs this many credits per missing hull point (rounded up);
+ *  a stat respec is flat. */
 export const REPAIR_CREDITS_PER_HP = 0.5;
 export const RESPEC_CREDIT_COST = 100;
 

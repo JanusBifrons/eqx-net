@@ -186,14 +186,14 @@ import type {
   SectorSnapshotLingeringHull,
 } from './SectorSnapshot.js';
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
-import { getPlayerShipStore, getHoldStore } from '../db/PersistenceWorker.js';
+import { getPlayerShipStore, getHoldStore, getWallet } from '../db/PersistenceWorker.js';
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { StorageService, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto } from '../../core/cargo/hold.js';
-import { HARVESTER_CAPACITY, RAID_CREDITS_PER_STEP, RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
+import { HARVESTER_CAPACITY, RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
-import { rollLoot } from '../../shared-types/lootTables.js';
+import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
 import { rollEliteLoot, ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS, PlaceBountySchema, type BountyResult } from '../../shared-types/contracts.js';
 import {
@@ -287,6 +287,9 @@ const JoinOptionsSchema = z
     /** Living World P1a — test-only: seed the joining ship's carried hold (so
      *  spill / deposit specs don't have to farm loot first). testMode-gated. */
     initialCargo: HoldSchema.optional(),
+    /** Economy v2 W1 — test-only: top the joining player's WALLET up to this
+     *  many credits (credits are virtual; never seeded into a hold). */
+    initialWallet: z.number().int().min(0).max(10_000_000).optional(),
     /** Test-only initial energy override; same testMode gate. Lets energy
      *  specs start near-empty so the fire-gate / regen flow resolves in a
      *  few ticks. (weapons/energy/AI overhaul §3) */
@@ -1314,7 +1317,7 @@ export class SectorRoom extends Room<SectorState> {
       tradeEnabled?: boolean;
       /** Living World P2 — testMode: a storage structure PLACED in this room
        *  starts with this hold (trade E2E / showcase). */
-      seedStorageHold?: { goods: Partial<Record<'minerals' | 'salvage' | 'alloy' | 'core', number>>; credits: number };
+      seedStorageHold?: { goods: Partial<Record<'minerals' | 'salvage' | 'alloy' | 'core', number>>; credits?: number };
       /** Living World P2 — testMode: when a trade hauler enters this room, this
        *  many robot cubes appear partway along its route (the raid on camera). */
       haulerRaiders?: number;
@@ -1676,6 +1679,8 @@ export class SectorRoom extends Room<SectorState> {
       shipHoldOf: (shipInstanceId) => this.loot.shipHold(shipInstanceId),
       // P5 — the own ship's fitted blueprints (cache read only — alloc-free).
       fittedOf: (shipInstanceId) => this.fittedCache.get(shipInstanceId),
+      // Economy v2 W1 — the own player's wallet balance on the snapshot.
+      walletOf: (playerId) => getWallet().balance(playerId),
       depositProgressOf: (shipInstanceId) => this.depositProgress.get(shipInstanceId),
       playerMountAngles: this.mountTicker.playerMountAngles,
       droneMountAngles: this.mountTicker.droneMountAngles,
@@ -1944,10 +1949,10 @@ export class SectorRoom extends Room<SectorState> {
       forEachCollector: (visit) => this.forEachLootCollector(visit),
       onCollected: (c, moved, podId) => this.onLootCollected(c, moved, podId),
       onDropped: (podId, hold, cause) => {
-        auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, credits: hold.credits });
+        auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) });
       },
       onDestroyed: (podId, hold, cause) => {
-        auditEvent({ event: 'loot_destroyed', sector: this.sectorKey ?? undefined, podId, cause, credits: hold.credits });
+        auditEvent({ event: 'loot_destroyed', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) });
       },
     });
 
@@ -2099,7 +2104,9 @@ export class SectorRoom extends Room<SectorState> {
     if (this.testMode) {
       if (roomOpts.seedStorageHold) {
         const g = roomOpts.seedStorageHold;
-        this.testSeedStorageHold = { goods: { ...g.goods }, credits: Math.max(0, Math.floor(g.credits)) };
+        this.testSeedStorageHold = { goods: { ...g.goods } };
+        // Economy v2 W1 — credits aren't stored: they seed each joiner's WALLET.
+        this.testWalletSeed = Math.max(0, Math.floor(g.credits ?? 0));
       }
       this.testHaulerRaiders = Math.max(0, Math.min(6, Math.floor(roomOpts.haulerRaiders ?? 0)));
     }
@@ -2406,7 +2413,7 @@ export class SectorRoom extends Room<SectorState> {
         if (this.testSeedStorageHold !== null) {
           const s = this.structureRegistry.get(id);
           if (s !== undefined && (getStructureKind(s.kind).holdCapacity ?? 0) > 0) {
-            s.hold = { goods: { ...this.testSeedStorageHold.goods }, credits: this.testSeedStorageHold.credits, blueprints: [] };
+            s.hold = { goods: { ...this.testSeedStorageHold.goods }, blueprints: [] };
             this.storage.flushDirty();
           }
         }
@@ -2642,11 +2649,8 @@ export class SectorRoom extends Room<SectorState> {
         try { client.send('bounty_result', { type: 'bounty_result', ok, message } satisfies BountyResult); } catch { /* closing */ }
       };
       if (this.sectorKey === null) { reply(false, 'Bounties are only available in the galaxy.'); return; }
-      if (!this.playerToUser.get(playerId)) { reply(false, 'Sign in to place bounties.'); return; }
-      const rec = this.swarmRegistry.getByEntityId(p.data.networkEntityId);
-      const s = rec ? this.structureRegistry.get(rec.id) : undefined;
-      if (s === undefined || s.owner !== playerId || s.uid === undefined) { reply(false, 'Pick one of your storage structures.'); return; }
-      const v = board.place(this, playerId, p.data.targetPlayerId, s.uid, p.data.amount);
+      // Economy v2 W1 — paid from the placer's WALLET (anywhere; guests too).
+      const v = board.place(this, playerId, p.data.targetPlayerId, p.data.amount);
       reply(v.ok, v.message);
     });
 
@@ -2712,13 +2716,12 @@ export class SectorRoom extends Room<SectorState> {
       }
       const playerId = this.sessionToPlayer.get(client.sessionId);
       if (!playerId) return;
-      // Living World P1a-2 — a respec is a CREDIT SINK: it costs
-      // RESPEC_CREDIT_COST from the credits banked in this sector's storage.
-      // Charged only for an OWNED ship that actually has points to refund.
+      // A respec is a CREDIT SINK: RESPEC_CREDIT_COST from the WALLET (economy
+      // v2 — anywhere). Charged only for an OWNED ship with points to refund.
       const row = this.sectorKey !== null ? getPlayerShipStore().get(parsed.data.shipId) : null;
       if (row === null || row.playerId !== playerId || Object.keys(row.statAlloc).length === 0) return;
-      if (!this.storage.spendCredits(playerId, RESPEC_CREDIT_COST)) {
-        this.sendNotice(client, `Respec costs ${RESPEC_CREDIT_COST} cr — bank credits in your base storage first`);
+      if (!getWallet().debit(playerId, RESPEC_CREDIT_COST, 'respec')) {
+        this.sendNotice(client, `Respec costs ${RESPEC_CREDIT_COST} cr — not enough credits`);
         return;
       }
       auditEvent({ event: 'credits_spent', sector: this.sectorKey ?? undefined, playerId, amount: RESPEC_CREDIT_COST, reason: 'respec' });
@@ -2748,8 +2751,8 @@ export class SectorRoom extends Room<SectorState> {
         return;
       }
       const cost = Math.ceil(missing * REPAIR_CREDITS_PER_HP);
-      if (!this.storage.spendCredits(playerId, cost)) {
-        this.sendNotice(client, `Repair costs ${cost} cr — not enough banked credits`);
+      if (!getWallet().debit(playerId, cost, 'repair')) {
+        this.sendNotice(client, `Repair costs ${cost} cr — not enough credits`);
         return;
       }
       ship.health = ship.maxHealth;
@@ -3633,6 +3636,11 @@ export class SectorRoom extends Room<SectorState> {
       // awarded separately in the SHIP_DESTROYED handler.
       const droneMaxHealth = droneMaxHealthOf(rec) ?? 40;
       this.awardKillXp(shooterId ?? '', droneMaxHealth);
+      // Economy v2 W1 — every NPC kill pays a bounty straight into the killer's
+      // WALLET (credits are virtual; pods carry goods only).
+      if (shooterId && classifyAttacker(shooterId) === 'player') {
+        getWallet().credit(shooterId, rollKillBounty(rec.shipKind, Math.random), 'kill_bounty');
+      }
     }
   }
 
@@ -4579,7 +4587,7 @@ export class SectorRoom extends Room<SectorState> {
       ...(holdCap > 0
         ? {
             hold: {
-              goods: h ? { ...h.goods } : {}, credits: h?.credits ?? 0, blueprints: h?.blueprints.length ?? 0,
+              goods: h ? { ...h.goods } : {}, blueprints: h?.blueprints.length ?? 0,
               // P5 — the ids, for the owner's Install action (owner-only like the rest).
               blueprintIds: h ? h.blueprints.slice(0, 64) : [],
             },
@@ -4754,41 +4762,19 @@ export class SectorRoom extends Room<SectorState> {
   /** Living World P4a — promote a just-spawned bot to a NAMED ELITE: its hull
    *  max becomes ELITE_HEALTH_MUL × its kind's and it is healed to full. */
   /**
-   * Living World P4c — pay a world bounty into the killer's ACTIVE ship hold
-   * (credits are weightless, so it always fits) as one atomic hold write.
-   * Only a signed-in PLAYER collects (bounties need an account — guests still
-   * get the loot). Announced to the sector as a `world_notice`.
+   * Living World P4c — pay a named target's bounty into the killer's WALLET
+   * (economy v2: credits are virtual — every player, guests included).
+   * Announced to the sector as a `world_notice`.
    */
   private payEliteBounty(killerId: string, targetName: string, credits: number): void {
     if (credits <= 0 || classifyAttacker(killerId) !== 'player') return;
-    if (!this.playerToUser.get(killerId)) return;
-    if (!this.creditKillerHold(killerId, credits, [])) return;
+    getWallet().credit(killerId, credits, 'elite_bounty');
     auditEvent({ event: 'bounty_claimed', sector: this.sectorKey ?? undefined, playerId: killerId, target: targetName, credits });
     const who = this.resolveOwnerName(killerId) ?? 'A pilot';
     this.broadcastWorldNotice({
       type: 'world_notice', kind: 'bounty',
       message: `${who} claimed the ${credits}¢ bounty on ${targetName}!`,
     });
-  }
-
-  /**
-   * P4c — credit `credits` into `playerId`'s ACTIVE ship hold and delete
-   * `deletes` (a bounty's escrow) in ONE atomic hold group. False — nothing
-   * written — when the player has no roster-bound active hull here.
-   */
-  creditKillerHold(playerId: string, credits: number, deletes: readonly string[]): boolean {
-    const shipId = this.resolveActiveShipKey(playerId);
-    if (shipId === undefined || shipId === '' || this.sectorKey === null) return false;
-    const store = getHoldStore();
-    const cur = store.get(shipId);
-    const hold = cur ? cloneHold(cur.hold) : emptyHold();
-    hold.credits += credits;
-    store.commit(
-      [{ holderUid: shipId, holderType: 'ship', ownerId: playerId, sectorKey: null, x: null, y: null, hold, expiresAt: null }],
-      deletes,
-      true,
-    );
-    return true;
   }
 
   /** P5 — the blueprints fitted to a ship (cached; the hold row is the truth). */
@@ -5863,6 +5849,12 @@ export class SectorRoom extends Room<SectorState> {
       if (typeof parsed.data.initialEnergy === 'number') {
         ship.energy = Math.max(0, parsed.data.initialEnergy);
       }
+      // Economy v2 W1 — test-only wallet seed (join option, else the room's).
+      const walletSeed = parsed.data.initialWallet ?? this.testWalletSeed;
+      if (walletSeed > 0) {
+        const have = getWallet().balance(playerId);
+        if (have < walletSeed) getWallet().credit(playerId, walletSeed - have, 'test_seed');
+      }
       // Living World P1a — seed the hull's carried hold (needs a roster-bound
       // shipInstanceId; engineering rooms have none ⇒ no-op).
       if (parsed.data.initialCargo !== undefined && ship.shipInstanceId !== '' && this.sectorKey !== null) {
@@ -5870,7 +5862,7 @@ export class SectorRoom extends Room<SectorState> {
         getHoldStore().put({
           holderUid: ship.shipInstanceId, holderType: 'ship', ownerId: playerId,
           sectorKey: null, x: null, y: null,
-          hold: { goods: { ...c.goods }, credits: c.credits, blueprints: [...c.blueprints] },
+          hold: { goods: { ...c.goods }, blueprints: [...c.blueprints] },
           expiresAt: null,
         });
       }
@@ -6643,19 +6635,19 @@ export class SectorRoom extends Room<SectorState> {
    *  cargo rides the own-ship snapshot slice) + audit. */
   private onLootCollected(c: LootCollector, moved: Hold, podId: string): void {
     if (c.npc === true) {
-      auditEvent({ event: 'loot_collected', sector: this.sectorKey ?? undefined, podId, playerId: c.playerId, shipInstanceId: c.shipInstanceId, credits: moved.credits });
+      auditEvent({ event: 'loot_collected', sector: this.sectorKey ?? undefined, podId, playerId: c.playerId, shipInstanceId: c.shipInstanceId, weight: holdWeight(moved) });
       return;
     }
     const sessionId = this.playerToSession.get(c.playerId);
     const client = sessionId !== undefined ? this.clients.find((cl) => cl.sessionId === sessionId) : undefined;
     if (client) {
       try {
-        client.send('loot_collected', { type: 'loot_collected', goods: moved.goods, credits: moved.credits, blueprints: moved.blueprints.length });
+        client.send('loot_collected', { type: 'loot_collected', goods: moved.goods, blueprints: moved.blueprints.length });
       } catch { /* socket closing */ }
     }
     auditEvent({
       event: 'loot_collected', sector: this.sectorKey ?? undefined, podId,
-      playerId: c.playerId, shipInstanceId: c.shipInstanceId, credits: moved.credits,
+      playerId: c.playerId, shipInstanceId: c.shipInstanceId, weight: holdWeight(moved),
     });
   }
 
@@ -6709,11 +6701,11 @@ export class SectorRoom extends Room<SectorState> {
     const sessionId = this.playerToSession.get(c.playerId);
     const client = sessionId !== undefined ? this.clients.find((cl) => cl.sessionId === sessionId) : undefined;
     try {
-      client?.send('cargo_deposited', { type: 'cargo_deposited', goods: moved.goods, credits: moved.credits, blueprints: moved.blueprints.length });
+      client?.send('cargo_deposited', { type: 'cargo_deposited', goods: moved.goods, blueprints: moved.blueprints.length });
     } catch { /* socket closing */ }
     auditEvent({
       event: 'cargo_deposited', sector: this.sectorKey ?? undefined, playerId: c.playerId,
-      shipInstanceId: c.shipInstanceId, structureKind: target.kind, credits: moved.credits,
+      shipInstanceId: c.shipInstanceId, structureKind: target.kind, weight: holdWeight(moved),
     });
   };
 
@@ -6787,13 +6779,13 @@ export class SectorRoom extends Room<SectorState> {
     if (rec === null || rec.uid === undefined) return null;
     const snap = this.storage.tradeSnapshot(rec.owner, rec.uid);
     if (snap === null) return null;
-    let worth = snap.credits;
+    let worth = 0;
     for (const g of GOOD_IDS) worth += snap.goods[g] ?? 0;
     return worth > 0 ? { uid: rec.uid, owner: rec.owner, x: rec.x, y: rec.y } : null;
   }
 
   /** P3c — a harvester steals up to `stepWeight` (rarest goods first, plus up
-   *  to RAID_CREDITS_PER_STEP credits) from the storage network at `uid`, as
+   *  credits — never: they're virtual) from the storage network at `uid`, as
    *  ONE atomic `tradeTransfer` group into its own ownerless hold. */
   raidStorage(harvesterId: string, owner: string, uid: string, stepWeight: number): number {
     const snap = this.storage.tradeSnapshot(owner, uid);
@@ -6807,12 +6799,11 @@ export class SectorRoom extends Room<SectorState> {
       want.goods[g] = n;
       room -= n * w;
     }
-    want.credits = Math.min(snap.credits, RAID_CREDITS_PER_STEP);
     if (isHoldEmpty(want)) return 0;
     const res = this.tradeTransfer(owner, uid, { take: { want, intoUid: harvesterId, intoOwner: null } });
     if (res === null || isHoldEmpty(res.taken)) return 0;
     const weight = holdWeight(res.taken);
-    auditEvent({ event: 'storage_raided', sector: this.sectorKey ?? undefined, playerId: owner, raider: harvesterId, weight, credits: res.taken.credits });
+    auditEvent({ event: 'storage_raided', sector: this.sectorKey ?? undefined, playerId: owner, raider: harvesterId, weight });
     const now = Date.now();
     if (now - (this.raidNoticeAtMs.get(owner) ?? 0) >= RAID_NOTICE_THROTTLE_MS) {
       this.raidNoticeAtMs.set(owner, now);
@@ -6870,7 +6861,9 @@ export class SectorRoom extends Room<SectorState> {
     if (this.tradeRegisteredKey !== null) getTradeSink()?.registerRoom(this.tradeRegisteredKey, this);
   }
   /** P2 bespoke triggers (testMode only). */
-  private testSeedStorageHold: { goods: Partial<Record<'minerals' | 'salvage' | 'alloy' | 'core', number>>; credits: number } | null = null;
+  private testSeedStorageHold: { goods: Partial<Record<'minerals' | 'salvage' | 'alloy' | 'core', number>> } | null = null;
+  /** Economy v2 W1 (testMode) — top each joiner's wallet up to this. */
+  private testWalletSeed = 0;
   private testHaulerRaiders = 0;
 
   /** Living World P2 — robot reputation truce (no on-sight engagement). One Map

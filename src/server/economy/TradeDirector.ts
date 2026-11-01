@@ -62,6 +62,8 @@ import type { HoldStore } from '../cargo/HoldStore.js';
 import type { TradeNetworkSnapshot, TradeTransferResult, TradeTransferSpec } from '../cargo/StorageService.js';
 import type { EconomyStore } from './EconomyStore.js';
 import type { AcceptOfferMsg, SendGiftMsg, TradeSink, TradeVerdict } from './tradeSink.js';
+import type { Wallet } from './Wallet.js';
+import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 
 /** The room surface the trade director drives (SectorRoom implements it). */
 export interface TradeRoom {
@@ -125,6 +127,16 @@ interface BoardOffer {
 
 const escrowUid = (runId: string): string => `escrow-${runId}`;
 
+/** No wallet injected (tests that don't exercise credits): an empty balance
+ *  that refuses every debit and ignores credits. */
+const NO_WALLET: Pick<Wallet, 'balance' | 'credit' | 'creditDeferred' | 'debitDeferred' | 'flush'> = {
+  balance: () => 0,
+  credit: () => 0,
+  creditDeferred: () => null,
+  debitDeferred: () => null,
+  flush: () => undefined,
+};
+
 export class TradeDirector implements TradeSink {
   private readonly opts: TradeDirectorOptions;
   private readonly rng: Rng;
@@ -151,6 +163,9 @@ export class TradeDirector implements TradeSink {
       nowMs?: () => number;
       /** Web Push for an OFFLINE owner (the notifier gates presence itself). */
       push?: (ownerPlayerId: string, title: string, body: string, tag: string) => void;
+      /** Economy v2 W1 — the virtual wallet credits move through (buy price,
+       *  gift credits, sell proceeds, refunds). */
+      wallet?: Pick<Wallet, 'balance' | 'credit' | 'creditDeferred' | 'debitDeferred' | 'flush'>;
     } = {},
   ) {
     this.rooms = new Map(rooms);
@@ -158,7 +173,16 @@ export class TradeDirector implements TradeSink {
     this.rng = options.rng ?? Math.random;
     this.now = options.nowMs ?? Date.now;
     this.push = options.push ?? null;
+    this.wallet = options.wallet ?? NO_WALLET;
     this.lastDriftAtMs = this.now();
+  }
+
+  private readonly wallet: Pick<Wallet, 'balance' | 'credit' | 'creditDeferred' | 'debitDeferred' | 'flush'>;
+
+  /** Refund a run's wallet-held credits as an op for the caller's group
+   *  (null when nothing was paid). */
+  private refundOp(deal: TradeDeal, run: TradeRun, reason: string): PersistOp | null {
+    return this.wallet.creditDeferred(deal.ownerId, run.paid ?? 0, reason);
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
@@ -203,9 +227,13 @@ export class TradeDirector implements TradeSink {
       else destroy.push(run.haulerId);
       const next: TradeDeal = { ...deal, run: null, state: 'scheduled', nextVisitAtMs: this.now() + 30_000 };
       const op = this.store.dealOp(next);
-      const res = room?.tradeTransfer(deal.ownerId, deal.networkUid, { release, destroy, extraOps: [op] }) ?? null;
+      // The wallet-held credits go back (in the same group when possible).
+      const refund = this.refundOp(deal, run, 'trade_refund');
+      const ops = refund ? [op, refund] : [op];
+      const res = room?.tradeTransfer(deal.ownerId, deal.networkUid, { release, destroy, extraOps: ops }) ?? null;
       if (res === null) {
-        // Base gone: keep the value as pods at the old dock rather than lose it.
+        if (refund) this.wallet.flush(deal.ownerId);
+        // Base gone: keep the goods as pods at the old dock rather than lose them.
         for (const uid of release) this.dropHolder(room, uid, run.dockX, run.dockY);
         for (const uid of destroy) this.holds.delete(uid);
         this.store.saveDeal(next);
@@ -438,7 +466,7 @@ export class TradeDirector implements TradeSink {
         exists: snap !== null,
         underAttack: snap !== null && room!.tradeBaseUnderAttack(deal.ownerId),
         goods: snap?.goods ?? {},
-        credits: snap?.credits ?? 0,
+        credits: this.wallet.balance(deal.ownerId),
         freeCapacity: snap?.freeCapacity ?? 0,
       },
       quoteNow,
@@ -526,21 +554,34 @@ export class TradeDirector implements TradeSink {
 
   /** Docked: the player's side of the trade moves into escrow. */
   private dock(deal: TradeDeal, run: TradeRun, room: TradeRoom): void {
-    const docked: TradeRun = { ...run, phase: 'docked', phaseStartedAtMs: this.now() };
+    if (room.tradeSnapshot(deal.ownerId, deal.networkUid) === null) {
+      this.abortRun(deal, run, room, 'Visit aborted: your storage is gone');
+      return;
+    }
     const want = emptyHold();
     let into = escrowUid(run.runId);
     if (deal.kind === 'sell' && deal.good) {
       want.goods[deal.good] = run.qty;
       into = run.haulerId; // the goods physically ride in the hauler
-    } else if (deal.kind === 'buy') {
-      want.credits = buyCost(run.qty, run.unitPrice);
-    } else {
-      if (deal.good && run.qty > 0) want.goods[deal.good] = run.qty;
-      want.credits = run.credits;
+    } else if (deal.kind === 'gift' && deal.good && run.qty > 0) {
+      want.goods[deal.good] = run.qty;
     }
+    // Economy v2 W1 — the credit side comes from the WALLET (held virtually on
+    // the run until settlement; refunded if the visit unwinds).
+    const due = deal.kind === 'buy' ? buyCost(run.qty, run.unitPrice) : deal.kind === 'gift' ? run.credits : 0;
+    let walletOp: PersistOp | null = null;
+    if (due > 0) {
+      walletOp = this.wallet.debitDeferred(deal.ownerId, due, deal.kind === 'buy' ? 'trade_buy' : 'trade_gift');
+      if (walletOp === null && deal.kind === 'buy') { this.abortRun(deal, run, room, 'Visit aborted: not enough credits'); return; }
+    }
+    const paid = walletOp !== null ? due : 0;
+    const docked: TradeRun = { ...run, phase: 'docked', phaseStartedAtMs: this.now(), paid, credits: deal.kind === 'gift' ? paid : run.credits };
     const next: TradeDeal = { ...deal, state: 'docked', run: docked };
-    const res = room.tradeTransfer(deal.ownerId, deal.networkUid, { take: { want, intoUid: into }, extraOps: [this.store.dealOp(next)] });
+    const ops = walletOp ? [this.store.dealOp(next), walletOp] : [this.store.dealOp(next)];
+    const res = room.tradeTransfer(deal.ownerId, deal.networkUid, { take: { want, intoUid: into }, extraOps: ops });
     if (res === null) {
+      // Unreachable after the snapshot check; keep the wallet whole regardless.
+      if (paid > 0) this.wallet.credit(deal.ownerId, paid, 'trade_refund');
       this.abortRun(deal, run, room, 'Visit aborted: your storage is gone');
       return;
     }
@@ -549,12 +590,10 @@ export class TradeDirector implements TradeSink {
       const got = res.taken.goods[deal.good] ?? 0;
       if (got <= 0) { this.abortRun(next, docked, room, 'Visit aborted: nothing left to sell'); return; }
       if (got < run.qty) this.store.saveDeal({ ...next, run: { ...docked, qty: got, partial: true } });
-    } else if (deal.kind === 'buy') {
-      if (res.taken.credits < want.credits) { this.abortRun(next, docked, room, 'Visit aborted: not enough credits banked'); return; }
-    } else {
+    } else if (deal.kind === 'gift') {
       const got = deal.good ? res.taken.goods[deal.good] ?? 0 : 0;
-      if (got <= 0 && res.taken.credits <= 0) { this.abortRun(next, docked, room, 'Visit aborted: nothing left to give'); return; }
-      this.store.saveDeal({ ...next, run: { ...docked, qty: got, credits: res.taken.credits, partial: got < run.qty || res.taken.credits < run.credits } });
+      if (got <= 0 && paid <= 0) { this.abortRun(next, docked, room, 'Visit aborted: nothing left to give'); return; }
+      this.store.saveDeal({ ...next, run: { ...docked, qty: got, partial: got < run.qty || paid < run.credits } });
     }
     this.notify(next, 'docked', 'The trade hauler has docked. Keep it safe until it leaves.');
   }
@@ -567,9 +606,14 @@ export class TradeDirector implements TradeSink {
     const escrow = escrowUid(run.runId);
     let res: TradeTransferResult | null;
     let credits = 0;
+    const alive = room.tradeSnapshot(deal.ownerId, deal.networkUid) !== null;
     if (deal.kind === 'sell') {
       credits = sellProceeds(run.qty, run.unitPrice);
-      res = room.tradeTransfer(deal.ownerId, deal.networkUid, { destroy: [run.haulerId], mintCredits: credits, extraOps: [op] });
+      // The proceeds go to the WALLET, in the same group as the goods leaving.
+      const pay = alive ? this.wallet.creditDeferred(deal.ownerId, credits, 'trade_sell') : null;
+      res = alive
+        ? room.tradeTransfer(deal.ownerId, deal.networkUid, { destroy: [run.haulerId], extraOps: pay ? [op, pay] : [op] })
+        : null;
       if (res !== null && deal.good) applyFill(this.store.market, deal.good, run.qty, 'sell');
     } else if (deal.kind === 'buy') {
       credits = buyCost(run.qty, run.unitPrice);
@@ -580,8 +624,9 @@ export class TradeDirector implements TradeSink {
       res = room.tradeTransfer(deal.ownerId, deal.networkUid, { destroy: [escrow], extraOps: [op] });
     }
     if (res === null) {
-      // Base razed while docked: nothing is owed or paid — the escrow and the
-      // hauler's cargo stay in the world as pods at the dock.
+      // Base razed while docked: nothing is owed — the wallet-held credits go
+      // back, and the escrow goods + the hauler's cargo stay as pods at the dock.
+      if ((run.paid ?? 0) > 0) this.wallet.credit(deal.ownerId, run.paid ?? 0, 'trade_refund');
       this.dropHolder(room, escrow, run.dockX, run.dockY);
       this.dropHolder(room, run.haulerId, run.dockX, run.dockY);
       this.store.saveDeal(next);
@@ -620,11 +665,16 @@ export class TradeDirector implements TradeSink {
     const next: TradeDeal = { ...deal, ...afterVisit(deal, 'raided', this.now()), run: null };
     const op = this.store.dealOp(next);
     const escrow = escrowUid(run.runId);
+    // A forfeit keeps the wallet-held credits (the self-raid penalty);
+    // otherwise they're refunded in the same group as the escrow goods.
+    const refund = forfeit ? null : this.refundOp(deal, run, 'trade_refund');
+    const ops = refund ? [op, refund] : [op];
     const spec: TradeTransferSpec = forfeit
-      ? { destroy: [escrow], extraOps: [op] }
-      : { release: [escrow], extraOps: [op] };
+      ? { destroy: [escrow], extraOps: ops }
+      : { release: [escrow], extraOps: ops };
     const res = room?.tradeTransfer(deal.ownerId, deal.networkUid, spec) ?? null;
     if (res === null) {
+      if (refund) this.wallet.flush(deal.ownerId);
       this.dropHolder(room, escrow, run.dockX, run.dockY);
       this.store.saveDeal(next);
     } else if (!isHoldEmpty(res.overflow)) {
@@ -652,8 +702,10 @@ export class TradeDirector implements TradeSink {
     const destroy: string[] = [];
     if (deal.kind === 'sell') release.push(run.haulerId);
     else destroy.push(run.haulerId);
-    const res = room.tradeTransfer(deal.ownerId, deal.networkUid, { release, destroy, extraOps: [op] });
+    const refund = this.refundOp(deal, run, 'trade_refund');
+    const res = room.tradeTransfer(deal.ownerId, deal.networkUid, { release, destroy, extraOps: refund ? [op, refund] : [op] });
     if (res === null) {
+      if (refund) this.wallet.flush(deal.ownerId);
       for (const uid of release) this.dropHolder(room, uid, run.dockX, run.dockY);
       for (const uid of destroy) this.holds.delete(uid);
       this.store.saveDeal(next);

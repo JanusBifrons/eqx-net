@@ -22,13 +22,16 @@ type LegacyLimboPayload = {
 import { SHIP_KIND_CATALOGUE_VERSION } from '../../shared-types/shipKinds.js';
 import { db } from './Database.js';
 import {
+  canonicalPlayerId,
   getAccountPlayerRegistry,
   type AccountPlayerBinding,
   type PlayerAlias,
 } from '../identity/AccountPlayerRegistry.js';
 import { mergeAccountPlayerIds, type AccountMergeResult } from '../identity/accountPlayerMerge.js';
 import { HoldStore, type HoldRecord } from '../cargo/HoldStore.js';
-import { parseHoldJson } from '../../shared-types/goods.js';
+import { Wallet } from '../economy/Wallet.js';
+import { migrateLegacyCredits } from '../economy/walletMigration.js';
+import { legacyHoldCredits, parseHoldJson } from '../../shared-types/goods.js';
 
 /**
  * Process-global persistence singleton. `initWorker()` constructs a
@@ -139,6 +142,34 @@ export function setHoldStore(store: HoldStore): void {
   _holdStore = store;
 }
 
+// ── Economy v2 W1 — the virtual wallet singleton ───────────────────────
+
+let _wallet: Wallet | null = null;
+
+export function getWallet(): Wallet {
+  if (_wallet === null) _wallet = new Wallet({ persistence: () => _sink });
+  return _wallet;
+}
+
+/** Test seam — replace the wallet with an injected one. */
+export function setWallet(w: Wallet): void {
+  _wallet = w;
+}
+
+/** Boot hydrate of `player_wallets` (alias ids fold onto their canonical id). */
+export function initWallet(): { hydrated: number } {
+  let rows: Array<{ player_id: string; balance: number }> = [];
+  try {
+    rows = db.prepare('SELECT player_id, balance FROM player_wallets').all() as typeof rows;
+  } catch (err) {
+    _hydrateHealth.selectFailures += 1;
+    _hydrateLogger.warn({ err, table: 'player_wallets' }, 'wallet hydrate SELECT failed (treating as empty)');
+    rows = [];
+  }
+  getWallet().hydrate(rows.map((r) => ({ playerId: canonicalPlayerId(r.player_id), balance: r.balance })));
+  return { hydrated: rows.length };
+}
+
 /** Boot hydrate of the unified `holds` table (read-only main-thread connection). */
 export function initHoldStore(): { hydrated: number } {
   const store = getHoldStore();
@@ -156,6 +187,7 @@ export function initHoldStore(): { hydrated: number } {
     rows = [];
   }
   const records: HoldRecord[] = [];
+  _legacyCredits.length = 0;
   for (const row of rows) {
     if (row.holder_type !== 'ship' && row.holder_type !== 'pod' && row.holder_type !== 'derelict' && row.holder_type !== 'structure' && row.holder_type !== 'hauler' && row.holder_type !== 'bounty' && row.holder_type !== 'fitted') {
       _hydrateHealth.corruptRowsSkipped += 1;
@@ -171,9 +203,24 @@ export function initHoldStore(): { hydrated: number } {
       hold: parseHoldJson(row.payload_json),
       expiresAt: row.expires_at,
     });
+    // Economy v2 W1 — remember any pre-wallet credits for the boot migration.
+    const credits = legacyHoldCredits(row.payload_json);
+    if (credits > 0) _legacyCredits.push({ uid: row.holder_uid, owner: row.owner_id, credits });
   }
   store.hydrate(records);
   return { hydrated: records.length };
+}
+
+/** Pre-wallet credits found in hold rows at hydrate (economy v2 W1). */
+const _legacyCredits: Array<{ uid: string; owner: string | null; credits: number }> = [];
+
+/**
+ * Economy v2 W1 — move the pre-wallet hold credits found at hydrate into their
+ * owners' wallets, once (see `economy/walletMigration.ts`). Run AFTER
+ * `initHoldStore`, the account merge (canonical ids) and `initWallet`.
+ */
+export function migrateLegacyHoldCredits(): { rows: number; credited: number } {
+  return migrateLegacyCredits(getHoldStore(), getWallet(), _legacyCredits, canonicalPlayerId);
 }
 
 // ── Phase 2 — PlayerShipStore singleton ────────────────────────────────

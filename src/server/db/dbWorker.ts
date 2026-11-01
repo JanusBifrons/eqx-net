@@ -222,6 +222,7 @@ function applyOp(op: PersistOp): { rowId?: number } {
     case 'TRADE_DEAL_PUT':
     case 'TRADE_DEAL_DELETE':
     case 'ECON_STATE_PUT':
+    case 'WALLET_PUT':
       applyEconomyOp(econStmts, op);
       return {};
     case 'ACCOUNT_PLAYER_PUT': {

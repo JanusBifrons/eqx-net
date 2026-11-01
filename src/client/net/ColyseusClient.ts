@@ -3059,6 +3059,10 @@ export class ColyseusGameClient {
       this.applyLocalStatAlloc(localId, serverState.statAlloc);
       // Living World P1a (#16) — the authoritative own-ship cargo slice.
       this.applyLocalCargo(localId, serverState.cargo, serverState.fitted);
+      // Economy v2 W1 (#16) — the wallet balance (store write only on change).
+      if (serverState.wallet !== undefined && useUIStore.getState().wallet !== serverState.wallet) {
+        useUIStore.getState().setWallet(serverState.wallet);
+      }
       // Living World P1a-2 — auto-deposit progress ring (quantised to 10 % so
       // the 2 s dwell costs ≤ 10 store writes, not one per snapshot).
       const dep = serverState.depositing === undefined ? null : Math.floor(serverState.depositing / 10) * 10;
@@ -5303,7 +5307,7 @@ export class ColyseusGameClient {
    */
   private applyLocalCargo(
     localId: string,
-    cargo: { goods: Partial<Record<string, number>>; credits: number; blueprints: string[] } | undefined,
+    cargo: { goods: Partial<Record<string, number>>; blueprints: string[] } | undefined,
     fitted?: string[],
   ): void {
     const s = useUIStore.getState();
@@ -5315,7 +5319,7 @@ export class ColyseusGameClient {
     );
     if (!cargoChanged(s.cargo, cargo) && s.cargoCapacity === capacity) return;
     s.setCargo(
-      cargo === undefined ? null : { goods: { ...cargo.goods }, credits: cargo.credits, blueprints: cargo.blueprints.length },
+      cargo === undefined ? null : { goods: { ...cargo.goods }, blueprints: cargo.blueprints.length },
       capacity,
     );
   }

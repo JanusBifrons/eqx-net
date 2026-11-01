@@ -25,8 +25,8 @@ function setup(component: string[] = []) {
     holdStore, registry, sectorKey: () => 's',
     componentOf: (id) => (component.includes(id) ? component : [id]),
   });
-  const ship = (goods: Record<string, number>, credits = 0) =>
-    holdStore.put({ holderUid: 'ship-1', holderType: 'ship', ownerId: 'p1', sectorKey: null, x: null, y: null, hold: { goods, credits, blueprints: [] }, expiresAt: null });
+  const ship = (goods: Record<string, number>) =>
+    holdStore.put({ holderUid: 'ship-1', holderType: 'ship', ownerId: 'p1', sectorKey: null, x: null, y: null, hold: { goods, blueprints: [] }, expiresAt: null });
   return { svc, holdStore, registry, ops, ship };
 }
 
@@ -40,11 +40,10 @@ describe('StorageService (P1a-2)', () => {
     const t = setup();
     const cap = rec('c', 'capital', 0, 0);
     t.registry.add(cap);
-    t.ship({ minerals: 50, salvage: 7 }, 30);
+    t.ship({ minerals: 50, salvage: 7 });
     t.ops.length = 0;
     const moved = t.svc.deposit('ship-1', 'p1', cap);
     expect(moved.goods.salvage).toBe(7);
-    expect(moved.credits).toBe(30);
     expect(cap.minerals).toBe(50);
     expect(cap.hold!.goods.salvage).toBe(7);
     expect(t.holdStore.get('ship-1')).toBeUndefined();
@@ -76,7 +75,7 @@ describe('StorageService (P1a-2)', () => {
 
   it('refine turns network salvage into Capital minerals', () => {
     const cap = rec('c', 'capital', 0, 0);
-    const bay = rec('b', 'cargo_bay', 100, 0, { hold: { goods: { salvage: 5 }, credits: 0, blueprints: [] } });
+    const bay = rec('b', 'cargo_bay', 100, 0, { hold: { goods: { salvage: 5 }, blueprints: [] } });
     const t = setup(['c', 'b']);
     t.registry.add(cap);
     t.registry.add(bay);
@@ -88,12 +87,11 @@ describe('StorageService (P1a-2)', () => {
   it('restore overlays the holds row (bank → minerals, rest → hold)', () => {
     const t = setup();
     const cap = rec('c', 'capital', 0, 0);
-    t.holdStore.hydrate([{ holderUid: cap.uid!, holderType: 'structure', ownerId: 'p1', sectorKey: 's', x: 0, y: 0, hold: { goods: { minerals: 900, alloy: 3 }, credits: 50, blueprints: [] }, expiresAt: null }]);
+    t.holdStore.hydrate([{ holderUid: cap.uid!, holderType: 'structure', ownerId: 'p1', sectorKey: 's', x: 0, y: 0, hold: { goods: { minerals: 900, alloy: 3 }, blueprints: [] }, expiresAt: null }]);
     t.svc.restore(cap);
     expect(cap.minerals).toBe(900);
     expect(cap.hold!.goods.alloy).toBe(3);
     expect(cap.hold!.goods.minerals).toBeUndefined();
-    expect(cap.hold!.credits).toBe(50);
   });
 
   it('flushDirty persists only changed storage; takeForSpill empties + deletes the row', () => {

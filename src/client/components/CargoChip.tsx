@@ -84,13 +84,11 @@ export function CargoChip(): JSX.Element | null {
           data-testid="cargo-chip"
           data-cargo-weight={weight}
           data-cargo-capacity={capacity}
-          data-cargo-credits={cargo.credits}
           data-cargo-fill={fill}
           sx={CHIP_SX}
           onClick={() => setOpen((o) => !o)}
         >
           <span style={{ color: FILL_COLOR[fill] }}>▣ {weight}/{capacity}</span>
-          <span style={{ color: '#ffd060' }}>¢{cargo.credits.toLocaleString()}</span>
           {cargo.blueprints > 0 && <span style={{ color: '#ffc83a' }}>★{cargo.blueprints}</span>}
         </Box>
       )}

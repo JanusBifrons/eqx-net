@@ -71,7 +71,7 @@ describe('SectorRoom integration — blueprints (P5)', () => {
     cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 150, y: 0 });
     expect(await until(() => [...internal.structureRegistry.all()].some((s) => s.owner === pid), 5000)).toBe(true);
     const cap = [...internal.structureRegistry.all()].find((s) => s.owner === pid)!;
-    cap.hold = { goods: {}, credits: 0, blueprints: ['bp-reinforced-hull', 'bp-missile-rack'] };
+    cap.hold = { goods: {}, blueprints: ['bp-reinforced-hull', 'bp-missile-rack'] };
     const capEid = internal.swarmRegistry.get(cap.id)!.entityId;
 
     // A blueprint the storage doesn't have is refused.

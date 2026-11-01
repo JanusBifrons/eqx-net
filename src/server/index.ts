@@ -31,6 +31,9 @@ import {
   getPersistence,
   getHoldStore,
   getPlayerShipStore,
+  getWallet,
+  initWallet,
+  migrateLegacyHoldCredits,
 } from './db/PersistenceWorker.js';
 import { getUser } from './auth/AuthService.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
@@ -1078,6 +1081,13 @@ async function main(): Promise<void> {
   const identity = initAccountPlayerRegistry();
   logger.info(identity, 'Account-bound player identity hydrated + merged');
 
+  // Economy v2 W1 — the virtual wallet (credits are never in holds). Hydrate
+  // AFTER the identity merge (rows fold onto canonical ids), then move any
+  // pre-wallet hold credits into their owners' wallets (one-time, idempotent).
+  const { hydrated: walletsHydrated } = initWallet();
+  const migrated = migrateLegacyHoldCredits();
+  logger.info({ wallets: walletsHydrated, ...migrated }, 'Wallets hydrated (+ legacy hold credits migrated)');
+
   // Phase 8 — eagerly instantiate each galaxy room so they hydrate from
   // snapshots at boot (not on first traveller) and so future transit
   // reservations always find a live destination. Sequential await: the
@@ -1217,9 +1227,9 @@ async function main(): Promise<void> {
     // P4c — the Contracts board reads the live elites + event.
     const ed = eliteDirector;
     const evd = eventDirector;
-    // P4c-2 — player bounties: escrow holds + the roster/auth for the rules.
-    const bounties = new BountyBoard(getHoldStore, {
-      userIdOf: (pid) => getPlayerShipStore().listByPlayer(pid).find((r) => r.userId !== null)?.userId ?? null,
+    // P4c-2 — player bounties: paid from the wallet, the board persisted as
+    // one economy-state record (economy v2 W1).
+    const bounties = new BountyBoard(getWallet(), getPersistence, {
       maxShipLevel: (pid) => getPlayerShipStore().listByPlayer(pid).reduce((m, r) => Math.max(m, r.level), 0),
       nameOf: (pid) => {
         const uid = getPlayerShipStore().listByPlayer(pid).find((r) => r.userId !== null)?.userId ?? null;
@@ -1228,6 +1238,10 @@ async function main(): Promise<void> {
       },
       lastSectorOf: (pid) => getPlayerShipStore().listByPlayer(pid)[0]?.lastSectorKey ?? null,
     });
+    const bountyRow = db
+      .prepare("SELECT payload_json FROM economy_state WHERE key = 'bounties'")
+      .get() as { payload_json: string } | undefined;
+    bounties.hydrate(bountyRow?.payload_json);
     setBountyBoard(bounties);
     setContractsProvider({ elites: () => ed.elites(), activeEvent: () => evd.activeEvent(), bounties: () => bounties.open() });
     livingWorldDirector.start();
@@ -1257,6 +1271,7 @@ async function main(): Promise<void> {
   const econ = hydrateEconomyStore(economyStore, (sql) => db.prepare(sql).all());
   tradeDirector = new TradeDirector(galaxyRooms, economyStore, getHoldStore(), {
     push: (pid, title, body, tag) => pushNotifier.notifyTrade(pid, title, body, tag),
+    wallet: getWallet(),
   });
   tradeDirector.start();
   setTradeSink(tradeDirector);
