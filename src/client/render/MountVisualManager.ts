@@ -99,6 +99,15 @@ const BARREL_LENGTH = MUZZLE_CLEARANCE;
 
 export class MountVisualManager {
   private readonly clusters = new Map<string, MountCluster>();
+  /** Turret aim-guide lines. Off for showcase capture (`?cleanworld=1`). */
+  private aimLinesVisible = true;
+
+  setAimLinesVisible(visible: boolean): void {
+    this.aimLinesVisible = visible;
+    for (const c of this.clusters.values()) {
+      for (const m of c.perMount.values()) m.aimLine.visible = visible;
+    }
+  }
 
   /**
    * Ensure a mount-visual cluster exists for the given ship and is parented
@@ -176,6 +185,7 @@ export class MountVisualManager {
       for (const mount of mounts) {
         const turret = buildTurretGfx(mount, color);
         const aimLine = buildAimLineGfx(mount, color);
+        aimLine.visible = this.aimLinesVisible;
         // Position in ship-local space. Pixi-up convention: ship-forward is
         // −y, so we flip Y when laying out the local offset.
         turret.x = mount.localX;

@@ -75,7 +75,14 @@ export class LabelManager {
   /** Reused per-frame to avoid allocating a fresh Set every update. */
   private readonly seen = new Set<string>();
 
-  constructor(parent: Container) {
+  /**
+   * @param showDroneLabels NPC callsigns (`AI 00F`). Off for showcase capture
+   *   (`?cleanworld=1`) — player name labels always render.
+   */
+  constructor(
+    parent: Container,
+    private readonly showDroneLabels = true,
+  ) {
     this.container = new Container();
     // Labels render on top of everything else in this container hierarchy.
     parent.addChild(this.container);
@@ -95,7 +102,7 @@ export class LabelManager {
     }
 
     // Drones — kind === 1. Asteroids skipped.
-    if (mirror.swarm) {
+    if (mirror.swarm && this.showDroneLabels) {
       for (const [entityId, sw] of mirror.swarm) {
         if (sw.kind !== 1) continue;
         const key = `d:${entityId}`;

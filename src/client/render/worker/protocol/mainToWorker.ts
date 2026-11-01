@@ -6,6 +6,7 @@
 
 import type { BaseRenderDescriptor, RenderMirror, WarpCenter } from '@core/contracts/IRenderer';
 import type { EffectQuality } from '@core/contracts/IEffects';
+import type { CameraCue } from '@core/contracts/cameraScript';
 import type { WarpParams } from './warpParams.js';
 import type { SerialisedPointerEvent, SerialisedWheelEvent } from './serialisedEvents.js';
 import type { SectorLiveState } from '../../../../shared-types/galaxySnapshot.js';
@@ -224,6 +225,16 @@ export interface GlideCameraMsg {
 }
 
 /**
+ * Cinematic camera — play a cue script (`null` = stop, hand back to gameplay).
+ * Drives `PixiRenderer.setCameraScript` → `CameraDirector`. Posted once per
+ * script, never per frame. See docs/architecture/cinematic-camera.md.
+ */
+export interface SetCameraScriptMsg {
+  type: 'SET_CAMERA_SCRIPT';
+  cues: readonly CameraCue[] | null;
+}
+
+/**
  * Phase 5 — set the spectator WASD free-pan velocity (SCREEN px/sec). Posted on
  * a key state change, NOT per frame; the worker `Camera.tick` integrates it.
  * Drives `PixiRenderer.setPanVelocity` → `Camera.setPanVelocity`.
@@ -355,6 +366,7 @@ export type MainToWorkerMsg =
   | SetRadarSuppressedMsg
   | SetBasesMsg
   | GlideCameraMsg
+  | SetCameraScriptMsg
   | PanCameraMsg
   | SetDiagMarkersMsg
   | TriggerEffectMsg

@@ -208,6 +208,13 @@ export class HaloRadar {
     this.spectating = active;
   }
 
+  /** Cinematic camera script active (CameraDirector) — also camera-relative,
+   *  since the framed subject may not be the local ship. */
+  private cameraRelative = false;
+  setCameraRelative(active: boolean): void {
+    this.cameraRelative = active;
+  }
+
   /** In transit / arriving → clear the radar (the mirror holds the OLD sector).
    *  Deliberately NOT during the spool-up: the player can still be attacked. */
   setSuppressed(suppressed: boolean): void {
@@ -235,7 +242,7 @@ export class HaloRadar {
     const local = localId ? mirror.ships.get(localId) : undefined;
     camera.centerInto(this.camCentre);
     const hasRef = resolveRadarReference(
-      this.spectating,
+      this.spectating || this.cameraRelative,
       local ? local.x : null,
       local ? local.y : null,
       this.camCentre.x,
