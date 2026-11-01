@@ -13,7 +13,9 @@ import { COMBINE_COUNT, COPY_MAX_RUNS } from '../research.js';
 const entityId = z.number().int().nonnegative();
 const uid = z.string().min(1).max(80);
 
-export const LabQuerySchema = z.object({ entityId }).strict();
+// Every client message carries its `type` (the client's send() adds it); a
+// strict schema without it rejects every real request (tradeClientWireParity).
+export const LabQuerySchema = z.object({ type: z.literal('lab_query'), entityId }).strict();
 export type LabQuery = z.infer<typeof LabQuerySchema>;
 
 export const LabJobSpecSchema = z.discriminatedUnion('kind', [
@@ -22,10 +24,10 @@ export const LabJobSpecSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('combine'), uids: z.array(uid).length(COMBINE_COUNT) }).strict(),
 ]);
 
-export const LabStartSchema = z.object({ entityId, job: LabJobSpecSchema }).strict();
+export const LabStartSchema = z.object({ type: z.literal('lab_start'), entityId, job: LabJobSpecSchema }).strict();
 export type LabStart = z.infer<typeof LabStartSchema>;
 
-export const LabCancelSchema = z.object({ entityId }).strict();
+export const LabCancelSchema = z.object({ type: z.literal('lab_cancel'), entityId }).strict();
 export type LabCancel = z.infer<typeof LabCancelSchema>;
 
 /** One blueprint as the lab panel shows it. */

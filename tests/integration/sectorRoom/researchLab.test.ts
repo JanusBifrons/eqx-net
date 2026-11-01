@@ -91,7 +91,7 @@ describe('SectorRoom integration — Research Lab (economy v2 W3)', () => {
     cr.onMessage('lab_state', (m: LabState) => replies.push(m));
     const ask = async (type: string, body: Record<string, unknown>): Promise<LabState> => {
       const n = replies.length;
-      cr.send(type, { entityId: labEid, ...body });
+      cr.send(type, { type, entityId: labEid, ...body });
       expect(await until(() => replies.length > n, 4000)).toBe(true);
       return replies[replies.length - 1]!;
     };
@@ -178,11 +178,11 @@ describe('SectorRoom integration — Research Lab (economy v2 W3)', () => {
     const labEid = internal.swarmRegistry.get(lab.id)!.entityId;
     const replies: LabState[] = [];
     cr.onMessage('lab_state', (m: LabState) => replies.push(m));
-    cr.send('lab_query', { entityId: labEid });
+    cr.send('lab_query', { type: 'lab_query', entityId: labEid });
     expect(await until(() => replies.length > 0, 4000)).toBe(true);
     expect(replies[0]).toMatchObject({ ok: false, blueprints: [] });
     // Malformed payloads are dropped (no reply).
-    cr.send('lab_start', { entityId: labEid, job: { kind: 'combine', uids: ['a'] } });
+    cr.send('lab_start', { type: 'lab_start', entityId: labEid, job: { kind: 'combine', uids: ['a'] } });
     await new Promise((res) => setTimeout(res, 300));
     expect(replies).toHaveLength(1);
   });
