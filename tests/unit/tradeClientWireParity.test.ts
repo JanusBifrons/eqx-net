@@ -24,6 +24,7 @@ import { AcceptOfferSchema, CancelDealSchema, SendGiftSchema } from '../../src/s
 import { InstallBlueprintSchema } from '../../src/shared-types/blueprints';
 import { PlaceBountySchema } from '../../src/shared-types/contracts';
 import { LabCancelSchema, LabQuerySchema, LabStartSchema } from '../../src/shared-types/messages/labMessages';
+import { CargoMoveSchema, CargoQuerySchema } from '../../src/shared-types/messages/cargoMessages';
 
 function lastAccepted(schema: ZodType, wireType: string): void {
   const m = sent[sent.length - 1]!;
@@ -52,6 +53,13 @@ describe('tradeClient senders match the server schemas', () => {
   it('place_bounty', () => {
     client.sendPlaceBounty({ targetPlayerId: 'p2', amount: 500 });
     lastAccepted(PlaceBountySchema, 'place_bounty');
+  });
+
+  it('cargo_query / cargo_move (C1)', () => {
+    client.sendCargoQuery(9);
+    lastAccepted(CargoQuerySchema, 'cargo_query');
+    client.sendCargoMove(9, 'take', { goods: { alloy: 3 }, packed: ['structure:smelter'], blueprints: ['bp-1'] });
+    lastAccepted(CargoMoveSchema, 'cargo_move');
   });
 
   it('lab_query / lab_start / lab_cancel', () => {

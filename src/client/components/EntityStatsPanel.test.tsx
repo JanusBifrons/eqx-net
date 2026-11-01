@@ -279,6 +279,28 @@ describe('EntityStatsPanel', () => {
     expect(screen.getByTestId('entity-stats-panel')).not.toHaveAttribute('data-conn-count');
   });
 
+  it('C1: a BUILT storage structure offers Open cargo (anyone at all); a solar does not', () => {
+    const swarm = new Map([
+      [8, { kind: 2, shipKind: 'cargo_bay', radius: 40, x: 0, y: 0 }],
+      [9, { kind: 2, shipKind: 'solar', radius: 40, x: 0, y: 0 }],
+    ]);
+    const structures = new Map([
+      [8, { powered: true, netPower: 0, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: 'someone-else' }],
+      [9, { powered: true, netPower: 30, connTo: [], built: true, buildPct: 1, deconstructPct: 0 }],
+    ]);
+    setGameClient(fakeClient({ structures, swarm }));
+    applySelectionStats({ id: '8', name: 'Cargo Bay', hp: 300, hpMax: 300 });
+    useUIStore.setState({ selectedEntityId: 'swarm-8', selectedEntityKind: 'structure' });
+    const { unmount } = render(<EntityStatsPanel />);
+    expect(screen.getByTestId('cargo-open-toggle')).toBeInTheDocument();
+    unmount();
+    resetSelectionStats();
+    applySelectionStats({ id: '9', name: 'Solar Panel', hp: 300, hpMax: 300 });
+    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.queryByTestId('cargo-open-toggle')).toBeNull();
+  });
+
   // ── WS-9/R2.23 — asteroids + lingering hulls are selectable, read from the
   // mirror (no server channel), with no hull bar. ──
   it('an asteroid shows a SIZE readout (untouched rock), no hull bar (R2.23)', () => {

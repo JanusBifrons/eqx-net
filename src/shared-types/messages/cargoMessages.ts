@@ -3,9 +3,9 @@
  *
  * A pilot flies up to a storage structure and opens its cargo. The server
  * decides whether it opens (`relationOf` → `cargoOpensFor`, range, a live ship)
- * and replies with `cargo_state`. The structure pane is rebuilt from
- * `cargo_state` replies ONLY (#16); the ship pane is the own-ship snapshot
- * cargo slice. Every move replies with a fresh `cargo_state` carrying a
+ * and replies with `cargo_state`. Both panes (the structure and the pilot's
+ * ship) are rebuilt from `cargo_state` replies ONLY (#16), so they always
+ * agree. Every move replies with a fresh `cargo_state` carrying a
  * player-facing `message`.
  */
 import { z } from 'zod';
@@ -29,12 +29,13 @@ export const CargoItemsSchema = z
   .strict();
 export type CargoItems = z.infer<typeof CargoItemsSchema>;
 
-export const CargoQuerySchema = z.object({ entityId }).strict();
+// Client messages carry their `type` (tradeClient's send() adds it).
+export const CargoQuerySchema = z.object({ type: z.literal('cargo_query'), entityId }).strict();
 export type CargoQuery = z.infer<typeof CargoQuerySchema>;
 
 /** `take` = structure → your ship; `put` = your ship → structure. */
 export const CargoMoveSchema = z
-  .object({ entityId, dir: z.enum(['take', 'put']), items: CargoItemsSchema })
+  .object({ type: z.literal('cargo_move'), entityId, dir: z.enum(['take', 'put']), items: CargoItemsSchema })
   .strict();
 export type CargoMove = z.infer<typeof CargoMoveSchema>;
 
@@ -49,6 +50,9 @@ export const CargoStateSchema = z
     /** Goods-hold weight used / capacity (the bank is extra). */
     used: z.number().nonnegative(),
     capacity: z.number().nonnegative(),
+    /** The pilot's ship hold and its capacity, when open. */
+    ship: HoldSchema.nullable(),
+    shipCapacity: z.number().nonnegative(),
     /** The verdict of the action this replies to, or why it's locked. */
     message: z.string().max(200).optional(),
     ok: z.boolean().optional(),

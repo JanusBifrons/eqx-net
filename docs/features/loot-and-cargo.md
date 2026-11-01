@@ -162,7 +162,7 @@ Plan soft-leaping-truffle v3, phase C1. Auto-deposit banks everything you carry;
 
 **A withdrawal sticks.** After a manual move, auto-deposit stays off for that pilot until they fly out of deposit range of their storage (`SectorRoom.manualCargo`). Otherwise anything you took from your own storage would be banked straight back 2 s later.
 
-**Wire (#16).** `cargo_query` / `cargo_move` → `cargo_state` (`shared-types/messages/cargoMessages.ts`). The structure pane is rebuilt from `cargo_state` only; the ship pane is the own-ship snapshot cargo slice. The inspector's hold readout (`entity_stats`) shows to anyone the cargo would open for. Each move is audited as `cargo_moved`.
+**Wire (#16).** `cargo_query` / `cargo_move` → `cargo_state` (`shared-types/messages/cargoMessages.ts`). `cargo_state` carries BOTH the structure's hold and the pilot's ship hold, so the two panes always agree; the panel is rebuilt from it only. The inspector's hold readout (`entity_stats`) shows to anyone the cargo would open for. Each move is audited as `cargo_moved`.
 
 **Lock:** `tests/integration/sectorRoom/cargoAccess.test.ts`:
 - take and put move items;
@@ -172,7 +172,19 @@ Plan soft-leaping-truffle v3, phase C1. Auto-deposit banks everything you carry;
 
 Unit locks: `hold.test.ts` (`extractRequested`) and `StorageService.test.ts` (cargo access).
 
-**Next:** C1b, the cargo panel UI. C1c, holds on every structure kind and NPC ship holds rolled from a seed.
+**The panel (C1b).** Select any BUILT storage structure; the inspector shows an **Open cargo** button (`cargo-open-toggle`). It opens `CargoPanel`, which asks every second while open:
+- **Here:** the structure's contents, each row with Take 1 / Take all.
+- **Aboard:** your hold, each row with Put 1 / Put all.
+- **Locked or far:** it shows why.
+
+Rows come from the pure `cargoRows` (goods by name, "Smelter (packed)", "Smelter blueprint (3 runs)"; never ids).
+
+Locks:
+- `cargoRows.test.ts`, `CargoPanel.test.tsx`, `EntityStatsPanel.test.tsx`;
+- `tests/unit/tradeClientWireParity.test.ts`: the real senders' payloads parse with the server schemas;
+- the feature-tier E2E `tests/e2e/cargo-panel.spec.ts`: place a Capital in `trade-test`, open it, take 1 alloy, put it back.
+
+**Next (C1c):** holds on every structure kind (with "is a deposit target" separate), and NPC ship holds rolled from a seed.
 
 ## Tests
 
