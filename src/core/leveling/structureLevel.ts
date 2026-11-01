@@ -27,6 +27,7 @@
  * invariant #14's hot-loop ban does not bite). Same inputs ⇒ same outputs on any
  * caller, so the server and any future client preview agree.
  */
+import type { GoodId } from '../../shared-types/goods.js';
 
 /**
  * The maximum structure level. A structure at the cap can't be upgraded further
@@ -167,4 +168,31 @@ export function effectiveStructureMaxConnections(
   level: number | undefined,
 ): number {
   return baseMaxConnections + (clampStructureLevel(level) - 1) * STRUCTURE_CONNECTIONS_PER_LEVEL;
+}
+
+/**
+ * Goods bill for upgrading to level 3 and above (plan soft-leaping-truffle v3,
+ * P1; user ruling 2026-11-01: level 3+ upgrades cost refined goods on top of
+ * minerals). Upgrading from `level` to `level + 1`:
+ *  - to level 2: minerals only (empty bill);
+ *  - to level 3: alloy;
+ *  - to level 4: alloy + components;
+ *  - to level 5: components + machinery.
+ * Quantities scale with the kind's base `constructionCost`, rounded up, so a
+ * dearer structure needs more. Zero-cost kinds (the pre-built Capital) use a
+ * floor of 1 per good so their high levels still need industry. Empty at the
+ * cap. Wired into the upgrade build phase in P2.
+ */
+export function structureUpgradeGoods(
+  baseConstructionCost: number,
+  level: number,
+): Partial<Record<GoodId, number>> {
+  if (!canUpgradeStructure(level)) return {};
+  const target = clampStructureLevel(level) + 1;
+  const base = Math.max(0, baseConstructionCost);
+  const q = (per: number) => Math.max(1, Math.ceil(base / per));
+  if (target <= 2) return {};
+  if (target === 3) return { alloy: q(60) };
+  if (target === 4) return { alloy: q(40), components: q(200) };
+  return { components: q(120), machinery: q(600) };
 }
