@@ -257,7 +257,8 @@ export const INCURSION_BLUEPRINT_CHANCE = 0.5;
 /** A dropped blueprint is an ORIGINAL this rarely (else a copy). */
 export const ORIGINAL_DROP_CHANCE = 0.05;
 
-function uidFrom(rng: () => number): string {
+/** A fresh blueprint instance uid from `rng` (never shown). */
+export function uidFrom(rng: () => number): string {
   return `bp-${Math.floor(rng() * 0x7fffffff).toString(36)}${Math.floor(rng() * 0x7fffffff).toString(36)}`;
 }
 

@@ -30,6 +30,7 @@ import {
 import { mergeAccountPlayerIds, type AccountMergeResult } from '../identity/accountPlayerMerge.js';
 import { HoldStore, type HoldRecord } from '../cargo/HoldStore.js';
 import { Wallet } from '../economy/Wallet.js';
+import { LAB_JOBS_STATE_KEY, LabBoard } from '../economy/LabBoard.js';
 import { migrateLegacyCredits } from '../economy/walletMigration.js';
 import { legacyHoldCredits, parseHoldJson } from '../../shared-types/goods.js';
 
@@ -168,6 +169,33 @@ export function initWallet(): { hydrated: number } {
   }
   getWallet().hydrate(rows.map((r) => ({ playerId: canonicalPlayerId(r.player_id), balance: r.balance })));
   return { hydrated: rows.length };
+}
+
+// ── Economy v2 W3 — the running Research Lab jobs ─────────────────────
+
+let _labBoard: LabBoard | null = null;
+
+export function getLabBoard(): LabBoard {
+  if (_labBoard === null) _labBoard = new LabBoard({ persistence: () => _sink });
+  return _labBoard;
+}
+
+/** Test seam — replace the board with an injected one. */
+export function setLabBoard(b: LabBoard): void {
+  _labBoard = b;
+}
+
+/** Boot hydrate of the `lab_jobs` economy-state row. */
+export function initLabBoard(): { jobs: number } {
+  let row: { payload_json: string } | undefined;
+  try {
+    row = db.prepare('SELECT payload_json FROM economy_state WHERE key = ?').get(LAB_JOBS_STATE_KEY) as typeof row;
+  } catch (err) {
+    _hydrateHealth.selectFailures += 1;
+    _hydrateLogger.warn({ err, table: 'economy_state' }, 'lab jobs hydrate SELECT failed (treating as empty)');
+  }
+  getLabBoard().hydrate(row?.payload_json);
+  return { jobs: getLabBoard().all().length };
 }
 
 /** Boot hydrate of the unified `holds` table (read-only main-thread connection). */

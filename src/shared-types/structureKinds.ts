@@ -62,6 +62,8 @@ export const StructureKindIdSchema = z.enum([
   'deep_core_rig',
   'ore_processing_complex',
   'assembly_plant',
+  // Economy v2 W3 (plan peppy-jumping-pinwheel) — APPEND ONLY.
+  'research_lab',
 ]);
 export type StructureKindId = z.infer<typeof StructureKindIdSchema>;
 
@@ -695,6 +697,22 @@ export const ASSEMBLY_PLANT: StructureKind = {
   color: 0xffd166,
 };
 
+export const RESEARCH_LAB: StructureKind = {
+  id: 'research_lab',
+  displayName: 'Research Lab',
+  description: 'Researches, copies and combines blueprints held in your base storage (needs power). A leaf node.',
+  radius: 250, // bounding circle of the 400×300 footprint
+  footprint: { w: 400, h: 300 },
+  maxHealth: 1800,
+  maxConnections: 1,
+  isHub: false,
+  powerOutput: 0,
+  powerConsumption: 80,
+  storageCapacity: 0,
+  constructionCost: 1500,
+  color: 0x9b7bff,
+};
+
 export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   CAPITAL,
   CONNECTOR,
@@ -723,6 +741,8 @@ export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   DEEP_CORE_RIG,
   ORE_PROCESSING_COMPLEX,
   ASSEMBLY_PLANT,
+  // Economy v2 W3 — APPENDED. Never reorder.
+  RESEARCH_LAB,
 ]);
 
 /** Id-keyed lookup, derived from the canonical list (the list is the source of
@@ -820,6 +840,7 @@ export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
   deep_core_rig: 4,
   ore_processing_complex: 4,
   assembly_plant: 4,
+  research_lab: 4,
 };
 
 /**

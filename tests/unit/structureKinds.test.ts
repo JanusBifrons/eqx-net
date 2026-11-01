@@ -43,6 +43,7 @@ describe('structureKinds catalogue', () => {
       'deep_core_rig',
       'ore_processing_complex',
       'assembly_plant',
+      'research_lab', // economy v2 W3 — appended at the tail
     ]);
   });
 
