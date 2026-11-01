@@ -50,7 +50,9 @@ describe('SectorRoom integration — named elites (P4a)', () => {
     pilot.onMessage('world_notice', (n: WorldNotice) => notices.push(n));
 
     elites = new EliteDirector(rooms, {
-      maxElites: 1, firstSector: 'greenfall', kind: 'gunship', respawnMs: 500, nowMs: () => clock.now,
+      // Fixed rng ⇒ the elite spawns NE of the centre, inside the pilot's
+      // interest window (a random bearing can land outside it).
+      maxElites: 1, firstSector: 'greenfall', kind: 'gunship', respawnMs: 500, nowMs: () => clock.now, rng: () => 0.1,
     });
     elites.start();
 
