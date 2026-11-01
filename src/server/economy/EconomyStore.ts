@@ -15,6 +15,7 @@ import {
   HOURLY_TRADE_VALUE_CAP,
   REP_MAX,
   REP_MIN,
+  tradeSectorKey,
   type EconAllegiance,
   type PlayerEconomyView,
   type TradeDealView,
@@ -225,7 +226,8 @@ export function dealView(d: TradeDeal): TradeDealView {
     qty: d.qty,
     credits: d.credits,
     allegiance: d.allegiance,
-    sectorKey: d.sectorKey,
+    // The view carries the SECTOR key only (never a testMode `#roomId`).
+    sectorKey: tradeSectorKey(d.sectorKey),
     networkUid: d.networkUid,
     unitPrice: d.unitPrice,
     priceBandPct: d.priceBandPct,

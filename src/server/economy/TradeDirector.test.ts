@@ -289,7 +289,9 @@ describe('TradeDirector', () => {
     const hauler = t.arrive();
     t.dir.onHaulerDamaged(hauler, null);
     t.dir.onHaulerDamaged(hauler, null);
-    expect(t.room.notices.filter((n) => n.event === 'under_fire')).toHaveLength(1);
+    const fire = t.room.notices.filter((n) => n.event === 'under_fire');
+    expect(fire).toHaveLength(1);
+    expect(fire[0]!.message).not.toContain('#'); // no testMode room id in player text
     // An NPC raid records no pirate (no standing lost by anyone).
     expect([...t.store.allDeals()][0]!.run!.attackers).toEqual([]);
     t.stop();

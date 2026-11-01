@@ -10,6 +10,7 @@ import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { GOOD_DEFS, type GoodId } from '../../shared-types/goods.js';
 import type { TradeHistoryEntry, TradeNotice } from '../../shared-types/economy.js';
 import type { TradeToastTone } from '../state/storeTypes.js';
+import { getSector } from '../../core/galaxy/galaxy.js';
 
 /** One of the player's storage structures, for the base picker. */
 export interface OwnStorage {
@@ -39,7 +40,23 @@ export function ownStorages(
     out.push({ entityId, kind, label: def.displayName });
   }
   out.sort((a, b) => (a.kind === 'capital' ? -1 : b.kind === 'capital' ? 1 : a.entityId - b.entityId));
+  // Player-facing labels never show an entity id (client CLAUDE.md "no raw
+  // ids"): a kind that appears more than once is numbered 1, 2, …
+  const total = new Map<string, number>();
+  for (const s of out) total.set(s.kind, (total.get(s.kind) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  for (const s of out) {
+    if ((total.get(s.kind) ?? 0) < 2) continue;
+    const n = (seen.get(s.kind) ?? 0) + 1;
+    seen.set(s.kind, n);
+    s.label = `${s.label} ${n}`;
+  }
   return out;
+}
+
+/** A sector's player-facing name (galaxy name, else the key). */
+export function sectorName(key: string): string {
+  return getSector(key)?.name ?? key;
 }
 
 /** Toast colour + whether it counts toward the rail badge. */

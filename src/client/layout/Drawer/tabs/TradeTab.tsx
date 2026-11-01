@@ -22,7 +22,7 @@ import { getGameClient } from '../../../net/clientSingleton';
 import { loadStoredPlayerId } from '../../../identity/token';
 import { loadToken } from '../../../auth/tokenStorage';
 import { fetchEconomy, fetchOffers, saveTradeLastSeen } from '../../../net/tradeApi';
-import { formatPrice, goodName, ownStorages, repFill, repLabel, type OwnStorage } from '../../../net/tradeView';
+import { formatPrice, goodName, ownStorages, repFill, repLabel, sectorName, type OwnStorage } from '../../../net/tradeView';
 import { sendAcceptOffer, sendCancelDeal, sendGift } from '../../../net/tradeClient';
 import {
   ECON_ALLEGIANCES,
@@ -141,7 +141,7 @@ export function TradeTab(): JSX.Element {
             data-testid="trade-base-picker"
           >
             {storages.map((s) => (
-              <MenuItem key={s.entityId} value={s.entityId} sx={{ fontSize: 11 }}>{s.label} #{s.entityId}</MenuItem>
+              <MenuItem key={s.entityId} value={s.entityId} sx={{ fontSize: 11 }}>{s.label}</MenuItem>
             ))}
           </Select>
         )}
@@ -195,7 +195,7 @@ export function TradeTab(): JSX.Element {
                     {d.state}
                     {d.state === 'scheduled' && d.nextVisitAtMs ? ` · next visit ${new Date(d.nextVisitAtMs).toLocaleTimeString()}` : ''}
                     {d.visitsLeft !== null && d.recurrenceMin ? ` · ${d.visitsLeft} left` : ''}
-                    {` · ${d.sectorKey}`}
+                    {` · ${sectorName(d.sectorKey)}`}
                   </Typography>
                 </Box>
                 {active && (

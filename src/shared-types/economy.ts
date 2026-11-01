@@ -49,6 +49,16 @@ export const REP_PIRACY_HIT = -200; // per run, per player who damaged the haule
 export const REP_SELF_RAID = -500; // the deal owner damaged their own hauler
 export const REP_ATTACK_ROBOT = -100; // a player hit a robot (ends any truce)
 
+/**
+ * The internal key the trade system knows a room by → the sector key a player
+ * may see. testMode rooms are registered as `<sectorKey>#<roomId>`; the room id
+ * part must never reach player-facing text (client CLAUDE.md "no raw ids").
+ */
+export function tradeSectorKey(key: string): string {
+  const i = key.indexOf('#');
+  return i < 0 ? key : key.slice(0, i);
+}
+
 // ── Deals ───────────────────────────────────────────────────────────────────
 
 export const DEAL_KINDS = ['sell', 'buy', 'gift'] as const;

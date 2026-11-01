@@ -24,6 +24,14 @@ describe('ownStorages', () => {
     const list = ownStorages(structures, (id) => kinds[id], 'me');
     expect(list.map((s) => s.entityId)).toEqual([7, 5]);
     expect(list[0]!.label).toBe('Capital');
+    // Labels never carry an entity id.
+    for (const s of list) expect(s.label).not.toMatch(/\d{1,}$|#/);
+  });
+
+  it('numbers duplicate kinds instead of showing ids', () => {
+    const structures = new Map<number, StructureRenderState>([[3, st('me')], [4, st('me')]]);
+    const list = ownStorages(structures, () => 'cargo_bay', 'me');
+    expect(list.map((s) => s.label)).toEqual(['Cargo Bay 1', 'Cargo Bay 2']);
     expect(ownStorages(structures, (id) => kinds[id], null)).toEqual([]);
   });
 });

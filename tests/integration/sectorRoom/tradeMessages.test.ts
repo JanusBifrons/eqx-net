@@ -75,6 +75,14 @@ describe('SectorRoom integration — trade messages (P2)', () => {
       await new Promise((r) => setTimeout(r, 25));
     }
     expect(hauler).toBe(true);
+
+    // The "inbound" notice names the sector — never the testMode `#roomId`
+    // key the director knows this room by (no raw ids in player-facing text).
+    const iEnd = Date.now() + 3000;
+    while (Date.now() < iEnd && !notices.some((n) => n.event === 'inbound')) await new Promise((r) => setTimeout(r, 25));
+    const inbound = notices.find((n) => n.event === 'inbound');
+    expect(inbound?.message).toContain('trade-test');
+    expect(inbound?.message).not.toContain('#');
   });
 
   /**

@@ -34,10 +34,12 @@ import {
   REP_PARTIAL_FILL,
   REP_PIRACY_HIT,
   REP_SELF_RAID,
+  tradeSectorKey,
   type EconAllegiance,
   type TradeNotice,
   type TradeOffer,
 } from '../../shared-types/economy.js';
+import { getSector } from '../../core/galaxy/galaxy.js';
 import { cloneHold, emptyHold, isHoldEmpty } from '../../core/cargo/hold.js';
 import { applyFill, driftMarket, quoteBuy, quoteSell } from '../../core/economy/market.js';
 import { giftRepGain, robotTruce, tradersRefuse, waveIntervalFactor } from '../../core/economy/reputation.js';
@@ -354,7 +356,7 @@ export class TradeDirector implements TradeSink {
         const now = this.now();
         if (now - (this.underFireAt.get(haulerId) ?? -Infinity) >= this.opts.underFireThrottleMs) {
           this.underFireAt.set(haulerId, now);
-          this.notify(deal, 'under_fire', `Your trade hauler in ${deal.sectorKey} is under fire!`);
+          this.notify(deal, 'under_fire', `Your trade hauler in ${sectorLabel(deal.sectorKey)} is under fire!`);
         }
       }
       return;
@@ -494,7 +496,7 @@ export class TradeDirector implements TradeSink {
       this.store.saveDeal(next);
     }
     room!.setBotMoveTarget(haulerId, run.dockX, run.dockY);
-    this.notify(next, 'inbound', `A trade hauler is inbound to your base in ${deal.sectorKey}.`);
+    this.notify(next, 'inbound', `A trade hauler is inbound to your base in ${sectorLabel(deal.sectorKey)}.`);
     serverLogEvent('trade_run_start', { dealId: deal.dealId, haulerId, sectorKey: deal.sectorKey });
   }
 
@@ -698,6 +700,13 @@ export class TradeDirector implements TradeSink {
       this.push(deal.ownerId, title, message, `trade:${deal.dealId}`);
     }
   }
+}
+
+/** A sector's player-facing name (galaxy name, else the bare key — never the
+ *  testMode `#roomId` suffix). */
+function sectorLabel(key: string): string {
+  const k = tradeSectorKey(key);
+  return getSector(k)?.name ?? k;
 }
 
 function reject(message: string): TradeVerdict {
