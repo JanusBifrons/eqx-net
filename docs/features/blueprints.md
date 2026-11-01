@@ -135,6 +135,11 @@ are BOUGHT from NPC factions and traders, and some are LOOTED from ships.
     your storage and selling pays straight into your wallet. Each is one
     atomic group with the wallet change.
 
+  **Repacking:** taking down a structure that was placed from a packed item
+  gives the packed item back, at the same quality (EVE-style repackaging). It
+  goes into your storage in that base, or drops as a pod where the structure
+  stood if no storage is linked to it.
+
 ## Tests
 
 - `src/shared-types/blueprints.test.ts`:

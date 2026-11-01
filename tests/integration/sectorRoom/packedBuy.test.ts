@@ -18,7 +18,7 @@ import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { getHoldStore, getPersistence, getWallet } from '../../../src/server/db/PersistenceWorker.js';
 import { EconomyStore } from '../../../src/server/economy/EconomyStore.js';
-import { PACKED_HULL_OFFERS_ON_BOARD, TradeDirector } from '../../../src/server/economy/TradeDirector.js';
+import { PACKED_HULL_OFFERS_ON_BOARD, TRADER_PACKED_QUALITY, TradeDirector } from '../../../src/server/economy/TradeDirector.js';
 import { setTradeSink } from '../../../src/server/economy/tradeSink.js';
 import { buyCost } from '../../../src/core/economy/deals.js';
 import { quotePacked } from '../../../src/core/economy/market.js';
@@ -126,6 +126,13 @@ describe('SectorRoom integration — buying + placing packed structures (economy
     for (let i = 0; i < maxPulses && internal.structureRegistry.get(placed.id); i++) internal.pulseStructureGrid();
     expect(internal.structureRegistry.get(placed.id)).toBeUndefined();
     expect(capital.minerals).toBe(minerals);
+    // ...but it REPACKS: the same packed item (trader quality) comes back, into
+    // the base's storage if it was linked to it, else as a pod where it stood.
+    const back = [
+      ...(capital.hold?.packed ?? []),
+      ...getHoldStore().inSector(SECTOR, 'pod').flatMap((r) => r.hold.packed ?? []),
+    ].filter((it) => it.product === offer!.product);
+    expect(back).toEqual([{ product: offer!.product, quality: TRADER_PACKED_QUALITY }]);
   });
 
   it('a packed item in the builder’s ship hold works too', { timeout: 30_000 }, async () => {
@@ -140,8 +147,16 @@ describe('SectorRoom integration — buying + placing packed structures (economy
       hold: { goods: {}, blueprints: [], packed: [{ product: 'structure:missile_turret', quality: 40 }] }, expiresAt: null,
     }, false);
     const before = [...internal.structureRegistry.all()].length;
-    cr.send('place_structure', { type: 'place_structure', kind: 'missile_turret', x: 400, y: -900 });
+    // Far from any storage, so taking it down repacks it as a POD.
+    cr.send('place_structure', { type: 'place_structure', kind: 'missile_turret', x: 2500, y: -2500 });
     await until(() => [...internal.structureRegistry.all()].length === before + 1, 3000, 'placed from the ship hold');
     expect(getHoldStore().get(shipId)).toBeUndefined(); // the only item: the row is gone
+    const turret = [...internal.structureRegistry.all()].find((r) => r.kind === 'missile_turret')!;
+    expect(turret.packedQuality).toBe(40);
+    turret.isDeconstructing = true;
+    for (let i = 0; i < 50 && internal.structureRegistry.get(turret.id); i++) internal.pulseStructureGrid();
+    expect(internal.structureRegistry.get(turret.id)).toBeUndefined();
+    const pods = getHoldStore().inSector(SECTOR, 'pod').flatMap((r) => r.hold.packed ?? []);
+    expect(pods).toContainEqual({ product: 'structure:missile_turret', quality: 40 });
   });
 });
