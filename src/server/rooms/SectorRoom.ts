@@ -179,7 +179,8 @@ import { getPlayerShipStore, getHoldStore } from '../db/PersistenceWorker.js';
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { StorageService, structureUid, DEPOSIT_DWELL_TICKS, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
-import { isHoldEmpty } from '../../core/cargo/hold.js';
+import { cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto } from '../../core/cargo/hold.js';
+import { HARVESTER_CAPACITY } from '../livingworld/RobotTerritory.js';
 import { cargoCapacityForMaxHealth, HoldSchema, type Hold } from '../../shared-types/goods.js';
 import { rollLoot } from '../../shared-types/lootTables.js';
 // RosterFullError is handled inside RosterPersistence.ts
@@ -6254,6 +6255,20 @@ export class SectorRoom extends Room<SectorState> {
       c.x = pose.x;
       c.y = pose.y;
       c.capacity = cargoCapacityForMaxHealth(getShipKind(ship.kind).maxHealth);
+      c.npc = false;
+      visit(c);
+    }
+    // Living World P3b — robot HARVESTERS collect too (#17: a live swarm entity
+    // of kind robot-harvester; its hold is keyed by its swarm id).
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== 1 || rec.shipKind !== 'robot-harvester') continue;
+      const b = slotBase(rec.slot);
+      c.playerId = rec.id;
+      c.shipInstanceId = rec.id;
+      c.x = this.sabF32[b + SLOT_X_OFF]!;
+      c.y = this.sabF32[b + SLOT_Y_OFF]!;
+      c.capacity = HARVESTER_CAPACITY;
+      c.npc = true;
       visit(c);
     }
   }
@@ -6261,6 +6276,10 @@ export class SectorRoom extends Room<SectorState> {
   /** A pickup landed: tell the collector (UI accelerator — the authoritative
    *  cargo rides the own-ship snapshot slice) + audit. */
   private onLootCollected(c: LootCollector, moved: Hold, podId: string): void {
+    if (c.npc === true) {
+      auditEvent({ event: 'loot_collected', sector: this.sectorKey ?? undefined, podId, playerId: c.playerId, shipInstanceId: c.shipInstanceId, credits: moved.credits });
+      return;
+    }
     const sessionId = this.playerToSession.get(c.playerId);
     const client = sessionId !== undefined ? this.clients.find((cl) => cl.sessionId === sessionId) : undefined;
     if (client) {
@@ -6354,6 +6373,45 @@ export class SectorRoom extends Room<SectorState> {
     // a robot only cares about player attackers.
     if (hauler) sink.onHaulerDamaged(targetId, attacker);
     else if (attacker !== null) sink.onRobotDamaged(attacker);
+  }
+
+  // ── Living World P3b — harvester hooks (driven by RobotTerritory) ───────
+
+  nearestLootPod(x: number, y: number): { x: number; y: number } | null {
+    let best: { x: number; y: number } | null = null;
+    let bestD2 = Infinity;
+    for (const id of this.loot.podIds()) {
+      if (this.loot.isDerelict(id)) continue;
+      const rec = this.swarmRegistry.get(id);
+      if (rec == null) continue;
+      const b = slotBase(rec.slot);
+      const px = this.sabF32[b + SLOT_X_OFF]!;
+      const py = this.sabF32[b + SLOT_Y_OFF]!;
+      const d2 = (px - x) ** 2 + (py - y) ** 2;
+      if (d2 < bestD2) { bestD2 = d2; best = { x: px, y: py }; }
+    }
+    return best;
+  }
+
+  holdWeight(uid: string): number {
+    const rec = getHoldStore().get(uid);
+    return rec ? holdWeight(rec.hold) : 0;
+  }
+
+  bankHold(fromUid: string, toUid: string): number {
+    const store = getHoldStore();
+    const from = store.get(fromUid);
+    if (from === undefined || isHoldEmpty(from.hold)) return 0;
+    const to = store.get(toUid);
+    const merged = to ? cloneHold(to.hold) : emptyHold();
+    const moved = holdWeight(from.hold);
+    mergeInto(merged, cloneHold(from.hold));
+    store.commit(
+      [{ holderUid: toUid, holderType: 'hauler', ownerId: null, sectorKey: this.sectorKey, x: null, y: null, hold: merged, expiresAt: null }],
+      [fromUid],
+      this.sectorKey !== null,
+    );
+    return moved;
   }
 
   // ── Living World P2 — TradeRoom hooks (driven by the TradeDirector) ──────
