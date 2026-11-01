@@ -118,6 +118,11 @@ Update this section when a threshold is set.
 
 ---
 
+## Structure network at base scale (plan soft-leaping-truffle v2)
+
+- **Generated structures use the real rules.** `StructurePlacementSubsystem.place(…, { skipAutoConnect: true })` + `structureGridView.connectExplicit` (re-checks `canConnect` against the live adjacency) let a generated base supply its INTENDED graph — greedy auto-connect would e.g. link gate pylons and close a gate. Players never pass `skipAutoConnect`.
+- **Measured cost today (A0, citadel ≈ 448 structures):** the `structures[]` snapshot slice is ~79 B/row sent to EVERY client in EVERY 20 Hz snapshot → 35 KB/snapshot, ~689 KB/s per client (a 46-structure outpost already adds 69 KB/s, more than the whole per-client baseline). The turret tick is O(turrets × all swarm entities): 5 ms median / 12.6 ms max per 10 Hz call. A route recompute after any topology change costs ~0.94 ms PER ROUTE. Budgets: `src/shared-types/structureBudgets.ts`; ledger + fixes (A1/A2): [docs/architecture/structure-network-scale.md](../../docs/architecture/structure-network-scale.md). **Don't add structure-heavy content (NPC bases) before A1/A2 land.**
+
 ## Procedural bases (`src/server/bases/BaseSubsystem.ts`, plan soft-leaping-truffle)
 
 - **The `bases` room-definition option** (server-authored, so NOT testMode-gated) → `BaseSubsystem.add`. That call:

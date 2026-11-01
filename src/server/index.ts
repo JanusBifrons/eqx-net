@@ -664,6 +664,22 @@ gameServer
     maxClients: 4,
   })
   .filterBy(['testId']);
+// Structure SCALE (plan soft-leaping-truffle v2, A0): a citadel-size, rule-valid
+// structure lattice (448 structures incl. a 48-pylon fence, all built +
+// powered, owner 'scenario'). For scale measurement, perf arms and showcases.
+// Spawn sits south of the fence (fence half-extent 2300).
+gameServer
+  .define('structure-scale-test', SectorRoom, {
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    scaleGrid: { n: 400, seed: 7, fence: true },
+    defaultSpawnX: 0,
+    defaultSpawnY: -2900,
+    maxClients: 8,
+  })
+  .filterBy(['testId']);
 // Procedural bases (plan soft-leaping-truffle, PR-V2) — the WAREHOUSE showcase:
 // one max-size (8000 u) warehouse at the origin, nothing else in the sector, so
 // screenshots/videos/E2Es see the base alone. Spawn sits OUTSIDE the south wall
