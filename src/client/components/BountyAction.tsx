@@ -2,7 +2,7 @@
  * Living World P4c-2 — "put a bounty on this pilot". Rendered by the entity
  * inspector for a selected REMOTE player ship. A tiny toggle opens three price
  * chips; each shows the full cost (bounty + burned fee). The price is paid
- * from the pilot's own storage in THIS sector (the first one, Capital first).
+ * from the pilot's WALLET (economy v2 — credits are virtual; any sector).
  * The server decides everything; its verdict comes back as `bounty_result` (a
  * toast) and the Contracts tab shows the live board. No raw ids are shown.
  */
@@ -10,8 +10,6 @@ import { memo, useState } from 'react';
 import { Box, IconButton, Tooltip } from '@mui/material';
 import GpsFixedIcon from '@mui/icons-material/GpsFixed';
 import { useUIStore } from '../state/store';
-import { getGameClient } from '../net/clientSingleton';
-import { ownStorages } from '../net/tradeView';
 import { sendPlaceBounty } from '../net/tradeClient';
 import { pvpBountyCost } from '../../shared-types/contracts';
 
@@ -32,21 +30,17 @@ const CHIP_SX = {
 const BTN_SX = { color: '#ff6b6b', p: 0.5 };
 const ICON_SX = { fontSize: { xs: 16, sm: 22 } };
 
-/** Place a bounty of `amount` on `targetPlayerId` from the pilot's first own
- *  storage here. Returns false (with a toast) when there's no storage. */
+/** Place a bounty of `amount` on `targetPlayerId`, paid from the wallet.
+ *  Returns false (with a toast) when the wallet can't cover it. */
 export function placeBountyFromHere(targetPlayerId: string, amount: number): boolean {
-  const m = getGameClient()?.mirror;
-  const swarm = m?.swarm;
-  const storages = m?.structures && swarm
-    ? ownStorages(m.structures, (id) => swarm.get(id)?.shipKind, m.localPlayerId)
-    : [];
-  const first = storages[0];
-  if (first === undefined) {
-    const id = useUIStore.getState().pushTradeToast('You need your own storage in this sector to pay a bounty.', 'danger', false);
+  const wallet = useUIStore.getState().wallet ?? 0;
+  const cost = pvpBountyCost(amount);
+  if (wallet < cost) {
+    const id = useUIStore.getState().pushTradeToast(`That bounty costs ${cost}¢ — you have ${wallet}¢.`, 'danger', false);
     setTimeout(() => useUIStore.getState().expireTradeToast(id), 5000);
     return false;
   }
-  return sendPlaceBounty({ targetPlayerId, networkEntityId: first.entityId, amount });
+  return sendPlaceBounty({ targetPlayerId, amount });
 }
 
 export const BountyAction = memo(function BountyAction({ targetPlayerId }: { targetPlayerId: string }): JSX.Element {

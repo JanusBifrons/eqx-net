@@ -189,7 +189,10 @@ export interface SnapshotMessage {
        *  carrier (invariant #16) — the `loot_collected` message is only a UI
        *  accelerator. Shared reference, replaced only on a discrete transfer.
        *  No `SWARM_WIRE_VERSION` bump (slim JSON field). */
-      cargo?: { goods: Partial<Record<string, number>>; credits: number; blueprints: string[] };
+      cargo?: { goods: Partial<Record<string, number>>; blueprints: string[] };
+      /** Economy v2 W1 — the OWN player's wallet balance (credits are virtual,
+       *  one balance per player; emitted on the own active ship's entry). */
+      wallet?: number;
       /** Living World P5 — the OWN active ship's fitted blueprint ids (emit-when-
        *  non-empty). Drives the cargo capacity + the upgrade modal's weapon gate. */
       fitted?: string[];

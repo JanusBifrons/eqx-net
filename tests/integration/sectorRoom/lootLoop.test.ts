@@ -18,7 +18,7 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SnapshotMessage } from '../../../src/shared-types/messages/snapshotMessages.js';
-import { getHoldStore, getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
+import { getHoldStore, getPlayerShipStore, getWallet } from '../../../src/server/db/PersistenceWorker.js';
 
 function room(id: string): SectorRoom {
   return matchMaker.getLocalRoomById(id) as unknown as SectorRoom;
@@ -57,7 +57,7 @@ describe('SectorRoom integration — loot loop (P1a-1)', () => {
     expect(internal.loot.podCount(), 'a combat kill must drop a loot pod').toBe(1);
 
     // 2) Seed a pod right next to the ship → the collector picks it up.
-    internal.loot.drop({ goods: { salvage: 7 }, credits: 30, blueprints: [] }, 20, 0);
+    internal.loot.drop({ goods: { salvage: 7 }, blueprints: [] }, 20, 0);
     const state = r.state as SectorState;
     let shipId = '';
     for (const [, s] of state.ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
@@ -77,18 +77,20 @@ describe('SectorRoom integration — loot loop (P1a-1)', () => {
     expect(sawCargo, 'the own-ship snapshot entry must carry cargo').toBe(true);
   });
 
-  it('hardcore: a ship that dies carrying cargo spills it as a pod and keeps nothing', { timeout: 40_000 }, async () => {
+  it('hardcore: a ship that dies carrying cargo spills it as a pod and keeps nothing — but the WALLET is untouched', { timeout: 40_000 }, async () => {
     const pid = randomUUID();
     const cr = await harness.connectActive(pid, {
       spawnX: 500, spawnY: 500,
-      initialCargo: { goods: { alloy: 3 }, credits: 120, blueprints: [] },
+      initialCargo: { goods: { alloy: 3 }, blueprints: [] },
+      initialWallet: 120,
     });
     const r = room(cr.roomId);
     const internal = r._internals;
     const state = r.state as SectorState;
     let shipId = '';
     for (const [, s] of state.ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
-    expect(getHoldStore().get(shipId)?.hold.credits).toBe(120);
+    expect(getHoldStore().get(shipId)?.hold.goods.alloy).toBe(3);
+    expect(getWallet().balance(pid)).toBe(120);
     const podsBefore = internal.loot.podCount();
 
     for (let i = 0; i < 10 && state.ships.get(shipId)?.alive !== false; i++) {
@@ -97,15 +99,17 @@ describe('SectorRoom integration — loot loop (P1a-1)', () => {
     expect(getHoldStore().get(shipId), 'the dead ship must keep NOTHING (no duplication)').toBeUndefined();
     expect(internal.loot.podCount()).toBe(podsBefore + 1);
     let spilled = 0;
-    for (const id of internal.loot.podIds()) spilled += getHoldStore().get(id)?.hold.credits ?? 0;
-    expect(spilled).toBe(120);
+    for (const id of internal.loot.podIds()) spilled += getHoldStore().get(id)?.hold.goods.alloy ?? 0;
+    expect(spilled).toBe(3);
+    // Economy v2 — credits are virtual: dying can never lose them.
+    expect(getWallet().balance(pid)).toBe(120);
   });
 
   it('P1a-2: abandoning a ship carrying cargo leaves a salvageable DERELICT', { timeout: 40_000 }, async () => {
     const pid = randomUUID();
     const cr = await harness.connectActive(pid, {
       spawnX: -600, spawnY: 300,
-      initialCargo: { goods: { salvage: 12 }, credits: 40, blueprints: [] },
+      initialCargo: { goods: { salvage: 12 }, blueprints: [] },
     });
     const r = room(cr.roomId);
     const internal = r._internals;
@@ -120,6 +124,6 @@ describe('SectorRoom integration — loot loop (P1a-1)', () => {
     expect(getHoldStore().get(shipId), 'the abandoned ship keeps nothing').toBeUndefined();
     const derelicts = [...internal.loot.podIds()].filter((id) => internal.loot.isDerelict(id));
     expect(derelicts, 'its hold becomes a derelict hulk').toHaveLength(1);
-    expect(getHoldStore().get(derelicts[0]!)?.hold.credits).toBe(40);
+    expect(getHoldStore().get(derelicts[0]!)?.hold.goods.salvage).toBe(12);
   });
 });

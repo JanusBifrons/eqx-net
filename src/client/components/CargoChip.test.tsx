@@ -17,21 +17,20 @@ describe('CargoChip (P1a-1)', () => {
     expect(screen.queryByTestId('cargo-chip')).toBeNull();
   });
 
-  it('shows weight / capacity / credits and turns red when full', () => {
+  it('shows weight / capacity (credits live in the wallet) and turns red when full', () => {
     act(() => {
-      useUIStore.getState().setCargo({ goods: { salvage: 300 }, credits: 1250, blueprints: 1 }, 300);
+      useUIStore.getState().setCargo({ goods: { salvage: 300 }, blueprints: 1 }, 300);
     });
     render(<CargoChip />);
     const chip = screen.getByTestId('cargo-chip');
     expect(chip.getAttribute('data-cargo-weight')).toBe('300');
-    expect(chip.getAttribute('data-cargo-credits')).toBe('1250');
     expect(chip.getAttribute('data-cargo-fill')).toBe('full');
     expect(chip.textContent).toContain('★1');
   });
 
   it('tap expands the per-good breakdown', () => {
     act(() => {
-      useUIStore.getState().setCargo({ goods: { alloy: 2 }, credits: 0, blueprints: 0 }, 300);
+      useUIStore.getState().setCargo({ goods: { alloy: 2 }, blueprints: 0 }, 300);
     });
     render(<CargoChip />);
     fireEvent.click(screen.getByTestId('cargo-chip'));

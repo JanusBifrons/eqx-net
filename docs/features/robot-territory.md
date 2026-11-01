@@ -1,5 +1,9 @@
 # Robot territory and the nexus (Living World P3a)
 
+> **Economy v2 W1:** credits are a virtual wallet ([economy-wallet.md](economy-wallet.md)).
+> The nexus's credits are its kill bounty (paid to the killer's wallet), and
+> harvester raids steal **goods only**, never credits.
+
 Plan: `peppy-jumping-pinwheel`. Builds on robots v1
 ([robots.md](robots.md)).
 

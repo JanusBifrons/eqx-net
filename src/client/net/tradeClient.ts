@@ -35,7 +35,7 @@ export function sendInstallBlueprint(networkEntityId: number, blueprintId: strin
 }
 
 /** P4c-2 — put a bounty on a player (verdict: `bounty_result`). */
-export function sendPlaceBounty(args: { targetPlayerId: string; networkEntityId: number; amount: number }): boolean {
+export function sendPlaceBounty(args: { targetPlayerId: string; amount: number }): boolean {
   return send('place_bounty', args);
 }
 

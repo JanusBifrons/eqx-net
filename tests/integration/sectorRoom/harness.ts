@@ -58,9 +58,11 @@ import {
   setPersistence,
   setPlayerShipStore,
   setHoldStore,
+  setWallet,
 } from '../../../src/server/db/PersistenceWorker.js';
 import { PlayerShipStore } from '../../../src/server/playerShips/PlayerShipStore.js';
 import { HoldStore } from '../../../src/server/cargo/HoldStore.js';
+import { Wallet } from '../../../src/server/economy/Wallet.js';
 import type {
   IPersistenceSink,
   PersistOp,
@@ -167,7 +169,7 @@ export async function bootSectorTestServer(opts: {
   defaultSpawnY?: number;
   /** Living World P2 — join the TradeDirector / stock placed storage / raiders. */
   tradeEnabled?: boolean;
-  seedStorageHold?: { goods: Partial<Record<'minerals' | 'salvage' | 'alloy' | 'core', number>>; credits: number };
+  seedStorageHold?: { goods: Partial<Record<'minerals' | 'salvage' | 'alloy' | 'core', number>>; credits?: number };
   haulerRaiders?: number;
   /** A0 scale lattice (plan soft-leaping-truffle v2). */
   scaleGrid?: { n: number; seed: number; fence?: boolean };
@@ -180,6 +182,8 @@ export async function bootSectorTestServer(opts: {
   // Living World P1a — fresh hold store per boot (process singleton; a stale
   // one would restore a previous test's loot pods into this room).
   setHoldStore(new HoldStore({ persistence: () => sink }));
+  // Economy v2 W1 — fresh wallet per boot (process singleton).
+  setWallet(new Wallet({ persistence: () => sink }));
   setPlayerShipStore(new PlayerShipStore({
     generateShipId: ((): () => string => {
       let n = 0;
@@ -409,6 +413,8 @@ export async function bootLivingWorldTestServer(opts: {
   // Living World P1a — fresh hold store per boot (process singleton; a stale
   // one would restore a previous test's loot pods into this room).
   setHoldStore(new HoldStore({ persistence: () => sink }));
+  // Economy v2 W1 — fresh wallet per boot (process singleton).
+  setWallet(new Wallet({ persistence: () => sink }));
   setPlayerShipStore(new PlayerShipStore({
     generateShipId: ((): () => string => {
       let n = 0;

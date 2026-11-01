@@ -7,7 +7,8 @@
  *  2. a client in the sector sees the elite's NAME on the snapshot
  *     (`drones[].elite` — the #16 carrier, not just the world notice);
  *  3. the galaxy hook reports the elite in its sector;
- *  4. killing it drops the guaranteed rare haul (Robot Cores + 200+ credits),
+ *  4. killing it drops the guaranteed rare haul (Robot Cores; the credits are
+ *     its bounty, paid to the killer's WALLET — economy v2),
  *     announces it galaxy-wide, and a replacement appears after the delay.
  */
 import { describe, it, expect, afterEach } from 'vitest';
@@ -17,7 +18,7 @@ import { EliteDirector } from '../../../src/server/livingworld/EliteDirector.js'
 import { ELITE_HEALTH_MUL } from '../../../src/shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS } from '../../../src/shared-types/contracts.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
-import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
+import { getHoldStore, getWallet } from '../../../src/server/db/PersistenceWorker.js';
 import type { LivingWorldRoom } from '../../../src/server/livingworld/LivingWorldRoom.js';
 import type { SnapshotMessage } from '../../../src/shared-types/messages.js';
 import type { WorldNotice } from '../../../src/shared-types/worldNotice.js';
@@ -69,7 +70,8 @@ describe('SectorRoom integration — named elites (P4a)', () => {
     expect(seenName).toBe(e!.name);
     await h.waitUntil(() => notices.some((n) => n.kind === 'elite_spawned'), 3000, 'sighting notice');
 
-    // Kill it: the rare haul spills (cores + credits ≥ 200), the galaxy hears.
+    // Kill it: the rare haul spills (cores), the bounty goes to the killer's
+    // wallet (credits are never in pods — economy v2), the galaxy hears.
     const podsBefore = getHoldStore().inSector('greenfall', 'pod').length;
     for (let i = 0; i < 20 && room._internals.swarmRegistry.get(e!.id); i++) {
       room._internals.applyDamage(e!.id, 'some-player', 5_000);
@@ -78,9 +80,9 @@ describe('SectorRoom integration — named elites (P4a)', () => {
     const pods = getHoldStore().inSector('greenfall', 'pod');
     expect(pods.length).toBeGreaterThan(podsBefore);
     const cores = pods.reduce((s, p) => s + (p.hold.goods.core ?? 0), 0);
-    const credits = pods.reduce((s, p) => s + p.hold.credits, 0);
     expect(cores).toBeGreaterThanOrEqual(1);
-    expect(credits).toBeGreaterThanOrEqual(200);
+    expect(pods.every((p) => !('credits' in p.hold))).toBe(true);
+    expect(getWallet().balance('some-player')).toBeGreaterThanOrEqual(ELITE_BOUNTY_CREDITS);
     expect(elites.elites()).toHaveLength(0);
     await h.waitUntil(() => notices.some((n) => n.kind === 'elite_killed'), 3000, 'kill notice');
 
@@ -91,10 +93,11 @@ describe('SectorRoom integration — named elites (P4a)', () => {
   });
 
   /**
-   * P4c — the elite's BOUNTY goes into the killer's own ship hold, but only for
-   * a signed-in pilot (bounties need an account); a guest still gets the loot.
+   * P4c / economy v2 — the elite's BOUNTY goes into the killer's WALLET, for
+   * every pilot: guests are full players (the user's ruling). Nothing goes into
+   * the ship hold — credits are virtual, so dying can't lose them.
    */
-  it('pays the bounty into a signed-in killer\'s hold, and not a guest\'s', { timeout: 40_000 }, async () => {
+  it('pays the bounty into the killer\'s wallet — guests included — never into the hold', { timeout: 40_000 }, async () => {
     h = await bootLivingWorldTestServer({ sectors: ['greenfall', 'emerald-span'], botCount: 0, seed: 4 });
     const clock = { now: 1_000_000 };
     const rooms = new Map<string, LivingWorldRoom>([
@@ -107,11 +110,11 @@ describe('SectorRoom integration — named elites (P4a)', () => {
     await h.connectActive(signedIn, 'greenfall', { initialHull: 99999 });
     await h.connectActive(guest, 'greenfall', { initialHull: 99999 });
     (room as unknown as { playerToUser: Map<string, string | null> }).playerToUser.set(signedIn, 'user-bounty');
-    // `state.ships` is keyed by ship instance — find the pilot's active hull.
-    const creditsOf = (pid: string): number => {
+    // `state.ships` is keyed by ship instance — the pilot's active hull.
+    const shipOf = (pid: string): string => {
       let shipId = '';
       room.state.ships.forEach((s) => { if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId; });
-      return getHoldStore().get(shipId)?.hold.credits ?? 0;
+      return shipId;
     };
 
     elites = new EliteDirector(rooms, { maxElites: 2, firstSector: 'greenfall', kind: 'heavy', respawnMs: 60_000, nowMs: () => clock.now });
@@ -121,14 +124,16 @@ describe('SectorRoom integration — named elites (P4a)', () => {
     const [first] = inGreenfall();
 
     for (let i = 0; i < 30 && room._internals.swarmRegistry.get(first!); i++) room._internals.applyDamage(first!, signedIn, 5_000);
-    expect(creditsOf(signedIn)).toBe(ELITE_BOUNTY_CREDITS);
+    // The elite bounty plus the hull's own kill bounty — all in the wallet.
+    expect(getWallet().balance(signedIn)).toBeGreaterThanOrEqual(ELITE_BOUNTY_CREDITS);
+    expect(getHoldStore().get(shipOf(signedIn))).toBeUndefined();
 
-    // A guest kill of another elite pays nothing into the guest's hold.
+    // A guest is a full player: their elite kill pays too.
     const second = 'elite-guest-target';
     expect(room.spawnLivingWorldBot({ botId: second, kind: 'heavy', x: 600, y: 0 })).toBe(true);
     expect(room.markElite(second, 'Grim Oruk')).toBe(true);
     for (let i = 0; i < 30 && room._internals.swarmRegistry.get(second); i++) room._internals.applyDamage(second, guest, 5_000);
     expect(room._internals.swarmRegistry.get(second)).toBeFalsy();
-    expect(creditsOf(guest)).toBe(0);
+    expect(getWallet().balance(guest)).toBeGreaterThanOrEqual(ELITE_BOUNTY_CREDITS);
   });
 });

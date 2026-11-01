@@ -52,7 +52,6 @@ export const selectionStats: SelectionStats = {
 
 interface HoldWire {
   goods: Partial<Record<string, number>>;
-  credits: number;
   blueprints: number;
   blueprintIds?: string[];
 }
@@ -109,7 +108,6 @@ export function formatHoldLine(h: HoldWire): string {
     const n = h.goods[id];
     if (n) parts.push(`${GOOD_DEFS[id].displayName} ${n}`);
   }
-  if (h.credits > 0) parts.push(`¢${h.credits}`);
   if (h.blueprints > 0) parts.push(`★${h.blueprints}`);
   return parts.length > 0 ? parts.join(' · ') : 'Empty';
 }

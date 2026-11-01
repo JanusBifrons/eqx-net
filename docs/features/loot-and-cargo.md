@@ -4,6 +4,12 @@ Plan: `peppy-jumping-pinwheel` (Living World: Allegiances, Loot & Trade).
 Part 1 (P1a-1): loot pods, fly-over pickup, carrying cargo, losing it on death.
 Part 2 (P1a-2) adds base storage, auto-deposit, derelicts and credit sinks.
 
+> **Economy v2 W1 supersedes the credits on this page.** Credits are now a
+> virtual per-player **wallet**: never in a hold, pod or storage, never dropped,
+> spilled or stolen. Kills pay a bounty into the wallet, and repairs and
+> respecs are paid from it. See [economy-wallet.md](economy-wallet.md). Where
+> this page says credits ride in pods or holds, read "goods and blueprints".
+
 ## What the player sees
 
 - **Every kill drops loot.** A destroyed NPC ship leaves a small glowing

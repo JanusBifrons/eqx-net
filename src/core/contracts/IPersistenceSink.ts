@@ -72,6 +72,8 @@ export type PersistOp =
   | { type: 'TRADE_DEAL_PUT'; dealId: string; ownerId: string; payloadJson: string; ts: number }
   | { type: 'TRADE_DEAL_DELETE'; dealId: string; ts: number }
   | { type: 'ECON_STATE_PUT'; key: string; payloadJson: string; ts: number }
+  // Economy v2 W1 — a player's virtual wallet (absolute balance; memory is the authority).
+  | { type: 'WALLET_PUT'; playerId: string; balance: number; ts: number }
   // PR 3a — account-bound player identity. One canonical playerId per account
   // (`account_players`, UPSERT on user_id) + historical per-browser ids folded
   // into it (`player_aliases`, keyed on the alias id). Boot hydration reads via

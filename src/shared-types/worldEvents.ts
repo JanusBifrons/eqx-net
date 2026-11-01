@@ -71,7 +71,6 @@ export function rollIncursionCache(rng: () => number): Hold {
   const bp = rollBlueprint(rng, INCURSION_BLUEPRINT_CHANCE);
   return {
     goods: { salvage: randInt(rng, 40, 80), alloy: randInt(rng, 10, 20), core: randInt(rng, 1, 3) },
-    credits: randInt(rng, 250, 500),
     blueprints: bp !== null ? [bp] : [],
   };
 }
@@ -80,7 +79,6 @@ export function rollIncursionCache(rng: () => number): Hold {
 export function rollSalvagePod(rng: () => number): Hold {
   return {
     goods: { salvage: randInt(rng, 20, 45), alloy: randInt(rng, 2, 8) },
-    credits: randInt(rng, 20, 60),
     blueprints: [],
   };
 }

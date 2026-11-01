@@ -272,7 +272,7 @@ export function EntityStatsPanel(): JSX.Element | null {
           )}
           {data.holdLine !== undefined && (
             // Living World P1a-2 — instant repair of MY ship here (credit sink).
-            <Tooltip title="Repair your ship here (costs banked credits)">
+            <Tooltip title="Repair your ship here (paid from your credits)">
               <IconButton
                 data-testid="structure-action-repair-ship"
                 size="small"

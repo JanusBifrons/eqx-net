@@ -9,14 +9,14 @@
 import { GOOD_DEFS, GOOD_IDS, type GoodId, type Hold } from '../../shared-types/goods.js';
 
 export function emptyHold(): Hold {
-  return { goods: {}, credits: 0, blueprints: [] };
+  return { goods: {}, blueprints: [] };
 }
 
 export function cloneHold(h: Hold): Hold {
-  return { goods: { ...h.goods }, credits: h.credits, blueprints: [...h.blueprints] };
+  return { goods: { ...h.goods }, blueprints: [...h.blueprints] };
 }
 
-/** Total cargo weight (credits + blueprints weigh nothing). */
+/** Total cargo weight (blueprints weigh nothing; credits are not cargo). */
 export function holdWeight(h: Hold): number {
   let w = 0;
   for (const id of GOOD_IDS) {
@@ -27,12 +27,12 @@ export function holdWeight(h: Hold): number {
 }
 
 export function isHoldEmpty(h: Hold): boolean {
-  if (h.credits > 0 || h.blueprints.length > 0) return false;
+  if (h.blueprints.length > 0) return false;
   for (const id of GOOD_IDS) if ((h.goods[id] ?? 0) > 0) return false;
   return true;
 }
 
-/** Highest rarity tier present (0 when only tier-0 goods / credits). A
+/** Highest rarity tier present (0 when only tier-0 goods). A
  *  blueprint counts as top tier. Drives loot-pod glow. */
 export function holdBestTier(h: Hold): 0 | 1 | 2 {
   if (h.blueprints.length > 0) return 2;
@@ -51,19 +51,14 @@ export interface TransferResult {
 }
 
 /**
- * Move as much of `src` into `dst` as `dstCapacity` (weight) allows. Credits
- * and blueprints always move (weightless). Goods move highest-tier first so a
+ * Move as much of `src` into `dst` as `dstCapacity` (weight) allows.
+ * Blueprints always move (weightless). Goods move highest-tier first so a
  * nearly-full hold keeps the valuable stuff. Mutates BOTH holds; value is
  * conserved exactly (dst gains what src loses). `dstCapacity = Infinity` ⇒
  * move everything.
  */
 export function transferInto(dst: Hold, src: Hold, dstCapacity: number): TransferResult {
   const moved = emptyHold();
-  if (src.credits > 0) {
-    dst.credits += src.credits;
-    moved.credits = src.credits;
-    src.credits = 0;
-  }
   if (src.blueprints.length > 0) {
     for (const b of src.blueprints) {
       dst.blueprints.push(b);

@@ -123,6 +123,13 @@ CREATE TABLE IF NOT EXISTS allegiance_director_state (
 
 -- Living World P2 — economy. Memory (EconomyStore) is the authority; every
 -- mutation is an absolute upsert. Per-player standing + trade history:
+-- Economy v2 W1 — the virtual wallet: ONE credit balance per player (canonical
+-- playerId). Credits never live in holds.
+CREATE TABLE IF NOT EXISTS player_wallets (
+  player_id   TEXT PRIMARY KEY,
+  balance     INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS player_economy (
   player_id    TEXT PRIMARY KEY,
   payload_json TEXT NOT NULL,

@@ -63,6 +63,8 @@ function repColor(rep: number): string {
 export function TradeTab(): JSX.Element {
   const visible = useUIStore((s) => s.drawerTab === 'trade' && s.isDrawerOpen);
   const noticeSeq = useUIStore((s) => s.tradeNoticeSeq);
+  // Economy v2 W1 — buys and gifts are paid from the wallet (credits are virtual).
+  const wallet = useUIStore((s) => s.wallet);
   const [section, setSection] = useState<Section>('offers');
   const [view, setView] = useState<PlayerEconomyView | null>(null);
   const [offers, setOffers] = useState<TradeOffer[]>([]);
@@ -112,6 +114,9 @@ export function TradeTab(): JSX.Element {
 
   return (
     <Box sx={ROOT_SX} data-testid="trade-tab">
+      <Typography sx={{ fontSize: 11, color: '#ffd060', mb: 0.5 }} data-testid="trade-wallet" data-wallet={wallet ?? 0}>
+        Credits: ¢ {(wallet ?? 0).toLocaleString('en-US')}
+      </Typography>
       <Box data-testid="trade-rep">
         {ECON_ALLEGIANCES.map((a) => {
           const rep = view?.rep[a] ?? 0;

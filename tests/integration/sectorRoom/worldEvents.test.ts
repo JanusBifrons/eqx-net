@@ -49,7 +49,7 @@ describe('SectorRoom integration — world events (P4b)', () => {
     return out;
   }
 
-  function podSum(sectorKey: string, pick: (p: { goods: Record<string, number | undefined>; credits: number }) => number): number {
+  function podSum(sectorKey: string, pick: (p: { goods: Record<string, number | undefined> }) => number): number {
     return getHoldStore().inSector(sectorKey, 'pod').reduce((s, p) => s + pick(p.hold), 0);
   }
 

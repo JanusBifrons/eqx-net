@@ -279,7 +279,8 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 
 - The local ship's hold is decoded ONLY from the authoritative own-ship `SnapshotMessage.states[].cargo` slice (`ColyseusClient.applyLocalCargo`, invariant #16). It writes the discrete Zustand `cargo`/`cargoCapacity` ONLY when the contents changed (`net/lootView.ts` `cargoChanged`, field-by-field, alloc-free), so a steady hold costs zero React renders.
 - `loot_collected` (zod-validated) only pushes a short-lived popup line (`lootFeed`, capped at 4, `LOOT_FEED_TTL_MS`). Never derive cargo from it.
-- `CargoChip` lives in the `top-left` slot at `order={3}` (under `ShieldHullBar`). Testids: `cargo-chip` (`data-cargo-weight/capacity/credits/fill`), `cargo-breakdown`, `loot-feed-line`.
+- `CargoChip` lives in the `top-left` slot at `order={3}` (under `ShieldHullBar`). Testids: `cargo-chip` (`data-cargo-weight/capacity/fill`), `cargo-breakdown`, `loot-feed-line`. It shows NO credits.
+- **Economy v2 W1 — the wallet.** Credits are virtual: never cargo. `WalletChip` (`top-left`, `order={4}`, testid `wallet-chip` / `data-wallet`) shows the one balance from the Zustand `wallet`, written ONLY from the own-ship snapshot `states[].wallet` field when it changes (#16). Bounty and repair UIs check and pay from the wallet; no storage picker for payment.
 - Loot pods render through the EXISTING scrap path (`parentShipKind 'cargo-pod'`, `componentIndex` = tier colour). There's no separate pod renderer.
 
 ## Trade UI (Living World P2b, plan peppy-jumping-pinwheel)

@@ -16,14 +16,16 @@ export interface LootEntry {
 }
 
 export interface LootTable {
-  readonly credits: readonly [number, number];
+  /** Credits paid straight into the KILLER's wallet (economy v2 W1 — never
+   *  dropped in a pod). */
+  readonly bounty: readonly [number, number];
   readonly entries: readonly LootEntry[];
 }
 
 /** Explicit per-kind tables. A kind not listed falls back to `defaultTable`. */
 const TABLES: Readonly<Record<string, LootTable>> = {
   'robot-square': {
-    credits: [8, 20],
+    bounty: [8, 20],
     entries: [
       { good: 'salvage', chance: 1, min: 4, max: 10 },
       { good: 'alloy', chance: 0.35, min: 1, max: 2 },
@@ -31,15 +33,15 @@ const TABLES: Readonly<Record<string, LootTable>> = {
   },
   // P2 — a hauler drops NOTHING from a table: its cargo hold (the deal goods)
   // spills instead, so killing one never mints value.
-  'trader-hauler': { credits: [0, 0], entries: [] },
+  'trader-hauler': { bounty: [0, 0], entries: [] },
   // P3b — a harvester's real prize is the cargo it SPILLS; its own table is small.
   'robot-harvester': {
-    credits: [10, 25],
+    bounty: [10, 25],
     entries: [{ good: 'salvage', chance: 1, min: 4, max: 10 }],
   },
   // P3 — the robot nexus: the richest single kill in the game.
   'robot-nexus': {
-    credits: [400, 800],
+    bounty: [400, 800],
     entries: [
       { good: 'salvage', chance: 1, min: 60, max: 120 },
       { good: 'alloy', chance: 1, min: 20, max: 40 },
@@ -48,7 +50,7 @@ const TABLES: Readonly<Record<string, LootTable>> = {
   },
   // P1b — robot tiers drop progressively better loot (the reason to hunt them).
   'robot-circle': {
-    credits: [20, 45],
+    bounty: [20, 45],
     entries: [
       { good: 'salvage', chance: 1, min: 8, max: 18 },
       { good: 'alloy', chance: 0.6, min: 1, max: 3 },
@@ -56,7 +58,7 @@ const TABLES: Readonly<Record<string, LootTable>> = {
     ],
   },
   'robot-hexagon': {
-    credits: [45, 90],
+    bounty: [45, 90],
     entries: [
       { good: 'salvage', chance: 1, min: 15, max: 30 },
       { good: 'alloy', chance: 1, min: 2, max: 5 },
@@ -69,7 +71,7 @@ const TABLES: Readonly<Record<string, LootTable>> = {
 function defaultTable(maxHealth: number): LootTable {
   const scale = Math.max(1, Math.round(maxHealth / 50));
   return {
-    credits: [2 * scale, 6 * scale],
+    bounty: [2 * scale, 6 * scale],
     entries: [
       { good: 'salvage', chance: 1, min: scale, max: 3 * scale },
       { good: 'alloy', chance: 0.1, min: 1, max: 1 },
@@ -86,10 +88,18 @@ function randInt(rng: () => number, min: number, max: number): number {
   return min + Math.floor(rng() * (max - min + 1));
 }
 
-/** Roll a table into a fresh hold. `rng` ∈ [0, 1). */
+/** Economy v2 W1 — the kill bounty (credits) paid straight into the killer's
+ *  wallet for destroying a `kindId` NPC. `rng` ∈ [0, 1). */
+export function rollKillBounty(kindId: string | null | undefined, rng: () => number): number {
+  const t = lootTableFor(kindId);
+  return randInt(rng, t.bounty[0], t.bounty[1]);
+}
+
+/** Roll a table's GOODS into a fresh hold (credits are the separate kill
+ *  bounty — `rollKillBounty`). `rng` ∈ [0, 1). */
 export function rollLoot(kindId: string | null | undefined, rng: () => number): Hold {
   const t = lootTableFor(kindId);
-  const out: Hold = { goods: {}, credits: randInt(rng, t.credits[0], t.credits[1]), blueprints: [] };
+  const out: Hold = { goods: {}, blueprints: [] };
   for (const e of t.entries) {
     if (rng() >= e.chance) continue;
     const n = randInt(rng, e.min, e.max);

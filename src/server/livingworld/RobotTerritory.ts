@@ -50,11 +50,11 @@ export const HARVESTER_RESPAWN_MS = 90_000;
 
 /** P3c — raids: with no pod to chase, a harvester raids player storage within
  *  RAID_RANGE of its nexus, stealing up to RAID_STEP_WEIGHT per control tick
- *  (rarest goods first, plus some credits) while within RAID_DOCK_RADIUS. */
+ *  (rarest goods first) while within RAID_DOCK_RADIUS. Credits are virtual
+ *  (economy v2) — a raid can never take them. */
 export const RAID_RANGE = 3000;
 export const RAID_DOCK_RADIUS = 200;
 export const RAID_STEP_WEIGHT = 30;
-export const RAID_CREDITS_PER_STEP = 25;
 export const RAID_PRIORITY: readonly GoodId[] = ['core', 'alloy', 'salvage', 'minerals'];
 /** The owner is warned at most this often per room. */
 export const RAID_NOTICE_THROTTLE_MS = 60_000;

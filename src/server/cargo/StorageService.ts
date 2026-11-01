@@ -44,7 +44,6 @@ export interface StorageServiceDeps {
 
 export interface TradeNetworkSnapshot {
   goods: Partial<Record<GoodId, number>>;
-  credits: number;
   freeCapacity: number;
   /** Pose of the network's anchor storage (the hauler docks beside it). */
   x: number;
@@ -54,9 +53,8 @@ export interface TradeNetworkSnapshot {
 export interface TradeTransferSpec {
   /** `intoOwner` overrides the receiving hold's owner (default: the network
    *  owner — escrow). A robot raid passes null: stolen cargo is nobody's. */
-  take?: { want: Hold; intoUid: string; intoOwner?: string | null; intoType?: HolderType; burnCredits?: number };
+  take?: { want: Hold; intoUid: string; intoOwner?: string | null; intoType?: HolderType };
   release?: readonly string[];
-  mintCredits?: number;
   destroy?: readonly string[];
   extraOps?: readonly PersistOp[];
 }
@@ -243,39 +241,6 @@ export class StorageService {
     return refined;
   }
 
-  /** Credits banked across ALL of `owner`'s storage in this sector. */
-  creditsOf(owner: string): number {
-    let c = 0;
-    for (const rec of this.d.registry.all()) {
-      if (rec.owner === owner && isOperationalStorage(rec)) c += rec.hold?.credits ?? 0;
-    }
-    return c;
-  }
-
-  /**
-   * Spend `amount` credits from `owner`'s banked storage in this sector
-   * (a credit SINK: repairs, respecs). All-or-nothing — returns false and
-   * changes nothing when the balance is short. One atomic group.
-   */
-  spendCredits(owner: string, amount: number): boolean {
-    if (amount <= 0) return true;
-    if (this.creditsOf(owner) < amount) return false;
-    let left = amount;
-    const touched: StructureRecord[] = [];
-    for (const rec of this.d.registry.all()) {
-      if (left <= 0) break;
-      if (rec.owner !== owner || !isOperationalStorage(rec)) continue;
-      const have = rec.hold?.credits ?? 0;
-      if (have <= 0) continue;
-      const take = Math.min(have, left);
-      rec.hold!.credits = have - take;
-      left -= take;
-      touched.push(rec);
-    }
-    this.commitStructures(touched);
-    return true;
-  }
-
   /** A storage structure left the world (razed / deconstructed): return its
    *  whole payload (for the caller to spill) and delete its holds row. */
   takeForSpill(rec: StructureRecord): Hold | null {
@@ -298,16 +263,15 @@ export class StorageService {
   }
 
   /** What a base network can trade right now (goods incl. a Capital's mineral
-   *  bank, banked credits, free weight capacity). Null ⇒ no such network. */
+   *  bank, free weight capacity). Null ⇒ no such network. Credits are in the
+   *  owner's WALLET, never here. */
   tradeSnapshot(owner: string, networkUid: string): TradeNetworkSnapshot | null {
     const target = this.storageByUid(owner, networkUid);
     if (target === null) return null;
     const goods: Partial<Record<GoodId, number>> = {};
-    let credits = 0;
     let free = 0;
     for (const rec of this.network(target)) {
       const h = rec.hold ?? emptyHold();
-      credits += h.credits;
       for (const g of GOOD_IDS) {
         const n = h.goods[g] ?? 0;
         if (n > 0) goods[g] = (goods[g] ?? 0) + n;
@@ -315,7 +279,7 @@ export class StorageService {
       if (rec.minerals > 0) goods.minerals = (goods.minerals ?? 0) + rec.minerals;
       free += Math.max(0, holdCapacityOf(rec) - holdWeight(h));
     }
-    return { goods, credits, freeCapacity: free, x: target.x, y: target.y };
+    return { goods, freeCapacity: free, x: target.x, y: target.y };
   }
 
   /**
@@ -325,7 +289,6 @@ export class StorageService {
    *  - `release`: move each listed holder's whole hold INTO the network, then
    *    delete the holder (anything that doesn't fit is returned as `overflow`
    *    for the caller to drop as a pod at the storage);
-   *  - `mintCredits`: credits paid in by traders (a sell's proceeds);
    *  - `destroy`: holders deleted outright (value leaves the economy);
    *  - `extraOps`: the deal-state write that must land in the same group.
    * Returns null when the network no longer exists (nothing changes).
@@ -342,16 +305,8 @@ export class StorageService {
 
     if (spec.take) {
       const want = spec.take.want;
-      let creditsLeft = want.credits;
       for (const rec of net) {
         const h = rec.hold;
-        if (creditsLeft > 0 && h && h.credits > 0) {
-          const t = Math.min(h.credits, creditsLeft);
-          h.credits -= t;
-          creditsLeft -= t;
-          taken.credits += t;
-          touched.add(rec);
-        }
         for (const g of GOOD_IDS) {
           let need = (want.goods[g] ?? 0) - (taken.goods[g] ?? 0);
           if (need <= 0) continue;
@@ -375,9 +330,6 @@ export class StorageService {
       const existing = this.d.holdStore.get(spec.take.intoUid);
       const into = existing ? cloneHold(existing.hold) : emptyHold();
       transferInto(into, cloneHold(taken), Infinity);
-      // P4c-2 — a fee taken with the value but burned (never deposited).
-      const burn = Math.min(spec.take.burnCredits ?? 0, into.credits);
-      if (burn > 0) into.credits -= burn;
       puts.push({
         holderUid: spec.take.intoUid, holderType: spec.take.intoType ?? 'hauler',
         ownerId: spec.take.intoOwner === undefined ? owner : spec.take.intoOwner,
@@ -409,13 +361,6 @@ export class StorageService {
         if (isHoldEmpty(src)) break;
       }
       transferInto(overflow, src, Infinity);
-    }
-
-    if ((spec.mintCredits ?? 0) > 0) {
-      const h = target.hold ?? emptyHold();
-      h.credits += Math.floor(spec.mintCredits!);
-      target.hold = h;
-      touched.add(target);
     }
 
     for (const uid of spec.destroy ?? []) deletes.push(uid);
@@ -514,7 +459,7 @@ export class StorageService {
 /** Stable payload signature (sorted keys) for dirty detection. 1 Hz, off-tick. */
 function sig(h: Hold): string {
   const keys = Object.keys(h.goods).sort();
-  let s = `${h.credits}|${h.blueprints.length}`;
+  let s = `${h.blueprints.length}`;
   for (const k of keys) s += `|${k}:${(h.goods as Record<string, number>)[k]}`;
   return s;
 }

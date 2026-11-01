@@ -229,6 +229,7 @@ export class SyncSinkAdapter implements IPersistenceSink {
       case 'TRADE_DEAL_PUT':
       case 'TRADE_DEAL_DELETE':
       case 'ECON_STATE_PUT':
+      case 'WALLET_PUT':
         applyEconomyOp(this.econStmts, op);
         return {};
       case 'ACCOUNT_PLAYER_PUT': {

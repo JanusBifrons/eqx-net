@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
-import { getHoldStore, getPersistence } from '../../../src/server/db/PersistenceWorker.js';
+import { getHoldStore, getPersistence, getWallet } from '../../../src/server/db/PersistenceWorker.js';
 import { EconomyStore } from '../../../src/server/economy/EconomyStore.js';
 import { TradeDirector } from '../../../src/server/economy/TradeDirector.js';
 import { setTradeSink } from '../../../src/server/economy/tradeSink.js';
@@ -27,7 +27,7 @@ const OWNER = 'trade-owner';
 interface Ctx {
   harness: SectorTestHarness;
   room: SectorRoom;
-  capital: { uid?: string; hold?: { goods: Record<string, number>; credits: number; blueprints: string[] } };
+  capital: { uid?: string; hold?: { goods: Record<string, number>; blueprints: string[] } };
   dir: TradeDirector;
   store: EconomyStore;
 }
@@ -52,6 +52,8 @@ async function boot(): Promise<Ctx> {
     // The hauler spawns at the sector edge; a huge radius docks it at once so
     // the test exercises escrow + settlement, not the flight.
     dockRadius: 100_000,
+    // Economy v2 W1 — credits move through the virtual wallet.
+    wallet: getWallet(),
   });
   dir.start();
   // The room reports hauler hits + robot hits through the trade sink (index.ts
@@ -84,7 +86,7 @@ describe('SectorRoom integration — trade deals (P2)', () => {
 
   it('a SELL settles on safe departure and the hauler leaves', { timeout: 20_000 }, async () => {
     const { room, capital, dir, store } = ctx;
-    capital.hold = { goods: { salvage: 50 }, credits: 0, blueprints: [] };
+    capital.hold = { goods: { salvage: 50 }, blueprints: [] };
     const offer = dir.offersFor(OWNER).find((o) => o.kind === 'sell' && o.good === 'salvage')!;
     const v = dir.acceptOffer(OWNER, SECTOR, capital.uid!, {
       type: 'accept_offer', offerId: offer.offerId, networkEntityId: 0, qty: 20,
@@ -94,22 +96,23 @@ describe('SectorRoom integration — trade deals (P2)', () => {
 
     await until(() => haulers(room).length === 1, 3000, 'hauler spawned in the sector');
     await until(() => (capital.hold?.goods.salvage ?? 0) === 30, 3000, 'goods taken into escrow at dock');
-    expect(capital.hold!.credits).toBe(0); // nothing paid while docked
+    expect(getWallet().balance(OWNER)).toBe(0); // nothing paid while docked
     await until(() => store.getDeal(v.dealId!)?.state === 'settled', 5000, 'deal settled');
-    expect(capital.hold!.credits).toBe(sellProceeds(20, offer.unitPrice));
+    // The proceeds land in the owner's WALLET (credits are virtual).
+    expect(getWallet().balance(OWNER)).toBe(sellProceeds(20, offer.unitPrice));
     expect(haulers(room)).toHaveLength(0);
   });
 
   it('a BUY raided while docked spills the trader cargo and refunds the buyer', { timeout: 20_000 }, async () => {
     const { room, capital, dir, store } = ctx;
-    capital.hold = { goods: {}, credits: 3000, blueprints: [] };
+    getWallet().credit(OWNER, 3000, 'test_seed');
     const offer = dir.offersFor(OWNER).find((o) => o.kind === 'buy' && o.good === 'alloy')!;
     const v = dir.acceptOffer(OWNER, SECTOR, capital.uid!, {
       type: 'accept_offer', offerId: offer.offerId, networkEntityId: 0, qty: 10,
       recurrenceMin: null, visits: null, priceBandPct: 0,
     });
     expect(v.ok, v.message).toBe(true);
-    await until(() => capital.hold!.credits === 3000 - buyCost(10, offer.unitPrice), 4000, 'credits in escrow');
+    await until(() => getWallet().balance(OWNER) === 3000 - buyCost(10, offer.unitPrice), 4000, 'wallet paid at dock');
     const [hauler] = haulers(room);
     expect(hauler).toBeDefined();
 
@@ -118,7 +121,7 @@ describe('SectorRoom integration — trade deals (P2)', () => {
       room._internals.applyDamage(hauler!, 'some-pirate', 5000);
     }
     await until(() => store.getDeal(v.dealId!)?.state === 'failed', 3000, 'deal marked raided');
-    expect(capital.hold!.credits).toBe(3000); // refunded in full
+    expect(getWallet().balance(OWNER)).toBe(3000); // refunded in full
     const pods = getHoldStore().inSector(SECTOR, 'pod');
     expect(pods.some((p) => (p.hold.goods.alloy ?? 0) === 10)).toBe(true); // the trader's goods spilled
     expect(store.rep('some-pirate', 'traders')).toBeLessThan(0); // piracy costs standing

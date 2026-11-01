@@ -27,6 +27,11 @@ something shoots it down on the way in or while it is docked, the deal fails.
   settled, failed) and its next visit. **Cancel** is free between visits; during
   a visit the deal ends after it.
 - **History** — what happened, newest first.
+> **Economy v2 W1:** credits are a virtual wallet ([economy-wallet.md](economy-wallet.md)).
+> A buy's price and a gift's credits are taken from your wallet when the
+> hauler docks and refunded to it if the visit fails; a sale's proceeds land in
+> your wallet when the hauler leaves safely.
+
 - **Gift** — send goods or credits to any side for standing. Giving a lot at
   once buys less standing per credit.
 

@@ -157,6 +157,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   energyMax: 100,
   cargo: null,
   cargoCapacity: 0,
+  wallet: null,
   fittedBlueprints: [],
   lootFeed: [],
   tradeToasts: [],
@@ -256,6 +257,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setSelectedEntity: (id, kind) => set({ selectedEntityId: id, selectedEntityKind: kind }),
   setEnergyMax: (max) => set({ energyMax: max }),
   setCargo: (cargo, capacity) => set({ cargo, cargoCapacity: capacity }),
+  setWallet: (credits) => set({ wallet: credits }),
   setFittedBlueprints: (ids) => set({ fittedBlueprints: ids }),
   pushLootFeed: (text) => {
     const id = ++lootFeedSeq;

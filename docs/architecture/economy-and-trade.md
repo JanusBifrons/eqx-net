@@ -17,6 +17,11 @@ haulers, and players can pirate them at a reputation cost.
 | Piece | Where | Role |
 |---|---|---|
 | Contract | `src/shared-types/economy.ts` | Prices, rep thresholds, deal/offer/view types, zod messages. Shared by client + server (#15). |
+> **Economy v2 W1:** credits never sit in escrow holds now. The wallet is
+> debited at dock (`run.paid`), credited at a safe sell departure, and refunded
+> on any unwind, each op in the deal's atomic group. See
+> [../features/economy-wallet.md](../features/economy-wallet.md).
+
 | Market | `src/core/economy/market.ts` | One galaxy market. Supply index per good (credits of value); fills move prices; mean reversion + random walk. |
 | Reputation | `src/core/economy/reputation.ts` | Per player, per side (drones / robots / traders). Gifts have diminishing returns. |
 | Deal rules | `src/core/economy/deals.ts` | `planVisit` (skip reasons, partial fills, price band), `afterVisit` (recurrence + retries), proceeds/cost. |

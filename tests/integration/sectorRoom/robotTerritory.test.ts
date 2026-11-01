@@ -108,7 +108,7 @@ describe('SectorRoom integration — robot nexus + territory (P3)', () => {
 
     // A pod right under the harvester — the room's collector picks it up.
     const pose = room.getBotPose(hid)!;
-    room.tradeDropAt({ goods: { alloy: 10 }, credits: 0, blueprints: [] }, pose.x, pose.y);
+    room.tradeDropAt({ goods: { alloy: 10 }, blueprints: [] }, pose.x, pose.y);
     await h.waitUntil(() => room.holdWeight(hid) > 0, 4000, 'harvester scooped the pod');
 
     // Nothing left to chase + cargo aboard ⇒ it banks at the (adjacent) nexus.
@@ -133,7 +133,7 @@ describe('SectorRoom integration — robot nexus + territory (P3)', () => {
     t.tick(clock.now);
     const hid = t.liveHarvesters()[0]!;
     const pose = room.getBotPose(hid)!;
-    room.tradeDropAt({ goods: { core: 3 }, credits: 0, blueprints: [] }, pose.x, pose.y);
+    room.tradeDropAt({ goods: { core: 3 }, blueprints: [] }, pose.x, pose.y);
     await h.waitUntil(() => room.holdWeight(hid) > 0, 4000, 'scooped');
     for (let i = 0; i < 6 && room._internals.swarmRegistry.get(hid); i++) {
       room._internals.applyDamage(hid, 'some-player', 5_000);
@@ -147,7 +147,7 @@ describe('SectorRoom integration — robot nexus + territory (P3)', () => {
   /**
    * P3c — raids: with no pod to chase, a harvester flies to the nearest player
    * storage near its nexus and steals from it (rarest goods first, plus some
-   * credits) in atomic steps; the loot sits ownerless in its hold.
+   * never credits — they're virtual) in atomic steps; the loot sits ownerless.
    */
   it('a harvester with nothing to scoop raids nearby player storage', async () => {
     let clock: { now: number };
@@ -163,21 +163,20 @@ describe('SectorRoom integration — robot nexus + territory (P3)', () => {
       subtypeIndex: structureKindToIndex('cargo_bay'), x: pose.x + 40, y: pose.y, radius: 40,
       isConstructed: true, constructionProgress: 0, constructionCost: 0, isDeconstructing: false,
       minerals: 0, storedPower: 0, level: 1,
-      hold: { goods: { core: 2, salvage: 100 }, credits: 500, blueprints: [] },
+      hold: { goods: { core: 2, salvage: 100 }, blueprints: [] },
     });
 
     clock.now += 1000;
     t.tick(clock.now);
-    // Step 1 (30 weight): both cores (10) + 20 salvage, and 25 credits.
+    // Step 1 (30 weight): both cores (10) + 20 salvage. No credits (virtual).
     const loot = getHoldStore().get(hid)?.hold;
     expect(loot?.goods.core).toBe(2);
     expect(loot?.goods.salvage).toBe(20);
-    expect(loot?.credits).toBe(25);
+    expect(loot !== undefined && 'credits' in loot).toBe(false);
     expect(getHoldStore().get(hid)?.ownerId).toBeNull();
     const bay = room._internals.structureRegistry.get('test-raid-bay')!;
     expect(bay.hold?.goods.core ?? 0).toBe(0);
     expect(bay.hold?.goods.salvage).toBe(80);
-    expect(bay.hold?.credits).toBe(475);
 
     // It keeps raiding on later ticks.
     clock.now += 1000;

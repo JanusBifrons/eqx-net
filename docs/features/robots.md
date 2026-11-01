@@ -11,7 +11,7 @@ on sight — players, drones, and (from P2) trade haulers. They are the reason a
 quiet sector can turn into a three-way fight, and their wrecks drop the best
 loot in the game so far.
 
-| Tier | Kind id | Hull | Weapon | HP / shield | Loot (credits) |
+| Tier | Kind id | Hull | Weapon | HP / shield | Kill bounty (credits → the killer's wallet, economy v2) |
 |---|---|---|---|---|---|
 | T1 | `robot-square` | square | bolts | 120 / 80 | 8–20, salvage, some alloy |
 | T2 | `robot-circle` | 12-gon | continuous beam | 220 / 140 | 20–45, more alloy, rare core |

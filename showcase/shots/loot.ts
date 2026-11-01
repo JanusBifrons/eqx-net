@@ -6,7 +6,7 @@ export const loot: Shot = {
   id: 'loot',
   section: 'mechanics',
   title: 'Loot & cargo',
-  caption: 'Every kill drops a loot pod — fly over it to haul the salvage and credits home, or lose it if you die.',
+  caption: 'Every kill pays a bounty to your wallet and drops a loot pod — fly over it to haul the goods home, or lose them if you die.',
   features: ['M17'],
   docs: ['loot-and-cargo'],
   reel: true,
