@@ -80,3 +80,44 @@ function suite(label: string, b: Built): void {
 
 suite('citadel', citadel);
 suite('sector max', sectorMax);
+
+// A1 — turret targeting, old vs new in the SAME run (relative numbers cancel
+// host load). The citadel has 44 turrets; the sector holds ~750 swarm entities
+// (448 structures + 300 drones). Old: each turret scans every entity. New:
+// one grid rebuild over the targetable drones, then a local query per turret.
+import { NearestPointGrid } from '../src/core/spatial/NearestPointGrid.js';
+
+const ENT = 750;
+const ex = new Float64Array(ENT), ey = new Float64Array(ENT), ekind = new Uint8Array(ENT);
+for (let i = 0; i < ENT; i++) {
+  ex[i] = ((i * 7919) % 12_000) - 6000;
+  ey[i] = ((i * 104_729) % 12_000) - 6000;
+  ekind[i] = i < 300 ? 1 : 2; // 300 drones, the rest structures
+}
+const turrets: Array<[number, number]> = [];
+for (let t = 0; t < 44; t++) turrets.push([((t * 331) % 4600) - 2300, ((t * 577) % 4600) - 2300]);
+const tgrid = new NearestPointGrid(512, 10_000, 1024);
+
+describe('turret targeting — 44 turrets, 750 entities (300 drones)', () => {
+  bench('old: linear scan per turret', () => {
+    let sink = 0;
+    for (const [tx, ty] of turrets) {
+      let best = -1, bestD2 = 900 * 900;
+      for (let i = 0; i < ENT; i++) {
+        if (ekind[i] !== 1) continue;
+        const dx = ex[i]! - tx, dy = ey[i]! - ty, d2 = dx * dx + dy * dy;
+        if (d2 <= bestD2) { bestD2 = d2; best = i; }
+      }
+      sink += best;
+    }
+    if (sink === -1e9) throw new Error('unreachable');
+  });
+  bench('new: grid rebuild + query per turret', () => {
+    tgrid.reset();
+    for (let i = 0; i < ENT; i++) if (ekind[i] === 1) tgrid.add(ex[i]!, ey[i]!);
+    tgrid.build();
+    let sink = 0;
+    for (const [tx, ty] of turrets) sink += tgrid.nearest(tx, ty, 900);
+    if (sink === -1e9) throw new Error('unreachable');
+  });
+});

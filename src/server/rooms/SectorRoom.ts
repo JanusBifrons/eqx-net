@@ -82,6 +82,7 @@ import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js'
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
+import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
@@ -1886,7 +1887,7 @@ export class SectorRoom extends Room<SectorState> {
       drawAsteroidResources: (entityId, amount) => this.drawAsteroidResources(entityId, amount),
       // Allegiances P0: base turrets defend against combat allegiances (drones,
       // robots) but never open fire on NEUTRAL traders (their haulers).
-      findNearestDrone: (x, y, range) => this.findNearestSwarmOfKind(x, y, range, 1, this._isTurretTargetable),
+      findNearestDrone: (x, y, range) => this.findNearestTurretTarget(x, y, range),
       applyDamage: (targetId, shooterId, damage) => this.applyDamage(targetId, shooterId, damage),
       broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) => {
         this.broadcast('laser_fired', {
@@ -3242,6 +3243,9 @@ export class SectorRoom extends Room<SectorState> {
     rec: SwarmEntityRecord,
     opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string },
   ): void {
+    // A turret's kill mid-tick must not leave the evicted drone selectable by
+    // the next turret in the same tick (the linear scan never saw it).
+    this.turretTargetGridFresh = false;
     // Gameplay audit log — record a REAL combat death (the `emitDestroyed`
     // signal that fires the kill-feed + bus ENTITY_DESTROYED; load-shedder /
     // quiet bot despawn / abandon use emitDestroyed:false and are excluded).
@@ -3687,6 +3691,9 @@ export class SectorRoom extends Room<SectorState> {
   private structureTurretTick(): void {
     if (this.structureRegistry.size === 0) return;
     const nowMs = Date.now();
+    // A1 — the turret target grid is rebuilt (lazily, on the first query) once
+    // per turret tick, instead of every turret scanning every swarm entity.
+    this.turretTargetGridFresh = false;
     this.structureGrid.tickTurrets(nowMs);
     // WS-4 — re-broadcast each Miner's mining beam on the same fast cadence so
     // the continuous beam tracks + doesn't flicker (gated per-Miner internally).
@@ -3804,6 +3811,52 @@ export class SectorRoom extends Room<SectorState> {
    *  every drone). So: everything except traders. Built once (no per-call alloc). */
   private readonly _isTurretTargetable = (rec: SwarmEntityRecord): boolean =>
     allegianceOfKind(rec.shipKind) !== 'traders';
+
+  /**
+   * A1 (plan soft-leaping-truffle v2) — turret targets via a uniform grid.
+   * The A0 measurement put the per-turret linear scan of EVERY swarm entity at
+   * 5 ms median / 12.6 ms max per 10 Hz tick at citadel scale. The grid holds
+   * the turret-targetable kind-1 records (same filter, same registry order, so
+   * `NearestPointGrid`'s tie rule reproduces the scan's winner exactly), built
+   * once per turret tick in O(E) and rebuilt after any eviction. Allocation-free
+   * in steady state: the result object is reused (callers consume it at once —
+   * `tickTurrets` keeps only the entityId).
+   */
+  private readonly turretTargetGrid = new NearestPointGrid(512, DRONE_MAX_BOUNDS, 512);
+  private readonly turretTargetRecs: SwarmEntityRecord[] = [];
+  private turretTargetGridFresh = false;
+  private readonly turretTargetOut = { id: '', entityId: 0, x: 0, y: 0, radius: 0 };
+
+  private findNearestTurretTarget(
+    x: number,
+    y: number,
+    range: number,
+  ): { id: string; entityId: number; x: number; y: number; radius: number } | null {
+    if (!this.turretTargetGridFresh) {
+      const g = this.turretTargetGrid;
+      const recs = this.turretTargetRecs;
+      g.reset();
+      recs.length = 0;
+      for (const rec of this.swarmRegistry.all()) {
+        if (rec.kind !== 1 || !this._isTurretTargetable(rec)) continue;
+        const base = slotBase(rec.slot);
+        g.add(this.sabF32[base + SLOT_X_OFF]!, this.sabF32[base + SLOT_Y_OFF]!);
+        recs.push(rec);
+      }
+      g.build();
+      this.turretTargetGridFresh = true;
+    }
+    const i = this.turretTargetGrid.nearest(x, y, range);
+    if (i < 0) return null;
+    const rec = this.turretTargetRecs[i]!;
+    const out = this.turretTargetOut;
+    out.id = rec.id;
+    out.entityId = rec.entityId;
+    out.x = this.turretTargetGrid.x(i);
+    out.y = this.turretTargetGrid.y(i);
+    out.radius = rec.radius;
+    return out;
+  }
 
   private findNearestSwarmOfKind(
     x: number,

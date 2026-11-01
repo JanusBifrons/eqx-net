@@ -86,6 +86,18 @@ describe('A0 — structure scale measurement', () => {
     const turret = time(() => internal.tickStructureTurrets(), 40);
     const rebuild = time(() => internal.rebuildStructuresSlice(), 40);
     const turrets = kinds.get('turret') ?? 0;
+    // Break the turret tick into its parts (it runs four things every 100 ms).
+    const priv = room as unknown as {
+      structureGrid: { tickTurrets(now: number): void; tickMiners(now: number): void };
+      shieldWalls: { update(now: number): void };
+      turretTargetGridFresh: boolean;
+    };
+    const parts = {
+      tickTurrets: time(() => { priv.turretTargetGridFresh = false; priv.structureGrid.tickTurrets(Date.now()); }, 40),
+      tickMiners: time(() => priv.structureGrid.tickMiners(Date.now()), 40),
+      shieldWallsUpdate: time(() => priv.shieldWalls.update(Date.now()), 40),
+      sliceRebuild: rebuild,
+    };
 
     const row = {
       n,
@@ -99,6 +111,7 @@ describe('A0 — structure scale measurement', () => {
       binaryFullRefreshBytesPerSecPerClient: rows * 34, // SWARM_RECORD_BYTES × 1 Hz full refresh
       pulseMs: pulse,
       turretTickMs: turret,
+      turretTickParts: parts,
       turretTickMsPerSec: +(turret.median * 10).toFixed(2),
       sliceRebuildMs: rebuild,
       sliceRebuildMsPerSec: +(rebuild.median * 11).toFixed(2), // 10 Hz turret tick + 1 Hz pulse
