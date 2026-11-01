@@ -2056,6 +2056,8 @@ export class SectorRoom extends Room<SectorState> {
       sectorHasNebula: () => this.sectorFeatures.includes('nebula'),
       // P2d — missile and autocannon turrets load munitions from base storage.
       takeMunition: (rec) => this.production.takeGoods(rec, ONE_MUNITION),
+      // P2e — the level 3+ upgrade goods bill.
+      takeGoods: (rec, goods) => this.production.takeGoods(rec, goods),
       // Allegiances P0: base turrets defend against combat allegiances (drones,
       // robots) but never open fire on NEUTRAL traders (their haulers).
       findNearestDrone: (x, y, range, owner) => this.findNearestTurretTarget(x, y, range, owner),
