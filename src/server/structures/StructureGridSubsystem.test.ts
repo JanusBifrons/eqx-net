@@ -886,3 +886,40 @@ describe('StructureGridSubsystem — power summary', () => {
     expect(summary.netPower).toBe(80); // capital 50 + solar 30
   });
 });
+
+describe('StructureGridSubsystem — P2e upgrade goods bill', () => {
+  function builtSolar() {
+    const h = makeHarness();
+    h.placement.place(OWNER, 'capital', 0, 0);
+    relayConnector(h, 120, 120);
+    const id = h.placement.place(OWNER, 'solar', 150, 0)!;
+    const rec = h.registry.get(id)!;
+    rec.isConstructed = true;
+    rec.constructionProgress = rec.constructionCost;
+    return { h, rec, id };
+  }
+
+  it('level 1 → 2 costs minerals only (no goods asked for)', () => {
+    const { h, rec, id } = builtSolar();
+    const asked: unknown[] = [];
+    (h.grid as unknown as { hooks: { takeGoods: (r: unknown, g: unknown) => boolean } }).hooks.takeGoods = (_r, g) => { asked.push(g); return false; };
+    expect(h.grid.upgradeStructure(id)).toBe(true);
+    expect(asked).toHaveLength(0);
+    expect(rec.upgradeTargetLevel).toBe(2);
+  });
+
+  it('level 2 → 3 needs alloy from storage: refused without it, started (and paid) with it', () => {
+    const { h, rec, id } = builtSolar();
+    rec.level = 2;
+    let have = false;
+    const asked: Array<Record<string, number>> = [];
+    (h.grid as unknown as { hooks: { takeGoods: (r: unknown, g: Record<string, number>) => boolean } }).hooks.takeGoods = (_r, g) => { asked.push(g); return have; };
+    expect(h.grid.upgradeStructure(id)).toBe(false);
+    expect(rec.upgradeTargetLevel).toBeUndefined();
+    expect(rec.isConstructed).toBe(true);
+    have = true;
+    expect(h.grid.upgradeStructure(id)).toBe(true);
+    expect(rec.upgradeTargetLevel).toBe(3);
+    expect(Object.keys(asked[1]!)).toEqual(['alloy']);
+  });
+});

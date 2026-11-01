@@ -29,7 +29,7 @@ import {
   canUpgradeStructure,
   effectiveStructureMaxHealth,
   structureLevelFactor,
-  structureUpgradeCost,
+  structureUpgradeCost, structureUpgradeGoods,
 } from '../../core/leveling/structureLevel.js';
 import { getWeapon, isWeaponId, type WeaponDef, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { MINING_BEAM_PLAYER_DPS, resolveMiningBeamEndpoint, type MiningBeamObstacle } from '../../core/combat/miningBeamHazard.js';
@@ -108,6 +108,9 @@ export interface StructureGridHooks {
   /** P2d — take ONE unit of munitions from `rec`'s owner network storage;
    *  false when there is none. Absent ⇒ unlimited ammo. */
   takeMunition?(rec: StructureRecord): boolean;
+  /** P2e — take exactly these goods from `rec`'s owner network storage (all or
+   *  nothing; the level 3+ upgrade bill). Absent ⇒ upgrades cost minerals only. */
+  takeGoods?(rec: StructureRecord, goods: Partial<Record<GoodId, number>>): boolean;
   /** Phase 5 — nearest target within `range` of (x, y) for a turret owned by
    *  `owner`, or null. Returns the target's damage id + entityId + pose. B2: a
    *  player-owned turret engages drones and robots (unchanged); an NPC-owned
@@ -759,6 +762,13 @@ export class StructureGridSubsystem {
     if (!canUpgradeStructure(rec.level)) return false; // at the cap
     const baseCost = getStructureKind(rec.kind).constructionCost;
     const cost = structureUpgradeCost(baseCost, rec.level);
+    // P2e (plan soft-leaping-truffle v3) — level 3+ also costs goods (alloy,
+    // components, machinery), taken up front from the owner's network storage,
+    // all or nothing. Missing goods ⇒ the upgrade doesn't start.
+    const bill = structureUpgradeGoods(baseCost, rec.level);
+    let needsGoods = false;
+    for (const g in bill) if ((bill as Record<string, number>)[g]! > 0) needsGoods = true;
+    if (needsGoods && this.hooks.takeGoods && !this.hooks.takeGoods(rec, bill)) return false;
     // Review must-fix #2 (2026-06-20): the Capital's `constructionCost` is 0, so
     // its upgrade `cost` is 0 — a BALANCE oddity (a free capital upgrade,
     // contradicts D14 "costs resources"; recorded as a follow-up, NOT this fix).

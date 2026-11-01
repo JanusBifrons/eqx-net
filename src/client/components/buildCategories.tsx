@@ -38,7 +38,7 @@ export const BUILD_CATEGORIES: readonly BuildCategory[] = [
     id: 'economy',
     label: 'Economy',
     icon: <BoltIcon />,
-    kinds: ['solar', 'battery', 'miner', 'gas_collector', 'deep_core_rig', 'cargo_bay', 'freight_dock'],
+    kinds: ['solar', 'battery', 'miner', 'gas_collector', 'deep_core_rig', 'cargo_bay', 'freight_dock', 'reactor', 'battery_bank', 'storage_vault'],
   },
   // Production chains (plan soft-leaping-truffle v3, P2a): the processors.
   {

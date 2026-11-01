@@ -47,6 +47,7 @@ import {
   STRUCTURE_FLAG_POWERED,
   STRUCTURE_FLAG_WALL_ACTIVE,
   STRUCTURE_FLAG_NO_AMMO,
+  STRUCTURE_FLAG_NO_FUEL,
   STRUCTURE_TARGET_NONE,
   STRUCTURE_DEFAULTS as SD,
 } from '../../shared-types/structureStateWire.js';
@@ -2068,6 +2069,8 @@ export class SectorRoom extends Room<SectorState> {
       sectorHasNebula: () => this.sectorFeatures.includes('nebula'),
       // P2d — missile and autocannon turrets load munitions from base storage.
       takeMunition: (rec) => this.production.takeGoods(rec, ONE_MUNITION),
+      // P2e — the level 3+ upgrade goods bill.
+      takeGoods: (rec, goods) => this.production.takeGoods(rec, goods),
       // Allegiances P0: base turrets defend against combat allegiances (drones,
       // robots) but never open fire on NEUTRAL traders (their haulers).
       findNearestDrone: (x, y, range, owner) => this.findNearestTurretTarget(x, y, range, owner),
@@ -4563,6 +4566,7 @@ export class SectorRoom extends Room<SectorState> {
         // emitter's walls are up). `shieldWallTo` stays for a pylon's first wall.
         if (this.shieldWalls.wallsUpFor(rec.id, nowMs)) flags |= STRUCTURE_FLAG_WALL_ACTIVE;
         if (rec.noAmmo === true) flags |= STRUCTURE_FLAG_NO_AMMO;
+        if (rec.isConstructed && getStructureKind(rec.kind).fuelEveryPulses != null && rec.fueled !== true) flags |= STRUCTURE_FLAG_NO_FUEL;
         if (rec.kind === 'shield_pylon') {
           const wall = this.shieldWalls.wallStateFor(rec.id, nowMs);
           const other = wall ? this.swarmRegistry.get(wall.otherPost)?.entityId : undefined;

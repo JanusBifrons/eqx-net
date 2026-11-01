@@ -45,6 +45,9 @@ describe('structureKinds catalogue', () => {
       'assembly_plant',
       'research_lab', // economy v2 W3 — appended at the tail
       'autocannon_turret', // P2d — appended at the tail
+      'reactor', // D1 consolidated kinds — appended at the tail
+      'battery_bank',
+      'storage_vault',
     ]);
   });
 
@@ -88,7 +91,7 @@ describe('structureKinds catalogue', () => {
     }
   });
 
-  it('the battery carries a stored-power capacity; nothing else does', () => {
+  it('the battery (and the D1 Battery Bank) carry a stored-power capacity; nothing else does', () => {
     expect(STRUCTURE_KINDS.battery.powerStorageCapacity).toBeGreaterThan(0);
     expect(STRUCTURE_KINDS.battery.powerOutput).toBe(0);
     expect(STRUCTURE_KINDS.battery.powerConsumption).toBe(0);
