@@ -86,7 +86,7 @@ export const ContractsTab = memo(function ContractsTab(): JSX.Element {
           </Typography>
           <Typography sx={DETAIL_SX}>{c.detail}</Typography>
           <Box sx={META_SX}>
-            <span>{sectorName(c.sectorKey)}</span>
+            <span>{c.sectorKey === '' ? 'Location unknown' : sectorName(c.sectorKey)}</span>
             <span style={{ color: ELITE_COLOR }}>{formatReward(c)}</span>
             {c.endsAtMs !== null && <span style={{ color: '#9aa0b4' }}>{formatTimeLeft(c.endsAtMs, now)} left</span>}
           </Box>

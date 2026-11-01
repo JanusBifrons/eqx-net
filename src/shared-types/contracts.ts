@@ -39,3 +39,41 @@ export const ContractsResponseSchema = z
   .strict();
 
 export type ContractsResponse = z.infer<typeof ContractsResponseSchema>;
+
+// ── P4c-2 — player bounties ────────────────────────────────────────────────
+
+/** Placing a bounty also burns this fraction ON TOP (a 100¢ bounty costs 125¢). */
+export const PVP_BOUNTY_FEE_FRAC = 0.25;
+export const PVP_BOUNTY_MIN = 100;
+export const PVP_BOUNTY_MAX = 50_000;
+/** The target must own a ship at least this level (no griefing new pilots). */
+export const PVP_BOUNTY_MIN_TARGET_LEVEL = 3;
+/** After a bounty on a target is claimed, its placer must wait this long to
+ *  place another on the same target. */
+export const PVP_BOUNTY_PAIR_COOLDOWN_MS = 24 * 60 * 60_000;
+
+/** The total a placer pays for a bounty of `amount` (bounty + burned fee). */
+export function pvpBountyCost(amount: number): number {
+  return amount + Math.ceil(amount * PVP_BOUNTY_FEE_FRAC);
+}
+
+/** Client → server: put `amount` credits on `targetPlayerId`, paid from the
+ *  placer's storage network at `networkEntityId` (in this sector). */
+export const PlaceBountySchema = z
+  .object({
+    targetPlayerId: z.string().min(1).max(64),
+    networkEntityId: z.number().int().nonnegative(),
+    amount: z.number().int().min(PVP_BOUNTY_MIN).max(PVP_BOUNTY_MAX),
+  })
+  .strict();
+export type PlaceBounty = z.infer<typeof PlaceBountySchema>;
+
+/** Server → client: the placement verdict (an accelerator — the board is the truth). */
+export const BountyResultSchema = z
+  .object({
+    type: z.literal('bounty_result'),
+    ok: z.boolean(),
+    message: z.string().max(200),
+  })
+  .strict();
+export type BountyResult = z.infer<typeof BountyResultSchema>;

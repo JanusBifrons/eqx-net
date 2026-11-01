@@ -29,6 +29,11 @@ export function sendCancelDeal(dealId: string): boolean {
   return send('cancel_deal', { dealId });
 }
 
+/** P4c-2 — put a bounty on a player (verdict: `bounty_result`). */
+export function sendPlaceBounty(args: { targetPlayerId: string; networkEntityId: number; amount: number }): boolean {
+  return send('place_bounty', args);
+}
+
 export function sendGift(args: {
   allegiance: EconAllegiance;
   networkEntityId: number;

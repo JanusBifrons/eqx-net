@@ -20,7 +20,7 @@ import { GOOD_IDS, type GoodId, type Hold } from '../../shared-types/goods.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { cloneHold, emptyHold, holdWeight, isHoldEmpty, transferInto } from '../../core/cargo/hold.js';
-import type { HoldRecord, HoldStore } from './HoldStore.js';
+import type { HolderType, HoldRecord, HoldStore } from './HoldStore.js';
 import type { StructureRecord, StructureRegistry } from '../structures/StructureRegistry.js';
 
 /** Fly within this distance of your own storage to deposit. */
@@ -53,7 +53,7 @@ export interface TradeNetworkSnapshot {
 export interface TradeTransferSpec {
   /** `intoOwner` overrides the receiving hold's owner (default: the network
    *  owner — escrow). A robot raid passes null: stolen cargo is nobody's. */
-  take?: { want: Hold; intoUid: string; intoOwner?: string | null };
+  take?: { want: Hold; intoUid: string; intoOwner?: string | null; intoType?: HolderType; burnCredits?: number };
   release?: readonly string[];
   mintCredits?: number;
   destroy?: readonly string[];
@@ -374,8 +374,11 @@ export class StorageService {
       const existing = this.d.holdStore.get(spec.take.intoUid);
       const into = existing ? cloneHold(existing.hold) : emptyHold();
       transferInto(into, cloneHold(taken), Infinity);
+      // P4c-2 — a fee taken with the value but burned (never deposited).
+      const burn = Math.min(spec.take.burnCredits ?? 0, into.credits);
+      if (burn > 0) into.credits -= burn;
       puts.push({
-        holderUid: spec.take.intoUid, holderType: 'hauler',
+        holderUid: spec.take.intoUid, holderType: spec.take.intoType ?? 'hauler',
         ownerId: spec.take.intoOwner === undefined ? owner : spec.take.intoOwner,
         sectorKey: this.d.sectorKey(), x: null, y: null, hold: into, expiresAt: null,
       });

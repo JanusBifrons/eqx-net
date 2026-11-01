@@ -30,6 +30,7 @@ import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
 import { toastForNotice } from './tradeView';
 import { TradeNoticeSchema } from '../../shared-types/economy.js';
 import { WorldNoticeSchema } from '../../shared-types/worldNotice.js';
+import { BountyResultSchema } from '../../shared-types/contracts.js';
 
 /** Living World P2 — how long a trade toast stays up. */
 const TRADE_TOAST_TTL_MS = 6_000;
@@ -2010,6 +2011,13 @@ export class ColyseusGameClient {
     });
     // Living World P2 — trade toasts + Trade-tab badge. An ACCELERATOR only:
     // the tab's truth is `GET /trade/economy` (it refetches on tradeNoticeSeq).
+    // Living World P4c-2 — a bounty placement verdict (accelerator only).
+    room.onMessage('bounty_result', (raw: unknown) => {
+      const parsed = BountyResultSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.ok ? 'good' : 'danger', false);
+      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
+    });
     room.onMessage('trade_notice', (raw: unknown) => {
       const parsed = TradeNoticeSchema.safeParse(raw);
       if (!parsed.success) return;

@@ -12,7 +12,8 @@
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import type { Hold } from '../../shared-types/goods.js';
 
-export type HolderType = 'ship' | 'pod' | 'derelict' | 'structure' | 'hauler';
+/** `bounty` (P4c-2): a player bounty's escrowed credits, keyed `bounty:<target>:<placer>`. */
+export type HolderType = 'ship' | 'pod' | 'derelict' | 'structure' | 'hauler' | 'bounty';
 
 export interface HoldRecord {
   readonly holderUid: string;
@@ -91,6 +92,13 @@ export class HoldStore {
   delete(uid: string, persist = true): void {
     if (!this.byUid.has(uid)) return;
     this.commit([], [uid], persist);
+  }
+
+  /** Every record of `type` (any sector) — boot / control cadence only (allocates). */
+  ofType(type: HolderType): HoldRecord[] {
+    const out: HoldRecord[] = [];
+    for (const r of this.byUid.values()) if (r.holderType === type) out.push(r);
+    return out;
   }
 
   size(): number {

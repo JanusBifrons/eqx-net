@@ -184,7 +184,8 @@ import { HARVESTER_CAPACITY, RAID_CREDITS_PER_STEP, RAID_NOTICE_THROTTLE_MS, RAI
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
 import { rollLoot } from '../../shared-types/lootTables.js';
 import { rollEliteLoot, ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
-import { ELITE_BOUNTY_CREDITS } from '../../shared-types/contracts.js';
+import { ELITE_BOUNTY_CREDITS, PlaceBountySchema, type BountyResult } from '../../shared-types/contracts.js';
+import { getBountyBoard } from '../economy/BountyBoard.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
 // RosterFullError is handled inside RosterPersistence.ts
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
@@ -2542,6 +2543,25 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('cancel_deal', (client: Client, raw: unknown) => tradeRequest(client, 'cancel_deal', raw));
     this.onMessage('send_gift', (client: Client, raw: unknown) => tradeRequest(client, 'send_gift', raw));
 
+    // ── Living World P4c-2 — place a player bounty ───────────────────────────
+    this.onMessage('place_bounty', (client: Client, raw: unknown) => {
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      const board = getBountyBoard();
+      if (!playerId || !board) return;
+      const p = PlaceBountySchema.safeParse(raw);
+      if (!p.success) { this.malformed.record(client.sessionId, 'place_bounty'); return; }
+      const reply = (ok: boolean, message: string): void => {
+        try { client.send('bounty_result', { type: 'bounty_result', ok, message } satisfies BountyResult); } catch { /* closing */ }
+      };
+      if (this.sectorKey === null) { reply(false, 'Bounties are only available in the galaxy.'); return; }
+      if (!this.playerToUser.get(playerId)) { reply(false, 'Sign in to place bounties.'); return; }
+      const rec = this.swarmRegistry.getByEntityId(p.data.networkEntityId);
+      const s = rec ? this.structureRegistry.get(rec.id) : undefined;
+      if (s === undefined || s.owner !== playerId || s.uid === undefined) { reply(false, 'Pick one of your storage structures.'); return; }
+      const v = board.place(this, playerId, p.data.targetPlayerId, s.uid, p.data.amount);
+      reply(v.ok, v.message);
+    });
+
     // ── Phase 4 WS-A2 — same-sector instant pilot swap ─────────────────────
     // The player (a spectator after death, or piloting another hull) reclaims
     // one of their OWN lingering hulls parked in THIS sector and resumes control
@@ -2773,6 +2793,8 @@ export class SectorRoom extends Room<SectorState> {
           victim: victimPlayerId,
           killer: auditAttacker,
         });
+        // P4c-2 — the killer collects any open player bounties on the victim.
+        getBountyBoard()?.onPlayerKilled(this, victimPlayerId, auditAttacker);
       }
       // Phase 4 (Leveling & XP, WS-B1) — award XP to the KILLER SHIP INSTANCE,
       // weighted by the victim's toughness. MUST run BEFORE the roster wipe
@@ -4504,23 +4526,33 @@ export class SectorRoom extends Room<SectorState> {
   private payEliteBounty(killerId: string, targetName: string, credits: number): void {
     if (credits <= 0 || classifyAttacker(killerId) !== 'player') return;
     if (!this.playerToUser.get(killerId)) return;
-    const shipId = this.resolveActiveShipKey(killerId);
-    if (shipId === undefined || shipId === '' || this.sectorKey === null) return;
-    const store = getHoldStore();
-    const cur = store.get(shipId);
-    const hold = cur ? cloneHold(cur.hold) : emptyHold();
-    hold.credits += credits;
-    store.commit(
-      [{ holderUid: shipId, holderType: 'ship', ownerId: killerId, sectorKey: null, x: null, y: null, hold, expiresAt: null }],
-      [],
-      true,
-    );
-    auditEvent({ event: 'bounty_claimed', sector: this.sectorKey, playerId: killerId, target: targetName, credits });
+    if (!this.creditKillerHold(killerId, credits, [])) return;
+    auditEvent({ event: 'bounty_claimed', sector: this.sectorKey ?? undefined, playerId: killerId, target: targetName, credits });
     const who = this.resolveOwnerName(killerId) ?? 'A pilot';
     this.broadcastWorldNotice({
       type: 'world_notice', kind: 'bounty',
       message: `${who} claimed the ${credits}¢ bounty on ${targetName}!`,
     });
+  }
+
+  /**
+   * P4c — credit `credits` into `playerId`'s ACTIVE ship hold and delete
+   * `deletes` (a bounty's escrow) in ONE atomic hold group. False — nothing
+   * written — when the player has no roster-bound active hull here.
+   */
+  creditKillerHold(playerId: string, credits: number, deletes: readonly string[]): boolean {
+    const shipId = this.resolveActiveShipKey(playerId);
+    if (shipId === undefined || shipId === '' || this.sectorKey === null) return false;
+    const store = getHoldStore();
+    const cur = store.get(shipId);
+    const hold = cur ? cloneHold(cur.hold) : emptyHold();
+    hold.credits += credits;
+    store.commit(
+      [{ holderUid: shipId, holderType: 'ship', ownerId: playerId, sectorKey: null, x: null, y: null, hold, expiresAt: null }],
+      deletes,
+      true,
+    );
+    return true;
   }
 
   /** P4b — a world-event reward (cache / salvage pod), as an ordinary loot pod. */

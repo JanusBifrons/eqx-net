@@ -89,7 +89,7 @@ export type PersistOp =
   | {
       type: 'HOLD_PUT';
       holderUid: string;
-      holderType: 'ship' | 'pod' | 'derelict' | 'structure' | 'hauler';
+      holderType: 'ship' | 'pod' | 'derelict' | 'structure' | 'hauler' | 'bounty';
       ownerId: string | null;
       sectorKey: string | null;
       x: number | null;
