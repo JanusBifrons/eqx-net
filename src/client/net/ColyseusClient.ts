@@ -31,6 +31,17 @@ import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
 import { toastForNotice } from './tradeView';
 import { TradeNoticeSchema } from '../../shared-types/economy.js';
 import { WorldNoticeSchema } from '../../shared-types/worldNotice.js';
+import { BountyResultSchema } from '../../shared-types/contracts.js';
+import { BlueprintResultSchema, fittedCargoMul } from '../../shared-types/blueprints.js';
+
+const EMPTY_IDS: readonly string[] = Object.freeze([]);
+/** Same id list (order-sensitive; absent ≡ empty). Alloc-free. */
+function sameIds(a: readonly string[], b: readonly string[] | undefined): boolean {
+  const n = b?.length ?? 0;
+  if (a.length !== n) return false;
+  for (let i = 0; i < n; i++) if (a[i] !== b![i]) return false;
+  return true;
+}
 
 /** Living World P2 — how long a trade toast stays up. */
 const TRADE_TOAST_TTL_MS = 6_000;
@@ -2038,6 +2049,20 @@ export class ColyseusGameClient {
     });
     // Living World P2 — trade toasts + Trade-tab badge. An ACCELERATOR only:
     // the tab's truth is `GET /trade/economy` (it refetches on tradeNoticeSeq).
+    // Living World P5 — a blueprint install verdict (accelerator only).
+    room.onMessage('blueprint_result', (raw: unknown) => {
+      const parsed = BlueprintResultSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.ok ? 'good' : 'danger', false);
+      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
+    });
+    // Living World P4c-2 — a bounty placement verdict (accelerator only).
+    room.onMessage('bounty_result', (raw: unknown) => {
+      const parsed = BountyResultSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.ok ? 'good' : 'danger', false);
+      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
+    });
     room.onMessage('trade_notice', (raw: unknown) => {
       const parsed = TradeNoticeSchema.safeParse(raw);
       if (!parsed.success) return;
@@ -3032,7 +3057,7 @@ export class ColyseusGameClient {
       // takes effect the moment its own-ship slice arrives.
       this.applyLocalStatAlloc(localId, serverState.statAlloc);
       // Living World P1a (#16) — the authoritative own-ship cargo slice.
-      this.applyLocalCargo(localId, serverState.cargo);
+      this.applyLocalCargo(localId, serverState.cargo, serverState.fitted);
       // Living World P1a-2 — auto-deposit progress ring (quantised to 10 % so
       // the 2 s dwell costs ≤ 10 store writes, not one per snapshot).
       const dep = serverState.depositing === undefined ? null : Math.floor(serverState.depositing / 10) * 10;
@@ -5273,9 +5298,15 @@ export class ColyseusGameClient {
   private applyLocalCargo(
     localId: string,
     cargo: { goods: Partial<Record<string, number>>; credits: number; blueprints: string[] } | undefined,
+    fitted?: string[],
   ): void {
     const s = useUIStore.getState();
-    const capacity = cargoCapacityForMaxHealth(getShipKind(this.mirror.ships.get(localId)?.kind ?? null).maxHealth);
+    // P5 — fitted blueprints (store only on change; compared without allocating).
+    if (!sameIds(s.fittedBlueprints, fitted)) s.setFittedBlueprints(fitted === undefined ? [] : fitted.slice());
+    const capacity = Math.floor(
+      cargoCapacityForMaxHealth(getShipKind(this.mirror.ships.get(localId)?.kind ?? null).maxHealth)
+        * fittedCargoMul(fitted ?? EMPTY_IDS),
+    );
     if (!cargoChanged(s.cargo, cargo) && s.cargoCapacity === capacity) return;
     s.setCargo(
       cargo === undefined ? null : { goods: { ...cargo.goods }, credits: cargo.credits, blueprints: cargo.blueprints.length },

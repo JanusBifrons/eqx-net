@@ -17,10 +17,11 @@
  *    mining, it can never duplicate player value.
  */
 import { GOOD_IDS, type GoodId, type Hold } from '../../shared-types/goods.js';
+import { fittedUid } from '../../shared-types/blueprints.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { cloneHold, emptyHold, holdWeight, isHoldEmpty, transferInto } from '../../core/cargo/hold.js';
-import type { HoldRecord, HoldStore } from './HoldStore.js';
+import type { HolderType, HoldRecord, HoldStore } from './HoldStore.js';
 import type { StructureRecord, StructureRegistry } from '../structures/StructureRegistry.js';
 
 /** Fly within this distance of your own storage to deposit. */
@@ -53,7 +54,7 @@ export interface TradeNetworkSnapshot {
 export interface TradeTransferSpec {
   /** `intoOwner` overrides the receiving hold's owner (default: the network
    *  owner — escrow). A robot raid passes null: stolen cargo is nobody's. */
-  take?: { want: Hold; intoUid: string; intoOwner?: string | null };
+  take?: { want: Hold; intoUid: string; intoOwner?: string | null; intoType?: HolderType; burnCredits?: number };
   release?: readonly string[];
   mintCredits?: number;
   destroy?: readonly string[];
@@ -374,8 +375,11 @@ export class StorageService {
       const existing = this.d.holdStore.get(spec.take.intoUid);
       const into = existing ? cloneHold(existing.hold) : emptyHold();
       transferInto(into, cloneHold(taken), Infinity);
+      // P4c-2 — a fee taken with the value but burned (never deposited).
+      const burn = Math.min(spec.take.burnCredits ?? 0, into.credits);
+      if (burn > 0) into.credits -= burn;
       puts.push({
-        holderUid: spec.take.intoUid, holderType: 'hauler',
+        holderUid: spec.take.intoUid, holderType: spec.take.intoType ?? 'hauler',
         ownerId: spec.take.intoOwner === undefined ? owner : spec.take.intoOwner,
         sectorKey: this.d.sectorKey(), x: null, y: null, hold: into, expiresAt: null,
       });
@@ -428,6 +432,41 @@ export class StorageService {
 
   /** Living World P3c — the nearest OPERATIONAL storage (any player owner) to
    *  (x, y) within `range`, for a robot raid. Control cadence (allocates). */
+  /**
+   * Living World P5 — install one `blueprintId` from `owner`'s storage network
+   * at `networkUid` onto ship `shipInstanceId`: ONE atomic hold group (the
+   * storage loses it, the ship's `fitted` hold gains it). Returns the ship's
+   * new fitted list, or null when the network doesn't hold that blueprint.
+   */
+  installBlueprint(owner: string, networkUid: string, blueprintId: string, shipInstanceId: string): string[] | null {
+    const target = this.storageByUid(owner, networkUid);
+    if (target === null) return null;
+    let from: StructureRecord | null = null;
+    for (const rec of this.network(target)) {
+      const i = rec.hold?.blueprints.indexOf(blueprintId) ?? -1;
+      if (i >= 0) {
+        rec.hold!.blueprints.splice(i, 1);
+        from = rec;
+        break;
+      }
+    }
+    if (from === null) return null;
+    const uid = fittedUid(shipInstanceId);
+    const prior = this.d.holdStore.get(uid);
+    const fitted = prior ? cloneHold(prior.hold) : emptyHold();
+    fitted.blueprints.push(blueprintId);
+    const puts: HoldRecord[] = [
+      { holderUid: uid, holderType: 'fitted', ownerId: owner, sectorKey: null, x: null, y: null, hold: fitted, expiresAt: null },
+    ];
+    const r = this.recordFor(from);
+    if (r !== null) {
+      this.persistedSig.set(from.uid!, sig(r.hold));
+      puts.push(r);
+    }
+    this.d.holdStore.commit(puts, [], this.persist());
+    return fitted.blueprints;
+  }
+
   nearestAnyStorage(x: number, y: number, range: number): StructureRecord | null {
     let best: StructureRecord | null = null;
     let bestD2 = range * range;

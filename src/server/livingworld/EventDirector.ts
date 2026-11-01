@@ -34,6 +34,7 @@ import {
   type WorldEventView,
 } from '../../shared-types/worldEvents.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
+import { MOTHERSHIP_BOUNTY_CREDITS } from '../../shared-types/contracts.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import type { LivingWorldRoom } from './LivingWorldRoom.js';
@@ -142,7 +143,7 @@ export class EventDirector {
     } else if (kind === 'mothership') {
       const bossId = `${EVENT_ID_PREFIX}${seq}-boss`;
       this.spawnMob(room, ev, bossId, MOTHERSHIP_KIND, 0, 1, 0);
-      if (!ev.mobs.has(bossId) || room.markElite?.(bossId, MOTHERSHIP_NAME, MOTHERSHIP_HEALTH_MUL) !== true) {
+      if (!ev.mobs.has(bossId) || room.markElite?.(bossId, MOTHERSHIP_NAME, MOTHERSHIP_HEALTH_MUL, MOTHERSHIP_BOUNTY_CREDITS) !== true) {
         for (const id of ev.mobs) room.despawnLivingWorldBot(id);
         return false;
       }
