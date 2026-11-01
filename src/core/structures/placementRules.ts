@@ -12,7 +12,7 @@
  * iterables are caller-owned, so it's safe to call from the per-frame ghost
  * preview (invariant #14). `null` means legal.
  */
-import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { structureHalfExtents } from '../../shared-types/structureKinds.js';
 import type { GridObstacle } from './Grid.js';
 
 /** A circular footprint to test against (a placed structure or the ghost). */
@@ -20,19 +20,26 @@ export interface PlacementFootprint {
   x: number;
   y: number;
   radius: number;
+  /** Footprint half extents (phase V). ABSENT ⇒ a square of `radius`. */
+  halfW?: number;
+  halfH?: number;
 }
 
 /** Why a placement is illegal. `null` (from {@link placementRejection}) = legal. */
 export type PlacementRejection = 'overlap-structure' | 'overlap-obstacle';
 
-/** Sum-of-radii circle overlap (centre distance < r₁ + r₂). The exact semantics
- *  the server's pre-existing structure-overlap loop used, factored out so the
- *  obstacle pass reuses it. */
-function overlaps(ax: number, ay: number, ar: number, bx: number, by: number, br: number): boolean {
-  const dx = ax - bx;
-  const dy = ay - by;
-  const minDist = ar + br;
-  return dx * dx + dy * dy < minDist * minDist;
+/** Two axis-aligned boxes (structure footprints, rotations are 90° steps)
+ *  overlap when they intersect on BOTH axes. Touching edges are legal. */
+function boxesOverlap(ax: number, ay: number, ahw: number, ahh: number, bx: number, by: number, bhw: number, bhh: number): boolean {
+  return Math.abs(ax - bx) < ahw + bhw && Math.abs(ay - by) < ahh + bhh;
+}
+
+/** A box vs a circle (an asteroid): the circle's centre is closer than its
+ *  radius to the box's nearest point. */
+function boxOverlapsCircle(bx: number, by: number, hw: number, hh: number, cx: number, cy: number, r: number): boolean {
+  const dx = Math.max(Math.abs(cx - bx) - hw, 0);
+  const dy = Math.max(Math.abs(cy - by) - hh, 0);
+  return dx * dx + dy * dy < r * r;
 }
 
 /**
@@ -47,15 +54,16 @@ export function placementRejection(
   y: number,
   structures: Iterable<PlacementFootprint>,
   obstacles?: readonly GridObstacle[] | null,
+  rotDeg: number = 0,
 ): PlacementRejection | null {
-  const radius = getStructureKind(kindId).radius;
+  const { hw, hh } = structureHalfExtents(kindId, rotDeg);
   for (const s of structures) {
-    if (overlaps(s.x, s.y, s.radius, x, y, radius)) return 'overlap-structure';
+    if (boxesOverlap(s.x, s.y, s.halfW ?? s.radius, s.halfH ?? s.radius, x, y, hw, hh)) return 'overlap-structure';
   }
   if (obstacles) {
     for (let i = 0; i < obstacles.length; i++) {
       const o = obstacles[i]!;
-      if (overlaps(o.x, o.y, o.radius, x, y, radius)) return 'overlap-obstacle';
+      if (boxOverlapsCircle(x, y, hw, hh, o.x, o.y, o.radius)) return 'overlap-obstacle';
     }
   }
   return null;
@@ -68,6 +76,7 @@ export function canPlaceStructureAt(
   y: number,
   structures: Iterable<PlacementFootprint>,
   obstacles?: readonly GridObstacle[] | null,
+  rotDeg: number = 0,
 ): boolean {
-  return placementRejection(kindId, x, y, structures, obstacles) === null;
+  return placementRejection(kindId, x, y, structures, obstacles, rotDeg) === null;
 }

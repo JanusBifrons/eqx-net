@@ -79,7 +79,7 @@ test('wave attack: a ready base draws an 8 × Legionnaires squad that warps in a
     }
   }, WAVE_OWNER_ID);
   const page = await ctx.newPage();
-  await page.goto(`${BASE_URL}?room=galaxy-wave-test&worker=0&spawnX=0&spawnY=600`, {
+  await page.goto(`${BASE_URL}?room=galaxy-wave-test&worker=0&spawnX=0&spawnY=900`, {
     waitUntil: 'domcontentloaded',
     timeout: 60_000,
   });

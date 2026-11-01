@@ -21,8 +21,8 @@ describe('structure budgets', () => {
     expect(B.STRUCTURE_PATCH_IDLE_MAX_BYTES_PER_SEC).toBeLessThan(B.STRUCTURE_PATCH_COMBAT_MAX_BYTES_PER_SEC);
   });
 
-  it('the A0 sector-max lattice (measured working at 864 structures) exceeds the sector budget it justifies', () => {
-    const lat = buildStructureLattice({ n: 800, seed: 7, fence: true });
+  it('the sector-max lattice (measured working at 664 structures, phase V) reaches the sector budget it justifies', () => {
+    const lat = buildStructureLattice({ n: 600, seed: 7, fence: true });
     expect(lat.placements.length).toBeGreaterThanOrEqual(B.MAX_STRUCTURES_PER_SECTOR);
   });
 });

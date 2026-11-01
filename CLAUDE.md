@@ -146,6 +146,15 @@ Long uncommitted sessions are a recovery hazard. If Vite HMR cycles go wrong, th
 
 ---
 
+## End every message with a status line (2026-11-01, standing user directive)
+
+The last line of every message is one of:
+- **Continuing:** what happens next (no action needed from the user);
+- **Done:** nothing left;
+- **Waiting on you:** a short pointer to the decision.
+
+**Decisions go through the AskUserQuestion prompt tool, never as questions in prose.** The user called prose questions "very annoying" and asked to be "prompted properly". Asks buried in a long report get missed ("I've no idea what you want from me").
+
 ## Pushing branches & opening PRs — `gh` IS installed (2026-06-16)
 
 `gh` (GitHub CLI, v2.94+) is installed (winget `GitHub.cli`, user scope at `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.cli_*\bin\gh.exe`, on the user PATH for new shells) and authenticated via `%APPDATA%\GitHub CLI\hosts.yml`. **Stop saying "gh isn't installed / branches are local" — it is.** Push + open a PR is a one-liner; **never leave finished, green work unpushed waiting to "ask" — when the user says push/PR (or the task implies shipping), do it.**

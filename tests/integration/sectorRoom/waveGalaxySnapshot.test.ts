@@ -44,9 +44,9 @@ describe('SectorRoom integration — a wave shows as hostile on the galaxy snaps
           // Turret), seeded PRE-BUILT (isConstructed) + non-overlapping.
           structures: [
             { kind: 'capital', x: 0, y: 0 },
-            { kind: 'solar', x: 250, y: 0 },
-            { kind: 'miner', x: -350, y: 0 },
-            { kind: 'turret', x: 0, y: 350 },
+            { kind: 'solar', x: 700, y: 0 },
+            { kind: 'miner', x: -700, y: 0 },
+            { kind: 'turret', x: 0, y: 700 },
           ],
         },
       ],
@@ -84,9 +84,9 @@ describe('SectorRoom integration — a wave shows as hostile on the galaxy snaps
           owner: OFFLINE_OWNER,
           structures: [
             { kind: 'capital', x: 0, y: 0 },
-            { kind: 'solar', x: 250, y: 0 },
-            { kind: 'miner', x: -350, y: 0 },
-            { kind: 'turret', x: 0, y: 350 },
+            { kind: 'solar', x: 700, y: 0 },
+            { kind: 'miner', x: -700, y: 0 },
+            { kind: 'turret', x: 0, y: 700 },
           ],
         },
       ],
@@ -159,9 +159,9 @@ describe('SectorRoom integration — a wave shows as hostile on the galaxy snaps
           owner: OFFLINE_OWNER,
           structures: [
             { kind: 'capital', x: 0, y: 0 },
-            { kind: 'solar', x: 250, y: 0 },
-            { kind: 'miner', x: -350, y: 0 }, // miner ALIVE the whole test ⇒ de-escalation can't fire
-            { kind: 'turret', x: 0, y: 350 },
+            { kind: 'solar', x: 700, y: 0 },
+            { kind: 'miner', x: -700, y: 0 }, // miner ALIVE the whole test ⇒ de-escalation can't fire
+            { kind: 'turret', x: 0, y: 700 },
           ],
         },
       ],

@@ -54,9 +54,9 @@ describe('SectorRoom integration — a wave engages the PRESENT base owner (Phas
           owner: OWNER, // the wave targets the OWNER's faction
           structures: [
             { kind: 'capital', x: 0, y: 0 },
-            { kind: 'solar', x: 250, y: 0 },
-            { kind: 'miner', x: -350, y: 0 },
-            { kind: 'turret', x: 0, y: 350 },
+            { kind: 'solar', x: 700, y: 0 }, // phase V footprints
+            { kind: 'miner', x: -700, y: 0 },
+            { kind: 'turret', x: 0, y: 700 },
           ],
         },
       ],
@@ -120,9 +120,9 @@ describe('SectorRoom integration — a wave engages the PRESENT base owner (Phas
           owner: OWNER,
           structures: [
             { kind: 'capital', x: 0, y: 0 },
-            { kind: 'solar', x: 250, y: 0 },
-            { kind: 'miner', x: -350, y: 0 },
-            { kind: 'turret', x: 0, y: 350 },
+            { kind: 'solar', x: 700, y: 0 }, // phase V footprints
+            { kind: 'miner', x: -700, y: 0 },
+            { kind: 'turret', x: 0, y: 700 },
           ],
         },
       ],

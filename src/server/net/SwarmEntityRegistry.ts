@@ -24,6 +24,10 @@ export interface SwarmEntityRecord {
   kind: SwarmKind;
   /** Collision radius — shipped on the wire and used by the server hitscan path. */
   radius: number;
+  /** Structures (kind 2, phase V): the rotated footprint's half extents —
+   *  weapon hit tests use the box, not the bounding circle `radius`. */
+  halfW?: number;
+  halfH?: number;
   /** Polygon vertices in entity-local space, populated for kind=0 asteroids
    *  whose collider is a convex hull. Used by the polygon-aware hit resolver
    *  in `SectorRoom.handleFire`. The same array is the one passed to the

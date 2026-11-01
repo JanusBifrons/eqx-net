@@ -124,6 +124,8 @@ export const PlaceStructureSchema = z
     kind: StructureKindIdSchema,
     x: z.number().finite(),
     y: z.number().finite(),
+    /** Phase V — rotation in degrees; the server snaps it to 0/90/180/270. */
+    rot: z.number().finite().optional(),
   })
   .strict();
 

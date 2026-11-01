@@ -25,7 +25,7 @@ import {
 } from '../../core/combat/WeaponCatalogue.js';
 import { getWeaponObject } from '../../core/combat/weapons/index.js';
 import type { WeaponFireContext, WeaponFireSink } from '../../core/combat/weapons/Weapon.js';
-import { rayHitsSphere } from '../../core/combat/Weapons.js';
+import { rayHitsBox, rayHitsSphere } from '../../core/combat/Weapons.js';
 import type { AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import type { LaserFiredEvent } from '../../shared-types/messages.js';
 import type { ShipState } from './schema/SectorState.js';
@@ -78,7 +78,7 @@ export interface AiFireResolverDeps {
    *  filtered, constructed structures the drone's body target already selected
    *  among. A structure beam hit routes through `applyDamage(structureId,
    *  shooterId, …)` → the StructureEntity leaf (no new damage branch). */
-  structureHitTargets?: () => Iterable<{ id: string; x: number; y: number; radius: number }>;
+  structureHitTargets?: () => Iterable<{ id: string; x: number; y: number; radius: number; halfW?: number; halfH?: number }>;
   /** Allegiances P0 — other swarm combatants as circles (built once per tick;
    *  EMPTY in a single-allegiance sector ⇒ byte-identical). The beam skips the
    *  shooter itself and any FRIENDLY (same-allegiance) entity. */
@@ -296,7 +296,9 @@ export class AiFireResolver implements WeaponFireSink {
     const structs = d.structureHitTargets?.();
     if (structs) {
       for (const s of structs) {
-        const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, s.x, s.y, s.radius);
+        const dist = s.halfW !== undefined && s.halfH !== undefined
+          ? rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, s.x, s.y, s.halfW, s.halfH)
+          : rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, s.x, s.y, s.radius);
         if (dist !== null && dist < hitDist) {
           hitDist = dist;
           hitId = s.id;

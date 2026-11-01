@@ -89,6 +89,65 @@ export function rayHitsSphere(
 }
 
 /**
+ * Ray vs an axis-aligned box centred on (cx, cy) with half extents (hw, hh) —
+ * structure footprints (phase V; rotations are quarter turns, so a structure
+ * is an axis-aligned box in world space). Slab clip. Returns the distance to
+ * the entry point (0 when the ray starts inside), or null on a miss.
+ * Allocation-free.
+ */
+export function rayHitsBox(
+  fromX: number, fromY: number,
+  dirX: number, dirY: number,
+  maxDist: number,
+  cx: number, cy: number,
+  hw: number, hh: number,
+): number | null {
+  let tMin = 0;
+  let tMax = maxDist;
+  const minX = cx - hw, maxX = cx + hw, minY = cy - hh, maxY = cy + hh;
+  if (Math.abs(dirX) < 1e-12) {
+    if (fromX < minX || fromX > maxX) return null;
+  } else {
+    let t1 = (minX - fromX) / dirX;
+    let t2 = (maxX - fromX) / dirX;
+    if (t1 > t2) { const t = t1; t1 = t2; t2 = t; }
+    if (t1 > tMin) tMin = t1;
+    if (t2 < tMax) tMax = t2;
+    if (tMin > tMax) return null;
+  }
+  if (Math.abs(dirY) < 1e-12) {
+    if (fromY < minY || fromY > maxY) return null;
+  } else {
+    let t1 = (minY - fromY) / dirY;
+    let t2 = (maxY - fromY) / dirY;
+    if (t1 > t2) { const t = t1; t1 = t2; t2 = t; }
+    if (t1 > tMin) tMin = t1;
+    if (t2 < tMax) tMax = t2;
+    if (tMin > tMax) return null;
+  }
+  return tMin;
+}
+
+/** Swept projectile (radius `projRadius`) vs a structure box: the box grown
+ *  by the projectile radius, then a ray along the step. Same return shape as
+ *  `projectileSweepCircle`. */
+export function projectileSweepBox(
+  fromX: number, fromY: number,
+  stepX: number, stepY: number,
+  projRadius: number,
+  cx: number, cy: number,
+  hw: number, hh: number,
+): { entry: number; hitX: number; hitY: number } | null {
+  const segLen = Math.hypot(stepX, stepY);
+  if (segLen < 1e-6) return null;
+  const dirX = stepX / segLen;
+  const dirY = stepY / segLen;
+  const entry = rayHitsBox(fromX, fromY, dirX, dirY, segLen, cx, cy, hw + projRadius, hh + projRadius);
+  if (entry === null) return null;
+  return { entry, hitX: fromX + dirX * entry, hitY: fromY + dirY * entry };
+}
+
+/**
  * Swept circle-vs-circle collision for a one-tick projectile step.
  *
  * Tests the segment from `(fromX, fromY)` to `(fromX + stepX, fromY + stepY)`
