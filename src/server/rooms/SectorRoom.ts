@@ -2797,7 +2797,7 @@ export class SectorRoom extends Room<SectorState> {
       const send = (st: CargoState): void => { try { client.send('cargo_state', st); } catch { /* closing */ } };
       const access = this.cargoAccess(playerId, entityId);
       if (!access.ok) {
-        send({ type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, message: access.message, ...(move ? { ok: false } : {}) });
+        send({ type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message: access.message, ...(move ? { ok: false } : {}) });
         return;
       }
       let verdict: { ok: boolean; message: string } | undefined;
@@ -2819,7 +2819,11 @@ export class SectorRoom extends Room<SectorState> {
         }
       }
       const view = this.storage.cargoView(access.rec);
-      send({ type: 'cargo_state', entityId, open: true, hold: view.hold, used: view.used, capacity: view.capacity, ...(verdict ?? {}) });
+      const shipHold = getHoldStore().get(access.shipInstanceId)?.hold ?? emptyHold();
+      send({
+        type: 'cargo_state', entityId, open: true, hold: view.hold, used: view.used, capacity: view.capacity,
+        ship: shipHold, shipCapacity: access.capacity, ...(verdict ?? {}),
+      });
     };
     this.onMessage('cargo_query', (client: Client, raw: unknown) => cargoRequest(client, 'cargo_query', raw));
     this.onMessage('cargo_move', (client: Client, raw: unknown) => cargoRequest(client, 'cargo_move', raw));

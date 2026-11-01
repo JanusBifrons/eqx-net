@@ -25,6 +25,7 @@ import { sendPilotShip } from '../ships/shipActionsClient';
 import { BountyAction } from './BountyAction';
 import { BlueprintInstall } from './BlueprintInstall';
 import { ResearchLabPanel } from './ResearchLabPanel';
+import { CargoAction } from './CargoPanel';
 import { hullColor } from './ShieldHullBar';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { canUpgradeStructure, structureUpgradeGoods } from '@core/leveling/structureLevel';
@@ -136,6 +137,9 @@ interface PanelData {
   canRefine?: boolean;
   /** Economy v2 W3 — my own BUILT Research Lab: show the lab panel. */
   isLab?: boolean;
+  /** C1 — a BUILT storage structure (anyone's): offer "Open cargo". The
+   *  server decides whether it opens. */
+  hasCargo?: boolean;
   /** Living World P4c-2 — a selected REMOTE player ship: its playerId, the
    *  target of the Bounty action (never displayed). */
   bountyTarget?: string;
@@ -425,6 +429,7 @@ export function EntityStatsPanel(): JSX.Element | null {
         <BlueprintInstall entityId={data.entityId} blueprints={data.blueprints} />
       )}
       {data.isLab === true && data.entityId !== undefined && <ResearchLabPanel entityId={data.entityId} />}
+      {data.hasCargo === true && data.entityId !== undefined && <CargoAction key={data.entityId} entityId={data.entityId} />}
       {data.pilotShipId !== undefined && (
         // Phase 4 WS-A2 — in-world Pilot action on the local player's OWN
         // lingering hull. Same-sector instant swap (no spool/curtain); the camera
@@ -456,7 +461,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
   'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'noAmmo', 'noFuel', 'upgradeGoods',
-  'isLab',
+  'isLab', 'hasCargo',
 ];
 
 /** The next gate access setting in the cycle (owner + allies → owner only →
@@ -574,6 +579,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         if (parts.length > 0) data.upgradeGoods = parts.join(', ');
       }
       if (subtype === 'research_lab' && data.isOwn === true && st.built === true) data.isLab = true;
+      if (subtype !== undefined && (getStructureKind(subtype).holdCapacity ?? 0) > 0 && st.built === true) data.hasCargo = true;
       // Living World P1a-2 — owned storage contents (the server only sends them
       // to the owner) + the Refine gate (a Capital with salvage in its network
       // view — the contents line reflects THIS structure's hold).
