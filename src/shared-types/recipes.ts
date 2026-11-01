@@ -35,10 +35,8 @@ export const RECIPE_IDS = [
 ] as const;
 export type RecipeId = (typeof RECIPE_IDS)[number];
 
-/**
- * Structure kinds that run recipes. They join the structure catalogue in P2;
- * until then they are named here so recipes can say where they run.
- */
+/** Structure kinds that run recipes (catalogue kinds since P2a; locked by
+ *  recipes.test.ts). */
 export const PROCESSOR_KIND_IDS = [
   'reclaimer',
   'smelter',
@@ -49,7 +47,7 @@ export const PROCESSOR_KIND_IDS = [
   'munitions_works',
   'assembly_plant',
   'ore_processing_complex',
-] as const;
+] as const satisfies readonly StructureKindId[];
 export type ProcessorKindId = (typeof PROCESSOR_KIND_IDS)[number];
 
 /** What a recipe makes: goods, or (once Living World's W2 lands) a PACKED

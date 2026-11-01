@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import HubIcon from '@mui/icons-material/Hub';
 import BoltIcon from '@mui/icons-material/Bolt';
 import SecurityIcon from '@mui/icons-material/Security';
+import FactoryIcon from '@mui/icons-material/Factory';
 import { type StructureKindId } from '@shared-types/structureKinds';
 
 /**
@@ -22,7 +23,7 @@ import { type StructureKindId } from '@shared-types/structureKinds';
  * (no orphan, no duplicate) — locked by `buildCategories.test.ts`, which fails
  * closed the moment a 10th kind is appended to the catalogue without a category.
  */
-export type BuildCategoryId = 'core' | 'economy' | 'defence';
+export type BuildCategoryId = 'core' | 'economy' | 'industry' | 'defence';
 
 export interface BuildCategory {
   readonly id: BuildCategoryId;
@@ -33,7 +34,29 @@ export interface BuildCategory {
 
 export const BUILD_CATEGORIES: readonly BuildCategory[] = [
   { id: 'core', label: 'Core', icon: <HubIcon />, kinds: ['capital', 'connector'] },
-  { id: 'economy', label: 'Economy', icon: <BoltIcon />, kinds: ['solar', 'battery', 'miner', 'cargo_bay'] },
+  {
+    id: 'economy',
+    label: 'Economy',
+    icon: <BoltIcon />,
+    kinds: ['solar', 'battery', 'miner', 'gas_collector', 'deep_core_rig', 'cargo_bay', 'freight_dock'],
+  },
+  // Production chains (plan soft-leaping-truffle v3, P2a): the processors.
+  {
+    id: 'industry',
+    label: 'Industry',
+    icon: <FactoryIcon />,
+    kinds: [
+      'reclaimer',
+      'smelter',
+      'refinery',
+      'silicon_works',
+      'hydroponics',
+      'fabricator',
+      'munitions_works',
+      'ore_processing_complex',
+      'assembly_plant',
+    ],
+  },
   {
     id: 'defence',
     label: 'Defence',
@@ -46,6 +69,7 @@ export const BUILD_CATEGORIES: readonly BuildCategory[] = [
 export const CATEGORY_ICON: Record<BuildCategoryId, ReactNode> = {
   core: <HubIcon />,
   economy: <BoltIcon />,
+  industry: <FactoryIcon />,
   defence: <SecurityIcon />,
 };
 
