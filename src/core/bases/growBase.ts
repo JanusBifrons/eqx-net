@@ -35,21 +35,19 @@ import type { GoodId } from '../../shared-types/goods.js';
 
 /** Bump on ANY change to the generator's output (NPC bases regenerate from the
  *  seed, so a change moves every base). */
-export const BASE_GROWTH_VERSION = 1;
+export const BASE_GROWTH_VERSION = 2;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
- * 2026-11-01 (growBase.test.ts): a fenced outpost is ~80 structures because
- * the fence dominates small bases. A Shield Pylon draws 20 power and a Solar
- * makes 30, so a 24-pylon ring needs ~16 Solars of its own. The consolidated
- * Reactor (next) is the fix; these come down with it. The plan's target is
- * 10–30 for an outpost.
+ * 2026-11-01 with Reactors powering the fence (a Shield Pylon draws 20, a
+ * Reactor makes 240): fenced outpost ~43, settlement ~60, stronghold ~116,
+ * citadel ~123. Before the Reactor a fenced outpost needed ~78.
  */
 export const TIER_MAX_STRUCTURES: Readonly<Record<BaseTier, number>> = Object.freeze({
-  outpost: 90,
-  settlement: 140,
-  stronghold: 260,
-  citadel: 420,
+  outpost: 50,
+  settlement: 80,
+  stronghold: 160,
+  citadel: 260,
 });
 
 export interface GrownPlacement {
@@ -301,10 +299,17 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   const fenceDraw = 0;
   const capOut = getStructureKind('capital').powerOutput;
   const solar = getStructureKind('solar').powerOutput;
-  const solars = Math.max(0, Math.ceil((consumption + fenceDraw - capOut) / solar)) + extraSolars;
+  // Power the deficit with Reactors (fuel-burning, ~8 Solars each) and the
+  // remainder with Solars. A bigger base banks its reserve in a Battery Bank.
+  const reactorOut = getStructureKind('reactor').powerOutput;
+  const deficit = Math.max(0, consumption + fenceDraw - capOut) + extraSolars * solar;
+  const reactors = Math.floor(deficit / reactorOut);
+  const solars = Math.max(0, Math.ceil((deficit - reactors * reactorOut) / solar));
+  for (let r = 0; r < reactors; r++) normal.push({ kind: 'reactor' });
   for (let s = 0; s < solars; s++) normal.push({ kind: 'solar' });
   const batteries = Math.max(1, Math.round(wants.length / 6));
-  for (let b = 0; b < batteries; b++) normal.push({ kind: 'battery' });
+  if (batteries >= 5) normal.push({ kind: 'battery_bank' });
+  else for (let b = 0; b < batteries; b++) normal.push({ kind: 'battery' });
 
   // Tallest normal leaf sets the row spacing.
   let tallest = 0;

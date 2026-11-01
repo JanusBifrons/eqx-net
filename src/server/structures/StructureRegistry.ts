@@ -135,6 +135,11 @@ export interface StructureRecord {
   prodYield?: number;
   /** Cycles completed (seeds the deterministic yield roll). */
   prodCycles?: number;
+  /** D1 — a Reactor has fuel burning (its output counts). Rides room state as
+   *  the inverse NO_FUEL flag. */
+  fueled?: boolean;
+  /** D1 — pulses until the Reactor burns its next unit of fuel. */
+  fuelTimer?: number;
   /** P2d — shots left in the magazine (ammo-using turrets). */
   ammo?: number;
   /** P2d — the last shot found no munitions in storage. Rides room state. */

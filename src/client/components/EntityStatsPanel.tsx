@@ -117,6 +117,8 @@ interface PanelData {
   upgradeGoods?: string;
   /** P2d — an ammo-using turret is out of munitions. */
   noAmmo?: boolean;
+  /** D1 — a Reactor has no fuel. */
+  noFuel?: boolean;
   /** P2b — the recipe needs a blueprint. */
   needsBlueprint?: boolean;
   /** P2b — the loaded blueprint ("original" or "N runs", with its quality). */
@@ -259,6 +261,11 @@ export function EntityStatsPanel(): JSX.Element | null {
         // P2b — what a processor makes, and its status.
         <Box sx={POWER_SX} data-testid="entity-stats-recipe" data-recipe={data.recipe} data-prod-status={data.prodStatus}>
           {`MAKES ${RECIPES[data.recipe].displayName}${data.prodStatus ? ` · ${data.prodStatus}` : ''}`}
+        </Box>
+      )}
+      {data.noFuel === true && (
+        <Box sx={POWER_SX} data-testid="entity-stats-no-fuel">
+          NO FUEL
         </Box>
       )}
       {data.noAmmo === true && (
@@ -447,7 +454,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
-  'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'noAmmo', 'upgradeGoods',
+  'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'noAmmo', 'noFuel', 'upgradeGoods',
   'isLab',
 ];
 
@@ -539,6 +546,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       data.isConnector = subtype === 'connector';
       if (gateTypeOf(subtype) !== null) data.gateAccess = gateAccessFromIndex(st.gateAccess);
       if (st.noAmmo === true) data.noAmmo = true;
+      if (st.noFuel === true) data.noFuel = true;
       if (subtype !== undefined && isProcessorKind(subtype)) {
         // P2b — what it makes and how it's going.
         data.recipe = effectiveRecipe(subtype, st.recipe);

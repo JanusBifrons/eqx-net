@@ -66,6 +66,10 @@ export const StructureKindIdSchema = z.enum([
   'research_lab',
   // P2d (plan soft-leaping-truffle v3) — APPEND ONLY.
   'autocannon_turret',
+  // D1 consolidated kinds (plan soft-leaping-truffle v3) — APPEND ONLY.
+  'reactor',
+  'battery_bank',
+  'storage_vault',
 ]);
 export type StructureKindId = z.infer<typeof StructureKindIdSchema>;
 
@@ -156,6 +160,9 @@ export const StructureKindSchema = z
     /** Gas collected per pulse in a nebula sector (P2c). Present only on the
      *  Gas Collector. */
     gasRate: z.number().nonnegative().optional(),
+    /** D1 — burns ONE unit of fuel from network storage every N pulses; its
+     *  `powerOutput` counts only while fuelled. Present only on the Reactor. */
+    fuelEveryPulses: z.number().int().positive().optional(),
 
     // -- Turret (Phase 5) --------------------------------------------------
     /** Hostile-targeting range, world units. Present only on the turret. */
@@ -751,6 +758,64 @@ export const AUTOCANNON_TURRET: StructureKind = {
   ],
 };
 
+// ── Consolidated kinds (plan soft-leaping-truffle v3, D1) ──────────────────
+// Each replaces several standard units in one footprint and one link, priced
+// ABOVE the units it replaces, so only wealthy bases have many.
+
+/** ~8 Solars of power from one footprint, while it has fuel. */
+export const REACTOR: StructureKind = {
+  id: 'reactor',
+  displayName: 'Reactor',
+  description: 'Burns fuel from base storage for about eight Solars of power. No fuel, no power. A leaf node.',
+  radius: 283, // bounding circle of the 400×400 footprint
+  footprint: { w: 400, h: 400 },
+  maxHealth: 3000,
+  maxConnections: 1,
+  isHub: false,
+  powerOutput: 240,
+  powerConsumption: 0,
+  storageCapacity: 0,
+  fuelEveryPulses: 10,
+  constructionCost: 1500,
+  color: 0xff6f3c,
+};
+
+/** Ten Batteries of stored power in one footprint. */
+export const BATTERY_BANK: StructureKind = {
+  id: 'battery_bank',
+  displayName: 'Battery Bank',
+  description: 'Stores as much power as ten Batteries. A leaf node.',
+  radius: 255, // bounding circle of the 360×360 footprint
+  footprint: { w: 360, h: 360 },
+  maxHealth: 2500,
+  maxConnections: 1,
+  isHub: false,
+  powerOutput: 0,
+  powerConsumption: 0,
+  storageCapacity: 0,
+  powerStorageCapacity: 3000,
+  constructionCost: 9000,
+  color: 0xc8e86a,
+};
+
+/** Eight Cargo Bays of hold in one footprint. */
+export const STORAGE_VAULT: StructureKind = {
+  id: 'storage_vault',
+  displayName: 'Storage Vault',
+  description: 'Holds as much as eight Cargo Bays; part of the base storage network. A leaf node.',
+  radius: 289, // bounding circle of the 480×320 footprint
+  footprint: { w: 480, h: 320 },
+  maxHealth: 4000,
+  maxConnections: 1,
+  isHub: false,
+  powerOutput: 0,
+  powerConsumption: 0,
+  storageCapacity: 0,
+  holdCapacity: 16_000,
+  constructionCost: 3600,
+  color: 0x3fa89a,
+};
+
 export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   CAPITAL,
   CONNECTOR,
@@ -782,6 +847,9 @@ export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   // Economy v2 W3 — APPENDED. Never reorder.
   RESEARCH_LAB,
   AUTOCANNON_TURRET,
+  REACTOR,
+  BATTERY_BANK,
+  STORAGE_VAULT,
 ]);
 
 /** Id-keyed lookup, derived from the canonical list (the list is the source of
@@ -883,6 +951,9 @@ export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
   assembly_plant: 4,
   research_lab: 4,
   autocannon_turret: 4,
+  reactor: 4,
+  battery_bank: 4,
+  storage_vault: 4,
 };
 
 /**
