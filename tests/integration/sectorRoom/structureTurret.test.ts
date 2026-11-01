@@ -115,6 +115,8 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
     const mt = await placeAndWait(harness, room, 'missile_turret', -140, 420);
     for (let i = 0; i < 250; i++) internals.pulseStructureGrid();
     expect(internals.structureRegistry.get(mt)!.isConstructed).toBe(true);
+    // P2d — missiles spend munitions: stock the Capital with one unit.
+    internals.structureRegistry.get(cap)!.hold = { goods: { munitions: 1 }, blueprints: [] };
 
     const capBefore = internals.swarmHealth.get(cap)!;
     const before = priv.missileSim.size();
@@ -127,6 +129,32 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
     // drones-only it flies AWAY toward the drone, so the Capital stays untouched.
     await harness.advance(1500);
     expect(internals.swarmHealth.get(cap)).toBe(capBefore);
+  }, 30_000);
+
+  it('P2d: a Missile Turret with no munitions in storage does not fire, and says so', async () => {
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
+    const room = await harness.connectAs('player-1');
+    const serverRoom = harness.getServerRoom()!;
+    const internals = serverRoom._internals;
+    const priv = serverRoom as unknown as RoomShotPrivates;
+    internals.spawnTestDrone('mob-msl2', -140, 920);
+    const cap = await placeAndWait(harness, room, 'capital', 0, 0);
+    await placeAndWait(harness, room, 'connector', 0, 350);
+    await placeAndWait(harness, room, 'solar', 250, 400);
+    await placeAndWait(harness, room, 'solar', 0, 600);
+    const mt = await placeAndWait(harness, room, 'missile_turret', -140, 420);
+    for (let i = 0; i < 250; i++) internals.pulseStructureGrid();
+    internals.structureRegistry.get(cap)!.hold = { goods: {}, blueprints: [] };
+    const before = priv.missileSim.size();
+    internals.tickStructureTurrets();
+    expect(priv.missileSim.size()).toBe(before);
+    expect(internals.structureRegistry.get(mt)!.noAmmo).toBe(true);
+    // One unit of munitions loads a magazine and it fires.
+    internals.structureRegistry.get(cap)!.hold = { goods: { munitions: 1 }, blueprints: [] };
+    internals.tickStructureTurrets();
+    expect(priv.missileSim.size()).toBe(before + 1);
+    expect(internals.structureRegistry.get(mt)!.noAmmo).toBe(false);
+    expect(internals.structureRegistry.get(cap)!.hold!.goods.munitions ?? 0).toBe(0);
   }, 30_000);
 
   it('an unpowered turret (overdrawn grid) does not fire', async () => {

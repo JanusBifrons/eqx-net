@@ -232,7 +232,8 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
     }
     case 'turret':
     case 'laser_bolt_turret':
-    case 'missile_turret': {
+    case 'missile_turret':
+    case 'autocannon_turret': {
       // Armoured emplacement: chamfered base plates + a turret ring (the
       // rotating barrel is drawn by the mount visuals on top).
       slab(rects, x0 + 14, y0, W - 28, H, STEEL_DARK, 6);

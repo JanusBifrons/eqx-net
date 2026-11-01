@@ -175,6 +175,16 @@ export class ProductionSubsystem {
     out.n = n;
     return this.put(this.depositList, 0, 0) ? n : 0;
   }
+  /** P2d — take exactly `inputs` from `rec`'s owner network storage (all
+   *  or nothing). Turrets use it for munitions. */
+  takeGoods(rec: StructureRecord, inputs: Readonly<Partial<Record<GoodId, number>>>): boolean {
+    this.netComponent = null;
+    this.collectNetwork(rec);
+    if (this.firstMissing(inputs) !== undefined) return false;
+    this.take(inputs);
+    return true;
+  }
+
   private readonly depositScratch: { good: GoodId; n: number } = { good: 'minerals', n: 0 };
   private readonly depositList: readonly RecipeOutput[] = [this.depositScratch];
 

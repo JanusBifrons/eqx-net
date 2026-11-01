@@ -46,6 +46,7 @@ import {
   STRUCTURE_FLAG_DECONSTRUCTING,
   STRUCTURE_FLAG_POWERED,
   STRUCTURE_FLAG_WALL_ACTIVE,
+  STRUCTURE_FLAG_NO_AMMO,
   STRUCTURE_TARGET_NONE,
   STRUCTURE_DEFAULTS as SD,
 } from '../../shared-types/structureStateWire.js';
@@ -112,6 +113,10 @@ import { blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
+import type { GoodId } from '../../shared-types/goods.js';
+
+/** P2d — one unit of munitions (a turret's magazine reload). */
+const ONE_MUNITION = Object.freeze({ munitions: 1 });
 
 /** P2c — give each asteroid in a roster its resource kind, rolled from the
  *  sector's features and seeded by the asteroid's id (stable across restarts). */
@@ -1342,6 +1347,9 @@ export class SectorRoom extends Room<SectorState> {
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
       prebuiltStructuresOwner?: string;
+      /** P2d (testMode) — goods put into the prebuilt Capital's hold (e.g.
+       *  munitions so a showcase's missile turrets can fire). */
+      prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
       /** Living World P2 — testMode: join the TradeDirector so deals can be
        *  made in this (non-galaxy) room (showcase / E2E). */
       tradeEnabled?: boolean;
@@ -2046,6 +2054,8 @@ export class SectorRoom extends Room<SectorState> {
       asteroidResourceOf: (entityId) => this.swarmRegistry.getByEntityId(entityId)?.asteroidResource ?? 'rock',
       depositGoods: (rec, good, n) => this.production.deposit(rec, good, n),
       sectorHasNebula: () => this.sectorFeatures.includes('nebula'),
+      // P2d — missile and autocannon turrets load munitions from base storage.
+      takeMunition: (rec) => this.production.takeGoods(rec, ONE_MUNITION),
       // Allegiances P0: base turrets defend against combat allegiances (drones,
       // robots) but never open fire on NEUTRAL traders (their haulers).
       findNearestDrone: (x, y, range, owner) => this.findNearestTurretTarget(x, y, range, owner),
@@ -3863,6 +3873,7 @@ export class SectorRoom extends Room<SectorState> {
   private seedStructureScenario(roomOpts: {
     prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number; rot?: number; gateAccess?: GateAccess }>;
     prebuiltStructuresOwner?: string;
+    prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
     scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
     scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
   }): void {
@@ -3891,6 +3902,17 @@ export class SectorRoom extends Room<SectorState> {
         }
       }
       this.structureRegistry.topologyDirty = true;
+      // P2d — stock the prebuilt Capital (e.g. munitions for a showcase's
+      // missile turrets), so ammo-using turrets can fire.
+      const goods = roomOpts.prebuiltStorageGoods;
+      if (goods) {
+        for (const rec of this.structureRegistry.all()) {
+          if (rec.owner !== owner || rec.kind !== 'capital') continue;
+          rec.hold ??= { goods: {}, blueprints: [] };
+          for (const [g, n] of Object.entries(goods)) rec.hold.goods[g as GoodId] = (rec.hold.goods[g as GoodId] ?? 0) + (n ?? 0);
+          break;
+        }
+      }
       // One pulse rebuilds the grid (powered components) + refreshes the slice.
       this.structureGridTick();
     }
@@ -4522,6 +4544,7 @@ export class SectorRoom extends Room<SectorState> {
         // Clients derive every wall from connections + this flag (all of this
         // emitter's walls are up). `shieldWallTo` stays for a pylon's first wall.
         if (this.shieldWalls.wallsUpFor(rec.id, nowMs)) flags |= STRUCTURE_FLAG_WALL_ACTIVE;
+        if (rec.noAmmo === true) flags |= STRUCTURE_FLAG_NO_AMMO;
         if (rec.kind === 'shield_pylon') {
           const wall = this.shieldWalls.wallStateFor(rec.id, nowMs);
           const other = wall ? this.swarmRegistry.get(wall.otherPost)?.entityId : undefined;
