@@ -37,6 +37,8 @@ export type TradeToastTone = 'good' | 'info' | 'danger' | 'world';
 export interface CargoView {
   goods: Partial<Record<string, number>>;
   blueprints: number;
+  /** Economy v2 W2 — packed structures / hulls carried (count). */
+  packed?: number;
 }
 
 export interface WarpWarning {

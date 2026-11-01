@@ -7,27 +7,78 @@
  * the anti-duplication persistence (one atomic group per transfer) relies on.
  */
 import { GOOD_DEFS, GOOD_IDS, type GoodId, type Hold } from '../../shared-types/goods.js';
+import type { PackedItem } from '../../shared-types/items.js';
+import { getStructureKind, isStructureKindId } from '../../shared-types/structureKinds.js';
+
+/** Default cargo weight of a packed structure / hull when the catalogue has no
+ *  `packedWeight` (the structures agent's field; the catalogue value wins). */
+export const DEFAULT_PACKED_STRUCTURE_WEIGHT = 25;
+export const DEFAULT_PACKED_HULL_WEIGHT = 40;
+
+/** Cargo weight of ONE packed item. Shared by the HUD + the server clamp (#15). */
+export function packedWeightOf(product: string): number {
+  if (product.startsWith('structure:')) {
+    const id = product.slice('structure:'.length);
+    if (isStructureKindId(id)) {
+      const w = (getStructureKind(id) as { packedWeight?: number }).packedWeight;
+      if (typeof w === 'number' && w >= 0) return w;
+    }
+    return DEFAULT_PACKED_STRUCTURE_WEIGHT;
+  }
+  return DEFAULT_PACKED_HULL_WEIGHT;
+}
+
+/** Add one packed item (the production pass / a test seed). Mutates. */
+export function addPacked(h: Hold, product: string, quality: number): void {
+  (h.packed ??= []).push({ product, quality: Math.max(0, Math.min(100, Math.round(quality))) });
+}
+
+/** Take the best-quality packed `product` out of `h` (placement / unpack), or
+ *  null when there is none. Mutates. */
+export function takePacked(h: Hold, product: string): PackedItem | null {
+  const list = h.packed;
+  if (!list) return null;
+  let best = -1;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i]!.product === product && (best < 0 || list[i]!.quality > list[best]!.quality)) best = i;
+  }
+  if (best < 0) return null;
+  const [item] = list.splice(best, 1);
+  if (list.length === 0) delete h.packed;
+  return item!;
+}
+
+/** How many packed `product` items `h` holds. */
+export function packedCount(h: Hold, product: string): number {
+  let n = 0;
+  for (const p of h.packed ?? []) if (p.product === product) n++;
+  return n;
+}
 
 export function emptyHold(): Hold {
   return { goods: {}, blueprints: [] };
 }
 
 export function cloneHold(h: Hold): Hold {
-  return { goods: { ...h.goods }, blueprints: [...h.blueprints] };
+  const c: Hold = { goods: { ...h.goods }, blueprints: h.blueprints.map((b) => ({ ...b })) };
+  if (h.packed && h.packed.length > 0) c.packed = h.packed.map((p) => ({ ...p }));
+  return c;
 }
 
-/** Total cargo weight (blueprints weigh nothing; credits are not cargo). */
+/** Total cargo weight (blueprints weigh nothing; credits are not cargo;
+ *  packed structures / hulls are heavy). */
 export function holdWeight(h: Hold): number {
   let w = 0;
   for (const id of GOOD_IDS) {
     const n = h.goods[id];
     if (n) w += n * GOOD_DEFS[id].weight;
   }
+  if (h.packed) for (const p of h.packed) w += packedWeightOf(p.product);
   return w;
 }
 
 export function isHoldEmpty(h: Hold): boolean {
-  if (h.blueprints.length > 0) return false;
+  if (h.blueprints.length > 0 || (h.packed?.length ?? 0) > 0) return false;
   for (const id of GOOD_IDS) if ((h.goods[id] ?? 0) > 0) return false;
   return true;
 }
@@ -35,7 +86,7 @@ export function isHoldEmpty(h: Hold): boolean {
 /** Highest rarity tier present (0 when only tier-0 goods). A
  *  blueprint counts as top tier. Drives loot-pod glow. */
 export function holdBestTier(h: Hold): 0 | 1 | 2 {
-  if (h.blueprints.length > 0) return 2;
+  if (h.blueprints.length > 0 || (h.packed?.length ?? 0) > 0) return 2;
   let best: 0 | 1 | 2 = 0;
   for (const id of GOOD_IDS) {
     if ((h.goods[id] ?? 0) > 0 && GOOD_DEFS[id].tier > best) best = GOOD_DEFS[id].tier;
@@ -67,6 +118,22 @@ export function transferInto(dst: Hold, src: Hold, dstCapacity: number): Transfe
     src.blueprints.length = 0;
   }
   let room = dstCapacity - holdWeight(dst);
+  // Packed items are discrete and heavy: each moves whole if it fits.
+  if (src.packed && src.packed.length > 0) {
+    const keep: PackedItem[] = [];
+    for (const p of src.packed) {
+      const w = packedWeightOf(p.product);
+      if (w <= room + 1e-9) {
+        (dst.packed ??= []).push(p);
+        (moved.packed ??= []).push(p);
+        room -= w;
+      } else {
+        keep.push(p);
+      }
+    }
+    if (keep.length > 0) src.packed = keep;
+    else delete src.packed;
+  }
   // Highest tier first.
   const order: GoodId[] = [...GOOD_IDS].sort((a, b) => GOOD_DEFS[b].tier - GOOD_DEFS[a].tier);
   for (const id of order) {

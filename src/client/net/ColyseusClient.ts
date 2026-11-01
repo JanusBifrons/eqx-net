@@ -5307,7 +5307,7 @@ export class ColyseusGameClient {
    */
   private applyLocalCargo(
     localId: string,
-    cargo: { goods: Partial<Record<string, number>>; blueprints: string[] } | undefined,
+    cargo: { goods: Partial<Record<string, number>>; blueprints: readonly unknown[]; packed?: readonly unknown[] } | undefined,
     fitted?: string[],
   ): void {
     const s = useUIStore.getState();
@@ -5319,7 +5319,7 @@ export class ColyseusGameClient {
     );
     if (!cargoChanged(s.cargo, cargo) && s.cargoCapacity === capacity) return;
     s.setCargo(
-      cargo === undefined ? null : { goods: { ...cargo.goods }, blueprints: cargo.blueprints.length },
+      cargo === undefined ? null : { goods: { ...cargo.goods }, blueprints: cargo.blueprints.length, packed: cargo.packed?.length ?? 0 },
       capacity,
     );
   }

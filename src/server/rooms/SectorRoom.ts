@@ -188,7 +188,7 @@ import type {
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { getPlayerShipStore, getHoldStore, getWallet } from '../db/PersistenceWorker.js';
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
-import { StorageService, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
+import { StorageService, fittedModuleIds, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto } from '../../core/cargo/hold.js';
 import { HARVESTER_CAPACITY, RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
@@ -4588,8 +4588,10 @@ export class SectorRoom extends Room<SectorState> {
         ? {
             hold: {
               goods: h ? { ...h.goods } : {}, blueprints: h?.blueprints.length ?? 0,
-              // P5 — the ids, for the owner's Install action (owner-only like the rest).
-              blueprintIds: h ? h.blueprints.slice(0, 64) : [],
+              // W2 — the stored blueprints' PRODUCT ids (owner-only like the rest):
+              // the Install action picks the module ones; the panel names them.
+              blueprintIds: h ? h.blueprints.slice(0, 64).map((b) => b.product) : [],
+              packed: h?.packed?.length ?? 0,
             },
             holdCapacity: holdCap,
           }
@@ -4782,7 +4784,8 @@ export class SectorRoom extends Room<SectorState> {
     if (shipInstanceId === '') return EMPTY_FITTED;
     let f = this.fittedCache.get(shipInstanceId);
     if (f === undefined) {
-      f = getHoldStore().get(fittedUid(shipInstanceId))?.hold.blueprints ?? EMPTY_FITTED;
+      const fh = getHoldStore().get(fittedUid(shipInstanceId))?.hold;
+      f = fh ? fittedModuleIds(fh) : EMPTY_FITTED;
       this.fittedCache.set(shipInstanceId, f);
     }
     return f;
