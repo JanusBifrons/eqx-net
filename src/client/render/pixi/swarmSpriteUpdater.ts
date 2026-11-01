@@ -291,7 +291,12 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       if (structMounts.length > 0) {
         const st = mirror.structures?.get(entityId);
         const targetId = st?.turretTargetId ?? st?.miningTargetId;
-        const targetEntry = targetId !== undefined ? mirror.swarm.get(targetId) : undefined;
+        // B2 — an NPC turret can aim at a player ship (no swarm entity).
+        const targetEntry = targetId !== undefined
+          ? mirror.swarm.get(targetId)
+          : st?.turretTargetPlayerId !== undefined
+            ? mirror.ships.get(st.turretTargetPlayerId)
+            : undefined;
         _structureMountAngles.length = 0;
         // Body pose = the resolved sprite pose (game-space, from `lerped`).
         const bodyX = lerped.x;

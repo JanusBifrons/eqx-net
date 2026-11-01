@@ -36,6 +36,22 @@ export const STRUCTURE_ETA_STALLED = -2;
 export const STRUCTURE_TARGET_STRIDE = 3;
 export const STRUCTURE_TARGET_NONE = -1;
 
+/**
+ * B2 (plan soft-leaping-truffle v3) — a turret can target a PLAYER, who has no
+ * swarm entity id. The turret slot then holds `-(ownerIdx + 2)`, where
+ * `ownerIdx` indexes the room-state `structureOwners` table (the server
+ * interns the target player there). Both sides use these two helpers (#15).
+ */
+export function encodePlayerTurretTarget(ownerIdx: number): number {
+  return -(ownerIdx + 2);
+}
+
+/** The owner-table index a turret slot points at, or -1 when it is a swarm
+ *  entity id or `STRUCTURE_TARGET_NONE`. */
+export function decodePlayerTurretTarget(v: number): number {
+  return v <= -2 ? -v - 2 : -1;
+}
+
 /** Value of a room-state structure field that is UNSET (never encoded). */
 export const STRUCTURE_DEFAULTS = {
   ownerIdx: 0,

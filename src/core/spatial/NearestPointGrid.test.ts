@@ -78,3 +78,45 @@ describe('NearestPointGrid — op-count lock (turret targeting budget)', () => {
     expect(worst).toBeLessThanOrEqual(2000 * 0.05);
   });
 });
+
+describe('NearestPointGrid.nearestWhere (B2: NPC turrets keep hostile targets only)', () => {
+  it('matches a filtered linear scan, including ties', () => {
+    const xs: number[] = [];
+    const ys: number[] = [];
+    let s = 7;
+    const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff) * 4000 - 2000;
+    const g = new NearestPointGrid(512, 4096, 8);
+    g.reset();
+    for (let i = 0; i < 400; i++) {
+      const x = Math.round(rnd() / 50) * 50;
+      const y = Math.round(rnd() / 50) * 50;
+      xs.push(x);
+      ys.push(y);
+      g.add(x, y);
+    }
+    g.build();
+    const accept = (i: number) => i % 3 !== 0;
+    for (let q = 0; q < 200; q++) {
+      const x = rnd(), y = rnd(), range = 100 + Math.abs(rnd()) / 4;
+      let best = -1;
+      let bestD2 = range * range;
+      for (let i = 0; i < xs.length; i++) {
+        if (!accept(i)) continue;
+        const dx = xs[i]! - x, dy = ys[i]! - y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 <= bestD2) { bestD2 = d2; best = i; }
+      }
+      expect(g.nearestWhere(x, y, range, accept)).toBe(best);
+    }
+  });
+
+  it('returns -1 when every point in range is rejected', () => {
+    const g = new NearestPointGrid(512, 4096, 8);
+    g.reset();
+    g.add(0, 0);
+    g.add(10, 0);
+    g.build();
+    expect(g.nearestWhere(0, 0, 100, () => false)).toBe(-1);
+    expect(g.nearestWhere(0, 0, 100, (i) => i === 1)).toBe(1);
+  });
+});

@@ -104,6 +104,14 @@ import { gateAccessIndex, GATE_ACCESS_IDS, type GateAccess } from '../../shared-
 import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
+import { createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf } from '../../shared-types/relations.js';
+import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
+import { ALLEGIANCE_DEFS, NPC_ALLEGIANCE_IDS, type NpcAllegianceId } from '../../shared-types/allegiances.js';
+import { encodePlayerTurretTarget } from '../../shared-types/structureStateWire.js';
+
+/** B2 — the party string of each roaming NPC side (`npc:<allegiance>`), built
+ *  once so turret and missile queries never build strings. */
+const NPC_SIDE_PARTY = Object.fromEntries(NPC_ALLEGIANCE_IDS.map((a) => [a, npcOwner(a)])) as Record<NpcAllegianceId, string>;
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
@@ -710,6 +718,12 @@ export class SectorRoom extends Room<SectorState> {
   /** A2 — entityId key → generation last synced (stale-row sweep, alloc-free). */
   private readonly structureStateGen = new Map<string, number>();
   private structureStateGeneration = 0;
+  /** B2 (plan soft-leaping-truffle v3) — hostile acts against owners in this
+   *  room (attacking an NPC base's structure), read by `relationOf`. */
+  private readonly hostileActs = new HostileActLedger();
+  /** The ONE relation context for this room; `nowMs` is refreshed in place on
+   *  the turret tick (no allocation per query). */
+  private readonly relationCtx = createRelationContext({ hostileActs: this.hostileActs });
   /** A2 — owner id → interned index in `state.structureOwners`. */
   private readonly structureOwnerIdx = new Map<string, number>();
   /** Interned index keys ("0", "1", …), cached so syncing never allocates. */
@@ -1987,7 +2001,7 @@ export class SectorRoom extends Room<SectorState> {
       drawAsteroidResources: (entityId, amount) => this.drawAsteroidResources(entityId, amount),
       // Allegiances P0: base turrets defend against combat allegiances (drones,
       // robots) but never open fire on NEUTRAL traders (their haulers).
-      findNearestDrone: (x, y, range) => this.findNearestTurretTarget(x, y, range),
+      findNearestDrone: (x, y, range, owner) => this.findNearestTurretTarget(x, y, range, owner),
       applyDamage: (targetId, shooterId, damage) => this.applyDamage(targetId, shooterId, damage),
       broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) => {
         this.broadcast('laser_fired', {
@@ -2036,7 +2050,7 @@ export class SectorRoom extends Room<SectorState> {
       registry: this.structureRegistry,
       collectShips: (out) => this.collectGateShips(out),
       // B1 relation seam slots in here; until then: same player ⇒ self.
-      relationOf: (playerId, owner) => (playerId === owner ? 'self' : 'neutral'),
+      relationOf: (playerId, owner) => relationOf(playerId, owner, this.relationCtx),
     });
     this.shieldWalls = new ShieldWallManager({
       gateOpenMask: (id) => this.gates.maskFor(id),
@@ -3272,6 +3286,21 @@ export class SectorRoom extends Room<SectorState> {
     // friendly structures (the candidate set includes kind 1 AND kind 2). Kind
     // is the source of truth (lwbot drones are kind 1 too, swarm-/lwbot-prefixed).
     if (ownerId.startsWith('pstruct-')) {
+      // B2 — an NPC-owned turret's missile homes on what is hostile to its owner
+      // (the same rule as its targeting); a player turret's stays drones-only.
+      const structOwner = this.structureRegistry.get(ownerId)?.owner ?? '';
+      if (isNpcOwner(structOwner)) {
+        return (id) => {
+          const rec = this.swarmRegistry.get(id);
+          let party: string | null = null;
+          if (rec != null) {
+            if (rec.kind === 1) party = NPC_SIDE_PARTY[allegianceOfKind(rec.shipKind)];
+          } else if (this.getActiveShip(id)?.isActive === true) {
+            party = id;
+          }
+          return party !== null && relationOf(party, structOwner, this.relationCtx) === 'hostile';
+        };
+      }
       return (id) => {
         const rec = this.swarmRegistry.get(id);
         return rec != null && rec.kind === 1 && this._isTurretTargetable(rec);
@@ -3376,6 +3405,14 @@ export class SectorRoom extends Room<SectorState> {
     // wall-clock (Date.now), matching every other shieldWalls call site.
     if (damage > 0) {
       const s = this.structureRegistry.get(targetId);
+      if (s !== undefined && isNpcOwner(s.owner)) {
+        // B2 — a player (or a player's turret) hitting an NPC base makes that
+        // player hostile to the base: its turrets engage, its gates close.
+        const actor = this.playerToSlot.has(shooterId)
+          ? shooterId
+          : this.structureRegistry.get(shooterId)?.owner;
+        if (actor !== undefined && !isNpcOwner(actor)) this.hostileActs.record(actor, s.owner, Date.now());
+      }
       if (s !== undefined) {
         // Audit "your base is under attack" — throttled to one record per
         // structure per window (a sustained beam mustn't firehose the log).
@@ -3501,6 +3538,7 @@ export class SectorRoom extends Room<SectorState> {
     // A turret's kill mid-tick must not leave the evicted drone selectable by
     // the next turret in the same tick (the linear scan never saw it).
     this.turretTargetGridFresh = false;
+    this.npcTargetGridFresh = false;
     // P3c — a removed shooter's pending charge never fires.
     this.aiFireResolver.forget(rec.id);
     // Gameplay audit log — record a REAL combat death (the `emitDestroyed`
@@ -3604,6 +3642,7 @@ export class SectorRoom extends Room<SectorState> {
    *  slice, and broadcast the discrete `grid_pulse` flash event. No-op (and no
    *  broadcast) when the sector has no structures. */
   private structureGridTick(): void {
+    this.hostileActs.sweep(Date.now());
     if (this.structureRegistry.size === 0) return;
     const result = this.structureGrid.pulse(Date.now());
     // Living World P1a-2 — persist storage payloads the pulse just changed
@@ -3963,6 +4002,8 @@ export class SectorRoom extends Room<SectorState> {
     // A1 — the turret target grid is rebuilt (lazily, on the first query) once
     // per turret tick, instead of every turret scanning every swarm entity.
     this.turretTargetGridFresh = false;
+    this.npcTargetGridFresh = false;
+    this.relationCtx.nowMs = nowMs;
     this.structureGrid.tickTurrets(nowMs);
     // WS-4 — re-broadcast each Miner's mining beam on the same fast cadence so
     // the continuous beam tracks + doesn't flicker (gated per-Miner internally).
@@ -4113,13 +4154,86 @@ export class SectorRoom extends Room<SectorState> {
   private readonly turretTargetGrid = new NearestPointGrid(512, DRONE_MAX_BOUNDS, 512);
   private readonly turretTargetRecs: SwarmEntityRecord[] = [];
   private turretTargetGridFresh = false;
-  private readonly turretTargetOut = { id: '', entityId: 0, x: 0, y: 0, radius: 0 };
+  private readonly turretTargetOut: { id: string; entityId: number; x: number; y: number; radius: number; playerId?: string } =
+    { id: '', entityId: 0, x: 0, y: 0, radius: 0, playerId: undefined };
+
+  /**
+   * B2 (plan soft-leaping-truffle v3) — targets for NPC-owned turrets: every
+   * NPC ship (drones, robots, traders) plus every ACTIVE player ship (#17:
+   * lingering and pending hulls are not turret targets, the same set that opens
+   * gates). Built lazily once per turret tick, like the drone grid; a turret
+   * then keeps only candidates `relationOf` says are hostile to its owner.
+   */
+  private readonly npcTargetGrid = new NearestPointGrid(512, DRONE_MAX_BOUNDS, 512);
+  private readonly npcTargetParty: string[] = [];
+  private readonly npcTargetRecs: (SwarmEntityRecord | null)[] = [];
+  private npcTargetGridFresh = false;
+  private npcTurretOwner = '';
+  private readonly _npcTargetAccept = (i: number): boolean =>
+    relationOf(this.npcTargetParty[i]!, this.npcTurretOwner, this.relationCtx) === 'hostile';
+
+  private buildNpcTargetGrid(): void {
+    const g = this.npcTargetGrid;
+    g.reset();
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== 1) continue;
+      const base = slotBase(rec.slot);
+      const i = g.add(this.sabF32[base + SLOT_X_OFF]!, this.sabF32[base + SLOT_Y_OFF]!);
+      this.npcTargetParty[i] = NPC_SIDE_PARTY[allegianceOfKind(rec.shipKind)];
+      this.npcTargetRecs[i] = rec;
+    }
+    for (const [playerId] of this.playerToSlot) {
+      const ship = this.getActiveShip(playerId);
+      if (!ship || !ship.alive || !ship.isActive) continue;
+      const pose = this.shipPoseCache.get(playerId);
+      if (!pose) continue;
+      const i = g.add(pose.x, pose.y);
+      this.npcTargetParty[i] = playerId;
+      this.npcTargetRecs[i] = null;
+    }
+    g.build();
+    this.npcTargetGridFresh = true;
+  }
+
+  private findNearestNpcTurretTarget(
+    x: number,
+    y: number,
+    range: number,
+    owner: string,
+  ): { id: string; entityId: number; x: number; y: number; radius: number; playerId?: string } | null {
+    if (!this.npcTargetGridFresh) this.buildNpcTargetGrid();
+    this.npcTurretOwner = owner;
+    const g = this.npcTargetGrid;
+    const i = g.nearestWhere(x, y, range, this._npcTargetAccept);
+    if (i < 0) return null;
+    const out = this.turretTargetOut;
+    out.x = g.x(i);
+    out.y = g.y(i);
+    const rec = this.npcTargetRecs[i];
+    if (rec) {
+      out.id = rec.id;
+      out.entityId = rec.entityId;
+      out.radius = rec.radius;
+      out.playerId = undefined;
+    } else {
+      const playerId = this.npcTargetParty[i]!;
+      out.id = playerId;
+      out.entityId = -1;
+      out.radius = getShipKind(this.getActiveShip(playerId)?.kind).radius;
+      out.playerId = playerId;
+    }
+    return out;
+  }
 
   private findNearestTurretTarget(
     x: number,
     y: number,
     range: number,
-  ): { id: string; entityId: number; x: number; y: number; radius: number } | null {
+    owner: string,
+  ): { id: string; entityId: number; x: number; y: number; radius: number; playerId?: string } | null {
+    // B2 — NPC-owned turrets engage by relation (players included); player
+    // turrets keep the A1 drone grid below, unchanged.
+    if (isNpcOwner(owner)) return this.findNearestNpcTurretTarget(x, y, range, owner);
     if (!this.turretTargetGridFresh) {
       const g = this.turretTargetGrid;
       const recs = this.turretTargetRecs;
@@ -4138,6 +4252,7 @@ export class SectorRoom extends Room<SectorState> {
     if (i < 0) return null;
     const rec = this.turretTargetRecs[i]!;
     const out = this.turretTargetOut;
+    out.playerId = undefined;
     out.id = rec.id;
     out.entityId = rec.entityId;
     out.x = this.turretTargetGrid.x(i);
@@ -4186,6 +4301,13 @@ export class SectorRoom extends Room<SectorState> {
   private resolveOwnerName(owner: string): string | null {
     const cached = this._ownerNameCache.get(owner);
     if (cached !== undefined) return cached;
+    // B2 — an NPC base is named for its side (never a raw id; client rule).
+    const party = parseOwner(owner);
+    if (party.kind === 'npc') {
+      const name = `${ALLEGIANCE_DEFS[party.allegiance!].displayName} base`;
+      this._ownerNameCache.set(owner, name);
+      return name;
+    }
     const userId =
       this.playerToUser.get(owner) ??
       getPlayerShipStore().listByPlayer(owner)[0]?.userId ??
@@ -4285,13 +4407,19 @@ export class SectorRoom extends Room<SectorState> {
       }
       this.syncConnTo(rec.id, st);
       // Fast cosmetics stay on the snapshot (only structures with a target).
-      if (rec.turretTargetEntityId !== undefined || rec.miningTargetEntityId !== undefined) {
+      if (
+        rec.turretTargetEntityId !== undefined ||
+        rec.miningTargetEntityId !== undefined ||
+        rec.turretTargetPlayer !== undefined
+      ) {
         // TODO: alloc-debt — one small array per rebuild while any turret or
         // miner has a target (bounded by their count); A3 may pool it.
         targets ??= [];
         targets.push(
           entityId,
-          rec.turretTargetEntityId ?? STRUCTURE_TARGET_NONE,
+          rec.turretTargetPlayer !== undefined
+            ? encodePlayerTurretTarget(this.internStructureOwner(rec.turretTargetPlayer))
+            : (rec.turretTargetEntityId ?? STRUCTURE_TARGET_NONE),
           rec.miningTargetEntityId ?? STRUCTURE_TARGET_NONE,
         );
       }
@@ -4760,7 +4888,8 @@ export class SectorRoom extends Room<SectorState> {
     }
     const byOwner = new Map<string, Agg>();
     for (const rec of this.structureRegistry.all()) {
-      if (!rec.isConstructed) continue;
+      // B2 — NPC bases are never a wave target (they aren't a player faction).
+      if (!rec.isConstructed || isNpcOwner(rec.owner)) continue;
       let agg = byOwner.get(rec.owner);
       if (!agg) {
         agg = { hasCapital: false, minerCount: 0, solarCount: 0, turretCount: 0 };

@@ -228,6 +228,9 @@ export interface StructureRenderState {
   /** Phase 5 — drone entityId a Turret is aiming at (draws the aim line), or
    *  undefined. */
   turretTargetId?: number;
+  /** B2 — playerId a Turret is aiming at (an NPC turret engaging a hostile
+   *  pilot), or undefined. Mutually exclusive with `turretTargetId`. */
+  turretTargetPlayerId?: string;
   /** Batteries plan — current stored power (Battery only; undefined elsewhere). */
   storedPower?: number;
   /** Batteries plan — the Battery's stored-power capacity (readout denominator). */

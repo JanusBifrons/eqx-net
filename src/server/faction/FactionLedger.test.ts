@@ -150,3 +150,10 @@ describe('FactionLedger — hostility + wave state', () => {
     expect(ledger.isHostileToDrones('nobody')).toBe(false);
   });
 });
+
+describe('FactionLedger — NPC bases are not player factions (B2)', () => {
+  it('factionOf an NPC-owned structure is null, so a hit never escalates it', () => {
+    const { ledger } = makeLedger([struct('pstruct-1', 'npc:robots:r1')]);
+    expect(ledger.factionOf('pstruct-1')).toBeNull();
+  });
+});

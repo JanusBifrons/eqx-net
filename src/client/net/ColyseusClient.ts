@@ -2,6 +2,7 @@ import { decodeStructureState, emptyStructureRow } from './structureStateDecode.
 import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import {
   STRUCTURE_TARGET_NONE,
+  decodePlayerTurretTarget,
   STRUCTURE_TARGET_STRIDE,
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
@@ -3383,6 +3384,7 @@ export class ColyseusGameClient {
     }
     decodeStructureState(v, this._structureOwners, row);
     row.turretTargetId = undefined;
+    row.turretTargetPlayerId = undefined;
     row.miningTargetId = undefined;
     this._structureGen.set(id, this._structureGenN);
   };
@@ -3430,7 +3432,11 @@ export class ColyseusGameClient {
         for (let i = 0; i + 2 < targets.length; i += STRUCTURE_TARGET_STRIDE) {
           const row = map.get(targets[i]!);
           if (!row) continue;
-          if (targets[i + 1] !== STRUCTURE_TARGET_NONE) row.turretTargetId = targets[i + 1];
+          const turret = targets[i + 1]!;
+          // B2 — a negative slot below NONE is a PLAYER target (an owner-table index).
+          const ownerIdx = decodePlayerTurretTarget(turret);
+          if (ownerIdx >= 0) row.turretTargetPlayerId = this._structureOwners.ids[ownerIdx];
+          else if (turret !== STRUCTURE_TARGET_NONE) row.turretTargetId = turret;
           if (targets[i + 2] !== STRUCTURE_TARGET_NONE) row.miningTargetId = targets[i + 2];
         }
       }
