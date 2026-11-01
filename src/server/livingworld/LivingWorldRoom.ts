@@ -86,6 +86,12 @@ export interface LivingWorldRoom {
   /** P3b — move the whole hold `fromUid` into `toUid` (an ownerless
    *  `hauler`-type hold) as ONE atomic group. Returns the weight moved. */
   bankHold?(fromUid: string, toUid: string): number;
+  /** P3c — nearest operational player storage to (x, y) within `range`. */
+  nearestPlayerStorage?(x: number, y: number, range: number): { uid: string; owner: string; x: number; y: number } | null;
+  /** P3c — a robot harvester steals up to `stepWeight` (best goods first, plus
+   *  some credits) from that storage's network into its own hold, as ONE atomic
+   *  group; the owner is warned (throttled). Returns the weight taken. */
+  raidStorage?(harvesterId: string, owner: string, uid: string, stepWeight: number): number;
   spawnLivingWorldBot(spec: {
     botId: string;
     kind: ShipKindId;

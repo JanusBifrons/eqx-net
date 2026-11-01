@@ -164,6 +164,9 @@ export interface SwarmRenderState {
    *  auto-fire). Absent ⇒ treated as 1 (full): the server omits `hp` for
    *  undamaged drones. Low-cadence (snapshot rate), not per-frame. */
   healthFrac?: number;
+  /** Living World P3c — this drone is winding up a CHARGE weapon (snapshot
+   *  `drones[].charging`). Drives the telegraph glow. Snapshot cadence. */
+  charging?: boolean;
   /** Mineable resource pool for an asteroid (kind 0), decoded from the snapshot
    *  `asteroids[]` slice (WS-4 Phase 6 / R2.23 enabler). The server emits these
    *  ONLY for MINED in-interest asteroids (`resources < resourcesMax`), so

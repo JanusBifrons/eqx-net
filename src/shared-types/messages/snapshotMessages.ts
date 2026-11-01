@@ -250,6 +250,10 @@ export interface SnapshotMessage {
      *  bytes; absence does NOT force-clear (the client ledger's time-decay
      *  owns forgetting, exactly as with the event path). */
     hostile?: boolean;
+    /** Living World P3c — true while this drone winds up a CHARGE weapon (the
+     *  robot orb's charge laser): the client draws the telegraph. Emit-when-
+     *  true; absence means "not charging" (the wind-up is ~1.2 s). */
+    charging?: boolean;
     /** Hull health PERCENT (0-100 integer) for health-weighted player turret
      *  aim (Part C — the player turret + auto-fire focus the wounded). Emitted
      *  only for DAMAGED in-interest drones (full-HP omit it → client treats

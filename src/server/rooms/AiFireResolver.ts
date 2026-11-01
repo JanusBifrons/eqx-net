@@ -161,6 +161,65 @@ export class AiFireResolver implements WeaponFireSink {
     if (tick - lastFireCt < slotCooldown) return;
     d.lastFireClientTick.set(shooterId, tick);
 
+    // Living World P3c — a CHARGE weapon winds up instead of firing: lock the
+    // direction now, fire it `chargeTicks` later from `releaseCharges` (the
+    // telegraph rides `drones[].charging`). One reused record per shooter.
+    let chargeTicks = 0;
+    for (let i = 0; i < slotMounts.length; i++) {
+      const w = getWeapon(slotMounts[i]!.weaponId);
+      if (w.mode === 'hitscan' && (w.chargeTicks ?? 0) > chargeTicks) chargeTicks = w.chargeTicks!;
+    }
+    if (chargeTicks > 0) {
+      let c = this.charges.get(shooterId);
+      if (c === undefined) {
+        c = { active: false, readyTick: 0, dirX: 0, dirY: 0 };
+        this.charges.set(shooterId, c);
+      }
+      c.active = true;
+      c.readyTick = tick + chargeTicks;
+      c.dirX = dirNdx;
+      c.dirY = dirNdy;
+      return;
+    }
+    this.fireNow(shooterId, dirNdx, dirNdy);
+  }
+
+  /** Release every charge whose wind-up has elapsed (call once per server
+   *  tick, after the AI tick). Fires from the shooter's CURRENT pose along the
+   *  LOCKED direction — a dodgeable telegraph. Allocation-free. */
+  releaseCharges(tick: number): void {
+    if (this.charges.size === 0) return;
+    for (const [id, c] of this.charges) {
+      if (!c.active || tick < c.readyTick) continue;
+      c.active = false;
+      this.fireNow(id, c.dirX, c.dirY);
+    }
+  }
+
+  /** The drone is mid wind-up (the snapshot `drones[].charging` bit). */
+  isCharging(shooterId: string): boolean {
+    return this.charges.get(shooterId)?.active === true;
+  }
+
+  /** The shooter left the world — drop its charge. */
+  forget(shooterId: string): void {
+    this.charges.delete(shooterId);
+  }
+
+  /** P3c — per-shooter wind-up records (reused; never per-tick allocated). */
+  private readonly charges = new Map<string, { active: boolean; readyTick: number; dirX: number; dirY: number }>();
+
+  /** Fire the shooter's active slot now along a unit direction. */
+  private fireNow(shooterId: string, dirNdx: number, dirNdy: number): void {
+    const d = this.deps;
+    const self = d.swarmEntitySnapshot(shooterId);
+    if (!self) return;
+    const shooterRec = d.swarmRegistry.get(shooterId);
+    const droneKindId = shooterRec?.shipKind ?? DEFAULT_SHIP_KIND;
+    const droneKind = getShipKind(droneKindId);
+    const slotMounts = d.resolveSlotMounts(droneKind);
+    if (slotMounts.length === 0) return;
+
     // The fire direction the AI computed is the drone's body intent.
     // Re-express as an angle so mount.baseAngle can be added per mount.
     // For drones with rotating mounts, also add the per-mount slewed

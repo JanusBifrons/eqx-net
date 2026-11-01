@@ -180,8 +180,8 @@ import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { StorageService, structureUid, DEPOSIT_DWELL_TICKS, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto } from '../../core/cargo/hold.js';
-import { HARVESTER_CAPACITY } from '../livingworld/RobotTerritory.js';
-import { cargoCapacityForMaxHealth, HoldSchema, type Hold } from '../../shared-types/goods.js';
+import { HARVESTER_CAPACITY, RAID_CREDITS_PER_STEP, RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
+import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
 import { rollLoot } from '../../shared-types/lootTables.js';
 // RosterFullError is handled inside RosterPersistence.ts
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
@@ -658,6 +658,8 @@ export class SectorRoom extends Room<SectorState> {
    *  first-hit allocates (invariant #14). Entry cleared on the structure's
    *  removal in `evictSwarmEntity`. */
   private readonly structureAttackAuditAtMs = new Map<string, number>();
+  /** P3c — last raid warning per owner (throttle). */
+  private readonly raidNoticeAtMs = new Map<string, number>();
   /** Web Push throttle — structureId → wall-clock ms of the last "base under
    *  attack" PUSH notification (separate, far longer window than the audit map
    *  above). Same alloc-free steady state; cleared in `evictSwarmEntity`. */
@@ -1633,6 +1635,7 @@ export class SectorRoom extends Room<SectorState> {
       // Campaign 2.1 — the per-recipient `drones[].hostile` bit reads the
       // same hostility ledger the AI tick + liveCounts use (one truth).
       isDroneHostileTo: (droneId, playerId) => this.npcHostileTo(droneId, playerId),
+      isDroneCharging: (droneId) => this.aiFireResolver.isCharging(droneId),
       // Living World P1a (#16) — own-ship cargo slice source.
       shipHoldOf: (shipInstanceId) => this.loot.shipHold(shipInstanceId),
       depositProgressOf: (shipInstanceId) => this.depositProgress.get(shipInstanceId),
@@ -3399,6 +3402,8 @@ export class SectorRoom extends Room<SectorState> {
     // A turret's kill mid-tick must not leave the evicted drone selectable by
     // the next turret in the same tick (the linear scan never saw it).
     this.turretTargetGridFresh = false;
+    // P3c — a removed shooter's pending charge never fires.
+    this.aiFireResolver.forget(rec.id);
     // Gameplay audit log — record a REAL combat death (the `emitDestroyed`
     // signal that fires the kill-feed + bus ENTITY_DESTROYED; load-shedder /
     // quiet bot despawn / abandon use emitDestroyed:false and are excluded).
@@ -6422,6 +6427,50 @@ export class SectorRoom extends Room<SectorState> {
     return moved;
   }
 
+  /** P3c — nearest operational player storage near (x, y) whose network holds
+   *  something worth stealing. Control cadence (allocates). */
+  nearestPlayerStorage(x: number, y: number, range: number): { uid: string; owner: string; x: number; y: number } | null {
+    const rec = this.storage.nearestAnyStorage(x, y, range);
+    if (rec === null || rec.uid === undefined) return null;
+    const snap = this.storage.tradeSnapshot(rec.owner, rec.uid);
+    if (snap === null) return null;
+    let worth = snap.credits;
+    for (const g of GOOD_IDS) worth += snap.goods[g] ?? 0;
+    return worth > 0 ? { uid: rec.uid, owner: rec.owner, x: rec.x, y: rec.y } : null;
+  }
+
+  /** P3c — a harvester steals up to `stepWeight` (rarest goods first, plus up
+   *  to RAID_CREDITS_PER_STEP credits) from the storage network at `uid`, as
+   *  ONE atomic `tradeTransfer` group into its own ownerless hold. */
+  raidStorage(harvesterId: string, owner: string, uid: string, stepWeight: number): number {
+    const snap = this.storage.tradeSnapshot(owner, uid);
+    if (snap === null || stepWeight <= 0) return 0;
+    const want = emptyHold();
+    let room = stepWeight;
+    for (const g of RAID_PRIORITY) {
+      const w = GOOD_DEFS[g].weight;
+      const n = Math.min(snap.goods[g] ?? 0, Math.floor(room / w));
+      if (n <= 0) continue;
+      want.goods[g] = n;
+      room -= n * w;
+    }
+    want.credits = Math.min(snap.credits, RAID_CREDITS_PER_STEP);
+    if (isHoldEmpty(want)) return 0;
+    const res = this.tradeTransfer(owner, uid, { take: { want, intoUid: harvesterId, intoOwner: null } });
+    if (res === null || isHoldEmpty(res.taken)) return 0;
+    const weight = holdWeight(res.taken);
+    auditEvent({ event: 'storage_raided', sector: this.sectorKey ?? undefined, playerId: owner, raider: harvesterId, weight, credits: res.taken.credits });
+    const now = Date.now();
+    if (now - (this.raidNoticeAtMs.get(owner) ?? 0) >= RAID_NOTICE_THROTTLE_MS) {
+      this.raidNoticeAtMs.set(owner, now);
+      this.tradeNotify(owner, {
+        type: 'trade_notice', dealId: '', event: 'raided',
+        message: 'Robot harvesters are raiding your storage! Defend your base.', econVersion: 0,
+      });
+    }
+    return weight;
+  }
+
   // ── Living World P2 — TradeRoom hooks (driven by the TradeDirector) ──────
 
   tradeSnapshot(ownerId: string, networkUid: string): TradeNetworkSnapshot | null {
@@ -7014,6 +7063,8 @@ export class SectorRoom extends Room<SectorState> {
       handleAiFire: (shooterId, dirX, dirY, tick) => this.handleAiFire(shooterId, dirX, dirY, tick),
       phaseTime,
     });
+    // Living World P3c — fire every NPC charge weapon whose wind-up elapsed.
+    this.aiFireResolver.releaseCharges(this.serverTick);
 
     // Phase 4b.3 — server-authoritative turret rotation for player ships.
     // Mirrors the client's `tickLocalMountAim` so the server's hit-test
