@@ -163,3 +163,48 @@ export function transferUpTo(dst: Hold, src: Hold, dstCapacity: number, stepWeig
 export function mergeInto(dst: Hold, src: Hold): void {
   transferInto(dst, src, Infinity);
 }
+
+/** C1 (plan soft-leaping-truffle v3) — the items a player asked to move
+ *  between two holds: goods by count, blueprints by uid, packed items by
+ *  product (one entry per item). */
+export interface CargoRequest {
+  goods?: Partial<Record<GoodId, number>>;
+  blueprints?: readonly string[];
+  packed?: readonly string[];
+}
+
+/**
+ * Remove exactly the requested items from `src` (each clamped to what `src`
+ * holds; unknown uids/products are ignored) and return them as a new hold.
+ * Mutates `src`. Value is conserved: `src` loses exactly what is returned.
+ * Pair it with `transferInto(dst, picked, cap)` and merge the leftover back
+ * into `src`, so a capacity-limited move never drops anything.
+ */
+export function extractRequested(src: Hold, want: CargoRequest): Hold {
+  const out = emptyHold();
+  if (want.goods) {
+    for (const id of GOOD_IDS) {
+      const asked = want.goods[id];
+      if (asked === undefined || !(asked > 0)) continue;
+      const have = src.goods[id] ?? 0;
+      const n = Math.min(have, Math.floor(asked));
+      if (n <= 0) continue;
+      out.goods[id] = n;
+      if (have - n > 0) src.goods[id] = have - n;
+      else delete src.goods[id];
+    }
+  }
+  if (want.blueprints && want.blueprints.length > 0) {
+    for (const uid of want.blueprints) {
+      const i = src.blueprints.findIndex((b) => b.uid === uid);
+      if (i >= 0) out.blueprints.push(src.blueprints.splice(i, 1)[0]!);
+    }
+  }
+  if (want.packed && want.packed.length > 0) {
+    for (const product of want.packed) {
+      const item = takePacked(src, product);
+      if (item) (out.packed ??= []).push(item);
+    }
+  }
+  return out;
+}
