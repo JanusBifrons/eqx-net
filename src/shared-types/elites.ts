@@ -10,6 +10,7 @@
 import type { Hold } from './goods.js';
 import type { ShipKindId } from './shipKinds.js';
 import { rollLoot } from './lootTables.js';
+import { ELITE_BLUEPRINT_CHANCE, rollBlueprint } from './blueprints.js';
 
 /** Elite bot ids (owned by the server `EliteDirector`). */
 export const ELITE_ID_PREFIX = 'elite-';
@@ -50,5 +51,8 @@ export function rollEliteLoot(kindId: string | null | undefined, rng: () => numb
   }
   out.goods.core = (out.goods.core ?? 0) + 1 + Math.floor(rng() * 3);
   out.credits += 200 + Math.floor(rng() * 301);
+  // P5 — elites are the main blueprint source.
+  const bp = rollBlueprint(rng, ELITE_BLUEPRINT_CHANCE);
+  if (bp !== null) out.blueprints.push(bp);
   return out;
 }

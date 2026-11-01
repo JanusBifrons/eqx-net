@@ -146,6 +146,9 @@ export interface SnapshotBroadcasterDeps {
   /** Living World P1a-2 — auto-deposit progress 0..100 for a ship instance
    *  (undefined ⇒ not depositing). Own active ship only on the wire. */
   depositProgressOf?: (shipInstanceId: string) => number | undefined;
+  /** Living World P5 — the blueprints fitted to a ship instance (own active
+   *  ship only on the wire). A SHARED reference; undefined ⇒ none known. */
+  fittedOf?: (shipInstanceId: string) => readonly string[] | undefined;
   playerMountAngles: Map<string, Float32Array>;
   droneMountAngles: Map<string, Float32Array>;
   /** Missile simulation — per-recipient AOI-filtered missile pose slice. */
@@ -231,6 +234,7 @@ type MutableStateEntry = {
   statAlloc?: Record<string, number>;
   cargo?: Hold;
   depositing?: number;
+  fitted?: string[];
   // Typed mutable to match the wire `SnapshotMessage['states'][...].mounts`; the
   // value assigned is a SHARED reference to `ShipState.mounts` (the encoder
   // reads it synchronously and never mutates it).
@@ -716,6 +720,10 @@ export class SnapshotBroadcaster {
           : undefined;
         entry.cargo = hold !== undefined && !isHoldEmpty(hold) ? hold : undefined;
         entry.depositing = ownActive ? this.deps.depositProgressOf?.(ship.shipInstanceId) : undefined;
+        // P5 (#16) — the own ACTIVE hull's fitted blueprints, emit-when-non-empty
+        // (shared reference; the encoder never mutates it).
+        const fitted = ownActive ? this.deps.fittedOf?.(ship.shipInstanceId) : undefined;
+        entry.fitted = fitted !== undefined && fitted.length > 0 ? (fitted as string[]) : undefined;
         // WS-B3 — activated mounts are PUBLIC (every recipient, active +
         // lingering), emit-when-non-empty. Shared reference (no per-tick alloc,
         // #14); the renderer looks up geometry by (shipKind, slotId). Clear the

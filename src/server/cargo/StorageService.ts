@@ -17,6 +17,7 @@
  *    mining, it can never duplicate player value.
  */
 import { GOOD_IDS, type GoodId, type Hold } from '../../shared-types/goods.js';
+import { fittedUid } from '../../shared-types/blueprints.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { cloneHold, emptyHold, holdWeight, isHoldEmpty, transferInto } from '../../core/cargo/hold.js';
@@ -431,6 +432,41 @@ export class StorageService {
 
   /** Living World P3c — the nearest OPERATIONAL storage (any player owner) to
    *  (x, y) within `range`, for a robot raid. Control cadence (allocates). */
+  /**
+   * Living World P5 — install one `blueprintId` from `owner`'s storage network
+   * at `networkUid` onto ship `shipInstanceId`: ONE atomic hold group (the
+   * storage loses it, the ship's `fitted` hold gains it). Returns the ship's
+   * new fitted list, or null when the network doesn't hold that blueprint.
+   */
+  installBlueprint(owner: string, networkUid: string, blueprintId: string, shipInstanceId: string): string[] | null {
+    const target = this.storageByUid(owner, networkUid);
+    if (target === null) return null;
+    let from: StructureRecord | null = null;
+    for (const rec of this.network(target)) {
+      const i = rec.hold?.blueprints.indexOf(blueprintId) ?? -1;
+      if (i >= 0) {
+        rec.hold!.blueprints.splice(i, 1);
+        from = rec;
+        break;
+      }
+    }
+    if (from === null) return null;
+    const uid = fittedUid(shipInstanceId);
+    const prior = this.d.holdStore.get(uid);
+    const fitted = prior ? cloneHold(prior.hold) : emptyHold();
+    fitted.blueprints.push(blueprintId);
+    const puts: HoldRecord[] = [
+      { holderUid: uid, holderType: 'fitted', ownerId: owner, sectorKey: null, x: null, y: null, hold: fitted, expiresAt: null },
+    ];
+    const r = this.recordFor(from);
+    if (r !== null) {
+      this.persistedSig.set(from.uid!, sig(r.hold));
+      puts.push(r);
+    }
+    this.d.holdStore.commit(puts, [], this.persist());
+    return fitted.blueprints;
+  }
+
   nearestAnyStorage(x: number, y: number, range: number): StructureRecord | null {
     let best: StructureRecord | null = null;
     let bestD2 = range * range;

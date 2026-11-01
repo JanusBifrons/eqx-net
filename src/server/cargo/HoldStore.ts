@@ -13,7 +13,8 @@ import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersiste
 import type { Hold } from '../../shared-types/goods.js';
 
 /** `bounty` (P4c-2): a player bounty's escrowed credits, keyed `bounty:<target>:<placer>`. */
-export type HolderType = 'ship' | 'pod' | 'derelict' | 'structure' | 'hauler' | 'bounty';
+/** `fitted` (P5): the blueprints INSTALLED on a ship, keyed `fitted:<shipInstanceId>`. */
+export type HolderType = 'ship' | 'pod' | 'derelict' | 'structure' | 'hauler' | 'bounty' | 'fitted';
 
 export interface HoldRecord {
   readonly holderUid: string;
