@@ -32,6 +32,8 @@ export interface ResearchLabDeps {
   storage: StorageService;
   registry: StructureRegistry;
   powered: (structureId: string) => boolean;
+  /** Active power: a lab draws full only while its job advances. */
+  setActive?: (lab: StructureRecord, active: boolean) => void;
   sectorKey: () => string | null;
   now?: () => number;
   rng?: () => number;
@@ -130,9 +132,11 @@ export class ResearchLabSubsystem {
     for (const lab of this.d.registry.all()) {
       if (lab.kind !== RESEARCH_LAB_KIND || lab.uid === undefined) continue;
       const job = board.get(lab.uid);
+      const working = job !== undefined && job.done < job.pulses && lab.isConstructed && this.d.powered(lab.id);
+      this.d.setActive?.(lab, working);
       if (job === undefined) continue;
       if (job.done < job.pulses) {
-        if (!lab.isConstructed || !this.d.powered(lab.id)) continue;
+        if (!working) continue;
         board.advance(lab.uid);
         advanced = true;
       }

@@ -172,7 +172,19 @@ Update this section when a threshold is set.
   - Beam turrets never reach it: lasers are power-only.
   - No hook ⇒ unlimited (unit harnesses).
   - Test rooms with ammo turrets stock munitions via `prebuiltStorageGoods`.
+- **Active power (2026-11-01):** a structure draws its full consumption only while working, else `IDLE_DRAW_FRAC` (0.2) of it (`shared-types/structurePower.ts`, used by both sides).
+  - **The one switch** is `StructureGridSubsystem.setActive(rec, active)`, which adjusts the component's net power in O(1) via `Grid.adjustDraw`. Never write `rec.drawFull` directly, or the component's power goes stale until the next rebuild.
+  - **Callers:** drills and gas (StructureGridSubsystem), turrets (target or not), processors (`ProductionSubsystem` dep, running or not), Research Labs (`ResearchLabSubsystem` dep, job advancing or not). A new power consumer that "works" must call it too, or it draws idle forever.
+  - **Wire:** `STRUCTURE_FLAG_DRAW_FULL` (64) in the room-state flags byte.
 - Locks: `ProductionSubsystem.test.ts` and `tests/integration/sectorRoom/production.test.ts`. Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).
+
+## NPC bases from the generator (plan soft-leaping-truffle v3, D2)
+
+- **Seeding:** the `npcBases` room option → `seedNpcBases` → `NpcBaseSubsystem.seed`.
+- **Place and link:** placements go through `structurePlacement.place(…, { skipAutoConnect: true, rot })`, edges through `connectExplicit`. Never auto-connect a generated base, because it would close gates and link the wrong things.
+- **Built and set up:** structures spawn built at their level. Processors get recipes and BOUND originals (`rec.blueprint.bound`, which `unloadBlueprint` refuses). Gates open for anyone not hostile.
+- **Stocked:** storage starts with an hour of fuel, munitions, and 20 cycles of inputs.
+- **Not persisted:** NPC structures aren't saved (B2); a restart regenerates them from the seed.
 
 ## NPC ownership (plan soft-leaping-truffle v3, B2)
 
@@ -189,26 +201,6 @@ Update this section when a threshold is set.
 - **Display names:** `resolveOwnerName` gives "<Side> base", never a raw id.
 - **A turret aiming at a player** rides `structureTargets` as an owner-table index (`encodePlayerTurretTarget`).
 - Lock: `tests/integration/sectorRoom/npcOwnership.test.ts`. Story: [docs/architecture/relations.md](../../docs/architecture/relations.md).
-
-## Procedural bases (`src/server/bases/BaseSubsystem.ts`, plan soft-leaping-truffle)
-
-- **The `bases` room-definition option** (server-authored, so NOT testMode-gated) → `BaseSubsystem.add`. That call:
-  - generates the layout with the shared core;
-  - writes a `BaseState` descriptor into `state.bases` (a schema MapSchema), so joiners regenerate from it (Invariant #16);
-  - posts `SPAWN_BASE` so the worker regenerates and spawns the outline colliders. No geometry crosses the thread boundary.
-- **Weapon blocking:** `blockShotAtWall` (used by both fire resolvers) takes the nearest of base and shield wall, and caps the shield-wall range at the base hit so a shield span BEHIND base geometry never takes damage. `wallBlocksProjectile` checks bases first.
-  - **Not yet blocked:** turret beams and missiles (PR-M).
-- **Spawn safety:** `onJoin` nudges a spawn inside solid geometry to the nearest clear point (`findClearSpawn`). The colliders are hollow outlines, so a ship placed inside would be trapped.
-- **Destructible pieces (PR-D).** `shotHit` / `projectileHit` apply damage to the solid piece at the impact point. Hit points live per GROUP: `groupSplitPieces` reunites halves the builder split at chunk lines, so a rack breaks whole. At 0 HP:
-  - the destroy bits go into `state.bases[id].dead` (schema ArraySchema → deltas, so late joiners see holes; Invariant #16);
-  - `SET_BASE_DEAD` makes the worker rebuild that base's outline colliders from its stored layout;
-  - the ray grid is rebuilt.
-  Per-hit work is allocation-free; only a destroy allocates.
-  - **Test trigger:** testMode room option `baseHpScale` (`base-warehouse-destructible` = 2%).
-  - **Persistence:** destroy bits for galaxy sectors are NOT yet persisted. They only matter once bases are seeded into galaxy sectors (PR-P).
-- **Showcase rooms:** `base-warehouse-showcase`, `base-warehouse-destructible` (testMode, filterBy testId).
-- **Locks:** `tests/integration/sectorRoom/proceduralBase.test.ts` (state descriptor, spawn nudge, real-worker wall stop with a moved-then-stopped assertion, beam block) and `tests/e2e/base-warehouse-showcase.spec.ts`.
-- **Netgate required** (touches `SectorRoom` join + fire paths).
 
 ## Player identity is ACCOUNT-bound (PR 3a, 2026-10-31)
 

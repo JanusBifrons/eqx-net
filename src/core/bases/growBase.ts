@@ -25,6 +25,7 @@
 import { getStructureKind, structureHalfExtents, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { RECIPES, packRecipeFor, recipesFor, type RecipeId } from '../../shared-types/recipes.js';
 import { BASE_PRICES } from '../../shared-types/economy.js';
+import { IDLE_DRAW_FRAC } from '../../shared-types/structurePower.js';
 import { canConnect, type GridNode } from '../structures/Grid.js';
 import { Connection } from '../structures/Connection.js';
 import { placementRejection } from '../structures/placementRules.js';
@@ -35,7 +36,7 @@ import type { GoodId } from '../../shared-types/goods.js';
 
 /** Bump on ANY change to the generator's output (NPC bases regenerate from the
  *  seed, so a change moves every base). */
-export const BASE_GROWTH_VERSION = 2;
+export const BASE_GROWTH_VERSION = 3;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -91,6 +92,27 @@ export function generatedCost(kind: StructureKindId): number {
   let v = 0;
   for (const [g, n] of Object.entries(RECIPES[pack].inputs)) v += BASE_PRICES[g as GoodId] * (n ?? 0);
   return base + v;
+}
+
+/**
+ * Expected power draw of a structure on a typical day (user ruling
+ * 2026-11-01): it draws full power only while active, a small idle trickle
+ * otherwise (`structurePower.ts`), and no base runs everything at 100 %.
+ * Processors are assumed busy 60 % of the time, drills 80 %, turrets 15 %;
+ * shield emitters hold their walls on the trickle (a fence under fire is paid
+ * from surplus and batteries). Generation is sized for this, not for peak.
+ */
+export const EXPECTED_ACTIVE: Readonly<Partial<Record<StructureKindId, number>>> = Object.freeze({
+  miner: 0.8, gas_collector: 0.8, deep_core_rig: 0.8,
+  reclaimer: 0.6, smelter: 0.6, refinery: 0.6, silicon_works: 0.6, hydroponics: 0.6,
+  fabricator: 0.6, munitions_works: 0.6, ore_processing_complex: 0.6, assembly_plant: 0.6,
+  turret: 0.15, laser_bolt_turret: 0.15, missile_turret: 0.15, autocannon_turret: 0.15,
+});
+
+export function expectedDraw(kind: StructureKindId): number {
+  const cons = getStructureKind(kind).powerConsumption;
+  const u = EXPECTED_ACTIVE[kind] ?? 0;
+  return cons * (u + (1 - u) * IDLE_DRAW_FRAC);
 }
 
 const HUGE: ReadonlySet<StructureKindId> = new Set(['deep_core_rig', 'ore_processing_complex', 'assembly_plant']);
@@ -172,7 +194,7 @@ function planBuild(profile: BaseProfile, features: readonly SectorFeature[], rnd
     const storage = w.kind === 'cargo_bay' || w.kind === 'freight_dock';
     if (n >= (storage ? storageCap : unitCap)) return false;
     // A purchase includes the Solars that power it (a builder pays for both).
-    const c = generatedCost(w.kind) + Math.ceil(getStructureKind(w.kind).powerConsumption / solarOut) * solarCost;
+    const c = generatedCost(w.kind) + Math.ceil(expectedDraw(w.kind) / solarOut) * solarCost;
     if (c > budget || wants.length >= cap) return false;
     counts.set(w.kind, n + 1);
     budget -= c;
@@ -294,7 +316,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   // Power: role consumption + an estimate for the fence; Solars to cover it,
   // a battery per ~4 consumers for a reserve.
   let consumption = 0;
-  for (const w of wants) consumption += getStructureKind(w.kind).powerConsumption;
+  for (const w of wants) consumption += expectedDraw(w.kind);
   // The fence's draw is measured after layout (see growBase); start with none.
   const fenceDraw = 0;
   const capOut = getStructureKind('capital').powerOutput;
@@ -307,7 +329,9 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   const solars = Math.max(0, Math.ceil((deficit - reactors * reactorOut) / solar));
   for (let r = 0; r < reactors; r++) normal.push({ kind: 'reactor' });
   for (let s = 0; s < solars; s++) normal.push({ kind: 'solar' });
-  const batteries = Math.max(1, Math.round(wants.length / 6));
+  // Batteries are a real strategy (user): a fence under fire drains the grid's
+  // surplus and then its batteries, so fenced bases bank extra reserve.
+  const batteries = Math.max(1, Math.round(wants.length / 6)) + (profile.fenced ? 2 : 0);
   if (batteries >= 5) normal.push({ kind: 'battery_bank' });
   else for (let b = 0; b < batteries; b++) normal.push({ kind: 'battery' });
 
@@ -503,7 +527,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   let netPower = 0;
   for (const p of B.placements) {
     const k = getStructureKind(p.kind);
-    netPower += k.powerOutput - k.powerConsumption;
+    netPower += k.powerOutput - expectedDraw(p.kind);
   }
   const stages = new Set<number>();
   for (const p of B.placements) {
@@ -514,7 +538,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
     placements: B.placements,
     edges: B.edges,
     spent,
-    netPower,
+    netPower: Math.round(netPower),
     fencePylons,
     fenceGates,
     stages: [...stages].sort(),

@@ -115,25 +115,6 @@ export class ShipState extends Schema {
 // creates a wreck any more.
 
 /**
- * Procedural base descriptor (plan soft-leaping-truffle). Geometry is NEVER on
- * the wire: every side regenerates it from these scalars with the shared core
- * generator. Joiners get the full map with the room state; later changes
- * (destroy bits, PR-D) arrive as schema deltas — so a late joiner always
- * reconstructs the same base (Invariant #16). The world origin is the
- * descriptor's anchor, not a moving pose (no spatial-field duplicate).
- */
-export class BaseState extends Schema {
-  @type('uint16') ver: number = 1;
-  @type('string') archetype: string = 'warehouse';
-  @type('uint32') seed: number = 0;
-  @type('int32') originX: number = 0;
-  @type('int32') originY: number = 0;
-  @type('uint32') size: number = 0;
-  /** Destroy bits, one per layout piece (u32 words). Empty = intact. */
-  @type(['uint32']) dead = new ArraySchema<number>();
-}
-
-/**
  * A structure's slow-changing grid state (plan soft-leaping-truffle v2, A2).
  * Lives in ROOM STATE — sent once on join, then only changed fields as delta
  * patches — instead of riding every 20 Hz snapshot to every client (A0
@@ -192,8 +173,6 @@ export class SectorState extends Schema {
   @type({ map: 'string' }) structureOwners = new MapSchema<string>();
   /** owner index → display name ('' ⇒ unresolved; the client shows "Unknown"). */
   @type({ map: 'string' }) structureOwnerNames = new MapSchema<string>();
-  /** Procedural bases in this sector, keyed by base id. */
-  @type({ map: BaseState }) bases = new MapSchema<BaseState>();
   @type('number') tick: number = 0;
   @type('number') clockRate: number = 1.0;
 }

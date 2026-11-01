@@ -135,6 +135,8 @@ export interface StructureRecord {
   prodYield?: number;
   /** Cycles completed (seeds the deterministic yield roll). */
   prodCycles?: number;
+  /** Active power — drawing full consumption this pulse (else the idle trickle). */
+  drawFull?: boolean;
   /** D1 — a Reactor has fuel burning (its output counts). Rides room state as
    *  the inverse NO_FUEL flag. */
   fueled?: boolean;
