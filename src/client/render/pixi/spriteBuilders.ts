@@ -22,7 +22,8 @@ import {
   type ShipPart,
   type WeaponMount,
 } from '../../../shared-types/shipKinds.js';
-import { getStructureKind, structureHullPoints } from '../../../shared-types/structureKinds.js';
+import { getStructureKind, isStructureKindId, structureHullPoints } from '../../../shared-types/structureKinds.js';
+import { buildStructureVisual } from './structureVisuals.js';
 
 export const SHIP_HITBOX_RADIUS = 12; // must match World.ts SHIP_RADIUS
 export const HITBOX_COLOR = 0xff0066;
@@ -247,17 +248,29 @@ export function structureRenderVerts(
  * `-angle`. Unknown subtype ⇒ the Capital's look (forgiving, like
  * `getStructureKind`).
  */
-export function buildStructureGfx(structureKindId: string | undefined, radius: number): Graphics {
+export function buildStructureGfx(structureKindId: string | undefined, _radius?: number, seed = 1): Graphics {
+  // Phase V (plan soft-leaping-truffle v2) — the architectural draw plan at the
+  // kind's catalogue footprint (the SAME plan the design sheet renders), in
+  // local pixi space centred on the body; the sprite's rotation carries the
+  // structure's quarter-turn. Built ONCE per sprite (never per frame, #14).
   const g = new Graphics();
   const kind = getStructureKind(structureKindId);
-  const verts = structureRenderVerts(kind.id, radius);
-  g.poly(verts);
-  g.fill({ color: kind.color });
-  g.poly(verts);
-  g.stroke({ color: 0xffffff, width: 1.5, alpha: 0.6 });
-  // Core dot so small structures stay legible.
-  g.circle(0, 0, Math.max(2, radius * 0.18));
-  g.fill({ color: 0xffffff, alpha: 0.85 });
+  // A kindless structure (test fixture) is a plain slab sized by its radius,
+  // matching its radius-square collider.
+  const kindless = !structureKindId || !isStructureKindId(structureKindId);
+  const plan = kindless && _radius
+    ? buildStructureVisual('__kindless__', { accent: kind.color, seed, size: { w: _radius * 2, h: _radius * 2 } })
+    : buildStructureVisual(kind.id, { accent: kind.color, seed });
+  for (const r of plan.rects) {
+    g.rect(r.x, r.y, r.w, r.h);
+    g.fill({ color: r.color, alpha: r.alpha });
+  }
+  for (const l of plan.lights) {
+    g.circle(l.x, l.y, l.r * 2.2);
+    g.fill({ color: l.color, alpha: 0.22 });
+    g.circle(l.x, l.y, l.r);
+    g.fill({ color: l.color, alpha: 0.95 });
+  }
   return g;
 }
 

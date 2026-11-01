@@ -50,7 +50,7 @@
 
 import { pickTarget, type MountTargetView } from '../../core/ai/WeaponMountController.js';
 import { isDirectorBotId } from '../livingworld/directorBotIds.js';
-import { projectileSweepCircle, SHIP_COLLISION_RADIUS } from '../../core/combat/Weapons.js';
+import { projectileSweepCircle, SHIP_COLLISION_RADIUS, projectileSweepBox } from '../../core/combat/Weapons.js';
 import {
   SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF,
   slotBase,
@@ -162,7 +162,7 @@ export interface PendingImpulse {
  *  based filter is a leaky abstraction). */
 interface SwarmRecLookup {
   get(id: string): { entityId: number; radius: number; kind: number } | null | undefined;
-  all(): Iterable<{ id: string; slot: number; radius: number; kind: number }>;
+  all(): Iterable<{ id: string; slot: number; radius: number; kind: number; halfW?: number; halfH?: number }>;
 }
 
 export interface MissileSimulationDeps {
@@ -712,7 +712,9 @@ export class MissileSimulation {
       const b = slotBase(rec.slot);
       const cx = this.deps.sabF32[b + SLOT_X_OFF]!;
       const cy = this.deps.sabF32[b + SLOT_Y_OFF]!;
-      const sweep = projectileSweepCircle(m.x, m.y, stepX, stepY, mr, cx, cy, rec.radius);
+      const sweep = rec.halfW !== undefined && rec.halfH !== undefined
+        ? projectileSweepBox(m.x, m.y, stepX, stepY, mr, cx, cy, rec.halfW, rec.halfH)
+        : projectileSweepCircle(m.x, m.y, stepX, stepY, mr, cx, cy, rec.radius);
       if (sweep && sweep.entry < bestEntry) {
         bestEntry = sweep.entry;
         bestId = rec.id;

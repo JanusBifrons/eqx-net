@@ -21,6 +21,7 @@
 import {
   getStructureKind,
   type StructureKindId,
+  structureHalfExtents,
 } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxConnections } from '../../core/leveling/structureLevel.js';
 import type { GridNode, GridObstacle } from '../../core/structures/Grid.js';
@@ -55,6 +56,11 @@ export function structureMirrorToGridNode(
   out.x = swarmEntry.x;
   out.y = swarmEntry.y;
   out.radius = kind.radius;
+  // Phase V — the rotated footprint box (the structure's swarm angle carries
+  // its quarter-turn rotation). Must match the server's structureToGridNode.
+  const ext = structureHalfExtents(swarmEntry.shipKind, (swarmEntry.angle * 180) / Math.PI);
+  out.halfW = ext.hw;
+  out.halfH = ext.hh;
   out.isHub = kind.isHub;
   out.isCapital = swarmEntry.shipKind === 'capital';
   out.isConnector = swarmEntry.shipKind === 'connector';
@@ -84,7 +90,7 @@ export function structureMirrorToGridNode(
 export const GHOST_NODE_ID = '__ghost__';
 
 export function ghostToGridNode(
-  preview: { kind: string; x: number; y: number },
+  preview: { kind: string; x: number; y: number; angle?: number },
   out: GridNode,
 ): GridNode {
   const kind = getStructureKind(preview.kind as StructureKindId);
@@ -92,6 +98,9 @@ export function ghostToGridNode(
   out.x = preview.x;
   out.y = preview.y;
   out.radius = kind.radius;
+  const ext = structureHalfExtents(preview.kind, ((preview.angle ?? 0) * 180) / Math.PI);
+  out.halfW = ext.hw;
+  out.halfH = ext.hh;
   out.isHub = kind.isHub;
   out.isCapital = preview.kind === 'capital';
   out.isConnector = preview.kind === 'connector';

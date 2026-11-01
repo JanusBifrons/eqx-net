@@ -45,6 +45,8 @@ export function structureToGridNode(rec: StructureRecord): GridNode {
     x: rec.x,
     y: rec.y,
     radius: rec.radius,
+    halfW: rec.halfW,
+    halfH: rec.halfH,
     isHub: kind.isHub,
     isCapital: rec.kind === 'capital',
     isConnector: rec.kind === 'connector',

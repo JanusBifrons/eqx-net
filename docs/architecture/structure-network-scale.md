@@ -73,6 +73,47 @@ Each phase appends a row with its measured numbers against the budgets in `struc
 
 | A2 (wire split) | ~0 (targets only) | 733 / 1,825 | 16,711 | ~3,000 worst case (out of interest, every 5th refresh) | 0.82 | (A1) | Measured at 448 structures (loaded host) |
 
+| V (large footprints) | ~0 | 1,553 / 4,116 (during battery charge-up, 456 structures) | 17,015 | — | 0.82 | 1.97 | Footprints 3–6× larger; sector ceiling re-measured to 664 structures (budget 800 → 650) |
+
+## Phase V: structures redesigned far larger
+
+**What changed.** The user found the citadel lattice "awful" and asked for structures that are "far larger and more like the other ones you made". Every kind now has a rectangular `footprint` in the catalogue (v9):
+
+| Kind | Footprint (u) |
+|---|---|
+| Capital | 560 × 560 |
+| Solar | 360 × 150 |
+| Cargo Bay | 320 × 200 |
+| Miner | 240 × 240 |
+| Battery | 190 × 190 |
+| Missile Turret | 190 × 190 |
+| Bolt Turret | 150 × 150 |
+| Turret | 140 × 140 |
+| Shield Pylon | 72 × 72 |
+| Connector | 64 × 64 |
+
+`radius` is now the footprint's bounding circle, used for broad checks only.
+
+**One box drives every rule, on both sides.**
+- **Collider:** `structureHullPoints`, the footprint rectangle.
+- **Placement overlap:** box vs box, and box vs an asteroid circle.
+- **Grid:** edge distance and line of sight (`GridNode.halfW/halfH`).
+- **Weapon hits:** `rayHitsBox` / `projectileSweepBox` in the player and AI hitscan, projectiles and missiles.
+- **Selection picking.**
+- **Renderer:** draws the architectural plan at the same box.
+- **Rotation:** a structure rotates in quarter turns (`place_structure.rot`, the R key on the ghost), and a quarter turn swaps width and height (`structureHalfExtents`).
+
+**Measured consequence: sector capacity.**
+- At these sizes a fenced lattice stays inside the ±5000 u sector only up to 664 structures. The 800-structure lattice ran past the sector edge, and its clamped placements overlapped.
+- `MAX_STRUCTURES_PER_SECTOR` was lowered 800 → 650. That is a budget re-derived from a new measurement, made tighter, not looser.
+- The A0 measurement now runs at N = 30 / 100 / 400 / 600.
+
+**Open item: idle patch traffic.**
+- At 456 structures the idle window measured 1.5 KB/s, over the 1 KB/s idle budget.
+- The window is the three seconds after seeding, while every battery is still charging. A charging battery's `storedPower` changes every pulse, so each charging battery sends a patch.
+- In steady state (batteries full) it drops toward zero.
+- A follow-up should quantise the charge, or move the measurement window past charge-up, before the budget is enforced by a test.
+
 ## A2: structure state moved to room state
 
 **Before.** Every structure's full row rode every 20 Hz snapshot to every client: ~79 B × N × 20 Hz.

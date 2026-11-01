@@ -43,6 +43,11 @@ export interface GridNode {
    *  pylons. Optional (absent ⇒ not a pylon) so existing `GridNode` builders are
    *  unaffected. Projected from the kind by each view. */
   isShieldPylon?: boolean;
+  /** Footprint half extents (phase V — rotated footprint box). ABSENT ⇒ a
+   *  square of `radius` (legacy / obstacles). Drives edge distance + line of
+   *  sight. */
+  halfW?: number;
+  halfH?: number;
   /** Per-kind connection cap (Connector 6, Capital 4, leaves 1). */
   maxConnections: number;
   /** WS-5 (R2.10) — per-kind max edge-to-edge connection range (world units).
@@ -92,8 +97,8 @@ export interface GridObstacle {
  *  radius). Returns 0 when the boxes overlap or touch — eqx-peri's
  *  `edgeDistance`. */
 export function edgeDistance(a: GridNode, b: GridNode): number {
-  const dx = Math.max(0, Math.abs(a.x - b.x) - (a.radius + b.radius));
-  const dy = Math.max(0, Math.abs(a.y - b.y) - (a.radius + b.radius));
+  const dx = Math.max(0, Math.abs(a.x - b.x) - ((a.halfW ?? a.radius) + (b.halfW ?? b.radius)));
+  const dy = Math.max(0, Math.abs(a.y - b.y) - ((a.halfH ?? a.radius) + (b.halfH ?? b.radius)));
   return Math.hypot(dx, dy);
 }
 
@@ -141,7 +146,8 @@ export function isConnectionLineBlocked(
     if (
       segmentIntersectsAabb(
         a.x, a.y, b.x, b.y,
-        n.x - n.radius, n.y - n.radius, n.x + n.radius, n.y + n.radius,
+        n.x - (n.halfW ?? n.radius), n.y - (n.halfH ?? n.radius),
+        n.x + (n.halfW ?? n.radius), n.y + (n.halfH ?? n.radius),
       )
     ) {
       return true;

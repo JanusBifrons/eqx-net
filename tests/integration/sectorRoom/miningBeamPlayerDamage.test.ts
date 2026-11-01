@@ -4,9 +4,9 @@
  * into an active Miner's beam takes light damage through the real
  * structure-grid → tickMiners → damagePlayersInMiningBeam → applyDamage path.
  *
- * Geometry: a pre-built powered grid (capital@0,0 + solar@200,0 + miner@-350,0)
- * mines a rock@-700,0, so the mining beam runs along y=0 from the miner to the
- * rock. A player parked at (-525,0) sits squarely in that beam.
+ * Geometry: a pre-built powered grid (capital@0,0 + relay@0,350 + solar@250,400 + miner@-180,420)
+ * mines a rock@-750,420, so the mining beam runs along y=420 from the miner to the
+ * rock. A player parked at (-500,420) sits squarely in that beam.
  *
  * Drives the grid deterministically via the _internals seams (pulseStructureGrid
  * sets the miner's target; tickStructureTurrets ticks tickMiners → beam +
@@ -37,11 +37,14 @@ describe('SectorRoom integration — mining beam player hazard (WS-4 Phase 3 / R
         // Connector relay offset on +y (its LOS clears the Capital to both the
         // +x solar and the −x miner). The miner→rock beam (along −x at y=0) is
         // unaffected by the relay.
-        { kind: 'connector', x: 0, y: 140 },
-        { kind: 'solar', x: 200, y: 0 },
-        { kind: 'miner', x: -350, y: 0 },
+        // Phase V footprints: relay above the Capital, solar right of it, miner
+        // left of it; the rock sits along the miner's row so the beam runs
+        // along y = 420 from x = -180 to -750.
+        { kind: 'connector', x: 0, y: 350 },
+        { kind: 'solar', x: 250, y: 400 },
+        { kind: 'miner', x: -180, y: 420 },
       ],
-      scenarioAsteroids: [{ x: -700, y: 0, radius: 30 }],
+      scenarioAsteroids: [{ x: -750, y: 420, radius: 30 }],
     });
   }, 15_000);
   afterEach(async () => {
@@ -55,8 +58,8 @@ describe('SectorRoom integration — mining beam player hazard (WS-4 Phase 3 / R
 
   it('a player parked in an active mining beam takes light damage', async () => {
     const pid = randomUUID();
-    // Spawn the player ON the miner→rock beam line (y=0, between -350 and -700).
-    const cr = await harness.connectActive(pid, { shipKind: 'fighter', spawnX: -525, spawnY: 0 });
+    // Spawn the player ON the miner→rock beam line (y=420, between -180 and -750).
+    const cr = await harness.connectActive(pid, { shipKind: 'fighter', spawnX: -500, spawnY: 420 });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === pid });
     const room = getRoomById(cr.roomId);
     const state = room.state as SectorState;
@@ -95,8 +98,8 @@ describe('SectorRoom integration — mining beam player hazard (WS-4 Phase 3 / R
 
   it('a player OUTSIDE the beam corridor is untouched', async () => {
     const pid = randomUUID();
-    // Far off the y=0 beam line.
-    const cr = await harness.connectActive(pid, { shipKind: 'fighter', spawnX: -525, spawnY: 600 });
+    // Far off the y=420 beam line.
+    const cr = await harness.connectActive(pid, { shipKind: 'fighter', spawnX: -500, spawnY: 800 });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === pid });
     const room = getRoomById(cr.roomId);
     const state = room.state as SectorState;

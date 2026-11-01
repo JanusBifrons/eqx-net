@@ -22,7 +22,7 @@
  * Architecture section of src/server/CLAUDE.md).
  */
 
-import { projectileSweepCircle } from '../../core/combat/Weapons.js';
+import { projectileSweepCircle, projectileSweepBox } from '../../core/combat/Weapons.js';
 import { SHIP_COLLISION_RADIUS } from '../../core/combat/Weapons.js';
 import {
   SLOT_X_OFF,
@@ -66,7 +66,7 @@ export interface ShipPose {
 
 /** Narrow view of the swarm registry the pipeline iterates. */
 export interface SwarmCandidateSource {
-  all(): Iterable<{ id: string; slot: number; radius: number; kind?: number; shipKind?: string }>;
+  all(): Iterable<{ id: string; slot: number; radius: number; kind?: number; shipKind?: string; halfW?: number; halfH?: number }>;
 }
 
 export interface ProjectilePipelineDeps {
@@ -196,7 +196,9 @@ export class ProjectilePipeline {
         const b = slotBase(rec.slot);
         const cx = d.sabF32[b + SLOT_X_OFF]!;
         const cy = d.sabF32[b + SLOT_Y_OFF]!;
-        const sweep = projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius);
+        const sweep = rec.halfW !== undefined && rec.halfH !== undefined
+          ? projectileSweepBox(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.halfW, rec.halfH)
+          : projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius);
         if (sweep && sweep.entry < bestEntry) {
           bestEntry = sweep.entry;
           bestTargetId = rec.id;

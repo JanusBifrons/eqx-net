@@ -28,10 +28,12 @@
 /** Largest base (citadel tier). The generator's sweep must stay ≤ this. */
 export const MAX_STRUCTURES_PER_BASE = 400;
 
-/** Whole sector, all owners (e.g. a citadel + player bases + outposts). The
- *  A0 lattice proved 864 structures seed and run; 800 keeps margin. Shares the
- *  swarm slot pool (MAX_ENTITIES 5120) with ships, asteroids, scrap, pods. */
-export const MAX_STRUCTURES_PER_SECTOR = 800;
+/** Whole sector, all owners (e.g. a citadel + player bases + outposts).
+ *  Phase V (large footprints): a fenced lattice stays inside the ±5000 u
+ *  sector up to 664 structures (n = 600 + fence) — re-measured and lowered
+ *  800 → 650. Shares the swarm slot pool (MAX_ENTITIES 5120) with ships,
+ *  asteroids, scrap, pods. */
+export const MAX_STRUCTURES_PER_SECTOR = 650;
 
 // ── Wire (per client) ──────────────────────────────────────────────────────
 

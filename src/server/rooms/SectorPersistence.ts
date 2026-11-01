@@ -43,6 +43,8 @@ export interface PersistableStructure {
   kind: string;
   x: number;
   y: number;
+  /** Phase V — rotation in degrees (absent ⇒ 0). */
+  rot?: number;
   isConstructed: boolean;
   constructionProgress: number;
   minerals: number;
@@ -163,6 +165,7 @@ export class SectorPersistence {
         owner: s.owner,
         kind: s.kind,
         x: s.x,
+        ...(s.rot ? { rot: s.rot } : {}),
         y: s.y,
         health: d.swarmHealth.get(s.id) ?? 0,
         isConstructed: s.isConstructed,

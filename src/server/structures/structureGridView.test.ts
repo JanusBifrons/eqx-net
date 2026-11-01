@@ -28,6 +28,9 @@ function record(id: string, kind: StructureKindId, x: number, y: number, built =
     x,
     y,
     radius: k.radius,
+    // Phase V — the footprint box every rule reads (as the placement path sets it).
+    halfW: k.footprint.w / 2,
+    halfH: k.footprint.h / 2,
     isConstructed: built,
     constructionProgress: built ? k.constructionCost : 0,
     constructionCost: k.constructionCost,
@@ -94,9 +97,10 @@ describe('autoConnectStructure — WS-5 (R2.17) multi-connect', () => {
     const registry = new StructureRegistry();
     // 3 connectors at distinct angles + distances from the origin (all in range,
     // no mutual LOS blocking). The solar (cap 1) must pick ONLY the nearest.
-    registry.add(record('hub-near', 'connector', 150, 0)); // edge dist 86
-    registry.add(record('hub-c', 'connector', -180, 0)); // edge dist 116
-    registry.add(record('hub-b', 'connector', 0, 200)); // edge dist 136
+    // (Phase V: the Solar is a 360×150 box, the connectors 64×64.)
+    registry.add(record('hub-near', 'connector', 0, 150)); // edge dist 43
+    registry.add(record('hub-c', 'connector', -290, 0)); // edge dist 78
+    registry.add(record('hub-b', 'connector', 0, -230)); // edge dist 123
     const placedId = 'solar';
     registry.add(record(placedId, 'solar', 0, 0));
 

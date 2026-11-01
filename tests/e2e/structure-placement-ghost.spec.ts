@@ -204,13 +204,27 @@ async function clickPlaceAssertAtClick(browser: Browser, useWorker: boolean): Pr
     // Hover well off-centre so the chosen point is clearly NOT the ahead-of-ship
     // default, then read the renderer's chosen world point BEFORE the click
     // commits (the click clears placement + the dataset).
-    await page.mouse.move(950, 250);
+    // Two moves, and wait for the published chosen point to CHANGE between
+    // them: on the worker path the feedback lags the pointer by a frame or
+    // two, so reading right after one move can return the ahead-of-ship
+    // default (a race the phase-V Capital footprint made visible).
+    await page.mouse.move(900, 300);
     await page.waitForFunction(
       () => {
         const v = document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-world-x');
         return v !== null && v !== '' && Number.isFinite(parseFloat(v));
       },
       undefined,
+      { timeout: 6_000 },
+    );
+    const firstX = await surfaceAttr(page, 'data-placement-world-x');
+    await page.mouse.move(950, 250);
+    await page.waitForFunction(
+      (prev) => {
+        const v = document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-world-x');
+        return v !== null && v !== '' && v !== prev && Number.isFinite(parseFloat(v));
+      },
+      firstX,
       { timeout: 6_000 },
     );
     const chosenX = parseFloat((await surfaceAttr(page, 'data-placement-world-x')) ?? 'NaN');
