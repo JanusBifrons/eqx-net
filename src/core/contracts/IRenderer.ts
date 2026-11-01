@@ -149,6 +149,8 @@ export interface SwarmRenderState {
    *  into `shipScrapGroups(shipKind)`. Decoded from the wire's trailing u8;
    *  absent for every other kind. */
   componentIndex?: number;
+  /** P2c — an asteroid's resource ('ice' | 'crystal'; absent ⇒ rock). */
+  asteroidResource?: string;
   /** Phase: shield — true while this drone's shield is down (hull
    *  exposed). Decoded from swarm recordFlags bit 1 and kept consistent
    *  for in-interest drones by the snapshot drones[] loop. */
