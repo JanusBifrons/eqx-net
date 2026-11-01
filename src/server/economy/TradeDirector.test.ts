@@ -135,8 +135,12 @@ describe('TradeDirector regional prices (T3)', () => {
       const plain = t.dir.offersFor(OWNER);
       const regional = t.dir.offersFor(OWNER, 'sol-prime');
       expect(plain.length).toBeGreaterThan(0);
+      // Goods offers carry the regional factor; packed structures are priced
+      // by their bill (not regional).
       for (let i = 0; i < plain.length; i++) {
-        expect(regional[i]!.unitPrice / plain[i]!.unitPrice).toBeCloseTo(1.4, 1);
+        const ratio = regional[i]!.unitPrice / plain[i]!.unitPrice;
+        if (plain[i]!.product === undefined) expect(ratio).toBeCloseTo(1.4, 1);
+        else expect(ratio).toBe(1);
       }
       // A sector outside the galaxy (a test room) gets the plain price.
       expect(t.dir.offersFor(OWNER, 'nowhere')).toEqual(plain);
