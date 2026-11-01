@@ -147,6 +147,10 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
   }),
 });
 
+export function isRecipeId(s: string): s is RecipeId {
+  return (RECIPE_IDS as readonly string[]).includes(s);
+}
+
 export function recipeIndex(id: RecipeId): number {
   return RECIPE_IDS.indexOf(id);
 }

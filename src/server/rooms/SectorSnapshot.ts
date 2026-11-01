@@ -65,6 +65,11 @@ export interface SectorSnapshotStructure {
   rot?: number;
   /** Gates: who the gate opens for (GATE_ACCESS_IDS index). Absent ⇒ default. */
   gateAccess?: number;
+  /** Production (P2b): the owner's recipe (a RecipeId) and a cycle in progress
+   *  (its inputs are already taken). Absent ⇒ default recipe, idle. */
+  recipe?: string;
+  prodLoaded?: boolean;
+  prodProgress?: number;
   /** Hull HP at save time. */
   health: number;
   /** Built vs blueprint. */

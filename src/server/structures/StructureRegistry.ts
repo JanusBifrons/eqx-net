@@ -6,6 +6,9 @@
  *
  * Session-scoped per `SectorRoom` (persistence is a noted follow-up).
  */
+import type { RecipeId } from '../../shared-types/recipes.js';
+import type { ProdState } from '../../shared-types/production.js';
+import type { GoodId } from '../../shared-types/goods.js';
 import type { Hold } from '../../shared-types/goods.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import { Connection } from '../../core/structures/Connection.js';
@@ -112,6 +115,17 @@ export interface StructureRecord {
   /** B2 — playerId this turret is aiming at (NPC turrets only), or undefined.
    *  Mutually exclusive with `turretTargetEntityId`. */
   turretTargetPlayer?: string;
+  // ── Production (plan soft-leaping-truffle v3, P2b) ──
+  /** The recipe the owner picked (absent ⇒ the kind's default). Persisted. */
+  recipe?: RecipeId;
+  /** Inputs for the current cycle are taken (persisted with progress). */
+  prodLoaded?: boolean;
+  /** Pulses into the current cycle. */
+  prodProgress?: number;
+  /** Status (`PROD_STATE`), refreshed each pulse; rides room state. */
+  prodState?: ProdState;
+  /** The input a starved processor is waiting for. */
+  prodMissing?: GoodId;
   /** Phase 5 — wall-clock ms of this Turret's last shot (fire-rate cooldown). */
   lastTurretFireMs?: number;
 }

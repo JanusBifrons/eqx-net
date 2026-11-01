@@ -438,6 +438,44 @@ describe('EntityStatsPanel', () => {
   // shows a `LVL n` line for a LEVELED structure (>1) and an Upgrade action on an
   // OWNED, BUILT, below-cap structure. Detection of "structure" is the swarm
   // subtype byte (kind === 2).
+  it('P2b: a processor shows what it makes and why it is waiting', () => {
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me-123',
+        structures: new Map([
+          [9, { powered: true, netPower: 0, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: 'me-123', prodState: 2, prodMissing: 1 }],
+        ]),
+        swarm: new Map([[9, { kind: 2, shipKind: 'smelter', radius: 223, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '9', name: 'Smelter', hp: 1800, hpMax: 1800 });
+    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-recipe')).toHaveTextContent('MAKES Smelt alloy · Waiting for Minerals');
+    // A smelter has one recipe: no change-recipe button.
+    expect(screen.queryByTestId('structure-action-recipe')).toBeNull();
+  });
+
+  it('P2b: the owner cycles a refinery to its next recipe', () => {
+    const sendSpy = vi.fn();
+    setGameClient({
+      mirror: {
+        localPlayerId: 'me-123',
+        structures: new Map([
+          [9, { powered: true, netPower: 0, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: 'me-123', prodState: 1 }],
+        ]),
+        swarm: new Map([[9, { kind: 2, shipKind: 'refinery', radius: 243, x: 0, y: 0 }]]),
+      },
+      getRoom: () => ({ send: sendSpy }),
+    } as unknown as ColyseusGameClient);
+    applySelectionStats({ id: '9', name: 'Refinery', hp: 1800, hpMax: 1800 });
+    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-recipe')).toHaveAttribute('data-recipe', 'refine_ice_fuel');
+    fireEvent.click(screen.getByTestId('structure-action-recipe'));
+    expect(sendSpy).toHaveBeenCalledWith('set_recipe', { type: 'set_recipe', entityId: 9, recipe: 'refine_gas' });
+  });
+
   it('shows a LVL n line for a leveled structure', () => {
     setGameClient(
       fakeClient({

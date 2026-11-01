@@ -12,7 +12,10 @@ import { useUIStore } from '../state/store';
 import { selectionStats } from '../net/selectionStats';
 import { toSelectWire } from '../net/selectionClient';
 import { getGameClient } from '../net/clientSingleton';
-import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip, sendSetGateAccess } from '../structures/structureActionsClient';
+import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip, sendSetGateAccess, sendSetRecipe } from '../structures/structureActionsClient';
+import { decodeGood, effectiveRecipe, isProcessorKind, nextRecipe, prodStatusLine, type ProdState } from '@shared-types/production';
+import { RECIPES, recipesFor, type RecipeId } from '@shared-types/recipes';
+import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import { gateTypeOf } from '@core/structures/gateGeometry';
 import { GATE_ACCESS_IDS, GATE_ACCESS_LABELS, gateAccessFromIndex, type GateAccess } from '@shared-types/gateAccess';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
@@ -101,6 +104,12 @@ interface PanelData {
   canUpgrade?: boolean;
   /** Gates — who it opens for (an access id). Absent for non-gates. */
   gateAccess?: GateAccess;
+  /** P2b — a processor's recipe (always set for a processor). */
+  recipe?: RecipeId;
+  /** P2b — its status line ("Running", "Waiting for Minerals", …). */
+  prodStatus?: string;
+  /** P2b — the processor can switch between more than one recipe. */
+  canChangeRecipe?: boolean;
   /** Phase 4 WS-A2 — set for an OWNED in-sector lingering hull (the local
    *  player's own parked ship). Drives the in-world "Pilot" action; the value is
    *  the shipInstanceId to `pilot_ship`. Absent for another player's hull / a
@@ -235,6 +244,12 @@ export function EntityStatsPanel(): JSX.Element | null {
           {`OPENS FOR ${GATE_ACCESS_LABELS[data.gateAccess]}`}
         </Box>
       )}
+      {data.recipe !== undefined && (
+        // P2b — what a processor makes, and its status.
+        <Box sx={POWER_SX} data-testid="entity-stats-recipe" data-recipe={data.recipe} data-prod-status={data.prodStatus}>
+          {`MAKES ${RECIPES[data.recipe].displayName}${data.prodStatus ? ` · ${data.prodStatus}` : ''}`}
+        </Box>
+      )}
       {data.owner !== undefined && (
         // Owner readout — identifies whose base this is ("you" vs a truncated id).
         <Box sx={POWER_SX} data-testid="entity-stats-owner">
@@ -272,6 +287,18 @@ export function EntityStatsPanel(): JSX.Element | null {
               <HubIcon sx={ICON_SX} />
             </IconButton>
           </Tooltip>
+          {data.recipe !== undefined && data.canChangeRecipe && (
+            <Tooltip title="Change what this makes">
+              <IconButton
+                data-testid="structure-action-recipe"
+                size="small"
+                sx={ACTION_BTN_SX}
+                onClick={() => sendSetRecipe(data.entityId!, nextRecipe(RECIPES[data.recipe!].processors[0]!, data.recipe!))}
+              >
+                <SwapHorizIcon sx={ICON_SX} />
+              </IconButton>
+            </Tooltip>
+          )}
           {data.gateAccess !== undefined && (
             <Tooltip title="Change who this gate opens for">
               <IconButton
@@ -374,6 +401,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
+  'recipe', 'prodStatus', 'canChangeRecipe',
   'isLab',
 ];
 
@@ -464,6 +492,12 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       data.isDeconstructing = st.isDeconstructing === true;
       data.isConnector = subtype === 'connector';
       if (gateTypeOf(subtype) !== null) data.gateAccess = gateAccessFromIndex(st.gateAccess);
+      if (subtype !== undefined && isProcessorKind(subtype)) {
+        // P2b — what it makes and how it's going.
+        data.recipe = effectiveRecipe(subtype, st.recipe);
+        data.prodStatus = prodStatusLine((st.prodState ?? 0) as ProdState, decodeGood(st.prodMissing));
+        data.canChangeRecipe = recipesFor(subtype).length > 1;
+      }
       // WS-B4 — the level (≥ 1; absent on the slice ⇒ level 1) drives the LVL
       // line + the Upgrade affordance. Upgrade is OWN-only, BUILT-only,
       // not-deconstructing, below the cap.

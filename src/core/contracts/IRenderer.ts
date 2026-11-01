@@ -249,6 +249,11 @@ export interface StructureRenderState {
   gateOpen?: number;
   /** Gates: access setting (GATE_ACCESS_IDS index; undefined ⇒ default). */
   gateAccess?: number;
+  /** Production (P2b): the selected recipe byte (0/absent = default), the
+   *  PROD_STATE, and the good a starved processor waits for (index + 1). */
+  recipe?: number;
+  prodState?: number;
+  prodMissing?: number;
   /** Owning playerId. Drives the inspector's "is this mine?" check AND the
    *  same-owner filter on connection / placement-preview lines — a cross-owner
    *  structure is visible but never draws a connection line to the local grid. */

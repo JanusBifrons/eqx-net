@@ -59,6 +59,12 @@ export function decodeStructureState(v: StructureStateView, owners: StructureOwn
   out.gateOpen = gateOpen !== 0 ? gateOpen : undefined;
   const gateAccess = v.gateAccess ?? D.gateAccess;
   out.gateAccess = gateAccess !== 0 ? gateAccess : undefined;
+  const recipe = v.recipe ?? D.recipe;
+  out.recipe = recipe !== 0 ? recipe : undefined;
+  const prodState = v.prodState ?? D.prodState;
+  out.prodState = prodState !== 0 ? prodState : undefined;
+  const prodMissing = v.prodMissing ?? D.prodMissing;
+  out.prodMissing = prodMissing !== 0 ? prodMissing : undefined;
   const oi = v.ownerIdx ?? D.ownerIdx;
   out.owner = owners.ids[oi] ?? '';
   const name = owners.names[oi] ?? '';

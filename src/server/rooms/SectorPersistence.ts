@@ -48,6 +48,10 @@ export interface PersistableStructure {
   rot?: number;
   /** Gates: access setting index (absent ⇒ default). */
   gateAccess?: number;
+  /** Production (P2b): the owner's recipe and a cycle in progress. */
+  recipe?: string;
+  prodLoaded?: boolean;
+  prodProgress?: number;
   isConstructed: boolean;
   constructionProgress: number;
   minerals: number;
@@ -172,6 +176,8 @@ export class SectorPersistence {
         x: s.x,
         ...(s.rot ? { rot: s.rot } : {}),
         ...(s.gateAccess ? { gateAccess: s.gateAccess } : {}),
+        ...(s.recipe ? { recipe: s.recipe } : {}),
+        ...(s.prodLoaded ? { prodLoaded: true, prodProgress: s.prodProgress ?? 0 } : {}),
         y: s.y,
         health: d.swarmHealth.get(s.id) ?? 0,
         isConstructed: s.isConstructed,

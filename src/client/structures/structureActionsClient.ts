@@ -4,6 +4,7 @@
  * Mirrors `structurePlacementClient`'s send pattern; the structure is referenced
  * by its numeric swarm entityId (the selected id). Owner-gated server-side.
  */
+import type { RecipeId } from '../../shared-types/recipes';
 import type { GateAccess } from '../../shared-types/gateAccess';
 import { getGameClient } from '../net/clientSingleton.js';
 
@@ -40,6 +41,17 @@ export function sendSetGateAccess(entityId: number, access: GateAccess): boolean
   const room = client.getRoom();
   if (!room) return false;
   room.send('set_gate_access', { type: 'set_gate_access', entityId, access });
+  return true;
+}
+
+/** P2b — send `set_recipe` (the owner picks what a processor makes). The
+ *  server validates owner + that the kind runs the recipe. */
+export function sendSetRecipe(entityId: number, recipe: RecipeId): boolean {
+  const client = getGameClient();
+  if (!client) return false;
+  const room = client.getRoom();
+  if (!room) return false;
+  room.send('set_recipe', { type: 'set_recipe', entityId, recipe });
   return true;
 }
 
