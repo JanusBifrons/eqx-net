@@ -107,8 +107,9 @@ import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
 import { createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf } from '../../shared-types/relations.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
-import { PROD_STATE, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
-import { isRecipeId } from '../../shared-types/recipes.js';
+import { PROD_STATE, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
+import { blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
+import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { ALLEGIANCE_DEFS, NPC_ALLEGIANCE_IDS, type NpcAllegianceId } from '../../shared-types/allegiances.js';
 import { encodePlayerTurretTarget } from '../../shared-types/structureStateWire.js';
 
@@ -221,6 +222,8 @@ import {
   UpgradeStructureSchema,
   SetGateAccessSchema,
   SetRecipeSchema,
+  LoadBlueprintSchema,
+  UnloadBlueprintSchema,
   RefineSalvageSchema,
   RepairShipSchema,
   PilotShipSchema,
@@ -2073,6 +2076,7 @@ export class SectorRoom extends Room<SectorState> {
       registry: this.structureRegistry,
       powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
       componentOf: (id) => this.structureGrid.componentMembersOf(id),
+      onBlueprintSpent: (rec) => this.storage.persistSlot(rec),
     });
     this.gates = new GateController({
       registry: this.structureRegistry,
@@ -2426,7 +2430,8 @@ export class SectorRoom extends Room<SectorState> {
         parsed.data.kind,
         parsed.data.x,
         parsed.data.y,
-        { rot: parsed.data.rot },
+        // P2b — only a PLAYER's placement can need a packed structure.
+        { rot: parsed.data.rot, requirePacked: true },
       );
       if (id === null) {
         logger.warn({ sessionId: client.sessionId, kind: parsed.data.kind }, 'place_structure rejected');
@@ -2557,6 +2562,30 @@ export class SectorRoom extends Room<SectorState> {
         this.rebuildStructuresSlice();
       }
     });
+
+    // ── P2b — load / unload a processor's blueprint (owner-gated) ──
+    // A loaded cycle hands its inputs back first; if they don't fit, no change.
+    const blueprintMessage = (type: 'load_blueprint' | 'unload_blueprint') => (client: Client, raw: unknown) => {
+      const parsed = (type === 'load_blueprint' ? LoadBlueprintSchema : UnloadBlueprintSchema).safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, type);
+        return;
+      }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      const swarmRec = this.swarmRegistry.getByEntityId(parsed.data.entityId);
+      if (!swarmRec) return;
+      const rec = this.structureRegistry.get(swarmRec.id);
+      if (!rec || rec.owner !== owner || !isProcessorKind(rec.kind)) return;
+      if (!this.production.unload(rec)) return;
+      const ok = type === 'load_blueprint'
+        ? this.storage.loadBlueprint(rec, blueprintProductFor(this.production.recipeOf(rec)), blueprintQuality)
+        : this.storage.unloadBlueprint(rec);
+      this.storage.flushDirty();
+      if (ok) this.rebuildStructuresSlice();
+    };
+    this.onMessage('load_blueprint', blueprintMessage('load_blueprint'));
+    this.onMessage('unload_blueprint', blueprintMessage('unload_blueprint'));
 
     this.onMessage('set_gate_access', (client: Client, raw: unknown) => {
       const parsed = SetGateAccessSchema.safeParse(raw);
@@ -3639,6 +3668,9 @@ export class SectorRoom extends Room<SectorState> {
       if (srec) {
         const payload = this.storage.takeForSpill(srec);
         if (payload !== null) this.loot.drop(payload, srec.x, srec.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
+        // P2b — a processor's (unbound) blueprint spills too.
+        const slot = this.storage.takeSlotForSpill(srec);
+        if (slot !== null) this.loot.drop(slot, srec.x, srec.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
         // Economy v2 W3 — a lab's running job spills its blueprints too.
         const labSpill = this.researchLabs.onRemoved(srec);
         if (labSpill !== null) this.loot.drop(labSpill, srec.x, srec.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
@@ -3886,6 +3918,8 @@ export class SectorRoom extends Room<SectorState> {
         // Living World P1a-2 — overlay the fresher holds-table payload (bank +
         // deposited goods) keyed by the structure's stable uid.
         this.storage.restore(rec);
+        // P2b — a processor's loaded blueprint comes back into its slot.
+        this.storage.restoreSlot(rec);
       }
       this.swarmHealth.set(id, r.health);
       restored += 1;
@@ -4509,6 +4543,10 @@ export class SectorRoom extends Room<SectorState> {
         if ((st.prodState ?? SD.prodState) !== ps) st.prodState = ps;
         const pm = ps === PROD_STATE.starved ? encodeGood(rec.prodMissing) : 0;
         if ((st.prodMissing ?? SD.prodMissing) !== pm) st.prodMissing = pm;
+        const runs = encodeBpRuns(rec.blueprint);
+        if ((st.bpRuns ?? SD.bpRuns) !== runs) st.bpRuns = runs;
+        const bq = rec.blueprint !== undefined ? blueprintQuality(rec.blueprint) : 0;
+        if ((st.bpQuality ?? SD.bpQuality) !== bq) st.bpQuality = bq;
       }
       this.syncConnTo(rec.id, st);
       // Fast cosmetics stay on the snapshot (only structures with a target).

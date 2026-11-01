@@ -123,3 +123,72 @@ describe('SectorRoom integration — production (P2b)', () => {
     expect(refinery.recipe).toBe('refine_gas');
   });
 });
+
+describe('SectorRoom integration — processor blueprint slots (P2b + Living World W2)', () => {
+  let harness: SectorTestHarness;
+  afterEach(async () => {
+    if (harness) await harness.cleanup();
+  });
+
+  it('the owner loads a blueprint from storage, it runs the recipe, and unloads it back', async () => {
+    const { getHoldStore } = await import('../../../src/server/db/PersistenceWorker.js');
+    harness = await bootSectorTestServer({
+      sectorKey: 'sol-prime',
+      droneCount: 0,
+      testMode: true,
+      asteroidConfig: [],
+      prebuiltStructures: [
+        { kind: 'capital', x: 0, y: 0 },
+        { kind: 'connector', x: 0, y: -350 },
+        { kind: 'solar', x: 500, y: -500 },
+        { kind: 'fabricator', x: 0, y: -720 },
+        { kind: 'cargo_bay', x: -450, y: -350 },
+      ],
+      prebuiltStructuresOwner: OWNER,
+      defaultSpawnX: 0,
+      defaultSpawnY: -1500,
+    });
+    const stranger = await harness.connectAs(randomUUID());
+    const owner = await harness.connectAs(OWNER);
+    const internals = harness.getServerRoom()!._internals;
+    const all = [...internals.structureRegistry.all()];
+    const fab = all.find((r) => r.kind === 'fabricator')!;
+    const bay = all.find((r) => r.kind === 'cargo_bay')!;
+    const capital = all.find((r) => r.kind === 'capital')!;
+    const entityId = internals.swarmRegistry.get(fab.id)!.entityId;
+    const bp = { uid: 'bp-test-1', product: 'recipe:fab_components', kind: 'bpc' as const, runs: 3, material: 0, output: 0, research: 0 };
+    bay.hold = { goods: { alloy: 20, polymer: 10 }, blueprints: [bp] };
+
+    internals.pulseStructureGrid();
+    expect(fab.prodState).toBe(PROD_STATE.needsBlueprint);
+
+    stranger.send('load_blueprint', { type: 'load_blueprint', entityId });
+    await harness.advance(200);
+    expect(fab.blueprint).toBeUndefined();
+
+    owner.send('load_blueprint', { type: 'load_blueprint', entityId });
+    await harness.advance(200);
+    expect(fab.blueprint?.uid).toBe('bp-test-1');
+    expect(bay.hold!.blueprints).toHaveLength(0);
+    // The slot is its own persisted hold, written in the same group.
+    expect(getHoldStore().get(`bpslot:${fab.uid}`)?.hold.blueprints[0]?.uid).toBe('bp-test-1');
+
+    for (let i = 0; i < RECIPES.fab_components.cyclePulses; i++) internals.pulseStructureGrid();
+    // Output lands in the network (Capital or Cargo Bay). The room's own 1 Hz
+    // pulse may also have run, so count rather than pin.
+    const made = (bay.hold?.goods.components ?? 0) + (capital.hold?.goods.components ?? 0);
+    expect(made).toBeGreaterThanOrEqual(1);
+    expect(fab.blueprint?.runs).toBeLessThan(3);
+
+    await harness.advance(200);
+    const row = owner.state.structures.get(String(entityId)) as { bpRuns?: number } | undefined;
+    expect(row?.bpRuns).toBe(fab.blueprint?.runs);
+
+    owner.send('unload_blueprint', { type: 'unload_blueprint', entityId });
+    await harness.advance(200);
+    expect(fab.blueprint).toBeUndefined();
+    const back = [...(capital.hold?.blueprints ?? []), ...(bay.hold?.blueprints ?? [])].map((b) => b.uid);
+    expect(back).toEqual(['bp-test-1']);
+    expect(getHoldStore().get(`bpslot:${fab.uid}`)).toBeUndefined();
+  });
+});

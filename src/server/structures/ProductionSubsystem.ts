@@ -12,26 +12,41 @@
  * Scarce inputs are shared round-robin in a fixed order, so results are
  * deterministic.
  *
+ * **Blueprints** (Living World W2). A recipe with `blueprintRequired` runs only
+ * with a matching blueprint in the processor's slot (`rec.blueprint`):
+ * `applyBlueprint` trims the inputs (material efficiency), a copy spends one run
+ * per cycle (a used-up copy leaves the slot), output quality gives a chance of
+ * one extra unit per output (rolled deterministically per processor and cycle),
+ * and a packed structure carries the quality. `onBlueprintSpent` lets the room
+ * persist the slot.
+ *
  * Storage holds are mutated in place, exactly like mining and construction do
  * with the Capital bank; `StorageService.flushDirty()` persists them on the
  * same pulse. A cycle's inputs are consumed when it starts, so a processor never
  * makes value from nothing.
  *
- * Allocation: the processor and network lists are reused arrays; steady-state
- * pulses allocate nothing (#14).
+ * Allocation: the processor and network lists are reused arrays and blueprint
+ * effects are cached per slot; steady-state pulses allocate nothing (#14).
  */
 import { GOOD_DEFS, GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
-import { RECIPES, type RecipeId, type RecipeOutput } from '../../shared-types/recipes.js';
+import { RECIPES, blueprintProductFor, type RecipeId, type RecipeOutput } from '../../shared-types/recipes.js';
 import { PROD_STATE, defaultRecipeFor, isProcessorKind } from '../../shared-types/production.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { applyBlueprint, isBlueprintUsedUp, spendBlueprintRun, type AppliedRecipe } from '../../shared-types/blueprints.js';
+import type { BlueprintItem } from '../../shared-types/items.js';
+import { addPacked, holdWeight, packedWeightOf } from '../../core/cargo/hold.js';
 import { holdCapacityOf, isOperationalStorage } from '../cargo/StorageService.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
-/** A blueprint-scaled recipe (Living World's `applyBlueprint`). */
+/** What one cycle of a recipe actually uses and makes. */
 export interface EffectiveRecipe {
   inputs: Readonly<Partial<Record<GoodId, number>>>;
   outputs: readonly RecipeOutput[];
   cyclePulses: number;
+  /** Chance of one extra unit of each goods output (blueprint quality). */
+  yieldBonus: number;
+  /** Quality stamped onto a packed output. */
+  quality: number;
 }
 
 export interface ProductionDeps {
@@ -40,24 +55,55 @@ export interface ProductionDeps {
   powered(id: string): boolean;
   /** Ids in the same grid component as `id` (including `id`). */
   componentOf(id: string): readonly string[];
-  /**
-   * The blueprint loaded in a processor, applied to a recipe that needs one;
-   * null when none is loaded. ABSENT until Living World's blueprint items land
-   * (W2): blueprint recipes then run at base values.
-   */
-  blueprintFor?(rec: StructureRecord, recipe: RecipeId): EffectiveRecipe | null;
+  /** A processor's blueprint changed (a run was spent, or a used-up copy left
+   *  the slot): persist the slot. */
+  onBlueprintSpent?(rec: StructureRecord): void;
+}
+
+interface AppliedCache {
+  bp: BlueprintItem;
+  recipe: RecipeId;
+  material: number;
+  output: number;
+  eff: EffectiveRecipe;
+}
+
+/** `structure:<kind>` product ids, built once per kind (no per-cycle strings). */
+const PACKED_PRODUCT = new Map<StructureKindId, string>();
+function packedProduct(kind: StructureKindId): string {
+  let p = PACKED_PRODUCT.get(kind);
+  if (p === undefined) {
+    p = `structure:${kind}`;
+    PACKED_PRODUCT.set(kind, p);
+  }
+  return p;
+}
+
+/** A recipe's base effect (no blueprint), cached per recipe. */
+const BASE_EFFECT = new Map<RecipeId, EffectiveRecipe>();
+function baseEffect(id: RecipeId): EffectiveRecipe {
+  let e = BASE_EFFECT.get(id);
+  if (e === undefined) {
+    const d = RECIPES[id];
+    e = { inputs: d.inputs, outputs: d.outputs, cyclePulses: d.cyclePulses, yieldBonus: 0, quality: 0 };
+    BASE_EFFECT.set(id, e);
+  }
+  return e;
 }
 
 export class ProductionSubsystem {
   private readonly procs: StructureRecord[] = [];
   private readonly net: StructureRecord[] = [];
   private readonly free: number[] = [];
+  private readonly bank: number[] = [];
   /** The network last collected (component array + owner): processors in the
    *  same component reuse it, so a pulse scans each component once. Reset by
    *  `pulse()` (storage may have been built or removed since). */
   private netComponent: readonly string[] | null = null;
   private netOwner = '';
   private pulses = 0;
+  private readonly applied = new Map<string, AppliedCache>();
+  private readonly idHash = new Map<string, number>();
   /** Outputs completed over the subsystem's life (tests, diagnostics). */
   cyclesCompleted = 0;
 
@@ -94,16 +140,24 @@ export class ProductionSubsystem {
       rec.recipe = recipe;
       return true;
     }
-    if (rec.prodLoaded === true) {
-      this.netComponent = null;
-      this.collectNetwork(rec);
-      const oldId = this.recipeOf(rec);
-      const old = this.effective(rec, oldId);
-      if (old !== null && !this.put(inputsAsOutputs(oldId, old))) return false;
-      rec.prodLoaded = false;
-      rec.prodProgress = 0;
-    }
+    if (rec.prodLoaded === true && !this.unload(rec)) return false;
     rec.recipe = recipe;
+    return true;
+  }
+
+  /**
+   * Hand a loaded cycle's inputs back to the network (before the recipe or the
+   * blueprint changes). Returns false, changing nothing, if they don't fit.
+   */
+  unload(rec: StructureRecord): boolean {
+    if (rec.prodLoaded !== true) return true;
+    this.netComponent = null;
+    this.collectNetwork(rec);
+    const id = this.recipeOf(rec);
+    const eff = this.effective(rec, id) ?? baseEffect(id);
+    if (!this.put(inputsAsOutputs(eff), 0, 0)) return false;
+    rec.prodLoaded = false;
+    rec.prodProgress = 0;
     return true;
   }
 
@@ -112,7 +166,11 @@ export class ProductionSubsystem {
       rec.prodState = PROD_STATE.none;
       return;
     }
-    const eff = this.effective(rec, this.recipeOf(rec));
+    const id = this.recipeOf(rec);
+    const loaded = rec.prodLoaded === true;
+    // A loaded cycle keeps running on what it captured at its start, even if
+    // the copy that started it is now used up.
+    const eff = loaded ? this.effective(rec, id) ?? baseEffect(id) : this.effective(rec, id);
     if (eff === null) {
       rec.prodState = PROD_STATE.needsBlueprint;
       return;
@@ -122,7 +180,7 @@ export class ProductionSubsystem {
       return;
     }
     this.collectNetwork(rec);
-    if (rec.prodLoaded !== true) {
+    if (!loaded) {
       const missing = this.firstMissing(eff.inputs);
       if (missing !== undefined) {
         rec.prodState = PROD_STATE.starved;
@@ -132,27 +190,63 @@ export class ProductionSubsystem {
       this.take(eff.inputs);
       rec.prodLoaded = true;
       rec.prodProgress = 0;
+      rec.prodQuality = eff.quality;
+      rec.prodYield = eff.yieldBonus;
+      if (RECIPES[id].blueprintRequired && rec.blueprint !== undefined) {
+        spendBlueprintRun(rec.blueprint);
+        if (isBlueprintUsedUp(rec.blueprint)) {
+          rec.blueprint = undefined;
+          this.applied.delete(rec.id);
+        }
+        this.d.onBlueprintSpent?.(rec);
+      }
     }
     rec.prodMissing = undefined;
     const progress = rec.prodProgress ?? 0;
     if (progress < eff.cyclePulses) rec.prodProgress = progress + 1;
     if ((rec.prodProgress ?? 0) >= eff.cyclePulses) {
-      if (!this.put(eff.outputs)) {
+      const cycle = rec.prodCycles ?? 0;
+      const extra = (rec.prodYield ?? 0) > 0 && this.roll(rec.id, cycle) < (rec.prodYield ?? 0) ? 1 : 0;
+      if (!this.put(eff.outputs, extra, rec.prodQuality ?? 0)) {
         rec.prodState = PROD_STATE.blocked;
         return;
       }
       rec.prodLoaded = false;
       rec.prodProgress = 0;
+      rec.prodCycles = cycle + 1;
       this.cyclesCompleted++;
     }
     rec.prodState = PROD_STATE.running;
   }
 
-  /** Base or blueprint-scaled recipe; null when a needed blueprint is missing. */
+  /** Base effect, or the slot blueprint's (cached); null when a needed
+   *  blueprint is missing, used up, or for another product. */
   private effective(rec: StructureRecord, id: RecipeId): EffectiveRecipe | null {
     const def = RECIPES[id];
-    if (def.blueprintRequired && this.d.blueprintFor) return this.d.blueprintFor(rec, id);
-    return def;
+    if (!def.blueprintRequired) return baseEffect(id);
+    const bp = rec.blueprint;
+    if (bp === undefined || isBlueprintUsedUp(bp) || bp.product !== blueprintProductFor(id)) return null;
+    const c = this.applied.get(rec.id);
+    if (c !== undefined && c.bp === bp && c.recipe === id && c.material === bp.material && c.output === bp.output) return c.eff;
+    const a: AppliedRecipe<readonly RecipeOutput[]> = applyBlueprint(def, bp);
+    const eff: EffectiveRecipe = { inputs: a.inputs, outputs: a.outputs, cyclePulses: a.cyclePulses, yieldBonus: a.yieldBonus, quality: a.quality };
+    this.applied.set(rec.id, { bp, recipe: id, material: bp.material, output: bp.output, eff });
+    return eff;
+  }
+
+  /** A deterministic roll in [0, 1) per processor and cycle (the yield bonus). */
+  private roll(id: string, cycle: number): number {
+    let h = this.idHash.get(id);
+    if (h === undefined) {
+      h = 2166136261;
+      for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+      this.idHash.set(id, h);
+    }
+    let x = Math.imul(h ^ Math.imul(cycle + 1, 0x9e3779b1), 0x85ebca6b);
+    x ^= x >>> 13;
+    x = Math.imul(x, 0xc2b2ae35);
+    x ^= x >>> 16;
+    return (x >>> 0) / 4294967296;
   }
 
   /** Same-owner operational storage in the processor's grid component. */
@@ -210,85 +304,76 @@ export class ProductionSubsystem {
   }
 
   /**
-   * Put exactly `outputs` into the network, or nothing. Minerals fill a
-   * Capital bank first; goods fill holds by weight. Placement is planned before
-   * anything is written, so a partial fit changes nothing.
+   * Put exactly `outputs` (+`extra` units of each goods output) into the
+   * network, or nothing. Minerals fill a Capital bank first; goods and packed
+   * structures fill holds by weight. Placement is planned before anything is
+   * written, so a partial fit changes nothing. Storages are weighed lazily.
    */
-  private put(outputs: readonly RecipeOutput[]): boolean {
+  private put(outputs: readonly RecipeOutput[], extra: number, quality: number): boolean {
+    if (!this.placeAll(outputs, extra, false, quality)) return false;
+    this.placeAll(outputs, extra, true, quality);
+    return true;
+  }
+
+  private placeAll(outputs: readonly RecipeOutput[], extra: number, apply: boolean, quality: number): boolean {
     const net = this.net;
     const free = this.free;
+    const bank = this.bank;
     free.length = net.length;
-    for (let i = 0; i < net.length; i++) free[i] = NaN; // weighed lazily
-    // Plan: check every unit fits somewhere before writing anything. Most
-    // outputs fit in the first storage, so most storages are never weighed.
-    let bankPlanned = 0;
-    for (const o of outputs) {
-      if (!('good' in o)) continue;
-      let n = o.n;
-      if (o.good === 'minerals') {
-        let bankFree = 0;
-        for (const s of net) bankFree += Math.max(0, getStructureKind(s.kind).storageCapacity - s.minerals);
-        const b = Math.min(n, bankFree - bankPlanned);
-        bankPlanned += b;
-        n -= b;
-      }
-      const w = GOOD_DEFS[o.good].weight;
-      for (let i = 0; i < net.length && n > 0; i++) {
-        if (Number.isNaN(free[i]!)) free[i] = holdCapacityOf(net[i]!) - holdWeightOf(net[i]!);
-        const fit = Math.min(n, Math.floor((free[i]! + 1e-9) / w));
-        free[i]! -= fit * w;
-        n -= fit;
-      }
-      if (n > 0) return false;
+    bank.length = net.length;
+    for (let i = 0; i < net.length; i++) {
+      free[i] = NaN; // weighed lazily
+      bank[i] = NaN;
     }
-    // Apply, in the same order as the plan.
-    for (let i = 0; i < net.length; i++) free[i] = NaN;
     for (const o of outputs) {
-      if (!('good' in o)) continue;
-      let n = o.n;
+      if ('packed' in o) {
+        const product = packedProduct(o.packed);
+        const w = packedWeightOf(product);
+        let placed = false;
+        for (let i = 0; i < net.length && !placed; i++) {
+          if (Number.isNaN(free[i]!)) free[i] = holdCapacityOf(net[i]!) - holdWeight(net[i]!.hold ?? EMPTY);
+          if (free[i]! + 1e-9 < w) continue;
+          free[i]! -= w;
+          placed = true;
+          if (apply) addPacked((net[i]!.hold ??= { goods: {}, blueprints: [] }), product, quality);
+        }
+        if (!placed) return false;
+        continue;
+      }
+      let n = o.n + extra;
       if (o.good === 'minerals') {
-        for (const s of net) {
-          if (n <= 0) break;
-          const b = Math.min(n, Math.max(0, getStructureKind(s.kind).storageCapacity - s.minerals));
-          s.minerals += b;
+        for (let i = 0; i < net.length && n > 0; i++) {
+          const s = net[i]!;
+          if (Number.isNaN(bank[i]!)) bank[i] = Math.max(0, getStructureKind(s.kind).storageCapacity - s.minerals);
+          const b = Math.min(n, bank[i]!);
+          bank[i]! -= b;
+          if (apply) s.minerals += b;
           n -= b;
         }
       }
       const w = GOOD_DEFS[o.good].weight;
       for (let i = 0; i < net.length && n > 0; i++) {
         const s = net[i]!;
-        if (Number.isNaN(free[i]!)) free[i] = holdCapacityOf(s) - holdWeightOf(s);
+        if (Number.isNaN(free[i]!)) free[i] = holdCapacityOf(s) - holdWeight(s.hold ?? EMPTY);
         const fit = Math.min(n, Math.floor((free[i]! + 1e-9) / w));
         if (fit <= 0) continue;
-        s.hold ??= { goods: {}, blueprints: [] };
-        s.hold.goods[o.good] = (s.hold.goods[o.good] ?? 0) + fit;
+        if (apply) {
+          s.hold ??= { goods: {}, blueprints: [] };
+          s.hold.goods[o.good] = (s.hold.goods[o.good] ?? 0) + fit;
+        }
         free[i]! -= fit * w;
         n -= fit;
       }
+      if (n > 0) return false;
     }
     return true;
   }
 }
 
-function holdWeightOf(s: StructureRecord): number {
-  let w = 0;
-  const goods = s.hold?.goods;
-  if (!goods) return 0;
-  for (const g of GOOD_IDS) w += (goods[g] ?? 0) * GOOD_DEFS[g].weight;
-  return w;
-}
+const EMPTY = { goods: {}, blueprints: [] };
 
-/** A recipe's inputs as outputs (handing a loaded cycle back), cached per
- *  recipe for base values so steady state allocates nothing. */
-const INPUTS_AS_OUTPUTS = new Map<RecipeId, readonly RecipeOutput[]>();
-function inputsAsOutputs(id: RecipeId, eff: EffectiveRecipe): readonly RecipeOutput[] {
-  if (eff === RECIPES[id]) {
-    let c = INPUTS_AS_OUTPUTS.get(id);
-    if (!c) {
-      c = Object.entries(eff.inputs).map(([good, n]) => ({ good: good as GoodId, n: n ?? 0 }));
-      INPUTS_AS_OUTPUTS.set(id, c);
-    }
-    return c;
-  }
+/** A cycle's inputs as outputs (handing a loaded cycle back). Rare (recipe or
+ *  blueprint change), so it may allocate. */
+function inputsAsOutputs(eff: EffectiveRecipe): readonly RecipeOutput[] {
   return Object.entries(eff.inputs).map(([good, n]) => ({ good: good as GoodId, n: n ?? 0 }));
 }

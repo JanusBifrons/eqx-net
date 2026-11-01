@@ -287,6 +287,122 @@ export class StorageService {
     return isHoldEmpty(payload) ? null : payload;
   }
 
+  // ── P2b — processor blueprint slots ─────────────────────────────────────
+  // A processor's loaded blueprint is persisted as its own hold row
+  // (`bpslot:<structure uid>`, holder type 'fitted': a blueprint fitted into a
+  // structure). Every move between a storage hold and a slot is ONE atomic
+  // group, so a blueprint is never duplicated or lost.
+
+  private slotUid(rec: StructureRecord): string | null {
+    return rec.uid === undefined ? null : `bpslot:${rec.uid}`;
+  }
+
+  private slotRecord(rec: StructureRecord): HoldRecord | null {
+    const uid = this.slotUid(rec);
+    if (uid === null || rec.blueprint === undefined) return null;
+    return {
+      holderUid: uid, holderType: 'fitted', ownerId: rec.owner, sectorKey: this.d.sectorKey(),
+      x: rec.x, y: rec.y, hold: { goods: {}, blueprints: [rec.blueprint] }, expiresAt: null,
+    };
+  }
+
+  /** Room hydrate: put a persisted blueprint back in its processor's slot. */
+  restoreSlot(rec: StructureRecord): void {
+    const uid = this.slotUid(rec);
+    if (uid === null) return;
+    const bp = this.d.holdStore.get(uid)?.hold.blueprints[0];
+    if (bp !== undefined) rec.blueprint = { ...bp };
+  }
+
+  /** Persist a slot after a run was spent (or a used-up copy left it). */
+  persistSlot(rec: StructureRecord): void {
+    const uid = this.slotUid(rec);
+    if (uid === null) return;
+    const r = this.slotRecord(rec);
+    if (r !== null) this.d.holdStore.commit([r], [], this.persist());
+    else if (this.d.holdStore.get(uid) !== undefined) this.d.holdStore.delete(uid, this.persist());
+  }
+
+  /** Same-owner operational storage in a (non-storage) structure's component. */
+  private networkOf(rec: StructureRecord): StructureRecord[] {
+    const out: StructureRecord[] = [];
+    for (const id of this.d.componentOf(rec.id)) {
+      const r = this.d.registry.get(id);
+      if (r && r.owner === rec.owner && isOperationalStorage(r)) out.push(r);
+    }
+    return out;
+  }
+
+  /**
+   * Load the best blueprint for `product` from the processor's network storage
+   * into its slot (an original first, then the highest quality). A blueprint
+   * already in the slot goes back to storage in the same group, unless it is
+   * bound. Returns false when the network has none.
+   */
+  loadBlueprint(proc: StructureRecord, product: string, quality: (bp: BlueprintItem) => number): boolean {
+    if (proc.blueprint?.bound === true) return false;
+    const net = this.networkOf(proc);
+    let best: { s: StructureRecord; i: number; bp: BlueprintItem } | null = null;
+    for (const s of net) {
+      const list = s.hold?.blueprints ?? [];
+      for (let i = 0; i < list.length; i++) {
+        const bp = list[i]!;
+        if (bp.product !== product) continue;
+        const better = best === null
+          || (bp.kind === 'bpo' && best.bp.kind !== 'bpo')
+          || (bp.kind === best.bp.kind && quality(bp) > quality(best.bp));
+        if (better) best = { s, i, bp };
+      }
+    }
+    if (best === null) return false;
+    const touched = new Set<StructureRecord>([best.s]);
+    best.s.hold!.blueprints.splice(best.i, 1);
+    if (proc.blueprint !== undefined) {
+      best.s.hold!.blueprints.push(proc.blueprint);
+    }
+    proc.blueprint = best.bp;
+    this.commitSlotAndStorage(proc, touched);
+    return true;
+  }
+
+  /** Move the slot's blueprint back into network storage (never a bound one). */
+  unloadBlueprint(proc: StructureRecord): boolean {
+    const bp = proc.blueprint;
+    if (bp === undefined || bp.bound === true) return false;
+    const target = this.networkOf(proc)[0];
+    if (target === undefined) return false;
+    (target.hold ??= emptyHold()).blueprints.push(bp);
+    proc.blueprint = undefined;
+    this.commitSlotAndStorage(proc, new Set([target]));
+    return true;
+  }
+
+  /** A processor left the world: its (unbound) blueprint spills; the slot row
+   *  is deleted either way. */
+  takeSlotForSpill(proc: StructureRecord): Hold | null {
+    const uid = this.slotUid(proc);
+    const bp = proc.blueprint;
+    proc.blueprint = undefined;
+    if (uid !== null && this.d.holdStore.get(uid) !== undefined) this.d.holdStore.delete(uid, this.persist());
+    return bp === undefined || bp.bound === true ? null : { goods: {}, blueprints: [bp] };
+  }
+
+  private commitSlotAndStorage(proc: StructureRecord, touched: Set<StructureRecord>): void {
+    const puts: HoldRecord[] = [];
+    const deletes: string[] = [];
+    const slot = this.slotRecord(proc);
+    const uid = this.slotUid(proc);
+    if (slot !== null) puts.push(slot);
+    else if (uid !== null && this.d.holdStore.get(uid) !== undefined) deletes.push(uid);
+    for (const rec of touched) {
+      const r = this.recordFor(rec);
+      if (r === null) continue;
+      this.persistedSig.set(rec.uid!, sig(r.hold));
+      puts.push(r);
+    }
+    this.d.holdStore.commit(puts, deletes, this.persist());
+  }
+
   // ── Living World P2 — trade escrow ──────────────────────────────────────
 
   /** The operational storage structure with this uid, owned by `owner`. */

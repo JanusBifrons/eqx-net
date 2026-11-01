@@ -67,6 +67,15 @@ export function decodeGood(v: number | undefined): GoodId | undefined {
   return v ? GOOD_IDS[v - 1] : undefined;
 }
 
+/** Slot blueprint runs on the wire: 0 = no blueprint, BP_RUNS_ORIGINAL = an
+ *  original (never runs out), otherwise the copy's runs left. */
+export const BP_RUNS_ORIGINAL = 65535;
+
+export function encodeBpRuns(bp: { kind: 'bpo' | 'bpc'; runs: number | null } | undefined): number {
+  if (bp === undefined) return 0;
+  return bp.kind === 'bpo' ? BP_RUNS_ORIGINAL : Math.max(1, Math.min(65534, bp.runs ?? 0));
+}
+
 /** "Waiting for Minerals" style status line for the inspector. */
 export function prodStatusLine(state: ProdState, missing: GoodId | undefined): string {
   if (state === PROD_STATE.starved && missing !== undefined) return `Waiting for ${GOOD_DEFS[missing].displayName}`;
