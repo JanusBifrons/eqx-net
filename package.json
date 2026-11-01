@@ -9,7 +9,8 @@
     "node": ">=20.11.0"
   },
   "scripts": {
-    "typecheck": "tsc -b tsconfig.core.json tsconfig.server.json tsconfig.client.json",
+    "typecheck": "tsc -b tsconfig.core.json tsconfig.server.json tsconfig.client.json && tsc -p tsconfig.showcase.json",
+    "showcase": "tsx showcase/run-showcase.ts",
     "lint": "eslint .",
     "audit:god-files": "node scripts/audit-god-files.mjs",
     "audit:thin-wrappers": "node scripts/audit-thin-wrappers.mjs",

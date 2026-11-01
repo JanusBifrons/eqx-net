@@ -53,6 +53,32 @@
         touch-action: none;
       }
       canvas { display: block; touch-action: none; -webkit-user-select: none; user-select: none; }
+      /* Cinematic HUD modes (src/client/cinematic/hudMode.ts) — `?cinematic=1`
+         / `?hud=clean|minimal|none`, or `__eqxCinema.setHud()` mid-capture. The
+         transit + fullscreen anchors (warp overlay, load curtain) stay visible. */
+      html.eqx-hud-clean [data-testid="app-header"],
+      html.eqx-hud-clean [data-testid="sector-info-panel"],
+      html.eqx-hud-clean [data-testid="pilot-spectator-toggle"],
+      html.eqx-hud-clean [data-testid="warp-warning-idle"],
+      html.eqx-hud-clean [data-testid="single-player-button"],
+      html.eqx-hud-clean [data-testid="engineering-rooms-button"],
+      html.eqx-hud-minimal [data-testid="single-player-button"],
+      html.eqx-hud-minimal [data-testid="engineering-rooms-button"],
+      html.eqx-hud-none [data-testid="single-player-button"],
+      html.eqx-hud-none [data-testid="engineering-rooms-button"],
+      html.eqx-hud-minimal [data-testid="sector-info-panel"],
+      html.eqx-hud-minimal [data-testid="pilot-spectator-toggle"],
+      html.eqx-hud-minimal [data-testid="warp-warning-idle"],
+      html.eqx-hud-minimal [data-testid="app-header"],
+      html.eqx-hud-minimal [data-anchor="top-right"],
+      html.eqx-hud-minimal [data-anchor^="middle-"],
+      html.eqx-hud-minimal [data-anchor^="bottom-"],
+      html.eqx-hud-none [data-testid="app-header"],
+      html.eqx-hud-none [data-anchor^="top-"],
+      html.eqx-hud-none [data-anchor^="middle-"],
+      html.eqx-hud-none [data-anchor^="bottom-"] {
+        visibility: hidden !important;
+      }
     </style>
   </head>
   <body>

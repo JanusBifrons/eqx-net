@@ -66,3 +66,6 @@ tests/mobile-perf/screenshots/
 
 # Storybook build output
 storybook-static/
+
+# Showcase video pipeline output (docs/architecture/showcase-pipeline.md)
+showcase-out/

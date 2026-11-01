@@ -34,6 +34,7 @@ import type {
   SetEffectParamsMsg,
 } from './protocol';
 import type { EffectQuality } from '@core/contracts/IEffects';
+import type { CameraCue } from '@core/contracts/cameraScript';
 import type { RadarInsets, RadarPrefs } from '../../../shared-types/settings/radar.js';
 import { logEvent, isDiagEnabled, isAutoCaptureEnabled } from '../../debug/ClientLogger';
 import { serialisePointerEvent, serialiseWheelEvent } from './eventSerialisation.js';
@@ -515,6 +516,11 @@ export class WorkerRendererClient implements IRenderer {
    */
   setPanVelocity(vx: number, vy: number): void {
     this.post({ type: 'PAN_CAMERA', vx, vy });
+  }
+
+  /** Cinematic camera — see `IRenderer.setCameraScript`. Posted once per script. */
+  setCameraScript(cues: readonly CameraCue[] | null): void {
+    this.post({ type: 'SET_CAMERA_SCRIPT', cues });
   }
 
   /**

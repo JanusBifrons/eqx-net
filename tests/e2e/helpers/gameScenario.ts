@@ -10,6 +10,8 @@ export interface TestClientOpts {
    *  Use 1 for "kill in one tick" scenarios so the spec runs in seconds
    *  instead of fighting 500 HP + shield through full TTK. */
   initialHull?: number;
+  /** Pre-load the roster XP so one kill levels the ship (roster-backed rooms only). */
+  initialXp?: number;
   initialShield?: number;
   /** Which test room to join (default 'test-sector'). Pass
    *  'test-sector-fast' for 10x physics-tick acceleration, or
@@ -50,6 +52,7 @@ export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
     testId: opts.testId ?? randomUUID(),
   });
   if (opts.initialHull !== undefined) params.set('initialHull', String(opts.initialHull));
+  if (opts.initialXp !== undefined) params.set('initialXp', String(opts.initialXp));
   if (opts.initialShield !== undefined) params.set('initialShield', String(opts.initialShield));
   if (opts.initialAngle !== undefined) params.set('initialAngle', String(opts.initialAngle));
   if (opts.shipKind !== undefined) params.set('shipKind', opts.shipKind);
