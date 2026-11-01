@@ -5,6 +5,7 @@ import {
   isBlueprintUsedUp, makeBlueprint, parseProduct, productName, rollBlueprint, spendBlueprintRun, weaponGate, weaponUnlocked,
 } from './blueprints.js';
 import { parseHoldJson } from './goods.js';
+import { RECIPES, RECIPE_IDS } from './recipes.js';
 import { rollEliteLoot } from './elites.js';
 
 function seeded(seed: number): () => number {
@@ -53,7 +54,24 @@ describe('blueprint items (economy v2 W2)', () => {
   it('product names are human (never a raw id)', () => {
     expect(productName('hull:gunship')).toBe('Gunship');
     expect(productName('module:bp-cargo-expander')).toBe('Cargo Expander');
-    expect(productName('recipe:fab_components')).toBe('Fab Components');
+    expect(productName('recipe:fab_components')).toBe('Fabricate components');
+  });
+
+  it('recipe products are exactly the recipes flagged blueprintRequired', () => {
+    const products = blueprintProducts();
+    for (const id of RECIPE_IDS) {
+      expect(products.includes(`recipe:${id}`)).toBe(RECIPES[id].blueprintRequired);
+    }
+  });
+
+  it('applyBlueprint takes a real RecipeDef and passes its outputs through untouched', () => {
+    const def = RECIPES.fab_components;
+    const applied = applyBlueprint(def, { material: MATERIAL_MAX, output: 50 });
+    expect(applied.outputs).toBe(def.outputs);
+    expect(applied.cyclePulses).toBe(def.cyclePulses);
+    for (const [g, n] of Object.entries(def.inputs)) {
+      expect(applied.inputs[g as keyof typeof applied.inputs]).toBeLessThanOrEqual(n!);
+    }
   });
 
   it('applyBlueprint: material trims inputs (never below 1), output quality is a capped yield bonus', () => {

@@ -23,6 +23,11 @@ import type { GoodId } from './goods.js';
 import type { BlueprintItem } from './items.js';
 import { STRUCTURE_KINDS_LIST, getStructureKind, isStructureKindId } from './structureKinds.js';
 import { PLAYABLE_SHIP_KINDS_LIST, getShipKind, isPlayableShipKindId } from './shipKinds.js';
+import { RECIPES, RECIPE_IDS, type RecipeId } from './recipes.js';
+
+function isRecipeId(id: string): id is RecipeId {
+  return (RECIPE_IDS as readonly string[]).includes(id);
+}
 
 // ── Modules (P5 ship upgrades; manufactured items from W5) ──────────────────
 
@@ -148,14 +153,15 @@ export function productName(product: string): string {
   if (ns === 'module') return blueprintName(id);
   if (ns === 'structure' && isStructureKindId(id)) return getStructureKind(id).displayName;
   if (ns === 'hull' && isPlayableShipKindId(id)) return getShipKind(id).displayName;
+  if (ns === 'recipe' && isRecipeId(id)) return RECIPES[id].displayName;
   return titleCase(id);
 }
 
-/** Every blueprint product known to this zone: non-starter structures + hulls
- *  and the modules. Recipe products are the structures agent's `recipes.ts`.
- *  Allocates — call at control cadence. */
+/** Every blueprint product: recipes flagged `blueprintRequired`, non-starter
+ *  structures + hulls, and the modules. Allocates — call at control cadence. */
 export function blueprintProducts(): string[] {
   const out: string[] = [];
+  for (const id of RECIPE_IDS) if (RECIPES[id].blueprintRequired) out.push(`recipe:${id}`);
   for (const k of STRUCTURE_KINDS_LIST) if (!STARTER_STRUCTURE_KINDS.includes(k.id)) out.push(`structure:${k.id}`);
   for (const k of PLAYABLE_SHIP_KINDS_LIST) {
     if (!STARTER_HULL_KINDS.includes(k.id) && !k.engineeringOnly) out.push(`hull:${k.id}`);
@@ -189,19 +195,21 @@ export function blueprintQuality(bp: Pick<BlueprintItem, 'kind' | 'runs' | 'mate
   return Math.round((0.45 * m + 0.45 * o + 0.1 * r) * 100);
 }
 
-/** The minimal recipe shape `applyBlueprint` needs (the structures agent's
- *  `recipes.ts` records satisfy it). */
-export interface RecipeLike {
-  inputs: Partial<Record<GoodId, number>>;
-  outputs: Partial<Record<GoodId, number>>;
-  cyclePulses: number;
+/** The minimal recipe shape `applyBlueprint` needs. A `recipes.ts` `RecipeDef`
+ *  satisfies it directly; `outputs` is passed through untouched, whatever its
+ *  shape (`RecipeOutput[]` there). */
+export interface RecipeLike<O = unknown> {
+  readonly inputs: Readonly<Partial<Record<GoodId, number>>>;
+  readonly outputs: O;
+  readonly cyclePulses: number;
 }
 
-export interface AppliedRecipe {
+export interface AppliedRecipe<O = unknown> {
   /** Inputs after material efficiency (every non-zero input stays ≥ 1). */
   inputs: Partial<Record<GoodId, number>>;
-  /** Outputs per cycle (unchanged — quality adds the yield bonus below). */
-  outputs: Partial<Record<GoodId, number>>;
+  /** Outputs per cycle, the recipe's own value (never mutate it — quality
+   *  adds the yield bonus below). */
+  outputs: O;
   cyclePulses: number;
   /** Chance (0 … OUTPUT_YIELD_MAX) of one EXTRA unit of each output per cycle;
    *  the processor rolls it with its own seeded counter (deterministic). */
@@ -212,7 +220,7 @@ export interface AppliedRecipe {
 
 /** Apply a blueprint's stats to a recipe. Pure + allocation per call (the
  *  processor caches it per loaded blueprint, not per pulse). */
-export function applyBlueprint(recipe: RecipeLike, bp: Pick<BlueprintItem, 'material' | 'output'>): AppliedRecipe {
+export function applyBlueprint<O>(recipe: RecipeLike<O>, bp: Pick<BlueprintItem, 'material' | 'output'>): AppliedRecipe<O> {
   const keep = 1 - clamp(bp.material, 0, MATERIAL_MAX) / 100;
   const inputs: Partial<Record<GoodId, number>> = {};
   for (const [g, n] of Object.entries(recipe.inputs) as Array<[GoodId, number]>) {
@@ -221,7 +229,7 @@ export function applyBlueprint(recipe: RecipeLike, bp: Pick<BlueprintItem, 'mate
   const q = clamp(bp.output, 0, 100);
   return {
     inputs,
-    outputs: { ...recipe.outputs },
+    outputs: recipe.outputs,
     cyclePulses: recipe.cyclePulses,
     yieldBonus: (q / 100) * OUTPUT_YIELD_MAX,
     quality: Math.round(q),
