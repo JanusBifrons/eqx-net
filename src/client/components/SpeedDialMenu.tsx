@@ -370,6 +370,10 @@ export const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
   ore_processing_complex: <SettingsIcon />,
   assembly_plant: <FactoryIcon />,
   research_lab: <ScienceIcon />, // economy v2 W3
+  autocannon_turret: <GpsFixedIcon />, // P2d
+  reactor: <WhatshotIcon />, // D1 consolidated
+  battery_bank: <BatteryChargingFullIcon />,
+  storage_vault: <InventoryIcon />,
 };
 
 // ── Hoisted static sx / props (no per-render allocation) ───────────────────

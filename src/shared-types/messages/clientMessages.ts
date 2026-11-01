@@ -193,6 +193,15 @@ export const SetRecipeSchema = z
   })
   .strict();
 
+/** P2b — client → server: load the best matching blueprint from the base's
+ *  storage into a processor (unload: put it back). Owner-gated; strict. */
+export const LoadBlueprintSchema = z
+  .object({ type: z.literal('load_blueprint'), entityId: z.number().int().nonnegative() })
+  .strict();
+export const UnloadBlueprintSchema = z
+  .object({ type: z.literal('unload_blueprint'), entityId: z.number().int().nonnegative() })
+  .strict();
+
 /** Living World P1a-2 — client → server: refine SALVAGE from the base storage
  *  network into this Capital's mineral bank. Owner-gated server-side; a
  *  foreign / non-Capital / empty request is a silent no-op. */
@@ -320,6 +329,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   UpgradeStructureSchema,
   SetGateAccessSchema,
   SetRecipeSchema,
+  LoadBlueprintSchema,
+  UnloadBlueprintSchema,
   RefineSalvageSchema,
   RepairShipSchema,
   PilotShipSchema,

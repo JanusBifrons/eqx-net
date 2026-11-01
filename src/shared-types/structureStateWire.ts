@@ -25,6 +25,10 @@ export const STRUCTURE_FLAG_DECONSTRUCTING = 4;
 /** A shield emitter's walls are up: it has at least one wall and every one of
  *  them is powered and not stunned (gates: the shield, not the open state). */
 export const STRUCTURE_FLAG_WALL_ACTIVE = 8;
+/** P2d — an ammo-using turret found no munitions for its last shot. */
+export const STRUCTURE_FLAG_NO_AMMO = 16;
+/** D1 — a built Reactor has no fuel (it produces no power). */
+export const STRUCTURE_FLAG_NO_FUEL = 32;
 
 /** `StructureState.etaMs` sentinels: ≥ 0 is a real ETA. */
 export const STRUCTURE_ETA_NONE = -1;
@@ -71,6 +75,8 @@ export const STRUCTURE_DEFAULTS = {
   recipe: 0,
   prodState: 0,
   prodMissing: 0,
+  bpRuns: 0,
+  bpQuality: 0,
 } as const;
 
 /** The fields the client reads from a room-state structure row (absent ⇒
@@ -97,5 +103,7 @@ export interface StructureStateView {
   recipe?: number;
   prodState?: number;
   prodMissing?: number;
+  bpRuns?: number;
+  bpQuality?: number;
   connTo: { readonly length: number; at(i: number): number | undefined };
 }

@@ -61,7 +61,8 @@ export function structureToGridNode(rec: StructureRecord): GridNode {
     // The isConstructed gate: a blueprint is inert (0 power) until built. A
     // mid-upgrade Capital (see above) is treated as operational so it keeps
     // funding power + minerals through its own re-build.
-    powerOutput: operational ? kind.powerOutput * lvlMul : 0,
+    // D1 — a fuel-burning kind (Reactor) outputs only while fuelled.
+    powerOutput: operational && (kind.fuelEveryPulses == null || rec.fueled === true) ? kind.powerOutput * lvlMul : 0,
     powerConsumption: operational ? kind.powerConsumption : 0,
     isConstructed: operational,
   };

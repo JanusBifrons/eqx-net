@@ -124,3 +124,25 @@ describe('binary swarm wire — encoder→decoder round-trip (structures + scrap
     expect(dd.componentIndex).toBeUndefined();
   });
 });
+
+describe('binary swarm wire — asteroid resource kind (P2c)', () => {
+  it('ice and crystal-veined asteroids round-trip; plain rock stays byte 0 (absent on decode)', () => {
+    const registry = new SwarmEntityRegistry();
+    const encoder = new BinarySwarmBroadcast();
+    const { f32, u32 } = makeSab();
+    const rock = registry.register('rock-0', 3, 0, 40, 0, 0, 0);
+    setSlotPose(f32, 3, 0, 0, 0);
+    const ice = registry.register('ice-0', 4, 0, 40, 100, 0, 0);
+    ice.asteroidResource = 'ice';
+    setSlotPose(f32, 4, 100, 0, 0);
+    const crystal = registry.register('crystal-0', 6, 0, 40, 200, 0, 0);
+    crystal.asteroidResource = 'crystal';
+    setSlotPose(f32, 6, 200, 0, 0);
+    const packet = encoder.encode(registry, f32, u32, 60);
+    const mirror: RenderMirror = { ships: new Map(), localPlayerId: null };
+    decodeSwarmPacket(packet!, mirror);
+    expect(mirror.swarm!.get(rock.entityId)!.asteroidResource).toBeUndefined();
+    expect(mirror.swarm!.get(ice.entityId)!.asteroidResource).toBe('ice');
+    expect(mirror.swarm!.get(crystal.entityId)!.asteroidResource).toBe('crystal');
+  });
+});

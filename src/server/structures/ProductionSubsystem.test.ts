@@ -9,6 +9,11 @@ import { ProductionSubsystem, type ProductionDeps } from './ProductionSubsystem.
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 import { PROD_STATE } from '../../shared-types/production.js';
 import { RECIPES } from '../../shared-types/recipes.js';
+import type { BlueprintItem } from '../../shared-types/items.js';
+
+function bp(product: string, over: Partial<BlueprintItem> = {}): BlueprintItem {
+  return { uid: 'bp1', product, kind: 'bpc', runs: 10, material: 0, output: 0, research: 0, ...over };
+}
 
 function rec(id: string, kind: StructureRecord['kind'], over: Partial<StructureRecord> = {}): StructureRecord {
   return {
@@ -18,7 +23,7 @@ function rec(id: string, kind: StructureRecord['kind'], over: Partial<StructureR
   };
 }
 
-function world(recs: StructureRecord[], opts: { powered?: boolean; blueprintFor?: ProductionDeps['blueprintFor'] } = {}) {
+function world(recs: StructureRecord[], opts: { powered?: boolean; onBlueprintSpent?: ProductionDeps['onBlueprintSpent'] } = {}) {
   const byId = new Map(recs.map((r) => [r.id, r]));
   const ids = recs.map((r) => r.id);
   const registry = { all: () => byId.values(), get: (id: string) => byId.get(id) } as unknown as StructureRegistry;
@@ -26,7 +31,7 @@ function world(recs: StructureRecord[], opts: { powered?: boolean; blueprintFor?
     registry,
     powered: () => opts.powered ?? true,
     componentOf: () => ids,
-    ...(opts.blueprintFor ? { blueprintFor: opts.blueprintFor } : {}),
+    ...(opts.onBlueprintSpent ? { onBlueprintSpent: opts.onBlueprintSpent } : {}),
   });
   const run = (n: number) => { for (let i = 0; i < n; i++) prod.pulse(); };
   return { prod, run };
@@ -102,23 +107,63 @@ describe('ProductionSubsystem', () => {
     expect(bay.hold!.goods.minerals).toBe(10);
   });
 
-  it('needs a blueprint for a blueprint recipe once the blueprint hook exists', () => {
+  it('a blueprint recipe needs a matching blueprint in the slot', () => {
     const bay = rec('bay', 'cargo_bay', { hold: { goods: { alloy: 4, polymer: 2 }, blueprints: [] } });
     const fab = rec('f', 'fabricator');
-    const { run } = world([bay, fab], { blueprintFor: () => null });
+    const { run } = world([bay, fab]);
+    run(1);
+    expect(fab.prodState).toBe(PROD_STATE.needsBlueprint);
+    fab.blueprint = bp('recipe:fab_electronics'); // wrong product
     run(1);
     expect(fab.prodState).toBe(PROD_STATE.needsBlueprint);
     expect(bay.hold!.goods.alloy).toBe(4);
+    fab.blueprint = bp('recipe:fab_components');
+    run(1);
+    expect(fab.prodState).toBe(PROD_STATE.running);
   });
 
-  it('a blueprint scales the recipe (fewer inputs here)', () => {
-    const bay = rec('bay', 'cargo_bay', { hold: { goods: { alloy: 1, polymer: 1 }, blueprints: [] } });
-    const fab = rec('f', 'fabricator');
-    const { run } = world([bay, fab], {
-      blueprintFor: () => ({ inputs: { alloy: 1, polymer: 1 }, outputs: [{ good: 'components', n: 1 }], cyclePulses: 2 }),
-    });
-    run(2);
-    expect(bay.hold!.goods).toEqual({ components: 1 });
+  it('material efficiency trims inputs; a copy spends one run per cycle and leaves the slot when used up', () => {
+    // material 10 ⇒ 90 % of inputs, each at least 1: alloy 2 → 2, polymer 1 → 1.
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: { alloy: 10, polymer: 10 }, blueprints: [] } });
+    const fab = rec('f', 'fabricator', { blueprint: bp('recipe:fab_components', { runs: 2, material: 10 }) });
+    let spent = 0;
+    const { run } = world([bay, fab], { onBlueprintSpent: () => spent++ });
+    run(RECIPES.fab_components.cyclePulses * 2);
+    expect(spent).toBe(2);
+    expect(fab.blueprint).toBeUndefined();
+    expect(bay.hold!.goods.components).toBe(2);
+    run(1);
+    expect(fab.prodState).toBe(PROD_STATE.needsBlueprint);
+  });
+
+  it('an original never runs out', () => {
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: { alloy: 40, polymer: 20 }, blueprints: [] } });
+    const fab = rec('f', 'fabricator', { blueprint: bp('recipe:fab_components', { kind: 'bpo', runs: null }) });
+    world([bay, fab]).run(RECIPES.fab_components.cyclePulses * 5);
+    expect(fab.blueprint).toBeDefined();
+    expect(bay.hold!.goods.components).toBe(5);
+  });
+
+  it('a pack recipe puts a PACKED structure into storage, carrying the blueprint quality', () => {
+    const bill = RECIPES.pack_smelter.inputs;
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: { ...bill }, blueprints: [] } });
+    const fab = rec('f', 'fabricator', { recipe: 'pack_smelter', blueprint: bp('structure:smelter', { output: 80 }) });
+    world([bay, fab]).run(RECIPES.pack_smelter.cyclePulses);
+    expect(bay.hold!.packed).toEqual([{ product: 'structure:smelter', quality: 80 }]);
+    expect(Object.keys(bay.hold!.goods)).toHaveLength(0);
+  });
+
+  it('output quality gives extra units, deterministically', () => {
+    const make = () => {
+      const bay = rec('bay', 'cargo_bay', { hold: { goods: { alloy: 400, polymer: 200 }, blueprints: [] } });
+      const fab = rec('f', 'fabricator', { blueprint: bp('recipe:fab_components', { kind: 'bpo', runs: null, output: 100 }) });
+      world([bay, fab]).run(RECIPES.fab_components.cyclePulses * 100);
+      return bay.hold!.goods.components!;
+    };
+    const a = make();
+    expect(a).toBeGreaterThan(100); // ~12 % bonus at quality 100
+    expect(a).toBeLessThan(130);
+    expect(make()).toBe(a);
   });
 
   it('shares scarce inputs round-robin, deterministically', () => {
@@ -166,6 +211,24 @@ describe('ProductionSubsystem', () => {
     world([theirs, smelter]).run(1);
     expect(smelter.prodState).toBe(PROD_STATE.starved);
     expect(theirs.hold!.goods.minerals).toBe(50);
+  });
+
+  it('D1: a Reactor burns one fuel every fuelEveryPulses and is unfuelled (no power) without it', () => {
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: { fuel: 2 }, blueprints: [] } });
+    const reactor = rec('r', 'reactor');
+    const byId = new Map([[bay.id, bay], [reactor.id, reactor]]);
+    const registry = { all: () => byId.values(), get: (id: string) => byId.get(id), topologyDirty: false } as unknown as StructureRegistry & { topologyDirty: boolean };
+    const prod = new ProductionSubsystem({ registry, powered: () => true, componentOf: () => [bay.id, reactor.id] });
+    prod.pulse();
+    expect(reactor.fueled).toBe(true);
+    expect(registry.topologyDirty).toBe(true); // power must be recomputed
+    expect(bay.hold!.goods.fuel).toBe(1);
+    for (let i = 0; i < 9; i++) prod.pulse(); // the same unit lasts 10 pulses
+    expect(bay.hold!.goods.fuel).toBe(1);
+    prod.pulse(); // the next unit
+    expect(bay.hold!.goods.fuel).toBeUndefined();
+    for (let i = 0; i < 10; i++) prod.pulse();
+    expect(reactor.fueled).toBe(false);
   });
 
   it('a citadel pulse scans each component storage once, not once per processor', () => {

@@ -55,6 +55,18 @@ export function sendSetRecipe(entityId: number, recipe: RecipeId): boolean {
   return true;
 }
 
+/** P2b — load the best matching blueprint from base storage into a processor,
+ *  or put its blueprint back. Owner-gated server-side. */
+export function sendBlueprintSlot(entityId: number, action: 'load' | 'unload'): boolean {
+  const client = getGameClient();
+  if (!client) return false;
+  const room = client.getRoom();
+  if (!room) return false;
+  const type = action === 'load' ? 'load_blueprint' : 'unload_blueprint';
+  room.send(type, { type, entityId });
+  return true;
+}
+
 /** Living World P1a-2 — send `repair_ship` (repair MY active ship to full at my
  *  own storage, paid from the wallet; the server checks range + balance). */
 export function sendRepairShip(): boolean {

@@ -176,6 +176,10 @@ export class StructureState extends Schema {
   @type('uint8') prodState?: number;
   /** Production: the good a starved processor waits for, as index + 1. */
   @type('uint8') prodMissing?: number;
+  /** Production: the slot blueprint's runs (0 = none, 65535 = an original). */
+  @type('uint16') bpRuns?: number;
+  /** Production: the slot blueprint's glance quality (0–100). */
+  @type('uint8') bpQuality?: number;
   /** Connected structures' entityIds. */
   @type(['uint16']) connTo = new ArraySchema<number>();
 }

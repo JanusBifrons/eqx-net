@@ -155,7 +155,23 @@ Update this section when a threshold is set.
 - **Inputs are taken when a cycle starts (all or nothing), outputs are put when it ends (all or nothing).** A processor never makes value from nothing, and a partial put changes nothing.
 - **Status rides room state:** `recipe` / `prodState` / `prodMissing` bytes, assigned only on change (A2 rules). `set_recipe` is owner-gated.
 - **Allocation-free steady state:** reused processor/network arrays, and one network lookup per component per pulse. Keep it that way: the budget is 0.3 ms per pulse at 60 processors.
-- **Blueprints:** `ProductionDeps.blueprintFor` is the Living World seam (`applyBlueprint`). Absent ⇒ blueprint recipes run at base values.
+- **Blueprints:** a processor's slot is `rec.blueprint`, persisted as the hold `bpslot:<structure uid>` (holder type `fitted`).
+  - **Moves:** `StorageService.loadBlueprint` / `unloadBlueprint` / `takeSlotForSpill` each make ONE hold group. Never move a blueprint between a storage hold and a slot any other way.
+  - **Runs:** spent runs persist through `onBlueprintSpent` → `persistSlot`.
+- **Packed placement:** `StructurePlacementSubsystem.place(…, { requirePacked: true })` is passed ONLY by the player's `place_structure`.
+  - **Generated builds never pass it:** scenario seeding, restore, lattices and NPC bases.
+  - **The hook:** `packedGateForBuild` is optional; Living World injects it when packed structures can be bought.
+- **Extraction (P2c):**
+  - Drilling is data-driven: any built kind with a `miningRate` mines (Miner, Deep Core Rig).
+  - The asteroid's `asteroidResource` (swarm record + wire byte) splits the yield via `ASTEROID_YIELD`. Minerals go to the drill buffer; other goods go to network storage through `ProductionSubsystem.deposit`.
+  - Gas Collectors work only when `sectorFeatures` include `nebula`.
+  - Lock: `tests/integration/sectorRoom/extraction.test.ts`.
+- **Ammo (P2d):**
+  - `tickTurrets` calls `spendAmmo` before every projectile / missile shot. An empty magazine reloads `AMMO_SHOTS_PER_UNIT[kind]` shots from one munition, through the `takeMunition` hook (`ProductionSubsystem.takeGoods`).
+  - With none, `rec.noAmmo` is set (the room-state flag bit) and the turret holds fire.
+  - Beam turrets never reach it: lasers are power-only.
+  - No hook ⇒ unlimited (unit harnesses).
+  - Test rooms with ammo turrets stock munitions via `prebuiltStorageGoods`.
 - Locks: `ProductionSubsystem.test.ts` and `tests/integration/sectorRoom/production.test.ts`. Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).
 
 ## NPC ownership (plan soft-leaping-truffle v3, B2)

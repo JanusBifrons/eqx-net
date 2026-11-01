@@ -232,7 +232,8 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
     }
     case 'turret':
     case 'laser_bolt_turret':
-    case 'missile_turret': {
+    case 'missile_turret':
+    case 'autocannon_turret': {
       // Armoured emplacement: chamfered base plates + a turret ring (the
       // rotating barrel is drawn by the mount visuals on top).
       slab(rects, x0 + 14, y0, W - 28, H, STEEL_DARK, 6);
@@ -453,6 +454,44 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       lit(0, 0, 24, accent);
       lit(x0 + 24, y0 + 24, 10, RED);
       lit(x0 + W - 24, y0 + H - 24, 10, RED);
+      break;
+    }
+    case 'reactor': {
+      // Containment dome on a shielded pad, with coolant towers at the corners.
+      box(rects, x0, y0, W, H, DECK, 0.95);
+      hazard(rects, x0, y0, W, H);
+      for (const [cx, cy] of [[x0 + 20, y0 + 20], [x0 + W - 100, y0 + 20], [x0 + 20, y0 + H - 100], [x0 + W - 100, y0 + H - 100]] as const) {
+        slab(rects, cx, cy, 80, 80, STEEL, 8);
+      }
+      slab(rects, -130, -130, 260, 260, STEEL_DARK, 12);
+      box(rects, -80, -80, 160, 160, live ? mixColor(accent, 0xffffff, 0.15) : 0x553322, 0.95);
+      lit(0, 0, 30, live ? accent : 0x553322);
+      break;
+    }
+    case 'battery_bank': {
+      // A big cell bank: a 6×6 grid of cells with charge bars.
+      slab(rects, x0, y0, W, H, STEEL_DARK, 10);
+      const cell = (W - 40) / 6 - 6;
+      for (let r = 0; r < 6; r++) {
+        for (let k = 0; k < 6; k++) {
+          const cx = x0 + 20 + k * (cell + 6), cy = y0 + 20 + r * (cell + 6);
+          box(rects, cx, cy, cell, cell, STEEL);
+          box(rects, cx + 6, cy + cell - 12, cell - 12, 6, live ? accent : 0x553322, 0.95);
+        }
+      }
+      lit(x0 + W - 14, y0 + 14, 8, live ? 0x7fe0a4 : RED);
+      break;
+    }
+    case 'storage_vault': {
+      // An armoured vault: thick walls, a grid of sealed lockers, a blast door.
+      slab(rects, x0, y0, W, H, STEEL_DARK, 16);
+      for (let r = 0; r < 3; r++) {
+        for (let k = 0; k < 5; k++) {
+          slab(rects, x0 + 30 + k * ((W - 60) / 5), y0 + 30 + r * ((H - 90) / 3), (W - 60) / 5 - 10, (H - 90) / 3 - 10, mixColor(accent, STEEL, 0.55), 4);
+        }
+      }
+      box(rects, -50, y0 + H - 50, 100, 34, STEEL_LIGHT);
+      lit(0, y0 + H - 33, 8, WARM);
       break;
     }
     case 'assembly_plant': {

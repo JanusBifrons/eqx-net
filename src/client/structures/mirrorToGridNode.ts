@@ -71,7 +71,8 @@ export function structureMirrorToGridNode(
   // + the live grid agree.
   out.maxConnections = effectiveStructureMaxConnections(kind.maxConnections, structureState.level);
   out.connectionRange = kind.connectionRange;
-  out.powerOutput = structureState.built ? kind.powerOutput : 0;
+  // D1 — a Reactor with no fuel produces nothing (the server's same rule).
+  out.powerOutput = structureState.built && structureState.noFuel !== true ? kind.powerOutput : 0;
   out.powerConsumption = structureState.built ? kind.powerConsumption : 0;
   out.isConstructed = structureState.built;
   return out;

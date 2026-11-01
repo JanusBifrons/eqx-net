@@ -162,6 +162,8 @@ export async function bootSectorTestServer(opts: {
    *  (no rocks) so a test can seed its own asteroids deterministically. When
    *  omitted, the room spawns the production `ASTEROIDS` roster. */
   asteroidConfig?: ReadonlyArray<{ x: number; y: number; vx: number; vy: number; radius: number; mass: number }>;
+  /** P2c — sector features for the room (asteroid mix, nebula). */
+  sectorFeatures?: string[];
   /** Procedural bases to generate (plan soft-leaping-truffle). */
   bases?: ReadonlyArray<{ archetype: 'warehouse'; seed: number; x: number; y: number; size: number }>;
   /** testMode base hit-point multiplier (PR-D bespoke trigger). */
@@ -221,6 +223,7 @@ export async function bootSectorTestServer(opts: {
     scenarioDrones: opts.scenarioDrones,
     scenarioAsteroids: opts.scenarioAsteroids,
     asteroidConfig: opts.asteroidConfig,
+    sectorFeatures: opts.sectorFeatures,
     bases: opts.bases,
     baseHpScale: opts.baseHpScale,
     tradeEnabled: opts.tradeEnabled,

@@ -23,6 +23,8 @@ export {
   UpgradeStructureSchema,
   SetGateAccessSchema,
   SetRecipeSchema,
+  LoadBlueprintSchema,
+  UnloadBlueprintSchema,
   RefineSalvageSchema,
   RepairShipSchema,
   PilotShipSchema,

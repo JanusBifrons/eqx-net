@@ -56,9 +56,26 @@ Other rules:
 - **Storage is updated in place,** like mining and construction, and `StorageService.flushDirty()` persists it on the same pulse.
 - **The recipe choice and a cycle in progress survive a restart.**
 - **Changing recipe mid-cycle** hands the loaded inputs back, or refuses the change if they no longer fit.
-- **Blueprints:** recipes that need one run only with a blueprint loaded, through the `blueprintFor` hook (Living World's `applyBlueprint`). Until that hook is wired, they run at base values.
+- **Blueprints:** a recipe with `blueprintRequired` runs only with a matching blueprint in the processor's slot (`recipe:<id>`, or `structure:<kind>` for a pack recipe).
+  - **Load and unload:** the owner sends `load_blueprint`, which takes the best one from base storage (an original first, then the highest quality), or `unload_blueprint`. Each move is ONE hold group, and the slot persists as the `bpslot:<uid>` hold. Bound NPC blueprints can't be unloaded.
+  - **Effects:** Living World's `applyBlueprint` trims the inputs. A copy spends one run per cycle and leaves the slot when used up. Output quality gives a chance of one extra unit per goods output, rolled deterministically per processor and cycle. A packed structure carries the quality.
+  - **Destruction:** a destroyed processor spills its (unbound) blueprint.
 - **Cost:** 60 smelters with 20 storages take under 0.3 ms per pulse, locked by `ProductionSubsystem.test.ts`. Processors in one component share a single network lookup.
 - **Wire:** room-state bytes `recipe`, `prodState` and `prodMissing`, sent only when not 0 (#16). Late joiners read them from the join payload.
+
+## Packed structures
+
+User rulings (2026-11-01):
+- **Every non-starter structure is placed from a packed item.** Placing it costs only time.
+- **NPC factions make packed structures, and players mostly buy them.** Traders sell them (Living World W4, priced from `packBillValue` plus a markup).
+- **They can also be looted from ships:** raided haulers and convoys, and NPC loot.
+
+How it works:
+- **Pack recipes:** `pack_<kind>` recipes, one per non-starter kind, run on a Fabricator, or an Assembly Plant for the huge kinds. They need the structure's blueprint and pay its goods bill.
+- **Placement seam:** `StructurePlacementSubsystem`'s `packedGateForBuild` hook.
+  - **Who it checks:** only a player's `place_structure` of a non-starter kind (`requirePacked`).
+  - **Order:** it runs after the overlap rules. The packed item is consumed only after the structure is registered, so a failed spawn spends nothing.
+  - **Until it's on:** the hook is injected only when packed structures can be bought (W4). Until then, every kind still builds from minerals.
 
 ## Asteroids
 
@@ -70,16 +87,83 @@ A sector's asteroid field mixes three kinds, weighted by the sector's galaxy `fe
 | Ice | 10 ice | nebula sectors |
 | Crystal-veined | 8 minerals + 2 crystal | mineral sectors, black holes |
 
-`rollAsteroidResource(u, features)` picks a kind from an injected uniform roll.
+`rollAsteroidResource(u, features)` picks a kind from an injected uniform roll; the room seeds it with an FNV hash of the asteroid's id, so a restart rolls the same kinds.
+- **Room options:** the galaxy sector's `features` drive the mix. A testMode room can override them with the `sectorFeatures` room option (e.g. `['nebula']` to make Gas Collectors work); integration tests also use `_internals.spawnTestAsteroid(id, x, y, r, resource)`.
+- **Full storage loses the extra:** ice and crystal that don't fit in network storage are lost (the drill keeps drilling). A later pass may pause the drill instead.
 
 ## What each phase adds
 
 | Phase | Adds |
 |---|---|
 | P1 | This data and its tests. No live behaviour changes. |
+| P2e | Minerals at the goods scale, and goods for upgrades. The Miner makes 20 minerals a pulse (was 1000), the Capital bank holds 50,000 (was 2,000,000) and the Deep Core Rig drills 120, so what a base can afford finally limits it. The structure catalogue version went 9 → 10, so saved structures reset once (user: "Resets are fine at this stage"). Upgrades to level 3, 4 and 5 also take `structureUpgradeGoods` (alloy, then components, then machinery) from base storage when they start, all or nothing; the Upgrade tooltip names them. The bank stays the Capital's minerals: production, deposits and trade already treat it as part of the network's mineral stock, so it is one pool. |
+| P2d | Ammo. Physical ordnance spends munitions; lasers only spend power (user ruling). The new **Autocannon Turret** (kinetic `autocannon` shells) and the **Missile Turret** reload a magazine of `AMMO_SHOTS_PER_UNIT` shots (8 missiles / 40 bursts, `src/shared-types/ammo.ts`) from ONE unit of munitions in base storage when empty. With none, the turret doesn't fire, and the `STRUCTURE_FLAG_NO_AMMO` room-state bit shows "NO MUNITIONS" in the inspector. The Mine Layer comes next (it needs a mine entity). |
+| P2c | Extraction by resource. Each asteroid gets a kind, rolled from its sector's features and seeded by its id; it rides the swarm wire's shared subtype byte (rock = 0, so existing rocks are unchanged), and the client tints ice and crystal. Miners (and the Deep Core Rig: any kind with a `miningRate`) yield by kind: minerals to the drill's buffer as before, ice and crystal straight into network storage. Gas Collectors gather `gasRate` gas per pulse in nebula sectors. |
 | P2b | Production runs. `ProductionSubsystem` steps every built processor once per 1 Hz grid pulse (see "How production runs" below). The inspector shows "MAKES <recipe> · <status>", and owners change a multi-recipe processor with `set_recipe`. |
 | P2a | The 12 production kinds join the structure catalogue (appended, no version bump), with footprints, drawings, build icons and a new Industry build category. The Deep Core Rig, Ore Processing Complex and Assembly Plant are hubs with 4 links. They can be placed but don't produce yet. |
 | P2 | The production structures, a processing step in the 1 Hz grid pulse, Miner yields by asteroid kind, ammo, the upgrade goods bill, one mineral pool. Packed structures arrive once Living World's packed items land. |
 | D1–D2 | The base generator grows a chain for each base's role (mining outpost, refinery, workshop, manufactory, assembly works, trade hub). |
 | T | Trade between bases: convoys, regional prices, Freight Dock orders. Payments go through the Living World wallet. |
 | D3 | Cities: the main consumers of provisions and consumer goods. |
+
+## Base roles and the growth generator (D1)
+
+Code: [src/core/bases/baseProfile.ts](../../src/core/bases/baseProfile.ts) and [src/core/bases/growBase.ts](../../src/core/bases/growBase.ts). Both are pure and seeded.
+
+**`contextForSector(key)`** derives where a sector sits in its region:
+- **Heart:** the sector nearest the region's hex centre.
+- **Hops from the heart:** counted within the region.
+- **Entry and chokepoint:** whether it is an entry (edge) sector, and whether it borders another region (a chokepoint).
+- **Features:** the sector's own.
+
+**`baseProfileFor(context, seed)`** picks:
+
+| Choice | Rule |
+|---|---|
+| Tier | Outposts are the majority; citadels appear only at a region heart; edge sectors are almost always outposts |
+| Role | Mining, refinery, workshop, manufactory, assembly (hearts only) or trade, weighted by features: extraction sectors mine, stations and chokepoints trade, central sectors manufacture |
+| Wealth | Rises toward the heart |
+| Level cap | 1–2 for outposts up to 4–5 for citadels |
+| Fenced | ≥ 80 % of bases overall |
+
+**`growBase(profile, seed, features)`** builds the base as a builder would:
+1. **Buy:** the role's units, a Freight Dock, storage and turrets, within wealth and per-tier caps.
+   - **Price:** each purchase costs its construction cost, its pack bill (for packed kinds), and the Solars that power it.
+   - **Huge kinds:** at most one per base.
+2. **Lay out:** connector rows around the Capital, with leaves above and below each row connector.
+   - **Spine:** it stays bare, with relay connectors where a row gap exceeds range.
+   - **Spacing:** the row pitch comes from the tallest structure.
+   - **The huge kind:** it sits on its own outer row.
+3. **Power:** lay out, measure the real draw (the fence depends on the layout), and add Solars until net power ≥ 0.
+4. **Fence:** a rectangle of Shield Pylons around the extent, with a Shield Gate in the middle of each side, tapped from the row ends.
+5. **Budget:** a base over its tier's budget spends 15 % less and regrows.
+
+**Locks:**
+- **`growBase.test.ts`** re-checks every base against the real `placementRejection` and `canConnect`, and checks that each one is:
+  - connected to the Capital and powered;
+  - within its tier's budget;
+  - in fewer than 4 chain stages (an outpost in at most 2);
+  - deterministic;
+  - true to its role (mining bases are mostly extractors, trade hubs mostly storage).
+
+  It runs a sweep over every galaxy sector.
+- **`baseProfile.test.ts`** covers the profiles.
+
+**Consolidated kinds (D1).** Each is priced above the standard units it replaces, so only wealthy bases have many.
+
+| Kind | Replaces | Footprint |
+|---|---|---|
+| **Reactor** | ~8 Solars of power (240). It burns one unit of fuel from base storage every 10 pulses, and only produces while fuelled; out of fuel, it shows "NO FUEL" | 400 × 400 |
+| **Battery Bank** | 10 Batteries | 360 × 360 |
+| **Storage Vault** | 8 Cargo Bays | 480 × 320 |
+
+The generator powers bases with Reactors first, then Solars, and uses a Battery Bank where it would otherwise need five or more Batteries. Fences used to dominate small bases (a Shield Pylon draws 20 power, a Solar makes 30).
+
+| Tier | Before the Reactor | After |
+|---|---|---|
+| Fenced outpost | 78 | 43 |
+| Settlement | 99 | 60 |
+| Stronghold | 198 | 116 |
+| Citadel | 236 | 123 |
+
+`TIER_MAX_STRUCTURES` is now 50 / 80 / 160 / 260. NPC bases need fuel stock for their Reactors, so D2 seeds it and trade (T) keeps them supplied.

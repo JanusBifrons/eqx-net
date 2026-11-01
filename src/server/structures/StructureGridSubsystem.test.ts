@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { StructureRegistry } from './StructureRegistry.js';
 import { StructurePlacementSubsystem } from './StructurePlacementSubsystem.js';
 import { StructureGridSubsystem, resolveTurretBeam } from './StructureGridSubsystem.js';
+import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import {
@@ -836,6 +837,36 @@ describe('StructureGridSubsystem — turrets (Phase 5)', () => {
     h.grid.tickTurrets(10_000 + kind.fireRateMs! + 1);
     expect(h.missiles.length).toBe(2);
   });
+
+  it('P2d: an ammo turret loads a magazine per munition and stops (flagged) when storage runs dry', () => {
+    const drone = { id: 'swarm-8', entityId: 8, x: 0, y: 800 };
+    const h = makeHarness(undefined, drone);
+    h.placement.place(OWNER, 'capital', 0, 0);
+    relayConnector(h, 120, 120);
+    h.placement.place(OWNER, 'solar', 150, 0);
+    const mt = h.placement.place(OWNER, 'missile_turret', 0, 200)!;
+    const rec = h.registry.get(mt)!;
+    rec.isConstructed = true;
+    rec.constructionProgress = rec.constructionCost;
+    h.health.set(mt, getStructureKind('missile_turret').maxHealth);
+    h.registry.topologyDirty = true;
+    for (let i = 0; i < 5; i++) h.pulse();
+    let stock = 1; // one unit of munitions in storage
+    (h.grid as unknown as { hooks: { takeMunition: (r: unknown) => boolean } }).hooks.takeMunition = () => {
+      if (stock <= 0) return false;
+      stock--;
+      return true;
+    };
+    const per = AMMO_SHOTS_PER_UNIT.missile_turret!;
+    const cadence = getStructureKind('missile_turret').fireRateMs!;
+    for (let i = 0; i < per + 2; i++) h.grid.tickTurrets(10_000 + i * (cadence + 1));
+    expect(h.missiles.length).toBe(per); // one unit = one magazine
+    expect(stock).toBe(0);
+    expect(rec.noAmmo).toBe(true);
+    // Lasers never spend munitions: the beam turret has no ammo entry.
+    expect(AMMO_SHOTS_PER_UNIT.turret).toBeUndefined();
+    expect(AMMO_SHOTS_PER_UNIT.laser_bolt_turret).toBeUndefined();
+  });
 });
 
 describe('StructureGridSubsystem — power summary', () => {
@@ -853,5 +884,42 @@ describe('StructureGridSubsystem — power summary', () => {
     const summary = h.grid.powerSummaryFor(sol);
     expect(summary.powered).toBe(true);
     expect(summary.netPower).toBe(80); // capital 50 + solar 30
+  });
+});
+
+describe('StructureGridSubsystem — P2e upgrade goods bill', () => {
+  function builtSolar() {
+    const h = makeHarness();
+    h.placement.place(OWNER, 'capital', 0, 0);
+    relayConnector(h, 120, 120);
+    const id = h.placement.place(OWNER, 'solar', 150, 0)!;
+    const rec = h.registry.get(id)!;
+    rec.isConstructed = true;
+    rec.constructionProgress = rec.constructionCost;
+    return { h, rec, id };
+  }
+
+  it('level 1 → 2 costs minerals only (no goods asked for)', () => {
+    const { h, rec, id } = builtSolar();
+    const asked: unknown[] = [];
+    (h.grid as unknown as { hooks: { takeGoods: (r: unknown, g: unknown) => boolean } }).hooks.takeGoods = (_r, g) => { asked.push(g); return false; };
+    expect(h.grid.upgradeStructure(id)).toBe(true);
+    expect(asked).toHaveLength(0);
+    expect(rec.upgradeTargetLevel).toBe(2);
+  });
+
+  it('level 2 → 3 needs alloy from storage: refused without it, started (and paid) with it', () => {
+    const { h, rec, id } = builtSolar();
+    rec.level = 2;
+    let have = false;
+    const asked: Array<Record<string, number>> = [];
+    (h.grid as unknown as { hooks: { takeGoods: (r: unknown, g: Record<string, number>) => boolean } }).hooks.takeGoods = (_r, g) => { asked.push(g); return have; };
+    expect(h.grid.upgradeStructure(id)).toBe(false);
+    expect(rec.upgradeTargetLevel).toBeUndefined();
+    expect(rec.isConstructed).toBe(true);
+    have = true;
+    expect(h.grid.upgradeStructure(id)).toBe(true);
+    expect(rec.upgradeTargetLevel).toBe(3);
+    expect(Object.keys(asked[1]!)).toEqual(['alloy']);
   });
 });

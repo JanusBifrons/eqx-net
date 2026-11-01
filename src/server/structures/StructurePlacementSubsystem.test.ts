@@ -142,3 +142,51 @@ describe('StructurePlacementSubsystem', () => {
     expect(h.sub.remove('player-1', 'nope')).toBe(false);
   });
 });
+
+describe('StructurePlacementSubsystem — packed placement seam (P2b)', () => {
+  function gated(ok: boolean, spawnOk = true) {
+    const h = makeHarness({ spawnOk });
+    const calls: string[] = [];
+    let commits = 0;
+    (h.sub as unknown as { hooks: StructurePlacementHooks }).hooks.packedGateForBuild = (_owner, kind) => {
+      calls.push(kind);
+      return { ok, commit: () => { commits++; } };
+    };
+    return { ...h, calls, commits: () => commits };
+  }
+
+  it('only a player placement (requirePacked) of a non-starter kind is checked', () => {
+    const g = gated(true);
+    g.sub.place('alice', 'smelter', 0, 0); // scenario / generated path
+    g.sub.place('alice', 'solar', 2000, 0, { requirePacked: true }); // starter kind
+    expect(g.calls).toEqual([]);
+    g.sub.place('alice', 'smelter', 4000, 0, { requirePacked: true });
+    expect(g.calls).toEqual(['smelter']);
+  });
+
+  it('no packed item ⇒ rejected, nothing spawned, nothing consumed', () => {
+    const g = gated(false);
+    expect(g.sub.place('alice', 'smelter', 0, 0, { requirePacked: true })).toBeNull();
+    expect(g.spawned).toHaveLength(0);
+    expect(g.commits()).toBe(0);
+  });
+
+  it('a packed item is consumed once, after the structure is registered', () => {
+    const g = gated(true);
+    const id = g.sub.place('alice', 'smelter', 0, 0, { requirePacked: true });
+    expect(id).not.toBeNull();
+    expect(g.registry.get(id!)).toBeDefined();
+    expect(g.commits()).toBe(1);
+  });
+
+  it('a failed spawn consumes nothing', () => {
+    const g = gated(true, false);
+    expect(g.sub.place('alice', 'smelter', 0, 0, { requirePacked: true })).toBeNull();
+    expect(g.commits()).toBe(0);
+  });
+
+  it('without the hook (until packed structures can be bought) everything builds', () => {
+    const h = makeHarness();
+    expect(h.sub.place('alice', 'missile_turret', 0, 0, { requirePacked: true })).not.toBeNull();
+  });
+});

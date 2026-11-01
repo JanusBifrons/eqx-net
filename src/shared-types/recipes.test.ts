@@ -12,11 +12,17 @@ import {
   PROCESSOR_KIND_IDS,
   RECIPES,
   RECIPE_IDS,
+  blueprintProductFor,
+  packBillValue,
+  packRecipeFor,
+  packedKindOf,
   recipeFromIndex,
   recipeIndex,
   recipesFor,
   type RecipeDef,
 } from './recipes.js';
+import { STRUCTURE_KINDS_LIST } from './structureKinds.js';
+import { STARTER_STRUCTURE_KINDS, blueprintProducts } from './blueprints.js';
 import {
   ASTEROID_RESOURCE_IDS,
   ASTEROID_YIELD,
@@ -93,6 +99,7 @@ describe('recipes', () => {
   it('every step is worth running but none prints money: output is 1.2–1.6× input value', () => {
     for (const id of RECIPE_IDS) {
       const r = RECIPES[id];
+      if (packedKindOf(id) !== null) continue; // packed structures are priced by W4's markup
       const ratio = outputValue(r) / inputValue(r);
       expect(ratio, `${id} returns ${ratio.toFixed(2)}×`).toBeGreaterThanOrEqual(1.2);
       expect(ratio, `${id} returns ${ratio.toFixed(2)}×`).toBeLessThanOrEqual(1.6);
@@ -135,6 +142,34 @@ describe('recipes', () => {
 
   it('every processor kind runs at least one recipe', () => {
     for (const k of PROCESSOR_KIND_IDS) expect(recipesFor(k).length, k).toBeGreaterThan(0);
+  });
+});
+
+describe('packed structures (user ruling: NPC factions make them, players mostly buy)', () => {
+  it('every non-starter structure kind has exactly one pack recipe; starter kinds have none', () => {
+    for (const k of STRUCTURE_KINDS_LIST) {
+      const starter = STARTER_STRUCTURE_KINDS.includes(k.id);
+      expect(packRecipeFor(k.id) === null, k.id).toBe(starter);
+    }
+  });
+
+  it("pack recipes need the structure's blueprint, run at a Fabricator or Assembly Plant, and cost goods", () => {
+    const products = new Set(blueprintProducts());
+    for (const id of RECIPE_IDS) {
+      const kind = packedKindOf(id);
+      if (kind === null) continue;
+      const r = RECIPES[id];
+      expect(r.blueprintRequired, id).toBe(true);
+      expect(r.outputs).toEqual([{ packed: kind }]);
+      expect(['fabricator', 'assembly_plant']).toContain(r.processors[0]);
+      expect(packBillValue(kind), id).toBeGreaterThan(0);
+      expect(products.has(blueprintProductFor(id)), id).toBe(true);
+    }
+  });
+
+  it('every blueprint recipe names a product Living World can make blueprints for', () => {
+    const products = new Set(blueprintProducts());
+    for (const id of RECIPE_IDS) if (RECIPES[id].blueprintRequired) expect(products.has(blueprintProductFor(id)), id).toBe(true);
   });
 });
 

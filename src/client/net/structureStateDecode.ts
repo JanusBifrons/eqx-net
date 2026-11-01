@@ -13,6 +13,8 @@ import {
   STRUCTURE_FLAG_DECONSTRUCTING,
   STRUCTURE_FLAG_POWERED,
   STRUCTURE_FLAG_WALL_ACTIVE,
+  STRUCTURE_FLAG_NO_AMMO,
+  STRUCTURE_FLAG_NO_FUEL,
   STRUCTURE_DEFAULTS as D,
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
@@ -55,6 +57,8 @@ export function decodeStructureState(v: StructureStateView, owners: StructureOwn
   // Every shield emitter: are all of its walls up? Walls themselves are derived
   // from connections (structures/derivedWalls.ts).
   out.wallActive = (flags & STRUCTURE_FLAG_WALL_ACTIVE) !== 0 ? true : undefined;
+  out.noAmmo = (flags & STRUCTURE_FLAG_NO_AMMO) !== 0 ? true : undefined;
+  out.noFuel = (flags & STRUCTURE_FLAG_NO_FUEL) !== 0 ? true : undefined;
   const gateOpen = v.gateOpen ?? D.gateOpen;
   out.gateOpen = gateOpen !== 0 ? gateOpen : undefined;
   const gateAccess = v.gateAccess ?? D.gateAccess;
@@ -65,6 +69,9 @@ export function decodeStructureState(v: StructureStateView, owners: StructureOwn
   out.prodState = prodState !== 0 ? prodState : undefined;
   const prodMissing = v.prodMissing ?? D.prodMissing;
   out.prodMissing = prodMissing !== 0 ? prodMissing : undefined;
+  const bpRuns = v.bpRuns ?? D.bpRuns;
+  out.bpRuns = bpRuns !== 0 ? bpRuns : undefined;
+  out.bpQuality = bpRuns !== 0 ? (v.bpQuality ?? D.bpQuality) : undefined;
   const oi = v.ownerIdx ?? D.ownerIdx;
   out.owner = owners.ids[oi] ?? '';
   const name = owners.names[oi] ?? '';

@@ -38,7 +38,7 @@ export const BUILD_CATEGORIES: readonly BuildCategory[] = [
     id: 'economy',
     label: 'Economy',
     icon: <BoltIcon />,
-    kinds: ['solar', 'battery', 'miner', 'gas_collector', 'deep_core_rig', 'cargo_bay', 'freight_dock'],
+    kinds: ['solar', 'battery', 'miner', 'gas_collector', 'deep_core_rig', 'cargo_bay', 'freight_dock', 'reactor', 'battery_bank', 'storage_vault'],
   },
   // Production chains (plan soft-leaping-truffle v3, P2a): the processors.
   {
@@ -62,7 +62,7 @@ export const BUILD_CATEGORIES: readonly BuildCategory[] = [
     id: 'defence',
     label: 'Defence',
     icon: <SecurityIcon />,
-    kinds: ['turret', 'laser_bolt_turret', 'missile_turret', 'shield_pylon', 'shield_gate', 'shield_airlock'],
+    kinds: ['turret', 'laser_bolt_turret', 'missile_turret', 'autocannon_turret', 'shield_pylon', 'shield_gate', 'shield_airlock'],
   },
 ];
 

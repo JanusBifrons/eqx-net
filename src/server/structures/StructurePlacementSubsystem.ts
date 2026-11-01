@@ -33,8 +33,28 @@ import type { GridObstacle } from '../../core/structures/Grid.js';
 import { placementRejection } from '../../core/structures/placementRules.js';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
 import { autoConnectStructure } from './structureGridView.js';
+import { STARTER_STRUCTURE_KINDS } from '../../shared-types/blueprints.js';
+
+/** A packed-structure check for one placement (Living World W4). `ok` false
+ *  rejects it; `commit` consumes the packed item, as ONE HoldStore group, once
+ *  the structure is registered (a failed spawn spends nothing). */
+export interface PackedGateResult {
+  ok: boolean;
+  commit(): void;
+}
 
 export interface StructurePlacementHooks {
+  /**
+   * P2b seam (plan soft-leaping-truffle v3; user ruling: non-starter structures
+   * are placed from a PACKED item). Called only for placements that pass
+   * `requirePacked` (a player's `place_structure`), after the overlap rules and
+   * before the spawn. Starter kinds never reach it. ABSENT ⇒ no check: every
+   * kind builds from minerals, until packed structures can be bought (W4
+   * injects it in the same PR).
+   */
+  packedGateForBuild?(owner: string, kindId: StructureKindId, sectorKey: string | null): PackedGateResult;
+  /** Room's sector key (for the packed gate). */
+  sectorKey?(): string | null;
   /** Spawn the kind=2 swarm entity (returns false if the slot pool is full). */
   spawnStructure(s: { id: string; x: number; y: number; radius: number; shipKind: string; angle?: number }): boolean;
   /** Seed the hull (and zero the shield) so the structure is damageable. */
@@ -73,7 +93,7 @@ export class StructurePlacementSubsystem {
     kindId: string,
     x: number,
     y: number,
-    opts?: { skipAutoConnect?: boolean; rot?: number },
+    opts?: { skipAutoConnect?: boolean; rot?: number; requirePacked?: boolean },
   ): string | null {
     if (!isStructureKindId(kindId)) return null;
     const kind = getStructureKind(kindId);
@@ -88,6 +108,13 @@ export class StructurePlacementSubsystem {
     // client ghost can validate identically.
     if (placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.(), rot) !== null) {
       return null;
+    }
+
+    // P2b — a player placing a non-starter kind needs a packed one.
+    let packed: PackedGateResult | null = null;
+    if (opts?.requirePacked === true && this.hooks.packedGateForBuild && !STARTER_STRUCTURE_KINDS.includes(kindId)) {
+      packed = this.hooks.packedGateForBuild(owner, kindId, this.hooks.sectorKey?.() ?? null);
+      if (!packed.ok) return null;
     }
 
     const preBuilt = kind.constructionCost <= 0;
@@ -138,6 +165,7 @@ export class StructurePlacementSubsystem {
       ...(this.hooks.structureUid ? { uid: this.hooks.structureUid(owner, kindId, pos.x, pos.y) } : {}),
     };
     this.hooks.registry.add(rec);
+    packed?.commit();
     // Auto-wire into the owner's grid: nearest in-range hub with a free slot
     // whose connecting segment isn't blocked by another structure OR an asteroid.
     if (opts?.skipAutoConnect !== true) {

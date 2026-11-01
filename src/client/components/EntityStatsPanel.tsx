@@ -12,8 +12,10 @@ import { useUIStore } from '../state/store';
 import { selectionStats } from '../net/selectionStats';
 import { toSelectWire } from '../net/selectionClient';
 import { getGameClient } from '../net/clientSingleton';
-import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip, sendSetGateAccess, sendSetRecipe } from '../structures/structureActionsClient';
-import { decodeGood, effectiveRecipe, isProcessorKind, nextRecipe, prodStatusLine, type ProdState } from '@shared-types/production';
+import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip, sendSetGateAccess, sendSetRecipe, sendBlueprintSlot } from '../structures/structureActionsClient';
+import { BP_RUNS_ORIGINAL, decodeGood, effectiveRecipe, isProcessorKind, nextRecipe, prodStatusLine, type ProdState } from '@shared-types/production';
+import SchoolIcon from '@mui/icons-material/School';
+import EjectIcon from '@mui/icons-material/Eject';
 import { RECIPES, recipesFor, type RecipeId } from '@shared-types/recipes';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import { gateTypeOf } from '@core/structures/gateGeometry';
@@ -25,7 +27,8 @@ import { BlueprintInstall } from './BlueprintInstall';
 import { ResearchLabPanel } from './ResearchLabPanel';
 import { hullColor } from './ShieldHullBar';
 import { getStructureKind } from '@shared-types/structureKinds';
-import { canUpgradeStructure } from '@core/leveling/structureLevel';
+import { canUpgradeStructure, structureUpgradeGoods } from '@core/leveling/structureLevel';
+import { GOOD_DEFS, type GoodId } from '@shared-types/goods';
 import type { PickedEntityKind } from '../render/pickEntity';
 import type { StructureRenderState } from '@core/contracts/IRenderer';
 
@@ -110,6 +113,16 @@ interface PanelData {
   prodStatus?: string;
   /** P2b — the processor can switch between more than one recipe. */
   canChangeRecipe?: boolean;
+  /** P2e — goods the next upgrade takes from base storage ("3 Alloy, 1 Components"). */
+  upgradeGoods?: string;
+  /** P2d — an ammo-using turret is out of munitions. */
+  noAmmo?: boolean;
+  /** D1 — a Reactor has no fuel. */
+  noFuel?: boolean;
+  /** P2b — the recipe needs a blueprint. */
+  needsBlueprint?: boolean;
+  /** P2b — the loaded blueprint ("original" or "N runs", with its quality). */
+  blueprintLine?: string;
   /** Phase 4 WS-A2 — set for an OWNED in-sector lingering hull (the local
    *  player's own parked ship). Drives the in-world "Pilot" action; the value is
    *  the shipInstanceId to `pilot_ship`. Absent for another player's hull / a
@@ -250,6 +263,22 @@ export function EntityStatsPanel(): JSX.Element | null {
           {`MAKES ${RECIPES[data.recipe].displayName}${data.prodStatus ? ` · ${data.prodStatus}` : ''}`}
         </Box>
       )}
+      {data.noFuel === true && (
+        <Box sx={POWER_SX} data-testid="entity-stats-no-fuel">
+          NO FUEL
+        </Box>
+      )}
+      {data.noAmmo === true && (
+        // P2d — a missile / autocannon turret with no munitions in base storage.
+        <Box sx={POWER_SX} data-testid="entity-stats-no-ammo">
+          NO MUNITIONS
+        </Box>
+      )}
+      {data.recipe !== undefined && (data.needsBlueprint || data.blueprintLine !== undefined) && (
+        <Box sx={POWER_SX} data-testid="entity-stats-blueprint">
+          {data.blueprintLine ?? 'NO BLUEPRINT LOADED'}
+        </Box>
+      )}
       {data.owner !== undefined && (
         // Owner readout — identifies whose base this is ("you" vs a truncated id).
         <Box sx={POWER_SX} data-testid="entity-stats-owner">
@@ -287,6 +316,30 @@ export function EntityStatsPanel(): JSX.Element | null {
               <HubIcon sx={ICON_SX} />
             </IconButton>
           </Tooltip>
+          {data.recipe !== undefined && data.needsBlueprint && (
+            <Tooltip title={data.blueprintLine !== undefined ? 'Swap in the best blueprint from storage' : 'Load a blueprint from storage'}>
+              <IconButton
+                data-testid="structure-action-load-blueprint"
+                size="small"
+                sx={ACTION_BTN_SX}
+                onClick={() => sendBlueprintSlot(data.entityId!, 'load')}
+              >
+                <SchoolIcon sx={ICON_SX} />
+              </IconButton>
+            </Tooltip>
+          )}
+          {data.blueprintLine !== undefined && (
+            <Tooltip title="Put the blueprint back in storage">
+              <IconButton
+                data-testid="structure-action-unload-blueprint"
+                size="small"
+                sx={ACTION_BTN_SX}
+                onClick={() => sendBlueprintSlot(data.entityId!, 'unload')}
+              >
+                <EjectIcon sx={ICON_SX} />
+              </IconButton>
+            </Tooltip>
+          )}
           {data.recipe !== undefined && data.canChangeRecipe && (
             <Tooltip title="Change what this makes">
               <IconButton
@@ -353,7 +406,7 @@ export function EntityStatsPanel(): JSX.Element | null {
           {data.canUpgrade && (
             // WS-B4 — the 4th action: a paid Upgrade (level-up build phase).
             // Gated to OWNED + BUILT + below-cap (set in readData).
-            <Tooltip title="Upgrade (paid level-up: boosts this structure's key stat)">
+            <Tooltip title={data.upgradeGoods !== undefined ? `Upgrade (minerals + ${data.upgradeGoods} from base storage)` : 'Upgrade (paid level-up: boosts this structure\x27s key stat)'}>
               <IconButton
                 data-testid="structure-action-upgrade"
                 size="small"
@@ -401,7 +454,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
-  'recipe', 'prodStatus', 'canChangeRecipe',
+  'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'noAmmo', 'noFuel', 'upgradeGoods',
   'isLab',
 ];
 
@@ -492,11 +545,18 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       data.isDeconstructing = st.isDeconstructing === true;
       data.isConnector = subtype === 'connector';
       if (gateTypeOf(subtype) !== null) data.gateAccess = gateAccessFromIndex(st.gateAccess);
+      if (st.noAmmo === true) data.noAmmo = true;
+      if (st.noFuel === true) data.noFuel = true;
       if (subtype !== undefined && isProcessorKind(subtype)) {
         // P2b — what it makes and how it's going.
         data.recipe = effectiveRecipe(subtype, st.recipe);
         data.prodStatus = prodStatusLine((st.prodState ?? 0) as ProdState, decodeGood(st.prodMissing));
         data.canChangeRecipe = recipesFor(subtype).length > 1;
+        data.needsBlueprint = RECIPES[data.recipe].blueprintRequired;
+        if (st.bpRuns !== undefined) {
+          const runs = st.bpRuns === BP_RUNS_ORIGINAL ? 'original' : `${st.bpRuns} run${st.bpRuns === 1 ? '' : 's'}`;
+          data.blueprintLine = `BLUEPRINT ${runs} · quality ${st.bpQuality ?? 0}`;
+        }
       }
       // WS-B4 — the level (≥ 1; absent on the slice ⇒ level 1) drives the LVL
       // line + the Upgrade affordance. Upgrade is OWN-only, BUILT-only,
@@ -505,6 +565,12 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       data.level = level;
       data.canUpgrade =
         st.built === true && st.isDeconstructing !== true && canUpgradeStructure(level);
+      if (data.canUpgrade && subtype !== undefined) {
+        // P2e — level 3+ also costs goods, taken from base storage when it starts.
+        const bill = structureUpgradeGoods(getStructureKind(subtype).constructionCost, level);
+        const parts = (Object.keys(bill) as GoodId[]).map((g) => `${bill[g]} ${GOOD_DEFS[g].displayName}`);
+        if (parts.length > 0) data.upgradeGoods = parts.join(', ');
+      }
       if (subtype === 'research_lab' && data.isOwn === true && st.built === true) data.isLab = true;
       // Living World P1a-2 — owned storage contents (the server only sends them
       // to the owner) + the Refine gate (a Capital with salvage in its network

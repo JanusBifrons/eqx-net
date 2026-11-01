@@ -438,6 +438,22 @@ describe('EntityStatsPanel', () => {
   // shows a `LVL n` line for a LEVELED structure (>1) and an Upgrade action on an
   // OWNED, BUILT, below-cap structure. Detection of "structure" is the swarm
   // subtype byte (kind === 2).
+  it('P2d: an ammo turret with no munitions says so', () => {
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me-123',
+        structures: new Map([
+          [9, { powered: true, netPower: 0, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: 'me-123', noAmmo: true }],
+        ]),
+        swarm: new Map([[9, { kind: 2, shipKind: 'missile_turret', radius: 135, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '9', name: 'Missile Turret', hp: 900, hpMax: 900 });
+    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-no-ammo')).toHaveTextContent('NO MUNITIONS');
+  });
+
   it('P2b: a processor shows what it makes and why it is waiting', () => {
     setGameClient(
       fakeClient({

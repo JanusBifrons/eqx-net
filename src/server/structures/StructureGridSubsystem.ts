@@ -21,12 +21,15 @@
  * Power is AGGREGATED (not routed per-connection), so power doesn't flash — only
  * the mineral streams do. The single Phase-3 flow material is `minerals`.
  */
+import { ASTEROID_YIELD, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
+import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
+import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import {
   canUpgradeStructure,
   effectiveStructureMaxHealth,
   structureLevelFactor,
-  structureUpgradeCost,
+  structureUpgradeCost, structureUpgradeGoods,
 } from '../../core/leveling/structureLevel.js';
 import { getWeapon, isWeaponId, type WeaponDef, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { MINING_BEAM_PLAYER_DPS, resolveMiningBeamEndpoint, type MiningBeamObstacle } from '../../core/combat/miningBeamHazard.js';
@@ -95,6 +98,19 @@ export interface StructureGridHooks {
    *  (pre-WS-4 / unit-harness fallback). MUST be reachable only from mining —
    *  combat never depletes asteroid resources (asteroid-interaction-model ADR). */
   drawAsteroidResources?(entityId: number, amount: number): number;
+  /** P2c — an asteroid's resource kind (absent hook ⇒ rock). */
+  asteroidResourceOf?(entityId: number): AsteroidResourceId;
+  /** P2c — put `n` of a good into `rec`'s owner network storage (all or
+   *  nothing); returns what was stored. */
+  depositGoods?(rec: StructureRecord, good: GoodId, n: number): number;
+  /** P2c — this sector has a nebula (Gas Collectors work). */
+  sectorHasNebula?(): boolean;
+  /** P2d — take ONE unit of munitions from `rec`'s owner network storage;
+   *  false when there is none. Absent ⇒ unlimited ammo. */
+  takeMunition?(rec: StructureRecord): boolean;
+  /** P2e — take exactly these goods from `rec`'s owner network storage (all or
+   *  nothing; the level 3+ upgrade bill). Absent ⇒ upgrades cost minerals only. */
+  takeGoods?(rec: StructureRecord, goods: Partial<Record<GoodId, number>>): boolean;
   /** Phase 5 — nearest target within `range` of (x, y) for a turret owned by
    *  `owner`, or null. Returns the target's damage id + entityId + pose. B2: a
    *  player-owned turret engages drones and robots (unchanged); an NPC-owned
@@ -228,6 +244,8 @@ export class StructureGridSubsystem {
         // bolt off the `projectiles[]` slice (pose-authoritative).
         const cadence = kind.fireRateMs ?? 600;
         if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cadence) continue;
+        // P2d — physical ordnance spends munitions (lasers never reach here).
+        if (!this.spendAmmo(rec)) continue;
         rec.lastTurretFireMs = nowMs;
         this.fireTurretShot(rec, kind.radius, damage, def, target.x, target.y);
       } else if (def.mode === 'missile') {
@@ -238,10 +256,33 @@ export class StructureGridSubsystem {
         // (realistic, by user choice — no friendly-structure skip).
         const cadence = kind.fireRateMs ?? 1500;
         if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cadence) continue;
+        // P2d — physical ordnance spends munitions (lasers never reach here).
+        if (!this.spendAmmo(rec)) continue;
         rec.lastTurretFireMs = nowMs;
         this.fireTurretMissile(rec, kind.radius, def, target.x, target.y);
       }
     }
+  }
+
+  /**
+   * P2d — spend one shot. An empty magazine reloads AMMO_SHOTS_PER_UNIT shots
+   * from one unit of munitions in the owner's network storage; with none, the
+   * turret is flagged `noAmmo` and doesn't fire. Kinds that don't use ammo,
+   * and rooms without the `takeMunition` hook (unit harnesses), never block.
+   */
+  private spendAmmo(rec: StructureRecord): boolean {
+    const per = (AMMO_SHOTS_PER_UNIT as Record<string, number | undefined>)[rec.kind];
+    if (per === undefined || !this.hooks.takeMunition) return true;
+    if ((rec.ammo ?? 0) <= 0) {
+      if (!this.hooks.takeMunition(rec)) {
+        rec.noAmmo = true;
+        return false;
+      }
+      rec.ammo = per;
+    }
+    rec.ammo = (rec.ammo ?? 0) - 1;
+    rec.noAmmo = false;
+    return true;
   }
 
   /** WS-8 — spawn ONE bolt from a projectile turret toward (tx, ty), offset
@@ -318,6 +359,7 @@ export class StructureGridSubsystem {
 
     const flashed: Array<[string, string, FlowMaterial]> = [];
     this.processMining();
+    this.processGas();
     this.processTransfer(nowMs, flashed);
     this.processConstruction(nowMs, flashed);
     this.processRepair(nowMs, flashed);
@@ -462,14 +504,28 @@ export class StructureGridSubsystem {
 
   /** Phase 4 — each built + powered Miner extracts `miningRate` from the
    *  nearest in-range asteroid into its local buffer (capped by storage). */
+  /** P2c — powered Gas Collectors gather gas in a nebula sector, straight
+   *  into network storage. Elsewhere they report nothing to collect. */
+  private processGas(): void {
+    if (!this.hooks.depositGoods || this.hooks.sectorHasNebula?.() !== true) return;
+    for (const rec of this.hooks.registry.all()) {
+      if (!rec.isConstructed) continue;
+      const rate = getStructureKind(rec.kind).gasRate;
+      if (rate == null || rate <= 0) continue;
+      if (!this.powerSummaryFor(rec.id).powered) continue;
+      this.hooks.depositGoods(rec, 'gas', rate);
+    }
+  }
+
   private processMining(): void {
     for (const rec of this.hooks.registry.all()) {
-      if (rec.kind !== 'miner' || !rec.isConstructed) continue;
+      // P2c — any kind with a mining rate drills (the Miner and the Deep Core Rig).
+      if (!rec.isConstructed || getStructureKind(rec.kind).miningRate == null) continue;
       if (!this.powerSummaryFor(rec.id).powered) {
         this.clearMiningTarget(rec);
         continue;
       }
-      const kind = getStructureKind('miner');
+      const kind = getStructureKind(rec.kind);
       // findNearestAsteroid SKIPS exhausted rocks (resources<=0), so an
       // exhausted asteroid is never returned and the miner auto-retargets to a
       // fresh in-range rock (or clears its target → the beam stops).
@@ -499,7 +555,24 @@ export class StructureGridSubsystem {
       const drawn = this.hooks.drawAsteroidResources
         ? this.hooks.drawAsteroidResources(target.entityId, want)
         : want;
-      rec.minerals = Math.min(kind.storageCapacity, rec.minerals + drawn);
+      // P2c — what the rock yields: rock → minerals, ice → ice, crystal-veined
+      // → minerals + crystal (ASTEROID_YIELD, per 10 mined). Minerals go to the
+      // drill's buffer (hauled to the Capital as before); other goods go
+      // straight into the owner's network storage (lost if it is full).
+      const resource = this.hooks.asteroidResourceOf?.(target.entityId) ?? 'rock';
+      const y = ASTEROID_YIELD[resource];
+      const mineralsPart = resource === 'rock' ? drawn : Math.floor((drawn * (y.minerals ?? 0)) / 10);
+      rec.minerals = Math.min(kind.storageCapacity, rec.minerals + mineralsPart);
+      if (resource !== 'rock' && this.hooks.depositGoods) {
+        const rest = drawn - mineralsPart;
+        for (const g of GOOD_IDS) {
+          if (g === 'minerals') continue;
+          const share = y[g] ?? 0;
+          if (share <= 0) continue;
+          const n = Math.floor((rest * share) / (10 - (y.minerals ?? 0)));
+          if (n > 0) this.hooks.depositGoods(rec, g, n);
+        }
+      }
     }
   }
 
@@ -565,7 +638,7 @@ export class StructureGridSubsystem {
   tickMiners(nowMs: number): void {
     if (!this.hooks.broadcastBeam) return;
     for (const rec of this.hooks.registry.all()) {
-      if (rec.kind !== 'miner' || !rec.isConstructed) continue;
+      if (!rec.isConstructed || getStructureKind(rec.kind).miningRate == null) continue;
       if (rec.miningTargetEntityId === undefined || rec.miningTargetX === undefined || rec.miningTargetY === undefined) continue;
       if (rec.miningTargetWireId === undefined) continue;
       if (!this.powerSummaryFor(rec.id).powered) continue;
@@ -689,6 +762,13 @@ export class StructureGridSubsystem {
     if (!canUpgradeStructure(rec.level)) return false; // at the cap
     const baseCost = getStructureKind(rec.kind).constructionCost;
     const cost = structureUpgradeCost(baseCost, rec.level);
+    // P2e (plan soft-leaping-truffle v3) — level 3+ also costs goods (alloy,
+    // components, machinery), taken up front from the owner's network storage,
+    // all or nothing. Missing goods ⇒ the upgrade doesn't start.
+    const bill = structureUpgradeGoods(baseCost, rec.level);
+    let needsGoods = false;
+    for (const g in bill) if ((bill as Record<string, number>)[g]! > 0) needsGoods = true;
+    if (needsGoods && this.hooks.takeGoods && !this.hooks.takeGoods(rec, bill)) return false;
     // Review must-fix #2 (2026-06-20): the Capital's `constructionCost` is 0, so
     // its upgrade `cost` is 0 — a BALANCE oddity (a free capital upgrade,
     // contradicts D14 "costs resources"; recorded as a follow-up, NOT this fix).
