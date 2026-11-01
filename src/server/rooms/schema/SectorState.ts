@@ -133,8 +133,51 @@ export class BaseState extends Schema {
   @type(['uint32']) dead = new ArraySchema<number>();
 }
 
+/**
+ * A structure's slow-changing grid state (plan soft-leaping-truffle v2, A2).
+ * Lives in ROOM STATE — sent once on join, then only changed fields as delta
+ * patches — instead of riding every 20 Hz snapshot to every client (A0
+ * measured that at ~79 B per structure per snapshot: 689 KB/s per client at
+ * citadel scale). Keyed by the structure's swarm entityId (decimal string).
+ * Quantised: hp is a 0-100 percent, flags pack the booleans. Fields have NO
+ * initialisers and are assigned only when they differ from the current value
+ * (or, while unset, from STRUCTURE_DEFAULTS) — so the join payload carries only
+ * non-default fields and an idle base sends nothing. Unset ⇒ the default. Two-sided contract (#15): the client decodes these
+ * into the same `mirror.structures` shape (`STRUCTURE_FLAG_*` are shared).
+ */
+export class StructureState extends Schema {
+  /** Index into `SectorState.structureOwners` / `structureOwnerNames`
+   *  (owners are interned once per sector: a citadel's ~400 rows share one
+   *  owner, so per-row id + name strings dominated the join payload). */
+  @type('uint16') ownerIdx?: number;
+  /** STRUCTURE_FLAG_* bits (built / powered / deconstructing / wallActive). */
+  @type('uint8') flags?: number;
+  @type('uint8') hpPct?: number;
+  @type('uint8') level?: number;
+  @type('float32') netPower?: number;
+  @type('number') minerals?: number;
+  /** 0..1 while a blueprint (or upgrade) builds. */
+  @type('float32') buildPct?: number;
+  /** ms to completion while building (STRUCTURE_ETA_* sentinels otherwise). */
+  @type('int32') etaMs?: number;
+  @type('float32') deconstructPct?: number;
+  @type('uint16') storedPower?: number;
+  /** > 0 only for power-storage kinds. */
+  @type('uint16') storedPowerMax?: number;
+  /** Pylon: the other post's entityId of its (first) wall; -1 ⇒ none. */
+  @type('int32') shieldWallTo?: number;
+  /** Connected structures' entityIds. */
+  @type(['uint16']) connTo = new ArraySchema<number>();
+}
+
 export class SectorState extends Schema {
   @type({ map: ShipState }) ships = new MapSchema<ShipState>();
+  /** Structure grid state, keyed by entityId (A2 — see StructureState). */
+  @type({ map: StructureState }) structures = new MapSchema<StructureState>();
+  /** Interned structure owners: owner index (decimal) → playerId / owner id. */
+  @type({ map: 'string' }) structureOwners = new MapSchema<string>();
+  /** owner index → display name ('' ⇒ unresolved; the client shows "Unknown"). */
+  @type({ map: 'string' }) structureOwnerNames = new MapSchema<string>();
   /** Procedural bases in this sector, keyed by base id. */
   @type({ map: BaseState }) bases = new MapSchema<BaseState>();
   @type('number') tick: number = 0;

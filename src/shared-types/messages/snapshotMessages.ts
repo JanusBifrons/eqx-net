@@ -314,85 +314,11 @@ export interface SnapshotMessage {
      *  catalogue lookups. */
     lifePct: number;
   }>;
-  /** Placed structures' slow-moving grid state (structures plan, Phase 3).
-   *  Slim + low-cadence (rebuilt at the 1 Hz pulse, not per tick); the same
-   *  array reference is attached to every recipient. POSE is NOT here — a
-   *  structure is a kind=2 swarm entity, so its x/y/radius/subtype flow on the
-   *  binary swarm channel. This slice carries only what the binary wire can't:
-   *  the connector web + power/construction state. Absent when no structures
-   *  exist (zero cost otherwise). `id` is the dense `u16 entityId` matching the
-   *  binary swarm channel — so the client joins this slice to the swarm mirror
-   *  (which carries the pose) by entityId. */
-  structures?: Array<{
-    id: number;
-    /** Phase-4 C3 — hull health as a 0-100 INTEGER percent (matches the
-     *  `drones[].hp` convention). Emitted for every structure so the client
-     *  renders the inspector hull bar on the FIRST polled frame after selection
-     *  (no `entity_stats` round-trip → no "hull pops in" lag). Slim JSON field,
-     *  no SWARM_WIRE_VERSION bump (pose flows on the binary channel). */
-    hpPct?: number;
-    /** Component net power ≥ 0 AND reachable to a Capital. */
-    powered: boolean;
-    /** Component net power (Σ output − Σ consumption over built members). */
-    netPower?: number;
-    /** Connected neighbour entityIds — draws the web on the client. */
-    connTo?: number[];
-    /** Minerals currently stored (Capital bank; omitted when 0). */
-    minerals?: number;
-    /** True once fully constructed. */
-    built?: boolean;
-    /** Construction fraction [0..1]; sent ONLY while `!built` (drives the
-     *  scaffolding fill-bar), omitted once complete to keep the slice small. */
-    buildPct?: number;
-    /** Estimated ms to completion at the steady delivery rate, ASSUMING
-     *  resources are available (Phase-1 issue 1/2). Sent while `!built`:
-     *  a number drives the smooth linear build bar + the in-world ETA
-     *  countdown; `null` ⇒ the build is STALLED (no minerals reachable) so the
-     *  client freezes the bar + shows a paused timer. Omitted once built. */
-    etaMs?: number | null;
-    /** Deconstruction fraction [0..1] while reclaiming; omitted otherwise. */
-    deconstructPct?: number;
-    /** True while the owner is reclaiming this structure (Phase-1 issue 6).
-     *  Drives the inspector's Deconstruct↔Cancel button state from the first
-     *  polled frame (don't infer from `deconstructPct > 0`, which is ~0 at the
-     *  start of a drain). Omitted when not deconstructing. */
-    isDeconstructing?: boolean;
-    /** Phase 4 — the asteroid entityId a Miner is extracting from (draws the
-     *  mining beam). Present only on actively-mining miners. */
-    miningTargetId?: number;
-    /** Phase 5 — the drone entityId a Turret is aiming at (draws the aim line;
-     *  the fire beam itself arrives as a discrete `laser_fired`). */
-    turretTargetId?: number;
-    /** Batteries plan — current stored power (Battery only; omitted on every
-     *  other kind). Drives the inspector charge readout. */
-    storedPower?: number;
-    /** Batteries plan — the Battery's `powerStorageCapacity` (the readout
-     *  denominator). Present only alongside `storedPower`. */
-    storedPowerMax?: number;
-    /** Shield-fence plan — the paired pylon's entityId this pylon projects a
-     *  shield-wall span to (Shield Pylons only). The client derives the span
-     *  geometry from the two pylon poses + renders/predicts the wall. */
-    shieldWallTo?: number;
-    /** Shield-fence plan — whether that wall is currently ACTIVE (blocking). A
-     *  down wall (stunned / unpowered) renders dim + is passable. */
-    wallActive?: boolean;
-    /** Owning playerId. Lets the client show WHOSE base a structure is in the
-     *  inspector AND filter connection / placement-preview lines to same-owner
-     *  structures only — another player's base is visible but never draws a
-     *  connection line to the local player's grid. Static per structure; slim
-     *  JSON field, no SWARM_WIRE_VERSION bump (pose flows on the binary channel). */
-    owner?: string;
-    /** The owner's resolved DISPLAY NAME (server-side; online via the session,
-     *  offline via the persistent roster's playerId→userId→user). Absent when the
-     *  owner doesn't map to a DB user — an orphaned structure (the server logs
-     *  it). The client shows the name, "you" for the local player, else "Unknown". */
-    ownerName?: string;
-    /** Phase 4 (Leveling & XP, WS-B4) — this structure's level (≥ 1). Drives the
-     *  inspector's `LVL n` line + the Upgrade affordance (an at-cap structure
-     *  hides the button). Emitted ONLY when > 1 (un-levelled grids pay zero extra
-     *  bytes; absent ⇒ the client treats it as level 1), the same emit-if-> 1
-     *  discipline as `states[].level`. Slim JSON field, no SWARM_WIRE_VERSION bump
-     *  (pose flows on the binary channel). */
-    level?: number;
-  }>;
+  /** Plan soft-leaping-truffle v2, A2 — structure grid state moved to ROOM
+   *  STATE (`SectorState.structures`: join payload + delta patches); the
+   *  snapshot keeps only the fast cosmetics, as flat triples
+   *  `[structureEntityId, turretTargetEntityId, miningTargetEntityId]` (-1 =
+   *  none) for structures that currently have a target. Absent when none. See
+   *  src/shared-types/structureStateWire.ts. */
+  structureTargets?: number[];
 }

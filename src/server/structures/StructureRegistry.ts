@@ -43,6 +43,9 @@ export interface StructureRecord {
    *  structure recomputes the same uid with no snapshot field. Keys the
    *  structure's row in the `holds` table. Absent only on test fixtures. */
   uid?: string;
+  /** A2 — cached decimal entityId: this structure's key in the room-state
+   *  `structures` map (avoids a String() allocation per sync). */
+  stateKey?: string;
   /** Living World P1a-2 — deposited cargo (goods / credits / blueprints) for a
    *  storage kind (`holdCapacity > 0`). Minerals DELIVERED to a Capital stay in
    *  `minerals` (they fund construction). Absent ⇒ empty. */

@@ -6,9 +6,10 @@
  *  - server ms: the 1 Hz grid pulse, the 10 Hz turret tick (with drones
  *    present for the O(turrets × entities) target scan), and the structures
  *    snapshot-slice rebuild;
- *  - wire bytes: the `structures[]` slice packed with the SAME msgpack encoder
- *    Colyseus uses (`@colyseus/msgpackr`), × the 20 Hz snapshot rate = the
- *    per-client bytes/s this slice costs today;
+ *  - wire bytes (A2): the room-state JOIN payload (the server serializer's
+ *    full state), the state PATCH bytes an observer receives while the base
+ *    idles and while it is under fire, and the snapshot's slim
+ *    `structureTargets` slice (packed with `@colyseus/msgpackr`);
  *  - liveness of the lattice itself (all built, powered, walls formed), so the
  *    numbers measure a WORKING base, not a broken one.
  *
@@ -81,7 +82,34 @@ describe('A0 — structure scale measurement', () => {
     expect(powered).toBe(rows);
     expect(walls).toBeGreaterThan(0);
 
-    const sliceBytes = pack(slice).length;
+    // A2 wire: join payload, patches (idle + under fire), snapshot targets.
+    const serializer = (room as unknown as { _serializer: { getFullState(c?: unknown): Uint8Array } })._serializer;
+    const joinStateBytes = serializer.getFullState().length;
+    const targets = (room as unknown as { structuresSlice?: number[] }).structuresSlice;
+    const targetsBytesPerSnapshot = targets ? pack(targets).length : 0;
+    const ws = (cr as unknown as { connection: { transport: { ws: { addEventListener(t: string, f: (e: { data: unknown }) => void): void } } } }).connection.transport.ws;
+    let patchBytes = 0;
+    ws.addEventListener('message', (e) => {
+      const d = e.data as ArrayBuffer | Uint8Array;
+      const u8 = d instanceof Uint8Array ? d : new Uint8Array(d as ArrayBuffer);
+      if (u8[0] === 15) patchBytes += u8.length; // ROOM_STATE_PATCH
+    });
+    const pulseFor = async (ms: number, hit: boolean): Promise<number> => {
+      patchBytes = 0;
+      const ids: string[] = [];
+      for (const rec of internal.structureRegistry.all()) if (rec.kind !== 'shield_pylon' && rec.kind !== 'capital') ids.push(rec.id);
+      const t0 = Date.now();
+      let k = 0;
+      while (Date.now() - t0 < ms) {
+        // The room's own 1 Hz pulse + 10 Hz turret tick sync the state.
+        if (hit) for (let j = 0; j < 3; j++) internal.applyDamage(ids[(k++ * 7) % ids.length]!, 'measure', 1, 0, 0);
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      await new Promise((r) => setTimeout(r, 200));
+      return Math.round((patchBytes * 1000) / ms);
+    };
+    const patchIdleBytesPerSec = await pulseFor(3000, false);
+    const patchCombatBytesPerSec = await pulseFor(3000, true); // ~30 hits/s
     const pulse = time(() => internal.pulseStructureGrid(), 15);
     const turret = time(() => internal.tickStructureTurrets(), 40);
     const rebuild = time(() => internal.rebuildStructuresSlice(), 40);
@@ -105,10 +133,13 @@ describe('A0 — structure scale measurement', () => {
       fencePylons: kinds.get('shield_pylon') ?? 0,
       turrets,
       drones: DRONES,
-      sliceBytesPerSnapshot: sliceBytes,
-      sliceBytesPerRow: +(sliceBytes / rows).toFixed(1),
-      sliceKBPerSecPerClient: +((sliceBytes * SNAPSHOT_HZ) / 1024).toFixed(1),
-      binaryFullRefreshBytesPerSecPerClient: rows * 34, // SWARM_RECORD_BYTES × 1 Hz full refresh
+      joinStateBytes,
+      patchIdleBytesPerSec,
+      patchCombatBytesPerSec,
+      targetsBytesPerSnapshot,
+      targetsKBPerSecPerClient: +((targetsBytesPerSnapshot * SNAPSHOT_HZ) / 1024).toFixed(2),
+      // A2: sleeping out-of-interest structures ride every 5th 1 Hz full refresh.
+      binaryFullRefreshBytesPerSecPerClient: Math.round((rows * 34) / 5),
       pulseMs: pulse,
       turretTickMs: turret,
       turretTickParts: parts,
