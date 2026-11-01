@@ -113,12 +113,14 @@ import { NpcBaseSubsystem, isNpcBasesDisabled, type NpcBaseSpec } from '../bases
 import { baseProfileFor, contextForSector, hashString } from '../../core/bases/baseProfile.js';
 import { chooseBaseSite, grownExtent, nearestClearPoint, type SiteBox, type SiteCircle } from '../../core/bases/baseSite.js';
 import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
-import { PROD_STATE, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
-import { blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
+import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
+import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
+import { RECIPES, blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
+import { usesAmmo } from '../../shared-types/ammo.js';
 
 /** P2d — one unit of munitions (a turret's magazine reload). */
 const ONE_MUNITION = Object.freeze({ munitions: 1 });
@@ -279,6 +281,8 @@ import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat
 
 /** T1 — a fresh spawn stays at least this far from any structure's box. */
 const SPAWN_STRUCTURE_CLEARANCE = 120;
+/** T2 — an NPC ammo turret's assumed munitions use (it fires only when attacked). */
+const NPC_TURRET_MUNITIONS_PER_MIN = 0.2;
 
 const logger = pino({
   name: 'SectorRoom',
@@ -7154,6 +7158,60 @@ export class SectorRoom extends Room<SectorState> {
 
   tradeSnapshot(ownerId: string, networkUid: string): TradeNetworkSnapshot | null {
     return this.storage.tradeSnapshot(ownerId, networkUid);
+  }
+
+  /**
+   * T2 — this room's NPC bases for convoy planning (ConvoyDirector, every
+   * ~15 s; off-tick, so building arrays here is fine). Per base: its storage
+   * stock, free space, footprint box, and per-minute use/make rates read from
+   * its own structures (processor recipes, Reactor fuel, ammo turrets, drills,
+   * gas collectors).
+   */
+  npcBaseTrade(): NpcBaseTrade[] {
+    const byOwner = new Map<string, StructureRecord[]>();
+    for (const r of this.structureRegistry.all()) {
+      if (!r.isConstructed || !isNpcOwner(r.owner)) continue;
+      const list = byOwner.get(r.owner);
+      if (list) list.push(r); else byOwner.set(r.owner, [r]);
+    }
+    const out: NpcBaseTrade[] = [];
+    for (const [owner, recs] of byOwner) {
+      const anchor = recs.find((r) => r.kind === 'capital' && r.uid !== undefined)
+        ?? recs.find((r) => r.uid !== undefined && (getStructureKind(r.kind).holdCapacity ?? 0) > 0);
+      if (!anchor?.uid) continue;
+      const snap = this.storage.tradeSnapshot(owner, anchor.uid);
+      if (snap === null) continue;
+      const uses: Partial<Record<GoodId, number>> = {};
+      const makes: Partial<Record<GoodId, number>> = {};
+      const add = (m: Partial<Record<GoodId, number>>, g: GoodId, n: number): void => { m[g] = (m[g] ?? 0) + n; };
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const r of recs) {
+        const hw = r.halfW ?? r.radius, hh = r.halfH ?? r.radius;
+        x0 = Math.min(x0, r.x - hw); x1 = Math.max(x1, r.x + hw);
+        y0 = Math.min(y0, r.y - hh); y1 = Math.max(y1, r.y + hh);
+        const k = getStructureKind(r.kind);
+        if (isProcessorKind(r.kind)) {
+          const def = RECIPES[r.recipe ?? defaultRecipeFor(r.kind)];
+          const perMin = 60 / Math.max(1, def.cyclePulses);
+          for (const [g, n] of Object.entries(def.inputs)) add(uses, g as GoodId, (n ?? 0) * perMin);
+          for (const o of def.outputs) if ('good' in o) add(makes, o.good, o.n * perMin);
+        }
+        if (k.fuelEveryPulses) add(uses, 'fuel', 60 / k.fuelEveryPulses);
+        if (usesAmmo(r.kind)) add(uses, 'munitions', NPC_TURRET_MUNITIONS_PER_MIN);
+        if (k.miningRate) add(makes, 'minerals', k.miningRate * 60);
+        if (k.gasRate) add(makes, 'gas', k.gasRate * 60);
+      }
+      out.push({ owner, networkUid: anchor.uid, view: { stock: snap.goods, freeCapacity: snap.freeCapacity, uses, makes }, box: { x0, x1, y0, y1 } });
+    }
+    return out;
+  }
+
+  /** T2 — the nearest point clear of every structure (convoy hauler spawns). */
+  clearPointNear(x: number, y: number): { x: number; y: number } {
+    if (this.structureRegistry.size === 0) return { x, y };
+    const boxes: SiteBox[] = [];
+    for (const r of this.structureRegistry.all()) boxes.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
+    return nearestClearPoint(x, y, boxes, 150);
   }
 
   tradeTransfer(ownerId: string, networkUid: string, spec: TradeTransferSpec): TradeTransferResult | null {

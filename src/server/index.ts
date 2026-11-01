@@ -37,7 +37,9 @@ import {
   migrateLegacyHoldCredits,
 } from './db/PersistenceWorker.js';
 import { getUser } from './auth/AuthService.js';
-import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
+import { GALAXY_SECTORS, getSector } from '../core/galaxy/galaxy.js';
+import { ConvoyDirector, isConvoysDisabled } from './economy/ConvoyDirector.js';
+import { isNpcBasesDisabled } from './bases/NpcBaseSubsystem.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled, resolveBotSpoolMs, resolveBotHopMs, type LivingWorldOptions } from './livingworld/LivingWorldDirector.js';
 import { setIncomingPlayerSink } from './livingworld/incomingPlayerSink.js';
@@ -129,6 +131,7 @@ const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
 /** Living World P2 — the economy (null until boot finishes). */
 let economyStore: EconomyStore | null = null;
 let tradeDirector: TradeDirector | null = null;
+let convoyDirector: ConvoyDirector | null = null;
 app.get('/healthz', (_req, res) => {
   res.json({
     status: 'ok',
@@ -162,6 +165,11 @@ if (process.env['NODE_ENV'] !== 'production') {
     const deadline = Date.now() + 200;
     while (Date.now() < deadline) { /* intentional busy-wait */ }
     res.json({ ok: true });
+  });
+
+  // T2 — convoys in flight (phase, hauler pose, target).
+  app.get('/dev/convoys', (_req, res) => {
+    res.json({ convoys: convoyDirector?.debugView() ?? [] });
   });
 
   // GET /dev/events?limit=N — recent server events (snapshots, joins, leaves).
@@ -1302,6 +1310,13 @@ async function main(): Promise<void> {
   });
   tradeDirector.start();
   setTradeSink(tradeDirector);
+  // T2 (plan soft-leaping-truffle v3) — convoys between the galaxy's NPC bases.
+  if (!isConvoysDisabled() && !isNpcBasesDisabled()) {
+    const convoyRooms = new Map<string, SectorRoom>();
+    for (const [key, room] of galaxyRooms) if (getSector(key)) convoyRooms.set(key, room);
+    convoyDirector = new ConvoyDirector(convoyRooms, getHoldStore());
+    convoyDirector.start();
+  }
   const store = economyStore;
   const director = tradeDirector;
   setEconomyRouteProvider({
@@ -1354,6 +1369,7 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
     setTradeSink(null);
     setEconomyRouteProvider(null);
     tradeDirector?.stop();
+    convoyDirector?.stop();
     economyStore?.saveMarket();
   } catch (err) {
     logger.warn({ err }, 'livingWorldDirector.persistState/stop threw');

@@ -202,6 +202,14 @@ Update this section when a threshold is set.
   - **Spawns** are nudged out of every structure box (`nearestClearPoint` in `onJoin`).
   - **Kill switch:** `EQX_DISABLE_NPC_BASES=1`. Lock: `galaxyBases.test.ts`.
 
+## Convoys between NPC bases (plan soft-leaping-truffle v3, T2)
+
+- **`ConvoyDirector` (`economy/`)** is process-global (built in `index.ts` from the galaxy rooms only) on a 1 s unref'd loop; never the 60 Hz tick. Planning is the pure `core/economy/convoys.ts`.
+- **Room surface:** `npcBaseTrade()` (stock, rates, footprint box per NPC base), `clearPointNear`, plus the existing `tradeTransfer` / `spawnLivingWorldBot` / `setBotMoveTarget`.
+- **Every value move** is ONE `tradeTransfer` (take into the hauler's hold at pickup, release into the importer at delivery). Convoy haulers use `CONVOY_HAULER_ID_PREFIX` (`hauler-convoy-`), so a kill spills the hold.
+- **Haulers dock OUTSIDE a base's footprint** (fences block ships; gates open only for player ships) and enter and leave at the edge on the base's own side.
+- **Not persisted.** Crash leftovers (`hauler-convoy-*` holds) are discarded on `start()`. Kill switch `EQX_DISABLE_CONVOYS`; diagnostics `GET /dev/convoys`.
+
 ## NPC ownership (plan soft-leaping-truffle v3, B2)
 
 - **Owners like `npc:<allegiance>:<baseId>` are NPC bases.** Every "is this hostile?" decision about a structure goes through `relationOf`, using the room's ONE `relationCtx` (which holds the hostile-act ledger). Don't compare owner strings inline.

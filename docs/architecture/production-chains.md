@@ -99,6 +99,32 @@ Locks:
 - `baseSite.test.ts`: site rules, and every real sector's base fits its sector;
 - `tests/integration/sectorRoom/galaxyBases.test.ts`: the bloomgate citadel is placed in full in a real room with its asteroid field; a spawn on its Capital is nudged clear (fails without the nudge); the kill switch.
 
+## Convoys between NPC bases (T2)
+
+**Why no off-screen economy.** Every galaxy room is created at boot and simulates when empty, so every NPC base already runs its real production pulse. The plan's `advanceBaseEconomy` (with its 2 % equivalence test) isn't needed. Trade between bases is just convoys.
+
+**Planning** (`src/core/economy/convoys.ts`, pure; every 15 s):
+- **Rates.** Each room reports its NPC bases (`SectorRoom.npcBaseTrade`): storage stock, free space, footprint box, and per-minute use/make rates read from the base's own structures (processor recipes, Reactor fuel, ammo turrets, drills, gas collectors).
+- **Need and spare.** A base **needs** an input below half of `TARGET_MINUTES` (10) of use, and is refilled to the target. It **offers** anything beyond its own 10 minutes, when that is at least `MIN_LOAD_WEIGHT` (20).
+- **Matching.** `matchConvoys` serves the most-starved importer first, from the nearest exporter by galaxy hops, capped at a hauler-load (400 weight). Goods promised to convoys still on their way to pick up are not spare.
+
+**Flying** (`src/server/economy/ConvoyDirector.ts`, process-global, 1 s loop). One convoy is one `trader-hauler`; its id prefix `hauler-convoy-` starts with `hauler-`, so every hauler rule applies.
+- **Pickup.** It enters at the sector edge on the base's own side, stepped back until clear of the footprint (haulers cruise at about 40 u/s, so a far-side entry made each leg minutes long). It docks just OUTSIDE the base's box, since a fence blocks every ship and only player ships open gates, then loads in one atomic `tradeTransfer` take.
+- **Outbound / transit.** It leaves at the same edge. Transit is abstract, `hopMs` (20 s) per galaxy hop; a same-sector convoy skips straight to delivery.
+- **Delivery.** It enters the importer's sector the same way, docks, and unloads in one atomic `tradeTransfer` release; overflow drops as a pod.
+- **Raids.** A hauler destroyed anywhere spills its hold (existing hauler rule), and the convoy ends.
+
+**Limits.** At most 12 convoys in flight, at most 4 convoy haulers per sector, and the room's free-slot check applies. Convoys aren't persisted (neither are NPC bases); `start()` discards any convoy hold a crash left behind.
+
+**Kill switch:** `EQX_DISABLE_CONVOYS=1` (also off with `EQX_DISABLE_NPC_BASES`). **Diagnostics:** `GET /dev/convoys` (phase, hauler pose, target).
+
+**Measured live** (21 seeded sectors, first 3 minutes after boot): 9 convoys launched, 7 loaded and 4 delivered across sectors.
+
+Locks:
+- `convoys.test.ts` (needs, spare, matching);
+- `ConvoyDirector.test.ts` (fake rooms): same-sector and cross-sector delivery with goods conserved and no hold left, a raid ends the convoy, crash holds discarded, entry outside the footprint, no double promise (fails without the fix);
+- `tests/integration/sectorRoom/convoys.test.ts`: a real seeded base reports itself, loads a convoy hold, and a killed convoy hauler spills it.
+
 ## Packed structures
 
 User rulings (2026-11-01):

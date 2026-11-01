@@ -12,6 +12,9 @@ export const DRONE_BOT_ID_PREFIX = 'lwbot-';
 export const ROBOT_BOT_ID_PREFIX = 'rbot-';
 /** P2 — trade haulers (owned by the `TradeDirector`, not a squad director). */
 export const HAULER_ID_PREFIX = 'hauler-';
+/** T2 — NPC base-to-base convoy haulers. Starts with `hauler-` on purpose:
+ *  every hauler rule (spill on death, director-bot classification) applies. */
+export const CONVOY_HAULER_ID_PREFIX = 'hauler-convoy-';
 
 /** P4a — named elites (owned by the `EliteDirector`); mirrors `ELITE_ID_PREFIX`. */
 export const ELITE_BOT_ID_PREFIX = 'elite-';
