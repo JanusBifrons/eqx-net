@@ -211,6 +211,8 @@ import type {
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { getPlayerShipStore, getHoldStore, getWallet, getLabBoard } from '../db/PersistenceWorker.js';
 import { ResearchLabSubsystem } from '../structures/ResearchLabSubsystem.js';
+import { BpBuySchema, BpMarketQuerySchema, BpSellSchema, type BpListing, type BpMarketState } from '../../shared-types/blueprintMarket.js';
+import { bpBuyPrice, bpSellPrice, getBlueprintMarket, listing as bpListing } from '../economy/BlueprintMarket.js';
 import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type LabState } from '../../shared-types/messages/labMessages.js';
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
@@ -2777,6 +2779,23 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('lab_query', (client: Client, raw: unknown) => labRequest(client, 'lab_query', raw));
     this.onMessage('lab_start', (client: Client, raw: unknown) => labRequest(client, 'lab_start', raw));
     this.onMessage('lab_cancel', (client: Client, raw: unknown) => labRequest(client, 'lab_cancel', raw));
+
+    // ── Economy v2 W6 — the blueprint market (buy / sell, instant) ───────────
+    const bpRequest = (client: Client, kind: 'bp_market_query' | 'bp_buy' | 'bp_sell', raw: unknown): void => {
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      const schema = kind === 'bp_buy' ? BpBuySchema : kind === 'bp_sell' ? BpSellSchema : BpMarketQuerySchema;
+      const p = schema.safeParse(raw);
+      if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
+      const d = p.data as { networkEntityId: number; offerId?: string; uid?: string };
+      let verdict: { ok: boolean; message: string } | undefined;
+      if (kind === 'bp_buy') verdict = this.buyBlueprint(playerId, d.networkEntityId, d.offerId!);
+      else if (kind === 'bp_sell') verdict = this.sellBlueprint(playerId, d.networkEntityId, d.uid!);
+      try { client.send('bp_market_state', this.bpMarketView(playerId, d.networkEntityId, verdict)); } catch { /* closing */ }
+    };
+    this.onMessage('bp_market_query', (client: Client, raw: unknown) => bpRequest(client, 'bp_market_query', raw));
+    this.onMessage('bp_buy', (client: Client, raw: unknown) => bpRequest(client, 'bp_buy', raw));
+    this.onMessage('bp_sell', (client: Client, raw: unknown) => bpRequest(client, 'bp_sell', raw));
 
     // ── Economy v2 W5a — unpack a packed hull into my roster ─────────────────
     this.onMessage('unpack_hull', (client: Client, raw: unknown) => {
@@ -7030,6 +7049,67 @@ export class SectorRoom extends Room<SectorState> {
       this.storage.commitChanged([from], []);
       return [false, `Could not unpack the ${name}.`];
     }
+  }
+
+  /** Economy v2 W6 — `playerId`'s operational storage at `networkEntityId`. */
+  private ownStorageAt(playerId: string, networkEntityId: number): StructureRecord | null {
+    const rec = this.swarmRegistry.getByEntityId(networkEntityId);
+    const s = rec ? this.structureRegistry.get(rec.id) : undefined;
+    return s !== undefined && s.owner === playerId && s.uid !== undefined && isOperationalStorage(s) ? s : null;
+  }
+
+  /** Economy v2 W6 — the market view for `playerId`'s base at `networkEntityId`. */
+  private bpMarketView(playerId: string, networkEntityId: number, verdict?: { ok: boolean; message: string }): BpMarketState {
+    const rep = getTradeSink()?.traderRep?.(playerId) ?? 0;
+    const s = this.ownStorageAt(playerId, networkEntityId);
+    const mine: BpListing[] = [];
+    if (s !== null) {
+      for (const r of this.storage.network(s)) {
+        for (const b of r.hold?.blueprints ?? []) if (mine.length < 200) mine.push(bpListing(b, b.uid, bpSellPrice(b, rep)));
+      }
+    }
+    return {
+      type: 'bp_market_state',
+      networkEntityId,
+      offers: getBlueprintMarket().offersFor(rep),
+      mine,
+      ...(verdict ?? {}),
+    };
+  }
+
+  /** Economy v2 W6 — buy a board blueprint into this base: the wallet debit
+   *  and the storage change commit as ONE group; the offer then leaves the board. */
+  private buyBlueprint(playerId: string, networkEntityId: number, offerId: string): { ok: boolean; message: string } {
+    const s = this.ownStorageAt(playerId, networkEntityId);
+    if (s === null) return { ok: false, message: 'Pick one of your storage structures.' };
+    const market = getBlueprintMarket();
+    const bp = market.peek(offerId);
+    if (bp === null) return { ok: false, message: 'That blueprint has been sold.' };
+    const price = bpBuyPrice(bp, getTradeSink()?.traderRep?.(playerId) ?? 0);
+    const pay = getWallet().debitDeferred(playerId, price, 'blueprint_buy');
+    if (pay === null) return { ok: false, message: `You need ${price}¢ for that blueprint.` };
+    market.remove(offerId);
+    (s.hold ??= { goods: {}, blueprints: [] }).blueprints.push(bp);
+    this.storage.commitChanged([s], [pay]);
+    auditEvent({ event: 'blueprint_traded', sector: this.sectorKey ?? undefined, playerId, side: 'buy', product: bp.product, credits: price });
+    return { ok: true, message: `Bought ${productName(bp.product)} blueprint for ${price}¢.` };
+  }
+
+  /** Economy v2 W6 — sell a blueprint from this base to traders (one group). */
+  private sellBlueprint(playerId: string, networkEntityId: number, uid: string): { ok: boolean; message: string } {
+    const s = this.ownStorageAt(playerId, networkEntityId);
+    if (s === null) return { ok: false, message: 'Pick one of your storage structures.' };
+    const from = this.storage.network(s).find((r) => r.hold?.blueprints.some((b) => b.uid === uid));
+    if (from === undefined) return { ok: false, message: 'That blueprint is not in this base.' };
+    const list = from.hold!.blueprints;
+    const bp = list.find((b) => b.uid === uid)!;
+    const price = bpSellPrice(bp, getTradeSink()?.traderRep?.(playerId) ?? 0);
+    if (price <= 0) return { ok: false, message: 'Traders won\u2019t buy that blueprint.' };
+    list.splice(list.indexOf(bp), 1);
+    const op = getWallet().creditDeferred(playerId, price, 'blueprint_sell');
+    this.storage.commitChanged([from], op ? [op] : []);
+    auditEvent({ event: 'blueprint_traded', sector: this.sectorKey ?? undefined, playerId, side: 'sell', product: bp.product, credits: price });
+    return { ok: true, message: `Sold ${productName(bp.product)} blueprint for ${price}¢.` };
   }
 
   /** Living World P1a-2 — a short player-facing notice (HUD popup line). */

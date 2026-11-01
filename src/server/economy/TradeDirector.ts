@@ -484,6 +484,10 @@ export class TradeDirector implements TradeSink {
     this.store.addRep(attackerPlayerId, 'robots', REP_ATTACK_ROBOT);
   }
 
+  traderRep(playerId: string): number {
+    return this.store.rep(playerId, 'traders');
+  }
+
   robotTruce(playerId: string): boolean {
     return robotTruce(this.store.rep(playerId, 'robots'));
   }

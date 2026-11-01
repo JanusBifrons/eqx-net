@@ -122,7 +122,18 @@ are BOUGHT from NPC factions and traders, and some are LOOTED from ships.
       your roster. A fresh spawn asking for another kind gets a fighter and a
       notice. The server enforces this in galaxy rooms; test rooms opt in with
       `enforceHullGate`.
-- **W6 — blueprint market:** buy and sell blueprints with traders.
+- **W6 — blueprint market. Shipped.** The Trade tab's **Blueprints** section:
+  - **Traders sell** four real blueprints at a time: mostly copies, an original
+    1 time in 10. Each is one item, pre-rolled, so what you see is what you get,
+    and it leaves the board once bought. Offers expire and restock.
+  - **You sell** any blueprint in the selected base back to traders.
+  - **Price** = the product's goods bill × 0.3 per run (an original counts as 40
+    runs), plus up to 50 % for good stats. Traders sell at × 1.25 and buy at
+    × 0.5, and your trader standing shifts both. NPC (bound) blueprints can't
+    be sold.
+  - **Instant:** a blueprint is weightless data, so buying puts it straight into
+    your storage and selling pays straight into your wallet. Each is one
+    atomic group with the wallet change.
 
 ## Tests
 

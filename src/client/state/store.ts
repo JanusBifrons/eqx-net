@@ -159,6 +159,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   cargoCapacity: 0,
   wallet: null,
   labState: null,
+  bpMarket: null,
   fittedBlueprints: [],
   lootFeed: [],
   tradeToasts: [],
@@ -260,6 +261,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setCargo: (cargo, capacity) => set({ cargo, cargoCapacity: capacity }),
   setWallet: (credits) => set({ wallet: credits }),
   setLabState: (labState) => set({ labState }),
+  setBpMarket: (bpMarket) => set({ bpMarket }),
   setFittedBlueprints: (ids) => set({ fittedBlueprints: ids }),
   pushLootFeed: (text) => {
     const id = ++lootFeedSeq;

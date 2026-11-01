@@ -22,6 +22,7 @@ import { getGameClient } from '../../../net/clientSingleton';
 import { loadStoredPlayerId } from '../../../identity/token';
 import { loadToken } from '../../../auth/tokenStorage';
 import { fetchEconomy, fetchOffers, saveTradeLastSeen } from '../../../net/tradeApi';
+import { BlueprintMarketSection } from './BlueprintMarketSection';
 import { formatPrice, goodName, itemName, ownStorages, repFill, repLabel, sectorName, type OwnStorage } from '../../../net/tradeView';
 import { sendAcceptOffer, sendCancelDeal, sendGift } from '../../../net/tradeClient';
 import {
@@ -54,7 +55,7 @@ const STATE_COLOR: Record<string, string> = {
   settled: '#5fd6a0', failed: '#ff8a8a', cancelled: '#777',
 };
 
-type Section = 'offers' | 'deals' | 'history' | 'gift';
+type Section = 'offers' | 'deals' | 'history' | 'gift' | 'blueprints';
 
 function repColor(rep: number): string {
   return rep >= 150 ? '#5fd6a0' : rep > -150 ? '#c8cde0' : '#ff8a8a';
@@ -157,6 +158,7 @@ export function TradeTab(): JSX.Element {
         <Tab value="deals" label={`Deals${view ? ` (${view.deals.filter((d) => ['scheduled', 'inbound', 'docked', 'departing'].includes(d.state)).length})` : ''}`} data-testid="trade-section-deals" />
         <Tab value="history" label="History" data-testid="trade-section-history" />
         <Tab value="gift" label="Gift" data-testid="trade-section-gift" />
+        <Tab value="blueprints" label="Blueprints" data-testid="trade-section-blueprints" />
       </Tabs>
 
       {section === 'offers' && (
@@ -227,6 +229,7 @@ export function TradeTab(): JSX.Element {
       )}
 
       {section === 'gift' && <GiftForm baseId={baseId} />}
+      {section === 'blueprints' && <BlueprintMarketSection baseId={baseId} />}
 
       {dealOffer !== null && baseId !== null && (
         <DealDialog offer={dealOffer} baseId={baseId} onClose={() => setDealOffer(null)} />
