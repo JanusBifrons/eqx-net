@@ -22,7 +22,7 @@ import {
   type ShipPart,
   type WeaponMount,
 } from '../../../shared-types/shipKinds.js';
-import { getStructureKind, structureHullPoints } from '../../../shared-types/structureKinds.js';
+import { getStructureKind, isStructureKindId, structureHullPoints } from '../../../shared-types/structureKinds.js';
 import { buildStructureVisual } from './structureVisuals.js';
 
 export const SHIP_HITBOX_RADIUS = 12; // must match World.ts SHIP_RADIUS
@@ -255,7 +255,12 @@ export function buildStructureGfx(structureKindId: string | undefined, _radius?:
   // structure's quarter-turn. Built ONCE per sprite (never per frame, #14).
   const g = new Graphics();
   const kind = getStructureKind(structureKindId);
-  const plan = buildStructureVisual(kind.id, { accent: kind.color, seed });
+  // A kindless structure (test fixture) is a plain slab sized by its radius,
+  // matching its radius-square collider.
+  const kindless = !structureKindId || !isStructureKindId(structureKindId);
+  const plan = kindless && _radius
+    ? buildStructureVisual('__kindless__', { accent: kind.color, seed, size: { w: _radius * 2, h: _radius * 2 } })
+    : buildStructureVisual(kind.id, { accent: kind.color, seed });
   for (const r of plan.rects) {
     g.rect(r.x, r.y, r.w, r.h);
     g.fill({ color: r.color, alpha: r.alpha });

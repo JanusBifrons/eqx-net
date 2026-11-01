@@ -26,6 +26,7 @@
  * never re-builds within the pulse budget) AND the turret never heals.
  */
 import { describe, it, expect, afterEach } from 'vitest';
+import { SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../../../src/server/rooms/scenarioLayouts.js';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { getStructureKind } from '../../../src/shared-types/structureKinds.js';
 import {
@@ -47,8 +48,8 @@ describe('SectorRoom integration — Capital Upgrade does not hang / brick the g
       // Turret leaf (the SECOND structure that must keep getting funded).
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
-        { kind: 'connector', x: 150, y: 60 },
-        { kind: 'turret', x: 0, y: 250 },
+        { kind: 'connector', ...SCENARIO.connectorN },
+        { kind: 'turret', x: 130, y: 420 }, // beside the N relay (phase V footprints)
       ],
       prebuiltStructuresOwner: OWNER_UUID,
     });

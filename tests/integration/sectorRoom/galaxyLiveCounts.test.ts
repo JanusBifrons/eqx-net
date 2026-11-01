@@ -12,6 +12,7 @@
  * ship-restore path that never activates (the connectActive 3 s timeout).
  */
 import { describe, it, expect, afterEach } from 'vitest';
+import { SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../../../src/server/rooms/scenarioLayouts.js';
 import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 
@@ -65,10 +66,10 @@ describe('SectorRoom integration — liveCounts (Living Galaxy Phase 3)', () => 
       asteroidConfig: [],
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
-        { kind: 'connector', x: 150, y: 60 },
-        { kind: 'solar', x: 250, y: 0 },
+        { kind: 'connector', ...SCENARIO.connectorN },
+        { kind: 'solar', ...SCENARIO.solarNE },
       ],
-      scenarioDrones: [{ x: 0, y: -550 }],
+      scenarioDrones: [{ ...SCENARIO.drone }],
     });
     // connectAs is a pending (inactive) hull — enough to read structures/drones;
     // no active player means the scenario drone is hostile to nobody present.

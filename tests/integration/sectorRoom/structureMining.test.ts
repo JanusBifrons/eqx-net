@@ -37,14 +37,14 @@ describe('SectorRoom integration — mining (Phase 4)', () => {
     const internals = harness.getServerRoom()!._internals;
 
     // Seed an asteroid within the miner's mining range.
-    expect(internals.spawnTestAsteroid('mine-rock', 0, 600, 30)).toBe(true);
+    expect(internals.spawnTestAsteroid('mine-rock', -500, 900, 30)).toBe(true);
 
     const cap = await placeAndWait(harness, room, 'capital', 0, 0);
     // WS-5 capital-only-connectors: leaves route through a Connector relay
     // offset above the Capital (its LOS clears for both the +x solar + +y miner).
-    await placeAndWait(harness, room, 'connector', 0, 140);
-    const sol = await placeAndWait(harness, room, 'solar', 200, 0); // offsets miner power draw
-    const miner = await placeAndWait(harness, room, 'miner', 0, 300);
+    await placeAndWait(harness, room, 'connector', 0, 350);
+    const sol = await placeAndWait(harness, room, 'solar', 250, 400); // offsets miner power draw
+    const miner = await placeAndWait(harness, room, 'miner', -180, 420);
     const capRec = internals.structureRegistry.get(cap)!;
     const minerRec = internals.structureRegistry.get(miner)!;
 
@@ -64,14 +64,14 @@ describe('SectorRoom integration — mining (Phase 4)', () => {
     harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
-    internals.spawnTestAsteroid('mine-rock', 0, 600, 30);
+    internals.spawnTestAsteroid('mine-rock', -500, 900, 30);
 
     // Capital + miner, NO solar: capital 50 − miner 60 = −10 ⇒ unpowered grid.
     // WS-5: the miner routes via a Connector relay (still draws the grid
     // negative, so the component stays unpowered — the behaviour under test).
     const cap = await placeAndWait(harness, room, 'capital', 0, 0);
-    await placeAndWait(harness, room, 'connector', 0, 140);
-    const miner = await placeAndWait(harness, room, 'miner', 0, 300);
+    await placeAndWait(harness, room, 'connector', 0, 350);
+    const miner = await placeAndWait(harness, room, 'miner', -180, 420);
     const capRec = internals.structureRegistry.get(cap)!;
     const minerRec = internals.structureRegistry.get(miner)!;
     for (let i = 0; i < 120; i++) internals.pulseStructureGrid();

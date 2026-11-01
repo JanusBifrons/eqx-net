@@ -6,6 +6,7 @@
  * run in this environment).
  */
 import { describe, it, expect, afterEach } from 'vitest';
+import { SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../../../src/server/rooms/scenarioLayouts.js';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 
 describe('SectorRoom integration — structure scenario seeding (Phase 3-5)', () => {
@@ -19,20 +20,9 @@ describe('SectorRoom integration — structure scenario seeding (Phase 3-5)', ()
       // Item D threads asteroids into the LOS check). Only `scenarioAsteroids`
       // — placed clear of every connecting segment — should exist.
       asteroidConfig: [],
-      prebuiltStructures: [
-        { kind: 'capital', x: 0, y: 0 },
-        // WS-5 (R2.10): leaves route through Connector relays, not the Capital.
-        // Two offset relays (NE → solars, SW → miner + turret) keep the grid
-        // powered while honouring capital-only-connectors.
-        { kind: 'connector', x: 150, y: 60 },
-        { kind: 'connector', x: -100, y: -100 },
-        { kind: 'solar', x: 250, y: 0 },
-        { kind: 'solar', x: 0, y: 250 },
-        { kind: 'miner', x: -350, y: 0 },
-        { kind: 'turret', x: 0, y: -350 },
-      ],
-      scenarioAsteroids: [{ x: -700, y: 0, radius: 30 }],
-      scenarioDrones: [{ x: 0, y: -550 }],
+      prebuiltStructures: [...STRUCTURE_SCENARIO_PREBUILT], // phase V footprints (scenarioLayouts.ts)
+      scenarioAsteroids: [{ ...SCENARIO.asteroid }],
+      scenarioDrones: [{ ...SCENARIO.drone }],
     });
     await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;

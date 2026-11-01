@@ -531,11 +531,23 @@ export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
  */
 export function structureHullPoints(
   kindId: string | null | undefined,
-  _radius?: number,
+  radius?: number,
 ): Array<{ x: number; y: number }> {
-  const id = kindId != null && isStructureKindId(kindId) ? kindId : DEFAULT_STRUCTURE_KIND;
-  const { w, h } = getStructureKind(id).footprint;
-  const hw = w / 2, hh = h / 2;
+  let hw: number, hh: number;
+  if (kindId != null && isStructureKindId(kindId)) {
+    const { w, h } = getStructureKind(kindId).footprint;
+    hw = w / 2;
+    hh = h / 2;
+  } else if (radius !== undefined && radius > 0) {
+    // A KINDLESS structure (test fixtures, e.g. `structurePoses`): a square
+    // sized by its radius — never the Capital's 560 u box.
+    hw = radius;
+    hh = radius;
+  } else {
+    const { w, h } = getStructureKind(DEFAULT_STRUCTURE_KIND).footprint;
+    hw = w / 2;
+    hh = h / 2;
+  }
   return [
     { x: -hw, y: -hh },
     { x: hw, y: -hh },

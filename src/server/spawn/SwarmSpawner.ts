@@ -222,6 +222,13 @@ export class SwarmSpawner {
         rec.halfW = ext.hw;
         rec.halfH = ext.hh;
       }
+    } else if (ok) {
+      // Kindless (test fixture): its square collider is radius-sized.
+      const rec = this.registry.get(s.id);
+      if (rec) {
+        rec.halfW = s.radius;
+        rec.halfH = s.radius;
+      }
     }
     return ok;
   }

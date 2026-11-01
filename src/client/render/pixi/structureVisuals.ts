@@ -61,6 +61,8 @@ export interface StructureVisualOpts {
   seed?: number;
   /** Shield Gate: 'open' | 'closed'. Shield Airlock: 'openA' | 'openB' | 'closed'. */
   gate?: GateState;
+  /** Override the footprint (kindless test structures sized by radius). */
+  size?: StructureFootprint;
 }
 
 /** A gate shield span between two posts: bright when closed, a faint ghost
@@ -119,7 +121,8 @@ function hazard(out: RectOp[], x: number, y: number, w: number, h: number): void
 export function buildStructureVisual(kindId: string, opts: StructureVisualOpts): StructureVisual {
   // Catalogue kinds use the catalogue footprint (the collider's source);
   // not-yet-catalogued designs (gates) use the proposal table.
-  const fp = isStructureKindId(kindId) ? getStructureKind(kindId).footprint : PROPOSED_FOOTPRINTS[kindId] ?? { w: 80, h: 80 };
+  const fp = opts.size
+    ?? (isStructureKindId(kindId) ? getStructureKind(kindId).footprint : PROPOSED_FOOTPRINTS[kindId] ?? { w: 80, h: 80 });
   const rects: RectOp[] = [];
   const lights: LightOp[] = [];
   const W = fp.w, H = fp.h, x0 = -W / 2, y0 = -H / 2;

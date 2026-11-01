@@ -45,7 +45,7 @@ describe('SectorRoom integration — construction flow economy (Phase 3)', () =>
     const internals = harness.getServerRoom()!._internals;
 
     const cap = await placeAndWait(harness, room, 'capital', 0, 0);
-    const con = await placeAndWait(harness, room, 'connector', 300, 0);
+    const con = await placeAndWait(harness, room, 'connector', 400, 0);
     const capRec = internals.structureRegistry.get(cap)!;
     const conRec = internals.structureRegistry.get(con)!;
     const startMinerals = capRec.minerals;
@@ -66,7 +66,7 @@ describe('SectorRoom integration — construction flow economy (Phase 3)', () =>
     const internals = harness.getServerRoom()!._internals;
 
     const cap = await placeAndWait(harness, room, 'capital', 0, 0);
-    const con = await placeAndWait(harness, room, 'connector', 300, 0);
+    const con = await placeAndWait(harness, room, 'connector', 400, 0);
     const capRec = internals.structureRegistry.get(cap)!;
     const conRec = internals.structureRegistry.get(con)!;
 
@@ -90,8 +90,8 @@ describe('SectorRoom integration — construction flow economy (Phase 3)', () =>
     const internals = harness.getServerRoom()!._internals;
 
     await placeAndWait(harness, room, 'capital', 0, 0);
-    const con = await placeAndWait(harness, room, 'connector', 300, 0);
-    const sol = await placeAndWait(harness, room, 'solar', 600, 0);
+    const con = await placeAndWait(harness, room, 'connector', 400, 0);
+    const sol = await placeAndWait(harness, room, 'solar', 650, 0);
     const conRec = internals.structureRegistry.get(con)!;
     const solRec = internals.structureRegistry.get(sol)!;
 
@@ -113,7 +113,7 @@ describe('SectorRoom integration — construction flow economy (Phase 3)', () =>
     const internals = harness.getServerRoom()!._internals;
 
     const cap = await placeAndWait(harness, room, 'capital', 0, 0);
-    const con = await placeAndWait(harness, room, 'connector', 300, 0);
+    const con = await placeAndWait(harness, room, 'connector', 400, 0);
     const capRec = internals.structureRegistry.get(cap)!;
     for (let i = 0; i < Math.ceil(getStructureKind('connector').constructionCost / CONSTRUCTION_PULSE_AMOUNT); i++) {
       internals.pulseStructureGrid();

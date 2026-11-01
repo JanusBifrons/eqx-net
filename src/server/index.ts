@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createServer } from 'node:http';
 import { pino } from 'pino';
 import { SectorRoom } from './rooms/SectorRoom.js';
+import { SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './rooms/scenarioLayouts.js';
 import { SHOWCASE_ROOMS } from './rooms/showcaseRooms.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
 import { installGcMonitor } from './debug/GcMonitor.js';
@@ -382,18 +383,10 @@ gameServer.define('feel-test-structures', SectorRoom, {
   swarmRatio: 0,
   swarmRadius: 500,
   structureGridPulseMs: 100,
-  prebuiltStructures: [
-    { kind: 'capital', x: 0, y: 0 },
-    // capital-only-connectors (R2.10): two offset relays carry the grid.
-    { kind: 'connector', x: 150, y: 60 },
-    { kind: 'connector', x: -100, y: -100 },
-    { kind: 'solar', x: 250, y: 0 },
-    { kind: 'solar', x: 0, y: 250 },
-    { kind: 'miner', x: -350, y: 0 },
-    { kind: 'turret', x: 0, y: -350 },
-  ],
-  scenarioAsteroids: [{ x: -700, y: 0, radius: 30 }],
-  defaultSpawnX: 700, // clear of the origin grid; within the drone pack + interest
+  // Phase V footprints — the shared powered scenario grid (see scenarioLayouts.ts).
+  prebuiltStructures: [...STRUCTURE_SCENARIO_PREBUILT],
+  scenarioAsteroids: [{ ...SCENARIO.asteroid }],
+  defaultSpawnX: 900, // clear of the origin grid; within the drone pack + interest
   defaultSpawnY: 0,
   maxClients: 4,
 });
@@ -599,23 +592,12 @@ gameServer
     asteroidConfig: [],
     peacefulDrones: true,
     structureGridPulseMs: 100,
-    prebuiltStructures: [
-      { kind: 'capital', x: 0, y: 0 },
-      // WS-5 (R2.10): leaves can no longer attach DIRECTLY to the Capital
-      // (capital-only-connectors). Two Connector relays, offset to clear the
-      // Capital's line-of-sight, carry the grid — NE relay → the +x/+y solars,
-      // SW relay → the −x miner + −y turret. Capital uses 2 of its 4 slots.
-      { kind: 'connector', x: 150, y: 60 },
-      { kind: 'connector', x: -100, y: -100 },
-      { kind: 'solar', x: 250, y: 0 },
-      { kind: 'solar', x: 0, y: 250 },
-      { kind: 'miner', x: -350, y: 0 },
-      { kind: 'turret', x: 0, y: -350 },
-    ],
-    scenarioAsteroids: [{ x: -700, y: 0, radius: 30 }],
-    scenarioDrones: [{ x: 0, y: -550 }],
-    defaultSpawnX: 600,
-    defaultSpawnY: 600,
+    // Phase V footprints — the shared powered scenario grid (see scenarioLayouts.ts).
+    prebuiltStructures: [...STRUCTURE_SCENARIO_PREBUILT],
+    scenarioAsteroids: [{ ...SCENARIO.asteroid }],
+    scenarioDrones: [{ ...SCENARIO.drone }],
+    defaultSpawnX: 900,
+    defaultSpawnY: 900,
     maxClients: 4,
   })
   .filterBy(['testId']);
@@ -734,26 +716,16 @@ gameServer.define('galaxy-wave-test', SectorRoom, {
   asteroidConfig: [],
   peacefulDrones: true,
   structureGridPulseMs: 100,
-  prebuiltStructures: [
-    { kind: 'capital', x: 0, y: 0 },
-    // WS-5 (R2.10): capital-only-connectors — two offset Connector relays carry
-    // the grid (NE → solars, SW → miner + turret) since leaves can't attach to
-    // the Capital directly. Keeps this base READY (powered) for the wave gate.
-    { kind: 'connector', x: 150, y: 60 },
-    { kind: 'connector', x: -100, y: -100 },
-    { kind: 'solar', x: 250, y: 0 },
-    { kind: 'solar', x: 0, y: 250 },
-    { kind: 'miner', x: -350, y: 0 },
-    { kind: 'turret', x: 0, y: -350 },
-  ],
+  // Phase V footprints — the shared powered scenario grid (see scenarioLayouts.ts).
+  prebuiltStructures: [...STRUCTURE_SCENARIO_PREBUILT],
   // Fixed sentinel UUID (the server rejects non-UUID playerIds). The wave spec
   // joins AS this id so the seeded base is owned by the present player and the
   // owner-presence gate releases the wave. Kept in sync with
   // tests/e2e/wave-attack.spec.ts WAVE_OWNER_ID.
   prebuiltStructuresOwner: 'face0000-0000-4000-8000-000000000001',
-  scenarioAsteroids: [{ x: -700, y: 0, radius: 30 }],
+  scenarioAsteroids: [{ ...SCENARIO.asteroid }],
   defaultSpawnX: 0,
-  defaultSpawnY: 600,
+  defaultSpawnY: 900,
   maxClients: 4,
 });
 // 2026-05-28 — POSITIVE control for hull-collision-test. Two crossguards

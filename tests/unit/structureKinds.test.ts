@@ -155,8 +155,11 @@ describe('structureKinds catalogue', () => {
       expect(Math.max(...xs) - Math.min(...xs), k.id).toBe(k.footprint.w);
       expect(Math.max(...ys) - Math.min(...ys), k.id).toBe(k.footprint.h);
     }
-    // Unknown id ⇒ the Capital's box (forgiving, like getStructureKind).
+    // Unknown id, no radius ⇒ the Capital's box (forgiving, like getStructureKind).
     expect(structureHullPoints('not-a-kind')).toEqual(structureHullPoints(DEFAULT_STRUCTURE_KIND));
+    // A kindless fixture WITH a radius ⇒ a radius-sized square, never the Capital box.
+    const sq = structureHullPoints(undefined, 60);
+    expect(Math.max(...sq.map((p) => p.x)) - Math.min(...sq.map((p) => p.x))).toBe(120);
   });
 
   it('structureHalfExtents swaps width and height on a quarter turn', () => {
