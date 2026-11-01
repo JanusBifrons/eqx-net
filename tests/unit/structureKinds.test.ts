@@ -30,6 +30,19 @@ describe('structureKinds catalogue', () => {
       'cargo_bay', // Living World P1a-2 — appended at the tail
       'shield_gate', // gates — appended at the tail
       'shield_airlock',
+      // Production chains (plan soft-leaping-truffle v3, P2a) — appended at the tail
+      'gas_collector',
+      'reclaimer',
+      'smelter',
+      'refinery',
+      'silicon_works',
+      'hydroponics',
+      'fabricator',
+      'munitions_works',
+      'freight_dock',
+      'deep_core_rig',
+      'ore_processing_complex',
+      'assembly_plant',
     ]);
   });
 
@@ -55,7 +68,14 @@ describe('structureKinds catalogue', () => {
 
   it('hubs are the Capital + Connector + the shield emitters; leaves cap at 1 connection', () => {
     const hubs = STRUCTURE_KINDS_LIST.filter((k) => k.isHub).map((k) => k.id);
-    expect(hubs.sort()).toEqual(['capital', 'connector', 'shield_airlock', 'shield_gate', 'shield_pylon']);
+    // P2a — the huge production kinds are hubs (4 links) that anchor a district.
+    expect(hubs.sort()).toEqual([
+      'assembly_plant', 'capital', 'connector', 'deep_core_rig', 'ore_processing_complex',
+      'shield_airlock', 'shield_gate', 'shield_pylon',
+    ]);
+    for (const huge of ['deep_core_rig', 'ore_processing_complex', 'assembly_plant'] as const) {
+      expect(STRUCTURE_KINDS[huge].maxConnections).toBe(4);
+    }
     expect(STRUCTURE_KINDS.capital.maxConnections).toBe(4);
     expect(STRUCTURE_KINDS.connector.maxConnections).toBe(6);
     // The pylon is a hub so two pylons can link directly (it pairs into a wall).

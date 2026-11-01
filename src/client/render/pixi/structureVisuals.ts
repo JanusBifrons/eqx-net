@@ -297,6 +297,180 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       }
       break;
     }
+    // ── Production chains (plan soft-leaping-truffle v3, P2a) ──────────────
+    case 'gas_collector': {
+      // Intake array: a ring of scoop vanes round a compressor drum.
+      box(rects, x0, y0, W, H, DECK, 0.9);
+      const r = Math.min(W, H) / 2 - 10;
+      for (let k = 0; k < 8; k++) {
+        const a = (k / 8) * Math.PI * 2;
+        const cx = Math.cos(a) * (r - 30), cy = Math.sin(a) * (r - 30);
+        slab(rects, cx - 22, cy - 22, 44, 44, mixColor(accent, STEEL_DARK, 0.5), 4);
+      }
+      slab(rects, -60, -60, 120, 120, STEEL, 8);
+      box(rects, -30, -30, 60, 60, mixColor(accent, 0xffffff, 0.15));
+      lit(0, 0, 14, accent);
+      break;
+    }
+    case 'reclaimer': {
+      // Scrap hopper and crusher: a hazard pad, an intake hopper, a crusher block.
+      box(rects, x0, y0, W, H, DECK, 0.95);
+      hazard(rects, x0, y0, W, H);
+      slab(rects, x0 + 14, y0 + 14, W * 0.45, H - 28, STEEL_DARK, 6);
+      for (let y = y0 + 30; y < y0 + H - 24; y += 18) box(rects, x0 + 24, y, W * 0.45 - 20, 4, mixColor(STEEL, 0x000000, 0.3));
+      slab(rects, x0 + W * 0.55, y0 + 30, W * 0.38, H - 60, mixColor(accent, STEEL, 0.45), 6);
+      lit(x0 + W - 18, y0 + 18, 6, WARM);
+      break;
+    }
+    case 'smelter': {
+      // Furnace hall: two blast furnaces with glowing mouths and a stack.
+      slab(rects, x0, y0, W, H, STEEL_DARK, 8);
+      const fw = (W - 60) / 2;
+      for (let k = 0; k < 2; k++) {
+        const fx = x0 + 20 + k * (fw + 20);
+        slab(rects, fx, y0 + 24, fw, H - 48, STEEL, 8);
+        box(rects, fx + fw / 2 - 24, y0 + H - 70, 48, 26, live ? 0xff7a2a : 0x553322, 0.95);
+        lit(fx + fw / 2, y0 + H - 57, 14, 0xff7a2a);
+      }
+      box(rects, x0 + W / 2 - 14, y0 + 30, 28, 60, STEEL_LIGHT);
+      break;
+    }
+    case 'refinery': {
+      // Tank farm and cracking column: round-ish tanks (squares) and pipes.
+      box(rects, x0, y0, W, H, DECK, 0.9);
+      const t = 96;
+      for (let r = 0; r < 2; r++) {
+        for (let k = 0; k < 2; k++) {
+          const tx = x0 + 18 + k * (t + 14), ty = y0 + 18 + r * (t + 40);
+          slab(rects, tx, ty, t, t, mixColor(accent, STEEL, 0.5), 10);
+          box(rects, tx + 20, ty + 20, t - 40, t - 40, mixColor(accent, 0xffffff, 0.1), 0.8);
+        }
+      }
+      slab(rects, x0 + W - 110, y0 + 20, 80, H - 40, STEEL, 6);
+      for (let y = y0 + 40; y < y0 + H - 40; y += 30) box(rects, x0 + W - 100, y, 60, 6, STEEL_LIGHT);
+      box(rects, x0 + 18, y0 + H / 2 - 4, W - 140, 8, STEEL_LIGHT, 0.8);
+      lit(x0 + W - 70, y0 + 30, 8, RED);
+      break;
+    }
+    case 'silicon_works': {
+      // Clean-room grid: wafer cells under glass.
+      slab(rects, x0, y0, W, H, STEEL_DARK, 8);
+      const c = 56;
+      for (let r = 0; r < 4; r++) {
+        for (let k = 0; k < 4; k++) {
+          const cx = x0 + 24 + k * (c + 12), cy = y0 + 24 + r * (c + 12);
+          box(rects, cx, cy, c, c, mixColor(GLASS, STEEL_DARK, 0.6), 0.9);
+          box(rects, cx + 14, cy + 14, c - 28, c - 28, mixColor(accent, 0xffffff, 0.2), live ? 0.9 : 0.4);
+        }
+      }
+      lit(0, 0, 12, accent);
+      break;
+    }
+    case 'hydroponics': {
+      // Greenhouse: long glazed bays of green growth.
+      slab(rects, x0, y0, W, H, STEEL_DARK, 6);
+      const bays = 4, bw = (W - 30) / bays;
+      for (let k = 0; k < bays; k++) {
+        const bx = x0 + 15 + k * bw;
+        box(rects, bx + 4, y0 + 16, bw - 8, H - 32, mixColor(GLASS, STEEL_DARK, 0.7), 0.85);
+        for (let y = y0 + 26; y < y0 + H - 26; y += 16) box(rects, bx + 10, y, bw - 20, 8, live ? 0x4fbf5a : 0x2f4f33, 0.9);
+      }
+      lit(x0 + 12, 0, 6, WARM);
+      break;
+    }
+    case 'fabricator': {
+      // Fabrication hall: a long assembly line with robot cells either side.
+      slab(rects, x0, y0, W, H, STEEL_DARK, 10);
+      box(rects, x0 + 30, -14, W - 60, 28, STEEL_LIGHT);
+      for (let k = 0; k < 5; k++) {
+        const cx = x0 + 40 + k * ((W - 80) / 5);
+        for (const cy of [y0 + 30, 30]) {
+          slab(rects, cx, cy, 60, H / 2 - 60, mixColor(accent, STEEL, 0.55), 5);
+        }
+        box(rects, cx + 22, -6, 16, 12, live ? accent : 0x553322);
+      }
+      lit(x0 + 20, y0 + 20, 8, RED);
+      lit(x0 + W - 20, y0 + H - 20, 8, RED);
+      break;
+    }
+    case 'munitions_works': {
+      // Bunkered works: blast-walled shell lines with hazard striping.
+      box(rects, x0, y0, W, H, DECK, 0.95);
+      hazard(rects, x0, y0, W, H);
+      slab(rects, x0 + 16, y0 + 16, W - 32, H - 32, STEEL_DARK, 10);
+      for (let r = 0; r < 3; r++) {
+        const ry = y0 + 40 + r * ((H - 80) / 3);
+        box(rects, x0 + 40, ry, W - 80, 30, STEEL);
+        for (let x = x0 + 50; x < x0 + W - 60; x += 26) box(rects, x, ry + 8, 12, 14, mixColor(accent, 0x000000, 0.2));
+      }
+      lit(0, 0, 10, accent);
+      break;
+    }
+    case 'freight_dock': {
+      // A pier: a long berth with mooring clamps and cargo cranes.
+      box(rects, x0, y0, W, H, DECK, 0.9);
+      slab(rects, x0, y0, W, H * 0.45, STEEL_DARK, 8);
+      for (let x = x0 + 30; x < x0 + W - 40; x += 90) {
+        slab(rects, x, y0 + H * 0.5, 50, H * 0.42, mixColor(accent, STEEL, 0.5), 5);
+        box(rects, x + 10, y0 + 18, 30, H * 0.45 - 30, STEEL_LIGHT, 0.85);
+      }
+      hazard(rects, x0, y0 + H - 12, W, 12);
+      lit(x0 + 14, y0 + H - 20, 7, 0x7fe0a4);
+      lit(x0 + W - 14, y0 + H - 20, 7, 0x7fe0a4);
+      break;
+    }
+    case 'deep_core_rig': {
+      // Huge drilling platform: a square deck, four corner legs, a central bore.
+      box(rects, x0, y0, W, H, DECK, 0.95);
+      hazard(rects, x0, y0, W, H);
+      const leg = 150;
+      for (const [lx, ly] of [[x0, y0], [x0 + W - leg, y0], [x0, y0 + H - leg], [x0 + W - leg, y0 + H - leg]] as const) {
+        slab(rects, lx + 10, ly + 10, leg - 20, leg - 20, STEEL, 10);
+      }
+      slab(rects, -200, -200, 400, 400, STEEL_DARK, 12);
+      slab(rects, -110, -110, 220, 220, mixColor(accent, STEEL, 0.4), 10);
+      box(rects, -40, -40, 80, 80, live ? 0xffa54a : 0x553322, 0.95);
+      for (let k = 0; k < 4; k++) box(rects, -8, y0 + 40 + k * 70, 16, 40, STEEL_LIGHT);
+      lit(0, 0, 30, accent);
+      lit(x0 + 20, y0 + 20, 10, RED);
+      lit(x0 + W - 20, y0 + H - 20, 10, RED);
+      break;
+    }
+    case 'ore_processing_complex': {
+      // Huge refinery block: furnace row, separator towers, a conveyor spine.
+      box(rects, x0, y0, W, H, DECK, 0.95);
+      slab(rects, x0 + 20, y0 + 20, W - 40, 150, STEEL_DARK, 10);
+      for (let k = 0; k < 5; k++) {
+        const fx = x0 + 50 + k * ((W - 100) / 5);
+        box(rects, fx, y0 + 60, 90, 70, STEEL);
+        box(rects, fx + 20, y0 + 100, 50, 22, live ? 0xff7a2a : 0x553322, 0.95);
+      }
+      box(rects, x0 + 40, -10, W - 80, 20, STEEL_LIGHT);
+      for (let k = 0; k < 4; k++) {
+        const tx = x0 + 70 + k * ((W - 140) / 4);
+        slab(rects, tx, 40, 120, H / 2 - 80, mixColor(accent, STEEL, 0.5), 8);
+      }
+      lit(0, 0, 24, accent);
+      lit(x0 + 24, y0 + 24, 10, RED);
+      lit(x0 + W - 24, y0 + H - 24, 10, RED);
+      break;
+    }
+    case 'assembly_plant': {
+      // Huge assembly hall: twin bays, a gantry spine, a roof of skylights.
+      box(rects, x0, y0, W, H, DECK, 0.95);
+      for (const by of [y0 + 20, 20]) {
+        slab(rects, x0 + 20, by, W - 40, H / 2 - 40, STEEL_DARK, 12);
+        for (let x = x0 + 50; x < x0 + W - 70; x += 70) {
+          box(rects, x, by + 30, 40, H / 2 - 100, mixColor(GLASS, STEEL_DARK, 0.6), 0.85);
+        }
+      }
+      box(rects, x0 + 20, -12, W - 40, 24, STEEL_LIGHT);
+      for (let x = x0 + 60; x < x0 + W - 60; x += 120) box(rects, x, -8, 40, 16, live ? accent : 0x553322);
+      lit(0, 0, 26, accent);
+      lit(x0 + 24, y0 + 24, 10, RED);
+      lit(x0 + W - 24, y0 + H - 24, 10, RED);
+      break;
+    }
     default:
       slab(rects, x0, y0, W, H, mixColor(STEEL, accent, 0.25), 6);
   }
