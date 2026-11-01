@@ -213,6 +213,24 @@ describe('ProductionSubsystem', () => {
     expect(theirs.hold!.goods.minerals).toBe(50);
   });
 
+  it('D1: a Reactor burns one fuel every fuelEveryPulses and is unfuelled (no power) without it', () => {
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: { fuel: 2 }, blueprints: [] } });
+    const reactor = rec('r', 'reactor');
+    const byId = new Map([[bay.id, bay], [reactor.id, reactor]]);
+    const registry = { all: () => byId.values(), get: (id: string) => byId.get(id), topologyDirty: false } as unknown as StructureRegistry & { topologyDirty: boolean };
+    const prod = new ProductionSubsystem({ registry, powered: () => true, componentOf: () => [bay.id, reactor.id] });
+    prod.pulse();
+    expect(reactor.fueled).toBe(true);
+    expect(registry.topologyDirty).toBe(true); // power must be recomputed
+    expect(bay.hold!.goods.fuel).toBe(1);
+    for (let i = 0; i < 9; i++) prod.pulse(); // the same unit lasts 10 pulses
+    expect(bay.hold!.goods.fuel).toBe(1);
+    prod.pulse(); // the next unit
+    expect(bay.hold!.goods.fuel).toBeUndefined();
+    for (let i = 0; i < 10; i++) prod.pulse();
+    expect(reactor.fueled).toBe(false);
+  });
+
   it('a citadel pulse scans each component storage once, not once per processor', () => {
     // Deterministic work lock (the wall-clock budget lives in
     // benchmarks/structures-scale.bench.ts — CI runs unit tests with coverage).
