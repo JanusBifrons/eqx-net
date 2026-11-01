@@ -4728,14 +4728,17 @@ export class SectorRoom extends Room<SectorState> {
       if (rec.isConstructed) flags |= STRUCTURE_FLAG_BUILT;
       if (summary.powered) flags |= STRUCTURE_FLAG_POWERED;
       if (rec.isDeconstructing) flags |= STRUCTURE_FLAG_DECONSTRUCTING;
+      // Every kind's flags (NOT inside the shield-emitter branch below — they
+      // were, so these bits reached clients only for pylons and gates; locked
+      // by structureFlagsWire.test.ts).
+      if (rec.noAmmo === true) flags |= STRUCTURE_FLAG_NO_AMMO;
+      if (rec.drawFull === true) flags |= STRUCTURE_FLAG_DRAW_FULL;
+      if (rec.isConstructed && getStructureKind(rec.kind).fuelEveryPulses != null && rec.fueled !== true) flags |= STRUCTURE_FLAG_NO_FUEL;
       let wallTo = -1;
       if (isShieldEmitterKind(rec.kind)) {
         // Clients derive every wall from connections + this flag (all of this
         // emitter's walls are up). `shieldWallTo` stays for a pylon's first wall.
         if (this.shieldWalls.wallsUpFor(rec.id, nowMs)) flags |= STRUCTURE_FLAG_WALL_ACTIVE;
-        if (rec.noAmmo === true) flags |= STRUCTURE_FLAG_NO_AMMO;
-        if (rec.drawFull === true) flags |= STRUCTURE_FLAG_DRAW_FULL;
-        if (rec.isConstructed && getStructureKind(rec.kind).fuelEveryPulses != null && rec.fueled !== true) flags |= STRUCTURE_FLAG_NO_FUEL;
         if (rec.kind === 'shield_pylon') {
           const wall = this.shieldWalls.wallStateFor(rec.id, nowMs);
           const other = wall ? this.swarmRegistry.get(wall.otherPost)?.entityId : undefined;
