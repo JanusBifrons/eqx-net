@@ -3569,7 +3569,7 @@ export class SectorRoom extends Room<SectorState> {
     const ids: Array<string | null> = [];
     let rejectedPlace = 0;
     for (const p of lat.placements) {
-      const id = this.structurePlacement.place('scenario', p.kind, p.x, p.y, { skipAutoConnect: true });
+      const id = this.structurePlacement.place('scenario', p.kind, p.x, p.y, { skipAutoConnect: true, rot: p.rot });
       if (id === null) rejectedPlace++;
       ids.push(id);
       const rec = id ? this.structureRegistry.get(id) : undefined;

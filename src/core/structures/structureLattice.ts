@@ -5,7 +5,8 @@
  * Builds N structures the way a player could: a Capital at the origin, a grid
  * of Connector hubs (row chains + a vertical spine through the Capital), up to
  * two leaves per row connector (Solar / Battery / Cargo Bay / Turret mix) sat
- * directly above and below it, and an optional closed Shield Pylon fence ring
+ * directly above and below it, and an optional closed rectangular shield fence
+ * around the base's extent, with a Shield Gate in the middle of each side,
  * tapped into the row ends. Every placement passes the real
  * `placementRejection`, and every edge passes the real `canConnect` when the
  * edges are applied in order — locked by `structureLattice.test.ts`.
@@ -16,8 +17,11 @@
  *     its four neighbours (capital ↔ connectors only);
  *   - a row connector's leaves sit directly above / below it, clear of the
  *     row line; spine connectors carry no leaves (the spine line stays clear);
- *   - fence pylons ring the lattice, level with each row / column so each row
- *     end taps the pylon beside it.
+ *   - the fence is a rectangle around the base (not a circle): pylons level
+ *     with each row / column so each row end taps the emitter beside it, and
+ *     the middle emitter of each side is a Shield Gate lying along that side
+ *     (rot 0 on the top/bottom, 90 on the left/right), so the fence runs post
+ *     to post and ships can come and go.
  *
  * Pure + zone-blind (no I/O). Not on a hot path (built once per room create).
  */
@@ -27,21 +31,25 @@ export interface LatticePlacement {
   kind: StructureKindId;
   x: number;
   y: number;
+  /** Quarter-turn rotation in degrees (gates on the left/right sides: 90). */
+  rot?: number;
 }
 
 export interface StructureLattice {
   placements: LatticePlacement[];
   /** Index pairs into `placements`, in an order every `canConnect` passes. */
   edges: Array<readonly [number, number]>;
-  /** Number of fence pylons (the tail of `placements`). */
+  /** Number of fence emitters, pylons and gates (the tail of `placements`). */
   fencePylons: number;
+  /** How many of those are Shield Gates (one per side). */
+  fenceGates: number;
 }
 
 export interface LatticeOptions {
   /** Structures in the connector+leaf lattice (Capital included; fence extra). */
   n: number;
   seed: number;
-  /** Ring the lattice with a closed shield-pylon fence. */
+  /** Ring the lattice with a closed rectangular shield fence (with gates). */
   fence?: boolean;
 }
 
@@ -117,6 +125,7 @@ export function buildStructureLattice(opts: LatticeOptions): StructureLattice {
   }
 
   let fencePylons = 0;
+  let fenceGates = 0;
   if (opts.fence) {
     let maxI = 0, maxJ = 0;
     for (const k of at.keys()) {
@@ -139,7 +148,12 @@ export function buildStructureLattice(opts: LatticeOptions): StructureLattice {
     ring.push([-fx, fy]);
     for (let j = maxJ; j >= -maxJ; j--) ring.push([-fx, j * LATTICE_PITCH]);
     const first = placements.length;
-    for (const [x, y] of ring) placements.push({ kind: 'shield_pylon', x, y });
+    for (const [x, y] of ring) {
+      // The middle of each side is a gate lying along the side.
+      if (x === 0 && Math.abs(y) === fy) { placements.push({ kind: 'shield_gate', x, y, rot: 0 }); fenceGates++; continue; }
+      if (y === 0 && Math.abs(x) === fx) { placements.push({ kind: 'shield_gate', x, y, rot: 90 }); fenceGates++; continue; }
+      placements.push({ kind: 'shield_pylon', x, y });
+    }
     fencePylons = ring.length;
     for (let p = 0; p < ring.length; p++) edges.push([first + p, first + ((p + 1) % ring.length)]);
     // Taps: each row-end connector links the side pylon level with it.
@@ -168,5 +182,5 @@ export function buildStructureLattice(opts: LatticeOptions): StructureLattice {
     }
   }
 
-  return { placements, edges, fencePylons };
+  return { placements, edges, fencePylons, fenceGates };
 }

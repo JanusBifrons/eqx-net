@@ -9,17 +9,18 @@ import { canConnect, type GridNode } from './Grid.js';
 import { Connection } from './Connection.js';
 import { placementRejection } from './placementRules.js';
 import { buildStructureLattice } from './structureLattice.js';
+import { isShieldEmitterKind } from './gateGeometry.js';
 
-function node(id: string, kind: string, x: number, y: number): GridNode {
+function node(id: string, kind: string, x: number, y: number, rot = 0): GridNode {
   const k = getStructureKind(kind);
   return {
     id, x, y, radius: k.radius,
-    halfW: structureHalfExtents(kind).hw,
-    halfH: structureHalfExtents(kind).hh,
+    halfW: structureHalfExtents(kind, rot).hw,
+    halfH: structureHalfExtents(kind, rot).hh,
     isHub: k.isHub,
     isCapital: kind === 'capital',
     isConnector: kind === 'connector',
-    isShieldPylon: kind === 'shield_pylon',
+    isShieldPylon: isShieldEmitterKind(kind),
     maxConnections: k.maxConnections,
     connectionRange: k.connectionRange,
     powerOutput: k.powerOutput,
@@ -28,13 +29,13 @@ function node(id: string, kind: string, x: number, y: number): GridNode {
   };
 }
 
-function check(n: number, fence: boolean): { total: number; reached: number; net: number; pylons: number } {
+function check(n: number, fence: boolean): { total: number; reached: number; net: number; pylons: number; gates: number } {
   const lat = buildStructureLattice({ n, seed: 7, fence });
   const nodes = new Map<string, GridNode>();
   const placed: Array<{ x: number; y: number; radius: number; halfW: number; halfH: number }> = [];
   lat.placements.forEach((p, i) => {
-    expect(placementRejection(p.kind, p.x, p.y, placed), `placement ${i} ${p.kind} @${p.x},${p.y}`).toBeNull();
-    const nd = node('s' + i, p.kind, p.x, p.y);
+    expect(placementRejection(p.kind, p.x, p.y, placed, null, p.rot ?? 0), `placement ${i} ${p.kind} @${p.x},${p.y}`).toBeNull();
+    const nd = node('s' + i, p.kind, p.x, p.y, p.rot ?? 0);
     placed.push({ x: p.x, y: p.y, radius: nd.radius, halfW: nd.halfW!, halfH: nd.halfH! });
     nodes.set(nd.id, nd);
   });
@@ -60,7 +61,7 @@ function check(n: number, fence: boolean): { total: number; reached: number; net
   }
   let net = 0;
   for (const nd of nodes.values()) net += nd.powerOutput - nd.powerConsumption;
-  return { total: lat.placements.length, reached: seen.size, net, pylons: lat.fencePylons };
+  return { total: lat.placements.length, reached: seen.size, net, pylons: lat.fencePylons, gates: lat.fenceGates };
 }
 
 describe('buildStructureLattice — valid under the real building rules', () => {
@@ -74,6 +75,7 @@ describe('buildStructureLattice — valid under the real building rules', () => 
   it.each([30, 100, 400, 800])('n=%i with a fence: closed pylon ring, tapped, powered', (n) => {
     const r = check(n, true);
     expect(r.pylons).toBeGreaterThan(8);
+    expect(r.gates).toBe(4); // a gate in the middle of each side
     expect(r.total).toBe(n + r.pylons);
     expect(r.reached).toBe(r.total);
     expect(r.net).toBeGreaterThanOrEqual(0);
