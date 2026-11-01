@@ -158,6 +158,9 @@ export const useUIStore = create<UIStore>((set, get) => ({
   cargo: null,
   cargoCapacity: 0,
   lootFeed: [],
+  tradeToasts: [],
+  tradeUnread: 0,
+  tradeNoticeSeq: 0,
   depositPct: null,
   pendingLevelUp: null,
   upgradeAck: null,
@@ -259,6 +262,18 @@ export const useUIStore = create<UIStore>((set, get) => ({
     return id;
   },
   expireLootFeed: (id) => set((s) => ({ lootFeed: s.lootFeed.filter((e) => e.id !== id) })),
+  pushTradeToast: (text, tone, unread) => {
+    const id = ++lootFeedSeq;
+    // Cap at 3 visible toasts; a burst of notices can't grow the stack.
+    set((s) => ({
+      tradeToasts: [...s.tradeToasts.slice(-2), { id, text, tone }],
+      tradeUnread: unread ? s.tradeUnread + 1 : s.tradeUnread,
+      tradeNoticeSeq: s.tradeNoticeSeq + 1,
+    }));
+    return id;
+  },
+  expireTradeToast: (id) => set((s) => ({ tradeToasts: s.tradeToasts.filter((e) => e.id !== id) })),
+  clearTradeUnread: () => set({ tradeUnread: 0 }),
   setDepositPct: (pct) => set({ depositPct: pct }),
   setPendingLevelUp: (level) => set({ pendingLevelUp: level }),
   setUpgradeAck: (ack) => set({ upgradeAck: ack }),

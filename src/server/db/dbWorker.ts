@@ -20,6 +20,7 @@ import { SCHEMA_SQL, PLAYER_SHIPS_MIGRATIONS } from './schema.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import type { WorkerInbound, WorkerOutbound } from './workerProtocol.js';
 import { HOLD_PUT_SQL, HOLD_DELETE_SQL, holdPutArgs, applyGroupAtomically } from './holdsSql.js';
+import { applyEconomyOp, prepareEconomyStatements } from './economySql.js';
 
 interface WorkerData {
   dbPath: string;
@@ -49,6 +50,8 @@ for (const sql of PLAYER_SHIPS_MIGRATIONS) {
     if (!/duplicate column name/i.test(message)) throw err;
   }
 }
+
+const econStmts = prepareEconomyStatements(db);
 
 const stmts = {
   KILL: db.prepare(
@@ -215,6 +218,12 @@ function applyOp(op: PersistOp): { rowId?: number } {
       stmts.ALLEGIANCE_DIRECTOR_STATE_PUT.run(op.allegiance, op.payloadJson, op.ts, op.ts);
       return {};
     }
+    case 'ECON_PLAYER_PUT':
+    case 'TRADE_DEAL_PUT':
+    case 'TRADE_DEAL_DELETE':
+    case 'ECON_STATE_PUT':
+      applyEconomyOp(econStmts, op);
+      return {};
     case 'ACCOUNT_PLAYER_PUT': {
       stmts.ACCOUNT_PLAYER_PUT.run(op.userId, op.playerId, op.ts, op.ts);
       return {};

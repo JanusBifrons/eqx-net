@@ -108,7 +108,7 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
         // Keep the SPA navigation fallback OFF the proxied API/WS routes — the
         // SW must never serve index.html for an /auth, /push, /galaxy… request.
-        navigateFallbackDenylist: [/^\/(matchmake|auth|galaxy|diag|dev|healthz|push)/],
+        navigateFallbackDenylist: [/^\/(matchmake|auth|galaxy|diag|dev|healthz|push|trade)/],
         // Custom push handlers (push + notificationclick) live in
         // public/push-sw.js, imported into the generated SW at root scope.
         importScripts: ['push-sw.js'],
@@ -162,6 +162,13 @@ export default defineConfig({
       },
       '/push': {
         target: `http://localhost:${SERVER_PORT}`,
+        changeOrigin: true,
+      },
+      // Living World P2 economy reads. NOTE: never add a top-level
+      // `src/client/trade/` dir — its module URLs would collide with this proxy
+      // (the 2026-06-14 `/galaxy` lesson).
+      '/trade': {
+        target: 'http://localhost:2567',
         changeOrigin: true,
       },
     },

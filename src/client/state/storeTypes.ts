@@ -29,6 +29,9 @@ export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'er
  *  live warning is a hostile drone wave, so the store defaults absent → 'hostile'. */
 export type WarpRelation = 'hostile' | 'neutral' | 'friendly';
 
+/** Living World P2 — trade toast colouring: good news / neutral / danger. */
+export type TradeToastTone = 'good' | 'info' | 'danger';
+
 /** Living World P1a — the local ship's carried hold, as the HUD sees it. */
 export interface CargoView {
   goods: Partial<Record<string, number>>;
@@ -262,6 +265,14 @@ export interface UIStore {
   cargoCapacity: number;
   /** Short-lived pickup popups ("+7 Salvage"). Newest last; auto-expired. */
   lootFeed: ReadonlyArray<{ id: number; text: string }>;
+  /** Living World P2 — short-lived trade toasts (from `trade_notice`). Newest
+   *  last, capped, auto-expired. An ACCELERATOR only — the Trade tab's truth is
+   *  `GET /trade/economy` (#16). */
+  tradeToasts: ReadonlyArray<{ id: number; text: string; tone: TradeToastTone }>;
+  /** Unread trade events (the Trade tab rail badge). Cleared when the tab is opened. */
+  tradeUnread: number;
+  /** Bumped on every `trade_notice`, so an open Trade tab refetches at once. */
+  tradeNoticeSeq: number;
   /** Living World P1a-2 — auto-deposit progress 0..100 (10 % steps), null when
    *  not depositing. Drives the chip's deposit bar. */
   depositPct: number | null;
@@ -448,6 +459,10 @@ export interface UIStore {
   setCargo: (cargo: CargoView | null, capacity: number) => void;
   pushLootFeed: (text: string) => number;
   expireLootFeed: (id: number) => void;
+  /** Push a trade toast; `unread` bumps the rail badge. Returns the toast id. */
+  pushTradeToast: (text: string, tone: TradeToastTone, unread: boolean) => number;
+  expireTradeToast: (id: number) => void;
+  clearTradeUnread: () => void;
   setDepositPct: (pct: number | null) => void;
   setLastFireMs: (ms: number | null) => void;
   setDrawerOpen: (v: boolean) => void;

@@ -165,6 +165,10 @@ export async function bootSectorTestServer(opts: {
   /** Room-level default spawn point (forwarded to `defaultSpawnX/Y`). */
   defaultSpawnX?: number;
   defaultSpawnY?: number;
+  /** Living World P2 — join the TradeDirector / stock placed storage / raiders. */
+  tradeEnabled?: boolean;
+  seedStorageHold?: { goods: Partial<Record<'minerals' | 'salvage' | 'alloy' | 'core', number>>; credits: number };
+  haulerRaiders?: number;
   /** A0 scale lattice (plan soft-leaping-truffle v2). */
   scaleGrid?: { n: number; seed: number; fence?: boolean };
 } = {}): Promise<SectorTestHarness> {
@@ -212,6 +216,9 @@ export async function bootSectorTestServer(opts: {
     asteroidConfig: opts.asteroidConfig,
     bases: opts.bases,
     baseHpScale: opts.baseHpScale,
+    tradeEnabled: opts.tradeEnabled,
+    seedStorageHold: opts.seedStorageHold,
+    haulerRaiders: opts.haulerRaiders,
     defaultSpawnX: opts.defaultSpawnX,
     defaultSpawnY: opts.defaultSpawnY,
     scaleGrid: opts.scaleGrid,

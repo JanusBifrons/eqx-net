@@ -27,6 +27,11 @@ import {
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
 import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
+import { toastForNotice } from './tradeView';
+import { TradeNoticeSchema } from '../../shared-types/economy.js';
+
+/** Living World P2 — how long a trade toast stays up. */
+const TRADE_TOAST_TTL_MS = 6_000;
 import { cargoCapacityForMaxHealth } from '@shared-types/goods';
 import { applySelectionStats } from './selectionStats.js';
 import {
@@ -2001,6 +2006,15 @@ export class ColyseusGameClient {
       if (!parsed.success) return;
       const id = useUIStore.getState().pushLootFeed(parsed.data.text);
       setTimeout(() => useUIStore.getState().expireLootFeed(id), LOOT_FEED_TTL_MS);
+    });
+    // Living World P2 — trade toasts + Trade-tab badge. An ACCELERATOR only:
+    // the tab's truth is `GET /trade/economy` (it refetches on tradeNoticeSeq).
+    room.onMessage('trade_notice', (raw: unknown) => {
+      const parsed = TradeNoticeSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const { tone, unread } = toastForNotice(parsed.data);
+      const id = useUIStore.getState().pushTradeToast(parsed.data.message, tone, unread);
+      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
     });
     room.onMessage('cargo_deposited', (raw: unknown) => {
       const parsed = CargoDepositedEventSchema.safeParse(raw);

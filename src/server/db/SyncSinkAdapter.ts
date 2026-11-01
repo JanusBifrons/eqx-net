@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { HOLD_PUT_SQL, HOLD_DELETE_SQL, holdPutArgs, applyGroupAtomically } from './holdsSql.js';
+import { applyEconomyOp, prepareEconomyStatements, type EconomyStatements } from './economySql.js';
 
 /**
  * Sub-phase A bridge: implements IPersistenceSink against a synchronous
@@ -34,8 +35,10 @@ export class SyncSinkAdapter implements IPersistenceSink {
   };
   /** A5 — atomic groups that rolled back (test observability). */
   groupFailures = 0;
+  private readonly econStmts: EconomyStatements;
 
   constructor(private readonly db: DatabaseSync) {
+    this.econStmts = prepareEconomyStatements(db);
     this.stmts = {
       HOLD_PUT: db.prepare(HOLD_PUT_SQL),
       HOLD_DELETE: db.prepare(HOLD_DELETE_SQL),
@@ -222,6 +225,12 @@ export class SyncSinkAdapter implements IPersistenceSink {
         this.stmts.ALLEGIANCE_DIRECTOR_STATE_PUT.run(op.allegiance, op.payloadJson, op.ts, op.ts);
         return {};
       }
+      case 'ECON_PLAYER_PUT':
+      case 'TRADE_DEAL_PUT':
+      case 'TRADE_DEAL_DELETE':
+      case 'ECON_STATE_PUT':
+        applyEconomyOp(this.econStmts, op);
+        return {};
       case 'ACCOUNT_PLAYER_PUT': {
         this.stmts.ACCOUNT_PLAYER_PUT.run(op.userId, op.playerId, op.ts, op.ts);
         return {};

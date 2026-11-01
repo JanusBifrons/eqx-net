@@ -282,6 +282,16 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 - `CargoChip` lives in the `top-left` slot at `order={3}` (under `ShieldHullBar`). Testids: `cargo-chip` (`data-cargo-weight/capacity/credits/fill`), `cargo-breakdown`, `loot-feed-line`.
 - Loot pods render through the EXISTING scrap path (`parentShipKind 'cargo-pod'`, `componentIndex` = tier colour). There's no separate pod renderer.
 
+## Trade UI (Living World P2b, plan peppy-jumping-pinwheel)
+
+- The **Trade tab** (`layout/Drawer/tabs/TradeTab.tsx`) rebuilds from `GET /trade/economy` + `/trade/offers` ONLY (#16). It polls only while on screen (`drawerTab === 'trade' && isDrawerOpen`, the drawer-perf rule) and refetches at once when `tradeNoticeSeq` bumps.
+- `trade_notice` (zod `TradeNoticeSchema`) is an ACCELERATOR. It pushes `tradeToasts` (`TradeToasts`, top-centre; red = under fire / raided = the escort prompt, tap opens the Trade tab) and bumps `tradeUnread` (the rail badge). Never derive deal state from it.
+- The base picker reads own storage from the render mirror via `getGameClient()` at poll cadence (`net/tradeView.ts` `ownStorages`). The structure subtype comes from the swarm entry's `shipKind`. Messages send the storage **entityId**; the server resolves the owned uid.
+- **No raw ids in trade text.** Storage labels are numbered ("Cargo Bay 2"), never `#entityId`. Sector names go through `sectorName`, and the server strips testMode `#roomId` keys (`tradeSectorKey`).
+- `WhileAwayDialog` summarises history newer than the localStorage watermark (`eqxTradeLastSeenMs`).
+- **Never add a top-level `src/client/trade/` dir:** it collides with the `/trade` Vite proxy. Trade client code lives in `net/trade*.ts`. The `clientDirProxyCollision.test.ts` guard locks this.
+- Locks: `tradeView.test.ts`, `TradeToasts.test.tsx`, `tests/e2e/trade-tab.spec.ts` (feature tier).
+
 ## Durable Identity
 
 - `playerId` is persisted in `localStorage` as `eqxPlayerId`. Read at bootstrap, sent in the `identify` handshake.

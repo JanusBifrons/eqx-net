@@ -16,7 +16,8 @@
  *    `flushDirty()` on the ~1 Hz grid pulse — a crash loses at most ~1 s of
  *    mining, it can never duplicate player value.
  */
-import type { Hold } from '../../shared-types/goods.js';
+import { GOOD_IDS, type GoodId, type Hold } from '../../shared-types/goods.js';
+import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { cloneHold, emptyHold, holdWeight, isHoldEmpty, transferInto } from '../../core/cargo/hold.js';
 import type { HoldRecord, HoldStore } from './HoldStore.js';
@@ -38,6 +39,30 @@ export interface StorageServiceDeps {
   sectorKey: () => string | null;
   /** Ids of every structure in the same grid component as `id` (incl. `id`). */
   componentOf: (id: string) => readonly string[];
+}
+
+export interface TradeNetworkSnapshot {
+  goods: Partial<Record<GoodId, number>>;
+  credits: number;
+  freeCapacity: number;
+  /** Pose of the network's anchor storage (the hauler docks beside it). */
+  x: number;
+  y: number;
+}
+
+export interface TradeTransferSpec {
+  take?: { want: Hold; intoUid: string };
+  release?: readonly string[];
+  mintCredits?: number;
+  destroy?: readonly string[];
+  extraOps?: readonly PersistOp[];
+}
+
+export interface TradeTransferResult {
+  taken: Hold;
+  overflow: Hold;
+  x: number;
+  y: number;
 }
 
 export function holdCapacityOf(rec: StructureRecord): number {
@@ -257,6 +282,145 @@ export class StorageService {
     this.persistedSig.delete(rec.uid);
     if (this.d.holdStore.get(rec.uid) !== undefined) this.d.holdStore.delete(rec.uid, this.persist());
     return isHoldEmpty(payload) ? null : payload;
+  }
+
+  // ── Living World P2 — trade escrow ──────────────────────────────────────
+
+  /** The operational storage structure with this uid, owned by `owner`. */
+  storageByUid(owner: string, uid: string): StructureRecord | null {
+    for (const rec of this.d.registry.all()) {
+      if (rec.uid === uid) return rec.owner === owner && isOperationalStorage(rec) ? rec : null;
+    }
+    return null;
+  }
+
+  /** What a base network can trade right now (goods incl. a Capital's mineral
+   *  bank, banked credits, free weight capacity). Null ⇒ no such network. */
+  tradeSnapshot(owner: string, networkUid: string): TradeNetworkSnapshot | null {
+    const target = this.storageByUid(owner, networkUid);
+    if (target === null) return null;
+    const goods: Partial<Record<GoodId, number>> = {};
+    let credits = 0;
+    let free = 0;
+    for (const rec of this.network(target)) {
+      const h = rec.hold ?? emptyHold();
+      credits += h.credits;
+      for (const g of GOOD_IDS) {
+        const n = h.goods[g] ?? 0;
+        if (n > 0) goods[g] = (goods[g] ?? 0) + n;
+      }
+      if (rec.minerals > 0) goods.minerals = (goods.minerals ?? 0) + rec.minerals;
+      free += Math.max(0, holdCapacityOf(rec) - holdWeight(h));
+    }
+    return { goods, credits, freeCapacity: free, x: target.x, y: target.y };
+  }
+
+  /**
+   * ONE atomic trade value move against `owner`'s network at `networkUid`:
+   *  - `take`: move up to `want` out of the network into holder `intoUid`
+   *    (only what exists moves — the caller reads `taken`);
+   *  - `release`: move each listed holder's whole hold INTO the network, then
+   *    delete the holder (anything that doesn't fit is returned as `overflow`
+   *    for the caller to drop as a pod at the storage);
+   *  - `mintCredits`: credits paid in by traders (a sell's proceeds);
+   *  - `destroy`: holders deleted outright (value leaves the economy);
+   *  - `extraOps`: the deal-state write that must land in the same group.
+   * Returns null when the network no longer exists (nothing changes).
+   */
+  tradeTransfer(owner: string, networkUid: string, spec: TradeTransferSpec): TradeTransferResult | null {
+    const target = this.storageByUid(owner, networkUid);
+    if (target === null) return null;
+    const net = this.network(target);
+    const touched = new Set<StructureRecord>();
+    const puts: HoldRecord[] = [];
+    const deletes: string[] = [];
+    const taken = emptyHold();
+    const overflow = emptyHold();
+
+    if (spec.take) {
+      const want = spec.take.want;
+      let creditsLeft = want.credits;
+      for (const rec of net) {
+        const h = rec.hold;
+        if (creditsLeft > 0 && h && h.credits > 0) {
+          const t = Math.min(h.credits, creditsLeft);
+          h.credits -= t;
+          creditsLeft -= t;
+          taken.credits += t;
+          touched.add(rec);
+        }
+        for (const g of GOOD_IDS) {
+          let need = (want.goods[g] ?? 0) - (taken.goods[g] ?? 0);
+          if (need <= 0) continue;
+          const have = h?.goods[g] ?? 0;
+          if (have > 0) {
+            const t = Math.min(have, need);
+            if (have - t > 0) h!.goods[g] = have - t;
+            else delete h!.goods[g];
+            taken.goods[g] = (taken.goods[g] ?? 0) + t;
+            need -= t;
+            touched.add(rec);
+          }
+          if (g === 'minerals' && need > 0 && rec.minerals > 0) {
+            const t = Math.min(rec.minerals, need);
+            rec.minerals -= t;
+            taken.goods.minerals = (taken.goods.minerals ?? 0) + t;
+            touched.add(rec);
+          }
+        }
+      }
+      const existing = this.d.holdStore.get(spec.take.intoUid);
+      const into = existing ? cloneHold(existing.hold) : emptyHold();
+      transferInto(into, cloneHold(taken), Infinity);
+      puts.push({
+        holderUid: spec.take.intoUid, holderType: 'hauler', ownerId: owner,
+        sectorKey: this.d.sectorKey(), x: null, y: null, hold: into, expiresAt: null,
+      });
+    }
+
+    for (const uid of spec.release ?? []) {
+      const rec = this.d.holdStore.get(uid);
+      deletes.push(uid);
+      if (rec === undefined) continue;
+      const src = cloneHold(rec.hold);
+      for (const s of net) {
+        const bankCap = getStructureKind(s.kind).storageCapacity;
+        const m = src.goods.minerals ?? 0;
+        if (bankCap > 0 && m > 0) {
+          const fit = Math.max(0, Math.min(m, bankCap - s.minerals));
+          if (fit > 0) {
+            s.minerals += fit;
+            if (m - fit > 0) src.goods.minerals = m - fit;
+            else delete src.goods.minerals;
+            touched.add(s);
+          }
+        }
+        if (isHoldEmpty(src)) break;
+        const hold = s.hold ?? emptyHold();
+        const r = transferInto(hold, src, holdCapacityOf(s));
+        if (!isHoldEmpty(r.moved)) { s.hold = hold; touched.add(s); }
+        if (isHoldEmpty(src)) break;
+      }
+      transferInto(overflow, src, Infinity);
+    }
+
+    if ((spec.mintCredits ?? 0) > 0) {
+      const h = target.hold ?? emptyHold();
+      h.credits += Math.floor(spec.mintCredits!);
+      target.hold = h;
+      touched.add(target);
+    }
+
+    for (const uid of spec.destroy ?? []) deletes.push(uid);
+
+    for (const rec of touched) {
+      const r = this.recordFor(rec);
+      if (r === null) continue;
+      this.persistedSig.set(rec.uid!, sig(r.hold));
+      puts.push(r);
+    }
+    this.d.holdStore.commit(puts, deletes, this.persist(), spec.extraOps ?? []);
+    return { taken, overflow, x: target.x, y: target.y };
   }
 
   /** Weight currently held across a target's network (inspector / tests). */

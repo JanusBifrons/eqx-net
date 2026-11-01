@@ -29,6 +29,8 @@ export const RADAR_CATEGORIES = [
   'lingering',
   // Living World P1a-2: loot pods + derelicts (cargo-pod scrap). ON by default.
   'loot',
+  // Living World P2: trade haulers (traders side). ON by default.
+  'trader',
 ] as const;
 export type RadarCategory = (typeof RADAR_CATEGORIES)[number];
 
@@ -88,6 +90,7 @@ export const RadarPrefsSchema = z
         scrap: CategorySchema,
         lingering: CategorySchema,
         loot: CategorySchema,
+        trader: CategorySchema,
       })
       .strict(),
   })
@@ -104,6 +107,7 @@ function categories(touch: boolean): RadarPrefs['categories'] {
     scrap: { enabled: false, shape: 'square', color: 0xb8b8b8, sizeMul: 0.7, opacityMul: 0.7 },
     lingering: { enabled: false, shape: 'triangle', color: 0x6b9b7b, sizeMul: 0.9, opacityMul: 0.7 },
     loot: { enabled: true, shape: 'circle', color: 0xffc94a, sizeMul: touch ? 0.8 : 0.9, opacityMul: 0.9 },
+    trader: { enabled: true, shape: 'square', color: 0x7fd6a8, sizeMul: 1, opacityMul: 0.95 },
   };
 }
 
