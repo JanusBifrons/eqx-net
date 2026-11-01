@@ -343,6 +343,9 @@ export function rollPackedHull(rng: () => number, chance: number): PackedItem | 
  *  `networkEntityId` into my roster (a parked ship there). */
 export const UnpackHullSchema = z
   .object({
+    // The client's send() always adds `type` (a strict schema without it drops
+    // every real request — the bug #227 fixed for the other messages).
+    type: z.literal('unpack_hull'),
     networkEntityId: z.number().int().nonnegative(),
     kind: z.string().min(1).max(40),
   })

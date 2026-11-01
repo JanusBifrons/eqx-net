@@ -47,7 +47,8 @@ describe('SectorRoom integration — unpacking hulls (economy v2 W5a)', () => {
     cr.onMessage('blueprint_result', (m: BlueprintResult) => results.push(m));
     const unpack = async (networkEntityId: number, kind: string): Promise<BlueprintResult> => {
       const n = results.length;
-      cr.send('unpack_hull', { networkEntityId, kind });
+      // The REAL client payload: tradeClient's send() always adds `type`.
+      cr.send('unpack_hull', { type: 'unpack_hull', networkEntityId, kind });
       expect(await until(() => results.length > n, 4000)).toBe(true);
       return results[results.length - 1]!;
     };
@@ -96,7 +97,7 @@ describe('SectorRoom integration — unpacking hulls (economy v2 W5a)', () => {
     const b = await harness.connectActive(thief, { spawnX: 600, spawnY: 900, shipKind: 'fighter' });
     const results: BlueprintResult[] = [];
     b.onMessage('blueprint_result', (m: BlueprintResult) => results.push(m));
-    b.send('unpack_hull', { networkEntityId: internal.swarmRegistry.get(cap.id)!.entityId, kind: 'gunship' });
+    b.send('unpack_hull', { type: 'unpack_hull', networkEntityId: internal.swarmRegistry.get(cap.id)!.entityId, kind: 'gunship' });
     expect(await until(() => results.length > 0, 4000)).toBe(true);
     expect(results[0]!.ok).toBe(false);
     expect(cap.hold.packed).toHaveLength(1);
