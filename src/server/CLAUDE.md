@@ -174,6 +174,14 @@ Update this section when a threshold is set.
   - Test rooms with ammo turrets stock munitions via `prebuiltStorageGoods`.
 - Locks: `ProductionSubsystem.test.ts` and `tests/integration/sectorRoom/production.test.ts`. Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).
 
+## NPC bases from the generator (plan soft-leaping-truffle v3, D2)
+
+- **Seeding:** the `npcBases` room option → `seedNpcBases` → `NpcBaseSubsystem.seed`.
+- **Place and link:** placements go through `structurePlacement.place(…, { skipAutoConnect: true, rot })`, edges through `connectExplicit`. Never auto-connect a generated base, because it would close gates and link the wrong things.
+- **Built and set up:** structures spawn built at their level. Processors get recipes and BOUND originals (`rec.blueprint.bound`, which `unloadBlueprint` refuses). Gates open for anyone not hostile.
+- **Stocked:** storage starts with an hour of fuel, munitions, and 20 cycles of inputs.
+- **Not persisted:** NPC structures aren't saved (B2); a restart regenerates them from the seed.
+
 ## NPC ownership (plan soft-leaping-truffle v3, B2)
 
 - **Owners like `npc:<allegiance>:<baseId>` are NPC bases.** Every "is this hostile?" decision about a structure goes through `relationOf`, using the room's ONE `relationCtx` (which holds the hostile-act ledger). Don't compare owner strings inline.

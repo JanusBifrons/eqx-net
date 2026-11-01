@@ -167,3 +167,24 @@ The generator powers bases with Reactors first, then Solars, and uses a Battery 
 | Citadel | 236 | 123 |
 
 `TIER_MAX_STRUCTURES` is now 50 / 80 / 160 / 260. NPC bases need fuel stock for their Reactors, so D2 seeds it and trade (T) keeps them supplied.
+
+## NPC bases in the game (D2)
+
+Code: [src/server/bases/NpcBaseSubsystem.ts](../../src/server/bases/NpcBaseSubsystem.ts). The `npcBases` room option takes specs like `{ baseId, role, tier, seed, x, y, features }`.
+
+`seed(spec)` grows the base with `growBase`, then:
+- **Place:** each structure goes through the real `StructurePlacementSubsystem` (`skipAutoConnect`), owned by `npc:<side>:<baseId>`.
+- **Link:** the generator's edges are applied with `connectExplicit`, which re-checks the real `canConnect`.
+- **Build:** every structure is built at its level, with its HP at the leveled maximum.
+- **Set up processors:** their recipes, plus a BOUND faction blueprint (an original that can't be unloaded) where the recipe needs one.
+- **Gates:** they open for anyone not hostile.
+- **Stock:** an hour of Reactor fuel, munitions for ammo turrets, and 20 cycles of each processor's inputs.
+
+Then the real systems run: power, batteries, fence, turrets, production. NPC structures aren't persisted; a restart regenerates them from the seed.
+
+**Test rooms:** `npc-base-outpost` (mining), `npc-base-settlement` (refinery), `npc-base-stronghold` (manufactory) and `npc-base-citadel` (assembly works). Each has `filterBy(testId)` and spawns the pilot south of the fence.
+
+**Lock:** `tests/integration/sectorRoom/npcBases.test.ts`.
+- Every structure is placed, NPC-owned, built and reachable from the Capital through the live grid, with zero rejected placements or edges.
+- After pulses, Reactors are fuelled and processors run.
+- Gates are open, and manufactory blueprints are bound originals.

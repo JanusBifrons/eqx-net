@@ -79,6 +79,17 @@ function packedProduct(kind: StructureKindId): string {
   return p;
 }
 
+/** `hull:<kind>` product ids, built once per kind. */
+const HULL_PRODUCT = new Map<string, string>();
+function hullProduct(kind: string): string {
+  let p = HULL_PRODUCT.get(kind);
+  if (p === undefined) {
+    p = `hull:${kind}`;
+    HULL_PRODUCT.set(kind, p);
+  }
+  return p;
+}
+
 /** A recipe's base effect (no blueprint), cached per recipe. */
 const BASE_EFFECT = new Map<RecipeId, EffectiveRecipe>();
 function baseEffect(id: RecipeId): EffectiveRecipe {
@@ -376,8 +387,9 @@ export class ProductionSubsystem {
       bank[i] = NaN;
     }
     for (const o of outputs) {
-      if ('packed' in o) {
-        const product = packedProduct(o.packed);
+      if ('packed' in o || 'hull' in o) {
+        // A packed structure, or a packed hull (W5 Shipyard): one discrete item.
+        const product = 'packed' in o ? packedProduct(o.packed) : hullProduct(o.hull);
         const w = packedWeightOf(product);
         let placed = false;
         for (let i = 0; i < net.length && !placed; i++) {
