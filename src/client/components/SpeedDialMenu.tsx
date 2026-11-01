@@ -20,6 +20,18 @@ import BoltIcon from '@mui/icons-material/Bolt';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import DoorSlidingIcon from '@mui/icons-material/DoorSliding';
 import MeetingRoomIcon from '@mui/icons-material/MeetingRoom';
+import AirIcon from '@mui/icons-material/Air';
+import RecyclingIcon from '@mui/icons-material/Recycling';
+import WhatshotIcon from '@mui/icons-material/Whatshot';
+import OilBarrelIcon from '@mui/icons-material/OilBarrel';
+import MemoryIcon from '@mui/icons-material/Memory';
+import GrassIcon from '@mui/icons-material/Grass';
+import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing';
+import HardwareIcon from '@mui/icons-material/Hardware';
+import LocalShippingIcon from '@mui/icons-material/LocalShipping';
+import TerrainIcon from '@mui/icons-material/Terrain';
+import FactoryIcon from '@mui/icons-material/Factory';
+import SettingsIcon from '@mui/icons-material/Settings';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
 import { getStructureKind, type StructureKindId } from '@shared-types/structureKinds';
@@ -343,6 +355,19 @@ export const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
   cargo_bay: <InventoryIcon />, // Living World P1a-2
   shield_gate: <DoorSlidingIcon />,
   shield_airlock: <MeetingRoomIcon />,
+  // Production chains (plan soft-leaping-truffle v3, P2a).
+  gas_collector: <AirIcon />,
+  reclaimer: <RecyclingIcon />,
+  smelter: <WhatshotIcon />,
+  refinery: <OilBarrelIcon />,
+  silicon_works: <MemoryIcon />,
+  hydroponics: <GrassIcon />,
+  fabricator: <PrecisionManufacturingIcon />,
+  munitions_works: <HardwareIcon />,
+  freight_dock: <LocalShippingIcon />,
+  deep_core_rig: <TerrainIcon />,
+  ore_processing_complex: <SettingsIcon />,
+  assembly_plant: <FactoryIcon />,
 };
 
 // ── Hoisted static sx / props (no per-render allocation) ───────────────────

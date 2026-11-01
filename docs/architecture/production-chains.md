@@ -59,6 +59,7 @@ A sector's asteroid field mixes three kinds, weighted by the sector's galaxy `fe
 | Phase | Adds |
 |---|---|
 | P1 | This data and its tests. No live behaviour changes. |
+| P2a | The 12 production kinds join the structure catalogue (appended, no version bump), with footprints, drawings, build icons and a new Industry build category. The Deep Core Rig, Ore Processing Complex and Assembly Plant are hubs with 4 links. They can be placed but don't produce yet. |
 | P2 | The production structures, a processing step in the 1 Hz grid pulse, Miner yields by asteroid kind, ammo, the upgrade goods bill, one mineral pool. Packed structures arrive once Living World's packed items land. |
 | D1–D2 | The base generator grows a chain for each base's role (mining outpost, refinery, workshop, manufactory, assembly works, trade hub). |
 | T | Trade between bases: convoys, regional prices, Freight Dock orders. Payments go through the Living World wallet. |
