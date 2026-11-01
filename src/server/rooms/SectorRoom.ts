@@ -142,7 +142,7 @@ import type { SnapshotMessage } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { isLatentSlot, resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
-import type { ActivatedMount } from '../playerShips/PlayerShipStore.js';
+import { ROSTER_CAP, type ActivatedMount } from '../playerShips/PlayerShipStore.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
@@ -220,10 +220,12 @@ import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
 import { rollEliteLoot, ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS, PlaceBountySchema, type BountyResult } from '../../shared-types/contracts.js';
 import {
-  InstallBlueprintSchema, STARTER_STRUCTURE_KINDS, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, productName, weaponUnlocked, type BlueprintResult,
+  InstallBlueprintSchema, UnpackHullSchema, STARTER_STRUCTURE_KINDS, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, productName, weaponUnlocked, type BlueprintResult,
 } from '../../shared-types/blueprints.js';
 
 const EMPTY_FITTED: readonly string[] = Object.freeze([]);
+/** Economy v2 W5a — an unpacked hull parks this far from its storage. */
+const UNPACK_PARK_OFFSET = 400;
 import { getBountyBoard } from '../economy/BountyBoard.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
 // RosterFullError is handled inside RosterPersistence.ts
@@ -2705,7 +2707,7 @@ export class SectorRoom extends Room<SectorState> {
       // The key the TradeDirector knows this room by (galaxy: the sectorKey).
       const tradeKey = this.tradeRegisteredKey ?? this.sectorKey;
       if (tradeKey === null) { reply(false, null, 'Trade is only available in the galaxy.'); return; }
-      if (!this.playerToUser.get(playerId)) { reply(false, null, 'Sign in to trade.'); return; }
+      // Economy v2 — guests are full players (the user's ruling): no sign-in gate.
       // A storage structure the player OWNS here → its stable uid.
       const networkUidOf = (entityId: number): string | null => {
         const rec = this.swarmRegistry.getByEntityId(entityId);
@@ -2797,6 +2799,18 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('lab_query', (client: Client, raw: unknown) => labRequest(client, 'lab_query', raw));
     this.onMessage('lab_start', (client: Client, raw: unknown) => labRequest(client, 'lab_start', raw));
     this.onMessage('lab_cancel', (client: Client, raw: unknown) => labRequest(client, 'lab_cancel', raw));
+
+    // ── Economy v2 W5a — unpack a packed hull into my roster ─────────────────
+    this.onMessage('unpack_hull', (client: Client, raw: unknown) => {
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      const p = UnpackHullSchema.safeParse(raw);
+      if (!p.success || !isPlayableShipKindId(p.data.kind)) { this.malformed.record(client.sessionId, 'unpack_hull'); return; }
+      const reply = (ok: boolean, message: string): void => {
+        try { client.send('blueprint_result', { type: 'blueprint_result', ok, message } satisfies BlueprintResult); } catch { /* closing */ }
+      };
+      reply(...this.unpackHull(playerId, p.data.networkEntityId, p.data.kind));
+    });
 
     // ── Living World P4c-2 — place a player bounty ───────────────────────────
     this.onMessage('place_bounty', (client: Client, raw: unknown) => {
@@ -4797,6 +4811,8 @@ export class SectorRoom extends Room<SectorState> {
               // the Install action picks the module ones; the panel names them.
               blueprintIds: h ? h.blueprints.slice(0, 64).map((b) => b.product) : [],
               packed: h?.packed?.length ?? 0,
+              // W5a — the stored packed items' PRODUCT ids (the Unpack chips).
+              packedIds: h?.packed ? h.packed.slice(0, 64).map((p) => p.product) : [],
             },
             holdCapacity: holdCap,
           }
@@ -6897,6 +6913,46 @@ export class SectorRoom extends Room<SectorState> {
         else getHoldStore().commit([{ ...row, hold: h }], [], persist);
       },
     };
+  }
+
+  /**
+   * Economy v2 W5a — unpack one packed `kind` hull from `playerId`'s storage
+   * network at `networkEntityId` into their roster: a fresh ship parked beside
+   * that storage, picked from the roster like any other. The roster cap is
+   * checked first; the packed item is taken (one hold group) BEFORE the roster
+   * row is created, and put back if creating it fails, so a hull is never
+   * duplicated. Galaxy rooms only (engineering rooms have no roster).
+   */
+  private unpackHull(playerId: string, networkEntityId: number, kind: ShipKindId): [boolean, string] {
+    const name = getShipKind(kind).displayName;
+    if (this.sectorKey === null) return [false, 'Ships can only be unpacked in the galaxy.'];
+    const rec = this.swarmRegistry.getByEntityId(networkEntityId);
+    const s = rec ? this.structureRegistry.get(rec.id) : undefined;
+    if (s === undefined || s.owner !== playerId || !isOperationalStorage(s)) return [false, 'Pick one of your storage structures.'];
+    const product = `hull:${kind}`;
+    const from = this.storage.network(s).find((r) => r.hold !== undefined && packedCount(r.hold, product) > 0);
+    if (from === undefined) return [false, `There is no packed ${name} in this base.`];
+    const store = getPlayerShipStore();
+    if (store.listByPlayer(playerId).length >= ROSTER_CAP) return [false, `Your roster is full (${ROSTER_CAP} ships). Abandon one first.`];
+    const item = takePacked(from.hold!, product)!;
+    this.storage.commitChanged([from], []);
+    try {
+      const ship = store.create({
+        playerId,
+        userId: this.playerToUser.get(playerId) ?? null,
+        kind,
+        sectorKey: this.sectorKey,
+        x: s.x + UNPACK_PARK_OFFSET,
+        y: s.y,
+        health: getShipKind(kind).maxHealth,
+      });
+      auditEvent({ event: 'hull_unpacked', sector: this.sectorKey, playerId, shipInstanceId: ship.shipId, kind, quality: item.quality });
+      return [true, `${name} unpacked: it's in your roster.`];
+    } catch {
+      (from.hold!.packed ??= []).push(item);
+      this.storage.commitChanged([from], []);
+      return [false, `Could not unpack the ${name}.`];
+    }
   }
 
   /** Living World P1a-2 — a short player-facing notice (HUD popup line). */

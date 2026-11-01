@@ -99,6 +99,20 @@ are BOUGHT from NPC factions and traders, and some are LOOTED from ships.
   minerals.
 - **W5 — Shipyard:** ship blueprint + goods → a packed hull → unpack into your
   roster. Modules become manufactured items.
+  - **W5a, shipped: unpacking.**
+    - A packed hull (`hull:<kind>`) in your storage shows as an **▢ Unpack
+      \<ship\>** chip in that storage's inspector. Tapping it turns the crate
+      into a ship parked beside the storage, in your roster; pick it from
+      the roster like any other.
+    - Your roster cap (10) is checked first, and the crate stays put if
+      you're full.
+    - Elites (~15 %) and incursion caches (~15 %) can drop packed hulls.
+    - Quality has no stat effect yet.
+  - **W5b, next:**
+    - the Shipyard structure and its `build_<ship>` recipes;
+    - traders selling packed hulls;
+    - the picker gate: starter hulls stay free, and any other kind needs a
+      hull you own.
 - **W6 — blueprint market:** buy and sell blueprints with traders.
 
 ## Tests

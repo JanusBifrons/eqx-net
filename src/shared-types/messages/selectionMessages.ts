@@ -64,6 +64,8 @@ export const EntityStatsSchema = z
       blueprintIds: z.array(z.string().max(80)).max(64).optional(),
       /** W2 — how many packed structures / hulls are stored. */
       packed: z.number().int().nonnegative().optional(),
+      /** W5a — the stored packed items' product ids (owner-only). */
+      packedIds: z.array(z.string().max(80)).max(64).optional(),
     }).strict().optional(),
     /** Weight capacity of that storage (with `hold`). */
     holdCapacity: z.number().nonnegative().optional(),

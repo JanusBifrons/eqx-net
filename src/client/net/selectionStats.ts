@@ -35,6 +35,8 @@ export interface SelectionStats {
   holdSalvage: number;
   /** P5 — stored blueprint ids, comma-joined (a primitive for the shallow compare). */
   holdBlueprints: string;
+  /** W5a — stored packed product ids, comma-joined (the Unpack chips). */
+  holdPacked: string;
 }
 
 export const selectionStats: SelectionStats = {
@@ -48,6 +50,7 @@ export const selectionStats: SelectionStats = {
   holdUse: undefined,
   holdSalvage: 0,
   holdBlueprints: '',
+  holdPacked: '',
 };
 
 interface HoldWire {
@@ -55,6 +58,7 @@ interface HoldWire {
   blueprints: number;
   blueprintIds?: string[];
   packed?: number;
+  packedIds?: string[];
 }
 
 /** Apply a fresh `entity_stats` packet (mutated in place — no alloc on the
@@ -80,11 +84,13 @@ export function applySelectionStats(s: {
     selectionStats.holdUse = `${Math.round(holdViewWeight(s.hold))}/${s.holdCapacity}`;
     selectionStats.holdSalvage = s.hold.goods.salvage ?? 0;
     selectionStats.holdBlueprints = (s.hold.blueprintIds ?? []).join(',');
+    selectionStats.holdPacked = (s.hold.packedIds ?? []).join(',');
   } else {
     selectionStats.holdLine = undefined;
     selectionStats.holdUse = undefined;
     selectionStats.holdSalvage = 0;
     selectionStats.holdBlueprints = '';
+    selectionStats.holdPacked = '';
   }
 }
 
@@ -100,6 +106,7 @@ export function resetSelectionStats(): void {
   selectionStats.holdUse = undefined;
   selectionStats.holdSalvage = 0;
   selectionStats.holdBlueprints = '';
+  selectionStats.holdPacked = '';
 }
 
 /** "Salvage 7 · Alloy 3 · ¢30 · ★1" ("Empty" when nothing is stored). */

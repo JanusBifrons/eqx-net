@@ -10,7 +10,7 @@
 import type { Hold } from './goods.js';
 import type { ShipKindId } from './shipKinds.js';
 import { rollLoot } from './lootTables.js';
-import { ELITE_BLUEPRINT_CHANCE, ELITE_PACKED_CHANCE, rollBlueprint, rollPackedStructure } from './blueprints.js';
+import { ELITE_BLUEPRINT_CHANCE, ELITE_HULL_CHANCE, ELITE_PACKED_CHANCE, rollBlueprint, rollPackedHull, rollPackedStructure } from './blueprints.js';
 
 /** Elite bot ids (owned by the server `EliteDirector`). */
 export const ELITE_ID_PREFIX = 'elite-';
@@ -58,5 +58,8 @@ export function rollEliteLoot(kindId: string | null | undefined, rng: () => numb
   // their 3 table rolls above; any packed items those dropped are kept too.
   const packed = rollPackedStructure(rng, ELITE_PACKED_CHANCE);
   if (packed !== null) (out.packed ??= []).push(packed);
+  // Economy v2 W5a — and, rarely, a packed hull.
+  const hull = rollPackedHull(rng, ELITE_HULL_CHANCE);
+  if (hull !== null) (out.packed ??= []).push(hull);
   return out;
 }

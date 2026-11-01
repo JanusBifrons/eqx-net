@@ -35,6 +35,12 @@ export function sendInstallBlueprint(networkEntityId: number, blueprintId: strin
   return send('install_blueprint', { networkEntityId, blueprintId });
 }
 
+/** Economy v2 W5a — unpack a packed hull at my storage into my roster
+ *  (verdict: `blueprint_result`). */
+export function sendUnpackHull(networkEntityId: number, kind: string): boolean {
+  return send('unpack_hull', { networkEntityId, kind });
+}
+
 /** Economy v2 W3 — Research Lab requests (each answered by `lab_state`). */
 export function sendLabQuery(entityId: number): boolean {
   return send('lab_query', { entityId });

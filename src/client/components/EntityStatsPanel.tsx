@@ -25,6 +25,7 @@ import { sendPilotShip } from '../ships/shipActionsClient';
 import { BountyAction } from './BountyAction';
 import { BlueprintInstall } from './BlueprintInstall';
 import { ResearchLabPanel } from './ResearchLabPanel';
+import { HullUnpack } from './HullUnpack';
 import { hullColor } from './ShieldHullBar';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { canUpgradeStructure } from '@core/leveling/structureLevel';
@@ -136,6 +137,9 @@ interface PanelData {
   /** Living World P5 — an OWNED storage's blueprint ids, comma-joined (the
    *  Install actions). Empty / absent when it holds none. */
   blueprints?: string;
+  /** Economy v2 W5a — an OWNED storage's packed product ids, comma-joined
+   *  (the Unpack-hull chips). Absent when it holds none. */
+  packed?: string;
 }
 
 export function EntityStatsPanel(): JSX.Element | null {
@@ -413,6 +417,7 @@ export function EntityStatsPanel(): JSX.Element | null {
       {data.blueprints !== undefined && data.entityId !== undefined && (
         <BlueprintInstall entityId={data.entityId} blueprints={data.blueprints} />
       )}
+      {data.packed !== undefined && data.entityId !== undefined && <HullUnpack entityId={data.entityId} packed={data.packed} />}
       {data.isLab === true && data.entityId !== undefined && <ResearchLabPanel entityId={data.entityId} />}
       {data.pilotShipId !== undefined && (
         // Phase 4 WS-A2 — in-world Pilot action on the local player's OWN
@@ -445,7 +450,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
   'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'noAmmo',
-  'isLab',
+  'isLab', 'packed',
 ];
 
 /** The next gate access setting in the cycle (owner + allies → owner only →
@@ -563,6 +568,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         data.holdUse = selectionStats.holdUse;
         data.canRefine = data.isOwn === true && subtype === 'capital' && selectionStats.holdSalvage > 0;
         if (data.isOwn === true && selectionStats.holdBlueprints !== '') data.blueprints = selectionStats.holdBlueprints;
+        if (data.isOwn === true && selectionStats.holdPacked !== '') data.packed = selectionStats.holdPacked;
       }
     }
     return data;
