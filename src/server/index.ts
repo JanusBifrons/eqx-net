@@ -11,6 +11,10 @@ import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
 import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devPlayerShipsAbandonHandler, devResetSectorHandler, devResetRosterHandler, devWebrtcCountersHandler } from './routes/diagRouter.js';
 import { galaxyRouter } from './routes/galaxyRouter.js';
+import { economyRouter, setEconomyRouteProvider } from './routes/economyRouter.js';
+import { EconomyStore, hydrateEconomyStore } from './economy/EconomyStore.js';
+import { TradeDirector } from './economy/TradeDirector.js';
+import { setTradeSink } from './economy/tradeSink.js';
 import { pushRouter } from './routes/pushRouter.js';
 import { devAuditHandler } from './audit/auditRoute.js';
 import { flushAudit } from './audit/GameplayAuditLog.js';
@@ -21,6 +25,8 @@ import {
   initHoldStore,
   initAccountPlayerRegistry,
   getPersistenceHealth,
+  getPersistence,
+  getHoldStore,
 } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
@@ -74,6 +80,7 @@ app.use('/auth', authRouter);
 // Phase 8 — public route exposing the galaxy graph for the landing screen
 // and the in-game galaxy-map overlay.
 app.use('/galaxy', galaxyRouter);
+app.use('/trade', economyRouter);
 // Web Push (PWA notifications): VAPID public key + subscribe/unsubscribe.
 app.use('/push', pushRouter);
 
@@ -98,6 +105,9 @@ let livingWorldDirector: LivingWorldDirector | null = null;
 /** Living World P1b — the robot-side director (null when disarmed). */
 let robotDirector: LivingWorldDirector | null = null;
 const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
+/** Living World P2 — the economy (null until boot finishes). */
+let economyStore: EconomyStore | null = null;
+let tradeDirector: TradeDirector | null = null;
 app.get('/healthz', (_req, res) => {
   res.json({
     status: 'ok',
@@ -1112,6 +1122,23 @@ async function main(): Promise<void> {
     );
   }
 
+  // Living World P2 — the economy: market, reputation, trade deals carried by
+  // physical haulers. Independent of the squad directors (trade still runs when
+  // the Living World kill switch is set). Hydrate BEFORE start(): the director's
+  // boot reconcile unwinds any run that was in flight when the server stopped.
+  economyStore = new EconomyStore({ persistence: getPersistence });
+  const econ = hydrateEconomyStore(economyStore, (sql) => db.prepare(sql).all());
+  tradeDirector = new TradeDirector(galaxyRooms, economyStore, getHoldStore());
+  tradeDirector.start();
+  setTradeSink(tradeDirector);
+  const store = economyStore;
+  const director = tradeDirector;
+  setEconomyRouteProvider({
+    offersFor: (pid) => director.offersFor(pid),
+    view: (pid) => store.view(pid),
+  });
+  logger.info(econ, 'trade director started');
+
   // All boot work is done — joining a galaxy room will now succeed.
   // Flip the /healthz `ready` flag so the client landing screen enables
   // the Join CTA.
@@ -1148,6 +1175,10 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
     livingWorldDirector?.stop();
     robotDirector?.persistState();
     robotDirector?.stop();
+    setTradeSink(null);
+    setEconomyRouteProvider(null);
+    tradeDirector?.stop();
+    economyStore?.saveMarket();
   } catch (err) {
     logger.warn({ err }, 'livingWorldDirector.persistState/stop threw');
   }
