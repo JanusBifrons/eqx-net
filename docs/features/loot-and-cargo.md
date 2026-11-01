@@ -143,6 +143,37 @@ killed lingering hull never deleted its roster row. See `docs/LESSONS.md`.
 - **Ownerless storage** becomes derelict when a base loses its owner. Nothing
   in the game removes an owner yet, so there is no trigger.
 
+## Part 3 (C1): open a structure's cargo and move items by hand
+
+Plan soft-leaping-truffle v3, phase C1. Auto-deposit banks everything you carry; opening the cargo lets you choose.
+
+**What the player does.** Fly up to a storage structure (a Capital, Cargo Bay, Storage Vault…) and open its cargo. One pane is the structure's contents, including a Capital's mineral bank; the other is your ship's hold. Move items either way: **take** loads them aboard, **put** unloads them into that structure.
+
+**When it opens** (server-checked on every message, `SectorRoom.cargoAccess`):
+- **Who:** the relation allows it. `cargoOpensFor(relationOf(you, owner))` opens for your own and friendly cargo; allied cargo only if the owner allows it, and there is no owner setting yet, so not today. Neutral and hostile cargo is **locked**, and later needs a break-in (C2). An NPC trader base is neutral, so it is locked.
+- **A live ship:** ACTIVE, alive, with a roster row (#17, the same liveness as loot pickup).
+- **In range:** within `CARGO_ACCESS_RANGE` (400 u) of the structure's **footprint edge**, not its centre (large structures).
+
+**How a move works** (`StorageService.cargoTake` / `cargoPut`):
+- **Exactly what was asked.** `extractRequested` (core/cargo/hold.ts) pulls exactly the requested items, clamped to what is there.
+- **Capacity.** `transferInto` applies the destination's capacity, and whatever doesn't fit goes back. Value is conserved.
+- **Minerals.** A take draws a Capital's minerals from its goods hold first, then its bank. A put fills the bank first, like a deposit.
+- **Atomic.** The ship row and the structure row commit as ONE hold group.
+
+**A withdrawal sticks.** After a manual move, auto-deposit stays off for that pilot until they fly out of deposit range of their storage (`SectorRoom.manualCargo`). Otherwise anything you took from your own storage would be banked straight back 2 s later.
+
+**Wire (#16).** `cargo_query` / `cargo_move` → `cargo_state` (`shared-types/messages/cargoMessages.ts`). The structure pane is rebuilt from `cargo_state` only; the ship pane is the own-ship snapshot cargo slice. The inspector's hold readout (`entity_stats`) shows to anyone the cargo would open for. Each move is audited as `cargo_moved`.
+
+**Lock:** `tests/integration/sectorRoom/cargoAccess.test.ts`:
+- take and put move items;
+- a withdrawal sticks (this fails without the manual-cargo rule);
+- a stranger and an NPC base are locked;
+- too far reads "Fly closer".
+
+Unit locks: `hold.test.ts` (`extractRequested`) and `StorageService.test.ts` (cargo access).
+
+**Next:** C1b, the cargo panel UI. C1c, holds on every structure kind and NPC ship holds rolled from a seed.
+
 ## Tests
 
 - Part 2: `src/server/cargo/StorageService.test.ts` (uid determinism, atomic
