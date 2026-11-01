@@ -72,7 +72,7 @@ describe('SectorRoom integration — player bounties (P4c-2, wallet)', () => {
     pc.onMessage('bounty_result', (m: BountyResult) => results.push(m));
     const placeBounty = async (targetPlayerId: string, amount: number): Promise<BountyResult> => {
       const n = results.length;
-      pc.send('place_bounty', { targetPlayerId, amount });
+      pc.send('place_bounty', { type: 'place_bounty', targetPlayerId, amount });
       expect(await until(() => results.length > n, 4000)).toBe(true);
       return results[results.length - 1]!;
     };

@@ -61,6 +61,7 @@ export function pvpBountyCost(amount: number): number {
  *  placer's WALLET (economy v2 — credits are virtual). */
 export const PlaceBountySchema = z
   .object({
+    type: z.literal('place_bounty'),
     targetPlayerId: z.string().min(1).max(64),
     amount: z.number().int().min(PVP_BOUNTY_MIN).max(PVP_BOUNTY_MAX),
   })
