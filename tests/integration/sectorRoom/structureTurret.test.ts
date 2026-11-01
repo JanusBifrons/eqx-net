@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { STARTER_STRUCTURE_KINDS } from '../../../src/shared-types/blueprints.js';
 
 /** Room-PRIVATE collaborators the WS-8 shot tests observe — `missileSim` +
  *  `projectiles.liveProjectiles` are private fields (not on the `_internals`
@@ -24,6 +25,15 @@ async function placeAndWait(
   const internals = harness.getServerRoom()!._internals;
   const before = new Set<string>();
   for (const r of internals.structureRegistry.all()) before.add(r.id);
+  // Economy v2 W4b — a non-starter kind is placed from a PACKED item: stock
+  // one in the Capital first (this test is about turrets, not packing).
+  if (!STARTER_STRUCTURE_KINDS.includes(kind)) {
+    const cap = [...internals.structureRegistry.all()].find((r) => r.kind === 'capital');
+    if (cap) {
+      cap.hold ??= { goods: {}, blueprints: [] };
+      (cap.hold.packed ??= []).push({ product: `structure:${kind}`, quality: 50 });
+    }
+  }
   room.send('place_structure', { type: 'place_structure', kind, x, y });
   const deadline = Date.now() + 3000;
   while (Date.now() < deadline) {

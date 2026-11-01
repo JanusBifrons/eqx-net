@@ -89,13 +89,13 @@ import type { BotCarry } from '../livingworld/botTypes.js';
 // Drone-kind catalogue helpers moved to ./droneKindHelpers.ts.
 import { droneMaxHealthOf, getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
-import { StructureRegistry } from '../structures/StructureRegistry.js';
+import { StructureRegistry, type StructureRecord } from '../structures/StructureRegistry.js';
 import { FactionLedger } from '../faction/FactionLedger.js';
 import { isBaseReady } from '../../core/faction/Faction.js';
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
 import { RecentCombatLog } from './RecentCombatLog.js';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
-import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
+import { StructurePlacementSubsystem, type PackedGateResult } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { GateController, type GateShipBuffer } from '../structures/GateController.js';
@@ -194,16 +194,16 @@ import { getPlayerShipStore, getHoldStore, getWallet, getLabBoard } from '../db/
 import { ResearchLabSubsystem } from '../structures/ResearchLabSubsystem.js';
 import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type LabState } from '../../shared-types/messages/labMessages.js';
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
-import { StorageService, fittedModuleIds, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
+import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
-import { cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto } from '../../core/cargo/hold.js';
+import { cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked } from '../../core/cargo/hold.js';
 import { HARVESTER_CAPACITY, RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
 import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
 import { rollEliteLoot, ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS, PlaceBountySchema, type BountyResult } from '../../shared-types/contracts.js';
 import {
-  InstallBlueprintSchema, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, weaponUnlocked, type BlueprintResult,
+  InstallBlueprintSchema, STARTER_STRUCTURE_KINDS, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, productName, weaponUnlocked, type BlueprintResult,
 } from '../../shared-types/blueprints.js';
 
 const EMPTY_FITTED: readonly string[] = Object.freeze([]);
@@ -2007,6 +2007,11 @@ export class SectorRoom extends Room<SectorState> {
       // `gatherStructureObstacles`. Off the 60 Hz hot loop (placement + 1 Hz
       // pulse only), so the array build is fine.
       getObstacles: () => this.gatherStructureObstacles(),
+      // Economy v2 W4b — a player's non-starter structure is placed from a
+      // PACKED item (now buyable from traders, and lootable). Consumed only
+      // after the structure registers; its build then costs only time.
+      sectorKey: () => this.sectorKey,
+      packedGateForBuild: (owner, kindId) => this.packedGateForBuild(owner, kindId),
     });
 
     // ── Structure grid pulse (structures plan, Phase 3) ─────────────────
@@ -2442,6 +2447,11 @@ export class SectorRoom extends Room<SectorState> {
       );
       if (id === null) {
         logger.warn({ sessionId: client.sessionId, kind: parsed.data.kind }, 'place_structure rejected');
+        // Economy v2 W4b — say why when it was the packed item that was missing.
+        const kindId = parsed.data.kind;
+        if (!STARTER_STRUCTURE_KINDS.includes(kindId) && this.findPacked(owner, `structure:${kindId}`) === null) {
+          this.sendNotice(client, `You need a Packed ${productName(`structure:${kindId}`)}: buy one on the Trade tab, or loot one.`);
+        }
       } else {
         // P2 bespoke trigger (testMode) — a placed storage structure starts
         // stocked, so a trade E2E/showcase needn't fly cargo home first.
@@ -3918,6 +3928,7 @@ export class SectorRoom extends Room<SectorState> {
         if (r.gateAccess !== undefined) rec.gateAccess = r.gateAccess;
         // P2b — the owner's recipe choice and a cycle in progress survive a restart.
         if (r.recipe !== undefined && isRecipeId(r.recipe)) rec.recipe = r.recipe;
+        if (r.prepaid === true) rec.prepaid = true;
         if (r.prodLoaded === true) {
           rec.prodLoaded = true;
           rec.prodProgress = r.prodProgress ?? 0;
@@ -6794,6 +6805,46 @@ export class SectorRoom extends Room<SectorState> {
       event: 'loot_collected', sector: this.sectorKey ?? undefined, podId,
       playerId: c.playerId, shipInstanceId: c.shipInstanceId, weight: holdWeight(moved),
     });
+  }
+
+  /**
+   * Economy v2 W4b — where `owner` keeps a packed `product` in this sector:
+   * one of their operational storage structures, else their active ship's
+   * hold. Null when they have none here. Control cadence (placement only).
+   */
+  private findPacked(owner: string, product: string): { rec: StructureRecord } | { shipId: string } | null {
+    for (const rec of this.structureRegistry.all()) {
+      if (rec.owner === owner && rec.hold !== undefined && isOperationalStorage(rec) && packedCount(rec.hold, product) > 0) return { rec };
+    }
+    const shipId = this.resolveActiveShipKey(owner);
+    const row = shipId ? getHoldStore().get(shipId) : undefined;
+    if (shipId && row !== undefined && packedCount(row.hold, product) > 0) return { shipId };
+    return null;
+  }
+
+  /** The `packedGateForBuild` hook: ok when `owner` has a packed `kindId`
+   *  here; `commit` takes one (best quality first) as ONE hold group. */
+  private packedGateForBuild(owner: string, kindId: StructureKindId): PackedGateResult {
+    const product = `structure:${kindId}`;
+    const src = this.findPacked(owner, product);
+    if (src === null) return { ok: false, commit: () => {} };
+    return {
+      ok: true,
+      commit: () => {
+        if ('rec' in src) {
+          takePacked(src.rec.hold!, product);
+          this.storage.commitChanged([src.rec], []);
+          return;
+        }
+        const row = getHoldStore().get(src.shipId);
+        if (row === undefined) return;
+        const h = cloneHold(row.hold);
+        takePacked(h, product);
+        const persist = this.sectorKey !== null;
+        if (isHoldEmpty(h)) getHoldStore().commit([], [src.shipId], persist);
+        else getHoldStore().commit([{ ...row, hold: h }], [], persist);
+      },
+    };
   }
 
   /** Living World P1a-2 — a short player-facing notice (HUD popup line). */

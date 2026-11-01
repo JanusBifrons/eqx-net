@@ -52,6 +52,8 @@ export interface PersistableStructure {
   recipe?: string;
   prodLoaded?: boolean;
   prodProgress?: number;
+  /** Economy v2 W4b — placed from a packed item (build costs only time). */
+  prepaid?: boolean;
   isConstructed: boolean;
   constructionProgress: number;
   minerals: number;
@@ -178,6 +180,7 @@ export class SectorPersistence {
         ...(s.gateAccess ? { gateAccess: s.gateAccess } : {}),
         ...(s.recipe ? { recipe: s.recipe } : {}),
         ...(s.prodLoaded ? { prodLoaded: true, prodProgress: s.prodProgress ?? 0 } : {}),
+        ...(s.prepaid ? { prepaid: true } : {}),
         y: s.y,
         health: d.swarmHealth.get(s.id) ?? 0,
         isConstructed: s.isConstructed,

@@ -41,7 +41,10 @@ import {
 } from '../../shared-types/economy.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
 import { cloneHold, emptyHold, isHoldEmpty } from '../../core/cargo/hold.js';
-import { applyFill, driftMarket, quoteBuy, quoteSell } from '../../core/economy/market.js';
+import { applyFill, driftMarket, quoteBuy, quotePacked, quoteSell } from '../../core/economy/market.js';
+import { packedStructureProducts, parseProduct, productName } from '../../shared-types/blueprints.js';
+import { packBillValue } from '../../shared-types/recipes.js';
+import { isStructureKindId } from '../../shared-types/structureKinds.js';
 import { giftRepGain, robotTruce, tradersRefuse, waveIntervalFactor } from '../../core/economy/reputation.js';
 import {
   afterVisit,
@@ -120,12 +123,27 @@ export const DEFAULT_TRADE_OPTIONS: TradeDirectorOptions = {
 interface BoardOffer {
   offerId: string;
   kind: 'sell' | 'buy';
-  good: GoodId;
+  /** null on a packed-item offer. */
+  good: GoodId | null;
+  /** Economy v2 W4b — a packed structure on sale (`structure:<kind>`). */
+  product?: string;
   maxQty: number;
   expiresAtMs: number;
 }
 
 const escrowUid = (runId: string): string => `escrow-${runId}`;
+
+/** Economy v2 W4b — packed-structure offers kept on the board, and their size. */
+export const PACKED_OFFERS_ON_BOARD = 4;
+export const PACKED_OFFER_MAX_QTY = 3;
+/** Trader-made packed items are solid mid quality. */
+export const TRADER_PACKED_QUALITY = 50;
+
+/** Goods value of a packed product's pack recipe (0 ⇒ not sellable). */
+function packedBillOf(product: string): number {
+  const { ns, id } = parseProduct(product);
+  return ns === 'structure' && isStructureKindId(id) ? packBillValue(id) : 0;
+}
 
 /** No wallet injected (tests that don't exercise credits): an empty balance
  *  that refuses every debit and ignores credits. */
@@ -252,7 +270,7 @@ export class TradeDirector implements TradeSink {
     // Keep one SELL and one BUY offer per good on the board.
     for (const good of GOOD_IDS) {
       for (const kind of ['sell', 'buy'] as const) {
-        if (this.offers.some((o) => o.good === good && o.kind === kind)) continue;
+        if (this.offers.some((o) => o.product === undefined && o.good === good && o.kind === kind)) continue;
         const cap = good === 'core' ? 20 : good === 'alloy' ? 120 : MAX_OFFER_QTY;
         this.offers.push({
           offerId: `of-${randomUUID().slice(0, 10)}`,
@@ -263,6 +281,29 @@ export class TradeDirector implements TradeSink {
         });
       }
     }
+    // Economy v2 W4b — traders also SELL packed structures (the user's ruling:
+    // most players buy them rather than make them). A rotating handful.
+    const products = packedStructureProducts().filter((p) => packedBillOf(p) > 0);
+    let onBoard = this.offers.filter((o) => o.product !== undefined).length;
+    for (let tries = 0; onBoard < PACKED_OFFERS_ON_BOARD && tries < 20 && products.length > 0; tries++) {
+      const product = products[Math.floor(this.rng() * products.length)]!;
+      if (this.offers.some((o) => o.product === product)) continue;
+      this.offers.push({
+        offerId: `of-${randomUUID().slice(0, 10)}`,
+        kind: 'buy',
+        good: null,
+        product,
+        maxQty: 1 + Math.floor(this.rng() * PACKED_OFFER_MAX_QTY),
+        expiresAtMs: now + this.opts.offerTtlMs * (0.7 + this.rng() * 0.6),
+      });
+      onBoard++;
+    }
+  }
+
+  /** The price of one unit of `offer` at `traderRep`. */
+  private offerPrice(offer: { kind: 'sell' | 'buy'; good: GoodId | null; product?: string }, traderRep: number): number {
+    if (offer.product !== undefined) return quotePacked(packedBillOf(offer.product), traderRep);
+    return this.quote(offer.kind, offer.good!, traderRep);
   }
 
   /** The board as `playerId` sees it (prices at their trader reputation). */
@@ -272,7 +313,8 @@ export class TradeDirector implements TradeSink {
       offerId: o.offerId,
       kind: o.kind,
       good: o.good,
-      unitPrice: this.quote(o.kind, o.good, rep),
+      ...(o.product !== undefined ? { product: o.product } : {}),
+      unitPrice: this.offerPrice(o, rep),
       maxQty: o.maxQty,
       expiresAtMs: o.expiresAtMs,
     }));
@@ -295,7 +337,8 @@ export class TradeDirector implements TradeSink {
     if (this.store.activeDealsForNetwork(networkUid) >= MAX_DEALS_PER_NETWORK) {
       return reject(`A base can run at most ${MAX_DEALS_PER_NETWORK} deals.`);
     }
-    const unitPrice = this.quote(offer.kind, offer.good, traderRep);
+    if (offer.product !== undefined && msg.recurrenceMin !== null) return reject('Packed structures are one-off deals.');
+    const unitPrice = this.offerPrice(offer, traderRep);
     if (msg.qty * unitPrice > this.store.volumeLeft(playerId)) return reject('Hourly trade limit reached.');
     const recurring = msg.recurrenceMin !== null;
     const deal: TradeDeal = {
@@ -304,6 +347,7 @@ export class TradeDirector implements TradeSink {
       kind: offer.kind,
       allegiance: 'traders',
       good: offer.good,
+      ...(offer.product !== undefined ? { product: offer.product } : {}),
       qty: msg.qty,
       credits: 0,
       sectorKey,
@@ -459,7 +503,9 @@ export class TradeDirector implements TradeSink {
     const room = this.rooms.get(deal.sectorKey);
     const snap = room?.tradeSnapshot(deal.ownerId, deal.networkUid) ?? null;
     const traderRep = this.store.rep(deal.ownerId, 'traders');
-    const quoteNow = deal.kind === 'gift' || !deal.good ? 0 : this.quote(deal.kind, deal.good, traderRep);
+    const quoteNow = deal.kind === 'gift' ? 0
+      : deal.product !== undefined ? quotePacked(packedBillOf(deal.product), traderRep)
+      : !deal.good ? 0 : this.quote(deal.kind, deal.good, traderRep);
     const plan = planVisit(
       deal,
       {
@@ -510,10 +556,12 @@ export class TradeDirector implements TradeSink {
     };
     const next: TradeDeal = { ...deal, state: 'inbound', run };
     const op = this.store.dealOp(next);
-    if (deal.kind === 'buy' && deal.good) {
-      // The trader's goods ride in the hauler's hold from spawn.
+    if (deal.kind === 'buy' && (deal.good || deal.product !== undefined)) {
+      // The trader's goods (or packed items) ride in the hauler's hold from
+      // spawn, so raiding the hauler spills them.
       const hold = emptyHold();
-      hold.goods[deal.good] = plan.qty;
+      if (deal.good) hold.goods[deal.good] = plan.qty;
+      else for (let i = 0; i < plan.qty; i++) (hold.packed ??= []).push({ product: deal.product!, quality: TRADER_PACKED_QUALITY });
       this.holds.commit(
         [{ holderUid: haulerId, holderType: 'hauler', ownerId: null, sectorKey: deal.sectorKey, x: null, y: null, hold, expiresAt: null }],
         [],
@@ -646,7 +694,8 @@ export class TradeDirector implements TradeSink {
       this.store.recordVolume(deal.ownerId, Math.floor(run.qty * run.unitPrice));
       this.store.addRep(deal.ownerId, 'traders', run.partial ? REP_PARTIAL_FILL : REP_DEAL_COMPLETED);
       const verb = deal.kind === 'sell' ? 'Sold' : 'Bought';
-      const note = `${verb} ${run.qty} ${deal.good} for ${credits} cr${run.partial ? ' (partial)' : ''}`;
+      const what = deal.product !== undefined ? `Packed ${productName(deal.product)}` : `${deal.good}`;
+      const note = `${verb} ${run.qty} ${what} for ${credits} cr${run.partial ? ' (partial)' : ''}`;
       this.history(deal, run.partial ? 'partial' : 'settled', run.qty, credits, note);
       this.notify(next, run.partial ? 'partial' : 'settled', note);
     }

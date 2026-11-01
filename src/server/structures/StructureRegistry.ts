@@ -116,6 +116,9 @@ export interface StructureRecord {
   /** B2 — playerId this turret is aiming at (NPC turrets only), or undefined.
    *  Mutually exclusive with `turretTargetEntityId`. */
   turretTargetPlayer?: string;
+  /** Economy v2 W4b — placed from a PACKED item: its build costs only time
+   *  (no minerals drawn) and deconstructing it reclaims none. Persisted. */
+  prepaid?: boolean;
   // ── Production (plan soft-leaping-truffle v3, P2b) ──
   /** The recipe the owner picked (absent ⇒ the kind's default). Persisted. */
   recipe?: RecipeId;
