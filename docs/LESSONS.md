@@ -2560,3 +2560,12 @@ Two of them, missile lock-on and attacker labels, decided "is this an AI?" from 
 - **Sector capacity.** At the new sizes, 800 structures no longer fit in a sector. That is a budget finding (the ceiling was lowered 800 → 650), not a bug.
 
 **Rule.** When an entity's size changes, every hand-authored layout that references it is suspect. Derive layouts from the real footprint helpers, and keep repeated layouts in one shared module.
+
+
+## 2026-11-01 — Integration joins keep a requested playerId only if it is a UUID; a rotated structure must carry its angle to the worker (plan soft-leaping-truffle v2, gates)
+
+**Join ids.** An integration test that joined as `connectActive('gate-owner')` failed with "ship never activated". It wasn't load or the gate: the join schema accepts a client-claimed playerId only when it is a UUID, so a readable id like `'gate-owner'` was replaced with a fresh one and the harness never found the ship. Use `randomUUID()` (or a fixed UUID when a structure owner must match). Also: the server room exists only after the first join, so join an observer before reading `getServerRoom()._internals`.
+
+**Rotated bodies.** Phase V added quarter-turn rotation for structures, but `SwarmSpawner` forwarded the spawn angle to the physics worker (and the SAB pose) for scrap only. A rotated structure therefore collided — and drew, since the client reads the pose angle — at 0°, while placement, connections and weapon hits used the rotated box. Unit tests on the box helpers all passed; only an integration test through the real `place_structure` message and worker caught it. Rule: when a new per-entity attribute (rotation) feeds several systems, test it where the systems meet, not in each helper.
+
+**Per-pylon wall state.** `shieldWallTo` reported only a pylon's FIRST wall, so a fence pylon's second wall was never drawn or predicted. Gates made this visible (a pylon beside a gate has two walls). The fix derives walls from connections on the client (`derivedWalls.ts`), with a per-emitter "all walls up" flag from the server.
