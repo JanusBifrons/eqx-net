@@ -22,6 +22,8 @@ export interface SectorTooltipData {
   structures: number;
   /** Living World P4a — a named elite roaming here (its name), or null. */
   elite: string | null;
+  /** Living World P4b — the title of the world event running here, or null. */
+  event: string | null;
 }
 
 /** Title-case a kebab/underscore/space region key for display. */
@@ -63,6 +65,7 @@ export function buildSectorTooltip(
     neutrals: live?.neutrals ?? 0,
     structures: live?.structures ?? 0,
     elite: live?.elite ?? null,
+    event: live?.event?.title ?? null,
   };
 }
 

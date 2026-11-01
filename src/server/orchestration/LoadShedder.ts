@@ -13,6 +13,7 @@
  * persistence/telemetry hook that distinguishes shed from combat-kill.
  */
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { isEventId } from '../../shared-types/worldEvents.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { Bus } from '../../core/events/Bus.js';
 import { OVER_BUDGET_MS, TIDI_FLOOR } from '../../core/clock/SimulationClock.js';
@@ -58,7 +59,9 @@ export class LoadShedder {
       if (rec.kind !== 1) continue; // drone only
       // Allegiances P0: shed-immune kinds (haulers, nexi, elites) are never
       // silently evicted — that would destroy value / break a world state machine.
-      if (getShipKind(rec.shipKind).shedImmune || rec.elite !== undefined) continue;
+      // P4a/P4b — elites and world-event NPCs are never shed (a quiet shed has
+      // no ENTITY_DESTROYED, so their director would never learn they left).
+      if (getShipKind(rec.shipKind).shedImmune || rec.elite !== undefined || isEventId(rec.id)) continue;
       const pos = this.deps.getPosition(rec);
       let best = Infinity;
       for (const p of players) {

@@ -4,7 +4,8 @@ Phase P4 of the Living World plan (`peppy-jumping-pinwheel`) gives players
 named targets worth chasing. It ships in parts:
 
 - **P4a — named elites** (this page, shipped).
-- **P4b — world events** (convoys, motherships, nests).
+- **P4b — world events** (shipped): robot incursions, drone motherships,
+  salvage fields.
 - **P4c — bounties and the Contracts tab.**
 
 ## Named elites (P4a)
@@ -69,3 +70,46 @@ named targets worth chasing. It ships in parts:
 - `tests/integration/sectorRoom/eliteDirector.test.ts`: a real elite with 4×
   hull, its name on the client snapshot, the galaxy hook, the rare haul on
   death, galaxy-wide notices, and the respawn.
+
+## World events (P4b)
+
+### What the player sees
+
+Every few minutes something happens somewhere in the galaxy. A gold toast
+announces it to every pilot ("Robot Incursion detected!"), and the galaxy map's
+tooltip and sector drawer show **⚑ \<event\> underway** in that sector. One event
+runs at a time, with a 9-minute lull between them.
+
+| Event | What happens | How it ends | Reward |
+|---|---|---|---|
+| **Robot Incursion** | 6 robots (1 hexagon, 2 orbs, 3 cubes) appear together, hostile on sight. | Destroy every raider. | A cache where they stood: 40–80 salvage, 10–20 alloy, 1–3 Robot Cores, 250–500 credits (plus each robot's own drop). |
+| **Drone Mothership** | A "Drone Mothership" (a missile frigate with 6× hull, gold ring and name) plus 4 fighter escorts. | Destroy the mothership; the escorts warp out. | The elite haul (table ×3 + 1–3 cores + 200–500 credits). |
+| **Salvage Field** | 6 rich loot pods scattered around a point. | It drifts away after 5 minutes (the pods keep their own 15-minute life). | 20–45 salvage, 2–8 alloy and 20–60 credits per pod. |
+
+An unfinished incursion (10 min) or mothership (12 min) fades: the survivors
+leave quietly and drop nothing.
+
+### How it works
+
+- `EventDirector` (`src/server/livingworld/EventDirector.ts`) ticks on the
+  drone director's `onTick` alongside the elites. Event NPCs use `event-` ids
+  (NPC ids for `isDirectorBotId`) and spawn through the living-world bot hook.
+  The mothership is tagged through `markElite(id, name, 6)`.
+- Event NPCs are **never load-shed**: a quiet shed would leave the event
+  waiting forever for a death it never hears about.
+- Rewards drop through `SectorRoom.dropEventLoot` as ordinary loot pods.
+- **Client state (#16):** the galaxy snapshot carries `SectorLiveState.event`
+  (`{ kind, title, endsAtMs }`, via the `sectorEvent` hook). The notices are
+  accelerators. In the sector, event NPCs are ordinary drones (the mothership
+  carries the elite name and ring).
+- **Test trigger:** `POST /dev/world-event/start?kind=incursion|mothership|salvage&sector=<key>`
+  (non-production) starts one immediately.
+- **Audit events:** `world_event_started`, `world_event_ended` (`completed`
+  or `faded`). Events are not persisted: a restart begins a fresh lull.
+
+### Tests
+
+- `tests/integration/sectorRoom/worldEvents.test.ts`: covers each event kind
+  in real rooms (strike group → cache, mothership → haul + escorts leave,
+  salvage pods), the fade and the lull, one event at a time, the galaxy hook,
+  and the notices.

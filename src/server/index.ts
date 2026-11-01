@@ -39,6 +39,8 @@ import { setGalaxyStatsProvider } from './livingworld/galaxyStatsProvider.js';
 import { ROBOT_DIRECTOR_OPTIONS, ROBOT_BOT_COUNT, isRobotsDisabled } from './livingworld/robotDirector.js';
 import { RobotTerritory } from './livingworld/RobotTerritory.js';
 import { EliteDirector } from './livingworld/EliteDirector.js';
+import { EventDirector } from './livingworld/EventDirector.js';
+import { WORLD_EVENT_KINDS, type WorldEventKind } from '../shared-types/worldEvents.js';
 import { DirectorPersistence, type DirectorStatePayload } from './livingworld/DirectorPersistence.js';
 import { db } from './db/Database.js';
 import { resolveCorsPolicy, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
@@ -113,6 +115,8 @@ let robotDirector: LivingWorldDirector | null = null;
 let robotTerritory: RobotTerritory | null = null;
 /** Living World P4a — named elites (null when the Living World is disabled). */
 let eliteDirector: EliteDirector | null = null;
+/** Living World P4b — world events (null when the Living World is disabled). */
+let eventDirector: EventDirector | null = null;
 const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
 /** Living World P2 — the economy (null until boot finishes). */
 let economyStore: EconomyStore | null = null;
@@ -191,6 +195,18 @@ if (process.env['NODE_ENV'] !== 'production') {
     // `?allegiance=robots` inspects the robot director (Living World P1b).
     const d = req.query['allegiance'] === 'robots' ? robotDirector : livingWorldDirector;
     res.json(d ? d.snapshot() : { ready: false });
+  });
+
+  // POST /dev/world-event/start?kind=incursion|mothership|salvage&sector=<key>
+  // — Living World P4b test trigger: start a world event now (no 9-min lull).
+  app.post('/dev/world-event/start', (req, res) => {
+    const kind = String(req.query['kind'] ?? '');
+    const sector = String(req.query['sector'] ?? '');
+    if (!eventDirector || !(WORLD_EVENT_KINDS as readonly string[]).includes(kind)) {
+      res.status(400).json({ ok: false });
+      return;
+    }
+    res.json({ ok: eventDirector.startEvent(kind as WorldEventKind, sector), event: eventDirector.activeEvent() });
   });
 
   // GET /dev/audit?player=&owner=&sector=&event=&since=&until=&limit=&source=&format=
@@ -1166,12 +1182,19 @@ async function main(): Promise<void> {
         sectorOwner: (key) => robotTerritory?.sectorOwner(key) ?? null,
         // P4a — named elites: ticked on the drone director's control loop and
         // marked on the galaxy map.
-        onTick: (now) => eliteDirector?.tick(now),
+        onTick: (now) => {
+          eliteDirector?.tick(now);
+          eventDirector?.tick(now);
+        },
         sectorElite: (key) => eliteDirector?.sectorElite(key) ?? null,
+        // P4b — world events show on the galaxy map.
+        sectorEvent: (key) => eventDirector?.sectorEvent(key) ?? null,
       },
     });
     eliteDirector = new EliteDirector(galaxyRooms);
     eliteDirector.start();
+    eventDirector = new EventDirector(galaxyRooms);
+    eventDirector.start();
     livingWorldDirector.start();
     // Phase-4 P0 — let the per-room TransitOrchestrator + destination rooms feed
     // inbound PLAYERS into the director's IncomingRegistry (the "incoming" banner)
@@ -1248,6 +1271,7 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
     robotDirector?.stop();
     robotTerritory?.stop();
     eliteDirector?.stop();
+    eventDirector?.stop();
     setTradeSink(null);
     setEconomyRouteProvider(null);
     tradeDirector?.stop();
