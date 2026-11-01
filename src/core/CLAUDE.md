@@ -351,3 +351,11 @@ reintroduces the spiral the 500-target cannot afford. Full story:
   `collisionGroups` param (→ worker `SPAWN_OBSTACLE`). `swarm/scrapConstants.ts`
   holds the tuning (burst/damping/HP/MAX_LIVE_SCRAP). Full story:
   [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).
+
+## Relations: one answer to "who is hostile to whom" (plan soft-leaping-truffle v3, B1)
+
+- **Ask `relationOf(actor, owner, ctx)`** (`src/shared-types/relations.ts`) whenever a system decides whether a ship or player is welcome near something it doesn't own: gates, turrets, cargo, break-ins, NPC docks. Don't compare owner strings or allegiances inline; that is how two systems end up disagreeing.
+- **Owners are strings:** a player id, `npc:<allegiance>`, or `npc:<allegiance>:<baseId>` (`npcOwner`, `parseOwner`).
+- **Hostile acts go into `HostileActLedger`** (`src/core/relations/`). They are directional, per owner, and cool down after `HOSTILE_ACT_COOLDOWN_MS`.
+- **Keep one `RelationContext` per room** and update `nowMs` in place; the query allocates nothing.
+- Full story: [docs/architecture/relations.md](../../docs/architecture/relations.md).

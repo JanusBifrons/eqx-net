@@ -79,6 +79,7 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
   'pwa-and-push-notifications': 'Install prompt + push notification — not in-world footage.',
   'web-push': 'Server-side push delivery — not in-world footage.',
   security: 'Infrastructure — no visible surface.',
+  relations: 'A shared rule (who is hostile to whom) with no visible surface of its own; gates, turrets and cargo show its effects.',
   'persistence-and-migrations': 'Covered by an end-card line until the persistence shot lands (SHOWCASE_PENDING).',
   'gameplay-audit-log': 'Tooling — end-card line.',
   'diagnostic-captures': 'Tooling — end-card line.',
