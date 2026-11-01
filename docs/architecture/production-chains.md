@@ -87,13 +87,16 @@ A sector's asteroid field mixes three kinds, weighted by the sector's galaxy `fe
 | Ice | 10 ice | nebula sectors |
 | Crystal-veined | 8 minerals + 2 crystal | mineral sectors, black holes |
 
-`rollAsteroidResource(u, features)` picks a kind from an injected uniform roll.
+`rollAsteroidResource(u, features)` picks a kind from an injected uniform roll; the room seeds it with an FNV hash of the asteroid's id, so a restart rolls the same kinds.
+- **Room options:** the galaxy sector's `features` drive the mix. A testMode room can override them with the `sectorFeatures` room option (e.g. `['nebula']` to make Gas Collectors work); integration tests also use `_internals.spawnTestAsteroid(id, x, y, r, resource)`.
+- **Full storage loses the extra:** ice and crystal that don't fit in network storage are lost (the drill keeps drilling). A later pass may pause the drill instead.
 
 ## What each phase adds
 
 | Phase | Adds |
 |---|---|
 | P1 | This data and its tests. No live behaviour changes. |
+| P2c | Extraction by resource. Each asteroid gets a kind, rolled from its sector's features and seeded by its id; it rides the swarm wire's shared subtype byte (rock = 0, so existing rocks are unchanged), and the client tints ice and crystal. Miners (and the Deep Core Rig: any kind with a `miningRate`) yield by kind: minerals to the drill's buffer as before, ice and crystal straight into network storage. Gas Collectors gather `gasRate` gas per pulse in nebula sectors. |
 | P2b | Production runs. `ProductionSubsystem` steps every built processor once per 1 Hz grid pulse (see "How production runs" below). The inspector shows "MAKES <recipe> · <status>", and owners change a multi-recipe processor with `set_recipe`. |
 | P2a | The 12 production kinds join the structure catalogue (appended, no version bump), with footprints, drawings, build icons and a new Industry build category. The Deep Core Rig, Ore Processing Complex and Assembly Plant are hubs with 4 links. They can be placed but don't produce yet. |
 | P2 | The production structures, a processing step in the 1 Hz grid pulse, Miner yields by asteroid kind, ammo, the upgrade goods bill, one mineral pool. Packed structures arrive once Living World's packed items land. |

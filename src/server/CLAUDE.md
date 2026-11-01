@@ -161,6 +161,11 @@ Update this section when a threshold is set.
 - **Packed placement:** `StructurePlacementSubsystem.place(…, { requirePacked: true })` is passed ONLY by the player's `place_structure`.
   - **Generated builds never pass it:** scenario seeding, restore, lattices and NPC bases.
   - **The hook:** `packedGateForBuild` is optional; Living World injects it when packed structures can be bought.
+- **Extraction (P2c):**
+  - Drilling is data-driven: any built kind with a `miningRate` mines (Miner, Deep Core Rig).
+  - The asteroid's `asteroidResource` (swarm record + wire byte) splits the yield via `ASTEROID_YIELD`. Minerals go to the drill buffer; other goods go to network storage through `ProductionSubsystem.deposit`.
+  - Gas Collectors work only when `sectorFeatures` include `nebula`.
+  - Lock: `tests/integration/sectorRoom/extraction.test.ts`.
 - Locks: `ProductionSubsystem.test.ts` and `tests/integration/sectorRoom/production.test.ts`. Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).
 
 ## NPC ownership (plan soft-leaping-truffle v3, B2)
