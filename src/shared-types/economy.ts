@@ -154,6 +154,68 @@ export const SendGiftSchema = z
   .strict()
   .refine((m) => (m.good !== null && m.qty > 0) || m.credits > 0, 'a gift must carry goods or credits');
 
+// ── Client-side validation of what the server sends (invariant #3) ─────────
+
+const repSchema = z.object({ drones: z.number(), robots: z.number(), traders: z.number() });
+const goodOrNull = z.enum(GOOD_IDS).nullable();
+
+export const TradeOfferSchema = z.object({
+  offerId: z.string(),
+  kind: z.enum(['sell', 'buy']),
+  good: z.enum(GOOD_IDS),
+  unitPrice: z.number(),
+  maxQty: z.number().int(),
+  expiresAtMs: z.number(),
+});
+export const TradeOffersResponseSchema = z.object({ offers: z.array(TradeOfferSchema) });
+
+export const TradeDealViewSchema = z.object({
+  dealId: z.string(),
+  kind: z.enum(DEAL_KINDS),
+  good: goodOrNull,
+  qty: z.number(),
+  credits: z.number(),
+  allegiance: z.enum(ECON_ALLEGIANCES),
+  sectorKey: z.string(),
+  networkUid: z.string(),
+  unitPrice: z.number(),
+  priceBandPct: z.number(),
+  recurrenceMin: z.number().nullable(),
+  visitsLeft: z.number().nullable(),
+  state: z.enum(DEAL_STATES),
+  nextVisitAtMs: z.number().nullable(),
+});
+
+export const TradeHistoryEntrySchema = z.object({
+  atMs: z.number(),
+  dealId: z.string(),
+  outcome: z.enum(['settled', 'partial', 'skipped', 'raided', 'refused', 'cancelled']),
+  kind: z.enum(DEAL_KINDS),
+  good: goodOrNull,
+  qty: z.number(),
+  credits: z.number(),
+  note: z.string(),
+});
+
+export const PlayerEconomyViewSchema = z.object({
+  econVersion: z.number(),
+  rep: repSchema,
+  deals: z.array(TradeDealViewSchema),
+  history: z.array(TradeHistoryEntrySchema),
+});
+
+export const TRADE_NOTICE_EVENTS = [
+  'accepted', 'rejected', 'inbound', 'docked', 'settled', 'partial', 'skipped', 'raided', 'cancelled', 'under_fire',
+] as const;
+
+export const TradeNoticeSchema = z.object({
+  type: z.literal('trade_notice'),
+  dealId: z.string(),
+  event: z.enum(TRADE_NOTICE_EVENTS),
+  message: z.string().max(300),
+  econVersion: z.number(),
+});
+
 // ── Server → client discrete notice (accelerator only, #16) ────────────────
 
 export interface TradeNotice {

@@ -50,6 +50,33 @@ export class PushNotifier {
     });
   }
 
+  /**
+   * Living World P2 — fire-and-forget trade outcome ("your hauler was raided",
+   * "deal settled") to the deal OWNER's offline devices. Same presence gate +
+   * prune as the base-attack push.
+   */
+  notifyTrade(ownerPlayerId: string, title: string, body: string, tag: string): void {
+    if (!this.deps.enabled) return;
+    void this.dispatchTrade(ownerPlayerId, title, body, tag).catch(() => {
+      /* never throw into the caller */
+    });
+  }
+
+  private async dispatchTrade(ownerPlayerId: string, title: string, body: string, tag: string): Promise<void> {
+    if (this.deps.isOnline(ownerPlayerId)) return;
+    const userId = this.deps.userIdForPlayer(ownerPlayerId);
+    if (!userId) return;
+    const subs = this.deps.subscriptionsForUser(userId);
+    if (subs.length === 0) return;
+    const payload = JSON.stringify({ type: 'trade_outcome', title, body, tag });
+    await Promise.allSettled(
+      subs.map(async (target) => {
+        const res = await this.deps.send(target, payload);
+        if (res.gone) this.deps.deleteSubscription(target.endpoint);
+      }),
+    );
+  }
+
   private async dispatchStructureAttacked(
     ownerPlayerId: string,
     kind: string,

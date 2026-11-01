@@ -15,6 +15,7 @@ import { economyRouter, setEconomyRouteProvider } from './routes/economyRouter.j
 import { EconomyStore, hydrateEconomyStore } from './economy/EconomyStore.js';
 import { TradeDirector } from './economy/TradeDirector.js';
 import { setTradeSink } from './economy/tradeSink.js';
+import { pushNotifier } from './push/PushNotifier.js';
 import { pushRouter } from './routes/pushRouter.js';
 import { devAuditHandler } from './audit/auditRoute.js';
 import { flushAudit } from './audit/GameplayAuditLog.js';
@@ -890,6 +891,33 @@ gameServer
     ],
   })
   .filterBy(['testId']);
+// Living World P2 — trade rooms (testMode). Both join the TradeDirector
+// (`tradeEnabled`) and stock any storage the player places (`seedStorageHold`),
+// so a test can post a deal at once. `trade-showcase` also sends two robot
+// cubes to meet each incoming hauler (`haulerRaiders`) — the raid on camera.
+gameServer
+  .define('trade-test', SectorRoom, {
+    sectorKey: 'trade-test',
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    maxClients: 4,
+    tradeEnabled: true,
+    seedStorageHold: { goods: { salvage: 120, alloy: 20 }, credits: 3000 },
+  })
+  .filterBy(['testId']);
+gameServer
+  .define('trade-showcase', SectorRoom, {
+    sectorKey: 'trade-showcase',
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    maxClients: 4,
+    tradeEnabled: true,
+    seedStorageHold: { goods: { salvage: 120, alloy: 20 }, credits: 3000 },
+    haulerRaiders: 2,
+  })
+  .filterBy(['testId']);
 // Living World P1b showcase — one full mixed-tier ROBOT squad (hexagon lead,
 // two circles, three cubes) vs six drones, the pilot spawning between them.
 // Robots are hostile to the pilot too, so the recording shows a real three-way
@@ -1128,7 +1156,9 @@ async function main(): Promise<void> {
   // boot reconcile unwinds any run that was in flight when the server stopped.
   economyStore = new EconomyStore({ persistence: getPersistence });
   const econ = hydrateEconomyStore(economyStore, (sql) => db.prepare(sql).all());
-  tradeDirector = new TradeDirector(galaxyRooms, economyStore, getHoldStore());
+  tradeDirector = new TradeDirector(galaxyRooms, economyStore, getHoldStore(), {
+    push: (pid, title, body, tag) => pushNotifier.notifyTrade(pid, title, body, tag),
+  });
   tradeDirector.start();
   setTradeSink(tradeDirector);
   const store = economyStore;

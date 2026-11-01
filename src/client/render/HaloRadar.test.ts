@@ -19,6 +19,9 @@ describe('radarCategoryForSwarm — contact → radar category', () => {
     expect(radarCategoryForSwarm(3, false)).toBe('scrap');
     // Living World P1a-2: loot pods / derelicts ride scrap but show as 'loot'.
     expect(radarCategoryForSwarm(3, false, 'cargo-pod')).toBe('loot');
+    // Living World P2: a trade hauler shows as 'trader' unless it is hostile.
+    expect(radarCategoryForSwarm(1, false, 'trader-hauler')).toBe('trader');
+    expect(radarCategoryForSwarm(1, true, 'trader-hauler')).toBe('hostile');
     expect(radarCategoryForSwarm(3, false, 'fighter')).toBe('scrap');
   });
   it('classifies a drone by hostility to the local player', () => {

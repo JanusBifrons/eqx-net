@@ -131,6 +131,7 @@ export class TradeDirector implements TradeSink {
   private lastDriftAtMs: number;
   private readonly robotHitAt = new Map<string, number>();
   private readonly underFireAt = new Map<string, number>();
+  private readonly push: ((ownerPlayerId: string, title: string, body: string, tag: string) => void) | null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly subs: Array<{ bus: Bus; fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void }> = [];
 
@@ -138,11 +139,17 @@ export class TradeDirector implements TradeSink {
     private readonly rooms: Map<string, TradeRoom>,
     private readonly store: EconomyStore,
     private readonly holds: HoldStore,
-    options: Partial<TradeDirectorOptions> & { rng?: Rng; nowMs?: () => number } = {},
+    options: Partial<TradeDirectorOptions> & {
+      rng?: Rng;
+      nowMs?: () => number;
+      /** Web Push for an OFFLINE owner (the notifier gates presence itself). */
+      push?: (ownerPlayerId: string, title: string, body: string, tag: string) => void;
+    } = {},
   ) {
     this.opts = { ...DEFAULT_TRADE_OPTIONS, ...options };
     this.rng = options.rng ?? Math.random;
     this.now = options.nowMs ?? Date.now;
+    this.push = options.push ?? null;
     this.lastDriftAtMs = this.now();
   }
 
@@ -679,6 +686,11 @@ export class TradeDirector implements TradeSink {
       econVersion: this.store.player(deal.ownerId).econVersion,
     };
     for (const room of this.rooms.values()) room.tradeNotify(deal.ownerId, notice);
+    // Offline owner → Web Push for the outcomes worth waking a phone for.
+    if (this.push && (event === 'settled' || event === 'partial' || event === 'raided' || event === 'under_fire')) {
+      const title = event === 'raided' ? 'Trade hauler lost' : event === 'under_fire' ? 'Hauler under fire' : 'Trade complete';
+      this.push(deal.ownerId, title, message, `trade:${deal.dealId}`);
+    }
   }
 }
 

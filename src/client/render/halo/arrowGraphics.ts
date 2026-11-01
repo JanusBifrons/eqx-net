@@ -75,7 +75,9 @@ export function radarCategoryForSwarm(swarmKind: number, hostile: boolean, shipK
     case 0:
       return 'asteroid';
     case 1:
-      return hostile ? 'hostile' : 'neutral';
+      if (hostile) return 'hostile';
+      // Living World P2 — a trade hauler gets its own radar icon (escort it).
+      return shipKind === 'trader-hauler' ? 'trader' : 'neutral';
     case 2:
       return 'structure';
     case 3:
