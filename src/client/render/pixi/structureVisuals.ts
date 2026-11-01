@@ -471,6 +471,21 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       lit(x0 + W - 24, y0 + H - 24, 10, RED);
       break;
     }
+    case 'research_lab': {
+      // Research lab: a glass-roofed hall around a central test chamber, with
+      // two instrument racks either side.
+      slab(rects, x0, y0, W, H, STEEL_DARK, 10);
+      box(rects, x0 + 24, y0 + 24, W - 48, H - 48, mixColor(GLASS, STEEL_DARK, 0.5), 0.9);
+      box(rects, -50, -50, 100, 100, STEEL_LIGHT);
+      box(rects, -34, -34, 68, 68, live ? accent : 0x443366, 0.9);
+      for (const sx of [x0 + 40, W / 2 - 80]) {
+        for (let y = y0 + 44; y < y0 + H - 60; y += 40) box(rects, sx, y, 40, 24, mixColor(accent, STEEL, 0.6), 0.85);
+      }
+      lit(0, 0, 18, accent);
+      lit(x0 + 20, y0 + 20, 8, RED);
+      lit(x0 + W - 20, y0 + H - 20, 8, RED);
+      break;
+    }
     default:
       slab(rects, x0, y0, W, H, mixColor(STEEL, accent, 0.25), 6);
   }

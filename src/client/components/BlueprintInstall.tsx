@@ -7,7 +7,7 @@
  */
 import { memo } from 'react';
 import { Box, Tooltip } from '@mui/material';
-import { BLUEPRINTS, isBlueprintId } from '../../shared-types/blueprints';
+import { BLUEPRINTS, isBlueprintId, parseProduct } from '../../shared-types/blueprints';
 import { sendInstallBlueprint } from '../net/tradeClient';
 
 const ROW_SX = { display: 'flex', flexWrap: 'wrap' as const, gap: '4px', pointerEvents: 'auto' as const, mt: 0.5 };
@@ -26,8 +26,9 @@ const CHIP_SX = {
 export const BlueprintInstall = memo(function BlueprintInstall(
   { entityId, blueprints }: { entityId: number; blueprints: string },
 ): JSX.Element | null {
-  // One chip per distinct blueprint kind (duplicates install one at a time).
-  const ids = [...new Set(blueprints.split(',').filter(isBlueprintId))];
+  // `blueprints` = comma-joined stored PRODUCT ids (W2). Only MODULE blueprints
+  // install onto a ship; one chip per distinct module (duplicates go one at a time).
+  const ids = [...new Set(blueprints.split(',').map((p) => parseProduct(p)).filter((p) => p.ns === 'module').map((p) => p.id).filter(isBlueprintId))];
   if (ids.length === 0) return null;
   return (
     <Box sx={ROW_SX} data-testid="blueprint-install">

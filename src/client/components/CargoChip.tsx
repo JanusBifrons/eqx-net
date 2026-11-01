@@ -90,6 +90,7 @@ export function CargoChip(): JSX.Element | null {
         >
           <span style={{ color: FILL_COLOR[fill] }}>▣ {weight}/{capacity}</span>
           {cargo.blueprints > 0 && <span style={{ color: '#ffc83a' }}>★{cargo.blueprints}</span>}
+          {(cargo.packed ?? 0) > 0 && <span style={{ color: '#9ad0ff' }} data-testid="cargo-packed">▢{cargo.packed}</span>}
         </Box>
       )}
       {depositPct !== null && cargo !== null && (

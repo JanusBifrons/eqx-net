@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { emptyHold, holdBestTier, holdWeight, isHoldEmpty, mergeInto, transferInto, transferUpTo } from './hold.js';
+import { addPacked, emptyHold, holdBestTier, holdWeight, isHoldEmpty, mergeInto, packedCount, packedWeightOf, takePacked, transferInto, transferUpTo } from './hold.js';
 import { legacyHoldCredits, parseHoldJson, type Hold } from '../../shared-types/goods.js';
+import { legacyBlueprintItem } from '../../shared-types/items.js';
 import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
 
 function h(goods: Hold['goods'], blueprints: string[] = []): Hold {
-  return { goods: { ...goods }, blueprints: [...blueprints] };
+  return { goods: { ...goods }, blueprints: blueprints.map(legacyBlueprintItem) };
 }
 
 /** Total units of value across two holds — must be invariant under transfer. */
@@ -43,8 +44,27 @@ describe('hold arithmetic (P1a-1)', () => {
     const dst = h({ salvage: 50 });
     const src = h({ salvage: 5 }, ['bp-1']);
     transferInto(dst, src, 50);
-    expect(dst.blueprints).toEqual(['bp-1']);
+    expect(dst.blueprints.map((b) => b.product)).toEqual(['module:bp-1']);
     expect(src.goods.salvage).toBe(5);
+  });
+
+  it('W2 — packed items weigh, move whole when they fit, and come back by best quality', () => {
+    const src = h({});
+    addPacked(src, 'structure:smelter', 30);
+    addPacked(src, 'structure:smelter', 80);
+    addPacked(src, 'hull:gunship', 50);
+    const sw = packedWeightOf('structure:smelter');
+    expect(holdWeight(src)).toBe(2 * sw + packedWeightOf('hull:gunship'));
+    expect(isHoldEmpty(src)).toBe(false);
+    // Room for exactly the two structures: the hull stays behind.
+    const dst = emptyHold();
+    transferInto(dst, src, 2 * sw);
+    expect(packedCount(dst, 'structure:smelter')).toBe(2);
+    expect(packedCount(src, 'hull:gunship')).toBe(1);
+    expect(takePacked(dst, 'structure:smelter')!.quality).toBe(80);
+    expect(takePacked(dst, 'structure:smelter')!.quality).toBe(30);
+    expect(takePacked(dst, 'structure:smelter')).toBeNull();
+    expect(dst.packed).toBeUndefined();
   });
 
   it('transferUpTo bounds a single step', () => {

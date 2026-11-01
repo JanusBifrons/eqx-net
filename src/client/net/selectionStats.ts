@@ -54,6 +54,7 @@ interface HoldWire {
   goods: Partial<Record<string, number>>;
   blueprints: number;
   blueprintIds?: string[];
+  packed?: number;
 }
 
 /** Apply a fresh `entity_stats` packet (mutated in place — no alloc on the
@@ -109,6 +110,7 @@ export function formatHoldLine(h: HoldWire): string {
     if (n) parts.push(`${GOOD_DEFS[id].displayName} ${n}`);
   }
   if (h.blueprints > 0) parts.push(`★${h.blueprints}`);
+  if ((h.packed ?? 0) > 0) parts.push(`▢${h.packed}`);
   return parts.length > 0 ? parts.join(' · ') : 'Empty';
 }
 

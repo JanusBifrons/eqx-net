@@ -17,7 +17,18 @@
  *    mining, it can never duplicate player value.
  */
 import { GOOD_IDS, type GoodId, type Hold } from '../../shared-types/goods.js';
-import { fittedUid } from '../../shared-types/blueprints.js';
+import { fittedUid, moduleProduct, parseProduct } from '../../shared-types/blueprints.js';
+import type { BlueprintItem } from '../../shared-types/items.js';
+
+/** The module ids fitted to a ship, from its `fitted` hold (W2 items). */
+export function fittedModuleIds(h: Hold): string[] {
+  const out: string[] = [];
+  for (const b of h.blueprints) {
+    const p = parseProduct(b.product);
+    if (p.ns === 'module') out.push(p.id);
+  }
+  return out;
+}
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { cloneHold, emptyHold, holdWeight, isHoldEmpty, transferInto } from '../../core/cargo/hold.js';
@@ -167,6 +178,30 @@ export class StorageService {
       if (r && r.owner === target.owner && isOperationalStorage(r)) out.push(r);
     }
     return out;
+  }
+
+  /** Economy v2 W3 — the owner's operational storage in the same grid
+   *  component as ANY structure `rec` (a Research Lab is not storage itself). */
+  networkFor(rec: StructureRecord): StructureRecord[] {
+    const out: StructureRecord[] = [];
+    for (const id of this.d.componentOf(rec.id)) {
+      const r = this.d.registry.get(id);
+      if (r && r.owner === rec.owner && isOperationalStorage(r)) out.push(r);
+    }
+    return out;
+  }
+
+  /** Economy v2 W3 — persist the storage structures a caller changed directly,
+   *  in ONE atomic group with `extraOps` (a lab job record, a wallet fee). */
+  commitChanged(touched: readonly StructureRecord[], extraOps: readonly PersistOp[]): void {
+    const puts: HoldRecord[] = [];
+    for (const rec of touched) {
+      const r = this.recordFor(rec);
+      if (r === null) continue;
+      this.persistedSig.set(rec.uid!, sig(r.hold));
+      puts.push(r);
+    }
+    this.d.holdStore.commit(puts, [], this.persist(), extraOps);
   }
 
   /**
@@ -386,20 +421,23 @@ export class StorageService {
   installBlueprint(owner: string, networkUid: string, blueprintId: string, shipInstanceId: string): string[] | null {
     const target = this.storageByUid(owner, networkUid);
     if (target === null) return null;
+    // W2 — blueprints are items: take a MODULE blueprint for `blueprintId`.
+    const product = moduleProduct(blueprintId);
     let from: StructureRecord | null = null;
+    let item: BlueprintItem | null = null;
     for (const rec of this.network(target)) {
-      const i = rec.hold?.blueprints.indexOf(blueprintId) ?? -1;
+      const i = rec.hold?.blueprints.findIndex((b) => b.product === product) ?? -1;
       if (i >= 0) {
-        rec.hold!.blueprints.splice(i, 1);
+        item = rec.hold!.blueprints.splice(i, 1)[0]!;
         from = rec;
         break;
       }
     }
-    if (from === null) return null;
+    if (from === null || item === null) return null;
     const uid = fittedUid(shipInstanceId);
     const prior = this.d.holdStore.get(uid);
     const fitted = prior ? cloneHold(prior.hold) : emptyHold();
-    fitted.blueprints.push(blueprintId);
+    fitted.blueprints.push(item);
     const puts: HoldRecord[] = [
       { holderUid: uid, holderType: 'fitted', ownerId: owner, sectorKey: null, x: null, y: null, hold: fitted, expiresAt: null },
     ];
@@ -409,7 +447,7 @@ export class StorageService {
       puts.push(r);
     }
     this.d.holdStore.commit(puts, [], this.persist());
-    return fitted.blueprints;
+    return fittedModuleIds(fitted);
   }
 
   nearestAnyStorage(x: number, y: number, range: number): StructureRecord | null {
@@ -459,7 +497,8 @@ export class StorageService {
 /** Stable payload signature (sorted keys) for dirty detection. 1 Hz, off-tick. */
 function sig(h: Hold): string {
   const keys = Object.keys(h.goods).sort();
-  let s = `${h.blueprints.length}`;
+  let s = `${h.blueprints.length}|${h.packed?.length ?? 0}`;
+  for (const b of h.blueprints) s += `|${b.uid}:${b.runs ?? 'o'}:${b.material}:${b.output}`;
   for (const k of keys) s += `|${k}:${(h.goods as Record<string, number>)[k]}`;
   return s;
 }

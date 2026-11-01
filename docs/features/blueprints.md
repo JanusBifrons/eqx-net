@@ -1,73 +1,96 @@
-# Blueprints (Living World P5)
+# Blueprints and packed items (economy v2, Eve-style industry)
 
-Phase P5, the last phase of the Living World plan (`peppy-jumping-pinwheel`).
-Blueprints are rare loot that permanently improve one ship until it is lost.
-They complete the loop: hunt → loot → carry home at risk → bank → upgrade.
+Plan `peppy-jumping-pinwheel`, economy v2, built in unison with the structures
+agent's production chains (plan `soft-leaping-truffle` v3).
 
-## What the player sees
+## The vision (the user's rulings)
 
-- **Where they drop.** A named elite drops one about 40% of the time; the Drone
-  Mothership drops the same haul. A cleared Robot Incursion's cache holds one
-  about half the time. Loot pods carrying a blueprint glow gold (top tier).
-- **Carrying.** Blueprints are weightless. The cargo chip counts them (★n).
-  They spill with the rest of the hold if you die, so bring them home.
-- **Banking.** Like any cargo, they auto-deposit at your own storage. The
-  storage inspector lists them as **★ Install \<name\>** chips.
-- **Installing.** Park your ship within 400 u of that storage and tap the chip.
-  The blueprint moves from storage onto your **active ship**, and a toast
-  confirms it. One of each kind per ship.
-- **Lost with the ship.** If that ship is destroyed or abandoned, its installed
-  blueprints are gone.
+- **You need a blueprint to produce anything complex**: components, end
+  products, ships, and every structure beyond the starter set. That makes
+  blueprints valuable.
+- **Originals (BPO)** have infinite runs. **Copies (BPC)** have limited runs;
+  you can loot or buy them.
+- **No tiers. A blueprint has real stats:**
+  - `material`: % fewer inputs;
+  - `output`: output quality;
+  - `runs`: copies only.
 
-| Blueprint | Effect |
-|---|---|
-| **Missile Rack** | A spare hardpoint can carry heat-seeking missiles. Without it, Missile is greyed out in the upgrade screen and the server refuses it. |
-| **Cargo Expander** | +50% cargo capacity. |
-| **Reinforced Hull** | +25% max hull, at once. The extra starts empty: no free heal. |
+  The UI's "quality" is only a glance score summarising those stats.
+- **Research** an original in a Research Lab to improve its stats. **Copy** an
+  original into copies. **Combine** worse blueprints into a better one (gacha).
+  This is W3.
+- **A blueprint makes one packed item.** A packed structure ("Packed Smelter")
+  or a packed hull is a normal, heavy cargo item. **Placing or unpacking it
+  costs nothing but time**: the full goods bill is paid when it is
+  manufactured.
+- **Casual players don't meet blueprints until mid-game.**
+  - Starter structures are built from minerals, exactly as before: capital,
+    connector, solar, battery, miner, cargo bay, turret, shield pylon and
+    shield gate.
+  - Starter hulls (scout, fighter) are always free.
 
-## How it works
+## Shipped so far
 
-- **Catalogue:** `src/shared-types/blueprints.ts` (shared, #15) holds the
-  catalogue, the weapon gate (`weaponUnlocked`), the multipliers
-  (`fittedCargoMul` / `fittedHullMul`), the drop roll and the message schemas.
-- **Installed blueprints are a hold.** They live in a `fitted` holder keyed
-  `fitted:<shipInstanceId>`. An install is ONE atomic hold group
-  (`StorageService.installBlueprint`): the storage loses it and the fitted
-  hold gains it. A blueprint is never minted or duplicated, and survives a
-  restart like any hold. No roster schema change was needed.
-- **Effects are applied in one place each:**
-  - **Hull:** `SectorRoom.shipHullMax` (kind base × stat upgrades × fitted) at
-    every hull-seed site, and immediately on install.
-  - **Cargo:** the loot collector's capacity.
-  - **Weapon gate:** `activateMount`.
-- **Lost with the ship.** `spillOrLoseShipHold` is the one seam every death and
-  abandon path goes through, and it drops the fitted hold.
-- **Client state (#16):**
-  - The own active ship's fitted list rides `SnapshotMessage.states[].fitted`
-    (own-only, sent when non-empty). It drives the cargo chip's capacity and
-    the upgrade modal's Missile gate (Zustand `fittedBlueprints`, written only
-    on change).
-  - Stored blueprint ids reach the owner's storage inspector through the
-    owner-only `entity_stats.hold.blueprintIds`.
-  - `install_blueprint` → `blueprint_result` (a toast) is an accelerator only.
-- **Audit event:** `blueprint_installed`.
+**W2: the item model.**
+- **Blueprint items.** `Hold.blueprints` holds `BlueprintItem`s:
+  `{ uid, product, kind: 'bpo'|'bpc', runs, material, output, research, bound? }`
+  (`src/shared-types/items.ts`).
+  - Products are namespaced: `structure:<kind>`, `hull:<shipKind>`,
+    `module:<id>`, `recipe:<id>`. Recipes are the structures agent's
+    `recipes.ts`.
+  - `bound` marks an NPC base's blueprint, which can't be taken out of its
+    processor.
+- **Packed items.** `Hold.packed` holds `{ product, quality }` entries. Each
+  has weight: the catalogue's `packedWeight`, or a default of 25 for
+  structures and 40 for hulls. The helpers `addPacked`, `takePacked`
+  (best quality first), `packedCount` and `packedWeightOf` live in
+  `core/cargo/hold.ts`. They are pure, so the off-screen economy uses the
+  same maths.
+- **`applyBlueprint(recipe, bp)`** returns `{ inputs, outputs, cyclePulses,
+  yieldBonus, quality }`:
+  - `material` (max 10 %) trims inputs;
+  - `output` (0–100) becomes a chance of an extra unit per cycle (max +12 %),
+    which the processor rolls with its own seeded counter;
+  - `quality` is stamped onto a discrete product.
+  - **Balance cap:** the best blueprint gains at most ~1.24× value, so a
+    recipe worth ≤ 1.6× its inputs stays under ~2×. Production can't print
+    money.
+- **`blueprintQuality(bp)`** is the 0–100 glance score; nothing reads it as
+  an input.
+- **Runs:** `spendBlueprintRun` spends one run (an original never runs out),
+  and `isBlueprintUsedUp` reports a spent copy.
+- **Drops.** Elites (~40 %) and incursion caches (~50 %) drop a blueprint for
+  a random non-starter product. It is usually a copy (1–10 runs, modest
+  stats) and rarely an original (5 %).
+- **Migration.** A pre-W2 hold row's bare string ids parse into single-run
+  module copies, so nothing is lost.
+- **Modules.** P5's installable ship upgrades (Missile Rack, Cargo Expander,
+  Reinforced Hull) are now `module:` blueprints. Until W5 makes them
+  manufactured items, a module blueprint still installs onto your active ship
+  at your storage.
 
-## Not yet
+## Coming next
 
-- Blueprints can't be bought or sold through trade deals yet; deals move
-  goods only.
-- No video yet (pending the showcase recording pass).
+- **W3 — Research Lab:** research, copy and combine (gacha). Shipped: see
+  [research-lab.md](research-lab.md).
+- **W4 — gates:**
+  - packed structures for non-starter kinds;
+  - the structures agent's `packedGateForBuild` placement seam;
+  - processor blueprint slots, which call `applyBlueprint`.
+- **W5 — Shipyard:** ship blueprint + goods → a packed hull → unpack into your
+  roster. Modules become manufactured items.
+- **W6 — blueprint market:** buy and sell blueprints with traders.
 
 ## Tests
 
-- `tests/integration/sectorRoom/blueprintInstall.test.ts`, a real room with real
-  messages:
-  - an install moves the blueprint storage → ship, and the client sees `fitted`;
-  - hull ×1.25 applies at once;
-  - the Missile Rack gate refuses heat-seekers before the install and accepts
-    them after;
-  - refusals: a duplicate, a blueprint the storage lacks, a ship too far away;
-  - death destroys the fitted hold.
-- `src/shared-types/blueprints.test.ts`: gates, multipliers, names, drop rates.
-- `BlueprintInstall.test.tsx` and `UpgradeModal.test.tsx`: the chips by name,
-  the install send, and the Missile lock.
+- `src/shared-types/blueprints.test.ts`:
+  - products (starter kinds excluded) and names;
+  - `applyBlueprint` maths and the balance cap;
+  - the glance score;
+  - runs and used-up copies;
+  - drops;
+  - legacy-row migration and a W2 round trip.
+- `src/core/cargo/hold.test.ts`: packed items weigh, move whole when they fit,
+  and come back best quality first.
+- `tests/integration/sectorRoom/blueprintInstall.test.ts`: module blueprint
+  items install onto a ship through a real room.

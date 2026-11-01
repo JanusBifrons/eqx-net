@@ -24,10 +24,10 @@ export function formatLootPickup(e: { goods: Partial<Record<string, number>>; bl
  *  alloc-free, so the per-snapshot call is cheap (#14). */
 export function cargoChanged(
   prev: CargoView | null,
-  next: { goods: Partial<Record<string, number>>; blueprints: string[] } | undefined,
+  next: { goods: Partial<Record<string, number>>; blueprints: readonly unknown[]; packed?: readonly unknown[] } | undefined,
 ): boolean {
   if (prev === null || next === undefined) return (prev === null) !== (next === undefined);
-  if (prev.blueprints !== next.blueprints.length) return true;
+  if (prev.blueprints !== next.blueprints.length || (prev.packed ?? 0) !== (next.packed?.length ?? 0)) return true;
   for (const id of GOOD_IDS) {
     if ((prev.goods[id] ?? 0) !== (next.goods[id] ?? 0)) return true;
   }

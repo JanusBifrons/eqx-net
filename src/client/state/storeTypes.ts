@@ -15,6 +15,7 @@
 import type { ArrivalMode } from '../settings/settingsStorage.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
+import type { LabState } from '../../shared-types/messages/labMessages.js';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import type { SectorStructurePresence } from '../../shared-types/galaxyPresence.js';
 
@@ -37,6 +38,8 @@ export type TradeToastTone = 'good' | 'info' | 'danger' | 'world';
 export interface CargoView {
   goods: Partial<Record<string, number>>;
   blueprints: number;
+  /** Economy v2 W2 — packed structures / hulls carried (count). */
+  packed?: number;
 }
 
 export interface WarpWarning {
@@ -266,6 +269,9 @@ export interface UIStore {
   /** Economy v2 W1 — the player's WALLET balance (credits are virtual), from
    *  the own-ship snapshot `wallet` field; null until the first snapshot. */
   wallet: number | null;
+  /** Economy v2 W3 — the last `lab_state` reply (the Research Lab panel is
+   *  rebuilt from it; discrete, written only on a reply). */
+  labState: LabState | null;
   /** Living World P5 — blueprints fitted to the local ACTIVE ship (from the
    *  own-ship snapshot slice; discrete, written only on change). */
   fittedBlueprints: readonly string[];
@@ -464,6 +470,7 @@ export interface UIStore {
   setEnergyMax: (max: number) => void;
   setCargo: (cargo: CargoView | null, capacity: number) => void;
   setWallet: (credits: number | null) => void;
+  setLabState: (s: LabState | null) => void;
   setFittedBlueprints: (ids: readonly string[]) => void;
   pushLootFeed: (text: string) => number;
   expireLootFeed: (id: number) => void;

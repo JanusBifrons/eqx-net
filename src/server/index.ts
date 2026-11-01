@@ -33,6 +33,7 @@ import {
   getPlayerShipStore,
   getWallet,
   initWallet,
+  initLabBoard,
   migrateLegacyHoldCredits,
 } from './db/PersistenceWorker.js';
 import { getUser } from './auth/AuthService.js';
@@ -1087,6 +1088,8 @@ async function main(): Promise<void> {
   const { hydrated: walletsHydrated } = initWallet();
   const migrated = migrateLegacyHoldCredits();
   logger.info({ wallets: walletsHydrated, ...migrated }, 'Wallets hydrated (+ legacy hold credits migrated)');
+  // Economy v2 W3 — the running Research Lab jobs (they hold their blueprints).
+  logger.info(initLabBoard(), 'Research Lab jobs hydrated');
 
   // Phase 8 — eagerly instantiate each galaxy room so they hydrate from
   // snapshots at boot (not on first traveller) and so future transit

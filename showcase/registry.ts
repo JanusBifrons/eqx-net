@@ -118,6 +118,8 @@ export const SHOWCASE_PENDING: Record<string, string> = {
     'Blueprints drop at random from elites/events and install at a signed-in base; needs a staged loot→install room for the P5 showcase.',
   'economy-wallet':
     'The wallet is a HUD number + server rules; filmed inside the next economy showcase (kill → balance ticks up).',
+  'research-lab':
+    'Lab jobs run for minutes on the 1 Hz grid pulse; needs a staged base with blueprints + a fast-pulse room before it can be filmed.',
   'bounties-and-events':
     'Elites roam the galaxy on the EliteDirector cadence (not on cue); needs a staged elite room — filmed once the P4 showcase room lands.',
 };
