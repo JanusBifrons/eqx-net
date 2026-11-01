@@ -3,7 +3,7 @@
 //   closed.png   — both gates closed, the ship waiting south of them;
 //   opening.png  — the ship flying north: the west gate opens, the east stays shut;
 //   through.png  — the ship past the open gate;
-//   fence.png    — the scale lattice's rectangular fence with a gate on each side.
+//   fence.png    — the scale lattice's rectangular fence, at its east-side gate.
 //
 //   node scripts/showcase/gate-stills.mjs [outDir]
 // Requires warm dev servers (pnpm dev:server:nowatch + pnpm dev:client).
@@ -35,16 +35,17 @@ await gates.screenshot({ path: `${out}/closed.png` });
 console.log('shot closed');
 await gates.locator('[data-testid="game-surface"]').click();
 await gates.keyboard.down('w');
-await gates.waitForTimeout(900);
+await gates.waitForTimeout(2000);
 await gates.screenshot({ path: `${out}/opening.png` });
 console.log('shot opening');
-await gates.waitForTimeout(900);
+await gates.waitForTimeout(1500);
 await gates.keyboard.up('w');
 await gates.screenshot({ path: `${out}/through.png` });
 console.log('shot through');
 await gates.close();
 
-const fence = await join({ room: 'structure-scale-test', zoom: '0.12', spawnX: '200', spawnY: '200' });
+// The lattice is wider than the screen: frame the EAST side's gate (x ≈ 4170).
+const fence = await join({ room: 'structure-scale-test', zoom: '0.4', spawnX: '3800', spawnY: '0' });
 await fence.screenshot({ path: `${out}/fence.png` });
 console.log('shot fence');
 await fence.close();
