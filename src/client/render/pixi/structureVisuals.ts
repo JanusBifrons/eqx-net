@@ -493,6 +493,20 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       lit(x0 + W - 14, y0 + 14, 8, live ? 0x7fe0a4 : RED);
       break;
     }
+    case 'shipyard': {
+      // A huge slipway: a long dry dock with a hull frame on the slip, a crane
+      // gantry across it and launch lights at the bow end.
+      box(rects, x0, y0, W, H, DECK, 0.95);
+      slab(rects, x0 + 30, -H / 4, W - 60, H / 2, STEEL_DARK, 12);
+      box(rects, x0 + 80, -H / 8, W - 220, H / 4, mixColor(accent, STEEL, 0.5), 0.9);
+      for (let x = x0 + 120; x < x0 + W - 140; x += 120) box(rects, x, y0 + 20, 24, H - 40, STEEL_LIGHT, 0.9);
+      for (let x = x0 + 60; x < x0 + W - 60; x += 90) box(rects, x, y0 + 26, 40, 22, mixColor(GLASS, STEEL_DARK, 0.6), 0.85);
+      lit(x0 + W - 50, -H / 6, 10, live ? accent : 0x553322);
+      lit(x0 + W - 50, H / 6, 10, live ? accent : 0x553322);
+      lit(x0 + 24, y0 + 24, 10, RED);
+      lit(x0 + W - 24, y0 + H - 24, 10, RED);
+      break;
+    }
     case 'storage_vault': {
       // An armoured vault: thick walls, a grid of sealed lockers, a blast door.
       slab(rects, x0, y0, W, H, STEEL_DARK, 16);

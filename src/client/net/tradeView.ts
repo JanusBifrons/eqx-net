@@ -8,6 +8,7 @@
 import type { StructureRenderState } from '../../core/contracts/IRenderer.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { GOOD_DEFS, type GoodId } from '../../shared-types/goods.js';
+import { productName } from '../../shared-types/blueprints.js';
 import type { TradeHistoryEntry, TradeNotice } from '../../shared-types/economy.js';
 import type { TradeToastTone } from '../state/storeTypes.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
@@ -106,6 +107,12 @@ export function summarizeHistory(entries: readonly TradeHistoryEntry[]): string 
 
 export function goodName(g: GoodId | null): string {
   return g === null ? 'credits' : GOOD_DEFS[g].displayName;
+}
+
+/** Economy v2 W4b — what an offer / deal trades, by name: a good, or a
+ *  packed structure ("Packed Smelter"). Never an id. */
+export function itemName(x: { good: GoodId | null; product?: string }): string {
+  return x.product !== undefined ? `Packed ${productName(x.product)}` : goodName(x.good);
 }
 
 /** Reputation −1000..1000 → a bar fill 0..1 (0.5 = neutral). */

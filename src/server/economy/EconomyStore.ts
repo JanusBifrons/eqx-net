@@ -223,6 +223,7 @@ export function dealView(d: TradeDeal): TradeDealView {
     dealId: d.dealId,
     kind: d.kind,
     good: d.good,
+    ...(d.product !== undefined ? { product: d.product } : {}),
     qty: d.qty,
     credits: d.credits,
     allegiance: d.allegiance,

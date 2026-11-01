@@ -16,13 +16,16 @@ import {
   packBillValue,
   packRecipeFor,
   packedKindOf,
+  hullKindOf,
+  buildRecipeFor,
+  hullBillValue,
   recipeFromIndex,
   recipeIndex,
   recipesFor,
   type RecipeDef,
 } from './recipes.js';
 import { STRUCTURE_KINDS_LIST } from './structureKinds.js';
-import { STARTER_STRUCTURE_KINDS, blueprintProducts } from './blueprints.js';
+import { STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS, blueprintProducts, packedHullProducts } from './blueprints.js';
 import {
   ASTEROID_RESOURCE_IDS,
   ASTEROID_YIELD,
@@ -100,6 +103,7 @@ describe('recipes', () => {
     for (const id of RECIPE_IDS) {
       const r = RECIPES[id];
       if (packedKindOf(id) !== null) continue; // packed structures are priced by W4's markup
+      if (hullKindOf(id) !== null) continue; // packed hulls too (W5b)
       const ratio = outputValue(r) / inputValue(r);
       expect(ratio, `${id} returns ${ratio.toFixed(2)}×`).toBeGreaterThanOrEqual(1.2);
       expect(ratio, `${id} returns ${ratio.toFixed(2)}×`).toBeLessThanOrEqual(1.6);
@@ -170,6 +174,29 @@ describe('packed structures (user ruling: NPC factions make them, players mostly
   it('every blueprint recipe names a product Living World can make blueprints for', () => {
     const products = new Set(blueprintProducts());
     for (const id of RECIPE_IDS) if (RECIPES[id].blueprintRequired) expect(products.has(blueprintProductFor(id)), id).toBe(true);
+  });
+});
+
+describe('packed hulls (economy v2 W5b: the Shipyard builds ships)', () => {
+  it('every packable hull has exactly one Shipyard recipe that needs its blueprint; starter hulls have none', () => {
+    const products = new Set(blueprintProducts());
+    for (const p of packedHullProducts()) {
+      const kind = p.slice('hull:'.length) as Parameters<typeof buildRecipeFor>[0];
+      const id = buildRecipeFor(kind);
+      expect(id, kind).not.toBeNull();
+      const r = RECIPES[id!];
+      expect(r.processors).toEqual(['shipyard']);
+      expect(r.blueprintRequired).toBe(true);
+      expect(r.outputs).toEqual([{ hull: kind }]);
+      expect(blueprintProductFor(id!)).toBe(p);
+      expect(products.has(p)).toBe(true);
+      expect(hullBillValue(kind)).toBeGreaterThan(0);
+    }
+    for (const k of STARTER_HULL_KINDS) expect(buildRecipeFor(k as Parameters<typeof buildRecipeFor>[0])).toBeNull();
+  });
+
+  it('a bigger hull costs more to build', () => {
+    expect(hullBillValue('missile-frigate')).toBeGreaterThan(hullBillValue('interceptor'));
   });
 });
 

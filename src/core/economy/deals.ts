@@ -19,6 +19,7 @@ import {
   type EconAllegiance,
 } from '../../shared-types/economy.js';
 import { tradersRefuse } from './reputation.js';
+import { packedWeightOf } from '../cargo/hold.js';
 
 /** One-off deals retry a skipped visit this often, up to `ONE_OFF_MAX_ATTEMPTS`. */
 export const ONE_OFF_RETRY_MS = 5 * 60 * 1000;
@@ -51,6 +52,9 @@ export interface TradeDeal {
   /** Traders for sell/buy; the gift's recipient side for gifts. */
   allegiance: EconAllegiance;
   good: GoodId | null;
+  /** Economy v2 W4b — a PACKED item bought (`structure:<kind>`); `good` is
+   *  null then. The hauler carries it in its hold's `packed` list. */
+  product?: string;
   qty: number;
   /** Gift only: credits carried. */
   credits: number;
@@ -121,8 +125,8 @@ export function planVisit(deal: TradeDeal, net: NetworkSnapshot, quoteNow: numbe
   }
 
   if (deal.kind === 'buy') {
-    if (!deal.good) return { go: false, reason: 'nothing-to-trade' };
-    const w = GOOD_DEFS[deal.good].weight;
+    if (!deal.good && !deal.product) return { go: false, reason: 'nothing-to-trade' };
+    const w = deal.good ? GOOD_DEFS[deal.good].weight : packedWeightOf(deal.product!);
     const fit = w > 0 ? Math.floor((net.freeCapacity + 1e-9) / w) : deal.qty;
     // Largest qty the network can pay for, fee included.
     let afford = Math.floor(Math.max(0, net.credits - HAULING_FEE) / Math.max(0.01, unit));
