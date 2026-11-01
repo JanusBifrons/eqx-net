@@ -31,7 +31,7 @@ export function fittedModuleIds(h: Hold): string[] {
 }
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
-import { cloneHold, emptyHold, holdWeight, isHoldEmpty, transferInto } from '../../core/cargo/hold.js';
+import { cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord, HoldStore } from './HoldStore.js';
 import type { StructureRecord, StructureRegistry } from '../structures/StructureRegistry.js';
 
@@ -575,6 +575,75 @@ export class StorageService {
       if (d2 <= bestD2) { bestD2 = d2; best = rec; }
     }
     return best;
+  }
+
+  // ── C1 (plan soft-leaping-truffle v3) — open a structure's cargo ─────────
+  // Access (relation, range, a live ship) is the room's call; these move the
+  // items. Each move is ONE atomic group: the ship row + the structure row.
+
+  /** What the cargo pane shows: the goods hold plus a Capital's bank. */
+  cargoView(rec: StructureRecord): { hold: Hold; used: number; capacity: number } {
+    return { hold: this.payloadOf(rec), used: holdWeight(rec.hold ?? emptyHold()), capacity: holdCapacityOf(rec) };
+  }
+
+  /**
+   * Structure → ship: move the requested items into the ship's hold, up to
+   * `shipCapacity`. Minerals come out of the goods hold first, then a
+   * Capital's bank. Returns what moved (empty ⇒ nothing changed).
+   */
+  cargoTake(shipInstanceId: string, shipOwner: string, rec: StructureRecord, want: CargoRequest, shipCapacity: number): Hold {
+    const ship = cloneHold(this.d.holdStore.get(shipInstanceId)?.hold ?? emptyHold());
+    // The source is the payload view (goods + bank minerals) so the bank can be drawn on.
+    const src = this.payloadOf(rec);
+    const picked = extractRequested(src, want);
+    const { moved } = transferInto(ship, picked, shipCapacity);
+    mergeInto(src, picked); // whatever didn't fit stays in the structure
+    if (isHoldEmpty(moved)) return moved;
+    // Split the remaining minerals back: the bank keeps up to what it had, the
+    // rest stays in the goods hold (so a take draws on the goods hold first).
+    const bankCap = getStructureKind(rec.kind).storageCapacity;
+    if (bankCap > 0) {
+      const m = src.goods.minerals ?? 0;
+      rec.minerals = Math.min(rec.minerals, m);
+      const rest = m - rec.minerals;
+      if (rest > 0) src.goods.minerals = rest;
+      else delete src.goods.minerals;
+    }
+    rec.hold = src;
+    this.commitShipAndStructures(shipInstanceId, shipOwner, ship, [rec]);
+    return moved;
+  }
+
+  /**
+   * Ship → structure: move the requested items into THIS structure (not its
+   * network: the pilot chose it). Minerals fill a Capital's bank first, like
+   * a deposit. Whatever doesn't fit stays aboard. Returns what moved.
+   */
+  cargoPut(shipInstanceId: string, shipOwner: string, rec: StructureRecord, want: CargoRequest): Hold {
+    const shipRow = this.d.holdStore.get(shipInstanceId);
+    if (shipRow === undefined) return emptyHold();
+    const ship = cloneHold(shipRow.hold);
+    const picked = extractRequested(ship, want);
+    const moved = emptyHold();
+    const bankCap = getStructureKind(rec.kind).storageCapacity;
+    const carried = picked.goods.minerals ?? 0;
+    if (bankCap > 0 && carried > 0) {
+      const fit = Math.max(0, Math.min(carried, bankCap - rec.minerals));
+      if (fit > 0) {
+        rec.minerals += fit;
+        moved.goods.minerals = fit;
+        if (carried - fit > 0) picked.goods.minerals = carried - fit;
+        else delete picked.goods.minerals;
+      }
+    }
+    const hold = rec.hold ?? emptyHold();
+    const r = transferInto(hold, picked, holdCapacityOf(rec));
+    rec.hold = hold;
+    mergeInto(moved, r.moved);
+    mergeInto(ship, picked); // leftover stays aboard
+    if (isHoldEmpty(moved)) return moved;
+    this.commitShipAndStructures(shipInstanceId, shipOwner, ship, [rec]);
+    return moved;
   }
 
   /** Weight currently held across a target's network (inspector / tests). */
