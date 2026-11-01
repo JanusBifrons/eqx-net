@@ -63,6 +63,16 @@ export function quoteBuy(m: MarketState, good: GoodId, traderRep: number, region
   return round2((midPrice(m, good) * regionFactor * (1 + MARKET_SPREAD)) / repPriceFactor(traderRep));
 }
 
+/** Economy v2 W4b — traders sell packed structures at the pack recipe's goods
+ *  value times this markup (they did the manufacturing). */
+export const PACKED_MARKUP = 1.3;
+
+/** What the player PAYS for one packed item whose goods bill is worth
+ *  `billValue` at base prices. Good rep pays less, like goods. */
+export function quotePacked(billValue: number, traderRep: number): number {
+  return round2((billValue * PACKED_MARKUP) / repPriceFactor(traderRep));
+}
+
 /** A settled fill moves supply: the player sold `qty` (supply up) or bought it (down). */
 export function applyFill(m: MarketState, good: GoodId, qty: number, side: 'sell' | 'buy'): void {
   const value = qty * BASE_PRICES[good];

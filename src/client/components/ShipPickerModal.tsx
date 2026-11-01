@@ -1,7 +1,15 @@
 import { Box, Button, Card, CardActionArea, Dialog, DialogActions, DialogContent, DialogTitle, Typography } from '@mui/material';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { useEffect, useState } from 'react';
-import { PLAYABLE_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds';
+import { DEFAULT_SHIP_KIND, PLAYABLE_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds';
+import { STARTER_HULL_KINDS } from '../../shared-types/blueprints';
+
+/** Economy v2 W5b — a NEW ship can only be a starter hull; any other kind must
+ *  be bought packed, unpacked at your storage, then picked from the roster.
+ *  (The server enforces the same rule; this keeps the picker honest.) */
+export function isFreeHull(kind: ShipKindId): boolean {
+  return STARTER_HULL_KINDS.includes(kind);
+}
 import { ShipSilhouette } from '../render/shipShapeSvg';
 
 interface ShipPickerModalProps {
@@ -29,12 +37,13 @@ interface ShipPickerModalProps {
  * tight — silhouette + name + slim stats line, no full description.
  */
 export function ShipPickerModal({ open, onClose, selectedKind, onSelect, title, subtitle }: ShipPickerModalProps): JSX.Element {
-  const [tentative, setTentative] = useState<ShipKindId>(selectedKind);
+  const initial = isFreeHull(selectedKind) ? selectedKind : DEFAULT_SHIP_KIND;
+  const [tentative, setTentative] = useState<ShipKindId>(initial);
   // Reset the tentative selection to the prop whenever the modal opens.
   // Without this, a player who picked X last time and now wants Y starts
   // with X pre-selected — fine; but if the prop changes mid-life (e.g.
   // Zustand updates from another path), the tentative state should follow.
-  useEffect(() => { if (open) setTentative(selectedKind); }, [open, selectedKind]);
+  useEffect(() => { if (open) setTentative(initial); }, [open, initial]);
 
   return (
     <Dialog
@@ -68,6 +77,7 @@ export function ShipPickerModal({ open, onClose, selectedKind, onSelect, title, 
               key={kind.id}
               kind={kind}
               isSelected={kind.id === tentative}
+              locked={!isFreeHull(kind.id)}
               onSelect={() => setTentative(kind.id)}
             />
           ))}
@@ -95,15 +105,18 @@ export function ShipPickerModal({ open, onClose, selectedKind, onSelect, title, 
 interface ShipCardProps {
   kind: ShipKind;
   isSelected: boolean;
+  /** Not a starter hull: buy one packed, unpack it, pick it from the roster. */
+  locked: boolean;
   onSelect: () => void;
 }
 
-function ShipCard({ kind, isSelected, onSelect }: ShipCardProps): JSX.Element {
+function ShipCard({ kind, isSelected, locked, onSelect }: ShipCardProps): JSX.Element {
   return (
     <Card
       elevation={0}
       data-testid={`ship-card-${kind.id}`}
       data-selected={isSelected ? '1' : '0'}
+      data-locked={locked ? '1' : '0'}
       sx={{
         bgcolor: 'transparent',
         border: '1px solid',
@@ -113,6 +126,7 @@ function ShipCard({ kind, isSelected, onSelect }: ShipCardProps): JSX.Element {
     >
       <CardActionArea
         onClick={onSelect}
+        disabled={locked}
         sx={{
           display: 'flex',
           flexDirection: 'column',
@@ -131,6 +145,11 @@ function ShipCard({ kind, isSelected, onSelect }: ShipCardProps): JSX.Element {
         <Typography sx={{ color: '#888', fontSize: 9, textAlign: 'center', lineHeight: 1.1, mt: 0.25 }}>
           {Math.round(kind.maxSpeed)} spd · {Math.round(kind.maxHealth)} hull
         </Typography>
+        {locked && (
+          <Typography sx={{ color: '#7ec8ff', fontSize: 9, textAlign: 'center', lineHeight: 1.1, mt: 0.25 }}>
+            Buy &amp; unpack
+          </Typography>
+        )}
       </CardActionArea>
     </Card>
   );

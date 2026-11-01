@@ -27,6 +27,16 @@ something shoots it down on the way in or while it is docked, the deal fails.
   settled, failed) and its next visit. **Cancel** is free between visits; during
   a visit the deal ends after it.
 - **History** — what happened, newest first.
+
+> **Economy v2 W6 — blueprints.** A **Blueprints** section buys traders' blueprints into the selected base and sells yours, instantly (no hauler: blueprints are weightless). See [blueprints.md](blueprints.md).
+
+> **Economy v2 W4b — packed structures.** The board also carries a rotating
+> handful of **Buy Packed \<structure\>** offers (1–3 each). Price: the pack
+> recipe's goods value × 1.3, shifted by your trader standing like goods.
+> They are one-off deals. The hauler carries the packed structures in its hold
+> (a raid spills them as a pod) and unloads them into your storage when it
+> leaves. You need one to place any non-starter structure; see
+> [blueprints.md](blueprints.md).
 > **Economy v2 W1:** credits are a virtual wallet ([economy-wallet.md](economy-wallet.md)).
 > A buy's price and a gift's credits are taken from your wallet when the
 > hauler docks and refunded to it if the visit fails; a sale's proceeds land in

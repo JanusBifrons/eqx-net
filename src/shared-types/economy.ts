@@ -97,7 +97,11 @@ export type DealState = (typeof DEAL_STATES)[number];
 export interface TradeOffer {
   offerId: string;
   kind: 'sell' | 'buy';
-  good: GoodId;
+  /** The good traded; null for a PACKED-item offer (see `product`). */
+  good: GoodId | null;
+  /** Economy v2 W4b — a packed structure the player can BUY (`structure:<kind>`).
+   *  One-off only (no recurring deals). Absent on goods offers. */
+  product?: string;
   /** Credits per unit at the requesting player's reputation. */
   unitPrice: number;
   maxQty: number;
@@ -109,6 +113,8 @@ export interface TradeDealView {
   dealId: string;
   kind: DealKind;
   good: GoodId | null;
+  /** Economy v2 W4b — a packed-item buy (`structure:<kind>`). */
+  product?: string;
   qty: number;
   credits: number;
   allegiance: EconAllegiance;

@@ -21,7 +21,8 @@ vi.mock('../../src/client/net/clientSingleton', () => ({
 
 import * as client from '../../src/client/net/tradeClient';
 import { AcceptOfferSchema, CancelDealSchema, SendGiftSchema } from '../../src/shared-types/economy';
-import { InstallBlueprintSchema } from '../../src/shared-types/blueprints';
+import { InstallBlueprintSchema, UnpackHullSchema } from '../../src/shared-types/blueprints';
+import { BpBuySchema, BpMarketQuerySchema, BpSellSchema } from '../../src/shared-types/blueprintMarket';
 import { PlaceBountySchema } from '../../src/shared-types/contracts';
 import { LabCancelSchema, LabQuerySchema, LabStartSchema } from '../../src/shared-types/messages/labMessages';
 import { CargoMoveSchema, CargoQuerySchema } from '../../src/shared-types/messages/cargoMessages';
@@ -48,6 +49,20 @@ describe('tradeClient senders match the server schemas', () => {
   it('install_blueprint', () => {
     client.sendInstallBlueprint(3, 'bp-cargo-expander');
     lastAccepted(InstallBlueprintSchema, 'install_blueprint');
+  });
+
+  it('bp_market_query / bp_buy / bp_sell (economy v2 W6)', () => {
+    client.sendBpMarketQuery(3);
+    lastAccepted(BpMarketQuerySchema, 'bp_market_query');
+    client.sendBpBuy(3, 'bpo-1');
+    lastAccepted(BpBuySchema, 'bp_buy');
+    client.sendBpSell(3, 'bp-1');
+    lastAccepted(BpSellSchema, 'bp_sell');
+  });
+
+  it('unpack_hull (economy v2 W5a)', () => {
+    client.sendUnpackHull(3, 'gunship');
+    lastAccepted(UnpackHullSchema, 'unpack_hull');
   });
 
   it('place_bounty', () => {

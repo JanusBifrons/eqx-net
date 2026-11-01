@@ -173,6 +173,8 @@ export async function bootSectorTestServer(opts: {
   defaultSpawnY?: number;
   /** Living World P2 — join the TradeDirector / stock placed storage / raiders. */
   tradeEnabled?: boolean;
+  /** Economy v2 W5b — switch the ship-picker hull gate on in a test room. */
+  enforceHullGate?: boolean;
   seedStorageHold?: { goods: Partial<Record<'minerals' | 'salvage' | 'alloy' | 'core', number>>; credits?: number };
   haulerRaiders?: number;
   /** A0 scale lattice (plan soft-leaping-truffle v2). */
@@ -227,6 +229,7 @@ export async function bootSectorTestServer(opts: {
     npcBases: opts.npcBases,
     galaxyBases: opts.galaxyBases,
     tradeEnabled: opts.tradeEnabled,
+    enforceHullGate: opts.enforceHullGate,
     seedStorageHold: opts.seedStorageHold,
     haulerRaiders: opts.haulerRaiders,
     defaultSpawnX: opts.defaultSpawnX,
