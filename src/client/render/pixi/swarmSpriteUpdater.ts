@@ -26,6 +26,7 @@
  * arc mounts so `applyMountAngles` is a no-op.
  */
 
+import { isSpriteInView } from '../spriteUpdateDecisions.js';
 import type { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind, type WeaponMount } from '../../../shared-types/shipKinds';
@@ -66,6 +67,9 @@ export interface SpriteBuildSig {
 }
 
 export interface SwarmSpriteCtx {
+  /** A3 — the camera's visible rect (pixi space) this frame; structures
+   *  outside it are not drawn. Absent ⇒ draw everything. */
+  viewBounds?: Float64Array;
   shipContainer: Container;
   sprites: Map<string, Graphics>;
   mountVisuals: MountVisualManager;
@@ -213,6 +217,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       : interpolateSwarmPose(entry, now, ctx.swarmPoseScratch);
     sprite.x = lerped.x;
     sprite.y = -lerped.y;
+    // A3 — don't draw structures that are off screen (static, so the bounding
+    // radius is a safe margin; mount barrels are children and hide with it).
+    if (entry.kind === 2) sprite.visible = isSpriteInView(sprite.x, sprite.y, entry.radius, ctx.viewBounds);
     sprite.rotation = -lerped.angle;
     if (entry.kind === 1 && entry.shipKind) {
       ctx.mountVisuals.ensureForShip(spriteKey, entry.shipKind, sprite);

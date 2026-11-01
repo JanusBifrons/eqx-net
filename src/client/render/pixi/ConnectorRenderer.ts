@@ -11,7 +11,7 @@
  * numerically (no string keys), and no per-frame collections are created.
  */
 import { Graphics } from 'pixi.js';
-import type { RenderMirror, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
+import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
 import { interpBuildPct } from './buildBarInterp.js';
 import {
   connectorVisualInto,
@@ -87,8 +87,68 @@ function blankGridNode(): GridNode {
   };
 }
 
+/** FNV-1a style integer mix. */
+function mix(h: number, n: number): number {
+  return Math.imul(h ^ (n | 0), 16777619);
+}
+
+/**
+ * Integer signature of everything the static layer draws: the structure set and
+ * poses, connections, built / walls-up / gate-open state, and the highlighted
+ * turret. Alloc-free (key iteration + scalar maths).
+ */
+export function staticSignature(
+  structures: ReadonlyMap<number, StructureRenderState>,
+  swarm: ReadonlyMap<number, SwarmRenderState>,
+  highlighted: number | null | undefined,
+): number {
+  let h = mix(2166136261, structures.size);
+  h = mix(h, highlighted ?? -1);
+  for (const id of structures.keys()) {
+    const st = structures.get(id)!;
+    const a = swarm.get(id);
+    h = mix(h, id);
+    if (a) {
+      h = mix(h, Math.round(a.x));
+      h = mix(h, Math.round(a.y));
+      h = mix(h, Math.round(a.angle * 1000));
+    } else {
+      h = mix(h, -7);
+    }
+    h = mix(h, (st.built ? 1 : 0) | (st.wallActive ? 2 : 0) | ((st.gateOpen ?? 0) << 2));
+    const conn = st.connTo;
+    h = mix(h, conn.length);
+    for (let c = 0; c < conn.length; c++) h = mix(h, conn[c]!);
+  }
+  return h;
+}
+
+/** Rebuild the static layer when the zoom has moved more than this fraction
+ *  since its last build (its line widths are zoom-dependent). */
+const STATIC_SCALE_TOLERANCE = 0.03;
+
 export class ConnectorRenderer {
+  /** Per-frame layer: everything that animates (flow pulses, wall glow and
+   *  shimmer, beams, build bars, the placement preview). Cleared every frame. */
   readonly gfx = new Graphics();
+  /**
+   * A3 (plan soft-leaping-truffle v2) — the STATIC layer, drawn BEHIND `gfx`:
+   * idle edges, built-turret range rings, up-wall rails and open-gate guides.
+   * Rebuilt only when the structure topology / state signature changes or the
+   * zoom moves past STATIC_SCALE_TOLERANCE, so Pixi stops re-tessellating
+   * every edge of a big base each frame. Measured before the split (citadel,
+   * 456 structures, desktop): 0.70 ms median per frame building commands, plus
+   * the re-tessellation of every line.
+   */
+  readonly staticGfx = new Graphics();
+  /** Test hook: how many times the static layer has been rebuilt. */
+  staticRebuilds = 0;
+  private _staticSig = NaN;
+  private _staticScale = 0;
+  /** Range-ring readouts captured at the last static rebuild. */
+  private _staticRingCount = 0;
+  private _staticRingRadius = 0;
+  private _staticRingWidth = 0;
 
   /**
    * Item C — number of 'ok' (would-connect, GREEN, counted) preview lines the
@@ -213,10 +273,15 @@ export class ConnectorRenderer {
   /** Per-frame inputs for the wall visitor (set before each walk). */
   private _wallNow = 0;
   private _wallScale = 1;
-  /** Draws each derived shield wall (fence walls + gate spans). Created once. */
+  /** Draws the ANIMATED part of each derived shield wall (per frame). */
   private readonly _wallVisitor: DerivedWallVisitor = {
     wall: (_key, ax, ay, bx, by, blocking, _thickness, open) =>
-      this.drawShieldWall(ax, -ay, bx, -by, blocking, open),
+      this.drawShieldWall(ax, -ay, bx, -by, blocking, open, false),
+  };
+  /** Draws the STEADY part of each derived shield wall (static layer). */
+  private readonly _staticWallVisitor: DerivedWallVisitor = {
+    wall: (_key, ax, ay, bx, by, blocking, _thickness, open) =>
+      this.drawShieldWall(ax, -ay, bx, -by, blocking, open, true),
   };
 
   /**
@@ -224,11 +289,16 @@ export class ConnectorRenderer {
    * — a glow field + two parallel rails (the band slab) + a sweeping shimmer —
    * so it never reads as a connector link. Down = the dim red flicker. An open
    * gate end = a faint dashed guide across the gap.
+   *
+   * `steady` (static layer): the rails of an up wall and an open gate's guide.
+   * Otherwise (per frame): an up wall's breathing glow + shimmer, or a down
+   * wall's flicker.
    */
-  private drawShieldWall(ax: number, ay: number, wx: number, wy: number, blocking: boolean, open: boolean): void {
-    const g = this.gfx;
+  private drawShieldWall(ax: number, ay: number, wx: number, wy: number, blocking: boolean, open: boolean, steady: boolean): void {
+    const g = steady ? this.staticGfx : this.gfx;
     const scale = this._wallScale;
     if (open) {
+      if (!steady) return;
       const dx = wx - ax;
       const dy = wy - ay;
       const len = Math.hypot(dx, dy);
@@ -244,12 +314,14 @@ export class ConnectorRenderer {
       return;
     }
     const sv = shieldWallVisualParams(this._shieldVisual, blocking, this._wallNow, scale);
-    // Glow field down the centreline (drawn first, behind the rails).
-    if (sv.glowAlpha > 0) {
+    if (!blocking) {
+      // Down: a single dim flickering red line ships can pass (animated).
+      if (steady) return;
       g.moveTo(ax, ay); g.lineTo(wx, wy);
-      g.stroke({ color: sv.glowColor, alpha: sv.glowAlpha, width: sv.glowWidth });
+      g.stroke({ color: sv.railColor, alpha: sv.railAlpha, width: sv.railWidth });
+      return;
     }
-    if (sv.halfThickness > 0) {
+    if (steady) {
       // Band: two rails offset by ±halfThickness along the span NORMAL.
       const dx = wx - ax;
       const dy = wy - ay;
@@ -262,17 +334,91 @@ export class ConnectorRenderer {
         g.moveTo(ax - nx, ay - ny); g.lineTo(wx - nx, wy - ny);
         g.stroke({ color: sv.railColor, alpha: sv.railAlpha, width: sv.railWidth });
       }
-      // Travelling shimmer along the centreline (the "live energy" sweep).
-      if (sv.shimmerAlpha > 0) {
-        const c = cometSegment(this._comet, sv.shimmerT, true, ax, ay, wx, wy, scale);
-        g.moveTo(c.x0, c.y0); g.lineTo(c.x1, c.y1);
-        g.stroke({ color: sv.shimmerColor, alpha: sv.shimmerAlpha, width: sv.shimmerWidth });
-      }
-    } else {
-      // Down: a single dim flickering red line ships can pass.
-      g.moveTo(ax, ay); g.lineTo(wx, wy);
-      g.stroke({ color: sv.railColor, alpha: sv.railAlpha, width: sv.railWidth });
+      return;
     }
+    // Glow field down the centreline (the rails sit on the static layer).
+    if (sv.glowAlpha > 0) {
+      g.moveTo(ax, ay); g.lineTo(wx, wy);
+      g.stroke({ color: sv.glowColor, alpha: sv.glowAlpha, width: sv.glowWidth });
+    }
+    // Travelling shimmer along the centreline (the "live energy" sweep).
+    if (sv.shimmerAlpha > 0) {
+      const c = cometSegment(this._comet, sv.shimmerT, true, ax, ay, wx, wy, scale);
+      g.moveTo(c.x0, c.y0); g.lineTo(c.x1, c.y1);
+      g.stroke({ color: sv.shimmerColor, alpha: sv.shimmerAlpha, width: sv.shimmerWidth });
+    }
+  }
+
+  /**
+   * Rebuild the static layer if anything it draws has changed: the structure
+   * set and poses, connections, built / walls-up / gate-open state, the
+   * highlighted turret, or the zoom (past STATIC_SCALE_TOLERANCE). The
+   * signature is an integer hash walk — far cheaper than drawing.
+   */
+  private refreshStatic(
+    structures: ReadonlyMap<number, StructureRenderState>,
+    swarm: ReadonlyMap<number, SwarmRenderState>,
+    scale: number,
+  ): void {
+    const sig = staticSignature(structures, swarm, this.highlightedStructureId);
+    const scaleMoved = this._staticScale === 0 || Math.abs(scale / this._staticScale - 1) > STATIC_SCALE_TOLERANCE;
+    if (sig !== this._staticSig || scaleMoved) {
+      this._staticSig = sig;
+      this._staticScale = scale;
+      this.staticRebuilds++;
+      this.drawStatic(structures, swarm, scale);
+    }
+    this.builtTurretRangeCount = this._staticRingCount;
+    this.lastBuiltTurretRangeRadius = this._staticRingRadius;
+    this.lastBuiltTurretRangeWidth = this._staticRingWidth;
+  }
+
+  private drawStatic(
+    structures: ReadonlyMap<number, StructureRenderState>,
+    swarm: ReadonlyMap<number, SwarmRenderState>,
+    scale: number,
+  ): void {
+    const g = this.staticGfx;
+    g.clear();
+    this._staticRingCount = 0;
+    this._staticRingRadius = 0;
+    this._staticRingWidth = 0;
+    // Idle look of every edge (an edge carrying flow is overdrawn per frame).
+    const idle = connectorVisualInto(this._edgeVisual, 0, 0, scale);
+    for (const id of structures.keys()) {
+      const st = structures.get(id)!;
+      const a = swarm.get(id);
+      if (!a) continue;
+      const ax = a.x;
+      const ay = -a.y;
+      // WS-D (#21) — always-on defensive RANGE circle for a BUILT weapon turret.
+      if (st.built && a.shipKind !== undefined && isStructureKindId(a.shipKind)) {
+        const wr = getStructureKind(a.shipKind).weaponRange;
+        if (wr !== undefined && wr > 0) {
+          const rc = builtRangeCircleVisualInto(this._builtRangeVisual, scale);
+          // Phase 5 — bolder ring when this turret is hovered/selected.
+          const highlighted = id === this.highlightedStructureId;
+          const ringWidth = highlighted ? rc.width * 3 : rc.width;
+          g.circle(ax, ay, wr);
+          g.stroke({ color: rc.color, alpha: highlighted ? Math.min(1, rc.alpha * 2.6) : rc.alpha, width: ringWidth });
+          this._staticRingCount++;
+          this._staticRingRadius = wr;
+          this._staticRingWidth = ringWidth;
+        }
+      }
+      const conn = st.connTo;
+      for (let c = 0; c < conn.length; c++) {
+        const otherId = conn[c]!;
+        if (id > otherId) continue; // each undirected edge once
+        const b = swarm.get(otherId);
+        if (!b) continue;
+        g.moveTo(ax, ay);
+        g.lineTo(b.x, -b.y);
+        g.stroke({ color: idle.color, alpha: idle.alpha, width: idle.width });
+      }
+    }
+    this._wallScale = scale;
+    visitDerivedWalls(structures, swarm, this._staticWallVisitor);
   }
 
   update(mirror: RenderMirror, scale: number, nowMs: number): void {
@@ -295,8 +441,14 @@ export class ConnectorRenderer {
     if (swarm) this.drawPlacementPreview(mirror, swarm, scale);
     if (!structures || !swarm || structures.size === 0) {
       if (this._buildAnchors.size > 0) this._buildAnchors.clear();
+      if (this._staticSig === this._staticSig) { // not NaN ⇒ something is drawn
+        this.staticGfx.clear();
+        this._staticSig = NaN;
+        this._staticRingCount = 0;
+      }
       return;
     }
+    this.refreshStatic(structures, swarm, scale);
     const flashes = mirror.gridFlashes;
     const flowSrc = mirror.gridFlowSrc;
     const flowMat = mirror.gridFlowMaterial;
@@ -314,31 +466,7 @@ export class ConnectorRenderer {
       const ax = a.x;
       const ay = -a.y;
 
-      // WS-D (#21) — always-on defensive RANGE circle for a BUILT weapon turret.
-      // `a.shipKind` is the structure subtype (rides the shared shipKind byte);
-      // the catalogue `weaponRange` is known client-side, so no wire. Out-of-
-      // interest structures are absent from `structures`, so they're omitted by
-      // construction. Drawn FIRST (faint underlay, behind the web). A symmetric
-      // circle → the Y-flip on `ay` doesn't affect the radius.
-      if (st.built && a.shipKind !== undefined && isStructureKindId(a.shipKind)) {
-        const wr = getStructureKind(a.shipKind).weaponRange;
-        if (wr !== undefined && wr > 0) {
-          const rc = builtRangeCircleVisualInto(this._builtRangeVisual, scale);
-          // Phase 5 — bolder ring when this turret is hovered/selected.
-          const highlighted = id === this.highlightedStructureId;
-          const ringWidth = highlighted ? rc.width * 3 : rc.width;
-          g.circle(ax, ay, wr);
-          g.stroke({
-            color: rc.color,
-            alpha: highlighted ? Math.min(1, rc.alpha * 2.6) : rc.alpha,
-            width: ringWidth,
-          });
-          this.builtTurretRangeCount++;
-          this.lastBuiltTurretRangeRadius = wr;
-          this.lastBuiltTurretRangeWidth = ringWidth;
-        }
-      }
-
+      // (Turret range rings + idle edges live on the static layer.)
       for (const otherId of st.connTo) {
         // Draw each undirected edge once, from the lower-id endpoint.
         if (id > otherId) continue;
@@ -355,6 +483,7 @@ export class ConnectorRenderer {
         // (repair→green / minerals→orange / construction→cyan). Absent ⇒ minerals.
         const material = codeToFlowMaterial(flowMat ? flowMat.get(key) : undefined);
         const v = connectorVisualInto(this._edgeVisual, flashUntil, nowMs, scale, phaseOffset, material);
+        if (!v.pulseActive) continue; // idle: drawn on the static layer
         const bx = b.x;
         const by = -b.y;
         // Glow underlay first (so the core line sits on top).

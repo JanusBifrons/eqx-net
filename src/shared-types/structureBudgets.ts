@@ -74,6 +74,19 @@ export const GRID_ROUTES_REBUILD_MAX_MS = 0.5;
 
 // ── Client ─────────────────────────────────────────────────────────────────
 
+/** A3 — the client prediction world carries a structure (or shield wall)
+ *  body only while its EDGE is within this distance of the local ship. Every
+ *  server correction replays ~20 physics ticks; with a whole citadel in the
+ *  prediction world (456 structures) that replay measured 2.36 ms median /
+ *  5.1 ms p95 on a desktop (~4× that on a phone), against 0.16 ms with none
+ *  and 0.31 ms with only the structures within 1500 u. Ships move < 50 u
+ *  between swarm packets and predicted weapons reach ≤ 325 u, so 1500 u is
+ *  ample. Measured by src/core/physics/World.structureStreaming.test.ts. */
+export const PREDWORLD_STRUCTURE_RADIUS = 1500;
+/** Extra distance before a streamed-in structure body is released again, so
+ *  a ship hovering at the edge doesn't churn bodies. */
+export const PREDWORLD_STRUCTURE_HYSTERESIS = 300;
+
 /** Frame-time p99 regression allowed with a citadel on screen (mirrors
  *  baseBudgets CLIENT_FRAME_P99_REL_MAX). */
 export const STRUCTURE_CLIENT_FRAME_P99_REL_MAX = 0.1;
