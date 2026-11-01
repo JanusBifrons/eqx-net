@@ -84,6 +84,21 @@ User ruling (2026-11-01): "not everything should drain full power all of the tim
 - **The generator sizes for expected use.** `growBase` prices power at `expectedDraw(kind) = cons × (u + (1 − u) × IDLE_DRAW_FRAC)`, with utilisation `u` from `EXPECTED_ACTIVE` (processors 0.6, drills 0.8, turrets 0.15), and adds two extra batteries to fenced bases. So NPC bases don't build power for every machine at 100 % at once (`BASE_GROWTH_VERSION` 3).
 - **Locks:** `StructureGridSubsystem.test.ts` (brown-out alternation, battery recovery, overdrawn turret), `structureMining.test.ts` and `structureTurret.test.ts` (integration: alternating drill, a drilling miner overdraws a turret), `researchLab.test.ts` (a lab draws full only while its job runs), `growBase.test.ts` (power ≥ 0 at expected draw).
 
+## NPC bases in the galaxy (T1)
+
+Every galaxy sector grows its own NPC base when its room is created (`SectorRoom.seedGalaxyBase`, enabled for every galaxy room by `resolveSectorConfig`):
+- **Profile and growth.** `contextForSector` → `baseProfileFor` (tier, role, wealth, level cap, fence) → `growBase`. The seed is `hashString(sectorKey)`, so a sector's base is stable across restarts.
+- **After the restore.** Seeding runs AFTER the sector snapshot restore, so saved player structures and parked hulls are already in place and always win the space.
+- **Site.** The pure `chooseBaseSite` (`src/core/bases/baseSite.ts`) scans the sector on a 250 u grid for a Capital position where the whole base, plus a 250 u margin, fits inside the sector and touches no player structure or parked hull. It prefers the fewest asteroids, then the site farthest from the origin (where players spawn). Asteroids under the chosen footprint are cleared quietly (no destroy event).
+- **Spawns.** A fresh spawn that would land inside any structure's box is moved to the nearest clear point (`nearestClearPoint`, 120 u clearance). A citadel (≈6,000 × 6,400 u) can't avoid the origin in a 10,000 u sector, so this matters.
+- **Not persisted.** A restart regrows the base. **Kill switch:** `EQX_DISABLE_NPC_BASES=1`.
+
+Today's galaxy (seeded): 13 outposts, 6 settlements, a stronghold (andromeda-rim) and a citadel (bloomgate), all trader bases.
+
+Locks:
+- `baseSite.test.ts`: site rules, and every real sector's base fits its sector;
+- `tests/integration/sectorRoom/galaxyBases.test.ts`: the bloomgate citadel is placed in full in a real room with its asteroid field; a spawn on its Capital is nudged clear (fails without the nudge); the kill switch.
+
 ## Packed structures
 
 User rulings (2026-11-01):

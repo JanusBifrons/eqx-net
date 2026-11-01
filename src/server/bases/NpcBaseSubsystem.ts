@@ -19,7 +19,7 @@
  * NPC structures are not persisted (B2); a restart regenerates from the seed.
  */
 import { growBase, type GrownBase } from '../../core/bases/growBase.js';
-import { TIER_LEVEL_CAP, TIER_WEALTH, type BaseRole, type BaseTier } from '../../core/bases/baseProfile.js';
+import { TIER_LEVEL_CAP, TIER_WEALTH, type BaseProfile, type BaseRole, type BaseTier } from '../../core/bases/baseProfile.js';
 import type { SectorFeature } from '../../core/galaxy/galaxy.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import { npcOwner } from '../../shared-types/relations.js';
@@ -47,6 +47,9 @@ export interface NpcBaseSpec {
   fenced?: boolean;
   /** Override the tier's default wealth. */
   wealth?: number;
+  /** T1 — a full profile (a galaxy sector's `baseProfileFor`); overrides the
+   *  tier defaults above. */
+  profile?: BaseProfile;
 }
 
 export interface NpcBaseHooks {
@@ -64,6 +67,13 @@ export interface SeededNpcBase {
   rejectedEdge: number;
 }
 
+/** Ops kill switch for galaxy NPC bases (T1): `EQX_DISABLE_NPC_BASES=1`.
+ *  Test rooms with an explicit `npcBases` option are unaffected. */
+export function isNpcBasesDisabled(env: Record<string, string | undefined> = process.env): boolean {
+  const v = env['EQX_DISABLE_NPC_BASES'];
+  return v === '1' || v === 'true';
+}
+
 /** Hours of fuel a base starts with (pulses at 1 Hz). */
 const START_FUEL_PULSES = 3600;
 /** Processor cycles of inputs a base starts with. */
@@ -74,19 +84,33 @@ const START_MUNITIONS_PER_TURRET = 10;
 export class NpcBaseSubsystem {
   constructor(private readonly h: NpcBaseHooks) {}
 
-  seed(spec: NpcBaseSpec): SeededNpcBase {
+  /** The profile a spec describes (its `profile`, else the tier defaults). */
+  profileOf(spec: NpcBaseSpec): BaseProfile {
+    if (spec.profile) return spec.profile;
     const [w0, w1] = TIER_WEALTH[spec.tier];
     const [, l1] = TIER_LEVEL_CAP[spec.tier];
-    const profile = {
+    return {
       tier: spec.tier,
       role: spec.role,
       ownerSide: spec.side ?? 'traders',
       wealth: spec.wealth ?? Math.round((w0 + w1) / 2),
       levelCap: l1,
       fenced: spec.fenced ?? true,
-    } as const;
-    const grown = growBase(profile, spec.seed, spec.features ?? []);
-    const owner = npcOwner(spec.side ?? 'traders', spec.baseId);
+    };
+  }
+
+  /** Grow the base a spec describes (pure; nothing placed). Lets a caller
+   *  pick a site from its extent before seeding (T1). */
+  grow(spec: NpcBaseSpec): GrownBase {
+    return growBase(this.profileOf(spec), spec.seed, spec.features ?? []);
+  }
+
+  /** Place a base with its Capital at (spec.x, spec.y). `grown` may come from
+   *  `grow(spec)`; otherwise it is grown here. */
+  seed(spec: NpcBaseSpec, grownIn?: GrownBase): SeededNpcBase {
+    const profile = this.profileOf(spec);
+    const grown = grownIn ?? this.grow(spec);
+    const owner = npcOwner(profile.ownerSide, spec.baseId);
 
     const ids: Array<string | null> = [];
     let rejectedPlace = 0;

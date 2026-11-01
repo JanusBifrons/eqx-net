@@ -109,7 +109,10 @@ import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner,
 import { CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, type CargoState } from '../../shared-types/messages/cargoMessages.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
-import { NpcBaseSubsystem, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
+import { NpcBaseSubsystem, isNpcBasesDisabled, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
+import { baseProfileFor, contextForSector, hashString } from '../../core/bases/baseProfile.js';
+import { chooseBaseSite, grownExtent, nearestClearPoint, type SiteBox, type SiteCircle } from '../../core/bases/baseSite.js';
+import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
 import { PROD_STATE, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import { blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
@@ -273,6 +276,9 @@ import {
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
 import type { WeaponId, MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat/Energy.js';
+
+/** T1 — a fresh spawn stays at least this far from any structure's box. */
+const SPAWN_STRUCTURE_CLEARANCE = 120;
 
 const logger = pino({
   name: 'SectorRoom',
@@ -1321,6 +1327,10 @@ export class SectorRoom extends Room<SectorState> {
       /** D2 — NPC bases grown by the core generator (server-authored, never
        *  client input). Galaxy seeding of these comes with trade (phase T). */
       npcBases?: NpcBaseSpec[];
+      /** T1 — grow this galaxy sector's own NPC base from its profile and
+       *  seed it AFTER the snapshot restore (saved player structures keep
+       *  their space). Set for every galaxy room by `resolveSectorConfig`. */
+      galaxyBases?: boolean;
       /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
@@ -2328,6 +2338,10 @@ export class SectorRoom extends Room<SectorState> {
     // only; positions are deterministic from the seed and are not persisted.
     if (this.sectorKey !== null) {
       this.hydrateFromSnapshot();
+    }
+    // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
+    if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {
+      this.seedGalaxyBase(this.sectorKey);
     }
 
     // Phase 8 sub-phase B — explicit 15s seat-reservation TTL for incoming
@@ -3865,6 +3879,54 @@ export class SectorRoom extends Room<SectorState> {
    * `scenario`. Rejections are counted and logged — the lattice is rule-valid
    * by construction (structureLattice.test.ts), so any rejection is a bug.
    */
+  /**
+   * T1 — grow this galaxy sector's NPC base from its profile and seed it at a
+   * site that fits: clear of saved player structures and parked hulls (they
+   * always win the space), on the fewest asteroids (those under the footprint
+   * are cleared: the builders cleared the rock), as far from the spawn at the
+   * origin as it fits. Not persisted: a restart regrows it from the seed.
+   */
+  private seedGalaxyBase(sectorKey: string): void {
+    const seed = hashString(sectorKey);
+    const sector = getSector(sectorKey)!;
+    const profile = baseProfileFor(contextForSector(sectorKey), seed);
+    const spec: NpcBaseSpec = {
+      baseId: 'b0', role: profile.role, tier: profile.tier, seed, x: 0, y: 0,
+      side: profile.ownerSide, features: [...sector.features], profile,
+    };
+    const sub = new NpcBaseSubsystem({
+      registry: this.structureRegistry,
+      place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
+      setHealth: (id, hp) => this.swarmHealth.set(id, hp),
+    });
+    const grown = sub.grow(spec);
+    const hard: SiteBox[] = [];
+    for (const r of this.structureRegistry.all()) hard.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
+    for (const p of this.lingeringPoseCache.values()) hard.push({ x: p.x, y: p.y, hw: 150, hh: 150 });
+    const rocks: SwarmEntityRecord[] = [];
+    const soft: SiteCircle[] = [];
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== 0) continue;
+      const b = slotBase(rec.slot);
+      rocks.push(rec);
+      soft.push({ x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, r: rec.radius });
+    }
+    const site = chooseBaseSite(grownExtent(grown.placements), hard, soft, {
+      halfExtent: SECTOR_PLAYABLE_HALF_EXTENT, margin: 250, step: 250, seed,
+    });
+    if (site === null) {
+      logger.warn({ sectorKey, tier: profile.tier, role: profile.role }, 'npc base: no site fits; sector left without a base');
+      return;
+    }
+    for (const i of site.overlapped) this.evictSwarmEntity(rocks[i]!, { broadcast: false, emitDestroyed: false });
+    const r = sub.seed({ ...spec, x: site.x, y: site.y }, grown);
+    logger.info({
+      sectorKey, tier: profile.tier, role: profile.role, owner: r.owner, x: Math.round(site.x), y: Math.round(site.y),
+      placed: r.placed, rejectedPlace: r.rejectedPlace, rejectedEdge: r.rejectedEdge, asteroidsCleared: site.overlapped.length,
+    }, 'galaxy npc base seeded');
+    this.structureGridTick();
+  }
+
   /** D2 — seed NPC bases from the generator (built, stocked, recipes + bound
    *  blueprints loaded), then run one grid pulse so power settles. */
   private seedNpcBases(specs: readonly NpcBaseSpec[]): void {
@@ -5919,6 +5981,16 @@ export class SectorRoom extends Room<SectorState> {
     // path for BOTH reconnect and transit-arrival — and a lingering hull
     // persists in-world via the sector snapshot (`lingeringHulls[]`). A join
     // without a resolvable owned shipId fresh-spawns.
+
+    // T1 — never spawn inside a structure (an NPC base can fill much of a
+    // sector): nudge to the nearest clear point. Join path, not the hot loop.
+    if (this.structureRegistry.size > 0) {
+      const boxes: SiteBox[] = [];
+      for (const r of this.structureRegistry.all()) boxes.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
+      const clear = nearestClearPoint(spawnX, spawnY, boxes, SPAWN_STRUCTURE_CLEARANCE);
+      spawnX = clear.x;
+      spawnY = clear.y;
+    }
 
     this.initialSpawnPositions.set(playerId, { x: spawnX, y: spawnY });
 

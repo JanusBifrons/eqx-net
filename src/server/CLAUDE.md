@@ -196,6 +196,11 @@ Update this section when a threshold is set.
 - **Built and set up:** structures spawn built at their level. Processors get recipes and BOUND originals (`rec.blueprint.bound`, which `unloadBlueprint` refuses). Gates open for anyone not hostile.
 - **Stocked:** storage starts with an hour of fuel, munitions, and 20 cycles of inputs.
 - **Not persisted:** NPC structures aren't saved (B2); a restart regenerates them from the seed.
+- **Galaxy sectors (T1):** `galaxyBases` (set by `resolveSectorConfig`) → `seedGalaxyBase`, run AFTER `hydrateFromSnapshot`.
+  - **Order matters.** Seeding before the restore would make saved player structures fail their overlap check and be lost. Keep it after.
+  - **Site.** The site comes from `chooseBaseSite`: player structures and parked hulls are hard blockers. Asteroids under the footprint are evicted quietly.
+  - **Spawns** are nudged out of every structure box (`nearestClearPoint` in `onJoin`).
+  - **Kill switch:** `EQX_DISABLE_NPC_BASES=1`. Lock: `galaxyBases.test.ts`.
 
 ## NPC ownership (plan soft-leaping-truffle v3, B2)
 

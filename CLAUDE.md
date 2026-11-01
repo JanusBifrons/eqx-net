@@ -153,6 +153,8 @@ The last line of every message is one of:
 - **Done:** nothing left;
 - **Waiting on you:** a short pointer to the decision.
 
+**Never end a turn to wait for "continue" (2026-11-01, standing user directive).** When a plan is approved, execute ALL of it: commit, push, PR (auto-merge) each piece, then start the next piece in the same turn. A phase boundary, an in-flight PR (branch off it) or the size of what's left is NOT a reason to stop. In the user's words: "Execute the plan in full without pausing unless it's for a good reason. Waiting for me to say continue is not a good reason." Stop only when the whole plan is done, or for a genuine user decision (AskUserQuestion) or a hard blocker.
+
 **Decisions go through the AskUserQuestion prompt tool, never as questions in prose.** The user called prose questions "very annoying" and asked to be "prompted properly". Asks buried in a long report get missed ("I've no idea what you want from me").
 
 ## Pushing branches & opening PRs — `gh` IS installed (2026-06-16)
