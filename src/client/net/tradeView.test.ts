@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { StructureRenderState } from '../../core/contracts/IRenderer.js';
 import type { TradeHistoryEntry } from '../../shared-types/economy.js';
-import { ownStorages, repFill, repLabel, summarizeHistory, toastForNotice, unseenHistory } from './tradeView.js';
+import { itemName, ownStorages, repFill, repLabel, summarizeHistory, toastForNotice, unseenHistory } from './tradeView.js';
 
 function st(owner: string, built = true): StructureRenderState {
   return { powered: true, netPower: 0, connTo: [], built, buildPct: built ? 1 : 0.5, deconstructPct: 0, owner };
@@ -70,5 +70,12 @@ describe('reputation display', () => {
     expect(repLabel(600)).toBe('Allied');
     expect(repLabel(0)).toBe('Neutral');
     expect(repLabel(-700)).toBe('Hostile');
+  });
+});
+
+describe('itemName (economy v2 W4b)', () => {
+  it('names goods and packed structures, never ids', () => {
+    expect(itemName({ good: 'alloy' })).toBe('Alloy');
+    expect(itemName({ good: null, product: 'structure:missile_turret' })).toBe('Packed Missile Turret');
   });
 });

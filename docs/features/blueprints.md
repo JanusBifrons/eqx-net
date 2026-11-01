@@ -84,10 +84,19 @@ are BOUGHT from NPC factions and traders, and some are LOOTED from ships.
 
 - **W3 — Research Lab:** research, copy and combine (gacha). Shipped: see
   [research-lab.md](research-lab.md).
-- **W4 — gates:**
-  - packed structures for non-starter kinds;
-  - the structures agent's `packedGateForBuild` placement seam;
-  - processor blueprint slots, which call `applyBlueprint`.
+- **W4 — gates.** Shipped:
+  - W4a: packed structures drop as loot (above);
+  - W4b: traders SELL packed structures (see
+    [trade-deals.md](trade-deals.md)), and placing any non-starter structure
+    now needs one, from your storage in that sector or your ship's hold;
+  - the structures agent shipped the processor blueprint slots and the pack
+    recipes (see [production-chains.md](../architecture/production-chains.md)).
+
+  A structure placed from a packed item **costs nothing but time**: it builds
+  at the normal rate with no minerals, even unconnected. Deconstructing it
+  returns no minerals, since it never used any. Without one, placement is
+  refused with a notice saying how to get one. Starter kinds still build from
+  minerals.
 - **W5 — Shipyard:** ship blueprint + goods → a packed hull → unpack into your
   roster. Modules become manufactured items.
 - **W6 — blueprint market:** buy and sell blueprints with traders.

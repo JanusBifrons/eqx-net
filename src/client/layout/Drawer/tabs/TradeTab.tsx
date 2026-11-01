@@ -22,7 +22,7 @@ import { getGameClient } from '../../../net/clientSingleton';
 import { loadStoredPlayerId } from '../../../identity/token';
 import { loadToken } from '../../../auth/tokenStorage';
 import { fetchEconomy, fetchOffers, saveTradeLastSeen } from '../../../net/tradeApi';
-import { formatPrice, goodName, ownStorages, repFill, repLabel, sectorName, type OwnStorage } from '../../../net/tradeView';
+import { formatPrice, goodName, itemName, ownStorages, repFill, repLabel, sectorName, type OwnStorage } from '../../../net/tradeView';
 import { sendAcceptOffer, sendCancelDeal, sendGift } from '../../../net/tradeClient';
 import {
   ECON_ALLEGIANCES,
@@ -163,10 +163,10 @@ export function TradeTab(): JSX.Element {
         <Box data-testid="trade-offers">
           {offers.length === 0 && <Typography sx={MUTED_SX}>No offers right now.</Typography>}
           {offers.map((o) => (
-            <Box key={o.offerId} sx={ROW_SX} data-testid="trade-offer" data-offer-kind={o.kind} data-offer-good={o.good}>
+            <Box key={o.offerId} sx={ROW_SX} data-testid="trade-offer" data-offer-kind={o.kind} data-offer-good={o.good ?? undefined} data-offer-product={o.product}>
               <Box sx={ROW_MAIN_SX}>
                 <Typography sx={{ fontSize: 11 }}>
-                  {o.kind === 'sell' ? 'Sell' : 'Buy'} {goodName(o.good)}
+                  {o.kind === 'sell' ? 'Sell' : 'Buy'} {itemName(o)}
                 </Typography>
                 <Typography sx={MUTED_SX}>{formatPrice(o.unitPrice)} cr each · up to {o.maxQty}</Typography>
               </Box>
@@ -193,7 +193,7 @@ export function TradeTab(): JSX.Element {
               <Box key={d.dealId} sx={ROW_SX} data-testid="trade-deal" data-deal-state={d.state}>
                 <Box sx={ROW_MAIN_SX}>
                   <Typography sx={{ fontSize: 11 }}>
-                    {d.kind === 'gift' ? `Gift to ${d.allegiance}` : `${d.kind === 'sell' ? 'Sell' : 'Buy'} ${d.qty} ${goodName(d.good)}`}
+                    {d.kind === 'gift' ? `Gift to ${d.allegiance}` : `${d.kind === 'sell' ? 'Sell' : 'Buy'} ${d.qty} ${itemName(d)}`}
                     {d.recurrenceMin ? ` · every ${d.recurrenceMin} min` : ''}
                   </Typography>
                   <Typography sx={{ ...MUTED_SX, color: STATE_COLOR[d.state] ?? '#9aa0b4' }}>
@@ -236,7 +236,7 @@ export function TradeTab(): JSX.Element {
 }
 
 function DealDialog({ offer, baseId, onClose }: { offer: TradeOffer; baseId: number; onClose: () => void }): JSX.Element {
-  const [qty, setQty] = useState(Math.min(offer.maxQty, 20));
+  const [qty, setQty] = useState(offer.product !== undefined ? 1 : Math.min(offer.maxQty, 20));
   const [every, setEvery] = useState<'once' | 10 | 30 | 60>('once');
   const [visits, setVisits] = useState(5);
   const [band, setBand] = useState(10);
@@ -255,7 +255,7 @@ function DealDialog({ offer, baseId, onClose }: { offer: TradeOffer; baseId: num
   return (
     <Dialog open onClose={onClose} maxWidth="xs" fullWidth PaperProps={PAPER_PROPS} data-testid="trade-deal-dialog">
       <DialogTitle sx={{ fontSize: 13, color: '#00ff88', pb: 0.5 }}>
-        {offer.kind === 'sell' ? 'Sell' : 'Buy'} {goodName(offer.good)} @ {formatPrice(offer.unitPrice)} cr
+        {offer.kind === 'sell' ? 'Sell' : 'Buy'} {itemName(offer)} @ {formatPrice(offer.unitPrice)} cr
       </DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1, pt: '8px !important' }}>
         <TextField
@@ -267,12 +267,15 @@ function DealDialog({ offer, baseId, onClose }: { offer: TradeOffer; baseId: num
           sx={FIELD_SX}
           inputProps={{ min: 1, max: offer.maxQty, 'data-testid': 'trade-deal-qty' }}
         />
+        {/* Economy v2 W4b — packed structures are one-off deals only. */}
+        {offer.product === undefined && (
         <Select size="small" value={every} onChange={(e) => setEvery(e.target.value as typeof every)} sx={SELECT_SX} data-testid="trade-deal-every">
           <MenuItem value="once" sx={{ fontSize: 11 }}>One-off</MenuItem>
           <MenuItem value={10} sx={{ fontSize: 11 }}>Every 10 min</MenuItem>
           <MenuItem value={30} sx={{ fontSize: 11 }}>Every 30 min</MenuItem>
           <MenuItem value={60} sx={{ fontSize: 11 }}>Every 60 min</MenuItem>
         </Select>
+        )}
         {every !== 'once' && (
           <Box sx={{ display: 'flex', gap: 1 }}>
             <TextField label="Visits" type="number" size="small" value={visits} onChange={(e) => setVisits(Number(e.target.value))} sx={FIELD_SX} />
@@ -280,7 +283,7 @@ function DealDialog({ offer, baseId, onClose }: { offer: TradeOffer; baseId: num
           </Box>
         )}
         <Typography sx={MUTED_SX}>
-          ≈ {total.toLocaleString('en-US')} cr {offer.kind === 'sell' ? 'paid to you' : 'from your bank'} per visit, plus a 5 cr hauling fee.
+          ≈ {total.toLocaleString('en-US')} cr {offer.kind === 'sell' ? 'paid to you' : 'from your wallet'} per visit, plus a 5 cr hauling fee.
           A hauler docks at your base; value changes hands when it leaves safely.
         </Typography>
       </DialogContent>
