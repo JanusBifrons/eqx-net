@@ -358,6 +358,7 @@ export type UnpackHull = z.infer<typeof UnpackHullSchema>;
  *  `networkEntityId` onto my ACTIVE ship (which must be near that storage). */
 export const InstallBlueprintSchema = z
   .object({
+    type: z.literal('install_blueprint'),
     networkEntityId: z.number().int().nonnegative(),
     blueprintId: z.enum(BLUEPRINT_IDS),
   })

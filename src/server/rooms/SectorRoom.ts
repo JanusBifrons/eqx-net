@@ -105,7 +105,8 @@ import { gateAccessIndex, GATE_ACCESS_IDS, type GateAccess } from '../../shared-
 import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
-import { createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf } from '../../shared-types/relations.js';
+import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf } from '../../shared-types/relations.js';
+import { CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, type CargoState } from '../../shared-types/messages/cargoMessages.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
 import { NpcBaseSubsystem, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
@@ -214,7 +215,7 @@ import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type La
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
-import { cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked } from '../../core/cargo/hold.js';
+import { cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, type CargoRequest } from '../../core/cargo/hold.js';
 import { HARVESTER_CAPACITY, RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
 import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
@@ -704,6 +705,10 @@ export class SectorRoom extends Room<SectorState> {
   private readonly depositDwell = new Map<string, { targetId: string; sinceTick: number }>();
   /** Auto-deposit progress 0..100 by shipInstanceId (own-ship snapshot ring). */
   private readonly depositProgress = new Map<string, number>();
+  /** C1 — pilots who moved cargo by hand. Auto-deposit stays off for them
+   *  until they fly out of deposit range of their storage, so a withdrawal
+   *  from your own storage isn't banked straight back 2 s later. */
+  private readonly manualCargo = new Set<string>();
   private readonly _podPoseScratch = { x: 0, y: 0 };
   /** Reused per-collector scratch (forEachLootCollector — no per-tick alloc, #14). */
   private readonly _collectorScratch: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, capacity: 0 };
@@ -2785,6 +2790,53 @@ export class SectorRoom extends Room<SectorState> {
       reply(...this.unpackHull(playerId, p.data.networkEntityId, p.data.kind));
     });
 
+    // ── C1 (plan soft-leaping-truffle v3) — open a structure's cargo ────────
+    // The cargo pane is rebuilt from `cargo_state` replies only (#16).
+    const cargoRequest = (client: Client, kind: 'cargo_query' | 'cargo_move', raw: unknown): void => {
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      let entityId: number;
+      let move: { dir: 'take' | 'put'; items: CargoRequest } | null = null;
+      if (kind === 'cargo_move') {
+        const p = CargoMoveSchema.safeParse(raw);
+        if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
+        entityId = p.data.entityId;
+        move = { dir: p.data.dir, items: p.data.items };
+      } else {
+        const p = CargoQuerySchema.safeParse(raw);
+        if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
+        entityId = p.data.entityId;
+      }
+      const send = (st: CargoState): void => { try { client.send('cargo_state', st); } catch { /* closing */ } };
+      const access = this.cargoAccess(playerId, entityId);
+      if (!access.ok) {
+        send({ type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, message: access.message, ...(move ? { ok: false } : {}) });
+        return;
+      }
+      let verdict: { ok: boolean; message: string } | undefined;
+      if (move !== null) {
+        const moved = move.dir === 'take'
+          ? this.storage.cargoTake(access.shipInstanceId, playerId, access.rec, move.items, access.capacity)
+          : this.storage.cargoPut(access.shipInstanceId, playerId, access.rec, move.items);
+        if (isHoldEmpty(moved)) {
+          verdict = { ok: false, message: move.dir === 'take' ? 'No room aboard for that.' : 'No room in there for that.' };
+        } else {
+          verdict = { ok: true, message: move.dir === 'take' ? 'Loaded aboard.' : 'Unloaded.' };
+          this.manualCargo.add(playerId);
+          auditEvent({
+            event: 'cargo_moved', sector: this.sectorKey ?? undefined, playerId, shipInstanceId: access.shipInstanceId,
+            owner: access.rec.owner, structureKind: access.rec.kind, dir: move.dir, weight: holdWeight(moved),
+          });
+          // A Capital's mineral bank rides room state.
+          if (getStructureKind(access.rec.kind).storageCapacity > 0) this.rebuildStructuresSlice();
+        }
+      }
+      const view = this.storage.cargoView(access.rec);
+      send({ type: 'cargo_state', entityId, open: true, hold: view.hold, used: view.used, capacity: view.capacity, ...(verdict ?? {}) });
+    };
+    this.onMessage('cargo_query', (client: Client, raw: unknown) => cargoRequest(client, 'cargo_query', raw));
+    this.onMessage('cargo_move', (client: Client, raw: unknown) => cargoRequest(client, 'cargo_move', raw));
+
     // ── Living World P4c-2 — place a player bounty ───────────────────────────
     this.onMessage('place_bounty', (client: Client, raw: unknown) => {
       const playerId = this.sessionToPlayer.get(client.sessionId);
@@ -4809,7 +4861,8 @@ export class SectorRoom extends Room<SectorState> {
     const viewer = this.sessionToPlayer.get(sessionId);
     const swarmRec = this.swarmRegistry.getByEntityId(Number(msg.id));
     const owner = swarmRec ? this.structureRegistry.get(swarmRec.id)?.owner : undefined;
-    if (viewer !== undefined && owner === viewer) return msg;
+    // C1 — the hold shows to anyone it would open for (own + friendly today).
+    if (viewer !== undefined && owner !== undefined && cargoOpensFor(relationOf(viewer, owner, this.relationCtx), false)) return msg;
     const { hold: _h, holdCapacity: _c, ...rest } = msg;
     return rest;
   }
@@ -6801,6 +6854,44 @@ export class SectorRoom extends Room<SectorState> {
     auditEvent({ event: 'cargo_lost', sector: this.sectorKey ?? undefined, playerId, shipInstanceId, cause });
   }
 
+  /** A ship's cargo capacity: its hull class, raised by a fitted Cargo
+   *  Expander (shared helper, #15). Used by loot pickup and cargo access. */
+  private shipCargoCapacity(kind: string, shipInstanceId: string): number {
+    return Math.floor(cargoCapacityForMaxHealth(getShipKind(kind as ShipKindId).maxHealth) * fittedCargoMul(this.fittedOf(shipInstanceId)));
+  }
+
+  /**
+   * C1 (plan soft-leaping-truffle v3) — may `playerId` open the cargo of the
+   * structure with this entity id right now? Opens when the relation allows it
+   * (`cargoOpensFor`: own and friendly; allied only if the owner allows), the
+   * pilot flies a live ship (#17: ACTIVE + alive + a roster row, the loot
+   * collector's liveness) and is within CARGO_ACCESS_RANGE of its footprint.
+   * Neutral or hostile cargo needs a break-in (C2).
+   */
+  private cargoAccess(playerId: string, entityId: number):
+    | { ok: true; rec: StructureRecord; shipInstanceId: string; capacity: number }
+    | { ok: false; message: string } {
+    const swarmRec = this.swarmRegistry.getByEntityId(entityId);
+    const rec = swarmRec ? this.structureRegistry.get(swarmRec.id) ?? null : null;
+    if (rec === null || !isOperationalStorage(rec)) return { ok: false, message: 'That has no cargo hold.' };
+    // Allies may open only if the owner allows it; there is no owner setting yet.
+    if (!cargoOpensFor(relationOf(playerId, rec.owner, this.relationCtx), false)) {
+      return { ok: false, message: 'Locked. That cargo is not yours.' };
+    }
+    if (this.sectorKey === null) return { ok: false, message: 'Cargo only moves in the galaxy.' };
+    const ship = this.getActiveShip(playerId);
+    const pose = this.shipPoseCache.get(playerId);
+    if (!ship?.alive || !ship.isActive || ship.shipInstanceId === '' || getPlayerShipStore().get(ship.shipInstanceId) === null || !pose) {
+      return { ok: false, message: 'You need a ship to move cargo.' };
+    }
+    const dx = Math.max(Math.abs(pose.x - rec.x) - (rec.halfW ?? rec.radius), 0);
+    const dy = Math.max(Math.abs(pose.y - rec.y) - (rec.halfH ?? rec.radius), 0);
+    if (dx * dx + dy * dy > CARGO_ACCESS_RANGE * CARGO_ACCESS_RANGE) {
+      return { ok: false, message: 'Fly closer to open its cargo.' };
+    }
+    return { ok: true, rec, shipInstanceId: ship.shipInstanceId, capacity: this.shipCargoCapacity(ship.kind, ship.shipInstanceId) };
+  }
+
   /**
    * Visit every hull allowed to collect loot this tick (#17 liveness: ACTIVE +
    * alive hulls only — lingering and dead hulls never collect; and only hulls
@@ -6822,7 +6913,7 @@ export class SectorRoom extends Room<SectorState> {
       c.x = pose.x;
       c.y = pose.y;
       // P5 — a fitted Cargo Expander raises the capacity (shared helper, #15).
-      c.capacity = Math.floor(cargoCapacityForMaxHealth(getShipKind(ship.kind).maxHealth) * fittedCargoMul(this.fittedOf(ship.shipInstanceId)));
+      c.capacity = this.shipCargoCapacity(ship.kind, ship.shipInstanceId);
       c.npc = false;
       visit(c);
     }
@@ -6958,6 +7049,7 @@ export class SectorRoom extends Room<SectorState> {
   private autoDepositTick(): void {
     if (this.structureRegistry.size === 0) {
       if (this.depositDwell.size > 0) { this.depositDwell.clear(); this.depositProgress.clear(); }
+      this.manualCargo.clear();
       return;
     }
     this.forEachLootCollector(this.visitDepositor);
@@ -6965,6 +7057,12 @@ export class SectorRoom extends Room<SectorState> {
 
   /** Bound once (no per-tick closure allocation, #14). */
   private readonly visitDepositor = (c: LootCollector): void => {
+    if (this.manualCargo.has(c.playerId)) {
+      // Moved cargo by hand: no auto-deposit until they leave their storage.
+      if (this.storage.nearestOwnStorage(c.playerId, c.x, c.y) === null) this.manualCargo.delete(c.playerId);
+      if (this.depositDwell.delete(c.playerId)) this.depositProgress.delete(c.shipInstanceId);
+      return;
+    }
     const hold = this.loot.shipHold(c.shipInstanceId);
     const target = hold !== undefined && !isHoldEmpty(hold)
       ? this.storage.nearestOwnStorage(c.playerId, c.x, c.y)

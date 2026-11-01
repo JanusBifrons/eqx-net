@@ -112,6 +112,8 @@ export type AuditEvent =
   | (AuditEventBase & { event: 'cargo_lost'; playerId?: string; shipInstanceId: string; cause: string })
   | (AuditEventBase & { event: 'cargo_deposited'; playerId: string; shipInstanceId: string; structureKind: string; weight: number })
   | (AuditEventBase & { event: 'salvage_refined'; owner: string; salvage: number })
+  // C1 — a pilot moved items between their ship and a structure's cargo.
+  | (AuditEventBase & { event: 'cargo_moved'; playerId: string; shipInstanceId: string; owner: string; structureKind: string; dir: 'take' | 'put'; weight: number })
   | (AuditEventBase & { event: 'credits_spent'; playerId: string; amount: number; reason: string })
   // P3c — a robot harvester stole from a player's storage network.
   | (AuditEventBase & { event: 'storage_raided'; playerId: string; raider: string; weight: number })
