@@ -42,6 +42,17 @@ describe('MountVisualManager — dynamic mounts (WS-B3)', () => {
     expect(mgr.mountCountForShip('p1')).toBe(FIGHTER.mounts!.length);
   });
 
+  it('setAimLinesVisible(false) hides aim guides on existing AND new clusters (showcase ?cleanworld=1)', () => {
+    const mounts = resolveInstanceMounts(FIGHTER, []);
+    mgr.ensureForInstance('p1', 'fighter', mounts, shipPrimaryColor(FIGHTER), sig([]), parent);
+    const firstChildOf = (i: number) => (parent.children[i] as Container).children[0]!; // aim line draws first
+    expect(firstChildOf(0).visible).toBe(true);
+    mgr.setAimLinesVisible(false);
+    expect(firstChildOf(0).visible).toBe(false);
+    mgr.ensureForInstance('p2', 'fighter', mounts, shipPrimaryColor(FIGHTER), sig([]), parent);
+    expect(firstChildOf(1).visible).toBe(false);
+  });
+
   it('REBUILDS the cluster to add the extra barrel when a latent mount activates', () => {
     // Start un-upgraded.
     mgr.ensureForInstance('p1', 'fighter', resolveInstanceMounts(FIGHTER, []), shipPrimaryColor(FIGHTER), sig([]), parent);

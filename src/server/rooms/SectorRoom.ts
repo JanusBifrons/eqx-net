@@ -310,6 +310,11 @@ const JoinOptionsSchema = z
      *  ignored on live galaxy rooms so a malicious client can't force a
      *  short or huge linger window. */
     lingerMs: z.number().int().min(1).max(900_000).optional(),
+    /** Showcase / E2E bespoke trigger — pre-load the joining ship's roster XP
+     *  so ONE kill crosses a level threshold (the level-up + upgrade-modal
+     *  shot) instead of a dozen. testMode-gated; needs a roster row (a room
+     *  with a real sectorKey). Level is unchanged — only the XP bar fills. */
+    initialXp: z.number().int().min(0).max(100_000).optional(),
     /** Structures plan (Phase 3/4) test-only override of the grid pulse
      *  interval (ms). On the room-creating client it reaches `onCreate` and
      *  sets the pulse timer; lets the mining/construction E2E fast-forward the
@@ -5196,6 +5201,11 @@ export class SectorRoom extends Room<SectorState> {
       // evict without waiting out the 15-min production window).
       if (typeof parsed.data.lingerMs === 'number') {
         this.playerToLingerMs.set(playerId, parsed.data.lingerMs);
+      }
+      // initialXp — pre-load the roster row's XP so a single kill levels the
+      // ship (showcase level-up shot). Roster-backed rooms only; level kept.
+      if (typeof parsed.data.initialXp === 'number' && ship.shipInstanceId !== '') {
+        getPlayerShipStore().setProgress(ship.shipInstanceId, { xp: parsed.data.initialXp });
       }
     }
     ship.shieldLastDamageTick = this.serverTick;

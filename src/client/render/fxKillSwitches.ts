@@ -30,6 +30,15 @@ export interface FxKillSwitches {
   dmgNumbersDisabled: boolean;
   /** `?nohealthbars=1` — skip health-bar Graphics draws. */
   healthBarsDisabled: boolean;
+  /** `?noselfdmg=1` — skip damage numbers over the LOCAL ship only (target
+   *  numbers still show). Showcase capture: an invulnerable test pilot
+   *  (huge `initialHull`) would otherwise accumulate absurd totals. */
+  selfDmgNumbersDisabled: boolean;
+  /** `?cleanworld=1` — hide debug-flavoured world overlays for showcase
+   *  footage: the background spatial grid, the turret aim-guide lines and the
+   *  NPC callsign labels (`AI 00F`) and the server-position ghost. Gameplay
+   *  visuals are untouched. */
+  cleanWorld: boolean;
 }
 
 export function readFxKillSwitches(
@@ -55,5 +64,7 @@ export function readFxKillSwitches(
     beamsDisabled: /\bnobeams=1\b/.test(search),
     dmgNumbersDisabled: /\bnodmgnumbers=1\b/.test(search),
     healthBarsDisabled: /\bnohealthbars=1\b/.test(search),
+    selfDmgNumbersDisabled: /\bnoselfdmg=1\b/.test(search),
+    cleanWorld: /\bcleanworld=1\b/.test(search),
   };
 }

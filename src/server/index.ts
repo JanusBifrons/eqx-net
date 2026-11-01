@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createServer } from 'node:http';
 import { pino } from 'pino';
 import { SectorRoom } from './rooms/SectorRoom.js';
+import { SHOWCASE_ROOMS } from './rooms/showcaseRooms.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
 import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
@@ -628,6 +629,12 @@ gameServer
     maxClients: 4,
   })
   .filterBy(['testId']);
+// Showcase capture rooms — staged scenes for the repeatable showcase video
+// (docs/architecture/showcase-pipeline.md). Options live in
+// rooms/showcaseRooms.ts so the integration test boots exactly these.
+for (const [name, opts] of Object.entries(SHOWCASE_ROOMS)) {
+  gameServer.define(name, SectorRoom, opts).filterBy(['testId']);
+}
 // Off-screen radar SANDBOX (plan sparkling-wondering-rose) — `?room=radar-sandbox`.
 // The ship spawns at a FIXED point S=(-3000,-3000) (off-centre so contacts can sit
 // beyond the 10 000 u radar range while staying inside the drone ±10 000 /
