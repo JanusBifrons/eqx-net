@@ -71,6 +71,8 @@ export interface SectorSnapshotStructure {
   prodLoaded?: boolean;
   /** Economy v2 W4b — placed from a packed item. Absent ⇒ built from minerals. */
   prepaid?: boolean;
+  /** The packed item's quality (a deconstruct repacks it). */
+  packedQuality?: number;
   prodProgress?: number;
   /** Hull HP at save time. */
   health: number;
