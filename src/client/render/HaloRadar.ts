@@ -90,6 +90,7 @@ const CATEGORY_RANK: Record<RadarCategory, number> = {
   scrap: 5,
   asteroid: 6,
   loot: 4,
+  trader: 3,
 };
 
 function compareCandidates(a: Candidate, b: Candidate): number {

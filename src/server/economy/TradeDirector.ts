@@ -34,10 +34,12 @@ import {
   REP_PARTIAL_FILL,
   REP_PIRACY_HIT,
   REP_SELF_RAID,
+  tradeSectorKey,
   type EconAllegiance,
   type TradeNotice,
   type TradeOffer,
 } from '../../shared-types/economy.js';
+import { getSector } from '../../core/galaxy/galaxy.js';
 import { cloneHold, emptyHold, isHoldEmpty } from '../../core/cargo/hold.js';
 import { applyFill, driftMarket, quoteBuy, quoteSell } from '../../core/economy/market.js';
 import { giftRepGain, robotTruce, tradersRefuse, waveIntervalFactor } from '../../core/economy/reputation.js';
@@ -96,6 +98,8 @@ export interface TradeDirectorOptions {
   dockOffset: number;
   /** One robot-attack rep hit per player per this window. */
   robotHitThrottleMs: number;
+  /** One "your hauler is under fire" notice per hauler per this window. */
+  underFireThrottleMs: number;
 }
 
 export const DEFAULT_TRADE_OPTIONS: TradeDirectorOptions = {
@@ -108,6 +112,7 @@ export const DEFAULT_TRADE_OPTIONS: TradeDirectorOptions = {
   dockRadius: 260,
   dockOffset: 220,
   robotHitThrottleMs: 10_000,
+  underFireThrottleMs: 8_000,
 };
 
 interface BoardOffer {
@@ -127,18 +132,32 @@ export class TradeDirector implements TradeSink {
   private offers: BoardOffer[] = [];
   private lastDriftAtMs: number;
   private readonly robotHitAt = new Map<string, number>();
+  private readonly underFireAt = new Map<string, number>();
+  private readonly push: ((ownerPlayerId: string, title: string, body: string, tag: string) => void) | null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly subs: Array<{ bus: Bus; fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void }> = [];
 
+  /** Its OWN copy of the room map: `registerRoom` must never add a testMode
+   *  room to the caller's map (in production that is the galaxy room map the
+   *  squad directors iterate — a test room would leak into /galaxy/snapshot). */
+  private readonly rooms: Map<string, TradeRoom>;
+
   constructor(
-    private readonly rooms: Map<string, TradeRoom>,
+    rooms: ReadonlyMap<string, TradeRoom>,
     private readonly store: EconomyStore,
     private readonly holds: HoldStore,
-    options: Partial<TradeDirectorOptions> & { rng?: Rng; nowMs?: () => number } = {},
+    options: Partial<TradeDirectorOptions> & {
+      rng?: Rng;
+      nowMs?: () => number;
+      /** Web Push for an OFFLINE owner (the notifier gates presence itself). */
+      push?: (ownerPlayerId: string, title: string, body: string, tag: string) => void;
+    } = {},
   ) {
+    this.rooms = new Map(rooms);
     this.opts = { ...DEFAULT_TRADE_OPTIONS, ...options };
     this.rng = options.rng ?? Math.random;
     this.now = options.nowMs ?? Date.now;
+    this.push = options.push ?? null;
     this.lastDriftAtMs = this.now();
   }
 
@@ -237,15 +256,15 @@ export class TradeDirector implements TradeSink {
 
   // ── Requests (TradeSink) ─────────────────────────────────────────────────
 
-  acceptOffer(playerId: string, sectorKey: string, msg: AcceptOfferMsg): TradeVerdict {
+  acceptOffer(playerId: string, sectorKey: string, networkUid: string, msg: AcceptOfferMsg): TradeVerdict {
     const offer = this.offers.find((o) => o.offerId === msg.offerId);
     if (!offer || offer.expiresAtMs <= this.now()) return reject('That offer has expired.');
     if (msg.qty > offer.maxQty) return reject(`That offer only covers ${offer.maxQty}.`);
     const traderRep = this.store.rep(playerId, 'traders');
     if (tradersRefuse(traderRep)) return reject('Traders refuse to deal with you.');
     const room = this.rooms.get(sectorKey);
-    if (!room || room.tradeSnapshot(playerId, msg.networkUid) === null) return reject('No storage of yours here.');
-    if (this.store.activeDealsForNetwork(msg.networkUid) >= MAX_DEALS_PER_NETWORK) {
+    if (!room || room.tradeSnapshot(playerId, networkUid) === null) return reject('No storage of yours here.');
+    if (this.store.activeDealsForNetwork(networkUid) >= MAX_DEALS_PER_NETWORK) {
       return reject(`A base can run at most ${MAX_DEALS_PER_NETWORK} deals.`);
     }
     const unitPrice = this.quote(offer.kind, offer.good, traderRep);
@@ -260,7 +279,7 @@ export class TradeDirector implements TradeSink {
       qty: msg.qty,
       credits: 0,
       sectorKey,
-      networkUid: msg.networkUid,
+      networkUid,
       unitPrice,
       priceBandPct: recurring ? msg.priceBandPct : 0,
       recurrenceMin: msg.recurrenceMin,
@@ -293,10 +312,10 @@ export class TradeDirector implements TradeSink {
     return reject('That deal has already ended.');
   }
 
-  sendGift(playerId: string, sectorKey: string, msg: SendGiftMsg): TradeVerdict {
+  sendGift(playerId: string, sectorKey: string, networkUid: string, msg: SendGiftMsg): TradeVerdict {
     const room = this.rooms.get(sectorKey);
-    if (!room || room.tradeSnapshot(playerId, msg.networkUid) === null) return reject('No storage of yours here.');
-    if (this.store.activeDealsForNetwork(msg.networkUid) >= MAX_DEALS_PER_NETWORK) {
+    if (!room || room.tradeSnapshot(playerId, networkUid) === null) return reject('No storage of yours here.');
+    if (this.store.activeDealsForNetwork(networkUid) >= MAX_DEALS_PER_NETWORK) {
       return reject(`A base can run at most ${MAX_DEALS_PER_NETWORK} deals.`);
     }
     const deal: TradeDeal = {
@@ -308,7 +327,7 @@ export class TradeDirector implements TradeSink {
       qty: msg.good !== null ? msg.qty : 0,
       credits: msg.credits,
       sectorKey,
-      networkUid: msg.networkUid,
+      networkUid,
       unitPrice: 0,
       priceBandPct: 0,
       recurrenceMin: null,
@@ -323,16 +342,52 @@ export class TradeDirector implements TradeSink {
     return { ok: true, dealId: deal.dealId, message: 'Gift arranged: a hauler will collect it.' };
   }
 
-  onHaulerDamaged(haulerId: string, attackerPlayerId: string): void {
+  onHaulerDamaged(haulerId: string, attackerPlayerId: string | null): void {
     for (const deal of this.store.allDeals()) {
       const run = deal.run;
       if (run === null || run.haulerId !== haulerId) continue;
-      if (!run.attackers.includes(attackerPlayerId)) {
+      if (attackerPlayerId !== null && !run.attackers.includes(attackerPlayerId)) {
         // Memory only — the attacker list is consulted when the run ends, and a
         // restart unwinds the run anyway.
         run.attackers.push(attackerPlayerId);
       }
+      // Escort prompt — tell the owner their hauler is taking fire (throttled).
+      if (attackerPlayerId !== deal.ownerId) {
+        const now = this.now();
+        if (now - (this.underFireAt.get(haulerId) ?? -Infinity) >= this.opts.underFireThrottleMs) {
+          this.underFireAt.set(haulerId, now);
+          this.notify(deal, 'under_fire', `Your trade hauler in ${sectorLabel(deal.sectorKey)} is under fire!`);
+        }
+      }
       return;
+    }
+  }
+
+  /**
+   * Add a room after boot (testMode rooms that opt into trade — showcase/E2E).
+   * Galaxy rooms are passed to the constructor.
+   */
+  registerRoom(sectorKey: string, room: TradeRoom): void {
+    if (this.rooms.has(sectorKey)) return;
+    this.rooms.set(sectorKey, room);
+    if (this.timer === null) return;
+    const bus = room.eventBus();
+    const fn = (e: { type: 'ENTITY_DESTROYED'; entityId: string }): void => {
+      if (e.entityId.startsWith(HAULER_ID_PREFIX)) this.onHaulerDestroyed(e.entityId);
+    };
+    bus.on('ENTITY_DESTROYED', fn);
+    this.subs.push({ bus, fn });
+  }
+
+  unregisterRoom(sectorKey: string, room: TradeRoom): void {
+    if (this.rooms.get(sectorKey) !== room) return;
+    this.rooms.delete(sectorKey);
+    const bus = room.eventBus();
+    for (let i = this.subs.length - 1; i >= 0; i--) {
+      if (this.subs[i]!.bus === bus) {
+        bus.off('ENTITY_DESTROYED', this.subs[i]!.fn);
+        this.subs.splice(i, 1);
+      }
     }
   }
 
@@ -441,7 +496,7 @@ export class TradeDirector implements TradeSink {
       this.store.saveDeal(next);
     }
     room!.setBotMoveTarget(haulerId, run.dockX, run.dockY);
-    this.notify(next, 'inbound', `A trade hauler is inbound to your base in ${deal.sectorKey}.`);
+    this.notify(next, 'inbound', `A trade hauler is inbound to your base in ${sectorLabel(deal.sectorKey)}.`);
     serverLogEvent('trade_run_start', { dealId: deal.dealId, haulerId, sectorKey: deal.sectorKey });
   }
 
@@ -639,7 +694,19 @@ export class TradeDirector implements TradeSink {
       econVersion: this.store.player(deal.ownerId).econVersion,
     };
     for (const room of this.rooms.values()) room.tradeNotify(deal.ownerId, notice);
+    // Offline owner → Web Push for the outcomes worth waking a phone for.
+    if (this.push && (event === 'settled' || event === 'partial' || event === 'raided' || event === 'under_fire')) {
+      const title = event === 'raided' ? 'Trade hauler lost' : event === 'under_fire' ? 'Hauler under fire' : 'Trade complete';
+      this.push(deal.ownerId, title, message, `trade:${deal.dealId}`);
+    }
   }
+}
+
+/** A sector's player-facing name (galaxy name, else the bare key — never the
+ *  testMode `#roomId` suffix). */
+function sectorLabel(key: string): string {
+  const k = tradeSectorKey(key);
+  return getSector(k)?.name ?? k;
 }
 
 function reject(message: string): TradeVerdict {

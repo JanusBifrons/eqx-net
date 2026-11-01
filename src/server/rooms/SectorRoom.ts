@@ -1260,6 +1260,15 @@ export class SectorRoom extends Room<SectorState> {
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
       prebuiltStructuresOwner?: string;
+      /** Living World P2 — testMode: join the TradeDirector so deals can be
+       *  made in this (non-galaxy) room (showcase / E2E). */
+      tradeEnabled?: boolean;
+      /** Living World P2 — testMode: a storage structure PLACED in this room
+       *  starts with this hold (trade E2E / showcase). */
+      seedStorageHold?: { goods: Partial<Record<'minerals' | 'salvage' | 'alloy' | 'core', number>>; credits: number };
+      /** Living World P2 — testMode: when a trade hauler enters this room, this
+       *  many robot cubes appear partway along its route (the raid on camera). */
+      haulerRaiders?: number;
       /** Structures plan (Phase 5) — park idle drones at poses (turret targets).
        *  testMode-only; for the turret-fires scenario. */
       scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
@@ -2022,6 +2031,19 @@ export class SectorRoom extends Room<SectorState> {
     // overlap, no construction wait).
     if (this.testMode) this.seedStructureScenario(roomOpts);
     if (this.testMode && roomOpts.scaleGrid) this.seedScaleGrid(roomOpts.scaleGrid);
+    if (this.testMode && roomOpts.tradeEnabled === true && this.sectorKey !== null) {
+      // Per-room key: testId-filtered rooms share a sectorKey, so the director
+      // must not confuse two parallel tests' rooms.
+      this.tradeRegisteredKey = `${this.sectorKey}#${this.roomId}`;
+      this.ensureTradeRegistered();
+    }
+    if (this.testMode) {
+      if (roomOpts.seedStorageHold) {
+        const g = roomOpts.seedStorageHold;
+        this.testSeedStorageHold = { goods: { ...g.goods }, credits: Math.max(0, Math.floor(g.credits)) };
+      }
+      this.testHaulerRaiders = Math.max(0, Math.min(6, Math.floor(roomOpts.haulerRaiders ?? 0)));
+    }
     // Phase-1 issue 5 — scrap-stress seed: a dense corridor of free-floating
     // scrap ahead of spawn for the fly-through reconciliation E2E.
     if (this.testMode && (roomOpts.scenarioScrapCount ?? 0) > 0) {
@@ -2319,6 +2341,15 @@ export class SectorRoom extends Room<SectorState> {
       if (id === null) {
         logger.warn({ sessionId: client.sessionId, kind: parsed.data.kind }, 'place_structure rejected');
       } else {
+        // P2 bespoke trigger (testMode) — a placed storage structure starts
+        // stocked, so a trade E2E/showcase needn't fly cargo home first.
+        if (this.testSeedStorageHold !== null) {
+          const s = this.structureRegistry.get(id);
+          if (s !== undefined && (getStructureKind(s.kind).holdCapacity ?? 0) > 0) {
+            s.hold = { goods: { ...this.testSeedStorageHold.goods }, credits: this.testSeedStorageHold.credits, blueprints: [] };
+            this.storage.flushDirty();
+          }
+        }
         // Refresh the slice so the new blueprint + its auto-connection appear on
         // the next snapshot without waiting for the 1 Hz pulse.
         this.rebuildStructuresSlice();
@@ -2449,6 +2480,9 @@ export class SectorRoom extends Room<SectorState> {
       const playerId = this.sessionToPlayer.get(client.sessionId);
       const sink = getTradeSink();
       if (!playerId || !sink) return;
+      // A testMode trade room may have been created before boot installed the
+      // director — join it now (idempotent).
+      this.ensureTradeRegistered();
       const reply = (ok: boolean, dealId: string | null, message: string): void => {
         try {
           client.send('trade_notice', {
@@ -2456,13 +2490,23 @@ export class SectorRoom extends Room<SectorState> {
           } satisfies TradeNotice);
         } catch { /* socket closing */ }
       };
-      if (this.sectorKey === null) { reply(false, null, 'Trade is only available in the galaxy.'); return; }
+      // The key the TradeDirector knows this room by (galaxy: the sectorKey).
+      const tradeKey = this.tradeRegisteredKey ?? this.sectorKey;
+      if (tradeKey === null) { reply(false, null, 'Trade is only available in the galaxy.'); return; }
       if (!this.playerToUser.get(playerId)) { reply(false, null, 'Sign in to trade.'); return; }
+      // A storage structure the player OWNS here → its stable uid.
+      const networkUidOf = (entityId: number): string | null => {
+        const rec = this.swarmRegistry.getByEntityId(entityId);
+        const s = rec ? this.structureRegistry.get(rec.id) : undefined;
+        return s !== undefined && s.owner === playerId && s.uid !== undefined ? s.uid : null;
+      };
       let v;
       if (kind === 'accept_offer') {
         const p = AcceptOfferSchema.safeParse(raw);
         if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
-        v = sink.acceptOffer(playerId, this.sectorKey, p.data);
+        const uid = networkUidOf(p.data.networkEntityId);
+        if (uid === null) { reply(false, null, 'Pick one of your storage structures.'); return; }
+        v = sink.acceptOffer(playerId, tradeKey, uid, p.data);
       } else if (kind === 'cancel_deal') {
         const p = CancelDealSchema.safeParse(raw);
         if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
@@ -2470,7 +2514,9 @@ export class SectorRoom extends Room<SectorState> {
       } else {
         const p = SendGiftSchema.safeParse(raw);
         if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
-        v = sink.sendGift(playerId, this.sectorKey, p.data);
+        const uid = networkUidOf(p.data.networkEntityId);
+        if (uid === null) { reply(false, null, 'Pick one of your storage structures.'); return; }
+        v = sink.sendGift(playerId, tradeKey, uid, p.data);
       }
       reply(v.ok, v.dealId, v.message);
     };
@@ -4374,7 +4420,22 @@ export class SectorRoom extends Room<SectorState> {
     health?: number;
     hostileToFaction?: { playerId: string; structureIds: readonly string[] };
   }): boolean {
-    return this.livingWorldBotHooks.spawnBot(spec);
+    const ok = this.livingWorldBotHooks.spawnBot(spec);
+    // P2 bespoke trigger (testMode): robot raiders meet an incoming hauler
+    // ~45 % of the way from its entry point to the sector centre.
+    if (ok && this.testHaulerRaiders > 0 && isHaulerId(spec.botId)) {
+      for (let i = 0; i < this.testHaulerRaiders; i++) {
+        const a = (i / this.testHaulerRaiders) * Math.PI * 2;
+        const x = spec.x * 0.55 + Math.cos(a) * 160;
+        const y = spec.y * 0.55 + Math.sin(a) * 160;
+        // `swarm-` prefix ⇒ classified as an NPC attacker (never booked as piracy).
+        const id = `swarm-raider-${spec.botId}-${i}`;
+        if (this.swarmSpawner.spawnDrone({ id, x, y, kind: 'robot-square' })) {
+          this.swarmHealth.set(id, getDroneMaxHealth('robot-square') ?? 120);
+        }
+      }
+    }
+    return ok;
   }
 
   /** WS-E #15 — resolve a faction's hostility members here (owning player +
@@ -6286,9 +6347,10 @@ export class SectorRoom extends Room<SectorState> {
     const attacker = kind === 'player'
       ? shooterId
       : kind === 'structure' ? (this.structureRegistry.get(shooterId)?.owner ?? null) : null;
-    if (attacker === null) return;
+    // A hauler reports EVERY hit (an NPC raider drives the escort prompt too);
+    // a robot only cares about player attackers.
     if (hauler) sink.onHaulerDamaged(targetId, attacker);
-    else sink.onRobotDamaged(attacker);
+    else if (attacker !== null) sink.onRobotDamaged(attacker);
   }
 
   // ── Living World P2 — TradeRoom hooks (driven by the TradeDirector) ──────
@@ -6325,6 +6387,20 @@ export class SectorRoom extends Room<SectorState> {
     const client = this.clients.find((c) => c.sessionId === sessionId);
     try { client?.send('trade_notice', notice); } catch { /* socket closing */ }
   }
+
+  /** testMode trade opt-in key: the key this room is known by to the
+   *  TradeDirector (null ⇒ not a testMode trade room). */
+  private tradeRegisteredKey: string | null = null;
+
+  /** Join the TradeDirector if this room opted in. Idempotent; called at
+   *  onCreate AND on every trade request, because a room can be created before
+   *  boot installs the director (the trade-tab E2E race). */
+  private ensureTradeRegistered(): void {
+    if (this.tradeRegisteredKey !== null) getTradeSink()?.registerRoom(this.tradeRegisteredKey, this);
+  }
+  /** P2 bespoke triggers (testMode only). */
+  private testSeedStorageHold: { goods: Partial<Record<'minerals' | 'salvage' | 'alloy' | 'core', number>>; credits: number } | null = null;
+  private testHaulerRaiders = 0;
 
   /** Living World P2 — robot reputation truce (no on-sight engagement). One Map
    *  lookup; safe on the snapshot / AI hot paths. */
@@ -6548,6 +6624,7 @@ export class SectorRoom extends Room<SectorState> {
 
   override onDispose(): void {
     this.simLoopStopped = true;
+    if (this.tradeRegisteredKey !== null) getTradeSink()?.unregisterRoom(this.tradeRegisteredKey, this);
     // Structures plan, Phase 3 — stop the grid pulse heartbeat.
     if (this.structureGridTimer !== undefined) {
       clearInterval(this.structureGridTimer);

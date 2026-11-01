@@ -111,8 +111,8 @@ function setup() {
 
 function acceptFirst(t: ReturnType<typeof setup>, kind: 'sell' | 'buy', good: 'salvage' | 'alloy', qty: number, recurrenceMin: 10 | null = null) {
   const offer = t.dir.offersFor(OWNER).find((o) => o.kind === kind && o.good === good)!;
-  const v = t.dir.acceptOffer(OWNER, 's', {
-    type: 'accept_offer', offerId: offer.offerId, networkUid: NET_UID, qty,
+  const v = t.dir.acceptOffer(OWNER, 's', NET_UID, {
+    type: 'accept_offer', offerId: offer.offerId, networkEntityId: 1, qty,
     recurrenceMin, visits: recurrenceMin ? 3 : null, priceBandPct: 10,
   });
   expect(v.ok).toBe(true);
@@ -274,10 +274,26 @@ describe('TradeDirector', () => {
   it('refuses a deal when the player has no storage, or the network is at its deal cap', () => {
     const t = setup();
     const offer = t.dir.offersFor(OWNER).find((o) => o.kind === 'sell')!;
-    const base = { type: 'accept_offer' as const, offerId: offer.offerId, qty: 1, recurrenceMin: null, visits: null, priceBandPct: 0 };
-    expect(t.dir.acceptOffer(OWNER, 's', { ...base, networkUid: 'nope' }).ok).toBe(false);
-    for (let i = 0; i < 3; i++) expect(t.dir.acceptOffer(OWNER, 's', { ...base, networkUid: NET_UID }).ok).toBe(true);
-    expect(t.dir.acceptOffer(OWNER, 's', { ...base, networkUid: NET_UID }).message).toContain('at most 3');
+    const base = { type: 'accept_offer' as const, offerId: offer.offerId, networkEntityId: 1, qty: 1, recurrenceMin: null, visits: null, priceBandPct: 0 };
+    expect(t.dir.acceptOffer(OWNER, 's', 'nope', base).ok).toBe(false);
+    for (let i = 0; i < 3; i++) expect(t.dir.acceptOffer(OWNER, 's', NET_UID, base).ok).toBe(true);
+    expect(t.dir.acceptOffer(OWNER, 's', NET_UID, base).message).toContain('at most 3');
+    t.stop();
+  });
+
+  it('escort prompt: an NPC hitting the owner’s hauler sends one throttled under-fire notice', () => {
+    const t = setup();
+    t.room.net.goods.salvage = 50;
+    acceptFirst(t, 'sell', 'salvage', 20);
+    t.advance(1);
+    const hauler = t.arrive();
+    t.dir.onHaulerDamaged(hauler, null);
+    t.dir.onHaulerDamaged(hauler, null);
+    const fire = t.room.notices.filter((n) => n.event === 'under_fire');
+    expect(fire).toHaveLength(1);
+    expect(fire[0]!.message).not.toContain('#'); // no testMode room id in player text
+    // An NPC raid records no pirate (no standing lost by anyone).
+    expect([...t.store.allDeals()][0]!.run!.attackers).toEqual([]);
     t.stop();
   });
 });

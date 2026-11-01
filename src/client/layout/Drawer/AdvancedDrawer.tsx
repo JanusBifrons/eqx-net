@@ -1,5 +1,6 @@
 import { memo, useCallback, useMemo, type ReactNode } from 'react';
-import { Box, Drawer, IconButton, Tooltip, Typography } from '@mui/material';
+import { Badge, Box, Drawer, IconButton, Tooltip, Typography } from '@mui/material';
+import StorefrontOutlinedIcon from '@mui/icons-material/StorefrontOutlined';
 import AccountCircleOutlinedIcon from '@mui/icons-material/AccountCircleOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import HexagonOutlinedIcon from '@mui/icons-material/HexagonOutlined';
@@ -10,6 +11,7 @@ import { ProfileTab } from './tabs/ProfileTab';
 import { SettingsTab } from './tabs/SettingsTab';
 import { GalaxyTab } from './tabs/GalaxyTab';
 import { DebugTab } from './tabs/DebugTab';
+import { TradeTab } from './tabs/TradeTab';
 
 interface TabSpec {
   id: string;
@@ -28,8 +30,21 @@ interface TabSpec {
  * Adding a new tab: append to either group. Adding a new bottom-pinned
  * tab: set `bottom: true`. The catalogue is the single source of truth.
  */
+/** Living World P2 — the Trade rail icon carries its own unread badge (a local
+ *  Zustand subscription, so the memoised rail buttons don't re-render). */
+const TRADE_BADGE_SX = { '& .MuiBadge-badge': { fontSize: 9, height: 14, minWidth: 14, px: 0.5 } } as const;
+function TradeRailIcon(): JSX.Element {
+  const unread = useUIStore((s) => s.tradeUnread);
+  return (
+    <Badge badgeContent={unread} color="error" max={9} sx={TRADE_BADGE_SX} data-testid="trade-badge" data-unread={unread}>
+      <StorefrontOutlinedIcon />
+    </Badge>
+  );
+}
+
 const TABS: readonly TabSpec[] = [
   { id: 'galaxy',   label: 'Galaxy',      icon: <HexagonOutlinedIcon />,       node: <GalaxyTab /> },
+  { id: 'trade',    label: 'Trade',       icon: <TradeRailIcon />,             node: <TradeTab /> },
   { id: 'profile',  label: 'Profile',     icon: <AccountCircleOutlinedIcon />, node: <ProfileTab /> },
   { id: 'settings', label: 'Settings',    icon: <SettingsOutlinedIcon />,      node: <SettingsTab /> },
   { id: 'debug',    label: 'Debug',       icon: <BugReportOutlinedIcon />,     node: <DebugTab />, bottom: true },

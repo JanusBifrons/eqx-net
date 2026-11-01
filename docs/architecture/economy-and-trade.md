@@ -95,6 +95,20 @@ Standing is earned by completed deals (+10) and by **gifts** (any side; value
 - Never create a top-level `src/client/trade/` directory: it would collide with
   the `/trade` Vite proxy (locked by `clientDirProxyCollision.test.ts`).
 
+## P2b additions
+
+- Messages carry the storage **entityId** (`networkEntityId`); the room resolves
+  it to the owned structure's uid, so the client never needs the uid.
+- Any hit on a hauler reports to the director (NPC raiders included) and sends
+  the owner a throttled `under_fire` notice — the escort prompt.
+- Offline owner → Web Push (`PushNotifier.notifyTrade`) for settled / raided /
+  under fire.
+- testMode trade rooms register under `<sectorKey>#<roomId>` and register
+  **lazily** on their first trade request (a room can be created before boot
+  installs the director — the trade-tab E2E race). The director keeps its OWN
+  copy of the room map so a test room never leaks into the galaxy map.
+- Player-facing text never shows the `#roomId` key (`tradeSectorKey`).
+
 ## Tests
 
 - `src/core/economy/economy.test.ts` — market, reputation, planVisit, afterVisit.
@@ -105,3 +119,7 @@ Standing is earned by completed deals (+10) and by **gifts** (any side; value
   the hauler leaves; buy raided while docked spills cargo, refunds the buyer,
   and costs the pirate standing.
 - `HostileDroneBehaviour.allegiance.test.ts` — robot truce + retaliation.
+- `tests/integration/sectorRoom/tradeMessages.test.ts` — the client's message
+  route through a real room; lazy registration; no `#roomId` in notices.
+- `tests/e2e/trade-tab.spec.ts` — Trade tab → deal → a hauler enters.
+- Player guide: [docs/features/trade-deals.md](../features/trade-deals.md).
