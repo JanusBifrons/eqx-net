@@ -403,6 +403,19 @@ export function buildProjectileGfx(isGhost: boolean): Graphics {
   return g;
 }
 
+/** Living World P3 — the robot nexus's pulse orb: a slow, fat violet ball
+ *  (radius matches the weapon's 10 u hit radius so the visual is honest). */
+export function buildPulseOrbGfx(): Graphics {
+  const g = new Graphics();
+  g.circle(0, 0, 16);
+  g.fill({ color: 0x9a6bff, alpha: 0.25 });
+  g.circle(0, 0, 10);
+  g.fill({ color: 0xc070ff, alpha: 0.75 });
+  g.circle(0, 0, 4);
+  g.fill({ color: 0xffffff, alpha: 0.95 });
+  return g;
+}
+
 export function buildLaserBoltGfx(): Graphics {
   const g = new Graphics();
   // Outer glow — short bright line

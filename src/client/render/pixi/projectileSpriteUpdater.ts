@@ -20,6 +20,7 @@ import {
   buildBeamGfx,
   buildLaserBoltGfx,
   buildProjectileGfx,
+  buildPulseOrbGfx,
 } from './spriteBuilders.js';
 
 export interface ProjectileSpriteCtx {
@@ -45,6 +46,8 @@ export function updateProjectileSprites(
         ps = buildBeamGfx(dx, dy);
       } else if (proj.weaponId === 'laser') {
         ps = buildLaserBoltGfx();
+      } else if (proj.weaponId === 'pulse-orb') {
+        ps = buildPulseOrbGfx();
       } else {
         ps = buildProjectileGfx(proj.isGhost ?? false);
       }
