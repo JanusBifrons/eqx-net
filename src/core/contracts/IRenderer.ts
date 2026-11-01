@@ -260,6 +260,8 @@ export interface StructureRenderState {
   noAmmo?: boolean;
   /** D1 — a Reactor has no fuel (no power). */
   noFuel?: boolean;
+  /** Active power — drawing full consumption (else the idle trickle). */
+  drawFull?: boolean;
   /** The slot blueprint (P2b): runs (BP_RUNS_ORIGINAL = original) + quality. */
   bpRuns?: number;
   bpQuality?: number;

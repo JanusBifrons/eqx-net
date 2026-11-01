@@ -48,6 +48,7 @@ import {
   STRUCTURE_FLAG_WALL_ACTIVE,
   STRUCTURE_FLAG_NO_AMMO,
   STRUCTURE_FLAG_NO_FUEL,
+  STRUCTURE_FLAG_DRAW_FULL,
   STRUCTURE_TARGET_NONE,
   STRUCTURE_DEFAULTS as SD,
 } from '../../shared-types/structureStateWire.js';
@@ -109,6 +110,7 @@ import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
 import { createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf } from '../../shared-types/relations.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
+import { NpcBaseSubsystem, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
 import { PROD_STATE, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import { blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
@@ -1337,6 +1339,9 @@ export class SectorRoom extends Room<SectorState> {
        *  measurement. Generated server-side from (n, seed), so it is not bound
        *  by the 64-entry seed cap. testMode-only. */
       scaleGrid?: { n: number; seed: number; fence?: boolean };
+      /** D2 — NPC bases grown by the core generator (server-authored, like
+       *  `bases`). Galaxy seeding of these comes with trade (phase T). */
+      npcBases?: NpcBaseSpec[];
       /** Procedural bases (plan soft-leaping-truffle) to generate in this
        *  sector. A room-DEFINITION option (server-authored, never client
        *  input), so it is not testMode-gated — galaxy sectors use it too. */
@@ -2109,6 +2114,7 @@ export class SectorRoom extends Room<SectorState> {
       storage: this.storage,
       registry: this.structureRegistry,
       powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
+      setActive: (lab, active) => this.structureGrid.setActive(lab, active),
       sectorKey: () => this.sectorKey,
     });
     // ── Shield-wall lifecycle (shield-fence plan) ──────────────────────────
@@ -2119,6 +2125,8 @@ export class SectorRoom extends Room<SectorState> {
       powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
       componentOf: (id) => this.structureGrid.componentMembersOf(id),
       onBlueprintSpent: (rec) => this.storage.persistSlot(rec),
+      // Active power: processors draw full only while running.
+      setActive: (rec, active) => this.structureGrid.setActive(rec, active),
     });
     this.gates = new GateController({
       registry: this.structureRegistry,
@@ -2164,6 +2172,8 @@ export class SectorRoom extends Room<SectorState> {
     // overlap, no construction wait).
     if (this.testMode) this.seedStructureScenario(roomOpts);
     if (this.testMode && roomOpts.scaleGrid) this.seedScaleGrid(roomOpts.scaleGrid);
+    // D2 (plan soft-leaping-truffle v3) — NPC bases grown from the generator.
+    if (roomOpts.npcBases && roomOpts.npcBases.length > 0) this.seedNpcBases(roomOpts.npcBases);
     if (this.testMode && roomOpts.tradeEnabled === true && this.sectorKey !== null) {
       // Per-room key: testId-filtered rooms share a sectorKey, so the director
       // must not confuse two parallel tests' rooms.
@@ -3843,6 +3853,21 @@ export class SectorRoom extends Room<SectorState> {
    * `scenario`. Rejections are counted and logged — the lattice is rule-valid
    * by construction (structureLattice.test.ts), so any rejection is a bug.
    */
+  /** D2 — seed NPC bases from the generator (built, stocked, recipes + bound
+   *  blueprints loaded), then run one grid pulse so power settles. */
+  private seedNpcBases(specs: readonly NpcBaseSpec[]): void {
+    const sub = new NpcBaseSubsystem({
+      registry: this.structureRegistry,
+      place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
+      setHealth: (id, hp) => this.swarmHealth.set(id, hp),
+    });
+    for (const spec of specs.slice(0, 8)) {
+      const r = sub.seed(spec);
+      logger.info({ baseId: spec.baseId, role: spec.role, tier: spec.tier, owner: r.owner, placed: r.placed, rejectedPlace: r.rejectedPlace, rejectedEdge: r.rejectedEdge }, 'npc base seeded');
+    }
+    this.structureGridTick();
+  }
+
   private seedScaleGrid(opts: { n: number; seed: number; fence?: boolean }): void {
     const n = Math.max(1, Math.min(4000, Math.floor(opts.n)));
     const lat = buildStructureLattice({ n, seed: opts.seed, fence: opts.fence === true });
@@ -4548,6 +4573,7 @@ export class SectorRoom extends Room<SectorState> {
         // emitter's walls are up). `shieldWallTo` stays for a pylon's first wall.
         if (this.shieldWalls.wallsUpFor(rec.id, nowMs)) flags |= STRUCTURE_FLAG_WALL_ACTIVE;
         if (rec.noAmmo === true) flags |= STRUCTURE_FLAG_NO_AMMO;
+        if (rec.drawFull === true) flags |= STRUCTURE_FLAG_DRAW_FULL;
         if (rec.isConstructed && getStructureKind(rec.kind).fuelEveryPulses != null && rec.fueled !== true) flags |= STRUCTURE_FLAG_NO_FUEL;
         if (rec.kind === 'shield_pylon') {
           const wall = this.shieldWalls.wallStateFor(rec.id, nowMs);

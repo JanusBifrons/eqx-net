@@ -18,6 +18,7 @@
 import type { GoodId } from './goods.js';
 import { getStructureKind, type StructureKindId } from './structureKinds.js';
 import { BASE_PRICES } from './economy.js';
+import type { ShipKindId } from './shipKinds.js';
 
 export const RECIPE_IDS = [
   'smelt_alloy',
@@ -77,7 +78,10 @@ export type ProcessorKindId = (typeof PROCESSOR_KIND_IDS)[number];
  *  structure that is placed later at no cost but time. */
 export type RecipeOutput =
   | { readonly good: GoodId; readonly n: number }
-  | { readonly packed: StructureKindId };
+  | { readonly packed: StructureKindId }
+  /** A packed HULL (Living World W5: the Shipyard builds ships that are
+   *  unpacked into the roster). Lands in storage as `hull:<kind>`. */
+  | { readonly hull: ShipKindId };
 
 export interface RecipeDef {
   readonly id: RecipeId;

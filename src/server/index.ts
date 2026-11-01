@@ -725,6 +725,61 @@ gameServer
     maxClients: 8,
   })
   .filterBy(['testId']);
+// D2 (plan soft-leaping-truffle v3) — one NPC base grown by the production-chain
+// generator per room (npc-base-<tier>), owned by npc:traders:<tier>, built and
+// stocked; the pilot spawns south of the fence. filterBy(testId) isolates specs.
+gameServer
+  .define('npc-base-outpost', SectorRoom, {
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    sectorFeatures: ['asteroid'],
+    npcBases: [{ baseId: 'outpost', role: 'mining', tier: 'outpost', seed: 11, x: 0, y: 0, features: ['asteroid'] }],
+    defaultSpawnX: 0,
+    defaultSpawnY: -2600,
+    maxClients: 8,
+  })
+  .filterBy(['testId']);
+gameServer
+  .define('npc-base-settlement', SectorRoom, {
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    sectorFeatures: ['minerals'],
+    npcBases: [{ baseId: 'settlement', role: 'refinery', tier: 'settlement', seed: 12, x: 0, y: 0, features: ['minerals'] }],
+    defaultSpawnX: 0,
+    defaultSpawnY: -3600,
+    maxClients: 8,
+  })
+  .filterBy(['testId']);
+gameServer
+  .define('npc-base-stronghold', SectorRoom, {
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    sectorFeatures: [],
+    npcBases: [{ baseId: 'stronghold', role: 'manufactory', tier: 'stronghold', seed: 14, x: 0, y: 0, features: [] }],
+    defaultSpawnX: 0,
+    defaultSpawnY: -4400,
+    maxClients: 8,
+  })
+  .filterBy(['testId']);
+gameServer
+  .define('npc-base-citadel', SectorRoom, {
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    sectorFeatures: [],
+    npcBases: [{ baseId: 'citadel', role: 'assembly', tier: 'citadel', seed: 15, x: 0, y: 0, features: [] }],
+    defaultSpawnX: 0,
+    defaultSpawnY: -4800,
+    maxClients: 8,
+  })
+  .filterBy(['testId']);
 // Procedural bases (plan soft-leaping-truffle, PR-V2) — the WAREHOUSE showcase:
 // one max-size (8000 u) warehouse at the origin, nothing else in the sector, so
 // screenshots/videos/E2Es see the base alone. Spawn sits OUTSIDE the south wall
