@@ -22,6 +22,7 @@ export {
   StructureActionSchema,
   UpgradeStructureSchema,
   SetGateAccessSchema,
+  SetRecipeSchema,
   RefineSalvageSchema,
   RepairShipSchema,
   PilotShipSchema,

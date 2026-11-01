@@ -149,6 +149,15 @@ Update this section when a threshold is set.
   - **Test view:** `_internals.getStructuresSlice()` is the pre-A2 row shape rebuilt from room state.
 - **A1 (turret targeting + routes):** turret targets come from `findNearestTurretTarget`, a per-turret-tick `NearestPointGrid` of turret-targetable drones (rebuilt lazily on first query; any `evictSwarmEntity` marks it stale; same winner as the old scan, including ties). `Grid.route` reads a per-source BFS tree, cached until the next topology change. After A1 the dominant turret-tick cost is the 10 Hz `rebuildStructuresSlice` (allocation-heavy; GC spikes), which A2 removes.
 
+## Production (plan soft-leaping-truffle v3, P2b)
+
+- **`ProductionSubsystem` (`structures/`) runs on the 1 Hz grid pulse,** after the grid pulse and BEFORE `storage.flushDirty()`. It mutates storage holds and Capital banks in place; the flush persists them.
+- **Inputs are taken when a cycle starts (all or nothing), outputs are put when it ends (all or nothing).** A processor never makes value from nothing, and a partial put changes nothing.
+- **Status rides room state:** `recipe` / `prodState` / `prodMissing` bytes, assigned only on change (A2 rules). `set_recipe` is owner-gated.
+- **Allocation-free steady state:** reused processor/network arrays, and one network lookup per component per pulse. Keep it that way: the budget is 0.3 ms per pulse at 60 processors.
+- **Blueprints:** `ProductionDeps.blueprintFor` is the Living World seam (`applyBlueprint`). Absent ⇒ blueprint recipes run at base values.
+- Locks: `ProductionSubsystem.test.ts` and `tests/integration/sectorRoom/production.test.ts`. Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).
+
 ## NPC ownership (plan soft-leaping-truffle v3, B2)
 
 - **Owners like `npc:<allegiance>:<baseId>` are NPC bases.** Every "is this hostile?" decision about a structure goes through `relationOf`, using the room's ONE `relationCtx` (which holds the hostile-act ledger). Don't compare owner strings inline.

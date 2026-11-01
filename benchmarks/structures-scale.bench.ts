@@ -121,3 +121,31 @@ describe('turret targeting — 44 turrets, 750 entities (300 drones)', () => {
     if (sink === -1e9) throw new Error('unreachable');
   });
 });
+
+// P2b (plan soft-leaping-truffle v3) — the production pass at a citadel with
+// 60 processors and 20 storages. Budget: ≤ 0.3 ms per pulse. Measured on the
+// dev box: 0.047 ms mean, 0.25 ms p99 (2026-11-01).
+import { ProductionSubsystem } from '../src/server/structures/ProductionSubsystem.js';
+import type { StructureRecord, StructureRegistry } from '../src/server/structures/StructureRegistry.js';
+
+describe('production pass (P2b)', () => {
+  const mk = (id: string, kind: StructureRecord['kind'], over: Partial<StructureRecord> = {}): StructureRecord => ({
+    id, owner: 'a', kind, subtypeIndex: 0, x: 0, y: 0, radius: 10, isConstructed: true,
+    constructionProgress: 0, constructionCost: 0, isDeconstructing: false, minerals: 0, storedPower: 0, ...over,
+  });
+  const recs: StructureRecord[] = [mk('cap', 'capital', { minerals: 1e12 })];
+  // Minerals come from the Capital bank; outputs go into the holds, which are
+  // emptied every 500 pulses so storage never fills (a full network would make
+  // every processor "blocked" and measure the retry path instead).
+  for (let i = 0; i < 20; i++) recs.push(mk(`bay${i}`, 'cargo_bay', { hold: { goods: {}, blueprints: [] } }));
+  for (let i = 0; i < 60; i++) recs.push(mk(`s${i}`, 'smelter'));
+  const byId = new Map(recs.map((r) => [r.id, r]));
+  const ids = recs.map((r) => r.id);
+  const registry = { all: () => byId.values(), get: (id: string) => byId.get(id) } as unknown as StructureRegistry;
+  const prod = new ProductionSubsystem({ registry, powered: () => true, componentOf: () => ids });
+  let n = 0;
+  bench('60 processors, 20 storages: one pulse', () => {
+    if (++n % 500 === 0) for (const r of recs) if (r.hold) r.hold.goods = {};
+    prod.pulse();
+  });
+});

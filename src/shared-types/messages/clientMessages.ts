@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RECIPE_IDS } from '../recipes.js';
 import { StructureKindIdSchema } from '../structureKinds.js';
 import { GATE_ACCESS_IDS } from '../gateAccess.js';
 import { SelectEntitySchema, DeselectEntitySchema } from './selectionMessages.js';
@@ -181,6 +182,17 @@ export const SetGateAccessSchema = z
   })
   .strict();
 
+/** P2b (plan soft-leaping-truffle v3) — client → server: pick the recipe a
+ *  processor runs. Owner-gated server-side; a foreign / non-processor /
+ *  wrong-recipe request is a silent no-op. Strict. */
+export const SetRecipeSchema = z
+  .object({
+    type: z.literal('set_recipe'),
+    entityId: z.number().int().nonnegative(),
+    recipe: z.enum(RECIPE_IDS),
+  })
+  .strict();
+
 /** Living World P1a-2 — client → server: refine SALVAGE from the base storage
  *  network into this Capital's mineral bank. Owner-gated server-side; a
  *  foreign / non-Capital / empty request is a silent no-op. */
@@ -307,6 +319,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   StructureActionSchema,
   UpgradeStructureSchema,
   SetGateAccessSchema,
+  SetRecipeSchema,
   RefineSalvageSchema,
   RepairShipSchema,
   PilotShipSchema,
@@ -329,6 +342,7 @@ export type RemoveStructureMessage = z.infer<typeof RemoveStructureSchema>;
 export type StructureActionMessage = z.infer<typeof StructureActionSchema>;
 export type UpgradeStructureMessage = z.infer<typeof UpgradeStructureSchema>;
 export type SetGateAccessMessage = z.infer<typeof SetGateAccessSchema>;
+export type SetRecipeMessage = z.infer<typeof SetRecipeSchema>;
 export type PilotShipMessage = z.infer<typeof PilotShipSchema>;
 export type SpectateMessage = z.infer<typeof SpectateSchema>;
 export type StatId = z.infer<typeof StatIdSchema>;

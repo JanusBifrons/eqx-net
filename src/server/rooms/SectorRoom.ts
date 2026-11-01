@@ -106,6 +106,9 @@ import { buildStructureLattice } from '../../core/structures/structureLattice.js
 import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
 import { createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf } from '../../shared-types/relations.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
+import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
+import { PROD_STATE, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
+import { isRecipeId } from '../../shared-types/recipes.js';
 import { ALLEGIANCE_DEFS, NPC_ALLEGIANCE_IDS, type NpcAllegianceId } from '../../shared-types/allegiances.js';
 import { encodePlayerTurretTarget } from '../../shared-types/structureStateWire.js';
 
@@ -217,6 +220,7 @@ import {
   StructureActionSchema,
   UpgradeStructureSchema,
   SetGateAccessSchema,
+  SetRecipeSchema,
   RefineSalvageSchema,
   RepairShipSchema,
   PilotShipSchema,
@@ -712,6 +716,8 @@ export class SectorRoom extends Room<SectorState> {
   private shieldWalls!: ShieldWallManager;
   /** Gates: open/close on approach (phase V gates). */
   private gates!: GateController;
+  /** P2b — processors on the grid pulse (take inputs, run, put outputs). */
+  private production!: ProductionSubsystem;
   /** 1 Hz grid heartbeat timer (unref'd; off the physics tick). */
   private structureGridTimer: ReturnType<typeof setInterval> | undefined;
   /** Faster turret aim/fire timer (Phase 5; unref'd). */
@@ -2070,6 +2076,11 @@ export class SectorRoom extends Room<SectorState> {
     // ── Shield-wall lifecycle (shield-fence plan) ──────────────────────────
     // Forms the blocking span between paired pylons + drives its physics
     // collider; updated on the grid pulse + the faster turret tick.
+    this.production = new ProductionSubsystem({
+      registry: this.structureRegistry,
+      powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
+      componentOf: (id) => this.structureGrid.componentMembersOf(id),
+    });
     this.gates = new GateController({
       registry: this.structureRegistry,
       collectShips: (out) => this.collectGateShips(out),
@@ -2534,6 +2545,26 @@ export class SectorRoom extends Room<SectorState> {
     });
 
     // ── Gates — set who a gate opens for (owner-gated) ──
+    // ── P2b — the owner picks a processor's recipe ──
+    // Owner-gated; a foreign / non-processor / wrong-recipe request is a no-op.
+    this.onMessage('set_recipe', (client: Client, raw: unknown) => {
+      const parsed = SetRecipeSchema.safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, 'set_recipe');
+        return;
+      }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      const swarmRec = this.swarmRegistry.getByEntityId(parsed.data.entityId);
+      if (!swarmRec) return;
+      const rec = this.structureRegistry.get(swarmRec.id);
+      if (!rec || rec.owner !== owner || !isProcessorKind(rec.kind)) return;
+      if (this.production.setRecipe(rec, parsed.data.recipe)) {
+        this.storage.flushDirty();
+        this.rebuildStructuresSlice();
+      }
+    });
+
     this.onMessage('set_gate_access', (client: Client, raw: unknown) => {
       const parsed = SetGateAccessSchema.safeParse(raw);
       if (!parsed.success) {
@@ -3707,6 +3738,8 @@ export class SectorRoom extends Room<SectorState> {
     this.hostileActs.sweep(Date.now());
     if (this.structureRegistry.size === 0) return;
     const result = this.structureGrid.pulse(Date.now());
+    // P2b — processors take inputs from and put outputs into network storage.
+    this.production.pulse();
     // Economy v2 W3 — powered Research Labs advance their jobs.
     this.researchLabs.pulse();
     // Living World P1a-2 — persist storage payloads the pulse just changed
@@ -3851,6 +3884,12 @@ export class SectorRoom extends Room<SectorState> {
         // persisted (already-leveled) value, so no re-seed is needed.
         rec.level = r.level ?? 1;
         if (r.gateAccess !== undefined) rec.gateAccess = r.gateAccess;
+        // P2b — the owner's recipe choice and a cycle in progress survive a restart.
+        if (r.recipe !== undefined && isRecipeId(r.recipe)) rec.recipe = r.recipe;
+        if (r.prodLoaded === true) {
+          rec.prodLoaded = true;
+          rec.prodProgress = r.prodProgress ?? 0;
+        }
         // Living World P1a-2 — overlay the fresher holds-table payload (bank +
         // deposited goods) keyed by the structure's stable uid.
         this.storage.restore(rec);
@@ -4468,6 +4507,15 @@ export class SectorRoom extends Room<SectorState> {
         if ((st.gateOpen ?? SD.gateOpen) !== open) st.gateOpen = open;
         const access = rec.gateAccess ?? SD.gateAccess;
         if ((st.gateAccess ?? SD.gateAccess) !== access) st.gateAccess = access;
+      }
+      if (isProcessorKind(rec.kind)) {
+        // P2b — production status (recipe, state, missing input) for the inspector.
+        const recipe = encodeRecipe(rec.recipe);
+        if ((st.recipe ?? SD.recipe) !== recipe) st.recipe = recipe;
+        const ps = rec.prodState ?? SD.prodState;
+        if ((st.prodState ?? SD.prodState) !== ps) st.prodState = ps;
+        const pm = ps === PROD_STATE.starved ? encodeGood(rec.prodMissing) : 0;
+        if ((st.prodMissing ?? SD.prodMissing) !== pm) st.prodMissing = pm;
       }
       this.syncConnTo(rec.id, st);
       // Fast cosmetics stay on the snapshot (only structures with a target).
