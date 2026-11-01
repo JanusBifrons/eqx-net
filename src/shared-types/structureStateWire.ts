@@ -29,6 +29,9 @@ export const STRUCTURE_FLAG_WALL_ACTIVE = 8;
 export const STRUCTURE_FLAG_NO_AMMO = 16;
 /** D1 — a built Reactor has no fuel (it produces no power). */
 export const STRUCTURE_FLAG_NO_FUEL = 32;
+/** Active power: the structure is drawing its full consumption this pulse
+ *  (otherwise the idle trickle, `structurePower.ts`). */
+export const STRUCTURE_FLAG_DRAW_FULL = 64;
 
 /** `StructureState.etaMs` sentinels: ≥ 0 is a real ETA. */
 export const STRUCTURE_ETA_NONE = -1;

@@ -24,6 +24,7 @@
 import { ASTEROID_YIELD, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
 import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
+import { structureDraw } from '../../shared-types/structurePower.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import {
   canUpgradeStructure,
@@ -211,6 +212,7 @@ export class StructureGridSubsystem {
       if (!this.powerSummaryFor(rec.id).powered) {
         rec.turretTargetEntityId = undefined;
         rec.turretTargetPlayer = undefined;
+        this.setActive(rec, false);
         continue;
       }
       // Phase 4 WS-B4 — a leveled turret targets FARTHER + hits HARDER. The
@@ -223,6 +225,7 @@ export class StructureGridSubsystem {
       // B2 — a player target has no swarm entity id; it rides as a player id.
       rec.turretTargetPlayer = target?.playerId;
       rec.turretTargetEntityId = target && target.playerId === undefined ? target.entityId : undefined;
+      this.setActive(rec, target !== null);
       if (!target) continue;
       const def = getWeapon(mountWeaponId);
       if (def.mode === 'hitscan') {
@@ -507,13 +510,14 @@ export class StructureGridSubsystem {
   /** P2c — powered Gas Collectors gather gas in a nebula sector, straight
    *  into network storage. Elsewhere they report nothing to collect. */
   private processGas(): void {
-    if (!this.hooks.depositGoods || this.hooks.sectorHasNebula?.() !== true) return;
+    const nebula = this.hooks.sectorHasNebula?.() === true;
     for (const rec of this.hooks.registry.all()) {
       if (!rec.isConstructed) continue;
       const rate = getStructureKind(rec.kind).gasRate;
       if (rate == null || rate <= 0) continue;
-      if (!this.powerSummaryFor(rec.id).powered) continue;
-      this.hooks.depositGoods(rec, 'gas', rate);
+      const working = nebula && !!this.hooks.depositGoods && this.powerSummaryFor(rec.id).powered;
+      this.setActive(rec, working);
+      if (working) this.hooks.depositGoods!(rec, 'gas', rate);
     }
   }
 
@@ -523,6 +527,7 @@ export class StructureGridSubsystem {
       if (!rec.isConstructed || getStructureKind(rec.kind).miningRate == null) continue;
       if (!this.powerSummaryFor(rec.id).powered) {
         this.clearMiningTarget(rec);
+        this.setActive(rec, false);
         continue;
       }
       const kind = getStructureKind(rec.kind);
@@ -530,7 +535,8 @@ export class StructureGridSubsystem {
       // exhausted asteroid is never returned and the miner auto-retargets to a
       // fresh in-range rock (or clears its target → the beam stops).
       const target = this.hooks.findNearestAsteroid(rec.x, rec.y, kind.miningRange ?? 0);
-      if (!target) { this.clearMiningTarget(rec); continue; }
+      if (!target) { this.clearMiningTarget(rec); this.setActive(rec, false); continue; }
+      this.setActive(rec, true);
       // Cache the target + its (static) pose so the faster mining-beam tick
       // (tickMiners) can broadcast the beam endpoint without re-scanning. Build
       // the `swarm-<eid>` wire id ONLY when the target rock CHANGES, so the
@@ -574,6 +580,18 @@ export class StructureGridSubsystem {
         }
       }
     }
+  }
+
+  /**
+   * Active power — mark whether a structure draws its full consumption. A
+   * change adjusts its grid component's net power in O(1) (no rebuild).
+   */
+  setActive(rec: StructureRecord, active: boolean): void {
+    if ((rec.drawFull === true) === active) return;
+    const cons = getStructureKind(rec.kind).powerConsumption;
+    const before = structureDraw(cons, rec.drawFull === true);
+    rec.drawFull = active;
+    if (rec.isConstructed) this.grid.adjustDraw(rec.id, structureDraw(cons, active) - before);
   }
 
   /** Clear a Miner's target + cached pose (unpowered / no in-range rock) so the

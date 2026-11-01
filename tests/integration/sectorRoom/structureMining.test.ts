@@ -60,7 +60,7 @@ describe('SectorRoom integration — mining (Phase 4)', () => {
     expect(capRec.minerals).toBeGreaterThan(before);
   }, 25_000);
 
-  it('an UNPOWERED miner (no solar to offset its draw) mines nothing', async () => {
+  it('an overdrawn miner browns out: it drills only on alternate pulses', async () => {
     harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
@@ -79,10 +79,15 @@ describe('SectorRoom integration — mining (Phase 4)', () => {
 
     const before = capRec.minerals;
     internals.pulseStructureGrid();
-    // Unpowered ⇒ no mining target locked, no extraction.
-    expect(minerRec.miningTargetEntityId).toBeUndefined();
-    expect(minerRec.minerals).toBe(0);
-    // Capital bank doesn't grow from this miner (no haul).
-    expect(capRec.minerals).toBe(before);
+    // Active power: idle, the miner draws a trickle (capital 50 − 12 > 0), so
+    // it powers up and locks the rock; drilling draws its full 60 (net −10),
+    // so the next pulse it is unpowered and drops the target. Brown-out.
+    const active: boolean[] = [];
+    for (let i = 0; i < 6; i++) {
+      internals.pulseStructureGrid();
+      active.push(minerRec.miningTargetEntityId !== undefined);
+    }
+    for (let i = 1; i < active.length; i++) expect(active[i]).toBe(!active[i - 1]);
+    expect(capRec.minerals + minerRec.minerals).toBeGreaterThanOrEqual(before);
   }, 25_000);
 });

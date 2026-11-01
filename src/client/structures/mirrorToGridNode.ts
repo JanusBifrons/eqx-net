@@ -18,6 +18,7 @@
  * write into a CALLER-OWNED `GridNode` (the renderer reuses one ghost node + a
  * small pool of structure nodes across frames).
  */
+import { structureDraw } from '../../shared-types/structurePower.js';
 import {
   getStructureKind,
   type StructureKindId,
@@ -73,7 +74,8 @@ export function structureMirrorToGridNode(
   out.connectionRange = kind.connectionRange;
   // D1 — a Reactor with no fuel produces nothing (the server's same rule).
   out.powerOutput = structureState.built && structureState.noFuel !== true ? kind.powerOutput : 0;
-  out.powerConsumption = structureState.built ? kind.powerConsumption : 0;
+  // Active power — the server's same rule (full while active, else idle trickle).
+  out.powerConsumption = structureState.built ? structureDraw(kind.powerConsumption, structureState.drawFull === true) : 0;
   out.isConstructed = structureState.built;
   return out;
 }

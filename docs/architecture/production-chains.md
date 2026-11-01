@@ -63,6 +63,27 @@ Other rules:
 - **Cost:** 60 smelters with 20 storages take under 0.3 ms per pulse, locked by `ProductionSubsystem.test.ts`. Processors in one component share a single network lookup.
 - **Wire:** room-state bytes `recipe`, `prodState` and `prodMissing`, sent only when not 0 (#16). Late joiners read them from the join payload.
 
+## Active power: full draw only while working
+
+User ruling (2026-11-01): "not everything should drain full power all of the time. Only when actively processing material should it draw full power. If it's idle it won't… They should draw a small amount when idle, just not full."
+
+- **The rule** lives in one shared function, `structureDraw(powerConsumption, drawFull)` in [src/shared-types/structurePower.ts](../../src/shared-types/structurePower.ts). A structure draws its full `powerConsumption` while ACTIVE and `IDLE_DRAW_FRAC` (0.2) of it otherwise. The server's grid view and the client's grid mirror both call it (#15).
+- **What counts as active:**
+
+  | Structure | Active while |
+  |---|---|
+  | Processor (Smelter, Fabricator, …) | its cycle is running (`prodState === running`) |
+  | Drill (Miner, Deep Core Rig) | it has an asteroid to mine |
+  | Gas Collector | it is gathering (nebula sector, powered) |
+  | Turret (every kind) | it has a target |
+  | Research Lab | its job is advancing |
+
+  Everything else (connectors, storage, shield pylons and gates) never becomes active, so it always draws the idle trickle. Pylons hold their walls on it; a hit on a wall is paid from the grid surplus and then from batteries, so batteries remain a real strategy.
+- **The server decides.** `StructureGridSubsystem.setActive(rec, active)` flips `rec.drawFull` and adjusts the structure's grid component by the difference with `Grid.adjustDraw`, an O(1) update with no topology rebuild. The flag rides room state as `STRUCTURE_FLAG_DRAW_FULL` (64), so the client's power readouts and the inspector match.
+- **Brown-outs alternate.** A grid that only affords its structures idle powers up, a structure starts working and draws full, the grid goes negative, the structure drops back to idle on the next pulse, and so on. Batteries cover the gap: that is what they are for.
+- **The generator sizes for expected use.** `growBase` prices power at `expectedDraw(kind) = cons × (u + (1 − u) × IDLE_DRAW_FRAC)`, with utilisation `u` from `EXPECTED_ACTIVE` (processors 0.6, drills 0.8, turrets 0.15), and adds two extra batteries to fenced bases. So NPC bases don't build power for every machine at 100 % at once (`BASE_GROWTH_VERSION` 3).
+- **Locks:** `StructureGridSubsystem.test.ts` (brown-out alternation, battery recovery, overdrawn turret), `structureMining.test.ts` and `structureTurret.test.ts` (integration: alternating drill, a drilling miner overdraws a turret), `researchLab.test.ts` (a lab draws full only while its job runs), `growBase.test.ts` (power ≥ 0 at expected draw).
+
 ## Packed structures
 
 User rulings (2026-11-01):
@@ -167,3 +188,24 @@ The generator powers bases with Reactors first, then Solars, and uses a Battery 
 | Citadel | 236 | 123 |
 
 `TIER_MAX_STRUCTURES` is now 50 / 80 / 160 / 260. NPC bases need fuel stock for their Reactors, so D2 seeds it and trade (T) keeps them supplied.
+
+## NPC bases in the game (D2)
+
+Code: [src/server/bases/NpcBaseSubsystem.ts](../../src/server/bases/NpcBaseSubsystem.ts). The `npcBases` room option takes specs like `{ baseId, role, tier, seed, x, y, features }`.
+
+`seed(spec)` grows the base with `growBase`, then:
+- **Place:** each structure goes through the real `StructurePlacementSubsystem` (`skipAutoConnect`), owned by `npc:<side>:<baseId>`.
+- **Link:** the generator's edges are applied with `connectExplicit`, which re-checks the real `canConnect`.
+- **Build:** every structure is built at its level, with its HP at the leveled maximum.
+- **Set up processors:** their recipes, plus a BOUND faction blueprint (an original that can't be unloaded) where the recipe needs one.
+- **Gates:** they open for anyone not hostile.
+- **Stock:** an hour of Reactor fuel, munitions for ammo turrets, and 20 cycles of each processor's inputs.
+
+Then the real systems run: power, batteries, fence, turrets, production. NPC structures aren't persisted; a restart regenerates them from the seed.
+
+**Test rooms:** `npc-base-outpost` (mining), `npc-base-settlement` (refinery), `npc-base-stronghold` (manufactory) and `npc-base-citadel` (assembly works). Each has `filterBy(testId)` and spawns the pilot south of the fence.
+
+**Lock:** `tests/integration/sectorRoom/npcBases.test.ts`.
+- Every structure is placed, NPC-owned, built and reachable from the Capital through the live grid, with zero rejected placements or edges.
+- After pulses, Reactors are fuelled and processors run.
+- Gates are open, and manufactory blueprints are bound originals.

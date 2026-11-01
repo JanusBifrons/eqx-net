@@ -27,9 +27,6 @@ import { PhysicsWorld } from './World.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { tickInputQueue, type QueuedInput } from './inputQueue.js';
 import { drainContacts } from './contactDrain.js';
-import { generateBase } from '../procgen/generateBase.js';
-import { buildChunkOutlines } from '../procgen/baseChunkMesh.js';
-import type { BaseLayout } from '../procgen/baseLayout.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import {
   SEQLOCK_IDX,
@@ -107,15 +104,7 @@ interface MissileImpulseCmd { type: 'MISSILE_IMPULSE'; entityId: string; fx: num
 interface SpawnWallCmd      { type: 'SPAWN_WALL';      id: string; ax: number; ay: number; bx: number; by: number; thickness: number }
 interface SetWallActiveCmd  { type: 'SET_WALL_ACTIVE'; id: string; active: boolean }
 interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
-/** Procedural bases (plan soft-leaping-truffle) — the worker REGENERATES the
- *  base from its descriptor with the shared core generator (no geometry crosses
- *  the thread boundary) and spawns one union-outline polyline body per chunk.
- *  `dead` = destroy-bit words (omitted = nothing destroyed). */
-interface SpawnBaseCmd      { type: 'SPAWN_BASE'; id: string; ver: number; archetype: 'warehouse'; seed: number; x: number; y: number; size: number; dead?: number[] }
-/** Procedural bases (PR-D) — a piece group was destroyed: rebuild this base's
- *  outline colliders from the stored layout + the new destroy mask. */
-interface SetBaseDeadCmd    { type: 'SET_BASE_DEAD'; id: string; dead: number[] }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SpawnBaseCmd | SetBaseDeadCmd;
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd;
 
 async function main(): Promise<void> {
   const { sab } = workerData as { sab: SharedArrayBuffer };
@@ -123,8 +112,6 @@ async function main(): Promise<void> {
   const f32 = new Float32Array(sab);
 
   const physics = await PhysicsWorld.create();
-  /** Procedural bases (PR-D): layouts by base id, for SET_BASE_DEAD rebuilds. */
-  const baseLayouts = new Map<string, BaseLayout>();
   // Stage 2 — Rapier event queue persists across all `world.step()` calls;
   // drained once per tick after the SAB write window. `true` enables contact-
   // force events alongside collision-start/stop events.
@@ -298,25 +285,6 @@ async function main(): Promise<void> {
       }
       case 'REMOVE_WALL': {
         physics.removeWall(cmd.id);
-        break;
-      }
-      case 'SPAWN_BASE': {
-        const layout = generateBase({ ver: cmd.ver, archetype: cmd.archetype, seed: cmd.seed, x: cmd.x, y: cmd.y, size: cmd.size });
-        baseLayouts.set(cmd.id, layout);
-        const outlines = buildChunkOutlines(layout, cmd.dead ? Uint32Array.from(cmd.dead) : null);
-        for (let c = 0; c < outlines.length; c++) physics.spawnBaseChunk(cmd.id, c, outlines[c]!.vertices, outlines[c]!.indices);
-        break;
-      }
-      case 'SET_BASE_DEAD': {
-        const layout = baseLayouts.get(cmd.id);
-        if (!layout) break;
-        // Destroys are rare + event-driven: rebuild every chunk of this base
-        // (the union outline of a whole row can change, not just one chunk).
-        const outlines = buildChunkOutlines(layout, Uint32Array.from(cmd.dead));
-        for (let c = 0; c < outlines.length; c++) {
-          physics.removeBaseChunk(cmd.id, c);
-          physics.spawnBaseChunk(cmd.id, c, outlines[c]!.vertices, outlines[c]!.indices);
-        }
         break;
       }
     }

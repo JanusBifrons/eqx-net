@@ -167,11 +167,14 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
     expect(internals.structureRegistry.get(cap)!.hold!.goods.munitions ?? 0).toBe(0);
   }, 30_000);
 
-  it('an unpowered turret (overdrawn grid) does not fire', async () => {
+  it('an unpowered turret (grid overdrawn by a DRILLING miner) does not fire', async () => {
     harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
     internals.spawnTestDrone('mob-2', 400, 700);
+    // Active power: an idle miner only trickles, so give it a rock to drill;
+    // its full draw is what overdraws the grid.
+    internals.spawnTestAsteroid('drill-rock', 740, -660, 30);
 
     await placeAndWait(harness, room, 'capital', 0, 0);
     // WS-5: relay offset on +x so its LOS clears the Capital to BOTH the +y
@@ -184,9 +187,13 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
     expect(internals.structureRegistry.get(turret)!.isConstructed).toBe(true);
     expect(internals.structureRegistry.get(miner)!.isConstructed).toBe(true);
 
+    const minerRec = internals.structureRegistry.get(miner)!;
+    // Brown-out alternates; stop on a pulse where the miner is drilling.
+    for (let i = 0; i < 3 && minerRec.drawFull !== true; i++) internals.pulseStructureGrid();
+    expect(minerRec.drawFull).toBe(true);
     const before = internals.swarmHealth.get('mob-2')!;
     internals.tickStructureTurrets();
-    // capital 50 − turret 15 − miner 60 = −25 → unpowered → no shot.
+    // capital 50 − turret idle 3 − drilling miner 60 = −13 → unpowered → no shot.
     expect(internals.swarmHealth.get('mob-2')).toBe(before);
     expect(internals.structureRegistry.get(turret)!.turretTargetEntityId).toBeUndefined();
   }, 25_000);

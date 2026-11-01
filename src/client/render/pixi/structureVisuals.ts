@@ -5,7 +5,7 @@
  *
  * Each structure kind gets a rectangular (or composite) FOOTPRINT several
  * times larger than the old regular-polygon silhouette, drawn with the same
- * vocabulary as the warehouse/city bases (baseVisuals.ts): three flat tones, a
+ * vocabulary as the original warehouse/city base sheets: three flat tones, a
  * rim, functional detail (panel grids, container ribs, cell rows, windows) and
  * point lights. Pure + deterministic (no Pixi): returns rect/light ops in
  * LOCAL pixi space centred on the structure, so one plan feeds the in-game
@@ -14,9 +14,20 @@
  * `PROPOSED_FOOTPRINTS` is the design proposal; phase V moves the agreed
  * numbers into the structure catalogue (collider + placement + LOS).
  */
-import type { LightOp, RectOp } from './baseVisuals.js';
-import { mixColor } from './baseVisuals.js';
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
+
+/** A filled rectangle (pixi space). */
+export interface RectOp { x: number; y: number; w: number; h: number; color: number; alpha: number }
+/** A light point (pixi space). */
+export interface LightOp { x: number; y: number; r: number; color: number }
+
+/** Blend colour `c` toward `target` by `t` (0..1), per channel. */
+export function mixColor(c: number, target: number, t: number): number {
+  const r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
+  const tr = (target >> 16) & 0xff, tg = (target >> 8) & 0xff, tb = target & 0xff;
+  const rr = Math.round(r + (tr - r) * t), gg = Math.round(g + (tg - g) * t), bb = Math.round(b + (tb - b) * t);
+  return (rr << 16) | (gg << 8) | bb;
+}
 
 export interface StructureFootprint {
   /** Full width / height (u). */
