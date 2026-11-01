@@ -68,6 +68,10 @@ export interface TradeTransferSpec {
   release?: readonly string[];
   destroy?: readonly string[];
   extraOps?: readonly PersistOp[];
+  /** T4b — ops that depend on what the take actually moved (a wallet credit
+   *  for exactly the goods taken); built after the take, before the commit,
+   *  so they land in the SAME atomic group. */
+  extraOpsFor?: (taken: Hold) => readonly PersistOp[];
 }
 
 export interface TradeTransferResult {
@@ -522,7 +526,8 @@ export class StorageService {
       this.persistedSig.set(rec.uid!, sig(r.hold));
       puts.push(r);
     }
-    this.d.holdStore.commit(puts, deletes, this.persist(), spec.extraOps ?? []);
+    const ops = spec.extraOpsFor ? [...(spec.extraOps ?? []), ...spec.extraOpsFor(taken)] : (spec.extraOps ?? []);
+    this.d.holdStore.commit(puts, deletes, this.persist(), ops);
     return { taken, overflow, x: target.x, y: target.y };
   }
 

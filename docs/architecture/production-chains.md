@@ -138,6 +138,33 @@ Locks:
 - `TradeDirector.test.ts`: the board is quoted with the region's factor; an unknown sector is unchanged;
 - `ConvoyDirector.test.ts`: the planning pass publishes factors from real base stock.
 
+## Standing orders at a player's Freight Dock (T4b)
+
+The owner of a built Freight Dock sets up to 6 standing orders (`set_freight_orders`, owner-gated; shown and edited in the cargo panel). NPC convoys fill them from real NPC stock:
+- **Import** good X **up to** level N: a convoy delivers when the base's network falls below half of N, refilling it to N. The player pays the board's regional buy price on delivery.
+- **Export** good X **above** level N: anything above N is offered to NPC importers; a convoy collects it, and the player is paid the board's sell price at pickup.
+
+How it works:
+- **Planning.** `SectorRoom.npcBaseTrade` also reports each player Freight Dock with orders, flagged `player`. Its "use" is shaped by its orders (`level / TARGET_MINUTES`), and its stock is limited to the ordered goods; import goods are capped at their level, so they're never offered.
+- **NPC partners only.** `matchConvoys` takes an `allowPair` hook, and the director never pairs two players.
+- **Clamps at planning.** A player import is clamped to what the wallet can afford and to the hourly volume; an export is clamped to the volume.
+- **Atomic payment.** An export's credit is built by `tradeTransfer`'s new `extraOpsFor(taken)`, so it pays for exactly what was taken, in the same group. An import's debit rides the delivery's release group. A player who can no longer pay at delivery doesn't receive the goods.
+- **Same market.** Each fill moves the galaxy market and volume (`recordDockFill`). Audit: `freight_orders_set`, `freight_order_filled`.
+- **Persisted.** Orders are saved with the structure (`freightOrders` in the sector snapshot).
+
+Locks:
+- `ConvoyDirector.test.ts`: an import clamped to credits and paid on delivery (the wallet op rides the group); an export paid for exactly what was taken; never player to player; unpaid at delivery means no goods.
+- `tests/integration/sectorRoom/freightOrders.test.ts`: set over the real message, shown in `cargo_state`, joins planning with shaped rates, a stranger can't set them.
+- `SectorPersistence.structures.test.ts` (round-trip), `CargoPanel.test.tsx` (the editor), `tradeClientWireParity` (the sender).
+
+## The Shipyard (Living World W5b)
+
+The Shipyard (960 × 600 hub, 4 links, 220 power) is the hull end of the chain. Two kinds of recipe touch it:
+- **`build_<hull>`** (`build_interceptor`, `build_gunship`, `build_heavy`, `build_missile_frigate`) runs on the Shipyard and needs the hull's blueprint (`blueprintProductFor` → `hull:<kind>`). Its output is a PACKED hull (`{ hull }`), made into storage by the same `ProductionSubsystem`.
+- **`pack_shipyard`** runs on the Assembly Plant and packs the Shipyard itself.
+
+It's a processor like any other, so active power applies: full draw only while building. The balance test (`recipes.test.ts`) skips hull and pack recipes. Their value is the bill (`hullBillValue`, `packBillValue`), not the 1.2–1.6× ladder. Full story: [docs/features/blueprints.md](../features/blueprints.md).
+
 ## Packed structures
 
 User rulings (2026-11-01):

@@ -25,7 +25,7 @@ import { InstallBlueprintSchema, UnpackHullSchema } from '../../src/shared-types
 import { BpBuySchema, BpMarketQuerySchema, BpSellSchema } from '../../src/shared-types/blueprintMarket';
 import { PlaceBountySchema } from '../../src/shared-types/contracts';
 import { LabCancelSchema, LabQuerySchema, LabStartSchema } from '../../src/shared-types/messages/labMessages';
-import { CargoMoveSchema, CargoQuerySchema } from '../../src/shared-types/messages/cargoMessages';
+import { CargoMoveSchema, CargoQuerySchema, SetFreightOrdersSchema } from '../../src/shared-types/messages/cargoMessages';
 
 function lastAccepted(schema: ZodType, wireType: string): void {
   const m = sent[sent.length - 1]!;
@@ -75,6 +75,8 @@ describe('tradeClient senders match the server schemas', () => {
     lastAccepted(CargoQuerySchema, 'cargo_query');
     client.sendCargoMove(9, 'take', { goods: { alloy: 3 }, packed: ['structure:smelter'], blueprints: ['bp-1'] });
     lastAccepted(CargoMoveSchema, 'cargo_move');
+    client.sendSetFreightOrders(9, [{ good: 'alloy', mode: 'import', level: 200 }, { good: 'fuel', mode: 'export', level: 50 }]);
+    lastAccepted(SetFreightOrdersSchema, 'set_freight_orders');
   });
 
   it('lab_query / lab_start / lab_cancel', () => {

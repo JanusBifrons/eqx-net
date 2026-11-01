@@ -30,6 +30,25 @@ export const CargoItemsSchema = z
 export type CargoItems = z.infer<typeof CargoItemsSchema>;
 
 // Client messages carry their `type` (tradeClient's send() adds it).
+/** T4b — a standing order on a player's own Freight Dock. NPC convoys fill
+ *  it from real NPC stock: `import` keeps the base's network stocked up to
+ *  `level` (delivered when it falls below half), `export` sells anything
+ *  above `level`. Paid at the trade board's regional price. */
+export const MAX_FREIGHT_ORDERS = 6;
+export const FreightOrderSchema = z
+  .object({
+    good: z.enum(GOOD_IDS),
+    mode: z.enum(['import', 'export']),
+    level: z.number().int().min(1).max(100_000),
+  })
+  .strict();
+export type FreightOrder = z.infer<typeof FreightOrderSchema>;
+
+export const SetFreightOrdersSchema = z
+  .object({ type: z.literal('set_freight_orders'), entityId, orders: z.array(FreightOrderSchema).max(MAX_FREIGHT_ORDERS) })
+  .strict();
+export type SetFreightOrders = z.infer<typeof SetFreightOrdersSchema>;
+
 export const CargoQuerySchema = z.object({ type: z.literal('cargo_query'), entityId }).strict();
 export type CargoQuery = z.infer<typeof CargoQuerySchema>;
 
@@ -53,6 +72,8 @@ export const CargoStateSchema = z
     /** The pilot's ship hold and its capacity, when open. */
     ship: HoldSchema.nullable(),
     shipCapacity: z.number().nonnegative(),
+    /** T4b — your own Freight Dock's standing orders (absent otherwise). */
+    orders: z.array(FreightOrderSchema).max(MAX_FREIGHT_ORDERS).optional(),
     /** T4 — an NPC Freight Dock: a market, not free access. `hold` is the
      *  base's stock; per-unit prices: `buy` = you pay, `sell` = you get. */
     market: z

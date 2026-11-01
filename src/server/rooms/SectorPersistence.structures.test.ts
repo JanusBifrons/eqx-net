@@ -128,6 +128,17 @@ describe('SectorPersistence — structures survive a server restart', () => {
     });
   });
 
+  it('T4b: Freight Dock standing orders round-trip through persist → hydrate', () => {
+    const orders = [{ good: 'alloy', mode: 'import' as const, level: 200 }, { good: 'fuel', mode: 'export' as const, level: 50 }];
+    const struct = makeStructure({ kind: 'freight_dock', freightOrders: orders });
+    let restored: readonly SectorSnapshotStructure[] = [];
+    const { deps } = makeDeps([struct], (rows) => { restored = rows; });
+    const persistence = new SectorPersistence(deps);
+    persistence.persist();
+    persistence.hydrate();
+    expect(restored[0]!.freightOrders).toEqual(orders);
+  });
+
   it('persist() skips NPC-owned structures (B2: NPC bases regenerate from their seed)', () => {
     const mine = makeStructure();
     const npc = makeStructure({ entityId: 'pstruct-8', owner: 'npc:traders:t1' });

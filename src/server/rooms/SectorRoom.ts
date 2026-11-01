@@ -106,7 +106,7 @@ import { buildGridNodes, connectExplicit } from '../structures/structureGridView
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
 import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf } from '../../shared-types/relations.js';
-import { CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, type CargoState } from '../../shared-types/messages/cargoMessages.js';
+import { CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, MAX_FREIGHT_ORDERS, SetFreightOrdersSchema, type CargoState } from '../../shared-types/messages/cargoMessages.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
 import { NpcBaseSubsystem, isNpcBasesDisabled, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
@@ -115,6 +115,7 @@ import { chooseBaseSite, grownExtent, nearestClearPoint, type SiteBox, type Site
 import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
 import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
+import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
 import { RECIPES, blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
@@ -287,6 +288,10 @@ import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat
 const SPAWN_STRUCTURE_CLEARANCE = 120;
 /** T2 — an NPC ammo turret's assumed munitions use (it fires only when attacked). */
 const NPC_TURRET_MUNITIONS_PER_MIN = 0.2;
+/** T4b — the level of `good`'s order on a dock (0 when none). */
+function o_level(r: { freightOrders?: Array<{ good: GoodId; level: number }> }, good: GoodId): number {
+  return r.freightOrders?.find((o) => o.good === good)?.level ?? 0;
+}
 
 const logger = pino({
   name: 'SectorRoom',
@@ -2871,11 +2876,30 @@ export class SectorRoom extends Room<SectorState> {
       }
       const view = this.storage.cargoView(access.rec);
       const shipHold = getHoldStore().get(access.shipInstanceId)?.hold ?? emptyHold();
+      const own = access.rec.owner === playerId && access.rec.kind === 'freight_dock';
       send({
         type: 'cargo_state', entityId, open: true, hold: view.hold, used: view.used, capacity: view.capacity,
-        ship: shipHold, shipCapacity: access.capacity, ...(verdict ?? {}),
+        ship: shipHold, shipCapacity: access.capacity,
+        ...(own ? { orders: (access.rec.freightOrders ?? []).map((o) => ({ ...o })) } : {}),
+        ...(verdict ?? {}),
       });
     };
+    // T4b — standing orders on the owner's own built Freight Dock (last
+    // order per good wins). Convoys fill them; the panel re-reads on its poll.
+    this.onMessage('set_freight_orders', (client: Client, raw: unknown) => {
+      const p = SetFreightOrdersSchema.safeParse(raw);
+      if (!p.success) { this.malformed.record(client.sessionId, 'set_freight_orders'); return; }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      const swarmRec = this.swarmRegistry.getByEntityId(p.data.entityId);
+      const rec = swarmRec ? this.structureRegistry.get(swarmRec.id) : undefined;
+      if (!rec || rec.owner !== owner || rec.kind !== 'freight_dock' || !rec.isConstructed) return;
+      const byGood = new Map<GoodId, { good: GoodId; mode: 'import' | 'export'; level: number }>();
+      for (const o of p.data.orders) byGood.set(o.good, { good: o.good, mode: o.mode, level: o.level });
+      rec.freightOrders = [...byGood.values()].slice(0, MAX_FREIGHT_ORDERS);
+      if (rec.freightOrders.length === 0) delete rec.freightOrders;
+      auditEvent({ event: 'freight_orders_set', sector: this.sectorKey ?? undefined, playerId: owner, orders: rec.freightOrders?.length ?? 0 });
+    });
     this.onMessage('cargo_query', (client: Client, raw: unknown) => cargoRequest(client, 'cargo_query', raw));
     this.onMessage('cargo_move', (client: Client, raw: unknown) => cargoRequest(client, 'cargo_move', raw));
 
@@ -4124,6 +4148,11 @@ export class SectorRoom extends Room<SectorState> {
         // P2b — the owner's recipe choice and a cycle in progress survive a restart.
         if (r.recipe !== undefined && isRecipeId(r.recipe)) rec.recipe = r.recipe;
         if (r.prepaid === true) rec.prepaid = true;
+        // T4b — a Freight Dock's standing orders survive a restart.
+        if (r.freightOrders) {
+          const ok = r.freightOrders.filter((o) => (GOOD_IDS as readonly string[]).includes(o.good) && (o.mode === 'import' || o.mode === 'export') && o.level > 0);
+          if (ok.length > 0) rec.freightOrders = ok.map((o) => ({ good: o.good as GoodId, mode: o.mode, level: Math.floor(o.level) })).slice(0, MAX_FREIGHT_ORDERS);
+        }
         if (r.prodLoaded === true) {
           rec.prodLoaded = true;
           rec.prodProgress = r.prodProgress ?? 0;
@@ -7503,6 +7532,32 @@ export class SectorRoom extends Room<SectorState> {
         if (k.gasRate) add(makes, 'gas', k.gasRate * 60);
       }
       out.push({ owner, networkUid: anchor.uid, view: { stock: snap.goods, freeCapacity: snap.freeCapacity, uses, makes }, box: { x0, x1, y0, y1 } });
+    }
+    // T4b — a player's Freight Dock with standing orders trades too, but only
+    // in the goods it has orders for: "use" is shaped so an import keeps the
+    // network up to its level and an export offers anything above it.
+    for (const r of this.structureRegistry.all()) {
+      if (r.kind !== 'freight_dock' || !r.isConstructed || !r.freightOrders?.length || isNpcOwner(r.owner) || r.uid === undefined) continue;
+      const snap = this.storage.tradeSnapshot(r.owner, r.uid);
+      if (snap === null) continue;
+      const stock: Partial<Record<GoodId, number>> = {};
+      const uses: Partial<Record<GoodId, number>> = {};
+      const imports: GoodId[] = [];
+      const exports: GoodId[] = [];
+      for (const o of r.freightOrders) {
+        stock[o.good] = snap.goods[o.good] ?? 0;
+        uses[o.good] = o.level / CONVOY_TARGET_MINUTES;
+        (o.mode === 'import' ? imports : exports).push(o.good);
+      }
+      // Import goods are never offered (only exports are spare); export goods
+      // are never asked for.
+      for (const g of imports) if ((stock[g] ?? 0) > o_level(r, g)) stock[g] = o_level(r, g);
+      const hw = r.halfW ?? r.radius, hh = r.halfH ?? r.radius;
+      out.push({
+        owner: r.owner, networkUid: r.uid, player: { imports, exports },
+        view: { stock, freeCapacity: snap.freeCapacity, uses, makes: {} },
+        box: { x0: r.x - hw, x1: r.x + hw, y0: r.y - hh, y1: r.y + hh },
+      });
     }
     return out;
   }

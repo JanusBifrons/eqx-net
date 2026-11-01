@@ -69,6 +69,29 @@ describe('CargoPanel (C1)', () => {
     expect(send).toHaveBeenLastCalledWith('cargo_move', { type: 'cargo_move', entityId: 9, dir: 'put', items: { goods: { salvage: 3 } } });
   });
 
+  it('T4b: your own Freight Dock shows standing orders; add and remove send set_freight_orders', () => {
+    render(<CargoPanel entityId={9} />);
+    act(() => useUIStore.getState().setCargoState(state({ orders: [{ good: 'alloy', mode: 'import', level: 200 }] })));
+    const row = screen.getByTestId('freight-order');
+    expect(row.textContent).toContain('Alloy: buy up to 200');
+    fireEvent.change(screen.getByTestId('freight-order-good'), { target: { value: 'fuel' } });
+    fireEvent.click(screen.getByTestId('freight-order-mode')); // → sell above
+    fireEvent.change(screen.getByTestId('freight-order-level'), { target: { value: '50' } });
+    fireEvent.click(screen.getByTestId('freight-order-add'));
+    expect(send).toHaveBeenLastCalledWith('set_freight_orders', {
+      type: 'set_freight_orders', entityId: 9,
+      orders: [{ good: 'alloy', mode: 'import', level: 200 }, { good: 'fuel', mode: 'export', level: 50 }],
+    });
+    fireEvent.click(screen.getByTestId('freight-order-remove'));
+    expect(send).toHaveBeenLastCalledWith('set_freight_orders', { type: 'set_freight_orders', entityId: 9, orders: [] });
+  });
+
+  it('no orders editor on anything but your own Freight Dock', () => {
+    render(<CargoPanel entityId={9} />);
+    act(() => useUIStore.getState().setCargoState(state()));
+    expect(screen.queryByTestId('freight-orders')).toBeNull();
+  });
+
   it('ignores a reply for a different structure', () => {
     render(<CargoPanel entityId={9} />);
     act(() => useUIStore.getState().setCargoState(state({ entityId: 10 })));

@@ -10,9 +10,10 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { Box, IconButton, Tooltip } from '@mui/material';
 import Inventory2Icon from '@mui/icons-material/Inventory2';
 import { useUIStore } from '../state/store';
-import { sendCargoMove, sendCargoQuery } from '../net/tradeClient';
+import { sendCargoMove, sendCargoQuery, sendSetFreightOrders } from '../net/tradeClient';
+import { GOOD_DEFS, GOOD_IDS, type GoodId } from '../../shared-types/goods';
 import { cargoRows, type CargoRow } from './cargoRows';
-import type { CargoItems } from '../../shared-types/messages/cargoMessages';
+import { MAX_FREIGHT_ORDERS, type CargoItems, type FreightOrder } from '../../shared-types/messages/cargoMessages';
 
 export const CARGO_POLL_MS = 1000;
 /** How long a move's verdict stays on the panel. */
@@ -76,6 +77,52 @@ function Pane({ title, rows, verb, testPrefix, onMove, prices }: {
   );
 }
 
+const INPUT_SX = {
+  fontSize: 9, background: 'rgba(10,30,24,0.8)', color: '#d6efe4', border: '1px solid rgba(110,200,160,0.4)',
+  borderRadius: '3px', padding: '1px 2px',
+} as const;
+
+/** T4b — a player's own Freight Dock: standing orders NPC convoys fill. */
+function FreightOrders({ entityId, orders }: { entityId: number; orders: FreightOrder[] }): JSX.Element {
+  const [good, setGood] = useState<GoodId>('minerals');
+  const [mode, setMode] = useState<'import' | 'export'>('import');
+  const [level, setLevel] = useState(100);
+  const save = (next: FreightOrder[]): void => { sendSetFreightOrders(entityId, next); };
+  const add = (): void => {
+    const lv = Math.max(1, Math.min(100_000, Math.floor(level) || 1));
+    save([...orders.filter((o) => o.good !== good), { good, mode, level: lv }].slice(-MAX_FREIGHT_ORDERS));
+  };
+  return (
+    <Box data-testid="freight-orders">
+      <Box sx={PANE_TITLE_SX}>Standing orders (convoys fill them)</Box>
+      <Box sx={LIST_SX}>
+        {orders.length === 0 && <Box sx={EMPTY_SX}>None</Box>}
+        {orders.map((o) => (
+          <Box key={o.good} sx={ROW_SX} data-testid="freight-order" data-good={o.good} data-mode={o.mode} data-level={o.level}>
+            <Box sx={LABEL_SX}>
+              {GOOD_DEFS[o.good].displayName}: {o.mode === 'import' ? `buy up to ${o.level}` : `sell above ${o.level}`}
+            </Box>
+            <Box sx={BTN_SX} data-testid="freight-order-remove" onClick={() => save(orders.filter((x) => x.good !== o.good))}>×</Box>
+          </Box>
+        ))}
+      </Box>
+      <Box sx={{ display: 'flex', gap: '3px', alignItems: 'center', mt: '3px' }}>
+        <select data-testid="freight-order-good" style={INPUT_SX} value={good} onChange={(e) => setGood(e.target.value as GoodId)}>
+          {GOOD_IDS.map((g) => <option key={g} value={g}>{GOOD_DEFS[g].displayName}</option>)}
+        </select>
+        <Box sx={BTN_SX} data-testid="freight-order-mode" onClick={() => setMode(mode === 'import' ? 'export' : 'import')}>
+          {mode === 'import' ? 'Buy up to' : 'Sell above'}
+        </Box>
+        <input
+          data-testid="freight-order-level" style={{ ...INPUT_SX, width: 44 }} type="number" min={1} max={100000}
+          value={level} onChange={(e) => setLevel(Number(e.target.value))}
+        />
+        <Box sx={BTN_SX} data-testid="freight-order-add" onClick={add}>Add</Box>
+      </Box>
+    </Box>
+  );
+}
+
 export const CargoPanel = memo(function CargoPanel({ entityId }: { entityId: number }): JSX.Element {
   const state = useUIStore((s) => (s.cargoState?.entityId === entityId ? s.cargoState : null));
 
@@ -121,6 +168,7 @@ export const CargoPanel = memo(function CargoPanel({ entityId }: { entityId: num
           />
         </>
       )}
+      {state?.open === true && state.orders !== undefined && <FreightOrders entityId={entityId} orders={state.orders} />}
       {notice !== null && (
         <Box sx={notice.ok ? undefined : WARN_SX} data-testid="cargo-notice" data-ok={notice.ok ? '1' : '0'}>{notice.message}</Box>
       )}

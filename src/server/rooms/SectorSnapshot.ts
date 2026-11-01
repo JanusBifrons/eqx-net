@@ -71,6 +71,8 @@ export interface SectorSnapshotStructure {
   prodLoaded?: boolean;
   /** Economy v2 W4b — placed from a packed item. Absent ⇒ built from minerals. */
   prepaid?: boolean;
+  /** T4b — a Freight Dock's standing orders. Absent ⇒ none. */
+  freightOrders?: Array<{ good: string; mode: 'import' | 'export'; level: number }>;
   prodProgress?: number;
   /** Hull HP at save time. */
   health: number;

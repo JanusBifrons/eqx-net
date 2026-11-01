@@ -71,6 +71,8 @@ export interface MatchOptions {
   hops: (a: string, b: string) => number;
   /** `<to>|<good>` pairs already being delivered — not planned again. */
   inFlight?: ReadonlySet<string>;
+  /** T4b — may `from` ship to `to`? (e.g. never player to player). */
+  allowPair?: (from: string, to: string) => boolean;
 }
 
 /**
@@ -103,6 +105,7 @@ export function matchConvoys(bases: readonly BaseTradeView[], o: MatchOptions): 
     let bestHops = Infinity;
     for (const e of bases) {
       if (e.key === n.b.key) continue;
+      if (o.allowPair && !o.allowPair(e.key, n.b.key)) continue;
       if ((spare.get(spareKey(e.key, n.g)) ?? 0) <= 0) continue;
       const h = o.hops(e.sectorKey, n.b.sectorKey);
       if (h < bestHops || (h === bestHops && best !== null && e.key < best.key)) { best = e; bestHops = h; }

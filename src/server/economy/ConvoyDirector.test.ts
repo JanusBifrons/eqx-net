@@ -19,12 +19,13 @@ const SINK: IPersistenceSink = {
   enqueueCriticalAwaitable: () => Promise.resolve({}), shutdown: () => Promise.resolve({ drained: 0 }),
 };
 
-interface FakeBase { owner: string; uid: string; stock: Partial<Record<GoodId, number>>; uses: Partial<Record<GoodId, number>>; box: NpcBaseTrade['box'] }
+interface FakeBase { owner: string; uid: string; stock: Partial<Record<GoodId, number>>; uses: Partial<Record<GoodId, number>>; box: NpcBaseTrade['box']; player?: NpcBaseTrade['player'] }
 
 class FakeRoom implements ConvoyRoom {
   readonly bus = new Bus();
   readonly poses = new Map<string, { x: number; y: number; angle: number }>();
   readonly dropped: Hold[] = [];
+  readonly committedOps: unknown[] = [];
   constructor(readonly bases: FakeBase[], readonly holds: HoldStore) {}
   eventBus(): Bus { return this.bus; }
   hasFreeSlot(): boolean { return true; }
@@ -35,7 +36,7 @@ class FakeRoom implements ConvoyRoom {
   tradeDropAt(h: Hold): void { this.dropped.push(h); }
   clearPointNear(x: number, y: number) { return { x, y }; }
   npcBaseTrade(): NpcBaseTrade[] {
-    return this.bases.map((b) => ({ owner: b.owner, networkUid: b.uid, box: b.box, view: { stock: { ...b.stock }, freeCapacity: 100_000, uses: b.uses, makes: {} } }));
+    return this.bases.map((b) => ({ owner: b.owner, networkUid: b.uid, box: b.box, ...(b.player ? { player: b.player } : {}), view: { stock: { ...b.stock }, freeCapacity: 100_000, uses: b.uses, makes: {} } }));
   }
   tradeTransfer(owner: string, uid: string, spec: TradeTransferSpec): TradeTransferResult | null {
     const b = this.bases.find((x) => x.owner === owner && x.uid === uid);
@@ -49,6 +50,8 @@ class FakeRoom implements ConvoyRoom {
       }
       this.holds.put({ holderUid: spec.take.intoUid, holderType: 'hauler', ownerId: null, sectorKey: 's', x: null, y: null, hold: cloneHold(taken), expiresAt: null }, false);
     }
+    const ops = [...(spec.extraOps ?? []), ...(spec.extraOpsFor ? spec.extraOpsFor(taken) : [])];
+    this.committedOps.push(...ops);
     for (const h of spec.release ?? []) {
       const rec = this.holds.get(h);
       if (rec) for (const [g, n] of Object.entries(rec.hold.goods)) b.stock[g as GoodId] = (b.stock[g as GoodId] ?? 0) + (n ?? 0);
@@ -186,5 +189,87 @@ describe('ConvoyDirector (T2)', () => {
     // (weight 10) are below a worthwhile load — no second convoy. Without the
     // promise, the exporter would still look like it had 205 to give.
     expect(dir.active()).toHaveLength(1);
+  });
+});
+
+
+describe('ConvoyDirector — player Freight Dock orders (T4b)', () => {
+  function payments(balance: number) {
+    const wallet = {
+      bal: balance,
+      balance() { return this.bal; },
+      credit(_p: string, n: number) { this.bal += n; return this.bal; },
+      creditDeferred(_p: string, n: number) { this.bal += Math.floor(n); return { type: 'WALLET_PUT', delta: Math.floor(n) } as never; },
+      debitDeferred(_p: string, n: number) { const a = Math.ceil(n); if (this.bal < a) return null; this.bal -= a; return { type: 'WALLET_PUT', delta: -a } as never; },
+    };
+    const fills: Array<{ good: string; qty: number; side: string; value: number }> = [];
+    const sink = {
+      dockQuote: () => ({ buy: 10, sell: 6 }),
+      volumeLeft: () => 1_000_000,
+      recordDockFill: (_p: string, good: string, qty: number, side: string, value: number) => { fills.push({ good, qty, side, value }); },
+    };
+    return { wallet, fills, pay: { wallet, sink: () => sink as never } };
+  }
+
+  function run(dir: ConvoyDirector, clock: { t: number }): void {
+    dir.tick();
+    for (let i = 0; i < 12 && dir.active().length > 0; i++) { clock.t += 1000; dir.tick(); }
+  }
+
+  it('a player import is clamped to what they can afford and paid on delivery, atomically', () => {
+    const clock = { t: 0 };
+    const holds = new HoldStore({ persistence: () => SINK });
+    const npc: FakeBase = { owner: 'npc:traders:ex', uid: 'u-ex', stock: { alloy: 1000 }, uses: {}, box: BOX_A };
+    const me: FakeBase = { owner: 'pilot-1', uid: 'u-me', stock: {}, uses: { alloy: 20 }, box: BOX_B, player: { imports: ['alloy'], exports: [] } };
+    const room = new FakeRoom([npc, me], holds);
+    const { wallet, fills, pay } = payments(500); // 10¢ each ⇒ 50 affordable
+    const dir = new ConvoyDirector(new Map([['sol-prime', room]]), holds, { ...DEFAULT_CONVOY_OPTIONS, planIntervalMs: 1_000_000 }, () => clock.t, pay);
+    run(dir, clock);
+    expect(me.stock.alloy).toBe(50);
+    expect(wallet.bal).toBe(0);
+    expect(fills).toEqual([{ good: 'alloy', qty: 50, side: 'buy', value: 500 }]);
+    expect(room.committedOps, 'the wallet op rides the delivery group').toContainEqual({ type: 'WALLET_PUT', delta: -500 });
+  });
+
+  it('a player export is paid for exactly what was taken, at pickup', () => {
+    const clock = { t: 0 };
+    const holds = new HoldStore({ persistence: () => SINK });
+    const me: FakeBase = { owner: 'pilot-1', uid: 'u-me', stock: { alloy: 101 }, uses: { alloy: 0.1 }, box: BOX_A, player: { imports: [], exports: ['alloy'] } };
+    const npc: FakeBase = { owner: 'npc:traders:im', uid: 'u-im', stock: {}, uses: { alloy: 20 }, box: BOX_B };
+    const room = new FakeRoom([me, npc], holds);
+    const { wallet, fills, pay } = payments(0);
+    const dir = new ConvoyDirector(new Map([['sol-prime', room]]), holds, { ...DEFAULT_CONVOY_OPTIONS, planIntervalMs: 1_000_000 }, () => clock.t, pay);
+    run(dir, clock);
+    // Keeps its order level (1); the other 100 sold at 6¢.
+    expect(me.stock.alloy).toBe(1);
+    expect(npc.stock.alloy).toBe(100);
+    expect(wallet.bal).toBe(600);
+    expect(fills).toEqual([{ good: 'alloy', qty: 100, side: 'sell', value: 600 }]);
+  });
+
+  it('two players never trade with each other through convoys', () => {
+    const clock = { t: 0 };
+    const holds = new HoldStore({ persistence: () => SINK });
+    const seller: FakeBase = { owner: 'pilot-1', uid: 'u-1', stock: { alloy: 500 }, uses: { alloy: 0.1 }, box: BOX_A, player: { imports: [], exports: ['alloy'] } };
+    const buyer: FakeBase = { owner: 'pilot-2', uid: 'u-2', stock: {}, uses: { alloy: 20 }, box: BOX_B, player: { imports: ['alloy'], exports: [] } };
+    const room = new FakeRoom([seller, buyer], holds);
+    const dir = new ConvoyDirector(new Map([['sol-prime', room]]), holds, DEFAULT_CONVOY_OPTIONS, () => clock.t, payments(10_000).pay);
+    dir.tick();
+    expect(dir.active()).toHaveLength(0);
+  });
+
+  it('an importer who can no longer pay at delivery gets nothing', () => {
+    const clock = { t: 0 };
+    const holds = new HoldStore({ persistence: () => SINK });
+    const npc: FakeBase = { owner: 'npc:traders:ex', uid: 'u-ex', stock: { alloy: 1000 }, uses: {}, box: BOX_A };
+    const me: FakeBase = { owner: 'pilot-1', uid: 'u-me', stock: {}, uses: { alloy: 20 }, box: BOX_B, player: { imports: ['alloy'], exports: [] } };
+    const room = new FakeRoom([npc, me], holds);
+    const { wallet, pay } = payments(500);
+    const dir = new ConvoyDirector(new Map([['sol-prime', room]]), holds, { ...DEFAULT_CONVOY_OPTIONS, planIntervalMs: 1_000_000 }, () => clock.t, pay);
+    dir.tick();
+    wallet.bal = 0; // spent elsewhere before the convoy arrived
+    for (let i = 0; i < 12 && dir.active().length > 0; i++) { clock.t += 1000; dir.tick(); }
+    expect(me.stock.alloy ?? 0).toBe(0);
+    expect(wallet.bal).toBe(0);
   });
 });

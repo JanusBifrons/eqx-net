@@ -16,7 +16,7 @@ import { galaxyRouter } from './routes/galaxyRouter.js';
 import { economyRouter, setEconomyRouteProvider } from './routes/economyRouter.js';
 import { EconomyStore, hydrateEconomyStore } from './economy/EconomyStore.js';
 import { TradeDirector } from './economy/TradeDirector.js';
-import { setTradeSink } from './economy/tradeSink.js';
+import { getTradeSink, setTradeSink } from './economy/tradeSink.js';
 import { pushNotifier } from './push/PushNotifier.js';
 import { pushRouter } from './routes/pushRouter.js';
 import { devAuditHandler } from './audit/auditRoute.js';
@@ -1314,7 +1314,7 @@ async function main(): Promise<void> {
   if (!isConvoysDisabled() && !isNpcBasesDisabled()) {
     const convoyRooms = new Map<string, SectorRoom>();
     for (const [key, room] of galaxyRooms) if (getSector(key)) convoyRooms.set(key, room);
-    convoyDirector = new ConvoyDirector(convoyRooms, getHoldStore());
+    convoyDirector = new ConvoyDirector(convoyRooms, getHoldStore(), undefined, undefined, { wallet: getWallet(), sink: getTradeSink });
     convoyDirector.start();
   }
   const store = economyStore;

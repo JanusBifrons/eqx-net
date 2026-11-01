@@ -39,6 +39,10 @@ import { regionPriceFactors, type RegionBase } from '../../core/economy/regional
 import { setRegionalPrices } from './regionalPrices.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { guarded } from '../rooms/guardedLoop.js';
+import { auditEvent } from '../audit/GameplayAuditLog.js';
+import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
+import type { Wallet } from './Wallet.js';
+import type { TradeSink } from './tradeSink.js';
 
 /** Ops kill switch: `EQX_DISABLE_CONVOYS=1` (also off when NPC bases are). */
 export function isConvoysDisabled(env: Record<string, string | undefined> = process.env): boolean {
@@ -54,6 +58,15 @@ export interface NpcBaseTrade {
   view: Omit<BaseTradeView, 'key' | 'sectorKey'>;
   /** The base's footprint box (world). */
   box: { x0: number; x1: number; y0: number; y1: number };
+  /** T4b — a player's Freight Dock with standing orders (owner = playerId).
+   *  Trades only with NPC bases, and is paid / charged through the wallet. */
+  player?: { imports: GoodId[]; exports: GoodId[] };
+}
+
+/** T4b — what the director needs to charge and pay players. */
+export interface ConvoyPayments {
+  wallet: Pick<Wallet, 'balance' | 'credit' | 'creditDeferred' | 'debitDeferred'>;
+  sink: () => TradeSink | null;
 }
 
 /** The room surface the convoy director drives (SectorRoom implements it). */
@@ -112,6 +125,11 @@ interface Convoy {
   id: string;
   haulerId: string;
   plan: ConvoyPlan;
+  /** T4b — the player who sells (exporter) or buys (importer), and the unit
+   *  price agreed at planning (the board's regional quote). */
+  fromPlayer?: string;
+  toPlayer?: string;
+  unit?: number;
   fromSector: string;
   toSector: string;
   from: { owner: string; uid: string; box: NpcBaseTrade['box'] };
@@ -169,6 +187,8 @@ export class ConvoyDirector {
     private readonly holds: HoldStore,
     private readonly opts: ConvoyDirectorOptions = DEFAULT_CONVOY_OPTIONS,
     private readonly now: () => number = Date.now,
+    /** T4b — without it, player Freight Dock orders are ignored. */
+    private readonly pay: ConvoyPayments | null = null,
   ) {}
 
   /** Discard convoy holds a crash left behind, subscribe, start the loop. */
@@ -234,6 +254,7 @@ export class ConvoyDirector {
     // T3 — the regional price factors follow the same stock and rates.
     const regional: RegionBase[] = [];
     for (const v of views) {
+      if (this.bases.get(v.key)?.base.player) continue; // NPC supply only
       const region = getSector(v.sectorKey)?.region;
       if (region !== undefined) regional.push({ region, stock: v.stock, uses: v.uses });
     }
@@ -242,7 +263,9 @@ export class ConvoyDirector {
     const plans = this.match(views);
     for (const p of plans) {
       const from = this.bases.get(p.from)!, to = this.bases.get(p.to)!;
-      this.launch(p, from.sectorKey, from.base, to.sectorKey, to.base, now);
+      const priced = this.price(p, from, to);
+      if (priced === null) continue;
+      this.launch(priced.plan, from.sectorKey, from.base, to.sectorKey, to.base, now, priced);
     }
   }
 
@@ -254,6 +277,7 @@ export class ConvoyDirector {
     const views: BaseTradeView[] = [];
     for (const [sectorKey, room] of this.rooms) {
       for (const b of room.npcBaseTrade()) {
+        if (b.player && this.pay === null) continue;
         const key = `${sectorKey}|${b.owner}`;
         views.push({ key, sectorKey, ...b.view });
         this.bases.set(key, { sectorKey, base: b });
@@ -285,7 +309,33 @@ export class ConvoyDirector {
       maxConvoys: this.opts.maxActive - this.convoys.size,
       hops: hopDistance,
       inFlight,
+      // Players trade with NPC bases, never with each other.
+      allowPair: (a, b) => !(this.bases.get(a)?.base.player && this.bases.get(b)?.base.player),
     });
+  }
+
+  /** T4b — a player order is priced (and clamped to credits and volume) at
+   *  planning; NPC-to-NPC convoys pass unchanged. Null = skip it. */
+  private price(
+    p: ConvoyPlan,
+    from: { sectorKey: string; base: NpcBaseTrade },
+    to: { sectorKey: string; base: NpcBaseTrade },
+  ): { plan: ConvoyPlan; fromPlayer?: string; toPlayer?: string; unit?: number } | null {
+    if (!from.base.player && !to.base.player) return { plan: p };
+    const sink = this.pay?.sink() ?? null;
+    if (sink === null || this.pay === null) return null;
+    if (to.base.player) {
+      const pid = to.base.owner;
+      const q = sink.dockQuote(pid, to.sectorKey, p.good);
+      if (q === null || q.buy <= 0) return null;
+      const n = Math.min(p.qty, Math.floor(this.pay.wallet.balance(pid) / q.buy), Math.floor(sink.volumeLeft(pid) / q.buy));
+      return n > 0 ? { plan: { ...p, qty: n }, toPlayer: pid, unit: q.buy } : null;
+    }
+    const pid = from.base.owner;
+    const q = sink.dockQuote(pid, from.sectorKey, p.good);
+    if (q === null || q.sell <= 0) return null;
+    const n = Math.min(p.qty, Math.floor(sink.volumeLeft(pid) / q.sell));
+    return n > 0 ? { plan: { ...p, qty: n }, fromPlayer: pid, unit: q.sell } : null;
   }
 
   private inSectorCount(sectorKey: string): number {
@@ -303,7 +353,10 @@ export class ConvoyDirector {
     return room.spawnLivingWorldBot({ botId: haulerId, kind: 'trader-hauler', x: at.x, y: at.y }) ? at : null;
   }
 
-  private launch(plan: ConvoyPlan, fromSector: string, from: NpcBaseTrade, toSector: string, to: NpcBaseTrade, now: number): void {
+  private launch(
+    plan: ConvoyPlan, fromSector: string, from: NpcBaseTrade, toSector: string, to: NpcBaseTrade, now: number,
+    priced: { fromPlayer?: string; toPlayer?: string; unit?: number } = {},
+  ): void {
     const id = `${now.toString(36)}${(this.seq++).toString(36)}`;
     const haulerId = `${CONVOY_HAULER_ID_PREFIX}${id}`;
     const at = this.enter(fromSector, haulerId, from.box);
@@ -312,6 +365,9 @@ export class ConvoyDirector {
       id, haulerId, plan, fromSector, toSector,
       from: { owner: from.owner, uid: from.networkUid, box: from.box },
       to: { owner: to.owner, uid: to.networkUid, box: to.box },
+      ...(priced.fromPlayer !== undefined ? { fromPlayer: priced.fromPlayer } : {}),
+      ...(priced.toPlayer !== undefined ? { toPlayer: priced.toPlayer } : {}),
+      ...(priced.unit !== undefined ? { unit: priced.unit } : {}),
       phase: 'pickup', inSector: fromSector, phaseAtMs: now, transitUntilMs: 0,
       target: dockPoint(from.box, this.opts.dockMargin, at.x, at.y),
     };
@@ -349,8 +405,20 @@ export class ConvoyDirector {
         if (!arrived) { this.leave(c, room); return; } // never reached the base
         const want = emptyHold();
         want.goods[c.plan.good] = c.plan.qty;
-        const res = room.tradeTransfer(c.from.owner, c.from.uid, { take: { want, intoUid: c.haulerId, intoOwner: null } });
+        let paid = 0;
+        const res = room.tradeTransfer(c.from.owner, c.from.uid, {
+          take: { want, intoUid: c.haulerId, intoOwner: null },
+          // T4b — a player export is paid for exactly what was taken, atomically.
+          ...(c.fromPlayer !== undefined && c.unit !== undefined && this.pay !== null ? {
+            extraOpsFor: (taken: Hold) => {
+              paid = Math.floor((taken.goods[c.plan.good] ?? 0) * c.unit!);
+              const op = paid > 0 ? this.pay!.wallet.creditDeferred(c.fromPlayer!, paid, 'freight_export') : null;
+              return op ? [op] : [];
+            },
+          } : {}),
+        });
         const got = res?.taken.goods[c.plan.good] ?? 0;
+        if (c.fromPlayer !== undefined && got > 0) this.settlePlayer(c.fromPlayer, c.plan.good, got, 'export', paid);
         if (got <= 0) { this.holds.delete(c.haulerId); this.depart(c, now); return; } // nothing to carry
         serverLogEvent('convoy_loaded', { haulerId: c.haulerId, good: c.plan.good, qty: got });
         if (c.toSector === c.fromSector) {
@@ -370,7 +438,23 @@ export class ConvoyDirector {
         return;
       }
       case 'delivery': {
-        const res = room.tradeTransfer(c.to.owner, c.to.uid, { release: [c.haulerId] });
+        let extraOps: PersistOp[] = [];
+        let cost = 0;
+        const carried = this.holds.get(c.haulerId)?.hold.goods[c.plan.good] ?? 0;
+        if (c.toPlayer !== undefined && c.unit !== undefined && this.pay !== null) {
+          // T4b — the importing player pays on delivery, atomically; if they
+          // can no longer pay, the hauler leaves with the goods.
+          cost = Math.ceil(carried * c.unit);
+          const op = cost > 0 ? this.pay.wallet.debitDeferred(c.toPlayer, cost, 'freight_import') : null;
+          if (cost > 0 && op === null) {
+            serverLogEvent('convoy_unpaid', { haulerId: c.haulerId, to: c.plan.to });
+            this.depart(c, now);
+            return;
+          }
+          if (op) extraOps = [op];
+        }
+        const res = room.tradeTransfer(c.to.owner, c.to.uid, { release: [c.haulerId], extraOps });
+        if (res !== null && c.toPlayer !== undefined && carried > 0) this.settlePlayer(c.toPlayer, c.plan.good, carried, 'import', cost);
         if (res === null) {
           // The importer is gone: the cargo drops where the hauler is.
           const h = this.holds.get(c.haulerId)?.hold;
@@ -387,6 +471,12 @@ export class ConvoyDirector {
         this.leave(c, room);
         return;
     }
+  }
+
+  /** T4b — a player fill moves the galaxy market + volume and is audited. */
+  private settlePlayer(playerId: string, good: GoodId, qty: number, dir: 'import' | 'export', credits: number): void {
+    this.pay?.sink()?.recordDockFill(playerId, good, qty, dir === 'import' ? 'buy' : 'sell', credits);
+    auditEvent({ event: 'freight_order_filled', playerId, good, qty, dir, credits });
   }
 
   /** Head for the edge, away from the base it's at. */
