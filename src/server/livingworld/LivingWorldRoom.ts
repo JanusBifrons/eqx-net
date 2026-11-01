@@ -12,6 +12,7 @@ import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { WarpWarningEvent, WarpWarningClearEvent } from '../../shared-types/messages.js';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
 import type { BotCarry } from './botTypes.js';
+import type { WorldNotice } from '../../shared-types/worldNotice.js';
 
 /**
  * Per-(owner, sector) faction base summary the `WaveDirector` polls (wave-system
@@ -92,6 +93,10 @@ export interface LivingWorldRoom {
    *  some credits) from that storage's network into its own hold, as ONE atomic
    *  group; the owner is warned (throttled). Returns the weight taken. */
   raidStorage?(harvesterId: string, owner: string, uid: string, stepWeight: number): number;
+  /** P4a — promote a just-spawned bot to a named elite (boosted hull). */
+  markElite?(botId: string, name: string): boolean;
+  /** P4 — a sector-wide world notice (accelerator only, #16). */
+  broadcastWorldNotice?(notice: WorldNotice): void;
   spawnLivingWorldBot(spec: {
     botId: string;
     kind: ShipKindId;

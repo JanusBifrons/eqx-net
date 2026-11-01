@@ -58,7 +58,7 @@ export class LoadShedder {
       if (rec.kind !== 1) continue; // drone only
       // Allegiances P0: shed-immune kinds (haulers, nexi, elites) are never
       // silently evicted — that would destroy value / break a world state machine.
-      if (getShipKind(rec.shipKind).shedImmune) continue;
+      if (getShipKind(rec.shipKind).shedImmune || rec.elite !== undefined) continue;
       const pos = this.deps.getPosition(rec);
       let best = Infinity;
       for (const p of players) {

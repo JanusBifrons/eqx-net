@@ -87,7 +87,7 @@ import { registerConnectedPlayer, unregisterConnectedPlayer } from '../push/conn
 import type { BotCarry } from '../livingworld/botTypes.js';
 
 // Drone-kind catalogue helpers moved to ./droneKindHelpers.ts.
-import { getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
+import { droneMaxHealthOf, getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
 import { StructureRegistry } from '../structures/StructureRegistry.js';
 import { FactionLedger } from '../faction/FactionLedger.js';
@@ -183,6 +183,8 @@ import { cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto } from '../../
 import { HARVESTER_CAPACITY, RAID_CREDITS_PER_STEP, RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
 import { rollLoot } from '../../shared-types/lootTables.js';
+import { rollEliteLoot, ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
+import type { WorldNotice } from '../../shared-types/worldNotice.js';
 // RosterFullError is handled inside RosterPersistence.ts
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
 import { setSession } from '../transit/sessionRegistry.js';
@@ -3472,11 +3474,16 @@ export class SectorRoom extends Room<SectorState> {
       // Equinox Phase 9 (item 5) — a drone is an NPC SHIP for the combat tally.
       this.recentCombatLog.record('ship', Date.now());
       auditEvent({ event: 'drone_destroyed', sector, attackerId: shooterId });
+      // Living World P4a — a named elite falls (the galaxy-wide notice is the
+      // EliteDirector's, off ENTITY_DESTROYED).
+      if (rec.elite !== undefined) {
+        auditEvent({ event: 'elite_killed', sector, name: rec.elite.name, kind: rec.shipKind ?? '', attackerId: shooterId });
+      }
       // Phase 4 (Leveling & XP, WS-B1) — a drone is the primary XP source. Award
       // XP to the KILLER SHIP INSTANCE, weighted by the drone's toughness
       // (per-kind maxHealth — tougher drones = more XP, D10). PvP hull kills are
       // awarded separately in the SHIP_DESTROYED handler.
-      const droneMaxHealth = getDroneMaxHealth(rec.shipKind ?? undefined) ?? 40;
+      const droneMaxHealth = droneMaxHealthOf(rec) ?? 40;
       this.awardKillXp(shooterId ?? '', droneMaxHealth);
     }
   }
@@ -4470,6 +4477,21 @@ export class SectorRoom extends Room<SectorState> {
       y: this.sabF32[b + SLOT_Y_OFF]!,
       angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
     };
+  }
+
+  /** Living World P4a — promote a just-spawned bot to a NAMED ELITE: its hull
+   *  max becomes ELITE_HEALTH_MUL × its kind's and it is healed to full. */
+  broadcastWorldNotice(notice: WorldNotice): void {
+    this.broadcast('world_notice', notice);
+  }
+
+  markElite(botId: string, name: string): boolean {
+    const rec = this.swarmRegistry.get(botId);
+    if (rec == null || rec.kind !== SWARM_KIND_DRONE) return false;
+    const maxHealth = (getDroneMaxHealth(rec.shipKind) ?? 40) * ELITE_HEALTH_MUL;
+    rec.elite = { name, maxHealth };
+    this.swarmHealth.set(botId, maxHealth);
+    return true;
   }
 
   /** Roaming-formation (Phase 5) — assign a bot's in-sector move target. The
@@ -6533,7 +6555,8 @@ export class SectorRoom extends Room<SectorState> {
     if (getHoldStore().get(rec.id)?.holderType === 'hauler') {
       this.loot.spillShipHold(rec.id, x, y, vx, vy, 'hauler-raided');
     }
-    const hold = rollLoot(rec.shipKind, Math.random);
+    // P4a — an elite drops its guaranteed rare haul instead of the kind table.
+    const hold = rec.elite !== undefined ? rollEliteLoot(rec.shipKind, Math.random) : rollLoot(rec.shipKind, Math.random);
     this.loot.drop(hold, x, y, vx, vy, { cause: 'kill' });
   }
 

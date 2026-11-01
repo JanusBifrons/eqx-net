@@ -111,4 +111,6 @@ export const SHOWCASE_PENDING: Record<string, string> = {
     'Filmed standalone meanwhile: tests/showcase/trade-p2.spec.ts (room trade-showcase).',
   'economy-and-trade':
     'Same as trade-deals (signed-in take needed); standalone recording: tests/showcase/trade-p2.spec.ts.',
+  'bounties-and-events':
+    'Elites roam the galaxy on the EliteDirector cadence (not on cue); needs a staged elite room — filmed once the P4 showcase room lands.',
 };

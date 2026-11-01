@@ -49,7 +49,7 @@ import {
   type ShipInputBits,
 } from '../net/snapshotScheduler.js';
 import { checkBackpressure } from '../net/Backpressure.js';
-import { getDroneMaxHealth } from './droneKindHelpers.js';
+import { droneMaxHealthOf } from './droneKindHelpers.js';
 import type { SnapshotMessage } from '../../shared-types/messages.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import type { ShipState } from './schema/SectorState.js';
@@ -89,6 +89,8 @@ export interface SwarmDroneRec {
    *  has been mined; drives the slim `asteroids[]` slice (emit-when-mined). */
   resources?: number;
   resourcesMax?: number;
+  /** P4a — a named elite (its name rides `drones[].elite`; its max drives hp%). */
+  elite?: { name: string; maxHealth: number };
 }
 
 export interface SwarmLookupByEid {
@@ -256,6 +258,7 @@ type MutableDroneEntry = {
   hp?: number;
   hostile?: boolean;
   charging?: boolean;
+  elite?: string;
 };
 
 type MutableAsteroidEntry = {
@@ -445,7 +448,7 @@ export class SnapshotBroadcaster {
   private static writeDroneSlot(
     arr: MutableDroneEntry[], i: number,
     id: number, mountAngles: number[] | undefined, shieldDown: boolean,
-    hp: number | undefined, hostile: boolean, charging = false,
+    hp: number | undefined, hostile: boolean, charging = false, elite?: string,
   ): void {
     const slot = arr[i];
     if (!slot) {
@@ -454,11 +457,14 @@ export class SnapshotBroadcaster {
       if (hp !== undefined) fresh.hp = hp;
       if (hostile) fresh.hostile = true;
       if (charging) fresh.charging = true;
+      if (elite !== undefined) fresh.elite = elite;
       arr[i] = fresh;
       return;
     }
     if (charging) slot.charging = true;
     else delete slot.charging;
+    if (elite !== undefined) slot.elite = elite;
+    else delete slot.elite;
     slot.id = id;
     // Always assign; undefined means "drop the field on the wire" via
     // notepack.io's encoder which skips undefined values.
@@ -791,7 +797,7 @@ export class SnapshotBroadcaster {
           // Hull health percent (Part C) — emitted only when DAMAGED so
           // undamaged drones add zero bytes (client treats absent as 100 %).
           let hpPct: number | undefined;
-          const maxHp = getDroneMaxHealth(rec.shipKind);
+          const maxHp = droneMaxHealthOf(rec);
           if (maxHp && maxHp > 0) {
             const cur = d.swarmHealth.get(rec.id);
             if (cur !== undefined && cur < maxHp) {
@@ -806,10 +812,12 @@ export class SnapshotBroadcaster {
           const hostile = d.isDroneHostileTo(rec.id, recipientPlayerId);
           // P3c — charge-weapon wind-up telegraph (emit-when-true, #16).
           const charging = d.isDroneCharging?.(rec.id) === true;
-          if (!droneMountAnglesArr && !rec.shieldDown && hpPct === undefined && !hostile && !charging) continue;
+          // P4a — an elite always reports (its name drives the label, #16).
+          const elite = rec.elite?.name;
+          if (!droneMountAnglesArr && !rec.shieldDown && hpPct === undefined && !hostile && !charging && elite === undefined) continue;
           SnapshotBroadcaster.writeDroneSlot(
             dronesScratch, dronesCount,
-            eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct, hostile, charging,
+            eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct, hostile, charging, elite,
           );
           dronesCount++;
         }

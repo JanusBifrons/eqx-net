@@ -13,9 +13,13 @@ export const ROBOT_BOT_ID_PREFIX = 'rbot-';
 /** P2 — trade haulers (owned by the `TradeDirector`, not a squad director). */
 export const HAULER_ID_PREFIX = 'hauler-';
 
-/** True for any director-owned NPC id (drone, robot or trade hauler). Alloc-free. */
+/** P4a — named elites (owned by the `EliteDirector`); mirrors `ELITE_ID_PREFIX`. */
+export const ELITE_BOT_ID_PREFIX = 'elite-';
+
+/** True for any director-owned NPC id (drone, robot, trade hauler or elite). Alloc-free. */
 export function isDirectorBotId(id: string): boolean {
-  return id.startsWith(DRONE_BOT_ID_PREFIX) || id.startsWith(ROBOT_BOT_ID_PREFIX) || id.startsWith(HAULER_ID_PREFIX);
+  return id.startsWith(DRONE_BOT_ID_PREFIX) || id.startsWith(ROBOT_BOT_ID_PREFIX)
+    || id.startsWith(HAULER_ID_PREFIX) || id.startsWith(ELITE_BOT_ID_PREFIX);
 }
 
 export function isHaulerId(id: string): boolean {

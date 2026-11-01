@@ -415,6 +415,17 @@ export function buildChargeTelegraphGfx(radius: number, range: number): Graphics
   return g;
 }
 
+/** Living World P4a — a named elite's gold ring (two thin strokes, so it reads
+ *  as a "boss" marker without hiding the hull). Built once per sprite. */
+export function buildEliteRingGfx(radius: number): Graphics {
+  const g = new Graphics();
+  g.circle(0, 0, radius + 14);
+  g.stroke({ color: 0xffc850, width: 2, alpha: 0.9 });
+  g.circle(0, 0, radius + 19);
+  g.stroke({ color: 0xffc850, width: 1, alpha: 0.45 });
+  return g;
+}
+
 /** Living World P3 — the robot nexus's pulse orb: a slow, fat violet ball
  *  (radius matches the weapon's 10 u hit radius so the visual is honest). */
 export function buildPulseOrbGfx(): Graphics {

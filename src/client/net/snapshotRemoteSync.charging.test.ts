@@ -28,4 +28,13 @@ describe('applyDroneMountAngles — P3c charge telegraph', () => {
     applyDroneMountAngles(snap(undefined), m);
     expect(m.swarm!.get(1)!.charging).toBe(false);
   });
+
+  it('P4a — carries an elite name, and clears it when the elite drops out', () => {
+    const m = mirrorWith([1, 2]);
+    applyDroneMountAngles(snap([{ id: 1, elite: 'Dread Vexis' }]), m);
+    expect(m.swarm!.get(1)!.eliteName).toBe('Dread Vexis');
+    expect(m.swarm!.get(2)!.eliteName).toBeUndefined();
+    applyDroneMountAngles(snap([{ id: 2, hostile: true }]), m);
+    expect(m.swarm!.get(1)!.eliteName).toBeUndefined();
+  });
 });

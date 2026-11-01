@@ -31,7 +31,7 @@ import {
   type MountTargetView,
 } from '../../core/ai/WeaponMountController.js';
 import { HITSCAN_RANGE } from '../../core/combat/Weapons.js';
-import { getDroneMaxHealth } from './droneKindHelpers.js';
+import { droneMaxHealthOf } from './droneKindHelpers.js';
 import {
   DEFAULT_SHIP_KIND,
   getShipKind,
@@ -208,7 +208,7 @@ export class WeaponMountTicker {
       // Part C — carry drone health so the player turret can focus the wounded.
       // Per-drone (shared across players); hostility is per-player (callback
       // below). maxHealth from the kind; undefined when unknown ⇒ distance-only.
-      const maxHp = getDroneMaxHealth(rec.shipKind) ?? undefined;
+      const maxHp = droneMaxHealthOf(rec) ?? undefined;
       const curHp = maxHp !== undefined ? swarmHealth.get(rec.id) : undefined;
       WeaponMountTicker.writeTargetSlot(
         targets, count, rec.id,

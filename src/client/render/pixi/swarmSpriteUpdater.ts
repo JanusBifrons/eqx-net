@@ -46,6 +46,7 @@ import {
   formatResources,
   formatBuildEta,
   buildChargeTelegraphGfx,
+  buildEliteRingGfx,
 } from './spriteBuilders.js';
 import type { Text } from 'pixi.js';
 import { getWeapon } from '../../../core/combat/WeaponCatalogue';
@@ -122,6 +123,9 @@ const EMPTY_MOUNTS: readonly WeaponMount[] = [];
 
 /** P3c — drone sprite → its charge telegraph child (weak: dies with the sprite). */
 const chargeTelegraphs = new WeakMap<Graphics, Graphics>();
+/** P4a — a named elite's gold ring, created lazily the first frame the sprite
+ *  is known to be an elite (once per sprite, #14), then shown/hidden. */
+const eliteRings = new WeakMap<Graphics, Graphics>();
 
 /** The longest charge weapon range a kind carries (0 ⇒ no charge weapon). */
 export function chargeRangeForKind(shipKind: string | undefined): number {
@@ -247,6 +251,17 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         const on = entry.charging === true;
         tele.visible = on;
         if (on) tele.alpha = 0.45 + 0.4 * Math.sin(now / 70);
+      }
+      // P4a — a named elite wears a slowly-pulsing gold ring.
+      let ring = eliteRings.get(sprite);
+      if (entry.eliteName !== undefined && ring === undefined) {
+        ring = buildEliteRingGfx(entry.radius);
+        sprite.addChild(ring);
+        eliteRings.set(sprite, ring);
+      }
+      if (ring !== undefined) {
+        ring.visible = entry.eliteName !== undefined;
+        if (ring.visible) ring.alpha = 0.7 + 0.3 * Math.sin(now / 400);
       }
     }
     if (entry.kind === 1 && entry.shipKind) {
