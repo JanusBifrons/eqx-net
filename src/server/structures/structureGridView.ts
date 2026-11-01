@@ -141,3 +141,30 @@ export function autoConnectStructure(
   }
   return firstConnected;
 }
+
+/**
+ * Link two SAME-OWNER structures explicitly (a generated base's intended
+ * graph), re-checking the real `canConnect` against the live adjacency.
+ * Returns false (and links nothing) when the rules reject the edge — a
+ * generated layout must never bypass the building rules a player plays by.
+ *
+ * `nodes` lets a bulk seeder project the registry ONCE (`buildGridNodes`) and
+ * reuse it across many edges. Seed-time only — not a hot path.
+ */
+export function connectExplicit(
+  registry: StructureRegistry,
+  aId: string,
+  bId: string,
+  nodes: ReadonlyMap<string, GridNode> = buildGridNodes(registry),
+  obstacles?: readonly GridObstacle[],
+): boolean {
+  const a = registry.get(aId);
+  const b = registry.get(bId);
+  if (!a || !b || a.owner !== b.owner) return false;
+  const na = nodes.get(aId);
+  const nb = nodes.get(bId);
+  if (!na || !nb) return false;
+  if (!canConnect(na, nb, registry.adjacencyMap(), nodes, obstacles).ok) return false;
+  registry.addConnection(aId, bId, CONNECTION_THROUGHPUT);
+  return true;
+}

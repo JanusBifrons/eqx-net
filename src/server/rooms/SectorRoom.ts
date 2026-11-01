@@ -80,6 +80,8 @@ import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
 import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
+import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
+import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
@@ -915,6 +917,8 @@ export class SectorRoom extends Room<SectorState> {
      *  'havok') to exercise scrap-on-death (Phase 2b-ii). */
     spawnTestDrone: (id: string, x: number, y: number, kind?: ShipKindId) => boolean;
     tickStructureTurrets: () => void;
+    /** A0 scale measurement — rebuild the structures snapshot slice directly. */
+    rebuildStructuresSlice: () => void;
     /** Unified-hull plan, Phase 4 — assert a structure resolves its OWN
      *  shield/hull (generic optional shield) from the STRUCTURE catalogue, not
      *  the fighter fallback. Returns the layered-damage result (reported
@@ -957,6 +961,7 @@ export class SectorRoom extends Room<SectorState> {
         return ok;
       },
       tickStructureTurrets: () => this.structureTurretTick(),
+      rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
       damageSwarmLayered: (rec, damage) => this.damageSwarmLayered(rec, damage),
     };
   }
@@ -1185,6 +1190,11 @@ export class SectorRoom extends Room<SectorState> {
        *  place-ahead UI (which stacks/overlaps multiple placements) or the
        *  construction wait. Each is born `isConstructed` at full HP. */
       prebuiltStructures?: ReadonlyArray<{ kind: StructureKindId; x: number; y: number }>;
+      /** Plan soft-leaping-truffle v2, A0 — seed a RULE-VALID structure lattice
+       *  of `n` structures (+ an optional closed pylon fence) for scale
+       *  measurement. Generated server-side from (n, seed), so it is not bound
+       *  by the 64-entry seed cap. testMode-only. */
+      scaleGrid?: { n: number; seed: number; fence?: boolean };
       /** Procedural bases (plan soft-leaping-truffle) to generate in this
        *  sector. A room-DEFINITION option (server-authored, never client
        *  input), so it is not testMode-gated — galaxy sectors use it too. */
@@ -1957,6 +1967,7 @@ export class SectorRoom extends Room<SectorState> {
     // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
     // overlap, no construction wait).
     if (this.testMode) this.seedStructureScenario(roomOpts);
+    if (this.testMode && roomOpts.scaleGrid) this.seedScaleGrid(roomOpts.scaleGrid);
     // Phase-1 issue 5 — scrap-stress seed: a dense corridor of free-floating
     // scrap ahead of spawn for the fly-through reconciliation E2E.
     if (this.testMode && (roomOpts.scenarioScrapCount ?? 0) > 0) {
@@ -3354,6 +3365,43 @@ export class SectorRoom extends Room<SectorState> {
    *  auto-connected structures (owner `scenario`) + parked drones + asteroids.
    *  Gives E2E a fully-functional powered grid without the place-ahead UI
    *  (which overlaps stacked placements) or the construction wait. */
+  /**
+   * A0 scale lattice: place every structure WITHOUT greedy auto-connect, then
+   * apply the lattice's intended edges through `connectExplicit` (the real
+   * `canConnect` re-checked), force-build, and run one grid tick. Owner
+   * `scenario`. Rejections are counted and logged — the lattice is rule-valid
+   * by construction (structureLattice.test.ts), so any rejection is a bug.
+   */
+  private seedScaleGrid(opts: { n: number; seed: number; fence?: boolean }): void {
+    const n = Math.max(1, Math.min(4000, Math.floor(opts.n)));
+    const lat = buildStructureLattice({ n, seed: opts.seed, fence: opts.fence === true });
+    const ids: Array<string | null> = [];
+    let rejectedPlace = 0;
+    for (const p of lat.placements) {
+      const id = this.structurePlacement.place('scenario', p.kind, p.x, p.y, { skipAutoConnect: true });
+      if (id === null) rejectedPlace++;
+      ids.push(id);
+      const rec = id ? this.structureRegistry.get(id) : undefined;
+      if (rec && !rec.isConstructed) {
+        rec.isConstructed = true;
+        rec.constructionProgress = rec.constructionCost;
+        this.swarmHealth.set(rec.id, getStructureKind(rec.kind).maxHealth);
+      }
+    }
+    const nodes = buildGridNodes(this.structureRegistry);
+    let rejectedEdge = 0;
+    for (const [a, b] of lat.edges) {
+      const ia = ids[a], ib = ids[b];
+      if (!ia || !ib || !connectExplicit(this.structureRegistry, ia, ib, nodes)) rejectedEdge++;
+    }
+    this.structureRegistry.topologyDirty = true;
+    this.structureGridTick();
+    logger.info(
+      { n, placed: lat.placements.length - rejectedPlace, edges: lat.edges.length, rejectedPlace, rejectedEdge, fencePylons: lat.fencePylons },
+      'scale lattice seeded',
+    );
+  }
+
   private seedStructureScenario(roomOpts: {
     prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number }>;
     prebuiltStructuresOwner?: string;

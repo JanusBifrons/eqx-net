@@ -165,6 +165,8 @@ export async function bootSectorTestServer(opts: {
   /** Room-level default spawn point (forwarded to `defaultSpawnX/Y`). */
   defaultSpawnX?: number;
   defaultSpawnY?: number;
+  /** A0 scale lattice (plan soft-leaping-truffle v2). */
+  scaleGrid?: { n: number; seed: number; fence?: boolean };
 } = {}): Promise<SectorTestHarness> {
   // 1. Stub the persistence singletons FIRST. SectorRoom.onCreate
   //    reads these via module-level singletons, so the injection has
@@ -212,6 +214,7 @@ export async function bootSectorTestServer(opts: {
     baseHpScale: opts.baseHpScale,
     defaultSpawnX: opts.defaultSpawnX,
     defaultSpawnY: opts.defaultSpawnY,
+    scaleGrid: opts.scaleGrid,
   });
   await gameServer.listen(port);
 

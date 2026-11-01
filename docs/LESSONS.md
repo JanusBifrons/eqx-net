@@ -2523,3 +2523,12 @@ Two of them, missile lock-on and attacker labels, decided "is this an AI?" from 
 **Also.** The cross-allegiance view is built only when ≥ 2 allegiances are present in the sector. That keeps the common drones-only case byte-identical and free, which is why the existing AI, wave and turret integration suites passed unchanged.
 
 **Harness note.** On a loaded Windows box `connectActive` took up to 13 s. A test that only needs to *observe* broadcasts should join with `connectAs`. That gives a pending hull, which the AI also ignores. It took the fight test from flaky 20 s timeouts to a stable ~1.3 s.
+
+
+## 2026-11-01 — A modest base already doubled per-client bandwidth: the structures slice costs ~79 B per structure, every snapshot, every client (plan soft-leaping-truffle v2, A0)
+
+**Symptom (found by measuring, not by playing).** Before building NPC bases out of real structures, A0 seeded rule-valid lattices of 30–800 structures into a real room and measured the actual code. The `structures[]` snapshot slice costs ~79 B per structure (msgpack, the real encoder). It is rebuilt at 10 Hz, and the WHOLE array rides EVERY client's 20 Hz snapshot, with no interest filter and no deltas. A 46-structure outpost adds 69 KB/s per client, more than the entire per-client baseline (~58 KB/s for 4 players and 100 drones). A ~450-structure citadel adds 689 KB/s per client, 35 KB per snapshot: 4× the WebRTC degrade threshold, so every client would fall back to WebSocket. The turret tick scans every swarm entity per turret (5 ms median, 12.6 ms spikes at 44 turrets / 300 drones).
+
+**Why nobody noticed.** Player bases have so far been a handful of structures, and the netgate scenarios measure the LOCAL player's prediction, not bytes. The cost grows linearly and silently with structure count.
+
+**Rule.** Any per-entity state that rides the 20 Hz snapshot must be budgeted per entity × entity count × clients. Slow-changing per-structure state belongs in Colyseus room state (sent once on join, then delta patches); the snapshot carries only fast cosmetics for in-interest entities. Measure the scale case before adding content that multiplies entity counts: `scaleGrid` + `structureScale.measure.test.ts` is the harness.
