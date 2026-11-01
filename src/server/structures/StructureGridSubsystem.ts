@@ -862,13 +862,19 @@ export class StructureGridSubsystem {
   private processConstruction(nowMs: number, flashed: Array<[string, string, FlowMaterial]>): void {
     for (const bp of this.hooks.registry.all()) {
       if (bp.isConstructed || bp.isDeconstructing) continue;
-      const source = this.findStorageRoute(bp.id);
-      if (!source) continue; // unreachable OR no minerals → pause
-      const amount = Math.min(CONSTRUCTION_PULSE_AMOUNT, source.capital.minerals);
-      if (amount <= 0) continue;
-      source.capital.minerals -= amount;
-      bp.constructionProgress += amount;
-      this.flashRoute(source.route, nowMs, flashed, 'construction');
+      if (bp.prepaid === true && bp.upgradeTargetLevel === undefined) {
+        // Economy v2 W4b — unpacking a packed structure costs only time: it
+        // builds at the normal rate with no minerals and needs no route.
+        bp.constructionProgress += CONSTRUCTION_PULSE_AMOUNT;
+      } else {
+        const source = this.findStorageRoute(bp.id);
+        if (!source) continue; // unreachable OR no minerals → pause
+        const amount = Math.min(CONSTRUCTION_PULSE_AMOUNT, source.capital.minerals);
+        if (amount <= 0) continue;
+        source.capital.minerals -= amount;
+        bp.constructionProgress += amount;
+        this.flashRoute(source.route, nowMs, flashed, 'construction');
+      }
       if (bp.constructionProgress >= bp.constructionCost) {
         bp.constructionProgress = bp.constructionCost;
         bp.isConstructed = true;
@@ -931,7 +937,9 @@ export class StructureGridSubsystem {
       const reclaim = Math.min(DECONSTRUCTION_RATE_KG, rec.constructionProgress);
       rec.constructionProgress -= reclaim;
       // Return reclaimed minerals to a connected Capital (capped by capacity).
-      if (reclaim > 0) {
+      // Economy v2 W4b — a structure unpacked from a packed item never drew
+      // minerals, so taking it down returns none (no credits→minerals mint).
+      if (reclaim > 0 && rec.prepaid !== true) {
         const source = this.returnRoute(rec.id);
         if (source) {
           const cap = getStructureKind(source.capital.kind).storageCapacity;
