@@ -10,7 +10,7 @@
 import type { Hold } from './goods.js';
 import type { ShipKindId } from './shipKinds.js';
 import { rollLoot } from './lootTables.js';
-import { ELITE_BLUEPRINT_CHANCE, rollBlueprint } from './blueprints.js';
+import { ELITE_BLUEPRINT_CHANCE, ELITE_HULL_CHANCE, ELITE_PACKED_CHANCE, rollBlueprint, rollPackedHull, rollPackedStructure } from './blueprints.js';
 
 /** Elite bot ids (owned by the server `EliteDirector`). */
 export const ELITE_ID_PREFIX = 'elite-';
@@ -48,10 +48,18 @@ export function rollEliteLoot(kindId: string | null | undefined, rng: () => numb
       const k = g as keyof Hold['goods'];
       out.goods[k] = (out.goods[k] ?? 0) + (n ?? 0);
     }
+    if (h.packed !== undefined) (out.packed ??= []).push(...h.packed);
   }
   out.goods.core = (out.goods.core ?? 0) + 1 + Math.floor(rng() * 3);
   // P5 — elites are the main blueprint source.
   const bp = rollBlueprint(rng, ELITE_BLUEPRINT_CHANCE);
   if (bp !== null) out.blueprints.push(bp);
+  // Economy v2 W4a — and a packed structure ~30 % of the time. Elites roll
+  // their 3 table rolls above; any packed items those dropped are kept too.
+  const packed = rollPackedStructure(rng, ELITE_PACKED_CHANCE);
+  if (packed !== null) (out.packed ??= []).push(packed);
+  // Economy v2 W5a — and, rarely, a packed hull.
+  const hull = rollPackedHull(rng, ELITE_HULL_CHANCE);
+  if (hull !== null) (out.packed ??= []).push(hull);
   return out;
 }

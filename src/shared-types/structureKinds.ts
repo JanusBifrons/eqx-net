@@ -70,6 +70,8 @@ export const StructureKindIdSchema = z.enum([
   'reactor',
   'battery_bank',
   'storage_vault',
+  // Economy v2 W5b (plan peppy-jumping-pinwheel) — APPEND ONLY.
+  'shipyard',
 ]);
 export type StructureKindId = z.infer<typeof StructureKindIdSchema>;
 
@@ -816,6 +818,24 @@ export const STORAGE_VAULT: StructureKind = {
   color: 0x3fa89a,
 };
 
+/** Economy v2 W5b — builds packed HULLS from a ship blueprint + goods; a
+ *  packed hull is unpacked into your roster at your storage. */
+export const SHIPYARD: StructureKind = {
+  id: 'shipyard',
+  displayName: 'Shipyard',
+  description: 'A huge yard that builds packed ships from a ship blueprint and goods (needs power). A hub (4 links); rare.',
+  radius: 567, // bounding circle of the 960×600 footprint
+  footprint: { w: 960, h: 600 },
+  maxHealth: 9000,
+  maxConnections: 4,
+  isHub: true,
+  powerOutput: 0,
+  powerConsumption: 220,
+  storageCapacity: 0,
+  constructionCost: 6500,
+  color: 0x7ec8ff,
+};
+
 export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   CAPITAL,
   CONNECTOR,
@@ -850,6 +870,8 @@ export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   REACTOR,
   BATTERY_BANK,
   STORAGE_VAULT,
+  // Economy v2 W5b — APPENDED. Never reorder.
+  SHIPYARD,
 ]);
 
 /** Id-keyed lookup, derived from the canonical list (the list is the source of
@@ -954,6 +976,7 @@ export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
   reactor: 4,
   battery_bank: 4,
   storage_vault: 4,
+  shipyard: 4,
 };
 
 /**

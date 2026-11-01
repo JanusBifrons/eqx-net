@@ -161,6 +161,8 @@ export class StructurePlacementSubsystem {
       // Phase 4 (Leveling & XP, WS-B4) — every fresh structure starts at level 1.
       // A paid Upgrade build phase increments it (restore overrides on hydrate).
       level: 1,
+      // Economy v2 W4b — placed from a packed item: the build costs only time.
+      ...(packed !== null ? { prepaid: true } : {}),
       // Living World P1a-2 — stable identity for the holds table.
       ...(this.hooks.structureUid ? { uid: this.hooks.structureUid(owner, kindId, pos.x, pos.y) } : {}),
     };

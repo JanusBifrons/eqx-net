@@ -26,6 +26,7 @@ import { BountyAction } from './BountyAction';
 import { BlueprintInstall } from './BlueprintInstall';
 import { ResearchLabPanel } from './ResearchLabPanel';
 import { CargoAction } from './CargoPanel';
+import { HullUnpack } from './HullUnpack';
 import { hullColor } from './ShieldHullBar';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { canUpgradeStructure, structureUpgradeGoods } from '@core/leveling/structureLevel';
@@ -146,6 +147,9 @@ interface PanelData {
   /** Living World P5 — an OWNED storage's blueprint ids, comma-joined (the
    *  Install actions). Empty / absent when it holds none. */
   blueprints?: string;
+  /** Economy v2 W5a — an OWNED storage's packed product ids, comma-joined
+   *  (the Unpack-hull chips). Absent when it holds none. */
+  packed?: string;
 }
 
 export function EntityStatsPanel(): JSX.Element | null {
@@ -428,6 +432,7 @@ export function EntityStatsPanel(): JSX.Element | null {
       {data.blueprints !== undefined && data.entityId !== undefined && (
         <BlueprintInstall entityId={data.entityId} blueprints={data.blueprints} />
       )}
+      {data.packed !== undefined && data.entityId !== undefined && <HullUnpack entityId={data.entityId} packed={data.packed} />}
       {data.isLab === true && data.entityId !== undefined && <ResearchLabPanel entityId={data.entityId} />}
       {data.hasCargo === true && data.entityId !== undefined && <CargoAction key={data.entityId} entityId={data.entityId} />}
       {data.pilotShipId !== undefined && (
@@ -461,7 +466,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
   'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'noAmmo', 'noFuel', 'upgradeGoods',
-  'isLab', 'hasCargo',
+  'isLab', 'hasCargo', 'packed',
 ];
 
 /** The next gate access setting in the cycle (owner + allies → owner only →
@@ -588,6 +593,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         data.holdUse = selectionStats.holdUse;
         data.canRefine = data.isOwn === true && subtype === 'capital' && selectionStats.holdSalvage > 0;
         if (data.isOwn === true && selectionStats.holdBlueprints !== '') data.blueprints = selectionStats.holdBlueprints;
+        if (data.isOwn === true && selectionStats.holdPacked !== '') data.packed = selectionStats.holdPacked;
       }
     }
     return data;

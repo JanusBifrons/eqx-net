@@ -96,7 +96,7 @@ import { isBaseReady } from '../../core/faction/Faction.js';
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
 import { RecentCombatLog } from './RecentCombatLog.js';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
-import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
+import { StructurePlacementSubsystem, type PackedGateResult } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { GateController, type GateShipBuffer } from '../structures/GateController.js';
@@ -144,7 +144,7 @@ import type { SnapshotMessage } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { isLatentSlot, resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
-import type { ActivatedMount } from '../playerShips/PlayerShipStore.js';
+import { ROSTER_CAP, type ActivatedMount } from '../playerShips/PlayerShipStore.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
@@ -211,21 +211,25 @@ import type {
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { getPlayerShipStore, getHoldStore, getWallet, getLabBoard } from '../db/PersistenceWorker.js';
 import { ResearchLabSubsystem } from '../structures/ResearchLabSubsystem.js';
+import { BpBuySchema, BpMarketQuerySchema, BpSellSchema, type BpListing, type BpMarketState } from '../../shared-types/blueprintMarket.js';
+import { bpBuyPrice, bpSellPrice, getBlueprintMarket, listing as bpListing } from '../economy/BlueprintMarket.js';
 import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type LabState } from '../../shared-types/messages/labMessages.js';
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
-import { cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, type CargoRequest } from '../../core/cargo/hold.js';
+import { cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, type CargoRequest } from '../../core/cargo/hold.js';
 import { HARVESTER_CAPACITY, RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
 import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
 import { rollEliteLoot, ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS, PlaceBountySchema, type BountyResult } from '../../shared-types/contracts.js';
 import {
-  InstallBlueprintSchema, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, weaponUnlocked, type BlueprintResult,
+  InstallBlueprintSchema, UnpackHullSchema, STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, productName, weaponUnlocked, type BlueprintResult,
 } from '../../shared-types/blueprints.js';
 
 const EMPTY_FITTED: readonly string[] = Object.freeze([]);
+/** Economy v2 W5a — an unpacked hull parks this far from its storage. */
+const UNPACK_PARK_OFFSET = 400;
 import { getBountyBoard } from '../economy/BountyBoard.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
 // RosterFullError is handled inside RosterPersistence.ts
@@ -563,6 +567,13 @@ const STRUCTURE_ATTACK_AUDIT_WINDOW_MS = 15_000;
  *  rare (one per base per 15 min) rather than once per sustained-fire burst. */
 const STRUCTURE_ATTACK_PUSH_WINDOW_MS = 15 * 60_000;
 
+/** Economy v2 W4a — the packed products a pickup/deposit moved, for the popup
+ *  (spread into the message; absent when none). Discrete event, not per tick. */
+function packedProducts(moved: Hold): { packed?: string[] } {
+  if (moved.packed === undefined || moved.packed.length === 0) return {};
+  return { packed: moved.packed.slice(0, 20).map((p) => p.product) };
+}
+
 /**
  * Coarse audit attribution from a shooter id's prefix — drone (`swarm-` /
  * `lwbot-`), structure turret (`pstruct-`), or a player otherwise. The raw
@@ -895,6 +906,10 @@ export class SectorRoom extends Room<SectorState> {
    */
   private pendingJoin = new Map<string, PendingJoinRecord>();
   private testMode = false;
+  /** Economy v2 W5b — a fresh spawn of a non-starter hull needs one you own
+   *  (galaxy rooms). Off in test rooms unless `enforceHullGate` is set, so the
+   *  many tests/showcases that join as other kinds are unaffected. */
+  private enforceHullGate = false;
   private disableCollisionDamage = false;
   /** Phase 6 synthetic-load knob — extra ms of CPU burn per server update().
    *  Set via the `tickBurnMs` room option to push tick budget over the TiDi
@@ -1318,6 +1333,8 @@ export class SectorRoom extends Room<SectorState> {
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
       prebuiltStructuresOwner?: string;
+      /** Economy v2 W5b — test rooms: switch the ship-picker hull gate on. */
+      enforceHullGate?: boolean;
       /** P2d (testMode) — goods put into the prebuilt Capital's hold (e.g.
        *  munitions so a showcase's missile turrets can fire). */
       prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
@@ -1353,6 +1370,7 @@ export class SectorRoom extends Room<SectorState> {
     // create, so reject oversized seed arrays before they seed the sector.
     assertRoomSeedBounds(roomOpts as Record<string, unknown>);
     this.testMode = roomOpts.testMode ?? false;
+    this.enforceHullGate = !this.testMode || roomOpts.enforceHullGate === true;
     this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);
     // Default 1.0 (no acceleration). Only honoured when testMode is true,
     // so a malicious / mis-targeted galaxy join can't ever speed it up.
@@ -2003,6 +2021,11 @@ export class SectorRoom extends Room<SectorState> {
       // `gatherStructureObstacles`. Off the 60 Hz hot loop (placement + 1 Hz
       // pulse only), so the array build is fine.
       getObstacles: () => this.gatherStructureObstacles(),
+      // Economy v2 W4b — a player's non-starter structure is placed from a
+      // PACKED item (now buyable from traders, and lootable). Consumed only
+      // after the structure registers; its build then costs only time.
+      sectorKey: () => this.sectorKey,
+      packedGateForBuild: (owner, kindId) => this.packedGateForBuild(owner, kindId),
     });
 
     // ── Structure grid pulse (structures plan, Phase 3) ─────────────────
@@ -2445,6 +2468,11 @@ export class SectorRoom extends Room<SectorState> {
       );
       if (id === null) {
         logger.warn({ sessionId: client.sessionId, kind: parsed.data.kind }, 'place_structure rejected');
+        // Economy v2 W4b — say why when it was the packed item that was missing.
+        const kindId = parsed.data.kind;
+        if (!STARTER_STRUCTURE_KINDS.includes(kindId) && this.findPacked(owner, `structure:${kindId}`) === null) {
+          this.sendNotice(client, `You need a Packed ${productName(`structure:${kindId}`)}: buy one on the Trade tab, or loot one.`);
+        }
       } else {
         // P2 bespoke trigger (testMode) — a placed storage structure starts
         // stocked, so a trade E2E/showcase needn't fly cargo home first.
@@ -2659,7 +2687,7 @@ export class SectorRoom extends Room<SectorState> {
       // The key the TradeDirector knows this room by (galaxy: the sectorKey).
       const tradeKey = this.tradeRegisteredKey ?? this.sectorKey;
       if (tradeKey === null) { reply(false, null, 'Trade is only available in the galaxy.'); return; }
-      if (!this.playerToUser.get(playerId)) { reply(false, null, 'Sign in to trade.'); return; }
+      // Economy v2 — guests are full players (the user's ruling): no sign-in gate.
       // A storage structure the player OWNS here → its stable uid.
       const networkUidOf = (entityId: number): string | null => {
         const rec = this.swarmRegistry.getByEntityId(entityId);
@@ -2751,6 +2779,35 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('lab_query', (client: Client, raw: unknown) => labRequest(client, 'lab_query', raw));
     this.onMessage('lab_start', (client: Client, raw: unknown) => labRequest(client, 'lab_start', raw));
     this.onMessage('lab_cancel', (client: Client, raw: unknown) => labRequest(client, 'lab_cancel', raw));
+
+    // ── Economy v2 W6 — the blueprint market (buy / sell, instant) ───────────
+    const bpRequest = (client: Client, kind: 'bp_market_query' | 'bp_buy' | 'bp_sell', raw: unknown): void => {
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      const schema = kind === 'bp_buy' ? BpBuySchema : kind === 'bp_sell' ? BpSellSchema : BpMarketQuerySchema;
+      const p = schema.safeParse(raw);
+      if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
+      const d = p.data as { networkEntityId: number; offerId?: string; uid?: string };
+      let verdict: { ok: boolean; message: string } | undefined;
+      if (kind === 'bp_buy') verdict = this.buyBlueprint(playerId, d.networkEntityId, d.offerId!);
+      else if (kind === 'bp_sell') verdict = this.sellBlueprint(playerId, d.networkEntityId, d.uid!);
+      try { client.send('bp_market_state', this.bpMarketView(playerId, d.networkEntityId, verdict)); } catch { /* closing */ }
+    };
+    this.onMessage('bp_market_query', (client: Client, raw: unknown) => bpRequest(client, 'bp_market_query', raw));
+    this.onMessage('bp_buy', (client: Client, raw: unknown) => bpRequest(client, 'bp_buy', raw));
+    this.onMessage('bp_sell', (client: Client, raw: unknown) => bpRequest(client, 'bp_sell', raw));
+
+    // ── Economy v2 W5a — unpack a packed hull into my roster ─────────────────
+    this.onMessage('unpack_hull', (client: Client, raw: unknown) => {
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      const p = UnpackHullSchema.safeParse(raw);
+      if (!p.success || !isPlayableShipKindId(p.data.kind)) { this.malformed.record(client.sessionId, 'unpack_hull'); return; }
+      const reply = (ok: boolean, message: string): void => {
+        try { client.send('blueprint_result', { type: 'blueprint_result', ok, message } satisfies BlueprintResult); } catch { /* closing */ }
+      };
+      reply(...this.unpackHull(playerId, p.data.networkEntityId, p.data.kind));
+    });
 
     // ── C1 (plan soft-leaping-truffle v3) — open a structure's cargo ────────
     // The cargo pane is rebuilt from `cargo_state` replies only (#16).
@@ -3999,6 +4056,7 @@ export class SectorRoom extends Room<SectorState> {
         if (r.gateAccess !== undefined) rec.gateAccess = r.gateAccess;
         // P2b — the owner's recipe choice and a cycle in progress survive a restart.
         if (r.recipe !== undefined && isRecipeId(r.recipe)) rec.recipe = r.recipe;
+        if (r.prepaid === true) rec.prepaid = true;
         if (r.prodLoaded === true) {
           rec.prodLoaded = true;
           rec.prodProgress = r.prodProgress ?? 0;
@@ -4810,6 +4868,8 @@ export class SectorRoom extends Room<SectorState> {
               // the Install action picks the module ones; the panel names them.
               blueprintIds: h ? h.blueprints.slice(0, 64).map((b) => b.product) : [],
               packed: h?.packed?.length ?? 0,
+              // W5a — the stored packed items' PRODUCT ids (the Unpack chips).
+              packedIds: h?.packed ? h.packed.slice(0, 64).map((p) => p.product) : [],
             },
             holdCapacity: holdCap,
           }
@@ -5911,6 +5971,17 @@ export class SectorRoom extends Room<SectorState> {
       }
     }
 
+    // Economy v2 W5b — the ship-picker gate. Starter hulls (scout, fighter)
+    // are always free; any other kind must be a ship you OWN (a roster row,
+    // e.g. one you unpacked). A fresh spawn asking for another kind gets a
+    // starter hull instead, and is told how to get the one it wanted.
+    if (!resumedFromStore && this.sectorKey !== null && this.enforceHullGate && !STARTER_HULL_KINDS.includes(chosenKind)) {
+      const wanted = getShipKind(chosenKind).displayName;
+      chosenKind = DEFAULT_SHIP_KIND;
+      this.sendNotice(client, `You need a ${wanted}: buy a packed one on the Trade tab (or loot one), then unpack it at your storage.`);
+      serverLogEvent('hull_gate_refused', { playerId, wanted });
+    }
+
     // WS-B (Phase 5): the Limbo restore path is RETIRED. A returning player
     // resumes by shipId — the roster shipId-restore above, which is now the
     // path for BOTH reconnect and transit-arrival — and a lingering hull
@@ -6895,13 +6966,154 @@ export class SectorRoom extends Room<SectorState> {
     const client = sessionId !== undefined ? this.clients.find((cl) => cl.sessionId === sessionId) : undefined;
     if (client) {
       try {
-        client.send('loot_collected', { type: 'loot_collected', goods: moved.goods, blueprints: moved.blueprints.length });
+        client.send('loot_collected', { type: 'loot_collected', goods: moved.goods, blueprints: moved.blueprints.length, ...packedProducts(moved) });
       } catch { /* socket closing */ }
     }
     auditEvent({
       event: 'loot_collected', sector: this.sectorKey ?? undefined, podId,
       playerId: c.playerId, shipInstanceId: c.shipInstanceId, weight: holdWeight(moved),
     });
+  }
+
+  /**
+   * Economy v2 W4b — where `owner` keeps a packed `product` in this sector:
+   * one of their operational storage structures, else their active ship's
+   * hold. Null when they have none here. Control cadence (placement only).
+   */
+  private findPacked(owner: string, product: string): { rec: StructureRecord } | { shipId: string } | null {
+    for (const rec of this.structureRegistry.all()) {
+      if (rec.owner === owner && rec.hold !== undefined && isOperationalStorage(rec) && packedCount(rec.hold, product) > 0) return { rec };
+    }
+    const shipId = this.resolveActiveShipKey(owner);
+    const row = shipId ? getHoldStore().get(shipId) : undefined;
+    if (shipId && row !== undefined && packedCount(row.hold, product) > 0) return { shipId };
+    return null;
+  }
+
+  /** The `packedGateForBuild` hook: ok when `owner` has a packed `kindId`
+   *  here; `commit` takes one (best quality first) as ONE hold group. */
+  private packedGateForBuild(owner: string, kindId: StructureKindId): PackedGateResult {
+    const product = `structure:${kindId}`;
+    const src = this.findPacked(owner, product);
+    if (src === null) return { ok: false, commit: () => {} };
+    return {
+      ok: true,
+      commit: () => {
+        if ('rec' in src) {
+          takePacked(src.rec.hold!, product);
+          this.storage.commitChanged([src.rec], []);
+          return;
+        }
+        const row = getHoldStore().get(src.shipId);
+        if (row === undefined) return;
+        const h = cloneHold(row.hold);
+        takePacked(h, product);
+        const persist = this.sectorKey !== null;
+        if (isHoldEmpty(h)) getHoldStore().commit([], [src.shipId], persist);
+        else getHoldStore().commit([{ ...row, hold: h }], [], persist);
+      },
+    };
+  }
+
+  /**
+   * Economy v2 W5a — unpack one packed `kind` hull from `playerId`'s storage
+   * network at `networkEntityId` into their roster: a fresh ship parked beside
+   * that storage, picked from the roster like any other. The roster cap is
+   * checked first; the packed item is taken (one hold group) BEFORE the roster
+   * row is created, and put back if creating it fails, so a hull is never
+   * duplicated. Galaxy rooms only (engineering rooms have no roster).
+   */
+  private unpackHull(playerId: string, networkEntityId: number, kind: ShipKindId): [boolean, string] {
+    const name = getShipKind(kind).displayName;
+    if (this.sectorKey === null) return [false, 'Ships can only be unpacked in the galaxy.'];
+    const rec = this.swarmRegistry.getByEntityId(networkEntityId);
+    const s = rec ? this.structureRegistry.get(rec.id) : undefined;
+    if (s === undefined || s.owner !== playerId || !isOperationalStorage(s)) return [false, 'Pick one of your storage structures.'];
+    const product = `hull:${kind}`;
+    const from = this.storage.network(s).find((r) => r.hold !== undefined && packedCount(r.hold, product) > 0);
+    if (from === undefined) return [false, `There is no packed ${name} in this base.`];
+    const store = getPlayerShipStore();
+    if (store.listByPlayer(playerId).length >= ROSTER_CAP) return [false, `Your roster is full (${ROSTER_CAP} ships). Abandon one first.`];
+    const item = takePacked(from.hold!, product)!;
+    this.storage.commitChanged([from], []);
+    try {
+      const ship = store.create({
+        playerId,
+        userId: this.playerToUser.get(playerId) ?? null,
+        kind,
+        sectorKey: this.sectorKey,
+        x: s.x + UNPACK_PARK_OFFSET,
+        y: s.y,
+        health: getShipKind(kind).maxHealth,
+      });
+      auditEvent({ event: 'hull_unpacked', sector: this.sectorKey, playerId, shipInstanceId: ship.shipId, kind, quality: item.quality });
+      return [true, `${name} unpacked: it's in your roster.`];
+    } catch {
+      (from.hold!.packed ??= []).push(item);
+      this.storage.commitChanged([from], []);
+      return [false, `Could not unpack the ${name}.`];
+    }
+  }
+
+  /** Economy v2 W6 — `playerId`'s operational storage at `networkEntityId`. */
+  private ownStorageAt(playerId: string, networkEntityId: number): StructureRecord | null {
+    const rec = this.swarmRegistry.getByEntityId(networkEntityId);
+    const s = rec ? this.structureRegistry.get(rec.id) : undefined;
+    return s !== undefined && s.owner === playerId && s.uid !== undefined && isOperationalStorage(s) ? s : null;
+  }
+
+  /** Economy v2 W6 — the market view for `playerId`'s base at `networkEntityId`. */
+  private bpMarketView(playerId: string, networkEntityId: number, verdict?: { ok: boolean; message: string }): BpMarketState {
+    const rep = getTradeSink()?.traderRep?.(playerId) ?? 0;
+    const s = this.ownStorageAt(playerId, networkEntityId);
+    const mine: BpListing[] = [];
+    if (s !== null) {
+      for (const r of this.storage.network(s)) {
+        for (const b of r.hold?.blueprints ?? []) if (mine.length < 200) mine.push(bpListing(b, b.uid, bpSellPrice(b, rep)));
+      }
+    }
+    return {
+      type: 'bp_market_state',
+      networkEntityId,
+      offers: getBlueprintMarket().offersFor(rep),
+      mine,
+      ...(verdict ?? {}),
+    };
+  }
+
+  /** Economy v2 W6 — buy a board blueprint into this base: the wallet debit
+   *  and the storage change commit as ONE group; the offer then leaves the board. */
+  private buyBlueprint(playerId: string, networkEntityId: number, offerId: string): { ok: boolean; message: string } {
+    const s = this.ownStorageAt(playerId, networkEntityId);
+    if (s === null) return { ok: false, message: 'Pick one of your storage structures.' };
+    const market = getBlueprintMarket();
+    const bp = market.peek(offerId);
+    if (bp === null) return { ok: false, message: 'That blueprint has been sold.' };
+    const price = bpBuyPrice(bp, getTradeSink()?.traderRep?.(playerId) ?? 0);
+    const pay = getWallet().debitDeferred(playerId, price, 'blueprint_buy');
+    if (pay === null) return { ok: false, message: `You need ${price}¢ for that blueprint.` };
+    market.remove(offerId);
+    (s.hold ??= { goods: {}, blueprints: [] }).blueprints.push(bp);
+    this.storage.commitChanged([s], [pay]);
+    auditEvent({ event: 'blueprint_traded', sector: this.sectorKey ?? undefined, playerId, side: 'buy', product: bp.product, credits: price });
+    return { ok: true, message: `Bought ${productName(bp.product)} blueprint for ${price}¢.` };
+  }
+
+  /** Economy v2 W6 — sell a blueprint from this base to traders (one group). */
+  private sellBlueprint(playerId: string, networkEntityId: number, uid: string): { ok: boolean; message: string } {
+    const s = this.ownStorageAt(playerId, networkEntityId);
+    if (s === null) return { ok: false, message: 'Pick one of your storage structures.' };
+    const from = this.storage.network(s).find((r) => r.hold?.blueprints.some((b) => b.uid === uid));
+    if (from === undefined) return { ok: false, message: 'That blueprint is not in this base.' };
+    const list = from.hold!.blueprints;
+    const bp = list.find((b) => b.uid === uid)!;
+    const price = bpSellPrice(bp, getTradeSink()?.traderRep?.(playerId) ?? 0);
+    if (price <= 0) return { ok: false, message: 'Traders won\u2019t buy that blueprint.' };
+    list.splice(list.indexOf(bp), 1);
+    const op = getWallet().creditDeferred(playerId, price, 'blueprint_sell');
+    this.storage.commitChanged([from], op ? [op] : []);
+    auditEvent({ event: 'blueprint_traded', sector: this.sectorKey ?? undefined, playerId, side: 'sell', product: bp.product, credits: price });
+    return { ok: true, message: `Sold ${productName(bp.product)} blueprint for ${price}¢.` };
   }
 
   /** Living World P1a-2 — a short player-facing notice (HUD popup line). */
@@ -6961,7 +7173,7 @@ export class SectorRoom extends Room<SectorState> {
     const sessionId = this.playerToSession.get(c.playerId);
     const client = sessionId !== undefined ? this.clients.find((cl) => cl.sessionId === sessionId) : undefined;
     try {
-      client?.send('cargo_deposited', { type: 'cargo_deposited', goods: moved.goods, blueprints: moved.blueprints.length });
+      client?.send('cargo_deposited', { type: 'cargo_deposited', goods: moved.goods, blueprints: moved.blueprints.length, ...packedProducts(moved) });
     } catch { /* socket closing */ }
     auditEvent({
       event: 'cargo_deposited', sector: this.sectorKey ?? undefined, playerId: c.playerId,

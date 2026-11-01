@@ -5,6 +5,8 @@ describe('lootView (P1a-1)', () => {
   it('formats a pickup popup', () => {
     expect(formatLootPickup({ goods: { salvage: 7 }, blueprints: 0 })).toBe('+7 Salvage');
     expect(formatLootPickup({ goods: {}, blueprints: 1 })).toBe('+1 blueprint');
+    // Economy v2 W4a — packed items by NAME, never the product id.
+    expect(formatLootPickup({ goods: {}, blueprints: 0, packed: ['structure:smelter'] })).toBe('+Packed Smelter');
     expect(formatLootPickup({ goods: {}, blueprints: 0 })).toBe('');
   });
 

@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   BPC_RUNS_REF, MATERIAL_MAX, OUTPUT_YIELD_MAX, STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS,
   applyBlueprint, blueprintName, blueprintProducts, blueprintQuality, fittedCargoMul, fittedHullMul, fittedUid,
-  isBlueprintUsedUp, makeBlueprint, parseProduct, productName, rollBlueprint, spendBlueprintRun, weaponGate, weaponUnlocked,
+  isBlueprintUsedUp, makeBlueprint, packedHullProducts, packedStructureProducts, parseProduct, productName, rollBlueprint, rollPackedHull, rollPackedStructure,
+  spendBlueprintRun, weaponGate, weaponUnlocked,
 } from './blueprints.js';
+import { rollLoot } from './lootTables.js';
+import { rollIncursionCache } from './worldEvents.js';
 import { parseHoldJson } from './goods.js';
 import { RECIPES, RECIPE_IDS } from './recipes.js';
 import { rollEliteLoot } from './elites.js';
@@ -36,6 +39,56 @@ describe('modules (P5 ship upgrades)', () => {
     expect(blueprintName('bp-missile-rack')).toBe('Missile Rack');
     expect(blueprintName('mystery')).toBe('Blueprint');
     expect(fittedUid('ship-1')).toBe('fitted:ship-1');
+  });
+});
+
+describe('packed-structure drops (economy v2 W4a)', () => {
+  it('only non-starter structures can drop; quality is middling', () => {
+    const products = packedStructureProducts();
+    for (const k of STARTER_STRUCTURE_KINDS) expect(products).not.toContain(`structure:${k}`);
+    expect(products.every((p) => p.startsWith('structure:'))).toBe(true);
+    expect(rollPackedStructure(() => 0.99, 0.5)).toBeNull();
+    expect(rollPackedStructure(() => 0, 0)).toBeNull();
+    for (let s = 1; s <= 50; s++) {
+      const p = rollPackedStructure(seeded(s), 1)!;
+      expect(products).toContain(p.product);
+      expect(p.quality).toBeGreaterThanOrEqual(10);
+      expect(p.quality).toBeLessThan(60);
+    }
+  });
+
+  it('the nexus always drops one; robot squares never do; elites and caches often', () => {
+    for (let s = 1; s <= 20; s++) {
+      expect(rollLoot('robot-nexus', seeded(s)).packed).toHaveLength(1);
+      expect(rollLoot('robot-square', seeded(s)).packed).toBeUndefined();
+    }
+    let elite = 0;
+    let cache = 0;
+    for (let s = 1; s <= 200; s++) {
+      if ((rollEliteLoot('gunship', seeded(s)).packed?.length ?? 0) > 0) elite++;
+      if ((rollIncursionCache(seeded(s)).packed?.length ?? 0) > 0) cache++;
+    }
+    expect(elite).toBeGreaterThan(30);
+    expect(elite).toBeLessThan(110);
+    expect(cache).toBeGreaterThan(60);
+    expect(cache).toBeLessThan(140);
+  });
+});
+
+describe('packed-hull drops (economy v2 W5a)', () => {
+  it('only non-starter, non-engineering hulls; elites and caches sometimes', () => {
+    const products = packedHullProducts();
+    for (const k of STARTER_HULL_KINDS) expect(products).not.toContain(`hull:${k}`);
+    expect(products).toContain('hull:gunship');
+    const h = rollPackedHull(seeded(9), 1)!;
+    expect(products).toContain(h.product);
+    expect(rollPackedHull(() => 0.99, 0.15)).toBeNull();
+    let elite = 0;
+    for (let s = 1; s <= 300; s++) {
+      if ((rollEliteLoot('gunship', seeded(s)).packed ?? []).some((p) => p.product.startsWith('hull:'))) elite++;
+    }
+    expect(elite).toBeGreaterThan(15);
+    expect(elite).toBeLessThan(90);
   });
 });
 
