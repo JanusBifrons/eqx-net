@@ -824,7 +824,7 @@ export const SHIPYARD: StructureKind = {
   id: 'shipyard',
   displayName: 'Shipyard',
   description: 'A huge yard that builds packed ships from a ship blueprint and goods (needs power). A hub (4 links); rare.',
-  radius: 570, // bounding circle of the 960×600 footprint
+  radius: 567, // bounding circle of the 960×600 footprint
   footprint: { w: 960, h: 600 },
   maxHealth: 9000,
   maxConnections: 4,

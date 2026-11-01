@@ -18,11 +18,13 @@ import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { getHoldStore, getPersistence, getWallet } from '../../../src/server/db/PersistenceWorker.js';
 import { EconomyStore } from '../../../src/server/economy/EconomyStore.js';
-import { TradeDirector } from '../../../src/server/economy/TradeDirector.js';
+import { PACKED_HULL_OFFERS_ON_BOARD, TradeDirector } from '../../../src/server/economy/TradeDirector.js';
 import { setTradeSink } from '../../../src/server/economy/tradeSink.js';
 import { buyCost } from '../../../src/core/economy/deals.js';
 import { quotePacked } from '../../../src/core/economy/market.js';
-import { packBillValue } from '../../../src/shared-types/recipes.js';
+import { CONSTRUCTION_PULSE_AMOUNT } from '../../../src/core/structures/structureGridConstants.js';
+import { hullBillValue, packBillValue } from '../../../src/shared-types/recipes.js';
+import type { ShipKindId } from '../../../src/shared-types/shipKinds.js';
 import type { StructureKindId } from '../../../src/shared-types/structureKinds.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
@@ -69,7 +71,12 @@ describe('SectorRoom integration — buying + placing packed structures (economy
     setTradeSink(dir);
 
     // The board carries packed-structure offers, priced from the pack recipe.
-    const offer = dir.offersFor(owner).find((o) => o.product !== undefined);
+    // W5b — packed HULLS have their own slots on the board, priced from the
+    // Shipyard recipe like structures are from their pack recipe.
+    const hulls = dir.offersFor(owner).filter((o) => o.product?.startsWith('hull:') === true);
+    expect(hulls).toHaveLength(PACKED_HULL_OFFERS_ON_BOARD);
+    for (const h of hulls) expect(h.unitPrice).toBe(quotePacked(hullBillValue(h.product!.slice('hull:'.length) as ShipKindId), 0));
+    const offer = dir.offersFor(owner).find((o) => o.product?.startsWith('structure:') === true);
     expect(offer, 'a packed-structure offer is on the board').toBeDefined();
     expect(offer!.kind).toBe('buy');
     expect(offer!.good).toBeNull();
@@ -108,13 +115,15 @@ describe('SectorRoom integration — buying + placing packed structures (economy
     const placed = [...internal.structureRegistry.all()].find((s) => s.kind === kind)!;
     expect(placed.prepaid).toBe(true);
     expect(capital.hold?.packed ?? []).toEqual([]);
-    for (let i = 0; i < 400 && !placed.isConstructed; i++) internal.pulseStructureGrid();
+    // The kind is whatever the board offers; the biggest take thousands of pulses.
+    const maxPulses = Math.ceil(placed.constructionCost / CONSTRUCTION_PULSE_AMOUNT) + 10;
+    for (let i = 0; i < maxPulses && !placed.isConstructed; i++) internal.pulseStructureGrid();
     expect(placed.isConstructed).toBe(true);
     expect(capital.minerals).toBe(minerals); // unpacking cost nothing but time
 
     // Taking it down returns no minerals (they were never paid).
     placed.isDeconstructing = true;
-    for (let i = 0; i < 400 && internal.structureRegistry.get(placed.id); i++) internal.pulseStructureGrid();
+    for (let i = 0; i < maxPulses && internal.structureRegistry.get(placed.id); i++) internal.pulseStructureGrid();
     expect(internal.structureRegistry.get(placed.id)).toBeUndefined();
     expect(capital.minerals).toBe(minerals);
   });

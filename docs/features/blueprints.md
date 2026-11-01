@@ -108,11 +108,20 @@ are BOUGHT from NPC factions and traders, and some are LOOTED from ships.
       you're full.
     - Elites (~15 %) and incursion caches (~15 %) can drop packed hulls.
     - Quality has no stat effect yet.
-  - **W5b, next:**
-    - the Shipyard structure and its `build_<ship>` recipes;
-    - traders selling packed hulls;
-    - the picker gate: starter hulls stay free, and any other kind needs a
-      hull you own.
+  - **W5b, shipped: the Shipyard and the hull gate.**
+    - **Shipyard:** a huge hub structure (Build ▸ Industry), 220 power while it
+      works. Give it a ship blueprint (`hull:<kind>`) and goods and it builds
+      a packed hull into your storage: `build_interceptor`, `build_gunship`,
+      `build_heavy` and `build_missile_frigate`. Set the recipe, then load the
+      blueprint, like any processor. It also comes packed (`pack_shipyard`).
+    - **Traders sell packed hulls:** two hull offers on the board at all times,
+      priced from the Shipyard recipe's goods value × 1.3 (`hullBillValue`).
+    - **The picker gate:** a NEW ship is always a scout or a fighter. Any other
+      kind is locked in the picker ("Buy & unpack"); you get one by buying or
+      looting a packed hull, unpacking it at your storage, and picking it from
+      your roster. A fresh spawn asking for another kind gets a fighter and a
+      notice. The server enforces this in galaxy rooms; test rooms opt in with
+      `enforceHullGate`.
 - **W6 — blueprint market:** buy and sell blueprints with traders.
 
 ## Tests

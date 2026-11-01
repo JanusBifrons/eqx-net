@@ -221,7 +221,7 @@ import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
 import { rollEliteLoot, ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS, PlaceBountySchema, type BountyResult } from '../../shared-types/contracts.js';
 import {
-  InstallBlueprintSchema, UnpackHullSchema, STARTER_STRUCTURE_KINDS, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, productName, weaponUnlocked, type BlueprintResult,
+  InstallBlueprintSchema, UnpackHullSchema, STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, productName, weaponUnlocked, type BlueprintResult,
 } from '../../shared-types/blueprints.js';
 
 const EMPTY_FITTED: readonly string[] = Object.freeze([]);
@@ -899,6 +899,10 @@ export class SectorRoom extends Room<SectorState> {
    */
   private pendingJoin = new Map<string, PendingJoinRecord>();
   private testMode = false;
+  /** Economy v2 W5b — a fresh spawn of a non-starter hull needs one you own
+   *  (galaxy rooms). Off in test rooms unless `enforceHullGate` is set, so the
+   *  many tests/showcases that join as other kinds are unaffected. */
+  private enforceHullGate = false;
   private disableCollisionDamage = false;
   /** Phase 6 synthetic-load knob — extra ms of CPU burn per server update().
    *  Set via the `tickBurnMs` room option to push tick budget over the TiDi
@@ -1322,6 +1326,8 @@ export class SectorRoom extends Room<SectorState> {
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
       prebuiltStructuresOwner?: string;
+      /** Economy v2 W5b — test rooms: switch the ship-picker hull gate on. */
+      enforceHullGate?: boolean;
       /** P2d (testMode) — goods put into the prebuilt Capital's hold (e.g.
        *  munitions so a showcase's missile turrets can fire). */
       prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
@@ -1357,6 +1363,7 @@ export class SectorRoom extends Room<SectorState> {
     // create, so reject oversized seed arrays before they seed the sector.
     assertRoomSeedBounds(roomOpts as Record<string, unknown>);
     this.testMode = roomOpts.testMode ?? false;
+    this.enforceHullGate = !this.testMode || roomOpts.enforceHullGate === true;
     this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);
     // Default 1.0 (no acceleration). Only honoured when testMode is true,
     // so a malicious / mis-targeted galaxy join can't ever speed it up.
@@ -5886,6 +5893,17 @@ export class SectorRoom extends Room<SectorState> {
           'JoinOptions.shipId is in a different sector; fresh spawn',
         );
       }
+    }
+
+    // Economy v2 W5b — the ship-picker gate. Starter hulls (scout, fighter)
+    // are always free; any other kind must be a ship you OWN (a roster row,
+    // e.g. one you unpacked). A fresh spawn asking for another kind gets a
+    // starter hull instead, and is told how to get the one it wanted.
+    if (!resumedFromStore && this.sectorKey !== null && this.enforceHullGate && !STARTER_HULL_KINDS.includes(chosenKind)) {
+      const wanted = getShipKind(chosenKind).displayName;
+      chosenKind = DEFAULT_SHIP_KIND;
+      this.sendNotice(client, `You need a ${wanted}: buy a packed one on the Trade tab (or loot one), then unpack it at your storage.`);
+      serverLogEvent('hull_gate_refused', { playerId, wanted });
     }
 
     // WS-B (Phase 5): the Limbo restore path is RETIRED. A returning player
