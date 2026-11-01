@@ -6,6 +6,7 @@
  */
 import type { Hold, GoodId } from './goods.js';
 import { getShipKind } from './shipKinds.js';
+import { rollPackedStructure } from './blueprints.js';
 
 export interface LootEntry {
   readonly good: GoodId;
@@ -20,6 +21,9 @@ export interface LootTable {
    *  dropped in a pod). */
   readonly bounty: readonly [number, number];
   readonly entries: readonly LootEntry[];
+  /** Economy v2 W4a — chance of one PACKED structure in the pod (absent ⇒
+   *  never; the roll then draws nothing, so old seeded results hold). */
+  readonly packedChance?: number;
 }
 
 /** Explicit per-kind tables. A kind not listed falls back to `defaultTable`. */
@@ -42,6 +46,7 @@ const TABLES: Readonly<Record<string, LootTable>> = {
   // P3 — the robot nexus: the richest single kill in the game.
   'robot-nexus': {
     bounty: [400, 800],
+    packedChance: 1,
     entries: [
       { good: 'salvage', chance: 1, min: 60, max: 120 },
       { good: 'alloy', chance: 1, min: 20, max: 40 },
@@ -51,6 +56,7 @@ const TABLES: Readonly<Record<string, LootTable>> = {
   // P1b — robot tiers drop progressively better loot (the reason to hunt them).
   'robot-circle': {
     bounty: [20, 45],
+    packedChance: 0.02,
     entries: [
       { good: 'salvage', chance: 1, min: 8, max: 18 },
       { good: 'alloy', chance: 0.6, min: 1, max: 3 },
@@ -59,6 +65,7 @@ const TABLES: Readonly<Record<string, LootTable>> = {
   },
   'robot-hexagon': {
     bounty: [45, 90],
+    packedChance: 0.06,
     entries: [
       { good: 'salvage', chance: 1, min: 15, max: 30 },
       { good: 'alloy', chance: 1, min: 2, max: 5 },
@@ -104,6 +111,10 @@ export function rollLoot(kindId: string | null | undefined, rng: () => number): 
     if (rng() >= e.chance) continue;
     const n = randInt(rng, e.min, e.max);
     if (n > 0) out.goods[e.good] = (out.goods[e.good] ?? 0) + n;
+  }
+  if (t.packedChance !== undefined) {
+    const p = rollPackedStructure(rng, t.packedChance);
+    if (p !== null) out.packed = [p];
   }
   return out;
 }

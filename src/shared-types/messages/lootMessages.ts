@@ -14,6 +14,8 @@ export const LootCollectedEventSchema = z
     goods: z.partialRecord(z.enum(GOOD_IDS), z.number().int().nonnegative()),
     /** Count of blueprints picked up (ids ride the cargo slice). */
     blueprints: z.number().int().nonnegative(),
+    /** Economy v2 W4a — packed items picked up (product ids; named client-side). */
+    packed: z.array(z.string().max(80)).max(20).optional(),
   })
   .strict();
 export type LootCollectedEvent = z.infer<typeof LootCollectedEventSchema>;
@@ -34,5 +36,6 @@ export const CargoDepositedEventSchema = z
     type: z.literal('cargo_deposited'),
     goods: z.partialRecord(z.enum(GOOD_IDS), z.number().int().nonnegative()),
     blueprints: z.number().int().nonnegative(),
+    packed: z.array(z.string().max(80)).max(20).optional(),
   })
   .strict();

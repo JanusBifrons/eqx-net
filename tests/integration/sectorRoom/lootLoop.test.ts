@@ -77,7 +77,7 @@ describe('SectorRoom integration — loot loop (P1a-1)', () => {
     expect(sawCargo, 'the own-ship snapshot entry must carry cargo').toBe(true);
   });
 
-  it('hardcore: a ship that dies carrying cargo spills it as a pod and keeps nothing — but the WALLET is untouched', { timeout: 40_000 }, async () => {
+  it('hardcore: a ship that dies carrying cargo spills it as a pod and keeps nothing — but the WALLET is untouched',{ timeout: 40_000 }, async () => {
     const pid = randomUUID();
     const cr = await harness.connectActive(pid, {
       spawnX: 500, spawnY: 500,
@@ -125,5 +125,47 @@ describe('SectorRoom integration — loot loop (P1a-1)', () => {
     const derelicts = [...internal.loot.podIds()].filter((id) => internal.loot.isDerelict(id));
     expect(derelicts, 'its hold becomes a derelict hulk').toHaveLength(1);
     expect(getHoldStore().get(derelicts[0]!)?.hold.goods.salvage).toBe(12);
+  });
+});
+
+// Economy v2 W4a — its own boot with no asteroid field (the Capital footprint
+// would overlap the default rocks near the origin).
+describe('SectorRoom integration — packed loot (economy v2 W4a)', () => {
+  let harness: SectorTestHarness;
+  beforeEach(async () => {
+    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [] });
+  }, 15_000);
+  afterEach(async () => {
+    if (harness) await harness.cleanup();
+  }, 10_000);
+
+  it('economy v2 W4a: a looted PACKED structure rides the pod into the hold, the own-ship snapshot, then base storage', { timeout: 40_000 }, async () => {
+    const pid = randomUUID();
+    const cr = await harness.connectActive(pid, { spawnX: 0, spawnY: 0 });
+    const r = room(cr.roomId);
+    const internal = r._internals;
+    const state = r.state as SectorState;
+    let shipId = '';
+    for (const [, s] of state.ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
+
+    internal.loot.drop({ goods: {}, blueprints: [], packed: [{ product: 'structure:smelter', quality: 42 }] }, 20, 0);
+    const picked = await until(() => (getHoldStore().get(shipId)?.hold.packed?.length ?? 0) === 1, 5_000);
+    expect(picked, 'the packed structure must move into the ship hold').toBe(true);
+    let sawPacked = false;
+    const deadline = Date.now() + 6_000;
+    while (Date.now() < deadline && !sawPacked) {
+      const snap: SnapshotMessage = await harness.waitForSnapshot(cr, 2_000);
+      if (snap.states?.[shipId]?.cargo?.packed?.[0]?.product === 'structure:smelter') sawPacked = true;
+    }
+    expect(sawPacked, 'the own-ship cargo slice must carry the packed item (#16)').toBe(true);
+
+    // Park next to my own Capital: the dwell deposit banks it.
+    cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 150, y: 0 });
+    expect(await until(() => [...internal.structureRegistry.all()].some((s) => s.owner === pid), 5_000)).toBe(true);
+    const cap = [...internal.structureRegistry.all()].find((s) => s.owner === pid)!;
+    const banked = await until(() => (cap.hold?.packed?.length ?? 0) === 1, 8_000);
+    expect(banked, 'the dwell deposit must move the packed structure into storage').toBe(true);
+    expect(cap.hold!.packed![0]).toEqual({ product: 'structure:smelter', quality: 42 });
+    expect(getHoldStore().get(shipId)?.hold.packed ?? []).toEqual([]);
   });
 });
