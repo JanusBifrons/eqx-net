@@ -45,6 +45,8 @@ export interface PersistableStructure {
   y: number;
   /** Phase V — rotation in degrees (absent ⇒ 0). */
   rot?: number;
+  /** Gates: access setting index (absent ⇒ default). */
+  gateAccess?: number;
   isConstructed: boolean;
   constructionProgress: number;
   minerals: number;
@@ -166,6 +168,7 @@ export class SectorPersistence {
         kind: s.kind,
         x: s.x,
         ...(s.rot ? { rot: s.rot } : {}),
+        ...(s.gateAccess ? { gateAccess: s.gateAccess } : {}),
         y: s.y,
         health: d.swarmHealth.get(s.id) ?? 0,
         isConstructed: s.isConstructed,

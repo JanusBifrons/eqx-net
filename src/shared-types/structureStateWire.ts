@@ -22,6 +22,8 @@ export const STRUCTURE_OUT_OF_INTEREST_FULL_EVERY = 5;
 export const STRUCTURE_FLAG_BUILT = 1;
 export const STRUCTURE_FLAG_POWERED = 2;
 export const STRUCTURE_FLAG_DECONSTRUCTING = 4;
+/** A shield emitter's walls are up: it has at least one wall and every one of
+ *  them is powered and not stunned (gates: the shield, not the open state). */
 export const STRUCTURE_FLAG_WALL_ACTIVE = 8;
 
 /** `StructureState.etaMs` sentinels: ≥ 0 is a real ETA. */
@@ -48,6 +50,8 @@ export const STRUCTURE_DEFAULTS = {
   storedPower: 0,
   storedPowerMax: 0,
   shieldWallTo: -1,
+  gateOpen: 0,
+  gateAccess: 0,
 } as const;
 
 /** The fields the client reads from a room-state structure row (absent ⇒
@@ -66,5 +70,9 @@ export interface StructureStateView {
   storedPower?: number;
   storedPowerMax?: number;
   shieldWallTo?: number;
+  /** Gates: GATE_OPEN_A / GATE_OPEN_B bits (core/structures/gateLogic.ts). */
+  gateOpen?: number;
+  /** Gates: GATE_ACCESS_IDS index (shared-types/gateAccess.ts). */
+  gateAccess?: number;
   connTo: { readonly length: number; at(i: number): number | undefined };
 }

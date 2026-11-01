@@ -8,6 +8,7 @@
  * half-built node's power.
  */
 import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { isShieldEmitterKind } from '../../core/structures/gateGeometry.js';
 import { structureLevelFactor, effectiveStructureMaxConnections } from '../../core/leveling/structureLevel.js';
 import {
   canConnect,
@@ -50,7 +51,8 @@ export function structureToGridNode(rec: StructureRecord): GridNode {
     isHub: kind.isHub,
     isCapital: rec.kind === 'capital',
     isConnector: rec.kind === 'connector',
-    isShieldPylon: rec.kind === 'shield_pylon',
+    // Gates join a fence like a pylon (pylon connection rules).
+    isShieldPylon: isShieldEmitterKind(rec.kind),
     // Leveled connection cap — an upgraded connector holds MORE links (Equinox
     // Phase-5 audit). Matches the client `structureMirrorToGridNode` so the
     // preview + live grid agree on the cap.

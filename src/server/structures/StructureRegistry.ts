@@ -60,6 +60,8 @@ export interface StructureRecord {
    *  component `powered` through a deficit, and is drained first by shield-wall
    *  hits. 0 on every non-battery kind (they have no `powerStorageCapacity`). */
   storedPower: number;
+  /** Gates: who the gate opens for (GATE_ACCESS_IDS index; absent ⇒ default). */
+  gateAccess?: number;
   /** Phase 4 (Leveling & XP, WS-B4) — structure level (≥ 1). A fresh structure
    *  is level 1; a paid Upgrade build phase increments it and applies the
    *  per-level stat grant (HP / turret range+damage / power output / storage).

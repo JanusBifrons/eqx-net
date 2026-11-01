@@ -162,7 +162,7 @@ export interface PendingImpulse {
  *  based filter is a leaky abstraction). */
 interface SwarmRecLookup {
   get(id: string): { entityId: number; radius: number; kind: number } | null | undefined;
-  all(): Iterable<{ id: string; slot: number; radius: number; kind: number; halfW?: number; halfH?: number }>;
+  all(): Iterable<{ id: string; slot: number; radius: number; kind: number; halfW?: number; halfH?: number; boxes?: Float32Array }>;
 }
 
 export interface MissileSimulationDeps {
@@ -713,7 +713,7 @@ export class MissileSimulation {
       const cx = this.deps.sabF32[b + SLOT_X_OFF]!;
       const cy = this.deps.sabF32[b + SLOT_Y_OFF]!;
       const sweep = rec.halfW !== undefined && rec.halfH !== undefined
-        ? projectileSweepBox(m.x, m.y, stepX, stepY, mr, cx, cy, rec.halfW, rec.halfH)
+        ? projectileSweepBox(m.x, m.y, stepX, stepY, mr, cx, cy, rec.halfW, rec.halfH, rec.boxes)
         : projectileSweepCircle(m.x, m.y, stepX, stepY, mr, cx, cy, rec.radius);
       if (sweep && sweep.entry < bestEntry) {
         bestEntry = sweep.entry;

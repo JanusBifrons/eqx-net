@@ -4,6 +4,7 @@
  * records (PlayerFireResolver, AiFireResolver, ProjectilePipeline,
  * MissileSimulation).
  */
+import { gateWorldAxisBoxes } from '../structures/gateGeometry.js';
 import { describe, expect, it } from 'vitest';
 import { projectileSweepBox, rayHitsBox, rayHitsSphere } from './Weapons.js';
 
@@ -38,5 +39,23 @@ describe('projectileSweepBox', () => {
   it('a step that stops short (or passes the corner gap) is a miss', () => {
     expect(projectileSweepBox(0, 0, 200, 0, 5, 500, 0, 180, 75)).toBeNull();
     expect(projectileSweepBox(0, 100, 1000, 0, 5, 500, 0, 180, 75)).toBeNull(); // 100 > 75 + 5
+  });
+});
+
+describe('gate parts (phase V gates)', () => {
+  const boxes = gateWorldAxisBoxes('shield_gate', 0)!; // posts at x = ±124, 72×72
+
+  it('a shot straight through the gap misses the gate', () => {
+    expect(rayHitsBox(0, -500, 0, 1, 1000, 0, 0, 160, 36, boxes)).toBeNull();
+    expect(projectileSweepBox(0, -100, 0, 200, 5, 0, 0, 160, 36, boxes)).toBeNull();
+  });
+
+  it('a shot at a post hits the post face', () => {
+    expect(rayHitsBox(124, -500, 0, 1, 1000, 0, 0, 160, 36, boxes)).toBeCloseTo(500 - 36);
+    expect(projectileSweepBox(124, -100, 0, 200, 5, 0, 0, 160, 36, boxes)!.entry).toBeCloseTo(100 - 36 - 5);
+  });
+
+  it('without parts the whole footprint box still blocks', () => {
+    expect(rayHitsBox(0, -500, 0, 1, 1000, 0, 0, 160, 36)).toBeCloseTo(464);
   });
 });

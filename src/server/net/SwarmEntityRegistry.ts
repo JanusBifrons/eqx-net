@@ -28,6 +28,11 @@ export interface SwarmEntityRecord {
    *  weapon hit tests use the box, not the bounding circle `radius`. */
   halfW?: number;
   halfH?: number;
+  /** Gates (phase V): the solid parts' world-axis boxes as flat
+   *  `[offsetX, offsetY, halfW, halfH, ...]` from the centre. When set, weapon
+   *  hits test these (a shot through the open gap passes) instead of the full
+   *  footprint box. Static structures, so computed once at spawn. */
+  boxes?: Float32Array;
   /** Polygon vertices in entity-local space, populated for kind=0 asteroids
    *  whose collider is a convex hull. Used by the polygon-aware hit resolver
    *  in `SectorRoom.handleFire`. The same array is the one passed to the

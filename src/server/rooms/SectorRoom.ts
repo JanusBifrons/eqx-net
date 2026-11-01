@@ -98,6 +98,9 @@ import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
 import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
+import { GateController, type GateShipBuffer } from '../structures/GateController.js';
+import { isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
+import { gateAccessIndex, GATE_ACCESS_IDS, type GateAccess } from '../../shared-types/gateAccess.js';
 import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
@@ -203,6 +206,7 @@ import {
   RemoveStructureSchema,
   StructureActionSchema,
   UpgradeStructureSchema,
+  SetGateAccessSchema,
   RefineSalvageSchema,
   RepairShipSchema,
   PilotShipSchema,
@@ -684,6 +688,8 @@ export class SectorRoom extends Room<SectorState> {
   /** Shield-wall lifecycle (shield-fence plan) — forms/teardowns the blocking
    *  span between paired pylons + drives its collider. */
   private shieldWalls!: ShieldWallManager;
+  /** Gates: open/close on approach (phase V gates). */
+  private gates!: GateController;
   /** 1 Hz grid heartbeat timer (unref'd; off the physics tick). */
   private structureGridTimer: ReturnType<typeof setInterval> | undefined;
   /** Faster turret aim/fire timer (Phase 5; unref'd). */
@@ -730,6 +736,7 @@ export class SectorRoom extends Room<SectorState> {
     radius: number;
     halfW?: number;
     halfH?: number;
+    boxes?: Float32Array;
   }> = [];
 
   // ── Phase 4b.3 (multi-mount turret refactor, 2026-05-11) ────────────────
@@ -992,6 +999,8 @@ export class SectorRoom extends Room<SectorState> {
     rebuildStructuresSlice: () => void;
     /** The authoritative SAB pose of a swarm entity (null ⇒ unknown id). */
     swarmPose: (id: string) => { x: number; y: number; angle: number } | null;
+    /** Gates: open bits for a gate structure id. */
+    gateMask: (id: string) => number;
     /** Unified-hull plan, Phase 4 — assert a structure resolves its OWN
      *  shield/hull (generic optional shield) from the STRUCTURE catalogue, not
      *  the fighter fallback. Returns the layered-damage result (reported
@@ -1035,6 +1044,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       tickStructureTurrets: () => this.structureTurretTick(),
       rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
+      gateMask: (id) => this.gates.maskFor(id),
       swarmPose: (id) => {
         const rec = this.swarmRegistry.get(id);
         if (!rec) return null;
@@ -1268,7 +1278,7 @@ export class SectorRoom extends Room<SectorState> {
        *  trigger: gives E2E a fully-functional powered grid without fighting the
        *  place-ahead UI (which stacks/overlaps multiple placements) or the
        *  construction wait. Each is born `isConstructed` at full HP. */
-      prebuiltStructures?: ReadonlyArray<{ kind: StructureKindId; x: number; y: number }>;
+      prebuiltStructures?: ReadonlyArray<{ kind: StructureKindId; x: number; y: number; rot?: number; gateAccess?: GateAccess }>;
       /** Plan soft-leaping-truffle v2, A0 — seed a RULE-VALID structure lattice
        *  of `n` structures (+ an optional closed pylon fence) for scale
        *  measurement. Generated server-side from (n, seed), so it is not bound
@@ -1825,8 +1835,8 @@ export class SectorRoom extends Room<SectorState> {
       : undefined;
     this.swarmSpawner = new SwarmSpawner(this.swarmRegistry, {
       takeSlot: () => this.freeSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle) =>
-        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts) =>
+        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
@@ -2022,7 +2032,14 @@ export class SectorRoom extends Room<SectorState> {
     // ── Shield-wall lifecycle (shield-fence plan) ──────────────────────────
     // Forms the blocking span between paired pylons + drives its physics
     // collider; updated on the grid pulse + the faster turret tick.
+    this.gates = new GateController({
+      registry: this.structureRegistry,
+      collectShips: (out) => this.collectGateShips(out),
+      // B1 relation seam slots in here; until then: same player ⇒ self.
+      relationOf: (playerId, owner) => (playerId === owner ? 'self' : 'neutral'),
+    });
     this.shieldWalls = new ShieldWallManager({
+      gateOpenMask: (id) => this.gates.maskFor(id),
       registry: this.structureRegistry,
       powerSummaryFor: (id) => this.structureGrid.powerSummaryFor(id),
       componentBatteryCharge: (id) => this.structureGrid.componentBatteryCharge(id),
@@ -2474,6 +2491,23 @@ export class SectorRoom extends Room<SectorState> {
         // COMPLETION is audited via `onConstructed` (`structure_built`).
         this.rebuildStructuresSlice();
       }
+    });
+
+    // ── Gates — set who a gate opens for (owner-gated) ──
+    this.onMessage('set_gate_access', (client: Client, raw: unknown) => {
+      const parsed = SetGateAccessSchema.safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, 'set_gate_access');
+        return;
+      }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      const swarmRec = this.swarmRegistry.getByEntityId(parsed.data.entityId);
+      if (!swarmRec) return;
+      const rec = this.structureRegistry.get(swarmRec.id);
+      if (!rec || rec.owner !== owner || gateTypeOf(rec.kind) === null) return;
+      rec.gateAccess = gateAccessIndex(parsed.data.access);
+      this.rebuildStructuresSlice();
     });
 
     // ── Living World P1a-2 — refine salvage into a Capital's mineral bank ──
@@ -3118,7 +3152,7 @@ export class SectorRoom extends Room<SectorState> {
         maxHealth: getStructureKind(rec.kind).maxHealth,
         priority: structurePriority(rec.kind),
       });
-      circles.push({ id: rec.id, x: rec.x, y: rec.y, radius: rec.radius, halfW: rec.halfW, halfH: rec.halfH });
+      circles.push({ id: rec.id, x: rec.x, y: rec.y, radius: rec.radius, halfW: rec.halfW, halfH: rec.halfH, boxes: this.swarmRegistry.get(rec.id)?.boxes });
     }
   }
 
@@ -3612,7 +3646,7 @@ export class SectorRoom extends Room<SectorState> {
     const ids: Array<string | null> = [];
     let rejectedPlace = 0;
     for (const p of lat.placements) {
-      const id = this.structurePlacement.place('scenario', p.kind, p.x, p.y, { skipAutoConnect: true });
+      const id = this.structurePlacement.place('scenario', p.kind, p.x, p.y, { skipAutoConnect: true, rot: p.rot });
       if (id === null) rejectedPlace++;
       ids.push(id);
       const rec = id ? this.structureRegistry.get(id) : undefined;
@@ -3637,7 +3671,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private seedStructureScenario(roomOpts: {
-    prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number }>;
+    prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number; rot?: number; gateAccess?: GateAccess }>;
     prebuiltStructuresOwner?: string;
     scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
     scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
@@ -3650,12 +3684,16 @@ export class SectorRoom extends Room<SectorState> {
     const owner = roomOpts.prebuiltStructuresOwner ?? 'scenario';
     if (prebuilt && prebuilt.length > 0) {
       for (const ps of prebuilt) {
-        const id = this.structurePlacement.place(owner, ps.kind as string, ps.x, ps.y, { rot: (ps as { rot?: number }).rot });
+        const extra = ps as { rot?: number; gateAccess?: GateAccess };
+        const id = this.structurePlacement.place(owner, ps.kind as string, ps.x, ps.y, { rot: extra.rot });
         if (id === null) {
           logger.warn({ kind: ps.kind, x: ps.x, y: ps.y }, 'scenario prebuilt structure rejected');
           continue;
         }
         const rec = this.structureRegistry.get(id);
+        if (rec && extra.gateAccess && GATE_ACCESS_IDS.includes(extra.gateAccess)) {
+          rec.gateAccess = gateAccessIndex(extra.gateAccess);
+        }
         if (rec && !rec.isConstructed) {
           rec.isConstructed = true;
           rec.constructionProgress = rec.constructionCost;
@@ -3709,6 +3747,7 @@ export class SectorRoom extends Room<SectorState> {
         // 1 for a pre-v6 / un-levelled row). The hydrated HP below is the
         // persisted (already-leveled) value, so no re-seed is needed.
         rec.level = r.level ?? 1;
+        if (r.gateAccess !== undefined) rec.gateAccess = r.gateAccess;
         // Living World P1a-2 — overlay the fresher holds-table payload (bank +
         // deposited goods) keyed by the structure's stable uid.
         this.storage.restore(rec);
@@ -3928,12 +3967,31 @@ export class SectorRoom extends Room<SectorState> {
     // WS-4 — re-broadcast each Miner's mining beam on the same fast cadence so
     // the continuous beam tracks + doesn't flicker (gated per-Miner internally).
     this.structureGrid.tickMiners(nowMs);
+    // Gates open/close on approach at this cadence; the wall refresh below
+    // then drops (or restores) each span's collider.
+    this.gates.update(nowMs);
     // Refresh wall active states at the turret cadence so a stun lifts (and a
     // power-loss drop registers) within ~100 ms, not a full grid pulse later.
     this.shieldWalls.update(Date.now());
     // Refresh the slice so the client's turret aim line tracks at the turret
     // cadence (not just the 1 Hz pulse). Cheap — few structures, off the tick.
     this.rebuildStructuresSlice();
+  }
+
+  /** Gates: every ACTIVE player ship (#17 — lingering hulls are parked and
+   *  never open gates), into the controller's reused buffer. */
+  private collectGateShips(out: GateShipBuffer): void {
+    for (const [playerId] of this.playerToSlot) {
+      const ship = this.getActiveShip(playerId);
+      if (!ship || !ship.alive || !ship.isActive) continue;
+      const pose = this.shipPoseCache.get(playerId);
+      if (!pose) continue;
+      const i = out.count++;
+      out.playerIds[i] = playerId;
+      out.xs[i] = pose.x;
+      out.ys[i] = pose.y;
+      out.radii[i] = getShipKind(ship.kind).radius;
+    }
   }
 
   /** Shield-fence plan — beam-vs-wall absorption seam shared by the player + AI
@@ -4179,14 +4237,14 @@ export class SectorRoom extends Room<SectorState> {
       if (summary.powered) flags |= STRUCTURE_FLAG_POWERED;
       if (rec.isDeconstructing) flags |= STRUCTURE_FLAG_DECONSTRUCTING;
       let wallTo = -1;
-      if (rec.kind === 'shield_pylon') {
-        const wall = this.shieldWalls.wallStateFor(rec.id, nowMs);
-        if (wall) {
-          const other = this.swarmRegistry.get(wall.otherPost)?.entityId;
-          if (other !== undefined) {
-            wallTo = other;
-            if (wall.active) flags |= STRUCTURE_FLAG_WALL_ACTIVE;
-          }
+      if (isShieldEmitterKind(rec.kind)) {
+        // Clients derive every wall from connections + this flag (all of this
+        // emitter's walls are up). `shieldWallTo` stays for a pylon's first wall.
+        if (this.shieldWalls.wallsUpFor(rec.id, nowMs)) flags |= STRUCTURE_FLAG_WALL_ACTIVE;
+        if (rec.kind === 'shield_pylon') {
+          const wall = this.shieldWalls.wallStateFor(rec.id, nowMs);
+          const other = wall ? this.swarmRegistry.get(wall.otherPost)?.entityId : undefined;
+          if (other !== undefined) wallTo = other;
         }
       }
       const building = !rec.isConstructed && rec.constructionCost > 0;
@@ -4219,6 +4277,12 @@ export class SectorRoom extends Room<SectorState> {
       if ((st.storedPower ?? SD.storedPower) !== stored) st.storedPower = stored;
       if ((st.storedPowerMax ?? SD.storedPowerMax) !== storageMax) st.storedPowerMax = storageMax;
       if ((st.shieldWallTo ?? SD.shieldWallTo) !== wallTo) st.shieldWallTo = wallTo;
+      if (gateTypeOf(rec.kind) !== null) {
+        const open = this.gates.maskFor(rec.id);
+        if ((st.gateOpen ?? SD.gateOpen) !== open) st.gateOpen = open;
+        const access = rec.gateAccess ?? SD.gateAccess;
+        if ((st.gateAccess ?? SD.gateAccess) !== access) st.gateAccess = access;
+      }
       this.syncConnTo(rec.id, st);
       // Fast cosmetics stay on the snapshot (only structures with a target).
       if (rec.turretTargetEntityId !== undefined || rec.miningTargetEntityId !== undefined) {

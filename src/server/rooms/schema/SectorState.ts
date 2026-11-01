@@ -166,6 +166,10 @@ export class StructureState extends Schema {
   @type('uint16') storedPowerMax?: number;
   /** Pylon: the other post's entityId of its (first) wall; -1 ⇒ none. */
   @type('int32') shieldWallTo?: number;
+  /** Gates: open bits (GATE_OPEN_A / GATE_OPEN_B); never both. */
+  @type('uint8') gateOpen?: number;
+  /** Gates: access setting (GATE_ACCESS_IDS index). */
+  @type('uint8') gateAccess?: number;
   /** Connected structures' entityIds. */
   @type(['uint16']) connTo = new ArraySchema<number>();
 }

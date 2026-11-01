@@ -239,6 +239,12 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 - **Placement rotation.** It is module state in `structures/structurePlacementClient.ts` (`cyclePlacementRotation`, the R key, main-thread in `App.tsx`), NOT Zustand: `rotation` is a lint-blocked spatial key and this is a discrete selection the renderer reads through the preview's `angle`. It rides `place_structure.rot`.
 - **Client rules use the box too.** The grid view (`mirrorToGridNode`: `halfW/halfH` from the swarm angle) and picking (`pickEntity.ts`) use the footprint box, matching the server.
 
+## Shield walls are DERIVED, not read per pylon (gates, plan soft-leaping-truffle v2)
+
+- `structures/derivedWalls.ts` `visitDerivedWalls` is the ONE place the client works out shield walls: fence walls between any two connected built emitters (pylons + gates, anchored on the nearest gate post) and each gate's spans, blocking per `wallActive` and the `gateOpen` bits.
+- Both `ConnectorRenderer` (draws) and `ColyseusClient.syncPredWalls` (prediction colliders: spawned once, toggled as they block, swept by generation stamp) use it. Don't read `shieldWallTo` for walls again: it only names a pylon's FIRST wall.
+- Gate sprites draw posts and walls only (`omitSpans`); spans are drawn live. The inspector shows **OPENS FOR** and owners cycle it (`sendSetGateAccess`).
+
 ## Structure state from ROOM STATE (plan soft-leaping-truffle v2, A2)
 
 - **Where structures come from.** `mirror.structures` is filled from Colyseus room state (`room.state.structures`, join payload + delta patches) by `ColyseusClient.syncStructures`. It decodes each row IN PLACE via `net/structureStateDecode.ts` `decodeStructureState`, applying `STRUCTURE_DEFAULTS` for unset fields and resolving the owner through the interned owner tables.

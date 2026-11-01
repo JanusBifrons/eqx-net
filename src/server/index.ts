@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createServer } from 'node:http';
 import { pino } from 'pino';
 import { SectorRoom } from './rooms/SectorRoom.js';
-import { SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './rooms/scenarioLayouts.js';
+import { GATE_TEST_PREBUILT, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './rooms/scenarioLayouts.js';
 import { SHOWCASE_ROOMS } from './rooms/showcaseRooms.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
 import { installGcMonitor } from './debug/GcMonitor.js';
@@ -614,6 +614,21 @@ gameServer
     ],
     defaultSpawnX: 0,
     defaultSpawnY: 0,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
+// Gates (plan soft-leaping-truffle v2, phase V) — two powered Shield Gates:
+// west opens for anyone not hostile, east is owner-only (owner `scenario`).
+// Spawn south of a gate with ?spawnX=±400&spawnY=-1300 and fly north.
+gameServer
+  .define('gate-test', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    structureGridPulseMs: 100,
+    prebuiltStructures: GATE_TEST_PREBUILT.map((p) => ({ ...p })),
+    defaultSpawnX: -400,
+    defaultSpawnY: -1300,
     maxClients: 4,
   })
   .filterBy(['testId']);

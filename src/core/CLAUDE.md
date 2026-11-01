@@ -86,6 +86,13 @@ When a new phase needs a new concretion (e.g., persistence), add it as a new con
 - **Never test a structure against its `radius` for a gameplay rule:** a long Solar's bounding circle covers empty space beside it.
 - **Kindless fixtures:** a structure with no subtype (`structurePoses`) is a radius-sized square.
 
+## Gates (`src/core/structures/gateGeometry.ts` + `gateLogic.ts`, plan soft-leaping-truffle v2)
+
+- **One geometry source for both sides (#15).** Collider parts (posts, airlock walls), spans, fence anchors and approach zones all come from `gateGeometry.ts`. Never hand-place a gate post or span anywhere else.
+- **A gate's body is several convex parts** (`World.spawnObstacle(..., parts)`), so the gap is open; weapon hits use the matching world-axis boxes.
+- **The open/close logic is server-only** (`gateLogic.ts`; the client reads the open bits from room state). An airlock is ONE `phase` field, so "never both ends open" holds by construction; keep it that way.
+- **The lattice fence has a gate per side** (rot 0 top/bottom, 90 left/right), still checked against the real rules by `structureLattice.test.ts`.
+
 ## Structure scale lattice (`src/core/structures/structureLattice.ts`, plan soft-leaping-truffle v2)
 
 `buildStructureLattice({n, seed, fence})` is a rule-valid N-structure base (Capital, connector spine + rows, 2–3 leaves per connector, optional closed pylon fence, Solars added until powered), used to MEASURE the structure system at base scale and as the seed of the base generator. Every placement + link passes the real `placementRejection` / `canConnect` (locked by `structureLattice.test.ts`). Budgets it measures against: `src/shared-types/structureBudgets.ts`; ledger: [docs/architecture/structure-network-scale.md](../../docs/architecture/structure-network-scale.md). **Any generated base must pass the same real rules — never bypass `canConnect`.**
