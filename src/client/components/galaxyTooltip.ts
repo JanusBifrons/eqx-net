@@ -52,7 +52,8 @@ export function buildSectorTooltip(
     : 'Neutral';
   return {
     name: sector.name,
-    faction: titleCase(sector.region),
+    // Living World P3 — a robot-held sector reads as robot territory.
+    faction: live?.owner?.factionId === 'robots' ? 'Robot Dominion' : titleCase(sector.region),
     status,
     features: sector.features,
     players: live?.players ?? 0,
