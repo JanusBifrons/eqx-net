@@ -105,3 +105,48 @@ A sector's asteroid field mixes three kinds, weighted by the sector's galaxy `fe
 | D1–D2 | The base generator grows a chain for each base's role (mining outpost, refinery, workshop, manufactory, assembly works, trade hub). |
 | T | Trade between bases: convoys, regional prices, Freight Dock orders. Payments go through the Living World wallet. |
 | D3 | Cities: the main consumers of provisions and consumer goods. |
+
+## Base roles and the growth generator (D1)
+
+Code: [src/core/bases/baseProfile.ts](../../src/core/bases/baseProfile.ts) and [src/core/bases/growBase.ts](../../src/core/bases/growBase.ts). Both are pure and seeded.
+
+**`contextForSector(key)`** derives where a sector sits in its region:
+- **Heart:** the sector nearest the region's hex centre.
+- **Hops from the heart:** counted within the region.
+- **Entry and chokepoint:** whether it is an entry (edge) sector, and whether it borders another region (a chokepoint).
+- **Features:** the sector's own.
+
+**`baseProfileFor(context, seed)`** picks:
+
+| Choice | Rule |
+|---|---|
+| Tier | Outposts are the majority; citadels appear only at a region heart; edge sectors are almost always outposts |
+| Role | Mining, refinery, workshop, manufactory, assembly (hearts only) or trade, weighted by features: extraction sectors mine, stations and chokepoints trade, central sectors manufacture |
+| Wealth | Rises toward the heart |
+| Level cap | 1–2 for outposts up to 4–5 for citadels |
+| Fenced | ≥ 80 % of bases overall |
+
+**`growBase(profile, seed, features)`** builds the base as a builder would:
+1. **Buy:** the role's units, a Freight Dock, storage and turrets, within wealth and per-tier caps.
+   - **Price:** each purchase costs its construction cost, its pack bill (for packed kinds), and the Solars that power it.
+   - **Huge kinds:** at most one per base.
+2. **Lay out:** connector rows around the Capital, with leaves above and below each row connector.
+   - **Spine:** it stays bare, with relay connectors where a row gap exceeds range.
+   - **Spacing:** the row pitch comes from the tallest structure.
+   - **The huge kind:** it sits on its own outer row.
+3. **Power:** lay out, measure the real draw (the fence depends on the layout), and add Solars until net power ≥ 0.
+4. **Fence:** a rectangle of Shield Pylons around the extent, with a Shield Gate in the middle of each side, tapped from the row ends.
+5. **Budget:** a base over its tier's budget spends 15 % less and regrows.
+
+**Locks:**
+- **`growBase.test.ts`** re-checks every base against the real `placementRejection` and `canConnect`, and checks that each one is:
+  - connected to the Capital and powered;
+  - within its tier's budget;
+  - in fewer than 4 chain stages (an outpost in at most 2);
+  - deterministic;
+  - true to its role (mining bases are mostly extractors, trade hubs mostly storage).
+
+  It runs a sweep over every galaxy sector.
+- **`baseProfile.test.ts`** covers the profiles.
+
+**Known gap:** fences dominate small bases. A Shield Pylon draws 20 power and a Solar makes 30, so a fenced outpost is about 80 structures, against the plan's target of 10–30. The consolidated Reactor is the fix, and `TIER_MAX_STRUCTURES` comes down with it.
