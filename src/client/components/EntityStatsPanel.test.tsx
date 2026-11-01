@@ -120,11 +120,11 @@ describe('EntityStatsPanel', () => {
   // ── Phase-4 C5 — the panel shows the SELECTED building's own drain/surplus,
   // not the shared grid aggregate (which was identical for every building in a
   // grid). Pure catalogue lookup (powerOutput − powerConsumption). ──
-  it('shows a CONSUMER building its own negative draw — turret PWR -15 (C5)', () => {
+  it('shows a CONSUMER building its own negative draw — an ENGAGING turret PWR -15 (C5 + active power)', () => {
     setGameClient(
       fakeClient({
-        // Grid aggregate +35, but the turret itself DRAINS 15.
-        structures: new Map([[9, { powered: true, netPower: 35, connTo: [3], built: true, buildPct: 1, deconstructPct: 0 }]]),
+        // Grid aggregate +35, but the turret itself DRAINS 15 while engaging.
+        structures: new Map([[9, { powered: true, netPower: 35, connTo: [3], built: true, buildPct: 1, deconstructPct: 0, drawFull: true }]]),
         swarm: new Map([[9, { kind: 2, shipKind: 'turret', radius: 36, x: 0, y: 0 }]]),
       }),
     );
@@ -133,6 +133,19 @@ describe('EntityStatsPanel', () => {
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR -15');
     expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-self-power', '-15');
+  });
+
+  it('active power: an IDLE turret shows only its trickle (20 % → PWR -3)', () => {
+    setGameClient(
+      fakeClient({
+        structures: new Map([[9, { powered: true, netPower: 35, connTo: [3], built: true, buildPct: 1, deconstructPct: 0 }]]),
+        swarm: new Map([[9, { kind: 2, shipKind: 'turret', radius: 36, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
+    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR -3');
   });
 
   // Phase 5 — "you can't see how much power a SOLAR gives". A GENERATOR shows its

@@ -266,6 +266,8 @@ describe('StructureGridSubsystem — batteries (full power buffer)', () => {
   });
 
   it('discharges to keep a deficit grid powered, then browns out when empty', () => {
+    // An asteroid in range: the miner DRILLS (active power, full 60 draw).
+    h = makeHarness({ entityId: 9, x: -500, y: 700 });
     h.placement.place(OWNER, 'capital', 0, 0)!; // +50
     relayConnectorRaw(h, 0, 350); // WS-5: battery + miner route via this Connector, beside each other above the Capital
     const bat = h.placeRaw(OWNER, 'battery', 150, 420)!;
@@ -275,8 +277,10 @@ describe('StructureGridSubsystem — batteries (full power buffer)', () => {
     for (let i = 0; i < 6; i++) h.pulse();
     expect(h.registry.get(bat)!.storedPower).toBe(300);
 
-    // Bring the miner online → component balance 50 - 60 = -10/pulse.
+    // Bring the miner online and ACTIVE (drilling: full draw) → component
+    // balance 50 - 60 = -10/pulse. (Idle it would draw only the 20 % trickle.)
     build(miner, 'miner');
+    h.pulse(); // idle draw (12): powered, finds the rock, starts drilling (60)
     h.pulse();
     // Battery covers the shortfall → miner stays powered despite a negative net.
     expect(h.grid.powerSummaryFor(miner).netPower).toBe(-10);
@@ -286,9 +290,12 @@ describe('StructureGridSubsystem — batteries (full power buffer)', () => {
     // 29 more pulses drain the remaining 290 at 10/pulse → empty.
     for (let i = 0; i < 29; i++) h.pulse();
     expect(h.registry.get(bat)!.storedPower).toBe(0);
-    // No charge left + a -10 balance → the whole component browns out.
+    // No charge left + a -10 balance → brown-out: the miner stops drilling,
+    // drops to its idle trickle, and the grid recovers (active power).
     h.pulse();
-    expect(h.grid.powerSummaryFor(miner).powered).toBe(false);
+    expect(h.registry.get(miner)!.miningTargetEntityId).toBeUndefined();
+    expect(h.grid.powerSummaryFor(miner).netPower).toBe(50 - 12);
+    expect(h.grid.powerSummaryFor(miner).powered).toBe(true);
   });
 
   it('a battery with no capital path stays inert (capital-less island)', () => {
@@ -545,7 +552,7 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
     expect(h.registry.get(miner)!.miningTargetEntityId).toBe(7);
   });
 
-  it('an UNPOWERED miner does not mine (no asteroid target set)', () => {
+  it('active power: a miner that overdraws the grid browns out (it drills only on alternate pulses)', () => {
     // Asteroid in range, but no solar → miner draws the grid negative.
     const h = makeHarness({ entityId: 9, x: -500, y: 700 });
     h.placement.place(OWNER, 'capital', 0, 0);
@@ -555,10 +562,12 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
     for (let i = 0; i < 400; i++) h.pulse();
     const minerRec = h.registry.get(miner)!;
     expect(minerRec.isConstructed).toBe(true);
-    // Capital 50 − miner 60 = −10 → unpowered → no mining target, no minerals.
-    h.pulse();
-    expect(minerRec.miningTargetEntityId).toBeUndefined();
-    expect(minerRec.minerals).toBe(0);
+    // Idle it draws 12 (powered); drilling it draws 60 (Capital 50 − 60 = −10 →
+    // unpowered), so it stops, goes idle, is powered again, and so on.
+    const states: boolean[] = [];
+    for (let i = 0; i < 4; i++) { h.pulse(); states.push(minerRec.miningTargetEntityId !== undefined); }
+    expect(states.filter(Boolean).length).toBe(2);
+    expect(states[0]).not.toBe(states[1]);
   });
 
   it('WS-4/R2.27 Phase 1: draws down a FINITE asteroid pool, then stops + clears the target on exhaustion', () => {
@@ -751,7 +760,9 @@ describe('StructureGridSubsystem — turrets (Phase 5)', () => {
     for (let i = 0; i < 400; i++) h.pulse();
     expect(h.registry.get(turret)!.isConstructed).toBe(true);
     expect(h.registry.get(m1)!.isConstructed).toBe(true);
-    // capital 50 − turret 15 − miner 60 = −25 → unpowered.
+    // An ACTIVE miner (60) overdraws the Capital (50) → the grid is unpowered.
+    h.grid.setActive(h.registry.get(m1)!, true);
+    h.registry.topologyDirty = true;
     h.grid.tickTurrets(10_000);
     expect(h.damage.length).toBe(0);
     expect(h.registry.get(turret)!.turretTargetEntityId).toBeUndefined();

@@ -118,8 +118,13 @@ describe('SectorRoom integration — Research Lab (economy v2 W3)', () => {
     expect((await ask('lab_start', { job: { kind: 'copy', uid: 'orig', runs: 2 } })).ok).toBe(false);
     pulse(researchPulses(2) - 1);
     expect(getLabBoard().get(lab!.uid!)!.done).toBe(researchPulses(2) - 1);
+    // Active power: a lab with a running job draws full power.
+    expect(lab!.drawFull).toBe(true);
     pulse(1);
     expect(getLabBoard().get(lab!.uid!)).toBeUndefined();
+    // Finished: back to the idle trickle on the next pulse.
+    pulse(1);
+    expect(lab!.drawFull).toBe(false);
     const orig = cap.hold!.blueprints.find((b) => b.uid === 'orig')!;
     expect(orig).toMatchObject({ material: 3, research: 1 });
 

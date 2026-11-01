@@ -7,6 +7,7 @@
  * powerConsumption = 0` (inert until built), so the grid never counts a
  * half-built node's power.
  */
+import { structureDraw } from '../../shared-types/structurePower.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { isShieldEmitterKind } from '../../core/structures/gateGeometry.js';
 import { structureLevelFactor, effectiveStructureMaxConnections } from '../../core/leveling/structureLevel.js';
@@ -63,7 +64,8 @@ export function structureToGridNode(rec: StructureRecord): GridNode {
     // funding power + minerals through its own re-build.
     // D1 — a fuel-burning kind (Reactor) outputs only while fuelled.
     powerOutput: operational && (kind.fuelEveryPulses == null || rec.fueled === true) ? kind.powerOutput * lvlMul : 0,
-    powerConsumption: operational ? kind.powerConsumption : 0,
+    // Active power — full draw while active, an idle trickle otherwise.
+    powerConsumption: operational ? structureDraw(kind.powerConsumption, rec.drawFull === true) : 0,
     isConstructed: operational,
   };
 }

@@ -213,6 +213,8 @@ a `'deferred'` line is emitted as short segments from a scale-aware
 (`placementPreviewConnectionCount` / `placementPreviewOverflowCount` kept as the
 back-compat aliases).
 
+**Active power (2026-11-01).** A structure draws its full `powerConsumption` only while it is working (a processor running, a drill on a rock, a turret with a target, a lab with a job) and 20 % of it when idle. The server flips `rec.drawFull` through `StructureGridSubsystem.setActive`, which adjusts the component's net power in O(1) (`Grid.adjustDraw`). Full story: [production-chains.md](production-chains.md#active-power-full-draw-only-while-working).
+
 ## Batteries — stored-power buffer (batteries plan — shipped)
 
 The `battery` kind is a **leaf that stores power**. It produces and consumes

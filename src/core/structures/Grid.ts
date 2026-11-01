@@ -339,6 +339,15 @@ export class Grid {
     }
   }
 
+  /** Active power: a structure's draw changed by `delta` (positive = more
+   *  draw) without any topology change. O(1); avoids a rebuild per flip. */
+  adjustDraw(id: string, delta: number): void {
+    const comp = this.componentOf.get(id);
+    if (comp === undefined) return;
+    const info = this.componentInfo.get(comp);
+    if (info) info.netPower -= delta;
+  }
+
   /** Power summary for a structure. Unbuilt / unknown → unpowered, 0 net.
    *  `powered` requires the component to contain a Capital (the grid root) AND
    *  net power ≥ 0 — so a lone generator with no path to a Capital is
