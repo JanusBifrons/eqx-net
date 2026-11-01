@@ -128,7 +128,11 @@ export type AuditEvent =
   // P5 — a blueprint moved from storage onto a ship.
   | (AuditEventBase & { event: 'blueprint_installed'; playerId: string; shipInstanceId: string; blueprint: string })
   // Economy v2 W1 — every wallet change (credits are virtual; never in a hold).
-  | (AuditEventBase & { event: 'wallet_tx'; playerId: string; delta: number; balance: number; reason: string });
+  | (AuditEventBase & { event: 'wallet_tx'; playerId: string; delta: number; balance: number; reason: string })
+  // Economy v2 W3 — Research Lab jobs (research / copy / combine).
+  | (AuditEventBase & { event: 'lab_job_started'; playerId: string; job: string; product: string; fee: number })
+  | (AuditEventBase & { event: 'lab_job_cancelled'; playerId: string; job: string })
+  | (AuditEventBase & { event: 'lab_job_done'; playerId: string; job: string; product?: string });
 
 /** Distributive `Omit` so the union is preserved across the stamped fields. */
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;

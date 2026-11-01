@@ -32,6 +32,7 @@ import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import TerrainIcon from '@mui/icons-material/Terrain';
 import FactoryIcon from '@mui/icons-material/Factory';
 import SettingsIcon from '@mui/icons-material/Settings';
+import ScienceIcon from '@mui/icons-material/Science';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
 import { getStructureKind, type StructureKindId } from '@shared-types/structureKinds';
@@ -368,6 +369,7 @@ export const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
   deep_core_rig: <TerrainIcon />,
   ore_processing_complex: <SettingsIcon />,
   assembly_plant: <FactoryIcon />,
+  research_lab: <ScienceIcon />, // economy v2 W3
 };
 
 // ── Hoisted static sx / props (no per-render allocation) ───────────────────

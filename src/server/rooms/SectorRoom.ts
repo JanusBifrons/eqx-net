@@ -189,9 +189,11 @@ import type {
   SectorSnapshotLingeringHull,
 } from './SectorSnapshot.js';
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
-import { getPlayerShipStore, getHoldStore, getWallet } from '../db/PersistenceWorker.js';
+import { getPlayerShipStore, getHoldStore, getWallet, getLabBoard } from '../db/PersistenceWorker.js';
+import { ResearchLabSubsystem } from '../structures/ResearchLabSubsystem.js';
+import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type LabState } from '../../shared-types/messages/labMessages.js';
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
-import { StorageService, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
+import { StorageService, fittedModuleIds, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto } from '../../core/cargo/hold.js';
 import { HARVESTER_CAPACITY, RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
@@ -666,6 +668,8 @@ export class SectorRoom extends Room<SectorState> {
   private loot!: LootSubsystem;
   /** Living World P1a-2 — base storage holds (deposit / refine / spill). */
   private storage!: StorageService;
+  /** Economy v2 W3 — Research Lab jobs (research / copy / combine). */
+  private researchLabs!: ResearchLabSubsystem;
   /** Auto-deposit dwell: playerId → (target structure id, first in-range tick). */
   private readonly depositDwell = new Map<string, { targetId: string; sinceTick: number }>();
   /** Auto-deposit progress 0..100 by shipInstanceId (own-ship snapshot ring). */
@@ -2054,6 +2058,14 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: () => this.sectorKey,
       componentOf: (id) => this.structureGrid.componentMembersOf(id),
     });
+    this.researchLabs = new ResearchLabSubsystem({
+      board: getLabBoard,
+      wallet: getWallet,
+      storage: this.storage,
+      registry: this.structureRegistry,
+      powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
+      sectorKey: () => this.sectorKey,
+    });
     // ── Shield-wall lifecycle (shield-fence plan) ──────────────────────────
     // Forms the blocking span between paired pylons + drives its physics
     // collider; updated on the grid pulse + the faster turret tick.
@@ -2668,6 +2680,38 @@ export class SectorRoom extends Room<SectorState> {
       auditEvent({ event: 'blueprint_installed', sector: this.sectorKey, playerId, shipInstanceId: shipId, blueprint: id });
       reply(true, `${blueprintName(id)} installed.`);
     });
+
+    // ── Economy v2 W3 — Research Lab: view / start / cancel a job ───────────
+    const labRequest = (client: Client, kind: 'lab_query' | 'lab_start' | 'lab_cancel', raw: unknown): void => {
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      let entityId: number;
+      let job: LabStart['job'] | null = null;
+      if (kind === 'lab_start') {
+        const p = LabStartSchema.safeParse(raw);
+        if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
+        entityId = p.data.entityId;
+        job = p.data.job;
+      } else {
+        const p = (kind === 'lab_query' ? LabQuerySchema : LabCancelSchema).safeParse(raw);
+        if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
+        entityId = p.data.entityId;
+      }
+      const rec = this.swarmRegistry.getByEntityId(entityId);
+      const lab = rec ? this.structureRegistry.get(rec.id) : undefined;
+      if (lab === undefined || lab.owner !== playerId) {
+        const none: LabState = { type: 'lab_state', entityId, powered: false, connected: false, job: null, blueprints: [], ok: false, message: 'That is not your Research Lab.' };
+        try { client.send('lab_state', none); } catch { /* closing */ }
+        return;
+      }
+      let verdict: { ok: boolean; message: string } | undefined;
+      if (job !== null) verdict = this.researchLabs.start(playerId, lab, job);
+      else if (kind === 'lab_cancel') verdict = this.researchLabs.cancel(playerId, lab);
+      try { client.send('lab_state', this.researchLabs.view(playerId, lab, entityId, verdict)); } catch { /* closing */ }
+    };
+    this.onMessage('lab_query', (client: Client, raw: unknown) => labRequest(client, 'lab_query', raw));
+    this.onMessage('lab_start', (client: Client, raw: unknown) => labRequest(client, 'lab_start', raw));
+    this.onMessage('lab_cancel', (client: Client, raw: unknown) => labRequest(client, 'lab_cancel', raw));
 
     // ── Living World P4c-2 — place a player bounty ───────────────────────────
     this.onMessage('place_bounty', (client: Client, raw: unknown) => {
@@ -3595,6 +3639,9 @@ export class SectorRoom extends Room<SectorState> {
       if (srec) {
         const payload = this.storage.takeForSpill(srec);
         if (payload !== null) this.loot.drop(payload, srec.x, srec.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
+        // Economy v2 W3 — a lab's running job spills its blueprints too.
+        const labSpill = this.researchLabs.onRemoved(srec);
+        if (labSpill !== null) this.loot.drop(labSpill, srec.x, srec.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
       }
       this.structureRegistry.remove(rec.id);
       this.structureAttackAuditAtMs.delete(rec.id);
@@ -3686,6 +3733,8 @@ export class SectorRoom extends Room<SectorState> {
     const result = this.structureGrid.pulse(Date.now());
     // P2b — processors take inputs from and put outputs into network storage.
     this.production.pulse();
+    // Economy v2 W3 — powered Research Labs advance their jobs.
+    this.researchLabs.pulse();
     // Living World P1a-2 — persist storage payloads the pulse just changed
     // (mining / hauling / construction flows mutate the bank directly).
     this.storage.flushDirty();
@@ -4636,8 +4685,10 @@ export class SectorRoom extends Room<SectorState> {
         ? {
             hold: {
               goods: h ? { ...h.goods } : {}, blueprints: h?.blueprints.length ?? 0,
-              // P5 — the ids, for the owner's Install action (owner-only like the rest).
-              blueprintIds: h ? h.blueprints.slice(0, 64) : [],
+              // W2 — the stored blueprints' PRODUCT ids (owner-only like the rest):
+              // the Install action picks the module ones; the panel names them.
+              blueprintIds: h ? h.blueprints.slice(0, 64).map((b) => b.product) : [],
+              packed: h?.packed?.length ?? 0,
             },
             holdCapacity: holdCap,
           }
@@ -4830,7 +4881,8 @@ export class SectorRoom extends Room<SectorState> {
     if (shipInstanceId === '') return EMPTY_FITTED;
     let f = this.fittedCache.get(shipInstanceId);
     if (f === undefined) {
-      f = getHoldStore().get(fittedUid(shipInstanceId))?.hold.blueprints ?? EMPTY_FITTED;
+      const fh = getHoldStore().get(fittedUid(shipInstanceId))?.hold;
+      f = fh ? fittedModuleIds(fh) : EMPTY_FITTED;
       this.fittedCache.set(shipInstanceId, f);
     }
     return f;

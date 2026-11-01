@@ -33,6 +33,7 @@ import { toastForNotice } from './tradeView';
 import { TradeNoticeSchema } from '../../shared-types/economy.js';
 import { WorldNoticeSchema } from '../../shared-types/worldNotice.js';
 import { BountyResultSchema } from '../../shared-types/contracts.js';
+import { LabStateSchema } from '../../shared-types/messages/labMessages.js';
 import { BlueprintResultSchema, fittedCargoMul } from '../../shared-types/blueprints.js';
 
 const EMPTY_IDS: readonly string[] = Object.freeze([]);
@@ -2063,6 +2064,13 @@ export class ColyseusGameClient {
       if (!parsed.success) return;
       const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.ok ? 'good' : 'danger', false);
       setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
+    });
+    // Economy v2 W3 — the Research Lab panel's view (a reply to lab_query /
+    // lab_start / lab_cancel; the panel is rebuilt from it alone).
+    room.onMessage('lab_state', (raw: unknown) => {
+      const parsed = LabStateSchema.safeParse(raw);
+      if (!parsed.success) return;
+      useUIStore.getState().setLabState(parsed.data);
     });
     room.onMessage('trade_notice', (raw: unknown) => {
       const parsed = TradeNoticeSchema.safeParse(raw);
@@ -5307,7 +5315,7 @@ export class ColyseusGameClient {
    */
   private applyLocalCargo(
     localId: string,
-    cargo: { goods: Partial<Record<string, number>>; blueprints: string[] } | undefined,
+    cargo: { goods: Partial<Record<string, number>>; blueprints: readonly unknown[]; packed?: readonly unknown[] } | undefined,
     fitted?: string[],
   ): void {
     const s = useUIStore.getState();
@@ -5319,7 +5327,7 @@ export class ColyseusGameClient {
     );
     if (!cargoChanged(s.cargo, cargo) && s.cargoCapacity === capacity) return;
     s.setCargo(
-      cargo === undefined ? null : { goods: { ...cargo.goods }, blueprints: cargo.blueprints.length },
+      cargo === undefined ? null : { goods: { ...cargo.goods }, blueprints: cargo.blueprints.length, packed: cargo.packed?.length ?? 0 },
       capacity,
     );
   }

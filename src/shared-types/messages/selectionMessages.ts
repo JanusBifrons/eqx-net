@@ -60,8 +60,10 @@ export const EntityStatsSchema = z
     hold: z.object({
       goods: z.partialRecord(z.enum(GOOD_IDS), z.number().int().nonnegative()),
       blueprints: z.number().int().nonnegative(),
-      /** P5 — the stored blueprint ids (the Install action's list). */
-      blueprintIds: z.array(z.string().max(40)).max(64).optional(),
+      /** W2 — the stored blueprints' PRODUCT ids (`module:…`, `structure:…`). */
+      blueprintIds: z.array(z.string().max(80)).max(64).optional(),
+      /** W2 — how many packed structures / hulls are stored. */
+      packed: z.number().int().nonnegative().optional(),
     }).strict().optional(),
     /** Weight capacity of that storage (with `hold`). */
     holdCapacity: z.number().nonnegative().optional(),
