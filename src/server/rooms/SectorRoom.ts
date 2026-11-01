@@ -544,6 +544,13 @@ const STRUCTURE_ATTACK_AUDIT_WINDOW_MS = 15_000;
  *  rare (one per base per 15 min) rather than once per sustained-fire burst. */
 const STRUCTURE_ATTACK_PUSH_WINDOW_MS = 15 * 60_000;
 
+/** Economy v2 W4a — the packed products a pickup/deposit moved, for the popup
+ *  (spread into the message; absent when none). Discrete event, not per tick. */
+function packedProducts(moved: Hold): { packed?: string[] } {
+  if (moved.packed === undefined || moved.packed.length === 0) return {};
+  return { packed: moved.packed.slice(0, 20).map((p) => p.product) };
+}
+
 /**
  * Coarse audit attribution from a shooter id's prefix — drone (`swarm-` /
  * `lwbot-`), structure turret (`pstruct-`), or a player otherwise. The raw
@@ -6780,7 +6787,7 @@ export class SectorRoom extends Room<SectorState> {
     const client = sessionId !== undefined ? this.clients.find((cl) => cl.sessionId === sessionId) : undefined;
     if (client) {
       try {
-        client.send('loot_collected', { type: 'loot_collected', goods: moved.goods, blueprints: moved.blueprints.length });
+        client.send('loot_collected', { type: 'loot_collected', goods: moved.goods, blueprints: moved.blueprints.length, ...packedProducts(moved) });
       } catch { /* socket closing */ }
     }
     auditEvent({
@@ -6839,7 +6846,7 @@ export class SectorRoom extends Room<SectorState> {
     const sessionId = this.playerToSession.get(c.playerId);
     const client = sessionId !== undefined ? this.clients.find((cl) => cl.sessionId === sessionId) : undefined;
     try {
-      client?.send('cargo_deposited', { type: 'cargo_deposited', goods: moved.goods, blueprints: moved.blueprints.length });
+      client?.send('cargo_deposited', { type: 'cargo_deposited', goods: moved.goods, blueprints: moved.blueprints.length, ...packedProducts(moved) });
     } catch { /* socket closing */ }
     auditEvent({
       event: 'cargo_deposited', sector: this.sectorKey ?? undefined, playerId: c.playerId,
