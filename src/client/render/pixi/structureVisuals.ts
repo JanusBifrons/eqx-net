@@ -63,6 +63,9 @@ export interface StructureVisualOpts {
   gate?: GateState;
   /** Override the footprint (kindless test structures sized by radius). */
   size?: StructureFootprint;
+  /** Gates in game: leave the shield spans out — the renderer draws them live
+   *  from the open state (ConnectorRenderer via derivedWalls). */
+  omitSpans?: boolean;
 }
 
 /** A gate shield span between two posts: bright when closed, a faint ghost
@@ -266,14 +269,11 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       const post = H;
       gatePost(rects, x0 + post / 2, 0, post, accent);
       gatePost(rects, x0 + W - post / 2, 0, post, accent);
-      // Approach markings on the deck either side of the span.
-      for (let x = x0 + post + 10; x < x0 + W - post - 10; x += 26) {
-        box(rects, x, -H / 2 - 18, 12, 4, 0xe8c547, 0.6);
-        box(rects, x, H / 2 + 14, 12, 4, 0xe8c547, 0.6);
+      if (!opts.omitSpans) {
+        shieldSpan(rects, lights, x0 + post, x0 + W - post, 0, 22, opts.gate === 'open', accent, live);
+        lit(x0 + post / 2, 0, 9, opts.gate === 'open' ? 0x7fe0a4 : RED);
+        lit(x0 + W - post / 2, 0, 9, opts.gate === 'open' ? 0x7fe0a4 : RED);
       }
-      shieldSpan(rects, lights, x0 + post, x0 + W - post, 0, 22, opts.gate === 'open', accent, live);
-      lit(x0 + post / 2, 0, 9, opts.gate === 'open' ? 0x7fe0a4 : RED);
-      lit(x0 + W - post / 2, 0, 9, opts.gate === 'open' ? 0x7fe0a4 : RED);
       break;
     }
     case 'shield_airlock': {
@@ -289,10 +289,12 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
         gatePost(rects, x0 + W - post / 2, ey, post, accent);
       }
       const g = opts.gate ?? 'closed';
-      shieldSpan(rects, lights, x0 + post, x0 + W - post, y0 + post / 2, 20, g === 'openA', accent, live);
-      shieldSpan(rects, lights, x0 + post, x0 + W - post, y0 + H - post / 2, 20, g === 'openB', accent, live);
-      // Cycle indicator: which end may open next.
-      lit(x0 + W / 2, 0, 10, g === 'closed' ? RED : 0x7fe0a4);
+      if (!opts.omitSpans) {
+        shieldSpan(rects, lights, x0 + post, x0 + W - post, y0 + post / 2, 20, g === 'openA', accent, live);
+        shieldSpan(rects, lights, x0 + post, x0 + W - post, y0 + H - post / 2, 20, g === 'openB', accent, live);
+        // Cycle indicator: which end may open next.
+        lit(x0 + W / 2, 0, 10, g === 'closed' ? RED : 0x7fe0a4);
+      }
       break;
     }
     default:

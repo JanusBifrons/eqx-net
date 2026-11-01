@@ -18,6 +18,7 @@
  * round-trip is unit-testable without the real sqlite worker.
  */
 
+import { isNpcOwner } from '../../shared-types/relations.js';
 import type { Logger } from 'pino';
 import {
   SLOT_X_OFF,
@@ -45,6 +46,8 @@ export interface PersistableStructure {
   y: number;
   /** Phase V — rotation in degrees (absent ⇒ 0). */
   rot?: number;
+  /** Gates: access setting index (absent ⇒ default). */
+  gateAccess?: number;
   isConstructed: boolean;
   constructionProgress: number;
   minerals: number;
@@ -160,12 +163,15 @@ export class SectorPersistence {
     }
     const structures: SectorSnapshotStructure[] = [];
     for (const s of d.structures()) {
+      // B2 — NPC bases regenerate from their seed in v1; they are not saved.
+      if (isNpcOwner(s.owner)) continue;
       structures.push({
         entityId: s.id,
         owner: s.owner,
         kind: s.kind,
         x: s.x,
         ...(s.rot ? { rot: s.rot } : {}),
+        ...(s.gateAccess ? { gateAccess: s.gateAccess } : {}),
         y: s.y,
         health: d.swarmHealth.get(s.id) ?? 0,
         isConstructed: s.isConstructed,

@@ -78,7 +78,7 @@ export interface AiFireResolverDeps {
    *  filtered, constructed structures the drone's body target already selected
    *  among. A structure beam hit routes through `applyDamage(structureId,
    *  shooterId, …)` → the StructureEntity leaf (no new damage branch). */
-  structureHitTargets?: () => Iterable<{ id: string; x: number; y: number; radius: number; halfW?: number; halfH?: number }>;
+  structureHitTargets?: () => Iterable<{ id: string; x: number; y: number; radius: number; halfW?: number; halfH?: number; boxes?: Float32Array }>;
   /** Allegiances P0 — other swarm combatants as circles (built once per tick;
    *  EMPTY in a single-allegiance sector ⇒ byte-identical). The beam skips the
    *  shooter itself and any FRIENDLY (same-allegiance) entity. */
@@ -297,7 +297,7 @@ export class AiFireResolver implements WeaponFireSink {
     if (structs) {
       for (const s of structs) {
         const dist = s.halfW !== undefined && s.halfH !== undefined
-          ? rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, s.x, s.y, s.halfW, s.halfH)
+          ? rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, s.x, s.y, s.halfW, s.halfH, s.boxes)
           : rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, s.x, s.y, s.radius);
         if (dist !== null && dist < hitDist) {
           hitDist = dist;

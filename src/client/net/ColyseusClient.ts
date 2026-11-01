@@ -2,6 +2,7 @@ import { decodeStructureState, emptyStructureRow } from './structureStateDecode.
 import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import {
   STRUCTURE_TARGET_NONE,
+  decodePlayerTurretTarget,
   STRUCTURE_TARGET_STRIDE,
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
@@ -16,7 +17,8 @@ import { parseWelcome } from './parseWelcome';
 import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { decideStatAllocReanchor } from './localStatAlloc';
-import { SHIELD_WALL_THICKNESS } from '@core/structures/ShieldWall';
+import { visitDerivedWalls, type DerivedWallVisitor } from '../structures/derivedWalls.js';
+import { pointSegmentDistance, wantPredBody } from '../structures/predStructureStreaming.js';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import {
@@ -721,10 +723,38 @@ export class ColyseusGameClient {
    *  syncSwarmIntoPredWorld's per-packet "seen" sweep. Pre-fix
    *  allocated `new Set<string>()` per binary swarm packet (~60 Hz). */
   private readonly _swarmSyncSeenScratch = new Set<string>();
-  /** Shield-fence plan — predWorld shield-wall body ids currently spawned, and a
-   *  reused "desired this snapshot" scratch set (syncPredWalls reconciles them). */
-  private readonly _predWallIds = new Set<string>();
-  private readonly _predWallDesired = new Set<string>();
+  /** Shield walls in predWorld (fence walls + gate spans), keyed by the
+   *  derived-wall key. Spawned once, toggled as they block / open, and swept by
+   *  a generation stamp when they leave (syncPredWalls). */
+  private readonly _predWalls = new Map<number, { id: string; blocking: boolean; gen: number }>();
+  private _predWallGen = 0;
+  /** A3 — the local ship's pose for distance-streaming walls (NaN ⇒ none). */
+  private _predWallShipX = NaN;
+  private _predWallShipY = NaN;
+  private readonly _predWallVisitor: DerivedWallVisitor = {
+    wall: (key, ax, ay, bx, by, blocking, thickness) => {
+      const world = this.predWorld;
+      if (!world) return;
+      const w = this._predWalls.get(key);
+      // A3 — only walls near the local ship (unswept ⇒ released).
+      if (this._predWallShipX === this._predWallShipX) {
+        const d = pointSegmentDistance(this._predWallShipX, this._predWallShipY, ax, ay, bx, by);
+        if (!wantPredBody(w !== undefined, d)) return;
+      }
+      if (!w) {
+        const id = `predwall-${key}`; // once per wall (static structures)
+        world.spawnWall(id, ax, ay, bx, by, thickness);
+        if (!blocking) world.setWallActive(id, false);
+        this._predWalls.set(key, { id, blocking, gen: this._predWallGen });
+        return;
+      }
+      w.gen = this._predWallGen;
+      if (w.blocking !== blocking) {
+        world.setWallActive(w.id, blocking);
+        w.blocking = blocking;
+      }
+    },
+  };
   /** 2026-05-25 heap-growth gate step 8 — pooled `{targetId, damage}`
    *  literal for the per-damage-event reconcileDamageToFeedback call.
    *  Under 25-drone combat at ~75 hits/sec, the pre-fix per-event
@@ -1202,9 +1232,8 @@ export class ColyseusGameClient {
     this._aiRegisteredIds.clear();
     // Shield-fence plan — drop predWorld shield-wall colliders on handoff; the
     // destination sector's fences re-sync from its own structure slice.
-    for (const wid of this._predWallIds) this.predWorld?.removeWall(wid);
-    this._predWallIds.clear();
-    this._predWallDesired.clear();
+    for (const w of this._predWalls.values()) this.predWorld?.removeWall(w.id);
+    this._predWalls.clear();
     // Multi-mount/turret refactor (Phase 4b.2): drop the local ship's
     // sticky turret target on sector handoff — the destination sector has
     // a fresh swarm with different ids, so holding the previous pin would
@@ -3259,6 +3288,10 @@ export class ColyseusGameClient {
     // collider / mass / AI-ledger / shield-swap details live in the leaves.
     const ctx = this._clientSpawnCtx;
     ctx.predWorld = this.predWorld;
+    // A3 — structures stream in by distance from the local ship (every
+    // correction replays the whole prediction world). No local ship ⇒ keep all.
+    const localId = this.mirror.localPlayerId;
+    const me = localId ? this.mirror.ships.get(localId) : undefined;
     for (const [entityId, entry] of this.mirror.swarm) {
       // HC#2: an unrecognised pose-core kind resolves to `null` and is SKIPPED —
       // it never falls through to the drone path (the old `else`-is-drone branch
@@ -3269,6 +3302,10 @@ export class ColyseusGameClient {
       if (key === undefined) {
         key = `swarm-${entityId}`;
         keyCache.set(entityId, key);
+      }
+      if (entry.kind === 2 && me) {
+        const edge = Math.hypot(entry.x - me.x, entry.y - me.y) - entry.radius;
+        if (!wantPredBody(this.predWorld.hasShip(key), edge)) continue; // unseen ⇒ swept below
       }
       seen.add(key);
       ctx.entityId = entityId;
@@ -3351,6 +3388,7 @@ export class ColyseusGameClient {
     }
     decodeStructureState(v, this._structureOwners, row);
     row.turretTargetId = undefined;
+    row.turretTargetPlayerId = undefined;
     row.miningTargetId = undefined;
     this._structureGen.set(id, this._structureGenN);
   };
@@ -3398,7 +3436,11 @@ export class ColyseusGameClient {
         for (let i = 0; i + 2 < targets.length; i += STRUCTURE_TARGET_STRIDE) {
           const row = map.get(targets[i]!);
           if (!row) continue;
-          if (targets[i + 1] !== STRUCTURE_TARGET_NONE) row.turretTargetId = targets[i + 1];
+          const turret = targets[i + 1]!;
+          // B2 — a negative slot below NONE is a PLAYER target (an owner-table index).
+          const ownerIdx = decodePlayerTurretTarget(turret);
+          if (ownerIdx >= 0) row.turretTargetPlayerId = this._structureOwners.ids[ownerIdx];
+          else if (turret !== STRUCTURE_TARGET_NONE) row.turretTargetId = turret;
           if (targets[i + 2] !== STRUCTURE_TARGET_NONE) row.miningTargetId = targets[i + 2];
         }
       }
@@ -3465,36 +3507,25 @@ export class ColyseusGameClient {
    * rule), so the LOCAL player is predicted-blocked by an up wall instead of
    * predicting through it and rubber-banding to the server. Snapshot cadence
    * (NOT the per-frame loop): walls are static + low-count, so a reconcile here
-   * is cheap. Geometry derived from the two pylon poses (`mirror.swarm`), exactly
-   * like the server collider + the rendered span. A down wall (stunned /
-   * unpowered) has NO collider so the player passes — matching the server.
+   * is cheap. Every wall (fence walls between emitters + each gate's spans) is
+   * derived by the shared `visitDerivedWalls` — the same rules the renderer
+   * draws with and the server collides with (#15). A wall that isn't blocking
+   * (down, or an open gate end) keeps its body with the collider disabled.
    */
   private syncPredWalls(): void {
     if (!this.predWorld) return;
     const structures = this.mirror.structures;
     const swarm = this.mirror.swarm;
-    const desired = this._predWallDesired;
-    desired.clear();
-    if (structures && swarm) {
-      for (const [id, st] of structures) {
-        if (st.shieldWallTo === undefined || !st.wallActive) continue;
-        if (id >= st.shieldWallTo) continue; // once per pair (lower id wins)
-        const a = swarm.get(id);
-        const b = swarm.get(st.shieldWallTo);
-        if (!a || !b) continue;
-        const wid = `predwall-${id}-${st.shieldWallTo}`;
-        desired.add(wid);
-        if (!this._predWallIds.has(wid)) {
-          this.predWorld.spawnWall(wid, a.x, a.y, b.x, b.y, SHIELD_WALL_THICKNESS);
-          this._predWallIds.add(wid);
-        }
-      }
-    }
-    for (const wid of this._predWallIds) {
-      if (!desired.has(wid)) {
-        this.predWorld.removeWall(wid);
-        this._predWallIds.delete(wid);
-      }
+    const gen = ++this._predWallGen;
+    const localId = this.mirror.localPlayerId;
+    const me = localId ? this.mirror.ships.get(localId) : undefined;
+    this._predWallShipX = me ? me.x : NaN;
+    this._predWallShipY = me ? me.y : NaN;
+    if (structures && swarm) visitDerivedWalls(structures, swarm, this._predWallVisitor);
+    for (const [key, w] of this._predWalls) {
+      if (w.gen === gen) continue;
+      this.predWorld.removeWall(w.id);
+      this._predWalls.delete(key);
     }
   }
 

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { StructureKindIdSchema } from '../structureKinds.js';
+import { GATE_ACCESS_IDS } from '../gateAccess.js';
 import { SelectEntitySchema, DeselectEntitySchema } from './selectionMessages.js';
 
 export const InputMessageSchema = z
@@ -169,6 +170,17 @@ export const UpgradeStructureSchema = z
   })
   .strict();
 
+/** Gates — client → server: set who a Shield Gate / Airlock opens for.
+ *  Owner-gated server-side; a foreign / non-gate / unknown request is a silent
+ *  no-op. Strict — no extra keys. */
+export const SetGateAccessSchema = z
+  .object({
+    type: z.literal('set_gate_access'),
+    entityId: z.number().int().nonnegative(),
+    access: z.enum(GATE_ACCESS_IDS),
+  })
+  .strict();
+
 /** Living World P1a-2 — client → server: refine SALVAGE from the base storage
  *  network into this Capital's mineral bank. Owner-gated server-side; a
  *  foreign / non-Capital / empty request is a silent no-op. */
@@ -294,6 +306,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   RemoveStructureSchema,
   StructureActionSchema,
   UpgradeStructureSchema,
+  SetGateAccessSchema,
   RefineSalvageSchema,
   RepairShipSchema,
   PilotShipSchema,
@@ -315,6 +328,7 @@ export type PlaceStructureMessage = z.infer<typeof PlaceStructureSchema>;
 export type RemoveStructureMessage = z.infer<typeof RemoveStructureSchema>;
 export type StructureActionMessage = z.infer<typeof StructureActionSchema>;
 export type UpgradeStructureMessage = z.infer<typeof UpgradeStructureSchema>;
+export type SetGateAccessMessage = z.infer<typeof SetGateAccessSchema>;
 export type PilotShipMessage = z.infer<typeof PilotShipSchema>;
 export type SpectateMessage = z.infer<typeof SpectateSchema>;
 export type StatId = z.infer<typeof StatIdSchema>;

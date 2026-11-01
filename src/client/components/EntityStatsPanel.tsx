@@ -12,7 +12,10 @@ import { useUIStore } from '../state/store';
 import { selectionStats } from '../net/selectionStats';
 import { toSelectWire } from '../net/selectionClient';
 import { getGameClient } from '../net/clientSingleton';
-import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip } from '../structures/structureActionsClient';
+import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip, sendSetGateAccess } from '../structures/structureActionsClient';
+import { gateTypeOf } from '@core/structures/gateGeometry';
+import { GATE_ACCESS_IDS, GATE_ACCESS_LABELS, gateAccessFromIndex, type GateAccess } from '@shared-types/gateAccess';
+import LockOpenIcon from '@mui/icons-material/LockOpen';
 import { sendPilotShip } from '../ships/shipActionsClient';
 import { BountyAction } from './BountyAction';
 import { BlueprintInstall } from './BlueprintInstall';
@@ -95,6 +98,8 @@ interface PanelData {
    *  OWNED, fully BUILT (not a blueprint / mid-upgrade), not deconstructing, and
    *  below the level cap. Gates the 4th action button. */
   canUpgrade?: boolean;
+  /** Gates — who it opens for (an access id). Absent for non-gates. */
+  gateAccess?: GateAccess;
   /** Phase 4 WS-A2 — set for an OWNED in-sector lingering hull (the local
    *  player's own parked ship). Drives the in-world "Pilot" action; the value is
    *  the shipInstanceId to `pilot_ship`. Absent for another player's hull / a
@@ -221,6 +226,12 @@ export function EntityStatsPanel(): JSX.Element | null {
           {`LVL ${data.level}`}
         </Box>
       )}
+      {data.gateAccess !== undefined && (
+        // Gates — who it opens for (visible to everyone; only the owner changes it).
+        <Box sx={POWER_SX} data-testid="entity-stats-gate-access" data-gate-access={data.gateAccess}>
+          {`OPENS FOR ${GATE_ACCESS_LABELS[data.gateAccess]}`}
+        </Box>
+      )}
       {data.owner !== undefined && (
         // Owner readout — identifies whose base this is ("you" vs a truncated id).
         <Box sx={POWER_SX} data-testid="entity-stats-owner">
@@ -258,6 +269,18 @@ export function EntityStatsPanel(): JSX.Element | null {
               <HubIcon sx={ICON_SX} />
             </IconButton>
           </Tooltip>
+          {data.gateAccess !== undefined && (
+            <Tooltip title="Change who this gate opens for">
+              <IconButton
+                data-testid="structure-action-gate-access"
+                size="small"
+                sx={ACTION_BTN_SX}
+                onClick={() => sendSetGateAccess(data.entityId!, nextGateAccess(data.gateAccess!))}
+              >
+                <LockOpenIcon sx={ICON_SX} />
+              </IconButton>
+            </Tooltip>
+          )}
           {data.isConnector && (
             <Tooltip title="Clear all connections">
               <IconButton
@@ -346,8 +369,15 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'powered',
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
-  'holdLine', 'holdUse', 'canRefine', 'bountyTarget', 'blueprints',
+  'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
 ];
+
+/** The next gate access setting in the cycle (owner + allies → owner only →
+ *  anyone not hostile → …). */
+export function nextGateAccess(a: GateAccess): GateAccess {
+  const i = GATE_ACCESS_IDS.indexOf(a);
+  return GATE_ACCESS_IDS[(i + 1) % GATE_ACCESS_IDS.length]!;
+}
 
 /** True when two polled PanelData reads carry identical values (Wave-3 3.3 —
  *  gates the poll's setState so unchanged data never commits a re-render). */
@@ -428,6 +458,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       if (eid !== undefined) data.entityId = eid;
       data.isDeconstructing = st.isDeconstructing === true;
       data.isConnector = subtype === 'connector';
+      if (gateTypeOf(subtype) !== null) data.gateAccess = gateAccessFromIndex(st.gateAccess);
       // WS-B4 — the level (≥ 1; absent on the slice ⇒ level 1) drives the LVL
       // line + the Upgrade affordance. Upgrade is OWN-only, BUILT-only,
       // not-deconstructing, below the cap.

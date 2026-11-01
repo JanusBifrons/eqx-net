@@ -28,6 +28,8 @@ describe('structureKinds catalogue', () => {
       'laser_bolt_turret', // WS-8 (R2.15) — appended at the tail
       'missile_turret',
       'cargo_bay', // Living World P1a-2 — appended at the tail
+      'shield_gate', // gates — appended at the tail
+      'shield_airlock',
     ]);
   });
 
@@ -51,9 +53,9 @@ describe('structureKinds catalogue', () => {
     );
   });
 
-  it('hubs are the Capital + Connector + Shield Pylon; leaves cap at 1 connection', () => {
+  it('hubs are the Capital + Connector + the shield emitters; leaves cap at 1 connection', () => {
     const hubs = STRUCTURE_KINDS_LIST.filter((k) => k.isHub).map((k) => k.id);
-    expect(hubs.sort()).toEqual(['capital', 'connector', 'shield_pylon']);
+    expect(hubs.sort()).toEqual(['capital', 'connector', 'shield_airlock', 'shield_gate', 'shield_pylon']);
     expect(STRUCTURE_KINDS.capital.maxConnections).toBe(4);
     expect(STRUCTURE_KINDS.connector.maxConnections).toBe(6);
     // The pylon is a hub so two pylons can link directly (it pairs into a wall).

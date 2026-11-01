@@ -79,6 +79,8 @@ export interface SwarmHitTarget {
   /** Structures (phase V): footprint half extents for the box hit test. */
   halfW?: number;
   halfH?: number;
+  /** Gates: the solid parts' world-axis boxes (see SwarmEntityRecord.boxes). */
+  boxes?: Float32Array;
 }
 
 export interface SwarmHitSource {
@@ -431,7 +433,7 @@ export class PlayerFireResolver implements WeaponFireSink {
         dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, rec.vertices);
       } else if (rec.halfW !== undefined && rec.halfH !== undefined) {
         // Structures (phase V): the footprint box, not the bounding circle.
-        dist = rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.halfW, rec.halfH);
+        dist = rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.halfW, rec.halfH, rec.boxes);
       } else {
         dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.radius);
       }

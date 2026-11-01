@@ -228,6 +228,9 @@ export interface StructureRenderState {
   /** Phase 5 — drone entityId a Turret is aiming at (draws the aim line), or
    *  undefined. */
   turretTargetId?: number;
+  /** B2 — playerId a Turret is aiming at (an NPC turret engaging a hostile
+   *  pilot), or undefined. Mutually exclusive with `turretTargetId`. */
+  turretTargetPlayerId?: string;
   /** Batteries plan — current stored power (Battery only; undefined elsewhere). */
   storedPower?: number;
   /** Batteries plan — the Battery's stored-power capacity (readout denominator). */
@@ -239,8 +242,13 @@ export interface StructureRenderState {
    *  a wall span to (undefined when unpaired). Joined to `mirror.swarm` for the
    *  pair's pose to draw + predict the span. */
   shieldWallTo?: number;
-  /** Shield-fence plan — whether that wall is currently blocking (active). */
+  /** A shield emitter's walls are up (all powered, none stunned). Walls are
+   *  derived from `connTo` between emitters, plus each gate's own spans. */
   wallActive?: boolean;
+  /** Gates: open bits (GATE_OPEN_A = span 0, GATE_OPEN_B = span 1). */
+  gateOpen?: number;
+  /** Gates: access setting (GATE_ACCESS_IDS index; undefined ⇒ default). */
+  gateAccess?: number;
   /** Owning playerId. Drives the inspector's "is this mine?" check AND the
    *  same-owner filter on connection / placement-preview lines — a cross-owner
    *  structure is visible but never draws a connection line to the local grid. */

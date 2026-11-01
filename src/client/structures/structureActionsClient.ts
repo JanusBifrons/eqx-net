@@ -4,6 +4,7 @@
  * Mirrors `structurePlacementClient`'s send pattern; the structure is referenced
  * by its numeric swarm entityId (the selected id). Owner-gated server-side.
  */
+import type { GateAccess } from '../../shared-types/gateAccess';
 import { getGameClient } from '../net/clientSingleton.js';
 
 export type StructureAction = 'toggle_deconstruct' | 'reconnect' | 'clear_connections';
@@ -28,6 +29,17 @@ export function sendUpgradeStructure(entityId: number): boolean {
   const room = client.getRoom();
   if (!room) return false;
   room.send('upgrade_structure', { type: 'upgrade_structure', entityId });
+  return true;
+}
+
+/** Gates — send `set_gate_access` (who this gate opens for). Owner-gated
+ *  server-side; the inspector only offers it on the owner's own gates. */
+export function sendSetGateAccess(entityId: number, access: GateAccess): boolean {
+  const client = getGameClient();
+  if (!client) return false;
+  const room = client.getRoom();
+  if (!room) return false;
+  room.send('set_gate_access', { type: 'set_gate_access', entityId, access });
   return true;
 }
 

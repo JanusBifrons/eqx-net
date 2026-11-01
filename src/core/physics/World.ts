@@ -244,6 +244,7 @@ export class PhysicsWorld {
     vertices?: ReadonlyArray<Vec2>,
     linearDamping = 0,
     collisionGroups?: number,
+    parts?: ReadonlyArray<ReadonlyArray<Vec2>>,
   ): void {
     // WS-11 (R2.25) — `linearDamping` defaults to 0 so ASTEROIDS + STRUCTURES
     // stay ballistic (no friction), but DRONES pass their per-kind
@@ -260,6 +261,27 @@ export class PhysicsWorld {
       // Soft CCD for every moving obstacle (drones, asteroids, scrap) — see spawnShip.
       .setSoftCcdPrediction(SOFT_CCD_PREDICTION);
     const body = this.world.createRigidBody(bodyDesc);
+
+    // Gates (phase V): a body made of SEVERAL convex parts (two posts, or an
+    // airlock's posts + side walls) so ships can pass through the gap between
+    // them. Density spreads the requested mass over the total part area.
+    if (parts && parts.length > 0) {
+      let totalArea = 0;
+      for (const p of parts) totalArea += polygonArea(p);
+      const density = totalArea > 0 ? mass / totalArea : mass;
+      for (const p of parts) {
+        const d = RAPIER.ColliderDesc.convexHull(verticesToFloat32(p));
+        if (!d) continue;
+        d.setRestitution(0.8).setFriction(0).setDensity(density)
+          .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+          .setContactForceEventThreshold(10);
+        if (collisionGroups !== undefined) d.setCollisionGroups(collisionGroups);
+        this.world.createCollider(d, body);
+      }
+      this.bodies.set(id, { body, kind: getShipKind(DEFAULT_SHIP_KIND), exposed: false });
+      this.handleToId.set(body.handle, id);
+      return;
+    }
 
     let collider: RAPIER.ColliderDesc | null = null;
     if (vertices && vertices.length >= 3) {

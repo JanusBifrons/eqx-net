@@ -66,7 +66,7 @@ export interface ShipPose {
 
 /** Narrow view of the swarm registry the pipeline iterates. */
 export interface SwarmCandidateSource {
-  all(): Iterable<{ id: string; slot: number; radius: number; kind?: number; shipKind?: string; halfW?: number; halfH?: number }>;
+  all(): Iterable<{ id: string; slot: number; radius: number; kind?: number; shipKind?: string; halfW?: number; halfH?: number; boxes?: Float32Array }>;
 }
 
 export interface ProjectilePipelineDeps {
@@ -197,7 +197,7 @@ export class ProjectilePipeline {
         const cx = d.sabF32[b + SLOT_X_OFF]!;
         const cy = d.sabF32[b + SLOT_Y_OFF]!;
         const sweep = rec.halfW !== undefined && rec.halfH !== undefined
-          ? projectileSweepBox(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.halfW, rec.halfH)
+          ? projectileSweepBox(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.halfW, rec.halfH, rec.boxes)
           : projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius);
         if (sweep && sweep.entry < bestEntry) {
           bestEntry = sweep.entry;

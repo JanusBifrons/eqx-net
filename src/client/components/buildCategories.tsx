@@ -38,7 +38,7 @@ export const BUILD_CATEGORIES: readonly BuildCategory[] = [
     id: 'defence',
     label: 'Defence',
     icon: <SecurityIcon />,
-    kinds: ['turret', 'laser_bolt_turret', 'missile_turret', 'shield_pylon'],
+    kinds: ['turret', 'laser_bolt_turret', 'missile_turret', 'shield_pylon', 'shield_gate', 'shield_airlock'],
   },
 ];
 

@@ -101,6 +101,40 @@ export function rayHitsBox(
   maxDist: number,
   cx: number, cy: number,
   hw: number, hh: number,
+  boxes?: Float32Array,
+): number | null {
+  if (boxes) return rayHitsBoxParts(fromX, fromY, dirX, dirY, maxDist, cx, cy, boxes, 0);
+  return rayHitsAabb(fromX, fromY, dirX, dirY, maxDist, cx, cy, hw, hh);
+}
+
+/**
+ * A ray against a structure made of several boxes (a gate's posts and walls):
+ * `boxes` is flat `[offsetX, offsetY, halfW, halfH, ...]` from the centre,
+ * each padded by `pad`. The nearest hit wins; the gap between parts is open.
+ * Alloc-free.
+ */
+export function rayHitsBoxParts(
+  fromX: number, fromY: number,
+  dirX: number, dirY: number,
+  maxDist: number,
+  cx: number, cy: number,
+  boxes: Float32Array,
+  pad: number,
+): number | null {
+  let best: number | null = null;
+  for (let i = 0; i + 3 < boxes.length; i += 4) {
+    const t = rayHitsAabb(fromX, fromY, dirX, dirY, maxDist, cx + boxes[i]!, cy + boxes[i + 1]!, boxes[i + 2]! + pad, boxes[i + 3]! + pad);
+    if (t !== null && (best === null || t < best)) best = t;
+  }
+  return best;
+}
+
+function rayHitsAabb(
+  fromX: number, fromY: number,
+  dirX: number, dirY: number,
+  maxDist: number,
+  cx: number, cy: number,
+  hw: number, hh: number,
 ): number | null {
   let tMin = 0;
   let tMax = maxDist;
@@ -137,12 +171,15 @@ export function projectileSweepBox(
   projRadius: number,
   cx: number, cy: number,
   hw: number, hh: number,
+  boxes?: Float32Array,
 ): { entry: number; hitX: number; hitY: number } | null {
   const segLen = Math.hypot(stepX, stepY);
   if (segLen < 1e-6) return null;
   const dirX = stepX / segLen;
   const dirY = stepY / segLen;
-  const entry = rayHitsBox(fromX, fromY, dirX, dirY, segLen, cx, cy, hw + projRadius, hh + projRadius);
+  const entry = boxes
+    ? rayHitsBoxParts(fromX, fromY, dirX, dirY, segLen, cx, cy, boxes, projRadius)
+    : rayHitsAabb(fromX, fromY, dirX, dirY, segLen, cx, cy, hw + projRadius, hh + projRadius);
   if (entry === null) return null;
   return { entry, hitX: fromX + dirX * entry, hitY: fromY + dirY * entry };
 }

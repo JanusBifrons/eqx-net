@@ -75,6 +75,23 @@ Each phase appends a row with its measured numbers against the budgets in `struc
 
 | V (large footprints) | ~0 | 1,553 / 4,116 (during battery charge-up, 456 structures) | 17,015 | — | 0.82 | 1.97 | Footprints 3–6× larger; sector ceiling re-measured to 664 structures (budget 800 → 650) |
 
+## A3: client cost
+
+Measured at the citadel (456 structures incl. a fenced lattice) on the dev box.
+
+| Surface | Before | After | Lock |
+|---|---|---|---|
+| Connector web, per frame (building draw commands) | 0.70 ms median, every edge redrawn and re-tessellated each frame | 0.20 ms median; idle web cached | `ConnectorRenderer.staticLayer.test.ts` (static layer rebuilds once across 120 frames) |
+| Prediction replay, 20 ticks (each server correction) | 2.36–2.54 ms median, 5–7 ms p95, whole base in the prediction world | 0.31–0.42 ms median, 1.1 ms p95, 52 of 456 bodies near the ship | `World.structureStreaming.test.ts`, `predStructureStreaming.test.ts` |
+| Off-screen structure sprites | all drawn | not drawn (camera rect + bounding radius) | `spriteUpdateDecisions.test.ts` (`isSpriteInView`) |
+
+**What changed.**
+- **Static layer.** `ConnectorRenderer` draws idle edges, built-turret range rings, up-wall rails and open-gate guides on a retained `staticGfx`, rebuilt only when an integer signature of the structure set, poses, connections and built / walls-up / gate-open state changes, or the zoom moves more than 3 %. Flow pulses, wall glow and shimmer, beams, build bars and the placement preview stay per frame.
+- **Prediction streaming.** The client prediction world holds a structure or shield-wall body only while its edge is within `PREDWORLD_STRUCTURE_RADIUS` (1500 u) of the local ship, released past +300 u. Making structure bodies FIXED instead of locked-dynamic did NOT help (same cost), so the cost is per collider in Rapier's broad/narrow phase, not the solver: fewer colliders is the only lever.
+- **Sprite culling.** Structure sprites outside the camera rect are hidden (`visible = false`).
+
+**Not measured here.** The GPU-side saving of not re-tessellating the web each frame happens at render time and needs a browser perf arm (`STRUCTURE_CLIENT_FRAME_P99_REL_MAX`). That arm, and a renderer heap-delta lock, are follow-ups.
+
 ## Phase V: structures redesigned far larger
 
 **What changed.** The user found the citadel lattice "awful" and asked for structures that are "far larger and more like the other ones you made". Every kind now has a rectangular `footprint` in the catalogue (v9):

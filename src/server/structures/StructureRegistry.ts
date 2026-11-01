@@ -60,6 +60,8 @@ export interface StructureRecord {
    *  component `powered` through a deficit, and is drained first by shield-wall
    *  hits. 0 on every non-battery kind (they have no `powerStorageCapacity`). */
   storedPower: number;
+  /** Gates: who the gate opens for (GATE_ACCESS_IDS index; absent ⇒ default). */
+  gateAccess?: number;
   /** Phase 4 (Leveling & XP, WS-B4) — structure level (≥ 1). A fresh structure
    *  is level 1; a paid Upgrade build phase increments it and applies the
    *  per-level stat grant (HP / turret range+damage / power output / storage).
@@ -107,6 +109,9 @@ export interface StructureRecord {
   /** Phase 5 — the drone entityId this Turret is aiming at (for the client aim
    *  line). Transient; recomputed each turret tick. */
   turretTargetEntityId?: number;
+  /** B2 — playerId this turret is aiming at (NPC turrets only), or undefined.
+   *  Mutually exclusive with `turretTargetEntityId`. */
+  turretTargetPlayer?: string;
   /** Phase 5 — wall-clock ms of this Turret's last shot (fire-rate cooldown). */
   lastTurretFireMs?: number;
 }

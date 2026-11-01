@@ -24,6 +24,27 @@ export interface LayoutPoint {
   y: number;
 }
 
+/**
+ * Gates E2E / showcase base: a powered Capital with two Shield Gates south of
+ * it, side by side. The WEST gate opens for anyone not hostile; the EAST gate
+ * opens for its owner only — and the owner is `scenario`, so a visiting pilot
+ * is locked out. Ships spawned south of a gate and flown north (+y) test both.
+ * Power: Capital 50 + Solar 30 = 80 ≥ 2 gates × 30.
+ */
+export const GATE_TEST = {
+  openGate: { x: -400, y: -900 },
+  lockedGate: { x: 400, y: -900 },
+} as const;
+
+export const GATE_TEST_PREBUILT = [
+  { kind: 'capital', x: 0, y: 0 },
+  { kind: 'connector', x: 0, y: 350 },
+  { kind: 'solar', x: 250, y: 400 },
+  { kind: 'connector', x: 0, y: -350 },
+  { kind: 'shield_gate', ...GATE_TEST.openGate, gateAccess: 'open' },
+  { kind: 'shield_gate', ...GATE_TEST.lockedGate, gateAccess: 'owner' },
+] as const;
+
 export const SCENARIO = {
   capital: { x: 0, y: 0 },
   connectorN: { x: 0, y: 350 },

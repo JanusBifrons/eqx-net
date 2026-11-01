@@ -18,6 +18,8 @@ import InventoryIcon from '@mui/icons-material/Inventory2';
 import SecurityIcon from '@mui/icons-material/Security';
 import BoltIcon from '@mui/icons-material/Bolt';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
+import DoorSlidingIcon from '@mui/icons-material/DoorSliding';
+import MeetingRoomIcon from '@mui/icons-material/MeetingRoom';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
 import { getStructureKind, type StructureKindId } from '@shared-types/structureKinds';
@@ -339,6 +341,8 @@ export const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
   laser_bolt_turret: <BoltIcon />, // WS-8 (R2.15)
   missile_turret: <RocketLaunchIcon />,
   cargo_bay: <InventoryIcon />, // Living World P1a-2
+  shield_gate: <DoorSlidingIcon />,
+  shield_airlock: <MeetingRoomIcon />,
 };
 
 // ── Hoisted static sx / props (no per-render allocation) ───────────────────

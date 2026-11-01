@@ -318,6 +318,55 @@ ship) and posted `SET_HULL_EXPOSED`, corrupting the collider — the unified-ent
 hull "fly into a capital" bug. Pylons are the first structures the AI actively
 shoots, which surfaced it; regen is now gated on `rec.kind === 1` (drones only).
 
+## Gates
+
+Plan soft-leaping-truffle v2, phase V. Player guide:
+[shield-gates.md](../features/shield-gates.md).
+
+**Kinds.** `shield_gate` (320 × 72) and `shield_airlock` (320 × 260), appended
+to the structure catalogue (no version bump: appending leaves saved rows valid,
+and a bump would reset saved structures).
+
+**Geometry** lives in one zone-pure module, `src/core/structures/gateGeometry.ts`,
+read by both sides (#15):
+- **Collider parts:** a gate's physics body is its posts (and an airlock's side
+  walls) as separate convex parts (`gateColliderPolygons`), on the server worker
+  and the client prediction world, so the gap between them is open. Weapon hits
+  test the same parts (`SwarmEntityRecord.boxes`, `rayHitsBox(..., boxes)`).
+- **Spans:** the shield across a gap (`gateSpans`; gate: one, airlock: A at
+  local +y, B at −y).
+- **Anchors:** a fence wall ends on the gate post nearest its far end
+  (`emitterAnchor`).
+
+**Open/close** (`src/core/structures/gateLogic.ts`, server-only): occupancy is
+built from ship positions in the gate's local frame. A gate opens while an
+admitted ship is within `GATE_APPROACH_DEPTH` (300 u) of the span and closes
+`GATE_CLOSE_HOLD_MS` after the zone empties. An airlock is one `phase` field
+(closed / open A / open B), so both ends can never be open; it never closes an
+end while a ship overlaps it. Locked by a fast-check property test.
+
+**Server.** `GateController` steps every built gate on the 10 Hz structure tick
+from the ACTIVE player ships (#17) and the gate's access setting
+(`shared-types/gateAccess.ts`: owner + allies / owner only / anyone not
+hostile; relations go through the B1 seam once it lands).
+`ShieldWallManager` forms walls between ANY two connected built emitters
+(pylons and gates) plus each gate's own spans; a span stops blocking while its
+end is open. `wallsUpFor(id)` feeds `STRUCTURE_FLAG_WALL_ACTIVE`.
+
+**Wire.** Room state `StructureState.gateOpen` (open bits) and `gateAccess`;
+`set_gate_access` message (owner-gated). Access persists in the sector snapshot.
+
+**Client.** `src/client/structures/derivedWalls.ts` derives every wall (fence
+walls + spans) from the mirror with the server's rules; the renderer draws from
+it and the prediction world collides with it. This replaced the per-pylon
+`shieldWallTo` read, which only knew a pylon's FIRST wall — a pylon's second
+wall was neither drawn nor predicted.
+
+**Tests.** `gateLogic.test` (geometry + state machines + property),
+`World.gate.test` (fly through the gap / stopped by a post / span blocks),
+`GateController.test`, `derivedWalls.test`, integration `gates.test`, E2E
+`gate-fly-through.spec` (`gate-test` room).
+
 ## Mining (Phase 4 — shipped)
 
 `StructureGridSubsystem.pulse()` gained two steps before construction: **mining**

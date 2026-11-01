@@ -134,6 +134,11 @@ Update this section when a threshold is set.
   - **Structure rotation.** `place_structure` carries an optional `rot`, which the server snaps to 0/90/180/270. It is stored on `StructureRecord.rot` and the cached `halfW/halfH`, persisted in the sector snapshot, and becomes the body angle at spawn.
   - **Weapon paths.** They use the swarm record's `halfW/halfH` box for kind 2.
   - **Test and scenario layouts** live in ONE place: `rooms/scenarioLayouts.ts` (`SCENARIO`, `STRUCTURE_SCENARIO_PREBUILT`), shared by `index.ts`, `showcaseRooms.ts` and the integration tests. Footprints are 3–6× the old radii, so a hand-placed layout must be re-derived against the real boxes, not guessed.
+- **Gates:**
+  - `GateController` (`structures/GateController.ts`) steps every built gate on the 10 Hz structure tick, BEFORE `ShieldWallManager.update`. Only ACTIVE player ships open gates (#17).
+  - `ShieldWallManager` forms walls between ANY two connected emitters (`isShieldEmitterKind`: pylons + gates) plus each gate's spans; `wallsUpFor(id)` is the per-emitter WALL_ACTIVE flag.
+  - Room state `gateOpen` / `gateAccess`; `set_gate_access` is owner-gated. Test room `gate-test` (open gate + owner-only gate).
+- **Structure rotation reaches the physics body.** `SwarmSpawner` forwards the spawn angle for structures (kind 2) as well as scrap, and primes the SAB angle. (It used to forward it for scrap only, so rotated structures collided and drew at 0° — locked by `structureRotation.test.ts`.)
 - **A2 (structure state → ROOM STATE):** structure grid state is `SectorState.structures` (MapSchema keyed by the decimal entityId; `StructureState` in `schema/SectorState.ts`), synced by `SectorRoom.rebuildStructuresSlice` (name kept; same 1 Hz pulse / 10 Hz turret tick / placement call sites). **Rules:**
   - **Assign only on change, and only away from the default.** Fields have NO initialisers: Colyseus schema v3 encodes every ASSIGNED field on join, and initialisers count as assignments. Unset means `STRUCTURE_DEFAULTS` (`shared-types/structureStateWire.ts`); compare `(st.f ?? DEFAULT) !== value` before writing.
   - **Owners are interned** (`structureOwners` / `structureOwnerNames` + `ownerIdx`).
@@ -141,6 +146,22 @@ Update this section when a threshold is set.
   - **Binary channel:** a sleeping out-of-interest structure rides only every `STRUCTURE_OUT_OF_INTEREST_FULL_EVERY` (5th) full refresh. Room state owns structure lifetime on the client.
   - **Test view:** `_internals.getStructuresSlice()` is the pre-A2 row shape rebuilt from room state.
 - **A1 (turret targeting + routes):** turret targets come from `findNearestTurretTarget`, a per-turret-tick `NearestPointGrid` of turret-targetable drones (rebuilt lazily on first query; any `evictSwarmEntity` marks it stale; same winner as the old scan, including ties). `Grid.route` reads a per-source BFS tree, cached until the next topology change. After A1 the dominant turret-tick cost is the 10 Hz `rebuildStructuresSlice` (allocation-heavy; GC spikes), which A2 removes.
+
+## NPC ownership (plan soft-leaping-truffle v3, B2)
+
+- **Owners like `npc:<allegiance>:<baseId>` are NPC bases.** Every "is this hostile?" decision about a structure goes through `relationOf`, using the room's ONE `relationCtx` (which holds the hostile-act ledger). Don't compare owner strings inline.
+- **Turrets:**
+  - A player-owned turret keeps the A1 drone grid, unchanged.
+  - An NPC-owned turret uses a second per-tick grid of every NPC ship plus every ACTIVE player ship (#17), filtered by `relationOf(target, owner) === 'hostile'` (`NearestPointGrid.nearestWhere`).
+  - Missiles from an NPC turret home on the same rule.
+- **Hostile acts:** `applyDamage` records one when a player, or a player's turret, hits an NPC structure. They expire on the 1 Hz grid pulse.
+- **NPC owners are excluded from player-faction systems:**
+  - `factionBaseReadiness`: no waves;
+  - `FactionLedger.factionOf`: no escalation;
+  - `SectorPersistence`: NPC bases regenerate from their seed.
+- **Display names:** `resolveOwnerName` gives "<Side> base", never a raw id.
+- **A turret aiming at a player** rides `structureTargets` as an owner-table index (`encodePlayerTurretTarget`).
+- Lock: `tests/integration/sectorRoom/npcOwnership.test.ts`. Story: [docs/architecture/relations.md](../../docs/architecture/relations.md).
 
 ## Procedural bases (`src/server/bases/BaseSubsystem.ts`, plan soft-leaping-truffle)
 
