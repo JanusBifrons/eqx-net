@@ -18,6 +18,7 @@
  * round-trip is unit-testable without the real sqlite worker.
  */
 
+import { isNpcOwner } from '../../shared-types/relations.js';
 import type { Logger } from 'pino';
 import {
   SLOT_X_OFF,
@@ -162,6 +163,8 @@ export class SectorPersistence {
     }
     const structures: SectorSnapshotStructure[] = [];
     for (const s of d.structures()) {
+      // B2 — NPC bases regenerate from their seed in v1; they are not saved.
+      if (isNpcOwner(s.owner)) continue;
       structures.push({
         entityId: s.id,
         owner: s.owner,

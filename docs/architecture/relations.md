@@ -58,8 +58,10 @@ Both the actor and the owner are owner strings:
 
 | Caller | Since | Note |
 |---|---|---|
-| `GateController` (via `SectorRoom`) | B2 | Replaces the interim self/neutral rule. `gateAdmits` must treat `friendly` like `self`, so an NPC base's own side passes its gates |
-| Structure turrets, missile targeting | B2 | |
+| `GateController` (via `SectorRoom`) | B2 | `gateAdmits` treats `friendly` like `self`, so an NPC base's own side passes its gates |
+| NPC-owned turrets and their missiles | B2 | Target whatever is `hostile` to the owner, players included. Player-owned turrets are unchanged (drones and robots, never players) |
+| Hostile acts | B2 | A player, or a player's turret, damaging an NPC structure records an act against that base |
+| Waves, faction escalation, persistence | B2 | NPC owners are skipped: never a wave target, never a player faction, not saved (they regenerate from their seed) |
 | Cargo access (`cargoOpensFor`) | C1 | |
 | Break-ins | C2 | |
 
@@ -71,4 +73,16 @@ Both the actor and the owner are owner strings:
   - a property test proving that, with no alliances or acts, a pair of players is still `self` or `neutral`: exactly the interim gate rule, so switching gates over in B2 changes nothing for players.
 - `HostileActLedger.test.ts`: directionality, expiry, the extend-only cooldown, `sweep` and `clear`.
 
-B1 ships the seam only: nothing calls it yet, so behaviour is unchanged.
+B1 shipped the seam only. B2 wired it in. Its locks:
+- `tests/integration/sectorRoom/npcOwnership.test.ts`:
+  - a trader base ignores a pilot until the pilot attacks it;
+  - a robot base engages pilots and drones, but never robots;
+  - a player's turret is unchanged;
+  - NPC bases are never wave targets.
+- `structureTargets.test.ts`.
+
+## A turret aiming at a player
+
+A player has no swarm entity id, so a turret's target slot in `structureTargets` holds `-(ownerIdx + 2)`. `ownerIdx` indexes the room-state `structureOwners` table, where the server interns the target player.
+- The server encodes with `encodePlayerTurretTarget`.
+- The client decodes with `decodePlayerTurretTarget` into `turretTargetPlayerId`, then aims the barrel and the aim line at that ship.

@@ -125,6 +125,40 @@ export class NearestPointGrid {
     return best;
   }
 
+  /**
+   * Like `nearest`, but only points for which `accept(i)` is true count
+   * (B2: NPC turrets keep only targets hostile to their owner). Pass a
+   * pre-bound function so the query allocates nothing. Same tie rule.
+   */
+  nearestWhere(x: number, y: number, range: number, accept: (i: number) => boolean): number {
+    if (this.n === 0 || !(range >= 0)) return -1;
+    const c0 = this.col(x - range), c1 = this.col(x + range);
+    const r0 = this.col(y - range), r1 = this.col(y + range);
+    let best = -1;
+    let bestD2 = range * range;
+    let visited = 0;
+    for (let r = r0; r <= r1; r++) {
+      const rowBase = r * this.cols;
+      for (let c = c0; c <= c1; c++) {
+        const cell = rowBase + c;
+        const end = this.start[cell + 1]!;
+        visited += end - this.start[cell]!;
+        for (let k = this.start[cell]!; k < end; k++) {
+          const i = this.order[k]!;
+          const dx = this.xs[i]! - x;
+          const dy = this.ys[i]! - y;
+          const d2 = dx * dx + dy * dy;
+          if ((d2 < bestD2 || (d2 === bestD2 && i > best)) && accept(i)) {
+            bestD2 = d2;
+            best = i;
+          }
+        }
+      }
+    }
+    this.lastVisited = visited;
+    return best;
+  }
+
   x(i: number): number {
     return this.xs[i]!;
   }

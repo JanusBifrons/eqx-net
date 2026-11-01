@@ -18,6 +18,7 @@
  * `FactionState` map + the registry-derived membership/reverse-lookup.
  */
 
+import { isNpcOwner } from '../../shared-types/relations.js';
 import { createFactionState, type FactionState } from '../../core/faction/Faction.js';
 import type { StructureRecord } from '../structures/StructureRegistry.js';
 
@@ -75,7 +76,8 @@ export class FactionLedger {
   factionOf(entityId: string): string | null {
     let ownsStructure = false;
     for (const s of this.deps.structures()) {
-      if (s.id === entityId) return s.owner; // entityId IS a structure
+      // B2 — an NPC base is not a player faction (no waves, no escalation).
+      if (s.id === entityId) return isNpcOwner(s.owner) ? null : s.owner; // entityId IS a structure
       if (s.owner === entityId) ownsStructure = true; // entityId is a base-owning player
     }
     return ownsStructure ? entityId : null;

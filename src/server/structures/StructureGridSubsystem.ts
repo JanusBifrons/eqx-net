@@ -95,9 +95,17 @@ export interface StructureGridHooks {
    *  (pre-WS-4 / unit-harness fallback). MUST be reachable only from mining —
    *  combat never depletes asteroid resources (asteroid-interaction-model ADR). */
   drawAsteroidResources?(entityId: number, amount: number): number;
-  /** Phase 5 — nearest drone (swarm kind 1) within `range` of (x, y), or null.
-   *  Returns the drone's registry id (for damage) + entityId + pose. */
-  findNearestDrone?(x: number, y: number, range: number): { id: string; entityId: number; x: number; y: number } | null;
+  /** Phase 5 — nearest target within `range` of (x, y) for a turret owned by
+   *  `owner`, or null. Returns the target's damage id + entityId + pose. B2: a
+   *  player-owned turret engages drones and robots (unchanged); an NPC-owned
+   *  turret engages whatever `relationOf` says is hostile to its owner,
+   *  players included. A player target has `playerId` set (entityId -1). */
+  findNearestDrone?(
+    x: number,
+    y: number,
+    range: number,
+    owner: string,
+  ): { id: string; entityId: number; x: number; y: number; playerId?: string } | null;
   /** Phase 5 — apply turret damage to a target through the standard path. */
   applyDamage?(targetId: string, shooterId: string, damage: number): void;
   /** Phase 5 — broadcast the turret fire beam (laser_fired). */
@@ -186,6 +194,7 @@ export class StructureGridSubsystem {
       if (kind.weaponRange == null || !isWeaponId(mountWeaponId)) continue;
       if (!this.powerSummaryFor(rec.id).powered) {
         rec.turretTargetEntityId = undefined;
+        rec.turretTargetPlayer = undefined;
         continue;
       }
       // Phase 4 WS-B4 — a leveled turret targets FARTHER + hits HARDER. The
@@ -194,8 +203,10 @@ export class StructureGridSubsystem {
       const lvlMul = structureLevelFactor(rec.level);
       const range = kind.weaponRange * lvlMul;
       const damage = (kind.weaponDamage ?? 0) * lvlMul;
-      const target = this.hooks.findNearestDrone(rec.x, rec.y, range);
-      rec.turretTargetEntityId = target?.entityId;
+      const target = this.hooks.findNearestDrone(rec.x, rec.y, range, rec.owner);
+      // B2 — a player target has no swarm entity id; it rides as a player id.
+      rec.turretTargetPlayer = target?.playerId;
+      rec.turretTargetEntityId = target && target.playerId === undefined ? target.entityId : undefined;
       if (!target) continue;
       const def = getWeapon(mountWeaponId);
       if (def.mode === 'hitscan') {

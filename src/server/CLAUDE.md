@@ -146,6 +146,22 @@ Update this section when a threshold is set.
   - **Test view:** `_internals.getStructuresSlice()` is the pre-A2 row shape rebuilt from room state.
 - **A1 (turret targeting + routes):** turret targets come from `findNearestTurretTarget`, a per-turret-tick `NearestPointGrid` of turret-targetable drones (rebuilt lazily on first query; any `evictSwarmEntity` marks it stale; same winner as the old scan, including ties). `Grid.route` reads a per-source BFS tree, cached until the next topology change. After A1 the dominant turret-tick cost is the 10 Hz `rebuildStructuresSlice` (allocation-heavy; GC spikes), which A2 removes.
 
+## NPC ownership (plan soft-leaping-truffle v3, B2)
+
+- **Owners like `npc:<allegiance>:<baseId>` are NPC bases.** Every "is this hostile?" decision about a structure goes through `relationOf`, using the room's ONE `relationCtx` (which holds the hostile-act ledger). Don't compare owner strings inline.
+- **Turrets:**
+  - A player-owned turret keeps the A1 drone grid, unchanged.
+  - An NPC-owned turret uses a second per-tick grid of every NPC ship plus every ACTIVE player ship (#17), filtered by `relationOf(target, owner) === 'hostile'` (`NearestPointGrid.nearestWhere`).
+  - Missiles from an NPC turret home on the same rule.
+- **Hostile acts:** `applyDamage` records one when a player, or a player's turret, hits an NPC structure. They expire on the 1 Hz grid pulse.
+- **NPC owners are excluded from player-faction systems:**
+  - `factionBaseReadiness`: no waves;
+  - `FactionLedger.factionOf`: no escalation;
+  - `SectorPersistence`: NPC bases regenerate from their seed.
+- **Display names:** `resolveOwnerName` gives "<Side> base", never a raw id.
+- **A turret aiming at a player** rides `structureTargets` as an owner-table index (`encodePlayerTurretTarget`).
+- Lock: `tests/integration/sectorRoom/npcOwnership.test.ts`. Story: [docs/architecture/relations.md](../../docs/architecture/relations.md).
+
 ## Procedural bases (`src/server/bases/BaseSubsystem.ts`, plan soft-leaping-truffle)
 
 - **The `bases` room-definition option** (server-authored, so NOT testMode-gated) → `BaseSubsystem.add`. That call:

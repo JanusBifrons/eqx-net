@@ -523,8 +523,11 @@ export class ConnectorRenderer {
       // Phase 5 — turret aim line toward its target drone (the fire beam
       // itself arrives as a discrete laser_fired). Faint dashed-feel via low
       // alpha; the actual shot is the bright beam.
-      if (st.turretTargetId !== undefined) {
-        const target = swarm.get(st.turretTargetId);
+      if (st.turretTargetId !== undefined || st.turretTargetPlayerId !== undefined) {
+        // B2 — an NPC turret can aim at a player ship.
+        const target = st.turretTargetId !== undefined
+          ? swarm.get(st.turretTargetId)
+          : mirror.ships.get(st.turretTargetPlayerId!);
         if (target) {
           g.moveTo(ax, ay);
           g.lineTo(target.x, -target.y);

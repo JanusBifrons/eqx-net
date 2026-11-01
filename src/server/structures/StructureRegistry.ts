@@ -109,6 +109,9 @@ export interface StructureRecord {
   /** Phase 5 — the drone entityId this Turret is aiming at (for the client aim
    *  line). Transient; recomputed each turret tick. */
   turretTargetEntityId?: number;
+  /** B2 — playerId this turret is aiming at (NPC turrets only), or undefined.
+   *  Mutually exclusive with `turretTargetEntityId`. */
+  turretTargetPlayer?: string;
   /** Phase 5 — wall-clock ms of this Turret's last shot (fire-rate cooldown). */
   lastTurretFireMs?: number;
 }

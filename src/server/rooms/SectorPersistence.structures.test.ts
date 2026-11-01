@@ -128,6 +128,15 @@ describe('SectorPersistence — structures survive a server restart', () => {
     });
   });
 
+  it('persist() skips NPC-owned structures (B2: NPC bases regenerate from their seed)', () => {
+    const mine = makeStructure();
+    const npc = makeStructure({ entityId: 'pstruct-8', owner: 'npc:traders:t1' });
+    const { deps, readStored } = makeDeps([mine, npc], () => undefined);
+    new SectorPersistence(deps).persist();
+    const payload = JSON.parse(readStored()!.snapshot) as SectorSnapshotPayload;
+    expect(payload.structures!.map((r) => r.owner)).toEqual(['player-alice']);
+  });
+
   it('hydrate() hands the persisted structures back to the restore callback', () => {
     const struct = makeStructure({ id: 'pstruct-9', kind: 'solar', minerals: 5 });
     const restore = vi.fn();
