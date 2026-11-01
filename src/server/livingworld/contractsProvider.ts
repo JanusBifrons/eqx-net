@@ -15,9 +15,12 @@ import {
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import type { WorldEventKind } from '../../shared-types/worldEvents.js';
 import type { EliteSummary } from './EliteDirector.js';
+import type { OpenBounty } from '../economy/BountyBoard.js';
 
 export interface ContractSources {
   elites(): readonly EliteSummary[];
+  /** P4c-2 — open player bounties (grouped per target). Optional. */
+  bounties?(): readonly OpenBounty[];
   activeEvent(): { kind: WorldEventKind; title: string; endsAtMs: number; sectorKey: string } | null;
 }
 
@@ -52,6 +55,17 @@ export function buildContracts(src: ContractSources | null): ContractsResponse {
       sectorKey: ev.sectorKey,
       rewardCredits: ev.kind === 'mothership' ? MOTHERSHIP_BOUNTY_CREDITS : null,
       endsAtMs: ev.endsAtMs,
+    });
+  }
+  for (const b of src.bounties?.() ?? []) {
+    contracts.push({
+      id: `player:${b.target}`,
+      kind: 'player',
+      title: `Wanted: ${b.targetName}`,
+      detail: 'Destroy their active ship to collect',
+      sectorKey: b.lastSector ?? '',
+      rewardCredits: b.credits,
+      endsAtMs: null,
     });
   }
   return { contracts };

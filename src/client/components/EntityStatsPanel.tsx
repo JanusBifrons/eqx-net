@@ -14,6 +14,7 @@ import { toSelectWire } from '../net/selectionClient';
 import { getGameClient } from '../net/clientSingleton';
 import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip } from '../structures/structureActionsClient';
 import { sendPilotShip } from '../ships/shipActionsClient';
+import { BountyAction } from './BountyAction';
 import { hullColor } from './ShieldHullBar';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { canUpgradeStructure } from '@core/leveling/structureLevel';
@@ -103,6 +104,9 @@ interface PanelData {
   holdLine?: string;
   holdUse?: string;
   canRefine?: boolean;
+  /** Living World P4c-2 — a selected REMOTE player ship: its playerId, the
+   *  target of the Bounty action (never displayed). */
+  bountyTarget?: string;
 }
 
 export function EntityStatsPanel(): JSX.Element | null {
@@ -305,6 +309,7 @@ export function EntityStatsPanel(): JSX.Element | null {
           )}
         </Box>
       )}
+      {data.bountyTarget !== undefined && <BountyAction targetPlayerId={data.bountyTarget} />}
       {data.pilotShipId !== undefined && (
         // Phase 4 WS-A2 — in-world Pilot action on the local player's OWN
         // lingering hull. Same-sector instant swap (no spool/curtain); the camera
@@ -334,7 +339,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'powered',
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
-  'holdLine', 'holdUse', 'canRefine',
+  'holdLine', 'holdUse', 'canRefine', 'bountyTarget',
 ];
 
 /** True when two polled PanelData reads carry identical values (Wave-3 3.3 —
@@ -443,7 +448,9 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       selectionStats.shield !== undefined && selectionStats.shieldMax !== undefined && selectionStats.shieldMax > 0
         ? (selectionStats.shield / selectionStats.shieldMax) * 100
         : null;
-    return { name: selectionStats.name || 'Ship', hpPct, shieldPct };
+    // P4c-2 — a remote player's ship (ships are selected by playerId; the own
+    // ship is never pickable) can carry a bounty.
+    return { name: selectionStats.name || 'Ship', hpPct, shieldPct, bountyTarget: id };
   }
 
   // The rest read the render mirror directly (no server stats channel).

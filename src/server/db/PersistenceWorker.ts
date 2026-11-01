@@ -157,7 +157,7 @@ export function initHoldStore(): { hydrated: number } {
   }
   const records: HoldRecord[] = [];
   for (const row of rows) {
-    if (row.holder_type !== 'ship' && row.holder_type !== 'pod' && row.holder_type !== 'derelict' && row.holder_type !== 'structure' && row.holder_type !== 'hauler') {
+    if (row.holder_type !== 'ship' && row.holder_type !== 'pod' && row.holder_type !== 'derelict' && row.holder_type !== 'structure' && row.holder_type !== 'hauler' && row.holder_type !== 'bounty') {
       _hydrateHealth.corruptRowsSkipped += 1;
       continue;
     }
