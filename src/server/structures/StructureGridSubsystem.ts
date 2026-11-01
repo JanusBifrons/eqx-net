@@ -149,6 +149,9 @@ export interface StructureGridHooks {
    *  supplies the closure (it owns the sectorKey). Off the 60 Hz loop (1 Hz
    *  pulse). Optional ⇒ no-op in the unit harness. */
   onConstructed?: (owner: string, kind: string) => void;
+  /** Economy v2 — a PREPAID structure (placed from a packed item) finished
+   *  deconstructing: the room repacks it. Called BEFORE it is despawned. */
+  onRepack?: (rec: StructureRecord) => void;
 }
 
 export interface GridPulseResult {
@@ -948,6 +951,7 @@ export class StructureGridSubsystem {
         }
       }
       if (rec.constructionProgress <= 0) {
+        if (rec.prepaid === true) this.hooks.onRepack?.(rec);
         this.hooks.despawn(rec.id);
         this.hooks.registry.remove(rec.id);
       }

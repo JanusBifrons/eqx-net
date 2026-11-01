@@ -40,7 +40,8 @@ import { STARTER_STRUCTURE_KINDS } from '../../shared-types/blueprints.js';
  *  the structure is registered (a failed spawn spends nothing). */
 export interface PackedGateResult {
   ok: boolean;
-  commit(): void;
+  /** Consume the packed item; returns its quality (null if it vanished). */
+  commit(): number | null;
 }
 
 export interface StructurePlacementHooks {
@@ -167,7 +168,9 @@ export class StructurePlacementSubsystem {
       ...(this.hooks.structureUid ? { uid: this.hooks.structureUid(owner, kindId, pos.x, pos.y) } : {}),
     };
     this.hooks.registry.add(rec);
-    packed?.commit();
+    const packedQuality = packed?.commit() ?? null;
+    // Economy v2 — remember the crate's quality so taking it down REPACKS it.
+    if (packedQuality !== null) rec.packedQuality = packedQuality;
     // Auto-wire into the owner's grid: nearest in-range hub with a free slot
     // whose connecting segment isn't blocked by another structure OR an asteroid.
     if (opts?.skipAutoConnect !== true) {

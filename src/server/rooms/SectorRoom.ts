@@ -223,7 +223,7 @@ import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type La
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
-import { cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, type CargoRequest } from '../../core/cargo/hold.js';
+import { addPacked, cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, type CargoRequest } from '../../core/cargo/hold.js';
 import { HARVESTER_CAPACITY, RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
 import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
@@ -234,6 +234,8 @@ import {
 } from '../../shared-types/blueprints.js';
 
 const EMPTY_FITTED: readonly string[] = Object.freeze([]);
+/** Economy v2 — a repacked structure with no recorded quality (pre-repack rows). */
+const REPACK_DEFAULT_QUALITY = 50;
 /** Economy v2 W5a — an unpacked hull parks this far from its storage. */
 const UNPACK_PARK_OFFSET = 400;
 import { getBountyBoard } from '../economy/BountyBoard.js';
@@ -2102,6 +2104,9 @@ export class SectorRoom extends Room<SectorState> {
       // Gameplay audit — a blueprint finished construction (1 Hz pulse, off-tick).
       // Campaign 6.3 — completion is durable state (isConstructed + full HP);
       // persist event-driven so a crash keeps the built structure built.
+      // Economy v2 — taking down a structure placed from a packed item gives
+      // the packed item back (EVE-style repackaging).
+      onRepack: (rec) => this.repackStructure(rec),
       onConstructed: (owner, kind) => {
         auditEvent({ event: 'structure_built', sector: this.sectorKey ?? undefined, owner, kind });
         this.sectorPersistence.persistSoon();
@@ -4153,6 +4158,7 @@ export class SectorRoom extends Room<SectorState> {
           const ok = r.freightOrders.filter((o) => (GOOD_IDS as readonly string[]).includes(o.good) && (o.mode === 'import' || o.mode === 'export') && o.level > 0);
           if (ok.length > 0) rec.freightOrders = ok.map((o) => ({ good: o.good as GoodId, mode: o.mode, level: Math.floor(o.level) })).slice(0, MAX_FREIGHT_ORDERS);
         }
+        if (typeof r.packedQuality === 'number') rec.packedQuality = r.packedQuality;
         if (r.prodLoaded === true) {
           rec.prodLoaded = true;
           rec.prodProgress = r.prodProgress ?? 0;
@@ -7192,24 +7198,43 @@ export class SectorRoom extends Room<SectorState> {
   private packedGateForBuild(owner: string, kindId: StructureKindId): PackedGateResult {
     const product = `structure:${kindId}`;
     const src = this.findPacked(owner, product);
-    if (src === null) return { ok: false, commit: () => {} };
+    if (src === null) return { ok: false, commit: () => null };
     return {
       ok: true,
       commit: () => {
         if ('rec' in src) {
-          takePacked(src.rec.hold!, product);
+          const item = takePacked(src.rec.hold!, product);
           this.storage.commitChanged([src.rec], []);
-          return;
+          return item?.quality ?? null;
         }
         const row = getHoldStore().get(src.shipId);
-        if (row === undefined) return;
+        if (row === undefined) return null;
         const h = cloneHold(row.hold);
-        takePacked(h, product);
+        const item = takePacked(h, product);
         const persist = this.sectorKey !== null;
         if (isHoldEmpty(h)) getHoldStore().commit([], [src.shipId], persist);
         else getHoldStore().commit([{ ...row, hold: h }], [], persist);
+        return item?.quality ?? null;
       },
     };
+  }
+
+  /**
+   * Economy v2 — repack a PREPAID structure that finished deconstructing: the
+   * packed item (same kind, same quality) goes into the owner's storage in its
+   * grid component, else it drops as a pod where the structure stood. Called
+   * by the grid pulse BEFORE the structure is despawned.
+   */
+  private repackStructure(rec: StructureRecord): void {
+    const item = { product: `structure:${rec.kind}`, quality: rec.packedQuality ?? REPACK_DEFAULT_QUALITY };
+    const target = this.storage.networkFor(rec).find((r) => r.id !== rec.id);
+    if (target !== undefined) {
+      addPacked((target.hold ??= { goods: {}, blueprints: [] }), item.product, item.quality);
+      this.storage.commitChanged([target], []);
+    } else {
+      this.loot.drop({ goods: {}, blueprints: [], packed: [item] }, rec.x, rec.y, 0, 0, { cause: 'removed' });
+    }
+    auditEvent({ event: 'structure_repacked', sector: this.sectorKey ?? undefined, owner: rec.owner, kind: rec.kind, quality: item.quality, toStorage: target !== undefined });
   }
 
   /**

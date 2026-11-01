@@ -73,6 +73,8 @@ export interface SectorSnapshotStructure {
   prepaid?: boolean;
   /** T4b — a Freight Dock's standing orders. Absent ⇒ none. */
   freightOrders?: Array<{ good: string; mode: 'import' | 'export'; level: number }>;
+  /** The packed item's quality (a deconstruct repacks it). */
+  packedQuality?: number;
   prodProgress?: number;
   /** Hull HP at save time. */
   health: number;

@@ -119,6 +119,9 @@ export interface StructureRecord {
   /** Economy v2 W4b — placed from a PACKED item: its build costs only time
    *  (no minerals drawn) and deconstructing it reclaims none. Persisted. */
   prepaid?: boolean;
+  /** Economy v2 — the packed item's quality (prepaid structures): a
+   *  deconstruct repacks it at this quality. Persisted. */
+  packedQuality?: number;
   // ── Production (plan soft-leaping-truffle v3, P2b) ──
   /** The recipe the owner picked (absent ⇒ the kind's default). Persisted. */
   recipe?: RecipeId;

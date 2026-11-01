@@ -142,6 +142,8 @@ export type AuditEvent =
   | (AuditEventBase & { event: 'lab_job_done'; playerId: string; job: string; product?: string })
   // Economy v2 W5a — a packed hull unpacked into a player's roster.
   | (AuditEventBase & { event: 'hull_unpacked'; playerId: string; shipInstanceId: string; kind: string; quality: number })
+  // Economy v2 — a prepaid structure taken down and repacked.
+  | (AuditEventBase & { event: 'structure_repacked'; owner: string; kind: string; quality: number; toStorage: boolean })
   // Economy v2 W6 — a blueprint bought from / sold to traders.
   | (AuditEventBase & { event: 'blueprint_traded'; playerId: string; side: 'buy' | 'sell'; product: string; credits: number });
 

@@ -56,6 +56,7 @@ export interface PersistableStructure {
   prepaid?: boolean;
   /** T4b — a Freight Dock's standing orders. */
   freightOrders?: Array<{ good: string; mode: 'import' | 'export'; level: number }>;
+  packedQuality?: number;
   isConstructed: boolean;
   constructionProgress: number;
   minerals: number;
@@ -184,6 +185,7 @@ export class SectorPersistence {
         ...(s.prodLoaded ? { prodLoaded: true, prodProgress: s.prodProgress ?? 0 } : {}),
         ...(s.prepaid ? { prepaid: true } : {}),
         ...(s.freightOrders && s.freightOrders.length > 0 ? { freightOrders: s.freightOrders.map((o) => ({ ...o })) } : {}),
+        ...(s.packedQuality !== undefined ? { packedQuality: s.packedQuality } : {}),
         y: s.y,
         health: d.swarmHealth.get(s.id) ?? 0,
         isConstructed: s.isConstructed,
