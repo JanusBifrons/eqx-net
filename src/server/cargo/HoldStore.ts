@@ -64,7 +64,14 @@ export class HoldStore {
    * `GROUP` op. `persist: false` keeps it memory-only (engineering rooms with no
    * persistent identity).
    */
-  commit(puts: readonly HoldRecord[], deletes: readonly string[], persist = true): void {
+  commit(
+    puts: readonly HoldRecord[],
+    deletes: readonly string[],
+    persist = true,
+    /** P2 — non-hold ops that must land in the SAME atomic group (e.g. the
+     *  trade-deal state that records an escrow move). */
+    extraOps: readonly PersistOp[] = [],
+  ): void {
     for (const r of puts) this.byUid.set(r.holderUid, r);
     for (const uid of deletes) this.byUid.delete(uid);
     if (!persist) return;
@@ -72,6 +79,7 @@ export class HoldStore {
     const ops: PersistOp[] = [];
     for (const r of puts) ops.push(toPutOp(r, ts));
     for (const uid of deletes) ops.push({ type: 'HOLD_DELETE', holderUid: uid, ts });
+    for (const op of extraOps) ops.push(op);
     if (ops.length === 0) return;
     this.deps.persistence().enqueueCritical(ops.length === 1 ? ops[0]! : { type: 'GROUP', ops });
   }
