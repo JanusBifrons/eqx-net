@@ -96,6 +96,8 @@ export interface TradeDirectorOptions {
   dockOffset: number;
   /** One robot-attack rep hit per player per this window. */
   robotHitThrottleMs: number;
+  /** One "your hauler is under fire" notice per hauler per this window. */
+  underFireThrottleMs: number;
 }
 
 export const DEFAULT_TRADE_OPTIONS: TradeDirectorOptions = {
@@ -108,6 +110,7 @@ export const DEFAULT_TRADE_OPTIONS: TradeDirectorOptions = {
   dockRadius: 260,
   dockOffset: 220,
   robotHitThrottleMs: 10_000,
+  underFireThrottleMs: 8_000,
 };
 
 interface BoardOffer {
@@ -127,6 +130,7 @@ export class TradeDirector implements TradeSink {
   private offers: BoardOffer[] = [];
   private lastDriftAtMs: number;
   private readonly robotHitAt = new Map<string, number>();
+  private readonly underFireAt = new Map<string, number>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly subs: Array<{ bus: Bus; fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void }> = [];
 
@@ -237,15 +241,15 @@ export class TradeDirector implements TradeSink {
 
   // ── Requests (TradeSink) ─────────────────────────────────────────────────
 
-  acceptOffer(playerId: string, sectorKey: string, msg: AcceptOfferMsg): TradeVerdict {
+  acceptOffer(playerId: string, sectorKey: string, networkUid: string, msg: AcceptOfferMsg): TradeVerdict {
     const offer = this.offers.find((o) => o.offerId === msg.offerId);
     if (!offer || offer.expiresAtMs <= this.now()) return reject('That offer has expired.');
     if (msg.qty > offer.maxQty) return reject(`That offer only covers ${offer.maxQty}.`);
     const traderRep = this.store.rep(playerId, 'traders');
     if (tradersRefuse(traderRep)) return reject('Traders refuse to deal with you.');
     const room = this.rooms.get(sectorKey);
-    if (!room || room.tradeSnapshot(playerId, msg.networkUid) === null) return reject('No storage of yours here.');
-    if (this.store.activeDealsForNetwork(msg.networkUid) >= MAX_DEALS_PER_NETWORK) {
+    if (!room || room.tradeSnapshot(playerId, networkUid) === null) return reject('No storage of yours here.');
+    if (this.store.activeDealsForNetwork(networkUid) >= MAX_DEALS_PER_NETWORK) {
       return reject(`A base can run at most ${MAX_DEALS_PER_NETWORK} deals.`);
     }
     const unitPrice = this.quote(offer.kind, offer.good, traderRep);
@@ -260,7 +264,7 @@ export class TradeDirector implements TradeSink {
       qty: msg.qty,
       credits: 0,
       sectorKey,
-      networkUid: msg.networkUid,
+      networkUid,
       unitPrice,
       priceBandPct: recurring ? msg.priceBandPct : 0,
       recurrenceMin: msg.recurrenceMin,
@@ -293,10 +297,10 @@ export class TradeDirector implements TradeSink {
     return reject('That deal has already ended.');
   }
 
-  sendGift(playerId: string, sectorKey: string, msg: SendGiftMsg): TradeVerdict {
+  sendGift(playerId: string, sectorKey: string, networkUid: string, msg: SendGiftMsg): TradeVerdict {
     const room = this.rooms.get(sectorKey);
-    if (!room || room.tradeSnapshot(playerId, msg.networkUid) === null) return reject('No storage of yours here.');
-    if (this.store.activeDealsForNetwork(msg.networkUid) >= MAX_DEALS_PER_NETWORK) {
+    if (!room || room.tradeSnapshot(playerId, networkUid) === null) return reject('No storage of yours here.');
+    if (this.store.activeDealsForNetwork(networkUid) >= MAX_DEALS_PER_NETWORK) {
       return reject(`A base can run at most ${MAX_DEALS_PER_NETWORK} deals.`);
     }
     const deal: TradeDeal = {
@@ -308,7 +312,7 @@ export class TradeDirector implements TradeSink {
       qty: msg.good !== null ? msg.qty : 0,
       credits: msg.credits,
       sectorKey,
-      networkUid: msg.networkUid,
+      networkUid,
       unitPrice: 0,
       priceBandPct: 0,
       recurrenceMin: null,
@@ -323,16 +327,52 @@ export class TradeDirector implements TradeSink {
     return { ok: true, dealId: deal.dealId, message: 'Gift arranged: a hauler will collect it.' };
   }
 
-  onHaulerDamaged(haulerId: string, attackerPlayerId: string): void {
+  onHaulerDamaged(haulerId: string, attackerPlayerId: string | null): void {
     for (const deal of this.store.allDeals()) {
       const run = deal.run;
       if (run === null || run.haulerId !== haulerId) continue;
-      if (!run.attackers.includes(attackerPlayerId)) {
+      if (attackerPlayerId !== null && !run.attackers.includes(attackerPlayerId)) {
         // Memory only — the attacker list is consulted when the run ends, and a
         // restart unwinds the run anyway.
         run.attackers.push(attackerPlayerId);
       }
+      // Escort prompt — tell the owner their hauler is taking fire (throttled).
+      if (attackerPlayerId !== deal.ownerId) {
+        const now = this.now();
+        if (now - (this.underFireAt.get(haulerId) ?? -Infinity) >= this.opts.underFireThrottleMs) {
+          this.underFireAt.set(haulerId, now);
+          this.notify(deal, 'under_fire', `Your trade hauler in ${deal.sectorKey} is under fire!`);
+        }
+      }
       return;
+    }
+  }
+
+  /**
+   * Add a room after boot (testMode rooms that opt into trade — showcase/E2E).
+   * Galaxy rooms are passed to the constructor.
+   */
+  registerRoom(sectorKey: string, room: TradeRoom): void {
+    if (this.rooms.has(sectorKey)) return;
+    this.rooms.set(sectorKey, room);
+    if (this.timer === null) return;
+    const bus = room.eventBus();
+    const fn = (e: { type: 'ENTITY_DESTROYED'; entityId: string }): void => {
+      if (e.entityId.startsWith(HAULER_ID_PREFIX)) this.onHaulerDestroyed(e.entityId);
+    };
+    bus.on('ENTITY_DESTROYED', fn);
+    this.subs.push({ bus, fn });
+  }
+
+  unregisterRoom(sectorKey: string, room: TradeRoom): void {
+    if (this.rooms.get(sectorKey) !== room) return;
+    this.rooms.delete(sectorKey);
+    const bus = room.eventBus();
+    for (let i = this.subs.length - 1; i >= 0; i--) {
+      if (this.subs[i]!.bus === bus) {
+        bus.off('ENTITY_DESTROYED', this.subs[i]!.fn);
+        this.subs.splice(i, 1);
+      }
     }
   }
 

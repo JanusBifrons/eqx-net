@@ -1199,6 +1199,9 @@ export class SectorRoom extends Room<SectorState> {
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
       prebuiltStructuresOwner?: string;
+      /** Living World P2 — testMode: join the TradeDirector so deals can be
+       *  made in this (non-galaxy) room (showcase / E2E). */
+      tradeEnabled?: boolean;
       /** Structures plan (Phase 5) — park idle drones at poses (turret targets).
        *  testMode-only; for the turret-fires scenario. */
       scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
@@ -1960,6 +1963,10 @@ export class SectorRoom extends Room<SectorState> {
     // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
     // overlap, no construction wait).
     if (this.testMode) this.seedStructureScenario(roomOpts);
+    if (this.testMode && roomOpts.tradeEnabled === true && this.sectorKey !== null) {
+      this.tradeRegisteredKey = this.sectorKey;
+      getTradeSink()?.registerRoom(this.sectorKey, this);
+    }
     // Phase-1 issue 5 — scrap-stress seed: a dense corridor of free-floating
     // scrap ahead of spawn for the fly-through reconciliation E2E.
     if (this.testMode && (roomOpts.scenarioScrapCount ?? 0) > 0) {
@@ -2396,11 +2403,19 @@ export class SectorRoom extends Room<SectorState> {
       };
       if (this.sectorKey === null) { reply(false, null, 'Trade is only available in the galaxy.'); return; }
       if (!this.playerToUser.get(playerId)) { reply(false, null, 'Sign in to trade.'); return; }
+      // A storage structure the player OWNS here → its stable uid.
+      const networkUidOf = (entityId: number): string | null => {
+        const rec = this.swarmRegistry.getByEntityId(entityId);
+        const s = rec ? this.structureRegistry.get(rec.id) : undefined;
+        return s !== undefined && s.owner === playerId && s.uid !== undefined ? s.uid : null;
+      };
       let v;
       if (kind === 'accept_offer') {
         const p = AcceptOfferSchema.safeParse(raw);
         if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
-        v = sink.acceptOffer(playerId, this.sectorKey, p.data);
+        const uid = networkUidOf(p.data.networkEntityId);
+        if (uid === null) { reply(false, null, 'Pick one of your storage structures.'); return; }
+        v = sink.acceptOffer(playerId, this.sectorKey, uid, p.data);
       } else if (kind === 'cancel_deal') {
         const p = CancelDealSchema.safeParse(raw);
         if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
@@ -2408,7 +2423,9 @@ export class SectorRoom extends Room<SectorState> {
       } else {
         const p = SendGiftSchema.safeParse(raw);
         if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
-        v = sink.sendGift(playerId, this.sectorKey, p.data);
+        const uid = networkUidOf(p.data.networkEntityId);
+        if (uid === null) { reply(false, null, 'Pick one of your storage structures.'); return; }
+        v = sink.sendGift(playerId, this.sectorKey, uid, p.data);
       }
       reply(v.ok, v.dealId, v.message);
     };
@@ -6022,9 +6039,10 @@ export class SectorRoom extends Room<SectorState> {
     const attacker = kind === 'player'
       ? shooterId
       : kind === 'structure' ? (this.structureRegistry.get(shooterId)?.owner ?? null) : null;
-    if (attacker === null) return;
+    // A hauler reports EVERY hit (an NPC raider drives the escort prompt too);
+    // a robot only cares about player attackers.
     if (hauler) sink.onHaulerDamaged(targetId, attacker);
-    else sink.onRobotDamaged(attacker);
+    else if (attacker !== null) sink.onRobotDamaged(attacker);
   }
 
   // ── Living World P2 — TradeRoom hooks (driven by the TradeDirector) ──────
@@ -6061,6 +6079,10 @@ export class SectorRoom extends Room<SectorState> {
     const client = this.clients.find((c) => c.sessionId === sessionId);
     try { client?.send('trade_notice', notice); } catch { /* socket closing */ }
   }
+
+  /** testMode trade opt-in key (set when this room registered with the
+   *  TradeDirector, so dispose can unregister). */
+  private tradeRegisteredKey: string | null = null;
 
   /** Living World P2 — robot reputation truce (no on-sight engagement). One Map
    *  lookup; safe on the snapshot / AI hot paths. */
@@ -6284,6 +6306,7 @@ export class SectorRoom extends Room<SectorState> {
 
   override onDispose(): void {
     this.simLoopStopped = true;
+    if (this.tradeRegisteredKey !== null) getTradeSink()?.unregisterRoom(this.tradeRegisteredKey, this);
     // Structures plan, Phase 3 — stop the grid pulse heartbeat.
     if (this.structureGridTimer !== undefined) {
       clearInterval(this.structureGridTimer);

@@ -125,8 +125,10 @@ export const AcceptOfferSchema = z
   .object({
     type: z.literal('accept_offer'),
     offerId: id64,
-    /** Uid of any storage structure in the base network the deal serves. */
-    networkUid: id64,
+    /** Swarm entityId of one of the player's storage structures (the base
+     *  network the deal serves). The room resolves it to the structure's
+     *  stable uid, so the client never needs the uid. */
+    networkEntityId: z.number().int().nonnegative(),
     qty: z.number().int().min(1).max(MAX_OFFER_QTY),
     /** null ⇒ one-off; else repeat every N minutes. */
     recurrenceMin: z.union([z.null(), z.literal(10), z.literal(30), z.literal(60)]),
@@ -144,7 +146,7 @@ export const SendGiftSchema = z
   .object({
     type: z.literal('send_gift'),
     allegiance: z.enum(ECON_ALLEGIANCES),
-    networkUid: id64,
+    networkEntityId: z.number().int().nonnegative(),
     good: z.enum(GOOD_IDS).nullable(),
     qty: z.number().int().min(0).max(MAX_OFFER_QTY),
     credits: z.number().int().min(0).max(1_000_000),
@@ -158,7 +160,10 @@ export interface TradeNotice {
   type: 'trade_notice';
   dealId: string;
   /** What just happened to the deal. */
-  event: 'accepted' | 'rejected' | 'inbound' | 'docked' | 'settled' | 'partial' | 'skipped' | 'raided' | 'cancelled';
+  event:
+    | 'accepted' | 'rejected' | 'inbound' | 'docked' | 'settled' | 'partial' | 'skipped' | 'raided' | 'cancelled'
+    /** The player's hauler is taking fire (the escort prompt). Throttled. */
+    | 'under_fire';
   message: string;
   econVersion: number;
 }

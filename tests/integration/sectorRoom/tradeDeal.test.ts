@@ -86,8 +86,8 @@ describe('SectorRoom integration — trade deals (P2)', () => {
     const { room, capital, dir, store } = ctx;
     capital.hold = { goods: { salvage: 50 }, credits: 0, blueprints: [] };
     const offer = dir.offersFor(OWNER).find((o) => o.kind === 'sell' && o.good === 'salvage')!;
-    const v = dir.acceptOffer(OWNER, SECTOR, {
-      type: 'accept_offer', offerId: offer.offerId, networkUid: capital.uid!, qty: 20,
+    const v = dir.acceptOffer(OWNER, SECTOR, capital.uid!, {
+      type: 'accept_offer', offerId: offer.offerId, networkEntityId: 0, qty: 20,
       recurrenceMin: null, visits: null, priceBandPct: 0,
     });
     expect(v.ok, v.message).toBe(true);
@@ -104,8 +104,8 @@ describe('SectorRoom integration — trade deals (P2)', () => {
     const { room, capital, dir, store } = ctx;
     capital.hold = { goods: {}, credits: 3000, blueprints: [] };
     const offer = dir.offersFor(OWNER).find((o) => o.kind === 'buy' && o.good === 'alloy')!;
-    const v = dir.acceptOffer(OWNER, SECTOR, {
-      type: 'accept_offer', offerId: offer.offerId, networkUid: capital.uid!, qty: 10,
+    const v = dir.acceptOffer(OWNER, SECTOR, capital.uid!, {
+      type: 'accept_offer', offerId: offer.offerId, networkEntityId: 0, qty: 10,
       recurrenceMin: null, visits: null, priceBandPct: 0,
     });
     expect(v.ok, v.message).toBe(true);
