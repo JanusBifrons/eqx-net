@@ -34,7 +34,16 @@ export const PROPOSED_FOOTPRINTS: Readonly<Record<string, StructureFootprint>> =
   laser_bolt_turret: { w: 150, h: 150 },
   missile_turret: { w: 190, h: 190 },
   cargo_bay: { w: 320, h: 200 },
+  // User request 2026-11-01 — gates. A Shield Gate is ONE structure: two gate
+  // posts placed together with a shield span between them that opens when an
+  // allowed ship approaches. A Shield Airlock is a chamber with a shield gate at
+  // each end; it opens one end or the other, never both.
+  shield_gate: { w: 320, h: 72 },
+  shield_airlock: { w: 320, h: 260 },
 };
+
+/** Gate / airlock shield state for the draw plan (from room state at runtime). */
+export type GateState = 'closed' | 'open' | 'openA' | 'openB';
 
 export interface StructureVisual {
   rects: RectOp[];
@@ -49,6 +58,28 @@ export interface StructureVisualOpts {
   powered?: boolean;
   /** Per-instance variety (deterministic). */
   seed?: number;
+  /** Shield Gate: 'open' | 'closed'. Shield Airlock: 'openA' | 'openB' | 'closed'. */
+  gate?: GateState;
+}
+
+/** A gate shield span between two posts: bright when closed, a faint ghost
+ *  line when open. Horizontal span from x0..x1 at y, thickness t. */
+function shieldSpan(out: RectOp[], lights: LightOp[], x0: number, x1: number, y: number, t: number, open: boolean, accent: number, live: boolean): void {
+  if (open || !live) {
+    // Open: two short stubs at the posts + a faint dashed guide.
+    for (let x = x0; x < x1; x += 28) out.push({ x, y: y - 1, w: 12, h: 2, color: accent, alpha: 0.35 });
+    return;
+  }
+  out.push({ x: x0, y: y - t / 2, w: x1 - x0, h: t, color: accent, alpha: 0.28 });
+  out.push({ x: x0, y: y - t / 6, w: x1 - x0, h: Math.max(2, t / 3), color: mixColor(accent, 0xffffff, 0.5), alpha: 0.85 });
+  lights.push({ x: (x0 + x1) / 2, y, r: 8, color: accent });
+}
+
+/** A gate post (the shield emitter block at either end of a gate). */
+function gatePost(out: RectOp[], x: number, y: number, size: number, accent: number): void {
+  slab(out, x - size / 2, y - size / 2, size, size, STEEL_DARK, 6);
+  box(out, x - size / 2 + 12, y - size / 2 + 12, size - 24, size - 24, STEEL);
+  box(out, x - 8, y - 8, 16, 16, mixColor(accent, 0xffffff, 0.3));
 }
 
 const STEEL = 0x6b7a8f;
@@ -221,6 +252,40 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       slab(rects, x0, y0, W, H, STEEL_DARK, 6);
       box(rects, -14, -14, 28, 28, mixColor(accent, 0xffffff, 0.3));
       lit(0, 0, 16, accent);
+      break;
+    }
+    case 'shield_gate': {
+      // Two posts (placed as one structure) with a shield span between them.
+      const post = H;
+      gatePost(rects, x0 + post / 2, 0, post, accent);
+      gatePost(rects, x0 + W - post / 2, 0, post, accent);
+      // Approach markings on the deck either side of the span.
+      for (let x = x0 + post + 10; x < x0 + W - post - 10; x += 26) {
+        box(rects, x, -H / 2 - 18, 12, 4, 0xe8c547, 0.6);
+        box(rects, x, H / 2 + 14, 12, 4, 0xe8c547, 0.6);
+      }
+      shieldSpan(rects, lights, x0 + post, x0 + W - post, 0, 22, opts.gate === 'open', accent, live);
+      lit(x0 + post / 2, 0, 9, opts.gate === 'open' ? 0x7fe0a4 : RED);
+      lit(x0 + W - post / 2, 0, 9, opts.gate === 'open' ? 0x7fe0a4 : RED);
+      break;
+    }
+    case 'shield_airlock': {
+      // A chamber: two solid side walls, a shield gate at each end (A = top,
+      // B = bottom in local space). Never both open.
+      const wall = 40, post = 64;
+      box(rects, x0, y0, W, H, DECK, 0.9);
+      slab(rects, x0, y0 + post / 2, wall, H - post, STEEL_DARK, 6);
+      slab(rects, x0 + W - wall, y0 + post / 2, wall, H - post, STEEL_DARK, 6);
+      for (let y = y0 + post; y < y0 + H - post; y += 24) box(rects, x0 + wall + 10, y, W - 2 * wall - 20, 2, mixColor(STEEL, DECK, 0.6));
+      for (const ey of [y0 + post / 2, y0 + H - post / 2]) {
+        gatePost(rects, x0 + post / 2, ey, post, accent);
+        gatePost(rects, x0 + W - post / 2, ey, post, accent);
+      }
+      const g = opts.gate ?? 'closed';
+      shieldSpan(rects, lights, x0 + post, x0 + W - post, y0 + post / 2, 20, g === 'openA', accent, live);
+      shieldSpan(rects, lights, x0 + post, x0 + W - post, y0 + H - post / 2, 20, g === 'openB', accent, live);
+      // Cycle indicator: which end may open next.
+      lit(x0 + W / 2, 0, 10, g === 'closed' ? RED : 0x7fe0a4);
       break;
     }
     default:
