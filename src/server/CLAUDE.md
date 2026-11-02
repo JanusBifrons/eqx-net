@@ -222,6 +222,7 @@ Update this section when a threshold is set.
   - **Order matters.** Seeding before the restore would make saved player structures fail their overlap check and be lost. Keep it after.
   - **Site.** The site comes from `chooseBaseSite`: player structures and parked hulls are hard blockers. Asteroids under the footprint are evicted quietly.
   - **Spawns** are nudged out of every structure box (`nearestClearPoint` in `onJoin`).
+  - **Several bases:** `galaxyBasePlan` gives a sector one to three bases (each its own owner, a different role, big bases alone, within `NPC_STRUCTURES_PER_SECTOR_MAX`), each seeded with `NPC_BASE_GAP` from the earlier ones. A base that finds no site is skipped and logged.
   - **Kill switch:** `EQX_DISABLE_NPC_BASES=1`. Lock: `galaxyBases.test.ts`.
 
 ## Convoys between NPC bases (plan soft-leaping-truffle v3, T2)

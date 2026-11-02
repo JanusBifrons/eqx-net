@@ -8,23 +8,25 @@
  *  - A spawn requested on top of a structure is nudged clear of every box.
  *  - The ops kill switch leaves the sector without a base.
  *
- * bloomgate's base is a citadel: the largest, so the hardest to fit.
+ * bloomgate's base is a citadel (the largest; it holds its sector alone), and
+ * deepcurrent holds THREE bases (galaxyBasePlan), each its own owner and kept
+ * apart.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { resolveSectorConfig } from '../../../src/server/galaxy/GalaxyRegistry.js';
-import { baseProfileFor, contextForSector, hashString } from '../../../src/core/bases/baseProfile.js';
+import { galaxyBasePlan } from '../../../src/core/bases/galaxyBases.js';
 import { growBase } from '../../../src/core/bases/growBase.js';
 import { getSector } from '../../../src/core/galaxy/galaxy.js';
 import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../../src/shared-types/sectorBounds.js';
 
 const KEY = 'bloomgate';
 
-async function boot(): Promise<SectorTestHarness> {
-  const cfg = resolveSectorConfig(KEY);
+async function boot(key = KEY): Promise<SectorTestHarness> {
+  const cfg = resolveSectorConfig(key);
   return bootSectorTestServer({
-    sectorKey: KEY, droneCount: 0, testMode: true,
+    sectorKey: key, droneCount: 0, testMode: true,
     asteroidConfig: cfg.asteroidConfig as never, galaxyBases: true,
   });
 }
@@ -37,17 +39,37 @@ describe('SectorRoom integration — galaxy NPC bases (T1)', () => {
     harness = undefined;
   });
 
-  it('grows the sector base in full, inside the sector, with no asteroid under it; spawns are nudged clear', { timeout: 40_000 }, async () => {
-    harness = await boot();
-    const seed = hashString(KEY);
-    const expected = growBase(baseProfileFor(contextForSector(KEY), seed), seed, getSector(KEY)!.features).placements.length;
+  for (const [KEY, bases] of [['bloomgate', 1], ['deepcurrent', 3]] as const) it(`${KEY}: grows its ${bases} planned base(s) in full, each its own owner, inside the sector, apart; spawns are nudged clear`, { timeout: 40_000 }, async () => {
+    harness = await boot(KEY);
+    const plan = galaxyBasePlan(KEY);
+    expect(plan.length).toBe(bases);
 
     const cr = await harness.connectActive(randomUUID());
     const internal = harness.getServerRoom()!._internals;
     const npc = [...internal.structureRegistry.all()].filter((r) => r.owner.startsWith('npc:'));
-    expect(npc.length, 'every grown structure is placed').toBe(expected);
-    expect(npc.every((r) => r.owner === 'npc:traders:b0')).toBe(true);
     expect(npc.every((r) => r.isConstructed)).toBe(true);
+    const boxes: Array<{ x0: number; x1: number; y0: number; y1: number }> = [];
+    for (const b of plan) {
+      const expected = growBase(b.profile, b.seed, getSector(KEY)!.features).placements.length;
+      const mine = npc.filter((r) => r.owner === `npc:${b.profile.ownerSide}:${b.baseId}`);
+      expect(mine.length, `every structure of ${b.baseId} (${b.profile.tier} ${b.profile.role}) is placed`).toBe(expected);
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const r of mine) {
+        x0 = Math.min(x0, r.x - (r.halfW ?? r.radius)); x1 = Math.max(x1, r.x + (r.halfW ?? r.radius));
+        y0 = Math.min(y0, r.y - (r.halfH ?? r.radius)); y1 = Math.max(y1, r.y + (r.halfH ?? r.radius));
+      }
+      boxes.push({ x0, x1, y0, y1 });
+    }
+    expect(npc.length, 'nothing but the planned bases').toBe(plan.reduce((n, b) => n + growBase(b.profile, b.seed, getSector(KEY)!.features).placements.length, 0));
+    // Bases keep clear of each other (room for bastions, mines and traffic).
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i]!, c = boxes[j]!;
+        const gapX = Math.max(c.x0 - a.x1, a.x0 - c.x1);
+        const gapY = Math.max(c.y0 - a.y1, a.y0 - c.y1);
+        expect(Math.max(gapX, gapY), `bases ${i} and ${j} keep apart`).toBeGreaterThan(500);
+      }
+    }
 
     const H = SECTOR_PLAYABLE_HALF_EXTENT;
     for (const r of npc) {
