@@ -116,8 +116,12 @@ import { stream } from '../../core/random/rng.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
 import { NpcBaseSubsystem, isNpcBasesDisabled, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
-import { baseProfileFor, contextForSector, hashString } from '../../core/bases/baseProfile.js';
+import { hashString } from '../../core/bases/baseProfile.js';
 import { chooseBaseSite, grownExtent, nearestClearPoint, type SiteBox, type SiteCircle } from '../../core/bases/baseSite.js';
+import { galaxyBasePlan, type GalaxyBasePlan } from '../../core/bases/galaxyBases.js';
+import type { SectorFeature } from '../../core/galaxy/galaxy.js';
+/** Clear space kept between two NPC bases in one sector (bastions, mines, traffic). */
+const NPC_BASE_GAP = 900;
 import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
 import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
@@ -223,6 +227,7 @@ import type {
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { getPlayerShipStore, getHoldStore, getWallet, getLabBoard } from '../db/PersistenceWorker.js';
 import { ResearchLabSubsystem } from '../structures/ResearchLabSubsystem.js';
+import { PackedStockQuerySchema, type PackedStock } from '../../shared-types/packedStock.js';
 import { BpBuySchema, BpMarketQuerySchema, BpSellSchema, type BpListing, type BpMarketState } from '../../shared-types/blueprintMarket.js';
 import { bpBuyPrice, bpSellPrice, getBlueprintMarket, listing as bpListing } from '../economy/BlueprintMarket.js';
 import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type LabState } from '../../shared-types/messages/labMessages.js';
@@ -237,7 +242,7 @@ import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
 import { rollEliteLoot, ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS, PlaceBountySchema, type BountyResult } from '../../shared-types/contracts.js';
 import {
-  InstallBlueprintSchema, UnpackHullSchema, STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, productName, weaponUnlocked, type BlueprintResult,
+  InstallBlueprintSchema, UnpackHullSchema, qualityHullFactor, STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, productName, weaponUnlocked, type BlueprintResult,
 } from '../../shared-types/blueprints.js';
 
 const EMPTY_FITTED: readonly string[] = Object.freeze([]);
@@ -2892,6 +2897,14 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('lab_start', (client: Client, raw: unknown) => labRequest(client, 'lab_start', raw));
     this.onMessage('lab_cancel', (client: Client, raw: unknown) => labRequest(client, 'lab_cancel', raw));
 
+    // ── Economy v2 — packed-structure stock for the Build menus ──────────────
+    this.onMessage('packed_stock_query', (client: Client, raw: unknown) => {
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      if (!PackedStockQuerySchema.safeParse(raw).success) { this.malformed.record(client.sessionId, 'packed_stock_query'); return; }
+      try { client.send('packed_stock', { type: 'packed_stock', counts: this.packedStockOf(playerId) } satisfies PackedStock); } catch { /* closing */ }
+    });
+
     // ── Economy v2 W6 — the blueprint market (buy / sell, instant) ───────────
     const bpRequest = (client: Client, kind: 'bp_market_query' | 'bp_buy' | 'bp_sell', raw: unknown): void => {
       const playerId = this.sessionToPlayer.get(client.sessionId);
@@ -4104,20 +4117,38 @@ export class SectorRoom extends Room<SectorState> {
    * origin as it fits. Not persisted: a restart regrows it from the seed.
    */
   private seedGalaxyBase(sectorKey: string): void {
-    const seed = hashString(sectorKey);
+    // A sector holds one to three NPC bases (galaxyBasePlan); base 0 is the
+    // sector's original base. Each later one keeps well clear of the earlier.
     const sector = getSector(sectorKey)!;
-    const profile = baseProfileFor(contextForSector(sectorKey), seed);
-    const spec: NpcBaseSpec = {
-      baseId: 'b0', role: profile.role, tier: profile.tier, seed, x: 0, y: 0,
-      side: profile.ownerSide, features: [...sector.features], profile,
-    };
     const sub = new NpcBaseSubsystem({
       registry: this.structureRegistry,
       place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
       setHealth: (id, hp) => this.swarmHealth.set(id, hp),
     });
+    const seededBases: SiteBox[] = [];
+    for (const plan of galaxyBasePlan(sectorKey)) {
+      const box = this.seedOneGalaxyBase(sectorKey, sector.features, plan, sub, seededBases);
+      if (box !== null) seededBases.push(box);
+    }
+    this.structureGridTick();
+  }
+
+  /** Seed one planned galaxy base; returns its footprint box, inflated by the
+   *  gap a later base must keep, or null when no site fits. */
+  private seedOneGalaxyBase(
+    sectorKey: string,
+    features: readonly SectorFeature[],
+    plan: GalaxyBasePlan,
+    sub: NpcBaseSubsystem,
+    seededBases: readonly SiteBox[],
+  ): SiteBox | null {
+    const { seed, profile } = plan;
+    const spec: NpcBaseSpec = {
+      baseId: plan.baseId, role: profile.role, tier: profile.tier, seed, x: 0, y: 0,
+      side: profile.ownerSide, features: [...features], profile,
+    };
     const grown = sub.grow(spec);
-    const hard: SiteBox[] = [];
+    const hard: SiteBox[] = [...seededBases];
     for (const r of this.structureRegistry.all()) hard.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
     for (const p of this.lingeringPoseCache.values()) hard.push({ x: p.x, y: p.y, hw: 150, hh: 150 });
     const rocks: SwarmEntityRecord[] = [];
@@ -4128,20 +4159,29 @@ export class SectorRoom extends Room<SectorState> {
       rocks.push(rec);
       soft.push({ x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, r: rec.radius });
     }
-    const site = chooseBaseSite(grownExtent(grown.placements), hard, soft, {
+    const ext = grownExtent(grown.placements);
+    const site = chooseBaseSite(ext, hard, soft, {
       halfExtent: SECTOR_PLAYABLE_HALF_EXTENT, margin: 250, step: 250, seed,
     });
     if (site === null) {
-      logger.warn({ sectorKey, tier: profile.tier, role: profile.role }, 'npc base: no site fits; sector left without a base');
-      return;
+      logger.warn({ sectorKey, baseId: plan.baseId, tier: profile.tier, role: profile.role }, 'npc base: no site fits; base skipped');
+      return null;
     }
     for (const i of site.overlapped) this.evictSwarmEntity(rocks[i]!, { broadcast: false, emitDestroyed: false });
     const r = sub.seed({ ...spec, x: site.x, y: site.y }, grown);
     logger.info({
-      sectorKey, tier: profile.tier, role: profile.role, owner: r.owner, x: Math.round(site.x), y: Math.round(site.y),
+      sectorKey, baseId: plan.baseId, tier: profile.tier, role: profile.role, owner: r.owner, x: Math.round(site.x), y: Math.round(site.y),
       placed: r.placed, rejectedPlace: r.rejectedPlace, rejectedEdge: r.rejectedEdge, asteroidsCleared: site.overlapped.length,
     }, 'galaxy npc base seeded');
-    this.structureGridTick();
+    // Later bases keep this far from this one's footprint (room for its
+    // bastions, its minefield and traffic between the two).
+    const gap = NPC_BASE_GAP;
+    return {
+      x: site.x + (ext.x0 + ext.x1) / 2,
+      y: site.y + (ext.y0 + ext.y1) / 2,
+      hw: (ext.x1 - ext.x0) / 2 + gap,
+      hh: (ext.y1 - ext.y0) / 2 + gap,
+    };
   }
 
   /** D2 — seed NPC bases from the generator (built, stocked, recipes + bound
@@ -5022,7 +5062,7 @@ export class SectorRoom extends Room<SectorState> {
       this.structureStateGen.set(key, gen);
       const summary = this.structureGrid.powerSummaryFor(rec.id);
       // Hull percent of the LEVELED max (a full-health leveled structure is 100).
-      const hpMax = effectiveStructureMaxHealth(getStructureKind(rec.kind).maxHealth, rec.level);
+      const hpMax = effectiveStructureMaxHealth(getStructureKind(rec.kind).maxHealth, rec.level, rec.packedQuality);
       const hp = this.swarmHealth.get(rec.id) ?? hpMax;
       const hpPct = Math.round((Math.max(0, hp) / hpMax) * 100);
       let flags = 0;
@@ -5266,7 +5306,7 @@ export class SectorRoom extends Room<SectorState> {
       kind: 'structure',
       name: kind.displayName,
       hp: Math.max(0, Math.round(hp)),
-      hpMax: Math.round(kind.maxHealth),
+      hpMax: Math.round(effectiveStructureMaxHealth(kind.maxHealth, struct.level, struct.packedQuality)),
       ...(holdCap > 0
         ? {
             hold: {
@@ -5479,7 +5519,9 @@ export class SectorRoom extends Room<SectorState> {
 
   /** P5 — the ship's max hull: kind base × stat upgrades × fitted blueprints. */
   private shipHullMax(kindMax: number, alloc: CoreStatAlloc | undefined, shipInstanceId: string): number {
-    return Math.round(effectiveShipMaxHealth(kindMax, alloc) * fittedHullMul(this.fittedOf(shipInstanceId)));
+    // Economy v2 — an unpacked hull's quality adds up to +10 % (roster `hullQuality`).
+    const quality = shipInstanceId !== '' ? getPlayerShipStore().get(shipInstanceId)?.hullQuality : undefined;
+    return Math.round(effectiveShipMaxHealth(kindMax, alloc) * fittedHullMul(this.fittedOf(shipInstanceId)) * qualityHullFactor(quality));
   }
 
   /** P5 — destroy a ship's fitted blueprints (it died / was abandoned). */
@@ -7572,7 +7614,8 @@ export class SectorRoom extends Room<SectorState> {
         sectorKey: this.sectorKey,
         x: s.x + UNPACK_PARK_OFFSET,
         y: s.y,
-        health: getShipKind(kind).maxHealth,
+        health: Math.round(getShipKind(kind).maxHealth * qualityHullFactor(item.quality)),
+        hullQuality: item.quality,
       });
       auditEvent({ event: 'hull_unpacked', sector: this.sectorKey, playerId, shipInstanceId: ship.shipId, kind, quality: item.quality });
       return [true, `${name} unpacked: it's in your roster.`];
@@ -7581,6 +7624,22 @@ export class SectorRoom extends Room<SectorState> {
       this.storage.commitChanged([from], []);
       return [false, `Could not unpack the ${name}.`];
     }
+  }
+
+  /** Economy v2 — `playerId`'s packed STRUCTURES in this sector, by product:
+   *  their operational storage here plus their active ship's hold (exactly
+   *  where `packedGateForBuild` looks). Control cadence (allocates). */
+  private packedStockOf(playerId: string): Record<string, number> {
+    const counts: Record<string, number> = {};
+    const add = (items: readonly { product: string }[] | undefined): void => {
+      for (const it of items ?? []) if (it.product.startsWith('structure:')) counts[it.product] = (counts[it.product] ?? 0) + 1;
+    };
+    for (const rec of this.structureRegistry.all()) {
+      if (rec.owner === playerId && rec.hold !== undefined && isOperationalStorage(rec)) add(rec.hold.packed);
+    }
+    const shipId = this.resolveActiveShipKey(playerId);
+    if (shipId) add(getHoldStore().get(shipId)?.hold.packed);
+    return counts;
   }
 
   /** Economy v2 W6 — `playerId`'s operational storage at `networkEntityId`. */

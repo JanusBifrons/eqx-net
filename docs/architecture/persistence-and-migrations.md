@@ -286,6 +286,12 @@ survive. Locked by `dbWorker.integration.test.ts` ("round-trips the Phase 4
 leveling columns" + "the idempotent ALTER adds the leveling columns to a
 pre-existing DB without them").
 
+**Economy v2 adds `hull_quality (INTEGER DEFAULT 0)`** the same way: one more
+`PLAYER_SHIPS_MIGRATIONS` entry, the optional `hullQuality` field on the
+`PLAYER_SHIP_PUT` op (absent ⇒ 0), and `PlayerShipStore.hullQuality`. It's the
+packed hull's quality for a ship unpacked from a crate (a small max-hull bonus);
+0 for every other ship.
+
 The boot-hydrate row mapping (`initPlayerShipStore`) parses `stat_alloc` /
 `mounts` JSON defensively (`parseStatAlloc` / `parseMounts` → `{}` / `[]` on
 absence / corruption / wrong shape) so one bad row never throws the whole boot.
