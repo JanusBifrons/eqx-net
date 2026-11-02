@@ -61,6 +61,25 @@ describe('SectorRoom integration — extraction (P2c)', () => {
     expect(minerals()).toBe(before);
   });
 
+  it('a Miner never takes ice it has nowhere to put: full storage leaves the rock alone', async () => {
+    // Follow-up found during D1/P2c: the drill drew from the asteroid's finite
+    // pool, then the deposit into full storage failed and the ice was lost.
+    const { internals, stored } = await boot('miner');
+    const all = [...internals.structureRegistry.all()];
+    const capital = all.find((r) => r.kind === 'capital')!;
+    const bay = all.find((r) => r.kind === 'cargo_bay')!;
+    // Fill every hold to the brim with salvage (weight 1 a unit).
+    capital.hold = { goods: { salvage: 5000 }, blueprints: [] };
+    bay.hold = { goods: { salvage: 2000 }, blueprints: [] };
+    expect(internals.spawnTestAsteroid('ice-rock', 0, -1250, 80, 'ice')).toBe(true);
+    const rock = internals.swarmRegistry.get('ice-rock')!;
+    const before = rock.resources;
+    expect(before, 'the rock has a finite pool').toBeGreaterThan(0);
+    for (let i = 0; i < 3; i++) internals.pulseStructureGrid();
+    expect(stored('ice')).toBe(0);
+    expect(rock.resources, 'nothing mined into full storage').toBe(before);
+  });
+
   it('a Miner on a crystal-veined asteroid gets minerals and some crystal', async () => {
     const { internals, stored, minerals } = await boot('miner');
     expect(internals.spawnTestAsteroid('crystal-rock', 0, -1250, 80, 'crystal')).toBe(true);

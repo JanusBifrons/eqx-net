@@ -10,6 +10,8 @@ import type { StructureKindId } from './structureKinds.js';
 export const AMMO_SHOTS_PER_UNIT: Readonly<Partial<Record<StructureKindId, number>>> = Object.freeze({
   missile_turret: 8,
   autocannon_turret: 40,
+  // Mines laid per munition (a mine is a whole charge, not a burst).
+  mine_layer: 2,
 });
 
 /** Does this structure kind spend munitions to fire? */

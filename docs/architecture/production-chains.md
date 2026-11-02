@@ -305,7 +305,7 @@ Code: [src/server/bases/NpcBaseSubsystem.ts](../../src/server/bases/NpcBaseSubsy
 
 Then the real systems run: power, batteries, fence, turrets, production. NPC structures aren't persisted; a restart regenerates them from the seed.
 
-**Test rooms:** `npc-base-outpost` (mining), `npc-base-settlement` (refinery), `npc-base-stronghold` (manufactory) and `npc-base-citadel` (assembly works). Each has `filterBy(testId)` and spawns the pilot south of the fence.
+**Test rooms:** `npc-base-outpost` (mining), `npc-base-settlement` (refinery), `npc-base-stronghold` (manufactory, with a Mine Layer), `npc-base-citadel` (assembly works) and `npc-base-colony` (a city, D3). Each has `filterBy(testId)` and spawns the pilot south of the fence.
 
 **Lock:** `tests/integration/sectorRoom/npcBases.test.ts`.
 - Every structure is placed, NPC-owned, built and reachable from the Capital through the live grid, with zero rejected placements or edges.

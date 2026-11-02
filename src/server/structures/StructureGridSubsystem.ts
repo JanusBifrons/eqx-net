@@ -104,6 +104,9 @@ export interface StructureGridHooks {
   /** P2c — put `n` of a good into `rec`'s owner network storage (all or
    *  nothing); returns what was stored. */
   depositGoods?(rec: StructureRecord, good: GoodId, n: number): number;
+  /** Would ALL of `goods` fit in `rec`'s owner network storage? A drill asks
+   *  before it draws from a rock, so a full network never burns finite ore. */
+  canDepositGoods?(rec: StructureRecord, goods: Readonly<Partial<Record<GoodId, number>>>): boolean;
   /** P2c — this sector has a nebula (Gas Collectors work). */
   sectorHasNebula?(): boolean;
   /** P2d — take ONE unit of munitions from `rec`'s owner network storage;
@@ -560,30 +563,54 @@ export class StructureGridSubsystem {
       // ore into full storage). drawAsteroidResources decrements the pool and
       // returns the amount actually mined; absent hook ⇒ flat rate (pre-WS-4 /
       // unit-harness fallback). Combat never reaches this hook (ADR boundary).
-      const want = Math.min(kind.miningRate ?? 0, kind.storageCapacity - rec.minerals);
-      const drawn = this.hooks.drawAsteroidResources
-        ? this.hooks.drawAsteroidResources(target.entityId, want)
-        : want;
       // P2c — what the rock yields: rock → minerals, ice → ice, crystal-veined
       // → minerals + crystal (ASTEROID_YIELD, per 10 mined). Minerals go to the
       // drill's buffer (hauled to the Capital as before); other goods go
-      // straight into the owner's network storage (lost if it is full).
+      // straight into the owner's network storage.
       const resource = this.hooks.asteroidResourceOf?.(target.entityId) ?? 'rock';
       const y = ASTEROID_YIELD[resource];
+      let want = Math.min(kind.miningRate ?? 0, kind.storageCapacity - rec.minerals);
+      // A full network never burns finite ore: if this pulse's goods wouldn't
+      // all fit, the drill idles and the rock keeps them.
+      if (resource !== 'rock' && this.hooks.depositGoods && this.hooks.canDepositGoods && want > 0) {
+        const plan = this.yieldGoods(y, want);
+        if (!this.hooks.canDepositGoods(rec, plan)) {
+          this.setActive(rec, false);
+          continue;
+        }
+      }
+      const drawn = this.hooks.drawAsteroidResources
+        ? this.hooks.drawAsteroidResources(target.entityId, want)
+        : want;
       const mineralsPart = resource === 'rock' ? drawn : Math.floor((drawn * (y.minerals ?? 0)) / 10);
       rec.minerals = Math.min(kind.storageCapacity, rec.minerals + mineralsPart);
       if (resource !== 'rock' && this.hooks.depositGoods) {
-        const rest = drawn - mineralsPart;
+        // Same order as the check above, and never more than it planned, so it fits.
+        const goods = this.yieldGoods(y, drawn);
         for (const g of GOOD_IDS) {
-          if (g === 'minerals') continue;
-          const share = y[g] ?? 0;
-          if (share <= 0) continue;
-          const n = Math.floor((rest * share) / (10 - (y.minerals ?? 0)));
+          const n = goods[g] ?? 0;
           if (n > 0) this.hooks.depositGoods(rec, g, n);
         }
       }
     }
   }
+
+  /** The non-mineral goods `drawn` units of a rock yield, into a reused
+   *  scratch record (alloc-free). */
+  private yieldGoods(y: Readonly<Partial<Record<GoodId, number>>>, drawn: number): Readonly<Partial<Record<GoodId, number>>> {
+    const out = this._yieldScratch;
+    const mineralsPart = Math.floor((drawn * (y.minerals ?? 0)) / 10);
+    const rest = drawn - mineralsPart;
+    for (const g of GOOD_IDS) {
+      if (out[g] !== undefined) out[g] = 0;
+      if (g === 'minerals') continue;
+      const share = y[g] ?? 0;
+      if (share <= 0) continue;
+      out[g] = Math.floor((rest * share) / (10 - (y.minerals ?? 0)));
+    }
+    return out;
+  }
+  private readonly _yieldScratch: Partial<Record<GoodId, number>> = {};
 
   /**
    * Active power — mark whether a structure draws its full consumption. A

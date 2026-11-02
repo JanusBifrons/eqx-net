@@ -522,6 +522,19 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       lit(x0 + W - 22, y0 + H - 22, 8, RED);
       break;
     }
+    case 'mine_layer': {
+      // Mine layer: an armoured launcher with a rack of mine canisters round a
+      // central chute.
+      slab(rects, x0, y0, W, H, STEEL_DARK, 12);
+      slab(rects, x0 + 22, y0 + 22, W - 44, H - 44, mixColor(accent, STEEL, 0.55), 8);
+      for (let k = 0; k < 6; k++) {
+        const a = (k * Math.PI) / 3;
+        box(rects, Math.cos(a) * (W / 2 - 46) - 13, Math.sin(a) * (H / 2 - 46) - 13, 26, 26, mixColor(accent, STEEL_DARK, 0.35), 0.95);
+      }
+      box(rects, -22, -22, 44, 44, STEEL_LIGHT);
+      lit(0, 0, 10, live ? accent : 0x553322);
+      break;
+    }
     case 'tower_module': {
       // Residential tower seen from above: stepped tiers to a lit crown.
       slab(rects, x0, y0, W, H, STEEL_DARK, 14);

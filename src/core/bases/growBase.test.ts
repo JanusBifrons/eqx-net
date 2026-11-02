@@ -108,6 +108,15 @@ describe('growBase — valid under the real building rules', () => {
     expect(count(trade, ['cargo_bay', 'freight_dock'])).toBeGreaterThan(5);
   });
 
+  it('strongholds and citadels mine their approaches; small bases do not', () => {
+    const has = (tier: 'outpost' | 'settlement' | 'stronghold' | 'citadel') =>
+      growBase(profile(tier, 'manufactory'), 7, ['asteroid']).placements.filter((p) => p.kind === 'mine_layer').length;
+    expect(has('outpost')).toBe(0);
+    expect(has('settlement')).toBe(0);
+    expect(has('stronghold')).toBeGreaterThanOrEqual(1);
+    expect(has('citadel')).toBeGreaterThanOrEqual(1);
+  });
+
   it('a colony is a city: housing dominates, and it runs the residents\' upkeep', () => {
     const city = growBase(profile('settlement', 'colony'), 9, ['station']);
     const count = (kinds: string[]) => city.placements.filter((p) => kinds.includes(p.kind)).length;
