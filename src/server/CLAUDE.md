@@ -248,6 +248,18 @@ Update this section when a threshold is set.
 - **Room state:** `tp*` / `padWeight` fields are assigned on change (A2). `tpPhaseMs` rides along only when the phase changes.
 - **Persisted:** partner, rules and charge go in the sector snapshot `teleport` block (rules re-validated on restore).
 - **Pairing (T1):** same sector, same owner.
+- **T2 — the doors and the ride:**
+  - **Phase effects:** `applyPhaseEffects` turns the pad field on while CLOSING (`SET_PAD_FIELD`) and the iris walls solid while SEALED (`tpiris-<id>-<i>`, spawned once, inactive).
+  - **The swap:** `SectorRoom.swapPadShips` collects riders by liveness class (#17: ACTIVE alive players, LINGERING hulls, swarm kinds 1 and 3), then moves them all (SAB + `SET_POSITION` + pose caches).
+  - **Riders' clients:** an active rider's `ShipState.poseEpoch` bumps and rides the own-ship snapshot entry (#16), and the broadcast grace is extended.
+  - **Spawn clearance** treats a pad as its posts (`pushSolidBoxes`).
+- **T3 — across sectors.**
+  - **Links:** a partner is a `PartnerLink` (local, or remote via `TeleportBroker.find`). The initiator drives both rooms' phases (`setPhase` on the far subsystem). Charge counts hops (`hopsToSector`; test rooms outside the galaxy graph count 1).
+  - **The swap:** `swapAcross` trades the pad holds (`padSwapAcross`, one group), then collects BOTH pads' riders before dispatching either:
+    - pilots go via `TransitOrchestrator.teleportOut` (instant, any sector);
+    - parked hulls, a disconnected pilot's included, are displaced if needed, removed quietly (`removeLingeringHullQuietly`) and rebuilt via the far room's `receiveLingeringHull`, with the roster row `markStored` to the new sector;
+    - NPC bots go via `TeleportBroker.moveBot` → `LivingWorldDirector.teleportBot` (registered for both directors in `index.ts`). Never move a director bot any other way, or the director's sector record goes stale.
+  - **Rooms register** with the broker on create and unregister on dispose.
 - Lock: `tests/integration/sectorRoom/teleporter.test.ts`. Story: [docs/features/teleporters.md](../../docs/features/teleporters.md).
 
 ## Faction standing events and policies (plan soft-leaping-truffle v4, F3)

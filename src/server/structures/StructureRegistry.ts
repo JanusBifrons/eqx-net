@@ -75,6 +75,8 @@ export interface StructureRecord {
   tpBoardedSinceMs?: number;
   /** Goods just arrived on the pad: unload them into storage next pulse. */
   tpArrived?: boolean;
+  /** T2 — its iris walls and push field exist in the physics worker. */
+  tpIrisSpawned?: boolean;
   /** Stored power for a Battery (0..the kind's `powerStorageCapacity`). It
    *  charges from the component's surplus each pulse, discharges to keep the
    *  component `powered` through a deficit, and is drained first by shield-wall

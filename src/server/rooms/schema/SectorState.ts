@@ -75,6 +75,12 @@ export class ShipState extends Schema {
   // 2026-06-20 — these were dead code before). `{}` = un-upgraded.
   statAlloc: StatAlloc = {};
 
+  // -- Teleport epoch (v4 T2) ----------------------------------------------
+  // PLAIN instance field: bumped each time a teleporter moves this ACTIVE hull.
+  // Rides the OWN-ship snapshot entry (emit-when > 0); a change tells the
+  // owner's client to re-seed its prediction at the new pose (#16).
+  poseEpoch = 0;
+
   // -- Activated dynamic mounts (Phase 4 WS-B3) --------------------------
   // PLAIN instance field, intentionally NOT @type-decorated: the per-instance
   // ACTIVATED latent mount slots (`{ slotId, weaponId }[]`). Mirrored from the

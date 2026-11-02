@@ -16,6 +16,7 @@ import type { ArrivalMode } from '../settings/settingsStorage.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import type { LabState } from '../../shared-types/messages/labMessages.js';
+import type { TeleportCandidatesReply } from '../../shared-types/teleport.js';
 import type { CargoState } from '../../shared-types/messages/cargoMessages.js';
 import type { BpMarketState } from '../../shared-types/blueprintMarket.js';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
@@ -276,6 +277,9 @@ export interface UIStore {
   labState: LabState | null;
   /** C1 — the last `cargo_state` reply (the cargo panel is rebuilt from it). */
   cargoState: CargoState | null;
+  /** v4 T3 — the last `teleport_candidates` reply (your teleporters anywhere,
+   *  by name; the teleporter panel's pair list). Discrete, written on a reply. */
+  teleportCandidates: TeleportCandidatesReply | null;
   /** Economy v2 W6 — the last `bp_market_state` reply (the Trade tab's
    *  Blueprints section is rebuilt from it). */
   bpMarket: BpMarketState | null;
@@ -482,6 +486,7 @@ export interface UIStore {
   setWallet: (credits: number | null) => void;
   setLabState: (s: LabState | null) => void;
   setCargoState: (s: CargoState | null) => void;
+  setTeleportCandidates: (s: TeleportCandidatesReply | null) => void;
   setBpMarket: (s: BpMarketState | null) => void;
   setPackedStock: (counts: Readonly<Record<string, number>> | null) => void;
   setFittedBlueprints: (ids: readonly string[]) => void;

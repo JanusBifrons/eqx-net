@@ -17,6 +17,15 @@ import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/stru
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { decideStatAllocReanchor } from './localStatAlloc';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../structures/derivedWalls.js';
+import { PAD_SPECS, TP_PHASE, TeleportCandidatesReplySchema, isTeleporterKind } from '../../shared-types/teleport.js';
+
+/** v4 T2 — prediction-world pad field ids, cached per structure (no per-sync string). */
+const PAD_FIELD_IDS = new Map<number, string>();
+function padFieldId(id: number): string {
+  let s = PAD_FIELD_IDS.get(id);
+  if (s === undefined) { s = `tpfield-${id}`; PAD_FIELD_IDS.set(id, s); }
+  return s;
+}
 import { pointSegmentDistance, wantPredBody } from '../structures/predStructureStreaming.js';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
@@ -726,6 +735,8 @@ export class ColyseusGameClient {
    *  a generation stamp when they leave (syncPredWalls). */
   private readonly _predWalls = new Map<number, { id: string; blocking: boolean; gen: number }>();
   private _predWallGen = 0;
+  /** v4 T2 — the own ship's last seen teleport epoch (-1 ⇒ none seen yet). */
+  private _localPoseEpoch = -1;
   /** A3 — the local ship's pose for distance-streaming walls (NaN ⇒ none). */
   private _predWallShipX = NaN;
   private _predWallShipY = NaN;
@@ -1188,6 +1199,8 @@ export class ColyseusGameClient {
    * `ColyseusClient.transitArrivalDrift.test.ts`.
    */
   private resetPredictionState(): void {
+    // v4 T2 — a new sector's first snapshot only records the teleport epoch.
+    this._localPoseEpoch = -1;
     this._rttWelford = createWelford();
     this._lookaheadCtrl = createLookaheadController(6);
     this._dropDetector = createDropDetector();
@@ -2098,6 +2111,11 @@ export class ColyseusGameClient {
       const parsed = BpMarketStateSchema.safeParse(raw);
       if (!parsed.success) return;
       useUIStore.getState().setBpMarket(parsed.data);
+    });
+    room.onMessage('teleport_candidates', (raw: unknown) => {
+      const parsed = TeleportCandidatesReplySchema.safeParse(raw);
+      if (!parsed.success) return;
+      useUIStore.getState().setTeleportCandidates(parsed.data);
     });
     room.onMessage('lab_state', (raw: unknown) => {
       const parsed = LabStateSchema.safeParse(raw);
@@ -3127,9 +3145,23 @@ export class ColyseusGameClient {
       // confirming reconcile is the dominant cost. `replayWindow` and
       // `reconcileMs` go onto the snapshot_applied event so a single
       // capture distinguishes reconcile time from everything-else time.
+      // v4 T2 — a teleporter moved our ship: re-seed prediction at the
+      // authoritative pose once per epoch (a snap, not a long reconcile slide).
+      const epoch = serverState.poseEpoch ?? 0;
+      let teleported = false;
+      if (epoch !== this._localPoseEpoch) {
+        const seen = this._localPoseEpoch !== -1;
+        this._localPoseEpoch = epoch;
+        if (seen && this.predWorld) {
+          this.predWorld.setShipState(localId, serverState);
+          this.reconciler = new Reconciler(this.predWorld, localId, this.clock);
+          teleported = true;
+          logEvent('teleport_reseed', { epoch, x: serverState.x, y: serverState.y });
+        }
+      }
       const replayWindow = this.inputTick - ackedTick;
       const reconcileStartMs = this.clock.now();
-      this.reconciler.reconcile(
+      if (!teleported) this.reconciler.reconcile(
         serverState,
         snap.serverTick,
         this.inputTick,
@@ -3518,7 +3550,24 @@ export class ColyseusGameClient {
       }
     }
     this.syncPredWalls();
+    this.syncPadFields();
     this.syncMines();
+  }
+
+  /** v4 T2 — each teleporter's closing push in the prediction world, from the
+   *  room-state phase (the server worker runs the same field, #15). */
+  private syncPadFields(): void {
+    const world = this.predWorld;
+    const structures = this.mirror.structures;
+    const swarm = this.mirror.swarm;
+    if (!world || !structures || !swarm) return;
+    for (const [id, st] of structures) {
+      const t = st.teleport;
+      if (t === undefined) continue;
+      const e = swarm.get(id);
+      if (!e || !isTeleporterKind(e.shipKind)) continue;
+      world.setPadField(padFieldId(id), e.x, e.y, PAD_SPECS[e.shipKind].padRadius, t.phase === TP_PHASE.CLOSING);
+    }
   }
 
   /**

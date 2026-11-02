@@ -194,6 +194,10 @@ export interface SnapshotMessage {
       /** Economy v2 W1 — the OWN player's wallet balance (credits are virtual,
        *  one balance per player; emitted on the own active ship's entry). */
       wallet?: number;
+      /** v4 T2 — bumped when a teleporter moved this (own, active) hull;
+       *  emitted when > 0. A change makes the client re-seed its prediction
+       *  at the snapshot pose instead of reconciling a long jump. */
+      poseEpoch?: number;
       /** Living World P5 — the OWN active ship's fitted blueprint ids (emit-when-
        *  non-empty). Drives the cargo capacity + the upgrade modal's weapon gate. */
       fitted?: string[];

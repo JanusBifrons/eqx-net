@@ -559,6 +559,32 @@ export class LivingWorldDirector {
   }
 
   /** Stop the loop, abandon in-flight transits, unsubscribe. Idempotent. */
+  /**
+   * v4 T3 — a teleporter carried one of this director's bots to another
+   * sector: despawn it here, spawn it there at (x, y) with its carry, and
+   * record the new sector. Only an ACTIVE bot that isn't mid-hop moves.
+   * Returns false when the bot isn't this director's (the caller tries the
+   * next director).
+   */
+  teleportBot(botId: string, from: string, to: string, x: number, y: number): boolean {
+    const rec = this.pool.get(botId);
+    if (!rec || rec.state !== 'active' || rec.sectorKey !== from || rec.controller !== null) return false;
+    const src = this.rooms.get(from);
+    const dest = this.rooms.get(to);
+    if (!src || !dest || !dest.hasFreeSlot()) return false;
+    const carry = src.despawnLivingWorldBot(botId);
+    if (!carry) return false;
+    const ok = dest.spawnLivingWorldBot({ botId, kind: carry.kind, x, y, vx: carry.vx, vy: carry.vy, health: carry.health });
+    rec.kind = carry.kind;
+    if (!ok) {
+      this.pool.scheduleRespawn(rec, this.opts.respawnDelayMs);
+      return true;
+    }
+    this.pool.markActive(rec, to);
+    serverLogEvent('bot_teleported', { botId, from, to });
+    return true;
+  }
+
   stop(): void {
     if (this.timer) {
       clearInterval(this.timer);

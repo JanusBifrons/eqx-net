@@ -61,6 +61,8 @@ export type WorkerCmd =
   | { type: 'SPAWN_WALL';      id: string; ax: number; ay: number; bx: number; by: number; thickness: number }
   | { type: 'SET_WALL_ACTIVE'; id: string; active: boolean }
   | { type: 'REMOVE_WALL';     id: string }
+  | { type: 'SET_PAD_FIELD';   id: string; cx: number; cy: number; half: number; active: boolean }
+  | { type: 'REMOVE_PAD_FIELD'; id: string }
 ;
 
 /** Per-tick contact payload extracted from the worker's CONTACT_BATCH message.

@@ -126,7 +126,7 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 export const SHOWCASE_PENDING: Record<string, string> = {
   allegiances: 'AI-vs-AI sides fight in the living galaxy but not on cue; needs a staged two-faction room.',
   teleporters:
-    'T1 is the pad, charge and cargo swap; the doors-closing animation and ships riding the jump (T2) are what a showcase shot should show.',
+    'Ships ride the jump (T2) with the warning, push and sealed iris; a showcase shot of a squad riding a pad is due with the cross-sector jump (T3).',
   factions:
     'The Factions tab (v4 F3) shows standings; a meaningful shot needs a staged room with non-zero standings both ways and a turret firing on a disliked pilot.',
   blueprints:

@@ -53,6 +53,7 @@ import { SpeedDialMenu } from './components/SpeedDialMenu';
 import { BottomControlPanel } from './components/BottomControlPanel';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
 import { PlacementFenceHint } from './components/PlacementFenceHint';
+import { TeleportWarning } from './components/TeleportWarning';
 import { EntityStatsPanel } from './components/EntityStatsPanel';
 import { UpgradeModalHost } from './components/UpgradeModalHost';
 import { Hud } from './components/Hud';
@@ -846,6 +847,7 @@ function GameSurface({
       <Slot anchor="top-left" order={10}><Hud /></Slot>
       <Slot anchor="top-center" order={1}><EnergyBar /></Slot>
       <Slot anchor="top-center" order={2}><WarpInWarningBanner /></Slot>
+      <Slot anchor="top-center" order={2}><TeleportWarning /></Slot>
       {/* Living World P2 — trade toasts (escort prompt when red). */}
       <Slot anchor="top-center" order={5}><TradeToasts /></Slot>
       <WhileAwayDialog />

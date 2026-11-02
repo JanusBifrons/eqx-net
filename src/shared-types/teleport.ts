@@ -163,14 +163,94 @@ const POST_CENTERS: Readonly<Record<TeleporterKind, ReadonlyArray<readonly [numb
   for (const k of TELEPORTER_KINDS) {
     const s = PAD_SPECS[k];
     const h = padHalfExtent(k) - s.post / 2;
-    const pts: Array<readonly [number, number]> = [[-h, -h], [h, -h], [h, h], [-h, h]];
-    if (s.posts === 8) pts.push([0, -h], [h, 0], [0, h], [-h, 0]);
-    out[k] = pts;
+    // Perimeter order (each post's neighbour is the next one), so the iris
+    // spans run post to post.
+    out[k] = s.posts === 8
+      ? [[-h, -h], [0, -h], [h, -h], [h, 0], [h, h], [0, h], [-h, h], [-h, 0]]
+      : [[-h, -h], [h, -h], [h, h], [-h, h]];
   }
   return out;
 })();
 
-/** Centres of a pad's posts, local frame. Ships enter between them. */
+/** Centres of a pad's posts, local frame, in perimeter order. Ships enter
+ *  between them. */
 export function padPostCenters(kind: TeleporterKind): ReadonlyArray<readonly [number, number]> {
   return POST_CENTERS[kind];
 }
+
+/** The pad is the square |dx|, |dy| ≤ padRadius inside the posts. */
+export function onPad(kind: TeleporterKind, cx: number, cy: number, x: number, y: number): boolean {
+  const r = PAD_SPECS[kind].padRadius;
+  return Math.abs(x - cx) <= r && Math.abs(y - cy) <= r;
+}
+
+/** One iris span (local frame): the gap between post `i` and post `i + 1`,
+ *  from one post's edge to the next's. Spans close the pad at SEALED. */
+export function padIrisSpanLocal(kind: TeleporterKind, i: number, out: { ax: number; ay: number; bx: number; by: number }): void {
+  const pts = POST_CENTERS[kind];
+  const a = pts[i % pts.length]!;
+  const b = pts[(i + 1) % pts.length]!;
+  const half = PAD_SPECS[kind].post / 2;
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const ux = (b[0] - a[0]) / len;
+  const uy = (b[1] - a[1]) / len;
+  out.ax = a[0] + ux * half;
+  out.ay = a[1] + uy * half;
+  out.bx = b[0] - ux * half;
+  out.by = b[1] - uy * half;
+}
+
+// ── The doors push (T2; applied by the physics world on BOTH sides, #15) ─────
+
+/** How hard the closing iris nudges a straddling ship (world units / s²). */
+export const PAD_PUSH_ACCEL = 90;
+/** A ship is straddling while its centre is within its radius plus this of
+ *  the pad edge. */
+export const PAD_PUSH_MARGIN = 20;
+
+/**
+ * Which way the closing iris pushes a ship at (x, y) on a pad centred at
+ * (cx, cy) with half-size `half`: straight in if its centre is on the pad,
+ * straight out if not, along the nearest edge's normal. Writes a unit vector
+ * to `out` and returns true; false when the ship isn't straddling the edge.
+ * Pure and allocation-free: the server worker and the client's prediction
+ * call the same function.
+ */
+export function padPushDir(
+  cx: number, cy: number, half: number, x: number, y: number, shipRadius: number, out: { x: number; y: number },
+): boolean {
+  const dx = x - cx;
+  const dy = y - cy;
+  const ax = Math.abs(dx);
+  const ay = Math.abs(dy);
+  const depth = half - Math.max(ax, ay); // > 0 on the pad
+  if (Math.abs(depth) > shipRadius + PAD_PUSH_MARGIN) return false;
+  const sign = depth >= 0 ? -1 : 1; // on the pad → toward the centre
+  if (ax >= ay) { out.x = (dx >= 0 ? 1 : -1) * sign; out.y = 0; }
+  else { out.x = 0; out.y = (dy >= 0 ? 1 : -1) * sign; }
+  return true;
+}
+
+// ── T3 — pairing across sectors ─────────────────────────────────────────────
+
+/** Ask for the sender's other teleporters, in every sector. */
+export const TeleportCandidatesQuerySchema = z
+  .object({ type: z.literal('teleport_candidates'), entityId })
+  .strict();
+/** Pair with one of the sender's teleporters anywhere (by sector + uid). */
+export const TeleportPairRemoteSchema = z
+  .object({
+    type: z.literal('teleport_pair_remote'),
+    entityId,
+    sectorKey: z.string().min(1).max(64),
+    uid: z.string().min(1).max(64),
+  })
+  .strict();
+/** The reply: candidates by name ("Teleporter · Verdance"), never raw ids
+ *  on screen (the uid only rides back in the pair request). */
+export const TeleportCandidatesReplySchema = z.object({
+  type: z.literal('teleport_candidates'),
+  entityId,
+  items: z.array(z.object({ sectorKey: z.string(), uid: z.string(), label: z.string() })).max(200),
+});
+export type TeleportCandidatesReply = z.infer<typeof TeleportCandidatesReplySchema>;

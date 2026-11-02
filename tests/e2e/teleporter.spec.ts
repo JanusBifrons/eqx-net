@@ -53,3 +53,41 @@ test('pair, charge, load and fire a teleporter from the inspector', async ({ bro
   await expect.poll(async () => Number(await panel.getAttribute('data-charge-pct')), { timeout: 2_000 }).toBeLessThan(100);
   await ctx.close();
 });
+
+/**
+ * v4 T2 — the pilot rides. Spawn ON the west pad, fire it: the doors-closing
+ * warning shows, the ship arrives on the east pad (x ≈ +1300), and it stays
+ * there (the client re-seeds its prediction at the new pose; no snap back).
+ */
+test('a pilot on the pad is warned, rides the jump, and stays on the far pad', async ({ browser }) => {
+  test.setTimeout(120_000);
+  const ctx = await browser.newContext();
+  await ctx.addInitScript((pid) => {
+    try { localStorage.setItem('eqxPlayerId', pid as string); } catch { /* ignore */ }
+  }, OWNER);
+  const page = await ctx.newPage();
+  await page.goto(`${BASE_URL}?room=teleport-test&testId=${randomUUID()}&worker=0&spawnX=-1300&spawnY=-60`);
+  await page.waitForFunction(
+    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '',
+    { timeout: 90_000 },
+  );
+  const shipX = (): Promise<number> => page.evaluate(() => {
+    const m = (window as unknown as { __eqxClient?: { mirror?: { localPlayerId?: string; ships: Map<string, { x: number }> } } }).__eqxClient?.mirror;
+    return m?.localPlayerId ? (m.ships.get(m.localPlayerId)?.x ?? NaN) : NaN;
+  });
+  await expect.poll(shipX, { timeout: 10_000 }).toBeLessThan(-900);
+
+  await expect.poll(() => page.evaluate(() => (window as unknown as EqxWindow).__eqxSelectAtWorld?.(-1300, 250) ?? null), { timeout: 10_000 }).not.toBeNull();
+  const panel = page.getByTestId('tp-panel');
+  await expect(panel).toHaveAttribute('data-charge-pct', '100', { timeout: 30_000 });
+  await page.getByTestId('tp-fire').click();
+
+  await expect(page.getByTestId('teleport-warning')).toBeVisible({ timeout: 5_000 });
+  await expect.poll(shipX, { timeout: 10_000 }).toBeGreaterThan(900);
+  // It stays: sample for a second, never back on the west side.
+  for (let i = 0; i < 10; i++) {
+    expect(await shipX()).toBeGreaterThan(900);
+    await page.waitForTimeout(100);
+  }
+  await ctx.close();
+});

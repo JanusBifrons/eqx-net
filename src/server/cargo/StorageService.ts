@@ -503,6 +503,20 @@ export class StorageService {
     this.commitPads([a, b], []);
   }
 
+  /** v4 T3 — the jump across sectors: pad `a` (this room) and pad `b`
+   *  (`other` room) trade holds in ONE group (the hold store is process-wide,
+   *  and each pad row keeps its own sector). */
+  padSwapAcross(a: StructureRecord, other: StorageService, b: StructureRecord): void {
+    const ha = a.padHold;
+    a.padHold = b.padHold;
+    b.padHold = ha;
+    const puts: HoldRecord[] = [];
+    const deletes: string[] = [];
+    this.padOp(a, puts, deletes);
+    other.padOp(b, puts, deletes);
+    this.d.holdStore.commit(puts, deletes, this.persist() || other.persist());
+  }
+
   /** A teleporter left the world: its pad hold spills; the row is deleted. */
   takePadForSpill(rec: StructureRecord): Hold | null {
     const uid = this.padUid(rec);
