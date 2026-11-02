@@ -193,7 +193,9 @@ const goodOrNull = z.enum(GOOD_IDS).nullable();
 export const TradeOfferSchema = z.object({
   offerId: z.string(),
   kind: z.enum(['sell', 'buy']),
-  good: z.enum(GOOD_IDS),
+  // A packed structure / hull offer has no good, only a `product` (W4b).
+  good: goodOrNull,
+  product: z.string().optional(),
   unitPrice: z.number(),
   maxQty: z.number().int(),
   expiresAtMs: z.number(),
