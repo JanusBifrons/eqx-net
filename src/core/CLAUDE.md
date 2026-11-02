@@ -370,5 +370,5 @@ reintroduces the spiral the 500-target cannot afford. Full story:
 - **Every placement and edge is checked with the real rules AS the base is built** (`placementRejection`, `canConnect`); a slot that fails is skipped. Never bypass them; `growBase.test.ts` re-checks independently.
 - **Deterministic per seed.** NPC bases regenerate from their seed, so bump `BASE_GROWTH_VERSION` on any output change.
 - **Fenced bases put their turrets on bastions OUTSIDE the fence** (a fence blocks its owner's own fire). `Builder.tryPlace` refuses any box on an existing link line, so a later placement can never break an earlier link's line of sight.
-- **Roles include `colony` (D3, cities):** housing modules that consume provisions and consumer goods. A colony is never an outpost.
+- **Roles include `colony` (D3, habitat stations):** habitation modules that consume provisions and consumer goods. Never an outpost. Player-facing text says "habitat station", never "city".
 - Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).

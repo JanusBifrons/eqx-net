@@ -2222,9 +2222,9 @@ export class SectorRoom extends Room<SectorState> {
       onBlueprintSpent: (rec) => this.storage.persistSlot(rec),
       // Active power: processors draw full only while running.
       setActive: (rec, active) => this.structureGrid.setActive(rec, active),
-      // D3 — city taxes: a player's habitats and towers pay their wallet.
+      // D3 — station taxes: a player's habitat modules and spires pay their wallet.
       payCredits: (rec, n) => {
-        if (parseOwner(rec.owner).kind === 'player') getWallet().credit(rec.owner, n, 'city_taxes');
+        if (parseOwner(rec.owner).kind === 'player') getWallet().credit(rec.owner, n, 'station_taxes');
       },
     });
     this.gates = new GateController({

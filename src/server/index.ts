@@ -789,7 +789,7 @@ gameServer
     maxClients: 8,
   })
   .filterBy(['testId']);
-// D3 — a colony (a city: habitats, towers, hydroponics) for the showcase and
+// D3 — a habitat station (role colony: habitat modules, spires, hydroponics) for the showcase and
 // tests.
 gameServer
   .define('npc-base-colony', SectorRoom, {
