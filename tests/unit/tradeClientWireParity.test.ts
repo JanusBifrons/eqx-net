@@ -23,6 +23,7 @@ import * as client from '../../src/client/net/tradeClient';
 import { AcceptOfferSchema, CancelDealSchema, SendGiftSchema } from '../../src/shared-types/economy';
 import { InstallBlueprintSchema, UnpackHullSchema } from '../../src/shared-types/blueprints';
 import { BpBuySchema, BpMarketQuerySchema, BpSellSchema } from '../../src/shared-types/blueprintMarket';
+import { PackedStockQuerySchema } from '../../src/shared-types/packedStock';
 import { PlaceBountySchema } from '../../src/shared-types/contracts';
 import { LabCancelSchema, LabQuerySchema, LabStartSchema } from '../../src/shared-types/messages/labMessages';
 import { BreakInCancelSchema, BreakInSchema, CargoMoveSchema, CargoQuerySchema, SetFreightOrdersSchema } from '../../src/shared-types/messages/cargoMessages';
@@ -49,6 +50,11 @@ describe('tradeClient senders match the server schemas', () => {
   it('install_blueprint', () => {
     client.sendInstallBlueprint(3, 'bp-cargo-expander');
     lastAccepted(InstallBlueprintSchema, 'install_blueprint');
+  });
+
+  it('packed_stock_query (economy v2)', () => {
+    client.sendPackedStockQuery();
+    lastAccepted(PackedStockQuerySchema, 'packed_stock_query');
   });
 
   it('bp_market_query / bp_buy / bp_sell (economy v2 W6)', () => {

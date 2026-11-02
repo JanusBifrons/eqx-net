@@ -15,6 +15,8 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
 import { ROSTER_CAP } from '../../../src/server/playerShips/PlayerShipStore.js';
+import { getShipKind } from '../../../src/shared-types/shipKinds.js';
+import { qualityHullFactor } from '../../../src/shared-types/blueprints.js';
 import type { BlueprintResult } from '../../../src/shared-types/blueprints.js';
 
 function room(id: string): SectorRoom {
@@ -69,6 +71,9 @@ describe('SectorRoom integration — unpacking hulls (economy v2 W5a)', () => {
     const roster = getPlayerShipStore().listByPlayer(pid);
     expect(roster).toHaveLength(before + 1);
     const ship = roster.find((r) => r.kind === 'gunship')!;
+    // Quality 50 ⇒ +5 % max hull, and it starts full.
+    expect(ship.hullQuality).toBe(50);
+    expect(ship.health).toBe(Math.round(getShipKind('gunship').maxHealth * qualityHullFactor(50)));
     expect(ship.isActive).toBe(false);
     expect(ship.lastSectorKey).toBe('sol-prime');
     expect(Math.hypot(ship.lastX - cap.x, ship.lastY - cap.y)).toBeLessThan(600);

@@ -107,7 +107,6 @@ are BOUGHT from NPC factions and traders, and some are LOOTED from ships.
     - Your roster cap (10) is checked first, and the crate stays put if
       you're full.
     - Elites (~15 %) and incursion caches (~15 %) can drop packed hulls.
-    - Quality has no stat effect yet.
   - **W5b, shipped: the Shipyard and the hull gate.**
     - **Shipyard:** a huge hub structure (Build ▸ Industry), 220 power while it
       works. Give it a ship blueprint (`hull:<kind>`) and goods and it builds
@@ -134,6 +133,18 @@ are BOUGHT from NPC factions and traders, and some are LOOTED from ships.
   - **Instant:** a blueprint is weightless data, so buying puts it straight into
     your storage and selling pays straight into your wallet. Each is one
     atomic group with the wallet change.
+
+  **The Build menus show your stock:** every non-starter kind shows how many
+  packed ones you have in this sector ("Smelter ×2"), and a kind you have none
+  of is dimmed and can't be picked ("Smelter · buy packed"). That covers both
+  the speed-dial drill and the desktop bottom bar. It's a request/reply view
+  (`packed_stock_query` → `packed_stock`) asked every few seconds while a build
+  menu is open, counting the same places the placement gate looks.
+
+  **Quality matters:** a packed item's quality (0–100, set by the blueprint's
+  output stat) gives what's made from it up to **+10 % max hull**: the structure
+  placed from it, or the ship unpacked from it (stored on the roster row as
+  `hull_quality`). Repacking keeps the quality.
 
   **Repacking:** taking down a structure that was placed from a packed item
   gives the packed item back, at the same quality (EVE-style repackaging). It

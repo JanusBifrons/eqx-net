@@ -102,6 +102,9 @@ export interface PlayerShipRecord {
   statAlloc: StatAlloc;
   /** Phase 4. Activated latent mount slots + bound weapons; `[]` = none. */
   mounts: ActivatedMount[];
+  /** Economy v2 — the packed hull's quality if this ship was unpacked from a
+   *  crate (0 otherwise): a small max-hull bonus (`qualityHullFactor`). */
+  hullQuality: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -117,6 +120,8 @@ export interface CreateShipInput {
   /** Hull at spawn. Caller is responsible for clamping to kind's
    *  maxHealth — store doesn't know catalogue numerics beyond version. */
   health: number;
+  /** Economy v2 — the packed hull's quality (unpacked ships only). */
+  hullQuality?: number;
 }
 
 export interface PlayerShipStoreOpts {
@@ -170,6 +175,7 @@ export class PlayerShipStore {
       xp: 0,
       statAlloc: {},
       mounts: [],
+      hullQuality: input.hullQuality ?? 0,
       createdAt: now,
       updatedAt: now,
     };
@@ -216,6 +222,7 @@ export class PlayerShipStore {
       xp: stamped.xp,
       statAllocJson: JSON.stringify(stamped.statAlloc),
       mountsJson: JSON.stringify(stamped.mounts),
+      hullQuality: stamped.hullQuality,
       ts: now,
     });
   }

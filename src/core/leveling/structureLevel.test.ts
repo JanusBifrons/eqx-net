@@ -87,6 +87,9 @@ describe('structureLevel — multipliers', () => {
 describe('structureLevel — effective max health', () => {
   it('a level-1 structure keeps its base HP', () => {
     expect(effectiveStructureMaxHealth(600, 1)).toBe(600);
+    // Economy v2 — quality from the packed item adds up to +10 %.
+    expect(effectiveStructureMaxHealth(600, 1, 100)).toBeCloseTo(660);
+    expect(effectiveStructureMaxHealth(600, 1, 0)).toBe(600);
   });
   it('a level-2 structure has more HP than base', () => {
     expect(effectiveStructureMaxHealth(600, 2)).toBeGreaterThan(600);
