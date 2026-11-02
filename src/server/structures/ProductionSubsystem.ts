@@ -60,6 +60,9 @@ export interface ProductionDeps {
   onBlueprintSpent?(rec: StructureRecord): void;
   /** Active power: full draw while running, the idle trickle otherwise. */
   setActive?(rec: StructureRecord, active: boolean): void;
+  /** D3 — a city module finished a cycle: pay its owner `n` credits (taxes).
+   *  The room pays a player's wallet; an NPC owner has none. */
+  payCredits?(rec: StructureRecord, n: number): void;
 }
 
 interface AppliedCache {
@@ -225,6 +228,26 @@ export class ProductionSubsystem {
     return true;
   }
 
+  /** Would ALL of `goods` fit in `rec`'s owner network storage (checked
+   *  together, in GOOD_IDS order, the order the caller then deposits in)?
+   *  Plans only; changes nothing. Alloc-free. */
+  canDeposit(rec: StructureRecord, goods: Readonly<Partial<Record<GoodId, number>>>): boolean {
+    this.netComponent = null;
+    this.collectNetwork(rec);
+    const list = this.multiList;
+    list.length = 0;
+    for (let i = 0; i < GOOD_IDS.length; i++) {
+      const n = goods[GOOD_IDS[i]!] ?? 0;
+      if (n <= 0) continue;
+      const o = this.multiScratch[i]!;
+      o.n = n;
+      list.push(o);
+    }
+    return list.length === 0 || this.placeAll(list, 0, false, 0);
+  }
+  private readonly multiScratch: Array<{ good: GoodId; n: number }> = GOOD_IDS.map((good) => ({ good, n: 0 }));
+  private readonly multiList: Array<{ good: GoodId; n: number }> = [];
+
   private readonly depositScratch: { good: GoodId; n: number } = { good: 'minerals', n: 0 };
   private readonly depositList: readonly RecipeOutput[] = [this.depositScratch];
 
@@ -282,6 +305,8 @@ export class ProductionSubsystem {
       rec.prodProgress = 0;
       rec.prodCycles = cycle + 1;
       this.cyclesCompleted++;
+      // D3 — taxes go to the owner's wallet, never into a hold.
+      for (const o of eff.outputs) if ('credits' in o) this.d.payCredits?.(rec, o.credits);
     }
     rec.prodState = PROD_STATE.running;
   }
@@ -393,6 +418,7 @@ export class ProductionSubsystem {
       bank[i] = NaN;
     }
     for (const o of outputs) {
+      if ('credits' in o) continue; // D3 taxes: paid to the wallet, take no space
       if ('packed' in o || 'hull' in o) {
         // A packed structure, or a packed hull (W5 Shipyard): one discrete item.
         const product = 'packed' in o ? packedProduct(o.packed) : hullProduct(o.hull);

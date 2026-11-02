@@ -36,7 +36,9 @@ import {
   SendGiftSchema,
   type TradeNotice,
 } from '../../shared-types/economy.js';
-import { SectorState, ShipState, StructureState } from './schema/SectorState.js';
+import { MineState, SectorState, ShipState, StructureState } from './schema/SectorState.js';
+import { MineFieldSubsystem, type MineRecord, type MineTarget } from '../structures/MineFieldSubsystem.js';
+import { MINE_BLAST_RADIUS, MINE_CLEARANCE, MINE_DAMAGE, type MineDetonated } from '../../shared-types/mines.js';
 import {
   STRUCTURE_ETA_NONE,
   STRUCTURE_ETA_STALLED,
@@ -806,6 +808,8 @@ export class SectorRoom extends Room<SectorState> {
   private sectorFeatures: readonly AsteroidFieldFeature[] = [];
   /** P2b — processors on the grid pulse (take inputs, run, put outputs). */
   private production!: ProductionSubsystem;
+  /** Mine Layers' proximity mines (10 Hz with the structure tick). */
+  private mineField!: MineFieldSubsystem;
   /** 1 Hz grid heartbeat timer (unref'd; off the physics tick). */
   private structureGridTimer: ReturnType<typeof setInterval> | undefined;
   /** Faster turret aim/fire timer (Phase 5; unref'd). */
@@ -1091,6 +1095,8 @@ export class SectorRoom extends Room<SectorState> {
      *  'havok') to exercise scrap-on-death (Phase 2b-ii). */
     spawnTestDrone: (id: string, x: number, y: number, kind?: ShipKindId) => boolean;
     tickStructureTurrets: () => void;
+    /** Mine Layers' live mines (integration tests). */
+    mineField: MineFieldSubsystem;
     /** A0 scale measurement — rebuild the structures snapshot slice directly. */
     rebuildStructuresSlice: () => void;
     /** The authoritative SAB pose of a swarm entity (null ⇒ unknown id). */
@@ -1138,6 +1144,7 @@ export class SectorRoom extends Room<SectorState> {
         return ok;
       },
       tickStructureTurrets: () => this.structureTurretTick(),
+      mineField: this.mineField,
       rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
       gateMask: (id) => this.gates.maskFor(id),
       swarmPose: (id) => {
@@ -2108,6 +2115,7 @@ export class SectorRoom extends Room<SectorState> {
       // P2c — asteroid kinds, extractor goods into network storage, nebulae.
       asteroidResourceOf: (entityId) => this.swarmRegistry.getByEntityId(entityId)?.asteroidResource ?? 'rock',
       depositGoods: (rec, good, n) => this.production.deposit(rec, good, n),
+      canDepositGoods: (rec, goods) => this.production.canDeposit(rec, goods),
       sectorHasNebula: () => this.sectorFeatures.includes('nebula'),
       // P2d — missile and autocannon turrets load munitions from base storage.
       takeMunition: (rec) => this.production.takeGoods(rec, ONE_MUNITION),
@@ -2169,6 +2177,33 @@ export class SectorRoom extends Room<SectorState> {
       setActive: (lab, active) => this.structureGrid.setActive(lab, active),
       sectorKey: () => this.sectorKey,
     });
+    // Mine Layers: lay mines from munitions; a mine goes off on a ship hostile
+    // to its owner (the owner's turret-targeting rule).
+    this.mineField = new MineFieldSubsystem({
+      registry: this.structureRegistry,
+      powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
+      takeMunition: (rec) => this.production.takeGoods(rec, ONE_MUNITION),
+      isClear: (x, y) => this.mineSpotClear(x, y),
+      findHostile: (x, y, range, owner) => {
+        const t = this.findNearestTurretTarget(x, y, range, owner);
+        if (t === null) return null;
+        const out = this._mineTarget;
+        out.id = t.playerId ?? t.id;
+        out.x = t.x;
+        out.y = t.y;
+        return out;
+      },
+      detonate: (mine, target) => this.detonateMine(mine, target),
+      onLaid: (mine) => {
+        const st = new MineState();
+        st.ownerIdx = this.internStructureOwner(mine.owner);
+        st.x = Math.round(mine.x);
+        st.y = Math.round(mine.y);
+        (this.state as SectorState).mines.set(mine.id, st);
+      },
+      onRemoved: (mine) => { (this.state as SectorState).mines.delete(mine.id); },
+      setActive: (rec, active) => this.structureGrid.setActive(rec, active),
+    });
     // ── Shield-wall lifecycle (shield-fence plan) ──────────────────────────
     // Forms the blocking span between paired pylons + drives its physics
     // collider; updated on the grid pulse + the faster turret tick.
@@ -2179,6 +2214,10 @@ export class SectorRoom extends Room<SectorState> {
       onBlueprintSpent: (rec) => this.storage.persistSlot(rec),
       // Active power: processors draw full only while running.
       setActive: (rec, active) => this.structureGrid.setActive(rec, active),
+      // D3 — city taxes: a player's habitats and towers pay their wallet.
+      payCredits: (rec, n) => {
+        if (parseOwner(rec.owner).kind === 'player') getWallet().credit(rec.owner, n, 'city_taxes');
+      },
     });
     this.gates = new GateController({
       registry: this.structureRegistry,
@@ -4464,7 +4503,11 @@ export class SectorRoom extends Room<SectorState> {
   private structureTurretTick(): void {
     // C2/C3 — break-ins tick even in a sector with no structures (ship targets).
     this.breakIns.tick();
-    if (this.structureRegistry.size === 0) return;
+    if (this.structureRegistry.size === 0) {
+      // Mines whose layer is gone still have to leave.
+      if (this.mineField.mines.size > 0) this.mineField.tick(Date.now());
+      return;
+    }
     const nowMs = Date.now();
     // A1 — the turret target grid is rebuilt (lazily, on the first query) once
     // per turret tick, instead of every turret scanning every swarm entity.
@@ -4472,6 +4515,8 @@ export class SectorRoom extends Room<SectorState> {
     this.npcTargetGridFresh = false;
     this.relationCtx.nowMs = nowMs;
     this.structureGrid.tickTurrets(nowMs);
+    // Mine Layers lay and mines go off (same target grids as the turrets).
+    this.mineField.tick(nowMs);
     // WS-4 — re-broadcast each Miner's mining beam on the same fast cadence so
     // the continuous beam tracks + doesn't flicker (gated per-Miner internally).
     this.structureGrid.tickMiners(nowMs);
@@ -4735,6 +4780,38 @@ export class SectorRoom extends Room<SectorState> {
     out.y = this.turretTargetGrid.y(i);
     out.radius = rec.radius;
     return out;
+  }
+
+  private readonly _mineTarget: MineTarget = { id: '', x: 0, y: 0 };
+
+  /** A mine spot keeps clear of structure boxes, asteroids, other mines and
+   *  the sector edge. Called only when a layer lays (rare). */
+  private mineSpotClear(x: number, y: number): boolean {
+    const c = MINE_CLEARANCE;
+    if (Math.abs(x) > SECTOR_PLAYABLE_HALF_EXTENT - c || Math.abs(y) > SECTOR_PLAYABLE_HALF_EXTENT - c) return false;
+    for (const r of this.structureRegistry.all()) {
+      const dx = Math.max(Math.abs(x - r.x) - (r.halfW ?? r.radius), 0);
+      const dy = Math.max(Math.abs(y - r.y) - (r.halfH ?? r.radius), 0);
+      if (dx * dx + dy * dy < c * c) return false;
+    }
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== 0) continue;
+      const b = slotBase(rec.slot);
+      const d = rec.radius + c;
+      if ((this.sabF32[b + SLOT_X_OFF]! - x) ** 2 + (this.sabF32[b + SLOT_Y_OFF]! - y) ** 2 < d * d) return false;
+    }
+    for (const m of this.mineField.mines.values()) {
+      if ((m.x - x) ** 2 + (m.y - y) ** 2 < 4 * c * c) return false;
+    }
+    return true;
+  }
+
+  /** A mine went off: hurt the ship that set it off (the layer is the
+   *  attacker, like a turret) and show the blast to everyone. */
+  private detonateMine(mine: MineRecord, target: MineTarget): void {
+    this.applyDamage(target.id, mine.layerId, MINE_DAMAGE, mine.x, mine.y);
+    const msg: MineDetonated = { type: 'mine_detonated', x: mine.x, y: mine.y, radius: MINE_BLAST_RADIUS };
+    this.broadcast('mine_detonated', msg);
   }
 
   /** C2 — the nearest ACTIVE, alive pilot (#17) within range who is hostile

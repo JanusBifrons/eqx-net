@@ -3,6 +3,7 @@ import HubIcon from '@mui/icons-material/Hub';
 import BoltIcon from '@mui/icons-material/Bolt';
 import SecurityIcon from '@mui/icons-material/Security';
 import FactoryIcon from '@mui/icons-material/Factory';
+import ApartmentIcon from '@mui/icons-material/Apartment';
 import { type StructureKindId } from '@shared-types/structureKinds';
 
 /**
@@ -23,7 +24,7 @@ import { type StructureKindId } from '@shared-types/structureKinds';
  * (no orphan, no duplicate) — locked by `buildCategories.test.ts`, which fails
  * closed the moment a 10th kind is appended to the catalogue without a category.
  */
-export type BuildCategoryId = 'core' | 'economy' | 'industry' | 'defence';
+export type BuildCategoryId = 'core' | 'economy' | 'industry' | 'defence' | 'city';
 
 export interface BuildCategory {
   readonly id: BuildCategoryId;
@@ -63,8 +64,10 @@ export const BUILD_CATEGORIES: readonly BuildCategory[] = [
     id: 'defence',
     label: 'Defence',
     icon: <SecurityIcon />,
-    kinds: ['turret', 'laser_bolt_turret', 'missile_turret', 'autocannon_turret', 'shield_pylon', 'shield_gate', 'shield_airlock'],
+    kinds: ['turret', 'laser_bolt_turret', 'missile_turret', 'autocannon_turret', 'mine_layer', 'shield_pylon', 'shield_gate', 'shield_airlock'],
   },
+  // D3 — cities: residents use provisions and consumer goods and pay taxes.
+  { id: 'city', label: 'City', icon: <ApartmentIcon />, kinds: ['habitat_module', 'tower_module'] },
 ];
 
 /** The drilled-into category's icon (mirrored onto the FAB at the `kinds` level). */
@@ -73,6 +76,7 @@ export const CATEGORY_ICON: Record<BuildCategoryId, ReactNode> = {
   economy: <BoltIcon />,
   industry: <FactoryIcon />,
   defence: <SecurityIcon />,
+  city: <ApartmentIcon />,
 };
 
 /** Resolve a category record by id (every id is present — exhaustiveness-locked). */

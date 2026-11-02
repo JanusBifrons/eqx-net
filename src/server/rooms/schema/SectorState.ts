@@ -165,6 +165,15 @@ export class StructureState extends Schema {
   @type(['uint16']) connTo = new ArraySchema<number>();
 }
 
+/** A proximity mine (Mine Layer). Static, so room state carries it: the join
+ *  payload has every mine, and a laid / detonated mine is one patch (#16). */
+export class MineState extends Schema {
+  /** Index into `SectorState.structureOwners` (the layer's owner). */
+  @type('uint16') ownerIdx?: number;
+  @type('float32') x?: number;
+  @type('float32') y?: number;
+}
+
 export class SectorState extends Schema {
   @type({ map: ShipState }) ships = new MapSchema<ShipState>();
   /** Structure grid state, keyed by entityId (A2 — see StructureState). */
@@ -173,6 +182,8 @@ export class SectorState extends Schema {
   @type({ map: 'string' }) structureOwners = new MapSchema<string>();
   /** owner index → display name ('' ⇒ unresolved; the client shows "Unknown"). */
   @type({ map: 'string' }) structureOwnerNames = new MapSchema<string>();
+  /** Proximity mines, keyed by mine id. */
+  @type({ map: MineState }) mines = new MapSchema<MineState>();
   @type('number') tick: number = 0;
   @type('number') clockRate: number = 1.0;
 }

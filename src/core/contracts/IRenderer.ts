@@ -198,6 +198,16 @@ export interface SwarmRenderState {
  * holds the pose). Drives the connector web, the scaffolding fill + dim, and the
  * HUD power readout. Pure UI state — no spatial fields (those live in `swarm`).
  */
+/** Mine Layer — one proximity mine (from room state `mines`). Static. */
+export interface MineRenderState {
+  x: number;
+  y: number;
+  /** Laid by the local player's base (drawn friendly). */
+  own: boolean;
+  /** Sync generation (sweep stamp; renderer ignores it). */
+  gen: number;
+}
+
 export interface StructureRenderState {
   /** Phase-4 C3 — hull health fraction [0..1], decoded from the slice's 0-100
    *  `hpPct`. Lets the inspector render the hull bar instantly on selection
@@ -369,6 +379,8 @@ export interface RenderMirror {
    *  from `SnapshotMessage.structures[]`. The renderer joins by entityId to draw
    *  the connector web + scaffolding fill + dim unbuilt blueprints. */
   structures?: Map<number, StructureRenderState>;
+  /** Mine Layer — proximity mines, keyed by mine id (room state `mines`). */
+  mines?: Map<string, MineRenderState>;
   /** Structures plan, Phase 3 — connection flash windows from the discrete
    *  `grid_pulse` event. Key is the sorted entityId pair packed as
    *  `min * 65536 + max` (numeric ⇒ no per-frame string-key allocation in the

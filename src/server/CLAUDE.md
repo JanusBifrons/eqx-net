@@ -169,6 +169,7 @@ Update this section when a threshold is set.
   - Drilling is data-driven: any built kind with a `miningRate` mines (Miner, Deep Core Rig).
   - The asteroid's `asteroidResource` (swarm record + wire byte) splits the yield via `ASTEROID_YIELD`. Minerals go to the drill buffer; other goods go to network storage through `ProductionSubsystem.deposit`.
   - Gas Collectors work only when `sectorFeatures` include `nebula`.
+  - **A drill never mines into a full network.** Before drawing from a non-rock asteroid it asks `canDepositGoods` (`ProductionSubsystem.canDeposit`, the whole yield together); if it would not fit, the drill idles and the rock keeps its finite ore.
   - Lock: `tests/integration/sectorRoom/extraction.test.ts`.
 - **Ammo (P2d):**
   - `tickTurrets` calls `spendAmmo` before every projectile / missile shot. An empty magazine reloads `AMMO_SHOTS_PER_UNIT[kind]` shots from one munition, through the `takeMunition` hook (`ProductionSubsystem.takeGoods`).
@@ -180,6 +181,8 @@ Update this section when a threshold is set.
   - **The one switch** is `StructureGridSubsystem.setActive(rec, active)`, which adjusts the component's net power in O(1) via `Grid.adjustDraw`. Never write `rec.drawFull` directly, or the component's power goes stale until the next rebuild.
   - **Callers:** drills and gas (StructureGridSubsystem), turrets (target or not), processors (`ProductionSubsystem` dep, running or not), Research Labs (`ResearchLabSubsystem` dep, job advancing or not). A new power consumer that "works" must call it too, or it draws idle forever.
   - **Wire:** `STRUCTURE_FLAG_DRAW_FULL` (64) in the room-state flags byte.
+- **Mine Layers:** `MineFieldSubsystem` (`structures/`) is ticked with the 10 Hz structure tick, after the turrets, and reuses their target grids, magazine (`rec.ammo`) and `setActive`. Mines are static and live in ROOM STATE (`SectorState.mines`, #16); `mine_detonated` is only an accelerator. Mines whose layer is gone are swept even when the sector has no structures left. Not persisted. Story: [docs/features/mine-layer.md](../../docs/features/mine-layer.md).
+- **City taxes (D3):** a recipe output `{ credits: n }` takes no storage space. When the cycle ends, `payCredits` pays it to a PLAYER owner's wallet (`city_taxes`); an NPC owner gets nothing. Never put credits in a hold.
 - Locks: `ProductionSubsystem.test.ts` and `tests/integration/sectorRoom/production.test.ts`. Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).
 
 ## Cargo access (plan soft-leaping-truffle v3, C1)

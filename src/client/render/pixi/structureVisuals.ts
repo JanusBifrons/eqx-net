@@ -507,6 +507,46 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       lit(x0 + W - 24, y0 + H - 24, 10, RED);
       break;
     }
+    case 'habitat_module': {
+      // Housing block: two rows of apartments with lit windows, a roof garden.
+      slab(rects, x0, y0, W, H, STEEL_DARK, 12);
+      for (const by of [y0 + 18, 12]) {
+        slab(rects, x0 + 18, by, W - 36, H / 2 - 30, mixColor(accent, STEEL, 0.55), 6);
+        for (let x = x0 + 34; x < x0 + W - 44; x += 36) {
+          box(rects, x, by + 14, 18, 14, live ? WARM : mixColor(GLASS, STEEL_DARK, 0.7), 0.9);
+          box(rects, x, by + H / 2 - 60, 18, 14, live ? mixColor(WARM, GLASS, 0.4) : mixColor(GLASS, STEEL_DARK, 0.7), 0.9);
+        }
+      }
+      box(rects, -40, -8, 80, 16, mixColor(0x5fae5a, STEEL_DARK, 0.3), 0.95);
+      lit(x0 + 22, y0 + 22, 8, RED);
+      lit(x0 + W - 22, y0 + H - 22, 8, RED);
+      break;
+    }
+    case 'mine_layer': {
+      // Mine layer: an armoured launcher with a rack of mine canisters round a
+      // central chute.
+      slab(rects, x0, y0, W, H, STEEL_DARK, 12);
+      slab(rects, x0 + 22, y0 + 22, W - 44, H - 44, mixColor(accent, STEEL, 0.55), 8);
+      for (let k = 0; k < 6; k++) {
+        const a = (k * Math.PI) / 3;
+        box(rects, Math.cos(a) * (W / 2 - 46) - 13, Math.sin(a) * (H / 2 - 46) - 13, 26, 26, mixColor(accent, STEEL_DARK, 0.35), 0.95);
+      }
+      box(rects, -22, -22, 44, 44, STEEL_LIGHT);
+      lit(0, 0, 10, live ? accent : 0x553322);
+      break;
+    }
+    case 'tower_module': {
+      // Residential tower seen from above: stepped tiers to a lit crown.
+      slab(rects, x0, y0, W, H, STEEL_DARK, 14);
+      slab(rects, x0 + 26, y0 + 26, W - 52, H - 52, mixColor(accent, STEEL, 0.5), 10);
+      slab(rects, x0 + 56, y0 + 56, W - 112, H - 112, mixColor(accent, STEEL_LIGHT, 0.35), 8);
+      for (let k = 0; k < 4; k++) {
+        const a = (k * Math.PI) / 2;
+        box(rects, Math.cos(a) * (W / 2 - 40) - 9, Math.sin(a) * (H / 2 - 40) - 9, 18, 18, live ? WARM : 0x553322, 0.9);
+      }
+      lit(0, 0, 18, live ? accent : 0x553322);
+      break;
+    }
     case 'storage_vault': {
       // An armoured vault: thick walls, a grid of sealed lockers, a blast door.
       slab(rects, x0, y0, W, H, STEEL_DARK, 16);

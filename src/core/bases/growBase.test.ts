@@ -108,6 +108,26 @@ describe('growBase — valid under the real building rules', () => {
     expect(count(trade, ['cargo_bay', 'freight_dock'])).toBeGreaterThan(5);
   });
 
+  it('strongholds and citadels mine their approaches; small bases do not', () => {
+    const has = (tier: 'outpost' | 'settlement' | 'stronghold' | 'citadel') =>
+      growBase(profile(tier, 'manufactory'), 7, ['asteroid']).placements.filter((p) => p.kind === 'mine_layer').length;
+    expect(has('outpost')).toBe(0);
+    expect(has('settlement')).toBe(0);
+    expect(has('stronghold')).toBeGreaterThanOrEqual(1);
+    expect(has('citadel')).toBeGreaterThanOrEqual(1);
+  });
+
+  it('a colony is a city: housing dominates, and it runs the residents\' upkeep', () => {
+    const city = growBase(profile('settlement', 'colony'), 9, ['station']);
+    const count = (kinds: string[]) => city.placements.filter((p) => kinds.includes(p.kind)).length;
+    expect(count(['habitat_module', 'tower_module'])).toBeGreaterThan(count(['smelter', 'refinery', 'fabricator', 'miner']));
+    expect(count(['tower_module'])).toBeGreaterThan(0);
+    for (const p of city.placements) {
+      if (p.kind === 'habitat_module') expect(p.recipe).toBe('habitat_upkeep');
+      if (p.kind === 'tower_module') expect(p.recipe).toBe('tower_upkeep');
+    }
+  });
+
   it('every galaxy sector grows a valid base (sweep)', () => {
     for (const s of GALAXY_SECTORS) {
       const ctx = contextForSector(s.key);
