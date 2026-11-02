@@ -260,6 +260,11 @@ Update this section when a threshold is set.
     - parked hulls, a disconnected pilot's included, are displaced if needed, removed quietly (`removeLingeringHullQuietly`) and rebuilt via the far room's `receiveLingeringHull`, with the roster row `markStored` to the new sector;
     - NPC bots go via `TeleportBroker.moveBot` → `LivingWorldDirector.teleportBot` (registered for both directors in `index.ts`). Never move a director bot any other way, or the director's sector record goes stale.
   - **Rooms register** with the broker on create and unregister on dispose.
+- **T4 — tolls and consent pairing.**
+  - **Toll:** `rec.tpToll` (`set_teleport_toll`, owner-gated, persisted in the `teleport` block, room state `tpToll` + the `TP_RULE_TOLL_HOSTILE` bit).
+  - **When it is asked and settled:** the subsystem's `onArmed` hook → `offerToll` (prompts riders on that pad, skipping friends and allies; a remembered Always/Never answers at once); `answerToll` pays at once; the swap calls `onTollSettle` for both ends → `settleToll` costs non-payers standing or records a hostile act. A late answer is ignored and logged.
+  - **Payment** goes wallet → wallet for a player owner, or into the owner faction's treasury (`EconomyStore.creditTreasury`, persisted). Remembered answers are `EconomyStore.tollPref`.
+  - **Pairing with another owner:** `teleport_pair_request` → `TeleportBroker.addRequest` + a prompt to the owner (`sendToPlayer` reaches them in any room) → `teleport_pair_answer`; only the owner of the asked teleporter can accept. `pair(…, consented=true)` skips the same-owner check.
 - Lock: `tests/integration/sectorRoom/teleporter.test.ts`. Story: [docs/features/teleporters.md](../../docs/features/teleporters.md).
 
 ## Faction standing events and policies (plan soft-leaping-truffle v4, F3)

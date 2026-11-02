@@ -14,7 +14,11 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
-import { jumpCharge, TP_PHASE } from '../../../src/shared-types/teleport.js';
+import { jumpCharge, TOLL_DODGE_STANDING, TP_PHASE, tollFor } from '../../../src/shared-types/teleport.js';
+import { EconomyStore } from '../../../src/server/economy/EconomyStore.js';
+import { TradeDirector, type TradeRoom } from '../../../src/server/economy/TradeDirector.js';
+import { setTradeSink } from '../../../src/server/economy/tradeSink.js';
+import { getHoldStore, getPersistence, getWallet } from '../../../src/server/db/PersistenceWorker.js';
 
 const OWNER = 'face0000-0000-4000-8000-000000000002';
 const LAYOUT = [
@@ -157,5 +161,92 @@ describe('SectorRoom integration — ships ride the swap (v4 T2)', () => {
     expect(after.x).toBeGreaterThan(900); // now on pad B (x 1300)
     const dronePose = internals.swarmPose(drone.id)!;
     expect(dronePose.x).toBeLessThan(-900); // the drone came the other way
+  });
+});
+
+describe('SectorRoom integration — teleporter tolls (v4 T4)', () => {
+  let harness: SectorTestHarness;
+  afterEach(async () => {
+    setTradeSink(null);
+    if (harness) await harness.cleanup();
+  });
+
+  async function bootToll(nonPayer: 'standing' | 'hostile' = 'standing') {
+    harness = await bootSectorTestServer({
+      sectorKey: 'teleport-test', droneCount: 0, testMode: true, asteroidConfig: [],
+      prebuiltStructures: LAYOUT, prebuiltStructuresOwner: OWNER, pairTeleporters: true,
+      teleportCycleScale: 0.01, defaultSpawnX: 0, defaultSpawnY: 900,
+    } as never);
+    const owner = await harness.connectActive(OWNER, { shipKind: 'fighter', initialWallet: 0 });
+    const internals = harness.getServerRoom()!._internals;
+    const store = new EconomyStore({ persistence: getPersistence });
+    setTradeSink(new TradeDirector(new Map<string, TradeRoom>(), store, getHoldStore(), { wallet: getWallet() }));
+    const [a, b] = [...internals.structureRegistry.all()].filter((r) => r.kind === 'teleporter');
+    const eid = internals.swarmRegistry.get(a!.id)!.entityId;
+    // A toll on both pads (a rider pays the pad they board).
+    for (const t of [a!, b!]) {
+      owner.send('set_teleport_toll', { type: 'set_teleport_toll', entityId: internals.swarmRegistry.get(t.id)!.entityId, toll: { per1000: 100, nonPayer } });
+    }
+    for (let i = 0; i < 400; i++) internals.pulseStructureGrid();
+    await harness.advance(100);
+    expect(a!.tpToll).toEqual({ per1000: 100, nonPayer });
+    const credits = tollFor(jumpCharge(2600), 100);
+    return { owner, internals, a: a!, eid, store, credits };
+  }
+
+  async function runJump(owner: { send(t: string, m: unknown): void }, internals: { tickStructureTurrets(): void }, a: { tpPhase?: number }, eid: number): Promise<void> {
+    owner.send('teleport_fire', { type: 'teleport_fire', entityId: eid });
+    await harness.advance(60);
+    for (let i = 0; i < 60 && (a.tpPhase ?? 0) !== 0; i++) {
+      internals.tickStructureTurrets();
+      await harness.advance(30);
+    }
+  }
+
+  it('a rider is offered the toll, pays it, and the owner is paid', { timeout: 30_000 }, async () => {
+    const { owner, internals, a, eid, credits } = await bootToll();
+    const RIDER = randomUUID();
+    const rider = await harness.connectActive(RIDER, { shipKind: 'fighter', spawnX: -1300, spawnY: -50, initialWallet: 1000 });
+    const prompts: Array<{ padId: number; credits: number }> = [];
+    rider.onMessage('teleport_toll', (m: { padId: number; credits: number }) => {
+      prompts.push(m);
+      rider.send('teleport_toll_answer', { type: 'teleport_toll_answer', padId: m.padId, answer: 'pay' });
+    });
+    await runJump(owner, internals, a, eid);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]!.credits).toBe(credits);
+    expect(getWallet().balance(RIDER)).toBe(1000 - credits);
+    expect(getWallet().balance(OWNER)).toBe(credits);
+  });
+
+  it('a rider who declines still rides and loses the owner’s standing', { timeout: 30_000 }, async () => {
+    const { owner, internals, a, eid, store } = await bootToll();
+    const RIDER = randomUUID();
+    const rider = await harness.connectActive(RIDER, { shipKind: 'fighter', spawnX: -1300, spawnY: -50, initialWallet: 1000 });
+    rider.onMessage('teleport_toll', (m: { padId: number }) => {
+      rider.send('teleport_toll_answer', { type: 'teleport_toll_answer', padId: m.padId, answer: 'decline' });
+    });
+    await runJump(owner, internals, a, eid);
+    expect(getWallet().balance(RIDER)).toBe(1000);
+    expect(store.standing(OWNER, RIDER)).toBe(TOLL_DODGE_STANDING);
+    expect(internals.playerPose(RIDER)!.x).toBeGreaterThan(900); // rode anyway
+  });
+
+  it('“Always pay” is remembered: the next jump pays without asking', { timeout: 40_000 }, async () => {
+    const { owner, internals, a, eid, credits } = await bootToll();
+    const RIDER = randomUUID();
+    const rider = await harness.connectActive(RIDER, { shipKind: 'fighter', spawnX: -1300, spawnY: -50, initialWallet: 1000 });
+    let prompts = 0;
+    rider.onMessage('teleport_toll', (m: { padId: number }) => {
+      prompts++;
+      rider.send('teleport_toll_answer', { type: 'teleport_toll_answer', padId: m.padId, answer: 'always' });
+    });
+    await runJump(owner, internals, a, eid);
+    // The rider is on the other pad now; recharge and jump back.
+    for (let i = 0; i < 400; i++) internals.pulseStructureGrid();
+    await harness.advance(50);
+    await runJump(owner, internals, a, eid);
+    expect(prompts).toBe(1);
+    expect(getWallet().balance(RIDER)).toBe(1000 - 2 * credits);
   });
 });

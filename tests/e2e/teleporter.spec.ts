@@ -91,3 +91,51 @@ test('a pilot on the pad is warned, rides the jump, and stays on the far pad', a
   }
   await ctx.close();
 });
+
+/**
+ * v4 T4 — tolls. The owner sets a toll on the west pad from the inspector; a
+ * rider (another pilot, with credits) on that pad is offered it when the pad
+ * arms, pays, and their wallet goes down.
+ *
+ * The answer must land before the swap settles the toll, so this uses the
+ * half-speed `teleport-toll-test` room (~6 s from arming to the swap), and the
+ * rider renders off the main thread (no `worker=0`): two main-thread renderers
+ * on one box starved the rider page and its click took up to 11 s.
+ */
+test('a rider is offered the owner’s toll and pays it', async ({ browser }) => {
+  test.setTimeout(150_000);
+  const testId = randomUUID();
+  const ownerCtx = await browser.newContext();
+  await ownerCtx.addInitScript((pid) => {
+    try { localStorage.setItem('eqxPlayerId', pid as string); } catch { /* ignore */ }
+  }, OWNER);
+  const owner = await ownerCtx.newPage();
+  await owner.goto(`${BASE_URL}?room=teleport-toll-test&testId=${testId}&worker=0&spawnX=0&spawnY=650`);
+  await owner.waitForFunction(
+    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '',
+    { timeout: 90_000 },
+  );
+  await expect.poll(() => owner.evaluate(() => (window as unknown as EqxWindow).__eqxSelectAtWorld?.(-1300, 250) ?? null), { timeout: 10_000 }).not.toBeNull();
+  await expect(owner.getByTestId('tp-panel')).toBeVisible({ timeout: 10_000 });
+  await owner.getByTestId('tp-toll').selectOption('50');
+
+  const riderCtx = await browser.newContext();
+  const rider = await riderCtx.newPage();
+  await rider.goto(`${BASE_URL}?room=teleport-toll-test&testId=${testId}&spawnX=-1300&spawnY=-60&initialWallet=1000`);
+  await rider.waitForFunction(
+    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '',
+    { timeout: 90_000 },
+  );
+  await expect(rider.getByTestId('wallet-chip')).toHaveAttribute('data-wallet', '1000', { timeout: 10_000 });
+
+  await expect(owner.getByTestId('tp-panel')).toHaveAttribute('data-charge-pct', '100', { timeout: 30_000 });
+  await owner.getByTestId('tp-fire').click();
+  const prompt = rider.getByTestId('toll-prompt');
+  await expect(prompt).toBeVisible({ timeout: 5_000 });
+  const credits = Number(await prompt.getAttribute('data-credits'));
+  expect(credits).toBeGreaterThan(0);
+  await rider.getByTestId('toll-pay').click();
+  await expect(rider.getByTestId('wallet-chip')).toHaveAttribute('data-wallet', String(1000 - credits), { timeout: 10_000 });
+  await riderCtx.close();
+  await ownerCtx.close();
+});

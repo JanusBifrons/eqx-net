@@ -92,6 +92,7 @@ export const STRUCTURE_DEFAULTS = {
   tpKeepGood: 0,
   tpKeepQty: 0,
   padWeight: 0,
+  tpToll: 0,
 } as const;
 
 /** The fields the client reads from a room-state structure row (absent ⇒
@@ -131,5 +132,6 @@ export interface StructureStateView {
   tpKeepGood?: number;
   tpKeepQty?: number;
   padWeight?: number;
+  tpToll?: number;
   connTo: { readonly length: number; at(i: number): number | undefined };
 }

@@ -43,6 +43,11 @@ export interface TradeSink {
   policyOf?(faction: string): FactionPolicy;
   /** F3 — a player edits their own faction's policy. */
   setPlayerPolicy?(playerId: string, policy: PlayerPolicyWire): void;
+  /** T4 — remembered teleporter-toll answers, by owner faction. */
+  tollPref?(playerId: string, faction: string): 'always' | 'never' | undefined;
+  setTollPref?(playerId: string, faction: string, pref: 'always' | 'never'): void;
+  /** T4 — an NPC faction collects a toll. */
+  creditFaction?(faction: string, credits: number): void;
   /** Robot reputation ≥ ROBOT_TRUCE_AT. Hot-path safe (one Map lookup). */
   robotTruce(playerId: string): boolean;
   /** Drone-reputation wave spacing multiplier (≥ 1). */

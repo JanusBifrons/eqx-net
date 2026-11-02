@@ -16,6 +16,10 @@ import {
   TeleportPairSchema,
   TeleportUnpairSchema,
   DEFAULT_TELEPORT_RULES,
+  SetTeleportTollSchema,
+  TollAnswerSchema,
+  TeleportPairRequestSchema,
+  TeleportPairAnswerSchema,
 } from '../../src/shared-types/teleport';
 
 const sent: Array<{ type: string; payload: unknown }> = [];
@@ -53,5 +57,16 @@ describe('teleporter senders match the server schemas', () => {
     lastAccepted(TeleportCandidatesQuerySchema, 'teleport_candidates');
     client.sendTeleportPairRemote(3, 'verdance', 'st-abc');
     lastAccepted(TeleportPairRemoteSchema, 'teleport_pair_remote');
+    // T4 — tolls and pairing with another owner.
+    client.sendSetTeleportToll(3, { per1000: 25, nonPayer: 'hostile' });
+    lastAccepted(SetTeleportTollSchema, 'set_teleport_toll');
+    client.sendSetTeleportToll(3, null);
+    lastAccepted(SetTeleportTollSchema, 'set_teleport_toll');
+    client.sendTollAnswer(3, 'always');
+    lastAccepted(TollAnswerSchema, 'teleport_toll_answer');
+    client.sendTeleportPairRequest(3, 'verdance', 'st-abc');
+    lastAccepted(TeleportPairRequestSchema, 'teleport_pair_request');
+    client.sendTeleportPairAnswer('req-1', true);
+    lastAccepted(TeleportPairAnswerSchema, 'teleport_pair_answer');
   });
 });

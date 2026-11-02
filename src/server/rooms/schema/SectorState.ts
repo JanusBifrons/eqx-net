@@ -181,6 +181,8 @@ export class StructureState extends Schema {
   @type('uint8') tpKeepGood?: number;
   @type('uint16') tpKeepQty?: number;
   @type('uint16') padWeight?: number;
+  /** T4 — the toll, credits per 1000 charge (0 = free). */
+  @type('uint16') tpToll?: number;
   /** Connected structures' entityIds. */
   @type(['uint16']) connTo = new ArraySchema<number>();
 }

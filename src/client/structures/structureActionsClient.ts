@@ -6,7 +6,7 @@
  */
 import type { RecipeId } from '../../shared-types/recipes';
 import type { GateAccess } from '../../shared-types/gateAccess';
-import type { TeleportRules } from '../../shared-types/teleport';
+import type { TeleportRules, TeleportToll, TollAnswer } from '../../shared-types/teleport';
 import type { GoodId } from '../../shared-types/goods';
 import { getGameClient } from '../net/clientSingleton.js';
 
@@ -111,6 +111,22 @@ export function sendTeleportCandidates(entityId: number): boolean {
 /** v4 T3 — pair with one of your teleporters anywhere, by sector + uid. */
 export function sendTeleportPairRemote(entityId: number, sectorKey: string, uid: string): boolean {
   return sendTp('teleport_pair_remote', { entityId, sectorKey, uid });
+}
+/** v4 T4 — set (or clear with null) your teleporter's toll. */
+export function sendSetTeleportToll(entityId: number, toll: TeleportToll | null): boolean {
+  return sendTp('set_teleport_toll', { entityId, toll });
+}
+/** v4 T4 — answer a toll prompt. */
+export function sendTollAnswer(padId: number, answer: TollAnswer): boolean {
+  return sendTp('teleport_toll_answer', { padId, answer });
+}
+/** v4 T4 — ask another owner to pair their teleporter with one of yours. */
+export function sendTeleportPairRequest(entityId: number, sectorKey: string, uid: string): boolean {
+  return sendTp('teleport_pair_request', { entityId, sectorKey, uid });
+}
+/** v4 T4 — accept or decline someone's request to pair with your teleporter. */
+export function sendTeleportPairAnswer(requestId: string, accept: boolean): boolean {
+  return sendTp('teleport_pair_answer', { requestId, accept });
 }
 export function sendTeleportUnpair(entityId: number): boolean {
   return sendTp('teleport_unpair', { entityId });

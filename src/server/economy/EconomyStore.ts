@@ -54,6 +54,8 @@ export interface PlayerEconomy {
   standingScale: number;
   /** The player's own faction policy (F3); absent = all off. */
   policy?: PlayerPolicyWire;
+  /** T4 — remembered teleporter-toll answers, by owner faction. */
+  tollPrefs?: Record<string, 'always' | 'never'>;
   history: TradeHistoryEntry[];
   /** Value gifted to each side inside the current window (diminishing returns). */
   gifts: Record<EconAllegiance, { value: number; sinceMs: number }>;
@@ -78,6 +80,8 @@ export class EconomyStore {
   private readonly npcWeb = new Map<string, Map<string, number>>();
   /** Player → their resolved policy, built when it is set (hot-path reads). */
   private readonly policyCache = new Map<string, FactionPolicy>();
+  /** T4 — credits paid to NPC factions (teleporter tolls). */
+  private readonly treasuries = new Map<string, number>();
   private readonly deals = new Map<string, TradeDeal>();
   market: MarketState;
   private readonly now: () => number;
@@ -94,7 +98,14 @@ export class EconomyStore {
     deals: ReadonlyArray<{ payload_json: string }>;
     market: string | null;
     standings?: string | null;
+    treasuries?: string | null;
   }): { players: number; deals: number } {
+    if (rows.treasuries) {
+      try {
+        const t = JSON.parse(rows.treasuries) as Record<string, number>;
+        for (const [f, v] of Object.entries(t)) if (typeof v === 'number' && Number.isFinite(v) && v > 0) this.treasuries.set(f, v);
+      } catch { /* corrupt row — start empty */ }
+    }
     if (rows.standings) {
       try {
         const web = JSON.parse(rows.standings) as Record<string, Record<string, number>>;
@@ -248,6 +259,31 @@ export class EconomyStore {
     }
     rows.sort((a, b) => Math.abs(b.theirView) + Math.abs(b.yourView) - (Math.abs(a.theirView) + Math.abs(a.yourView)));
     return { rows, policy: this.playerPolicy(playerId) };
+  }
+
+  // ── Teleporter tolls (T4) ───────────────────────────────────────────────
+
+  tollPref(playerId: string, faction: string): 'always' | 'never' | undefined {
+    return this.players.get(playerId)?.tollPrefs?.[faction];
+  }
+
+  setTollPref(playerId: string, faction: string, pref: 'always' | 'never'): void {
+    const pe = this.player(playerId);
+    (pe.tollPrefs ??= {})[faction] = pref;
+    this.touchPlayer(playerId);
+  }
+
+  /** An NPC faction's treasury (tolls it collected). */
+  treasury(faction: string): number {
+    return this.treasuries.get(faction) ?? 0;
+  }
+
+  creditTreasury(faction: string, n: number): void {
+    if (n <= 0) return;
+    this.treasuries.set(faction, (this.treasuries.get(faction) ?? 0) + n);
+    const all: Record<string, number> = {};
+    for (const [f, v] of this.treasuries) all[f] = v;
+    this.enqueue({ type: 'ECON_STATE_PUT', key: 'treasuries', payloadJson: JSON.stringify(all), ts: this.now() });
   }
 
   private saveStandings(): void {
@@ -425,6 +461,11 @@ function parsePlayer(json: string): PlayerEconomy | null {
       const parsed = PlayerPolicyWireSchema.safeParse(raw.policy);
       if (parsed.success) pe.policy = parsed.data;
     }
+    if (raw.tollPrefs && typeof raw.tollPrefs === 'object') {
+      for (const [f, v] of Object.entries(raw.tollPrefs)) {
+        if (v === 'always' || v === 'never') (pe.tollPrefs ??= {})[f] = v;
+      }
+    }
     if (Array.isArray(raw.history)) pe.history = raw.history.slice(0, HISTORY_CAP);
     if (raw.gifts) for (const a of ECON_ALLEGIANCES) if (raw.gifts[a]) pe.gifts[a] = { ...raw.gifts[a] };
     if (raw.volume) pe.volume = { ...raw.volume };
@@ -448,10 +489,12 @@ export function hydrateEconomyStore(
   };
   const marketRow = read<{ payload_json: string }>("SELECT payload_json FROM economy_state WHERE key = 'market'")[0];
   const standingsRow = read<{ payload_json: string }>("SELECT payload_json FROM economy_state WHERE key = 'standings'")[0];
+  const treasuriesRow = read<{ payload_json: string }>("SELECT payload_json FROM economy_state WHERE key = 'treasuries'")[0];
   return store.hydrate({
     players: read<{ player_id: string; payload_json: string }>('SELECT player_id, payload_json FROM player_economy'),
     deals: read<{ payload_json: string }>('SELECT payload_json FROM trade_deals'),
     market: marketRow?.payload_json ?? null,
     standings: standingsRow?.payload_json ?? null,
+    treasuries: treasuriesRow?.payload_json ?? null,
   });
 }

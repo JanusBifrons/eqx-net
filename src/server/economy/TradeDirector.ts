@@ -527,6 +527,18 @@ export class TradeDirector implements TradeSink {
     this.store.setPlayerPolicy(playerId, policy);
   }
 
+  tollPref(playerId: string, faction: string): 'always' | 'never' | undefined {
+    return this.store.tollPref(playerId, faction);
+  }
+
+  setTollPref(playerId: string, faction: string, pref: 'always' | 'never'): void {
+    this.store.setTollPref(playerId, faction, pref);
+  }
+
+  creditFaction(faction: string, credits: number): void {
+    this.store.creditTreasury(faction, credits);
+  }
+
   robotTruce(playerId: string): boolean {
     return robotTruce(this.store.rep(playerId, 'robots'));
   }

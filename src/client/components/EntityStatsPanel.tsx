@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Box, CircularProgress, IconButton, Tooltip } from '@mui/material';
+import { Box, CircularProgress, IconButton, Portal, Tooltip } from '@mui/material';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import CancelIcon from '@mui/icons-material/Cancel';
 import HubIcon from '@mui/icons-material/Hub';
@@ -26,7 +26,7 @@ import { BountyAction } from './BountyAction';
 import { BlueprintInstall } from './BlueprintInstall';
 import { ResearchLabPanel } from './ResearchLabPanel';
 import { CargoAction } from './CargoPanel';
-import { TeleporterPanel } from './TeleporterPanel';
+import { ForeignTeleporterPanel, TeleporterPanel } from './TeleporterPanel';
 import { isTeleporterKind } from '../../shared-types/teleport';
 import { HullUnpack } from './HullUnpack';
 import { hullColor } from './ShieldHullBar';
@@ -144,6 +144,8 @@ interface PanelData {
   isLab?: boolean;
   /** v4 T1 — the pilot's own built teleporter. */
   isTeleporter?: boolean;
+  /** v4 T4 — someone else's built teleporter (ask to pair). */
+  isForeignTeleporter?: boolean;
   /** C1 — a BUILT storage structure (anyone's) or (C3) an NPC ship: offer
    *  "Open cargo" by `entityId`. The server decides whether it opens. */
   hasCargo?: boolean;
@@ -190,7 +192,10 @@ export function EntityStatsPanel(): JSX.Element | null {
   const building = data.buildPct !== undefined && data.buildPct < 1;
   const hasCharge = data.storedPowerMax !== undefined && data.storedPowerMax > 0;
   const chargePct = hasCharge ? ((data.storedPower ?? 0) / data.storedPowerMax!) * 100 : 0;
+  // Portalled to <body>: an ancestor stacking context otherwise traps the
+  // z-index under the body-level HUD slot anchors (LESSONS 2026-06-17).
   return (
+    <Portal>
     <Box
       data-testid="entity-stats-panel"
       data-entity-name={data.name}
@@ -449,6 +454,7 @@ export function EntityStatsPanel(): JSX.Element | null {
       {data.packed !== undefined && data.entityId !== undefined && <HullUnpack entityId={data.entityId} packed={data.packed} />}
       {data.isLab === true && data.entityId !== undefined && <ResearchLabPanel entityId={data.entityId} />}
       {data.isTeleporter === true && data.entityId !== undefined && <TeleporterPanel key={data.entityId} entityId={data.entityId} />}
+      {data.isForeignTeleporter === true && data.entityId !== undefined && <ForeignTeleporterPanel key={data.entityId} entityId={data.entityId} />}
       {data.hasCargo === true && data.entityId !== undefined && <CargoAction key={data.entityId} entityId={data.entityId} />}
       {data.cargoShip !== undefined && <CargoAction key={data.cargoShip} ship={data.cargoShip} />}
       {data.pilotShipId !== undefined && (
@@ -470,6 +476,7 @@ export function EntityStatsPanel(): JSX.Element | null {
         </Box>
       )}
     </Box>
+    </Portal>
   );
 }
 
@@ -482,7 +489,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
   'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'noAmmo', 'noFuel', 'breach', 'upgradeGoods',
-  'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter',
+  'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter',
 ];
 
 /** The next gate access setting in the cycle (owner + allies → owner only →
@@ -603,6 +610,8 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       if (subtype === 'research_lab' && data.isOwn === true && st.built === true) data.isLab = true;
       // v4 T1 — your own built teleporter shows its charge, pairing, rules and pad.
       if (isTeleporterKind(subtype) && data.isOwn === true && st.built === true) data.isTeleporter = true;
+      // T4 — someone else's teleporter: ask its owner to pair it with one of yours.
+      if (isTeleporterKind(subtype) && data.isOwn !== true && st.built === true) data.isForeignTeleporter = true;
       if (subtype !== undefined && (getStructureKind(subtype).holdCapacity ?? 0) > 0 && st.built === true) data.hasCargo = true;
       // Living World P1a-2 — owned storage contents (the server only sends them
       // to the owner) + the Refine gate (a Capital with salvage in its network

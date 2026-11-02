@@ -29,6 +29,8 @@ export interface TeleportRoom {
    * move through their director (a bot no director owns stays behind).
    */
   dispatchRiders(batch: RiderBatch, toRoom: TeleportRoom, to: StructureRecord): void;
+  /** T4 — send a message to a player if they are in this room. */
+  sendToPlayer(playerId: string, type: string, msg: unknown): boolean;
   /** Rebuild a parked hull that rode a jump into this room. */
   receiveLingeringHull(row: {
     shipInstanceId: string;
@@ -54,12 +56,30 @@ export interface RiderBatch {
   bots: Array<{ botId: string; dx: number; dy: number }>;
 }
 
+/** T4 — a request to pair another owner's teleporter with one of yours. */
+export interface PairRequest {
+  id: string;
+  /** The other owner's teleporter (they accept or decline). */
+  targetSector: string;
+  targetUid: string;
+  toOwner: string;
+  /** The requester's own teleporter. */
+  fromSector: string;
+  fromUid: string;
+  fromOwner: string;
+  atMs: number;
+}
+
+/** Pending pair requests expire after this long. */
+export const PAIR_REQUEST_TTL_MS = 10 * 60_000;
+
 /** Moves a director-owned NPC bot between sectors (a director registers one). */
 export type BotMover = (botId: string, fromSector: string, toSector: string, x: number, y: number) => boolean;
 
 export class TeleportBroker {
   private readonly rooms = new Map<string, TeleportRoom>();
   private readonly movers: BotMover[] = [];
+  private readonly requests = new Map<string, PairRequest>();
 
   register(room: TeleportRoom): void {
     if (room.sectorKey !== null) this.rooms.set(room.sectorKey, room);
@@ -100,9 +120,29 @@ export class TeleportBroker {
     return false;
   }
 
+  /** Send to a player in whichever registered room they are in. */
+  sendToPlayer(playerId: string, type: string, msg: unknown): boolean {
+    for (const room of this.rooms.values()) if (room.sendToPlayer(playerId, type, msg)) return true;
+    return false;
+  }
+
+  addRequest(req: PairRequest): void {
+    for (const [id, r] of this.requests) if (req.atMs - r.atMs > PAIR_REQUEST_TTL_MS) this.requests.delete(id);
+    this.requests.set(req.id, req);
+  }
+
+  /** Take a pending request (it is answered once). */
+  takeRequest(id: string, nowMs: number): PairRequest | null {
+    const r = this.requests.get(id);
+    if (!r) return null;
+    this.requests.delete(id);
+    return nowMs - r.atMs > PAIR_REQUEST_TTL_MS ? null : r;
+  }
+
   clear(): void {
     this.rooms.clear();
     this.movers.length = 0;
+    this.requests.clear();
   }
 }
 

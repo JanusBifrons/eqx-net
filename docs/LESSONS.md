@@ -2621,3 +2621,14 @@ The generator now puts a fenced base's turrets outside the fence. Lock: `turretV
 **Fix.** The generator sizes NPC processors at full utilisation (`EXPECTED_ACTIVE`, `BASE_GROWTH_VERSION` 7), and NPC batteries start full (`NpcBaseSubsystem`).
 
 **Rule.** Batteries smooth peaks; they cannot fix an average deficit. Size generation for the load the base will actually run, then add batteries for fights and spikes. A base-level test should watch power over many pulses, not one.
+
+## 2026-11-02 — The inspector was under the HUD; a starved page made a click miss its window
+
+**What happened.** The teleporter toll E2E failed twice, for two different reasons.
+
+1. The owner's **Fire** click in the inspector was intercepted by the `top-left` HUD anchor. `EntityStatsPanel` sets `zIndex: 1400`, but it renders inside the app tree, and an ancestor's stacking context trapped that z-index under the body-level slot anchors (z 10). This is the same trap as the sector drawer (2026-06-17).
+2. With that fixed, the rider's **Pay** click sometimes reached the server after the swap had settled the toll, so it was ignored (`teleport_toll_answer_ignored`, entry gone). The trace showed every step of the click taking seconds: two game pages both rendering Pixi on the main thread (`worker=0`) starved the rider page. The button never moved.
+
+**Fix.** `EntityStatsPanel` is wrapped in MUI `<Portal>` (to `document.body`). The toll test uses a half-speed room (`teleport-toll-test`, ~6 s from arming to the swap), and its rider renders off the main thread. The toll prompt also sits right under the energy bar, above the phase warning whose text changes height.
+
+**Rule.** Any panel that must sit above the HUD and lives outside the Slot system gets a Portal; a high `zIndex` alone is not enough. In a multi-page E2E, only the page that needs main-thread hooks (`__eqxSelectAtWorld`, screenshots) should use `worker=0`. Read the trace's per-step times before blaming layout: slow steps everywhere mean a starved page, not a moving element.

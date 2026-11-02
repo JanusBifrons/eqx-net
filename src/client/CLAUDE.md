@@ -291,6 +291,8 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
   - **Push:** `syncPadFields` sets each pad's closing push in predWorld from the room-state phase.
   - **Re-seed:** an own-ship `poseEpoch` change makes `handleSnapshot` re-seed the local body at the snapshot pose with a fresh `Reconciler`, and that snapshot skips the reconcile (a snap, not a slide). `_localPoseEpoch` resets to -1 on sector handoff.
   - **Warning:** `TeleportWarning` (top-centre) is derived from room state + the mirror, never a message.
+- **T4 — tolls and pairing prompts.** `TeleportPrompts` (top-centre, `order={2}`, right under the energy bar so nothing above it changes height) shows a toll (`teleport_toll` → Zustand `tollPrompt`, Pay / Don't pay / Always / Never) and pair requests (`teleport_pair_request` → `pairRequests`, Accept / Decline). They are offers, not state. The owner's toll select lives in `TeleporterPanel`; `ForeignTeleporterPanel` asks another owner to pair. Every sender has a case in `teleportClientWireParity.test.ts`.
+- **The inspector is `<Portal>`'d to `document.body`.** Its `zIndex: 1400` was trapped by an ancestor stacking context under the body-level HUD anchors, so the `top-left` anchor ate clicks on its buttons (LESSONS 2026-11-02). Any panel outside the Slot system that must beat the HUD needs a Portal. `gameRafLoop` still finds it by testid.
 - **The world-anchored inspector is placed by `app/inspectorPlacement.ts` `placeInspector`:** the WHOLE panel stays on screen, below the header, with the bottom kept when it is too tall.
   - A target off-screen used to push half the panel out of view (its buttons unclickable). Found by `teleporter.spec.ts`; the header case by `break-in.spec.ts`.
   - Never clamp only the anchor.

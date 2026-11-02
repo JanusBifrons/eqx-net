@@ -60,6 +60,7 @@ export interface PersistableStructure {
   tpPartner?: { sectorKey: string; uid: string };
   tpRules?: unknown;
   tpCharge?: number;
+  tpToll?: unknown;
   packedQuality?: number;
   isConstructed: boolean;
   constructionProgress: number;
@@ -189,8 +190,9 @@ export class SectorPersistence {
         ...(s.prodLoaded ? { prodLoaded: true, prodProgress: s.prodProgress ?? 0 } : {}),
         ...(s.prepaid ? { prepaid: true } : {}),
         ...(s.freightOrders && s.freightOrders.length > 0 ? { freightOrders: s.freightOrders.map((o) => ({ ...o })) } : {}),
-        ...(s.tpPartner !== undefined || s.tpRules !== undefined || (s.tpCharge ?? 0) > 0
+        ...(s.tpPartner !== undefined || s.tpRules !== undefined || (s.tpCharge ?? 0) > 0 || s.tpToll !== undefined
           ? { teleport: {
+            ...(s.tpToll !== undefined ? { toll: s.tpToll } : {}),
             ...(s.tpPartner ? { partner: { ...s.tpPartner } } : {}),
             ...(s.tpRules !== undefined ? { rules: s.tpRules } : {}),
             ...((s.tpCharge ?? 0) > 0 ? { charge: s.tpCharge } : {}),
