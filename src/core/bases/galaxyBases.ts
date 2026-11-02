@@ -16,7 +16,7 @@
  */
 import { NPC_STRUCTURES_PER_SECTOR_MAX } from '../../shared-types/structureBudgets.js';
 import { TIER_LEVEL_CAP, TIER_WEALTH, baseProfileFor, contextForSector, hashString, seededRandom, type BaseProfile } from './baseProfile.js';
-import { TRANSIT_HUB_BASE_ID, buildTransitNetwork, type TransitNetwork } from './transitNetwork.js';
+import { TRANSIT_HUB_BASE_ID, buildTransitNetwork, routeHops, type TransitNetwork } from './transitNetwork.js';
 import { TIER_MAX_STRUCTURES } from './growBase.js';
 import { sectorController } from '../galaxy/control.js';
 import { getSector } from '../galaxy/galaxy.js';
@@ -106,6 +106,19 @@ export function galaxyBasePlan(sectorKey: string): GalaxyBasePlan[] {
     if (mine.length > 0) b.profile = { ...b.profile, links: mine.map((l) => l.id) };
   }
   return out;
+}
+
+/** v4 H2 — route length between two sectors riding the transit links
+ *  (memoised per pair; the network never changes at run time). */
+const ROUTES = new Map<string, number>();
+export function transitRouteHops(from: string, to: string): number {
+  const key = from < to ? `${from}|${to}` : `${to}|${from}`;
+  let h = ROUTES.get(key);
+  if (h === undefined) {
+    h = routeHops(from, to, transitNetwork());
+    ROUTES.set(key, h);
+  }
+  return h;
 }
 
 let NETWORK: TransitNetwork | null = null;

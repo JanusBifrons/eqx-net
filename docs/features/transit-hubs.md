@@ -22,9 +22,17 @@ A hub makes room in its sector by dropping extra bases if the sector would go ov
 - **The toll.** Its owner charges a small toll, 5 credits per 1000 charge (`NPC_LINK_TOLL`). You get the usual Pay / Don't pay / Always / Never prompt. Riding without paying costs standing with the owner; it doesn't make you hostile.
 - **No pairing offer.** Selecting an NPC teleporter offers no pairing (it's already linked), and the server refuses such requests.
 
-## Still to come (H2)
+## Convoys ride the links (H2)
 
-Convoys and NPC traffic don't yet route through the hubs. The routing overlay (hub links counted in `hopDistance` / `nextHopToward`) and convoys riding the teleporters are the next step.
+NPC convoys (see [docs/architecture/economy-and-trade.md](../architecture/economy-and-trade.md)) cross between sectors abstractly: a hauler leaves at the edge, spends `hopMs` per galaxy hop in transit, and enters the far sector. Their route now rides the hub links:
+
+- **`routeHops`** (`transitNetwork.ts`) is the shortest route where each neighbour hop costs 1 and each transit link costs `LINK_HOP_COST` (half a hop: the ride is quick, but the hauler still docks, waits for the pad and pays). It is never longer than flying.
+- **`transitRouteHops`** (`galaxyBases.ts`) memoises it per pair. The `ConvoyDirector` uses it for both choices:
+  - planning: the nearest exporter, counting the links;
+  - transit time: `routeHops × hopMs`, at least half a hop.
+- **Linked bases trade sooner and more often.** A heart's citadel and its region's border hub, or two hubs on the backbone, are half a hop apart for trade.
+
+The drone and robot directors still route by plain galaxy hops: their waves and roaming are a separate system.
 
 ## Testing
 
@@ -32,4 +40,6 @@ Convoys and NPC traffic don't yet route through the hubs. The routing overlay (h
 |---|---|
 | Network (pure) | `src/core/bases/transitNetwork.test.ts`: one hub per region on its border, links valid and listed at both ends, both ends grow exactly one tagged teleporter, no sector over its structure budget |
 | Plans | `src/core/bases/galaxyBases.test.ts`: base 0 unchanged apart from its links; the Traders run transit hubs in held sectors |
+| Routes (pure) | `transitNetwork.test.ts` H2 case: riding the links is never longer than flying, shortens some routes, a link is half a hop |
+| Convoys | `src/server/economy/ConvoyDirector.test.ts` H2 case: transit lasts route hops × `hopMs` |
 | Integration | `tests/integration/sectorRoom/transitHubs.test.ts` (the two real rooms at a hub link's ends, real NPC bases): the ends pair by link id, fire when a ship boards, charge the toll, and carry a paying pilot to the far sector |

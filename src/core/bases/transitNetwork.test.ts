@@ -5,9 +5,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import { GALAXY_SECTORS, getSector } from '../galaxy/galaxy.js';
-import { galaxyBasePlan, transitNetwork } from './galaxyBases.js';
+import { galaxyBasePlan, transitNetwork, transitRouteHops } from './galaxyBases.js';
 import { growBase, TIER_MAX_STRUCTURES } from './growBase.js';
-import { TRANSIT_HUB_BASE_ID, linkEnds } from './transitNetwork.js';
+import { LINK_HOP_COST, TRANSIT_HUB_BASE_ID, linkEnds, routeHops } from './transitNetwork.js';
 import { NPC_STRUCTURES_PER_SECTOR_MAX } from '../../shared-types/structureBudgets.js';
 
 describe('transit network (v4 H)', () => {
@@ -66,5 +66,23 @@ describe('transit network (v4 H)', () => {
 
   it('is deterministic', () => {
     expect(transitNetwork()).toBe(net);
+  });
+
+  it('H2: riding the links is never longer than flying, and shortens some routes', () => {
+    const none = { hubs: new Map<string, string>(), links: [] };
+    let shorter = 0;
+    for (const a of GALAXY_SECTORS) {
+      for (const b of GALAXY_SECTORS) {
+        const flown = routeHops(a.key, b.key, none);
+        const ridden = routeHops(a.key, b.key, net);
+        expect(ridden, `${a.key} → ${b.key}`).toBeLessThanOrEqual(flown);
+        if (ridden < flown) shorter++;
+        expect(transitRouteHops(a.key, b.key)).toBe(ridden);
+      }
+    }
+    expect(shorter).toBeGreaterThan(0);
+    // A link's two ends are half a hop apart.
+    const l = net.links[0]!;
+    expect(routeHops(l.a.sector, l.b.sector, net)).toBe(LINK_HOP_COST);
   });
 });

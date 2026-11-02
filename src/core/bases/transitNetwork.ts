@@ -133,3 +133,42 @@ export function buildTransitNetwork(plans: (sectorKey: string) => GalaxyBasePlan
   }
   return { hubs, links };
 }
+
+/** What one ride on a transit link counts for in route length: half a galaxy
+ *  hop (it is quick, but a hauler still docks, waits for the pad and pays). */
+export const LINK_HOP_COST = 0.5;
+
+/**
+ * Route length between two sectors (in galaxy hops) when the transit links
+ * can be ridden: each neighbour hop costs 1, each link `LINK_HOP_COST`.
+ * Infinity when unreachable; 0 in the same sector. Pure (Dijkstra over the
+ * ~21 sectors, so cheap enough to call at planning time).
+ */
+export function routeHops(from: string, to: string, network: TransitNetwork): number {
+  if (from === to) return 0;
+  if (getSector(from) === undefined || getSector(to) === undefined) return Infinity;
+  const extra = new Map<string, string[]>();
+  for (const l of network.links) {
+    (extra.get(l.a.sector) ?? extra.set(l.a.sector, []).get(l.a.sector)!).push(l.b.sector);
+    (extra.get(l.b.sector) ?? extra.set(l.b.sector, []).get(l.b.sector)!).push(l.a.sector);
+  }
+  const dist = new Map<string, number>([[from, 0]]);
+  const open = new Set<string>([from]);
+  while (open.size > 0) {
+    let k = '';
+    let best = Infinity;
+    for (const o of open) {
+      const d = dist.get(o)!;
+      if (d < best || (d === best && o < k)) { best = d; k = o; }
+    }
+    open.delete(k);
+    if (k === to) return best;
+    const relax = (n: string, w: number): void => {
+      const nd = best + w;
+      if (nd < (dist.get(n) ?? Infinity)) { dist.set(n, nd); open.add(n); }
+    };
+    for (const n of getSector(k)!.neighbours) relax(n, 1);
+    for (const n of extra.get(k) ?? []) relax(n, LINK_HOP_COST);
+  }
+  return Infinity;
+}
