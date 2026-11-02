@@ -2611,3 +2611,13 @@ The generator now puts a fenced base's turrets outside the fence. Lock: `turretV
 **Test trap.** A missile bigger than the grid's spare power plus its battery charge STUNS the wall, and a stunned wall is open by design. A wall test with no battery measures overload, not blocking.
 
 **Rule.** When a rule says "every X", check every path that produces an X: beam, bolt, missile and spawn offset. They were added at different times, and each skipped the walls in its own way.
+
+## 2026-11-02 — NPC bases browned out every other second; their fences flickered
+
+**What happened.** In the showcase footage the stronghold's shield fence switched on and off about twice a second. Measured with `npcBasePowerStable.test.ts`: the stronghold generated 950 against 1,880 at full draw, net power alternated between about −24 and +4, and every structure lost power on 20 of 40 pulses. Settlement and citadel did the same; the outpost and colony did not.
+
+**Why.** After active power (#223), `growBase` sized generation for processors busy 60 % of the time. A stocked NPC base runs them back to back, so it ran a deficit on average. Its batteries (3,000) also started empty, and with no surplus they never charged, so they could not cover the gap.
+
+**Fix.** The generator sizes NPC processors at full utilisation (`EXPECTED_ACTIVE`, `BASE_GROWTH_VERSION` 7), and NPC batteries start full (`NpcBaseSubsystem`).
+
+**Rule.** Batteries smooth peaks; they cannot fix an average deficit. Size generation for the load the base will actually run, then add batteries for fights and spikes. A base-level test should watch power over many pulses, not one.

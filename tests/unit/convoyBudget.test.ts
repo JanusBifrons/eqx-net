@@ -22,7 +22,11 @@ describe('convoy budgets', () => {
 
   it('the worst case really is busy: plans the full convoy allowance', () => {
     expect(views.length).toBeGreaterThan(21); // several sectors hold more than one base
-    expect(matchConvoys(views, opts).length).toBe(DEFAULT_CONVOY_OPTIONS.maxActive);
+    // A precondition for the timing budget below: the fixture must keep the
+    // planner busy. Base growth v7 (NPC bases sized to run their processors
+    // flat out, so they no longer brown out) has 2 fewer processors galaxy-wide
+    // (89 → 87), and the worst case plans 11 of the 12 allowed.
+    expect(matchConvoys(views, opts).length).toBeGreaterThanOrEqual(DEFAULT_CONVOY_OPTIONS.maxActive - 1);
   });
 
   it(`a planning pass over the whole galaxy stays within ${CONVOY_PLAN_MAX_MS} ms (fastest of 25: host noise only adds)`, () => {

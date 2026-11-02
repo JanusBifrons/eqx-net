@@ -36,7 +36,7 @@ import type { GoodId } from '../../shared-types/goods.js';
 
 /** Bump on ANY change to the generator's output (NPC bases regenerate from the
  *  seed, so a change moves every base). */
-export const BASE_GROWTH_VERSION = 6;
+export const BASE_GROWTH_VERSION = 7;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -98,14 +98,17 @@ export function generatedCost(kind: StructureKindId): number {
  * Expected power draw of a structure on a typical day (user ruling
  * 2026-11-01): it draws full power only while active, a small idle trickle
  * otherwise (`structurePower.ts`), and no base runs everything at 100 %.
- * Processors are assumed busy 60 % of the time, drills 80 %, turrets 15 %;
+ * Processors are sized as busy ALL the time: an NPC base is stocked with
+ * inputs, so its processors run back to back (sizing them at 60 % browned the
+ * stronghold out every other pulse and dropped its fence — user report
+ * 2026-11-02, `npcBasePowerStable.test.ts`). Drills 80 %, turrets 15 %;
  * shield emitters hold their walls on the trickle (a fence under fire is paid
  * from surplus and batteries). Generation is sized for this, not for peak.
  */
 export const EXPECTED_ACTIVE: Readonly<Partial<Record<StructureKindId, number>>> = Object.freeze({
   miner: 0.8, gas_collector: 0.8, deep_core_rig: 0.8,
-  reclaimer: 0.6, smelter: 0.6, refinery: 0.6, silicon_works: 0.6, hydroponics: 0.6,
-  fabricator: 0.6, munitions_works: 0.6, ore_processing_complex: 0.6, assembly_plant: 0.6,
+  reclaimer: 1, smelter: 1, refinery: 1, silicon_works: 1, hydroponics: 1,
+  fabricator: 1, munitions_works: 1, ore_processing_complex: 1, assembly_plant: 1,
   turret: 0.15, laser_bolt_turret: 0.15, missile_turret: 0.15, autocannon_turret: 0.15,
   // A mine layer lays only until its field is full.
   mine_layer: 0.2,

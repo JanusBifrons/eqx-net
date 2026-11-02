@@ -126,6 +126,10 @@ export class NpcBaseSubsystem {
       rec.constructionProgress = rec.constructionCost;
       rec.level = p.level ?? 1;
       this.h.setHealth(id, effectiveStructureMaxHealth(getStructureKind(p.kind).maxHealth, rec.level));
+      // An established base has charged batteries: they carry its fence
+      // through a fight or a production spike from the first pulse.
+      const storeCap = getStructureKind(p.kind).powerStorageCapacity ?? 0;
+      if (storeCap > 0) rec.storedPower = storeCap;
       if (p.recipe) {
         rec.recipe = p.recipe;
         if (RECIPES[p.recipe].blueprintRequired) {
