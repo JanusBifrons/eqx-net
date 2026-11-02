@@ -6,7 +6,7 @@
  * id `b0`), so adding this changed no existing base. Up to two more may join
  * it, each with its own seed and a DIFFERENT role from the bases already there
  * (a mining outpost beside a trade hub trades; two mining outposts mostly
- * don't). Every base is its own owner (`npc:<side>:<baseId>`), so each has its
+ * don't). Every base is its own owner (`npc:<faction>:<baseId>`), so each has its
  * own grid and they trade by convoy like bases in different sectors.
  *
  * A stronghold or citadel takes most of a sector, so it holds its sector
@@ -17,6 +17,10 @@
 import { NPC_STRUCTURES_PER_SECTOR_MAX } from '../../shared-types/structureBudgets.js';
 import { baseProfileFor, contextForSector, hashString, seededRandom, type BaseProfile } from './baseProfile.js';
 import { TIER_MAX_STRUCTURES } from './growBase.js';
+import { sectorController } from '../galaxy/control.js';
+import { getSector } from '../galaxy/galaxy.js';
+import { minorFactionsOf, type FactionId, type MinorSpecialty } from '../../shared-types/factions.js';
+import type { BaseRole } from './baseProfile.js';
 
 /** Tiers too big to share a sector. */
 const BIG: ReadonlySet<string> = new Set(['stronghold', 'citadel']);
@@ -27,12 +31,63 @@ export interface GalaxyBasePlan {
   profile: BaseProfile;
 }
 
+/** The minor specialty that fits a base role best. */
+const ROLE_SPECIALTY: Readonly<Record<BaseRole, MinorSpecialty>> = {
+  mining: 'mining',
+  refinery: 'manufacturer',
+  workshop: 'manufacturer',
+  manufactory: 'manufacturer',
+  assembly: 'manufacturer',
+  trade: 'freight',
+  colony: 'freight',
+};
+
+/**
+ * The owner faction of one planned base. `taken` holds owners already used in
+ * this sector; they are much less likely to be picked again.
+ */
+export function chooseBaseOwner(sectorKey: string, role: BaseRole, rnd: () => number, taken: readonly FactionId[]): FactionId {
+  const controller = sectorController(sectorKey);
+  if (controller !== null) return role === 'trade' ? 'traders' : controller;
+  const region = getSector(sectorKey)?.region ?? null;
+  const weights: Array<[FactionId, number]> = [];
+  if (region !== null) {
+    for (const m of minorFactionsOf(region)) weights.push([m.id, m.specialty === ROLE_SPECIALTY[role] ? 4 : 1]);
+    weights.push([region, 1.5]);
+  }
+  weights.push(['traders', role === 'trade' ? 4 : 0.5]);
+  let total = 0;
+  for (const w of weights) {
+    if (taken.includes(w[0])) w[1] *= 0.15;
+    total += w[1];
+  }
+  let t = rnd() * total;
+  for (const [id, w] of weights) {
+    t -= w;
+    if (t < 0) return id;
+  }
+  return weights[weights.length - 1]![0];
+}
+
 /** The NPC bases a galaxy sector holds, base 0 first. Deterministic. */
 export function galaxyBasePlan(sectorKey: string): GalaxyBasePlan[] {
   const ctx = contextForSector(sectorKey);
   const seed0 = hashString(sectorKey);
   const out: GalaxyBasePlan[] = [{ baseId: 'b0', seed: seed0, profile: baseProfileFor(ctx, seed0) }];
-  if (BIG.has(out[0]!.profile.tier)) return out;
+  if (!BIG.has(out[0]!.profile.tier)) addExtraBases(sectorKey, ctx, seed0, out);
+  // Owners (F2), from their own stream so the layout is unchanged.
+  const ownerRnd = seededRandom(seed0 ^ 0x0f2a7c11);
+  const taken: FactionId[] = [];
+  for (const b of out) {
+    const owner = chooseBaseOwner(sectorKey, b.profile.role, ownerRnd, taken);
+    taken.push(owner);
+    b.profile = { ...b.profile, ownerFaction: owner };
+  }
+  return out;
+}
+
+/** Up to two more outposts or settlements beside base 0 (in place). */
+function addExtraBases(sectorKey: string, ctx: ReturnType<typeof contextForSector>, seed0: number, out: GalaxyBasePlan[]): void {
   let used = TIER_MAX_STRUCTURES[out[0]!.profile.tier];
   const rnd = seededRandom(seed0 ^ 0x2c1b3c6d);
   // About half the sectors get a second base, about a fifth a third.
@@ -46,5 +101,4 @@ export function galaxyBasePlan(sectorKey: string): GalaxyBasePlan[] {
     used += cost;
     out.push({ baseId: `b${i}`, seed, profile });
   }
-  return out;
 }

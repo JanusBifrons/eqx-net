@@ -51,7 +51,7 @@ describe('SectorRoom integration — galaxy NPC bases (T1)', () => {
     const boxes: Array<{ x0: number; x1: number; y0: number; y1: number }> = [];
     for (const b of plan) {
       const expected = growBase(b.profile, b.seed, getSector(KEY)!.features).placements.length;
-      const mine = npc.filter((r) => r.owner === `npc:${b.profile.ownerSide}:${b.baseId}`);
+      const mine = npc.filter((r) => r.owner === `npc:${b.profile.ownerFaction}:${b.baseId}`);
       expect(mine.length, `every structure of ${b.baseId} (${b.profile.tier} ${b.profile.role}) is placed`).toBe(expected);
       let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
       for (const r of mine) {

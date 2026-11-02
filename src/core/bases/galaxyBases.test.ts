@@ -2,7 +2,9 @@
  * Several NPC bases per galaxy sector (plan soft-leaping-truffle v3, phase T).
  */
 import { describe, expect, it } from 'vitest';
-import { GALAXY_SECTORS } from '../galaxy/galaxy.js';
+import { GALAXY_FACTIONS, GALAXY_SECTORS } from '../galaxy/galaxy.js';
+import { regionHeart, sectorController } from '../galaxy/control.js';
+import { isNpcFactionId, npcFactionDef } from '../../shared-types/factions.js';
 import { NPC_STRUCTURES_PER_SECTOR_MAX } from '../../shared-types/structureBudgets.js';
 import { baseProfileFor, contextForSector, hashString } from './baseProfile.js';
 import { galaxyBasePlan } from './galaxyBases.js';
@@ -15,7 +17,8 @@ describe('galaxyBasePlan', () => {
       const [b0] = galaxyBasePlan(s.key);
       expect(b0!.baseId).toBe('b0');
       expect(b0!.seed).toBe(seed);
-      expect(b0!.profile).toEqual(baseProfileFor(contextForSector(s.key), seed));
+      // Only the owner (F2) is assigned on top of the original profile.
+      expect({ ...b0!.profile, ownerFaction: 'traders' }).toEqual(baseProfileFor(contextForSector(s.key), seed));
     }
   });
 
@@ -51,5 +54,52 @@ describe('galaxyBasePlan', () => {
       const total = plan.reduce((n, b) => n + TIER_MAX_STRUCTURES[b.profile.tier], 0);
       expect(total, s.key).toBeLessThanOrEqual(NPC_STRUCTURES_PER_SECTOR_MAX);
     }
+  });
+});
+
+describe('galaxy base owners (v4 F2)', () => {
+  it('a controlled sector is its power’s; the Traders run its trade hubs', () => {
+    for (const s of GALAXY_SECTORS) {
+      const controller = sectorController(s.key);
+      if (controller === null) continue;
+      for (const b of galaxyBasePlan(s.key)) {
+        expect(b.profile.ownerFaction, s.key).toBe(b.profile.role === 'trade' ? 'traders' : controller);
+      }
+    }
+  });
+
+  it('neutral ground is shared by minor factions, powers and the Traders', () => {
+    const owners = new Set<string>();
+    let minorBases = 0;
+    let multiOwnerSectors = 0;
+    for (const s of GALAXY_SECTORS) {
+      if (sectorController(s.key) !== null) continue;
+      const plan = galaxyBasePlan(s.key);
+      for (const b of plan) {
+        owners.add(b.profile.ownerFaction);
+        expect(isNpcFactionId(b.profile.ownerFaction), b.profile.ownerFaction).toBe(true);
+        if (npcFactionDef(b.profile.ownerFaction)?.kind === 'minor') {
+          minorBases++;
+          // A minor faction builds only in its own region.
+          expect(npcFactionDef(b.profile.ownerFaction)!.region, s.key).toBe(s.region);
+        }
+      }
+      if (new Set(plan.map((b) => b.profile.ownerFaction)).size > 1) multiOwnerSectors++;
+    }
+    expect(owners.size, 'many factions build on neutral ground').toBeGreaterThanOrEqual(6);
+    expect(minorBases, 'minor factions own bases').toBeGreaterThanOrEqual(5);
+    expect(multiOwnerSectors, 'some neutral sectors hold several factions').toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('sector control (v4 F2)', () => {
+  it('most of the galaxy is neutral; powers hold only their heartland', () => {
+    const held = GALAXY_SECTORS.filter((s) => sectorController(s.key) !== null);
+    expect(held.length).toBeLessThan(GALAXY_SECTORS.length / 2);
+    for (const s of held) expect(sectorController(s.key)).toBe(s.region);
+    for (const r of GALAXY_FACTIONS) {
+      expect(sectorController(regionHeart(r.id)), r.id).toBe(r.id); // every power holds its heart
+    }
+    expect(sectorController('not-a-sector')).toBeNull();
   });
 });

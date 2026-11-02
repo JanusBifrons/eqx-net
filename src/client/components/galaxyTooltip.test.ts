@@ -83,3 +83,17 @@ describe('shipsInSector (Equinox Phase 7 / Item 4 popover sub-list)', () => {
     expect(out[0]).toEqual({ shipId: 's1', kind: 'heavy', isActive: true, health: 42, x: 12, y: -8 });
   });
 });
+
+describe('buildSectorTooltip — factions (v4 F2)', () => {
+  it('names the controlling power, and calls neutral ground neutral', () => {
+    const held = buildSectorTooltip('sol-prime', [
+      { key: 'sol-prime', players: 0, enemies: 0, neutrals: 0, structures: 0, owner: { factionId: 'core', contested: false } },
+    ])!;
+    expect(held.faction).toBe('Sol Dominion');
+    const neutral = buildSectorTooltip('orion-belt', [
+      { key: 'orion-belt', players: 0, enemies: 0, neutrals: 0, structures: 0, owner: null },
+    ])!;
+    expect(neutral.faction.startsWith('Neutral ground')).toBe(true);
+    expect(neutral.status).toBe('Neutral');
+  });
+});
