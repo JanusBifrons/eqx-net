@@ -238,6 +238,7 @@ Code: [src/core/bases/baseProfile.ts](../../src/core/bases/baseProfile.ts) and [
    - **The huge kind:** it sits on its own outer row.
 3. **Power:** lay out, measure the real draw (the fence depends on the layout), and add Solars until net power ≥ 0.
 4. **Fence:** a rectangle of Shield Pylons around the extent, with a Shield Gate in the middle of each side, tapped from the row ends.
+5. **Bastions (fenced bases):** a fence blocks its owner's own fire, so a fenced base's turrets are NOT in the rows. From a row's end connector (never the gate row), a relay just inside the fence links, between two pylons, to a hub just outside, and up to three turrets hang off the hub. They stay on the grid and their fire never crosses their own wall. A turret with no bastion spot is left out rather than placed inside. The builder also refuses any placement on an existing link line. `BASE_GROWTH_VERSION` 6.
 5. **Budget:** a base over its tier's budget spends 15 % less and regrows.
 
 **Locks:**
@@ -305,7 +306,7 @@ Code: [src/server/bases/NpcBaseSubsystem.ts](../../src/server/bases/NpcBaseSubsy
 
 Then the real systems run: power, batteries, fence, turrets, production. NPC structures aren't persisted; a restart regenerates them from the seed.
 
-**Test rooms:** `npc-base-outpost` (mining), `npc-base-settlement` (refinery), `npc-base-stronghold` (manufactory) and `npc-base-citadel` (assembly works). Each has `filterBy(testId)` and spawns the pilot south of the fence.
+**Test rooms:** `npc-base-outpost` (mining), `npc-base-settlement` (refinery), `npc-base-stronghold` (manufactory, with a Mine Layer), `npc-base-citadel` (assembly works) and `npc-base-colony` (a city, D3). Each has `filterBy(testId)` and spawns the pilot south of the fence.
 
 **Lock:** `tests/integration/sectorRoom/npcBases.test.ts`.
 - Every structure is placed, NPC-owned, built and reachable from the Capital through the live grid, with zero rejected placements or edges.

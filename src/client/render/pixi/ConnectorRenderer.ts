@@ -39,6 +39,7 @@ import {
   CONNECTION_MAX_RANGE,
 } from '../../../core/structures/structureGridConstants.js';
 import type { Connection } from '../../../core/structures/Connection.js';
+import { MINE_TRIGGER_RANGE } from '../../../shared-types/mines.js';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../../structures/derivedWalls.js';
 import {
   structureMirrorToGridNode,
@@ -439,6 +440,7 @@ export class ConnectorRenderer {
     this.lastBuiltTurretRangeRadius = 0;
     this.lastBuiltTurretRangeWidth = 0;
     if (swarm) this.drawPlacementPreview(mirror, swarm, scale);
+    if (mirror.mines && mirror.mines.size > 0) this.drawMines(mirror.mines, scale, nowMs);
     if (!structures || !swarm || structures.size === 0) {
       if (this._buildAnchors.size > 0) this._buildAnchors.clear();
       if (this._staticSig === this._staticSig) { // not NaN ⇒ something is drawn
@@ -856,6 +858,27 @@ export class ConnectorRenderer {
 
   /** Resolve the smoothly-interpolated build fraction for blueprint `id`,
    *  re-anchoring when the authoritative `buildPct` changes. */
+  /** Mine Layer — each mine: a faint trigger ring (a warning to anyone) and a
+   *  small canister with a blinking light (cyan = yours, red = anyone else's).
+   *  Immediate-mode, zero-alloc. */
+  private drawMines(mines: NonNullable<RenderMirror['mines']>, scale: number, nowMs: number): void {
+    const g = this.gfx;
+    const w = Math.max(1 / scale, 1);
+    for (const m of mines.values()) {
+      const x = m.x;
+      const y = -m.y;
+      const color = m.own ? 0x66ddff : 0xff5544;
+      g.circle(x, y, MINE_TRIGGER_RANGE);
+      g.stroke({ color, alpha: 0.12, width: w });
+      g.circle(x, y, 16);
+      g.fill({ color: 0x1b1f27, alpha: 0.95 });
+      g.stroke({ color, alpha: 0.6, width: Math.max(1.5 / scale, 1.5) });
+      const on = Math.sin(nowMs * 0.006 + x * 0.01) > 0;
+      g.circle(x, y, 6);
+      g.fill({ color, alpha: on ? 0.95 : 0.3 });
+    }
+  }
+
   private displayedBuildPct(id: number, authoritativePct: number, etaMs: number | null, nowMs: number): number {
     let anchor = this._buildAnchors.get(id);
     if (!anchor || anchor.pct !== authoritativePct) {
