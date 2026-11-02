@@ -51,6 +51,7 @@ describe('structureKinds catalogue', () => {
       'shipyard', // economy v2 W5b — appended at the tail
       'habitat_module', // D3 city modules — appended at the tail
       'tower_module',
+      'mine_layer', // Mine Layer — appended at the tail
     ]);
   });
 

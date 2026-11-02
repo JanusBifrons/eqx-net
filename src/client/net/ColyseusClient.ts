@@ -25,6 +25,7 @@ import {
   createCollisionGuard,
   type CollisionGuardState,
 } from './applyCollisionResolved';
+import { MineDetonatedSchema } from '@shared-types/mines';
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
 import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
@@ -1906,6 +1907,19 @@ export class ColyseusGameClient {
       });
     });
 
+    // Mine Layer — a mine went off: the same explosion visual as a missile
+    // (an accelerator; the mine leaving room state is the truth).
+    room.onMessage('mine_detonated', (raw: unknown) => {
+      const result = MineDetonatedSchema.safeParse(raw);
+      if (!result.success) return;
+      (this.mirror.pendingMissileExplosions ??= []).push({
+        x: result.data.x,
+        y: result.data.y,
+        splashRadius: result.data.radius,
+        missileId: -1,
+      });
+    });
+
     // Stage 2 of the network-feel roadmap — server-broadcast collision
     // events. Apply post-collision velocities to predWorld immediately;
     // eliminates the ~50 ms snapshot wait for the same correction.
@@ -3393,6 +3407,38 @@ export class ColyseusGameClient {
   private _structureMap: Map<number, StructureRenderState> | null = null;
   /** Interned owner tables (index → id / name), refreshed from room state. */
   private readonly _structureOwners: { ids: string[]; names: string[] } = { ids: [], names: [] };
+  /** Mine Layer — sync generation for the mines sweep. */
+  private _mineGen = 0;
+  private readonly _decodeMine = (v: { ownerIdx?: number; x?: number; y?: number }, k: string): void => {
+    const map = this.mirror.mines!;
+    let row = map.get(k);
+    if (!row) {
+      row = { x: 0, y: 0, own: false, gen: 0 };
+      map.set(k, row);
+    }
+    row.x = v.x ?? 0;
+    row.y = v.y ?? 0;
+    row.own = this._structureOwners.ids[v.ownerIdx ?? 0] === this.mirror.localPlayerId;
+    row.gen = this._mineGen;
+  };
+
+  /** Mine Layer — mirror room-state `mines` (join payload + patches) into
+   *  `mirror.mines` in place; a mine gone from room state is gone. */
+  private syncMines(): void {
+    const rows = (this.room?.state as { mines?: { size: number; forEach(cb: (v: { ownerIdx?: number; x?: number; y?: number }, k: string) => void): void } } | undefined)?.mines;
+    let map = this.mirror.mines;
+    if (!rows || rows.size === 0) {
+      if (map && map.size > 0) map.clear();
+      return;
+    }
+    if (!map) {
+      map = new Map();
+      this.mirror.mines = map;
+    }
+    this._mineGen++;
+    rows.forEach(this._decodeMine);
+    for (const [id, row] of map) if (row.gen !== this._mineGen) map.delete(id);
+  }
   private readonly _readStructureOwner = (v: string, k: string): void => { this._structureOwners.ids[Number(k)] = v; };
   private readonly _readStructureOwnerName = (v: string, k: string): void => { this._structureOwners.names[Number(k)] = v; };
   /** Bound once (no per-snapshot closure): decode one room-state row into
@@ -3465,6 +3511,7 @@ export class ColyseusGameClient {
       }
     }
     this.syncPredWalls();
+    this.syncMines();
   }
 
   /**

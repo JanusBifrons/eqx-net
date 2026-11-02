@@ -64,7 +64,7 @@ export const BUILD_CATEGORIES: readonly BuildCategory[] = [
     id: 'defence',
     label: 'Defence',
     icon: <SecurityIcon />,
-    kinds: ['turret', 'laser_bolt_turret', 'missile_turret', 'autocannon_turret', 'shield_pylon', 'shield_gate', 'shield_airlock'],
+    kinds: ['turret', 'laser_bolt_turret', 'missile_turret', 'autocannon_turret', 'mine_layer', 'shield_pylon', 'shield_gate', 'shield_airlock'],
   },
   // D3 — cities: residents use provisions and consumer goods and pay taxes.
   { id: 'city', label: 'City', icon: <ApartmentIcon />, kinds: ['habitat_module', 'tower_module'] },

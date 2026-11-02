@@ -75,6 +75,8 @@ export const StructureKindIdSchema = z.enum([
   // D3 city modules (plan soft-leaping-truffle v3) — APPEND ONLY.
   'habitat_module',
   'tower_module',
+  // Mine Layer (plan soft-leaping-truffle v3) — APPEND ONLY.
+  'mine_layer',
 ]);
 export type StructureKindId = z.infer<typeof StructureKindIdSchema>;
 
@@ -877,6 +879,24 @@ export const TOWER_MODULE: StructureKind = {
   color: 0xe8a3ff,
 };
 
+/** Lays proximity mines on a ring around itself (`shared-types/mines.ts`),
+ *  paid in munitions from base storage. A leaf node. */
+export const MINE_LAYER: StructureKind = {
+  id: 'mine_layer',
+  displayName: 'Mine Layer',
+  description: 'Lays proximity mines around itself from munitions in base storage. Mines go off on ships hostile to you. A leaf node.',
+  radius: 156, // bounding circle of the 220×220 footprint
+  footprint: { w: 220, h: 220 },
+  maxHealth: 1400,
+  maxConnections: 1,
+  isHub: false,
+  powerOutput: 0,
+  powerConsumption: 25,
+  storageCapacity: 0,
+  constructionCost: 900,
+  color: 0xff8a3d,
+};
+
 export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   CAPITAL,
   CONNECTOR,
@@ -916,6 +936,8 @@ export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   // D3 city modules — APPENDED. Never reorder.
   HABITAT_MODULE,
   TOWER_MODULE,
+  // Mine Layer — APPENDED. Never reorder.
+  MINE_LAYER,
 ]);
 
 /** Id-keyed lookup, derived from the canonical list (the list is the source of
@@ -1023,6 +1045,7 @@ export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
   shipyard: 4,
   habitat_module: 4,
   tower_module: 4,
+  mine_layer: 4,
 };
 
 /**

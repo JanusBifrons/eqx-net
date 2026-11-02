@@ -67,6 +67,7 @@ export const RECIPE_IDS = [
   'tower_upkeep',
   'pack_habitat_module',
   'pack_tower_module',
+  'pack_mine_layer',
 ] as const;
 export type RecipeId = (typeof RECIPE_IDS)[number];
 
@@ -344,6 +345,11 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
     id: 'pack_habitat_module', displayName: packName('habitat_module'),
     inputs: { alloy: 10, polymer: 6, components: 2 }, outputs: [{ packed: 'habitat_module' }],
     cyclePulses: 20, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_mine_layer: r({
+    id: 'pack_mine_layer', displayName: packName('mine_layer'),
+    inputs: { alloy: 8, components: 2, electronics: 1 }, outputs: [{ packed: 'mine_layer' }],
+    cyclePulses: 16, processors: ['fabricator'], blueprintRequired: true,
   }),
   pack_tower_module: r({
     id: 'pack_tower_module', displayName: packName('tower_module'),
