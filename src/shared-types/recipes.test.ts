@@ -22,6 +22,7 @@ import {
   recipeFromIndex,
   recipeIndex,
   recipesFor,
+  recipeCredits,
   type RecipeDef,
 } from './recipes.js';
 import { STRUCTURE_KINDS_LIST } from './structureKinds.js';
@@ -42,7 +43,10 @@ function inputValue(r: RecipeDef): number {
 }
 function outputValue(r: RecipeDef): number {
   let v = 0;
-  for (const o of r.outputs) if ('good' in o) v += BASE_PRICES[o.good] * o.n;
+  for (const o of r.outputs) {
+    if ('good' in o) v += BASE_PRICES[o.good] * o.n;
+    else if ('credits' in o) v += o.credits; // D3 taxes: a credit is worth 1
+  }
   return v;
 }
 function median(xs: number[]): number {
@@ -96,6 +100,7 @@ describe('recipes', () => {
       expect(Number.isInteger(r.cyclePulses) && r.cyclePulses > 0).toBe(true);
       for (const n of Object.values(r.inputs)) expect(Number.isInteger(n) && n! > 0).toBe(true);
       for (const o of r.outputs) if ('good' in o) expect(Number.isInteger(o.n) && o.n > 0).toBe(true);
+      for (const o of r.outputs) if ('credits' in o) expect(Number.isInteger(o.credits) && o.credits > 0).toBe(true);
     }
   });
 
@@ -197,6 +202,23 @@ describe('packed hulls (economy v2 W5b: the Shipyard builds ships)', () => {
 
   it('a bigger hull costs more to build', () => {
     expect(hullBillValue('missile-frigate')).toBeGreaterThan(hullBillValue('interceptor'));
+  });
+});
+
+describe('cities (D3)', () => {
+  it('city modules consume provisions and consumer goods and pay taxes, with no blueprint', () => {
+    for (const id of ['habitat_upkeep', 'tower_upkeep'] as const) {
+      const r = RECIPES[id];
+      expect(r.inputs.provisions ?? 0, id).toBeGreaterThan(0);
+      expect(r.inputs.consumer_goods ?? 0, id).toBeGreaterThan(0);
+      expect(r.outputs.every((o) => 'credits' in o), id).toBe(true);
+      expect(r.blueprintRequired, id).toBe(false);
+    }
+  });
+
+  it('a tower pays more per cycle than a habitat, and both pay taxes per minute', () => {
+    expect(recipeCredits('tower_upkeep')).toBeGreaterThan(recipeCredits('habitat_upkeep'));
+    expect(recipeCredits('smelt_alloy')).toBe(0);
   });
 });
 

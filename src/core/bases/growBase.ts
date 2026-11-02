@@ -36,7 +36,7 @@ import type { GoodId } from '../../shared-types/goods.js';
 
 /** Bump on ANY change to the generator's output (NPC bases regenerate from the
  *  seed, so a change moves every base). */
-export const BASE_GROWTH_VERSION = 3;
+export const BASE_GROWTH_VERSION = 4;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -107,6 +107,8 @@ export const EXPECTED_ACTIVE: Readonly<Partial<Record<StructureKindId, number>>>
   reclaimer: 0.6, smelter: 0.6, refinery: 0.6, silicon_works: 0.6, hydroponics: 0.6,
   fabricator: 0.6, munitions_works: 0.6, ore_processing_complex: 0.6, assembly_plant: 0.6,
   turret: 0.15, laser_bolt_turret: 0.15, missile_turret: 0.15, autocannon_turret: 0.15,
+  // D3 — residents live there around the clock.
+  habitat_module: 0.9, tower_module: 0.9,
 });
 
 export function expectedDraw(kind: StructureKindId): number {
@@ -175,6 +177,18 @@ function roleUnits(profile: BaseProfile, features: readonly SectorFeature[], rnd
       ];
     case 'trade':
       return [{ kind: 'cargo_bay' }];
+    case 'colony': {
+      // A city: housing first, towers once it's a settlement or bigger, and
+      // hydroponics to grow part of its own provisions.
+      const out: Want[] = [
+        { kind: 'habitat_module', recipe: 'habitat_upkeep' },
+        { kind: 'habitat_module', recipe: 'habitat_upkeep' },
+      ];
+      if (profile.tier !== 'outpost') {
+        out.push({ kind: 'tower_module', recipe: 'tower_upkeep' }, { kind: 'hydroponics', recipe: 'grow_provisions' });
+      }
+      return out;
+    }
   }
 }
 
