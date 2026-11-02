@@ -7735,6 +7735,22 @@ export class SectorRoom extends Room<SectorState> {
 
   // ── Living World P3b — harvester hooks (driven by RobotTerritory) ───────
 
+  /** Robot harvesters hunt haulers — the nearest live hauler (trade or convoy)
+   *  within `range` of (x, y). Control cadence (allocates the result). */
+  nearestHauler(x: number, y: number, range: number): { id: string; x: number; y: number } | null {
+    let best: { id: string; x: number; y: number } | null = null;
+    let bestD2 = range * range;
+    for (const rec of this.swarmRegistry.all()) {
+      if (!isHaulerId(rec.id)) continue;
+      const b = slotBase(rec.slot);
+      const px = this.sabF32[b + SLOT_X_OFF]!;
+      const py = this.sabF32[b + SLOT_Y_OFF]!;
+      const d2 = (px - x) ** 2 + (py - y) ** 2;
+      if (d2 <= bestD2) { bestD2 = d2; best = { id: rec.id, x: px, y: py }; }
+    }
+    return best;
+  }
+
   nearestLootPod(x: number, y: number): { x: number; y: number } | null {
     let best: { x: number; y: number } | null = null;
     let bestD2 = Infinity;
