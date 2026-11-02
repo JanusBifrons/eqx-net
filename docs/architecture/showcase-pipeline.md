@@ -181,3 +181,17 @@ window.
 - Every Vite proxy entry must target `SERVER_PORT` (locked by
   `tests/unit/viteProxyPort.test.ts`). A hard-coded `localhost:2567` sends the
   isolated capture's requests to whatever dev server owns that port.
+
+## Piloted shots
+
+Shots in `showcase/shots/cockpit.ts` are flown from one player's ship: the
+camera tracks `local`, the HUD is `clean` (shield/hull, cargo, wallet stay on
+screen), and `_pilot.ts` steers with the arrow keys (`flyTo`, `flyRoute`,
+`face`). Prefer this over a free camera for anything a player does.
+
+- **Trade tab stalls the capture.** With the Trade tab open, each refresh blocks
+  the main thread for up to ~1 s on the reference laptop (frame gaps of
+  0.9–1.9 s every ~0.9 s), so `trade-deal` fails the smoothness gate. Phones use
+  the same main-thread renderer, so this is worth profiling for players too.
+- **Trade rooms share one sector name,** so each take's Capital is saved and
+  restored into the next take's room. `placeHome` tries a ring of spots.

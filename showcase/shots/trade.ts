@@ -1,5 +1,6 @@
 import type { Shot } from '../types.js';
-import { TRADE_TARGET, agreeSalvageDeal, haulerId, placeHome } from './_trade.js';
+import { TRADE_TARGET, agreeSalvageDeal, haulerId, placeHome, warmTradeTab } from './_trade.js';
+import { flyTo } from './_pilot.js';
 
 /**
  * Trade deals (Living World P2, economy v2) — the Trade tab: standing with each
@@ -16,13 +17,14 @@ export const tradeDeal: Shot = {
   reel: true,
   server: 'lean',
   target: TRADE_TARGET,
-  hud: 'full',
+  hud: 'clean',
   durationMs: 11_000,
   async prepare(ctx) {
     await ctx.sleep(3000);
     await placeHome(ctx);
+    await warmTradeTab(ctx);
   },
-  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 0, y: -450, zoom: 0.55 } }],
+  camera: [{ atMs: 0, smoothMs: 300, shot: { kind: 'track', target: 'local', zoom: 0.75, leadMs: 250 } }],
   async run(ctx) {
     await ctx.sleep(1200);
     await agreeSalvageDeal(ctx, 1100);
@@ -39,7 +41,7 @@ export const tradeRaid: Shot = {
   id: 'trade-raid',
   section: 'mechanics',
   title: 'Haulers & raiders',
-  caption: 'Every deal is a real hauler crossing the sector — raiders hunt it, and you can fly out to escort it home.',
+  caption: 'Every deal is a real hauler crossing the sector. Raiders hunt it — fly out and escort it home.',
   features: ['M41'],
   docs: [],
   reel: true,
@@ -60,10 +62,18 @@ export const tradeRaid: Shot = {
       .first()
       .waitFor({ state: 'visible', timeout: 120_000 });
   },
+  camera: [{ atMs: 0, smoothMs: 300, shot: { kind: 'track', target: 'local', zoom: 0.9, leadMs: 250 } }],
   async run(ctx) {
-    await ctx.cinema.play([
-      { atMs: 0, smoothMs: 0, shot: { kind: 'track', target: `swarm-${raidedHauler}`, zoom: 0.8 } },
-      { atMs: 5000, smoothMs: 1500, shot: { kind: 'track', target: `swarm-${raidedHauler}`, zoom: 0.55 } },
-    ]);
+    // Fly out to the hauler; auto-fire takes on the raiders around it.
+    const end = Date.now() + 11_000;
+    while (Date.now() < end) {
+      const h = await ctx.page.evaluate((id) => {
+        const m = (window as unknown as { __eqxClient?: { mirror?: { swarm?: Map<number, { x: number; y: number }> } } }).__eqxClient?.mirror;
+        const e = m?.swarm?.get(id);
+        return e ? { x: e.x, y: e.y } : null;
+      }, raidedHauler);
+      if (!h) break;
+      await flyTo(ctx, h.x, h.y - 150, { arrive: 200, cruise: 300, maxMs: 1500, passThrough: true });
+    }
   },
 };

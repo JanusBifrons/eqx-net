@@ -151,6 +151,18 @@ export function buildJoinSpec(
   // observe despawn→return-to-pool in ~2 s. Server-side testMode-gated.
   if (urlParams.has('initialXp'))
     extraJoinOptions['initialXp'] = parseInt(urlParams.get('initialXp')!, 10);
+  // Test-only: start with goods aboard (`?initialCargo=salvage:40,alloy:12`)
+  // and a wallet balance (`?initialWallet=500`). Server-side testMode-gated.
+  if (urlParams.has('initialCargo')) {
+    const goods: Record<string, number> = {};
+    for (const pair of urlParams.get('initialCargo')!.split(',')) {
+      const [good, qty] = pair.split(':');
+      if (good && qty) goods[good] = parseInt(qty, 10);
+    }
+    extraJoinOptions['initialCargo'] = { goods, blueprints: [] };
+  }
+  if (urlParams.has('initialWallet'))
+    extraJoinOptions['initialWallet'] = parseInt(urlParams.get('initialWallet')!, 10);
   if (urlParams.has('lingerMs'))
     extraJoinOptions['lingerMs'] = parseInt(urlParams.get('lingerMs')!, 10);
   // Structures plan (Phase 3/4) — override the grid pulse interval (ms) so the
