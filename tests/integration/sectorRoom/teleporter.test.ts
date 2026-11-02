@@ -87,7 +87,9 @@ describe('SectorRoom integration — teleporters (v4 T1)', () => {
     }
     expect(a.tpPhase).toBe(TP_PHASE.IDLE);
     expect(b.tpPhase).toBe(TP_PHASE.IDLE);
-    expect(a.tpCharge).toBe(0);
+    // A spent its charge (the room's own 1 Hz pulse may already have put a
+    // little spare power back, so not exactly 0); B kept all of its own.
+    expect(a.tpCharge ?? 0).toBeLessThan(need / 4);
     expect(b.tpCharge).toBe(need);
     // The pad holds traded places: the alloy is on B's pad…
     expect(a.padHold?.goods.alloy ?? 0).toBe(0);
