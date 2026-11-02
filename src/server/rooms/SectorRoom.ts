@@ -221,6 +221,7 @@ import type {
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { getPlayerShipStore, getHoldStore, getWallet, getLabBoard } from '../db/PersistenceWorker.js';
 import { ResearchLabSubsystem } from '../structures/ResearchLabSubsystem.js';
+import { PackedStockQuerySchema, type PackedStock } from '../../shared-types/packedStock.js';
 import { BpBuySchema, BpMarketQuerySchema, BpSellSchema, type BpListing, type BpMarketState } from '../../shared-types/blueprintMarket.js';
 import { bpBuyPrice, bpSellPrice, getBlueprintMarket, listing as bpListing } from '../economy/BlueprintMarket.js';
 import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type LabState } from '../../shared-types/messages/labMessages.js';
@@ -2853,6 +2854,14 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('lab_query', (client: Client, raw: unknown) => labRequest(client, 'lab_query', raw));
     this.onMessage('lab_start', (client: Client, raw: unknown) => labRequest(client, 'lab_start', raw));
     this.onMessage('lab_cancel', (client: Client, raw: unknown) => labRequest(client, 'lab_cancel', raw));
+
+    // ── Economy v2 — packed-structure stock for the Build menus ──────────────
+    this.onMessage('packed_stock_query', (client: Client, raw: unknown) => {
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      if (!PackedStockQuerySchema.safeParse(raw).success) { this.malformed.record(client.sessionId, 'packed_stock_query'); return; }
+      try { client.send('packed_stock', { type: 'packed_stock', counts: this.packedStockOf(playerId) } satisfies PackedStock); } catch { /* closing */ }
+    });
 
     // ── Economy v2 W6 — the blueprint market (buy / sell, instant) ───────────
     const bpRequest = (client: Client, kind: 'bp_market_query' | 'bp_buy' | 'bp_sell', raw: unknown): void => {
@@ -7508,6 +7517,22 @@ export class SectorRoom extends Room<SectorState> {
       this.storage.commitChanged([from], []);
       return [false, `Could not unpack the ${name}.`];
     }
+  }
+
+  /** Economy v2 — `playerId`'s packed STRUCTURES in this sector, by product:
+   *  their operational storage here plus their active ship's hold (exactly
+   *  where `packedGateForBuild` looks). Control cadence (allocates). */
+  private packedStockOf(playerId: string): Record<string, number> {
+    const counts: Record<string, number> = {};
+    const add = (items: readonly { product: string }[] | undefined): void => {
+      for (const it of items ?? []) if (it.product.startsWith('structure:')) counts[it.product] = (counts[it.product] ?? 0) + 1;
+    };
+    for (const rec of this.structureRegistry.all()) {
+      if (rec.owner === playerId && rec.hold !== undefined && isOperationalStorage(rec)) add(rec.hold.packed);
+    }
+    const shipId = this.resolveActiveShipKey(playerId);
+    if (shipId) add(getHoldStore().get(shipId)?.hold.packed);
+    return counts;
   }
 
   /** Economy v2 W6 — `playerId`'s operational storage at `networkEntityId`. */

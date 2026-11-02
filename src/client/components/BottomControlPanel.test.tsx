@@ -50,6 +50,23 @@ describe('BottomControlPanel (Phase 5 WS-4)', () => {
     expect(useUIStore.getState().activeSlotId).toBe(getShipKind('fighter').slots![0]!.id);
   });
 
+  it('SPECTATING — economy v2: packed counts label non-starter kinds; one you have none of is greyed + unpickable', () => {
+    useUIStore.setState({ pilotMode: 'spectator', packedStock: { 'structure:smelter': 2 } });
+    render(<BottomControlPanel />);
+    const smelter = screen.getByTestId('bcp-cell-build:smelter');
+    expect(smelter.textContent).toContain('Smelter ×2');
+    fireEvent.click(smelter);
+    expect(useUIStore.getState().placementKind).toBe('smelter');
+    useUIStore.setState({ placementKind: null });
+    const turret = screen.getByTestId('bcp-cell-build:missile_turret');
+    expect(turret.textContent).toContain('buy packed');
+    fireEvent.click(turret);
+    expect(useUIStore.getState().placementKind).toBeNull();
+    // Starter kinds are never locked.
+    expect(screen.getByTestId('bcp-cell-build:solar').textContent).not.toContain('buy packed');
+    useUIStore.setState({ packedStock: null });
+  });
+
   it('SPECTATING — flips to the flattened building palette; click selects a building', () => {
     useUIStore.setState({ pilotMode: 'spectator' });
     render(<BottomControlPanel />);

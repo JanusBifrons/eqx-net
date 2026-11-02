@@ -279,6 +279,9 @@ export interface UIStore {
   /** Economy v2 W6 — the last `bp_market_state` reply (the Trade tab's
    *  Blueprints section is rebuilt from it). */
   bpMarket: BpMarketState | null;
+  /** Economy v2 — packed `structure:<kind>` → count here (Build menus);
+   *  null until the first `packed_stock` reply. */
+  packedStock: Readonly<Record<string, number>> | null;
   /** Living World P5 — blueprints fitted to the local ACTIVE ship (from the
    *  own-ship snapshot slice; discrete, written only on change). */
   fittedBlueprints: readonly string[];
@@ -480,6 +483,7 @@ export interface UIStore {
   setLabState: (s: LabState | null) => void;
   setCargoState: (s: CargoState | null) => void;
   setBpMarket: (s: BpMarketState | null) => void;
+  setPackedStock: (counts: Readonly<Record<string, number>> | null) => void;
   setFittedBlueprints: (ids: readonly string[]) => void;
   pushLootFeed: (text: string) => number;
   expireLootFeed: (id: number) => void;

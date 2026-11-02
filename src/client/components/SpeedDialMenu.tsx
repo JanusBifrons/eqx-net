@@ -38,7 +38,9 @@ import ApartmentIcon from '@mui/icons-material/Apartment';
 import HomeWorkIcon from '@mui/icons-material/HomeWork';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
-import { getStructureKind, type StructureKindId } from '@shared-types/structureKinds';
+import { type StructureKindId } from '@shared-types/structureKinds';
+import { buildEntry } from '@shared-types/packedStock';
+import { usePackedStock } from '../structures/usePackedStock';
 import {
   BUILD_CATEGORIES,
   CATEGORY_ICON,
@@ -159,6 +161,8 @@ export function SpeedDialMenu(): JSX.Element | null {
     [],
   );
   const goBack = useCallback(() => setView((v) => goBackView(v)), []);
+  // Economy v2 — packed stock while the build drill is open.
+  const packedStock = usePackedStock(open && view.level !== 'root');
 
   // Pick a kind to place: raise the placement ghost. Does NOT close the dial —
   // it STAYS OPEN at the kinds level so the player can place several structures
@@ -216,19 +220,26 @@ export function SpeedDialMenu(): JSX.Element | null {
   } else if (view.level === 'kinds') {
     actions = [
       backAction,
-      ...categoryById(view.category).kinds.map((kindId) => (
-        <SpeedDialAction
-          key={kindId}
-          icon={BUILD_ICONS[kindId] ?? <ConstructionIcon />}
-          tooltipTitle={getStructureKind(kindId).displayName}
-          tooltipOpen
-          FabProps={fab(ACTION_FAB_BASE, {
-            'data-testid': `build-${kindId}`,
-            onClick: clickActivate(() => handlePickBuild(kindId)),
-            onTouchStart: touchActivate(() => handlePickBuild(kindId)),
-          })}
-        />
-      )),
+      ...categoryById(view.category).kinds.map((kindId) => {
+        // Economy v2 — non-starter kinds need a packed one: show the count, or
+        // lock (dimmed, no-op) with a hint, instead of refusing on placement.
+        const entry = buildEntry(kindId, packedStock);
+        const pick = entry.locked ? () => {} : () => handlePickBuild(kindId);
+        return (
+          <SpeedDialAction
+            key={kindId}
+            icon={BUILD_ICONS[kindId] ?? <ConstructionIcon />}
+            tooltipTitle={entry.label}
+            tooltipOpen
+            FabProps={fab(entry.locked ? LOCKED_ACTION_FAB_BASE : ACTION_FAB_BASE, {
+              'data-testid': `build-${kindId}`,
+              'data-locked': entry.locked ? '1' : '0',
+              onClick: clickActivate(pick),
+              onTouchStart: touchActivate(pick),
+            })}
+          />
+        );
+      }),
     ];
   } else {
     actions = [
@@ -441,6 +452,9 @@ const ACTION_FAB_BASE = {
     '&:hover': { bgcolor: 'rgba(5,7,15,0.95)' },
   },
 } as const;
+
+/** Economy v2 — a locked build kind (no packed one here): dimmed. */
+const LOCKED_ACTION_FAB_BASE = { ...ACTION_FAB_BASE, sx: { ...ACTION_FAB_BASE.sx, opacity: 0.45 } };
 
 const MENU_ACTION_FAB_PROPS = ACTION_FAB_BASE;
 const WEAPON_ACTION_FAB_PROPS = ACTION_FAB_BASE;
