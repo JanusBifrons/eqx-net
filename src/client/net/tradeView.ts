@@ -12,6 +12,7 @@ import { productName } from '../../shared-types/blueprints.js';
 import type { TradeHistoryEntry, TradeNotice } from '../../shared-types/economy.js';
 import type { TradeToastTone } from '../state/storeTypes.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
+import { standingLabel } from '../../shared-types/factions.js';
 
 /** One of the player's storage structures, for the base picker. */
 export interface OwnStorage {
@@ -115,17 +116,20 @@ export function itemName(x: { good: GoodId | null; product?: string }): string {
   return x.product !== undefined ? `Packed ${productName(x.product)}` : goodName(x.good);
 }
 
-/** Reputation −1000..1000 → a bar fill 0..1 (0.5 = neutral). */
+/** Standing −100..100 → a bar fill 0..1 (0.5 = neutral). */
 export function repFill(rep: number): number {
-  return Math.max(0, Math.min(1, (rep + 1000) / 2000));
+  return Math.max(0, Math.min(1, (rep + 100) / 200));
 }
 
+/** The shared label scale (factions F1). */
 export function repLabel(rep: number): string {
-  if (rep >= 500) return 'Allied';
-  if (rep >= 150) return 'Friendly';
-  if (rep > -150) return 'Neutral';
-  if (rep > -500) return 'Wary';
-  return 'Hostile';
+  return standingLabel(rep);
+}
+
+/** A standing for display: whole numbers plain, otherwise one decimal. */
+export function formatStanding(rep: number): string {
+  const s = Number.isInteger(rep) ? String(rep) : rep.toFixed(1);
+  return rep > 0 ? `+${s}` : s;
 }
 
 export function formatPrice(n: number): string {

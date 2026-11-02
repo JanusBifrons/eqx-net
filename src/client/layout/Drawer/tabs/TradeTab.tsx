@@ -23,7 +23,7 @@ import { loadStoredPlayerId } from '../../../identity/token';
 import { loadToken } from '../../../auth/tokenStorage';
 import { fetchEconomy, fetchOffers, saveTradeLastSeen } from '../../../net/tradeApi';
 import { BlueprintMarketSection } from './BlueprintMarketSection';
-import { formatPrice, goodName, itemName, ownStorages, repFill, repLabel, sectorName, type OwnStorage } from '../../../net/tradeView';
+import { formatPrice, formatStanding, goodName, itemName, ownStorages, repFill, repLabel, sectorName, type OwnStorage } from '../../../net/tradeView';
 import { sendAcceptOffer, sendCancelDeal, sendGift } from '../../../net/tradeClient';
 import {
   ECON_ALLEGIANCES,
@@ -58,7 +58,7 @@ const STATE_COLOR: Record<string, string> = {
 type Section = 'offers' | 'deals' | 'history' | 'gift' | 'blueprints';
 
 function repColor(rep: number): string {
-  return rep >= 150 ? '#5fd6a0' : rep > -150 ? '#c8cde0' : '#ff8a8a';
+  return rep >= 15 ? '#5fd6a0' : rep > -15 ? '#c8cde0' : '#ff8a8a';
 }
 
 export function TradeTab(): JSX.Element {
@@ -130,7 +130,7 @@ export function TradeTab(): JSX.Element {
                 <Box sx={REP_MID_SX} />
                 <Box sx={{ height: '100%', width: `${repFill(rep) * 100}%`, bgcolor: repColor(rep) }} />
               </Box>
-              <Typography sx={REP_VALUE_SX}>{repLabel(rep)} {rep > 0 ? '+' : ''}{rep}</Typography>
+              <Typography sx={REP_VALUE_SX}>{repLabel(rep)} {formatStanding(rep)}</Typography>
             </Box>
           );
         })}

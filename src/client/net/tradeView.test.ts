@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { StructureRenderState } from '../../core/contracts/IRenderer.js';
 import type { TradeHistoryEntry } from '../../shared-types/economy.js';
-import { itemName, ownStorages, repFill, repLabel, summarizeHistory, toastForNotice, unseenHistory } from './tradeView.js';
+import { formatStanding, itemName, ownStorages, repFill, repLabel, summarizeHistory, toastForNotice, unseenHistory } from './tradeView.js';
 
 function st(owner: string, built = true): StructureRenderState {
   return { powered: true, netPower: 0, connTo: [], built, buildPct: built ? 1 : 0.5, deconstructPct: 0, owner };
@@ -65,11 +65,16 @@ describe('while-you-were-away', () => {
 describe('reputation display', () => {
   it('maps standing to a bar fill and a label', () => {
     expect(repFill(0)).toBe(0.5);
-    expect(repFill(-1000)).toBe(0);
-    expect(repFill(1000)).toBe(1);
-    expect(repLabel(600)).toBe('Allied');
+    expect(repFill(-100)).toBe(0);
+    expect(repFill(100)).toBe(1);
+    expect(repLabel(60)).toBe('Allied');
+    expect(repLabel(20)).toBe('Friendly');
     expect(repLabel(0)).toBe('Neutral');
-    expect(repLabel(-700)).toBe('Hostile');
+    expect(repLabel(-20)).toBe('Wary');
+    expect(repLabel(-70)).toBe('Hostile');
+    expect(formatStanding(1)).toBe('+1');
+    expect(formatStanding(-1.5)).toBe('-1.5');
+    expect(formatStanding(0)).toBe('0');
   });
 });
 

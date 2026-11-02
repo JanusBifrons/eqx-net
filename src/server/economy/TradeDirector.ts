@@ -510,6 +510,10 @@ export class TradeDirector implements TradeSink {
     return this.store.rep(playerId, 'traders');
   }
 
+  standing(from: string, to: string): number {
+    return this.store.standing(from, to);
+  }
+
   robotTruce(playerId: string): boolean {
     return robotTruce(this.store.rep(playerId, 'robots'));
   }

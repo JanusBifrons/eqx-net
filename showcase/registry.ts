@@ -125,6 +125,8 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 /** Docs whose feature exists but cannot be staged on main yet — with what unblocks it. */
 export const SHOWCASE_PENDING: Record<string, string> = {
   allegiances: 'AI-vs-AI sides fight in the living galaxy but not on cue; needs a staged two-faction room.',
+  factions:
+    'F1 is the faction model and standing web with no visible surface; the Factions tab (v4 F3) is where it gets a shot.',
   blueprints:
     'Blueprints drop at random from elites/events and install at a signed-in base; needs a staged loot→install room for the P5 showcase.',
   'research-lab':

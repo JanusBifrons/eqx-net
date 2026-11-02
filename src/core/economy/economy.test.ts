@@ -64,14 +64,15 @@ describe('reputation', () => {
   it('clamps, gates refusal + truce, and gifts have diminishing returns', () => {
     const t = neutralRep();
     expect(applyRep(t, 'traders', -5000)).toBe(-REP_MAX);
-    expect(tradersRefuse(t.traders)).toBe(true);
-    expect(robotTruce(499)).toBe(false);
-    expect(robotTruce(500)).toBe(true);
+    expect(tradersRefuse(t.traders!)).toBe(true);
+    expect(robotTruce(49.9)).toBe(false);
+    expect(robotTruce(50)).toBe(true);
     const fresh = giftRepGain(1000, 0);
     const tired = giftRepGain(1000, 6000);
     expect(fresh).toBeGreaterThan(tired);
-    expect(giftRepGain(1_000_000, 0)).toBe(150); // per-gift cap
-    expect(waveIntervalFactor(-500)).toBe(1);
+    expect(giftRepGain(1_000_000, 0)).toBe(15); // per-gift cap
+    expect(giftRepGain(1000, 0)).toBe(10); // 100 credits ≈ 1 point
+    expect(waveIntervalFactor(-50)).toBe(1);
     expect(waveIntervalFactor(REP_MAX)).toBe(3);
   });
 });

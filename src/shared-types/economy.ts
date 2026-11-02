@@ -48,21 +48,24 @@ export const PRICE_CEIL_MUL = 2.5;
 export const ECON_ALLEGIANCES = ['drones', 'robots', 'traders'] as const;
 export type EconAllegiance = (typeof ECON_ALLEGIANCES)[number];
 
-export const REP_MIN = -1000;
-export const REP_MAX = 1000;
+/** Standing (reputation) runs −100..100 in 0.1 steps (factions F1). It was
+ *  −1000..1000; stored values are divided by 10 once on load
+ *  (`STANDING_SCALE_VERSION` in `EconomyStore`). */
+export const REP_MIN = -100;
+export const REP_MAX = 100;
 /** Trader rep swings deal prices by up to ±15 %. */
 export const REP_PRICE_SWING = 0.15;
 /** Traders refuse new deals below this standing. */
-export const TRADER_REFUSE_BELOW = -300;
+export const TRADER_REFUSE_BELOW = -30;
 /** Robots stop attacking a player on sight at or above this standing. */
-export const ROBOT_TRUCE_AT = 500;
+export const ROBOT_TRUCE_AT = 50;
 
 /** Reputation deltas (balance knobs — tune on-device). */
-export const REP_DEAL_COMPLETED = 10;
-export const REP_PARTIAL_FILL = -15;
-export const REP_PIRACY_HIT = -200; // per run, per player who damaged the hauler
-export const REP_SELF_RAID = -500; // the deal owner damaged their own hauler
-export const REP_ATTACK_ROBOT = -100; // a player hit a robot (ends any truce)
+export const REP_DEAL_COMPLETED = 1;
+export const REP_PARTIAL_FILL = -1.5;
+export const REP_PIRACY_HIT = -20; // per run, per player who damaged the hauler
+export const REP_SELF_RAID = -50; // the deal owner damaged their own hauler
+export const REP_ATTACK_ROBOT = -10; // a player hit a robot (ends any truce)
 
 /**
  * The internal key the trade system knows a room by → the sector key a player

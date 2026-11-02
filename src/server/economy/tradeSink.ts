@@ -32,6 +32,9 @@ export interface TradeSink {
   onRobotDamaged(attackerPlayerId: string): void;
   /** Economy v2 W6 — the player's standing with traders (blueprint prices). */
   traderRep?(playerId: string): number;
+  /** Factions F1 — faction `from`'s view of faction `to` (−100..100; a
+   *  player's faction id is their player id). Hot-path safe (Map lookups). */
+  standing?(from: string, to: string): number;
   /** Robot reputation ≥ ROBOT_TRUCE_AT. Hot-path safe (one Map lookup). */
   robotTruce(playerId: string): boolean;
   /** Drone-reputation wave spacing multiplier (≥ 1). */
