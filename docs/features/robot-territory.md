@@ -115,6 +115,16 @@ Tests: `tests/integration/sectorRoom/robotTerritory.test.ts` (raid),
 `tests/integration/sectorRoom/chargeLaser.test.ts` (the telegraph lands before
 the beam; red with no wind-up), `src/client/net/snapshotRemoteSync.charging.test.ts`.
 
+## Harvesters hunt haulers
+
+With no loose pod to scoop, a harvester goes after the nearest **hauler**
+(a trade hauler or an NPC convoy) within 2,500 u, BEFORE raiding storage.
+Robots are hostile to traders on sight, so closing in starts the attack. A
+killed hauler takes the existing raid path: the buyer is refunded, the owner
+is told, and the cargo spills as a pod, which the harvester then scoops and
+banks at the nexus. Escort your haulers near robot space. Test:
+`robotTerritory.test.ts` ("hunts a nearby hauler before raiding storage").
+
 ## Next
 
-Harvesters raiding trade haulers and mining asteroids, and merge clusters.
+Harvesters mining asteroids, and merge clusters.

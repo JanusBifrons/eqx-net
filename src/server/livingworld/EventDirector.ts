@@ -171,6 +171,18 @@ export class EventDirector {
     return { kind: a.kind, title: WORLD_EVENT_TITLES[a.kind], endsAtMs: a.endsAtMs };
   }
 
+  /** Galaxy-map ENEMY counts this director adds: an incursion's robots are
+   *  hostile to every player on sight, so they show red on the map (they were
+   *  counted as neutral before). A mothership's drone escort stays neutral (drones
+   *  are hostile only when provoked), and a salvage field has no mobs. Control
+   *  cadence (allocates). */
+  hostileCountsBySector(): ReadonlyMap<string, number> {
+    const a = this.active;
+    const out = new Map<string, number>();
+    if (a !== null && a.kind === 'incursion' && a.mobs.size > 0) out.set(a.sectorKey, a.mobs.size);
+    return out;
+  }
+
   /** The live event anywhere (inspection / tests). */
   activeEvent(): (WorldEventView & { sectorKey: string; mobs: number }) | null {
     const a = this.active;

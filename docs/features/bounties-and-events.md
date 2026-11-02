@@ -80,7 +80,10 @@ named targets worth chasing. It ships in parts:
 Every few minutes something happens somewhere in the galaxy. A gold toast
 announces it to every pilot ("Robot Incursion detected!"), and the galaxy map's
 tooltip and sector drawer show **⚑ \<event\> underway** in that sector. One event
-runs at a time, with a 9-minute lull between them.
+runs at a time, with a 9-minute lull between them. An incursion's raiders are hostile on
+sight, so they also count as **enemies** (red) in the map's sector badges
+(`EventDirector.hostileCountsBySector`); a mothership's drone escort stays
+neutral unless provoked.
 
 | Event | What happens | How it ends | Reward |
 |---|---|---|---|
