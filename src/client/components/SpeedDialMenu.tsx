@@ -37,6 +37,8 @@ import SailingIcon from '@mui/icons-material/Sailing';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import HomeWorkIcon from '@mui/icons-material/HomeWork';
 import BlurCircularIcon from '@mui/icons-material/BlurCircular';
+import TripOriginIcon from '@mui/icons-material/TripOrigin';
+import AllOutIcon from '@mui/icons-material/AllOut';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
 import { type StructureKindId } from '@shared-types/structureKinds';
@@ -393,6 +395,8 @@ export const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
   habitat_module: <HomeWorkIcon />, // D3 habitation
   tower_module: <ApartmentIcon />,
   mine_layer: <BlurCircularIcon />, // Mine Layer
+  teleporter: <TripOriginIcon />, // v4 T1
+  teleporter_large: <AllOutIcon />,
 };
 
 // ── Hoisted static sx / props (no per-render allocation) ───────────────────

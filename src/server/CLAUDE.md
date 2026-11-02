@@ -237,6 +237,19 @@ Update this section when a threshold is set.
   - Every trade quote goes through `TradeDirector.quote(kind, good, rep, sectorKey)`, so the board, the accept and the re-quote agree. Never quote around it.
   - The offers route takes `?sector=`.
 
+## Teleporters (plan soft-leaping-truffle v4, T1)
+
+- **`TeleporterSubsystem` (`structures/`)** owns capacitors, pairing, firing rules and the jump cycle:
+  - `update` runs at 10 Hz (`structureTurretTick`);
+  - `pulse` runs at 1 Hz, after production: arrivals unload, then "keep loaded".
+- **Charge:** the battery pass hands surplus left after batteries to `chargeCapacitors` (a `StructureGridHooks` hook). It never discharges batteries.
+- **The cycle:** both pads of a pair run ONE cycle, driven by the initiator, which spends its charge at the swap.
+- **The pad hold** is its own hold row (`tppad:<uid>`, holder type 'fitted'), never base storage. Move it only through `StorageService.padLoad` / `padUnload` / `padSwap` / `takePadForSpill`, each ONE group.
+- **Room state:** `tp*` / `padWeight` fields are assigned on change (A2). `tpPhaseMs` rides along only when the phase changes.
+- **Persisted:** partner, rules and charge go in the sector snapshot `teleport` block (rules re-validated on restore).
+- **Pairing (T1):** same sector, same owner.
+- Lock: `tests/integration/sectorRoom/teleporter.test.ts`. Story: [docs/features/teleporters.md](../../docs/features/teleporters.md).
+
 ## Faction standing events and policies (plan soft-leaping-truffle v4, F3)
 
 - **One rule for hits:** `applyDamage` → `noteStandingHit` lowers the victim faction's view of the attacker's faction once per pair per window (`STANDING_HIT_*`). Victims are structures (their owner) and player ships, with at least one player side. Steady state is nested Map lookups only (#14). Break-ins cost `STANDING_BREAK_IN_DELTA`. Don't add standing deltas elsewhere without a reason; trade keeps its own (`REP_*`).

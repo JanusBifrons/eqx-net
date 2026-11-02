@@ -76,6 +76,20 @@ export function decodeStructureState(v: StructureStateView, owners: StructureOwn
   const bpRuns = v.bpRuns ?? D.bpRuns;
   out.bpRuns = bpRuns !== 0 ? bpRuns : undefined;
   out.bpQuality = bpRuns !== 0 ? (v.bpQuality ?? D.bpQuality) : undefined;
+  // v4 T1 — teleporters: decode in place (allocated once per teleporter row).
+  if (v.tpPhase !== undefined || v.tpPartner !== undefined || v.tpChargePct !== undefined || out.teleport !== undefined) {
+    const t = (out.teleport ??= { phase: 0, phaseMs: 0, chargePct: 0, partner: -1, rules: 0, loadGood: 0, loadQty: 0, keepGood: 0, keepQty: 0, padWeight: 0 });
+    t.phase = v.tpPhase ?? D.tpPhase;
+    t.phaseMs = v.tpPhaseMs ?? D.tpPhaseMs;
+    t.chargePct = v.tpChargePct ?? D.tpChargePct;
+    t.partner = v.tpPartner ?? D.tpPartner;
+    t.rules = v.tpRules ?? D.tpRules;
+    t.loadGood = v.tpLoadGood ?? D.tpLoadGood;
+    t.loadQty = v.tpLoadQty ?? D.tpLoadQty;
+    t.keepGood = v.tpKeepGood ?? D.tpKeepGood;
+    t.keepQty = v.tpKeepQty ?? D.tpKeepQty;
+    t.padWeight = v.padWeight ?? D.padWeight;
+  }
   const oi = v.ownerIdx ?? D.ownerIdx;
   out.owner = owners.ids[oi] ?? '';
   const name = owners.names[oi] ?? '';

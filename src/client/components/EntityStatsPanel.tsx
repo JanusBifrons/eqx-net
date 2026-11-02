@@ -26,6 +26,8 @@ import { BountyAction } from './BountyAction';
 import { BlueprintInstall } from './BlueprintInstall';
 import { ResearchLabPanel } from './ResearchLabPanel';
 import { CargoAction } from './CargoPanel';
+import { TeleporterPanel } from './TeleporterPanel';
+import { isTeleporterKind } from '../../shared-types/teleport';
 import { HullUnpack } from './HullUnpack';
 import { hullColor } from './ShieldHullBar';
 import { getStructureKind } from '@shared-types/structureKinds';
@@ -140,6 +142,8 @@ interface PanelData {
   canRefine?: boolean;
   /** Economy v2 W3 — my own BUILT Research Lab: show the lab panel. */
   isLab?: boolean;
+  /** v4 T1 — the pilot's own built teleporter. */
+  isTeleporter?: boolean;
   /** C1 — a BUILT storage structure (anyone's) or (C3) an NPC ship: offer
    *  "Open cargo" by `entityId`. The server decides whether it opens. */
   hasCargo?: boolean;
@@ -444,6 +448,7 @@ export function EntityStatsPanel(): JSX.Element | null {
       )}
       {data.packed !== undefined && data.entityId !== undefined && <HullUnpack entityId={data.entityId} packed={data.packed} />}
       {data.isLab === true && data.entityId !== undefined && <ResearchLabPanel entityId={data.entityId} />}
+      {data.isTeleporter === true && data.entityId !== undefined && <TeleporterPanel key={data.entityId} entityId={data.entityId} />}
       {data.hasCargo === true && data.entityId !== undefined && <CargoAction key={data.entityId} entityId={data.entityId} />}
       {data.cargoShip !== undefined && <CargoAction key={data.cargoShip} ship={data.cargoShip} />}
       {data.pilotShipId !== undefined && (
@@ -477,7 +482,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
   'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'noAmmo', 'noFuel', 'breach', 'upgradeGoods',
-  'isLab', 'hasCargo', 'cargoShip', 'packed',
+  'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter',
 ];
 
 /** The next gate access setting in the cycle (owner + allies → owner only →
@@ -596,6 +601,8 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         if (parts.length > 0) data.upgradeGoods = parts.join(', ');
       }
       if (subtype === 'research_lab' && data.isOwn === true && st.built === true) data.isLab = true;
+      // v4 T1 — your own built teleporter shows its charge, pairing, rules and pad.
+      if (isTeleporterKind(subtype) && data.isOwn === true && st.built === true) data.isTeleporter = true;
       if (subtype !== undefined && (getStructureKind(subtype).holdCapacity ?? 0) > 0 && st.built === true) data.hasCargo = true;
       // Living World P1a-2 — owned storage contents (the server only sends them
       // to the owner) + the Refine gate (a Capital with salvage in its network

@@ -115,6 +115,23 @@ import { BreakInSubsystem } from './BreakInSubsystem.js';
 import { stream } from '../../core/random/rng.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
+import { TeleporterSubsystem } from '../structures/TeleporterSubsystem.js';
+import {
+  PAD_SPECS,
+  SetTeleportRulesSchema,
+  TeleportFireSchema,
+  TeleportPadLoadSchema,
+  TeleportPadUnloadSchema,
+  TeleportPairSchema,
+  TeleportUnpairSchema,
+  TP_PARTNER_REMOTE,
+  TeleportRulesSchema,
+  TP_RULE_BOARDS,
+  TP_RULE_CHARGED,
+  TP_RULE_KEEP,
+  TP_RULE_LOADED,
+  isTeleporterKind,
+} from '../../shared-types/teleport.js';
 import { NpcBaseSubsystem, isNpcBasesDisabled, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
 import { hashString } from '../../core/bases/baseProfile.js';
 import { chooseBaseSite, grownExtent, nearestClearPoint, type SiteBox, type SiteCircle } from '../../core/bases/baseSite.js';
@@ -830,6 +847,8 @@ export class SectorRoom extends Room<SectorState> {
   private sectorFeatures: readonly AsteroidFieldFeature[] = [];
   /** P2b — processors on the grid pulse (take inputs, run, put outputs). */
   private production!: ProductionSubsystem;
+  /** v4 T1 — teleporter capacitors, pairing, rules and the jump cycle. */
+  private teleporters!: TeleporterSubsystem;
   /** Mine Layers' proximity mines (10 Hz with the structure tick). */
   private mineField!: MineFieldSubsystem;
   /** 1 Hz grid heartbeat timer (unref'd; off the physics tick). */
@@ -1403,6 +1422,12 @@ export class SectorRoom extends Room<SectorState> {
        *  mining (the pulse is a wall-clock timer, NOT the physics tick, so
        *  `testTimeScale` doesn't speed it). Default `TRANSFER_PULSE_MS`. */
       structureGridPulseMs?: number;
+      /** v4 T1 — teleporter jump-cycle speed (1 = real time; 0.01 runs the
+       *  ~14 s cycle in ~140 ms). testMode-only bespoke trigger. */
+      teleportCycleScale?: number;
+      /** v4 T1 — pair the seeded teleporters in order (1st with 2nd, …).
+       *  testMode-only. */
+      pairTeleporters?: boolean;
       /** Structures plan (Phase 3-5) — seed PRE-BUILT, auto-connected structures
        *  at hand-authored poses (owner `scenario`). testMode-only bespoke
        *  trigger: gives E2E a fully-functional powered grid without fighting the
@@ -2138,6 +2163,8 @@ export class SectorRoom extends Room<SectorState> {
         this.swarmShield.delete(id);
       },
       findNearestAsteroid: (x, y, range) => this.findNearestAsteroid(x, y, range),
+      // v4 T1 — spare power after the batteries charges teleporter capacitors.
+      chargeCapacitors: (members, spare) => this.teleporters.chargeCapacitors(members, spare),
       drawAsteroidResources: (entityId, amount) => this.drawAsteroidResources(entityId, amount),
       // P2c — asteroid kinds, extractor goods into network storage, nebulae.
       asteroidResourceOf: (entityId) => this.swarmRegistry.getByEntityId(entityId)?.asteroidResource ?? 'rock',
@@ -2246,6 +2273,18 @@ export class SectorRoom extends Room<SectorState> {
       payCredits: (rec, n) => {
         if (parseOwner(rec.owner).kind === 'player') getWallet().credit(rec.owner, n, 'station_taxes');
       },
+    });
+    const tpScale = this.testMode && roomOpts.teleportCycleScale !== undefined
+      ? Math.max(0.001, Math.min(1, roomOpts.teleportCycleScale))
+      : 1;
+    this.teleporters = new TeleporterSubsystem({
+      registry: this.structureRegistry,
+      storage: this.storage,
+      sectorKey: () => this.sectorKey,
+      isPowered: (rec) => rec.isConstructed && this.structureGrid.powerSummaryFor(rec.id).powered,
+      cycleScale: () => tpScale,
+      shipsOnPad: (rec) => this.shipsOnPad(rec),
+      onChanged: () => this.rebuildStructuresSlice(),
     });
     this.gates = new GateController({
       registry: this.structureRegistry,
@@ -2762,6 +2801,44 @@ export class SectorRoom extends Room<SectorState> {
     };
     this.onMessage('load_blueprint', blueprintMessage('load_blueprint'));
     this.onMessage('unload_blueprint', blueprintMessage('unload_blueprint'));
+
+    // v4 T1 — teleporters: pair, unpair, fire, rules, pad load/unload. Every
+    // message is owner-gated; a foreign / non-teleporter id is a silent no-op.
+    const ownTeleporter = (client: Client, entityId: number): StructureRecord | null => {
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      const swarmRec = this.swarmRegistry.getByEntityId(entityId);
+      const rec = swarmRec ? this.structureRegistry.get(swarmRec.id) : undefined;
+      return owner && rec && rec.owner === owner && isTeleporterKind(rec.kind) ? rec : null;
+    };
+    const tpMessage = <T extends { entityId: number }>(
+      type: string,
+      schema: { safeParse(raw: unknown): { success: true; data: T } | { success: false } },
+      act: (rec: StructureRecord, msg: T, client: Client) => void,
+    ) => (client: Client, raw: unknown): void => {
+      const parsed = schema.safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, type);
+        return;
+      }
+      const rec = ownTeleporter(client, parsed.data.entityId);
+      if (rec) act(rec, parsed.data, client);
+    };
+    this.onMessage('teleport_pair', tpMessage('teleport_pair', TeleportPairSchema, (rec, msg, client) => {
+      const other = ownTeleporter(client, msg.partnerEntityId);
+      if (other) this.teleporters.pair(rec, other);
+    }));
+    this.onMessage('teleport_unpair', tpMessage('teleport_unpair', TeleportUnpairSchema, (rec) => this.teleporters.unpair(rec)));
+    this.onMessage('teleport_fire', tpMessage('teleport_fire', TeleportFireSchema, (rec) => { this.teleporters.fire(rec, Date.now()); }));
+    this.onMessage('set_teleport_rules', tpMessage('set_teleport_rules', SetTeleportRulesSchema, (rec, msg) => this.teleporters.setRules(rec, msg.rules)));
+    this.onMessage('teleport_pad_load', tpMessage('teleport_pad_load', TeleportPadLoadSchema, (rec, msg) => {
+      if (!isTeleporterKind(rec.kind) || !rec.isConstructed) return;
+      this.storage.padLoad(rec, msg.good, msg.qty, PAD_SPECS[rec.kind].padCapacity);
+      this.rebuildStructuresSlice();
+    }));
+    this.onMessage('teleport_pad_unload', tpMessage('teleport_pad_unload', TeleportPadUnloadSchema, (rec) => {
+      this.storage.padUnload(rec);
+      this.rebuildStructuresSlice();
+    }));
 
     // F3 — a player edits their own faction's policy (owner = the session).
     this.onMessage('set_faction_policy', (client: Client, raw: unknown) => {
@@ -4007,6 +4084,10 @@ export class SectorRoom extends Room<SectorState> {
         // P2b — a processor's (unbound) blueprint spills too.
         const slot = this.storage.takeSlotForSpill(srec);
         if (slot !== null) this.loot.drop(slot, srec.x, srec.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
+        // v4 T1 — a teleporter's pad hold spills, and its partner is unpaired.
+        const pad = this.storage.takePadForSpill(srec);
+        if (pad !== null) this.loot.drop(pad, srec.x, srec.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
+        this.teleporters.onRemoved(srec);
         // Economy v2 W3 — a lab's running job spills its blueprints too.
         const labSpill = this.researchLabs.onRemoved(srec);
         if (labSpill !== null) this.loot.drop(labSpill, srec.x, srec.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
@@ -4107,6 +4188,8 @@ export class SectorRoom extends Room<SectorState> {
     const result = this.structureGrid.pulse(Date.now());
     // P2b — processors take inputs from and put outputs into network storage.
     this.production.pulse();
+    // v4 T1 — teleporter pads unload arrivals and top up "keep loaded".
+    this.teleporters.pulse();
     // Economy v2 W3 — powered Research Labs advance their jobs.
     this.researchLabs.pulse();
     // Living World P1a-2 — persist storage payloads the pulse just changed
@@ -4267,6 +4350,7 @@ export class SectorRoom extends Room<SectorState> {
     prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number; rot?: number; gateAccess?: GateAccess }>;
     prebuiltStructuresOwner?: string;
     prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
+    pairTeleporters?: boolean;
     scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
     scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
   }): void {
@@ -4305,6 +4389,11 @@ export class SectorRoom extends Room<SectorState> {
           for (const [g, n] of Object.entries(goods)) rec.hold.goods[g as GoodId] = (rec.hold.goods[g as GoodId] ?? 0) + (n ?? 0);
           break;
         }
+      }
+      // v4 T1 — pair the seeded teleporters in order (1st with 2nd, …).
+      if (roomOpts.pairTeleporters === true) {
+        const tps = [...this.structureRegistry.all()].filter((r) => r.owner === owner && isTeleporterKind(r.kind));
+        for (let i = 0; i + 1 < tps.length; i += 2) this.teleporters.pair(tps[i]!, tps[i + 1]!);
       }
       // One pulse rebuilds the grid (powered components) + refreshes the slice.
       this.structureGridTick();
@@ -4353,6 +4442,15 @@ export class SectorRoom extends Room<SectorState> {
         // persisted (already-leveled) value, so no re-seed is needed.
         rec.level = r.level ?? 1;
         if (r.gateAccess !== undefined) rec.gateAccess = r.gateAccess;
+        // v4 T1 — a teleporter's partner, rules, charge and pad hold survive a restart.
+        if (isTeleporterKind(rec.kind)) {
+          const t = r.teleport;
+          if (t?.partner && typeof t.partner.uid === 'string' && typeof t.partner.sectorKey === 'string') rec.tpPartner = { ...t.partner };
+          const rules = TeleportRulesSchema.safeParse(t?.rules);
+          if (rules.success) rec.tpRules = rules.data;
+          if (typeof t?.charge === 'number' && Number.isFinite(t.charge) && t.charge > 0) rec.tpCharge = t.charge;
+          this.storage.restorePad(rec);
+        }
         // P2b — the owner's recipe choice and a cycle in progress survive a restart.
         if (r.recipe !== undefined && isRecipeId(r.recipe)) rec.recipe = r.recipe;
         if (r.prepaid === true) rec.prepaid = true;
@@ -4594,6 +4692,8 @@ export class SectorRoom extends Room<SectorState> {
     this.structureGrid.tickTurrets(nowMs);
     // Mine Layers lay and mines go off (same target grids as the turrets).
     this.mineField.tick(nowMs);
+    // v4 T1 — teleporter rules and jump cycles.
+    this.teleporters.update(nowMs);
     // WS-4 — re-broadcast each Miner's mining beam on the same fast cadence so
     // the continuous beam tracks + doesn't flicker (gated per-Miner internally).
     this.structureGrid.tickMiners(nowMs);
@@ -4917,6 +5017,21 @@ export class SectorRoom extends Room<SectorState> {
   }
   private readonly _hostilePilotOut = { playerId: '', x: 0, y: 0, d2: 0 };
 
+  /** v4 T1 — how many ACTIVE, alive player ships (#17: lingering hulls and
+   *  the dead don't board) sit with their centre on this teleporter's pad. */
+  private shipsOnPad(rec: StructureRecord): number {
+    if (!isTeleporterKind(rec.kind)) return 0;
+    const r2 = PAD_SPECS[rec.kind].padRadius ** 2;
+    let n = 0;
+    for (const [pid] of this.playerToSlot) {
+      const ship = this.getActiveShip(pid);
+      if (!ship?.alive || !ship.isActive) continue;
+      const pose = this.shipPoseCache.get(pid);
+      if (pose && (pose.x - rec.x) ** 2 + (pose.y - rec.y) ** 2 <= r2) n++;
+    }
+    return n;
+  }
+
   /** C2 — does `playerId` fly a live ship (#17) within cargo range of `rec`? */
   private pilotNear(playerId: string, rec: StructureRecord): boolean {
     const ship = this.getActiveShip(playerId);
@@ -5175,6 +5290,7 @@ export class SectorRoom extends Room<SectorState> {
         const bq = rec.blueprint !== undefined ? blueprintQuality(rec.blueprint) : 0;
         if ((st.bpQuality ?? SD.bpQuality) !== bq) st.bpQuality = bq;
       }
+      if (isTeleporterKind(rec.kind)) this.syncTeleporterState(rec, st);
       this.syncConnTo(rec.id, st);
       // Fast cosmetics stay on the snapshot (only structures with a target).
       if (
@@ -5222,6 +5338,38 @@ export class SectorRoom extends Room<SectorState> {
 
   /** Mirror a structure's connections into its room-state `connTo` only when
    *  the set changed (compared in place — no allocation when unchanged). */
+  /** v4 T1 — a teleporter's room-state fields (A2: assign only on change). */
+  private syncTeleporterState(rec: StructureRecord, st: StructureState): void {
+    const phase = rec.tpPhase ?? 0;
+    if ((st.tpPhase ?? SD.tpPhase) !== phase) {
+      st.tpPhase = phase;
+      // The phase's length rides along only when the phase changes (the client
+      // times the animation from when the change arrives).
+      const ms = phase === 0 ? 0 : Math.max(0, Math.min(65535, Math.round((rec.tpPhaseEndsAtMs ?? 0) - Date.now())));
+      if ((st.tpPhaseMs ?? SD.tpPhaseMs) !== ms) st.tpPhaseMs = ms;
+    }
+    const req = this.teleporters.required(rec);
+    const pct = req > 0 ? Math.min(100, Math.floor(((rec.tpCharge ?? 0) / req) * 100)) : 0;
+    if ((st.tpChargePct ?? SD.tpChargePct) !== pct) st.tpChargePct = pct;
+    const p = this.teleporters.partnerOf(rec);
+    const partner = p !== null ? (this.swarmRegistry.get(p.id)?.entityId ?? -1) : rec.tpPartner !== undefined ? TP_PARTNER_REMOTE : -1;
+    if ((st.tpPartner ?? SD.tpPartner) !== partner) st.tpPartner = partner;
+    const r = rec.tpRules;
+    const bits = r === undefined ? 0
+      : (r.whenCharged ? TP_RULE_CHARGED : 0) | (r.shipBoards ? TP_RULE_BOARDS : 0) | (r.loaded ? TP_RULE_LOADED : 0) | (r.keepLoaded ? TP_RULE_KEEP : 0);
+    if ((st.tpRules ?? SD.tpRules) !== bits) st.tpRules = bits;
+    const lg = r?.loaded ? (r.loaded.good === null ? 0 : encodeGood(r.loaded.good)) : 0;
+    if ((st.tpLoadGood ?? SD.tpLoadGood) !== lg) st.tpLoadGood = lg;
+    const lq = r?.loaded?.qty ?? 0;
+    if ((st.tpLoadQty ?? SD.tpLoadQty) !== lq) st.tpLoadQty = lq;
+    const kg = r?.keepLoaded ? encodeGood(r.keepLoaded.good) : 0;
+    if ((st.tpKeepGood ?? SD.tpKeepGood) !== kg) st.tpKeepGood = kg;
+    const kq = r?.keepLoaded?.qty ?? 0;
+    if ((st.tpKeepQty ?? SD.tpKeepQty) !== kq) st.tpKeepQty = kq;
+    const w = rec.padHold ? Math.min(65535, Math.round(holdWeight(rec.padHold))) : 0;
+    if ((st.padWeight ?? SD.padWeight) !== w) st.padWeight = w;
+  }
+
   private syncConnTo(id: string, st: StructureState): void {
     const conns = this.structureRegistry.connectionsOf(id);
     let n = 0;

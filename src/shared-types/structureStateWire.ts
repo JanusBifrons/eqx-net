@@ -82,6 +82,16 @@ export const STRUCTURE_DEFAULTS = {
   prodMissing: 0,
   bpRuns: 0,
   bpQuality: 0,
+  tpPhase: 0,
+  tpPhaseMs: 0,
+  tpChargePct: 0,
+  tpPartner: -1,
+  tpRules: 0,
+  tpLoadGood: 0,
+  tpLoadQty: 0,
+  tpKeepGood: 0,
+  tpKeepQty: 0,
+  padWeight: 0,
 } as const;
 
 /** The fields the client reads from a room-state structure row (absent ⇒
@@ -110,5 +120,16 @@ export interface StructureStateView {
   prodMissing?: number;
   bpRuns?: number;
   bpQuality?: number;
+  /** v4 T1 — teleporters (encodings in shared-types/teleport.ts). */
+  tpPhase?: number;
+  tpPhaseMs?: number;
+  tpChargePct?: number;
+  tpPartner?: number;
+  tpRules?: number;
+  tpLoadGood?: number;
+  tpLoadQty?: number;
+  tpKeepGood?: number;
+  tpKeepQty?: number;
+  padWeight?: number;
   connTo: { readonly length: number; at(i: number): number | undefined };
 }

@@ -277,6 +277,20 @@ export interface StructureRenderState {
   /** The slot blueprint (P2b): runs (BP_RUNS_ORIGINAL = original) + quality. */
   bpRuns?: number;
   bpQuality?: number;
+  /** v4 T1 — a teleporter: present only for teleporter kinds. */
+  teleport?: {
+    phase: number;
+    phaseMs: number;
+    chargePct: number;
+    /** Partner entityId; -1 none; -2 in another sector. */
+    partner: number;
+    rules: number;
+    loadGood: number;
+    loadQty: number;
+    keepGood: number;
+    keepQty: number;
+    padWeight: number;
+  };
   /** Owning playerId. Drives the inspector's "is this mine?" check AND the
    *  same-owner filter on connection / placement-preview lines — a cross-owner
    *  structure is visible but never draws a connection line to the local grid. */

@@ -77,6 +77,8 @@ export const StructureKindIdSchema = z.enum([
   'tower_module',
   // Mine Layer (plan soft-leaping-truffle v3) — APPEND ONLY.
   'mine_layer',
+  'teleporter',
+  'teleporter_large',
 ]);
 export type StructureKindId = z.infer<typeof StructureKindIdSchema>;
 
@@ -898,6 +900,47 @@ export const MINE_LAYER: StructureKind = {
   color: 0xff8a3d,
 };
 
+/**
+ * Teleporter (plan soft-leaping-truffle v4, T1): a pad ringed by four posts.
+ * It pairs with one partner, and a jump swaps whatever sits on each pad. Its
+ * capacitor fills from the grid's spare power. Pad sizes and the jump cycle
+ * live in `shared-types/teleport.ts`.
+ */
+export const TELEPORTER: StructureKind = {
+  id: 'teleporter',
+  displayName: 'Teleporter',
+  description:
+    'A pad paired with one partner. A jump swaps whatever sits on both pads (ships and cargo). Charges from spare power; the charge depends on distance.',
+  radius: 566, // bounding circle of the 800×800 footprint
+  footprint: { w: 800, h: 800 },
+  maxHealth: 2500,
+  maxConnections: 1,
+  isHub: false,
+  powerOutput: 0,
+  powerConsumption: 10,
+  storageCapacity: 0,
+  constructionCost: 2400,
+  color: 0x9b7bff,
+};
+
+/** Large Teleporter: the same, sized for capital ships to come. */
+export const TELEPORTER_LARGE: StructureKind = {
+  id: 'teleporter_large',
+  displayName: 'Large Teleporter',
+  description:
+    'A massive pad paired with one partner, sized for the largest hulls. A jump swaps whatever sits on both pads. Charges from spare power.',
+  radius: 1500, // bounding circle of the 2120×2120 footprint
+  footprint: { w: 2120, h: 2120 },
+  maxHealth: 8000,
+  maxConnections: 1,
+  isHub: false,
+  powerOutput: 0,
+  powerConsumption: 25,
+  storageCapacity: 0,
+  constructionCost: 9000,
+  color: 0xb59bff,
+};
+
 export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   CAPITAL,
   CONNECTOR,
@@ -939,6 +982,9 @@ export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   TOWER_MODULE,
   // Mine Layer — APPENDED. Never reorder.
   MINE_LAYER,
+  // Teleporters (v4 T1) — APPENDED. Never reorder.
+  TELEPORTER,
+  TELEPORTER_LARGE,
 ]);
 
 /** Id-keyed lookup, derived from the canonical list (the list is the source of
@@ -1047,6 +1093,8 @@ export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
   habitat_module: 4,
   tower_module: 4,
   mine_layer: 4,
+  teleporter: 4,
+  teleporter_large: 4,
 };
 
 /**

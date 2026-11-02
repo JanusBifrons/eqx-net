@@ -52,6 +52,8 @@ describe('structureKinds catalogue', () => {
       'habitat_module', // D3 city modules — appended at the tail
       'tower_module',
       'mine_layer', // Mine Layer — appended at the tail
+      'teleporter', // v4 T1 — appended
+      'teleporter_large',
     ]);
   });
 

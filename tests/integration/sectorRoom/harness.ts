@@ -168,6 +168,11 @@ export async function bootSectorTestServer(opts: {
   galaxyBases?: boolean;
   /** C2 — every break-in takes this long (bespoke trigger). */
   breakInMs?: number;
+  /** P2d — stock the prebuilt Capital's hold. */
+  prebuiltStorageGoods?: Record<string, number>;
+  /** v4 T1 — teleporter cycle speed, and pair the seeded teleporters. */
+  teleportCycleScale?: number;
+  pairTeleporters?: boolean;
   /** Drones never attack (the room option). */
   peacefulDrones?: boolean;
   /** P2c — sector features for the room (asteroid mix, nebula). */
@@ -233,6 +238,9 @@ export async function bootSectorTestServer(opts: {
     npcBases: opts.npcBases,
     galaxyBases: opts.galaxyBases,
     breakInMs: opts.breakInMs,
+    prebuiltStorageGoods: opts.prebuiltStorageGoods,
+    teleportCycleScale: opts.teleportCycleScale,
+    pairTeleporters: opts.pairTeleporters,
     peacefulDrones: opts.peacefulDrones,
     tradeEnabled: opts.tradeEnabled,
     enforceHullGate: opts.enforceHullGate,

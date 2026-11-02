@@ -283,6 +283,13 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 - **Never add a top-level `src/client/trade/` dir:** it collides with the `/trade` Vite proxy. Trade client code lives in `net/trade*.ts`. The `clientDirProxyCollision.test.ts` guard locks this.
 - Locks: `tradeView.test.ts`, `TradeToasts.test.tsx`, `tests/e2e/trade-tab.spec.ts` (feature tier).
 
+## Teleporter panel and inspector placement (plan soft-leaping-truffle v4, T1)
+
+- **`components/TeleporterPanel.tsx`** mounts in the inspector for your own built teleporter. It reads the room-state row decoded into `StructureRenderState.teleport` from the mirror at 4 Hz (no Zustand). It lists pairing candidates by kind and distance, never ids. Senders live in `structureActionsClient.ts`.
+- **The world-anchored inspector is placed by `app/inspectorPlacement.ts` `placeInspector`:** the WHOLE panel stays on screen, below the header, with the bottom kept when it is too tall.
+  - A target off-screen used to push half the panel out of view (its buttons unclickable). Found by `teleporter.spec.ts`; the header case by `break-in.spec.ts`.
+  - Never clamp only the anchor.
+
 ## Factions tab (plan soft-leaping-truffle v4, F3)
 
 - `layout/Drawer/tabs/FactionsTab.tsx` is rebuilt ONLY from `GET /trade/factions` (#16), polled only while `drawerTab === 'factions' && isDrawerOpen`.

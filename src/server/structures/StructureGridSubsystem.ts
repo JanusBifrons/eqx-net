@@ -157,6 +157,9 @@ export interface StructureGridHooks {
    *  supplies the closure (it owns the sectorKey). Off the 60 Hz loop (1 Hz
    *  pulse). Optional ⇒ no-op in the unit harness. */
   onConstructed?: (owner: string, kind: string) => void;
+  /** v4 T1 — spare power left after the batteries fill goes to teleporter
+   *  capacitors in the component. Returns how much was used. */
+  chargeCapacitors?: (members: readonly string[], spare: number) => number;
   /** Economy v2 — a PREPAID structure (placed from a packed item) finished
    *  deconstructing: the room repacks it. Called BEFORE it is despawned. */
   onRepack?: (rec: StructureRecord) => void;
@@ -454,29 +457,38 @@ export class StructureGridSubsystem {
     this.grid.forEachComponent((members, netPower, hasCapital) => {
       // A capital-less island is unpowered (raw rule) — batteries inert there.
       if (!hasCapital) return;
-      if (netPower > 0) this.chargeComponentBatteries(members, capacity, netPower);
+      if (netPower > 0) {
+        const left = this.chargeComponentBatteries(members, capacity, netPower);
+        if (left > 0) this.hooks.chargeCapacitors?.(members, left);
+      }
       else if (netPower < 0) this.dischargeComponentBatteries(members, -netPower);
     });
   }
 
-  /** Charge a component's not-yet-full batteries with `surplus`, split evenly. */
+  /** Charge a component's not-yet-full batteries with `surplus`, split evenly.
+   *  Returns the surplus the batteries could not take (v4 T1: it charges
+   *  teleporter capacitors). */
   private chargeComponentBatteries(
     members: readonly string[],
     capacity: number,
     surplus: number,
-  ): void {
+  ): number {
     let count = 0;
     for (const id of members) {
       const rec = this.hooks.registry.get(id);
       if (rec && rec.kind === 'battery' && rec.storedPower < capacity) count++;
     }
-    if (count === 0) return;
+    if (count === 0) return surplus;
     const share = surplus / count;
+    let used = 0;
     for (const id of members) {
       const rec = this.hooks.registry.get(id);
       if (!rec || rec.kind !== 'battery' || rec.storedPower >= capacity) continue;
+      const before = rec.storedPower;
       rec.storedPower = chargeStep(rec.storedPower, capacity, share).stored;
+      used += rec.storedPower - before;
     }
+    return Math.max(0, surplus - used);
   }
 
   /** Discharge a component's batteries to cover a per-pulse `deficit` — but only

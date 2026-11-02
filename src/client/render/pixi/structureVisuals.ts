@@ -15,6 +15,7 @@
  * numbers into the structure catalogue (collider + placement + LOS).
  */
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
+import { PAD_SPECS, padPostCenters } from '../../../shared-types/teleport.js';
 
 /** A filled rectangle (pixi space). */
 export interface RectOp { x: number; y: number; w: number; h: number; color: number; alpha: number }
@@ -533,6 +534,27 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       }
       box(rects, -22, -22, 44, 44, STEEL_LIGHT);
       lit(0, 0, 10, live ? accent : 0x553322);
+      break;
+    }
+    case 'teleporter':
+    case 'teleporter_large': {
+      // Teleporter (v4 T1): an open pad ringed by its posts. The pad is a
+      // faint disc with concentric guide rings; ships hover over it. The posts
+      // are the only solid parts (they match the collider).
+      const big = kindId === 'teleporter_large';
+      const post = PAD_SPECS[kindId].post;
+      const pad = PAD_SPECS[kindId].padRadius;
+      // Faint guide squares on the open pad (decoration only, not solid).
+      for (let ring = 0; ring < 3; ring++) {
+        const rr = pad * (1 - ring * 0.3);
+        box(rects, -rr, -rr, rr * 2, rr * 2, mixColor(accent, STEEL_DARK, 0.82 - ring * 0.08), 0.35);
+      }
+      for (const [cx, cy] of padPostCenters(kindId)) {
+        slab(rects, cx - post / 2, cy - post / 2, post, post, STEEL_DARK, post * 0.25);
+        box(rects, cx - post / 4, cy - post / 4, post / 2, post / 2, mixColor(accent, STEEL_LIGHT, 0.4), 0.95);
+        lit(cx, cy, post / 8, live ? accent : 0x553322);
+      }
+      lit(0, 0, big ? 40 : 18, live ? accent : 0x553322);
       break;
     }
     case 'tower_module': {

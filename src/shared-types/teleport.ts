@@ -1,0 +1,176 @@
+/**
+ * Teleporters (plan soft-leaping-truffle v4, T1). Shared by server and client
+ * (invariant #15): pad sizes, the charge a jump needs, the jump cycle's
+ * phases and timings, and the owner's firing rules.
+ *
+ * A teleporter pairs with exactly one partner. A jump is a two-way SWAP: what
+ * sits on each pad (ships, and each pad's own hold) trades places at the same
+ * moment. Each end charges its own capacitor from the grid's spare power; only
+ * the end that fires spends a charge, and the charge depends only on distance.
+ */
+import { z } from 'zod';
+import { GOOD_IDS } from './goods.js';
+
+export const TELEPORTER_KINDS = ['teleporter', 'teleporter_large'] as const;
+export type TeleporterKind = (typeof TELEPORTER_KINDS)[number];
+
+export function isTeleporterKind(kind: string | null | undefined): kind is TeleporterKind {
+  return kind === 'teleporter' || kind === 'teleporter_large';
+}
+
+export interface PadSpec {
+  /** Radius of the open pad: a ship whose centre is inside it rides. */
+  readonly padRadius: number;
+  /** Weight the pad's own hold carries. */
+  readonly padCapacity: number;
+  /** Side of each corner post (the solid parts; ships enter between them). */
+  readonly post: number;
+  /** Number of posts round the pad. */
+  readonly posts: number;
+}
+
+/**
+ * Pad sizes. A small pad fits a squad of small ships plus one medium or large
+ * hull squeezed in; a large pad is sized for capital ships to come.
+ */
+export const PAD_SPECS: Readonly<Record<TeleporterKind, PadSpec>> = Object.freeze({
+  teleporter: { padRadius: 320, padCapacity: 400, post: 80, posts: 4 },
+  teleporter_large: { padRadius: 900, padCapacity: 4000, post: 160, posts: 8 },
+});
+
+// ── Charge ──────────────────────────────────────────────────────────────────
+
+/** A cross-sector hop counts as this many world units of distance. */
+export const TELEPORT_HOP_DISTANCE_U = 20_000;
+/** Every jump costs this much, however short. */
+export const JUMP_BASE_CHARGE = 600;
+/** Charge per world unit of distance. */
+export const JUMP_CHARGE_PER_U = 0.15;
+
+/**
+ * The charge a jump needs. Only distance matters (user ruling 2026-11-02): in
+ * one sector it is the straight-line distance between the pads; across
+ * sectors each hop counts as `TELEPORT_HOP_DISTANCE_U`. A mid-size base's
+ * spare power refills an in-sector jump in about a minute or two.
+ */
+export function jumpCharge(distanceU: number): number {
+  return Math.round(JUMP_BASE_CHARGE + JUMP_CHARGE_PER_U * Math.max(0, distanceU));
+}
+
+/** The jump distance between two pads (`hops` = 0 in the same sector). */
+export function jumpDistance(hops: number, ax: number, ay: number, bx: number, by: number): number {
+  return hops > 0 ? hops * TELEPORT_HOP_DISTANCE_U : Math.hypot(bx - ax, by - ay);
+}
+
+// ── The jump cycle (like train doors closing) ───────────────────────────────
+
+/**
+ * 0 idle; 1 armed (everyone on either pad is warned); 2 closing (a slow shield
+ * iris closes round the edge, gently pushing straddlers in or out); 3 sealed
+ * (the barrier is solid, the pad charges up); then the swap; 4 open (the iris
+ * opens again). Both pads run it together.
+ */
+export const TP_PHASE = Object.freeze({ IDLE: 0, ARMED: 1, CLOSING: 2, SEALED: 3, OPEN: 4 });
+export type TpPhase = 0 | 1 | 2 | 3 | 4;
+
+/** How long each phase lasts (ms), before any test speed-up. */
+export const TP_PHASE_MS: Readonly<Record<1 | 2 | 3 | 4, number>> = Object.freeze({ 1: 5000, 2: 4000, 3: 3000, 4: 2000 });
+
+/** The phase after `p` (the swap happens leaving SEALED). */
+export function nextTpPhase(p: TpPhase): TpPhase {
+  return p === TP_PHASE.OPEN ? TP_PHASE.IDLE : ((p + 1) as TpPhase);
+}
+
+// ── Firing rules ────────────────────────────────────────────────────────────
+
+/** "Fire when the pad holds at least `qty`": of one good, or total weight. */
+export const LoadedRuleSchema = z
+  .object({ good: z.enum(GOOD_IDS).nullable(), qty: z.number().int().min(1).max(100_000) })
+  .strict();
+
+/**
+ * The owner's firing rules; the first one met fires (Manual is always
+ * available as a button). `keepLoaded` tops the pad hold up from base storage
+ * every pulse.
+ */
+export const TeleportRulesSchema = z
+  .object({
+    whenCharged: z.boolean(),
+    shipBoards: z.boolean(),
+    loaded: LoadedRuleSchema.nullable(),
+    keepLoaded: z.object({ good: z.enum(GOOD_IDS), qty: z.number().int().min(1).max(100_000) }).strict().nullable(),
+  })
+  .strict();
+export type TeleportRules = z.infer<typeof TeleportRulesSchema>;
+
+export const DEFAULT_TELEPORT_RULES: TeleportRules = Object.freeze({
+  whenCharged: false,
+  shipBoards: false,
+  loaded: null,
+  keepLoaded: null,
+});
+
+/** A ship must sit on the pad this long before "when a ship boards" fires. */
+export const SHIP_BOARD_DWELL_MS = 3000;
+
+/** The partner of a teleporter: its sector and structure uid. */
+export interface TeleportPartner {
+  sectorKey: string;
+  uid: string;
+}
+
+// ── Room-state encoding (A2 rules: assign only on change) ────────────────────
+
+/** `tpRules` bit flags. */
+export const TP_RULE_CHARGED = 1;
+export const TP_RULE_BOARDS = 2;
+export const TP_RULE_LOADED = 4;
+export const TP_RULE_KEEP = 8;
+
+/** `tpPartner` when the partner is in another sector (T3). */
+export const TP_PARTNER_REMOTE = -2;
+
+// ── Messages (strict; owner-gated server-side) ──────────────────────────────
+
+const entityId = z.number().int().nonnegative();
+
+/** Pair two of the sender's teleporters in this sector. */
+export const TeleportPairSchema = z
+  .object({ type: z.literal('teleport_pair'), entityId, partnerEntityId: entityId })
+  .strict();
+export const TeleportUnpairSchema = z.object({ type: z.literal('teleport_unpair'), entityId }).strict();
+/** Fire now (Manual). */
+export const TeleportFireSchema = z.object({ type: z.literal('teleport_fire'), entityId }).strict();
+export const SetTeleportRulesSchema = z
+  .object({ type: z.literal('set_teleport_rules'), entityId, rules: TeleportRulesSchema })
+  .strict();
+/** Move goods from base storage onto the pad (or all of the pad back). */
+export const TeleportPadLoadSchema = z
+  .object({ type: z.literal('teleport_pad_load'), entityId, good: z.enum(GOOD_IDS), qty: z.number().int().min(1).max(100_000) })
+  .strict();
+export const TeleportPadUnloadSchema = z.object({ type: z.literal('teleport_pad_unload'), entityId }).strict();
+
+// ── Pad geometry (the ONE source: collider, hits, drawing; #15) ─────────────
+
+/** Half the footprint side: the pad plus its ring of posts. */
+export function padHalfExtent(kind: TeleporterKind): number {
+  const s = PAD_SPECS[kind];
+  return s.padRadius + s.post;
+}
+
+const POST_CENTERS: Readonly<Record<TeleporterKind, ReadonlyArray<readonly [number, number]>>> = (() => {
+  const out = {} as Record<TeleporterKind, Array<readonly [number, number]>>;
+  for (const k of TELEPORTER_KINDS) {
+    const s = PAD_SPECS[k];
+    const h = padHalfExtent(k) - s.post / 2;
+    const pts: Array<readonly [number, number]> = [[-h, -h], [h, -h], [h, h], [-h, h]];
+    if (s.posts === 8) pts.push([0, -h], [h, 0], [0, h], [-h, 0]);
+    out[k] = pts;
+  }
+  return out;
+})();
+
+/** Centres of a pad's posts, local frame. Ships enter between them. */
+export function padPostCenters(kind: TeleporterKind): ReadonlyArray<readonly [number, number]> {
+  return POST_CENTERS[kind];
+}

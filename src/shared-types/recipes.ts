@@ -68,6 +68,9 @@ export const RECIPE_IDS = [
   'pack_habitat_module',
   'pack_tower_module',
   'pack_mine_layer',
+  // v4 T1 — teleporters.
+  'pack_teleporter',
+  'pack_teleporter_large',
 ] as const;
 export type RecipeId = (typeof RECIPE_IDS)[number];
 
@@ -350,6 +353,16 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
     id: 'pack_mine_layer', displayName: packName('mine_layer'),
     inputs: { alloy: 8, components: 2, electronics: 1 }, outputs: [{ packed: 'mine_layer' }],
     cyclePulses: 16, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_teleporter: r({
+    id: 'pack_teleporter', displayName: packName('teleporter'),
+    inputs: { alloy: 24, components: 6, electronics: 6 }, outputs: [{ packed: 'teleporter' }],
+    cyclePulses: 40, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_teleporter_large: r({
+    id: 'pack_teleporter_large', displayName: packName('teleporter_large'),
+    inputs: { alloy: 80, components: 20, electronics: 20, machinery: 4 }, outputs: [{ packed: 'teleporter_large' }],
+    cyclePulses: 90, processors: ['assembly_plant'], blueprintRequired: true,
   }),
   pack_tower_module: r({
     id: 'pack_tower_module', displayName: packName('tower_module'),

@@ -12,6 +12,7 @@ import type { GoodId } from '../../shared-types/goods.js';
 import type { BlueprintItem } from '../../shared-types/items.js';
 import type { Hold } from '../../shared-types/goods.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
+import type { TeleportPartner, TeleportRules, TpPhase } from '../../shared-types/teleport.js';
 import { Connection } from '../../core/structures/Connection.js';
 
 export interface StructureRecord {
@@ -59,6 +60,21 @@ export interface StructureRecord {
    *  storage kind (`holdCapacity > 0`). Minerals DELIVERED to a Capital stay in
    *  `minerals` (they fund construction). Absent ⇒ empty. */
   hold?: Hold;
+  /** v4 T1 — teleporters. The capacitor (charge so far), the partner, the
+   *  owner's firing rules, the pad's own hold (NOT base storage), the running
+   *  jump cycle, and the board/arrival bookkeeping. */
+  tpCharge?: number;
+  tpPartner?: TeleportPartner;
+  tpRules?: TeleportRules;
+  padHold?: Hold;
+  tpPhase?: TpPhase;
+  tpPhaseEndsAtMs?: number;
+  /** True on the end that fired (it spends the charge at the swap). */
+  tpInitiator?: boolean;
+  /** When a ship first sat on the pad (for "when a ship boards"). */
+  tpBoardedSinceMs?: number;
+  /** Goods just arrived on the pad: unload them into storage next pulse. */
+  tpArrived?: boolean;
   /** Stored power for a Battery (0..the kind's `powerStorageCapacity`). It
    *  charges from the component's surplus each pulse, discharges to keep the
    *  component `powered` through a deficit, and is drained first by shield-wall

@@ -6,6 +6,8 @@
  */
 import type { RecipeId } from '../../shared-types/recipes';
 import type { GateAccess } from '../../shared-types/gateAccess';
+import type { TeleportRules } from '../../shared-types/teleport';
+import type { GoodId } from '../../shared-types/goods';
 import { getGameClient } from '../net/clientSingleton.js';
 
 export type StructureAction = 'toggle_deconstruct' | 'reconnect' | 'clear_connections';
@@ -88,4 +90,32 @@ export function sendRefineSalvage(entityId: number, qty: number): boolean {
   if (!room) return false;
   room.send('refine_salvage', { type: 'refine_salvage', entityId, qty });
   return true;
+}
+
+// ── v4 T1 — teleporters (owner-gated server-side) ───────────────────────────
+
+function sendTp(type: string, payload: Record<string, unknown>): boolean {
+  const room = getGameClient()?.getRoom();
+  if (!room) return false;
+  room.send(type, { type, ...payload });
+  return true;
+}
+
+export function sendTeleportPair(entityId: number, partnerEntityId: number): boolean {
+  return sendTp('teleport_pair', { entityId, partnerEntityId });
+}
+export function sendTeleportUnpair(entityId: number): boolean {
+  return sendTp('teleport_unpair', { entityId });
+}
+export function sendTeleportFire(entityId: number): boolean {
+  return sendTp('teleport_fire', { entityId });
+}
+export function sendSetTeleportRules(entityId: number, rules: TeleportRules): boolean {
+  return sendTp('set_teleport_rules', { entityId, rules });
+}
+export function sendTeleportPadLoad(entityId: number, good: GoodId, qty: number): boolean {
+  return sendTp('teleport_pad_load', { entityId, good, qty });
+}
+export function sendTeleportPadUnload(entityId: number): boolean {
+  return sendTp('teleport_pad_unload', { entityId });
 }
