@@ -230,3 +230,27 @@ export function padPushDir(
   else { out.x = 0; out.y = (dy >= 0 ? 1 : -1) * sign; }
   return true;
 }
+
+// ── T3 — pairing across sectors ─────────────────────────────────────────────
+
+/** Ask for the sender's other teleporters, in every sector. */
+export const TeleportCandidatesQuerySchema = z
+  .object({ type: z.literal('teleport_candidates'), entityId })
+  .strict();
+/** Pair with one of the sender's teleporters anywhere (by sector + uid). */
+export const TeleportPairRemoteSchema = z
+  .object({
+    type: z.literal('teleport_pair_remote'),
+    entityId,
+    sectorKey: z.string().min(1).max(64),
+    uid: z.string().min(1).max(64),
+  })
+  .strict();
+/** The reply: candidates by name ("Teleporter · Verdance"), never raw ids
+ *  on screen (the uid only rides back in the pair request). */
+export const TeleportCandidatesReplySchema = z.object({
+  type: z.literal('teleport_candidates'),
+  entityId,
+  items: z.array(z.object({ sectorKey: z.string(), uid: z.string(), label: z.string() })).max(200),
+});
+export type TeleportCandidatesReply = z.infer<typeof TeleportCandidatesReplySchema>;

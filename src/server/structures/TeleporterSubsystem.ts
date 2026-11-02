@@ -1,20 +1,22 @@
 /**
- * Teleporters (plan soft-leaping-truffle v4, T1): capacitors, pairing, firing
- * rules, the jump cycle and the pad swap. One instance per SectorRoom.
+ * Teleporters (plan soft-leaping-truffle v4, T1–T3): capacitors, pairing,
+ * firing rules, the jump cycle and the swap. One instance per SectorRoom.
  *
  *  - CHARGE: spare grid power left after the batteries fill tops up each
  *    paired teleporter's capacitor to the charge its jump needs
- *    (`jumpCharge(distance)`; distance is all that matters).
+ *    (`jumpCharge(distance)`; distance is all that matters: in-sector the pad
+ *    distance, across sectors the hop count).
  *  - FIRE: a pad fires when its owner presses Fire or one of its rules is met
  *    (when charged / when loaded / when a ship boards), if it is charged and
  *    both pads are idle.
  *  - CYCLE: both pads arm, close, seal, swap and open together; the end that
- *    fired spends its charge at the swap. The pad holds trade places in one
- *    atomic group (ships join in T2).
+ *    fired drives the cycle (for both rooms, T3) and spends its charge at the
+ *    swap.
  *  - PULSE (1 Hz): goods that just arrived unload into base storage, then a
  *    "keep loaded" rule tops the pad back up.
  *
- * T1 pairs teleporters in the same sector only; T3 adds other sectors.
+ * A partner is a LINK: a teleporter in this room, or (T3) in another
+ * sector's room, reached through `remoteFind`.
  */
 import { isTeleporterKind, jumpCharge, jumpDistance, PAD_SPECS, TP_PHASE, type TeleportRules } from '../../shared-types/teleport.js';
 import { DEFAULT_TELEPORT_RULES } from '../../shared-types/teleport.js';
@@ -22,6 +24,15 @@ import { holdWeight } from '../../core/cargo/hold.js';
 import { armCycle, rulesSayFire, stepCycle, type CycleState } from '../../core/structures/teleportCycle.js';
 import type { StorageService } from '../cargo/StorageService.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
+
+/** A teleporter's partner, local or in another sector's room. */
+export interface PartnerLink {
+  rec: StructureRecord;
+  sys: TeleporterSubsystem;
+  /** 0 in the same sector; the hop count across sectors. */
+  hops: number;
+  remote: boolean;
+}
 
 export interface TeleporterHooks {
   registry: StructureRegistry;
@@ -35,8 +46,14 @@ export interface TeleporterHooks {
   shipsOnPad(rec: StructureRecord): number;
   /** A teleporter's state changed (room state must be re-synced). */
   onChanged(): void;
-  /** T2 — move the ships on the two pads at the swap. */
+  /** T2 — move the ships on the two pads at an in-sector swap. */
   onSwapShips?(a: StructureRecord, b: StructureRecord): void;
+  /** T3 — a cross-sector swap: trade the pad holds and send the riders both ways. */
+  onSwapRemote?(a: StructureRecord, link: PartnerLink): void;
+  /** T3 — a teleporter in another sector (null when unknown or gone). */
+  remoteFind?(sectorKey: string, uid: string): { rec: StructureRecord; sys: TeleporterSubsystem } | null;
+  /** T3 — hops from this sector to another (Infinity when unreachable). */
+  hopsTo?(sectorKey: string): number;
   /** T2 — the iris spans (solid only while SEALED) and the closing push. */
   spawnIris?(rec: StructureRecord): void;
   setIrisActive?(rec: StructureRecord, active: boolean): void;
@@ -51,19 +68,42 @@ export class TeleporterSubsystem {
 
   constructor(private readonly h: TeleporterHooks) {}
 
-  /** The partner when it is in this sector and still exists. */
+  private here(): string {
+    return this.h.sectorKey() ?? '';
+  }
+
+  /** The partner when it is in THIS sector and still exists. */
   partnerOf(rec: StructureRecord): StructureRecord | null {
     const p = rec.tpPartner;
-    if (p === undefined || p.sectorKey !== (this.h.sectorKey() ?? '')) return null;
-    for (const r of this.h.registry.all()) if (r.uid === p.uid && isTeleporterKind(r.kind)) return r;
+    if (p === undefined || p.sectorKey !== this.here()) return null;
+    return this.byUid(p.uid);
+  }
+
+  /** A built teleporter in this room by structure uid. */
+  byUid(uid: string): StructureRecord | null {
+    for (const r of this.h.registry.all()) if (r.uid === uid && isTeleporterKind(r.kind)) return r;
     return null;
   }
 
-  /** The charge this teleporter's jump needs (0 when unpaired). */
+  /** The partner, local or remote, with its subsystem and hop count. */
+  link(rec: StructureRecord): PartnerLink | null {
+    const p = rec.tpPartner;
+    if (p === undefined) return null;
+    if (p.sectorKey === this.here()) {
+      const r = this.byUid(p.uid);
+      return r ? { rec: r, sys: this, hops: 0, remote: false } : null;
+    }
+    const found = this.h.remoteFind?.(p.sectorKey, p.uid) ?? null;
+    if (found === null) return null;
+    const hops = this.h.hopsTo?.(p.sectorKey) ?? Infinity;
+    return Number.isFinite(hops) ? { ...found, hops, remote: true } : null;
+  }
+
+  /** The charge this teleporter's jump needs (0 when unpaired or unreachable). */
   required(rec: StructureRecord): number {
-    const p = this.partnerOf(rec);
-    if (p === null) return 0;
-    return jumpCharge(jumpDistance(0, rec.x, rec.y, p.x, p.y));
+    const l = this.link(rec);
+    if (l === null) return 0;
+    return jumpCharge(jumpDistance(l.hops, rec.x, rec.y, l.rec.x, l.rec.y));
   }
 
   isCharged(rec: StructureRecord): boolean {
@@ -97,24 +137,33 @@ export class TeleporterSubsystem {
     return isTeleporterKind(r.kind) && r.isConstructed && (r.tpCharge ?? 0) < this.required(r);
   }
 
-  /** Pair two of one owner's teleporters (same sector). */
-  pair(a: StructureRecord, b: StructureRecord): boolean {
+  /** Pair with one of the same owner's teleporters, here or (T3) in another
+   *  sector's room (`otherSys`). */
+  pair(a: StructureRecord, b: StructureRecord, otherSys: TeleporterSubsystem = this): boolean {
     if (a === b || a.owner !== b.owner || !isTeleporterKind(a.kind) || !isTeleporterKind(b.kind)) return false;
     if (a.uid === undefined || b.uid === undefined) return false;
-    if (this.busy(a) || this.busy(b)) return false;
+    if (this.busy(a) || otherSys.busy(b)) return false;
     this.unpair(a);
-    this.unpair(b);
-    const sector = this.h.sectorKey() ?? '';
-    a.tpPartner = { sectorKey: sector, uid: b.uid };
-    b.tpPartner = { sectorKey: sector, uid: a.uid };
+    otherSys.unpair(b);
+    a.tpPartner = { sectorKey: otherSys.here(), uid: b.uid };
+    b.tpPartner = { sectorKey: this.here(), uid: a.uid };
     this.h.onChanged();
+    if (otherSys !== this) otherSys.changed();
     return true;
   }
 
   unpair(a: StructureRecord): void {
-    const p = this.partnerOf(a);
-    if (p !== null && p.tpPartner?.uid === a.uid) this.clearPartner(p);
+    const l = this.link(a);
+    if (l !== null && l.rec.tpPartner?.uid === a.uid) {
+      l.sys.clearPartner(l.rec);
+      if (l.sys !== this) l.sys.changed();
+    }
     this.clearPartner(a);
+    this.h.onChanged();
+  }
+
+  /** Re-sync room state (called by another room's subsystem). */
+  changed(): void {
     this.h.onChanged();
   }
 
@@ -125,7 +174,7 @@ export class TeleporterSubsystem {
     this.applyPhaseEffects(r);
   }
 
-  private busy(r: StructureRecord): boolean {
+  busy(r: StructureRecord): boolean {
     return (r.tpPhase ?? TP_PHASE.IDLE) !== TP_PHASE.IDLE;
   }
 
@@ -134,19 +183,24 @@ export class TeleporterSubsystem {
     this.h.onChanged();
   }
 
+  /** Set a teleporter's phase from the cycle (its own room's side effects). */
+  setPhase(r: StructureRecord, phase: TeleportPhaseValue, endsAtMs: number): void {
+    r.tpPhase = phase;
+    r.tpPhaseEndsAtMs = endsAtMs;
+    this.applyPhaseEffects(r);
+    this.h.onChanged();
+  }
+
   /** Fire now (Manual, or a rule). Needs a present, idle partner, power and charge. */
   fire(rec: StructureRecord, nowMs: number): boolean {
-    const p = this.partnerOf(rec);
-    if (p === null || this.busy(rec) || this.busy(p)) return false;
+    const l = this.link(rec);
+    if (l === null || this.busy(rec) || l.sys.busy(l.rec)) return false;
     if (!rec.isConstructed || !this.h.isPowered(rec) || !this.isCharged(rec)) return false;
     armCycle(this.cycle, nowMs, this.h.cycleScale());
-    for (const r of [rec, p]) {
-      r.tpPhase = this.cycle.phase;
-      r.tpPhaseEndsAtMs = this.cycle.phaseEndsAtMs;
-      r.tpInitiator = false;
-    }
     rec.tpInitiator = true;
-    this.h.onChanged();
+    l.rec.tpInitiator = false;
+    this.setPhase(rec, this.cycle.phase, this.cycle.phaseEndsAtMs);
+    l.sys.setPhase(l.rec, this.cycle.phase, this.cycle.phaseEndsAtMs);
     return true;
   }
 
@@ -187,15 +241,13 @@ export class TeleporterSubsystem {
   }
 
   private advance(a: StructureRecord, nowMs: number): void {
-    const b = this.partnerOf(a);
+    const l = this.link(a);
     this.cycle.phase = a.tpPhase ?? TP_PHASE.IDLE;
     this.cycle.phaseEndsAtMs = a.tpPhaseEndsAtMs ?? nowMs;
-    if (b === null) {
+    if (l === null) {
       // The partner vanished mid-cycle: stand down.
-      a.tpPhase = TP_PHASE.IDLE;
       a.tpInitiator = false;
-      this.applyPhaseEffects(a);
-      this.h.onChanged();
+      this.setPhase(a, TP_PHASE.IDLE, 0);
       return;
     }
     const before = this.cycle.phase;
@@ -205,19 +257,19 @@ export class TeleporterSubsystem {
       const req = this.required(a);
       if ((a.tpCharge ?? 0) >= req) {
         a.tpCharge = (a.tpCharge ?? 0) - req;
-        this.h.storage.padSwap(a, b);
+        if (l.remote) {
+          this.h.onSwapRemote?.(a, l);
+        } else {
+          this.h.storage.padSwap(a, l.rec);
+          this.h.onSwapShips?.(a, l.rec);
+        }
         a.tpArrived = true;
-        b.tpArrived = true;
-        this.h.onSwapShips?.(a, b);
+        l.rec.tpArrived = true;
       }
     }
-    for (const r of [a, b]) {
-      r.tpPhase = this.cycle.phase;
-      r.tpPhaseEndsAtMs = this.cycle.phaseEndsAtMs;
-      this.applyPhaseEffects(r);
-    }
+    this.setPhase(a, this.cycle.phase, this.cycle.phaseEndsAtMs);
+    l.sys.setPhase(l.rec, this.cycle.phase, this.cycle.phaseEndsAtMs);
     if (ev === 'done') a.tpInitiator = false;
-    this.h.onChanged();
   }
 
   /** 1 Hz: unload arrivals into storage, then top a "keep loaded" pad up. */
@@ -236,14 +288,16 @@ export class TeleporterSubsystem {
     }
   }
 
-  /** A teleporter left the world: its partner is unpaired. */
+  /** A teleporter left the world: its partner (here or elsewhere) is unpaired. */
   onRemoved(rec: StructureRecord): void {
     if (!isTeleporterKind(rec.kind)) return;
     if (rec.tpIrisSpawned === true) this.h.removeIris?.(rec);
-    const p = this.partnerOf(rec);
-    if (p !== null) {
-      this.clearPartner(p);
-      this.h.onChanged();
+    const l = this.link(rec);
+    if (l !== null && l.rec.tpPartner?.uid === rec.uid) {
+      l.sys.clearPartner(l.rec);
+      l.sys.changed();
     }
   }
 }
+
+type TeleportPhaseValue = 0 | 1 | 2 | 3 | 4;

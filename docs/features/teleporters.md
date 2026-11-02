@@ -75,6 +75,23 @@ It is separate from base storage, so production never draws from it.
 
 **Spawning on a pad works:** spawn clearance treats a pad as open (only the posts are solid).
 
+## Across sectors (T3)
+
+**Pairing.** The inspector asks the server for your teleporters in **every** sector (`teleport_candidates`). It lists them by name: "Teleporter · 1.3 km" here, or "Teleporter · Verdance" elsewhere. Pairing one (`teleport_pair_remote`) links both ends, wherever they are.
+
+**Charge.** A cross-sector jump counts each galaxy hop as 20 000 u. One hop needs 3 600 charge, about a minute on a mid-size base's spare power, and each extra hop adds 3 000.
+
+**One cycle, two rooms.** The end that fires drives the cycle and sets the far pad's phase in its own room, so both pads warn, close, seal and open together.
+
+**At the swap:**
+- **Pad holds** trade places in one atomic group (`StorageService.padSwapAcross`; the hold store is process-wide).
+- **Riders on both pads are collected first, then sent,** so nobody rides twice:
+  - **Pilots** leave by an instant transit (`TransitOrchestrator.teleportOut`): no neighbour check and no spool, but the same seat reservation and roster re-home as a warp. They land on the far pad at the same offset.
+  - **Parked hulls,** a disconnected pilot's hull included, are rebuilt in the far room. Their roster row moves sector, and their hold travels with them (keyed by the hull's id).
+  - **NPC bots** move through their director (`LivingWorldDirector.teleportBot`), so its records stay right. An NPC no director owns (a trade hauler, a scenario drone) stays behind.
+
+**How rooms find each other.** The `TeleportBroker` (`src/server/teleport/`) is a process-wide registry, like the trade sink. Every room with a sector key registers itself, and each director registers a bot mover.
+
 ## Testing
 
 | Layer | File |
@@ -84,5 +101,9 @@ It is separate from base storage, so production never draws from it.
 | E2E | `tests/e2e/teleporter.spec.ts` (`teleport-test` room, feature tier): the cargo flow, and a pilot on the pad who is warned, rides, and stays on the far pad |
 | T2 unit | `src/shared-types/teleport.test.ts` (pad geometry, push direction); `src/core/physics/World.padField.test.ts` (the push in, out, off, and two worlds agree) |
 | T2 integration | `teleporter.test.ts`: a pilot on pad A and a drone on pad B trade places, and the pilot's epoch bumps |
+| T3 integration | `teleporterAcross.test.ts` (two real galaxy rooms): candidates by sector name, pairing both ways, the hop-based charge, the cycle in both rooms, the pad holds swapped across rooms, the pilot sent to the far sector, a parked hull rebuilt there |
+| T3 unit | `LivingWorldDirector.teleportBot.test.ts`, `tests/unit/teleportClientWireParity.test.ts` |
+
+There is no cross-sector browser test yet: the pilot's hop is the existing warp flow (`transit_ready`), checked here at the integration level.
 
 The `teleport-test` room seeds a powered Capital with a paired teleporter on each side, owned by a fixed id the test joins as. It uses `teleportCycleScale` and a fast grid pulse.

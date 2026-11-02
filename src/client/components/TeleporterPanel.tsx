@@ -17,10 +17,11 @@ import {
   sendTeleportFire,
   sendTeleportPadLoad,
   sendTeleportPadUnload,
-  sendTeleportPair,
+  sendTeleportCandidates,
+  sendTeleportPairRemote,
   sendTeleportUnpair,
 } from '../structures/structureActionsClient';
-import { getStructureKind, isStructureKindId } from '../../shared-types/structureKinds';
+import { useUIStore } from '../state/store';
 import {
   DEFAULT_TELEPORT_RULES,
   PAD_SPECS,
@@ -63,8 +64,6 @@ interface View {
   padWeight: number;
   x: number;
   y: number;
-  /** Your other teleporters here that could be its partner. */
-  candidates: Array<{ entityId: number; label: string }>;
 }
 
 function readView(entityId: number): View | null {
@@ -73,28 +72,26 @@ function readView(entityId: number): View | null {
   const sw = m?.swarm?.get(entityId);
   const kind = sw?.shipKind;
   if (!st?.teleport || !sw || kind === undefined || !isTeleporterKind(kind)) return null;
-  const candidates: View['candidates'] = [];
-  for (const [id, other] of m!.structures!) {
-    if (id === entityId || other.owner !== m!.localPlayerId || other.built !== true) continue;
-    const o = m!.swarm?.get(id);
-    if (!o?.shipKind || !isTeleporterKind(o.shipKind)) continue;
-    const km = Math.hypot(o.x - sw.x, o.y - sw.y) / 1000;
-    const name = isStructureKindId(o.shipKind) ? getStructureKind(o.shipKind).displayName : 'Teleporter';
-    candidates.push({ entityId: id, label: `${name} · ${km.toFixed(1)} km` });
-  }
   const t = st.teleport;
-  return { kind, phase: t.phase, chargePct: t.chargePct, partner: t.partner, rules: t.rules, padWeight: t.padWeight, x: sw.x, y: sw.y, candidates };
+  return { kind, phase: t.phase, chargePct: t.chargePct, partner: t.partner, rules: t.rules, padWeight: t.padWeight, x: sw.x, y: sw.y };
 }
 
 function sameView(a: View | null, b: View | null): boolean {
   if (a === null || b === null) return a === b;
   return a.phase === b.phase && a.chargePct === b.chargePct && a.partner === b.partner && a.rules === b.rules
-    && a.padWeight === b.padWeight && a.candidates.length === b.candidates.length;
+    && a.padWeight === b.padWeight;
 }
 
 export const TeleporterPanel = memo(function TeleporterPanel({ entityId }: { entityId: number }): JSX.Element | null {
   const [view, setView] = useState<View | null>(() => readView(entityId));
   const [good, setGood] = useState<GoodId>('alloy');
+  // T3 — your teleporters in every sector, asked for on mount and when the
+  // pairing changes (the reply fills the store; names only on screen).
+  const candidates = useUIStore((s) => (s.teleportCandidates?.entityId === entityId ? s.teleportCandidates.items : null));
+  const partnerKey = view?.partner ?? -1;
+  useEffect(() => {
+    sendTeleportCandidates(entityId);
+  }, [entityId, partnerKey]);
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -126,7 +123,7 @@ export const TeleporterPanel = memo(function TeleporterPanel({ entityId }: { ent
         <Box sx={{ height: '100%', width: `${view.chargePct}%`, backgroundColor: '#9b7bff' }} />
       </Box>
       <Box data-testid="tp-partner">
-        {!paired ? 'Not paired' : view.partner === TP_PARTNER_REMOTE ? 'Paired with a pad in another sector' : 'Paired'}
+        {!paired ? 'Not paired' : view.partner === TP_PARTNER_REMOTE ? 'Paired with a pad in another sector' : 'Paired in this sector'}
       </Box>
       <Box sx={ROW_SX}>
         {paired ? (
@@ -138,11 +135,13 @@ export const TeleporterPanel = memo(function TeleporterPanel({ entityId }: { ent
               Unpair
             </Box>
           </>
-        ) : view.candidates.length === 0 ? (
-          <span>Build a second teleporter here to pair.</span>
+        ) : candidates === null ? (
+          <span>Looking for your other teleporters…</span>
+        ) : candidates.length === 0 ? (
+          <span>Build a second teleporter (here or in another sector) to pair.</span>
         ) : (
-          view.candidates.map((c) => (
-            <Box key={c.entityId} component="span" sx={BTN_SX} data-testid="tp-pair-option" onClick={() => sendTeleportPair(entityId, c.entityId)}>
+          candidates.map((c) => (
+            <Box key={`${c.sectorKey}/${c.uid}`} component="span" sx={BTN_SX} data-testid="tp-pair-option" onClick={() => sendTeleportPairRemote(entityId, c.sectorKey, c.uid)}>
               {`Pair: ${c.label}`}
             </Box>
           ))

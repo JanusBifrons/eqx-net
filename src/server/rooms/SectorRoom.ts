@@ -115,7 +115,9 @@ import { BreakInSubsystem } from './BreakInSubsystem.js';
 import { stream } from '../../core/random/rng.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
-import { TeleporterSubsystem } from '../structures/TeleporterSubsystem.js';
+import { TeleporterSubsystem, type PartnerLink } from '../structures/TeleporterSubsystem.js';
+import { getTeleportBroker, type RiderBatch, type TeleportRoom } from '../teleport/TeleportBroker.js';
+import { hopDistance } from '../livingworld/population.js';
 import {
   PAD_SPECS,
   SetTeleportRulesSchema,
@@ -124,6 +126,8 @@ import {
   TeleportPadUnloadSchema,
   TeleportPairSchema,
   TeleportUnpairSchema,
+  TeleportCandidatesQuerySchema,
+  TeleportPairRemoteSchema,
   onPad,
   padIrisSpanLocal,
   padPostCenters,
@@ -864,6 +868,8 @@ export class SectorRoom extends Room<SectorState> {
   private production!: ProductionSubsystem;
   /** v4 T1 — teleporter capacitors, pairing, rules and the jump cycle. */
   private teleporters!: TeleporterSubsystem;
+  /** v4 T3 — this room as the teleport broker sees it. */
+  private teleportRoom!: TeleportRoom;
   /** Mine Layers' proximity mines (10 Hz with the structure tick). */
   private mineField!: MineFieldSubsystem;
   /** 1 Hz grid heartbeat timer (unref'd; off the physics tick). */
@@ -2310,6 +2316,13 @@ export class SectorRoom extends Room<SectorState> {
       onChanged: () => this.rebuildStructuresSlice(),
       // T2 — ships ride the swap; the iris and the closing push in the worker.
       onSwapShips: (a, b) => this.swapPadShips(a, b),
+      // T3 — partners in other sectors, reached through the broker.
+      onSwapRemote: (a, link) => this.swapAcross(a, link),
+      remoteFind: (sk, uid) => {
+        const f = getTeleportBroker().find(sk, uid);
+        return f && f.room !== this.teleportRoom ? { rec: f.rec, sys: f.room.teleporters } : null;
+      },
+      hopsTo: (sk) => this.hopsToSector(sk),
       spawnIris: (rec) => this.forIrisSpan(rec, (id, s) => {
         this.postToWorker({ type: 'SPAWN_WALL', id, ax: rec.x + s.ax, ay: rec.y + s.ay, bx: rec.x + s.bx, by: rec.y + s.by, thickness: GATE_SPAN_THICKNESS });
         this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active: false });
@@ -2324,6 +2337,27 @@ export class SectorRoom extends Room<SectorState> {
         this.postToWorker({ type: 'SET_PAD_FIELD', id: `tpfield-${rec.id}`, cx: rec.x, cy: rec.y, half: PAD_SPECS[rec.kind].padRadius, active });
       },
     });
+    // v4 T3 — the broker reaches this room's teleporters from other sectors.
+    this.teleportRoom = {
+      sectorKey: this.sectorKey,
+      teleporters: this.teleporters,
+      storage: this.storage,
+      teleporterByUid: (uid) => {
+        const r = this.teleporters.byUid(uid);
+        return r && r.isConstructed ? r : null;
+      },
+      ownTeleporters: (owner) => {
+        const out: StructureRecord[] = [];
+        for (const r of this.structureRegistry.all()) {
+          if (r.owner === owner && r.isConstructed && isTeleporterKind(r.kind)) out.push(r);
+        }
+        return out;
+      },
+      collectRiders: (from) => this.collectRiders(from),
+      dispatchRiders: (batch, toRoom, to) => this.dispatchRiders(batch, toRoom, to),
+      receiveLingeringHull: (row) => this.restoreLingeringHullsFromSnapshot([row]),
+    };
+    if (this.sectorKey !== null) getTeleportBroker().register(this.teleportRoom);
     this.gates = new GateController({
       registry: this.structureRegistry,
       collectShips: (out) => this.collectGateShips(out),
@@ -2864,6 +2898,31 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('teleport_pair', tpMessage('teleport_pair', TeleportPairSchema, (rec, msg, client) => {
       const other = ownTeleporter(client, msg.partnerEntityId);
       if (other) this.teleporters.pair(rec, other);
+    }));
+    // T3 — the sender's other teleporters, here and in every other sector.
+    this.onMessage('teleport_candidates', tpMessage('teleport_candidates', TeleportCandidatesQuerySchema, (rec, msg, client) => {
+      const items: Array<{ sectorKey: string; uid: string; label: string }> = [];
+      const here = this.sectorKey ?? '';
+      for (const r of this.teleportRoom.ownTeleporters(rec.owner)) {
+        if (r === rec || r.uid === undefined) continue;
+        const km = (Math.hypot(r.x - rec.x, r.y - rec.y) / 1000).toFixed(1);
+        items.push({ sectorKey: here, uid: r.uid, label: `${getStructureKind(r.kind).displayName} · ${km} km` });
+      }
+      for (const { sectorKey, rec: r } of getTeleportBroker().ownTeleporters(rec.owner)) {
+        if (sectorKey === here || r.uid === undefined) continue;
+        const where = getSector(sectorKey)?.name ?? 'another sector';
+        items.push({ sectorKey, uid: r.uid, label: `${getStructureKind(r.kind).displayName} · ${where}` });
+      }
+      client.send('teleport_candidates', { type: 'teleport_candidates', entityId: msg.entityId, items: items.slice(0, 200) });
+    }));
+    this.onMessage('teleport_pair_remote', tpMessage('teleport_pair_remote', TeleportPairRemoteSchema, (rec, msg) => {
+      if (msg.sectorKey === (this.sectorKey ?? '')) {
+        const other = this.teleporters.byUid(msg.uid);
+        if (other && other.isConstructed) this.teleporters.pair(rec, other);
+        return;
+      }
+      const f = getTeleportBroker().find(msg.sectorKey, msg.uid);
+      if (f && f.rec.owner === rec.owner) this.teleporters.pair(rec, f.rec, f.room.teleporters);
     }));
     this.onMessage('teleport_unpair', tpMessage('teleport_unpair', TeleportUnpairSchema, (rec) => this.teleporters.unpair(rec)));
     this.onMessage('teleport_fire', tpMessage('teleport_fire', TeleportFireSchema, (rec) => { this.teleporters.fire(rec, Date.now()); }));
@@ -5055,6 +5114,124 @@ export class SectorRoom extends Room<SectorState> {
   }
   private readonly _hostilePilotOut = { playerId: '', x: 0, y: 0, d2: 0 };
 
+  // ── v4 T3 — teleporters across sectors ──────────────────────────────────
+
+  /** Hops to another sector for the jump charge. Rooms outside the galaxy
+   *  graph (tests) that the broker knows count as one hop. */
+  private hopsToSector(sectorKey: string): number {
+    if (this.sectorKey === null) return Infinity;
+    if (getSector(this.sectorKey) && getSector(sectorKey)) return hopDistance(this.sectorKey, sectorKey);
+    return getTeleportBroker().room(sectorKey) !== null ? 1 : Infinity;
+  }
+
+  /** The jump across sectors: the pad holds trade in one group, then both
+   *  pads' riders are collected BEFORE either side is sent (nobody rides twice). */
+  private swapAcross(a: StructureRecord, link: PartnerLink): void {
+    const other = a.tpPartner ? getTeleportBroker().room(a.tpPartner.sectorKey) : null;
+    if (other === null) return;
+    this.storage.padSwapAcross(a, other.storage, link.rec);
+    const mine = this.collectRiders(a);
+    const theirs = other.collectRiders(link.rec);
+    this.dispatchRiders(mine, other, link.rec);
+    other.dispatchRiders(theirs, this.teleportRoom, a);
+    serverLogEvent('teleport_swap_across', {
+      from: this.sectorKey ?? '', to: other.sectorKey ?? '',
+      out: mine.pilots.length + mine.hulls.length + mine.bots.length,
+      in: theirs.pilots.length + theirs.hulls.length + theirs.bots.length,
+    });
+  }
+
+  /** Who is on a pad (#17 by class: ACTIVE alive pilots, LINGERING hulls,
+   *  NPC ships), as offsets from its centre. A discrete event per jump. */
+  private collectRiders(from: StructureRecord): RiderBatch {
+    const batch: RiderBatch = { pilots: [], hulls: [], bots: [] };
+    if (!isTeleporterKind(from.kind)) return batch;
+    const kind = from.kind;
+    const disconnected: string[] = [];
+    for (const [pid, slot] of this.playerToSlot) {
+      const ship = this.getActiveShip(pid);
+      if (!ship?.alive) continue;
+      const sb = slotBase(slot);
+      const x = this.sabF32[sb + SLOT_X_OFF]!;
+      const y = this.sabF32[sb + SLOT_Y_OFF]!;
+      if (!onPad(kind, from.x, from.y, x, y)) continue;
+      if (ship.isActive) batch.pilots.push({ playerId: pid, dx: x - from.x, dy: y - from.y });
+      // A disconnected pilot's hull lingers under their id; a connected but
+      // inactive hull is a pending join and stays (#17).
+      else if (!this.playerToSession.has(pid)) disconnected.push(pid);
+    }
+    // Disconnected hulls become ordinary parked hulls, so they ride below.
+    for (const pid of disconnected) this.displaceActiveHullToLingering(pid);
+    for (const [sid, slot] of this.lingeringSlots) {
+      const ship = this.state.ships.get(sid);
+      if (!ship || !ship.alive) continue;
+      const sb = slotBase(slot);
+      const x = this.sabF32[sb + SLOT_X_OFF]!;
+      const y = this.sabF32[sb + SLOT_Y_OFF]!;
+      if (!onPad(kind, from.x, from.y, x, y)) continue;
+      batch.hulls.push({
+        shipInstanceId: sid, playerId: ship.playerId, kind: ship.kind,
+        dx: x - from.x, dy: y - from.y,
+        vx: this.sabF32[sb + SLOT_VX_OFF]!, vy: this.sabF32[sb + SLOT_VY_OFF]!,
+        angle: this.sabF32[sb + SLOT_ANGLE_OFF]!, angvel: this.sabF32[sb + SLOT_ANGVEL_OFF]!,
+        health: ship.health, shieldDown: ship.shield <= 0,
+      });
+    }
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== 1) continue;
+      const sb = slotBase(rec.slot);
+      const x = this.sabF32[sb + SLOT_X_OFF]!;
+      const y = this.sabF32[sb + SLOT_Y_OFF]!;
+      if (onPad(kind, from.x, from.y, x, y)) batch.bots.push({ botId: rec.id, dx: x - from.x, dy: y - from.y });
+    }
+    return batch;
+  }
+
+  /** Send a batch to another sector's pad: pilots by an instant transit,
+   *  parked hulls rebuilt there (their roster row moves sector), NPC bots
+   *  through their director (a bot no director owns stays behind). */
+  private dispatchRiders(batch: RiderBatch, toRoom: TeleportRoom, to: StructureRecord): void {
+    const dest = toRoom.sectorKey;
+    if (dest === null || this.sectorKey === null) return;
+    for (const p of batch.pilots) {
+      this.transitOrchestrator?.teleportOut(p.playerId, dest, { x: to.x + p.dx, y: to.y + p.dy });
+    }
+    for (const h of batch.hulls) {
+      if (!this.removeLingeringHullQuietly(h.shipInstanceId)) continue;
+      const x = to.x + h.dx;
+      const y = to.y + h.dy;
+      getPlayerShipStore().markStored(h.shipInstanceId, {
+        x, y, vx: h.vx, vy: h.vy, angle: h.angle, angvel: h.angvel, health: h.health, sectorKey: dest,
+      });
+      toRoom.receiveLingeringHull({
+        shipInstanceId: h.shipInstanceId, playerId: h.playerId, kind: h.kind,
+        x, y, vx: h.vx, vy: h.vy, angle: h.angle, angvel: h.angvel, health: h.health, shieldDown: h.shieldDown,
+      });
+    }
+    for (const b of batch.bots) {
+      getTeleportBroker().moveBot(b.botId, this.sectorKey, dest, to.x + b.dx, to.y + b.dy);
+    }
+  }
+
+  /** A parked hull left this sector by teleporter: drop it here without scrap,
+   *  spill or audit (its hold is keyed by its id and travels with it). */
+  private removeLingeringHullQuietly(shipInstanceId: string): boolean {
+    const ship = this.state.ships.get(shipInstanceId);
+    const slot = this.lingeringSlots.get(shipInstanceId);
+    if (ship === undefined || slot === undefined) return false;
+    this.lingeringSlots.delete(shipInstanceId);
+    this.lingeringPoseCache.delete(shipInstanceId);
+    this.freeSlots.push(slot);
+    this.postToWorker({ type: 'DESPAWN', slot, playerId: `linger-${shipInstanceId}` });
+    const timer = this.ownerlessShips.get(shipInstanceId);
+    if (timer !== undefined) {
+      if (timer) clearTimeout(timer);
+      this.ownerlessShips.delete(shipInstanceId);
+    }
+    this.state.ships.delete(shipInstanceId);
+    return true;
+  }
+
   /** v4 T1 — how many ACTIVE, alive player ships (#17: lingering hulls and
    *  the dead don't board) sit with their centre on this teleporter's pad. */
   private shipsOnPad(rec: StructureRecord): number {
@@ -5098,7 +5275,10 @@ export class SectorRoom extends Room<SectorState> {
       const kind = from.kind as TeleporterKind;
       for (const [pid, slot] of this.playerToSlot) {
         const ship = this.getActiveShip(pid);
-        if (!ship?.alive || !ship.isActive) continue;
+        if (!ship?.alive) continue;
+        // Active pilots and disconnected pilots' parked hulls ride; a connected
+        // but inactive hull is a pending join and stays (#17).
+        if (!ship.isActive && this.playerToSession.has(pid)) continue;
         const sb = slotBase(slot);
         const x = this.sabF32[sb + SLOT_X_OFF]!;
         const y = this.sabF32[sb + SLOT_Y_OFF]!;
@@ -8764,6 +8944,7 @@ export class SectorRoom extends Room<SectorState> {
   override onDispose(): void {
     this.simLoopStopped = true;
     if (this.tradeRegisteredKey !== null) getTradeSink()?.unregisterRoom(this.tradeRegisteredKey, this);
+    if (this.teleportRoom) getTeleportBroker().unregister(this.teleportRoom);
     // Structures plan, Phase 3 — stop the grid pulse heartbeat.
     if (this.structureGridTimer !== undefined) {
       clearInterval(this.structureGridTimer);

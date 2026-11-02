@@ -57,6 +57,7 @@ import { db } from './db/Database.js';
 import { resolveCorsPolicy, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
 import { shouldRegisterTestRooms } from './rooms/testRoomGating.js';
 import { installProcessGuards } from './orchestration/processGuards.js';
+import { getTeleportBroker } from './teleport/TeleportBroker.js';
 /** v4 T1 — the owner the teleport-test room's base belongs to (the E2E joins
  *  as this id). Kept in sync with tests/e2e/teleporter.spec.ts. */
 const TELEPORT_TEST_OWNER = 'face0000-0000-4000-8000-000000000002';
@@ -1291,6 +1292,9 @@ async function main(): Promise<void> {
         directorPersistence: robotPersistence,
       });
       robotDirector.start();
+      // v4 T3 — teleporters carry robot bots across sectors.
+      const rdMover = robotDirector;
+      getTeleportBroker().addBotMover((id, from, to, x, y) => rdMover.teleportBot(id, from, to, x, y));
       // Living World P3 — robot territory + the nexus (reinforcements spawn at
       // it; robot-held sectors show on the galaxy map).
       const rd = robotDirector;
@@ -1349,6 +1353,9 @@ async function main(): Promise<void> {
     setBountyBoard(bounties);
     setContractsProvider({ elites: () => ed.elites(), activeEvent: () => evd.activeEvent(), bounties: () => bounties.open() });
     livingWorldDirector.start();
+    // v4 T3 — teleporters carry drone bots across sectors.
+    const lwMover = livingWorldDirector;
+    getTeleportBroker().addBotMover((id, from, to, x, y) => lwMover.teleportBot(id, from, to, x, y));
     // Phase-4 P0 — let the per-room TransitOrchestrator + destination rooms feed
     // inbound PLAYERS into the director's IncomingRegistry (the "incoming" banner)
     // without an import cycle. Null when the Living World is disabled.

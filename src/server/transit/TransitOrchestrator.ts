@@ -278,6 +278,32 @@ export class TransitOrchestrator {
     return true;
   }
 
+  /**
+   * v4 T3 — a teleporter jump to another sector: an INSTANT hop to any sector
+   * (no neighbour check, no spool; the teleporter's own cycle was the wait),
+   * landing at `arrival` on the partner pad. Reuses the normal commit path
+   * (seat reservation, roster re-home, `transit_ready`), so the arrival is
+   * the same shipId-restore every warp uses.
+   */
+  teleportOut(playerId: string, targetSectorKey: string, arrival: { x: number; y: number }): boolean {
+    if (this.room.sectorKey === null || this.inFlight.has(playerId) || !this.room.hasLiveHull(playerId)) return false;
+    const machine = new TransitStateMachine(playerId, this.room.bus, 1);
+    machine.beginSpool(Date.now());
+    const onShipDestroyed: InFlight['onShipDestroyed'] = () => undefined;
+    this.room.bus.on('SHIP_DESTROYED', onShipDestroyed);
+    this.inFlight.set(playerId, {
+      machine,
+      targetSectorKey,
+      transitToken: randomUUID(),
+      arrival: { x: arrival.x, y: arrival.y },
+      shipId: null,
+      commitTimer: setTimeout(() => undefined, 0),
+      onShipDestroyed,
+    });
+    void this.commitTransit(playerId);
+    return true;
+  }
+
   /** Cancel an in-flight spool. Legal from SPOOLING only — once committed
    *  the destination has a reservation. */
   cancelTransit(playerId: string, reason: TransitCancelReason): void {

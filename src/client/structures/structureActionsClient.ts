@@ -104,6 +104,14 @@ function sendTp(type: string, payload: Record<string, unknown>): boolean {
 export function sendTeleportPair(entityId: number, partnerEntityId: number): boolean {
   return sendTp('teleport_pair', { entityId, partnerEntityId });
 }
+/** v4 T3 — ask for your teleporters in every sector (the reply fills the store). */
+export function sendTeleportCandidates(entityId: number): boolean {
+  return sendTp('teleport_candidates', { entityId });
+}
+/** v4 T3 — pair with one of your teleporters anywhere, by sector + uid. */
+export function sendTeleportPairRemote(entityId: number, sectorKey: string, uid: string): boolean {
+  return sendTp('teleport_pair_remote', { entityId, sectorKey, uid });
+}
 export function sendTeleportUnpair(entityId: number): boolean {
   return sendTp('teleport_unpair', { entityId });
 }

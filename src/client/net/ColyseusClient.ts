@@ -17,7 +17,7 @@ import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/stru
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { decideStatAllocReanchor } from './localStatAlloc';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../structures/derivedWalls.js';
-import { PAD_SPECS, TP_PHASE, isTeleporterKind } from '../../shared-types/teleport.js';
+import { PAD_SPECS, TP_PHASE, TeleportCandidatesReplySchema, isTeleporterKind } from '../../shared-types/teleport.js';
 
 /** v4 T2 — prediction-world pad field ids, cached per structure (no per-sync string). */
 const PAD_FIELD_IDS = new Map<number, string>();
@@ -2111,6 +2111,11 @@ export class ColyseusGameClient {
       const parsed = BpMarketStateSchema.safeParse(raw);
       if (!parsed.success) return;
       useUIStore.getState().setBpMarket(parsed.data);
+    });
+    room.onMessage('teleport_candidates', (raw: unknown) => {
+      const parsed = TeleportCandidatesReplySchema.safeParse(raw);
+      if (!parsed.success) return;
+      useUIStore.getState().setTeleportCandidates(parsed.data);
     });
     room.onMessage('lab_state', (raw: unknown) => {
       const parsed = LabStateSchema.safeParse(raw);

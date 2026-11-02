@@ -425,6 +425,8 @@ export async function bootLivingWorldTestServer(opts: {
    *  faction the wave targets. Lets a test drive the full wave lifecycle
    *  (dispatch → traverse → attack) against a real base, with or without the
    *  owner present. */
+  /** v4 T3 — teleporter cycle speed in every sector (1 = real time). */
+  teleportCycleScale?: number;
   bases?: ReadonlyArray<{
     sector: string;
     structures: ReadonlyArray<{ kind: string; x: number; y: number }>;
@@ -460,6 +462,7 @@ export async function bootLivingWorldTestServer(opts: {
       sectorKey: key,
       droneCount: 0,
       testMode: true,
+      ...(opts.teleportCycleScale !== undefined ? { teleportCycleScale: opts.teleportCycleScale } : {}),
       // Seed a base ⇒ also clear the ambient asteroid field: placement is
       // obstacle-aware, so a stray rock would block a structure (e.g. the solar)
       // and leave the base un-ready. Mirrors structureScenario.test's
