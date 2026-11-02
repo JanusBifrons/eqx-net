@@ -116,8 +116,12 @@ import { stream } from '../../core/random/rng.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
 import { NpcBaseSubsystem, isNpcBasesDisabled, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
-import { baseProfileFor, contextForSector, hashString } from '../../core/bases/baseProfile.js';
+import { hashString } from '../../core/bases/baseProfile.js';
 import { chooseBaseSite, grownExtent, nearestClearPoint, type SiteBox, type SiteCircle } from '../../core/bases/baseSite.js';
+import { galaxyBasePlan, type GalaxyBasePlan } from '../../core/bases/galaxyBases.js';
+import type { SectorFeature } from '../../core/galaxy/galaxy.js';
+/** Clear space kept between two NPC bases in one sector (bastions, mines, traffic). */
+const NPC_BASE_GAP = 900;
 import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
 import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
@@ -4113,20 +4117,38 @@ export class SectorRoom extends Room<SectorState> {
    * origin as it fits. Not persisted: a restart regrows it from the seed.
    */
   private seedGalaxyBase(sectorKey: string): void {
-    const seed = hashString(sectorKey);
+    // A sector holds one to three NPC bases (galaxyBasePlan); base 0 is the
+    // sector's original base. Each later one keeps well clear of the earlier.
     const sector = getSector(sectorKey)!;
-    const profile = baseProfileFor(contextForSector(sectorKey), seed);
-    const spec: NpcBaseSpec = {
-      baseId: 'b0', role: profile.role, tier: profile.tier, seed, x: 0, y: 0,
-      side: profile.ownerSide, features: [...sector.features], profile,
-    };
     const sub = new NpcBaseSubsystem({
       registry: this.structureRegistry,
       place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
       setHealth: (id, hp) => this.swarmHealth.set(id, hp),
     });
+    const seededBases: SiteBox[] = [];
+    for (const plan of galaxyBasePlan(sectorKey)) {
+      const box = this.seedOneGalaxyBase(sectorKey, sector.features, plan, sub, seededBases);
+      if (box !== null) seededBases.push(box);
+    }
+    this.structureGridTick();
+  }
+
+  /** Seed one planned galaxy base; returns its footprint box, inflated by the
+   *  gap a later base must keep, or null when no site fits. */
+  private seedOneGalaxyBase(
+    sectorKey: string,
+    features: readonly SectorFeature[],
+    plan: GalaxyBasePlan,
+    sub: NpcBaseSubsystem,
+    seededBases: readonly SiteBox[],
+  ): SiteBox | null {
+    const { seed, profile } = plan;
+    const spec: NpcBaseSpec = {
+      baseId: plan.baseId, role: profile.role, tier: profile.tier, seed, x: 0, y: 0,
+      side: profile.ownerSide, features: [...features], profile,
+    };
     const grown = sub.grow(spec);
-    const hard: SiteBox[] = [];
+    const hard: SiteBox[] = [...seededBases];
     for (const r of this.structureRegistry.all()) hard.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
     for (const p of this.lingeringPoseCache.values()) hard.push({ x: p.x, y: p.y, hw: 150, hh: 150 });
     const rocks: SwarmEntityRecord[] = [];
@@ -4137,20 +4159,29 @@ export class SectorRoom extends Room<SectorState> {
       rocks.push(rec);
       soft.push({ x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, r: rec.radius });
     }
-    const site = chooseBaseSite(grownExtent(grown.placements), hard, soft, {
+    const ext = grownExtent(grown.placements);
+    const site = chooseBaseSite(ext, hard, soft, {
       halfExtent: SECTOR_PLAYABLE_HALF_EXTENT, margin: 250, step: 250, seed,
     });
     if (site === null) {
-      logger.warn({ sectorKey, tier: profile.tier, role: profile.role }, 'npc base: no site fits; sector left without a base');
-      return;
+      logger.warn({ sectorKey, baseId: plan.baseId, tier: profile.tier, role: profile.role }, 'npc base: no site fits; base skipped');
+      return null;
     }
     for (const i of site.overlapped) this.evictSwarmEntity(rocks[i]!, { broadcast: false, emitDestroyed: false });
     const r = sub.seed({ ...spec, x: site.x, y: site.y }, grown);
     logger.info({
-      sectorKey, tier: profile.tier, role: profile.role, owner: r.owner, x: Math.round(site.x), y: Math.round(site.y),
+      sectorKey, baseId: plan.baseId, tier: profile.tier, role: profile.role, owner: r.owner, x: Math.round(site.x), y: Math.round(site.y),
       placed: r.placed, rejectedPlace: r.rejectedPlace, rejectedEdge: r.rejectedEdge, asteroidsCleared: site.overlapped.length,
     }, 'galaxy npc base seeded');
-    this.structureGridTick();
+    // Later bases keep this far from this one's footprint (room for its
+    // bastions, its minefield and traffic between the two).
+    const gap = NPC_BASE_GAP;
+    return {
+      x: site.x + (ext.x0 + ext.x1) / 2,
+      y: site.y + (ext.y0 + ext.y1) / 2,
+      hw: (ext.x1 - ext.x0) / 2 + gap,
+      hh: (ext.y1 - ext.y0) / 2 + gap,
+    };
   }
 
   /** D2 — seed NPC bases from the generator (built, stocked, recipes + bound
