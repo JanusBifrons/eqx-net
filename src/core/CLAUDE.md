@@ -377,5 +377,6 @@ reintroduces the spiral the 500-target cannot afford. Full story:
 - **Deterministic per seed.** NPC bases regenerate from their seed, so bump `BASE_GROWTH_VERSION` on any output change.
 - **Fenced bases put their turrets on bastions OUTSIDE the fence** (a fence blocks its owner's own fire). `Builder.tryPlace` refuses any box on an existing link line, so a later placement can never break an earlier link's line of sight.
 - **Owners are factions (v4 F2).** `galaxyBasePlan` gives each base an `ownerFaction` via `chooseBaseOwner`: the controlling power in its heartland (`galaxy/control.ts` `sectorController`), else a weighted mix of the region's minor factions, its power and the Traders. The owner pick uses its own seeded stream, so layouts never move when the owner rules change.
+- **Transit hubs (v4 H):** the `transit` role is never rolled (weight 0, so every existing roll is unchanged); hubs and their teleporter links come from `transitNetwork.ts`, a galaxy-wide pass over the per-sector plans. `transitNetwork.test.ts` checks both ends of every link grow its teleporter.
 - **Roles include `colony` (D3, habitat stations):** habitation modules that consume provisions and consumer goods. Never an outpost. Player-facing text says "habitat station", never "city".
 - Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).

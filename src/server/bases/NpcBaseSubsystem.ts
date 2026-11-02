@@ -18,6 +18,7 @@
  * Then the real systems run: power, batteries, fence, turrets, production.
  * NPC structures are not persisted (B2); a restart regenerates from the seed.
  */
+import { DEFAULT_TELEPORT_RULES, NPC_LINK_TOLL, isTeleporterKind } from '../../shared-types/teleport.js';
 import { growBase, type GrownBase } from '../../core/bases/growBase.js';
 import { TIER_LEVEL_CAP, TIER_WEALTH, type BaseProfile, type BaseRole, type BaseTier } from '../../core/bases/baseProfile.js';
 import type { SectorFeature } from '../../core/galaxy/galaxy.js';
@@ -146,6 +147,13 @@ export class NpcBaseSubsystem {
         }
       }
       if (gateTypeOf(p.kind) !== null) rec.gateAccess = gateAccessIndex('open');
+      // v4 H — a transit link's teleporter: fires when a ship boards, charges
+      // the owner's toll; it finds its partner at run time by the link id.
+      if (p.link !== undefined && isTeleporterKind(p.kind)) {
+        rec.npcLink = p.link;
+        rec.tpRules = { ...DEFAULT_TELEPORT_RULES, shipBoards: true };
+        rec.tpToll = { ...NPC_LINK_TOLL };
+      }
     }
 
     const nodes = buildGridNodes(this.h.registry);

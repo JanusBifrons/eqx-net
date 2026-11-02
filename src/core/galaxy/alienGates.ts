@@ -11,9 +11,9 @@
 import { axialToPixel, getNeighbours, getSector } from './galaxy.js';
 
 /** Distance from the sector centre to a gate's centre (world units): as far
- *  out as the 2000-wide gate fits inside the 5000-unit playable half-extent,
+ *  out as the 1600-wide gate fits inside the 5000-unit playable half-extent,
  *  so the sector's middle stays clear for bases. */
-export const ALIEN_GATE_EDGE_RADIUS = 3900;
+export const ALIEN_GATE_EDGE_RADIUS = 4100;
 
 /** Owner string for every alien gate (the Ancients faction). */
 export const ALIEN_GATE_OWNER = 'npc:ancients:gates';
@@ -60,7 +60,7 @@ export function alienGateSites(sectorKey: string): AlienGateSite[] {
 }
 
 /**
- * Where to try putting a gate, best first: every spot on a 500-unit grid that
+ * Where to try putting a gate, best first: every spot on a 250-unit grid that
  * keeps the whole gate inside the playable area, nearest its ideal site first
  * (ties by x, then y, so it is deterministic). A sector's NPC bases pick
  * their site first, so a gate takes the nearest free spot; a big base can
@@ -68,9 +68,9 @@ export function alienGateSites(sectorKey: string): AlienGateSite[] {
  */
 export function alienGateCandidates(site: AlienGateSite, gateHalf: number, halfExtent: number): Array<{ x: number; y: number }> {
   const out: Array<{ x: number; y: number; d: number }> = [];
-  const lim = Math.floor((halfExtent - gateHalf) / 500) * 500;
-  for (let x = -lim; x <= lim; x += 500) {
-    for (let y = -lim; y <= lim; y += 500) out.push({ x, y, d: Math.hypot(x - site.x, y - site.y) });
+  const lim = Math.floor((halfExtent - gateHalf) / 250) * 250;
+  for (let x = -lim; x <= lim; x += 250) {
+    for (let y = -lim; y <= lim; y += 250) out.push({ x, y, d: Math.hypot(x - site.x, y - site.y) });
   }
   out.push({ x: site.x, y: site.y, d: -1 }); // the ideal site itself, first
   out.sort((a, b) => a.d - b.d || a.x - b.x || a.y - b.y);

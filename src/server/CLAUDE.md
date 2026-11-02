@@ -277,6 +277,13 @@ Update this section when a threshold is set.
 - **Steady state** with no gates is one `gateCount` check per fire/damage call.
 - Locks: `AlienGateGuard.test.ts`, `tests/unit/disableParity.test.ts`, `tests/integration/sectorRoom/alienGates.test.ts`, `galaxyBases.test.ts` (gates fit around the bases). Story: [docs/features/alien-gates.md](../../docs/features/alien-gates.md).
 
+## NPC transit hubs (plan soft-leaping-truffle v4, H1)
+
+- **The network is pure core** (`core/bases/transitNetwork.ts`, `transitNetwork()`): one `transit` hub per region at a chokepoint, linked to its heart's base, up to two trade bases and (frontier hubs) the core hub. `galaxyBasePlan` adds the hub base and each base's `profile.links`; `growBase` adds one teleporter per link, tagged `GrownPlacement.link`.
+- **Seeding.** `NpcBaseSubsystem.seed` sets `rec.npcLink`, the "when a ship boards" rule and `NPC_LINK_TOLL`. The ends pair at run time in `TeleporterSubsystem.update` through `findLinkTwin` (the teleporter in the other end's room with the same `npcLink`), like the alien gates. Never pair them by position.
+- **No pairing requests** to an NPC-owned teleporter (`teleport_pair_request` refuses them).
+- Lock: `tests/integration/sectorRoom/transitHubs.test.ts`. Story: [docs/features/transit-hubs.md](../../docs/features/transit-hubs.md).
+
 ## Faction standing events and policies (plan soft-leaping-truffle v4, F3)
 
 - **One rule for hits:** `applyDamage` → `noteStandingHit` lowers the victim faction's view of the attacker's faction once per pair per window (`STANDING_HIT_*`). Victims are structures (their owner) and player ships, with at least one player side. Steady state is nested Map lookups only (#14). Break-ins cost `STANDING_BREAK_IN_DELTA`. Don't add standing deltas elsewhere without a reason; trade keeps its own (`REP_*`).

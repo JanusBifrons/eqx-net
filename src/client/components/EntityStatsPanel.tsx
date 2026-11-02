@@ -617,7 +617,8 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       // v4 T1 — your own built teleporter shows its charge, pairing, rules and pad.
       if (isTeleporterKind(subtype) && data.isOwn === true && st.built === true) data.isTeleporter = true;
       // T4 — someone else's teleporter: ask its owner to pair it with one of yours.
-      if (isTeleporterKind(subtype) && !isAlienGateKind(subtype) && data.isOwn !== true && st.built === true) data.isForeignTeleporter = true;
+      // (An NPC's teleporters are pre-linked; nobody answers a request for them.)
+      if (isTeleporterKind(subtype) && !isAlienGateKind(subtype) && data.isOwn !== true && st.built === true && !(st.owner ?? '').startsWith('npc:')) data.isForeignTeleporter = true;
       // v4 A — an alien gate says where it leads and when it next jumps.
       if (isAlienGateKind(subtype)) {
         const e = getGameClient()?.mirror.swarm?.get(parseInt(id.startsWith('swarm-') ? id.slice(6) : id, 10));

@@ -117,6 +117,7 @@ import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
 import { TeleporterSubsystem, type PartnerLink } from '../structures/TeleporterSubsystem.js';
 import { getTeleportBroker, type RiderBatch, type TeleportRoom } from '../teleport/TeleportBroker.js';
+import { linkEnds } from '../../core/bases/transitNetwork.js';
 import { hopDistance } from '../livingworld/population.js';
 import {
   isAlienGateKind,
@@ -2358,6 +2359,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       hopsTo: (sk) => this.hopsToSector(sk),
       findAlienTwin: (rec) => this.findAlienTwin(rec),
+      findLinkTwin: (rec) => this.findLinkTwin(rec),
       // T4 — tolls: offered at arming, settled at the swap.
       onArmed: (rec) => this.offerToll(rec),
       onTollSettle: (rec) => this.settleToll(rec),
@@ -2384,6 +2386,7 @@ export class SectorRoom extends Room<SectorState> {
         const r = this.teleporters.byUid(uid);
         return r && r.isConstructed ? r : null;
       },
+      structures: () => this.structureRegistry.all(),
       ownTeleporters: (owner) => {
         const out: StructureRecord[] = [];
         for (const r of this.structureRegistry.all()) {
@@ -3003,8 +3006,9 @@ export class SectorRoom extends Room<SectorState> {
       const sw = this.swarmRegistry.getByEntityId(parsed.data.entityId);
       const target = sw ? this.structureRegistry.get(sw.id) : undefined;
       if (!pid || !target || !isTeleporterKind(target.kind) || !target.isConstructed || target.owner === pid || target.uid === undefined) return;
-      // v4 A — alien gates only ever link to each other.
-      if (isAlienGateKind(target.kind)) return;
+      // v4 A — alien gates only ever link to each other; v4 H — an NPC
+      // teleporter is pre-linked by the transit network.
+      if (isAlienGateKind(target.kind) || isNpcOwner(target.owner)) return;
       if (relationOf(pid, target.owner, this.relationCtx) === 'hostile') return;
       const here = this.sectorKey ?? '';
       const mine = parsed.data.sectorKey === here
@@ -4530,6 +4534,22 @@ export class SectorRoom extends Room<SectorState> {
       this.gateGuard.addGate(rec);
     }
     this.rebuildStructuresSlice();
+  }
+
+  /** v4 H — the teleporter at the other end of `rec.npcLink` (another sector's
+   *  room, found through the broker; it carries the same link id). */
+  private findLinkTwin(rec: StructureRecord): { sectorKey: string; uid: string } | null {
+    const id = rec.npcLink;
+    if (id === undefined || this.sectorKey === null) return null;
+    const ends = linkEnds(id);
+    if (ends === null) return null;
+    const there = ends[0].sector === this.sectorKey ? ends[1].sector : ends[0].sector;
+    const room = getTeleportBroker().room(there);
+    if (room === null) return null;
+    for (const r of room.structures()) {
+      if (r.npcLink === id && r.uid !== undefined && r.isConstructed) return { sectorKey: there, uid: r.uid };
+    }
+    return null;
   }
 
   /** v4 A — the alien gate in `rec.alienNeighbour`'s room that faces back here. */

@@ -27,7 +27,7 @@ export type BaseTier = (typeof BASE_TIERS)[number];
 
 /** Production-chain roles. A `colony` (D3) is a habitat station: the
  *  chain's consumer. */
-export const BASE_ROLES = ['mining', 'refinery', 'workshop', 'manufactory', 'assembly', 'trade', 'colony'] as const;
+export const BASE_ROLES = ['mining', 'refinery', 'workshop', 'manufactory', 'assembly', 'trade', 'colony', 'transit'] as const;
 export type BaseRole = (typeof BASE_ROLES)[number];
 
 /** Which chain stages each role runs (0 raw … 3 end products). A workshop runs
@@ -42,6 +42,8 @@ export const ROLE_STAGES: Readonly<Record<BaseRole, readonly number[]>> = Object
   // A habitat station may grow some of its own provisions; its consumer goods are always
   // imported.
   colony: [1],
+  // v4 H — a transit hub runs no chain: its teleporters are its business.
+  transit: [],
 });
 
 export interface BaseContext {
@@ -61,6 +63,9 @@ export interface BaseContext {
 export interface BaseProfile {
   tier: BaseTier;
   role: BaseRole;
+  /** v4 H — transit links this base ends (one teleporter each, tagged with
+   *  the link id; `core/bases/transitNetwork.ts`). */
+  links?: readonly string[];
   /** The NPC faction that owns it (v4 F2: `galaxyBasePlan` assigns region
    *  powers, minor factions and the Traders; a hand-built profile defaults to
    *  the Traders). */
@@ -182,6 +187,8 @@ export function baseProfileFor(ctx: BaseContext, seed: number): BaseProfile {
       assembly: heart && big ? 18 : 0,
       trade: (f.includes('station') ? 30 : 4) + (ctx.isChokepoint ? 12 : 0),
       colony: tier === 'outpost' ? 0 : 6 + 12 * c,
+      // v4 H — hubs are placed by the transit network, never rolled.
+      transit: 0,
     },
     rnd(),
   );
