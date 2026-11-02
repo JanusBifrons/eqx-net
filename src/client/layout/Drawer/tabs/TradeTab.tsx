@@ -77,7 +77,9 @@ export function TradeTab(): JSX.Element {
 
   const refresh = useCallback(async () => {
     if (!playerId) return;
-    const [v, o] = await Promise.all([fetchEconomy(playerId), fetchOffers(playerId)]);
+    // T3 — prices are regional: quote for the sector the player is in.
+    const sector = useUIStore.getState().currentSectorKey;
+    const [v, o] = await Promise.all([fetchEconomy(playerId), fetchOffers(playerId, sector)]);
     if (v) setView(v);
     if (o) setOffers(o);
     const m = getGameClient()?.mirror;

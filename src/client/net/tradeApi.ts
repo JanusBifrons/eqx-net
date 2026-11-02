@@ -20,9 +20,11 @@ export async function fetchEconomy(playerId: string): Promise<PlayerEconomyView 
   }
 }
 
-export async function fetchOffers(playerId: string): Promise<TradeOffer[] | null> {
+/** T3 — prices are regional: pass the sector the player trades from. */
+export async function fetchOffers(playerId: string, sectorKey?: string | null): Promise<TradeOffer[] | null> {
   try {
-    const res = await fetch(`/trade/offers?playerId=${encodeURIComponent(playerId)}`);
+    const sector = sectorKey ? `&sector=${encodeURIComponent(sectorKey)}` : '';
+    const res = await fetch(`/trade/offers?playerId=${encodeURIComponent(playerId)}${sector}`);
     if (!res.ok) return null;
     const parsed = TradeOffersResponseSchema.safeParse(await res.json());
     return parsed.success ? parsed.data.offers : null;

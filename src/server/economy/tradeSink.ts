@@ -6,6 +6,7 @@
  */
 import type { z } from 'zod';
 import type { AcceptOfferSchema, SendGiftSchema } from '../../shared-types/economy.js';
+import type { GoodId } from '../../shared-types/goods.js';
 import type { TradeRoom } from './TradeDirector.js';
 
 export type AcceptOfferMsg = z.infer<typeof AcceptOfferSchema>;
@@ -35,6 +36,14 @@ export interface TradeSink {
   robotTruce(playerId: string): boolean;
   /** Drone-reputation wave spacing multiplier (≥ 1). */
   waveIntervalFactor(playerId: string): number;
+  /** T4 — what an NPC Freight Dock charges (`buy`) and pays (`sell`) this
+   *  pilot per unit of `good` in `sectorKey`'s region; null when traders
+   *  refuse to deal with them. The same quote as the trade board. */
+  dockQuote(playerId: string, sectorKey: string | null, good: GoodId): { buy: number; sell: number } | null;
+  /** T4 — the pilot's remaining hourly trade volume (credits of value). */
+  volumeLeft(playerId: string): number;
+  /** T4 — a settled dock trade moves the market and counts toward volume. */
+  recordDockFill(playerId: string, good: GoodId, qty: number, side: 'buy' | 'sell', value: number): void;
   /** testMode rooms that opt into trade (showcase / E2E) join at onCreate. */
   registerRoom(sectorKey: string, room: TradeRoom): void;
   unregisterRoom(sectorKey: string, room: TradeRoom): void;

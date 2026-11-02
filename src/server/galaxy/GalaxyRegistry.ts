@@ -21,6 +21,8 @@ export interface ResolvedSectorConfig {
   droneCount: number;
   /** Per-room player cap. */
   maxClients: number;
+  /** T1 — grow the sector's NPC base (`SectorRoom.seedGalaxyBase`). */
+  galaxyBases: boolean;
 }
 
 export function resolveSectorConfig(key: string): ResolvedSectorConfig {
@@ -33,6 +35,7 @@ export function resolveSectorConfig(key: string): ResolvedSectorConfig {
     asteroidConfig: ASTEROID_CONFIGS[sector.asteroidConfigKey],
     droneCount: sector.droneCount,
     maxClients: DEFAULT_MAX_CLIENTS,
+    galaxyBases: true,
   };
 }
 

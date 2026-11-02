@@ -2580,3 +2580,17 @@ Two of them, missile lock-on and attacker labels, decided "is this an AI?" from 
 **Fix and lock.** Those schemas now require their `type` literal, like every other client message. `tests/unit/tradeClientWireParity.test.ts` calls each real sender with a mocked room and parses the captured payload with the server's schema. It failed on the old schemas.
 
 **Rule (#15).** A client → server message is a two-sided contract. Lock it at the seam: the payload the real client helper produces must parse with the server's schema. An integration test that types the payload by hand only proves the server accepts what the test author wrote.
+
+
+## 2026-11-01 — Structure flag bits set inside the wrong branch never reached most clients
+
+**Symptom (found while building break-ins).** In `SectorRoom.rebuildStructuresSlice`, the flag bits NO_AMMO (P2d), NO_FUEL (D1) and DRAW_FULL (active power) were each added right after the existing `WALL_ACTIVE` line. That line sits INSIDE `if (isShieldEmitterKind(rec.kind))`. So the bits reached clients only for pylons and gates:
+- a Reactor's "NO FUEL" never showed;
+- a turret's "NO MUNITIONS" never showed;
+- every structure's live power draw was wrong on the wire.
+
+**Why nothing caught it.** The inspector tests fed decoded state straight in. The integration tests read the server's records (`rec.noAmmo`, `rec.fueled`), never what a client receives.
+
+**Fix and lock.** The bits now set for every kind, and `tests/integration/sectorRoom/structureFlagsWire.test.ts` reads them from a CLIENT's room state. It failed on main.
+
+**Rule.** When a new wire bit is added next to an existing one, check which branch you're in. A flag's test must read it where the client reads it (room state or snapshot), not from the server object it was computed from.

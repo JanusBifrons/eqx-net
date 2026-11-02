@@ -40,6 +40,7 @@ import {
   type TradeOffer,
 } from '../../shared-types/economy.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
+import { regionalPriceFactor } from './regionalPrices.js';
 import { cloneHold, emptyHold, isHoldEmpty } from '../../core/cargo/hold.js';
 import { applyFill, driftMarket, quoteBuy, quotePacked, quoteSell } from '../../core/economy/market.js';
 import { packedHullProducts, packedStructureProducts, parseProduct, productName } from '../../shared-types/blueprints.js';
@@ -314,27 +315,48 @@ export class TradeDirector implements TradeSink {
   }
 
   /** The price of one unit of `offer` at `traderRep`. */
-  private offerPrice(offer: { kind: 'sell' | 'buy'; good: GoodId | null; product?: string }, traderRep: number): number {
+  private offerPrice(offer: { kind: 'sell' | 'buy'; good: GoodId | null; product?: string }, traderRep: number, sectorKey?: string | null): number {
     if (offer.product !== undefined) return quotePacked(packedBillOf(offer.product), traderRep);
-    return this.quote(offer.kind, offer.good!, traderRep);
+    return this.quote(offer.kind, offer.good!, traderRep, sectorKey);
   }
 
-  /** The board as `playerId` sees it (prices at their trader reputation). */
-  offersFor(playerId: string): TradeOffer[] {
+  /** The board as `playerId` sees it (prices at their trader reputation, in
+   *  the region of `sectorKey` — T3 — when the client says where it is). */
+  offersFor(playerId: string, sectorKey?: string | null): TradeOffer[] {
     const rep = this.store.rep(playerId, 'traders');
     return this.offers.map((o) => ({
       offerId: o.offerId,
       kind: o.kind,
       good: o.good,
       ...(o.product !== undefined ? { product: o.product } : {}),
-      unitPrice: this.offerPrice(o, rep),
+      unitPrice: this.offerPrice(o, rep, sectorKey),
       maxQty: o.maxQty,
       expiresAtMs: o.expiresAtMs,
     }));
   }
 
-  private quote(kind: 'sell' | 'buy', good: GoodId, traderRep: number): number {
-    return kind === 'sell' ? quoteSell(this.store.market, good, traderRep) : quoteBuy(this.store.market, good, traderRep);
+  /** T3 — prices carry the region's supply factor (`regionalPrices.ts`). */
+  private quote(kind: 'sell' | 'buy', good: GoodId, traderRep: number, sectorKey?: string | null): number {
+    const f = regionalPriceFactor(sectorKey, good);
+    return kind === 'sell' ? quoteSell(this.store.market, good, traderRep, f) : quoteBuy(this.store.market, good, traderRep, f);
+  }
+
+  // ── T4: an NPC Freight Dock trades with a visiting pilot ─────────────────
+
+  dockQuote(playerId: string, sectorKey: string | null, good: GoodId): { buy: number; sell: number } | null {
+    const rep = this.store.rep(playerId, 'traders');
+    if (tradersRefuse(rep)) return null;
+    return { buy: this.quote('buy', good, rep, sectorKey), sell: this.quote('sell', good, rep, sectorKey) };
+  }
+
+  volumeLeft(playerId: string): number {
+    return this.store.volumeLeft(playerId);
+  }
+
+  recordDockFill(playerId: string, good: GoodId, qty: number, side: 'buy' | 'sell', value: number): void {
+    // The pilot sold ⇒ supply up (price falls); bought ⇒ down. Same as a deal.
+    applyFill(this.store.market, good, qty, side);
+    this.store.recordVolume(playerId, Math.floor(value));
   }
 
   // ── Requests (TradeSink) ─────────────────────────────────────────────────
@@ -351,7 +373,7 @@ export class TradeDirector implements TradeSink {
       return reject(`A base can run at most ${MAX_DEALS_PER_NETWORK} deals.`);
     }
     if (offer.product !== undefined && msg.recurrenceMin !== null) return reject('Packed structures are one-off deals.');
-    const unitPrice = this.offerPrice(offer, traderRep);
+    const unitPrice = this.offerPrice(offer, traderRep, sectorKey);
     if (msg.qty * unitPrice > this.store.volumeLeft(playerId)) return reject('Hourly trade limit reached.');
     const recurring = msg.recurrenceMin !== null;
     const deal: TradeDeal = {
@@ -522,7 +544,7 @@ export class TradeDirector implements TradeSink {
     const traderRep = this.store.rep(deal.ownerId, 'traders');
     const quoteNow = deal.kind === 'gift' ? 0
       : deal.product !== undefined ? quotePacked(packedBillOf(deal.product), traderRep)
-      : !deal.good ? 0 : this.quote(deal.kind, deal.good, traderRep);
+      : !deal.good ? 0 : this.quote(deal.kind, deal.good, traderRep, deal.sectorKey);
     const plan = planVisit(
       deal,
       {

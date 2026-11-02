@@ -16,6 +16,7 @@ import type { ArrivalMode } from '../settings/settingsStorage.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import type { LabState } from '../../shared-types/messages/labMessages.js';
+import type { CargoState } from '../../shared-types/messages/cargoMessages.js';
 import type { BpMarketState } from '../../shared-types/blueprintMarket.js';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import type { SectorStructurePresence } from '../../shared-types/galaxyPresence.js';
@@ -273,6 +274,8 @@ export interface UIStore {
   /** Economy v2 W3 — the last `lab_state` reply (the Research Lab panel is
    *  rebuilt from it; discrete, written only on a reply). */
   labState: LabState | null;
+  /** C1 — the last `cargo_state` reply (the cargo panel is rebuilt from it). */
+  cargoState: CargoState | null;
   /** Economy v2 W6 — the last `bp_market_state` reply (the Trade tab's
    *  Blueprints section is rebuilt from it). */
   bpMarket: BpMarketState | null;
@@ -475,6 +478,7 @@ export interface UIStore {
   setCargo: (cargo: CargoView | null, capacity: number) => void;
   setWallet: (credits: number | null) => void;
   setLabState: (s: LabState | null) => void;
+  setCargoState: (s: CargoState | null) => void;
   setBpMarket: (s: BpMarketState | null) => void;
   setFittedBlueprints: (ids: readonly string[]) => void;
   pushLootFeed: (text: string) => number;

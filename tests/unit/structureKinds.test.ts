@@ -49,6 +49,8 @@ describe('structureKinds catalogue', () => {
       'battery_bank',
       'storage_vault',
       'shipyard', // economy v2 W5b — appended at the tail
+      'habitat_module', // D3 city modules — appended at the tail
+      'tower_module',
     ]);
   });
 

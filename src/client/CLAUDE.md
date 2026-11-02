@@ -283,6 +283,12 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 - **Never add a top-level `src/client/trade/` dir:** it collides with the `/trade` Vite proxy. Trade client code lives in `net/trade*.ts`. The `clientDirProxyCollision.test.ts` guard locks this.
 - Locks: `tradeView.test.ts`, `TradeToasts.test.tsx`, `tests/e2e/trade-tab.spec.ts` (feature tier).
 
+## Cargo panel (plan soft-leaping-truffle v3, C1)
+
+- `components/CargoPanel.tsx` (opened by `CargoAction` from the inspector, for any BUILT storage structure) is rebuilt ONLY from `cargo_state` replies (#16). It polls while mounted. The reply carries the structure's hold AND the ship's hold, so the panes never disagree.
+- Rows come from the pure `components/cargoRows.ts`: names, never ids (uids ride inside the requests).
+- Every client → server message sender must pass its server schema: add a case to `tests/unit/tradeClientWireParity.test.ts` (strict schemas need the `type` the client's `send()` adds; LESSONS 2026-11-01).
+
 ## Contracts tab (Living World P4c, plan peppy-jumping-pinwheel)
 
 - `layout/Drawer/tabs/ContractsTab.tsx` rebuilds ONLY from `GET /galaxy/contracts` (#16), polled only while `drawerTab === 'contracts' && isDrawerOpen`. It lives under `/galaxy` on purpose, so no new Vite proxy path is needed (see the `/trade` collision rule above).

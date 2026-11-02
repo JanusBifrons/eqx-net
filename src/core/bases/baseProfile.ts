@@ -9,7 +9,9 @@
  *   refinery, workshop (a short chain ending in a product it sells),
  *   manufactory, assembly works (rare, region hearts only), trade hub.
  *   Sector features drive it: asteroids, minerals and nebulae mean mining;
- *   stations and chokepoints mean trade; hearts mean manufacturing.
+ *   stations and chokepoints mean trade; hearts mean manufacturing. Colonies
+ *   (cities, D3) settle in the wealthier middle and core of a region, never as
+ *   a small outpost.
  * - **Wealth, level cap, fence** follow the tier and how central the sector is.
  *
  * The context comes from the galaxy graph (`contextForSector`) or is built by
@@ -21,8 +23,8 @@ import { GALAXY_SECTORS, getSector, isEntrySector, type SectorFeature } from '..
 export const BASE_TIERS = ['outpost', 'settlement', 'stronghold', 'citadel'] as const;
 export type BaseTier = (typeof BASE_TIERS)[number];
 
-/** Production-chain roles (the colony role arrives with cities, D3). */
-export const BASE_ROLES = ['mining', 'refinery', 'workshop', 'manufactory', 'assembly', 'trade'] as const;
+/** Production-chain roles. A colony (D3) is a city: the chain's consumer. */
+export const BASE_ROLES = ['mining', 'refinery', 'workshop', 'manufactory', 'assembly', 'trade', 'colony'] as const;
 export type BaseRole = (typeof BASE_ROLES)[number];
 
 /** Which chain stages each role runs (0 raw … 3 end products). A workshop runs
@@ -34,6 +36,9 @@ export const ROLE_STAGES: Readonly<Record<BaseRole, readonly number[]>> = Object
   manufactory: [2],
   assembly: [2, 3],
   trade: [],
+  // A city may grow some of its own provisions; its consumer goods are always
+  // imported.
+  colony: [1],
 });
 
 export interface BaseContext {
@@ -188,6 +193,7 @@ export function baseProfileFor(ctx: BaseContext, seed: number): BaseProfile {
       manufactory: 6 + 14 * c,
       assembly: heart && big ? 18 : 0,
       trade: (f.includes('station') ? 30 : 4) + (ctx.isChokepoint ? 12 : 0),
+      colony: tier === 'outpost' ? 0 : 6 + 12 * c,
     },
     rnd(),
   );

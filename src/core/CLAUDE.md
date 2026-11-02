@@ -369,4 +369,5 @@ reintroduces the spiral the 500-target cannot afford. Full story:
   - then `growBase` (placements, edges, recipes, levels).
 - **Every placement and edge is checked with the real rules AS the base is built** (`placementRejection`, `canConnect`); a slot that fails is skipped. Never bypass them; `growBase.test.ts` re-checks independently.
 - **Deterministic per seed.** NPC bases regenerate from their seed, so bump `BASE_GROWTH_VERSION` on any output change.
+- **Roles include `colony` (D3, cities):** housing modules that consume provisions and consumer goods. A colony is never an outpost.
 - Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).

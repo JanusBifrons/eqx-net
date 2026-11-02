@@ -34,6 +34,8 @@ import FactoryIcon from '@mui/icons-material/Factory';
 import SettingsIcon from '@mui/icons-material/Settings';
 import ScienceIcon from '@mui/icons-material/Science';
 import SailingIcon from '@mui/icons-material/Sailing';
+import ApartmentIcon from '@mui/icons-material/Apartment';
+import HomeWorkIcon from '@mui/icons-material/HomeWork';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
 import { getStructureKind, type StructureKindId } from '@shared-types/structureKinds';
@@ -376,6 +378,8 @@ export const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
   battery_bank: <BatteryChargingFullIcon />,
   storage_vault: <InventoryIcon />,
   shipyard: <SailingIcon />, // economy v2 W5b
+  habitat_module: <HomeWorkIcon />, // D3 cities
+  tower_module: <ApartmentIcon />,
 };
 
 // ── Hoisted static sx / props (no per-render allocation) ───────────────────

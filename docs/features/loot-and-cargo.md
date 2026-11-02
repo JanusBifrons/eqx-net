@@ -162,7 +162,7 @@ Plan soft-leaping-truffle v3, phase C1. Auto-deposit banks everything you carry;
 
 **A withdrawal sticks.** After a manual move, auto-deposit stays off for that pilot until they fly out of deposit range of their storage (`SectorRoom.manualCargo`). Otherwise anything you took from your own storage would be banked straight back 2 s later.
 
-**Wire (#16).** `cargo_query` / `cargo_move` → `cargo_state` (`shared-types/messages/cargoMessages.ts`). The structure pane is rebuilt from `cargo_state` only; the ship pane is the own-ship snapshot cargo slice. The inspector's hold readout (`entity_stats`) shows to anyone the cargo would open for. Each move is audited as `cargo_moved`.
+**Wire (#16).** `cargo_query` / `cargo_move` → `cargo_state` (`shared-types/messages/cargoMessages.ts`). `cargo_state` carries BOTH the structure's hold and the pilot's ship hold, so the two panes always agree; the panel is rebuilt from it only. The inspector's hold readout (`entity_stats`) shows to anyone the cargo would open for. Each move is audited as `cargo_moved`.
 
 **Lock:** `tests/integration/sectorRoom/cargoAccess.test.ts`:
 - take and put move items;
@@ -172,7 +172,63 @@ Plan soft-leaping-truffle v3, phase C1. Auto-deposit banks everything you carry;
 
 Unit locks: `hold.test.ts` (`extractRequested`) and `StorageService.test.ts` (cargo access).
 
-**Next:** C1b, the cargo panel UI. C1c, holds on every structure kind and NPC ship holds rolled from a seed.
+**The panel (C1b).** Select any BUILT storage structure; the inspector shows an **Open cargo** button (`cargo-open-toggle`). It opens `CargoPanel`, which asks every second while open:
+- **Here:** the structure's contents, each row with Take 1 / Take all.
+- **Aboard:** your hold, each row with Put 1 / Put all.
+- **Locked or far:** it shows why.
+
+Rows come from the pure `cargoRows` (goods by name, "Smelter (packed)", "Smelter blueprint (3 runs)"; never ids).
+
+Locks:
+- `cargoRows.test.ts`, `CargoPanel.test.tsx`, `EntityStatsPanel.test.tsx`;
+- `tests/unit/tradeClientWireParity.test.ts`: the real senders' payloads parse with the server schemas;
+- the feature-tier E2E `tests/e2e/cargo-panel.spec.ts`: place a Capital in `trade-test`, open it, take 1 alloy, put it back.
+
+**Next (C1c):** holds on every structure kind (with "is a deposit target" separate), and NPC ship holds rolled from a seed.
+
+## Part 4 (T4): trade at an NPC Freight Dock
+
+Every generated NPC base has a Freight Dock, and its gates open for anyone not hostile. Fly in and open the dock (the same **Open cargo** button). If you aren't hostile to its side, it opens as a **market**, not free access:
+- **For sale:** the base's stock across its whole storage network. **Buy** moves goods aboard and the wallet pays.
+- **Aboard:** your hold. **Sell** moves goods into the dock and the wallet is paid.
+- **Prices:** the trade board's, for you, here. That means the regional factor (T3) and your trader standing: the dock charges more than it pays (the spread), and traders who refuse to deal with you keep it closed.
+- **Clamps:** each trade is clamped to the stock, your cargo space, your credits and your hourly trade volume.
+- **Atomic, and part of the economy.** Each good is ONE atomic group: the ship row, the storage and the wallet op. Every fill moves the galaxy market and counts toward volume, exactly like a deal.
+- **Code:** `SectorRoom.cargoAccess` (market mode) → `dockMarket`; `StorageService.marketBuy` / `marketSell`; the trade sink's `dockQuote` / `volumeLeft` / `recordDockFill`. Audit: `dock_trade`.
+- **Your own Freight Dock (T4b):** the cargo panel adds **Standing orders**: "buy up to N" or "sell above N" per good. NPC convoys fill them at the board price; see [production-chains.md](../architecture/production-chains.md#standing-orders-at-a-players-freight-dock-t4b).
+- **Locks:** `tests/integration/sectorRoom/dockMarket.test.ts` (buy and sell at the board price; wallet, hold and base stock all move), `StorageService.test.ts` (the wallet op rides the same group), `CargoPanel.test.tsx` (market mode: priced Buy/Sell, goods only).
+
+## Part 5 (C2): break-ins
+
+Cargo that doesn't open for you (another player's, or an NPC base's when the market is closed to you) can be broken into. The cargo panel's **Break in · Ns** button starts it.
+- **Duration.** `breakInDurationMs(holdCapacity, level)` in `shared-types/breakIn.ts`: 10 s for a small level-1 store, longer for bigger and higher-level ones, at most 45 s.
+- **A hostile act from the first second.** It goes in the `HostileActLedger`:
+  - the owner's turrets engage you. **Player turrets now target pilots hostile to their owner**; this path is skipped while the ledger is empty, so it is byte-identical otherwise;
+  - an NPC side's ships within `ON_SIGHT_ENGAGE_RANGE` turn on you (`markHostile` + `bot_aggro`);
+  - a player owner is alerted: a `break_in_notice` toast online, a push offline.
+- **What interrupts it:** leaving range, either side dying, or taking ANY hit. A defended base usually stops a break-in this way.
+- **Success** opens the cargo to you for `BREAK_IN_ACCESS_MS` (60 s), with normal take/put.
+- **Truth (#16).**
+  - Your progress rides `cargo_state.breakIn`, which the panel polls.
+  - Everyone else sees the structure's **BREACH** room-state flag (`STRUCTURE_FLAG_BREACH`); the inspector shows "BREACH".
+  - `break_in_notice` toasts are accelerators.
+- **Code:** `server/rooms/BreakInSubsystem.ts` (channels + grants over injected hooks, ticked with the 10 Hz structure tick), `SectorRoom.onBreakInStart` / `onBreakInEnd`.
+- **Locks:**
+  - `BreakInSubsystem.test.ts`: success, grant window, interruptions;
+  - `tests/integration/sectorRoom/breakIn.test.ts`: undefended, the alarm and BREACH, then the cargo opens and goods are taken; defended, the owner's turret engages the thief and the hit interrupts it;
+  - `CargoPanel.test.tsx` and wire parity.
+
+## Part 6 (C3): ship cargo
+
+Ships have cargo you can open too. Select one and use **Open cargo**:
+- **Your own parked hulls** open to you, so you can move cargo between your ships.
+- **Another player's ship** (active or a parked hull) is locked. Breaking in works like a structure break-in (Part 5): it's a hostile act, the owner gets an alarm (a push if they're offline), and success opens the hold for 60 s. The range check uses the target's LIVE pose, so a ship that flies off ends the break-in.
+- **An NPC ship's loot is its hold.** Its loot table is rolled ONCE per spawn (seeded from its id, `npc-hold` stream), on top of anything it already carries (a nexus hoard, a harvester's scoop, a hauler's cargo). What you take from it is gone: its death spills only what's left, never a second roll. Breaking into one turns its side's nearby ships on you.
+- **Targets on the wire.** `cargo_query` / `cargo_move` / `break_in` take exactly one of `entityId` (a structure or NPC ship) or `ship` (a playerId for an active ship, or a shipInstanceId for a parked hull). `cargo_state.targetShip` echoes the ship target.
+- **Liveness (#17).** A player target is an ACTIVE ship (by playerId) or a LINGERING hull (by shipInstanceId); DEAD ships aren't targets. NPC targets are live swarm drones.
+- **Holds.** Player hulls and trade/convoy haulers keep persisted holds. NPC loot holds live in memory only and are dropped when the NPC is evicted.
+- **Code:** `SectorRoom.shipTarget` / `shipCargo` / `npcHold` / `onShipBreakInStart`.
+- **Locks:** `tests/integration/sectorRoom/shipCargo.test.ts` (a PvP break-in alarms the owner and moves goods between both holds; an NPC ship robbed clean drops no pod) and the wire-parity ship cases.
 
 ## Tests
 

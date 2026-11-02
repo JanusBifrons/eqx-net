@@ -72,6 +72,9 @@ export const StructureKindIdSchema = z.enum([
   'storage_vault',
   // Economy v2 W5b (plan peppy-jumping-pinwheel) — APPEND ONLY.
   'shipyard',
+  // D3 city modules (plan soft-leaping-truffle v3) — APPEND ONLY.
+  'habitat_module',
+  'tower_module',
 ]);
 export type StructureKindId = z.infer<typeof StructureKindIdSchema>;
 
@@ -836,6 +839,44 @@ export const SHIPYARD: StructureKind = {
   color: 0x7ec8ff,
 };
 
+// ── City modules (plan soft-leaping-truffle v3, D3) ─────────────────────────
+// Cities are the production chain's main consumers: their people use up
+// provisions and consumer goods from base storage and pay their owner taxes.
+
+/** Housing: uses provisions and a little consumer goods; pays taxes. */
+export const HABITAT_MODULE: StructureKind = {
+  id: 'habitat_module',
+  displayName: 'Habitat Module',
+  description: 'Housing. Its residents use provisions and consumer goods from base storage and pay you taxes. A leaf node.',
+  radius: 217, // bounding circle of the 360×240 footprint
+  footprint: { w: 360, h: 240 },
+  maxHealth: 1500,
+  maxConnections: 1,
+  isHub: false,
+  powerOutput: 0,
+  powerConsumption: 20,
+  storageCapacity: 0,
+  constructionCost: 600,
+  color: 0xf2c46b,
+};
+
+/** A residential tower: wealthier residents, more consumer goods, more taxes. */
+export const TOWER_MODULE: StructureKind = {
+  id: 'tower_module',
+  displayName: 'Tower Module',
+  description: 'A residential tower. Wealthier residents use more consumer goods from base storage and pay more taxes. A leaf node.',
+  radius: 170, // bounding circle of the 240×240 footprint
+  footprint: { w: 240, h: 240 },
+  maxHealth: 2200,
+  maxConnections: 1,
+  isHub: false,
+  powerOutput: 0,
+  powerConsumption: 30,
+  storageCapacity: 0,
+  constructionCost: 1200,
+  color: 0xe8a3ff,
+};
+
 export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   CAPITAL,
   CONNECTOR,
@@ -872,6 +913,9 @@ export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   STORAGE_VAULT,
   // Economy v2 W5b — APPENDED. Never reorder.
   SHIPYARD,
+  // D3 city modules — APPENDED. Never reorder.
+  HABITAT_MODULE,
+  TOWER_MODULE,
 ]);
 
 /** Id-keyed lookup, derived from the canonical list (the list is the source of
@@ -977,6 +1021,8 @@ export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
   battery_bank: 4,
   storage_vault: 4,
   shipyard: 4,
+  habitat_module: 4,
+  tower_module: 4,
 };
 
 /**

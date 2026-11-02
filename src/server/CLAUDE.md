@@ -181,6 +181,7 @@ Update this section when a threshold is set.
   - **The one switch** is `StructureGridSubsystem.setActive(rec, active)`, which adjusts the component's net power in O(1) via `Grid.adjustDraw`. Never write `rec.drawFull` directly, or the component's power goes stale until the next rebuild.
   - **Callers:** drills and gas (StructureGridSubsystem), turrets (target or not), processors (`ProductionSubsystem` dep, running or not), Research Labs (`ResearchLabSubsystem` dep, job advancing or not). A new power consumer that "works" must call it too, or it draws idle forever.
   - **Wire:** `STRUCTURE_FLAG_DRAW_FULL` (64) in the room-state flags byte.
+- **City taxes (D3):** a recipe output `{ credits: n }` takes no storage space. When the cycle ends, `payCredits` pays it to a PLAYER owner's wallet (`city_taxes`); an NPC owner gets nothing. Never put credits in a hold.
 - Locks: `ProductionSubsystem.test.ts` and `tests/integration/sectorRoom/production.test.ts`. Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).
 
 ## Cargo access (plan soft-leaping-truffle v3, C1)
@@ -192,6 +193,20 @@ Update this section when a threshold is set.
 - **Moves:** `StorageService.cargoTake` / `cargoPut`, each ONE hold group with the ship row. Never move items between a ship and a structure any other way.
 - **A manual move switches auto-deposit off for that pilot** (`manualCargo`) until they leave deposit range. Without it, a withdrawal from your own storage is banked straight back.
 - **`entity_stats` holds** show to anyone the cargo opens for (`ownerGateStats`).
+- **Market mode (T4):** an NPC `freight_dock` opens as a market for a non-hostile pilot (`dockMarket`): Take buys, Put sells.
+  - **Prices:** the trade sink's `dockQuote`, the same quote as the board.
+  - **Clamped** to stock, space, wallet and volume.
+  - **Atomic:** one group per good, with the wallet op passed as `extraOps` to `StorageService.marketBuy` / `marketSell`.
+  - Never let a market fill skip `recordDockFill`: the galaxy market and volume must see it.
+- **Break-ins (C2):** `break_in` / `break_in_cancel` → `BreakInSubsystem` (ticked in `structureTurretTick`).
+  - **Starting is a hostile act.** `onBreakInStart` records it in `hostileActs` and alarms the owner, or aggros the NPC side's nearby ships.
+  - **Hits cancel it.** `applyDamage` calls `onActorDamaged` for any hit.
+  - **A grant opens `cargoAccess`** for 60 s.
+  - **Player turrets** also engage pilots hostile to their owner (`nearestHostilePilot`). The scan only runs while `hostileActs.size() > 0`.
+- **Ship cargo (C3):** cargo messages target an `entityId` OR a `ship` (playerId of an ACTIVE ship / shipInstanceId of a LINGERING hull). `npcHold` rolls an NPC's loot table ONCE per spawn (seeded, memory-only, merged onto any stash it carries) and `dropKillLoot` spills that same hold, so stolen loot never drops twice. Break-ins tick BEFORE `structureTurretTick`'s no-structures early return (a sector with no structures can still have a ship break-in).
+- **Standing orders (T4b):** `set_freight_orders` (owner, built `freight_dock`) → `rec.freightOrders` (persisted). The dock joins convoy planning as a `player` base.
+  - **Who trades with whom:** the ConvoyDirector pairs it with NPC bases only.
+  - **When money moves:** it prices and clamps the order at planning. The wallet op lands in the SAME group as the goods: a credit at pickup via `extraOpsFor(taken)`, a debit at delivery with the release.
 - Lock: `tests/integration/sectorRoom/cargoAccess.test.ts`. Story: [docs/features/loot-and-cargo.md](../../docs/features/loot-and-cargo.md) Part 3.
 
 ## NPC bases from the generator (plan soft-leaping-truffle v3, D2)
@@ -201,6 +216,22 @@ Update this section when a threshold is set.
 - **Built and set up:** structures spawn built at their level. Processors get recipes and BOUND originals (`rec.blueprint.bound`, which `unloadBlueprint` refuses). Gates open for anyone not hostile.
 - **Stocked:** storage starts with an hour of fuel, munitions, and 20 cycles of inputs.
 - **Not persisted:** NPC structures aren't saved (B2); a restart regenerates them from the seed.
+- **Galaxy sectors (T1):** `galaxyBases` (set by `resolveSectorConfig`) → `seedGalaxyBase`, run AFTER `hydrateFromSnapshot`.
+  - **Order matters.** Seeding before the restore would make saved player structures fail their overlap check and be lost. Keep it after.
+  - **Site.** The site comes from `chooseBaseSite`: player structures and parked hulls are hard blockers. Asteroids under the footprint are evicted quietly.
+  - **Spawns** are nudged out of every structure box (`nearestClearPoint` in `onJoin`).
+  - **Kill switch:** `EQX_DISABLE_NPC_BASES=1`. Lock: `galaxyBases.test.ts`.
+
+## Convoys between NPC bases (plan soft-leaping-truffle v3, T2)
+
+- **`ConvoyDirector` (`economy/`)** is process-global (built in `index.ts` from the galaxy rooms only) on a 1 s unref'd loop; never the 60 Hz tick. Planning is the pure `core/economy/convoys.ts`.
+- **Room surface:** `npcBaseTrade()` (stock, rates, footprint box per NPC base), `clearPointNear`, plus the existing `tradeTransfer` / `spawnLivingWorldBot` / `setBotMoveTarget`.
+- **Every value move** is ONE `tradeTransfer` (take into the hauler's hold at pickup, release into the importer at delivery). Convoy haulers use `CONVOY_HAULER_ID_PREFIX` (`hauler-convoy-`), so a kill spills the hold.
+- **Haulers dock OUTSIDE a base's footprint** (fences block ships; gates open only for player ships) and enter and leave at the edge on the base's own side.
+- **Not persisted.** Crash leftovers (`hauler-convoy-*` holds) are discarded on `start()`. Kill switch `EQX_DISABLE_CONVOYS`; diagnostics `GET /dev/convoys`.
+- **Regional prices (T3).** The planning pass also publishes per-region price factors (`economy/regionalPrices.ts`).
+  - Every trade quote goes through `TradeDirector.quote(kind, good, rep, sectorKey)`, so the board, the accept and the re-quote agree. Never quote around it.
+  - The offers route takes `?sector=`.
 
 ## NPC ownership (plan soft-leaping-truffle v3, B2)
 

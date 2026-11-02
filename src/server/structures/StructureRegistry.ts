@@ -141,6 +141,8 @@ export interface StructureRecord {
   prodYield?: number;
   /** Cycles completed (seeds the deterministic yield roll). */
   prodCycles?: number;
+  /** T4b — standing import/export orders on a player's Freight Dock. */
+  freightOrders?: Array<{ good: GoodId; mode: 'import' | 'export'; level: number }>;
   /** Active power — drawing full consumption this pulse (else the idle trickle). */
   drawFull?: boolean;
   /** D1 — a Reactor has fuel burning (its output counts). Rides room state as

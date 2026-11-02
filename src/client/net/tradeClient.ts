@@ -7,6 +7,7 @@ import { getGameClient } from './clientSingleton.js';
 import type { EconAllegiance } from '../../shared-types/economy.js';
 import type { GoodId } from '../../shared-types/goods.js';
 import type { LabStart } from '../../shared-types/messages/labMessages.js';
+import type { CargoItems, FreightOrder } from '../../shared-types/messages/cargoMessages.js';
 
 function send(type: string, payload: Record<string, unknown>): boolean {
   const room = getGameClient()?.getRoom();
@@ -33,6 +34,38 @@ export function sendCancelDeal(dealId: string): boolean {
 /** P5 — install a stored blueprint onto my active ship (verdict: `blueprint_result`). */
 export function sendInstallBlueprint(networkEntityId: number, blueprintId: string): boolean {
   return send('install_blueprint', { networkEntityId, blueprintId });
+}
+
+/** C1 — open a structure's cargo / move items (each answered by `cargo_state`). */
+/** C3 — a cargo target: a swarm entityId (structure / NPC ship) or a ship
+ *  (another player's ship by playerId, or a parked hull by shipInstanceId).
+ *  A bare number means an entityId. */
+export type CargoTarget = { entityId: number } | { ship: string };
+function targetRef(t: CargoTarget | number): Record<string, unknown> {
+  if (typeof t === 'number') return { entityId: t };
+  return 'ship' in t ? { ship: t.ship } : { entityId: t.entityId };
+}
+
+export function sendCargoQuery(target: CargoTarget | number): boolean {
+  return send('cargo_query', targetRef(target));
+}
+
+export function sendCargoMove(target: CargoTarget | number, dir: 'take' | 'put', items: CargoItems): boolean {
+  return send('cargo_move', { ...targetRef(target), dir, items });
+}
+
+/** C2 — break into locked cargo (a hostile act) / stop. */
+export function sendBreakIn(target: CargoTarget | number): boolean {
+  return send('break_in', targetRef(target));
+}
+
+export function sendBreakInCancel(): boolean {
+  return send('break_in_cancel', {});
+}
+
+/** T4b — replace my Freight Dock's standing orders (re-read via `cargo_state`). */
+export function sendSetFreightOrders(entityId: number, orders: FreightOrder[]): boolean {
+  return send('set_freight_orders', { entityId, orders });
 }
 
 /** Economy v2 W6 — the blueprint market (each answered by `bp_market_state`). */

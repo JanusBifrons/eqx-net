@@ -84,6 +84,87 @@ User ruling (2026-11-01): "not everything should drain full power all of the tim
 - **The generator sizes for expected use.** `growBase` prices power at `expectedDraw(kind) = cons × (u + (1 − u) × IDLE_DRAW_FRAC)`, with utilisation `u` from `EXPECTED_ACTIVE` (processors 0.6, drills 0.8, turrets 0.15), and adds two extra batteries to fenced bases. So NPC bases don't build power for every machine at 100 % at once (`BASE_GROWTH_VERSION` 3).
 - **Locks:** `StructureGridSubsystem.test.ts` (brown-out alternation, battery recovery, overdrawn turret), `structureMining.test.ts` and `structureTurret.test.ts` (integration: alternating drill, a drilling miner overdraws a turret), `researchLab.test.ts` (a lab draws full only while its job runs), `growBase.test.ts` (power ≥ 0 at expected draw).
 
+## NPC bases in the galaxy (T1)
+
+Every galaxy sector grows its own NPC base when its room is created (`SectorRoom.seedGalaxyBase`, enabled for every galaxy room by `resolveSectorConfig`):
+- **Profile and growth.** `contextForSector` → `baseProfileFor` (tier, role, wealth, level cap, fence) → `growBase`. The seed is `hashString(sectorKey)`, so a sector's base is stable across restarts.
+- **After the restore.** Seeding runs AFTER the sector snapshot restore, so saved player structures and parked hulls are already in place and always win the space.
+- **Site.** The pure `chooseBaseSite` (`src/core/bases/baseSite.ts`) scans the sector on a 250 u grid for a Capital position where the whole base, plus a 250 u margin, fits inside the sector and touches no player structure or parked hull. It prefers the fewest asteroids, then the site farthest from the origin (where players spawn). Asteroids under the chosen footprint are cleared quietly (no destroy event).
+- **Spawns.** A fresh spawn that would land inside any structure's box is moved to the nearest clear point (`nearestClearPoint`, 120 u clearance). A citadel (≈6,000 × 6,400 u) can't avoid the origin in a 10,000 u sector, so this matters.
+- **Not persisted.** A restart regrows the base. **Kill switch:** `EQX_DISABLE_NPC_BASES=1`.
+
+Today's galaxy (seeded): 13 outposts, 6 settlements, a stronghold (andromeda-rim) and a citadel (bloomgate), all trader bases.
+
+Locks:
+- `baseSite.test.ts`: site rules, and every real sector's base fits its sector;
+- `tests/integration/sectorRoom/galaxyBases.test.ts`: the bloomgate citadel is placed in full in a real room with its asteroid field; a spawn on its Capital is nudged clear (fails without the nudge); the kill switch.
+
+## Convoys between NPC bases (T2)
+
+**Why no off-screen economy.** Every galaxy room is created at boot and simulates when empty, so every NPC base already runs its real production pulse. The plan's `advanceBaseEconomy` (with its 2 % equivalence test) isn't needed. Trade between bases is just convoys.
+
+**Planning** (`src/core/economy/convoys.ts`, pure; every 15 s):
+- **Rates.** Each room reports its NPC bases (`SectorRoom.npcBaseTrade`): storage stock, free space, footprint box, and per-minute use/make rates read from the base's own structures (processor recipes, Reactor fuel, ammo turrets, drills, gas collectors).
+- **Need and spare.** A base **needs** an input below half of `TARGET_MINUTES` (10) of use, and is refilled to the target. It **offers** anything beyond its own 10 minutes, when that is at least `MIN_LOAD_WEIGHT` (20).
+- **Matching.** `matchConvoys` serves the most-starved importer first, from the nearest exporter by galaxy hops, capped at a hauler-load (400 weight). Goods promised to convoys still on their way to pick up are not spare.
+
+**Flying** (`src/server/economy/ConvoyDirector.ts`, process-global, 1 s loop). One convoy is one `trader-hauler`; its id prefix `hauler-convoy-` starts with `hauler-`, so every hauler rule applies.
+- **Pickup.** It enters at the sector edge on the base's own side, stepped back until clear of the footprint (haulers cruise at about 40 u/s, so a far-side entry made each leg minutes long). It docks just OUTSIDE the base's box, since a fence blocks every ship and only player ships open gates, then loads in one atomic `tradeTransfer` take.
+- **Outbound / transit.** It leaves at the same edge. Transit is abstract, `hopMs` (20 s) per galaxy hop; a same-sector convoy skips straight to delivery.
+- **Delivery.** It enters the importer's sector the same way, docks, and unloads in one atomic `tradeTransfer` release; overflow drops as a pod.
+- **Raids.** A hauler destroyed anywhere spills its hold (existing hauler rule), and the convoy ends.
+
+**Limits.** At most 12 convoys in flight, at most 4 convoy haulers per sector, and the room's free-slot check applies. Convoys aren't persisted (neither are NPC bases); `start()` discards any convoy hold a crash left behind.
+
+**Kill switch:** `EQX_DISABLE_CONVOYS=1` (also off with `EQX_DISABLE_NPC_BASES`). **Diagnostics:** `GET /dev/convoys` (phase, hauler pose, target).
+
+**Measured live** (21 seeded sectors, first 3 minutes after boot): 9 convoys launched, 7 loaded and 4 delivered across sectors.
+
+Locks:
+- `convoys.test.ts` (needs, spare, matching);
+- `ConvoyDirector.test.ts` (fake rooms): same-sector and cross-sector delivery with goods conserved and no hold left, a raid ends the convoy, crash holds discarded, entry outside the footprint, no double promise (fails without the fix);
+- `tests/integration/sectorRoom/convoys.test.ts`: a real seeded base reports itself, loads a convoy hold, and a killed convoy hauler spills it.
+
+## Regional prices (T3)
+
+Prices depend on where you trade:
+- **The factor** (`src/core/economy/regionalPrices.ts`, pure). For each galaxy region and good, the factor is `clamp(((stock + 50) / (target + 50)) ^ -0.35, 0.75, 1.5)`. `stock` is the region's NPC base stock; `target` is its 10 minutes of use (the convoy rates).
+- **What moves it.** A shortage (a refinery razed, convoys raided) makes a good dearer, and a producing region's glut makes it cheaper. Moving goods from a cheap region to a dear one pays.
+- **Publishing.** The ConvoyDirector recomputes the factors on its planning pass (~15 s) and publishes them (`server/economy/regionalPrices.ts`). Before the first pass, every factor is 1.
+- **Applying.** `TradeDirector.quote` scales the mid price by the deal's sector: the offers board (`GET /trade/offers?sector=`, which the Trade tab sends from `currentSectorKey`), accepting a deal, and a recurring deal's re-quote all quote the same way, so the price you see is the price you get. A sector outside the galaxy (test rooms) gets factor 1.
+
+Locks:
+- `regionalPrices.test.ts`: shortage dearer, glut cheaper, balance 1, clamps, a raided region gets dearer;
+- `TradeDirector.test.ts`: the board is quoted with the region's factor; an unknown sector is unchanged;
+- `ConvoyDirector.test.ts`: the planning pass publishes factors from real base stock.
+
+## Standing orders at a player's Freight Dock (T4b)
+
+The owner of a built Freight Dock sets up to 6 standing orders (`set_freight_orders`, owner-gated; shown and edited in the cargo panel). NPC convoys fill them from real NPC stock:
+- **Import** good X **up to** level N: a convoy delivers when the base's network falls below half of N, refilling it to N. The player pays the board's regional buy price on delivery.
+- **Export** good X **above** level N: anything above N is offered to NPC importers; a convoy collects it, and the player is paid the board's sell price at pickup.
+
+How it works:
+- **Planning.** `SectorRoom.npcBaseTrade` also reports each player Freight Dock with orders, flagged `player`. Its "use" is shaped by its orders (`level / TARGET_MINUTES`), and its stock is limited to the ordered goods; import goods are capped at their level, so they're never offered.
+- **NPC partners only.** `matchConvoys` takes an `allowPair` hook, and the director never pairs two players.
+- **Clamps at planning.** A player import is clamped to what the wallet can afford and to the hourly volume; an export is clamped to the volume.
+- **Atomic payment.** An export's credit is built by `tradeTransfer`'s new `extraOpsFor(taken)`, so it pays for exactly what was taken, in the same group. An import's debit rides the delivery's release group. A player who can no longer pay at delivery doesn't receive the goods.
+- **Same market.** Each fill moves the galaxy market and volume (`recordDockFill`). Audit: `freight_orders_set`, `freight_order_filled`.
+- **Persisted.** Orders are saved with the structure (`freightOrders` in the sector snapshot).
+
+Locks:
+- `ConvoyDirector.test.ts`: an import clamped to credits and paid on delivery (the wallet op rides the group); an export paid for exactly what was taken; never player to player; unpaid at delivery means no goods.
+- `tests/integration/sectorRoom/freightOrders.test.ts`: set over the real message, shown in `cargo_state`, joins planning with shaped rates, a stranger can't set them.
+- `SectorPersistence.structures.test.ts` (round-trip), `CargoPanel.test.tsx` (the editor), `tradeClientWireParity` (the sender).
+
+## The Shipyard (Living World W5b)
+
+The Shipyard (960 × 600 hub, 4 links, 220 power) is the hull end of the chain. Two kinds of recipe touch it:
+- **`build_<hull>`** (`build_interceptor`, `build_gunship`, `build_heavy`, `build_missile_frigate`) runs on the Shipyard and needs the hull's blueprint (`blueprintProductFor` → `hull:<kind>`). Its output is a PACKED hull (`{ hull }`), made into storage by the same `ProductionSubsystem`.
+- **`pack_shipyard`** runs on the Assembly Plant and packs the Shipyard itself.
+
+It's a processor like any other, so active power applies: full draw only while building. The balance test (`recipes.test.ts`) skips hull and pack recipes. Their value is the bill (`hullBillValue`, `packBillValue`), not the 1.2–1.6× ladder. Full story: [docs/features/blueprints.md](../features/blueprints.md).
+
 ## Packed structures
 
 User rulings (2026-11-01):
@@ -188,6 +269,27 @@ The generator powers bases with Reactors first, then Solars, and uses a Battery 
 | Citadel | 236 | 123 |
 
 `TIER_MAX_STRUCTURES` is now 50 / 80 / 160 / 260. NPC bases need fuel stock for their Reactors, so D2 seeds it and trade (T) keeps them supplied.
+
+## Cities: the chain's consumers (D3)
+
+Everything upstream ends somewhere. Cities are where provisions and consumer goods go.
+
+- **Two city modules**, appended to the catalogue and buildable by players from packed items (a Fabricator makes them):
+
+  | Kind | Size | Uses per cycle | Pays |
+  |---|---|---|---|
+  | Habitat Module | 360 × 240 | 4 provisions, 1 consumer goods (about a minute) | 300 credits |
+  | Tower Module | 240 × 240 | 2 provisions, 3 consumer goods (90 s) | 800 credits |
+
+- **They run on the normal production pass.** A module is a processor whose recipe (`habitat_upkeep`, `tower_upkeep`) takes goods from the base's network storage like any other. The output is `{ credits: n }`, which is paid to the OWNER'S WALLET when the cycle ends (`ProductionDeps.payCredits` → `getWallet().credit(owner, n, 'city_taxes')`). Credits never land in a hold.
+- **A city with no goods starves.** It reports what it's missing and pays nothing, the same `starved` state as any processor; that is how a starving city "shrinks its wealth". Its power draw drops to the idle trickle too.
+- **Balance.** Taxes are valued at 1 per credit in the value-ladder test, so a city returns 1.29–1.30× the goods it uses, inside the 1.2–1.6× band every other step obeys.
+- **NPC colonies.** `colony` is a new base role. It is never an outpost and favours the wealthier middle and heart of a region. A colony grows habitats (plus towers and a Hydroponics Bay from settlement size up). Its provisions and consumer goods show up as `uses` in `npcBaseTrade`, so convoys bring them in. An NPC base has no wallet, so its city simply consumes; that consumption is the sink that pulls end products through the chain. `BASE_GROWTH_VERSION` 4.
+- **Locks:**
+  - `recipes.test.ts`: the city recipes, taxes in the value ladder;
+  - `ProductionSubsystem.test.ts`: pays per cycle, starving pays nothing;
+  - `growBase.test.ts` / `baseProfile.test.ts`: colony character, never an outpost;
+  - `tests/integration/sectorRoom/cityTaxes.test.ts`: a fed habitat pays the owner's wallet; a starving one shows `starved` in room state.
 
 ## NPC bases in the game (D2)
 

@@ -47,6 +47,7 @@ import {
   STRUCTURE_FLAG_NO_AMMO,
   STRUCTURE_FLAG_NO_FUEL,
   STRUCTURE_FLAG_DRAW_FULL,
+  STRUCTURE_FLAG_BREACH,
   STRUCTURE_TARGET_NONE,
   STRUCTURE_DEFAULTS as SD,
 } from '../../shared-types/structureStateWire.js';
@@ -106,16 +107,25 @@ import { buildGridNodes, connectExplicit } from '../structures/structureGridView
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
 import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf } from '../../shared-types/relations.js';
-import { CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, type CargoState } from '../../shared-types/messages/cargoMessages.js';
+import { BreakInCancelSchema, BreakInSchema, CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, MAX_FREIGHT_ORDERS, SetFreightOrdersSchema, type BreakInNotice, type CargoState } from '../../shared-types/messages/cargoMessages.js';
+import { breakInDurationMs } from '../../shared-types/breakIn.js';
+import { BreakInSubsystem } from './BreakInSubsystem.js';
+import { stream } from '../../core/random/rng.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
-import { NpcBaseSubsystem, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
-import { PROD_STATE, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
-import { blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
+import { NpcBaseSubsystem, isNpcBasesDisabled, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
+import { baseProfileFor, contextForSector, hashString } from '../../core/bases/baseProfile.js';
+import { chooseBaseSite, grownExtent, nearestClearPoint, type SiteBox, type SiteCircle } from '../../core/bases/baseSite.js';
+import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
+import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
+import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
+import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
+import { RECIPES, blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
+import { usesAmmo } from '../../shared-types/ammo.js';
 
 /** P2d — one unit of munitions (a turret's magazine reload). */
 const ONE_MUNITION = Object.freeze({ munitions: 1 });
@@ -129,7 +139,7 @@ function withAsteroidResources<T extends { id: string }>(roster: readonly T[], f
     return { ...a, resource: rollAsteroidResource((h >>> 0) / 4294967296, features) };
   });
 }
-import { ALLEGIANCE_DEFS, NPC_ALLEGIANCE_IDS, type NpcAllegianceId } from '../../shared-types/allegiances.js';
+import { ALLEGIANCE_DEFS, NPC_ALLEGIANCE_IDS, ON_SIGHT_ENGAGE_RANGE, type NpcAllegianceId } from '../../shared-types/allegiances.js';
 import { encodePlayerTurretTarget } from '../../shared-types/structureStateWire.js';
 
 /** B2 — the party string of each roaming NPC side (`npc:<allegiance>`), built
@@ -217,7 +227,8 @@ import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type La
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
-import { addPacked, cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, type CargoRequest } from '../../core/cargo/hold.js';
+import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
+import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
 import { HARVESTER_CAPACITY, RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
 import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
@@ -279,6 +290,33 @@ import {
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
 import type { WeaponId, MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat/Energy.js';
+
+/** T1 — a fresh spawn stays at least this far from any structure's box. */
+const SPAWN_STRUCTURE_CLEARANCE = 120;
+/** C3 — a ship cargo target (see `SectorRoom.shipTarget`). */
+interface ShipCargoTarget {
+  /** Break-in / grant key: the NPC swarm id, or the player hull's shipInstanceId. */
+  id: string;
+  holdUid: string;
+  owner: string;
+  x: number;
+  y: number;
+  radius: number;
+  capacity: number;
+  /** Player-facing kind name (never an id). */
+  label: string;
+  /** Does its hold persist? (player hulls, trade haulers; NPC loot holds don't) */
+  persisted: boolean;
+  npc?: SwarmEntityRecord;
+}
+/** C3 — how much you can unload into an NPC ship's hold. */
+const NPC_HOLD_CAPACITY = 1000;
+/** T2 — an NPC ammo turret's assumed munitions use (it fires only when attacked). */
+const NPC_TURRET_MUNITIONS_PER_MIN = 0.2;
+/** T4b — the level of `good`'s order on a dock (0 when none). */
+function o_level(r: { freightOrders?: Array<{ good: GoodId; level: number }> }, good: GoodId): number {
+  return r.freightOrders?.find((o) => o.good === good)?.level ?? 0;
+}
 
 const logger = pino({
   name: 'SectorRoom',
@@ -709,6 +747,22 @@ export class SectorRoom extends Room<SectorState> {
   private readonly depositDwell = new Map<string, { targetId: string; sinceTick: number }>();
   /** Auto-deposit progress 0..100 by shipInstanceId (own-ship snapshot ring). */
   private readonly depositProgress = new Map<string, number>();
+  /** C2 — break-ins (channels + access grants); ticked with the structure tick. */
+  private readonly breakIns = new BreakInSubsystem({
+    now: () => Date.now(),
+    canContinue: (actor, sid) => {
+      const rec = this.structureRegistry.get(sid);
+      if (rec !== undefined) return this.pilotNear(actor, rec);
+      // C3 — a ship: its LIVE pose (a target flying away ends it).
+      const t = this.shipTargetById(sid);
+      return t !== null && this.pilotNearPoint(actor, t.x, t.y, t.radius);
+    },
+    exists: (sid) => this.structureRegistry.get(sid) !== undefined || this.shipTargetById(sid) !== null,
+    onStart: (actor, sid) => this.onBreakInStart(actor, sid),
+    onEnd: (actor, sid, outcome, reason) => this.onBreakInEnd(actor, sid, outcome, reason),
+  });
+  /** C2 bespoke trigger (testMode `breakInMs`). */
+  private testBreakInMs: number | null = null;
   /** C1 — pilots who moved cargo by hand. Auto-deposit stays off for them
    *  until they fly out of deposit range of their storage, so a withdrawal
    *  from your own storage isn't banked straight back 2 s later. */
@@ -1331,6 +1385,12 @@ export class SectorRoom extends Room<SectorState> {
       /** D2 — NPC bases grown by the core generator (server-authored, never
        *  client input). Galaxy seeding of these comes with trade (phase T). */
       npcBases?: NpcBaseSpec[];
+      /** T1 — grow this galaxy sector's own NPC base from its profile and
+       *  seed it AFTER the snapshot restore (saved player structures keep
+       *  their space). Set for every galaxy room by `resolveSectorConfig`. */
+      galaxyBases?: boolean;
+      /** C2 bespoke trigger: every break-in takes this long (ms). testMode-only. */
+      breakInMs?: number;
       /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
@@ -2119,6 +2179,10 @@ export class SectorRoom extends Room<SectorState> {
       onBlueprintSpent: (rec) => this.storage.persistSlot(rec),
       // Active power: processors draw full only while running.
       setActive: (rec, active) => this.structureGrid.setActive(rec, active),
+      // D3 — city taxes: a player's habitats and towers pay their wallet.
+      payCredits: (rec, n) => {
+        if (parseOwner(rec.owner).kind === 'player') getWallet().credit(rec.owner, n, 'city_taxes');
+      },
     });
     this.gates = new GateController({
       registry: this.structureRegistry,
@@ -2349,6 +2413,11 @@ export class SectorRoom extends Room<SectorState> {
     // only; positions are deterministic from the seed and are not persisted.
     if (this.sectorKey !== null) {
       this.hydrateFromSnapshot();
+    }
+    if (this.testMode && roomOpts.breakInMs !== undefined) this.testBreakInMs = Math.max(1, roomOpts.breakInMs);
+    // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
+    if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {
+      this.seedGalaxyBase(this.sectorKey);
     }
 
     // Phase 8 sub-phase B — explicit 15s seat-reservation TTL for incoming
@@ -2819,24 +2888,33 @@ export class SectorRoom extends Room<SectorState> {
     const cargoRequest = (client: Client, kind: 'cargo_query' | 'cargo_move', raw: unknown): void => {
       const playerId = this.sessionToPlayer.get(client.sessionId);
       if (!playerId) return;
-      let entityId: number;
+      let ref: { entityId?: number; ship?: string };
       let move: { dir: 'take' | 'put'; items: CargoRequest } | null = null;
       if (kind === 'cargo_move') {
         const p = CargoMoveSchema.safeParse(raw);
         if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
-        entityId = p.data.entityId;
+        ref = p.data.ship !== undefined ? { ship: p.data.ship } : { entityId: p.data.entityId! };
         move = { dir: p.data.dir, items: p.data.items };
       } else {
         const p = CargoQuerySchema.safeParse(raw);
         if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
-        entityId = p.data.entityId;
+        ref = p.data.ship !== undefined ? { ship: p.data.ship } : { entityId: p.data.entityId! };
       }
       const send = (st: CargoState): void => { try { client.send('cargo_state', st); } catch { /* closing */ } };
-      const access = this.cargoAccess(playerId, entityId);
-      if (!access.ok) {
-        send({ type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, message: access.message, ...(move ? { ok: false } : {}) });
+      // C3 — a ship (an NPC ship by entityId, a player's ship / parked hull).
+      if (ref.ship !== undefined || this.swarmRegistry.getByEntityId(ref.entityId!)?.kind === 1) {
+        send(this.shipCargo(playerId, ref, move));
         return;
       }
+      const entityId = ref.entityId!;
+      const access = this.cargoAccess(playerId, entityId);
+      if (!access.ok) {
+        const lr = access.locked;
+        const breakIn = lr ? { pct: this.breakIns.progress(playerId, lr.id), durationMs: this.breakInMsFor(lr) } : undefined;
+        send({ type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message: access.message, ...(breakIn ? { breakIn } : {}), ...(move ? { ok: false } : {}) });
+        return;
+      }
+      if (access.market) { send(this.dockMarket(playerId, entityId, access, move)); return; }
       let verdict: { ok: boolean; message: string } | undefined;
       if (move !== null) {
         const moved = move.dir === 'take'
@@ -2856,8 +2934,60 @@ export class SectorRoom extends Room<SectorState> {
         }
       }
       const view = this.storage.cargoView(access.rec);
-      send({ type: 'cargo_state', entityId, open: true, hold: view.hold, used: view.used, capacity: view.capacity, ...(verdict ?? {}) });
+      const shipHold = getHoldStore().get(access.shipInstanceId)?.hold ?? emptyHold();
+      const own = access.rec.owner === playerId && access.rec.kind === 'freight_dock';
+      send({
+        type: 'cargo_state', entityId, open: true, hold: view.hold, used: view.used, capacity: view.capacity,
+        ship: shipHold, shipCapacity: access.capacity,
+        ...(own ? { orders: (access.rec.freightOrders ?? []).map((o) => ({ ...o })) } : {}),
+        ...(verdict ?? {}),
+      });
     };
+    // C2 — break into locked cargo (a hostile act); stop.
+    this.onMessage('break_in', (client: Client, raw: unknown) => {
+      const p = BreakInSchema.safeParse(raw);
+      if (!p.success) { this.malformed.record(client.sessionId, 'break_in'); return; }
+      const actor = this.sessionToPlayer.get(client.sessionId);
+      if (!actor) return;
+      // C3 — a ship: an NPC ship (by entityId), a player's ship or parked hull.
+      const st = this.shipTarget(p.data.ship !== undefined ? { ship: p.data.ship } : { entityId: p.data.entityId! });
+      if (st !== null) {
+        if (cargoOpensFor(relationOf(actor, st.owner, this.relationCtx), false) || this.breakIns.hasGrant(actor, st.id)) return;
+        if (this.getActiveShip(actor)?.shipInstanceId === st.holdUid || !this.pilotNearPoint(actor, st.x, st.y, st.radius)) return;
+        this.breakIns.start(actor, st.id, this.breakInMsForShip(st));
+        return;
+      }
+      if (p.data.entityId === undefined) return;
+      const swarmRec = this.swarmRegistry.getByEntityId(p.data.entityId);
+      const rec = swarmRec ? this.structureRegistry.get(swarmRec.id) : undefined;
+      if (!rec || !isOperationalStorage(rec)) return;
+      // Only cargo that doesn't open for you, and only once you're there.
+      if (cargoOpensFor(relationOf(actor, rec.owner, this.relationCtx), false) || this.breakIns.hasGrant(actor, rec.id)) return;
+      if (!this.pilotNear(actor, rec)) return;
+      this.breakIns.start(actor, rec.id, this.breakInMsFor(rec));
+    });
+    this.onMessage('break_in_cancel', (client: Client, raw: unknown) => {
+      if (!BreakInCancelSchema.safeParse(raw).success) { this.malformed.record(client.sessionId, 'break_in_cancel'); return; }
+      const actor = this.sessionToPlayer.get(client.sessionId);
+      if (actor) this.breakIns.cancel(actor, 'You stopped.');
+    });
+
+    // T4b — standing orders on the owner's own built Freight Dock (last
+    // order per good wins). Convoys fill them; the panel re-reads on its poll.
+    this.onMessage('set_freight_orders', (client: Client, raw: unknown) => {
+      const p = SetFreightOrdersSchema.safeParse(raw);
+      if (!p.success) { this.malformed.record(client.sessionId, 'set_freight_orders'); return; }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      const swarmRec = this.swarmRegistry.getByEntityId(p.data.entityId);
+      const rec = swarmRec ? this.structureRegistry.get(swarmRec.id) : undefined;
+      if (!rec || rec.owner !== owner || rec.kind !== 'freight_dock' || !rec.isConstructed) return;
+      const byGood = new Map<GoodId, { good: GoodId; mode: 'import' | 'export'; level: number }>();
+      for (const o of p.data.orders) byGood.set(o.good, { good: o.good, mode: o.mode, level: o.level });
+      rec.freightOrders = [...byGood.values()].slice(0, MAX_FREIGHT_ORDERS);
+      if (rec.freightOrders.length === 0) delete rec.freightOrders;
+      auditEvent({ event: 'freight_orders_set', sector: this.sectorKey ?? undefined, playerId: owner, orders: rec.freightOrders?.length ?? 0 });
+    });
     this.onMessage('cargo_query', (client: Client, raw: unknown) => cargoRequest(client, 'cargo_query', raw));
     this.onMessage('cargo_move', (client: Client, raw: unknown) => cargoRequest(client, 'cargo_move', raw));
 
@@ -3622,6 +3752,8 @@ export class SectorRoom extends Room<SectorState> {
 
   private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
     if (damage > 0) this.noteEconomicHit(targetId, shooterId);
+    // C2 — a hit ends the target's break-in (one Map lookup when none).
+    if (damage > 0 && this.breakIns.activeCount() > 0) this.breakIns.onActorDamaged(targetId);
     // R2.18 — a Shield Pylon is undamageable while its wall is up: route the hit
     // into an active wall (drains the grid/batteries, can stun it) and skip the
     // pylon damage entirely (no damage event for the pylon). This single choke
@@ -3810,6 +3942,12 @@ export class SectorRoom extends Room<SectorState> {
     if (opts.emitDestroyed && rec.kind === SWARM_KIND_DRONE) {
       this.dropKillLoot(rec);
     }
+    // C3 — an NPC loot hold (memory only) goes with its ship. Trade and convoy
+    // haulers keep theirs: their cargo travels with them between sectors.
+    if (rec.kind === SWARM_KIND_DRONE && !isHaulerId(rec.id) && getHoldStore().get(rec.id)?.holderType === 'hauler') {
+      getHoldStore().delete(rec.id, false);
+    }
+    if (rec.kind === SWARM_KIND_DRONE) this.npcLootRolled.delete(`${rec.id}:${rec.entityId}`);
     if (rec.kind === SWARM_KIND_SCRAP && this.loot.isPod(rec.id) && opts.emitDestroyed) {
       this.loot.onPodDestroyed(rec.id);
     }
@@ -3920,6 +4058,54 @@ export class SectorRoom extends Room<SectorState> {
    * `scenario`. Rejections are counted and logged — the lattice is rule-valid
    * by construction (structureLattice.test.ts), so any rejection is a bug.
    */
+  /**
+   * T1 — grow this galaxy sector's NPC base from its profile and seed it at a
+   * site that fits: clear of saved player structures and parked hulls (they
+   * always win the space), on the fewest asteroids (those under the footprint
+   * are cleared: the builders cleared the rock), as far from the spawn at the
+   * origin as it fits. Not persisted: a restart regrows it from the seed.
+   */
+  private seedGalaxyBase(sectorKey: string): void {
+    const seed = hashString(sectorKey);
+    const sector = getSector(sectorKey)!;
+    const profile = baseProfileFor(contextForSector(sectorKey), seed);
+    const spec: NpcBaseSpec = {
+      baseId: 'b0', role: profile.role, tier: profile.tier, seed, x: 0, y: 0,
+      side: profile.ownerSide, features: [...sector.features], profile,
+    };
+    const sub = new NpcBaseSubsystem({
+      registry: this.structureRegistry,
+      place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
+      setHealth: (id, hp) => this.swarmHealth.set(id, hp),
+    });
+    const grown = sub.grow(spec);
+    const hard: SiteBox[] = [];
+    for (const r of this.structureRegistry.all()) hard.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
+    for (const p of this.lingeringPoseCache.values()) hard.push({ x: p.x, y: p.y, hw: 150, hh: 150 });
+    const rocks: SwarmEntityRecord[] = [];
+    const soft: SiteCircle[] = [];
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== 0) continue;
+      const b = slotBase(rec.slot);
+      rocks.push(rec);
+      soft.push({ x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, r: rec.radius });
+    }
+    const site = chooseBaseSite(grownExtent(grown.placements), hard, soft, {
+      halfExtent: SECTOR_PLAYABLE_HALF_EXTENT, margin: 250, step: 250, seed,
+    });
+    if (site === null) {
+      logger.warn({ sectorKey, tier: profile.tier, role: profile.role }, 'npc base: no site fits; sector left without a base');
+      return;
+    }
+    for (const i of site.overlapped) this.evictSwarmEntity(rocks[i]!, { broadcast: false, emitDestroyed: false });
+    const r = sub.seed({ ...spec, x: site.x, y: site.y }, grown);
+    logger.info({
+      sectorKey, tier: profile.tier, role: profile.role, owner: r.owner, x: Math.round(site.x), y: Math.round(site.y),
+      placed: r.placed, rejectedPlace: r.rejectedPlace, rejectedEdge: r.rejectedEdge, asteroidsCleared: site.overlapped.length,
+    }, 'galaxy npc base seeded');
+    this.structureGridTick();
+  }
+
   /** D2 — seed NPC bases from the generator (built, stocked, recipes + bound
    *  blueprints loaded), then run one grid pulse so power settles. */
   private seedNpcBases(specs: readonly NpcBaseSpec[]): void {
@@ -4058,6 +4244,11 @@ export class SectorRoom extends Room<SectorState> {
         // P2b — the owner's recipe choice and a cycle in progress survive a restart.
         if (r.recipe !== undefined && isRecipeId(r.recipe)) rec.recipe = r.recipe;
         if (r.prepaid === true) rec.prepaid = true;
+        // T4b — a Freight Dock's standing orders survive a restart.
+        if (r.freightOrders) {
+          const ok = r.freightOrders.filter((o) => (GOOD_IDS as readonly string[]).includes(o.good) && (o.mode === 'import' || o.mode === 'export') && o.level > 0);
+          if (ok.length > 0) rec.freightOrders = ok.map((o) => ({ good: o.good as GoodId, mode: o.mode, level: Math.floor(o.level) })).slice(0, MAX_FREIGHT_ORDERS);
+        }
         if (typeof r.packedQuality === 'number') rec.packedQuality = r.packedQuality;
         if (r.prodLoaded === true) {
           rec.prodLoaded = true;
@@ -4275,6 +4466,8 @@ export class SectorRoom extends Room<SectorState> {
   /** Phase 5 — turret aim/fire tick (faster cadence than the grid pulse).
    *  No-op when the sector has no structures. */
   private structureTurretTick(): void {
+    // C2/C3 — break-ins tick even in a sector with no structures (ship targets).
+    this.breakIns.tick();
     if (this.structureRegistry.size === 0) return;
     const nowMs = Date.now();
     // A1 — the turret target grid is rebuilt (lazily, on the first query) once
@@ -4519,6 +4712,23 @@ export class SectorRoom extends Room<SectorState> {
       this.turretTargetGridFresh = true;
     }
     const i = this.turretTargetGrid.nearest(x, y, range);
+    // C2 — a player's turrets also engage pilots hostile to their owner (a
+    // break-in is a hostile act). Skipped entirely while nobody has committed
+    // one, so the A1 drone path stays byte-identical.
+    const pilot = this.hostileActs.size() > 0 ? this.nearestHostilePilot(x, y, range, owner) : null;
+    if (pilot !== null) {
+      const droneD2 = i < 0 ? Infinity : (this.turretTargetGrid.x(i) - x) ** 2 + (this.turretTargetGrid.y(i) - y) ** 2;
+      if (pilot.d2 <= droneD2) {
+        const out = this.turretTargetOut;
+        out.id = pilot.playerId;
+        out.entityId = -1;
+        out.x = pilot.x;
+        out.y = pilot.y;
+        out.radius = getShipKind(this.getActiveShip(pilot.playerId)?.kind).radius;
+        out.playerId = pilot.playerId;
+        return out;
+      }
+    }
     if (i < 0) return null;
     const rec = this.turretTargetRecs[i]!;
     const out = this.turretTargetOut;
@@ -4529,6 +4739,121 @@ export class SectorRoom extends Room<SectorState> {
     out.y = this.turretTargetGrid.y(i);
     out.radius = rec.radius;
     return out;
+  }
+
+  /** C2 — the nearest ACTIVE, alive pilot (#17) within range who is hostile
+   *  to `owner` (an act in the ledger). Few players: a plain scan. */
+  private nearestHostilePilot(x: number, y: number, range: number, owner: string): { playerId: string; x: number; y: number; d2: number } | null {
+    const out = this._hostilePilotOut;
+    let best = range * range;
+    let found = false;
+    for (const [pid] of this.playerToSlot) {
+      if (pid === owner) continue;
+      const ship = this.getActiveShip(pid);
+      if (!ship?.alive || !ship.isActive) continue;
+      const pose = this.shipPoseCache.get(pid);
+      if (!pose) continue;
+      const d2 = (pose.x - x) ** 2 + (pose.y - y) ** 2;
+      if (d2 > best) continue;
+      if (relationOf(pid, owner, this.relationCtx) !== 'hostile') continue;
+      best = d2;
+      out.playerId = pid; out.x = pose.x; out.y = pose.y; out.d2 = d2;
+      found = true;
+    }
+    return found ? out : null;
+  }
+  private readonly _hostilePilotOut = { playerId: '', x: 0, y: 0, d2: 0 };
+
+  /** C2 — does `playerId` fly a live ship (#17) within cargo range of `rec`? */
+  private pilotNear(playerId: string, rec: StructureRecord): boolean {
+    const ship = this.getActiveShip(playerId);
+    const pose = this.shipPoseCache.get(playerId);
+    if (!ship?.alive || !ship.isActive || !pose) return false;
+    const dx = Math.max(Math.abs(pose.x - rec.x) - (rec.halfW ?? rec.radius), 0);
+    const dy = Math.max(Math.abs(pose.y - rec.y) - (rec.halfH ?? rec.radius), 0);
+    return dx * dx + dy * dy <= CARGO_ACCESS_RANGE * CARGO_ACCESS_RANGE;
+  }
+
+  /** C2 — how long a break-in into `rec` takes. */
+  private breakInMsFor(rec: StructureRecord): number {
+    return this.testBreakInMs ?? breakInDurationMs(getStructureKind(rec.kind).holdCapacity ?? 0, rec.level ?? 1);
+  }
+
+  private notifyBreakIn(playerId: string, tone: 'good' | 'danger', message: string): void {
+    const sessionId = this.playerToSession.get(playerId);
+    if (sessionId === undefined) return;
+    const client = this.clients.find((c) => c.sessionId === sessionId);
+    const msg: BreakInNotice = { type: 'break_in_notice', tone, message };
+    try { client?.send('break_in_notice', msg); } catch { /* closing */ }
+  }
+
+  /**
+   * C2 — a break-in started: it is a HOSTILE ACT (the owner's turrets now
+   * engage the actor; an NPC side's ships nearby turn on them), and the owner
+   * is alerted (online: a notice; offline: a push).
+   */
+  private onBreakInStart(actor: string, sid: string): void {
+    const rec = this.structureRegistry.get(sid);
+    if (!rec) { this.onShipBreakInStart(actor, sid); return; }
+    const now = Date.now();
+    this.hostileActs.record(actor, rec.owner, now);
+    this.relationCtx.nowMs = now;
+    const kindName = getStructureKind(rec.kind).displayName;
+    const who = this.resolveOwnerName(actor) ?? 'A pilot';
+    const party = parseOwner(rec.owner);
+    if (party.kind === 'npc' && party.allegiance != null) {
+      this.aggroNpcSide(party.allegiance, rec.x, rec.y, actor);
+    } else if (party.kind === 'player') {
+      const text = `${who} is breaking into your ${kindName}!`;
+      this.notifyBreakIn(rec.owner, 'danger', text);
+      pushNotifier.notifyTrade(rec.owner, 'Break-in!', text, 'break-in');
+    }
+    auditEvent({ event: 'break_in', sector: this.sectorKey ?? undefined, playerId: actor, owner: rec.owner, structureKind: rec.kind, outcome: 'started' });
+    this.rebuildStructuresSlice(); // the BREACH flag
+  }
+
+  /** C2/C3 — an NPC side's ships near (x, y) turn on `actor` (ledger + bot_aggro). */
+  private aggroNpcSide(allegiance: NpcAllegianceId, x: number, y: number, actor: string): void {
+    const tick = this.serverTick;
+    const r2 = ON_SIGHT_ENGAGE_RANGE * ON_SIGHT_ENGAGE_RANGE;
+    for (const s of this.swarmRegistry.all()) {
+      if (s.kind !== 1 || allegianceOfKind(s.shipKind) !== allegiance) continue;
+      const b = slotBase(s.slot);
+      if ((this.sabF32[b + SLOT_X_OFF]! - x) ** 2 + (this.sabF32[b + SLOT_Y_OFF]! - y) ** 2 > r2) continue;
+      this.aiController.markHostile(s.id, actor, tick);
+      this.broadcast('bot_aggro', { type: 'bot_aggro', botEntityId: `swarm-${s.entityId}`, targetPlayerId: actor, tick });
+    }
+  }
+
+  /** C3 — breaking into a ship: a hostile act against its owner / NPC side. */
+  private onShipBreakInStart(actor: string, sid: string): void {
+    const t = this.shipTargetById(sid);
+    if (!t) return;
+    const now = Date.now();
+    this.hostileActs.record(actor, t.owner, now);
+    this.relationCtx.nowMs = now;
+    if (t.npc) {
+      this.aggroNpcSide(allegianceOfKind(t.npc.shipKind), t.x, t.y, actor);
+    } else {
+      const text = `${this.resolveOwnerName(actor) ?? 'A pilot'} is breaking into your ${t.label}!`;
+      this.notifyBreakIn(t.owner, 'danger', text);
+      pushNotifier.notifyTrade(t.owner, 'Break-in!', text, 'break-in');
+    }
+    auditEvent({ event: 'break_in', sector: this.sectorKey ?? undefined, playerId: actor, owner: t.owner, structureKind: `ship:${t.label}`, outcome: 'started' });
+  }
+
+  private onBreakInEnd(actor: string, sid: string, outcome: 'success' | 'interrupted', reason: string): void {
+    const rec = this.structureRegistry.get(sid);
+    if (!rec && outcome === 'success') {
+      const t = this.shipTargetById(sid);
+      if (t && !t.npc) this.notifyBreakIn(t.owner, 'danger', `Your ${t.label} was broken into!`);
+    }
+    this.notifyBreakIn(actor, outcome === 'success' ? 'good' : 'danger', outcome === 'success' ? 'You are in. The cargo is open for a minute.' : `Break-in failed: ${reason}`);
+    if (rec && parseOwner(rec.owner).kind === 'player' && outcome === 'success') {
+      this.notifyBreakIn(rec.owner, 'danger', `Your ${getStructureKind(rec.kind).displayName} was broken into!`);
+    }
+    auditEvent({ event: 'break_in', sector: this.sectorKey ?? undefined, playerId: actor, owner: rec?.owner ?? '', structureKind: rec?.kind ?? '', outcome: outcome === 'success' ? 'success' : 'interrupted' });
+    this.rebuildStructuresSlice();
   }
 
   private findNearestSwarmOfKind(
@@ -4628,14 +4953,18 @@ export class SectorRoom extends Room<SectorState> {
       if (rec.isConstructed) flags |= STRUCTURE_FLAG_BUILT;
       if (summary.powered) flags |= STRUCTURE_FLAG_POWERED;
       if (rec.isDeconstructing) flags |= STRUCTURE_FLAG_DECONSTRUCTING;
+      // Every kind's flags (NOT inside the shield-emitter branch below — they
+      // were, so these bits reached clients only for pylons and gates; locked
+      // by structureFlagsWire.test.ts).
+      if (rec.noAmmo === true) flags |= STRUCTURE_FLAG_NO_AMMO;
+      if (rec.drawFull === true) flags |= STRUCTURE_FLAG_DRAW_FULL;
+      if (this.breakIns.breached(rec.id)) flags |= STRUCTURE_FLAG_BREACH;
+      if (rec.isConstructed && getStructureKind(rec.kind).fuelEveryPulses != null && rec.fueled !== true) flags |= STRUCTURE_FLAG_NO_FUEL;
       let wallTo = -1;
       if (isShieldEmitterKind(rec.kind)) {
         // Clients derive every wall from connections + this flag (all of this
         // emitter's walls are up). `shieldWallTo` stays for a pylon's first wall.
         if (this.shieldWalls.wallsUpFor(rec.id, nowMs)) flags |= STRUCTURE_FLAG_WALL_ACTIVE;
-        if (rec.noAmmo === true) flags |= STRUCTURE_FLAG_NO_AMMO;
-        if (rec.drawFull === true) flags |= STRUCTURE_FLAG_DRAW_FULL;
-        if (rec.isConstructed && getStructureKind(rec.kind).fuelEveryPulses != null && rec.fueled !== true) flags |= STRUCTURE_FLAG_NO_FUEL;
         if (rec.kind === 'shield_pylon') {
           const wall = this.shieldWalls.wallStateFor(rec.id, nowMs);
           const other = wall ? this.swarmRegistry.get(wall.otherPost)?.entityId : undefined;
@@ -5992,6 +6321,16 @@ export class SectorRoom extends Room<SectorState> {
     // persists in-world via the sector snapshot (`lingeringHulls[]`). A join
     // without a resolvable owned shipId fresh-spawns.
 
+    // T1 — never spawn inside a structure (an NPC base can fill much of a
+    // sector): nudge to the nearest clear point. Join path, not the hot loop.
+    if (this.structureRegistry.size > 0) {
+      const boxes: SiteBox[] = [];
+      for (const r of this.structureRegistry.all()) boxes.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
+      const clear = nearestClearPoint(spawnX, spawnY, boxes, SPAWN_STRUCTURE_CLEARANCE);
+      spawnX = clear.x;
+      spawnY = clear.y;
+    }
+
     this.initialSpawnPositions.set(playerId, { x: spawnX, y: spawnY });
 
     // Pre-populate the SAB slot so the update() loop sees a sane position
@@ -6896,14 +7235,22 @@ export class SectorRoom extends Room<SectorState> {
    * Neutral or hostile cargo needs a break-in (C2).
    */
   private cargoAccess(playerId: string, entityId: number):
-    | { ok: true; rec: StructureRecord; shipInstanceId: string; capacity: number }
-    | { ok: false; message: string } {
+    | { ok: true; rec: StructureRecord; shipInstanceId: string; capacity: number; market: boolean }
+    | { ok: false; message: string; locked?: StructureRecord } {
     const swarmRec = this.swarmRegistry.getByEntityId(entityId);
     const rec = swarmRec ? this.structureRegistry.get(swarmRec.id) ?? null : null;
     if (rec === null || !isOperationalStorage(rec)) return { ok: false, message: 'That has no cargo hold.' };
     // Allies may open only if the owner allows it; there is no owner setting yet.
-    if (!cargoOpensFor(relationOf(playerId, rec.owner, this.relationCtx), false)) {
-      return { ok: false, message: 'Locked. That cargo is not yours.' };
+    const relation = relationOf(playerId, rec.owner, this.relationCtx);
+    let market = false;
+    // C2 — a successful break-in opens it for a short window.
+    if (!cargoOpensFor(relation, false) && !this.breakIns.hasGrant(playerId, rec.id)) {
+      // T4 — an NPC Freight Dock trades with anyone who isn't hostile.
+      if (isNpcOwner(rec.owner) && rec.kind === 'freight_dock' && relation !== 'hostile' && getTradeSink() !== null) {
+        market = true;
+      } else {
+        return { ok: false, locked: rec, message: relation === 'hostile' ? 'Locked. They will not trade with you.' : 'Locked. That cargo is not yours.' };
+      }
     }
     if (this.sectorKey === null) return { ok: false, message: 'Cargo only moves in the galaxy.' };
     const ship = this.getActiveShip(playerId);
@@ -6916,7 +7263,91 @@ export class SectorRoom extends Room<SectorState> {
     if (dx * dx + dy * dy > CARGO_ACCESS_RANGE * CARGO_ACCESS_RANGE) {
       return { ok: false, message: 'Fly closer to open its cargo.' };
     }
-    return { ok: true, rec, shipInstanceId: ship.shipInstanceId, capacity: this.shipCargoCapacity(ship.kind, ship.shipInstanceId) };
+    return { ok: true, rec, shipInstanceId: ship.shipInstanceId, capacity: this.shipCargoCapacity(ship.kind, ship.shipInstanceId), market };
+  }
+
+  /**
+   * T4 — an NPC Freight Dock is a market: Take buys from the base's storage
+   * network, Put sells into the dock, at the trade board's regional price for
+   * this pilot. Each good is ONE atomic group (ship + storage + the wallet op),
+   * clamped first to stock, cargo space, the wallet and the hourly volume.
+   */
+  private dockMarket(
+    playerId: string,
+    entityId: number,
+    access: { rec: StructureRecord; shipInstanceId: string; capacity: number },
+    move: { dir: 'take' | 'put'; items: CargoRequest } | null,
+  ): CargoState {
+    const sink = getTradeSink();
+    const shipId = access.shipInstanceId;
+    const dock = access.rec;
+    const closed = (message: string): CargoState => ({
+      type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message, ...(move ? { ok: false } : {}),
+    });
+    if (sink === null) return closed('The traders are not here.');
+    if (sink.dockQuote(playerId, this.sectorKey, 'minerals') === null) return closed('The traders refuse to deal with you.');
+    const wallet = getWallet();
+    let verdict: { ok: boolean; message: string } | undefined;
+    if (move !== null) {
+      let total = 0;
+      let any = false;
+      for (const g of GOOD_IDS) {
+        const asked = move.items.goods?.[g] ?? 0;
+        if (!(asked > 0)) continue;
+        const q = sink.dockQuote(playerId, this.sectorKey, g);
+        if (q === null) continue;
+        const ship = getHoldStore().get(shipId)?.hold ?? emptyHold();
+        const w = GOOD_DEFS[g].weight;
+        if (move.dir === 'take') {
+          const unit = q.buy;
+          const space = Math.floor(Math.max(0, access.capacity - holdWeight(ship)) / Math.max(1e-9, w));
+          const afford = unit > 0 ? Math.floor(wallet.balance(playerId) / unit) : asked;
+          const volume = unit > 0 ? Math.floor(sink.volumeLeft(playerId) / unit) : asked;
+          const n = Math.min(asked, this.storage.networkStock(dock, g), space, afford, volume);
+          if (n <= 0) continue;
+          const cost = Math.ceil(n * unit);
+          const op = cost > 0 ? wallet.debitDeferred(playerId, cost, 'dock_buy') : null;
+          if (cost > 0 && op === null) continue;
+          const moved = this.storage.marketBuy(shipId, playerId, dock, g, n, op ? [op] : []);
+          if (moved <= 0) { if (cost > 0) wallet.credit(playerId, cost, 'dock_refund'); continue; }
+          sink.recordDockFill(playerId, g, moved, 'buy', cost);
+          total += cost;
+          any = true;
+        } else {
+          const unit = q.sell;
+          const fit = Math.floor(this.storage.dockFreeWeight(dock) / Math.max(1e-9, w));
+          const volume = unit > 0 ? Math.floor(sink.volumeLeft(playerId) / unit) : asked;
+          const n = Math.min(asked, ship.goods[g] ?? 0, fit, volume);
+          if (n <= 0) continue;
+          const pay = Math.floor(n * unit);
+          const op = pay > 0 ? wallet.creditDeferred(playerId, pay, 'dock_sell') : null;
+          const moved = this.storage.marketSell(shipId, playerId, dock, g, n, op ? [op] : []);
+          if (moved <= 0) continue;
+          sink.recordDockFill(playerId, g, moved, 'sell', pay);
+          total += pay;
+          any = true;
+        }
+      }
+      verdict = any
+        ? { ok: true, message: move.dir === 'take' ? `Bought for ${total}¢.` : `Sold for ${total}¢.` }
+        : { ok: false, message: move.dir === 'take' ? 'Nothing bought: out of stock, no room aboard, or not enough credits.' : 'Nothing sold: the dock is full or you hold none.' };
+      if (any) auditEvent({ event: 'dock_trade', sector: this.sectorKey ?? undefined, playerId, owner: dock.owner, dir: move.dir === 'take' ? 'buy' : 'sell', credits: total });
+    }
+    const stock: Hold = { goods: {}, blueprints: [] };
+    for (const g of GOOD_IDS) {
+      const n = this.storage.networkStock(dock, g);
+      if (n > 0) stock.goods[g] = n;
+    }
+    const ship = getHoldStore().get(shipId)?.hold ?? emptyHold();
+    const market: NonNullable<CargoState['market']> = { buy: {}, sell: {} };
+    for (const g of GOOD_IDS) {
+      if ((stock.goods[g] ?? 0) <= 0 && (ship.goods[g] ?? 0) <= 0) continue;
+      const q = sink.dockQuote(playerId, this.sectorKey, g);
+      if (q === null) continue;
+      market.buy[g] = q.buy;
+      market.sell[g] = q.sell;
+    }
+    return { type: 'cargo_state', entityId, open: true, hold: stock, used: 0, capacity: 0, ship, shipCapacity: access.capacity, market, ...(verdict ?? {}) };
   }
 
   /**
@@ -7317,6 +7748,86 @@ export class SectorRoom extends Room<SectorState> {
     return this.storage.tradeSnapshot(ownerId, networkUid);
   }
 
+  /**
+   * T2 — this room's NPC bases for convoy planning (ConvoyDirector, every
+   * ~15 s; off-tick, so building arrays here is fine). Per base: its storage
+   * stock, free space, footprint box, and per-minute use/make rates read from
+   * its own structures (processor recipes, Reactor fuel, ammo turrets, drills,
+   * gas collectors).
+   */
+  npcBaseTrade(): NpcBaseTrade[] {
+    const byOwner = new Map<string, StructureRecord[]>();
+    for (const r of this.structureRegistry.all()) {
+      if (!r.isConstructed || !isNpcOwner(r.owner)) continue;
+      const list = byOwner.get(r.owner);
+      if (list) list.push(r); else byOwner.set(r.owner, [r]);
+    }
+    const out: NpcBaseTrade[] = [];
+    for (const [owner, recs] of byOwner) {
+      const anchor = recs.find((r) => r.kind === 'capital' && r.uid !== undefined)
+        ?? recs.find((r) => r.uid !== undefined && (getStructureKind(r.kind).holdCapacity ?? 0) > 0);
+      if (!anchor?.uid) continue;
+      const snap = this.storage.tradeSnapshot(owner, anchor.uid);
+      if (snap === null) continue;
+      const uses: Partial<Record<GoodId, number>> = {};
+      const makes: Partial<Record<GoodId, number>> = {};
+      const add = (m: Partial<Record<GoodId, number>>, g: GoodId, n: number): void => { m[g] = (m[g] ?? 0) + n; };
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const r of recs) {
+        const hw = r.halfW ?? r.radius, hh = r.halfH ?? r.radius;
+        x0 = Math.min(x0, r.x - hw); x1 = Math.max(x1, r.x + hw);
+        y0 = Math.min(y0, r.y - hh); y1 = Math.max(y1, r.y + hh);
+        const k = getStructureKind(r.kind);
+        if (isProcessorKind(r.kind)) {
+          const def = RECIPES[r.recipe ?? defaultRecipeFor(r.kind)];
+          const perMin = 60 / Math.max(1, def.cyclePulses);
+          for (const [g, n] of Object.entries(def.inputs)) add(uses, g as GoodId, (n ?? 0) * perMin);
+          for (const o of def.outputs) if ('good' in o) add(makes, o.good, o.n * perMin);
+        }
+        if (k.fuelEveryPulses) add(uses, 'fuel', 60 / k.fuelEveryPulses);
+        if (usesAmmo(r.kind)) add(uses, 'munitions', NPC_TURRET_MUNITIONS_PER_MIN);
+        if (k.miningRate) add(makes, 'minerals', k.miningRate * 60);
+        if (k.gasRate) add(makes, 'gas', k.gasRate * 60);
+      }
+      out.push({ owner, networkUid: anchor.uid, view: { stock: snap.goods, freeCapacity: snap.freeCapacity, uses, makes }, box: { x0, x1, y0, y1 } });
+    }
+    // T4b — a player's Freight Dock with standing orders trades too, but only
+    // in the goods it has orders for: "use" is shaped so an import keeps the
+    // network up to its level and an export offers anything above it.
+    for (const r of this.structureRegistry.all()) {
+      if (r.kind !== 'freight_dock' || !r.isConstructed || !r.freightOrders?.length || isNpcOwner(r.owner) || r.uid === undefined) continue;
+      const snap = this.storage.tradeSnapshot(r.owner, r.uid);
+      if (snap === null) continue;
+      const stock: Partial<Record<GoodId, number>> = {};
+      const uses: Partial<Record<GoodId, number>> = {};
+      const imports: GoodId[] = [];
+      const exports: GoodId[] = [];
+      for (const o of r.freightOrders) {
+        stock[o.good] = snap.goods[o.good] ?? 0;
+        uses[o.good] = o.level / CONVOY_TARGET_MINUTES;
+        (o.mode === 'import' ? imports : exports).push(o.good);
+      }
+      // Import goods are never offered (only exports are spare); export goods
+      // are never asked for.
+      for (const g of imports) if ((stock[g] ?? 0) > o_level(r, g)) stock[g] = o_level(r, g);
+      const hw = r.halfW ?? r.radius, hh = r.halfH ?? r.radius;
+      out.push({
+        owner: r.owner, networkUid: r.uid, player: { imports, exports },
+        view: { stock, freeCapacity: snap.freeCapacity, uses, makes: {} },
+        box: { x0: r.x - hw, x1: r.x + hw, y0: r.y - hh, y1: r.y + hh },
+      });
+    }
+    return out;
+  }
+
+  /** T2 — the nearest point clear of every structure (convoy hauler spawns). */
+  clearPointNear(x: number, y: number): { x: number; y: number } {
+    if (this.structureRegistry.size === 0) return { x, y };
+    const boxes: SiteBox[] = [];
+    for (const r of this.structureRegistry.all()) boxes.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
+    return nearestClearPoint(x, y, boxes, 150);
+  }
+
   tradeTransfer(ownerId: string, networkUid: string, spec: TradeTransferSpec): TradeTransferResult | null {
     const res = this.storage.tradeTransfer(ownerId, networkUid, spec);
     if (res !== null) this.rebuildStructuresSlice(); // the bank rides the slice
@@ -7381,14 +7892,190 @@ export class SectorRoom extends Room<SectorState> {
     const y = this.sabF32[b + SLOT_Y_OFF]!;
     const vx = this.sabF32[b + SLOT_VX_OFF]! * 0.3;
     const vy = this.sabF32[b + SLOT_VY_OFF]! * 0.3;
-    // P2 — an NPC that CARRIES a hold (a trade hauler) spills it where it died:
-    // anything with a hold spills on death (the deal cargo is up for grabs).
-    if (getHoldStore().get(rec.id)?.holderType === 'hauler') {
-      this.loot.spillShipHold(rec.id, x, y, vx, vy, 'hauler-raided');
+    // C3 — an NPC ship's loot IS its hold: rolled once from a seed (so a
+    // break-in that already took some leaves less to drop), and a trade
+    // hauler's hold is its cargo. Anything with a hold spills where it died.
+    const hold = this.npcHold(rec);
+    if (!isHoldEmpty(hold)) this.loot.spillShipHold(rec.id, x, y, vx, vy, isHaulerId(rec.id) ? 'hauler-raided' : 'kill');
+    else getHoldStore().delete(rec.id, false);
+  }
+
+  /**
+   * C3 — an NPC ship's hold: a trade hauler's real cargo, or (any other NPC)
+   * its kind's loot — an elite's guaranteed rare haul — rolled ONCE from a
+   * seed (its id + this spawn's entityId) the first time it's needed (opened,
+   * broken into, or killed). NPC loot holds live in memory only.
+   */
+  private npcHold(rec: SwarmEntityRecord): Hold {
+    const store = getHoldStore();
+    const key = `${rec.id}:${rec.entityId}`;
+    const row = store.get(rec.id);
+    if (this.npcLootRolled.has(key)) return row?.hold ?? emptyHold();
+    // Roll this spawn's loot table ONCE, on top of anything it already
+    // carries (a nexus hoard, a harvester's scoop, a hauler's cargo).
+    this.npcLootRolled.add(key);
+    const rng = stream(hashString(key), 'npc-hold');
+    const f = (): number => rng.u32() / 4294967296;
+    const loot = rec.elite !== undefined ? rollEliteLoot(rec.shipKind, f) : rollLoot(rec.shipKind, f);
+    if (row !== undefined) {
+      if (isHoldEmpty(loot)) return row.hold;
+      const merged = cloneHold(row.hold);
+      mergeInto(merged, loot);
+      store.put({ ...row, hold: merged }, false);
+      return merged;
     }
-    // P4a — an elite drops its guaranteed rare haul instead of the kind table.
-    const hold = rec.elite !== undefined ? rollEliteLoot(rec.shipKind, Math.random) : rollLoot(rec.shipKind, Math.random);
-    this.loot.drop(hold, x, y, vx, vy, { cause: 'kill' });
+    store.put({ holderUid: rec.id, holderType: 'hauler', ownerId: null, sectorKey: this.sectorKey, x: null, y: null, hold: loot, expiresAt: null }, false);
+    return loot;
+  }
+  /** C3 — NPC spawns (`id:entityId`) whose loot table is already in their hold. */
+  private readonly npcLootRolled = new Set<string>();
+
+  /** C3 — every ship cargo can target: an NPC ship (by its swarm record), a
+   *  player's ACTIVE ship (by playerId), or a parked hull (by shipInstanceId).
+   *  `id` keys break-ins and grants; `holdUid` keys the hold. */
+  private shipTarget(ref: { entityId?: number; ship?: string }): ShipCargoTarget | null {
+    if (ref.entityId !== undefined) {
+      const rec = this.swarmRegistry.getByEntityId(ref.entityId);
+      return rec && rec.kind === 1 ? this.npcShipTarget(rec) : null;
+    }
+    const key = ref.ship!;
+    const active = this.getActiveShip(key);
+    if (active?.alive && active.isActive && active.shipInstanceId !== '') {
+      const pose = this.shipPoseCache.get(key);
+      if (!pose) return null;
+      return {
+        id: active.shipInstanceId, holdUid: active.shipInstanceId, owner: key, x: pose.x, y: pose.y,
+        radius: getShipKind(active.kind).radius, capacity: this.shipCargoCapacity(active.kind, active.shipInstanceId),
+        label: getShipKind(active.kind).displayName, persisted: true,
+      };
+    }
+    if (this.lingeringSlots.has(key)) {
+      const st = (this.state as SectorState).ships.get(key);
+      const pose = this.lingeringPoseCache.get(key);
+      if (!st || !pose) return null;
+      return {
+        id: key, holdUid: key, owner: st.playerId, x: pose.x, y: pose.y, radius: getShipKind(st.kind).radius,
+        capacity: this.shipCargoCapacity(st.kind, key), label: getShipKind(st.kind).displayName, persisted: true,
+      };
+    }
+    return null;
+  }
+
+  private npcShipTarget(rec: SwarmEntityRecord): ShipCargoTarget {
+    const b = slotBase(rec.slot);
+    return {
+      id: rec.id, holdUid: rec.id, owner: npcOwner(allegianceOfKind(rec.shipKind)),
+      x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, radius: rec.radius,
+      capacity: NPC_HOLD_CAPACITY, label: getShipKind(rec.shipKind as ShipKindId).displayName,
+      persisted: isHaulerId(rec.id), npc: rec,
+    };
+  }
+
+  /** C3 — a break-in / grant key back to its ship target (or null). */
+  private shipTargetById(id: string): ShipCargoTarget | null {
+    const rec = this.swarmRegistry.get(id);
+    if (rec && rec.kind === 1) return this.npcShipTarget(rec);
+    for (const [pid] of this.playerToSlot) if (this.getActiveShip(pid)?.shipInstanceId === id) return this.shipTarget({ ship: pid });
+    return this.lingeringSlots.has(id) ? this.shipTarget({ ship: id }) : null;
+  }
+
+  /** C2/C3 — is `playerId`'s live ship within cargo range of a point body? */
+  private pilotNearPoint(playerId: string, x: number, y: number, radius: number): boolean {
+    const ship = this.getActiveShip(playerId);
+    const pose = this.shipPoseCache.get(playerId);
+    if (!ship?.alive || !ship.isActive || !pose) return false;
+    const reach = CARGO_ACCESS_RANGE + radius;
+    return (pose.x - x) ** 2 + (pose.y - y) ** 2 <= reach * reach;
+  }
+
+  /**
+   * C3 — move the requested items from one hold to another. Player holds
+   * commit together in ONE atomic group; an NPC loot hold (memory only) is
+   * updated in memory and never persisted. Returns what moved.
+   */
+  private moveBetweenHolds(
+    from: { uid: string; persisted: boolean; type: HolderType; owner: string | null },
+    to: { uid: string; persisted: boolean; type: HolderType; owner: string | null },
+    want: CargoRequest,
+    toCapacity: number,
+  ): Hold {
+    const store = getHoldStore();
+    const fromRow = store.get(from.uid);
+    if (fromRow === undefined) return emptyHold();
+    const src = cloneHold(fromRow.hold);
+    const toRow = store.get(to.uid);
+    const dst = cloneHold(toRow?.hold ?? emptyHold());
+    const picked = extractRequested(src, want);
+    const { moved } = transferInto(dst, picked, toCapacity);
+    mergeInto(src, picked);
+    if (isHoldEmpty(moved)) return moved;
+    const puts: HoldRecord[] = [];
+    const deletes: string[] = [];
+    const write = (side: typeof from, row: HoldRecord | undefined, hold: Hold): void => {
+      const rec: HoldRecord = row
+        ? { ...row, hold }
+        : { holderUid: side.uid, holderType: side.type, ownerId: side.owner, sectorKey: null, x: null, y: null, hold, expiresAt: null };
+      if (!side.persisted) {
+        // An NPC loot hold stays even when emptied: its loot was rolled once,
+        // and a missing row would roll it again at death (taken twice).
+        store.put(rec, false);
+        return;
+      }
+      if (isHoldEmpty(hold)) deletes.push(side.uid); else puts.push(rec);
+    };
+    write(from, fromRow, src);
+    write(to, toRow, dst);
+    if (puts.length > 0 || deletes.length > 0) store.commit(puts, deletes, this.sectorKey !== null);
+    return moved;
+  }
+
+  /** C3 — open / move a SHIP's cargo (NPC ship, another player's ship, a parked hull). */
+  private shipCargo(
+    playerId: string,
+    ref: { entityId?: number; ship?: string },
+    move: { dir: 'take' | 'put'; items: CargoRequest } | null,
+  ): CargoState {
+    const echo = ref.entityId !== undefined ? { entityId: ref.entityId } : { targetShip: ref.ship! };
+    const closed = (message: string, breakIn?: CargoState['breakIn']): CargoState => ({
+      type: 'cargo_state', ...echo, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message,
+      ...(breakIn ? { breakIn } : {}), ...(move ? { ok: false } : {}),
+    });
+    const t = this.shipTarget(ref);
+    if (t === null) return closed('Nothing to open.');
+    if (this.sectorKey === null) return closed('Cargo only moves in the galaxy.');
+    const mine = this.getActiveShip(playerId);
+    if (!mine?.alive || !mine.isActive || mine.shipInstanceId === '' || getPlayerShipStore().get(mine.shipInstanceId) === null) {
+      return closed('You need a ship to move cargo.');
+    }
+    if (t.holdUid === mine.shipInstanceId) return closed('That is the ship you are flying.');
+    if (!this.pilotNearPoint(playerId, t.x, t.y, t.radius)) return closed('Fly closer to open its cargo.');
+    if (!cargoOpensFor(relationOf(playerId, t.owner, this.relationCtx), false) && !this.breakIns.hasGrant(playerId, t.id)) {
+      return closed(`Locked. That ${t.label} is not yours.`, { pct: this.breakIns.progress(playerId, t.id), durationMs: this.breakInMsForShip(t) });
+    }
+    if (t.npc) this.npcHold(t.npc); // roll its loot (once) before anyone looks in
+    const myCap = this.shipCargoCapacity(mine.kind, mine.shipInstanceId);
+    const me = { uid: mine.shipInstanceId, persisted: true, type: 'ship' as HolderType, owner: playerId };
+    const them = { uid: t.holdUid, persisted: t.persisted, type: (t.npc ? 'hauler' : 'ship') as HolderType, owner: t.npc ? null : t.owner };
+    let verdict: { ok: boolean; message: string } | undefined;
+    if (move !== null) {
+      const moved = move.dir === 'take' ? this.moveBetweenHolds(them, me, move.items, myCap) : this.moveBetweenHolds(me, them, move.items, t.capacity);
+      verdict = isHoldEmpty(moved)
+        ? { ok: false, message: move.dir === 'take' ? 'No room aboard for that.' : 'No room in there for that.' }
+        : { ok: true, message: move.dir === 'take' ? 'Loaded aboard.' : 'Unloaded.' };
+      if (!isHoldEmpty(moved)) {
+        auditEvent({ event: 'cargo_moved', sector: this.sectorKey ?? undefined, playerId, shipInstanceId: mine.shipInstanceId, owner: t.owner, structureKind: `ship:${t.label}`, dir: move.dir, weight: holdWeight(moved) });
+      }
+    }
+    const theirs = getHoldStore().get(t.holdUid)?.hold ?? emptyHold();
+    return {
+      type: 'cargo_state', ...echo, open: true, hold: theirs, used: holdWeight(theirs), capacity: Number.isFinite(t.capacity) ? t.capacity : 0,
+      ship: getHoldStore().get(mine.shipInstanceId)?.hold ?? emptyHold(), shipCapacity: myCap, ...(verdict ?? {}),
+    };
+  }
+
+  /** C3 — how long breaking into a ship takes. */
+  private breakInMsForShip(t: ShipCargoTarget): number {
+    return this.testBreakInMs ?? breakInDurationMs(Number.isFinite(t.capacity) ? t.capacity : 1000, 1);
   }
 
   /**

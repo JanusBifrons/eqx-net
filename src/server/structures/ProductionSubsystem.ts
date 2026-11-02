@@ -60,6 +60,9 @@ export interface ProductionDeps {
   onBlueprintSpent?(rec: StructureRecord): void;
   /** Active power: full draw while running, the idle trickle otherwise. */
   setActive?(rec: StructureRecord, active: boolean): void;
+  /** D3 — a city module finished a cycle: pay its owner `n` credits (taxes).
+   *  The room pays a player's wallet; an NPC owner has none. */
+  payCredits?(rec: StructureRecord, n: number): void;
 }
 
 interface AppliedCache {
@@ -282,6 +285,8 @@ export class ProductionSubsystem {
       rec.prodProgress = 0;
       rec.prodCycles = cycle + 1;
       this.cyclesCompleted++;
+      // D3 — taxes go to the owner's wallet, never into a hold.
+      for (const o of eff.outputs) if ('credits' in o) this.d.payCredits?.(rec, o.credits);
     }
     rec.prodState = PROD_STATE.running;
   }
@@ -393,6 +398,7 @@ export class ProductionSubsystem {
       bank[i] = NaN;
     }
     for (const o of outputs) {
+      if ('credits' in o) continue; // D3 taxes: paid to the wallet, take no space
       if ('packed' in o || 'hull' in o) {
         // A packed structure, or a packed hull (W5 Shipyard): one discrete item.
         const product = 'packed' in o ? packedProduct(o.packed) : hullProduct(o.hull);
