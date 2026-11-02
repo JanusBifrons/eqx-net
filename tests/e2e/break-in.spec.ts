@@ -28,8 +28,8 @@ type EqxWindow = {
   __eqxSelectAtWorld?: (x: number, y: number) => string | null;
 };
 
-async function join(page: Page): Promise<void> {
-  await page.goto(`${BASE_URL}?room=break-in-test&testId=${randomUUID()}&newShip=1&worker=0`);
+async function join(page: Page, spawn = ''): Promise<void> {
+  await page.goto(`${BASE_URL}?room=break-in-test&testId=${randomUUID()}&newShip=1&worker=0${spawn}`);
   await page.waitForFunction(
     () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '',
     { timeout: 90_000 },
@@ -53,7 +53,9 @@ async function selectAndOpenCargo(page: Page, at: { x: number; y: number }): Pro
 
 test("break into another owner's storage: locked, break in, the cargo opens", async ({ page }) => {
   test.setTimeout(120_000);
-  await join(page);
+  // Spawn NORTH of the Capital: it sits below the ship on screen, so the
+  // inspector opens clear of the app header.
+  await join(page, '&spawnX=0&spawnY=650');
   await expect.poll(() => poseOf(page, 2), { timeout: 10_000 }).not.toBeNull();
   await selectAndOpenCargo(page, (await poseOf(page, 2))!);
 
@@ -81,4 +83,28 @@ test("an NPC ship's hold is locked behind a break-in (C3)", async ({ page }) => 
   await expect(panel).toHaveAttribute('data-open', '0', { timeout: 5_000 });
   await expect(page.getByTestId('cargo-locked')).toBeVisible();
   await expect(page.getByTestId('cargo-break-in')).toBeVisible();
+});
+
+/**
+ * Found while writing the break-in spec: from the default spawn (south of the
+ * Capital) the Capital sits high on screen, and the world-anchored inspector
+ * (it floats ABOVE its anchor) slid UNDER the app header, so "Open cargo"
+ * couldn't be clicked. The panel must stay fully below the header.
+ */
+test('the inspector stays clear of the app header when its target is high on screen', async ({ page }) => {
+  test.setTimeout(120_000);
+  await join(page);
+  await expect.poll(() => poseOf(page, 2), { timeout: 10_000 }).not.toBeNull();
+  const cap = (await poseOf(page, 2))!;
+  await page.evaluate(([x, y]) => { (window as unknown as EqxWindow).__eqxSelectAtWorld!(x!, y!); }, [cap.x, cap.y]);
+  const panel = page.getByTestId('entity-stats-panel');
+  await expect(panel).toBeVisible({ timeout: 5_000 });
+  await page.waitForTimeout(200); // a few frames of world-anchoring
+  const header = await page.getByTestId('app-header').boundingBox();
+  const box = await panel.boundingBox();
+  expect(box, 'the panel is laid out').not.toBeNull();
+  expect(box!.y, `panel top ${box!.y} vs header bottom ${(header?.y ?? 0) + (header?.height ?? 0)}`).toBeGreaterThanOrEqual((header?.y ?? 0) + (header?.height ?? 0));
+  // And its button is clickable (nothing intercepts it).
+  await page.getByTestId('cargo-open-toggle').click({ timeout: 5_000 });
+  await expect(page.getByTestId('cargo-panel')).toBeVisible({ timeout: 5_000 });
 });
