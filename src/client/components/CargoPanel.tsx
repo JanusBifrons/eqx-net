@@ -10,7 +10,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { Box, IconButton, Tooltip } from '@mui/material';
 import Inventory2Icon from '@mui/icons-material/Inventory2';
 import { useUIStore } from '../state/store';
-import { sendCargoMove, sendCargoQuery, sendSetFreightOrders } from '../net/tradeClient';
+import { sendBreakIn, sendBreakInCancel, sendCargoMove, sendCargoQuery, sendSetFreightOrders } from '../net/tradeClient';
 import { GOOD_DEFS, GOOD_IDS, type GoodId } from '../../shared-types/goods';
 import { cargoRows, type CargoRow } from './cargoRows';
 import { MAX_FREIGHT_ORDERS, type CargoItems, type FreightOrder } from '../../shared-types/messages/cargoMessages';
@@ -156,6 +156,25 @@ export const CargoPanel = memo(function CargoPanel({ entityId }: { entityId: num
       </Box>
       {state === null && <Box>Opening…</Box>}
       {state !== null && !state.open && <Box sx={WARN_SX} data-testid="cargo-locked">{state.message ?? 'Locked.'}</Box>}
+      {state !== null && !state.open && state.breakIn !== undefined && (
+        // C2 — breaking in is a hostile act: the owner's turrets will engage you.
+        state.breakIn.pct === null ? (
+          <Box sx={{ display: 'flex', gap: '3px', alignItems: 'center', mt: '3px' }}>
+            <Box sx={BTN_SX} data-testid="cargo-break-in" onClick={() => sendBreakIn(entityId)}>
+              Break in · {Math.round(state.breakIn.durationMs / 1000)}s
+            </Box>
+            <Box sx={EMPTY_SX}>hostile: their turrets will fire</Box>
+          </Box>
+        ) : (
+          <Box data-testid="cargo-break-in-progress" data-pct={Math.round(state.breakIn.pct * 100)} sx={{ mt: '3px' }}>
+            <Box>Breaking in… {Math.round(state.breakIn.pct * 100)}%</Box>
+            <Box sx={{ height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.12)', overflow: 'hidden', my: '2px' }}>
+              <Box sx={{ height: '100%', width: `${Math.round(state.breakIn.pct * 100)}%`, backgroundColor: '#ff8f6b' }} />
+            </Box>
+            <Box sx={BTN_SX} data-testid="cargo-break-in-cancel" onClick={() => sendBreakInCancel()}>Stop</Box>
+          </Box>
+        )
+      )}
       {state?.open === true && (
         <>
           <Pane

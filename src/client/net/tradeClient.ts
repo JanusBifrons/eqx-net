@@ -45,6 +45,15 @@ export function sendCargoMove(entityId: number, dir: 'take' | 'put', items: Carg
   return send('cargo_move', { entityId, dir, items });
 }
 
+/** C2 — break into locked cargo (a hostile act) / stop. */
+export function sendBreakIn(entityId: number): boolean {
+  return send('break_in', { entityId });
+}
+
+export function sendBreakInCancel(): boolean {
+  return send('break_in_cancel', {});
+}
+
 /** T4b — replace my Freight Dock's standing orders (re-read via `cargo_state`). */
 export function sendSetFreightOrders(entityId: number, orders: FreightOrder[]): boolean {
   return send('set_freight_orders', { entityId, orders });

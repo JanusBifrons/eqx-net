@@ -122,6 +122,8 @@ interface PanelData {
   noAmmo?: boolean;
   /** D1 — a Reactor has no fuel. */
   noFuel?: boolean;
+  /** C2 — someone is breaking into its cargo. */
+  breach?: boolean;
   /** P2b — the recipe needs a blueprint. */
   needsBlueprint?: boolean;
   /** P2b — the loaded blueprint ("original" or "N runs", with its quality). */
@@ -270,6 +272,11 @@ export function EntityStatsPanel(): JSX.Element | null {
         // P2b — what a processor makes, and its status.
         <Box sx={POWER_SX} data-testid="entity-stats-recipe" data-recipe={data.recipe} data-prod-status={data.prodStatus}>
           {`MAKES ${RECIPES[data.recipe].displayName}${data.prodStatus ? ` · ${data.prodStatus}` : ''}`}
+        </Box>
+      )}
+      {data.breach === true && (
+        <Box sx={POWER_SX} data-testid="entity-stats-breach">
+          BREACH: someone is breaking in
         </Box>
       )}
       {data.noFuel === true && (
@@ -465,7 +472,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
-  'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'noAmmo', 'noFuel', 'upgradeGoods',
+  'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'noAmmo', 'noFuel', 'breach', 'upgradeGoods',
   'isLab', 'hasCargo', 'packed',
 ];
 
@@ -559,6 +566,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       if (gateTypeOf(subtype) !== null) data.gateAccess = gateAccessFromIndex(st.gateAccess);
       if (st.noAmmo === true) data.noAmmo = true;
       if (st.noFuel === true) data.noFuel = true;
+      if (st.breach === true) data.breach = true;
       if (subtype !== undefined && isProcessorKind(subtype)) {
         // P2b — what it makes and how it's going.
         data.recipe = effectiveRecipe(subtype, st.recipe);

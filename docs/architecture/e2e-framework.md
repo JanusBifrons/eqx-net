@@ -223,6 +223,8 @@ The clustering means most fixes are mechanically similar — once `sector-alpha.
 
 ## Bespoke gameplay triggers — catalogue + design rules
 
+> **`breakInMs`** (room opt, testMode, C2): every break-in takes this many ms, so a break-in test resolves in under a second (`tests/integration/sectorRoom/breakIn.test.ts`).
+
 **The principle:** E2E tests must be **highly controlled and tightly scoped**. Target wall-clock per test is **1-2 seconds** wherever game logic allows. When a test needs longer, almost always the right move is to **add a bespoke server-side gameplay trigger that bypasses the game-time wait**, NOT to expand the timeout. Bumping the budget hides the real signal, invites flakes, and silently breaks again on the next gameplay-tuning PR.
 
 ### Triage flow (when a test needs > 30 s default)

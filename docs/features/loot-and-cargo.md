@@ -198,6 +198,26 @@ Every generated NPC base has a Freight Dock, and its gates open for anyone not h
 - **Your own Freight Dock (T4b):** the cargo panel adds **Standing orders**: "buy up to N" or "sell above N" per good. NPC convoys fill them at the board price; see [production-chains.md](../architecture/production-chains.md#standing-orders-at-a-players-freight-dock-t4b).
 - **Locks:** `tests/integration/sectorRoom/dockMarket.test.ts` (buy and sell at the board price; wallet, hold and base stock all move), `StorageService.test.ts` (the wallet op rides the same group), `CargoPanel.test.tsx` (market mode: priced Buy/Sell, goods only).
 
+## Part 5 (C2): break-ins
+
+Cargo that doesn't open for you (another player's, or an NPC base's when the market is closed to you) can be broken into. The cargo panel's **Break in · Ns** button starts it.
+- **Duration.** `breakInDurationMs(holdCapacity, level)` in `shared-types/breakIn.ts`: 10 s for a small level-1 store, longer for bigger and higher-level ones, at most 45 s.
+- **A hostile act from the first second.** It goes in the `HostileActLedger`:
+  - the owner's turrets engage you. **Player turrets now target pilots hostile to their owner**; this path is skipped while the ledger is empty, so it is byte-identical otherwise;
+  - an NPC side's ships within `ON_SIGHT_ENGAGE_RANGE` turn on you (`markHostile` + `bot_aggro`);
+  - a player owner is alerted: a `break_in_notice` toast online, a push offline.
+- **What interrupts it:** leaving range, either side dying, or taking ANY hit. A defended base usually stops a break-in this way.
+- **Success** opens the cargo to you for `BREAK_IN_ACCESS_MS` (60 s), with normal take/put.
+- **Truth (#16).**
+  - Your progress rides `cargo_state.breakIn`, which the panel polls.
+  - Everyone else sees the structure's **BREACH** room-state flag (`STRUCTURE_FLAG_BREACH`); the inspector shows "BREACH".
+  - `break_in_notice` toasts are accelerators.
+- **Code:** `server/rooms/BreakInSubsystem.ts` (channels + grants over injected hooks, ticked with the 10 Hz structure tick), `SectorRoom.onBreakInStart` / `onBreakInEnd`.
+- **Locks:**
+  - `BreakInSubsystem.test.ts`: success, grant window, interruptions;
+  - `tests/integration/sectorRoom/breakIn.test.ts`: undefended, the alarm and BREACH, then the cargo opens and goods are taken; defended, the owner's turret engages the thief and the hit interrupts it;
+  - `CargoPanel.test.tsx` and wire parity.
+
 ## Tests
 
 - Part 2: `src/server/cargo/StorageService.test.ts` (uid determinism, atomic

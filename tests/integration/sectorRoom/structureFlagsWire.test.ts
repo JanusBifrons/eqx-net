@@ -1,6 +1,6 @@
 /**
- * Regression lock (found 2026-11-01 while building break-ins): the structure flag
- * bits NO_AMMO (P2d), NO_FUEL (D1) and DRAW_FULL (active power)
+ * Regression lock (found 2026-11-01 while building C2): the structure flag
+ * bits NO_AMMO (P2d), NO_FUEL (D1), DRAW_FULL (active power) and BREACH (C2)
  * were set INSIDE the shield-emitter branch of `rebuildStructuresSlice`, so
  * they only ever reached clients for pylons and gates. A Reactor's "NO FUEL",
  * a turret's "NO MUNITIONS" and every structure's live power draw were wrong

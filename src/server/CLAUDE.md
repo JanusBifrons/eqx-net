@@ -196,6 +196,11 @@ Update this section when a threshold is set.
   - **Clamped** to stock, space, wallet and volume.
   - **Atomic:** one group per good, with the wallet op passed as `extraOps` to `StorageService.marketBuy` / `marketSell`.
   - Never let a market fill skip `recordDockFill`: the galaxy market and volume must see it.
+- **Break-ins (C2):** `break_in` / `break_in_cancel` → `BreakInSubsystem` (ticked in `structureTurretTick`).
+  - **Starting is a hostile act.** `onBreakInStart` records it in `hostileActs` and alarms the owner, or aggros the NPC side's nearby ships.
+  - **Hits cancel it.** `applyDamage` calls `onActorDamaged` for any hit.
+  - **A grant opens `cargoAccess`** for 60 s.
+  - **Player turrets** also engage pilots hostile to their owner (`nearestHostilePilot`). The scan only runs while `hostileActs.size() > 0`.
 - **Standing orders (T4b):** `set_freight_orders` (owner, built `freight_dock`) → `rec.freightOrders` (persisted). The dock joins convoy planning as a `player` base.
   - **Who trades with whom:** the ConvoyDirector pairs it with NPC bases only.
   - **When money moves:** it prices and clamps the order at planning. The wallet op lands in the SAME group as the goods: a credit at pickup via `extraOpsFor(taken)`, a debit at delivery with the release.
