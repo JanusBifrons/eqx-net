@@ -237,6 +237,13 @@ Update this section when a threshold is set.
   - Every trade quote goes through `TradeDirector.quote(kind, good, rep, sectorKey)`, so the board, the accept and the re-quote agree. Never quote around it.
   - The offers route takes `?sector=`.
 
+## Faction standing events and policies (plan soft-leaping-truffle v4, F3)
+
+- **One rule for hits:** `applyDamage` → `noteStandingHit` lowers the victim faction's view of the attacker's faction once per pair per window (`STANDING_HIT_*`). Victims are structures (their owner) and player ships, with at least one player side. Steady state is nested Map lookups only (#14). Break-ins cost `STANDING_BREAK_IN_DELTA`. Don't add standing deltas elsewhere without a reason; trade keeps its own (`REP_*`).
+- **Player policy:** `set_faction_policy` → `TradeSink.setPlayerPolicy` → `EconomyStore` (persisted on the player row, cached as a `FactionPolicy`). The room's `relationCtx.policyOf` reads it.
+- **Player turrets** scan pilots when there are hostile acts OR their owner's policy can act on standing (`policyActsOnStanding`).
+- Lock: `tests/integration/sectorRoom/factionStanding.test.ts`. Story: [docs/architecture/factions.md](../../docs/architecture/factions.md).
+
 ## NPC ownership (plan soft-leaping-truffle v3, B2)
 
 - **Owners like `npc:<allegiance>:<baseId>` are NPC bases.** Every "is this hostile?" decision about a structure goes through `relationOf`, using the room's ONE `relationCtx` (which holds the hostile-act ledger). Don't compare owner strings inline.

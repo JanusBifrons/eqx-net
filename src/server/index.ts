@@ -1360,6 +1360,11 @@ async function main(): Promise<void> {
   setEconomyRouteProvider({
     offersFor: (pid, sector) => director.offersFor(pid, sector),
     view: (pid) => store.view(pid),
+    factions: (pid) => store.factionsView(pid, (other) => {
+      const uid = getPlayerShipStore().listByPlayer(other).find((r) => r.userId !== null)?.userId ?? null;
+      const u = uid ? getUser(uid) : null;
+      return u?.displayName ?? u?.email ?? 'A pilot';
+    }),
   });
   logger.info(econ, 'trade director started');
 

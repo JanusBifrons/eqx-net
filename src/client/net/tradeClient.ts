@@ -7,6 +7,7 @@ import { getGameClient } from './clientSingleton.js';
 import type { EconAllegiance } from '../../shared-types/economy.js';
 import type { GoodId } from '../../shared-types/goods.js';
 import type { LabStart } from '../../shared-types/messages/labMessages.js';
+import type { PlayerPolicyWire } from '../../shared-types/factions.js';
 import type { CargoItems, FreightOrder } from '../../shared-types/messages/cargoMessages.js';
 
 function send(type: string, payload: Record<string, unknown>): boolean {
@@ -118,4 +119,9 @@ export function sendGift(args: {
   credits: number;
 }): boolean {
   return send('send_gift', args);
+}
+
+/** F3 — set this player's own faction policy (null = a rule off). */
+export function sendSetFactionPolicy(policy: PlayerPolicyWire): boolean {
+  return send('set_faction_policy', { policy });
 }

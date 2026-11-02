@@ -8,6 +8,7 @@ import type { z } from 'zod';
 import type { AcceptOfferSchema, SendGiftSchema } from '../../shared-types/economy.js';
 import type { GoodId } from '../../shared-types/goods.js';
 import type { TradeRoom } from './TradeDirector.js';
+import type { FactionPolicy, PlayerPolicyWire } from '../../shared-types/factions.js';
 
 export type AcceptOfferMsg = z.infer<typeof AcceptOfferSchema>;
 export type SendGiftMsg = z.infer<typeof SendGiftSchema>;
@@ -35,6 +36,13 @@ export interface TradeSink {
   /** Factions F1 — faction `from`'s view of faction `to` (−100..100; a
    *  player's faction id is their player id). Hot-path safe (Map lookups). */
   standing?(from: string, to: string): number;
+  /** F3 — move `from`'s view of `to` (standing events: hits, break-ins). */
+  adjustStanding?(from: string, to: string, delta: number): void;
+  /** F3 — a faction's policy (a player's own settings, else the default).
+   *  Hot-path safe (one Map lookup). */
+  policyOf?(faction: string): FactionPolicy;
+  /** F3 — a player edits their own faction's policy. */
+  setPlayerPolicy?(playerId: string, policy: PlayerPolicyWire): void;
   /** Robot reputation ≥ ROBOT_TRUCE_AT. Hot-path safe (one Map lookup). */
   robotTruce(playerId: string): boolean;
   /** Drone-reputation wave spacing multiplier (≥ 1). */

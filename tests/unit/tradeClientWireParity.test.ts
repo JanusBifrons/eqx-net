@@ -26,6 +26,7 @@ import { BpBuySchema, BpMarketQuerySchema, BpSellSchema } from '../../src/shared
 import { PackedStockQuerySchema } from '../../src/shared-types/packedStock';
 import { PlaceBountySchema } from '../../src/shared-types/contracts';
 import { LabCancelSchema, LabQuerySchema, LabStartSchema } from '../../src/shared-types/messages/labMessages';
+import { SetFactionPolicySchema } from '../../src/shared-types/messages/factionMessages';
 import { BreakInCancelSchema, BreakInSchema, CargoMoveSchema, CargoQuerySchema, SetFreightOrdersSchema } from '../../src/shared-types/messages/cargoMessages';
 
 function lastAccepted(schema: ZodType, wireType: string): void {
@@ -85,6 +86,9 @@ describe('tradeClient senders match the server schemas', () => {
     lastAccepted(SetFreightOrdersSchema, 'set_freight_orders');
     client.sendBreakIn(9);
     lastAccepted(BreakInSchema, 'break_in');
+    // F3 — the player's own faction policy.
+    client.sendSetFactionPolicy({ hostileBelow: -40, alliedAbove: null });
+    lastAccepted(SetFactionPolicySchema, 'set_faction_policy');
     // C3 — ship targets.
     client.sendCargoQuery({ ship: 'p-2' });
     lastAccepted(CargoQuerySchema, 'cargo_query');

@@ -9,6 +9,8 @@ import {
   type TradeOffer,
 } from '../../shared-types/economy.js';
 
+import { PlayerFactionsViewSchema, type PlayerFactionsView } from '../../shared-types/factions.js';
+
 export async function fetchEconomy(playerId: string): Promise<PlayerEconomyView | null> {
   try {
     const res = await fetch(`/trade/economy?playerId=${encodeURIComponent(playerId)}`);
@@ -49,4 +51,16 @@ export function saveTradeLastSeen(ms: number): void {
   try {
     localStorage.setItem(TRADE_LAST_SEEN_KEY, String(ms));
   } catch { /* storage blocked — the summary just shows again */ }
+}
+
+/** F3 — the Factions tab: standings both ways, plus this player's policy. */
+export async function fetchFactions(playerId: string): Promise<PlayerFactionsView | null> {
+  try {
+    const res = await fetch(`/trade/factions?playerId=${encodeURIComponent(playerId)}`);
+    if (!res.ok) return null;
+    const parsed = PlayerFactionsViewSchema.safeParse(await res.json());
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
 }

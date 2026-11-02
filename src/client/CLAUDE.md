@@ -283,6 +283,13 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 - **Never add a top-level `src/client/trade/` dir:** it collides with the `/trade` Vite proxy. Trade client code lives in `net/trade*.ts`. The `clientDirProxyCollision.test.ts` guard locks this.
 - Locks: `tradeView.test.ts`, `TradeToasts.test.tsx`, `tests/e2e/trade-tab.spec.ts` (feature tier).
 
+## Factions tab (plan soft-leaping-truffle v4, F3)
+
+- `layout/Drawer/tabs/FactionsTab.tsx` is rebuilt ONLY from `GET /trade/factions` (#16), polled only while `drawerTab === 'factions' && isDrawerOpen`.
+- The policy selects send `set_faction_policy` (`sendSetFactionPolicy`) and refetch.
+- Rows show names, never ids. Standing labels come from the shared `standingLabel` scale (−100..100).
+- Locks: `FactionsTab.test.tsx`, `tests/e2e/factions-tab.spec.ts`.
+
 ## Turret-vs-fence placement hint
 
 - A fence blocks every shot, its owner's turret fire included. While a shot-firing kind is placed, `PlacementFenceHint` (mounted hidden) is shown under the ghost by `gameRafLoop` when `turretFireCrossesWall` (`structures/fenceFireHint.ts`: pure, alloc-free, over the shared `visitDerivedWalls`) finds a wall within the turret's range. It toggles on change only, using direct DOM writes and no React re-render. It works on desktop and touch.

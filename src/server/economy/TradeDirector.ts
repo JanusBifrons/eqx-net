@@ -69,6 +69,7 @@ import type { EconomyStore } from './EconomyStore.js';
 import type { AcceptOfferMsg, SendGiftMsg, TradeSink, TradeVerdict } from './tradeSink.js';
 import type { Wallet } from './Wallet.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
+import type { FactionPolicy, PlayerPolicyWire } from '../../shared-types/factions.js';
 
 /** The room surface the trade director drives (SectorRoom implements it). */
 export interface TradeRoom {
@@ -512,6 +513,18 @@ export class TradeDirector implements TradeSink {
 
   standing(from: string, to: string): number {
     return this.store.standing(from, to);
+  }
+
+  adjustStanding(from: string, to: string, delta: number): void {
+    this.store.adjustStanding(from, to, delta);
+  }
+
+  policyOf(faction: string): FactionPolicy {
+    return this.store.policyOf(faction);
+  }
+
+  setPlayerPolicy(playerId: string, policy: PlayerPolicyWire): void {
+    this.store.setPlayerPolicy(playerId, policy);
   }
 
   robotTruce(playerId: string): boolean {
