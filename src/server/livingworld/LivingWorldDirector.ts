@@ -58,6 +58,7 @@ import {
 import { DRONE_BOT_ID_PREFIX } from './directorBotIds.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import { WaveSquadBehaviour } from './director/SquadBehaviour.js';
+import { planClusterJoins, type ClusterCandidate } from './director/clusterJoins.js';
 import { EscalatingWavePattern } from './director/WavePattern.js';
 import { WaveDirector, type WaveStep } from './director/WaveDirector.js';
 import { IncomingRegistry } from './IncomingRegistry.js';
@@ -233,6 +234,9 @@ export interface LivingWorldOptions {
   leadKind: ShipKindId;
   /** false ⇒ never dispatch waves at bases (robots). Roam + flock still run. */
   wavesEnabled: boolean;
+  /** Squads roaming the same sector merge into one bigger cluster (robots):
+   *  a joined squad follows its host's roam goal and flocks on its leader. */
+  mergeClusters: boolean;
 }
 
 /** Optional cross-director hooks (not tuning knobs, so not in the options
@@ -342,6 +346,7 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   squadLayout: DEFAULT_SQUAD_LAYOUT,
   leadKind: 'fighter',
   wavesEnabled: true,
+  mergeClusters: false,
 };
 
 /** Leader-course tunables (non-combat herding). Radius (game units) of the ring
@@ -408,6 +413,8 @@ export class LivingWorldDirector {
   /** squadId → wall-clock the squad may next pick a new roam goal (the
    *  slow-roam dwell). Idle squads drift one roam hop per `roamIntervalMs`. */
   private readonly squadRoamNextAtMs = new Map<string, number>();
+  /** Merged clusters (`mergeClusters`): joiner squadId → host squadId. */
+  private clusterJoins: Map<string, string> = new Map();
   /** Non-combat herding: squadId → the LEADER's current IN-SECTOR A→B course
    *  point (the leader cruises to it; followers flock to the leader). Re-picked
    *  once the leader arrives. */
@@ -815,8 +822,15 @@ export class LivingWorldDirector {
    */
   private roamStep(now: number): void {
     const avoidCombat = (sectorKey: string): boolean => this.sectorInRecentCombat(sectorKey);
+    if (this.opts.mergeClusters) this.planClusters();
     for (const sq of this.squadPool.all()) {
       if (sq.state !== 'idle' || sq.targetFactionId !== null) continue;
+      // A squad merged into a cluster takes its host's goal (set when the host
+      // picks one, below) instead of choosing its own.
+      if (this.clusterJoins.has(sq.squadId)) {
+        this.advanceMembersTowardGoal(sq);
+        continue;
+      }
       const sched = this.squadRoamNextAtMs.get(sq.squadId);
       if (sched === undefined) {
         // First sighting: dwell at the home edge before the first drift.
@@ -830,6 +844,14 @@ export class LivingWorldDirector {
         const goal = pickRoamGoal(this.rng, from, this.sectorKeys, avoidCombat);
         sq.sectorKey = goal;
         this.squadRoamNextAtMs.set(sq.squadId, now + this.opts.roamIntervalMs);
+        // Its merged squads travel with it.
+        for (const [joinerId, hostId] of this.clusterJoins) {
+          if (hostId !== sq.squadId) continue;
+          const joiner = this.squadPool.get(joinerId);
+          if (joiner === undefined) continue;
+          joiner.sectorKey = goal;
+          this.squadRoamNextAtMs.set(joinerId, now + this.opts.roamIntervalMs);
+        }
         // Audit a combat-driven re-route: a neighbour was skipped for combat and
         // the squad picked elsewhere (or held at `from` because all were unsafe).
         if (avoided !== null && goal !== avoided) {
@@ -906,6 +928,56 @@ export class LivingWorldDirector {
    * Combat overrides this: a hostile (waved) drone is in COMBAT and never reads
    * the flock role, so a squad under attack pursues normally.
    */
+  /** Re-plan merged clusters (`mergeClusters`): squads idle in the same
+   *  sector join the first one there (`planClusterJoins`). Control cadence. */
+  private planClusters(): void {
+    const cands: ClusterCandidate[] = [];
+    for (const sq of this.squadPool.all()) {
+      let live = 0;
+      for (const botId of sq.botIds) {
+        const rec = this.pool.get(botId);
+        if (rec && (rec.state === 'active' || rec.state === 'in-transit')) live++;
+      }
+      cands.push({
+        squadId: sq.squadId,
+        sectorKey: sq.sectorKey,
+        eligible: sq.state === 'idle' && sq.targetFactionId === null,
+        gathered: this.squadGatheredAt(sq, sq.sectorKey),
+        size: live,
+      });
+    }
+    const next = planClusterJoins(cands, this.clusterJoins);
+    for (const [j, h] of next) {
+      if (this.clusterJoins.get(j) !== h) serverLogEvent('robot_cluster_merged', { squadId: j, hostId: h, sector: this.squadPool.get(h)?.sectorKey });
+    }
+    this.clusterJoins = next;
+  }
+
+  /** The cluster (host + joined squads) bots in `sectorKey`, host's first —
+   *  the first is the cluster's leader. Control cadence (allocates). */
+  clusterMembersOf(hostId: string, sectorKey: string): string[] {
+    const out: string[] = [];
+    const add = (sq: SquadRecord | undefined): void => {
+      for (const botId of sq?.botIds ?? []) {
+        const rec = this.pool.get(botId);
+        if (rec && rec.state === 'active' && rec.sectorKey === sectorKey) out.push(botId);
+      }
+    };
+    add(this.squadPool.get(hostId));
+    for (const [j, h] of this.clusterJoins) if (h === hostId) add(this.squadPool.get(j));
+    return out;
+  }
+
+  /** A squad's current goal sector (inspection / tests). */
+  squadGoalOf(squadId: string): string | undefined {
+    return this.squadPool.get(squadId)?.sectorKey;
+  }
+
+  /** Merged clusters (inspection / tests): joiner squadId → host squadId. */
+  clusters(): ReadonlyMap<string, string> {
+    return this.clusterJoins;
+  }
+
   private flockStep(): void {
     // Env-gated herd diagnostics (`EQX_BOT_*`-style): off by default, inert in
     // production. Emits one `flock_debug` per idle squad per control tick (skip
@@ -926,6 +998,19 @@ export class LivingWorldDirector {
       if (!room) {
         if (dbg) serverLogEvent('flock_debug', { squadId: sq.squadId, sector: sq.sectorKey, skip: 'no-room' });
         continue;
+      }
+
+      // A merged cluster flocks as ONE pack on the HOST's leader: a joined
+      // squad's bots follow it (with the whole cluster for separation).
+      const hostId = this.clusterJoins.get(sq.squadId);
+      if (hostId !== undefined) {
+        const pack = this.clusterMembersOf(hostId, sq.sectorKey);
+        const hostLeader = pack[0];
+        const hostSq = this.squadPool.get(hostId);
+        if (hostLeader !== undefined && hostSq !== undefined && hostSq.botIds.includes(hostLeader)) {
+          for (const botId of pack) if (sq.botIds.includes(botId)) room.setBotFlockFollow(botId, hostLeader, pack);
+          continue;
+        }
       }
 
       // Active members present in this sector, in stable botIds order so the
