@@ -5,7 +5,7 @@ import {
   goBackView,
   categoryById,
 } from './buildCategories';
-import { STRUCTURE_KINDS_LIST } from '@shared-types/structureKinds';
+import { STRUCTURE_KINDS_LIST, isBuildableStructureKind } from '@shared-types/structureKinds';
 
 /**
  * WS-13 / R2.6 — taxonomy + dial nav reducer locks.
@@ -15,9 +15,9 @@ import { STRUCTURE_KINDS_LIST } from '@shared-types/structureKinds';
  * can never silently drop out of the Build menu.
  */
 describe('buildCategories taxonomy', () => {
-  it('covers every structure kind exactly once (no orphan, no duplicate)', () => {
+  it('covers every buildable structure kind exactly once (no orphan, no duplicate)', () => {
     const categorised = BUILD_CATEGORIES.flatMap((c) => c.kinds);
-    const all = STRUCTURE_KINDS_LIST.map((k) => k.id);
+    const all = STRUCTURE_KINDS_LIST.map((k) => k.id).filter((id) => isBuildableStructureKind(id));
     expect(new Set(categorised)).toEqual(new Set(all));
     // length equality rules out duplicates hiding an orphan and vice-versa.
     expect(categorised.length).toBe(all.length);

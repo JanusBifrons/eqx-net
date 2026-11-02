@@ -119,6 +119,7 @@ import { TeleporterSubsystem, type PartnerLink } from '../structures/TeleporterS
 import { getTeleportBroker, type RiderBatch, type TeleportRoom } from '../teleport/TeleportBroker.js';
 import { hopDistance } from '../livingworld/population.js';
 import {
+  isAlienGateKind,
   PAD_SPECS,
   SetTeleportRulesSchema,
   TeleportFireSchema,
@@ -204,7 +205,9 @@ const ROOM_STANDING: StandingQuery = { of: (from, to) => getTradeSink()?.standin
  *  settings live in the economy store). No sink ⇒ the catalogue defaults. */
 const ROOM_POLICY = (faction: string): FactionPolicy => getTradeSink()?.policyOf?.(faction) ?? defaultFactionPolicy(faction);
 const NPC_SIDE_PARTY = Object.fromEntries(NPC_ALLEGIANCE_IDS.map((a) => [a, npcOwner(a)])) as Record<NpcAllegianceId, string>;
-import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { getStructureKind, isBuildableStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { AlienGateGuard, isAlienGatesDisabled } from '../structures/AlienGateGuard.js';
+import { ALIEN_GATE_OWNER, alienGateCandidates, alienGateSites, type AlienGateSite } from '../../core/galaxy/alienGates.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
 import type { GridObstacle } from '../../core/structures/Grid.js';
@@ -879,6 +882,13 @@ export class SectorRoom extends Room<SectorState> {
   private production!: ProductionSubsystem;
   /** v4 T1 — teleporter capacitors, pairing, rules and the jump cycle. */
   private teleporters!: TeleporterSubsystem;
+  /** v4 A — the alien gates' guns: who is disabled, and for how long. */
+  private readonly gateGuard = new AlienGateGuard({
+    swarmSlotOf: (id) => this.swarmRegistry.get(id)?.slot,
+    onDisabled: (actorId, gate) => {
+      serverLogEvent('alien_gate_disabled', { sectorKey: this.sectorKey ?? '', actorId, gate: gate.id });
+    },
+  });
   /** v4 T3 — this room as the teleport broker sees it. */
   private teleportRoom!: TeleportRoom;
   /** Mine Layers' proximity mines (10 Hz with the structure tick). */
@@ -1486,6 +1496,11 @@ export class SectorRoom extends Room<SectorState> {
        *  seed it AFTER the snapshot restore (saved player structures keep
        *  their space). Set for every galaxy room by `resolveSectorConfig`. */
       galaxyBases?: boolean;
+      /** v4 A — seed the Ancients' border gates (one per neighbour, twinned
+       *  with the gate across the border). Set for every galaxy room. */
+      alienGates?: boolean;
+      /** v4 A — testMode: seed one alien gate here (no twin room), for E2E. */
+      testAlienGate?: { x: number; y: number; neighbour: string };
       /** C2 bespoke trigger: every break-in takes this long (ms). testMode-only. */
       breakInMs?: number;
       /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
@@ -1574,6 +1589,13 @@ export class SectorRoom extends Room<SectorState> {
     // whether they drift passively or steer toward players.
     this.aiController = new AiController({
       postIntent: (slot, fx, fy, torque, setAngvel) => {
+        // v4 A — a disabled NPC ship's engines are off.
+        if (this.gateGuard.isSlotDisabled(slot, Date.now())) {
+          fx = 0;
+          fy = 0;
+          torque = 0;
+          setAngvel = undefined;
+        }
         this.postToWorker({
           type: 'AI_INTENT',
           slot, fx, fy, torque,
@@ -1876,6 +1898,7 @@ export class SectorRoom extends Room<SectorState> {
       fittedOf: (shipInstanceId) => this.fittedCache.get(shipInstanceId),
       // Economy v2 W1 — the own player's wallet balance on the snapshot.
       walletOf: (playerId) => getWallet().balance(playerId),
+      disabledMsOf: (playerId) => this.gateGuard.remainingMs(playerId, Date.now()),
       depositProgressOf: (shipInstanceId) => this.depositProgress.get(shipInstanceId),
       playerMountAngles: this.mountTicker.playerMountAngles,
       droneMountAngles: this.mountTicker.droneMountAngles,
@@ -2334,6 +2357,7 @@ export class SectorRoom extends Room<SectorState> {
         return f && f.room !== this.teleportRoom ? { rec: f.rec, sys: f.room.teleporters } : null;
       },
       hopsTo: (sk) => this.hopsToSector(sk),
+      findAlienTwin: (rec) => this.findAlienTwin(rec),
       // T4 — tolls: offered at arming, settled at the swap.
       onArmed: (rec) => this.offerToll(rec),
       onTollSettle: (rec) => this.settleToll(rec),
@@ -2609,6 +2633,14 @@ export class SectorRoom extends Room<SectorState> {
     if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {
       this.seedGalaxyBase(this.sectorKey);
     }
+    // v4 A — the border gates, after the restore (saved player structures keep
+    // their places) and the NPC bases (a gate takes the nearest free spot).
+    if (roomOpts.alienGates === true && this.sectorKey !== null && getSector(this.sectorKey) && !isAlienGatesDisabled()) {
+      this.seedAlienGates(this.sectorKey, alienGateSites(this.sectorKey));
+    }
+    if (this.testMode && roomOpts.testAlienGate !== undefined) {
+      this.seedAlienGates(this.sectorKey ?? 'test', [roomOpts.testAlienGate]);
+    }
 
     // Phase 8 sub-phase B — explicit 15s seat-reservation TTL for incoming
     // hyperspace travellers. Default is already 15 in Colyseus 0.16; making
@@ -2687,6 +2719,7 @@ export class SectorRoom extends Room<SectorState> {
       postToWorker: (cmd) => this.postToWorker(cmd),
       serverTick: () => this.serverTick,
       shipEnergyOf: (playerId) => this.getActiveShip(playerId)?.energy,
+      isDisabled: (playerId) => this.gateGuard.isDisabled(playerId, Date.now()),
       logger,
       malformed: this.malformed,
     }));
@@ -2722,6 +2755,8 @@ export class SectorRoom extends Room<SectorState> {
       }
       const owner = this.sessionToPlayer.get(client.sessionId);
       if (!owner) return;
+      // v4 A — nobody builds an alien gate.
+      if (!isBuildableStructureKind(parsed.data.kind)) return;
       const id = this.structurePlacement.place(
         owner,
         parsed.data.kind,
@@ -2968,6 +3003,8 @@ export class SectorRoom extends Room<SectorState> {
       const sw = this.swarmRegistry.getByEntityId(parsed.data.entityId);
       const target = sw ? this.structureRegistry.get(sw.id) : undefined;
       if (!pid || !target || !isTeleporterKind(target.kind) || !target.isConstructed || target.owner === pid || target.uid === undefined) return;
+      // v4 A — alien gates only ever link to each other.
+      if (isAlienGateKind(target.kind)) return;
       if (relationOf(pid, target.owner, this.relationCtx) === 'hostile') return;
       const here = this.sectorKey ?? '';
       const mine = parsed.data.sectorKey === here
@@ -3795,6 +3832,21 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private handleFire(client: Client, raw: unknown): void {
+    // v4 A — a disabled pilot's weapons are offline; firing inside an alien
+    // gate's zone disables them.
+    if (this.gateGuard.gateCount > 0) {
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      if (pid !== undefined) {
+        const now = Date.now();
+        if (this.gateGuard.isDisabled(pid, now)) return;
+        const slot = this.playerToSlot.get(pid);
+        if (slot !== undefined) {
+          const b = slotBase(slot);
+          this.gateGuard.onFired(pid, this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!, now);
+          if (this.gateGuard.isDisabled(pid, now)) return;
+        }
+      }
+    }
     this.playerFireResolver.resolve(client, raw);
   }
 
@@ -3957,6 +4009,16 @@ export class SectorRoom extends Room<SectorState> {
    * preview the duplication is contained to this single method.
    */
   private handleAiFire(shooterId: string, dirX: number, dirY: number, tick: number): void {
+    if (this.gateGuard.gateCount > 0) {
+      const now = Date.now();
+      if (this.gateGuard.isDisabled(shooterId, now)) return;
+      const rec = this.swarmRegistry.get(shooterId);
+      if (rec) {
+        const b = slotBase(rec.slot);
+        this.gateGuard.onFired(shooterId, this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!, now);
+        if (this.gateGuard.isDisabled(shooterId, now)) return;
+      }
+    }
     this.aiFireResolver.resolve(shooterId, dirX, dirY, tick);
   }
 
@@ -4094,6 +4156,11 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
+    // v4 A — alien gates can't be damaged; whoever hits one is disabled.
+    if (this.gateGuard.gateCount > 0 && this.gateGuard.isGate(targetId)) {
+      if (damage > 0) this.gateGuard.onGateAttacked(targetId, shooterId, Date.now());
+      return;
+    }
     if (damage > 0) this.noteEconomicHit(targetId, shooterId);
     if (damage > 0) this.noteStandingHit(targetId, shooterId);
     // C2 — a hit ends the target's break-in (one Map lookup when none).
@@ -4243,6 +4310,8 @@ export class SectorRoom extends Room<SectorState> {
     this.npcTargetGridFresh = false;
     // P3c — a removed shooter's pending charge never fires.
     this.aiFireResolver.forget(rec.id);
+    // v4 A — its slot may be reused; a new ship must not inherit a disable.
+    if (this.gateGuard.gateCount > 0) this.gateGuard.forget(rec.id);
     // Gameplay audit log — record a REAL combat death (the `emitDestroyed`
     // signal that fires the kill-feed + bus ENTITY_DESTROYED; load-shedder /
     // quiet bot despawn / abandon use emitDestroyed:false and are excluded).
@@ -4366,6 +4435,7 @@ export class SectorRoom extends Room<SectorState> {
    *  broadcast) when the sector has no structures. */
   private structureGridTick(): void {
     this.hostileActs.sweep(Date.now());
+    this.gateGuard.sweep(Date.now());
     if (this.structureRegistry.size === 0) return;
     const result = this.structureGrid.pulse(Date.now());
     // P2b — processors take inputs from and put outputs into network storage.
@@ -4415,6 +4485,65 @@ export class SectorRoom extends Room<SectorState> {
    * are cleared: the builders cleared the rock), as far from the spawn at the
    * origin as it fits. Not persisted: a restart regrows it from the seed.
    */
+  /**
+   * v4 A — seed this sector's alien gates: one per neighbour, near the edge
+   * facing it, built and invulnerable (no hull pool; `applyDamage` turns a hit
+   * into a disable). Runs AFTER the NPC bases, so a gate takes the nearest
+   * free spot to its ideal site (`alienGateCandidates`); asteroids under it are
+   * cleared quietly. It remembers its neighbour, and the teleporter subsystem
+   * finds the twin across the border through the broker the first time it
+   * needs it (`findAlienTwin`). Not persisted (NPC-owned): every boot
+   * regenerates them.
+   */
+  private seedAlienGates(sectorKey: string, sites: readonly AlienGateSite[]): void {
+    const half = getStructureKind('alien_gate').footprint.w / 2;
+    for (const site of sites) {
+      let placed: string | null = null;
+      for (const c of alienGateCandidates(site, half, SECTOR_PLAYABLE_HALF_EXTENT)) {
+        let blocked = false;
+        for (const r of this.structureRegistry.all()) {
+          if (Math.abs(r.x - c.x) < half + (r.halfW ?? r.radius) && Math.abs(r.y - c.y) < half + (r.halfH ?? r.radius)) {
+            blocked = true;
+            break;
+          }
+        }
+        if (blocked) continue;
+        for (const rec of [...this.swarmRegistry.all()]) { // TODO: alloc-debt (boot only)
+          if (rec.kind !== 0) continue;
+          const b = slotBase(rec.slot);
+          const dx = Math.abs(this.sabF32[b + SLOT_X_OFF]! - c.x);
+          const dy = Math.abs(this.sabF32[b + SLOT_Y_OFF]! - c.y);
+          if (dx < half + rec.radius && dy < half + rec.radius) this.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false });
+        }
+        placed = this.structurePlacement.place(ALIEN_GATE_OWNER, 'alien_gate', c.x, c.y, { skipAutoConnect: true });
+        if (placed !== null) break;
+      }
+      if (placed === null) {
+        logger.warn({ sectorKey, neighbour: site.neighbour }, 'alien gate: no free spot; gate skipped');
+        continue;
+      }
+      const rec = this.structureRegistry.get(placed)!;
+      rec.isConstructed = true;
+      rec.constructionProgress = rec.constructionCost;
+      rec.alienNeighbour = site.neighbour;
+      this.swarmHealth.delete(placed);
+      this.gateGuard.addGate(rec);
+    }
+    this.rebuildStructuresSlice();
+  }
+
+  /** v4 A — the alien gate in `rec.alienNeighbour`'s room that faces back here. */
+  private findAlienTwin(rec: StructureRecord): { sectorKey: string; uid: string } | null {
+    const there = rec.alienNeighbour;
+    if (there === undefined || this.sectorKey === null) return null;
+    const room = getTeleportBroker().room(there);
+    if (room === null) return null;
+    for (const g of room.ownTeleporters(ALIEN_GATE_OWNER)) {
+      if (g.alienNeighbour === this.sectorKey && g.uid !== undefined) return { sectorKey: there, uid: g.uid };
+    }
+    return null;
+  }
+
   private seedGalaxyBase(sectorKey: string): void {
     // A sector holds one to three NPC bases (galaxyBasePlan); base 0 is the
     // sector's original base. Each later one keeps well clear of the earlier.
@@ -5638,7 +5767,10 @@ export class SectorRoom extends Room<SectorState> {
     // B2 — an NPC base is named for its side (never a raw id; client rule).
     const party = parseOwner(owner);
     if (party.kind === 'npc') {
-      const name = `${factionDisplayName(party.faction) ?? 'NPC'} base`;
+      // v4 A — the alien gates belong to the Ancients, not a base.
+      const name = owner === ALIEN_GATE_OWNER
+        ? (factionDisplayName(party.faction) ?? 'The Ancients')
+        : `${factionDisplayName(party.faction) ?? 'NPC'} base`;
       this._ownerNameCache.set(owner, name);
       return name;
     }

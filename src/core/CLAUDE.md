@@ -347,6 +347,11 @@ reintroduces the spiral the 500-target cannot afford. Full story:
   holds the tuning (burst/damping/HP/MAX_LIVE_SCRAP). Full story:
   [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).
 
+## Alien gates and the disabled input gate (plan soft-leaping-truffle v4, A)
+
+- `galaxy/alienGates.ts` is the one source for where the Ancients' gates go (`alienGateSites`, `alienGateCandidates`) and who owns them (`ALIEN_GATE_OWNER`). Server seeding and the client inspector both read it.
+- `combat/disable.ts` `gateDisabledInput` is the disabled-input contract for BOTH sides (#15): the server input handler and the client's `tickPhysics` call it. Don't copy its logic; `tests/unit/disableParity.test.ts` fails if either side stops calling it.
+
 ## Relations: one answer to "who is hostile to whom" (plan soft-leaping-truffle v3, B1)
 
 - **Ask `relationOf(actor, owner, ctx)`** (`src/shared-types/relations.ts`) whenever a system decides whether a ship or player is welcome near something it doesn't own: gates, turrets, cargo, break-ins, NPC docks. Don't compare owner strings or allegiances inline; that is how two systems end up disagreeing.

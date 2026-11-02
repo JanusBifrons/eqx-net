@@ -282,6 +282,9 @@ export interface UIStore {
   teleportCandidates: TeleportCandidatesReply | null;
   /** v4 T4 — a teleporter toll the local rider was just offered (null = none). */
   tollPrompt: TollPrompt | null;
+  /** v4 A — when the local ship's alien-gate disable ends (Date.now ms; 0 =
+   *  not disabled). Discrete: written when it starts, ends or is re-applied. */
+  disabledUntil: number;
   /** v4 T4 — requests from other owners to pair with one of your teleporters. */
   pairRequests: PairRequestPrompt[];
   /** Economy v2 W6 — the last `bp_market_state` reply (the Trade tab's
@@ -492,6 +495,7 @@ export interface UIStore {
   setCargoState: (s: CargoState | null) => void;
   setTeleportCandidates: (s: TeleportCandidatesReply | null) => void;
   setTollPrompt: (p: TollPrompt | null) => void;
+  setDisabledUntil: (ms: number) => void;
   addPairRequest: (p: PairRequestPrompt) => void;
   removePairRequest: (requestId: string) => void;
   setBpMarket: (s: BpMarketState | null) => void;

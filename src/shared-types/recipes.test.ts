@@ -25,7 +25,7 @@ import {
   recipeCredits,
   type RecipeDef,
 } from './recipes.js';
-import { STRUCTURE_KINDS_LIST } from './structureKinds.js';
+import { STRUCTURE_KINDS_LIST, isBuildableStructureKind } from './structureKinds.js';
 import { STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS, blueprintProducts, packedHullProducts } from './blueprints.js';
 import {
   ASTEROID_RESOURCE_IDS,
@@ -155,10 +155,10 @@ describe('recipes', () => {
 });
 
 describe('packed structures (user ruling: NPC factions make them, players mostly buy)', () => {
-  it('every non-starter structure kind has exactly one pack recipe; starter kinds have none', () => {
+  it('every non-starter structure kind has exactly one pack recipe; starter and unbuildable kinds have none', () => {
     for (const k of STRUCTURE_KINDS_LIST) {
-      const starter = STARTER_STRUCTURE_KINDS.includes(k.id);
-      expect(packRecipeFor(k.id) === null, k.id).toBe(starter);
+      const none = STARTER_STRUCTURE_KINDS.includes(k.id) || !isBuildableStructureKind(k.id);
+      expect(packRecipeFor(k.id) === null, k.id).toBe(none);
     }
   });
 

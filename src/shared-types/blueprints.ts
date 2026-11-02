@@ -21,7 +21,7 @@
 import { z } from 'zod';
 import type { GoodId } from './goods.js';
 import type { BlueprintItem, PackedItem } from './items.js';
-import { STRUCTURE_KINDS_LIST, getStructureKind, isStructureKindId } from './structureKinds.js';
+import { STRUCTURE_KINDS_LIST, getStructureKind, isBuildableStructureKind, isStructureKindId } from './structureKinds.js';
 import { PLAYABLE_SHIP_KINDS_LIST, getShipKind, isPlayableShipKindId } from './shipKinds.js';
 import { RECIPES, RECIPE_IDS, type RecipeId } from './recipes.js';
 
@@ -162,7 +162,9 @@ export function productName(product: string): string {
 export function blueprintProducts(): string[] {
   const out: string[] = [];
   for (const id of RECIPE_IDS) if (RECIPES[id].blueprintRequired) out.push(`recipe:${id}`);
-  for (const k of STRUCTURE_KINDS_LIST) if (!STARTER_STRUCTURE_KINDS.includes(k.id)) out.push(`structure:${k.id}`);
+  for (const k of STRUCTURE_KINDS_LIST) {
+    if (!STARTER_STRUCTURE_KINDS.includes(k.id) && isBuildableStructureKind(k.id)) out.push(`structure:${k.id}`);
+  }
   for (const k of PLAYABLE_SHIP_KINDS_LIST) {
     if (!STARTER_HULL_KINDS.includes(k.id) && !k.engineeringOnly) out.push(`hull:${k.id}`);
   }

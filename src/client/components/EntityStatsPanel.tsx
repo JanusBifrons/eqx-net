@@ -27,7 +27,8 @@ import { BlueprintInstall } from './BlueprintInstall';
 import { ResearchLabPanel } from './ResearchLabPanel';
 import { CargoAction } from './CargoPanel';
 import { ForeignTeleporterPanel, TeleporterPanel } from './TeleporterPanel';
-import { isTeleporterKind } from '../../shared-types/teleport';
+import { isAlienGateKind, isTeleporterKind } from '../../shared-types/teleport';
+import { alienGateLine } from './alienGateInfo';
 import { HullUnpack } from './HullUnpack';
 import { hullColor } from './ShieldHullBar';
 import { getStructureKind } from '@shared-types/structureKinds';
@@ -146,6 +147,8 @@ interface PanelData {
   isTeleporter?: boolean;
   /** v4 T4 — someone else's built teleporter (ask to pair). */
   isForeignTeleporter?: boolean;
+  /** v4 A — an alien gate: where it leads and when it next jumps. */
+  alienGateLine?: string;
   /** C1 — a BUILT storage structure (anyone's) or (C3) an NPC ship: offer
    *  "Open cargo" by `entityId`. The server decides whether it opens. */
   hasCargo?: boolean;
@@ -301,6 +304,9 @@ export function EntityStatsPanel(): JSX.Element | null {
         <Box sx={POWER_SX} data-testid="entity-stats-no-ammo">
           NO MUNITIONS
         </Box>
+      )}
+      {data.alienGateLine !== undefined && (
+        <Box sx={POWER_SX} data-testid="entity-stats-alien-gate">{data.alienGateLine}</Box>
       )}
       {data.recipe !== undefined && (data.needsBlueprint || data.blueprintLine !== undefined) && (
         <Box sx={POWER_SX} data-testid="entity-stats-blueprint">
@@ -489,7 +495,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
   'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'noAmmo', 'noFuel', 'breach', 'upgradeGoods',
-  'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter',
+  'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter', 'alienGateLine',
 ];
 
 /** The next gate access setting in the cycle (owner + allies → owner only →
@@ -611,7 +617,13 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       // v4 T1 — your own built teleporter shows its charge, pairing, rules and pad.
       if (isTeleporterKind(subtype) && data.isOwn === true && st.built === true) data.isTeleporter = true;
       // T4 — someone else's teleporter: ask its owner to pair it with one of yours.
-      if (isTeleporterKind(subtype) && data.isOwn !== true && st.built === true) data.isForeignTeleporter = true;
+      if (isTeleporterKind(subtype) && !isAlienGateKind(subtype) && data.isOwn !== true && st.built === true) data.isForeignTeleporter = true;
+      // v4 A — an alien gate says where it leads and when it next jumps.
+      if (isAlienGateKind(subtype)) {
+        const e = getGameClient()?.mirror.swarm?.get(parseInt(id.startsWith('swarm-') ? id.slice(6) : id, 10));
+        const line = e ? alienGateLine(useUIStore.getState().currentSectorKey, e.x, e.y, Date.now()) : null;
+        if (line !== null) data.alienGateLine = line;
+      }
       if (subtype !== undefined && (getStructureKind(subtype).holdCapacity ?? 0) > 0 && st.built === true) data.hasCargo = true;
       // Living World P1a-2 — owned storage contents (the server only sends them
       // to the owner) + the Refine gate (a Capital with salvage in its network

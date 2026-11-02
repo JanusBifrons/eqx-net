@@ -127,6 +127,8 @@ export const SHOWCASE_PENDING: Record<string, string> = {
   allegiances: 'AI-vs-AI sides fight in the living galaxy but not on cue; needs a staged two-faction room.',
   teleporters:
     'Ships ride the jump (T2) with the warning, push and sealed iris; a showcase shot of a squad riding a pad is due with the cross-sector jump (T3).',
+  'alien-gates':
+    'The gate ring rides on a once-a-minute timetable between two live sectors; a shot needs a staged two-sector capture (a squad riding the jump, and a pilot disabled for firing near one).',
   factions:
     'The Factions tab (v4 F3) shows standings; a meaningful shot needs a staged room with non-zero standings both ways and a turret firing on a disliked pilot.',
   blueprints:

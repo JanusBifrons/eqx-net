@@ -267,6 +267,16 @@ Update this section when a threshold is set.
   - **Pairing with another owner:** `teleport_pair_request` → `TeleportBroker.addRequest` + a prompt to the owner (`sendToPlayer` reaches them in any room) → `teleport_pair_answer`; only the owner of the asked teleporter can accept. `pair(…, consented=true)` skips the same-owner check.
 - Lock: `tests/integration/sectorRoom/teleporter.test.ts`. Story: [docs/features/teleporters.md](../../docs/features/teleporters.md).
 
+## Alien gates and the disable status (plan soft-leaping-truffle v4, A)
+
+- **What they are.** `alien_gate` is a teleporter kind (`isTeleporterKind` includes it; `isAlienGateKind` picks it out). It is unbuildable (`UNBUILDABLE_STRUCTURE_KINDS`: no blueprint, no pack recipe, no build menu, and `place_structure` refuses it), owned by `ALIEN_GATE_OWNER` (`npc:ancients:gates`), and never joins a grid (`maxConnections: 0`).
+- **Seeding.** `seedAlienGates` runs for galaxy rooms (`alienGates` room option, set by `resolveSectorConfig`) AFTER the snapshot restore and AFTER the NPC bases. Each gate takes the free spot nearest its ideal site (`alienGateCandidates`). Seeding gates before the bases pushed 5 bases out of their sectors; keep the order.
+- **Pairing.** A gate stores `alienNeighbour`. `TeleporterSubsystem.alienTimetable` resolves the twin through the broker on first use (`findAlienTwin`: the gate in that room whose `alienNeighbour` is here). Never pair gates by a pre-computed uid: a gate may sit off its ideal spot.
+- **The subsystem.** `required()` is 0 and `isCharged()` true (free), `scaleFor` runs the cycle at `ALIEN_GATE_CYCLE_SCALE`, the pulse skips them (no pad hold), and only the end in the lower sector key fires the timetable. `teleportCycleScale` also shortens the minute (the test trigger).
+- **Invulnerable + disable.** `applyDamage` returns early for a gate and calls `AlienGateGuard.onGateAttacked`; `handleFire` / `handleAiFire` call `onFired` (2500 u zone) and drop a disabled shooter's fire. The input handler strips movement bits through the SHARED `gateDisabledInput` (#15), and `postIntent` zeroes a disabled NPC's AI intent by slot. `evictSwarmEntity` must `forget` the ship (slots are reused). The own-ship snapshot carries `disabledMs` (#16).
+- **Steady state** with no gates is one `gateCount` check per fire/damage call.
+- Locks: `AlienGateGuard.test.ts`, `tests/unit/disableParity.test.ts`, `tests/integration/sectorRoom/alienGates.test.ts`, `galaxyBases.test.ts` (gates fit around the bases). Story: [docs/features/alien-gates.md](../../docs/features/alien-gates.md).
+
 ## Faction standing events and policies (plan soft-leaping-truffle v4, F3)
 
 - **One rule for hits:** `applyDamage` → `noteStandingHit` lowers the victim faction's view of the attacker's faction once per pair per window (`STANDING_HIT_*`). Victims are structures (their owner) and player ships, with at least one player side. Steady state is nested Map lookups only (#14). Break-ins cost `STANDING_BREAK_IN_DELTA`. Don't add standing deltas elsewhere without a reason; trade keeps its own (`REP_*`).

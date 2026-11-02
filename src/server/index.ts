@@ -1045,6 +1045,21 @@ const TELEPORT_TEST_OPTS = {
 gameServer
   .define('teleport-test', SectorRoom, { ...TELEPORT_TEST_OPTS, sectorKey: 'teleport-test', teleportCycleScale: 0.1 })
   .filterBy(['testId']);
+// v4 A — one alien gate (no twin) for the disable E2E: firing inside its
+// zone disables the pilot. Spawn at (0, -1500) (inside the zone).
+gameServer
+  .define('alien-gate-test', SectorRoom, {
+    sectorKey: 'alien-gate-test',
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    testAlienGate: { x: 0, y: 0, neighbour: 'vega-reach' },
+    defaultSpawnX: 0,
+    defaultSpawnY: -1500,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
 // v4 T4 — the same layout with a half-speed cycle, so a rider has ~6 s
 // between the toll prompt (pad armed) and the swap to answer it.
 gameServer

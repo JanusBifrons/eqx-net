@@ -11,11 +11,16 @@
 import { z } from 'zod';
 import { GOOD_IDS } from './goods.js';
 
-export const TELEPORTER_KINDS = ['teleporter', 'teleporter_large'] as const;
+export const TELEPORTER_KINDS = ['teleporter', 'teleporter_large', 'alien_gate'] as const;
 export type TeleporterKind = (typeof TELEPORTER_KINDS)[number];
 
 export function isTeleporterKind(kind: string | null | undefined): kind is TeleporterKind {
-  return kind === 'teleporter' || kind === 'teleporter_large';
+  return kind === 'teleporter' || kind === 'teleporter_large' || kind === 'alien_gate';
+}
+
+/** v4 A — the Ancients' border gate: a teleporter nobody owns or builds. */
+export function isAlienGateKind(kind: string | null | undefined): kind is 'alien_gate' {
+  return kind === 'alien_gate';
 }
 
 export interface PadSpec {
@@ -36,6 +41,8 @@ export interface PadSpec {
 export const PAD_SPECS: Readonly<Record<TeleporterKind, PadSpec>> = Object.freeze({
   teleporter: { padRadius: 320, padCapacity: 400, post: 80, posts: 4 },
   teleporter_large: { padRadius: 900, padCapacity: 4000, post: 160, posts: 8 },
+  // v4 A — bigger than a small pad; no hold (alien gates carry ships only).
+  alien_gate: { padRadius: 820, padCapacity: 0, post: 120, posts: 12 },
 });
 
 // ── Charge ──────────────────────────────────────────────────────────────────
@@ -75,6 +82,36 @@ export type TpPhase = 0 | 1 | 2 | 3 | 4;
 
 /** How long each phase lasts (ms), before any test speed-up. */
 export const TP_PHASE_MS: Readonly<Record<1 | 2 | 3 | 4, number>> = Object.freeze({ 1: 5000, 2: 4000, 3: 3000, 4: 2000 });
+
+// ── Alien gates (v4 A) ──────────────────────────────────────────────────────
+
+/** An alien gate jumps on its own once a minute. */
+export const ALIEN_GATE_INTERVAL_MS = 60_000;
+/** Its jump cycle runs at this fraction of a built teleporter's (~5 s). */
+export const ALIEN_GATE_CYCLE_SCALE = 0.36;
+
+/**
+ * Where in the minute a twinned pair of gates jumps (ms), from the two sector
+ * keys: the same for both ends (order doesn't matter), different between
+ * pairs so the galaxy's gates don't all fire at once.
+ */
+export function alienGateOffsetMs(sectorA: string, sectorB: string): number {
+  const key = sectorA < sectorB ? `${sectorA}|${sectorB}` : `${sectorB}|${sectorA}`;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h % ALIEN_GATE_INTERVAL_MS;
+}
+
+/** The first timetabled jump (ms since epoch) after `nowMs`: every
+ *  `intervalMs` (a test speed-up shortens it), at `offsetMs` into each. */
+export function nextAlienGateJumpMs(nowMs: number, offsetMs: number, intervalMs: number = ALIEN_GATE_INTERVAL_MS): number {
+  const off = offsetMs % intervalMs;
+  const base = Math.floor((nowMs - off) / intervalMs) * intervalMs + off;
+  return base > nowMs ? base : base + intervalMs;
+}
 
 /** The phase after `p` (the swap happens leaving SEALED). */
 export function nextTpPhase(p: TpPhase): TpPhase {
@@ -164,10 +201,15 @@ const POST_CENTERS: Readonly<Record<TeleporterKind, ReadonlyArray<readonly [numb
     const s = PAD_SPECS[k];
     const h = padHalfExtent(k) - s.post / 2;
     // Perimeter order (each post's neighbour is the next one), so the iris
-    // spans run post to post.
-    out[k] = s.posts === 8
-      ? [[-h, -h], [0, -h], [h, -h], [h, 0], [h, h], [0, h], [-h, h], [-h, 0]]
-      : [[-h, -h], [h, -h], [h, h], [-h, h]];
+    // spans run post to post: `posts / 4` per side, starting at each corner.
+    const perSide = Math.max(1, Math.round(s.posts / 4));
+    const step = (2 * h) / perSide;
+    const pts: Array<readonly [number, number]> = [];
+    for (let i = 0; i < perSide; i++) pts.push([-h + i * step, -h]);
+    for (let i = 0; i < perSide; i++) pts.push([h, -h + i * step]);
+    for (let i = 0; i < perSide; i++) pts.push([h - i * step, h]);
+    for (let i = 0; i < perSide; i++) pts.push([-h, h - i * step]);
+    out[k] = pts;
   }
   return out;
 })();

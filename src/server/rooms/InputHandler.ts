@@ -17,6 +17,7 @@
  *     tick-delta over 5 — surfaces client/server clock drift).
  */
 
+import { gateDisabledInput, type ControlBits } from '../../core/combat/disable.js';
 import type { Client } from 'colyseus';
 import { InputMessageSchema } from '../../shared-types/messages.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
@@ -40,12 +41,17 @@ export interface InputHandlerCtx {
    *  pool can't afford a tick of boost — the worker stays oblivious (no new
    *  command, no SAB field). */
   shipEnergyOf: (playerId: string) => number | undefined;
+  /** v4 A — the pilot is disabled (an alien gate's guns): engines off. */
+  isDisabled?: (playerId: string) => boolean;
   logger: pino.Logger;
   /** Per-connection malformed-packet counter + sampled warn (campaign 1.3;
    *  invariant #3's second half). The input channel is the flood vector —
    *  up to 3 accepted messages/tick — so it MUST NOT warn per packet. */
   malformed: MalformedMessageTracker;
 }
+
+/** Reused per message (no allocation in the input path, #14). */
+const INPUT_BITS: ControlBits = { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false };
 
 export function makeInputHandler(
   ctx: InputHandlerCtx,
@@ -63,9 +69,19 @@ export function makeInputHandler(
       ctx.malformed.record(client.sessionId, 'input');
       return;
     }
-    const { tick, thrust, turnLeft, turnRight } = result.data;
-    let boost = result.data.boost ?? false;
-    const reverse = result.data.reverse ?? false;
+    const { tick } = result.data;
+    const bits = INPUT_BITS;
+    bits.thrust = result.data.thrust;
+    bits.turnLeft = result.data.turnLeft;
+    bits.turnRight = result.data.turnRight;
+    bits.boost = result.data.boost ?? false;
+    bits.reverse = result.data.reverse ?? false;
+    // v4 A — a disabled ship's engines are off (the same shared gate the
+    // client applies to its own prediction, #15).
+    gateDisabledInput(ctx.isDisabled?.(playerId) ?? false, bits);
+    const { thrust, turnLeft, turnRight } = bits;
+    let boost = bits.boost;
+    const reverse = bits.reverse ?? false;
     // Energy-gate boost: strip the bit before it reaches the worker when the
     // ship can't afford a tick of boost. One owner / two sites, same tick —
     // this gate prevents applying a boost the drain (tickEnergy) would make

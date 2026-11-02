@@ -75,6 +75,10 @@ export interface StructureRecord {
   tpBoardedSinceMs?: number;
   /** Goods just arrived on the pad: unload them into storage next pulse. */
   tpArrived?: boolean;
+  /** v4 A — an alien gate's next timetabled jump (ms since epoch). */
+  tpNextJumpMs?: number;
+  /** v4 A — the sector an alien gate leads to (its twin faces back here). */
+  alienNeighbour?: string;
   /** T4 — its toll (credits per 1000 charge; what happens to non-payers). */
   tpToll?: TeleportToll;
   /** T2 — its iris walls and push field exist in the physics worker. */

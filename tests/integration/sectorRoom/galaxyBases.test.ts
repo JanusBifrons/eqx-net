@@ -27,7 +27,7 @@ async function boot(key = KEY): Promise<SectorTestHarness> {
   const cfg = resolveSectorConfig(key);
   return bootSectorTestServer({
     sectorKey: key, droneCount: 0, testMode: true,
-    asteroidConfig: cfg.asteroidConfig as never, galaxyBases: true,
+    asteroidConfig: cfg.asteroidConfig as never, galaxyBases: true, alienGates: cfg.alienGates,
   });
 }
 
@@ -46,8 +46,12 @@ describe('SectorRoom integration — galaxy NPC bases (T1)', () => {
 
     const cr = await harness.connectActive(randomUUID());
     const internal = harness.getServerRoom()!._internals;
-    const npc = [...internal.structureRegistry.all()].filter((r) => r.owner.startsWith('npc:'));
+    const all = [...internal.structureRegistry.all()];
+    const npc = all.filter((r) => r.owner.startsWith('npc:') && r.kind !== 'alien_gate');
     expect(npc.every((r) => r.isConstructed)).toBe(true);
+    // v4 A — the alien gates (seeded after the bases) fit too: one per neighbour.
+    const gates = all.filter((r) => r.kind === 'alien_gate');
+    expect(gates.map((g) => g.alienNeighbour).sort()).toEqual([...getSector(KEY)!.neighbours].sort());
     const boxes: Array<{ x0: number; x1: number; y0: number; y1: number }> = [];
     for (const b of plan) {
       const expected = growBase(b.profile, b.seed, getSector(KEY)!.features).placements.length;
@@ -102,6 +106,7 @@ describe('SectorRoom integration — galaxy NPC bases (T1)', () => {
     harness = await boot();
     await harness.connectActive(randomUUID());
     const internal = harness.getServerRoom()!._internals;
-    expect([...internal.structureRegistry.all()].filter((r) => r.owner.startsWith('npc:'))).toHaveLength(0);
+    // (The alien gates don't belong to a base; the kill switch leaves them.)
+    expect([...internal.structureRegistry.all()].filter((r) => r.owner.startsWith('npc:') && r.kind !== 'alien_gate')).toHaveLength(0);
   });
 });

@@ -198,6 +198,9 @@ export interface SnapshotMessage {
        *  emitted when > 0. A change makes the client re-seed its prediction
        *  at the snapshot pose instead of reconciling a long jump. */
       poseEpoch?: number;
+      /** v4 A — this (own, active) ship is DISABLED by an alien gate for this
+       *  many more ms (engines and weapons offline); emitted when > 0. */
+      disabledMs?: number;
       /** Living World P5 — the OWN active ship's fitted blueprint ids (emit-when-
        *  non-empty). Drives the cargo capacity + the upgrade modal's weapon gate. */
       fitted?: string[];

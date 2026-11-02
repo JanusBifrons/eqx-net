@@ -111,6 +111,7 @@ import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE, MUZZLE_CLEARANCE, rayHitsSphere } from '@core/combat/Weapons';
 import { getWeapon, weaponAutoFireRange, type WeaponDef } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
+import { gateDisabledInput, type ControlBits } from '@core/combat/disable';
 import { resolveSlotMounts, resolveInstanceMounts, resolveInstanceFireMounts } from '@shared-types/shipKinds/slots';
 import { HitPredictionLedger } from '@core/combat/HitPrediction';
 import {
@@ -737,6 +738,11 @@ export class ColyseusGameClient {
   private _predWallGen = 0;
   /** v4 T2 — the own ship's last seen teleport epoch (-1 ⇒ none seen yet). */
   private _localPoseEpoch = -1;
+  /** v4 A — when the local ship's alien-gate disable ends (clock ms; 0 = not
+   *  disabled). Set from the own-ship snapshot `disabledMs` (#16). */
+  private _disabledUntilMs = 0;
+  /** Reused input bits for the shared disable gate (#14, #15). */
+  private readonly _disableBits: ControlBits = { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false };
   /** A3 — the local ship's pose for distance-streaming walls (NaN ⇒ none). */
   private _predWallShipX = NaN;
   private _predWallShipY = NaN;
@@ -1201,6 +1207,8 @@ export class ColyseusGameClient {
   private resetPredictionState(): void {
     // v4 T2 — a new sector's first snapshot only records the teleport epoch.
     this._localPoseEpoch = -1;
+    // v4 A — a disable belongs to the room that applied it.
+    this.applyLocalDisabled(0);
     this._rttWelford = createWelford();
     this._lookaheadCtrl = createLookaheadController(6);
     this._dropDetector = createDropDetector();
@@ -3155,6 +3163,8 @@ export class ColyseusGameClient {
       // capture distinguishes reconcile time from everything-else time.
       // v4 T2 — a teleporter moved our ship: re-seed prediction at the
       // authoritative pose once per epoch (a snap, not a long reconcile slide).
+      // v4 A (#16) — an alien gate disabled us: engines and weapons off until then.
+      this.applyLocalDisabled(serverState.disabledMs ?? 0);
       const epoch = serverState.poseEpoch ?? 0;
       let teleported = false;
       if (epoch !== this._localPoseEpoch) {
@@ -4556,13 +4566,22 @@ export class ColyseusGameClient {
           tcThrust = next.thrust;
         }
       }
-      const thrust    = kb.thrust    || tcThrust;
-      const turnLeft  = kb.turnLeft  || tcTurnLeft;
-      const turnRight = kb.turnRight || tcTurnRight;
-      const fireHeld  = kb.fireHeld  || tcFire;
-      const boost     = kb.boost || (this.touchInput?.getBoostHeld() ?? false);
+      // v4 A — a disabled ship's engines and weapons are off: the SAME shared
+      // gate the server applies to our input (#15), so prediction agrees.
+      const db = this._disableBits;
+      db.thrust = kb.thrust || tcThrust;
+      db.turnLeft = kb.turnLeft || tcTurnLeft;
+      db.turnRight = kb.turnRight || tcTurnRight;
+      db.boost = kb.boost || (this.touchInput?.getBoostHeld() ?? false);
       // Reverse is keyboard-only in v1 — no on-screen button on touch yet.
-      const reverse   = kb.reverse;
+      db.reverse = kb.reverse;
+      const disabledNow = gateDisabledInput(this.isLocallyDisabled(), db);
+      const thrust    = db.thrust;
+      const turnLeft  = db.turnLeft;
+      const turnRight = db.turnRight;
+      const fireHeld  = !disabledNow && (kb.fireHeld || tcFire);
+      const boost     = db.boost;
+      const reverse   = db.reverse ?? false;
       const tick = this.inputTick++;
 
       // Replay-grade input-intent capture (plan: replay infra Phase A).
@@ -4832,8 +4851,9 @@ export class ColyseusGameClient {
       // zero-iteration RAF; the cooldown gate makes that harmless. Auto-fire
       // only decides WHEN to fire — the server stays the hit authority via its
       // own mount angles; turret aim/fire-target unification is Part C.
-      let fireWanted = manualFire;
-      if (!fireWanted && autoFireEnabled) {
+      // v4 A — a disabled ship's weapons are offline (the server drops the shot).
+      let fireWanted = manualFire && !this.isLocallyDisabled();
+      if (!fireWanted && autoFireEnabled && !this.isLocallyDisabled()) {
         const st = this.predWorld.getShipState(this.mirror.localPlayerId);
         if (st) fireWanted = this.hasHostileInRange(st.x, st.y, weaponAutoFireRange(slotWeaponDef));
       }
@@ -4924,20 +4944,27 @@ export class ColyseusGameClient {
           tcThrust2 = next.thrust;
         }
       }
-      const thrust    = kb.thrust    || tcThrust2;
-      const turnLeft  = kb.turnLeft  || tcTurnLeft2;
-      const turnRight = kb.turnRight || tcTurnRight2;
+      const db2 = this._disableBits;
+      db2.thrust = kb.thrust || tcThrust2;
+      db2.turnLeft = kb.turnLeft || tcTurnLeft2;
+      db2.turnRight = kb.turnRight || tcTurnRight2;
+      db2.boost = kb.boost || (this.touchInput?.getBoostHeld() ?? false);
+      db2.reverse = kb.reverse;
+      gateDisabledInput(this.isLocallyDisabled(), db2);
+      const thrust    = db2.thrust;
+      const turnLeft  = db2.turnLeft;
+      const turnRight = db2.turnRight;
       // tcFire2 is sampled for parity with the in-loop block but the
       // sentinel never spawns a fire — fire is per-tick and we're not
       // advancing inputTick. Reading it (rather than dropping the var)
       // keeps the touch state machine consistent with the in-loop path.
       void tcFire2;
-      const boost     = kb.boost || (this.touchInput?.getBoostHeld() ?? false);
+      const boost     = db2.boost;
       // Energy-gate boost identically to the per-tick path so the sentinel
       // re-send carries the same value the server will apply (and that the
       // per-tick path predicted) — keeps `lastSentInputState` consistent.
       const boostApplied = boost && canAfford(this.predEnergy, BOOST_TICK_COST);
-      const reverse   = kb.reverse;
+      const reverse   = db2.reverse ?? false;
       const tick = this.inputTick; // NOT incremented; sentinel rides at the last-sent tick
       const nowMs = this.clock.now();
       const last = this.lastSentInputState;
@@ -5430,6 +5457,27 @@ export class ColyseusGameClient {
       this.updateLiveBeam();
     }
     return true;
+  }
+
+  /** v4 A — the local ship is disabled (alien-gate guns) right now. */
+  private isLocallyDisabled(): boolean {
+    return this._disabledUntilMs > 0 && this.clock.now() < this._disabledUntilMs;
+  }
+
+  /** v4 A — take the own-ship snapshot's `disabledMs`. The HUD deadline
+   *  (Zustand, wall clock) is written only when the disable starts, ends or
+   *  is re-applied, never per snapshot. */
+  private applyLocalDisabled(ms: number): void {
+    const now = this.clock.now();
+    const until = ms > 0 ? now + ms : 0;
+    const was = this._disabledUntilMs;
+    this._disabledUntilMs = until;
+    const wasOn = was > now;
+    const isOn = until > now;
+    if (wasOn !== isOn || (isOn && until - was > 1000)) {
+      useUIStore.getState().setDisabledUntil(isOn ? Date.now() + ms : 0);
+      if (isOn !== wasOn) logEvent('ship_disabled', { on: isOn, ms });
+    }
   }
 
   private sendFire(tick: number): void {
