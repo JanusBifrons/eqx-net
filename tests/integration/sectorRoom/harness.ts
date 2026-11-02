@@ -432,6 +432,8 @@ export async function bootLivingWorldTestServer(opts: {
   teleportCycleScale?: number;
   /** v4 A — seed the alien gates in every sector (off by default). */
   alienGates?: boolean;
+  /** v4 H — grow each sector's real NPC bases (galaxyBasePlan; off by default). */
+  galaxyBases?: boolean;
   bases?: ReadonlyArray<{
     sector: string;
     structures: ReadonlyArray<{ kind: string; x: number; y: number }>;
@@ -469,6 +471,7 @@ export async function bootLivingWorldTestServer(opts: {
       testMode: true,
       ...(opts.teleportCycleScale !== undefined ? { teleportCycleScale: opts.teleportCycleScale } : {}),
       ...(opts.alienGates === true ? { alienGates: true } : {}),
+      ...(opts.galaxyBases === true ? { galaxyBases: true } : {}),
       // Seed a base ⇒ also clear the ambient asteroid field: placement is
       // obstacle-aware, so a stray rock would block a structure (e.g. the solar)
       // and leave the base un-ready. Mirrors structureScenario.test's

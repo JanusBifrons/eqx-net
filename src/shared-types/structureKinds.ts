@@ -957,8 +957,8 @@ export const ALIEN_GATE: StructureKind = {
   displayName: 'Alien Gate',
   description:
     'An ancient gate twinned with one across the border. It jumps on its own every minute, free, and disables anyone who attacks it.',
-  radius: 1415, // bounding circle of the 2000×2000 footprint
-  footprint: { w: 2000, h: 2000 },
+  radius: 1132, // bounding circle of the 1600×1600 footprint
+  footprint: { w: 1600, h: 1600 },
   maxHealth: 1_000_000,
   maxConnections: 0,
   isHub: false,

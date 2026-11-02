@@ -5,7 +5,7 @@ Plan `soft-leaping-truffle` v4, phase A. Every sector has a ring of ancient gate
 ## What a gate is
 
 - **A teleporter nobody owns or builds.** It is the `alien_gate` structure kind, and it works like a built teleporter (see [teleporters.md](teleporters.md)). It has the same pad, the same doors-closing cycle, and the same rule that everyone on the pad rides.
-- **Bigger:** a 2000 × 2000 footprint with an open pad 820 units across the middle, ringed by twelve glowing posts.
+- **Bigger:** a 1600 × 1600 footprint with an open pad reaching 640 units from its centre (twice a small teleporter's), ringed by twelve glowing posts.
 - **Quicker:** its cycle runs at about a third of a built teleporter's (about 5 s from warning to arrival).
 - **Free:** it charges itself. No grid, no capacitor, no toll.
 - **On a timetable:** each twinned pair jumps once a minute, at a moment set by the two sector keys. Different pairs jump at different moments, so the galaxy's gates don't all fire at once. The inspector shows where a gate leads and roughly when it next jumps.
@@ -16,9 +16,11 @@ Plan `soft-leaping-truffle` v4, phase A. Every sector has a ring of ancient gate
 
 Each sector's gates are worked out by pure shared code (`src/core/galaxy/alienGates.ts`):
 
-- **The ideal site** is 3900 units from the centre, along the galaxy-map bearing to the neighbour. Its twin sits on the matching edge of the neighbour, facing back.
-- **The gates are placed after the sector's NPC bases**, so a big base never loses its site to a gate. Each gate takes the free spot nearest its ideal site (`alienGateCandidates`, a 500-unit grid searched nearest-first). Asteroids under a gate are cleared quietly.
+- **The ideal site** is 4100 units from the centre, along the galaxy-map bearing to the neighbour. Its twin sits on the matching edge of the neighbour, facing back.
+- **The gates are placed after the sector's NPC bases**, so a big base never loses its site to a gate. Each gate takes the free spot nearest its ideal site (`alienGateCandidates`, a 250-unit grid searched nearest-first). Asteroids under a gate are cleared quietly.
 - **Twins find each other at run time.** Each gate records the sector it leads to. The first time it needs its partner, it asks the teleport broker for the gate in that sector that points back. A gate may sit off its ideal spot, so pairing never relies on a pre-computed position.
+
+The gate is 1600 units wide so it fits round the biggest bases once their transit-link teleporters are added (v4 H): at 2000 one gate in Bloomgate found no spot.
 
 Gates are NPC structures, so they aren't saved: every boot regenerates them. `EQX_DISABLE_ALIEN_GATES=1` turns them off.
 

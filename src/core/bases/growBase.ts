@@ -36,7 +36,7 @@ import type { GoodId } from '../../shared-types/goods.js';
 
 /** Bump on ANY change to the generator's output (NPC bases regenerate from the
  *  seed, so a change moves every base). */
-export const BASE_GROWTH_VERSION = 7;
+export const BASE_GROWTH_VERSION = 8;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -59,6 +59,8 @@ export interface GrownPlacement {
   /** Selected recipe (processors). */
   recipe?: RecipeId;
   level?: number;
+  /** v4 H — the transit link this teleporter ends (paired at run time). */
+  link?: string;
 }
 
 export interface GrownBase {
@@ -148,6 +150,8 @@ function stageOf(kind: StructureKindId, recipe: RecipeId | undefined): number | 
 interface Want {
   kind: StructureKindId;
   recipe?: RecipeId;
+  /** v4 H — the transit link a teleporter ends. */
+  link?: string;
 }
 
 /** The role's production units, in the order a builder adds them. */
@@ -190,6 +194,9 @@ function roleUnits(profile: BaseProfile, features: readonly SectorFeature[], rnd
         { kind: 'fabricator', recipe: 'fab_electronics' },
       ];
     case 'trade':
+      return [{ kind: 'cargo_bay' }];
+    case 'transit':
+      // A hub's business is its teleporters (one per link, added below).
       return [{ kind: 'cargo_bay' }];
     case 'colony': {
       // A habitat station: housing first, spires once it's a settlement or bigger, and
@@ -347,6 +354,9 @@ function balanced(profile: BaseProfile, seed: number, features: readonly SectorF
 function growOnce(profile: BaseProfile, seed: number, features: readonly SectorFeature[], extraSolars: number): GrownBase {
   const rnd = seededRandom(seed ^ 0x5bd1e995);
   const { wants, spent } = planBuild(profile, features, rnd);
+  // v4 H — one teleporter per transit link this base ends (outside the budget:
+  // the network needs both ends).
+  for (const id of profile.links ?? []) wants.push({ kind: 'teleporter', link: id });
   const huge = wants.filter((w) => HUGE.has(w.kind));
   // A fenced base's turrets go on bastions outside the fence (placed after it).
   const posts = profile.fenced ? wants.filter((w) => TURRET_KINDS.has(w.kind)) : [];
@@ -444,6 +454,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
             const fp = getStructureKind(w.kind).footprint;
             const p: GrownPlacement = { kind: w.kind, x: conn.x, y: conn.y + side * (CONN_HALF + GAP + fp.h / 2) };
             if (w.recipe) p.recipe = w.recipe;
+            if (w.link) p.link = w.link;
             const li = B.tryPlace(p);
             if (li < 0) continue;
             if (!B.tryLink(c, li)) { B.undoLast(); continue; }

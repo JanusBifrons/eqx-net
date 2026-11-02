@@ -75,6 +75,8 @@ export interface TeleporterHooks {
   /** v4 A — the twin of an alien gate, in its neighbour's room (null until
    *  that room is up). */
   findAlienTwin?(rec: StructureRecord): { sectorKey: string; uid: string } | null;
+  /** v4 H — the other end of an NPC transit link (null until its room is up). */
+  findLinkTwin?(rec: StructureRecord): { sectorKey: string; uid: string } | null;
   /** T4 — a pad armed: offer its toll to the riders on it. */
   onArmed?(rec: StructureRecord): void;
   /** T4 — the swap is now: settle the pad's toll (payers ride free; dodgers
@@ -265,6 +267,13 @@ export class TeleporterSubsystem {
       if (isAlienGateKind(rec.kind)) {
         this.alienTimetable(rec, nowMs);
         continue;
+      }
+      // v4 H — an NPC transit teleporter finds its partner by link id.
+      if (rec.npcLink !== undefined && rec.tpPartner === undefined) {
+        const twin = this.h.findLinkTwin?.(rec) ?? null;
+        if (twin === null) continue;
+        rec.tpPartner = twin;
+        this.h.onChanged();
       }
       // "When a ship boards": how long a ship has sat on the pad.
       if (this.h.shipsOnPad(rec) > 0) rec.tpBoardedSinceMs ??= nowMs;

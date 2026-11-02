@@ -17,8 +17,10 @@ describe('galaxyBasePlan', () => {
       const [b0] = galaxyBasePlan(s.key);
       expect(b0!.baseId).toBe('b0');
       expect(b0!.seed).toBe(seed);
-      // Only the owner (F2) is assigned on top of the original profile.
-      expect({ ...b0!.profile, ownerFaction: 'traders' }).toEqual(baseProfileFor(contextForSector(s.key), seed));
+      // Only the owner (F2) and its transit links (v4 H) are added on top of
+      // the original profile.
+      const { links: _links, ...rest } = b0!.profile;
+      expect({ ...rest, ownerFaction: 'traders' }).toEqual(baseProfileFor(contextForSector(s.key), seed));
     }
   });
 
@@ -58,12 +60,12 @@ describe('galaxyBasePlan', () => {
 });
 
 describe('galaxy base owners (v4 F2)', () => {
-  it('a controlled sector is its power’s; the Traders run its trade hubs', () => {
+  it('a controlled sector is its power’s; the Traders run its trade and transit hubs', () => {
     for (const s of GALAXY_SECTORS) {
       const controller = sectorController(s.key);
       if (controller === null) continue;
       for (const b of galaxyBasePlan(s.key)) {
-        expect(b.profile.ownerFaction, s.key).toBe(b.profile.role === 'trade' ? 'traders' : controller);
+        expect(b.profile.ownerFaction, s.key).toBe(b.profile.role === 'trade' || b.profile.role === 'transit' ? 'traders' : controller);
       }
     }
   });

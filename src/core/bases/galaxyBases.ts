@@ -15,7 +15,8 @@
  * tier's structure ceiling, so a sector never exceeds the measured budget.
  */
 import { NPC_STRUCTURES_PER_SECTOR_MAX } from '../../shared-types/structureBudgets.js';
-import { baseProfileFor, contextForSector, hashString, seededRandom, type BaseProfile } from './baseProfile.js';
+import { TIER_LEVEL_CAP, TIER_WEALTH, baseProfileFor, contextForSector, hashString, seededRandom, type BaseProfile } from './baseProfile.js';
+import { TRANSIT_HUB_BASE_ID, buildTransitNetwork, type TransitNetwork } from './transitNetwork.js';
 import { TIER_MAX_STRUCTURES } from './growBase.js';
 import { sectorController } from '../galaxy/control.js';
 import { getSector } from '../galaxy/galaxy.js';
@@ -40,6 +41,7 @@ const ROLE_SPECIALTY: Readonly<Record<BaseRole, MinorSpecialty>> = {
   assembly: 'manufacturer',
   trade: 'freight',
   colony: 'freight',
+  transit: 'freight',
 };
 
 /**
@@ -48,14 +50,14 @@ const ROLE_SPECIALTY: Readonly<Record<BaseRole, MinorSpecialty>> = {
  */
 export function chooseBaseOwner(sectorKey: string, role: BaseRole, rnd: () => number, taken: readonly FactionId[]): FactionId {
   const controller = sectorController(sectorKey);
-  if (controller !== null) return role === 'trade' ? 'traders' : controller;
+  if (controller !== null) return role === 'trade' || role === 'transit' ? 'traders' : controller;
   const region = getSector(sectorKey)?.region ?? null;
   const weights: Array<[FactionId, number]> = [];
   if (region !== null) {
     for (const m of minorFactionsOf(region)) weights.push([m.id, m.specialty === ROLE_SPECIALTY[role] ? 4 : 1]);
     weights.push([region, 1.5]);
   }
-  weights.push(['traders', role === 'trade' ? 4 : 0.5]);
+  weights.push(['traders', role === 'trade' || role === 'transit' ? 4 : 0.5]);
   let total = 0;
   for (const w of weights) {
     if (taken.includes(w[0])) w[1] *= 0.15;
@@ -69,8 +71,53 @@ export function chooseBaseOwner(sectorKey: string, role: BaseRole, rnd: () => nu
   return weights[weights.length - 1]![0];
 }
 
-/** The NPC bases a galaxy sector holds, base 0 first. Deterministic. */
+/**
+ * The NPC bases a galaxy sector holds, base 0 first, then (v4 H) its transit
+ * hub if it has one; each base lists the transit links it ends. Deterministic.
+ */
 export function galaxyBasePlan(sectorKey: string): GalaxyBasePlan[] {
+  const out = sectorBasePlan(sectorKey).map((b) => ({ ...b, profile: { ...b.profile } }));
+  const net = transitNetwork();
+  if (net.hubs.get(getSector(sectorKey)?.region ?? '') === sectorKey) {
+    // Make room under the per-sector budget: drop extra bases, newest first.
+    const hubTier = 'settlement' as const;
+    let used = out.reduce((n, b) => n + TIER_MAX_STRUCTURES[b.profile.tier], 0);
+    while (used + TIER_MAX_STRUCTURES[hubTier] > NPC_STRUCTURES_PER_SECTOR_MAX && out.length > 1) {
+      used -= TIER_MAX_STRUCTURES[out.pop()!.profile.tier];
+    }
+    const seed = hashString(`${sectorKey}#${TRANSIT_HUB_BASE_ID}`);
+    const [w0, w1] = TIER_WEALTH[hubTier];
+    out.push({
+      baseId: TRANSIT_HUB_BASE_ID,
+      seed,
+      profile: {
+        tier: hubTier,
+        role: 'transit',
+        ownerFaction: chooseBaseOwner(sectorKey, 'transit', seededRandom(seed), []),
+        wealth: Math.round((w0 + w1) / 2),
+        levelCap: TIER_LEVEL_CAP[hubTier][0],
+        // Open: anyone may fly onto its pads.
+        fenced: false,
+      },
+    });
+  }
+  for (const b of out) {
+    const mine = net.links.filter((l) => (l.a.sector === sectorKey && l.a.baseId === b.baseId) || (l.b.sector === sectorKey && l.b.baseId === b.baseId));
+    if (mine.length > 0) b.profile = { ...b.profile, links: mine.map((l) => l.id) };
+  }
+  return out;
+}
+
+let NETWORK: TransitNetwork | null = null;
+/** The galaxy's transit network (built once, from the plans without links). */
+export function transitNetwork(): TransitNetwork {
+  NETWORK ??= buildTransitNetwork(sectorBasePlan);
+  return NETWORK;
+}
+
+/** A sector's bases before the transit pass (v4 H): base 0, its extras and
+ *  their owners. */
+function sectorBasePlan(sectorKey: string): GalaxyBasePlan[] {
   const ctx = contextForSector(sectorKey);
   const seed0 = hashString(sectorKey);
   const out: GalaxyBasePlan[] = [{ baseId: 'b0', seed: seed0, profile: baseProfileFor(ctx, seed0) }];

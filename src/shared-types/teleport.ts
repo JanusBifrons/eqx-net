@@ -42,7 +42,7 @@ export const PAD_SPECS: Readonly<Record<TeleporterKind, PadSpec>> = Object.freez
   teleporter: { padRadius: 320, padCapacity: 400, post: 80, posts: 4 },
   teleporter_large: { padRadius: 900, padCapacity: 4000, post: 160, posts: 8 },
   // v4 A — bigger than a small pad; no hold (alien gates carry ships only).
-  alien_gate: { padRadius: 820, padCapacity: 0, post: 120, posts: 12 },
+  alien_gate: { padRadius: 640, padCapacity: 0, post: 100, posts: 12 },
 });
 
 // ── Charge ──────────────────────────────────────────────────────────────────
@@ -313,6 +313,10 @@ export type TeleportToll = z.infer<typeof TeleportTollSchema>;
 export function tollFor(required: number, per1000: number): number {
   return Math.max(0, Math.ceil((required * per1000) / 1000));
 }
+
+/** v4 H — an NPC transit teleporter's toll: credits per 1000 charge, and a
+ *  non-payer only loses standing. */
+export const NPC_LINK_TOLL: TeleportToll = Object.freeze({ per1000: 5, nonPayer: 'standing' });
 
 /** A rider who rides without paying loses this much of the owner's standing
  *  (unless the owner makes non-payers hostile instead). */

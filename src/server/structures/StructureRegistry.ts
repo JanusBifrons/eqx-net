@@ -79,6 +79,8 @@ export interface StructureRecord {
   tpNextJumpMs?: number;
   /** v4 A — the sector an alien gate leads to (its twin faces back here). */
   alienNeighbour?: string;
+  /** v4 H — the transit link an NPC teleporter ends (its twin has the same id). */
+  npcLink?: string;
   /** T4 — its toll (credits per 1000 charge; what happens to non-payers). */
   tpToll?: TeleportToll;
   /** T2 — its iris walls and push field exist in the physics worker. */

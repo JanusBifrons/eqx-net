@@ -20,6 +20,8 @@ export interface TeleportRoom {
   teleporterByUid(uid: string): StructureRecord | null;
   /** The owner's built teleporters in this room (for the pairing list). */
   ownTeleporters(owner: string): StructureRecord[];
+  /** v4 H — every structure in this room (link lookups). */
+  structures(): Iterable<StructureRecord>;
   /** Who is on `from`'s pad right now (offsets from its centre). Both ends of
    *  a jump are collected BEFORE either is dispatched, so nobody rides twice. */
   collectRiders(from: StructureRecord): RiderBatch;
