@@ -29,6 +29,11 @@ import { nexus } from './shots/nexus.js';
 import { proceduralBase } from './shots/proceduralBase.js';
 import { productionLine } from './shots/productionLine.js';
 import { habitatStation } from './shots/habitatStation.js';
+import { shieldGates } from './shots/shieldGates.js';
+import { radar } from './shots/radar.js';
+import { breakIn } from './shots/breakIn.js';
+import { npcCitadel } from './shots/npcCitadel.js';
+import { tradeDeal, tradeRaid } from './shots/trade.js';
 
 /** Every shot, in reel order. Catalogue = all of them; reel = `reel: true`. */
 export const SHOTS: readonly Shot[] = [
@@ -44,15 +49,21 @@ export const SHOTS: readonly Shot[] = [
   nexus,
   scrap,
   loot,
+  breakIn,
+  tradeDeal,
+  tradeRaid,
   buildBase,
   gridAlive,
   defence,
+  shieldGates,
   waveAttack,
   levelUp,
   spectator,
+  radar,
   warp,
   scale,
   proceduralBase,
+  npcCitadel,
   productionLine,
   habitatStation,
   mobile,
@@ -101,7 +112,6 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
   'collision-layers': 'Physics internals — visible inside combat/scrap shots.',
   'asteroid-interaction-model': 'Visible incidentally (mining, scale shot).',
   'webrtc-datachannel-snapshot-transport': 'Off under automation; end-card line.',
-  'off-screen-indicators': 'Visible in every minimal/full HUD combat shot (halo ring).',
   'cinematic-camera': 'The tool that films the video.',
   'showcase-pipeline': 'The pipeline itself.',
   'procedural-bases-research': 'Research record.',
@@ -109,17 +119,9 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 
 /** Docs whose feature exists but cannot be staged on main yet — with what unblocks it. */
 export const SHOWCASE_PENDING: Record<string, string> = {
-  'shield-gates': 'Gates (plan soft-leaping-truffle v2, phase V) — a fly-through shot in the gate-test room is next; the design sheet stills are in diag/showcase/structure-redesign.',
   allegiances: 'AI-vs-AI sides fight in the living galaxy but not on cue; needs a staged two-faction room.',
-  'trade-deals':
-    'Trade needs a SIGNED-IN pilot and shots join anonymously (AS_PILOT); needs a logged-in take. ' +
-    'Filmed standalone meanwhile: tests/showcase/trade-p2.spec.ts (room trade-showcase).',
-  'economy-and-trade':
-    'Same as trade-deals (signed-in take needed); standalone recording: tests/showcase/trade-p2.spec.ts.',
   blueprints:
     'Blueprints drop at random from elites/events and install at a signed-in base; needs a staged loot→install room for the P5 showcase.',
-  'economy-wallet':
-    'The wallet is a HUD number + server rules; filmed inside the next economy showcase (kill → balance ticks up).',
   'research-lab':
     'Lab jobs run for minutes on the 1 Hz grid pulse; needs a staged base with blueprints + a fast-pulse room before it can be filmed.',
   'bounties-and-events':

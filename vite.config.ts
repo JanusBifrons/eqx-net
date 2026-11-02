@@ -168,7 +168,7 @@ export default defineConfig({
       // `src/client/trade/` dir — its module URLs would collide with this proxy
       // (the 2026-06-14 `/galaxy` lesson).
       '/trade': {
-        target: 'http://localhost:2567',
+        target: `http://localhost:${SERVER_PORT}`,
         changeOrigin: true,
       },
     },
