@@ -205,8 +205,8 @@ describe('packed hulls (economy v2 W5b: the Shipyard builds ships)', () => {
   });
 });
 
-describe('cities (D3)', () => {
-  it('city modules consume provisions and consumer goods and pay taxes, with no blueprint', () => {
+describe('habitation (D3)', () => {
+  it('habitation modules consume provisions and consumer goods and pay taxes, with no blueprint', () => {
     for (const id of ['habitat_upkeep', 'tower_upkeep'] as const) {
       const r = RECIPES[id];
       expect(r.inputs.provisions ?? 0, id).toBeGreaterThan(0);

@@ -58,7 +58,7 @@ describe('baseProfileFor across the galaxy', () => {
     if (station.length > 0) expect(rate(station, 'trade')).toBeGreaterThan(rate(all, 'trade'));
     expect(rate(extraction, 'mining')).toBeGreaterThan(rate(noExtraction, 'mining'));
     for (const x of all) if (x.p.role === 'assembly') expect(x.hops, x.key).toBe(0);
-    // D3 — a colony is never a small outpost.
+    // D3 — a habitat station is never a small outpost.
     for (const x of all) if (x.p.role === 'colony') expect(x.p.tier, x.key).not.toBe('outpost');
   });
 

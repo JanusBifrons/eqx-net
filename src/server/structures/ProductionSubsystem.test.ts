@@ -255,7 +255,7 @@ describe('ProductionSubsystem', () => {
   });
 });
 
-describe('ProductionSubsystem — cities (D3)', () => {
+describe('ProductionSubsystem — habitation (D3)', () => {
   const HAB = RECIPES.habitat_upkeep;
 
   function city(goods: Record<string, number>, owner = 'alice') {
@@ -286,7 +286,7 @@ describe('ProductionSubsystem — cities (D3)', () => {
     expect(Object.keys(bay.hold!.goods)).not.toContain('credits');
   });
 
-  it('a starving city pays nothing and reports what it is missing', () => {
+  it('a starving habitat station pays nothing and reports what it is missing', () => {
     const { hab, paid, run } = city({ provisions: 8 });
     run(HAB.cyclePulses * 2);
     expect(hab.prodState).toBe(PROD_STATE.starved);
