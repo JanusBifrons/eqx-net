@@ -892,7 +892,7 @@ export class StructureGridSubsystem {
           bp.upgradeTargetLevel = undefined;
           bp.constructionCost = getStructureKind(bp.kind).constructionCost;
         }
-        this.hooks.setHealth(bp.id, effectiveStructureMaxHealth(getStructureKind(bp.kind).maxHealth, bp.level));
+        this.hooks.setHealth(bp.id, effectiveStructureMaxHealth(getStructureKind(bp.kind).maxHealth, bp.level, bp.packedQuality));
         this.hooks.registry.topologyDirty = true; // it now relays
         this.hooks.onConstructed?.(bp.owner, bp.kind);
       }
@@ -902,7 +902,9 @@ export class StructureGridSubsystem {
   private processRepair(nowMs: number, flashed: Array<[string, string, FlowMaterial]>): void {
     for (const rec of this.hooks.registry.all()) {
       if (!rec.isConstructed || rec.isDeconstructing) continue;
-      const max = getStructureKind(rec.kind).maxHealth;
+      // The LEVELED + quality max (was the base max: a leveled or high-quality
+      // structure could never be repaired back to full).
+      const max = effectiveStructureMaxHealth(getStructureKind(rec.kind).maxHealth, rec.level, rec.packedQuality);
       const hp = this.hooks.getHealth(rec.id);
       // Campaign 4.3 (review A8) — repair in MEANINGFUL QUANTA. A structure
       // under sustained sub-quantum chip damage used to find `hp < max` + a

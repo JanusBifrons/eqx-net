@@ -55,6 +55,8 @@ export type PersistOp =
       xp: number;
       statAllocJson: string;
       mountsJson: string;
+      /** Economy v2 — an unpacked hull's quality (absent ⇒ 0). */
+      hullQuality?: number;
       ts: number;
     }
   | { type: 'PLAYER_SHIP_DELETE'; shipId: string; ts: number }

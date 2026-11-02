@@ -25,7 +25,7 @@ import { quotePacked } from '../../../src/core/economy/market.js';
 import { CONSTRUCTION_PULSE_AMOUNT } from '../../../src/core/structures/structureGridConstants.js';
 import { hullBillValue, packBillValue } from '../../../src/shared-types/recipes.js';
 import type { ShipKindId } from '../../../src/shared-types/shipKinds.js';
-import type { StructureKindId } from '../../../src/shared-types/structureKinds.js';
+import { getStructureKind, type StructureKindId } from '../../../src/shared-types/structureKinds.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 
@@ -153,6 +153,11 @@ describe('SectorRoom integration — buying + placing packed structures (economy
     expect(getHoldStore().get(shipId)).toBeUndefined(); // the only item: the row is gone
     const turret = [...internal.structureRegistry.all()].find((r) => r.kind === 'missile_turret')!;
     expect(turret.packedQuality).toBe(40);
+    // Quality 40 ⇒ +4 % max hull once built.
+    const maxPulses2 = Math.ceil(turret.constructionCost / CONSTRUCTION_PULSE_AMOUNT) + 10;
+    for (let i = 0; i < maxPulses2 && !turret.isConstructed; i++) internal.pulseStructureGrid();
+    expect(turret.isConstructed).toBe(true);
+    expect(internal.swarmHealth.get(turret.id)).toBeCloseTo(getStructureKind('missile_turret').maxHealth * 1.04);
     turret.isDeconstructing = true;
     for (let i = 0; i < 50 && internal.structureRegistry.get(turret.id); i++) internal.pulseStructureGrid();
     expect(internal.structureRegistry.get(turret.id)).toBeUndefined();
