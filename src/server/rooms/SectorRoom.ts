@@ -227,6 +227,7 @@ import type {
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { getPlayerShipStore, getHoldStore, getWallet, getLabBoard } from '../db/PersistenceWorker.js';
 import { ResearchLabSubsystem } from '../structures/ResearchLabSubsystem.js';
+import { PackedStockQuerySchema, type PackedStock } from '../../shared-types/packedStock.js';
 import { BpBuySchema, BpMarketQuerySchema, BpSellSchema, type BpListing, type BpMarketState } from '../../shared-types/blueprintMarket.js';
 import { bpBuyPrice, bpSellPrice, getBlueprintMarket, listing as bpListing } from '../economy/BlueprintMarket.js';
 import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type LabState } from '../../shared-types/messages/labMessages.js';
@@ -241,7 +242,7 @@ import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
 import { rollEliteLoot, ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS, PlaceBountySchema, type BountyResult } from '../../shared-types/contracts.js';
 import {
-  InstallBlueprintSchema, UnpackHullSchema, STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, productName, weaponUnlocked, type BlueprintResult,
+  InstallBlueprintSchema, UnpackHullSchema, qualityHullFactor, STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, productName, weaponUnlocked, type BlueprintResult,
 } from '../../shared-types/blueprints.js';
 
 const EMPTY_FITTED: readonly string[] = Object.freeze([]);
@@ -2896,6 +2897,14 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('lab_start', (client: Client, raw: unknown) => labRequest(client, 'lab_start', raw));
     this.onMessage('lab_cancel', (client: Client, raw: unknown) => labRequest(client, 'lab_cancel', raw));
 
+    // ── Economy v2 — packed-structure stock for the Build menus ──────────────
+    this.onMessage('packed_stock_query', (client: Client, raw: unknown) => {
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      if (!PackedStockQuerySchema.safeParse(raw).success) { this.malformed.record(client.sessionId, 'packed_stock_query'); return; }
+      try { client.send('packed_stock', { type: 'packed_stock', counts: this.packedStockOf(playerId) } satisfies PackedStock); } catch { /* closing */ }
+    });
+
     // ── Economy v2 W6 — the blueprint market (buy / sell, instant) ───────────
     const bpRequest = (client: Client, kind: 'bp_market_query' | 'bp_buy' | 'bp_sell', raw: unknown): void => {
       const playerId = this.sessionToPlayer.get(client.sessionId);
@@ -5053,7 +5062,7 @@ export class SectorRoom extends Room<SectorState> {
       this.structureStateGen.set(key, gen);
       const summary = this.structureGrid.powerSummaryFor(rec.id);
       // Hull percent of the LEVELED max (a full-health leveled structure is 100).
-      const hpMax = effectiveStructureMaxHealth(getStructureKind(rec.kind).maxHealth, rec.level);
+      const hpMax = effectiveStructureMaxHealth(getStructureKind(rec.kind).maxHealth, rec.level, rec.packedQuality);
       const hp = this.swarmHealth.get(rec.id) ?? hpMax;
       const hpPct = Math.round((Math.max(0, hp) / hpMax) * 100);
       let flags = 0;
@@ -5297,7 +5306,7 @@ export class SectorRoom extends Room<SectorState> {
       kind: 'structure',
       name: kind.displayName,
       hp: Math.max(0, Math.round(hp)),
-      hpMax: Math.round(kind.maxHealth),
+      hpMax: Math.round(effectiveStructureMaxHealth(kind.maxHealth, struct.level, struct.packedQuality)),
       ...(holdCap > 0
         ? {
             hold: {
@@ -5510,7 +5519,9 @@ export class SectorRoom extends Room<SectorState> {
 
   /** P5 — the ship's max hull: kind base × stat upgrades × fitted blueprints. */
   private shipHullMax(kindMax: number, alloc: CoreStatAlloc | undefined, shipInstanceId: string): number {
-    return Math.round(effectiveShipMaxHealth(kindMax, alloc) * fittedHullMul(this.fittedOf(shipInstanceId)));
+    // Economy v2 — an unpacked hull's quality adds up to +10 % (roster `hullQuality`).
+    const quality = shipInstanceId !== '' ? getPlayerShipStore().get(shipInstanceId)?.hullQuality : undefined;
+    return Math.round(effectiveShipMaxHealth(kindMax, alloc) * fittedHullMul(this.fittedOf(shipInstanceId)) * qualityHullFactor(quality));
   }
 
   /** P5 — destroy a ship's fitted blueprints (it died / was abandoned). */
@@ -7603,7 +7614,8 @@ export class SectorRoom extends Room<SectorState> {
         sectorKey: this.sectorKey,
         x: s.x + UNPACK_PARK_OFFSET,
         y: s.y,
-        health: getShipKind(kind).maxHealth,
+        health: Math.round(getShipKind(kind).maxHealth * qualityHullFactor(item.quality)),
+        hullQuality: item.quality,
       });
       auditEvent({ event: 'hull_unpacked', sector: this.sectorKey, playerId, shipInstanceId: ship.shipId, kind, quality: item.quality });
       return [true, `${name} unpacked: it's in your roster.`];
@@ -7612,6 +7624,22 @@ export class SectorRoom extends Room<SectorState> {
       this.storage.commitChanged([from], []);
       return [false, `Could not unpack the ${name}.`];
     }
+  }
+
+  /** Economy v2 — `playerId`'s packed STRUCTURES in this sector, by product:
+   *  their operational storage here plus their active ship's hold (exactly
+   *  where `packedGateForBuild` looks). Control cadence (allocates). */
+  private packedStockOf(playerId: string): Record<string, number> {
+    const counts: Record<string, number> = {};
+    const add = (items: readonly { product: string }[] | undefined): void => {
+      for (const it of items ?? []) if (it.product.startsWith('structure:')) counts[it.product] = (counts[it.product] ?? 0) + 1;
+    };
+    for (const rec of this.structureRegistry.all()) {
+      if (rec.owner === playerId && rec.hold !== undefined && isOperationalStorage(rec)) add(rec.hold.packed);
+    }
+    const shipId = this.resolveActiveShipKey(playerId);
+    if (shipId) add(getHoldStore().get(shipId)?.hold.packed);
+    return counts;
   }
 
   /** Economy v2 W6 — `playerId`'s operational storage at `networkEntityId`. */

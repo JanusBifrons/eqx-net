@@ -84,8 +84,8 @@ const stmts = {
     'INSERT INTO player_ships (ship_id, player_id, user_id, kind, kind_version, health, ' +
     'last_sector_key, last_x, last_y, last_vx, last_vy, last_angle, last_angvel, ' +
     'last_fire_client_tick, is_active, active_room_id, expires_at, ' +
-    'level, xp, stat_alloc, mounts, created_at, updated_at) ' +
-    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+    'level, xp, stat_alloc, mounts, hull_quality, created_at, updated_at) ' +
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
     'ON CONFLICT(ship_id) DO UPDATE SET ' +
     'player_id=excluded.player_id, user_id=excluded.user_id, kind=excluded.kind, ' +
     'kind_version=excluded.kind_version, health=excluded.health, ' +
@@ -94,7 +94,7 @@ const stmts = {
     'last_angvel=excluded.last_angvel, last_fire_client_tick=excluded.last_fire_client_tick, ' +
     'is_active=excluded.is_active, active_room_id=excluded.active_room_id, ' +
     'expires_at=excluded.expires_at, level=excluded.level, xp=excluded.xp, ' +
-    'stat_alloc=excluded.stat_alloc, mounts=excluded.mounts, updated_at=excluded.updated_at',
+    'stat_alloc=excluded.stat_alloc, mounts=excluded.mounts, hull_quality=excluded.hull_quality, updated_at=excluded.updated_at',
   ),
   PLAYER_SHIP_DELETE: db.prepare('DELETE FROM player_ships WHERE ship_id = ?'),
   // Phase 5 director-state persistence shadow. Singleton row (id = 1).
@@ -201,6 +201,7 @@ function applyOp(op: PersistOp): { rowId?: number } {
         op.xp,
         op.statAllocJson,
         op.mountsJson,
+        op.hullQuality ?? 0,
         op.ts,
         op.ts,
       );

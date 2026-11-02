@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
 import { RECIPES } from '../../../src/shared-types/recipes.js';
+import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 
@@ -97,8 +98,13 @@ describe('SectorRoom integration — Shipyard + hull gate (economy v2 W5b)', () 
     await harness.advance(300);
 
     // An owned gunship (e.g. one you unpacked) is picked by its roster id.
-    const owned = getPlayerShipStore().create({ playerId: pid, userId: null, kind: 'gunship', sectorKey: 'sol-prime', x: 300, y: 300, health: 210 });
+    // Quality 100 (an unpacked top-quality hull) ⇒ +10 % max hull.
+    const owned = getPlayerShipStore().create({ playerId: pid, userId: null, kind: 'gunship', sectorKey: 'sol-prime', x: 300, y: 300, health: 210, hullQuality: 100 });
     await harness.connectActive(pid, { spawnX: 0, spawnY: 0, shipId: owned.shipId });
     expect(kindOf()).toBe('gunship');
+    const room = harness.getServerRoom() as unknown as SectorRoom;
+    let max = 0;
+    for (const [, s] of (room.state as SectorState).ships) if (s.playerId === pid && s.isActive) max = s.maxHealth;
+    expect(max).toBe(Math.round(getShipKind('gunship').maxHealth * 1.1));
   });
 });

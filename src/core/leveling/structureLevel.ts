@@ -28,6 +28,7 @@
  * caller, so the server and any future client preview agree.
  */
 import type { GoodId } from '../../shared-types/goods.js';
+import { qualityHullFactor } from '../../shared-types/blueprints.js';
 
 /**
  * The maximum structure level. A structure at the cap can't be upgraded further
@@ -151,8 +152,9 @@ export function structureLevelFactor(level: number | undefined): number {
 /** Leveled effective max-health for a structure (`baseMaxHealth · level mul`).
  *  The single helper both the subsystem (HP seed on build) and the snapshot
  *  slice (`hpPct` denominator) read so a leveled structure's bar is consistent. */
-export function effectiveStructureMaxHealth(baseMaxHealth: number, level: number | undefined): number {
-  return baseMaxHealth * structureLevelMultipliers(level).maxHealth;
+export function effectiveStructureMaxHealth(baseMaxHealth: number, level: number | undefined, quality?: number): number {
+  // Economy v2 — a structure placed from a packed item gets its quality bonus.
+  return baseMaxHealth * structureLevelMultipliers(level).maxHealth * qualityHullFactor(quality);
 }
 
 /**

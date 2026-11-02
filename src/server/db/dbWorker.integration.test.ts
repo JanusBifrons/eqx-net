@@ -197,6 +197,7 @@ describe('dbWorker (real worker, temp file DB)', () => {
           xp: 4321,
           statAllocJson: JSON.stringify({ hull: 2, damage: 1 }),
           mountsJson: JSON.stringify([{ slotId: 'wing-l', weaponId: 'laser_beam' }]),
+          hullQuality: 73,
           ts: now,
         },
       ],
@@ -210,12 +211,13 @@ describe('dbWorker (real worker, temp file DB)', () => {
 
     const ro = new DatabaseSync(dbPath, { readOnly: true });
     const row = ro
-      .prepare('SELECT level, xp, stat_alloc, mounts FROM player_ships WHERE ship_id = ?')
-      .get('ship-lvl-1') as { level: number; xp: number; stat_alloc: string; mounts: string };
+      .prepare('SELECT level, xp, stat_alloc, mounts, hull_quality FROM player_ships WHERE ship_id = ?')
+      .get('ship-lvl-1') as { level: number; xp: number; stat_alloc: string; mounts: string; hull_quality: number };
     expect(row.level).toBe(5);
     expect(row.xp).toBe(4321);
     expect(JSON.parse(row.stat_alloc)).toEqual({ hull: 2, damage: 1 });
     expect(JSON.parse(row.mounts)).toEqual([{ slotId: 'wing-l', weaponId: 'laser_beam' }]);
+    expect(row.hull_quality).toBe(73); // economy v2 — an unpacked hull's quality
     ro.close();
   });
 
@@ -275,12 +277,13 @@ describe('dbWorker (real worker, temp file DB)', () => {
     const ro = new DatabaseSync(dbPath, { readOnly: true });
     // The migrated old row carries the column DEFAULTs (1 / 0 / {} / []).
     const oldRow = ro
-      .prepare('SELECT level, xp, stat_alloc, mounts FROM player_ships WHERE ship_id = ?')
-      .get('old-ship') as { level: number; xp: number; stat_alloc: string; mounts: string };
+      .prepare('SELECT level, xp, stat_alloc, mounts, hull_quality FROM player_ships WHERE ship_id = ?')
+      .get('old-ship') as { level: number; xp: number; stat_alloc: string; mounts: string; hull_quality: number };
     expect(oldRow.level).toBe(1);
     expect(oldRow.xp).toBe(0);
     expect(oldRow.stat_alloc).toBe('{}');
     expect(oldRow.mounts).toBe('[]');
+    expect(oldRow.hull_quality).toBe(0); // economy v2 column added by the migration
     // The new write landed its non-default values.
     const newRow = ro
       .prepare('SELECT level, xp FROM player_ships WHERE ship_id = ?')
