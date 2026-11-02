@@ -169,6 +169,7 @@ Update this section when a threshold is set.
   - Drilling is data-driven: any built kind with a `miningRate` mines (Miner, Deep Core Rig).
   - The asteroid's `asteroidResource` (swarm record + wire byte) splits the yield via `ASTEROID_YIELD`. Minerals go to the drill buffer; other goods go to network storage through `ProductionSubsystem.deposit`.
   - Gas Collectors work only when `sectorFeatures` include `nebula`.
+  - **A drill never mines into a full network.** Before drawing from a non-rock asteroid it asks `canDepositGoods` (`ProductionSubsystem.canDeposit`, the whole yield together); if it would not fit, the drill idles and the rock keeps its finite ore.
   - Lock: `tests/integration/sectorRoom/extraction.test.ts`.
 - **Ammo (P2d):**
   - `tickTurrets` calls `spendAmmo` before every projectile / missile shot. An empty magazine reloads `AMMO_SHOTS_PER_UNIT[kind]` shots from one munition, through the `takeMunition` hook (`ProductionSubsystem.takeGoods`).

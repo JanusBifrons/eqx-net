@@ -2115,6 +2115,7 @@ export class SectorRoom extends Room<SectorState> {
       // P2c — asteroid kinds, extractor goods into network storage, nebulae.
       asteroidResourceOf: (entityId) => this.swarmRegistry.getByEntityId(entityId)?.asteroidResource ?? 'rock',
       depositGoods: (rec, good, n) => this.production.deposit(rec, good, n),
+      canDepositGoods: (rec, goods) => this.production.canDeposit(rec, goods),
       sectorHasNebula: () => this.sectorFeatures.includes('nebula'),
       // P2d — missile and autocannon turrets load munitions from base storage.
       takeMunition: (rec) => this.production.takeGoods(rec, ONE_MUNITION),
