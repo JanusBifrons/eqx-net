@@ -57,6 +57,9 @@ import { db } from './db/Database.js';
 import { resolveCorsPolicy, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
 import { shouldRegisterTestRooms } from './rooms/testRoomGating.js';
 import { installProcessGuards } from './orchestration/processGuards.js';
+/** v4 T1 — the owner the teleport-test room's base belongs to (the E2E joins
+ *  as this id). Kept in sync with tests/e2e/teleporter.spec.ts. */
+const TELEPORT_TEST_OWNER = 'face0000-0000-4000-8000-000000000002';
 
 const logger = pino({
   name: 'server',
@@ -1011,6 +1014,34 @@ gameServer
     dronePoses: [{ kind: 'fighter', x: 260, y: -650, angle: 0 }],
     defaultSpawnX: 0,
     defaultSpawnY: -650,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
+// v4 T1 — teleporters: a powered Capital with a teleporter on each side,
+// paired at seed, owned by a fixed sentinel the E2E joins as (anonymous
+// context + localStorage eqxPlayerId). Jump cycles run 10× fast and the grid
+// pulses every 100 ms, so a capacitor fills in a couple of seconds.
+gameServer
+  .define('teleport-test', SectorRoom, {
+    sectorKey: 'teleport-test',
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    structureGridPulseMs: 100,
+    teleportCycleScale: 0.1,
+    prebuiltStructures: [
+      { kind: 'capital', x: 0, y: 0 },
+      { kind: 'connector', x: -600, y: 0 },
+      { kind: 'connector', x: 600, y: 0 },
+      { kind: 'teleporter', x: -1300, y: 0 },
+      { kind: 'teleporter', x: 1300, y: 0 },
+    ],
+    prebuiltStructuresOwner: TELEPORT_TEST_OWNER,
+    prebuiltStorageGoods: { alloy: 50 },
+    pairTeleporters: true,
+    defaultSpawnX: 0,
+    defaultSpawnY: 900,
     maxClients: 4,
   })
   .filterBy(['testId']);

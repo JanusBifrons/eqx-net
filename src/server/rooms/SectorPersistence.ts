@@ -56,6 +56,10 @@ export interface PersistableStructure {
   prepaid?: boolean;
   /** T4b — a Freight Dock's standing orders. */
   freightOrders?: Array<{ good: string; mode: 'import' | 'export'; level: number }>;
+  /** v4 T1 — a teleporter's partner, rules and capacitor charge. */
+  tpPartner?: { sectorKey: string; uid: string };
+  tpRules?: unknown;
+  tpCharge?: number;
   packedQuality?: number;
   isConstructed: boolean;
   constructionProgress: number;
@@ -185,6 +189,13 @@ export class SectorPersistence {
         ...(s.prodLoaded ? { prodLoaded: true, prodProgress: s.prodProgress ?? 0 } : {}),
         ...(s.prepaid ? { prepaid: true } : {}),
         ...(s.freightOrders && s.freightOrders.length > 0 ? { freightOrders: s.freightOrders.map((o) => ({ ...o })) } : {}),
+        ...(s.tpPartner !== undefined || s.tpRules !== undefined || (s.tpCharge ?? 0) > 0
+          ? { teleport: {
+            ...(s.tpPartner ? { partner: { ...s.tpPartner } } : {}),
+            ...(s.tpRules !== undefined ? { rules: s.tpRules } : {}),
+            ...((s.tpCharge ?? 0) > 0 ? { charge: s.tpCharge } : {}),
+          } }
+          : {}),
         ...(s.packedQuality !== undefined ? { packedQuality: s.packedQuality } : {}),
         y: s.y,
         health: d.swarmHealth.get(s.id) ?? 0,

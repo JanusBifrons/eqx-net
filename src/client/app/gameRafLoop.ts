@@ -37,6 +37,10 @@ import { sendSelectEntity, sendDeselectEntity } from '../net/selectionClient.js'
 import { resetSelectionStats } from '../net/selectionStats.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { IRenderer } from '@core/contracts/IRenderer';
+import { placeInspector, type InspectorAnchor } from './inspectorPlacement.js';
+
+/** Reused each frame (no per-frame allocation, #14). */
+const inspectorAt: InspectorAnchor = { left: 0, top: 0 };
 
 /** Click-to-inspect (Item B5) — last selection id the bridge published, so the
  *  RendererFeedback → Zustand mirror + server select/deselect sends fire ONLY on
@@ -353,13 +357,12 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     if (typeof ssx === 'number' && typeof ssy === 'number') {
       const panel = document.querySelector('[data-testid="entity-stats-panel"]') as HTMLElement | null;
       if (panel) {
-        // The panel floats ABOVE its anchor (translate -100%), so clamp the
-        // anchor by the panel's height: its TOP stays below the app header
-        // (a target high on screen used to push it under the header, where
-        // "Open cargo" couldn't be clicked). Read the height before writing.
-        const h = panel.offsetHeight;
-        panel.style.left = `${Math.max(8, Math.min(window.innerWidth - 8, ssx))}px`;
-        panel.style.top = `${Math.max(56 + h, Math.min(window.innerHeight - 8, ssy))}px`;
+        // The panel is centred ABOVE its anchor, so the anchor is clamped by
+        // the panel's size and the whole panel stays on screen, below the
+        // header (inspectorPlacement.ts). Read the size before writing.
+        const at = placeInspector(ssx, ssy, panel.offsetWidth, panel.offsetHeight, window.innerWidth, window.innerHeight, inspectorAt);
+        panel.style.left = `${at.left}px`;
+        panel.style.top = `${at.top}px`;
       }
       if (writeE2E) {
         el.dataset['selectionScreenX'] = ssx.toFixed(1);

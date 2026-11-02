@@ -16,7 +16,7 @@
  *    `flushDirty()` on the ~1 Hz grid pulse — a crash loses at most ~1 s of
  *    mining, it can never duplicate player value.
  */
-import { GOOD_IDS, type GoodId, type Hold } from '../../shared-types/goods.js';
+import { GOOD_DEFS, GOOD_IDS, type GoodId, type Hold } from '../../shared-types/goods.js';
 import { fittedUid, moduleProduct, parseProduct } from '../../shared-types/blueprints.js';
 import type { BlueprintItem } from '../../shared-types/items.js';
 
@@ -405,6 +405,111 @@ export class StorageService {
       puts.push(r);
     }
     this.d.holdStore.commit(puts, deletes, this.persist());
+  }
+
+  // ── v4 T1 — teleporter pad holds ─────────────────────────────────────────
+  // A teleporter's pad has its OWN hold (`tppad:<structure uid>`, holder type
+  // 'fitted'), separate from base storage, so production never draws from it.
+  // Loading, unloading and the swap are each ONE atomic group.
+
+  private padUid(rec: StructureRecord): string | null {
+    return rec.uid === undefined ? null : `tppad:${rec.uid}`;
+  }
+
+  /** Add a pad's row (or its delete when empty) to a group. */
+  private padOp(rec: StructureRecord, puts: HoldRecord[], deletes: string[]): void {
+    const uid = this.padUid(rec);
+    if (uid === null) return;
+    if (rec.padHold !== undefined && !isHoldEmpty(rec.padHold)) {
+      puts.push({
+        holderUid: uid, holderType: 'fitted', ownerId: rec.owner, sectorKey: this.d.sectorKey(),
+        x: rec.x, y: rec.y, hold: cloneHold(rec.padHold), expiresAt: null,
+      });
+    } else if (this.d.holdStore.get(uid) !== undefined) {
+      deletes.push(uid);
+    }
+  }
+
+  private commitPads(pads: readonly StructureRecord[], touched: Iterable<StructureRecord>): void {
+    const puts: HoldRecord[] = [];
+    const deletes: string[] = [];
+    for (const p of pads) this.padOp(p, puts, deletes);
+    for (const rec of touched) {
+      const r = this.recordFor(rec);
+      if (r === null) continue;
+      this.persistedSig.set(rec.uid!, sig(r.hold));
+      puts.push(r);
+    }
+    this.d.holdStore.commit(puts, deletes, this.persist());
+  }
+
+  /** Room hydrate: put a persisted pad hold back. */
+  restorePad(rec: StructureRecord): void {
+    const uid = this.padUid(rec);
+    if (uid === null) return;
+    const row = this.d.holdStore.get(uid);
+    if (row !== undefined) rec.padHold = cloneHold(row.hold);
+  }
+
+  /** Move up to `qty` of `good` from the pad's base storage onto the pad,
+   *  limited by the pad's free weight. Returns how many moved. */
+  padLoad(pad: StructureRecord, good: GoodId, qty: number, padCapacity: number): number {
+    const h = (pad.padHold ??= emptyHold());
+    const unit = GOOD_DEFS[good].weight;
+    const room = padCapacity - holdWeight(h);
+    let want = Math.min(qty, unit > 0 ? Math.floor(room / unit + 1e-9) : qty);
+    if (want <= 0) return 0;
+    const touched = new Set<StructureRecord>();
+    let moved = 0;
+    for (const s of this.networkOf(pad)) {
+      if (want <= 0) break;
+      const have = s.hold?.goods[good] ?? 0;
+      if (have <= 0) continue;
+      const n = Math.min(have, want);
+      if (have - n > 0) s.hold!.goods[good] = have - n;
+      else delete s.hold!.goods[good];
+      touched.add(s);
+      moved += n;
+      want -= n;
+    }
+    if (moved === 0) return 0;
+    h.goods[good] = (h.goods[good] ?? 0) + moved;
+    this.commitPads([pad], touched);
+    return moved;
+  }
+
+  /** Move the pad's hold into its base storage, as far as storage has room.
+   *  Whatever doesn't fit stays on the pad. Returns true when anything moved. */
+  padUnload(pad: StructureRecord): boolean {
+    const h = pad.padHold;
+    if (h === undefined || isHoldEmpty(h)) return false;
+    const touched: StructureRecord[] = [];
+    for (const s of this.networkOf(pad)) {
+      if (isHoldEmpty(h)) break;
+      const dst = (s.hold ??= emptyHold());
+      const r = transferInto(dst, h, holdCapacityOf(s));
+      if (!isHoldEmpty(r.moved)) touched.push(s);
+    }
+    if (touched.length === 0) return false;
+    this.commitPads([pad], touched);
+    return true;
+  }
+
+  /** The jump: the two pads' holds trade places, in one group. */
+  padSwap(a: StructureRecord, b: StructureRecord): void {
+    const ha = a.padHold;
+    a.padHold = b.padHold;
+    b.padHold = ha;
+    this.commitPads([a, b], []);
+  }
+
+  /** A teleporter left the world: its pad hold spills; the row is deleted. */
+  takePadForSpill(rec: StructureRecord): Hold | null {
+    const uid = this.padUid(rec);
+    const h = rec.padHold;
+    rec.padHold = undefined;
+    if (uid !== null && this.d.holdStore.get(uid) !== undefined) this.d.holdStore.delete(uid, this.persist());
+    return h === undefined || isHoldEmpty(h) ? null : h;
   }
 
   // ── Living World P2 — trade escrow ──────────────────────────────────────

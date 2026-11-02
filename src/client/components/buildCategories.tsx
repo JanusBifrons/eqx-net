@@ -4,6 +4,7 @@ import BoltIcon from '@mui/icons-material/Bolt';
 import SecurityIcon from '@mui/icons-material/Security';
 import FactoryIcon from '@mui/icons-material/Factory';
 import ApartmentIcon from '@mui/icons-material/Apartment';
+import TripOriginIcon from '@mui/icons-material/TripOrigin';
 import { type StructureKindId } from '@shared-types/structureKinds';
 
 /**
@@ -24,7 +25,7 @@ import { type StructureKindId } from '@shared-types/structureKinds';
  * (no orphan, no duplicate) — locked by `buildCategories.test.ts`, which fails
  * closed the moment a 10th kind is appended to the catalogue without a category.
  */
-export type BuildCategoryId = 'core' | 'economy' | 'industry' | 'defence' | 'habitation';
+export type BuildCategoryId = 'core' | 'economy' | 'industry' | 'defence' | 'habitation' | 'transport';
 
 export interface BuildCategory {
   readonly id: BuildCategoryId;
@@ -68,6 +69,8 @@ export const BUILD_CATEGORIES: readonly BuildCategory[] = [
   },
   // D3 — habitation: station residents use provisions and consumer goods and pay taxes.
   { id: 'habitation', label: 'Habitation', icon: <ApartmentIcon />, kinds: ['habitat_module', 'tower_module'] },
+  // v4 T1 — teleporters: paired pads that swap ships and cargo.
+  { id: 'transport', label: 'Transport', icon: <TripOriginIcon />, kinds: ['teleporter', 'teleporter_large'] },
 ];
 
 /** The drilled-into category's icon (mirrored onto the FAB at the `kinds` level). */
@@ -77,6 +80,7 @@ export const CATEGORY_ICON: Record<BuildCategoryId, ReactNode> = {
   industry: <FactoryIcon />,
   defence: <SecurityIcon />,
   habitation: <ApartmentIcon />,
+  transport: <TripOriginIcon />,
 };
 
 /** Resolve a category record by id (every id is present — exhaustiveness-locked). */

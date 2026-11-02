@@ -161,6 +161,20 @@ export class StructureState extends Schema {
   @type('uint16') bpRuns?: number;
   /** Production: the slot blueprint's glance quality (0–100). */
   @type('uint8') bpQuality?: number;
+  /** v4 T1 — teleporters: the jump-cycle phase (TP_PHASE), how long it lasts
+   *  (ms), the capacitor (% of the jump's charge), the partner (entityId; -2 in
+   *  another sector), the rule bits (TP_RULE_*), the "loaded" and "keep
+   *  loaded" rules (good index + 1, 0 = weight; qty), and the pad hold's weight. */
+  @type('uint8') tpPhase?: number;
+  @type('uint16') tpPhaseMs?: number;
+  @type('uint8') tpChargePct?: number;
+  @type('int32') tpPartner?: number;
+  @type('uint8') tpRules?: number;
+  @type('uint8') tpLoadGood?: number;
+  @type('uint16') tpLoadQty?: number;
+  @type('uint8') tpKeepGood?: number;
+  @type('uint16') tpKeepQty?: number;
+  @type('uint16') padWeight?: number;
   /** Connected structures' entityIds. */
   @type(['uint16']) connTo = new ArraySchema<number>();
 }

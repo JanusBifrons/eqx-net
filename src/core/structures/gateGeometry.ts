@@ -14,6 +14,7 @@
  * span walls, the approach zones and the drawing all agree (invariant #15).
  */
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
+import { PAD_SPECS, TELEPORTER_KINDS, isTeleporterKind, padPostCenters } from '../../shared-types/teleport.js';
 
 export type GateType = 'gate' | 'airlock';
 
@@ -83,11 +84,23 @@ const AIRLOCK_BOXES: readonly LocalBox[] = Object.freeze([
   { cx: AIRLOCK_W / 2 - AIRLOCK_WALL / 2, cy: 0, hw: AIRLOCK_WALL / 2, hh: AL_END_Y },
 ]);
 
-/** The solid collider parts of a gate (its posts and walls), local frame.
- *  null ⇒ not a gate (the structure is its footprint box). */
+/** Teleporter pads (v4 T1): only the posts are solid; the pad is open. */
+const PAD_BOXES: Readonly<Record<string, readonly LocalBox[]>> = Object.freeze(
+  Object.fromEntries(
+    TELEPORTER_KINDS.map((k) => [
+      k,
+      Object.freeze(padPostCenters(k).map(([cx, cy]) => ({ cx, cy, hw: PAD_SPECS[k].post / 2, hh: PAD_SPECS[k].post / 2 }))),
+    ]),
+  ),
+);
+
+/** The solid collider parts of a gate (its posts and walls) or a teleporter
+ *  pad (its posts), local frame. null ⇒ the structure is its footprint box. */
 export function gateColliderBoxes(kind: string | null | undefined): readonly LocalBox[] | null {
   const t = gateTypeOf(kind);
-  return t === 'gate' ? GATE_BOXES : t === 'airlock' ? AIRLOCK_BOXES : null;
+  if (t === 'gate') return GATE_BOXES;
+  if (t === 'airlock') return AIRLOCK_BOXES;
+  return isTeleporterKind(kind) ? PAD_BOXES[kind]! : null;
 }
 
 /** Half-width of the passable gap between the posts. */
