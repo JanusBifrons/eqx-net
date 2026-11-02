@@ -347,6 +347,8 @@ export function initPlayerShipStore(): { hydrated: number } {
     xp: number;
     stat_alloc: string;
     mounts: string;
+    /** Economy v2 — an unpacked hull's quality (0 for ships not from a crate). */
+    hull_quality: number;
     created_at: number;
     updated_at: number;
   }> = [];
@@ -355,7 +357,7 @@ export function initPlayerShipStore(): { hydrated: number } {
       'SELECT ship_id, player_id, user_id, kind, kind_version, health, ' +
       'last_sector_key, last_x, last_y, last_vx, last_vy, last_angle, last_angvel, ' +
       'last_fire_client_tick, is_active, active_room_id, expires_at, ' +
-      'level, xp, stat_alloc, mounts, created_at, updated_at ' +
+      'level, xp, stat_alloc, mounts, hull_quality, created_at, updated_at ' +
       'FROM player_ships',
     ).all() as typeof rows;
   } catch (err) {
@@ -389,6 +391,7 @@ export function initPlayerShipStore(): { hydrated: number } {
     xp: typeof row.xp === 'number' ? row.xp : 0,
     statAlloc: parseStatAlloc(row.stat_alloc),
     mounts: parseMounts(row.mounts),
+    hullQuality: typeof row.hull_quality === 'number' ? row.hull_quality : 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }));
@@ -455,6 +458,7 @@ export function initPlayerShipStore(): { hydrated: number } {
         xp: 0,
         statAlloc: {},
         mounts: [],
+        hullQuality: 0,
         createdAt: row.created_at,
         updatedAt: now,
       };

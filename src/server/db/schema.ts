@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS player_ships (
   xp                    INTEGER NOT NULL DEFAULT 0,
   stat_alloc            TEXT NOT NULL DEFAULT '{}',
   mounts                TEXT NOT NULL DEFAULT '[]',
+  hull_quality          INTEGER NOT NULL DEFAULT 0,
   created_at            INTEGER NOT NULL,
   updated_at            INTEGER NOT NULL
 );
@@ -225,4 +226,6 @@ export const PLAYER_SHIPS_MIGRATIONS: readonly string[] = [
   "ALTER TABLE player_ships ADD COLUMN xp INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE player_ships ADD COLUMN stat_alloc TEXT NOT NULL DEFAULT '{}'",
   "ALTER TABLE player_ships ADD COLUMN mounts TEXT NOT NULL DEFAULT '[]'",
+  // Economy v2 — an unpacked hull's quality (a small max-hull bonus).
+  "ALTER TABLE player_ships ADD COLUMN hull_quality INTEGER NOT NULL DEFAULT 0",
 ];

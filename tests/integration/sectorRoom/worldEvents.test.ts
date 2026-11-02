@@ -67,6 +67,8 @@ describe('SectorRoom integration — world events (P4b)', () => {
     expect(mobs.every((id) => room._internals.swarmRegistry.get(id)?.shipKind?.startsWith('robot-'))).toBe(true);
     expect(ev.sectorEvent('greenfall')?.kind).toBe('incursion');
     expect(ev.sectorEvent('emerald-span')).toBeNull();
+    // The raiders are hostile on sight, so they count as ENEMIES on the map.
+    expect(ev.hostileCountsBySector().get('greenfall')).toBe(6);
 
     const coresBefore = podSum('greenfall', (p) => p.goods['core'] ?? 0);
     for (const id of mobs) {
@@ -74,6 +76,7 @@ describe('SectorRoom integration — world events (P4b)', () => {
     }
     expect(eventMobs('greenfall')).toHaveLength(0);
     expect(ev.activeEvent()).toBeNull();
+    expect(ev.hostileCountsBySector().size).toBe(0);
     // The cache (1–3 cores) on top of whatever the robots' own tables dropped.
     expect(podSum('greenfall', (p) => p.goods['core'] ?? 0) - coresBefore).toBeGreaterThanOrEqual(1);
     await h.waitUntil(
@@ -92,6 +95,8 @@ describe('SectorRoom integration — world events (P4b)', () => {
     expect(rec.elite?.name).toBe(MOTHERSHIP_NAME);
     expect(rec.elite?.maxHealth).toBe(getShipKind('missile-frigate').maxHealth * MOTHERSHIP_HEALTH_MUL);
     expect(mobs.length).toBe(5); // boss + 4 escorts
+    // Drones are hostile only when provoked: a mothership isn't map-red.
+    expect(ev.hostileCountsBySector().size).toBe(0);
 
     for (let i = 0; i < 40 && room._internals.swarmRegistry.get(boss); i++) room._internals.applyDamage(boss, 'some-player', 5_000);
     expect(ev.activeEvent()).toBeNull();

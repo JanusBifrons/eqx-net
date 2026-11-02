@@ -48,6 +48,7 @@ import { ROBOT_DIRECTOR_OPTIONS, ROBOT_BOT_COUNT, isRobotsDisabled } from './liv
 import { RobotTerritory } from './livingworld/RobotTerritory.js';
 import { EliteDirector } from './livingworld/EliteDirector.js';
 import { EventDirector } from './livingworld/EventDirector.js';
+import { sumCounts } from './livingworld/countMaps.js';
 import { setContractsProvider } from './livingworld/contractsProvider.js';
 import { BountyBoard, setBountyBoard } from './economy/BountyBoard.js';
 import { WORLD_EVENT_KINDS, type WorldEventKind } from '../shared-types/worldEvents.js';
@@ -1256,7 +1257,9 @@ async function main(): Promise<void> {
       directorPersistence,
       // Robots are enemies of every player on the galaxy map.
       hooks: {
-        extraEnemyCounts: () => robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS,
+        // Robots are hostile to every player on sight: the robot director's bots
+        // AND an active incursion's raiders both show as enemies on the map.
+        extraEnemyCounts: () => sumCounts(robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS, eventDirector?.hostileCountsBySector() ?? EMPTY_COUNTS),
         // P3 — robot-held sectors show the robots as owner on the galaxy map.
         sectorOwner: (key) => robotTerritory?.sectorOwner(key) ?? null,
         // P4a — named elites: ticked on the drone director's control loop and

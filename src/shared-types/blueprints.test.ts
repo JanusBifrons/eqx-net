@@ -5,6 +5,7 @@ import {
   isBlueprintUsedUp, makeBlueprint, packedHullProducts, packedStructureProducts, parseProduct, productName, rollBlueprint, rollPackedHull, rollPackedStructure,
   spendBlueprintRun, weaponGate, weaponUnlocked,
 } from './blueprints.js';
+import { QUALITY_HULL_BONUS_MAX, qualityHullFactor } from './blueprints.js';
 import { rollLoot } from './lootTables.js';
 import { rollIncursionCache } from './worldEvents.js';
 import { parseHoldJson } from './goods.js';
@@ -72,6 +73,16 @@ describe('packed-structure drops (economy v2 W4a)', () => {
     expect(elite).toBeLessThan(110);
     expect(cache).toBeGreaterThan(60);
     expect(cache).toBeLessThan(140);
+  });
+});
+
+describe('quality (economy v2)', () => {
+  it('adds up to +10 % max hull, scaling with quality; none at 0 / absent', () => {
+    expect(qualityHullFactor(undefined)).toBe(1);
+    expect(qualityHullFactor(0)).toBe(1);
+    expect(qualityHullFactor(50)).toBeCloseTo(1 + QUALITY_HULL_BONUS_MAX / 2);
+    expect(qualityHullFactor(100)).toBeCloseTo(1.1);
+    expect(qualityHullFactor(500)).toBeCloseTo(1.1);
   });
 });
 

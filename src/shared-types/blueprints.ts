@@ -249,6 +249,18 @@ export function isBlueprintUsedUp(bp: BlueprintItem): boolean {
   return bp.kind === 'bpc' && (bp.runs ?? 0) <= 0;
 }
 
+// ── Quality (economy v2) ────────────────────────────────────────────────────
+
+/** A packed item's quality (0–100, set by the blueprint's output stat) gives
+ *  the structure / ship made from it up to this much extra max hull. */
+export const QUALITY_HULL_BONUS_MAX = 0.1;
+
+/** Max-hull multiplier for quality `q` (absent / 0 ⇒ 1, 100 ⇒ 1.1). */
+export function qualityHullFactor(q: number | undefined): number {
+  if (q === undefined || !(q > 0)) return 1;
+  return 1 + QUALITY_HULL_BONUS_MAX * (Math.min(100, q) / 100);
+}
+
 // ── Drops ───────────────────────────────────────────────────────────────────
 
 /** Drop chances. */

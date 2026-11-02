@@ -91,13 +91,20 @@ Every galaxy sector grows its own NPC base when its room is created (`SectorRoom
 - **After the restore.** Seeding runs AFTER the sector snapshot restore, so saved player structures and parked hulls are already in place and always win the space.
 - **Site.** The pure `chooseBaseSite` (`src/core/bases/baseSite.ts`) scans the sector on a 250 u grid for a Capital position where the whole base, plus a 250 u margin, fits inside the sector and touches no player structure or parked hull. It prefers the fewest asteroids, then the site farthest from the origin (where players spawn). Asteroids under the chosen footprint are cleared quietly (no destroy event).
 - **Spawns.** A fresh spawn that would land inside any structure's box is moved to the nearest clear point (`nearestClearPoint`, 120 u clearance). A citadel (≈6,000 × 6,400 u) can't avoid the origin in a 10,000 u sector, so this matters.
-- **Not persisted.** A restart regrows the base. **Kill switch:** `EQX_DISABLE_NPC_BASES=1`.
+- **Several bases per sector.** `galaxyBasePlan` (`src/core/bases/galaxyBases.ts`) gives a sector one to three bases:
+  - **base 0** is the original (same seed and id `b0`), so no existing base moved;
+  - **extra bases** have their own seed, a DIFFERENT role from the bases already there, and their own owner (`npc:<side>:b<i>`), so they have separate grids and trade by convoy;
+  - a **stronghold or citadel** holds its sector alone (a citadel takes most of the sector), so extras are only outposts or settlements;
+  - the **NPC total** stays within `NPC_STRUCTURES_PER_SECTOR_MAX` (400, counted by tier ceilings);
+  - each later base keeps `NPC_BASE_GAP` (900 u) clear of the earlier ones, for bastions, minefields and traffic.
+- **Not persisted.** A restart regrows the bases. **Kill switch:** `EQX_DISABLE_NPC_BASES=1`.
 
-Today's galaxy (seeded): 13 outposts, 6 settlements, a stronghold (andromeda-rim) and a citadel (bloomgate), all trader bases.
+Today's galaxy (seeded): 21 original bases (13 outposts, 6 settlements, a stronghold at andromeda-rim, a citadel at bloomgate), plus extra bases in 9 sectors (deepcurrent holds three). All are trader bases.
 
 Locks:
 - `baseSite.test.ts`: site rules, and every real sector's base fits its sector;
-- `tests/integration/sectorRoom/galaxyBases.test.ts`: the bloomgate citadel is placed in full in a real room with its asteroid field; a spawn on its Capital is nudged clear (fails without the nudge); the kill switch.
+- `galaxyBases.test.ts` (core): base 0 unchanged, deterministic, roles differ, budget kept, big bases alone;
+- `tests/integration/sectorRoom/galaxyBases.test.ts`: deepcurrent's three bases are each placed in full, under their own owners, apart; the bloomgate citadel is placed in full in a real room with its asteroid field; a spawn on its Capital is nudged clear (fails without the nudge); the kill switch.
 
 ## Convoys between NPC bases (T2)
 

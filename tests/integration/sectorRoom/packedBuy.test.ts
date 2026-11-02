@@ -25,7 +25,7 @@ import { quotePacked } from '../../../src/core/economy/market.js';
 import { CONSTRUCTION_PULSE_AMOUNT } from '../../../src/core/structures/structureGridConstants.js';
 import { hullBillValue, packBillValue } from '../../../src/shared-types/recipes.js';
 import type { ShipKindId } from '../../../src/shared-types/shipKinds.js';
-import type { StructureKindId } from '../../../src/shared-types/structureKinds.js';
+import { getStructureKind, type StructureKindId } from '../../../src/shared-types/structureKinds.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 
@@ -147,12 +147,28 @@ describe('SectorRoom integration — buying + placing packed structures (economy
       hold: { goods: {}, blueprints: [], packed: [{ product: 'structure:missile_turret', quality: 40 }] }, expiresAt: null,
     }, false);
     const before = [...internal.structureRegistry.all()].length;
+    // The Build-menu stock view counts the packed turret in the ship's hold.
+    const stock: Array<Record<string, number>> = [];
+    cr.onMessage('packed_stock', (m: { counts: Record<string, number> }) => stock.push(m.counts));
+    const askStock = async (): Promise<Record<string, number>> => {
+      const n = stock.length;
+      cr.send('packed_stock_query', { type: 'packed_stock_query' });
+      await until(() => stock.length > n, 3000, 'packed_stock reply');
+      return stock[stock.length - 1]!;
+    };
+    expect(await askStock()).toEqual({ 'structure:missile_turret': 1 });
     // Far from any storage, so taking it down repacks it as a POD.
     cr.send('place_structure', { type: 'place_structure', kind: 'missile_turret', x: 2500, y: -2500 });
     await until(() => [...internal.structureRegistry.all()].length === before + 1, 3000, 'placed from the ship hold');
     expect(getHoldStore().get(shipId)).toBeUndefined(); // the only item: the row is gone
+    expect(await askStock()).toEqual({}); // used up
     const turret = [...internal.structureRegistry.all()].find((r) => r.kind === 'missile_turret')!;
     expect(turret.packedQuality).toBe(40);
+    // Quality 40 ⇒ +4 % max hull once built.
+    const maxPulses2 = Math.ceil(turret.constructionCost / CONSTRUCTION_PULSE_AMOUNT) + 10;
+    for (let i = 0; i < maxPulses2 && !turret.isConstructed; i++) internal.pulseStructureGrid();
+    expect(turret.isConstructed).toBe(true);
+    expect(internal.swarmHealth.get(turret.id)).toBeCloseTo(getStructureKind('missile_turret').maxHealth * 1.04);
     turret.isDeconstructing = true;
     for (let i = 0; i < 50 && internal.structureRegistry.get(turret.id); i++) internal.pulseStructureGrid();
     expect(internal.structureRegistry.get(turret.id)).toBeUndefined();
