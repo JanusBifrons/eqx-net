@@ -24,7 +24,7 @@ Every good has a use besides selling it:
 | Good | Use |
 |---|---|
 | fuel | Reactors burn it for power |
-| provisions, consumer goods | Colonies and cities consume them |
+| provisions, consumer goods | Habitat stations consume them |
 | munitions | Ammo for missile turrets, autocannons and mine layers. Lasers only use power. Munitions are light (0.1 per unit) and one unit covers many shots |
 | alloy, components, machinery | Upgrading a structure to level 3, 4 and 5 (`structureUpgradeGoods`) |
 | components, electronics, machinery, Robot Cores | Making packed structures |
@@ -206,7 +206,7 @@ A sector's asteroid field mixes three kinds, weighted by the sector's galaxy `fe
 | P2 | The production structures, a processing step in the 1 Hz grid pulse, Miner yields by asteroid kind, ammo, the upgrade goods bill, one mineral pool. Packed structures arrive once Living World's packed items land. |
 | D1–D2 | The base generator grows a chain for each base's role (mining outpost, refinery, workshop, manufactory, assembly works, trade hub). |
 | T | Trade between bases: convoys, regional prices, Freight Dock orders. Payments go through the Living World wallet. |
-| D3 | Cities: the main consumers of provisions and consumer goods. |
+| D3 | Habitat stations: the main consumers of provisions and consumer goods. |
 
 ## Base roles and the growth generator (D1)
 
@@ -271,26 +271,26 @@ The generator powers bases with Reactors first, then Solars, and uses a Battery 
 
 `TIER_MAX_STRUCTURES` is now 50 / 80 / 160 / 260. NPC bases need fuel stock for their Reactors, so D2 seeds it and trade (T) keeps them supplied.
 
-## Cities: the chain's consumers (D3)
+## Habitat stations: the chain's consumers (D3)
 
-Everything upstream ends somewhere. Cities are where provisions and consumer goods go.
+Everything upstream ends somewhere. Habitat stations are where provisions and consumer goods go. (Bases are space stations; the connector spines are their roads.)
 
-- **Two city modules**, appended to the catalogue and buildable by players from packed items (a Fabricator makes them):
+- **Two habitation modules** (build category **Habitation**), appended to the catalogue and buildable by players from packed items (a Fabricator makes them):
 
   | Kind | Size | Uses per cycle | Pays |
   |---|---|---|---|
   | Habitat Module | 360 × 240 | 4 provisions, 1 consumer goods (about a minute) | 300 credits |
-  | Tower Module | 240 × 240 | 2 provisions, 3 consumer goods (90 s) | 800 credits |
+  | Residential Spire | 240 × 240 | 2 provisions, 3 consumer goods (90 s) | 800 credits |
 
 - **They run on the normal production pass.** A module is a processor whose recipe (`habitat_upkeep`, `tower_upkeep`) takes goods from the base's network storage like any other. The output is `{ credits: n }`, which is paid to the OWNER'S WALLET when the cycle ends (`ProductionDeps.payCredits` → `getWallet().credit(owner, n, 'city_taxes')`). Credits never land in a hold.
-- **A city with no goods starves.** It reports what it's missing and pays nothing, the same `starved` state as any processor; that is how a starving city "shrinks its wealth". Its power draw drops to the idle trickle too.
-- **Balance.** Taxes are valued at 1 per credit in the value-ladder test, so a city returns 1.29–1.30× the goods it uses, inside the 1.2–1.6× band every other step obeys.
-- **NPC colonies.** `colony` is a new base role. It is never an outpost and favours the wealthier middle and heart of a region. A colony grows habitats (plus towers and a Hydroponics Bay from settlement size up). Its provisions and consumer goods show up as `uses` in `npcBaseTrade`, so convoys bring them in. An NPC base has no wallet, so its city simply consumes; that consumption is the sink that pulls end products through the chain. `BASE_GROWTH_VERSION` 4.
+- **A habitat station with no goods starves.** It reports what it's missing and pays nothing, the same `starved` state as any processor; that is how a starving city "shrinks its wealth". Its power draw drops to the idle trickle too.
+- **Balance.** Taxes are valued at 1 per credit in the value-ladder test, so a habitat station returns 1.29–1.30× the goods it uses, inside the 1.2–1.6× band every other step obeys.
+- **NPC habitat stations.** `colony` is the base role (internal id). It is never an outpost and favours the wealthier middle and heart of a region. A colony grows habitats (plus towers and a Hydroponics Bay from settlement size up). Its provisions and consumer goods show up as `uses` in `npcBaseTrade`, so convoys bring them in. An NPC base has no wallet, so its city simply consumes; that consumption is the sink that pulls end products through the chain. `BASE_GROWTH_VERSION` 4.
 - **Locks:**
-  - `recipes.test.ts`: the city recipes, taxes in the value ladder;
+  - `recipes.test.ts`: the habitation recipes, taxes in the value ladder;
   - `ProductionSubsystem.test.ts`: pays per cycle, starving pays nothing;
   - `growBase.test.ts` / `baseProfile.test.ts`: colony character, never an outpost;
-  - `tests/integration/sectorRoom/cityTaxes.test.ts`: a fed habitat pays the owner's wallet; a starving one shows `starved` in room state.
+  - `tests/integration/sectorRoom/stationTaxes.test.ts`: a fed habitat pays the owner's wallet; a starving one shows `starved` in room state.
 
 ## NPC bases in the game (D2)
 
@@ -306,7 +306,7 @@ Code: [src/server/bases/NpcBaseSubsystem.ts](../../src/server/bases/NpcBaseSubsy
 
 Then the real systems run: power, batteries, fence, turrets, production. NPC structures aren't persisted; a restart regenerates them from the seed.
 
-**Test rooms:** `npc-base-outpost` (mining), `npc-base-settlement` (refinery), `npc-base-stronghold` (manufactory, with a Mine Layer), `npc-base-citadel` (assembly works) and `npc-base-colony` (a city, D3). Each has `filterBy(testId)` and spawns the pilot south of the fence.
+**Test rooms:** `npc-base-outpost` (mining), `npc-base-settlement` (refinery), `npc-base-stronghold` (manufactory, with a Mine Layer), `npc-base-citadel` (assembly works) and `npc-base-colony` (a habitat station, D3). Each has `filterBy(testId)` and spawns the pilot south of the fence.
 
 **Lock:** `tests/integration/sectorRoom/npcBases.test.ts`.
 - Every structure is placed, NPC-owned, built and reachable from the Capital through the live grid, with zero rejected placements or edges.

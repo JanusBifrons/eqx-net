@@ -1,5 +1,5 @@
 /**
- * D3 (plan soft-leaping-truffle v3) — cities in a real room. A player's
+ * D3 (plan soft-leaping-truffle v3) — habitation in a real room. A player's
  * powered Habitat Module uses provisions and consumer goods from the base's
  * storage and pays its owner taxes into their WALLET (never a hold); without
  * consumer goods it starves, pays nothing, and clients see why (#16).
@@ -16,7 +16,7 @@ import { getWallet } from '../../../src/server/db/PersistenceWorker.js';
 
 const OWNER = '6a7e0000-0000-4000-8000-0000000000d3';
 
-describe('SectorRoom integration — city taxes (D3)', () => {
+describe('SectorRoom integration — station taxes (D3)', () => {
   let harness: SectorTestHarness;
   afterEach(async () => {
     if (harness) await harness.cleanup();
