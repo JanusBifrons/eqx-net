@@ -70,7 +70,32 @@ After the stance table and the hostile-act ledger, `relationOf` applies the **ow
 
 It's allocation-free, and returns early when the policy can't act on standing, so hot loops (NPC turret target filtering) pay nothing for the default policies. A parity test proves a full standing web with default policies changes no relation.
 
+## The galaxy (F2)
+
+**Control** (`src/core/galaxy/control.ts`, `sectorController`):
+- the Sol Dominion holds the whole core region (3 sectors);
+- each frontier power holds only its region's heart;
+- the other 15 of 21 sectors are **neutral ground**.
+
+A sector's `region` is now geography only. The galaxy map groups territories by the controller (`/galaxy/snapshot` `owner`, null on neutral ground), and the tooltip names the power or says "Neutral ground".
+
+**Minor factions** (`MINOR_FACTIONS` in `factions.ts`):
+- three per region, each with a different specialty (mining, freight, manufacturer, militia);
+- a generated name ("Merrow Mining Co.", "Saffron Freight") and a colour;
+- generated from a fixed seed, so client and server agree on every id with no registration step.
+
+Minor factions don't have to own anything: the core region's minors own no bases, because their power holds the whole region.
+
+**Base owners** (`chooseBaseOwner` in `galaxyBases.ts`, from its own seeded stream, so layouts are unchanged):
+
+| Sector | Owner |
+|---|---|
+| Controlled | the power; the Traders run its trade hubs |
+| Neutral | a weighted pick: minor factions of the region (4× when their specialty fits the role), the region's power (1.5×), the Traders (4× for trade hubs, else 0.5×). An owner already used in the sector is far less likely, so several factions build side by side |
+
+The owner string is `npc:<faction>:<baseId>`, and the inspector names it ("Merrow Mining Co. base").
+
 ## Next
 
-- **F2:** region powers control their heartland, most sectors are neutral, minor factions are generated, and NPC bases get faction owners.
 - **F3:** a Factions tab, editable policies, and standing events beyond trade (kills, raids, break-ins, tolls).
+- **Military bases (M):** these fill in power and militia patrols.

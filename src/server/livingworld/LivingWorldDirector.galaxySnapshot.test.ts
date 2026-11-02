@@ -45,7 +45,7 @@ const OPTS: Partial<LivingWorldOptions> & { rng: () => number; nowMs: () => numb
 };
 
 describe('LivingWorldDirector.galaxySnapshot', () => {
-  it('P3 — a robot-held sector reports the robots as owner; others keep their region', () => {
+  it('P3 — a robot-held sector reports the robots as owner; others their controller (F2)', () => {
     const rooms = new Map<string, LivingWorldRoom>([
       ['orion-belt', withCounts({ players: 1, enemies: 0, neutrals: 3, structures: 0 })],
       ['sol-prime', withCounts({ players: 0, enemies: 0, neutrals: 0, structures: 0 })],
@@ -58,7 +58,7 @@ describe('LivingWorldDirector.galaxySnapshot', () => {
     try {
       const snap = director.galaxySnapshot();
       expect(snap.find((s) => s.key === 'orion-belt')!.owner).toEqual({ factionId: 'robots', contested: true });
-      expect(snap.find((s) => s.key === 'sol-prime')!.owner!.factionId).toBe(getSector('sol-prime')!.region);
+      expect(snap.find((s) => s.key === 'sol-prime')!.owner!.factionId).toBe(getSector('sol-prime')!.region); // core: held
     } finally {
       director.stop();
     }
@@ -108,7 +108,7 @@ describe('LivingWorldDirector.galaxySnapshot', () => {
       // No wave ⇒ enemies 0; the mock's 4 "enemies" + 2 neutrals = 6 present
       // drones, all classified neutral (total preserved).
       expect(orion).toMatchObject({ players: 0, enemies: 0, neutrals: 6, structures: 0 });
-      expect(orion.owner!.factionId).toBe(getSector('orion-belt')!.region);
+      expect(orion.owner).toBeNull(); // F2: neutral ground
     } finally {
       director.stop();
     }

@@ -13,6 +13,7 @@
  * static graph with zero counts (never a crash).
  */
 import { GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
+import { sectorController } from '../../core/galaxy/control.js';
 import type { GalaxySnapshotResponse, SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import type {
   GalaxyPresenceResponse,
@@ -56,7 +57,7 @@ export function buildGalaxySnapshot(p: GalaxyStatsProvider | null): GalaxySnapsh
       enemies: 0,
       neutrals: 0,
       structures: 0,
-      owner: { factionId: s.region, contested: false },
+      owner: controllerOwner(s.key),
       recentCombat: null,
     })),
   };
@@ -75,4 +76,11 @@ export function buildGalaxyPresence(
 ): GalaxyPresenceResponse {
   if (p) return { sectors: p.playerStructurePresence(playerId) };
   return { sectors: [] };
+}
+
+/** Factions F2 — a sector's static owner: its controlling power, or null on
+ *  neutral ground. */
+function controllerOwner(sectorKey: string): SectorLiveState['owner'] {
+  const c = sectorController(sectorKey);
+  return c ? { factionId: c, contested: false } : null;
 }

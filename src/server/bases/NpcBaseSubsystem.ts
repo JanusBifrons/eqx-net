@@ -4,7 +4,7 @@
  * Grows a base with the core generator (`growBase`) and seeds it into the room:
  *  - every structure is placed through the real `StructurePlacementSubsystem`
  *    (`skipAutoConnect`: the generator supplies the intended graph, so greedy
- *    auto-connect can't, e.g., close a gate), owned by `npc:<side>:<baseId>`;
+ *    auto-connect can't, e.g., close a gate), owned by `npc:<faction>:<baseId>`;
  *  - the generator's edges are applied with `connectExplicit` (the real
  *    `canConnect` re-checked against the live adjacency);
  *  - everything spawns BUILT at its generated level (HP at the leveled max);
@@ -28,7 +28,7 @@ import { getStructureKind, type StructureKindId } from '../../shared-types/struc
 import { GOOD_DEFS, type GoodId } from '../../shared-types/goods.js';
 import { RECIPES, blueprintProductFor } from '../../shared-types/recipes.js';
 import { usesAmmo } from '../../shared-types/ammo.js';
-import type { NpcAllegianceId } from '../../shared-types/allegiances.js';
+import type { FactionId } from '../../shared-types/factions.js';
 import { gateTypeOf } from '../../core/structures/gateGeometry.js';
 import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
 import type { StructureRecord, StructureRegistry } from '../structures/StructureRegistry.js';
@@ -42,7 +42,7 @@ export interface NpcBaseSpec {
   /** World position of the base's Capital. */
   x: number;
   y: number;
-  side?: NpcAllegianceId;
+  side?: FactionId;
   features?: SectorFeature[];
   fenced?: boolean;
   /** Override the tier's default wealth. */
@@ -92,7 +92,7 @@ export class NpcBaseSubsystem {
     return {
       tier: spec.tier,
       role: spec.role,
-      ownerSide: spec.side ?? 'traders',
+      ownerFaction: spec.side ?? 'traders',
       wealth: spec.wealth ?? Math.round((w0 + w1) / 2),
       levelCap: l1,
       fenced: spec.fenced ?? true,
@@ -110,7 +110,7 @@ export class NpcBaseSubsystem {
   seed(spec: NpcBaseSpec, grownIn?: GrownBase): SeededNpcBase {
     const profile = this.profileOf(spec);
     const grown = grownIn ?? this.grow(spec);
-    const owner = npcOwner(profile.ownerSide, spec.baseId);
+    const owner = npcOwner(profile.ownerFaction, spec.baseId);
 
     const ids: Array<string | null> = [];
     let rejectedPlace = 0;

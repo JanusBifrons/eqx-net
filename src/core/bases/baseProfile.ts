@@ -18,7 +18,9 @@
  * hand for showcase rooms. Every roll is seeded, so a base is the same each
  * time it is generated.
  */
-import { GALAXY_SECTORS, getSector, isEntrySector, type SectorFeature } from '../galaxy/galaxy.js';
+import { getSector, isEntrySector, type SectorFeature } from '../galaxy/galaxy.js';
+import { regionHeart } from '../galaxy/control.js';
+import type { FactionId } from '../../shared-types/factions.js';
 
 export const BASE_TIERS = ['outpost', 'settlement', 'stronghold', 'citadel'] as const;
 export type BaseTier = (typeof BASE_TIERS)[number];
@@ -59,8 +61,10 @@ export interface BaseContext {
 export interface BaseProfile {
   tier: BaseTier;
   role: BaseRole;
-  /** NPC side that owns it (civilian bases are traders; military later). */
-  ownerSide: 'traders' | 'robots' | 'drones';
+  /** The NPC faction that owns it (v4 F2: `galaxyBasePlan` assigns region
+   *  powers, minor factions and the Traders; a hand-built profile defaults to
+   *  the Traders). */
+  ownerFaction: FactionId;
   /** Construction budget the generator spends (minerals-equivalent). */
   wealth: number;
   /** Highest structure level the generator may upgrade to. */
@@ -116,23 +120,6 @@ function pickWeighted<T extends string>(weights: Readonly<Record<T, number>>, u:
 }
 
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
-
-/** A region's heart: the sector nearest the region's hex centroid. */
-function regionHeart(region: string): string {
-  const members = GALAXY_SECTORS.filter((s) => s.region === region);
-  const cq = members.reduce((n, s) => n + s.hex.q, 0) / members.length;
-  const cr = members.reduce((n, s) => n + s.hex.r, 0) / members.length;
-  let best = members[0]!;
-  let bestD = Infinity;
-  for (const s of members) {
-    const d = (s.hex.q - cq) ** 2 + (s.hex.r - cr) ** 2 + (s.hex.q - cq) * (s.hex.r - cr);
-    if (d < bestD || (d === bestD && s.key < best.key)) {
-      bestD = d;
-      best = s;
-    }
-  }
-  return best.key;
-}
 
 /** The base context of a galaxy sector (hops within its region via BFS). */
 export function contextForSector(key: string): BaseContext {
@@ -205,5 +192,5 @@ export function baseProfileFor(ctx: BaseContext, seed: number): BaseProfile {
   const levelCap = rnd() < 0.5 + c * 0.5 ? l1 : l0;
   const fenced = rnd() < (tier === 'outpost' ? 0.75 : 0.97);
 
-  return { tier, role, ownerSide: 'traders', wealth, levelCap, fenced };
+  return { tier, role, ownerFaction: 'traders', wealth, levelCap, fenced };
 }

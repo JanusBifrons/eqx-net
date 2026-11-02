@@ -2,6 +2,7 @@ import { getSector } from '../../core/galaxy/galaxy';
 import type { SectorFeature } from '../../core/galaxy/galaxy';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import type { RosterEntry } from '../state/storeTypes';
+import { factionDisplayName } from '../../shared-types/factions.js';
 
 /**
  * Living Galaxy Phase 6 — the content of the galaxy-map sector tooltip, derived
@@ -27,6 +28,17 @@ export interface SectorTooltipData {
 }
 
 /** Title-case a kebab/underscore/space region key for display. */
+/**
+ * Who holds the sector, by name. Living World P3: a robot-held sector reads as
+ * robot territory. Factions F2: a power's heartland shows the power; most
+ * sectors are neutral ground (the region is geography only).
+ */
+function factionLabel(owner: string | null, region: string): string {
+  if (owner === 'robots') return 'Robot Dominion';
+  if (owner !== null) return factionDisplayName(owner) ?? titleCase(owner);
+  return `Neutral ground, ${titleCase(region)}`;
+}
+
 function titleCase(s: string): string {
   return s.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -56,8 +68,7 @@ export function buildSectorTooltip(
     : 'Neutral';
   return {
     name: sector.name,
-    // Living World P3 — a robot-held sector reads as robot territory.
-    faction: live?.owner?.factionId === 'robots' ? 'Robot Dominion' : titleCase(sector.region),
+    faction: factionLabel(live?.owner?.factionId ?? null, sector.region),
     status,
     features: sector.features,
     players: live?.players ?? 0,

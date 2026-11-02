@@ -58,7 +58,7 @@ function verify(b: GrownBase): { reached: number } {
 
 function profile(tier: BaseTier, role: BaseRole, fenced = true): BaseProfile {
   const wealth = { outpost: 5_000, settlement: 16_000, stronghold: 50_000, citadel: 120_000 }[tier];
-  return { tier, role, ownerSide: 'traders', wealth, levelCap: tier === 'citadel' ? 5 : 2, fenced };
+  return { tier, role, ownerFaction: 'traders', wealth, levelCap: tier === 'citadel' ? 5 : 2, fenced };
 }
 
 describe('growBase — valid under the real building rules', () => {

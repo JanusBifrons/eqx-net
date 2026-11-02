@@ -66,9 +66,13 @@ export interface FactionDef {
   /** The allegiance stance layer this faction uses, if any. Factions without
    *  one are neutral to everyone, except that robots attack them on sight. */
   readonly allegiance?: NpcAllegianceId;
-  /** Home sector (minor factions). */
-  readonly home?: string;
+  /** The region a power rules, or a minor faction works in. */
+  readonly region?: string;
+  /** What a minor faction does (it owns bases of matching roles). */
+  readonly specialty?: MinorSpecialty;
 }
+
+export type MinorSpecialty = 'mining' | 'freight' | 'manufacturer' | 'militia';
 
 /**
  * The fixed NPC factions. Append-only: ids are persisted in owner strings
@@ -79,14 +83,85 @@ export const FIXED_FACTIONS: readonly FactionDef[] = Object.freeze([
   { id: 'drones', displayName: 'Drones', kind: 'swarm', color: 0xff4444, allegiance: 'drones' },
   { id: 'robots', displayName: 'Robots', kind: 'swarm', color: 0xc070ff, allegiance: 'robots' },
   { id: 'traders', displayName: 'Traders', kind: 'guild', color: 0xffd060, allegiance: 'traders' },
-  { id: 'core', displayName: 'Sol Dominion', kind: 'power', color: 0x6fb6ff },
-  { id: 'verdant-reach', displayName: 'Verdant Reach', kind: 'power', color: 0x5fd6a0 },
-  { id: 'crimson-expanse', displayName: 'Crimson Expanse', kind: 'power', color: 0xff7a5c },
-  { id: 'azure-deep', displayName: 'Azure Deep', kind: 'power', color: 0x4fd0e8 },
+  { id: 'core', displayName: 'Sol Dominion', kind: 'power', color: 0x6fb6ff, region: 'core' },
+  { id: 'verdant-reach', displayName: 'Verdant Reach', kind: 'power', color: 0x5fd6a0, region: 'verdant-reach' },
+  { id: 'crimson-expanse', displayName: 'Crimson Expanse', kind: 'power', color: 0xff7a5c, region: 'crimson-expanse' },
+  { id: 'azure-deep', displayName: 'Azure Deep', kind: 'power', color: 0x4fd0e8, region: 'azure-deep' },
   { id: 'ancients', displayName: 'The Ancients', kind: 'ancient', color: 0xd8c4ff },
 ] as FactionDef[]);
 
-const NPC_FACTIONS = new Map<FactionId, FactionDef>(FIXED_FACTIONS.map((f) => [f.id, f]));
+/** The region powers, by region id. */
+export const REGION_POWER_IDS: readonly FactionId[] = Object.freeze(['core', 'verdant-reach', 'crimson-expanse', 'azure-deep']);
+
+// ── Minor factions (F2) ─────────────────────────────────────────────────────
+
+const MINOR_NAMES = [
+  'Kestrel', 'Halvard', 'Orrin', 'Vesta', 'Tamsin', 'Corvid', 'Brannock', 'Ilex', 'Merrow', 'Saffron',
+  'Dunmore', 'Pellan', 'Quillon', 'Ashgrove', 'Thorne', 'Calder', 'Wrexley', 'Marisol', 'Oduya', 'Sorrel',
+] as const;
+const MINOR_SUFFIX: Readonly<Record<MinorSpecialty, readonly string[]>> = {
+  mining: ['Mining Co.', 'Extraction', 'Deepcut'],
+  freight: ['Freight', 'Haulage', 'Logistics'],
+  manufacturer: ['Works', 'Industries', 'Fabrication'],
+  militia: ['Militia', 'Guard', 'Defence Corps'],
+};
+const MINOR_SPECIALTIES: readonly MinorSpecialty[] = ['mining', 'freight', 'manufacturer', 'militia'];
+/** Seed of the minor-faction table. Changing it renames every minor faction. */
+const MINOR_SEED = 0x5eed_f2;
+export const MINOR_FACTIONS_PER_REGION = 3;
+
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * The minor factions: `MINOR_FACTIONS_PER_REGION` per region, each with a
+ * different specialty, a unique generated name and a colour. Deterministic
+ * (fixed seed), so every process, client or server, agrees on the same ids.
+ */
+function generateMinorFactions(): FactionDef[] {
+  const rnd = mulberry32(MINOR_SEED);
+  const names = [...MINOR_NAMES];
+  const out: FactionDef[] = [];
+  for (const region of REGION_POWER_IDS) {
+    const specs = [...MINOR_SPECIALTIES];
+    for (let i = 0; i < MINOR_FACTIONS_PER_REGION; i++) {
+      const specialty = specs.splice(Math.floor(rnd() * specs.length), 1)[0]!;
+      const name = names.splice(Math.floor(rnd() * names.length), 1)[0]!;
+      const suffixes = MINOR_SUFFIX[specialty];
+      const suffix = suffixes[Math.floor(rnd() * suffixes.length)]!;
+      const displayName = `${name} ${suffix}`;
+      const id = displayName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '');
+      const hue = Math.floor(rnd() * 360);
+      out.push({ id, displayName, kind: 'minor', color: hslToRgb(hue, 0.45, 0.62), region, specialty });
+    }
+  }
+  return out;
+}
+
+function hslToRgb(h: number, s: number, l: number): number {
+  const k = (n: number): number => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number): number => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return (Math.round(f(0) * 255) << 16) | (Math.round(f(8) * 255) << 8) | Math.round(f(4) * 255);
+}
+
+/** The generated minor factions (registered with the catalogue on load). */
+export const MINOR_FACTIONS: readonly FactionDef[] = Object.freeze(generateMinorFactions());
+
+const NPC_FACTIONS = new Map<FactionId, FactionDef>([...FIXED_FACTIONS, ...MINOR_FACTIONS].map((f) => [f.id, f]));
+
+/** The minor factions working in a region. */
+export function minorFactionsOf(region: string): FactionDef[] {
+  return MINOR_FACTIONS.filter((f) => f.region === region);
+}
 
 /** Register generated NPC factions (F2's minor factions). Fixed ids win; a
  *  repeat registration of the same id is ignored, so it is idempotent. */

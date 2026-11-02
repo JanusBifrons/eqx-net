@@ -4,12 +4,13 @@ import {
   buildGalaxyPresence,
   type GalaxyStatsProvider,
 } from './galaxyStatsProvider.js';
-import { GALAXY_SECTORS, getSector } from '../../core/galaxy/galaxy.js';
+import { GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
 import {
   GalaxySnapshotResponseSchema,
   type SectorLiveState,
 } from '../../shared-types/galaxySnapshot.js';
 import { GalaxyPresenceResponseSchema } from '../../shared-types/galaxyPresence.js';
+import { sectorController } from '../../core/galaxy/control.js';
 
 describe('buildGalaxySnapshot', () => {
   it("returns the provider's live sectors verbatim when a provider is set", () => {
@@ -36,13 +37,14 @@ describe('buildGalaxySnapshot', () => {
     expect(res.sectors).toHaveLength(GALAXY_SECTORS.length);
     const keys = new Set(res.sectors.map((s) => s.key));
     for (const sec of GALAXY_SECTORS) expect(keys.has(sec.key), `${sec.key} missing`).toBe(true);
-    // Zero counts + the static region faction stamped on every sector.
+    // Zero counts + the controlling power (F2), or null on neutral ground.
     for (const s of res.sectors) {
       expect(s.players).toBe(0);
       expect(s.enemies).toBe(0);
       expect(s.neutrals).toBe(0);
       expect(s.structures).toBe(0);
-      expect(s.owner).toEqual({ factionId: getSector(s.key)!.region, contested: false });
+      const c = sectorController(s.key);
+      expect(s.owner).toEqual(c ? { factionId: c, contested: false } : null);
     }
   });
 

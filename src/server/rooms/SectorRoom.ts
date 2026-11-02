@@ -4153,7 +4153,7 @@ export class SectorRoom extends Room<SectorState> {
     const { seed, profile } = plan;
     const spec: NpcBaseSpec = {
       baseId: plan.baseId, role: profile.role, tier: profile.tier, seed, x: 0, y: 0,
-      side: profile.ownerSide, features: [...features], profile,
+      side: profile.ownerFaction, features: [...features], profile,
     };
     const grown = sub.grow(spec);
     const hard: SiteBox[] = [...seededBases];
