@@ -21,6 +21,7 @@
  *
  * Pure data, shared by server and client (invariant #15).
  */
+import { z } from 'zod';
 import { NPC_ALLEGIANCE_IDS, PLAYERS_SIDE, stanceOf, type NpcAllegianceId, type Stance } from './allegiances.js';
 import {
   REP_MAX,
@@ -263,3 +264,59 @@ export function standingLabel(v: number): string {
 export function isAllegianceFaction(id: FactionId): id is NpcAllegianceId {
   return (NPC_ALLEGIANCE_IDS as readonly string[]).includes(id);
 }
+
+// ── Standing events (F3) ────────────────────────────────────────────────────
+
+/** A first hit between two factions (one of them a player) lowers the
+ *  victim's view of the attacker by this much, once per window per pair. */
+export const STANDING_HIT_DELTA = -1;
+export const STANDING_HIT_WINDOW_MS = 15_000;
+/** Starting a break-in lowers the owner's view of the thief. */
+export const STANDING_BREAK_IN_DELTA = -10;
+
+// ── A player's own policy (F3) ──────────────────────────────────────────────
+
+/**
+ * The editable part of a player's policy, as sent on the wire. `null` = off
+ * (JSON has no Infinity). Turrets fire on anyone the player views below
+ * `hostileBelow`; anyone above `alliedAbove` counts as an ally.
+ */
+export const PlayerPolicyWireSchema = z
+  .object({
+    hostileBelow: z.number().min(STANDING_MIN).max(0).nullable(),
+    alliedAbove: z.number().min(0).max(STANDING_MAX).nullable(),
+  })
+  .strict();
+export type PlayerPolicyWire = z.infer<typeof PlayerPolicyWireSchema>;
+
+export const PLAYER_POLICY_OFF: PlayerPolicyWire = Object.freeze({ hostileBelow: null, alliedAbove: null });
+
+/** The full policy a player's wire settings mean (trade fields stay default). */
+export function policyFromWire(w: PlayerPolicyWire): FactionPolicy {
+  return {
+    ...DEFAULT_FACTION_POLICY,
+    hostileBelow: w.hostileBelow ?? -Infinity,
+    alliedAbove: w.alliedAbove ?? Infinity,
+  };
+}
+
+// ── The Factions tab view (F3, `GET /trade/factions`) ───────────────────────
+
+export const FactionRowSchema = z.object({
+  factionId: z.string(),
+  /** A display name, never a raw id (players resolve to their name). */
+  name: z.string(),
+  kind: z.enum(['swarm', 'guild', 'power', 'ancient', 'minor', 'player']),
+  color: z.number(),
+  /** That faction's view of the player. */
+  theirView: z.number(),
+  /** The player's view of that faction. */
+  yourView: z.number(),
+});
+export type FactionRow = z.infer<typeof FactionRowSchema>;
+
+export const PlayerFactionsViewSchema = z.object({
+  rows: z.array(FactionRowSchema),
+  policy: PlayerPolicyWireSchema,
+});
+export type PlayerFactionsView = z.infer<typeof PlayerFactionsViewSchema>;

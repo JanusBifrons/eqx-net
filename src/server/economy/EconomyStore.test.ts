@@ -79,3 +79,36 @@ describe('EconomyStore standing', () => {
     expect(Object.keys(s.view(P).rep).sort()).toEqual(['drones', 'robots', 'traders']);
   });
 });
+
+describe('EconomyStore policies and the Factions view (F3)', () => {
+  it('a player policy resolves for the hot path and persists', () => {
+    const { s } = store();
+    expect(s.policyOf(P).hostileBelow).toBe(-Infinity);
+    s.setPlayerPolicy(P, { hostileBelow: -25, alliedAbove: 60 });
+    expect(s.policyOf(P)).toMatchObject({ hostileBelow: -25, alliedAbove: 60 });
+    expect(s.policyOf(P)).toBe(s.policyOf(P)); // cached, no allocation per read
+    expect(s.policyOf('traders').refuseTradeBelow).toBe(-30); // NPC defaults untouched
+    const op = s.playerOp(P) as Extract<PersistOp, { type: 'ECON_PLAYER_PUT' }>;
+    const { s: s2 } = store();
+    s2.hydrate({ players: [{ player_id: P, payload_json: op.payloadJson }], deals: [], market: null });
+    expect(s2.policyOf(P).hostileBelow).toBe(-25);
+    s2.setPlayerPolicy(P, { hostileBelow: null, alliedAbove: null });
+    expect(s2.policyOf(P).hostileBelow).toBe(-Infinity);
+  });
+
+  it('lists fixed factions always, minor ones only with standing, and players either side rates', () => {
+    const { s } = store();
+    s.adjustStanding('merrow-mining-co', P, 12);
+    s.adjustStanding(Q, P, -30); // Q dislikes P
+    const v = s.factionsView(P, (id) => (id === Q ? 'Quinn' : 'A pilot'));
+    const ids = v.rows.map((r) => r.factionId);
+    expect(ids).toContain('traders');
+    expect(ids).toContain('core');
+    expect(ids).toContain('merrow-mining-co');
+    expect(ids).not.toContain('saffron-freight'); // a minor with no standing
+    const quinn = v.rows.find((r) => r.factionId === Q)!;
+    expect(quinn).toMatchObject({ name: 'Quinn', kind: 'player', theirView: -30, yourView: 0 });
+    expect(v.rows[0]!.factionId, 'strongest feelings first').toBe(Q);
+    expect(v.policy).toEqual({ hostileBelow: null, alliedAbove: null });
+  });
+});

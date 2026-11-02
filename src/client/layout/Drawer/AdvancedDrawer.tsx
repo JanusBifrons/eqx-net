@@ -6,6 +6,7 @@ import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import HexagonOutlinedIcon from '@mui/icons-material/HexagonOutlined';
 import BugReportOutlinedIcon from '@mui/icons-material/BugReportOutlined';
 import AssignmentOutlinedIcon from '@mui/icons-material/AssignmentOutlined';
+import FlagOutlinedIcon from '@mui/icons-material/FlagOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import { useUIStore } from '../../state/store';
 import { ProfileTab } from './tabs/ProfileTab';
@@ -14,6 +15,7 @@ import { GalaxyTab } from './tabs/GalaxyTab';
 import { DebugTab } from './tabs/DebugTab';
 import { TradeTab } from './tabs/TradeTab';
 import { ContractsTab } from './tabs/ContractsTab';
+import { FactionsTab } from './tabs/FactionsTab';
 
 interface TabSpec {
   id: string;
@@ -48,6 +50,7 @@ const TABS: readonly TabSpec[] = [
   { id: 'galaxy',   label: 'Galaxy',      icon: <HexagonOutlinedIcon />,       node: <GalaxyTab /> },
   { id: 'trade',    label: 'Trade',       icon: <TradeRailIcon />,             node: <TradeTab /> },
   { id: 'contracts', label: 'Contracts',  icon: <AssignmentOutlinedIcon />,    node: <ContractsTab /> },
+  { id: 'factions', label: 'Factions',   icon: <FlagOutlinedIcon />,          node: <FactionsTab /> },
   { id: 'profile',  label: 'Profile',     icon: <AccountCircleOutlinedIcon />, node: <ProfileTab /> },
   { id: 'settings', label: 'Settings',    icon: <SettingsOutlinedIcon />,      node: <SettingsTab /> },
   { id: 'debug',    label: 'Debug',       icon: <BugReportOutlinedIcon />,     node: <DebugTab />, bottom: true },

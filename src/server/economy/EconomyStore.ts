@@ -22,7 +22,19 @@ import {
 import { GOOD_IDS } from '../../shared-types/goods.js';
 import { createMarket, type MarketState } from '../../core/economy/market.js';
 import { applyRep, neutralRep, type RepTable } from '../../core/economy/reputation.js';
-import { STANDING_MAX, clampStanding, isNpcFactionId } from '../../shared-types/factions.js';
+import {
+  PLAYER_POLICY_OFF,
+  PlayerPolicyWireSchema,
+  STANDING_MAX,
+  clampStanding,
+  defaultFactionPolicy,
+  isNpcFactionId,
+  npcFactions,
+  policyFromWire,
+  type FactionPolicy,
+  type PlayerFactionsView,
+  type PlayerPolicyWire,
+} from '../../shared-types/factions.js';
 import { isActiveDeal, type TradeDeal } from '../../core/economy/deals.js';
 
 /** History entries kept per player (the Trade tab's History list). */
@@ -40,6 +52,8 @@ export interface PlayerEconomy {
   /** This player's view of other factions (−100..100, sparse). */
   views: Record<string, number>;
   standingScale: number;
+  /** The player's own faction policy (F3); absent = all off. */
+  policy?: PlayerPolicyWire;
   history: TradeHistoryEntry[];
   /** Value gifted to each side inside the current window (diminishing returns). */
   gifts: Record<EconAllegiance, { value: number; sinceMs: number }>;
@@ -62,6 +76,8 @@ export class EconomyStore {
   private readonly players = new Map<string, PlayerEconomy>();
   /** NPC faction → NPC faction → standing (sparse; missing = 0). */
   private readonly npcWeb = new Map<string, Map<string, number>>();
+  /** Player → their resolved policy, built when it is set (hot-path reads). */
+  private readonly policyCache = new Map<string, FactionPolicy>();
   private readonly deals = new Map<string, TradeDeal>();
   market: MarketState;
   private readonly now: () => number;
@@ -96,7 +112,11 @@ export class EconomyStore {
     let d = 0;
     for (const r of rows.players) {
       const pe = parsePlayer(r.payload_json);
-      if (pe) { this.players.set(r.player_id, pe); p++; }
+      if (pe) {
+        this.players.set(r.player_id, pe);
+        if (pe.policy) this.cachePolicy(r.player_id, pe.policy);
+        p++;
+      }
     }
     for (const r of rows.deals) {
       try {
@@ -176,6 +196,58 @@ export class EconomyStore {
     else row.set(to, v);
     this.saveStandings();
     return v;
+  }
+
+  // ── Policies (F3) ───────────────────────────────────────────────────────
+
+  /** A faction's policy: a player's own settings, else the catalogue default.
+   *  Allocation-free (the player's policy is resolved when it is set). */
+  policyOf(faction: string): FactionPolicy {
+    return this.policyCache.get(faction) ?? defaultFactionPolicy(faction);
+  }
+
+  playerPolicy(playerId: string): PlayerPolicyWire {
+    return this.players.get(playerId)?.policy ?? PLAYER_POLICY_OFF;
+  }
+
+  setPlayerPolicy(playerId: string, wire: PlayerPolicyWire): void {
+    const pe = this.player(playerId);
+    pe.policy = { hostileBelow: wire.hostileBelow, alliedAbove: wire.alliedAbove };
+    this.cachePolicy(playerId, pe.policy);
+    this.touchPlayer(playerId);
+  }
+
+  private cachePolicy(playerId: string, wire: PlayerPolicyWire): void {
+    if (wire.hostileBelow === null && wire.alliedAbove === null) this.policyCache.delete(playerId);
+    else this.policyCache.set(playerId, policyFromWire(wire));
+  }
+
+  /**
+   * The Factions tab: every NPC faction the player has standing with (and the
+   * fixed ones always), plus players either side has an opinion of. Sorted by
+   * how strongly they feel. `nameOf` resolves a player id to a display name.
+   */
+  factionsView(playerId: string, nameOf: (playerId: string) => string): PlayerFactionsView {
+    const pe = this.players.get(playerId);
+    const rows: PlayerFactionsView['rows'] = [];
+    for (const f of npcFactions()) {
+      const theirView = pe?.rep[f.id] ?? 0;
+      const yourView = pe?.views[f.id] ?? 0;
+      if (f.kind === 'minor' && theirView === 0 && yourView === 0) continue;
+      rows.push({ factionId: f.id, name: f.displayName, kind: f.kind, color: f.color, theirView, yourView });
+    }
+    const others = new Set<string>();
+    if (pe) for (const id of Object.keys(pe.views)) if (!isNpcFactionId(id)) others.add(id);
+    for (const [id, other] of this.players) if (id !== playerId && (other.views[playerId] ?? 0) !== 0) others.add(id);
+    for (const id of others) {
+      rows.push({
+        factionId: id, name: nameOf(id), kind: 'player', color: 0x9aa0b4,
+        theirView: this.players.get(id)?.views[playerId] ?? 0,
+        yourView: pe?.views[id] ?? 0,
+      });
+    }
+    rows.sort((a, b) => Math.abs(b.theirView) + Math.abs(b.yourView) - (Math.abs(a.theirView) + Math.abs(a.yourView)));
+    return { rows, policy: this.playerPolicy(playerId) };
   }
 
   private saveStandings(): void {
@@ -348,6 +420,10 @@ function parsePlayer(json: string): PlayerEconomy | null {
         const v = raw.views[f];
         if (typeof v === 'number' && Number.isFinite(v) && v !== 0) pe.views[f] = clampStanding(v);
       }
+    }
+    if (raw.policy) {
+      const parsed = PlayerPolicyWireSchema.safeParse(raw.policy);
+      if (parsed.success) pe.policy = parsed.data;
     }
     if (Array.isArray(raw.history)) pe.history = raw.history.slice(0, HISTORY_CAP);
     if (raw.gifts) for (const a of ECON_ALLEGIANCES) if (raw.gifts[a]) pe.gifts[a] = { ...raw.gifts[a] };

@@ -146,7 +146,17 @@ function withAsteroidResources<T extends { id: string }>(roster: readonly T[], f
   });
 }
 import { NPC_ALLEGIANCE_IDS, ON_SIGHT_ENGAGE_RANGE, type NpcAllegianceId } from '../../shared-types/allegiances.js';
-import { factionDisplayName } from '../../shared-types/factions.js';
+import {
+  STANDING_BREAK_IN_DELTA,
+  STANDING_HIT_DELTA,
+  STANDING_HIT_WINDOW_MS,
+  defaultFactionPolicy,
+  factionDisplayName,
+  isNpcFactionId,
+  policyActsOnStanding,
+  type FactionPolicy,
+} from '../../shared-types/factions.js';
+import { SetFactionPolicySchema } from '../../shared-types/messages/factionMessages.js';
 import { encodePlayerTurretTarget } from '../../shared-types/structureStateWire.js';
 
 /** B2 — the party string of each roaming NPC side (`npc:<allegiance>`), built
@@ -154,6 +164,9 @@ import { encodePlayerTurretTarget } from '../../shared-types/structureStateWire.
 /** Factions F1 — the standing web, read through the trade sink (the economy
  *  store owns it). No sink (tests, Living World off) reads as 0. */
 const ROOM_STANDING: StandingQuery = { of: (from, to) => getTradeSink()?.standing?.(from, to) ?? 0 };
+/** F3 — a faction's policy, read through the trade sink (players' own
+ *  settings live in the economy store). No sink ⇒ the catalogue defaults. */
+const ROOM_POLICY = (faction: string): FactionPolicy => getTradeSink()?.policyOf?.(faction) ?? defaultFactionPolicy(faction);
 const NPC_SIDE_PARTY = Object.fromEntries(NPC_ALLEGIANCE_IDS.map((a) => [a, npcOwner(a)])) as Record<NpcAllegianceId, string>;
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
@@ -844,7 +857,7 @@ export class SectorRoom extends Room<SectorState> {
   private readonly hostileActs = new HostileActLedger();
   /** The ONE relation context for this room; `nowMs` is refreshed in place on
    *  the turret tick (no allocation per query). */
-  private readonly relationCtx = createRelationContext({ hostileActs: this.hostileActs, standing: ROOM_STANDING });
+  private readonly relationCtx = createRelationContext({ hostileActs: this.hostileActs, standing: ROOM_STANDING, policyOf: ROOM_POLICY });
   /** A2 — owner id → interned index in `state.structureOwners`. */
   private readonly structureOwnerIdx = new Map<string, number>();
   /** Interned index keys ("0", "1", …), cached so syncing never allocates. */
@@ -2750,6 +2763,18 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('load_blueprint', blueprintMessage('load_blueprint'));
     this.onMessage('unload_blueprint', blueprintMessage('unload_blueprint'));
 
+    // F3 — a player edits their own faction's policy (owner = the session).
+    this.onMessage('set_faction_policy', (client: Client, raw: unknown) => {
+      const parsed = SetFactionPolicySchema.safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, 'set_faction_policy');
+        return;
+      }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      getTradeSink()?.setPlayerPolicy?.(owner, parsed.data.policy);
+    });
+
     this.onMessage('set_gate_access', (client: Client, raw: unknown) => {
       const parsed = SetGateAccessSchema.safeParse(raw);
       if (!parsed.success) {
@@ -3811,6 +3836,7 @@ export class SectorRoom extends Room<SectorState> {
 
   private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
     if (damage > 0) this.noteEconomicHit(targetId, shooterId);
+    if (damage > 0) this.noteStandingHit(targetId, shooterId);
     // C2 — a hit ends the target's break-in (one Map lookup when none).
     if (damage > 0 && this.breakIns.activeCount() > 0) this.breakIns.onActorDamaged(targetId);
     // R2.18 — a Shield Pylon is undamageable while its wall is up: route the hit
@@ -4807,7 +4833,10 @@ export class SectorRoom extends Room<SectorState> {
     // C2 — a player's turrets also engage pilots hostile to their owner (a
     // break-in is a hostile act). Skipped entirely while nobody has committed
     // one, so the A1 drone path stays byte-identical.
-    const pilot = this.hostileActs.size() > 0 ? this.nearestHostilePilot(x, y, range, owner) : null;
+    // F3 — a player whose policy fires on low standing scans pilots too.
+    const pilot = this.hostileActs.size() > 0 || policyActsOnStanding(ROOM_POLICY(parseOwner(owner).faction))
+      ? this.nearestHostilePilot(x, y, range, owner)
+      : null;
     if (pilot !== null) {
       const droneD2 = i < 0 ? Infinity : (this.turretTargetGrid.x(i) - x) ** 2 + (this.turretTargetGrid.y(i) - y) ** 2;
       if (pilot.d2 <= droneD2) {
@@ -4922,6 +4951,7 @@ export class SectorRoom extends Room<SectorState> {
     const now = Date.now();
     this.hostileActs.record(actor, rec.owner, now);
     this.relationCtx.nowMs = now;
+    this.adjustStanding(parseOwner(rec.owner).faction, actor, STANDING_BREAK_IN_DELTA);
     const kindName = getStructureKind(rec.kind).displayName;
     const who = this.resolveOwnerName(actor) ?? 'A pilot';
     const party = parseOwner(rec.owner);
@@ -4956,6 +4986,7 @@ export class SectorRoom extends Room<SectorState> {
     const now = Date.now();
     this.hostileActs.record(actor, t.owner, now);
     this.relationCtx.nowMs = now;
+    this.adjustStanding(parseOwner(t.owner).faction, actor, STANDING_BREAK_IN_DELTA);
     if (t.npc) {
       this.aggroNpcSide(allegianceOfKind(t.npc.shipKind), t.x, t.y, actor);
     } else {
@@ -7782,6 +7813,47 @@ export class SectorRoom extends Room<SectorState> {
    * run); hitting a ROBOT costs robot standing (ends a truce). Steady state is
    * prefix checks + Map lookups, no allocation (#14).
    */
+  /** F3 — move `from`'s view of `to`, through the economy store. */
+  private adjustStanding(from: string, to: string, delta: number): void {
+    if (from === to || from === '' || to === '') return;
+    getTradeSink()?.adjustStanding?.(from, to, delta);
+  }
+
+  /** The faction behind an attacker id: a player, a structure's owner, or an
+   *  NPC ship's allegiance. Null for anything else. Allocation-free. */
+  private attackerFaction(id: string): string | null {
+    if (this.playerToSlot.has(id)) return id;
+    const s = this.structureRegistry.get(id);
+    if (s !== undefined) return parseOwner(s.owner).faction;
+    const rec = this.swarmRegistry.get(id);
+    return rec != null && rec.kind === 1 ? allegianceOfKind(rec.shipKind) : null;
+  }
+
+  /**
+   * F3 — a hit lowers the victim faction's view of the attacker's faction
+   * (one `STANDING_HIT_DELTA` per pair per window). Victims are structures
+   * (their owner) and player ships; at least one side must be a player (NPC
+   * politics come later). Steady state is Map lookups only (#14).
+   */
+  private noteStandingHit(targetId: string, shooterId: string): void {
+    const sink = getTradeSink();
+    if (sink?.adjustStanding === undefined) return;
+    const s = this.structureRegistry.get(targetId);
+    const victim = s !== undefined ? parseOwner(s.owner).faction : this.playerToSlot.has(targetId) ? targetId : null;
+    if (victim === null) return;
+    const attacker = this.attackerFaction(shooterId);
+    if (attacker === null || attacker === victim) return;
+    if (isNpcFactionId(victim) && isNpcFactionId(attacker)) return;
+    const now = Date.now();
+    let row = this.standingHitAtMs.get(victim);
+    if (row === undefined) { row = new Map(); this.standingHitAtMs.set(victim, row); }
+    if (now - (row.get(attacker) ?? -Infinity) < STANDING_HIT_WINDOW_MS) return;
+    row.set(attacker, now);
+    sink.adjustStanding(victim, attacker, STANDING_HIT_DELTA);
+  }
+  /** victim faction → attacker faction → last standing hit (ms). */
+  private readonly standingHitAtMs = new Map<string, Map<string, number>>();
+
   private noteEconomicHit(targetId: string, shooterId: string): void {
     const sink = getTradeSink();
     if (sink === null) return;

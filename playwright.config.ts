@@ -68,6 +68,7 @@ const FEATURE_SPECS: string[] = [
   '**/account-bound-identity.spec.ts',
   // Living World P2 — Trade tab → deal → a hauler arrives.
   '**/trade-tab.spec.ts',
+  '**/factions-tab.spec.ts',
   // C1 — open your own storage's cargo and move items by hand.
   '**/cargo-panel.spec.ts',
   // A fence blocks its owner's own fire: the turret placement hint.

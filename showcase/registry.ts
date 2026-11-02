@@ -126,7 +126,7 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 export const SHOWCASE_PENDING: Record<string, string> = {
   allegiances: 'AI-vs-AI sides fight in the living galaxy but not on cue; needs a staged two-faction room.',
   factions:
-    'F1 is the faction model and standing web with no visible surface; the Factions tab (v4 F3) is where it gets a shot.',
+    'The Factions tab (v4 F3) shows standings; a meaningful shot needs a staged room with non-zero standings both ways and a turret firing on a disliked pilot.',
   blueprints:
     'Blueprints drop at random from elites/events and install at a signed-in base; needs a staged loot→install room for the P5 showcase.',
   'research-lab':

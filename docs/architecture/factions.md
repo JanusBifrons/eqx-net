@@ -95,7 +95,29 @@ Minor factions don't have to own anything: the core region's minors own no bases
 
 The owner string is `npc:<faction>:<baseId>`, and the inspector names it ("Merrow Mining Co. base").
 
+## Standing events and your own policy (F3)
+
+**Events** (`SectorRoom.noteStandingHit`, at the one damage choke point):
+- When something of faction A hits something owned by faction B (a structure's owner, or a player's ship), B's view of A drops by `STANDING_HIT_DELTA` (−1), at most once per pair per `STANDING_HIT_WINDOW_MS` (15 s).
+- At least one side must be a player; NPC-vs-NPC politics come later.
+- The attacker's faction is a player, a structure's owner, or an NPC ship's allegiance.
+- **Starting a break-in** costs `STANDING_BREAK_IN_DELTA` (−10) with the owner.
+- **Trade events** (deals, piracy, robot hits) keep their own deltas.
+
+**Your policy.** A player edits their own faction's policy in the drawer's **Factions** tab (`set_faction_policy`, strict zod; `null` turns a rule off):
+- *Your turrets fire on anyone you rate below* −10 / −25 / −50 / −75. A player turret then scans pilots whenever its owner's policy can act on standing, not only after a hostile act.
+- *Anyone you rate above this is an ally:* +25 / +50 / +75, so they become `allied` (gates set to "owner + allies" admit them).
+
+The policy is stored on the player's economy row and resolved once into a cached `FactionPolicy`, so `relationOf` reads it with one Map lookup (`EconomyStore.policyOf`, via `TradeSink.policyOf`).
+
+**The Factions tab** is rebuilt only from `GET /trade/factions?playerId=` (#16):
+- every fixed faction, plus any minor faction or player either side has an opinion of;
+- each row shows their view of you and yours of them, sorted by how strongly they feel;
+- names only, never ids.
+
+**Locks:** `EconomyStore.test.ts` (policy cache and persistence, view rows), `tests/integration/sectorRoom/factionStanding.test.ts` (hit once per window, player vs player, a policy makes a turret fire and stop, the message sets the sender's policy only), `FactionsTab.test.tsx`, `tests/e2e/factions-tab.spec.ts`, `tradeClientWireParity.test.ts`.
+
 ## Next
 
-- **F3:** a Factions tab, editable policies, and standing events beyond trade (kills, raids, break-ins, tolls).
 - **Military bases (M):** these fill in power and militia patrols.
+- **Teleporter tolls (T4):** these use the same standing and policy.
