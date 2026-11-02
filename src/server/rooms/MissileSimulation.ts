@@ -195,6 +195,11 @@ export interface MissileSimulationDeps {
   /** Colyseus broadcast facade. Type-narrowed at the call site. */
   broadcastFired: (msg: MissileFiredEvent) => void;
   broadcastDetonated: (msg: MissileDetonatedEvent) => void;
+  /** A fence blocks every shot, missiles included (user ruling 2026-11-02):
+   *  if this tick's step crosses a blocking shield wall, absorb the missile
+   *  (the wall's grid-power damage model) and return true. Absent ⇒ no walls.
+   *  Alloc-free. */
+  wallBlocksMissile?: (x: number, y: number, stepX: number, stepY: number, damage: number) => boolean;
   /** Local per-process bus (SFX/Pino subscribers). Cross-process is
    *  handled by the broadcast* callbacks above. */
   bus: Bus;
@@ -207,7 +212,7 @@ export interface MissileSimulationDeps {
 /** Detonation cause — surfaced into `missile_detonated` diag entries so
  *  a capture can distinguish "homed onto target and hit" from "dumb-flight
  *  expired". */
-export type DetonateCause = 'sweep' | 'fuse' | 'lifetime';
+export type DetonateCause = 'sweep' | 'fuse' | 'lifetime' | 'wall';
 
 export class MissileSimulation {
   /** Pre-allocated record pool. Indices are stable for the record's
@@ -471,6 +476,12 @@ export class MissileSimulation {
       const hit = this.sweepCollision(m, stepX, stepY);
       if (hit !== null) {
         this.detonate(m, hit.x, hit.y, hit.id, hit.kind, 'sweep');
+        this.releaseAtPos(i);
+        continue;
+      }
+      // A shield wall in the way takes the missile (no splash past it).
+      if (this.deps.wallBlocksMissile?.(m.x, m.y, stepX, stepY, def.damage)) {
+        this.detonate(m, m.x, m.y, null, null, 'wall');
         this.releaseAtPos(i);
         continue;
       }
@@ -769,7 +780,7 @@ export class MissileSimulation {
     // 2026-06-06 impact-only design (a missile that lands no direct hit deals no
     // damage) is preserved by skipping every splash loop on cause==='lifetime'.
     // Real detonations (sweep / fuse) splash as before.
-    if (cause !== 'lifetime') {
+    if (cause !== 'lifetime' && cause !== 'wall') {
       // Splash against players.
       for (const [playerId] of this.deps.playerToSlot) {
         if (playerId === ownerSkip) continue;

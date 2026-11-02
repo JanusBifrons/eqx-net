@@ -238,6 +238,7 @@ Code: [src/core/bases/baseProfile.ts](../../src/core/bases/baseProfile.ts) and [
    - **The huge kind:** it sits on its own outer row.
 3. **Power:** lay out, measure the real draw (the fence depends on the layout), and add Solars until net power ≥ 0.
 4. **Fence:** a rectangle of Shield Pylons around the extent, with a Shield Gate in the middle of each side, tapped from the row ends.
+5. **Bastions (fenced bases):** a fence blocks its owner's own fire, so a fenced base's turrets are NOT in the rows. From a row's end connector (never the gate row), a relay just inside the fence links, between two pylons, to a hub just outside, and up to three turrets hang off the hub. They stay on the grid and their fire never crosses their own wall. A turret with no bastion spot is left out rather than placed inside. The builder also refuses any placement on an existing link line. `BASE_GROWTH_VERSION` 6.
 5. **Budget:** a base over its tier's budget spends 15 % less and regrows.
 
 **Locks:**
