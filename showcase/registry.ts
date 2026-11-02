@@ -27,6 +27,8 @@ import { loot } from './shots/loot.js';
 import { robots } from './shots/robots.js';
 import { nexus } from './shots/nexus.js';
 import { proceduralBase } from './shots/proceduralBase.js';
+import { productionLine } from './shots/productionLine.js';
+import { colonyCity } from './shots/colonyCity.js';
 
 /** Every shot, in reel order. Catalogue = all of them; reel = `reel: true`. */
 export const SHOTS: readonly Shot[] = [
@@ -51,6 +53,8 @@ export const SHOTS: readonly Shot[] = [
   warp,
   scale,
   proceduralBase,
+  productionLine,
+  colonyCity,
   mobile,
 ];
 
@@ -105,8 +109,6 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 
 /** Docs whose feature exists but cannot be staged on main yet — with what unblocks it. */
 export const SHOWCASE_PENDING: Record<string, string> = {
-  'mine-layer': 'Mine Layer — needs a staged base with a stocked layer and a hostile approach (a drone flying into the field); filmed with the production-line shot.',
-  'production-chains': 'Production chains (plan soft-leaping-truffle v3) — P1 is data only; a production-line shot (ore flowing through processors to a Freight Dock) lands with P2.',
   'shield-gates': 'Gates (plan soft-leaping-truffle v2, phase V) — a fly-through shot in the gate-test room is next; the design sheet stills are in diag/showcase/structure-redesign.',
   allegiances: 'AI-vs-AI sides fight in the living galaxy but not on cue; needs a staged two-faction room.',
   'trade-deals':
