@@ -283,6 +283,11 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 - **Never add a top-level `src/client/trade/` dir:** it collides with the `/trade` Vite proxy. Trade client code lives in `net/trade*.ts`. The `clientDirProxyCollision.test.ts` guard locks this.
 - Locks: `tradeView.test.ts`, `TradeToasts.test.tsx`, `tests/e2e/trade-tab.spec.ts` (feature tier).
 
+## Mines (Mine Layer)
+
+- `mirror.mines` is filled ONLY from room state `mines` by `ColyseusClient.syncMines` (in place, generation sweep, alloc-free once rows exist). `ConnectorRenderer.drawMines` draws each on the per-frame layer: the trigger ring plus a blinking canister, cyan for own and red for anyone else's.
+- `mine_detonated` pushes a `pendingMissileExplosions` entry (`missileId: -1`) for the blast. It is an accelerator: the mine leaving room state is the truth.
+
 ## Cargo panel (plan soft-leaping-truffle v3, C1)
 
 - `components/CargoPanel.tsx` (opened by `CargoAction` from the inspector, for any BUILT storage structure) is rebuilt ONLY from `cargo_state` replies (#16). It polls while mounted. The reply carries the structure's hold AND the ship's hold, so the panes never disagree.

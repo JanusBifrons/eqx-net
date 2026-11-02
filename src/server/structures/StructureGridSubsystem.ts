@@ -104,6 +104,9 @@ export interface StructureGridHooks {
   /** P2c — put `n` of a good into `rec`'s owner network storage (all or
    *  nothing); returns what was stored. */
   depositGoods?(rec: StructureRecord, good: GoodId, n: number): number;
+  /** Would ALL of `goods` fit in `rec`'s owner network storage? A drill asks
+   *  before it draws from a rock, so a full network never burns finite ore. */
+  canDepositGoods?(rec: StructureRecord, goods: Readonly<Partial<Record<GoodId, number>>>): boolean;
   /** P2c — this sector has a nebula (Gas Collectors work). */
   sectorHasNebula?(): boolean;
   /** P2d — take ONE unit of munitions from `rec`'s owner network storage;
@@ -125,6 +128,11 @@ export interface StructureGridHooks {
   ): { id: string; entityId: number; x: number; y: number; playerId?: string } | null;
   /** Phase 5 — apply turret damage to a target through the standard path. */
   applyDamage?(targetId: string, shooterId: string, damage: number): void;
+  /** A fence blocks every shot, its owner's turret beams included (user
+   *  ruling 2026-11-02): if a blocking shield wall lies along the beam within
+   *  `maxDist`, it absorbs the hit; returns the crossing distance, else null.
+   *  Absent ⇒ no walls (unit harnesses). */
+  blockBeamAtWall?(fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, damage: number): number | null;
   /** Phase 5 — broadcast the turret fire beam (laser_fired). */
   broadcastBeam?(shooterId: string, fromX: number, fromY: number, toX: number, toY: number, targetId: string, mountId?: string): void;
   /** WS-8 (R2.15) — spawn a server PROJECTILE bolt from a Bolt Turret toward its
@@ -241,6 +249,18 @@ export class StructureGridSubsystem {
         );
         if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cooldownMs) continue;
         rec.lastTurretFireMs = nowMs;
+        // A shield wall in the way (its owner's own fence included) takes the
+        // hit and the beam ends there.
+        const bdx = target.x - rec.x;
+        const bdy = target.y - rec.y;
+        const blen = Math.hypot(bdx, bdy);
+        const wallT = blen > 1e-6 && this.hooks.blockBeamAtWall
+          ? this.hooks.blockBeamAtWall(rec.x, rec.y, bdx / blen, bdy / blen, blen, perHitDamage)
+          : null;
+        if (wallT !== null) {
+          this.hooks.broadcastBeam?.(rec.id, rec.x, rec.y, rec.x + (bdx / blen) * wallT, rec.y + (bdy / blen) * wallT, '');
+          continue;
+        }
         this.hooks.applyDamage!(target.id, rec.id, perHitDamage);
         this.hooks.broadcastBeam?.(rec.id, rec.x, rec.y, target.x, target.y, target.id);
       } else if (def.mode === 'projectile') {
@@ -311,6 +331,9 @@ export class StructureGridSubsystem {
     // Emerge from the barrel tip (clear the turret radius) — a static structure
     // has no velocity to inherit, so the bolt velocity is pure aim × speed.
     const muzzle = radius + 8;
+    // A wall between the turret and its muzzle takes the bolt (a fence blocks
+    // its owner's own fire, user ruling 2026-11-02).
+    if (this.hooks.blockBeamAtWall?.(rec.x, rec.y, ndx, ndy, muzzle, weaponDamage ?? def.damage) != null) return;
     this.hooks.spawnProjectile(
       rec.id,
       rec.x + ndx * muzzle,
@@ -341,6 +364,8 @@ export class StructureGridSubsystem {
     const ndx = dx / dist;
     const ndy = dy / dist;
     const muzzle = radius + 8;
+    // A wall between the launcher and its muzzle takes the missile.
+    if (this.hooks.blockBeamAtWall?.(rec.x, rec.y, ndx, ndy, muzzle, def.damage) != null) return;
     this.hooks.spawnMissile(rec.id, rec.x + ndx * muzzle, rec.y + ndy * muzzle, ndx, ndy, def);
   }
 
@@ -560,30 +585,54 @@ export class StructureGridSubsystem {
       // ore into full storage). drawAsteroidResources decrements the pool and
       // returns the amount actually mined; absent hook ⇒ flat rate (pre-WS-4 /
       // unit-harness fallback). Combat never reaches this hook (ADR boundary).
-      const want = Math.min(kind.miningRate ?? 0, kind.storageCapacity - rec.minerals);
-      const drawn = this.hooks.drawAsteroidResources
-        ? this.hooks.drawAsteroidResources(target.entityId, want)
-        : want;
       // P2c — what the rock yields: rock → minerals, ice → ice, crystal-veined
       // → minerals + crystal (ASTEROID_YIELD, per 10 mined). Minerals go to the
       // drill's buffer (hauled to the Capital as before); other goods go
-      // straight into the owner's network storage (lost if it is full).
+      // straight into the owner's network storage.
       const resource = this.hooks.asteroidResourceOf?.(target.entityId) ?? 'rock';
       const y = ASTEROID_YIELD[resource];
+      let want = Math.min(kind.miningRate ?? 0, kind.storageCapacity - rec.minerals);
+      // A full network never burns finite ore: if this pulse's goods wouldn't
+      // all fit, the drill idles and the rock keeps them.
+      if (resource !== 'rock' && this.hooks.depositGoods && this.hooks.canDepositGoods && want > 0) {
+        const plan = this.yieldGoods(y, want);
+        if (!this.hooks.canDepositGoods(rec, plan)) {
+          this.setActive(rec, false);
+          continue;
+        }
+      }
+      const drawn = this.hooks.drawAsteroidResources
+        ? this.hooks.drawAsteroidResources(target.entityId, want)
+        : want;
       const mineralsPart = resource === 'rock' ? drawn : Math.floor((drawn * (y.minerals ?? 0)) / 10);
       rec.minerals = Math.min(kind.storageCapacity, rec.minerals + mineralsPart);
       if (resource !== 'rock' && this.hooks.depositGoods) {
-        const rest = drawn - mineralsPart;
+        // Same order as the check above, and never more than it planned, so it fits.
+        const goods = this.yieldGoods(y, drawn);
         for (const g of GOOD_IDS) {
-          if (g === 'minerals') continue;
-          const share = y[g] ?? 0;
-          if (share <= 0) continue;
-          const n = Math.floor((rest * share) / (10 - (y.minerals ?? 0)));
+          const n = goods[g] ?? 0;
           if (n > 0) this.hooks.depositGoods(rec, g, n);
         }
       }
     }
   }
+
+  /** The non-mineral goods `drawn` units of a rock yield, into a reused
+   *  scratch record (alloc-free). */
+  private yieldGoods(y: Readonly<Partial<Record<GoodId, number>>>, drawn: number): Readonly<Partial<Record<GoodId, number>>> {
+    const out = this._yieldScratch;
+    const mineralsPart = Math.floor((drawn * (y.minerals ?? 0)) / 10);
+    const rest = drawn - mineralsPart;
+    for (const g of GOOD_IDS) {
+      if (out[g] !== undefined) out[g] = 0;
+      if (g === 'minerals') continue;
+      const share = y[g] ?? 0;
+      if (share <= 0) continue;
+      out[g] = Math.floor((rest * share) / (10 - (y.minerals ?? 0)));
+    }
+    return out;
+  }
+  private readonly _yieldScratch: Partial<Record<GoodId, number>> = {};
 
   /**
    * Active power — mark whether a structure draws its full consumption. A

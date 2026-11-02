@@ -108,6 +108,35 @@ describe('growBase — valid under the real building rules', () => {
     expect(count(trade, ['cargo_bay', 'freight_dock'])).toBeGreaterThan(5);
   });
 
+  it("a fenced base's turrets stand OUTSIDE its fence (a fence blocks its owner's own fire), still on the grid", () => {
+    const TURRETS = ['turret', 'laser_bolt_turret', 'missile_turret', 'autocannon_turret'];
+    for (const tier of ['outpost', 'settlement', 'stronghold', 'citadel'] as const) {
+      for (const seed of [1, 7, 42, 99]) {
+        const b = growBase(profile(tier, 'refinery', true), seed, ['minerals']);
+        const fence = b.placements.filter((p) => p.kind === 'shield_pylon' || p.kind === 'shield_gate');
+        expect(fence.length, `${tier}/${seed} fenced`).toBeGreaterThan(0);
+        const fx = Math.max(...fence.map((p) => Math.abs(p.x)));
+        const fy = Math.max(...fence.map((p) => Math.abs(p.y)));
+        const turrets = b.placements.filter((p) => TURRETS.includes(p.kind));
+        expect(turrets.length, `${tier}/${seed} keeps its defence`).toBeGreaterThan(0);
+        for (const t of turrets) {
+          expect(Math.abs(t.x) > fx || Math.abs(t.y) > fy, `${tier}/${seed} turret at (${t.x}, ${t.y}) is inside the fence`).toBe(true);
+        }
+        // Every structure (the bastions included) still connects to the Capital.
+        expect(verify(b).reached).toBe(b.placements.length);
+      }
+    }
+  });
+
+  it('strongholds and citadels mine their approaches; small bases do not', () => {
+    const has = (tier: 'outpost' | 'settlement' | 'stronghold' | 'citadel') =>
+      growBase(profile(tier, 'manufactory'), 7, ['asteroid']).placements.filter((p) => p.kind === 'mine_layer').length;
+    expect(has('outpost')).toBe(0);
+    expect(has('settlement')).toBe(0);
+    expect(has('stronghold')).toBeGreaterThanOrEqual(1);
+    expect(has('citadel')).toBeGreaterThanOrEqual(1);
+  });
+
   it('a colony is a city: housing dominates, and it runs the residents\' upkeep', () => {
     const city = growBase(profile('settlement', 'colony'), 9, ['station']);
     const count = (kinds: string[]) => city.placements.filter((p) => kinds.includes(p.kind)).length;

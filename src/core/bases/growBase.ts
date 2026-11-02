@@ -26,7 +26,7 @@ import { getStructureKind, structureHalfExtents, type StructureKindId } from '..
 import { RECIPES, packRecipeFor, recipesFor, type RecipeId } from '../../shared-types/recipes.js';
 import { BASE_PRICES } from '../../shared-types/economy.js';
 import { IDLE_DRAW_FRAC } from '../../shared-types/structurePower.js';
-import { canConnect, type GridNode } from '../structures/Grid.js';
+import { canConnect, segmentIntersectsAabb, type GridNode } from '../structures/Grid.js';
 import { Connection } from '../structures/Connection.js';
 import { placementRejection } from '../structures/placementRules.js';
 import { isShieldEmitterKind } from '../structures/gateGeometry.js';
@@ -36,7 +36,7 @@ import type { GoodId } from '../../shared-types/goods.js';
 
 /** Bump on ANY change to the generator's output (NPC bases regenerate from the
  *  seed, so a change moves every base). */
-export const BASE_GROWTH_VERSION = 4;
+export const BASE_GROWTH_VERSION = 6;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -107,6 +107,8 @@ export const EXPECTED_ACTIVE: Readonly<Partial<Record<StructureKindId, number>>>
   reclaimer: 0.6, smelter: 0.6, refinery: 0.6, silicon_works: 0.6, hydroponics: 0.6,
   fabricator: 0.6, munitions_works: 0.6, ore_processing_complex: 0.6, assembly_plant: 0.6,
   turret: 0.15, laser_bolt_turret: 0.15, missile_turret: 0.15, autocannon_turret: 0.15,
+  // A mine layer lays only until its field is full.
+  mine_layer: 0.2,
   // D3 — residents live there around the clock.
   habitat_module: 0.9, tower_module: 0.9,
 });
@@ -118,6 +120,15 @@ export function expectedDraw(kind: StructureKindId): number {
 }
 
 const HUGE: ReadonlySet<StructureKindId> = new Set(['deep_core_rig', 'ore_processing_complex', 'assembly_plant']);
+
+/** Weapons that fire SHOTS. A fence blocks every shot, its owner's own
+ *  included (user ruling 2026-11-02), so a fenced base puts these OUTSIDE its
+ *  fence, on bastions (see growOnce). */
+const TURRET_KINDS: ReadonlySet<StructureKindId> = new Set(['turret', 'laser_bolt_turret', 'missile_turret', 'autocannon_turret']);
+/** A bastion's inside relay sits this far inside the fence line, its hub this
+ *  far outside (both clear of the pylons' boxes). */
+const BASTION_IN = 120;
+const BASTION_OUT = 220;
 
 /** Stage each processor kind's main output belongs to (for the coverage rule). */
 function stageOf(kind: StructureKindId, recipe: RecipeId | undefined): number | null {
@@ -221,6 +232,9 @@ function planBuild(profile: BaseProfile, features: readonly SectorFeature[], rnd
   buy({ kind: 'cargo_bay' });
   const turrets = { outpost: 1, settlement: 2, stronghold: 4, citadel: 6 }[profile.tier];
   for (let t = 0; t < turrets; t++) buy({ kind: 'turret' });
+  // Big bases mine their approaches.
+  const mineLayers = { outpost: 0, settlement: 0, stronghold: 1, citadel: 2 }[profile.tier];
+  for (let t = 0; t < mineLayers; t++) buy({ kind: 'mine_layer' });
   // The role's chain, repeated (huge kinds once) while wealth lasts.
   const units = roleUnits(profile, features, rnd);
   let hugeBought = false;
@@ -261,6 +275,11 @@ class Builder {
     if (placementRejection(p.kind, p.x, p.y, this.placed, null, rot) !== null) return -1;
     const k = getStructureKind(p.kind);
     const { hw, hh } = structureHalfExtents(p.kind, rot);
+    // Never on top of an existing link (a link needs a clear line of sight).
+    for (const [ea, eb] of this.edges) {
+      const a = this.placements[ea]!, b = this.placements[eb]!;
+      if (segmentIntersectsAabb(a.x, a.y, b.x, b.y, p.x - hw, p.y - hh, p.x + hw, p.y + hh)) return -1;
+    }
     const i = this.placements.length;
     this.placements.push(p);
     this.placed.push({ x: p.x, y: p.y, radius: k.radius, halfW: hw, halfH: hh });
@@ -326,7 +345,9 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   const rnd = seededRandom(seed ^ 0x5bd1e995);
   const { wants, spent } = planBuild(profile, features, rnd);
   const huge = wants.filter((w) => HUGE.has(w.kind));
-  const normal = wants.filter((w) => !HUGE.has(w.kind));
+  // A fenced base's turrets go on bastions outside the fence (placed after it).
+  const posts = profile.fenced ? wants.filter((w) => TURRET_KINDS.has(w.kind)) : [];
+  const normal = wants.filter((w) => !HUGE.has(w.kind) && !(profile.fenced && TURRET_KINDS.has(w.kind)));
   // Power: role consumption + an estimate for the fence; Solars to cover it,
   // a battery per ~4 consumers for a reserve.
   let consumption = 0;
@@ -456,6 +477,12 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
     if (li >= 0 && !B.tryLink(ext, li)) B.undoLast();
   }
 
+  // Bastions reach out from a row's end connector, and the side gates sit on
+  // row 0, so a fenced base with turrets needs a row off the gate line.
+  if (posts.length > 0 && ![...rowConn.keys()].some((j) => j !== 0)) {
+    if (addRow(-1)) rowOrder.push(-1);
+  }
+
   // Fence: a rectangle around everything, a gate mid-side, row ends tapped.
   let fencePylons = 0;
   let fenceGates = 0;
@@ -515,6 +542,43 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
     }
     fencePylons = B.placements.length - first;
     for (let k = 0; k < idx.length; k++) B.tryLink(idx[k]!, idx[(k + 1) % idx.length]!);
+    // Bastions: turrets OUTSIDE the fence, so their fire never crosses their
+    // own wall. From a row's end connector, a relay just inside the fence links
+    // (between two pylons) to a hub just outside; turrets hang off the hub.
+    // Rows nearest the middle first, off the gate row; each hub takes up to 3.
+    const rowsByDistance = [...rowConn.keys()].filter((j) => j !== 0).sort((a, b) => Math.abs(a) - Math.abs(b) || a - b);
+    let postIdx = 0;
+    for (const j of rowsByDistance) {
+      for (const sideX of [1, -1]) {
+        if (postIdx >= posts.length) break;
+        const end = (rowConn.get(j) ?? []).find((c) => B.placements[c]!.x === sideX * cols * PITCH_X);
+        if (end === undefined) continue;
+        const y = B.placements[end]!.y;
+        const relay = B.tryPlace({ kind: 'connector', x: sideX * (fx - BASTION_IN), y });
+        if (relay < 0) continue;
+        if (!B.tryLink(end, relay)) { B.undoLast(); continue; }
+        const hub = B.tryPlace({ kind: 'connector', x: sideX * (fx + BASTION_OUT), y });
+        if (hub < 0) continue;
+        if (!B.tryLink(relay, hub)) { B.undoLast(); continue; }
+        // Up to three turrets: outward, then above and below the hub.
+        for (const slot of [0, 1, -1]) {
+          if (postIdx >= posts.length) break;
+          const w = posts[postIdx]!;
+          const fp = getStructureKind(w.kind).footprint;
+          const hx = B.placements[hub]!.x;
+          const p: GrownPlacement = slot === 0
+            ? { kind: w.kind, x: hx + sideX * (CONN_HALF + GAP + fp.w / 2), y }
+            : { kind: w.kind, x: hx, y: y + slot * (CONN_HALF + GAP + fp.h / 2) };
+          const li = B.tryPlace(p);
+          if (li < 0) continue;
+          if (!B.tryLink(hub, li)) { B.undoLast(); continue; }
+          postIdx++;
+        }
+      }
+      if (postIdx >= posts.length) break;
+    }
+    // Turrets that found no bastion are left out rather than placed inside
+    // the fence, where their own wall would stop every shot.
     // Taps: every row's end connectors link the nearest side emitter.
     for (const [, row] of rowConn) {
       for (const c of row) {
@@ -530,6 +594,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
         if (best >= 0) B.tryLink(c, best);
       }
     }
+
   }
 
   // Levels: wealthy bases upgrade processors and turrets up to their level cap.

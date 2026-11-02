@@ -788,6 +788,21 @@ gameServer
     maxClients: 8,
   })
   .filterBy(['testId']);
+// D3 — a colony (a city: habitats, towers, hydroponics) for the showcase and
+// tests.
+gameServer
+  .define('npc-base-colony', SectorRoom, {
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    sectorFeatures: ['station'],
+    npcBases: [{ baseId: 'colony', role: 'colony', tier: 'settlement', seed: 16, x: 0, y: 0, features: ['station'] }],
+    defaultSpawnX: 0,
+    defaultSpawnY: -3600,
+    maxClients: 8,
+  })
+  .filterBy(['testId']);
 // Wave-system E2E (tests/e2e/wave-attack.spec.ts) — a DIRECTOR-MANAGED galaxy
 // room (real sectorKey) seeded with a PRE-BUILT, player-owned READY base
 // (Capital + Miner + Solar + Turret, owner `wave-tester`). Single eager
