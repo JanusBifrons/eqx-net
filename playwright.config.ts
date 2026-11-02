@@ -70,6 +70,10 @@ const FEATURE_SPECS: string[] = [
   '**/trade-tab.spec.ts',
   // C1 — open your own storage's cargo and move items by hand.
   '**/cargo-panel.spec.ts',
+  // C2/C3 — break into another owner's storage / an NPC ship's hold.
+  '**/break-in.spec.ts',
+  // Mine Layer + habitat stations reach the client.
+  '**/mines-and-habitation.spec.ts',
   '**/asteroid-shape.spec.ts',
   '**/radar-sandbox.spec.ts',
   '**/auto-fire.spec.ts',

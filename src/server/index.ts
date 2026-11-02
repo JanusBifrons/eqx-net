@@ -994,6 +994,26 @@ gameServer
     seedStorageHold: { goods: { salvage: 120, alloy: 20 }, credits: 3000 },
   })
   .filterBy(['testId']);
+// C2/C3 break-in E2Es: a Capital owned by 'scenario' (a neutral owner, so its
+// cargo is locked to a visiting pilot) holding 7 alloy, a peaceful NPC fighter
+// beside the spawn, and breakInMs so a break-in resolves in under a second.
+// A real sectorKey: cargo access needs the ship's roster row.
+gameServer
+  .define('break-in-test', SectorRoom, {
+    sectorKey: 'break-in-test',
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    breakInMs: 800,
+    prebuiltStructures: [{ kind: 'capital', x: 0, y: 0 }],
+    prebuiltStorageGoods: { alloy: 7 },
+    dronePoses: [{ kind: 'fighter', x: 260, y: -650, angle: 0 }],
+    defaultSpawnX: 0,
+    defaultSpawnY: -650,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
 gameServer
   .define('trade-showcase', SectorRoom, {
     sectorKey: 'trade-showcase',
