@@ -537,11 +537,15 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       break;
     }
     case 'teleporter':
-    case 'teleporter_large': {
+    case 'teleporter_large':
+    case 'alien_gate': {
       // Teleporter (v4 T1): an open pad ringed by its posts. The pad is a
       // faint disc with concentric guide rings; ships hover over it. The posts
       // are the only solid parts (they match the collider).
-      const big = kindId === 'teleporter_large';
+      const big = kindId !== 'teleporter';
+      // v4 A — the Ancients' gate: the same pad, with glowing monolith posts
+      // that are always lit (it needs no grid) and a bright centre glyph.
+      const alien = kindId === 'alien_gate';
       const post = PAD_SPECS[kindId].post;
       const pad = PAD_SPECS[kindId].padRadius;
       // Faint guide squares on the open pad (decoration only, not solid).
@@ -550,11 +554,15 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
         box(rects, -rr, -rr, rr * 2, rr * 2, mixColor(accent, STEEL_DARK, 0.82 - ring * 0.08), 0.35);
       }
       for (const [cx, cy] of padPostCenters(kindId)) {
-        slab(rects, cx - post / 2, cy - post / 2, post, post, STEEL_DARK, post * 0.25);
-        box(rects, cx - post / 4, cy - post / 4, post / 2, post / 2, mixColor(accent, STEEL_LIGHT, 0.4), 0.95);
-        lit(cx, cy, post / 8, live ? accent : 0x553322);
+        slab(rects, cx - post / 2, cy - post / 2, post, post, alien ? mixColor(accent, STEEL_DARK, 0.7) : STEEL_DARK, post * 0.25);
+        box(rects, cx - post / 4, cy - post / 4, post / 2, post / 2, mixColor(accent, STEEL_LIGHT, alien ? 0.15 : 0.4), 0.95);
+        lit(cx, cy, alien ? post / 5 : post / 8, live || alien ? accent : 0x553322);
       }
-      lit(0, 0, big ? 40 : 18, live ? accent : 0x553322);
+      if (alien) {
+        box(rects, -90, -90, 180, 180, mixColor(accent, STEEL_DARK, 0.5), 0.6);
+        box(rects, -45, -45, 90, 90, accent, 0.8);
+      }
+      lit(0, 0, alien ? 60 : big ? 40 : 18, live || alien ? accent : 0x553322);
       break;
     }
     case 'tower_module': {

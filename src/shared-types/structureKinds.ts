@@ -79,6 +79,8 @@ export const StructureKindIdSchema = z.enum([
   'mine_layer',
   'teleporter',
   'teleporter_large',
+  // v4 A — the Ancients' border gates (never built by anyone) — APPEND ONLY.
+  'alien_gate',
 ]);
 export type StructureKindId = z.infer<typeof StructureKindIdSchema>;
 
@@ -117,8 +119,9 @@ export const StructureKindSchema = z
     shieldRegenRate: z.number().nonnegative().optional(),
 
     // -- Grid topology -----------------------------------------------------
-    /** Max simultaneous grid connections. Capital 4, Connector 6, leaves 1. */
-    maxConnections: z.number().int().positive(),
+    /** Max simultaneous grid connections. Capital 4, Connector 6, leaves 1;
+     *  0 never joins a grid (the alien gate). */
+    maxConnections: z.number().int().nonnegative(),
     /** Hub flag — at least one endpoint of EVERY connection must be a hub
      *  (Capital or Connector). Leaves (solar/miner/turret) can only attach to
      *  a hub, never to each other. This is the eqx-peri rule verbatim. */
@@ -941,6 +944,31 @@ export const TELEPORTER_LARGE: StructureKind = {
   color: 0xb59bff,
 };
 
+/**
+ * Alien gate (plan soft-leaping-truffle v4, phase A): the Ancients' border
+ * gate. One sits on every sector edge that faces a neighbour, twinned with the
+ * gate just across the border. It works like a teleporter but is bigger,
+ * quicker and free, jumps on a fixed timetable, never joins a structure
+ * network, can't be damaged, and disables anyone who attacks it. Nobody
+ * builds one (`UNBUILDABLE_STRUCTURE_KINDS`).
+ */
+export const ALIEN_GATE: StructureKind = {
+  id: 'alien_gate',
+  displayName: 'Alien Gate',
+  description:
+    'An ancient gate twinned with one across the border. It jumps on its own every minute, free, and disables anyone who attacks it.',
+  radius: 1415, // bounding circle of the 2000×2000 footprint
+  footprint: { w: 2000, h: 2000 },
+  maxHealth: 1_000_000,
+  maxConnections: 0,
+  isHub: false,
+  powerOutput: 0,
+  powerConsumption: 0,
+  storageCapacity: 0,
+  constructionCost: 0,
+  color: 0x3fe0c5,
+};
+
 export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   CAPITAL,
   CONNECTOR,
@@ -985,6 +1013,8 @@ export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   // Teleporters (v4 T1) — APPENDED. Never reorder.
   TELEPORTER,
   TELEPORTER_LARGE,
+  // v4 A — APPENDED. Never reorder.
+  ALIEN_GATE,
 ]);
 
 /** Id-keyed lookup, derived from the canonical list (the list is the source of
@@ -1022,6 +1052,17 @@ export const DEFAULT_STRUCTURE_KIND: StructureKindId = 'capital';
 
 /** Resolve a kind's record. Forgiving: unknown ids fall back to the Capital,
  *  matching `getShipKind`'s stance so a malformed id never crashes. */
+/**
+ * Kinds nobody builds: they never appear in a build menu, have no blueprint
+ * or pack recipe, and a player's `place_structure` of one is refused. The
+ * world places them itself (the Ancients' gates).
+ */
+export const UNBUILDABLE_STRUCTURE_KINDS: readonly StructureKindId[] = ['alien_gate'];
+
+export function isBuildableStructureKind(id: string): boolean {
+  return !(UNBUILDABLE_STRUCTURE_KINDS as readonly string[]).includes(id);
+}
+
 export function getStructureKind(id: string | null | undefined): StructureKind {
   if (id != null && Object.prototype.hasOwnProperty.call(STRUCTURE_KINDS, id)) {
     return STRUCTURE_KINDS[id as StructureKindId];
@@ -1095,6 +1136,7 @@ export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
   mine_layer: 4,
   teleporter: 4,
   teleporter_large: 4,
+  alien_gate: 12,
 };
 
 /**

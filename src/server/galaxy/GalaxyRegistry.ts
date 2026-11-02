@@ -23,6 +23,8 @@ export interface ResolvedSectorConfig {
   maxClients: number;
   /** T1 — grow the sector's NPC base (`SectorRoom.seedGalaxyBase`). */
   galaxyBases: boolean;
+  /** v4 A — seed the Ancients' border gates (`SectorRoom.seedAlienGates`). */
+  alienGates: boolean;
 }
 
 export function resolveSectorConfig(key: string): ResolvedSectorConfig {
@@ -36,6 +38,7 @@ export function resolveSectorConfig(key: string): ResolvedSectorConfig {
     droneCount: sector.droneCount,
     maxClients: DEFAULT_MAX_CLIENTS,
     galaxyBases: true,
+    alienGates: true,
   };
 }
 

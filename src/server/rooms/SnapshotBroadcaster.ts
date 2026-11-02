@@ -151,6 +151,8 @@ export interface SnapshotBroadcasterDeps {
   fittedOf?: (shipInstanceId: string) => readonly string[] | undefined;
   /** Economy v2 W1 — a player's wallet balance (own active ship only). */
   walletOf?: (playerId: string) => number;
+  /** v4 A — ms left on a player's alien-gate disable (0 when none). */
+  disabledMsOf?: (playerId: string) => number;
   playerMountAngles: Map<string, Float32Array>;
   droneMountAngles: Map<string, Float32Array>;
   /** Missile simulation — per-recipient AOI-filtered missile pose slice. */
@@ -241,6 +243,7 @@ type MutableStateEntry = {
   fitted?: string[];
   wallet?: number;
   poseEpoch?: number;
+  disabledMs?: number;
   // Typed mutable to match the wire `SnapshotMessage['states'][...].mounts`; the
   // value assigned is a SHARED reference to `ShipState.mounts` (the encoder
   // reads it synchronously and never mutates it).
@@ -737,6 +740,9 @@ export class SnapshotBroadcaster {
         entry.wallet = ownActive ? this.deps.walletOf?.(ship.playerId) : undefined;
         // v4 T2 (#16) — teleport epoch: the owner re-seeds prediction on a change.
         entry.poseEpoch = ownActive && ship.poseEpoch > 0 ? ship.poseEpoch : undefined;
+        // v4 A (#16) — the alien-gate disable, emitted while it runs.
+        const dis = ownActive ? (this.deps.disabledMsOf?.(ship.playerId) ?? 0) : 0;
+        entry.disabledMs = dis > 0 ? Math.ceil(dis) : undefined;
         // WS-B3 — activated mounts are PUBLIC (every recipient, active +
         // lingering), emit-when-non-empty. Shared reference (no per-tick alloc,
         // #14); the renderer looks up geometry by (shipKind, slotId). Clear the

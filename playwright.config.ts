@@ -71,6 +71,8 @@ const FEATURE_SPECS: string[] = [
   '**/factions-tab.spec.ts',
   // v4 T1 — teleporters: pair, charge, load, fire.
   '**/teleporter.spec.ts',
+  // v4 A — alien gates: the Ancients' owner line and the disable.
+  '**/alien-gate.spec.ts',
   // C1 — open your own storage's cargo and move items by hand.
   '**/cargo-panel.spec.ts',
   // A fence blocks its owner's own fire: the turret placement hint.

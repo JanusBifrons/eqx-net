@@ -2632,3 +2632,11 @@ The generator now puts a fenced base's turrets outside the fence. Lock: `turretV
 **Fix.** `EntityStatsPanel` is wrapped in MUI `<Portal>` (to `document.body`). The toll test uses a half-speed room (`teleport-toll-test`, ~6 s from arming to the swap), and its rider renders off the main thread. The toll prompt also sits right under the energy bar, above the phase warning whose text changes height.
 
 **Rule.** Any panel that must sit above the HUD and lives outside the Slot system gets a Portal; a high `zIndex` alone is not enough. In a multi-page E2E, only the page that needs main-thread hooks (`__eqxSelectAtWorld`, screenshots) should use `worker=0`. Read the trace's per-step times before blaming layout: slow steps everywhere mean a starved page, not a moving element.
+
+## 2026-11-02 — Alien gates seeded before the NPC bases pushed five bases out
+
+**What happened.** The first cut seeded each sector's alien gates (2400 wide, 3200 from the centre) BEFORE its NPC bases, so the bases would build around them. Booting the server logged 5 bases "no site fits" (0 without gates), including settlements and Bloomgate's citadel. The gate ring boxed in the middle of the sector. Shrinking the gates and moving them out cut that to 2, and seeding the gates after the bases at their ideal sites still left 7 gates without a spot.
+
+**Fix.** The gates go in AFTER the bases and search the whole sector for the free spot nearest their ideal site (`alienGateCandidates`). Because a gate may now sit off its ideal spot, twins pair at run time by neighbour sector (`findAlienTwin`) instead of by a uid computed from the ideal pose. Result: every gate and every base fits.
+
+**Rule.** Fixed world features (gates, beacons) that share a sector with generated bases should place after the bases and adapt, not claim space first. Link them by identity (which sector they lead to), never by a position the other side has to recompute. Count "no site fits" and skipped features at boot with and without the change.

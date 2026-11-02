@@ -17,8 +17,26 @@
  *
  * A partner is a LINK: a teleporter in this room, or (T3) in another
  * sector's room, reached through `remoteFind`.
+ *
+ * ALIEN GATES (v4 A) are teleporters too, with three differences: they cost
+ * nothing (no capacitor, no grid), their cycle runs at
+ * `ALIEN_GATE_CYCLE_SCALE`, and they fire on a timetable (every
+ * `ALIEN_GATE_INTERVAL_MS`, at a per-pair offset), driven by the end in the
+ * lower sector key so the twins fire once, together. They carry ships only.
  */
-import { isTeleporterKind, jumpCharge, jumpDistance, PAD_SPECS, TP_PHASE, type TeleportRules } from '../../shared-types/teleport.js';
+import {
+  ALIEN_GATE_CYCLE_SCALE,
+  ALIEN_GATE_INTERVAL_MS,
+  alienGateOffsetMs,
+  isAlienGateKind,
+  isTeleporterKind,
+  jumpCharge,
+  jumpDistance,
+  nextAlienGateJumpMs,
+  PAD_SPECS,
+  TP_PHASE,
+  type TeleportRules,
+} from '../../shared-types/teleport.js';
 import { DEFAULT_TELEPORT_RULES } from '../../shared-types/teleport.js';
 import { holdWeight } from '../../core/cargo/hold.js';
 import { armCycle, rulesSayFire, stepCycle, type CycleState } from '../../core/structures/teleportCycle.js';
@@ -54,6 +72,9 @@ export interface TeleporterHooks {
   remoteFind?(sectorKey: string, uid: string): { rec: StructureRecord; sys: TeleporterSubsystem } | null;
   /** T3 — hops from this sector to another (Infinity when unreachable). */
   hopsTo?(sectorKey: string): number;
+  /** v4 A — the twin of an alien gate, in its neighbour's room (null until
+   *  that room is up). */
+  findAlienTwin?(rec: StructureRecord): { sectorKey: string; uid: string } | null;
   /** T4 — a pad armed: offer its toll to the riders on it. */
   onArmed?(rec: StructureRecord): void;
   /** T4 — the swap is now: settle the pad's toll (payers ride free; dodgers
@@ -104,14 +125,17 @@ export class TeleporterSubsystem {
     return Number.isFinite(hops) ? { ...found, hops, remote: true } : null;
   }
 
-  /** The charge this teleporter's jump needs (0 when unpaired or unreachable). */
+  /** The charge this teleporter's jump needs (0 when unpaired or unreachable,
+   *  and always 0 for an alien gate: they are free). */
   required(rec: StructureRecord): number {
+    if (isAlienGateKind(rec.kind)) return 0;
     const l = this.link(rec);
     if (l === null) return 0;
     return jumpCharge(jumpDistance(l.hops, rec.x, rec.y, l.rec.x, l.rec.y));
   }
 
   isCharged(rec: StructureRecord): boolean {
+    if (isAlienGateKind(rec.kind)) return true;
     const req = this.required(rec);
     return req > 0 && (rec.tpCharge ?? 0) >= req;
   }
@@ -139,7 +163,7 @@ export class TeleporterSubsystem {
   }
 
   private wantsCharge(r: StructureRecord): boolean {
-    return isTeleporterKind(r.kind) && r.isConstructed && (r.tpCharge ?? 0) < this.required(r);
+    return isTeleporterKind(r.kind) && !isAlienGateKind(r.kind) && r.isConstructed && (r.tpCharge ?? 0) < this.required(r);
   }
 
   /** Pair with one of the same owner's teleporters, here or (T3) in another
@@ -208,8 +232,9 @@ export class TeleporterSubsystem {
   fire(rec: StructureRecord, nowMs: number): boolean {
     const l = this.link(rec);
     if (l === null || this.busy(rec) || l.sys.busy(l.rec)) return false;
-    if (!rec.isConstructed || !this.h.isPowered(rec) || !this.isCharged(rec)) return false;
-    armCycle(this.cycle, nowMs, this.h.cycleScale());
+    const alien = isAlienGateKind(rec.kind);
+    if (!rec.isConstructed || (!alien && (!this.h.isPowered(rec) || !this.isCharged(rec)))) return false;
+    armCycle(this.cycle, nowMs, this.scaleFor(rec));
     rec.tpInitiator = true;
     l.rec.tpInitiator = false;
     this.setPhase(rec, this.cycle.phase, this.cycle.phaseEndsAtMs);
@@ -237,6 +262,10 @@ export class TeleporterSubsystem {
         if (rec.tpInitiator === true) this.advance(rec, nowMs);
         continue;
       }
+      if (isAlienGateKind(rec.kind)) {
+        this.alienTimetable(rec, nowMs);
+        continue;
+      }
       // "When a ship boards": how long a ship has sat on the pad.
       if (this.h.shipsOnPad(rec) > 0) rec.tpBoardedSinceMs ??= nowMs;
       else delete rec.tpBoardedSinceMs;
@@ -253,6 +282,39 @@ export class TeleporterSubsystem {
     }
   }
 
+  /** Cycle speed for this pad: alien gates run quicker than built ones. */
+  private scaleFor(rec: StructureRecord): number {
+    return isAlienGateKind(rec.kind) ? this.h.cycleScale() * ALIEN_GATE_CYCLE_SCALE : this.h.cycleScale();
+  }
+
+  /** An idle alien gate: fire when its timetable says so. Only the end in
+   *  the lower sector key fires (its twin then runs the same cycle). The
+   *  test speed-up (`cycleScale`) shortens the interval too. */
+  private alienTimetable(rec: StructureRecord, nowMs: number): void {
+    if (rec.tpPartner === undefined) {
+      const twin = this.h.findAlienTwin?.(rec) ?? null;
+      if (twin === null) return;
+      rec.tpPartner = twin;
+      this.h.onChanged();
+    }
+    const p = rec.tpPartner;
+    const here = this.here();
+    const interval = ALIEN_GATE_INTERVAL_MS * this.h.cycleScale();
+    const offset = alienGateOffsetMs(here, p.sectorKey) * this.h.cycleScale();
+    if (rec.tpNextJumpMs === undefined) {
+      rec.tpNextJumpMs = nextAlienGateJumpMs(nowMs, offset, interval);
+      return;
+    }
+    if (nowMs < rec.tpNextJumpMs) return;
+    rec.tpNextJumpMs = nextAlienGateJumpMs(nowMs, offset, interval);
+    if (here < p.sectorKey) this.fire(rec, nowMs);
+  }
+
+  /** When this alien gate next jumps (ms since epoch), if known. */
+  nextJumpAt(rec: StructureRecord): number | undefined {
+    return rec.tpNextJumpMs;
+  }
+
   private advance(a: StructureRecord, nowMs: number): void {
     const l = this.link(a);
     this.cycle.phase = a.tpPhase ?? TP_PHASE.IDLE;
@@ -264,7 +326,7 @@ export class TeleporterSubsystem {
       return;
     }
     const before = this.cycle.phase;
-    const ev = stepCycle(this.cycle, nowMs, this.h.cycleScale());
+    const ev = stepCycle(this.cycle, nowMs, this.scaleFor(a));
     if (this.cycle.phase === before) return;
     if (ev === 'swap') {
       const req = this.required(a);
@@ -291,6 +353,7 @@ export class TeleporterSubsystem {
   pulse(): void {
     for (const rec of this.h.registry.all()) {
       if (!isTeleporterKind(rec.kind) || !rec.isConstructed || this.busy(rec)) continue;
+      if (isAlienGateKind(rec.kind)) continue; // ships only: no pad hold
       if (rec.tpArrived === true) {
         this.h.storage.padUnload(rec);
         rec.tpArrived = false;

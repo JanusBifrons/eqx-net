@@ -54,6 +54,7 @@ describe('structureKinds catalogue', () => {
       'mine_layer', // Mine Layer — appended at the tail
       'teleporter', // v4 T1 — appended
       'teleporter_large',
+      'alien_gate', // v4 A — appended
     ]);
   });
 

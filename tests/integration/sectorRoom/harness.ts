@@ -166,6 +166,8 @@ export async function bootSectorTestServer(opts: {
   npcBases?: ReadonlyArray<Record<string, unknown>>;
   /** T1 — seed the sector's own NPC base (as galaxy rooms do). */
   galaxyBases?: boolean;
+  /** v4 A — seed the alien gates (`SectorRoom.seedAlienGates`). */
+  alienGates?: boolean;
   /** C2 — every break-in takes this long (bespoke trigger). */
   breakInMs?: number;
   /** P2d — stock the prebuilt Capital's hold. */
@@ -237,6 +239,7 @@ export async function bootSectorTestServer(opts: {
     sectorFeatures: opts.sectorFeatures,
     npcBases: opts.npcBases,
     galaxyBases: opts.galaxyBases,
+    alienGates: opts.alienGates,
     breakInMs: opts.breakInMs,
     prebuiltStorageGoods: opts.prebuiltStorageGoods,
     teleportCycleScale: opts.teleportCycleScale,
@@ -427,6 +430,8 @@ export async function bootLivingWorldTestServer(opts: {
    *  owner present. */
   /** v4 T3 — teleporter cycle speed in every sector (1 = real time). */
   teleportCycleScale?: number;
+  /** v4 A — seed the alien gates in every sector (off by default). */
+  alienGates?: boolean;
   bases?: ReadonlyArray<{
     sector: string;
     structures: ReadonlyArray<{ kind: string; x: number; y: number }>;
@@ -463,6 +468,7 @@ export async function bootLivingWorldTestServer(opts: {
       droneCount: 0,
       testMode: true,
       ...(opts.teleportCycleScale !== undefined ? { teleportCycleScale: opts.teleportCycleScale } : {}),
+      ...(opts.alienGates === true ? { alienGates: true } : {}),
       // Seed a base ⇒ also clear the ambient asteroid field: placement is
       // obstacle-aware, so a stray rock would block a structure (e.g. the solar)
       // and leave the base un-ready. Mirrors structureScenario.test's

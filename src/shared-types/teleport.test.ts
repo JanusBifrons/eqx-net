@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PAD_SPECS, TELEPORTER_KINDS, onPad, padHalfExtent, padIrisSpanLocal, padPostCenters, padPushDir } from './teleport.js';
+import { ALIEN_GATE_INTERVAL_MS, PAD_SPECS, TELEPORTER_KINDS, alienGateOffsetMs, nextAlienGateJumpMs, onPad, padHalfExtent, padIrisSpanLocal, padPostCenters, padPushDir } from './teleport.js';
 
 describe('pad geometry (v4 T2)', () => {
   it('posts sit inside the footprint, in perimeter order', () => {
@@ -59,5 +59,28 @@ describe('padPushDir (the closing iris)', () => {
   it('a bigger hull straddles over a wider band', () => {
     expect(padPushDir(0, 0, half, 150, 0, 30, out)).toBe(false);
     expect(padPushDir(0, 0, half, 150, 0, 213, out)).toBe(true);
+  });
+});
+
+describe('alien gate timetable (v4 A)', () => {
+  it('both ends of a pair agree on the offset; different pairs differ', () => {
+    expect(alienGateOffsetMs('sol-prime', 'vega-reach')).toBe(alienGateOffsetMs('vega-reach', 'sol-prime'));
+    expect(alienGateOffsetMs('sol-prime', 'vega-reach')).not.toBe(alienGateOffsetMs('sol-prime', 'cygnus-arm'));
+    expect(alienGateOffsetMs('a', 'b')).toBeLessThan(ALIEN_GATE_INTERVAL_MS);
+  });
+
+  it('the next jump is strictly after now, within one interval, on the offset', () => {
+    const off = 12_345;
+    for (const now of [0, 12_345, 12_346, 59_999, 1_000_000, 1_793_656_000_000]) {
+      const next = nextAlienGateJumpMs(now, off);
+      expect(next).toBeGreaterThan(now);
+      expect(next - now).toBeLessThanOrEqual(ALIEN_GATE_INTERVAL_MS);
+      expect(((next - off) % ALIEN_GATE_INTERVAL_MS + ALIEN_GATE_INTERVAL_MS) % ALIEN_GATE_INTERVAL_MS).toBe(0);
+    }
+  });
+
+  it('a test speed-up shortens the interval', () => {
+    expect(nextAlienGateJumpMs(0, 0, 600)).toBe(600);
+    expect(nextAlienGateJumpMs(600, 0, 600)).toBe(1200);
   });
 });
