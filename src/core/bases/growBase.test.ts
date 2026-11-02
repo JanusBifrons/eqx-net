@@ -137,7 +137,7 @@ describe('growBase — valid under the real building rules', () => {
     expect(has('citadel')).toBeGreaterThanOrEqual(1);
   });
 
-  it('a colony is a city: housing dominates, and it runs the residents\' upkeep', () => {
+  it('a colony is a habitat station: housing dominates, and it runs the residents\' upkeep', () => {
     const city = growBase(profile('settlement', 'colony'), 9, ['station']);
     const count = (kinds: string[]) => city.placements.filter((p) => kinds.includes(p.kind)).length;
     expect(count(['habitat_module', 'tower_module'])).toBeGreaterThan(count(['smelter', 'refinery', 'fabricator', 'miner']));

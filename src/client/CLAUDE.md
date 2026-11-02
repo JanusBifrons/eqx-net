@@ -294,6 +294,12 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 - Rows come from the pure `components/cargoRows.ts`: names, never ids (uids ride inside the requests).
 - Every client → server message sender must pass its server schema: add a case to `tests/unit/tradeClientWireParity.test.ts` (strict schemas need the `type` the client's `send()` adds; LESSONS 2026-11-01).
 
+## Build menus show packed stock (economy v2)
+
+- Non-starter structures are placed from a PACKED item. Both build surfaces (the `SpeedDialMenu` kind drill and the desktop `BottomControlPanel`) label each kind via the pure `buildEntry(kindId, counts)` (`shared-types/packedStock.ts`): "Smelter ×2", or LOCKED ("Smelter · buy packed", dimmed, no-op on click/hotkey). Starter kinds are never locked; before the first reply (`counts === null`) nothing is.
+- The counts come ONLY from `packed_stock` replies (#16) via `usePackedStock(active)`, asked while a build menu is open. The Zustand `packedStock` field is a discrete map, written only on a reply.
+- Locks: `packedStock.test.ts`, `BottomControlPanel.test.tsx`, `packedBuy.test.ts` (server counts).
+
 ## Contracts tab (Living World P4c, plan peppy-jumping-pinwheel)
 
 - `layout/Drawer/tabs/ContractsTab.tsx` rebuilds ONLY from `GET /galaxy/contracts` (#16), polled only while `drawerTab === 'contracts' && isDrawerOpen`. It lives under `/galaxy` on purpose, so no new Vite proxy path is needed (see the `/trade` collision rule above).

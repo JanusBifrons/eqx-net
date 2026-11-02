@@ -36,6 +36,7 @@ import { BountyResultSchema } from '../../shared-types/contracts.js';
 import { LabStateSchema } from '../../shared-types/messages/labMessages.js';
 import { BreakInNoticeSchema, CargoStateSchema } from '../../shared-types/messages/cargoMessages.js';
 import { BpMarketStateSchema } from '../../shared-types/blueprintMarket.js';
+import { PackedStockSchema } from '../../shared-types/packedStock.js';
 import { BlueprintResultSchema, fittedCargoMul } from '../../shared-types/blueprints.js';
 
 const EMPTY_IDS: readonly string[] = Object.freeze([]);
@@ -2087,6 +2088,12 @@ export class ColyseusGameClient {
       useUIStore.getState().setCargoState(parsed.data);
     });
     // Economy v2 W6 — the blueprint market view (the Trade tab rebuilds from it).
+    // Economy v2 — packed-structure counts (the Build menus label/lock from them).
+    room.onMessage('packed_stock', (raw: unknown) => {
+      const parsed = PackedStockSchema.safeParse(raw);
+      if (!parsed.success) return;
+      useUIStore.getState().setPackedStock(parsed.data.counts);
+    });
     room.onMessage('bp_market_state', (raw: unknown) => {
       const parsed = BpMarketStateSchema.safeParse(raw);
       if (!parsed.success) return;

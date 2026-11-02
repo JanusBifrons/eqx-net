@@ -184,7 +184,7 @@ Update this section when a threshold is set.
   - **Wire:** `STRUCTURE_FLAG_DRAW_FULL` (64) in the room-state flags byte.
 - **A fence blocks its owner's own fire (user ruling 2026-11-02).** Every structure weapon asks the walls: beam turrets via `blockBeamAtWall` (the hit lands on the wall and the beam ends there); bolts and missiles are refused at the launcher when a wall lies between the turret and its muzzle; missiles in flight check `wallBlocksMissile` each step (detonate cause `'wall'`, no splash). Lock: `tests/integration/sectorRoom/turretVsOwnFence.test.ts`.
 - **Mine Layers:** `MineFieldSubsystem` (`structures/`) is ticked with the 10 Hz structure tick, after the turrets, and reuses their target grids, magazine (`rec.ammo`) and `setActive`. Mines are static and live in ROOM STATE (`SectorState.mines`, #16); `mine_detonated` is only an accelerator. Mines whose layer is gone are swept even when the sector has no structures left. Not persisted. Story: [docs/features/mine-layer.md](../../docs/features/mine-layer.md).
-- **City taxes (D3):** a recipe output `{ credits: n }` takes no storage space. When the cycle ends, `payCredits` pays it to a PLAYER owner's wallet (`city_taxes`); an NPC owner gets nothing. Never put credits in a hold.
+- **Station taxes (D3):** a recipe output `{ credits: n }` takes no storage space. When the cycle ends, `payCredits` pays it to a PLAYER owner's wallet (`station_taxes`); an NPC owner gets nothing. Never put credits in a hold.
 - Locks: `ProductionSubsystem.test.ts` and `tests/integration/sectorRoom/production.test.ts`. Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).
 
 ## Cargo access (plan soft-leaping-truffle v3, C1)
@@ -223,6 +223,7 @@ Update this section when a threshold is set.
   - **Order matters.** Seeding before the restore would make saved player structures fail their overlap check and be lost. Keep it after.
   - **Site.** The site comes from `chooseBaseSite`: player structures and parked hulls are hard blockers. Asteroids under the footprint are evicted quietly.
   - **Spawns** are nudged out of every structure box (`nearestClearPoint` in `onJoin`).
+  - **Several bases:** `galaxyBasePlan` gives a sector one to three bases (each its own owner, a different role, big bases alone, within `NPC_STRUCTURES_PER_SECTOR_MAX`), each seeded with `NPC_BASE_GAP` from the earlier ones. A base that finds no site is skipped and logged.
   - **Kill switch:** `EQX_DISABLE_NPC_BASES=1`. Lock: `galaxyBases.test.ts`.
 
 ## Convoys between NPC bases (plan soft-leaping-truffle v3, T2)

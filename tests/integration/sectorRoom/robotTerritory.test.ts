@@ -184,6 +184,46 @@ describe('SectorRoom integration — robot nexus + territory (P3)', () => {
     expect(getHoldStore().get(hid)?.hold.goods.salvage).toBe(50);
   }, 30_000);
 
+  /**
+   * Harvesters hunt haulers: with no pod to scoop, a harvester goes after a
+   * trade/convoy hauler nearby BEFORE raiding storage (robots are hostile to
+   * traders on sight, so closing in starts the attack; the killed hauler's
+   * cargo spills as a pod it then scoops). Out of range, it raids as before.
+   */
+  it('a harvester with nothing to scoop hunts a nearby hauler before raiding storage', async () => {
+    let clock: { now: number };
+    ({ h, t, clock } = await boot());
+    const room = h.getRoom('greenfall');
+    clock.now += 1000;
+    t.tick(clock.now);
+    const hid = t.liveHarvesters()[0]!;
+    const pose = room.getBotPose(hid)!;
+    const targets: Array<{ id: string; x: number; y: number }> = [];
+    const orig = room.setBotMoveTarget.bind(room);
+    room.setBotMoveTarget = (id: string, x: number, y: number): void => { targets.push({ id, x, y }); orig(id, x, y); };
+    // A raidable Cargo Bay right beside it AND a hauler in hunting range.
+    room._internals.structureRegistry.add({
+      id: 'test-raid-bay', uid: 'test-raid-bay-uid', owner: 'victim', kind: 'cargo_bay',
+      subtypeIndex: structureKindToIndex('cargo_bay'), x: pose.x + 40, y: pose.y, radius: 40,
+      isConstructed: true, constructionProgress: 0, constructionCost: 0, isDeconstructing: false,
+      minerals: 0, storedPower: 0, level: 1,
+      hold: { goods: { core: 2, salvage: 100 }, blueprints: [] },
+    });
+    expect(room.spawnLivingWorldBot({ botId: 'hauler-test-1', kind: 'trader-hauler', x: pose.x + 900, y: pose.y })).toBe(true);
+    clock.now += 1000;
+    t.tick(clock.now);
+    const last = targets.filter((c) => c.id === hid).pop()!;
+    const hauler = room.getBotPose('hauler-test-1')!;
+    expect(Math.hypot(last.x - hauler.x, last.y - hauler.y)).toBeLessThan(1);
+    expect(room._internals.structureRegistry.get('test-raid-bay')!.hold?.goods.core).toBe(2); // not raided
+
+    // The hauler leaves the hunting range ⇒ back to raiding.
+    room.despawnLivingWorldBot('hauler-test-1');
+    clock.now += 1000;
+    t.tick(clock.now);
+    expect(room._internals.structureRegistry.get('test-raid-bay')!.hold?.goods.core ?? 0).toBe(0);
+  }, 30_000);
+
   it('the nexus sector is claimed by the robots (and held through a dip)', async () => {
     let clock: { now: number };
     ({ h, t, clock } = await boot());

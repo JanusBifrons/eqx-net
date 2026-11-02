@@ -3,9 +3,11 @@ import { Box, Tooltip } from '@mui/material';
 import GpsFixedIcon from '@mui/icons-material/GpsFixed';
 import { useUIStore } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
-import { getStructureKind, type StructureKindId } from '@shared-types/structureKinds';
+import { type StructureKindId } from '@shared-types/structureKinds';
 import { BUILD_CATEGORIES } from './buildCategories';
 import { BUILD_ICONS } from './SpeedDialMenu';
+import { buildEntry } from '@shared-types/packedStock';
+import { usePackedStock } from '../structures/usePackedStock';
 import { isTouchDevice } from '../input/TouchInput';
 
 /**
@@ -101,6 +103,8 @@ export function BottomControlPanel(): JSX.Element | null {
   const setPlacementKind = useUIStore((s) => s.setPlacementKind);
 
   const spectating = pilotMode === 'spectator';
+  // Economy v2 — packed-structure stock while the build row is showing.
+  const packedStock = usePackedStock(phase === 'game' && spectating && !isTouchDevice());
 
   // Number-key (1..9) selection — weapon slot when piloting, building when
   // spectating. Desktop-only + in-game; ignores keystrokes while a text field
@@ -116,7 +120,7 @@ export function BottomControlPanel(): JSX.Element | null {
       const idx = n - 1;
       if (spectating) {
         const b = BUILDINGS[idx];
-        if (b) setPlacementKind(b);
+        if (b && !buildEntry(b, packedStock).locked) setPlacementKind(b);
       } else {
         const slots = getShipKind(shipKindId).slots ?? [];
         const s = slots[idx];
@@ -125,21 +129,23 @@ export function BottomControlPanel(): JSX.Element | null {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [phase, spectating, shipKindId, setActiveSlotId, setPlacementKind]);
+  }, [phase, spectating, shipKindId, setActiveSlotId, setPlacementKind, packedStock]);
 
   if (phase !== 'game' || isTouchDevice()) return null;
 
   const cells: PanelCell[] = [];
   if (spectating) {
     BUILDINGS.forEach((k, i) => {
+      // Economy v2 — a non-starter kind with no packed one here is greyed out.
+      const entry = buildEntry(k, packedStock);
       cells.push({
         key: `build:${k}`,
         num: i + 1,
-        label: getStructureKind(k).displayName,
+        label: entry.label,
         icon: BUILD_ICONS[k],
         active: placementKind === k,
-        empty: false,
-        onSelect: () => setPlacementKind(k),
+        empty: entry.locked,
+        onSelect: entry.locked ? null : () => setPlacementKind(k),
       });
     });
   } else {

@@ -48,6 +48,7 @@ import { ROBOT_DIRECTOR_OPTIONS, ROBOT_BOT_COUNT, isRobotsDisabled } from './liv
 import { RobotTerritory } from './livingworld/RobotTerritory.js';
 import { EliteDirector } from './livingworld/EliteDirector.js';
 import { EventDirector } from './livingworld/EventDirector.js';
+import { sumCounts } from './livingworld/countMaps.js';
 import { setContractsProvider } from './livingworld/contractsProvider.js';
 import { BountyBoard, setBountyBoard } from './economy/BountyBoard.js';
 import { WORLD_EVENT_KINDS, type WorldEventKind } from '../shared-types/worldEvents.js';
@@ -788,7 +789,7 @@ gameServer
     maxClients: 8,
   })
   .filterBy(['testId']);
-// D3 — a colony (a city: habitats, towers, hydroponics) for the showcase and
+// D3 — a habitat station (role colony: habitat modules, spires, hydroponics) for the showcase and
 // tests.
 gameServer
   .define('npc-base-colony', SectorRoom, {
@@ -991,6 +992,26 @@ gameServer
     maxClients: 4,
     tradeEnabled: true,
     seedStorageHold: { goods: { salvage: 120, alloy: 20 }, credits: 3000 },
+  })
+  .filterBy(['testId']);
+// C2/C3 break-in E2Es: a Capital owned by 'scenario' (a neutral owner, so its
+// cargo is locked to a visiting pilot) holding 7 alloy, a peaceful NPC fighter
+// beside the spawn, and breakInMs so a break-in resolves in under a second.
+// A real sectorKey: cargo access needs the ship's roster row.
+gameServer
+  .define('break-in-test', SectorRoom, {
+    sectorKey: 'break-in-test',
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    breakInMs: 800,
+    prebuiltStructures: [{ kind: 'capital', x: 0, y: 0 }],
+    prebuiltStorageGoods: { alloy: 7 },
+    dronePoses: [{ kind: 'fighter', x: 260, y: -650, angle: 0 }],
+    defaultSpawnX: 0,
+    defaultSpawnY: -650,
+    maxClients: 4,
   })
   .filterBy(['testId']);
 gameServer
@@ -1256,7 +1277,9 @@ async function main(): Promise<void> {
       directorPersistence,
       // Robots are enemies of every player on the galaxy map.
       hooks: {
-        extraEnemyCounts: () => robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS,
+        // Robots are hostile to every player on sight: the robot director's bots
+        // AND an active incursion's raiders both show as enemies on the map.
+        extraEnemyCounts: () => sumCounts(robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS, eventDirector?.hostileCountsBySector() ?? EMPTY_COUNTS),
         // P3 — robot-held sectors show the robots as owner on the galaxy map.
         sectorOwner: (key) => robotTerritory?.sectorOwner(key) ?? null,
         // P4a — named elites: ticked on the drone director's control loop and

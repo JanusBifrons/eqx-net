@@ -147,10 +147,21 @@ describe('SectorRoom integration — buying + placing packed structures (economy
       hold: { goods: {}, blueprints: [], packed: [{ product: 'structure:missile_turret', quality: 40 }] }, expiresAt: null,
     }, false);
     const before = [...internal.structureRegistry.all()].length;
+    // The Build-menu stock view counts the packed turret in the ship's hold.
+    const stock: Array<Record<string, number>> = [];
+    cr.onMessage('packed_stock', (m: { counts: Record<string, number> }) => stock.push(m.counts));
+    const askStock = async (): Promise<Record<string, number>> => {
+      const n = stock.length;
+      cr.send('packed_stock_query', { type: 'packed_stock_query' });
+      await until(() => stock.length > n, 3000, 'packed_stock reply');
+      return stock[stock.length - 1]!;
+    };
+    expect(await askStock()).toEqual({ 'structure:missile_turret': 1 });
     // Far from any storage, so taking it down repacks it as a POD.
     cr.send('place_structure', { type: 'place_structure', kind: 'missile_turret', x: 2500, y: -2500 });
     await until(() => [...internal.structureRegistry.all()].length === before + 1, 3000, 'placed from the ship hold');
     expect(getHoldStore().get(shipId)).toBeUndefined(); // the only item: the row is gone
+    expect(await askStock()).toEqual({}); // used up
     const turret = [...internal.structureRegistry.all()].find((r) => r.kind === 'missile_turret')!;
     expect(turret.packedQuality).toBe(40);
     // Quality 40 ⇒ +4 % max hull once built.

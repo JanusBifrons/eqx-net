@@ -68,6 +68,11 @@ export function sendSetFreightOrders(entityId: number, orders: FreightOrder[]): 
   return send('set_freight_orders', { entityId, orders });
 }
 
+/** Economy v2 — packed-structure counts for the Build menus (→ `packed_stock`). */
+export function sendPackedStockQuery(): boolean {
+  return send('packed_stock_query', {});
+}
+
 /** Economy v2 W6 — the blueprint market (each answered by `bp_market_state`). */
 export function sendBpMarketQuery(networkEntityId: number): boolean {
   return send('bp_market_query', { networkEntityId });
