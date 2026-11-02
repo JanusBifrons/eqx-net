@@ -53,6 +53,10 @@ export const HARVESTER_RESPAWN_MS = 90_000;
  *  (rarest goods first) while within RAID_DOCK_RADIUS. Credits are virtual
  *  (economy v2) — a raid can never take them. */
 export const RAID_RANGE = 3000;
+/** Harvesters hunt any hauler (trade or convoy) within this range of them. They
+ *  are hostile to traders on sight, so closing in starts the attack; a killed
+ *  hauler spills its cargo as a pod, which the harvester then scoops. */
+export const HAULER_HUNT_RANGE = 2500;
 export const RAID_DOCK_RADIUS = 200;
 export const RAID_STEP_WEIGHT = 30;
 export const RAID_PRIORITY: readonly GoodId[] = ['core', 'alloy', 'salvage', 'minerals'];
@@ -243,10 +247,14 @@ export class RobotTerritory {
       const carried = room.holdWeight?.(id) ?? 0;
       const pod = room.nearestLootPod?.(pose.x, pose.y) ?? null;
       const full = carried >= HARVESTER_CAPACITY * HARVESTER_RETURN_FRAC;
-      // P3c — nothing to scoop: raid the nearest player storage near the nexus.
-      const raid = !full && pod === null ? (room.nearestPlayerStorage?.(n.x, n.y, RAID_RANGE) ?? null) : null;
-      const goHome = full || (carried > 0 && pod === null && raid === null);
-      if (raid !== null) {
+      // Nothing to scoop: hunt a hauler nearby (killing it spills a pod to scoop).
+      const prey = !full && pod === null ? (room.nearestHauler?.(pose.x, pose.y, HAULER_HUNT_RANGE) ?? null) : null;
+      // P3c — no pod and no hauler: raid the nearest player storage near the nexus.
+      const raid = !full && pod === null && prey === null ? (room.nearestPlayerStorage?.(n.x, n.y, RAID_RANGE) ?? null) : null;
+      const goHome = full || (carried > 0 && pod === null && prey === null && raid === null);
+      if (prey !== null) {
+        room.setBotMoveTarget(id, prey.x, prey.y);
+      } else if (raid !== null) {
         if (Math.hypot(pose.x - raid.x, pose.y - raid.y) <= RAID_DOCK_RADIUS) {
           const step = Math.min(RAID_STEP_WEIGHT, HARVESTER_CAPACITY - carried);
           const took = room.raidStorage?.(id, raid.owner, raid.uid, step) ?? 0;
