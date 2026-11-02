@@ -123,6 +123,8 @@ Locks:
 
 **Limits.** At most 12 convoys in flight, at most 4 convoy haulers per sector, and the room's free-slot check applies. Convoys aren't persisted (neither are NPC bases); `start()` discards any convoy hold a crash left behind.
 
+**Budgets (measured).** A planning pass over every NPC base in today's galaxy, at its worst case (every base starved of every input, every output piled up; 30 bases), takes about 0.34 ms mean and 0.96 ms p99, against the plan's 2 ms. The director keeps at most `maxPerSector` (4) live convoys in a sector, against the plan's 6. Locks: `tests/unit/convoyBudget.test.ts` and the `benchmarks/convoys.bench.ts` bench.
+
 **Kill switch:** `EQX_DISABLE_CONVOYS=1` (also off with `EQX_DISABLE_NPC_BASES`). **Diagnostics:** `GET /dev/convoys` (phase, hauler pose, target).
 
 **Measured live** (21 seeded sectors, first 3 minutes after boot): 9 convoys launched, 7 loaded and 4 delivered across sectors.
