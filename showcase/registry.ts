@@ -28,7 +28,7 @@ import { robots } from './shots/robots.js';
 import { nexus } from './shots/nexus.js';
 import { proceduralBase } from './shots/proceduralBase.js';
 import { productionLine } from './shots/productionLine.js';
-import { colonyCity } from './shots/colonyCity.js';
+import { habitatStation } from './shots/habitatStation.js';
 
 /** Every shot, in reel order. Catalogue = all of them; reel = `reel: true`. */
 export const SHOTS: readonly Shot[] = [
@@ -54,7 +54,7 @@ export const SHOTS: readonly Shot[] = [
   scale,
   proceduralBase,
   productionLine,
-  colonyCity,
+  habitatStation,
   mobile,
 ];
 

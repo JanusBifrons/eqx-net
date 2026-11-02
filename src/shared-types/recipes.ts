@@ -62,7 +62,7 @@ export const RECIPE_IDS = [
   'build_gunship',
   'build_heavy',
   'build_missile_frigate',
-  // D3 — cities: upkeep (consumes goods, pays taxes) and their packed modules.
+  // D3 — habitation: upkeep (consumes goods, pays taxes) and its packed modules.
   'habitat_upkeep',
   'tower_upkeep',
   'pack_habitat_module',
@@ -84,7 +84,7 @@ export const PROCESSOR_KIND_IDS = [
   'assembly_plant',
   'ore_processing_complex',
   'shipyard',
-  // D3 — city modules "run" their residents' upkeep.
+  // D3 — habitation modules "run" their residents' upkeep.
   'habitat_module',
   'tower_module',
 ] as const satisfies readonly StructureKindId[];
@@ -99,7 +99,7 @@ export type RecipeOutput =
    *  unpacked into the roster). Lands in storage as `hull:<kind>`. */
   | { readonly hull: ShipKindId }
   /** D3 — taxes: credits paid into the OWNER's wallet when the cycle ends
-   *  (an NPC base has no wallet, so its city just consumes). Never stored in
+   *  (an NPC base has no wallet, so its habitat station just consumes). Never stored in
    *  a hold. */
   | { readonly credits: number };
 
@@ -329,7 +329,7 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
     inputs: { alloy: 40, components: 10, electronics: 6, machinery: 4, core: 2 }, outputs: [{ hull: 'missile-frigate' }],
     cyclePulses: 80, processors: ['shipyard'], blueprintRequired: true,
   }),
-  // ── D3 cities: the chain's consumers. A cycle is about a minute of residents
+  // ── D3 habitation: the chain's consumers. A cycle is about a minute of residents
   // living; without the goods the module is starved and pays nothing.
   habitat_upkeep: r({
     id: 'habitat_upkeep', displayName: 'Residents (taxes)',
@@ -399,8 +399,8 @@ export const GOOD_SOURCES: Readonly<Partial<Record<GoodId, readonly string[]>>> 
 
 export const GOOD_SINKS: Readonly<Partial<Record<GoodId, readonly string[]>>> = Object.freeze({
   fuel: ['reactor (burns it for power)'],
-  provisions: ['habitat and tower modules (city residents)'],
-  consumer_goods: ['habitat and tower modules (city residents)'],
+  provisions: ['habitat modules and residential spires (station residents)'],
+  consumer_goods: ['habitat modules and residential spires (station residents)'],
   munitions: ['missile turrets, autocannons and mine layers (ammo)'],
   alloy: ['structure upgrades to level 3+'],
   components: ['structure upgrades to level 4+', 'packed structures'],

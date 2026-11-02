@@ -390,7 +390,7 @@ export const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
   battery_bank: <BatteryChargingFullIcon />,
   storage_vault: <InventoryIcon />,
   shipyard: <SailingIcon />, // economy v2 W5b
-  habitat_module: <HomeWorkIcon />, // D3 cities
+  habitat_module: <HomeWorkIcon />, // D3 habitation
   tower_module: <ApartmentIcon />,
   mine_layer: <BlurCircularIcon />, // Mine Layer
 };

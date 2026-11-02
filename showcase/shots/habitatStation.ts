@@ -1,14 +1,14 @@
 import type { Shot } from '../types.js';
 
-/** Cities (plan soft-leaping-truffle v3, D3) — an NPC colony: housing and
- *  residential towers that use up provisions and consumer goods (the chain's
+/** Habitat stations (plan soft-leaping-truffle v3, D3) — an NPC habitat
+ *  station: habitat modules and residential spires that use up provisions and consumer goods (the chain's
  *  end products) and pay taxes, fed by its own hydroponics and by convoys.
  *  Fly-over from the spawn south of the fence. */
-export const colonyCity: Shot = {
-  id: 'colony-city',
+export const habitatStation: Shot = {
+  id: 'habitat-station',
   section: 'mechanics',
-  title: 'Cities',
-  caption: 'Cities consume what the chain makes: their residents use provisions and consumer goods and pay taxes.',
+  title: 'Habitat stations',
+  caption: 'Habitat stations consume what the chain makes: their residents use provisions and consumer goods and pay taxes.',
   features: ['T10'],
   docs: [],
   reel: false,
