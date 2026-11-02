@@ -283,6 +283,11 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 - **Never add a top-level `src/client/trade/` dir:** it collides with the `/trade` Vite proxy. Trade client code lives in `net/trade*.ts`. The `clientDirProxyCollision.test.ts` guard locks this.
 - Locks: `tradeView.test.ts`, `TradeToasts.test.tsx`, `tests/e2e/trade-tab.spec.ts` (feature tier).
 
+## Turret-vs-fence placement hint
+
+- A fence blocks every shot, its owner's turret fire included. While a shot-firing kind is placed, `PlacementFenceHint` (mounted hidden) is shown under the ghost by `gameRafLoop` when `turretFireCrossesWall` (`structures/fenceFireHint.ts`: pure, alloc-free, over the shared `visitDerivedWalls`) finds a wall within the turret's range. It toggles on change only, using direct DOM writes and no React re-render. It works on desktop and touch.
+- Locks: `fenceFireHint.test.ts`, `PlacementFenceHint.test.tsx`, `tests/e2e/turret-fence-hint.spec.ts`.
+
 ## Mines (Mine Layer)
 
 - `mirror.mines` is filled ONLY from room state `mines` by `ColyseusClient.syncMines` (in place, generation sweep, alloc-free once rows exist). `ConnectorRenderer.drawMines` draws each on the per-frame layer: the trigger ring plus a blinking canister, cyan for own and red for anyone else's.
