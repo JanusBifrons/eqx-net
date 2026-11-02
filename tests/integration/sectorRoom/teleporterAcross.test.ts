@@ -99,13 +99,81 @@ describe('SectorRoom integration — teleporters across sectors (v4 T3)', () => 
     expect(tpA.tpCharge ?? 0).toBeLessThan(need);
     expect(tpB.tpCharge ?? 0).toBeLessThan(need); // B is still filling on its own grid
     // The pad holds traded places across the two rooms.
-    expect(tpA.padHold?.goods.fuel).toBe(3);
-    expect(tpB.padHold?.goods.alloy).toBe(5);
+    // (Each room's own pulse may already have unloaded arrivals into its storage.)
+    const capA = [...ia.structureRegistry.all()].find((r) => r.kind === 'capital')!;
+    const capB = [...ib.structureRegistry.all()].find((r) => r.kind === 'capital')!;
+    expect((tpA.padHold?.goods.fuel ?? 0) + (capA.hold?.goods.fuel ?? 0)).toBe(3);
+    expect((tpB.padHold?.goods.alloy ?? 0) + (capB.hold?.goods.alloy ?? 0)).toBe(5);
     // The pilot on the near pad was sent to the far sector.
     await harness.waitUntil(() => transits.length > 0, 5000, 'transit_ready');
     expect(transits[0]!.targetSectorKey).toBe(B);
     // The parked hull rode the other way: rebuilt in A, gone from B.
     expect(ia.lingeringSlots.has(parkedId)).toBe(true);
     expect(ib.lingeringSlots.has(parkedId)).toBe(false);
+  });
+});
+
+describe('SectorRoom integration — pairing with another owner (v4 T4)', () => {
+  let harness: LivingWorldTestHarness;
+  afterEach(async () => {
+    if (harness) await harness.cleanup();
+  });
+
+  it('a request reaches the other owner by name; only that owner can accept', { timeout: 30_000 }, async () => {
+    harness = await bootLivingWorldTestServer({
+      sectors: [A, B],
+      botCount: 0,
+      bases: [
+        { sector: A, structures: LAYOUT, owner: OWNER },
+        { sector: B, structures: LAYOUT, owner: OTHER },
+      ],
+    });
+    const ia = (harness.getRoom(A) as SectorRoom)._internals;
+    const ib = (harness.getRoom(B) as SectorRoom)._internals;
+    const mine = [...ia.structureRegistry.all()].find((r) => r.kind === 'teleporter')!;
+    const theirs = [...ib.structureRegistry.all()].find((r) => r.kind === 'teleporter')!;
+
+    // The other owner is online in their sector; I visit it and ask.
+    const them = await harness.connectActive(OTHER, B, { shipKind: 'fighter' });
+    const prompts: Array<{ requestId: string; label: string; fromName: string }> = [];
+    them.onMessage('teleport_pair_request', (m: { requestId: string; label: string; fromName: string }) => prompts.push(m));
+    const me = await harness.connectActive(OWNER, B, { shipKind: 'fighter' });
+    me.send('teleport_pair_request', {
+      type: 'teleport_pair_request', entityId: ib.swarmRegistry.get(theirs.id)!.entityId, sectorKey: A, uid: mine.uid,
+    });
+    await harness.waitUntil(() => prompts.length > 0, 3000, 'request reached the owner');
+    expect(prompts[0]!.label).toContain(getSector(A)!.name);
+    expect(mine.tpPartner).toBeUndefined(); // nothing until they accept
+
+    // Only the owner can accept; a stranger's answer does nothing.
+    me.send('teleport_pair_answer', { type: 'teleport_pair_answer', requestId: prompts[0]!.requestId, accept: true });
+    await harness.advance(150);
+    expect(mine.tpPartner).toBeUndefined();
+  });
+
+  it('the owner accepting pairs them across owners and sectors', { timeout: 30_000 }, async () => {
+    harness = await bootLivingWorldTestServer({
+      sectors: [A, B],
+      botCount: 0,
+      bases: [
+        { sector: A, structures: LAYOUT, owner: OWNER },
+        { sector: B, structures: LAYOUT, owner: OTHER },
+      ],
+    });
+    const ia = (harness.getRoom(A) as SectorRoom)._internals;
+    const ib = (harness.getRoom(B) as SectorRoom)._internals;
+    const mine = [...ia.structureRegistry.all()].find((r) => r.kind === 'teleporter')!;
+    const theirs = [...ib.structureRegistry.all()].find((r) => r.kind === 'teleporter')!;
+    const them = await harness.connectActive(OTHER, B, { shipKind: 'fighter' });
+    const prompts: Array<{ requestId: string }> = [];
+    them.onMessage('teleport_pair_request', (m: { requestId: string }) => prompts.push(m));
+    const me = await harness.connectActive(OWNER, B, { shipKind: 'fighter' });
+    me.send('teleport_pair_request', {
+      type: 'teleport_pair_request', entityId: ib.swarmRegistry.get(theirs.id)!.entityId, sectorKey: A, uid: mine.uid,
+    });
+    await harness.waitUntil(() => prompts.length > 0, 3000, 'request reached the owner');
+    them.send('teleport_pair_answer', { type: 'teleport_pair_answer', requestId: prompts[0]!.requestId, accept: true });
+    await harness.waitUntil(() => theirs.tpPartner?.uid === mine.uid, 3000, 'paired');
+    expect(mine.tpPartner).toEqual({ sectorKey: B, uid: theirs.uid });
   });
 });

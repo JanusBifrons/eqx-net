@@ -1022,29 +1022,33 @@ gameServer
 // paired at seed, owned by a fixed sentinel the E2E joins as (anonymous
 // context + localStorage eqxPlayerId). Jump cycles run 10× fast and the grid
 // pulses every 100 ms, so a capacitor fills in a couple of seconds.
+const TELEPORT_TEST_OPTS = {
+  testMode: true,
+  droneCount: 0,
+  asteroidConfig: [],
+  peacefulDrones: true,
+  structureGridPulseMs: 100,
+  prebuiltStructures: [
+    { kind: 'capital', x: 0, y: 0 },
+    { kind: 'connector', x: -600, y: 0 },
+    { kind: 'connector', x: 600, y: 0 },
+    { kind: 'teleporter', x: -1300, y: 0 },
+    { kind: 'teleporter', x: 1300, y: 0 },
+  ],
+  prebuiltStructuresOwner: TELEPORT_TEST_OWNER,
+  prebuiltStorageGoods: { alloy: 50 },
+  pairTeleporters: true,
+  defaultSpawnX: 0,
+  defaultSpawnY: 900,
+  maxClients: 4,
+};
 gameServer
-  .define('teleport-test', SectorRoom, {
-    sectorKey: 'teleport-test',
-    testMode: true,
-    droneCount: 0,
-    asteroidConfig: [],
-    peacefulDrones: true,
-    structureGridPulseMs: 100,
-    teleportCycleScale: 0.1,
-    prebuiltStructures: [
-      { kind: 'capital', x: 0, y: 0 },
-      { kind: 'connector', x: -600, y: 0 },
-      { kind: 'connector', x: 600, y: 0 },
-      { kind: 'teleporter', x: -1300, y: 0 },
-      { kind: 'teleporter', x: 1300, y: 0 },
-    ],
-    prebuiltStructuresOwner: TELEPORT_TEST_OWNER,
-    prebuiltStorageGoods: { alloy: 50 },
-    pairTeleporters: true,
-    defaultSpawnX: 0,
-    defaultSpawnY: 900,
-    maxClients: 4,
-  })
+  .define('teleport-test', SectorRoom, { ...TELEPORT_TEST_OPTS, sectorKey: 'teleport-test', teleportCycleScale: 0.1 })
+  .filterBy(['testId']);
+// v4 T4 — the same layout with a half-speed cycle, so a rider has ~6 s
+// between the toll prompt (pad armed) and the swap to answer it.
+gameServer
+  .define('teleport-toll-test', SectorRoom, { ...TELEPORT_TEST_OPTS, sectorKey: 'teleport-toll-test', teleportCycleScale: 0.5 })
   .filterBy(['testId']);
 gameServer
   .define('trade-showcase', SectorRoom, {

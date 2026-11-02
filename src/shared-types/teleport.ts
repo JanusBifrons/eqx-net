@@ -254,3 +254,74 @@ export const TeleportCandidatesReplySchema = z.object({
   items: z.array(z.object({ sectorKey: z.string(), uid: z.string(), label: z.string() })).max(200),
 });
 export type TeleportCandidatesReply = z.infer<typeof TeleportCandidatesReplySchema>;
+
+// ── T4 — tolls and pairing with another owner ───────────────────────────────
+
+/** A teleporter's toll: credits per 1000 charge of the jump, and what happens
+ *  to a rider who doesn't pay (they still ride). */
+export const TeleportTollSchema = z
+  .object({
+    per1000: z.number().int().min(0).max(10_000),
+    nonPayer: z.enum(['standing', 'hostile']),
+  })
+  .strict();
+export type TeleportToll = z.infer<typeof TeleportTollSchema>;
+
+/** The toll for one rider on a jump needing `required` charge. */
+export function tollFor(required: number, per1000: number): number {
+  return Math.max(0, Math.ceil((required * per1000) / 1000));
+}
+
+/** A rider who rides without paying loses this much of the owner's standing
+ *  (unless the owner makes non-payers hostile instead). */
+export const TOLL_DODGE_STANDING = -5;
+
+/** `tpRules` bit: non-payers become hostile (else they lose standing). */
+export const TP_RULE_TOLL_HOSTILE = 16;
+
+export const SetTeleportTollSchema = z
+  .object({ type: z.literal('set_teleport_toll'), entityId, toll: TeleportTollSchema.nullable() })
+  .strict();
+
+/** Server → a rider on an armed pad: pay this toll? `padId` names the pad. */
+export const TollPromptSchema = z.object({
+  type: z.literal('teleport_toll'),
+  padId: z.number().int().nonnegative(),
+  credits: z.number().int().nonnegative(),
+  /** The owner, by name. */
+  ownerName: z.string(),
+});
+export type TollPrompt = z.infer<typeof TollPromptSchema>;
+
+/** A rider's answer. Always / Never are remembered for that owner's faction. */
+export const TollAnswerSchema = z
+  .object({
+    type: z.literal('teleport_toll_answer'),
+    padId: z.number().int().nonnegative(),
+    answer: z.enum(['pay', 'decline', 'always', 'never']),
+  })
+  .strict();
+export type TollAnswer = z.infer<typeof TollAnswerSchema>['answer'];
+
+/** Ask another owner to pair their teleporter (`entityId`, here) with one of
+ *  yours (`sectorKey` + `uid`). They accept or decline. */
+export const TeleportPairRequestSchema = z
+  .object({
+    type: z.literal('teleport_pair_request'),
+    entityId,
+    sectorKey: z.string().min(1).max(64),
+    uid: z.string().min(1).max(64),
+  })
+  .strict();
+/** Server → the other owner: a pairing request, by name. */
+export const PairRequestPromptSchema = z.object({
+  type: z.literal('teleport_pair_request'),
+  requestId: z.string(),
+  fromName: z.string(),
+  /** "Their Teleporter · Verdance → your Teleporter · 1.3 km". */
+  label: z.string(),
+});
+export type PairRequestPrompt = z.infer<typeof PairRequestPromptSchema>;
+export const TeleportPairAnswerSchema = z
+  .object({ type: z.literal('teleport_pair_answer'), requestId: z.string().min(1).max(64), accept: z.boolean() })
+  .strict();

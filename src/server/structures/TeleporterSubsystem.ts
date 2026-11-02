@@ -54,6 +54,11 @@ export interface TeleporterHooks {
   remoteFind?(sectorKey: string, uid: string): { rec: StructureRecord; sys: TeleporterSubsystem } | null;
   /** T3 — hops from this sector to another (Infinity when unreachable). */
   hopsTo?(sectorKey: string): number;
+  /** T4 — a pad armed: offer its toll to the riders on it. */
+  onArmed?(rec: StructureRecord): void;
+  /** T4 — the swap is now: settle the pad's toll (payers ride free; dodgers
+   *  lose standing or become hostile). */
+  onTollSettle?(rec: StructureRecord): void;
   /** T2 — the iris spans (solid only while SEALED) and the closing push. */
   spawnIris?(rec: StructureRecord): void;
   setIrisActive?(rec: StructureRecord, active: boolean): void;
@@ -138,9 +143,11 @@ export class TeleporterSubsystem {
   }
 
   /** Pair with one of the same owner's teleporters, here or (T3) in another
-   *  sector's room (`otherSys`). */
-  pair(a: StructureRecord, b: StructureRecord, otherSys: TeleporterSubsystem = this): boolean {
-    if (a === b || a.owner !== b.owner || !isTeleporterKind(a.kind) || !isTeleporterKind(b.kind)) return false;
+   *  sector's room (`otherSys`). `consented` (T4): both owners agreed, so the
+   *  two may belong to different owners. */
+  pair(a: StructureRecord, b: StructureRecord, otherSys: TeleporterSubsystem = this, consented = false): boolean {
+    if (a === b || !isTeleporterKind(a.kind) || !isTeleporterKind(b.kind)) return false;
+    if (!consented && a.owner !== b.owner) return false;
     if (a.uid === undefined || b.uid === undefined) return false;
     if (this.busy(a) || otherSys.busy(b)) return false;
     this.unpair(a);
@@ -188,7 +195,13 @@ export class TeleporterSubsystem {
     r.tpPhase = phase;
     r.tpPhaseEndsAtMs = endsAtMs;
     this.applyPhaseEffects(r);
+    if (phase === TP_PHASE.ARMED) this.h.onArmed?.(r);
     this.h.onChanged();
+  }
+
+  /** T4 — settle this room's pad's toll (called for both ends at the swap). */
+  settleToll(r: StructureRecord): void {
+    this.h.onTollSettle?.(r);
   }
 
   /** Fire now (Manual, or a rule). Needs a present, idle partner, power and charge. */
@@ -257,6 +270,8 @@ export class TeleporterSubsystem {
       const req = this.required(a);
       if ((a.tpCharge ?? 0) >= req) {
         a.tpCharge = (a.tpCharge ?? 0) - req;
+        this.settleToll(a);
+        l.sys.settleToll(l.rec);
         if (l.remote) {
           this.h.onSwapRemote?.(a, l);
         } else {

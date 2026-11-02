@@ -74,7 +74,7 @@ export interface SectorSnapshotStructure {
   /** T4b — a Freight Dock's standing orders. Absent ⇒ none. */
   freightOrders?: Array<{ good: string; mode: 'import' | 'export'; level: number }>;
   /** v4 T1 — a teleporter's partner, rules (validated on restore) and charge. */
-  teleport?: { partner?: { sectorKey: string; uid: string }; rules?: unknown; charge?: number };
+  teleport?: { partner?: { sectorKey: string; uid: string }; rules?: unknown; charge?: number; toll?: unknown };
   /** The packed item's quality (a deconstruct repacks it). */
   packedQuality?: number;
   prodProgress?: number;

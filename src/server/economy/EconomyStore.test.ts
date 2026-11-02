@@ -112,3 +112,23 @@ describe('EconomyStore policies and the Factions view (F3)', () => {
     expect(v.policy).toEqual({ hostileBelow: null, alliedAbove: null });
   });
 });
+
+describe('EconomyStore teleporter tolls (T4)', () => {
+  it('remembers Always / Never per owner faction and keeps faction treasuries', () => {
+    const { s, ops } = store();
+    s.setTollPref(P, 'core', 'always');
+    s.setTollPref(P, Q, 'never');
+    expect(s.tollPref(P, 'core')).toBe('always');
+    expect(s.tollPref(P, Q)).toBe('never');
+    expect(s.tollPref(P, 'traders')).toBeUndefined();
+    s.creditTreasury('traders', 40);
+    s.creditTreasury('traders', 2);
+    expect(s.treasury('traders')).toBe(42);
+    const player = s.playerOp(P) as Extract<PersistOp, { type: 'ECON_PLAYER_PUT' }>;
+    const tre = ops.filter((o) => o.type === 'ECON_STATE_PUT' && (o as { key: string }).key === 'treasuries').pop() as Extract<PersistOp, { type: 'ECON_STATE_PUT' }>;
+    const { s: s2 } = store();
+    s2.hydrate({ players: [{ player_id: P, payload_json: player.payloadJson }], deals: [], market: null, treasuries: tre.payloadJson });
+    expect(s2.tollPref(P, 'core')).toBe('always');
+    expect(s2.treasury('traders')).toBe(42);
+  });
+});

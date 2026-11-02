@@ -12,7 +12,7 @@ import type { GoodId } from '../../shared-types/goods.js';
 import type { BlueprintItem } from '../../shared-types/items.js';
 import type { Hold } from '../../shared-types/goods.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
-import type { TeleportPartner, TeleportRules, TpPhase } from '../../shared-types/teleport.js';
+import type { TeleportPartner, TeleportRules, TeleportToll, TpPhase } from '../../shared-types/teleport.js';
 import { Connection } from '../../core/structures/Connection.js';
 
 export interface StructureRecord {
@@ -75,6 +75,8 @@ export interface StructureRecord {
   tpBoardedSinceMs?: number;
   /** Goods just arrived on the pad: unload them into storage next pulse. */
   tpArrived?: boolean;
+  /** T4 — its toll (credits per 1000 charge; what happens to non-payers). */
+  tpToll?: TeleportToll;
   /** T2 — its iris walls and push field exist in the physics worker. */
   tpIrisSpawned?: boolean;
   /** Stored power for a Battery (0..the kind's `powerStorageCapacity`). It

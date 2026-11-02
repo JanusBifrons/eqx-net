@@ -290,6 +290,8 @@ export interface StructureRenderState {
     keepGood: number;
     keepQty: number;
     padWeight: number;
+    /** T4 — toll, credits per 1000 charge (0 = free). */
+    toll: number;
   };
   /** Owning playerId. Drives the inspector's "is this mine?" check AND the
    *  same-owner filter on connection / placement-preview lines — a cross-owner

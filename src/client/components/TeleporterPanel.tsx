@@ -17,8 +17,10 @@ import {
   sendTeleportFire,
   sendTeleportPadLoad,
   sendTeleportPadUnload,
+  sendSetTeleportToll,
   sendTeleportCandidates,
   sendTeleportPairRemote,
+  sendTeleportPairRequest,
   sendTeleportUnpair,
 } from '../structures/structureActionsClient';
 import { useUIStore } from '../state/store';
@@ -29,12 +31,14 @@ import {
   TP_PHASE,
   TP_RULE_BOARDS,
   TP_RULE_CHARGED,
+  TP_RULE_TOLL_HOSTILE,
   isTeleporterKind,
   type TeleportRules,
 } from '../../shared-types/teleport';
 import { GOOD_DEFS, GOOD_IDS, type GoodId } from '../../shared-types/goods';
 
 const POLL_MS = 250;
+const TOLL_STEPS = [0, 5, 10, 25, 50] as const;
 const ROOT_SX = { mt: 0.5, pointerEvents: 'auto' as const, fontSize: 10, color: '#dcd4ff', maxWidth: 240 };
 const TITLE_SX = { fontSize: 10, fontWeight: 700, color: '#b9a6ff', mb: '2px' };
 const BAR_SX = { height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.12)', overflow: 'hidden', my: '2px' };
@@ -62,6 +66,8 @@ interface View {
   partner: number;
   rules: number;
   padWeight: number;
+  toll: number;
+  tollHostile: boolean;
   x: number;
   y: number;
 }
@@ -73,13 +79,16 @@ function readView(entityId: number): View | null {
   const kind = sw?.shipKind;
   if (!st?.teleport || !sw || kind === undefined || !isTeleporterKind(kind)) return null;
   const t = st.teleport;
-  return { kind, phase: t.phase, chargePct: t.chargePct, partner: t.partner, rules: t.rules, padWeight: t.padWeight, x: sw.x, y: sw.y };
+  return {
+    kind, phase: t.phase, chargePct: t.chargePct, partner: t.partner, rules: t.rules, padWeight: t.padWeight,
+    toll: t.toll, tollHostile: (t.rules & TP_RULE_TOLL_HOSTILE) !== 0, x: sw.x, y: sw.y,
+  };
 }
 
 function sameView(a: View | null, b: View | null): boolean {
   if (a === null || b === null) return a === b;
   return a.phase === b.phase && a.chargePct === b.chargePct && a.partner === b.partner && a.rules === b.rules
-    && a.padWeight === b.padWeight;
+    && a.padWeight === b.padWeight && a.toll === b.toll && a.tollHostile === b.tollHostile;
 }
 
 export const TeleporterPanel = memo(function TeleporterPanel({ entityId }: { entityId: number }): JSX.Element | null {
@@ -156,6 +165,30 @@ export const TeleporterPanel = memo(function TeleporterPanel({ entityId }: { ent
           when a ship boards
         </Box>
       </Box>
+      <Box sx={ROW_SX}>
+        <span>Toll:</span>
+        <select
+          style={SELECT_STYLE}
+          value={String(view.toll)}
+          onChange={(e) => {
+            const per1000 = Number(e.target.value);
+            sendSetTeleportToll(entityId, per1000 === 0 ? null : { per1000, nonPayer: view.tollHostile ? 'hostile' : 'standing' });
+          }}
+          data-testid="tp-toll"
+        >
+          {TOLL_STEPS.map((v) => <option key={v} value={String(v)}>{v === 0 ? 'Free' : `${v}¢ per 1000 charge`}</option>)}
+        </select>
+        {view.toll > 0 && (
+          <Box
+            component="span"
+            sx={view.tollHostile ? CHIP_ON_SX : BTN_SX}
+            data-testid="tp-toll-hostile"
+            onClick={() => sendSetTeleportToll(entityId, { per1000: view.toll, nonPayer: view.tollHostile ? 'standing' : 'hostile' })}
+          >
+            non-payers hostile
+          </Box>
+        )}
+      </Box>
       <Box sx={ROW_SX} data-testid="tp-pad" data-pad-weight={view.padWeight}>
         <span>{`PAD ${view.padWeight} / ${cap}`}</span>
         <select style={SELECT_STYLE} value={good} onChange={(e) => setGood(e.target.value as GoodId)} data-testid="tp-load-good">
@@ -168,6 +201,46 @@ export const TeleporterPanel = memo(function TeleporterPanel({ entityId }: { ent
           Unload
         </Box>
       </Box>
+    </Box>
+  );
+});
+
+/**
+ * v4 T4 — someone else's teleporter: ask its owner to pair it with one of
+ * yours. Lists YOUR teleporters (the server's reply, by name); the owner gets
+ * a request to accept or decline.
+ */
+export const ForeignTeleporterPanel = memo(function ForeignTeleporterPanel({ entityId }: { entityId: number }): JSX.Element {
+  const candidates = useUIStore((s) => (s.teleportCandidates?.entityId === entityId ? s.teleportCandidates.items : null));
+  const [asked, setAsked] = useState(false);
+  useEffect(() => {
+    sendTeleportCandidates(entityId);
+  }, [entityId]);
+  return (
+    <Box sx={ROOT_SX} data-testid="tp-foreign-panel">
+      <Box sx={TITLE_SX}>TELEPORTER · not yours</Box>
+      {asked ? (
+        <span data-testid="tp-pair-requested">Request sent. The owner decides.</span>
+      ) : candidates === null ? (
+        <span>Looking for your teleporters…</span>
+      ) : candidates.length === 0 ? (
+        <span>Build a teleporter of your own to pair with this one.</span>
+      ) : (
+        <Box sx={ROW_SX}>
+          <span>Ask to pair with:</span>
+          {candidates.map((c) => (
+            <Box
+              key={`${c.sectorKey}/${c.uid}`}
+              component="span"
+              sx={BTN_SX}
+              data-testid="tp-pair-request-option"
+              onClick={() => { if (sendTeleportPairRequest(entityId, c.sectorKey, c.uid)) setAsked(true); }}
+            >
+              {c.label}
+            </Box>
+          ))}
+        </Box>
+      )}
     </Box>
   );
 });

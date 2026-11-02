@@ -14,7 +14,7 @@ Ships enter between the posts; only the posts are solid. Both sizes are player-b
 
 A teleporter pairs with exactly **one** partner. Select your teleporter, and the inspector lists your other built teleporters in the sector by kind and distance, never by id. Tap one to pair them, or **Unpair** to split them.
 
-T1 pairs teleporters in the same sector. Other sectors (T3) and other owners' teleporters, by mutual agreement (T4), come next.
+T1 pairs teleporters in the same sector. T3 adds other sectors, and T4 adds other owners' teleporters by mutual agreement.
 
 ## Charge
 
@@ -92,6 +92,21 @@ It is separate from base storage, so production never draws from it.
 
 **How rooms find each other.** The `TeleportBroker` (`src/server/teleport/`) is a process-wide registry, like the trade sink. Every room with a sector key registers itself, and each director registers a bot mover.
 
+## Tolls and pairing with other owners (T4)
+
+**Setting a toll.** The inspector's **Toll** select sets a price per 1 000 charge (Free, 5, 10, 25 or 50 credits). A jump's toll is `tollFor(jumpCharge, per1000)`, rounded up, so a longer jump costs more. Once a toll is set, **non-payers hostile** switches what happens to someone who rides without paying. The toll is stored on the teleporter, persisted with it, and rides room state (`tpToll`, plus a bit in `tpRules`).
+
+**Who is asked.** When a pad arms, every pilot on it is offered that pad's toll, except the owner and anyone the owner counts as friendly or allied (`relationOf`). A rider pays the pad they board, so each end of a pair can charge its own toll.
+
+**The prompt.** A card at the top centre: *"<Owner> charges N¢ to ride this teleporter."* with four buttons:
+- **Pay**: taken from the wallet now (all or nothing) and paid to the owner: a player's wallet, or an NPC faction's treasury.
+- **Don't pay**: you still ride.
+- **Always pay** / **Never pay**: as above, and remembered for every teleporter that faction owns, so you aren't asked again.
+
+**At the swap.** Anyone still on the pad who was asked and didn't pay rides anyway, and pays for it in standing: the owner faction's view of them drops by 5 (`TOLL_DODGE_STANDING`). With **non-payers hostile** on, the owner records a hostile act instead, so their turrets and patrols treat the rider as hostile for a while. An answer that arrives after the swap is ignored (the server logs `teleport_toll_answer_ignored`).
+
+**Pairing with someone else's teleporter.** Select another owner's built teleporter to see **Ask to pair**, which lists your own teleporters in any sector. Choosing one sends the owner a request (`teleport_pair_request`), and they see an Accept / Decline card. Only that owner can accept. On Accept the two are paired like any other pair, and either owner can unpair. A request expires after 10 minutes.
+
 ## Testing
 
 | Layer | File |
@@ -103,6 +118,9 @@ It is separate from base storage, so production never draws from it.
 | T2 integration | `teleporter.test.ts`: a pilot on pad A and a drone on pad B trade places, and the pilot's epoch bumps |
 | T3 integration | `teleporterAcross.test.ts` (two real galaxy rooms): candidates by sector name, pairing both ways, the hop-based charge, the cycle in both rooms, the pad holds swapped across rooms, the pilot sent to the far sector, a parked hull rebuilt there |
 | T3 unit | `LivingWorldDirector.teleportBot.test.ts`, `tests/unit/teleportClientWireParity.test.ts` |
+| T4 integration | `teleporter.test.ts` (pay, don't pay → standing, always remembered); `teleporterAcross.test.ts` (a stranger can't accept a pair request; the owner's accept pairs both rooms) |
+| T4 unit | `EconomyStore.test.ts` (toll preferences, treasuries); `teleportClientWireParity.test.ts` (toll and pairing senders) |
+| T4 E2E | `teleporter.spec.ts` (`teleport-toll-test` room, half-speed cycle): the owner sets a toll from the inspector, a rider on the pad gets the prompt, pays, and their wallet goes down |
 
 There is no cross-sector browser test yet: the pilot's hop is the existing warp flow (`transit_ready`), checked here at the integration level.
 

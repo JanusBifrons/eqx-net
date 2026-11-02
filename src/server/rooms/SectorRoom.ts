@@ -128,6 +128,17 @@ import {
   TeleportUnpairSchema,
   TeleportCandidatesQuerySchema,
   TeleportPairRemoteSchema,
+  SetTeleportTollSchema,
+  TollAnswerSchema,
+  TeleportPairRequestSchema,
+  TeleportPairAnswerSchema,
+  TOLL_DODGE_STANDING,
+  TP_RULE_TOLL_HOSTILE,
+  TeleportTollSchema,
+  tollFor,
+  type TollAnswer,
+  type TollPrompt,
+  type PairRequestPrompt,
   onPad,
   padIrisSpanLocal,
   padPostCenters,
@@ -2323,6 +2334,9 @@ export class SectorRoom extends Room<SectorState> {
         return f && f.room !== this.teleportRoom ? { rec: f.rec, sys: f.room.teleporters } : null;
       },
       hopsTo: (sk) => this.hopsToSector(sk),
+      // T4 — tolls: offered at arming, settled at the swap.
+      onArmed: (rec) => this.offerToll(rec),
+      onTollSettle: (rec) => this.settleToll(rec),
       spawnIris: (rec) => this.forIrisSpan(rec, (id, s) => {
         this.postToWorker({ type: 'SPAWN_WALL', id, ax: rec.x + s.ax, ay: rec.y + s.ay, bx: rec.x + s.bx, by: rec.y + s.by, thickness: GATE_SPAN_THICKNESS });
         this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active: false });
@@ -2356,6 +2370,7 @@ export class SectorRoom extends Room<SectorState> {
       collectRiders: (from) => this.collectRiders(from),
       dispatchRiders: (batch, toRoom, to) => this.dispatchRiders(batch, toRoom, to),
       receiveLingeringHull: (row) => this.restoreLingeringHullsFromSnapshot([row]),
+      sendToPlayer: (pid, type, msg) => this.sendToPlayerHere(pid, type, msg),
     };
     if (this.sectorKey !== null) getTeleportBroker().register(this.teleportRoom);
     this.gates = new GateController({
@@ -2900,21 +2915,91 @@ export class SectorRoom extends Room<SectorState> {
       if (other) this.teleporters.pair(rec, other);
     }));
     // T3 — the sender's other teleporters, here and in every other sector.
-    this.onMessage('teleport_candidates', tpMessage('teleport_candidates', TeleportCandidatesQuerySchema, (rec, msg, client) => {
+    // Any teleporter (yours or someone else's, for a pair request): it lists
+    // the SENDER's own teleporters.
+    this.onMessage('teleport_candidates', (client: Client, raw: unknown) => {
+      const parsed = TeleportCandidatesQuerySchema.safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, 'teleport_candidates');
+        return;
+      }
+      const msg = parsed.data;
+      const me = this.sessionToPlayer.get(client.sessionId);
+      const sw = this.swarmRegistry.getByEntityId(msg.entityId);
+      const rec = sw ? this.structureRegistry.get(sw.id) : undefined;
+      if (!me || !rec || !isTeleporterKind(rec.kind)) return;
       const items: Array<{ sectorKey: string; uid: string; label: string }> = [];
       const here = this.sectorKey ?? '';
-      for (const r of this.teleportRoom.ownTeleporters(rec.owner)) {
+      for (const r of this.teleportRoom.ownTeleporters(me)) {
         if (r === rec || r.uid === undefined) continue;
         const km = (Math.hypot(r.x - rec.x, r.y - rec.y) / 1000).toFixed(1);
         items.push({ sectorKey: here, uid: r.uid, label: `${getStructureKind(r.kind).displayName} · ${km} km` });
       }
-      for (const { sectorKey, rec: r } of getTeleportBroker().ownTeleporters(rec.owner)) {
+      for (const { sectorKey, rec: r } of getTeleportBroker().ownTeleporters(me)) {
         if (sectorKey === here || r.uid === undefined) continue;
         const where = getSector(sectorKey)?.name ?? 'another sector';
         items.push({ sectorKey, uid: r.uid, label: `${getStructureKind(r.kind).displayName} · ${where}` });
       }
       client.send('teleport_candidates', { type: 'teleport_candidates', entityId: msg.entityId, items: items.slice(0, 200) });
+    });
+    // T4 — tolls: the owner sets one; riders answer the prompt.
+    this.onMessage('set_teleport_toll', tpMessage('set_teleport_toll', SetTeleportTollSchema, (rec, msg) => {
+      if (msg.toll === null || msg.toll.per1000 === 0) delete rec.tpToll;
+      else rec.tpToll = { ...msg.toll };
+      this.rebuildStructuresSlice();
     }));
+    this.onMessage('teleport_toll_answer', (client: Client, raw: unknown) => {
+      const parsed = TollAnswerSchema.safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, 'teleport_toll_answer');
+        return;
+      }
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      if (pid) this.answerToll(pid, parsed.data.padId, parsed.data.answer);
+    });
+    // T4 — ask another owner to pair their teleporter (here) with one of yours.
+    this.onMessage('teleport_pair_request', (client: Client, raw: unknown) => {
+      const parsed = TeleportPairRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, 'teleport_pair_request');
+        return;
+      }
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      const sw = this.swarmRegistry.getByEntityId(parsed.data.entityId);
+      const target = sw ? this.structureRegistry.get(sw.id) : undefined;
+      if (!pid || !target || !isTeleporterKind(target.kind) || !target.isConstructed || target.owner === pid || target.uid === undefined) return;
+      if (relationOf(pid, target.owner, this.relationCtx) === 'hostile') return;
+      const here = this.sectorKey ?? '';
+      const mine = parsed.data.sectorKey === here
+        ? this.teleporters.byUid(parsed.data.uid)
+        : getTeleportBroker().find(parsed.data.sectorKey, parsed.data.uid)?.rec ?? null;
+      if (!mine || mine.owner !== pid || !mine.isConstructed) return;
+      const id = randomUUID();
+      getTeleportBroker().addRequest({
+        id, targetSector: here, targetUid: target.uid, toOwner: target.owner,
+        fromSector: parsed.data.sectorKey, fromUid: parsed.data.uid, fromOwner: pid, atMs: Date.now(),
+      });
+      const fromName = this.resolveOwnerName(pid) ?? 'A pilot';
+      const where = (sk: string): string => (sk === here ? 'here' : (getSector(sk)?.name ?? 'another sector'));
+      const label = `their ${getStructureKind(mine.kind).displayName} (${where(parsed.data.sectorKey)}) with your ${getStructureKind(target.kind).displayName} (${getSector(here)?.name ?? 'this sector'})`;
+      getTeleportBroker().sendToPlayer(target.owner, 'teleport_pair_request', { type: 'teleport_pair_request', requestId: id, fromName, label } satisfies PairRequestPrompt);
+    });
+    this.onMessage('teleport_pair_answer', (client: Client, raw: unknown) => {
+      const parsed = TeleportPairAnswerSchema.safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, 'teleport_pair_answer');
+        return;
+      }
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      const broker = getTeleportBroker();
+      const req = broker.takeRequest(parsed.data.requestId, Date.now());
+      if (!pid || !req || req.toOwner !== pid || !parsed.data.accept) return;
+      const target = broker.find(req.targetSector, req.targetUid);
+      const from = broker.find(req.fromSector, req.fromUid);
+      if (!target || !from || target.rec.owner !== pid || from.rec.owner !== req.fromOwner) return;
+      target.room.teleporters.pair(target.rec, from.rec, from.room.teleporters, true);
+    });
+
     this.onMessage('teleport_pair_remote', tpMessage('teleport_pair_remote', TeleportPairRemoteSchema, (rec, msg) => {
       if (msg.sectorKey === (this.sectorKey ?? '')) {
         const other = this.teleporters.byUid(msg.uid);
@@ -4546,6 +4631,8 @@ export class SectorRoom extends Room<SectorState> {
           const rules = TeleportRulesSchema.safeParse(t?.rules);
           if (rules.success) rec.tpRules = rules.data;
           if (typeof t?.charge === 'number' && Number.isFinite(t.charge) && t.charge > 0) rec.tpCharge = t.charge;
+          const toll = TeleportTollSchema.safeParse(t?.toll);
+          if (toll.success && toll.data.per1000 > 0) rec.tpToll = toll.data;
           this.storage.restorePad(rec);
         }
         // P2b — the owner's recipe choice and a cycle in progress survive a restart.
@@ -5114,6 +5201,93 @@ export class SectorRoom extends Room<SectorState> {
   }
   private readonly _hostilePilotOut = { playerId: '', x: 0, y: 0, d2: 0 };
 
+  // ── v4 T4 — teleporter tolls ────────────────────────────────────────────
+
+  /** A pad armed: offer its toll to every rider on it who isn't the owner or
+   *  their friend/ally. A remembered Always pays at once, a Never declines. */
+  private offerToll(rec: StructureRecord): void {
+    this.tollAnswers.delete(rec.id);
+    const toll = rec.tpToll;
+    if (!toll || toll.per1000 <= 0 || !isTeleporterKind(rec.kind)) return;
+    const credits = tollFor(this.teleporters.required(rec), toll.per1000);
+    if (credits <= 0) return;
+    const ownerFaction = parseOwner(rec.owner).faction;
+    const ownerName = this.resolveOwnerName(rec.owner) ?? 'the owner';
+    const padId = this.swarmRegistry.get(rec.id)?.entityId ?? -1;
+    const answers = new Map<string, 'paid' | 'declined' | 'pending'>();
+    this.tollAnswers.set(rec.id, { credits, answers });
+    const sink = getTradeSink();
+    for (const [pid, slot] of this.playerToSlot) {
+      const ship = this.getActiveShip(pid);
+      if (!ship?.alive || !ship.isActive || pid === rec.owner) continue;
+      const sb = slotBase(slot);
+      if (!onPad(rec.kind, rec.x, rec.y, this.sabF32[sb + SLOT_X_OFF]!, this.sabF32[sb + SLOT_Y_OFF]!)) continue;
+      const rel = relationOf(pid, rec.owner, this.relationCtx);
+      if (rel === 'self' || rel === 'friendly' || rel === 'allied') continue;
+      const pref = sink?.tollPref?.(pid, ownerFaction);
+      if (pref === 'always') { answers.set(pid, this.payToll(rec, pid, credits) ? 'paid' : 'declined'); continue; }
+      if (pref === 'never') { answers.set(pid, 'declined'); continue; }
+      answers.set(pid, 'pending');
+      if (padId >= 0) this.sendToPlayerHere(pid, 'teleport_toll', { type: 'teleport_toll', padId, credits, ownerName } satisfies TollPrompt);
+    }
+    serverLogEvent('teleport_toll_offered', { sectorKey: this.sectorKey ?? '', padId, riders: answers.size });
+  }
+
+  /** Take the toll from the rider's wallet (all or nothing) and pay the owner:
+   *  a player's wallet, or an NPC faction's treasury. */
+  private payToll(rec: StructureRecord, pid: string, credits: number): boolean {
+    if (!getWallet().debit(pid, credits, 'teleport_toll')) return false;
+    const owner = parseOwner(rec.owner);
+    if (owner.kind === 'player') getWallet().credit(rec.owner, credits, 'teleport_toll');
+    else getTradeSink()?.creditFaction?.(owner.faction, credits);
+    return true;
+  }
+
+  /** The swap is now: anyone still on the pad who was asked and didn't pay
+   *  rides anyway, and loses the owner's standing (or becomes hostile). */
+  private settleToll(rec: StructureRecord): void {
+    const entry = this.tollAnswers.get(rec.id);
+    this.tollAnswers.delete(rec.id);
+    if (!entry || !isTeleporterKind(rec.kind)) return;
+    const hostile = rec.tpToll?.nonPayer === 'hostile';
+    const ownerFaction = parseOwner(rec.owner).faction;
+    for (const [pid, state] of entry.answers) {
+      if (state === 'paid') continue;
+      const slot = this.playerToSlot.get(pid);
+      if (slot === undefined) continue;
+      const sb = slotBase(slot);
+      if (!onPad(rec.kind, rec.x, rec.y, this.sabF32[sb + SLOT_X_OFF]!, this.sabF32[sb + SLOT_Y_OFF]!)) continue;
+      if (hostile) this.hostileActs.record(pid, rec.owner, Date.now());
+      else this.adjustStanding(ownerFaction, pid, TOLL_DODGE_STANDING);
+      serverLogEvent('teleport_toll_dodged', { sectorKey: this.sectorKey ?? '', playerId: pid, owner: rec.owner, hostile });
+    }
+  }
+
+  /** A rider answered a toll prompt. */
+  private answerToll(pid: string, padId: number, answer: TollAnswer): void {
+    const sw = this.swarmRegistry.getByEntityId(padId);
+    const rec = sw ? this.structureRegistry.get(sw.id) : undefined;
+    const entry = rec ? this.tollAnswers.get(rec.id) : undefined;
+    // Too late (the swap already settled it) or not asked: log, ignore.
+    if (!rec || !entry || entry.answers.get(pid) !== 'pending') {
+      serverLogEvent('teleport_toll_answer_ignored', { sectorKey: this.sectorKey ?? '', playerId: pid, padId, hasRec: rec !== undefined, hasEntry: entry !== undefined, state: entry?.answers.get(pid) ?? null });
+      return;
+    }
+    const ownerFaction = parseOwner(rec.owner).faction;
+    if (answer === 'always' || answer === 'never') getTradeSink()?.setTollPref?.(pid, ownerFaction, answer);
+    const pay = answer === 'pay' || answer === 'always';
+    entry.answers.set(pid, pay && this.payToll(rec, pid, entry.credits) ? 'paid' : 'declined');
+  }
+
+  private sendToPlayerHere(pid: string, type: string, msg: unknown): boolean {
+    const sid = this.playerToSession.get(pid);
+    if (!sid) return false;
+    const c = this.clients.find((x) => x.sessionId === sid);
+    if (!c) return false;
+    c.send(type, msg);
+    return true;
+  }
+
   // ── v4 T3 — teleporters across sectors ──────────────────────────────────
 
   /** Hops to another sector for the jump charge. Rooms outside the galaxy
@@ -5257,6 +5431,8 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
   private readonly _irisSpan = { ax: 0, ay: 0, bx: 0, by: 0 };
+  /** T4 — per armed pad (structure id): the toll and each rider's answer. */
+  private readonly tollAnswers = new Map<string, { credits: number; answers: Map<string, 'paid' | 'declined' | 'pending'> }>();
 
   /**
    * T2 — the jump: everything on pad `a` goes to pad `b` and everything on
@@ -5650,7 +5826,10 @@ export class SectorRoom extends Room<SectorState> {
     const r = rec.tpRules;
     const bits = r === undefined ? 0
       : (r.whenCharged ? TP_RULE_CHARGED : 0) | (r.shipBoards ? TP_RULE_BOARDS : 0) | (r.loaded ? TP_RULE_LOADED : 0) | (r.keepLoaded ? TP_RULE_KEEP : 0);
-    if ((st.tpRules ?? SD.tpRules) !== bits) st.tpRules = bits;
+    const tollBits = rec.tpToll?.nonPayer === 'hostile' ? TP_RULE_TOLL_HOSTILE : 0;
+    const tollPer = rec.tpToll?.per1000 ?? 0;
+    if ((st.tpToll ?? SD.tpToll) !== tollPer) st.tpToll = tollPer;
+    if ((st.tpRules ?? SD.tpRules) !== (bits | tollBits)) st.tpRules = bits | tollBits;
     const lg = r?.loaded ? (r.loaded.good === null ? 0 : encodeGood(r.loaded.good)) : 0;
     if ((st.tpLoadGood ?? SD.tpLoadGood) !== lg) st.tpLoadGood = lg;
     const lq = r?.loaded?.qty ?? 0;

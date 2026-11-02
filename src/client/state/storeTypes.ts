@@ -16,7 +16,7 @@ import type { ArrivalMode } from '../settings/settingsStorage.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import type { LabState } from '../../shared-types/messages/labMessages.js';
-import type { TeleportCandidatesReply } from '../../shared-types/teleport.js';
+import type { PairRequestPrompt, TeleportCandidatesReply, TollPrompt } from '../../shared-types/teleport.js';
 import type { CargoState } from '../../shared-types/messages/cargoMessages.js';
 import type { BpMarketState } from '../../shared-types/blueprintMarket.js';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
@@ -280,6 +280,10 @@ export interface UIStore {
   /** v4 T3 — the last `teleport_candidates` reply (your teleporters anywhere,
    *  by name; the teleporter panel's pair list). Discrete, written on a reply. */
   teleportCandidates: TeleportCandidatesReply | null;
+  /** v4 T4 — a teleporter toll the local rider was just offered (null = none). */
+  tollPrompt: TollPrompt | null;
+  /** v4 T4 — requests from other owners to pair with one of your teleporters. */
+  pairRequests: PairRequestPrompt[];
   /** Economy v2 W6 — the last `bp_market_state` reply (the Trade tab's
    *  Blueprints section is rebuilt from it). */
   bpMarket: BpMarketState | null;
@@ -487,6 +491,9 @@ export interface UIStore {
   setLabState: (s: LabState | null) => void;
   setCargoState: (s: CargoState | null) => void;
   setTeleportCandidates: (s: TeleportCandidatesReply | null) => void;
+  setTollPrompt: (p: TollPrompt | null) => void;
+  addPairRequest: (p: PairRequestPrompt) => void;
+  removePairRequest: (requestId: string) => void;
   setBpMarket: (s: BpMarketState | null) => void;
   setPackedStock: (counts: Readonly<Record<string, number>> | null) => void;
   setFittedBlueprints: (ids: readonly string[]) => void;
