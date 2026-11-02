@@ -79,6 +79,16 @@ describe('tradeClient senders match the server schemas', () => {
     lastAccepted(SetFreightOrdersSchema, 'set_freight_orders');
     client.sendBreakIn(9);
     lastAccepted(BreakInSchema, 'break_in');
+    // C3 — ship targets.
+    client.sendCargoQuery({ ship: 'p-2' });
+    lastAccepted(CargoQuerySchema, 'cargo_query');
+    client.sendCargoMove({ ship: 'p-2' }, 'take', { goods: { alloy: 1 } });
+    lastAccepted(CargoMoveSchema, 'cargo_move');
+    client.sendBreakIn({ ship: 'p-2' });
+    lastAccepted(BreakInSchema, 'break_in');
+    // Neither or both targets are rejected.
+    expect(CargoQuerySchema.safeParse({ type: 'cargo_query' }).success).toBe(false);
+    expect(CargoQuerySchema.safeParse({ type: 'cargo_query', entityId: 1, ship: 'x' }).success).toBe(false);
     client.sendBreakInCancel();
     lastAccepted(BreakInCancelSchema, 'break_in_cancel');
   });

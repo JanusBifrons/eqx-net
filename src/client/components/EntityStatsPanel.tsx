@@ -140,9 +140,12 @@ interface PanelData {
   canRefine?: boolean;
   /** Economy v2 W3 — my own BUILT Research Lab: show the lab panel. */
   isLab?: boolean;
-  /** C1 — a BUILT storage structure (anyone's): offer "Open cargo". The
-   *  server decides whether it opens. */
+  /** C1 — a BUILT storage structure (anyone's) or (C3) an NPC ship: offer
+   *  "Open cargo" by `entityId`. The server decides whether it opens. */
   hasCargo?: boolean;
+  /** C3 — another player's ship (playerId) or a parked hull (shipInstanceId):
+   *  offer "Open cargo" (yours opens; anyone else's needs a break-in). */
+  cargoShip?: string;
   /** Living World P4c-2 — a selected REMOTE player ship: its playerId, the
    *  target of the Bounty action (never displayed). */
   bountyTarget?: string;
@@ -442,6 +445,7 @@ export function EntityStatsPanel(): JSX.Element | null {
       {data.packed !== undefined && data.entityId !== undefined && <HullUnpack entityId={data.entityId} packed={data.packed} />}
       {data.isLab === true && data.entityId !== undefined && <ResearchLabPanel entityId={data.entityId} />}
       {data.hasCargo === true && data.entityId !== undefined && <CargoAction key={data.entityId} entityId={data.entityId} />}
+      {data.cargoShip !== undefined && <CargoAction key={data.cargoShip} ship={data.cargoShip} />}
       {data.pilotShipId !== undefined && (
         // Phase 4 WS-A2 — in-world Pilot action on the local player's OWN
         // lingering hull. Same-sector instant swap (no spool/curtain); the camera
@@ -473,7 +477,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
   'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'noAmmo', 'noFuel', 'breach', 'upgradeGoods',
-  'isLab', 'hasCargo', 'packed',
+  'isLab', 'hasCargo', 'cargoShip', 'packed',
 ];
 
 /** The next gate access setting in the cycle (owner + allies → owner only →
@@ -617,7 +621,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         : null;
     // P4c-2 — a remote player's ship (ships are selected by playerId; the own
     // ship is never pickable) can carry a bounty.
-    return { name: selectionStats.name || 'Ship', hpPct, shieldPct, bountyTarget: id };
+    return { name: selectionStats.name || 'Ship', hpPct, shieldPct, bountyTarget: id, cargoShip: id };
   }
 
   // The rest read the render mirror directly (no server stats channel).
@@ -628,7 +632,8 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
     const sw = Number.isNaN(swarmId) ? undefined : client.mirror.swarm?.get(swarmId);
     if (!sw) return null;
     const frac = sw.healthFrac ?? 1;
-    return { name: droneName(sw.shipKind), hpPct: frac * 100, shieldPct: null };
+    // C3 — an NPC ship carries a hold (its loot); breaking in is a hostile act.
+    return { name: droneName(sw.shipKind), hpPct: frac * 100, shieldPct: null, entityId: swarmId, hasCargo: true };
   }
   // ASTEROID (R2.23) — indestructible rock: no hull bar; show resources when the
   // rock is being mined, else a SIZE proxy from radius (untouched rocks carry no
@@ -660,6 +665,9 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       shieldPct: null,
       noHull: true,
       infoLine: `${l.kind ?? 'ship'}`,
+      // C3 — a parked hull's cargo: yours opens (move cargo between your
+      // ships); anyone else's needs a break-in.
+      cargoShip: id,
     };
     // WS-A2 — a lingering hull the LOCAL player owns is reclaimable via the
     // in-world Pilot action. The selection id IS the shipInstanceId (the

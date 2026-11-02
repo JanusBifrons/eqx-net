@@ -49,8 +49,15 @@ export const SetFreightOrdersSchema = z
   .strict();
 export type SetFreightOrders = z.infer<typeof SetFreightOrdersSchema>;
 
+/** C3 — a cargo target: a swarm `entityId` (a structure, or an NPC ship) OR
+ *  `ship` (another player's ship by playerId, or a parked hull by its
+ *  shipInstanceId). Exactly one. */
+const ship = z.string().min(1).max(64);
+const oneTarget = (m: { entityId?: number; ship?: string }): boolean => (m.entityId === undefined) !== (m.ship === undefined);
+const ONE_TARGET = { message: 'exactly one of entityId / ship' };
+
 /** C2 — start / stop breaking into cargo that doesn't open for you. */
-export const BreakInSchema = z.object({ type: z.literal('break_in'), entityId }).strict();
+export const BreakInSchema = z.object({ type: z.literal('break_in'), entityId: entityId.optional(), ship: ship.optional() }).strict().refine(oneTarget, ONE_TARGET);
 export const BreakInCancelSchema = z.object({ type: z.literal('break_in_cancel') }).strict();
 /** C2 — server → client: an alarm (to the owner) or a result (to the actor).
  *  Accelerator only: the truth is `cargo_state` and the BREACH flag (#16). */
@@ -59,19 +66,22 @@ export const BreakInNoticeSchema = z
   .strict();
 export type BreakInNotice = z.infer<typeof BreakInNoticeSchema>;
 
-export const CargoQuerySchema = z.object({ type: z.literal('cargo_query'), entityId }).strict();
+export const CargoQuerySchema = z.object({ type: z.literal('cargo_query'), entityId: entityId.optional(), ship: ship.optional() }).strict().refine(oneTarget, ONE_TARGET);
 export type CargoQuery = z.infer<typeof CargoQuerySchema>;
 
 /** `take` = structure → your ship; `put` = your ship → structure. */
 export const CargoMoveSchema = z
-  .object({ type: z.literal('cargo_move'), entityId, dir: z.enum(['take', 'put']), items: CargoItemsSchema })
-  .strict();
+  .object({ type: z.literal('cargo_move'), entityId: entityId.optional(), ship: ship.optional(), dir: z.enum(['take', 'put']), items: CargoItemsSchema })
+  .strict()
+  .refine(oneTarget, ONE_TARGET);
 export type CargoMove = z.infer<typeof CargoMoveSchema>;
 
 export const CargoStateSchema = z
   .object({
     type: z.literal('cargo_state'),
-    entityId,
+    /** The target this answers: a swarm entityId, or (C3) `targetShip`. */
+    entityId: entityId.optional(),
+    targetShip: ship.optional(),
     /** Is the cargo open to this pilot right now? */
     open: z.boolean(),
     /** The structure's contents (incl. a Capital's mineral bank), when open. */

@@ -37,17 +37,26 @@ export function sendInstallBlueprint(networkEntityId: number, blueprintId: strin
 }
 
 /** C1 — open a structure's cargo / move items (each answered by `cargo_state`). */
-export function sendCargoQuery(entityId: number): boolean {
-  return send('cargo_query', { entityId });
+/** C3 — a cargo target: a swarm entityId (structure / NPC ship) or a ship
+ *  (another player's ship by playerId, or a parked hull by shipInstanceId).
+ *  A bare number means an entityId. */
+export type CargoTarget = { entityId: number } | { ship: string };
+function targetRef(t: CargoTarget | number): Record<string, unknown> {
+  if (typeof t === 'number') return { entityId: t };
+  return 'ship' in t ? { ship: t.ship } : { entityId: t.entityId };
 }
 
-export function sendCargoMove(entityId: number, dir: 'take' | 'put', items: CargoItems): boolean {
-  return send('cargo_move', { entityId, dir, items });
+export function sendCargoQuery(target: CargoTarget | number): boolean {
+  return send('cargo_query', targetRef(target));
+}
+
+export function sendCargoMove(target: CargoTarget | number, dir: 'take' | 'put', items: CargoItems): boolean {
+  return send('cargo_move', { ...targetRef(target), dir, items });
 }
 
 /** C2 — break into locked cargo (a hostile act) / stop. */
-export function sendBreakIn(entityId: number): boolean {
-  return send('break_in', { entityId });
+export function sendBreakIn(target: CargoTarget | number): boolean {
+  return send('break_in', targetRef(target));
 }
 
 export function sendBreakInCancel(): boolean {

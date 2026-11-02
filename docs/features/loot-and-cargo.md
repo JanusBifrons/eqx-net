@@ -218,6 +218,18 @@ Cargo that doesn't open for you (another player's, or an NPC base's when the mar
   - `tests/integration/sectorRoom/breakIn.test.ts`: undefended, the alarm and BREACH, then the cargo opens and goods are taken; defended, the owner's turret engages the thief and the hit interrupts it;
   - `CargoPanel.test.tsx` and wire parity.
 
+## Part 6 (C3): ship cargo
+
+Ships have cargo you can open too. Select one and use **Open cargo**:
+- **Your own parked hulls** open to you, so you can move cargo between your ships.
+- **Another player's ship** (active or a parked hull) is locked. Breaking in works like a structure break-in (Part 5): it's a hostile act, the owner gets an alarm (a push if they're offline), and success opens the hold for 60 s. The range check uses the target's LIVE pose, so a ship that flies off ends the break-in.
+- **An NPC ship's loot is its hold.** Its loot table is rolled ONCE per spawn (seeded from its id, `npc-hold` stream), on top of anything it already carries (a nexus hoard, a harvester's scoop, a hauler's cargo). What you take from it is gone: its death spills only what's left, never a second roll. Breaking into one turns its side's nearby ships on you.
+- **Targets on the wire.** `cargo_query` / `cargo_move` / `break_in` take exactly one of `entityId` (a structure or NPC ship) or `ship` (a playerId for an active ship, or a shipInstanceId for a parked hull). `cargo_state.targetShip` echoes the ship target.
+- **Liveness (#17).** A player target is an ACTIVE ship (by playerId) or a LINGERING hull (by shipInstanceId); DEAD ships aren't targets. NPC targets are live swarm drones.
+- **Holds.** Player hulls and trade/convoy haulers keep persisted holds. NPC loot holds live in memory only and are dropped when the NPC is evicted.
+- **Code:** `SectorRoom.shipTarget` / `shipCargo` / `npcHold` / `onShipBreakInStart`.
+- **Locks:** `tests/integration/sectorRoom/shipCargo.test.ts` (a PvP break-in alarms the owner and moves goods between both holds; an NPC ship robbed clean drops no pod) and the wire-parity ship cases.
+
 ## Tests
 
 - Part 2: `src/server/cargo/StorageService.test.ts` (uid determinism, atomic
