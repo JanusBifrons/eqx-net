@@ -62,6 +62,11 @@ export const RECIPE_IDS = [
   'build_gunship',
   'build_heavy',
   'build_missile_frigate',
+  // D3 — cities: upkeep (consumes goods, pays taxes) and their packed modules.
+  'habitat_upkeep',
+  'tower_upkeep',
+  'pack_habitat_module',
+  'pack_tower_module',
 ] as const;
 export type RecipeId = (typeof RECIPE_IDS)[number];
 
@@ -78,6 +83,9 @@ export const PROCESSOR_KIND_IDS = [
   'assembly_plant',
   'ore_processing_complex',
   'shipyard',
+  // D3 — city modules "run" their residents' upkeep.
+  'habitat_module',
+  'tower_module',
 ] as const satisfies readonly StructureKindId[];
 export type ProcessorKindId = (typeof PROCESSOR_KIND_IDS)[number];
 
@@ -88,7 +96,11 @@ export type RecipeOutput =
   | { readonly packed: StructureKindId }
   /** A packed HULL (Living World W5: the Shipyard builds ships that are
    *  unpacked into the roster). Lands in storage as `hull:<kind>`. */
-  | { readonly hull: ShipKindId };
+  | { readonly hull: ShipKindId }
+  /** D3 — taxes: credits paid into the OWNER's wallet when the cycle ends
+   *  (an NPC base has no wallet, so its city just consumes). Never stored in
+   *  a hold. */
+  | { readonly credits: number };
 
 export interface RecipeDef {
   readonly id: RecipeId;
@@ -316,7 +328,37 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
     inputs: { alloy: 40, components: 10, electronics: 6, machinery: 4, core: 2 }, outputs: [{ hull: 'missile-frigate' }],
     cyclePulses: 80, processors: ['shipyard'], blueprintRequired: true,
   }),
+  // ── D3 cities: the chain's consumers. A cycle is about a minute of residents
+  // living; without the goods the module is starved and pays nothing.
+  habitat_upkeep: r({
+    id: 'habitat_upkeep', displayName: 'Residents (taxes)',
+    inputs: { provisions: 4, consumer_goods: 1 }, outputs: [{ credits: 300 }],
+    cyclePulses: 60, processors: ['habitat_module'], blueprintRequired: false,
+  }),
+  tower_upkeep: r({
+    id: 'tower_upkeep', displayName: 'Wealthy residents (taxes)',
+    inputs: { provisions: 2, consumer_goods: 3 }, outputs: [{ credits: 800 }],
+    cyclePulses: 90, processors: ['tower_module'], blueprintRequired: false,
+  }),
+  pack_habitat_module: r({
+    id: 'pack_habitat_module', displayName: packName('habitat_module'),
+    inputs: { alloy: 10, polymer: 6, components: 2 }, outputs: [{ packed: 'habitat_module' }],
+    cyclePulses: 20, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_tower_module: r({
+    id: 'pack_tower_module', displayName: packName('tower_module'),
+    inputs: { alloy: 20, polymer: 8, components: 4, electronics: 2 }, outputs: [{ packed: 'tower_module' }],
+    cyclePulses: 30, processors: ['fabricator'], blueprintRequired: true,
+  }),
 });
+
+/** D3 — the credits (taxes) one cycle of a recipe pays its owner (0 for a
+ *  goods recipe). */
+export function recipeCredits(recipe: RecipeId): number {
+  let n = 0;
+  for (const o of RECIPES[recipe].outputs) if ('credits' in o) n += o.credits;
+  return n;
+}
 
 export function isRecipeId(s: string): s is RecipeId {
   return (RECIPE_IDS as readonly string[]).includes(s);
@@ -351,8 +393,8 @@ export const GOOD_SOURCES: Readonly<Partial<Record<GoodId, readonly string[]>>> 
 
 export const GOOD_SINKS: Readonly<Partial<Record<GoodId, readonly string[]>>> = Object.freeze({
   fuel: ['reactor (burns it for power)'],
-  provisions: ['colonies and cities'],
-  consumer_goods: ['colonies and cities'],
+  provisions: ['habitat and tower modules (city residents)'],
+  consumer_goods: ['habitat and tower modules (city residents)'],
   munitions: ['missile turrets, autocannons and mine layers (ammo)'],
   alloy: ['structure upgrades to level 3+'],
   components: ['structure upgrades to level 4+', 'packed structures'],

@@ -254,3 +254,43 @@ describe('ProductionSubsystem', () => {
     expect(gets).toBe(ids.length); // but the network itself is collected ONCE
   });
 });
+
+describe('ProductionSubsystem — cities (D3)', () => {
+  const HAB = RECIPES.habitat_upkeep;
+
+  function city(goods: Record<string, number>, owner = 'alice') {
+    const bay = rec('bay', 'cargo_bay', { owner, hold: { goods, blueprints: [] } });
+    const hab = rec('h', 'habitat_module', { owner });
+    const byId = new Map([[bay.id, bay], [hab.id, hab]]);
+    const registry = { all: () => byId.values(), get: (id: string) => byId.get(id) } as unknown as StructureRegistry;
+    const paid: Array<{ owner: string; n: number }> = [];
+    const prod = new ProductionSubsystem({
+      registry,
+      powered: () => true,
+      componentOf: () => ['bay', 'h'],
+      payCredits: (r, n) => paid.push({ owner: r.owner, n }),
+    });
+    const run = (n: number) => { for (let i = 0; i < n; i++) prod.pulse(); };
+    return { bay, hab, paid, run };
+  }
+
+  it('a habitat uses provisions and consumer goods and pays its owner taxes each cycle', () => {
+    const { bay, hab, paid, run } = city({ provisions: 8, consumer_goods: 2 });
+    run(HAB.cyclePulses);
+    expect(hab.prodState).toBe(PROD_STATE.running);
+    expect(paid).toEqual([{ owner: 'alice', n: 300 }]);
+    expect(bay.hold!.goods).toEqual({ provisions: 4, consumer_goods: 1 });
+    run(HAB.cyclePulses);
+    expect(paid.length).toBe(2);
+    // Taxes never land in a hold.
+    expect(Object.keys(bay.hold!.goods)).not.toContain('credits');
+  });
+
+  it('a starving city pays nothing and reports what it is missing', () => {
+    const { hab, paid, run } = city({ provisions: 8 });
+    run(HAB.cyclePulses * 2);
+    expect(hab.prodState).toBe(PROD_STATE.starved);
+    expect(hab.prodMissing).toBe('consumer_goods');
+    expect(paid).toEqual([]);
+  });
+});
