@@ -52,6 +52,7 @@ import { EnergyBar } from './components/EnergyBar';
 import { SpeedDialMenu } from './components/SpeedDialMenu';
 import { BottomControlPanel } from './components/BottomControlPanel';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
+import { PlacementFenceHint } from './components/PlacementFenceHint';
 import { EntityStatsPanel } from './components/EntityStatsPanel';
 import { UpgradeModalHost } from './components/UpgradeModalHost';
 import { Hud } from './components/Hud';
@@ -899,6 +900,7 @@ function GameSurface({
        *  bottom-center/Z.hud slot put it UNDER them on mobile). gameRafLoop
        *  moves it to the projected on-screen position of the blueprint ghost. */}
       <StructurePlacementBanner />
+      <PlacementFenceHint />
       <LostConnectionOverlay />
       {/* Equinox Phase 7 (Item 1) — the in-game full-page WARP map: the SAME
        *  GalaxyPickerChrome (context='warp') over the full-page selector layer

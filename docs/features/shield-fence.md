@@ -45,7 +45,8 @@ every ship and every shot, its owner's included: your turrets' beams, bolts and
 missiles stop at your own wall, and a shot whose muzzle is already past a wall
 is caught at the launcher. So put turrets where their field of fire is clear:
 outside the fence, or covering the gates. NPC bases do exactly that (their
-turrets stand on bastions outside the fence).
+turrets stand on bastions outside the fence). While you place a turret, a
+warning appears under the ghost whenever a shield wall lies within its range.
 
 ## At a glance
 

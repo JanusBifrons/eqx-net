@@ -125,6 +125,19 @@ is told, and the cargo spills as a pod, which the harvester then scoops and
 banks at the nexus. Escort your haulers near robot space. Test:
 `robotTerritory.test.ts` ("hunts a nearby hauler before raiding storage").
 
+## Robot clusters merge
+
+Robot squads roaming the same sector **merge into one bigger cluster** (up to
+12 bots, two squads). Once both squads have arrived in a sector, the later one
+joins the earlier (its host):
+- its bots flock on the host's leader, so the cluster moves and fights as one pack;
+- it takes the host's roam goal, so the cluster hops sectors together.
+
+Squad membership itself stays fixed (the squad pool is shared with the drones);
+the merge is a plan re-made every control tick (`director/clusterJoins.ts`),
+on only for the robot director (`mergeClusters`). Drone squads never merge.
+Tests: `clusterJoins.test.ts`, `robotClusters.test.ts`.
+
 ## Next
 
-Harvesters mining asteroids, and merge clusters.
+Harvesters mining asteroids.
