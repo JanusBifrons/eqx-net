@@ -286,6 +286,11 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 ## Teleporter panel and inspector placement (plan soft-leaping-truffle v4, T1)
 
 - **`components/TeleporterPanel.tsx`** mounts in the inspector for your own built teleporter. It reads the room-state row decoded into `StructureRenderState.teleport` from the mirror at 4 Hz (no Zustand). It lists pairing candidates by kind and distance, never ids. Senders live in `structureActionsClient.ts`.
+- **T2 — on-pad prediction.**
+  - **Walls:** `visitDerivedWalls` emits each teleporter's iris spans (blocking only while SEALED, keys from `-2e9`), so prediction and drawing follow the server walls.
+  - **Push:** `syncPadFields` sets each pad's closing push in predWorld from the room-state phase.
+  - **Re-seed:** an own-ship `poseEpoch` change makes `handleSnapshot` re-seed the local body at the snapshot pose with a fresh `Reconciler`, and that snapshot skips the reconcile (a snap, not a slide). `_localPoseEpoch` resets to -1 on sector handoff.
+  - **Warning:** `TeleportWarning` (top-centre) is derived from room state + the mirror, never a message.
 - **The world-anchored inspector is placed by `app/inspectorPlacement.ts` `placeInspector`:** the WHOLE panel stays on screen, below the header, with the bottom kept when it is too tall.
   - A target off-screen used to push half the panel out of view (its buttons unclickable). Found by `teleporter.spec.ts`; the header case by `break-in.spec.ts`.
   - Never clamp only the anchor.

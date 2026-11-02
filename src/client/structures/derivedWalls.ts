@@ -23,6 +23,7 @@ import {
   isShieldEmitterKind,
 } from '../../core/structures/gateGeometry.js';
 import { SHIELD_WALL_THICKNESS } from '../../core/structures/ShieldWall.js';
+import { PAD_SPECS, TP_PHASE, isTeleporterKind, padIrisSpanLocal } from '../../shared-types/teleport.js';
 
 export interface DerivedWallVisitor {
   /** `open`: a gate span whose end is open (not blocking by design, as opposed
@@ -32,6 +33,9 @@ export interface DerivedWallVisitor {
 
 const A = { x: 0, y: 0 };
 const B = { x: 0, y: 0 };
+const IRIS = { ax: 0, ay: 0, bx: 0, by: 0 };
+/** Iris span keys live far below gate-span keys (-(id * 4 + i + 1)). */
+const IRIS_KEY_BASE = 2_000_000_000;
 
 export function visitDerivedWalls(
   structures: ReadonlyMap<number, StructureRenderState>,
@@ -42,7 +46,19 @@ export function visitDerivedWalls(
     const st = structures.get(id)!;
     if (!st.built) continue;
     const e = swarm.get(id);
-    if (!e || !isShieldEmitterKind(e.shipKind)) continue;
+    if (!e) continue;
+    // v4 T2 — a teleporter's iris: the spans between its posts, solid only
+    // while SEALED (the server's iris walls, #15). Drawn as open otherwise.
+    if (st.teleport !== undefined && isTeleporterKind(e.shipKind)) {
+      const sealed = st.teleport.phase === TP_PHASE.SEALED;
+      const n = PAD_SPECS[e.shipKind].posts;
+      for (let i = 0; i < n; i++) {
+        padIrisSpanLocal(e.shipKind, i, IRIS);
+        v.wall(-(IRIS_KEY_BASE + id * 16 + i + 1), e.x + IRIS.ax, e.y + IRIS.ay, e.x + IRIS.bx, e.y + IRIS.by, sealed, GATE_SPAN_THICKNESS, !sealed);
+      }
+      continue;
+    }
+    if (!isShieldEmitterKind(e.shipKind)) continue;
     const up = st.wallActive === true;
     // The gate's own spans.
     if (gateTypeOf(e.shipKind) !== null) {

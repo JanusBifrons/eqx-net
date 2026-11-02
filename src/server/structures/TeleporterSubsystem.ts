@@ -37,6 +37,11 @@ export interface TeleporterHooks {
   onChanged(): void;
   /** T2 — move the ships on the two pads at the swap. */
   onSwapShips?(a: StructureRecord, b: StructureRecord): void;
+  /** T2 — the iris spans (solid only while SEALED) and the closing push. */
+  spawnIris?(rec: StructureRecord): void;
+  setIrisActive?(rec: StructureRecord, active: boolean): void;
+  removeIris?(rec: StructureRecord): void;
+  setPadField?(rec: StructureRecord, active: boolean): void;
 }
 
 const EMPTY_GOODS: Readonly<Record<string, number>> = Object.freeze({});
@@ -117,6 +122,7 @@ export class TeleporterSubsystem {
     delete r.tpPartner;
     r.tpPhase = TP_PHASE.IDLE;
     r.tpInitiator = false;
+    this.applyPhaseEffects(r);
   }
 
   private busy(r: StructureRecord): boolean {
@@ -144,10 +150,22 @@ export class TeleporterSubsystem {
     return true;
   }
 
+  /** T2 — the physical side of a phase: the closing push while CLOSING, the
+   *  solid iris while SEALED, neither otherwise. */
+  private applyPhaseEffects(r: StructureRecord): void {
+    const p = r.tpPhase ?? TP_PHASE.IDLE;
+    this.h.setPadField?.(r, p === TP_PHASE.CLOSING);
+    this.h.setIrisActive?.(r, p === TP_PHASE.SEALED);
+  }
+
   /** ~10 Hz: run cycles (driven by the initiator) and check the rules. */
   update(nowMs: number): void {
     for (const rec of this.h.registry.all()) {
       if (!isTeleporterKind(rec.kind) || !rec.isConstructed) continue;
+      if (rec.tpIrisSpawned !== true) {
+        this.h.spawnIris?.(rec);
+        rec.tpIrisSpawned = true;
+      }
       if (this.busy(rec)) {
         if (rec.tpInitiator === true) this.advance(rec, nowMs);
         continue;
@@ -176,6 +194,7 @@ export class TeleporterSubsystem {
       // The partner vanished mid-cycle: stand down.
       a.tpPhase = TP_PHASE.IDLE;
       a.tpInitiator = false;
+      this.applyPhaseEffects(a);
       this.h.onChanged();
       return;
     }
@@ -195,6 +214,7 @@ export class TeleporterSubsystem {
     for (const r of [a, b]) {
       r.tpPhase = this.cycle.phase;
       r.tpPhaseEndsAtMs = this.cycle.phaseEndsAtMs;
+      this.applyPhaseEffects(r);
     }
     if (ev === 'done') a.tpInitiator = false;
     this.h.onChanged();
@@ -219,6 +239,7 @@ export class TeleporterSubsystem {
   /** A teleporter left the world: its partner is unpaired. */
   onRemoved(rec: StructureRecord): void {
     if (!isTeleporterKind(rec.kind)) return;
+    if (rec.tpIrisSpawned === true) this.h.removeIris?.(rec);
     const p = this.partnerOf(rec);
     if (p !== null) {
       this.clearPartner(p);

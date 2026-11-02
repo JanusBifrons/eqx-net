@@ -12,6 +12,7 @@ import { configureShipCollider, shipBallColliderDesc } from './colliderConfig.js
 import { applyShipInput, type ShipInputMultipliers } from './applyShipInput.js';
 import { castHitscan } from './hitscanRay.js';
 import { wallGeometry } from '../structures/ShieldWall.js';
+import { PAD_PUSH_ACCEL, padPushDir } from '../../shared-types/teleport.js';
 
 const FIXED_DT = 1 / 60;
 
@@ -77,6 +78,10 @@ export class PhysicsWorld {
   private world: RAPIER.World;
   private accumulator = 0;
   private bodies = new Map<string, ShipBody>();
+  /** v4 T2 — teleporter pad fields (see `setPadField`). */
+  private readonly padFields = new Map<string, { cx: number; cy: number; half: number; active: boolean }>();
+  private readonly _padDir = { x: 0, y: 0 };
+  private readonly _padImpulse = { x: 0, y: 0 };
   /** Reverse lookup: Rapier rigid-body handle → entity ID, for hitscan results. */
   private handleToId = new Map<number, string>();
   /** Shield-wall span bodies + colliders, keyed by wall id. Kept SEPARATE from
@@ -133,6 +138,7 @@ export class PhysicsWorld {
   tick(dtSeconds: number, eventQueue?: RAPIER.EventQueue): void {
     this.accumulator += dtSeconds;
     while (this.accumulator >= FIXED_DT) {
+      this.applyPadFields();
       this.world.step(eventQueue);
       this.accumulator -= FIXED_DT;
     }
@@ -373,6 +379,42 @@ export class PhysicsWorld {
    *  no-op for an unknown id. */
   setWallActive(id: string, active: boolean): void {
     this.wallColliders.get(id)?.setEnabled(active);
+  }
+
+  /**
+   * v4 T2 — a teleporter pad's closing-iris push. While a field is active,
+   * every dynamic body straddling the pad edge is nudged fully in or fully
+   * out (`padPushDir`, shared) each fixed step. The server worker and the
+   * client's prediction world both run this, from the same pad phase, so a
+   * pushed ship never judders (#15). Idempotent on `id`.
+   */
+  setPadField(id: string, cx: number, cy: number, half: number, active: boolean): void {
+    const f = this.padFields.get(id);
+    if (f) { f.cx = cx; f.cy = cy; f.half = half; f.active = active; return; }
+    this.padFields.set(id, { cx, cy, half, active });
+  }
+
+  removePadField(id: string): void {
+    this.padFields.delete(id);
+  }
+
+  private applyPadFields(): void {
+    if (this.padFields.size === 0) return;
+    for (const f of this.padFields.values()) {
+      if (!f.active) continue;
+      for (const rec of this.bodies.values()) {
+        const b = rec.body;
+        if (!b.isDynamic()) continue;
+        // TODO: alloc-debt — Rapier's translation() returns a fresh vector; this
+        // runs only during a pad's ~4 s closing phase.
+        const t = b.translation();
+        if (!padPushDir(f.cx, f.cy, f.half, t.x, t.y, rec.kind.radius, this._padDir)) continue;
+        const j = b.mass() * PAD_PUSH_ACCEL * FIXED_DT;
+        this._padImpulse.x = this._padDir.x * j;
+        this._padImpulse.y = this._padDir.y * j;
+        b.applyImpulse(this._padImpulse, true);
+      }
+    }
   }
 
   /** Remove a wall span entirely (pylon destroyed / pair severed). */

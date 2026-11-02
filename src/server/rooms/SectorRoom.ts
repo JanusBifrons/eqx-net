@@ -103,7 +103,7 @@ import { StructurePlacementSubsystem, type PackedGateResult } from '../structure
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { GateController, type GateShipBuffer } from '../structures/GateController.js';
-import { isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
+import { GATE_SPAN_THICKNESS, isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
 import { gateAccessIndex, GATE_ACCESS_IDS, type GateAccess } from '../../shared-types/gateAccess.js';
 import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
@@ -124,6 +124,10 @@ import {
   TeleportPadUnloadSchema,
   TeleportPairSchema,
   TeleportUnpairSchema,
+  onPad,
+  padIrisSpanLocal,
+  padPostCenters,
+  type TeleporterKind,
   TP_PARTNER_REMOTE,
   TeleportRulesSchema,
   TP_RULE_BOARDS,
@@ -355,6 +359,17 @@ const NPC_HOLD_CAPACITY = 1000;
 /** T2 — an NPC ammo turret's assumed munitions use (it fires only when attacked). */
 const NPC_TURRET_MUNITIONS_PER_MIN = 0.2;
 /** T4b — the level of `good`'s order on a dock (0 when none). */
+/** The solid boxes of a structure for spawn clearance: a teleporter's pad is
+ *  open (only its posts are solid, v4 T2), everything else is its footprint. */
+function pushSolidBoxes(r: StructureRecord, out: SiteBox[]): void {
+  if (isTeleporterKind(r.kind)) {
+    const h = PAD_SPECS[r.kind].post / 2;
+    for (const [cx, cy] of padPostCenters(r.kind)) out.push({ x: r.x + cx, y: r.y + cy, hw: h, hh: h });
+    return;
+  }
+  out.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
+}
+
 function o_level(r: { freightOrders?: Array<{ good: GoodId; level: number }> }, good: GoodId): number {
   return r.freightOrders?.find((o) => o.good === good)?.level ?? 0;
 }
@@ -1142,6 +1157,8 @@ export class SectorRoom extends Room<SectorState> {
     rebuildStructuresSlice: () => void;
     /** The authoritative SAB pose of a swarm entity (null ⇒ unknown id). */
     swarmPose: (id: string) => { x: number; y: number; angle: number } | null;
+    /** v4 T2 — an active player's SAB pose and teleport epoch. */
+    playerPose: (playerId: string) => { x: number; y: number; poseEpoch: number } | null;
     /** Gates: open bits for a gate structure id. */
     gateMask: (id: string) => number;
     /** Unified-hull plan, Phase 4 — assert a structure resolves its OWN
@@ -1188,6 +1205,12 @@ export class SectorRoom extends Room<SectorState> {
       mineField: this.mineField,
       rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
       gateMask: (id) => this.gates.maskFor(id),
+      playerPose: (pid) => {
+        const slot = this.playerToSlot.get(pid);
+        if (slot === undefined) return null;
+        const b = slotBase(slot);
+        return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, poseEpoch: this.getActiveShip(pid)?.poseEpoch ?? 0 };
+      },
       swarmPose: (id) => {
         const rec = this.swarmRegistry.get(id);
         if (!rec) return null;
@@ -2285,6 +2308,21 @@ export class SectorRoom extends Room<SectorState> {
       cycleScale: () => tpScale,
       shipsOnPad: (rec) => this.shipsOnPad(rec),
       onChanged: () => this.rebuildStructuresSlice(),
+      // T2 — ships ride the swap; the iris and the closing push in the worker.
+      onSwapShips: (a, b) => this.swapPadShips(a, b),
+      spawnIris: (rec) => this.forIrisSpan(rec, (id, s) => {
+        this.postToWorker({ type: 'SPAWN_WALL', id, ax: rec.x + s.ax, ay: rec.y + s.ay, bx: rec.x + s.bx, by: rec.y + s.by, thickness: GATE_SPAN_THICKNESS });
+        this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active: false });
+      }),
+      setIrisActive: (rec, active) => this.forIrisSpan(rec, (id) => this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active })),
+      removeIris: (rec) => {
+        this.forIrisSpan(rec, (id) => this.postToWorker({ type: 'REMOVE_WALL', id }));
+        this.postToWorker({ type: 'REMOVE_PAD_FIELD', id: `tpfield-${rec.id}` });
+      },
+      setPadField: (rec, active) => {
+        if (!isTeleporterKind(rec.kind)) return;
+        this.postToWorker({ type: 'SET_PAD_FIELD', id: `tpfield-${rec.id}`, cx: rec.x, cy: rec.y, half: PAD_SPECS[rec.kind].padRadius, active });
+      },
     });
     this.gates = new GateController({
       registry: this.structureRegistry,
@@ -5021,15 +5059,90 @@ export class SectorRoom extends Room<SectorState> {
    *  the dead don't board) sit with their centre on this teleporter's pad. */
   private shipsOnPad(rec: StructureRecord): number {
     if (!isTeleporterKind(rec.kind)) return 0;
-    const r2 = PAD_SPECS[rec.kind].padRadius ** 2;
     let n = 0;
     for (const [pid] of this.playerToSlot) {
       const ship = this.getActiveShip(pid);
       if (!ship?.alive || !ship.isActive) continue;
       const pose = this.shipPoseCache.get(pid);
-      if (pose && (pose.x - rec.x) ** 2 + (pose.y - rec.y) ** 2 <= r2) n++;
+      if (pose && onPad(rec.kind, rec.x, rec.y, pose.x, pose.y)) n++;
     }
     return n;
+  }
+
+  /** T2 — call `fn` with each iris span's worker id and its offset from the
+   *  pad centre (the pad is square, so a quarter turn leaves them unchanged). */
+  private forIrisSpan(rec: StructureRecord, fn: (id: string, s: { ax: number; ay: number; bx: number; by: number }) => void): void {
+    if (!isTeleporterKind(rec.kind)) return;
+    const n = PAD_SPECS[rec.kind].posts;
+    for (let i = 0; i < n; i++) {
+      padIrisSpanLocal(rec.kind, i, this._irisSpan);
+      fn(`tpiris-${rec.id}-${i}`, this._irisSpan);
+    }
+  }
+  private readonly _irisSpan = { ax: 0, ay: 0, bx: 0, by: 0 };
+
+  /**
+   * T2 — the jump: everything on pad `a` goes to pad `b` and everything on
+   * `b` comes to `a`, each at the same offset from its pad's centre. Riders,
+   * by liveness class (#17): ACTIVE alive player ships, LINGERING hulls, and
+   * NPC ships and scrap (swarm kinds 1 and 3). Everyone rides, strangers too
+   * (user ruling). Collected first, then moved, so nobody rides twice. An
+   * active player's `poseEpoch` bumps so their client re-seeds its prediction.
+   * A discrete event (once per jump), so its small arrays are fine.
+   */
+  private swapPadShips(a: StructureRecord, b: StructureRecord): void {
+    if (!isTeleporterKind(a.kind) || !isTeleporterKind(b.kind)) return;
+    const moves: Array<{ bodyKey: string; slot: number; nx: number; ny: number; playerId?: string; lingerId?: string }> = [];
+    const pairs: Array<[StructureRecord, StructureRecord]> = [[a, b], [b, a]];
+    for (const [from, to] of pairs) {
+      const kind = from.kind as TeleporterKind;
+      for (const [pid, slot] of this.playerToSlot) {
+        const ship = this.getActiveShip(pid);
+        if (!ship?.alive || !ship.isActive) continue;
+        const sb = slotBase(slot);
+        const x = this.sabF32[sb + SLOT_X_OFF]!;
+        const y = this.sabF32[sb + SLOT_Y_OFF]!;
+        if (onPad(kind, from.x, from.y, x, y)) moves.push({ bodyKey: pid, slot, nx: to.x + x - from.x, ny: to.y + y - from.y, playerId: pid });
+      }
+      for (const [sid, slot] of this.lingeringSlots) {
+        const sb = slotBase(slot);
+        const x = this.sabF32[sb + SLOT_X_OFF]!;
+        const y = this.sabF32[sb + SLOT_Y_OFF]!;
+        if (onPad(kind, from.x, from.y, x, y)) moves.push({ bodyKey: `linger-${sid}`, slot, nx: to.x + x - from.x, ny: to.y + y - from.y, lingerId: sid });
+      }
+      for (const rec of this.swarmRegistry.all()) {
+        if (rec.kind !== 1 && rec.kind !== 3) continue;
+        const sb = slotBase(rec.slot);
+        const x = this.sabF32[sb + SLOT_X_OFF]!;
+        const y = this.sabF32[sb + SLOT_Y_OFF]!;
+        if (onPad(kind, from.x, from.y, x, y)) moves.push({ bodyKey: rec.id, slot: rec.slot, nx: to.x + x - from.x, ny: to.y + y - from.y });
+      }
+    }
+    for (const m of moves) {
+      const sb = slotBase(m.slot);
+      this.sabF32[sb + SLOT_X_OFF] = m.nx;
+      this.sabF32[sb + SLOT_Y_OFF] = m.ny;
+      this.postToWorker({
+        type: 'SET_POSITION', entityId: m.bodyKey, x: m.nx, y: m.ny,
+        angle: this.sabF32[sb + SLOT_ANGLE_OFF]!, vx: this.sabF32[sb + SLOT_VX_OFF]!,
+        vy: this.sabF32[sb + SLOT_VY_OFF]!, angvel: this.sabF32[sb + SLOT_ANGVEL_OFF]!,
+      });
+      if (m.playerId !== undefined) {
+        const pose = this.shipPoseCache.get(m.playerId);
+        if (pose) { pose.x = m.nx; pose.y = m.ny; }
+        const ship = this.getActiveShip(m.playerId);
+        if (ship) ship.poseEpoch++;
+      }
+      if (m.lingerId !== undefined) {
+        const pose = this.lingeringPoseCache.get(m.lingerId);
+        if (pose) { pose.x = m.nx; pose.y = m.ny; }
+      }
+    }
+    if (moves.length > 0) {
+      // Keep snapshots flowing so the riders' clients reconcile at once.
+      this.forceBroadcastUntilTick = Atomics.load(this.sabU32, TICK_IDX) + JOIN_BROADCAST_GRACE_TICKS;
+      serverLogEvent('teleport_swap', { sectorKey: this.sectorKey ?? '', riders: moves.length });
+    }
   }
 
   /** C2 — does `playerId` fly a live ship (#17) within cargo range of `rec`? */
@@ -6628,7 +6741,7 @@ export class SectorRoom extends Room<SectorState> {
     // sector): nudge to the nearest clear point. Join path, not the hot loop.
     if (this.structureRegistry.size > 0) {
       const boxes: SiteBox[] = [];
-      for (const r of this.structureRegistry.all()) boxes.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
+      for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
       const clear = nearestClearPoint(spawnX, spawnY, boxes, SPAWN_STRUCTURE_CLEARANCE);
       spawnX = clear.x;
       spawnY = clear.y;
@@ -8200,7 +8313,7 @@ export class SectorRoom extends Room<SectorState> {
   clearPointNear(x: number, y: number): { x: number; y: number } {
     if (this.structureRegistry.size === 0) return { x, y };
     const boxes: SiteBox[] = [];
-    for (const r of this.structureRegistry.all()) boxes.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
+    for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
     return nearestClearPoint(x, y, boxes, 150);
   }
 

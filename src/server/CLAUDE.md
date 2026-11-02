@@ -248,6 +248,11 @@ Update this section when a threshold is set.
 - **Room state:** `tp*` / `padWeight` fields are assigned on change (A2). `tpPhaseMs` rides along only when the phase changes.
 - **Persisted:** partner, rules and charge go in the sector snapshot `teleport` block (rules re-validated on restore).
 - **Pairing (T1):** same sector, same owner.
+- **T2 — the doors and the ride:**
+  - **Phase effects:** `applyPhaseEffects` turns the pad field on while CLOSING (`SET_PAD_FIELD`) and the iris walls solid while SEALED (`tpiris-<id>-<i>`, spawned once, inactive).
+  - **The swap:** `SectorRoom.swapPadShips` collects riders by liveness class (#17: ACTIVE alive players, LINGERING hulls, swarm kinds 1 and 3), then moves them all (SAB + `SET_POSITION` + pose caches).
+  - **Riders' clients:** an active rider's `ShipState.poseEpoch` bumps and rides the own-ship snapshot entry (#16), and the broadcast grace is extended.
+  - **Spawn clearance** treats a pad as its posts (`pushSolidBoxes`).
 - Lock: `tests/integration/sectorRoom/teleporter.test.ts`. Story: [docs/features/teleporters.md](../../docs/features/teleporters.md).
 
 ## Faction standing events and policies (plan soft-leaping-truffle v4, F3)

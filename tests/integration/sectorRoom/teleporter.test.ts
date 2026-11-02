@@ -120,3 +120,40 @@ describe('SectorRoom integration — teleporters (v4 T1)', () => {
     expect(a.tpPartner).toBeDefined();
   });
 });
+
+describe('SectorRoom integration — ships ride the swap (v4 T2)', () => {
+  let harness: SectorTestHarness;
+  afterEach(async () => {
+    if (harness) await harness.cleanup();
+  });
+
+  it('a pilot on pad A and a drone on pad B trade places; the pilot’s epoch bumps', { timeout: 30_000 }, async () => {
+    harness = await bootSectorTestServer({
+      sectorKey: 'teleport-test', droneCount: 0, testMode: true, asteroidConfig: [],
+      prebuiltStructures: LAYOUT, prebuiltStructuresOwner: OWNER, pairTeleporters: true,
+      teleportCycleScale: 0.01, peacefulDrones: true,
+      scenarioDrones: [{ x: 1300, y: 100 }],
+      defaultSpawnX: 0, defaultSpawnY: 900,
+    } as never);
+    const client = await harness.connectActive(OWNER, { shipKind: 'fighter', spawnX: -1300, spawnY: -50 });
+    const internals = harness.getServerRoom()!._internals;
+    const [a] = [...internals.structureRegistry.all()].filter((r) => r.kind === 'teleporter');
+    const drone = [...internals.swarmRegistry.all()].find((r) => r.kind === 1)!;
+    for (let i = 0; i < 400; i++) internals.pulseStructureGrid();
+    await harness.advance(50);
+    const before = internals.playerPose(OWNER)!;
+    expect(Math.abs(before.x - -1300)).toBeLessThan(300); // on pad A
+    expect(before.poseEpoch).toBe(0);
+
+    client.send('teleport_fire', { type: 'teleport_fire', entityId: internals.swarmRegistry.get(a!.id)!.entityId });
+    for (let i = 0; i < 60 && (a!.tpPhase ?? 0) !== 0 || i < 2; i++) {
+      internals.tickStructureTurrets();
+      await harness.advance(30);
+    }
+    const after = internals.playerPose(OWNER)!;
+    expect(after.poseEpoch).toBe(1);
+    expect(after.x).toBeGreaterThan(900); // now on pad B (x 1300)
+    const dronePose = internals.swarmPose(drone.id)!;
+    expect(dronePose.x).toBeLessThan(-900); // the drone came the other way
+  });
+});

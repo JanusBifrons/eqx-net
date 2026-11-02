@@ -104,7 +104,10 @@ interface MissileImpulseCmd { type: 'MISSILE_IMPULSE'; entityId: string; fx: num
 interface SpawnWallCmd      { type: 'SPAWN_WALL';      id: string; ax: number; ay: number; bx: number; by: number; thickness: number }
 interface SetWallActiveCmd  { type: 'SET_WALL_ACTIVE'; id: string; active: boolean }
 interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd;
+/** v4 T2 — a teleporter pad's closing-iris push (PhysicsWorld.setPadField). */
+interface SetPadFieldCmd    { type: 'SET_PAD_FIELD';   id: string; cx: number; cy: number; half: number; active: boolean }
+interface RemovePadFieldCmd { type: 'REMOVE_PAD_FIELD'; id: string }
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd;
 
 async function main(): Promise<void> {
   const { sab } = workerData as { sab: SharedArrayBuffer };
@@ -285,6 +288,14 @@ async function main(): Promise<void> {
       }
       case 'REMOVE_WALL': {
         physics.removeWall(cmd.id);
+        break;
+      }
+      case 'SET_PAD_FIELD': {
+        physics.setPadField(cmd.id, cmd.cx, cmd.cy, cmd.half, cmd.active);
+        break;
+      }
+      case 'REMOVE_PAD_FIELD': {
+        physics.removePadField(cmd.id);
         break;
       }
     }

@@ -60,12 +60,29 @@ It is separate from base storage, so production never draws from it.
 
 **If a teleporter is destroyed or removed:** its pad hold spills as loot and its partner is unpaired.
 
+## Riding the jump (T2)
+
+**Who rides.** At the swap, everything on either pad trades places, each at the same offset from its pad's centre. That means active pilots, parked (lingering) hulls, NPC ships and scrap. **Everyone rides, strangers and enemies included** (your ruling): defend your pads. The pad is the open square inside the posts (`onPad`).
+
+**The doors.**
+- **Closing:** a gentle push moves any ship straddling the pad edge fully in, or fully out, whichever side its centre is on (`padPushDir`, ~90 u/s²).
+- **Sealed:** the iris spans between the posts turn solid, so no one can fly in or out at the last moment.
+- **Both sides agree.** The server worker and your client's prediction world run the same push and the same walls from the room-state phase (#15), so your ship doesn't judder at the doors.
+
+**The warning.** A pilot whose ship is on a pad sees a top-centre banner while its cycle runs: "Teleport departing. Stay on the pad to ride, or fly off now.", then "Doors closing.", then "Sealed. Charging up…". It is worked out on the client from room state; no message is sent.
+
+**Your view after the jump.** A teleported ship's `poseEpoch` goes up. On the change your client re-seeds its prediction at the new authoritative pose, a snap rather than a long correction slide, and the camera follows.
+
+**Spawning on a pad works:** spawn clearance treats a pad as open (only the posts are solid).
+
 ## Testing
 
 | Layer | File |
 |---|---|
 | Cycle and rules (pure) | `src/core/structures/teleportCycle.test.ts` |
 | Integration | `tests/integration/sectorRoom/teleporter.test.ts`: charge capped at the jump's need, pad load, the swap with only the firing end paying, arrivals unloading, late-joiner room state, owner gating |
-| E2E | `tests/e2e/teleporter.spec.ts` (`teleport-test` room, feature tier) |
+| E2E | `tests/e2e/teleporter.spec.ts` (`teleport-test` room, feature tier): the cargo flow, and a pilot on the pad who is warned, rides, and stays on the far pad |
+| T2 unit | `src/shared-types/teleport.test.ts` (pad geometry, push direction); `src/core/physics/World.padField.test.ts` (the push in, out, off, and two worlds agree) |
+| T2 integration | `teleporter.test.ts`: a pilot on pad A and a drone on pad B trade places, and the pilot's epoch bumps |
 
 The `teleport-test` room seeds a powered Capital with a paired teleporter on each side, owned by a fixed id the test joins as. It uses `teleportCycleScale` and a fast grid pulse.

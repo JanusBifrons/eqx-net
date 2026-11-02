@@ -201,6 +201,8 @@ interface AllShipEntry {
    *  for every ship (active + lingering) with ≥ 1 activated mount, so others see
    *  the extra turrets. The renderer looks up geometry by `(shipKind, slotId)`. */
   mounts: MountsRef;
+  /** v4 T2 — the hull's teleport epoch (0 = never teleported). */
+  poseEpoch: number;
 }
 
 /** Read-only reference shape for the per-instance stat allocation (mirrors
@@ -238,6 +240,7 @@ type MutableStateEntry = {
   depositing?: number;
   fitted?: string[];
   wallet?: number;
+  poseEpoch?: number;
   // Typed mutable to match the wire `SnapshotMessage['states'][...].mounts`; the
   // value assigned is a SHARED reference to `ShipState.mounts` (the encoder
   // reads it synchronously and never mutates it).
@@ -532,6 +535,7 @@ export class SnapshotBroadcaster {
         level: 1,
         statAlloc: EMPTY_STAT_ALLOC,
         mounts: EMPTY_MOUNTS,
+        poseEpoch: 0,
       };
       this._allShipsScratch[index] = entry;
     }
@@ -587,6 +591,7 @@ export class SnapshotBroadcaster {
       entry.level = ship.level; // Phase 4 WS-B1 — public level
       entry.statAlloc = ship.statAlloc ?? EMPTY_STAT_ALLOC; // WS-B2 — shared ref
       entry.mounts = ship.mounts ?? EMPTY_MOUNTS; // WS-B3 — public activated mounts
+      entry.poseEpoch = ship.poseEpoch ?? 0; // v4 T2 — teleport epoch
       allShipsCount++;
       this._aliveIdsScratch.add(playerId);
       this._aliveShipInstanceIds.add(entry.shipInstanceId);
@@ -621,6 +626,7 @@ export class SnapshotBroadcaster {
       // WS-B3 — activated mounts ARE public for lingering hulls too (a parked
       // upgraded hull renders its extra turrets to observers).
       entry.mounts = ship.mounts ?? EMPTY_MOUNTS;
+      entry.poseEpoch = 0;
       allShipsCount++;
       this._aliveShipInstanceIds.add(shipInstanceId);
     }
@@ -729,6 +735,8 @@ export class SnapshotBroadcaster {
         entry.fitted = fitted !== undefined && fitted.length > 0 ? (fitted as string[]) : undefined;
         // Economy v2 W1 (#16) — the own player's wallet balance (a number, no alloc).
         entry.wallet = ownActive ? this.deps.walletOf?.(ship.playerId) : undefined;
+        // v4 T2 (#16) — teleport epoch: the owner re-seeds prediction on a change.
+        entry.poseEpoch = ownActive && ship.poseEpoch > 0 ? ship.poseEpoch : undefined;
         // WS-B3 — activated mounts are PUBLIC (every recipient, active +
         // lingering), emit-when-non-empty. Shared reference (no per-tick alloc,
         // #14); the renderer looks up geometry by (shipKind, slotId). Clear the
