@@ -83,6 +83,9 @@ export interface LivingWorldRoom {
   /** Living World P3b — nearest live loot pod (not a derelict) to (x, y), or
    *  null. Control cadence only (allocates). OPTIONAL for mock rooms. */
   nearestLootPod?(x: number, y: number): { x: number; y: number } | null;
+  /** Robot harvesters hunt haulers: the nearest live hauler (trade or convoy)
+   *  within `range` of (x, y), or null. Control cadence only. OPTIONAL. */
+  nearestHauler?(x: number, y: number, range: number): { id: string; x: number; y: number } | null;
   /** P3b — cargo weight carried in the hold keyed `uid` (0 when none). */
   holdWeight?(uid: string): number;
   /** P3b — move the whole hold `fromUid` into `toUid` (an ownerless
