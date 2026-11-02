@@ -60,7 +60,7 @@ export interface ProductionDeps {
   onBlueprintSpent?(rec: StructureRecord): void;
   /** Active power: full draw while running, the idle trickle otherwise. */
   setActive?(rec: StructureRecord, active: boolean): void;
-  /** D3 — a city module finished a cycle: pay its owner `n` credits (taxes).
+  /** D3 — a habitation module finished a cycle: pay its owner `n` credits (taxes).
    *  The room pays a player's wallet; an NPC owner has none. */
   payCredits?(rec: StructureRecord, n: number): void;
 }

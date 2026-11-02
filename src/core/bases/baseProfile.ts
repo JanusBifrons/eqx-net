@@ -9,9 +9,9 @@
  *   refinery, workshop (a short chain ending in a product it sells),
  *   manufactory, assembly works (rare, region hearts only), trade hub.
  *   Sector features drive it: asteroids, minerals and nebulae mean mining;
- *   stations and chokepoints mean trade; hearts mean manufacturing. Colonies
- *   (cities, D3) settle in the wealthier middle and core of a region, never as
- *   a small outpost.
+ *   stations and chokepoints mean trade; hearts mean manufacturing. Habitat
+ *   stations (role `colony`, D3) settle in the wealthier middle and core of a
+ *   region, never as a small outpost.
  * - **Wealth, level cap, fence** follow the tier and how central the sector is.
  *
  * The context comes from the galaxy graph (`contextForSector`) or is built by
@@ -23,7 +23,8 @@ import { GALAXY_SECTORS, getSector, isEntrySector, type SectorFeature } from '..
 export const BASE_TIERS = ['outpost', 'settlement', 'stronghold', 'citadel'] as const;
 export type BaseTier = (typeof BASE_TIERS)[number];
 
-/** Production-chain roles. A colony (D3) is a city: the chain's consumer. */
+/** Production-chain roles. A `colony` (D3) is a habitat station: the
+ *  chain's consumer. */
 export const BASE_ROLES = ['mining', 'refinery', 'workshop', 'manufactory', 'assembly', 'trade', 'colony'] as const;
 export type BaseRole = (typeof BASE_ROLES)[number];
 
@@ -36,7 +37,7 @@ export const ROLE_STAGES: Readonly<Record<BaseRole, readonly number[]>> = Object
   manufactory: [2],
   assembly: [2, 3],
   trade: [],
-  // A city may grow some of its own provisions; its consumer goods are always
+  // A habitat station may grow some of its own provisions; its consumer goods are always
   // imported.
   colony: [1],
 });

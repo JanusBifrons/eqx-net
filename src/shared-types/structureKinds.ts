@@ -72,7 +72,7 @@ export const StructureKindIdSchema = z.enum([
   'storage_vault',
   // Economy v2 W5b (plan peppy-jumping-pinwheel) — APPEND ONLY.
   'shipyard',
-  // D3 city modules (plan soft-leaping-truffle v3) — APPEND ONLY.
+  // D3 habitation modules (plan soft-leaping-truffle v3) — APPEND ONLY.
   'habitat_module',
   'tower_module',
   // Mine Layer (plan soft-leaping-truffle v3) — APPEND ONLY.
@@ -841,9 +841,10 @@ export const SHIPYARD: StructureKind = {
   color: 0x7ec8ff,
 };
 
-// ── City modules (plan soft-leaping-truffle v3, D3) ─────────────────────────
-// Cities are the production chain's main consumers: their people use up
-// provisions and consumer goods from base storage and pay their owner taxes.
+// ── Habitation modules (plan soft-leaping-truffle v3, D3) ───────────────────
+// Habitat stations are the production chain's main consumers: their residents
+// use up provisions and consumer goods from base storage and pay their owner
+// taxes. (Bases are space stations; the connector spines are their roads.)
 
 /** Housing: uses provisions and a little consumer goods; pays taxes. */
 export const HABITAT_MODULE: StructureKind = {
@@ -862,11 +863,11 @@ export const HABITAT_MODULE: StructureKind = {
   color: 0xf2c46b,
 };
 
-/** A residential tower: wealthier residents, more consumer goods, more taxes. */
+/** A residential spire: wealthier residents, more consumer goods, more taxes. */
 export const TOWER_MODULE: StructureKind = {
   id: 'tower_module',
-  displayName: 'Tower Module',
-  description: 'A residential tower. Wealthier residents use more consumer goods from base storage and pay more taxes. A leaf node.',
+  displayName: 'Residential Spire',
+  description: 'A residential spire. Wealthier residents use more consumer goods from base storage and pay more taxes. A leaf node.',
   radius: 170, // bounding circle of the 240×240 footprint
   footprint: { w: 240, h: 240 },
   maxHealth: 2200,
@@ -933,7 +934,7 @@ export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   STORAGE_VAULT,
   // Economy v2 W5b — APPENDED. Never reorder.
   SHIPYARD,
-  // D3 city modules — APPENDED. Never reorder.
+  // D3 habitation modules — APPENDED. Never reorder.
   HABITAT_MODULE,
   TOWER_MODULE,
   // Mine Layer — APPENDED. Never reorder.

@@ -353,8 +353,13 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     if (typeof ssx === 'number' && typeof ssy === 'number') {
       const panel = document.querySelector('[data-testid="entity-stats-panel"]') as HTMLElement | null;
       if (panel) {
+        // The panel floats ABOVE its anchor (translate -100%), so clamp the
+        // anchor by the panel's height: its TOP stays below the app header
+        // (a target high on screen used to push it under the header, where
+        // "Open cargo" couldn't be clicked). Read the height before writing.
+        const h = panel.offsetHeight;
         panel.style.left = `${Math.max(8, Math.min(window.innerWidth - 8, ssx))}px`;
-        panel.style.top = `${Math.max(56, Math.min(window.innerHeight - 8, ssy))}px`;
+        panel.style.top = `${Math.max(56 + h, Math.min(window.innerHeight - 8, ssy))}px`;
       }
       if (writeE2E) {
         el.dataset['selectionScreenX'] = ssx.toFixed(1);

@@ -189,7 +189,7 @@ function roleUnits(profile: BaseProfile, features: readonly SectorFeature[], rnd
     case 'trade':
       return [{ kind: 'cargo_bay' }];
     case 'colony': {
-      // A city: housing first, towers once it's a settlement or bigger, and
+      // A habitat station: housing first, spires once it's a settlement or bigger, and
       // hydroponics to grow part of its own provisions.
       const out: Want[] = [
         { kind: 'habitat_module', recipe: 'habitat_upkeep' },

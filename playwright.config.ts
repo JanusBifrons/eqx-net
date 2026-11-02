@@ -72,6 +72,10 @@ const FEATURE_SPECS: string[] = [
   '**/cargo-panel.spec.ts',
   // A fence blocks its owner's own fire: the turret placement hint.
   '**/turret-fence-hint.spec.ts',
+  // C2/C3 — break into another owner's storage / an NPC ship's hold.
+  '**/break-in.spec.ts',
+  // Mine Layer + habitat stations reach the client.
+  '**/mines-and-habitation.spec.ts',
   '**/asteroid-shape.spec.ts',
   '**/radar-sandbox.spec.ts',
   '**/auto-fire.spec.ts',
