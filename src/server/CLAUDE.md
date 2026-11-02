@@ -285,6 +285,11 @@ Update this section when a threshold is set.
 - **H2 — convoys ride the links.** `ConvoyDirector` routes by `transitRouteHops` (a link is `LINK_HOP_COST` = half a hop) for planning and transit time; the `routeHops` option injects another. Transit stays abstract (haulers don't physically ride a pad). The drone/robot directors still use plain `hopDistance`.
 - Lock: `tests/integration/sectorRoom/transitHubs.test.ts`. Story: [docs/features/transit-hubs.md](../../docs/features/transit-hubs.md).
 
+## Military bases (plan soft-leaping-truffle v4, M1)
+
+- Placed by `galaxyBasePlan` (`militarySites`); seeded like any NPC base. `NpcBaseSubsystem.seed` sets a military base's gates to **owner + allies** (`'allies'`); every other NPC base's stay **open**.
+- Patrols (M2) are next. Story: [docs/features/military-bases.md](../../docs/features/military-bases.md).
+
 ## Faction standing events and policies (plan soft-leaping-truffle v4, F3)
 
 - **One rule for hits:** `applyDamage` → `noteStandingHit` lowers the victim faction's view of the attacker's faction once per pair per window (`STANDING_HIT_*`). Victims are structures (their owner) and player ships, with at least one player side. Steady state is nested Map lookups only (#14). Break-ins cost `STANDING_BREAK_IN_DELTA`. Don't add standing deltas elsewhere without a reason; trade keeps its own (`REP_*`).
