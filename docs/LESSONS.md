@@ -2594,3 +2594,20 @@ Two of them, missile lock-on and attacker labels, decided "is this an AI?" from 
 **Fix and lock.** The bits now set for every kind, and `tests/integration/sectorRoom/structureFlagsWire.test.ts` reads them from a CLIENT's room state. It failed on main.
 
 **Rule.** When a new wire bit is added next to an existing one, check which branch you're in. A flag's test must read it where the client reads it (room state or snapshot), not from the server object it was computed from.
+
+## 2026-11-02 — Structure beam turrets and missiles ignored shield walls
+
+**Symptom.** The user ruled that a fence blocks every shot, its owner's included. Checking that showed it was never true for most structure fire. A beam turret applied its damage straight to the target without asking the walls, so it fired through ANY fence. Missiles had no wall check at all. Only bolts were stopped (by the projectile pipeline).
+
+**A second hole.** A turret spawns bolts and missiles at its muzzle, a bounding radius plus 8 u out, about 180 u for a missile turret. A wall closer than that was simply skipped.
+
+**Fix.** Every structure weapon asks the walls:
+- beams through `blockBeamAtWall`;
+- bolts and missiles at the launcher (a wall between turret and muzzle takes the shot);
+- missiles in flight through `wallBlocksMissile`.
+
+The generator now puts a fenced base's turrets outside the fence. Lock: `turretVsOwnFence.test.ts`, which failed before the fix with 21 beam hits through the fence.
+
+**Test trap.** A missile bigger than the grid's spare power plus its battery charge STUNS the wall, and a stunned wall is open by design. A wall test with no battery measures overload, not blocking.
+
+**Rule.** When a rule says "every X", check every path that produces an X: beam, bolt, missile and spawn offset. They were added at different times, and each skipped the walls in its own way.

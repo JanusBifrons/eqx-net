@@ -1718,6 +1718,8 @@ export class SectorRoom extends Room<SectorState> {
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
       broadcastFired: (msg) => this.broadcast('missile_fired', msg),
       broadcastDetonated: (msg) => this.broadcast('missile_detonated', msg),
+      // A fence stops missiles too (user ruling 2026-11-02).
+      wallBlocksMissile: (x, y, sx, sy, damage) => this.shieldWalls.blockProjectile(x, y, sx, sy, damage, Date.now()),
       bus: this.bus,
       serverLogEvent,
     });
@@ -2125,6 +2127,7 @@ export class SectorRoom extends Room<SectorState> {
       // robots) but never open fire on NEUTRAL traders (their haulers).
       findNearestDrone: (x, y, range, owner) => this.findNearestTurretTarget(x, y, range, owner),
       applyDamage: (targetId, shooterId, damage) => this.applyDamage(targetId, shooterId, damage),
+      blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) => this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) => {
         this.broadcast('laser_fired', {
           type: 'laser_fired',

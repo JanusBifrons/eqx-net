@@ -40,6 +40,13 @@ their shots are **absorbed by the wall** in the way. To break through, an attack
 must out-gun the fence's power buffer (keeping the wall stunned) and then destroy a
 pylon. The fence buys your base time; batteries decide how much.
 
+**Your own fire doesn't pass either** (user ruling 2026-11-02). A fence blocks
+every ship and every shot, its owner's included: your turrets' beams, bolts and
+missiles stop at your own wall, and a shot whose muzzle is already past a wall
+is caught at the launcher. So put turrets where their field of fire is clear:
+outside the fence, or covering the gates. NPC bases do exactly that (their
+turrets stand on bastions outside the fence).
+
 ## At a glance
 
 | | |
