@@ -35,6 +35,12 @@ export const MAX_STRUCTURES_PER_BASE = 400;
  *  asteroids, scrap, pods. */
 export const MAX_STRUCTURES_PER_SECTOR = 650;
 
+/** All NPC bases in one galaxy sector together, counted by each tier's
+ *  structure ceiling (`TIER_MAX_STRUCTURES`). Set to the N = 400 point the
+ *  join-payload budget (`STRUCTURE_JOIN_MAX_BYTES`) was measured at, leaving
+ *  the rest of `MAX_STRUCTURES_PER_SECTOR` for players' bases. */
+export const NPC_STRUCTURES_PER_SECTOR_MAX = 400;
+
 // ── Wire (per client) ──────────────────────────────────────────────────────
 
 /** The per-snapshot structures slice after A2 carries only fast cosmetics
