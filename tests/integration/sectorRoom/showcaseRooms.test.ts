@@ -9,11 +9,13 @@ import { matchMaker } from 'colyseus';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
-import { getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
+import { getPlayerShipStore, getWallet } from '../../../src/server/db/PersistenceWorker.js';
 import { getDroneMaxHealth } from '../../../src/server/rooms/droneKindHelpers.js';
 import { xpForKill, xpToNext } from '../../../src/core/leveling/shipXp.js';
 import {
   SHOWCASE_BASE_OPTS,
+  SHOWCASE_BOUNTY_OPTS,
+  SHOWCASE_HOMESTEAD_OPTS,
   SHOWCASE_DEFENCE_OPTS,
   SHOWCASE_PILOT_ID,
   SHOWCASE_LEVELUP_OPTS,
@@ -99,5 +101,29 @@ describe('Showcase rooms', () => {
 
     expect(getPlayerShipStore().get(instanceId)!.level).toBe(2);
     expect(state.ships.get(instanceId)!.level).toBe(2);
+  });
+
+  it('bounty room: a named elite on cue pays its bounty into the killer wallet', async () => {
+    harness = await bootSectorTestServer(opts(SHOWCASE_BOUNTY_OPTS));
+    const hunter = randomUUID();
+    const cr = await harness.connectActive(hunter, { shipKind: 'interceptor' });
+    const room = roomOf(cr.roomId);
+    const elite = [...room._internals.swarmRegistry.all()].find((r) => r.elite !== undefined)!;
+    expect(elite.elite!.name).toBe('Kestrel Vane');
+    const before = getWallet().balance(hunter);
+    for (let i = 0; i < 10 && room._internals.swarmRegistry.get(elite.id); i++) room._internals.applyDamage(elite.id, hunter, 99_999);
+    expect(room._internals.swarmRegistry.get(elite.id) ?? null).toBeNull();
+    expect(getWallet().balance(hunter) - before).toBeGreaterThanOrEqual(elite.elite!.bounty ?? 1);
+  });
+
+  it('homestead: the pilot owns a powered base with a miner on its asteroid', async () => {
+    harness = await bootSectorTestServer(opts(SHOWCASE_HOMESTEAD_OPTS));
+    const cr = await harness.connectAs(randomUUID());
+    const internals = roomOf(cr.roomId)._internals;
+    const structures = [...internals.structureRegistry.all()];
+    expect(structures.every((s) => s.owner === SHOWCASE_PILOT_ID && s.isConstructed)).toBe(true);
+    expect(structures.some((s) => s.kind === 'miner')).toBe(true);
+    internals.pulseStructureGrid();
+    for (const s of internals.getStructuresSlice() ?? []) expect(s.powered).toBe(true);
   });
 });

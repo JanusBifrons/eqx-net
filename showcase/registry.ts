@@ -34,6 +34,7 @@ import { radar } from './shots/radar.js';
 import { breakIn } from './shots/breakIn.js';
 import { npcCitadel } from './shots/npcCitadel.js';
 import { tradeDeal, tradeRaid } from './shots/trade.js';
+import { cockpitBounty, cockpitHaul, cockpitRobots, cockpitStronghold } from './shots/cockpit.js';
 
 /** Every shot, in reel order. Catalogue = all of them; reel = `reel: true`. */
 export const SHOTS: readonly Shot[] = [
@@ -49,6 +50,10 @@ export const SHOTS: readonly Shot[] = [
   nexus,
   scrap,
   loot,
+  cockpitHaul,
+  cockpitBounty,
+  cockpitRobots,
+  cockpitStronghold,
   breakIn,
   tradeDeal,
   tradeRaid,
@@ -124,6 +129,4 @@ export const SHOWCASE_PENDING: Record<string, string> = {
     'Blueprints drop at random from elites/events and install at a signed-in base; needs a staged loot→install room for the P5 showcase.',
   'research-lab':
     'Lab jobs run for minutes on the 1 Hz grid pulse; needs a staged base with blueprints + a fast-pulse room before it can be filmed.',
-  'bounties-and-events':
-    'Elites roam the galaxy on the EliteDirector cadence (not on cue); needs a staged elite room — filmed once the P4 showcase room lands.',
 };

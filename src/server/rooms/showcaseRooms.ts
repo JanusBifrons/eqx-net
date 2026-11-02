@@ -137,6 +137,47 @@ export const SHOWCASE_SWARM_OPTS = {
   maxClients: 4,
 } as const;
 
+/**
+ * The pilot's home base, roster-backed (real sectorKey, outside the galaxy
+ * graph) so cargo can be hauled home: join with `initialCargo` far to the
+ * south-west, fly past the Miner drilling its asteroid, and unload at the
+ * Capital (auto-deposit). Peaceful — no drones.
+ */
+export const SHOWCASE_HOMESTEAD_OPTS = {
+  sectorKey: 'showcase-homestead',
+  testMode: true,
+  droneCount: 0,
+  asteroidConfig: [],
+  peacefulDrones: true,
+  structureGridPulseMs: 250,
+  prebuiltStructuresOwner: SHOWCASE_PILOT_ID,
+  prebuiltStructures: [...STRUCTURE_SCENARIO_PREBUILT],
+  scenarioAsteroids: [{ ...SCENARIO.asteroid }],
+  defaultSpawnX: -1150,
+  defaultSpawnY: -1450,
+  maxClients: 4,
+} as const;
+
+/**
+ * A named elite with a bounty and two escorts, on cue (the EliteDirector only
+ * sends them on its own schedule). Roster-backed so the bounty pays into the
+ * killer's wallet. Join with `startHostile=1`.
+ */
+export const SHOWCASE_BOUNTY_OPTS = {
+  sectorKey: 'showcase-bounty',
+  testMode: true,
+  droneCount: 0,
+  asteroidConfig: [],
+  dronePoses: [
+    { kind: 'heavy', x: 0, y: 650, angle: Math.PI, hullExposed: true, elite: { name: 'Kestrel Vane', healthMul: 0.35 } },
+    { kind: 'fighter', x: -260, y: 760, angle: Math.PI, hullExposed: true },
+    { kind: 'fighter', x: 260, y: 760, angle: Math.PI, hullExposed: true },
+  ],
+  defaultSpawnX: 0,
+  defaultSpawnY: -150,
+  maxClients: 4,
+} as const;
+
 /** Room name → options, registered in `index.ts`. */
 export const SHOWCASE_ROOMS = {
   'showcase-ship-gallery': SHOWCASE_SHIP_GALLERY_OPTS,
@@ -144,4 +185,6 @@ export const SHOWCASE_ROOMS = {
   'showcase-defence': SHOWCASE_DEFENCE_OPTS,
   'showcase-levelup': SHOWCASE_LEVELUP_OPTS,
   'showcase-swarm': SHOWCASE_SWARM_OPTS,
+  'showcase-homestead': SHOWCASE_HOMESTEAD_OPTS,
+  'showcase-bounty': SHOWCASE_BOUNTY_OPTS,
 } as const;

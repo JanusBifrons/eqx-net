@@ -1362,6 +1362,9 @@ export class SectorRoom extends Room<SectorState> {
         /** Radar sandbox — mark this drone hostile to every joining player (so
          *  it renders as a hostile contact) without it attacking anything. */
         hostile?: boolean;
+        /** Showcase — make this drone a named elite with a bounty (as the
+         *  EliteDirector would), so a bounty kill can be staged on cue. */
+        elite?: { name: string; healthMul?: number; bounty?: number };
       }>;
       /**
        * Generic Entity Pipeline P4 — deterministic STRUCTURE placement. Each
@@ -2384,6 +2387,7 @@ export class SectorRoom extends Room<SectorState> {
             tick: this.serverTick,
           });
         }
+        if (pose.elite) this.markElite(droneId, pose.elite.name, pose.elite.healthMul, pose.elite.bounty);
         placed++;
       }
       logger.info({ requested: poses.length, spawned: placed }, 'dronePoses seeded');
