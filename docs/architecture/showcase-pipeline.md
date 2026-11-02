@@ -161,3 +161,23 @@ window.
   staged two-faction room. **Wave attacks** are catalogue-only: the squad holds
   at the sector edge for more than 45 s before committing, so the assault needs
   a fast-approach trigger to land inside a take.
+- **DOM panels opened inside the world-anchored inspector** (the cargo panel)
+  do not appear in the screencast frames, although the DOM has them and a page
+  screenshot shows them. The `break-in` shot is catalogue-only until that is
+  understood. Drawers, dialogs and toasts record fine.
+- **UI-heavy takes record slowly.** The Trade tab with the full offers board
+  captures at ~25–30 fps on the reference laptop (main-thread renderer plus
+  React), so `trade-deal` fails the smoothness gate there.
+
+## Failure handling
+
+- A take whose scripted actions throw (`shot.run`) is a failed take, never an
+  encoded clip: the recorder stops the screencast, then rethrows.
+- A shot with no usable take after `MAX_TAKES` is logged and skipped; the rest
+  of the run continues and the run exits non-zero naming the skipped shots.
+- After a crashed take restarts the server, the recorder warms up again before
+  the next take (the first take after a boot is the unstable one).
+- Moving a take into `clips/<id>` retries: Windows briefly locks folders.
+- Every Vite proxy entry must target `SERVER_PORT` (locked by
+  `tests/unit/viteProxyPort.test.ts`). A hard-coded `localhost:2567` sends the
+  isolated capture's requests to whatever dev server owns that port.

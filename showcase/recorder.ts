@@ -149,12 +149,20 @@ export class Recorder {
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 80, everyNthFrame: 1, ...size });
     index.startT = Date.now();
     if (shot.camera) await ctx.cinema.play(scaleCues(shot.camera, phone ? 1 : ctx.viewport.width / 1920));
-    const actions = shot.run ? shot.run(ctx).catch((e: Error) => this.log(`  [action error] ${e.message}`)) : null;
+    // A failed action means the take did not show what the caption says:
+    // fail the take (after stopping the screencast) so it is retaken.
+    let actionError: Error | null = null;
+    const actions = shot.run
+      ? shot.run(ctx).catch((e: Error) => {
+          actionError = e;
+        })
+      : null;
     await sleep(shot.durationMs);
     await cdp.send('Page.stopScreencast');
     index.endT = Date.now();
     await actions;
     await writing;
+    if (actionError) throw new Error(`action failed: ${(actionError as Error).message.split('\n')[0]}`);
 
     // Rebase timestamps onto the screencast clock's first frame.
     if (index.frames.length > 0) {

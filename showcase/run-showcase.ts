@@ -116,6 +116,7 @@ async function main(): Promise<void> {
   mkdirSync(runDir, { recursive: true });
   const manifestFile = path.join(out, 'manifest.json');
   const manifest = loadManifest(manifestFile);
+  const failed: string[] = [];
 
   const wanted = SHOTS.filter((s) =>
     args.shots ? args.shots.includes(s.id) : args.catalogue || s.reel,
@@ -149,7 +150,14 @@ async function main(): Promise<void> {
         await servers.ensure(profile);
         await recorder.warmUp(profile === 'lean' ? 4000 : 12_000);
         for (const shot of group) {
-          manifest[shot.id] = await takeWithRetry(shot, recorder, servers, capBrowser, out, sha, args.fps);
+          // One shot with no usable take must not lose the rest of the run.
+          try {
+            manifest[shot.id] = await takeWithRetry(shot, recorder, servers, capBrowser, out, sha, args.fps);
+          } catch (e) {
+            failed.push(shot.id);
+            log(`✗ ${shot.id}: no usable take (${(e as Error).message.split('\n')[0]}) — skipped`);
+            continue;
+          }
           writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
         }
       }
@@ -163,16 +171,34 @@ async function main(): Promise<void> {
   if (args.shots && !args.composeOnly) {
     // Re-takes / test clips: cut just these shots together (no cards) so they
     // can be reviewed without touching the full reel.
-    const parts = SHOTS.filter((s) => args.shots!.includes(s.id)).map((s) => path.join(out, 'clips', s.id, 'clip.mp4'));
+    const parts = SHOTS.filter((s) => args.shots!.includes(s.id) && !failed.includes(s.id)).map((s) => path.join(out, 'clips', s.id, 'clip.mp4'));
     const { master } = await assemble(parts, out, 'shots');
     log(`wrote ${master}`);
   } else {
     await compose(args, out, manifest, args.catalogue);
   }
   printSummary(manifest, wanted);
+  if (failed.length) {
+    log(`no usable take for: ${failed.join(', ')}`);
+    process.exitCode = 1;
+  }
 }
 
 const MAX_TAKES = 3;
+
+/** Move a take into place. Windows briefly locks folders (indexer, AV), so retry. */
+async function replaceDir(from: string, to: string): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      rmSync(to, { recursive: true, force: true });
+      renameSync(from, to);
+      return;
+    } catch (e) {
+      if (attempt >= 6) throw e;
+      await new Promise((r) => setTimeout(r, 500 * attempt));
+    }
+  }
+}
 
 const takeStats = (rec: RecordResult): TakeStats => ({
   frames: rec.index.frames.length,
@@ -217,12 +243,13 @@ async function takeWithRetry(
       log(`  ✗ ${shot.id}: ${lastError.message.split('\n')[0]}`);
       rmSync(dir, { recursive: true, force: true });
       await servers.restartServer().catch(() => {});
+      // The first take after a fresh server boot is the unstable one; warm up.
+      await recorder.warmUp(4000).catch(() => {});
     }
   }
   if (!best) throw lastError ?? new Error(`no usable take for ${shot.id}`);
 
-  rmSync(clipDir, { recursive: true, force: true });
-  renameSync(best.dir, clipDir);
+  await replaceDir(best.dir, clipDir);
   const caption = path.join(clipDir, 'caption.png');
   await captionOverlay(capBrowser, caption, shot.title, shot.caption, shot.viewport === 'phone' ? 'side' : 'lower-third');
   const mp4 = await encodeClip(clipDir, best.rec.index, shot.durationMs, caption, { fps, cuts: shot.cuts });
