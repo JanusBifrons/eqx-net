@@ -70,4 +70,4 @@ cross-side view entirely.
 ## Next (P3)
 
 Robot territory, a nexus that spawns reinforcements, harvesters that collect
-loot pods, merge clusters, and robot-only weapons (`pulse-orb`, `charge-laser`).
+loot pods, merge clusters (shipped: [robot-territory.md](robot-territory.md)), and robot-only weapons (`pulse-orb`, `charge-laser`).

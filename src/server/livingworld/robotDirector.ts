@@ -45,6 +45,8 @@ export const ROBOT_DIRECTOR_OPTIONS: Partial<LivingWorldOptions> = {
   squadLayout: ROBOT_SQUAD_LAYOUT,
   leadKind: 'robot-hexagon',
   wavesEnabled: false,
+  // Robot squads roaming the same sector merge into one bigger cluster.
+  mergeClusters: true,
 };
 
 /** `EQX_DISABLE_ROBOTS=1|true` keeps the robot side out of the galaxy. */
