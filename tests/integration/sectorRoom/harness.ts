@@ -168,6 +168,8 @@ export async function bootSectorTestServer(opts: {
   galaxyBases?: boolean;
   /** C2 — every break-in takes this long (bespoke trigger). */
   breakInMs?: number;
+  /** Drones never attack (the room option). */
+  peacefulDrones?: boolean;
   /** P2c — sector features for the room (asteroid mix, nebula). */
   sectorFeatures?: string[];
   /** Room-level default spawn point (forwarded to `defaultSpawnX/Y`). */
@@ -231,6 +233,7 @@ export async function bootSectorTestServer(opts: {
     npcBases: opts.npcBases,
     galaxyBases: opts.galaxyBases,
     breakInMs: opts.breakInMs,
+    peacefulDrones: opts.peacefulDrones,
     tradeEnabled: opts.tradeEnabled,
     enforceHullGate: opts.enforceHullGate,
     seedStorageHold: opts.seedStorageHold,

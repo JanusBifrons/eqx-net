@@ -10,7 +10,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { Box, IconButton, Tooltip } from '@mui/material';
 import Inventory2Icon from '@mui/icons-material/Inventory2';
 import { useUIStore } from '../state/store';
-import { sendBreakIn, sendBreakInCancel, sendCargoMove, sendCargoQuery, sendSetFreightOrders } from '../net/tradeClient';
+import { sendBreakIn, sendBreakInCancel, sendCargoMove, sendCargoQuery, sendSetFreightOrders, type CargoTarget } from '../net/tradeClient';
 import { GOOD_DEFS, GOOD_IDS, type GoodId } from '../../shared-types/goods';
 import { cargoRows, type CargoRow } from './cargoRows';
 import { MAX_FREIGHT_ORDERS, type CargoItems, type FreightOrder } from '../../shared-types/messages/cargoMessages';
@@ -123,8 +123,16 @@ function FreightOrders({ entityId, orders }: { entityId: number; orders: Freight
   );
 }
 
-export const CargoPanel = memo(function CargoPanel({ entityId }: { entityId: number }): JSX.Element {
-  const state = useUIStore((s) => (s.cargoState?.entityId === entityId ? s.cargoState : null));
+/** C3 — the panel's target: `entityId` (a structure / NPC ship) or `ship`. */
+export interface CargoPanelProps { entityId?: number; ship?: string }
+
+export const CargoPanel = memo(function CargoPanel({ entityId, ship }: CargoPanelProps): JSX.Element {
+  const target: CargoTarget = ship !== undefined ? { ship } : { entityId: entityId ?? -1 };
+  const state = useUIStore((s) => {
+    const c = s.cargoState;
+    if (c === null) return null;
+    return (ship !== undefined ? c.targetShip === ship : c.entityId === entityId) ? c : null;
+  });
 
   // A move's verdict rides one reply; the next poll has none. Hold it.
   const [notice, setNotice] = useState<{ ok: boolean; message: string } | null>(null);
@@ -140,10 +148,10 @@ export const CargoPanel = memo(function CargoPanel({ entityId }: { entityId: num
   }, []);
 
   useEffect(() => {
-    sendCargoQuery(entityId);
-    const t = setInterval(() => sendCargoQuery(entityId), CARGO_POLL_MS);
+    sendCargoQuery(target);
+    const t = setInterval(() => sendCargoQuery(target), CARGO_POLL_MS);
     return () => clearInterval(t);
-  }, [entityId]);
+  }, [entityId, ship]);
 
   const here = cargoRows(state?.hold ?? null);
   const aboard = cargoRows(state?.ship ?? null);
@@ -160,7 +168,7 @@ export const CargoPanel = memo(function CargoPanel({ entityId }: { entityId: num
         // C2 — breaking in is a hostile act: the owner's turrets will engage you.
         state.breakIn.pct === null ? (
           <Box sx={{ display: 'flex', gap: '3px', alignItems: 'center', mt: '3px' }}>
-            <Box sx={BTN_SX} data-testid="cargo-break-in" onClick={() => sendBreakIn(entityId)}>
+            <Box sx={BTN_SX} data-testid="cargo-break-in" onClick={() => sendBreakIn(target)}>
               Break in · {Math.round(state.breakIn.durationMs / 1000)}s
             </Box>
             <Box sx={EMPTY_SX}>hostile: their turrets will fire</Box>
@@ -179,15 +187,15 @@ export const CargoPanel = memo(function CargoPanel({ entityId }: { entityId: num
         <>
           <Pane
             title={market ? 'For sale' : 'Here'} rows={here} verb={market ? 'Buy' : 'Take'} testPrefix="here"
-            onMove={(items) => sendCargoMove(entityId, 'take', items)} prices={market?.buy}
+            onMove={(items) => sendCargoMove(target, 'take', items)} prices={market?.buy}
           />
           <Pane
             title={`Aboard · ${Math.round(state.shipCapacity)} capacity`} rows={aboard} verb={market ? 'Sell' : 'Put'} testPrefix="aboard"
-            onMove={(items) => sendCargoMove(entityId, 'put', items)} prices={market?.sell}
+            onMove={(items) => sendCargoMove(target, 'put', items)} prices={market?.sell}
           />
         </>
       )}
-      {state?.open === true && state.orders !== undefined && <FreightOrders entityId={entityId} orders={state.orders} />}
+      {state?.open === true && state.orders !== undefined && entityId !== undefined && <FreightOrders entityId={entityId} orders={state.orders} />}
       {notice !== null && (
         <Box sx={notice.ok ? undefined : WARN_SX} data-testid="cargo-notice" data-ok={notice.ok ? '1' : '0'}>{notice.message}</Box>
       )}
@@ -201,7 +209,7 @@ const TOGGLE_ICON_SX = { fontSize: { xs: 16, sm: 22 } };
 
 /** The inspector's "Cargo" toggle for a storage structure: opens the panel
  *  (which asks the server, so a locked or far structure says why). */
-export const CargoAction = memo(function CargoAction({ entityId }: { entityId: number }): JSX.Element {
+export const CargoAction = memo(function CargoAction({ entityId, ship }: CargoPanelProps): JSX.Element {
   const [open, setOpen] = useState(false);
   return (
     <Box>
@@ -212,7 +220,7 @@ export const CargoAction = memo(function CargoAction({ entityId }: { entityId: n
           </IconButton>
         </Tooltip>
       </Box>
-      {open && <CargoPanel entityId={entityId} />}
+      {open && <CargoPanel {...(ship !== undefined ? { ship } : { entityId })} />}
     </Box>
   );
 });
