@@ -108,7 +108,7 @@ import { gateAccessIndex, GATE_ACCESS_IDS, type GateAccess } from '../../shared-
 import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
-import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf } from '../../shared-types/relations.js';
+import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, type StandingQuery } from '../../shared-types/relations.js';
 import { BreakInCancelSchema, BreakInSchema, CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, MAX_FREIGHT_ORDERS, SetFreightOrdersSchema, type BreakInNotice, type CargoState } from '../../shared-types/messages/cargoMessages.js';
 import { breakInDurationMs } from '../../shared-types/breakIn.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
@@ -145,11 +145,15 @@ function withAsteroidResources<T extends { id: string }>(roster: readonly T[], f
     return { ...a, resource: rollAsteroidResource((h >>> 0) / 4294967296, features) };
   });
 }
-import { ALLEGIANCE_DEFS, NPC_ALLEGIANCE_IDS, ON_SIGHT_ENGAGE_RANGE, type NpcAllegianceId } from '../../shared-types/allegiances.js';
+import { NPC_ALLEGIANCE_IDS, ON_SIGHT_ENGAGE_RANGE, type NpcAllegianceId } from '../../shared-types/allegiances.js';
+import { factionDisplayName } from '../../shared-types/factions.js';
 import { encodePlayerTurretTarget } from '../../shared-types/structureStateWire.js';
 
 /** B2 — the party string of each roaming NPC side (`npc:<allegiance>`), built
  *  once so turret and missile queries never build strings. */
+/** Factions F1 — the standing web, read through the trade sink (the economy
+ *  store owns it). No sink (tests, Living World off) reads as 0. */
+const ROOM_STANDING: StandingQuery = { of: (from, to) => getTradeSink()?.standing?.(from, to) ?? 0 };
 const NPC_SIDE_PARTY = Object.fromEntries(NPC_ALLEGIANCE_IDS.map((a) => [a, npcOwner(a)])) as Record<NpcAllegianceId, string>;
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
@@ -840,7 +844,7 @@ export class SectorRoom extends Room<SectorState> {
   private readonly hostileActs = new HostileActLedger();
   /** The ONE relation context for this room; `nowMs` is refreshed in place on
    *  the turret tick (no allocation per query). */
-  private readonly relationCtx = createRelationContext({ hostileActs: this.hostileActs });
+  private readonly relationCtx = createRelationContext({ hostileActs: this.hostileActs, standing: ROOM_STANDING });
   /** A2 — owner id → interned index in `state.structureOwners`. */
   private readonly structureOwnerIdx = new Map<string, number>();
   /** Interned index keys ("0", "1", …), cached so syncing never allocates. */
@@ -5019,7 +5023,7 @@ export class SectorRoom extends Room<SectorState> {
     // B2 — an NPC base is named for its side (never a raw id; client rule).
     const party = parseOwner(owner);
     if (party.kind === 'npc') {
-      const name = `${ALLEGIANCE_DEFS[party.allegiance!].displayName} base`;
+      const name = `${factionDisplayName(party.faction) ?? 'NPC'} base`;
       this._ownerNameCache.set(owner, name);
       return name;
     }

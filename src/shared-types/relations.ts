@@ -16,7 +16,16 @@
  * and an optional NPC-stance override (e.g. a robot truce earned through
  * reputation, B2).
  */
-import { PLAYERS_SIDE, isNpcAllegianceId, stanceOf, type NpcAllegianceId, type Stance } from './allegiances.js';
+import { PLAYERS_SIDE, stanceOf, type NpcAllegianceId, type Stance } from './allegiances.js';
+import {
+  defaultFactionPolicy,
+  factionStance,
+  isNpcFactionId,
+  npcFactionDef,
+  policyActsOnStanding,
+  type FactionId,
+  type FactionPolicy,
+} from './factions.js';
 
 /** What an actor is to an owner, from closest to worst. */
 export type Relation = 'self' | 'friendly' | 'allied' | 'neutral' | 'hostile';
@@ -32,7 +41,10 @@ export interface PartyRef {
   readonly kind: 'player' | 'npc';
   /** Player: the id. NPC: the full owner string. */
   readonly id: string;
-  /** NPC only. */
+  /** The party's faction: the NPC faction id, or a player's own id (a player
+   *  is a faction of one until player factions exist). */
+  readonly faction: FactionId;
+  /** NPC only: the faction's allegiance stance side, if it has one. */
   readonly allegiance: NpcAllegianceId | null;
   /** NPC base only ('' for a roaming NPC side). */
   readonly baseId: string;
@@ -61,6 +73,16 @@ export interface RelationContext {
   /** Override the stance table between an NPC side and a player (e.g. a robot
    *  truce from reputation). Return undefined to use the table. */
   npcStanceToPlayer: ((allegiance: NpcAllegianceId, playerId: string) => Stance | undefined) | null;
+  /** The standing web (factions F1): `from`'s view of `to`, −100..100. Null ⇒
+   *  standing never changes a relation. */
+  standing: StandingQuery | null;
+  /** A faction's policy; null ⇒ the catalogue defaults. */
+  policyOf: ((faction: FactionId) => FactionPolicy) | null;
+}
+
+/** Read side of the standing web. */
+export interface StandingQuery {
+  of(from: FactionId, to: FactionId): number;
 }
 
 export function createRelationContext(partial?: Partial<RelationContext>): RelationContext {
@@ -69,6 +91,8 @@ export function createRelationContext(partial?: Partial<RelationContext>): Relat
     alliances: partial?.alliances ?? NO_ALLIANCES,
     hostileActs: partial?.hostileActs ?? null,
     npcStanceToPlayer: partial?.npcStanceToPlayer ?? null,
+    standing: partial?.standing ?? null,
+    policyOf: partial?.policyOf ?? null,
   };
 }
 
@@ -78,23 +102,24 @@ export function createRelationContext(partial?: Partial<RelationContext>): Relat
 const PARSE_CACHE = new Map<string, PartyRef>();
 const PARSE_CACHE_MAX = 4096;
 
-/** The owner string for an NPC side or base. */
-export function npcOwner(allegiance: NpcAllegianceId, baseId?: string): string {
-  return baseId ? `${NPC_OWNER_PREFIX}${allegiance}:${baseId}` : `${NPC_OWNER_PREFIX}${allegiance}`;
+/** The owner string for an NPC faction or one of its bases. */
+export function npcOwner(faction: FactionId, baseId?: string): string {
+  return baseId ? `${NPC_OWNER_PREFIX}${faction}:${baseId}` : `${NPC_OWNER_PREFIX}${faction}`;
 }
 
 /** Parse an owner (or actor) string. A malformed `npc:` string (unknown
- *  allegiance) is treated as a plain player-style id, never as an NPC side. */
+ *  faction) is treated as a plain player-style id, never as an NPC side. */
 export function parseOwner(owner: string): PartyRef {
   const hit = PARSE_CACHE.get(owner);
   if (hit) return hit;
-  let ref: PartyRef = { kind: 'player', id: owner, allegiance: null, baseId: '' };
+  let ref: PartyRef = { kind: 'player', id: owner, faction: owner, allegiance: null, baseId: '' };
   if (owner.startsWith(NPC_OWNER_PREFIX)) {
     const rest = owner.slice(NPC_OWNER_PREFIX.length);
     const colon = rest.indexOf(':');
-    const allegiance = colon < 0 ? rest : rest.slice(0, colon);
-    if (isNpcAllegianceId(allegiance)) {
-      ref = { kind: 'npc', id: owner, allegiance, baseId: colon < 0 ? '' : rest.slice(colon + 1) };
+    const faction = colon < 0 ? rest : rest.slice(0, colon);
+    if (isNpcFactionId(faction)) {
+      const allegiance = npcFactionDef(faction)?.allegiance ?? null;
+      ref = { kind: 'npc', id: owner, faction, allegiance, baseId: colon < 0 ? '' : rest.slice(colon + 1) };
     }
   }
   if (PARSE_CACHE.size >= PARSE_CACHE_MAX) PARSE_CACHE.clear();
@@ -118,10 +143,28 @@ function worse(a: Stance, b: Stance): Stance {
   return RANK[a] >= RANK[b] ? a : b;
 }
 
-function npcToPlayer(allegiance: NpcAllegianceId, playerId: string, ctx: RelationContext): Stance {
-  const override = ctx.npcStanceToPlayer?.(allegiance, playerId);
-  if (override !== undefined) return override;
-  return worse(stanceOf(allegiance, PLAYERS_SIDE), stanceOf(PLAYERS_SIDE, allegiance));
+function npcToPlayer(npc: PartyRef, playerId: string, ctx: RelationContext): Stance {
+  if (npc.allegiance !== null) {
+    const override = ctx.npcStanceToPlayer?.(npc.allegiance, playerId);
+    if (override !== undefined) return override;
+    return worse(stanceOf(npc.allegiance, PLAYERS_SIDE), stanceOf(PLAYERS_SIDE, npc.allegiance));
+  }
+  return worse(factionStance(npc.faction, playerId), factionStance(playerId, npc.faction));
+}
+
+/**
+ * The owner faction's policy applied to its view of the actor: below
+ * `hostileBelow` → hostile; above `alliedAbove` a neutral party becomes
+ * allied. It never softens a hostile base relation. Allocation-free.
+ */
+function applyPolicy(base: Relation, actor: PartyRef, owner: PartyRef, ctx: RelationContext): Relation {
+  if (base === 'hostile' || ctx.standing === null || actor.faction === owner.faction) return base;
+  const policy = ctx.policyOf?.(owner.faction) ?? defaultFactionPolicy(owner.faction);
+  if (!policyActsOnStanding(policy)) return base;
+  const v = ctx.standing.of(owner.faction, actor.faction);
+  if (v < policy.hostileBelow) return 'hostile';
+  if (base === 'neutral' && v > policy.alliedAbove) return 'allied';
+  return base;
 }
 
 /**
@@ -129,9 +172,12 @@ function npcToPlayer(allegiance: NpcAllegianceId, playerId: string, ctx: Relatio
  *  1. The same party → 'self'.
  *  2. A hostile act that hasn't cooled down → 'hostile' (beats any alliance).
  *  3. Two players → 'allied' if the alliance provider says so, else 'neutral'.
- *  4. Two NPC parties → 'friendly' on the same side, else the stance table.
+ *  4. Two NPC parties → 'friendly' in the same faction, else the stance table.
  *  5. A player and an NPC party → the stance table (the worse direction),
  *     unless `npcStanceToPlayer` overrides it.
+ *  6. Then the owner's faction policy reads its standing toward the actor and
+ *     may make the relation hostile (or a neutral one allied). With no
+ *     standing web, or default policies, nothing changes.
  * An empty owner (an unowned thing) is 'neutral' to everyone.
  */
 export function relationOf(actor: string, owner: string, ctx: RelationContext): Relation {
@@ -140,16 +186,19 @@ export function relationOf(actor: string, owner: string, ctx: RelationContext): 
   if (ctx.hostileActs?.isHostile(actor, owner, ctx.nowMs) === true) return 'hostile';
   const a = parseOwner(actor);
   const o = parseOwner(owner);
+  let base: Relation;
   if (a.kind === 'player' && o.kind === 'player') {
-    return ctx.alliances.areAllied(a.id, o.id) ? 'allied' : 'neutral';
+    base = ctx.alliances.areAllied(a.id, o.id) ? 'allied' : 'neutral';
+  } else if (a.kind === 'npc' && o.kind === 'npc') {
+    base = a.faction === o.faction
+      ? 'friendly'
+      : stanceToRelation(worse(factionStance(a.faction, o.faction), factionStance(o.faction, a.faction)));
+  } else {
+    const npc = a.kind === 'npc' ? a : o;
+    const player = a.kind === 'npc' ? o : a;
+    base = stanceToRelation(npcToPlayer(npc, player.id, ctx));
   }
-  if (a.kind === 'npc' && o.kind === 'npc') {
-    if (a.allegiance === o.allegiance) return 'friendly';
-    return stanceToRelation(worse(stanceOf(a.allegiance!, o.allegiance!), stanceOf(o.allegiance!, a.allegiance!)));
-  }
-  const npc = a.kind === 'npc' ? a : o;
-  const player = a.kind === 'npc' ? o : a;
-  return stanceToRelation(npcToPlayer(npc.allegiance!, player.id, ctx));
+  return applyPolicy(base, a, o, ctx);
 }
 
 /** Who may open an owner's cargo without breaking in (C1). Friendly opens;

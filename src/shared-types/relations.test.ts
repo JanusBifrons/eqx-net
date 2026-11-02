@@ -134,3 +134,70 @@ describe('cargoOpensFor', () => {
     expect(cargoOpensFor('hostile', true)).toBe(false);
   });
 });
+
+describe('relationOf — factions (v4 F1)', () => {
+  it('parses region powers and the Ancients as NPC factions without an allegiance', () => {
+    expect(parseOwner('npc:core:b0')).toMatchObject({ kind: 'npc', faction: 'core', allegiance: null, baseId: 'b0' });
+    expect(parseOwner('npc:ancients')).toMatchObject({ kind: 'npc', faction: 'ancients', allegiance: null });
+    expect(parseOwner('npc:traders:t1')).toMatchObject({ faction: 'traders', allegiance: 'traders' });
+    expect(parseOwner(A)).toMatchObject({ kind: 'player', faction: A });
+  });
+
+  it('new factions start neutral, except robots attack them', () => {
+    const ctx = createRelationContext();
+    expect(relationOf(A, 'npc:core:b0', ctx)).toBe('neutral');
+    expect(relationOf('npc:core', 'npc:azure-deep:b1', ctx)).toBe('neutral');
+    expect(relationOf('npc:core:b0', 'npc:core:b1', ctx)).toBe('friendly');
+    expect(relationOf('npc:robots', 'npc:core:b0', ctx)).toBe('hostile');
+    expect(relationOf('npc:core', 'npc:robots:r1', ctx)).toBe('hostile'); // mutual
+  });
+
+  // The standing web may only change a relation through a policy; with the
+  // catalogue's default policies a full web changes nothing.
+  it('parity: a standing web with default policies changes no relation', () => {
+    const parties = [A, B, 'scenario', 'npc:robots', 'npc:robots:r1', 'npc:drones:d1', 'npc:traders:t1', 'npc:core:b0', 'npc:ancients', ''];
+    const plain = createRelationContext();
+    const webbed = createRelationContext({ standing: { of: (from, to) => (from.length * 7 + to.length * 13) % 201 - 100 } });
+    for (const actor of parties) {
+      for (const owner of parties) {
+        // Robots are hostile below their truce; that only ever lands on a base
+        // relation that is already hostile, so the table is unchanged.
+        expect(relationOf(actor, owner, webbed), `${actor} → ${owner}`).toBe(relationOf(actor, owner, plain));
+      }
+    }
+  });
+
+  it('a policy turns low standing hostile and high standing allied', () => {
+    let standing = 0;
+    const ctx = createRelationContext({
+      standing: { of: () => standing },
+      policyOf: () => ({ hostileBelow: -25, alliedAbove: 40, refuseTradeBelow: -Infinity, priceSwing: 0 }),
+    });
+    expect(relationOf(A, 'npc:core:b0', ctx)).toBe('neutral');
+    standing = -30;
+    expect(relationOf(A, 'npc:core:b0', ctx)).toBe('hostile');
+    standing = 45;
+    expect(relationOf(A, 'npc:core:b0', ctx)).toBe('allied');
+    expect(relationOf(B, A, ctx)).toBe('allied'); // player owners use their own policy too
+  });
+
+  it('reads the OWNER faction’s view of the actor (directional)', () => {
+    const seen: string[] = [];
+    const ctx = createRelationContext({
+      standing: { of: (from, to) => { seen.push(`${from}>${to}`); return 0; } },
+      policyOf: () => ({ hostileBelow: -25, alliedAbove: 40, refuseTradeBelow: -Infinity, priceSwing: 0 }),
+    });
+    relationOf(A, 'npc:core:b0', ctx);
+    expect(seen).toEqual([`core>${A}`]);
+  });
+
+  it('never softens a hostile base relation, and skips the same faction', () => {
+    const ctx = createRelationContext({
+      standing: { of: () => 100 },
+      policyOf: () => ({ hostileBelow: 50, alliedAbove: 40, refuseTradeBelow: -Infinity, priceSwing: 0 }),
+    });
+    expect(relationOf(A, 'npc:robots:r1', ctx)).toBe('hostile');
+    const zero = createRelationContext({ standing: { of: () => 0 } }); // robots' truce policy, no store
+    expect(relationOf('npc:robots', 'npc:robots:r1', zero)).toBe('friendly');
+  });
+});

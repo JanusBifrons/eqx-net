@@ -13,8 +13,6 @@ import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersiste
 import {
   ECON_ALLEGIANCES,
   HOURLY_TRADE_VALUE_CAP,
-  REP_MAX,
-  REP_MIN,
   tradeSectorKey,
   type EconAllegiance,
   type PlayerEconomyView,
@@ -24,6 +22,7 @@ import {
 import { GOOD_IDS } from '../../shared-types/goods.js';
 import { createMarket, type MarketState } from '../../core/economy/market.js';
 import { applyRep, neutralRep, type RepTable } from '../../core/economy/reputation.js';
+import { STANDING_MAX, clampStanding, isNpcFactionId } from '../../shared-types/factions.js';
 import { isActiveDeal, type TradeDeal } from '../../core/economy/deals.js';
 
 /** History entries kept per player (the Trade tab's History list). */
@@ -31,8 +30,16 @@ export const HISTORY_CAP = 40;
 /** Window over which recent gifts weaken further gifts. */
 export const GIFT_WINDOW_MS = 60 * 60 * 1000;
 
+/** Bumped when stored standings change scale. 1 = −100..100 (factions F1);
+ *  a row without it holds the old −1000..1000 values and is divided by 10. */
+export const STANDING_SCALE_VERSION = 1;
+
 export interface PlayerEconomy {
+  /** Each NPC faction's view of this player (−100..100). */
   rep: RepTable;
+  /** This player's view of other factions (−100..100, sparse). */
+  views: Record<string, number>;
+  standingScale: number;
   history: TradeHistoryEntry[];
   /** Value gifted to each side inside the current window (diminishing returns). */
   gifts: Record<EconAllegiance, { value: number; sinceMs: number }>;
@@ -48,9 +55,13 @@ export interface EconomyStoreDeps {
 }
 
 const MARKET_KEY = 'market';
+/** economy_state key of the NPC-to-NPC standing web. */
+const STANDINGS_KEY = 'standings';
 
 export class EconomyStore {
   private readonly players = new Map<string, PlayerEconomy>();
+  /** NPC faction → NPC faction → standing (sparse; missing = 0). */
+  private readonly npcWeb = new Map<string, Map<string, number>>();
   private readonly deals = new Map<string, TradeDeal>();
   market: MarketState;
   private readonly now: () => number;
@@ -66,7 +77,21 @@ export class EconomyStore {
     players: ReadonlyArray<{ player_id: string; payload_json: string }>;
     deals: ReadonlyArray<{ payload_json: string }>;
     market: string | null;
+    standings?: string | null;
   }): { players: number; deals: number } {
+    if (rows.standings) {
+      try {
+        const web = JSON.parse(rows.standings) as Record<string, Record<string, number>>;
+        for (const from of Object.keys(web)) {
+          const row = new Map<string, number>();
+          for (const to of Object.keys(web[from]!)) {
+            const v = web[from]![to];
+            if (typeof v === 'number' && Number.isFinite(v) && v !== 0) row.set(to, clampStanding(v));
+          }
+          if (row.size > 0) this.npcWeb.set(from, row);
+        }
+      } catch { /* corrupt row — start neutral */ }
+    }
     let p = 0;
     let d = 0;
     for (const r of rows.players) {
@@ -102,16 +127,66 @@ export class EconomyStore {
     return pe;
   }
 
-  rep(playerId: string, a: EconAllegiance): number {
-    return this.players.get(playerId)?.rep[a] ?? 0;
+  /** NPC faction `faction`'s view of a player. */
+  rep(playerId: string, faction: string): number {
+    return this.players.get(playerId)?.rep[faction] ?? 0;
   }
 
   /** Apply a reputation delta + persist. Returns the new standing. */
-  addRep(playerId: string, a: EconAllegiance, delta: number): number {
+  addRep(playerId: string, faction: string, delta: number): number {
     const pe = this.player(playerId);
-    const v = applyRep(pe.rep, a, delta);
+    const v = applyRep(pe.rep, faction, delta);
     this.touchPlayer(playerId);
     return v;
+  }
+
+  // ── The standing web (factions F1) ───────────────────────────────────────
+
+  /**
+   * Faction `from`'s view of faction `to`, −100..100 (0 when never set). A
+   * player's faction id is their player id. Allocation-free.
+   */
+  standing(from: string, to: string): number {
+    if (from === to) return STANDING_MAX;
+    const fromNpc = isNpcFactionId(from);
+    const toNpc = isNpcFactionId(to);
+    if (fromNpc && !toNpc) return this.players.get(to)?.rep[from] ?? 0;
+    if (!fromNpc) return this.players.get(from)?.views[to] ?? 0;
+    return this.npcWeb.get(from)?.get(to) ?? 0;
+  }
+
+  /** Move `from`'s view of `to` by `delta` and persist. Returns the new value. */
+  adjustStanding(from: string, to: string, delta: number): number {
+    if (from === to) return STANDING_MAX;
+    const fromNpc = isNpcFactionId(from);
+    const toNpc = isNpcFactionId(to);
+    if (fromNpc && !toNpc) return this.addRep(to, from, delta);
+    if (!fromNpc) {
+      const pe = this.player(from);
+      const v = clampStanding((pe.views[to] ?? 0) + delta);
+      if (v === 0) delete pe.views[to];
+      else pe.views[to] = v;
+      this.touchPlayer(from);
+      return v;
+    }
+    let row = this.npcWeb.get(from);
+    if (!row) { row = new Map(); this.npcWeb.set(from, row); }
+    const v = clampStanding((row.get(to) ?? 0) + delta);
+    if (v === 0) row.delete(to);
+    else row.set(to, v);
+    this.saveStandings();
+    return v;
+  }
+
+  private saveStandings(): void {
+    const web: Record<string, Record<string, number>> = {};
+    for (const [from, row] of this.npcWeb) {
+      if (row.size === 0) continue;
+      const r: Record<string, number> = {};
+      for (const [to, v] of row) r[to] = v;
+      web[from] = r;
+    }
+    this.enqueue({ type: 'ECON_STATE_PUT', key: STANDINGS_KEY, payloadJson: JSON.stringify(web), ts: this.now() });
   }
 
   pushHistory(playerId: string, entry: TradeHistoryEntry): void {
@@ -210,7 +285,9 @@ export class EconomyStore {
     const deals: TradeDealView[] = [];
     for (const d of this.dealsOf(playerId)) deals.push(dealView(d));
     deals.sort((a, b) => (b.nextVisitAtMs ?? 0) - (a.nextVisitAtMs ?? 0));
-    return { econVersion: pe.econVersion, rep: { ...pe.rep }, deals, history: pe.history.slice() };
+    const rep = {} as PlayerEconomyView['rep'];
+    for (const a of ECON_ALLEGIANCES) rep[a] = pe.rep[a] ?? 0;
+    return { econVersion: pe.econVersion, rep, deals, history: pe.history.slice() };
   }
 
   private enqueue(op: PersistOp): void {
@@ -242,7 +319,15 @@ export function dealView(d: TradeDeal): TradeDealView {
 function freshPlayer(now: number): PlayerEconomy {
   const gifts = {} as PlayerEconomy['gifts'];
   for (const a of ECON_ALLEGIANCES) gifts[a] = { value: 0, sinceMs: now };
-  return { rep: neutralRep(), history: [], gifts, volume: { value: 0, sinceMs: now }, econVersion: 0 };
+  return {
+    rep: neutralRep(),
+    views: {},
+    standingScale: STANDING_SCALE_VERSION,
+    history: [],
+    gifts,
+    volume: { value: 0, sinceMs: now },
+    econVersion: 0,
+  };
 }
 
 /** Defensive parse — a corrupt row is skipped, values are clamped, never fabricated. */
@@ -250,10 +335,18 @@ function parsePlayer(json: string): PlayerEconomy | null {
   try {
     const raw = JSON.parse(json) as Partial<PlayerEconomy>;
     const pe = freshPlayer(Date.now());
+    // Rows saved before factions F1 hold −1000..1000; rescale them once.
+    const scale = raw.standingScale === STANDING_SCALE_VERSION ? 1 : 0.1;
     if (raw.rep) {
-      for (const a of ECON_ALLEGIANCES) {
-        const v = raw.rep[a];
-        if (typeof v === 'number' && Number.isFinite(v)) pe.rep[a] = Math.max(REP_MIN, Math.min(REP_MAX, Math.round(v)));
+      for (const f of Object.keys(raw.rep)) {
+        const v = raw.rep[f];
+        if (typeof v === 'number' && Number.isFinite(v)) pe.rep[f] = clampStanding(v * scale);
+      }
+    }
+    if (raw.views) {
+      for (const f of Object.keys(raw.views)) {
+        const v = raw.views[f];
+        if (typeof v === 'number' && Number.isFinite(v) && v !== 0) pe.views[f] = clampStanding(v);
       }
     }
     if (Array.isArray(raw.history)) pe.history = raw.history.slice(0, HISTORY_CAP);
@@ -278,9 +371,11 @@ export function hydrateEconomyStore(
     try { return select(sql) as T[]; } catch { return []; }
   };
   const marketRow = read<{ payload_json: string }>("SELECT payload_json FROM economy_state WHERE key = 'market'")[0];
+  const standingsRow = read<{ payload_json: string }>("SELECT payload_json FROM economy_state WHERE key = 'standings'")[0];
   return store.hydrate({
     players: read<{ player_id: string; payload_json: string }>('SELECT player_id, payload_json FROM player_economy'),
     deals: read<{ payload_json: string }>('SELECT payload_json FROM trade_deals'),
     market: marketRow?.payload_json ?? null,
+    standings: standingsRow?.payload_json ?? null,
   });
 }

@@ -16,6 +16,8 @@ If each system answered the question its own way, they would drift apart: a gate
 
 ## Parties
 
+> Since v4 F1 every NPC side is a **faction** (region powers and the Ancients included), and a standing web plus per-faction policies sit on top of the rules below. See [factions.md](factions.md).
+
 Both the actor and the owner are owner strings:
 
 | String | Party |
