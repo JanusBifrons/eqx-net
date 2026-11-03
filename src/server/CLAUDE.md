@@ -282,7 +282,13 @@ Update this section when a threshold is set.
 - **The network is pure core** (`core/bases/transitNetwork.ts`, `transitNetwork()`): one `transit` hub per region at a chokepoint, linked to its heart's base, up to two trade bases and (frontier hubs) the core hub. `galaxyBasePlan` adds the hub base and each base's `profile.links`; `growBase` adds one teleporter per link, tagged `GrownPlacement.link`.
 - **Seeding.** `NpcBaseSubsystem.seed` sets `rec.npcLink`, the "when a ship boards" rule and `NPC_LINK_TOLL`. The ends pair at run time in `TeleporterSubsystem.update` through `findLinkTwin` (the teleporter in the other end's room with the same `npcLink`), like the alien gates. Never pair them by position.
 - **No pairing requests** to an NPC-owned teleporter (`teleport_pair_request` refuses them).
+- **H2 — convoys ride the links.** `ConvoyDirector` routes by `transitRouteHops` (a link is `LINK_HOP_COST` = half a hop) for planning and transit time; the `routeHops` option injects another. Transit stays abstract (haulers don't physically ride a pad). The drone/robot directors still use plain `hopDistance`.
 - Lock: `tests/integration/sectorRoom/transitHubs.test.ts`. Story: [docs/features/transit-hubs.md](../../docs/features/transit-hubs.md).
+
+## Military bases (plan soft-leaping-truffle v4, M1)
+
+- Placed by `galaxyBasePlan` (`militarySites`); seeded like any NPC base. `NpcBaseSubsystem.seed` sets a military base's gates to **owner + allies** (`'allies'`); every other NPC base's stay **open**.
+- Patrols (M2) are next. Story: [docs/features/military-bases.md](../../docs/features/military-bases.md).
 
 ## Faction standing events and policies (plan soft-leaping-truffle v4, F3)
 

@@ -16,7 +16,11 @@
  *              the dock is OUTSIDE the footprint) and loads: one atomic
  *              `tradeTransfer` take into its hold;
  *   outbound — flies back to that edge point and leaves;
- *   transit  — abstract, `hopMs` per galaxy hop (skipped in the same sector);
+ *   transit  — abstract, `hopMs` per galaxy hop (skipped in the same sector).
+ *              v4 H2: the route rides the transit hubs' teleporter links
+ *              (`transitRouteHops`: a link counts half a hop), so a convoy
+ *              between two linked bases arrives sooner, and planning prefers
+ *              exporters a link brings closer;
  *   delivery — enters the importer's sector and docks the same way; unloads:
  *              one atomic `tradeTransfer` release (overflow drops as a pod);
  *   leaving  — flies away and leaves.
@@ -33,7 +37,8 @@ import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js'
 import type { HoldStore } from '../cargo/HoldStore.js';
 import type { TradeTransferResult, TradeTransferSpec } from '../cargo/StorageService.js';
 import { CONVOY_HAULER_ID_PREFIX } from '../livingworld/directorBotIds.js';
-import { hopDistance } from '../livingworld/population.js';
+import { transitRouteHops } from '../../core/bases/galaxyBases.js';
+import { LINK_HOP_COST } from '../../core/bases/transitNetwork.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
 import { regionPriceFactors, type RegionBase } from '../../core/economy/regionalPrices.js';
 import { setRegionalPrices } from './regionalPrices.js';
@@ -104,6 +109,9 @@ export interface ConvoyDirectorOptions {
   arriveRadius: number;
   /** Distance from the sector centre where haulers enter and leave. */
   edgeRadius: number;
+  /** v4 H2 — route length between two sectors in galaxy hops (default: ride
+   *  the transit links, `transitRouteHops`). */
+  routeHops?: (from: string, to: string) => number;
 }
 
 export const DEFAULT_CONVOY_OPTIONS: ConvoyDirectorOptions = {
@@ -176,6 +184,8 @@ export function edgeNear(box: NpcBaseTrade['box'], r: number, clear: number): { 
 }
 
 export class ConvoyDirector {
+  /** v4 H2 — route length in hops (rides the transit links by default). */
+  private readonly routeHops = (from: string, to: string): number => (this.opts.routeHops ?? transitRouteHops)(from, to);
   private readonly convoys = new Map<string, Convoy>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastPlanMs = -Infinity;
@@ -307,7 +317,7 @@ export class ConvoyDirector {
     return matchConvoys(views, {
       haulerCapacity: this.opts.haulerCapacity,
       maxConvoys: this.opts.maxActive - this.convoys.size,
-      hops: hopDistance,
+      hops: this.routeHops,
       inFlight,
       // Players trade with NPC bases, never with each other.
       allowPair: (a, b) => !(this.bases.get(a)?.base.player && this.bases.get(b)?.base.player),
@@ -433,7 +443,7 @@ export class ConvoyDirector {
       case 'outbound': {
         room.despawnLivingWorldBot(c.haulerId);
         c.inSector = null;
-        c.transitUntilMs = now + Math.max(1, hopDistance(c.fromSector, c.toSector)) * this.opts.hopMs;
+        c.transitUntilMs = now + Math.max(LINK_HOP_COST, this.routeHops(c.fromSector, c.toSector)) * this.opts.hopMs;
         this.setPhase(c, 'transit', now);
         return;
       }

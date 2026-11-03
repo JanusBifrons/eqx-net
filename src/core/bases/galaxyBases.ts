@@ -16,10 +16,11 @@
  */
 import { NPC_STRUCTURES_PER_SECTOR_MAX } from '../../shared-types/structureBudgets.js';
 import { TIER_LEVEL_CAP, TIER_WEALTH, baseProfileFor, contextForSector, hashString, seededRandom, type BaseProfile } from './baseProfile.js';
-import { TRANSIT_HUB_BASE_ID, buildTransitNetwork, type TransitNetwork } from './transitNetwork.js';
+import { TRANSIT_HUB_BASE_ID, buildTransitNetwork, routeHops, type TransitNetwork } from './transitNetwork.js';
 import { TIER_MAX_STRUCTURES } from './growBase.js';
 import { sectorController } from '../galaxy/control.js';
-import { getSector } from '../galaxy/galaxy.js';
+import { GALAXY_SECTORS, getSector, isEntrySector } from '../galaxy/galaxy.js';
+import { regionHeart } from '../galaxy/control.js';
 import { minorFactionsOf, type FactionId, type MinorSpecialty } from '../../shared-types/factions.js';
 import type { BaseRole } from './baseProfile.js';
 
@@ -42,6 +43,7 @@ const ROLE_SPECIALTY: Readonly<Record<BaseRole, MinorSpecialty>> = {
   trade: 'freight',
   colony: 'freight',
   transit: 'freight',
+  military: 'militia',
 };
 
 /**
@@ -101,11 +103,90 @@ export function galaxyBasePlan(sectorKey: string): GalaxyBasePlan[] {
       },
     });
   }
+  addMilitaryBase(sectorKey, out);
   for (const b of out) {
     const mine = net.links.filter((l) => (l.a.sector === sectorKey && l.a.baseId === b.baseId) || (l.b.sector === sectorKey && l.b.baseId === b.baseId));
     if (mine.length > 0) b.profile = { ...b.profile, links: mine.map((l) => l.id) };
   }
   return out;
+}
+
+/** v4 H2 — route length between two sectors riding the transit links
+ *  (memoised per pair; the network never changes at run time). */
+const ROUTES = new Map<string, number>();
+export function transitRouteHops(from: string, to: string): number {
+  const key = from < to ? `${from}|${to}` : `${to}|${from}`;
+  let h = ROUTES.get(key);
+  if (h === undefined) {
+    h = routeHops(from, to, transitNetwork());
+    ROUTES.set(key, h);
+  }
+  return h;
+}
+
+/** v4 M — the base id of a sector's military base. */
+export const MILITARY_BASE_ID = 'mil';
+
+/**
+ * Where military bases go (v4 M): one at each region's heart (the region
+ * power's garrison) and one militia outpost at the region's first neutral
+ * entry sector by key (the galaxy edge, where raiders warp in), unless that
+ * sector holds the region's transit hub. Deterministic.
+ */
+export function militarySites(): ReadonlyMap<string, 'heart' | 'edge'> {
+  if (MILITARY !== null) return MILITARY;
+  const out = new Map<string, 'heart' | 'edge'>();
+  const regions = [...new Set(GALAXY_SECTORS.map((s) => s.region))].sort();
+  const hubs = transitNetwork().hubs;
+  for (const region of regions) {
+    out.set(regionHeart(region), 'heart');
+    const edge = GALAXY_SECTORS.filter((s) => s.region === region && isEntrySector(s.key) && sectorController(s.key) === null && hubs.get(region) !== s.key)
+      .map((s) => s.key)
+      .sort()[0];
+    if (edge !== undefined) out.set(edge, 'edge');
+  }
+  MILITARY = out;
+  return out;
+}
+let MILITARY: Map<string, 'heart' | 'edge'> | null = null;
+
+/** Add the sector's military base, if it has one (in place). A heart's is
+ *  the region power's; an edge outpost is a militia's (else the power's). */
+function addMilitaryBase(sectorKey: string, out: GalaxyBasePlan[]): void {
+  const site = militarySites().get(sectorKey);
+  if (site === undefined) return;
+  // A stronghold or citadel holds its sector alone (it garrisons itself).
+  if (BIG.has(out[0]!.profile.tier)) return;
+  // A fence alone is ~20 structures, so a garrison needs room for its guns:
+  // a stronghold beside a small base 0, else a settlement (it must still fit).
+  const tier = site === 'heart' && out[0]!.profile.tier === 'outpost' ? ('stronghold' as const) : ('settlement' as const);
+  let used = out.reduce((n, b) => n + TIER_MAX_STRUCTURES[b.profile.tier], 0);
+  // Make room by dropping extra bases (never base 0 or the hub), newest first.
+  for (let i = out.length - 1; i >= 1 && used + TIER_MAX_STRUCTURES[tier] > NPC_STRUCTURES_PER_SECTOR_MAX; i--) {
+    if (out[i]!.baseId === TRANSIT_HUB_BASE_ID) continue;
+    used -= TIER_MAX_STRUCTURES[out[i]!.profile.tier];
+    out.splice(i, 1);
+  }
+  if (used + TIER_MAX_STRUCTURES[tier] > NPC_STRUCTURES_PER_SECTOR_MAX) return;
+  const region = getSector(sectorKey)!.region;
+  const controller = sectorController(sectorKey);
+  const militia = minorFactionsOf(region).find((m) => m.specialty === 'militia')?.id;
+  const owner: FactionId = site === 'heart' ? (controller ?? region) : (militia ?? region);
+  const seed = hashString(`${sectorKey}#${MILITARY_BASE_ID}`);
+  const w1 = TIER_WEALTH[tier][1];
+  out.push({
+    baseId: MILITARY_BASE_ID,
+    seed,
+    profile: {
+      tier,
+      role: 'military',
+      ownerFaction: owner,
+      // A garrison is better funded than a trading base of its size: guns.
+      wealth: Math.round(w1 * 2),
+      levelCap: TIER_LEVEL_CAP[tier][1],
+      fenced: true,
+    },
+  });
 }
 
 let NETWORK: TransitNetwork | null = null;

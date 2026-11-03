@@ -45,7 +45,8 @@ describe('galaxyBasePlan', () => {
     for (const s of GALAXY_SECTORS) {
       const plan = galaxyBasePlan(s.key);
       if (plan[0]!.profile.tier === 'stronghold' || plan[0]!.profile.tier === 'citadel') expect(plan.length, s.key).toBe(1);
-      for (const b of plan.slice(1)) expect(['outpost', 'settlement'], s.key).toContain(b.profile.tier);
+      // (A military garrison (v4 M) may be a stronghold beside a small base 0.)
+      for (const b of plan.slice(1)) if (b.profile.role !== 'military') expect(['outpost', 'settlement'], s.key).toContain(b.profile.tier);
     }
   });
 

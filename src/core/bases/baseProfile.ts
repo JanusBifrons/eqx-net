@@ -27,7 +27,7 @@ export type BaseTier = (typeof BASE_TIERS)[number];
 
 /** Production-chain roles. A `colony` (D3) is a habitat station: the
  *  chain's consumer. */
-export const BASE_ROLES = ['mining', 'refinery', 'workshop', 'manufactory', 'assembly', 'trade', 'colony', 'transit'] as const;
+export const BASE_ROLES = ['mining', 'refinery', 'workshop', 'manufactory', 'assembly', 'trade', 'colony', 'transit', 'military'] as const;
 export type BaseRole = (typeof BASE_ROLES)[number];
 
 /** Which chain stages each role runs (0 raw … 3 end products). A workshop runs
@@ -44,6 +44,8 @@ export const ROLE_STAGES: Readonly<Record<BaseRole, readonly number[]>> = Object
   colony: [1],
   // v4 H — a transit hub runs no chain: its teleporters are its business.
   transit: [],
+  // v4 M — a military base runs no chain: it guards.
+  military: [],
 });
 
 export interface BaseContext {
@@ -189,6 +191,8 @@ export function baseProfileFor(ctx: BaseContext, seed: number): BaseProfile {
       colony: tier === 'outpost' ? 0 : 6 + 12 * c,
       // v4 H — hubs are placed by the transit network, never rolled.
       transit: 0,
+      // v4 M — military bases are placed by their own pass, never rolled.
+      military: 0,
     },
     rnd(),
   );

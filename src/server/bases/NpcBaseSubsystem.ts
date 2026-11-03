@@ -146,7 +146,8 @@ export class NpcBaseSubsystem {
           };
         }
       }
-      if (gateTypeOf(p.kind) !== null) rec.gateAccess = gateAccessIndex('open');
+      // A military base admits only its owner and allies (v4 M).
+      if (gateTypeOf(p.kind) !== null) rec.gateAccess = gateAccessIndex(profile.role === 'military' ? 'allies' : 'open');
       // v4 H — a transit link's teleporter: fires when a ship boards, charges
       // the owner's toll; it finds its partner at run time by the link id.
       if (p.link !== undefined && isTeleporterKind(p.kind)) {

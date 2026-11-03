@@ -127,6 +127,8 @@ export const SHOWCASE_PENDING: Record<string, string> = {
   allegiances: 'AI-vs-AI sides fight in the living galaxy but not on cue; needs a staged two-faction room.',
   teleporters:
     'Ships ride the jump (T2) with the warning, push and sealed iris; a showcase shot of a squad riding a pad is due with the cross-sector jump (T3).',
+  'military-bases':
+    'Garrisons are fenced gun-bases at region hearts and frontier edges; the shot (a garrison opening up on a hostile pilot, then its patrol) waits for M2 patrols.',
   'transit-hubs':
     'Hub teleporters fire when a ship boards but need a charged capacitor and a second live sector; a shot needs a staged two-sector capture of a pilot paying the toll and arriving at a trade base.',
   'alien-gates':

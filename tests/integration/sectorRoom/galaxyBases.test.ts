@@ -16,7 +16,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { resolveSectorConfig } from '../../../src/server/galaxy/GalaxyRegistry.js';
-import { galaxyBasePlan } from '../../../src/core/bases/galaxyBases.js';
+import { MILITARY_BASE_ID, galaxyBasePlan } from '../../../src/core/bases/galaxyBases.js';
+import { gateAccessFromIndex } from '../../../src/shared-types/gateAccess.js';
 import { growBase } from '../../../src/core/bases/growBase.js';
 import { getSector } from '../../../src/core/galaxy/galaxy.js';
 import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../../src/shared-types/sectorBounds.js';
@@ -99,6 +100,22 @@ describe('SectorRoom integration — galaxy NPC bases (T1)', () => {
       const dx = Math.max(Math.abs(me.x - r.x) - hw, 0), dy = Math.max(Math.abs(me.y - r.y) - hh, 0);
       expect(Math.hypot(dx, dy), `the ship must not spawn inside ${r.kind}`).toBeGreaterThan(50);
     }
+  });
+
+  it('v4 M: the region power\u2019s garrison grows in full: fenced, guns outside, gates for owner + allies', { timeout: 40_000 }, async () => {
+    const key = 'sol-prime';
+    const mil = galaxyBasePlan(key).find((b) => b.baseId === MILITARY_BASE_ID)!;
+    expect(mil.profile.role).toBe('military');
+    harness = await boot(key);
+    await harness.connectActive(randomUUID());
+    const internal = harness.getServerRoom()!._internals;
+    const mine = [...internal.structureRegistry.all()].filter((r) => r.owner === `npc:${mil.profile.ownerFaction}:${MILITARY_BASE_ID}`);
+    const expected = growBase(mil.profile, mil.seed, getSector(key)!.features).placements.length;
+    expect(mine.length, 'every structure of the garrison is placed').toBe(expected);
+    expect(mine.filter((r) => /turret/.test(r.kind)).length).toBeGreaterThanOrEqual(4);
+    const gates = mine.filter((r) => r.kind === 'shield_gate');
+    expect(gates.length).toBeGreaterThan(0);
+    for (const g of gates) expect(gateAccessFromIndex(g.gateAccess)).toBe('allies');
   });
 
   it('the kill switch leaves the sector without a base', { timeout: 30_000 }, async () => {

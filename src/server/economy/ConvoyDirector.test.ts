@@ -64,7 +64,7 @@ class FakeRoom implements ConvoyRoom {
 const BOX_A = { x0: 2000, x1: 3000, y0: 2000, y1: 3000 };
 const BOX_B = { x0: -3000, x1: -2000, y0: -3000, y1: -2000 };
 
-function setup(sameSector: boolean, clock: { t: number }) {
+function setup(sameSector: boolean, clock: { t: number }, routeHops?: (a: string, b: string) => number) {
   const holds = new HoldStore({ persistence: () => SINK });
   const exporter: FakeBase = { owner: 'npc:traders:ex', uid: 'u-ex', stock: { alloy: 1000 }, uses: {}, box: BOX_A };
   const importer: FakeBase = { owner: 'npc:traders:im', uid: 'u-im', stock: {}, uses: { alloy: 20 }, box: BOX_B };
@@ -79,7 +79,7 @@ function setup(sameSector: boolean, clock: { t: number }) {
     rooms.set('sol-prime', ra);
     rooms.set('vega-reach', rb);
   }
-  const dir = new ConvoyDirector(rooms, holds, { ...DEFAULT_CONVOY_OPTIONS, planIntervalMs: 1000, hopMs: 20_000 }, () => clock.t);
+  const dir = new ConvoyDirector(rooms, holds, { ...DEFAULT_CONVOY_OPTIONS, planIntervalMs: 1000, hopMs: 20_000, ...(routeHops ? { routeHops } : {}) }, () => clock.t);
   return { holds, exporter, importer, ra, rb, dir };
 }
 
@@ -115,6 +115,20 @@ describe('ConvoyDirector (T2)', () => {
     expect(dir.active()).toHaveLength(0);
     expect(importer.stock.alloy ?? 0).toBeGreaterThan(0);
     expect(rb.poses.size).toBe(0);
+  });
+
+  it('H2: a convoy rides the transit links — its transit lasts route hops × hopMs', () => {
+    for (const [hops, ms] of [[0.5, 10_000], [3, 60_000]] as const) {
+      const clock = { t: 0 };
+      const { dir } = setup(false, clock, () => hops);
+      dir.tick();
+      for (let i = 0; i < 20 && dir.active()[0]?.phase !== 'transit'; i++) { clock.t += 1000; dir.tick(); }
+      expect(dir.active()[0]?.phase).toBe('transit');
+      const left = clock.t;
+      for (let i = 0; i < 200 && dir.active()[0]?.phase === 'transit'; i++) { clock.t += 500; dir.tick(); }
+      expect(clock.t - left, `${hops} hops`).toBeGreaterThanOrEqual(ms);
+      expect(clock.t - left, `${hops} hops`).toBeLessThanOrEqual(ms + 1000);
+    }
   });
 
   it('T3: the planning pass publishes regional price factors from base stock', () => {

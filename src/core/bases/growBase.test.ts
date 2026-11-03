@@ -74,7 +74,8 @@ describe('growBase — valid under the real building rules', () => {
         expect(b.stages.length).toBeLessThan(4);
         if (tier === 'outpost') expect(b.stages.length).toBeLessThanOrEqual(2);
         expect(b.placements.filter((p) => ['deep_core_rig', 'ore_processing_complex', 'assembly_plant'].includes(p.kind)).length).toBeLessThanOrEqual(1);
-        if (role !== 'trade') expect(b.placements.some((p) => p.kind === 'freight_dock'), 'a dock').toBe(true);
+        // (A military base trades nothing, so it has no dock.)
+        if (role !== 'trade' && role !== 'military') expect(b.placements.some((p) => p.kind === 'freight_dock'), 'a dock').toBe(true);
       });
     }
   }

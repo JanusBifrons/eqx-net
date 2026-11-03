@@ -36,7 +36,7 @@ import type { GoodId } from '../../shared-types/goods.js';
 
 /** Bump on ANY change to the generator's output (NPC bases regenerate from the
  *  seed, so a change moves every base). */
-export const BASE_GROWTH_VERSION = 8;
+export const BASE_GROWTH_VERSION = 9;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -198,6 +198,10 @@ function roleUnits(profile: BaseProfile, features: readonly SectorFeature[], rnd
     case 'transit':
       // A hub's business is its teleporters (one per link, added below).
       return [{ kind: 'cargo_bay' }];
+    case 'military':
+      // v4 M — turret-heavy: every kind of gun, repeated while wealth lasts
+      // (a fenced base puts them on bastions outside the fence).
+      return [{ kind: 'laser_bolt_turret' }, { kind: 'autocannon_turret' }, { kind: 'missile_turret' }, { kind: 'turret' }];
     case 'colony': {
       // A habitat station: housing first, spires once it's a settlement or bigger, and
       // hydroponics to grow part of its own provisions.
@@ -238,12 +242,13 @@ function planBuild(profile: BaseProfile, features: readonly SectorFeature[], rnd
     return true;
   };
   // Every trading base has a dock and some storage; defence scales with tier.
-  buy({ kind: 'freight_dock' });
+  // (A military base trades nothing: its cargo bay holds munitions and fuel.)
+  if (profile.role !== 'military') buy({ kind: 'freight_dock' });
   buy({ kind: 'cargo_bay' });
   const turrets = { outpost: 1, settlement: 2, stronghold: 4, citadel: 6 }[profile.tier];
   for (let t = 0; t < turrets; t++) buy({ kind: 'turret' });
   // Big bases mine their approaches.
-  const mineLayers = { outpost: 0, settlement: 0, stronghold: 1, citadel: 2 }[profile.tier];
+  const mineLayers = { outpost: 0, settlement: 0, stronghold: 1, citadel: 2 }[profile.tier] + (profile.role === 'military' ? 1 : 0);
   for (let t = 0; t < mineLayers; t++) buy({ kind: 'mine_layer' });
   // The role's chain, repeated (huge kinds once) while wealth lasts.
   const units = roleUnits(profile, features, rnd);
@@ -495,6 +500,17 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   // row 0, so a fenced base with turrets needs a row off the gate line.
   if (posts.length > 0 && ![...rowConn.keys()].some((j) => j !== 0)) {
     if (addRow(-1)) rowOrder.push(-1);
+  }
+  // v4 M — a garrison is mostly guns: give it a row (two bastions, up to six
+  // guns) for every six it bought.
+  if (profile.role === 'military') {
+    const need = Math.ceil(posts.length / 6);
+    for (let k = 1; [...rowConn.keys()].filter((j) => j !== 0).length < need && k <= 6; k++) {
+      for (const j of [-k, k]) {
+        if (rowConn.has(j)) continue;
+        if (addRow(j)) rowOrder.push(j);
+      }
+    }
   }
 
   // Fence: a rectangle around everything, a gate mid-side, row ends tapped.
