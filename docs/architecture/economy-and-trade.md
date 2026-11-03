@@ -128,3 +128,15 @@ Standing is earned by completed deals (+10) and by **gifts** (any side; value
   route through a real room; lazy registration; no `#roomId` in notices.
 - `tests/e2e/trade-tab.spec.ts` — Trade tab → deal → a hauler enters.
 - Player guide: [docs/features/trade-deals.md](../features/trade-deals.md).
+
+## Freight contracting (plan soft-leaping-truffle v4, phase C)
+
+Every NPC convoy now has a **carrier** as well as an owner (`core/economy/freight.ts`).
+
+- **Who carries.**
+  - A faction that runs its own freight carries its own goods: a region power, the Traders guild, or a freight company (`runsOwnFreight`).
+  - Anyone else contracts the cheapest freight carrier working in the region: one of its freight companies, or the Traders (`chooseCarrier`). This covers mining companies, manufacturers, militias and players.
+- **What it costs.** Each carrier has a fixed cut (`carrierCut`): the Traders take 10 %, and a freight company 5–15 %, set by its id. On delivery the carrier's treasury is paid its cut of the cargo's value at `BASE_PRICES`.
+- **Raids.** The hauler flies for both factions. `ConvoyDirector` records them when it launches the convoy (`registerConvoyHauler`, `economy/convoyCarriers.ts`) and forgets them when the convoy ends. A pilot who hits a convoy hauler loses standing with the owner AND the carrier (`SectorRoom.noteStandingHit`, the same once-per-window hit as any other).
+
+Locks: `src/core/economy/freight.test.ts` (who carries, cut range), `ConvoyDirector.test.ts` (a contracted carrier is recorded and paid its cut; the Traders carry their own for free), `tests/integration/sectorRoom/factionStanding.test.ts` (raiding a contracted convoy costs standing with both).

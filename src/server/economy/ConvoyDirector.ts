@@ -25,9 +25,19 @@
  *              one atomic `tradeTransfer` release (overflow drops as a pod);
  *   leaving  — flies away and leaves.
  *
+ * Freight contracting (v4 C): each convoy has a CARRIER (`chooseCarrier`): its
+ * owner when the owner runs freight, else the cheapest freight faction in the
+ * region, paid its cut of the cargo value (to its treasury) on delivery. The
+ * hauler flies for both (`registerConvoyHauler`), so a raid costs standing
+ * with each.
+ *
  * NPC bases are not persisted, so neither are convoys: on start, any convoy
  * hold left by a crash is discarded (NPC value only).
  */
+import { chooseCarrier } from '../../core/economy/freight.js';
+import { registerConvoyHauler, forgetConvoyHauler } from './convoyCarriers.js';
+import { parseOwner } from '../../shared-types/relations.js';
+import { BASE_PRICES } from '../../shared-types/economy.js';
 import type { Bus } from '../../core/events/Bus.js';
 import { emptyHold } from '../../core/cargo/hold.js';
 import { matchConvoys, type BaseTradeView, type ConvoyPlan } from '../../core/economy/convoys.js';
@@ -142,6 +152,11 @@ interface Convoy {
   toSector: string;
   from: { owner: string; uid: string; box: NpcBaseTrade['box'] };
   to: { owner: string; uid: string; box: NpcBaseTrade['box'] };
+  /** v4 C — the faction that owns the cargo, and the one carrying it (and
+   *  its cut of the cargo value, 0 when the owner carries its own). */
+  ownerFaction: string;
+  carrier: string;
+  cut: number;
   phase: Phase;
   /** The sector the hauler is currently in (null while in transit). */
   inSector: string | null;
@@ -371,8 +386,11 @@ export class ConvoyDirector {
     const haulerId = `${CONVOY_HAULER_ID_PREFIX}${id}`;
     const at = this.enter(fromSector, haulerId, from.box);
     if (at === null) return;
+    const ownerFaction = parseOwner(from.owner).faction;
+    const { carrier, cut } = chooseCarrier(ownerFaction, getSector(fromSector)?.region ?? null);
+    registerConvoyHauler(haulerId, { owner: ownerFaction, carrier });
     const c: Convoy = {
-      id, haulerId, plan, fromSector, toSector,
+      id, haulerId, plan, fromSector, toSector, ownerFaction, carrier, cut,
       from: { owner: from.owner, uid: from.networkUid, box: from.box },
       to: { owner: to.owner, uid: to.networkUid, box: to.box },
       ...(priced.fromPlayer !== undefined ? { fromPlayer: priced.fromPlayer } : {}),
@@ -382,7 +400,7 @@ export class ConvoyDirector {
       target: dockPoint(from.box, this.opts.dockMargin, at.x, at.y),
     };
     this.convoys.set(id, c);
-    serverLogEvent('convoy_launch', { haulerId, from: plan.from, to: plan.to, good: plan.good, qty: plan.qty });
+    serverLogEvent('convoy_launch', { haulerId, from: plan.from, to: plan.to, good: plan.good, qty: plan.qty, carrier, cut });
   }
 
   private setPhase(c: Convoy, phase: Phase, now: number): void {
@@ -465,6 +483,11 @@ export class ConvoyDirector {
         }
         const res = room.tradeTransfer(c.to.owner, c.to.uid, { release: [c.haulerId], extraOps });
         if (res !== null && c.toPlayer !== undefined && carried > 0) this.settlePlayer(c.toPlayer, c.plan.good, carried, 'import', cost);
+        // v4 C — a contracted carrier is paid its cut of the cargo's value.
+        if (res !== null && c.cut > 0 && carried > 0) {
+          const fee = Math.round(carried * BASE_PRICES[c.plan.good] * c.cut);
+          if (fee > 0) this.pay?.sink()?.creditFaction?.(c.carrier, fee);
+        }
         if (res === null) {
           // The importer is gone: the cargo drops where the hauler is.
           const h = this.holds.get(c.haulerId)?.hold;
@@ -505,6 +528,7 @@ export class ConvoyDirector {
     // A hauler leaving with cargo still aboard (it never unloaded): NPC value
     // only — discard it rather than leak a hold row.
     if (clean && this.holds.get(c.haulerId) !== undefined) this.holds.delete(c.haulerId);
+    forgetConvoyHauler(c.haulerId);
     this.convoys.delete(c.id);
   }
 
@@ -513,6 +537,7 @@ export class ConvoyDirector {
       if (c.haulerId !== haulerId) continue;
       // The room's kill path already spilled the hold where it died.
       serverLogEvent('convoy_raided', { haulerId, from: c.plan.from, to: c.plan.to, good: c.plan.good });
+      forgetConvoyHauler(haulerId);
       this.convoys.delete(c.id);
       return;
     }
