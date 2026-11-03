@@ -18,7 +18,7 @@
 import { Application, Container, Graphics, RenderTexture, Sprite, Texture, TilingSprite } from 'pixi.js';
 import { buildShipGfxFromShape, buildStructureGfx, shapeForKind } from '../render/pixi/spriteBuilders.js';
 import { ArtCache, PIXEL_ROT_STEPS, SUN_STEPS, type PixelSettings, type ShipArt, type StructArt } from './assets.js';
-import { buildScene, SCENE_IDS, type Cam, type Pose, type Scene, type SceneId, type ShipE } from './scenes.js';
+import { buildScene, SCENE_IDS, type Cam, type Pose, type Scene, type SceneId, type ShipE, type Shot } from './scenes.js';
 import { hash01, valueNoise } from './forge/fields.js';
 import { seedVariant, type BakeJob } from './forge/bake.js';
 
@@ -57,6 +57,17 @@ const GLOW = canvasTex(64, (ctx, s) => {
   g.addColorStop(0.45, 'rgba(255,255,255,0.22)');
   g.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
+});
+
+/** A horizontal streak: bright middle, soft ends and edges (bolts, beams). */
+const STREAK = canvasTex(64, (ctx, s) => {
+  const g = ctx.createLinearGradient(0, 0, s, 0);
+  g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.25, 'rgba(255,255,255,0.9)');
+  g.addColorStop(0.75, 'rgba(255,255,255,0.9)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
+  const v = ctx.createLinearGradient(0, 0, 0, s);
+  v.addColorStop(0, 'rgba(0,0,0,1)'); v.addColorStop(0.5, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,1)');
+  ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = v; ctx.fillRect(0, 0, s, s);
 });
 
 /** Shockwave ring. */
@@ -139,6 +150,14 @@ interface BoomView {
   flash: Sprite; ring: Sprite; pool: Sprite; balls: Sprite[];
   x: number; y: number; t0: number; size: number;
 }
+
+/** One weapon stream's sprites, all created up front. */
+interface ShotView {
+  s: Shot;
+  core: Sprite; halo: Sprite; flare: Sprite; rim: Sprite;
+  bolts: Sprite[]; sparks: Sprite[];
+}
+const SPARKS = 6;
 
 const BAND_OFFSET = 40;
 const BALLS = 14;
@@ -288,6 +307,21 @@ async function main(): Promise<void> {
     return v;
   });
 
+  // ---- weapons
+  const shotViews: ShotView[] = (scene.shots ?? []).map((sh) => {
+    const mk = (tex: Texture, tint: number): Sprite => { const sp = new Sprite(tex); sp.anchor.set(0.5); sp.tint = tint; sp.alpha = 0; fxL.addChild(sp); return sp; };
+    const nBolts = sh.kind === 'bolt' ? Math.ceil(1.2 / (sh.period ?? 0.3)) + 1 : 0;
+    const v: ShotView = {
+      s: sh,
+      core: mk(STREAK, 0xffffff), halo: mk(STREAK, sh.color), flare: mk(GLOW, sh.color), rim: mk(RING, 0x7fd8ff),
+      bolts: [], sparks: [],
+    };
+    v.core.anchor.set(0, 0.5); v.halo.anchor.set(0, 0.5);
+    for (let k = 0; k < nBolts; k++) v.bolts.push(mk(STREAK, sh.color));
+    for (let k = 0; k < SPARKS; k++) v.sparks.push(mk(GLOW, k % 2 ? 0xffe6b0 : sh.color));
+    return v;
+  });
+
   // ---- explosions
   const booms: BoomView[] = scene.booms.map((bm) => {
     const balls: Sprite[] = [];
@@ -409,6 +443,62 @@ async function main(): Promise<void> {
         s.alpha = 0.35 + 0.15 * Math.sin(t * 2.1 + n * 1.3 + v.seed);
       }
       if (v.lit) v.lit.alpha = 0;
+    }
+
+    // Weapons: beams, bolts, impact flares, shield rims.
+    for (const v of shotViews) {
+      const sh = v.s, a = ships[sh.from]!.pose, b = ships[sh.to]!.pose;
+      const tr = ships[sh.to]!.art!;
+      const hitR = (Math.max(tr.w, tr.h) / tr.density) * 0.32; // ~hull radius
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+      // Muzzle a little ahead of the shooter; impact on the near side of the target.
+      const mx = a.x + ux * 10, my = a.y + uy * 10;
+      const stand = hitR * (sh.shield ? 1.25 : 0.7);
+      const ix = b.x - ux * stand, iy = b.y - uy * stand;
+      const len = Math.hypot(ix - mx, iy - my), ang = Math.atan2(iy - my, ix - mx);
+      let hitI = 0;
+      if (sh.kind === 'beam') {
+        const on = t >= sh.t0 && t <= sh.t1;
+        const ramp = on ? Math.min(1, (t - sh.t0) * 8, (sh.t1 - t) * 8) : 0;
+        const fl = 0.85 + 0.15 * Math.sin(t * 61 + sh.from);
+        v.core.position.set(mx, my); v.core.rotation = ang; v.core.scale.set(len / 64, 1.6 / 64); v.core.alpha = ramp;
+        v.halo.position.set(mx, my); v.halo.rotation = ang; v.halo.scale.set(len / 64, (9 * fl) / 64); v.halo.alpha = ramp * 0.7;
+        hitI = ramp * fl;
+      } else {
+        const per = sh.period ?? 0.3, sp = sh.speed ?? 500, flight = len / sp;
+        // Bolts in flight: fired at t0 + n*per, alive for `flight` seconds.
+        const nNow = Math.floor((t - sh.t0) / per);
+        for (let k = 0; k < v.bolts.length; k++) {
+          const bo = v.bolts[k]!;
+          bo.alpha = 0;
+          const n = nNow - k;
+          const tf = sh.t0 + n * per;
+          if (n < 0 || tf > sh.t1) continue;
+          const age = t - tf;
+          if (age < 0 || age > flight) continue;
+          const f = age / flight;
+          bo.position.set(mx + (ix - mx) * f, my + (iy - my) * f);
+          bo.rotation = ang; bo.scale.set(26 / 64, 6 / 64); bo.alpha = 1;
+        }
+        // Hit pulse: the most recent arrival.
+        const sinceHit = (((t - sh.t0 - flight) % per) + per) % per;
+        hitI = t - sh.t0 > flight && t - flight <= sh.t1 ? Math.exp(-sinceHit * 14) : 0;
+      }
+      // Impact: a flare + sparks on the hull, or a rim flash on the shield.
+      v.flare.position.set(ix, iy);
+      v.flare.scale.set((sh.kind === 'beam' ? 22 : 16) * glowScale * (0.7 + 0.5 * hitI));
+      v.flare.alpha = hitI;
+      v.rim.position.set(b.x, b.y); v.rim.scale.set((hitR * 2.6) / 128);
+      v.rim.alpha = sh.shield ? hitI * 0.55 : 0;
+      for (let k = 0; k < SPARKS; k++) {
+        const s2 = v.sparks[k]!;
+        const sa = ang + Math.PI + (hash01(k, 91) - 0.5) * 2.2;
+        const ph = (t * 3 + hash01(k, 93)) % 1;
+        const dd = ph * (8 + hash01(k, 97) * 14);
+        s2.position.set(ix + Math.cos(sa) * dd, iy + Math.sin(sa) * dd);
+        s2.scale.set(3.5 * glowScale * (1 - ph));
+        s2.alpha = sh.shield ? 0 : hitI * (1 - ph);
+      }
     }
 
     // Explosions: flash, fireballs, ring, and a light pool on the base.

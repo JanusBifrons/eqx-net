@@ -41,6 +41,7 @@ const STILLS: Still[] = [
   { id: 'capitals', scene: 'capitals', t: 1.5, w: 1600, h: 900 },
   { id: 'industry', scene: 'industry', t: 0.5, w: 1600, h: 900 },
   { id: 'mega', scene: 'mega', t: 0.5, w: 1600, h: 900 },
+  { id: 'combat', scene: 'combat', t: 1.47, w: 1280, h: 720 },
 ];
 
 interface Clip { id: string; scene: string; seconds: number; w: number; h: number }
@@ -49,6 +50,7 @@ const CLIPS: Clip[] = [
   { id: 'fleet-pass', scene: 'base', seconds: 8, w: 1280, h: 720 },
   { id: 'explosion', scene: 'explosion', seconds: 4.5, w: 1280, h: 720 },
   { id: 'zoom-sweep', scene: 'sweep', seconds: 7, w: 1280, h: 720 },
+  { id: 'combat', scene: 'combat', seconds: 6, w: 1280, h: 720 },
 ];
 const FPS = 30;
 

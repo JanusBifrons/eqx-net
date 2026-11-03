@@ -25,15 +25,31 @@ export interface Boom { x: number; y: number; t0: number; size: number }
 
 export interface Cam { x: number; y: number; zoom: number }
 
+/** A weapon stream between two ships (indices into `ships`). Beams are
+ *  continuous over [t0, t1]; bolts fire every `period` s and fly at `speed`. */
+export interface Shot {
+  kind: 'beam' | 'bolt';
+  from: number;
+  to: number;
+  t0: number;
+  t1: number;
+  color: number;
+  period?: number;
+  speed?: number;
+  /** Target has its shield up: hits flash a rim instead of sparking the hull. */
+  shield?: boolean;
+}
+
 export interface Scene {
   ships: ShipE[];
   structs: StructE[];
   booms: Boom[];
+  shots?: Shot[];
   camera: (t: number, out: Cam) => void;
   duration: number;
 }
 
-export const SCENE_IDS = ['ships', 'factions', 'structures', 'base', 'explosion', 'sweep', 'bench', 'fleet', 'capitals', 'industry', 'mega'] as const;
+export const SCENE_IDS = ['ships', 'factions', 'structures', 'base', 'explosion', 'sweep', 'bench', 'fleet', 'capitals', 'industry', 'mega', 'combat'] as const;
 
 /** Sheet scenes fit their content into this view (the capture size). */
 const SHEET_W = 1600, SHEET_H = 900;
@@ -202,6 +218,34 @@ export function buildScene(id: SceneId, zoomOverride?: number, n = 40): Scene {
         'freight_dock'].filter((id) => !CORE_STRUCTS.has(id)), SHEET_W / SHEET_H, zoomOr);
     case 'mega':
       return structSheet(MEGA_STRUCTS, SHEET_W / SHEET_H, zoomOr);
+    case 'combat': {
+      // Sol patrol (left) against a robot pack (right).
+      const face = (id: string, x: number, y: number, tx: number, ty: number, ph: number, paint?: number): ShipE => ({
+        id, paint, trail: false,
+        pose: (t, o) => {
+          o.x = x + Math.sin(t * 0.7 + ph) * 6; o.y = y + Math.cos(t * 0.5 + ph) * 8;
+          o.rot = Math.atan2(ty - o.y, tx - o.x) + Math.PI / 2 + Math.sin(t * 1.3 + ph) * 0.06;
+          o.thrust = 0.35;
+        },
+      });
+      const sol = npcFactionDef('core')?.color;
+      const ships = [
+        face('heavy', -150, 0, 150, 0, 0, sol),
+        face('fighter', -125, -70, 140, -60, 1, sol),
+        face('fighter', -125, 70, 140, 60, 2, sol),
+        face('robot-hexagon', 150, 0, -150, 0, 3),
+        face('robot-square', 140, -60, -125, -70, 4),
+        face('robot-square', 140, 60, -125, 70, 5),
+      ];
+      const shots: Shot[] = [
+        { kind: 'beam', from: 0, to: 3, t0: 0.4, t1: 3.2, color: 0x6fd0ff },
+        { kind: 'bolt', from: 1, to: 4, t0: 0, t1: 6, color: 0xffd27a, period: 0.32, speed: 520 },
+        { kind: 'bolt', from: 2, to: 5, t0: 0.15, t1: 6, color: 0xffd27a, period: 0.32, speed: 520 },
+        { kind: 'bolt', from: 3, to: 0, t0: 0.2, t1: 6, color: 0xff5a7a, period: 0.45, speed: 420, shield: true },
+        { kind: 'beam', from: 4, to: 1, t0: 3.6, t1: 5.6, color: 0xff4f8a, shield: true },
+      ];
+      return { ships, structs: [], booms: [], shots, duration: 6, camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = zoomOr(2.4); } };
+    }
     case 'bench': {
       const structs: StructE[] = [];
       const kinds = ['capital', 'solar', 'turret', 'connector', 'solar', 'turret', 'connector', 'turret'];
