@@ -73,3 +73,36 @@ describe('art lab forge', () => {
     }
   });
 });
+
+describe('art lab bake (round 2 speedups)', () => {
+  it('the sliding-window box blur matches a naive blur', async () => {
+    const { boxBlur } = await import('../../src/client/__art-lab__/forge/raster');
+    const w = 23, h = 17, r = 3;
+    const src = new Float32Array(w * h).map((_, i) => ((i * 2654435761) >>> 0) / 4294967296);
+    const got = boxBlur(src, w, h, r);
+    const at = (a: Float32Array, x: number, y: number): number => a[Math.min(h - 1, Math.max(0, y)) * w + Math.min(w - 1, Math.max(0, x))]!;
+    const tmp = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { let s = 0; for (let k = -r; k <= r; k++) s += at(src, x + k, y); tmp[y * w + x] = s / (2 * r + 1); }
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      let s = 0; for (let k = -r; k <= r; k++) s += at(tmp, x, y + k);
+      expect(got[y * w + x]!).toBeCloseTo(s / (2 * r + 1), 4);
+    }
+  });
+
+  it('seed variants stay within the shared set', async () => {
+    const { seedVariant, STRUCT_SEED_VARIANTS } = await import('../../src/client/__art-lab__/forge/bake');
+    const seen = new Set<number>();
+    for (let s = -20; s < 200; s++) seen.add(seedVariant(s));
+    expect(seen.size).toBe(STRUCT_SEED_VARIANTS);
+    for (const v of seen) expect(v >= 1 && v <= STRUCT_SEED_VARIANTS).toBe(true);
+  });
+
+  it('a structure bake is deterministic and capped in size', async () => {
+    const { runBake, STRUCT_MAX_SIDE } = await import('../../src/client/__art-lab__/forge/bake');
+    const job = { type: 'struct' as const, id: 'teleporter_large', seed: 1 };
+    const a = runBake(job, DEFAULT_RIG), b = runBake(job, DEFAULT_RIG);
+    expect(Math.max(a.w, a.h)).toBeLessThanOrEqual(STRUCT_MAX_SIDE + 2);
+    expect(hashBytes(a.frames[0]!.data)).toBe(hashBytes(b.frames[0]!.data));
+    expect(a.frames[1]!.w).toBe(Math.ceil(a.w / 2)); // half-res light overlay
+  });
+});

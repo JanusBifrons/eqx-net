@@ -400,21 +400,26 @@ export function hash01(a: number, seed: number): number {
 }
 
 /** Hashed value noise in 0..1 (smooth, cheap). */
+function latticeHash(a: number, b: number, seed: number): number {
+  let h = Math.imul(a, 374761393) + Math.imul(b, 668265263) + seed;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
 export function valueNoise(x: number, y: number, seed: number): number {
   const xi = Math.floor(x), yi = Math.floor(y);
   const xf = x - xi, yf = y - yi;
-  const hsh = (a: number, b: number): number => {
-    let h = Math.imul(a, 374761393) + Math.imul(b, 668265263) + seed;
-    h = Math.imul(h ^ (h >>> 13), 1274126177);
-    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-  };
-  const s = (t: number): number => t * t * (3 - 2 * t);
-  const a = hsh(xi, yi), b = hsh(xi + 1, yi), c = hsh(xi, yi + 1), d = hsh(xi + 1, yi + 1);
-  return a + (b - a) * s(xf) + (c - a) * s(yf) + (a - b - c + d) * s(xf) * s(yf);
+  const sx = xf * xf * (3 - 2 * xf), sy = yf * yf * (3 - 2 * yf);
+  const a = latticeHash(xi, yi, seed), b = latticeHash(xi + 1, yi, seed);
+  const c = latticeHash(xi, yi + 1, seed), d = latticeHash(xi + 1, yi + 1, seed);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
 }
 
 export interface StructureForgeOpts {
+  /** Texels per world unit, before the size cap. */
   ppu: number;
+  /** Cap on the texture's longest side, texels (the resolution drops for big kinds). */
+  maxSide?: number;
   seed?: number;
   /** Override the accent paint (owner faction). */
   accent?: number;
@@ -447,7 +452,9 @@ export function forgeStructure(kindId: string, opts: StructureForgeOpts): Fields
   const plan = buildStructureVisual(kindId, { accent, seed: opts.seed ?? 1, omitSpans: true });
   const fp = plan.footprint;
   const box: Poly = [[-fp.w / 2, -fp.h / 2], [fp.w / 2, -fp.h / 2], [fp.w / 2, fp.h / 2], [-fp.w / 2, fp.h / 2]];
-  const g = gridFor([box], opts.ppu, 2);
+  const side = Math.max(fp.w, fp.h) + 4;
+  const ppu = opts.maxSide ? Math.min(opts.ppu, opts.maxSide / side) : opts.ppu;
+  const g = gridFor([box], ppu, 2);
   const f = newFields(g, paintOf(accent));
   const area = fp.w * fp.h;
   const noiseSeed = hashStr(kindId + ':grime');
@@ -501,8 +508,7 @@ export function forgeStructure(kindId: string, opts: StructureForgeOpts): Fields
         if (cov > 0.5) {
           f.mat[i] = mat;
           f.key[i] = r.color & 0xf0f0f0;
-          const nz = valueNoise(wx * 0.08, wy * 0.08, noiseSeed);
-          const k = (mat === MAT.WINDOW ? 1 : 0.88 + 0.22 * nz) * kk;
+          const k = kk;
           f.albedo[i * 3] = col[0] * k; f.albedo[i * 3 + 1] = col[1] * k; f.albedo[i * 3 + 2] = col[2] * k;
           if (mat === MAT.WINDOW) {
             const e = r.alpha * 0.9;
@@ -513,6 +519,16 @@ export function forgeStructure(kindId: string, opts: StructureForgeOpts): Fields
       }
     }
   });
+  // Grime: one low-frequency noise pass over everything but windows.
+  for (let ty = 0; ty < g.h; ty++) {
+    for (let tx = 0; tx < g.w; tx++) {
+      const i = ty * g.w + tx;
+      if (f.cov[i]! <= 0 || f.mat[i] === MAT.WINDOW) continue;
+      const nz = valueNoise(((tx + 0.5 - g.ox) / g.ppu) * 0.08, ((ty + 0.5 - g.oy) / g.ppu) * 0.08, noiseSeed);
+      const k = 0.88 + 0.22 * nz;
+      f.albedo[i * 3]! *= k; f.albedo[i * 3 + 1]! *= k; f.albedo[i * 3 + 2]! *= k;
+    }
+  }
   // Lamps.
   for (const l of plan.lights) {
     const e = lin(l.color);

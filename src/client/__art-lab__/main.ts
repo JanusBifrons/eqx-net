@@ -20,6 +20,7 @@ import { buildShipGfxFromShape, buildStructureGfx, shapeForKind } from '../rende
 import { ArtCache, PIXEL_ROT_STEPS, SUN_STEPS, type PixelSettings, type ShipArt, type StructArt } from './assets.js';
 import { buildScene, SCENE_IDS, type Cam, type Pose, type Scene, type SceneId, type ShipE } from './scenes.js';
 import { hash01, valueNoise } from './forge/fields.js';
+import { seedVariant, type BakeJob } from './forge/bake.js';
 
 type Style = 'current' | 'machined' | 'pixel';
 
@@ -168,6 +169,14 @@ async function main(): Promise<void> {
   const scene: Scene = buildScene(SCENE, ZOOM, BENCH_N);
   const cache = new ArtCache();
   const t0Bake = performance.now();
+  // Machined: bake everything the scene needs on worker threads first
+  // (`?workers=0` bakes on the main thread instead, for comparison).
+  if (STYLE === 'machined' && qs.get('workers') !== '0') {
+    const jobs: BakeJob[] = [];
+    for (const st of scene.structs) jobs.push({ type: 'struct', id: st.id, seed: seedVariant(st.seed) });
+    for (const sh of scene.ships) jobs.push({ type: 'ship', id: sh.id, paint: sh.paint });
+    await cache.prebake(jobs, Number(qs.get('workers') ?? 4), qs.get('persist') !== '0');
+  }
 
   // ---- scene graph
   const sceneRoot = new Container();
@@ -227,7 +236,7 @@ async function main(): Promise<void> {
     if (STYLE === 'machined') {
       art = cache.machinedStruct(st.id, st.seed);
       v.lit = new Sprite(art.albedo!);
-      v.lit.anchor.set(0.5); v.lit.scale.set(1 / art.density); v.lit.position.set(st.x, st.y);
+      v.lit.anchor.set(0.5); v.lit.scale.set(2 / art.density); // half-res albedo v.lit.position.set(st.x, st.y);
       v.lit.alpha = 0; v.lit.tint = 0xffb070;
       litL.addChild(v.lit);
     } else {

@@ -1,16 +1,24 @@
 /**
  * Art lab — baked art per style, cached by kind (+ zoom level and settings for
  * the pixel look). Bake time and atlas bytes are tallied for the bench.
+ *
+ * Machined bakes can run ahead on worker threads (`prebake`): the forge is
+ * pure, so workers return plain RGBA frames and only the atlas packing (it
+ * needs a canvas) stays on the main thread. Anything not prebaked is baked on
+ * the main thread on first use, with the same code.
  */
 import type { Texture } from 'pixi.js';
 import { Atlas } from './atlas.js';
 import { forgeShip, forgeStructure, type Fields } from './forge/fields.js';
-import { DEFAULT_RIG, litFrame, pixelFrame, type Frame, type LightRig } from './forge/shade.js';
-import { getShipKind } from '../../shared-types/shipKinds.js';
-import { linToSrgb } from './forge/palette.js';
+import { DEFAULT_RIG, pixelFrame, type LightRig } from './forge/shade.js';
+import {
+  bakeKey, runBake, seedVariant, shipPpu, STRUCT_MAX_SIDE, STRUCT_PPU, SUN_STEPS,
+  type Baked, type BakeJob,
+} from './forge/bake.js';
+import { loadBakes, saveBakes, storeKey } from './bakeStore.js';
 
-/** Machined ships keep this many sun azimuths and cross-fade between two. */
-export const SUN_STEPS = 16;
+export { SUN_STEPS };
+
 /** Pixel ships keep this many baked rotations. */
 export const PIXEL_ROT_STEPS = 64;
 
@@ -40,22 +48,6 @@ export interface PixelSettings {
   outline: boolean;
 }
 
-function shipPpu(id: string): number {
-  return getShipKind(id).radius >= 25 ? 3 : 4;
-}
-
-function albedoFrame(f: Fields): Frame {
-  const n = f.g.w * f.g.h;
-  const data = new Uint8ClampedArray(n * 4);
-  for (let i = 0; i < n; i++) {
-    const a = f.cov[i]!;
-    if (a <= 0) continue;
-    for (let c = 0; c < 3; c++) data[i * 4 + c] = Math.round(linToSrgb(f.albedo[i * 3 + c]! * 1.4) * 255);
-    data[i * 4 + 3] = Math.round(a * 255);
-  }
-  return { w: f.g.w, h: f.g.h, data };
-}
-
 export class ArtCache {
   readonly smooth = new Atlas(false);
   readonly pixel = new Atlas(true);
@@ -63,7 +55,91 @@ export class ArtCache {
   private ships = new Map<string, ShipArt>();
   private structs = new Map<string, StructArt>();
   private fieldCache = new Map<string, Fields>();
+  /** Finished bakes from `prebake`, waiting to be packed on first use. */
+  private prebaked = new Map<string, Baked>();
+  /** Wall-clock of the last `prebake`, and how many workers it used. */
+  prebakeMs = 0;
+  prebakeWorkers = 0;
+  /** How many of the last prebake's jobs came from the between-session store. */
+  prebakeFromStore = 0;
   rig: LightRig = DEFAULT_RIG;
+
+  /**
+   * Bake the given Machined jobs on up to `maxWorkers` worker threads in
+   * parallel. Resolves when all are done; falls back to the main thread when
+   * workers are unavailable.
+   */
+  async prebake(jobs: BakeJob[], maxWorkers = 4, persist = true): Promise<void> {
+    const t0 = performance.now();
+    const seen = new Set<string>();
+    let todo: BakeJob[] = [];
+    for (const j of jobs) {
+      const k = bakeKey(j);
+      if (seen.has(k) || this.prebaked.has(k)) continue;
+      seen.add(k);
+      todo.push(j);
+    }
+    // Reuse art baked in an earlier session.
+    if (persist) {
+      const hits = await loadBakes(todo.map((j) => storeKey(bakeKey(j), this.rig)));
+      this.prebakeFromStore = 0;
+      todo = todo.filter((j) => {
+        const b = hits.get(storeKey(bakeKey(j), this.rig));
+        if (!b) return true;
+        this.prebaked.set(bakeKey(j), b);
+        this.prebakeFromStore++;
+        return false;
+      });
+    }
+    const fresh = todo.map(bakeKey);
+    const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 2 : 2;
+    const n = Math.max(1, Math.min(maxWorkers, cores - 1, todo.length));
+    const workers: Worker[] = [];
+    try {
+      for (let i = 0; i < n; i++) workers.push(new Worker(new URL('./bake.worker.ts', import.meta.url), { type: 'module' }));
+    } catch {
+      workers.length = 0;
+    }
+    this.prebakeWorkers = workers.length;
+    if (workers.length === 0) {
+      for (const j of todo) this.prebaked.set(bakeKey(j), runBake(j, this.rig));
+    } else {
+      let next = 0;
+      await Promise.all(workers.map((w) => new Promise<void>((resolve, reject) => {
+        const pump = (): void => {
+          if (next >= todo.length) { resolve(); return; }
+          const job = todo[next]!, seq = next++;
+          w.onmessage = (e: MessageEvent<{ seq: number; baked: Baked }>): void => {
+            this.prebaked.set(bakeKey(job), e.data.baked);
+            pump();
+          };
+          w.onerror = (err): void => reject(new Error(`bake worker failed: ${err.message}`));
+          w.postMessage({ seq, job, rig: this.rig });
+        };
+        pump();
+      })));
+      for (const w of workers) w.terminate();
+    }
+    this.prebakeMs = performance.now() - t0;
+    if (persist && fresh.length > 0) {
+      // Save in the background; a failure only means the next load re-bakes.
+      // Copies, because packing may transfer or reuse the frame buffers.
+      const entries: Array<[string, Baked]> = [];
+      for (const k of fresh) {
+        const b = this.prebaked.get(k);
+        if (b) entries.push([storeKey(k, this.rig), { ...b, frames: b.frames.map((f) => ({ w: f.w, h: f.h, data: f.data.slice() })) }]);
+      }
+      void saveBakes(entries);
+    }
+  }
+
+  /** A finished bake for `job`: prebaked if available, else baked now. */
+  private baked(job: BakeJob): Baked {
+    const k = bakeKey(job);
+    const hit = this.prebaked.get(k);
+    if (hit) { this.prebaked.delete(k); return hit; }
+    return runBake(job, this.rig);
+  }
 
   private shipFields(id: string, paint?: number): Fields {
     const k = `s:${id}:${paint ?? ''}`;
@@ -76,40 +152,45 @@ export class ArtCache {
     const k = `t:${id}:${seed}:${accent ?? ''}`;
     let f = this.fieldCache.get(k);
     if (!f) {
-      // Keep the biggest pads inside one atlas page.
-      const ppu = id.startsWith('teleporter') ? 1.2 : 1.5;
-      f = forgeStructure(id, { ppu, seed, accent });
+      f = forgeStructure(id, { ppu: STRUCT_PPU, maxSide: STRUCT_MAX_SIDE, seed, accent });
       this.fieldCache.set(k, f);
     }
     return f;
   }
 
+  /** Map any placement seed onto one of the shared variants. */
+  static variant(seed: number): number {
+    return seedVariant(seed);
+  }
+
   machinedShip(id: string, paint?: number): ShipArt {
-    const key = `${id}:${paint ?? ''}`;
-    const hit = this.ships.get(`m:${key}`);
+    const job: BakeJob = { type: 'ship', id, paint };
+    const key = bakeKey(job);
+    const hit = this.ships.get(key);
     if (hit) return hit;
     const t0 = performance.now();
-    const f = this.shipFields(id, paint);
+    const b = this.baked(job);
     const frames: Texture[] = [];
-    for (let j = 0; j < SUN_STEPS; j++) this.smooth.add(litFrame(f, this.rig, (j / SUN_STEPS) * Math.PI * 2), frames, j);
+    for (let j = 0; j < b.frames.length; j++) this.smooth.add(b.frames[j]!, frames, j);
     this.smooth.commit();
-    const art: ShipArt = { frames, w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: f.nozzles, navLights: f.navLights };
-    this.ships.set(`m:${key}`, art);
+    const art: ShipArt = { frames, w: b.w, h: b.h, density: b.density, nozzles: b.nozzles, navLights: b.navLights };
+    this.ships.set(key, art);
     this.bakeMs.ships += performance.now() - t0;
     return art;
   }
 
-  machinedStruct(id: string, seed = 1, accent?: number): StructArt {
-    const key = `m:${id}:${seed}:${accent ?? ''}`;
+  machinedStruct(id: string, rawSeed = 1, accent?: number): StructArt {
+    const job: BakeJob = { type: 'struct', id, seed: seedVariant(rawSeed), accent };
+    const key = bakeKey(job);
     const hit = this.structs.get(key);
     if (hit) return hit;
     const t0 = performance.now();
-    const f = this.structFields(id, seed, accent);
+    const b = this.baked(job);
     const out: Texture[] = [];
-    this.smooth.add(litFrame(f, this.rig, this.rig.sunAz), out, 0);
-    this.smooth.add(albedoFrame(f), out, 1);
+    this.smooth.add(b.frames[0]!, out, 0);
+    this.smooth.add(b.frames[1]!, out, 1);
     this.smooth.commit();
-    const art: StructArt = { tex: out[0]!, albedo: out[1]!, w: f.g.w, h: f.g.h, density: f.g.ppu, navLights: f.navLights };
+    const art: StructArt = { tex: out[0]!, albedo: out[1]!, w: b.w, h: b.h, density: b.density, navLights: b.navLights };
     this.structs.set(key, art);
     this.bakeMs.structures += performance.now() - t0;
     return art;
@@ -135,7 +216,8 @@ export class ArtCache {
     return art;
   }
 
-  pixelStruct(id: string, pd: number, s: PixelSettings, seed = 1, accent?: number): StructArt {
+  pixelStruct(id: string, pd: number, s: PixelSettings, rawSeed = 1, accent?: number): StructArt {
+    const seed = ArtCache.variant(rawSeed);
     const key = `p:${id}:${seed}:${accent ?? ''}:${pd.toFixed(4)}:${s.steps}:${s.dither}:${s.outline}`;
     const hit = this.structs.get(key);
     if (hit) return hit;
@@ -151,7 +233,10 @@ export class ArtCache {
     return art;
   }
 
-  stats(): { smoothBytes: number; pixelBytes: number; smoothPages: number; pixelPages: number; bakeMs: ArtCache['bakeMs'] } {
-    return { smoothBytes: this.smooth.bytes, pixelBytes: this.pixel.bytes, smoothPages: this.smooth.pageCount, pixelPages: this.pixel.pageCount, bakeMs: { ...this.bakeMs } };
+  stats(): { smoothBytes: number; pixelBytes: number; smoothPages: number; pixelPages: number; bakeMs: ArtCache['bakeMs']; prebakeMs: number; prebakeWorkers: number; prebakeFromStore: number } {
+    return {
+      smoothBytes: this.smooth.bytes, pixelBytes: this.pixel.bytes, smoothPages: this.smooth.pageCount, pixelPages: this.pixel.pageCount,
+      bakeMs: { ...this.bakeMs }, prebakeMs: this.prebakeMs, prebakeWorkers: this.prebakeWorkers, prebakeFromStore: this.prebakeFromStore,
+    };
   }
 }

@@ -62,10 +62,20 @@ function derived(f: Fields): Derived {
   const H = ppu >= 2 ? boxBlur(f.height, w, h, 1) : f.height;
   const at = (x: number, y: number): number => H[Math.min(h - 1, Math.max(0, y)) * w + Math.min(w - 1, Math.max(0, x))]!;
   for (let y = 0; y < h; y++) {
+    const interiorRow = y > 0 && y < h - 1;
     for (let x = 0; x < w; x++) {
-      // Sobel, slope in world units per world unit.
-      const gx = (at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1) - at(x - 1, y - 1) - 2 * at(x - 1, y) - at(x - 1, y + 1)) / 8;
-      const gy = (at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1) - at(x - 1, y - 1) - 2 * at(x, y - 1) - at(x + 1, y - 1)) / 8;
+      // Sobel, slope in world units per world unit. Interior texels read the
+      // field directly; only the border pays for clamping.
+      let gx: number, gy: number;
+      if (interiorRow && x > 0 && x < w - 1) {
+        const c = y * w + x, u = c - w, d = c + w;
+        const ul = H[u - 1]!, um = H[u]!, ur = H[u + 1]!, ml = H[c - 1]!, mr = H[c + 1]!, dl = H[d - 1]!, dm = H[d]!, dr = H[d + 1]!;
+        gx = (ur + 2 * mr + dr - ul - 2 * ml - dl) / 8;
+        gy = (dl + 2 * dm + dr - ul - 2 * um - ur) / 8;
+      } else {
+        gx = (at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1) - at(x - 1, y - 1) - 2 * at(x - 1, y) - at(x - 1, y + 1)) / 8;
+        gy = (at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1) - at(x - 1, y - 1) - 2 * at(x, y - 1) - at(x + 1, y - 1)) / 8;
+      }
       const sx = -gx * ppu, sy = -gy * ppu;
       const len = Math.hypot(sx, sy, 1);
       const i = y * w + x;
@@ -81,26 +91,35 @@ function derived(f: Fields): Derived {
 function shadowMap(f: Fields, az: number, elev: number): Float32Array {
   const { w, h, ppu } = f.g;
   const out = new Float32Array(w * h).fill(1);
-  const dx = Math.cos(az), dy = Math.sin(az);
-  const rise = Math.tan(elev) / ppu; // world units of rise per texel step
+  // March in steps of ~0.75 world units (not one texel), so the cost does
+  // not grow with resolution; shadows here are soft anyway.
+  const stepT = Math.max(1, ppu * 0.75);
+  const dx = Math.cos(az) * stepT, dy = Math.sin(az) * stepT;
+  const rise = (Math.tan(elev) / ppu) * stepT; // world units of rise per step
   let maxH = 0;
   for (let i = 0; i < f.height.length; i++) if (f.height[i]! > maxH) maxH = f.height[i]!;
-  const maxSteps = Math.min(400, Math.ceil(maxH / Math.max(1e-4, rise)) + 2);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
+  // Shadows longer than ~40 world units are clipped (rare, and soft anyway).
+  const maxSteps = Math.min(Math.ceil(40 / 0.75), Math.ceil(maxH / Math.max(1e-4, rise)) + 2);
+  // Marched at half resolution (each result fills a 2×2 block): shadows are
+  // soft, and this is the light pass's biggest cost.
+  for (let y = 0; y < h; y += 2) {
+    for (let x = 0; x < w; x += 2) {
       const i = y * w + x;
-      if (f.cov[i]! <= 0) continue;
+      if (f.cov[i]! <= 0 && f.cov[Math.min(w * h - 1, i + w + 1)]! <= 0) continue;
       const h0 = f.height[i]! + 0.05;
       let occl = 0;
       for (let s = 1; s < maxSteps; s++) {
-        const sx = Math.round(x + dx * s), sy = Math.round(y + dy * s);
+        const sx = (x + dx * s + 0.5) | 0, sy = (y + dy * s + 0.5) | 0;
         if (sx < 0 || sy < 0 || sx >= w || sy >= h) break;
         const ray = h0 + rise * s;
         if (ray > maxH) break;
         const d = f.height[sy * w + sx]! - ray;
         if (d > 0) { occl = Math.max(occl, Math.min(1, d / 0.6)); if (occl >= 1) break; }
       }
-      out[i] = 1 - occl * 0.85;
+      const v = 1 - occl * 0.85;
+      out[i] = v;
+      if (x + 1 < w) out[i + 1] = v;
+      if (y + 1 < h) { out[i + w] = v; if (x + 1 < w) out[i + w + 1] = v; }
     }
   }
   return out;
@@ -132,23 +151,27 @@ function radianceUncached(f: Fields, rig: LightRig, localAz: number, shadows: bo
   const hl = Math.hypot(Hv[0]!, Hv[1]!, Hv[2]!);
   Hv[0]! /= hl; Hv[1]! /= hl; Hv[2]! /= hl;
   const sh = shadows ? shadowMap(f, localAz, rig.sunElev) : null;
+  const gloss = new Float32Array(8), specK = new Float32Array(8);
+  for (let k = 0; k < 8; k++) { const m = MATP[k] ?? MATP[MAT.METAL]!; gloss[k] = m.gloss; specK[k] = m.spec; }
+  const [ar, ag, ab] = rig.ambient, [sr, sg, sb] = rig.sunColor, [rr, rg, rb] = rig.rim;
   for (let i = 0; i < n; i++) {
     if (f.cov[i]! <= 0) continue;
-    const m = MATP[f.mat[i]!] ?? MATP[MAT.METAL]!;
+    const mi = f.mat[i]!;
     const ndl = Math.max(0, nx[i]! * L[0]! + ny[i]! * L[1]! + nz[i]! * L[2]!);
     const ndh = Math.max(0, nx[i]! * Hv[0]! + ny[i]! * Hv[1]! + nz[i]! * Hv[2]!);
     const ao = 1 - 0.65 * cav[i]!;
     const s = sh ? sh[i]! : 1;
-    const spec = m.spec * Math.pow(ndh, m.gloss) * s;
-    const rim = Math.pow(1 - nz[i]!, 2) * 1.6;
-    const hemi = 0.55 + 0.45 * nz[i]!;
-    for (let c = 0; c < 3; c++) {
-      const a = f.albedo[i * 3 + c]!;
-      out[i * 3 + c] = a * (rig.ambient[c]! * hemi * ao + rig.sunColor[c]! * ndl * s * (0.35 + 0.65 * ao))
-        + rig.sunColor[c]! * spec * 0.6
-        + rig.rim[c]! * rim * ao * (0.35 + a)
-        + f.emis[i * 3 + c]!;
-    }
+    const sk = specK[mi]!;
+    const spec = sk > 0 && ndh > 0 ? sk * Math.pow(ndh, gloss[mi]!) * s : 0;
+    const nzi = 1 - nz[i]!;
+    const rim = nzi * nzi * 1.6 * ao;
+    const hemi = (0.55 + 0.45 * nz[i]!) * ao;
+    const sunT = ndl * s * (0.35 + 0.65 * ao);
+    const j = i * 3;
+    const a0 = f.albedo[j]!, a1 = f.albedo[j + 1]!, a2 = f.albedo[j + 2]!;
+    out[j] = a0 * (ar! * hemi + sr! * sunT) + sr! * spec * 0.6 + rr! * rim * (0.35 + a0) + f.emis[j]!;
+    out[j + 1] = a1 * (ag! * hemi + sg! * sunT) + sg! * spec * 0.6 + rg! * rim * (0.35 + a1) + f.emis[j + 1]!;
+    out[j + 2] = a2 * (ab! * hemi + sb! * sunT) + sb! * spec * 0.6 + rb! * rim * (0.35 + a2) + f.emis[j + 2]!;
   }
   return out;
 }
@@ -160,6 +183,16 @@ function tone(x: number): number {
 
 export interface Frame { w: number; h: number; data: Uint8ClampedArray }
 
+/** Tone map + sRGB encode as a lookup table over linear radiance [0, 8). */
+const OUT_LUT_SIZE = 4096, OUT_LUT_MAX = 8;
+const OUT_LUT = new Uint8Array(OUT_LUT_SIZE);
+for (let i = 0; i < OUT_LUT_SIZE; i++) OUT_LUT[i] = Math.round(linToSrgb(tone(((i + 0.5) / OUT_LUT_SIZE) * OUT_LUT_MAX)) * 255);
+const OUT_LUT_K = OUT_LUT_SIZE / OUT_LUT_MAX;
+function encode(x: number): number {
+  const i = (x * OUT_LUT_K) | 0;
+  return OUT_LUT[i < 0 ? 0 : i >= OUT_LUT_SIZE ? OUT_LUT_SIZE - 1 : i]!;
+}
+
 /** One fully lit RGBA frame (straight alpha, sRGB) at local sun azimuth. */
 export function litFrame(f: Fields, rig: LightRig, localAz: number, shadows = true): Frame {
   const rad = radiance(f, rig, localAz, shadows);
@@ -168,7 +201,10 @@ export function litFrame(f: Fields, rig: LightRig, localAz: number, shadows = tr
   for (let i = 0; i < n; i++) {
     const a = f.cov[i]!;
     if (a <= 0) continue;
-    for (let c = 0; c < 3; c++) data[i * 4 + c] = Math.round(linToSrgb(tone(rad[i * 3 + c]! * rig.exposure)) * 255);
+    const ex = rig.exposure;
+    data[i * 4] = encode(rad[i * 3]! * ex);
+    data[i * 4 + 1] = encode(rad[i * 3 + 1]! * ex);
+    data[i * 4 + 2] = encode(rad[i * 3 + 2]! * ex);
     data[i * 4 + 3] = Math.round(a * 255);
   }
   return { w: f.g.w, h: f.g.h, data };

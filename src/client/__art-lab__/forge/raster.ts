@@ -151,22 +151,26 @@ export function hashStr(s: string): number {
   return h >>> 0;
 }
 
-/** Box blur (separable, radius r texels), for cavity / AO. */
+/** Box blur (separable, radius r texels, clamped edges), for cavity / AO.
+ *  Sliding window: O(1) per texel whatever the radius. */
 export function boxBlur(src: Float32Array, w: number, h: number, r: number): Float32Array {
   const tmp = new Float32Array(w * h), out = new Float32Array(w * h);
   const norm = 1 / (2 * r + 1);
   for (let y = 0; y < h; y++) {
+    const row = y * w;
+    let acc = 0;
+    for (let k = -r; k <= r; k++) acc += src[row + Math.min(w - 1, Math.max(0, k))]!;
     for (let x = 0; x < w; x++) {
-      let s = 0;
-      for (let k = -r; k <= r; k++) s += src[y * w + Math.min(w - 1, Math.max(0, x + k))]!;
-      tmp[y * w + x] = s * norm;
+      tmp[row + x] = acc * norm;
+      acc += src[row + Math.min(w - 1, x + r + 1)]! - src[row + Math.max(0, x - r)]!;
     }
   }
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let s = 0;
-      for (let k = -r; k <= r; k++) s += tmp[Math.min(h - 1, Math.max(0, y + k)) * w + x]!;
-      out[y * w + x] = s * norm;
+  for (let x = 0; x < w; x++) {
+    let acc = 0;
+    for (let k = -r; k <= r; k++) acc += tmp[Math.min(h - 1, Math.max(0, k)) * w + x]!;
+    for (let y = 0; y < h; y++) {
+      out[y * w + x] = acc * norm;
+      acc += tmp[Math.min(h - 1, y + r + 1) * w + x]! - tmp[Math.max(0, y - r) * w + x]!;
     }
   }
   return out;
