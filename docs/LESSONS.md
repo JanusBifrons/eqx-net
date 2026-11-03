@@ -2640,3 +2640,11 @@ The generator now puts a fenced base's turrets outside the fence. Lock: `turretV
 **Fix.** The gates go in AFTER the bases and search the whole sector for the free spot nearest their ideal site (`alienGateCandidates`). Because a gate may now sit off its ideal spot, twins pair at run time by neighbour sector (`findAlienTwin`) instead of by a uid computed from the ideal pose. Result: every gate and every base fits.
 
 **Rule.** Fixed world features (gates, beacons) that share a sector with generated bases should place after the bases and adapt, not claim space first. Link them by identity (which sector they lead to), never by a position the other side has to recompute. Count "no site fits" and skipped features at boot with and without the change.
+
+## 2026-11-03 — Filming the garrison found that its patrol ignored attacks on its own fence
+
+**What happened.** The showcase clip of a garrison patrol showed the pilot shooting the fence and the patrol flying on without turning. The patrol engaged pilots within 3,500 u of the base's centre, but a stronghold reaches about 3,900 u from its centre, so anyone attacking its outer fence was out of range. The integration test passed because its pilot sat near the middle.
+
+**Fix.** The range is measured from the base's footprint (1,500 u beyond its outline). Locks: `PatrolSubsystem.test.ts` (a stronghold-sized box, pilot 1,000 u outside the fence) and `showcaseRooms.test.ts` (in the garrison room, a pilot at the spawn hitting the south fence draws the patrol, and the patrol actually shoots).
+
+**Rule.** For anything that guards an area, measure its reach from the area's edge, not its centre, and test with the biggest version of the thing. A showcase take is a cheap end-to-end check: watch what happens, not just whether the take passed QA.

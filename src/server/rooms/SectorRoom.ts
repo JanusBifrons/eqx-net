@@ -120,6 +120,7 @@ import { getTeleportBroker, type RiderBatch, type TeleportRoom } from '../telepo
 import { linkEnds } from '../../core/bases/transitNetwork.js';
 import { hopDistance } from '../livingworld/population.js';
 import {
+  DEFAULT_TELEPORT_RULES,
   isAlienGateKind,
   PAD_SPECS,
   SetTeleportRulesSchema,
@@ -209,6 +210,7 @@ const NPC_SIDE_PARTY = Object.fromEntries(NPC_ALLEGIANCE_IDS.map((a) => [a, npcO
 import { getStructureKind, isBuildableStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { AlienGateGuard, isAlienGatesDisabled } from '../structures/AlienGateGuard.js';
 import { PatrolSubsystem } from '../bases/PatrolSubsystem.js';
+import type { FactionId } from '../../shared-types/factions.js';
 import { convoyHaulerFactions } from '../economy/convoyCarriers.js';
 import { ALIEN_GATE_OWNER, alienGateCandidates, alienGateSites, type AlienGateSite } from '../../core/galaxy/alienGates.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
@@ -885,9 +887,12 @@ export class SectorRoom extends Room<SectorState> {
   private production!: ProductionSubsystem;
   /** v4 T1 — teleporter capacitors, pairing, rules and the jump cycle. */
   private teleporters!: TeleporterSubsystem;
+  /** Showcase / tests (`teleportFullCharge`): keep capacitors full. */
+  private testTeleportFullCharge = false;
   /** v4 M2 — garrison patrols (spawned with their military bases). */
   private readonly patrols = new PatrolSubsystem({
-    spawn: (id, x, y) => this.spawnLivingWorldBot({ botId: id, kind: 'patrol-fighter', x, y }),
+    // (Not before the room can spawn ships; the next tick retries.)
+    spawn: (id, x, y) => this.livingWorldBotHooks !== undefined && this.spawnLivingWorldBot({ botId: id, kind: 'patrol-fighter', x, y }),
     poseOf: (id, out) => {
       const rec = this.swarmRegistry.get(id);
       if (!rec) return false;
@@ -1508,6 +1513,11 @@ export class SectorRoom extends Room<SectorState> {
       /** v4 T1 — pair the seeded teleporters in order (1st with 2nd, …).
        *  testMode-only. */
       pairTeleporters?: boolean;
+      /** Showcase / tests: the seeded teleporters fire when a ship boards. */
+      teleportShipBoards?: boolean;
+      /** Showcase / tests: keep every teleporter's capacitor full (an NPC
+       *  base's spare power is small, and a take must not wait on it). */
+      teleportFullCharge?: boolean;
       /** Structures plan (Phase 3-5) — seed PRE-BUILT, auto-connected structures
        *  at hand-authored poses (owner `scenario`). testMode-only bespoke
        *  trigger: gives E2E a fully-functional powered grid without fighting the
@@ -2473,6 +2483,7 @@ export class SectorRoom extends Room<SectorState> {
     // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
     // overlap, no construction wait).
     if (this.testMode) this.seedStructureScenario(roomOpts);
+    this.testTeleportFullCharge = this.testMode && roomOpts.teleportFullCharge === true;
     if (this.testMode && roomOpts.scaleGrid) this.seedScaleGrid(roomOpts.scaleGrid);
     // D2 (plan soft-leaping-truffle v3) — NPC bases grown from the generator.
     if (roomOpts.npcBases && roomOpts.npcBases.length > 0) this.seedNpcBases(roomOpts.npcBases);
@@ -4575,10 +4586,17 @@ export class SectorRoom extends Room<SectorState> {
     const ends = linkEnds(id);
     if (ends === null) return null;
     const there = ends[0].sector === this.sectorKey ? ends[1].sector : ends[0].sector;
-    const room = getTeleportBroker().room(there);
-    if (room === null) return null;
-    for (const r of room.structures()) {
-      if (r.npcLink === id && r.uid !== undefined && r.isConstructed) return { sectorKey: there, uid: r.uid };
+    // Both ends in this sector: look here (another instance of a test room may
+    // share the sector key in the broker).
+    let candidates: Iterable<StructureRecord>;
+    if (there === this.sectorKey) candidates = this.structureRegistry.all();
+    else {
+      const room = getTeleportBroker().room(there);
+      if (room === null) return null;
+      candidates = room.structures();
+    }
+    for (const r of candidates) {
+      if (r !== rec && r.npcLink === id && r.uid !== undefined && r.isConstructed) return { sectorKey: there, uid: r.uid };
     }
     return null;
   }
@@ -4649,19 +4667,7 @@ export class SectorRoom extends Room<SectorState> {
     for (const i of site.overlapped) this.evictSwarmEntity(rocks[i]!, { broadcast: false, emitDestroyed: false });
     const r = sub.seed({ ...spec, x: site.x, y: site.y }, grown);
     // v4 M2 — a garrison flies a patrol round its approaches.
-    if (profile.role === 'military') {
-      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-      for (const rec of this.structureRegistry.all()) {
-        if (rec.owner !== r.owner) continue;
-        const hw = rec.halfW ?? rec.radius, hh = rec.halfH ?? rec.radius;
-        x0 = Math.min(x0, rec.x - hw); x1 = Math.max(x1, rec.x + hw);
-        y0 = Math.min(y0, rec.y - hh); y1 = Math.max(y1, rec.y + hh);
-      }
-      if (Number.isFinite(x0)) {
-        const count = profile.tier === 'stronghold' || profile.tier === 'citadel' ? 4 : 3;
-        this.patrols.addBase(`${sectorKey}-${plan.baseId}`, r.owner, profile.ownerFaction, { x0, x1, y0, y1 }, site.x, site.y, count);
-      }
-    }
+    if (profile.role === 'military') this.addGarrisonPatrol(`${sectorKey}-${plan.baseId}`, r.owner, profile.ownerFaction, profile.tier, site.x, site.y);
     logger.info({
       sectorKey, baseId: plan.baseId, tier: profile.tier, role: profile.role, owner: r.owner, x: Math.round(site.x), y: Math.round(site.y),
       placed: r.placed, rejectedPlace: r.rejectedPlace, rejectedEdge: r.rejectedEdge, asteroidsCleared: site.overlapped.length,
@@ -4679,6 +4685,21 @@ export class SectorRoom extends Room<SectorState> {
 
   /** D2 — seed NPC bases from the generator (built, stocked, recipes + bound
    *  blueprints loaded), then run one grid pulse so power settles. */
+  /** v4 M2 — give a seeded garrison its patrol: corners from the base's
+   *  footprint, 3 ships (4 for a stronghold or citadel). */
+  private addGarrisonPatrol(tag: string, owner: string, faction: FactionId, tier: string, cx: number, cy: number): void {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const rec of this.structureRegistry.all()) {
+      if (rec.owner !== owner) continue;
+      const hw = rec.halfW ?? rec.radius, hh = rec.halfH ?? rec.radius;
+      x0 = Math.min(x0, rec.x - hw); x1 = Math.max(x1, rec.x + hw);
+      y0 = Math.min(y0, rec.y - hh); y1 = Math.max(y1, rec.y + hh);
+    }
+    if (!Number.isFinite(x0)) return;
+    const count = tier === 'stronghold' || tier === 'citadel' ? 4 : 3;
+    this.patrols.addBase(tag, owner, faction, { x0, x1, y0, y1 }, cx, cy, count);
+  }
+
   private seedNpcBases(specs: readonly NpcBaseSpec[]): void {
     const sub = new NpcBaseSubsystem({
       registry: this.structureRegistry,
@@ -4687,6 +4708,10 @@ export class SectorRoom extends Room<SectorState> {
     });
     for (const spec of specs.slice(0, 8)) {
       const r = sub.seed(spec);
+      // v4 M2 — a garrison flies its patrol here too (showcase / test rooms).
+      if (spec.role === 'military') {
+        this.addGarrisonPatrol(`${this.sectorKey ?? 'room'}-${spec.baseId}`, r.owner, spec.profile?.ownerFaction ?? spec.side ?? 'traders', spec.tier, spec.x, spec.y);
+      }
       logger.info({ baseId: spec.baseId, role: spec.role, tier: spec.tier, owner: r.owner, placed: r.placed, rejectedPlace: r.rejectedPlace, rejectedEdge: r.rejectedEdge }, 'npc base seeded');
     }
     this.structureGridTick();
@@ -4727,6 +4752,7 @@ export class SectorRoom extends Room<SectorState> {
     prebuiltStructuresOwner?: string;
     prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
     pairTeleporters?: boolean;
+    teleportShipBoards?: boolean;
     scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
     scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
   }): void {
@@ -4770,6 +4796,9 @@ export class SectorRoom extends Room<SectorState> {
       if (roomOpts.pairTeleporters === true) {
         const tps = [...this.structureRegistry.all()].filter((r) => r.owner === owner && isTeleporterKind(r.kind));
         for (let i = 0; i + 1 < tps.length; i += 2) this.teleporters.pair(tps[i]!, tps[i + 1]!);
+        if (roomOpts.teleportShipBoards === true) {
+          for (const t of tps) t.tpRules = { ...DEFAULT_TELEPORT_RULES, shipBoards: true };
+        }
       }
       // One pulse rebuilds the grid (powered components) + refreshes the slice.
       this.structureGridTick();
@@ -5071,6 +5100,11 @@ export class SectorRoom extends Room<SectorState> {
     // Mine Layers lay and mines go off (same target grids as the turrets).
     this.mineField.tick(nowMs);
     // v4 T1 — teleporter rules and jump cycles.
+    if (this.testTeleportFullCharge) {
+      for (const r of this.structureRegistry.all()) {
+        if (isTeleporterKind(r.kind) && r.tpPartner !== undefined) r.tpCharge = Math.max(r.tpCharge ?? 0, this.teleporters.required(r));
+      }
+    }
     this.teleporters.update(nowMs);
     // WS-4 — re-broadcast each Miner's mining beam on the same fast cadence so
     // the continuous beam tracks + doesn't flicker (gated per-Miner internally).
