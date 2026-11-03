@@ -24,7 +24,7 @@ Every garrison flies a patrol: three `patrol-fighter`s, four for a stronghold. `
 
 - **Where they fly.** Each ship flies the four corners of the base, just outside its fence, in turn. Each starts at a different corner, so the squad spreads round the base. A ship spawns at its corner: a fence stops every ship and gates open only for pilots, so a patrol born inside could never leave.
 - **Who they fight.** A patrol fighter's allegiance is the Traders': no one is hostile to it on sight, and it is hostile to no one on sight, except robots, who attack everything.
-  - **Engaging.** Once a second, any pilot within 3500 units of the base whose relation to the owner is **hostile** is marked hostile to every ship of the patrol, and the clients hear about it once (`bot_aggro`). Hostile means a hostile act against the base, or standing below the owner's threshold.
+  - **Engaging.** Once a second, any pilot within 1500 units of the base's outline (so a pilot shooting at a big base's outer fence counts) whose relation to the owner is **hostile** is marked hostile to every ship of the patrol, and the clients hear about it once (`bot_aggro`). Hostile means a hostile act against the base, or standing below the owner's threshold.
   - **Everyone else** is left alone, and the AI forgets a hostile pilot who stays away.
 - **Losses.** A lost ship comes back after a minute.
 - **On the wire.** Each patrol ship's snapshot entry always carries `drones[].fac`, the faction it flies for (#16). Clients keep it and tint the ship in that faction's colour.

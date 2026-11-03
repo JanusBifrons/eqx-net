@@ -5,8 +5,9 @@
  *  - ROAM: each patrol ship flies the base's four corner waypoints (just
  *    outside its fence) in turn, starting at a different corner, so the squad
  *    spreads round the base.
- *  - ENGAGE: once a second, any pilot within `PATROL_ENGAGE_RANGE` of the
- *    base who is hostile to its owner (`relationOf`: a hostile act against
+ *  - ENGAGE: once a second, any pilot within `PATROL_ENGAGE_MARGIN` of the
+ *    base's footprint (measured from its outline, so a pilot shooting at a
+ *    big base's outer fence counts) who is hostile to its owner (`relationOf`: a hostile act against
  *    the base, or standing below the owner's threshold) is marked hostile to
  *    every patrol ship of that base, through the room's `markBotHostile`
  *    channel (it broadcasts `bot_aggro`). Neutral pilots are left alone; the
@@ -23,8 +24,8 @@
 import type { FactionId } from '../../shared-types/factions.js';
 
 export const PATROL_BOT_PREFIX = 'patrol-';
-/** Pilots this close to a garrison's centre can draw its patrol. */
-export const PATROL_ENGAGE_RANGE = 3500;
+/** Pilots this close to a garrison's footprint can draw its patrol. */
+export const PATROL_ENGAGE_MARGIN = 1500;
 export const PATROL_RESPAWN_MS = 60_000;
 /** How far outside the base's box the waypoints sit. */
 export const PATROL_WAYPOINT_MARGIN = 500;
@@ -44,14 +45,25 @@ export interface PatrolHooks {
   isHostileToOwner(playerId: string, owner: string): boolean;
 }
 
+interface Ship {
+  id: string;
+  leg: number;
+  deadAtMs: number;
+  /** Spawned at least once (ships first spawn on the first tick: a base can
+   *  be seeded before the room can spawn ships). */
+  spawned: boolean;
+}
+
 interface Patrol {
   owner: string;
   faction: FactionId;
   cx: number;
   cy: number;
+  /** The base's footprint box. */
+  box: { x0: number; x1: number; y0: number; y1: number };
   /** Corner waypoints, game space: x0, y0, x1, y1, ... */
   points: number[];
-  ships: Array<{ id: string; leg: number; deadAtMs: number }>;
+  ships: Ship[];
 }
 
 export class PatrolSubsystem {
@@ -70,14 +82,13 @@ export class PatrolSubsystem {
   addBase(tag: string, owner: string, faction: FactionId, box: { x0: number; x1: number; y0: number; y1: number }, cx: number, cy: number, count: number): void {
     const m = PATROL_WAYPOINT_MARGIN;
     const points = [box.x0 - m, box.y0 - m, box.x1 + m, box.y0 - m, box.x1 + m, box.y1 + m, box.x0 - m, box.y1 + m];
-    const p: Patrol = { owner, faction, cx, cy, points, ships: [] };
+    const p: Patrol = { owner, faction, cx, cy, box: { ...box }, points, ships: [] };
     for (let i = 0; i < count; i++) {
       const id = `${PATROL_BOT_PREFIX}${tag}-${i}`;
-      p.ships.push({ id, leg: i % 4, deadAtMs: -Infinity });
+      p.ships.push({ id, leg: i % 4, deadAtMs: -Infinity, spawned: false });
       this.factionById.set(id, faction);
     }
     this.patrols.push(p);
-    for (const s of p.ships) this.spawnShip(p, s);
   }
 
   get count(): number {
@@ -104,6 +115,10 @@ export class PatrolSubsystem {
   tick(nowMs: number): void {
     for (const p of this.patrols) {
       for (const s of p.ships) {
+        if (!s.spawned) {
+          this.spawnShip(p, s);
+          continue;
+        }
         if (!this.h.poseOf(s.id, this.scratch)) {
           if (s.deadAtMs === -Infinity) s.deadAtMs = nowMs;
           if (nowMs - s.deadAtMs >= PATROL_RESPAWN_MS) this.spawnShip(p, s);
@@ -124,13 +139,16 @@ export class PatrolSubsystem {
   private readonly engagePilot = (playerId: string, x: number, y: number): void => {
     const p = this.currentPatrol;
     if (p === null) return;
-    if (Math.hypot(x - p.cx, y - p.cy) > PATROL_ENGAGE_RANGE) return;
+    const dx = Math.max(p.box.x0 - x, 0, x - p.box.x1);
+    const dy = Math.max(p.box.y0 - y, 0, y - p.box.y1);
+    if (dx * dx + dy * dy > PATROL_ENGAGE_MARGIN * PATROL_ENGAGE_MARGIN) return;
     if (!this.h.isHostileToOwner(playerId, p.owner)) return;
     for (const s of p.ships) this.h.markHostile(s.id, playerId);
   };
 
-  private spawnShip(p: Patrol, s: { id: string; leg: number; deadAtMs: number }): void {
+  private spawnShip(p: Patrol, s: Ship): void {
     if (this.h.spawn(s.id, p.points[s.leg * 2]!, p.points[s.leg * 2 + 1]!)) {
+      s.spawned = true;
       s.deadAtMs = -Infinity;
       this.h.moveTo(s.id, p.points[s.leg * 2]!, p.points[s.leg * 2 + 1]!);
     }

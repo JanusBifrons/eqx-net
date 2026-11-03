@@ -33,6 +33,7 @@ import { shieldGates } from './shots/shieldGates.js';
 import { radar } from './shots/radar.js';
 import { breakIn } from './shots/breakIn.js';
 import { npcCitadel } from './shots/npcCitadel.js';
+import { alienGate, garrisonPatrol, teleporterRide, transitHub } from './shots/v4.js';
 import { tradeDeal, tradeRaid } from './shots/trade.js';
 import { cockpitBounty, cockpitHaul, cockpitRobots, cockpitStronghold } from './shots/cockpit.js';
 
@@ -70,6 +71,10 @@ export const SHOTS: readonly Shot[] = [
   proceduralBase,
   npcCitadel,
   productionLine,
+  teleporterRide,
+  transitHub,
+  alienGate,
+  garrisonPatrol,
   habitatStation,
   mobile,
 ];
@@ -125,14 +130,6 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 /** Docs whose feature exists but cannot be staged on main yet — with what unblocks it. */
 export const SHOWCASE_PENDING: Record<string, string> = {
   allegiances: 'AI-vs-AI sides fight in the living galaxy but not on cue; needs a staged two-faction room.',
-  teleporters:
-    'Ships ride the jump (T2) with the warning, push and sealed iris; a showcase shot of a squad riding a pad is due with the cross-sector jump (T3).',
-  'military-bases':
-    'Garrisons are fenced gun-bases at region hearts and frontier edges with a faction-tinted patrol; the shot needs a staged room where a pilot attacks one and the patrol turns on them.',
-  'transit-hubs':
-    'Hub teleporters fire when a ship boards but need a charged capacitor and a second live sector; a shot needs a staged two-sector capture of a pilot paying the toll and arriving at a trade base.',
-  'alien-gates':
-    'The gate ring rides on a once-a-minute timetable between two live sectors; a shot needs a staged two-sector capture (a squad riding the jump, and a pilot disabled for firing near one).',
   factions:
     'The Factions tab (v4 F3) shows standings; a meaningful shot needs a staged room with non-zero standings both ways and a turret firing on a disliked pilot.',
   blueprints:

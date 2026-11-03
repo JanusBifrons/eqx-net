@@ -175,6 +175,8 @@ export async function bootSectorTestServer(opts: {
   /** v4 T1 — teleporter cycle speed, and pair the seeded teleporters. */
   teleportCycleScale?: number;
   pairTeleporters?: boolean;
+  teleportShipBoards?: boolean;
+  teleportFullCharge?: boolean;
   /** Drones never attack (the room option). */
   peacefulDrones?: boolean;
   /** P2c — sector features for the room (asteroid mix, nebula). */
@@ -244,6 +246,8 @@ export async function bootSectorTestServer(opts: {
     prebuiltStorageGoods: opts.prebuiltStorageGoods,
     teleportCycleScale: opts.teleportCycleScale,
     pairTeleporters: opts.pairTeleporters,
+    teleportShipBoards: opts.teleportShipBoards,
+    teleportFullCharge: opts.teleportFullCharge,
     peacefulDrones: opts.peacefulDrones,
     tradeEnabled: opts.tradeEnabled,
     enforceHullGate: opts.enforceHullGate,

@@ -14,6 +14,11 @@ import { SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './scenarioLayouts.js';
  * links to it (cross-owner hubs are skipped by design) and the inspector reads
  * "you" instead of "Unknown". A valid UUID — the client rejects anything else.
  */
+import { TIER_LEVEL_CAP, TIER_WEALTH, type BaseProfile } from '../../core/bases/baseProfile.js';
+import { growBase } from '../../core/bases/growBase.js';
+import { grownExtent } from '../../core/bases/baseSite.js';
+import { linkId } from '../../core/bases/transitNetwork.js';
+
 export const SHOWCASE_PILOT_ID = '5ca5e000-0000-4000-8000-000000000001';
 
 /** The six player ship kinds parked peacefully in a line-up. */
@@ -178,6 +183,100 @@ export const SHOWCASE_BOUNTY_OPTS = {
   maxClients: 4,
 } as const;
 
+/**
+ * v4 T1/T2 — a paired teleporter pair that fires when a ship boards. The
+ * pilot spawns south of the west pad, flies onto it, is warned, the doors
+ * close, and the jump lands it on the east pad. Capacitors kept full.
+ */
+export const SHOWCASE_TELEPORT_OPTS = {
+  sectorKey: 'showcase-teleport',
+  testMode: true,
+  droneCount: 0,
+  asteroidConfig: [],
+  peacefulDrones: true,
+  structureGridPulseMs: 100,
+  teleportCycleScale: 0.6,
+  prebuiltStructures: [
+    { kind: 'capital', x: 0, y: 0 },
+    { kind: 'connector', x: -600, y: 0 },
+    { kind: 'connector', x: 600, y: 0 },
+    { kind: 'teleporter', x: -1300, y: 0 },
+    { kind: 'teleporter', x: 1300, y: 0 },
+  ],
+  prebuiltStructuresOwner: 'scenario',
+  pairTeleporters: true,
+  teleportShipBoards: true,
+  teleportFullCharge: true,
+  defaultSpawnX: -1300,
+  defaultSpawnY: -900,
+  maxClients: 4,
+} as const;
+
+/** v4 M — a region power's garrison (a fenced gun-base) with its patrol. */
+const GARRISON_PROFILE: BaseProfile = {
+  tier: 'stronghold',
+  role: 'military',
+  ownerFaction: 'core',
+  wealth: TIER_WEALTH.stronghold[1] * 2,
+  levelCap: TIER_LEVEL_CAP.stronghold[1],
+  fenced: true,
+};
+const GARRISON_EXTENT = grownExtent(growBase(GARRISON_PROFILE, 7, []).placements);
+export const SHOWCASE_GARRISON_OPTS = {
+  sectorKey: 'showcase-garrison',
+  testMode: true,
+  droneCount: 0,
+  asteroidConfig: [],
+  npcBases: [{ baseId: 'mil', role: 'military', tier: 'stronghold', seed: 7, x: 0, y: 0, side: 'core', profile: GARRISON_PROFILE }],
+  defaultSpawnX: 0,
+  // South of the patrol's corners (they fly 500 u outside the base), in bounds.
+  defaultSpawnY: Math.max(-4800, Math.round(GARRISON_EXTENT.y0 - 900)),
+  maxClients: 4,
+};
+
+/**
+ * v4 H — a transit hub and a trade port it links to, side by side in one
+ * room (the link's two ends; galaxy links join two sectors). The pilot spawns
+ * on the hub's link pad with credits: it is asked the toll, pays, the doors
+ * close, and it lands at the port.
+ */
+const HUB_LINK = linkId({ sector: 'showcase-hub', baseId: 'hub' }, { sector: 'showcase-hub', baseId: 'port' });
+const HUB_PROFILE: BaseProfile = {
+  tier: 'settlement', role: 'transit', ownerFaction: 'traders', wealth: 20_000, levelCap: 2, fenced: false, links: [HUB_LINK],
+};
+const PORT_PROFILE: BaseProfile = {
+  tier: 'outpost', role: 'trade', ownerFaction: 'traders', wealth: 6_000, levelCap: 1, fenced: false, links: [HUB_LINK],
+};
+const HUB_GROWN = growBase(HUB_PROFILE, 11, ['station']);
+const PORT_GROWN = growBase(PORT_PROFILE, 12, ['station']);
+const HUB_EXT = grownExtent(HUB_GROWN.placements);
+const PORT_EXT = grownExtent(PORT_GROWN.placements);
+/** Capital positions: the two bases side by side with a 700 u gap. */
+export const SHOWCASE_HUB_X = Math.round(-HUB_EXT.x1 - 350);
+export const SHOWCASE_PORT_X = Math.round(-PORT_EXT.x0 + 350);
+const HUB_PAD = HUB_GROWN.placements.find((p) => p.link === HUB_LINK)!;
+const PORT_PAD = PORT_GROWN.placements.find((p) => p.link === HUB_LINK)!;
+/** Where the two link pads end up (the shot frames them). */
+export const SHOWCASE_HUB_PAD = { x: SHOWCASE_HUB_X + HUB_PAD.x, y: HUB_PAD.y };
+export const SHOWCASE_PORT_PAD = { x: SHOWCASE_PORT_X + PORT_PAD.x, y: PORT_PAD.y };
+export const SHOWCASE_HUB_OPTS = {
+  sectorKey: 'showcase-hub',
+  testMode: true,
+  droneCount: 0,
+  asteroidConfig: [],
+  peacefulDrones: true,
+  sectorFeatures: ['station'],
+  teleportCycleScale: 0.6,
+  teleportFullCharge: true,
+  npcBases: [
+    { baseId: 'hub', role: 'transit', tier: 'settlement', seed: 11, x: SHOWCASE_HUB_X, y: 0, side: 'traders', features: ['station'], profile: HUB_PROFILE },
+    { baseId: 'port', role: 'trade', tier: 'outpost', seed: 12, x: SHOWCASE_PORT_X, y: 0, side: 'traders', features: ['station'], profile: PORT_PROFILE },
+  ],
+  defaultSpawnX: SHOWCASE_HUB_PAD.x,
+  defaultSpawnY: SHOWCASE_HUB_PAD.y,
+  maxClients: 4,
+};
+
 /** Room name → options, registered in `index.ts`. */
 export const SHOWCASE_ROOMS = {
   'showcase-ship-gallery': SHOWCASE_SHIP_GALLERY_OPTS,
@@ -187,4 +286,7 @@ export const SHOWCASE_ROOMS = {
   'showcase-swarm': SHOWCASE_SWARM_OPTS,
   'showcase-homestead': SHOWCASE_HOMESTEAD_OPTS,
   'showcase-bounty': SHOWCASE_BOUNTY_OPTS,
+  'showcase-teleport': SHOWCASE_TELEPORT_OPTS,
+  'showcase-garrison': SHOWCASE_GARRISON_OPTS,
+  'showcase-hub': SHOWCASE_HUB_OPTS,
 } as const;
