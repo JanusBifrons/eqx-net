@@ -1,0 +1,163 @@
+/**
+ * Art lab — deterministic scenes. A frame is a pure function of `t` (seconds),
+ * so captures are frame-exact and every style sees the identical scene.
+ * Space is Pixi space (y down); a ship's nose is local -y.
+ */
+import { npcFactionDef, type FactionId } from '../../shared-types/factions.js';
+
+export interface Pose { x: number; y: number; rot: number; thrust: number }
+
+export interface ShipE {
+  id: string;
+  paint?: number;
+  pose: (t: number, out: Pose) => void;
+  /** Leave an exhaust trail (false for ships turning on the spot). */
+  trail: boolean;
+}
+
+export interface StructE { id: string; x: number; y: number; rot: number; seed: number }
+
+export interface Boom { x: number; y: number; t0: number; size: number }
+
+export interface Cam { x: number; y: number; zoom: number }
+
+export interface Scene {
+  ships: ShipE[];
+  structs: StructE[];
+  booms: Boom[];
+  camera: (t: number, out: Cam) => void;
+  duration: number;
+}
+
+export const SCENE_IDS = ['ships', 'factions', 'structures', 'base', 'explosion', 'sweep', 'bench'] as const;
+export type SceneId = (typeof SCENE_IDS)[number];
+
+const ROUND1_SHIPS = ['fighter', 'heavy', 'missile-frigate', 'trader-hauler', 'havok', 'robot-hexagon'];
+const SHIP_SPAN: Record<string, number> = { fighter: 34, heavy: 40, 'missile-frigate': 58, 'trader-hauler': 80, havok: 50, 'robot-hexagon': 50 };
+
+function spinner(id: string, x: number, y: number, phase: number, rate: number, paint?: number): ShipE {
+  return {
+    id, paint, trail: false,
+    pose: (t, o) => { o.x = x; o.y = y; o.rot = phase + t * rate; o.thrust = 0.35; },
+  };
+}
+
+/** A ship following path p(t); rotation from the path's tangent. */
+function flyer(id: string, p: (t: number) => [number, number], paint?: number): ShipE {
+  return {
+    id, paint, trail: true,
+    pose: (t, o) => {
+      const [x, y] = p(t);
+      const [x2, y2] = p(t + 0.02);
+      o.x = x; o.y = y;
+      o.rot = Math.atan2(y2 - y, x2 - x) + Math.PI / 2;
+      o.thrust = 1;
+    },
+  };
+}
+
+function baseStructs(): StructE[] {
+  return [
+    { id: 'capital', x: 0, y: 0, rot: 0, seed: 1 },
+    { id: 'connector', x: 360, y: 0, rot: 0, seed: 2 },
+    { id: 'connector', x: -360, y: 0, rot: 0, seed: 3 },
+    { id: 'connector', x: 0, y: 360, rot: 0, seed: 4 },
+    { id: 'solar', x: 620, y: -110, rot: 0, seed: 5 },
+    { id: 'solar', x: 620, y: 110, rot: 0, seed: 6 },
+    { id: 'solar', x: -620, y: -110, rot: 0, seed: 7 },
+    { id: 'turret', x: 330, y: 380, rot: 0, seed: 8 },
+    { id: 'turret', x: -330, y: 380, rot: 0, seed: 9 },
+    { id: 'turret', x: -620, y: 150, rot: 0, seed: 10 },
+    { id: 'teleporter', x: 0, y: 920, rot: 0, seed: 11 },
+  ];
+}
+
+function fleet(t0: number): ShipE[] {
+  const lane = (dy: number, speed: number, delay: number) => (t: number): [number, number] => {
+    const s = (t - delay + t0) * speed;
+    return [-1500 + s, -520 + dy + Math.sin(s / 260) * 60];
+  };
+  return [
+    flyer('heavy', lane(0, 170, 0)),
+    flyer('fighter', lane(-60, 170, -0.35)),
+    flyer('fighter', lane(60, 170, -0.35)),
+    flyer('missile-frigate', lane(-20, 150, 1.2)),
+    flyer('trader-hauler', lane(140, 110, 0.4)),
+  ];
+}
+
+export function buildScene(id: SceneId, zoomOverride?: number, n = 40): Scene {
+  const zoomOr = (z: number): number => zoomOverride ?? z;
+  switch (id) {
+    case 'ships': {
+      let x = 0;
+      const ships = ROUND1_SHIPS.map((sid, i) => {
+        const w = SHIP_SPAN[sid] ?? 50;
+        const s = spinner(sid, x + w / 2, 0, i * 0.9, 0.55);
+        x += w + 26;
+        return s;
+      });
+      const mid = (x - 26) / 2;
+      return { ships, structs: [], booms: [], duration: 8, camera: (_t, c) => { c.x = mid; c.y = 0; c.zoom = zoomOr(2.2); } };
+    }
+    case 'factions': {
+      const fac: Array<FactionId | null> = [null, 'core', 'verdant-reach', 'crimson-expanse', 'azure-deep', 'traders'];
+      const ships = fac.map((f, i) => spinner('heavy', i * 64, 0, 0.6, 0.3, f ? npcFactionDef(f)?.color : undefined));
+      return { ships, structs: [], booms: [], duration: 6, camera: (_t, c) => { c.x = 160; c.y = 0; c.zoom = zoomOr(2.6); } };
+    }
+    case 'structures':
+      return {
+        ships: [],
+        structs: [
+          { id: 'capital', x: 0, y: 0, rot: 0, seed: 1 },
+          { id: 'solar', x: 520, y: -170, rot: 0, seed: 2 },
+          { id: 'turret', x: 450, y: 120, rot: 0, seed: 3 },
+          { id: 'teleporter', x: -760, y: 0, rot: 0, seed: 4 },
+        ],
+        booms: [],
+        duration: 4,
+        camera: (_t, c) => { c.x = -120; c.y = 0; c.zoom = zoomOr(0.62); },
+      };
+    case 'base':
+      return { ships: fleet(0), structs: baseStructs(), booms: [], duration: 10, camera: (_t, c) => { c.x = 0; c.y = -60; c.zoom = zoomOr(0.5); } };
+    case 'explosion':
+      return {
+        ships: [flyer('fighter', (t) => [200 + t * 140, 120 - t * 30]), flyer('fighter', (t) => [520 - t * 60, 620 - t * 150])],
+        structs: baseStructs(),
+        booms: [{ x: 330, y: 380, t0: 1.0, size: 1 }, { x: 360, y: 0, t0: 2.6, size: 0.6 }],
+        duration: 5,
+        camera: (_t, c) => { c.x = 230; c.y = 230; c.zoom = zoomOr(1.1); },
+      };
+    case 'sweep':
+      return {
+        ships: fleet(2.5),
+        structs: baseStructs(),
+        booms: [],
+        duration: 7,
+        camera: (t, c) => {
+          const k = Math.min(1, Math.max(0, (t - 0.5) / 6));
+          const e = k * k * (3 - 2 * k);
+          c.zoom = 0.3 * Math.pow(10, e);
+          c.x = 330 * e; c.y = 380 * e;
+        },
+      };
+    case 'bench': {
+      const structs: StructE[] = [];
+      const kinds = ['capital', 'solar', 'turret', 'connector', 'solar', 'turret', 'connector', 'turret'];
+      let k = 0;
+      for (let gy = -6; gy <= 6 && structs.length < 150; gy++) {
+        for (let gx = -6; gx <= 6 && structs.length < 150; gx++) {
+          const id = kinds[k++ % kinds.length]!;
+          structs.push({ id, x: gx * 600, y: gy * 600, rot: 0, seed: k });
+        }
+      }
+      const ships: ShipE[] = [];
+      for (let i = 0; i < n; i++) {
+        const id = ROUND1_SHIPS[i % ROUND1_SHIPS.length]!;
+        const r = 400 + (i * 97) % 2400, ph = i * 1.7, sp = 0.06 + (i % 5) * 0.02;
+        ships.push(flyer(id, (t) => [Math.cos(ph + t * sp) * r, Math.sin(ph + t * sp) * r]));
+      }
+      return { ships, structs, booms: [], duration: 20, camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = zoomOr(0.5); } };
+    }
+  }
+}
