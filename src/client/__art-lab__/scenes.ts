@@ -4,6 +4,10 @@
  * Space is Pixi space (y down); a ship's nose is local -y.
  */
 import { npcFactionDef, type FactionId } from '../../shared-types/factions.js';
+import { SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
+import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { buildStructureVisual } from '../render/pixi/structureVisuals.js';
+import { shipExtent } from './forge/fields.js';
 
 export interface Pose { x: number; y: number; rot: number; thrust: number }
 
@@ -29,7 +33,53 @@ export interface Scene {
   duration: number;
 }
 
-export const SCENE_IDS = ['ships', 'factions', 'structures', 'base', 'explosion', 'sweep', 'bench'] as const;
+export const SCENE_IDS = ['ships', 'factions', 'structures', 'base', 'explosion', 'sweep', 'bench', 'fleet', 'capitals', 'industry', 'mega'] as const;
+
+/** Sheet scenes fit their content into this view (the capture size). */
+const SHEET_W = 1600, SHEET_H = 900;
+
+/** Shelf-pack items (w × h, world units) into rows no wider than `maxW`;
+ *  returns centres plus the overall bounds. */
+function shelf(sizes: Array<{ w: number; h: number }>, maxW: number, gap: number): { pos: Array<[number, number]>; w: number; h: number } {
+  const pos: Array<[number, number]> = [];
+  let x = 0, y = 0, rowH = 0, W = 0;
+  for (const sz of sizes) {
+    if (x > 0 && x + sz.w > maxW) { y += rowH + gap; x = 0; rowH = 0; }
+    pos.push([x + sz.w / 2, y + sz.h / 2]);
+    x += sz.w + gap; rowH = Math.max(rowH, sz.h); W = Math.max(W, x - gap);
+  }
+  return { pos, w: W, h: y + rowH };
+}
+
+function fitZoom(w: number, h: number, margin = 0.9): number {
+  return Math.min((SHEET_W * margin) / w, (SHEET_H * margin) / h);
+}
+
+const CORE_STRUCTS = new Set(['capital', 'connector', 'solar', 'turret', 'teleporter']);
+const MEGA_STRUCTS = ['deep_core_rig', 'ore_processing_complex', 'assembly_plant', 'shipyard', 'teleporter_large', 'alien_gate'];
+
+function structSheet(ids: string[], aspect: number, zoomOr: (z: number) => number): Scene {
+  const sizes = ids.map((id) => {
+    const fp = buildStructureVisual(id, { accent: getStructureKind(id).color, seed: 1, omitSpans: true }).footprint;
+    return { w: fp.w, h: fp.h };
+  });
+  let area = 0;
+  for (const z of sizes) area += (z.w + 60) * (z.h + 60);
+  const L = shelf(sizes, Math.sqrt(area * aspect) * 1.05, 60);
+  const structs: StructE[] = ids.map((id, i) => ({ id, x: L.pos[i]![0] - L.w / 2, y: L.pos[i]![1] - L.h / 2, rot: 0, seed: 1 + i }));
+  const z = fitZoom(L.w, L.h);
+  return { ships: [], structs, booms: [], duration: 4, camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = zoomOr(z); } };
+}
+
+function shipSheet(ids: string[], zoomOr: (z: number) => number): Scene {
+  const sizes = ids.map((id) => { const d = shipExtent(id) * 2.3; return { w: d, h: d }; });
+  let area = 0;
+  for (const z of sizes) area += (z.w + 16) * (z.h + 16);
+  const L = shelf(sizes, Math.sqrt(area * (SHEET_W / SHEET_H)) * 1.1, 16);
+  const ships = ids.map((id, i) => spinner(id, L.pos[i]![0] - L.w / 2, L.pos[i]![1] - L.h / 2, 0.5 + i * 0.7, 0.4));
+  const z = fitZoom(L.w, L.h, 0.85);
+  return { ships, structs: [], booms: [], duration: 8, camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = zoomOr(z); } };
+}
 export type SceneId = (typeof SCENE_IDS)[number];
 
 const ROUND1_SHIPS = ['fighter', 'heavy', 'missile-frigate', 'trader-hauler', 'havok', 'robot-hexagon'];
@@ -141,6 +191,17 @@ export function buildScene(id: SceneId, zoomOverride?: number, n = 40): Scene {
           c.x = 330 * e; c.y = 380 * e;
         },
       };
+    case 'fleet':
+      return shipSheet(SHIP_KINDS_LIST.filter((k) => shipExtent(k.id) < 100).map((k) => k.id), zoomOr);
+    case 'capitals':
+      return shipSheet(SHIP_KINDS_LIST.filter((k) => shipExtent(k.id) >= 100).map((k) => k.id), zoomOr);
+    case 'industry':
+      return structSheet(['miner', 'battery', 'shield_pylon', 'laser_bolt_turret', 'missile_turret', 'autocannon_turret', 'mine_layer',
+        'cargo_bay', 'shield_gate', 'shield_airlock', 'gas_collector', 'reclaimer', 'smelter', 'refinery', 'silicon_works', 'hydroponics',
+        'fabricator', 'munitions_works', 'research_lab', 'reactor', 'battery_bank', 'storage_vault', 'habitat_module', 'tower_module',
+        'freight_dock'].filter((id) => !CORE_STRUCTS.has(id)), SHEET_W / SHEET_H, zoomOr);
+    case 'mega':
+      return structSheet(MEGA_STRUCTS, SHEET_W / SHEET_H, zoomOr);
     case 'bench': {
       const structs: StructE[] = [];
       const kinds = ['capital', 'solar', 'turret', 'connector', 'solar', 'turret', 'connector', 'turret'];

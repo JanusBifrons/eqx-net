@@ -5,7 +5,7 @@
  * in the bake workers (`bake.worker.ts`). A bake is a list of RGBA frames plus
  * the few facts the runtime needs (size, density, light and nozzle spots).
  */
-import { forgeShip, forgeStructure, type Fields } from './fields.js';
+import { forgeShip, forgeStructure, shipExtent, type Fields } from './fields.js';
 import { litFrame, type Frame, type LightRig } from './shade.js';
 import { linToSrgb } from './palette.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
@@ -42,8 +42,11 @@ export function seedVariant(seed: number): number {
   return 1 + (((seed % STRUCT_SEED_VARIANTS) + STRUCT_SEED_VARIANTS) % STRUCT_SEED_VARIANTS);
 }
 
+/** Ship frames are capped at this many texels a side (capital ships). */
+export const SHIP_MAX_SIDE = 512;
+
 export function shipPpu(id: string): number {
-  return getShipKind(id).radius >= 25 ? 3 : 4;
+  return Math.min(getShipKind(id).radius >= 25 ? 3 : 4, SHIP_MAX_SIDE / (shipExtent(id) * 2 + 6));
 }
 
 /** Unlit albedo at HALF resolution (2×2 average): it only feeds the soft

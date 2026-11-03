@@ -29,6 +29,7 @@ const STYLES = (flag('--styles')?.split(',') ?? [...ALL_STYLES]) as Array<(typeo
 const FFMPEG = process.env['FFMPEG'] ?? 'ffmpeg';
 
 interface Still { id: string; scene: string; t: number; zoom?: number; w: number; h: number; extra?: string }
+const STILL_ONLY = flag('--still');
 const STILLS: Still[] = [
   { id: 'ships-close', scene: 'ships', t: 1.2, w: 1280, h: 420 },
   { id: 'ships-gameplay', scene: 'ships', t: 1.2, zoom: 0.9, w: 640, h: 200 },
@@ -36,6 +37,10 @@ const STILLS: Still[] = [
   { id: 'structures', scene: 'structures', t: 0.5, w: 1280, h: 720 },
   { id: 'base-gameplay', scene: 'base', t: 5.5, w: 1280, h: 720 },
   { id: 'explosion', scene: 'explosion', t: 1.18, w: 1280, h: 720 },
+  { id: 'fleet', scene: 'fleet', t: 1.5, w: 1600, h: 900 },
+  { id: 'capitals', scene: 'capitals', t: 1.5, w: 1600, h: 900 },
+  { id: 'industry', scene: 'industry', t: 0.5, w: 1600, h: 900 },
+  { id: 'mega', scene: 'mega', t: 0.5, w: 1600, h: 900 },
 ];
 
 interface Clip { id: string; scene: string; seconds: number; w: number; h: number }
@@ -109,7 +114,7 @@ async function main(): Promise<void> {
 
     if (!ONLY || ONLY === 'stills') {
       mkdirSync(`${OUT}/stills`, { recursive: true });
-      for (const s of STILLS) {
+      for (const s of STILLS.filter((x) => !STILL_ONLY || STILL_ONLY.split(',').includes(x.id))) {
         for (const style of STYLES) {
           const page = await browser.newPage({ viewport: { width: s.w, height: s.h } });
           await open(page, `style=${style}&scene=${s.scene}&w=${s.w}&h=${s.h}${s.zoom ? `&zoom=${s.zoom}` : ''}${s.extra ?? ''}`);

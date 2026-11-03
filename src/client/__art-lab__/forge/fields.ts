@@ -119,6 +119,14 @@ export function shipParts(kind: ShipKind): Array<{ pts: Poly; color: number }> {
   }));
 }
 
+/** Half-extent of a ship's drawn outline (world units): the catalogue `radius`
+ *  is the collider and can be far smaller than the drawing. */
+export function shipExtent(id: string): number {
+  let m = 0;
+  for (const p of shipParts(getShipKind(id))) for (const [x, y] of p.pts) m = Math.max(m, Math.abs(x), Math.abs(y));
+  return m;
+}
+
 export interface ShipForgeOpts {
   /** Texels per world unit. */
   ppu: number;
@@ -171,7 +179,8 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
 
   const Hmax = Math.min(14, Math.max(1.2, maxDu * 0.55));
   const bw = Math.min(4, Math.max(0.6, maxDu * 0.18));
-  const spacing = Math.min(14, Math.max(2.2, maxDu * 0.42));
+  // Panel bands: at most ~5 across the hull, however big it is.
+  const spacing = Math.max(maxDu / 5, Math.min(14, Math.max(2.2, maxDu * 0.42)));
   const grooveW = Math.max(0.35, 1.2 / g.ppu);
 
   // Per-part bevel for composites (each part a raised plate).
