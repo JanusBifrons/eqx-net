@@ -288,7 +288,8 @@ Update this section when a threshold is set.
 ## Military bases (plan soft-leaping-truffle v4, M1)
 
 - Placed by `galaxyBasePlan` (`militarySites`); seeded like any NPC base. `NpcBaseSubsystem.seed` sets a military base's gates to **owner + allies** (`'allies'`); every other NPC base's stay **open**.
-- Patrols (M2) are next. Story: [docs/features/military-bases.md](../../docs/features/military-bases.md).
+- **Patrols (M2).** `PatrolSubsystem` (`bases/`, room-owned, 1 Hz on the structure pulse): `patrol-fighter`s (Traders allegiance, so never hostile on sight) fly the base's corners outside its fence and are marked hostile (`markBotHostileToFaction`, quiet refresh once already hostile) to any pilot near the base whose `relationOf` to the owner is hostile. `drones[].fac` is emitted for every patrol in interest (it is in the slice's "anything to report" check). Ids start `patrol-` (in `isDirectorBotId`).
+- Story: [docs/features/military-bases.md](../../docs/features/military-bases.md).
 
 ## Faction standing events and policies (plan soft-leaping-truffle v4, F3)
 

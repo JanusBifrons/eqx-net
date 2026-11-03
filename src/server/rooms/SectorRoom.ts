@@ -208,6 +208,7 @@ const ROOM_POLICY = (faction: string): FactionPolicy => getTradeSink()?.policyOf
 const NPC_SIDE_PARTY = Object.fromEntries(NPC_ALLEGIANCE_IDS.map((a) => [a, npcOwner(a)])) as Record<NpcAllegianceId, string>;
 import { getStructureKind, isBuildableStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { AlienGateGuard, isAlienGatesDisabled } from '../structures/AlienGateGuard.js';
+import { PatrolSubsystem } from '../bases/PatrolSubsystem.js';
 import { ALIEN_GATE_OWNER, alienGateCandidates, alienGateSites, type AlienGateSite } from '../../core/galaxy/alienGates.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
@@ -883,6 +884,33 @@ export class SectorRoom extends Room<SectorState> {
   private production!: ProductionSubsystem;
   /** v4 T1 — teleporter capacitors, pairing, rules and the jump cycle. */
   private teleporters!: TeleporterSubsystem;
+  /** v4 M2 — garrison patrols (spawned with their military bases). */
+  private readonly patrols = new PatrolSubsystem({
+    spawn: (id, x, y) => this.spawnLivingWorldBot({ botId: id, kind: 'patrol-fighter', x, y }),
+    poseOf: (id, out) => {
+      const rec = this.swarmRegistry.get(id);
+      if (!rec) return false;
+      const b = slotBase(rec.slot);
+      out.x = this.sabF32[b + SLOT_X_OFF]!;
+      out.y = this.sabF32[b + SLOT_Y_OFF]!;
+      return true;
+    },
+    moveTo: (id, x, y) => this.setBotMoveTarget(id, x, y),
+    markHostile: (id, playerId) => {
+      // Refresh quietly when it already is; tell clients the first time.
+      if (this.aiController.isEntityHostileToPlayer(id, playerId)) this.aiController.markHostile(id, playerId, this.serverTick);
+      else this.livingWorldBotHooks.markBotHostileToFaction(id, playerId, []);
+    },
+    forEachPilot: (cb) => {
+      for (const [pid, slot] of this.playerToSlot) {
+        const ship = this.getActiveShip(pid);
+        if (!ship?.alive || !ship.isActive) continue;
+        const b = slotBase(slot);
+        cb(pid, this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!);
+      }
+    },
+    isHostileToOwner: (playerId, owner) => relationOf(playerId, owner, this.relationCtx) === 'hostile',
+  });
   /** v4 A — the alien gates' guns: who is disabled, and for how long. */
   private readonly gateGuard = new AlienGateGuard({
     swarmSlotOf: (id) => this.swarmRegistry.get(id)?.slot,
@@ -1900,6 +1928,7 @@ export class SectorRoom extends Room<SectorState> {
       // Economy v2 W1 — the own player's wallet balance on the snapshot.
       walletOf: (playerId) => getWallet().balance(playerId),
       disabledMsOf: (playerId) => this.gateGuard.remainingMs(playerId, Date.now()),
+      droneFactionOf: (id) => (this.patrols.count > 0 ? this.patrols.factionOf(id) : undefined),
       depositProgressOf: (shipInstanceId) => this.depositProgress.get(shipInstanceId),
       playerMountAngles: this.mountTicker.playerMountAngles,
       droneMountAngles: this.mountTicker.droneMountAngles,
@@ -4439,6 +4468,7 @@ export class SectorRoom extends Room<SectorState> {
    *  broadcast) when the sector has no structures. */
   private structureGridTick(): void {
     this.hostileActs.sweep(Date.now());
+    if (this.patrols.count > 0) this.patrols.tick(Date.now());
     this.gateGuard.sweep(Date.now());
     if (this.structureRegistry.size === 0) return;
     const result = this.structureGrid.pulse(Date.now());
@@ -4617,6 +4647,20 @@ export class SectorRoom extends Room<SectorState> {
     }
     for (const i of site.overlapped) this.evictSwarmEntity(rocks[i]!, { broadcast: false, emitDestroyed: false });
     const r = sub.seed({ ...spec, x: site.x, y: site.y }, grown);
+    // v4 M2 — a garrison flies a patrol round its approaches.
+    if (profile.role === 'military') {
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const rec of this.structureRegistry.all()) {
+        if (rec.owner !== r.owner) continue;
+        const hw = rec.halfW ?? rec.radius, hh = rec.halfH ?? rec.radius;
+        x0 = Math.min(x0, rec.x - hw); x1 = Math.max(x1, rec.x + hw);
+        y0 = Math.min(y0, rec.y - hh); y1 = Math.max(y1, rec.y + hh);
+      }
+      if (Number.isFinite(x0)) {
+        const count = profile.tier === 'stronghold' || profile.tier === 'citadel' ? 4 : 3;
+        this.patrols.addBase(`${sectorKey}-${plan.baseId}`, r.owner, profile.ownerFaction, { x0, x1, y0, y1 }, site.x, site.y, count);
+      }
+    }
     logger.info({
       sectorKey, baseId: plan.baseId, tier: profile.tier, role: profile.role, owner: r.owner, x: Math.round(site.x), y: Math.round(site.y),
       placed: r.placed, rejectedPlace: r.rejectedPlace, rejectedEdge: r.rejectedEdge, asteroidsCleared: site.overlapped.length,

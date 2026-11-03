@@ -172,6 +172,9 @@ export interface SwarmRenderState {
   /** Living World P4a — a named ELITE's display name (snapshot `drones[].elite`).
    *  Drives the gold label + ring. Snapshot cadence. */
   eliteName?: string;
+  /** v4 M2 — a garrison's patrol ship: the faction it flies for (snapshot
+   *  `drones[].fac`). The sprite takes the faction's colour. */
+  faction?: string;
   /** Mineable resource pool for an asteroid (kind 0), decoded from the snapshot
    *  `asteroids[]` slice (WS-4 Phase 6 / R2.23 enabler). The server emits these
    *  ONLY for MINED in-interest asteroids (`resources < resourcesMax`), so
