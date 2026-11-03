@@ -26,6 +26,7 @@
  * arc mounts so `applyMountAngles` is a no-op.
  */
 
+import { npcFactionDef } from '../../../shared-types/factions.js';
 import { isSpriteInView } from '../spriteUpdateDecisions.js';
 import type { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
@@ -261,6 +262,11 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         const on = entry.charging === true;
         tele.visible = on;
         if (on) tele.alpha = 0.45 + 0.4 * Math.sin(now / 70);
+      }
+      // v4 M2 — a patrol ship wears its faction's colour.
+      if (entry.faction !== undefined) {
+        const c = npcFactionDef(entry.faction)?.color;
+        if (c !== undefined && sprite.tint !== c) sprite.tint = c;
       }
       // P4a — a named elite wears a slowly-pulsing gold ring.
       let ring = eliteRings.get(sprite);

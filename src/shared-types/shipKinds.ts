@@ -72,6 +72,7 @@ import { HAVOK } from './shipKinds/composite/havok.js';
 import { ROBOT_SQUARE, ROBOT_CIRCLE, ROBOT_HEXAGON, ROBOT_NEXUS, ROBOT_HARVESTER } from './shipKinds/robots.js';
 import { CARGO_POD } from './shipKinds/cargoPod.js';
 import { TRADER_HAULER } from './shipKinds/traders.js';
+import { PATROL_FIGHTER } from './shipKinds/patrols.js';
 import { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 import type { NpcAllegianceId } from './allegiances.js';
 import type { ShipKind, ShipKindId } from './shipKinds/types.js';
@@ -132,6 +133,7 @@ export const SHIP_KINDS = Object.freeze({
   'trader-hauler': TRADER_HAULER,
   'robot-nexus': ROBOT_NEXUS,
   'robot-harvester': ROBOT_HARVESTER,
+  'patrol-fighter': PATROL_FIGHTER,
 } as const) satisfies Readonly<Record<string, ShipKind>>;
 
 /**

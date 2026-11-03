@@ -151,6 +151,8 @@ export interface SnapshotBroadcasterDeps {
   fittedOf?: (shipInstanceId: string) => readonly string[] | undefined;
   /** Economy v2 W1 — a player's wallet balance (own active ship only). */
   walletOf?: (playerId: string) => number;
+  /** v4 M2 — the faction a patrol ship flies for (undefined for other NPCs). */
+  droneFactionOf?: (droneId: string) => string | undefined;
   /** v4 A — ms left on a player's alien-gate disable (0 when none). */
   disabledMsOf?: (playerId: string) => number;
   playerMountAngles: Map<string, Float32Array>;
@@ -272,6 +274,7 @@ type MutableDroneEntry = {
   hostile?: boolean;
   charging?: boolean;
   elite?: string;
+  fac?: string;
 };
 
 type MutableAsteroidEntry = {
@@ -461,7 +464,7 @@ export class SnapshotBroadcaster {
   private static writeDroneSlot(
     arr: MutableDroneEntry[], i: number,
     id: number, mountAngles: number[] | undefined, shieldDown: boolean,
-    hp: number | undefined, hostile: boolean, charging = false, elite?: string,
+    hp: number | undefined, hostile: boolean, charging = false, elite?: string, fac?: string,
   ): void {
     const slot = arr[i];
     if (!slot) {
@@ -471,6 +474,7 @@ export class SnapshotBroadcaster {
       if (hostile) fresh.hostile = true;
       if (charging) fresh.charging = true;
       if (elite !== undefined) fresh.elite = elite;
+      if (fac !== undefined) fresh.fac = fac;
       arr[i] = fresh;
       return;
     }
@@ -478,6 +482,8 @@ export class SnapshotBroadcaster {
     else delete slot.charging;
     if (elite !== undefined) slot.elite = elite;
     else delete slot.elite;
+    if (fac !== undefined) slot.fac = fac;
+    else delete slot.fac;
     slot.id = id;
     // Always assign; undefined means "drop the field on the wire" via
     // notepack.io's encoder which skips undefined values.
@@ -841,10 +847,12 @@ export class SnapshotBroadcaster {
           const charging = d.isDroneCharging?.(rec.id) === true;
           // P4a — an elite always reports (its name drives the label, #16).
           const elite = rec.elite?.name;
-          if (!droneMountAnglesArr && !rec.shieldDown && hpPct === undefined && !hostile && !charging && elite === undefined) continue;
+          // v4 M2 — a patrol always reports whose it is (#16: the client tint).
+          const fac = d.droneFactionOf?.(rec.id);
+          if (!droneMountAnglesArr && !rec.shieldDown && hpPct === undefined && !hostile && !charging && elite === undefined && fac === undefined) continue;
           SnapshotBroadcaster.writeDroneSlot(
             dronesScratch, dronesCount,
-            eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct, hostile, charging, elite,
+            eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct, hostile, charging, elite, fac,
           );
           dronesCount++;
         }

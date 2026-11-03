@@ -298,6 +298,10 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
   - A target off-screen used to push half the panel out of view (its buttons unclickable). Found by `teleporter.spec.ts`; the header case by `break-in.spec.ts`.
   - Never clamp only the anchor.
 
+## Patrol ships (plan soft-leaping-truffle v4, M2)
+
+- `drones[].fac` (a garrison patrol's faction) is decoded once onto `SwarmRenderState.faction` (`applyDroneMountAngles`) and kept; `swarmSpriteUpdater` tints the ship with `npcFactionDef(fac).color`. Lock: `snapshotRemoteSync.charging.test.ts`.
+
 ## Factions tab (plan soft-leaping-truffle v4, F3)
 
 - `layout/Drawer/tabs/FactionsTab.tsx` is rebuilt ONLY from `GET /trade/factions` (#16), polled only while `drawerTab === 'factions' && isDrawerOpen`.

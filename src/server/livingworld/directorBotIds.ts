@@ -20,12 +20,14 @@ export const CONVOY_HAULER_ID_PREFIX = 'hauler-convoy-';
 export const ELITE_BOT_ID_PREFIX = 'elite-';
 /** P4b — world-event NPCs (owned by the `EventDirector`); mirrors `EVENT_ID_PREFIX`. */
 export const EVENT_BOT_ID_PREFIX = 'event-';
+/** v4 M2 — a garrison's patrol ships (owned by the room's `PatrolSubsystem`). */
+export const PATROL_BOT_ID_PREFIX = 'patrol-';
 
 /** True for any director-owned NPC id (drone, robot, trade hauler, elite or event NPC). Alloc-free. */
 export function isDirectorBotId(id: string): boolean {
   return id.startsWith(DRONE_BOT_ID_PREFIX) || id.startsWith(ROBOT_BOT_ID_PREFIX)
     || id.startsWith(HAULER_ID_PREFIX) || id.startsWith(ELITE_BOT_ID_PREFIX)
-    || id.startsWith(EVENT_BOT_ID_PREFIX);
+    || id.startsWith(EVENT_BOT_ID_PREFIX) || id.startsWith(PATROL_BOT_ID_PREFIX);
 }
 
 export function isHaulerId(id: string): boolean {

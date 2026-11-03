@@ -37,4 +37,14 @@ describe('applyDroneMountAngles — P3c charge telegraph', () => {
     applyDroneMountAngles(snap([{ id: 2, hostile: true }]), m);
     expect(m.swarm!.get(1)!.eliteName).toBeUndefined();
   });
+
+  it('v4 M2 — a patrol ship keeps the faction it flies for', () => {
+    const m = mirrorWith([1, 2]);
+    applyDroneMountAngles(snap([{ id: 1, fac: 'core' }]), m);
+    expect(m.swarm!.get(1)!.faction).toBe('core');
+    expect(m.swarm!.get(2)!.faction).toBeUndefined();
+    // A patrol always reports while in interest; its faction never changes.
+    applyDroneMountAngles(snap([{ id: 2, hostile: true }]), m);
+    expect(m.swarm!.get(1)!.faction).toBe('core');
+  });
 });

@@ -169,6 +169,8 @@ export function applyDroneMountAngles(
       sw.eliteName = d.elite;
       eliteIds.add(d.id);
     }
+    // v4 M2 — a patrol ship's faction never changes, so it is kept once seen.
+    if (d.fac !== undefined) sw.faction = d.fac;
     if (d.mountAngles && d.mountAngles.length > 0) {
       sw.mountAngles = d.mountAngles.slice();
     } else if (sw.mountAngles) {

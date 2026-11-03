@@ -30,6 +30,7 @@ import { HAVOK } from './composite/havok.js';
 import { ROBOT_SQUARE, ROBOT_CIRCLE, ROBOT_HEXAGON, ROBOT_NEXUS, ROBOT_HARVESTER } from './robots.js';
 import { CARGO_POD } from './cargoPod.js';
 import { TRADER_HAULER } from './traders.js';
+import { PATROL_FIGHTER } from './patrols.js';
 
 /**
  * Insertion order = canonical catalogue order. Fighter is first so it
@@ -61,4 +62,6 @@ export const SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze([
   ROBOT_NEXUS,
   // Living World P3b: the robot harvester. APPEND ONLY.
   ROBOT_HARVESTER,
+  // v4 M2: a garrison's patrol fighter. APPEND ONLY.
+  PATROL_FIGHTER,
 ]);
