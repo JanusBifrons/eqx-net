@@ -209,6 +209,7 @@ const NPC_SIDE_PARTY = Object.fromEntries(NPC_ALLEGIANCE_IDS.map((a) => [a, npcO
 import { getStructureKind, isBuildableStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { AlienGateGuard, isAlienGatesDisabled } from '../structures/AlienGateGuard.js';
 import { PatrolSubsystem } from '../bases/PatrolSubsystem.js';
+import { convoyHaulerFactions } from '../economy/convoyCarriers.js';
 import { ALIEN_GATE_OWNER, alienGateCandidates, alienGateSites, type AlienGateSite } from '../../core/galaxy/alienGates.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
@@ -8654,9 +8655,26 @@ export class SectorRoom extends Room<SectorState> {
   private noteStandingHit(targetId: string, shooterId: string): void {
     const sink = getTradeSink();
     if (sink?.adjustStanding === undefined) return;
+    // v4 C — a convoy hauler flies for its owner AND its carrier: both mind.
+    if (isHaulerId(targetId)) {
+      const f = convoyHaulerFactions(targetId);
+      if (f !== undefined) {
+        this.standingHit(f.owner, shooterId);
+        if (f.carrier !== f.owner) this.standingHit(f.carrier, shooterId);
+      }
+      return;
+    }
     const s = this.structureRegistry.get(targetId);
     const victim = s !== undefined ? parseOwner(s.owner).faction : this.playerToSlot.has(targetId) ? targetId : null;
     if (victim === null) return;
+    this.standingHit(victim, shooterId);
+  }
+
+  /** Lower `victim`'s view of the shooter's faction, at most once per pair per
+   *  window (never between two NPC factions). */
+  private standingHit(victim: string, shooterId: string): void {
+    const sink = getTradeSink();
+    if (sink?.adjustStanding === undefined) return;
     const attacker = this.attackerFaction(shooterId);
     if (attacker === null || attacker === victim) return;
     if (isNpcFactionId(victim) && isNpcFactionId(attacker)) return;

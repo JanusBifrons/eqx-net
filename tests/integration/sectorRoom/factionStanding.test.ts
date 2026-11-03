@@ -15,7 +15,8 @@ import { EconomyStore } from '../../../src/server/economy/EconomyStore.js';
 import { TradeDirector, type TradeRoom } from '../../../src/server/economy/TradeDirector.js';
 import { setTradeSink } from '../../../src/server/economy/tradeSink.js';
 import { getHoldStore, getPersistence, getWallet } from '../../../src/server/db/PersistenceWorker.js';
-import { STANDING_HIT_DELTA } from '../../../src/shared-types/factions.js';
+import { MINOR_FACTIONS, STANDING_HIT_DELTA } from '../../../src/shared-types/factions.js';
+import { clearConvoyHaulers, registerConvoyHauler } from '../../../src/server/economy/convoyCarriers.js';
 
 const OWNER = '6a7e0000-0000-4000-8000-0000000000a1';
 const LAYOUT = [
@@ -67,6 +68,26 @@ describe('SectorRoom integration — faction standing and policy (F3)', () => {
     internals.applyDamage(capital.id, pilot, 1);
     expect(store.standing('traders', pilot)).toBe(STANDING_HIT_DELTA);
     expect(store.standing(pilot, 'traders'), 'the attacker’s own view is untouched').toBe(0);
+  });
+
+  it('v4 C: raiding a contracted convoy costs standing with its owner AND its carrier', async () => {
+    const { internals, store } = await boot('npc:traders:t1');
+    const pilot = randomUUID();
+    await harness.connectActive(pilot);
+    const owner = MINOR_FACTIONS.find((f) => f.specialty === 'mining')!.id;
+    const carrier = MINOR_FACTIONS.find((f) => f.specialty === 'freight')!.id;
+    const haulerId = 'hauler-convoy-test1';
+    const room = harness.getServerRoom()!;
+    expect(room.spawnLivingWorldBot({ botId: haulerId, kind: 'trader-hauler', x: 400, y: -1000 })).toBe(true);
+    registerConvoyHauler(haulerId, { owner, carrier });
+    try {
+      internals.applyDamage(haulerId, pilot, 1);
+      internals.applyDamage(haulerId, pilot, 1);
+      expect(store.standing(owner, pilot), 'the owner minds').toBe(STANDING_HIT_DELTA);
+      expect(store.standing(carrier, pilot), 'and so does the carrier').toBe(STANDING_HIT_DELTA);
+    } finally {
+      clearConvoyHaulers();
+    }
   });
 
   it('a player hitting another player’s base lowers the owner’s view of them', async () => {

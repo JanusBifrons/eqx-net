@@ -13,6 +13,13 @@ import { HoldStore } from '../cargo/HoldStore.js';
 import type { TradeTransferResult, TradeTransferSpec } from '../cargo/StorageService.js';
 import { regionalPriceFactor, resetRegionalPrices } from './regionalPrices.js';
 import { ConvoyDirector, DEFAULT_CONVOY_OPTIONS, dockPoint, edgeNear, type ConvoyRoom, type NpcBaseTrade } from './ConvoyDirector.js';
+import { clearConvoyHaulers, convoyHaulerFactions } from './convoyCarriers.js';
+import { chooseCarrier } from '../../core/economy/freight.js';
+import { BASE_PRICES } from '../../shared-types/economy.js';
+import { MINOR_FACTIONS } from '../../shared-types/factions.js';
+
+/** A mining company in the core region (it contracts its freight). */
+const MINING = MINOR_FACTIONS.find((f) => f.region === 'core' && f.specialty === 'mining')?.id ?? MINOR_FACTIONS.find((f) => f.region === 'core' && f.specialty !== 'freight')!.id;
 
 const SINK: IPersistenceSink = {
   enqueueCritical: () => {}, enqueueVolatile: () => {},
@@ -128,6 +135,42 @@ describe('ConvoyDirector (T2)', () => {
       for (let i = 0; i < 200 && dir.active()[0]?.phase === 'transit'; i++) { clock.t += 500; dir.tick(); }
       expect(clock.t - left, `${hops} hops`).toBeGreaterThanOrEqual(ms);
       expect(clock.t - left, `${hops} hops`).toBeLessThanOrEqual(ms + 1000);
+    }
+  });
+
+  it('v4 C: a contracted carrier flies the hauler with the owner and is paid its cut on delivery', () => {
+    for (const [owner, carrier] of [['npc:traders:ex', 'traders'], [`npc:${MINING}:ex`, null]] as const) {
+      clearConvoyHaulers();
+      const clock = { t: 0 };
+      const holds = new HoldStore({ persistence: () => SINK });
+      const exporter: FakeBase = { owner, uid: 'u-ex', stock: { alloy: 1000 }, uses: {}, box: BOX_A };
+      const importer: FakeBase = { owner: 'npc:traders:im', uid: 'u-im', stock: {}, uses: { alloy: 20 }, box: BOX_B };
+      const rooms = new Map<string, ConvoyRoom>([['sol-prime', new FakeRoom([exporter, importer], holds)]]);
+      const paid: Array<[string, number]> = [];
+      const pay = {
+        wallet: { balance: () => 0, credit: () => undefined, creditDeferred: () => null, debitDeferred: () => null },
+        sink: () => ({ creditFaction: (f: string, n: number) => paid.push([f, n]) }),
+      } as unknown as ConstructorParameters<typeof ConvoyDirector>[4];
+      const dir = new ConvoyDirector(rooms, holds, { ...DEFAULT_CONVOY_OPTIONS, planIntervalMs: 1000 }, () => clock.t, pay);
+      dir.tick();
+      const haulerId = dir.active()[0]!.haulerId;
+      const f = convoyHaulerFactions(haulerId)!;
+      expect(f.owner).toBe(owner.split(':')[1]);
+      if (carrier === 'traders') {
+        // The Traders run their own freight: no contract, no fee.
+        expect(f.carrier).toBe('traders');
+      } else {
+        expect(f.carrier).not.toBe(f.owner);
+      }
+      for (let i = 0; i < 8 && dir.active().length > 0; i++) { clock.t += 1000; dir.tick(); }
+      expect(dir.active()).toHaveLength(0);
+      expect(convoyHaulerFactions(haulerId), 'forgotten when the convoy ends').toBeUndefined();
+      const moved = importer.stock.alloy ?? 0;
+      if (carrier === 'traders') expect(paid).toEqual([]);
+      else {
+        const { cut } = chooseCarrier(f.owner, 'core');
+        expect(paid).toEqual([[f.carrier, Math.round(moved * BASE_PRICES.alloy * cut)]]);
+      }
     }
   });
 
