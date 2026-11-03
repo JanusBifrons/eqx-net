@@ -2648,3 +2648,7 @@ The generator now puts a fenced base's turrets outside the fence. Lock: `turretV
 **Fix.** The range is measured from the base's footprint (1,500 u beyond its outline). Locks: `PatrolSubsystem.test.ts` (a stronghold-sized box, pilot 1,000 u outside the fence) and `showcaseRooms.test.ts` (in the garrison room, a pilot at the spawn hitting the south fence draws the patrol, and the patrol actually shoots).
 
 **Rule.** For anything that guards an area, measure its reach from the area's edge, not its centre, and test with the biggest version of the thing. A showcase take is a cheap end-to-end check: watch what happens, not just whether the take passed QA.
+
+## 2026-11-03 — A sprite property set twice in one pass: the last write wins
+
+The v4 patrol faction tint was set early in `updateSwarmSprites`, then the damage-flash branch later in the same pass reset every sprite's tint to white. Patrols never showed their colour, and the garrison showcase page claimed they did; the integration test only checked the decoded `faction` field, not the drawn tint. Fix: one tint site that decides flash / faction / white. Rule: a per-frame visual property gets exactly one write site per pass, and its test reads the final drawn value after a whole pass.

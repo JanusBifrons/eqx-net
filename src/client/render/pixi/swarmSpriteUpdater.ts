@@ -263,11 +263,6 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         tele.visible = on;
         if (on) tele.alpha = 0.45 + 0.4 * Math.sin(now / 70);
       }
-      // v4 M2 — a patrol ship wears its faction's colour.
-      if (entry.faction !== undefined) {
-        const c = npcFactionDef(entry.faction)?.color;
-        if (c !== undefined && sprite.tint !== c) sprite.tint = c;
-      }
       // P4a — a named elite wears a slowly-pulsing gold ring.
       let ring = eliteRings.get(sprite);
       if (entry.eliteName !== undefined && ring === undefined) {
@@ -360,7 +355,10 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     ) {
       sprite.tint = DAMAGE_FLASH_COLOR;
     } else {
-      sprite.tint = 0xffffff;
+      // v4 M2 — a patrol ship wears its faction's colour (set here, the one
+      // tint site, so the reset below a hit can't wipe it).
+      const fc = entry.kind === 1 && entry.faction !== undefined ? npcFactionDef(entry.faction)?.color : undefined;
+      sprite.tint = fc ?? 0xffffff;
     }
     // Structures plan, Phase 3 — blueprints (not yet built) render dimmed
     // ("scaffolding"); the fill-bar (ConnectorRenderer) shows build progress.

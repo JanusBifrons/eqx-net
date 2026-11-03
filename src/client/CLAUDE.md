@@ -300,7 +300,7 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 
 ## Patrol ships (plan soft-leaping-truffle v4, M2)
 
-- `drones[].fac` (a garrison patrol's faction) is decoded once onto `SwarmRenderState.faction` (`applyDroneMountAngles`) and kept; `swarmSpriteUpdater` tints the ship with `npcFactionDef(fac).color`. Lock: `snapshotRemoteSync.charging.test.ts`.
+- `drones[].fac` (a garrison patrol's faction) is decoded once onto `SwarmRenderState.faction` (`applyDroneMountAngles`) and kept; `swarmSpriteUpdater` tints the ship with `npcFactionDef(fac).color` at its ONE tint site (the damage-flash branch: flash wins, else faction, else white). Setting the tint anywhere earlier in the pass is wiped by that reset (2026-11-03 bug). Locks: `snapshotRemoteSync.charging.test.ts`, `swarmSpriteUpdater.factionTint.test.ts`.
 
 ## Factions tab (plan soft-leaping-truffle v4, F3)
 
