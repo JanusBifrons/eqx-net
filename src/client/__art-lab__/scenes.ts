@@ -75,7 +75,7 @@ function baseStructs(): StructE[] {
 function fleet(t0: number): ShipE[] {
   const lane = (dy: number, speed: number, delay: number) => (t: number): [number, number] => {
     const s = (t - delay + t0) * speed;
-    return [-1500 + s, -520 + dy + Math.sin(s / 260) * 60];
+    return [-1500 + s, -330 + dy + Math.sin(s / 260) * 60];
   };
   return [
     flyer('heavy', lane(0, 170, 0)),
@@ -119,7 +119,7 @@ export function buildScene(id: SceneId, zoomOverride?: number, n = 40): Scene {
         camera: (_t, c) => { c.x = -120; c.y = 0; c.zoom = zoomOr(0.62); },
       };
     case 'base':
-      return { ships: fleet(0), structs: baseStructs(), booms: [], duration: 10, camera: (_t, c) => { c.x = 0; c.y = -60; c.zoom = zoomOr(0.5); } };
+      return { ships: fleet(3.2), structs: baseStructs(), booms: [], duration: 10, camera: (_t, c) => { c.x = 0; c.y = -60; c.zoom = zoomOr(0.5); } };
     case 'explosion':
       return {
         ships: [flyer('fighter', (t) => [200 + t * 140, 120 - t * 30]), flyer('fighter', (t) => [520 - t * 60, 620 - t * 150])],

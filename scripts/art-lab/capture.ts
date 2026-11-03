@@ -21,8 +21,10 @@ const args = process.argv.slice(2);
 const flag = (k: string): string | undefined => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : undefined; };
 const OUT = flag('--out') ?? 'diag/art-lab/round1';
 const ONLY = flag('--only');
+const CLIP = flag('--clip');
 const PORT = 5374;
-const STYLES = ['current', 'machined', 'pixel'] as const;
+const ALL_STYLES = ['current', 'machined', 'pixel'] as const;
+const STYLES = (flag('--styles')?.split(',') ?? [...ALL_STYLES]) as Array<(typeof ALL_STYLES)[number]>;
 
 const FFMPEG = process.env['FFMPEG'] ?? 'ffmpeg';
 
@@ -38,10 +40,10 @@ const STILLS: Still[] = [
 
 interface Clip { id: string; scene: string; seconds: number; w: number; h: number }
 const CLIPS: Clip[] = [
-  { id: 'turning', scene: 'ships', seconds: 6, w: 960, h: 320 },
-  { id: 'fleet-pass', scene: 'base', seconds: 8, w: 960, h: 540 },
-  { id: 'explosion', scene: 'explosion', seconds: 4.5, w: 960, h: 540 },
-  { id: 'zoom-sweep', scene: 'sweep', seconds: 7, w: 960, h: 540 },
+  { id: 'turning', scene: 'ships', seconds: 6, w: 1280, h: 420 },
+  { id: 'fleet-pass', scene: 'base', seconds: 8, w: 1280, h: 720 },
+  { id: 'explosion', scene: 'explosion', seconds: 4.5, w: 1280, h: 720 },
+  { id: 'zoom-sweep', scene: 'sweep', seconds: 7, w: 1280, h: 720 },
 ];
 const FPS = 30;
 
@@ -125,7 +127,7 @@ async function main(): Promise<void> {
 
     if (!ONLY || ONLY === 'clips') {
       mkdirSync(`${OUT}/clips`, { recursive: true });
-      for (const c of CLIPS) {
+      for (const c of CLIPS.filter((x) => !CLIP || x.id === CLIP)) {
         const parts: string[] = [];
         for (const style of STYLES) {
           const dir = `${OUT}/frames/${c.id}-${style}`;
@@ -148,13 +150,17 @@ async function main(): Promise<void> {
           console.log(`clip ${c.id} ${style}`);
         }
         // Triptych: the three arms side by side on identical frames.
+        if (parts.length === 3) {
         const tw = 640, th = Math.round((c.h / c.w) * tw / 2) * 2;
         const filt = parts.map((_, i) => `[${i}:v]scale=${tw}:${th}:flags=${i === 2 ? 'neighbor' : 'lanczos'}[v${i}]`).join(';')
           + `;[v0][v1][v2]hstack=inputs=3[o]`;
         execFileSync(FFMPEG, ['-y', '-loglevel', 'error', ...parts.flatMap((p) => ['-i', p]), '-filter_complex', filt, '-map', '[o]',
           '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '22', '-preset', 'slow', '-movflags', '+faststart', `${OUT}/clips/${c.id}-triptych.mp4`]);
+        }
         // A small GIF of the machined + pixel arms for quick sharing.
-        for (const [i, style] of [[1, 'machined'], [2, 'pixel']] as const) {
+        for (let i = 0; i < parts.length; i++) {
+          const style = STYLES[i]!;
+          if (style === 'current') continue;
           execFileSync(FFMPEG, ['-y', '-loglevel', 'error', '-i', parts[i]!, '-vf',
             `fps=15,scale=480:-2:flags=${style === 'pixel' ? 'neighbor' : 'lanczos'},split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=bayer:bayer_scale=4`,
             `${OUT}/clips/${c.id}-${style}.gif`]);
@@ -187,9 +193,10 @@ async function main(): Promise<void> {
       try { execFileSync('taskkill', ['/pid', String(vite.pid), '/T', '/F'], { stdio: 'ignore' }); } catch { /* gone */ }
     }
   }
-  const rp = path.join(OUT, `report${ONLY ? `-${ONLY}` : ''}.json`);
+  const rp = path.join(OUT, `report${ONLY ? `-${ONLY}` : ''}${CLIP ? `-${CLIP}` : ''}.json`);
   writeFileSync(rp, JSON.stringify(report, null, 2));
   console.log(`done -> ${rp}${existsSync(rp) ? '' : ' (missing!)'}`);
+  process.exit(0);
 }
 
 void main().catch((e: unknown) => { console.error(e); process.exit(1); });
