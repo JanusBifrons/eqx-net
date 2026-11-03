@@ -2648,3 +2648,8 @@ The generator now puts a fenced base's turrets outside the fence. Lock: `turretV
 **Fix.** The range is measured from the base's footprint (1,500 u beyond its outline). Locks: `PatrolSubsystem.test.ts` (a stronghold-sized box, pilot 1,000 u outside the fence) and `showcaseRooms.test.ts` (in the garrison room, a pilot at the spawn hitting the south fence draws the patrol, and the patrol actually shoots).
 
 **Rule.** For anything that guards an area, measure its reach from the area's edge, not its centre, and test with the biggest version of the thing. A showcase take is a cheap end-to-end check: watch what happens, not just whether the take passed QA.
+
+## 2026-11-03 — Art lab: a ship's `radius` is not its drawn size; per-texel closures dominate bake time
+
+- **`ShipKind.radius` is the collider, not the drawing.** The El test ship's outline reaches 1000 u while its `radius` is 190 (Crossguard: 160 vs 213). Anything that sizes art, textures or a camera frame from `radius` gets it badly wrong. Use the outline's extent (`shipExtent` in `src/client/__art-lab__/forge/fields.ts`).
+- **A tiny helper that builds closures, called per texel, was the whole bake budget.** `valueNoise` defined two arrow functions on each call; inside a per-texel, per-layer loop that made structure forging 10–30× slower than necessary (the large teleporter took 26 s). Hoisting the helpers and running grime once per texel fixed it. In bake loops, profile before blaming resolution. See `docs/architecture/art-direction.md`.
