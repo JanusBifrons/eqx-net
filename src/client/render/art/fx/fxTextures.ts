@@ -354,6 +354,90 @@ export function shieldContactTex(size = 192, cells = 7): Img {
   return o;
 }
 
+// ------------------------------------------------------------------ shield fences
+
+/**
+ * A shield fence at rest (the wall between two emitters), drawn from short
+ * segments, each one period of this strip. Like a ship shield it is nearly
+ * invisible until hit: a thin bright energy line with a soft haze, and
+ * brighter pulses travelling along it. Each flipbook frame shifts the pulses
+ * by 1/frames of a period, so playing the frames makes the energy flow and the
+ * loop is seamless. The hex pattern only appears where something hits it
+ * (fenceRipple / fenceContact). White; tint per owner.
+ */
+export function fenceStripFlipbook(frames = 8, w = 128, h = 48): Flipbook {
+  const cols = 2;
+  const rows = Math.ceil(frames / cols);
+  const sheet = img(cols * w, rows * h);
+  for (let f = 0; f < frames; f++) {
+    const ph = f / frames;
+    const ox = (f % cols) * w, oy = Math.floor(f / cols) * h;
+    for (let y = 0; y < h; y++) {
+      const v = ((y + 0.5) / h - 0.5) * 2; // -1..1 across
+      for (let x = 0; x < w; x++) {
+        const u = x / w;
+        const pulse = 0.55 + 0.45 * smooth(0.45, 0.75, pfbm(u - ph, 0.5, 2, 2, 17));
+        const wob = (pfbm(u - ph * 0.5, 0.2, 3, 2, 29) - 0.5) * 0.12;
+        const core = Math.exp(-Math.pow((v - wob) / 0.07, 2)) * pulse;
+        const haze = Math.exp(-Math.pow(v / 0.5, 2)) * (0.16 + 0.14 * pulse);
+        putA(sheet, (oy + y) * sheet.w + ox + x, clamp01(core + haze) * smooth(1, 0.8, Math.abs(v)));
+      }
+    }
+  }
+  return { sheet, frames, cols, cell: w };
+}
+
+/** A hit on a fence: a ripple of lit cells running both ways from the
+ *  centre, fading (white). Placed at the hit point, along the wall. */
+export function fenceRippleFlipbook(frames = 8, w = 128, h = 48): Flipbook {
+  const cols = 2;
+  const rows = Math.ceil(frames / cols);
+  const sheet = img(cols * w, rows * h);
+  const aspect = w / h;
+  for (let f = 0; f < frames; f++) {
+    const t = f / (frames - 1);
+    const ox = (f % cols) * w, oy = Math.floor(f / cols) * h;
+    for (let y = 0; y < h; y++) {
+      const v = ((y + 0.5) / h - 0.5) * 2;
+      const av = Math.abs(v);
+      for (let x = 0; x < w; x++) {
+        const u = ((x + 0.5) / w - 0.5) * 2 * aspect; // in band half-heights
+        const d = Math.hypot(u, v * 0.8);
+        const e = hexEdgeDist((x / w) * 3 * 2, (v + 1) * 1.3);
+        const lines = Math.exp(-e * e * 400);
+        const front = 0.3 + t * aspect * 0.9;
+        const ring = Math.exp(-Math.pow((d - front) / (0.35 + t * 0.5), 2)) * Math.pow(1 - t, 1.5);
+        const spot = Math.exp(-d * d * 1.2) * Math.pow(1 - t, 2.4) * 1.3;
+        const edge = smooth(1, 0.8, av);
+        putA(sheet, (oy + y) * sheet.w + ox + x, clamp01(((lines * 0.8 + 0.2) * ring + spot) * edge));
+      }
+    }
+  }
+  return { sheet, frames, cols, cell: w };
+}
+
+/** A beam resting on a fence: a steady bright patch where it lands, the
+ *  cells around it lit, the rails brightened nearby (white). */
+export function fenceContactTex(w = 128, h = 48): Img {
+  const o = img(w, h);
+  const aspect = w / h;
+  for (let y = 0; y < h; y++) {
+    const v = ((y + 0.5) / h - 0.5) * 2;
+    const av = Math.abs(v);
+    for (let x = 0; x < w; x++) {
+      const u = ((x + 0.5) / w - 0.5) * 2 * aspect;
+      const d = Math.hypot(u, v * 0.8);
+      const e = hexEdgeDist((x / w) * 3 * 2, (v + 1) * 1.3);
+      const lines = Math.exp(-e * e * 400);
+      const patch = Math.exp(-d * d * 0.22);
+      const spot = Math.exp(-d * d * 3) * 1.4;
+      const rails = Math.exp(-Math.pow((av - 0.8) / 0.08, 2)) * Math.exp(-u * u * 0.3) * 0.7;
+      putA(o, y * w + x, clamp01((lines * 0.9 + 0.15) * patch + spot + rails) * smooth(1, 0.85, av));
+    }
+  }
+  return o;
+}
+
 // ------------------------------------------------------------------ sky
 
 /** Star colour by temperature class (linear RGB, roughly blackbody). */
@@ -602,7 +686,8 @@ export type FxId =
   | 'glow' | 'streak' | 'beamFlow' | 'ring' | 'spark' | 'smoke' | 'trail'
   | 'shieldDome' | 'shieldContact' | 'shieldHit' | 'fireball'
   | 'spikeStar' | 'galaxy' | 'sun' | 'wisp' | 'dust'
-  | 'starsFar' | 'starsMid' | 'starsNear' | 'planet' | 'nebula';
+  | 'starsFar' | 'starsMid' | 'starsNear' | 'planet' | 'nebula'
+  | 'fenceStrip' | 'fenceRipple' | 'fenceContact';
 
 export interface FxSpec {
   /** Wraps (drawn as a TilingSprite): gets its own texture, not an atlas slot. */
@@ -622,6 +707,9 @@ export const FX_SPECS: Readonly<Record<FxId, FxSpec>> = {
   spikeStar: { tile: false }, galaxy: { tile: false }, sun: { tile: false }, wisp: { tile: false },
   dust: { tile: true }, starsFar: { tile: true, mip: true }, starsMid: { tile: true, mip: true },
   starsNear: { tile: true, mip: true }, planet: { tile: false }, nebula: { tile: true },
+  fenceStrip: { tile: false, flip: { frames: 8, cols: 2, cell: 128 } },
+  fenceRipple: { tile: false, flip: { frames: 8, cols: 2, cell: 128 } },
+  fenceContact: { tile: false },
 };
 
 export function isFxId(id: string): id is FxId {
@@ -654,6 +742,9 @@ export function bakeFxImg(id: FxId, variant: string | undefined, seed: number | 
     case 'starsMid': return starTileTex(512, 260, 23, 1.0);
     case 'starsNear': return starTileTex(512, 70, 37, 0.85);
     case 'planet': return planetTex(256, sunAz, seed ?? 8);
+    case 'fenceStrip': return fenceStripFlipbook(8, 128, 48).sheet;
+    case 'fenceRipple': return fenceRippleFlipbook(8, 128, 48).sheet;
+    case 'fenceContact': return fenceContactTex(128, 48);
     case 'nebula': {
       const k: NebulaKind = variant === 'reflection' || variant === 'dark' ? variant : 'emission';
       return nebulaTex(k, 512, seed ?? 21);
@@ -666,4 +757,5 @@ export function bakeFxImg(id: FxId, variant: string | undefined, seed: number | 
 export const FX_WARM: readonly FxId[] = [
   'glow', 'streak', 'beamFlow', 'ring', 'spark', 'smoke', 'trail', 'shieldContact', 'shieldHit', 'fireball',
   'shieldDome', 'spikeStar', 'sun', 'starsFar', 'starsMid', 'starsNear', 'dust', 'galaxy', 'wisp',
+  'fenceStrip',
 ];

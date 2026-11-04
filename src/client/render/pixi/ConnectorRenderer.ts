@@ -11,6 +11,7 @@
  * numerically (no string keys), and no per-frame collections are created.
  */
 import { Graphics } from 'pixi.js';
+import type { FxFences } from '../art/fx/FxShields.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
 import { interpBuildPct } from './buildBarInterp.js';
 import {
@@ -276,11 +277,18 @@ export class ConnectorRenderer {
   private _wallScale = 1;
   /** Draws the ANIMATED part of each derived shield wall (per frame). */
   private readonly _wallVisitor: DerivedWallVisitor = {
-    wall: (_key, ax, ay, bx, by, blocking, _thickness, open) =>
-      this.drawShieldWall(ax, -ay, bx, -by, blocking, open, false),
+    wall: (key, ax, ay, bx, by, blocking, _thickness, open) => {
+      if (this._fxWallsOn) this.fxFences!.wall(key, ax, ay, bx, by, blocking, open, this._wallNow);
+      else this.drawShieldWall(ax, -ay, bx, -by, blocking, open, false);
+    },
   };
+  /** New fences (`?fx=new`, plan iridescent-seeking-rainbow v3 B5). When ready
+   *  they replace both wall layers here. */
+  fxFences: FxFences | null = null;
+  private _fxWallsOn = false;
   /** Draws the STEADY part of each derived shield wall (static layer). */
   private readonly _staticWallVisitor: DerivedWallVisitor = {
+    // (Skipped while the new fences draw: see drawStatic.)
     wall: (_key, ax, ay, bx, by, blocking, _thickness, open) =>
       this.drawShieldWall(ax, -ay, bx, -by, blocking, open, true),
   };
@@ -361,7 +369,9 @@ export class ConnectorRenderer {
     swarm: ReadonlyMap<number, SwarmRenderState>,
     scale: number,
   ): void {
-    const sig = staticSignature(structures, swarm, this.highlightedStructureId);
+    // The new fences take over the walls once ready: fold that into the
+    // signature so the static rails are rebuilt without them.
+    const sig = staticSignature(structures, swarm, this.highlightedStructureId) + (this._fxWallsOn ? 0.5 : 0);
     const scaleMoved = this._staticScale === 0 || Math.abs(scale / this._staticScale - 1) > STATIC_SCALE_TOLERANCE;
     if (sig !== this._staticSig || scaleMoved) {
       this._staticSig = sig;
@@ -419,7 +429,7 @@ export class ConnectorRenderer {
       }
     }
     this._wallScale = scale;
-    visitDerivedWalls(structures, swarm, this._staticWallVisitor);
+    if (!this._fxWallsOn) visitDerivedWalls(structures, swarm, this._staticWallVisitor);
   }
 
   update(mirror: RenderMirror, scale: number, nowMs: number): void {
@@ -450,6 +460,7 @@ export class ConnectorRenderer {
       }
       return;
     }
+    this._fxWallsOn = this.fxFences !== null && this.fxFences.ready();
     this.refreshStatic(structures, swarm, scale);
     const flashes = mirror.gridFlashes;
     const flowSrc = mirror.gridFlowSrc;
@@ -459,7 +470,9 @@ export class ConnectorRenderer {
     // same derived-wall rules the prediction world collides with (#15).
     this._wallNow = nowMs;
     this._wallScale = scale;
+    if (this._fxWallsOn) this.fxFences!.begin();
     visitDerivedWalls(structures, swarm, this._wallVisitor);
+    if (this._fxWallsOn) this.fxFences!.end(nowMs);
 
     for (const [id, st] of structures) {
       const a = swarm.get(id);
