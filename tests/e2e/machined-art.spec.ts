@@ -155,3 +155,42 @@ test.describe('New backdrop (plan iridescent-seeking-rainbow v3, B2)', () => {
     await ctx.close();
   });
 });
+
+test.describe('Nebulae you can fly into (plan iridescent-seeking-rainbow v5, C2)', () => {
+  test.describe.configure({ timeout: 90_000 });
+  type Bd = { backdrop?: { on: boolean; density: number } };
+  test('spawning inside a nebula reports being inside it; far away reports 0', async ({ browser }) => {
+    const { hashKey, nebulaCell, nebulaDensityAtSeed } = await import('../../src/client/render/art/fx/depth');
+    // test-sector-fast has no sector key, so its sky is seeded from 'none'.
+    const seed = hashKey('neb:none');
+    const g = { x: 0, y: 0, r: 0, variant: 'emission' as const, seed: 0 };
+    let best: { x: number; y: number } | null = null;
+    for (let iy = -2; iy <= 1 && !best; iy++) for (let ix = -2; ix <= 1 && !best; ix++) if (nebulaCell(seed, ix, iy, g)) best = { x: g.x, y: g.y };
+    expect(best, 'a nebula near the centre').not.toBeNull();
+    const inside = await launchTestClient(browser, {
+      spawnX: Math.round(best!.x), spawnY: Math.round(best!.y), room: 'test-sector-fast', shipKind: 'fighter',
+      extraParams: { worker: '0', art: 'machined', fx: 'new' },
+    });
+    await inside.page.waitForFunction(
+      () => ((window as unknown as { __eqxArtStats?: () => Bd }).__eqxArtStats?.().backdrop?.density ?? 0) > 0.5,
+      undefined, { timeout: 45_000 },
+    );
+    mkdirSync('diag/e2e-screenshots/machined-art', { recursive: true });
+    await inside.page.screenshot({ path: 'diag/e2e-screenshots/machined-art/inside-nebula.png' });
+    await inside.ctx.close();
+    // Somewhere with no nebula.
+    let fx = 0;
+    while (nebulaDensityAtSeed(seed, fx, 0, { x: 0, y: 0, r: 0, variant: 'emission', seed: 0 }) > 0) fx += 500;
+    const outside = await launchTestClient(browser, {
+      spawnX: fx, spawnY: 0, room: 'test-sector-fast', shipKind: 'fighter',
+      extraParams: { worker: '0', art: 'machined', fx: 'new' },
+    });
+    await outside.page.waitForFunction(
+      () => (window as unknown as { __eqxArtStats?: () => Bd }).__eqxArtStats?.().backdrop?.on === true,
+      undefined, { timeout: 45_000 },
+    );
+    const s = await outside.page.evaluate(() => (window as unknown as { __eqxArtStats: () => Bd }).__eqxArtStats());
+    expect(s.backdrop!.density).toBe(0);
+    await outside.ctx.close();
+  });
+});

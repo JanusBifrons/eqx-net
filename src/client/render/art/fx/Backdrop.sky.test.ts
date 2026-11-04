@@ -4,7 +4,7 @@
  * dust motes follow the quality tier.
  */
 import { describe, it, expect } from 'vitest';
-import { Texture } from 'pixi.js';
+import { Sprite, Texture } from 'pixi.js';
 import type { ArtHandle, ArtService } from '../ArtService.js';
 import { DEFAULT_RIG } from '../shade.js';
 import { Backdrop } from './Backdrop.js';
@@ -41,7 +41,7 @@ describe('Backdrop sky (C1)', () => {
   it('dust motes follow the quality tier', () => {
     let q = 'high';
     const b = new Backdrop(fakeArt(), () => q);
-    const motes = (): number => b.fore.children.filter((c) => c.visible).length;
+    const motes = (): number => b.fore.children.filter((c) => c.visible && c instanceof Sprite).length;
     b.update(cam(0, 0), 0);
     const high = motes();
     q = 'medium'; b.update(cam(0, 0), 0);
@@ -59,5 +59,35 @@ describe('Backdrop sky is endless (C1)', () => {
     let seen = 0;
     for (let x = 1_000_000; x < 1_000_000 + 40 * 5000; x += 5000) { b.update(cam(x, 0), 0); seen += b.visibleLandmarks; }
     expect(seen).toBeGreaterThan(0);
+  });
+});
+
+describe('Backdrop nebula volumes (C2)', () => {
+  it('inside a nebula: density is high, slices draw, and the middle stays clear', async () => {
+    const { hashKey, nebulaCell } = await import('./depth.js');
+    const g = { x: 0, y: 0, r: 0, variant: 'emission' as const, seed: 0 } as import('./depth.js').NebulaRegion;
+    // A region away from y = 0, so a Y-flip mistake misses it.
+    for (let i = 0; !nebulaCell(hashKey('neb:any'), i, -2, g); i++);
+    const b = new Backdrop(fakeArt(), () => 'high');
+    b.setSector('any');
+    // The renderer camera is Pixi space (Y down): a game point (x, y) is centre (x, -y).
+    b.update(cam(g.x, -g.y), 0);
+    expect(b.density).toBeGreaterThan(0.9);
+    const fronts = b.fore.children.filter((c) => c.visible && c.alpha > 0 && c.alpha < 0.2);
+    expect(fronts.length).toBeGreaterThan(0);
+    // Nothing in front of the world is opaque at the screen centre.
+    const centre = b.fore.children.filter((c) => c.visible && Math.hypot(c.x - 640, c.y - 360) < 100 && c.alpha > 0.05 && c.width > 50);
+    expect(centre).toHaveLength(0);
+  });
+
+  it('far from any nebula: density 0', async () => {
+    const { hashKey, nebulaDensityAtSeed } = await import('./depth.js');
+    const b = new Backdrop(fakeArt(), () => 'high');
+    b.setSector('any');
+    // Walk until a point outside every region.
+    let x = 0;
+    while (nebulaDensityAtSeed(hashKey('neb:any'), x, 0, { x: 0, y: 0, r: 0, variant: 'emission', seed: 0 }) > 0) x += 1000;
+    b.update(cam(x, 0), 0);
+    expect(b.density).toBe(0);
   });
 });
