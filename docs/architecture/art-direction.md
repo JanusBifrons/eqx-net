@@ -55,6 +55,8 @@ on the desktop GPU. Frame time is update plus draw, waiting for the GPU (`gl.fin
 | Machined, round 1 | 1.3 / 2.1 ms | 6.4 / 15.3 ms | 39 s | 181 MB |
 | Machined, round 2 | 0.9 / 1.7 ms | 4.7 / 11.2 ms | 1.3 s first visit, 0.11 s after | 30 MB |
 
+**On a real phone** (2026-11-04: an 8-core Android phone in Chrome, 90 Hz, rendering at DPR 2.6, via `phone.html`), every test held 90 fps. The 40-ship / 150-structure base drew in 3.2 / 5.2 ms (p50 / p95), against 3.3 / 4.7 ms for today's look. The base bakes in 1.5 s on a first visit and 0.12 s when cached.
+
 Drawing was never the problem; loading was. Round 2 fixed it as follows:
 
 - **Forge 10–30× faster.** The noise function allocated two closures per call
@@ -95,10 +97,13 @@ Drawing was never the problem; loading was. Round 2 fixed it as follows:
   (large teleporter, alien gate) come out flat. They need a recipe for big
   surfaces.
 - Scrap pieces, ships casting shadows on decks, and the nebula baked per sector.
-- A run on a real phone (one LAN URL per style). The 4× CPU numbers are only a proxy.
 - Integration into `PixiRenderer` needs its own plan: the worker render path,
   `EffectsBudget` tiers, the fallback to today's look while bakes are pending,
   and the cache budget on low-storage devices.
+
+## Phone run
+
+`pnpm tsx scripts/art-lab/phone-server.ts` serves the lab on the LAN (port 5374) and collects results (port 5375) into `diag/art-lab/phone/`. On the phone, open `http://<pc-ip>:5374/__art-lab__/phone.html` and tap Start. When sharing the link in chat, put it in a code block, or Markdown turns the `__` into bold and breaks it. To rehearse on the PC first: `scripts/art-lab/phone-dryrun.ts`.
 
 ## Running the lab
 
