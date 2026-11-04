@@ -214,3 +214,48 @@ describe('art mode and sun', () => {
     }
   });
 });
+
+describe('warm-up (bake before it is needed)', () => {
+  it('lists every regular ship kind, then the common structures, skipping test-size hulls', async () => {
+    const { warmUpJobs, WARM_STRUCTURES } = await import('../../src/client/render/art/warmUp');
+    const jobs = warmUpJobs();
+    const ships = jobs.filter((j) => j.type === 'ship').map((j) => j.id);
+    expect(ships).toEqual(expect.arrayContaining(['fighter', 'scout', 'heavy', 'interceptor', 'gunship', 'missile-frigate', 'trader-hauler', 'patrol-fighter']));
+    expect(ships).not.toContain('crossguard');
+    expect(ships).not.toContain('el');
+    expect(jobs.filter((j) => j.type === 'struct').map((j) => j.id)).toEqual([...WARM_STRUCTURES]);
+    // Ships come first: they're what appears first.
+    expect(jobs.findIndex((j) => j.type === 'struct')).toBe(ships.length);
+  });
+
+  it('a warmed structure is the same handle the renderer later asks for', async () => {
+    const { warmUpJobs } = await import('../../src/client/render/art/warmUp');
+    const { svc, runner } = make();
+    svc.warmUp(warmUpJobs());
+    const n = svc.stats().pending;
+    expect(svc.struct('capital', 1, 0)).toBe(svc.struct('capital', 1, 0));
+    expect(svc.stats().pending).toBe(n); // no second handle
+    await flush();
+    expect(runner.calls.filter((j) => j.id === 'capital')).toHaveLength(1);
+  });
+
+  it('something on screen jumps the queue; a queued warm-up bake is promoted when needed', async () => {
+    const { WorkerBakeRunner } = await import('../../src/client/render/art/ArtService');
+    const posted: string[] = [];
+    let onmsg: ((e: MessageEvent) => void) | null = null;
+    const fakeWorker = {
+      postMessage: (m: { job: BakeJob }) => { posted.push(m.job.id); },
+      set onmessage(f: (e: MessageEvent) => void) { onmsg = f; },
+      onerror: null, terminate: () => undefined,
+    };
+    const r = new WorkerBakeRunner(1, () => fakeWorker as unknown as Worker);
+    const finish = (): void => onmsg!({ data: { baked: baked(1) } } as MessageEvent);
+    void r.run({ type: 'ship', id: 'w1' }, DEFAULT_RIG, false); // starts at once (idle worker)
+    void r.run({ type: 'ship', id: 'w2' }, DEFAULT_RIG, false);
+    void r.run({ type: 'ship', id: 'w3' }, DEFAULT_RIG, false);
+    void r.run({ type: 'ship', id: 'onscreen' }, DEFAULT_RIG, true);
+    r.promote({ type: 'ship', id: 'w3' });
+    for (let i = 0; i < 3; i++) finish();
+    expect(posted).toEqual(['w1', 'w3', 'onscreen', 'w2']);
+  });
+});

@@ -29,6 +29,7 @@ import { shouldLatchFirstFrame } from './firstFrameLatch.js';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
 import { readFxKillSwitches } from './fxKillSwitches';
 import { createArtService } from './art/ArtService.js';
+import { warmUpJobs } from './art/warmUp.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
 import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
 import { BeamSpritePool } from './BeamSpritePool';
@@ -583,6 +584,9 @@ export class PixiRenderer implements IRenderer {
       const art = createArtService({ touch: this._isTouch, delayMs: this._artOpts.delayMs ?? 0 });
       this._artCtx.art = art;
       this._artCtx.sunAz = art.lightRig.sunAz;
+      // Warm-up: bake the likely art now (this runs on the galaxy map /
+      // warp screen), behind anything that appears on screen meanwhile.
+      art.warmUp(warmUpJobs());
     }
     // DEV/E2E hook (main-thread path, `?worker=0`): what the art service is
     // doing. Assigned from `update()`, so it always follows the LIVE renderer
@@ -787,6 +791,11 @@ export class PixiRenderer implements IRenderer {
       // deltaMS keeps the Camera's zoom-ease framerate-independent
       // (60 / 90 / 120 Hz devices ease at the same wall-clock rate).
       this.camera.tick(this.app.ticker.deltaMS);
+      // Machined art: pack finished bakes every frame — including on the
+      // galaxy map / warp screen, where `update()` doesn't run, so the
+      // warm-up lands before the player joins.
+      this._artCtx.art?.tick();
+      if (this._artStatsHook) (globalThis as { __eqxArtStats?: () => unknown }).__eqxArtStats = this._artStatsHook;
     });
 
     if (isDom && domContainer) {
@@ -1286,8 +1295,6 @@ export class PixiRenderer implements IRenderer {
     // ship velocity (the sprite carries only x/y/rotation). The effects tick
     // at the tail of THIS update reads it → always the current frame's mirror.
     this._lastMirror = mirror;
-    this._artCtx.art?.tick();
-    if (this._artStatsHook) (globalThis as { __eqxArtStats?: () => unknown }).__eqxArtStats = this._artStatsHook;
     // 2026-05-25 heap-growth gate step 6: reuse persistent scratch
     // containers instead of `new Set<string>()` per frame.
     const seen = this._updateSeenScratch;

@@ -66,7 +66,11 @@ export interface ArtPacker {
 
 /** Runs bakes somewhere other than the caller's stack. */
 export interface BakeRunner {
-  run(job: BakeJob, rig: LightRig): Promise<Baked>;
+  /** `urgent`: something on screen is waiting for it, so it goes ahead of
+   *  queued warm-up work. */
+  run(job: BakeJob, rig: LightRig, urgent?: boolean): Promise<Baked>;
+  /** Move a queued (not yet started) job to the front. */
+  promote?(job: BakeJob): void;
   readonly workers: number;
   destroy(): void;
 }
@@ -121,12 +125,20 @@ export class ArtService {
 
   get lightRig(): LightRig { return this.rig; }
 
-  ship(id: string, paint?: number): ArtHandle {
-    return this.acquire({ type: 'ship', id, paint });
+  ship(id: string, paint?: number, urgent = true): ArtHandle {
+    return this.acquire({ type: 'ship', id, paint }, urgent);
   }
 
-  struct(id: string, seed: number, rot = 0, accent?: number): ArtHandle {
-    return this.acquire({ type: 'struct', id, seed: seedVariant(seed), rot, accent });
+  struct(id: string, seed: number, rot = 0, accent?: number, urgent = true): ArtHandle {
+    return this.acquire({ type: 'struct', id, seed: seedVariant(seed), rot, accent }, urgent);
+  }
+
+  /** Queue background bakes for art the player is likely to see soon (see
+   *  warmUp.ts), behind anything on screen. Called when the renderer starts,
+   *  i.e. on the galaxy map / warp screen, so the swap from today's look is
+   *  rarely visible in play. */
+  warmUp(jobs: readonly BakeJob[]): void {
+    for (const j of jobs) this.acquire(j, false);
   }
 
   /** One component of a destroyed ship (tumbles: ship-style frames). */
@@ -141,23 +153,34 @@ export class ArtService {
 
   /** The handle for a job: an existing one if any, else a new pending one
    *  whose bake starts now. */
-  acquire(job: BakeJob): ArtHandle {
+  acquire(job: BakeJob, urgent = true): ArtHandle {
     const key = `${bakeKey(job)}|${this.rigTag}`;
     let h = this.handles.get(key);
-    if (h) return h;
+    if (h) {
+      // A warm-up bake still queued: something now needs it, so move it up.
+      if (urgent && h.state === 'pending' && !this.urgentKeys.has(key)) {
+        this.urgentKeys.add(key);
+        this.deps.runner.promote?.(h.job);
+      }
+      return h;
+    }
     h = { key, job, rig: this.rig, state: 'pending', ship: null, struct: null };
     this.handles.set(key, h);
-    void this.start(h);
+    if (urgent) this.urgentKeys.add(key);
+    void this.start(h, urgent);
     return h;
   }
 
-  private async start(h: ArtHandle): Promise<void> {
+  /** Handles something on screen asked for (vs warm-up only). */
+  private readonly urgentKeys = new Set<string>();
+
+  private async start(h: ArtHandle, urgent: boolean): Promise<void> {
     const sk = storeKey(bakeKey(h.job), h.rig);
     try {
       const hit = this.deps.cache ? (await this.deps.cache.load([sk])).get(sk) : undefined;
       if (this.destroyed) return;
       if (hit) { this.toPack.push({ h, b: hit, cached: true }); return; }
-      const b = await this.deps.runner.run(h.job, h.rig);
+      const b = await this.deps.runner.run(h.job, h.rig, urgent || this.urgentKeys.has(h.key));
       if (this.destroyed) return;
       this.toPack.push({ h, b, cached: false });
     } catch (e) {
@@ -264,11 +287,18 @@ export class WorkerBakeRunner implements BakeRunner {
 
   get workers(): number { return this.pool.length; }
 
-  run(job: BakeJob, rig: LightRig): Promise<Baked> {
+  run(job: BakeJob, rig: LightRig, urgent = true): Promise<Baked> {
     return new Promise((resolve, reject) => {
-      this.queue.push({ job, rig, resolve, reject });
+      const item = { job, rig, resolve, reject };
+      if (urgent) this.queue.unshift(item); else this.queue.push(item);
       this.pump();
     });
+  }
+
+  promote(job: BakeJob): void {
+    const k = bakeKey(job);
+    const i = this.queue.findIndex((q) => bakeKey(q.job) === k);
+    if (i > 0) this.queue.unshift(this.queue.splice(i, 1)[0]!);
   }
 
   private pump(): void {
@@ -303,7 +333,7 @@ export class InlineBakeRunner implements BakeRunner {
   private stopped = false;
   constructor(private readonly delayMs = 0) {}
   get workers(): number { return 0; }
-  run(job: BakeJob, rig: LightRig): Promise<Baked> {
+  run(job: BakeJob, rig: LightRig, _urgent = true): Promise<Baked> {
     const p = this.chain.then(() => new Promise<Baked>((resolve, reject) => {
       setTimeout(() => {
         if (this.stopped) { reject(new Error('art service destroyed')); return; }
