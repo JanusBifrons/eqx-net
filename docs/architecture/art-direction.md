@@ -80,6 +80,8 @@ Drawing was never the problem; loading was. Round 2 fixed it as follows:
 
 ## In the game
 
+**On by default for players** (A5): `?art=classic` or Settings → Graphics → Detailed art (off) brings back today's look; automated browsers default to classic unless they pass `?art=machined`. Showcase shot: `machined-art`.
+
 The renderer reaches the art through `src/client/render/art/ArtService.ts` (plan iridescent-seeking-rainbow):
 
 - **Handles.** A request returns a reused handle at once; the sprite draws today's look until the handle is ready, so nothing waits on a bake.

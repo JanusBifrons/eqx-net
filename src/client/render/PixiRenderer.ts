@@ -29,7 +29,7 @@ import { shouldLatchFirstFrame } from './firstFrameLatch.js';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
 import { readFxKillSwitches } from './fxKillSwitches';
 import { createArtService } from './art/ArtService.js';
-import { readArtDelayMs, readArtMode } from './art/artMode.js';
+import { ART_OFF, type ArtOptions } from './art/artMode.js';
 import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
 import { BeamSpritePool } from './BeamSpritePool';
 import {
@@ -114,8 +114,12 @@ export class PixiRenderer implements IRenderer {
    *  `isTouchDevice()` is unreliable in a worker (no `window.matchMedia`). */
   private readonly _isTouch: boolean;
 
-  constructor(isTouch = false) {
+  /** Which look to draw (resolved on the main thread; default today's look). */
+  private readonly _artOpts: ArtOptions;
+
+  constructor(isTouch = false, art: ArtOptions = ART_OFF) {
     this._isTouch = isTouch;
+    this._artOpts = art;
     this.halo = new HaloRadar(isTouch);
   }
 
@@ -489,11 +493,7 @@ export class PixiRenderer implements IRenderer {
     // reads the URL directly; worker mode receives it on the BOOT bag (the
     // worker has no `window`), forwarded by WorkerRendererClient.
     let zoom: number | undefined;
-    // The page's query string, for the art switch (the worker gets it on BOOT).
-    let search = '';
-
     if (isDom) {
-      search = window.location.search;
       domContainer = rawContainer as HTMLElement;
       initialW = domContainer.clientWidth || window.innerWidth;
       initialH = domContainer.clientHeight || window.innerHeight;
@@ -503,9 +503,8 @@ export class PixiRenderer implements IRenderer {
       // No `canvas:` option — Pixi creates one and we append it.
     } else {
       const bag = rawContainer as {
-        canvas: OffscreenCanvas; width: number; height: number; dpr: number; zoom?: number; search?: string;
+        canvas: OffscreenCanvas; width: number; height: number; dpr: number; zoom?: number;
       };
-      search = bag.search ?? '';
       canvas = bag.canvas;
       initialW = bag.width;
       initialH = bag.height;
@@ -578,10 +577,10 @@ export class PixiRenderer implements IRenderer {
     // Plan: melodic-engelbart Step 2.
     const fxKillSwitches = readFxKillSwitches();
 
-    // Machined art: bakes run on workers; until a ship's art is ready it
-    // draws today's look. `?art=classic` (the default for now) keeps it off.
-    if (readArtMode(search) === 'machined') {
-      const art = createArtService({ touch: this._isTouch, delayMs: readArtDelayMs(search) });
+    // Machined art: bakes run on workers; until an entity's art is ready it
+    // draws today's look. The mode is resolved on the main thread (artMode.ts).
+    if (this._artOpts.mode === 'machined') {
+      const art = createArtService({ touch: this._isTouch, delayMs: this._artOpts.delayMs ?? 0 });
       this._artCtx.art = art;
       this._artCtx.sunAz = art.lightRig.sunAz;
     }

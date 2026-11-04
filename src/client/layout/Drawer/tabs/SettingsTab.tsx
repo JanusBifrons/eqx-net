@@ -2,6 +2,8 @@ import { Box, Button, Divider, FormControlLabel, Stack, Switch, Typography } fro
 import HomeIcon from '@mui/icons-material/Home';
 import { useUIStore } from '../../../state/store';
 import { PushNotificationToggle } from '../../../components/PushNotificationToggle';
+import { useState } from 'react';
+import { loadArtPreference, saveArtPreference } from '../../../render/art/artMode';
 
 /**
  * Mobile-drawer Settings tab.
@@ -22,6 +24,14 @@ export function SettingsTab(): JSX.Element {
   const setShowServerGhost = useUIStore((s) => s.setShowServerGhost);
   const setPhase = useUIStore((s) => s.setPhase);
   const setDrawerOpen = useUIStore((s) => s.setDrawerOpen);
+
+  // Graphics: the Machined look (default) or today's flat look. Per device;
+  // read when the game loads, so a change applies on the next load.
+  const [machinedArt, setMachinedArt] = useState(() => loadArtPreference() !== 'classic');
+  const onArtToggle = (on: boolean): void => {
+    setMachinedArt(on);
+    saveArtPreference(on ? 'machined' : 'classic');
+  };
 
   const onReturnToMenu = (): void => {
     setPhase('meta');
@@ -46,6 +56,31 @@ export function SettingsTab(): JSX.Element {
         <Typography variant="caption" sx={{ color: '#9aa0b4', display: 'block', mt: 0.5 }}>
           Leaves the current sector and returns to the landing screen.
         </Typography>
+      </Box>
+
+      <Divider />
+
+      <Box>
+        <Typography variant="overline" sx={{ color: '#9aa0b4', display: 'block', mb: 1 }}>
+          Graphics
+        </Typography>
+        <FormControlLabel
+          control={
+            <Switch
+              checked={machinedArt}
+              onChange={(e) => onArtToggle(e.target.checked)}
+              inputProps={{ 'aria-label': 'Detailed ship and structure art', 'data-testid': 'settings-toggle-machined-art' } as React.InputHTMLAttributes<HTMLInputElement>}
+            />
+          }
+          label={
+            <Box>
+              <Typography variant="body2">Detailed art</Typography>
+              <Typography variant="caption" color="text.secondary">
+                Lit, panelled ships and structures. Off: the simple flat look. Applies the next time the game loads.
+              </Typography>
+            </Box>
+          }
+        />
       </Box>
 
       <Divider />
