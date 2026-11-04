@@ -77,3 +77,16 @@ test('a beam gets the new glow layer with ?fx=new', async ({ browser }) => {
   await page.screenshot({ path: 'diag/e2e-screenshots/fx-weapons/beam.png' });
   await ctx.close();
 });
+
+test('a destroyed drone goes up in the new explosion with ?fx=new (B4)', async ({ browser }) => {
+  const { ctx, page } = await join(browser, 'fighter', true);
+  // The parked drone is hull-exposed; auto-fire kills it. Its death must
+  // play a new explosion, not today's particle burst.
+  await page.waitForFunction(
+    () => ((window as unknown as { __eqxArtStats?: () => { fxExplosions?: number } }).__eqxArtStats?.().fxExplosions ?? 0) > 0,
+    undefined, { timeout: 60_000 },
+  );
+  mkdirSync('diag/e2e-screenshots/fx-weapons', { recursive: true });
+  await page.screenshot({ path: 'diag/e2e-screenshots/fx-weapons/explosion.png' });
+  await ctx.close();
+});
