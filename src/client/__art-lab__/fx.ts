@@ -1186,6 +1186,12 @@ async function main(): Promise<void> {
   };
   (window as unknown as { __artlab: typeof api }).__artlab = api;
   update(0);
+  // ?play=1: play the scene live, looping (for trying it by eye).
+  if (qs.get('play') === '1') {
+    const t0 = performance.now();
+    const loop = (): void => { update(((performance.now() - t0) / 1000) % scene.duration); requestAnimationFrame(loop); };
+    requestAnimationFrame(loop);
+  }
 }
 
 function countNodes(c: Container): number {
