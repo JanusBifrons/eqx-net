@@ -533,7 +533,7 @@ export function dustTileTex(size = 512, count = 26, seed = 51): Img {
   const acc = new Float32Array(size * size);
   for (let i = 0; i < count; i++) {
     const sx = h01(i, seed) * size, sy = h01(i, seed + 1) * size;
-    const s = 1.2 + h01(i, seed + 2) * 2.8;
+    const s = 0.8 + h01(i, seed + 2) * 1.6;
     const b = 0.25 + 0.75 * h01(i, seed + 3);
     const rad = Math.ceil(s * 3);
     for (let oy = -rad; oy <= rad; oy++) {

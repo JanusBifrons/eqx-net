@@ -198,7 +198,7 @@ async function main(): Promise<void> {
       skySprites.push({ s: p, lx: -W * 0.32, ly: H * 0.26, parallax: 0.03, zoomPow: 0.1, size: 210, alpha: 1, tw: 0 });
     }
     // Dust streams past in front of the world (parallax above 1).
-    tileLayer(T.dust, 1.25, 1.0, 1, 0.55, 'add', fore, [0.3, 0.6, Infinity, Infinity]);
+    tileLayer(T.dust, 1.25, 1.0, 1, 0.3, 'add', fore, [0.3, 0.6, Infinity, Infinity]);
   }
 
   // ---- environment: rocks, wisps, wreck
