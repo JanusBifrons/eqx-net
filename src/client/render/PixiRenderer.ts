@@ -1,4 +1,4 @@
-import { Application, Graphics, Container } from 'pixi.js';
+import { Application, Graphics, Container, type Texture } from 'pixi.js';
 import { Camera } from './worker/Camera';
 import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
@@ -31,6 +31,7 @@ import { readFxKillSwitches } from './fxKillSwitches';
 import { createArtService } from './art/ArtService.js';
 import { warmUpJobs } from './art/warmUp.js';
 import { Backdrop } from './art/fx/Backdrop.js';
+import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
 import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
 import { BeamSpritePool } from './BeamSpritePool';
@@ -717,6 +718,16 @@ export class PixiRenderer implements IRenderer {
       missileSeenScratch: this._updateMissileSeenScratch,
       activeExplosions: this.missileExplosionsActive,
     };
+    // New weapons (B3, `?fx=new`): beam glow + flow over today's beam pools,
+    // and bolts / tracers as batched sprites. Nothing draws until baked.
+    if (this._artOpts.fx === true && this._artCtx.art) {
+      const art = this._artCtx.art;
+      this._fxLiveBeams = new FxBeams(art, 0x6fd0ff);
+      this._fxRemoteBeams = new FxBeams(art, 0xffaa44);
+      this._fxProjectiles = new FxProjectiles(art);
+      this.shipContainer.addChild(this._fxRemoteBeams.container, this._fxLiveBeams.container, this._fxProjectiles.container);
+      this._projectileUpdaterCtx.fx = this._fxProjectiles;
+    }
 
     // Effects subsystem (plan `wiggly-puppy` M3+). Constructed inside
     // PixiRenderer.init so the same single seam serves both the worker
@@ -749,6 +760,7 @@ export class PixiRenderer implements IRenderer {
         stage: this.app.stage,
         camera: this.camera,
         warpChain: this.warp,
+        ...(this._artOpts.fx === true && this._artCtx.art ? { fxGlow: this.fxGlowTexture() } : {}),
         // Per-frame pose lookup. Reads the RENDERED sprite position so
         // it stays in lockstep with whatever frame the engine emitter
         // ticks on (one-pose-per-frame invariant for drones too — the
@@ -1621,6 +1633,7 @@ export class PixiRenderer implements IRenderer {
           slot.toX = toX;
           slot.toY = toY;
           slot.alpha = alpha;
+          if (!isMining) this._fxRemoteHit[idx] = laser.hit === true;
           if (isMining) miningIdx++;
           else slotIdx++;
         }
@@ -1633,6 +1646,7 @@ export class PixiRenderer implements IRenderer {
       // the transform writes are cheap (see the always-call rationale above).
       this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx);
       this.remoteBeamGfx!.visible = true;
+      this._fxRemoteBeams?.setBeams(this._remoteBeamCache, slotIdx, performance.now(), this._fxRemoteHit);
       if (this._miningBeamPool && this.miningBeamGfx) {
         this._miningBeamPool.setBeams(this._miningBeamCache, miningIdx);
         this.miningBeamGfx.visible = miningIdx > 0;
@@ -1641,6 +1655,7 @@ export class PixiRenderer implements IRenderer {
     } else if (this._remoteBeamPool && this.remoteBeamGfx) {
       this.remoteBeamGfx.visible = false;
       this._remoteBeamPool.hideAll();
+      this._fxRemoteBeams?.hideAll();
       this._remoteBeamCacheCount = 0;
       if (this._miningBeamPool && this.miningBeamGfx) {
         this.miningBeamGfx.visible = false;
@@ -1709,6 +1724,7 @@ export class PixiRenderer implements IRenderer {
       // Sprite-pool driven render (matches remoteBeam path) — always re-set.
       this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx);
       this.liveBeamGfx!.visible = true;
+      this._fxLiveBeams?.setBeams(this._liveBeamCache, slotIdx, performance.now());
       // E2E observable: publish the ACTUAL drawn beam origin (the sprite
       // transform), not a recompute — this is what catches the detach bug.
       this.feedback.liveBeamRenderedFromX = this._liveBeamPool.renderedFromX;
@@ -1716,6 +1732,7 @@ export class PixiRenderer implements IRenderer {
     } else {
       if (this.liveBeamGfx) this.liveBeamGfx.visible = false;
       this._liveBeamPool?.hideAll();
+      this._fxLiveBeams?.hideAll();
       this._liveBeamCacheCount = 0;
       this.feedback.liveBeamRenderedFromX = null;
       this.feedback.liveBeamRenderedFromY = null;
@@ -2382,6 +2399,19 @@ export class PixiRenderer implements IRenderer {
     this._backdrop?.setSector(sectorKey);
   }
 
+  /** The baked glow texture for impact sparks (null until baked). */
+  private fxGlowTexture(): () => Texture | null {
+    const h = this._artCtx.art!.fx('glow', undefined, undefined, false);
+    return () => (h.state === 'ready' && h.fx ? h.fx.tex : null);
+  }
+
+  /** New weapon effects (`?fx=new`, B3). */
+  private _fxLiveBeams: FxBeams | null = null;
+  private _fxRemoteBeams: FxBeams | null = null;
+  private _fxProjectiles: FxProjectiles | null = null;
+  /** Per remote beam this frame: did it land on something (FxBeams' flare). */
+  private readonly _fxRemoteHit: boolean[] = [];
+
   /** New backdrop (`?fx=new`), and the sector it shows. */
   private _backdrop: Backdrop | null = null;
   private _sectorKey: string | null = null;
@@ -2587,7 +2617,7 @@ export class PixiRenderer implements IRenderer {
 
   /** Machined art status: the service's counts plus how many ship sprites
    *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: { on: boolean; nebula: string | null } } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: { on: boolean; nebula: string | null }; fxProjectiles: number; fxBeam: boolean } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;
@@ -2597,7 +2627,7 @@ export class PixiRenderer implements IRenderer {
       if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
     const art = this._artCtx.art;
-    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), ...(art ? art.stats() : {}) };
+    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, ...(art ? art.stats() : {}) };
   }
 
   dispose(): void {
