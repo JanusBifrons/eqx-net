@@ -19,7 +19,7 @@ test.describe('Machined art', () => {
   test('a ship draws today\'s look while its art bakes, then swaps to Machined', async ({ browser }) => {
     const { ctx, page } = await launchTestClient(browser, {
       spawnX: 0, spawnY: 0, room: 'test-sector-fast', shipKind: 'heavy',
-      extraParams: { worker: '0', art: 'machined', artDelayMs: '4000', zoom: '3' },
+      extraParams: { worker: '0', art: 'machined', artDelayMs: '9000', zoom: '3' },
     });
     await page.waitForFunction(() => {
       const s = (window as unknown as { __eqxArtStats?: () => { classicShipSprites: number; machinedSprites: number } }).__eqxArtStats?.();
@@ -76,6 +76,25 @@ test.describe('Machined art — structures and asteroids', () => {
     expect(s.failed ?? 0).toBe(0);
     mkdirSync('diag/e2e-screenshots/machined-art', { recursive: true });
     await page.screenshot({ path: 'diag/e2e-screenshots/machined-art/base-machined.png' });
+    await ctx.close();
+  });
+});
+
+test.describe('Machined art — warm-up', () => {
+  test('the landing galaxy map bakes the common art before any sector is joined', async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    const page = await ctx.newPage();
+    const base = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+    await page.goto(`${base}?worker=0&art=machined`);
+    // No room joined: only the warm-up is asking for art. Ships (~15) and the
+    // common structures (~18) all become ready while the map is up.
+    await page.waitForFunction(
+      () => ((window as unknown as { __eqxArtStats?: () => { ready?: number } }).__eqxArtStats?.().ready ?? 0) >= 25,
+      undefined, { timeout: 30_000 },
+    );
+    const s = await stats(page);
+    expect(s.machinedSprites, 'no game sprites yet: this is all warm-up').toBe(0);
+    expect(s.failed ?? 0).toBe(0);
     await ctx.close();
   });
 });
