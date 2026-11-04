@@ -176,7 +176,7 @@ async function main(): Promise<void> {
   interface SkySprite { s: Sprite; lx: number; ly: number; parallax: number; zoomPow: number; size: number; alpha: number; tw: number }
   const skySprites: SkySprite[] = [];
   if (T) {
-    if (NEB !== 'none') tileLayer(T.nebula, 0.012, 0.08, 2.6, NEB === 'dark' ? 0.85 : 0.72, NEB === 'dark' ? 'normal' : 'add', sky);
+    if (NEB !== 'none') tileLayer(T.nebula, 0.012, 0.08, 2.6, NEB === 'dark' ? 0.85 : NEB === 'emission' ? 0.48 : 0.72, NEB === 'dark' ? 'normal' : 'add', sky);
     tileLayer(T.starFar, 0.02, 0.1, 1, 0.95, 'add', sky);
     const gal = (lx: number, ly: number, size: number): void => {
       skySprites.push({ s: sprite(T.galaxy, sky, 0xffffff), lx, ly, parallax: 0.015, zoomPow: 0.06, size, alpha: 0.5, tw: 0 });
