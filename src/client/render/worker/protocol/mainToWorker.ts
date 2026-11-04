@@ -43,6 +43,8 @@ export interface BootMsg {
   artDelayMs?: number;
   /** New effects + backdrop (`?fx=new`). */
   fx?: boolean;
+  /** Speed effects off (Settings → Graphics / `?speedfx=0`). Absent = on. */
+  speedFxOff?: boolean;
   /**
    * Touch-device flag (Equinox P6.1). The worker has no reliable
    * `window.matchMedia`, so the main thread (which knows via `isTouchDevice()`)

@@ -15,7 +15,7 @@
  */
 
 import { PixiRenderer } from '../render/PixiRenderer.js';
-import { loadArtPreference, readArtDelayMs, resolveArtMode, resolveFxMode, type ArtOptions } from '../render/art/artMode.js';
+import { loadArtPreference, loadSpeedFxPreference, readArtDelayMs, resolveArtMode, resolveFxMode, resolveSpeedFx, type ArtOptions } from '../render/art/artMode.js';
 import {
   WorkerRendererClient,
   supportsOffscreenRenderer,
@@ -55,6 +55,7 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
     delayMs: readArtDelayMs(search),
   };
   art.fx = resolveFxMode(search, art.mode, navigator.webdriver === true);
+  art.speedFx = resolveSpeedFx(search, loadSpeedFxPreference());
   const renderer: IRenderer = useWorker ? new WorkerRendererClient(isTouch, art) : new PixiRenderer(isTouch, art);
   // Click-to-inspect (Item B) — DEV/E2E deterministic selection hook. Only the
   // main-thread PixiRenderer exposes `devSelectAtWorld` (the worker renderer is

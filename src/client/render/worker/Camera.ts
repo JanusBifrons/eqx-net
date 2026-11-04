@@ -195,6 +195,17 @@ export class Camera {
   private readonly dampY: DampState = { v: 0 };
   private readonly dampZ: DampState = { v: 0 };
 
+  // Speed zoom-out (plan iridescent-seeking-rainbow v5, C3). The drawn scale
+  // is the player's zoom × this factor. Every tick restores the player's zoom
+  // first, runs the usual zoom/follow logic on it, then re-applies the factor
+  // round the screen centre, so wheel, pinch, glide and clamps never see it
+  // and the player's chosen zoom is never changed. Between ticks the target
+  // holds the DRAWN scale, so picking (screenToWorld) stays exact.
+  private speedReq = 1;
+  private speedApplied = 1;
+  private baseScale = 1;
+  private drawnScale = 1;
+
   constructor(
     private readonly target: CameraTarget,
     opts: CameraOptions = {},
@@ -232,7 +243,7 @@ export class Camera {
    */
   setZoom(scale: number): void {
     const s = this.clampScale(scale);
-    zoomAround(this.target, this.screenW / 2, this.screenH / 2, s);
+    zoomAround(this.target, this.screenW / 2, this.screenH / 2, s * this.speedApplied);
     this.targetScale = s;
     this.hasZoomTarget = false;
   }
@@ -323,7 +334,7 @@ export class Camera {
       this.momentum.clear();
     } else if (this.pointers.size === 2) {
       const [a, b] = [...this.pointers.values()];
-      if (a && b) this.pinch.begin(a, b, this.target.scale.x);
+      if (a && b) this.pinch.begin(a, b, this.target.scale.x / this.speedApplied);
       // Pan is suspended during pinch.
       this.drag.suspend();
       // Latch the gesture as multi-touch so no release in it counts as a tap.
@@ -343,7 +354,7 @@ export class Camera {
       const step = this.pinch.step(a, b);
       if (step) {
         const newScale = this.clampScale(this.pinch.startScale() * step.ratio);
-        zoomAround(this.target, step.midX, step.midY, newScale);
+        zoomAround(this.target, step.midX, step.midY, newScale * this.speedApplied);
         // Pinch is direct (no ease). Keep targetScale synced + cancel any
         // in-flight wheel ease so the two don't fight.
         this.targetScale = newScale;
@@ -448,6 +459,44 @@ export class Camera {
    * follow remain per-frame factors (unchanged behaviour).
    */
   tick(dtMs: number = 16.67): void {
+    this.applySpeedZoom(1);
+    this.tickInner(dtMs);
+    // The cinematic director frames its own shots: no speed zoom while it runs.
+    this.applySpeedZoom(this.directed ? 1 : this.speedReq);
+  }
+
+  /**
+   * Speed zoom-out factor for the next ticks (1 = none, clamped to 0.5..1).
+   * Set every frame by the renderer from the backdrop's eased speed.
+   */
+  setSpeedZoom(mul: number): void {
+    this.speedReq = mul >= 1 ? 1 : mul <= 0.5 ? 0.5 : mul;
+  }
+
+  /** The speed factor currently in the drawn scale (stats / tests). */
+  speedZoom(): number {
+    return this.speedApplied;
+  }
+
+  /** The player's own zoom (the drawn scale without the speed factor). */
+  playerScale(): number {
+    return this.target.scale.x / this.speedApplied;
+  }
+
+  /** Swap the applied speed factor round the screen centre. Going back to 1
+   *  restores the exact player zoom when nothing else touched the scale. */
+  private applySpeedZoom(mul: number): void {
+    if (mul === this.speedApplied) return;
+    const cur = this.target.scale.x;
+    const base = cur === this.drawnScale ? this.baseScale : cur / this.speedApplied;
+    const next = base * mul;
+    zoomAround(this.target, this.screenW / 2, this.screenH / 2, next);
+    this.speedApplied = mul;
+    this.baseScale = base;
+    this.drawnScale = this.target.scale.x;
+  }
+
+  private tickInner(dtMs: number): void {
     // Cinematic director owns the camera outright while active.
     if (this.directed) {
       this.tickDirector(dtMs);

@@ -20,6 +20,9 @@ export interface ArtOptions {
   /** New effects + backdrop (plan iridescent-seeking-rainbow v3). Needs the
    *  Machined art service; off by default until the rollout's last PR. */
   fx?: boolean;
+  /** Speed effects (C3): dust streaks + a slight zoom-out when flying fast.
+   *  Absent means on. Only drawn with the new backdrop (`fx`). */
+  speedFx?: boolean;
 }
 
 export const ART_OFF: ArtOptions = { mode: 'classic' };
@@ -70,6 +73,28 @@ export function loadArtPreference(store: Store | null = defaultStore()): ArtMode
   } catch {
     return null;
   }
+}
+
+const SPEED_KEY = 'eqxSpeedFx';
+
+/** Speed effects: `?speedfx=0|1` wins, else the saved choice, else on. */
+export function resolveSpeedFx(search: string, saved: boolean | null): boolean {
+  const m = /[?&]speedfx=(0|1)\b/.exec(search);
+  return m ? m[1] === '1' : saved ?? true;
+}
+
+/** The player's saved speed-effects choice on this device, or null. */
+export function loadSpeedFxPreference(store: Store | null = defaultStore()): boolean | null {
+  try {
+    const v = store?.getItem(SPEED_KEY);
+    return v === '1' ? true : v === '0' ? false : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveSpeedFxPreference(on: boolean, store: Store | null = defaultStore()): void {
+  try { store?.setItem(SPEED_KEY, on ? '1' : '0'); } catch { /* blocked storage: not saved */ }
 }
 
 export function saveArtPreference(mode: ArtMode, store: Store | null = defaultStore()): void {

@@ -595,7 +595,7 @@ export class PixiRenderer implements IRenderer {
       // New backdrop (B2): behind the world, with dust in front of it. Until
       // its star tiles are baked, today's starfield keeps drawing.
       if (this._artOpts.fx === true) {
-        const bd = new Backdrop(art, () => this.effects?.getQuality() ?? 'medium');
+        const bd = new Backdrop(art, () => this.effects?.getQuality() ?? 'medium', this._artOpts.speedFx === false ? 'off' : 'large');
         const wi = this.app.stage.getChildIndex(this.world);
         this.app.stage.addChildAt(bd.sky, wi);
         this.app.stage.addChildAt(bd.fore, wi + 2);
@@ -1875,6 +1875,9 @@ export class PixiRenderer implements IRenderer {
     // Background layers — run AFTER moveCenter so they use this frame's
     // camera position (otherwise stars and grid lag by one frame).
     const backdropOn = this._backdrop?.update(this.camera, performance.now()) ?? false;
+    // Speed effects (C3): the backdrop's eased speed asks the camera to zoom
+    // out a little; applied on the camera's next tick (none while it's baking).
+    this.camera.setSpeedZoom(backdropOn ? this._backdrop!.speedZoom() : 1);
     if (backdropOn) this.starfield?.setHidden(true);
     else this.starfield?.update(this.camera);
     this.backgroundGrid?.update(this.camera);
@@ -2487,9 +2490,10 @@ export class PixiRenderer implements IRenderer {
   private _sectorKey: string | null = null;
 
   /** DEV/E2E: what the backdrop is showing. */
-  backdropStats(): { on: boolean; nebula: string | null; landmarks: number; sky: string; density: number } {
+  backdropStats(): { on: boolean; nebula: string | null; landmarks: number; sky: string; density: number; speed: number; speedZoom: number; speedLevel: string } {
     const b = this._backdrop;
-    return { on: b?.sky.visible === true, nebula: b?.nebulaKey() ?? null, landmarks: b?.visibleLandmarks ?? 0, sky: b?.skySignature ?? '', density: b?.density ?? 0 };
+    return { on: b?.sky.visible === true, nebula: b?.nebulaKey() ?? null, landmarks: b?.visibleLandmarks ?? 0, sky: b?.skySignature ?? '', density: b?.density ?? 0,
+      speed: b?.speed.sf ?? 0, speedZoom: this.camera.speedZoom(), speedLevel: b?.speedLevel ?? 'off' };
   }
 
   setSpectator(active: boolean): void {
@@ -2691,7 +2695,7 @@ export class PixiRenderer implements IRenderer {
 
   /** Machined art status: the service's counts plus how many ship sprites
    *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: { on: boolean; nebula: string | null; landmarks: number; sky: string; density: number }; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;

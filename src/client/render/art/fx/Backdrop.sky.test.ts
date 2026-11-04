@@ -91,3 +91,35 @@ describe('Backdrop nebula volumes (C2)', () => {
     expect(b.density).toBe(0);
   });
 });
+
+describe('Backdrop speed effects (C3)', () => {
+  const fly = (b: Backdrop, vx: number, vy: number): void => {
+    let x = 0, y = 0;
+    for (let f = 0; f <= 120; f++) { b.update(cam(x, y), f * 16); x += vx * 0.016; y += vy * 0.016; }
+  };
+  it('at boost the dust streaks along the motion and the camera is asked to zoom out', () => {
+    const b = new Backdrop(fakeArt(), () => 'high', 'large');
+    b.setSector('any');
+    fly(b, 0, 900); // straight down the screen (Pixi Y-down)
+    expect(b.speed.sf).toBeGreaterThan(0.9);
+    expect(b.speedZoom()).toBeLessThan(0.83);
+    const m = b.fore.children.find((c) => c instanceof Sprite && c.visible && Math.abs(c.scale.x / c.scale.y - 1) > 1)!;
+    expect(m, 'a streaked mote').toBeDefined();
+    expect(m.rotation).toBeCloseTo(Math.PI / 2, 2);
+  });
+
+  it('at rest, or with speed effects off, the dust is round and there is no zoom-out', () => {
+    const rest = new Backdrop(fakeArt(), () => 'high', 'large');
+    rest.setSector('any');
+    fly(rest, 0, 0);
+    expect(rest.speedZoom()).toBe(1);
+    const off = new Backdrop(fakeArt(), () => 'high', 'off');
+    off.setSector('any');
+    fly(off, 0, 900);
+    expect(off.speedZoom()).toBe(1);
+    for (const b of [rest, off]) {
+      const streaked = b.fore.children.filter((c) => c instanceof Sprite && c.visible && c.texture !== Texture.WHITE && Math.abs(c.scale.x / c.scale.y - 1) > 0.01);
+      expect(streaked).toHaveLength(0);
+    }
+  });
+});

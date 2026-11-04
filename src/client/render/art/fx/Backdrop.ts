@@ -16,6 +16,10 @@
  *    colour grade while inside. Endless, seeded from the sector key;
  *  - (in front of the world) fore dust motes.
  *
+ * Speed effects (C3): at speed the dust motes stretch along the motion and
+ * brighten, and `speedZoom()` asks the camera to zoom out a little. The
+ * speed is the camera's own eased motion (`stepSpeedFx`).
+ *
  * Every texture is made once (art/fx/fxTextures.ts via `ArtService.fx`) and
  * only moved and scaled per frame. Until the star tiles are baked, `update`
  * returns false and the caller keeps drawing today's starfield.
@@ -26,7 +30,7 @@ import { Container, Sprite, Texture, TilingSprite } from 'pixi.js';
 import type { ArtHandle, ArtService } from '../ArtService.js';
 import { hashStr } from '../raster.js';
 import { backdropXf, zoomWindow, type TileXf } from './fxMath.js';
-import { hashKey, landmarkScreen, nebulaDensityAtSeed, sectorSky, SKY_LAYERS, visitNebulae, visitSkyLayer, type Landmark, type NebulaRegion } from './depth.js';
+import { hashKey, landmarkScreen, nebulaDensityAtSeed, newSpeedFxState, sectorSky, SKY_LAYERS, SPEED_FX, speedZoomFor, stepSpeedFx, visitNebulae, visitSkyLayer, type Landmark, type NebulaRegion, type SpeedFxLevel } from './depth.js';
 import { h01 } from './fxTextures.js';
 
 export interface BackdropCamera {
@@ -143,6 +147,8 @@ export class Backdrop {
   private nebGradeTint = 0xffffff;
   /** How deep in a nebula the camera is (0..1, stats). */
   density = 0;
+  /** Eased camera motion for the speed effects. */
+  readonly speed = newSpeedFxState();
   private readonly visitNebula = (g: NebulaRegion): void => {
     if (this.nebSlot >= NEB_SLOTS) return;
     const slot = this.wisps[this.nebSlot++]!;
@@ -184,7 +190,9 @@ export class Backdrop {
   /** This sector's sky, e.g. "planet@1200,-800 moon@..." (stats / E2E). */
   skySignature = '';
 
-  constructor(private readonly art: ArtService, private readonly getQuality: () => string) {
+  constructor(private readonly art: ArtService, private readonly getQuality: () => string,
+    /** Speed effects strength ('off' turns them off: Settings → Graphics). */
+    readonly speedLevel: SpeedFxLevel = 'large') {
     this.sky.eventMode = 'none';
     this.fore.eventMode = 'none';
     this.fore.blendMode = 'add';
@@ -283,6 +291,7 @@ export class Backdrop {
     const zoom = cam.scale.x, W = cam.screenWidth, H = cam.screenHeight;
     const cx = cam.center.x, cy = cam.center.y;
     const q = this.getQuality();
+    stepSpeedFx(this.speed, cx, cy, nowMs);
     // Nebulae live in GAME space (Y up); the camera centre is Pixi space (Y down).
     const d = nebulaDensityAtSeed(this.nebSeed, cx, -cy, this.scratchR);
     this.density = d;
@@ -338,9 +347,14 @@ export class Backdrop {
     const nearN = !glow || q === 'low' || q === 'minimal' ? 0 : q === 'medium' ? 40 : NEAR_MOTES;
     const foreN = !glow || q === 'low' || q === 'minimal' ? 0 : q === 'medium' ? 16 : FORE_MOTES;
     this.fore.visible = foreN > 0 || this.nebSlot > 0;
-    this.layoutMotes(this.nearMotes, nearN, glow, 0.4, 0.7, cx, cy, zoom, W, H);
-    this.layoutMotes(this.foreMotes, foreN, glow, 1.3, 1.1, cx, cy, zoom, W, H);
+    this.layoutMotes(this.nearMotes, nearN, glow, 0.4, 0.7, 0.4, cx, cy, zoom, W, H);
+    this.layoutMotes(this.foreMotes, foreN, glow, 1.3, 1.1, 1, cx, cy, zoom, W, H);
     return true;
+  }
+
+  /** The camera zoom factor the speed effects ask for (1 = none). */
+  speedZoom(): number {
+    return speedZoomFor(this.speedLevel, this.speed.sf);
   }
 
   destroy(): void {
@@ -350,10 +364,16 @@ export class Backdrop {
 
   /** Motes wrap around the camera inside a square a little larger than the
    *  screen, so they never run out. */
-  private layoutMotes(list: Mote[], n: number, glow: Texture | null, parallax: number, zoomPow: number,
+  private layoutMotes(list: Mote[], n: number, glow: Texture | null, parallax: number, zoomPow: number, gain: number,
     cx: number, cy: number, zoom: number, W: number, H: number): void {
     const s = Math.pow(Math.max(1e-3, zoom), zoomPow);
     const P = (Math.max(W, H) * 1.25) / s;
+    // Streaks along the motion at speed (the Pixi world is Y-down like the
+    // screen, so the camera velocity's angle is the on-screen angle).
+    const p = SPEED_FX[this.speedLevel], sp = this.speed;
+    const stretch = 1 + p.stretch * sp.sf * gain;
+    const bright = 1 + p.streakGain * sp.sf;
+    const ang = sp.vx * sp.vx + sp.vy * sp.vy > 1 ? Math.atan2(sp.vy, sp.vx) : 0;
     for (let i = 0; i < list.length; i++) {
       const m = list[i]!;
       m.s.visible = i < n && glow !== null;
@@ -362,8 +382,9 @@ export class Backdrop {
       let lx = (m.lx * P - cx * parallax) % P; if (lx < 0) lx += P;
       let ly = (m.ly * P - cy * parallax) % P; if (ly < 0) ly += P;
       m.s.position.set(W / 2 + (lx - P / 2) * s, H / 2 + (ly - P / 2) * s);
-      m.s.scale.set(m.size / glow!.width);
-      m.s.alpha = m.alpha;
+      m.s.rotation = ang;
+      m.s.scale.set((m.size * stretch) / glow!.width, m.size / glow!.height);
+      m.s.alpha = Math.min(1, m.alpha * bright);
     }
   }
 

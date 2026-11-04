@@ -2,7 +2,7 @@
  * Depth, scale and speed (plan iridescent-seeking-rainbow v4, round 2).
  */
 import { describe, it, expect } from 'vitest';
-import { DEPTH_LADDER, hashKey, landmarkScreen, nebulaCell, nebulaDensityAt, nebulaDensityAtSeed, nebulaRegions, visitNebulae, sectorSky, skyCell, SKY_LAYERS, SPEED_FX, speedFactor, visitSkyLayer } from './depth.js';
+import { DEPTH_LADDER, hashKey, landmarkScreen, nebulaCell, nebulaDensityAt, nebulaDensityAtSeed, nebulaRegions, visitNebulae, sectorSky, skyCell, SKY_LAYERS, SPEED_FX, speedFactor, visitSkyLayer, newSpeedFxState, stepSpeedFx, speedZoomFor } from './depth.js';
 
 describe('depth ladder', () => {
   it('spreads from very far to in front of the world, far to near', () => {
@@ -116,5 +116,41 @@ describe('endless nebula volumes (C2)', () => {
     let n = 0;
     visitNebulae(seed, cx, cy, 100, region(), () => { n++; });
     expect(n).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('speed effects state (C3)', () => {
+  it('eases up to full speed in about 0.6 s and back down when stopping', () => {
+    const st = newSpeedFxState();
+    let x = 0, t = 0;
+    stepSpeedFx(st, x, 0, t);
+    const at = (ms: number): void => { while (t < ms) { t += 16; x += 900 * 0.016; stepSpeedFx(st, x, 0, t); } };
+    at(160);
+    expect(st.sf).toBeGreaterThan(0.2);
+    expect(st.sf).toBeLessThan(0.6);
+    at(1500);
+    expect(st.sf).toBeGreaterThan(0.95);
+    expect(st.vx).toBeGreaterThan(800);
+    expect(Math.abs(st.vy)).toBeLessThan(1);
+    for (let i = 0; i < 100; i++) { t += 16; stepSpeedFx(st, x, 0, t); }
+    expect(st.sf).toBeLessThan(0.01);
+  });
+
+  it('ignores jumps (respawn, sector change) and re-primes after a hitch', () => {
+    const st = newSpeedFxState();
+    stepSpeedFx(st, 0, 0, 0);
+    stepSpeedFx(st, 0, 0, 16);
+    stepSpeedFx(st, 50_000, 0, 32); // a teleport
+    expect(st.sf).toBe(0);
+    stepSpeedFx(st, 90_000, 0, 1000); // a 1 s gap: re-prime, no speed
+    expect(st.sf).toBe(0);
+    stepSpeedFx(st, 90_000, 0, 1016);
+    expect(st.sf).toBe(0);
+  });
+
+  it('large asks for up to 20 % zoom-out; off asks for none', () => {
+    expect(speedZoomFor('large', 1)).toBeCloseTo(0.8, 10);
+    expect(speedZoomFor('large', 0)).toBe(1);
+    expect(speedZoomFor('off', 1)).toBe(1);
   });
 });
