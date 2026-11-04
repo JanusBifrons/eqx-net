@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Art lab phone run — EQX Peri</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #05070f; color: #dfe6f2; font: 14px/1.45 system-ui, sans-serif; }
+    #stage { position: fixed; inset: 0; border: 0; width: 100%; height: 100%; }
+    #panel { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); background: rgba(5, 7, 15, 0.86); }
+    #panel b { color: #ffb35a; }
+    #go { font: 600 15px system-ui; padding: 10px 16px; border: 0; border-radius: 4px; background: #ffb35a; color: #05070f; }
+    pre { margin: 6px 0 0; white-space: pre-wrap; font: 12px/1.4 ui-monospace, monospace; }
+  </style>
+</head>
+<body>
+  <!-- Dev-only phone run for the art lab (plan soft-leaping-truffle v5). -->
+  <iframe id="stage" title="Art lab scene"></iframe>
+  <div id="panel">
+    <div id="status">Machined phone run: about 1 minute. Keep the screen on and the phone still.</div>
+    <button id="go" type="button">Start</button>
+    <pre id="out"></pre>
+  </div>
+  <script type="module" src="./phone.ts"></script>
+</body>
+</html>

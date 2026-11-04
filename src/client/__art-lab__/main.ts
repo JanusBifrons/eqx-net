@@ -180,7 +180,9 @@ async function main(): Promise<void> {
   const H = Number(qs.get('h') ?? window.innerHeight) | 0;
   const app = new Application();
   await app.init({
-    width: W, height: H, background: 0x04060d, antialias: STYLE !== 'pixel', resolution: 1,
+    width: W, height: H, background: 0x04060d, antialias: STYLE !== 'pixel',
+    // ?dpr=1 renders at the device pixel ratio, as the game does on touch.
+    resolution: qs.get('dpr') === '1' ? window.devicePixelRatio || 1 : 1, autoDensity: qs.get('dpr') === '1',
     autoStart: false, preference: 'webgl', roundPixels: STYLE === 'pixel', preserveDrawingBuffer: true,
   });
   host.appendChild(app.canvas);
