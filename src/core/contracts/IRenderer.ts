@@ -506,7 +506,9 @@ export interface RenderMirror {
       | 'shield-hit'
       | 'warp-arrive'
       | 'destruction-shock'
-      | 'shield-flash';
+      | 'shield-flash'
+      /** A shield fence stopped a bolt or missile at (worldX, worldY). */
+      | 'wall-hit';
     worldX: number;
     worldY: number;
     intensity?: number;

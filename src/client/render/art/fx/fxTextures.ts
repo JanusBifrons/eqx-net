@@ -757,5 +757,5 @@ export function bakeFxImg(id: FxId, variant: string | undefined, seed: number | 
 export const FX_WARM: readonly FxId[] = [
   'glow', 'streak', 'beamFlow', 'ring', 'spark', 'smoke', 'trail', 'shieldContact', 'shieldHit', 'fireball',
   'shieldDome', 'spikeStar', 'sun', 'starsFar', 'starsMid', 'starsNear', 'dust', 'galaxy', 'wisp',
-  'fenceStrip',
+  'fenceStrip', 'fenceRipple', 'fenceContact',
 ];

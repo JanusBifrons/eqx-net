@@ -177,8 +177,16 @@ const FENCE_SEG = 42;
 const RAISE_S = 0.45;
 const FALL_S = 0.3;
 
+const FENCE_HITS = 4;
+const FENCE_HIT_LIFE = 0.45;
+/** Contact "angle" units: 100 world units along the wall. */
+const FENCE_POS_UNIT = 100;
+const MAX_PENDING_BEAMS = 16;
+
 interface FenceView {
-  key: number; gen: number;
+  key: number; gen: number; len: number;
+  hitPos: Float32Array; hitT: Float32Array; hitNext: number;
+  contacts: ShieldContacts; ripples: Sprite[]; held: Sprite[];
   ax: number; ay: number; bx: number; by: number;
   state: 0 | 1 | 2; // 0 down, 1 up, 2 open gate
   changedAt: number; prevState: 0 | 1 | 2;
@@ -192,19 +200,79 @@ export class FxFences {
   private readonly strip: ArtHandle;
   private readonly glow: ArtHandle;
   private readonly spark: ArtHandle;
+  private readonly ripple: ArtHandle;
+  private readonly contact: ArtHandle;
   private gen = 0;
+  private lastMs = 0;
+  /** Fence hits played so far (diagnostics / E2E). */
+  hitCount = 0;
+  /** Beams resting on fences, buffered until the next layout (the fence
+   *  frame runs before the beams are drawn). */
+  private readonly pendKey = new Int32Array(MAX_PENDING_BEAMS);
+  private readonly pendX = new Float32Array(MAX_PENDING_BEAMS);
+  private readonly pendY = new Float32Array(MAX_PENDING_BEAMS);
+  private pendN = 0;
 
   constructor(art: ArtService, private readonly tint = 0x7fd8ff) {
     this.container.blendMode = 'add';
     this.container.eventMode = 'none';
+    this.ripple = art.fx('fenceRipple', undefined, undefined, false);
+    this.contact = art.fx('fenceContact', undefined, undefined, false);
     this.strip = art.fx('fenceStrip', undefined, undefined, false);
     this.glow = art.fx('glow', undefined, undefined, false);
     this.spark = art.fx('spark', undefined, undefined, false);
   }
 
-  ready(): boolean { return !!(this.strip.fx && this.strip.state === 'ready' && tex(this.glow) && tex(this.spark)); }
+  ready(): boolean {
+    return !!(this.strip.fx && this.strip.state === 'ready' && this.ripple.fx && this.ripple.state === 'ready'
+      && tex(this.contact) && tex(this.glow) && tex(this.spark));
+  }
 
-  begin(): void { this.gen++; }
+  begin(): void {
+    this.gen++;
+    for (const v of this.views.values()) v.contacts.begin();
+  }
+
+  /** A fence stopped a bolt or missile at game-space (x, y): ripple on the
+   *  nearest blocking wall. False if no fence is there (or not ready). */
+  hitAt(x: number, y: number, nowMs: number): boolean {
+    if (!this.ready()) return false;
+    const v = this.nearestWall(x, -y);
+    if (!v) return false;
+    v.hitPos[v.hitNext] = this.along;
+    v.hitT[v.hitNext] = nowMs / 1000;
+    v.hitNext = (v.hitNext + 1) % FENCE_HITS;
+    this.hitCount++;
+    return true;
+  }
+
+  /** Beam `key` ends on a fence at game-space (x, y) this frame. */
+  beam(key: number, x: number, y: number): void {
+    if (this.pendN >= MAX_PENDING_BEAMS) return;
+    this.pendKey[this.pendN] = key; this.pendX[this.pendN] = x; this.pendY[this.pendN] = -y;
+    this.pendN++;
+  }
+
+  /** Beams currently held on fences. */
+  contactCount(): number {
+    let n = 0;
+    for (const v of this.views.values()) n += v.contacts.count();
+    return n;
+  }
+
+  /** Scratch from `nearestWall`: position along the wall, 0..1. */
+  private along = 0;
+  private nearestWall(px: number, py: number): FenceView | null {
+    let best: FenceView | null = null, bestD = FENCE_BAND * 1.5;
+    for (const v of this.views.values()) {
+      if (v.state !== 1) continue;
+      const dx = v.bx - v.ax, dy = v.by - v.ay, l2 = dx * dx + dy * dy || 1;
+      const t = Math.min(1, Math.max(0, ((px - v.ax) * dx + (py - v.ay) * dy) / l2));
+      const d = Math.hypot(px - (v.ax + dx * t), py - (v.ay + dy * t));
+      if (d < bestD) { bestD = d; best = v; this.along = t; }
+    }
+    return best;
+  }
 
   /**
    * One derived wall this frame (the same visitor arguments
@@ -228,12 +296,48 @@ export class FxFences {
 
   end(nowMs: number): void {
     const t = nowMs / 1000;
+    const dt = this.lastMs > 0 ? Math.min(0.1, Math.max(0, (nowMs - this.lastMs) / 1000)) : 0;
+    this.lastMs = nowMs;
+    // Beams that rested on a fence last frame.
+    for (let i = 0; i < this.pendN; i++) {
+      const v = this.nearestWall(this.pendX[i]!, this.pendY[i]!);
+      if (v) v.contacts.offer(this.pendKey[i]!, (this.along * v.len) / FENCE_POS_UNIT, 1);
+    }
+    this.pendN = 0;
+    const rippleFrames = this.ripple.fx!.frames;
+    const contactTex = tex(this.contact)!;
     const frames = this.strip.fx!.frames;
     const frame = frames[Math.floor(t * 10) % frames.length]!;
     for (const [key, v] of this.views) {
       if (v.gen !== this.gen) { this.hideView(v); this.views.delete(key); this.free.push(v); continue; }
       const dx = v.bx - v.ax, dy = v.by - v.ay, len = Math.hypot(dx, dy) || 1;
+      v.len = len;
       const ux = dx / len, uy = dy / len, ang = Math.atan2(dy, dx);
+      v.contacts.end(dt);
+      // Hits: a ripple running along the wall from where the shot landed.
+      for (let k = 0; k < FENCE_HITS; k++) {
+        const s = v.ripples[k]!;
+        const fi = v.state === 1 ? flipFrame(t - v.hitT[k]!, FENCE_HIT_LIFE, rippleFrames.length) : -1;
+        s.visible = fi >= 0;
+        if (fi < 0) continue;
+        const d = v.hitPos[k]! * len;
+        s.texture = rippleFrames[fi]!;
+        s.position.set(v.ax + ux * d, v.ay + uy * d); s.rotation = ang;
+        s.scale.set((FENCE_BAND * 2.6) / s.texture.width, (FENCE_BAND * 1.15) / s.texture.height);
+        s.alpha = 1;
+      }
+      // Lasers held on the wall: a steady lit patch each.
+      for (let k = 0; k < SHIELD_CONTACTS; k++) {
+        const s = v.held[k]!;
+        const I = v.state === 1 ? v.contacts.intensity(k) : 0;
+        s.visible = I > 0;
+        if (I <= 0) continue;
+        const d = v.contacts.ang[k]! * FENCE_POS_UNIT;
+        s.texture = contactTex;
+        s.position.set(v.ax + ux * d, v.ay + uy * d); s.rotation = ang;
+        s.scale.set((FENCE_BAND * 2.2) / contactTex.width, (FENCE_BAND * 1.1) / contactTex.height);
+        s.alpha = Math.min(1, I * 0.8 * (0.85 + 0.15 * Math.sin(t * 11 + k * 1.7) * Math.sin(t * 4.3 + k)));
+      }
       const n = Math.max(1, Math.min(v.segs.length, Math.round(len / FENCE_SEG)));
       const segL = len / n;
       const since = t - v.changedAt;
@@ -298,6 +402,10 @@ export class FxFences {
   destroy(): void { this.container.destroy({ children: true }); }
 
   private hideView(v: FenceView): void {
+    for (const s of v.ripples) s.visible = false;
+    for (const s of v.held) s.visible = false;
+    v.contacts.clear();
+    v.hitT.fill(-1e9);
     for (const s of v.segs) s.visible = false;
     for (const s of v.posts) s.visible = false;
     for (const s of v.sparks) s.visible = false;
@@ -309,7 +417,14 @@ export class FxFences {
     // Enough segments for the longest fence span (connection range 600 u).
     const segs: Sprite[] = [];
     for (let k = 0; k < 16; k++) segs.push(mk(f0, 0));
+    const r0 = this.ripple.fx!.frames[0]!, ct = tex(this.contact)!;
+    const ripples: Sprite[] = [], held: Sprite[] = [];
+    for (let k = 0; k < FENCE_HITS; k++) ripples.push(mk(r0, 0.5));
+    for (let k = 0; k < SHIELD_CONTACTS; k++) { const s = mk(ct, 0.5); s.tint = 0xc8f2ff; held.push(s); }
+    for (const s of ripples) s.tint = 0x9fe6ff;
     return {
+      len: 1, hitPos: new Float32Array(FENCE_HITS), hitT: new Float32Array(FENCE_HITS).fill(-1e9), hitNext: 0,
+      contacts: new ShieldContacts(), ripples, held,
       key: 0, gen: -1, ax: 0, ay: 0, bx: 0, by: 0, state: 1, changedAt: -1e9, prevState: 1,
       segs, posts: [mk(glow, 0.5), mk(glow, 0.5)], sparks: [mk(spark, 1), mk(spark, 1), mk(spark, 1), mk(spark, 1)],
     };

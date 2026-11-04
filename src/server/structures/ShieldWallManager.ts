@@ -283,8 +283,15 @@ export class ShieldWallManager {
     }
     if (nearestId === '') return null;
     this.onWallHit(nearestId, damage, nowMs);
+    this.lastHitX = fromX + dirX * nearestDist;
+    this.lastHitY = fromY + dirY * nearestDist;
     return nearestDist;
   }
+
+  /** Where the last blocked shot met its wall (game space). Written by
+   *  `blockShot` / `blockProjectile`; read right after a true result. */
+  lastHitX = 0;
+  lastHitY = 0;
 
   /** Whether a projectile's one-tick step `(x,y)→(x+stepX,y+stepY)` crosses a
    *  blocking wall — if so, absorb it and return true so the caller drops the

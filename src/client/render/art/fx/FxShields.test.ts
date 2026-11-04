@@ -84,3 +84,27 @@ describe('FxFences', () => {
     expect(sparks2).toBe(false);
   });
 });
+
+describe('FxFences hits and laser contacts (fence-hit fix)', () => {
+  it('a hit near an up fence ripples there; a hit in open space does not', () => {
+    const f = new FxFences(fakeArt());
+    f.begin(); f.wall(1, 0, 0, 300, 0, true, false, 0); f.end(0);
+    expect(f.hitAt(150, 5, 10)).toBe(true); // game space, just above the wall
+    expect(f.hitAt(150, 400, 10)).toBe(false);
+    expect(f.hitCount).toBe(1);
+  });
+
+  it('a hit on a down fence does not ripple', () => {
+    const f = new FxFences(fakeArt());
+    f.begin(); f.wall(1, 0, 0, 300, 0, false, false, 0); f.end(0);
+    expect(f.hitAt(150, 0, 10)).toBe(false);
+  });
+
+  it('a beam resting on a fence holds a steady contact; it fades when the beam stops', () => {
+    const f = new FxFences(fakeArt());
+    for (let i = 0; i < 20; i++) { f.begin(); f.wall(1, 0, 0, 300, 0, true, false, i * 16); f.beam(3, 120, 0); f.end(i * 16); }
+    expect(f.contactCount()).toBe(1);
+    for (let i = 20; i < 60; i++) { f.begin(); f.wall(1, 0, 0, 300, 0, true, false, i * 16); f.end(i * 16); }
+    expect(f.contactCount()).toBe(0);
+  });
+});
