@@ -17,6 +17,9 @@ export interface ArtOptions {
   mode: ArtMode;
   /** Test-only bake delay (`?artDelayMs=`). */
   delayMs?: number;
+  /** New effects + backdrop (plan iridescent-seeking-rainbow v3). Needs the
+   *  Machined art service; off by default until the rollout's last PR. */
+  fx?: boolean;
 }
 
 export const ART_OFF: ArtOptions = { mode: 'classic' };
@@ -28,6 +31,13 @@ export function readArtMode(search: string): ArtMode | null {
 
 export function resolveArtMode(search: string, isAutomation: boolean, saved: ArtMode | null): ArtMode {
   return readArtMode(search) ?? saved ?? (isAutomation ? 'classic' : 'machined');
+}
+
+/** `?fx=new|classic`: the new effects and backdrop. Default off for now. */
+export function resolveFxMode(search: string, mode: ArtMode): boolean {
+  if (mode !== 'machined') return false;
+  const m = /[?&]fx=(new|classic)\b/.exec(search);
+  return m ? m[1] === 'new' : false;
 }
 
 /** Test-only: delay every bake by this many ms (`?artDelayMs=`), so an E2E can

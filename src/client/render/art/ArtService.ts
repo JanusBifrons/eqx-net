@@ -12,7 +12,8 @@
  * reused, so a sprite holds its handle and checks it each frame without
  * allocating (invariant #14).
  */
-import type { Texture } from 'pixi.js';
+import { Rectangle, Texture } from 'pixi.js';
+import { FX_SPECS, isFxId, type FxId, type FxSpec } from './fx/fxTextures.js';
 import { Atlas, type AtlasOpts } from './atlas.js';
 import { bakeKey, runBake, seedVariant, type Baked, type BakeJob } from './bake.js';
 import { loadBakes, saveBakes, storeKey } from './bakeStore.js';
@@ -42,6 +43,14 @@ export interface StructArt {
   navLights: Baked['navLights'];
 }
 
+/** An effect or backdrop texture; `frames` holds a flipbook's cells (else [tex]). */
+export interface FxArt {
+  tex: Texture;
+  frames: Texture[];
+  w: number;
+  h: number;
+}
+
 export interface ArtHandle {
   readonly key: string;
   readonly job: BakeJob;
@@ -50,6 +59,7 @@ export interface ArtHandle {
   state: ArtState;
   ship: ShipArt | null;
   struct: StructArt | null;
+  fx?: FxArt | null;
   /** Why it failed (bake error, too big, over the memory budget). */
   reason?: string;
 }
@@ -59,6 +69,8 @@ export interface ArtPacker {
   canFit(frames: readonly Frame[]): boolean;
   add(fr: Frame, out: Texture[], idx: number): boolean;
   commit(): void;
+  /** A texture outside the pages (wrapping textures). */
+  standalone(fr: Frame, repeat: boolean, mip: boolean): Texture;
   readonly pageCount: number;
   readonly gpuBytes: number;
   destroy(): void;
@@ -97,11 +109,24 @@ export interface ArtStats {
   pages: number;
   gpuBytes: number;
   workers: number;
+  /** Effect textures ready / still baking. */
+  fxReady: number;
+  fxPending: number;
 }
 
 /** Defaults by device: phones get small pages and a tight page budget. */
 export function atlasOptsFor(touch: boolean): AtlasOpts {
   return touch ? { pageSize: 2048, maxPages: 6 } : { pageSize: 4096, maxPages: 4 };
+}
+
+/** Cut a flipbook sheet texture into its cells (same source, so they batch). */
+export function flipCells(sheet: Texture, flip: NonNullable<FxSpec['flip']>): Texture[] {
+  const out: Texture[] = [];
+  const f = sheet.frame;
+  for (let i = 0; i < flip.frames; i++) {
+    out.push(new Texture({ source: sheet.source, frame: new Rectangle(f.x + (i % flip.cols) * flip.cell, f.y + Math.floor(i / flip.cols) * flip.cell, flip.cell, flip.cell) }));
+  }
+  return out;
 }
 
 export class ArtService {
@@ -142,6 +167,11 @@ export class ArtService {
   }
 
   /** One component of a destroyed ship (tumbles: ship-style frames). */
+  /** An effect or backdrop texture (art/fx/fxTextures.ts). */
+  fx(id: FxId, variant?: string, seed?: number, urgent = true): ArtHandle {
+    return this.acquire({ type: 'fx', id, ...(variant !== undefined ? { variant } : {}), ...(seed !== undefined ? { seed } : {}) }, urgent);
+  }
+
   scrap(parentKind: string, component: number): ArtHandle {
     return this.acquire({ type: 'scrap', id: parentKind, component });
   }
@@ -214,6 +244,7 @@ export class ArtService {
   /** Place a bake's frames; false (handle failed) if it won't fit the budget. */
   private pack(h: ArtHandle, b: Baked): boolean {
     const packer = this.deps.packer;
+    if (h.job.type === 'fx') return this.packFx(h, h.job.id, b);
     if (!packer.canFit(b.frames)) {
       h.state = 'failed';
       h.reason = 'over the texture memory budget';
@@ -233,6 +264,28 @@ export class ArtService {
     return true;
   }
 
+  /** Effects: wrapping textures get their own; the rest share the atlas,
+   *  and a flipbook sheet is cut into its cells. */
+  private packFx(h: ArtHandle, id: string, b: Baked): boolean {
+    const spec = isFxId(id) ? FX_SPECS[id] : null;
+    const fr = b.frames[0];
+    if (!spec || !fr) { h.state = 'failed'; h.reason = 'unknown effect texture'; return false; }
+    if (spec.tile) {
+      const tex = this.deps.packer.standalone(fr, true, spec.mip === true);
+      this.pendingFill.push(() => { h.fx = { tex, frames: [tex], w: fr.w, h: fr.h }; h.state = 'ready'; });
+      return true;
+    }
+    if (!this.deps.packer.canFit(b.frames)) { h.state = 'failed'; h.reason = 'over the texture memory budget'; return false; }
+    const out: Texture[] = [];
+    this.deps.packer.add(fr, out, 0);
+    this.pendingFill.push(() => {
+      const tex = out[0]!;
+      h.fx = { tex, frames: spec.flip ? flipCells(tex, spec.flip) : [tex], w: fr.w, h: fr.h };
+      h.state = 'ready';
+    });
+    return true;
+  }
+
   private readonly pendingFill: Array<() => void> = [];
 
   /** Resolve the textures of everything packed this tick (after commit). */
@@ -242,15 +295,16 @@ export class ArtService {
   }
 
   stats(): ArtStats {
-    let ready = 0, pending = 0, failed = 0;
+    let ready = 0, pending = 0, failed = 0, fxReady = 0, fxPending = 0;
     for (const h of this.handles.values()) {
-      if (h.state === 'ready') ready++;
-      else if (h.state === 'pending') pending++;
+      const isFx = h.job.type === 'fx';
+      if (h.state === 'ready') { ready++; if (isFx) fxReady++; }
+      else if (h.state === 'pending') { pending++; if (isFx) fxPending++; }
       else failed++;
     }
     return {
       ready, pending, failed, fromCache: this.fromCache,
-      pages: this.deps.packer.pageCount, gpuBytes: this.deps.packer.gpuBytes, workers: this.deps.runner.workers,
+      pages: this.deps.packer.pageCount, gpuBytes: this.deps.packer.gpuBytes, workers: this.deps.runner.workers, fxReady, fxPending,
     };
   }
 

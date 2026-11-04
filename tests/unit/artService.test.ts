@@ -23,6 +23,7 @@ class FakePacker implements ArtPacker {
   canFit(frames: readonly Frame[]): boolean { return this.placed + frames.length <= this.capacity; }
   add(_fr: Frame, out: Texture[], idx: number): boolean { this.placed++; this.out.push([out, idx]); return true; }
   commit(): void { this.commits++; for (const [o, i] of this.out) o[i] = { fake: i } as unknown as Texture; this.out.length = 0; }
+  standalone(): Texture { return { fake: -1 } as unknown as Texture; }
   get pageCount(): number { return Math.ceil(this.placed / 10); }
   get gpuBytes(): number { return this.pageCount * 100; }
   destroy(): void { /* nothing */ }

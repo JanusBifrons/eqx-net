@@ -12,6 +12,7 @@
  * of it comes from the cache in a fraction of a second.
  */
 import { SHIP_KINDS_LIST } from '../../../shared-types/shipKinds.js';
+import { FX_WARM } from './fx/fxTextures.js';
 import type { BakeJob } from './bake.js';
 import { seedVariant } from './bake.js';
 import { shipExtent } from './fields.js';
@@ -28,8 +29,11 @@ export const WARM_STRUCTURES: readonly string[] = [
  *  capital hulls players rarely meet; they bake on demand. */
 const WARM_SHIP_MAX_EXTENT = 100;
 
-export function warmUpJobs(): BakeJob[] {
+/** `fx`: also the effect textures every sector uses (the new effects). */
+export function warmUpJobs(fx = false): BakeJob[] {
   const jobs: BakeJob[] = [];
+  // Effects first: they are few, small and on screen in every fight.
+  if (fx) for (const id of FX_WARM) jobs.push({ type: 'fx', id });
   for (const k of SHIP_KINDS_LIST) {
     if (shipExtent(k.id) < WARM_SHIP_MAX_EXTENT) jobs.push({ type: 'ship', id: k.id });
   }

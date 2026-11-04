@@ -127,3 +127,37 @@ The renderer reaches the art through `src/client/render/art/ArtService.ts` (plan
 `pnpm tsx scripts/art-lab/capture.ts --only stills|clips|bench --styles machined [--clip id] [--still id,…]`.
 It boots its own Vite on port 5374. On an 8 GB machine, run clips one at a
 time: a long background capture was once stopped by Claude Code for low memory.
+
+## Effects and backdrop (plan iridescent-seeking-rainbow v3)
+
+Round 2 applied the same idea to everything that isn't a hull: weapons, shield
+hits, explosions, the starfield, nebulae and environment props. The expensive
+looks (fireball and shield-hit flipbooks, hex shields, folded-noise nebulae,
+star tiles with colour temperature) are generated once by
+`render/art/fx/fxTextures.ts` and drawn every frame as batched sprites; the
+per-frame maths (`fxMath.ts`: flipbook frames, envelopes, backdrop depth,
+`ShieldHits`, `ShieldContacts`, `TrailRing`) is pure and allocation-free.
+
+- **R&D results.** Artifact: https://claude.ai/artifact/Dcp1xwrMZUGaAqZRNhH52w.
+  On the phone (Android, 90 Hz) every scene held 90 fps; the new starfield
+  costs 0.8 ms against 3.3 ms today; the battle effects cost slightly more than
+  today's in the lab (4.4 vs 4.0 ms at 12 a side), which the game version
+  offsets by skipping off-screen and finished effects.
+- **Choices.** Shield hits use the baked flipbook (not the shader in
+  `shieldShader.ts`, kept in the lab for comparison). All three
+  nebula types (emission fainter). A laser on a shield is a **held contact**,
+  not a stream of hits (`ShieldContacts`): one steady lit patch per beam, close
+  beams share a brighter one, at most four per shield, bolt ripples separate.
+- **Pipeline (B1).** Each texture is an `fx` bake job (`bake.ts`), cached in
+  IndexedDB under `FX_VERSION` (locked by `fxTextures.lock.test.ts`: bump it
+  with any generator change). Wrapping textures (star tiles, nebula, dust, the
+  beam flow) get a texture of their own (`Atlas.standalone`); the rest share
+  the art atlas, and flipbook sheets are cut into cells (`flipCells`). The
+  renderer asks with `ArtService.fx(id, variant?, seed?)`. Switch: `?fx=new`
+  (needs Machined art; default off until the rollout's last PR); with it the
+  warm-up bakes `FX_WARM` first.
+- **Lab.** `/__art-lab__/fx.html?fx=today|new&scene=weapons|shield|shield-beams|explosions|zoom|nebula|environment|battle`
+  (`shield=sprite|shader`, `neb=emission|reflection|dark|none`, `contact=0` for
+  round 1's flickering beams). Capture: `pnpm tsx scripts/art-lab/capture-fx.ts
+  --only stills|clips|bench [--clip id]` (outputs `diag/art-lab/fx-r1/`).
+  Phone: `phone.html?set=fx`.

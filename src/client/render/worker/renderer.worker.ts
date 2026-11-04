@@ -57,6 +57,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         renderer = new PixiRenderer(msg.isTouch ?? false, {
           mode: msg.artMode ?? 'classic',
           ...(msg.artDelayMs ? { delayMs: msg.artDelayMs } : {}),
+          ...(msg.fx ? { fx: true } : {}),
         });
         await renderer.init({
           canvas: msg.canvas,

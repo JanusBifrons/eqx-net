@@ -6,6 +6,7 @@
  * the few facts the runtime needs (size, density, light and nozzle spots).
  */
 import { forgeRock, forgeScrap, forgeShip, forgeStructure, shipExtent, type Fields } from './fields.js';
+import { bakeFxImg, FX_VERSION, isFxId } from './fx/fxTextures.js';
 import { litFrame, type Frame, type LightRig } from './shade.js';
 import { linToSrgb } from './color.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
@@ -37,12 +38,15 @@ export type BakeJob =
   /** One component of a destroyed ship; tumbles, so baked like a ship. */
   | { type: 'scrap'; id: string; component: number }
   /** An asteroid, by its seeded outline; static, so one frame at its turn. */
-  | { type: 'rock'; id: string; entityId: number; radius: number; resource?: string; rot?: number };
+  | { type: 'rock'; id: string; entityId: number; radius: number; resource?: string; rot?: number }
+  /** An effect or backdrop texture (art/fx/fxTextures.ts, plan iridescent-seeking-rainbow v3). */
+  | { type: 'fx'; id: string; variant?: string; seed?: number };
 
 /** The cache key a job's result is stored under (shared by main and workers). */
 export function bakeKey(j: BakeJob): string {
   if (j.type === 'ship') return `m:${j.id}:${j.paint ?? ''}`;
   if (j.type === 'scrap') return `s:${j.id}:${j.component}`;
+  if (j.type === 'fx') return `x:${FX_VERSION}:${j.id}:${j.variant ?? ''}:${j.seed ?? ''}`;
   if (j.type === 'rock') return `r:${j.entityId}:${j.radius}:${j.resource ?? ''}:${quarterTurnsFine(j.rot ?? 0)}`;
   const q = quarterTurns(j.rot ?? 0);
   return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}`;
@@ -102,6 +106,11 @@ export function albedoHalf(f: Fields): Frame {
 export const ROCK_MAX_SIDE = 256;
 
 export function runBake(j: BakeJob, rig: LightRig): Baked {
+  if (j.type === 'fx') {
+    if (!isFxId(j.id)) throw new Error(`unknown fx texture ${j.id}`);
+    const img = bakeFxImg(j.id, j.variant, j.seed, rig.sunAz);
+    return { frames: [img], w: img.w, h: img.h, density: 1, nozzles: [], navLights: [] };
+  }
   if (j.type === 'rock') {
     const ppu = Math.min(1.5, ROCK_MAX_SIDE / (j.radius * 2.6 + 4));
     const f = forgeRock(j.entityId, j.radius, j.resource, { ppu });
