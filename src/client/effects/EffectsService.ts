@@ -273,6 +273,11 @@ export class EffectsService implements IEffects {
     this.counters.activeFilters = 0;
   }
 
+  /** Hide today's shield rings while the new shields draw (B5). */
+  setShieldAuraHidden(hidden: boolean): void {
+    this.shieldAura.setHidden(hidden);
+  }
+
   pulseShield(entityId: string): void {
     this.shieldAura.pulse(entityId);
   }

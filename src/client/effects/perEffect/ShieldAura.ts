@@ -114,8 +114,17 @@ export class ShieldAura {
   }
 
   /** Per-frame: update ring positions + breathe + pulse decay. */
+  /** Hide every ring while the new shields draw (plan iridescent-seeking-rainbow v3, B5). */
+  setHidden(hidden: boolean): void {
+    if (this.hidden === hidden) return;
+    this.hidden = hidden;
+    this.applyQuality(this.currentLevel);
+  }
+  private hidden = false;
+
   tick(dtMs: number, getPose: EnginePoseFn): void {
     this.elapsedMs += dtMs;
+    if (this.hidden) return;
     const breathePeriodMs = DEFAULT_SHIELD_PARAMS.breathePeriodMs;
     const dial = this.qualityDial(this.currentLevel);
     if (!dial) return;
@@ -148,7 +157,7 @@ export class ShieldAura {
   applyQuality(level: EffectQuality): void {
     this.currentLevel = level;
     if (!this.auraContainer) return;
-    if (level === 'minimal') {
+    if (level === 'minimal' || this.hidden) {
       // Hide all rings.
       this.auraContainer.visible = false;
       this.auraContainer.filters = null as never;

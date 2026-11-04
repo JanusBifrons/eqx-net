@@ -110,8 +110,8 @@ describe('flipCells', () => {
     Object.defineProperty(sheet, 'frame', { value: new Rectangle(100, 50, 512, 512) });
     const cells = flipCells(sheet, { frames: 6, cols: 4, cell: 128 });
     expect(cells).toHaveLength(6);
-    expect([cells[0]!.frame.x, cells[0]!.frame.y]).toEqual([100, 50]);
-    expect([cells[5]!.frame.x, cells[5]!.frame.y]).toEqual([228, 178]);
+    expect([cells[0]!.frame.x, cells[0]!.frame.y, cells[0]!.frame.width]).toEqual([101, 51, 126]);
+    expect([cells[5]!.frame.x, cells[5]!.frame.y]).toEqual([229, 51 + 256]);
   });
 });
 

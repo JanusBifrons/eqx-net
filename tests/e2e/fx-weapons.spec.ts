@@ -90,3 +90,20 @@ test('a destroyed drone goes up in the new explosion with ?fx=new (B4)', async (
   await page.screenshot({ path: 'diag/e2e-screenshots/fx-weapons/explosion.png' });
   await ctx.close();
 });
+
+test('shields and fences use the new look with ?fx=new (B5)', async ({ browser }) => {
+  // gate-test: two powered shield gates, so there are fences to draw; the
+  // local ship spawns with its shield up.
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const page = await ctx.newPage();
+  const params = new URLSearchParams({ room: 'gate-test', spawnX: '-400', spawnY: '-1300', testId: randomUUID(), worker: '0', art: 'machined', fx: 'new', zoom: '0.6' });
+  await page.goto(`${BASE_URL}?${params}`);
+  type S = { fxShields?: number; fxFences?: number };
+  await page.waitForFunction(() => {
+    const s = (window as unknown as { __eqxArtStats?: () => S }).__eqxArtStats?.();
+    return !!s && (s.fxShields ?? -1) >= 1 && (s.fxFences ?? 0) >= 1;
+  }, undefined, { timeout: 60_000 });
+  mkdirSync('diag/e2e-screenshots/fx-weapons', { recursive: true });
+  await page.screenshot({ path: 'diag/e2e-screenshots/fx-weapons/fences.png' });
+  await ctx.close();
+});
