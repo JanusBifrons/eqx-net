@@ -97,4 +97,25 @@ test.describe('Machined art — warm-up', () => {
     expect(s.failed ?? 0).toBe(0);
     await ctx.close();
   });
+
+  test('with ?fx=new the effect textures bake too, through the worker pool (plan iridescent-seeking-rainbow v3, B1)', async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    const page = await ctx.newPage();
+    const base = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+    await page.goto(`${base}?worker=0&art=machined&fx=new`);
+    type FxStats = { fxReady?: number; fxPending?: number; failed?: number };
+    await page.waitForFunction(
+      () => ((window as unknown as { __eqxArtStats?: () => FxStats }).__eqxArtStats?.().fxReady ?? 0) >= 19,
+      undefined, { timeout: 30_000 },
+    );
+    const s = await page.evaluate(() => (window as unknown as { __eqxArtStats: () => FxStats }).__eqxArtStats());
+    expect(s.fxPending).toBe(0);
+    expect(s.failed ?? 0).toBe(0);
+    // Without the flag no effect textures are asked for.
+    await page.goto(`${base}?worker=0&art=machined`);
+    await page.waitForFunction(() => !!(window as unknown as { __eqxArtStats?: () => unknown }).__eqxArtStats, undefined, { timeout: 30_000 });
+    const off = await page.evaluate(() => (window as unknown as { __eqxArtStats: () => FxStats }).__eqxArtStats());
+    expect((off.fxReady ?? 0) + (off.fxPending ?? 0)).toBe(0);
+    await ctx.close();
+  });
 });

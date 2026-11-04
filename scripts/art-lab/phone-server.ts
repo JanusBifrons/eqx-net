@@ -39,6 +39,7 @@ const server = createServer((req, res) => {
 });
 server.listen(REPORT_PORT, '0.0.0.0', () => {
   console.log(`PHONE URL: http://${lan}:${LAB_PORT}/__art-lab__/phone.html`);
+  console.log(`FX PHONE URL: http://${lan}:${LAB_PORT}/__art-lab__/phone.html?set=fx`);
 });
 
 const stop = (): void => {

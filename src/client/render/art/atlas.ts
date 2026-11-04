@@ -139,15 +139,38 @@ export class Atlas {
     this.pending.length = 0;
   }
 
+  private readonly singles: Array<{ tex: Texture; bytes: number }> = [];
+
+  /**
+   * A texture of its own, outside the pages: for textures that wrap (drawn as
+   * a TilingSprite), which an atlas slot can't do. Counted in `gpuBytes`.
+   */
+  standalone(fr: Frame, repeat: boolean, mip: boolean): Texture {
+    const { canvas, ctx } = makeCanvas(Math.max(fr.w, fr.h));
+    if (canvas.width !== fr.w || canvas.height !== fr.h) { canvas.width = fr.w; canvas.height = fr.h; }
+    ctx.putImageData(new ImageData(fr.data as unknown as Uint8ClampedArray<ArrayBuffer>, fr.w, fr.h), 0, 0);
+    const tex = Texture.from(canvas as HTMLCanvasElement);
+    tex.source.scaleMode = 'linear';
+    if (repeat) tex.source.addressMode = 'repeat';
+    if (mip) tex.source.autoGenerateMipmaps = true;
+    const bytes = fr.w * fr.h * 4;
+    this.singles.push({ tex, bytes: mip ? Math.round((bytes * 4) / 3) : bytes });
+    return tex;
+  }
+
   get pageCount(): number { return this.pages.length; }
 
   /** GPU memory the pages cost: whole pages, RGBA, plus a third for mipmaps. */
   get gpuBytes(): number {
-    return atlasGpuBytes(this.pages.length, this.pageSize, !this.nearest);
+    let singles = 0;
+    for (const s of this.singles) singles += s.bytes;
+    return atlasGpuBytes(this.pages.length, this.pageSize, !this.nearest) + singles;
   }
 
   destroy(): void {
     for (const p of this.pages) p.tex?.destroy(true);
+    for (const s of this.singles) s.tex.destroy(true);
+    this.singles.length = 0;
     this.pages.length = 0;
     this.pending.length = 0;
     this.bytes = 0;

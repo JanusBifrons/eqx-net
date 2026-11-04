@@ -41,6 +41,8 @@ export interface BootMsg {
   artMode?: 'classic' | 'machined';
   /** Test-only bake delay (`?artDelayMs=`). */
   artDelayMs?: number;
+  /** New effects + backdrop (`?fx=new`). */
+  fx?: boolean;
   /**
    * Touch-device flag (Equinox P6.1). The worker has no reliable
    * `window.matchMedia`, so the main thread (which knows via `isTouchDevice()`)

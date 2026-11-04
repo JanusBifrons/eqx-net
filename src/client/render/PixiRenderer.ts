@@ -586,7 +586,7 @@ export class PixiRenderer implements IRenderer {
       this._artCtx.sunAz = art.lightRig.sunAz;
       // Warm-up: bake the likely art now (this runs on the galaxy map /
       // warp screen), behind anything that appears on screen meanwhile.
-      art.warmUp(warmUpJobs());
+      art.warmUp(warmUpJobs(this._artOpts.fx === true));
     }
     // DEV/E2E hook (main-thread path, `?worker=0`): what the art service is
     // doing. Assigned from `update()`, so it always follows the LIVE renderer
