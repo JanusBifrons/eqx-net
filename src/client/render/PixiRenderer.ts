@@ -2487,8 +2487,9 @@ export class PixiRenderer implements IRenderer {
   private _sectorKey: string | null = null;
 
   /** DEV/E2E: what the backdrop is showing. */
-  backdropStats(): { on: boolean; nebula: string | null } {
-    return { on: this._backdrop?.sky.visible === true, nebula: this._backdrop?.nebulaKey() ?? null };
+  backdropStats(): { on: boolean; nebula: string | null; landmarks: number; sky: string } {
+    const b = this._backdrop;
+    return { on: b?.sky.visible === true, nebula: b?.nebulaKey() ?? null, landmarks: b?.visibleLandmarks ?? 0, sky: b?.skySignature ?? '' };
   }
 
   setSpectator(active: boolean): void {
@@ -2690,7 +2691,7 @@ export class PixiRenderer implements IRenderer {
 
   /** Machined art status: the service's counts plus how many ship sprites
    *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: { on: boolean; nebula: string | null }; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: { on: boolean; nebula: string | null; landmarks: number; sky: string }; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;

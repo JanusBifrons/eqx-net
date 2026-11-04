@@ -136,6 +136,8 @@ test.describe('New backdrop (plan iridescent-seeking-rainbow v3, B2)', () => {
     );
     const s = await page.evaluate(() => (window as unknown as { __eqxArtStats: () => BdStats & { failed?: number } }).__eqxArtStats());
     expect(s.backdrop!.nebula, 'a nebula was chosen for the sector').toMatch(/^(emission|reflection|dark):\d+$/);
+    // C1: the sector's own sky (landmarks placed from its key).
+    expect((s.backdrop as { sky?: string }).sky ?? '', 'the sector laid out its landmarks').toMatch(/(planet|gasGiant|moon|nebulaPatch|galaxy)@/);
     expect(s.failed ?? 0).toBe(0);
     mkdirSync('diag/e2e-screenshots/machined-art', { recursive: true });
     await page.screenshot({ path: 'diag/e2e-screenshots/machined-art/backdrop.png' });
@@ -149,7 +151,7 @@ test.describe('New backdrop (plan iridescent-seeking-rainbow v3, B2)', () => {
     });
     await page.waitForFunction(() => !!(window as unknown as { __eqxArtStats?: () => BdStats }).__eqxArtStats?.().backdrop, undefined, { timeout: 20_000 });
     const s = await page.evaluate(() => (window as unknown as { __eqxArtStats: () => BdStats }).__eqxArtStats());
-    expect(s.backdrop).toEqual({ on: false, nebula: null });
+    expect(s.backdrop).toMatchObject({ on: false, nebula: null });
     await ctx.close();
   });
 });

@@ -682,6 +682,9 @@ export function imgGpuBytes(imgs: readonly Img[], mip = false): number {
  */
 export const FX_VERSION = 'fx2';
 
+/** Landmark planet tints (linear RGB): blue-grey, ochre, green, mauve, ice. */
+const LANDMARK_TINTS: Array<[number, number, number]> = [[0.54, 0.61, 0.72], [0.69, 0.54, 0.42], [0.48, 0.63, 0.53], [0.63, 0.48, 0.6], [0.6, 0.65, 0.69]];
+
 export type FxId =
   | 'glow' | 'streak' | 'beamFlow' | 'ring' | 'spark' | 'smoke' | 'trail'
   | 'shieldDome' | 'shieldContact' | 'shieldHit' | 'fireball'
@@ -741,7 +744,14 @@ export function bakeFxImg(id: FxId, variant: string | undefined, seed: number | 
     case 'starsFar': return starTileTex(512, 950, 11, 1.3);
     case 'starsMid': return starTileTex(512, 260, 23, 1.0);
     case 'starsNear': return starTileTex(512, 70, 37, 0.85);
-    case 'planet': return planetTex(256, sunAz, seed ?? 8);
+    case 'planet': {
+      // Landmarks (round 2): a gas giant, a rocky planet or a grey moon; the
+      // seed picks the tint. No variant = the original backdrop planet.
+      if (variant === 'gas') return planetTex(384, sunAz, seed ?? 8, LANDMARK_TINTS[(seed ?? 0) % LANDMARK_TINTS.length]!);
+      if (variant === 'rock') return planetTex(256, sunAz, seed ?? 8, LANDMARK_TINTS[((seed ?? 0) + 2) % LANDMARK_TINTS.length]!);
+      if (variant === 'moon') return planetTex(192, sunAz, seed ?? 8, [0.6, 0.6, 0.62]);
+      return planetTex(256, sunAz, seed ?? 8);
+    }
     case 'fenceStrip': return fenceStripFlipbook(8, 128, 48).sheet;
     case 'fenceRipple': return fenceRippleFlipbook(8, 128, 48).sheet;
     case 'fenceContact': return fenceContactTex(128, 48);
