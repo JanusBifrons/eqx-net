@@ -33,6 +33,8 @@ export const DEFAULT_RIG: LightRig = {
 };
 
 interface MatParams { gloss: number; spec: number }
+/** Size of the per-material lookup tables (one past the highest MAT id). */
+const MAT_COUNT = Math.max(...Object.values(MAT)) + 1;
 const MATP: Record<number, MatParams> = {
   [MAT.NONE]: { gloss: 8, spec: 0 },
   [MAT.METAL]: { gloss: 34, spec: 0.35 },
@@ -42,6 +44,7 @@ const MATP: Record<number, MatParams> = {
   [MAT.NOZZLE]: { gloss: 10, spec: 0.08 },
   [MAT.LIGHT]: { gloss: 10, spec: 0.05 },
   [MAT.WINDOW]: { gloss: 60, spec: 0.6 },
+  [MAT.ROCK]: { gloss: 6, spec: 0.03 },
 };
 
 /** Per-field-set cache of derived maps (normals, cavity). */
@@ -147,8 +150,9 @@ function radianceUncached(f: Fields, rig: LightRig, localAz: number, shadows: bo
   const hl = Math.hypot(Hv[0]!, Hv[1]!, Hv[2]!);
   Hv[0]! /= hl; Hv[1]! /= hl; Hv[2]! /= hl;
   const sh = shadows ? shadowMap(f, localAz, rig.sunElev) : null;
-  const gloss = new Float32Array(8), specK = new Float32Array(8);
-  for (let k = 0; k < 8; k++) { const m = MATP[k] ?? MATP[MAT.METAL]!; gloss[k] = m.gloss; specK[k] = m.spec; }
+  const NM = MAT_COUNT;
+  const gloss = new Float32Array(NM), specK = new Float32Array(NM);
+  for (let k = 0; k < NM; k++) { const m = MATP[k] ?? MATP[MAT.METAL]!; gloss[k] = m.gloss; specK[k] = m.spec; }
   const [ar, ag, ab] = rig.ambient, [sr, sg, sb] = rig.sunColor, [rr, rg, rb] = rig.rim;
   for (let i = 0; i < n; i++) {
     if (f.cov[i]! <= 0) continue;

@@ -107,7 +107,7 @@ The renderer reaches the art through `src/client/render/art/ArtService.ts` (plan
 - Very large hulls (the Crossguard and El test ships) and the two huge pads
   (large teleporter, alien gate) come out flat. They need a recipe for big
   surfaces.
-- Scrap pieces, ships casting shadows on decks, and the nebula baked per sector.
+- Ships casting shadows on decks, and the nebula baked per sector. (Scrap pieces and asteroids are now baked: `forgeScrap`, `forgeRock`.)
 - Integration into `PixiRenderer` needs its own plan: the worker render path,
   `EffectsBudget` tiers, the fallback to today's look while bakes are pending,
   and the cache budget on low-storage devices.

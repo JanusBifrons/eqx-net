@@ -55,6 +55,11 @@ import { getWeapon } from '../../../core/combat/WeaponCatalogue';
 import { minerRangeForKind } from '../minerRangeRing.js';
 import type { MountVisualManager } from '../MountVisualManager';
 import {
+  buildArtShipSprite, isMachinedSprite, rockHandleFor, scrapHandleFor, shipArtSwap, shipHandleFor, structHandleFor,
+  updateArtShipLight, type ShipArtCtx,
+} from '../art/shipArtSprites.js';
+import { MachinedShipSprite } from '../art/MachinedShipSprite.js';
+import {
   interpolateSwarmPose,
   type InterpolatedPose,
 } from '../../net/swarmInterpolation';
@@ -75,7 +80,9 @@ export interface SwarmSpriteCtx {
    *  outside it are not drawn. Absent ⇒ draw everything. */
   viewBounds?: Float64Array;
   shipContainer: Container;
-  sprites: Map<string, Graphics>;
+  sprites: Map<string, Container>;
+  /** Machined art (A3): drones of a known ship kind; null service ⇒ today's look. */
+  art: ShipArtCtx;
   mountVisuals: MountVisualManager;
   swarmPoseScratch: InterpolatedPose;
   remoteHitTargets: Set<string>;
@@ -127,10 +134,10 @@ const _structureMountAngles: number[] = [];
 const EMPTY_MOUNTS: readonly WeaponMount[] = [];
 
 /** P3c — drone sprite → its charge telegraph child (weak: dies with the sprite). */
-const chargeTelegraphs = new WeakMap<Graphics, Graphics>();
+const chargeTelegraphs = new WeakMap<Container, Graphics>();
 /** P4a — a named elite's gold ring, created lazily the first frame the sprite
  *  is known to be an elite (once per sprite, #14), then shown/hidden. */
-const eliteRings = new WeakMap<Graphics, Graphics>();
+const eliteRings = new WeakMap<Container, Graphics>();
 
 /** The longest charge weapon range a kind carries (0 ⇒ no charge weapon). */
 export function chargeRangeForKind(shipKind: string | undefined): number {
@@ -179,14 +186,38 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       ctx.sprites.delete(spriteKey);
       sprite = undefined;
     }
+    // Machined art: each kind swaps to its Machined sprite once the art is
+    // ready (A3 drones, A4 structures / scrap / asteroids). A patrol bakes in
+    // its faction's paint (tinting a lit sprite would muddy it); structures
+    // and asteroids bake their turn so the sun stays put.
+    const artHandle = !ctx.art.art
+      ? null
+      : entry.kind === 1 && entry.shipKind
+        ? shipHandleFor(ctx.art, spriteKey, entry.shipKind, entry.faction !== undefined ? npcFactionDef(entry.faction)?.color : undefined)
+        : entry.kind === 2 && entry.shipKind
+          ? structHandleFor(ctx.art, spriteKey, entry.shipKind, -entry.angle)
+          : entry.kind === 3 && entry.shipKind
+            ? scrapHandleFor(ctx.art, spriteKey, entry.shipKind, entry.componentIndex ?? 0)
+            : entry.kind === 0
+              ? rockHandleFor(ctx.art, spriteKey, entityId, entry.radius, entry.asteroidResource, -entry.angle)
+              : null;
+    if (sprite && artHandle && shipArtSwap(ctx.art, sprite, artHandle) !== 'keep') {
+      ctx.shipContainer.removeChild(sprite);
+      ctx.mountVisuals.removeShip(spriteKey);
+      ctx.spriteBuildSigs.delete(spriteKey);
+      sprite.destroy({ children: true });
+      ctx.sprites.delete(spriteKey);
+      sprite = undefined;
+    }
     if (!sprite) {
       if (entry.kind === 1) {
         // Drones use the same procedural shape as player ships of that
         // kind, so a Heavy drone visibly reads as a Heavy. Falls back
         // to the legacy magenta dart silhouette when the wire didn't
         // carry a kind (older snapshots / pre-v2 packets).
-        sprite = entry.shipKind
-          ? buildShipGfxFromShape(shapeForKind(entry.shipKind))
+        const sk = entry.shipKind;
+        sprite = sk
+          ? buildArtShipSprite(artHandle, () => buildShipGfxFromShape(shapeForKind(sk)))
           : buildDroneGfx(entry.radius);
         // P3c — a kind with a CHARGE weapon gets a (hidden) wind-up telegraph,
         // built once here and toggled per frame from `entry.charging`.
@@ -200,7 +231,8 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       } else if (entry.kind === 2) {
         // Structures (pose-core kind 2): a per-subtype tinted polygon read from
         // the shared shipKind byte (structures plan, Phase 2).
-        sprite = buildStructureGfx(entry.shipKind, entry.radius);
+        const stKind = entry.shipKind, stRadius = entry.radius;
+        sprite = buildArtShipSprite(artHandle, () => buildStructureGfx(stKind, stRadius));
         // WS-4 Phase 5 (R2.16) — a Miner shows a faint dashed mining-range ring
         // at its `miningRange` radius. Built HERE (the once-per-sprite create
         // path, invariant #14 — never per-frame) and parented to the body so it
@@ -223,12 +255,17 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // the part it broke off. Pose path below reads the resolved
         // single-per-frame pose (the drone kinematic-follower branch) so the
         // sprite matches the predWorld collision body (Phase-5 desync fix).
-        sprite = buildScrapGfx(entry.shipKind, entry.componentIndex ?? 0);
+        const parentKind = entry.shipKind, component = entry.componentIndex ?? 0;
+        sprite = buildArtShipSprite(artHandle, () => buildScrapGfx(parentKind, component));
       } else {
-        sprite = buildAsteroidGfx(entityId, entry.radius);
-        // P2c — ice and crystal-veined rocks read apart from plain rock.
-        if (entry.asteroidResource === 'ice') sprite.tint = 0xa8dcff;
-        else if (entry.asteroidResource === 'crystal') sprite.tint = 0xd2a8ff;
+        const rockRadius = entry.radius;
+        sprite = buildArtShipSprite(artHandle, () => buildAsteroidGfx(entityId, rockRadius));
+        // P2c — ice and crystal-veined rocks read apart from plain rock (the
+        // Machined rock bakes its resource colour instead).
+        if (!isMachinedSprite(sprite)) {
+          if (entry.asteroidResource === 'ice') sprite.tint = 0xa8dcff;
+          else if (entry.asteroidResource === 'crystal') sprite.tint = 0xd2a8ff;
+        }
       }
       ctx.shipContainer.addChild(sprite);
       ctx.sprites.set(spriteKey, sprite);
@@ -255,6 +292,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // radius is a safe margin; mount barrels are children and hide with it).
     if (entry.kind === 2) sprite.visible = isSpriteInView(sprite.x, sprite.y, entry.radius, ctx.viewBounds);
     sprite.rotation = -lerped.angle;
+    if (entry.kind === 1 || entry.kind === 3) updateArtShipLight(ctx.art, sprite); // ships + tumbling scrap
     if (entry.kind === 1) {
       // P3c — charge-weapon wind-up telegraph (pulses while charging).
       const tele = chargeTelegraphs.get(sprite);
@@ -357,7 +395,10 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     } else {
       // v4 M2 — a patrol ship wears its faction's colour (set here, the one
       // tint site, so the reset below a hit can't wipe it).
-      const fc = entry.kind === 1 && entry.faction !== undefined ? npcFactionDef(entry.faction)?.color : undefined;
+      // A Machined patrol has its faction paint baked in, so it stays untinted.
+      const fc = entry.kind === 1 && entry.faction !== undefined && !(sprite instanceof MachinedShipSprite)
+        ? npcFactionDef(entry.faction)?.color
+        : undefined;
       sprite.tint = fc ?? 0xffffff;
     }
     // Structures plan, Phase 3 — blueprints (not yet built) render dimmed

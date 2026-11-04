@@ -24,10 +24,13 @@ import { LabelManager } from './Labels';
 import { SelectionBracket } from './SelectionBracket';
 import { HoverBracket } from './HoverBracket';
 import { pickEntityAt, type PickedEntityKind } from './pickEntity';
-import { decideLingeringSpriteAction, decideExplosionPosition } from './spriteUpdateDecisions';
+import { decideLingeringSpriteAction, decideExplosionPosition, type SpriteDecision } from './spriteUpdateDecisions';
 import { shouldLatchFirstFrame } from './firstFrameLatch.js';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
 import { readFxKillSwitches } from './fxKillSwitches';
+import { createArtService } from './art/ArtService.js';
+import { readArtDelayMs, readArtMode } from './art/artMode.js';
+import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
 import { BeamSpritePool } from './BeamSpritePool';
 import {
   CameraDirector,
@@ -210,7 +213,13 @@ export class PixiRenderer implements IRenderer {
   private _selfDmgNumbersDisabled = false;
   private _cleanWorld = false;
   private _healthBarsDisabled = false;
-  private sprites = new Map<string, Graphics>();
+  private sprites = new Map<string, Container>();
+  /** Machined art (plan iridescent-seeking-rainbow): shared by the ship,
+   *  swarm and lingering updaters. `art` is set in `init` when `?art=machined`
+   *  (or the default) asks for it; null ⇒ today's vector look everywhere. */
+  private readonly _artCtx: ShipArtCtx = { art: null, handles: new Map(), sunAz: 0 };
+  /** Bound once in `init` (DOM path only); assigned to the global each frame. */
+  private _artStatsHook: (() => unknown) | null = null;
   /** Per-ship turret sprites + aim lines (multi-mount/turret refactor,
    *  Phase 3). Parented to each ship's main `sprite` so the cluster inherits
    *  the ship's world transform; the cluster's own children sit at their
@@ -480,8 +489,11 @@ export class PixiRenderer implements IRenderer {
     // reads the URL directly; worker mode receives it on the BOOT bag (the
     // worker has no `window`), forwarded by WorkerRendererClient.
     let zoom: number | undefined;
+    // The page's query string, for the art switch (the worker gets it on BOOT).
+    let search = '';
 
     if (isDom) {
+      search = window.location.search;
       domContainer = rawContainer as HTMLElement;
       initialW = domContainer.clientWidth || window.innerWidth;
       initialH = domContainer.clientHeight || window.innerHeight;
@@ -491,8 +503,9 @@ export class PixiRenderer implements IRenderer {
       // No `canvas:` option — Pixi creates one and we append it.
     } else {
       const bag = rawContainer as {
-        canvas: OffscreenCanvas; width: number; height: number; dpr: number; zoom?: number;
+        canvas: OffscreenCanvas; width: number; height: number; dpr: number; zoom?: number; search?: string;
       };
+      search = bag.search ?? '';
       canvas = bag.canvas;
       initialW = bag.width;
       initialH = bag.height;
@@ -564,6 +577,18 @@ export class PixiRenderer implements IRenderer {
     // warp chain (forceDisable) + EffectsService refs (per-effect bypasses).
     // Plan: melodic-engelbart Step 2.
     const fxKillSwitches = readFxKillSwitches();
+
+    // Machined art: bakes run on workers; until a ship's art is ready it
+    // draws today's look. `?art=classic` (the default for now) keeps it off.
+    if (readArtMode(search) === 'machined') {
+      const art = createArtService({ touch: this._isTouch, delayMs: readArtDelayMs(search) });
+      this._artCtx.art = art;
+      this._artCtx.sunAz = art.lightRig.sunAz;
+    }
+    // DEV/E2E hook (main-thread path, `?worker=0`): what the art service is
+    // doing. Assigned from `update()`, so it always follows the LIVE renderer
+    // (a dev StrictMode remount can leave a disposed one behind).
+    if (isDom) this._artStatsHook = () => this.artStats();
     this._beamsDisabled = fxKillSwitches.beamsDisabled;
     this._dmgNumbersDisabled = fxKillSwitches.dmgNumbersDisabled;
     this._selfDmgNumbersDisabled = fxKillSwitches.selfDmgNumbersDisabled;
@@ -651,6 +676,7 @@ export class PixiRenderer implements IRenderer {
       remoteHitTargets: this._updateRemoteHitTargetsScratch,
       localHitTargets: this._updateLocalHitTargetsScratch,
       seenScratch: this._updateSeenScratch,
+      art: this._artCtx,
     };
     this._swarmUpdaterCtx = {
       shipContainer: this.shipContainer,
@@ -664,6 +690,7 @@ export class PixiRenderer implements IRenderer {
       spriteKinds: this._swarmSpriteKinds,
       spriteBuildSigs: this._swarmSpriteSigs,
       slewDtSec: 1 / 60, // overwritten per frame before updateSwarmSprites
+      art: this._artCtx,
     };
     this._projectileUpdaterCtx = {
       shipContainer: this.shipContainer,
@@ -1260,6 +1287,8 @@ export class PixiRenderer implements IRenderer {
     // ship velocity (the sprite carries only x/y/rotation). The effects tick
     // at the tail of THIS update reads it → always the current frame's mirror.
     this._lastMirror = mirror;
+    this._artCtx.art?.tick();
+    if (this._artStatsHook) (globalThis as { __eqxArtStats?: () => unknown }).__eqxArtStats = this._artStatsHook;
     // 2026-05-25 heap-growth gate step 6: reuse persistent scratch
     // containers instead of `new Set<string>()` per frame.
     const seen = this._updateSeenScratch;
@@ -1400,6 +1429,7 @@ export class PixiRenderer implements IRenderer {
         this._structureMountSlew.delete(id); // P3.8 — drop slew state with the sprite
         this._swarmSpriteKinds.delete(id); // #20 — drop kind tracker with the sprite
         this._swarmSpriteSigs.delete(id); // campaign 3.2 — drop build signature with the sprite
+        this._artCtx.handles.delete(id); // Machined art — drop the handle with the sprite
       }
     }
 
@@ -2181,37 +2211,45 @@ export class PixiRenderer implements IRenderer {
         fallbackKind: 'fighter',
       });
       let entry = this.lingeringSprites.get(shipInstanceId);
-      if (decision.action === 'rebuild') {
+      // Machined art: a parked hull swaps to its Machined sprite once ready.
+      const artKey = `linger-${shipInstanceId}`; // TODO: alloc-debt (one key string per lingering hull per frame)
+      const kind = 'kind' in decision ? decision.kind : (entry?.kind ?? 'fighter');
+      const lingerHandle = shipHandleFor(this._artCtx, artKey, kind, undefined);
+      let action: SpriteDecision['action'] = decision.action;
+      if (entry && action === 'reposition' && shipArtSwap(this._artCtx, entry.sprite, lingerHandle) !== 'keep') action = 'rebuild';
+      if (action === 'rebuild') {
         this.mountVisuals.removeShip(shipInstanceId); // drop the old cluster before its sprite dies
         entry!.sprite.destroy();
         this.lingeringSprites.delete(shipInstanceId);
         entry = undefined;
       }
-      if (decision.action === 'create' || decision.action === 'rebuild') {
-        const shape = shapeForKind(decision.kind);
-        const sprite = buildShipGfxFromShape(shape, shipPrimaryColor(getShipKind(decision.kind)));
+      if (action === 'create' || action === 'rebuild') {
+        const shape = shapeForKind(kind);
+        const sprite = buildArtShipSprite(lingerHandle, () => buildShipGfxFromShape(shape, shipPrimaryColor(getShipKind(kind))));
         sprite.alpha = 0.75;
         this.shipContainer.addChild(sprite);
         // R2.32 — give the parked hull its weapon barrels. Parented to the
         // sprite so they inherit its pose; frozen at baseAngle (no
         // applyMountAngles call — an abandoned hull isn't aiming).
-        this.mountVisuals.ensureForShip(shipInstanceId, decision.kind, sprite);
-        entry = { sprite, kind: decision.kind, stamp: frameId };
+        this.mountVisuals.ensureForShip(shipInstanceId, kind, sprite);
+        entry = { sprite, kind, stamp: frameId };
         this.lingeringSprites.set(shipInstanceId, entry);
       }
       // 'skip' is not produced by the lingering decision today. Be
       // defensive anyway.
-      if (decision.action === 'skip' || !entry) continue;
+      if (action === 'skip' || !entry) continue;
       entry.stamp = frameId;
       entry.sprite.x = ship.x;
       entry.sprite.y = -ship.y;
       entry.sprite.rotation = -ship.angle;
+      updateArtShipLight(this._artCtx, entry.sprite);
     }
     for (const [id, entry] of this.lingeringSprites) {
       if (entry.stamp !== frameId) {
         this.mountVisuals.removeShip(id); // R2.32 — free the weapon-barrel cluster
         entry.sprite.destroy();
         this.lingeringSprites.delete(id);
+        this._artCtx.handles.delete(`linger-${id}`);
       }
     }
   }
@@ -2399,7 +2437,7 @@ export class PixiRenderer implements IRenderer {
       }
       count++;
     };
-    const visit = (sprite: Graphics, key: string): void => {
+    const visit = (sprite: Container, key: string): void => {
       if (!sprite.visible) return;
       if (group !== 'all') {
         const isSwarm = key.startsWith('swarm-');
@@ -2513,7 +2551,25 @@ export class PixiRenderer implements IRenderer {
     this._activeShieldIds.clear();
   }
 
+  /** Machined art status: the service's counts plus how many ship sprites
+   *  are drawing Machined vs today's look right now. */
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+    let machined = 0, classic = 0;
+    for (const [id, sp] of this.sprites) {
+      if (isMachinedSprite(sp)) machined++;
+      else if (!id.startsWith('swarm-') || this._artCtx.handles.has(id)) classic++;
+    }
+    for (const e of this.lingeringSprites.values()) {
+      if (isMachinedSprite(e.sprite)) machined++; else classic++;
+    }
+    const art = this._artCtx.art;
+    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, ...(art ? art.stats() : {}) };
+  }
+
   dispose(): void {
+    this._artCtx.art?.destroy();
+    this._artCtx.art = null;
+    this._artCtx.handles.clear();
     if (!this.initialized) return;
     // Flip the flag FIRST so any rAF / ResizeObserver callback that fires
     // between here and the actual destroy() short-circuits cleanly. Without

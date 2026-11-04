@@ -22,7 +22,7 @@
  * rotation is negated.
  */
 
-import type { Container, Graphics } from 'pixi.js';
+import type { Container } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '../../../shared-types/shipKinds';
 import { resolveInstanceMounts } from '../../../shared-types/shipKinds/slots';
@@ -33,10 +33,13 @@ import {
   shapeForKind,
 } from './spriteBuilders.js';
 import type { MountVisualManager } from '../MountVisualManager';
+import { buildArtShipSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from '../art/shipArtSprites.js';
 
 export interface ShipSpriteCtx {
   shipContainer: Container;
-  sprites: Map<string, Graphics>;
+  sprites: Map<string, Container>;
+  /** Machined art (A3): null art service ⇒ today's look for every ship. */
+  art: ShipArtCtx;
   mountVisuals: MountVisualManager;
   /** Filled by the caller from this frame's mirror; passed in to avoid
    *  recomputing per ship. */
@@ -52,8 +55,17 @@ export function updateShipSprites(mirror: RenderMirror, ctx: ShipSpriteCtx): voi
     ctx.seenScratch.add(playerId);
 
     let sprite = ctx.sprites.get(playerId);
+    // Machined art: build (or swap to) the Machined sprite once its art is
+    // ready; until then, today's vector look.
+    const handle = shipHandleFor(ctx.art, playerId, ship.kind ?? 'fighter', undefined);
+    if (sprite && shipArtSwap(ctx.art, sprite, handle) !== 'keep') {
+      ctx.mountVisuals.removeShip(playerId); // its barrel cluster is a child
+      ctx.shipContainer.removeChild(sprite);
+      sprite.destroy({ children: true });
+      sprite = undefined;
+    }
     if (!sprite) {
-      sprite = buildShipGfxFromShape(shapeForKind(ship.kind));
+      sprite = buildArtShipSprite(handle, () => buildShipGfxFromShape(shapeForKind(ship.kind)));
       ctx.shipContainer.addChild(sprite);
       ctx.sprites.set(playerId, sprite);
     }
@@ -84,6 +96,7 @@ export function updateShipSprites(mirror: RenderMirror, ctx: ShipSpriteCtx): voi
     sprite.x = ship.x;
     sprite.y = -ship.y;
     sprite.rotation = -ship.angle;
+    updateArtShipLight(ctx.art, sprite);
 
     // Damage flash takes priority; beam hit tint is secondary.
     if (mirror.damagedShips?.has(playerId)) {

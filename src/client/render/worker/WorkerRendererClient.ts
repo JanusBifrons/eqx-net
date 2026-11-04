@@ -177,6 +177,7 @@ export class WorkerRendererClient implements IRenderer {
       dpr,
       isTouch: this._isTouch,
       ...(zoom !== undefined ? { zoom } : {}),
+      search: window.location.search,
     }, [offscreen]);
 
     // F1 — tell the worker once whether to emit per-frame markers.

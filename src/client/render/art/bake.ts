@@ -5,7 +5,7 @@
  * in the bake workers (`bake.worker.ts`). A bake is a list of RGBA frames plus
  * the few facts the runtime needs (size, density, light and nozzle spots).
  */
-import { forgeShip, forgeStructure, shipExtent, type Fields } from './fields.js';
+import { forgeRock, forgeScrap, forgeShip, forgeStructure, shipExtent, type Fields } from './fields.js';
 import { litFrame, type Frame, type LightRig } from './shade.js';
 import { linToSrgb } from './color.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
@@ -33,13 +33,25 @@ export type BakeJob =
   /** `rot`: the structure's sprite rotation (radians, quarter turns). The sun
    *  is baked relative to it, so a turned structure is still lit from the
    *  sector's sun rather than having its lighting turn with it. */
-  | { type: 'struct'; id: string; seed: number; accent?: number; rot?: number };
+  | { type: 'struct'; id: string; seed: number; accent?: number; rot?: number }
+  /** One component of a destroyed ship; tumbles, so baked like a ship. */
+  | { type: 'scrap'; id: string; component: number }
+  /** An asteroid, by its seeded outline; static, so one frame at its turn. */
+  | { type: 'rock'; id: string; entityId: number; radius: number; resource?: string; rot?: number };
 
 /** The cache key a job's result is stored under (shared by main and workers). */
 export function bakeKey(j: BakeJob): string {
   if (j.type === 'ship') return `m:${j.id}:${j.paint ?? ''}`;
+  if (j.type === 'scrap') return `s:${j.id}:${j.component}`;
+  if (j.type === 'rock') return `r:${j.entityId}:${j.radius}:${j.resource ?? ''}:${quarterTurnsFine(j.rot ?? 0)}`;
   const q = quarterTurns(j.rot ?? 0);
   return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}`;
+}
+
+/** Asteroid turns snapped to 1/16 of a circle (they sit at any angle). */
+export function quarterTurnsFine(rot: number): number {
+  const q = Math.round(rot / (Math.PI / 8)) % 16;
+  return q < 0 ? q + 16 : q;
 }
 
 /** A rotation snapped to whole quarter turns, 0..3. */
@@ -86,9 +98,20 @@ export function albedoHalf(f: Fields): Frame {
   return { w, h, data };
 }
 
+/** Asteroids are numerous and unique: a coarser bake, capped at 256 texels. */
+export const ROCK_MAX_SIDE = 256;
+
 export function runBake(j: BakeJob, rig: LightRig): Baked {
-  if (j.type === 'ship') {
-    const f = forgeShip(j.id, { ppu: shipPpu(j.id), paint: j.paint });
+  if (j.type === 'rock') {
+    const ppu = Math.min(1.5, ROCK_MAX_SIDE / (j.radius * 2.6 + 4));
+    const f = forgeRock(j.entityId, j.radius, j.resource, { ppu });
+    const turn = quarterTurnsFine(j.rot ?? 0) * (Math.PI / 8);
+    return { frames: [litFrame(f, rig, rig.sunAz - turn), albedoHalf(f)], w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: [], navLights: [] };
+  }
+  if (j.type === 'ship' || j.type === 'scrap') {
+    const f = j.type === 'ship'
+      ? forgeShip(j.id, { ppu: shipPpu(j.id), paint: j.paint })
+      : forgeScrap(j.id, j.component, { ppu: shipPpu(j.id) });
     const frames: Frame[] = [];
     for (let k = 0; k < SUN_STEPS; k++) frames.push(litFrame(f, rig, (k / SUN_STEPS) * Math.PI * 2));
     return { frames, w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: f.nozzles, navLights: f.navLights };

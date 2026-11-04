@@ -120,3 +120,26 @@ export function isSpriteInView(x: number, y: number, r: number, bounds: Float64A
   if (!bounds) return true;
   return x + r >= bounds[0]! && x - r <= bounds[2]! && y + r >= bounds[1]! && y - r <= bounds[3]!;
 }
+
+/**
+ * Machined art (plan iridescent-seeking-rainbow, A3): should a ship's cached
+ * sprite be rebuilt this frame?
+ *  - art off, no handle, or the bake failed ⇒ today's vector look;
+ *  - handle pending ⇒ keep whatever is shown (vector until the first art lands;
+ *    an old Machined sprite keeps drawing while a re-paint bakes);
+ *  - handle ready ⇒ the Machined sprite.
+ * `showsHandleArt`: the cached sprite is the Machined sprite built from THIS
+ * handle's art (an old Machined sprite of another paint does not count).
+ * Returns a constant (no allocation: called per ship per frame, #14).
+ */
+export type ArtSwap = 'keep' | 'toMachined' | 'toClassic';
+
+export function decideArtSwap(
+  machinedOn: boolean,
+  handleState: 'pending' | 'ready' | 'failed' | null,
+  showsHandleArt: boolean,
+): ArtSwap {
+  if (!machinedOn || handleState === null || handleState === 'failed') return showsHandleArt ? 'toClassic' : 'keep';
+  if (handleState === 'ready') return showsHandleArt ? 'keep' : 'toMachined';
+  return 'keep';
+}
