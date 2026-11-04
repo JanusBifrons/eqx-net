@@ -78,6 +78,17 @@ Drawing was never the problem; loading was. Round 2 fixed it as follows:
 `scripts/art-lab/bake-cost.ts` prints the bake cost per structure kind.
 `scripts/art-lab/persist-check.ts` proves the between-session cache works.
 
+## In the game
+
+The renderer reaches the art through `src/client/render/art/ArtService.ts` (plan iridescent-seeking-rainbow):
+
+- **Handles.** A request returns a reused handle at once; the sprite draws today's look until the handle is ready, so nothing waits on a bake.
+- **Bakes.** They run on a worker pool (inline if workers are unavailable) and come from the device cache when possible.
+- **Packing.** Finished bakes go into the atlas within a per-frame budget (3 ms).
+- **Memory budget.** Pages are counted at their full GPU cost. Phones get up to 6 pages of 2048² (about 125 MB with mipmaps); desktop up to 4 of 4096² (about 340 MB). Art that doesn't fit fails, and that sprite keeps today's look.
+- **Sun.** Each sector gets its own sun direction, hashed from its key and kept above the screen (`sunRig.ts`).
+- **Turns.** Structures bake per quarter turn, so turning one never turns its sunlight.
+
 ## Rejected options
 
 - **Lit pixel.** It worked: palette ramps in OKLCh with cool shadows and warm

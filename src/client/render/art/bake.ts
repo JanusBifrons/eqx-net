@@ -30,11 +30,22 @@ export interface Baked {
 
 export type BakeJob =
   | { type: 'ship'; id: string; paint?: number }
-  | { type: 'struct'; id: string; seed: number; accent?: number };
+  /** `rot`: the structure's sprite rotation (radians, quarter turns). The sun
+   *  is baked relative to it, so a turned structure is still lit from the
+   *  sector's sun rather than having its lighting turn with it. */
+  | { type: 'struct'; id: string; seed: number; accent?: number; rot?: number };
 
 /** The cache key a job's result is stored under (shared by main and workers). */
 export function bakeKey(j: BakeJob): string {
-  return j.type === 'ship' ? `m:${j.id}:${j.paint ?? ''}` : `m:${j.id}:${j.seed}:${j.accent ?? ''}`;
+  if (j.type === 'ship') return `m:${j.id}:${j.paint ?? ''}`;
+  const q = quarterTurns(j.rot ?? 0);
+  return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}`;
+}
+
+/** A rotation snapped to whole quarter turns, 0..3. */
+export function quarterTurns(rot: number): number {
+  const q = Math.round(rot / (Math.PI / 2)) % 4;
+  return q < 0 ? q + 4 : q;
 }
 
 /** Map any placement seed onto one of the shared variants. */
@@ -84,7 +95,7 @@ export function runBake(j: BakeJob, rig: LightRig): Baked {
   }
   const f = forgeStructure(j.id, { ppu: STRUCT_PPU, maxSide: STRUCT_MAX_SIDE, seed: j.seed, accent: j.accent });
   return {
-    frames: [litFrame(f, rig, rig.sunAz), albedoHalf(f)],
+    frames: [litFrame(f, rig, rig.sunAz - quarterTurns(j.rot ?? 0) * (Math.PI / 2)), albedoHalf(f)],
     w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: f.nozzles, navLights: f.navLights,
   };
 }
