@@ -1,0 +1,153 @@
+{
+  "when": "2026-11-04T20:19:57.811Z",
+  "device": {
+    "ua": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Mobile Safari/537.36",
+    "cores": 8,
+    "dpr": 2.625,
+    "w": 411,
+    "h": 809,
+    "mem": null
+  },
+  "results": [
+    {
+      "run": "fx: battle, today",
+      "loadMs": 1362,
+      "bakeMs": 42,
+      "fxBakeMs": 0,
+      "bench": {
+        "frames": 718,
+        "cpuP50": 4.300000004470348,
+        "cpuP95": 6.100000001490116,
+        "rafP50": 11.100000001490116,
+        "rafP95": 12,
+        "drawCalls": 6
+      }
+    },
+    {
+      "run": "fx: battle, new (first load)",
+      "loadMs": 2109,
+      "bakeMs": 951,
+      "fxBakeMs": 916,
+      "bench": {
+        "frames": 716,
+        "cpuP50": 4.200000002980232,
+        "cpuP95": 6.299999997019768,
+        "rafP50": 11.100000001490116,
+        "rafP95": 11.899999998509884,
+        "drawCalls": 9
+      }
+    },
+    {
+      "run": "fx: battle, new + shader shields",
+      "loadMs": 2090,
+      "bakeMs": 930,
+      "fxBakeMs": 877,
+      "bench": {
+        "frames": 717,
+        "cpuP50": 4.399999998509884,
+        "cpuP95": 6.200000002980232,
+        "rafP50": 11.100000001490116,
+        "rafP95": 11.600000001490116,
+        "drawCalls": 19
+      }
+    },
+    {
+      "run": "fx: zoom sweep, today",
+      "loadMs": 1119,
+      "bakeMs": 85,
+      "fxBakeMs": 0,
+      "bench": {
+        "frames": 721,
+        "cpuP50": 3.0999999940395355,
+        "cpuP95": 6,
+        "rafP50": 11.100000001490116,
+        "rafP95": 12.100000001490116,
+        "drawCalls": 2
+      }
+    },
+    {
+      "run": "fx: zoom sweep, new",
+      "loadMs": 2146,
+      "bakeMs": 979,
+      "fxBakeMs": 916,
+      "bench": {
+        "frames": 719,
+        "cpuP50": 1,
+        "cpuP95": 2.3000000044703484,
+        "rafP50": 11.100000001490116,
+        "rafP95": 12.600000001490116,
+        "drawCalls": 9
+      }
+    },
+    {
+      "run": "fx: battle, today (24 a side)",
+      "loadMs": 1197,
+      "bakeMs": 37,
+      "fxBakeMs": 0,
+      "bench": {
+        "frames": 721,
+        "cpuP50": 5.0999999940395355,
+        "cpuP95": 7,
+        "rafP50": 11.100000001490116,
+        "rafP95": 12.199999995529652,
+        "drawCalls": 10
+      }
+    },
+    {
+      "run": "fx: battle, new (24 a side)",
+      "loadMs": 2151,
+      "bakeMs": 940,
+      "fxBakeMs": 894,
+      "bench": {
+        "frames": 702,
+        "cpuP50": 4.300000004470348,
+        "cpuP95": 8.100000001490116,
+        "rafP50": 11.100000001490116,
+        "rafP95": 11.700000002980232,
+        "drawCalls": 9
+      }
+    },
+    {
+      "run": "fx: fly-through, round 1 sky",
+      "loadMs": 1679,
+      "bakeMs": 847,
+      "fxBakeMs": 840,
+      "bench": {
+        "frames": 721,
+        "cpuP50": 0.6000000014901161,
+        "cpuP95": 0.8999999985098839,
+        "rafP50": 11.100000001490116,
+        "rafP95": 12.099999994039536,
+        "drawCalls": 7
+      }
+    },
+    {
+      "run": "fx: fly-through, round 2 sky",
+      "loadMs": 2487,
+      "bakeMs": 918,
+      "fxBakeMs": 888,
+      "bench": {
+        "frames": 719,
+        "cpuP50": 1.3999999985098839,
+        "cpuP95": 3.600000001490116,
+        "rafP50": 11.100000001490116,
+        "rafP95": 12.100000001490116,
+        "drawCalls": 5
+      }
+    },
+    {
+      "run": "fx: fly-through, round 2 sky + large speed effects",
+      "loadMs": 2346,
+      "bakeMs": 915,
+      "fxBakeMs": 897,
+      "bench": {
+        "frames": 718,
+        "cpuP50": 1.6000000014901161,
+        "cpuP95": 3.399999998509884,
+        "rafP50": 11.100000001490116,
+        "rafP95": 12.200000002980232,
+        "drawCalls": 5
+      }
+    }
+  ]
+}
