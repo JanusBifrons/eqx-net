@@ -32,6 +32,7 @@ import { createArtService } from './art/ArtService.js';
 import { warmUpJobs } from './art/warmUp.js';
 import { Backdrop } from './art/fx/Backdrop.js';
 import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
+import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
 import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
 import { BeamSpritePool } from './BeamSpritePool';
@@ -727,6 +728,13 @@ export class PixiRenderer implements IRenderer {
       this._fxProjectiles = new FxProjectiles(art);
       this.shipContainer.addChild(this._fxRemoteBeams.container, this._fxLiveBeams.container, this._fxProjectiles.container);
       this._projectileUpdaterCtx.fx = this._fxProjectiles;
+      // B4: explosions (ship / drone / structure deaths, missile detonations)
+      // and missile smoke trails.
+      this._fxExplosions = new FxExplosions(art, () => this.effects?.getQuality() ?? 'medium');
+      this._fxMissileTrails = new FxMissileTrails(art);
+      this.shipContainer.addChild(this._fxMissileTrails.smokeLayer, this._fxExplosions.smokeLayer, this._fxMissileTrails.glowLayer, this._fxExplosions.fireLayer);
+      this._missileUpdaterCtx.fxTrails = this._fxMissileTrails;
+      this._missileUpdaterCtx.fxExplosions = this._fxExplosions;
     }
 
     // Effects subsystem (plan `wiggly-puppy` M3+). Constructed inside
@@ -1380,7 +1388,13 @@ export class PixiRenderer implements IRenderer {
         // buildExplosionGfx path under the ?effects=0 escape hatch. The
         // pose returned by the helper is in Pixi space (Y-flipped); the
         // effects service expects world coords, so unflip here.
-        if (this.effects) {
+        // New explosions (B4): sized from the dying sprite; replaces the
+        // particle burst + shock filter when its textures are ready.
+        const dying = this.sprites.get(targetId);
+        const diameter = dying ? Math.max(dying.width, dying.height) : 40;
+        if (this._fxExplosions?.spawn(pose.x, -pose.y, blastRadiusFor(diameter), performance.now())) {
+          // drawn by FxExplosions
+        } else if (this.effects) {
           this.effects.spawnBurst('destruction', pose.x, -pose.y);
           this.effects.triggerOneShotFilter('destruction-shock', pose.x, -pose.y);
         } else {
@@ -1469,6 +1483,7 @@ export class PixiRenderer implements IRenderer {
     // Missile sprites + detonation VFX. Reads single-pose-per-frame via
     // resolveMissileDisplayPose (one-pose-per-frame rule — same as drones).
     updateMissileSprites(mirror, this._missileUpdaterCtx, performance.now());
+    this._fxExplosions?.tick(performance.now());
 
     // Server ghost: orange diamond showing where the server's last snapshot
     // put the ship, before any client-side prediction replay.
@@ -2405,6 +2420,10 @@ export class PixiRenderer implements IRenderer {
     return () => (h.state === 'ready' && h.fx ? h.fx.tex : null);
   }
 
+  /** New explosions + missile smoke (`?fx=new`, B4). */
+  private _fxExplosions: FxExplosions | null = null;
+  private _fxMissileTrails: FxMissileTrails | null = null;
+
   /** New weapon effects (`?fx=new`, B3). */
   private _fxLiveBeams: FxBeams | null = null;
   private _fxRemoteBeams: FxBeams | null = null;
@@ -2610,6 +2629,7 @@ export class PixiRenderer implements IRenderer {
    */
   resetEffectsForSectorHandoff(): void {
     this.effects?.resetForSectorHandoff();
+    this._fxExplosions?.reset();
     this._activeThrustIds.clear();
     this._activeBoostIds.clear();
     this._activeShieldIds.clear();
@@ -2617,7 +2637,7 @@ export class PixiRenderer implements IRenderer {
 
   /** Machined art status: the service's counts plus how many ship sprites
    *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: { on: boolean; nebula: string | null }; fxProjectiles: number; fxBeam: boolean } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: { on: boolean; nebula: string | null }; fxProjectiles: number; fxBeam: boolean; fxExplosions: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;
@@ -2627,7 +2647,7 @@ export class PixiRenderer implements IRenderer {
       if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
     const art = this._artCtx.art;
-    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, ...(art ? art.stats() : {}) };
+    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, ...(art ? art.stats() : {}) };
   }
 
   dispose(): void {

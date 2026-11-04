@@ -16,6 +16,7 @@ import type { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { resolveMissileDisplayPose } from '../../combat/MissileMirror.js';
 import { buildMissileGfx, buildMissileExplosionGfx } from './spriteBuilders.js';
+import type { FxExplosions, FxMissileTrails } from '../art/fx/FxExplosions.js';
 
 export interface MissileSpriteCtx {
   shipContainer: Container;
@@ -24,6 +25,10 @@ export interface MissileSpriteCtx {
   missileSeenScratch: Set<number>;
   /** Active explosion sprites with their spawn-time + max-life. */
   activeExplosions: Array<{ g: Graphics; spawnMs: number; lifeMs: number }>;
+  /** New smoke trails and detonations (`?fx=new`, plan
+   *  iridescent-seeking-rainbow v3 B4); null or not ready = today's look. */
+  fxTrails?: FxMissileTrails | null;
+  fxExplosions?: FxExplosions | null;
 }
 
 const EXPLOSION_LIFE_MS = 400;
@@ -34,6 +39,8 @@ export function updateMissileSprites(
   nowMs: number,
 ): void {
   // 1. Update existing missile sprites + spawn new ones.
+  const trails = ctx.fxTrails && ctx.fxTrails.ready() ? ctx.fxTrails : null;
+  trails?.beginFrame();
   if (mirror.missiles) {
     const seen = ctx.missileSeenScratch;
     seen.clear();
@@ -58,6 +65,7 @@ export function updateMissileSprites(
       // Fade slightly near end-of-life (lifePct < 0.15) so a missile
       // about to expire reads as fading rather than disappearing.
       g.alpha = pose.lifePct < 0.15 ? Math.max(0.3, pose.lifePct / 0.15) : 1;
+      trails?.draw(id, pose.x, pose.y, pose.angle, nowMs);
     }
     // Reap sprites for missiles that left the mirror.
     for (const [id, g] of ctx.missileSprites) {
@@ -79,9 +87,11 @@ export function updateMissileSprites(
   // (called on the main-thread mirror per gameRafLoop frame, gated on
   // `shouldRender` for the worker-skip-frame contract). This loop
   // ONLY reads the events; clearing is the caller's job.
+  trails?.endFrame();
   const explosions = mirror.pendingMissileExplosions;
   if (explosions && explosions.length > 0) {
     for (const evt of explosions) {
+      if (ctx.fxExplosions?.spawn(evt.x, evt.y, Math.max(34, evt.splashRadius), nowMs)) continue;
       const g = buildMissileExplosionGfx();
       g.x = evt.x;
       g.y = -evt.y;
