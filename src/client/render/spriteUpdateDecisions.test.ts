@@ -149,7 +149,7 @@ describe('decideLingeringSpriteAction — property tests', () => {
  * silhouette's position. Per Invariant #13, the failing test below
  * went in BEFORE the fix in `PixiRenderer.ts`.
  */
-import { decideExplosionPosition, isSpriteInView } from './spriteUpdateDecisions.js';
+import { decideArtSwap, decideExplosionPosition, isSpriteInView } from './spriteUpdateDecisions.js';
 
 describe('decideExplosionPosition', () => {
   const empty = new Map<string, { x: number; y: number }>();
@@ -206,5 +206,33 @@ describe('isSpriteInView (A3 structure culling)', () => {
   });
   it('no bounds ⇒ always drawn', () => {
     expect(isSpriteInView(1e6, 1e6, 1, undefined)).toBe(true);
+  });
+});
+
+describe('decideArtSwap (Machined art, A3)', () => {
+  it('follows the truth table', () => {
+    // Art off: today's look; an old Machined sprite is put back to it.
+    expect(decideArtSwap(false, null, false)).toBe('keep');
+    expect(decideArtSwap(false, null, true)).toBe('toClassic');
+    // Pending: keep whatever is shown.
+    expect(decideArtSwap(true, 'pending', false)).toBe('keep');
+    // Ready: the Machined sprite for THIS handle.
+    expect(decideArtSwap(true, 'ready', false)).toBe('toMachined');
+    expect(decideArtSwap(true, 'ready', true)).toBe('keep');
+    // Failed: today's look.
+    expect(decideArtSwap(true, 'failed', false)).toBe('keep');
+  });
+
+  it('never asks to rebuild a sprite that already shows ready art', () => {
+    fc.assert(fc.property(fc.boolean(), (on) => decideArtSwap(on, 'ready', true) !== 'toMachined'));
+  });
+
+  it('applying the swap reaches a fixed point (no rebuild loop)', () => {
+    const states = ['pending', 'ready', 'failed', null] as const;
+    fc.assert(fc.property(fc.boolean(), fc.constantFrom(...states), fc.boolean(), (on, st, shows) => {
+      const first = decideArtSwap(on, st, shows);
+      const after = first === 'toMachined' ? true : first === 'toClassic' ? false : shows;
+      return decideArtSwap(on, st, after) === 'keep';
+    }));
   });
 });

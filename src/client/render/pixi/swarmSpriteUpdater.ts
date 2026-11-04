@@ -54,6 +54,8 @@ import type { Text } from 'pixi.js';
 import { getWeapon } from '../../../core/combat/WeaponCatalogue';
 import { minerRangeForKind } from '../minerRangeRing.js';
 import type { MountVisualManager } from '../MountVisualManager';
+import { buildArtShipSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from '../art/shipArtSprites.js';
+import { MachinedShipSprite } from '../art/MachinedShipSprite.js';
 import {
   interpolateSwarmPose,
   type InterpolatedPose,
@@ -75,7 +77,9 @@ export interface SwarmSpriteCtx {
    *  outside it are not drawn. Absent ⇒ draw everything. */
   viewBounds?: Float64Array;
   shipContainer: Container;
-  sprites: Map<string, Graphics>;
+  sprites: Map<string, Container>;
+  /** Machined art (A3): drones of a known ship kind; null service ⇒ today's look. */
+  art: ShipArtCtx;
   mountVisuals: MountVisualManager;
   swarmPoseScratch: InterpolatedPose;
   remoteHitTargets: Set<string>;
@@ -127,10 +131,10 @@ const _structureMountAngles: number[] = [];
 const EMPTY_MOUNTS: readonly WeaponMount[] = [];
 
 /** P3c — drone sprite → its charge telegraph child (weak: dies with the sprite). */
-const chargeTelegraphs = new WeakMap<Graphics, Graphics>();
+const chargeTelegraphs = new WeakMap<Container, Graphics>();
 /** P4a — a named elite's gold ring, created lazily the first frame the sprite
  *  is known to be an elite (once per sprite, #14), then shown/hidden. */
-const eliteRings = new WeakMap<Graphics, Graphics>();
+const eliteRings = new WeakMap<Container, Graphics>();
 
 /** The longest charge weapon range a kind carries (0 ⇒ no charge weapon). */
 export function chargeRangeForKind(shipKind: string | undefined): number {
@@ -179,14 +183,29 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       ctx.sprites.delete(spriteKey);
       sprite = undefined;
     }
+    // Machined art (A3): a drone of a known ship kind swaps to its Machined
+    // sprite once the art is ready. A patrol bakes in its faction's paint
+    // (tinting a lit sprite would muddy it).
+    const droneHandle = entry.kind === 1 && entry.shipKind
+      ? shipHandleFor(ctx.art, spriteKey, entry.shipKind, entry.faction !== undefined ? npcFactionDef(entry.faction)?.color : undefined)
+      : null;
+    if (sprite && droneHandle && shipArtSwap(ctx.art, sprite, droneHandle) !== 'keep') {
+      ctx.shipContainer.removeChild(sprite);
+      ctx.mountVisuals.removeShip(spriteKey);
+      ctx.spriteBuildSigs.delete(spriteKey);
+      sprite.destroy({ children: true });
+      ctx.sprites.delete(spriteKey);
+      sprite = undefined;
+    }
     if (!sprite) {
       if (entry.kind === 1) {
         // Drones use the same procedural shape as player ships of that
         // kind, so a Heavy drone visibly reads as a Heavy. Falls back
         // to the legacy magenta dart silhouette when the wire didn't
         // carry a kind (older snapshots / pre-v2 packets).
-        sprite = entry.shipKind
-          ? buildShipGfxFromShape(shapeForKind(entry.shipKind))
+        const sk = entry.shipKind;
+        sprite = sk
+          ? buildArtShipSprite(droneHandle, () => buildShipGfxFromShape(shapeForKind(sk)))
           : buildDroneGfx(entry.radius);
         // P3c — a kind with a CHARGE weapon gets a (hidden) wind-up telegraph,
         // built once here and toggled per frame from `entry.charging`.
@@ -255,6 +274,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // radius is a safe margin; mount barrels are children and hide with it).
     if (entry.kind === 2) sprite.visible = isSpriteInView(sprite.x, sprite.y, entry.radius, ctx.viewBounds);
     sprite.rotation = -lerped.angle;
+    if (entry.kind === 1) updateArtShipLight(ctx.art, sprite);
     if (entry.kind === 1) {
       // P3c — charge-weapon wind-up telegraph (pulses while charging).
       const tele = chargeTelegraphs.get(sprite);
@@ -357,7 +377,10 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     } else {
       // v4 M2 — a patrol ship wears its faction's colour (set here, the one
       // tint site, so the reset below a hit can't wipe it).
-      const fc = entry.kind === 1 && entry.faction !== undefined ? npcFactionDef(entry.faction)?.color : undefined;
+      // A Machined patrol has its faction paint baked in, so it stays untinted.
+      const fc = entry.kind === 1 && entry.faction !== undefined && !(sprite instanceof MachinedShipSprite)
+        ? npcFactionDef(entry.faction)?.color
+        : undefined;
       sprite.tint = fc ?? 0xffffff;
     }
     // Structures plan, Phase 3 — blueprints (not yet built) render dimmed

@@ -37,6 +37,9 @@ export interface BootMsg {
    * so the main thread reads the URL param and forwards it here.
    */
   zoom?: number;
+  /** The page's query string, for flags the worker renderer reads itself
+   *  (the Machined art switch `?art=`); the worker has no `window`. */
+  search?: string;
   /**
    * Touch-device flag (Equinox P6.1). The worker has no reliable
    * `window.matchMedia`, so the main thread (which knows via `isTouchDevice()`)

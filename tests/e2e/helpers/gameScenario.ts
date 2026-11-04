@@ -40,6 +40,8 @@ export interface TestClientOpts {
    *  room). For multi-client specs, mint the testId at the test level
    *  and pass it explicitly to each launchTestClient call. */
   testId?: string;
+  /** Any other URL params (e.g. `{ worker: '0', art: 'machined' }`). */
+  extraParams?: Record<string, string>;
 }
 
 export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
@@ -57,6 +59,7 @@ export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
   if (opts.initialAngle !== undefined) params.set('initialAngle', String(opts.initialAngle));
   if (opts.shipKind !== undefined) params.set('shipKind', opts.shipKind);
   if (opts.injectLeak !== undefined) params.set('injectLeak', String(opts.injectLeak));
+  for (const [k, v] of Object.entries(opts.extraParams ?? {})) params.set(k, v);
   await page.goto(`${BASE_URL}?${params}`);
   await page.waitForFunction(
     () =>
