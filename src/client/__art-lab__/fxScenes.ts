@@ -19,7 +19,15 @@ export interface FxShot {
   period?: number;
   /** World units per second (not beams). */
   speed?: number;
+  /** Aim at shield fence `wall` (index into `fences`), at `wallT` (0..1
+   *  along it) instead of at ship `to`. */
+  wall?: number;
+  wallT?: number;
 }
+
+/** A shield fence between two emitters. `up`: the intervals it is raised.
+ *  A gate's gaps are it opening; anything else's are a power loss. */
+export interface FxFence { ax: number; ay: number; bx: number; by: number; up: Array<[number, number]>; gate?: boolean }
 
 export type BoomSize = 'small' | 'ship' | 'large';
 export interface FxBoom { x: number; y: number; t0: number; size: BoomSize; /** Ship index that dies here. */ ship?: number }
@@ -39,13 +47,14 @@ export interface FxScene {
   rocks: FxRock[];
   wisps: FxWisp[];
   wreck?: FxWreck;
+  fences?: FxFence[];
   /** Draw a distant planet in the backdrop. */
   planet?: boolean;
   camera: (t: number, out: Cam) => void;
   duration: number;
 }
 
-export const FX_SCENE_IDS = ['weapons', 'shield', 'shield-beams', 'explosions', 'zoom', 'nebula', 'environment', 'battle'] as const;
+export const FX_SCENE_IDS = ['weapons', 'shield', 'shield-beams', 'fences', 'explosions', 'zoom', 'nebula', 'environment', 'battle'] as const;
 export type FxSceneId = (typeof FX_SCENE_IDS)[number];
 
 /** A ship holding station at (x, y), facing (tx, ty), with a small bob. */
@@ -143,6 +152,40 @@ export function buildFxScene(id: FxSceneId, zoomOverride?: number, n = 12): FxSc
       ];
       return { ...empty, ships, shots, shields: [{ ship: 0, radius: 48, breakAt: 4.2, color: 0x7fd8ff }], duration: 6,
         camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = zoomOr(1.7); } };
+    }
+    case 'fences': {
+      // A fenced compound: bolts and lasers on the fence, the gate opening
+      // for a ship and closing behind it, then the west fence losing power
+      // and coming back up.
+      const P0: [number, number] = [-240, -170], P1: [number, number] = [240, -170], P2: [number, number] = [240, 170], P3: [number, number] = [-240, 170];
+      const G1: [number, number] = [55, 170], G2: [number, number] = [-55, 170];
+      const f = (a: [number, number], b: [number, number], up: Array<[number, number]>, gate = false): FxFence => ({ ax: a[0], ay: a[1], bx: b[0], by: b[1], up, gate });
+      const fences: FxFence[] = [
+        f(P0, P1, [[0.4, 9]]), f(P1, P2, [[0, 9]]), f(P2, G1, [[0, 9]]),
+        f(G1, G2, [[0, 3.4], [5.4, 9]], true), f(G2, P3, [[0, 9]]), f(P3, P0, [[0, 6.0], [7.3, 9]]),
+      ];
+      const ships: ShipE[] = [
+        station('robot-square', -110, -420, -110, 0, 1), station('robot-square', 120, -430, 120, 0, 2),
+        station('interceptor', 560, -60, 0, -60, 3), station('interceptor', 560, 40, 0, 40, 4), station('interceptor', 560, 110, 0, 110, 5),
+        {
+          id: 'fighter', trail: true,
+          pose: (t, o) => {
+            const k = Math.min(1, Math.max(0, (t - 3.6) / 1.5));
+            const e = k * k * (3 - 2 * k);
+            o.x = 0; o.y = 470 - e * 520; o.rot = 0; o.thrust = k > 0 && k < 1 ? 1 : 0.3;
+          },
+        },
+      ];
+      const shots: FxShot[] = [
+        { kind: 'bolt', from: 0, to: 0, wall: 0, wallT: 0.27, t0: 1.0, t1: 9, color: 0xff5a7a, period: 0.45, speed: 480 },
+        { kind: 'bolt', from: 1, to: 1, wall: 0, wallT: 0.75, t0: 1.25, t1: 9, color: 0xff5a7a, period: 0.5, speed: 480 },
+        { kind: 'beam', from: 2, to: 2, wall: 1, wallT: 0.32, t0: 2.0, t1: 5.6, color: 0xff4f8a },
+        { kind: 'beam', from: 3, to: 3, wall: 1, wallT: 0.62, t0: 2.6, t1: 5.6, color: 0xff4f8a },
+        { kind: 'beam', from: 4, to: 4, wall: 1, wallT: 0.7, t0: 3.2, t1: 5.6, color: 0xff4f8a },
+      ];
+      return { ...empty, ships, shots, fences, duration: 9,
+        structs: [P0, P1, P2, P3, G1, G2].map(([x, y], i) => ({ id: 'shield_pylon', x, y, rot: 0, seed: i + 1 })),
+        camera: (_t, c) => { c.x = 70; c.y = -10; c.zoom = zoomOr(0.95); } };
     }
     case 'shield-beams': {
       // Held beam contact: 1 beam, then a 2nd from another side, then a 3rd

@@ -123,8 +123,11 @@ export function atlasOptsFor(touch: boolean): AtlasOpts {
 export function flipCells(sheet: Texture, flip: NonNullable<FxSpec['flip']>): Texture[] {
   const out: Texture[] = [];
   const f = sheet.frame;
+  const ch = f.height / Math.ceil(flip.frames / flip.cols);
   for (let i = 0; i < flip.frames; i++) {
-    out.push(new Texture({ source: sheet.source, frame: new Rectangle(f.x + (i % flip.cols) * flip.cell, f.y + Math.floor(i / flip.cols) * flip.cell, flip.cell, flip.cell) }));
+    // Cells can be non-square (fence strips): height = sheet height / rows.
+    // Inset 1 texel so linear filtering never bleeds a neighbouring cell in.
+    out.push(new Texture({ source: sheet.source, frame: new Rectangle(f.x + (i % flip.cols) * flip.cell + 1, f.y + Math.floor(i / flip.cols) * ch + 1, flip.cell - 2, ch - 2) }));
   }
   return out;
 }

@@ -22,13 +22,13 @@ import {
   Texture, TilingSprite, UniformGroup, CanvasSource,
 } from 'pixi.js';
 import { ArtCache, SUN_STEPS, type ShipArt } from './assets.js';
-import { buildFxScene, FX_SCENE_IDS, type BoomSize, type FxScene, type FxSceneId, type FxShot } from './fxScenes.js';
+import { buildFxScene, FX_SCENE_IDS, type BoomSize, type FxFence, type FxScene, type FxSceneId, type FxShot } from './fxScenes.js';
 import type { Cam, Pose } from './scenes.js';
 import { seedVariant, runBake, type BakeJob } from '../render/art/bake.js';
 import type { Frame } from '../render/art/shade.js';
 import {
   beamFlowTex, dustTileTex, fireballFlipbook, galaxyTex, glowTex, imgGpuBytes, nebulaTex, planetTex, ringTex,
-  shieldContactTex, shieldDomeTex, shieldHitFlipbook, smokeTex, sparkTex, spikeStarTex, starTileTex, streakTex, sunTex, trailTex, wispTex,
+  fenceContactTex, fenceRippleFlipbook, fenceStripFlipbook, h01, shieldContactTex, shieldDomeTex, shieldHitFlipbook, smokeTex, sparkTex, spikeStarTex, starTileTex, streakTex, sunTex, trailTex, wispTex,
   type Flipbook, type Img, type NebulaKind,
 } from '../render/art/fx/fxTextures.js';
 import { backdropXf, emberTint, envelope, flipFrame, lerpRgb, zoomWindow, SHIELD_HITS, SHIELD_CONTACTS, ShieldContacts, type TileXf } from '../render/art/fx/fxMath.js';
@@ -38,6 +38,7 @@ import { buildExplosionGfx, buildLaserBoltGfx, buildMissileExplosionGfx, buildMi
 import { StarfieldBackground } from '../render/StarfieldBackground.js';
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
 import { SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
+import { cometSegment, shieldWallVisualParams, type ShieldWallVisual } from '../render/pixi/connectorVisual.js';
 
 const qs = new URLSearchParams(location.search);
 const ARM: 'today' | 'new' = qs.get('fx') === 'today' ? 'today' : 'new';
@@ -84,7 +85,8 @@ function flipFrames(name: string, make: () => Flipbook): Texture[] {
   const base = toTexture(fb.sheet);
   const out: Texture[] = [];
   for (let f = 0; f < fb.frames; f++) {
-    out.push(new Texture({ source: base.source, frame: new Rectangle((f % fb.cols) * fb.cell, Math.floor(f / fb.cols) * fb.cell, fb.cell, fb.cell) }));
+    const rows = Math.ceil(fb.frames / fb.cols), ch = fb.sheet.h / rows;
+    out.push(new Texture({ source: base.source, frame: new Rectangle((f % fb.cols) * fb.cell + 1, Math.floor(f / fb.cols) * ch + 1, fb.cell - 2, ch - 2) }));
   }
   return out;
 }
@@ -131,6 +133,9 @@ async function main(): Promise<void> {
     trail: fxTex('trail', () => trailTex(128, 16)),
     dome: fxTex('shieldDome', () => shieldDomeTex(256)),
     contact: fxTex('shieldContact', () => shieldContactTex(192)),
+    fenceStrip: flipFrames('fenceStrip', () => fenceStripFlipbook(8, 128, 48)),
+    fenceRipple: flipFrames('fenceRipple', () => fenceRippleFlipbook(8, 128, 48)),
+    fenceContact: fxTex('fenceContact', () => fenceContactTex(128, 48)),
     spike: fxTex('spikeStar', () => spikeStarTex(64)),
     galaxy: fxTex('galaxy', () => galaxyTex(64)),
     sun: fxTex('sun', () => sunTex(256)),
@@ -292,6 +297,7 @@ async function main(): Promise<void> {
   // ---- weapons
   interface Geo { mx: number; my: number; ix: number; iy: number; len: number; ang: number; ok: boolean; shielded: boolean }
   const geo = (sh: FxShot, t: number, g: Geo): Geo => {
+    if (sh.wall !== undefined) return geoWall(sh, t, g);
     scene.ships[sh.from]!.pose(t, tmpA); scene.ships[sh.to]!.pose(t, tmpB);
     const tgt = ships[sh.to]!;
     g.ok = t < ships[sh.from]!.deadAt && t < tgt.deadAt;
@@ -304,6 +310,25 @@ async function main(): Promise<void> {
     return g;
   };
   const G: Geo = { mx: 0, my: 0, ix: 0, iy: 0, len: 0, ang: 0, ok: true, shielded: false };
+  /** A shot at a fence: the impact point is on the wall (with a slow wander
+   *  for beams), and it counts as a shield hit while the wall is up. */
+  function geoWall(sh: FxShot, t: number, g: Geo): Geo {
+    const fe = scene.fences![sh.wall!]!;
+    scene.ships[sh.from]!.pose(t, tmpA);
+    const wt = (sh.wallT ?? 0.5) + (sh.kind === 'beam' ? Math.sin(t * 0.9 + sh.from) * 0.025 : 0);
+    tmpB.x = fe.ax + (fe.bx - fe.ax) * wt; tmpB.y = fe.ay + (fe.by - fe.ay) * wt;
+    g.ok = t < ships[sh.from]!.deadAt;
+    g.shielded = fenceUp(fe, t);
+    const dx = tmpB.x - tmpA.x, dy = tmpB.y - tmpA.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+    g.mx = tmpA.x + ux * 12; g.my = tmpA.y + uy * 12;
+    g.ix = tmpB.x; g.iy = tmpB.y;
+    g.len = Math.hypot(g.ix - g.mx, g.iy - g.my); g.ang = Math.atan2(g.iy - g.my, g.ix - g.mx);
+    return g;
+  }
+  function fenceUp(fe: FxFence, t: number): boolean {
+    for (const [a, b] of fe.up) if (t >= a && t < b) return true;
+    return false;
+  }
 
   interface Impact { flare: Sprite; sparks: Sprite[]; puffs: Sprite[] }
   const SPARKS = 6;
@@ -356,7 +381,8 @@ async function main(): Promise<void> {
 
   for (const sh of scene.shots) {
     scene.ships[sh.from]!.pose(0, tmpA); scene.ships[sh.to]!.pose(0, tmpB);
-    const dist0 = Math.hypot(tmpB.x - tmpA.x, tmpB.y - tmpA.y);
+    if (sh.wall !== undefined) geoWall(sh, 0, G);
+    const dist0 = sh.wall !== undefined ? G.len : Math.hypot(tmpB.x - tmpA.x, tmpB.y - tmpA.y);
     const per = sh.period ?? 0.3, sp = sh.speed ?? 500;
     const flightMax = (dist0 * 1.35) / sp;
     if (sh.kind === 'beam') {
@@ -379,7 +405,9 @@ async function main(): Promise<void> {
           core.position.set(G.mx, G.my); core.rotation = G.ang; core.scale.set(G.len / 128, 3 / 32); core.alpha = ramp;
           muzzle.position.set(G.mx, G.my); muzzle.scale.set(20 / 64 * fl); muzzle.alpha = ramp * 0.9;
           drawImpact(im, G, ramp * fl, (t * 2.6) % 1, 40);
-          if (G.shielded && ramp > 0) {
+          if (sh.wall !== undefined) {
+            if (G.shielded && ramp > 0) fenceBeam(sh.wall, beamKey, sh.wallT ?? 0.5, t, sh);
+          } else if (G.shielded && ramp > 0) {
             const si = shieldOf[sh.to]!;
             const ang = Math.atan2(tmpA.y - tmpB.y, tmpA.x - tmpB.x);
             if (CONTACT) {
@@ -580,7 +608,9 @@ async function main(): Promise<void> {
         p.scale.set((8 + a * 26) / 64); p.rotation = j * 2 + a;
         p.alpha = arrived && !G.shielded && G.ok ? 0.45 * Math.max(0, 1 - a / 0.5) : 0;
       }
-      if (G.shielded && arrived) {
+      if (sh.wall !== undefined) {
+        if (G.shielded && arrived) { fenceHit(sh.wall, sh.wallT ?? 0.5, since); fenceHit(sh.wall, (sh.wallT ?? 0.5) + 0.01, since + per); }
+      } else if (G.shielded && arrived) {
         // Recent arrivals on the shield: the last two of this stream.
         const si = shieldOf[sh.to]!;
         const ang = Math.atan2(tmpA.y - tmpB.y, tmpA.x - tmpB.x);
@@ -636,6 +666,161 @@ async function main(): Promise<void> {
     for (let k = 0; k < 14; k++) v.shards.push(sprite(T!.spark, shieldL, sd.color, 1, 0.5));
     return v;
   });
+  // ---- shield fences
+  /** Wall band thickness and segment length, world units. */
+  const FENCE_BAND = 24, FENCE_SEG = 42, FENCE_HIT_LIFE = 0.45;
+  interface FenceV {
+    fe: FxFence; len: number; ang: number; ux: number; uy: number;
+    segs: Sprite[]; posts: Sprite[]; sparks: Sprite[]; hits: Sprite[]; held: Sprite[];
+    gfx: Graphics | null;
+    hitPos: Float32Array; hitAge: Float32Array;
+  }
+  const fenceContacts: ShieldContacts[] = (scene.fences ?? []).map(() => new ShieldContacts());
+  const fenceViews: FenceV[] = (scene.fences ?? []).map((fe) => {
+    const dx = fe.bx - fe.ax, dy = fe.by - fe.ay, len = Math.hypot(dx, dy) || 1;
+    const v: FenceV = { fe, len, ang: Math.atan2(dy, dx), ux: dx / len, uy: dy / len, segs: [], posts: [], sparks: [], hits: [], held: [], gfx: null,
+      hitPos: new Float32Array(SHIELD_HITS), hitAge: new Float32Array(SHIELD_HITS).fill(99) };
+    if (!NEW) { v.gfx = new Graphics(); todayL.addChild(v.gfx); return v; }
+    const n = Math.max(1, Math.round(len / FENCE_SEG));
+    for (let k = 0; k < n; k++) { const s = sprite(T!.fenceStrip[0]!, shieldL, 0x7fd8ff, 0, 0.5); v.segs.push(s); }
+    for (let k = 0; k < 2; k++) v.posts.push(sprite(T!.glow, shieldL, 0x9fe6ff));
+    for (let k = 0; k < 6; k++) v.sparks.push(sprite(T!.spark, shieldL, 0xffb070, 1, 0.5));
+    for (let k = 0; k < SHIELD_HITS; k++) v.hits.push(sprite(T!.fenceRipple[0]!, shieldL, 0x9fe6ff));
+    for (let k = 0; k < SHIELD_CONTACTS; k++) v.held.push(sprite(T!.fenceContact, shieldL, 0xc8f2ff));
+    return v;
+  });
+  function fenceBegin(): void {
+    for (const c of fenceContacts) c.begin();
+    for (const v of fenceViews) v.hitAge.fill(99);
+  }
+  function fenceEnd(dt: number): void { for (const c of fenceContacts) c.end(dt); }
+  /** "Angle" units for the contact logic: 100 world units along the wall. */
+  const FENCE_POS_UNIT = 100;
+  function fenceBeam(wall: number, key: number, wt: number, t: number, sh: FxShot): void {
+    const v = fenceViews[wall]!;
+    const w = wt + Math.sin(t * 0.9 + sh.from) * 0.025;
+    fenceContacts[wall]!.offer(key, (w * v.len) / FENCE_POS_UNIT, 1);
+  }
+  function fenceHit(wall: number, wt: number, age: number): void {
+    const v = fenceViews[wall];
+    if (!v || age < 0 || age >= FENCE_HIT_LIFE) return;
+    let worst = 0;
+    for (let k = 1; k < SHIELD_HITS; k++) if (v.hitAge[k]! > v.hitAge[worst]!) worst = k;
+    if (age >= v.hitAge[worst]!) return;
+    v.hitAge[worst] = age; v.hitPos[worst] = wt;
+  }
+  /** Where a fence is in its up / raising / dropping / opening cycle. */
+  function fenceState(fe: FxFence, t: number): { up: boolean; raise: number; fall: number; since: number } {
+    for (let i = 0; i < fe.up.length; i++) {
+      const [a, b] = fe.up[i]!;
+      if (t >= a && t < b) return { up: true, raise: a > 0 ? Math.min(1, (t - a) / 0.45) : 1, fall: 0, since: t - a };
+    }
+    // Down: how long since it last went down.
+    let lastEnd = -1;
+    for (const [, b] of fe.up) if (b <= t) lastEnd = Math.max(lastEnd, b);
+    return { up: false, raise: 0, fall: lastEnd >= 0 ? Math.min(1, (t - lastEnd) / (fe.gate ? 0.35 : 0.3)) : 1, since: lastEnd >= 0 ? t - lastEnd : 99 };
+  }
+  const todayWall: ShieldWallVisual = { active: false, glowColor: 0, glowAlpha: 0, glowWidth: 0, railColor: 0, railAlpha: 0, railWidth: 0, halfThickness: 0, shimmerT: 0, shimmerColor: 0, shimmerAlpha: 0, shimmerWidth: 0 } as ShieldWallVisual;
+  const comet = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  function drawFences(t: number): void {
+    const zoom = cam.zoom;
+    for (let wi = 0; wi < fenceViews.length; wi++) {
+      const v = fenceViews[wi]!, fe = v.fe;
+      const st = fenceState(fe, t);
+      if (v.gfx) {
+        // Today's look (ConnectorRenderer.drawShieldWall, per frame here).
+        const g = v.gfx; g.clear();
+        const ax = fe.ax, ay = fe.ay, bx = fe.bx, by = fe.by;
+        if (!st.up && fe.gate) {
+          for (let d = 0; d < v.len; d += 28) {
+            const d1 = Math.min(v.len, d + 12);
+            g.moveTo(ax + v.ux * d, ay + v.uy * d).lineTo(ax + v.ux * d1, ay + v.uy * d1);
+          }
+          g.stroke({ color: 0x7fe0a4, alpha: 0.45, width: Math.max(1 / zoom, 2) });
+          continue;
+        }
+        const sv = shieldWallVisualParams(todayWall, st.up, t * 1000, zoom);
+        if (!st.up) { g.moveTo(ax, ay).lineTo(bx, by).stroke({ color: sv.railColor, alpha: sv.railAlpha, width: sv.railWidth }); continue; }
+        const nx = -v.uy * sv.halfThickness, ny = v.ux * sv.halfThickness;
+        g.moveTo(ax, ay).lineTo(bx, by).stroke({ color: sv.glowColor, alpha: sv.glowAlpha, width: sv.glowWidth });
+        g.moveTo(ax + nx, ay + ny).lineTo(bx + nx, by + ny).stroke({ color: sv.railColor, alpha: sv.railAlpha, width: sv.railWidth });
+        g.moveTo(ax - nx, ay - ny).lineTo(bx - nx, by - ny).stroke({ color: sv.railColor, alpha: sv.railAlpha, width: sv.railWidth });
+        const c = cometSegment(comet, sv.shimmerT, true, ax, ay, bx, by, zoom);
+        g.moveTo(c.x0, c.y0).lineTo(c.x1, c.y1).stroke({ color: sv.shimmerColor, alpha: sv.shimmerAlpha, width: sv.shimmerWidth });
+        continue;
+      }
+      // New look: a row of animated strip segments.
+      const n = v.segs.length, segL = v.len / n;
+      const frame = Math.floor(t * 10) % T!.fenceStrip.length;
+      const breathe = 0.8 + 0.1 * Math.sin(t * 2.1 + wi);
+      for (let k = 0; k < n; k++) {
+        const s = v.segs[k]!;
+        const c = (k + 0.5) / n, edge = Math.min(c, 1 - c);
+        s.texture = T!.fenceStrip[frame]!;
+        s.position.set(fe.ax + v.ux * segL * k, fe.ay + v.uy * segL * k);
+        s.rotation = v.ang; s.scale.set(segL / s.texture.frame.width, FENCE_BAND / s.texture.frame.height);
+        let a = 0, tint = 0x7fd8ff;
+        if (st.up) {
+          // Raising: grows from both posts and meets in the middle.
+          a = edge <= st.raise * 0.5 + 0.02 ? breathe : 0;
+          if (st.raise < 1 && Math.abs(edge - st.raise * 0.5) < 0.6 / n) { a = 1.4; tint = 0xeaffff; }
+        } else if (fe.gate) {
+          // Opening: pulls back into the posts, leaving a faint guide.
+          a = edge < (1 - st.fall) * 0.5 ? breathe : 0.1;
+          if (st.fall >= 1) { a = 0.1; tint = 0x7fe0a4; }
+        } else if (st.fall < 1) {
+          // Losing power: flickers out.
+          a = h01(k * 31 + Math.floor(t * 30), 7) > st.fall ? 1 : 0;
+        } else {
+          // Down: a faint red sputter.
+          tint = 0xff6a5a;
+          a = h01(k * 13 + Math.floor(t * 12), 3) > 0.7 ? 0.22 : 0.06;
+        }
+        s.alpha = a; s.tint = tint;
+      }
+      for (let k = 0; k < 2; k++) {
+        const p = v.posts[k]!;
+        p.position.set(k ? fe.bx : fe.ax, k ? fe.by : fe.ay);
+        p.scale.set(24 / 64);
+        p.alpha = st.up ? 0.75 : fe.gate ? 0.45 : 0.15 + 0.2 * h01(k + Math.floor(t * 9), 5);
+        p.tint = st.up || fe.gate ? 0x9fe6ff : 0xff8a6a;
+      }
+      // A powerless emitter spits sparks.
+      for (let k = 0; k < v.sparks.length; k++) {
+        const s = v.sparks[k]!;
+        const on = !st.up && !fe.gate;
+        const ph = (t * 2.2 + k * 0.37) % 1;
+        const end = k % 2, px = end ? fe.bx : fe.ax, py = end ? fe.by : fe.ay;
+        const dir = v.ang + (end ? Math.PI : 0) + (h01(k + Math.floor(t * 2.2 + k * 0.37) * 7, 9) - 0.5) * 1.6;
+        s.position.set(px + Math.cos(dir) * ph * 26, py + Math.sin(dir) * ph * 26); s.rotation = dir;
+        s.scale.set(10 / 32, 0.35); s.tint = emberTint(1 - ph);
+        s.alpha = on && h01(k + Math.floor(t * 2.2 + k * 0.37) * 3, 11) > 0.45 ? 1 - ph : 0;
+      }
+      // Bolt ripples along the wall.
+      for (let k = 0; k < SHIELD_HITS; k++) {
+        const s = v.hits[k]!;
+        const fi = st.up ? flipFrame(v.hitAge[k]!, FENCE_HIT_LIFE, T!.fenceRipple.length) : -1;
+        if (fi < 0) { s.alpha = 0; continue; }
+        const d = v.hitPos[k]! * v.len;
+        s.texture = T!.fenceRipple[fi]!;
+        s.position.set(fe.ax + v.ux * d, fe.ay + v.uy * d); s.rotation = v.ang;
+        s.scale.set((FENCE_BAND * 128 / 48) / 128 * 2.2, (FENCE_BAND / 48) * 1.15);
+        s.alpha = 1;
+      }
+      // Held laser contacts.
+      const fc = fenceContacts[wi]!;
+      for (let k = 0; k < SHIELD_CONTACTS; k++) {
+        const s = v.held[k]!;
+        const I = st.up ? fc.intensity(k) : 0;
+        if (I <= 0) { s.alpha = 0; continue; }
+        const d = fc.ang[k]! * FENCE_POS_UNIT;
+        s.position.set(fe.ax + v.ux * d, fe.ay + v.uy * d); s.rotation = v.ang;
+        s.scale.set(((FENCE_BAND * 128 / 48) / 128) * 0.9, (FENCE_BAND / 48) * 1.05);
+        s.alpha = Math.min(1, I * 0.8 * (0.85 + 0.15 * Math.sin(t * 11 + k * 1.7) * Math.sin(t * 4.3 + k)));
+      }
+    }
+  }
+
   function pulseToday(shipIdx: number, since: number): void {
     const si = shieldOf[shipIdx]!;
     if (si >= 0) shieldViews[si]!.todayPulse = Math.max(shieldViews[si]!.todayPulse, curT - since);
@@ -766,10 +951,13 @@ async function main(): Promise<void> {
     hitAge.fill(99);
     hitPow.fill(0);
     for (const c of contacts) c.begin();
+    fenceBegin();
     for (const v of shotViews) v.draw(t);
     const dt = lastT < 0 ? 0 : Math.min(0.1, Math.max(0, t - lastT));
     lastT = t;
     for (const c of contacts) c.end(dt);
+    fenceEnd(dt);
+    drawFences(t);
 
     // Shields.
     for (const v of shieldViews) {
@@ -920,6 +1108,7 @@ async function main(): Promise<void> {
     ready: true, arm: ARM, scene: SCENE, duration: scene.duration,
     seek(ms: number): void {
       const t = ms / 1000;
+      if (lastT < 0 || t < lastT || t - lastT > 0.1) for (const c of fenceContacts) c.clear();
       // Contacts fade over time: when jumping, run the last 0.4 s first so a
       // still shows the same state as the clip.
       if (lastT < 0 || t < lastT || t - lastT > 0.1) {
