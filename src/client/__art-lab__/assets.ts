@@ -8,14 +8,15 @@
  * the main thread on first use, with the same code.
  */
 import type { Texture } from 'pixi.js';
-import { Atlas } from './atlas.js';
-import { forgeShip, forgeStructure, type Fields } from './forge/fields.js';
-import { DEFAULT_RIG, pixelFrame, type LightRig } from './forge/shade.js';
+import { Atlas } from '../render/art/atlas.js';
+import { forgeShip, forgeStructure, type Fields } from '../render/art/fields.js';
+import { DEFAULT_RIG, type LightRig } from '../render/art/shade.js';
+import { pixelFrame } from './pixel.js';
 import {
   bakeKey, runBake, seedVariant, shipPpu, STRUCT_MAX_SIDE, STRUCT_PPU, SUN_STEPS,
   type Baked, type BakeJob,
-} from './forge/bake.js';
-import { loadBakes, saveBakes, storeKey } from './bakeStore.js';
+} from '../render/art/bake.js';
+import { loadBakes, saveBakes, storeKey } from '../render/art/bakeStore.js';
 
 export { SUN_STEPS };
 
@@ -96,7 +97,7 @@ export class ArtCache {
     const n = Math.max(1, Math.min(maxWorkers, cores - 1, todo.length));
     const workers: Worker[] = [];
     try {
-      for (let i = 0; i < n; i++) workers.push(new Worker(new URL('./bake.worker.ts', import.meta.url), { type: 'module' }));
+      for (let i = 0; i < n; i++) workers.push(new Worker(new URL('../render/art/bake.worker.ts', import.meta.url), { type: 'module' }));
     } catch {
       workers.length = 0;
     }

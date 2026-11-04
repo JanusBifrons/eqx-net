@@ -1,5 +1,5 @@
 /**
- * Art lab forge — polygon rasterising and the distance transform.
+ * Machined art — polygon rasterising and the distance transform.
  *
  * Pure, allocation-at-bake-time only (never per frame). Everything here works
  * on plain typed arrays so it runs in node (unit tests), the main thread or a

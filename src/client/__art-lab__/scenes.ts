@@ -7,7 +7,7 @@ import { npcFactionDef, type FactionId } from '../../shared-types/factions.js';
 import { SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { buildStructureVisual } from '../render/pixi/structureVisuals.js';
-import { shipExtent } from './forge/fields.js';
+import { shipExtent } from '../render/art/fields.js';
 
 export interface Pose { x: number; y: number; rot: number; thrust: number }
 

@@ -1,5 +1,5 @@
 /**
- * Art lab forge — OKLab colour maths and pixel-art palette ramps.
+ * Art lab — OKLab colour maths and pixel-art palette ramps.
  *
  * Pixel-art ramps follow the usual hand-painting rule: shadows shift toward
  * blue-violet, highlights toward warm yellow, chroma peaks in the mid-tones.
@@ -8,13 +8,9 @@
 
 export type RGB = [number, number, number];
 
-export function srgbToLin(c: number): number {
-  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-}
-export function linToSrgb(c: number): number {
-  const v = Math.max(0, Math.min(1, c));
-  return v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
-}
+import { linToSrgb, srgbToLin } from '../render/art/color.js';
+
+export { linToSrgb, srgbToLin };
 
 export function linToOklab([r, g, b]: RGB): RGB {
   const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);

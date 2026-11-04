@@ -1,5 +1,5 @@
 /**
- * Art lab forge — whole bakes for the Machined look, as plain data.
+ * Machined art — whole bakes, as plain data.
  *
  * Pure and DOM-free, so the same code runs on the main thread (fallback) and
  * in the bake workers (`bake.worker.ts`). A bake is a list of RGBA frames plus
@@ -7,7 +7,7 @@
  */
 import { forgeShip, forgeStructure, shipExtent, type Fields } from './fields.js';
 import { litFrame, type Frame, type LightRig } from './shade.js';
-import { linToSrgb } from './palette.js';
+import { linToSrgb } from './color.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
 
 /** Machined ships keep this many sun azimuths and cross-fade between two. */

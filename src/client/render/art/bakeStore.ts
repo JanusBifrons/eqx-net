@@ -1,5 +1,5 @@
 /**
- * Art lab — baked art kept between sessions (IndexedDB), so only a device's
+ * Machined art — baked art kept between sessions (IndexedDB), so only a device's
  * first load pays for baking.
  *
  * Entries are keyed by `FORGE_VERSION` + the bake key + the light rig, so any
@@ -7,8 +7,8 @@
  * best-effort: a private window, a full disk or a blocked store just means
  * "not cached", never an error.
  */
-import type { Baked } from './forge/bake.js';
-import type { LightRig } from './forge/shade.js';
+import type { Baked } from './bake.js';
+import type { LightRig } from './shade.js';
 
 /** Bump whenever forge output changes, or old art would be served. */
 export const FORGE_VERSION = 'r2.1';

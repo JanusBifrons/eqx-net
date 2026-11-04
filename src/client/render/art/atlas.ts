@@ -1,10 +1,10 @@
 /**
- * Art lab — a shelf-packed texture atlas. Every baked frame of every kind goes
+ * Machined art — a shelf-packed texture atlas. Every baked frame of every kind goes
  * into a few large pages, so all sprites of a style share one texture source
  * and batch into one draw call per layer.
  */
 import { Rectangle, Texture } from 'pixi.js';
-import type { Frame } from './forge/shade.js';
+import type { Frame } from './shade.js';
 
 const PAGE = 4096;
 

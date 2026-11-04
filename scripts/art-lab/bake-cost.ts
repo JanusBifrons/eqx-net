@@ -3,8 +3,8 @@
  * shadows, shading), size. `pnpm tsx scripts/art-lab/bake-cost.ts [ppu]`
  */
 import { STRUCTURE_KINDS_LIST } from '../../src/shared-types/structureKinds.js';
-import { forgeStructure } from '../../src/client/__art-lab__/forge/fields.js';
-import { DEFAULT_RIG, litFrame } from '../../src/client/__art-lab__/forge/shade.js';
+import { forgeStructure } from '../../src/client/render/art/fields.js';
+import { DEFAULT_RIG, litFrame } from '../../src/client/render/art/shade.js';
 
 const ppu = Number(process.argv[2] ?? 1.5);
 let tot = 0, bytes = 0;

@@ -494,3 +494,9 @@ Recovery thresholds are 2 ms lower than the downshift trigger AND require a 3× 
   `(parentShipKind, componentIndex)`. Lock: `scrapClientLeaf.test.ts` (a ship
   driven into a scrap fragment must shove it, not bounce). See
   [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).
+
+## Machined art (plan iridescent-seeking-rainbow)
+
+- **Where it lives.** `render/art/` generates the Machined look from the ship and structure catalogue at load time: `fields` (shape), `shade` (light), `bake` (whole bakes as plain data), `bake.worker` (off-thread), `bakeStore` (IndexedDB cache), `atlas`. It is pure and DOM-free except `atlas`. The dev-only lab (`__art-lab__/`) is its visual test bench. Story: [docs/architecture/art-direction.md](../../docs/architecture/art-direction.md).
+- **Bump `FORGE_VERSION` whenever the forge's output changes.** Players' devices cache baked art under it; a change without a bump serves stale art. `tests/unit/machinedArt.test.ts` pins a reference-bake hash to the version and fails until both are updated together.
+- **The silhouette is the collider.** The forge never changes an outline (locked to within one texel). Size art from the drawn outline (`shipExtent`), never from `ShipKind.radius`.

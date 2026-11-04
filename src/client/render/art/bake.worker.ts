@@ -1,10 +1,10 @@
 /**
- * Art lab bake worker: runs Machined bakes off the main thread. Frames come
+ * Machined art bake worker: runs Machined bakes off the main thread. Frames come
  * back as transferred buffers (no copy); the main thread packs them into the
  * atlas, which needs a canvas.
  */
-import { runBake, type BakeJob } from './forge/bake.js';
-import type { LightRig } from './forge/shade.js';
+import { runBake, type BakeJob } from './bake.js';
+import type { LightRig } from './shade.js';
 
 interface Req { seq: number; job: BakeJob; rig: LightRig }
 

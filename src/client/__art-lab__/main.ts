@@ -19,8 +19,8 @@ import { Application, Container, Graphics, RenderTexture, Sprite, Texture, Tilin
 import { buildShipGfxFromShape, buildStructureGfx, shapeForKind } from '../render/pixi/spriteBuilders.js';
 import { ArtCache, PIXEL_ROT_STEPS, SUN_STEPS, type PixelSettings, type ShipArt, type StructArt } from './assets.js';
 import { buildScene, SCENE_IDS, type Cam, type Pose, type Scene, type SceneId, type ShipE, type Shot } from './scenes.js';
-import { hash01, valueNoise } from './forge/fields.js';
-import { seedVariant, type BakeJob } from './forge/bake.js';
+import { hash01, valueNoise } from '../render/art/fields.js';
+import { seedVariant, type BakeJob } from '../render/art/bake.js';
 
 type Style = 'current' | 'machined' | 'pixel';
 

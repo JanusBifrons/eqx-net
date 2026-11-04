@@ -3,8 +3,9 @@
  *   pnpm tsx scripts/art-lab/preview.ts [outDir]
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { forgeShip, forgeStructure } from '../../src/client/__art-lab__/forge/fields.js';
-import { DEFAULT_RIG, litFrame, pixelFrame } from '../../src/client/__art-lab__/forge/shade.js';
+import { forgeShip, forgeStructure } from '../../src/client/render/art/fields.js';
+import { DEFAULT_RIG, litFrame } from '../../src/client/render/art/shade.js';
+import { pixelFrame } from '../../src/client/__art-lab__/pixel.js';
 import { encodePng, sheet } from './png.js';
 
 const out = process.argv[2] ?? 'diag/art-lab/preview';

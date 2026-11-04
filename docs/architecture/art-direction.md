@@ -23,17 +23,17 @@ has, so a new ship or structure kind gets art automatically.
    `structureVisuals` draw plan. The forge never changes a silhouette, so art
    and hitbox cannot disagree (`artLabForge.test.ts` checks this to within one
    texel).
-2. **Form** (`forge/fields.ts`). A distance transform of the outline gives a
+2. **Form** (`src/client/render/art/fields.ts`). A distance transform of the outline gives a
    bevelled edge plus a raised spine. Panel seams follow the distance contours
    (at most ~5 bands across any hull) and transverse cuts, mirrored by
    construction. Then a canopy, mirrored greebles, vents, nozzles and nav
    lights. Structure rects become blocks: big steel is tall, saturated rects are
    painted plating, translucent ones are lit windows, lights are lamps. Each
    kind is seeded by its id, so it always comes out the same.
-3. **Light** (`forge/shade.ts`). Lit once at load: sun, sky fill, rim light,
+3. **Light** (`src/client/render/art/shade.ts`). Lit once at load: sun, sky fill, rim light,
    specular per material, cavity occlusion, and a soft height-field shadow
    toward the sun. Tone-mapped (ACES fit) to sRGB through a lookup table.
-4. **Play** (`assets.ts`, `main.ts`). All frames go into shared 4096² atlas
+4. **Play** (`src/client/render/art/atlas.ts`; the lab's `__art-lab__/assets.ts` and `main.ts`). All frames go into shared 4096² atlas
    pages. A ship is two sprites cross-fading the two nearest of 16 pre-lit sun
    angles, so the hull rotates freely and the light never jumps. A structure
    is one sprite (it never rotates), plus a half-resolution unlit copy that
@@ -70,9 +70,9 @@ Drawing was never the problem; loading was. Round 2 fixed it as follows:
   longest side capped at 1024 for structures and 512 for ships, so small kinds
   stay sharp up close and huge kinds stay affordable.
 - **Off the main thread.** Up to 4 workers bake in parallel
-  (`bake.worker.ts`); the main thread only packs the atlas (18 ms).
+  (`src/client/render/art/bake.worker.ts`); the main thread only packs the atlas (18 ms).
 - **Kept between sessions.** Bakes are stored in IndexedDB, keyed by
-  `FORGE_VERSION` plus the bake key plus the light rig (`bakeStore.ts`).
+  `FORGE_VERSION` plus the bake key plus the light rig (`src/client/render/art/bakeStore.ts`).
   **Bump `FORGE_VERSION` whenever forge output changes**, or players see stale art.
 
 `scripts/art-lab/bake-cost.ts` prints the bake cost per structure kind.
@@ -83,7 +83,7 @@ Drawing was never the problem; loading was. Round 2 fixed it as follows:
 - **Lit pixel.** It worked: palette ramps in OKLCh with cool shadows and warm
   highlights, Bayer dither between light bands only, an outline, a true pixel
   grid with zoom bands and sub-pixel camera restore. The user preferred Machined.
-  The code is still in the lab (`pixelFrame`) for reference.
+  The code is still in the lab (`src/client/__art-lab__/pixel.ts`) for reference.
 - **Runtime normal-mapped lighting** (`pixijs-light2d`, `pixi-lights`). Normal
   maps must rotate with each sprite, which fights batching, and full-screen
   passes are what heat phones (`fxKillSwitches.ts`). Pre-lit sprites cost no

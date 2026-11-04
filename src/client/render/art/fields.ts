@@ -1,5 +1,5 @@
 /**
- * Art lab forge — surface fields for ships and structures.
+ * Machined art — surface fields for ships and structures.
  *
  * A "field set" is everything the light pass needs, baked once per kind from
  * data the game already has: the catalogue polygon / composite parts for a
@@ -9,7 +9,7 @@
  * Local space is Pixi-up (ship nose at -y). Heights are in WORLD units.
  */
 import { getShipKind, type ShipKind } from '../../../shared-types/shipKinds.js';
-import { buildStructureVisual, PROPOSED_FOOTPRINTS } from '../../render/pixi/structureVisuals.js';
+import { buildStructureVisual, PROPOSED_FOOTPRINTS } from '../pixi/structureVisuals.js';
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import { boxBlur, distanceInside, gridFor, hashStr, insidePoly, rasterPoly, rng, type Grid, type Poly } from './raster.js';
 

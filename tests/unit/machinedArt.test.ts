@@ -9,9 +9,10 @@
  *    invented in-between colours, which is what makes it read as pixel art).
  */
 import { describe, expect, it } from 'vitest';
-import { forgeShip, forgeStructure, shipParts } from '../../src/client/__art-lab__/forge/fields';
-import { DEFAULT_RIG, litFrame, pixelFrame } from '../../src/client/__art-lab__/forge/shade';
-import { insidePoly } from '../../src/client/__art-lab__/forge/raster';
+import { forgeShip, forgeStructure, shipParts } from '../../src/client/render/art/fields';
+import { DEFAULT_RIG, litFrame } from '../../src/client/render/art/shade';
+import { pixelFrame } from '../../src/client/__art-lab__/pixel';
+import { insidePoly } from '../../src/client/render/art/raster';
 import { getShipKind } from '../../src/shared-types/shipKinds';
 
 const SHIPS = ['fighter', 'heavy', 'missile-frigate', 'trader-hauler', 'havok', 'robot-hexagon'];
@@ -76,7 +77,7 @@ describe('art lab forge', () => {
 
 describe('art lab bake (round 2 speedups)', () => {
   it('the sliding-window box blur matches a naive blur', async () => {
-    const { boxBlur } = await import('../../src/client/__art-lab__/forge/raster');
+    const { boxBlur } = await import('../../src/client/render/art/raster');
     const w = 23, h = 17, r = 3;
     const src = new Float32Array(w * h).map((_, i) => ((i * 2654435761) >>> 0) / 4294967296);
     const got = boxBlur(src, w, h, r);
@@ -90,7 +91,7 @@ describe('art lab bake (round 2 speedups)', () => {
   });
 
   it('seed variants stay within the shared set', async () => {
-    const { seedVariant, STRUCT_SEED_VARIANTS } = await import('../../src/client/__art-lab__/forge/bake');
+    const { seedVariant, STRUCT_SEED_VARIANTS } = await import('../../src/client/render/art/bake');
     const seen = new Set<number>();
     for (let s = -20; s < 200; s++) seen.add(seedVariant(s));
     expect(seen.size).toBe(STRUCT_SEED_VARIANTS);
@@ -98,11 +99,27 @@ describe('art lab bake (round 2 speedups)', () => {
   });
 
   it('a structure bake is deterministic and capped in size', async () => {
-    const { runBake, STRUCT_MAX_SIDE } = await import('../../src/client/__art-lab__/forge/bake');
+    const { runBake, STRUCT_MAX_SIDE } = await import('../../src/client/render/art/bake');
     const job = { type: 'struct' as const, id: 'teleporter_large', seed: 1 };
     const a = runBake(job, DEFAULT_RIG), b = runBake(job, DEFAULT_RIG);
     expect(Math.max(a.w, a.h)).toBeLessThanOrEqual(STRUCT_MAX_SIDE + 2);
     expect(hashBytes(a.frames[0]!.data)).toBe(hashBytes(b.frames[0]!.data));
     expect(a.frames[1]!.w).toBe(Math.ceil(a.w / 2)); // half-res light overlay
+  });
+});
+
+describe('FORGE_VERSION lock', () => {
+  // Baked art is cached on players' devices under FORGE_VERSION. If the forge's
+  // output changes but the version does not, players keep seeing the OLD art.
+  // When this fails: bump FORGE_VERSION in src/client/render/art/bakeStore.ts
+  // AND update the recorded hash below, in the same change.
+  it('reference bakes match the hash recorded for this FORGE_VERSION', async () => {
+    const { runBake } = await import('../../src/client/render/art/bake');
+    const { FORGE_VERSION } = await import('../../src/client/render/art/bakeStore');
+    let h = 2166136261;
+    for (const j of [{ type: 'ship' as const, id: 'fighter' }, { type: 'ship' as const, id: 'havok' }, { type: 'struct' as const, id: 'turret', seed: 1 }]) {
+      for (const f of runBake(j, DEFAULT_RIG).frames) for (let i = 0; i < f.data.length; i++) { h ^= f.data[i]!; h = Math.imul(h, 16777619); }
+    }
+    expect({ version: FORGE_VERSION, hash: (h >>> 0).toString(16) }).toEqual({ version: 'r2.1', hash: '49b83b2b' });
   });
 });
