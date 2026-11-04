@@ -221,6 +221,58 @@ export function speedFactor(speed: number, max = 750): number {
   return k <= 0 ? 0 : k >= 1 ? 1 : k;
 }
 
+/** Eased camera motion for the speed effects (C3). */
+export interface SpeedFxState {
+  /** Eased camera velocity (world units / s). */
+  vx: number;
+  vy: number;
+  /** Eased speed factor, 0..1. */
+  sf: number;
+  px: number;
+  py: number;
+  t: number;
+  primed: boolean;
+}
+
+/** Easing time constant: the effects settle in about 0.6 s. */
+export const SPEED_FX_EASE_MS = 300;
+/** Faster than this (world units / s) is a jump (respawn, glide, sector
+ *  change), not flight: it doesn't count. */
+export const SPEED_FX_JUMP = 6000;
+/** A frame gap longer than this (a hitch, a hidden tab) just re-primes. */
+export const SPEED_FX_MAX_GAP_MS = 250;
+
+export function newSpeedFxState(): SpeedFxState {
+  return { vx: 0, vy: 0, sf: 0, px: 0, py: 0, t: 0, primed: false };
+}
+
+/**
+ * Advance the eased speed from the camera centre at `nowMs`. The speed is the
+ * camera's own motion, so it follows the ship and also a fast spectator pan.
+ * Allocation-free.
+ */
+export function stepSpeedFx(st: SpeedFxState, cx: number, cy: number, nowMs: number, max = 750): void {
+  const dt = nowMs - st.t;
+  if (!st.primed || dt > SPEED_FX_MAX_GAP_MS || dt < 0) {
+    st.px = cx; st.py = cy; st.t = nowMs; st.primed = true;
+    return;
+  }
+  if (dt === 0) return;
+  let vx = ((cx - st.px) * 1000) / dt;
+  let vy = ((cy - st.py) * 1000) / dt;
+  st.px = cx; st.py = cy; st.t = nowMs;
+  if (vx * vx + vy * vy > SPEED_FX_JUMP * SPEED_FX_JUMP) { vx = st.vx; vy = st.vy; }
+  const k = 1 - Math.exp(-dt / SPEED_FX_EASE_MS);
+  st.vx += (vx - st.vx) * k;
+  st.vy += (vy - st.vy) * k;
+  st.sf += (speedFactor(Math.sqrt(vx * vx + vy * vy), max) - st.sf) * k;
+}
+
+/** The camera zoom factor for speed factor `sf` at `level` (1 = none). */
+export function speedZoomFor(level: SpeedFxLevel, sf: number): number {
+  return 1 - SPEED_FX[level].zoomOut * sf;
+}
+
 // ------------------------------------------------------------------ nebula volumes (endless)
 
 /**

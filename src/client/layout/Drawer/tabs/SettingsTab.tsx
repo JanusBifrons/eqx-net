@@ -3,7 +3,7 @@ import HomeIcon from '@mui/icons-material/Home';
 import { useUIStore } from '../../../state/store';
 import { PushNotificationToggle } from '../../../components/PushNotificationToggle';
 import { useState } from 'react';
-import { loadArtPreference, saveArtPreference } from '../../../render/art/artMode';
+import { loadArtPreference, loadSpeedFxPreference, saveArtPreference, saveSpeedFxPreference } from '../../../render/art/artMode';
 
 /**
  * Mobile-drawer Settings tab.
@@ -31,6 +31,13 @@ export function SettingsTab(): JSX.Element {
   const onArtToggle = (on: boolean): void => {
     setMachinedArt(on);
     saveArtPreference(on ? 'machined' : 'classic');
+  };
+
+  // Speed effects (dust streaks + a slight zoom-out at speed). On by default.
+  const [speedFx, setSpeedFx] = useState(() => loadSpeedFxPreference() !== false);
+  const onSpeedFxToggle = (on: boolean): void => {
+    setSpeedFx(on);
+    saveSpeedFxPreference(on);
   };
 
   const onReturnToMenu = (): void => {
@@ -77,6 +84,23 @@ export function SettingsTab(): JSX.Element {
               <Typography variant="body2">Detailed art</Typography>
               <Typography variant="caption" color="text.secondary">
                 Lit, panelled ships and structures. Off: the simple flat look. Applies the next time the game loads.
+              </Typography>
+            </Box>
+          }
+        />
+        <FormControlLabel
+          control={
+            <Switch
+              checked={speedFx}
+              onChange={(e) => onSpeedFxToggle(e.target.checked)}
+              inputProps={{ 'aria-label': 'Speed effects', 'data-testid': 'settings-toggle-speed-fx' } as React.InputHTMLAttributes<HTMLInputElement>}
+            />
+          }
+          label={
+            <Box>
+              <Typography variant="body2">Speed effects</Typography>
+              <Typography variant="caption" color="text.secondary">
+                Dust streaks past and the view widens a little when you fly fast. Needs detailed art. Applies the next time the game loads.
               </Typography>
             </Box>
           }

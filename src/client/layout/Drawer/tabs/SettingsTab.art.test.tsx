@@ -9,7 +9,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 vi.mock('../../../components/PushNotificationToggle', () => ({ PushNotificationToggle: () => null }));
 
 import { SettingsTab } from './SettingsTab.js';
-import { loadArtPreference } from '../../../render/art/artMode.js';
+import { loadArtPreference, loadSpeedFxPreference, resolveSpeedFx } from '../../../render/art/artMode.js';
 
 beforeEach(() => {
   localStorage.clear();
@@ -25,6 +25,19 @@ describe('SettingsTab — Graphics', () => {
     expect(loadArtPreference()).toBe('classic');
     fireEvent.click(sw);
     expect(loadArtPreference()).toBe('machined');
+  });
+
+  it('speed effects start on, and switching off saves it for this device', () => {
+    render(<SettingsTab />);
+    const sw = screen.getByTestId('settings-toggle-speed-fx') as HTMLInputElement;
+    expect(sw.checked).toBe(true);
+    expect(resolveSpeedFx('', loadSpeedFxPreference())).toBe(true);
+    fireEvent.click(sw);
+    expect(loadSpeedFxPreference()).toBe(false);
+    expect(resolveSpeedFx('', loadSpeedFxPreference())).toBe(false);
+    // The URL wins either way (tests).
+    expect(resolveSpeedFx('?speedfx=1', false)).toBe(true);
+    expect(resolveSpeedFx('?speedfx=0', true)).toBe(false);
   });
 
   it('shows the saved choice', () => {

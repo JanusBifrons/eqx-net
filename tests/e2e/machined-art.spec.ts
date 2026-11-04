@@ -194,3 +194,50 @@ test.describe('Nebulae you can fly into (plan iridescent-seeking-rainbow v5, C2)
     await outside.ctx.close();
   });
 });
+
+test.describe('Speed effects (plan iridescent-seeking-rainbow v5, C3)', () => {
+  // Infrastructure cost only: cold room join + first-visit backdrop bake.
+  test.describe.configure({ timeout: 90_000 });
+  type Bd = { backdrop?: { on: boolean; speed: number; speedZoom: number; speedLevel: string } };
+  const bd = (page: Page): Promise<Bd['backdrop']> =>
+    page.evaluate(() => (window as unknown as { __eqxArtStats: () => Bd }).__eqxArtStats().backdrop);
+
+  for (const arm of [{ speedfx: '1', zooms: true }, { speedfx: '0', zooms: false }]) {
+    test(`flying fast ${arm.zooms ? 'zooms the view out a little' : 'with speed effects off keeps the zoom'} (?speedfx=${arm.speedfx})`, async ({ browser }) => {
+      const { ctx, page } = await launchTestClient(browser, {
+        spawnX: 0, spawnY: 0, room: 'test-sector-fast', shipKind: 'fighter',
+        extraParams: { worker: '0', art: 'machined', fx: 'new', speedfx: arm.speedfx },
+      });
+      await page.waitForFunction(
+        () => (window as unknown as { __eqxArtStats?: () => Bd }).__eqxArtStats?.().backdrop?.on === true,
+        undefined, { timeout: 45_000 },
+      );
+      expect((await bd(page))!.speedLevel).toBe(arm.zooms ? 'large' : 'off');
+      expect((await bd(page))!.speedZoom).toBe(1);
+      await page.keyboard.down('KeyW');
+      await page.keyboard.down('Shift');
+      try {
+        // The state under test: eased speed well up (and, with the effects on,
+        // the camera zoomed out). The timeout is a deadline, not a pace.
+        await page.waitForFunction(
+          (zooms) => {
+            const b = (window as unknown as { __eqxArtStats: () => Bd }).__eqxArtStats().backdrop!;
+            return zooms ? b.speedZoom < 0.95 : b.speed > 0.5;
+          },
+          arm.zooms, { timeout: 15_000 },
+        );
+        const b = (await bd(page))!;
+        if (arm.zooms) expect(b.speedZoom).toBeGreaterThanOrEqual(0.8);
+        else expect(b.speedZoom).toBe(1);
+        if (arm.zooms) {
+          mkdirSync('diag/e2e-screenshots/machined-art', { recursive: true });
+          await page.screenshot({ path: 'diag/e2e-screenshots/machined-art/speed-large.png' });
+        }
+      } finally {
+        await page.keyboard.up('Shift').catch(() => undefined);
+        await page.keyboard.up('KeyW').catch(() => undefined);
+      }
+      await ctx.close();
+    });
+  }
+});

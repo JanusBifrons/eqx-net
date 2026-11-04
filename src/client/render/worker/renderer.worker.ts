@@ -58,6 +58,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
           mode: msg.artMode ?? 'classic',
           ...(msg.artDelayMs ? { delayMs: msg.artDelayMs } : {}),
           ...(msg.fx ? { fx: true } : {}),
+          ...(msg.speedFxOff ? { speedFx: false } : {}),
         });
         await renderer.init({
           canvas: msg.canvas,
