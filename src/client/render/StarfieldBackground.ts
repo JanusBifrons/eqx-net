@@ -119,6 +119,11 @@ export class StarfieldBackground {
     }
   }
 
+  /** Hide it while the new backdrop draws instead (plan iridescent-seeking-rainbow v3, B2). */
+  setHidden(hidden: boolean): void {
+    if (this.gfx && hidden) { this.gfx.visible = false; }
+  }
+
   /** Canvas resize — no-op: `update()` reads the camera's live screen size each
    *  frame and redraws, so there's nothing to resize. Kept for the call sites. */
   resize(_w: number, _h: number): void {

@@ -230,6 +230,9 @@ export function syncGalaxyCurrentSector(
   currentSectorKey: string | null,
 ): void {
   galaxyLayer?.setCurrentSector(currentSectorKey);
+  // The game backdrop's nebula follows the sector too (main-thread renderer;
+  // the worker's hears the message below).
+  renderer?.setSector?.(currentSectorKey);
   if (renderer instanceof WorkerRendererClient) {
     renderer.setLayerCurrentSector(currentSectorKey);
   }

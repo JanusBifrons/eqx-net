@@ -469,7 +469,8 @@ export function nebulaTex(kind: NebulaKind, size = 512, seed = 21): Img {
       const i = y * size + x;
       if (kind === 'dark') {
         const m = smooth(0.48, 0.72, d) * (0.6 + 0.5 * fil);
-        putRGBA(o, i, 0.05, 0.035, 0.03, clamp01(m * 0.9));
+        // Truly dark once converted to sRGB (0.05 linear would show as grey-brown).
+        putRGBA(o, i, 0.006, 0.004, 0.003, clamp01(m * 0.9));
         continue;
       }
       const m = smooth(0.42, 0.85, d);
@@ -595,7 +596,7 @@ export function imgGpuBytes(imgs: readonly Img[], mip = false): number {
  * cached on players' devices under this version (the `fx` bake job's key).
  * Locked by the hash test in `fxTextures.lock.test.ts`.
  */
-export const FX_VERSION = 'fx1';
+export const FX_VERSION = 'fx2';
 
 export type FxId =
   | 'glow' | 'streak' | 'beamFlow' | 'ring' | 'spark' | 'smoke' | 'trail'

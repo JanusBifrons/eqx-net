@@ -23,6 +23,6 @@ describe('FX_VERSION lock', () => {
       expect(FX_SPECS[id]).toBeDefined();
       h = hashBytes(h, bakeFxImg(id, undefined, 7, -0.6).data);
     }
-    expect({ version: FX_VERSION, hash: (h >>> 0).toString(16) }).toEqual({ version: 'fx1', hash: '7e748caf' });
+    expect({ version: FX_VERSION, hash: (h >>> 0).toString(16) }).toEqual({ version: 'fx2', hash: '7e748caf' });
   });
 });

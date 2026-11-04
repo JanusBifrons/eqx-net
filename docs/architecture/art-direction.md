@@ -156,6 +156,7 @@ per-frame maths (`fxMath.ts`: flipbook frames, envelopes, backdrop depth,
   renderer asks with `ArtService.fx(id, variant?, seed?)`. Switch: `?fx=new`
   (needs Machined art; default off until the rollout's last PR); with it the
   warm-up bakes `FX_WARM` first.
+- **Backdrop (B2).** `art/fx/Backdrop.ts` replaces today's starfield once its star tiles are baked (until then `StarfieldBackground` keeps drawing). Layers: three star tiles, the sector's nebula, galaxies, spike stars, the sun along the hull light, and dust in front of the world on high quality only. Depth is `backdropXf` (far layers pan and grow less). The nebula comes from the sector key (`sectorNebula`: type and one of 12 seeds; emission kept faint; a dark-dust sector is a faint blue glow crossed by dark lanes, since dust only reads as dark against something bright). The sector reaches the renderer through `IRenderer.setSector` (main thread) or the existing `SET_CURRENT_SECTOR` (worker). The sun still uses the default light direction until per-sector sun is wired for the hull bakes too.
 - **Lab.** `/__art-lab__/fx.html?fx=today|new&scene=weapons|shield|shield-beams|explosions|zoom|nebula|environment|battle`
   (`shield=sprite|shader`, `neb=emission|reflection|dark|none`, `contact=0` for
   round 1's flickering beams). Capture: `pnpm tsx scripts/art-lab/capture-fx.ts

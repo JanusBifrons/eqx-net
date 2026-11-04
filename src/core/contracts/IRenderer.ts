@@ -863,6 +863,12 @@ export interface IRenderer {
    */
   setSpectator(active: boolean): void;
   /**
+   * The sector being shown changed (null on the galaxy map). Picks the new
+   * backdrop's nebula (plan iridescent-seeking-rainbow v3, B2). On the worker
+   * path the worker already hears it through `SET_CURRENT_SECTOR`.
+   */
+  setSector(sectorKey: string | null): void;
+  /**
    * Off-screen indicator radar (plan sparkling-wondering-rose). The active
    * preferences — the device-class defaults until the player's saved overrides
    * load. Plain structured-cloneable data (crosses the worker boundary).
