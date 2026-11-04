@@ -19,7 +19,8 @@ const RUNS: Array<{ label: string; q: string; benchMs: number }> = [
 ];
 
 const qs = new URLSearchParams(location.search);
-const REPORT = qs.get('report');
+// Default: the receiver on the same machine that served this page.
+const REPORT = qs.get('report') ?? `${location.protocol}//${location.hostname}:5375/`;
 const frame = document.getElementById('stage') as HTMLIFrameElement;
 const statusEl = document.getElementById('status')!;
 const out = document.getElementById('out')!;

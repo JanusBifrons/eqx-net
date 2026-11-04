@@ -10,8 +10,7 @@ async function main(): Promise<void> {
   const browser = await chromium.launch({ args: ['--use-angle=d3d11', '--ignore-gpu-blocklist'] });
   const ctx = await browser.newContext({ viewport: { width: 393, height: 851 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
   const page = await ctx.newPage();
-  const report = encodeURIComponent('http://localhost:5375/');
-  await page.goto(`http://localhost:5374/__art-lab__/phone.html?report=${report}`);
+  await page.goto(`http://localhost:5374/__art-lab__/phone.html`);
   await page.click('#go');
   await page.waitForFunction(() => document.getElementById('status')?.textContent?.startsWith('Done'), undefined, { timeout: 240_000 });
   console.log(await page.textContent('#status'));

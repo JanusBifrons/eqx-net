@@ -38,7 +38,7 @@ const server = createServer((req, res) => {
   });
 });
 server.listen(REPORT_PORT, '0.0.0.0', () => {
-  console.log(`PHONE URL: http://${lan}:${LAB_PORT}/__art-lab__/phone.html?report=${encodeURIComponent(`http://${lan}:${REPORT_PORT}/`)}`);
+  console.log(`PHONE URL: http://${lan}:${LAB_PORT}/__art-lab__/phone.html`);
 });
 
 const stop = (): void => {
