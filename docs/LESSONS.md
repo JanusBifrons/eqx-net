@@ -2652,3 +2652,8 @@ The generator now puts a fenced base's turrets outside the fence. Lock: `turretV
 ## 2026-11-03 — A sprite property set twice in one pass: the last write wins
 
 The v4 patrol faction tint was set early in `updateSwarmSprites`, then the damage-flash branch later in the same pass reset every sprite's tint to white. Patrols never showed their colour, and the garrison showcase page claimed they did; the integration test only checked the decoded `faction` field, not the drawn tint. Fix: one tint site that decides flash / faction / white. Rule: a per-frame visual property gets exactly one write site per pass, and its test reads the final drawn value after a whole pass.
+
+## 2026-11-03 — Art lab: a ship's `radius` is not its drawn size; per-texel closures dominate bake time
+
+- **`ShipKind.radius` is the collider, not the drawing.** The El test ship's outline reaches 1000 u while its `radius` is 190 (Crossguard: 160 vs 213). Anything that sizes art, textures or a camera frame from `radius` gets it badly wrong. Use the outline's extent (`shipExtent` in `src/client/__art-lab__/forge/fields.ts`).
+- **A tiny helper that builds closures, called per texel, was the whole bake budget.** `valueNoise` defined two arrow functions on each call; inside a per-texel, per-layer loop that made structure forging 10–30× slower than necessary (the large teleporter took 26 s). Hoisting the helpers and running grime once per texel fixed it. In bake loops, profile before blaming resolution. See `docs/architecture/art-direction.md`.
