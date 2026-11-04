@@ -54,14 +54,16 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
   try {
     switch (msg.type) {
       case 'BOOT': {
-        renderer = new PixiRenderer(msg.isTouch ?? false);
+        renderer = new PixiRenderer(msg.isTouch ?? false, {
+          mode: msg.artMode ?? 'classic',
+          ...(msg.artDelayMs ? { delayMs: msg.artDelayMs } : {}),
+        });
         await renderer.init({
           canvas: msg.canvas,
           width: msg.width,
           height: msg.height,
           dpr: msg.dpr,
           ...(msg.zoom !== undefined ? { zoom: msg.zoom } : {}),
-          ...(msg.search !== undefined ? { search: msg.search } : {}),
         });
         // Construct the in-game galaxy-map overlay worker-side. Its
         // hex `pointertap` listeners don't fire here (no Pixi event

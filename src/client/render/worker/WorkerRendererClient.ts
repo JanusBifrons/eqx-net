@@ -17,6 +17,7 @@
  * See `~/.claude/plans/humble-strolling-coral.md` Phase 3 / 4.
  */
 
+import { ART_OFF, type ArtOptions } from '../art/artMode.js';
 import type {
   IRenderer,
   RenderMirror,
@@ -87,8 +88,11 @@ export class WorkerRendererClient implements IRenderer {
    *  via BOOT so the placement ghost seeds at screen-centre on touch. */
   private readonly _isTouch: boolean;
 
-  constructor(isTouch = false) {
+  private readonly _art: ArtOptions;
+
+  constructor(isTouch = false, art: ArtOptions = ART_OFF) {
     this._isTouch = isTouch;
+    this._art = art;
   }
 
   private worker: Worker | null = null;
@@ -177,7 +181,8 @@ export class WorkerRendererClient implements IRenderer {
       dpr,
       isTouch: this._isTouch,
       ...(zoom !== undefined ? { zoom } : {}),
-      search: window.location.search,
+      artMode: this._art.mode,
+      ...(this._art.delayMs ? { artDelayMs: this._art.delayMs } : {}),
     }, [offscreen]);
 
     // F1 — tell the worker once whether to emit per-frame markers.

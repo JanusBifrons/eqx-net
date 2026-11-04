@@ -15,6 +15,7 @@
  */
 
 import { PixiRenderer } from '../render/PixiRenderer.js';
+import { loadArtPreference, readArtDelayMs, resolveArtMode, type ArtOptions } from '../render/art/artMode.js';
 import {
   WorkerRendererClient,
   supportsOffscreenRenderer,
@@ -47,7 +48,13 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
       : workerParam === '0'
         ? false
         : !isTouch && supportsOffscreenRenderer();
-  const renderer: IRenderer = useWorker ? new WorkerRendererClient(isTouch) : new PixiRenderer(isTouch);
+  // Machined art: URL > saved choice > classic under automation > Machined.
+  const search = window.location.search;
+  const art: ArtOptions = {
+    mode: resolveArtMode(search, navigator.webdriver === true, loadArtPreference()),
+    delayMs: readArtDelayMs(search),
+  };
+  const renderer: IRenderer = useWorker ? new WorkerRendererClient(isTouch, art) : new PixiRenderer(isTouch, art);
   // Click-to-inspect (Item B) — DEV/E2E deterministic selection hook. Only the
   // main-thread PixiRenderer exposes `devSelectAtWorld` (the worker renderer is
   // off-thread); E2E specs run `?worker=0` to use it. Mirrors __eqxGalaxyPick.

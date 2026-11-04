@@ -8,7 +8,7 @@ import type { Texture } from 'pixi.js';
 import { ArtService, InlineBakeRunner, type ArtPacker, type BakeCache, type BakeRunner } from '../../src/client/render/art/ArtService';
 import { Atlas, atlasGpuBytes } from '../../src/client/render/art/atlas';
 import { bakeKey, quarterTurns, runBake, type Baked, type BakeJob } from '../../src/client/render/art/bake';
-import { readArtDelayMs, readArtMode } from '../../src/client/render/art/artMode';
+import { loadArtPreference, readArtDelayMs, readArtMode, resolveArtMode, saveArtPreference } from '../../src/client/render/art/artMode';
 import { sunRigForSector } from '../../src/client/render/art/sunRig';
 import { DEFAULT_RIG, type Frame, type LightRig } from '../../src/client/render/art/shade';
 
@@ -173,12 +173,34 @@ describe('atlas budget', () => {
 });
 
 describe('art mode and sun', () => {
-  it('reads ?art= and defaults to classic', () => {
-    expect(readArtMode('')).toBe('classic');
+  it('reads ?art=', () => {
+    expect(readArtMode('')).toBeNull();
     expect(readArtMode('?art=machined')).toBe('machined');
-    expect(readArtMode('?worker=0&art=classic', 'machined')).toBe('classic');
+    expect(readArtMode('?worker=0&art=classic')).toBe('classic');
     expect(readArtDelayMs('?artDelayMs=750')).toBe(750);
     expect(readArtDelayMs('')).toBe(0);
+  });
+
+  it('resolves the look: URL, then the saved choice, then classic under automation, else Machined', () => {
+    expect(resolveArtMode('', false, null)).toBe('machined'); // players
+    expect(resolveArtMode('', true, null)).toBe('classic'); // automated browsers
+    expect(resolveArtMode('', false, 'classic')).toBe('classic'); // the player turned it off
+    expect(resolveArtMode('', true, 'machined')).toBe('machined');
+    expect(resolveArtMode('?art=machined', true, 'classic')).toBe('machined'); // URL wins
+    expect(resolveArtMode('?art=classic', false, 'machined')).toBe('classic');
+  });
+
+  it("saves the player's choice per device, and survives broken storage", () => {
+    const mem = new Map<string, string>();
+    const store = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => { mem.set(k, v); } };
+    expect(loadArtPreference(store)).toBeNull();
+    saveArtPreference('classic', store);
+    expect(loadArtPreference(store)).toBe('classic');
+    mem.set('eqxArtStyle', 'nonsense');
+    expect(loadArtPreference(store)).toBeNull();
+    const broken = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } };
+    expect(loadArtPreference(broken)).toBeNull();
+    expect(() => saveArtPreference('machined', broken)).not.toThrow();
   });
 
   it('gives each sector a stable sun from above the screen', () => {

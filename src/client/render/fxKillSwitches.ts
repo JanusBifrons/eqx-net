@@ -18,6 +18,8 @@
  *   src/client/CLAUDE.md "Effects subsystem" — falls back to legacy
  *   inline starburst). Stays the all-or-nothing switch.
  * - `?worker=0` forces main-thread renderer (touch default).
+ * - `?art=classic` draws today's flat vector look instead of the Machined art
+ *   (`render/art/artMode.ts`; automated browsers default to classic).
  */
 
 export interface FxKillSwitches {

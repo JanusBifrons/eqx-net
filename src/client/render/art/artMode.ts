@@ -1,18 +1,33 @@
 /**
- * Machined art — which look the renderer draws.
+ * Machined art — which look the renderer draws (plan iridescent-seeking-rainbow).
  *
- * `?art=machined` turns the Machined look on, `?art=classic` keeps today's
- * vector look. The default is `classic` until the rollout PR flips it.
- * Pure, so the worker (which has no `window`) gets the same answer from the
- * search string the main thread passes it.
+ * Resolved ONCE on the main thread when the renderer is chosen, then handed
+ * to the renderer (and on BOOT to the render worker, which has no `window`).
+ * Precedence:
+ *  1. `?art=machined|classic` in the URL (testing, A/B);
+ *  2. the player's saved choice (Settings → Graphics, per device);
+ *  3. automated browsers (`navigator.webdriver`) get `classic`, so bake work
+ *     on CI runners can't skew the netcode gate or slow the suite (the same
+ *     rule as the WebRTC transport) — the Machined specs ask for it;
+ *  4. everyone else gets `machined`.
  */
 export type ArtMode = 'classic' | 'machined';
 
-export const DEFAULT_ART_MODE: ArtMode = 'classic';
+export interface ArtOptions {
+  mode: ArtMode;
+  /** Test-only bake delay (`?artDelayMs=`). */
+  delayMs?: number;
+}
 
-export function readArtMode(search: string, fallback: ArtMode = DEFAULT_ART_MODE): ArtMode {
+export const ART_OFF: ArtOptions = { mode: 'classic' };
+
+export function readArtMode(search: string): ArtMode | null {
   const m = /[?&]art=(classic|machined)\b/.exec(search);
-  return m ? (m[1] as ArtMode) : fallback;
+  return m ? (m[1] as ArtMode) : null;
+}
+
+export function resolveArtMode(search: string, isAutomation: boolean, saved: ArtMode | null): ArtMode {
+  return readArtMode(search) ?? saved ?? (isAutomation ? 'classic' : 'machined');
 }
 
 /** Test-only: delay every bake by this many ms (`?artDelayMs=`), so an E2E can
@@ -20,4 +35,27 @@ export function readArtMode(search: string, fallback: ArtMode = DEFAULT_ART_MODE
 export function readArtDelayMs(search: string): number {
   const m = /[?&]artDelayMs=(\d{1,6})\b/.exec(search);
   return m ? Number(m[1]) : 0;
+}
+
+// ---------------------------------------------------------------- the setting
+
+const KEY = 'eqxArtStyle';
+
+type Store = Pick<Storage, 'getItem' | 'setItem'>;
+const defaultStore = (): Store | null => {
+  try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch { return null; }
+};
+
+/** The player's saved look on this device, or null if they never chose. */
+export function loadArtPreference(store: Store | null = defaultStore()): ArtMode | null {
+  try {
+    const v = store?.getItem(KEY);
+    return v === 'machined' || v === 'classic' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveArtPreference(mode: ArtMode, store: Store | null = defaultStore()): void {
+  try { store?.setItem(KEY, mode); } catch { /* private mode / blocked storage: not saved */ }
 }
