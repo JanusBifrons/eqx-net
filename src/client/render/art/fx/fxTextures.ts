@@ -587,3 +587,82 @@ export function imgGpuBytes(imgs: readonly Img[], mip = false): number {
   for (const i of imgs) b += i.w * i.h * 4;
   return mip ? Math.round(b * 4 / 3) : b;
 }
+
+// ------------------------------------------------------------------ registry
+
+/**
+ * Bump when any generator above changes its output: baked effect textures are
+ * cached on players' devices under this version (the `fx` bake job's key).
+ * Locked by the hash test in `fxTextures.lock.test.ts`.
+ */
+export const FX_VERSION = 'fx1';
+
+export type FxId =
+  | 'glow' | 'streak' | 'beamFlow' | 'ring' | 'spark' | 'smoke' | 'trail'
+  | 'shieldDome' | 'shieldContact' | 'shieldHit' | 'fireball'
+  | 'spikeStar' | 'galaxy' | 'sun' | 'wisp' | 'dust'
+  | 'starsFar' | 'starsMid' | 'starsNear' | 'planet' | 'nebula';
+
+export interface FxSpec {
+  /** Wraps (drawn as a TilingSprite): gets its own texture, not an atlas slot. */
+  tile: boolean;
+  /** Mipmapped (star tiles shrink a lot when zoomed out). */
+  mip?: boolean;
+  /** A flipbook sheet: frame count, columns and cell size. */
+  flip?: { frames: number; cols: number; cell: number };
+}
+
+export const FX_SPECS: Readonly<Record<FxId, FxSpec>> = {
+  glow: { tile: false }, streak: { tile: false }, beamFlow: { tile: true }, ring: { tile: false },
+  spark: { tile: false }, smoke: { tile: false }, trail: { tile: false },
+  shieldDome: { tile: false }, shieldContact: { tile: false },
+  shieldHit: { tile: false, flip: { frames: 12, cols: 4, cell: 192 } },
+  fireball: { tile: false, flip: { frames: 16, cols: 4, cell: 128 } },
+  spikeStar: { tile: false }, galaxy: { tile: false }, sun: { tile: false }, wisp: { tile: false },
+  dust: { tile: true }, starsFar: { tile: true, mip: true }, starsMid: { tile: true, mip: true },
+  starsNear: { tile: true, mip: true }, planet: { tile: false }, nebula: { tile: true },
+};
+
+export function isFxId(id: string): id is FxId {
+  return Object.prototype.hasOwnProperty.call(FX_SPECS, id);
+}
+
+/**
+ * Generate one effect texture. `variant` picks the nebula type; `seed` varies
+ * per-sector textures (nebula, planet); `sunAz` lights the planet.
+ */
+export function bakeFxImg(id: FxId, variant: string | undefined, seed: number | undefined, sunAz: number): Img {
+  switch (id) {
+    case 'glow': return glowTex(64);
+    case 'streak': return streakTex(128, 32);
+    case 'beamFlow': return beamFlowTex(256, 32);
+    case 'ring': return ringTex(128);
+    case 'spark': return sparkTex(32, 8);
+    case 'smoke': return smokeTex(64);
+    case 'trail': return trailTex(128, 16);
+    case 'shieldDome': return shieldDomeTex(256);
+    case 'shieldContact': return shieldContactTex(192);
+    case 'shieldHit': return shieldHitFlipbook(12, 192).sheet;
+    case 'fireball': return fireballFlipbook(16, 128).sheet;
+    case 'spikeStar': return spikeStarTex(64);
+    case 'galaxy': return galaxyTex(64, seed ?? 5);
+    case 'sun': return sunTex(256);
+    case 'wisp': return wispTex(128, seed ?? 33);
+    case 'dust': return dustTileTex(512);
+    case 'starsFar': return starTileTex(512, 950, 11, 1.3);
+    case 'starsMid': return starTileTex(512, 260, 23, 1.0);
+    case 'starsNear': return starTileTex(512, 70, 37, 0.85);
+    case 'planet': return planetTex(256, sunAz, seed ?? 8);
+    case 'nebula': {
+      const k: NebulaKind = variant === 'reflection' || variant === 'dark' ? variant : 'emission';
+      return nebulaTex(k, 512, seed ?? 21);
+    }
+  }
+}
+
+/** Effects every sector uses: baked during the galaxy-map warm-up. The
+ *  per-sector ones (nebula, planet) bake when the sector is known. */
+export const FX_WARM: readonly FxId[] = [
+  'glow', 'streak', 'beamFlow', 'ring', 'spark', 'smoke', 'trail', 'shieldContact', 'shieldHit', 'fireball',
+  'shieldDome', 'spikeStar', 'sun', 'starsFar', 'starsMid', 'starsNear', 'dust', 'galaxy', 'wisp',
+];

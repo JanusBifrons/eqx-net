@@ -183,6 +183,7 @@ export class WorkerRendererClient implements IRenderer {
       ...(zoom !== undefined ? { zoom } : {}),
       artMode: this._art.mode,
       ...(this._art.delayMs ? { artDelayMs: this._art.delayMs } : {}),
+      ...(this._art.fx ? { fx: true } : {}),
     }, [offscreen]);
 
     // F1 — tell the worker once whether to emit per-frame markers.
