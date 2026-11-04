@@ -35,7 +35,7 @@ import {
   type CollisionGuardState,
 } from './applyCollisionResolved';
 import { MineDetonatedSchema } from '@shared-types/mines';
-import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
+import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, WallHitEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
 import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
 import { toastForNotice } from './tradeView';
@@ -1927,6 +1927,14 @@ export class ColyseusGameClient {
         splashRadius: result.data.splashRadius,
         missileId: result.data.missileId,
       });
+    });
+
+    // A shield fence stopped a bolt or missile: draw the impact on the wall
+    // (fence-hit fix). An accelerator only — nothing persistent depends on it.
+    room.onMessage('wall_hit', (raw: unknown) => {
+      const result = WallHitEventSchema.safeParse(raw);
+      if (!result.success) return;
+      this.mirror.pendingEffectTriggers?.push({ kind: 'wall-hit', worldX: result.data.x, worldY: result.data.y });
     });
 
     // Mine Layer — a mine went off: the same explosion visual as a missile

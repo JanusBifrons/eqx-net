@@ -135,6 +135,10 @@ export type {
   MissileDetonatedEvent,
 } from './messages/missileMessages.js';
 
+// Fence-hit fix (server → client)
+export { WallHitEventSchema } from './messages/wallHitMessages.js';
+export type { WallHitEvent } from './messages/wallHitMessages.js';
+
 // Multi-ship roster (server → client)
 export type { ShipRosterEntry, ShipRosterMessage } from './messages/rosterMessages.js';
 // Campaign 6.1 — defensive ingest schemas (client-side safeParse; invariant #3).

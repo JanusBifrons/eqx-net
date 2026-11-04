@@ -1665,6 +1665,8 @@ export class PixiRenderer implements IRenderer {
           if (!isMining) this._fxRemoteHit[idx] = laser.hit === true;
           // A beam landing on a shield is a held contact there.
           if (this._fxShieldsOn && !isMining && laser.hit && laser.targetId) this._fxShields!.beam(laser.targetId, 1 + idx, toX, toY, this._fxShieldPose);
+          // A beam that hit something with no target id stopped on a fence.
+          else if (!isMining && laser.hit && !laser.targetId) this._fxFences?.beam(1 + idx, toX, toY);
           if (isMining) miningIdx++;
           else slotIdx++;
         }
@@ -1749,6 +1751,8 @@ export class PixiRenderer implements IRenderer {
         // not clipped); beyond it the pool fades the beam to nothing.
         slot.solidLen = beam.solidDist;
         if (this._fxShieldsOn && beam.hitId) this._fxShields!.beam(beam.hitId, 500 + slotIdx, toX, toY, this._fxShieldPose);
+        // The local beam stops on a fence's prediction collider.
+        if (beam.hitId?.startsWith('predwall-')) this._fxFences?.beam(500 + slotIdx, toX, toY);
         slotIdx++;
       }
       this._liveBeamCacheCount = slotIdx;
@@ -1896,7 +1900,13 @@ export class PixiRenderer implements IRenderer {
     // explodingShips). DO NOT add `.length = 0` here.
     if (this.effects && mirror.pendingEffectTriggers) {
       for (const ev of mirror.pendingEffectTriggers) {
-        if (ev.kind === 'destruction-shock' || ev.kind === 'shield-flash') {
+        if (ev.kind === 'wall-hit') {
+          // A fence stopped a shot: a ripple on the wall (new look), else
+          // shield-tinted sparks (today's look).
+          if (!this._fxFences?.hitAt(ev.worldX, ev.worldY, performance.now())) {
+            this.effects.spawnBurst('impact', ev.worldX, ev.worldY, { tint: 0x88ddff });
+          }
+        } else if (ev.kind === 'destruction-shock' || ev.kind === 'shield-flash') {
           this.effects.triggerOneShotFilter(ev.kind, ev.worldX, ev.worldY);
         } else {
           this.effects.spawnBurst(ev.kind, ev.worldX, ev.worldY, {
@@ -2680,7 +2690,7 @@ export class PixiRenderer implements IRenderer {
 
   /** Machined art status: the service's counts plus how many ship sprites
    *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: { on: boolean; nebula: string | null }; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: { on: boolean; nebula: string | null }; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;
@@ -2690,7 +2700,7 @@ export class PixiRenderer implements IRenderer {
       if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
     const art = this._artCtx.art;
-    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, ...(art ? art.stats() : {}) };
+    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, ...(art ? art.stats() : {}) };
   }
 
   dispose(): void {

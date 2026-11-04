@@ -1158,6 +1158,12 @@ export class SectorRoom extends Room<SectorState> {
    * dropped it (it was still referenced by 4 integration files, leaving
    * them RED). Each access reads through to the live field/method.
    */
+  /** A fence stopped a shot: tell clients where, so they draw the impact
+   *  (fence-hit fix). The point comes from the wall test just made. */
+  private broadcastWallHit(kind: 'bolt' | 'missile'): void {
+    this.broadcast('wall_hit', { type: 'wall_hit', x: this.shieldWalls.lastHitX, y: this.shieldWalls.lastHitY, kind });
+  }
+
   get _internals(): {
     serverTick: number;
     /** The shield-wall beam block the player/AI fire resolvers call. */
@@ -1213,6 +1219,8 @@ export class SectorRoom extends Room<SectorState> {
      *  'havok') to exercise scrap-on-death (Phase 2b-ii). */
     spawnTestDrone: (id: string, x: number, y: number, kind?: ShipKindId) => boolean;
     tickStructureTurrets: () => void;
+    /** Fence-hit fix: spawn a bolt (integration tests aim it at a fence). */
+    spawnTestProjectile: (ownerId: string, x: number, y: number, vx: number, vy: number) => void;
     /** Mine Layers' live mines (integration tests). */
     mineField: MineFieldSubsystem;
     /** A0 scale measurement — rebuild the structures snapshot slice directly. */
@@ -1264,6 +1272,7 @@ export class SectorRoom extends Room<SectorState> {
         return ok;
       },
       tickStructureTurrets: () => this.structureTurretTick(),
+      spawnTestProjectile: (ownerId, x, y, vx, vy) => this.projectiles.spawn(ownerId, x, y, vx, vy, 10, 4, 240, 'laser'),
       mineField: this.mineField,
       rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
       gateMask: (id) => this.gates.maskFor(id),
@@ -1845,8 +1854,11 @@ export class SectorRoom extends Room<SectorState> {
       lingeringSlots: this.lingeringSlots,
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
-      wallBlocksProjectile: (x, y, sx, sy, damage) =>
-        this.shieldWalls.blockProjectile(x, y, sx, sy, damage, Date.now()),
+      wallBlocksProjectile: (x, y, sx, sy, damage) => {
+        if (!this.shieldWalls.blockProjectile(x, y, sx, sy, damage, Date.now())) return false;
+        this.broadcastWallHit('bolt');
+        return true;
+      },
       // Allegiances P0 — AI bolts pass through their own allegiance's ships.
       ownerAllegianceOf: (ownerId) => {
         const rec = this.swarmRegistry.get(ownerId);
@@ -1871,7 +1883,11 @@ export class SectorRoom extends Room<SectorState> {
       broadcastFired: (msg) => this.broadcast('missile_fired', msg),
       broadcastDetonated: (msg) => this.broadcast('missile_detonated', msg),
       // A fence stops missiles too (user ruling 2026-11-02).
-      wallBlocksMissile: (x, y, sx, sy, damage) => this.shieldWalls.blockProjectile(x, y, sx, sy, damage, Date.now()),
+      wallBlocksMissile: (x, y, sx, sy, damage) => {
+        if (!this.shieldWalls.blockProjectile(x, y, sx, sy, damage, Date.now())) return false;
+        this.broadcastWallHit('missile');
+        return true;
+      },
       bus: this.bus,
       serverLogEvent,
     });
