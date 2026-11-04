@@ -3,7 +3,7 @@
  * Run via `pnpm test:gc` (needs `--expose-gc`).
  */
 import { describe, it, expect } from 'vitest';
-import { backdropXf, emberTint, envelope, flipFrame, ShieldHits, TrailRing, zoomWindow } from './fxMath.js';
+import { backdropXf, emberTint, envelope, flipFrame, ShieldContacts, ShieldHits, TrailRing, zoomWindow } from './fxMath.js';
 
 function postGcHeap(): number {
   const gc = (globalThis as { gc?: () => void }).gc;
@@ -17,6 +17,7 @@ describe('effects maths heap-delta', () => {
     const xf = { scale: 0, x: 0, y: 0 };
     const hits = new ShieldHits();
     const trail = new TrailRing(24);
+    const contacts = new ShieldContacts();
     let acc = 0;
     const step = (i: number): void => {
       const t = i * 0.001;
@@ -26,6 +27,10 @@ describe('effects maths heap-delta', () => {
       acc += hits.activity(t, 0.5);
       trail.push(t, -t);
       acc += trail.readX(i % 24);
+      contacts.begin();
+      for (let b = 0; b < (i % 6); b++) contacts.offer(b, b * 1.3 + t, 1);
+      contacts.end(1 / 60);
+      acc += contacts.intensity(i % 4);
     };
     for (let i = 0; i < 10_000; i++) step(i);
     const before = postGcHeap();

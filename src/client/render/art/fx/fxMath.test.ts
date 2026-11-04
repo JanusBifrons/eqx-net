@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
-import { backdropXf, emberTint, envelope, flipFrame, lerpRgb, ShieldHits, SHIELD_HITS, TrailRing, zoomWindow } from './fxMath.js';
+import { backdropXf, CONTACT_MAX_POWER, emberTint, envelope, flipFrame, lerpRgb, SHIELD_CONTACTS, ShieldContacts, ShieldHits, SHIELD_HITS, TrailRing, zoomWindow } from './fxMath.js';
 
 describe('flipFrame', () => {
   it('maps age to a frame inside [0, frames) and -1 outside the play', () => {
@@ -88,5 +88,61 @@ describe('TrailRing', () => {
     expect(r.readX(0)).toBe(9);
     expect(r.readY(3)).toBe(60);
     expect(r.count()).toBe(4);
+  });
+});
+
+describe('ShieldContacts (beams on a shield)', () => {
+  const frame = (c: ShieldContacts, beams: Array<[number, number]>, dt = 1 / 60): void => {
+    c.begin();
+    for (const [k, a] of beams) c.offer(k, a);
+    c.end(dt);
+  };
+
+  it('one beam holds one steady contact (no flicker) and fades out when it stops', () => {
+    const c = new ShieldContacts();
+    const levels: number[] = [];
+    for (let f = 0; f < 60; f++) { frame(c, [[7, 1]]); levels.push(c.intensity(0)); }
+    expect(c.count()).toBe(1);
+    // Rises once, then stays at full: never dips (the round-1 flicker).
+    for (let i = 1; i < levels.length; i++) expect(levels[i]!).toBeGreaterThanOrEqual(levels[i - 1]!);
+    expect(levels[levels.length - 1]).toBeCloseTo(1);
+    for (let f = 0; f < 30; f++) frame(c, []);
+    expect(c.count()).toBe(0);
+  });
+
+  it('two and three beams from different sides each get their own contact', () => {
+    const c = new ShieldContacts();
+    for (let f = 0; f < 20; f++) frame(c, [[1, 0], [2, 2]]);
+    expect(c.count()).toBe(2);
+    for (let f = 0; f < 20; f++) frame(c, [[1, 0], [2, 2], [3, -2]]);
+    expect(c.count()).toBe(3);
+  });
+
+  it('beams landing close together share one brighter patch', () => {
+    const c = new ShieldContacts();
+    for (let f = 0; f < 20; f++) frame(c, [[1, 0.5], [2, 0.6]]);
+    expect(c.count()).toBe(1);
+    let max = 0;
+    for (let i = 0; i < SHIELD_CONTACTS; i++) max = Math.max(max, c.intensity(i));
+    expect(max).toBeGreaterThan(1);
+    expect(max).toBeLessThanOrEqual(CONTACT_MAX_POWER);
+  });
+
+  it('more beams than slots merge into the nearest instead of evicting', () => {
+    const c = new ShieldContacts();
+    const beams: Array<[number, number]> = [[1, 0], [2, 1.6], [3, 3.1], [4, -1.6], [5, 0.8]];
+    for (let f = 0; f < 20; f++) frame(c, beams);
+    expect(c.count()).toBe(SHIELD_CONTACTS);
+    // Every contact stays fully lit while all five beams play.
+    for (let i = 0; i < SHIELD_CONTACTS; i++) expect(c.intensity(i)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('a moving beam drags its contact round the shield', () => {
+    const c = new ShieldContacts();
+    for (let f = 0; f < 60; f++) frame(c, [[9, f * 0.01]]);
+    expect(c.count()).toBe(1);
+    let slot = 0;
+    for (let i = 0; i < SHIELD_CONTACTS; i++) if (c.key[i] === 9) slot = i;
+    expect(c.ang[slot]!).toBeGreaterThan(0.5);
   });
 });

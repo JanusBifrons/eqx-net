@@ -324,6 +324,36 @@ export function shieldHitFlipbook(frames = 12, cell = 192, cells = 7): Flipbook 
   return { sheet, frames, cols, cell };
 }
 
+/**
+ * A beam resting on a shield (the held contact): a bright spot where it lands
+ * on the right edge (+x), the hex cells around it lit and fading with
+ * distance, and the rim glowing on that side. Steady, unlike the hit
+ * flipbook; the caller shimmers it. White; rotate so +x faces the beam.
+ */
+export function shieldContactTex(size = 192, cells = 7): Img {
+  const o = img(size, size);
+  const c = (size - 1) / 2, R = 0.94;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = (x - c) / c, dy = (y - c) / c;
+      const r = Math.hypot(dx, dy) / R;
+      if (r >= 1) { putA(o, y * size + x, 0); continue; }
+      const z = Math.sqrt(1 - r * r);
+      const lx = dx / (0.55 + 0.45 * z), ly = dy / (0.55 + 0.45 * z);
+      const e = hexEdgeDist(lx * cells, ly * cells);
+      const lines = Math.exp(-e * e * 700);
+      const fill = Math.exp(-e * e * 25) * 0.3;
+      const d = Math.hypot(dx / R - 1, dy / R) * (0.8 + 0.2 * z);
+      const patch = Math.exp(-d * d * 14);
+      const spot = Math.exp(-d * d * 140) * 2.2 + Math.exp(-d * d * 30) * 0.7;
+      const rimArc = Math.exp(-Math.pow((1 - r) * 14, 2)) * Math.exp(-Math.pow(Math.atan2(dy, dx) / 0.8, 2));
+      const a = (lines * 1.3 + fill) * patch * (0.55 + 0.45 * Math.pow(1 - z, 1.4)) + spot + rimArc * 0.8;
+      putA(o, y * size + x, clamp01(a) * smooth(1, 0.985, r));
+    }
+  }
+  return o;
+}
+
 // ------------------------------------------------------------------ sky
 
 /** Star colour by temperature class (linear RGB, roughly blackbody). */

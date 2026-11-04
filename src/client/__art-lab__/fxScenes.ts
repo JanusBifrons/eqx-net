@@ -45,7 +45,7 @@ export interface FxScene {
   duration: number;
 }
 
-export const FX_SCENE_IDS = ['weapons', 'shield', 'explosions', 'zoom', 'nebula', 'environment', 'battle'] as const;
+export const FX_SCENE_IDS = ['weapons', 'shield', 'shield-beams', 'explosions', 'zoom', 'nebula', 'environment', 'battle'] as const;
 export type FxSceneId = (typeof FX_SCENE_IDS)[number];
 
 /** A ship holding station at (x, y), facing (tx, ty), with a small bob. */
@@ -143,6 +143,29 @@ export function buildFxScene(id: FxSceneId, zoomOverride?: number, n = 12): FxSc
       ];
       return { ...empty, ships, shots, shields: [{ ship: 0, radius: 48, breakAt: 4.2, color: 0x7fd8ff }], duration: 6,
         camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = zoomOr(1.7); } };
+    }
+    case 'shield-beams': {
+      // Held beam contact: 1 beam, then a 2nd from another side, then a 3rd
+      // landing close to the first (they share one brighter patch), then bolts
+      // and autocannon on top.
+      const at = (a: number, r: number): [number, number] => [Math.cos(a) * r, Math.sin(a) * r];
+      const up = -Math.PI / 2;
+      const [ax, ay] = at(up, 270), [bx, by] = at(up - 0.85, 270), [cx, cy] = at(up + 0.22, 300);
+      const [dx, dy] = at(0.15, 280), [ex, ey] = at(1.1, 270);
+      const ships: ShipE[] = [
+        station('heavy', 0, 0, 0, -400, 0),
+        station('interceptor', ax, ay, 0, 0, 1), station('interceptor', bx, by, 0, 0, 2), station('interceptor', cx, cy, 0, 0, 3),
+        station('robot-square', dx, dy, 0, 0, 4), station('robot-square', ex, ey, 0, 0, 5),
+      ];
+      const shots: FxShot[] = [
+        { kind: 'beam', from: 1, to: 0, t0: 0.3, t1: 7.6, color: 0xff4f8a },
+        { kind: 'beam', from: 2, to: 0, t0: 2.0, t1: 7.6, color: 0xff4f8a },
+        { kind: 'beam', from: 3, to: 0, t0: 3.6, t1: 6.8, color: 0xff4f8a },
+        { kind: 'bolt', from: 4, to: 0, t0: 5.0, t1: 8, color: 0xff5a7a, period: 0.4, speed: 480 },
+        { kind: 'cannon', from: 5, to: 0, t0: 5.4, t1: 8, color: 0xffd0a0, period: 0.11, speed: 1100 },
+      ];
+      return { ...empty, ships, shots, shields: [{ ship: 0, radius: 52, color: 0x7fd8ff }], duration: 8,
+        camera: (_t, c) => { c.x = 0; c.y = -40; c.zoom = zoomOr(1.6); } };
     }
     case 'explosions': {
       const ships: ShipE[] = [

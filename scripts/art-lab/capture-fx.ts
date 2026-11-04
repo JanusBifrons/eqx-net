@@ -36,6 +36,8 @@ const SHOTS: Shot[] = [
   { id: 'weapons', scene: 'weapons', t: 2.35, w: 1280, h: 720, arms: PAIR, seconds: 6 },
   { id: 'shield', scene: 'shield', t: 1.75, w: 960, h: 640, seconds: 6,
     arms: [TODAY, { id: 'sprite', q: 'fx=new&shield=sprite' }, { id: 'shader', q: 'fx=new&shield=shader' }] },
+  { id: 'shield-beams', scene: 'shield-beams', t: 4.6, w: 960, h: 640, seconds: 8,
+    arms: [TODAY, { id: 'round1', q: 'fx=new&contact=0' }, { id: 'held', q: 'fx=new' }] },
   { id: 'explosions', scene: 'explosions', t: 2.75, w: 1280, h: 720, arms: PAIR, seconds: 5.6 },
   { id: 'zoom', scene: 'zoom', t: 3.2, w: 1280, h: 720, arms: PAIR, seconds: 10 },
   { id: 'nebula', scene: 'nebula', t: 2, w: 960, h: 600, seconds: 6,

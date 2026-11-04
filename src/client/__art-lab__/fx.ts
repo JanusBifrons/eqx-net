@@ -28,10 +28,10 @@ import { seedVariant, runBake, type BakeJob } from '../render/art/bake.js';
 import type { Frame } from '../render/art/shade.js';
 import {
   beamFlowTex, dustTileTex, fireballFlipbook, galaxyTex, glowTex, imgGpuBytes, nebulaTex, planetTex, ringTex,
-  shieldDomeTex, shieldHitFlipbook, smokeTex, sparkTex, spikeStarTex, starTileTex, streakTex, sunTex, trailTex, wispTex,
+  shieldContactTex, shieldDomeTex, shieldHitFlipbook, smokeTex, sparkTex, spikeStarTex, starTileTex, streakTex, sunTex, trailTex, wispTex,
   type Flipbook, type Img, type NebulaKind,
 } from '../render/art/fx/fxTextures.js';
-import { backdropXf, emberTint, envelope, flipFrame, lerpRgb, zoomWindow, SHIELD_HITS, type TileXf } from '../render/art/fx/fxMath.js';
+import { backdropXf, emberTint, envelope, flipFrame, lerpRgb, zoomWindow, SHIELD_HITS, SHIELD_CONTACTS, ShieldContacts, type TileXf } from '../render/art/fx/fxMath.js';
 import { SHIELD_FRAGMENT, SHIELD_QUAD_INDEX, SHIELD_QUAD_POS, SHIELD_QUAD_UV, SHIELD_VERTEX } from '../render/art/fx/shieldShader.js';
 import { BeamSpritePool, type BeamView } from '../render/BeamSpritePool.js';
 import { buildExplosionGfx, buildLaserBoltGfx, buildMissileExplosionGfx, buildMissileGfx, buildProjectileGfx } from '../render/pixi/spriteBuilders.js';
@@ -48,6 +48,8 @@ const NEB = (['emission', 'reflection', 'dark', 'none'].includes(qs.get('neb') ?
 const ZOOM = qs.has('zoom') ? Number(qs.get('zoom')) : undefined;
 const N = qs.has('n') ? Number(qs.get('n')) : 12;
 const TWINKLE = qs.get('twinkle') !== '0';
+/** Beams on shields: held contacts (default) or round 1's repeated hits (`contact=0`). */
+const CONTACT = qs.get('contact') !== '0';
 
 // ------------------------------------------------------------------ textures
 
@@ -128,6 +130,7 @@ async function main(): Promise<void> {
     smoke: fxTex('smoke', () => smokeTex(64)),
     trail: fxTex('trail', () => trailTex(128, 16)),
     dome: fxTex('shieldDome', () => shieldDomeTex(256)),
+    contact: fxTex('shieldContact', () => shieldContactTex(192)),
     spike: fxTex('spikeStar', () => spikeStarTex(64)),
     galaxy: fxTex('galaxy', () => galaxyTex(64)),
     sun: fxTex('sun', () => sunTex(256)),
@@ -313,9 +316,11 @@ async function main(): Promise<void> {
    *  0..1 phase within the spray cycle; `I` intensity. */
   const drawImpact = (im: Impact, g: Geo, I: number, k: number, size: number): void => {
     const on = !g.shielded && g.ok;
+    // Every beam and bolt gets its own hot point, on the hull or on the shield;
+    // sparks only fly off the hull.
     im.flare.position.set(g.ix, g.iy);
-    im.flare.scale.set((size / 64) * (0.75 + 0.4 * I));
-    im.flare.alpha = on ? I : 0;
+    im.flare.scale.set((size / 64) * (0.75 + 0.4 * I) * (g.shielded ? 0.8 : 1));
+    im.flare.alpha = g.ok && (on || CONTACT) ? I : 0;
     for (let j = 0; j < SPARKS; j++) {
       const s = im.sparks[j]!;
       const ph = (k + j / SPARKS) % 1;
@@ -337,6 +342,8 @@ async function main(): Promise<void> {
   const hitAge = new Float32Array(scene.shields.length * SHIELD_HITS);
   const hitPow = new Float32Array(scene.shields.length * SHIELD_HITS);
   const HIT_LIFE = 0.5;
+  const contacts: ShieldContacts[] = scene.shields.map(() => new ShieldContacts());
+  let lastT = -1;
   const pushHit = (si: number, ang: number, age: number, pow: number): void => {
     if (age < 0 || age >= HIT_LIFE) return;
     const o = si * SHIELD_HITS;
@@ -360,6 +367,7 @@ async function main(): Promise<void> {
         const core = sprite(T!.streak, fxL, 0xffffff, 0, 0.5);
         const muzzle = sprite(T!.glow, fxL, sh.color);
         const im = mkImpact(sh.color);
+        const beamKey = scene.shots.indexOf(sh);
         shotViews.push({ sh, draw: (t) => {
           geo(sh, t, G);
           const on = t >= sh.t0 && t <= sh.t1 && G.ok;
@@ -374,9 +382,14 @@ async function main(): Promise<void> {
           if (G.shielded && ramp > 0) {
             const si = shieldOf[sh.to]!;
             const ang = Math.atan2(tmpA.y - tmpB.y, tmpA.x - tmpB.x);
-            // A beam on a shield: a fresh hit every 0.15 s.
-            const since = (t - sh.t0) % 0.2;
-            pushHit(si, ang, since, 0.5);
+            if (CONTACT) {
+              // A beam on a shield is one held contact, not a stream of hits.
+              contacts[si]!.offer(beamKey, ang, 1);
+            } else {
+              // Round 1: a fresh hit every 0.2 s (reads as flicker).
+              const since = (t - sh.t0) % 0.2;
+              pushHit(si, ang, since, 0.5);
+            }
           }
         } });
       } else {
@@ -581,13 +594,13 @@ async function main(): Promise<void> {
   // ---- shields
   interface ShieldV {
     i: number; ring: Graphics | null; todayPulse: number;
-    hits: Sprite[]; dome: Sprite | null; shards: Sprite[];
+    hits: Sprite[]; dome: Sprite | null; shards: Sprite[]; held: Sprite[]; ripples: Sprite[]; flares: Sprite[];
     mesh: Mesh<Geometry, Shader> | null; uni: UniformGroup | null; hitU: Float32Array[];
   }
   const shieldGeom = new Geometry({ attributes: { aPosition: SHIELD_QUAD_POS, aUV: SHIELD_QUAD_UV }, indexBuffer: SHIELD_QUAD_INDEX });
   const shieldProgram = NEW && SHIELD_MODE === 'shader' ? GlProgram.from({ vertex: SHIELD_VERTEX, fragment: SHIELD_FRAGMENT, name: 'shield-hit' }) : null;
   const shieldViews: ShieldV[] = scene.shields.map((sd, i) => {
-    const v: ShieldV = { i, ring: null, todayPulse: -1e9, hits: [], dome: null, shards: [], mesh: null, uni: null, hitU: [] };
+    const v: ShieldV = { i, ring: null, todayPulse: -1e9, hits: [], dome: null, shards: [], held: [], ripples: [], flares: [], mesh: null, uni: null, hitU: [] };
     if (!NEW) {
       v.ring = new Graphics().circle(0, 0, sd.radius).stroke({ color: 0x88ddff, width: 2 });
       todayL.addChild(v.ring);
@@ -613,6 +626,11 @@ async function main(): Promise<void> {
       v.mesh = mesh;
     } else {
       for (let k = 0; k < SHIELD_HITS; k++) v.hits.push(sprite(T!.hit[0]!, shieldL, sd.color));
+      for (let k = 0; k < SHIELD_CONTACTS; k++) {
+        v.held.push(sprite(T!.contact, shieldL, lerpRgb(sd.color, 0xffffff, 0.35)));
+        v.ripples.push(sprite(T!.hit[0]!, shieldL, sd.color));
+        v.flares.push(sprite(T!.glow, shieldL, lerpRgb(sd.color, 0xffffff, 0.6)));
+      }
     }
     v.dome = sprite(T!.dome, shieldL, sd.color);
     for (let k = 0; k < 14; k++) v.shards.push(sprite(T!.spark, shieldL, sd.color, 1, 0.5));
@@ -747,7 +765,11 @@ async function main(): Promise<void> {
     // Weapons (also gathers shield hits).
     hitAge.fill(99);
     hitPow.fill(0);
+    for (const c of contacts) c.begin();
     for (const v of shotViews) v.draw(t);
+    const dt = lastT < 0 ? 0 : Math.min(0.1, Math.max(0, t - lastT));
+    lastT = t;
+    for (const c of contacts) c.end(dt);
 
     // Shields.
     for (const v of shieldViews) {
@@ -784,6 +806,28 @@ async function main(): Promise<void> {
           if (fi < 0) { s.alpha = 0; continue; }
           s.texture = T!.hit[fi]!;
           s.position.set(sp.x, sp.y); s.rotation = hitAng[o + k]!; s.scale.set(dScale); s.alpha = Math.min(1, hitPow[o + k]!);
+        }
+        // Held beam contacts: a steady lit patch per beam, shimmering, plus a
+        // gentle ripple leaving it every 0.6 s.
+        const sc = contacts[v.i]!;
+        for (let k = 0; k < SHIELD_CONTACTS; k++) {
+          const I = up ? sc.intensity(k) : 0;
+          const h = v.held[k]!, rp = v.ripples[k]!;
+          const fl = v.flares[k]!;
+          if (I <= 0) { h.alpha = 0; rp.alpha = 0; fl.alpha = 0; continue; }
+          const a = sc.ang[k]!;
+          // The hot point where the beam meets the shield.
+          const sh2 = 0.9 + 0.1 * Math.sin(t * 23 + k * 3);
+          // (The per-beam hot point is drawn by the beam itself; this one only
+          // adds a soft bloom over the shared patch.)
+          fl.position.set(sp.x + Math.cos(a) * sd.radius * 0.96, sp.y + Math.sin(a) * sd.radius * 0.96);
+          fl.scale.set((44 / 64) * sh2);
+          fl.alpha = Math.min(1, I) * 0.35;
+          h.position.set(sp.x, sp.y); h.rotation = a + 0.025 * Math.sin(t * 5 + k * 2); h.scale.set(dScale);
+          h.alpha = Math.min(1.25, I * (0.82 + 0.18 * Math.sin(t * 11 + k * 1.7) * Math.sin(t * 4.3 + k)));
+          const rf = flipFrame(sc.held[k]! % 0.6, HIT_LIFE, T!.hit.length);
+          rp.alpha = rf >= 0 ? Math.min(1, I) * 0.4 : 0;
+          if (rf >= 0) { rp.texture = T!.hit[rf]!; rp.position.set(sp.x, sp.y); rp.rotation = a; rp.scale.set(dScale); }
         }
       }
       // Break: dome flare (sprite variant draws it here; the shader draws its own) + shards.
@@ -874,7 +918,17 @@ async function main(): Promise<void> {
   }
   const api = {
     ready: true, arm: ARM, scene: SCENE, duration: scene.duration,
-    seek(ms: number): void { update(ms / 1000); },
+    seek(ms: number): void {
+      const t = ms / 1000;
+      // Contacts fade over time: when jumping, run the last 0.4 s first so a
+      // still shows the same state as the clip.
+      if (lastT < 0 || t < lastT || t - lastT > 0.1) {
+        lastT = -1;
+        for (const c of contacts) c.clear();
+        for (let k = 24; k >= 1; k--) update(Math.max(0, t - k / 60));
+      }
+      update(t);
+    },
     stats() {
       drawCalls = 0; update(curT);
       return {
