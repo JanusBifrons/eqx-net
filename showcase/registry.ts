@@ -136,4 +136,6 @@ export const SHOWCASE_PENDING: Record<string, string> = {
     'Blueprints drop at random from elites/events and install at a signed-in base; needs a staged loot→install room for the P5 showcase.',
   'research-lab':
     'Lab jobs run for minutes on the 1 Hz grid pulse; needs a staged base with blueprints + a fast-pulse room before it can be filmed.',
+  'art-direction':
+    'The Machined look lives in the dev-only art lab (rnd/art-direction) and is filmed there; a gameplay shot lands with the PixiRenderer integration.',
 };

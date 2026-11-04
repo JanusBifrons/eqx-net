@@ -1,0 +1,148 @@
+{
+  "when": "2026-11-04T08:57:26.483Z",
+  "device": {
+    "ua": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Mobile Safari/537.36",
+    "cores": 8,
+    "dpr": 2.625,
+    "w": 411,
+    "h": 809,
+    "mem": null
+  },
+  "results": [
+    {
+      "run": "base, first load",
+      "loadMs": 2877,
+      "bakeMs": 1510,
+      "art": {
+        "smoothBytes": 21503712,
+        "pixelBytes": 0,
+        "smoothPages": 1,
+        "pixelPages": 0,
+        "bakeMs": {
+          "ships": 5.400000002235174,
+          "structures": 10.599999994039536,
+          "pixelShips": 0,
+          "pixelStructures": 0
+        },
+        "prebakeMs": 1330.5,
+        "prebakeWorkers": 4,
+        "prebakeFromStore": 0
+      },
+      "bench": {
+        "frames": 715,
+        "cpuP50": 1,
+        "cpuP95": 2.2999999970197678,
+        "rafP50": 11.100000001490116,
+        "rafP95": 12
+      }
+    },
+    {
+      "run": "base, cached load",
+      "loadMs": 1021,
+      "bakeMs": 119,
+      "art": {
+        "smoothBytes": 21503712,
+        "pixelBytes": 0,
+        "smoothPages": 1,
+        "pixelPages": 0,
+        "bakeMs": {
+          "ships": 2.399999998509884,
+          "structures": 3.0000000037252903,
+          "pixelShips": 0,
+          "pixelStructures": 0
+        },
+        "prebakeMs": 85.60000000149012,
+        "prebakeWorkers": 1,
+        "prebakeFromStore": 15
+      },
+      "bench": {
+        "frames": 362,
+        "cpuP50": 0.5,
+        "cpuP95": 0.8000000007450581,
+        "rafP50": 11.100000001490116,
+        "rafP95": 11.5
+      }
+    },
+    {
+      "run": "combat",
+      "loadMs": 1003,
+      "bakeMs": 479,
+      "art": {
+        "smoothBytes": 4667904,
+        "pixelBytes": 0,
+        "smoothPages": 1,
+        "pixelPages": 0,
+        "bakeMs": {
+          "ships": 2.6000000052154064,
+          "structures": 0,
+          "pixelShips": 0,
+          "pixelStructures": 0
+        },
+        "prebakeMs": 389.0999999977648,
+        "prebakeWorkers": 4,
+        "prebakeFromStore": 0
+      },
+      "bench": {
+        "frames": 723,
+        "cpuP50": 0.9000000022351742,
+        "cpuP95": 1.8999999985098839,
+        "rafP50": 11.100000001490116,
+        "rafP95": 12
+      }
+    },
+    {
+      "run": "stress (40 ships, 150 structures)",
+      "loadMs": 2081,
+      "bakeMs": 1382,
+      "art": {
+        "smoothBytes": 30238560,
+        "pixelBytes": 0,
+        "smoothPages": 1,
+        "pixelPages": 0,
+        "bakeMs": {
+          "ships": 7,
+          "structures": 7.300000004470348,
+          "pixelShips": 0,
+          "pixelStructures": 0
+        },
+        "prebakeMs": 1211.3999999985099,
+        "prebakeWorkers": 3,
+        "prebakeFromStore": 15
+      },
+      "bench": {
+        "frames": 902,
+        "cpuP50": 3.2000000029802322,
+        "cpuP95": 5.199999999254942,
+        "rafP50": 11.100000001490116,
+        "rafP95": 11.600000001490116
+      }
+    },
+    {
+      "run": "today's look, stress",
+      "loadMs": 1682,
+      "bakeMs": 554,
+      "art": {
+        "smoothBytes": 9624960,
+        "pixelBytes": 0,
+        "smoothPages": 1,
+        "pixelPages": 0,
+        "bakeMs": {
+          "ships": 420.8999999985099,
+          "structures": 0,
+          "pixelShips": 0,
+          "pixelStructures": 0
+        },
+        "prebakeMs": 0,
+        "prebakeWorkers": 0,
+        "prebakeFromStore": 0
+      },
+      "bench": {
+        "frames": 902,
+        "cpuP50": 3.300000000745058,
+        "cpuP95": 4.700000002980232,
+        "rafP50": 11.100000001490116,
+        "rafP95": 11.599999997764826
+      }
+    }
+  ]
+}
