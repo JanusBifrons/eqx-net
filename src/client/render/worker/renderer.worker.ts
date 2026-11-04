@@ -258,6 +258,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
       }
       case 'SET_CURRENT_SECTOR': {
         galaxyLayer?.setCurrentSector(msg.sectorKey);
+        renderer?.setSector(msg.sectorKey);
         break;
       }
       case 'SET_TRANSIT_DOCKED': {

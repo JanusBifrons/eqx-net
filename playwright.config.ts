@@ -66,6 +66,8 @@ const SMOKE_SPECS: string[] = [
 // docs/refactors/test-coverage-audit.md.
 const FEATURE_SPECS: string[] = [
   '**/account-bound-identity.spec.ts',
+  // New weapon effects (plan iridescent-seeking-rainbow v3, B3).
+  '**/fx-weapons.spec.ts',
   // Living World P2 — Trade tab → deal → a hauler arrives.
   '**/trade-tab.spec.ts',
   '**/factions-tab.spec.ts',

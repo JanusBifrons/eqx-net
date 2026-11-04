@@ -1,4 +1,4 @@
-import { Application, Graphics, Container } from 'pixi.js';
+import { Application, Graphics, Container, type Texture } from 'pixi.js';
 import { Camera } from './worker/Camera';
 import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
@@ -30,6 +30,11 @@ import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService'
 import { readFxKillSwitches } from './fxKillSwitches';
 import { createArtService } from './art/ArtService.js';
 import { warmUpJobs } from './art/warmUp.js';
+import { Backdrop } from './art/fx/Backdrop.js';
+import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
+import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
+import { FxFences, FxShields } from './art/fx/FxShields.js';
+import { SHIELD_RADIUS_PAD } from '../../shared-types/shipKinds.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
 import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
 import { BeamSpritePool } from './BeamSpritePool';
@@ -587,6 +592,16 @@ export class PixiRenderer implements IRenderer {
       // Warm-up: bake the likely art now (this runs on the galaxy map /
       // warp screen), behind anything that appears on screen meanwhile.
       art.warmUp(warmUpJobs(this._artOpts.fx === true));
+      // New backdrop (B2): behind the world, with dust in front of it. Until
+      // its star tiles are baked, today's starfield keeps drawing.
+      if (this._artOpts.fx === true) {
+        const bd = new Backdrop(art, () => this.effects?.getQuality() ?? 'medium');
+        const wi = this.app.stage.getChildIndex(this.world);
+        this.app.stage.addChildAt(bd.sky, wi);
+        this.app.stage.addChildAt(bd.fore, wi + 2);
+        bd.setSector(this._sectorKey);
+        this._backdrop = bd;
+      }
     }
     // DEV/E2E hook (main-thread path, `?worker=0`): what the art service is
     // doing. Assigned from `update()`, so it always follows the LIVE renderer
@@ -706,6 +721,31 @@ export class PixiRenderer implements IRenderer {
       missileSeenScratch: this._updateMissileSeenScratch,
       activeExplosions: this.missileExplosionsActive,
     };
+    // New weapons (B3, `?fx=new`): beam glow + flow over today's beam pools,
+    // and bolts / tracers as batched sprites. Nothing draws until baked.
+    if (this._artOpts.fx === true && this._artCtx.art) {
+      const art = this._artCtx.art;
+      this._fxLiveBeams = new FxBeams(art, 0x6fd0ff);
+      this._fxRemoteBeams = new FxBeams(art, 0xffaa44);
+      this._fxProjectiles = new FxProjectiles(art);
+      this.shipContainer.addChild(this._fxRemoteBeams.container, this._fxLiveBeams.container, this._fxProjectiles.container);
+      this._projectileUpdaterCtx.fx = this._fxProjectiles;
+      // B4: explosions (ship / drone / structure deaths, missile detonations)
+      // and missile smoke trails.
+      this._fxExplosions = new FxExplosions(art, () => this.effects?.getQuality() ?? 'medium');
+      this._fxMissileTrails = new FxMissileTrails(art);
+      this.shipContainer.addChild(this._fxMissileTrails.smokeLayer, this._fxExplosions.smokeLayer, this._fxMissileTrails.glowLayer, this._fxExplosions.fireLayer);
+      this._missileUpdaterCtx.fxTrails = this._fxMissileTrails;
+      this._missileUpdaterCtx.fxExplosions = this._fxExplosions;
+      // B5: shields (invisible at rest; hit ripples, held laser contacts,
+      // break) and fences (energy line, raise / power-loss / gate).
+      this._fxShields = new FxShields(art);
+      this._fxFences = new FxFences(art);
+      this.shipContainer.addChild(this._fxShields.container);
+      // Fences sit just above the connector web, below the sprites.
+      this.shipContainer.addChildAt(this._fxFences.container, this.shipContainer.getChildIndex(this.connectorRenderer.gfx) + 1);
+      this.connectorRenderer.fxFences = this._fxFences;
+    }
 
     // Effects subsystem (plan `wiggly-puppy` M3+). Constructed inside
     // PixiRenderer.init so the same single seam serves both the worker
@@ -738,6 +778,7 @@ export class PixiRenderer implements IRenderer {
         stage: this.app.stage,
         camera: this.camera,
         warpChain: this.warp,
+        ...(this._artOpts.fx === true && this._artCtx.art ? { fxGlow: this.fxGlowTexture() } : {}),
         // Per-frame pose lookup. Reads the RENDERED sprite position so
         // it stays in lockstep with whatever frame the engine emitter
         // ticks on (one-pose-per-frame invariant for drones too — the
@@ -1357,7 +1398,13 @@ export class PixiRenderer implements IRenderer {
         // buildExplosionGfx path under the ?effects=0 escape hatch. The
         // pose returned by the helper is in Pixi space (Y-flipped); the
         // effects service expects world coords, so unflip here.
-        if (this.effects) {
+        // New explosions (B4): sized from the dying sprite; replaces the
+        // particle burst + shock filter when its textures are ready.
+        const dying = this.sprites.get(targetId);
+        const diameter = dying ? Math.max(dying.width, dying.height) : 40;
+        if (this._fxExplosions?.spawn(pose.x, -pose.y, blastRadiusFor(diameter), performance.now())) {
+          // drawn by FxExplosions
+        } else if (this.effects) {
           this.effects.spawnBurst('destruction', pose.x, -pose.y);
           this.effects.triggerOneShotFilter('destruction-shock', pose.x, -pose.y);
         } else {
@@ -1446,6 +1493,7 @@ export class PixiRenderer implements IRenderer {
     // Missile sprites + detonation VFX. Reads single-pose-per-frame via
     // resolveMissileDisplayPose (one-pose-per-frame rule — same as drones).
     updateMissileSprites(mirror, this._missileUpdaterCtx, performance.now());
+    this._fxExplosions?.tick(performance.now());
 
     // Server ghost: orange diamond showing where the server's last snapshot
     // put the ship, before any client-side prediction replay.
@@ -1476,6 +1524,10 @@ export class PixiRenderer implements IRenderer {
     // (not all stacked at the ship centre). Legacy single-mount ships have
     // mount.localX/Y = (0, 0) and baseAngle = 0, so the geometry collapses to
     // the pre-refactor "ship.pos + 20 u forward" path.
+    // New shields (B5): open the frame here; beams and hits feed it below,
+    // the shield sync closes it.
+    this._fxShieldsOn = this._fxShields !== null && this._fxShields.ready();
+    if (this._fxShieldsOn) this._fxShields!.begin();
     if (!this._beamsDisabled && mirror.remoteLasers && mirror.remoteLasers.size > 0 && this._remoteBeamPool) {
 
       // Origin tracking: the shooter pose moves every frame (drones each
@@ -1610,6 +1662,9 @@ export class PixiRenderer implements IRenderer {
           slot.toX = toX;
           slot.toY = toY;
           slot.alpha = alpha;
+          if (!isMining) this._fxRemoteHit[idx] = laser.hit === true;
+          // A beam landing on a shield is a held contact there.
+          if (this._fxShieldsOn && !isMining && laser.hit && laser.targetId) this._fxShields!.beam(laser.targetId, 1 + idx, toX, toY, this._fxShieldPose);
           if (isMining) miningIdx++;
           else slotIdx++;
         }
@@ -1622,6 +1677,7 @@ export class PixiRenderer implements IRenderer {
       // the transform writes are cheap (see the always-call rationale above).
       this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx);
       this.remoteBeamGfx!.visible = true;
+      this._fxRemoteBeams?.setBeams(this._remoteBeamCache, slotIdx, performance.now(), this._fxRemoteHit);
       if (this._miningBeamPool && this.miningBeamGfx) {
         this._miningBeamPool.setBeams(this._miningBeamCache, miningIdx);
         this.miningBeamGfx.visible = miningIdx > 0;
@@ -1630,6 +1686,7 @@ export class PixiRenderer implements IRenderer {
     } else if (this._remoteBeamPool && this.remoteBeamGfx) {
       this.remoteBeamGfx.visible = false;
       this._remoteBeamPool.hideAll();
+      this._fxRemoteBeams?.hideAll();
       this._remoteBeamCacheCount = 0;
       if (this._miningBeamPool && this.miningBeamGfx) {
         this.miningBeamGfx.visible = false;
@@ -1691,6 +1748,7 @@ export class PixiRenderer implements IRenderer {
         // P1a — the full-strength solid length (== aim guide / optimal range when
         // not clipped); beyond it the pool fades the beam to nothing.
         slot.solidLen = beam.solidDist;
+        if (this._fxShieldsOn && beam.hitId) this._fxShields!.beam(beam.hitId, 500 + slotIdx, toX, toY, this._fxShieldPose);
         slotIdx++;
       }
       this._liveBeamCacheCount = slotIdx;
@@ -1698,6 +1756,7 @@ export class PixiRenderer implements IRenderer {
       // Sprite-pool driven render (matches remoteBeam path) — always re-set.
       this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx);
       this.liveBeamGfx!.visible = true;
+      this._fxLiveBeams?.setBeams(this._liveBeamCache, slotIdx, performance.now());
       // E2E observable: publish the ACTUAL drawn beam origin (the sprite
       // transform), not a recompute — this is what catches the detach bug.
       this.feedback.liveBeamRenderedFromX = this._liveBeamPool.renderedFromX;
@@ -1705,6 +1764,7 @@ export class PixiRenderer implements IRenderer {
     } else {
       if (this.liveBeamGfx) this.liveBeamGfx.visible = false;
       this._liveBeamPool?.hideAll();
+      this._fxLiveBeams?.hideAll();
       this._liveBeamCacheCount = 0;
       this.feedback.liveBeamRenderedFromX = null;
       this.feedback.liveBeamRenderedFromY = null;
@@ -1810,7 +1870,9 @@ export class PixiRenderer implements IRenderer {
 
     // Background layers — run AFTER moveCenter so they use this frame's
     // camera position (otherwise stars and grid lag by one frame).
-    this.starfield?.update(this.camera);
+    const backdropOn = this._backdrop?.update(this.camera, performance.now()) ?? false;
+    if (backdropOn) this.starfield?.setHidden(true);
+    else this.starfield?.update(this.camera);
     this.backgroundGrid?.update(this.camera);
 
     // Drain pending damage numbers and spawn floating text. update()
@@ -1844,6 +1906,7 @@ export class PixiRenderer implements IRenderer {
           // Shield-hit impacts also pulse the target's shield ring.
           if (ev.kind === 'impact' && ev.tint === 0x88ddff && ev.entityId) {
             this.effects.pulseShield(ev.entityId);
+            if (this._fxShieldsOn) this._fxShields!.hitAt(ev.entityId, ev.worldX, ev.worldY, performance.now(), this._fxShieldPose);
           }
         }
       }
@@ -2160,13 +2223,22 @@ export class PixiRenderer implements IRenderer {
         }
         this.effects.setContinuous(id, 'shield', true, auraRadius);
         this._activeShieldIds.add(id);
+        this._fxShieldRadius.set(id, (auraRadius ?? 28) + SHIELD_RADIUS_PAD);
       }
     }
     for (const id of this._activeShieldIds) {
       if (!seen.has(id)) {
         this.effects.setContinuous(id, 'shield', false);
         this._activeShieldIds.delete(id);
+        this._fxShieldRadius.delete(id);
       }
+    }
+    // New shields (B5): every shield up this frame, then lay them out (a
+    // shield missing this frame went down and plays its break).
+    this.effects.setShieldAuraHidden(this._fxShieldsOn);
+    if (this._fxShieldsOn) {
+      for (const id of this._activeShieldIds) this._fxShields!.shield(id, this._fxShieldRadius.get(id) ?? 38);
+      this._fxShields!.end(performance.now(), this._fxShieldPose);
     }
   }
 
@@ -2363,6 +2435,52 @@ export class PixiRenderer implements IRenderer {
    * The gameplay pointer path already pans/zooms the same `Camera` (drag +
    * wheel/pinch), so free-roam needs no new event routing.
    */
+  /** See `IRenderer.setSector`. */
+  setSector(sectorKey: string | null): void {
+    this._sectorKey = sectorKey;
+    this._backdrop?.setSector(sectorKey);
+  }
+
+  /** The baked glow texture for impact sparks (null until baked). */
+  private fxGlowTexture(): () => Texture | null {
+    const h = this._artCtx.art!.fx('glow', undefined, undefined, false);
+    return () => (h.state === 'ready' && h.fx ? h.fx.tex : null);
+  }
+
+  /** New shields + fences (`?fx=new`, B5). */
+  private _fxShields: FxShields | null = null;
+  private _fxFences: FxFences | null = null;
+  private _fxShieldsOn = false;
+  /** Shield radius per shielded entity (hull radius + pad), set when it comes up. */
+  private readonly _fxShieldRadius = new Map<string, number>();
+  /** Pixi-space pose of an entity's sprite, for the new shields. */
+  private readonly _fxShieldPose = (id: string, out: { x: number; y: number }): boolean => {
+    const sp = this.sprites.get(id) ?? this.lingeringSprites.get(id)?.sprite;
+    if (!sp) return false;
+    out.x = sp.x; out.y = sp.y;
+    return true;
+  };
+
+  /** New explosions + missile smoke (`?fx=new`, B4). */
+  private _fxExplosions: FxExplosions | null = null;
+  private _fxMissileTrails: FxMissileTrails | null = null;
+
+  /** New weapon effects (`?fx=new`, B3). */
+  private _fxLiveBeams: FxBeams | null = null;
+  private _fxRemoteBeams: FxBeams | null = null;
+  private _fxProjectiles: FxProjectiles | null = null;
+  /** Per remote beam this frame: did it land on something (FxBeams' flare). */
+  private readonly _fxRemoteHit: boolean[] = [];
+
+  /** New backdrop (`?fx=new`), and the sector it shows. */
+  private _backdrop: Backdrop | null = null;
+  private _sectorKey: string | null = null;
+
+  /** DEV/E2E: what the backdrop is showing. */
+  backdropStats(): { on: boolean; nebula: string | null } {
+    return { on: this._backdrop?.sky.visible === true, nebula: this._backdrop?.nebulaKey() ?? null };
+  }
+
   setSpectator(active: boolean): void {
     this._spectator = active;
     // The radar is camera-relative while spectating. Pushed here (not read
@@ -2552,6 +2670,9 @@ export class PixiRenderer implements IRenderer {
    */
   resetEffectsForSectorHandoff(): void {
     this.effects?.resetForSectorHandoff();
+    this._fxExplosions?.reset();
+    this._fxShields?.reset();
+    this._fxFences?.reset();
     this._activeThrustIds.clear();
     this._activeBoostIds.clear();
     this._activeShieldIds.clear();
@@ -2559,7 +2680,7 @@ export class PixiRenderer implements IRenderer {
 
   /** Machined art status: the service's counts plus how many ship sprites
    *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: { on: boolean; nebula: string | null }; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;
@@ -2569,7 +2690,7 @@ export class PixiRenderer implements IRenderer {
       if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
     const art = this._artCtx.art;
-    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, ...(art ? art.stats() : {}) };
+    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, ...(art ? art.stats() : {}) };
   }
 
   dispose(): void {

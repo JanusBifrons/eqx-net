@@ -116,8 +116,10 @@ describe('flipCells', () => {
 });
 
 describe('the ?fx= switch', () => {
-  it('is off by default, on with ?fx=new, and needs the Machined art service', () => {
-    expect(resolveFxMode('', 'machined')).toBe(false);
+  it('is on for players, off for automated browsers, overridable, and needs the Machined art service (B6)', () => {
+    expect(resolveFxMode('', 'machined')).toBe(true);
+    expect(resolveFxMode('', 'machined', true)).toBe(false);
+    expect(resolveFxMode('?fx=new', 'machined', true)).toBe(true);
     expect(resolveFxMode('?fx=new', 'machined')).toBe(true);
     expect(resolveFxMode('?a=1&fx=classic', 'machined')).toBe(false);
     expect(resolveFxMode('?fx=new', 'classic')).toBe(false);

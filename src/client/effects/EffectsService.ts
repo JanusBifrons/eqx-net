@@ -15,6 +15,7 @@
  * wires the budget + per-effect quality dials.
  */
 
+import type { Texture } from 'pixi.js';
 import {
   type EffectQuality,
   type IEffects,
@@ -72,6 +73,10 @@ export interface EffectStageRefs {
    *  particle emitters (engines, impact sparks, destruction particles)
    *  skip every spawn. Both default to false (today's behaviour). */
   fxKillSwitches?: FxKillSwitches;
+  /** New effects (`?fx=new`, plan iridescent-seeking-rainbow v3 B3): the baked
+   *  glow texture once ready, else null. Impact sparks use it in place of
+   *  today's dots. */
+  fxGlow?: () => Texture | null;
 }
 
 interface ContinuousEntry {
@@ -130,7 +135,7 @@ export class EffectsService implements IEffects {
     this.impactSparks = new ImpactSparks(
       refs.world,
       () => this.getQuality(),
-      buildImpactFactories(),
+      buildImpactFactories(refs.fxGlow),
       { particlesDisabled },
     );
     this.shieldAura = new ShieldAura(
@@ -266,6 +271,11 @@ export class EffectsService implements IEffects {
     this.counters.activeBursts = 0;
     this.counters.activeContinuous = 0;
     this.counters.activeFilters = 0;
+  }
+
+  /** Hide today's shield rings while the new shields draw (B5). */
+  setShieldAuraHidden(hidden: boolean): void {
+    this.shieldAura.setHidden(hidden);
   }
 
   pulseShield(entityId: string): void {

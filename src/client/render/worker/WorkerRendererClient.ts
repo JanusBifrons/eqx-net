@@ -482,6 +482,11 @@ export class WorkerRendererClient implements IRenderer {
    * `IRenderer.setSpectator`. Posts to the worker which forwards to its
    * `PixiRenderer.setSpectator(active)` (detach follow + skip per-frame follow).
    */
+  /** See `IRenderer.setSector`. No message of its own: the galaxy-layer
+   *  `SET_CURRENT_SECTOR` (sent with every sector change) also reaches the
+   *  worker's renderer. */
+  setSector(_sectorKey: string | null): void { /* covered by SET_CURRENT_SECTOR */ }
+
   setSpectator(active: boolean): void {
     this.post({ type: 'SET_SPECTATOR', active });
   }

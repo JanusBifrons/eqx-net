@@ -112,6 +112,8 @@ export interface ArtStats {
   /** Effect textures ready / still baking. */
   fxReady: number;
   fxPending: number;
+  /** The most recent failure (job key and reason), for diagnosis. */
+  lastFailure?: string;
 }
 
 /** Defaults by device: phones get small pages and a tight page budget. */
@@ -299,15 +301,16 @@ export class ArtService {
 
   stats(): ArtStats {
     let ready = 0, pending = 0, failed = 0, fxReady = 0, fxPending = 0;
+    let lastFailure: string | undefined;
     for (const h of this.handles.values()) {
       const isFx = h.job.type === 'fx';
       if (h.state === 'ready') { ready++; if (isFx) fxReady++; }
       else if (h.state === 'pending') { pending++; if (isFx) fxPending++; }
-      else failed++;
+      else { failed++; lastFailure = `${h.key}: ${h.reason ?? "?"}`; }
     }
     return {
       ready, pending, failed, fromCache: this.fromCache,
-      pages: this.deps.packer.pageCount, gpuBytes: this.deps.packer.gpuBytes, workers: this.deps.runner.workers, fxReady, fxPending,
+      pages: this.deps.packer.pageCount, gpuBytes: this.deps.packer.gpuBytes, workers: this.deps.runner.workers, fxReady, fxPending, ...(lastFailure ? { lastFailure } : {}),
     };
   }
 

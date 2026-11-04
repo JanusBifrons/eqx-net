@@ -15,6 +15,7 @@
  */
 
 import type { Container, Graphics } from 'pixi.js';
+import { fxProjectileStyle, type FxProjectiles } from '../art/fx/FxWeapons.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import {
   buildBeamGfx,
@@ -27,6 +28,9 @@ export interface ProjectileSpriteCtx {
   shipContainer: Container;
   projectileSprites: Map<string, Graphics>;
   projSeenScratch: Set<string>;
+  /** New bolt / tracer look (`?fx=new`, plan iridescent-seeking-rainbow v3
+   *  B3); null or not ready = today's shapes. */
+  fx?: FxProjectiles | null;
 }
 
 export function updateProjectileSprites(
@@ -36,6 +40,8 @@ export function updateProjectileSprites(
   if (!mirror.projectiles) return;
   const projSeen = ctx.projSeenScratch;
   projSeen.clear();
+  const fx = ctx.fx && ctx.fx.ready() ? ctx.fx : null;
+  fx?.beginFrame();
   for (const [projId, proj] of mirror.projectiles) {
     projSeen.add(projId);
     let ps = ctx.projectileSprites.get(projId);
@@ -57,11 +63,15 @@ export function updateProjectileSprites(
     ps.x = proj.x;
     ps.y = -proj.y;
     ps.alpha = proj.alpha ?? 1;
+    const style = fx ? fxProjectileStyle(proj.weaponId, !!proj.beam) : null;
+    ps.visible = style === null;
+    if (style) fx!.draw(projId, style, proj.x, proj.y, proj.vx, proj.vy, proj.alpha ?? 1);
     // Rotate laser bolts to face their velocity heading.
     if (proj.weaponId === 'laser' && !proj.beam) {
       ps.rotation = -Math.atan2(proj.vy, proj.vx) + Math.PI / 2;
     }
   }
+  fx?.endFrame();
   for (const [projId, ps] of ctx.projectileSprites) {
     if (!projSeen.has(projId)) {
       ctx.shipContainer.removeChild(ps);
