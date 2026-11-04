@@ -103,19 +103,53 @@ test.describe('Machined art — warm-up', () => {
     const page = await ctx.newPage();
     const base = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
     await page.goto(`${base}?worker=0&art=machined&fx=new`);
-    type FxStats = { fxReady?: number; fxPending?: number; failed?: number };
+    type FxStats = { fxReady?: number; fxPending?: number; failed?: number; lastFailure?: string };
     await page.waitForFunction(
-      () => ((window as unknown as { __eqxArtStats?: () => FxStats }).__eqxArtStats?.().fxReady ?? 0) >= 19,
+      () => { const st = (window as unknown as { __eqxArtStats?: () => FxStats }).__eqxArtStats?.(); return (st?.fxReady ?? 0) >= 19 && st?.fxPending === 0; },
       undefined, { timeout: 30_000 },
     );
     const s = await page.evaluate(() => (window as unknown as { __eqxArtStats: () => FxStats }).__eqxArtStats());
     expect(s.fxPending).toBe(0);
-    expect(s.failed ?? 0).toBe(0);
+    expect(s.failed ?? 0, s.lastFailure).toBe(0);
     // Without the flag no effect textures are asked for.
     await page.goto(`${base}?worker=0&art=machined`);
     await page.waitForFunction(() => !!(window as unknown as { __eqxArtStats?: () => unknown }).__eqxArtStats, undefined, { timeout: 30_000 });
     const off = await page.evaluate(() => (window as unknown as { __eqxArtStats: () => FxStats }).__eqxArtStats());
     expect((off.fxReady ?? 0) + (off.fxPending ?? 0)).toBe(0);
+    await ctx.close();
+  });
+});
+
+test.describe('New backdrop (plan iridescent-seeking-rainbow v3, B2)', () => {
+  type BdStats = { backdrop?: { on: boolean; nebula: string | null } };
+  // Infrastructure cost only: a cold room join plus the first-visit bake of
+  // the backdrop textures on the worker pool (no game-time wait).
+  test.describe.configure({ timeout: 90_000 });
+  test('in a sector with ?fx=new the baked backdrop replaces today\'s starfield', async ({ browser }) => {
+    const { ctx, page } = await launchTestClient(browser, {
+      spawnX: 0, spawnY: 0, room: 'test-sector-fast', shipKind: 'fighter',
+      extraParams: { worker: '0', art: 'machined', fx: 'new' },
+    });
+    await page.waitForFunction(
+      () => (window as unknown as { __eqxArtStats?: () => BdStats }).__eqxArtStats?.().backdrop?.on === true,
+      undefined, { timeout: 30_000 },
+    );
+    const s = await page.evaluate(() => (window as unknown as { __eqxArtStats: () => BdStats & { failed?: number } }).__eqxArtStats());
+    expect(s.backdrop!.nebula, 'a nebula was chosen for the sector').toMatch(/^(emission|reflection|dark):\d+$/);
+    expect(s.failed ?? 0).toBe(0);
+    mkdirSync('diag/e2e-screenshots/machined-art', { recursive: true });
+    await page.screenshot({ path: 'diag/e2e-screenshots/machined-art/backdrop.png' });
+    await ctx.close();
+  });
+
+  test('without ?fx=new there is no new backdrop', async ({ browser }) => {
+    const { ctx, page } = await launchTestClient(browser, {
+      spawnX: 0, spawnY: 0, room: 'test-sector-fast', shipKind: 'fighter',
+      extraParams: { worker: '0', art: 'machined' },
+    });
+    await page.waitForFunction(() => !!(window as unknown as { __eqxArtStats?: () => BdStats }).__eqxArtStats?.().backdrop, undefined, { timeout: 20_000 });
+    const s = await page.evaluate(() => (window as unknown as { __eqxArtStats: () => BdStats }).__eqxArtStats());
+    expect(s.backdrop).toEqual({ on: false, nebula: null });
     await ctx.close();
   });
 });

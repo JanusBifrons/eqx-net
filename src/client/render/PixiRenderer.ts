@@ -30,6 +30,7 @@ import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService'
 import { readFxKillSwitches } from './fxKillSwitches';
 import { createArtService } from './art/ArtService.js';
 import { warmUpJobs } from './art/warmUp.js';
+import { Backdrop } from './art/fx/Backdrop.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
 import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
 import { BeamSpritePool } from './BeamSpritePool';
@@ -587,6 +588,16 @@ export class PixiRenderer implements IRenderer {
       // Warm-up: bake the likely art now (this runs on the galaxy map /
       // warp screen), behind anything that appears on screen meanwhile.
       art.warmUp(warmUpJobs(this._artOpts.fx === true));
+      // New backdrop (B2): behind the world, with dust in front of it. Until
+      // its star tiles are baked, today's starfield keeps drawing.
+      if (this._artOpts.fx === true) {
+        const bd = new Backdrop(art, () => this.effects?.getQuality() ?? 'medium');
+        const wi = this.app.stage.getChildIndex(this.world);
+        this.app.stage.addChildAt(bd.sky, wi);
+        this.app.stage.addChildAt(bd.fore, wi + 2);
+        bd.setSector(this._sectorKey);
+        this._backdrop = bd;
+      }
     }
     // DEV/E2E hook (main-thread path, `?worker=0`): what the art service is
     // doing. Assigned from `update()`, so it always follows the LIVE renderer
@@ -1810,7 +1821,9 @@ export class PixiRenderer implements IRenderer {
 
     // Background layers — run AFTER moveCenter so they use this frame's
     // camera position (otherwise stars and grid lag by one frame).
-    this.starfield?.update(this.camera);
+    const backdropOn = this._backdrop?.update(this.camera, performance.now()) ?? false;
+    if (backdropOn) this.starfield?.setHidden(true);
+    else this.starfield?.update(this.camera);
     this.backgroundGrid?.update(this.camera);
 
     // Drain pending damage numbers and spawn floating text. update()
@@ -2363,6 +2376,21 @@ export class PixiRenderer implements IRenderer {
    * The gameplay pointer path already pans/zooms the same `Camera` (drag +
    * wheel/pinch), so free-roam needs no new event routing.
    */
+  /** See `IRenderer.setSector`. */
+  setSector(sectorKey: string | null): void {
+    this._sectorKey = sectorKey;
+    this._backdrop?.setSector(sectorKey);
+  }
+
+  /** New backdrop (`?fx=new`), and the sector it shows. */
+  private _backdrop: Backdrop | null = null;
+  private _sectorKey: string | null = null;
+
+  /** DEV/E2E: what the backdrop is showing. */
+  backdropStats(): { on: boolean; nebula: string | null } {
+    return { on: this._backdrop?.sky.visible === true, nebula: this._backdrop?.nebulaKey() ?? null };
+  }
+
   setSpectator(active: boolean): void {
     this._spectator = active;
     // The radar is camera-relative while spectating. Pushed here (not read
@@ -2559,7 +2587,7 @@ export class PixiRenderer implements IRenderer {
 
   /** Machined art status: the service's counts plus how many ship sprites
    *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: { on: boolean; nebula: string | null } } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;
@@ -2569,7 +2597,7 @@ export class PixiRenderer implements IRenderer {
       if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
     const art = this._artCtx.art;
-    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, ...(art ? art.stats() : {}) };
+    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), ...(art ? art.stats() : {}) };
   }
 
   dispose(): void {
