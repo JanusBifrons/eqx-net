@@ -60,3 +60,22 @@ test.describe('Machined art', () => {
     await ctx.close();
   });
 });
+
+test.describe('Machined art — structures and asteroids', () => {
+  test('a prebuilt base draws structures and its asteroid in Machined once baked', async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    const page = await ctx.newPage();
+    const base = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+    await page.goto(`${base}?room=structure-scenario-test&worker=0&art=machined&zoom=0.4&spawnX=0&spawnY=520&testId=${crypto.randomUUID()}`);
+    // Capital + 2 solar + miner + turret (+ the asteroid) all become Machined.
+    await page.waitForFunction(
+      () => ((window as unknown as { __eqxArtStats?: () => { machinedSprites: number } }).__eqxArtStats?.().machinedSprites ?? 0) >= 6,
+      undefined, { timeout: 30_000 },
+    );
+    const s = await stats(page);
+    expect(s.failed ?? 0).toBe(0);
+    mkdirSync('diag/e2e-screenshots/machined-art', { recursive: true });
+    await page.screenshot({ path: 'diag/e2e-screenshots/machined-art/base-machined.png' });
+    await ctx.close();
+  });
+});

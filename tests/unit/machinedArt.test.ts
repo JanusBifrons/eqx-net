@@ -123,3 +123,46 @@ describe('FORGE_VERSION lock', () => {
     expect({ version: FORGE_VERSION, hash: (h >>> 0).toString(16) }).toEqual({ version: 'r2.1', hash: '49b83b2b' });
   });
 });
+
+describe('A4 recipes: scrap and asteroids keep their collider shapes', () => {
+  const maskMismatch = (cov: Float32Array, g: { w: number; h: number; ppu: number; ox: number; oy: number }, inside: (x: number, y: number) => boolean): number => {
+    let bad = 0;
+    for (let ty = 0; ty < g.h; ty++) for (let tx = 0; tx < g.w; tx++) {
+      const covered = cov[ty * g.w + tx]! > 0.5;
+      const wx = (tx + 0.5 - g.ox) / g.ppu, wy = (ty + 0.5 - g.oy) / g.ppu;
+      if (covered === inside(wx, wy)) continue;
+      const d = 1 / g.ppu;
+      if (![[d, 0], [-d, 0], [0, d], [0, -d]].some(([dx, dy]) => inside(wx + dx!, wy + dy!) === covered)) bad++;
+    }
+    return bad;
+  };
+
+  it('a scrap piece matches its component outline within one texel', async () => {
+    const { forgeScrap } = await import('../../src/client/render/art/fields');
+    const { shipScrapGroups } = await import('../../src/core/geometry/shipScrapGroups');
+    const { shipShapeScale } = await import('../../src/core/geometry/shipHullOutline');
+    const groups = shipScrapGroups('havok');
+    expect(groups.length).toBeGreaterThan(0);
+    const scale = shipShapeScale(getShipKind('havok'));
+    for (let c = 0; c < groups.length; c++) {
+      const f = forgeScrap('havok', c, { ppu: 3 });
+      const polys = groups[c]!.parts.map((p) => p.points.map(([x, y]) => [x * scale, y * scale] as const));
+      expect(maskMismatch(f.cov, f.g, (x, y) => polys.some((p) => insidePoly(p, x, y))), `component ${c}`).toBe(0);
+      expect(f.navLights).toHaveLength(0); // a dead piece has no running lights
+      expect(f.nozzles).toHaveLength(0);
+    }
+  });
+
+  it('an asteroid matches the seeded outline the server uses, and bakes the same each time', async () => {
+    const { forgeRock } = await import('../../src/client/render/art/fields');
+    const { generateAsteroidVertices } = await import('../../src/core/swarm/asteroidShape');
+    for (const [id, r] of [[7, 40], [123, 90]] as const) {
+      const f = forgeRock(id, r, undefined, { ppu: 1.5 });
+      const outline = generateAsteroidVertices(id, r).map((v) => [v.x, -v.y] as const);
+      expect(maskMismatch(f.cov, f.g, (x, y) => insidePoly(outline, x, y))).toBe(0);
+    }
+    const a = litFrame(forgeRock(9, 60, 'ice', { ppu: 1.5 }), DEFAULT_RIG, 0.4);
+    const b = litFrame(forgeRock(9, 60, 'ice', { ppu: 1.5 }), DEFAULT_RIG, 0.4);
+    expect(hashBytes(a.data)).toBe(hashBytes(b.data));
+  });
+});

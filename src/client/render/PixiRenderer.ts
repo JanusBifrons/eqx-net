@@ -30,8 +30,7 @@ import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService'
 import { readFxKillSwitches } from './fxKillSwitches';
 import { createArtService } from './art/ArtService.js';
 import { readArtDelayMs, readArtMode } from './art/artMode.js';
-import { MachinedShipSprite } from './art/MachinedShipSprite.js';
-import { buildArtShipSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
+import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
 import { BeamSpritePool } from './BeamSpritePool';
 import {
   CameraDirector,
@@ -2557,11 +2556,11 @@ export class PixiRenderer implements IRenderer {
   artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
-      if (sp instanceof MachinedShipSprite) machined++;
+      if (isMachinedSprite(sp)) machined++;
       else if (!id.startsWith('swarm-') || this._artCtx.handles.has(id)) classic++;
     }
     for (const e of this.lingeringSprites.values()) {
-      if (e.sprite instanceof MachinedShipSprite) machined++; else classic++;
+      if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
     const art = this._artCtx.art;
     return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, ...(art ? art.stats() : {}) };

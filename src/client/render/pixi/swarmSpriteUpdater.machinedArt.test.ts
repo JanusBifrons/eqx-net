@@ -11,7 +11,8 @@ import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js
 import { MountVisualManager } from '../MountVisualManager.js';
 import { DAMAGE_FLASH_COLOR } from './spriteBuilders.js';
 import { MachinedShipSprite } from '../art/MachinedShipSprite.js';
-import type { ArtHandle, ArtService, ShipArt } from '../art/ArtService.js';
+import type { ArtHandle, ArtService, ShipArt, StructArt } from '../art/ArtService.js';
+import { MachinedFlatSprite } from '../art/MachinedFlatSprite.js';
 import { npcFactionDef, type FactionId } from '../../../shared-types/factions.js';
 import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
@@ -40,14 +41,28 @@ const shipArt = (): ShipArt => ({
 /** A stub art service: every request returns a handle the test flips. */
 function stubArt(): { svc: ArtService; handles: ArtHandle[]; makeReady: () => void } {
   const handles: ArtHandle[] = [];
+  const mk = (job: ArtHandle['job']): ArtHandle => {
+    const h: ArtHandle = { key: JSON.stringify(job), job, rig: {} as ArtHandle['rig'], state: 'pending', ship: null, struct: null };
+    handles.push(h);
+    return h;
+  };
   const svc = {
-    ship(id: string, paint?: number): ArtHandle {
-      const h: ArtHandle = { key: `${id}:${paint ?? ''}`, job: { type: 'ship', id, paint }, rig: {} as ArtHandle['rig'], state: 'pending', ship: null, struct: null };
-      handles.push(h);
-      return h;
-    },
+    ship: (id: string, paint?: number) => mk({ type: 'ship', id, paint }),
+    struct: (id: string, seed: number, rot = 0) => mk({ type: 'struct', id, seed, rot }),
+    scrap: (id: string, component: number) => mk({ type: 'scrap', id, component }),
+    rock: (entityId: number, radius: number, resource: string | undefined, rot: number) =>
+      mk({ type: 'rock', id: 'asteroid', entityId, radius, resource, rot }),
   } as unknown as ArtService;
-  return { svc, handles, makeReady: () => { for (const h of handles) { h.state = 'ready'; h.ship = shipArt(); } } };
+  const flat = (): StructArt => ({ tex: Texture.EMPTY, albedo: Texture.EMPTY, w: 40, h: 40, density: 2, navLights: [] });
+  return {
+    svc, handles,
+    makeReady: () => {
+      for (const h of handles) {
+        h.state = 'ready';
+        if (h.job.type === 'ship' || h.job.type === 'scrap') h.ship = shipArt(); else h.struct = flat();
+      }
+    },
+  };
 }
 
 function makeCtx(art: ArtService | null): SwarmSpriteCtx {
@@ -117,6 +132,27 @@ describe('updateSwarmSprites — Machined art', () => {
     handles[0]!.state = 'failed';
     updateSwarmSprites(mirror, ctx);
     expect(ctx.sprites.get('swarm-3')).toBeInstanceOf(Graphics);
+  });
+
+  it('structures, scrap and asteroids swap too, with structures baked at their quarter turn', () => {
+    const { svc, handles, makeReady } = stubArt();
+    const ctx = makeCtx(svc);
+    const base = drone('fighter');
+    const st = { ...base, kind: 2, shipKind: 'turret', angle: Math.PI / 2, radius: 70 } as SwarmRenderState;
+    const scrap = { ...base, kind: 3, shipKind: 'havok', componentIndex: 1, radius: 10 } as SwarmRenderState;
+    const rock = { ...base, kind: 0, shipKind: undefined, radius: 40, asteroidResource: 'ice' } as unknown as SwarmRenderState;
+    const mirror = { swarm: new Map([[10, st], [11, scrap], [12, rock]]) } as unknown as RenderMirror;
+    updateSwarmSprites(mirror, ctx);
+    expect([...ctx.sprites.values()].every((s) => s instanceof Graphics)).toBe(true);
+    expect(handles.map((h) => h.job.type).sort()).toEqual(['rock', 'scrap', 'struct']);
+    expect(handles.find((h) => h.job.type === 'struct')!.job).toMatchObject({ id: 'turret', rot: -Math.PI / 2 });
+    makeReady();
+    updateSwarmSprites(mirror, ctx);
+    expect(ctx.sprites.get('swarm-10')).toBeInstanceOf(MachinedFlatSprite);
+    expect(ctx.sprites.get('swarm-11')).toBeInstanceOf(MachinedShipSprite);
+    expect(ctx.sprites.get('swarm-12')).toBeInstanceOf(MachinedFlatSprite);
+    // The structure's readouts (ETA text etc.) were rebuilt onto the new sprite.
+    expect(ctx.sprites.get('swarm-10')!.children.length).toBeGreaterThan(1);
   });
 
   it('with the art off, nothing changes from today', () => {

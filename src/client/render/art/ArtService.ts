@@ -129,6 +129,16 @@ export class ArtService {
     return this.acquire({ type: 'struct', id, seed: seedVariant(seed), rot, accent });
   }
 
+  /** One component of a destroyed ship (tumbles: ship-style frames). */
+  scrap(parentKind: string, component: number): ArtHandle {
+    return this.acquire({ type: 'scrap', id: parentKind, component });
+  }
+
+  /** An asteroid by its seeded outline (static: one frame at its turn). */
+  rock(entityId: number, radius: number, resource: string | undefined, rot: number): ArtHandle {
+    return this.acquire({ type: 'rock', id: 'asteroid', entityId, radius, resource, rot });
+  }
+
   /** The handle for a job: an existing one if any, else a new pending one
    *  whose bake starts now. */
   acquire(job: BakeJob): ArtHandle {
@@ -190,7 +200,7 @@ export class ArtService {
     for (let i = 0; i < b.frames.length; i++) packer.add(b.frames[i]!, tex, i);
     // Textures resolve on commit (end of this tick); fill the handle then.
     this.pendingFill.push(() => {
-      if (h.job.type === 'ship') {
+      if (h.job.type === 'ship' || h.job.type === 'scrap') {
         h.ship = { frames: tex, w: b.w, h: b.h, density: b.density, nozzles: b.nozzles, navLights: b.navLights };
       } else {
         h.struct = { tex: tex[0]!, albedo: tex[1]!, w: b.w, h: b.h, density: b.density, navLights: b.navLights };
