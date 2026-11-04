@@ -153,9 +153,10 @@ per-frame maths (`fxMath.ts`: flipbook frames, envelopes, backdrop depth,
   with any generator change). Wrapping textures (star tiles, nebula, dust, the
   beam flow) get a texture of their own (`Atlas.standalone`); the rest share
   the art atlas, and flipbook sheets are cut into cells (`flipCells`). The
-  renderer asks with `ArtService.fx(id, variant?, seed?)`. Switch: `?fx=new`
-  (needs Machined art; default off until the rollout's last PR); with it the
-  warm-up bakes `FX_WARM` first.
+  renderer asks with `ArtService.fx(id, variant?, seed?)`. Switch: on for players
+  whenever the art is Machined (since B6; the Settings "Detailed art" switch
+  covers both), off for automated browsers, `?fx=new|classic` to override;
+  with it the warm-up bakes `FX_WARM` first.
 - **Backdrop (B2).** `art/fx/Backdrop.ts` replaces today's starfield once its star tiles are baked (until then `StarfieldBackground` keeps drawing). Layers: three star tiles, the sector's nebula, galaxies, spike stars, the sun along the hull light, and dust in front of the world on high quality only. Depth is `backdropXf` (far layers pan and grow less). The nebula comes from the sector key (`sectorNebula`: type and one of 12 seeds; emission kept faint; a dark-dust sector is a faint blue glow crossed by dark lanes, since dust only reads as dark against something bright). The sector reaches the renderer through `IRenderer.setSector` (main thread) or the existing `SET_CURRENT_SECTOR` (worker). The sun still uses the default light direction until per-sector sun is wired for the hull bakes too.
 - **Weapons (B3).** `FxBeams` adds the halo, the flowing energy strip, the fading tail and the muzzle and hit flares over today's beam pools, so the range contract and the beam-origin test hooks are untouched. Bolts and tracers are pooled sprite views (`FxProjectiles`); impact sparks become soft glow sprites. Missile smoke trails come with the explosions (B4).
 - **Explosions (B4).** `FxExplosions` plays every death (ships, drones, structures; blast radius from the dying sprite) and every missile detonation as a pooled burst: flash, fireball flipbook, secondary fireballs on big blasts, a shock ring, cooling embers and lingering smoke. Missiles trail a smoke ribbon (`FxMissileTrails`). Hot-glowing scrap is still to do.

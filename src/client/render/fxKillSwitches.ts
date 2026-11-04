@@ -20,6 +20,9 @@
  * - `?worker=0` forces main-thread renderer (touch default).
  * - `?art=classic` draws today's flat vector look instead of the Machined art
  *   (`render/art/artMode.ts`; automated browsers default to classic).
+ * - `?fx=classic` keeps today's weapon effects, shields, fences and starfield
+ *   with the Machined art (`resolveFxMode`; on by default for players, off
+ *   for automated browsers; `?fx=new` asks for it).
  */
 
 export interface FxKillSwitches {
