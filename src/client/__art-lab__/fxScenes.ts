@@ -48,13 +48,17 @@ export interface FxScene {
   wisps: FxWisp[];
   wreck?: FxWreck;
   fences?: FxFence[];
+  /** Round 2: the sector key the sky is seeded from, and nebula volumes to
+   *  fly through (world space). */
+  sky?: string;
+  regions?: Array<{ x: number; y: number; r: number; variant: 'emission' | 'reflection' | 'dark'; seed: number }>;
   /** Draw a distant planet in the backdrop. */
   planet?: boolean;
   camera: (t: number, out: Cam) => void;
   duration: number;
 }
 
-export const FX_SCENE_IDS = ['weapons', 'shield', 'shield-beams', 'fences', 'explosions', 'zoom', 'nebula', 'environment', 'battle'] as const;
+export const FX_SCENE_IDS = ['flythrough', 'weapons', 'shield', 'shield-beams', 'fences', 'explosions', 'zoom', 'nebula', 'environment', 'battle'] as const;
 export type FxSceneId = (typeof FX_SCENE_IDS)[number];
 
 /** A ship holding station at (x, y), facing (tx, ty), with a small bob. */
@@ -152,6 +156,20 @@ export function buildFxScene(id: FxSceneId, zoomOverride?: number, n = 12): FxSc
       ];
       return { ...empty, ships, shots, shields: [{ ship: 0, radius: 48, breakAt: 4.2, color: 0x7fd8ff }], duration: 6,
         camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = zoomOr(1.7); } };
+    }
+    case 'flythrough': {
+      // 12 000 u in 20 s: cruise (450 u/s) for 10 s, then boost (750 u/s),
+      // through an emission nebula and past the sector's landmarks.
+      const xAt = (t: number): number => (t < 10 ? 450 * t : 4500 + 750 * (t - 10));
+      const yAt = (x: number): number => 300 * Math.sin(x / 2500);
+      const wing = (dx: number, dy: number) => (t: number): [number, number] => { const x = xAt(t) + dx; return [x, yAt(x) + dy]; };
+      const ships: ShipE[] = [flyer('fighter', wing(0, 0)), flyer('fighter', wing(-70, -60)), flyer('fighter', wing(-70, 60))];
+      return {
+        ...empty, ships, duration: 20, sky: 'emerald-span',
+        rocks: [...rockField(2400, 350, 9, 380, 2), ...rockField(5200, -420, 8, 340, 5), ...rockField(9800, 250, 9, 380, 9)],
+        regions: [{ x: 6800, y: 0, r: 2300, variant: 'emission', seed: 1 }, { x: 11600, y: 300, r: 1500, variant: 'reflection', seed: 2 }],
+        camera: (t, c) => { const x = xAt(t); c.x = x + 80; c.y = yAt(x); c.zoom = zoomOr(0.9); },
+      };
     }
     case 'fences': {
       // A fenced compound: bolts and lasers on the fence, the gate opening

@@ -1,0 +1,65 @@
+/**
+ * Depth, scale and speed (plan iridescent-seeking-rainbow v4, round 2).
+ */
+import { describe, it, expect } from 'vitest';
+import { DEPTH_LADDER, landmarkScreen, nebulaDensityAt, nebulaRegions, sectorSky, SPEED_FX, speedFactor } from './depth.js';
+
+describe('depth ladder', () => {
+  it('spreads from very far to in front of the world, far to near', () => {
+    const behind = DEPTH_LADDER.filter((b) => b.parallax < 1);
+    expect(Math.min(...behind.map((b) => b.parallax))).toBeLessThanOrEqual(0.01);
+    expect(Math.max(...behind.map((b) => b.parallax))).toBeGreaterThanOrEqual(0.4);
+    expect(DEPTH_LADDER.some((b) => b.parallax > 1)).toBe(true);
+  });
+});
+
+describe('sectorSky', () => {
+  it('is the same every visit and differs between sectors', () => {
+    expect(sectorSky('sol-prime')).toEqual(sectorSky('sol-prime'));
+    expect(sectorSky('sol-prime')).not.toEqual(sectorSky('vega-reach'));
+  });
+
+  it('crossing the sector carries nearby landmarks across the screen', () => {
+    // Planets move by (camera travel × parallax): a 12 000 u run must move a
+    // planet by more than a screen width, so the sky changes as you travel.
+    const planet = sectorSky('emerald-span').find((l) => l.kind === 'planet')!;
+    const a = { x: 0, y: 0, scale: 1 }, b = { x: 0, y: 0, scale: 1 };
+    landmarkScreen(planet, 0, 0, 1, 0.3, 1280, 720, a);
+    landmarkScreen(planet, 12_000, 0, 1, 0.3, 1280, 720, b);
+    expect(Math.abs(a.x - b.x)).toBeGreaterThan(1280);
+  });
+});
+
+describe('nebula volumes', () => {
+  it('density is 1 at a region core, 0 outside, and smooth between', () => {
+    const regs = [{ x: 0, y: 0, r: 1000, variant: 'emission' as const, seed: 1 }];
+    expect(nebulaDensityAt(0, 0, regs)).toBeCloseTo(1);
+    expect(nebulaDensityAt(1500, 0, regs)).toBe(0);
+    const mid = nebulaDensityAt(800, 0, regs);
+    expect(mid).toBeGreaterThan(0);
+    expect(mid).toBeLessThan(1);
+  });
+
+  it('every sector gets 1 to 3 regions, seeded from its key', () => {
+    for (const k of ['a', 'b', 'c', 'sol-prime']) {
+      const r = nebulaRegions(k);
+      expect(r.length).toBeGreaterThanOrEqual(1);
+      expect(r.length).toBeLessThanOrEqual(3);
+      expect(nebulaRegions(k)).toEqual(r);
+    }
+  });
+});
+
+describe('speed effects', () => {
+  it('levels grow from off to large, and off does nothing', () => {
+    expect(SPEED_FX.off).toEqual({ stretch: 0, zoomOut: 0, streakGain: 0 });
+    expect(SPEED_FX.small.stretch).toBeLessThan(SPEED_FX.medium.stretch);
+    expect(SPEED_FX.medium.zoomOut).toBeLessThan(SPEED_FX.large.zoomOut);
+  });
+
+  it('speedFactor clamps to 0..1', () => {
+    expect(speedFactor(0)).toBe(0);
+    expect(speedFactor(375)).toBeCloseTo(0.5);
+    expect(speedFactor(5000)).toBe(1);
+  });
+});

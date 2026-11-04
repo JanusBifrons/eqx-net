@@ -19,9 +19,12 @@ import { chromium, type Page } from '@playwright/test';
 const args = process.argv.slice(2);
 const flag = (k: string): string | undefined => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : undefined; };
 const OUT = flag('--out') ?? 'diag/art-lab/fx-r1';
+// (Round 2 captures go to --out diag/art-lab/fx-r2.)
 const ONLY = flag('--only');
 const CLIP = flag('--clip');
 const STILL = flag('--still');
+/** Only these arm ids (long clips: record a few at a time). */
+const ARMS = flag('--arms')?.split(',');
 const PORT = 5374;
 const FPS = 30;
 const FFMPEG = process.env['FFMPEG'] ?? 'ffmpeg';
@@ -32,7 +35,14 @@ const NEW: Arm = { id: 'new', q: 'fx=new' };
 const PAIR = [TODAY, NEW];
 
 interface Shot { id: string; scene: string; t: number; w: number; h: number; arms: Arm[]; seconds: number; extra?: string }
+const R2 = (speed: string): Arm => ({ id: `r2-${speed}`, q: `fx=new&bd=r2&speed=${speed}` });
 const SHOTS: Shot[] = [
+  // Round 2: the same 12 000 u fly-through, today / round 1 / round 2 (no
+  // speed effects), then round 2 at each speed effect level.
+  { id: 'flythrough', scene: 'flythrough', t: 12, w: 1280, h: 720, seconds: 20,
+    arms: [TODAY, { id: 'r1', q: 'fx=new&bd=r1' }, R2('off')] },
+  { id: 'speedfx', scene: 'flythrough', t: 15, w: 1280, h: 720, seconds: 20,
+    arms: [R2('off'), R2('small'), R2('medium'), R2('large')] },
   { id: 'weapons', scene: 'weapons', t: 2.35, w: 1280, h: 720, arms: PAIR, seconds: 6 },
   { id: 'shield', scene: 'shield', t: 1.75, w: 960, h: 640, seconds: 6,
     arms: [TODAY, { id: 'sprite', q: 'fx=new&shield=sprite' }, { id: 'shader', q: 'fx=new&shield=shader' }] },
@@ -115,7 +125,7 @@ async function main(): Promise<void> {
       mkdirSync(`${OUT}/clips`, { recursive: true });
       for (const s of SHOTS.filter((x) => !CLIP || CLIP.split(',').includes(x.id))) {
         const parts: string[] = [];
-        for (const a of s.arms) {
+        for (const a of s.arms.filter((x) => !ARMS || ARMS.includes(x.id))) {
           const dir = `${OUT}/frames/${s.id}-${a.id}`;
           rmSync(dir, { recursive: true, force: true });
           mkdirSync(dir, { recursive: true });
@@ -135,10 +145,13 @@ async function main(): Promise<void> {
           console.log(`clip ${s.id} ${a.id}`);
         }
         // The arms side by side on identical frames (stacked when there are 2 wide ones).
+        if (ARMS) { rmSync(`${OUT}/frames`, { recursive: true, force: true }); continue; }
         const k = parts.length;
         const tw = k === 2 ? 960 : 640, th = Math.round((s.h / s.w) * tw / 2) * 2;
         const filt = parts.map((_, i) => `[${i}:v]scale=${tw}:${th}:flags=lanczos[v${i}]`).join(';')
-          + `;${parts.map((_, i) => `[v${i}]`).join('')}${k === 2 ? 'vstack' : 'hstack'}=inputs=${k}[o]`;
+          + (k === 4
+            ? ';[v0][v1]hstack=inputs=2[top];[v2][v3]hstack=inputs=2[bot];[top][bot]vstack=inputs=2[o]'
+            : `;${parts.map((_, i) => `[v${i}]`).join('')}${k === 2 ? 'vstack' : 'hstack'}=inputs=${k}[o]`);
         execFileSync(FFMPEG, ['-y', '-loglevel', 'error', ...parts.flatMap((p) => ['-i', p]), '-filter_complex', filt, '-map', '[o]',
           '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '21', '-preset', 'slow', '-movflags', '+faststart', `${OUT}/clips/${s.id}-compare.mp4`]);
         rmSync(`${OUT}/frames`, { recursive: true, force: true });

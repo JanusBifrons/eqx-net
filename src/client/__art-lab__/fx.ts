@@ -38,6 +38,8 @@ import { buildExplosionGfx, buildLaserBoltGfx, buildMissileExplosionGfx, buildMi
 import { StarfieldBackground } from '../render/StarfieldBackground.js';
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
 import { SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
+import { DepthSky } from './depthLab.js';
+import { SPEED_FX, speedFactor, type SpeedFxLevel } from '../render/art/fx/depth.js';
 import { cometSegment, shieldWallVisualParams, type ShieldWallVisual } from '../render/pixi/connectorVisual.js';
 
 const qs = new URLSearchParams(location.search);
@@ -49,6 +51,10 @@ const NEB = (['emission', 'reflection', 'dark', 'none'].includes(qs.get('neb') ?
 const ZOOM = qs.has('zoom') ? Number(qs.get('zoom')) : undefined;
 const N = qs.has('n') ? Number(qs.get('n')) : 12;
 const TWINKLE = qs.get('twinkle') !== '0';
+/** Round-2 backdrop (`bd=r2`: depth ladder, landmarks, nebula volumes) and
+ *  the speed effect level (`speed=off|small|medium|large`). */
+const BD: 'r1' | 'r2' = qs.get('bd') === 'r2' ? 'r2' : 'r1';
+const SPEED = (['off', 'small', 'medium', 'large'].includes(qs.get('speed') ?? '') ? qs.get('speed') : 'off') as SpeedFxLevel;
 /** Beams on shields: held contacts (default) or round 1's repeated hits (`contact=0`). */
 const CONTACT = qs.get('contact') !== '0';
 
@@ -183,7 +189,13 @@ async function main(): Promise<void> {
   };
   interface SkySprite { s: Sprite; lx: number; ly: number; parallax: number; zoomPow: number; size: number; alpha: number; tw: number }
   const skySprites: SkySprite[] = [];
-  if (T) {
+  let depth: DepthSky | null = null;
+  if (T && BD === 'r2') {
+    depth = new DepthSky({ starFar: T.starFar, starMid: T.starMid, starNear: T.starNear, glow: T.glow, galaxy: T.galaxy, sun: T.sun },
+      (i) => toTexture(i), scene.sky ?? 'lab', SPEED, W, H, scene.regions);
+    sky.addChild(depth.sky); fore.addChild(depth.fore);
+  }
+  if (T && BD === 'r1') {
     if (NEB !== 'none') tileLayer(T.nebula, 0.012, 0.08, 2.6, NEB === 'dark' ? 0.85 : NEB === 'emission' ? 0.48 : 0.72, NEB === 'dark' ? 'normal' : 'add', sky);
     tileLayer(T.starFar, 0.02, 0.1, 1, 0.95, 'add', sky);
     const gal = (lx: number, ly: number, size: number): void => {
@@ -873,9 +885,28 @@ async function main(): Promise<void> {
   let curT = 0;
   const glowScale = 1 / 64;
 
+  /** Camera velocity (world/s) and the eased speed factor at `t`. */
+  const velCam: Cam = { x: 0, y: 0, zoom: 1 }, velCam2: Cam = { x: 0, y: 0, zoom: 1 };
+  const camVel = { x: 0, y: 0, sf: 0 };
+  function measureSpeed(t: number): void {
+    scene.camera(t, velCam); scene.camera(t + 0.05, velCam2);
+    camVel.x = (velCam2.x - velCam.x) / 0.05; camVel.y = (velCam2.y - velCam.y) / 0.05;
+    // Ease the speed factor over the last 0.6 s (deterministic: sampled).
+    let acc = 0;
+    for (let k = 0; k < 6; k++) {
+      const tk = Math.max(0, t - k * 0.12);
+      scene.camera(tk, velCam); scene.camera(tk + 0.05, velCam2);
+      acc += speedFactor(Math.hypot(velCam2.x - velCam.x, velCam2.y - velCam.y) / 0.05);
+    }
+    camVel.sf = acc / 6;
+  }
+
   function update(t: number): void {
     curT = t;
     scene.camera(t, cam);
+    measureSpeed(t);
+    // Speed effect: zoom out a little at speed (off ⇒ none).
+    if (depth) cam.zoom *= 1 - SPEED_FX[SPEED].zoomOut * camVel.sf;
     const zoom = cam.zoom;
     world.scale.set(zoom);
     world.position.set(W / 2 - cam.x * zoom, H / 2 - cam.y * zoom);
@@ -885,6 +916,7 @@ async function main(): Promise<void> {
       fakeCam.center.x = cam.x; fakeCam.center.y = cam.y; fakeCam.scale.x = zoom; fakeCam.scale.y = zoom;
       starfield.update(fakeCam as never);
     }
+    depth?.update(cam.x, cam.y, zoom, camVel.x, camVel.y, camVel.sf);
     for (const tl of tiles) {
       backdropXf(cam.x, cam.y, zoom, tl.parallax, tl.zoomPow, W, H, xf);
       tl.s.tileScale.set(xf.scale * tl.texScale);
@@ -1121,7 +1153,7 @@ async function main(): Promise<void> {
     stats() {
       drawCalls = 0; update(curT);
       return {
-        arm: ARM, scene: SCENE, shield: SHIELD_MODE, neb: NEB, t: curT,
+        arm: ARM, scene: SCENE, shield: SHIELD_MODE, neb: NEB, bd: BD, speed: SPEED, t: curT, nebulaDensity: depth?.density ?? 0,
         artBakeMs: Math.round(artBakeMs), fxBakeMs: Math.round(fxBakeMs), fxBakeEach: bakeMs,
         fxTextureBytes: imgGpuBytes(fxImgs), drawCallsPerFrame: drawCalls,
         sprites: countNodes(app.stage), ships: ships.length,

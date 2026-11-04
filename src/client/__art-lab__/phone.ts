@@ -29,6 +29,10 @@ const FX_RUNS: Run[] = [
   { label: 'fx: zoom sweep, new', q: 'fx=new&scene=zoom&dpr=1', benchMs: 8000, page: 'fx.html' },
   { label: 'fx: battle, today (24 a side)', q: 'fx=today&scene=battle&n=24&dpr=1', benchMs: 8000, page: 'fx.html' },
   { label: 'fx: battle, new (24 a side)', q: 'fx=new&scene=battle&n=24&dpr=1', benchMs: 8000, page: 'fx.html' },
+  // Round 2: depth, scale and speed.
+  { label: 'fx: fly-through, round 1 sky', q: 'fx=new&bd=r1&scene=flythrough&dpr=1', benchMs: 8000, page: 'fx.html' },
+  { label: 'fx: fly-through, round 2 sky', q: 'fx=new&bd=r2&speed=off&scene=flythrough&dpr=1', benchMs: 8000, page: 'fx.html' },
+  { label: 'fx: fly-through, round 2 sky + large speed effects', q: 'fx=new&bd=r2&speed=large&scene=flythrough&dpr=1', benchMs: 8000, page: 'fx.html' },
 ];
 
 const qs = new URLSearchParams(location.search);
