@@ -1,0 +1,111 @@
+{
+  "when": "2026-11-04T15:13:22.567Z",
+  "device": {
+    "ua": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Mobile Safari/537.36",
+    "cores": 8,
+    "dpr": 2.625,
+    "w": 411,
+    "h": 809,
+    "mem": null
+  },
+  "results": [
+    {
+      "run": "fx: battle, today",
+      "loadMs": 1703,
+      "bakeMs": 451,
+      "fxBakeMs": 0,
+      "bench": {
+        "frames": 712,
+        "cpuP50": 4,
+        "cpuP95": 5.699999999254942,
+        "rafP50": 11.100000001490116,
+        "rafP95": 12.199999999254942,
+        "drawCalls": 6
+      }
+    },
+    {
+      "run": "fx: battle, new (first load)",
+      "loadMs": 1797,
+      "bakeMs": 618,
+      "fxBakeMs": 581,
+      "bench": {
+        "frames": 717,
+        "cpuP50": 4.399999998509884,
+        "cpuP95": 6.5,
+        "rafP50": 11.100000001490116,
+        "rafP95": 12,
+        "drawCalls": 9
+      }
+    },
+    {
+      "run": "fx: battle, new + shader shields",
+      "loadMs": 1670,
+      "bakeMs": 616,
+      "fxBakeMs": 567,
+      "bench": {
+        "frames": 713,
+        "cpuP50": 4.100000001490116,
+        "cpuP95": 6.200000002980232,
+        "rafP50": 11.100000001490116,
+        "rafP95": 11.699999999254942,
+        "drawCalls": 21
+      }
+    },
+    {
+      "run": "fx: zoom sweep, today",
+      "loadMs": 1138,
+      "bakeMs": 59,
+      "fxBakeMs": 0,
+      "bench": {
+        "frames": 721,
+        "cpuP50": 3.300000000745058,
+        "cpuP95": 5.800000000745058,
+        "rafP50": 11.100000001490116,
+        "rafP95": 11.600000001490116,
+        "drawCalls": 2
+      }
+    },
+    {
+      "run": "fx: zoom sweep, new",
+      "loadMs": 1837,
+      "bakeMs": 623,
+      "fxBakeMs": 561,
+      "bench": {
+        "frames": 720,
+        "cpuP50": 0.8000000007450581,
+        "cpuP95": 2,
+        "rafP50": 11.100000001490116,
+        "rafP95": 11.900000002235174,
+        "drawCalls": 9
+      }
+    },
+    {
+      "run": "fx: battle, today (24 a side)",
+      "loadMs": 1089,
+      "bakeMs": 39,
+      "fxBakeMs": 0,
+      "bench": {
+        "frames": 721,
+        "cpuP50": 4.400000002235174,
+        "cpuP95": 6.600000001490116,
+        "rafP50": 11.100000001490116,
+        "rafP95": 11.599999997764826,
+        "drawCalls": 10
+      }
+    },
+    {
+      "run": "fx: battle, new (24 a side)",
+      "loadMs": 1781,
+      "bakeMs": 616,
+      "fxBakeMs": 568,
+      "bench": {
+        "frames": 710,
+        "cpuP50": 5.900000002235174,
+        "cpuP95": 8.300000000745058,
+        "rafP50": 11.100000001490116,
+        "rafP95": 12,
+        "drawCalls": 9
+      }
+    }
+  ]
+}
