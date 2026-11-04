@@ -9,6 +9,7 @@ import { galaxyLanding } from './shots/galaxyLanding.js';
 import { joinSector } from './shots/joinSector.js';
 import { shipGallery } from './shots/shipGallery.js';
 import { machinedArt } from './shots/machinedArt.js';
+import { newEffects } from './shots/newEffects.js';
 import { flight } from './shots/flight.js';
 import { beamCombat } from './shots/beamCombat.js';
 import { turrets } from './shots/turrets.js';
@@ -49,6 +50,7 @@ export const SHOTS: readonly Shot[] = [
   turrets,
   missiles,
   packBattle,
+  newEffects,
   robots,
   nexus,
   scrap,

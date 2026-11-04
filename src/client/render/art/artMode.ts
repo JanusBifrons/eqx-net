@@ -33,11 +33,17 @@ export function resolveArtMode(search: string, isAutomation: boolean, saved: Art
   return readArtMode(search) ?? saved ?? (isAutomation ? 'classic' : 'machined');
 }
 
-/** `?fx=new|classic`: the new effects and backdrop. Default off for now. */
-export function resolveFxMode(search: string, mode: ArtMode): boolean {
+/**
+ * The new effects and backdrop (plan iridescent-seeking-rainbow v3). They
+ * ride the Machined look (one player switch: Settings → Graphics → Detailed
+ * art), so classic art means classic effects. `?fx=new|classic` wins; else
+ * on for players, off for automated browsers (the same rule as the art mode:
+ * specs that test the effects ask for them).
+ */
+export function resolveFxMode(search: string, mode: ArtMode, isAutomation = false): boolean {
   if (mode !== 'machined') return false;
   const m = /[?&]fx=(new|classic)\b/.exec(search);
-  return m ? m[1] === 'new' : false;
+  return m ? m[1] === 'new' : !isAutomation;
 }
 
 /** Test-only: delay every bake by this many ms (`?artDelayMs=`), so an E2E can
