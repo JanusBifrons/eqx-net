@@ -220,3 +220,61 @@ export function speedFactor(speed: number, max = 750): number {
   const k = speed / max;
   return k <= 0 ? 0 : k >= 1 ? 1 : k;
 }
+
+// ------------------------------------------------------------------ nebula volumes (endless)
+
+/**
+ * Nebula volumes you can fly into, on an endless world-space grid (one chance
+ * per cell, seeded from the sector key). Like the landmarks, nothing depends
+ * on a sector's size: bigger sectors simply hold more of them.
+ */
+export const NEBULA_CELL = 9000;
+const NEBULA_CHANCE = 0.4;
+const NEBULA_VARIANTS = ['emission', 'reflection', 'dark'] as const;
+/** Largest region radius (world units); used to bound the cells to check. */
+export const NEBULA_MAX_R = 2800;
+
+/** The region in cell (ix, iy) for nebula seed `seed` (`hashKey('neb:'+key)`),
+ *  into `out`; false if the cell is empty. Deterministic, allocation-free. */
+export function nebulaCell(seed: number, ix: number, iy: number, out: NebulaRegion): boolean {
+  const c = (Math.imul(ix, 83492791) ^ Math.imul(iy, 2971215073) ^ seed) >>> 0;
+  if (h01(c, 11) >= NEBULA_CHANCE) return false;
+  out.x = (ix + 0.25 + 0.5 * h01(c, 12)) * NEBULA_CELL;
+  out.y = (iy + 0.25 + 0.5 * h01(c, 13)) * NEBULA_CELL;
+  out.r = 1400 + (NEBULA_MAX_R - 1400) * h01(c, 14);
+  out.variant = NEBULA_VARIANTS[c % 3]!;
+  out.seed = c % 997;
+  return true;
+}
+
+/** Visit every region whose edge comes within `reach` of (x, y). */
+export function visitNebulae(seed: number, x: number, y: number, reach: number, scratch: NebulaRegion,
+  visit: (g: NebulaRegion) => void): void {
+  const R = reach + NEBULA_MAX_R;
+  const x0 = Math.floor((x - R) / NEBULA_CELL), x1 = Math.floor((x + R) / NEBULA_CELL);
+  const y0 = Math.floor((y - R) / NEBULA_CELL), y1 = Math.floor((y + R) / NEBULA_CELL);
+  for (let iy = y0; iy <= y1; iy++) {
+    for (let ix = x0; ix <= x1; ix++) {
+      if (!nebulaCell(seed, ix, iy, scratch)) continue;
+      if (Math.hypot(x - scratch.x, y - scratch.y) - scratch.r <= reach) visit(scratch);
+    }
+  }
+}
+
+/** How deep inside a nebula (x, y) is for nebula seed `seed`: 0 outside, 1
+ *  at a core. Checks only the nearby cells; allocation-free. */
+export function nebulaDensityAtSeed(seed: number, x: number, y: number, scratch: NebulaRegion): number {
+  let d = 0;
+  const ix0 = Math.floor(x / NEBULA_CELL), iy0 = Math.floor(y / NEBULA_CELL);
+  for (let iy = iy0 - 1; iy <= iy0 + 1; iy++) {
+    for (let ix = ix0 - 1; ix <= ix0 + 1; ix++) {
+      if (!nebulaCell(seed, ix, iy, scratch)) continue;
+      const r = Math.hypot(x - scratch.x, y - scratch.y) / scratch.r;
+      if (r >= 1) continue;
+      const k = Math.min(1, (1 - r) / 0.45);
+      const v = k * k * (3 - 2 * k);
+      if (v > d) d = v;
+    }
+  }
+  return d;
+}

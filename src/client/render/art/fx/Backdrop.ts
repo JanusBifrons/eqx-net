@@ -11,6 +11,9 @@
  *    (`visitSkyLayer`), so the sky never runs out and its density doesn't
  *    depend on how big a sector is (sector sizes are arbitrary and will grow);
  *  - near stars; near dust motes;
+ *  - nebula volumes you can fly into (C2): slices behind the world and in
+ *    front of it, with a clear hole round the ship, dimmed stars and a faint
+ *    colour grade while inside. Endless, seeded from the sector key;
  *  - (in front of the world) fore dust motes.
  *
  * Every texture is made once (art/fx/fxTextures.ts via `ArtService.fx`) and
@@ -19,11 +22,11 @@
  *
  * Per frame: scalar writes on pooled sprites only (invariant #14).
  */
-import { Container, Sprite, TilingSprite, type Texture } from 'pixi.js';
+import { Container, Sprite, Texture, TilingSprite } from 'pixi.js';
 import type { ArtHandle, ArtService } from '../ArtService.js';
 import { hashStr } from '../raster.js';
 import { backdropXf, zoomWindow, type TileXf } from './fxMath.js';
-import { hashKey, landmarkScreen, sectorSky, SKY_LAYERS, visitSkyLayer, type Landmark } from './depth.js';
+import { hashKey, landmarkScreen, nebulaDensityAtSeed, sectorSky, SKY_LAYERS, visitNebulae, visitSkyLayer, type Landmark, type NebulaRegion } from './depth.js';
 import { h01 } from './fxTextures.js';
 
 export interface BackdropCamera {
@@ -57,8 +60,16 @@ const VARIANTS = [4, 6, 5, 5, 3];
 const NEAR_MOTES = 60;
 const FORE_MOTES = 26;
 
+/** Nebula slices: parallax, in front of the world?, wisps per region. */
+const SLICES: ReadonlyArray<readonly [number, boolean, number]> = [[0.6, false, 9], [0.85, false, 9], [1.2, true, 7], [1.5, true, 5]];
+/** Most regions drawn at once. */
+const NEB_SLOTS = 3;
+const REGION_TINT: Record<NebulaRegion['variant'], number> = { emission: 0xff6a9a, reflection: 0x6fa8ff, dark: 0x3a3048 };
+
+interface Wisp { s: Sprite; slice: number; i: number }
+
 interface Tile {
-  s: TilingSprite; h: ArtHandle | null;
+  s: TilingSprite; h: ArtHandle | null; star?: boolean;
   parallax: number; zoomPow: number; texScale: number; alpha: number;
   win: [number, number, number, number] | null;
 }
@@ -120,6 +131,53 @@ export class Backdrop {
   private readonly xf: TileXf = { scale: 1, x: 0, y: 0 };
   private readonly lp = { x: 0, y: 0, scale: 1 };
   private nebulaFor = '\u0000';
+  /** Nebula volumes (C2). */
+  private nebSeed = 0;
+  private readonly nebBack = new Container();
+  private readonly nebFront = new Container();
+  private readonly wisps: Wisp[][] = [];
+  private readonly grade = new Sprite();
+  private readonly scratchR: NebulaRegion = { x: 0, y: 0, r: 0, variant: 'emission', seed: 0 };
+  private nebSlot = 0;
+  private nebQ = 'high';
+  private nebGradeTint = 0xffffff;
+  /** How deep in a nebula the camera is (0..1, stats). */
+  density = 0;
+  private readonly visitNebula = (g: NebulaRegion): void => {
+    if (this.nebSlot >= NEB_SLOTS) return;
+    const slot = this.wisps[this.nebSlot++]!;
+    const handles = this.pools[1]!.handles; // the wisp textures (nebula patches)
+    const W = this.vW, H = this.vH, cx = this.vCx, cy = this.vCy, zoom = this.vZoom;
+    const hole0 = Math.min(W, H) * 0.16, hole1 = Math.min(W, H) * 0.46;
+    if (Math.hypot(cx - g.x, -cy - g.y) < g.r) this.nebGradeTint = REGION_TINT[g.variant];
+    for (let k = 0; k < slot.length; k++) {
+      const w = slot[k]!;
+      const [parallax, front] = SLICES[w.slice]!;
+      const on = this.nebQ === 'high' || (this.nebQ === 'medium' ? w.slice !== 3 : !front);
+      const tex = readyTex(handles[(g.seed + w.i) % handles.length]!);
+      if (!on || !tex) { w.s.visible = false; continue; }
+      const a = h01(w.i, g.seed * 31 + w.slice * 10) * Math.PI * 2;
+      const d = Math.sqrt(h01(w.i, g.seed * 17 + w.slice * 10)) * g.r * 0.85;
+      const sc = Math.pow(Math.max(1e-3, zoom), parallax);
+      const x = W / 2 + (g.x + Math.cos(a) * d - cx) * parallax * sc;
+      const y = H / 2 + (-(g.y + Math.sin(a) * d) - cy) * parallax * sc;
+      const size = g.r * (front ? 0.55 : 0.8) * sc;
+      if (x < -size || x > W + size || y < -size || y > H + size) { w.s.visible = false; continue; }
+      w.s.visible = true;
+      if (w.s.texture !== tex) w.s.texture = tex;
+      w.s.position.set(x, y); w.s.scale.set(size / tex.width); w.s.rotation = a * 3;
+      w.s.tint = REGION_TINT[g.variant];
+      w.s.blendMode = g.variant === 'dark' ? 'normal' : 'add';
+      let alpha = front ? 0.16 : 0.22;
+      if (front) {
+        // A clear hole round the ship (the camera keeps it at the centre).
+        const rr = Math.hypot(x - W / 2, y - H / 2);
+        const t = Math.min(1, Math.max(0, (rr - hole0) / (hole1 - hole0)));
+        alpha *= t * t * (3 - 2 * t);
+      }
+      w.s.alpha = alpha;
+    }
+  };
   private t = 0;
   /** Landmarks drawn last frame (stats). */
   visibleLandmarks = 0;
@@ -133,11 +191,12 @@ export class Backdrop {
     this.glow = art.fx('glow', undefined, undefined, false);
     this.nebula = this.tile(null, 0.012, 0.08, 2.6, 0.6, 'add', this.sky, null);
     this.far = this.tile(art.fx('starsFar', undefined, undefined, false), 0.03, 0.1, 1, 0.95, 'add', this.sky, null);
+    this.far.star = true;
     this.sky.addChild(this.farLands);
     // The sun sits far out along the light direction, so it agrees with the hulls.
     const az = art.lightRig.sunAz;
     this.sprite(art.fx('sun', undefined, undefined, false), Math.cos(az) * 700, Math.sin(az) * 700, 0.004, 0.03, 520, 0.95, false).s.tint = 0xfff0d8;
-    this.tile(art.fx('starsMid', undefined, undefined, false), 0.08, 0.25, 1, 0.9, 'add', this.sky, null);
+    this.tile(art.fx('starsMid', undefined, undefined, false), 0.08, 0.25, 1, 0.9, 'add', this.sky, null).star = true;
     // Dark lanes sit in front of the far stars and the glow, hiding them.
     this.lanes = this.tile(null, 0.03, 0.15, 2.2, 0.55, 'normal', this.sky, null);
     for (let i = 0; i < 7; i++) {
@@ -146,7 +205,9 @@ export class Backdrop {
     }
     // Planets are nearer than the mid stars, so they hide them.
     this.sky.addChild(this.nearLands);
-    this.tile(art.fx('starsNear', undefined, undefined, false), 0.18, 0.45, 1, 0.85, 'add', this.sky, [0.22, 0.45, Infinity, Infinity]);
+    this.tile(art.fx('starsNear', undefined, undefined, false), 0.18, 0.45, 1, 0.85, 'add', this.sky, [0.22, 0.45, Infinity, Infinity]).star = true;
+    // Nebula slices behind the world sit in front of every star layer.
+    this.sky.addChild(this.nebBack);
     // One pool per sky layer; far kinds (galaxies, patches) behind the mid
     // stars, near kinds (gas giants, planets, moons) in front of them.
     for (let li = 0; li < SKY_LAYERS.length; li++) {
@@ -165,7 +226,23 @@ export class Backdrop {
       this.pools.push({ sprites, handles, used: 0, blend, alpha });
     }
     for (let i = 0; i < NEAR_MOTES; i++) this.nearMotes.push(this.mote(this.sky, i, 61, 2, 0.18, 0xcfdcff));
+    this.fore.addChild(this.nebFront);
     for (let i = 0; i < FORE_MOTES; i++) this.foreMotes.push(this.mote(this.fore, i, 71, 3, 0.22, 0xe6eeff));
+    for (let j = 0; j < NEB_SLOTS; j++) {
+      const slot: Wisp[] = [];
+      for (let si = 0; si < SLICES.length; si++) {
+        const [, front, count] = SLICES[si]!;
+        for (let i = 0; i < count; i++) {
+          const sp = new Sprite(); sp.anchor.set(0.5); sp.visible = false;
+          (front ? this.nebFront : this.nebBack).addChild(sp);
+          slot.push({ s: sp, slice: si, i });
+        }
+      }
+      this.wisps.push(slot);
+    }
+    // The colour grade while inside a nebula (a faint full-screen tint).
+    this.grade.texture = Texture.WHITE; this.grade.blendMode = 'add'; this.grade.alpha = 0;
+    this.fore.addChild(this.grade);
     this.setSector(null);
   }
 
@@ -183,6 +260,7 @@ export class Backdrop {
     this.lanes.h = lanes > 0 ? this.art.fx('nebula', 'dark', n.seed + 40) : null;
     this.lanes.alpha = lanes;
     this.lanes.s.visible = false;
+    this.nebSeed = hashKey(`neb:${sectorKey ?? 'none'}`);
     // Landmarks come from the sector seed, cell by cell, as you fly.
     this.skySeed = hashKey(`sky:${sectorKey ?? 'none'}`);
     // A sample around the centre, for stats (once per sector change).
@@ -205,6 +283,9 @@ export class Backdrop {
     const zoom = cam.scale.x, W = cam.screenWidth, H = cam.screenHeight;
     const cx = cam.center.x, cy = cam.center.y;
     const q = this.getQuality();
+    // Nebulae live in GAME space (Y up); the camera centre is Pixi space (Y down).
+    const d = nebulaDensityAtSeed(this.nebSeed, cx, -cy, this.scratchR);
+    this.density = d;
     for (let i = 0; i < this.tiles.length; i++) {
       const tl = this.tiles[i]!;
       const tex = readyTex(tl.h);
@@ -216,7 +297,7 @@ export class Backdrop {
       backdropXf(cx, cy, zoom, tl.parallax, tl.zoomPow, W, H, this.xf);
       tl.s.tileScale.set(this.xf.scale * tl.texScale);
       tl.s.tilePosition.set(this.xf.x, this.xf.y);
-      tl.s.alpha = tl.alpha * (tl.win ? zoomWindow(zoom, tl.win[0], tl.win[1], tl.win[2], tl.win[3]) : 1);
+      tl.s.alpha = tl.alpha * (tl.win ? zoomWindow(zoom, tl.win[0], tl.win[1], tl.win[2], tl.win[3]) : 1) * (tl.star ? 1 - 0.55 * d : 1);
     }
     for (let i = 0; i < this.sprites.length; i++) {
       const ss = this.sprites[i]!;
@@ -241,11 +322,22 @@ export class Backdrop {
       shown += pool.used;
     }
     this.visibleLandmarks = shown;
+    // Nebula volumes near the camera (none at minimal).
+    this.nebSlot = 0; this.nebQ = q; this.nebGradeTint = 0xffffff;
+    if (q !== 'minimal') {
+      const reach = Math.max(W, H) / 2 / (0.6 * Math.pow(Math.max(1e-3, zoom), 0.6));
+      visitNebulae(this.nebSeed, cx, -cy, reach, this.scratchR, this.visitNebula);
+    }
+    for (let j = this.nebSlot; j < NEB_SLOTS; j++) for (const w of this.wisps[j]!) w.s.visible = false;
+    this.grade.tint = this.nebGradeTint;
+    this.grade.width = W; this.grade.height = H;
+    this.grade.alpha = 0.045 * d;
+    this.grade.visible = d > 0;
     // Dust motes (none on low; fewer on medium).
     const glow = readyTex(this.glow);
     const nearN = !glow || q === 'low' || q === 'minimal' ? 0 : q === 'medium' ? 40 : NEAR_MOTES;
     const foreN = !glow || q === 'low' || q === 'minimal' ? 0 : q === 'medium' ? 16 : FORE_MOTES;
-    this.fore.visible = foreN > 0;
+    this.fore.visible = foreN > 0 || this.nebSlot > 0;
     this.layoutMotes(this.nearMotes, nearN, glow, 0.4, 0.7, cx, cy, zoom, W, H);
     this.layoutMotes(this.foreMotes, foreN, glow, 1.3, 1.1, cx, cy, zoom, W, H);
     return true;
