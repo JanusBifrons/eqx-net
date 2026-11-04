@@ -17,6 +17,7 @@ const args = process.argv.slice(2);
 const flag = (k: string): string | undefined => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : undefined; };
 const OUT = flag('--out') ?? 'diag/art-lab/engines-r1';
 const ONLY = flag('--only');
+const CLIP = flag('--clip');
 const PORT = 5374;
 const FPS = 30;
 const FFMPEG = process.env['FFMPEG'] ?? 'ffmpeg';
@@ -98,7 +99,7 @@ async function main(): Promise<void> {
 
     if (!ONLY || ONLY === 'clips') {
       mkdirSync(`${OUT}/clips`, { recursive: true });
-      for (const [id, scene, seconds] of CLIPS) {
+      for (const [id, scene, seconds] of CLIPS.filter((c) => !CLIP || CLIP.split(',').includes(c[0]))) {
         const parts: string[] = [];
         for (const arm of ARMS) {
           const dir = `${OUT}/frames/${id}-${arm}`;
@@ -119,14 +120,22 @@ async function main(): Promise<void> {
           (report['clips'] as unknown[]).push({ id, arm, file: mp4 });
           console.log(`clip ${id} ${arm}`);
         }
-        // 2×2 grid: today | flame / ribbon | both, labelled.
-        const tw = 960, th = 540;
-        const lab = (i: number): string => `[${i}:v]scale=${tw}:${th}:flags=lanczos,drawtext=text='${ARMS[i]}':x=14:y=12:fontsize=26:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=6[v${i}]`;
-        const filt = `${[0, 1, 2, 3].map(lab).join(';')};[v0][v1]hstack[t];[v2][v3]hstack[b];[t][b]vstack[o]`;
-        execFileSync(FFMPEG, ['-y', '-loglevel', 'error', ...parts.flatMap((p) => ['-i', p]), '-filter_complex', filt, '-map', '[o]',
-          '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '22', '-preset', 'slow', '-movflags', '+faststart', `${OUT}/clips/${id}-compare.mp4`]);
+        // 2×2 grid: today | flame / ribbon | both (the page labels them).
+        compose(parts, `${OUT}/clips/${id}-compare.mp4`);
         rmSync(`${OUT}/frames`, { recursive: true, force: true });
       }
+    }
+    if (ONLY === 'compose') {
+      for (const [id] of CLIPS.filter((c) => !CLIP || CLIP.split(',').includes(c[0]))) {
+        compose(ARMS.map((a) => `${OUT}/clips/${id}-${a}.mp4`), `${OUT}/clips/${id}-compare.mp4`);
+      }
+    }
+    function compose(parts: string[], out: string): void {
+        const tw = 960, th = 540;
+        const lab = (i: number): string => `[${i}:v]scale=${tw}:${th}:flags=lanczos[v${i}]`;
+        const filt = `${[0, 1, 2, 3].map(lab).join(';')};[v0][v1]hstack[t];[v2][v3]hstack[b];[t][b]vstack[o]`;
+        execFileSync(FFMPEG, ['-y', '-loglevel', 'error', ...parts.flatMap((p) => ['-i', p]), '-filter_complex', filt, '-map', '[o]',
+          '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '22', '-preset', 'slow', '-movflags', '+faststart', out]);
     }
 
     if (!ONLY || ONLY === 'bench') {
