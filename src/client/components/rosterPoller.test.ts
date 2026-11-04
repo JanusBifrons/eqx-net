@@ -220,3 +220,44 @@ describe('roster poller — refcount + dedupe', () => {
     expect(mockFetch.mock.calls.length).toBeLessThanOrEqual(12);
   });
 });
+
+/**
+ * An unchanged roster must not be written to the store (phone run
+ * 2026-11-04, captures rh7xl3 / m3kt2p). Every 3 s poll wrote a NEW array,
+ * so every `shipRoster` subscriber re-rendered (App.tsx subscribes at the
+ * top), costing one 33 ms frame per poll on a 90 Hz phone with the new sky.
+ */
+describe('roster poller — skips unchanged rosters', () => {
+  it('an identical reply leaves the store array untouched', async () => {
+    acquireRosterPolling('player-1');
+    await vi.advanceTimersByTimeAsync(0);
+    const first = useUIStore.getState().shipRoster;
+    expect(first).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(useUIStore.getState().shipRoster).toBe(first);
+  });
+
+  it('a changed reply is written', async () => {
+    acquireRosterPolling('player-1');
+    await vi.advanceTimersByTimeAsync(0);
+    const first = useUIStore.getState().shipRoster;
+    mockFetch.mockImplementationOnce(() => Promise.resolve(new Response(
+      JSON.stringify({ ships: [{ shipId: 'a', kind: 'fighter', health: 50, lastSectorKey: 'sol-prime' }] }),
+      { status: 200 },
+    )));
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    const second = useUIStore.getState().shipRoster;
+    expect(second).not.toBe(first);
+    expect(second[0]!.health).toBe(50);
+  });
+
+  it('re-applies an identical reply when something else changed the store', async () => {
+    acquireRosterPolling('player-1');
+    await vi.advanceTimersByTimeAsync(0);
+    useUIStore.getState().setShipRoster([]); // e.g. a local patch
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(useUIStore.getState().shipRoster).toHaveLength(1);
+  });
+});
