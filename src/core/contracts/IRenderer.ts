@@ -573,6 +573,12 @@ export interface RenderMirror {
    * `solidDist === dist`). Absent ⇒ the whole beam is solid (legacy look).
    */
   liveBeams?: Map<string, { dist: number; solidDist?: number; hitId?: string }>;
+  /**
+   * The local ship's active-weapon mount ids while a hostile is in that
+   * weapon's range (empty otherwise). The new look shows aim guides only for
+   * these. A reused array owned by the client: read it, never keep it.
+   */
+  localAimMountIds?: readonly string[];
   /** When false, the renderer hides the orange server-ghost diamond. Default true. */
   showServerGhost?: boolean;
   /**

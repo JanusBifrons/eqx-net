@@ -155,12 +155,15 @@ export class ArtService {
 
   get lightRig(): LightRig { return this.rig; }
 
-  ship(id: string, paint?: number, urgent = true): ArtHandle {
-    return this.acquire({ type: 'ship', id, paint }, urgent);
+  /** `rings`: cut turret rings into the hull at its mounts (new effects). */
+  ship(id: string, paint?: number, urgent = true, rings = false): ArtHandle {
+    return this.acquire(rings ? { type: 'ship', id, paint, rings } : { type: 'ship', id, paint }, urgent);
   }
 
-  struct(id: string, seed: number, rot = 0, accent?: number, urgent = true): ArtHandle {
-    return this.acquire({ type: 'struct', id, seed: seedVariant(seed), rot, accent }, urgent);
+  struct(id: string, seed: number, rot = 0, accent?: number, urgent = true, rings = false): ArtHandle {
+    return this.acquire(rings
+      ? { type: 'struct', id, seed: seedVariant(seed), rot, accent, rings }
+      : { type: 'struct', id, seed: seedVariant(seed), rot, accent }, urgent);
   }
 
   /** Queue background bakes for art the player is likely to see soon (see
@@ -259,7 +262,7 @@ export class ArtService {
     for (let i = 0; i < b.frames.length; i++) packer.add(b.frames[i]!, tex, i);
     // Textures resolve on commit (end of this tick); fill the handle then.
     this.pendingFill.push(() => {
-      if (h.job.type === 'ship' || h.job.type === 'scrap') {
+      if (h.job.type === 'ship' || h.job.type === 'scrap' || h.job.type === 'turret') {
         h.ship = { frames: tex, w: b.w, h: b.h, density: b.density, nozzles: b.nozzles, navLights: b.navLights };
       } else {
         h.struct = { tex: tex[0]!, albedo: tex[1]!, w: b.w, h: b.h, density: b.density, navLights: b.navLights };

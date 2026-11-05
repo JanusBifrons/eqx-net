@@ -109,6 +109,9 @@ import { installPageLifecycleObserver } from '../debug/pageLifecycleObserver';
 import { recordServerGcPause, startHealthStatsPublisher } from '../debug/healthStats';
 import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE, MUZZLE_CLEARANCE, rayHitsSphere } from '@core/combat/Weapons';
+
+/** No aim guides (the mirror's `localAimMountIds` when nothing is in range). */
+const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
 import { getWeapon, weaponAutoFireRange, type WeaponDef } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
 import { gateDisabledInput, type ControlBits } from '@core/combat/disable';
@@ -912,6 +915,8 @@ export class ColyseusGameClient {
    *  invariant #14 — recompute only when the kind or active slot changes. */
   private _afSlotKindKey: string | null = null;
   private _afSlotIdKey: string | null = null;
+  /** The active slot's mount ids (recomputed with the slot cache above). */
+  private readonly _afSlotMountIds: string[] = [];
   private _afSlotWeaponDef: WeaponDef = getWeapon('hitscan');
   private _afSlotCooldownTicks = 0;
   /** Idle-suppression for the input upstream (network-discipline P4). The
@@ -4824,6 +4829,9 @@ export class ColyseusGameClient {
     // Auto-fire (default ON): fire automatically at an in-range HOSTILE without
     // any input. Manual fire (Space / FIRE button) still works as an override.
     const autoFireEnabled = useUIStore.getState().autoFireEnabled;
+    // Aim guides (new look): cleared each frame, set below while the active
+    // weapon has a hostile in range.
+    this.mirror.localAimMountIds = EMPTY_AIM_IDS;
     if ((manualFire || autoFireEnabled) && this.mirror.localPlayerId && !this.localDead && this.predWorld && this.room) {
       // Weapons/energy/AI overhaul (§5.2): the firing weapon is the active
       // SLOT's bound weapon, not a per-weapon picker. Slot cooldown = max
@@ -4847,6 +4855,8 @@ export class ColyseusGameClient {
         this._afSlotCooldownTicks = cd === 0 ? weaponDef.cooldownTicks : cd;
         this._afSlotKindKey = kindStr;
         this._afSlotIdKey = activeSlotId;
+        this._afSlotMountIds.length = 0;
+        for (let i = 0; i < slotMounts.length; i++) this._afSlotMountIds.push(slotMounts[i]!.id);
       }
       const slotWeaponDef = this._afSlotWeaponDef;
       const slotCooldownTicks = this._afSlotCooldownTicks;
@@ -4861,10 +4871,10 @@ export class ColyseusGameClient {
       // own mount angles; turret aim/fire-target unification is Part C.
       // v4 A — a disabled ship's weapons are offline (the server drops the shot).
       let fireWanted = manualFire && !this.isLocallyDisabled();
-      if (!fireWanted && autoFireEnabled && !this.isLocallyDisabled()) {
-        const st = this.predWorld.getShipState(this.mirror.localPlayerId);
-        if (st) fireWanted = this.hasHostileInRange(st.x, st.y, weaponAutoFireRange(slotWeaponDef));
-      }
+      const aimSt = this.predWorld.getShipState(this.mirror.localPlayerId);
+      const hostileInRange = aimSt ? this.hasHostileInRange(aimSt.x, aimSt.y, weaponAutoFireRange(slotWeaponDef)) : false;
+      if (hostileInRange) this.mirror.localAimMountIds = this._afSlotMountIds;
+      if (!fireWanted && autoFireEnabled && !this.isLocallyDisabled()) fireWanted = hostileInRange;
       if (fireWanted) {
         if (slotWeaponDef.mode === 'hitscan') {
           this.updateLiveBeam();

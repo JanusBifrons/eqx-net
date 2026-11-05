@@ -13,6 +13,7 @@ import type { ArtHandle, ArtService } from './ArtService.js';
 import { quarterTurns } from './bake.js';
 import { MachinedFlatSprite } from './MachinedFlatSprite.js';
 import { MachinedShipSprite } from './MachinedShipSprite.js';
+import { hasTurrets } from './turretLayout.js';
 
 export interface ShipArtCtx {
   /** Null when the Machined look is off: everything draws today's look. */
@@ -21,14 +22,17 @@ export interface ShipArtCtx {
   handles: Map<string, ArtHandle>;
   /** The sun's world azimuth (Pixi space) the art was lit by. */
   sunAz: number;
+  /** Machined turrets (new effects): ringed hull / deck bakes and baked guns. */
+  turrets?: boolean;
 }
 
 /** The handle a ship should use now (re-acquired only on a kind/paint change). */
 export function shipHandleFor(actx: ShipArtCtx, key: string, kindId: string, paint: number | undefined): ArtHandle | null {
   if (!actx.art) return null;
   let h = actx.handles.get(key);
-  if (!h || h.job.type !== 'ship' || h.job.id !== kindId || h.job.paint !== paint) {
-    h = actx.art.ship(kindId, paint);
+  const rings = actx.turrets === true && hasTurrets(kindId, false);
+  if (!h || h.job.type !== 'ship' || h.job.id !== kindId || h.job.paint !== paint || (h.job.rings === true) !== rings) {
+    h = actx.art.ship(kindId, paint, true, rings);
     actx.handles.set(key, h);
   }
   return h;
@@ -38,8 +42,9 @@ export function shipHandleFor(actx: ShipArtCtx, key: string, kindId: string, pai
 export function structHandleFor(actx: ShipArtCtx, key: string, kindId: string, rot: number): ArtHandle | null {
   if (!actx.art) return null;
   let h = actx.handles.get(key);
-  if (!h || h.job.type !== 'struct' || h.job.id !== kindId || quarterTurns(h.job.rot ?? 0) !== quarterTurns(rot)) {
-    h = actx.art.struct(kindId, 1, rot);
+  const rings = actx.turrets === true && hasTurrets(kindId, true);
+  if (!h || h.job.type !== 'struct' || h.job.id !== kindId || quarterTurns(h.job.rot ?? 0) !== quarterTurns(rot) || (h.job.rings === true) !== rings) {
+    h = actx.art.struct(kindId, 1, rot, undefined, true, rings);
     actx.handles.set(key, h);
   }
   return h;
