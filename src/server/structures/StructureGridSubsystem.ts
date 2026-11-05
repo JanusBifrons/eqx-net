@@ -48,6 +48,7 @@ import {
   TRANSFER_PULSE_MS,
 } from '../../core/structures/structureGridConstants.js';
 import { autoConnectStructure, buildGridNodes } from './structureGridView.js';
+import { structureTurretMuzzle } from '../../core/combat/muzzle.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
 /** Cap on reconnect attempts per pulse so a sector full of permanently-stranded
@@ -260,12 +261,15 @@ export class StructureGridSubsystem {
         const wallT = blen > 1e-6 && this.hooks.blockBeamAtWall
           ? this.hooks.blockBeamAtWall(rec.x, rec.y, bdx / blen, bdy / blen, blen, perHitDamage)
           : null;
+        // Drawn from the barrel tip (the shared muzzle, #15); the hit is unchanged.
+        const tip = blen > 1e-6 ? Math.min(blen, structureTurretMuzzle(rec.kind, def.id)) / blen : 0;
+        const fromX = rec.x + bdx * tip, fromY = rec.y + bdy * tip;
         if (wallT !== null) {
-          this.hooks.broadcastBeam?.(rec.id, rec.x, rec.y, rec.x + (bdx / blen) * wallT, rec.y + (bdy / blen) * wallT, '');
+          this.hooks.broadcastBeam?.(rec.id, fromX, fromY, rec.x + (bdx / blen) * wallT, rec.y + (bdy / blen) * wallT, '');
           continue;
         }
         this.hooks.applyDamage!(target.id, rec.id, perHitDamage);
-        this.hooks.broadcastBeam?.(rec.id, rec.x, rec.y, target.x, target.y, target.id);
+        this.hooks.broadcastBeam?.(rec.id, fromX, fromY, target.x, target.y, target.id);
       } else if (def.mode === 'projectile') {
         // SHOT model: one dodgeable bolt per the KIND's `fireRateMs` (NOT the
         // weapon's rapid player cooldown — at 10 ticks that would be a firehose).
@@ -276,7 +280,7 @@ export class StructureGridSubsystem {
         // P2d — physical ordnance spends munitions (lasers never reach here).
         if (!this.spendAmmo(rec)) continue;
         rec.lastTurretFireMs = nowMs;
-        this.fireTurretShot(rec, kind.radius, damage, def, target.x, target.y);
+        this.fireTurretShot(rec, damage, def, target.x, target.y);
       } else if (def.mode === 'missile') {
         // SHOT model: one homing missile per the kind's `fireRateMs` (a slow
         // salvo). The missile homes via MissileSimulation — restricted to DRONES
@@ -288,7 +292,7 @@ export class StructureGridSubsystem {
         // P2d — physical ordnance spends munitions (lasers never reach here).
         if (!this.spendAmmo(rec)) continue;
         rec.lastTurretFireMs = nowMs;
-        this.fireTurretMissile(rec, kind.radius, def, target.x, target.y);
+        this.fireTurretMissile(rec, def, target.x, target.y);
       }
     }
   }
@@ -319,7 +323,6 @@ export class StructureGridSubsystem {
    *  projectile pipeline also skips the firing owner). Alloc-free (scalars). */
   private fireTurretShot(
     rec: StructureRecord,
-    radius: number,
     weaponDamage: number | undefined,
     def: WeaponDef,
     tx: number,
@@ -331,9 +334,10 @@ export class StructureGridSubsystem {
     const dist = Math.hypot(dx, dy) || 1;
     const ndx = dx / dist;
     const ndy = dy / dist;
-    // Emerge from the barrel tip (clear the turret radius) — a static structure
-    // has no velocity to inherit, so the bolt velocity is pure aim × speed.
-    const muzzle = radius + 8;
+    // Emerge from the barrel tip — the shared muzzle (core/combat/muzzle.ts),
+    // inside the footprint: the projectile pipeline skips the firing owner. A
+    // static structure has no velocity to inherit (pure aim × speed).
+    const muzzle = structureTurretMuzzle(rec.kind, def.id);
     // A wall between the turret and its muzzle takes the bolt (a fence blocks
     // its owner's own fire, user ruling 2026-11-02).
     if (this.hooks.blockBeamAtWall?.(rec.x, rec.y, ndx, ndy, muzzle, weaponDamage ?? def.damage) != null) return;
@@ -355,7 +359,6 @@ export class StructureGridSubsystem {
    *  missile sim owns speed). Alloc-free (scalars). */
   private fireTurretMissile(
     rec: StructureRecord,
-    radius: number,
     def: WeaponDef,
     tx: number,
     ty: number,
@@ -366,7 +369,7 @@ export class StructureGridSubsystem {
     const dist = Math.hypot(dx, dy) || 1;
     const ndx = dx / dist;
     const ndy = dy / dist;
-    const muzzle = radius + 8;
+    const muzzle = structureTurretMuzzle(rec.kind, def.id);
     // A wall between the launcher and its muzzle takes the missile.
     if (this.hooks.blockBeamAtWall?.(rec.x, rec.y, ndx, ndy, muzzle, def.damage) != null) return;
     this.hooks.spawnMissile(rec.id, rec.x + ndx * muzzle, rec.y + ndy * muzzle, ndx, ndy, def);

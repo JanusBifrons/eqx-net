@@ -36,6 +36,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { ColyseusGameClient } from './ColyseusClient.js';
 import { PhysicsWorld } from '../../core/physics/World.js';
 import { applyMountOffset } from '../render/pixi/spriteBuilders.js';
+import { shipMountMuzzle } from '../../core/combat/muzzle.js';
+import { MUZZLE_CLEARANCE } from '../../core/combat/Weapons.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 
 interface MountLike {
   id: string;
@@ -117,8 +120,10 @@ describe('live-beam ray is cast from the RENDERED (mirror) pose, not the predict
       const fireAngle = MIRROR.angle + mount.baseAngle; // mountAngles undefined → baseAngle only
       const fwdX = -Math.sin(fireAngle);
       const fwdY = Math.cos(fireAngle);
-      const expFromX = origin.x + fwdX * 20;
-      const expFromY = origin.y + fwdY * 20;
+      // The barrel tip (turrets T3): the shared muzzle, as the renderer and server use.
+      const muzzleD = shipMountMuzzle(getShipKind('interceptor'), mount) ?? MUZZLE_CLEARANCE;
+      const expFromX = origin.x + fwdX * muzzleD;
+      const expFromY = origin.y + fwdY * muzzleD;
 
       // What it WOULD be from the predicted pose (the bug) — for a clear msg.
       const predOrigin = applyMountOffset(PRED.x, PRED.y, PRED.angle, mount);

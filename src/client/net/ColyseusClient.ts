@@ -109,6 +109,7 @@ import { installPageLifecycleObserver } from '../debug/pageLifecycleObserver';
 import { recordServerGcPause, startHealthStatsPublisher } from '../debug/healthStats';
 import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE, MUZZLE_CLEARANCE, rayHitsSphere } from '@core/combat/Weapons';
+import { shipMountMuzzle } from '@core/combat/muzzle';
 
 /** No aim guides (the mirror's `localAimMountIds` when nothing is in range). */
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
@@ -5296,8 +5297,9 @@ export class ColyseusGameClient {
       const mountAngle = ship.angle + mount.baseAngle + currentMountAngle;
       const fwdX = -Math.sin(mountAngle);
       const fwdY = Math.cos(mountAngle);
-      const fromX = mountWorldX + fwdX * MUZZLE_CLEARANCE;
-      const fromY = mountWorldY + fwdY * MUZZLE_CLEARANCE;
+      const muzzleD = this.localMuzzle(mount);
+      const fromX = mountWorldX + fwdX * muzzleD;
+      const fromY = mountWorldY + fwdY * muzzleD;
       // P3.13 / campaign 5.2 — the beam bands DERIVE from the catalogue def
       // via the unit-locked `beamBands` seam (the SAME numbers the server
       // damage falloff reads, so the visible taper == the damage band by
@@ -5377,6 +5379,14 @@ export class ColyseusGameClient {
    *  the first slot's mounts when no `slotId` is in play (today's only path;
    *  multi-slot UI lands in a future phase). Empty array if the ship-kind
    *  has no mounts/slots or the local player hasn't joined yet. */
+  /** Where the local ship's shot leaves a mount: the barrel tip of a turning
+   *  turret, else the shared clearance — the SAME function the server's
+   *  PlayerFireResolver uses (core/combat/muzzle.ts, invariant #15). */
+  private localMuzzle(mount: WeaponMount): number {
+    const kind = getShipKind(this.mirror.ships.get(this.mirror.localPlayerId ?? '')?.kind ?? null);
+    return shipMountMuzzle(kind, mount) ?? MUZZLE_CLEARANCE;
+  }
+
   private localShipMounts(): ReadonlyArray<WeaponMount> {
     const localId = this.mirror.localPlayerId;
     if (!localId) return [];
@@ -5562,8 +5572,9 @@ export class ColyseusGameClient {
         const mountFireAngle = state.angle + mount.baseAngle + currentMountAngle;
         const fwdX = -Math.sin(mountFireAngle);
         const fwdY = Math.cos(mountFireAngle);
-        const fromX = mountWorldX + fwdX * MUZZLE_CLEARANCE;
-        const fromY = mountWorldY + fwdY * MUZZLE_CLEARANCE;
+        const muzzleD = this.localMuzzle(mount);
+        const fromX = mountWorldX + fwdX * muzzleD;
+        const fromY = mountWorldY + fwdY * muzzleD;
         if (spawnGhost) {
           this.ghostManager.spawn(
             shotId,

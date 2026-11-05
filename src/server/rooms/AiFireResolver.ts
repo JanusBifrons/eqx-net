@@ -29,6 +29,7 @@ import { rayHitsBox, rayHitsSphere } from '../../core/combat/Weapons.js';
 import type { AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import type { LaserFiredEvent } from '../../shared-types/messages.js';
 import type { ShipState } from './schema/SectorState.js';
+import { shipMountMuzzle } from '../../core/combat/muzzle.js';
 import { isFriendly, isNpcAllegianceId, type NpcAllegianceId } from '../../shared-types/allegiances.js';
 
 /** Per-player pose the resolver reads to test target hits. */
@@ -247,8 +248,10 @@ export class AiFireResolver implements WeaponFireSink {
       const mountFireAngle = fireAngle + mount.baseAngle + currentMountAngle;
       const ndx = -Math.sin(mountFireAngle);
       const ndy = Math.cos(mountFireAngle);
-      const rayFromX = mountWorld.x + ndx * 16;
-      const rayFromY = mountWorld.y + ndy * 16;
+      // Barrel tip for a turning turret; chin guns keep the drone clearance.
+      const muzzleD = shipMountMuzzle(droneKind, mount) ?? 16;
+      const rayFromX = mountWorld.x + ndx * muzzleD;
+      const rayFromY = mountWorld.y + ndy * muzzleD;
 
       ctx.fromX = rayFromX;
       ctx.fromY = rayFromY;

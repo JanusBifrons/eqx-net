@@ -40,6 +40,7 @@ import {
   SHIP_COLLISION_RADIUS,
   MUZZLE_CLEARANCE,
 } from '../../core/combat/Weapons.js';
+import { shipMountMuzzle } from '../../core/combat/muzzle.js';
 import { getWeaponObject } from '../../core/combat/weapons/index.js';
 import type { WeaponFireContext, WeaponFireSink } from '../../core/combat/weapons/Weapon.js';
 import { clampFireTick } from '../../core/combat/fireTemporal.js';
@@ -326,8 +327,11 @@ export class PlayerFireResolver implements WeaponFireSink {
       const mountFireAngle = shipAngleAtFireTick + mount.baseAngle + currentMountAngle;
       const ndx = -Math.sin(mountFireAngle);
       const ndy = Math.cos(mountFireAngle);
-      const rayFromX = mountWorld.x + ndx * MUZZLE_CLEARANCE;
-      const rayFromY = mountWorld.y + ndy * MUZZLE_CLEARANCE;
+      // The shot leaves the barrel tip: a turning turret's own length, else
+      // (chin guns) the shared clearance. Same function the client uses (#15).
+      const muzzleD = shipMountMuzzle(shipKind, mount) ?? MUZZLE_CLEARANCE;
+      const rayFromX = mountWorld.x + ndx * muzzleD;
+      const rayFromY = mountWorld.y + ndy * muzzleD;
 
       d.serverLogEvent('fire_received', {
         shooterId,

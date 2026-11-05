@@ -18,7 +18,7 @@ describe('turret layout', () => {
   it('turning mounts pivot on the mount and are sized to the hull', () => {
     const ts = shipTurrets('gunship');
     expect(ts).toHaveLength(2);
-    expect(ts[0]!.py).toBe(12); // forward mount at game y -12 → Pixi +12
+    expect(ts[0]!.py).toBe(-12); // forward mount at game y +12 (the nose) → Pixi -12
     expect(ts[0]!.len).toBeLessThan(MUZZLE_CLEARANCE);
   });
 

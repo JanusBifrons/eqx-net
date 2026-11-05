@@ -369,8 +369,13 @@ describe('multi-mount kinds (Phase 3, 2026-05-11)', () => {
     const rear = k.mounts!.find((m) => m.id === 'rear')!;
     expect(forward.baseAngle).toBe(0);
     expect(rear.baseAngle).toBeCloseTo(Math.PI, 6);
-    // Rear sits behind the forward mount (Pixi-up: tail is +y).
-    expect(rear.localY).toBeGreaterThan(forward.localY);
+    // Mount positions are GAME space (+y is forward): the fire code rotates
+    // them by the ship angle with forward = (-sin, cos). So the forward mount
+    // sits toward the nose (+y) and the rear toward the tail. (Pre-T3 this test
+    // assumed Pixi-up and locked them swapped: each turret fired across its own
+    // hull.)
+    expect(forward.localY).toBeGreaterThan(0);
+    expect(rear.localY).toBeLessThan(forward.localY);
     // Forward mount has a smaller arc than the rear (the rear is the wide
     // sweep that covers the gunship's blind sides while the body cruises).
     expect(rear.arcMax - rear.arcMin).toBeGreaterThan(forward.arcMax - forward.arcMin);
@@ -428,8 +433,8 @@ describe('havok composite kind — catalogue registration (composite-ships Phase
     expect(SHIP_KINDS_LIST[8]!.id).toBe('havok'); // index 8 is wire-stable; robots append after (allegiances P0)
   });
 
-  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 19 (P3c orb charge-laser mount; 18 = P3b robot-harvester; 17 = P3a robot-nexus)', () => {
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(19);
+  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 20 (turrets T3: gunship mounts moved to nose / tail; 19 = P3c orb charge-laser mount; 18 = P3b robot-harvester)', () => {
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(20);
   });
 
   it('HAVOK is registered in SHIP_KINDS and parses its own schema', () => {
