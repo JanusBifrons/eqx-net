@@ -114,5 +114,6 @@ params.
 - **Mount size:** `MOUNT_SIZE_TUNING` (S/M/L/XL) and `mountSizeOf` exist, but
   nothing in the fire paths reads them yet. That's planned for the capital-ship
   plan, where L/XL batteries first appear.
-- **Gameplay values:** the default 2× pick and its tuning wait on the
-  comparison footage and phone run.
+- **Gameplay values:** this PR ships the system at 1× (no behaviour change).
+  The comparison footage (2026-11-05) picked **2× B**; switching the default to
+  2× B is the next PR, after a phone run.
