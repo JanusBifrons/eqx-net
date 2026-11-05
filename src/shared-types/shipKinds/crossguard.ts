@@ -17,12 +17,12 @@
  * carries rotational inertia. Pilot like a hammer, not a foil.
  */
 
+import { defineShipKind } from '../shipScale/defineShipKind.js';
 import {
-  ShipKindSchema,
   type ShipKind,
 } from './types.js';
 
-export const CROSSGUARD: ShipKind = ShipKindSchema.parse({
+export const CROSSGUARD: ShipKind = defineShipKind({
   id: 'crossguard',
   displayName: 'Crossguard',
   description: 'Massive engineering-test variant. 10× normal size, 30× mass. Built for impact testing — slow to manoeuvre, brutal to ram.',

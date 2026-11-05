@@ -3,8 +3,8 @@
  * Single-mount legacy chassis. See shipKinds/types.ts for the schemas.
  */
 
+import { defineShipKind } from '../shipScale/defineShipKind.js';
 import {
-  ShipKindSchema,
   LEGACY_FORWARD_MOUNT,
   LEGACY_PRIMARY_SLOT,
   type ShipKind,
@@ -40,7 +40,7 @@ import {
 // turns the ship 0.2 rad ≈ 11.5°. That's the resolution of fine aim.
 // ─────────────────────────────────────────────────────────────────────────
 
-export const SCOUT: ShipKind = ShipKindSchema.parse({
+export const SCOUT: ShipKind = defineShipKind({
   id: 'scout',
   displayName: 'Scout',
   description: 'Light, fast, twitchy. Glass cannon.',
@@ -96,7 +96,7 @@ export const SCOUT: ShipKind = ShipKindSchema.parse({
   slots: [LEGACY_PRIMARY_SLOT],
 });
 
-export const FIGHTER: ShipKind = ShipKindSchema.parse({
+export const FIGHTER: ShipKind = defineShipKind({
   id: 'fighter',
   displayName: 'Fighter',
   description: 'Balanced all-rounder. The default.',

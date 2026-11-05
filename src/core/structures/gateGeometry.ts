@@ -38,6 +38,10 @@ export const AIRLOCK_CYCLE_HOLD_MS = 350;
 
 const GATE_W = 320;
 const AIRLOCK_W = 320;
+/** The clear gap a ship flies through (between the posts): gate / airlock.
+ *  The ship-scale fit table checks every playable hull against these. */
+export const GATE_GAP = GATE_W - 2 * GATE_POST;
+export const AIRLOCK_GAP = AIRLOCK_W - 2 * AIRLOCK_POST;
 const AIRLOCK_H = 260;
 
 /** A box in the structure's local frame. */

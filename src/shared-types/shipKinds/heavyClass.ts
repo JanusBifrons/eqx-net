@@ -5,14 +5,14 @@
  * See shipKinds/types.ts for the schemas.
  */
 
+import { defineShipKind } from '../shipScale/defineShipKind.js';
 import {
-  ShipKindSchema,
   LEGACY_FORWARD_MOUNT,
   LEGACY_PRIMARY_SLOT,
   type ShipKind,
 } from './types.js';
 
-export const HEAVY: ShipKind = ShipKindSchema.parse({
+export const HEAVY: ShipKind = defineShipKind({
   id: 'heavy',
   displayName: 'Heavy',
   description: 'Sluggish accel, brutal top speed, a lot of hull.',
@@ -80,7 +80,7 @@ export const HEAVY: ShipKind = ShipKindSchema.parse({
 // Phase 4b adds rotation via WeaponMountController + MountAngleRing.
 // ─────────────────────────────────────────────────────────────────────────
 
-export const INTERCEPTOR: ShipKind = ShipKindSchema.parse({
+export const INTERCEPTOR: ShipKind = defineShipKind({
   id: 'interceptor',
   displayName: 'Interceptor',
   description: 'Twin-cannon light. Two forward beams per cooldown — high DPS, low hull.',
@@ -154,7 +154,7 @@ export const INTERCEPTOR: ShipKind = ShipKindSchema.parse({
   ],
 });
 
-export const GUNSHIP: ShipKind = ShipKindSchema.parse({
+export const GUNSHIP: ShipKind = defineShipKind({
   id: 'gunship',
   displayName: 'Gunship',
   description: 'Fore-and-aft platform. Forward laser plus a backward rear gun — fire while you flee.',

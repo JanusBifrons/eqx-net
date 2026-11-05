@@ -12,12 +12,12 @@
  * and docs/features/missiles.md for the player-facing description.
  */
 
+import { defineShipKind } from '../shipScale/defineShipKind.js';
 import {
-  ShipKindSchema,
   type ShipKind,
 } from './types.js';
 
-export const MISSILE_FRIGATE: ShipKind = ShipKindSchema.parse({
+export const MISSILE_FRIGATE: ShipKind = defineShipKind({
   id: 'missile-frigate',
   displayName: 'Missile Frigate',
   description: 'Slow battleship-class hull. Twin forward heat-seeker racks — devastating at range, vulnerable up close.',

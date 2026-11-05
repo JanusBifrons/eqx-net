@@ -11,7 +11,8 @@
  *
  * npcOnly (never piloted, never a random drone). APPEND-ONLY (invariant #11).
  */
-import { ShipKindSchema, type ShipKind } from './types.js';
+import { defineShipKind } from '../shipScale/defineShipKind.js';
+import { type ShipKind } from './types.js';
 
 /** Tier → glow colour (also used by the radar `loot` icon). */
 export const POD_TIER_COLORS: readonly number[] = [0xb0b8c0, 0x4aa8ff, 0xffc83a, 0xff4fd8];
@@ -20,7 +21,7 @@ export const POD_TIER_SPILL = 3;
 
 const DIAMOND: Array<[number, number]> = [[0, -9], [9, 0], [0, 9], [-9, 0]];
 
-export const CARGO_POD: ShipKind = ShipKindSchema.parse({
+export const CARGO_POD: ShipKind = defineShipKind({
   id: 'cargo-pod',
   displayName: 'Cargo Pod',
   description: 'Loot. Fly over it to collect.',

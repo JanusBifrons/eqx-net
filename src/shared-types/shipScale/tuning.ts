@@ -1,0 +1,258 @@
+/**
+ * Ship scale + tuning — the ONE place every size-dependent number comes from
+ * (plan: ship scale infrastructure). Shared by server and client (#15).
+ *
+ * Two layers:
+ *  1. `scaleShipKind(kind, factor)` — scales a kind's geometry (radius, shape
+ *     scale, mount and latent-mount positions) and records the factor as
+ *     `appliedScale`. `defineShipKind` (shipKinds/types) runs it for every
+ *     catalogue kind with `effectiveScale(kind)`.
+ *  2. `shipTuning(kind)` — every OTHER number that depends on a ship's size,
+ *     derived from its `appliedScale` and its `sizeClass` through the
+ *     `CLASS_TUNING` table: muzzle clearance, hit radius, shield pad, turret
+ *     sizes, exhaust, spawn clearance, loot pickup, flocking, bake budget.
+ *
+ * Rule: a size-dependent number comes from here, never a constant. At scale 1
+ * with today's classes every value equals the old constant exactly, so the
+ * 1× game is byte-identical; at 2× they follow the ships; a capital class
+ * gets its own multipliers. Tuning is a data change in `CLASS_TUNING`.
+ *
+ * Cached per kind object (a hot loop pays one WeakMap lookup, #14). Pure.
+ */
+import type { ShipKind, WeaponMount } from '../shipKinds/types.js';
+import { SHIP_SCALE, SHIP_TUNING, type ShipTuningProfile } from './config.js';
+
+export type SizeClass = 'fighter' | 'frigate' | 'cruiser' | 'capital';
+export const SIZE_CLASSES: readonly SizeClass[] = ['fighter', 'frigate', 'cruiser', 'capital'];
+
+/** Mount size: scales a weapon's reach, projectile radius and splash. */
+export type MountSize = 'S' | 'M' | 'L' | 'XL';
+
+/** The 1× fighter values every size-dependent number starts from. These ARE
+ *  the old constants (kept here so the 1× game is unchanged). */
+export const BASE = {
+  /** Player chin-gun clearance (was MUZZLE_CLEARANCE). */
+  muzzleClearance: 20,
+  /** Drone chin-gun clearance (was a literal 16 in AiFireResolver). */
+  droneMuzzleClearance: 16,
+  /** Missile vs player / wreck hit radius (was SHIP_COLLISION_RADIUS). */
+  hitRadius: 12,
+  /** Shield ball padding over the radius (was SHIELD_RADIUS_PAD). */
+  shieldPad: 10,
+  /** Turret caps (were BARREL_LEN_MAX / WID / CAP / RACK in muzzle.ts). */
+  barrelLenMax: 40, barrelWidMax: 6, capMax: 9, rackCapMax: 10,
+  /** Turret minimums (barrel ≥ 7, width ≥ 2, cap ≥ 3, rack ≥ 3.2). */
+  barrelLenMin: 7, barrelWidMin: 2, capMin: 3, rackCapMin: 3.2,
+  /** Exhaust: the radius plumes are drawn relative to, the nozzle radius cap. */
+  plumeRefRadius: 12, nozzleMax: 5,
+  /** Spawn clearance from structures (was SPAWN_STRUCTURE_CLEARANCE 120). */
+  spawnClearance: 120,
+  /** Loot pickup radius (was LOOT_PICKUP_RADIUS). */
+  lootPickup: 80,
+  /** Flocking (were FLOCK_FOLLOW_DISTANCE / FLOCK_SEPARATION_RADIUS). */
+  flockFollow: 220, flockSeparation: 150,
+  /** Art bake: ppu for small / big hulls, the radius between them, the side cap. */
+  ppuSmall: 4, ppuBig: 3, ppuBigRadius: 25, bakeMaxSide: 512,
+} as const;
+
+/** Per-class multipliers on top of `appliedScale`. 1 everywhere for the
+ *  classes today's kinds use, so 1× is unchanged; tune capitals here. */
+export interface ClassTuning {
+  /** Multiplier on muzzle, hit radius, shield pad, turret caps, exhaust. */
+  geometry: number;
+  /** Multiplier on spawn clearance, loot pickup, flocking. */
+  spacing: number;
+  /** Bake side cap for this class (texels). */
+  bakeMaxSide: number;
+  /** Default mount size for this class. */
+  mountSize: MountSize;
+  /** Clearances also reach past the hull (radius × 1.05): a gigantic hull's
+   *  chin gun must clear it, whatever the fighter-relative rule says. */
+  clearHull: boolean;
+}
+
+export const CLASS_TUNING: Readonly<Record<SizeClass, ClassTuning>> = {
+  fighter: { geometry: 1, spacing: 1, bakeMaxSide: BASE.bakeMaxSide, mountSize: 'S', clearHull: false },
+  frigate: { geometry: 1, spacing: 1, bakeMaxSide: BASE.bakeMaxSide, mountSize: 'S', clearHull: false },
+  cruiser: { geometry: 1, spacing: 1, bakeMaxSide: BASE.bakeMaxSide, mountSize: 'S', clearHull: false },
+  // Capitals (gigantic hulls): bigger turrets and nozzles than the per-scale
+  // rule alone would give, more room to spawn, a bigger texture budget.
+  capital: { geometry: 2, spacing: 2, bakeMaxSide: 1024, mountSize: 'L', clearHull: true },
+};
+
+/** Mount size multipliers on weapon reach / projectile radius / splash. */
+export const MOUNT_SIZE_TUNING: Readonly<Record<MountSize, { reach: number; radius: number; splash: number }>> = {
+  S: { reach: 1, radius: 1, splash: 1 },
+  M: { reach: 1.25, radius: 1.5, splash: 1.5 },
+  L: { reach: 1.6, radius: 2.5, splash: 2.5 },
+  XL: { reach: 2.2, radius: 4, splash: 4 },
+};
+
+/** A kind's size class: authored, else by its UNSCALED radius. */
+export function sizeClassOf(kind: Pick<ShipKind, 'radius'> & { sizeClass?: SizeClass; appliedScale?: number; engineeringOnly?: boolean }): SizeClass {
+  if (kind.sizeClass) return kind.sizeClass;
+  // Engineering test hulls (the 10× crossguard / el) keep fighter rules, so
+  // the tests built on them see today's numbers.
+  if (kind.engineeringOnly) return 'fighter';
+  const r = kind.radius / (kind.appliedScale ?? 1);
+  return r < 20 ? 'fighter' : r < 40 ? 'frigate' : r < 120 ? 'cruiser' : 'capital';
+}
+
+/** The scale a catalogue kind is built at: the global scale (engineering
+ *  test hulls are pinned) times its own `sizeScale`. */
+export function effectiveScale(kind: { engineeringOnly?: boolean; sizeScale?: number }, global: number = SHIP_SCALE): number {
+  return (kind.engineeringOnly ? 1 : global) * (kind.sizeScale ?? 1);
+}
+
+function scaleMount(m: WeaponMount, f: number): WeaponMount {
+  return { ...m, localX: m.localX * f, localY: m.localY * f };
+}
+
+/**
+ * The motion model: how size changes mass, thrust, turning and top speed.
+ * Exponents are tuning data. At scale `s` (uniform, same engines):
+ *  - mass ∝ volume: s^massExp (3);
+ *  - thrust ∝ total nozzle area: s² (more / bigger engines via `thrusters`);
+ *  - linear acceleration = thrust / mass ∝ s^(2 − massExp);
+ *  - turning: thruster torque (area × lever arm ∝ s³) over rotational inertia
+ *    (mass × r² ∝ s^(massExp + 2)); the turn RATE follows that ratio to the
+ *    power `turnExp` (0.5 ⇒ 1/s at uniform scale);
+ *  - top speed follows the acceleration change to the power `speedExp`.
+ * Applied ONCE when a kind is scaled, to the kind's own fields (`mass`,
+ * `thrustImpulse`, `ai.thrust`, `maxAngvel`, `maxSpeed`), so the player
+ * input, the drone brain and the collider mass all follow on both sides.
+ */
+export const MOTION = { massExp: 3, turnExp: 0.5, speedExp: 0.5 } as const;
+
+/** Total nozzle area (count × size²) of a kind's thrusters at 1×: authored,
+ *  else one nozzle sized like the bake's (radius × 0.16, 0.9–5). */
+export function thrusterArea(kind: Pick<ShipKind, 'radius'> & { thrusters?: { count: number; size: number } }, unscaledRadius = kind.radius): number {
+  if (kind.thrusters) return kind.thrusters.count * kind.thrusters.size * kind.thrusters.size;
+  const nr = Math.min(5, Math.max(0.9, unscaledRadius * 0.16));
+  return nr * nr;
+}
+
+export interface MotionFactors { mass: number; thrust: number; turn: number; speed: number }
+
+/** Motion multipliers for scaling a kind by `s` (1 ⇒ all 1). `engines` is
+ *  the ratio of the kind's thruster area to the default (1 unless authored). */
+export function motionFactors(s: number, engines = 1): MotionFactors {
+  const mass = Math.pow(s, MOTION.massExp);
+  const thrust = s * s * engines;
+  const accel = thrust / mass;
+  const torque = thrust * s; // area × lever arm
+  const inertia = mass * s * s;
+  return { mass, thrust, turn: Math.pow(torque / inertia, MOTION.turnExp), speed: Math.pow(accel, MOTION.speedExp) };
+}
+
+/**
+ * Scale a kind by `factor`: geometry (radius, shape scale, mount and
+ * latent-mount positions) and motion (`motionFactors`). Records
+ * `appliedScale` (compounding). At factor 1 with default engines the input
+ * is returned unchanged in every field, so 1× kinds are today's kinds.
+ */
+export function scaleShipKind(kind: ShipKind, factor: number): ShipKind {
+  const unscaledR = kind.radius / (kind.appliedScale ?? 1);
+  // Engines vs the default, both at 1× (an already-scaled kind's nozzles are
+  // scaled by appliedScale too, so the ratio is unchanged by re-scaling).
+  const s0 = kind.appliedScale ?? 1;
+  const engines = kind.thrusters
+    ? (kind.thrusters.count * (kind.thrusters.size / s0) ** 2) / thrusterArea({ radius: unscaledR })
+    : 1;
+  if (factor === 1 && (engines === 1 || kind.appliedScale !== undefined)) return kind.appliedScale === undefined ? { ...kind, appliedScale: 1 } : kind;
+  // Authored engines apply once, at the first scale (defineShipKind).
+  const m = motionFactors(factor, kind.appliedScale === undefined ? engines : 1);
+  const shape = { ...kind.shape, scale: (kind.shape.scale ?? 1) * factor } as ShipKind['shape'];
+  return {
+    ...kind,
+    radius: kind.radius * factor,
+    shape,
+    ...(kind.mounts ? { mounts: kind.mounts.map((mt) => scaleMount(mt, factor)) } : {}),
+    ...(kind.latentMounts ? { latentMounts: kind.latentMounts.map((mt) => scaleMount(mt, factor)) } : {}),
+    mass: (kind.mass ?? 1) * m.mass,
+    thrustImpulse: kind.thrustImpulse * m.thrust,
+    maxAngvel: kind.maxAngvel * m.turn,
+    maxSpeed: kind.maxSpeed * m.speed,
+    ai: { ...kind.ai, thrust: kind.ai.thrust * m.thrust },
+    // Already scaled: a re-scale must not count the authored engines twice.
+    ...(kind.thrusters ? { thrusters: { count: kind.thrusters.count, size: kind.thrusters.size * factor } } : {}),
+    appliedScale: (kind.appliedScale ?? 1) * factor,
+  };
+}
+
+/** Every size-dependent number for one kind (cached per kind object). */
+export interface ShipTuning {
+  sizeClass: SizeClass;
+  appliedScale: number;
+  muzzleClearance: number;
+  droneMuzzleClearance: number;
+  hitRadius: number;
+  shieldPad: number;
+  barrelLenMin: number; barrelLenMax: number;
+  barrelWidMin: number; barrelWidMax: number;
+  capMin: number; capMax: number;
+  rackCapMin: number; rackCapMax: number;
+  /** Exhaust plume multiplier (1 for a 1× fighter). */
+  plumeScale: number;
+  nozzleMax: number;
+  spawnClearance: number;
+  lootPickup: number;
+  flockFollow: number;
+  flockSeparation: number;
+  /** Art bake pixels per world unit, and the texture side cap. */
+  bakePpu: number;
+  bakeMaxSide: number;
+  mountSize: MountSize;
+}
+
+const CACHE = new WeakMap<object, ShipTuning>();
+
+/** The size-dependent numbers for a (scaled) kind. */
+export function shipTuning(kind: ShipKind): ShipTuning {
+  let t = CACHE.get(kind);
+  if (t) return t;
+  const s = kind.appliedScale ?? 1;
+  const cls = sizeClassOf(kind);
+  const ct = CLASS_TUNING[cls];
+  const g = s * ct.geometry, sp = s * ct.spacing;
+  const unscaledR = kind.radius / s;
+  t = {
+    sizeClass: cls,
+    appliedScale: s,
+    muzzleClearance: ct.clearHull ? Math.max(BASE.muzzleClearance * g, kind.radius * 1.05) : BASE.muzzleClearance * g,
+    droneMuzzleClearance: ct.clearHull ? Math.max(BASE.droneMuzzleClearance * g, kind.radius * 1.05) : BASE.droneMuzzleClearance * g,
+    hitRadius: BASE.hitRadius * g,
+    shieldPad: BASE.shieldPad * g,
+    barrelLenMin: BASE.barrelLenMin * g, barrelLenMax: BASE.barrelLenMax * g,
+    barrelWidMin: BASE.barrelWidMin * g, barrelWidMax: BASE.barrelWidMax * g,
+    capMin: BASE.capMin * g, capMax: BASE.capMax * g,
+    rackCapMin: BASE.rackCapMin * g, rackCapMax: BASE.rackCapMax * g,
+    plumeScale: (kind.radius / BASE.plumeRefRadius) * ct.geometry,
+    nozzleMax: BASE.nozzleMax * g,
+    spawnClearance: ct.clearHull ? Math.max(BASE.spawnClearance * sp, kind.radius * 2) : BASE.spawnClearance * sp,
+    lootPickup: ct.clearHull ? Math.max(BASE.lootPickup * sp, kind.radius * 1.3) : BASE.lootPickup * sp,
+    flockFollow: ct.clearHull ? Math.max(BASE.flockFollow * sp, kind.radius * 3.3) : BASE.flockFollow * sp,
+    flockSeparation: ct.clearHull ? Math.max(BASE.flockSeparation * sp, kind.radius * 2.2) : BASE.flockSeparation * sp,
+    // Pixel density by the UNSCALED hull (so a 2× fighter stays as sharp per
+    // world unit as today's), within the class's side budget.
+    bakePpu: unscaledR >= BASE.ppuBigRadius ? BASE.ppuBig : BASE.ppuSmall,
+    bakeMaxSide: ct.bakeMaxSide,
+    mountSize: ct.mountSize,
+  };
+  CACHE.set(kind, t);
+  return t;
+}
+
+/** A mount's size: authored, else its ship class's default. */
+export function mountSizeOf(m: WeaponMount & { size?: MountSize }, kind: ShipKind): MountSize {
+  return m.size ?? shipTuning(kind).mountSize;
+}
+
+/**
+ * How the combat profile scales weapon distances at a ship scale: A keeps
+ * them, B grows reach half as fast as the ships and splash with them.
+ */
+export function combatDistanceScale(profile: ShipTuningProfile = SHIP_TUNING, scale: number = SHIP_SCALE): { reach: number; splash: number } {
+  if (profile === 'A') return { reach: 1, splash: 1 };
+  return { reach: 1 + (scale - 1) / 2, splash: scale };
+}

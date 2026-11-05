@@ -16,12 +16,12 @@
  * full-thrust into the armpit and harvests `ramming_probe` diag entries.
  */
 
+import { defineShipKind } from '../shipScale/defineShipKind.js';
 import {
-  ShipKindSchema,
   type ShipKind,
 } from './types.js';
 
-export const L_SHAPE: ShipKind = ShipKindSchema.parse({
+export const L_SHAPE: ShipKind = defineShipKind({
   id: 'el',
   displayName: 'L-Frame',
   description: 'Engineering chassis. L-shaped silhouette, gigantic, low-mass — the deliberate worst case for resolver vs render alignment.',

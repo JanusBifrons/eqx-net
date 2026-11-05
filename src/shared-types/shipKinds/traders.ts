@@ -7,11 +7,12 @@
  * shedder must never quietly delete one. APPEND-ONLY in `catalogueOrder.ts`
  * (invariant #11).
  */
-import { ShipKindSchema, LEGACY_FORWARD_MOUNT, LEGACY_PRIMARY_SLOT, type ShipKind } from './types.js';
+import { defineShipKind } from '../shipScale/defineShipKind.js';
+import { LEGACY_FORWARD_MOUNT, LEGACY_PRIMARY_SLOT, type ShipKind } from './types.js';
 
 export const TRADER_COLOR = 0x7fd6a8;
 
-export const TRADER_HAULER: ShipKind = ShipKindSchema.parse({
+export const TRADER_HAULER: ShipKind = defineShipKind({
   id: 'trader-hauler',
   displayName: 'Trade Hauler',
   description: 'A slow, armoured trader freighter. Carries deal cargo.',
