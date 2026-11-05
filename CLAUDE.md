@@ -146,6 +146,14 @@ Long uncommitted sessions are a recovery hazard. If Vite HMR cycles go wrong, th
 
 ---
 
+## Clean up at every stage (2026-11-05, standing user directive)
+
+"Clean up as much memory as you can at each stage." A stage = a plan step, a commit, a test/netgate/showcase run, or the end of a session. Three kinds of memory, all three every time:
+
+1. **Machine RAM / processes.** When a run finishes (pass or fail), stop what it started: dev servers (2567/5173), showcase servers (2767/5373), netgate vite/proxies, headless Chrome, `tsx watch`. Check `netstat -ano | findstr ":2567 :5173 :2767 :5373" | findstr LISTENING` and the `node.exe` count; stop anything this session left. Don't leave background tasks running across stages unless the next step needs them.
+2. **Disk clutter.** Scratch goes in the session scratchpad, not `diag/_*`. When a stage ends, delete the scratch it created (probe scripts, `_commit-*.txt`, `_pr-body-*.md` once the PR exists, screenshots already reviewed). Remove a `.claude/worktrees/<x>` worktree once its branch is merged and the tree is clean (keep `netgate-baseline`/`netgate-head`: they're reused). Old `showcase-out/<arm>` runs go once their clips are published. Never delete committed evidence (`diag/captures/` that a doc cites) or a dirty worktree without asking.
+3. **Claude's notes (auto-memory).** Keep `MEMORY.md` under its 24 KB load limit: one line per note, ~150 chars. When a plan finishes, collapse its status note to one line (or delete it if the repo/PR history already says it), and delete notes a later one supersedes. Rules that must hold on both machines go here, not in a memory.
+
 ## End every message with a status line (2026-11-01, standing user directive)
 
 The last line of every message is one of:
