@@ -233,6 +233,11 @@ export class PixiRenderer implements IRenderer {
   private readonly _artCtx: ShipArtCtx = { art: null, handles: new Map(), sunAz: 0 };
   /** Bound once in `init` (DOM path only); assigned to the global each frame. */
   private _artStatsHook: (() => unknown) | null = null;
+  /** Scratch for `feedback.artReady` (see the end of `update()`). */
+  private _artPendingSeen = false;
+  private readonly _noteArtPending = (h: { state: string }): void => {
+    if (h.state === 'pending') this._artPendingSeen = true;
+  };
   /** Per-ship turret sprites + aim lines (multi-mount/turret refactor,
    *  Phase 3). Parented to each ship's main `sprite` so the cluster inherits
    *  the ship's world transform; the cluster's own children sit at their
@@ -416,6 +421,7 @@ export class PixiRenderer implements IRenderer {
     damageNumberActiveCount: 0,
     shieldRingVisibleCount: 0,
     firstFrameRendered: false,
+    artReady: false,
     liveBeamRenderedFromX: null,
     liveBeamRenderedFromY: null,
     placementScreenX: null,
@@ -2083,6 +2089,15 @@ export class PixiRenderer implements IRenderer {
           this._spectator,
         )) {
       this.feedback.firstFrameRendered = true;
+    }
+    // Art readiness: nothing on screen still waiting for its Machined art.
+    // Pre-bound callback + a field flag, so no per-frame allocation (#14).
+    if (this._artCtx.art === null) {
+      this.feedback.artReady = true;
+    } else {
+      this._artPendingSeen = false;
+      this._artCtx.handles.forEach(this._noteArtPending);
+      this.feedback.artReady = this.feedback.firstFrameRendered && !this._artPendingSeen;
     }
 
     // ---------- F1 frame markers (end-of-frame, worker→main diag) ----------

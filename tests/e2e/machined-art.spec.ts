@@ -45,6 +45,31 @@ test.describe('Machined art', () => {
     await ctx.close();
   });
 
+  /**
+   * Smoke test 2026-11-05 (phone, 2× B, capture v5ga3m): "The graphics were the
+   * old ones, except the background" and "Surely it shouldn't let me load in
+   * until I'm, yknow, loaded in? Why does it drop the curtain prior to those
+   * textures loading?!" The phone bakes slowly (~a minute behind a long
+   * queue), and the loading screen lifted as soon as the server handshake was
+   * done, so the pilot flew with fallback ships. The loading screen must stay
+   * up until every ship on screen has its art (ready or failed).
+   */
+  test('the loading screen stays up until the ships on screen have their Machined art', async ({ browser }) => {
+    const { ctx, page } = await launchTestClient(browser, {
+      spawnX: 0, spawnY: 0, room: 'test-sector-fast', shipKind: 'heavy',
+      extraParams: { worker: '0', art: 'machined', artDelayMs: '8000' },
+    });
+    // The flag reads 0 for a moment before the join's loading screen goes up,
+    // so wait for it to rise first, then for the reveal.
+    await page.waitForSelector('[data-loading-active="1"]', { state: 'attached', timeout: 30_000 });
+    await page.waitForSelector('[data-loading-active="0"]', { state: 'attached', timeout: 30_000 });
+    const atReveal = await stats(page);
+    expect(atReveal.mode).toBe('machined');
+    expect(atReveal.classicShipSprites, 'no ship is still in the fallback look when the loading screen lifts').toBe(0);
+    expect(atReveal.machinedSprites).toBeGreaterThan(0);
+    await ctx.close();
+  });
+
   test('without the flag nothing changes: no art service, today\'s look', async ({ browser }) => {
     const { ctx, page } = await launchTestClient(browser, {
       spawnX: 0, spawnY: 0, room: 'test-sector-fast', extraParams: { worker: '0' },
@@ -214,6 +239,9 @@ test.describe('Speed effects (plan iridescent-seeking-rainbow v5, C3)', () => {
       );
       expect((await bd(page))!.speedLevel).toBe(arm.zooms ? 'large' : 'off');
       expect((await bd(page))!.speedZoom).toBe(1);
+      // Controls unlock when the loading screen lifts, which now waits for the
+      // Machined art (`RendererFeedback.artReady`): fly only after the reveal.
+      await page.waitForSelector('[data-loading-active="0"]', { state: 'attached', timeout: 45_000 });
       await page.keyboard.down('KeyW');
       await page.keyboard.down('Shift');
       try {

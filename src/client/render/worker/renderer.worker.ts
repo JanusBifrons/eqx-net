@@ -121,6 +121,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             damageNumberActiveCount: fb.damageNumberActiveCount,
             shieldRingVisibleCount: fb.shieldRingVisibleCount,
             firstFrameRendered: fb.firstFrameRendered,
+            artReady: fb.artReady,
             liveBeamRenderedFromX: fb.liveBeamRenderedFromX,
             liveBeamRenderedFromY: fb.liveBeamRenderedFromY,
             placementScreenX: fb.placementScreenX,

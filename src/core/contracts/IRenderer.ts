@@ -671,6 +671,15 @@ export interface RendererFeedback {
    */
   firstFrameRendered: boolean;
   /**
+   * True once nothing drawn this frame is still waiting for its Machined art
+   * (every art handle is ready or failed), or when the Machined look is off.
+   * Gates `client_ready`, so the join / arrival loading screen stays up until
+   * the scene is drawn in its real look (smoke test 2026-11-05: "it shouldn't
+   * let me load in until I'm loaded in"). A failed bake counts as done, so a
+   * broken texture can never hold the loading screen.
+   */
+  artReady: boolean;
+  /**
    * World-space origin of the local player's first live hitscan beam as
    * ACTUALLY DRAWN this frame (the `BeamSpritePool` sprite transform),
    * or `null` when no live beam is on screen. E2E test attribute

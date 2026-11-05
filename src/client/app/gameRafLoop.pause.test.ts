@@ -95,6 +95,9 @@ interface Fake {
   sendClientReady: ReturnType<typeof vi.fn>;
 }
 
+/** What the fake renderer reports as `artReady` (true = no art pending). */
+const fakeArtReady = { value: true };
+
 function buildLoop(fake: Fake): { loop: (now: number) => void; animFrameRef: { current: number } } {
   const mockClient = {
     tickPhysics: fake.tickPhysics,
@@ -113,7 +116,7 @@ function buildLoop(fake: Fake): { loop: (now: number) => void; animFrameRef: { c
   const mockRenderer = {
     update: fake.rendererUpdate,
     glideCameraTo: vi.fn(),
-    getFeedback: () => ({ firstFrameRendered: false, mountCounts: new Map(), haloArrowCount: 0, selectedPickId: null, selectedPickKind: null }),
+    getFeedback: () => ({ firstFrameRendered: false, artReady: fakeArtReady.value, mountCounts: new Map(), haloArrowCount: 0, selectedPickId: null, selectedPickKind: null }),
   } as unknown as IRenderer;
   const el = document.createElement('div');
   const animFrameRef = { current: 0 };
@@ -134,6 +137,7 @@ let fake: Fake;
 let rafSpy: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  fakeArtReady.value = true;
   fake = {
     tickPhysics: vi.fn(),
     tickInbound: vi.fn(),
@@ -225,6 +229,22 @@ describe('gameRafLoop — pause boundary (Commit 4)', () => {
     expect(fake.tickPhysics).not.toHaveBeenCalled();
     expect(fake.updateMirror).toHaveBeenCalledTimes(1);
     expect(fake.rendererUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  // Smoke test 2026-11-05: the loading screen lifted before the Machined art
+  // was drawn. `client_ready` (which leads to the arrival + curtain drop) waits
+  // for `RendererFeedback.artReady`.
+  it('sendClientReady waits while the renderer still has art pending', () => {
+    storeState.clientReadySent = false;
+    storeState.arrivalAcked = false;
+    storeState.arrivalTickFromServer = null;
+    fakeArtReady.value = false;
+    const { loop } = buildLoop(fake);
+    loop(16.67);
+    expect(fake.sendClientReady).not.toHaveBeenCalled();
+    fakeArtReady.value = true;
+    loop(33.34);
+    expect(fake.sendClientReady).toHaveBeenCalledTimes(1);
   });
 
   it('sendClientReady does NOT fire when clientReadySent is already true', () => {
