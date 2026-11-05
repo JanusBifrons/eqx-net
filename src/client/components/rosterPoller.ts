@@ -38,6 +38,10 @@ interface PollerState {
   activePlayerId: string;
   intervalHandle: number | null;
   inFlight: boolean;
+  /** The last reply's raw text and the array it produced: an identical reply
+   *  is skipped while the store still holds that array (no re-render). */
+  lastBody: string;
+  lastApplied: RosterShipEntry[] | null;
 }
 
 const state: PollerState = {
@@ -45,6 +49,8 @@ const state: PollerState = {
   activePlayerId: '',
   intervalHandle: null,
   inFlight: false,
+  lastBody: '',
+  lastApplied: null,
 };
 
 /** Test-only seam — resets module state between cases. */
@@ -56,6 +62,8 @@ export function __test_resetRosterPoller(): void {
   state.activePlayerId = '';
   state.intervalHandle = null;
   state.inFlight = false;
+  state.lastBody = '';
+  state.lastApplied = null;
 }
 
 /** Test-only — observe the internal state. */
@@ -84,9 +92,20 @@ async function performFetch(playerId: string): Promise<void> {
       logEvent('roster_fetch', { stage: 'http-error', status: res.status });
       return;
     }
-    const body = (await res.json()) as { ships?: RosterShipEntry[] };
+    const text = await res.text();
+    const store = useUIStore.getState();
+    // Unchanged roster: skip the write. A new array every 3 s re-rendered
+    // every subscriber (App.tsx included) and cost a frame on a 90 Hz phone
+    // (phone run 2026-11-04). Re-apply if something else changed the store.
+    if (text === state.lastBody && store.shipRoster === state.lastApplied) {
+      logEvent('roster_fetch', { stage: 'ok', unchanged: true });
+      return;
+    }
+    const body = JSON.parse(text) as { ships?: RosterShipEntry[] };
     const out = Array.isArray(body.ships) ? body.ships : [];
-    useUIStore.getState().setShipRoster(out);
+    store.setShipRoster(out);
+    state.lastBody = text;
+    state.lastApplied = out;
     logEvent('roster_fetch', { stage: 'ok', count: out.length, kinds: out.map((s) => s.kind) });
   } catch (err) {
     logEvent('roster_fetch', { stage: 'exception', message: (err as Error).message ?? 'unknown' });
