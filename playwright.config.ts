@@ -73,6 +73,8 @@ const FEATURE_SPECS: string[] = [
   '**/fx-engines.spec.ts',
   // Machined turrets (plan T1, 2026-11-05).
   '**/fx-turrets.spec.ts',
+  // Prediction backlog after a long loading hold is skipped, not replayed (2026-11-05).
+  '**/loading-catchup.spec.ts',
   // Fence-hit fix (2026-11-04).
   '**/fence-hits.spec.ts',
   // Living World P2 — Trade tab → deal → a hauler arrives.

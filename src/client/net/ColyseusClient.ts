@@ -78,7 +78,7 @@ import {
   createDropDetector,
   type DropDetector,
 } from './snapshotDropDetector';
-import { recoverInputTickFromStarvation } from './inputTickRecovery';
+import { recoverInputTickFromStarvation, skipStalledBacklog, stallResumeAction } from './inputTickRecovery';
 import { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { ClientEntityFactory } from './entity/ClientEntityFactory.js';
@@ -669,6 +669,10 @@ export class ColyseusGameClient {
   /** True after the first snapshot has anchored the clock. Subsequent
    *  snapshots EWMA-smooth the anchor PerfNow instead of snapping it. */
   private _anchorInitialised = false;
+  /** When a snapshot / welcome last re-synced the clock anchor, and since when
+   *  a stalled client has been holding for a fresh one (-1 = not holding). */
+  private _anchorFreshAtMs = -Infinity;
+  private _stallHoldSinceMs = -1;
   /** Join-render diagnostic latch. Fires `local_pose_resolved` exactly
    *  once per (re)connect — when `tryInitPredWorld` succeeds and the
    *  local ship's pose is observable in the mirror at server-authoritative
@@ -1223,6 +1227,8 @@ export class ColyseusGameClient {
     this._dropDetector = createDropDetector();
     this.leadTicks = 6;
     this._anchorInitialised = false;
+    this._anchorFreshAtMs = -Infinity;
+    this._stallHoldSinceMs = -1;
     this.lastSnapshotAt = 0;
     this._recentIntervals.length = 0;
     this._recentCorrFlags.length = 0;
@@ -1432,6 +1438,7 @@ export class ColyseusGameClient {
       // The welcome handshake gives us a perfect anchor; let the next
       // snapshot drop straight into EWMA-smoothing instead of snapping.
       this._anchorInitialised = true;
+      this._anchorFreshAtMs = this.welcomePerfNow;
       this.inputTick = msg.serverTick; // Sync to server tick space so fire messages pass temporal plausibility check.
       // Reset idle-input throttle: the first input after a (re)connect must
       // always reach the server so it has a baseline before tick advance.
@@ -2752,6 +2759,7 @@ export class ColyseusGameClient {
     this.clockAnchorServerTick = msg.serverTick;
     this.clockAnchorPerfNow = this.welcomePerfNow;
     this._anchorInitialised = true;
+    this._anchorFreshAtMs = this.welcomePerfNow;
     // Reset the idle-input throttle so the first post-respawn input always sends.
     this.lastSentInputState = null;
     this.lastSentInputAtMs = 0;
@@ -3068,10 +3076,12 @@ export class ColyseusGameClient {
       );
       this.clockAnchorServerTick = next.anchorServerTick;
       this.clockAnchorPerfNow = next.anchorPerfNow;
+      this._anchorFreshAtMs = now;
     } else {
       this.clockAnchorServerTick = snap.serverTick;
       this.clockAnchorPerfNow = now;
       this._anchorInitialised = true;
+      this._anchorFreshAtMs = now;
     }
     // Stage 4 — jitter-aware lookahead with the three RTT hotfixes.
     // See rttLookaheadUpdater.ts for the full rationale.
@@ -4533,6 +4543,28 @@ export class ColyseusGameClient {
     const ticksSinceAnchor = Math.floor((this.clock.now() - this.clockAnchorPerfNow) / FIXED_MS);
     const targetTick = this.clockAnchorServerTick + ticksSinceAnchor + this.leadTicks;
     const tickDeficitBefore = targetTick - this.inputTick;
+    // A stall (loading curtain, background tab) is skipped, not replayed at 4
+    // ticks a frame, and only from a FRESH clock anchor: hold until a snapshot
+    // re-syncs it (inputTickRecovery.stallResumeAction; lock: loading-catchup.spec.ts).
+    // Never past the over-prediction cap: a backlog the cap held is not a stall.
+    {
+      const nowMs = this.clock.now();
+      const resume = stallResumeAction(
+        tickDeficitBefore, nowMs - this._anchorFreshAtMs,
+        this._stallHoldSinceMs < 0 ? 0 : nowMs - this._stallHoldSinceMs,
+      );
+      if (resume === 'hold') {
+        if (this._stallHoldSinceMs < 0) this._stallHoldSinceMs = nowMs;
+        return;
+      }
+      this._stallHoldSinceMs = -1;
+      if (resume === 'skip') {
+        this.inputTick = skipStalledBacklog(
+          this.inputTick, targetTick,
+          this.stats.lastAckedTick > 0 ? this.stats.lastAckedTick + MAX_OVER_PREDICTION_TICKS : Infinity,
+        );
+      }
+    }
     let stepsThisFrame = 0;
     let capEngaged = false;
     // Hoist Keyboard.read() out of the loop — Keyboard.ts read() returns
@@ -5854,6 +5886,8 @@ export class ColyseusGameClient {
     this._lookaheadCtrl = createLookaheadController(6);
     this._dropDetector = createDropDetector();
     this._anchorInitialised = false;
+    this._anchorFreshAtMs = -Infinity;
+    this._stallHoldSinceMs = -1;
     this._localPoseResolvedLogged = false;
     this.lastSentInputAtMs = 0;
     this.lastSentInputState = null;
