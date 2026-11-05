@@ -49,7 +49,7 @@ export function muzzleFlashFlipbook(frames = 4, cell = 64): { sheet: Img; frames
 /** Barrel recoil, 0..1 of the kick, `t` seconds after a shot: snaps back in
  *  25 ms, then springs home over ~0.2 s with a small overshoot. */
 export function recoilAt(t: number): number {
-  if (t < 0) return 0;
+  if (t < 0 || t > 0.6) return 0; // at rest (and settled)
   if (t < 0.025) return t / 0.025;
   const s = t - 0.025;
   return Math.exp(-s / 0.07) * Math.cos(s * 9);

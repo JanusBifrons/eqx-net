@@ -39,7 +39,9 @@
 import { Container, Graphics, Sprite } from 'pixi.js';
 import type { ArtHandle } from './art/ArtService.js';
 import { isMachinedSprite, type ShipArtCtx } from './art/shipArtSprites.js';
-import { shipTurrets, structureTurrets, type TurretPlace } from './art/turretLayout.js';
+import { muzzleReach, shipTurrets, structureTurrets, type TurretPlace } from './art/turretLayout.js';
+import { flashFrameAt, heatAfter, recoilAt } from './art/fx/turretFx.js';
+import type { EffectQuality } from '@core/contracts/IEffects';
 import { applySunBlend } from './art/machinedShipLight.js';
 import { isStructureKindId } from '../../shared-types/structureKinds';
 import { getShipKind, type WeaponMount } from '../../shared-types/shipKinds';
@@ -62,7 +64,23 @@ interface MachinedGun {
   pivot: Container;
   handle: ArtHandle;
   layers: { a: Sprite; b: Sprite } | null;
+  /** Pivot → tip, where a shot leaves (local world units). */
+  reach: number;
+  // Firing reactions (T2): recoil + flash + tip heat, emitter glow while a
+  // beam holds. Times are seconds on the renderer clock.
+  flash: Sprite | null;
+  tip: Sprite | null;
+  lastShot: number;
+  beamUntil: number;
+  heat: number;
+  lastT: number;
 }
+
+/** Shot / beam colour at the muzzle, per family. */
+const MUZZLE_TINT = { bolt: 0xffc060, beam: 0x6fd0ff, missile: 0xffa050, charge: 0xd890ff } as const;
+/** Furthest a new bolt may spawn from a barrel tip and still be that barrel's
+ *  (world units; bolts are first seen a frame or two after leaving). */
+const SHOT_MATCH_DIST = 60;
 
 /** Bookkeeping per ship — one cluster of mount graphics parented to the
  *  ship's sprite. The cluster `Container` rotates with the ship (because
@@ -129,6 +147,57 @@ export class MountVisualManager {
   private localAim: readonly string[] = EMPTY_IDS;
   /** Machined guns currently drawn (for `__eqxArtStats().turrets`). */
   private machinedGuns = 0;
+  /** Shots matched to a Machined gun so far (for `__eqxArtStats().turretShots`). */
+  private shotsMatched = 0;
+  /** This frame's renderer clock (s) and whether flash / heat draw. */
+  private nowS = 0;
+  private reactions = true;
+
+  /** Per frame, before the sprite updates: the clock and the quality tier
+   *  (low and minimal drop the flash and heat; recoil stays). */
+  setFrame(nowMs: number, quality: EffectQuality): void {
+    this.nowS = nowMs / 1000;
+    this.reactions = quality === 'high' || quality === 'medium';
+  }
+
+  /** A beam is holding on this ship's mount (unknown id: its first gun). */
+  noteBeam(shipId: string, mountId: string | undefined): void {
+    const cluster = this.clusters.get(shipId);
+    if (!cluster) return;
+    const g = (mountId !== undefined ? cluster.perMount.get(mountId)?.gun : null) ?? this.firstGun(cluster);
+    if (g) g.beamUntil = this.nowS + 0.12;
+  }
+
+  /** A bolt or missile was first seen at Pixi-space (x, y), fired by
+   *  `shipId`: kick the nearest of its guns (recoil, flash, heat). */
+  noteShotNear(shipId: string, x: number, y: number): void {
+    const cluster = this.clusters.get(shipId);
+    const parent = cluster?.container.parent;
+    if (!cluster || !parent) return;
+    const c = Math.cos(parent.rotation), s = Math.sin(parent.rotation);
+    let best: MachinedGun | null = null, bd = SHOT_MATCH_DIST * SHOT_MATCH_DIST;
+    for (const m of cluster.perMount.values()) {
+      const g = m.gun;
+      if (!g?.layers) continue;
+      const r = g.pivot.rotation;
+      const lx = g.pivot.x + Math.sin(r) * g.reach, ly = g.pivot.y - Math.cos(r) * g.reach;
+      const dx = parent.x + lx * c - ly * s - x, dy = parent.y + lx * s + ly * c - y;
+      const d = dx * dx + dy * dy;
+      if (d <= bd) { bd = d; best = g; }
+    }
+    if (!best) return;
+    best.lastShot = this.nowS;
+    best.heat = heatAfter(best.heat, 0, 1);
+    this.shotsMatched++;
+  }
+
+  /** Shots matched to a Machined gun so far, or -1 when the new look is off. */
+  turretShotCount(): number { return this.actx?.turrets ? this.shotsMatched : -1; }
+
+  private firstGun(cluster: MountCluster): MachinedGun | null {
+    for (const m of cluster.perMount.values()) if (m.gun) return m.gun;
+    return null;
+  }
 
   setArt(actx: ShipArtCtx): void { this.actx = actx; }
 
@@ -255,6 +324,76 @@ export class MountVisualManager {
     this.clusters.delete(shipId);
   }
 
+  /** Recoil, flash, tip heat and the beam glow for one gun, this frame. */
+  private animateGun(gun: MachinedGun): void {
+    const t = this.nowS, layers = gun.layers!;
+    const dt = Math.max(0, Math.min(0.1, t - gun.lastT));
+    gun.lastT = t;
+    const fam = gun.place.family;
+    const kicks = fam === 'bolt' || fam === 'missile';
+    const since = t - gun.lastShot;
+    const kick = kicks ? recoilAt(since) * Math.max(gun.place.len, gun.place.wid) * (fam === 'missile' ? 0.06 : 0.2) : 0;
+    layers.a.y = kick; layers.b.y = kick;
+    const beamOn = t < gun.beamUntil;
+    gun.heat = heatAfter(gun.heat, dt, 0) + (beamOn ? dt * 1.2 : 0);
+    if (gun.heat > 1) gun.heat = 1;
+    if (!this.reactions) {
+      if (gun.flash) gun.flash.visible = false;
+      if (gun.tip) gun.tip.visible = false;
+      return;
+    }
+    if (!gun.flash || !gun.tip) this.buildReactionSprites(gun);
+    const flash = gun.flash, tip = gun.tip;
+    if (flash) {
+      const frames = this.flashFrames();
+      const fr = kicks && frames ? flashFrameAt(since, frames.length) : -1;
+      flash.visible = fr >= 0;
+      if (fr >= 0) {
+        flash.texture = frames![fr]!;
+        flash.y = -gun.reach + kick;
+        const w = gun.place.wid;
+        flash.scale.set((w * 3.2) / 64, (w * 4.2) / 64);
+      }
+    }
+    if (tip) {
+      const glow = fam === 'bolt' ? gun.heat * 0.8 : beamOn ? 0.9 : 0;
+      tip.visible = glow > 0.02;
+      if (tip.visible) {
+        tip.alpha = glow;
+        tip.y = -gun.reach + kick;
+        tip.scale.set(((gun.place.wid * (fam === 'bolt' ? 1.6 : 3)) / 64) * (1 + 0.4 * glow));
+      }
+    }
+  }
+
+  /** The flash flipbook cells, once baked. */
+  private flashFrames(): readonly import('pixi.js').Texture[] | null {
+    const art = this.actx?.art;
+    if (!art) return null;
+    this.flashHandle ??= art.fx('muzzleFlash', undefined, undefined, false);
+    return this.flashHandle.state === 'ready' && this.flashHandle.fx ? this.flashHandle.fx.frames : null;
+  }
+  private flashHandle: ArtHandle | null = null;
+  private glowHandle: ArtHandle | null = null;
+
+  /** Make a gun's flash + tip glow sprites (once, when their textures are ready). */
+  private buildReactionSprites(gun: MachinedGun): void {
+    const art = this.actx?.art;
+    if (!art) return;
+    const frames = this.flashFrames();
+    this.glowHandle ??= art.fx('glow', undefined, undefined, false);
+    const glow = this.glowHandle.state === 'ready' && this.glowHandle.fx ? this.glowHandle.fx.tex : null;
+    const tint = MUZZLE_TINT[gun.place.family];
+    if (!gun.flash && frames) {
+      const f = new Sprite(frames[0]!); f.anchor.set(0.5, 1); f.blendMode = 'add'; f.tint = tint; f.visible = false;
+      gun.pivot.addChild(f); gun.flash = f;
+    }
+    if (!gun.tip && glow) {
+      const g = new Sprite(glow); g.anchor.set(0.5); g.blendMode = 'add'; g.tint = gun.place.family === 'bolt' ? 0xff6a2a : tint; g.visible = false;
+      gun.pivot.addChild(g); gun.tip = g;
+    }
+  }
+
   /** A Machined gun for one mount, when the new look is on and the parent is
    *  a Machined hull or deck; else null (today's bar). The gun takes the
    *  hull's own paint (a faction drone's, an owner's accent). */
@@ -278,7 +417,10 @@ export class MountVisualManager {
     const handle = actx.art.acquire({
       type: 'turret', id: place.family, paint, len: Math.max(place.len, 0.1), wid: place.wid, cap: place.cap, ppu: structure ? 2.5 : 6,
     });
-    return { place, pivot, handle, layers: null };
+    return {
+      place, pivot, handle, layers: null, reach: muzzleReach(place),
+      flash: null, tip: null, lastShot: -9, beamUntil: -1, heat: 0, lastT: this.nowS,
+    };
   }
 
   /** Mount count for a tracked ship — used by PixiRenderer to expose the
@@ -335,6 +477,7 @@ export class MountVisualManager {
           // Lit by the gun's own world rotation, like a hull.
           const parentRot = cluster.container.parent?.rotation ?? 0;
           applySunBlend(gun.layers, gun.handle.ship.frames, this.actx?.sunAz ?? 0, parentRot + spriteRotation);
+          this.animateGun(gun);
         }
       }
       if (this.actx?.turrets) {
@@ -401,3 +544,4 @@ function buildAimLineGfx(mount: WeaponMount, color: number): Graphics {
   g.stroke({ color, width: 1, alpha: 0.25 });
   return g;
 }
+

@@ -28,6 +28,7 @@ function fakeCtx(turrets = true): { ctx: ShipArtCtx; acquired: ArtHandle[] } {
       acquired.push(h);
       return h;
     },
+    fx: (): ArtHandle => ({ key: 'fx', job: { type: 'fx', id: 'glow' }, rig: undefined as never, state: 'pending', ship: null, struct: null }),
   } as unknown as ArtService;
   return { ctx: { art: service, handles: new Map(), sunAz: 0, turrets }, acquired };
 }

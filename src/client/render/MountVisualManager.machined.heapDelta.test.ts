@@ -1,7 +1,8 @@
 /**
  * Machined turrets heap-delta lock (invariant #14): 24 ships turning their
- * baked guns (lit by world rotation) and toggling aim guides must not
- * allocate per frame.
+ * baked guns (lit by world rotation), toggling aim guides, and firing (shots
+ * matched to guns, held beams, recoil / flash / heat) must not allocate per
+ * frame.
  */
 import { describe, it, expect } from 'vitest';
 import { Texture } from 'pixi.js';
@@ -23,7 +24,8 @@ const art = (): ShipArt => ({ frames, w: 32, h: 32, density: 4, nozzles: [], nav
 
 describe('Machined turrets heap-delta', () => {
   it('100 000 mount updates on 24 ships grow the heap < 150 KB', () => {
-    const service = { acquire: (job: BakeJob): ArtHandle => ({ key: 'k', job, rig: undefined as never, state: 'ready', ship: art(), struct: null }) } as unknown as ArtService;
+    const ready = (job: BakeJob): ArtHandle => ({ key: 'k', job, rig: undefined as never, state: 'ready', ship: art(), struct: null, fx: { tex: Texture.WHITE, frames: [Texture.WHITE, Texture.WHITE, Texture.WHITE, Texture.WHITE], w: 1, h: 1 } });
+    const service = { acquire: ready, fx: (id: string) => ready({ type: 'fx', id }) } as unknown as ArtService;
     const mvm = new MountVisualManager();
     mvm.setArt({ art: service, handles: new Map(), sunAz: 0.4, turrets: true });
     const kinds = ['gunship', 'interceptor', 'missile-frigate', 'fighter'];
@@ -34,6 +36,9 @@ describe('Machined turrets heap-delta', () => {
     const aim = ['wing-l', 'wing-r'];
     const frame = (f: number): void => {
       mvm.setLocalAim('s1', (f >> 5) & 1 ? aim : undefined);
+      mvm.setFrame(f * 16.7, (f >> 9) & 1 ? 'low' : 'high');
+      if (f % 7 === 0) mvm.noteShotNear(ids[f % 24]!, hulls[f % 24]!.x, hulls[f % 24]!.y);
+      if (f % 5 === 0) mvm.noteBeam(ids[(f + 1) % 24]!, 'wing-l');
       angles[0] = Math.sin(f * 0.01) * 0.4; angles[1] = -angles[0];
       for (let i = 0; i < 24; i++) {
         hulls[i]!.rotation = f * 0.003 + i;

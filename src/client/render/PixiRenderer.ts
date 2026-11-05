@@ -1359,6 +1359,7 @@ export class PixiRenderer implements IRenderer {
     // `this._shipUpdaterCtx` (heap-growth gate step 12) — same fields
     // every frame, no per-call literal allocation.
     this.mountVisuals.setLocalAim(mirror.localPlayerId, mirror.localAimMountIds);
+    this.mountVisuals.setFrame(performance.now(), this.effects?.getQuality() ?? 'medium');
     updateShipSprites(mirror, this._shipUpdaterCtx);
 
     // Explosion sprites spawned this frame for destroyed ships.
@@ -1478,6 +1479,7 @@ export class PixiRenderer implements IRenderer {
     this._lastSwarmUpdateNow = swarmNow;
     this._swarmUpdaterCtx.viewBounds = this.camera.visibleBoundsInto(this._swarmViewScratch);
     updateSwarmSprites(mirror, this._swarmUpdaterCtx);
+    this.noteTurretShots(mirror);
 
     for (const [id, sprite] of this.sprites) {
       if (!seen.has(id)) {
@@ -2144,6 +2146,55 @@ export class PixiRenderer implements IRenderer {
    *  transitions. Mirrors the existing thrust/boost flame ownership in
    *  spriteBuilders — those Graphics flames continue to render (they are
    *  the minimal-tier fallback); EngineEmitter ADDS particle trails. */
+  /** The sprite key a shooter id draws under (players and drones as-is,
+   *  structures as `swarm-<id>`), or null when it has no sprite. */
+  private shooterSpriteKey(id: string): string | null {
+    if (this.sprites.has(id)) return id;
+    let k = this._ownerSpriteKey.get(id);
+    if (k === undefined) {
+      if (this._ownerSpriteKey.size > 1024) this._ownerSpriteKey.clear();
+      k = `swarm-${id}`;
+      this._ownerSpriteKey.set(id, k);
+    }
+    return this.sprites.has(k) ? k : null;
+  }
+
+  /** Firing reactions for Machined guns (turrets T2): held beams by mount
+   *  id, and each bolt / missile the frame it first appears, matched to its
+   *  owner's nearest gun tip. Render-only; no wire change. */
+  private noteTurretShots(mirror: RenderMirror): void {
+    const mv = this.mountVisuals;
+    if (mv.machinedGunCount() <= 0) return;
+    const gen = ++this._turretShotGen;
+    const localId = mirror.localPlayerId;
+    if (localId && mirror.liveBeams) for (const mountId of mirror.liveBeams.keys()) mv.noteBeam(localId, mountId);
+    if (mirror.remoteLasers) {
+      for (const [shooterId, perShooter] of mirror.remoteLasers) {
+        const key = this.shooterSpriteKey(shooterId);
+        if (key) for (const mountId of perShooter.keys()) mv.noteBeam(key, mountId);
+      }
+    }
+    if (mirror.projectiles) for (const [id, p] of mirror.projectiles) {
+      if (p.beam) continue; // instant beam lines: handled as beams
+      if (!this._turretShotSeen.has(id)) {
+        const key = this.shooterSpriteKey(p.ownerId);
+        if (key) mv.noteShotNear(key, p.x, -p.y);
+      }
+      this._turretShotSeen.set(id, gen);
+    }
+    for (const [id, g] of this._turretShotSeen) if (g !== gen) this._turretShotSeen.delete(id);
+    if (mirror.missiles) {
+      for (const [id, m] of mirror.missiles) {
+        if (!this._turretMissileSeen.has(id)) {
+          const key = this.shooterSpriteKey(m.ownerId);
+          if (key) mv.noteShotNear(key, m.x, -m.y);
+        }
+        this._turretMissileSeen.set(id, gen);
+      }
+      for (const [id, g] of this._turretMissileSeen) if (g !== gen) this._turretMissileSeen.delete(id);
+    }
+  }
+
   /** New engine exhaust for every ship sprite with Machined art: players
    *  pass their thrust / boost input, drones (`swarm-*`) follow their speed.
    *  Lingering hulls and scrap are skipped. Reads the sprite's resolved pose
@@ -2519,6 +2570,13 @@ export class PixiRenderer implements IRenderer {
   private _fxExplosions: FxExplosions | null = null;
   private _fxMissileTrails: FxMissileTrails | null = null;
   private _fxEngines: FxEngines | null = null;
+  /** Firing reactions (turrets T2): projectile / missile ids seen, stamped
+   *  with the frame's generation so a new one is noticed once, and a cache of
+   *  owner id → sprite key (structures fire as their bare entity id). */
+  private readonly _turretShotSeen = new Map<string, number>();
+  private readonly _turretMissileSeen = new Map<number, number>();
+  private _turretShotGen = 0;
+  private readonly _ownerSpriteKey = new Map<string, string>();
   private _fxEnginesLastMs = 0;
   /** Scratch for the test-only particle count in `artStats`. */
   private readonly _engineDbgScratch: number[] = [];
@@ -2742,7 +2800,7 @@ export class PixiRenderer implements IRenderer {
 
   /** Machined art status: the service's counts plus how many ship sprites
    *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;
@@ -2752,7 +2810,7 @@ export class PixiRenderer implements IRenderer {
       if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
     const art = this._artCtx.art;
-    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), ...(art ? art.stats() : {}) };
+    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), ...(art ? art.stats() : {}) };
   }
 
   dispose(): void {
