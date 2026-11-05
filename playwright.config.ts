@@ -44,6 +44,7 @@ const SMOKE_SPECS: string[] = [
   '**/damage-number-lifetime.spec.ts',
   '**/happy-path-switch-ship.spec.ts',
   '**/join-warp-screen.spec.ts',
+  '**/join-art-ready.spec.ts',
   '**/layout-slots.spec.ts',
   '**/mobile-joystick-ship-swap.spec.ts',
   '**/persistence-kill.spec.ts',

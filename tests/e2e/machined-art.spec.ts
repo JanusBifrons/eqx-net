@@ -214,6 +214,9 @@ test.describe('Speed effects (plan iridescent-seeking-rainbow v5, C3)', () => {
       );
       expect((await bd(page))!.speedLevel).toBe(arm.zooms ? 'large' : 'off');
       expect((await bd(page))!.speedZoom).toBe(1);
+      // Controls unlock when the loading screen lifts, which now waits for the
+      // Machined art (`RendererFeedback.artReady`): fly only after the reveal.
+      await page.waitForSelector('[data-loading-active="0"]', { state: 'attached', timeout: 45_000 });
       await page.keyboard.down('KeyW');
       await page.keyboard.down('Shift');
       try {

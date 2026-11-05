@@ -66,6 +66,7 @@ function emptyFeedback(): RendererFeedback {
     damageNumberActiveCount: 0,
     shieldRingVisibleCount: 0,
     firstFrameRendered: false,
+    artReady: false,
     liveBeamRenderedFromX: null,
     liveBeamRenderedFromY: null,
     placementScreenX: null,
@@ -673,6 +674,7 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.damageNumberActiveCount = msg.feedback.damageNumberActiveCount;
         this.feedback.shieldRingVisibleCount = msg.feedback.shieldRingVisibleCount;
         this.feedback.firstFrameRendered = msg.feedback.firstFrameRendered;
+        this.feedback.artReady = msg.feedback.artReady;
         this.feedback.liveBeamRenderedFromX = msg.feedback.liveBeamRenderedFromX;
         this.feedback.liveBeamRenderedFromY = msg.feedback.liveBeamRenderedFromY;
         this.feedback.placementScreenX = msg.feedback.placementScreenX;

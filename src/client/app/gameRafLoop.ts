@@ -135,7 +135,11 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // game-work is skipped — loading is exactly when bootstrap-ready
     // flips, so the trigger must run during the pause.
     const ui = useUIStore.getState();
-    if (!ui.clientReadySent && computeBootstrapReadyFromState(ui)) {
+    // ...and only once the scene on screen has its Machined art (ready or
+    // failed): the loading screen lifts after the server's arrival, which
+    // waits for `client_ready`, so holding it here keeps the curtain up until
+    // the pilot is actually loaded in (smoke test 2026-11-05).
+    if (!ui.clientReadySent && computeBootstrapReadyFromState(ui) && renderer.getFeedback().artReady) {
       gameClient.sendClientReady();
     }
 
