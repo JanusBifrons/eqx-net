@@ -12,8 +12,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { SHIP_KINDS_LIST } from '../../src/shared-types/shipKinds.js';
 import { STRUCTURE_KINDS_LIST } from '../../src/shared-types/structureKinds.js';
-import { MUZZLE_CLEARANCE } from '../../src/core/combat/Weapons.js';
 import { isChinMount, shipMountMuzzle, structureTurretMuzzle } from '../../src/core/combat/muzzle.js';
+import { shipTuning } from '../../src/shared-types/shipScale/tuning.js';
 import { muzzleReach, shipTurrets, structureTurrets } from '../../src/client/render/art/turretLayout.js';
 
 describe('muzzle parity (turrets T3, #15)', () => {
@@ -24,12 +24,12 @@ describe('muzzle parity (turrets T3, #15)', () => {
         const t = places[i]!;
         if (isChinMount(m)) {
           expect(shipMountMuzzle(kind, m), `${kind.id}/${m.id}`).toBeNull();
-          // The chin gun's tip, measured from the mount, is today's clearance.
-          expect(-t.py + muzzleReach(t), `${kind.id}/${m.id}`).toBeCloseTo(MUZZLE_CLEARANCE, 6);
+          // The chin gun's tip, measured from the mount, is the kind's chin clearance.
+          expect(-t.py + muzzleReach(t), `${kind.id}/${m.id}`).toBeCloseTo(shipTuning(kind).muzzleClearance, 6);
         } else {
           expect(muzzleReach(t), `${kind.id}/${m.id}`).toBeCloseTo(shipMountMuzzle(kind, m)!, 6);
-          // Capital hulls get turrets, not giant cannons.
-          expect(muzzleReach(t), `${kind.id}/${m.id}`).toBeLessThanOrEqual(40);
+          // Turrets stay within the kind's caps (no giant cannons on big hulls).
+          expect(muzzleReach(t), `${kind.id}/${m.id}`).toBeLessThanOrEqual(shipTuning(kind).barrelLenMax);
         }
       });
     }
@@ -45,14 +45,18 @@ describe('muzzle parity (turrets T3, #15)', () => {
 
   it('every fire site, server and client, calls the shared muzzle', () => {
     const src = (p: string): string => readFileSync(p, 'utf8');
-    expect(src('src/server/rooms/PlayerFireResolver.ts')).toMatch(/shipMountMuzzle\(shipKind, mount\)/);
-    expect(src('src/server/rooms/AiFireResolver.ts')).toMatch(/shipMountMuzzle\(droneKind, mount\)/);
+    expect(src('src/server/rooms/PlayerFireResolver.ts')).toMatch(/shipShotMuzzle\(shipKind, mount\)/);
+    expect(src('src/server/rooms/AiFireResolver.ts')).toMatch(/shipShotMuzzle\(droneKind, mount, true\)/);
     const grid = src('src/server/structures/StructureGridSubsystem.ts');
     expect(grid.match(/structureTurretMuzzle\(rec\.kind, def\.id\)/g)?.length).toBe(3); // beam, bolt, missile
     expect(grid).not.toMatch(/radius \+ 8/);
     const client = src('src/client/net/ColyseusClient.ts');
-    expect(client).toMatch(/shipMountMuzzle\(kind, mount\)/);
+    expect(client).toMatch(/shipShotMuzzle\(kind, mount\)/);
     expect(client.match(/this\.localMuzzle\(mount\)/g)?.length).toBe(2); // live beam + ghosts
-    expect(src('src/client/render/PixiRenderer.ts').match(/shipMountMuzzle\(shooterKind, mount\)/g)?.length).toBe(2); // player + drone beams
+    expect(src('src/client/render/PixiRenderer.ts').match(/shipShotMuzzle\(shooterKind, mount/g)?.length).toBe(2); // player + drone beams
+    // No fire site hardcodes a muzzle distance any more (ship scale).
+    for (const f of ['src/server/rooms/PlayerFireResolver.ts', 'src/server/rooms/AiFireResolver.ts', 'src/client/render/PixiRenderer.ts']) {
+      expect(src(f), f).not.toMatch(/\?\? (16|20|MUZZLE_CLEARANCE)\b/);
+    }
   });
 });

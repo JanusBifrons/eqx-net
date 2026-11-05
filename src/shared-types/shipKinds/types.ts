@@ -251,6 +251,10 @@ export const ShipKindSchema = z
     /** Set by the catalogue: the total factor this kind was scaled by. Never
      *  author it. */
     appliedScale: z.number().positive().optional(),
+    /** Set by the catalogue: the motion model's mass multiplier, applied to
+     *  each side's EFFECTIVE mass (`massOf`), so a kind with no authored
+     *  mass keeps its side's fallback. Never author it. */
+    massScale: z.number().positive().optional(),
     /** Optional translational mass override. Default 1 (the historical
      *  pinned value — every legacy kind sat at mass 1 for "arcade-feel
      *  parity"). Bumping this scales how much the body resists pushes

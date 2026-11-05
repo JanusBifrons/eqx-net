@@ -23,7 +23,6 @@
  */
 
 import { projectileSweepCircle, projectileSweepBox } from '../../core/combat/Weapons.js';
-import { SHIP_COLLISION_RADIUS } from '../../core/combat/Weapons.js';
 import {
   SLOT_X_OFF,
   SLOT_Y_OFF,
@@ -32,6 +31,7 @@ import {
 import type { WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { allegianceOfKind } from '../../shared-types/shipKinds.js';
 import type { ShipState } from './schema/SectorState.js';
+import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 
 export interface ProjectileRecord {
   x: number;
@@ -213,7 +213,7 @@ export class ProjectilePipeline {
         const b = slotBase(slot);
         const cx = d.sabF32[b + SLOT_X_OFF]!;
         const cy = d.sabF32[b + SLOT_Y_OFF]!;
-        const sweep = projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, SHIP_COLLISION_RADIUS);
+        const sweep = projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, GLOBAL_SHIP_TUNING.hitRadius);
         if (sweep && sweep.entry < bestEntry) {
           bestEntry = sweep.entry;
           bestTargetId = shipInstanceId;

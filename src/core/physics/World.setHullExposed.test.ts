@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { PhysicsWorld } from './World.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { AT_DEFAULT_SHIP_SCALE } from '../../../src/shared-types/shipScale/config.js';
 
 const fighter = getShipKind('fighter');
 const scout = getShipKind('scout');
@@ -70,7 +71,8 @@ describe('World.setHullExposed — dynamic transparency', () => {
   });
 });
 
-describe('World.setHullExposed — geometry + query-pipeline lag', () => {
+// Locks authored 1× numbers; other scales: tests/unit/shipScaleInvariants.test.ts.
+describe.runIf(AT_DEFAULT_SHIP_SCALE)('World.setHullExposed — geometry + query-pipeline lag', () => {
   // Scout polygon (Pixi-up authored): [(0,-14), (6,8), (0,4), (-6,8)].
   // Post the 2026-05-28 Y-flip in `shipShapeToPolygon`, the collider sees:
   //   nose      (0, +14)   math forward

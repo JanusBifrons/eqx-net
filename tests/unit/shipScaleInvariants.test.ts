@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { SHIP_KINDS_LIST } from '../../src/shared-types/shipKinds.js';
 import { unscaledShipKinds } from '../../src/shared-types/shipScale/defineShipKind.js';
 import {
-  BASE, CLASS_TUNING, MOTION, combatDistanceScale, effectiveScale, motionFactors, scaleShipKind, shipTuning, sizeClassOf,
+  BASE, CLASS_TUNING, MOTION, combatDistanceScale, effectiveScale, massOf, motionFactors, scaleShipKind, shipTuning, sizeClassOf,
 } from '../../src/shared-types/shipScale/tuning.js';
 import { resolveShipScaleConfig } from '../../src/shared-types/shipScale/config.js';
 import { GATE_GAP, AIRLOCK_GAP } from '../../src/core/structures/gateGeometry.js';
@@ -36,7 +36,7 @@ const CAPITAL: ShipKind = {
 };
 
 describe('ship scale — the catalogue', () => {
-  it('at the default scale every kind is exactly its authored self', () => {
+  it.runIf(effectiveScale({}) === 1)('at the default scale every kind is exactly its authored self', () => {
     for (const raw of RAW) {
       const k = SHIP_KINDS_LIST.find((x) => x.id === raw.id)!;
       expect(effectiveScale(raw), raw.id).toBe(1);
@@ -115,7 +115,11 @@ describe('ship scale — the motion model', () => {
     expect(f.speed).toBeCloseTo(Math.SQRT1_2, 9);
     const fighter = RAW.find((k) => k.id === 'fighter')!;
     const big = scaleShipKind(fighter, 2);
-    expect(big.mass).toBeCloseTo((fighter.mass ?? 1) * 8, 9);
+    expect(massOf(big, 1)).toBeCloseTo(massOf(fighter, 1) * 8, 9);
+    expect(massOf(big, 3)).toBeCloseTo(3 * 8, 9); // a side's fallback mass scales too
+    // Terminal speed under drag ∝ accel / damping: lands on the speed factor.
+    const terminal = (k: ShipKind): number => k.thrustImpulse / massOf(k, 1) / k.linearDamping;
+    expect(terminal(big) / terminal(fighter)).toBeCloseTo(f.speed, 9);
     expect(big.ai.thrust).toBeCloseTo(fighter.ai.thrust * 4, 9);
     expect(big.maxAngvel).toBeLessThan(fighter.maxAngvel);
   });

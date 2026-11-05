@@ -169,15 +169,24 @@ export function scaleShipKind(kind: ShipKind, factor: number): ShipKind {
     shape,
     ...(kind.mounts ? { mounts: kind.mounts.map((mt) => scaleMount(mt, factor)) } : {}),
     ...(kind.latentMounts ? { latentMounts: kind.latentMounts.map((mt) => scaleMount(mt, factor)) } : {}),
-    mass: (kind.mass ?? 1) * m.mass,
+    massScale: (kind.massScale ?? 1) * m.mass,
     thrustImpulse: kind.thrustImpulse * m.thrust,
     maxAngvel: kind.maxAngvel * m.turn,
     maxSpeed: kind.maxSpeed * m.speed,
+    // Terminal speed under drag is accel / damping: scale the damping so the
+    // top speed lands on the model's speed factor, not just the cap.
+    linearDamping: kind.linearDamping * ((m.thrust / m.mass) / m.speed),
     ai: { ...kind.ai, thrust: kind.ai.thrust * m.thrust },
     // Already scaled: a re-scale must not count the authored engines twice.
     ...(kind.thrusters ? { thrusters: { count: kind.thrusters.count, size: kind.thrusters.size * factor } } : {}),
     appliedScale: (kind.appliedScale ?? 1) * factor,
   };
+}
+
+/** A kind's physics mass: its authored mass (else the side's fallback) times
+ *  the motion model's multiplier. Every body spawn uses this. */
+export function massOf(kind: { mass?: number; massScale?: number }, fallback: number): number {
+  return (kind.mass ?? fallback) * (kind.massScale ?? 1);
 }
 
 /** Every size-dependent number for one kind (cached per kind object). */

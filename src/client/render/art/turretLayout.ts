@@ -15,11 +15,11 @@
 import { getShipKind, type WeaponMount } from '../../../shared-types/shipKinds.js';
 import { getStructureKind } from '../../../shared-types/structureKinds.js';
 import { getWeapon, type WeaponId } from '../../../core/combat/WeaponCatalogue.js';
-import { MUZZLE_CLEARANCE } from '../../../core/combat/Weapons.js';
 import { familyFor, type TurretFamily } from './fx/turretFx.js';
 import {
   isChinMount, shipBarrelLength, shipBarrelWidth, shipCapRadius, shipMountMuzzle, structureTurretMuzzle, structureTurretRadius,
 } from '../../../core/combat/muzzle.js';
+import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
 
 export interface TurretPlace {
   mount: WeaponMount;
@@ -47,24 +47,24 @@ function familyOf(m: WeaponMount): TurretFamily {
 /** Turret places for a ship kind's catalogue mounts. */
 export function shipTurrets(kindId: string): TurretPlace[] {
   const k = getShipKind(kindId);
-  const R = k.radius;
   return (k.mounts ?? []).map((m) => {
     const family = familyOf(m);
     if (isChinMount(m)) {
       // A chin gun ends at today's muzzle point, so its shot needs no change.
-      const len = Math.min(MUZZLE_CLEARANCE * 0.55, shipBarrelLength(R));
-      const wid = shipBarrelWidth(R);
-      const cap = Math.max(2.4, wid * 1.25);
-      return { mount: m, family, px: 0, py: -(MUZZLE_CLEARANCE - len), len, wid, cap, ring: cap * 1.35, chin: true, muzzle: len };
+      const clear = shipTuning(k).muzzleClearance;
+      const len = Math.min(clear * 0.55, shipBarrelLength(k));
+      const wid = shipBarrelWidth(k);
+      const cap = Math.max(2.4 * shipTuning(k).appliedScale, wid * 1.25);
+      return { mount: m, family, px: 0, py: -(clear - len), len, wid, cap, ring: cap * 1.35, chin: true, muzzle: len };
     }
     const muzzle = shipMountMuzzle(k, m)!;
     if (family === 'missile') {
-      const cap = shipCapRadius(R, true);
+      const cap = shipCapRadius(k, true);
       return { mount: m, family, px: m.localX, py: -m.localY, len: 0, wid: cap, cap, ring: cap * 1.45, chin: false, muzzle };
     }
-    const wid = shipBarrelWidth(R);
-    const cap = shipCapRadius(R, false);
-    return { mount: m, family, px: m.localX, py: -m.localY, len: shipBarrelLength(R), wid, cap, ring: cap * 1.35, chin: false, muzzle };
+    const wid = shipBarrelWidth(k);
+    const cap = shipCapRadius(k, false);
+    return { mount: m, family, px: m.localX, py: -m.localY, len: shipBarrelLength(k), wid, cap, ring: cap * 1.35, chin: false, muzzle };
   });
 }
 

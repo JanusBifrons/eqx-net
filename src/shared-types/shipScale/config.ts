@@ -79,3 +79,9 @@ export const SHIP_TUNING: ShipTuningProfile = LIVE.tuning;
 export function shipScaleWorkerName(prefix = ''): string {
   return `${prefix}${prefix ? ';' : ''}shipScale=${SHIP_SCALE};shipTuning=${SHIP_TUNING}`;
 }
+
+/** True at the shipping scale and profile. Tests that lock authored 1×
+ *  geometry or tuning run only then (`describe.runIf(AT_DEFAULT_SHIP_SCALE)`);
+ *  the ship-scale invariant sweep covers every other scale. */
+export const AT_DEFAULT_SHIP_SCALE = SHIP_SCALE === DEFAULT_SHIP_SCALE && SHIP_TUNING === DEFAULT_SHIP_TUNING;
+

@@ -19,6 +19,7 @@ import { bakeKey, runBake, seedVariant, type Baked, type BakeJob } from './bake.
 import { loadBakes, saveBakes, storeKey } from './bakeStore.js';
 import type { Frame, LightRig } from './shade.js';
 import { sunRigForSector } from './sunRig.js';
+import { shipScaleWorkerName } from '../../../shared-types/shipScale/config.js';
 
 export type ArtState = 'pending' | 'ready' | 'failed';
 
@@ -426,7 +427,7 @@ export function createArtService(o: CreateArtServiceOpts): ArtService {
   let runner: BakeRunner;
   try {
     if (typeof Worker === 'undefined') throw new Error('no Worker');
-    runner = new WorkerBakeRunner(n, () => new Worker(new URL('./bake.worker.ts', import.meta.url), { type: 'module' }), o.delayMs ?? 0);
+    runner = new WorkerBakeRunner(n, () => new Worker(new URL('./bake.worker.ts', import.meta.url), { type: 'module', name: shipScaleWorkerName('bake') }), o.delayMs ?? 0);
   } catch {
     runner = new InlineBakeRunner(o.delayMs ?? 0);
   }

@@ -47,7 +47,7 @@ import { isStructureKindId } from '../../shared-types/structureKinds';
 import { getShipKind, type WeaponMount } from '../../shared-types/shipKinds';
 import { shipPrimaryColor } from '@core/geometry/shipHullOutline';
 import { aimLineLengthForMount } from './aimLineLength';
-import { MUZZLE_CLEARANCE } from '@core/combat/Weapons';
+import { GLOBAL_SHIP_TUNING } from '@shared-types/shipScale/lookup';
 
 /** Shared frozen empty mount-list. The `?? EMPTY_MOUNTS` fallback for a
  *  mountless kind avoids allocating a fresh `[]` literal every time
@@ -132,7 +132,7 @@ const AIM_LINE_DASH_OFF = 4;
  *  and beams emerged 20 u from the mount pivot, leaving a visible 12 u gap
  *  ("lasers don't come out of the exact tip of the barrel"). */
 const BARREL_HALF_WIDTH = 1.2;
-const BARREL_LENGTH = MUZZLE_CLEARANCE;
+const BARREL_LENGTH = GLOBAL_SHIP_TUNING.muzzleClearance;
 
 export class MountVisualManager {
   private readonly clusters = new Map<string, MountCluster>();

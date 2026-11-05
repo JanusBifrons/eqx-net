@@ -34,8 +34,8 @@ import { Backdrop } from './art/fx/Backdrop.js';
 import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
 import { FxEngines } from './art/fx/FxEngines.js';
-import { shipMountMuzzle } from '@core/combat/muzzle';
-import { MUZZLE_CLEARANCE } from '@core/combat/Weapons';
+import { shipShotMuzzle } from '@core/combat/muzzle';
+import { shipTuning } from '@shared-types/shipScale/tuning';
 import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { SHIELD_RADIUS_PAD } from '../../shared-types/shipKinds.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
@@ -1634,7 +1634,7 @@ export class PixiRenderer implements IRenderer {
             const fwdX = -Math.sin(fireAngle);
             const fwdY =  Math.cos(fireAngle);
             // The barrel tip (shared with the server, core/combat/muzzle.ts).
-            const muzzleD = mount ? (shipMountMuzzle(shooterKind, mount) ?? MUZZLE_CLEARANCE) : MUZZLE_CLEARANCE;
+            const muzzleD = mount ? shipShotMuzzle(shooterKind, mount) : shipTuning(shooterKind).muzzleClearance;
             fromX = origin.x + fwdX * muzzleD;
             fromY = origin.y + fwdY * muzzleD;
             toX = fromX + fwdX * laser.range;
@@ -1649,7 +1649,7 @@ export class PixiRenderer implements IRenderer {
             // pre-refactor visual where the beam clears the drone hull.
             // A drone's turning turret fires from its barrel tip (the server's
             // AiFireResolver uses the same shared muzzle).
-            const barrelOffset = mount ? (shipMountMuzzle(shooterKind, mount) ?? 20) : swarmShooter.radius + 2;
+            const barrelOffset = mount ? shipShotMuzzle(shooterKind, mount, true) : swarmShooter.radius + 2;
             fromX = origin.x + fwdX * barrelOffset;
             fromY = origin.y + fwdY * barrelOffset;
             toX = fromX + fwdX * laser.range;

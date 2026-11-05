@@ -4,7 +4,12 @@
  * game's existing muzzle point.
  */
 import { describe, it, expect } from 'vitest';
-import { MUZZLE_CLEARANCE } from '../../../core/combat/Weapons.js';
+import { getShipKind } from '../../../shared-types/shipKinds.js';
+import { shipTuning, BASE } from '../../../shared-types/shipScale/tuning.js';
+import { SHIP_SCALE } from '../../../shared-types/shipScale/config.js';
+
+/** The fighter's chin clearance at this scale (20 at 1×). */
+const MUZZLE_CLEARANCE = shipTuning(getShipKind('fighter')).muzzleClearance;
 import { forgeShip, forgeTurretGun, MAT } from './fields.js';
 import { muzzleReach, shipTurrets, structureTurrets } from './turretLayout.js';
 
@@ -18,14 +23,14 @@ describe('turret layout', () => {
   it('turning mounts pivot on the mount and are sized to the hull', () => {
     const ts = shipTurrets('gunship');
     expect(ts).toHaveLength(2);
-    expect(ts[0]!.py).toBe(-12); // forward mount at game y +12 (the nose) → Pixi -12
+    expect(ts[0]!.py).toBeCloseTo(-12 * SHIP_SCALE, 9); // forward mount at game y +12 (the nose) → Pixi -12, × scale
     expect(ts[0]!.len).toBeLessThan(MUZZLE_CLEARANCE);
   });
 
   it('structure turrets scale with the footprint', () => {
     const [small] = structureTurrets('turret');
     const [big] = structureTurrets('missile_turret');
-    expect(small!.len).toBeGreaterThan(MUZZLE_CLEARANCE * 2);
+    expect(small!.len).toBeGreaterThan(BASE.muzzleClearance * 2); // structures don't scale with ships
     expect(big!.family).toBe('missile');
     expect(big!.cap).toBeGreaterThan(small!.cap);
   });

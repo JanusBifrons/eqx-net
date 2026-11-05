@@ -25,6 +25,11 @@ export interface WelcomeMessage {
    *  pilotable via the in-world Pilot dropdown). Absent / `false` ⇒ the
    *  normal pilot join. Back-compat: pre-Phase-5 servers omit it. */
   spectator?: boolean;
+  /** Ship scale infrastructure: the server's ship scale and combat profile,
+   *  sent only when not the defaults (1, 'A'). The client must run the same
+   *  (the catalogue is built from it); a mismatch is logged loudly. */
+  shipScale?: number;
+  shipTuning?: 'A' | 'B';
 }
 
 /** PR 3a (account-bound identity) — sent to a session immediately before the
@@ -57,6 +62,8 @@ export const WelcomeSchema = z
     /** Empty string in engineering rooms — so max-only, no min. */
     shipInstanceId: z.string().max(64),
     spectator: z.boolean().optional(),
+    shipScale: z.number().positive().optional(),
+    shipTuning: z.enum(['A', 'B']).optional(),
   })
   .strict();
 

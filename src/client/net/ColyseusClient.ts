@@ -108,8 +108,10 @@ import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { installPageLifecycleObserver } from '../debug/pageLifecycleObserver';
 import { recordServerGcPause, startHealthStatsPublisher } from '../debug/healthStats';
 import { GhostManager } from '../combat/GhostProjectile';
-import { HITSCAN_RANGE, MUZZLE_CLEARANCE, rayHitsSphere } from '@core/combat/Weapons';
-import { shipMountMuzzle } from '@core/combat/muzzle';
+import { HITSCAN_RANGE, rayHitsSphere } from '@core/combat/Weapons';
+import { shipShotMuzzle } from '@core/combat/muzzle';
+import { shipTuning } from '@shared-types/shipScale/tuning';
+import { tuningFor } from '@shared-types/shipScale/lookup';
 
 /** No aim guides (the mirror's `localAimMountIds` when nothing is in range). */
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
@@ -139,7 +141,7 @@ import {
 import { updateAnchor } from './clockAnchor';
 import { getSector } from '@core/galaxy/galaxy';
 import { AiController, type AiIntentSink } from '@core/ai/AiController';
-import { getShipKind, SHIELD_RADIUS_PAD, type WeaponMount } from '@shared-types/shipKinds';
+import { getShipKind, type WeaponMount } from '@shared-types/shipKinds';
 import {
   resolvePlacementPreviewStatus,
   type PlacementPreview,
@@ -201,6 +203,7 @@ import {
   REMOTE_SPRING_VEL_END_MS,
   STAGE_3_MAX_LOOKAHEAD_TICKS,
 } from './predictionTuning.js';
+import { SHIP_SCALE, SHIP_TUNING } from '@shared-types/shipScale/config';
 
 /** Simple monotonically incrementing shot ID generator. */
 let _shotCounter = 0;
@@ -1412,6 +1415,11 @@ export class ColyseusGameClient {
       room.onMessage('welcome', (raw: unknown) => {
       const msg = parseWelcome(raw);
       if (msg === null) return;
+      // Ship scale: the catalogue is built at load from this client's own
+      // config; a server at another scale would desync physics and hits.
+      if ((msg.shipScale ?? 1) !== SHIP_SCALE || (msg.shipTuning ?? 'A') !== SHIP_TUNING) {
+        logEvent('ship_scale_mismatch', { server: msg.shipScale ?? 1, client: SHIP_SCALE, serverTuning: msg.shipTuning ?? 'A', clientTuning: SHIP_TUNING, fix: `?shipScale=${msg.shipScale ?? 1}&shipTuning=${msg.shipTuning ?? 'A'}` });
+      }
       const idChanged = storedPlayerId && msg.playerId !== storedPlayerId;
       logEvent('cc_welcome', {
         playerId: msg.playerId,
@@ -5361,14 +5369,15 @@ export class ColyseusGameClient {
       const sw = this.mirror.swarm?.get(Number(hitId.slice(6)));
       // Drones only (kind===1); asteroids (kind===0) have no shield.
       if (sw && sw.kind === 1 && sw.shieldDown !== true) {
-        const d = rayHitsSphere(fromX, fromY, fwdX, fwdY, maxRange, sw.x, sw.y, sw.radius + SHIELD_RADIUS_PAD);
+        const d = rayHitsSphere(fromX, fromY, fwdX, fwdY, maxRange, sw.x, sw.y, sw.radius + tuningFor(sw.shipKind).shieldPad);
         if (d !== null) return d;
       }
       return hit.dist;
     }
     const ship = this.mirror.ships.get(hitId);
     if (ship && ship.shieldDown !== true) {
-      const r = getShipKind(ship.kind ?? null).radius + SHIELD_RADIUS_PAD;
+      const sk = getShipKind(ship.kind ?? null);
+      const r = sk.radius + shipTuning(sk).shieldPad;
       const d = rayHitsSphere(fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, r);
       if (d !== null) return d;
     }
@@ -5384,7 +5393,7 @@ export class ColyseusGameClient {
    *  PlayerFireResolver uses (core/combat/muzzle.ts, invariant #15). */
   private localMuzzle(mount: WeaponMount): number {
     const kind = getShipKind(this.mirror.ships.get(this.mirror.localPlayerId ?? '')?.kind ?? null);
-    return shipMountMuzzle(kind, mount) ?? MUZZLE_CLEARANCE;
+    return shipShotMuzzle(kind, mount);
   }
 
   private localShipMounts(): ReadonlyArray<WeaponMount> {
@@ -5554,8 +5563,9 @@ export class ColyseusGameClient {
       // shipped kind today.
       const fwdX = -Math.sin(state.angle);
       const fwdY = Math.cos(state.angle);
-      const fromX = state.x + fwdX * MUZZLE_CLEARANCE;
-      const fromY = state.y + fwdY * MUZZLE_CLEARANCE;
+      const clear = tuningFor(this.mirror.ships.get(localId)?.kind).muzzleClearance;
+      const fromX = state.x + fwdX * clear;
+      const fromY = state.y + fwdY * clear;
       if (spawnGhost) {
         this.ghostManager.spawn(shotId, localId, fromX, fromY, fwdX, fwdY, slotWeapon, state.vx, state.vy);
       }

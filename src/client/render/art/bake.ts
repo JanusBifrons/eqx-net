@@ -11,6 +11,8 @@ import { bakeFxImg, FX_VERSION, isFxId } from './fx/fxTextures.js';
 import { litFrame, type Frame, type LightRig } from './shade.js';
 import { linToSrgb } from './color.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
+import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
+import { SHIP_SCALE } from '../../../shared-types/shipScale/config.js';
 
 /** Machined ships keep this many sun azimuths and cross-fade between two. */
 export const SUN_STEPS = 16;
@@ -46,11 +48,15 @@ export type BakeJob =
   /** An effect or backdrop texture (art/fx/fxTextures.ts, plan iridescent-seeking-rainbow v3). */
   | { type: 'fx'; id: string; variant?: string; seed?: number };
 
+/** Ship-shaped bakes depend on the ship scale (they're cached between
+ *  sessions): tag their keys when it isn't 1, so 1× keys are unchanged. */
+const SCALE_TAG = SHIP_SCALE === 1 ? '' : `@s${SHIP_SCALE}`;
+
 /** The cache key a job's result is stored under (shared by main and workers). */
 export function bakeKey(j: BakeJob): string {
-  if (j.type === 'ship') return `m:${j.id}:${j.paint ?? ''}${j.rings ? ':R' : ''}`;
+  if (j.type === 'ship') return `m:${j.id}:${j.paint ?? ''}${j.rings ? ':R' : ''}${SCALE_TAG}`;
   if (j.type === 'turret') return `g:${j.id}:${j.paint}:${j.len.toFixed(2)}:${j.wid.toFixed(2)}:${j.cap.toFixed(2)}:${j.ppu}`;
-  if (j.type === 'scrap') return `s:${j.id}:${j.component}`;
+  if (j.type === 'scrap') return `s:${j.id}:${j.component}${SCALE_TAG}`;
   if (j.type === 'fx') return `x:${FX_VERSION}:${j.id}:${j.variant ?? ''}:${j.seed ?? ''}`;
   if (j.type === 'rock') return `r:${j.entityId}:${j.radius}:${j.resource ?? ''}:${quarterTurnsFine(j.rot ?? 0)}`;
   const q = quarterTurns(j.rot ?? 0);
@@ -78,7 +84,10 @@ export function seedVariant(seed: number): number {
 export const SHIP_MAX_SIDE = 512;
 
 export function shipPpu(id: string): number {
-  return Math.min(getShipKind(id).radius >= 25 ? 3 : 4, SHIP_MAX_SIDE / (shipExtent(id) * 2 + 6));
+  // Density by the UNSCALED hull, within the class's side budget (tuning), so
+  // a 2× ship is as sharp per unit as today's and a capital has its own cap.
+  const t = shipTuning(getShipKind(id));
+  return Math.min(t.bakePpu, t.bakeMaxSide / (shipExtent(id) * 2 + 6));
 }
 
 /** Unlit albedo at HALF resolution (2×2 average): it only feeds the soft

@@ -83,6 +83,16 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Ship scale (R&D / tuning): read before any module loads, so the ship
+         catalogue is built at the right scale. Must match the server's
+         EQX_SHIP_SCALE / EQX_SHIP_TUNING (the welcome checks it). -->
+    <script>
+      (function () {
+        var q = new URLSearchParams(location.search);
+        if (q.has('shipScale')) window.__EQX_SHIP_SCALE__ = q.get('shipScale');
+        if (q.has('shipTuning')) window.__EQX_SHIP_TUNING__ = q.get('shipTuning');
+      })();
+    </script>
     <script type="module" src="./main.tsx"></script>
   </body>
 </html>

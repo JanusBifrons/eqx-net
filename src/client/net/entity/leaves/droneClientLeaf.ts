@@ -21,6 +21,7 @@ import { getShipKind } from '@shared-types/shipKinds';
 import { HostileDroneBehaviour } from '@core/ai/HostileDroneBehaviour';
 import { ClientEntityLeafBase } from '../ClientEntityLeafBase.js';
 import type { ClientSpawnCtx, ClientSyncCtx } from '../IClientEntityLeaf.js';
+import { massOf } from '../../../../shared-types/shipScale/tuning.js';
 
 /** Fallback mass when the catalogue lookup yields no mass (defensive — matches
  *  the pre-refactor `?? 3`). */
@@ -39,7 +40,7 @@ export class DroneClientLeaf extends ClientEntityLeafBase {
       ctx.entry.x,
       ctx.entry.y,
       ctx.entry.radius,
-      kind.mass ?? DRONE_FALLBACK_MASS,
+      massOf(kind, DRONE_FALLBACK_MASS),
       undefined,
     );
     // Hostility ledger only (brain never ticked client-side). The caller folds

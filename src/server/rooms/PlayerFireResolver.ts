@@ -37,10 +37,9 @@ import {
   rayHitsSphere,
   rayHitsBox,
   rayHitsConvexPolygon,
-  SHIP_COLLISION_RADIUS,
-  MUZZLE_CLEARANCE,
 } from '../../core/combat/Weapons.js';
-import { shipMountMuzzle } from '../../core/combat/muzzle.js';
+import { shipShotMuzzle } from '../../core/combat/muzzle.js';
+import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { getWeaponObject } from '../../core/combat/weapons/index.js';
 import type { WeaponFireContext, WeaponFireSink } from '../../core/combat/weapons/Weapon.js';
 import { clampFireTick } from '../../core/combat/fireTemporal.js';
@@ -329,7 +328,7 @@ export class PlayerFireResolver implements WeaponFireSink {
       const ndy = Math.cos(mountFireAngle);
       // The shot leaves the barrel tip: a turning turret's own length, else
       // (chin guns) the shared clearance. Same function the client uses (#15).
-      const muzzleD = shipMountMuzzle(shipKind, mount) ?? MUZZLE_CLEARANCE;
+      const muzzleD = shipShotMuzzle(shipKind, mount);
       const rayFromX = mountWorld.x + ndx * muzzleD;
       const rayFromY = mountWorld.y + ndy * muzzleD;
 
@@ -417,7 +416,7 @@ export class PlayerFireResolver implements WeaponFireSink {
     for (const [shipInstanceId] of d.lingeringSlots) {
       const lingeringPose = d.lingeringPoseCache.get(shipInstanceId);
       if (!lingeringPose) continue;
-      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, lingeringPose.x, lingeringPose.y, SHIP_COLLISION_RADIUS);
+      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, lingeringPose.x, lingeringPose.y, GLOBAL_SHIP_TUNING.hitRadius);
       if (dist !== null && dist < mountHitDist) {
         mountHitDist = dist;
         mountHitId = shipInstanceId;

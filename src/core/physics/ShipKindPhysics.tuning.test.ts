@@ -4,6 +4,7 @@ import {
   SHIP_KINDS,
   SHIP_KIND_CATALOGUE_VERSION,
 } from '../../shared-types/shipKinds.js';
+import { AT_DEFAULT_SHIP_SCALE } from '../../../src/shared-types/shipScale/config.js';
 
 /**
  * ABSOLUTE-VALUE regression lock for the 2026-05-18 "slow down gameplay" tune
@@ -48,7 +49,8 @@ async function measureCruise(kindKey: keyof typeof EXPECTED): Promise<number> {
   return speed;
 }
 
-describe('ship-kind tuning lock (2026-05-18 slow-down pass)', () => {
+// Locks authored 1× numbers; other scales: tests/unit/shipScaleInvariants.test.ts.
+describe.runIf(AT_DEFAULT_SHIP_SCALE)('ship-kind tuning lock (2026-05-18 slow-down pass)', () => {
   it('catalogue version lock', () => {
     // 3 → 4 on 2026-05-27: appended `missile-frigate` kind (heat-seeker
     // weapon platform).

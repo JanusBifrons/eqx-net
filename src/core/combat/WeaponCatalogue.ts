@@ -1,3 +1,4 @@
+import { combatDistanceScale } from '../../shared-types/shipScale/tuning.js';
 export type WeaponMode = 'hitscan' | 'projectile' | 'missile';
 export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'charge-laser' | 'autocannon';
 
@@ -257,13 +258,33 @@ const CHARGE_LASER_DEF: HitscanWeaponDef = {
   chargeTicks: 72,
 };
 
+/**
+ * Weapon distances under the ship scale's combat profile (shipScale/config):
+ * reach (hitscan range, projectile / missile flight time) and splash. Profile
+ * A, or scale 1, returns the definition unchanged. Pure.
+ */
+export function scaleWeaponDef<T extends WeaponDef>(def: T, reach: number, splash: number): T {
+  if (reach === 1 && splash === 1) return def;
+  if (def.mode === 'hitscan') return { ...def, range: def.range * reach };
+  if (def.mode === 'projectile') return { ...def, maxTicks: Math.round(def.maxTicks * reach) };
+  return {
+    ...def,
+    lifetimeTicks: Math.round(def.lifetimeTicks * reach),
+    splashRadius: def.splashRadius * splash,
+    proximityFuseRadius: def.proximityFuseRadius * splash,
+  };
+}
+
+const COMBAT = combatDistanceScale();
+const profiled = <T extends WeaponDef>(d: T): T => scaleWeaponDef(d, COMBAT.reach, COMBAT.splash);
+
 export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, WeaponDef>([
-  ['hitscan', HITSCAN_DEF],
-  ['laser', LASER_DEF],
-  ['heat-seeker', HEAT_SEEKER_DEF],
-  ['pulse-orb', PULSE_ORB_DEF],
-  ['charge-laser', CHARGE_LASER_DEF],
-  ['autocannon', AUTOCANNON_DEF],
+  ['hitscan', profiled(HITSCAN_DEF)],
+  ['laser', profiled(LASER_DEF)],
+  ['heat-seeker', profiled(HEAT_SEEKER_DEF)],
+  ['pulse-orb', profiled(PULSE_ORB_DEF)],
+  ['charge-laser', profiled(CHARGE_LASER_DEF)],
+  ['autocannon', profiled(AUTOCANNON_DEF)],
 ]);
 
 export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon'] as const;
@@ -271,7 +292,7 @@ export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker
 export const DEFAULT_WEAPON: WeaponId = 'hitscan';
 
 export function getWeapon(id: WeaponId): WeaponDef {
-  return WEAPONS.get(id) ?? HITSCAN_DEF;
+  return WEAPONS.get(id) ?? WEAPONS.get('hitscan')!;
 }
 
 export function isWeaponId(v: unknown): v is WeaponId {
