@@ -14,7 +14,7 @@ import { DEFAULT_RIG, litFrame } from '../../src/client/render/art/shade';
 import { pixelFrame } from '../../src/client/__art-lab__/pixel';
 import { insidePoly } from '../../src/client/render/art/raster';
 import { getShipKind } from '../../src/shared-types/shipKinds';
-import { AT_DEFAULT_SHIP_SCALE } from '../../src/shared-types/shipScale/config.js';
+import { AT_AUTHORED_SHIP_SCALE } from '../../src/shared-types/shipScale/config.js';
 
 const SHIPS = ['fighter', 'heavy', 'missile-frigate', 'trader-hauler', 'havok', 'robot-hexagon'];
 
@@ -54,7 +54,7 @@ describe('art lab forge', () => {
   });
 
   // Lab-only pixel look, locked at the authored 1× sizes.
-  it.runIf(AT_DEFAULT_SHIP_SCALE)('pixel frames use only ramp colours (no blended in-betweens)', () => {
+  it.runIf(AT_AUTHORED_SHIP_SCALE)('pixel frames use only ramp colours (no blended in-betweens)', () => {
     const f = forgeShip('heavy', { ppu: 4 });
     const fr = pixelFrame(f, DEFAULT_RIG, { pd: 1, steps: 4, dither: 0.3, rotation: 0.4, outline: true });
     const colours = new Set<number>();
@@ -111,7 +111,7 @@ describe('art lab bake (round 2 speedups)', () => {
 });
 
 // Bake hash at the authored 1× sizes (a 2× bake differs by design).
-describe.runIf(AT_DEFAULT_SHIP_SCALE)('FORGE_VERSION lock', () => {
+describe.runIf(AT_AUTHORED_SHIP_SCALE)('FORGE_VERSION lock', () => {
   // Baked art is cached on players' devices under FORGE_VERSION. If the forge's
   // output changes but the version does not, players keep seeing the OLD art.
   // When this fails: bump FORGE_VERSION in src/client/render/art/bakeStore.ts

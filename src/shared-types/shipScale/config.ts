@@ -16,8 +16,10 @@
  * Pure: no imports.
  */
 
-/** The shipping ship scale. R&D / tuning override it via the env above. */
-export const DEFAULT_SHIP_SCALE = 1;
+/** The shipping ship scale (2×, picked 2026-11-05 from the comparison footage).
+ *  R&D / tuning override it via the env above. Catalogue numbers are authored
+ *  at 1× and scaled from there. */
+export const DEFAULT_SHIP_SCALE = 2;
 
 /**
  * Combat tuning profile (how combat distances respond to the ship scale):
@@ -27,7 +29,7 @@ export const DEFAULT_SHIP_SCALE = 1;
  *    (in general: range × (1 + (scale − 1) / 2), splash × scale).
  */
 export type ShipTuningProfile = 'A' | 'B';
-export const DEFAULT_SHIP_TUNING: ShipTuningProfile = 'A';
+export const DEFAULT_SHIP_TUNING: ShipTuningProfile = 'B';
 
 const SCALE_MIN = 0.25, SCALE_MAX = 16;
 
@@ -114,8 +116,10 @@ export function shipScaleWorkerName(prefix = ''): string {
   return `${prefix}${prefix ? ';' : ''}shipScale=${SHIP_SCALE};shipTuning=${SHIP_TUNING}${SHIP_KIND_SCALE ? `;kindScale=${SHIP_KIND_SCALE}` : ''}`;
 }
 
-/** True at the shipping scale and profile. Tests that lock authored 1×
- *  geometry or tuning run only then (`describe.runIf(AT_DEFAULT_SHIP_SCALE)`);
- *  the ship-scale invariant sweep covers every other scale. */
-export const AT_DEFAULT_SHIP_SCALE = SHIP_SCALE === DEFAULT_SHIP_SCALE && SHIP_TUNING === DEFAULT_SHIP_TUNING && SHIP_KIND_SCALE === '';
+/** True at the AUTHORED scale (1×, profile A, no per-kind overrides): the
+ *  numbers the catalogue is written in. Tests that lock authored geometry or
+ *  tuning run only then (`describe.runIf(AT_AUTHORED_SHIP_SCALE)`); CI runs
+ *  them with `EQX_SHIP_SCALE=1 EQX_SHIP_TUNING=A`. The ship-scale invariant
+ *  sweep covers every other scale, including the shipping default. */
+export const AT_AUTHORED_SHIP_SCALE = SHIP_SCALE === 1 && SHIP_TUNING === 'A' && SHIP_KIND_SCALE === '';
 

@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { engineProfileForKind } from './engineGeometry';
 import { getShipKind, DEFAULT_SHIP_KIND } from '../../../shared-types/shipKinds';
-import { AT_DEFAULT_SHIP_SCALE } from '../../../../src/shared-types/shipScale/config.js';
+import { AT_AUTHORED_SHIP_SCALE } from '../../../../src/shared-types/shipScale/config.js';
 
 // Locks authored 1× numbers; other scales: tests/unit/shipScaleInvariants.test.ts.
-describe.runIf(AT_DEFAULT_SHIP_SCALE)('engineProfileForKind', () => {
+describe.runIf(AT_AUTHORED_SHIP_SCALE)('engineProfileForKind', () => {
   it('derives sternOffset from the hull rear extent (fighter rear edge = y 10)', () => {
     // FIGHTER points: [[0,-16],[-10,10],[0,5],[10,10]] → max +y = 10, scale 1.
     const p = engineProfileForKind('fighter');

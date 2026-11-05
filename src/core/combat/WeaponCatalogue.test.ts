@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+// Some cases lock AUTHORED 1× numbers (ranges, TTL, distances inside today's
+// standoff); they run at 1× via `pnpm test:authored-scale` (ship-scale.md).
+import { AT_AUTHORED_SHIP_SCALE } from '../../shared-types/shipScale/config.js';
 import {
   getWeapon,
   isWeaponId,
@@ -9,7 +12,7 @@ import {
 } from './WeaponCatalogue.js';
 
 describe('WeaponCatalogue', () => {
-  it('getWeapon returns the hitscan (beam) definition', () => {
+  it.runIf(AT_AUTHORED_SHIP_SCALE)('getWeapon returns the hitscan (beam) definition', () => {
     const w = getWeapon('hitscan');
     expect(w.id).toBe('hitscan');
     expect(w.mode).toBe('hitscan');
@@ -25,7 +28,7 @@ describe('WeaponCatalogue', () => {
     expect(w.energyCost).toBe(5);
   });
 
-  it('getWeapon returns the laser (bolt) definition', () => {
+  it.runIf(AT_AUTHORED_SHIP_SCALE)('getWeapon returns the laser (bolt) definition', () => {
     const w = getWeapon('laser');
     expect(w.id).toBe('laser');
     expect(w.mode).toBe('projectile');
@@ -63,7 +66,7 @@ describe('WeaponCatalogue', () => {
     }
   });
 
-  it('getWeapon returns the heat-seeker (missile) definition', () => {
+  it.runIf(AT_AUTHORED_SHIP_SCALE)('getWeapon returns the heat-seeker (missile) definition', () => {
     const w = getWeapon('heat-seeker');
     expect(w.id).toBe('heat-seeker');
     expect(w.mode).toBe('missile');
@@ -185,7 +188,7 @@ describe('WeaponCatalogue — TTK targets (lock the math, not the literals)', ()
     expect(w.damage).toBeGreaterThanOrEqual(FIGHTER_SHIELD);
   });
 
-  it('missile cadence can sustain ~8 in flight (≈4 salvos over the 6 s TTL)', () => {
+  it.runIf(AT_AUTHORED_SHIP_SCALE)('missile cadence can sustain ~8 in flight (≈4 salvos over the 6 s TTL)', () => {
     const w = getWeapon('heat-seeker');
     if (w.mode !== 'missile') throw new Error('expected missile');
     const ttlSeconds = w.lifetimeTicks / 60;

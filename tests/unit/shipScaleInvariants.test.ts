@@ -11,7 +11,7 @@ import { unscaledShipKinds } from '../../src/shared-types/shipScale/defineShipKi
 import {
   BASE, CLASS_TUNING, MOTION, combatDistanceScale, effectiveScale, massOf, motionFactors, scaleShipKind, shipTuning, sizeClassOf,
 } from '../../src/shared-types/shipScale/tuning.js';
-import { AT_DEFAULT_SHIP_SCALE, resolveShipScaleConfig } from '../../src/shared-types/shipScale/config.js';
+import { AT_AUTHORED_SHIP_SCALE, DEFAULT_SHIP_SCALE, DEFAULT_SHIP_TUNING, resolveShipScaleConfig } from '../../src/shared-types/shipScale/config.js';
 import { GATE_GAP, AIRLOCK_GAP } from '../../src/core/structures/gateGeometry.js';
 import type { ShipKind } from '../../src/shared-types/shipKinds/types.js';
 import { isChinMount } from '../../src/core/combat/muzzle.js';
@@ -36,7 +36,7 @@ const CAPITAL: ShipKind = {
 };
 
 describe('ship scale — the catalogue', () => {
-  it.runIf(AT_DEFAULT_SHIP_SCALE)('at the default scale every kind is exactly its authored self', () => {
+  it.runIf(AT_AUTHORED_SHIP_SCALE)('at the authored scale (1x, A) every kind is exactly its authored self', () => {
     for (const raw of RAW) {
       const k = SHIP_KINDS_LIST.find((x) => x.id === raw.id)!;
       expect(effectiveScale(raw), raw.id).toBe(1);
@@ -55,7 +55,8 @@ describe('ship scale — the catalogue', () => {
     expect(resolveShipScaleConfig({ global: { __EQX_SHIP_SCALE__: '1.5' } }).scale).toBe(1.5);
     expect(resolveShipScaleConfig({ workerName: 'bake;shipScale=4;shipTuning=A' })).toMatchObject({ scale: 4, tuning: 'A' });
     expect(resolveShipScaleConfig({ env: { EQX_SHIP_SCALE: '999' } }).scale).toBe(16);
-    expect(resolveShipScaleConfig({}).scale).toBe(1);
+    expect(resolveShipScaleConfig({})).toMatchObject({ scale: DEFAULT_SHIP_SCALE, tuning: DEFAULT_SHIP_TUNING });
+    expect([DEFAULT_SHIP_SCALE, DEFAULT_SHIP_TUNING]).toEqual([2, 'B']); // the shipping pick (2026-11-05)
   });
 });
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { PhysicsWorld } from './World.js';
 import { SHIP_KINDS } from '../../shared-types/shipKinds.js';
-import { AT_DEFAULT_SHIP_SCALE } from '../../../src/shared-types/shipScale/config.js';
+import { AT_AUTHORED_SHIP_SCALE } from '../../../src/shared-types/shipScale/config.js';
 
 /**
  * Integration test for the per-kind physics tuning. Spawns one ship of each
@@ -42,7 +42,7 @@ function runHoldTurnLeft(world: PhysicsWorld, id: string, ticks: number): number
 }
 
 // Locks authored 1× numbers; other scales: tests/unit/shipScaleInvariants.test.ts.
-describe.runIf(AT_DEFAULT_SHIP_SCALE)('ship-kind physics ordering (catalogue archetype contract)', () => {
+describe.runIf(AT_AUTHORED_SHIP_SCALE)('ship-kind physics ordering (catalogue archetype contract)', () => {
   it('top speed under boost: heavy > fighter > scout', async () => {
     // 25 seconds — Heavy's `linearDamping = 0.2` gives a 5 s time constant,
     // so 5 e-folds (≈ 99.3% of terminal) takes ~25 s of simulation.

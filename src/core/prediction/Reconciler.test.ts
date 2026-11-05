@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { PhysicsWorld } from '../physics/World.js';
 import { Reconciler, type InputRecord } from './Reconciler.js';
-import { AT_DEFAULT_SHIP_SCALE } from '../../../src/shared-types/shipScale/config.js';
+import { AT_AUTHORED_SHIP_SCALE } from '../../../src/shared-types/shipScale/config.js';
 
 const PLAYER = 'test-player';
 
@@ -16,7 +16,7 @@ function makeInput(tick: number, thrust = false): InputRecord {
 }
 
 // Locks authored 1× numbers; other scales: tests/unit/shipScaleInvariants.test.ts.
-describe.runIf(AT_DEFAULT_SHIP_SCALE)('Reconciler', () => {
+describe.runIf(AT_AUTHORED_SHIP_SCALE)('Reconciler', () => {
   it('records inputs without throwing', async () => {
     const world = await makeWorld();
     const r = new Reconciler(world, PLAYER);

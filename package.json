@@ -16,6 +16,7 @@
     "audit:thin-wrappers": "node scripts/audit-thin-wrappers.mjs",
     "audit:query": "node scripts/query-audit.mjs",
     "test": "vitest run",
+    "test:authored-scale": "node scripts/test-authored-scale.mjs",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:gc": "vitest run --config vitest.gc.config.ts",
