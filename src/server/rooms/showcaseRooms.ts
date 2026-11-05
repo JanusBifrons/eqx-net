@@ -221,7 +221,7 @@ const GARRISON_PROFILE: BaseProfile = {
   levelCap: TIER_LEVEL_CAP.stronghold[1],
   fenced: true,
 };
-const GARRISON_EXTENT = grownExtent(growBase(GARRISON_PROFILE, 7, []).placements);
+export const GARRISON_EXTENT = grownExtent(growBase(GARRISON_PROFILE, 7, []).placements);
 export const SHOWCASE_GARRISON_OPTS = {
   sectorKey: 'showcase-garrison',
   testMode: true,

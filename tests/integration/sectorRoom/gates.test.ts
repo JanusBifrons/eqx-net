@@ -11,6 +11,16 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { GATE_OPEN_A } from '../../../src/core/structures/gateLogic.js';
+import { GATE_APPROACH_DEPTH } from '../../../src/core/structures/gateGeometry.js';
+import { structureHalfExtents } from '../../../src/shared-types/structureKinds.js';
+import { DEFAULT_SHIP_KIND } from '../../../src/shared-types/shipKinds.js';
+import { tuningFor } from '../../../src/shared-types/shipScale/lookup.js';
+
+// Spawn in the approach zone but clear of the gate box (the join nudges a
+// ship out of any structure by its kind's spawn clearance, which grows with
+// the ship scale). Derived, so the layout holds at any scale.
+const GATE_Y = -900;
+const SPAWN_LY = structureHalfExtents('shield_gate').hh + tuningFor(DEFAULT_SHIP_KIND).spawnClearance + 10;
 
 // Joins keep a requested playerId only when it is a UUID.
 const OWNER = '6a7e0000-0000-4000-8000-0000000000a1';
@@ -19,7 +29,7 @@ function base(gateAccess?: 'allies' | 'owner' | 'open') {
   return [
     { kind: 'capital', x: 0, y: 0 },
     { kind: 'connector', x: 0, y: -350 },
-    { kind: 'shield_gate', x: 0, y: -900, ...(gateAccess ? { gateAccess } : {}) },
+    { kind: 'shield_gate', x: 0, y: GATE_Y, ...(gateAccess ? { gateAccess } : {}) },
   ];
 }
 
@@ -27,6 +37,10 @@ describe('SectorRoom integration — Shield Gate opens on approach (phase V gate
   let harness: SectorTestHarness;
   afterEach(async () => {
     if (harness) await harness.cleanup();
+  });
+
+  it('the spawn sits in the approach zone at this ship scale', () => {
+    expect(SPAWN_LY).toBeLessThanOrEqual(GATE_APPROACH_DEPTH);
   });
 
   async function boot(gateAccess?: 'allies' | 'owner' | 'open') {
@@ -38,7 +52,7 @@ describe('SectorRoom integration — Shield Gate opens on approach (phase V gate
       prebuiltStructures: base(gateAccess),
       prebuiltStructuresOwner: OWNER,
       defaultSpawnX: 0,
-      defaultSpawnY: -1150,
+      defaultSpawnY: GATE_Y - SPAWN_LY,
     });
     // The room exists once a client joins. A pending (not yet active) hull never
     // opens a gate, so this observer leaves the gate untouched.
