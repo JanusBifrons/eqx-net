@@ -203,8 +203,8 @@ export const GUNSHIP: ShipKind = ShipKindSchema.parse({
     {
       id: 'forward',
       localX: 0,
-      localY: -12,        // pivot near the nose
-      baseAngle: 0,       // fires forward (−y)
+      localY: 12,         // pivot near the nose (game space: +y is forward; was -12, which sat it on the tail — turrets plan T3)
+      baseAngle: 0,       // fires forward
       arcMin: -Math.PI / 4,
       arcMax: Math.PI / 4,
       rotationSpeed: 3,
@@ -217,8 +217,8 @@ export const GUNSHIP: ShipKind = ShipKindSchema.parse({
     {
       id: 'rear',
       localX: 0,
-      localY: 10,         // pivot near the tail
-      baseAngle: Math.PI, // fires backward (+y)
+      localY: -10,        // pivot near the tail (was +10, near the nose — turrets plan T3)
+      baseAngle: Math.PI, // fires backward
       arcMin: -Math.PI / 2,
       arcMax: Math.PI / 2,
       rotationSpeed: 3,

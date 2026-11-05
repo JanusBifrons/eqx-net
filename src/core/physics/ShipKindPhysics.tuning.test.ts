@@ -77,8 +77,9 @@ describe('ship-kind tuning lock (2026-05-18 slow-down pass)', () => {
     // 14 → 15 on Living World P1b: appended robot-circle + robot-hexagon (pure
     // append — existing kinds unchanged). 15 → 16 on P2: appended trader-hauler.
     // 16 → 17 on P3: appended robot-nexus. 17 → 18 on P3b: robot-harvester.
-    // 18 → 19 on P3c: robot-circle's mount → charge-laser.
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(19);
+    // 18 → 19 on P3c: robot-circle's mount → charge-laser. 19 → 20 on turrets
+    // T3: the gunship's two mounts moved to the nose / tail (positions only).
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(20);
   });
 
   for (const kindKey of Object.keys(EXPECTED) as (keyof typeof EXPECTED)[]) {

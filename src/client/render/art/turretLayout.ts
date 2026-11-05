@@ -17,6 +17,9 @@ import { getStructureKind } from '../../../shared-types/structureKinds.js';
 import { getWeapon, type WeaponId } from '../../../core/combat/WeaponCatalogue.js';
 import { MUZZLE_CLEARANCE } from '../../../core/combat/Weapons.js';
 import { familyFor, type TurretFamily } from './fx/turretFx.js';
+import {
+  isChinMount, shipBarrelLength, shipBarrelWidth, shipCapRadius, shipMountMuzzle, structureTurretMuzzle, structureTurretRadius,
+} from '../../../core/combat/muzzle.js';
 
 export interface TurretPlace {
   mount: WeaponMount;
@@ -31,6 +34,9 @@ export interface TurretPlace {
   ring: number;
   /** A fixed chin gun: its tip is the game's existing muzzle point. */
   chin: boolean;
+  /** Pivot → where the shot leaves: the SHARED muzzle (core/combat/muzzle.ts),
+   *  so the drawn tip and the server's fire point agree (#15). */
+  muzzle: number;
 }
 
 function familyOf(m: WeaponMount): TurretFamily {
@@ -44,20 +50,21 @@ export function shipTurrets(kindId: string): TurretPlace[] {
   const R = k.radius;
   return (k.mounts ?? []).map((m) => {
     const family = familyOf(m);
-    const chin = m.localX === 0 && m.localY === 0 && m.arcMin === 0 && m.arcMax === 0;
-    if (chin) {
-      const len = Math.min(MUZZLE_CLEARANCE * 0.55, Math.max(7, R * 0.7));
-      const wid = Math.max(2, R * 0.17);
+    if (isChinMount(m)) {
+      // A chin gun ends at today's muzzle point, so its shot needs no change.
+      const len = Math.min(MUZZLE_CLEARANCE * 0.55, shipBarrelLength(R));
+      const wid = shipBarrelWidth(R);
       const cap = Math.max(2.4, wid * 1.25);
-      return { mount: m, family, px: 0, py: -(MUZZLE_CLEARANCE - len), len, wid, cap, ring: cap * 1.35, chin: true };
+      return { mount: m, family, px: 0, py: -(MUZZLE_CLEARANCE - len), len, wid, cap, ring: cap * 1.35, chin: true, muzzle: len };
     }
+    const muzzle = shipMountMuzzle(k, m)!;
     if (family === 'missile') {
-      const cap = Math.max(3.2, R * 0.2);
-      return { mount: m, family, px: m.localX, py: -m.localY, len: 0, wid: cap, cap, ring: cap * 1.45, chin: false };
+      const cap = shipCapRadius(R, true);
+      return { mount: m, family, px: m.localX, py: -m.localY, len: 0, wid: cap, cap, ring: cap * 1.45, chin: false, muzzle };
     }
-    const wid = Math.max(2, R * 0.17);
-    const cap = Math.max(3, wid * 1.5);
-    return { mount: m, family, px: m.localX, py: -m.localY, len: Math.max(7, R * 0.7), wid, cap, ring: cap * 1.35, chin: false };
+    const wid = shipBarrelWidth(R);
+    const cap = shipCapRadius(R, false);
+    return { mount: m, family, px: m.localX, py: -m.localY, len: shipBarrelLength(R), wid, cap, ring: cap * 1.35, chin: false, muzzle };
   });
 }
 
@@ -65,21 +72,22 @@ export function shipTurrets(kindId: string): TurretPlace[] {
  *  turrets (they keep their drill line), so they're left out. */
 export function structureTurrets(kindId: string): TurretPlace[] {
   const sk = getStructureKind(kindId);
-  const R = Math.min(sk.footprint?.w ?? 140, sk.footprint?.h ?? 140) / 2;
+  const R = structureTurretRadius(kindId);
   return (sk.mounts ?? []).filter((m) => m.id !== 'drill').map((m) => {
     const family = familyOf(m);
+    const muzzle = structureTurretMuzzle(kindId, m.weaponId);
     if (family === 'missile') {
       const cap = R * 0.4;
-      return { mount: m, family, px: m.localX, py: -m.localY, len: 0, wid: cap, cap, ring: cap * 1.3, chin: false };
+      return { mount: m, family, px: m.localX, py: -m.localY, len: 0, wid: cap, cap, ring: cap * 1.3, chin: false, muzzle };
     }
     const cap = R * 0.34;
-    return { mount: m, family, px: m.localX, py: -m.localY, len: R * 0.68, wid: R * 0.13, cap, ring: cap * 1.3, chin: false };
+    return { mount: m, family, px: m.localX, py: -m.localY, len: R * 0.68, wid: R * 0.13, cap, ring: cap * 1.3, chin: false, muzzle };
   });
 }
 
 /** Distance from the pivot to where the shot leaves (the gun tip). */
 export function muzzleReach(t: TurretPlace): number {
-  return t.chin ? t.len : Math.max(t.len, t.cap * 0.8);
+  return t.muzzle;
 }
 
 const HAS = new Map<string, boolean>();
