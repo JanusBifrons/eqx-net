@@ -2,7 +2,8 @@
  * Depth, scale and speed (plan iridescent-seeking-rainbow v4, round 2).
  */
 import { describe, it, expect } from 'vitest';
-import { DEPTH_LADDER, hashKey, landmarkScreen, nebulaCell, nebulaDensityAt, nebulaDensityAtSeed, nebulaRegions, visitNebulae, sectorSky, skyCell, SKY_LAYERS, SPEED_FX, speedFactor, visitSkyLayer, newSpeedFxState, stepSpeedFx, speedZoomFor } from './depth.js';
+import { DEPTH_LADDER, hashKey, landmarkScreen, nebulaCell, nebulaDensityAt, nebulaDensityAtSeed, nebulaRegions, visitNebulae, sectorSky, skyCell, SKY_LAYERS, SPEED_FX, speedFactor, visitSkyLayer, newSpeedFxState, stepSpeedFx, speedZoomFor, speedFxFullSpeed } from './depth.js';
+import { getShipKind } from '../../../../shared-types/shipKinds.js';
 
 describe('depth ladder', () => {
   it('spreads from very far to in front of the world, far to near', () => {
@@ -152,5 +153,32 @@ describe('speed effects state (C3)', () => {
     expect(speedZoomFor('large', 1)).toBeCloseTo(0.8, 10);
     expect(speedZoomFor('large', 0)).toBe(1);
     expect(speedZoomFor('off', 1)).toBe(1);
+  });
+});
+
+/**
+ * Speed effects follow ship size (invariant 18). With a fixed 750 u/s "full
+ * speed" (the authored 1× fighter), 2× ships, slower under the size-based
+ * motion model (530–672 u/s), only reached 70–90% of the effect at full boost
+ * (found after the 2026-11-05 switch to 2× B).
+ */
+describe('speedFxFullSpeed — full speed is the ship\'s own top speed', () => {
+  it('is the scaled catalogue top speed of the pilot\'s kind', () => {
+    expect(speedFxFullSpeed('fighter')).toBe(getShipKind('fighter').maxSpeed);
+    expect(speedFxFullSpeed('heavy')).toBe(getShipKind('heavy').maxSpeed);
+  });
+
+  it('a ship flying at its top speed reads as full speed', () => {
+    for (const id of ['fighter', 'scout', 'heavy']) {
+      const top = getShipKind(id).maxSpeed;
+      const st = newSpeedFxState();
+      // 2 s of flight at top speed, 60 fps, along +x.
+      for (let i = 0; i <= 120; i++) stepSpeedFx(st, (top * i) / 60, 0, (i * 1000) / 60, speedFxFullSpeed(id));
+      expect(st.sf, id).toBeGreaterThan(0.95);
+    }
+  });
+
+  it('with no ship it falls back to the default kind', () => {
+    expect(speedFxFullSpeed(null)).toBe(getShipKind(null).maxSpeed);
   });
 });
