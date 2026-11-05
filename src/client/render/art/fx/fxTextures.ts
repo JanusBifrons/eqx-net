@@ -14,6 +14,8 @@
  *    so they can be drawn as a `TilingSprite`.
  */
 
+import { exhaustTrailTex, flameTex } from './engineFx.js';
+
 export interface Img { w: number; h: number; data: Uint8ClampedArray }
 
 function img(w: number, h: number): Img {
@@ -690,7 +692,8 @@ export type FxId =
   | 'shieldDome' | 'shieldContact' | 'shieldHit' | 'fireball'
   | 'spikeStar' | 'galaxy' | 'sun' | 'wisp' | 'dust'
   | 'starsFar' | 'starsMid' | 'starsNear' | 'planet' | 'nebula'
-  | 'fenceStrip' | 'fenceRipple' | 'fenceContact';
+  | 'fenceStrip' | 'fenceRipple' | 'fenceContact'
+  | 'flame' | 'flameCore' | 'exhaustTrail';
 
 export interface FxSpec {
   /** Wraps (drawn as a TilingSprite): gets its own texture, not an atlas slot. */
@@ -713,6 +716,7 @@ export const FX_SPECS: Readonly<Record<FxId, FxSpec>> = {
   fenceStrip: { tile: false, flip: { frames: 8, cols: 2, cell: 128 } },
   fenceRipple: { tile: false, flip: { frames: 8, cols: 2, cell: 128 } },
   fenceContact: { tile: false },
+  flame: { tile: false }, flameCore: { tile: false }, exhaustTrail: { tile: false },
 };
 
 export function isFxId(id: string): id is FxId {
@@ -755,6 +759,9 @@ export function bakeFxImg(id: FxId, variant: string | undefined, seed: number | 
     case 'fenceStrip': return fenceStripFlipbook(8, 128, 48).sheet;
     case 'fenceRipple': return fenceRippleFlipbook(8, 128, 48).sheet;
     case 'fenceContact': return fenceContactTex(128, 48);
+    case 'flame': return flameTex(128, 32, 0);
+    case 'flameCore': return flameTex(128, 32, 1);
+    case 'exhaustTrail': return exhaustTrailTex(128, 16);
     case 'nebula': {
       const k: NebulaKind = variant === 'reflection' || variant === 'dark' ? variant : 'emission';
       return nebulaTex(k, 512, seed ?? 21);

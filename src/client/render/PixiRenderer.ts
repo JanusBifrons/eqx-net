@@ -33,6 +33,7 @@ import { warmUpJobs } from './art/warmUp.js';
 import { Backdrop } from './art/fx/Backdrop.js';
 import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
+import { FxEngines } from './art/fx/FxEngines.js';
 import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { SHIELD_RADIUS_PAD } from '../../shared-types/shipKinds.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
@@ -736,6 +737,10 @@ export class PixiRenderer implements IRenderer {
       this._fxMissileTrails = new FxMissileTrails(art);
       this.shipContainer.addChild(this._fxMissileTrails.smokeLayer, this._fxExplosions.smokeLayer, this._fxMissileTrails.glowLayer, this._fxExplosions.fireLayer);
       this._missileUpdaterCtx.fxTrails = this._fxMissileTrails;
+      // Engine exhaust: a flame + ribbon at every Machined nozzle, for every
+      // ship (players and drones). Under the hulls; ship sprites are added later.
+      this._fxEngines = new FxEngines(art, () => this.effects?.getQuality() ?? 'medium');
+      this.shipContainer.addChild(this._fxEngines.trailLayer, this._fxEngines.flameLayer, this._fxEngines.glowLayer);
       this._missileUpdaterCtx.fxExplosions = this._fxExplosions;
       // B5: shields (invisible at rest; hit ripples, held laser contacts,
       // break) and fences (energy line, raise / power-loss / gate).
@@ -2099,6 +2104,7 @@ export class PixiRenderer implements IRenderer {
       // Engine continuous emitters — drive from mirror.boostingShips /
       // thrustingShips Sets (M5 of plan wiggly-puppy). Set diff per frame
       // → setContinuous on transitions only (no-op on identical state).
+      this.drawFxEngines(mirror);
       this.syncEngineContinuousEffects(mirror);
 
       const nowMs = performance.now();
@@ -2134,14 +2140,45 @@ export class PixiRenderer implements IRenderer {
    *  transitions. Mirrors the existing thrust/boost flame ownership in
    *  spriteBuilders — those Graphics flames continue to render (they are
    *  the minimal-tier fallback); EngineEmitter ADDS particle trails. */
+  /** New engine exhaust for every ship sprite with Machined art: players
+   *  pass their thrust / boost input, drones (`swarm-*`) follow their speed.
+   *  Lingering hulls and scrap are skipped. Reads the sprite's resolved pose
+   *  (one pose per frame). Ships it draws skip today's particle emitter. */
+  private drawFxEngines(mirror: RenderMirror): void {
+    const fx = this._fxEngines;
+    if (!fx) return;
+    const now = performance.now();
+    const dt = this._fxEnginesLastMs > 0 ? Math.min(0.1, (now - this._fxEnginesLastMs) / 1000) : 1 / 60;
+    this._fxEnginesLastMs = now;
+    fx.beginFrame();
+    for (const [key, sp] of this.sprites) {
+      if (!sp.visible) continue;
+      const h = this._artCtx.handles.get(key);
+      if (!h || h.job.type !== 'ship' || !h.ship) continue;
+      let thrust: -1 | 0 | 1, boost: -1 | 0 | 1;
+      if (mirror.ships.has(key)) {
+        thrust = mirror.thrustingShips?.has(key) ? 1 : 0;
+        boost = mirror.boostingShips?.has(key) ? 1 : 0;
+      } else if (key.startsWith('swarm-')) {
+        thrust = -1; boost = -1;
+      } else continue;
+      let top = this._fxTopSpeed.get(h.job.id);
+      if (top === undefined) { top = getShipKind(h.job.id).maxSpeed; this._fxTopSpeed.set(h.job.id, top); }
+      fx.draw(key, h.ship.nozzles, sp.x, sp.y, sp.rotation, thrust, boost, top, dt, now);
+    }
+    fx.endFrame();
+  }
+
   private syncEngineContinuousEffects(mirror: RenderMirror): void {
     if (!this.effects) return;
     const thrust = mirror.thrustingShips;
     const boost = mirror.boostingShips;
+    // Ships drawn by the new exhaust don't also get today's particles.
+    const fxe = this._fxEngines;
 
     if (thrust) {
       for (const id of thrust) {
-        if (!this._activeThrustIds.has(id)) {
+        if (!this._activeThrustIds.has(id) && !fxe?.drew(id)) {
           // Per-kind nozzle offset + plume scale, computed once at
           // registration (not per frame) from the ship catalogue.
           this.effects.setContinuous(id, 'thrust', true, undefined, engineProfileForKind(mirror.ships.get(id)?.kind));
@@ -2149,7 +2186,7 @@ export class PixiRenderer implements IRenderer {
         }
       }
       for (const id of this._activeThrustIds) {
-        if (!thrust.has(id)) {
+        if (!thrust.has(id) || fxe?.drew(id)) {
           this.effects.setContinuous(id, 'thrust', false);
           this._activeThrustIds.delete(id);
         }
@@ -2161,13 +2198,13 @@ export class PixiRenderer implements IRenderer {
 
     if (boost) {
       for (const id of boost) {
-        if (!this._activeBoostIds.has(id)) {
+        if (!this._activeBoostIds.has(id) && !fxe?.drew(id)) {
           this.effects.setContinuous(id, 'boost', true, undefined, engineProfileForKind(mirror.ships.get(id)?.kind));
           this._activeBoostIds.add(id);
         }
       }
       for (const id of this._activeBoostIds) {
-        if (!boost.has(id)) {
+        if (!boost.has(id) || fxe?.drew(id)) {
           this.effects.setContinuous(id, 'boost', false);
           this._activeBoostIds.delete(id);
         }
@@ -2477,6 +2514,12 @@ export class PixiRenderer implements IRenderer {
   /** New explosions + missile smoke (`?fx=new`, B4). */
   private _fxExplosions: FxExplosions | null = null;
   private _fxMissileTrails: FxMissileTrails | null = null;
+  private _fxEngines: FxEngines | null = null;
+  private _fxEnginesLastMs = 0;
+  /** Scratch for the test-only particle count in `artStats`. */
+  private readonly _engineDbgScratch: number[] = [];
+  /** Top speed per ship kind (normalises a drone's engine level). */
+  private readonly _fxTopSpeed = new Map<string, number>();
 
   /** New weapon effects (`?fx=new`, B3). */
   private _fxLiveBeams: FxBeams | null = null;
@@ -2695,7 +2738,7 @@ export class PixiRenderer implements IRenderer {
 
   /** Machined art status: the service's counts plus how many ship sprites
    *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;
@@ -2705,7 +2748,7 @@ export class PixiRenderer implements IRenderer {
       if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
     const art = this._artCtx.art;
-    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, ...(art ? art.stats() : {}) };
+    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, ...(art ? art.stats() : {}) };
   }
 
   dispose(): void {

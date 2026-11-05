@@ -68,6 +68,8 @@ const FEATURE_SPECS: string[] = [
   '**/account-bound-identity.spec.ts',
   // New weapon effects (plan iridescent-seeking-rainbow v3, B3).
   '**/fx-weapons.spec.ts',
+  // New engine exhaust on every ship (engine fx, 2026-11-05).
+  '**/fx-engines.spec.ts',
   // Fence-hit fix (2026-11-04).
   '**/fence-hits.spec.ts',
   // Living World P2 — Trade tab → deal → a hauler arrives.
