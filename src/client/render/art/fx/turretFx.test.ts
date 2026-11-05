@@ -1,26 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { familyFor, flashFrameAt, heatAfter, muzzleFlashFlipbook, nearestMuzzle, recoilAt, turretBarrelTex, turretBaseTex } from './turretFx.js';
-
-const alpha = (i: { w: number; data: Uint8ClampedArray }, x: number, y: number): number => i.data[(y * i.w + x) * 4 + 3]!;
+import { familyFor, flashFrameAt, heatAfter, muzzleFlashFlipbook, nearestMuzzle, recoilAt } from './turretFx.js';
 
 describe('turret bakes', () => {
-  it('housings are round discs (racks are boxes), transparent at the corners', () => {
-    for (const f of ['bolt', 'beam', 'charge'] as const) {
-      const t = turretBaseTex(f, 64);
-      expect(alpha(t, 32, 32)).toBe(255);
-      expect(alpha(t, 2, 2)).toBe(0);
-    }
-    const rack = turretBaseTex('missile', 64);
-    expect(alpha(rack, 32, 32)).toBe(255);
-    expect(alpha(rack, 6, 32)).toBeGreaterThan(0); // reaches the side like a box
-  });
-
-  it('a bolt barrel has a muzzle brake wider than its body', () => {
-    const b = turretBarrelTex('bolt', 16, 64);
-    const width = (row: number): number => { let n = 0; for (let x = 0; x < 16; x++) if (alpha(b, x, row) > 128) n++; return n; };
-    expect(width(3)).toBeGreaterThan(width(30));
-  });
-
   it('the flash shrinks frame by frame', () => {
     const fb = muzzleFlashFlipbook(4, 64);
     const sum = (f: number): number => { let s = 0; for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) s += fb.sheet.data[(y * fb.sheet.w + f * 64 + x) * 4 + 3]!; return s; };

@@ -142,6 +142,8 @@ export interface ShipForgeOpts {
   seedKey?: string;
   /** A dead piece: no canopy, engines or running lights. */
   scrap?: boolean;
+  /** Turret rings to cut into the hull (local world units, Pixi-up), R&D. */
+  rings?: ReadonlyArray<{ x: number; y: number; r: number }>;
 }
 
 /**
@@ -365,6 +367,8 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     });
   }
 
+  if (opts.rings) for (const rg of opts.rings) stampTurretRing(f, rg.x, rg.y, rg.r);
+
   // Nozzles at the stern.
   if (arch !== 'robot' && !opts.scrap) {
     // Stern = the hull outline's rear extent (same rule as render/pixi/engineGeometry.ts).
@@ -516,6 +520,8 @@ export interface StructureForgeOpts {
   seed?: number;
   /** Override the accent paint (owner faction). */
   accent?: number;
+  /** Turret rings to cut into the deck (local world units, Pixi-up), R&D. */
+  rings?: ReadonlyArray<{ x: number; y: number; r: number }>;
 }
 
 const DECK_HEX = 0x1d2433;
@@ -639,6 +645,7 @@ export function forgeStructure(kindId: string, opts: StructureForgeOpts): Fields
     }
     f.navLights.push({ x: l.x, y: l.y, color: l.color });
   }
+  if (opts.rings) for (const rg of opts.rings) stampTurretRing(f, rg.x, rg.y, rg.r);
   return f;
 }
 
@@ -652,3 +659,143 @@ export function cavity(f: Fields, radiusU: number): Float32Array {
 }
 
 export { insidePoly, PROPOSED_FOOTPRINTS };
+
+// ------------------------------------------------------------------ turrets (R&D)
+
+/**
+ * Cut a turret ring into a hull or deck at (cx, cy), radius r (world units):
+ * a recessed dark seat the gun sits in, a raised worn collar, a groove, and a
+ * lip that blends back into the plating. Lit and shadowed with the hull, so
+ * the turret reads as built in rather than stuck on top.
+ */
+export function stampTurretRing(f: Fields, cx: number, cy: number, r: number): void {
+  const g = f.g;
+  const ctx = Math.round(cx * g.ppu + g.ox), cty = Math.round(cy * g.ppu + g.oy);
+  const ci = Math.max(0, Math.min(g.h - 1, cty)) * g.w + Math.max(0, Math.min(g.w - 1, ctx));
+  const base = f.height[ci] ?? 0;
+  const R = r * 1.15;
+  const x0 = Math.floor((cx - R) * g.ppu + g.ox), x1 = Math.ceil((cx + R) * g.ppu + g.ox);
+  const y0 = Math.floor((cy - R) * g.ppu + g.oy), y1 = Math.ceil((cy + R) * g.ppu + g.oy);
+  const trim = lin(PALETTE.trim), collar = lin(0x8a93a1);
+  for (let ty = Math.max(0, y0); ty <= Math.min(g.h - 1, y1); ty++) {
+    for (let tx = Math.max(0, x0); tx <= Math.min(g.w - 1, x1); tx++) {
+      const i = ty * g.w + tx;
+      if (f.cov[i]! < 0.5) continue;
+      const wx = (tx + 0.5 - g.ox) / g.ppu - cx, wy = (ty + 0.5 - g.oy) / g.ppu - cy;
+      const k = Math.hypot(wx, wy) / r;
+      if (k > 1.15) continue;
+      if (k < 0.62) {
+        f.height[i] = base - r * 0.12;
+        f.mat[i] = MAT.TRIM; f.key[i] = PALETTE.trim; setAlbedo(f, i, trim, 0.85);
+      } else if (k < 0.82) {
+        const t = 1 - Math.abs((k - 0.72) / 0.1);
+        f.height[i] = base + r * 0.22 * Math.sqrt(Math.max(0, t));
+        f.mat[i] = MAT.METAL; f.key[i] = PALETTE.metal; setAlbedo(f, i, collar, 0.95);
+      } else if (k < 0.9) {
+        f.height[i] = base - r * 0.05;
+        f.mat[i] = MAT.TRIM; f.key[i] = PALETTE.trim; setAlbedo(f, i, trim, 0.7);
+      } else {
+        // Lip: a soft rise that fades into the existing plating.
+        f.height[i] = f.height[i]! + r * 0.08 * (1 - Math.abs(k - 1) / 0.15);
+      }
+    }
+  }
+}
+
+export type GunFamily = 'bolt' | 'beam' | 'missile' | 'charge';
+
+export interface TurretGunSpec {
+  family: GunFamily;
+  /** Hull paint (the cap is painted to match its ship or structure). */
+  paint: number;
+  /** Barrel length from the pivot to the tip, width, cap radius (world units). */
+  len: number;
+  wid: number;
+  cap: number;
+  ppu: number;
+}
+
+/**
+ * The turning part of a turret, through the same fields as a hull: a painted
+ * domed cap with a groove and a hub, and a bare-metal barrel pointing forward
+ * (-y) with ring seams; per family a muzzle brake and bore (bolt), a lens
+ * (beam), coils (charge) or a two-tube rack (missile). Light it with
+ * litFrame at every sun step, like a ship, and pick the frame by the gun's
+ * own world rotation.
+ */
+export function forgeTurretGun(spec: TurretGunSpec): Fields {
+  const { family, len, wid, cap, ppu } = spec;
+  const hw = wid / 2;
+  const rack = family === 'missile';
+  const capPts: Array<readonly [number, number]> = [];
+  for (let k = 0; k < 24; k++) { const a = (k / 24) * Math.PI * 2; capPts.push([Math.cos(a) * cap, Math.sin(a) * cap]); }
+  const capPoly: Poly = capPts;
+  const rackPoly: Poly = [[-cap, -cap * 0.75], [cap, -cap * 0.75], [cap, cap * 0.75], [-cap, cap * 0.75]];
+  const brake = family === 'bolt' ? hw * 1.45 : family === 'beam' ? hw * 1.25 : hw;
+  const tipFrac = family === 'bolt' ? 0.86 : family === 'beam' ? 0.8 : 1;
+  const bodyPoly: Poly = [[-hw, -len * tipFrac], [hw, -len * tipFrac], [hw, 0], [-hw, 0]];
+  const tipPoly: Poly = [[-brake, -len], [brake, -len], [brake, -len * tipFrac], [-brake, -len * tipFrac]];
+  const polys = rack ? [rackPoly] : tipFrac < 1 ? [capPoly, bodyPoly, tipPoly] : [capPoly, bodyPoly];
+  const g = gridFor(polys, ppu, 1.5);
+  const f = newFields(g, paintOf(spec.paint));
+  // Anti-aliased coverage from the same rasteriser as the hulls.
+  for (const poly of polys) { const c = rasterPoly(g, poly); for (let i = 0; i < c.length; i++) if (c[i]! > f.cov[i]!) f.cov[i] = c[i]!; }
+  const paint = lin(f.paint), metal = lin(PALETTE.metal), worn = lin(PALETTE.metalWorn), trim = lin(PALETTE.trim), glass = lin(PALETTE.glass);
+  const bore = lin(0x0b0c10);
+  const capH = cap * 0.55;
+  const seed = hashStr('turret:' + family);
+  const seam = len / Math.max(1, Math.round(len / Math.max(0.5, wid * 1.6)));
+  for (let ty = 0; ty < g.h; ty++) {
+    for (let tx = 0; tx < g.w; tx++) {
+      const i = ty * g.w + tx;
+      const wx = (tx + 0.5 - g.ox) / g.ppu, wy = (ty + 0.5 - g.oy) / g.ppu;
+      const nz = valueNoise(wx * 0.6, wy * 0.6, seed);
+      let h = -1, mat: number = MAT.NONE, col = metal, kk = 1, key = PALETTE.metal;
+      // Cap (a disc, or the rack's box).
+      const inCap = rack ? Math.abs(wx) <= cap && Math.abs(wy) <= cap * 0.75 : Math.hypot(wx, wy) <= cap;
+      if (inCap) {
+        const k = rack ? Math.max(Math.abs(wx) / cap, Math.abs(wy) / (cap * 0.75)) : Math.hypot(wx, wy) / cap;
+        h = capH * (rack ? 0.8 + 0.2 * Math.sqrt(Math.max(0, 1 - k * k)) : Math.sqrt(Math.max(0, 1 - k * k)) * 0.7 + 0.3);
+        mat = MAT.PAINT; col = paint; key = f.paint; kk = 0.92 + 0.1 * nz;
+        if (!rack && Math.abs(k - 0.74) < 0.06) { mat = MAT.TRIM; col = trim; key = PALETTE.trim; h -= capH * 0.08; }
+        if (!rack && k < 0.3) { mat = MAT.METAL; col = worn; key = PALETTE.metal; h += capH * 0.1; }
+        if (rack) {
+          // Two launch tubes: dark round mouths in metal sleeves.
+          for (const sx of [-cap * 0.48, cap * 0.48]) {
+            const d = Math.hypot(wx - sx, wy + cap * 0.1) / (cap * 0.36);
+            if (d < 1) {
+              const mouth = d < 0.62;
+              mat = mouth ? MAT.NOZZLE : MAT.METAL; col = mouth ? bore : worn; key = mouth ? PALETTE.nozzle : PALETTE.metal;
+              h = capH * (mouth ? 0.4 : 1.05);
+            }
+          }
+        }
+      }
+      // Barrel (over the cap where they overlap).
+      if (!rack && wy <= 0 && wy >= -len) {
+        const v = -wy / len; // 0 pivot .. 1 tip
+        const half = v > tipFrac ? brake : hw;
+        const u = wx / half;
+        if (Math.abs(u) <= 1) {
+          const cyl = Math.sqrt(Math.max(0, 1 - u * u));
+          const bh = capH * 0.75 + half * cyl;
+          if (bh > h) {
+            h = bh; mat = MAT.METAL; col = metal; key = PALETTE.metal; kk = 0.95 + 0.08 * nz;
+            if (v < 0.86 && Math.abs(((len * v) % seam) - seam * 0.5) < Math.max(0.18, 0.6 / ppu)) { mat = MAT.TRIM; col = trim; key = PALETTE.trim; h -= 0.08 * half; }
+            if (family === 'bolt' && v > 0.86) {
+              col = worn;
+              if (v > 0.965 && Math.abs(u) < 0.55) { mat = MAT.NOZZLE; col = bore; key = PALETTE.nozzle; h -= half * 0.6; }
+            }
+            if (family === 'beam' && v > 0.8) { mat = MAT.GLASS; col = glass; key = PALETTE.glass; }
+            if (family === 'charge' && v > 0.25 && Math.sin(v * len * 3.2) > 0.45) col = worn;
+            if (family === 'charge' && v > 0.9) { mat = MAT.GLASS; col = glass; key = PALETTE.glass; }
+          }
+        }
+      }
+      if (h < 0 || f.cov[i]! <= 0) continue;
+      f.height[i] = h; f.mat[i] = mat; f.key[i] = key;
+      setAlbedo(f, i, col, kk);
+    }
+  }
+  return f;
+}

@@ -164,8 +164,12 @@ export class ArtCache {
     return seedVariant(seed);
   }
 
-  machinedShip(id: string, paint?: number): ShipArt {
-    const job: BakeJob = { type: 'ship', id, paint };
+  machinedShip(id: string, paint?: number, rings = false): ShipArt {
+    return this.machinedFrames(rings ? { type: 'ship', id, paint, rings } : { type: 'ship', id, paint });
+  }
+
+  /** Any sun-stepped bake (a ship, or a turret gun): every frame packed. */
+  machinedFrames(job: BakeJob): ShipArt {
     const key = bakeKey(job);
     const hit = this.ships.get(key);
     if (hit) return hit;
@@ -180,8 +184,8 @@ export class ArtCache {
     return art;
   }
 
-  machinedStruct(id: string, rawSeed = 1, accent?: number): StructArt {
-    const job: BakeJob = { type: 'struct', id, seed: seedVariant(rawSeed), accent };
+  machinedStruct(id: string, rawSeed = 1, accent?: number, rings = false): StructArt {
+    const job: BakeJob = rings ? { type: 'struct', id, seed: seedVariant(rawSeed), accent, rings } : { type: 'struct', id, seed: seedVariant(rawSeed), accent };
     const key = bakeKey(job);
     const hit = this.structs.get(key);
     if (hit) return hit;

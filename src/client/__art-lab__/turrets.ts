@@ -8,7 +8,9 @@
  * the barrels differ:
  *  - `today` — the game's own MountVisualManager (flat 2.4 × 20 u bars, the
  *    shot leaving 20 u from the pivot, as in the game);
- *  - `new`   — baked housings + barrels (turretFx) sized to the hull, with
+ *  - `new`   — Machined turrets: a ring cut into the hull bake at each
+ *    mount and a gun forged + lit like the hull (fields.ts
+ *    forgeTurretGun / stampTurretRing, placed by turretLayout.ts), with
  *    recoil, a muzzle flash, tip heat and beam / charge glows.
  * `sizes` shows one gunship at 1×, 1.5× and 2× (the "bigger ships" question).
  * Pixi space (y down); a hull's nose is local -y. Fixed 1/60 s simulation, so
@@ -18,7 +20,8 @@ import { Application, Container, Rectangle, Sprite, Texture, TilingSprite, Canva
 import { ArtCache, SUN_STEPS, type ShipArt } from './assets.js';
 import { seedVariant, type BakeJob } from '../render/art/bake.js';
 import { glowTex, starTileTex, streakTex, type Img } from '../render/art/fx/fxTextures.js';
-import { familyFor, flashFrameAt, heatAfter, muzzleFlashFlipbook, recoilAt, turretBarrelTex, turretBaseTex, type TurretFamily } from '../render/art/fx/turretFx.js';
+import { flashFrameAt, heatAfter, muzzleFlashFlipbook, recoilAt, type TurretFamily } from '../render/art/fx/turretFx.js';
+import { muzzleReach, shipTurrets, structureTurrets, type TurretPlace } from '../render/art/turretLayout.js';
 import { MountVisualManager } from '../render/MountVisualManager.js';
 import { getShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
@@ -85,13 +88,22 @@ async function main(): Promise<void> {
   const cache = new ArtCache();
   const rig = cache.rig;
   const jobs: BakeJob[] = [];
-  for (const d of defs) jobs.push(d.struct ? { type: 'struct', id: d.kind, seed: seedVariant(1) } : { type: 'ship', id: d.kind });
+  /** Paint a turret cap takes: its hull's catalogue colour. */
+  const paintFor = (d: UnitDef): number => {
+    if (d.struct) return getStructureKind(d.kind).color;
+    const sh = getShipKind(d.kind).shape;
+    return sh.kind === 'polygon' ? sh.color : sh.parts[0]!.color;
+  };
+  const placesFor = (d: UnitDef): TurretPlace[] => (d.struct ? structureTurrets(d.kind) : shipTurrets(d.kind));
+  const gunJob = (d: UnitDef, t: TurretPlace): BakeJob =>
+    ({ type: 'turret', id: t.family, paint: paintFor(d), len: Math.max(t.len, 0.1), wid: t.wid, cap: t.cap, ppu: d.struct ? 2.5 : 6 });
+  for (const d of defs) {
+    jobs.push(d.struct ? { type: 'struct', id: d.kind, seed: seedVariant(1), ...(NEW ? { rings: true } : {}) } : { type: 'ship', id: d.kind, ...(NEW ? { rings: true } : {}) });
+    if (NEW) for (const t of placesFor(d)) jobs.push(gunJob(d, t));
+  }
   await cache.prebake(jobs, 4, qs.get('persist') !== '0');
 
-  const fam: TurretFamily[] = ['bolt', 'beam', 'missile', 'charge'];
   const T = {
-    base: Object.fromEntries(fam.map((f) => [f, toTexture(turretBaseTex(f, 64))])) as Record<TurretFamily, Texture>,
-    barrel: Object.fromEntries(fam.map((f) => [f, toTexture(turretBarrelTex(f, 16, 64))])) as Record<TurretFamily, Texture>,
     flash: [] as Texture[],
     glow: toTexture(glowTex(64)),
     streak: toTexture(streakTex(128, 32)),
@@ -116,8 +128,9 @@ async function main(): Promise<void> {
   interface MountV {
     m: WeaponMount; family: TurretFamily; cd: number; charge: boolean; speed: number;
     angle: number; cdLeft: number; lastShot: number; heat: number; beamUntil: number; chargeFrom: number;
-    // new arm
-    barrelPivot: Container | null; barrel: Sprite | null; flash: Sprite | null; tipGlow: Sprite | null; len: number; wid: number;
+    // new arm: the layout, and the gun (two sun frames cross-faded) on a pivot
+    place: TurretPlace | null; pivot: Container | null; gunA: Sprite | null; gunB: Sprite | null; gunArt: ShipArt | null;
+    flash: Sprite | null; tipGlow: Sprite | null; len: number; wid: number; reach: number;
     // world muzzle this frame
     mx: number; my: number;
   }
@@ -126,13 +139,13 @@ async function main(): Promise<void> {
     const c = new Container(); c.position.set(d.x, d.y); c.scale.set(d.size); unitL.addChild(c);
     let a: Sprite, b: Sprite | null = null, art: ShipArt | null = null, radius: number, mounts: readonly WeaponMount[], color: number;
     if (d.struct) {
-      const st = cache.machinedStruct(d.kind, 1);
+      const st = cache.machinedStruct(d.kind, 1, undefined, NEW);
       a = new Sprite(st.tex); a.anchor.set(0.5); a.scale.set(1 / st.density); c.addChild(a);
       const sk = getStructureKind(d.kind);
       mounts = sk.mounts ?? []; color = sk.color;
       radius = Math.min(sk.footprint?.w ?? 140, sk.footprint?.h ?? 140) / 2;
     } else {
-      art = cache.machinedShip(d.kind);
+      art = cache.machinedShip(d.kind, undefined, NEW);
       a = new Sprite(art.frames[0]!); b = new Sprite(art.frames[0]!);
       a.anchor.set(0.5); b.anchor.set(0.5); a.scale.set(1 / art.density); b.scale.set(1 / art.density);
       c.addChild(a, b);
@@ -140,34 +153,25 @@ async function main(): Promise<void> {
       mounts = k.mounts ?? []; color = shipPrimaryColor(k); radius = k.radius;
     }
     if (!NEW) mvm.ensureForMounts(`u${ui}`, d.kind, mounts, color, c);
-    const mv: MountV[] = mounts.map((m) => {
+    const places = placesFor(d);
+    const mv: MountV[] = mounts.map((m, mi) => {
       const w = getWeapon(m.weaponId as WeaponId);
       const charge = w.mode === 'hitscan' && (w.chargeTicks ?? 0) > 0;
-      const family = familyFor(m.weaponId, w.mode, charge);
-      const centre = m.localX === 0 && m.localY === 0 && !d.struct;
-      // New sizes: structures scale with their footprint; a turning ship
-      // mount with its housing; a fixed centre gun is a short chin barrel
-      // ending at today's 20 u muzzle (no server change needed for those).
-      const rack = family === 'missile';
-      const len = d.struct ? radius * (rack ? 0.4 : 0.62) : centre ? 9 : rack ? Math.max(5, radius * 0.3) : Math.max(7, radius * 0.75);
-      const wid = d.struct ? radius * (rack ? 0.22 : 0.16) : rack ? Math.max(2.4, radius * 0.12) : Math.max(2.2, radius * 0.2);
+      const place = places[mi]!;
       const v: MountV = {
-        m, family, cd: Math.max(0.22, w.cooldownTicks / 60), charge, speed: w.mode === 'hitscan' ? 0 : Math.min(700, (w as { speed: number }).speed),
+        m, family: place.family, cd: Math.max(0.22, w.cooldownTicks / 60), charge, speed: w.mode === 'hitscan' ? 0 : Math.min(700, (w as { speed: number }).speed),
         angle: 0, cdLeft: 0.3 + ui * 0.07, lastShot: -9, heat: 0, beamUntil: -1, chargeFrom: -1,
-        barrelPivot: null, barrel: null, flash: null, tipGlow: null, len, wid, mx: 0, my: 0,
+        place: NEW ? place : null, pivot: null, gunA: null, gunB: null, gunArt: null, flash: null, tipGlow: null,
+        len: place.len, wid: place.wid, reach: NEW ? muzzleReach(place) : MUZZLE_CLEARANCE, mx: 0, my: 0,
       };
       if (NEW) {
-        const px = m.localX, py = -m.localY - (centre ? MUZZLE_CLEARANCE - len : 0);
-        if (!centre || d.struct) {
-          const hr = d.struct ? radius * 0.42 : Math.max(3.2, wid * (rack ? 1.3 : 1.7));
-          const base = new Sprite(T.base[family]); base.anchor.set(0.5); base.position.set(px, py);
-          base.scale.set((hr * 2) / 64); base.rotation = -m.baseAngle; c.addChild(base);
-        }
-        const pivot = new Container(); pivot.position.set(px, py); c.addChild(pivot);
-        const bar = new Sprite(T.barrel[family]); bar.anchor.set(0.5, 1); bar.scale.set(wid / (16 * 0.6), len / 64); pivot.addChild(bar);
-        const flash = new Sprite(T.flash[0]!); flash.anchor.set(0.5, 1); flash.blendMode = 'add'; flash.tint = SHOT_COLOR[family]; flash.visible = false; pivot.addChild(flash);
-        const tip = new Sprite(T.glow); tip.anchor.set(0.5); tip.blendMode = 'add'; tip.tint = family === 'bolt' ? 0xff6a2a : SHOT_COLOR[family]; tip.alpha = 0; pivot.addChild(tip);
-        v.barrelPivot = pivot; v.barrel = bar; v.flash = flash; v.tipGlow = tip;
+        const gun = cache.machinedFrames(gunJob(d, place));
+        const pivot = new Container(); pivot.position.set(place.px, place.py); c.addChild(pivot);
+        const ga = new Sprite(gun.frames[0]!), gb = new Sprite(gun.frames[0]!);
+        for (const g of [ga, gb]) { g.anchor.set(0.5); g.scale.set(1 / gun.density); pivot.addChild(g); }
+        const flash = new Sprite(T.flash[0]!); flash.anchor.set(0.5, 1); flash.blendMode = 'add'; flash.tint = SHOT_COLOR[place.family]; flash.visible = false; pivot.addChild(flash);
+        const tip = new Sprite(T.glow); tip.anchor.set(0.5); tip.blendMode = 'add'; tip.tint = place.family === 'bolt' ? 0xff6a2a : SHOT_COLOR[place.family]; tip.alpha = 0; pivot.addChild(tip);
+        v.pivot = pivot; v.gunA = ga; v.gunB = gb; v.gunArt = gun; v.flash = flash; v.tipGlow = tip;
       }
       return v;
     });
@@ -195,13 +199,13 @@ async function main(): Promise<void> {
   const muzzleOf = (u: UnitV, mv: MountV): void => {
     // Mount pivot in world, then along the barrel to its tip.
     const c = Math.cos(u.rot), s = Math.sin(u.rot), z = u.d.size;
-    const centre = mv.m.localX === 0 && mv.m.localY === 0 && !u.d.struct;
-    const lx = mv.m.localX, ly = -mv.m.localY;
+    // Today: the mount itself; new: the turret pivot (a chin gun sits ahead of it).
+    const lx = mv.place ? mv.place.px : mv.m.localX, ly = mv.place ? mv.place.py : -mv.m.localY;
     const px = u.d.x + (lx * c - ly * s) * z, py = u.d.y + (lx * s + ly * c) * z;
     const rho = u.rot - (mv.m.baseAngle + mv.angle);
-    // Today and fixed centre guns: the muzzle is 20 u out (the game's
-    // MUZZLE_CLEARANCE); new turning barrels end at their own tip.
-    const reach = (!NEW || centre ? MUZZLE_CLEARANCE : mv.len) * z;
+    // Today: 20 u out (the game's MUZZLE_CLEARANCE); new: the gun's own tip
+    // (a chin gun's tip IS that same 20 u point).
+    const reach = mv.reach * z;
     mv.mx = px + Math.sin(rho) * reach; mv.my = py - Math.cos(rho) * reach;
   };
   let simT = 0;
@@ -286,19 +290,24 @@ async function main(): Promise<void> {
           beam.alpha = 0.9;
         } else beam.visible = false;
         // The new arm's reactions.
-        if (NEW && mv.barrelPivot && mv.barrel && mv.flash && mv.tipGlow) {
-          mv.barrelPivot.rotation = -(mv.m.baseAngle + mv.angle);
+        if (NEW && mv.pivot && mv.gunA && mv.gunB && mv.gunArt && mv.flash && mv.tipGlow) {
+          mv.pivot.rotation = -(mv.m.baseAngle + mv.angle);
+          // Light the gun by its own world rotation, like a hull.
+          let gs = ((rig.sunAz - (u.rot + mv.pivot.rotation)) / (Math.PI * 2)) * SUN_STEPS;
+          gs = ((gs % SUN_STEPS) + SUN_STEPS) % SUN_STEPS;
+          const g0 = Math.floor(gs);
+          mv.gunA.texture = mv.gunArt.frames[g0]!; mv.gunB.texture = mv.gunArt.frames[(g0 + 1) % SUN_STEPS]!; mv.gunB.alpha = gs - g0;
           const since = t - mv.lastShot;
-          const kick = mv.family === 'bolt' || mv.family === 'missile' ? recoilAt(since) * mv.len * (mv.family === 'missile' ? 0.08 : 0.22) : 0;
-          mv.barrel.y = kick;
+          const kick = mv.family === 'bolt' || mv.family === 'missile' ? recoilAt(since) * Math.max(mv.len, mv.wid) * (mv.family === 'missile' ? 0.06 : 0.2) : 0;
+          mv.gunA.y = kick; mv.gunB.y = kick;
           const fr = mv.family === 'bolt' || mv.family === 'missile' ? flashFrameAt(since, T.flash.length) : -1;
-          if (fr >= 0) { mv.flash.visible = true; mv.flash.texture = T.flash[fr]!; mv.flash.y = -mv.len + kick; mv.flash.scale.set((mv.wid * 3.2) / 64, (mv.wid * 4.2) / 64); }
+          if (fr >= 0) { mv.flash.visible = true; mv.flash.texture = T.flash[fr]!; mv.flash.y = -mv.reach + kick; mv.flash.scale.set((mv.wid * 3.2) / 64, (mv.wid * 4.2) / 64); }
           else mv.flash.visible = false;
           // Tip heat (bolts), the emitter glow while a beam holds, the charge wind-up.
           let ga = mv.family === 'bolt' ? mv.heat * 0.8 : 0;
           if (beamOn) ga = 0.9;
           if (mv.family === 'charge' && t >= mv.chargeFrom && t < mv.lastShot) ga = (t - mv.chargeFrom) / (mv.lastShot - mv.chargeFrom);
-          mv.tipGlow.alpha = ga; mv.tipGlow.y = -mv.len + kick;
+          mv.tipGlow.alpha = ga; mv.tipGlow.y = -mv.reach + kick;
           mv.tipGlow.scale.set((mv.wid * (mv.family === 'bolt' ? 1.6 : 3)) / 64 * (1 + 0.4 * ga));
           glow.visible = false;
         } else {
