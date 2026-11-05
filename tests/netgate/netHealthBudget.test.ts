@@ -134,7 +134,8 @@ describe('evaluateNetHealth — the relative∧absolute AND-gate, per metric', (
     const v = evaluateNetHealth(head, baseline);
     expect(v.pass).toBe(false);
     const names = v.failures.map((f) => f.metric).sort();
-    expect(names).toEqual(['maxDriftUnits', 'rollingCorrRate', 'ticksAhead']);
+    // rollingCorrRate breaches too, but it is print-only (not listed).
+    expect(names).toEqual(['maxDriftUnits', 'ticksAhead']);
   });
 });
 
@@ -234,17 +235,23 @@ describe('evaluateNetHealth — per-scenario budgetOverride (multi-scenario gate
   });
 });
 
-describe('NET_HEALTH_BUDGET — the gated set is exactly the five grounded metrics', () => {
-  it('locks the gated metric set (snapshotJitterMs is print-only; changing the set is deliberate)', () => {
+describe('NET_HEALTH_BUDGET — the gated set is exactly the four grounded metrics', () => {
+  it('locks the gated metric set (snapshotJitterMs + rollingCorrRate are print-only; changing the set is deliberate)', () => {
     expect(Object.keys(NET_HEALTH_BUDGET).sort()).toEqual(
       [
         'droppedSnapshotsRecent',
         'maxDriftUnits',
         'meanDriftUnits',
-        'rollingCorrRate',
         'ticksAhead',
       ].sort(),
     );
+  });
+
+  it('rollingCorrRate is print-only: the main-vs-main numbers that failed the gate now pass (2026-11-05)', () => {
+    // workflow_dispatch run 42078214467, IDENTICAL code on both arms.
+    const v = evaluateNetHealth({ ...ok(), rollingCorrRate: 0.95 }, { ...ok(), rollingCorrRate: 0.45 });
+    expect(v.pass).toBe(true);
+    expect(v.failures).toEqual([]);
   });
 
   it('ticksAhead ceiling is the system saturation cap 30 (lookaheadController CEILING_TICKS)', () => {
