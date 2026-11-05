@@ -261,6 +261,9 @@ export function targetUrl(baseUrl: string, target: ShotTarget, testId: string, h
   if (process.env['EQX_SHIP_SCALE']) p.set('shipScale', process.env['EQX_SHIP_SCALE']);
   if (process.env['EQX_SHIP_TUNING']) p.set('shipTuning', process.env['EQX_SHIP_TUNING']);
   if (process.env['EQX_SHIP_KIND_SCALE']) p.set('shipKindScale', process.env['EQX_SHIP_KIND_SCALE']);
+  // Extra URL params for every shot in a run (e.g. `art=machined&fx=new`, so
+  // comparison arms all film the same look).
+  for (const [k, v] of new URLSearchParams(process.env['EQX_SHOWCASE_PARAMS'] ?? '')) p.set(k, v);
   return `${baseUrl}/?${p.toString()}`;
 }
 
