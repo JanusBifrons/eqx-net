@@ -12,9 +12,10 @@
  * respawns it; the load shedder must not quietly delete one). APPEND-ONLY in
  * `catalogueOrder.ts` (invariant #11).
  */
-import { ShipKindSchema, LEGACY_FORWARD_MOUNT, LEGACY_PRIMARY_SLOT, type ShipKind } from './types.js';
+import { defineShipKind } from '../shipScale/defineShipKind.js';
+import { LEGACY_FORWARD_MOUNT, LEGACY_PRIMARY_SLOT, type ShipKind } from './types.js';
 
-export const PATROL_FIGHTER: ShipKind = ShipKindSchema.parse({
+export const PATROL_FIGHTER: ShipKind = defineShipKind({
   id: 'patrol-fighter',
   displayName: 'Patrol Fighter',
   description: "A garrison's patrol craft. Leaves you alone unless you're hostile to its owner.",

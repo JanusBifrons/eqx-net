@@ -158,6 +158,10 @@ export const WeaponMountSchema = z
     /** Catalogue id of the weapon in this mount. Data-driven so a future
      *  loadout UI can swap weapons without touching ship-kind definitions. */
     weaponId: MountWeaponIdSchema,
+    /** Mount size (ship scale infrastructure): scales the weapon's reach,
+     *  projectile radius and splash via `MOUNT_SIZE_TUNING`. Absent ⇒ the
+     *  ship's size-class default (`S` for today's ships). */
+    size: z.enum(['S', 'M', 'L', 'XL']).optional(),
   })
   .strict()
   .refine((m) => m.arcMax >= m.arcMin, {
@@ -231,8 +235,26 @@ export const ShipKindSchema = z
      *    1     = on-rails (cancels lateral every tick)
      *  Lower = more drifty. */
     lateralGrip: z.number().min(0).max(1),
-    /** Collider radius. Also drives sprite scale. */
+    /** Collider radius. Also drives sprite scale. Authored at 1×; the
+     *  catalogue scales it (see `shipScale/tuning.ts`). */
     radius: z.number().positive(),
+    /** Size class (ship scale infrastructure): picks the class row of
+     *  `CLASS_TUNING`. Absent ⇒ from the unscaled radius. */
+    sizeClass: z.enum(['fighter', 'frigate', 'cruiser', 'capital']).optional(),
+    /** Thrusters (ship scale infrastructure — motion model): how many main
+     *  engines and their nozzle radius at 1× (world units). Thrust comes from
+     *  total nozzle area, so more or bigger engines push a heavy hull harder.
+     *  Absent ⇒ one nozzle of the default size for its radius. */
+    thrusters: z.object({ count: z.number().int().min(1), size: z.number().positive() }).strict().optional(),
+    /** Per-kind scale on top of the global ship scale (tuning one hull). */
+    sizeScale: z.number().positive().optional(),
+    /** Set by the catalogue: the total factor this kind was scaled by. Never
+     *  author it. */
+    appliedScale: z.number().positive().optional(),
+    /** Set by the catalogue: the motion model's mass multiplier, applied to
+     *  each side's EFFECTIVE mass (`massOf`), so a kind with no authored
+     *  mass keeps its side's fallback. Never author it. */
+    massScale: z.number().positive().optional(),
     /** Optional translational mass override. Default 1 (the historical
      *  pinned value — every legacy kind sat at mass 1 for "arcade-feel
      *  parity"). Bumping this scales how much the body resists pushes

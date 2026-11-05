@@ -27,6 +27,7 @@ import {
   resolveFlock,
 } from './flocking.js';
 import type { AiEntityPoseOut } from '../contracts/IAiBehaviour.js';
+import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 
 /** Aim cone (radians). Drones won't fire unless their nose is within this many radians of the target. */
 const DRONE_AIM_TOLERANCE = 0.25; // ~14°
@@ -812,14 +813,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // from every squad neighbour (incl. the leader) so they cluster around it at
     // a spacing rather than piling on. ALIGNMENT with the leader's heading so the
     // herd flies the course as one + keeps pace.
-    addCohesion(acc, self.x, self.y, leaderX, leaderY);
+    addCohesion(acc, self.x, self.y, leaderX, leaderY, shipTuning(this.kind).flockFollow);
     for (let i = 0; i < this._flockMemberIds.length; i++) {
       const mid = this._flockMemberIds[i]!;
       if (mid === self.id) continue;
       const mx = mid === this.leaderId ? leaderX : (resolve(mid, this._neighborScratch) ? this._neighborScratch.x : NaN);
       if (Number.isNaN(mx)) continue;
       const my = mid === this.leaderId ? leaderY : this._neighborScratch.y;
-      addSeparation(acc, self.x, self.y, mx, my);
+      addSeparation(acc, self.x, self.y, mx, my, shipTuning(this.kind).flockSeparation);
     }
     addAlignment(acc, this._leaderScratch.angle);
     const flock = resolveFlock(acc, this._flockOut);

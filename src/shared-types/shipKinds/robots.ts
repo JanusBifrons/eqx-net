@@ -9,8 +9,8 @@
  * to test against; P1b appends the circle (T2) + hexagon (T3) + the director.
  */
 
+import { defineShipKind } from '../shipScale/defineShipKind.js';
 import {
-  ShipKindSchema,
   LEGACY_FORWARD_MOUNT,
   LEGACY_PRIMARY_SLOT,
   type ShipKind,
@@ -19,7 +19,7 @@ import {
 /** Robot palette — violet family so robots read as a distinct side at a glance. */
 export const ROBOT_COLOR_T1 = 0xc070ff;
 
-export const ROBOT_SQUARE: ShipKind = ShipKindSchema.parse({
+export const ROBOT_SQUARE: ShipKind = defineShipKind({
   id: 'robot-square',
   displayName: 'Robot Cube',
   description: 'Tier-1 robot drone. A simple, relentless square.',
@@ -70,7 +70,7 @@ export const ROBOT_COLOR_T2 = 0x9a6bff;
 export const ROBOT_COLOR_T3 = 0x6f4bff;
 
 /** T2 — the circle (a 12-gon). Tougher; fires a continuous beam (P1b). */
-export const ROBOT_CIRCLE: ShipKind = ShipKindSchema.parse({
+export const ROBOT_CIRCLE: ShipKind = defineShipKind({
   id: 'robot-circle',
   displayName: 'Robot Orb',
   description: 'Tier-2 robot drone. A rolling orb with a cutting beam.',
@@ -108,7 +108,7 @@ export const ROBOT_COLOR_NEXUS = 0x4b2bd6;
  * moves (token thrust, 5 u/s cap, heavy damping), is never load-shed, and drops
  * the richest loot in the game when destroyed.
  */
-export const ROBOT_NEXUS: ShipKind = ShipKindSchema.parse({
+export const ROBOT_NEXUS: ShipKind = defineShipKind({
   id: 'robot-nexus',
   displayName: 'Robot Nexus',
   description: 'The heart of a robot territory. Reinforcements spawn here.',
@@ -144,7 +144,7 @@ export const ROBOT_COLOR_HARVESTER = 0xd9a441;
  * the nexus. A killed harvester spills its cargo. Lightly armed; never squad-
  * flocked (the RobotTerritory steers it).
  */
-export const ROBOT_HARVESTER: ShipKind = ShipKindSchema.parse({
+export const ROBOT_HARVESTER: ShipKind = defineShipKind({
   id: 'robot-harvester',
   displayName: 'Robot Harvester',
   description: 'A robot scavenger. Collects loot and hoards it at the nexus.',
@@ -185,7 +185,7 @@ export const ROBOT_HARVESTER: ShipKind = ShipKindSchema.parse({
 });
 
 /** T3 — the hexagon. Heavy and slow; launches homing missiles (P1b). */
-export const ROBOT_HEXAGON: ShipKind = ShipKindSchema.parse({
+export const ROBOT_HEXAGON: ShipKind = defineShipKind({
   id: 'robot-hexagon',
   displayName: 'Robot Hex',
   description: 'Tier-3 robot drone. A slow hexagonal missile launcher.',

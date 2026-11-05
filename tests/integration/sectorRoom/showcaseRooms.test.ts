@@ -7,6 +7,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { matchMaker } from 'colyseus';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { GARRISON_EXTENT } from '../../../src/server/rooms/showcaseRooms.js';
+import { PATROL_WAYPOINT_MARGIN } from '../../../src/server/bases/PatrolSubsystem.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import { getPlayerShipStore, getWallet } from '../../../src/server/db/PersistenceWorker.js';
@@ -92,7 +94,14 @@ describe('Showcase rooms', () => {
   it('v4 M2: once the pilot attacks, the patrol actually shoots it', { timeout: 60_000 }, async () => {
     harness = await bootSectorTestServer(opts(SHOWCASE_GARRISON_OPTS));
     const pilot = randomUUID();
-    const cr = await harness.connectActive(pilot, { initialHull: 100_000 });
+    // Spawn by the south-west patrol corner (the patrols fly the base corners
+    // PATROL_WAYPOINT_MARGIN outside it): the test is about the patrol
+    // engaging, not its ~2.5 km flight from the room's default spawn.
+    const cr = await harness.connectActive(pilot, {
+      initialHull: 100_000,
+      spawnX: Math.round(GARRISON_EXTENT.x0 - PATROL_WAYPOINT_MARGIN),
+      spawnY: SHOWCASE_GARRISON_OPTS.defaultSpawnY,
+    });
     const internals = roomOf(cr.roomId)._internals;
     const hits: string[] = [];
     cr.onMessage('damage', (m: { targetId?: string; shooterId?: string }) => {

@@ -33,6 +33,7 @@ import type {
   AiLedgerHandle,
   SwarmRenderState,
 } from '../../src/client/net/entity/IClientEntityLeaf.js';
+import { massOf } from '../../src/shared-types/shipScale/tuning.js';
 
 interface Call {
   m: string;
@@ -147,7 +148,7 @@ describe('DroneClientLeaf (kind 1) — dynamic, AI ledger, shield swap', () => {
     factory.leafFor(SWARM_KIND_DRONE)!.spawnBody(ctx);
     const spawn = pw.calls.find((c) => c.m === 'spawnObstacle')!;
     expect(getShipKind('scout').mass).toBeUndefined(); // most kinds omit mass
-    expect(spawn.args[4]).toBe(3); // fallback, byte-identical to the old code
+    expect(spawn.args[4]).toBe(massOf(getShipKind('scout'), 3)); // fallback (× the ship-scale mass), 3 at 1×
   });
 
   it('onSync: swaps the shield collider, never re-poses (follower owns drone pose)', () => {

@@ -4,7 +4,6 @@ import { polygonArea, verticesToFloat32, type Vec2 } from '../swarm/asteroidShap
 import {
   DEFAULT_SHIP_KIND,
   getShipKind,
-  SHIELD_RADIUS_PAD,
   type ShipKind,
   type ShipKindId,
 } from '../../shared-types/shipKinds.js';
@@ -13,6 +12,7 @@ import { applyShipInput, type ShipInputMultipliers } from './applyShipInput.js';
 import { castHitscan } from './hitscanRay.js';
 import { wallGeometry } from '../structures/ShieldWall.js';
 import { PAD_PUSH_ACCEL, padPushDir } from '../../shared-types/teleport.js';
+import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
 
 const FIXED_DT = 1 / 60;
 
@@ -203,14 +203,14 @@ export class PhysicsWorld {
     // the same pad). Pinned mass + inertia stay derived from the bare
     // `kind.radius` — they're a kind-feel knob, not a function of the
     // current collider geometry (the pad doesn't change ship handling).
-    this.world.createCollider(shipBallColliderDesc(kind.radius + SHIELD_RADIUS_PAD), body);
+    this.world.createCollider(shipBallColliderDesc(kind.radius + shipTuning(kind).shieldPad), body);
     // Per-kind mass with a `default 1` back-compat path: every legacy
     // kind sat at mass 1 historically (the pinned value below), so
     // omitting `kind.mass` keeps every existing physics test byte-
     // identical. Inertia stays the disc formula `0.5 * m * r²` so a
     // heavier kind also rotates proportionally more sluggishly under
     // torque — same physical reality as a denser uniform disc.
-    const m = kind.mass ?? 1;
+    const m = massOf(kind, 1);
     body.setAdditionalMassProperties(m, { x: 0, y: 0 }, 0.5 * m * kind.radius * kind.radius, true);
     body.recomputeMassPropertiesFromColliders();
     this.bodies.set(id, { body, kind, exposed: false });
@@ -490,7 +490,7 @@ export class PhysicsWorld {
       // Shield up — ball collider extends `SHIELD_RADIUS_PAD` past the hull
       // (same constant as the visual ShieldAura ring) so the rapier
       // collider matches what the player sees.
-      this.world.createCollider(shipBallColliderDesc(kind.radius + SHIELD_RADIUS_PAD), body);
+      this.world.createCollider(shipBallColliderDesc(kind.radius + shipTuning(kind).shieldPad), body);
     }
     // Re-fold the pinned additional mass-props now (Rapier otherwise defers
     // to the next step). Total stays mass 1 / I 0.5r^2 -- the new colliders

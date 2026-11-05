@@ -16,6 +16,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { matchMaker } from 'colyseus';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { structureHalfExtents } from '../../../src/shared-types/structureKinds.js';
+import { tuningFor } from '../../../src/shared-types/shipScale/lookup.js';
+
+// On the beam line, clear of the miner box by the fighter's spawn clearance
+// (which grows with the ship scale), so the join doesn't nudge it off the line.
+const BEAM_SPAWN_X = -180 - structureHalfExtents('miner').hw - tuningFor('fighter').spawnClearance - 10;
 import type { SectorState, ShipState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 
@@ -59,7 +65,7 @@ describe('SectorRoom integration — mining beam player hazard (WS-4 Phase 3 / R
   it('a player parked in an active mining beam takes light damage', async () => {
     const pid = randomUUID();
     // Spawn the player ON the miner→rock beam line (y=420, between -180 and -750).
-    const cr = await harness.connectActive(pid, { shipKind: 'fighter', spawnX: -500, spawnY: 420 });
+    const cr = await harness.connectActive(pid, { shipKind: 'fighter', spawnX: BEAM_SPAWN_X, spawnY: 420 });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === pid });
     const room = getRoomById(cr.roomId);
     const state = room.state as SectorState;

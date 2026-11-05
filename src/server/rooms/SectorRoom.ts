@@ -77,7 +77,7 @@ import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
-import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isPlayableShipKindId, SHIELD_RADIUS_PAD, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isPlayableShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { isOnSightHostile } from '../../shared-types/allegiances.js';
 import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
 import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
@@ -358,9 +358,16 @@ import {
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
 import type { WeaponId, MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat/Energy.js';
+import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { tuningFor } from '../../shared-types/shipScale/lookup.js';
+import { DEFAULT_SHIP_SCALE, DEFAULT_SHIP_TUNING, SHIP_KIND_SCALE, SHIP_SCALE, SHIP_TUNING } from '../../shared-types/shipScale/config.js';
 
-/** T1 — a fresh spawn stays at least this far from any structure's box. */
-const SPAWN_STRUCTURE_CLEARANCE = 120;
+/** Stamp the ship scale onto a welcome when it isn't the default (so 1× is unchanged). */
+function withShipScale(w: WelcomeMessage): WelcomeMessage {
+  if (SHIP_SCALE === DEFAULT_SHIP_SCALE && SHIP_TUNING === DEFAULT_SHIP_TUNING && SHIP_KIND_SCALE === '') return w;
+  return { ...w, shipScale: SHIP_SCALE, shipTuning: SHIP_TUNING, ...(SHIP_KIND_SCALE ? { shipKindScale: SHIP_KIND_SCALE } : {}) };
+}
+
 /** C3 — a ship cargo target (see `SectorRoom.shipTarget`). */
 interface ShipCargoTarget {
   /** Break-in / grant key: the NPC swarm id, or the player hull's shipInstanceId. */
@@ -2573,7 +2580,7 @@ export class SectorRoom extends Room<SectorState> {
         if (!rec) continue;
         if (pose.path) {
           // Radar sandbox — scripted fly-in / fly-out / tangential pass.
-          const mass = getShipKind(pose.kind).mass ?? DRONE_DEFAULT_MASS;
+          const mass = massOf(getShipKind(pose.kind), DRONE_DEFAULT_MASS);
           this.aiController.register(droneId, rec.slot, new ScriptedPathBehaviour({
             from: { x: pose.x, y: pose.y },
             to: { x: pose.path.toX, y: pose.path.toY },
@@ -6779,7 +6786,8 @@ export class SectorRoom extends Room<SectorState> {
     // intuition matches every gate. Pre-2026-05-27 used a hardcoded
     // SHIP_COLLISION_RADIUS=12 that only matched fighter — heavy at
     // radius 16 had ~4 u of visible hull where lasers passed through.
-    const r = getShipKind(ship.kind).radius + SHIELD_RADIUS_PAD;
+    const rk = getShipKind(ship.kind);
+    const r = rk.radius + shipTuning(rk).shieldPad;
     const circle = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, r);
     if (circle === null || ship.shield > 0) return circle;
     return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, shipCollisionParts(ship.kind));
@@ -6794,7 +6802,8 @@ export class SectorRoom extends Room<SectorState> {
     fromX: number, fromY: number, stepX: number, stepY: number, projRadius: number,
     cx: number, cy: number, angle: number,
   ): { entry: number; hitX: number; hitY: number } | null {
-    const r = getShipKind(ship.kind).radius + SHIELD_RADIUS_PAD;
+    const rk = getShipKind(ship.kind);
+    const r = rk.radius + shipTuning(rk).shieldPad;
     const circle = projectileSweepCircle(fromX, fromY, stepX, stepY, projRadius, cx, cy, r);
     if (circle === null || ship.shield > 0) return circle;
     return sweptSegmentHitsShipPolygon(fromX, fromY, stepX, stepY, cx, cy, angle, shipCollisionParts(ship.kind));
@@ -7151,7 +7160,7 @@ export class SectorRoom extends Room<SectorState> {
           sectorKey: this.sectorKey,
           shipInstanceId: existingShip?.shipInstanceId ?? '',
         };
-        client.send('welcome', welcome);
+        client.send('welcome', withShipScale(welcome));
 
         setSession(client.sessionId, {
           roomId: this.roomId,
@@ -7348,7 +7357,7 @@ export class SectorRoom extends Room<SectorState> {
     if (this.structureRegistry.size > 0) {
       const boxes: SiteBox[] = [];
       for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
-      const clear = nearestClearPoint(spawnX, spawnY, boxes, SPAWN_STRUCTURE_CLEARANCE);
+      const clear = nearestClearPoint(spawnX, spawnY, boxes, tuningFor(chosenKind).spawnClearance);
       spawnX = clear.x;
       spawnY = clear.y;
     }
@@ -7618,7 +7627,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: ship.shipInstanceId,
     };
-    client.send('welcome', welcome);
+    client.send('welcome', withShipScale(welcome));
 
     // Prefer the auth-validated userId from this connect; fall back to the
     // Limbo-resumed value when this connect was anonymous (covers the
@@ -7740,7 +7749,7 @@ export class SectorRoom extends Room<SectorState> {
       shipInstanceId: '',
       spectator: true,
     };
-    client.send('welcome', welcome);
+    client.send('welcome', withShipScale(welcome));
 
     setSession(client.sessionId, {
       roomId: this.roomId,
@@ -8053,7 +8062,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: shipId,
     };
-    client.send('welcome', welcome);
+    client.send('welcome', withShipScale(welcome));
     this.pendingJoin.set(playerId, {
       joinTick: tick,
       watchdogTick: tick + CLIENT_READY_TIMEOUT_TICKS,

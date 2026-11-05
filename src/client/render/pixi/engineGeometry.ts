@@ -16,8 +16,9 @@
  * REGISTRATION (not per frame), so it never touches the hot loop.
  */
 
-import { getShipKind, DEFAULT_SHIP_KIND } from '../../../shared-types/shipKinds';
+import { getShipKind } from '../../../shared-types/shipKinds';
 import { shipHullOutline, shipShapeScale } from '@core/geometry/shipHullOutline';
+import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
 
 export interface EngineProfile {
   /** Distance behind ship centre (game units), along the astern direction,
@@ -29,8 +30,6 @@ export interface EngineProfile {
   plumeScale: number;
 }
 
-/** Reference hull radius (the default fighter) that `plumeScale` is relative to. */
-const REFERENCE_RADIUS = getShipKind(DEFAULT_SHIP_KIND).radius;
 
 export function engineProfileForKind(kindId: string | null | undefined): EngineProfile {
   const kind = getShipKind(kindId);
@@ -42,6 +41,7 @@ export function engineProfileForKind(kindId: string | null | undefined): EngineP
   }
   rearExtent *= shipShapeScale(kind);
   const sternOffset = rearExtent > 0 ? rearExtent : kind.radius;
-  const plumeScale = kind.radius / REFERENCE_RADIUS;
+  // Relative to a 1× fighter (shipScale/tuning), so a 2× hull's plume grows.
+  const plumeScale = shipTuning(kind).plumeScale;
   return { sternOffset, plumeScale };
 }

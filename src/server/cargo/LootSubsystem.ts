@@ -18,13 +18,16 @@ import type { Hold } from '../../shared-types/goods.js';
 import { cloneHold, holdBestTier, isHoldEmpty, mergeInto, transferInto, transferUpTo } from '../../core/cargo/hold.js';
 import { POD_TIER_SPILL } from '../../shared-types/shipKinds/cargoPod.js';
 import type { HoldRecord, HoldStore } from './HoldStore.js';
+import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 
 /** Max live loot pods per sector — a separate budget from `MAX_LIVE_SCRAP`. */
 export const MAX_LIVE_LOOT_PER_SECTOR = 64;
 /** A new drop within this distance of an existing pod MERGES into it. */
 export const LOOT_MERGE_RADIUS = 60;
 /** Fly-over pickup radius (pod centre to ship centre). */
-export const LOOT_PICKUP_RADIUS = 80;
+/** Pickup radius: the ship scale's (shipScale/tuning: 80 u at 1×). */
+export const LOOT_PICKUP_RADIUS = GLOBAL_SHIP_TUNING.lootPickup;
+const PICKUP_R2 = LOOT_PICKUP_RADIUS * LOOT_PICKUP_RADIUS;
 /** Pods expire (value destroyed) after this long untouched. */
 export const LOOT_POD_TTL_MS = 15 * 60_000;
 /** Re-persist a pod's drifted pose when it moved further than this. */
@@ -208,7 +211,7 @@ export class LootSubsystem {
       if (pose === null) continue;
       const dx = pose.x - c.x;
       const dy = pose.y - c.y;
-      if (dx * dx + dy * dy > LOOT_PICKUP_RADIUS * LOOT_PICKUP_RADIUS) continue;
+      if (dx * dx + dy * dy > PICKUP_R2) continue;
       this.pickUp(c, podId);
     }
   };

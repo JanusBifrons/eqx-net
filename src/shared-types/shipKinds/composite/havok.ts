@@ -26,8 +26,8 @@
  * player-selectable.
  */
 
+import { defineShipKind } from '../../shipScale/defineShipKind.js';
 import {
-  ShipKindSchema,
   LEGACY_FORWARD_MOUNT,
   LEGACY_PRIMARY_SLOT,
   type ShipKind,
@@ -318,7 +318,7 @@ const HAVOK_SCALE = Math.round((20 / MAX_MAG) * 100) / 100;
 /** Catalogue collider radius = scaled bounding circle. */
 const HAVOK_RADIUS = Math.round(MAX_MAG * HAVOK_SCALE);
 
-export const HAVOK: ShipKind = ShipKindSchema.parse({
+export const HAVOK: ShipKind = defineShipKind({
   id: 'havok',
   displayName: 'Havok',
   description:

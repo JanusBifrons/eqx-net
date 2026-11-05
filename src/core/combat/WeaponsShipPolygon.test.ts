@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { rayHitsSphere, rayHitsShipPolygon, sweptSegmentHitsShipPolygon, SHIP_COLLISION_RADIUS } from './Weapons.js';
 import { shipCollisionParts } from '../geometry/shipHullDecomp.js';
+import { AT_DEFAULT_SHIP_SCALE } from '../../../src/shared-types/shipScale/config.js';
 
 // Fighter polygon (Pixi-up authored at scale 1):
 //   [[0,-16], [-10,10], [0,5], [10,10]]
@@ -17,7 +18,8 @@ import { shipCollisionParts } from '../geometry/shipHullDecomp.js';
 // going up enters at the REFLEX, not the nose.
 const PARTS = shipCollisionParts('fighter');
 
-describe('rayHitsShipPolygon — exact hull vs bounding circle', () => {
+// Locks authored 1× numbers; other scales: tests/unit/shipScaleInvariants.test.ts.
+describe.runIf(AT_DEFAULT_SHIP_SCALE)('rayHitsShipPolygon — exact hull vs bounding circle', () => {
   it('a shot inside the bounding circle but OUTSIDE the hull HITS the circle but MISSES the polygon', () => {
     // Vertical ray at x = 11 (|11| < 12 circle radius, but > 10 max hull x).
     const circle = rayHitsSphere(11, -100, 0, 1, 200, 0, 0, SHIP_COLLISION_RADIUS);
@@ -55,7 +57,8 @@ describe('rayHitsShipPolygon — exact hull vs bounding circle', () => {
   });
 });
 
-describe('sweptSegmentHitsShipPolygon — projectile step vs hull', () => {
+// Locks authored 1× numbers; other scales: tests/unit/shipScaleInvariants.test.ts.
+describe.runIf(AT_DEFAULT_SHIP_SCALE)('sweptSegmentHitsShipPolygon — projectile step vs hull', () => {
   it('a step grazing the circle rim but outside the hull is a clean miss', () => {
     expect(sweptSegmentHitsShipPolygon(11, -50, 0, 100, 0, 0, 0, PARTS)).toBeNull();
   });

@@ -12,6 +12,7 @@ import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
 import { gateColliderPolygons, gateWorldAxisBoxes } from '../../core/structures/gateGeometry.js';
+import { massOf } from '../../shared-types/shipScale/tuning.js';
 
 export interface AsteroidSpec {
   id: string;
@@ -196,7 +197,7 @@ export class SwarmSpawner {
     // carry per-drone mass; both sides re-derive it from `entry.shipKind`
     // → catalogue lookup, so this fix lands on both. Player ships
     // (`spawnShip`) already use `kind.mass` (see World.ts:161).
-    const mass = d.mass ?? kind.mass ?? DRONE_DEFAULT_MASS;
+    const mass = d.mass ?? massOf(kind, DRONE_DEFAULT_MASS);
     const spec: AsteroidSpec = {
       id: d.id, x: d.x, y: d.y, vx: d.vx ?? 0, vy: d.vy ?? 0, radius, mass,
     };

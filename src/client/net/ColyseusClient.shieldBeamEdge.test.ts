@@ -23,7 +23,12 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ColyseusGameClient } from './ColyseusClient.js';
-import { getShipKind, SHIELD_RADIUS_PAD } from '../../shared-types/shipKinds.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
+import { shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
+
+/** The shield pad at this scale (10 at 1×). */
+const SHIELD_RADIUS_PAD = GLOBAL_SHIP_TUNING.shieldPad;
 
 interface SwarmLike {
   x: number; y: number; vx: number; vy: number; radius: number; kind: number; shieldDown?: boolean;
@@ -84,7 +89,8 @@ describe('live-beam endpoint snaps to the shield ring for shield-up targets', ()
 
   it('snaps a shield-UP player ship hit to its kind shield ring', () => {
     internals.mirror.ships.set('p2', { x: 0, y: DRONE_DIST, vx: 0, vy: 0, angle: 0, kind: 'fighter', shieldDown: false });
-    const r = getShipKind('fighter').radius + SHIELD_RADIUS_PAD;
+    const fk = getShipKind('fighter');
+    const r = fk.radius + shipTuning(fk).shieldPad;
     const got = internals.shieldEdgeDist({ hitId: 'p2', dist: 999 }, FROM_X, FROM_Y, FWD_X, FWD_Y);
     expect(got).toBeCloseTo(DRONE_DIST - r, 5);
   });
