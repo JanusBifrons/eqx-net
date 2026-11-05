@@ -283,15 +283,18 @@ export class Backdrop {
   }
 
   /** Lay the backdrop out for this frame. False while the star tiles are
-   *  still baking (the caller draws today's starfield instead). */
-  update(cam: BackdropCamera, nowMs: number): boolean {
+   *  still baking (the caller draws today's starfield instead).
+   *  `fullSpeed` is what counts as full speed for the speed effects: the
+   *  pilot's own ship's top speed, so the effect follows ship size (a 2×
+   *  ship is slower, invariant 18). */
+  update(cam: BackdropCamera, nowMs: number, fullSpeed?: number): boolean {
     if (this.far.h?.state !== 'ready') { this.sky.visible = false; this.fore.visible = false; return false; }
     this.sky.visible = true;
     this.t = nowMs / 1000;
     const zoom = cam.scale.x, W = cam.screenWidth, H = cam.screenHeight;
     const cx = cam.center.x, cy = cam.center.y;
     const q = this.getQuality();
-    stepSpeedFx(this.speed, cx, cy, nowMs);
+    stepSpeedFx(this.speed, cx, cy, nowMs, fullSpeed);
     // Nebulae live in GAME space (Y up); the camera centre is Pixi space (Y down).
     const d = nebulaDensityAtSeed(this.nebSeed, cx, -cy, this.scratchR);
     this.density = d;

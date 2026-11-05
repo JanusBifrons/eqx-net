@@ -31,6 +31,7 @@ import { readFxKillSwitches } from './fxKillSwitches';
 import { createArtService } from './art/ArtService.js';
 import { warmUpJobs } from './art/warmUp.js';
 import { Backdrop } from './art/fx/Backdrop.js';
+import { speedFxFullSpeed } from './art/fx/depth.js';
 import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
 import { FxEngines } from './art/fx/FxEngines.js';
@@ -1891,7 +1892,10 @@ export class PixiRenderer implements IRenderer {
 
     // Background layers — run AFTER moveCenter so they use this frame's
     // camera position (otherwise stars and grid lag by one frame).
-    const backdropOn = this._backdrop?.update(this.camera, performance.now()) ?? false;
+    // Speed effects follow the pilot's own ship: full speed is its top speed
+    // (the default kind's when spectating). Catalogue lookups are cached.
+    const speedShip = mirror.localPlayerId ? mirror.ships.get(mirror.localPlayerId) : undefined;
+    const backdropOn = this._backdrop?.update(this.camera, performance.now(), speedFxFullSpeed(speedShip?.kind)) ?? false;
     // Speed effects (C3): the backdrop's eased speed asks the camera to zoom
     // out a little; applied on the camera's next tick (none while it's baking).
     this.camera.setSpeedZoom(backdropOn ? this._backdrop!.speedZoom() : 1);

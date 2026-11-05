@@ -15,6 +15,7 @@
  * No allocation in the per-frame helpers (`nebulaDensityAt`, `speedFactor`).
  */
 import { h01 } from './fxTextures.js';
+import { getShipKind } from '../../../../shared-types/shipKinds.js';
 
 /** A backdrop band: `parallax` = how much it pans per unit of camera motion
  *  (0 fixed, 1 = the world), `zoomPow` = how much it grows when zooming. */
@@ -214,6 +215,14 @@ export const SPEED_FX: Readonly<Record<SpeedFxLevel, SpeedFxParams>> = {
   medium: { stretch: 7, zoomOut: 0.12, streakGain: 0.35 },
   large: { stretch: 14, zoomOut: 0.2, streakGain: 0.6 },
 };
+
+/** What counts as full speed for the speed effects: the pilot's own ship's
+ *  top speed (the default kind's when spectating). It follows ship size
+ *  (invariant 18): against a fixed 750 (the 1× fighter) the slower 2× ships
+ *  (530–672 u/s) only reached 70–90% of the effect at full boost. */
+export function speedFxFullSpeed(kindId: string | null | undefined): number {
+  return getShipKind(kindId ?? null).maxSpeed;
+}
 
 /** 0 at rest .. 1 at full boost speed (`max`, world units / s). */
 export function speedFactor(speed: number, max = 750): number {
