@@ -360,13 +360,10 @@ import type { WeaponId, MissileWeaponDef } from '../../core/combat/WeaponCatalog
 import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat/Energy.js';
 import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { tuningFor } from '../../shared-types/shipScale/lookup.js';
-import { DEFAULT_SHIP_SCALE, DEFAULT_SHIP_TUNING, SHIP_KIND_SCALE, SHIP_SCALE, SHIP_TUNING } from '../../shared-types/shipScale/config.js';
+import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
 
-/** Stamp the ship scale onto a welcome when it isn't the default (so 1× is unchanged). */
-function withShipScale(w: WelcomeMessage): WelcomeMessage {
-  if (SHIP_SCALE === DEFAULT_SHIP_SCALE && SHIP_TUNING === DEFAULT_SHIP_TUNING && SHIP_KIND_SCALE === '') return w;
-  return { ...w, shipScale: SHIP_SCALE, shipTuning: SHIP_TUNING, ...(SHIP_KIND_SCALE ? { shipKindScale: SHIP_KIND_SCALE } : {}) };
-}
+/** Stamp the ship scale onto a welcome (shared contract: shipScale/welcomeScale.ts). */
+const withShipScale = (w: WelcomeMessage): WelcomeMessage => stampShipScale(w);
 
 /** C3 — a ship cargo target (see `SectorRoom.shipTarget`). */
 interface ShipCargoTarget {
