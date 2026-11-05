@@ -46,12 +46,14 @@ export interface PhaseRouterProps {
   onSelectLocal: () => void;
   // 'auth' phase deps.
   onAuthSuccess: () => void;
+  /** "Continue as guest": remember the choice, then back to the map. */
+  onContinueAsGuest: () => void;
 }
 
 export function PhaseRouter(props: PhaseRouterProps): JSX.Element {
   const {
     phase, user, profileOpen, setProfileOpen, settingsOpen, openSettings, closeSettings,
-    setPhase, gameSurface, onJoinFromMeta, onSelectLocal, onAuthSuccess,
+    setPhase, gameSurface, onJoinFromMeta, onSelectLocal, onAuthSuccess, onContinueAsGuest,
   } = props;
 
   const headerWithLogin = (
@@ -101,7 +103,7 @@ export function PhaseRouter(props: PhaseRouterProps): JSX.Element {
           onProfileClick={() => setProfileOpen(true)}
           onSettingsClick={openSettings}
         />
-        <LoginPage onSuccess={onAuthSuccess} onSkip={onAuthSuccess} />
+        <LoginPage onSuccess={onAuthSuccess} onSkip={onContinueAsGuest} />
         {modals}
       </>
     );

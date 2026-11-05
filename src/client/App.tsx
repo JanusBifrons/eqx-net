@@ -421,7 +421,10 @@ function GameSurface({
     // Auth-gate the spawn ONLY on the landing map (phase 'galaxy-map'). In-game
     // (Equinox Phase 7 warp map, phase 'game') the pilot is already in a room —
     // never bounce them to the auth flow.
-    if (useUIStore.getState().phase === 'galaxy-map' && !useAuthStore.getState().user) {
+    // A pilot who chose "Continue as guest" passes the gate (guests are full
+    // players, economy v2).
+    const auth = useAuthStore.getState();
+    if (useUIStore.getState().phase === 'galaxy-map' && !auth.user && !auth.guest) {
       logEvent('pick_auth_gate', { sectorKey });
       useUIStore.getState().setPendingPickSector(sectorKey);
       useUIStore.getState().setPhase('auth');
@@ -1066,6 +1069,11 @@ export function App(): JSX.Element {
     setPhase('galaxy-map');
   }, [setPhase]);
 
+  const handleContinueAsGuest = useCallback(() => {
+    useAuthStore.getState().continueAsGuest();
+    setPhase('galaxy-map');
+  }, [setPhase]);
+
   // Meta-landing CTA: if logged in, jump to galaxy-map; else, login flow
   // first (the post-auth handler then continues on to galaxy-map).
   const handleJoinFromMeta = useCallback(() => {
@@ -1102,6 +1110,7 @@ export function App(): JSX.Element {
           onJoinFromMeta={handleJoinFromMeta}
           onSelectLocal={handleSelectLocal}
           onAuthSuccess={handleAuthSuccess}
+          onContinueAsGuest={handleContinueAsGuest}
         />
         <TopRightToolbar />
         {/* Unified warp-screen overlay. Internally null when phase !==
