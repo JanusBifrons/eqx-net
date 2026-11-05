@@ -235,6 +235,8 @@ export class PixiRenderer implements IRenderer {
   private _artStatsHook: (() => unknown) | null = null;
   /** Scratch for `feedback.artReady` (see the end of `update()`). */
   private _artPendingSeen = false;
+  /** The own-ship art handle already moved to the front of the bake queue. */
+  private _prioritizedArtKey: string | null = null;
   private readonly _noteArtPending = (h: { state: string }): void => {
     if (h.state === 'pending') this._artPendingSeen = true;
   };
@@ -2098,6 +2100,12 @@ export class PixiRenderer implements IRenderer {
       this._artPendingSeen = false;
       this._artCtx.handles.forEach(this._noteArtPending);
       this.feedback.artReady = this.feedback.firstFrameRendered && !this._artPendingSeen;
+      // The pilot's own ship bakes first (once per handle).
+      const own = mirror.localPlayerId ? this._artCtx.handles.get(mirror.localPlayerId) : undefined;
+      if (own && own.state === 'pending' && own.key !== this._prioritizedArtKey) {
+        this._prioritizedArtKey = own.key;
+        this._artCtx.art.prioritize(own);
+      }
     }
 
     // ---------- F1 frame markers (end-of-frame, worker→main diag) ----------

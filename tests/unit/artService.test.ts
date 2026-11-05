@@ -260,3 +260,82 @@ describe('warm-up (bake before it is needed)', () => {
     expect(posted).toEqual(['w1', 'w3', 'onscreen', 'w2']);
   });
 });
+
+/**
+ * Smoke test 2026-11-05 (phone, capture v5ga3m): ships stayed in the fallback
+ * look for ~a minute. "Why can't it start loading the moment the website
+ * loads?" It does start on the galaxy map, but joining replaces the map's
+ * renderer, and with it the art service: bakes still running were thrown
+ * away and finished ones only reached the cache once packed. The worker pool
+ * and in-flight bakes now outlive a service, finished bakes are saved as they
+ * finish, and the pilot's own ship can jump the queue.
+ */
+describe('ArtService — work carries over when the renderer is replaced', () => {
+  class DeferredRunner implements BakeRunner {
+    calls: BakeJob[] = [];
+    promoted: BakeJob[] = [];
+    destroyed = 0;
+    readonly workers = 2;
+    private pending: Array<() => void> = [];
+    run(job: BakeJob): Promise<Baked> {
+      this.calls.push(job);
+      return new Promise((resolve) => { this.pending.push(() => resolve(baked(job.type === 'ship' ? 16 : 2))); });
+    }
+    promote(job: BakeJob): void { this.promoted.push(job); }
+    finishAll(): void { for (const f of this.pending.splice(0)) f(); }
+    destroy(): void { this.destroyed++; }
+  }
+  const memCache = (): BakeCache & { saved: string[] } => {
+    const store = new Map<string, Baked>();
+    const saved: string[] = [];
+    return {
+      saved,
+      load: async (keys) => new Map(keys.filter((k) => store.has(k)).map((k) => [k, store.get(k)!])),
+      save: async (entries) => { for (const [k, b] of entries) { store.set(k, b); saved.push(k); } },
+    };
+  };
+  const svcWith = (runner: BakeRunner, cache: BakeCache, inflight: Map<string, Promise<Baked>>): ArtService =>
+    new ArtService({ packer: new FakePacker(), runner, cache, now: () => 0, packBudgetMs: 1000, inflight, ownsRunner: false });
+
+  it('a bake still running when the service is replaced is reused by the next one, not re-run', async () => {
+    const runner = new DeferredRunner(), cache = memCache(), inflight = new Map<string, Promise<Baked>>();
+    const map = svcWith(runner, cache, inflight);
+    map.ship('fighter');
+    await flush();
+    map.destroy(); // joining: the galaxy map's renderer goes away
+    const game = svcWith(runner, cache, inflight);
+    const h = game.ship('fighter');
+    await flush();
+    runner.finishAll();
+    await flush(); await flush();
+    game.tick();
+    expect(h.state).toBe('ready');
+    expect(runner.calls, 'baked once, across both services').toHaveLength(1);
+  });
+
+  it('a finished bake is saved as soon as it is baked, even if its service is gone before packing', async () => {
+    const runner = new DeferredRunner(), cache = memCache(), inflight = new Map<string, Promise<Baked>>();
+    const map = svcWith(runner, cache, inflight);
+    map.ship('heavy', undefined, false); // warm-up
+    await flush();
+    runner.finishAll();
+    map.destroy();
+    await flush(); await flush();
+    expect(cache.saved).toHaveLength(1);
+  });
+
+  it('destroying a service leaves a shared worker pool running', () => {
+    const runner = new DeferredRunner();
+    svcWith(runner, memCache(), new Map()).destroy();
+    expect(runner.destroyed).toBe(0);
+  });
+
+  it('the pilot\'s own ship can jump the queue', async () => {
+    const runner = new DeferredRunner();
+    const svc = svcWith(runner, memCache(), new Map());
+    const h = svc.ship('scout');
+    await flush();
+    svc.prioritize(h);
+    expect(runner.promoted).toEqual([h.job]);
+  });
+});

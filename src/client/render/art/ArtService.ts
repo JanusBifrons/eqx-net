@@ -100,6 +100,13 @@ export interface ArtServiceDeps {
   now: () => number;
   /** Most ms per `tick()` spent packing (at least one bake is packed). */
   packBudgetMs: number;
+  /** Bakes in flight, by store key, shared across services: joining the game
+   *  replaces the galaxy map's renderer (and its service), and the new one
+   *  picks up a bake the old one started instead of re-running it. */
+  inflight?: Map<string, Promise<Baked>>;
+  /** False when the runner is shared (page-lifetime worker pool): destroying
+   *  this service leaves it running. Default true. */
+  ownsRunner?: boolean;
 }
 
 export interface ArtStats {
@@ -139,7 +146,6 @@ export class ArtService {
   private readonly handles = new Map<string, ArtHandle>();
   /** Finished bakes waiting to be packed, oldest first. */
   private readonly toPack: Array<{ h: ArtHandle; b: Baked; cached: boolean }> = [];
-  private readonly toSave: Array<[string, Baked]> = [];
   private rig: LightRig = sunRigForSector(null);
   private rigTag = rigTag(this.rig);
   private fromCache = 0;
@@ -216,10 +222,28 @@ export class ArtService {
   private async start(h: ArtHandle, urgent: boolean): Promise<void> {
     const sk = storeKey(bakeKey(h.job), h.rig);
     try {
+      // Another service (the galaxy map's, before joining) is already baking it.
+      const shared = this.deps.inflight?.get(sk);
+      if (shared) {
+        if (urgent) this.deps.runner.promote?.(h.job);
+        const b = await shared;
+        if (this.destroyed) return;
+        this.toPack.push({ h, b, cached: false });
+        return;
+      }
       const hit = this.deps.cache ? (await this.deps.cache.load([sk])).get(sk) : undefined;
       if (this.destroyed) return;
       if (hit) { this.toPack.push({ h, b: hit, cached: true }); return; }
-      const b = await this.deps.runner.run(h.job, h.rig, urgent || this.urgentKeys.has(h.key));
+      const run = this.deps.runner.run(h.job, h.rig, urgent || this.urgentKeys.has(h.key));
+      // Save as soon as it is baked (not when packed), so a bake whose service
+      // is gone by then still reaches the cache; keep it findable until saved.
+      const inflight = this.deps.inflight, cache = this.deps.cache;
+      inflight?.set(sk, run);
+      void run
+        .then((b) => cache?.save([[sk, b]]))
+        .catch(() => { /* a failed bake is reported on its handle below */ })
+        .finally(() => { if (inflight?.get(sk) === run) inflight.delete(sk); });
+      const b = await run;
       if (this.destroyed) return;
       this.toPack.push({ h, b, cached: false });
     } catch (e) {
@@ -239,15 +263,11 @@ export class ArtService {
       const { h, b, cached } = this.toPack.shift()!;
       if (!this.pack(h, b)) continue;
       packed++;
+      // Fresh bakes were saved when they finished (see `start`).
       if (cached) this.fromCache++;
-      else this.toSave.push([storeKey(bakeKey(h.job), h.rig), b]);
     }
     // Upload, then hand out the textures: a handle turns `ready` only here.
     if (packed > 0) { this.deps.packer.commit(); this.flushFills(); }
-    if (this.toSave.length > 0 && this.deps.cache) {
-      const batch = this.toSave.splice(0, this.toSave.length);
-      void this.deps.cache.save(batch);
-    }
   }
 
   /** Place a bake's frames; false (handle failed) if it won't fit the budget. */
@@ -318,9 +338,16 @@ export class ArtService {
     };
   }
 
+  /** Move a still-queued bake to the front of the queue (the pilot's own ship). */
+  prioritize(h: ArtHandle): void {
+    if (h.state !== 'pending') return;
+    this.urgentKeys.add(h.key);
+    this.deps.runner.promote?.(h.job);
+  }
+
   destroy(): void {
     this.destroyed = true;
-    this.deps.runner.destroy();
+    if (this.deps.ownsRunner !== false) this.deps.runner.destroy();
     this.deps.packer.destroy();
     this.handles.clear();
     this.toPack.length = 0;
@@ -421,21 +448,34 @@ export interface CreateArtServiceOpts {
 
 /** The real thing: atlas sized for the device, a worker pool (inline if
  *  workers are unavailable), and the IndexedDB cache. */
-export function createArtService(o: CreateArtServiceOpts): ArtService {
+/** One bake worker pool and one in-flight list for the whole page: joining
+ *  the game replaces the galaxy map's renderer, and the bakes it started keep
+ *  going for the next one (smoke test 2026-11-05). The atlas stays per
+ *  service, because its textures belong to that renderer's GPU context. */
+let sharedRunner: BakeRunner | null = null;
+const sharedInflight = new Map<string, Promise<Baked>>();
+
+function pageRunner(o: CreateArtServiceOpts): BakeRunner {
+  if (sharedRunner) return sharedRunner;
   const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 2 : 2;
   const n = Math.max(1, Math.min(o.maxWorkers ?? 4, cores - 1));
-  let runner: BakeRunner;
   try {
     if (typeof Worker === 'undefined') throw new Error('no Worker');
-    runner = new WorkerBakeRunner(n, () => new Worker(new URL('./bake.worker.ts', import.meta.url), { type: 'module', name: shipScaleWorkerName('bake') }), o.delayMs ?? 0);
+    sharedRunner = new WorkerBakeRunner(n, () => new Worker(new URL('./bake.worker.ts', import.meta.url), { type: 'module', name: shipScaleWorkerName('bake') }), o.delayMs ?? 0);
   } catch {
-    runner = new InlineBakeRunner(o.delayMs ?? 0);
+    sharedRunner = new InlineBakeRunner(o.delayMs ?? 0);
   }
+  return sharedRunner;
+}
+
+export function createArtService(o: CreateArtServiceOpts): ArtService {
   return new ArtService({
     packer: new Atlas(false, atlasOptsFor(o.touch)),
-    runner,
+    runner: pageRunner(o),
     cache: { load: loadBakes, save: saveBakes },
     now: () => performance.now(),
     packBudgetMs: 3,
+    inflight: sharedInflight,
+    ownsRunner: false,
   });
 }
