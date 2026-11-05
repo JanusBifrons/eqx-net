@@ -64,6 +64,10 @@ The user typed `/netgate` (or `/netgate <baselineRef> <headRef>`). Arguments:
    - **Do NOT measure with `?diag=1`.** The Phase 0a `?diag=0` override is the gate's whole "measure production code" assertion. The spec asserts `__eqxDiagEnabled === false` before reading stats.
    - **Do NOT run the gate in the inner loop.** It creates worktrees and takes 6–8 minutes. The deterministic suite is the inner loop; the netgate is a conditional outer gate.
 
+## Clean up afterwards
+
+When the run ends (pass or fail): stop the servers, proxies and headless Chrome it started (`netstat -ano | findstr ":2567 :5173 :2767 :5373" | findstr LISTENING`), delete its scratch files and logs once read, and trim any status note in auto-memory. See root `CLAUDE.md` "Clean up at every stage".
+
 ## On flakes
 
 If the gate flakes (PASS state varies across identical invocations), the answer is to characterise the variance with `main`-vs-`main` ≥ 3×, then either:

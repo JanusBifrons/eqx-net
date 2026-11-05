@@ -79,6 +79,10 @@ You are diagnosing a failing Playwright spec in EQX Peri. The goal is a **determ
    - **Never** loosen a `@gate` budget — route to `/netgate` instead.
    - **Never** assert a gameplay-state guess without reading current `src/` — the symptom may not match what the spec was trying to lock.
 
+## Clean up afterwards
+
+When the run ends (pass or fail): stop the servers, proxies and headless Chrome it started (`netstat -ano | findstr ":2567 :5173 :2767 :5373" | findstr LISTENING`), delete its scratch files and logs once read, and trim any status note in auto-memory. See root `CLAUDE.md` "Clean up at every stage".
+
 ## References
 
 - Test-harness philosophy: root `CLAUDE.md` "Test-harness philosophy" section.
