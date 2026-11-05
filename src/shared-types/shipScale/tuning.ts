@@ -265,3 +265,12 @@ export function combatDistanceScale(profile: ShipTuningProfile = SHIP_TUNING, sc
   if (profile === 'A') return { reach: 1, splash: 1 };
   return { reach: 1 + (scale - 1) / 2, splash: scale };
 }
+
+/** Camera at the ship scale. The world isn't scaled, so the zoom-out floor
+ *  (how much space you can see) stays; the START zoom eases out by
+ *  scale^-0.5, so bigger ships draw bigger on screen (s^0.5 ×) while the
+ *  spawn view still shows more space around them. 1× ⇒ the base value. */
+export const CAMERA_ZOOM_EXP = 0.5;
+export function startZoomForScale(base: number, scale: number = SHIP_SCALE): number {
+  return base / Math.pow(scale, CAMERA_ZOOM_EXP);
+}

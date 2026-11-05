@@ -256,6 +256,10 @@ export function targetUrl(baseUrl: string, target: ShotTarget, testId: string, h
   }
   if (target.galaxy) p.set('galaxy', target.galaxy);
   for (const [k, v] of Object.entries(target.params ?? {})) p.set(k, String(v));
+  // Ship scale: the capture servers inherit EQX_SHIP_SCALE / EQX_SHIP_TUNING
+  // from this process; the page must load at the same scale (the welcome checks).
+  if (process.env['EQX_SHIP_SCALE']) p.set('shipScale', process.env['EQX_SHIP_SCALE']);
+  if (process.env['EQX_SHIP_TUNING']) p.set('shipTuning', process.env['EQX_SHIP_TUNING']);
   return `${baseUrl}/?${p.toString()}`;
 }
 

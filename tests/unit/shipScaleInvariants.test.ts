@@ -165,3 +165,16 @@ describe('ship scale — combat profiles', () => {
     expect(BASE.lootPickup).toBe(80);
   });
 });
+
+describe('camera at the ship scale', () => {
+  it('start zoom is the base at 1× and eases out as ships grow, never past the floor', async () => {
+    const { startZoomForScale } = await import('../../src/shared-types/shipScale/tuning.js');
+    expect(startZoomForScale(0.5, 1)).toBe(0.5);
+    for (const s of [2, 4]) {
+      const z = startZoomForScale(0.5, s);
+      expect(z).toBeLessThan(0.5);
+      expect(z * s).toBeGreaterThan(0.5); // ships still draw bigger on screen
+      expect(z).toBeGreaterThanOrEqual(0.15); // the gameplay zoom-out floor
+    }
+  });
+});

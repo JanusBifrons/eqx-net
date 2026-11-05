@@ -35,7 +35,7 @@ import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
 import { FxEngines } from './art/fx/FxEngines.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
-import { shipTuning } from '@shared-types/shipScale/tuning';
+import { shipTuning, startZoomForScale } from '@shared-types/shipScale/tuning';
 import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { SHIELD_RADIUS_PAD } from '../../shared-types/shipKinds.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
@@ -628,7 +628,7 @@ export class PixiRenderer implements IRenderer {
     const resolvedZoom =
       zoom !== undefined && Number.isFinite(zoom) && zoom > 0
         ? zoom
-        : DEFAULT_GAMEPLAY_ZOOM;
+        : startZoomForScale(DEFAULT_GAMEPLAY_ZOOM); // ship scale (shipScale/tuning)
     this.camera.setZoom(resolvedZoom);
 
     // Frame diagnostic (gated). The decisive crispness metric: the
