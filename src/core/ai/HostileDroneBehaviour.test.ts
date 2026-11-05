@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+// Some cases lock AUTHORED 1× numbers (ranges, distances inside today's
+// standoff); they run at 1× via `pnpm test:authored-scale` (ship-scale.md).
+import { AT_AUTHORED_SHIP_SCALE } from '../../shared-types/shipScale/config.js';
 import { HostileDroneBehaviour } from './HostileDroneBehaviour.js';
 import { DriftingAsteroidBehaviour } from './DriftingAsteroidBehaviour.js';
 import type { AiEntity, AiWorldView } from '../contracts/IAiBehaviour.js';
@@ -255,7 +258,7 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
   // Combat tests now require markHostile to put the drone in COMBAT mode
   // (which targets only marked-hostile players, not "any nearest").
 
-  it('targets the nearest hostile when two players are present', () => {
+  it.runIf(AT_AUTHORED_SHIP_SCALE)('targets the nearest hostile when two players are present', () => {
     // Default kind = fighter (bolt), fireRange ≈ 560 ⇒ STOP_DIST ≈ 336. The
     // near target sits in the approach window (> STOP_DIST so the drone
     // thrusts forward toward it; the standoff logic hovers inside STOP_DIST).
@@ -296,7 +299,7 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
     expect(intent.setAngvel ?? 0).not.toBe(0);
   });
 
-  it('thrust is along the drone\'s current forward, not toward the target', () => {
+  it.runIf(AT_AUTHORED_SHIP_SCALE)('thrust is along the drone\'s current forward, not toward the target', () => {
     // Drone at angle=π/2 → forward = (-sin(π/2), cos(π/2)) = (-1, 0). Target
     // placed in the approach window (> STOP_DIST ≈ 336 for the fighter bolt)
     // so the drone thrusts forward (−x) rather than hovering inside the stop
@@ -434,7 +437,7 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
 });
 
 describe('HostileDroneBehaviour — weapon-aware engagement (overhaul §4)', () => {
-  it('per-weapon fire ranges: beam very close, bolt medium, missile long', () => {
+  it.runIf(AT_AUTHORED_SHIP_SCALE)('per-weapon fire ranges: beam very close, bolt medium, missile long', () => {
     const beam = new HostileDroneBehaviour('interceptor'); // hitscan
     const bolt = new HostileDroneBehaviour('fighter');     // laser
     const missile = new HostileDroneBehaviour('missile-frigate'); // heat-seeker
