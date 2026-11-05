@@ -88,4 +88,27 @@ test.describe('logged-out (auth-gated pick)', () => {
     await page.getByTestId('sector-drawer-join').click();
     await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 8_000 });
   });
+
+  /**
+   * Smoke-test bug 2026-11-05 (phone, LAN host): "The login screen keeps
+   * popping up. Continue as guest acts like a dismiss or close button ...
+   * instead of a logon on a new throwaway account." Choosing guest was never
+   * remembered, so every LATER pick hit the auth gate again and a guest could
+   * not get into a sector they picked themselves.
+   */
+  test('after choosing guest, later picks do not bounce back to the login page', async ({ page }) => {
+    await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
+    await waitForGalaxyPickHook(page);
+    await pickSector(page);
+    await page.locator('text=Continue as guest').click();
+    await expect(page.getByTestId('sector-drawer-join')).toBeVisible({ timeout: 10_000 });
+    // A second pick, made by the guest themselves.
+    await waitForGalaxyPickHook(page);
+    await pickSector(page);
+    await expect(page.locator('text=Continue as guest')).toHaveCount(0);
+    await expect(page.getByTestId('sector-drawer-join')).toBeVisible({ timeout: 8_000 });
+    await page.getByTestId('sector-drawer-join').click();
+    await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 8_000 });
+  });
 });
