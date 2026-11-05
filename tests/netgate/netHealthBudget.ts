@@ -44,6 +44,14 @@
  * The plan pre-authorised this data-driven demotion (acceptance step 3
  * / self-critique #1); regression power is unaffected — the code-side
  * acceptance trips on the drift/correction metrics, never jitter.
+ *
+ * `rollingCorrRate` is PRINT-ONLY too (demoted 2026-11-05): `main` measured
+ * against IDENTICAL `main` FAILED the gate (workflow_dispatch run
+ * 42078214467: baseline 0.45, HEAD 0.95, PASS=false), and the same code
+ * read 0.3, 0.45, 0.6, 0.9 and 0.95 across five same-day runs, a spread
+ * wider than its 0.6 ceiling. It counts corrections in a short rolling
+ * window, so a handful of events flips it. Drift (`maxDriftUnits`,
+ * `meanDriftUnits`) still gates the correction behaviour itself.
  */
 
 /**
@@ -52,6 +60,8 @@
  * `meanDriftUnits = totalDriftUnits / max(1, snapshotCount)`.
  */
 export interface NetHealthArm {
+  /** PRINT-ONLY since 2026-11-05 (same-code spread exceeds its ceiling; see
+   *  header). Logged for diagnosis. */
   rollingCorrRate: number;
   ticksAhead: number;
   maxDriftUnits: number;
@@ -99,7 +109,8 @@ export interface NetHealthVerdict {
  * change (locked by the unit test). Each ceiling is grounded above.
  */
 export const NET_HEALTH_BUDGET = {
-  rollingCorrRate: { margin: 0.5, eps: 0.05, ceil: 0.6 },
+  // rollingCorrRate DEMOTED to print-only 2026-11-05 (see header): identical
+  // code failed the gate. Re-adding it needs a mechanism fix, not a margin.
   ticksAhead: { margin: 0.4, eps: 3, ceil: 30 },
   maxDriftUnits: { margin: 0.5, eps: 0.5, ceil: 12.0 },
   meanDriftUnits: { margin: 0.4, eps: 0.2, ceil: 3.0 },
