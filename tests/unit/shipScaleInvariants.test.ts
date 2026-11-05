@@ -11,7 +11,7 @@ import { unscaledShipKinds } from '../../src/shared-types/shipScale/defineShipKi
 import {
   BASE, CLASS_TUNING, MOTION, combatDistanceScale, effectiveScale, massOf, motionFactors, scaleShipKind, shipTuning, sizeClassOf,
 } from '../../src/shared-types/shipScale/tuning.js';
-import { resolveShipScaleConfig } from '../../src/shared-types/shipScale/config.js';
+import { AT_DEFAULT_SHIP_SCALE, resolveShipScaleConfig } from '../../src/shared-types/shipScale/config.js';
 import { GATE_GAP, AIRLOCK_GAP } from '../../src/core/structures/gateGeometry.js';
 import type { ShipKind } from '../../src/shared-types/shipKinds/types.js';
 import { isChinMount } from '../../src/core/combat/muzzle.js';
@@ -36,7 +36,7 @@ const CAPITAL: ShipKind = {
 };
 
 describe('ship scale — the catalogue', () => {
-  it.runIf(effectiveScale({}) === 1)('at the default scale every kind is exactly its authored self', () => {
+  it.runIf(AT_DEFAULT_SHIP_SCALE)('at the default scale every kind is exactly its authored self', () => {
     for (const raw of RAW) {
       const k = SHIP_KINDS_LIST.find((x) => x.id === raw.id)!;
       expect(effectiveScale(raw), raw.id).toBe(1);
@@ -51,9 +51,9 @@ describe('ship scale — the catalogue', () => {
   });
 
   it('config comes from env, the page global or the worker name, clamped', () => {
-    expect(resolveShipScaleConfig({ env: { EQX_SHIP_SCALE: '2', EQX_SHIP_TUNING: 'B' } })).toEqual({ scale: 2, tuning: 'B' });
+    expect(resolveShipScaleConfig({ env: { EQX_SHIP_SCALE: '2', EQX_SHIP_TUNING: 'B' } })).toMatchObject({ scale: 2, tuning: 'B' });
     expect(resolveShipScaleConfig({ global: { __EQX_SHIP_SCALE__: '1.5' } }).scale).toBe(1.5);
-    expect(resolveShipScaleConfig({ workerName: 'bake;shipScale=4;shipTuning=A' })).toEqual({ scale: 4, tuning: 'A' });
+    expect(resolveShipScaleConfig({ workerName: 'bake;shipScale=4;shipTuning=A' })).toMatchObject({ scale: 4, tuning: 'A' });
     expect(resolveShipScaleConfig({ env: { EQX_SHIP_SCALE: '999' } }).scale).toBe(16);
     expect(resolveShipScaleConfig({}).scale).toBe(1);
   });
@@ -176,5 +176,17 @@ describe('camera at the ship scale', () => {
       expect(z * s).toBeGreaterThan(0.5); // ships still draw bigger on screen
       expect(z).toBeGreaterThanOrEqual(0.15); // the gameplay zoom-out floor
     }
+  });
+});
+
+describe('per-kind size overrides (EQX_SHIP_KIND_SCALE)', () => {
+  it('parses id:scale[:class[:count:size]] and ignores junk', async () => {
+    const { parseKindScaleOverrides, resolveShipScaleConfig } = await import('../../src/shared-types/shipScale/config.js');
+    const m = parseKindScaleOverrides('gunship:10:capital:8:30,heavy:3,bad,:2,x:-1');
+    expect(m.get('gunship')).toEqual({ sizeScale: 10, sizeClass: 'capital', thrusters: { count: 8, size: 30 } });
+    expect(m.get('heavy')).toEqual({ sizeScale: 3 });
+    expect(m.size).toBe(2);
+    expect(resolveShipScaleConfig({ workerName: 'bake;shipScale=2;shipTuning=A;kindScale=gunship:10:capital' }).kinds).toBe('gunship:10:capital');
+    expect(resolveShipScaleConfig({ global: { __EQX_SHIP_KIND_SCALE__: 'a b' } }).kinds).toBe('');
   });
 });

@@ -30,6 +30,8 @@ export interface WelcomeMessage {
    *  (the catalogue is built from it); a mismatch is logged loudly. */
   shipScale?: number;
   shipTuning?: 'A' | 'B';
+  /** Per-kind size overrides (EQX_SHIP_KIND_SCALE), sent only when set. */
+  shipKindScale?: string;
 }
 
 /** PR 3a (account-bound identity) — sent to a session immediately before the
@@ -64,6 +66,7 @@ export const WelcomeSchema = z
     spectator: z.boolean().optional(),
     shipScale: z.number().positive().optional(),
     shipTuning: z.enum(['A', 'B']).optional(),
+    shipKindScale: z.string().max(256).optional(),
   })
   .strict();
 

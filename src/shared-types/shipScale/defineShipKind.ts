@@ -9,12 +9,22 @@
  */
 import { ShipKindSchema, type ShipKind } from '../shipKinds/types.js';
 import { effectiveScale, scaleShipKind } from './tuning.js';
+import { KIND_SCALE_OVERRIDES } from './config.js';
 
 const UNSCALED = new Map<string, ShipKind>();
 
 export function defineShipKind(raw: unknown): ShipKind {
-  const kind = ShipKindSchema.parse(raw);
-  UNSCALED.set(kind.id, kind);
+  const parsed = ShipKindSchema.parse(raw);
+  UNSCALED.set(parsed.id, parsed);
+  // A per-kind override (EQX_SHIP_KIND_SCALE) retunes one kind's size, class
+  // and engines without a catalogue edit (capital sandbox / tuning).
+  const o = KIND_SCALE_OVERRIDES.get(parsed.id);
+  const kind: ShipKind = o === undefined ? parsed : {
+    ...parsed,
+    sizeScale: (parsed.sizeScale ?? 1) * o.sizeScale,
+    ...(o.sizeClass ? { sizeClass: o.sizeClass } : {}),
+    ...(o.thrusters ? { thrusters: o.thrusters } : {}),
+  };
   return scaleShipKind(kind, effectiveScale(kind));
 }
 

@@ -260,6 +260,7 @@ export function targetUrl(baseUrl: string, target: ShotTarget, testId: string, h
   // from this process; the page must load at the same scale (the welcome checks).
   if (process.env['EQX_SHIP_SCALE']) p.set('shipScale', process.env['EQX_SHIP_SCALE']);
   if (process.env['EQX_SHIP_TUNING']) p.set('shipTuning', process.env['EQX_SHIP_TUNING']);
+  if (process.env['EQX_SHIP_KIND_SCALE']) p.set('shipKindScale', process.env['EQX_SHIP_KIND_SCALE']);
   return `${baseUrl}/?${p.toString()}`;
 }
 
