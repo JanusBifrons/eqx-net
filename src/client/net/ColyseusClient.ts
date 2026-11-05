@@ -203,7 +203,7 @@ import {
   REMOTE_SPRING_VEL_END_MS,
   STAGE_3_MAX_LOOKAHEAD_TICKS,
 } from './predictionTuning.js';
-import { SHIP_KIND_SCALE, SHIP_SCALE, SHIP_TUNING } from '@shared-types/shipScale/config';
+import { shipScaleMismatch } from '@shared-types/shipScale/welcomeScale';
 
 /** Simple monotonically incrementing shot ID generator. */
 let _shotCounter = 0;
@@ -1417,9 +1417,8 @@ export class ColyseusGameClient {
       if (msg === null) return;
       // Ship scale: the catalogue is built at load from this client's own
       // config; a server at another scale would desync physics and hits.
-      if ((msg.shipScale ?? 1) !== SHIP_SCALE || (msg.shipTuning ?? 'A') !== SHIP_TUNING || (msg.shipKindScale ?? '') !== SHIP_KIND_SCALE) {
-        logEvent('ship_scale_mismatch', { server: msg.shipScale ?? 1, client: SHIP_SCALE, serverTuning: msg.shipTuning ?? 'A', clientTuning: SHIP_TUNING, serverKinds: msg.shipKindScale ?? '', clientKinds: SHIP_KIND_SCALE, fix: `?shipScale=${msg.shipScale ?? 1}&shipTuning=${msg.shipTuning ?? 'A'}` });
-      }
+      const scaleMismatch = shipScaleMismatch(msg);
+      if (scaleMismatch) logEvent('ship_scale_mismatch', scaleMismatch);
       const idChanged = storedPlayerId && msg.playerId !== storedPlayerId;
       logEvent('cc_welcome', {
         playerId: msg.playerId,
