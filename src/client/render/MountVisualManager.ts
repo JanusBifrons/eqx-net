@@ -36,7 +36,12 @@
  * effectively underneath the ship body and are not visually intrusive.
  */
 
-import { Container, Graphics } from 'pixi.js';
+import { Container, Graphics, Sprite } from 'pixi.js';
+import type { ArtHandle } from './art/ArtService.js';
+import { isMachinedSprite, type ShipArtCtx } from './art/shipArtSprites.js';
+import { shipTurrets, structureTurrets, type TurretPlace } from './art/turretLayout.js';
+import { applySunBlend } from './art/machinedShipLight.js';
+import { isStructureKindId } from '../../shared-types/structureKinds';
 import { getShipKind, type WeaponMount } from '../../shared-types/shipKinds';
 import { shipPrimaryColor } from '@core/geometry/shipHullOutline';
 import { aimLineLengthForMount } from './aimLineLength';
@@ -46,6 +51,18 @@ import { MUZZLE_CLEARANCE } from '@core/combat/Weapons';
  *  mountless kind avoids allocating a fresh `[]` literal every time
  *  `ensureForShip` runs in the per-frame render path (invariant #14). */
 const EMPTY_MOUNTS: readonly WeaponMount[] = [];
+const EMPTY_IDS: readonly string[] = [];
+
+/** Machined turret (new effects): a pivot at the layout's spot holding the
+ *  baked gun, two sun frames cross-faded by the gun's own world rotation.
+ *  The ring it sits in is cut into the hull / deck bake. `layers` is null
+ *  until the gun's bake is ready (today's bar draws meanwhile). */
+interface MachinedGun {
+  place: TurretPlace;
+  pivot: Container;
+  handle: ArtHandle;
+  layers: { a: Sprite; b: Sprite } | null;
+}
 
 /** Bookkeeping per ship — one cluster of mount graphics parented to the
  *  ship's sprite. The cluster `Container` rotates with the ship (because
@@ -75,6 +92,8 @@ interface MountGraphics {
   /** Faint preview line from barrel tip in the mount's current fire
    *  direction. Static for Phase 3; modulated by target lock in Phase 4b. */
   aimLine: Graphics;
+  /** The Machined gun on this mount (new effects), or null. */
+  gun: MachinedGun | null;
 }
 
 /** Dotted-line dash and gap lengths (world units). 6 u on / 4 u off reads
@@ -101,6 +120,26 @@ export class MountVisualManager {
   private readonly clusters = new Map<string, MountCluster>();
   /** Turret aim-guide lines. Off for showcase capture (`?cleanworld=1`). */
   private aimLinesVisible = true;
+  /** The renderer's art context: with `turrets` on, mounts on Machined
+   *  hulls get Machined guns and aim lines follow the local active weapon. */
+  private actx: ShipArtCtx | null = null;
+  /** The local ship, and its active weapon's mount ids while a hostile is in
+   *  range (empty otherwise). Only these show aim lines in the new look. */
+  private localId: string | null = null;
+  private localAim: readonly string[] = EMPTY_IDS;
+  /** Machined guns currently drawn (for `__eqxArtStats().turrets`). */
+  private machinedGuns = 0;
+
+  setArt(actx: ShipArtCtx): void { this.actx = actx; }
+
+  /** Per frame, before the sprite updates. `ids` is read, never copied. */
+  setLocalAim(localId: string | null, ids: readonly string[] | undefined): void {
+    this.localId = localId;
+    this.localAim = ids ?? EMPTY_IDS;
+  }
+
+  /** Machined guns drawn now, or -1 when the new look is off. */
+  machinedGunCount(): number { return this.actx?.turrets ? this.machinedGuns : -1; }
 
   setAimLinesVisible(visible: boolean): void {
     this.aimLinesVisible = visible;
@@ -198,7 +237,7 @@ export class MountVisualManager {
         // visually appears to "cap" the line.
         container.addChild(aimLine);
         container.addChild(turret);
-        perMount.set(mount.id, { turret, aimLine });
+        perMount.set(mount.id, { turret, aimLine, gun: this.machinedGunFor(id, kindId, mount, color, parent, container) });
       }
     }
 
@@ -211,8 +250,35 @@ export class MountVisualManager {
   removeShip(shipId: string): void {
     const cluster = this.clusters.get(shipId);
     if (!cluster) return;
+    for (const m of cluster.perMount.values()) if (m.gun?.layers) this.machinedGuns--;
     cluster.container.destroy({ children: true });
     this.clusters.delete(shipId);
+  }
+
+  /** A Machined gun for one mount, when the new look is on and the parent is
+   *  a Machined hull or deck; else null (today's bar). The gun takes the
+   *  hull's own paint (a faction drone's, an owner's accent). */
+  private machinedGunFor(
+    id: string, kindId: string | undefined, mount: WeaponMount, color: number,
+    parent: Container | Graphics, container: Container,
+  ): MachinedGun | null {
+    const actx = this.actx;
+    if (!actx?.turrets || !actx.art || !kindId || !isMachinedSprite(parent)) return null;
+    const structure = isStructureKindId(kindId);
+    const places = structure ? structureTurrets(kindId) : shipTurrets(kindId);
+    let place: TurretPlace | undefined;
+    for (const p of places) if (p.mount.id === mount.id) place = p;
+    if (!place) return null; // e.g. an activated latent mount, a miner drill
+    const job = actx.handles.get(id)?.job;
+    const paint = job?.type === 'ship' ? (job.paint ?? color) : job?.type === 'struct' ? (job.accent ?? color) : color;
+    const pivot = new Container();
+    pivot.position.set(place.px, place.py);
+    pivot.rotation = -mount.baseAngle;
+    container.addChild(pivot);
+    const handle = actx.art.acquire({
+      type: 'turret', id: place.family, paint, len: Math.max(place.len, 0.1), wid: place.wid, cap: place.cap, ppu: structure ? 2.5 : 6,
+    });
+    return { place, pivot, handle, layers: null };
   }
 
   /** Mount count for a tracked ship — used by PixiRenderer to expose the
@@ -252,6 +318,30 @@ export class MountVisualManager {
       const spriteRotation = -(mount.baseAngle + current);
       gfx.turret.rotation = spriteRotation;
       gfx.aimLine.rotation = spriteRotation;
+      const gun = gfx.gun;
+      if (gun) {
+        if (!gun.layers && gun.handle.state === 'ready' && gun.handle.ship) {
+          // The bake just finished: build the gun (once) and retire the bar.
+          const art = gun.handle.ship;
+          const a = new Sprite(art.frames[0]!), b = new Sprite(art.frames[1 % art.frames.length]!);
+          for (const sp of [a, b]) { sp.anchor.set(0.5); sp.scale.set(1 / art.density); gun.pivot.addChild(sp); }
+          b.alpha = 0;
+          gun.layers = { a, b };
+          gfx.turret.visible = false;
+          this.machinedGuns++;
+        }
+        if (gun.layers && gun.handle.ship) {
+          gun.pivot.rotation = spriteRotation;
+          // Lit by the gun's own world rotation, like a hull.
+          const parentRot = cluster.container.parent?.rotation ?? 0;
+          applySunBlend(gun.layers, gun.handle.ship.frames, this.actx?.sunAz ?? 0, parentRot + spriteRotation);
+        }
+      }
+      if (this.actx?.turrets) {
+        // New look: guides only for the local ship's active weapon while a
+        // hostile is in range.
+        gfx.aimLine.visible = this.aimLinesVisible && shipId === this.localId && this.localAim.includes(mount.id);
+      }
     }
   }
 

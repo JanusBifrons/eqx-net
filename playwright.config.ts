@@ -70,6 +70,8 @@ const FEATURE_SPECS: string[] = [
   '**/fx-weapons.spec.ts',
   // New engine exhaust on every ship (engine fx, 2026-11-05).
   '**/fx-engines.spec.ts',
+  // Machined turrets (plan T1, 2026-11-05).
+  '**/fx-turrets.spec.ts',
   // Fence-hit fix (2026-11-04).
   '**/fence-hits.spec.ts',
   // Living World P2 — Trade tab → deal → a hauler arrives.
