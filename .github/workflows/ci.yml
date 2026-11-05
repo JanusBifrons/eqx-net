@@ -142,6 +142,11 @@ jobs:
       - name: Unit tests + coverage floor
         if: needs.changes.outputs.code == 'true'
         run: pnpm run coverage
+      # Ships default to 2× B; tests that lock the AUTHORED 1× catalogue numbers
+      # skip at that scale, so run them here at 1×, profile A (ship-scale.md).
+      - name: Authored-scale (1×) locks
+        if: needs.changes.outputs.code == 'true'
+        run: pnpm test:authored-scale
 
   # Integration suite (`vitest.integration.config.ts`). Boots a real
   # Colyseus Server + SectorRoom + physics worker + WebSocket transport per

@@ -11,7 +11,7 @@ import {
   SHIP_COLLISION_RADIUS,
 } from './Weapons.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
-import { AT_DEFAULT_SHIP_SCALE } from '../../../src/shared-types/shipScale/config.js';
+import { AT_AUTHORED_SHIP_SCALE } from '../../../src/shared-types/shipScale/config.js';
 
 describe('rayHitsSphere (geometric, no Rapier)', () => {
   it('hits a sphere directly ahead', () => {
@@ -170,7 +170,7 @@ describe('rayHitsConvexPolygon (geometric, no Rapier)', () => {
 });
 
 // Locks authored 1× numbers; other scales: tests/unit/shipScaleInvariants.test.ts.
-describe.runIf(AT_DEFAULT_SHIP_SCALE)('hitscanRaycast (real Rapier world)', () => {
+describe.runIf(AT_AUTHORED_SHIP_SCALE)('hitscanRaycast (real Rapier world)', () => {
   let world: PhysicsWorld;
 
   beforeEach(async () => {

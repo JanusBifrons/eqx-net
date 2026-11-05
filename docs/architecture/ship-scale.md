@@ -17,7 +17,7 @@ size is a knob, and the tests stop size bugs at any value.
 
 | File | What |
 |---|---|
-| `config.ts` | `SHIP_SCALE` + `SHIP_TUNING` (combat profile A/B), read once at module load, the same way in every context. `AT_DEFAULT_SHIP_SCALE` gates tests that lock 1× sizes. |
+| `config.ts` | `SHIP_SCALE` + `SHIP_TUNING` (combat profile A/B), read once at module load, the same way in every context. `AT_AUTHORED_SHIP_SCALE` gates tests that lock 1× sizes. |
 | `tuning.ts` | `scaleShipKind` (geometry + motion), `shipTuning(kind)` (every other size-dependent number), `CLASS_TUNING` (per size class), `MOUNT_SIZE_TUNING`, `combatDistanceScale`, `startZoomForScale`. |
 | `defineShipKind.ts` | What every catalogue family file calls instead of `ShipKindSchema.parse`: parse, then scale by `effectiveScale(kind)` = `SHIP_SCALE × sizeScale`. Engineering-only kinds stay at 1×. |
 | `lookup.ts` | `tuningFor(id)` / `GLOBAL_SHIP_TUNING` for sites that only have a kind id, or none. |
@@ -100,8 +100,10 @@ view still shows more space.
 - `muzzleParity.test.ts` locks every fire site, server and client, to the
   shared muzzle (no hardcoded `?? 16|20`).
 - Tests that lock authored 1× numbers use
-  `describe.runIf(AT_DEFAULT_SHIP_SCALE)`; the sweep covers other scales. Run
-  the suite at another scale with `EQX_SHIP_SCALE=2 pnpm test`.
+  `describe.runIf(AT_AUTHORED_SHIP_SCALE)`; the sweep covers other scales. Run
+  the suite at another scale with `EQX_SHIP_SCALE=4 pnpm test`. The default is
+  2× B, so `pnpm test` skips the authored-1× locks; `pnpm test:authored-scale`
+  (also a CI step) runs them at 1×, profile A.
 
 ## Filming another scale
 
@@ -114,6 +116,6 @@ params.
 - **Mount size:** `MOUNT_SIZE_TUNING` (S/M/L/XL) and `mountSizeOf` exist, but
   nothing in the fire paths reads them yet. That's planned for the capital-ship
   plan, where L/XL batteries first appear.
-- **Gameplay values:** this PR ships the system at 1× (no behaviour change).
-  The comparison footage (2026-11-05) picked **2× B**; switching the default to
-  2× B is the next PR, after a phone run.
+- **Gameplay values:** the shipping default is **2× B** (picked 2026-11-05
+  from the comparison footage). Per-class tuning for capitals comes with the
+  capital-ship plan.
