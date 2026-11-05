@@ -11,6 +11,7 @@ import { shipGallery } from './shots/shipGallery.js';
 import { machinedArt } from './shots/machinedArt.js';
 import { newEffects } from './shots/newEffects.js';
 import { crossingSector } from './shots/crossingSector.js';
+import { machinedTurrets } from './shots/machinedTurrets.js';
 import { flight } from './shots/flight.js';
 import { beamCombat } from './shots/beamCombat.js';
 import { turrets } from './shots/turrets.js';
@@ -53,6 +54,7 @@ export const SHOTS: readonly Shot[] = [
   packBattle,
   newEffects,
   crossingSector,
+  machinedTurrets,
   robots,
   nexus,
   scrap,
