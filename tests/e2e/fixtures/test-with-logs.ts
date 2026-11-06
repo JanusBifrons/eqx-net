@@ -66,6 +66,9 @@ export const test = base.extend<EqxFixtures>({
       }, undefined,
       { timeout: 10000 },
     );
+    // Hand the test a ship that is IN PLAY: it activates (targetable, input
+    // live, HUD mounted) only once the loading curtain lifts, 6-16 s under load.
+    await page.waitForSelector('[data-testid="warp-screen"][data-warp-visible="0"]', { state: 'attached', timeout: 60_000 });
 
     await use(page);
 
