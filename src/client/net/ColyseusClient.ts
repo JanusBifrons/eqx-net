@@ -3013,6 +3013,7 @@ export class ColyseusGameClient {
     // before the call. Other fields, including the pre-bound
     // `tryEnsureLingerPredBody` arrow, are stable.
     this._routeSnapshotShipStatesCtx.predWorld = this.predWorld;
+    this._routeSnapshotShipStatesCtx.localSpectating = useUIStore.getState().pilotMode === 'spectator';
     routeSnapshotShipStates(snap, this._routeSnapshotShipStatesCtx);
 
     // Wire-discipline P3: projectiles arrive on the snapshot, interest-filtered

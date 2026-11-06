@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { waitForInPlay, launchGalaxyTestClient } from './helpers/gameScenario';
 import { test, expect, type Page } from '@playwright/test';
 
 /**
@@ -38,6 +39,8 @@ async function join(page: Page, opts: { worker0?: boolean } = {}): Promise<void>
     }, undefined,
     { timeout: 15_000 },
   );
+  // The HUD (speed dial, pilot toggle) mounts when the loading curtain lifts.
+  await waitForInPlay(page);
   await page.locator('[data-testid="speed-dial-fab"]').waitFor({ timeout: 10_000 });
 }
 
@@ -205,9 +208,13 @@ test('construction works while spectating (place a structure with no ship)', asy
   expect(await swarmCount()).toBeGreaterThan(before);
 });
 
-test('pilot/spectate toggle round-trips pilot↔spectator', async ({ page }) => {
-  test.setTimeout(45_000);
-  await join(page);
+test('pilot/spectate toggle round-trips pilot↔spectator', async ({ browser }) => {
+  test.setTimeout(60_000);
+  // Spectate PARKS the ship you were flying (a lingering hull) and Pilot lists
+  // your parked ships. Parking needs a galaxy room (engineering rooms never
+  // linger), so this round trip runs in the linger-capable galaxy-test room.
+  const { ctx, page } = await launchGalaxyTestClient(browser, { testId: randomUUID(), shipKind: 'fighter' });
+  await waitForInPlay(page);
   expect(await pilotMode(page)).toBe('pilot');
 
   // Phase 5 — the always-visible two-button toggle (out of the speed-dial). Click
@@ -219,9 +226,13 @@ test('pilot/spectate toggle round-trips pilot↔spectator', async ({ page }) => 
     { timeout: 5_000 },
   );
 
+  // Pilot while spectating opens a menu of your parked ships (Spectate parked
+  // the one you were flying): pick it to fly again.
   await page.locator('[data-testid="pilot-toggle"]').click();
+  await page.locator('[data-testid^="pilot-menu-ship-"]').first().click({ timeout: 10_000 });
   await page.waitForFunction(
     () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'pilot', undefined,
-    { timeout: 5_000 },
+    { timeout: 10_000 },
   );
+  await ctx.close();
 });
