@@ -5,6 +5,8 @@
  */
 import type { FrameTimeSummary } from '../../../core/perf/FrameTimeRing.js';
 import type { SceneStatus } from './SceneScriptRunner.js';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 
 export interface ScenePerfView {
   roomId: string;
@@ -29,3 +31,21 @@ export function scenePerfViews(): ScenePerfView[] {
   for (const r of rooms) { const v = r.scenePerf(); if (v) out.push(v); }
   return out;
 }
+
+/** Client readings posted by the perf lab (`POST /dev/perf/client`). Kept in
+ *  memory (last 50) and, when `EQX_PERF_LEDGER_DIR` is set, written to disk
+ *  so Claude reads them; the user never pastes numbers. */
+const clientReadings: unknown[] = [];
+
+export function recordClientReading(r: unknown): string | null {
+  clientReadings.push(r);
+  if (clientReadings.length > 50) clientReadings.shift();
+  const dir = process.env['EQX_PERF_LEDGER_DIR'];
+  if (!dir) return null;
+  mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+  writeFileSync(file, JSON.stringify(r, null, 2));
+  return file;
+}
+
+export function clientPerfReadings(): readonly unknown[] { return clientReadings; }

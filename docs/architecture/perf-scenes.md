@@ -49,6 +49,16 @@ A run is **INVALID**, never fast, if any of these happen:
 - too few ships were left;
 - too few frames were recorded.
 
+## The perf lab: watch it on your own device
+
+The harness's numbers come from a headless laptop browser with an idle pilot. To check that they match what a person sees, `pnpm perf:lab` serves the scenes on the local network:
+1. It prints a link: `http://<pc-ip>:5374/__perf-lab__/index.html`. When pasting it into chat, put it in a code block so Markdown doesn't eat the `__`.
+2. Open the link on a phone or another browser and tap a scene. It plays in the real game on that device, with a countdown chip.
+3. When the scene ends, the device posts its reading (frame times, hitches, renderer cost, device, plus the server's tick numbers for the same window) to `POST /dev/perf/client`. The reading is saved to `perf/ledger/devices/`.
+4. The viewer only says whether it looked smooth. Nobody pastes numbers.
+
+Those verdicts, next to the numbers from the same take, set the absolute budgets per device (`perf/budgets.{desktop,phone}.ts`, still to come).
+
 ## Proving the gate sees a regression
 
 The runner can slow the head arm on purpose: `--inject-server-burn N` busy-waits N ms in every server tick of the perf rooms, and `--inject-client-burn N` does the same in every client frame. Before a metric gates anything, two runs must hold:

@@ -20,7 +20,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { CaptureServers, type ServerPorts } from '../showcase/servers.js';
-import { PERF_SCENES, type PerfScene } from '../src/server/rooms/scene/perfScenes.js';
+import { PERF_SCENES, type PerfScene } from '../src/shared-types/perf/perfScenes.js';
 import { compareArms, type RunMetrics, type ArmVerdict } from './verdict.js';
 
 const GPU_ARGS = ['--use-angle=d3d11', '--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'];

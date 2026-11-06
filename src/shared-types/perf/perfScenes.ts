@@ -3,11 +3,11 @@
  * test room (`perf-<id>`) plus what the runner does in it: the camera, how
  * long to measure, and the counts a valid run must reach.
  *
- * Plain data, imported by `src/server/index.ts` (room definitions) and by the
- * runner `perf/run-perf.ts` (camera + window), so both arms of an A/B read
- * the same definition. Adding a scene = one entry here.
+ * Plain data, read by `src/server/index.ts` (room definitions), the runner
+ * `perf/run-perf.ts` and the phone perf lab (camera + window), so every
+ * consumer reads the same definition. Adding a scene = one entry here.
  */
-import type { SceneStep } from './SceneScriptRunner.js';
+import type { SceneStep } from './sceneScript.js';
 
 export interface PerfScene {
   id: string;
@@ -28,6 +28,14 @@ export interface PerfScene {
 const fight = (tag: string, kind: string, x: number, y: number, count: number, atMs = 0): SceneStep =>
   ({ atMs, action: 'spawn', tag, kind, count, x, y, spread: 260 });
 
+/** Both sides, reinforced every 10 s: a 30-ship clash is over in ~10 s, so
+ *  without reinforcements most of the window would measure the aftermath. */
+const sustainedFight = (n: number, x: number, y: number, gap: number): SceneStep[] =>
+  [0, 10_000, 20_000].flatMap((t, i) => [
+    fight(`blue${i}`, 'fighter', x - gap, y, n, t),
+    fight(`red${i}`, 'robot-square', x + gap, y, n, t),
+  ]);
+
 export const PERF_SCENES: readonly PerfScene[] = [
   {
     id: 'idle',
@@ -40,20 +48,16 @@ export const PERF_SCENES: readonly PerfScene[] = [
   },
   {
     id: 'fleet-fight',
-    title: 'Two 30-ship fleets fight (drones vs robots)',
+    title: 'Two 30-ship fleets fight, reinforced every 10 s (drones vs robots)',
     room: {
       droneCount: 0,
       asteroidConfig: [],
-      sceneScript: [
-        fight('blue', 'fighter', -300, 1200, 30),
-        fight('red', 'robot-square', 300, 1200, 30),
-        { atMs: 30_000, action: 'end' },
-      ],
+      sceneScript: [...sustainedFight(30, 0, 1200, 300), { atMs: 30_000, action: 'end' }],
     },
     spawn: { x: 0, y: -400 },
     camera: { x: 0, y: 1200, zoom: 0.45 },
     durationMs: 30_000,
-    minSwarm: 1,
+    minSwarm: 30,
   },
   {
     id: 'teleport-raid',
@@ -78,11 +82,7 @@ export const PERF_SCENES: readonly PerfScene[] = [
     title: 'Fleet fight seen from the zoom-out floor',
     room: {
       droneCount: 0,
-      sceneScript: [
-        fight('blue', 'fighter', -600, 1500, 40),
-        fight('red', 'robot-square', 600, 1500, 40),
-        { atMs: 30_000, action: 'end' },
-      ],
+      sceneScript: [...sustainedFight(40, 0, 1500, 600), { atMs: 30_000, action: 'end' }],
     },
     spawn: { x: 0, y: 0 },
     camera: { x: 0, y: 800, zoom: 0.15 },
