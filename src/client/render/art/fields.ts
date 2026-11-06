@@ -375,12 +375,35 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     let stern = 0;
     for (const p of parts) for (const [, y] of p.pts) if (y > stern) stern = y;
     const prof = { sternOffset: stern > 0 ? stern : kind.radius };
-    const nr = Math.min(5, Math.max(0.9, kind.radius * 0.16));
-    const ny = prof.sternOffset - nr * 0.9;
-    // Half-width of the hull at the nozzle line.
-    let half = 0;
-    for (let x = 0; x < g.w / g.ppu / 2; x += 0.2) if (distAt(x, ny) > 0) half = x;
-    const xs = half > nr * 3.2 ? [-half * 0.45, half * 0.45] : [0];
+    // A kind that authors `thrusters` (the capitals) gets that many nozzles of
+    // that size; the 5 u cap below is a fighter-scale number, and on a 5,760 u
+    // battleship it left the exhaust invisible (invariant #18).
+    const t = kind.thrusters;
+    const nr = t ? t.size / 2 : Math.min(5, Math.max(0.9, kind.radius * 0.16));
+    const step = t ? Math.max(0.2, nr * 0.05) : 0.2;
+    const halfAt = (y: number): number => {
+      let h = 0;
+      for (let x = 0; x < g.w / g.ppu / 2; x += step) if (distAt(x, y) > 0) h = x;
+      return h;
+    };
+    // An authored bank of nozzles needs the hull wide enough to hold it side by
+    // side; a tapered stern is too narrow at its tip, so step the line forward
+    // (at most a quarter of the hull) until the bank fits.
+    const want = t && t.count > 1 ? (t.count - 1) * nr * 1.2 + nr : 0;
+    let ny = prof.sternOffset - nr * 0.9;
+    let half = halfAt(ny);
+    for (let k = 0; k < 40 && half < want && ny > prof.sternOffset * 0.5; k++) {
+      ny -= nr * 0.5;
+      half = halfAt(ny);
+    }
+    let xs: number[];
+    if (t && t.count > 1) {
+      // Evenly across the stern, inside the hull, nozzles not overlapping more than they must.
+      const span = Math.max(0, Math.min(2 * half - 2 * nr, (t.count - 1) * nr * 2.4));
+      xs = Array.from({ length: t.count }, (_, i) => -span / 2 + (span * i) / (t.count - 1));
+    } else {
+      xs = t ? [0] : half > nr * 3.2 ? [-half * 0.45, half * 0.45] : [0];
+    }
     const eng = lin(PALETTE.engine);
     for (const nx of xs) {
       f.nozzles.push({ x: nx, y: ny + nr * 0.6, r: nr });
