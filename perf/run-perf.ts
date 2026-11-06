@@ -17,7 +17,7 @@
 import { chromium, type Browser } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { CaptureServers, type ServerPorts } from '../showcase/servers.js';
 import { PERF_SCENES, type PerfScene } from '../src/shared-types/perf/perfScenes.js';
@@ -25,7 +25,7 @@ import { compareArms, type RunMetrics, type ArmVerdict } from './verdict.js';
 
 const GPU_ARGS = ['--use-angle=d3d11', '--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'];
 
-interface Args { scenes: string[]; reps: number; base: string; headOnly: boolean; headed: boolean; out: string; burnServerMs: number; burnClientMs: number }
+interface Args { scenes: string[]; reps: number; base: string; headOnly: boolean; headed: boolean; out: string; burnServerMs: number; burnClientMs: number; append: string | undefined }
 
 function parseArgs(argv: string[]): Args {
   const get = (k: string): string | undefined => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
@@ -39,6 +39,9 @@ function parseArgs(argv: string[]): Args {
     // Self-test only: slow the HEAD arm on purpose; the verdict must go RED.
     burnServerMs: Number(get('--inject-server-burn') ?? 0),
     burnClientMs: Number(get('--inject-client-burn') ?? 0),
+    // Add this run's reps to an existing ledger file and re-judge all of them
+    // (lets a long A/B run as short foreground chunks).
+    append: get('--append'),
   };
 }
 
@@ -187,6 +190,21 @@ async function main(): Promise<void> {
     for (const a of arms) a.servers.stop();
   }
 
+  // --append: fold earlier chunks' reps in before judging.
+  type Ledger = { when: string; device: string; reps: number; arms: Array<{ name: string; sha: string }>; scenes: Record<string, { title: string; injected: unknown; verdict: ArmVerdict | null; base: RunMetrics[]; head: RunMetrics[] }> };
+  let prior: Ledger | null = null;
+  if (args.append && existsSync(args.append)) {
+    prior = JSON.parse(readFileSync(args.append, 'utf8')) as Ledger;
+    const shas = arms.map((a) => `${a.name}@${a.sha}`).join(' ');
+    const priorShas = prior.arms.map((a) => `${a.name}@${a.sha}`).join(' ');
+    if (shas !== priorShas) throw new Error(`--append: arms differ (${priorShas} vs ${shas})`);
+    for (const scene of scenes) {
+      const old = prior.scenes[scene.id];
+      if (!old) continue;
+      results[scene.id]!['base']!.unshift(...old.base);
+      results[scene.id]!['head']!.unshift(...old.head);
+    }
+  }
   const verdicts: Record<string, ArmVerdict | null> = {};
   for (const scene of scenes) {
     const r = results[scene.id]!;
@@ -195,16 +213,16 @@ async function main(): Promise<void> {
   mkdirSync(args.out, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const head = arms.find((a) => a.name === 'head')!;
-  const file = path.join(args.out, `${stamp}-${head.sha}-desktop.json`);
+  const file = args.append ?? path.join(args.out, `${stamp}-${head.sha}-desktop.json`);
   writeFileSync(file, JSON.stringify({
-    when: new Date().toISOString(), device: 'desktop', reps: args.reps,
+    when: new Date().toISOString(), device: 'desktop', reps: results[scenes[0]!.id]!['head']!.length,
     arms: arms.map((a) => ({ name: a.name, sha: a.sha })),
     scenes: Object.fromEntries(scenes.map((s) => [s.id, {
       title: s.title,
       injected: { serverBurnMs: args.burnServerMs, clientBurnMs: args.burnClientMs },
       verdict: verdicts[s.id],
-      base: results[s.id]!['base']!.map(({ raw: _raw, ...rest }) => rest),
-      head: results[s.id]!['head']!.map(({ raw: _raw, ...rest }) => rest),
+      base: results[s.id]!['base']!.map(({ raw: _raw, ...rest }) => ({ ...rest, raw: null })),
+      head: results[s.id]!['head']!.map(({ raw: _raw, ...rest }) => ({ ...rest, raw: null })),
     }])),
   }, null, 2));
   log(`\nledger: ${path.relative(ROOT, file)}`);
