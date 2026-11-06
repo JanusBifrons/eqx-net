@@ -130,6 +130,7 @@ export class Recorder {
     await assertProductionPath(page, shot.target);
     if (shot.prepare) await shot.prepare(ctx);
     if (shot.startWhen) await shot.startWhen(ctx);
+    await waitForSteadyPrediction(page, this.log);
 
     // ---- record ----
     const cdp = await context.newCDPSession(page);
@@ -265,6 +266,37 @@ export function targetUrl(baseUrl: string, target: ShotTarget, testId: string, h
   // comparison arms all film the same look).
   for (const [k, v] of new URLSearchParams(process.env['EQX_SHOWCASE_PARAMS'] ?? '')) p.set(k, v);
   return `${baseUrl}/?${p.toString()}`;
+}
+
+/**
+ * Don't roll until the local prediction is in step: a run of frames that each
+ * advance at most two ticks with no server correction being smoothed. Right
+ * after a join (or a long loading hold while art bakes) the client can still
+ * be catching up, which films as a 20 Hz judder of the ship (round 3 fly-by,
+ * 2026-11-05). Shots with no local ship (landing, galaxy) pass at once.
+ */
+async function waitForSteadyPrediction(page: Page, log: (m: string) => void): Promise<void> {
+  // A string, not a function: tsx injects `__name` into named functions,
+  // which doesn't exist in the page.
+  const ok = await page.evaluate<boolean>(`new Promise((resolve) => {
+    const c = globalThis.__eqxClient;
+    if (!c || !c.mirror || !c.mirror.localPlayerId) { resolve(true); return; }
+    const t0 = performance.now();
+    let prev = c.inputTick, clean = 0;
+    const step = () => {
+      const d = c.inputTick - prev; prev = c.inputTick;
+      const lo = c.reconciler && c.reconciler.lerpOffset;
+      const lerping = !!lo && (lo.x !== 0 || lo.y !== 0);
+      // 0 or 2 ticks happen now and then as the display drifts against the
+      // tick grid; catch-up runs 3-4 a frame.
+      clean = d <= 2 && !lerping ? clean + 1 : 0;
+      if (clean >= 60) { resolve(true); return; }
+      if (performance.now() - t0 > 45000) { resolve(false); return; }
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  })`);
+  if (!ok) log('  · prediction never settled (45 s); filming anyway');
 }
 
 async function waitForInGame(page: Page): Promise<void> {
