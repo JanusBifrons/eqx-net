@@ -246,7 +246,7 @@ CI runs only the **17 smoke specs** on a PR. The **88 feature specs** run only w
 | feel-tuning | 1 | fighter moved 337 u, test wants > 400 | **fixed**: it thrust while the curtain was up (input dead), and its band was authored at 1×; it now waits for play and scales the band by the fighter's ship-scale speed factor (533 u in a 283–1061 band at 2×) |
 | halo-radar | 1 | no off-screen arrows | **fixed**: the stale "Sector Alpha has drones" test is removed (radar-sandbox covers it); the per-frame dataset test stays |
 | fence-hits, fx-turrets | 1 each | waits on `__eqxArtStats` time out | unknown |
-| cargo-panel | 1 | "a Capital was placed" is null | likely the same placement-flow change |
+| cargo-panel | 1 | "a Capital was placed" is null | **fixed**: test pollution. trade-test has a real sectorKey (cargo needs a roster row), so every instance shared one saved snapshot and old runs' Capitals came back exactly where the test places its own, so placement was refused. On CI the DB is fresh, so it passed there. New testMode room option `persistSector: false` (trade-test sets it) |
 | auto-fire | 1 | neutral → hostile takeover times out | unknown |
 | wave-attack | 1 | | unknown |
 | **smoke:** persistence-kill, combat-lifecycle, sector-alpha (two-client) | 1–2 each | beam doesn't drain the victim's hull; two-client checks | fail on untouched `main` **on this laptop** and pass on CI: two browsers on 8 GB with software WebGL |

@@ -10,6 +10,7 @@
  */
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { waitForInPlay } from './helpers/gameScenario';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
@@ -40,6 +41,8 @@ test('open your own storage and move cargo by hand', async ({ page }) => {
     () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '', undefined,
     { timeout: 90_000 },
   );
+  // Place only once the pilot is in play (curtain lifted, ship active).
+  await waitForInPlay(page, 90_000);
 
   // A Capital just south of the ship (the spawn scatter is ±200 u).
   for (let attempt = 0; attempt < 4 && (await ownCapital(page)) === null; attempt++) {

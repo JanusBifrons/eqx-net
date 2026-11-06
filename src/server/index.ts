@@ -1012,6 +1012,10 @@ gameServer
     maxClients: 4,
     tradeEnabled: true,
     seedStorageHold: { goods: { salvage: 120, alloy: 20 }, credits: 3000 },
+    // Every trade-test instance shares this sectorKey: without this, a test's
+    // structures were restored into the next run's room (cargo-panel placed
+    // its Capital onto an old one and was refused; test audit 2026-11-06).
+    persistSector: false,
   })
   .filterBy(['testId']);
 // C2/C3 break-in E2Es: a Capital owned by 'scenario' (a neutral owner, so its
