@@ -713,6 +713,77 @@ export interface TurretGunSpec {
   wid: number;
   cap: number;
   ppu: number;
+  /** Capital naval turret (capital-ship R&D): a faceted gunhouse centred on
+   *  the pivot, `barrels` parallel barrels of `len` from its front face. */
+  naval?: { barrels: number; houseW: number; houseL: number };
+}
+
+/**
+ * A WW2-style naval turret seen from above (capital-ship R&D): a gunhouse
+ * with an angled armoured face, flat sides and a rounded rear, roof plates,
+ * rangefinder ears on the big ones, and N parallel barrels with blast-bag
+ * collars at the face. Forward is −y, like `forgeTurretGun`.
+ */
+function forgeNavalTurret(spec: TurretGunSpec): Fields {
+  const nv = spec.naval!;
+  const W = nv.houseW, L = nv.houseL, hw = W / 2, hl = L / 2, bw = spec.wid / 2, len = spec.len;
+  const face = hl * 0.42; // depth of the angled front faces
+  const housePoly: Poly = [
+    [-hw * 0.62, -hl], [hw * 0.62, -hl], [hw, -hl + face], [hw, hl * 0.7],
+    [hw * 0.82, hl], [-hw * 0.82, hl], [-hw, hl * 0.7], [-hw, -hl + face],
+  ];
+  const n = Math.max(1, nv.barrels);
+  const pitch = n > 1 ? (W * 0.62) / (n - 1) : 0;
+  const xs: number[] = [];
+  for (let k = 0; k < n; k++) xs.push((k - (n - 1) / 2) * pitch);
+  const barrelPolys: Poly[] = xs.map((x): Poly => [[x - bw, -hl - len], [x + bw, -hl - len], [x + bw, -hl + 0.5], [x - bw, -hl + 0.5]]);
+  const polys = [housePoly, ...barrelPolys];
+  const g = gridFor(polys, spec.ppu, 1.5);
+  const f = newFields(g, paintOf(spec.paint));
+  for (const poly of polys) { const c = rasterPoly(g, poly); for (let i = 0; i < c.length; i++) if (c[i]! > f.cov[i]!) f.cov[i] = c[i]!; }
+  const paint = lin(f.paint), metal = lin(PALETTE.metal), worn = lin(PALETTE.metalWorn), trim = lin(PALETTE.trim), bore = lin(0x0b0c10);
+  const Hh = Math.max(1.2, W * 0.18);
+  const seed = hashStr('naval:' + n + ':' + Math.round(W));
+  const big = W > 12;
+  for (let ty = 0; ty < g.h; ty++) {
+    for (let tx = 0; tx < g.w; tx++) {
+      const i = ty * g.w + tx;
+      if (f.cov[i]! <= 0) continue;
+      const wx = (tx + 0.5 - g.ox) / g.ppu, wy = (ty + 0.5 - g.oy) / g.ppu;
+      const nz = valueNoise(wx * 0.5, wy * 0.5, seed);
+      let h = -1, mat: number = MAT.NONE, col = metal, kk = 1, key = PALETTE.metal;
+      // Gunhouse: flat armoured roof, slight chamfer to the edges.
+      const inHouse = wy >= -hl && wy <= hl && Math.abs(wx) <= hw;
+      if (inHouse) {
+        const edge = Math.min(hw - Math.abs(wx), wy + hl, hl - wy);
+        h = Hh * (0.82 + 0.18 * Math.min(1, edge / Math.max(0.5, W * 0.06)));
+        mat = MAT.PAINT; col = paint; key = f.paint; kk = 0.9 + 0.1 * nz;
+        // Roof plate seams: one lengthwise pair and a cross seam.
+        if (Math.abs(Math.abs(wx) - hw * 0.4) < Math.max(0.15, 0.5 / spec.ppu) || Math.abs(wy - hl * 0.1) < Math.max(0.15, 0.5 / spec.ppu)) { mat = MAT.TRIM; col = trim; key = PALETTE.trim; h -= Hh * 0.05; }
+        // Rangefinder ears at the rear corners (big turrets only).
+        if (big && wy > hl * 0.35 && wy < hl * 0.85 && Math.abs(wx) > hw * 0.72) { mat = MAT.METAL; col = worn; key = PALETTE.metal; h = Hh * 1.12; }
+        // Hatch near the rear centre.
+        if (Math.hypot(wx, wy - hl * 0.55) < W * 0.07) { mat = MAT.METAL; col = worn; key = PALETTE.metal; h = Hh * 0.98; }
+      }
+      // Barrels, over the house where they enter it.
+      for (const x of xs) {
+        const u = (wx - x) / bw;
+        if (Math.abs(u) > 1 || wy > -hl + 0.5 || wy < -hl - len) continue;
+        const v = (-hl - wy) / len; // 0 at the face .. 1 at the muzzle
+        const cyl = Math.sqrt(Math.max(0, 1 - u * u));
+        const bh = Hh * 0.7 + bw * cyl;
+        if (bh > h) {
+          h = bh; mat = MAT.METAL; col = metal; key = PALETTE.metal; kk = 0.95 + 0.08 * nz;
+          if (v < 0.07) { col = worn; h += bw * 0.3; } // blast bag collar
+          if (v > 0.97 && Math.abs(u) < 0.55) { mat = MAT.NOZZLE; col = bore; key = PALETTE.nozzle; h -= bw * 0.6; }
+        }
+      }
+      if (h < 0) continue;
+      f.height[i] = h; f.mat[i] = mat; f.key[i] = key;
+      setAlbedo(f, i, col, kk);
+    }
+  }
+  return f;
 }
 
 /**
@@ -724,6 +795,7 @@ export interface TurretGunSpec {
  * own world rotation.
  */
 export function forgeTurretGun(spec: TurretGunSpec): Fields {
+  if (spec.naval) return forgeNavalTurret(spec);
   const { family, len, wid, cap, ppu } = spec;
   const hw = wid / 2;
   const rack = family === 'missile';

@@ -16,12 +16,17 @@
  *  - a structure turret is sized to its footprint (R = half the smaller
  *    side): barrel R × 0.68, rack tubes at R × 0.32.
  *
- * Pure, zone-blind, allocation-free.
+ *  - a CAPITAL ship mount with an explicit `size` (S/M/L/XL, capital-ship
+ *    R&D) is sized to the hull BEAM by calibre class: a 16" (XL) barrel
+ *    is ~half the beam, a 5" (S) secondary ~a fifth (WW2 proportions).
+ *
+ * Pure, zone-blind, allocation-free (the beam is cached per kind).
  */
 import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds/types.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { getWeapon, type WeaponId } from './WeaponCatalogue.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { CAPITAL_TURRETS } from '../../shared-types/shipScale/capitalTurrets.js';
 
 /** A fixed gun at the hull centre (no arc): drawn as a chin gun. */
 export function isChinMount(m: WeaponMount): boolean {
@@ -37,17 +42,55 @@ export function isRackWeapon(weaponId: string): boolean {
 // in proportion (at 1× they are the old 40 / 6 / 9 / 10 and 7 / 2 / 3 / 3.2).
 
 /** Barrel width of a turning ship mount (world units). */
-export function shipBarrelWidth(kind: ShipKind): number {
+const beamCache = new WeakMap<ShipKind, number>();
+function hullBeam(kind: ShipKind): number {
+  let b = beamCache.get(kind);
+  if (b === undefined) {
+    const hull = (kind.shape as { hull?: ReadonlyArray<readonly [number, number]> }).hull;
+    b = 0;
+    if (hull) for (const p of hull) b = Math.max(b, Math.abs(p[0]) * 2);
+    if (b === 0) b = kind.radius * 0.25;
+    beamCache.set(kind, b);
+  }
+  return b;
+}
+/** A capital naval turret in world units (gunhouse + barrels), or null for
+ *  any other mount. Geometry from the shared `CAPITAL_TURRETS` table × the
+ *  hull beam × the mount's `turretScale`. */
+export interface NavalTurret { houseW: number; houseL: number; barbette: number; len: number; wid: number; barrels: number }
+const navalCache = new WeakMap<WeaponMount, NavalTurret>();
+export function navalTurret(kind: ShipKind, m?: WeaponMount): NavalTurret | null {
+  if (m === undefined || m.size === undefined || kind.sizeClass !== 'capital') return null;
+  let t = navalCache.get(m);
+  if (t === undefined) {
+    const g = CAPITAL_TURRETS[m.size], s = hullBeam(kind) * (m.turretScale ?? 1);
+    t = { houseW: g.houseW * s, houseL: g.houseL * s, barbette: g.barbette * s, len: g.len * s, wid: g.wid * s, barrels: m.barrels ?? 1 };
+    navalCache.set(m, t);
+  }
+  return t;
+}
+function capitalTurret(kind: ShipKind, m?: WeaponMount): { len: number; wid: number; cap: number } | null {
+  const t = navalTurret(kind, m);
+  return t === null ? null : { len: t.len, wid: t.wid, cap: t.houseW / 2 };
+}
+
+export function shipBarrelWidth(kind: ShipKind, m?: WeaponMount): number {
+  const c = capitalTurret(kind, m);
+  if (c) return c.wid;
   const t = shipTuning(kind);
   return Math.min(t.barrelWidMax, Math.max(t.barrelWidMin, kind.radius * 0.17));
 }
 /** Barrel length of a turning ship mount (world units). */
-export function shipBarrelLength(kind: ShipKind): number {
+export function shipBarrelLength(kind: ShipKind, m?: WeaponMount): number {
+  const c = capitalTurret(kind, m);
+  if (c) return c.len;
   const t = shipTuning(kind);
   return Math.min(t.barrelLenMax, Math.max(t.barrelLenMin, kind.radius * 0.7));
 }
 /** Cap radius of a turning ship mount (a rack's box half-width). */
-export function shipCapRadius(kind: ShipKind, rack: boolean): number {
+export function shipCapRadius(kind: ShipKind, rack: boolean, m?: WeaponMount): number {
+  const c = capitalTurret(kind, m);
+  if (c) return c.cap;
   const t = shipTuning(kind);
   return rack
     ? Math.min(t.rackCapMax, Math.max(t.rackCapMin, kind.radius * 0.2))
@@ -60,8 +103,11 @@ export function shipCapRadius(kind: ShipKind, rack: boolean): number {
  */
 export function shipMountMuzzle(kind: ShipKind, m: WeaponMount): number | null {
   if (isChinMount(m)) return null;
-  if (isRackWeapon(m.weaponId)) return shipCapRadius(kind, true) * 0.8;
-  return shipBarrelLength(kind);
+  if (isRackWeapon(m.weaponId)) return shipCapRadius(kind, true, m) * 0.8;
+  // A naval turret's barrels start at the gunhouse front face.
+  const nt = navalTurret(kind, m);
+  if (nt !== null) return nt.houseL / 2 + nt.len;
+  return shipBarrelLength(kind, m);
 }
 
 /** Where a ship's shot leaves a mount: the barrel tip of a turning turret,

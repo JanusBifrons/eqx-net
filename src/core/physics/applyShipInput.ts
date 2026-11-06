@@ -97,7 +97,21 @@ export function applyShipInput(
 
   // ---- 2. Snappy turn (direct setAngvel, snap-stop on release) ---------
   const target = (input.turnLeft ? 1 : 0) - (input.turnRight ? 1 : 0);
-  body.setAngvel(target * kind.maxAngvel * turnMul, true);
+  const wTarget = target * kind.maxAngvel * turnMul;
+  const torque = kind.turnTorque;
+  if (torque !== undefined && torque > 0) {
+    // Capital ships turn by torque, not by setting the rate: the body's
+    // rotational inertia (mass × size) makes a big hull slow to start and
+    // stop turning, and `angularDamping` sets its top turn rate, the same
+    // way thrust + linear damping set acceleration and top speed. The
+    // `maxAngvel` cap sits just above that terminal rate.
+    if (target !== 0) body.applyTorqueImpulse(target * torque * turnMul, true);
+    const w = body.angvel(), cap = kind.maxAngvel * turnMul;
+    if (w > cap) body.setAngvel(cap, true);
+    else if (w < -cap) body.setAngvel(-cap, true);
+  } else {
+    body.setAngvel(wTarget, true);
+  }
 
   // ---- 3. Lateral-grip filter (1-pole low-pass on sideways component) ---
   if (kind.lateralGrip > 0) {

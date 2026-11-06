@@ -415,7 +415,12 @@ export class MountVisualManager {
     pivot.rotation = -mount.baseAngle;
     container.addChild(pivot);
     const handle = actx.art.acquire({
-      type: 'turret', id: place.family, paint, len: Math.max(place.len, 0.1), wid: place.wid, cap: place.cap, ppu: structure ? 2.5 : 6,
+      // Capital naval turrets are big: bake them at a density that keeps the
+      // long side near 160 px (plenty at play zoom), or a capital fleet blows
+      // the texture budget (capital R&D, measured 365 MB at the fighter ppu).
+      type: 'turret', id: place.family, paint, len: Math.max(place.len, 0.1), wid: place.wid, cap: place.cap,
+      ppu: structure ? 2.5 : place.naval ? Math.min(6, 160 / (place.naval.houseL / 2 + place.len)) : 6,
+      ...(place.naval ? { naval: place.naval } : {}),
     });
     return {
       place, pivot, handle, layers: null, reach: muzzleReach(place),

@@ -24,10 +24,14 @@ import { shipScaleWorkerName } from '../../../shared-types/shipScale/config.js';
 export type ArtState = 'pending' | 'ready' | 'failed';
 
 export interface ShipArt {
-  /** One frame per baked sun angle (SUN_STEPS), cross-faded at run time. */
+  /** One frame per baked sun angle (SUN_STEPS), cross-faded at run time;
+   *  with tiles, sun-major (`sun * tiles + tile`). */
   frames: Texture[];
   w: number;
   h: number;
+  /** Tiles per sun frame along the hull (1 = untiled), and rows per tile. */
+  tiles: number;
+  tileH: number;
   /** Texels per world unit: a sprite's scale is 1 / density. */
   density: number;
   nozzles: Baked['nozzles'];
@@ -122,6 +126,8 @@ export interface ArtStats {
   fxPending: number;
   /** The most recent failure (job key and reason), for diagnosis. */
   lastFailure?: string;
+  /** Diagnostic: the art kinds using the most packed texels. */
+  topTexels?: string[];
 }
 
 /** Defaults by device: phones get small pages and a tight page budget. */
@@ -149,6 +155,8 @@ export class ArtService {
   private rig: LightRig = sunRigForSector(null);
   private rigTag = rigTag(this.rig);
   private fromCache = 0;
+  /** Packed texels by art kind (diagnostic; see `stats().topTexels`). */
+  private readonly texels = new Map<string, number>();
   private destroyed = false;
 
   constructor(private readonly deps: ArtServiceDeps) {}
@@ -263,6 +271,13 @@ export class ArtService {
       const { h, b, cached } = this.toPack.shift()!;
       if (!this.pack(h, b)) continue;
       packed++;
+      {
+        // Texture use by kind of art (capital R&D: which bakes fill the budget).
+        const k = h.job.type === 'ship' || h.job.type === 'turret' || h.job.type === 'struct' ? `${h.job.type}:${h.job.id}` : h.job.type;
+        let px = 0;
+        for (const fr of b.frames) px += fr.w * fr.h;
+        this.texels.set(k, (this.texels.get(k) ?? 0) + px);
+      }
       // Fresh bakes were saved when they finished (see `start`).
       if (cached) this.fromCache++;
     }
@@ -274,17 +289,20 @@ export class ArtService {
   private pack(h: ArtHandle, b: Baked): boolean {
     const packer = this.deps.packer;
     if (h.job.type === 'fx') return this.packFx(h, h.job.id, b);
-    if (!packer.canFit(b.frames)) {
+    if ((b.tiles ?? 1) <= 1 && !packer.canFit(b.frames)) {
       h.state = 'failed';
       h.reason = 'over the texture memory budget';
       return false;
     }
     const tex: Texture[] = [];
-    for (let i = 0; i < b.frames.length; i++) packer.add(b.frames[i]!, tex, i);
+    // Tiled capital frames get their own textures: tall frames waste most of
+    // an atlas shelf (capital-ship R&D round 2 finding).
+    if ((b.tiles ?? 1) > 1) for (let i = 0; i < b.frames.length; i++) tex[i] = packer.standalone(b.frames[i]!, false, false);
+    else for (let i = 0; i < b.frames.length; i++) packer.add(b.frames[i]!, tex, i);
     // Textures resolve on commit (end of this tick); fill the handle then.
     this.pendingFill.push(() => {
       if (h.job.type === 'ship' || h.job.type === 'scrap' || h.job.type === 'turret') {
-        h.ship = { frames: tex, w: b.w, h: b.h, density: b.density, nozzles: b.nozzles, navLights: b.navLights };
+        h.ship = { frames: tex, w: b.w, h: b.h, tiles: b.tiles ?? 1, tileH: b.tileH ?? b.h, density: b.density, nozzles: b.nozzles, navLights: b.navLights };
       } else {
         h.struct = { tex: tex[0]!, albedo: tex[1]!, w: b.w, h: b.h, density: b.density, navLights: b.navLights };
       }
@@ -335,6 +353,7 @@ export class ArtService {
     return {
       ready, pending, failed, fromCache: this.fromCache,
       pages: this.deps.packer.pageCount, gpuBytes: this.deps.packer.gpuBytes, workers: this.deps.runner.workers, fxReady, fxPending, ...(lastFailure ? { lastFailure } : {}),
+      topTexels: [...this.texels.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => `${k} ${(v / 1e6).toFixed(2)}Mpx`),
     };
   }
 

@@ -162,6 +162,12 @@ export const WeaponMountSchema = z
      *  projectile radius and splash via `MOUNT_SIZE_TUNING`. Absent ⇒ the
      *  ship's size-class default (`S` for today's ships). */
     size: z.enum(['S', 'M', 'L', 'XL']).optional(),
+    /** Capital naval turrets: barrels per gunhouse (1 single, 2 twin, 3
+     *  triple) and a scale on the calibre-class geometry (destroyer 5" mounts
+     *  are relatively larger on a narrow beam). Visual + muzzle geometry
+     *  only; a mount still fires one shot. */
+    barrels: z.number().int().min(1).max(4).optional(),
+    turretScale: z.number().positive().optional(),
   })
   .strict()
   .refine((m) => m.arcMax >= m.arcMin, {
@@ -218,6 +224,11 @@ export const ShipKindSchema = z
      *  `body.setAngvel(±maxAngvel)` directly — there is no eased ramp-up.
      *  When the key is released, `angularDamping` decays the angvel. */
     maxAngvel: z.number().positive(),
+    /** Capital ships: per-tick torque impulse while a turn is held. The
+     *  body's inertia and `angularDamping` then set how fast it starts
+     *  turning and its top rate (WW2 research: big hulls are slow to
+     *  respond). Absent ⇒ the turn snaps to `maxAngvel` (every legacy kind). */
+    turnTorque: z.number().positive().optional(),
     /** Hard ceiling on linear velocity magnitude. Per-tick clamp keeps the
      *  ship from running away from the camera. */
     maxSpeed: z.number().positive(),

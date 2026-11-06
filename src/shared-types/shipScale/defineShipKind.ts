@@ -37,3 +37,16 @@ export function unscaledShipKind(id: string): ShipKind | undefined {
 export function unscaledShipKinds(): ShipKind[] {
   return [...UNSCALED.values()];
 }
+
+/**
+ * Build a capital-ship kind (capital-ship R&D): validate, but do NOT scale.
+ * Capitals are authored in game units from the WW2-grounded solver
+ * (`capitalReference.ts`), with their own physics, so neither the global ship
+ * scale nor the generic size-based motion model applies. `appliedScale: 1`
+ * marks the record as final for every later `scaleShipKind`.
+ */
+export function defineCapitalShipKind(raw: unknown): ShipKind {
+  const parsed = ShipKindSchema.parse(raw);
+  UNSCALED.set(parsed.id, parsed);
+  return { ...parsed, appliedScale: 1 };
+}

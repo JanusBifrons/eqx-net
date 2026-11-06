@@ -17,7 +17,7 @@ import { getStructureKind } from '../../../shared-types/structureKinds.js';
 import { getWeapon, type WeaponId } from '../../../core/combat/WeaponCatalogue.js';
 import { familyFor, type TurretFamily } from './fx/turretFx.js';
 import {
-  isChinMount, shipBarrelLength, shipBarrelWidth, shipCapRadius, shipMountMuzzle, structureTurretMuzzle, structureTurretRadius,
+  isChinMount, navalTurret, shipBarrelLength, shipBarrelWidth, shipCapRadius, shipMountMuzzle, structureTurretMuzzle, structureTurretRadius,
 } from '../../../core/combat/muzzle.js';
 import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
 
@@ -37,6 +37,8 @@ export interface TurretPlace {
   /** Pivot → where the shot leaves: the SHARED muzzle (core/combat/muzzle.ts),
    *  so the drawn tip and the server's fire point agree (#15). */
   muzzle: number;
+  /** Capital naval turret: gunhouse + barrel count (shared geometry). */
+  naval?: { barrels: number; houseW: number; houseL: number };
 }
 
 function familyOf(m: WeaponMount): TurretFamily {
@@ -59,12 +61,16 @@ export function shipTurrets(kindId: string): TurretPlace[] {
     }
     const muzzle = shipMountMuzzle(k, m)!;
     if (family === 'missile') {
-      const cap = shipCapRadius(k, true);
+      const cap = shipCapRadius(k, true, m);
       return { mount: m, family, px: m.localX, py: -m.localY, len: 0, wid: cap, cap, ring: cap * 1.45, chin: false, muzzle };
     }
-    const wid = shipBarrelWidth(k);
-    const cap = shipCapRadius(k, false);
-    return { mount: m, family, px: m.localX, py: -m.localY, len: shipBarrelLength(k), wid, cap, ring: cap * 1.35, chin: false, muzzle };
+    const wid = shipBarrelWidth(k, m);
+    const cap = shipCapRadius(k, false, m);
+    const nt = navalTurret(k, m);
+    if (nt !== null) {
+      return { mount: m, family, px: m.localX, py: -m.localY, len: nt.len, wid, cap, ring: nt.barbette, chin: false, muzzle, naval: { barrels: nt.barrels, houseW: nt.houseW, houseL: nt.houseL } };
+    }
+    return { mount: m, family, px: m.localX, py: -m.localY, len: shipBarrelLength(k, m), wid, cap, ring: cap * 1.35, chin: false, muzzle };
   });
 }
 

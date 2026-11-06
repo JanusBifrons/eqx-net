@@ -79,7 +79,8 @@ export const CLASS_TUNING: Readonly<Record<SizeClass, ClassTuning>> = {
   cruiser: { geometry: 1, spacing: 1, bakeMaxSide: BASE.bakeMaxSide, mountSize: 'S', clearHull: false },
   // Capitals (gigantic hulls): bigger turrets and nozzles than the per-scale
   // rule alone would give, more room to spawn, a bigger texture budget.
-  capital: { geometry: 2, spacing: 2, bakeMaxSide: 1024, mountSize: 'L', clearHull: true },
+  // Capitals bake up to 3072 texels long, cut into 1024-texel tiles (round 3 E).
+  capital: { geometry: 2, spacing: 2, bakeMaxSide: 3072, mountSize: 'L', clearHull: true },
 };
 
 /** Mount size multipliers on weapon reach / projectile radius / splash. */
@@ -191,6 +192,13 @@ export function massOf(kind: { mass?: number; massScale?: number }, fallback: nu
   return (kind.mass ?? fallback) * (kind.massScale ?? 1);
 }
 
+/** A ship body's rotational inertia: the disc formula the physics world
+ *  sets (`World.spawnShip`, density-0 colliders), shared with the capital
+ *  solver so torque turning hits its targets (invariant 15). */
+export function shipAngularInertia(mass: number, radius: number): number {
+  return 0.5 * mass * radius * radius;
+}
+
 /** Every size-dependent number for one kind (cached per kind object). */
 export interface ShipTuning {
   sizeClass: SizeClass;
@@ -281,4 +289,42 @@ export function combatDistanceScale(profile: ShipTuningProfile = SHIP_TUNING, sc
 export const CAMERA_ZOOM_EXP = 0.5;
 export function startZoomForScale(base: number, scale: number = SHIP_SCALE): number {
   return base / Math.pow(scale, CAMERA_ZOOM_EXP);
+}
+
+/** Gameplay camera zoom-out floor for an ordinary ship. */
+export const GAMEPLAY_MIN_ZOOM = 0.15;
+/** Hulls up to this radius keep the ordinary zoom range; a bigger hull widens
+ *  it in proportion (capital-ship R&D round 3 D). Above every non-capital. */
+export const HULL_ZOOM_REF_RADIUS = 600;
+
+/** How much further out the camera may go for this hull (1 for every
+ *  non-capital; ~4.8 for a 10x battleship). */
+export function hullZoomFactor(kind: Pick<ShipKind, 'radius'>): number {
+  return kind.radius > HULL_ZOOM_REF_RADIUS ? kind.radius / HULL_ZOOM_REF_RADIUS : 1;
+}
+
+/** The gameplay zoom range for the ship you fly: the zoom-out floor and the
+ *  start zoom both divide by `hullZoomFactor`, so a battleship pilot can pull
+ *  back to see the ship and several kilometres around it, while a fighter's
+ *  range is unchanged. `base` is the 1x start zoom. Writes into `out`. */
+export function zoomRangeForKind(
+  kind: Pick<ShipKind, 'radius'>, base: number, out: { minScale: number; startZoom: number },
+): { minScale: number; startZoom: number } {
+  const f = hullZoomFactor(kind);
+  out.minScale = GAMEPLAY_MIN_ZOOM / f;
+  out.startZoom = startZoomForScale(base) / f;
+  return out;
+}
+
+/** The radius shield EFFECTS are sized to (hit flash, break dome, the legacy
+ *  ring). The hull radius for every kind, except capitals, whose shield follows
+ *  the hull (`shipShieldColliderDesc`): their effects use the hull's half beam,
+ *  not half a 5.8 km length (capital-ship R&D round 3). */
+export function shieldVisualRadius(kind: ShipKind): number {
+  if (kind.sizeClass !== 'capital') return kind.radius;
+  const hull = (kind.shape as { hull?: ReadonlyArray<readonly [number, number]> }).hull;
+  if (!hull) return kind.radius;
+  let w = 0;
+  for (const p of hull) w = Math.max(w, Math.abs(p[0]));
+  return w > 0 ? w : kind.radius;
 }
