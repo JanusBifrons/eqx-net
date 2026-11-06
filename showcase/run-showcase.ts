@@ -16,7 +16,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { chromium } from '@playwright/test';
 import { SHOTS, SECTION_CARDS, TITLE_SUB, END_CARD_POINTS } from './registry.js';
-import type { ClipRecord, ServerProfile, Shot } from './types.js';
+import type { ClipRecord, Shot } from './types.js';
+import { PROFILE_ORDER } from './types.js';
 import { CaptureServers } from './servers.js';
 import { Recorder, type RecordResult } from './recorder.js';
 import { smoothnessProblems, smoothScore, type TakeStats } from './smoothness.js';
@@ -96,7 +97,6 @@ function ensureSnapshotWorktree(repo: string, ref: string): string {
   return dir;
 }
 
-const PROFILE_ORDER: ServerProfile[] = ['lean', 'living', 'wave'];
 
 function loadManifest(file: string): Record<string, ClipRecord> {
   return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, ClipRecord>) : {};

@@ -21,6 +21,11 @@ export type ServerProfile =
    *  page must ask for the same scale (`sectorScale: '4'` in its params). */
   | 'capitals';
 
+/** The order the runner records server profiles in. A shot whose profile is
+ *  missing here is never recorded (2026-11-06: the capital shots, profile
+ *  `capitals`, were silently skipped). Lock: tests/unit/showcaseProfiles.test.ts. */
+export const PROFILE_ORDER: readonly ServerProfile[] = ['lean', 'living', 'wave', 'capitals'];
+
 export type HudMode = 'full' | 'clean' | 'minimal' | 'none';
 
 export type Section = 'opener' | 'mechanics' | 'tech';
