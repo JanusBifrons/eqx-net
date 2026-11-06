@@ -192,6 +192,8 @@ export async function bootSectorTestServer(opts: {
   haulerRaiders?: number;
   /** A0 scale lattice (plan soft-leaping-truffle v2). */
   scaleGrid?: { n: number; seed: number; fence?: boolean };
+  /** Perf scenes — the timed scene script (`SceneScriptRunner`). */
+  sceneScript?: unknown;
 } = {}): Promise<SectorTestHarness> {
   // 1. Stub the persistence singletons FIRST. SectorRoom.onCreate
   //    reads these via module-level singletons, so the injection has
@@ -256,6 +258,7 @@ export async function bootSectorTestServer(opts: {
     defaultSpawnX: opts.defaultSpawnX,
     defaultSpawnY: opts.defaultSpawnY,
     scaleGrid: opts.scaleGrid,
+    sceneScript: opts.sceneScript,
   });
   await gameServer.listen(port);
 

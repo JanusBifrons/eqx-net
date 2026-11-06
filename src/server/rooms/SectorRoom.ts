@@ -248,6 +248,7 @@ import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
+import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
 import { LeaveHandler } from './LeaveHandler.js';
 import { mirrorSabPoses } from './SabPoseMirror.js';
@@ -1592,6 +1593,10 @@ export class SectorRoom extends Room<SectorState> {
        *  reaches the player `TransitOrchestrator` only — drone-squad spool is
        *  driven by the director's own `spoolMs` option / `EQX_BOT_SPOOL_MS`. */
       transitSpoolMsOverride?: number;
+      /** Perf scenes (plan prancy-squishing-donut P1) — a timed list of world
+       *  events (`SceneScriptRunner`), started when the first pilot is ready.
+       *  testMode-only. */
+      sceneScript?: unknown;
     };
     // Payload-DoS bound (S5): onCreate options are client-suppliable on room
     // create, so reject oversized seed arrays before they seed the sector.
@@ -2521,6 +2526,7 @@ export class SectorRoom extends Room<SectorState> {
         this.testWalletSeed = Math.max(0, Math.floor(g.credits ?? 0));
       }
       this.testHaulerRaiders = Math.max(0, Math.min(6, Math.floor(roomOpts.haulerRaiders ?? 0)));
+      if (roomOpts.sceneScript !== undefined) this.initSceneScript(roomOpts.sceneScript);
     }
     // Phase-1 issue 5 — scrap-stress seed: a dense corridor of free-floating
     // scrap ahead of spawn for the fly-through reconciliation E2E.
@@ -6676,6 +6682,8 @@ export class SectorRoom extends Room<SectorState> {
     const currentTick = Atomics.load(this.sabU32, TICK_IDX);
     const arrivalTick = currentTick + ARRIVAL_OFFSET_TICKS;
     pending.arrivalTick = arrivalTick;
+    // Perf scenes: the scene clock starts with the first pilot.
+    this.sceneRunner?.start(arrivalTick);
 
     this.broadcast('warp_in', {
       type: 'warp_in',
@@ -8990,6 +8998,35 @@ export class SectorRoom extends Room<SectorState> {
   /** Economy v2 W1 (testMode) — top each joiner's wallet up to this. */
   private testWalletSeed = 0;
   private testHaulerRaiders = 0;
+  /** Perf scenes — null unless the room was created with `sceneScript`. */
+  private sceneRunner: SceneScriptRunner | null = null;
+
+  /** Scene status for `/dev/perf` and tests (null: no scene). */
+  sceneStatus(): Readonly<SceneStatus> | null { return this.sceneRunner?.getStatus() ?? null; }
+
+  private initSceneScript(raw: unknown): void {
+    const parsed = SceneScriptSchema.safeParse(raw);
+    if (!parsed.success) throw new Error(`invalid sceneScript: ${parsed.error.message}`);
+    this.sceneRunner = new SceneScriptRunner(parsed.data, {
+      spawn: (id, kind, x, y, warpIn) => {
+        if (warpIn) return this.spawnLivingWorldBot({ botId: id, kind, x, y });
+        if (!this.swarmSpawner.spawnDrone({ id, x, y, kind })) return false;
+        this.swarmHealth.set(id, getDroneMaxHealth(kind) ?? 40);
+        this.swarmShield.set(id, getDroneShieldMax(kind));
+        this.swarmShieldLastDmg.set(id, this.serverTick);
+        return true;
+      },
+      markHostileToAll: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        if (!rec) return;
+        const tick = this.serverTick;
+        for (const playerId of this.playerToSlot.keys()) {
+          this.aiController.markHostile(rec.id, playerId, tick);
+          this.broadcast('bot_aggro', { type: 'bot_aggro', botEntityId: `swarm-${rec.entityId}`, targetPlayerId: playerId, tick });
+        }
+      },
+    });
+  }
 
   /** Living World P2 — robot reputation truce (no on-sight engagement). One Map
    *  lookup; safe on the snapshot / AI hot paths. */
@@ -9578,6 +9615,7 @@ export class SectorRoom extends Room<SectorState> {
 
     this.serverTick = Atomics.load(this.sabU32, TICK_IDX);
     this.state.tick = this.serverTick;
+    this.sceneRunner?.tick(this.serverTick);
 
     // Plan: crispy-kazoo, Commit 2 — drain handshake activations.
     // Flip pending-join ships' `isActive=true` at arrivalTick, and
