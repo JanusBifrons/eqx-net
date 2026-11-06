@@ -140,6 +140,19 @@ export async function launchGalaxyTestClient(browser: Browser, opts: GalaxyTestC
 
 export const surface = (page: Page) => page.locator('[data-testid="game-surface"]');
 
+/**
+ * Wait until this client is IN PLAY: the loading curtain has lifted (the
+ * client sends `client_ready` and the HUD mounts then). A ship counts for
+ * targeting, collisions and hostility only once active, and the curtain
+ * holds for art + the spawn handshake (6–16 s on a loaded box), so a test
+ * that acts right after `data-local-player-id` appears acts on a pending
+ * ship (perf-plan test audit 2026-11-06: missile locks saw no entities, the
+ * energy bar was not mounted yet).
+ */
+export async function waitForInPlay(page: Page, timeoutMs = 60_000): Promise<void> {
+  await page.waitForSelector('[data-testid="warp-screen"][data-warp-visible="0"]', { state: 'attached', timeout: timeoutMs });
+}
+
 export async function getHullPct(page: Page): Promise<number> {
   return parseInt((await surface(page).getAttribute('data-hull-pct')) ?? '100', 10);
 }

@@ -37,7 +37,8 @@
  *
  * Run:
  *   pnpm e2e --project=feature tests/e2e/missile-frigate-homing.spec.ts --reporter=line
- */
+ */
+import { waitForInPlay } from './helpers/gameScenario';
 import { test, expect } from '@playwright/test';
 import type { Browser, Page, APIRequestContext } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
@@ -50,6 +51,10 @@ interface ServerLogEntry {
   tag: string;
   data: Record<string, unknown>;
 }
+
+// Joining waits for the loading curtain (infrastructural, up to ~16 s each
+// under load), so the default 30 s is too tight for a two-ship test.
+test.describe.configure({ timeout: 90_000 });
 
 async function joinShip(
   browser: Browser,
@@ -80,6 +85,9 @@ async function joinShip(
     }, undefined,
     { timeout: 12_000 },
   );
+  // The ship must be ACTIVE before anyone fires at it (it activates when the
+  // loading curtain lifts).
+  await waitForInPlay(page);
   const playerId = (await page
     .locator('[data-testid="game-surface"]')
     .getAttribute('data-local-player-id')) ?? '';

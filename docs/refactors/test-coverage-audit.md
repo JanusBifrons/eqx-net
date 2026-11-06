@@ -237,7 +237,7 @@ CI runs only the **17 smoke specs** on a PR. The **88 feature specs** run only w
 | Spec | Failing tests | Symptom | First read |
 |---|---|---|---|
 | robustness | 8 of 13 | "≥ 17 snapshots/s at idle" and the rest | stale: idle sectors stop broadcasting by design (Stage 5); the rest may share its setup |
-| missile-frigate-homing | 4 of 4 | homing / damage / refire / fizzle | **check first** (gameplay) |
+| missile-frigate-homing | 4 of 4 | homing / damage / refire / fizzle | stale: written against old tuning (expects a 180-tick cooldown; the catalogue says 90 since c795302d, and energy cost and lifetime moved too). It also fired before the target was active (now waits with `waitForInPlay`). Needs its expectations read from the catalogue. |
 | machined-art | 3 | fx textures through the worker pool; speed-effect zoom | unknown |
 | interceptor-beam-stays-connected, laser-smoothness | 1 each | local beam active only 0–4 of the expected > 20 frames | one cause; check (beam rendering) |
 | drawer-galaxy, galaxy-map-overlay | 1 each | click `galaxy-warp-close` never succeeds | one cause (UI) |
@@ -249,6 +249,8 @@ CI runs only the **17 smoke specs** on a PR. The **88 feature specs** run only w
 | auto-fire | 1 | neutral → hostile takeover times out | unknown |
 | wave-attack, swarm-jitter, spiral-disconnect-reconnect | 1 each | | unknown |
 | **smoke:** persistence-kill, combat-lifecycle, sector-alpha (two-client) | 1–2 each | beam doesn't drain the victim's hull; two-client checks | fail on untouched `main` **on this laptop** and pass on CI: two browsers on 8 GB with software WebGL |
+
+**A shared cause:** a ship is active (targetable, collidable, hostile-capable) only once its loading curtain lifts, which takes 6–16 s on a loaded box. Specs that act as soon as `data-local-player-id` appears act on a pending ship. `waitForInPlay(page)` (`tests/e2e/helpers/gameScenario.ts`) is the fix; apply it as each spec is triaged.
 
 **Next decisions:**
 1. Fix or delete each row above.
