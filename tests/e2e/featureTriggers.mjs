@@ -63,8 +63,6 @@ export const QUARANTINE = new Set([
   'interceptor-beam-stays-connected',
   'missile-frigate-homing',
   'machined-art',
-  'drawer-galaxy',
-  'galaxy-map-overlay',
   'fence-hits',
   'fx-turrets',
   'cargo-panel',

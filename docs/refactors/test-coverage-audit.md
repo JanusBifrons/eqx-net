@@ -241,7 +241,7 @@ CI runs only the **17 smoke specs** on a PR. The **88 feature specs** run only w
 | machined-art | 3 | fx textures through the worker pool; speed-effect zoom | unknown |
 | laser-smoothness | 1 | beam active 0 of 40 frames | **fixed**: stale, it flew the default fighter (bolts, no beam; each kind fires its own loadout since the weapons overhaul) and fired while the curtain was still up |
 | interceptor-beam-stays-connected | 1 | beam active 16 of 40 coast frames, test wants > 20 | open: with the curtain wait it went from 4 to 16. Is the beam pulsed by its cooldown, energy-limited, or slowed by sampling on the loaded laptop? |
-| drawer-galaxy, galaxy-map-overlay | 1 each | click `galaxy-warp-close` never succeeds | one cause (UI) |
+| drawer-galaxy, galaxy-map-overlay | 1 each | click `galaxy-warp-close` never succeeds | **fixed (real bug)**: the top-right roster badge sat on top of the in-game galaxy map's ✕ Close and took the click (its z-index was trapped inside the chrome); the button is now Portal'd at Z.overlay |
 | spectator-mode | 2 | speed dial late; Pilot toggle doesn't return to pilot | **fixed (real bug)**: Pilot's menu never listed the ship you parked with Spectate (the client's pending-join exemption kept it out of the parked list). Plus stale timing (curtain) |
 | feel-tuning | 1 | fighter moved 337 u, test wants > 400 | **fixed**: it thrust while the curtain was up (input dead), and its band was authored at 1×; it now waits for play and scales the band by the fighter's ship-scale speed factor (533 u in a 283–1061 band at 2×) |
 | halo-radar | 1 | no off-screen arrows | **fixed**: the stale "Sector Alpha has drones" test is removed (radar-sandbox covers it); the per-frame dataset test stays |
