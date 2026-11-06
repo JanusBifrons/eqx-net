@@ -147,7 +147,10 @@ export class Recorder {
       void cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {});
     });
     const size = phone ? { maxWidth: 1080, maxHeight: 2340 } : { maxWidth: this.capture.width, maxHeight: this.capture.height };
-    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 80, everyNthFrame: 1, ...size });
+    // EQX_CAPTURE_QUALITY: JPEG quality of the screencast. A frame full of bright,
+    // detailed hulls costs Chrome more to encode, and fewer frames arrive.
+    const quality = Number(process.env['EQX_CAPTURE_QUALITY'] ?? 80);
+    await cdp.send('Page.startScreencast', { format: 'jpeg', quality, everyNthFrame: 1, ...size });
     index.startT = Date.now();
     if (shot.camera) await ctx.cinema.play(scaleCues(shot.camera, phone ? 1 : ctx.viewport.width / 1920));
     // A failed action means the take did not show what the caption says:
@@ -262,6 +265,8 @@ export function targetUrl(baseUrl: string, target: ShotTarget, testId: string, h
   if (process.env['EQX_SHIP_SCALE']) p.set('shipScale', process.env['EQX_SHIP_SCALE']);
   if (process.env['EQX_SHIP_TUNING']) p.set('shipTuning', process.env['EQX_SHIP_TUNING']);
   if (process.env['EQX_SHIP_KIND_SCALE']) p.set('shipKindScale', process.env['EQX_SHIP_KIND_SCALE']);
+  if (process.env['EQX_CAPITAL_STYLE']) p.set('capStyle', process.env['EQX_CAPITAL_STYLE']);
+  if (process.env['EQX_CAPITAL_MAP']) p.set('capMap', process.env['EQX_CAPITAL_MAP']);
   // Extra URL params for every shot in a run (e.g. `art=machined&fx=new`, so
   // comparison arms all film the same look).
   for (const [k, v] of new URLSearchParams(process.env['EQX_SHOWCASE_PARAMS'] ?? '')) p.set(k, v);
