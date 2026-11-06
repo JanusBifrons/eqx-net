@@ -253,6 +253,8 @@ CI runs only the **17 smoke specs** on a PR. The **88 feature specs** run only w
 
 **A shared cause:** a ship is active (targetable, collidable, hostile-capable) only once its loading curtain lifts, which takes 6–16 s on a loaded box. Specs that act as soon as `data-local-player-id` appears act on a pending ship. `waitForInPlay(page)` (`tests/e2e/helpers/gameScenario.ts`) is the fix; apply it as each spec is triaged.
 
+**First advisory CI run (PR #310, 41 selected specs, hosted runners):** 27 passed, 1 flaky (cinematic-camera), 2 failed that pass on the laptop: energy-bar "sustained fire drains" and laser-smoothness (beam active frames). Both look like hosted-runner timing (software WebGL, slower frames). Watch these before the job becomes a required check.
+
 **Next decisions:**
 1. Fix or delete each row above.
 2. Decide which feature specs earn a place in per-PR CI. Without that, a feature spec protects nothing until someone runs `pnpm e2e`, which is how all of the above rotted unnoticed.

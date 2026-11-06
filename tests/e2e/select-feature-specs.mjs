@@ -8,6 +8,7 @@
  * `git diff --name-only <base>...HEAD`. Quarantined specs never run.
  */
 import { execFileSync } from 'node:child_process';
+import process from 'node:process';
 import { existsSync, readFileSync } from 'node:fs';
 import { FEATURE_TRIGGERS, QUARANTINE } from './featureTriggers.mjs';
 
