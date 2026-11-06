@@ -1,6 +1,6 @@
 import 'dotenv/config';
-import { PERF_SCENES } from './rooms/scene/perfScenes.js';
-import { scenePerfViews } from './rooms/scene/scenePerfRegistry.js';
+import { PERF_SCENES } from '../shared-types/perf/perfScenes.js';
+import { scenePerfViews, recordClientReading, clientPerfReadings } from './rooms/scene/scenePerfRegistry.js';
 import { Server, matchMaker } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import express from 'express';
@@ -178,6 +178,15 @@ if (process.env['NODE_ENV'] !== 'production') {
   // GET /dev/perf — perf-scene rooms: scene status, server tick cost, counts.
   app.get('/dev/perf', (_req, res) => {
     res.json({ rooms: scenePerfViews() });
+  });
+
+  // Perf lab: a device posts its reading when a scene ends; GET lists them.
+  app.post('/dev/perf/client', (req, res) => {
+    const file = recordClientReading({ ...(req.body as object), receivedAt: new Date().toISOString(), rooms: scenePerfViews() });
+    res.json({ ok: true, saved: file !== null });
+  });
+  app.get('/dev/perf/client', (_req, res) => {
+    res.json({ readings: clientPerfReadings() });
   });
 
   app.get('/dev/convoys', (_req, res) => {

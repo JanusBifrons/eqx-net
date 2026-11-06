@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Perf lab — EQX Peri</title>
+  <style>
+    html, body { margin: 0; background: #05070f; color: #dfe6f2; font: 14px/1.45 system-ui, sans-serif; }
+    main { max-width: 520px; margin: 0 auto; padding: 16px 14px calc(16px + env(safe-area-inset-bottom)); }
+    h1 { font-size: 17px; margin: 0 0 4px; }
+    p { margin: 0 0 12px; color: #9fb0c6; font-size: 13px; }
+    a.scene { display: block; padding: 10px 12px; margin: 0 0 8px; border: 1px solid #22324a; border-radius: 6px; color: #dfe6f2; text-decoration: none; background: #0b1322; }
+    a.scene b { color: #ffb35a; display: block; font-size: 14px; }
+    a.scene span { color: #9fb0c6; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <!-- Dev-only perf lab (plan prancy-squishing-donut P3b). -->
+  <main>
+    <h1>Perf lab</h1>
+    <p>Tap a scene. It plays in the real game on this device. Just watch: does it look smooth, or does it stutter? The game sends its own numbers when the scene ends.</p>
+    <div id="list"></div>
+  </main>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

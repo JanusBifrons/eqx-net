@@ -13,6 +13,7 @@
  */
 import type { IRenderer, RenderPerfReading } from '@core/contracts/IRenderer';
 import { FrameTimeRing, type FrameTimeSummary } from '@core/perf/FrameTimeRing';
+import { perfSceneById } from '@shared-types/perf/perfScenes';
 
 export interface PerfReading {
   elapsedMs: number;
@@ -80,4 +81,63 @@ export function installPerfProbe(rendererIn: IRenderer, useWorkerIn: boolean): v
       };
     },
   };
+}
+
+/**
+ * Perf lab (phone or desktop, `?perfscene=<id>`): once the loading curtain
+ * lifts, frame the scene's camera, measure for the scene's window, then post
+ * the reading to the server (`POST /dev/perf/client`) so Claude reads it.
+ * The person watching only judges how it looks. A small chip shows the
+ * countdown (updated once a second) and a link back to the scene list.
+ */
+let labStarted = false;
+
+export function runPerfLabScene(sceneId: string): void {
+  if (labStarted) return; // a remounted game surface must not start a second window
+  labStarted = true;
+  const scene = perfSceneById(sceneId);
+  if (!scene || !current) return;
+  const cur = current;
+  const chip = document.createElement('div');
+  chip.setAttribute('data-testid', 'perf-lab-chip');
+  chip.style.cssText = 'position:fixed;left:50%;top:max(8px,env(safe-area-inset-top));transform:translateX(-50%);z-index:3000;'
+    + 'font:600 11px system-ui,sans-serif;color:#cfe;background:rgba(5,7,13,.75);border:1px solid #2a3a4a;border-radius:10px;padding:4px 10px;';
+  chip.textContent = `${scene.title} · loading…`;
+  document.body.appendChild(chip);
+
+  const lifted = (): boolean => document.querySelector('[data-testid="warp-screen"][data-warp-visible="0"]') !== null;
+  const start = async (): Promise<void> => {
+    // Frame the scene for this screen: the catalogue zoom is for a 1920×1080
+    // view, so scale by the SHORT side (portrait phones keep the action large).
+    const fit = Math.min(window.innerWidth, window.innerHeight) / 1080;
+    cur.renderer.setCameraScript([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: scene.camera.x, y: scene.camera.y, zoom: scene.camera.zoom * fit } }]);
+    const perf = (globalThis as unknown as { __eqxPerf: { reset(): Promise<void>; read(): Promise<PerfReading> } }).__eqxPerf;
+    await perf.reset();
+    const endAt = performance.now() + scene.durationMs;
+    const tick = setInterval(() => {
+      chip.textContent = `${scene.title} · ${Math.max(0, Math.ceil((endAt - performance.now()) / 1000))} s`;
+    }, 1000);
+    await new Promise((r) => setTimeout(r, scene.durationMs));
+    clearInterval(tick);
+    const reading = await perf.read();
+    const body = {
+      scene: scene.id,
+      device: {
+        userAgent: navigator.userAgent, width: window.innerWidth, height: window.innerHeight,
+        dpr: window.devicePixelRatio, touch: navigator.maxTouchPoints > 0, worker: cur.useWorker,
+      },
+      reading,
+    };
+    const ok = await fetch('/dev/perf/client', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      .then((r) => r.ok).catch(() => false);
+    chip.innerHTML = '';
+    const msg = document.createElement('span');
+    msg.textContent = ok ? 'Done, numbers sent ✓ ' : 'Done (could not send numbers) ';
+    const back = document.createElement('a');
+    back.href = '/__perf-lab__/index.html';
+    back.textContent = 'Next scene ›';
+    back.style.cssText = 'color:#7cf;margin-left:6px;';
+    chip.append(msg, back);
+  };
+  const wait = setInterval(() => { if (lifted()) { clearInterval(wait); void start(); } }, 500);
 }

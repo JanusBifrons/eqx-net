@@ -12,6 +12,7 @@
     "typecheck": "tsc -b tsconfig.core.json tsconfig.server.json tsconfig.client.json && tsc -p tsconfig.showcase.json",
     "showcase": "tsx showcase/run-showcase.ts",
     "perf:scenes": "tsx perf/run-perf.ts",
+    "perf:lab": "tsx perf/lab-server.ts",
     "lint": "eslint .",
     "audit:god-files": "node scripts/audit-god-files.mjs",
     "audit:thin-wrappers": "node scripts/audit-thin-wrappers.mjs",
