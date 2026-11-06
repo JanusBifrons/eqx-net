@@ -53,7 +53,7 @@ test.describe('Phase 5e — sleep handshake', () => {
           if (!raw) return false;
           const map = JSON.parse(raw) as Record<string, boolean>;
           return Object.values(map).some((b) => b === true);
-        },
+        }, undefined,
         { timeout: 10_000 },
       );
 

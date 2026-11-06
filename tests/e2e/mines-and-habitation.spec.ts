@@ -22,7 +22,7 @@ type EqxWindow = { __eqxClient?: { mirror?: Mirror } };
 async function join(page: Page, room: string): Promise<void> {
   await page.goto(`${BASE_URL}?room=${room}&testId=${randomUUID()}&shipKind=scout&worker=0`);
   await page.waitForFunction(
-    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '',
+    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '', undefined,
     { timeout: 90_000 },
   );
 }

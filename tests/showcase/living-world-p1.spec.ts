@@ -111,7 +111,7 @@ test('Living World P1: robots vs drones → loot → carry home → bank', async
   });
   await page.goto(`${BASE_URL}?${params}`);
   await page.waitForFunction(
-    () => parseInt(document.querySelector('[data-testid="ship-count"]')?.textContent?.replace('Ships: ', '') ?? '0', 10) > 0,
+    () => parseInt(document.querySelector('[data-testid="ship-count"]')?.textContent?.replace('Ships: ', '') ?? '0', 10) > 0, undefined,
     { timeout: 120_000 },
   );
   // Let the warp-in curtain lift.

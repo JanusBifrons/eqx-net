@@ -39,7 +39,7 @@ async function joinClient(browser: Browser, touch = false): Promise<{ ctx: Await
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');
       return el !== null && el.getAttribute('data-local-player-id') !== '';
-    },
+    }, undefined,
     { timeout: 12_000 },
   );
   // The dial gates on `useShouldRenderHud()` — wait for the FAB to mount.

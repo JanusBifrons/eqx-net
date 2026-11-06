@@ -337,7 +337,7 @@ async function bootSession(webrtcParam: '0' | '1', tag: string): Promise<{
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
       return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-    },
+    }, undefined,
     { timeout: 20_000 },
   );
   // Warmup: ?webrtc=1 needs extra time for the DC to open.

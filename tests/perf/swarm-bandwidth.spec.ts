@@ -40,7 +40,7 @@ async function joinSoak(browser: Browser, idx: number): Promise<{ ctx: Awaited<R
     () => {
       const w = window as unknown as { __EQX_BW_STATS?: { swarmPackets: number } };
       return (w.__EQX_BW_STATS?.swarmPackets ?? 0) > 0;
-    },
+    }, undefined,
     { timeout: 20_000 },
   );
   return { ctx, page };

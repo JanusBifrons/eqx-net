@@ -32,7 +32,7 @@ test('Living World P3a: the robot nexus and robot territory', async ({ page }, t
   });
   await page.goto(`${BASE_URL}?${params}`);
   await page.waitForFunction(
-    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '',
+    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '', undefined,
     { timeout: 120_000 },
   );
   await page.waitForTimeout(6_000); // curtain lifts; orbs start flying

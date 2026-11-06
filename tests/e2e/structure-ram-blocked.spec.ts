@@ -82,7 +82,7 @@ test('player ramming a structure is BLOCKED, not flown through (Issue 4)', async
       && parseInt(
         document.querySelector('[data-testid="swarm-count"]')?.textContent?.replace(/[^0-9]/g, '') ?? '0',
         10,
-      ) >= 1,
+      ) >= 1, undefined,
     { timeout: 15_000 },
   );
 
@@ -96,7 +96,7 @@ test('player ramming a structure is BLOCKED, not flown through (Issue 4)', async
       } catch {
         return false;
       }
-    },
+    }, undefined,
     { timeout: 10_000 },
   );
 

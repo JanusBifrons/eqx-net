@@ -77,7 +77,7 @@ async function joinShip(
       const el = document.querySelector('[data-testid="game-surface"]');
       const id = el?.getAttribute('data-local-player-id') ?? '';
       return id.length > 0;
-    },
+    }, undefined,
     { timeout: 12_000 },
   );
   const playerId = (await page

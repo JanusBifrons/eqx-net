@@ -32,7 +32,7 @@ async function joinFast(browser: Browser, shipKind: string) {
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');
       return el !== null && el.getAttribute('data-local-player-id') !== '';
-    },
+    }, undefined,
     { timeout: 12000 },
   );
   return { ctx, page };

@@ -44,7 +44,7 @@ async function joinInterceptor(page: Page, room: string, extra = ''): Promise<vo
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
       return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-    },
+    }, undefined,
     { timeout: 20000 },
   );
   await page.waitForTimeout(1800); // prediction settle

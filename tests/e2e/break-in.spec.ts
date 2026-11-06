@@ -31,7 +31,7 @@ type EqxWindow = {
 async function join(page: Page, spawn = ''): Promise<void> {
   await page.goto(`${BASE_URL}?room=break-in-test&testId=${randomUUID()}&newShip=1&worker=0${spawn}`);
   await page.waitForFunction(
-    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '',
+    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '', undefined,
     { timeout: 90_000 },
   );
 }

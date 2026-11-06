@@ -34,7 +34,7 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
 async function waitForHandshake(page: Page): Promise<void> {
   await page.waitForFunction(
-    () => document.querySelector('[data-loading-active="0"]') !== null,
+    () => document.querySelector('[data-loading-active="0"]') !== null, undefined,
     { timeout: 15_000 },
   );
   // Settle the join-broadcast grace + first snapshot before sampling.

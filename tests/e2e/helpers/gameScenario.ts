@@ -66,7 +66,7 @@ export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
       parseInt(
         document.querySelector('[data-testid="ship-count"]')?.textContent?.replace('Ships: ', '') ?? '0',
         10,
-      ) > 0,
+      ) > 0, undefined,
     { timeout: 12_000 },
   );
   return { ctx, page };
@@ -132,7 +132,7 @@ export async function launchGalaxyTestClient(browser: Browser, opts: GalaxyTestC
       parseInt(
         document.querySelector('[data-testid="ship-count"]')?.textContent?.replace('Ships: ', '') ?? '0',
         10,
-      ) > 0,
+      ) > 0, undefined,
     { timeout: 20_000 },
   );
   return { ctx, page, playerId };
@@ -198,7 +198,7 @@ export async function getLocalPlayerId(page: Page): Promise<string> {
 
 export async function waitForDeath(page: Page, timeout = 10_000): Promise<void> {
   await page.waitForFunction(
-    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-hull-pct') === '0',
+    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-hull-pct') === '0', undefined,
     { timeout },
   );
 }
@@ -209,7 +209,7 @@ export async function waitForRespawn(page: Page, timeout = 10_000): Promise<void
       parseInt(
         document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-hull-pct') ?? '0',
         10,
-      ) > 0,
+      ) > 0, undefined,
     { timeout },
   );
 }

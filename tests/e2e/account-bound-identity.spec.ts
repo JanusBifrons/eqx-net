@@ -53,7 +53,7 @@ async function openLoggedIn(browser: Browser, token: string, anonId: string, tes
     () => parseInt(
       document.querySelector('[data-testid="ship-count"]')?.textContent?.replace('Ships: ', '') ?? '0',
       10,
-    ) > 0,
+    ) > 0, undefined,
     { timeout: 20_000 },
   );
   return { ctx, page };

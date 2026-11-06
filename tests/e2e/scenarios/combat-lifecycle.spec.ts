@@ -92,7 +92,7 @@ test('P1 destroys P2: hull reaches 0, SHIP DESTROYED alert fires', async ({ brow
     expect(await getHullPct(p2.page)).toBe(0);
 
     await p2.page.waitForFunction(
-      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-sector-alert') === 'SHIP DESTROYED',
+      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-sector-alert') === 'SHIP DESTROYED', undefined,
       { timeout: 1_000 },
     );
     expect(await getSectorAlert(p2.page)).toBe('SHIP DESTROYED');
@@ -160,7 +160,7 @@ test.fixme('full lifecycle: P2 dies, respawns at initial position with full hull
       () => {
         const alert = document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-sector-alert') ?? '';
         return alert === '' || alert === 'null';
-      },
+      }, undefined,
       { timeout: 2_000 },
     );
 

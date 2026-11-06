@@ -17,7 +17,7 @@ test('Factions tab lists standings and saves the player’s policy', async ({ pa
   test.setTimeout(120_000); // infrastructural: a cold server + Vite join
   await page.goto(`${BASE_URL}?room=trade-test&testId=${randomUUID()}&newShip=1`);
   await page.waitForFunction(
-    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '',
+    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '', undefined,
     { timeout: 90_000 },
   );
 

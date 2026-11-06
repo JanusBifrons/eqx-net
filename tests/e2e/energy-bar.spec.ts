@@ -33,7 +33,7 @@ async function joinClient(browser: Browser, shipKind = 'scout') {
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');
       return el !== null && el.getAttribute('data-local-player-id') !== '';
-    },
+    }, undefined,
     { timeout: 12000 },
   );
   // The HUD (and the bar) mount when the loading curtain lifts; under suite

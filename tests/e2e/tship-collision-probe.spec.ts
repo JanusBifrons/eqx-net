@@ -56,7 +56,7 @@ test('crossguard interlocking-T orientation (visual)', async ({ page }) => {
     timeout: 15_000,
   });
   await page.waitForFunction(
-    () => (window as unknown as ProbeWindow).__tshipProbe !== undefined,
+    () => (window as unknown as ProbeWindow).__tshipProbe !== undefined, undefined,
     { timeout: 15_000 },
   );
 

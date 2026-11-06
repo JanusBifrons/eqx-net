@@ -41,7 +41,7 @@ async function main(): Promise<void> {
 
   // Wait for handshake.
   await page.waitForFunction(
-    () => document.querySelector('[data-loading-active="0"]') !== null,
+    () => document.querySelector('[data-loading-active="0"]') !== null, undefined,
     { timeout: 20_000 },
   );
 

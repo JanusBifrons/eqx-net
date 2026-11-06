@@ -37,7 +37,7 @@ test('a lingering hull renders its weapon barrels across the worker boundary', a
     timeout: 10_000,
   });
   await page.waitForFunction(
-    () => (window as unknown as ProbeWindow).__lingerProbe !== undefined,
+    () => (window as unknown as ProbeWindow).__lingerProbe !== undefined, undefined,
     { timeout: 10_000 },
   );
 
@@ -90,7 +90,7 @@ test('a lingering hull with shield up draws its shield aura across the worker bo
     timeout: 10_000,
   });
   await page.waitForFunction(
-    () => (window as unknown as ProbeWindow).__lingerProbe !== undefined,
+    () => (window as unknown as ProbeWindow).__lingerProbe !== undefined, undefined,
     { timeout: 10_000 },
   );
 

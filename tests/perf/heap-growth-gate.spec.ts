@@ -108,7 +108,7 @@ async function measureHeapGrowth(_browser: Browser, label: string): Promise<Heap
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
       return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-    },
+    }, undefined,
     { timeout: 15_000 },
   );
   // Warmup 5s — initial connect / snapshot / mirror bootstrap heap pressure.

@@ -42,7 +42,7 @@ async function waitForLocalShip(page: Page, timeoutMs = 20_000): Promise<void> {
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
       return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-    },
+    }, undefined,
     { timeout: timeoutMs },
   );
 }
@@ -102,7 +102,7 @@ test('switch-ship dispatch keeps the local ship rendered', async ({ page }) => {
       const win = window as unknown as StoreWindow;
       const s = win.__eqxStore?.getState();
       return s !== undefined && s.shipRoster.length >= 1;
-    },
+    }, undefined,
     { timeout: 5_000 },
   );
 
@@ -128,14 +128,14 @@ test('switch-ship dispatch keeps the local ship rendered', async ({ page }) => {
     () => {
       const win = window as unknown as StoreWindow;
       return win.__eqxStore?.getState().phase === 'connecting';
-    },
+    }, undefined,
     { timeout: 3_000 },
   );
   await page.waitForFunction(
     () => {
       const win = window as unknown as StoreWindow;
       return win.__eqxStore?.getState().phase === 'game';
-    },
+    }, undefined,
     { timeout: 5_000 },
   );
 

@@ -46,7 +46,7 @@ test('Living World P2: a trade deal, a raid, an escort', async ({ page }, testIn
   });
   await page.goto(`${BASE_URL}?${params}`);
   await page.waitForFunction(
-    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '',
+    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '', undefined,
     { timeout: 120_000 },
   );
   await page.waitForTimeout(5_000); // warp-in curtain lifts

@@ -21,7 +21,7 @@ test('an alien gate disables a pilot who fires in its zone', async ({ page }) =>
   test.setTimeout(120_000);
   await page.goto(`${BASE_URL}?room=alien-gate-test&testId=${randomUUID()}&worker=0`);
   await page.waitForFunction(
-    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '',
+    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '', undefined,
     { timeout: 90_000 },
   );
 

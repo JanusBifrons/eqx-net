@@ -73,7 +73,7 @@ test('modal close diagnostic — DOM dump at each step', async ({ page }) => {
     () => {
       const win = window as unknown as StoreWindow;
       return win.__eqxStore?.getState().localShipInstanceId !== null;
-    },
+    }, undefined,
     { timeout: 15_000 },
   );
 

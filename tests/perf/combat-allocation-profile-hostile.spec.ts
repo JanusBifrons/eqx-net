@@ -75,7 +75,7 @@ test('hostile combat allocation profile: rank top 25 per-tick allocators', async
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
       return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-    },
+    }, undefined,
     { timeout: 15_000 },
   );
   await page.waitForTimeout(3000); // warmup — drone aggro packets flush + initial-join longtask tail

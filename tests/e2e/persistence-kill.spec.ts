@@ -81,7 +81,7 @@ async function joinClientAt(
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
       return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-    },
+    }, undefined,
     { timeout: 12_000 },
   );
   return { ctx, page };

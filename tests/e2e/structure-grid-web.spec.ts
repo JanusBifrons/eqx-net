@@ -27,7 +27,7 @@ async function joinClient(browser: Browser): Promise<{ ctx: Awaited<ReturnType<B
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');
       return el !== null && el.getAttribute('data-local-player-id') !== '';
-    },
+    }, undefined,
     { timeout: 12_000 },
   );
   await page.locator('[data-testid="speed-dial-fab"]').waitFor({ timeout: 10_000 });

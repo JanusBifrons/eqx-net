@@ -53,7 +53,7 @@ test.describe('Phase 6 — TiDi + LoadShedder acceptance', () => {
       // Wait for the first snapshot so debug attrs are populated.
       await page.waitForFunction(
         () =>
-          document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-clock-rate') !== null,
+          document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-clock-rate') !== null, undefined,
         { timeout: 20_000 },
       );
 
@@ -65,7 +65,7 @@ test.describe('Phase 6 — TiDi + LoadShedder acceptance', () => {
           const r = parseFloat(el.getAttribute('data-clock-rate') ?? '1');
           const a = el.getAttribute('data-sector-alert') ?? '';
           return r < 0.99 && a === 'Temporal Anomaly';
-        },
+        }, undefined,
         { timeout: 15_000 },
       );
 
@@ -75,7 +75,7 @@ test.describe('Phase 6 — TiDi + LoadShedder acceptance', () => {
           const el = document.querySelector('[data-testid="game-surface"]');
           const r = parseFloat(el?.getAttribute('data-clock-rate') ?? '1');
           return r <= 0.71;
-        },
+        }, undefined,
         { timeout: 30_000 },
       );
 

@@ -32,7 +32,7 @@ async function joinAt(page: Page, x: number): Promise<void> {
       } catch {
         return false;
       }
-    },
+    }, undefined,
     { timeout: 30_000 },
   );
 }

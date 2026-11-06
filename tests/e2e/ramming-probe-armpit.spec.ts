@@ -97,7 +97,7 @@ test('@diag ramming probe — fly into L-shape armpit at full thrust', async ({ 
       && parseInt(
         document.querySelector('[data-testid="swarm-count"]')?.textContent?.replace(/[^0-9]/g, '') ?? '0',
         10,
-      ) >= 1,
+      ) >= 1, undefined,
     { timeout: 15_000 },
   );
 
@@ -116,7 +116,7 @@ test('@diag ramming probe — fly into L-shape armpit at full thrust', async ({ 
       } catch {
         return false;
       }
-    },
+    }, undefined,
     { timeout: 10_000 },
   );
 
