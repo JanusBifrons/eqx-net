@@ -16,7 +16,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { chromium } from '@playwright/test';
 import { SHOTS, SECTION_CARDS, TITLE_SUB, END_CARD_POINTS } from './registry.js';
-import type { ClipRecord, ServerProfile, Shot } from './types.js';
+import type { ClipRecord, Shot } from './types.js';
 import { PROFILE_ORDER } from './types.js';
 import { CaptureServers } from './servers.js';
 import { Recorder, type RecordResult } from './recorder.js';
