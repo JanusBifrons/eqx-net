@@ -112,6 +112,14 @@ export interface ResizeMsg {
  * Pixi ticker FPS cap. See `PixiRenderer.setTickerMaxFPS`. `null` =
  * pause entirely; `undefined` = remove cap; number = throttle.
  */
+/** Perf scenes (plan prancy-squishing-donut P2): enable / reset / read the
+ *  worker renderer's frame-cost probe. The worker answers `PERF_PROBE_RESULT`. */
+export interface PerfProbeMsg {
+  type: 'PERF_PROBE';
+  op: import('@core/contracts/IRenderer').PerfProbeOp;
+  reqId: number;
+}
+
 export interface SetTickerFpsMsg {
   type: 'SET_TICKER_FPS';
   fps: number | null | undefined;
@@ -355,6 +363,7 @@ export type MainToWorkerMsg =
   | SetPlayerPresenceMsg
   | ResizeMsg
   | SetTickerFpsMsg
+  | PerfProbeMsg
   | SetWarpModeMsg
   | SetWarpParamsMsg
   | SetWarpCenterMsg

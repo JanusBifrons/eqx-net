@@ -306,6 +306,19 @@ The showcase reel is a **repeatable build artefact**, not a one-off edit: `pnpm 
 
 ---
 
+## Perf scenes (`pnpm perf:scenes`) — measure what a change costs
+
+Scripted scenes in real rooms (a fleet fight, a raid warping in beside a base, a wide view over a battle), played in a real browser on the real GPU. The runner records server tick and frame-time percentiles, hitches, renderer cost, bytes per second and display objects, then compares head with `origin/main` interleaved on the same machine in the same session.
+- **Counts gate; timings compare against the same-session base.** Never against a stored number from another day or machine.
+- **Percentiles and hitch counts, never mean FPS.**
+- **An invalid run is never "fast".** Refused spawns, a scene that never ended or too few frames ⇒ INVALID.
+- **Trust a metric only after its self-test.** main-vs-main must come back GREEN, and `--inject-server-burn` / `--inject-client-burn` must go RED on that metric.
+- **Claude runs it, not the user.** It is part of Claude's own verification before a PR that touches rendering, the server tick, the snapshot path or combat at scale. The verdict table goes in the PR body.
+
+Adding a scene is one entry in `src/server/rooms/scene/perfScenes.ts`. Full story: [docs/architecture/perf-scenes.md](docs/architecture/perf-scenes.md).
+
+---
+
 ## Test-harness philosophy — bespoke gameplay triggers, never bump timeouts
 
 E2E tests must be **highly controlled and tightly scoped**. Target: a single test runs in **1-2 seconds wall-clock** wherever the game logic allows it. When a test needs longer, the right move is almost always to **add a bespoke gameplay trigger** that bypasses the wait, NOT to expand the timeout. Bumping the budget hides the real signal ("the game-time wait is too long to belong in a test"), invites flakes, and bloats the suite wall-clock under the next gameplay-tuning change.

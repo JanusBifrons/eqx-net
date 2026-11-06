@@ -170,6 +170,11 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'PERF_PROBE': {
+        post({ type: 'PERF_PROBE_RESULT', reqId: msg.reqId, reading: renderer ? renderer.perfProbeSync(msg.op) : null });
+        break;
+      }
+
       case 'SET_TICKER_FPS': {
         if (!renderer) return;
         renderer.setTickerMaxFPS(msg.fps);

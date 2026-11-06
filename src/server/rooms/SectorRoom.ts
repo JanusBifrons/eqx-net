@@ -249,6 +249,8 @@ import { guarded } from './guardedLoop.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
+import { registerScenePerfRoom, unregisterScenePerfRoom, type ScenePerfView } from './scene/scenePerfRegistry.js';
+import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
 import { LeaveHandler } from './LeaveHandler.js';
 import { mirrorSabPoses } from './SabPoseMirror.js';
@@ -9004,9 +9006,29 @@ export class SectorRoom extends Room<SectorState> {
   /** Scene status for `/dev/perf` and tests (null: no scene). */
   sceneStatus(): Readonly<SceneStatus> | null { return this.sceneRunner?.getStatus() ?? null; }
 
+  /** Server tick cost while the scene runs (start → end), for `/dev/perf`. */
+  private sceneTickRing: FrameTimeRing | null = null;
+  private sceneWorkerRing: FrameTimeRing | null = null;
+
+  scenePerf(): ScenePerfView | null {
+    if (!this.sceneRunner || !this.sceneTickRing || !this.sceneWorkerRing) return null;
+    return {
+      roomId: this.roomId,
+      scene: { ...this.sceneRunner.getStatus() },
+      tick: this.sceneTickRing.summary(),
+      workerTick: this.sceneWorkerRing.summary(),
+      swarm: this.swarmRegistry.size(),
+      players: this.playerToSlot.size,
+      structures: this.structureRegistry.size,
+    };
+  }
+
   private initSceneScript(raw: unknown): void {
     const parsed = SceneScriptSchema.safeParse(raw);
     if (!parsed.success) throw new Error(`invalid sceneScript: ${parsed.error.message}`);
+    this.sceneTickRing = new FrameTimeRing(36_000);
+    this.sceneWorkerRing = new FrameTimeRing(36_000);
+    registerScenePerfRoom(this);
     this.sceneRunner = new SceneScriptRunner(parsed.data, {
       spawn: (id, kind, x, y, warpIn) => {
         if (warpIn) return this.spawnLivingWorldBot({ botId: id, kind, x, y });
@@ -9428,6 +9450,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   override onDispose(): void {
+    if (this.sceneRunner) unregisterScenePerfRoom(this);
     this.simLoopStopped = true;
     if (this.tradeRegisteredKey !== null) getTradeSink()?.unregisterRoom(this.tradeRegisteredKey, this);
     if (this.teleportRoom) getTeleportBroker().unregister(this.teleportRoom);
@@ -9785,6 +9808,10 @@ export class SectorRoom extends Room<SectorState> {
       aiSize: this.aiController.size(),
       liveProjectileCount: this.liveProjectiles.size,
     });
+    if (this.sceneRunner) {
+      const st = this.sceneRunner.getStatus();
+      if (st.started && !st.ended) { this.sceneTickRing!.push(totalMs); this.sceneWorkerRing!.push(workerTickMs); }
+    }
 
     // Phase 6 — drive the TiDi clock from whichever side is the bottleneck.
     // The server's `update()` time covers SAB-read / encode / broadcast; the

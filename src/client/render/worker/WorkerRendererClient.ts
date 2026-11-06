@@ -22,6 +22,8 @@ import type {
   IRenderer,
   RenderMirror,
   RendererFeedback,
+  RenderPerfReading,
+  PerfProbeOp,
 } from '@core/contracts/IRenderer';
 import type {
   MainToWorkerMsg,
@@ -427,6 +429,19 @@ export class WorkerRendererClient implements IRenderer {
     this.post({ type: 'SET_TICKER_FPS', fps });
   }
 
+  // Perf scenes (plan prancy-squishing-donut P2): ask the worker renderer.
+  private _perfReq = 0;
+  private readonly _perfWaiters = new Map<number, (r: RenderPerfReading | null) => void>();
+
+  perfProbe(op: PerfProbeOp): Promise<RenderPerfReading | null> {
+    if (!this.worker) return Promise.resolve(null);
+    const reqId = ++this._perfReq;
+    return new Promise((resolve) => {
+      this._perfWaiters.set(reqId, resolve);
+      this.post({ type: 'PERF_PROBE', op, reqId });
+    });
+  }
+
   /**
    * Warp-mode render state. See `IRenderer.setWarpMode`. Posts to the
    * worker which forwards to its `PixiRenderer.setWarpMode`.
@@ -697,6 +712,13 @@ export class WorkerRendererClient implements IRenderer {
         }
         break;
       }
+      case 'PERF_PROBE_RESULT': {
+        const w = this._perfWaiters.get(msg.reqId);
+        this._perfWaiters.delete(msg.reqId);
+        w?.(msg.reading);
+        break;
+      }
+
       case 'FRAME_MARKERS': {
         // F1 — re-emit the worker's per-frame sub-costs onto the
         // main-thread log ring (the worker has no `window.__eqxLogs`).

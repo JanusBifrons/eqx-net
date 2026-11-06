@@ -120,10 +120,18 @@ export interface FrameMarkersMsg {
   markers: FrameMarkers;
 }
 
+/** Reply to `PERF_PROBE` (null reading: probe off, or enable/reset). */
+export interface PerfProbeResultMsg {
+  type: 'PERF_PROBE_RESULT';
+  reqId: number;
+  reading: import('@core/contracts/IRenderer').RenderPerfReading | null;
+}
+
 export type WorkerToMainMsg =
   | ReadyMsg
   | FeedbackMsg
   | OverlayTappedMsg
   | GalaxyHoverMsg
   | WorkerErrorMsg
-  | FrameMarkersMsg;
+  | FrameMarkersMsg
+  | PerfProbeResultMsg;

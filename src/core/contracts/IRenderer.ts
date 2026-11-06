@@ -790,7 +790,27 @@ export interface RendererFeedback {
   miningBeamCount: number;
 }
 
+/** Perf scenes (plan prancy-squishing-donut P2): a probe request. */
+export type PerfProbeOp = 'enable' | 'reset' | 'read';
+
+/** Frame-time percentiles (ms) over the probe window. */
+export interface PerfFrameSummary { frames: number; p50: number; p95: number; p99: number; max: number; hitches: number }
+
+/** What the renderer reports for a perf scene, on whichever thread it runs. */
+export interface RenderPerfReading {
+  /** Per-frame renderer update cost (CPU, incl. effects), not the display interval. */
+  render: PerfFrameSummary;
+  sprites: number;
+  /** Every node in the Pixi stage tree. */
+  displayObjects: number;
+  mirrorShips: number;
+  mirrorSwarm: number;
+  effectQuality: string;
+}
+
 export interface IRenderer {
+  /** Perf scenes: enable / reset / read the renderer's frame-cost probe. Optional; null when not enabled. */
+  perfProbe?(op: PerfProbeOp): Promise<RenderPerfReading | null>;
   // Container is typed as unknown here so core stays DOM-free.
   // Client implementations narrow it to HTMLElement.
   init(container: unknown): Promise<void>;
