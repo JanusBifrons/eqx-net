@@ -23,9 +23,10 @@ import { easeTo, exhaustTint, ExhaustRing, flameShape, type FlameShape } from '.
 const tex = (h: ArtHandle): Texture | null => (h.state === 'ready' && h.fx ? h.fx.tex : null);
 
 const THRUST_OUT = 0xff7a30, THRUST_CORE = 0xffe0b0, BOOST_OUT = 0x4f9dff, BOOST_CORE = 0xe2f4ff;
-/** Ribbon history: points sampled at 60 Hz, so ~0.27 s of path. */
+/** Ribbon history: RING points spread over the ship's trail window
+ *  (`shipTuning(kind).exhaustTrailS`; the lab's 16/60 s at 1x). */
 const RING = 16;
-const SAMPLE_S = 1 / 60;
+const DEFAULT_TRAIL_S = 16 / 60;
 /** Input: -1 = unknown (a drone: follow speed), 0 = off, 1 = on. */
 export type EngineInput = -1 | 0 | 1;
 
@@ -37,6 +38,12 @@ interface EngineView {
   /** Pooled nozzle sprites; the first `count` are this hull's. */
   nozzles: NozzleView[]; count: number; src: readonly Nozzle[] | null; gen: number;
   thrust: number; boost: number; px: number; py: number; primed: boolean; acc: number; phase: number;
+  /** Times this view was refitted or its rings reset (diagnostic). */
+  resets: number;
+  /** Last measured speed, u/s (diagnostic). */
+  speed: number;
+  /** Seconds between ribbon samples (the ship's trail window / RING). */
+  sampleS: number;
 }
 
 export class FxEngines {
@@ -53,6 +60,8 @@ export class FxEngines {
   private readonly glow: ArtHandle;
   private gen = 0;
   private drawnCount = 0;
+  /** Nozzles that drew a ribbon this frame (diagnostic / E2E). */
+  private ribbonCount = 0;
   private readonly shape: FlameShape = { len: 0, wid: 0, alpha: 0 };
 
   constructor(art: ArtService, private readonly getQuality: () => EffectQuality = () => 'high') {
@@ -67,30 +76,32 @@ export class FxEngines {
     return tex(this.flame) !== null && tex(this.core) !== null && tex(this.trail) !== null && tex(this.glow) !== null;
   }
 
-  beginFrame(): void { this.gen++; this.drawnCount = 0; }
+  beginFrame(): void { this.gen++; this.drawnCount = 0; this.ribbonCount = 0; }
 
   /**
    * Draw ship `key`'s exhaust. `px, py, rot` is the sprite's Pixi pose;
-   * `topSpeed` (u/s) normalises speed for drones. Returns false when it
+   * `topSpeed` (u/s) normalises speed for drones; `trailS` is the seconds of
+   * path the ribbon spans (size-dependent: `shipTuning`). Returns false when it
    * can't draw (textures not baked, no nozzles), so the caller keeps
    * today's emitter for that ship.
    */
   draw(key: string, nozzles: readonly Nozzle[], px: number, py: number, rot: number,
-    thrustIn: EngineInput, boostIn: EngineInput, topSpeed: number, dtSec: number, nowMs: number): boolean {
+    thrustIn: EngineInput, boostIn: EngineInput, topSpeed: number, dtSec: number, nowMs: number, trailS = DEFAULT_TRAIL_S): boolean {
     if (nozzles.length === 0 || !this.ready()) return false;
     let v = this.live.get(key);
     if (!v) { v = this.make(); this.live.set(key, v); }
     if (v.src !== nozzles) this.fit(v, nozzles);
     v.gen = this.gen;
+    v.sampleS = trailS / RING;
     this.drawnCount++;
     // Speed from the sprite's own movement (one pose per frame).
     let speed = 0;
     if (v.primed && dtSec > 0) speed = Math.hypot(px - v.px, py - v.py) / dtSec;
     if (!v.primed || speed > topSpeed * 4) { // first frame or a teleport
-      speed = 0; v.primed = true;
+      speed = 0; v.primed = true; v.resets++;
       for (const nz of v.nozzles) nz.ring.reset();
     }
-    v.px = px; v.py = py;
+    v.px = px; v.py = py; v.speed = speed;
     const sp = Math.min(1, speed / Math.max(1, topSpeed));
     const tThrust = thrustIn >= 0 ? thrustIn : Math.min(1, sp / 0.45);
     const tBoost = boostIn >= 0 ? boostIn : Math.max(0, Math.min(1, (sp - 0.7) / 0.25));
@@ -104,8 +115,8 @@ export class FxEngines {
     // The nose is local -y, so astern is +y turned by rot.
     const astern = rot + Math.PI / 2;
     v.acc += dtSec;
-    const sample = v.acc >= SAMPLE_S;
-    if (sample) v.acc = v.acc % SAMPLE_S;
+    const sample = v.acc >= v.sampleS;
+    if (sample) v.acc = v.acc % v.sampleS;
     const t = nowMs / 1000;
     for (let n = 0; n < v.count; n++) {
       const nz = v.nozzles[n]!;
@@ -124,6 +135,7 @@ export class FxEngines {
         nz.pts[0]!.set(x, y);
         for (let k = 1; k < nz.pts.length; k++) nz.pts[k]!.set(nz.ring.x(k - 1), nz.ring.y(k - 1));
         nz.rope.visible = true; nz.rope.tint = outT;
+        this.ribbonCount++;
         nz.rope.alpha = 0.55 * (0.15 + 0.7 * v.thrust + 0.15 * v.boost);
       } else {
         nz.rope.visible = false;
@@ -145,8 +157,21 @@ export class FxEngines {
 
   /** Ships drawn this frame. */
   drawn(): number { return this.drawnCount; }
+  /** Engine ribbons drawn this frame. */
+  ribbons(): number { return this.ribbonCount; }
   /** Whether `key` was drawn this frame (the caller skips today's emitter). */
   drew(key: string): boolean { return this.live.get(key)?.gen === this.gen; }
+  /** One ship's engine state this frame (diagnostic / E2E; allocates, never call per frame). */
+  debugView(key: string): { drawn: boolean; thrust: number; boost: number; nozzles: number; ribbons: number; ringLen: number; resets: number; speed: number; ribbonUnits: number; nozzleR: number } | null {
+    const v = this.live.get(key);
+    if (!v) return null;
+    let ribbons = 0, ringLen = 0, ribbonUnits = 0;
+    for (let n = 0; n < v.count; n++) {
+      const nz = v.nozzles[n]!; if (nz.rope.visible) ribbons++; ringLen = Math.max(ringLen, nz.ring.length);
+      const a = nz.pts[0]!, b = nz.pts[nz.pts.length - 1]!; ribbonUnits = Math.max(ribbonUnits, Math.hypot(a.x - b.x, a.y - b.y));
+    }
+    return { drawn: v.gen === this.gen, thrust: v.thrust, boost: v.boost, nozzles: v.count, ribbons, ringLen, resets: v.resets, speed: v.speed, ribbonUnits, nozzleR: v.nozzles[0]?.r ?? 0 };
+  }
 
   destroy(): void {
     this.trailLayer.destroy({ children: true });
@@ -159,9 +184,9 @@ export class FxEngines {
 
   private make(): EngineView {
     const v = this.free.pop();
-    if (v) { v.thrust = 0; v.boost = 0; v.acc = 0; v.src = null; return v; }
+    if (v) { v.thrust = 0; v.boost = 0; v.acc = 0; v.src = null; v.resets = 0; v.speed = 0; v.sampleS = DEFAULT_TRAIL_S / RING; return v; }
     this.phaseSeed += 2.7;
-    return { nozzles: [], count: 0, src: null, gen: -1, thrust: 0, boost: 0, px: 0, py: 0, primed: false, acc: 0, phase: this.phaseSeed };
+    return { nozzles: [], count: 0, src: null, gen: -1, thrust: 0, boost: 0, px: 0, py: 0, primed: false, acc: 0, phase: this.phaseSeed, resets: 0, speed: 0, sampleS: DEFAULT_TRAIL_S / RING };
   }
 
   /** Size the view's nozzle sprites to a hull (only when the hull changes). */
@@ -177,6 +202,7 @@ export class FxEngines {
       geo._width = src.r * 2.4; geo.update();
       nz.ring.reset();
     }
+    v.resets++;
     v.count = nozzles.length;
     v.src = nozzles;
   }

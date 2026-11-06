@@ -66,6 +66,8 @@ const SMOKE_SPECS: string[] = [
 // investigation/bisect/repro captures were deleted. See
 // docs/refactors/test-coverage-audit.md.
 const FEATURE_SPECS: string[] = [
+  // Engine ribbon hid in the flame at the 2x ship scale (2026-11-06).
+  '**/engine-ribbon-length.spec.ts',
   '**/account-bound-identity.spec.ts',
   // New weapon effects (plan iridescent-seeking-rainbow v3, B3).
   '**/fx-weapons.spec.ts',
