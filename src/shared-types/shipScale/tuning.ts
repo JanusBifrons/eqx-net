@@ -45,6 +45,8 @@ export const BASE = {
   barrelLenMin: 7, barrelWidMin: 2, capMin: 3, rackCapMin: 3.2,
   /** Exhaust: the radius plumes are drawn relative to, the nozzle radius cap. */
   plumeRefRadius: 12, nozzleMax: 5,
+  /** Engine ribbon history, seconds of nozzle path (the exhaust lab's 16 samples at 60 Hz, at 1x). */
+  exhaustTrailS: 16 / 60,
   /** Spawn clearance from structures (was SPAWN_STRUCTURE_CLEARANCE 120). */
   spawnClearance: 120,
   /** Loot pickup radius (was LOOT_PICKUP_RADIUS). */
@@ -204,6 +206,11 @@ export interface ShipTuning {
   /** Exhaust plume multiplier (1 for a 1× fighter). */
   plumeScale: number;
   nozzleMax: number;
+  /** Seconds of nozzle path the engine ribbon spans: the lab's 1x window, grown so
+   *  the ribbon stays the same number of hull lengths when ships are bigger (and
+   *  slower, `motionFactors`). Authored as a constant it came out ~2.8x shorter
+   *  against the hull at 2x and hid inside the flame (2026-11-06). */
+  exhaustTrailS: number;
   spawnClearance: number;
   lootPickup: number;
   flockFollow: number;
@@ -238,6 +245,7 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     rackCapMin: BASE.rackCapMin * g, rackCapMax: BASE.rackCapMax * g,
     plumeScale: (kind.radius / BASE.plumeRefRadius) * ct.geometry,
     nozzleMax: BASE.nozzleMax * g,
+    exhaustTrailS: (BASE.exhaustTrailS * s) / motionFactors(s).speed,
     spawnClearance: ct.clearHull ? Math.max(BASE.spawnClearance * sp, kind.radius * 2) : BASE.spawnClearance * sp,
     lootPickup: ct.clearHull ? Math.max(BASE.lootPickup * sp, kind.radius * 1.3) : BASE.lootPickup * sp,
     flockFollow: ct.clearHull ? Math.max(BASE.flockFollow * sp, kind.radius * 3.3) : BASE.flockFollow * sp,

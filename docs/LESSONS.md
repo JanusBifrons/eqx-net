@@ -2679,3 +2679,10 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
 - **Fix.** `skipStalledBacklog` (`net/inputTickRecovery.ts`): a backlog over 30 ticks is a stall and is skipped; short hiccups still catch up. The showcase recorder also waits for steady frames before rolling. Lock: `tests/e2e/loading-catchup.spec.ts`.
 - **Process lesson.** The first two fix attempts measured the wrong thing: a smoothness test that EXCLUDED correction-smoothing frames was blind to a bug made of corrections, and a timing bug that was present in the smooth videos too cannot explain why they were smooth. When "it used to work", diff against the working artefact first; compare like with like (same tracker on both clips).
 
+
+## 2026-11-06 — Lab-tuned looks are tuned at 1×: the engine ribbon hid in the flame at the 2× default
+
+- **Symptom.** "The engines on the fighter were wrong in the video. They weren't the ones we redesigned." The fighter WAS drawn by the new exhaust (`FxEngines`), but its ribbon, the part that makes the look, was ~1 hull long and sat inside the flame. In the approved exhaust lab it trails several hull lengths.
+- **Cause.** The ribbon spans a fixed 16/60 s of each nozzle's path. The lab ran at 1×; the game ships at 2×, where hulls are twice as long and ~0.7× as fast (`motionFactors`), so the ribbon came out ~2.8× shorter against the hull while the flame (sized from the nozzle) grew. The reference screenshot hid it: it was taken in `auto-fire-test`, whose 10× physics speed makes any trail long.
+- **Fix.** `shipTuning(kind).exhaustTrailS` (invariant #18): the lab's 1× window, grown with the size so the ribbon stays the same number of hull lengths at top speed. Locks: `tests/e2e/engine-ribbon-length.spec.ts` (reads the local ship's drawn ribbon, `__eqxArtStats().localEngine`) and `shipScaleInvariants.test.ts`.
+- **Lesson.** A look approved in a lab or at 1× must be re-checked at the shipping scale, and never judged from a capture in a time-scaled test room. An "every ship" count (`fxRibbons ≥ 1`) passed while the filmed ship was wrong; assert on the ship the user looked at.

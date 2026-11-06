@@ -93,6 +93,19 @@ describe.each(SCALES)('ship scale %ix — geometry and tuning follow the hull', 
     }
   });
 
+  it('the engine ribbon trails the same number of hull lengths at top speed as at 1x', () => {
+    // Bug 2026-11-06 ("the engines on the fighter were wrong"): the ribbon's
+    // window was a 1x constant, so at 2x it was ~2.8x shorter against the hull.
+    // Kinds with authored engines change their own speed at the first scale;
+    // the ribbon follows the size alone, so they are left out.
+    for (const raw of RAW.filter((x) => !x.thrusters && !x.engineeringOnly)) {
+      const k = scaleShipKind(raw, s), t1 = shipTuning(scaleShipKind(raw, 1)).exhaustTrailS;
+      const hulls = (shipTuning(k).exhaustTrailS * k.maxSpeed) / k.radius;
+      expect(hulls, raw.id).toBeCloseTo((t1 * raw.maxSpeed) / raw.radius, 6);
+    }
+    expect(shipTuning(scaleShipKind(RAW[0]!, 1)).exhaustTrailS).toBeCloseTo(BASE.exhaustTrailS, 9); // the lab's 1x look
+  });
+
   it('a playable ship\'s shield fits through a gate and an airlock (at the scales we ship)', () => {
     if (s > 2) return; // 4× is a stress sweep, not a shipping scale
     for (const k of kinds.filter((x) => !x.npcOnly && !x.engineeringOnly && x.id !== 'test-capital')) {
