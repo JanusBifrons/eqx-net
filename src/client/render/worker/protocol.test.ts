@@ -276,6 +276,7 @@ describe('renderer-worker protocol', () => {
           case 'SET_GALAXY_STATS':
           case 'RESIZE':
           case 'SET_TICKER_FPS':
+          case 'PERF_PROBE':
           case 'SET_WARP_MODE':
           case 'SET_DIAG_MARKERS':
           case 'POINTER_EVENT':
@@ -303,6 +304,7 @@ describe('renderer-worker protocol', () => {
           case 'GALAXY_HOVER':
           case 'ERROR':
           case 'FRAME_MARKERS':
+          case 'PERF_PROBE_RESULT':
             return msg.type;
         }
       }

@@ -42,6 +42,7 @@ export type {
   SetTransitDockedMsg,
   ResizeMsg,
   SetTickerFpsMsg,
+  PerfProbeMsg,
   SetWarpModeMsg,
   SetWarpParamsMsg,
   SetWarpCenterMsg,
@@ -66,5 +67,6 @@ export type {
   WorkerErrorMsg,
   FrameMarkers,
   FrameMarkersMsg,
+  PerfProbeResultMsg,
   WorkerToMainMsg,
 } from './protocol/workerToMain.js';

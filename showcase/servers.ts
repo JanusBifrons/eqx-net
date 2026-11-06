@@ -64,6 +64,8 @@ export class CaptureServers {
     private readonly appDir: string,
     private readonly runDir: string,
     private readonly ports: ServerPorts = DEFAULT_PORTS,
+    /** Extra server env (the perf runner's fault injection). */
+    private readonly extraEnv: Record<string, string> = {},
   ) {}
 
   get baseUrl(): string {
@@ -104,6 +106,7 @@ export class CaptureServers {
         EQX_AUDIT_DIR: path.join(this.runDir, 'audit'),
         EQX_ENABLE_TEST_ROOMS: '1',
         ...profileEnv(profile),
+        ...this.extraEnv,
       },
       path.join(this.runDir, 'server.log'),
     );

@@ -1,4 +1,6 @@
-import 'dotenv/config';
+import 'dotenv/config';
+import { PERF_SCENES } from './rooms/scene/perfScenes.js';
+import { scenePerfViews } from './rooms/scene/scenePerfRegistry.js';
 import { Server, matchMaker } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import express from 'express';
@@ -173,6 +175,11 @@ if (process.env['NODE_ENV'] !== 'production') {
   });
 
   // T2 — convoys in flight (phase, hauler pose, target).
+  // GET /dev/perf — perf-scene rooms: scene status, server tick cost, counts.
+  app.get('/dev/perf', (_req, res) => {
+    res.json({ rooms: scenePerfViews() });
+  });
+
   app.get('/dev/convoys', (_req, res) => {
     res.json({ convoys: convoyDirector?.debugView() ?? [] });
   });
@@ -1153,6 +1160,21 @@ gameServer.define('swarm-tidi-burn', SectorRoom, {
   tickBurnMs: 16,
   maxClients: 4,
 });
+// Perf scenes (plan prancy-squishing-donut P1): one room per catalogue
+// entry, `perf-<id>`. Played by `pnpm perf:scenes`.
+for (const scene of PERF_SCENES) {
+  gameServer
+    .define(`perf-${scene.id}`, SectorRoom, {
+      testMode: true,
+      defaultSpawnX: scene.spawn.x,
+      defaultSpawnY: scene.spawn.y,
+      maxClients: 4,
+      // Fault injection for the runner's self-test: burn N ms of every tick.
+      tickBurnMs: Number(process.env['EQX_PERF_BURN_MS'] ?? 0),
+      ...scene.room,
+    })
+    .filterBy(['testId']);
+}
 } // end shouldRegisterTestRooms() gate (S6)
 
 // A6 (S6): warn loudly if the dev-override bypass is armed in production. It's

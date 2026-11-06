@@ -16,5 +16,5 @@
       "@shared-types/*": ["./src/shared-types/*"]
     }
   },
-  "include": ["showcase/**/*.ts"]
+  "include": ["showcase/**/*.ts", "perf/**/*.ts"]
 }

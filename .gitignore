@@ -69,3 +69,4 @@ storybook-static/
 
 # Showcase video pipeline output (docs/architecture/showcase-pipeline.md)
 showcase-out/
+perf/.run/

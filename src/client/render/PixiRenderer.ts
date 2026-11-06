@@ -67,6 +67,8 @@ import {
 } from './pixi/spriteBuilders.js';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { setCanvasPointerCapture } from './pointerCapture.js';
+import { FrameTimeRing } from '@core/perf/FrameTimeRing';
+import type { RenderPerfReading, PerfProbeOp } from '@core/contracts/IRenderer';
 
 // Most colour + builder constants moved to pixi/spriteBuilders.ts;
 // the constants below are PixiRenderer-specific (background tint,
@@ -474,6 +476,32 @@ export class PixiRenderer implements IRenderer {
    *  + `getFeedback()` for the parallel (but contract-gated) channel. */
   getFrameMarkers(): FrameMarkers {
     return this.frameMarkers;
+  }
+
+  /** Perf scenes (plan prancy-squishing-donut P2): per-frame render cost,
+   *  recorded only after `perfProbeSync('enable')` (`?perfprobe=1`). */
+  private _perfRing: FrameTimeRing | null = null;
+
+  perfProbeSync(op: PerfProbeOp): RenderPerfReading | null {
+    if (op === 'enable') { this._perfRing ??= new FrameTimeRing(); return null; }
+    if (!this._perfRing) return null;
+    if (op === 'reset') { this._perfRing.reset(); return null; }
+    let displayObjects = 0;
+    const walk = (c: Container): void => { displayObjects++; for (const ch of c.children) walk(ch as Container); };
+    if (this.app?.stage) walk(this.app.stage);
+    const m = this._lastMirror;
+    return {
+      render: this._perfRing.summary(),
+      sprites: this.sprites.size,
+      displayObjects,
+      mirrorShips: m?.ships.size ?? 0,
+      mirrorSwarm: m?.swarm?.size ?? 0,
+      effectQuality: this.effects?.getQuality() ?? 'none',
+    };
+  }
+
+  perfProbe(op: PerfProbeOp): Promise<RenderPerfReading | null> {
+    return Promise.resolve(this.perfProbeSync(op));
   }
 
   /** DEBUG (exhaust-side investigation): the local ship sprite WORLD position
@@ -2160,6 +2188,7 @@ export class PixiRenderer implements IRenderer {
     }
 
     this.frameMarkers.rendererUpdateMs = performance.now() - updateStart;
+    this._perfRing?.push(this.frameMarkers.rendererUpdateMs);
   }
 
   /** Track which ships currently have an active engine emitter registered
