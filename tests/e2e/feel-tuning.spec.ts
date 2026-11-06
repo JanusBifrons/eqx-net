@@ -11,7 +11,9 @@
  * slow-down displacement assertion below lives nowhere else, so it stays.
  */
 import { test, expect } from '@playwright/test';
-import { launchTestClient, getShipX, getShipY } from './helpers/gameScenario';
+import { launchTestClient, getShipX, getShipY, waitForInPlay } from './helpers/gameScenario';
+import { getShipKind } from '../../src/shared-types/shipKinds';
+import { motionFactors } from '../../src/shared-types/shipScale/tuning';
 
 /**
  * Regression lock for the 2026-05-18 "slow down gameplay" tune
@@ -32,8 +34,10 @@ test('slow-down tune: Fighter held-thrust displacement is in the halved band', a
 }) => {
   const { ctx, page } = await launchTestClient(browser, { spawnX: 0, spawnY: 0 });
 
-  // Let the join handshake + any spawn correction settle before sampling.
-  await page.waitForTimeout(1200);
+  // Thrust only counts once the ship is in play (curtain lifted); then let any
+  // spawn correction settle before sampling.
+  await waitForInPlay(page);
+  await page.waitForTimeout(500);
 
   const startX = await getShipX(page);
   const startY = await getShipY(page);
@@ -54,12 +58,17 @@ test('slow-down tune: Fighter held-thrust displacement is in the halved band', a
   console.log(`displacement=${displacement.toFixed(1)} u (post-tune ~970; pre-tune ~1940)`);
   console.log('===========================================================\n');
 
+  // The ~970 / ~1940 figures are at the authored 1× ship size. Bigger ships fly
+  // slower (motionFactors: ~0.71× at the 2× default), so scale the band by the
+  // fighter's speed factor at whatever size this run uses (invariant #18).
+  const speed = motionFactors(getShipKind('fighter').appliedScale ?? 1).speed;
+  console.log(`ship-scale speed factor ${speed.toFixed(3)} → band ${(400 * speed).toFixed(0)}–${(1500 * speed).toFixed(0)} u`);
   // Sanity floor: the ship clearly moved (well above prediction noise) even
   // on a slow host.
-  expect(displacement).toBeGreaterThan(400);
-  // Revert lock: pre-tune (2× thrust) would overshoot ~1940 u; this bound
-  // fails loudly if the catalogue speed is reverted/half-reverted.
-  expect(displacement).toBeLessThan(1500);
+  expect(displacement).toBeGreaterThan(400 * speed);
+  // Revert lock: pre-tune (2× thrust) would overshoot ~1940 u (× speed); this
+  // bound fails loudly if the catalogue speed is reverted/half-reverted.
+  expect(displacement).toBeLessThan(1500 * speed);
 
   await ctx.close();
 });

@@ -65,8 +65,6 @@ export const QUARANTINE = new Set([
   'machined-art',
   'drawer-galaxy',
   'galaxy-map-overlay',
-  'feel-tuning',
-  'halo-radar',
   'fence-hits',
   'fx-turrets',
   'cargo-panel',

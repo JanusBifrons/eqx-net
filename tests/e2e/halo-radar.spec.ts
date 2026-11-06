@@ -9,8 +9,6 @@
  */
 import { test, expect } from './fixtures/test-with-logs';
 
-const POLL_INTERVAL_MS = 100;
-const POLL_TIMEOUT_MS = 8000;
 
 async function readHaloCount(page: import('@playwright/test').Page): Promise<number> {
   const raw = await page
@@ -19,22 +17,10 @@ async function readHaloCount(page: import('@playwright/test').Page): Promise<num
   return parseInt(raw ?? '0', 10);
 }
 
-test('halo radar: arrows appear when POIs are off-screen', async ({ eqxPage }) => {
-  // Sector Alpha seeds a swarm of drones + asteroids. Once the local ship has
-  // had time to settle, at least some entities will be outside the viewport
-  // and the halo should report ≥1 arrow.
-  await eqxPage.waitForTimeout(1500);
-
-  const start = Date.now();
-  let observed = 0;
-  while (Date.now() - start < POLL_TIMEOUT_MS) {
-    observed = await readHaloCount(eqxPage);
-    if (observed > 0) break;
-    await eqxPage.waitForTimeout(POLL_INTERVAL_MS);
-  }
-
-  expect(observed).toBeGreaterThan(0);
-});
+// (An "arrows appear when POIs are off-screen" test lived here. It relied on
+// Sector Alpha seeding drones, which sectors stopped doing in June, so it found
+// nothing off-screen. radar-sandbox.spec covers off-screen arrows in a fixed
+// layout on both render paths. Test audit 2026-11-06.)
 
 test('halo radar: dataset attribute is present and numeric every frame', async ({
   eqxPage,
