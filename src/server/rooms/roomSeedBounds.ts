@@ -28,6 +28,7 @@ const SEED_ARRAY_FIELDS = [
   'scenarioDrones',
   'scenarioAsteroids',
   'droneKinds',
+  'sceneScript',
 ] as const;
 
 /**
