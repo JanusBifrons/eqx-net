@@ -58,7 +58,7 @@ async function main(): Promise<void> {
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-testid="ship-count"]');
     return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-  }, { timeout: 15_000 });
+  }, undefined, { timeout: 15_000 });
 
   console.log('[probe] 8 s warmup …');
   await page.waitForTimeout(8000);

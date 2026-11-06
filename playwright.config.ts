@@ -66,6 +66,19 @@ const SMOKE_SPECS: string[] = [
 // investigation/bisect/repro captures were deleted. See
 // docs/refactors/test-coverage-audit.md.
 const FEATURE_SPECS: string[] = [
+  // Orphans found by the perf-plan test audit (2026-11-06): written as regression
+  // locks but in no tier, so nothing ever ran them. All pass; now they run with
+  // the feature tier.
+  '**/auto-fire-multitouch.spec.ts',
+  '**/galaxy-map-no-warp-ripple.spec.ts',
+  '**/galaxy-sector-badge-icon-label.spec.ts',
+  '**/galaxy-sector-transit-adjacency.spec.ts',
+  '**/hover-outline.spec.ts',
+  '**/ring-indicator-dead-zone.spec.ts',
+  '**/ring-indicator-mobile-scaling.spec.ts',
+  '**/speed-dial-focus-blur.spec.ts',
+  '**/speed-dial-multitouch.spec.ts',
+  '**/structure-turret-range.spec.ts',
   // Engine ribbon hid in the flame at the 2x ship scale (2026-11-06).
   '**/engine-ribbon-length.spec.ts',
   '**/account-bound-identity.spec.ts',

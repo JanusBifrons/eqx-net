@@ -79,7 +79,7 @@ test('flying through 50 scrap pieces — corrections + drift stay playable (issu
       const ships = parseInt(document.querySelector('[data-testid="ship-count"]')?.textContent?.replace(/\D/g, '') ?? '0', 10);
       const swarm = parseInt(document.querySelector('[data-testid="swarm-count"]')?.textContent?.replace(/\D/g, '') ?? '0', 10);
       return ships >= 1 && swarm >= 40;
-    },
+    }, undefined,
     { timeout: 15_000 },
   );
 
@@ -88,7 +88,7 @@ test('flying through 50 scrap pieces — corrections + drift stay playable (issu
     () => {
       const raw = document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pred-stats');
       try { return (JSON.parse(raw ?? '{}').snapshotCount ?? 0) >= 40; } catch { return false; }
-    },
+    }, undefined,
     { timeout: 12_000 },
   );
 

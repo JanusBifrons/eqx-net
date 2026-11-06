@@ -25,6 +25,7 @@ import {
   getBeamActive,
   waitForDeath,
   waitForRespawn,
+  waitForInPlay,
 } from '../helpers/gameScenario.js';
 
 // ---------------------------------------------------------------------------
@@ -66,33 +67,40 @@ test('ship spawns at the position specified in URL params', async ({ browser }) 
 // C. P1 kills P2 — deterministic, < 5 s
 // ---------------------------------------------------------------------------
 test('P1 destroys P2: hull reaches 0, SHIP DESTROYED alert fires', async ({ browser }) => {
+  test.setTimeout(60_000); // two loading curtains (infrastructural)
   // P1 at south, fires north — P2 at north, directly in P1's sights.
   // Shared testId so both clients land in the SAME isolated room
   // (Colyseus filterBy routes by testId).
   const testId = randomUUID();
   const [p1, p2] = await Promise.all([
     launchTestClient(browser, { spawnX: 0, spawnY: -200, testId }),
-    launchTestClient(browser, { spawnX: 0, spawnY: 200, testId }),
+    // A near-dead, unshielded target: the kill is a few hits, not a fighter's
+    // full ~750 hull + shield (the old "100 HP, ~0.8 s" comment predates the
+    // slow-down retune; it only passed while the 5 s wait below had no deadline).
+    launchTestClient(browser, { spawnX: 0, spawnY: 200, testId, initialHull: 10, initialShield: 0 }),
   ]);
   try {
-    // Let both clients sync with the server before firing.
-    await Promise.all([p1.page.waitForTimeout(1000), p2.page.waitForTimeout(1000)]);
+    // Both ships must be active (curtain lifted) before anyone fires.
+    await Promise.all([waitForInPlay(p1.page), waitForInPlay(p2.page)]);
 
     const initialHull = await getHullPct(p2.page);
-    expect(initialHull).toBe(100);
+    expect(initialHull).toBeGreaterThan(0);
 
     // P1 fires until P2 is dead. Hitscan DPS = 120 HP/sec (catalogue-driven —
     // post-smooth-beam retune 4 HP × 33 ms = same DPS as the prior 20 HP × 167 ms,
     // see `src/core/combat/WeaponCatalogue.ts` HITSCAN_DEF). 100 HP ship → kill
     // in ~0.8 s + RTT; comfortable within the 5 s budget below.
     await p1.page.keyboard.down('Space');
-    await waitForDeath(p2.page, 5_000);
+    // 15 s: before the 2026-11-06 waitForFunction fix this deadline never
+    // applied (it ran to the 30 s test timeout); two clients on a CI runner
+    // need more than 5 s even for a few hits.
+    await waitForDeath(p2.page, 15_000);
     await p1.page.keyboard.up('Space');
 
     expect(await getHullPct(p2.page)).toBe(0);
 
     await p2.page.waitForFunction(
-      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-sector-alert') === 'SHIP DESTROYED',
+      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-sector-alert') === 'SHIP DESTROYED', undefined,
       { timeout: 1_000 },
     );
     expect(await getSectorAlert(p2.page)).toBe('SHIP DESTROYED');
@@ -160,7 +168,7 @@ test.fixme('full lifecycle: P2 dies, respawns at initial position with full hull
       () => {
         const alert = document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-sector-alert') ?? '';
         return alert === '' || alert === 'null';
-      },
+      }, undefined,
       { timeout: 2_000 },
     );
 

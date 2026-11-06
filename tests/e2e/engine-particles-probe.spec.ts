@@ -55,7 +55,7 @@ test('engine exhaust visual matrix', async ({ page }) => {
     timeout: 15_000,
   });
   await page.waitForFunction(
-    () => (window as unknown as ProbeWindow).__engineProbe !== undefined,
+    () => (window as unknown as ProbeWindow).__engineProbe !== undefined, undefined,
     { timeout: 15_000 },
   );
 
@@ -141,7 +141,7 @@ test('exhaust stays astern at high ship speed (no forward bug)', async ({ page }
     timeout: 15_000,
   });
   await page.waitForFunction(
-    () => (window as unknown as ProbeWindow).__engineProbe !== undefined,
+    () => (window as unknown as ProbeWindow).__engineProbe !== undefined, undefined,
     { timeout: 15_000 },
   );
   const result = await page.evaluate(async () => {

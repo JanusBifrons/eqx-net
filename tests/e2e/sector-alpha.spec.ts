@@ -23,7 +23,7 @@ async function joinSector(page: import('@playwright/test').Page): Promise<void> 
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
       return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-    },
+    }, undefined,
     { timeout: 10_000 },
   );
 }
@@ -64,7 +64,7 @@ async function waitForShipPos(page: import('@playwright/test').Page): Promise<vo
       const el = document.querySelector('[data-testid="game-surface"]');
       const x = el?.getAttribute('data-ship-x');
       return x !== null && x !== undefined && !Number.isNaN(parseFloat(x));
-    },
+    }, undefined,
     { timeout: 8000 },
   );
 }
@@ -485,7 +485,7 @@ test.describe('identity', () => {
         () => {
           const el = document.querySelector('[data-testid="ship-count"]');
           return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) >= 2;
-        },
+        }, undefined,
         { timeout: 10_000 },
       );
     await bothVisible(page1);

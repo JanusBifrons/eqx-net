@@ -36,7 +36,7 @@ test('shield+hull HUD wiring is live end-to-end on join', async ({ browser }) =>
       () => {
         const el = document.querySelector('[data-testid="ship-count"]');
         return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-      },
+      }, undefined,
       { timeout: 12000 },
     );
 
@@ -61,7 +61,7 @@ test('shield+hull HUD wiring is live end-to-end on join', async ({ browser }) =>
       () => {
         const el = document.querySelector('[data-testid="game-surface"]');
         return el?.getAttribute('data-shield-pct') === '100' && el?.getAttribute('data-hull-pct') === '100';
-      },
+      }, undefined,
       { timeout: 8000 },
     );
     expect(await surface.getAttribute('data-shield-pct')).toBe('100');

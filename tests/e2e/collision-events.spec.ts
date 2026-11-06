@@ -48,7 +48,7 @@ test('Stage 2: collision_resolved is applied when the local ship rams a drone', 
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
       return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-    },
+    }, undefined,
     { timeout: 15_000 },
   );
 
@@ -66,7 +66,7 @@ test('Stage 2: collision_resolved is applied when the local ship rams a drone', 
           ?.getAttribute('data-pred-stats');
         const s = JSON.parse(raw ?? '{}') as { collisionEventsApplied?: number };
         return (s.collisionEventsApplied ?? 0) > 0;
-      },
+      }, undefined,
       { timeout: 20_000 },
     );
   } finally {

@@ -19,14 +19,14 @@ test('hitscan beam appears while Space is held and clears on release', async ({ 
   try {
     await page.keyboard.down('Space');
     await page.waitForFunction(
-      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '1',
+      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '1', undefined,
       { timeout: 2_000 },
     );
     expect(await getBeamActive(page)).toBe(true);
 
     await page.keyboard.up('Space');
     await page.waitForFunction(
-      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '0',
+      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '0', undefined,
       { timeout: 2_000 },
     );
     expect(await getBeamActive(page)).toBe(false);

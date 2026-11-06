@@ -47,7 +47,7 @@ interface ProbeWindow extends Window {
 
 async function waitForProbeReady(page: Page): Promise<void> {
   await page.waitForFunction(
-    () => (window as unknown as ProbeWindow).__damageProbe !== undefined,
+    () => (window as unknown as ProbeWindow).__damageProbe !== undefined, undefined,
     { timeout: 10_000 },
   );
 }

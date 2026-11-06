@@ -97,7 +97,7 @@ test('heap snapshot diff (mobile emu): 180s hostile combat under 4x CPU throttle
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
       return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-    },
+    }, undefined,
     { timeout: 30_000 }, // 4x CPU throttle → 2x boot time budget
   );
   // 4x CPU → warmup gets 12 s of game-time to flush initial-join longtask.

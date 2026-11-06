@@ -69,7 +69,7 @@ async function waitForLocalShip(page: Page, timeoutMs = 25_000): Promise<void> {
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
       return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-    },
+    }, undefined,
     { timeout: timeoutMs },
   );
 }
@@ -145,7 +145,7 @@ test('in-game ship swap does NOT leave a stale joystick (two thumbsticks bug)', 
     () => {
       const win = window as unknown as StoreWindow;
       return win.__eqxStore!.getState().phase === 'game';
-    },
+    }, undefined,
     { timeout: 15_000 },
   );
   await waitForLocalShip(page);

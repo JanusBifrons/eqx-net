@@ -20,6 +20,10 @@ import type { Browser, Page } from '@playwright/test';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
+// The join waits for the loading curtain (infrastructural: art + spawn
+// handshake, up to ~16 s under suite load), so the default 30 s is too tight.
+test.describe.configure({ timeout: 90_000 });
+
 async function joinClient(browser: Browser, shipKind = 'scout') {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -29,9 +33,12 @@ async function joinClient(browser: Browser, shipKind = 'scout') {
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');
       return el !== null && el.getAttribute('data-local-player-id') !== '';
-    },
+    }, undefined,
     { timeout: 12000 },
   );
+  // The HUD (and the bar) mount when the loading curtain lifts; under suite
+  // load that can take well over 5 s.
+  await page.waitForSelector('[data-testid="warp-screen"][data-warp-visible="0"]', { state: 'attached', timeout: 60_000 });
   return { ctx, page };
 }
 
@@ -40,12 +47,19 @@ async function energyPct(page: Page): Promise<number> {
   return parseInt(v ?? '100', 10);
 }
 
+/**
+ * Bug (perf-plan test audit, 2026-11-06): when the curtain lifted the bar
+ * started EMPTY and climbed (0 → 2 → 9 → 14 %) for ~2.5 s, then jumped to
+ * full. The server spawns ships full, but only sends the own-ship energy once
+ * the ship goes active (a beat after the curtain); the client's predicted pool
+ * started at 0 and regenerated locally until then. Read the bar the moment it
+ * appears: it must already be full.
+ */
 test('energy bar is visible and full on spawn', async ({ browser }) => {
   const { ctx, page } = await joinClient(browser, 'scout');
   try {
     await expect(page.locator('[data-testid="energy-bar"]')).toBeVisible({ timeout: 5000 });
-    await page.waitForTimeout(400);
-    expect(await energyPct(page)).toBeGreaterThan(80);
+    expect(await energyPct(page), 'the bar must be full the moment it appears').toBeGreaterThan(80);
   } finally {
     await ctx.close();
   }
@@ -59,8 +73,13 @@ test('sustained fire drains the pool, then it recovers when firing stops', async
 
     // Hold fire long enough (testTimeScale=10) to draw the pool down.
     await page.keyboard.down('Space');
+    // Relative to the start: this used to wait for "< 60 %", which only held
+    // because the pool wrongly started near-empty (fixed alongside). And pass
+    // the start value as the arg: `waitForFunction(fn, { timeout })` treats the object
+    // as the ARGUMENT, so the 8 s deadline never applied.
     await page.waitForFunction(
-      () => parseInt(document.querySelector('[data-testid="energy-bar"]')?.getAttribute('data-energy-pct') ?? '100', 10) < 60,
+      (b: number) => parseInt(document.querySelector('[data-testid="energy-bar"]')?.getAttribute('data-energy-pct') ?? '100', 10) < b - 15,
+      before,
       { timeout: 8000 },
     );
     await page.keyboard.up('Space');

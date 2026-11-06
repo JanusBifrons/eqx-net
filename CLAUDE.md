@@ -245,6 +245,10 @@ Do not change `reuseExistingServer` to `false` casually — that breaks the live
 
 Playwright runs are slow (a single spec can take 30–120 s; the full suite is multi-minute). The original concern was that a synchronous `pnpm e2e` call would appear to "stall" the harness — that's still true if you run the *whole suite* in foreground, but targeted runs are fine and you have permission to do them.
 
+> **Feature specs run when their area changes (2026-11-06 audit).** CI's only required e2e gate is the smoke tier. The advisory `e2e-feature-affected` job also runs the feature specs for the areas a PR touches, from the map in `tests/e2e/featureTriggers.mjs`; a changed spec always runs itself. When a fix touches an area, add or keep its specs in that map. Known-failing specs sit in its `QUARANTINE` list (see `docs/refactors/test-coverage-audit.md`): remove the entry in the PR that fixes one. Before this, ~30 feature specs rotted unnoticed because nothing ran them.
+>
+> **`waitForFunction(fn, arg?, options?)`:** the second argument is the function's ARG. Write `waitForFunction(fn, undefined, { timeout })`, or the deadline is ignored (a lint rule enforces it).
+>
 > **Measurement specs live in `tests/perf/`, never in `pnpm e2e`.** Fixed-window heap/allocation/bandwidth/worker-A-B specs that hold a wall-clock window to gather a number (and are inherently host-load-variance-prone) run **only** via `pnpm e2e:perf` (`playwright.perf.config.ts`, 150 s per-test cap) — they are NOT part of the per-PR `pnpm e2e` regression suite. Adding a spec that waits out a fixed window for a measurement? It belongs in `tests/perf/`, not `tests/e2e/`. See `docs/refactors/test-coverage-audit.md` + the Determinism-refactor section of `docs/architecture/e2e-framework.md`.
 
 **Default playbook:**

@@ -50,7 +50,7 @@ async function measure(browser: Browser, diagFlag: '0' | '1'): Promise<DiagArmSt
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
       return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-    },
+    }, undefined,
     { timeout: 15_000 },
   );
   // Settle for 3 s (warmup), then measure for 10 s.

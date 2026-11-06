@@ -220,3 +220,41 @@ Gate: `netcode-health` (driven by `pnpm e2e:netgate`).
 - **Netcode gate** if any group-A/harness change touches the live loop: `pnpm e2e:netgate`.
 - **Tests-first evidence** for group A: each rewritten spec demonstrably fails against the old
   behaviour before the fix (paste the red run in the commit body).
+
+## 2026-11-06 audit: what never ran (perf plan prancy-squishing-donut, P4)
+
+CI runs only the **17 smoke specs** on a PR. The **88 feature specs** run only when someone runs `pnpm e2e` locally, and **11 specs were in no tier** (never run). A full local pass of the feature tier on the laptop, one small shard at a time, found the following.
+
+**Fixed (PR #310):**
+- **Energy bar (real bug):** it started empty at spawn.
+- **Orphans:** 10 now run in the feature tier, and 1 stale spec is deleted.
+- **Placement banner:** 5 tests wanted the banner, which is touch-only.
+- **Placement ghost:** its pixel baseline was never committed.
+- **Waits without deadlines:** 126 `waitForFunction` calls had none (a lint rule now stops this).
+
+**Still failing.** The verdict column is a first read from the error, not yet confirmed.
+
+| Spec | Failing tests | Symptom | First read |
+|---|---|---|---|
+| robustness | 8 of 13 | "≥ 17 snapshots/s at idle" and the rest | stale: idle sectors stop broadcasting by design (Stage 5); the rest may share its setup |
+| missile-frigate-homing | 4 of 4 | homing / damage / refire / fizzle | stale: written against old tuning (expects a 180-tick cooldown; the catalogue says 90 since c795302d, and energy cost and lifetime moved too). It also fired before the target was active (now waits with `waitForInPlay`). Needs its expectations read from the catalogue. |
+| machined-art | 3 | fx textures through the worker pool; speed-effect zoom | unknown |
+| laser-smoothness | 1 | beam active 0 of 40 frames | **fixed**: stale, it flew the default fighter (bolts, no beam; each kind fires its own loadout since the weapons overhaul) and fired while the curtain was still up |
+| interceptor-beam-stays-connected | 1 | beam active 16 of 40 coast frames, test wants > 20 | open: with the curtain wait it went from 4 to 16. Is the beam pulsed by its cooldown, energy-limited, or slowed by sampling on the loaded laptop? |
+| drawer-galaxy, galaxy-map-overlay | 1 each | click `galaxy-warp-close` never succeeds | one cause (UI) |
+| spectator-mode | 2 | speed dial late; Pilot toggle doesn't return to pilot | **fixed (real bug)**: Pilot's menu never listed the ship you parked with Spectate (the client's pending-join exemption kept it out of the parked list). Plus stale timing (curtain) |
+| feel-tuning | 1 | fighter moved 337 u, test wants > 400 | stale: the 2× ship scale made ships slower |
+| halo-radar | 1 | no off-screen arrows | stale: no drones in the sector (same premise as the deleted spec) |
+| fence-hits, fx-turrets | 1 each | waits on `__eqxArtStats` time out | unknown |
+| cargo-panel | 1 | "a Capital was placed" is null | likely the same placement-flow change |
+| auto-fire | 1 | neutral → hostile takeover times out | unknown |
+| wave-attack, swarm-jitter, spiral-disconnect-reconnect | 1 each | | unknown |
+| **smoke:** persistence-kill, combat-lifecycle, sector-alpha (two-client) | 1–2 each | beam doesn't drain the victim's hull; two-client checks | fail on untouched `main` **on this laptop** and pass on CI: two browsers on 8 GB with software WebGL |
+
+**A shared cause:** a ship is active (targetable, collidable, hostile-capable) only once its loading curtain lifts, which takes 6–16 s on a loaded box. Specs that act as soon as `data-local-player-id` appears act on a pending ship. `waitForInPlay(page)` (`tests/e2e/helpers/gameScenario.ts`) is the fix; apply it as each spec is triaged.
+
+**First advisory CI run (PR #310, 41 selected specs, hosted runners):** 27 passed, 1 flaky (cinematic-camera), 2 failed that pass on the laptop: energy-bar "sustained fire drains" and laser-smoothness (beam active frames). Both look like hosted-runner timing (software WebGL, slower frames). Watch these before the job becomes a required check.
+
+**Next decisions:**
+1. Fix or delete each row above.
+2. Decide which feature specs earn a place in per-PR CI. Without that, a feature spec protects nothing until someone runs `pnpm e2e`, which is how all of the above rotted unnoticed.

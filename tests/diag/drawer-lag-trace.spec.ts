@@ -36,7 +36,7 @@ async function waitForLocalShip(page: Page, timeoutMs = 25_000): Promise<void> {
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
       return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-    },
+    }, undefined,
     { timeout: timeoutMs },
   );
 }

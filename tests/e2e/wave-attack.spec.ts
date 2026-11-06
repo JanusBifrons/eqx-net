@@ -104,7 +104,7 @@ test('wave attack: a ready base draws an 8 × Legionnaires squad that warps in a
     () => {
       const el = document.querySelector('[data-testid="swarm-count"]');
       return el !== null && parseInt(el.textContent?.replace(/\D+/g, '') ?? '0', 10) > 0;
-    },
+    }, undefined,
     { timeout: 45_000 },
   );
 

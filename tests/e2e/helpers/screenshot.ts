@@ -29,7 +29,7 @@ export async function captureGameScene(page: Page, name: string, subdir = 'linge
       () =>
         document
           .querySelector('[data-testid="hud-test-attributes"]')
-          ?.getAttribute('data-loading-active') === '0',
+          ?.getAttribute('data-loading-active') === '0', undefined,
       { timeout: 10_000 },
     );
   } catch {

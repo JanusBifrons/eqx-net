@@ -48,7 +48,7 @@ async function joinWithDiag(
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
       return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-    },
+    }, undefined,
     { timeout: 12_000 },
   );
   return { ctx, page };
@@ -160,7 +160,7 @@ test.describe('Probe 4 — damage_number event shape', () => {
     await shooter.waitForFunction(
       () => parseInt(
         document.querySelector('[data-testid="ship-count"]')?.textContent?.replace('Ships: ', '') ?? '0', 10,
-      ) >= 2,
+      ) >= 2, undefined,
       { timeout: 12_000 },
     );
     await shooter.evaluate(() => { (window as unknown as EqxWindow).__eqxClearLogs?.(); });

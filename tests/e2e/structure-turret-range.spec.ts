@@ -35,7 +35,7 @@ test('a built scenario turret draws a defensive range circle', async ({ browser 
           10,
         );
         return sc >= 6;
-      },
+      }, undefined,
       { timeout: 12_000 },
     );
     // The built Turret's range circle is drawn (count ≥ 1) within a few frames.

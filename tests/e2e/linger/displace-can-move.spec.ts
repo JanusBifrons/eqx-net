@@ -27,7 +27,7 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
 async function waitForHandshake(page: Page): Promise<void> {
   await page.waitForFunction(
-    () => document.querySelector('[data-loading-active="0"]') !== null,
+    () => document.querySelector('[data-loading-active="0"]') !== null, undefined,
     { timeout: 20_000 },
   );
   await page.waitForTimeout(1200); // join-broadcast grace + first snapshot

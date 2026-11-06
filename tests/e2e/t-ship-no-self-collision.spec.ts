@@ -108,7 +108,7 @@ test('NEGATIVE control: two stationary T-ships with overlapping bounding circles
           .querySelector('[data-testid="swarm-count"]')
           ?.textContent?.replace(/[^0-9]/g, '') ?? '0',
         10,
-      ) >= 2,
+      ) >= 2, undefined,
     { timeout: 10_000 },
   );
 
@@ -129,7 +129,7 @@ test('NEGATIVE control: two stationary T-ships with overlapping bounding circles
       } catch {
         return false;
       }
-    },
+    }, undefined,
     { timeout: 10_000 },
   );
 
@@ -179,7 +179,7 @@ test('POSITIVE control: two overlapping T-ships DO collide (proves the test surf
           .querySelector('[data-testid="swarm-count"]')
           ?.textContent?.replace(/[^0-9]/g, '') ?? '0',
         10,
-      ) >= 2,
+      ) >= 2, undefined,
     { timeout: 10_000 },
   );
 
@@ -195,7 +195,7 @@ test('POSITIVE control: two overlapping T-ships DO collide (proves the test surf
       } catch {
         return false;
       }
-    },
+    }, undefined,
     { timeout: 10_000 },
   );
 

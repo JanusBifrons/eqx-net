@@ -35,7 +35,7 @@ async function join(page: Page): Promise<void> {
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');
       return el !== null && el.getAttribute('data-local-player-id') !== '';
-    },
+    }, undefined,
     { timeout: 15_000 },
   );
 }

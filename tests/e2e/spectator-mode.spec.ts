@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { waitForInPlay, launchGalaxyTestClient } from './helpers/gameScenario';
 import { test, expect, type Page } from '@playwright/test';
 
 /**
@@ -35,9 +36,11 @@ async function join(page: Page, opts: { worker0?: boolean } = {}): Promise<void>
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');
       return el !== null && el.getAttribute('data-local-player-id') !== '';
-    },
+    }, undefined,
     { timeout: 15_000 },
   );
+  // The HUD (speed dial, pilot toggle) mounts when the loading curtain lifts.
+  await waitForInPlay(page);
   await page.locator('[data-testid="speed-dial-fab"]').waitFor({ timeout: 10_000 });
 }
 
@@ -63,7 +66,7 @@ test('death → instant spectator, NO death modal', async ({ page }) => {
 
   // pilotMode flips to spectator immediately…
   await page.waitForFunction(
-    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator',
+    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator', undefined,
     { timeout: 5_000 },
   );
   // …and the blocking DeathOverlay never appears.
@@ -75,7 +78,7 @@ test('spectator camera free-roams (drag pans, no follow snap-back)', async ({ pa
   await join(page, { worker0: true });
   await killLocalShip(page);
   await page.waitForFunction(
-    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator',
+    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator', undefined,
     { timeout: 5_000 },
   );
 
@@ -128,7 +131,7 @@ test('spectator input is pan, not thrust — the ship does NOT move on W', async
       const lid = el?.getAttribute('data-local-player-id') ?? '';
       const posns = JSON.parse(el?.getAttribute('data-ship-positions') ?? '{}') as Record<string, unknown>;
       return lid !== '' && posns[lid] != null;
-    },
+    }, undefined,
     { timeout: 10_000 },
   );
 
@@ -136,7 +139,7 @@ test('spectator input is pan, not thrust — the ship does NOT move on W', async
   // speed-dial). The ship persists server-side; input gates.
   await page.locator('[data-testid="spectator-toggle"]').click();
   await page.waitForFunction(
-    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator',
+    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator', undefined,
     { timeout: 5_000 },
   );
 
@@ -169,7 +172,7 @@ test('construction works while spectating (place a structure with no ship)', asy
 
   await killLocalShip(page);
   await page.waitForFunction(
-    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator',
+    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator', undefined,
     { timeout: 5_000 },
   );
 
@@ -186,7 +189,7 @@ test('construction works while spectating (place a structure with no ship)', asy
   // The placement ghost is up (camera-anchored). Wait until the renderer reports
   // a chosen world point (`data-placement-screen-x`), then click to commit.
   await page.waitForFunction(
-    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-screen-x') != null,
+    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-screen-x') != null, undefined,
     { timeout: 5_000 },
   );
   const surface = page.locator('[data-testid="game-surface"]');
@@ -205,9 +208,13 @@ test('construction works while spectating (place a structure with no ship)', asy
   expect(await swarmCount()).toBeGreaterThan(before);
 });
 
-test('pilot/spectate toggle round-trips pilot↔spectator', async ({ page }) => {
-  test.setTimeout(45_000);
-  await join(page);
+test('pilot/spectate toggle round-trips pilot↔spectator', async ({ browser }) => {
+  test.setTimeout(60_000);
+  // Spectate PARKS the ship you were flying (a lingering hull) and Pilot lists
+  // your parked ships. Parking needs a galaxy room (engineering rooms never
+  // linger), so this round trip runs in the linger-capable galaxy-test room.
+  const { ctx, page } = await launchGalaxyTestClient(browser, { testId: randomUUID(), shipKind: 'fighter' });
+  await waitForInPlay(page);
   expect(await pilotMode(page)).toBe('pilot');
 
   // Phase 5 — the always-visible two-button toggle (out of the speed-dial). Click
@@ -215,13 +222,17 @@ test('pilot/spectate toggle round-trips pilot↔spectator', async ({ page }) => 
   // is a no-op, so the round-trip uses the OTHER button).
   await page.locator('[data-testid="spectator-toggle"]').click();
   await page.waitForFunction(
-    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator',
+    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator', undefined,
     { timeout: 5_000 },
   );
 
+  // Pilot while spectating opens a menu of your parked ships (Spectate parked
+  // the one you were flying): pick it to fly again.
   await page.locator('[data-testid="pilot-toggle"]').click();
+  await page.locator('[data-testid^="pilot-menu-ship-"]').first().click({ timeout: 10_000 });
   await page.waitForFunction(
-    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'pilot',
-    { timeout: 5_000 },
+    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'pilot', undefined,
+    { timeout: 10_000 },
   );
+  await ctx.close();
 });

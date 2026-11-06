@@ -125,3 +125,37 @@ describe('routeSnapshotShipStates — own active ship binds by shipInstanceId, n
     expect(ctx.mirror.lingeringShips!.get('OTHER')?.ownerPlayerId).toBe('Q');
   });
 });
+
+/**
+ * Bug (perf-plan test audit, 2026-11-06; spectator-mode.spec round trip):
+ * Spectate parks the ship you were flying (server: displaceActiveHullToLingering,
+ * same shipInstanceId, isActive=false). The pending-join exemption above kept
+ * that parked hull in `mirror.ships`, so it never reached `lingeringShips`
+ * and the Pilot menu (which lists your parked ships) was always empty: you
+ * could not get back into the ship you just left.
+ */
+describe('routeSnapshotShipStates — a spectating player sees their parked ship', () => {
+  it('routes the own inactive hull to lingeringShips while spectating', () => {
+    const ctx = makeCtx('P', 'S1');
+    ctx.localSpectating = true;
+    const snap = {
+      type: 'snapshot', serverTick: 1, ackedTick: 0,
+      states: { S1: { x: 7, y: 8, vx: 0, vy: 0, angle: 0, angvel: 0, playerId: 'P', isActive: false } },
+    } as unknown as SnapshotMessage;
+    routeSnapshotShipStates(snap, ctx);
+    expect(ctx.mirror.lingeringShips!.get('S1')?.ownerPlayerId, 'the parked hull is listed as yours').toBe('P');
+    expect(snap.states['P'], 'and it is not bound as the ship you are flying').toBeUndefined();
+  });
+
+  it('keeps the pending-join exemption when not spectating', () => {
+    const ctx = makeCtx('P', 'S1');
+    ctx.localSpectating = false;
+    const snap = {
+      type: 'snapshot', serverTick: 1, ackedTick: 0,
+      states: { S1: { x: 7, y: 8, vx: 0, vy: 0, angle: 0, angvel: 0, playerId: 'P', isActive: false } },
+    } as unknown as SnapshotMessage;
+    routeSnapshotShipStates(snap, ctx);
+    expect(snap.states['P']?.x).toBe(7);
+    expect(ctx.mirror.lingeringShips!.has('S1')).toBe(false);
+  });
+});

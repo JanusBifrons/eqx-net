@@ -39,7 +39,7 @@ test('Trade tab: post a deal and a trade hauler arrives', async ({ page }) => {
   test.setTimeout(150_000);
   await page.goto(`${BASE_URL}?room=trade-test&testId=${randomUUID()}&newShip=1`);
   await page.waitForFunction(
-    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '',
+    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '', undefined,
     { timeout: 90_000 },
   );
 

@@ -79,7 +79,7 @@ test('input-throttle state-change drift: 8 rapid W pulses keep drift bounded', a
             .querySelector('[data-testid="ship-count"]')
             ?.textContent?.replace('Ships: ', '') ?? '0',
           10,
-        ) > 0,
+        ) > 0, undefined,
       { timeout: 12_000 },
     );
 

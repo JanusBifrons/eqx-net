@@ -80,7 +80,7 @@ test('heap snapshot diff: 25s held-fire hostile combat', async () => {
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
       return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-    },
+    }, undefined,
     { timeout: 15_000 },
   );
   // Warmup — same 3 s the sampling-profile spec uses, lets initial-join

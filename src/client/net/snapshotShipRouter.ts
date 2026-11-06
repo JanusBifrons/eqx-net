@@ -27,6 +27,10 @@ export interface ShipRouterCtx {
   predWorld: PhysicsWorld | null;
   lingerBodies: LingeringPredBodyManager;
   tryEnsureLingerPredBody: (shipInstanceId: string) => void;
+  /** The local player chose Spectate: their inactive hull is PARKED, not a
+   *  pending join, so it must reach `lingeringShips` (the Pilot menu lists
+   *  your parked ships from there). Optional; absent ⇒ false. */
+  localSpectating?: boolean;
   /** Persistent scratch — reused across calls to avoid per-snapshot allocs. */
   lingeringSeenScratch: Set<string>;
   lingeringToEvictScratch: string[];
@@ -78,7 +82,9 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
     const isOwnPlayer = localPlayerId !== null && entry.playerId === localPlayerId;
     const isOwnActiveShip =
       isOwnPlayer && localShipInstanceId !== null && shipInstanceId === localShipInstanceId;
-    if (entry.isActive === false && isOwnActiveShip) {
+    // Not while spectating: then the own inactive hull is the ship you PARKED
+    // (Spectate), not a pending join, and it must be listed as parked.
+    if (entry.isActive === false && isOwnActiveShip && ctx.localSpectating !== true) {
       // Own joining ship MUST stay in `mirror.ships` even while pending-join
       // (isActive=false on server). Without this the bootstrap chain stalls
       // on rendererFirstFrameRendered.

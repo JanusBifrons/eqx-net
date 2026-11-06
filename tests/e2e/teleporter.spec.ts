@@ -25,7 +25,7 @@ test('pair, charge, load and fire a teleporter from the inspector', async ({ bro
   const page = await ctx.newPage();
   await page.goto(`${BASE_URL}?room=teleport-test&testId=${randomUUID()}&worker=0&spawnX=0&spawnY=900`);
   await page.waitForFunction(
-    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '',
+    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '', undefined,
     { timeout: 90_000 },
   );
 
@@ -68,7 +68,7 @@ test('a pilot on the pad is warned, rides the jump, and stays on the far pad', a
   const page = await ctx.newPage();
   await page.goto(`${BASE_URL}?room=teleport-test&testId=${randomUUID()}&worker=0&spawnX=-1300&spawnY=-60`);
   await page.waitForFunction(
-    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '',
+    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '', undefined,
     { timeout: 90_000 },
   );
   const shipX = (): Promise<number> => page.evaluate(() => {
@@ -112,7 +112,7 @@ test('a rider is offered the owner’s toll and pays it', async ({ browser }) =>
   const owner = await ownerCtx.newPage();
   await owner.goto(`${BASE_URL}?room=teleport-toll-test&testId=${testId}&worker=0&spawnX=0&spawnY=650`);
   await owner.waitForFunction(
-    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '',
+    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '', undefined,
     { timeout: 90_000 },
   );
   await expect.poll(() => owner.evaluate(() => (window as unknown as EqxWindow).__eqxSelectAtWorld?.(-1300, 250) ?? null), { timeout: 10_000 }).not.toBeNull();
@@ -123,7 +123,7 @@ test('a rider is offered the owner’s toll and pays it', async ({ browser }) =>
   const rider = await riderCtx.newPage();
   await rider.goto(`${BASE_URL}?room=teleport-toll-test&testId=${testId}&spawnX=-1300&spawnY=-60&initialWallet=1000`);
   await rider.waitForFunction(
-    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '',
+    () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '', undefined,
     { timeout: 90_000 },
   );
   await expect(rider.getByTestId('wallet-chip')).toHaveAttribute('data-wallet', '1000', { timeout: 10_000 });

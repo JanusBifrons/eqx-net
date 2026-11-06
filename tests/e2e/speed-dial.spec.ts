@@ -31,15 +31,15 @@ import type { Browser, Page } from '@playwright/test';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
-async function joinClient(browser: Browser): Promise<{ ctx: Awaited<ReturnType<Browser['newContext']>>; page: Page }> {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+async function joinClient(browser: Browser, touch = false): Promise<{ ctx: Awaited<ReturnType<Browser['newContext']>>; page: Page }> {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: touch });
   const page = await ctx.newPage();
   await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=scout`);
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');
       return el !== null && el.getAttribute('data-local-player-id') !== '';
-    },
+    }, undefined,
     { timeout: 12_000 },
   );
   // The dial gates on `useShouldRenderHud()` — wait for the FAB to mount.
@@ -175,7 +175,9 @@ test('Build drills category → kind, and Back pops each level', async ({ browse
 });
 
 test('the dial stays open across a placement for repeat builds (R2.6 defect)', async ({ browser }) => {
-  const { ctx, page } = await joinClient(browser);
+  // The Confirm banner is the TOUCH placement flow (desktop places on click
+  // since P3.6, d239bbf8), so this test joins as a touch device.
+  const { ctx, page } = await joinClient(browser, true);
   try {
     const before = await swarmCount(page);
     await openDial(page);

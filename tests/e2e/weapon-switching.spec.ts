@@ -36,7 +36,7 @@ async function joinClient(browser: Browser, shipKind = 'scout') {
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');
       return el !== null && el.getAttribute('data-local-player-id') !== '';
-    },
+    }, undefined,
     { timeout: 12000 },
   );
   return { ctx, page };
@@ -87,7 +87,7 @@ test('a scout (bolt loadout) fires projectiles, not a beam', async ({ browser })
           parseInt(el.getAttribute('data-projectile-count') ?? '0', 10) > 0 &&
           el.getAttribute('data-beam-active') !== '1'
         );
-      },
+      }, undefined,
       { timeout: 10_000 },
     );
     // A bolt ship must NOT have an active hitscan beam.
@@ -112,7 +112,7 @@ test('an interceptor (beam loadout) fires a hitscan beam', async ({ browser }) =
         (window as unknown as { __eqxClient?: { triggerFireForTest(id: string): boolean } })
           .__eqxClient?.triggerFireForTest('hitscan');
         return document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '1';
-      },
+      }, undefined,
       { timeout: 10_000 },
     );
   } finally {
@@ -133,7 +133,7 @@ test('bolt ghost sprites are cleaned up after expiry — no static duplicates', 
           .__eqxClient?.triggerFireForTest('laser');
         const el = document.querySelector('[data-testid="game-surface"]');
         return el !== null && parseInt(el.getAttribute('data-projectile-count') ?? '0', 10) > 0;
-      },
+      }, undefined,
       { timeout: 10_000 },
     );
     // …then STOP firing and wait for it to expire (ghost TTL + projectile
@@ -143,7 +143,7 @@ test('bolt ghost sprites are cleaned up after expiry — no static duplicates', 
       () => {
         const el = document.querySelector('[data-testid="game-surface"]');
         return el !== null && parseInt(el.getAttribute('data-projectile-count') ?? '0', 10) === 0;
-      },
+      }, undefined,
       { timeout: 10_000 },
     );
     expect(await getProjectileCount(page)).toBe(0);

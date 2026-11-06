@@ -82,7 +82,7 @@ test('dial opens and the map toggles via a SECOND touch while the joystick is he
       () => {
         const el = document.querySelector('[data-testid="ship-count"]');
         return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-      },
+      }, undefined,
       { timeout: 15000 },
     );
     // Joystick + dial FAB must be present (touch device → MobileControls mounts).

@@ -192,7 +192,7 @@ test('two clients thrust simultaneously — both stay within bounds', async ({ b
       () => {
         const el = document.querySelector('[data-testid="ship-count"]');
         return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-      },
+      }, undefined,
       { timeout: 12000 },
     );
     return { ctx, page };
@@ -357,7 +357,7 @@ test('p2p: rolling correction rate stays bounded during sustained two-client thr
       () => {
         const el = document.querySelector('[data-testid="ship-count"]');
         return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-      },
+      }, undefined,
       { timeout: 12000 },
     );
     return { ctx, page };
@@ -416,7 +416,7 @@ test('p2p: ships do not significantly overlap during close approach', async ({ b
       () => {
         const el = document.querySelector('[data-testid="ship-count"]');
         return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-      },
+      }, undefined,
       { timeout: 12000 },
     );
     return { ctx, page };
@@ -509,7 +509,7 @@ test('two clients agree on asteroid position after collision (< 8u)', async ({ b
       () => {
         const el = document.querySelector('[data-testid="ship-count"]');
         return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-      },
+      }, undefined,
       { timeout: 12000 },
     );
     return { ctx, page };

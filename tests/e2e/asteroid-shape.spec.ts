@@ -43,7 +43,7 @@ async function joinSector(page: Page): Promise<void> {
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
       return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-    },
+    }, undefined,
     { timeout: 12_000 },
   );
   // Wait for at least 3 asteroids (kind=0) to land in the swarm mirror — the
@@ -54,7 +54,7 @@ async function joinSector(page: Page): Promise<void> {
       const swarm = JSON.parse(el?.getAttribute('data-swarm-detail') ?? '{}') as Record<string, { kind: number; radius?: number }>;
       const asteroids = Object.values(swarm).filter((e) => e.kind === 0 && typeof e.radius === 'number');
       return asteroids.length >= 3;
-    },
+    }, undefined,
     { timeout: 12_000 },
   );
 }

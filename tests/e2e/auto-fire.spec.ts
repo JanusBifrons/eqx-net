@@ -46,7 +46,7 @@ async function joinAutoFire(browser: Browser, opts: { startHostile: boolean }) {
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');
       return el !== null && el.getAttribute('data-local-player-id') !== '';
-    },
+    }, undefined,
     { timeout: 12000 },
   );
   return { ctx, page };

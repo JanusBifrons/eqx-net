@@ -47,7 +47,7 @@ test('heap snapshot diff: 25s held-fire hostile combat (worker=0)', async () => 
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-testid="ship-count"]');
     return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-  }, { timeout: 15_000 });
+  }, undefined, { timeout: 15_000 });
   await page.waitForTimeout(3000);
   await page.keyboard.down('Space');
   await page.waitForTimeout(2000);

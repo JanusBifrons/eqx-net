@@ -31,7 +31,7 @@ test('Living World P1b: robots vs drones vs pilot → tiered loot', async ({ pag
   });
   await page.goto(`${BASE_URL}?${params}`);
   await page.waitForFunction(
-    () => parseInt(document.querySelector('[data-testid="ship-count"]')?.textContent?.replace('Ships: ', '') ?? '0', 10) > 0,
+    () => parseInt(document.querySelector('[data-testid="ship-count"]')?.textContent?.replace('Ships: ', '') ?? '0', 10) > 0, undefined,
     { timeout: 120_000 },
   );
   await page.waitForTimeout(5_000); // warp-in curtain lifts; the sides close in

@@ -291,4 +291,20 @@ export default [
       ],
     },
   },
+  {
+    // Playwright: waitForFunction(fn, arg?, options?). An object literal in the
+    // ARG slot is almost always meant as options, so the deadline silently
+    // doesn't apply and a broken wait hangs until the test timeout. 126 calls
+    // had this (perf-plan test audit, 2026-11-06). Pass `undefined` as the arg.
+    files: ['tests/**', 'showcase/**', 'perf/**'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "CallExpression[callee.property.name='waitForFunction'] > ObjectExpression.arguments:nth-child(2):has(Property[key.name=/^(timeout|polling)$/])",
+          message: 'waitForFunction(fn, arg?, options?): this object is the ARG, so its timeout/polling is ignored. Use waitForFunction(fn, undefined, { timeout }).',
+        },
+      ],
+    },
+  },
 ];
