@@ -42,6 +42,11 @@ export class DroneClientLeaf extends ClientEntityLeafBase {
       ctx.entry.radius,
       massOf(kind, DRONE_FALLBACK_MASS),
       undefined,
+      undefined,
+      undefined,
+      undefined,
+      // Capital drones: the same hull-shaped shield collider as the server (#15).
+      kind.sizeClass === 'capital' ? kind : undefined,
     );
     // Hostility ledger only (brain never ticked client-side). The caller folds
     // `registeredAiId` into `_aiRegisteredIds` (single cache ownership).

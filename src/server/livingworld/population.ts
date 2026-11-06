@@ -11,7 +11,7 @@
  * subscriptions and room references. This module owns only the decisions.
  */
 import { getSector, getNeighbours, getEntrySectors } from '../../core/galaxy/galaxy.js';
-import { clampToSectorBounds, SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
+import { clampToSectorBounds, SECTOR_PLAYABLE_HALF_EXTENT, SECTOR_SPACE_SCALE } from '../../shared-types/sectorBounds.js';
 
 /** A source of randomness in `[0, 1)` — `Math.random` in production, a
  *  seeded generator in tests. Mirrors the `SpawnerHooks.pickDroneKind`
@@ -486,8 +486,11 @@ function hashStr(s: string): number {
 }
 
 /** Angular spread (rad) of a squad's members around their shared spawn anchor.
- *  At the ~4600 u edge radius, ±0.06 rad ≈ ±275 u tangential. */
-export const SQUAD_SPAWN_ANGULAR_JITTER = 0.06;
+ *  At the ~4600 u edge radius (1x sector space), ±0.06 rad ≈ ±275 u
+ *  tangential; divided by the sector space scale so the cluster keeps the same
+ *  WORLD spread when sectors grow (round 3 C: ships do not spread, the world
+ *  does). */
+export const SQUAD_SPAWN_ANGULAR_JITTER = 0.06 / SECTOR_SPACE_SCALE;
 /** Radial spread (u) of a squad's members around the edge radius. */
 export const SQUAD_SPAWN_RADIAL_JITTER = 250;
 

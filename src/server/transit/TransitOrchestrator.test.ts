@@ -1,3 +1,4 @@
+import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TransitOrchestrator, type TransitHostRoom } from './TransitOrchestrator.js';
 import { PlayerShipStore } from '../playerShips/PlayerShipStore.js';
@@ -343,8 +344,8 @@ describe('TransitOrchestrator', () => {
       vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       const rec = store.get(shipId)!;
-      expect(rec.lastX).toBe(5000);   // SECTOR_PLAYABLE_HALF_EXTENT
-      expect(rec.lastY).toBe(-5000);
+      expect(rec.lastX).toBe(SECTOR_PLAYABLE_HALF_EXTENT);
+      expect(rec.lastY).toBe(-SECTOR_PLAYABLE_HALF_EXTENT);
     });
 
     it('falls back to SAB pose when no arrival is provided (regression lock)', async () => {

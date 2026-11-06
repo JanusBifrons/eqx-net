@@ -5,7 +5,7 @@
  * clamped; clearDirector hands control back to follow.
  */
 import { describe, it, expect } from 'vitest';
-import { Camera, type CameraTarget } from './Camera.js';
+import { Camera, DIRECTOR_MIN_SCALE, type CameraTarget } from './Camera.js';
 
 function makeTarget(): CameraTarget {
   return {
@@ -74,14 +74,18 @@ describe('Camera — cinematic director', () => {
     expect(cam.center.x).toBeCloseTo(0, 6);
   });
 
-  it('clamps the requested zoom to the camera range', () => {
+  it('caps a scripted zoom-in at maxScale, and lets it pull back past the gameplay floor to DIRECTOR_MIN_SCALE', () => {
     const { cam, target } = makeCam();
     cam.setDirectorTarget(0, 0, 50, 0);
     cam.tick(16.67);
     expect(target.scale.x).toBe(3);
+    // A 10x capital fleet needs less than a fighter's 0.15 floor (round 3).
+    cam.setDirectorTarget(0, 0, 0.05, 0);
+    cam.tick(16.67);
+    expect(target.scale.x).toBe(0.05);
     cam.setDirectorTarget(0, 0, 0.001, 0);
     cam.tick(16.67);
-    expect(target.scale.x).toBe(0.15);
+    expect(target.scale.x).toBe(DIRECTOR_MIN_SCALE);
   });
 
   it('zoom eases geometrically toward the target', () => {

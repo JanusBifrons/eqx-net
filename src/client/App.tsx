@@ -50,6 +50,7 @@ import { captureDeviceInfo } from './debug/deviceInfo';
 import { useMountLog } from './debug/useMountLog';
 import { useWarpOrchestration } from './useWarpOrchestration';
 import { EnergyBar } from './components/EnergyBar';
+import { HelmPanel } from './components/HelmPanel';
 import { SpeedDialMenu } from './components/SpeedDialMenu';
 import { BottomControlPanel } from './components/BottomControlPanel';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
@@ -865,6 +866,8 @@ function GameSurface({
       <Slot anchor="top-center" order={3}><WarpInWarningBanner /></Slot>
       <Slot anchor="top-center" order={3}><TeleportWarning /></Slot>
       <Slot anchor="top-center" order={3}><DisabledIndicator /></Slot>
+      {/* Capital-ship R&D round 3 D: helm orders (only while flying a capital). */}
+      <Slot anchor="top-center" order={4}><HelmPanel /></Slot>
       {/* Living World P2 — trade toasts (escort prompt when red). */}
       <Slot anchor="top-center" order={5}><TradeToasts /></Slot>
       <WhileAwayDialog />

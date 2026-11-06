@@ -19,6 +19,7 @@
  * Driven by the drone director's `onTick` (~1.5 s) — allocation here is fine.
  * Not persisted: a restart simply starts a fresh lull.
  */
+import { sectorSpace } from '../../shared-types/sectorBounds.js';
 import type { Bus } from '../../core/events/Bus.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import {
@@ -43,7 +44,7 @@ import type { Rng } from './population.js';
 /** The lull between one event ending and the next starting. */
 export const WORLD_EVENT_INTERVAL_MS = 9 * 60_000;
 /** Events happen this far from the sector centre (clear of spawns). */
-export const WORLD_EVENT_RADIUS = 1800;
+export const WORLD_EVENT_RADIUS = sectorSpace(1800);
 
 const INCURSION_KINDS: readonly ShipKindId[] = [
   'robot-hexagon', 'robot-circle', 'robot-circle', 'robot-square', 'robot-square', 'robot-square',

@@ -16,6 +16,7 @@
  * different entry sector. Off the 60 Hz tick (control cadence) — no netgate on
  * this module itself; the nexus rides the existing swarm wire.
  */
+import { sectorSpace } from '../../shared-types/sectorBounds.js';
 import type { SectorOwner } from '../../shared-types/galaxySnapshot.js';
 import type { GoodId } from '../../shared-types/goods.js';
 import type { Bus } from '../../core/events/Bus.js';
@@ -34,7 +35,7 @@ export const NEXUS_ID = 'rbot-nexus';
 /** A destroyed nexus returns after this long (a real win for the players). */
 export const NEXUS_RESPAWN_MS = 20 * 60_000;
 /** Distance of the nexus from its sector centre (clear of the central spawn). */
-export const NEXUS_RADIUS = 2400;
+export const NEXUS_RADIUS = sectorSpace(2400);
 export const ROBOT_FACTION_ID = 'robots';
 
 /** P3b — harvesters: robot scavengers that bank loot into the nexus. */
@@ -52,11 +53,11 @@ export const HARVESTER_RESPAWN_MS = 90_000;
  *  RAID_RANGE of its nexus, stealing up to RAID_STEP_WEIGHT per control tick
  *  (rarest goods first) while within RAID_DOCK_RADIUS. Credits are virtual
  *  (economy v2) — a raid can never take them. */
-export const RAID_RANGE = 3000;
+export const RAID_RANGE = sectorSpace(3000);
 /** Harvesters hunt any hauler (trade or convoy) within this range of them. They
  *  are hostile to traders on sight, so closing in starts the attack; a killed
  *  hauler spills its cargo as a pod, which the harvester then scoops. */
-export const HAULER_HUNT_RANGE = 2500;
+export const HAULER_HUNT_RANGE = sectorSpace(2500);
 export const RAID_DOCK_RADIUS = 200;
 export const RAID_STEP_WEIGHT = 30;
 export const RAID_PRIORITY: readonly GoodId[] = ['core', 'alloy', 'salvage', 'minerals'];

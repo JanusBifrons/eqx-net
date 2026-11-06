@@ -22,10 +22,12 @@
  * Architecture section of src/server/CLAUDE.md).
  */
 
+import { refineSweepHit } from '../../core/combat/capitalHits.js';
 import { projectileSweepCircle, projectileSweepBox } from '../../core/combat/Weapons.js';
 import {
   SLOT_X_OFF,
   SLOT_Y_OFF,
+  SLOT_ANGLE_OFF,
   slotBase,
 } from '../../shared-types/sabLayout.js';
 import type { WeaponId } from '../../core/combat/WeaponCatalogue.js';
@@ -198,7 +200,10 @@ export class ProjectilePipeline {
         const cy = d.sabF32[b + SLOT_Y_OFF]!;
         const sweep = rec.halfW !== undefined && rec.halfH !== undefined
           ? projectileSweepBox(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.halfW, rec.halfH, rec.boxes)
-          : projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius);
+          : rec.kind === 1
+            // A capital's circle is half its hull's length: refine to the hull (#15).
+            ? refineSweepHit(rec.shipKind, projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius), proj.x, proj.y, stepX, stepY, cx, cy, d.sabF32[b + SLOT_ANGLE_OFF]!)
+            : projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius);
         if (sweep && sweep.entry < bestEntry) {
           bestEntry = sweep.entry;
           bestTargetId = rec.id;

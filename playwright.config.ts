@@ -88,6 +88,10 @@ const FEATURE_SPECS: string[] = [
   '**/fx-engines.spec.ts',
   // Machined turrets (plan T1, 2026-11-05).
   '**/fx-turrets.spec.ts',
+  // Capital-ship R&D round 3 D — helm orders (tap a course, speed, WASD override).
+  '**/capital-helm.spec.ts',
+  // Round 3 smoke bug: the fly-by fighter jittered alongside the battleship.
+  '**/capital-flyby-smooth.spec.ts',
   // Prediction backlog after a long loading hold is skipped, not replayed (2026-11-05).
   '**/loading-catchup.spec.ts',
   // Fence-hit fix (2026-11-04).

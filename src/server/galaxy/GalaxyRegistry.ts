@@ -5,6 +5,7 @@
  *
  * See docs/architecture/galaxy-graph.md for the walkthrough.
  */
+import { sectorSpace } from '../../shared-types/sectorBounds.js';
 import { GALAXY_SECTORS, getSector } from '../../core/galaxy/galaxy.js';
 import type { GalaxySector } from '../../core/galaxy/galaxy.js';
 import { ASTEROID_CONFIGS } from './asteroidConfigs.js';
@@ -34,7 +35,8 @@ export function resolveSectorConfig(key: string): ResolvedSectorConfig {
   }
   return {
     sectorKey: sector.key,
-    asteroidConfig: ASTEROID_CONFIGS[sector.asteroidConfigKey],
+    // Fields spread with the sector space; rock sizes stay (round 3 C).
+    asteroidConfig: ASTEROID_CONFIGS[sector.asteroidConfigKey].map((a) => ({ ...a, x: sectorSpace(a.x), y: sectorSpace(a.y) })),
     droneCount: sector.droneCount,
     maxClients: DEFAULT_MAX_CLIENTS,
     galaxyBases: true,

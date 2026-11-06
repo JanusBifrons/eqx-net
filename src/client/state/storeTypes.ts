@@ -256,6 +256,13 @@ export interface UIStore {
    *  `entity_stats` channel; `drone` reads health from the render mirror
    *  directly. Null when nothing is selected. */
   selectedEntityKind: 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | null;
+  /** Helm orders (capital-ship R&D round 3 D), discrete UI state only: whether
+   *  the ship you fly takes helm orders, whether a course is set, and the speed
+   *  setting (0 stop, 1 one third, 2 two thirds, 3 full). The course point
+   *  itself lives in the client's helm controller, never here (#2). */
+  helmAvailable: boolean;
+  helmActive: boolean;
+  helmSpeed: 0 | 1 | 2 | 3;
   /** The local ship's full energy pool — the denominator for the top-center
    *  EnergyBar (the fill comes per-frame from
    *  `ColyseusClient.getPredictedEnergy()`). Set once on spawn from the
@@ -489,6 +496,7 @@ export interface UIStore {
     kind: 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | null,
   ) => void;
   setEnergyMax: (max: number) => void;
+  setHelmState: (available: boolean, active: boolean, speed: 0 | 1 | 2 | 3) => void;
   setCargo: (cargo: CargoView | null, capacity: number) => void;
   setWallet: (credits: number | null) => void;
   setLabState: (s: LabState | null) => void;

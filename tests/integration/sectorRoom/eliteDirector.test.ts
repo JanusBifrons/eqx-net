@@ -14,7 +14,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { bootLivingWorldTestServer, type LivingWorldTestHarness } from './harness.js';
-import { EliteDirector } from '../../../src/server/livingworld/EliteDirector.js';
+import { EliteDirector, ELITE_SPAWN_RADIUS } from '../../../src/server/livingworld/EliteDirector.js';
 import { ELITE_HEALTH_MUL } from '../../../src/shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS } from '../../../src/shared-types/contracts.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
@@ -42,7 +42,11 @@ describe('SectorRoom integration — named elites (P4a)', () => {
     const room = h.getRoom('greenfall');
 
     // A pilot in the sector, listening for the elite name + notices.
-    const pilot = await h.connectActive(randomUUID(), 'greenfall', { initialHull: 99999 });
+    // The elite spawns ELITE_SPAWN_RADIUS out on the rng(0.1) bearing (the
+    // sector space grows that radius): park the pilot beside it so it is
+    // inside the interest window at any sector size.
+    const ea = 0.1 * Math.PI * 2;
+    const pilot = await h.connectActive(randomUUID(), 'greenfall', { initialHull: 99999, spawnX: Math.round(Math.cos(ea) * (ELITE_SPAWN_RADIUS - 600)), spawnY: Math.round(Math.sin(ea) * (ELITE_SPAWN_RADIUS - 600)) });
     let seenName: string | null = null;
     const notices: WorldNotice[] = [];
     pilot.onMessage('snapshot', (snap: SnapshotMessage) => {

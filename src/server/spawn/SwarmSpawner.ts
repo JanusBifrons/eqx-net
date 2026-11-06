@@ -57,7 +57,7 @@ export interface SpawnerHooks {
    *  `angle` (scrap, kind=3) rotates the body at spawn so a recentred scrap
    *  collider is oriented to match the dying ship; every other caller passes 0
    *  / undefined (legacy axis-aligned spawn). */
-  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>) => void;
+  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string) => void;
   /** Direct write into the SAB so the first update() tick reads a sane pose. */
   sabF32: Float32Array;
   sabU32: Uint32Array;
@@ -384,7 +384,9 @@ export class SwarmSpawner {
     // match the dying ship. Other kinds pass 0 (legacy axis-aligned spawn).
     // Structures (kind 2) carry their quarter-turn rotation too (phase V).
     const spawnAngle = kind === SWARM_KIND_SCRAP || kind === 2 ? angle : 0;
-    this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, mass, vertices, linearDamping, staticBody, collisionGroups, spawnAngle, structureParts);
+    // Capital drones start with their hull-shaped shield collider (round 3).
+    const shieldKindId = kind === 1 && shipKind?.sizeClass === 'capital' ? shipKind.id : undefined;
+    this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, mass, vertices, linearDamping, staticBody, collisionGroups, spawnAngle, structureParts, shieldKindId);
 
     // Phase 5d: insert into the interest grid so this entity participates in
     // per-client filtering. Indexed by the dense u16 entityId since that's

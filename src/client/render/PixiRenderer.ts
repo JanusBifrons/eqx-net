@@ -36,7 +36,8 @@ import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
 import { FxEngines } from './art/fx/FxEngines.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
-import { shipTuning, startZoomForScale } from '@shared-types/shipScale/tuning';
+import { LodDots } from './pixi/LodDots';
+import { GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldVisualRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
 import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { SHIELD_RADIUS_PAD } from '../../shared-types/shipKinds.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
@@ -128,6 +129,12 @@ export class PixiRenderer implements IRenderer {
 
   /** Which look to draw (resolved on the main thread; default today's look). */
   private readonly _artOpts: ArtOptions;
+  /** Zoom range follows the ship you fly (capital-ship round 3 D): the kind id
+   *  last applied, its hull zoom factor, and whether `?zoom=` pinned the start. */
+  private _zoomKindId: string | null = null;
+  private _zoomFactor = 1;
+  private _zoomPinned = false;
+  private readonly _zoomRange = { minScale: GAMEPLAY_MIN_ZOOM, startZoom: 0 };
 
   constructor(isTouch = false, art: ArtOptions = ART_OFF) {
     this._isTouch = isTouch;
@@ -230,6 +237,8 @@ export class PixiRenderer implements IRenderer {
   private _cleanWorld = false;
   private _healthBarsDisabled = false;
   private sprites = new Map<string, Container>();
+  /** Screen-size LOD (capital-ship R&D round 3 E1): tiny ships draw as dots. */
+  private readonly _lodDots = new LodDots();
   /** Machined art (plan iridescent-seeking-rainbow): shared by the ship,
    *  swarm and lingering updaters. `art` is set in `init` when `?art=machined`
    *  (or the default) asks for it; null ⇒ today's vector look everywhere. */
@@ -437,6 +446,9 @@ export class PixiRenderer implements IRenderer {
     placementChosenWorldY: null,
     placementStuck: false,
     placementConfirmSeq: 0,
+    helmCourseSeq: 0,
+    helmCourseX: 0,
+    helmCourseY: 0,
     placementPreviewConnectionCount: 0,
     selectedPickId: null,
     selectedPickKind: null,
@@ -612,7 +624,7 @@ export class PixiRenderer implements IRenderer {
       // minScale lowered 0.4 → 0.15 (2026-06-03) so the player can zoom
       // much further out to read the wider battlefield. maxScale (zoom-in)
       // unchanged.
-      minScale: 0.15,
+      minScale: GAMEPLAY_MIN_ZOOM,
       maxScale: 3,
       followLerpFactor: 1,
     });
@@ -666,6 +678,7 @@ export class PixiRenderer implements IRenderer {
       zoom !== undefined && Number.isFinite(zoom) && zoom > 0
         ? zoom
         : startZoomForScale(DEFAULT_GAMEPLAY_ZOOM); // ship scale (shipScale/tuning)
+    this._zoomPinned = resolvedZoom !== startZoomForScale(DEFAULT_GAMEPLAY_ZOOM);
     this.camera.setZoom(resolvedZoom);
 
     // Frame diagnostic (gated). The decisive crispness metric: the
@@ -714,6 +727,8 @@ export class PixiRenderer implements IRenderer {
 
     this.shipContainer = new Container();
     this.camera.addChild(this.shipContainer);
+    // Round 3 E1: far-zoom dots above the ships they stand in for.
+    this.camera.addChild(this._lodDots.container);
 
     // Structures plan, Phase 3 — the grid connector web. Added FIRST so the
     // lines render BEHIND the structure/ship sprites added later.
@@ -1239,6 +1254,14 @@ export class PixiRenderer implements IRenderer {
     if (hit === null) {
       this._selectedId = null;
       this._selectedKind = null;
+      // Helm orders: a capital pilot's tap on empty space sets the course.
+      const m = this._lastMirror;
+      const own = m.localPlayerId ? m.ships.get(m.localPlayerId) : undefined;
+      if (own !== undefined && getShipKind(own.kind ?? null).sizeClass === 'capital') {
+        this.feedback.helmCourseX = gameX;
+        this.feedback.helmCourseY = gameY;
+        this.feedback.helmCourseSeq++;
+      }
     } else if (hit.id === this._selectedId) {
       this._selectedId = null; // re-tap toggles off
       this._selectedKind = null;
@@ -1373,6 +1396,24 @@ export class PixiRenderer implements IRenderer {
     return this._selectedId;
   }
 
+  /** The zoom range follows the ship you fly: on a change of kind, the
+   *  zoom-out floor moves, and a different-sized hull starts at its own zoom
+   *  (unless `?zoom=` pinned it). Compares ids only, so steady state is free. */
+  private applyHullZoom(mirror: RenderMirror): void {
+    const ship = mirror.localPlayerId ? mirror.ships.get(mirror.localPlayerId) : undefined;
+    const id = ship?.kind ?? null;
+    if (id === null || id === this._zoomKindId) return;
+    this._zoomKindId = id;
+    const kind = getShipKind(id);
+    zoomRangeForKind(kind, DEFAULT_GAMEPLAY_ZOOM, this._zoomRange);
+    this.camera.setMinScale(this._zoomRange.minScale);
+    const f = hullZoomFactor(kind);
+    if (f !== this._zoomFactor) {
+      this._zoomFactor = f;
+      if (!this._zoomPinned) this.camera.setZoom(this._zoomRange.startZoom);
+    }
+  }
+
   update(mirror: RenderMirror): void {
     // F1 — bracket the whole update() for `rendererUpdateMs`. Single
     // exit point (the method has no early `return`), so a start-stamp +
@@ -1398,6 +1439,7 @@ export class PixiRenderer implements IRenderer {
     // `this._shipUpdaterCtx` (heap-growth gate step 12) — same fields
     // every frame, no per-call literal allocation.
     this.mountVisuals.setLocalAim(mirror.localPlayerId, mirror.localAimMountIds);
+    this.applyHullZoom(mirror);
     this.mountVisuals.setFrame(performance.now(), this.effects?.getQuality() ?? 'medium');
     updateShipSprites(mirror, this._shipUpdaterCtx);
 
@@ -1518,6 +1560,7 @@ export class PixiRenderer implements IRenderer {
     this._lastSwarmUpdateNow = swarmNow;
     this._swarmUpdaterCtx.viewBounds = this.camera.visibleBoundsInto(this._swarmViewScratch);
     updateSwarmSprites(mirror, this._swarmUpdaterCtx);
+    this._lodDots.update(mirror, this.sprites, this.world.scale.x);
     this.noteTurretShots(mirror);
 
     for (const [id, sprite] of this.sprites) {
@@ -1835,7 +1878,7 @@ export class PixiRenderer implements IRenderer {
     if (this._director.isActive()) {
       // Cinematic script owns the camera — resolved from THIS frame's rendered
       // sprites (updated above), smoothed by the Camera's spring in tick().
-      const status = this._director.update(performance.now(), this._directorLookup, this._directorOut);
+      const status = this._director.update(performance.now(), this._directorLookup, this._directorOut, mirror.frameTimeMs);
       if (status === 'active') {
         const d = this._directorOut;
         this.camera.setDirectorTarget(d.x, d.y, d.zoom, d.smoothMs);
@@ -2384,12 +2427,12 @@ export class PixiRenderer implements IRenderer {
         if (id.startsWith('swarm-')) {
           const swarmId = parseInt(id.slice('swarm-'.length), 10);
           const sw = mirror.swarm?.get(swarmId);
-          if (sw) auraRadius = sw.radius;
+          if (sw) auraRadius = sw.shipKind ? shieldVisualRadius(getShipKind(sw.shipKind)) : sw.radius;
         } else {
           // mirror.ships for an active hull; mirror.lingeringShips for a parked
           // one (lingering hulls are shipInstanceId-keyed + kept out of ships).
           const ship = mirror.ships.get(id) ?? mirror.lingeringShips?.get(id);
-          if (ship?.kind) auraRadius = getShipKind(ship.kind).radius;
+          if (ship?.kind) auraRadius = shieldVisualRadius(getShipKind(ship.kind));
         }
         this.effects.setContinuous(id, 'shield', true, auraRadius);
         this._activeShieldIds.add(id);
@@ -2736,18 +2779,22 @@ export class PixiRenderer implements IRenderer {
     let group: CameraGroup = 'all';
     let count = 0;
     let acc: MutableBounds = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
-    const add = (x: number, y: number): void => {
+    // A framed entity contributes its whole extent (radius `r`), not just its
+    // centre: a 10x capital reaches kilometres past its centre (round 3).
+    const add = (x: number, y: number, r = 0): void => {
       if (count === 0) {
-        acc.minX = acc.maxX = x;
-        acc.minY = acc.maxY = y;
+        acc.minX = x - r; acc.maxX = x + r;
+        acc.minY = y - r; acc.maxY = y + r;
       } else {
-        if (x < acc.minX) acc.minX = x;
-        if (x > acc.maxX) acc.maxX = x;
-        if (y < acc.minY) acc.minY = y;
-        if (y > acc.maxY) acc.maxY = y;
+        if (x - r < acc.minX) acc.minX = x - r;
+        if (x + r > acc.maxX) acc.maxX = x + r;
+        if (y - r < acc.minY) acc.minY = y - r;
+        if (y + r > acc.maxY) acc.maxY = y + r;
       }
       count++;
     };
+    // Half the sprite's longer side: covers any rotation. Cinematic-only path.
+    const extentOf = (sprite: Container): number => Math.max(sprite.width, sprite.height) / 2;
     const visit = (sprite: Container, key: string): void => {
       if (!sprite.visible) return;
       if (group !== 'all') {
@@ -2761,7 +2808,7 @@ export class PixiRenderer implements IRenderer {
           if (k !== want) return;
         }
       }
-      add(sprite.x, sprite.y);
+      add(sprite.x, sprite.y, extentOf(sprite));
     };
     return {
       pose: (id: string, out: MutablePoint): boolean => {
@@ -2787,7 +2834,7 @@ export class PixiRenderer implements IRenderer {
         for (let i = 0; i < ids.length; i++) {
           const id = ids[i]!;
           const sp = this.sprites.get(id === 'local' && localId !== null ? localId : id);
-          if (sp && sp.visible) add(sp.x, sp.y);
+          if (sp && sp.visible) add(sp.x, sp.y, extentOf(sp));
         }
         return count;
       },
@@ -2867,7 +2914,7 @@ export class PixiRenderer implements IRenderer {
 
   /** Machined art status: the service's counts plus how many ship sprites
    *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']> } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; lodDots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']> } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;
@@ -2877,7 +2924,7 @@ export class PixiRenderer implements IRenderer {
       if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
     const art = this._artCtx.art;
-    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
+    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), lodDots: this._lodDots.dotCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
   }
 
   dispose(): void {

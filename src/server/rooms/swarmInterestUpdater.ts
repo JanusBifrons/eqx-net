@@ -48,7 +48,7 @@ export function updateSwarmInterestGrid(ctx: SwarmInterestCtx): void {
     const b = slotBase(rec.slot);
     const sx = sabF32[b + SLOT_X_OFF]!;
     const sy = sabF32[b + SLOT_Y_OFF]!;
-    interestGrid.move(rec.entityId, sx, sy);
+    interestGrid.move(rec.entityId, sx, sy, rec.radius); // radius marks capitals wide on first sight
     if (rec.kind === 1 && (Math.abs(sx) > droneMaxBounds || Math.abs(sy) > droneMaxBounds)) {
       const clampedX = Math.max(-droneMaxBounds, Math.min(droneMaxBounds, sx));
       const clampedY = Math.max(-droneMaxBounds, Math.min(droneMaxBounds, sy));

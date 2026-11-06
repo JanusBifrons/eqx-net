@@ -8,12 +8,13 @@
  * neighbour on the galaxy map. Its twin sits in the neighbour, on the edge
  * facing back, so flying through the pair carries you across the border.
  */
+import { sectorSpace } from '../../shared-types/sectorBounds.js';
 import { axialToPixel, getNeighbours, getSector } from './galaxy.js';
 
 /** Distance from the sector centre to a gate's centre (world units): as far
  *  out as the 1600-wide gate fits inside the 5000-unit playable half-extent,
  *  so the sector's middle stays clear for bases. */
-export const ALIEN_GATE_EDGE_RADIUS = 4100;
+export const ALIEN_GATE_EDGE_RADIUS = sectorSpace(4100);
 
 /** Owner string for every alien gate (the Ancients faction). */
 export const ALIEN_GATE_OWNER = 'npc:ancients:gates';

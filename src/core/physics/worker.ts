@@ -69,7 +69,7 @@ const CONTACT_FORCE_FLOOR = 200;
 interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
 interface DespawnCmd       { type: 'DESPAWN';        slot: number; playerId: string }
 interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean }
-interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>> }
+interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string }
 interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
 interface ClockRateCmd     { type: 'CLOCK_RATE';     rate: number }
 /** Authoritatively reposition a body in the physics world. Used by the
@@ -207,7 +207,7 @@ async function main(): Promise<void> {
         break;
       }
       case 'SPAWN_OBSTACLE': {
-        physics.spawnObstacle(cmd.obstacleId, cmd.x, cmd.y, cmd.radius, cmd.mass, cmd.vertices, cmd.linearDamping, cmd.collisionGroups, cmd.parts);
+        physics.spawnObstacle(cmd.obstacleId, cmd.x, cmd.y, cmd.radius, cmd.mass, cmd.vertices, cmd.linearDamping, cmd.collisionGroups, cmd.parts, cmd.shieldKindId ? getShipKind(cmd.shieldKindId) : undefined);
         // SCRAP (scrap-on-death) must spawn at the dying ship's angle so its
         // recentred collider is oriented correctly; `cmd.angle ?? 0` keeps
         // every existing caller (asteroids/drones/structures pass undefined)

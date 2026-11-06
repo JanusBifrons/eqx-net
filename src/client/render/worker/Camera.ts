@@ -105,6 +105,9 @@ interface ResolvedOpts {
   zoomSmoothTimeMs: number;
 }
 
+/** Floor for scripted (cinematic) zoom, independent of the gameplay minScale. */
+export const DIRECTOR_MIN_SCALE = 0.01;
+
 /** Below this absolute scale-delta the zoom ease snaps to target + clears. */
 const ZOOM_SNAP_EPSILON = 0.001;
 
@@ -298,7 +301,9 @@ export class Camera {
     if (smoothMs <= 0) this.dirSnapNext = true;
     this.dirX = worldX;
     this.dirY = worldY;
-    this.dirZoom = this.clampScale(zoom);
+    // A scripted shot may pull back past the pilot's gameplay floor (a
+    // fighter's 0.15 can't fit a 10x capital fleet); it keeps the zoom-in cap.
+    this.dirZoom = Math.max(DIRECTOR_MIN_SCALE, Math.min(this.opts.maxScale, zoom));
     this.dirSmoothMs = smoothMs;
   }
 
@@ -728,6 +733,11 @@ export class Camera {
   /** Test-only — active pointer count. */
   getPointerCount(): number {
     return this.pointers.size;
+  }
+
+  /** The zoom-out floor (it follows the ship you fly: capital-ship round 3 D). */
+  setMinScale(min: number): void {
+    this.opts.minScale = min;
   }
 
   // ---------- Internal ----------
