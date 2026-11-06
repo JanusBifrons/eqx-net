@@ -12,7 +12,7 @@
  *
  * Run with --reporter=list to see console output inline.
  */
-import { test, expect } from './fixtures/test-with-logs';
+import { test, expect } from '../e2e/fixtures/test-with-logs';
 import type { PredictionStats } from '../../src/client/net/ColyseusClient';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';

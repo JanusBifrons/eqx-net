@@ -24,7 +24,7 @@ describe('path-triggered feature specs', () => {
 
   it('a changed feature spec runs itself; quarantined specs never run', () => {
     expect(select(['tests/e2e/hover-outline.spec.ts'])).toEqual(['hover-outline']);
-    expect(select(['tests/e2e/robustness.spec.ts'])).toEqual([]);
+    expect(select(['tests/e2e/feel-tuning.spec.ts'])).toEqual([]);
   });
 
   it('smoke specs (already run on every PR) and quarantined subfolder specs are skipped', () => {

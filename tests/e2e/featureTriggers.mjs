@@ -62,7 +62,6 @@ export const FEATURE_TRIGGERS = [
 export const QUARANTINE = new Set([
   'interceptor-beam-stays-connected',
   'missile-frigate-homing',
-  'robustness',
   'machined-art',
   'drawer-galaxy',
   'galaxy-map-overlay',
@@ -73,6 +72,4 @@ export const QUARANTINE = new Set([
   'cargo-panel',
   'auto-fire',
   'wave-attack',
-  'swarm-jitter',
-  'spiral-disconnect-reconnect',
 ]);

@@ -236,7 +236,7 @@ CI runs only the **17 smoke specs** on a PR. The **88 feature specs** run only w
 
 | Spec | Failing tests | Symptom | First read |
 |---|---|---|---|
-| robustness | 7 of 11 (with the curtain wait) | idle snapshots 12.6/s (wants ≥ 17), interval jitter 49 ms (< 25), corrections 59 (≤ 2), a 226 u correction after an asteroid hit (< 15), two-client correction rates 36–46 % (< 30) | the host-load-sensitive prediction locks ci.yml already names; the netgate measures this signal against a same-session baseline. Decision pending: delete, move to tests/perf, or rebase on the netgate. The 226 u asteroid correction is worth one look before deleting. |
+| robustness, swarm-jitter, spiral-disconnect-reconnect | 7 + 1 + 1 | tight correction-rate / jitter numbers on whatever machine runs them | **moved to tests/perf** (user decision 2026-11-06): measurements, not regression locks; the netgate gates this signal. The 226 u "asteroid collision" correction was the join snap leaking in through a session-wide max (inside the window the largest was 1.19 u), not a bug. |
 | missile-frigate-homing | 4 of 4 | homing / damage / refire / fizzle | stale: written against old tuning (expects a 180-tick cooldown; the catalogue says 90 since c795302d, and energy cost and lifetime moved too). It also fired before the target was active (now waits with `waitForInPlay`). Needs its expectations read from the catalogue. |
 | machined-art | 3 | fx textures through the worker pool; speed-effect zoom | unknown |
 | laser-smoothness | 1 | beam active 0 of 40 frames | **fixed**: stale, it flew the default fighter (bolts, no beam; each kind fires its own loadout since the weapons overhaul) and fired while the curtain was still up |
@@ -248,7 +248,7 @@ CI runs only the **17 smoke specs** on a PR. The **88 feature specs** run only w
 | fence-hits, fx-turrets | 1 each | waits on `__eqxArtStats` time out | unknown |
 | cargo-panel | 1 | "a Capital was placed" is null | likely the same placement-flow change |
 | auto-fire | 1 | neutral → hostile takeover times out | unknown |
-| wave-attack, swarm-jitter, spiral-disconnect-reconnect | 1 each | | unknown |
+| wave-attack | 1 | | unknown |
 | **smoke:** persistence-kill, combat-lifecycle, sector-alpha (two-client) | 1–2 each | beam doesn't drain the victim's hull; two-client checks | fail on untouched `main` **on this laptop** and pass on CI: two browsers on 8 GB with software WebGL |
 
 **A shared cause:** a ship is active (targetable, collidable, hostile-capable) only once its loading curtain lifts, which takes 6–16 s on a loaded box. Specs that act as soon as `data-local-player-id` appears act on a pending ship. `waitForInPlay(page)` (`tests/e2e/helpers/gameScenario.ts`) is the fix; apply it as each spec is triaged.
