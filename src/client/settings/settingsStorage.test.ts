@@ -66,7 +66,7 @@ describe('settingsStorage', () => {
     expect(loadSettings('alice')).toEqual({
       showDevOverlay: false,
       showLogPanel: true,
-      showServerGhost: false,
+      // The old `showServerGhost` key is ignored (the marker is off by default).
     });
     // Per-user slot now populated …
     expect(localStorage.getItem('eqxSettings:alice')).not.toBeNull();
@@ -92,7 +92,7 @@ describe('settingsStorage', () => {
   it('drops fields that are not booleans', () => {
     localStorage.setItem(
       'eqxSettings:alice',
-      JSON.stringify({ showDevOverlay: 'yes', showLogPanel: 1, showServerGhost: true }),
+      JSON.stringify({ showDevOverlay: 'yes', showLogPanel: 1, serverGhostDebug: true }),
     );
     expect(loadSettings('alice')).toEqual({ showServerGhost: true });
   });
@@ -107,5 +107,14 @@ describe('settingsStorage', () => {
     expect(() =>
       saveSettings('alice', { showDevOverlay: true, showLogPanel: true, showServerGhost: true }),
     ).not.toThrow();
+  });
+
+  it('the server-position marker is off unless chosen: an old stored showServerGhost:true is ignored', () => {
+    // Every save used to write the old default (on), so a true there was mostly never chosen.
+    localStorage.setItem('eqxSettings:carol', JSON.stringify({ showDevOverlay: true, showLogPanel: false, showServerGhost: true }));
+    expect(loadSettings('carol').showServerGhost).toBeUndefined();
+    // A player who switches it on keeps that choice.
+    saveSettings('carol', { showDevOverlay: true, showLogPanel: false, showServerGhost: true, autoFireEnabled: true, arrivalMode: 'same', arrivalTargetX: 0, arrivalTargetY: 0, homePosX: 0, homePosY: 0 });
+    expect(loadSettings('carol').showServerGhost).toBe(true);
   });
 });

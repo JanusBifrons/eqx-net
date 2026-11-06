@@ -41,7 +41,7 @@ const initialPersisted     = loadSettings(null);
 const initialShipKind      = loadShipKind(null);
 const initialDevOverlay    = initialPersisted.showDevOverlay   ?? true;
 const initialLogPanel      = initialPersisted.showLogPanel     ?? true;
-const initialServerGhost   = initialPersisted.showServerGhost  ?? true;
+const initialServerGhost   = initialPersisted.showServerGhost  ?? false; // debug overlay: off by default
 const initialAutoFire      = initialPersisted.autoFireEnabled  ?? true;
 const initialArrivalMode   = initialPersisted.arrivalMode      ?? 'same';
 const initialArrivalTargetX = initialPersisted.arrivalTargetX  ?? 0;
@@ -541,7 +541,7 @@ export function applyUserPrefs(userId: UserId): void {
   useUIStore.setState({
     showDevOverlay:  persisted.showDevOverlay  ?? true,
     showLogPanel:    persisted.showLogPanel    ?? true,
-    showServerGhost: persisted.showServerGhost ?? true,
+    showServerGhost: persisted.showServerGhost ?? false,
     autoFireEnabled: persisted.autoFireEnabled ?? true,
     arrivalMode:     persisted.arrivalMode     ?? 'same',
     arrivalTargetX:  persisted.arrivalTargetX  ?? 0,
