@@ -11,6 +11,10 @@
  *
  * A metric is only gated once a main-vs-main self-test shows its spread fits
  * inside its thresholds (see docs/architecture/perf-scenes.md).
+ *
+ * Print-only by decision (self-test 2026-11-06, 5 reps of identical code):
+ * `clientFrameP99` is bimodal (one or two vsync refreshes, 16.8 or 33.3 ms)
+ * and flipped between runs, so `clientHitchesPerMin` gates that signal.
  */
 export interface RunMetrics {
   valid: boolean;
@@ -27,7 +31,6 @@ export const THRESHOLDS: Record<string, Threshold> = {
   serverTickP95: { rel: 0.25, abs: 0.5 },
   serverTickP99: { rel: 0.30, abs: 1.0 },
   clientFrameP95: { rel: 0.15, abs: 2.0 },
-  clientFrameP99: { rel: 0.25, abs: 4.0 },
   clientHitchesPerMin: { rel: 0.50, abs: 6 },
   renderP95: { rel: 0.25, abs: 0.5 },
   rxKBps: { rel: 0.10, abs: 5 },

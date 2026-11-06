@@ -162,16 +162,29 @@ async function main(): Promise<void> {
   if (!args.headOnly) arms.push(mk('base', prepareBase(args.base), { server: 2767, vite: 5373 }));
   arms.push(mk('head', ROOT, { server: 2768, vite: 5374 }));
 
+  // --append: earlier chunks of this A/B (their reps join the verdict).
+  type Ledger = { when: string; device: string; reps: number; arms: Array<{ name: string; sha: string }>; scenes: Record<string, { title: string; injected: unknown; verdict: ArmVerdict | null; base: RunMetrics[]; head: RunMetrics[] }> };
+  const prior: Ledger | null = args.append && existsSync(args.append) ? (JSON.parse(readFileSync(args.append, 'utf8')) as Ledger) : null;
+  if (prior) {
+    const shas = arms.map((a) => `${a.name}@${a.sha}`).join(' ');
+    const priorShas = prior.arms.map((a) => `${a.name}@${a.sha}`).join(' ');
+    if (shas !== priorShas) throw new Error(`--append: arms differ (${priorShas} vs ${shas})`);
+  }
+  const priorReps = prior ? prior.reps : 0;
+
   const browser = await chromium.launch({ headless: !args.headed, args: GPU_ARGS });
   const results: Record<string, Record<string, RunMetrics[]>> = {};
   try {
     log(`perf scenes: ${scenes.map((s) => s.id).join(', ')} · reps ${args.reps} · arms ${arms.map((a) => `${a.name}@${a.sha}`).join(' vs ')}`);
     // One arm's servers at a time (an 8 GB laptop can't hold two pairs plus a
     // GPU browser). Each rep boots one arm, plays every scene, then swaps:
-    // base, head, base, head… so slow drift in the machine hits both arms.
+    // Order alternates per rep (base-head, head-base, …): the arm that runs
+    // second in a round runs on a warmer machine, and a fixed order showed up
+    // as head-only extra hitches in the first self-test.
     for (const scene of scenes) results[scene.id] = { base: [], head: [] };
     for (let rep = 0; rep < args.reps; rep++) {
-      for (const a of arms) {
+      const order = (priorReps + rep) % 2 === 0 ? arms : [...arms].reverse();
+      for (const a of order) {
         for (const o of arms) if (o !== a) o.servers.stop();
         log(`rep ${rep + 1}/${args.reps}: ${a.name} servers…`);
         await a.servers.ensure('lean');
@@ -190,14 +203,7 @@ async function main(): Promise<void> {
     for (const a of arms) a.servers.stop();
   }
 
-  // --append: fold earlier chunks' reps in before judging.
-  type Ledger = { when: string; device: string; reps: number; arms: Array<{ name: string; sha: string }>; scenes: Record<string, { title: string; injected: unknown; verdict: ArmVerdict | null; base: RunMetrics[]; head: RunMetrics[] }> };
-  let prior: Ledger | null = null;
-  if (args.append && existsSync(args.append)) {
-    prior = JSON.parse(readFileSync(args.append, 'utf8')) as Ledger;
-    const shas = arms.map((a) => `${a.name}@${a.sha}`).join(' ');
-    const priorShas = prior.arms.map((a) => `${a.name}@${a.sha}`).join(' ');
-    if (shas !== priorShas) throw new Error(`--append: arms differ (${priorShas} vs ${shas})`);
+  if (prior) {
     for (const scene of scenes) {
       const old = prior.scenes[scene.id];
       if (!old) continue;
