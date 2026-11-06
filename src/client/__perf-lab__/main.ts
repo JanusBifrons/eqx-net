@@ -17,8 +17,6 @@ for (const scene of PERF_SCENES) {
     initialHull: '1000000',
     art: 'machined',
     fx: 'new',
-    cleanworld: '1',
-    hud: 'none',
     diag: '0',
     perfprobe: '1',
     perfscene: scene.id,

@@ -1599,6 +1599,9 @@ export class SectorRoom extends Room<SectorState> {
        *  events (`SceneScriptRunner`), started when the first pilot is ready.
        *  testMode-only. */
       sceneScript?: unknown;
+      /** Perf scenes — no TiDi and no load shedding, so the work stays fixed
+       *  and an overload shows as slower ticks. testMode-only. */
+      perfFixedLoad?: boolean;
     };
     // Payload-DoS bound (S5): onCreate options are client-suppliable on room
     // create, so reject oversized seed arrays before they seed the sector.
@@ -2529,6 +2532,7 @@ export class SectorRoom extends Room<SectorState> {
       }
       this.testHaulerRaiders = Math.max(0, Math.min(6, Math.floor(roomOpts.haulerRaiders ?? 0)));
       if (roomOpts.sceneScript !== undefined) this.initSceneScript(roomOpts.sceneScript);
+      this.perfFixedLoad = roomOpts.perfFixedLoad === true;
     }
     // Phase-1 issue 5 — scrap-stress seed: a dense corridor of free-floating
     // scrap ahead of spawn for the fly-through reconciliation E2E.
@@ -9002,6 +9006,8 @@ export class SectorRoom extends Room<SectorState> {
   private testHaulerRaiders = 0;
   /** Perf scenes — null unless the room was created with `sceneScript`. */
   private sceneRunner: SceneScriptRunner | null = null;
+  /** Perf scenes: TiDi + load shedding off (fixed work). testMode-only. */
+  private perfFixedLoad = false;
 
   /** Scene status for `/dev/perf` and tests (null: no scene). */
   sceneStatus(): Readonly<SceneStatus> | null { return this.sceneRunner?.getStatus() ?? null; }
@@ -9818,7 +9824,9 @@ export class SectorRoom extends Room<SectorState> {
     // worker's most-recent step duration covers physics. The real budget
     // overrun is whichever is longer.
     const busiestMs = Math.max(totalMs, workerTickMs);
-    this.simClock.report(busiestMs);
+    // Perf scenes measure WORK: with the room's self-protection on, an overload
+    // turns into a slower clock and shed drones instead of slower ticks.
+    if (!this.perfFixedLoad) this.simClock.report(busiestMs);
     const newRate = this.simClock.rate;
     // testTimeScale lets testMode rooms run physics N× faster (default 1).
     // state.clockRate stays at the UNMULTIPLIED simClock value so client
@@ -9831,6 +9839,6 @@ export class SectorRoom extends Room<SectorState> {
     }
     // Phase 6 second-lever: if rate is at floor and we're still over budget,
     // shed far drones in batches. No-op when rate > 0.71 or budget healthy.
-    this.shedder.consider(newRate, busiestMs);
+    if (!this.perfFixedLoad) this.shedder.consider(newRate, busiestMs);
   }
 }

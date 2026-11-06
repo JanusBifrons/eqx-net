@@ -23,10 +23,17 @@ export interface PerfReading {
   longTaskMs: number;
   heapMb: number | null;
   worker: boolean;
+  /** Which art was on screen (main-thread renderer only; null in the worker). */
+  art: { mode: string; pending?: number; failed?: number } | null;
 }
 
 export function perfProbeEnabled(search: string): boolean {
   return new URLSearchParams(search).get('perfprobe') === '1';
+}
+
+function readArt(): PerfReading['art'] {
+  const s = (globalThis as { __eqxArtStats?: () => { mode: string; pending?: number; failed?: number } }).__eqxArtStats?.();
+  return s ? { mode: s.mode, ...(s.pending !== undefined ? { pending: s.pending } : {}), ...(s.failed !== undefined ? { failed: s.failed } : {}) } : null;
 }
 
 let current: { renderer: IRenderer; useWorker: boolean } | null = null;
@@ -78,6 +85,7 @@ export function installPerfProbe(rendererIn: IRenderer, useWorkerIn: boolean): v
         longTaskMs: Math.round(longTaskMs),
         heapMb: mem ? Math.round(mem.usedJSHeapSize / 1048576) : null,
         worker: cur.useWorker,
+        art: readArt(),
       };
     },
   };

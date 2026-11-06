@@ -20,6 +20,8 @@ Three rules make the numbers trustworthy:
 1. **Counts gate; timings compare.** Counts (bytes per second, display objects, live entities) barely depend on the machine. Timings (server tick, frame time) do, so a timing is only ever judged against a **base arm run on the same machine in the same session**, interleaved base/head/base/head (rustc-perf and Chrome's Pinpoint work the same way).
 2. **Percentiles and hitches, never mean FPS.** One 120 ms stall in a second of 16 ms frames is invisible in a mean.
 3. **Deterministic scenes.** A seeded room, a scripted timeline and an idle, near-invulnerable pilot, so both arms play the same scene.
+4. **Fixed work.** Perf rooms set `perfFixedLoad`: no time dilation and no load shedding. With them on, an overloaded server slows its clock and drops drones, so a slowdown shows up as fewer ships rather than slower ticks. The first injected-slowdown run (2026-11-06) showed exactly that: head finished below the ship floor and its tick time didn't separate from base.
+5. **Alternate the arm order** every rep. The arm that runs second in a round runs on a warmer machine; a fixed order gave head extra hitches in the self-test.
 
 ## Pieces
 
@@ -49,6 +51,17 @@ A run is **INVALID**, never fast, if any of these happen:
 - too few ships were left;
 - too few frames were recorded.
 
+## The per-PR counts gate
+
+`tests/integration/sectorRoom/perfSceneCounts.test.ts` (the integration suite, so CI runs it on every PR) plays `fleet-fight` and `teleport-raid` in a real room with a connected pilot. It counts the bytes that pilot's socket receives over 10 s, and fails if:
+- any spawn is refused;
+- the scene isn't busy enough;
+- bytes per second are over the budget in `src/shared-types/perf/perfBudgets.ts`.
+
+The budgets are the measurement plus about 25 %. Three runs on the laptop gave 214–218 KB/s for the fleet fight and 67.5–67.8 KB/s for the raid, matching the browser runs.
+
+`pnpm bench:gc` stays out of CI. It gates GC pause times and major-GC counts, which depend on the machine (its baseline had 0 major GCs and a run on 2026-11-06 had 1). A true per-tick allocation count needs a heap-profiling harness; that's a follow-up.
+
 ## The perf lab: watch it on your own device
 
 The harness's numbers come from a headless laptop browser with an idle pilot. To check that they match what a person sees, `pnpm perf:lab` serves the scenes on the local network:
@@ -64,6 +77,21 @@ Those verdicts, next to the numbers from the same take, set the absolute budgets
 The runner can slow the head arm on purpose: `--inject-server-burn N` busy-waits N ms in every server tick of the perf rooms, and `--inject-client-burn N` does the same in every client frame. Before a metric gates anything, two runs must hold:
 - main-vs-main comes back GREEN;
 - an injected run goes RED on the right metric.
+
+### Results (laptop, 2026-11-06)
+
+- **Self-test:** 5 reps of idle and fleet-fight, identical code on both arms. Every gated metric GREEN. Ledger: `perf/ledger/selftest-2026-11-06.json`.
+- **Injected:** fleet-fight, 4 reps, head slowed by 6 ms per server tick and 20 ms per client frame. The planted metrics went RED, the others stayed GREEN:
+
+  | Metric | Verdict | Base | Head | p |
+  |---|---|---|---|---|
+  | server tick p95 | RED | 17.6 ms | 34.5 ms | 0.03 |
+  | frame p95 | RED | 16.8 ms | 50 ms | 0.03 |
+  | hitches | RED | 18 a minute | 482 a minute | 0.03 |
+
+  Ledger: `perf/ledger/inject-2026-11-06.json`.
+- **How sensitive it is:** the laptop is noisy. Base fleet-fight tick p95 ranged from 10 to 19 ms across one session, so the gate catches large regressions (around 1.5× or more), not 10 %. It needs at least 4 reps per arm: with 3, Mann-Whitney can never reach p < 0.05.
+- **A finding:** a sustained 60-ship fight (180 ships over the window) pushes the laptop server's p99 tick to about 40 ms with load shedding off, against a 16.7 ms budget. In real play, time dilation and shedding absorb it.
 
 ## Adding a scene
 

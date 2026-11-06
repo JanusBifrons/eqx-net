@@ -17,7 +17,7 @@
 import { chromium, type Browser } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { CaptureServers, type ServerPorts } from '../showcase/servers.js';
 import { PERF_SCENES, type PerfScene } from '../src/shared-types/perf/perfScenes.js';
@@ -25,7 +25,7 @@ import { compareArms, type RunMetrics, type ArmVerdict } from './verdict.js';
 
 const GPU_ARGS = ['--use-angle=d3d11', '--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'];
 
-interface Args { scenes: string[]; reps: number; base: string; headOnly: boolean; headed: boolean; out: string; burnServerMs: number; burnClientMs: number }
+interface Args { scenes: string[]; reps: number; base: string; headOnly: boolean; headed: boolean; out: string; burnServerMs: number; burnClientMs: number; append: string | undefined }
 
 function parseArgs(argv: string[]): Args {
   const get = (k: string): string | undefined => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
@@ -39,6 +39,9 @@ function parseArgs(argv: string[]): Args {
     // Self-test only: slow the HEAD arm on purpose; the verdict must go RED.
     burnServerMs: Number(get('--inject-server-burn') ?? 0),
     burnClientMs: Number(get('--inject-client-burn') ?? 0),
+    // Add this run's reps to an existing ledger file and re-judge all of them
+    // (lets a long A/B run as short foreground chunks).
+    append: get('--append'),
   };
 }
 
@@ -83,7 +86,7 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
   try {
     const p = new URLSearchParams({
       room: `perf-${scene.id}`, testId: randomUUID(), spawnX: String(scene.spawn.x), spawnY: String(scene.spawn.y),
-      shipKind: 'fighter', initialHull: '1000000', art: 'machined', fx: 'new', cleanworld: '1', hud: 'none', diag: '0', perfprobe: '1',
+      shipKind: 'fighter', initialHull: '1000000', art: 'machined', fx: 'new', diag: '0', perfprobe: '1',
       ...arm.clientParams,
     });
     await page.goto(`${arm.servers.baseUrl}/?${p}`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
@@ -159,15 +162,33 @@ async function main(): Promise<void> {
   if (!args.headOnly) arms.push(mk('base', prepareBase(args.base), { server: 2767, vite: 5373 }));
   arms.push(mk('head', ROOT, { server: 2768, vite: 5374 }));
 
+  // --append: earlier chunks of this A/B (their reps join the verdict).
+  type Ledger = { when: string; device: string; reps: number; arms: Array<{ name: string; sha: string }>; scenes: Record<string, { title: string; injected: unknown; verdict: ArmVerdict | null; base: RunMetrics[]; head: RunMetrics[] }> };
+  const prior: Ledger | null = args.append && existsSync(args.append) ? (JSON.parse(readFileSync(args.append, 'utf8')) as Ledger) : null;
+  if (prior) {
+    const shas = arms.map((a) => `${a.name}@${a.sha}`).join(' ');
+    const priorShas = prior.arms.map((a) => `${a.name}@${a.sha}`).join(' ');
+    if (shas !== priorShas) throw new Error(`--append: arms differ (${priorShas} vs ${shas})`);
+  }
+  const priorReps = prior ? prior.reps : 0;
+
   const browser = await chromium.launch({ headless: !args.headed, args: GPU_ARGS });
   const results: Record<string, Record<string, RunMetrics[]>> = {};
   try {
     log(`perf scenes: ${scenes.map((s) => s.id).join(', ')} · reps ${args.reps} · arms ${arms.map((a) => `${a.name}@${a.sha}`).join(' vs ')}`);
-    for (const a of arms) { log(`starting ${a.name} servers…`); await a.servers.ensure('lean'); }
-    for (const scene of scenes) {
-      results[scene.id] = { base: [], head: [] };
-      for (let rep = 0; rep < args.reps; rep++) {
-        for (const a of arms) {
+    // One arm's servers at a time (an 8 GB laptop can't hold two pairs plus a
+    // GPU browser). Each rep boots one arm, plays every scene, then swaps:
+    // Order alternates per rep (base-head, head-base, …): the arm that runs
+    // second in a round runs on a warmer machine, and a fixed order showed up
+    // as head-only extra hitches in the first self-test.
+    for (const scene of scenes) results[scene.id] = { base: [], head: [] };
+    for (let rep = 0; rep < args.reps; rep++) {
+      const order = (priorReps + rep) % 2 === 0 ? arms : [...arms].reverse();
+      for (const a of order) {
+        for (const o of arms) if (o !== a) o.servers.stop();
+        log(`rep ${rep + 1}/${args.reps}: ${a.name} servers…`);
+        await a.servers.ensure('lean');
+        for (const scene of scenes) {
           let m: RunMetrics;
           try { m = await runOnce(browser, a, scene, log); } catch (e) {
             log(`  ${a.name} ${scene.id}: FAILED ${(e as Error).message}`);
@@ -182,6 +203,14 @@ async function main(): Promise<void> {
     for (const a of arms) a.servers.stop();
   }
 
+  if (prior) {
+    for (const scene of scenes) {
+      const old = prior.scenes[scene.id];
+      if (!old) continue;
+      results[scene.id]!['base']!.unshift(...old.base);
+      results[scene.id]!['head']!.unshift(...old.head);
+    }
+  }
   const verdicts: Record<string, ArmVerdict | null> = {};
   for (const scene of scenes) {
     const r = results[scene.id]!;
@@ -190,16 +219,16 @@ async function main(): Promise<void> {
   mkdirSync(args.out, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const head = arms.find((a) => a.name === 'head')!;
-  const file = path.join(args.out, `${stamp}-${head.sha}-desktop.json`);
+  const file = args.append ?? path.join(args.out, `${stamp}-${head.sha}-desktop.json`);
   writeFileSync(file, JSON.stringify({
-    when: new Date().toISOString(), device: 'desktop', reps: args.reps,
+    when: new Date().toISOString(), device: 'desktop', reps: results[scenes[0]!.id]!['head']!.length,
     arms: arms.map((a) => ({ name: a.name, sha: a.sha })),
     scenes: Object.fromEntries(scenes.map((s) => [s.id, {
       title: s.title,
       injected: { serverBurnMs: args.burnServerMs, clientBurnMs: args.burnClientMs },
       verdict: verdicts[s.id],
-      base: results[s.id]!['base']!.map(({ raw: _raw, ...rest }) => rest),
-      head: results[s.id]!['head']!.map(({ raw: _raw, ...rest }) => rest),
+      base: results[s.id]!['base']!.map(({ raw: _raw, ...rest }) => ({ ...rest, raw: null })),
+      head: results[s.id]!['head']!.map(({ raw: _raw, ...rest }) => ({ ...rest, raw: null })),
     }])),
   }, null, 2));
   log(`\nledger: ${path.relative(ROOT, file)}`);
