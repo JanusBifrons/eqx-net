@@ -377,6 +377,10 @@ export interface ProjectileRenderState {
 }
 
 export interface RenderMirror {
+  /** The frame timestamp the local ship's pose is drawn at (main-thread
+   *  performance.now base; deltas only). The cinematic camera's velocity
+   *  estimate uses it. Absent ⇒ the renderer's clock. */
+  frameTimeMs?: number;
   ships: Map<string, ShipRenderState>;
   /** Phase 6b — lingering player hulls (isActive=false on the wire).
    *  These are NOT in `mirror.ships` (which is playerId-keyed and would
@@ -740,6 +744,14 @@ export interface RendererFeedback {
    * it (touch keeps the tap-to-position → Confirm-banner flow). Starts at 0.
    */
   placementConfirmSeq: number;
+  /**
+   * Helm orders (capital-ship R&D round 3 D). A capital pilot's tap on empty
+   * space sets a course point (game space, y up); the renderer bumps the seq
+   * and the main thread edge-detects it, like `placementConfirmSeq`.
+   */
+  helmCourseSeq: number;
+  helmCourseX: number;
+  helmCourseY: number;
   /**
    * Structure placement connection-range preview (structures follow-up Item C).
    * The number of existing structures the placement ghost WOULD connect to if

@@ -16,6 +16,7 @@
  * the galaxy snapshot (`SectorLiveState.elite`, via `sectorElite`) — the
  * notices are accelerators only (#16).
  */
+import { sectorSpace } from '../../shared-types/sectorBounds.js';
 import type { Bus } from '../../core/events/Bus.js';
 import { ELITE_ID_PREFIX, ELITE_KINDS, eliteName } from '../../shared-types/elites.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
@@ -29,8 +30,8 @@ export const MAX_ELITES = 2;
 /** A slain elite's replacement appears this long after (a real lull). */
 export const ELITE_RESPAWN_MS = 8 * 60_000;
 /** How far from the sector centre an elite appears + wanders. */
-export const ELITE_SPAWN_RADIUS = 2600;
-export const ELITE_ROAM_RADIUS = 3200;
+export const ELITE_SPAWN_RADIUS = sectorSpace(2600);
+export const ELITE_ROAM_RADIUS = sectorSpace(3200);
 /** Pick a new wander point this often. */
 export const ELITE_ROAM_INTERVAL_MS = 40_000;
 

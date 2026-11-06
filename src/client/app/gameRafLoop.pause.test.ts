@@ -116,7 +116,7 @@ function buildLoop(fake: Fake): { loop: (now: number) => void; animFrameRef: { c
   const mockRenderer = {
     update: fake.rendererUpdate,
     glideCameraTo: vi.fn(),
-    getFeedback: () => ({ firstFrameRendered: false, artReady: fakeArtReady.value, mountCounts: new Map(), haloArrowCount: 0, selectedPickId: null, selectedPickKind: null }),
+    getFeedback: () => ({ firstFrameRendered: false, artReady: fakeArtReady.value, mountCounts: new Map(), haloArrowCount: 0, selectedPickId: null, selectedPickKind: null, helmCourseSeq: 0, helmCourseX: 0, helmCourseY: 0 }),
   } as unknown as IRenderer;
   const el = document.createElement('div');
   const animFrameRef = { current: 0 };

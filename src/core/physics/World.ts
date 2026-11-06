@@ -7,12 +7,12 @@ import {
   type ShipKind,
   type ShipKindId,
 } from '../../shared-types/shipKinds.js';
-import { configureShipCollider, shipBallColliderDesc } from './colliderConfig.js';
+import { configureShipCollider, shipShieldColliderDesc } from './colliderConfig.js';
 import { applyShipInput, type ShipInputMultipliers } from './applyShipInput.js';
 import { castHitscan } from './hitscanRay.js';
 import { wallGeometry } from '../structures/ShieldWall.js';
 import { PAD_PUSH_ACCEL, padPushDir } from '../../shared-types/teleport.js';
-import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { massOf, shipAngularInertia } from '../../shared-types/shipScale/tuning.js';
 
 const FIXED_DT = 1 / 60;
 
@@ -203,7 +203,7 @@ export class PhysicsWorld {
     // the same pad). Pinned mass + inertia stay derived from the bare
     // `kind.radius` — they're a kind-feel knob, not a function of the
     // current collider geometry (the pad doesn't change ship handling).
-    this.world.createCollider(shipBallColliderDesc(kind.radius + shipTuning(kind).shieldPad), body);
+    this.world.createCollider(shipShieldColliderDesc(kind), body);
     // Per-kind mass with a `default 1` back-compat path: every legacy
     // kind sat at mass 1 historically (the pinned value below), so
     // omitting `kind.mass` keeps every existing physics test byte-
@@ -211,7 +211,7 @@ export class PhysicsWorld {
     // heavier kind also rotates proportionally more sluggishly under
     // torque — same physical reality as a denser uniform disc.
     const m = massOf(kind, 1);
-    body.setAdditionalMassProperties(m, { x: 0, y: 0 }, 0.5 * m * kind.radius * kind.radius, true);
+    body.setAdditionalMassProperties(m, { x: 0, y: 0 }, shipAngularInertia(m, kind.radius), true);
     body.recomputeMassPropertiesFromColliders();
     this.bodies.set(id, { body, kind, exposed: false });
     this.handleToId.set(body.handle, id);
@@ -241,6 +241,9 @@ export class PhysicsWorld {
     linearDamping = 0,
     collisionGroups?: number,
     parts?: ReadonlyArray<ReadonlyArray<Vec2>>,
+    /** Capital-ship R&D: a drone of this kind starts with its hull-shaped
+     *  shield collider (`shipShieldColliderDesc`) instead of a ball. */
+    shieldKind?: ShipKind,
   ): void {
     // WS-11 (R2.25) — `linearDamping` defaults to 0 so ASTEROIDS + STRUCTURES
     // stay ballistic (no friction), but DRONES pass their per-kind
@@ -290,6 +293,9 @@ export class PhysicsWorld {
       }
     }
     const isBall = !(vertices && vertices.length >= 3);
+    if (!collider && shieldKind?.sizeClass === 'capital') {
+      collider = shipShieldColliderDesc(shieldKind);
+    }
     if (!collider) {
       // Drone / plain-obstacle ball: ZERO density + a pinned additional
       // mass (set after createCollider below) so setHullExposed\u2019s
@@ -490,7 +496,7 @@ export class PhysicsWorld {
       // Shield up — ball collider extends `SHIELD_RADIUS_PAD` past the hull
       // (same constant as the visual ShieldAura ring) so the rapier
       // collider matches what the player sees.
-      this.world.createCollider(shipBallColliderDesc(kind.radius + shipTuning(kind).shieldPad), body);
+      this.world.createCollider(shipShieldColliderDesc(kind), body);
     }
     // Re-fold the pinned additional mass-props now (Rapier otherwise defers
     // to the next step). Total stays mass 1 / I 0.5r^2 -- the new colliders

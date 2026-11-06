@@ -79,6 +79,9 @@ function emptyFeedback(): RendererFeedback {
     placementChosenWorldY: null,
     placementStuck: false,
     placementConfirmSeq: 0,
+    helmCourseSeq: 0,
+    helmCourseX: 0,
+    helmCourseY: 0,
     placementPreviewConnectionCount: 0,
     selectedPickId: null,
     selectedPickKind: null,
@@ -700,6 +703,9 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.placementChosenWorldY = msg.feedback.placementChosenWorldY;
         this.feedback.placementStuck = msg.feedback.placementStuck;
         this.feedback.placementConfirmSeq = msg.feedback.placementConfirmSeq;
+        this.feedback.helmCourseSeq = msg.feedback.helmCourseSeq;
+        this.feedback.helmCourseX = msg.feedback.helmCourseX;
+        this.feedback.helmCourseY = msg.feedback.helmCourseY;
         this.feedback.placementPreviewConnectionCount =
           msg.feedback.placementPreviewConnectionCount;
         this.feedback.selectedPickId = msg.feedback.selectedPickId;

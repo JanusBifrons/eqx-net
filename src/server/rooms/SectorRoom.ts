@@ -77,7 +77,7 @@ import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
-import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isPlayableShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isPlayableShipKindId, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { isOnSightHostile } from '../../shared-types/allegiances.js';
 import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
 import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
@@ -160,8 +160,8 @@ import { chooseBaseSite, grownExtent, nearestClearPoint, type SiteBox, type Site
 import { galaxyBasePlan, type GalaxyBasePlan } from '../../core/bases/galaxyBases.js';
 import type { SectorFeature } from '../../core/galaxy/galaxy.js';
 /** Clear space kept between two NPC bases in one sector (bastions, mines, traffic). */
-const NPC_BASE_GAP = 900;
-import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
+const NPC_BASE_GAP = sectorSpace(900);
+import { SECTOR_PLAYABLE_HALF_EXTENT, sectorSpace } from '../../shared-types/sectorBounds.js';
 import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
@@ -636,7 +636,7 @@ const IDLE_MOTION_EPSILON_SQ = 0.05;
  *  region — this is the "should never fire" guard for runaway pursuits
  *  and the long-session drift bug captured 2026-05-10 (drones at ~4 M
  *  units). Asteroids are unaffected. */
-const DRONE_MAX_BOUNDS = 10000;
+const DRONE_MAX_BOUNDS = SECTOR_PLAYABLE_HALF_EXTENT * 2;
 
 // WorkerCmd union extracted to PhysicsWorkerProxy.ts
 
@@ -849,6 +849,8 @@ export class SectorRoom extends Room<SectorState> {
   });
   /** C2 bespoke trigger (testMode `breakInMs`). */
   private testBreakInMs: number | null = null;
+  /** Round 3 D test switch (testMode `pilotCapitals`). */
+  private testPilotCapitals = false;
   /** C1 — pilots who moved cargo by hand. Auto-deposit stays off for them
    *  until they fly out of deposit range of their storage, so a withdrawal
    *  from your own storage isn't banked straight back 2 s later. */
@@ -1559,6 +1561,9 @@ export class SectorRoom extends Room<SectorState> {
       testAlienGate?: { x: number; y: number; neighbour: string };
       /** C2 bespoke trigger: every break-in takes this long (ms). testMode-only. */
       breakInMs?: number;
+      /** Capital-ship R&D (round 3 D): a player may join flying a capital
+       *  (capitals stay npcOnly everywhere else). testMode-only. */
+      pilotCapitals?: boolean;
       /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
@@ -2106,6 +2111,7 @@ export class SectorRoom extends Room<SectorState> {
       swarmEncoder: this.swarmEncoder,
       snapshotBroadcaster: this.snapshotBroadcaster,
       logger,
+      viewerRadius: (playerId) => getShipKind(this.getActiveShip(playerId)?.kind).radius,
     });
 
     // GEP B4 — the single orchestration entry point for per-tick entity sync.
@@ -2149,8 +2155,8 @@ export class SectorRoom extends Room<SectorState> {
       : undefined;
     this.swarmSpawner = new SwarmSpawner(this.swarmRegistry, {
       takeSlot: () => this.freeSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts) =>
-        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, shieldKindId) =>
+        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}) }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
@@ -2712,6 +2718,7 @@ export class SectorRoom extends Room<SectorState> {
       this.hydrateFromSnapshot();
     }
     if (this.testMode && roomOpts.breakInMs !== undefined) this.testBreakInMs = Math.max(1, roomOpts.breakInMs);
+    this.testPilotCapitals = this.testMode && roomOpts.pilotCapitals === true;
     // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
     if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {
       this.seedGalaxyBase(this.sectorKey);
@@ -4697,7 +4704,7 @@ export class SectorRoom extends Room<SectorState> {
     }
     const ext = grownExtent(grown.placements);
     const site = chooseBaseSite(ext, hard, soft, {
-      halfExtent: SECTOR_PLAYABLE_HALF_EXTENT, margin: 250, step: 250, seed,
+      halfExtent: SECTOR_PLAYABLE_HALF_EXTENT, margin: 250, step: sectorSpace(250), seed,
     });
     if (site === null) {
       logger.warn({ sectorKey, baseId: plan.baseId, tier: profile.tier, role: profile.role }, 'npc base: no site fits; base skipped');
@@ -7000,7 +7007,9 @@ export class SectorRoom extends Room<SectorState> {
     // swap kind by reconnecting — the existing ShipState.kind is preserved).
     const requestedKind = parsed.success
         && typeof parsed.data.shipKind === 'string'
-        && isPlayableShipKindId(parsed.data.shipKind)
+        && (isPlayableShipKindId(parsed.data.shipKind)
+          || (this.testPilotCapitals && isShipKindId(parsed.data.shipKind)
+            && getShipKind(parsed.data.shipKind).sizeClass === 'capital'))
       ? parsed.data.shipKind
       : DEFAULT_SHIP_KIND;
 

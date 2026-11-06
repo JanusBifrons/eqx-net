@@ -1,3 +1,4 @@
+import { refineRayHit } from '@core/combat/capitalHits';
 import { decodeStructureState, emptyStructureRow } from './structureStateDecode.js';
 import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import {
@@ -118,6 +119,8 @@ const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
 import { getWeapon, weaponAutoFireRange, type WeaponDef } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
 import { gateDisabledInput, type ControlBits } from '@core/combat/disable';
+import { DEAD_RECKON_BACK_MS, DEAD_RECKON_CAP_MS, RENDER_DUE_SLEW_MS, RENDER_DUE_SNAP_MS, slewTickDue, tickBoundaryDueMs } from './renderTickPhase';
+import { helmStep, makeHelmOutput, type HelmOrder, type HelmPose, type HelmSpeed } from '@core/helm/helm';
 import { resolveSlotMounts, resolveInstanceMounts, resolveInstanceFireMounts } from '@shared-types/shipKinds/slots';
 import { HitPredictionLedger } from '@core/combat/HitPrediction';
 import {
@@ -754,6 +757,15 @@ export class ColyseusGameClient {
   private _disabledUntilMs = 0;
   /** Reused input bits for the shared disable gate (#14, #15). */
   private readonly _disableBits: ControlBits = { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false };
+  /** Helm orders (capital-ship R&D round 3 D). The helm turns a course point
+   *  and a speed setting into ordinary inputs before they are sent, so the
+   *  server and prediction replay the same inputs (#12, #15). Scratch reused
+   *  every tick (#14). */
+  private readonly _helmOrder: HelmOrder = { active: false, tx: 0, ty: 0, speed: 3 };
+  private readonly _helmOut = makeHelmOutput();
+  private readonly _helmPose: HelmPose = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0 };
+  private _helmKindId: string | null = null;
+  private _helmAvailable = false;
   /** A3 — the local ship's pose for distance-streaming walls (NaN ⇒ none). */
   private _predWallShipX = NaN;
   private _predWallShipY = NaN;
@@ -3805,7 +3817,11 @@ export class ColyseusGameClient {
   /**
    * Called once per render frame by App.tsx before renderer.update().
    */
-  updateMirror(): void {
+  /** `frameNowMs`: the frame's own timestamp (the RAF time), so the local ship
+   *  is drawn where it is at the moment the frame stands for, not wherever the
+   *  clock had got to after this frame's snapshot work. Absent ⇒ the clock. */
+  updateMirror(frameNowMs?: number): void {
+    this.mirror.frameTimeMs = frameNowMs ?? this.clock.now();
     // step 10: 1Hz HUD dispatcher — drains pending hull/shield pct to
     // Zustand at most once per second. Bar's CSS transition animates
     // smoothly between samples. Per-event handlers (handleDamage,
@@ -3880,7 +3896,7 @@ export class ColyseusGameClient {
         // perceived "stop-start" jitter. Locked by `assertFramePacingSmooth`
         // on the 2q0jxw capture.
         //
-        // Dead-reckon dt is capped at 32 ms (~2 ticks) to avoid wild
+        // Dead-reckon dt is capped at DEAD_RECKON_CAP_MS (~2 ticks) to avoid wild
         // extrapolation across multi-second stalls (tab background,
         // OS process reap) — those become discrete "freeze events"
         // visually, not glide-overshoot artifacts.
@@ -3890,8 +3906,11 @@ export class ColyseusGameClient {
         // pose (acceleration term is sub-pixel for typical ship
         // accelerations over 16.7 ms), so the transition from dead-
         // reckon to authoritative tick is visually continuous.
+        // From the frame's timestamp; a tick that fell due after the frame
+        // started (during this frame's work) makes it slightly negative, i.e.
+        // the pose a fraction of a tick before the state: still continuous.
         const tickElapsedMs = this._lastLocalTickAtMs >= 0
-          ? Math.max(0, Math.min(32, this.clock.now() - this._lastLocalTickAtMs))
+          ? Math.max(-DEAD_RECKON_BACK_MS, Math.min(DEAD_RECKON_CAP_MS, (frameNowMs ?? this.clock.now()) - this._lastLocalTickAtMs))
           : 0;
         const dtSec = tickElapsedMs / 1000;
         const drX = state.x + state.vx * dtSec;
@@ -4531,6 +4550,59 @@ export class ColyseusGameClient {
     this.rafStallDetector.detectGap(elapsedMs, this.inputTick, this.clock.now());
   }
 
+  /** Helm orders: set the course point (game space). Only a ship that takes
+   *  helm orders (a capital) accepts one. */
+  setHelmCourse(x: number, y: number): void {
+    if (!this._helmAvailable) return;
+    this._helmOrder.tx = x;
+    this._helmOrder.ty = y;
+    this._helmOrder.active = true;
+    this.publishHelm();
+  }
+
+  /** Helm orders: stop, one third, two thirds or full. */
+  setHelmSpeed(speed: HelmSpeed): void {
+    this._helmOrder.speed = speed;
+    this.publishHelm();
+  }
+
+  /** Cancel the course (WASD does this too). */
+  clearHelm(): void {
+    if (!this._helmOrder.active) return;
+    this._helmOrder.active = false;
+    this._helmOut.thrust = false; this._helmOut.turnLeft = false; this._helmOut.turnRight = false;
+    this.publishHelm();
+  }
+
+  /** Test/showcase read of the helm (`__eqxHelm`). */
+  getHelmOrder(): Readonly<HelmOrder> { return this._helmOrder; }
+
+  private publishHelm(): void {
+    useUIStore.getState().setHelmState(this._helmAvailable, this._helmOrder.active, this._helmOrder.speed);
+  }
+
+  /** Helm availability follows the ship you fly (id compare; free when unchanged). */
+  private updateHelmAvailability(): void {
+    const id = this.mirror.localPlayerId;
+    const kindId = id ? this.mirror.ships.get(id)?.kind ?? null : null;
+    if (kindId === this._helmKindId) return;
+    this._helmKindId = kindId;
+    this._helmAvailable = kindId !== null && getShipKind(kindId).sizeClass === 'capital';
+    if (!this._helmAvailable) this._helmOrder.active = false;
+    this.publishHelm();
+  }
+
+  /** One helm tick off the real-time predicted pose (same source the stick reads). */
+  private stepHelm(): void {
+    const id = this.mirror.localPlayerId;
+    const s = id ? this.predWorld?.getShipState(id) ?? null : null;
+    if (s === null || this._helmKindId === null) return;
+    const p = this._helmPose;
+    p.x = s.x; p.y = s.y; p.angle = s.angle; p.vx = s.vx; p.vy = s.vy; p.angvel = s.angvel ?? 0;
+    helmStep(this._helmOrder, p, getShipKind(this._helmKindId), this._helmOut);
+    if (this._helmOut.arrived) this.clearHelm();
+  }
+
   tickPhysics(elapsedMs: number): void {
     if (!this.room || !this.keyboard) return;
     this.lastFrameMs = elapsedMs;
@@ -4586,6 +4658,7 @@ export class ColyseusGameClient {
     // locked by `joystickToInput.test.ts` and a resulting corr-rate spiral
     // would trip the netcode-health gate (`pnpm e2e:netgate`).
     const kb = this.keyboard.read();
+    this.updateHelmAvailability();
     while (this.inputTick < targetTick && stepsThisFrame < MAX_CATCH_UP_TICKS) {
       // Over-prediction cap. `lastAckedTick > 0` excludes the
       // welcome-to-first-snapshot window (~50 ms; too short to spiral).
@@ -4630,10 +4703,16 @@ export class ColyseusGameClient {
       }
       // v4 A — a disabled ship's engines and weapons are off: the SAME shared
       // gate the server applies to our input (#15), so prediction agrees.
+      // Helm orders: WASD / the stick override (and cancel) a course.
+      if (this._helmOrder.active) {
+        if (kb.thrust || kb.turnLeft || kb.turnRight || kb.reverse || tcThrust || tcTurnLeft || tcTurnRight) this.clearHelm();
+        else this.stepHelm();
+      }
+      const helm = this._helmOrder.active ? this._helmOut : null;
       const db = this._disableBits;
-      db.thrust = kb.thrust || tcThrust;
-      db.turnLeft = kb.turnLeft || tcTurnLeft;
-      db.turnRight = kb.turnRight || tcTurnRight;
+      db.thrust = kb.thrust || tcThrust || (helm?.thrust ?? false);
+      db.turnLeft = kb.turnLeft || tcTurnLeft || (helm?.turnLeft ?? false);
+      db.turnRight = kb.turnRight || tcTurnRight || (helm?.turnRight ?? false);
       db.boost = kb.boost || (this.touchInput?.getBoostHeld() ?? false);
       // Reverse is keyboard-only in v1 — no on-screen button on touch yet.
       db.reverse = kb.reverse;
@@ -4786,14 +4865,20 @@ export class ColyseusGameClient {
       // Always advance physics — remote ships and obstacles must keep moving even while dead.
       if (this.predWorld) {
         this.predWorld.tick(1 / 60);
-        // Render-jitter-fix Phase 1: stamp wall-clock at this tick so
-        // `updateMirror`'s dead-reckon term knows how stale the latest
-        // predWorld pose is. All ticks within a single RAF's catch-up
-        // burst share the same `clock.now()` — that's correct, because
-        // they all happened at the same wall-clock instant; the
-        // dead-reckon dt is 0 for the burst-final RAF and accumulates
-        // only on subsequent 0-step RAFs.
-        this._lastLocalTickAtMs = this.clock.now();
+        // Stamp the wall-clock time this state STANDS FOR (when its tick
+        // boundary was due), so `updateMirror`'s dead-reckon is measured
+        // from there. Stamping the processing time drew the ship a tick
+        // ahead after a 2-tick frame and then stalled it: the fly-by judder
+        // (renderTickPhase.ts; lock: capital-flyby-smooth.spec.ts).
+        // ...advanced one tick per tick and only SLEWED toward the anchor-based
+        // due time: the anchor follows snapshot arrival, and a late snapshot
+        // moved it a whole tick, lurching the drawn ship (slewTickDue).
+        const due = tickBoundaryDueMs(
+          this.clockAnchorPerfNow, this.clockAnchorServerTick, this.leadTicks, this.inputTick, FIXED_MS,
+        );
+        this._lastLocalTickAtMs = this._lastLocalTickAtMs < 0
+          ? due
+          : slewTickDue(this._lastLocalTickAtMs, due, FIXED_MS, RENDER_DUE_SLEW_MS, RENDER_DUE_SNAP_MS);
       }
 
       // Replay-grade per-tick predicted-pose capture (plan: replay infra
@@ -5018,10 +5103,12 @@ export class ColyseusGameClient {
           tcThrust2 = next.thrust;
         }
       }
+      // Helm: the sentinel re-sends the last helm bits (no new tick to step).
+      const helm2 = this._helmOrder.active ? this._helmOut : null;
       const db2 = this._disableBits;
-      db2.thrust = kb.thrust || tcThrust2;
-      db2.turnLeft = kb.turnLeft || tcTurnLeft2;
-      db2.turnRight = kb.turnRight || tcTurnRight2;
+      db2.thrust = kb.thrust || tcThrust2 || (helm2?.thrust ?? false);
+      db2.turnLeft = kb.turnLeft || tcTurnLeft2 || (helm2?.turnLeft ?? false);
+      db2.turnRight = kb.turnRight || tcTurnRight2 || (helm2?.turnRight ?? false);
       db2.boost = kb.boost || (this.touchInput?.getBoostHeld() ?? false);
       db2.reverse = kb.reverse;
       gateDisabledInput(this.isLocallyDisabled(), db2);
@@ -5416,7 +5503,9 @@ export class ColyseusGameClient {
       const sw = this.mirror.swarm?.get(Number(hitId.slice(6)));
       // Drones only (kind===1); asteroids (kind===0) have no shield.
       if (sw && sw.kind === 1 && sw.shieldDown !== true) {
-        const d = rayHitsSphere(fromX, fromY, fwdX, fwdY, maxRange, sw.x, sw.y, sw.radius + tuningFor(sw.shipKind).shieldPad);
+        const c = rayHitsSphere(fromX, fromY, fwdX, fwdY, maxRange, sw.x, sw.y, sw.radius + tuningFor(sw.shipKind).shieldPad);
+        // Capitals: the hull, as the server resolves it (#15).
+        const d = refineRayHit(sw.shipKind, c, fromX, fromY, fwdX, fwdY, maxRange, sw.x, sw.y, sw.angle);
         if (d !== null) return d;
       }
       return hit.dist;

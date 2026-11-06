@@ -64,10 +64,15 @@ export type DirectorStatus = 'idle' | 'active' | 'released';
 /** Smallest box a `frame` shot fits, so a single entity doesn't zoom to max. */
 export const FRAME_MIN_EXTENT = 400;
 const DEFAULT_FRAME_PADDING = 0.25;
-const DEFAULT_FRAME_MIN_ZOOM = 0.15;
+/** Low enough to frame a 10x capital fleet (round 3); a shot can raise it. */
+const DEFAULT_FRAME_MIN_ZOOM = 0.02;
 const DEFAULT_FRAME_MAX_ZOOM = 3;
-/** EMA weight for the tracked entity's velocity estimate (per update). */
-const LEAD_VELOCITY_ALPHA = 0.25;
+/** Time constant (ms) of the tracked entity's velocity estimate. The lead is
+ *  velocity × (leadMs + smoothMs), seconds long for a slow cinematic move, so
+ *  frame-to-frame noise in the velocity must be averaged over time, not per
+ *  update (a per-update 0.25 EMA shook the whole view in the round 3 fly-by's
+ *  2.5 s zoom-out). */
+export const LEAD_VELOCITY_TAU_MS = 250;
 
 export class CameraDirector {
   private cues: readonly CameraCue[] = [];
@@ -89,6 +94,7 @@ export class CameraDirector {
   private trackPrevMs = 0;
   private trackVx = 0;
   private trackVy = 0;
+  private poseNowMs = 0;
 
   private readonly _pt: MutablePoint = { x: 0, y: 0 };
   private readonly _vp: MutablePoint = { x: 0, y: 0 };
@@ -127,8 +133,14 @@ export class CameraDirector {
    * - `'released'`: the script hit a `release` cue; the caller should hand the
    *   camera back to gameplay. The director stops itself.
    */
-  update(nowMs: number, lookup: CameraTargetLookup, out: DirectorTarget): DirectorStatus {
+  /** `poseTimeMs`: the time the looked-up poses stand for (the frame's
+   *  timestamp). The `track` velocity is measured against it; measured against
+   *  the render-time clock instead, frame-work noise became velocity noise and,
+   *  times a seconds-long lead, shook the view. Absent ⇒ `nowMs`. Cue timing
+   *  always uses `nowMs`. */
+  update(nowMs: number, lookup: CameraTargetLookup, out: DirectorTarget, poseTimeMs?: number): DirectorStatus {
     if (!this.playing) return 'idle';
+    this.poseNowMs = poseTimeMs ?? nowMs;
     const elapsed = nowMs - this.startMs;
 
     // Advance to the latest cue whose start time has passed.
@@ -203,7 +215,7 @@ export class CameraDirector {
         if (!lookup.pose(shot.target, this._pt)) return false;
         const px = this._pt.x;
         const py = this._pt.y;
-        this.updateTrackVelocity(shot.target, px, py, nowMs);
+        this.updateTrackVelocity(shot.target, px, py, this.poseNowMs);
         // Feed-forward: a critically-damped spring trails a constant-velocity
         // target by ≈ v × smoothTime, so aim that far ahead to cancel the lag;
         // `leadMs` is then a genuine look-ahead on top.
@@ -274,8 +286,9 @@ export class CameraDirector {
       if (dt > 0) {
         const vx = (x - this.trackPrevX) / dt;
         const vy = (y - this.trackPrevY) / dt;
-        this.trackVx += (vx - this.trackVx) * LEAD_VELOCITY_ALPHA;
-        this.trackVy += (vy - this.trackVy) * LEAD_VELOCITY_ALPHA;
+        const k = 1 - Math.exp(-dt / LEAD_VELOCITY_TAU_MS);
+        this.trackVx += (vx - this.trackVx) * k;
+        this.trackVy += (vy - this.trackVy) * k;
       }
     }
     this.trackPrevX = x;

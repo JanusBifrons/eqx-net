@@ -1,0 +1,12 @@
+{
+  "sectorScale": 1,
+  "halfExtent": 5000,
+  "drones": 200,
+  "rocks": 300,
+  "swarmTotal": 500,
+  "inInterest": 281,
+  "ticks": 180,
+  "tickMedianMs": 2.38,
+  "tickP95Ms": 4.052,
+  "bytesPerSec": 292274
+}

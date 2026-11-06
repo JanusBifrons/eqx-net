@@ -110,4 +110,35 @@ describe('SpatialGrid', () => {
     expect(s.entityCount).toBe(6);
     expect(s.maxCellPopulation).toBe(5);
   });
+
+  // Round 3 C (capital ships): a 5.8 km battleship's centre can sit cells
+  // away from a viewer whose window holds its bow.
+  it('a wide entity (capital) is in a window its radius overlaps, even when its centre is outside', () => {
+    const g = new SpatialGrid();
+    const battleshipRadius = 2880; // half of 5,760 u
+    g.move(7, CELL_SIZE * 3.5, 0, battleshipRadius); // first sight marks it wide
+    g.move(8, CELL_SIZE * 3.5, 0, 20);              // a fighter at the same spot is not
+    const out = new Set<number>();
+    g.query9(0, 0, out);                            // window spans cells -1..1
+    expect(out.has(7)).toBe(true);
+    expect(out.has(8)).toBe(false);
+    g.query9(-4, 0, out);                           // far beyond its reach
+    expect(out.has(7)).toBe(false);
+    g.remove(7);
+    g.query9(0, 0, out);
+    expect(out.has(7)).toBe(false);
+  });
+
+  it('a capital pilot sees a wider window; a fighter keeps the 3x3', () => {
+    expect(SpatialGrid.viewerReachFor(20)).toBe(1);
+    expect(SpatialGrid.viewerReachFor(CELL_SIZE / 2)).toBe(1);
+    expect(SpatialGrid.viewerReachFor(2880)).toBe(3);
+    const g = new SpatialGrid();
+    g.insert(1, CELL_SIZE * 3.5, 0);
+    const out = new Set<number>();
+    g.query9(0, 0, out, 1);
+    expect(out.has(1)).toBe(false);
+    g.query9(0, 0, out, SpatialGrid.viewerReachFor(2880));
+    expect(out.has(1)).toBe(true);
+  });
 });

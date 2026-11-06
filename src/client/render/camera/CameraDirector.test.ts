@@ -131,6 +131,31 @@ describe('CameraDirector', () => {
     expect(o.x).toBeLessThan(poses.a.x + 600);
   });
 
+  it('a long smoothed track stays steady when frame timing is noisy (round 3 fly-by shake)', () => {
+    // 0.25 u/ms cruise, frames every ~16.7 ms; the director runs ±2 ms off the
+    // frame time the pose was drawn at, and is told that pose time. Lead = (250 + 2500) ms, as the fly-by's zoom-out cue.
+    const d = new CameraDirector();
+    d.play([{ atMs: 0, shot: { kind: 'track', target: 'a', zoom: 1, leadMs: 250 }, smoothMs: 2500 }], 0);
+    const o = out();
+    const poses = { a: { x: 0, y: 0 } };
+    const lookup = makeLookup(poses);
+    let prevTarget = NaN, worst = 0;
+    for (let f = 0; f < 600; f++) {
+      const frame = f * (1000 / 60);
+      poses.a.x = frame * 0.25;
+      const sampledAt = frame + 2 * Math.sin(f * 2.1);
+      // The raw target the spring chases: read through a zero-smooth probe of
+      // the director's lead (pose + v × lead).
+      d.update(sampledAt, lookup, o, frame);
+      const v = (d as unknown as { trackVx: number }).trackVx;
+      const target = poses.a.x + v * 2750;
+      if (f > 120 && !Number.isNaN(prevTarget)) worst = Math.max(worst, Math.abs((target - prevTarget) - 0.25 * (1000 / 60)));
+      prevTarget = target;
+    }
+    // The lead target moves with the ship, not ±tens of units a frame.
+    expect(worst).toBeLessThan(3);
+  });
+
   it('holds the last framing when the tracked subject disappears', () => {
     const d = new CameraDirector();
     d.play([{ atMs: 0, shot: { kind: 'track', target: 'a', zoom: 1 } }], 0);

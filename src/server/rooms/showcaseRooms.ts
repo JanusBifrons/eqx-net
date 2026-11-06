@@ -19,6 +19,8 @@ import { growBase } from '../../core/bases/growBase.js';
 import { grownExtent } from '../../core/bases/baseSite.js';
 import { linkId } from '../../core/bases/transitNetwork.js';
 
+import { getShipKind } from '../../shared-types/shipKinds.js';
+
 export const SHOWCASE_PILOT_ID = '5ca5e000-0000-4000-8000-000000000001';
 
 /** The six player ship kinds parked peacefully in a line-up. */
@@ -38,6 +40,47 @@ export const SHOWCASE_SHIP_GALLERY_OPTS = {
   defaultSpawnY: -150,
   maxClients: 4,
 } as const;
+
+/**
+ * Capital-ship R&D (plan eager-sauteeing-curry): the five capitals parked side
+ * by side, nose up, spaced by their beams (so either size mapping fits), with a
+ * fighter and a base core for scale. Join with `startHostile=1` and they turn
+ * and fire (the broadside shot).
+ */
+const CAPITAL_IDS = ['destroyer', 'light-cruiser', 'heavy-cruiser', 'battlecruiser', 'battleship'] as const;
+function capitalLineup(): Array<{ kind: string; x: number; y: number; angle: number }> {
+  const beamOf = (id: string): number => {
+    const hull = (getShipKind(id).shape as { hull?: ReadonlyArray<readonly [number, number]> }).hull ?? [];
+    let w = 10;
+    for (const [x] of hull) w = Math.max(w, Math.abs(x));
+    return 2 * w;
+  };
+  let gap = 0;
+  for (const id of CAPITAL_IDS) gap = Math.max(gap, beamOf(id) * 2.6);
+  const n = CAPITAL_IDS.length;
+  const poses = CAPITAL_IDS.map((kind, i) => ({ kind: kind as string, x: (i - (n - 1) / 2) * gap, y: 0, angle: 0 }));
+  poses.push({ kind: 'fighter', x: -((n - 1) / 2) * gap - gap * 0.8, y: 0, angle: 0 });
+  // A parked wing of fighters south of the fleet, for scale (and the far-zoom
+  // dots in the capital-pilot shot, round 3 F).
+  for (let i = 0; i < 8; i++) poses.push({ kind: 'fighter', x: -1400 + (i % 4) * 260 + (i >= 4 ? 130 : 0), y: -4600 - (i >= 4 ? 220 : 0), angle: 0 });
+  return poses;
+}
+/** Clear of every hull in the line-up (ships sit at y = 0, so their sterns
+ *  reach -radius): the pilot and the base must not spawn inside a 10x hull. */
+const CAPITAL_CLEAR_Y = -Math.max(...CAPITAL_IDS.map((id) => getShipKind(id).radius));
+export const SHOWCASE_CAPITALS_OPTS = {
+  testMode: true,
+  asteroidConfig: [],
+  peacefulDrones: true,
+  dronePoses: capitalLineup(),
+  prebuiltStructuresOwner: SHOWCASE_PILOT_ID,
+  prebuiltStructures: [{ kind: 'capital', x: 2000, y: Math.round(CAPITAL_CLEAR_Y - 2600) }],
+  defaultSpawnX: 0,
+  defaultSpawnY: Math.round(CAPITAL_CLEAR_Y - 1200),
+  maxClients: 4,
+  /** Round 3 D: join `?shipKind=battleship` to fly a capital with helm orders. */
+  pilotCapitals: true,
+};
 
 /**
  * A powered base with a shield-pylon WALL, battery, bolt + missile turrets and
@@ -289,4 +332,5 @@ export const SHOWCASE_ROOMS = {
   'showcase-teleport': SHOWCASE_TELEPORT_OPTS,
   'showcase-garrison': SHOWCASE_GARRISON_OPTS,
   'showcase-hub': SHOWCASE_HUB_OPTS,
+  'showcase-capitals': SHOWCASE_CAPITALS_OPTS,
 } as const;

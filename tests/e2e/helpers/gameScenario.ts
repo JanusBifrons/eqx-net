@@ -42,6 +42,9 @@ export interface TestClientOpts {
   testId?: string;
   /** Any other URL params (e.g. `{ worker: '0', art: 'machined' }`). */
   extraParams?: Record<string, string>;
+  /** How long to wait for the join (ms, default 12 s). Capitals take longer
+   *  (their art bakes on spawn): load time, not game time. */
+  joinTimeoutMs?: number;
 }
 
 export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
@@ -67,7 +70,7 @@ export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
         document.querySelector('[data-testid="ship-count"]')?.textContent?.replace('Ships: ', '') ?? '0',
         10,
       ) > 0, undefined,
-    { timeout: 12_000 },
+    { timeout: opts.joinTimeoutMs ?? 12_000 },
   );
   return { ctx, page };
 }

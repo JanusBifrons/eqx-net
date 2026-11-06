@@ -49,6 +49,10 @@ const inspectorAt: InspectorAnchor = { left: 0, top: 0 };
  *  next session re-syncs naturally from null). */
 let _lastPublishedSelectedId: string | null = null;
 
+/** Helm orders (capital-ship R&D round 3 D) — last drained
+ *  `feedback.helmCourseSeq`; a change is a new course tap. */
+let _lastHelmCourseSeq = 0;
+
 /** WS-10 (R2.5) — last drained `feedback.placementConfirmSeq`. The renderer bumps
  *  the seq on a DESKTOP mouse left-click during placement; when it changes we
  *  commit the placement at the chosen point + clear `placementKind`. A monotonic
@@ -184,7 +188,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // drift during the curtain window.
     if (!isLoadingActive) gameClient.tickPhysics(deltaMs);
     const mirrorStart = performance.now();
-    gameClient.updateMirror();
+    gameClient.updateMirror(now);
     // Phase 4 WS-A2 — fire the ONE-SHOT smooth camera glide to a newly-piloted
     // ship the frame its pose is first mirrored (after a same-sector swap). One-
     // shot: `consumePendingCameraGlide` returns non-null exactly once. Driven off
@@ -336,6 +340,10 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // alloc field return (the heavy E2E dataset cost is gated above), so this
     // per-frame read is cheap; the actual work fires only on a transition.
     const selFb = feedback ?? renderer.getFeedback();
+    if (selFb.helmCourseSeq !== _lastHelmCourseSeq) {
+      _lastHelmCourseSeq = selFb.helmCourseSeq;
+      gameClient.setHelmCourse(selFb.helmCourseX, selFb.helmCourseY);
+    }
     const selId = selFb.selectedPickId;
     if (selId !== _lastPublishedSelectedId) {
       _lastPublishedSelectedId = selId;

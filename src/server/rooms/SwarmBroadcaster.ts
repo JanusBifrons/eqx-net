@@ -23,7 +23,7 @@ import {
   slotBase,
 } from '../../shared-types/sabLayout.js';
 import { checkBackpressure } from '../net/Backpressure.js';
-import type { SpatialGrid } from '../interest/SpatialGrid.js';
+import { SpatialGrid } from '../interest/SpatialGrid.js';
 import type { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { BinarySwarmBroadcast } from '../net/BinarySwarmBroadcast.js';
 import type { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
@@ -42,6 +42,9 @@ export interface SwarmBroadcasterDeps {
    *  populated here are reused by its per-client drone slice. */
   snapshotBroadcaster: SnapshotBroadcaster;
   logger: Logger;
+  /** Hull radius of the ship this player flies: a capital pilot's interest
+   *  window grows with their hull (round 3 C). Omitted ⇒ the 3×3 window. */
+  viewerRadius?: (playerId: string) => number;
 }
 
 export class SwarmBroadcaster {
@@ -69,7 +72,9 @@ export class SwarmBroadcaster {
           scratch = new Set<number>();
           d.snapshotBroadcaster.interestScratch.set(client.sessionId, scratch);
         }
-        d.interestGrid.query9(cx, cy, scratch);
+        const reach = d.viewerRadius !== undefined && playerId !== undefined
+          ? SpatialGrid.viewerReachFor(d.viewerRadius(playerId)) : 1;
+        d.interestGrid.query9(cx, cy, scratch, reach);
         inInterest = scratch;
       }
       const swarmPacket = d.swarmEncoder.encode(d.swarmRegistry, d.sabF32, d.sabU32, serverTick, inInterest);

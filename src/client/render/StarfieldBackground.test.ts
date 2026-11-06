@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { GAMEPLAY_STAR_LAYERS } from './StarfieldBackground';
-import { starLayerAlphaAt, starRadiusAt } from './lodStarfield';
+import { STAR_MAX_TILE_HALF, starLayerAlphaAt, starRadiusAt } from './lodStarfield';
 
 // The gameplay camera clamps zoom to [0.15, 3] — PixiRenderer overrides the
 // Camera default (0.4/4) with minScale 0.15 / maxScale 3. The field must never
@@ -61,6 +61,20 @@ describe('GAMEPLAY_STAR_LAYERS — zoom-aware LOD coverage', () => {
     for (const l of GAMEPLAY_STAR_LAYERS) {
       expect(l.radius).toBeLessThanOrEqual(1.0);
       expect(starRadiusAt(l, 1)).toBeLessThanOrEqual(1.3); // brightest star
+    }
+  });
+
+  it('capital pilots (round 3): a layer is FULL at the battleship ~0.03 floor and a 4K screen stays inside the tile backstop', () => {
+    const CAPITAL_FLOOR = 0.03;
+    const full = GAMEPLAY_STAR_LAYERS.some((l) => Math.abs(starLayerAlphaAt(l, CAPITAL_FLOOR) - l.baseAlpha) < 1e-6);
+    expect(full).toBe(true);
+    for (const s of [0.02, 0.03, 0.05, 0.08, 0.12, 0.15]) {
+      for (const l of GAMEPLAY_STAR_LAYERS) {
+        if (starLayerAlphaAt(l, s) <= 0) continue;
+        const halfWorld = 3840 / (2 * s);
+        expect(Math.ceil(halfWorld / l.tileSize) + 1).toBeLessThanOrEqual(STAR_MAX_TILE_HALF);
+      }
+      expect(GAMEPLAY_STAR_LAYERS.some((l) => starLayerAlphaAt(l, s) > 0)).toBe(true);
     }
   });
 });

@@ -91,7 +91,7 @@ describe('SectorRoom integration — alien gates (v4 A)', () => {
     const site = gateToward(roomA, B, A);
     // Every edge facing a neighbour has a gate; the centre is outside all their zones.
     const far = await harness.connectActive('face0000-0000-4000-8000-000000000005', A, { shipKind: 'fighter', spawnX: 0, spawnY: 0 });
-    const near = await harness.connectActive(PILOT, A, { shipKind: 'fighter', spawnX: Math.round(site.x * 0.8), spawnY: Math.round(site.y * 0.8) });
+    const near = await harness.connectActive(PILOT, A, { shipKind: 'fighter', spawnX: Math.round(site.x * (1 - 1000 / Math.hypot(site.x, site.y))), spawnY: Math.round(site.y * (1 - 1000 / Math.hypot(site.x, site.y))) }); // 1,000 u in from the gate (inside its 2,500 u zone at any sector size)
     const disabledFor = new Set<string>();
     for (const [c, pid] of [[far, 'far'], [near, 'near']] as const) {
       c.onMessage('snapshot', (snap: { states?: Record<string, { disabledMs?: number }> }) => {

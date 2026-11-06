@@ -21,6 +21,7 @@
  * (extracted to `LivingWorldRoom.ts` so the type lives beside the
  * sub-modules that consume it).
  */
+import { sectorSpace } from '../../shared-types/sectorBounds.js';
 import type { Bus } from '../../core/events/Bus.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { canonicalPlayerId } from '../identity/AccountPlayerRegistry.js';
@@ -358,7 +359,7 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
  *  top of a player at the centre (the 2026-06-19 playtest "spawned on top" fix —
  *  the central-arrival experiment was reverted; visibility comes from the long
  *  dwell + long legs, not from arriving on top). */
-export const FORMATION_DEST_RANGE = 2000;
+export const FORMATION_DEST_RANGE = sectorSpace(2000);
 /** Re-pick the leader's course once it's within this distance of it (so the herd
  *  continuously flies new A→B legs rather than parking). */
 const FORMATION_DEST_ARRIVE = 250;

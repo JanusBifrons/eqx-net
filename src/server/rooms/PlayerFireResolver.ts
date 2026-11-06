@@ -25,6 +25,7 @@
  * the server, and the seams document themselves.
  */
 
+import { refineRayHit } from '../../core/combat/capitalHits.js';
 import type { Client } from 'colyseus';
 import type { Logger } from 'pino';
 import {
@@ -81,6 +82,8 @@ export interface SwarmHitTarget {
   halfH?: number;
   /** Gates: the solid parts' world-axis boxes (see SwarmEntityRecord.boxes). */
   boxes?: Float32Array;
+  /** Drone ship kind (capitals refine hits to the hull). */
+  shipKind?: string;
 }
 
 export interface SwarmHitSource {
@@ -439,6 +442,8 @@ export class PlayerFireResolver implements WeaponFireSink {
         dist = rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.halfW, rec.halfH, rec.boxes);
       } else {
         dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.radius);
+        // A capital's circle is half its hull's length: refine to the hull (#15).
+        if (rec.kind === 1) dist = refineRayHit(rec.shipKind, dist, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca);
       }
       if (dist !== null && dist < mountHitDist) {
         mountHitDist = dist;
