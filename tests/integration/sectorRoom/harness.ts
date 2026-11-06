@@ -194,6 +194,10 @@ export async function bootSectorTestServer(opts: {
   scaleGrid?: { n: number; seed: number; fence?: boolean };
   /** Perf scenes — the timed scene script (`SceneScriptRunner`). */
   sceneScript?: unknown;
+  /** Perf scenes — no TiDi / load shedding. */
+  perfFixedLoad?: boolean;
+  /** Synthetic per-tick server load (ms). */
+  tickBurnMs?: number;
 } = {}): Promise<SectorTestHarness> {
   // 1. Stub the persistence singletons FIRST. SectorRoom.onCreate
   //    reads these via module-level singletons, so the injection has
@@ -259,6 +263,8 @@ export async function bootSectorTestServer(opts: {
     defaultSpawnY: opts.defaultSpawnY,
     scaleGrid: opts.scaleGrid,
     sceneScript: opts.sceneScript,
+    perfFixedLoad: opts.perfFixedLoad,
+    tickBurnMs: opts.tickBurnMs,
   });
   await gameServer.listen(port);
 

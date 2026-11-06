@@ -1180,6 +1180,8 @@ for (const scene of PERF_SCENES) {
       maxClients: 4,
       // Fault injection for the runner's self-test: burn N ms of every tick.
       tickBurnMs: Number(process.env['EQX_PERF_BURN_MS'] ?? 0),
+      // Fixed work: no TiDi, no load shedding (they hide an overload).
+      perfFixedLoad: true,
       ...scene.room,
     })
     .filterBy(['testId']);

@@ -59,4 +59,23 @@ describe('SectorRoom integration — scene script', () => {
     harness = await bootSectorTestServer({ sectorKey: null, sceneScript: [{ atMs: 0, action: 'spawn', tag: 'x', kind: 'nope', count: 1, x: 0, y: 0 }] });
     await expect(harness.connectAs(randomUUID())).rejects.toThrow();
   });
+
+  it('perfFixedLoad keeps the clock at full rate under overload (no TiDi, no shedding)', { timeout: 60_000 }, async () => {
+    // Without it the room protects itself: an overloaded tick slows the clock
+    // and sheds drones, so a perf scene measured fewer ships, not slower ticks
+    // (the first injected-slowdown run, 2026-11-06).
+    for (const fixed of [false, true]) {
+      harness = await bootSectorTestServer({
+        sectorKey: null, droneCount: 0, asteroidConfig: [], tickBurnMs: 20, perfFixedLoad: fixed,
+        sceneScript: [{ atMs: 0, action: 'spawn', tag: 'a', kind: 'fighter', count: 4, x: 0, y: 2000 }],
+      });
+      await harness.connectActive(randomUUID());
+      await new Promise((r) => setTimeout(r, 3000));
+      const rate = (harness.getServerRoom() as unknown as { state: { clockRate: number } }).state.clockRate;
+      if (fixed) expect(rate, 'perfFixedLoad: the clock stays at 1').toBe(1);
+      else expect(rate, 'control: an overloaded room slows its clock').toBeLessThan(1);
+      await harness.cleanup();
+      harness = undefined;
+    }
+  });
 });

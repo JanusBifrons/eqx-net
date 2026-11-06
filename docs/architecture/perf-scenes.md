@@ -20,6 +20,8 @@ Three rules make the numbers trustworthy:
 1. **Counts gate; timings compare.** Counts (bytes per second, display objects, live entities) barely depend on the machine. Timings (server tick, frame time) do, so a timing is only ever judged against a **base arm run on the same machine in the same session**, interleaved base/head/base/head (rustc-perf and Chrome's Pinpoint work the same way).
 2. **Percentiles and hitches, never mean FPS.** One 120 ms stall in a second of 16 ms frames is invisible in a mean.
 3. **Deterministic scenes.** A seeded room, a scripted timeline and an idle, near-invulnerable pilot, so both arms play the same scene.
+4. **Fixed work.** Perf rooms set `perfFixedLoad`: no time dilation and no load shedding. With them on, an overloaded server slows its clock and drops drones, so a slowdown shows up as fewer ships rather than slower ticks. The first injected-slowdown run (2026-11-06) showed exactly that: head finished below the ship floor and its tick time didn't separate from base.
+5. **Alternate the arm order** every rep. The arm that runs second in a round runs on a warmer machine; a fixed order gave head extra hitches in the self-test.
 
 ## Pieces
 
