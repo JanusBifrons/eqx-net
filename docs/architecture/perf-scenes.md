@@ -67,6 +67,21 @@ The runner can slow the head arm on purpose: `--inject-server-burn N` busy-waits
 - main-vs-main comes back GREEN;
 - an injected run goes RED on the right metric.
 
+### Results (laptop, 2026-11-06)
+
+- **Self-test:** 5 reps of idle and fleet-fight, identical code on both arms. Every gated metric GREEN. Ledger: `perf/ledger/selftest-2026-11-06.json`.
+- **Injected:** fleet-fight, 4 reps, head slowed by 6 ms per server tick and 20 ms per client frame. The planted metrics went RED, the others stayed GREEN:
+
+  | Metric | Verdict | Base | Head | p |
+  |---|---|---|---|---|
+  | server tick p95 | RED | 17.6 ms | 34.5 ms | 0.03 |
+  | frame p95 | RED | 16.8 ms | 50 ms | 0.03 |
+  | hitches | RED | 18 a minute | 482 a minute | 0.03 |
+
+  Ledger: `perf/ledger/inject-2026-11-06.json`.
+- **How sensitive it is:** the laptop is noisy. Base fleet-fight tick p95 ranged from 10 to 19 ms across one session, so the gate catches large regressions (around 1.5× or more), not 10 %. It needs at least 4 reps per arm: with 3, Mann-Whitney can never reach p < 0.05.
+- **A finding:** a sustained 60-ship fight (180 ships over the window) pushes the laptop server's p99 tick to about 40 ms with load shedding off, against a 16.7 ms budget. In real play, time dilation and shedding absorb it.
+
 ## Adding a scene
 
 Add one entry to `PERF_SCENES` with:
