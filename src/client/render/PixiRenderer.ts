@@ -1517,12 +1517,11 @@ export class PixiRenderer implements IRenderer {
     updateMissileSprites(mirror, this._missileUpdaterCtx, performance.now());
     this._fxExplosions?.tick(performance.now());
 
-    // Server ghost: orange diamond showing where the server's last snapshot
-    // put the ship, before any client-side prediction replay.
-    // `showServerGhost` defaults to true when undefined so older mirrors and
-    // the LocalGameClient diagnostic surface keep working.
-    // `?cleanworld=1` (showcase capture) never shows it — it is a debug overlay.
-    const ghostEnabled = !this._cleanWorld && mirror.showServerGhost !== false;
+    // Server ghost: the debug marker showing where the server's last snapshot
+    // put the ship, before any client-side prediction replay. OFF unless the
+    // player switches it on in Settings (2026-11-06; it used to default on).
+    // `?cleanworld=1` (showcase capture) never shows it.
+    const ghostEnabled = !this._cleanWorld && mirror.showServerGhost === true;
     if (ghostEnabled && mirror.serverGhostPos) {
       if (!this.serverGhost) {
         this.serverGhost = buildGhostGfx();

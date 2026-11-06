@@ -2,6 +2,8 @@ import { oneShotMigrateLegacy, saveJSON, type UserId } from './userPrefs.js';
 
 const LEGACY_KEY = 'eqxSettings';
 const BASE = 'eqxSettings';
+/** Storage key for the server-position marker setting (see `decode`). */
+const SERVER_GHOST_KEY = 'serverGhostDebug';
 
 /** Mode picker for hyperspace arrival position (mobile UI). See
  *  `docs/features/configurable-arrival.md`. */
@@ -37,7 +39,10 @@ function decode(parsed: unknown): Partial<PersistedSettings> | null {
   const out: Partial<PersistedSettings> = {};
   if (typeof obj['showDevOverlay']  === 'boolean') out.showDevOverlay  = obj['showDevOverlay'];
   if (typeof obj['showLogPanel']    === 'boolean') out.showLogPanel    = obj['showLogPanel'];
-  if (typeof obj['showServerGhost'] === 'boolean') out.showServerGhost = obj['showServerGhost'];
+  // The server-position marker (debug) was ON by default and every save wrote
+  // it, so old `showServerGhost: true` values were mostly never chosen. It is
+  // stored under a new key now; the old one is ignored (off by default, 2026-11-06).
+  if (typeof obj[SERVER_GHOST_KEY] === 'boolean') out.showServerGhost = obj[SERVER_GHOST_KEY];
   if (typeof obj['autoFireEnabled']  === 'boolean') out.autoFireEnabled  = obj['autoFireEnabled'];
   if (isArrivalMode(obj['arrivalMode']))           out.arrivalMode     = obj['arrivalMode'];
   if (typeof obj['arrivalTargetX']  === 'number' && Number.isFinite(obj['arrivalTargetX'])) {
@@ -69,5 +74,6 @@ export function loadSettings(userId: UserId): Partial<PersistedSettings> {
 }
 
 export function saveSettings(userId: UserId, settings: PersistedSettings): void {
-  saveJSON(BASE, userId, settings);
+  const { showServerGhost, ...rest } = settings;
+  saveJSON(BASE, userId, { ...rest, [SERVER_GHOST_KEY]: showServerGhost });
 }
