@@ -103,9 +103,12 @@ test.describe('logged-out (auth-gated pick)', () => {
     await pickSector(page);
     await page.locator('text=Continue as guest').click();
     await expect(page.getByTestId('sector-drawer-join')).toBeVisible({ timeout: 10_000 });
-    // A second pick, made by the guest themselves.
+    // A second pick, made by the guest themselves. A DIFFERENT sector: re-tapping
+    // the sector whose drawer is open closes it by design, so picking sol-prime
+    // again raced the close against the Join click (flaked on CI: "element was
+    // detached from the DOM").
     await waitForGalaxyPickHook(page);
-    await pickSector(page);
+    await pickSector(page, 'vega-reach');
     await expect(page.locator('text=Continue as guest')).toHaveCount(0);
     await expect(page.getByTestId('sector-drawer-join')).toBeVisible({ timeout: 8_000 });
     await page.getByTestId('sector-drawer-join').click();
