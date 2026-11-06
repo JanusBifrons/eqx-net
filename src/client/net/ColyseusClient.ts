@@ -1153,6 +1153,11 @@ export class ColyseusGameClient {
    *  each snapshot. NOT in Zustand — it changes per frame; the top-center
    *  EnergyBar reads it via a RAF loop + direct-DOM write. */
   private predEnergy = 0;
+  /** False until the pool has a real starting value: the server's own-ship
+   *  energy, or (before the ship goes active and that arrives) the kind's
+   *  maximum, since the server spawns every ship full. Starting at 0 made
+   *  the bar fill from empty for ~2.5 s after the curtain lifted. */
+  private _energySeeded = false;
 
   /** Phase 4 WS-B2 — the last per-instance stat allocation applied to the local
    *  player's predWorld body, as a stable JSON key. The server emits the
@@ -1218,6 +1223,8 @@ export class ColyseusGameClient {
    * `ColyseusClient.transitArrivalDrift.test.ts`.
    */
   private resetPredictionState(): void {
+    // A new sector / ship: seed the energy pool again from the new ship.
+    this._energySeeded = false;
     // v4 T2 — a new sector's first snapshot only records the teleport epoch.
     this._localPoseEpoch = -1;
     // v4 A — a disable belongs to the room that applied it.
@@ -3148,6 +3155,7 @@ export class ColyseusGameClient {
       // denominator from the local kind — cheap + idempotent.
       if (typeof serverState.energy === 'number') {
         this.predEnergy = serverState.energy;
+        this._energySeeded = true;
         const localKind = getShipKind(this.mirror.ships.get(localId)?.kind ?? null);
         const max = localKind.energyMax ?? 100;
         if (useUIStore.getState().energyMax !== max) useUIStore.getState().setEnergyMax(max);
@@ -4956,8 +4964,15 @@ export class ColyseusGameClient {
     // snapshot reconcile hard-sets the value, so this only smooths the bar
     // between snapshots. Scalar core helpers ⇒ no allocation.
     if (this.mirror.localPlayerId && stepsThisFrame > 0) {
-      const ek = getShipKind(this.mirror.ships.get(this.mirror.localPlayerId)?.kind ?? null);
+      const localKindId = this.mirror.ships.get(this.mirror.localPlayerId)?.kind;
+      const ek = getShipKind(localKindId ?? null);
       const emax = ek.energyMax ?? 100;
+      // Before the server's first own-ship energy: start full, as the server
+      // spawned it (only once the kind is known, or we'd seed another kind's max).
+      if (!this._energySeeded && localKindId) {
+        this.predEnergy = emax;
+        this._energySeeded = true;
+      }
       const eregen = ek.energyRegenRate ?? 0.25;
       const boosting = this.mirror.boostingShips?.has(this.mirror.localPlayerId) ?? false;
       for (let s = 0; s < stepsThisFrame; s++) {
