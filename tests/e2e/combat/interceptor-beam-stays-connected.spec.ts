@@ -31,7 +31,8 @@
  * FEEDBACK message (renderer.worker.ts + WorkerRendererClient), so dropping
  * the `?worker=0` override and using the default worker renderer is the
  * faster fallback.
- */
+ */
+import { waitForInPlay } from '../helpers/gameScenario';
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
@@ -40,6 +41,9 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 // `?worker=0` forces the main-thread PixiRenderer (the touch default), whose
 // BeamSpritePool transform the feedback reads directly. `interceptor` mounts
 // the twin hitscan beams the user reported.
+// The join waits for the loading curtain (infrastructural), so 30 s is tight.
+test.describe.configure({ timeout: 90_000 });
+
 async function joinSector(page: Page): Promise<void> {
   await page.goto(`${BASE_URL}?room=sector&shipKind=interceptor&worker=0`);
   await page.waitForFunction(
@@ -49,6 +53,8 @@ async function joinSector(page: Page): Promise<void> {
     }, undefined,
     { timeout: 15000 },
   );
+  // Input only counts once the loading curtain lifts.
+  await waitForInPlay(page);
 }
 
 interface Sample {

@@ -15,7 +15,8 @@
  * every sample. If anyone reverts the beam to cache its origin, the
  * arithmetic relationship will start drifting during corrections and this
  * test will fail.
- */
+ */
+import { waitForInPlay } from './helpers/gameScenario';
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
@@ -24,7 +25,9 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 // Use the ?room= auto-join URL so this test bypasses the auth gate (LoginPage)
 // the same way preserved E2E test compatibility was originally designed.
 async function joinSector(page: Page): Promise<void> {
-  await page.goto(`${BASE_URL}?room=sector`);
+  // The interceptor is the beam ship (each kind fires its own loadout since the
+  // weapons overhaul; the default fighter fires bolts, so there was no beam).
+  await page.goto(`${BASE_URL}?room=sector&shipKind=interceptor`);
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
@@ -32,6 +35,8 @@ async function joinSector(page: Page): Promise<void> {
     }, undefined,
     { timeout: 15000 },
   );
+  // Input only counts once the loading curtain lifts.
+  await waitForInPlay(page);
 }
 
 interface BeamSample {
