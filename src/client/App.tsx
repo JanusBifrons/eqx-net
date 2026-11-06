@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { installPerfProbe, perfProbeEnabled } from './debug/perf/perfProbe';
+import { installPerfProbe, perfProbeEnabled, runPerfLabScene } from './debug/perf/perfProbe';
 import { cyclePlacementRotation } from './structures/structurePlacementClient';
 import { installWindowLogger, refreshAutoCaptureLatch } from './debug/ClientLogger';
 import { installStreamingDiag } from './debug/streamingDiag';
@@ -487,7 +487,11 @@ function GameSurface({
     const { renderer, useWorker } = selectRenderer();
     rendererRef.current = renderer;
     // Perf scenes (`?perfprobe=1` only): frame times, long tasks, bytes.
-    if (perfProbeEnabled(window.location.search)) installPerfProbe(renderer, useWorker);
+    if (perfProbeEnabled(window.location.search)) {
+      installPerfProbe(renderer, useWorker);
+      const labScene = new URLSearchParams(window.location.search).get('perfscene');
+      if (labScene) runPerfLabScene(labScene);
+    }
     // Phase 5 — spectator WASD free-pan: feed the held-key velocity to the
     // renderer's camera. Self-gated by setEnabled (the spectating effect arms it
     // only on desktop while spectating).
