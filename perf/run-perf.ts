@@ -83,7 +83,7 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
   try {
     const p = new URLSearchParams({
       room: `perf-${scene.id}`, testId: randomUUID(), spawnX: String(scene.spawn.x), spawnY: String(scene.spawn.y),
-      shipKind: 'fighter', initialHull: '1000000', art: 'machined', fx: 'new', cleanworld: '1', hud: 'none', diag: '0', perfprobe: '1',
+      shipKind: 'fighter', initialHull: '1000000', art: 'machined', fx: 'new', diag: '0', perfprobe: '1',
       ...arm.clientParams,
     });
     await page.goto(`${arm.servers.baseUrl}/?${p}`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
@@ -163,11 +163,16 @@ async function main(): Promise<void> {
   const results: Record<string, Record<string, RunMetrics[]>> = {};
   try {
     log(`perf scenes: ${scenes.map((s) => s.id).join(', ')} · reps ${args.reps} · arms ${arms.map((a) => `${a.name}@${a.sha}`).join(' vs ')}`);
-    for (const a of arms) { log(`starting ${a.name} servers…`); await a.servers.ensure('lean'); }
-    for (const scene of scenes) {
-      results[scene.id] = { base: [], head: [] };
-      for (let rep = 0; rep < args.reps; rep++) {
-        for (const a of arms) {
+    // One arm's servers at a time (an 8 GB laptop can't hold two pairs plus a
+    // GPU browser). Each rep boots one arm, plays every scene, then swaps:
+    // base, head, base, head… so slow drift in the machine hits both arms.
+    for (const scene of scenes) results[scene.id] = { base: [], head: [] };
+    for (let rep = 0; rep < args.reps; rep++) {
+      for (const a of arms) {
+        for (const o of arms) if (o !== a) o.servers.stop();
+        log(`rep ${rep + 1}/${args.reps}: ${a.name} servers…`);
+        await a.servers.ensure('lean');
+        for (const scene of scenes) {
           let m: RunMetrics;
           try { m = await runOnce(browser, a, scene, log); } catch (e) {
             log(`  ${a.name} ${scene.id}: FAILED ${(e as Error).message}`);

@@ -1,0 +1,74 @@
+{
+  "scene": "teleport-raid",
+  "device": {
+    "userAgent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Mobile Safari/537.36",
+    "width": 411,
+    "height": 809,
+    "dpr": 2.625,
+    "touch": true,
+    "worker": false
+  },
+  "reading": {
+    "elapsedMs": 30001,
+    "main": {
+      "frames": 2697,
+      "p50": 11.1,
+      "p95": 11.2,
+      "p99": 11.2,
+      "max": 22.2,
+      "hitches": 0
+    },
+    "render": {
+      "render": {
+        "frames": 2698,
+        "p50": 1.8,
+        "p95": 2.3,
+        "p99": 2.9,
+        "max": 18.8,
+        "hitches": 0
+      },
+      "sprites": 175,
+      "displayObjects": 3623,
+      "mirrorShips": 1,
+      "mirrorSwarm": 174,
+      "effectQuality": "high"
+    },
+    "longTasks": 0,
+    "longTaskMs": 0,
+    "heapMb": 348,
+    "worker": false
+  },
+  "receivedAt": "2026-11-06T13:51:17.130Z",
+  "rooms": [
+    {
+      "roomId": "SLPG8laN5",
+      "scene": {
+        "started": true,
+        "played": 1,
+        "ended": false,
+        "spawned": 40,
+        "refused": 0,
+        "elapsedMs": 29866.666666666668
+      },
+      "tick": {
+        "frames": 1828,
+        "p50": 0.84,
+        "p95": 1.64,
+        "p99": 2.25,
+        "max": 5.16,
+        "hitches": 0
+      },
+      "workerTick": {
+        "frames": 1828,
+        "p50": 0.85,
+        "p95": 1.51,
+        "p99": 1.74,
+        "max": 4.27,
+        "hitches": 0
+      },
+      "swarm": 174,
+      "players": 1,
+      "structures": 134
+    }
+  ]
+}
