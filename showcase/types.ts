@@ -15,7 +15,11 @@ export type ServerProfile =
   /** Living world ON — galaxy sectors with roaming squads. */
   | 'living'
   /** Living world ON + the wave E2E base (`EQX_E2E_WAVE=1`, fast bot spool). */
-  | 'wave';
+  | 'wave'
+  /** Living world OFF + 4x sector space: 10x capital hulls need the room
+   *  (main's default sector scale is 1 until the solar-system phase). The
+   *  page must ask for the same scale (`sectorScale: '4'` in its params). */
+  | 'capitals';
 
 export type HudMode = 'full' | 'clean' | 'minimal' | 'none';
 

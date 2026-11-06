@@ -25,6 +25,8 @@ export function profileEnv(profile: ServerProfile): Record<string, string> {
       return {};
     case 'wave':
       return { EQX_E2E_WAVE: '1', EQX_BOT_SPOOL_MS: '5000', EQX_BOT_HOP_MS: '500' };
+    case 'capitals':
+      return { EQX_DISABLE_LIVING_WORLD: '1', EQX_SECTOR_SCALE: '4' };
   }
 }
 
