@@ -10,6 +10,7 @@ import {
   Stack,
   Alert,
   CircularProgress,
+  Portal,
 } from '@mui/material';
 import { getSector } from '../../core/galaxy/galaxy';
 import { loadStoredPlayerId } from '../identity/token';
@@ -416,18 +417,23 @@ export function GalaxyPickerChrome({
       </Stack>
       )}
 
-      {/* Equinox Phase 7 (Item 1) — Close button for the in-game warp map. */}
+      {/* Equinox Phase 7 (Item 1) — Close button for the in-game warp map.
+       *  Portal'd to <body> at Z.overlay: inside this chrome its z-index was
+       *  trapped below the body-level HUD anchors, and the top-right roster
+       *  badge sat on top of it and took the click (test audit 2026-11-06,
+       *  drawer-galaxy + galaxy-map-overlay specs). */}
       {isWarp && (
+        <Portal>
         <Box
           component="button"
           data-testid="galaxy-warp-close"
           onClick={() => onClose?.()}
           aria-label="Close galaxy map"
           sx={{
-            position: 'absolute',
+            position: 'fixed',
             top: 'calc(var(--app-bar-h, 48px) + 12px)',
             right: 16,
-            zIndex: 4,
+            zIndex: Z.overlay,
             pointerEvents: 'auto',
             cursor: 'pointer',
             bgcolor: 'rgba(5,7,15,0.8)',
@@ -443,6 +449,7 @@ export function GalaxyPickerChrome({
         >
           ✕ Close
         </Box>
+        </Portal>
       )}
 
       {/* Living Galaxy Phase 6 — sector tooltip on desktop hover. Anchored

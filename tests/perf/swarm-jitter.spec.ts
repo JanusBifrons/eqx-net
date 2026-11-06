@@ -18,7 +18,7 @@
  * entity kind, kept as its own test() rather than absorbed into the drone
  * per-frame-delta check above.
  */
-import { test, expect } from './fixtures/test-with-logs';
+import { test, expect } from '../e2e/fixtures/test-with-logs';
 
 interface SwarmDetail {
   x: number;

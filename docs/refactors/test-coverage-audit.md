@@ -236,19 +236,19 @@ CI runs only the **17 smoke specs** on a PR. The **88 feature specs** run only w
 
 | Spec | Failing tests | Symptom | First read |
 |---|---|---|---|
-| robustness | 8 of 13 | "≥ 17 snapshots/s at idle" and the rest | stale: idle sectors stop broadcasting by design (Stage 5); the rest may share its setup |
+| robustness, swarm-jitter, spiral-disconnect-reconnect | 7 + 1 + 1 | tight correction-rate / jitter numbers on whatever machine runs them | **moved to tests/perf** (user decision 2026-11-06): measurements, not regression locks; the netgate gates this signal. The 226 u "asteroid collision" correction was the join snap leaking in through a session-wide max (inside the window the largest was 1.19 u), not a bug. |
 | missile-frigate-homing | 4 of 4 | homing / damage / refire / fizzle | stale: written against old tuning (expects a 180-tick cooldown; the catalogue says 90 since c795302d, and energy cost and lifetime moved too). It also fired before the target was active (now waits with `waitForInPlay`). Needs its expectations read from the catalogue. |
 | machined-art | 3 | fx textures through the worker pool; speed-effect zoom | unknown |
 | laser-smoothness | 1 | beam active 0 of 40 frames | **fixed**: stale, it flew the default fighter (bolts, no beam; each kind fires its own loadout since the weapons overhaul) and fired while the curtain was still up |
 | interceptor-beam-stays-connected | 1 | beam active 16 of 40 coast frames, test wants > 20 | open: with the curtain wait it went from 4 to 16. Is the beam pulsed by its cooldown, energy-limited, or slowed by sampling on the loaded laptop? |
-| drawer-galaxy, galaxy-map-overlay | 1 each | click `galaxy-warp-close` never succeeds | one cause (UI) |
+| drawer-galaxy, galaxy-map-overlay | 1 each | click `galaxy-warp-close` never succeeds | **fixed (real bug)**: the top-right roster badge sat on top of the in-game galaxy map's ✕ Close and took the click (its z-index was trapped inside the chrome); the button is now Portal'd at Z.overlay |
 | spectator-mode | 2 | speed dial late; Pilot toggle doesn't return to pilot | **fixed (real bug)**: Pilot's menu never listed the ship you parked with Spectate (the client's pending-join exemption kept it out of the parked list). Plus stale timing (curtain) |
-| feel-tuning | 1 | fighter moved 337 u, test wants > 400 | stale: the 2× ship scale made ships slower |
-| halo-radar | 1 | no off-screen arrows | stale: no drones in the sector (same premise as the deleted spec) |
-| fence-hits, fx-turrets | 1 each | waits on `__eqxArtStats` time out | unknown |
-| cargo-panel | 1 | "a Capital was placed" is null | likely the same placement-flow change |
+| feel-tuning | 1 | fighter moved 337 u, test wants > 400 | **fixed**: it thrust while the curtain was up (input dead), and its band was authored at 1×; it now waits for play and scales the band by the fighter's ship-scale speed factor (533 u in a 283–1061 band at 2×) |
+| halo-radar | 1 | no off-screen arrows | **fixed**: the stale "Sector Alpha has drones" test is removed (radar-sandbox covers it); the per-frame dataset test stays |
+| fence-hits, fx-turrets | 1 each | waits on `__eqxArtStats` time out | open. Both already use `worker=0` (the stats hook exists) and wait long enough for the curtain. fence-hits never sees `fxFences > 0` in gate-test (gates only, no pylons): do gate spans count for FxFences, or did that change after 2026-11-04? fx-turrets never sees a turret shot with `startHostile=1` in auto-fire-test as a gunship; possibly linked to auto-fire's neutral→hostile failure. |
+| cargo-panel | 1 | "a Capital was placed" is null | **fixed**: test pollution. trade-test has a real sectorKey (cargo needs a roster row), so every instance shared one saved snapshot and old runs' Capitals came back exactly where the test places its own, so placement was refused. On CI the DB is fresh, so it passed there. New testMode room option `persistSector: false` (trade-test sets it) |
 | auto-fire | 1 | neutral → hostile takeover times out | unknown |
-| wave-attack, swarm-jitter, spiral-disconnect-reconnect | 1 each | | unknown |
+| wave-attack | 1 | | unknown |
 | **smoke:** persistence-kill, combat-lifecycle, sector-alpha (two-client) | 1–2 each | beam doesn't drain the victim's hull; two-client checks | fail on untouched `main` **on this laptop** and pass on CI: two browsers on 8 GB with software WebGL |
 
 **A shared cause:** a ship is active (targetable, collidable, hostile-capable) only once its loading curtain lifts, which takes 6–16 s on a loaded box. Specs that act as soon as `data-local-player-id` appears act on a pending ship. `waitForInPlay(page)` (`tests/e2e/helpers/gameScenario.ts`) is the fix; apply it as each spec is triaged.

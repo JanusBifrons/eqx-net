@@ -1602,6 +1602,9 @@ export class SectorRoom extends Room<SectorState> {
       /** Perf scenes — no TiDi and no load shedding, so the work stays fixed
        *  and an overload shows as slower ticks. testMode-only. */
       perfFixedLoad?: boolean;
+      /** testMode — false: never save or restore this sector's snapshot (a
+       *  test room that needs a sectorKey for the roster, not persistence). */
+      persistSector?: boolean;
     };
     // Payload-DoS bound (S5): onCreate options are client-suppliable on room
     // create, so reject oversized seed arrays before they seed the sector.
@@ -2064,7 +2067,10 @@ export class SectorRoom extends Room<SectorState> {
     // rooms have no persistent identity. Snapshots swarm health every
     // 60 s + onDispose; hydrates on onCreate.
     this.sectorPersistence = new SectorPersistence({
-      sectorKey: () => this.sectorKey,
+      // A test room can keep its sectorKey (roster, cargo) yet not persist:
+      // every room instance of one key shares one saved snapshot, so a test's
+      // structures came back in the next run's room (persistSector: false).
+      sectorKey: () => (this.persistSector ? this.sectorKey : null),
       sabF32: this.sabF32,
       swarmRegistry: this.swarmRegistry,
       swarmHealth: this.shieldHullRouter.swarmHealth,
@@ -2533,6 +2539,7 @@ export class SectorRoom extends Room<SectorState> {
       this.testHaulerRaiders = Math.max(0, Math.min(6, Math.floor(roomOpts.haulerRaiders ?? 0)));
       if (roomOpts.sceneScript !== undefined) this.initSceneScript(roomOpts.sceneScript);
       this.perfFixedLoad = roomOpts.perfFixedLoad === true;
+      this.persistSector = roomOpts.persistSector !== false;
     }
     // Phase-1 issue 5 — scrap-stress seed: a dense corridor of free-floating
     // scrap ahead of spawn for the fly-through reconciliation E2E.
@@ -9008,6 +9015,8 @@ export class SectorRoom extends Room<SectorState> {
   private sceneRunner: SceneScriptRunner | null = null;
   /** Perf scenes: TiDi + load shedding off (fixed work). testMode-only. */
   private perfFixedLoad = false;
+  /** testMode: false ⇒ SectorPersistence sees no sector (no save/restore). */
+  private persistSector = true;
 
   /** Scene status for `/dev/perf` and tests (null: no scene). */
   sceneStatus(): Readonly<SceneStatus> | null { return this.sceneRunner?.getStatus() ?? null; }
