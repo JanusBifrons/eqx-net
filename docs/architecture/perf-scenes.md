@@ -51,6 +51,17 @@ A run is **INVALID**, never fast, if any of these happen:
 - too few ships were left;
 - too few frames were recorded.
 
+## The per-PR counts gate
+
+`tests/integration/sectorRoom/perfSceneCounts.test.ts` (the integration suite, so CI runs it on every PR) plays `fleet-fight` and `teleport-raid` in a real room with a connected pilot. It counts the bytes that pilot's socket receives over 10 s, and fails if:
+- any spawn is refused;
+- the scene isn't busy enough;
+- bytes per second are over the budget in `src/shared-types/perf/perfBudgets.ts`.
+
+The budgets are the measurement plus about 25 %. Three runs on the laptop gave 214–218 KB/s for the fleet fight and 67.5–67.8 KB/s for the raid, matching the browser runs.
+
+`pnpm bench:gc` stays out of CI. It gates GC pause times and major-GC counts, which depend on the machine (its baseline had 0 major GCs and a run on 2026-11-06 had 1). A true per-tick allocation count needs a heap-profiling harness; that's a follow-up.
+
 ## The perf lab: watch it on your own device
 
 The harness's numbers come from a headless laptop browser with an idle pilot. To check that they match what a person sees, `pnpm perf:lab` serves the scenes on the local network:
