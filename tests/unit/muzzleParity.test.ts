@@ -28,8 +28,17 @@ describe('muzzle parity (turrets T3, #15)', () => {
           expect(-t.py + muzzleReach(t), `${kind.id}/${m.id}`).toBeCloseTo(shipTuning(kind).muzzleClearance, 6);
         } else {
           expect(muzzleReach(t), `${kind.id}/${m.id}`).toBeCloseTo(shipMountMuzzle(kind, m)!, 6);
-          // Turrets stay within the kind's caps (no giant cannons on big hulls).
-          expect(muzzleReach(t), `${kind.id}/${m.id}`).toBeLessThanOrEqual(shipTuning(kind).barrelLenMax);
+          if (t.naval) {
+            // Capital naval turrets are sized by calibre to the hull beam
+            // (CAPITAL_TURRETS): the barrel tip stays within one beam of the pivot.
+            const hull = (kind.shape as { hull: Array<[number, number]> }).hull;
+            let beam = 0;
+            for (const [x] of hull) beam = Math.max(beam, Math.abs(x) * 2);
+            expect(muzzleReach(t), `${kind.id}/${m.id}`).toBeLessThanOrEqual(beam * (m.turretScale ?? 1));
+          } else {
+            // Turrets stay within the kind's caps (no giant cannons on big hulls).
+            expect(muzzleReach(t), `${kind.id}/${m.id}`).toBeLessThanOrEqual(shipTuning(kind).barrelLenMax);
+          }
         }
       });
     }

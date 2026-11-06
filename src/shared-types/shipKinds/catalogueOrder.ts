@@ -31,6 +31,7 @@ import { ROBOT_SQUARE, ROBOT_CIRCLE, ROBOT_HEXAGON, ROBOT_NEXUS, ROBOT_HARVESTER
 import { CARGO_POD } from './cargoPod.js';
 import { TRADER_HAULER } from './traders.js';
 import { PATROL_FIGHTER } from './patrols.js';
+import { DESTROYER, LIGHT_CRUISER, HEAVY_CRUISER, BATTLECRUISER, BATTLESHIP } from './capitals/index.js';
 
 /**
  * Insertion order = canonical catalogue order. Fighter is first so it
@@ -64,4 +65,10 @@ export const SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze([
   ROBOT_HARVESTER,
   // v4 M2: a garrison's patrol fighter. APPEND ONLY.
   PATROL_FIGHTER,
+  // Capital class R&D (plan eager-sauteeing-curry): WW2-grounded warships. APPEND ONLY.
+  DESTROYER,
+  LIGHT_CRUISER,
+  HEAVY_CRUISER,
+  BATTLECRUISER,
+  BATTLESHIP,
 ]);

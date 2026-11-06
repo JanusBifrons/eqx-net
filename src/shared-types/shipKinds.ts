@@ -73,6 +73,7 @@ import { ROBOT_SQUARE, ROBOT_CIRCLE, ROBOT_HEXAGON, ROBOT_NEXUS, ROBOT_HARVESTER
 import { CARGO_POD } from './shipKinds/cargoPod.js';
 import { TRADER_HAULER } from './shipKinds/traders.js';
 import { PATROL_FIGHTER } from './shipKinds/patrols.js';
+import { DESTROYER, LIGHT_CRUISER, HEAVY_CRUISER, BATTLECRUISER, BATTLESHIP } from './shipKinds/capitals/index.js';
 import { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 import type { NpcAllegianceId } from './allegiances.js';
 import type { ShipKind, ShipKindId } from './shipKinds/types.js';
@@ -134,6 +135,11 @@ export const SHIP_KINDS = Object.freeze({
   'robot-nexus': ROBOT_NEXUS,
   'robot-harvester': ROBOT_HARVESTER,
   'patrol-fighter': PATROL_FIGHTER,
+  destroyer: DESTROYER,
+  'light-cruiser': LIGHT_CRUISER,
+  'heavy-cruiser': HEAVY_CRUISER,
+  battlecruiser: BATTLECRUISER,
+  battleship: BATTLESHIP,
 } as const) satisfies Readonly<Record<string, ShipKind>>;
 
 /**

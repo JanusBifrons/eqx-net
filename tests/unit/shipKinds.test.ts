@@ -111,13 +111,15 @@ describe('ShipShapeSchema — discriminated union (composite-ships Phase 0)', ()
     if (result.success) expect(result.data.kind).toBe('composite');
   });
 
-  it('every shipped kind parses as a valid shape; only havok is composite', () => {
+  it('every shipped kind parses as a valid shape; havok, the loot pod and the capital class are composite', () => {
     for (const kind of SHIP_KINDS_LIST) {
       const result = ShipShapeSchema.safeParse(kind.shape);
       expect(result.success, `${kind.id} shape parses`).toBe(true);
       // Phase 1: havok is the first (and only) composite kind; the original
       // eight stay polygon (the union is otherwise additive).
-      const expected = kind.id === 'havok' || kind.id === 'cargo-pod' ? 'composite' : 'polygon'; // cargo-pod: P1a loot pod (one silhouette per glow tier)
+      // cargo-pod: P1a loot pod (one silhouette per glow tier); capitals: WW2
+      // deck-plan hulls built from parts (capital-ship R&D).
+      const expected = kind.id === 'havok' || kind.id === 'cargo-pod' || kind.sizeClass === 'capital' ? 'composite' : 'polygon';
       expect(kind.shape.kind, `${kind.id} shape kind`).toBe(expected);
     }
   });

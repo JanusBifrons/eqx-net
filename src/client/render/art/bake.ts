@@ -23,10 +23,26 @@ export const STRUCT_SEED_VARIANTS = 3;
 export const STRUCT_PPU = 2;
 export const STRUCT_MAX_SIDE = 1024;
 
+/** Capital hulls (capital-ship R&D round 3 E): a 5.8 km hull baked sharp is
+ *  too big for one texture, so its frames are cut into tiles of at most
+ *  TILE_MAX_SIDE texels along the hull, each its own texture; and it keeps
+ *  only CAPITAL_SUN_STEPS sun angles (a slow-turning hull hardly needs 16). */
+export const CAPITAL_SUN_STEPS = 4;
+export const TILE_MAX_SIDE = 1024;
+
+export function isCapitalKind(id: string): boolean {
+  return getShipKind(id).sizeClass === 'capital';
+}
+
 export interface Baked {
+  /** Sun-major: with tiles, frame `sun * tiles + tile`. */
   frames: Frame[];
   w: number;
   h: number;
+  /** Tiles per sun frame, cut along rows (absent ⇒ 1, untiled). */
+  tiles?: number;
+  /** Rows per tile (the last may be shorter). */
+  tileH?: number;
   density: number;
   nozzles: Fields['nozzles'];
   navLights: Fields['navLights'];
@@ -40,7 +56,7 @@ export type BakeJob =
    *  sector's sun rather than having its lighting turn with it. */
   | { type: 'struct'; id: string; seed: number; accent?: number; rot?: number; rings?: boolean }
   /** The turning part of a turret (R&D, rnd/turrets); lit at every sun step like a ship. */
-  | { type: 'turret'; id: GunFamily; paint: number; len: number; wid: number; cap: number; ppu: number }
+  | { type: 'turret'; id: GunFamily; paint: number; len: number; wid: number; cap: number; ppu: number; naval?: { barrels: number; houseW: number; houseL: number } }
   /** One component of a destroyed ship; tumbles, so baked like a ship. */
   | { type: 'scrap'; id: string; component: number }
   /** An asteroid, by its seeded outline; static, so one frame at its turn. */
@@ -54,8 +70,8 @@ const SCALE_TAG = SHIP_SCALE === 1 ? '' : `@s${SHIP_SCALE}`;
 
 /** The cache key a job's result is stored under (shared by main and workers). */
 export function bakeKey(j: BakeJob): string {
-  if (j.type === 'ship') return `m:${j.id}:${j.paint ?? ''}${j.rings ? ':R' : ''}${SCALE_TAG}`;
-  if (j.type === 'turret') return `g:${j.id}:${j.paint}:${j.len.toFixed(2)}:${j.wid.toFixed(2)}:${j.cap.toFixed(2)}:${j.ppu}`;
+  if (j.type === 'ship') return `m:${j.id}:${j.paint ?? ''}${j.rings ? ':R' : ''}${isCapitalKind(j.id) ? ':T' : ''}${SCALE_TAG}`;
+  if (j.type === 'turret') return `g:${j.id}:${j.paint}:${j.len.toFixed(2)}:${j.wid.toFixed(2)}:${j.cap.toFixed(2)}:${j.ppu}${j.naval ? `:n${j.naval.barrels}:${j.naval.houseW.toFixed(2)}:${j.naval.houseL.toFixed(2)}` : ''}`;
   if (j.type === 'scrap') return `s:${j.id}:${j.component}${SCALE_TAG}`;
   if (j.type === 'fx') return `x:${FX_VERSION}:${j.id}:${j.variant ?? ''}:${j.seed ?? ''}`;
   if (j.type === 'rock') return `r:${j.entityId}:${j.radius}:${j.resource ?? ''}:${quarterTurnsFine(j.rot ?? 0)}`;
@@ -82,6 +98,20 @@ export function seedVariant(seed: number): number {
 
 /** Ship frames are capped at this many texels a side (capital ships). */
 export const SHIP_MAX_SIDE = 512;
+
+/** Scrap keeps the old single-texture budget (it tumbles; 16 suns, untiled). */
+export function scrapPpu(id: string): number {
+  const t = shipTuning(getShipKind(id));
+  return Math.min(t.bakePpu, Math.min(t.bakeMaxSide, TILE_MAX_SIDE) / (shipExtent(id) * 2 + 6));
+}
+
+/** Cut a frame into row bands of at most `tileH` rows (copies). */
+export function splitRows(f: Frame, tileH: number, out: Frame[]): void {
+  for (let y0 = 0; y0 < f.h; y0 += tileH) {
+    const y1 = Math.min(f.h, y0 + tileH);
+    out.push({ w: f.w, h: y1 - y0, data: f.data.slice(y0 * f.w * 4, y1 * f.w * 4) });
+  }
+}
 
 export function shipPpu(id: string): number {
   // Density by the UNSCALED hull, within the class's side budget (tuning), so
@@ -132,7 +162,7 @@ export function runBake(j: BakeJob, rig: LightRig): Baked {
     return { frames: [litFrame(f, rig, rig.sunAz - turn), albedoHalf(f)], w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: [], navLights: [] };
   }
   if (j.type === 'turret') {
-    const f = forgeTurretGun({ family: j.id, paint: j.paint, len: j.len, wid: j.wid, cap: j.cap, ppu: j.ppu });
+    const f = forgeTurretGun({ family: j.id, paint: j.paint, len: j.len, wid: j.wid, cap: j.cap, ppu: j.ppu, ...(j.naval ? { naval: j.naval } : {}) });
     const frames: Frame[] = [];
     for (let k = 0; k < SUN_STEPS; k++) frames.push(litFrame(f, rig, (k / SUN_STEPS) * Math.PI * 2));
     return { frames, w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: [], navLights: [] };
@@ -141,10 +171,16 @@ export function runBake(j: BakeJob, rig: LightRig): Baked {
     const rings = j.type === 'ship' && j.rings ? shipTurrets(j.id).map((t) => ({ x: t.px, y: t.py, r: t.ring })) : undefined;
     const f = j.type === 'ship'
       ? forgeShip(j.id, { ppu: shipPpu(j.id), paint: j.paint, rings })
-      : forgeScrap(j.id, j.component, { ppu: shipPpu(j.id) });
+      : forgeScrap(j.id, j.component, { ppu: scrapPpu(j.id) });
     const frames: Frame[] = [];
-    for (let k = 0; k < SUN_STEPS; k++) frames.push(litFrame(f, rig, (k / SUN_STEPS) * Math.PI * 2));
-    return { frames, w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: f.nozzles, navLights: f.navLights };
+    const tiled = j.type === 'ship' && isCapitalKind(j.id) && f.g.h > TILE_MAX_SIDE;
+    const steps = j.type === 'ship' && isCapitalKind(j.id) ? CAPITAL_SUN_STEPS : SUN_STEPS;
+    for (let k = 0; k < steps; k++) {
+      const lit = litFrame(f, rig, (k / steps) * Math.PI * 2);
+      if (tiled) splitRows(lit, TILE_MAX_SIDE, frames); else frames.push(lit);
+    }
+    const tiles = tiled ? Math.ceil(f.g.h / TILE_MAX_SIDE) : 1;
+    return { frames, w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: f.nozzles, navLights: f.navLights, ...(tiles > 1 ? { tiles, tileH: TILE_MAX_SIDE } : {}) };
   }
   const rings = j.rings ? structureTurrets(j.id).map((t) => ({ x: t.px, y: t.py, r: t.ring })) : undefined;
   const f = forgeStructure(j.id, { ppu: STRUCT_PPU, maxSide: STRUCT_MAX_SIDE, seed: j.seed, accent: j.accent, rings });
