@@ -220,3 +220,36 @@ Gate: `netcode-health` (driven by `pnpm e2e:netgate`).
 - **Netcode gate** if any group-A/harness change touches the live loop: `pnpm e2e:netgate`.
 - **Tests-first evidence** for group A: each rewritten spec demonstrably fails against the old
   behaviour before the fix (paste the red run in the commit body).
+
+## 2026-11-06 audit: what never ran (perf plan prancy-squishing-donut, P4)
+
+CI runs only the **17 smoke specs** on a PR. The **88 feature specs** run only when someone runs `pnpm e2e` locally, and **11 specs were in no tier** (never run). A full local pass of the feature tier on the laptop, one small shard at a time, found the following.
+
+**Fixed (PR #310):**
+- **Energy bar (real bug):** it started empty at spawn.
+- **Orphans:** 10 now run in the feature tier, and 1 stale spec is deleted.
+- **Placement banner:** 5 tests wanted the banner, which is touch-only.
+- **Placement ghost:** its pixel baseline was never committed.
+- **Waits without deadlines:** 126 `waitForFunction` calls had none (a lint rule now stops this).
+
+**Still failing.** The verdict column is a first read from the error, not yet confirmed.
+
+| Spec | Failing tests | Symptom | First read |
+|---|---|---|---|
+| robustness | 8 of 13 | "≥ 17 snapshots/s at idle" and the rest | stale: idle sectors stop broadcasting by design (Stage 5); the rest may share its setup |
+| missile-frigate-homing | 4 of 4 | homing / damage / refire / fizzle | **check first** (gameplay) |
+| machined-art | 3 | fx textures through the worker pool; speed-effect zoom | unknown |
+| interceptor-beam-stays-connected, laser-smoothness | 1 each | local beam active only 0–4 of the expected > 20 frames | one cause; check (beam rendering) |
+| drawer-galaxy, galaxy-map-overlay | 1 each | click `galaxy-warp-close` never succeeds | one cause (UI) |
+| spectator-mode | 2 | speed dial late; Pilot toggle doesn't return to pilot | check (toggle) |
+| feel-tuning | 1 | fighter moved 337 u, test wants > 400 | stale: the 2× ship scale made ships slower |
+| halo-radar | 1 | no off-screen arrows | stale: no drones in the sector (same premise as the deleted spec) |
+| fence-hits, fx-turrets | 1 each | waits on `__eqxArtStats` time out | unknown |
+| cargo-panel | 1 | "a Capital was placed" is null | likely the same placement-flow change |
+| auto-fire | 1 | neutral → hostile takeover times out | unknown |
+| wave-attack, swarm-jitter, spiral-disconnect-reconnect | 1 each | | unknown |
+| **smoke:** persistence-kill, combat-lifecycle, sector-alpha (two-client) | 1–2 each | beam doesn't drain the victim's hull; two-client checks | fail on untouched `main` **on this laptop** and pass on CI: two browsers on 8 GB with software WebGL |
+
+**Next decisions:**
+1. Fix or delete each row above.
+2. Decide which feature specs earn a place in per-PR CI. Without that, a feature spec protects nothing until someone runs `pnpm e2e`, which is how all of the above rotted unnoticed.
