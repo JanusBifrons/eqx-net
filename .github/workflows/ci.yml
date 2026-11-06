@@ -253,6 +253,54 @@ jobs:
         env:
           CI: 'true'
           PLAYWRIGHT_RETRIES: '2'
+  # Feature specs for the areas this PR touches (test audit 2026-11-06).
+  # The smoke tier above is the only e2e gate; feature specs used to run only
+  # locally, which is how ~30 of them rotted unnoticed. The map is
+  # tests/e2e/featureTriggers.mjs (area paths -> specs; known-failing specs are
+  # quarantined there until fixed). ADVISORY for now: not a required check, so
+  # a red result is reported, not blocking, until it has proven stable on the
+  # hosted runners.
+  e2e-feature-affected:
+    needs: changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select specs
+        id: select
+        run: |
+          git fetch -q origin ${{ github.base_ref }}
+          specs=$(node tests/e2e/select-feature-specs.mjs origin/${{ github.base_ref }})
+          echo "specs=$specs" >> "$GITHUB_OUTPUT"
+          echo "selected: ${specs:-none}"
+      - uses: pnpm/action-setup@v4
+        if: steps.select.outputs.specs != ''
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        if: steps.select.outputs.specs != ''
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: steps.select.outputs.specs != ''
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright browsers
+        if: steps.select.outputs.specs != ''
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Playwright E2E (affected feature specs, shard ${{ matrix.shard }}/3)
+        if: steps.select.outputs.specs != ''
+        run: pnpm exec playwright test --project=feature --shard=${{ matrix.shard }}/3 --pass-with-no-tests ${{ steps.select.outputs.specs }}
+        env:
+          CI: 'true'
+          PLAYWRIGHT_RETRIES: '2'
   # NOTE: the auto-retry for failed jobs is NOT here — `rerun-failed-jobs` is
   # rejected (HTTP 403 "workflow is already running") when called from a job
   # INSIDE the still-running run. The bounded one-shot retry lives in the
