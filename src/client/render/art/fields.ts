@@ -47,7 +47,7 @@ export interface Fields {
   paint: number;
   /** Nav lights + nozzles in local world units (runtime glow sprites). */
   navLights: Array<{ x: number; y: number; color: number }>;
-  nozzles: Array<{ x: number; y: number; r: number }>;
+  nozzles: Array<{ x: number; y: number; r: number; len?: number }>;
 }
 
 /** sRGB hex → linear rgb. */
@@ -404,9 +404,13 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     } else {
       xs = t ? [0] : half > nr * 3.2 ? [-half * 0.45, half * 0.45] : [0];
     }
+    // A full-thrust flame is ~8.4 nozzle radii (engineFx flameShape): right for a
+    // fighter, a sliver on a capital. Kinds with authored thrusters stretch it to
+    // about an eighth of the hull length so the exhaust still reads zoomed out.
+    const plume = t ? Math.max(1, (0.24 * kind.radius) / (8.4 * nr)) : 1;
     const eng = lin(PALETTE.engine);
     for (const nx of xs) {
-      f.nozzles.push({ x: nx, y: ny + nr * 0.6, r: nr });
+      f.nozzles.push(plume > 1 ? { x: nx, y: ny + nr * 0.6, r: nr, len: plume } : { x: nx, y: ny + nr * 0.6, r: nr });
       putRect(nx, ny, nr, nr * 0.85, (i, bev) => {
         f.mat[i] = MAT.NOZZLE;
         f.key[i] = PALETTE.nozzle;

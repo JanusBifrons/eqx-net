@@ -210,3 +210,38 @@ export const capitalPilot: Shot = {
     await ctx.cinema.play([{ atMs: 0, smoothMs: 3000, shot: { kind: 'track', target: 'local', zoom: 0.09 * k, leadMs: 400 } }]);
   },
 };
+
+/**
+ * Capitals review round, item 1: the engines. The battleship holds full thrust
+ * in a straight line (spawned nose +y, so the stern is at -y). The camera sits
+ * on the stern close enough to see each nozzle's flame and ribbon, then pulls
+ * back to the whole hull under way.
+ */
+export const capitalEngines: Shot = {
+  id: 'capital-engines',
+  section: 'mechanics',
+  title: 'Capital engines',
+  caption: 'A battleship at full thrust: four engines, each with its own flame and exhaust trail.',
+  features: ['CAP'],
+  docs: ['ship-kinds'],
+  reel: false,
+  server: 'capitals',
+  target: { room: 'showcase-capitals', params: { sectorScale: '4', shipKind: 'battleship', art: 'machined', fx: 'new', spawnX: 0, spawnY: -9000, initialHull: 1_000_000 } },
+  hud: 'none',
+  durationMs: 22_000,
+  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'track', target: 'local', zoom: 0.6, offsetY: -3000 } }],
+  async startWhen(ctx) {
+    await artSettled(ctx);
+  },
+  async run(ctx) {
+    const k = ctx.viewport.width / 1920;
+    await ctx.page.keyboard.down('ArrowUp');
+    try {
+      await ctx.sleep(9000);
+      await ctx.cinema.play([{ atMs: 0, smoothMs: 4000, shot: { kind: 'track', target: 'local', zoom: 0.08 * k } }]);
+      await ctx.sleep(12_500);
+    } finally {
+      await ctx.page.keyboard.up('ArrowUp');
+    }
+  },
+};

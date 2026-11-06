@@ -31,9 +31,10 @@ const DEFAULT_TRAIL_S = 16 / 60;
 export type EngineInput = -1 | 0 | 1;
 
 /** The nozzle list a Machined ship bake carries (local world units). */
-export interface Nozzle { x: number; y: number; r: number }
+/** `len` stretches the flame (default 1): a capital's plume scales with its hull, not just its nozzle. */
+export interface Nozzle { x: number; y: number; r: number; len?: number }
 
-interface NozzleView { flame: Sprite; core: Sprite; glow: Sprite; ring: ExhaustRing; rope: MeshRope; pts: Point[]; r: number; lx: number; ly: number }
+interface NozzleView { flame: Sprite; core: Sprite; glow: Sprite; ring: ExhaustRing; rope: MeshRope; pts: Point[]; r: number; len: number; lx: number; ly: number }
 interface EngineView {
   /** Pooled nozzle sprites; the first `count` are this hull's. */
   nozzles: NozzleView[]; count: number; src: readonly Nozzle[] | null; gen: number;
@@ -123,6 +124,7 @@ export class FxEngines {
       const x = px + nz.lx * c - nz.ly * s, y = py + nz.lx * s + nz.ly * c;
       const flick = Math.sin(t * 53 + v.phase + n * 2.3) * 0.6 + Math.sin(t * 31 + n) * 0.4;
       flameShape(nz.r, v.thrust, v.boost, flick, this.shape);
+      this.shape.len *= nz.len;
       nz.flame.visible = true; nz.flame.position.set(x, y); nz.flame.rotation = astern; nz.flame.tint = outT;
       nz.flame.scale.set(this.shape.len / 128, this.shape.wid / 32); nz.flame.alpha = this.shape.alpha;
       nz.core.visible = true; nz.core.position.set(x, y); nz.core.rotation = astern; nz.core.tint = coreT;
@@ -196,7 +198,7 @@ export class FxEngines {
       const nz = v.nozzles[n]!;
       const src = nozzles[n];
       if (!src) { nz.flame.visible = false; nz.core.visible = false; nz.glow.visible = false; nz.rope.visible = false; continue; }
-      nz.r = src.r; nz.lx = src.x; nz.ly = src.y + src.r * 0.4;
+      nz.r = src.r; nz.len = src.len ?? 1; nz.lx = src.x; nz.ly = src.y + src.r * 0.4;
       // Rope thickness lives on its geometry (getter only); set it per hull.
       const geo = nz.rope.geometry as unknown as { _width: number; update(): void };
       geo._width = src.r * 2.4; geo.update();
@@ -220,7 +222,7 @@ export class FxEngines {
       flame: sprite(tex(this.flame)!, this.flameLayer, 0),
       core: sprite(tex(this.core)!, this.flameLayer, 0),
       glow: sprite(tex(this.glow)!, this.glowLayer, 0.5),
-      ring: new ExhaustRing(RING), rope, pts, r: 1, lx: 0, ly: 0,
+      ring: new ExhaustRing(RING), rope, pts, r: 1, len: 1, lx: 0, ly: 0,
     };
   }
 }

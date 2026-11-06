@@ -24,6 +24,22 @@ describe('capital engines follow the authored thrusters', () => {
       // All astern, spread across the beam (not stacked on the centreline).
       if (t.count > 1) expect(new Set(f.nozzles.map((n) => Math.round(n.x))).size).toBe(t.count);
     });
+
+    it(`${id}: flat stern holds the bank at the very back, with a hull-scale plume`, () => {
+      const kind = getShipKind(id);
+      const f = forgeShip(id, { ppu: 0.08 });
+      // Stern extent of the hull outline (local +y is astern).
+      const shape = kind.shape as { parts: Array<{ points: Array<[number, number]> }> };
+      let stern = 0;
+      for (const p of shape.parts) for (const [, y] of p.points) stern = Math.max(stern, y * (kind.appliedScale ?? 1));
+      for (const n of f.nozzles) {
+        // Within a couple of nozzle radii of the transom, not stepped forward.
+        expect(Math.abs(stern - n.y)).toBeLessThan(n.r * 3);
+        // Full-thrust flame ≈ 8.4 r × len ≈ an eighth of the hull length.
+        const flame = 8.4 * n.r * (n.len ?? 1);
+        expect(flame).toBeGreaterThan(0.2 * kind.radius);
+      }
+    });
   }
 
   it('a fighter keeps its small authored-at-1x nozzles', () => {

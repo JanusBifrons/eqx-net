@@ -112,12 +112,19 @@ export function hullHalfWidth(s: StyleParams, t: number): number {
   return 0.5 * (p[i]! * (1 - f) + p[i + 1]! * f);
 }
 
+/** Transom half-width × beam: the engine block (0.34 B) plus a margin. */
+export const TRANSOM_HALF = 0.21;
+
 function hullOutline(s: StyleParams, L: number, B: number): Pt[] {
   const N = s.samples;
   const right: Pt[] = [];
   for (let i = 0; i <= N; i++) {
     const t = i / N;
-    right.push([Math.max(0.4, hullHalfWidth(s, t) * B), -L / 2 + t * L]);
+    // A flat transom at the stern, wide enough for the engine bank: the
+    // reference plans taper to a point, which left no room for four nozzles
+    // (capitals review round, 2026-11-06).
+    const transom = t >= 0.9 ? TRANSOM_HALF * B : 0;
+    right.push([Math.max(0.4, transom, hullHalfWidth(s, t) * B), -L / 2 + t * L]);
   }
   const left: Pt[] = right.slice(1, -1).reverse().map(([x, y]): Pt => [-x, y]);
   const sternR = right[right.length - 1]!, bowR = right[0]!;
@@ -179,7 +186,8 @@ export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: Capi
     for (let i = 1; i < N; i++) inset.push([hullHalfWidth(s, i / N) * B * 0.86, yAt(i / N)]);
     part([...inset, ...inset.slice().reverse().map(([x, y]): Pt => [-x, y])], s.colors.deck, 'deck');
   }
-  part(rect(0, yAt(0.965), B * 0.34, L * 0.035, 0.3), s.colors.engine, 'engine');
+  // The engine block runs to the transom so the nozzles sit at the very stern.
+  part(rect(0, yAt(0.9775), B * 0.34, L * 0.045, 0.12), s.colors.engine, 'engine');
 
   const mounts: Array<Record<string, unknown>> = [];
   const mainSize = t.mainMountSize;
