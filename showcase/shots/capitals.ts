@@ -369,9 +369,27 @@ export const capitalGunsFighter: Shot = {
   },
 };
 
-/** Bystander spot off the battleship's starboard bow, beside the forward
- *  turrets but clear of their line of fire toward the target (4,000, 0). */
-const BYSTANDER = { x: 600, y: 2300 };
+/** Bystander spot in the battleship's own frame (forward, starboard): ahead of
+ *  the forward turrets, clear of their line of fire to a target on the
+ *  starboard beam. The target sits TARGET_OFF u off that beam. */
+const BYSTANDER = { fwd: 2200, stbd: 500 };
+const TARGET_OFF = 4000;
+
+/** The battleship's live pose from a client's mirror. */
+async function battleship(page: import('@playwright/test').Page): Promise<{ x: number; y: number; angle: number } | null> {
+  return page.evaluate(() => {
+    const m = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number; x: number; y: number; angle: number }> } } }).__eqxClient?.mirror;
+    let p: { x: number; y: number; angle: number } | null = null;
+    m?.swarm.forEach((e) => { if (e.kind === 1) p = { x: e.x, y: e.y, angle: e.angle }; });
+    return p as { x: number; y: number; angle: number } | null;
+  });
+}
+/** A point (fwd, stbd) in the battleship's frame, in world space. */
+function shipPoint(bs: { x: number; y: number; angle: number }, fwd: number, stbd: number): { x: number; y: number } {
+  const fx = -Math.sin(bs.angle), fy = Math.cos(bs.angle); // forward
+  const sx = Math.cos(bs.angle), sy = Math.sin(bs.angle); // starboard
+  return { x: bs.x + fx * fwd + sx * stbd, y: bs.y + fy * fwd + sy * stbd };
+}
 
 /**
  * Review round (2026-11-07): "leave the fighter where it was and spawn another
@@ -390,29 +408,47 @@ export const capitalGunsBystander: Shot = {
   docs: ['ship-kinds'],
   reel: false,
   server: 'capitals',
-  target: { room: 'showcase-capital-duel', params: { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1, spawnX: BYSTANDER.x, spawnY: BYSTANDER.y } },
+  target: { room: 'showcase-capital-duel', params: { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1, spawnX: 2000, spawnY: 2000 } },
   hud: 'none',
   durationMs: 24_000,
   async startWhen(ctx) {
-    await artSettled(ctx);
     // The target: a separate browser context (its own player id) at the
-    // room's default spawn, 4,000 u off the battleship's starboard beam.
+    // room's default spawn, 4,000 u off the battleship's starboard beam. It
+    // joins and starts the fight BEFORE the art bake finishes, so the
+    // battleship spends that time squaring up to its target, not wandering.
     const browser = ctx.page.context().browser();
     if (!browser) throw new Error('no browser for the target client');
     const tctx = await browser.newContext({ viewport: { width: 640, height: 360 } });
     const tpage = await tctx.newPage();
     targetPages.set(ctx.testId, { tctx, tpage });
-    await tpage.goto(targetUrl(ctx.baseUrl, { room: 'showcase-capital-duel', params: { shipKind: 'fighter', art: 'classic', initialHull: 1_000_000, noselfdmg: 1 } }, ctx.testId, 'none'));
+    // Wait until the bystander's client sees the battleship, then put the
+    // target on its starboard beam wherever it has drifted to.
+    await ctx.page.waitForFunction(() => {
+      let n = 0;
+      (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number }> } } }).__eqxClient?.mirror.swarm.forEach((e) => { if (e.kind === 1) n++; });
+      return n > 0;
+    }, null, { timeout: 60_000, polling: 250 });
+    const bs0 = await battleship(ctx.page);
+    const tp = bs0 ? shipPoint(bs0, 0, TARGET_OFF) : { x: 4000, y: 0 };
+    await tpage.goto(targetUrl(ctx.baseUrl, { room: 'showcase-capital-duel', params: { shipKind: 'fighter', art: 'classic', initialHull: 1_000_000, noselfdmg: 1, spawnX: Math.round(tp.x), spawnY: Math.round(tp.y) } }, ctx.testId, 'none'));
     await tpage.waitForSelector('[data-testid="warp-screen"][data-warp-visible="0"]', { state: 'attached', timeout: 60_000 });
-    // Start the fight off camera so the turrets are already training round.
-    await keepHostileFrom(ctx, tpage, 14_000);
+    const aggro = (): Promise<void> => tpage.evaluate(() => {
+      const c = (window as unknown as { __eqxClient?: { getRoom?: () => { send: (ch: string, x: unknown) => void } | null } }).__eqxClient;
+      c?.getRoom?.()?.send('test_aggro', { type: 'test_aggro' });
+    }).catch(() => undefined);
+    await aggro();
+    const timer = setInterval(() => { void aggro(); }, 9000);
+    targetPages.get(ctx.testId)!.timer = timer;
+    await artSettled(ctx);
+    // Fly the bystander to its spot while the turrets finish training round.
+    await keepStation(ctx, 14_000);
   },
   async run(ctx) {
     const t = targetPages.get(ctx.testId);
     try {
-      if (t) await Promise.all([keepHostileFrom(ctx, t.tpage, 23_500), keepStation(ctx, 23_500)]);
-      else await ctx.sleep(23_500);
+      await keepStation(ctx, 23_500);
     } finally {
+      if (t?.timer) clearInterval(t.timer);
       await t?.tctx.close();
       targetPages.delete(ctx.testId);
     }
@@ -423,27 +459,12 @@ export const capitalGunsBystander: Shot = {
 async function keepStation(ctx: ShotContext, ms: number): Promise<void> {
   const end = Date.now() + ms;
   while (Date.now() < end) {
-    const bs = await ctx.page.evaluate(() => {
-      const m = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number; x: number; y: number }> } } }).__eqxClient?.mirror;
-      let p: { x: number; y: number } | null = null;
-      m?.swarm.forEach((e) => { if (e.kind === 1) p = { x: e.x, y: e.y }; });
-      return p as { x: number; y: number } | null;
-    });
-    if (bs) await flyTo(ctx, bs.x + BYSTANDER.x, bs.y + BYSTANDER.y, { arrive: 120, maxMs: Math.min(3000, end - Date.now()), cruise: 260 });
+    const bs = await battleship(ctx.page);
+    const p = bs ? shipPoint(bs, BYSTANDER.fwd, BYSTANDER.stbd) : null;
+    if (p) await flyTo(ctx, p.x, p.y, { arrive: 120, maxMs: Math.min(3000, end - Date.now()), cruise: 320 });
     else await ctx.sleep(500);
   }
 }
 
-const targetPages = new Map<string, { tctx: import('@playwright/test').BrowserContext; tpage: import('@playwright/test').Page }>();
+const targetPages = new Map<string, { tctx: import('@playwright/test').BrowserContext; tpage: import('@playwright/test').Page; timer?: ReturnType<typeof setInterval> }>();
 
-/** keepHostile, sent from another client's session (that client is the target). */
-async function keepHostileFrom(ctx: ShotContext, page: import('@playwright/test').Page, ms: number): Promise<void> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    await page.evaluate(() => {
-      const c = (window as unknown as { __eqxClient?: { getRoom?: () => { send: (ch: string, x: unknown) => void } | null } }).__eqxClient;
-      c?.getRoom?.()?.send('test_aggro', { type: 'test_aggro' });
-    });
-    await ctx.sleep(Math.min(9000, end - Date.now()));
-  }
-}
