@@ -589,6 +589,30 @@ export class PhysicsWorld {
     for (let i = 0; i < body.numColliders(); i++) body.collider(i).setEnabled(on);
   }
 
+  /** Copy a ship's warp state into `out` (false when it never warped). The
+   *  reconciler keeps one per input tick so a correction replays from the
+   *  right spool / run state, not the latest one. Alloc-free. */
+  copyWarpState(id: string, out: WarpState): boolean {
+    const w = this.bodies.get(id)?.warp;
+    if (!w) return false;
+    Object.assign(out, w);
+    return true;
+  }
+
+  /** Restore a ship's warp state (`null`: never warped → back to idle). */
+  restoreWarpState(id: string, src: WarpState | null): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    if (src === null) {
+      if (rec.warp) { Object.assign(rec.warp, newWarpState()); this.setCollidersEnabled(rec, true); }
+      return;
+    }
+    rec.warp ??= newWarpState();
+    Object.assign(rec.warp, src);
+    // Collisions are off only during the run: match the restored phase.
+    this.setCollidersEnabled(rec, rec.warp.phase !== 'cruise');
+  }
+
   /** In-sector warp phase of a ship (`idle` when it never warped). */
   warpPhase(id: string): WarpPhase {
     return this.bodies.get(id)?.warp?.phase ?? 'idle';

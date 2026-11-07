@@ -949,7 +949,11 @@ export class ColyseusGameClient {
    *  missing ticks: a tick with no inbound input simply gets no impulse, and
    *  drag handles the rest. Reconciliation replays only inputs we actually
    *  recorded locally (still 60 Hz), so the prediction model is unaffected. */
-  private lastSentInputState: { thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean } | null = null;
+  private lastSentInputState: { thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean; warpX?: number; warpY?: number } | null = null;
+  /** In-sector warp-to (Phase 4): the drop point the pilot asked for, held in
+   *  every input until the local ship arrives (then cleared, which releases
+   *  the server's latch). Null = none. */
+  private warpRequest: { x: number; y: number } | null = null;
   private lastSentInputAtMs = 0;
   /**
    * Per-tick scratch literals — pool everything tickPhysics's inner
@@ -978,7 +982,15 @@ export class ColyseusGameClient {
     turnRight: boolean;
     boost: boolean;
     reverse: boolean;
+    warpX?: number;
+    warpY?: number;
   } = { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false };
+  /** The send payload while a warp is requested: its own pooled object, so an
+   *  ordinary input never carries undefined warp fields (they'd serialise as
+   *  null and fail the server's strict schema, dropping the whole input). */
+  private readonly _sendWarpInputScratch = {
+    type: 'input' as const, tick: 0, thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false, warpX: 0, warpY: 0,
+  };
   private readonly _sendInputScratch: {
     type: 'input';
     tick: number;
@@ -1243,6 +1255,8 @@ export class ColyseusGameClient {
     this._localPoseEpoch = -1;
     // v4 A — a disable belongs to the room that applied it.
     this.applyLocalDisabled(0);
+    // Phase 4 — a warp drop point belongs to its sector.
+    this.warpRequest = null;
     this._rttWelford = createWelford();
     this._lookaheadCtrl = createLookaheadController(6);
     this._dropDetector = createDropDetector();
@@ -4787,14 +4801,22 @@ export class ColyseusGameClient {
         rec.boost = boostApplied;
         rec.reverse = reverse;
         rec.sentAt = nowMs;
+        const wx = this.warpRequest?.x, wy = this.warpRequest?.y;
+        rec.warpX = wx;
+        rec.warpY = wy;
         const applyArg = this._applyInputScratch;
         applyArg.thrust = thrust;
         applyArg.turnLeft = turnLeft;
         applyArg.turnRight = turnRight;
         applyArg.boost = boostApplied;
         applyArg.reverse = reverse;
+        applyArg.warpX = wx;
+        applyArg.warpY = wy;
         this.predWorld.applyInput(this.mirror.localPlayerId, applyArg);
         this.reconciler.recordInput(rec);
+        // Arrived: stop asking (the next input carries none, which also
+        // releases the server's latch on this target).
+        if (this.warpRequest !== null && this.predWorld.warpArrived(this.mirror.localPlayerId)) this.warpRequest = null;
         // Idle-suppression — narrowed (2026-05-06): throttle ONLY when current
         // AND last-sent state are both fully idle (all-false). Why: when ANY
         // key is held, the server's worker queue stays populated and the
@@ -4807,19 +4829,28 @@ export class ColyseusGameClient {
         // all-idle restriction keeps throttling safe because held all-idle
         // adds zero impulse, so a skipped tick is physically equivalent.
         const last = this.lastSentInputState;
-        const allIdle = !thrust && !turnLeft && !turnRight && !boostApplied && !reverse;
-        const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost && !last.reverse;
+        // A held warp request is never idle (the server must keep receiving it).
+        const allIdle = !thrust && !turnLeft && !turnRight && !boostApplied && !reverse && wx === undefined;
+        const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost && !last.reverse && last.warpX === undefined;
         const stateChanged = !last
           || last.thrust !== thrust
           || last.turnLeft !== turnLeft
           || last.turnRight !== turnRight
           || last.boost !== boostApplied
-          || last.reverse !== reverse;
+          || last.reverse !== reverse
+          || last.warpX !== wx
+          || last.warpY !== wy;
         const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
         const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
         if (!throttle) {
           // Pooled send payload — colyseus.js serialises the literal
           // before returning so reusing the scratch ref is safe.
+          if (wx !== undefined && wy !== undefined) {
+            const w = this._sendWarpInputScratch;
+            w.tick = tick; w.thrust = thrust; w.turnLeft = turnLeft; w.turnRight = turnRight;
+            w.boost = boostApplied; w.reverse = reverse; w.warpX = wx; w.warpY = wy;
+            this.room.send('input', w);
+          } else {
           const sendArg = this._sendInputScratch;
           sendArg.tick = tick;
           sendArg.thrust = thrust;
@@ -4828,6 +4859,7 @@ export class ColyseusGameClient {
           sendArg.boost = boostApplied;
           sendArg.reverse = reverse;
           this.room.send('input', sendArg);
+          }
           // lastSentInputState retains state ACROSS ticks — must NOT
           // alias the per-tick scratch (would mutate the stored
           // last-state on the next tick). Reuse the existing record if
@@ -4839,8 +4871,10 @@ export class ColyseusGameClient {
             stored.turnRight = turnRight;
             stored.boost = boostApplied;
             stored.reverse = reverse;
+            stored.warpX = wx;
+            stored.warpY = wy;
           } else {
-            this.lastSentInputState = { thrust, turnLeft, turnRight, boost: boostApplied, reverse };
+            this.lastSentInputState = { thrust, turnLeft, turnRight, boost: boostApplied, reverse, warpX: wx, warpY: wy };
           }
           this.lastSentInputAtMs = nowMs;
           if ((stateChanged || (tick % 60) === 0) && isFullDiagMode()) {
@@ -5136,14 +5170,17 @@ export class ColyseusGameClient {
       const tick = this.inputTick; // NOT incremented; sentinel rides at the last-sent tick
       const nowMs = this.clock.now();
       const last = this.lastSentInputState;
-      const allIdle = !thrust && !turnLeft && !turnRight && !boostApplied && !reverse;
-      const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost && !last.reverse;
+      const wx = this.warpRequest?.x, wy = this.warpRequest?.y;
+      const allIdle = !thrust && !turnLeft && !turnRight && !boostApplied && !reverse && wx === undefined;
+      const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost && !last.reverse && last.warpX === undefined;
       const stateChanged = !last
         || last.thrust !== thrust
         || last.turnLeft !== turnLeft
         || last.turnRight !== turnRight
         || last.boost !== boostApplied
-        || last.reverse !== reverse;
+        || last.reverse !== reverse
+        || last.warpX !== wx
+        || last.warpY !== wy;
       const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
       const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
       if (!throttle) {
@@ -5151,6 +5188,12 @@ export class ColyseusGameClient {
         // path. cap-engaged sentinel fires at-most-once per RAF (60-120
         // /sec) so the alloc rate here is lower than the per-tick path,
         // but the pattern duplicates — keep the pool consistent.
+        if (wx !== undefined && wy !== undefined) {
+          const w = this._sendWarpInputScratch;
+          w.tick = tick; w.thrust = thrust; w.turnLeft = turnLeft; w.turnRight = turnRight;
+          w.boost = boostApplied; w.reverse = reverse; w.warpX = wx; w.warpY = wy;
+          this.room.send('input', w);
+        } else {
         const sendArg = this._sendInputScratch;
         sendArg.tick = tick;
         sendArg.thrust = thrust;
@@ -5159,6 +5202,7 @@ export class ColyseusGameClient {
         sendArg.boost = boostApplied;
         sendArg.reverse = reverse;
         this.room.send('input', sendArg);
+        }
         // lastSentInputState retains state across ticks — mutate in
         // place to avoid aliasing the per-tick scratch.
         const stored = this.lastSentInputState;
@@ -5168,8 +5212,10 @@ export class ColyseusGameClient {
           stored.turnRight = turnRight;
           stored.boost = boostApplied;
           stored.reverse = reverse;
+          stored.warpX = wx;
+          stored.warpY = wy;
         } else {
-          this.lastSentInputState = { thrust, turnLeft, turnRight, boost: boostApplied, reverse };
+          this.lastSentInputState = { thrust, turnLeft, turnRight, boost: boostApplied, reverse, warpX: wx, warpY: wy };
         }
         this.lastSentInputAtMs = nowMs;
         // Always log on sentinel send (no stateChanged / tick%60 gate) so
@@ -5575,6 +5621,31 @@ export class ColyseusGameClient {
   /** Current predicted energy pool for the local ship (weapons/energy/AI
    *  overhaul §3.2). Read per-frame by the top-center `<EnergyBar />` RAF
    *  loop + direct-DOM write — never via Zustand (it changes every frame). */
+  /**
+   * In-sector warp-to (Phase 4, solar-system sectors): ask to warp to a drop
+   * point (a pocket's rim, from `warpDropPoint`). Held in every input until
+   * the local ship arrives; the server ignores a point that isn't a pocket rim.
+   */
+  public requestWarp(x: number, y: number): void {
+    this.warpRequest = { x, y };
+  }
+
+  /** Stop asking to warp (cancels a spool; a run in progress completes). */
+  public cancelWarp(): void {
+    this.warpRequest = null;
+  }
+
+  /** The local ship's predicted warp phase (`idle` / `spool` / `cruise`). */
+  public getWarpPhase(): 'idle' | 'spool' | 'cruise' {
+    const id = this.mirror.localPlayerId;
+    return id && this.predWorld ? this.predWorld.warpPhase(id) : 'idle';
+  }
+
+  /** True while a warp request is held (spooling or about to). */
+  public hasWarpRequest(): boolean {
+    return this.warpRequest !== null;
+  }
+
   public getPredictedEnergy(): number {
     return this.predEnergy;
   }

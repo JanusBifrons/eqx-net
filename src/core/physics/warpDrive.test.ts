@@ -83,3 +83,40 @@ describe('warp in a real physics world', () => {
     expect(a.arrivedAt).toBe(b.arrivedAt);
   });
 });
+
+describe('warp under prediction correction (Reconciler)', () => {
+  it('a correction mid-spool and mid-run replays from the right warp state', async () => {
+    const { Reconciler } = await import('../prediction/Reconciler.js');
+    // "Server": one world fed every input. "Client": another, corrected to the
+    // server's state at an older acked tick, then replaying.
+    const server = await PhysicsWorld.create();
+    const client = await PhysicsWorld.create();
+    server.spawnShip('p', 0, 0, 'fighter');
+    client.spawnShip('p', 0, 0, 'fighter');
+    const rec = new Reconciler(client, 'p');
+    const serverStates: Array<ReturnType<PhysicsWorld['getShipState']>> = [];
+    const total = WARP_SPOOL_TICKS + 200;
+    let worst = 0, corrected = false;
+    for (let t = 0; t < total; t++) {
+      const input = { ...idle, warpX: 90_000, warpY: 30_000 };
+      server.applyInput('p', input); server.tick(DT); serverStates[t] = server.getShipState('p');
+      client.applyInput('p', input);
+      rec.recordInput({ tick: t, thrust: false, turnLeft: false, turnRight: false, warpX: 90_000, warpY: 30_000, sentAt: 0 });
+      client.tick(DT);
+      // Corrections 20 ticks behind, once in the spool and once in the run.
+      if (t === WARP_SPOOL_TICKS - 50 || t === WARP_SPOOL_TICKS + 100) {
+        const acked = t - 20;
+        rec.reconcile(serverStates[acked]!, acked, t + 1, acked);
+        corrected = true;
+      }
+      // Every tick after a correction, the client must match the server
+      // (a replay from the wrong spool count engages early: km apart mid-run).
+      if (corrected) {
+        const a = server.getShipState('p')!, b = client.getShipState('p')!;
+        worst = Math.max(worst, Math.hypot(a.x - b.x, a.y - b.y));
+      }
+    }
+    expect(worst).toBeLessThan(1);
+    expect(client.warpPhase('p')).toBe(server.warpPhase('p'));
+  });
+});
