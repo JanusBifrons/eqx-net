@@ -88,6 +88,9 @@ const BOX_SX_VISIBLE = { ...BOX_SX_STATIC, opacity: 1 };
 // 5 s minDisplay + ~300 ms handshake comfortable margin; anything past
 // that is a real stall and the user should NOT be trapped.
 const LOADING_STALL_TIMEOUT_MS = 20_000;
+/** A sector-to-sector trip runs ~25 s by design (it hides the loading), so a
+ *  stall only counts well past it. */
+const TRAVEL_STALL_TIMEOUT_MS = 45_000;
 
 // Cancel button is pointer-active even though the surrounding Slot
 // disables pointer events (the curtain is otherwise a pass-through
@@ -136,7 +139,11 @@ export function WarpScreen(): JSX.Element | null {
   // composition; switching here so Commit 2's handshake gates land in
   // one place. The individual sub-flag selectors above stay — the
   // status text below still reports WHICH gate is still open.
-  const visible = useIsLoadingActive();
+  const loadingActive = useIsLoadingActive();
+  // Phase 4 travel state: a sector-to-sector trip IS the loading screen, so
+  // this screen stays hidden during it — unless the trip stalls (below),
+  // when it appears with the Cancel button so nobody is stuck flying forever.
+  const travelling = useUIStore((s) => s.travelling);
 
   // Plan: crispy-kazoo, Commit 8 — stall detection. After
   // LOADING_STALL_TIMEOUT_MS of continuous loading-active, surface the
@@ -151,8 +158,9 @@ export function WarpScreen(): JSX.Element | null {
   // diagnostic event are read at fire time via store.getState()
   // (live read, not closed-over from this effect).
   const [stalled, setStalled] = useState(false);
+  const visible = loadingActive && (!travelling || stalled);
   useEffect(() => {
-    if (!visible) {
+    if (!loadingActive) {
       setStalled(false);
       return undefined;
     }
@@ -171,9 +179,9 @@ export function WarpScreen(): JSX.Element | null {
           : !s.arrivalAcked ? 'arrival-tick-reached'
           : 'unknown',
       });
-    }, LOADING_STALL_TIMEOUT_MS);
+    }, useUIStore.getState().travelling ? TRAVEL_STALL_TIMEOUT_MS : LOADING_STALL_TIMEOUT_MS);
     return () => window.clearTimeout(handle);
-  }, [visible]);
+  }, [loadingActive]);
 
   const handleCancel = (): void => {
     logEvent('respawn_loading_cancelled', { stalled });

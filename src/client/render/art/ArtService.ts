@@ -132,7 +132,11 @@ export interface ArtStats {
 
 /** Defaults by device: phones get small pages and a tight page budget. */
 export function atlasOptsFor(touch: boolean): AtlasOpts {
-  return touch ? { pageSize: 2048, maxPages: 6 } : { pageSize: 4096, maxPages: 4 };
+  // Desktop: the same 64M-texel budget as 16 pages of 2048² (was 4 of 4096²).
+  // Adding art re-uploads its WHOLE page (+ mips): a 4096² page is ~64 MB per
+  // upload, a visible GPU stall (~0.4 s on integrated graphics) whenever new
+  // art lands, e.g. flying into a new sector (Phase 4 travel state, 2026-11-07).
+  return touch ? { pageSize: 2048, maxPages: 6 } : { pageSize: 2048, maxPages: 16 };
 }
 
 /** Cut a flipbook sheet texture into its cells (same source, so they batch). */
@@ -207,7 +211,10 @@ export class ArtService {
   /** The handle for a job: an existing one if any, else a new pending one
    *  whose bake starts now. */
   acquire(job: BakeJob, urgent = true): ArtHandle {
-    const key = `${bakeKey(job)}|${this.rigTag}`;
+    // Effect textures aren't lit by the sector's sun: one bake serves every
+    // sector (a sky prepared during a transit's spool is the one used after
+    // the switch, so its upload doesn't land mid-trip).
+    const key = job.type === 'fx' ? bakeKey(job) : `${bakeKey(job)}|${this.rigTag}`;
     let h = this.handles.get(key);
     if (h) {
       // A warm-up bake still queued: something now needs it, so move it up.

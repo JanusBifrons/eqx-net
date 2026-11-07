@@ -343,6 +343,9 @@ function GameSurface({
   const joinGeneration = useUIStore((s) => s.joinGeneration);
   useEffect(() => {
     const timer = setTimeout(() => {
+      // A sector-to-sector trip opens this gate itself when the ship has flown
+      // into the new sector (ColyseusClient.stepTravel).
+      if (useUIStore.getState().travelling) return;
       useUIStore.getState().setJoinMinimumElapsed(true);
     }, 2500);
     return () => clearTimeout(timer);

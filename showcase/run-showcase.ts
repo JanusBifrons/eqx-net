@@ -191,7 +191,9 @@ async function main(): Promise<void> {
   }
 }
 
-const MAX_TAKES = 3;
+/** Best-of takes per shot (`EQX_SHOWCASE_TAKES` overrides, e.g. 1 for a long shot
+ *  on a memory-tight machine). */
+const MAX_TAKES = Math.max(1, Math.min(3, Number(process.env['EQX_SHOWCASE_TAKES']) || 3));
 
 /** Move a take into place. Windows briefly locks folders (indexer, AV), so retry. */
 async function replaceDir(from: string, to: string): Promise<void> {

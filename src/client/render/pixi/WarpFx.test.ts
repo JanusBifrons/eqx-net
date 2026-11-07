@@ -47,7 +47,7 @@ describe('WarpFx', () => {
 
   it('forgets a ship that left the mirror', () => {
     const fx = new WarpFx();
-    frame(fx, 0, ship(1));
+    frame(fx, 0, ship(undefined));
     const n = fx.layer.children.length;
     fx.beginFrame(16); fx.endFrame();
     expect(fx.layer.children.length).toBe(n - 4);
@@ -80,5 +80,32 @@ describe('WarpFx', () => {
     const d = fx.lastBurstDir();
     expect(d.x).toBeCloseTo(1, 5);
     expect(d.y).toBeCloseTo(0, 5);
+  });
+
+  it('a spooling ship that vanishes (it left for another sector) leaves along its spool heading', () => {
+    const fx = new WarpFx();
+    const s: WarpFxShip = { x: 0, y: 0, rotation: Math.PI / 2, warp: 1, stern: 30, isLocal: false };
+    fx.beginFrame(0); fx.draw('o', s); fx.endFrame();
+    fx.beginFrame(3000); fx.endFrame(); // gone from the mirror mid-spool
+    expect(fx.burstCount()).toBe(1);
+    expect(fx.lastBurstDir().x).toBeCloseTo(1, 5);
+  });
+
+  it('a ship that vanishes while idle leaves no burst', () => {
+    const fx = new WarpFx();
+    fx.beginFrame(0); fx.draw('o', { x: 0, y: 0, rotation: 0, warp: undefined, stern: 30, isLocal: false }); fx.endFrame();
+    fx.beginFrame(100); fx.endFrame();
+    expect(fx.burstCount()).toBe(0);
+  });
+
+  it("the pilot's own departure trails never reach past the ship (it accelerates away behind them)", () => {
+    const fx = new WarpFx();
+    // Facing up in Pixi (rotation 0: nose = (0, -1)).
+    const me = (warp: 1 | 2, y: number): WarpFxShip => ({ x: 0, y, rotation: 0, warp, stern: 30, isLocal: true });
+    const f = (ms: number, s2: WarpFxShip): void => { fx.beginFrame(ms, 1); fx.draw('me', s2); fx.endFrame(); };
+    f(0, me(1, 0));
+    f(1000, me(2, -40));   // departs: has only moved 40 u
+    f(1300, me(2, -120));  // 0.3 s in: 120 u
+    expect(fx.departReach()).toBeLessThanOrEqual(120 + 30 + 1);
   });
 });

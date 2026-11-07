@@ -8,6 +8,7 @@ import type { Shot } from './types.js';
 import { galaxyLanding } from './shots/galaxyLanding.js';
 import { warpTo } from './shots/warpTo.js';
 import { warpOnlooker, warpArrival } from './shots/warpOnlooker.js';
+import { sectorTravel } from './shots/sectorTravel.js';
 import { joinSector } from './shots/joinSector.js';
 import { shipGallery } from './shots/shipGallery.js';
 import { capitalLineup, capitalBroadside, capitalFlyby, capitalPilot, capitalEngines, capitalTurrets, capitalGunsFighter, capitalGunsBystander } from './shots/capitals.js';
@@ -49,6 +50,7 @@ export const SHOTS: readonly Shot[] = [
   warpTo,
   warpOnlooker,
   warpArrival,
+  sectorTravel,
   galaxyLanding,
   joinSector,
   shipGallery,
