@@ -174,6 +174,15 @@ export class Recorder {
     const quality = Number(process.env['EQX_CAPTURE_QUALITY'] ?? 80);
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality, everyNthFrame: 1, ...size });
     index.startT = Date.now();
+    // EQX_TRACE=1: a Chrome performance trace of the take (trace.json), to see
+    // what runs inside a long frame (GPU uploads, shader compiles, GC).
+    const tracing = process.env['EQX_TRACE'] === '1';
+    if (tracing) {
+      await cdp.send('Tracing.start', {
+        transferMode: 'ReturnAsStream',
+        traceConfig: { includedCategories: ['devtools.timeline', 'disabled-by-default-devtools.timeline', 'disabled-by-default-devtools.timeline.frame', 'gpu', 'v8', 'blink.user_timing', 'disabled-by-default-gpu.service', 'toplevel'] },
+      });
+    }
     const net0 = await readNet(page);
     await startLongFrames(page);
     await startPoseTrace(page);
@@ -192,6 +201,7 @@ export class Recorder {
     const trace = await takePoseTrace(page);
     if (trace) writeFileSync(path.join(clipDir, 'pose-trace.json'), trace);
     stopped = true;
+    if (tracing) await saveTrace(cdp, path.join(clipDir, 'trace.json'));
     await cdp.send('Page.stopScreencast');
     index.endT = Date.now();
     await actions;
@@ -342,6 +352,22 @@ async function startPoseTrace(page: Page): Promise<void> {
 /** Stop the pose trace; JSON rows [t, meX, meY, meA, bigX, bigY, bigA, lerpX, lerpY, inputTick, frameTimeMs, tickDueMs, physX, physY, physVx, physVy]. */
 async function takePoseTrace(page: Page): Promise<string | null> {
   return page.evaluate<string | null>(`(() => { const g = globalThis; g.__eqxTraceOn = false; return g.__eqxTrace ? JSON.stringify(g.__eqxTrace) : null; })()`).catch(() => null);
+}
+
+/** End a CDP trace and stream it to a file. */
+async function saveTrace(cdp: import('@playwright/test').CDPSession, file: string): Promise<void> {
+  const done = new Promise<string>((resolve) => cdp.once('Tracing.tracingComplete', (e: { stream?: string }) => resolve(e.stream ?? '')));
+  await cdp.send('Tracing.end');
+  const stream = await done;
+  if (!stream) return;
+  const chunks: string[] = [];
+  for (;;) {
+    const r = (await cdp.send('IO.read', { handle: stream })) as { data: string; eof: boolean; base64Encoded?: boolean };
+    chunks.push(r.base64Encoded ? Buffer.from(r.data, 'base64').toString('utf8') : r.data);
+    if (r.eof) break;
+  }
+  await cdp.send('IO.close', { handle: stream });
+  writeFileSync(file, chunks.join(''));
 }
 
 /** Start collecting long animation frames (> 50 ms) in the page. */
