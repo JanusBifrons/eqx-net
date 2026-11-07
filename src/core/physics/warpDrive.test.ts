@@ -120,3 +120,22 @@ describe('warp under prediction correction (Reconciler)', () => {
     expect(client.warpPhase('p')).toBe(server.warpPhase('p'));
   });
 });
+
+describe('the ship aligns to its warp target during the spool', () => {
+  // Nose = (-sin θ, cos θ): θ = 0 faces +y; a target on +x is θ = -π/2.
+  it('turns to face the target before the jump, overriding the pilot\'s turn keys', async () => {
+    const w = await PhysicsWorld.create();
+    w.spawnShip('p', 0, 0, 'fighter');
+    const want = Math.atan2(-1, 0);
+    let before = NaN;
+    for (let t = 0; t < WARP_SPOOL_TICKS; t++) {
+      // The pilot holds turn-left the whole spool: the align wins.
+      w.applyInput('p', { ...idle, turnLeft: true, warpX: 120_000, warpY: 0 });
+      w.tick(DT);
+      if (t === WARP_SPOOL_TICKS - 2) before = w.getShipState('p')!.angle;
+    }
+    const d = Math.atan2(Math.sin(before - want), Math.cos(before - want));
+    expect(Math.abs(d)).toBeLessThan(0.02);
+    w.dispose();
+  });
+});
