@@ -45,6 +45,10 @@ export interface SwarmBroadcasterDeps {
   /** Hull radius of the ship this player flies: a capital pilot's interest
    *  window grows with their hull (round 3 C). Omitted ⇒ the 3×3 window. */
   viewerRadius?: (playerId: string) => number;
+  /** Phase 4 warp travel — while a pilot is on a warp run, their interest
+   *  window sits on the landing point (nothing along the route is sent; the
+   *  destination streams in early). Null ⇒ the ship's own pose. */
+  interestPointOf?: (playerId: string) => { x: number; y: number } | null;
 }
 
 export class SwarmBroadcaster {
@@ -64,8 +68,9 @@ export class SwarmBroadcaster {
       let inInterest: Set<number> | undefined;
       if (slot !== undefined) {
         const b = slotBase(slot);
-        const sx = d.sabF32[b + SLOT_X_OFF]!;
-        const sy = d.sabF32[b + SLOT_Y_OFF]!;
+        const ip = playerId !== undefined ? d.interestPointOf?.(playerId) ?? null : null;
+        const sx = ip !== null ? ip.x : d.sabF32[b + SLOT_X_OFF]!;
+        const sy = ip !== null ? ip.y : d.sabF32[b + SLOT_Y_OFF]!;
         const { cx, cy } = d.interestGrid.cellOf(sx, sy);
         let scratch = d.snapshotBroadcaster.interestScratch.get(client.sessionId);
         if (!scratch) {

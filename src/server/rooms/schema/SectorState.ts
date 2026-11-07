@@ -81,6 +81,12 @@ export class ShipState extends Schema {
   // owner's client to re-seed its prediction at the new pose (#16).
   poseEpoch = 0;
 
+  // -- Warp travel (Phase 4) ------------------------------------------------
+  // PLAIN instance field: true while this ACTIVE hull is on a warp run. A
+  // travelling ship is out of the world: hidden from other players'
+  // snapshots, not targetable, not damageable (rooms/warpTravel.ts).
+  travelling = false;
+
   // -- Activated dynamic mounts (Phase 4 WS-B3) --------------------------
   // PLAIN instance field, intentionally NOT @type-decorated: the per-instance
   // ACTIVATED latent mount slots (`{ slotId, weaponId }[]`). Mirrored from the

@@ -81,6 +81,9 @@ interface ClockRateCmd     { type: 'CLOCK_RATE';     rate: number }
  *  velocity. Single-writer rule: only the worker mutates SAB pose; this
  *  command is the only path the main thread has to override it. */
 interface SetPositionCmd   { type: 'SET_POSITION';   entityId: string; x: number; y: number; angle: number; vx: number; vy: number; angvel: number }
+/** Warp travel: move a running warp's drop point (the server lands a ship at the
+ *  nearest clear spot when its drop point is blocked). Server-only. */
+interface WarpRetargetCmd { type: 'WARP_RETARGET'; entityId: string; x: number; y: number }
 /** Rename a ship body's lookup key without destroying it. Used by the
  *  fresh-spawn-displace flow so a displaced hull's body outlives its
  *  original playerId (rekeyed to `linger-${shipInstanceId}`) on rejoin. */
@@ -109,7 +112,7 @@ interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
 /** v4 T2 — a teleporter pad's closing-iris push (PhysicsWorld.setPadField). */
 interface SetPadFieldCmd    { type: 'SET_PAD_FIELD';   id: string; cx: number; cy: number; half: number; active: boolean }
 interface RemovePadFieldCmd { type: 'REMOVE_PAD_FIELD'; id: string }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd;
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd;
 
 /** Pool commands (main → pooled worker): host / free one sector's world. */
 interface AddWorldCmd    { type: 'ADD_WORLD'; worldId: number; sab: SharedArrayBuffer }
@@ -267,6 +270,10 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
           x: cmd.x, y: cmd.y, angle: cmd.angle,
           vx: cmd.vx, vy: cmd.vy, angvel: cmd.angvel,
         });
+        break;
+      }
+      case 'WARP_RETARGET': {
+        physics.retargetWarp(cmd.entityId, cmd.x, cmd.y);
         break;
       }
       case 'SET_HULL_EXPOSED': {

@@ -41,6 +41,7 @@ export type WorkerCmd =
   | { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
   | { type: 'CLOCK_RATE';     rate: number }
   | { type: 'SET_POSITION';   entityId: string; x: number; y: number; angle: number; vx: number; vy: number; angvel: number }
+  | { type: 'WARP_RETARGET';  entityId: string; x: number; y: number }
   | { type: 'SET_HULL_EXPOSED'; id: string; exposed: boolean; kindId: string; tick: number }
   /** Phase 4 WS-B2 — set (or clear) a ship instance's per-instance PHYSICS stat
    *  multipliers (`topSpeed` / `turnRate`) on its worker body, so `applyShipInput`

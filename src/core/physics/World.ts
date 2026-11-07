@@ -638,6 +638,15 @@ export class PhysicsWorld {
     this.setCollidersEnabled(rec, rec.warp.phase !== 'cruise');
   }
 
+  /** Move a running warp's drop point (server: land at the nearest clear spot).
+   *  Only during the run; the run's direction is kept. */
+  retargetWarp(id: string, x: number, y: number): void {
+    const w = this.bodies.get(id)?.warp;
+    if (w === undefined || w.phase !== 'cruise') return;
+    w.tx = x;
+    w.ty = y;
+  }
+
   /** In-sector warp phase of a ship (`idle` when it never warped). */
   warpPhase(id: string): WarpPhase {
     return this.bodies.get(id)?.warp?.phase ?? 'idle';

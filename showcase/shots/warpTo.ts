@@ -13,7 +13,7 @@ export const warpTo: Shot = {
   title: 'Warp across the system',
   caption: 'Pick a destination in the system: the drive spools, the ship runs 170 km in seconds and drops out at the pocket.',
   features: ['P4'],
-  docs: [],
+  docs: ['warp-to', 'travel-state'],
   reel: false,
   server: 'solar',
   target: { galaxy: 'sol-prime', params: { solar: '1', spawnX: 0, spawnY: 0, art: 'machined', fx: 'new' } },

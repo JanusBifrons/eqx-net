@@ -52,4 +52,33 @@ describe('WarpFx', () => {
     fx.beginFrame(16); fx.endFrame();
     expect(fx.layer.children.length).toBe(n - 4);
   });
+
+  it("another pilot's warp: departure on 1→2, arrival once on 3", () => {
+    const fx = new WarpFx();
+    const other = (warp: 1 | 2 | 3 | undefined, x = 0): WarpFxShip => ({ x, y: 0, rotation: 0, warp, stern: 30, isLocal: false });
+    const f = (ms: number, s: WarpFxShip): void => { fx.beginFrame(ms); fx.draw('o', s); fx.endFrame(); };
+    f(0, other(1));
+    f(3000, other(2, 400));
+    expect(fx.burstCount()).toBe(1); // departure
+    f(6000, other(2, 90_000));
+    expect(fx.burstCount()).toBe(0);
+    f(6100, other(3, 170_000));
+    expect(fx.burstCount()).toBe(1); // arrival
+    f(6200, other(3, 170_000));
+    f(9000, other(3, 170_000));
+    expect(fx.burstCount()).toBe(0); // drawn once, burnt out
+  });
+
+  it("another pilot's departure points along its nose, not along a stale position change", () => {
+    // Facing +x in Pixi space: rotation π/2 (nose = (sin r, -cos r)).
+    const fx = new WarpFx();
+    const s = (warp: 1 | 2, x: number, y: number, rotation: number): WarpFxShip => ({ x, y, rotation, warp, stern: 30, isLocal: false });
+    const f = (ms: number, sh: WarpFxShip): void => { fx.beginFrame(ms); fx.draw('o', sh); fx.endFrame(); };
+    f(0, s(1, 0, 0, Math.PI / 2)); // spooling, aligned to +x
+    // On the run the mirror falls back to a stale pose AND heading.
+    f(3000, s(2, -500, 800, 0));
+    const d = fx.lastBurstDir();
+    expect(d.x).toBeCloseTo(1, 5);
+    expect(d.y).toBeCloseTo(0, 5);
+  });
 });

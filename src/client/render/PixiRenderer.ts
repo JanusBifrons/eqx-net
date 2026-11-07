@@ -2345,7 +2345,8 @@ export class PixiRenderer implements IRenderer {
     const s = this._warpShipScratch;
     for (const [id, ship] of mirror.ships) {
       const sp = this.sprites.get(id);
-      if (!sp || !sp.visible) continue;
+      // A remote ship on its run is hidden but still tracked (its departure).
+      if (!sp || (!sp.visible && ship.warp !== 2)) continue;
       const kind = ship.kind ?? '';
       let stern = this._warpStern.get(kind);
       if (stern === undefined) { stern = engineProfileForKind(ship.kind).sternOffset; this._warpStern.set(kind, stern); }

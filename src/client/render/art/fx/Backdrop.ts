@@ -30,7 +30,8 @@ import { Container, Sprite, Texture, TilingSprite } from 'pixi.js';
 import type { ArtHandle, ArtService } from '../ArtService.js';
 import { hashStr } from '../raster.js';
 import { backdropXf, zoomWindow, type TileXf } from './fxMath.js';
-import { hashKey, landmarkScreen, nebulaDensityAtSeed, newSpeedFxState, sectorSky, SKY_LAYERS, SPEED_FX, speedZoomFor, stepSpeedFx, visitNebulae, visitSkyLayer, type Landmark, type NebulaRegion, type SpeedFxLevel } from './depth.js';
+import { SOLAR_SECTORS } from '../../../../shared-types/sectorBounds.js';
+import { hashKey, landmarkScreen, SOLAR_SKY_SCALE, nebulaDensityAtSeed, newSpeedFxState, sectorSky, SKY_LAYERS, SPEED_FX, speedZoomFor, stepSpeedFx, visitNebulae, visitSkyLayer, type Landmark, type NebulaRegion, type SpeedFxLevel } from './depth.js';
 import { h01 } from './fxTextures.js';
 
 export interface BackdropCamera {
@@ -59,6 +60,9 @@ export function sectorNebula(sectorKey: string | null): SectorNebula {
 
 /** Most landmarks of one kind on screen at once (pool size per sky layer). */
 const PER_LAYER = 8;
+/** Solar-system sectors: the system's own few bodies, drifting slowly. */
+const SKY_SCALE = SOLAR_SECTORS ? SOLAR_SKY_SCALE : 1;
+
 /** Texture variants per sky layer (galaxy, patch, gas giant, planet, moon). */
 const VARIANTS = [4, 6, 5, 5, 3];
 const NEAR_MOTES = 60;
@@ -329,7 +333,7 @@ export class Backdrop {
       const pool = this.pools[li]!;
       pool.used = 0;
       this.vLayer = li;
-      visitSkyLayer(this.skySeed, li, cx, cy, zoom, W, H, this.scratchL, this.visitLandmark);
+      visitSkyLayer(this.skySeed, li, cx, cy, zoom, W, H, this.scratchL, this.visitLandmark, SKY_SCALE);
       for (let k = pool.used; k < pool.sprites.length; k++) pool.sprites[k]!.visible = false;
       shown += pool.used;
     }

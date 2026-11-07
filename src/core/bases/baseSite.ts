@@ -112,10 +112,15 @@ export function chooseBaseSite(
  */
 export function nearestClearPoint(
   x: number, y: number, boxes: readonly SiteBox[], radius: number, maxDistance = 6000,
+  circles: readonly SiteCircle[] = [],
 ): { x: number; y: number } {
   const clear = (px: number, py: number): boolean => {
     for (const b of boxes) {
       if (boxHitsCircle(b.x - b.hw, b.x + b.hw, b.y - b.hh, b.y + b.hh, { x: px, y: py, r: radius })) return false;
+    }
+    for (const c of circles) {
+      const rr = c.r + radius;
+      if ((c.x - px) * (c.x - px) + (c.y - py) * (c.y - py) < rr * rr) return false;
     }
     return true;
   };

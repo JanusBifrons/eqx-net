@@ -118,6 +118,8 @@ export class LabelManager {
     // Players (skip self — own ship gets no label).
     for (const [playerId, ship] of mirror.ships) {
       if (playerId === localId) continue;
+      // Phase 4 warp travel: a ship on its warp run is out of the world.
+      if (ship.warp === 2) continue;
       const key = `p:${playerId}`;
       this.seen.add(key);
       const value = formatPlayerLabel(playerId, ship.displayName);
