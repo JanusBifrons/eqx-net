@@ -45,4 +45,25 @@ describe('SectorRoom integration — warp-to (solar-system sectors)', () => {
     const pos = await flyWithWarp({ x: 90_000, y: 90_000 }, 5_000);
     expect(Math.hypot(pos.x, pos.y)).toBeLessThan(200);
   });
+
+  it('an onlooker sees the warp in the snapshot: spool, then the run (#16)', { timeout: 40_000 }, async () => {
+    harness = await boot({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [], galaxyBases: false, alienGates: false, solarSectors: true });
+    const pilot = randomUUID(), onlooker = randomUUID();
+    const room = await harness.connectActive(pilot, { spawnX: 0, spawnY: 0 });
+    const watch = await harness.connectActive(onlooker, { spawnX: 300, spawnY: 0 });
+    const seen = new Set<number>();
+    watch.onMessage('snapshot', (snap: { states?: Record<string, { playerId?: string; warp?: number }> }) => {
+      for (const st of Object.values(snap.states ?? {})) if (st.playerId === pilot && st.warp !== undefined) seen.add(st.warp);
+    });
+    const server = harness.getServerRoom() as unknown as { serverTick: number };
+    const gate = sites.sectorSites('sol-prime').find((x) => x.kind === 'gate')!;
+    const drop = sites.warpDropPoint(gate, 0, 0);
+    const end = Date.now() + 6000;
+    while (Date.now() < end && !seen.has(2)) {
+      room.send('input', { type: 'input', tick: server.serverTick + 2, thrust: false, turnLeft: false, turnRight: false, warpX: drop.x, warpY: drop.y });
+      await new Promise((r) => setTimeout(r, 16));
+    }
+    expect([...seen].sort()).toEqual([1, 2]);
+  });
 });
+

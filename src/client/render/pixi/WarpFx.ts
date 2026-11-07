@@ -1,0 +1,300 @@
+/**
+ * Warp-to visuals (plan prancy-squishing-donut Phase 4, step 4c). Cheap
+ * sprites only: the old WarpFilterChain shader effects are not used here.
+ *
+ * Driven by each ship's warp phase on the render mirror (`ShipRenderState.warp`:
+ * 1 spool, 2 run; the local ship's is its predicted phase) and the ship's
+ * resolved sprite pose (Pixi space, never re-interpolated):
+ *
+ *  - SPOOL: a glow builds at the engines, pulsing faster as the drive charges.
+ *  - ENGAGE (1→2): a flash at the engines, a hull streak shooting out along
+ *    the run (the blur of the acceleration) and two burning engine trails left
+ *    on the path that flicker and burn out (the "Back to the Future" look). An
+ *    onlooker sees the ship zip out of view.
+ *  - RUN, own ship: speed lines rush past and a streak trails the hull.
+ *  - DROP (2→idle): a flash, a reverse streak and short trails where it lands.
+ *
+ * Sizes have an on-screen floor (`px` = world units per screen pixel), so the
+ * effect still reads zoomed far out. All objects are pooled and reused; per
+ * frame only scalar writes (#14).
+ */
+import { Container, Graphics, Sprite, Texture } from 'pixi.js';
+import { WARP_SPOOL_TICKS } from '@core/physics/warpDrive';
+
+const SPOOL_S = WARP_SPOOL_TICKS / 60;
+/** Engine trails: reach along the path (world u), grow time, burn time (s). */
+const TRAIL_LEN = 2600;
+const TRAIL_GROW_S = 0.15;
+const TRAIL_LIFE_S = 2.2;
+/** Trail segments; each fades a little more towards the far end. */
+const SEGS = 5;
+const STREAK_LEN = 1400;
+const STREAK_LIFE_S = 0.35;
+const FLASH_LIFE_S = 0.3;
+const ARRIVE_STREAK_LEN = 1100;
+const ARRIVE_TRAIL_LEN = 700;
+const ARRIVE_LIFE_S = 1.4;
+const SPEED_LINES = 28;
+const FIRE_CORE = 0xffe6a8, FIRE_OUT = 0xff6a1c, BLUE_GLOW = 0x8fd0ff, STREAK = 0xcfe4ff;
+
+/** A soft round glow, built once and scaled (centre at 0,0, radius 1). */
+function glowGfx(color: number): Graphics {
+  const g = new Graphics();
+  const rings = 7;
+  for (let i = rings; i >= 1; i--) g.circle(0, 0, i / rings).fill({ color, alpha: 0.14 });
+  g.blendMode = 'add';
+  return g;
+}
+/** A 1×1 white sprite anchored on its left edge; scaled into a line. */
+function bar(color: number): Sprite {
+  const s = new Sprite(Texture.WHITE);
+  s.anchor.set(0, 0.5);
+  s.tint = color;
+  s.blendMode = 'add';
+  return s;
+}
+
+interface ShipWarpView {
+  phase: 0 | 1 | 2;
+  spoolStart: number;
+  /** Pose while spooling (Pixi space): where a departure starts. */
+  sx: number; sy: number;
+  gen: number;
+  glowC: Graphics; glowL: Graphics; glowR: Graphics;
+  streak: Sprite;
+}
+
+interface Burst {
+  kind: 'depart' | 'arrive';
+  t0: number;
+  /** Start point and unit direction (Pixi space). */
+  x: number; y: number; dx: number; dy: number;
+  /** Ship stern distance, world u. */
+  stern: number;
+  root: Container;
+  /** [side * SEGS + seg]: two trails, SEGS pieces each. */
+  core: Sprite[]; out: Sprite[];
+  streak: Sprite; flash: Graphics;
+  live: boolean;
+}
+
+export interface WarpFxShip {
+  /** Sprite pose (Pixi space). */
+  x: number; y: number; rotation: number;
+  /** Phase from the mirror: undefined idle, 1 spool, 2 run. */
+  warp: 1 | 2 | undefined;
+  /** Stern distance from the centre, world u (engineProfileForKind). */
+  stern: number;
+  isLocal: boolean;
+}
+
+export class WarpFx {
+  /** Under the hulls: trails, streaks, glows. */
+  readonly layer = new Container();
+  private readonly ships = new Map<string, ShipWarpView>();
+  private readonly bursts: Burst[] = [];
+  private readonly lines: Sprite[] = [];
+  private readonly linePhase: number[] = [];
+  private readonly lineLat: number[] = [];
+  private readonly lineLen: number[] = [];
+  private gen = 0;
+  private now = 0;
+  /** World units per screen pixel this frame. */
+  private px = 1;
+  private activeBursts = 0;
+  private spooling = 0;
+
+  constructor() {
+    this.layer.eventMode = 'none';
+    // Deterministic speed-line layout (no Math.random: same look every run).
+    let s = 0x9e3779b9;
+    const rnd = (): number => { s = (s * 1664525 + 1013904223) >>> 0; return s / 0x100000000; };
+    for (let i = 0; i < SPEED_LINES; i++) {
+      const l = bar(0xffffff);
+      l.visible = false;
+      this.layer.addChild(l);
+      this.lines.push(l);
+      this.linePhase.push(rnd());
+      this.lineLat.push(rnd() * 2 - 1);
+      this.lineLen.push(0.25 + rnd() * 0.55);
+    }
+  }
+
+  /** `scale` = world zoom (screen px per world u). */
+  beginFrame(nowMs: number, scale = 1): void {
+    this.gen++;
+    this.now = nowMs / 1000;
+    this.px = 1 / Math.max(0.02, scale);
+    this.spooling = 0;
+  }
+
+  /** One ship per frame. */
+  draw(id: string, ship: WarpFxShip): void {
+    let v = this.ships.get(id);
+    if (!v) {
+      v = this.newView();
+      this.ships.set(id, v);
+    }
+    v.gen = this.gen;
+    const phase: 0 | 1 | 2 = ship.warp ?? 0;
+    const fx = Math.sin(ship.rotation), fy = -Math.cos(ship.rotation); // nose direction (Pixi)
+    if (phase !== v.phase) {
+      if (phase === 1) v.spoolStart = this.now;
+      if (phase === 2) {
+        // Engage: leave from where it spooled, along the line it took.
+        let dx = ship.x - v.sx, dy = ship.y - v.sy;
+        const len = Math.hypot(dx, dy);
+        if (v.phase === 1 && len > 1) { dx /= len; dy /= len; } else { dx = fx; dy = fy; }
+        const ox = v.phase === 1 ? v.sx : ship.x, oy = v.phase === 1 ? v.sy : ship.y;
+        this.spawn('depart', ox - dx * ship.stern, oy - dy * ship.stern, dx, dy, ship.stern);
+      }
+      if (phase === 0 && v.phase === 2) this.spawn('arrive', ship.x, ship.y, fx, fy, ship.stern);
+      v.phase = phase;
+    }
+    const px = this.px;
+    if (phase === 1) {
+      v.sx = ship.x; v.sy = ship.y;
+      this.spooling++;
+      const p = Math.min(1, (this.now - v.spoolStart) / SPOOL_S);
+      // Pulse quickens from 2 Hz to 10 Hz; brightness and size build with charge.
+      const hz = 2 + 8 * p * p;
+      const pulse = 0.78 + 0.22 * Math.sin((this.now - v.spoolStart) * hz * Math.PI * 2);
+      const r = Math.max(ship.stern * (0.25 + 0.55 * p), px * (3 + 7 * p)) * pulse;
+      const ex = ship.x - fx * ship.stern, ey = ship.y - fy * ship.stern;
+      const gap = Math.max(ship.stern * 0.45, px * 4);
+      const lx = -fy * gap, ly = fx * gap;
+      place(v.glowC, ex, ey, r * 1.2, 0.1 + 0.25 * p);
+      place(v.glowL, ex + lx, ey + ly, r * 0.6, 0.2 + 0.5 * p);
+      place(v.glowR, ex - lx, ey - ly, r * 0.6, 0.2 + 0.5 * p);
+    } else {
+      v.glowC.visible = v.glowL.visible = v.glowR.visible = false;
+    }
+    if (phase === 2) {
+      // A hull streak trailing the ship while it runs.
+      const len = ship.isLocal ? 600 * px : 900 * px;
+      line(v.streak, ship.x - fx * ship.stern * 0.5, ship.y - fy * ship.stern * 0.5, Math.atan2(-fy, -fx), len, Math.max(ship.stern * 0.6, px * 3), 0.22);
+      if (ship.isLocal) this.drawSpeedLines(ship.x, ship.y, fx, fy);
+    } else {
+      v.streak.visible = false;
+    }
+    if (ship.isLocal && phase !== 2) for (const l of this.lines) l.visible = false;
+  }
+
+  endFrame(): void {
+    for (const [id, v] of this.ships) {
+      if (v.gen === this.gen) continue;
+      v.glowC.destroy(); v.glowL.destroy(); v.glowR.destroy(); v.streak.destroy();
+      this.ships.delete(id);
+    }
+    let live = 0;
+    for (const b of this.bursts) {
+      if (!b.live) continue;
+      if (this.stepBurst(b)) live++;
+    }
+    this.activeBursts = live;
+  }
+
+  /** Live departure/arrival effects (diagnostic / E2E). */
+  burstCount(): number { return this.activeBursts; }
+  /** Ships spooling this frame (diagnostic / E2E). */
+  spoolCount(): number { return this.spooling; }
+
+  private newView(): ShipWarpView {
+    const glowC = glowGfx(BLUE_GLOW), glowL = glowGfx(FIRE_CORE), glowR = glowGfx(FIRE_CORE);
+    const streak = bar(STREAK);
+    glowC.visible = glowL.visible = glowR.visible = streak.visible = false;
+    this.layer.addChild(streak, glowC, glowL, glowR);
+    return { phase: 0, spoolStart: 0, sx: 0, sy: 0, gen: 0, glowC, glowL, glowR, streak };
+  }
+
+  private spawn(kind: 'depart' | 'arrive', x: number, y: number, dx: number, dy: number, stern: number): void {
+    let b: Burst | undefined;
+    for (const q of this.bursts) if (!q.live) { b = q; break; }
+    if (!b) {
+      const root = new Container();
+      const core: Sprite[] = [], out: Sprite[] = [];
+      for (let i = 0; i < 2 * SEGS; i++) { out.push(bar(FIRE_OUT)); core.push(bar(FIRE_CORE)); }
+      const streak = bar(STREAK), flash = glowGfx(0xfff4dc);
+      root.addChild(...out, ...core, streak, flash);
+      this.layer.addChild(root);
+      b = { kind, t0: 0, x: 0, y: 0, dx: 0, dy: 0, stern: 0, root, core, out, streak, flash, live: false };
+      this.bursts.push(b);
+    }
+    b.kind = kind; b.t0 = this.now; b.x = x; b.y = y; b.dx = dx; b.dy = dy; b.stern = Math.max(4, stern); b.live = true;
+    b.root.visible = true;
+    this.stepBurst(b);
+  }
+
+  /** Advance one burst; false once it has burnt out (pooled again). */
+  private stepBurst(b: Burst): boolean {
+    const t = this.now - b.t0;
+    const depart = b.kind === 'depart';
+    const life = depart ? TRAIL_LIFE_S : ARRIVE_LIFE_S;
+    if (t >= life) { b.live = false; b.root.visible = false; return false; }
+    const px = this.px;
+    const ang = Math.atan2(b.dy, b.dx);
+    const gap = Math.max(b.stern * 0.4, px * 4);
+    const nx = -b.dy * gap, ny = b.dx * gap;
+    const fade = 1 - t / life;
+    // Trails reach out fast (the acceleration), then hold and burn down.
+    const reach = depart ? TRAIL_LEN * Math.min(1, t / TRAIL_GROW_S) : ARRIVE_TRAIL_LEN;
+    // Arrival trails lie BEHIND the ship (it came from there).
+    const sx = depart ? b.x : b.x - b.dx * reach, sy = depart ? b.y : b.y - b.dy * reach;
+    const coreW = Math.max(b.stern * 0.06, px * 1.2);
+    const outW = Math.max(b.stern * 0.2, px * 3.5);
+    const seg = reach / SEGS;
+    for (let side = 0; side < 2; side++) {
+      const ox = side === 0 ? nx : -nx, oy = side === 0 ? ny : -ny;
+      for (let k = 0; k < SEGS; k++) {
+        // Departure: hottest at the start (where it lit), fading along the run.
+        // Arrival: hottest at the ship, fading behind it.
+        const along = depart ? k / SEGS : 1 - (k + 1) / SEGS;
+        const heat = 1 - 0.75 * along;
+        const x0 = sx + b.dx * seg * k + ox, y0 = sy + b.dy * seg * k + oy;
+        const f = flick(t, side * 7 + k);
+        const i = side * SEGS + k;
+        line(b.out[i]!, x0, y0, ang, seg, outW, 0.22 * heat * fade * fade * f);
+        line(b.core[i]!, x0, y0, ang, seg, coreW, 0.6 * heat * fade * f);
+      }
+    }
+    // The blur streak: shoots out along the run and fades fast.
+    const st = Math.min(1, t / STREAK_LIFE_S);
+    const sw = Math.max(b.stern * 0.8, px * 4);
+    if (depart) line(b.streak, b.x, b.y, ang, STREAK_LEN * (0.3 + 0.7 * st), sw, 0.4 * (1 - st));
+    else {
+      const l = ARRIVE_STREAK_LEN * (1 - st);
+      line(b.streak, b.x - b.dx * l, b.y - b.dy * l, ang, l, sw, 0.4 * (1 - st));
+    }
+    const ft = Math.min(1, t / FLASH_LIFE_S);
+    place(b.flash, b.x, b.y, Math.max(b.stern * (1 + 2 * ft), px * (6 + 12 * ft)), 0.6 * (1 - ft));
+    return true;
+  }
+
+  private drawSpeedLines(x: number, y: number, fx: number, fy: number): void {
+    const span = 1100 * this.px;
+    const ang = Math.atan2(-fy, -fx);
+    for (let i = 0; i < SPEED_LINES; i++) {
+      // Each line runs from ahead of the ship to behind it, then wraps.
+      const p = (this.linePhase[i]! + this.now * 2.2) % 1;
+      const along = span * (1 - 2 * p);
+      const lat = this.lineLat[i]! * span * 0.9;
+      line(this.lines[i]!, x + fx * along - fy * lat, y + fy * along + fx * lat, ang, span * this.lineLen[i]!, 1.6 * this.px, 0.35 * Math.sin(p * Math.PI));
+    }
+  }
+}
+
+/** Fire flicker, 0.64..1. */
+function flick(t: number, k: number): number { return 0.82 + 0.18 * Math.sin(t * 37 + k) * Math.sin(t * 23 + k * 2.3); }
+function place(g: Graphics, x: number, y: number, r: number, alpha: number): void {
+  g.visible = alpha > 0.01;
+  g.x = x; g.y = y;
+  g.scale.set(r);
+  g.alpha = alpha;
+}
+function line(s: Sprite, x: number, y: number, rot: number, len: number, width: number, alpha: number): void {
+  s.visible = alpha > 0.01 && len > 0.5;
+  s.x = x; s.y = y;
+  s.rotation = rot;
+  s.scale.set(len, width);
+  s.alpha = alpha;
+}

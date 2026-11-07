@@ -40,6 +40,10 @@ export interface ShipRenderState {
    *  wire's `states[].level` (the broadcaster + badge renderer are owned by
    *  WS-B1). Absent ⇒ level 1. Discrete scalar — purity-clean (Invariant #2). */
   level?: number;
+  /** Phase 4 warp-to — 1 spooling, 2 on the run; absent = idle. The local ship
+   *  takes its PREDICTED phase each frame, others the snapshot's `warp`. The
+   *  renderer draws the build-up, the blur and the trails from it. */
+  warp?: 1 | 2;
   /** Phase 4 (Dynamic weapon mounts, WS-B3) — PUBLIC activated latent mounts
    *  (`{ slotId, weaponId }[]`). Mirrored from the wire's `states[].mounts` so
    *  the renderer draws the EXTRA turrets on every ship that has activated one.

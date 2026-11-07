@@ -9,7 +9,7 @@ import {
 } from '../../shared-types/shipKinds.js';
 import { configureShipCollider, shipShieldColliderDesc } from './colliderConfig.js';
 import { applyShipInput, type ShipInputMultipliers } from './applyShipInput.js';
-import { newWarpState, stepWarp, WARP_EXIT_SPEED, WARP_SPEED, type WarpPhase, type WarpState } from './warpDrive.js';
+import { newWarpState, stepWarp, WARP_ALIGN_GAIN, WARP_EXIT_SPEED, WARP_SPEED, type WarpPhase, type WarpState } from './warpDrive.js';
 import { castHitscan } from './hitscanRay.js';
 import { wallGeometry } from '../structures/ShieldWall.js';
 import { PAD_PUSH_ACCEL, padPushDir } from '../../shared-types/teleport.js';
@@ -579,14 +579,63 @@ export class PhysicsWorld {
         return;
       }
     }
-    applyShipInput(rec.body, rec.kind, input, rec.statMul);
+    const spool = rec.warp !== undefined && rec.warp.phase === 'spool';
+    if (!spool) {
+      applyShipInput(rec.body, rec.kind, input, rec.statMul);
+      return;
+    }
+    // Spooling: the drive turns the ship to face its target (the pilot's turn
+    // keys are ignored; thrust still works), so it is already pointing the
+    // way it goes when the run starts. Same code on server and prediction.
+    const s = this._spoolInput;
+    s.thrust = input.thrust; s.boost = input.boost; s.reverse = input.reverse;
+    applyShipInput(rec.body, rec.kind, s, rec.statMul);
+    this.alignToWarp(rec, rec.warp!);
+  }
+
+  /** Turn toward the warp target at up to the ship's turn rate. */
+  private alignToWarp(rec: ShipBody, w: WarpState): void {
+    const body = rec.body;
+    const t = body.translation();
+    const want = Math.atan2(-(w.tx - t.x), w.ty - t.y);
+    let d = want - body.rotation();
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    const cap = rec.kind.maxAngvel * (rec.statMul !== undefined && rec.statMul.turnRate > 0 ? rec.statMul.turnRate : 1);
+    // Proportional: full rate when far off, easing in over the last few degrees.
+    const rate = d * WARP_ALIGN_GAIN;
+    body.setAngvel(rate > cap ? cap : rate < -cap ? -cap : rate, true);
   }
 
   private readonly _warpReq = { x: 0, y: 0 };
+  private readonly _spoolInput: ShipInput = { thrust: false, turnLeft: false, turnRight: false };
 
   private setCollidersEnabled(rec: ShipBody, on: boolean): void {
     const body = rec.body;
     for (let i = 0; i < body.numColliders(); i++) body.collider(i).setEnabled(on);
+  }
+
+  /** Copy a ship's warp state into `out` (false when it never warped). The
+   *  reconciler keeps one per input tick so a correction replays from the
+   *  right spool / run state, not the latest one. Alloc-free. */
+  copyWarpState(id: string, out: WarpState): boolean {
+    const w = this.bodies.get(id)?.warp;
+    if (!w) return false;
+    Object.assign(out, w);
+    return true;
+  }
+
+  /** Restore a ship's warp state (`null`: never warped → back to idle). */
+  restoreWarpState(id: string, src: WarpState | null): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    if (src === null) {
+      if (rec.warp) { Object.assign(rec.warp, newWarpState()); this.setCollidersEnabled(rec, true); }
+      return;
+    }
+    rec.warp ??= newWarpState();
+    Object.assign(rec.warp, src);
+    // Collisions are off only during the run: match the restored phase.
+    this.setCollidersEnabled(rec, rec.warp.phase !== 'cruise');
   }
 
   /** In-sector warp phase of a ship (`idle` when it never warped). */

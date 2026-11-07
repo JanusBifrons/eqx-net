@@ -25,6 +25,7 @@
 import { springStep, type SpringState } from '../math/CritDampedSpring.js';
 import { playerCorrectionHalfLifeMs } from './correctionSmoothing.js';
 import type { PhysicsWorld, ShipPhysicsState } from '../physics/World.js';
+import { newWarpState } from '../physics/warpDrive.js';
 import { REAL_CLOCK, type Clock } from '../clock/Clock.js';
 
 const BUFFER_SIZE = 128; // ~2 s at 60 Hz
@@ -59,6 +60,10 @@ export interface InputRecord {
   boost?: boolean;
   /** S / Down-held reverse. Optional — replay treats `undefined` as `false`. */
   reverse?: boolean;
+  /** In-sector warp-to request (Phase 4); absent = none. Replayed like the
+   *  rest of the input. */
+  warpX?: number;
+  warpY?: number;
   /** performance.now() when the input was sent, for RTT estimation. */
   sentAt: number;
 }
@@ -138,8 +143,18 @@ export class Reconciler {
     slot.turnRight = input.turnRight;
     slot.boost = input.boost;
     slot.reverse = input.reverse;
+    slot.warpX = input.warpX;
+    slot.warpY = input.warpY;
     slot.sentAt = input.sentAt;
+    // The local ship's warp state AFTER this tick's input (only applyInput
+    // changes it): a correction restores the one at its ackedTick, then
+    // replays, so a warp mid-spool or mid-run replays from the right state.
+    const ws = this.warpHistory[input.tick % BUFFER_SIZE]!;
+    ws.valid = this.world.copyWarpState(this.playerId, ws.state);
   }
+
+  /** Per input tick: the local ship's warp state after that tick's input. */
+  private readonly warpHistory = Array.from({ length: BUFFER_SIZE }, () => ({ valid: false, state: newWarpState() }));
 
   /** Returns true while a visual lerp correction is in progress. */
   get isLerping(): boolean {
@@ -237,6 +252,11 @@ export class Reconciler {
     this.lastBeforePos.x = before.x;
     this.lastBeforePos.y = before.y;
     this.world.setShipState(this.playerId, serverState);
+    const acked = this.buffer[ackedTick % BUFFER_SIZE];
+    if (acked && acked.tick === ackedTick) {
+      const ws = this.warpHistory[ackedTick % BUFFER_SIZE]!;
+      this.world.restoreWarpState(this.playerId, ws.valid ? ws.state : null);
+    }
 
     // Cap the replay window to BUFFER_SIZE. Two real cases this protects:
     //  1. **Join**: the first snapshot after `welcome` reports `ackedTick=0`

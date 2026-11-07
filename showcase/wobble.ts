@@ -141,8 +141,12 @@ export function poseHealth(rows: number[][]): PoseHealth | null {
     if (lb > ONSET_U && lb > la + ONSET_U) { corrections++; bad = true; }
     const ticks = b[9]! - a[9]!;
     const one = Math.hypot(b[14]!, b[15]!) / 60;
+    // Only a STEADY speed can show a tick mislabel: a warp's engage / drop
+    // (or a collision) changes the speed itself in one tick, legitimately.
+    const prevOne = Math.hypot(a[14]!, a[15]!) / 60;
+    const steady = Math.abs(one - prevOne) <= 0.25 * Math.max(one, prevOne);
     const moved = Math.hypot(b[12]! - a[12]!, b[13]! - a[13]!);
-    if (one > 0.5 && ticks >= 0 && ticks <= 3 && Math.abs(moved - ticks * one) > 0.6 * one) { tickJumps++; bad = true; }
+    if (steady && one > 0.5 && ticks >= 0 && ticks <= 3 && Math.abs(moved - ticks * one) > 0.6 * one) { tickJumps++; bad = true; }
     if (bad && firstAtMs < 0) firstAtMs = b[10]! - t0;
   }
   return { frames: rows.length, corrections, tickJumps, firstAtMs };

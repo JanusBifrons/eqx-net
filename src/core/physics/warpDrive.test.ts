@@ -83,3 +83,59 @@ describe('warp in a real physics world', () => {
     expect(a.arrivedAt).toBe(b.arrivedAt);
   });
 });
+
+describe('warp under prediction correction (Reconciler)', () => {
+  it('a correction mid-spool and mid-run replays from the right warp state', async () => {
+    const { Reconciler } = await import('../prediction/Reconciler.js');
+    // "Server": one world fed every input. "Client": another, corrected to the
+    // server's state at an older acked tick, then replaying.
+    const server = await PhysicsWorld.create();
+    const client = await PhysicsWorld.create();
+    server.spawnShip('p', 0, 0, 'fighter');
+    client.spawnShip('p', 0, 0, 'fighter');
+    const rec = new Reconciler(client, 'p');
+    const serverStates: Array<ReturnType<PhysicsWorld['getShipState']>> = [];
+    const total = WARP_SPOOL_TICKS + 200;
+    let worst = 0, corrected = false;
+    for (let t = 0; t < total; t++) {
+      const input = { ...idle, warpX: 90_000, warpY: 30_000 };
+      server.applyInput('p', input); server.tick(DT); serverStates[t] = server.getShipState('p');
+      client.applyInput('p', input);
+      rec.recordInput({ tick: t, thrust: false, turnLeft: false, turnRight: false, warpX: 90_000, warpY: 30_000, sentAt: 0 });
+      client.tick(DT);
+      // Corrections 20 ticks behind, once in the spool and once in the run.
+      if (t === WARP_SPOOL_TICKS - 50 || t === WARP_SPOOL_TICKS + 100) {
+        const acked = t - 20;
+        rec.reconcile(serverStates[acked]!, acked, t + 1, acked);
+        corrected = true;
+      }
+      // Every tick after a correction, the client must match the server
+      // (a replay from the wrong spool count engages early: km apart mid-run).
+      if (corrected) {
+        const a = server.getShipState('p')!, b = client.getShipState('p')!;
+        worst = Math.max(worst, Math.hypot(a.x - b.x, a.y - b.y));
+      }
+    }
+    expect(worst).toBeLessThan(1);
+    expect(client.warpPhase('p')).toBe(server.warpPhase('p'));
+  });
+});
+
+describe('the ship aligns to its warp target during the spool', () => {
+  // Nose = (-sin θ, cos θ): θ = 0 faces +y; a target on +x is θ = -π/2.
+  it('turns to face the target before the jump, overriding the pilot\'s turn keys', async () => {
+    const w = await PhysicsWorld.create();
+    w.spawnShip('p', 0, 0, 'fighter');
+    const want = Math.atan2(-1, 0);
+    let before = NaN;
+    for (let t = 0; t < WARP_SPOOL_TICKS; t++) {
+      // The pilot holds turn-left the whole spool: the align wins.
+      w.applyInput('p', { ...idle, turnLeft: true, warpX: 120_000, warpY: 0 });
+      w.tick(DT);
+      if (t === WARP_SPOOL_TICKS - 2) before = w.getShipState('p')!.angle;
+    }
+    const d = Math.atan2(Math.sin(before - want), Math.cos(before - want));
+    expect(Math.abs(d)).toBeLessThan(0.02);
+    w.dispose();
+  });
+});

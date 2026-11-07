@@ -94,4 +94,14 @@ describe('pose-trace gate (what the game drew, frame by frame)', () => {
     expect(h!.corrections).toBe(4);
     expect(poseProblem(h)).toMatch(/prediction corrections: 4/);
   });
+
+  it('a warp drop-out (speed changes in one tick) is not a tick jump', () => {
+    // Cruising at 20,000 u/s (333 u a tick), then dropping on the target at 150 u/s.
+    const h = poseHealth(flight(120, (i, r) => {
+      if (i >= 40 && i < 80) { r[12] = 3 * 40 + (i - 40) * 333; r[14] = 20_000; }
+      if (i >= 80) { r[12] = 3 * 40 + 40 * 333 + (i - 80) * 2.5; r[14] = 150; }
+    }));
+    expect(h!.tickJumps).toBe(0);
+  });
 });
+

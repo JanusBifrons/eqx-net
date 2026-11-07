@@ -37,6 +37,7 @@ import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplos
 import { shellImpactRadius, shellEndedOnHit } from './art/fx/turretFx.js';
 import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import { FxEngines } from './art/fx/FxEngines.js';
+import { WarpFx, type WarpFxShip } from './pixi/WarpFx.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
 import { LodDots } from './pixi/LodDots';
 import { GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldVisualRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
@@ -742,6 +743,9 @@ export class PixiRenderer implements IRenderer {
     // per-frame layer.
     this.shipContainer.addChild(this.connectorRenderer.staticGfx);
     this.shipContainer.addChild(this.connectorRenderer.gfx);
+    // Warp-to visuals (Phase 4): engine build-up, blur streak, burning trails.
+    // Cheap sprites, under the hulls; drawn for every render mode.
+    this.shipContainer.addChild(this._warpFx.layer);
 
     // 2026-05-26 heap-growth gate step 12 — pool ctx objects for the
     // per-frame sprite updaters. All fields are permanent references;
@@ -2207,6 +2211,7 @@ export class PixiRenderer implements IRenderer {
       this.frameMarkers.gridLabelCount = 0;
     }
     this.frameMarkers.spriteCount = this.sprites.size;
+    this.drawWarpFx(mirror);
 
     // Effects subsystem tick. MUST run AFTER all sprite updates so per-
     // entity effects (shield aura, engine emitters in later milestones)
@@ -2332,6 +2337,24 @@ export class PixiRenderer implements IRenderer {
    *  pass their thrust / boost input, drones (`swarm-*`) follow their speed.
    *  Lingering hulls and scrap are skipped. Reads the sprite's resolved pose
    *  (one pose per frame). Ships it draws skip today's particle emitter. */
+  /** Warp-to visuals for every visible ship (one resolved sprite pose each). */
+  private drawWarpFx(mirror: RenderMirror): void {
+    const fx = this._warpFx;
+    fx.beginFrame(performance.now(), this.world.scale.x);
+    const local = mirror.localPlayerId;
+    const s = this._warpShipScratch;
+    for (const [id, ship] of mirror.ships) {
+      const sp = this.sprites.get(id);
+      if (!sp || !sp.visible) continue;
+      const kind = ship.kind ?? '';
+      let stern = this._warpStern.get(kind);
+      if (stern === undefined) { stern = engineProfileForKind(ship.kind).sternOffset; this._warpStern.set(kind, stern); }
+      s.x = sp.x; s.y = sp.y; s.rotation = sp.rotation; s.warp = ship.warp; s.stern = stern; s.isLocal = id === local;
+      fx.draw(id, s);
+    }
+    fx.endFrame();
+  }
+
   private drawFxEngines(mirror: RenderMirror): void {
     const fx = this._fxEngines;
     if (!fx) return;
@@ -2718,6 +2741,9 @@ export class PixiRenderer implements IRenderer {
   private _turretShotGen = 0;
   private readonly _ownerSpriteKey = new Map<string, string>();
   private _fxEnginesLastMs = 0;
+  private readonly _warpFx = new WarpFx();
+  private readonly _warpShipScratch: WarpFxShip = { x: 0, y: 0, rotation: 0, warp: undefined, stern: 0, isLocal: false };
+  private readonly _warpStern = new Map<string, number>();
   /** Scratch for the test-only particle count in `artStats`. */
   private readonly _engineDbgScratch: number[] = [];
   /** Top speed per ship kind (normalises a drone's engine level). */
@@ -2946,7 +2972,7 @@ export class PixiRenderer implements IRenderer {
 
   /** Machined art status: the service's counts plus how many ship sprites
    *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; lodDots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']> } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; lodDots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']>; warpBursts: number; warpSpooling: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;
@@ -2956,7 +2982,7 @@ export class PixiRenderer implements IRenderer {
       if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
     const art = this._artCtx.art;
-    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), lodDots: this._lodDots.dotCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
+    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), lodDots: this._lodDots.dotCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
   }
 
   dispose(): void {

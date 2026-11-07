@@ -230,6 +230,20 @@ export function applyShipLevels(snap: SnapshotMessage, mirror: RenderMirror): vo
 }
 
 /**
+ * Phase 4 warp-to (#16): mirror each ship's PUBLIC warp phase (`states[].warp`:
+ * 1 spool, 2 run; absent = idle) onto its render entry. Writes only on change.
+ * The local ship's entry is overwritten each frame by its predicted phase.
+ */
+export function applyShipWarp(snap: SnapshotMessage, mirror: RenderMirror): void {
+  for (const id in snap.states) {
+    const ship = mirror.ships.get(id);
+    if (!ship) continue;
+    const w = snap.states[id]!.warp;
+    if (ship.warp !== w) ship.warp = w;
+  }
+}
+
+/**
  * Public activated-mount slice (Phase 4 WS-B3, plan: effervescent-umbrella). The
  * snapshot `states[id].mounts` carries each hull's PUBLIC activated latent mounts
  * (emit-when-non-empty). Mirror it onto EVERY ship render entry (local + remote)

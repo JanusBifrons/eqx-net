@@ -19,12 +19,15 @@ export type ServerProfile =
   /** Living world OFF + 4x sector space: 10x capital hulls need the room
    *  (main's default sector scale is 1 until the solar-system phase). The
    *  page must ask for the same scale (`sectorScale: '4'` in its params). */
-  | 'capitals';
+  | 'capitals'
+  /** Solar-system sectors (Phase 4, `EQX_SOLAR_SECTORS=1`), only Sol Prime
+   *  booted, living world off. The page must ask too (`solar: '1'`). */
+  | 'solar';
 
 /** The order the runner records server profiles in. A shot whose profile is
  *  missing here is never recorded (2026-11-06: the capital shots, profile
  *  `capitals`, were silently skipped). Lock: tests/unit/showcaseProfiles.test.ts. */
-export const PROFILE_ORDER: readonly ServerProfile[] = ['lean', 'living', 'wave', 'capitals'];
+export const PROFILE_ORDER: readonly ServerProfile[] = ['lean', 'living', 'wave', 'capitals', 'solar'];
 
 export type HudMode = 'full' | 'clean' | 'minimal' | 'none';
 
