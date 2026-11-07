@@ -18,7 +18,7 @@
  * the muzzle is houseL / 2 + barrel length ahead of the pivot.
  * Sources: docs/research/ww2-surface-combatants.md (+ the 16"/50 Mark 7 page).
  */
-export type CapitalTurretSize = 'S' | 'M' | 'L' | 'XL';
+export type CapitalTurretSize = 'AA' | 'S' | 'M' | 'L' | 'XL';
 
 export interface CapitalTurretGeom {
   /** Gunhouse width and length. */
@@ -32,6 +32,8 @@ export interface CapitalTurretGeom {
 }
 
 export const CAPITAL_TURRETS: Readonly<Record<CapitalTurretSize, CapitalTurretGeom>> = {
+  // AA: a quad 40 mm Bofors mount (~4.5 m across on a 33 m beam), 4 short barrels.
+  AA: { houseW: 0.1, houseL: 0.08, barbette: 0.05, len: 0.075, wid: 0.009 },
   S: { houseW: 0.15, houseL: 0.17, barbette: 0.075, len: 0.16, wid: 0.022 },
   M: { houseW: 0.42, houseL: 0.46, barbette: 0.19, len: 0.38, wid: 0.04 },
   L: { houseW: 0.43, houseL: 0.48, barbette: 0.18, len: 0.52, wid: 0.045 },

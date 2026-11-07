@@ -23,10 +23,10 @@ describe('SectorRoom integration — capital main battery (Phase 3)', () => {
       droneCount: 0,
       testMode: true,
       asteroidConfig: [],
-      // Bow-on to the pilot at the origin (angle π/2: nose toward −x), so the
-      // forward 16" turrets bear at their rest angle and fire without a
-      // 20 s slew at the real 4°/s traverse. 5" reach can't cover the gap.
-      dronePoses: [{ kind: 'battleship', x: 5000, y: 0, angle: Math.PI / 2 }],
+      // The pilot (origin) 40° off the battleship's bow: clear of the hull
+      // (guns never fire along their own deck), and only a ~10 s swing at the
+      // real 4°/s traverse. 5" reach can't cover the gap.
+      dronePoses: [{ kind: 'battleship', x: 5000, y: 0, angle: (50 * Math.PI) / 180 }],
     });
   }, 15_000);
   afterEach(async () => {

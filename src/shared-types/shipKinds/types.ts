@@ -161,7 +161,7 @@ export const WeaponMountSchema = z
     /** Mount size (ship scale infrastructure): scales the weapon's reach,
      *  projectile radius and splash via `MOUNT_SIZE_TUNING`. Absent ⇒ the
      *  ship's size-class default (`S` for today's ships). */
-    size: z.enum(['S', 'M', 'L', 'XL']).optional(),
+    size: z.enum(['AA', 'S', 'M', 'L', 'XL']).optional(),
     /** Capital naval turrets: barrels per gunhouse (1 single, 2 twin, 3
      *  triple) and a scale on the calibre-class geometry (destroyer 5" mounts
      *  are relatively larger on a narrow beam). Visual + muzzle geometry
