@@ -150,6 +150,9 @@ export interface ArtStats {
   /** Diagnostic: atlas pages freed by `collect`, and the page budget. */
   freedPages?: number;
   maxPages?: number;
+  /** Current art visit, and what pinned a past one at the last collect. */
+  visit?: number;
+  pins?: string[];
   /** Failed bakes by art type (diagnostic). */
   failedKinds?: Record<string, number>;
   uploads?: number;
@@ -250,7 +253,7 @@ export class ArtService {
    * Phone report 2026-11-07: art from every sector visited filled a phone's
    * few pages, so ~67 bakes failed in base-heavy sectors.
    */
-  collect(inUse: Iterable<ArtHandle>, shown?: ReadonlySet<object>): number {
+  collect(inUse: ReadonlySet<ArtHandle>, shown?: ReadonlySet<object>): number {
     const live = this.liveGroups;
     live.clear();
     for (const h of inUse) if (h.group !== undefined) live.add(h.group);
@@ -258,6 +261,10 @@ export class ArtService {
       for (const h of this.handles.values()) this.noteShown(h, shown, live);
       for (const h of this.retired) this.noteShown(h, shown, live);
     }
+    // Diagnostic: what keeps a past visit's pages alive.
+    this.pins.length = 0;
+    for (const h of inUse) if ((h.group ?? 0) !== 0 && (h.group ?? 0) < this.gen && this.pins.length < 8) this.pins.push(`use:${h.key}${h.stale ? '*' : ''}`);
+    if (shown) for (const h of this.retired) { const a = h.ship ?? h.struct; if (a && shown.has(a) && this.pins.length < 8) this.pins.push(`shown:${h.key}`); }
     const dead = this.deadGroups;
     dead.clear();
     for (const h of this.handles.values()) this.noteDead(h, live, dead);
@@ -274,18 +281,19 @@ export class ArtService {
       for (let i = this.retired.length - 1; i >= 0; i--) if (dead.has(this.retired[i]!.group ?? 0)) this.retired.splice(i, 1);
       for (const g of dead) freed += this.deps.packer.freeGroup?.(g) ?? 0;
     }
-    const packer = this.deps.packer;
-    const max = packer.maxPageCount;
-    const tight = max !== undefined && Number.isFinite(max) && packer.pageCount >= max - 2;
-    let failedForSpace = 0;
-    for (const h of this.handles.values()) if (h.state === 'failed' && h.reason === OVER_BUDGET) failedForSpace++;
-    if (packer.freeGroup && (tight || failedForSpace > 0)) {
+    // Art from a past visit that is still drawn pins that visit's pages, so
+    // move it into the current visit right away (phone run 2026-11-07: the
+    // pilot's own ship and guns pinned Sol Prime's pages for the whole trip;
+    // waiting until the budget was full left no room to move them, and Vega
+    // Reach's asteroids failed). Mid-trip that is only the pilot's own ship.
+    if (this.deps.packer.freeGroup) {
       let moves = 0;
       for (const [key, h] of this.handles) {
         if (moves >= REHOME_PER_COLLECT) break;
         const g = h.group ?? 0;
-        if (g === 0 || g >= this.gen || h.stale || h.stuck) continue;
-        if (h.state !== 'ready') { this.handles.delete(key); h.stale = true; continue; }
+        if (g === 0 || g >= this.gen || h.stale || h.stuck || h.state !== 'ready') continue;
+        const art = h.ship ?? h.struct;
+        if (!inUse.has(h) && !(art && shown?.has(art))) continue;
         const n: ArtHandle = { key, job: h.job, rig: h.rig, state: 'pending', ship: null, struct: null, group: this.gen, prev: h };
         h.stale = true;
         h.next = n;
@@ -327,6 +335,8 @@ export class ArtService {
     if (g !== 0 && g < this.gen && !live.has(g)) dead.add(g);
   }
   private readonly liveGroups = new Set<number>();
+  /** Diagnostic (stats): handles pinning a past visit at the last collect. */
+  private readonly pins: string[] = [];
   private readonly deadGroups = new Set<number>();
 
   get lightRig(): LightRig { return this.rig; }
@@ -457,6 +467,8 @@ export class ArtService {
     const packer = this.deps.packer;
     // Released by `collect` while it was baking: nothing wants it.
     if (this.handles.get(h.key) !== h) return false;
+    // A bake asked for in a past visit lands in this one (not the old pages).
+    if (h.group !== undefined && h.group !== 0 && h.group < this.gen) h.group = this.gen;
     packer.setGroup?.(h.group ?? 0);
     if (h.job.type === 'fx') return this.packFx(h, h.job.id, b);
     // Warm-up bakes are a guess: they may only use half the budget, so art
@@ -549,8 +561,9 @@ export class ArtService {
       pages: this.deps.packer.pageCount, gpuBytes: this.deps.packer.gpuBytes, workers: this.deps.runner.workers, fxReady, fxPending, ...(lastFailure ? { lastFailure } : {}),
       uploads: (this.deps.packer as { uploads?: number }).uploads, uploadTexels: (this.deps.packer as { uploadTexels?: number }).uploadTexels,
       ...(failedKinds ? { failedKinds } : {}),
+      visit: this.gen, pins: this.pins.slice(),
       freedPages: (this.deps.packer as { freedPages?: number }).freedPages, maxPages: this.deps.packer.maxPageCount,
-      topTexels: [...this.texels.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => `${k} ${(v / 1e6).toFixed(2)}Mpx`),
+      topTexels: [...this.texels.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([k, v]) => `${k} ${(v / 1e6).toFixed(2)}Mpx`),
     };
   }
 

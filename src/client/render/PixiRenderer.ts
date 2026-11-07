@@ -2753,11 +2753,13 @@ export class PixiRenderer implements IRenderer {
    */
   /** See `IRenderer.setSector`. */
   setSector(sectorKey: string | null): void {
+    const prev = this._sectorKey;
     this._sectorKey = sectorKey;
     this._backdrop?.setSector(sectorKey);
-    // A new sector visit: its art goes into fresh pages, so the old sector's
-    // can be freed once nothing draws them (collectUnusedArt).
-    this._artCtx.art?.newVisit();
+    // Moving to another sector starts a new art visit: its art goes into
+    // fresh pages, and the old sector's are freed once nothing draws them
+    // (collectUnusedArt). The first sector joined is the warm-up's visit.
+    if (prev && sectorKey && prev !== sectorKey) this._artCtx.art?.newVisit();
   }
 
   /** The baked glow texture for impact sparks (null until baked). */
