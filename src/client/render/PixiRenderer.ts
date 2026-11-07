@@ -34,6 +34,8 @@ import { Backdrop } from './art/fx/Backdrop.js';
 import { speedFxFullSpeed } from './art/fx/depth.js';
 import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
+import { navalMuzzleBlastRadius, shellImpactRadius } from './art/fx/turretFx.js';
+import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import { FxEngines } from './art/fx/FxEngines.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
 import { LodDots } from './pixi/LodDots';
@@ -2278,15 +2280,37 @@ export class PixiRenderer implements IRenderer {
         if (key) for (const mountId of perShooter.keys()) mv.noteBeam(key, mountId);
       }
     }
+    const now = performance.now();
     if (mirror.projectiles) for (const [id, p] of mirror.projectiles) {
       if (p.beam) continue; // instant beam lines: handled as beams
       if (!this._turretShotSeen.has(id)) {
         const key = this.shooterSpriteKey(p.ownerId);
-        if (key) mv.noteShotNear(key, p.x, -p.y);
+        // A capital salvo: fire and smoke at the muzzle, once per salvo.
+        if (key && mv.noteShotNear(key, p.x, -p.y) && mv.shotBarrelWid > 0) {
+          this._fxExplosions?.spawn(mv.shotTipX, mv.shotTipY, navalMuzzleBlastRadius(mv.shotBarrelWid), now);
+        }
       }
       this._turretShotSeen.set(id, gen);
+      // Naval shells: remember where each one is, for its impact burst.
+      if (p.weaponId !== undefined && p.weaponId.startsWith('naval_')) {
+        let rec = this._navalShells.get(id);
+        if (rec === undefined) {
+          rec = this._navalShellFree.pop() ?? { x: 0, y: 0, r: 0 };
+          const w = isWeaponId(p.weaponId) ? getWeapon(p.weaponId) : null;
+          rec.r = shellImpactRadius(w && w.mode !== 'hitscan' ? w.radius : 3);
+          this._navalShells.set(id, rec);
+        }
+        rec.x = p.x; rec.y = -p.y;
+      }
     }
     for (const [id, g] of this._turretShotSeen) if (g !== gen) this._turretShotSeen.delete(id);
+    // A shell gone this frame (hit or spent): burst where it was last seen.
+    for (const [id, rec] of this._navalShells) {
+      if (this._turretShotSeen.has(id)) continue;
+      this._fxExplosions?.spawn(rec.x, rec.y, rec.r, now);
+      this._navalShells.delete(id);
+      this._navalShellFree.push(rec);
+    }
     if (mirror.missiles) {
       for (const [id, m] of mirror.missiles) {
         if (!this._turretMissileSeen.has(id)) {
@@ -2682,6 +2706,9 @@ export class PixiRenderer implements IRenderer {
    *  with the frame's generation so a new one is noticed once, and a cache of
    *  owner id → sprite key (structures fire as their bare entity id). */
   private readonly _turretShotSeen = new Map<string, number>();
+  /** Live naval shells (last Pixi-space position + impact radius), pooled. */
+  private readonly _navalShells = new Map<string, { x: number; y: number; r: number }>();
+  private readonly _navalShellFree: Array<{ x: number; y: number; r: number }> = [];
   private readonly _turretMissileSeen = new Map<number, number>();
   private _turretShotGen = 0;
   private readonly _ownerSpriteKey = new Map<string, string>();

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { familyFor, flashFrameAt, heatAfter, muzzleFlashFlipbook, nearestMuzzle, recoilAt } from './turretFx.js';
+import { familyFor, flashFrameAt, heatAfter, muzzleFlashFlipbook, nearestMuzzle, recoilAt, NAVAL_FLASH_LIFE_S, navalFlashSize, navalMuzzleBlastRadius, shellImpactRadius } from './turretFx.js';
 
 describe('turret bakes', () => {
   it('the flash shrinks frame by frame', () => {
@@ -41,5 +41,22 @@ describe('firing reactions', () => {
     expect(familyFor('hitscan', 'hitscan', false)).toBe('beam');
     expect(familyFor('charge-laser', 'hitscan', true)).toBe('charge');
     expect(familyFor('heat-seeker', 'missile', false)).toBe('missile');
+  });
+});
+
+describe('capital naval gun effects (review round 2026-11-07)', () => {
+  it('a naval flash lasts several times a fighter gun flash', () => {
+    expect(flashFrameAt(0.15, 4)).toBe(-1); // fighter flash gone
+    expect(flashFrameAt(0.15, 4, NAVAL_FLASH_LIFE_S)).toBeGreaterThanOrEqual(0); // naval still burning
+    expect(flashFrameAt(NAVAL_FLASH_LIFE_S, 4, NAVAL_FLASH_LIFE_S)).toBe(-1);
+  });
+
+  it('flash, muzzle blast and impact grow with the gun (invariant #18)', () => {
+    const small = navalFlashSize(10, 60), big = navalFlashSize(40, 240);
+    expect(big.w).toBeGreaterThan(small.w * 3);
+    expect(big.h).toBeGreaterThan(small.h * 3);
+    expect(big.w).toBeGreaterThan(240); // covers the whole barrel bank
+    expect(navalMuzzleBlastRadius(40)).toBeGreaterThan(navalMuzzleBlastRadius(10));
+    expect(shellImpactRadius(6)).toBeGreaterThan(shellImpactRadius(3));
   });
 });

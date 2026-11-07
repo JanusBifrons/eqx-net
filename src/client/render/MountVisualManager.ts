@@ -40,7 +40,8 @@ import { Container, Graphics, Sprite } from 'pixi.js';
 import type { ArtHandle } from './art/ArtService.js';
 import { isMachinedSprite, type ShipArtCtx } from './art/shipArtSprites.js';
 import { muzzleReach, shipTurrets, structureTurrets, type TurretPlace } from './art/turretLayout.js';
-import { flashFrameAt, heatAfter, recoilAt } from './art/fx/turretFx.js';
+import { flashFrameAt, heatAfter, recoilAt, NAVAL_FLASH_LIFE_S, navalFlashSize, SALVO_WINDOW_S } from './art/fx/turretFx.js';
+import { NAVAL_BARREL_SPAN } from '@core/combat/muzzle';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import { applySunBlend } from './art/machinedShipLight.js';
 import { isStructureKindId } from '../../shared-types/structureKinds';
@@ -170,12 +171,12 @@ export class MountVisualManager {
 
   /** A bolt or missile was first seen at Pixi-space (x, y), fired by
    *  `shipId`: kick the nearest of its guns (recoil, flash, heat). */
-  noteShotNear(shipId: string, x: number, y: number): void {
+  noteShotNear(shipId: string, x: number, y: number): boolean {
     const cluster = this.clusters.get(shipId);
     const parent = cluster?.container.parent;
-    if (!cluster || !parent) return;
+    if (!cluster || !parent) return false;
     const c = Math.cos(parent.rotation), s = Math.sin(parent.rotation);
-    let best: MachinedGun | null = null, bd = Infinity;
+    let best: MachinedGun | null = null, bd = Infinity, bestX = 0, bestY = 0;
     for (const m of cluster.perMount.values()) {
       const g = m.gun;
       if (!g?.layers) continue;
@@ -188,13 +189,26 @@ export class MountVisualManager {
       // pivot to muzzle, shoots shells first seen hundreds of units out;
       // invariant #18). Fighter guns keep SHOT_MATCH_DIST.
       const lim = Math.max(SHOT_MATCH_DIST, g.reach);
-      if (d <= lim * lim && d < bd) { bd = d; best = g; }
+      if (d <= lim * lim && d < bd) { bd = d; best = g; bestX = parent.x + lx * c - ly * s; bestY = parent.y + lx * s + ly * c; }
     }
-    if (!best) return;
+    if (!best) return false;
+    // A new salvo (not another barrel of the same one) — the caller may add a
+    // muzzle blast at `shotTipX/Y` (Pixi space) for big guns.
+    const newSalvo = this.nowS - best.lastShot > SALVO_WINDOW_S;
     best.lastShot = this.nowS;
     best.heat = heatAfter(best.heat, 0, 1);
     this.shotsMatched++;
+    this.shotTipX = bestX;
+    this.shotTipY = bestY;
+    this.shotBarrelWid = best.place.naval ? best.place.wid : 0;
+    return newSalvo;
   }
+
+  /** Muzzle of the gun the last `noteShotNear` matched (Pixi space), and its
+   *  barrel width when it is a naval turret (0 otherwise). */
+  shotTipX = 0;
+  shotTipY = 0;
+  shotBarrelWid = 0;
 
   /** Shots matched to a Machined gun so far, or -1 when the new look is off. */
   turretShotCount(): number { return this.actx?.turrets ? this.shotsMatched : -1; }
@@ -351,13 +365,20 @@ export class MountVisualManager {
     const flash = gun.flash, tip = gun.tip;
     if (flash) {
       const frames = this.flashFrames();
-      const fr = kicks && frames ? flashFrameAt(since, frames.length) : -1;
+      const naval = gun.place.naval;
+      const fr = kicks && frames ? flashFrameAt(since, frames.length, naval ? NAVAL_FLASH_LIFE_S : undefined) : -1;
       flash.visible = fr >= 0;
       if (fr >= 0) {
         flash.texture = frames![fr]!;
         flash.y = -gun.reach + kick;
         const w = gun.place.wid;
-        flash.scale.set((w * 3.2) / 64, (w * 4.2) / 64);
+        if (naval) {
+          // A capital salvo: one flash across the whole barrel bank, long.
+          const s = navalFlashSize(w, naval.houseW * NAVAL_BARREL_SPAN);
+          flash.scale.set(s.w / 64, s.h / 64);
+        } else {
+          flash.scale.set((w * 3.2) / 64, (w * 4.2) / 64);
+        }
       }
     }
     if (tip) {
