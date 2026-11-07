@@ -23,6 +23,8 @@ const W = 1920;
 const H = 1080;
 const BG = '0x05070d';
 const FADE = 0.35;
+/** One 60 Hz display refresh: the game draws one frame per refresh. */
+const SLOT_MS = 1000 / 60;
 const X264 = ['-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart'];
 
 /** Build an ffconcat list from the frame index, skipping cut windows. Returns total seconds. */
@@ -33,19 +35,48 @@ export function writeConcatList(
   cuts: ReadonlyArray<{ fromMs: number; toMs: number }> = [],
 ): number {
   const inCut = (t: number): boolean => cuts.some((c) => t >= c.fromMs && t < c.toMs);
-  const keep = index.frames.filter((f) => !inCut(f.t));
+  // Review 2026-11-07 (hostile audit of "still jittery" clips): the game draws
+  // one evenly paced frame per 60 Hz display refresh, but CDP screencast
+  // timestamps are noisy (p5 13.6 / p95 20.8 ms) and frames can ARRIVE out of
+  // order. So: drop frames outside the take (a late frame keeps an epoch
+  // time), play in timestamp order, and snap each frame to its nearest 60 Hz
+  // slot, one frame per slot, so a frame is held only for slots really
+  // missing (a dropped capture frame), never for timestamp noise.
+  const keep = index.frames
+    .filter((f) => f.t >= 0 && f.t <= durationMs + SLOT_MS && !inCut(f.t))
+    .slice()
+    .sort((a, b) => a.t - b.t);
+  // The capture grid's phase: the circular mean of every timestamp's position
+  // within a slot, so frames snap to THEIR refresh, not to a grid at 0.
+  let cs = 0, sn = 0;
+  for (const f of keep) { const a = ((f.t % SLOT_MS) / SLOT_MS) * Math.PI * 2; cs += Math.cos(a); sn += Math.sin(a); }
+  const phase = keep.length ? ((Math.atan2(sn, cs) / (Math.PI * 2) + 1) % 1) * SLOT_MS : 0;
+  const slots: Array<{ file: string; t: number; slot: number }> = [];
+  for (const f of keep) {
+    const slot = Math.round((f.t - phase) / SLOT_MS);
+    const prev = slots[slots.length - 1];
+    if (prev && slot <= prev.slot) {
+      // Two frames in one slot: the next slot is free when the following
+      // frame is well past it, else keep the frame nearer this slot's centre.
+      if (slot === prev.slot && Math.abs(f.t - phase - slot * SLOT_MS) < Math.abs(prev.t - phase - slot * SLOT_MS)) { prev.file = f.file; prev.t = f.t; }
+      continue;
+    }
+    slots.push({ file: f.file, t: f.t, slot });
+  }
+  const endSlot = Math.max(1, Math.round((durationMs - phase) / SLOT_MS));
   const lines = ['ffconcat version 1.0'];
   let total = 0;
-  for (let i = 0; i < keep.length; i++) {
-    const cur = keep[i]!;
-    let next = i + 1 < keep.length ? keep[i + 1]!.t : durationMs;
+  for (let i = 0; i < slots.length; i++) {
+    const cur = slots[i]!;
+    const nextSlot = i + 1 < slots.length ? slots[i + 1]!.slot : Math.max(cur.slot + 1, endSlot);
+    let dMs = (nextSlot - cur.slot) * SLOT_MS;
     // A cut between this frame and the next: hold this frame for one beat only.
-    if (cuts.some((c) => c.fromMs >= cur.t && c.fromMs < next)) next = cur.t + 1000 / 30;
-    const d = Math.max(1, next - cur.t) / 1000;
+    if (cuts.some((c) => c.fromMs >= cur.t && c.fromMs < nextSlot * SLOT_MS)) dMs = 1000 / 30;
+    const d = dMs / 1000;
     total += d;
-    lines.push(`file '${cur.file}'`, `duration ${d.toFixed(4)}`);
+    lines.push(`file '${cur.file}'`, `duration ${d.toFixed(6)}`);
   }
-  if (keep.length > 0) lines.push(`file '${keep[keep.length - 1]!.file}'`);
+  if (slots.length > 0) lines.push(`file '${slots[slots.length - 1]!.file}'`);
   writeFileSync(path.join(clipDir, 'frames.ffconcat'), lines.join('\n'));
   return total;
 }

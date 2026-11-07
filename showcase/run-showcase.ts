@@ -251,6 +251,8 @@ async function takeWithRetry(
       if (np) problems.push(np);
       const verdict = problems.length ? ` — ${problems.join('; ')}` : '';
       log(`  ${problems.length ? '·' : '✓'} ${rec.deliveredFps} fps, worst gap ${rec.gapMaxMs} ms, ${wobble ? wobbleSummary(wobble) : 'ship wobble: not measured'}, ${netSummary(rec.net)}${verdict}`);
+      // What ran in the take's longest frames, so a hitch says where it came from.
+      for (const f of rec.longFrames.slice(0, 3)) log(`    long frame ${f.ms} ms at ${(f.atMs / 1000).toFixed(1)} s: ${f.scripts}`);
       // Fewer QA problems first (a jittery take never beats a clean one), then the smoother.
       if (!best || problems.length < best.problems.length || (problems.length === best.problems.length && smoothScore(takeStats(rec)) > smoothScore(takeStats(best.rec)))) {
         if (best) dropTake(best.dir, best.problems);
