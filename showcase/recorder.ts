@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { chromium, devices, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import type { CameraCue } from '../src/core/contracts/cameraScript.js';
 import type { HudMode, Shot, ShotContext, ShotTarget } from './types.js';
-import { sleep } from './tools.js';
+import { browserPid, sleep, trackPid } from './tools.js';
 
 export interface FrameIndex {
   /** Frame files relative to the clip dir, with capture time (ms, monotonic). */
@@ -78,6 +78,7 @@ export class Recorder {
 
   async open(): Promise<void> {
     this.browser = await chromium.launch({ headless: !this.headed, args: GPU_ARGS });
+    trackPid(await browserPid(this.browser));
   }
 
   async close(): Promise<void> {

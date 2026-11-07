@@ -7,7 +7,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { openSync, closeSync } from 'node:fs';
 import path from 'node:path';
 import type { ServerProfile } from './types.js';
-import { killPort, waitForHttp } from './tools.js';
+import { killPort, trackPid, waitForHttp } from './tools.js';
 
 export interface ServerPorts {
   server: number;
@@ -55,6 +55,7 @@ function startLogged(cmd: string, cwd: string, env: Record<string, string>, logF
     env: { ...process.env, ...env },
   });
   closeSync(fd);
+  trackPid(child.pid);
   return child;
 }
 

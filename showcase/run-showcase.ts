@@ -24,7 +24,7 @@ import { smoothnessProblems, smoothScore, type TakeStats } from './smoothness.js
 import { measureWobble, wobbleProblem, wobbleSummary, netProblem, netSummary, poseHealth, poseProblem, poseSummary } from './wobble.js';
 import { encodeClip, encodeCard, assemble, qaClip } from './compositor.js';
 import { captionOverlay, endCard, sectionCard, titleCard } from './cards.js';
-import { gitSha, resolveFfmpeg } from './tools.js';
+import { browserPid, clearTracked, gitSha, reapStale, resolveFfmpeg, trackPid } from './tools.js';
 
 interface Args {
   shots: string[] | null;
@@ -115,6 +115,10 @@ async function main(): Promise<void> {
   mkdirSync(path.join(out, 'contact-sheets'), { recursive: true });
   mkdirSync(path.join(out, 'cards'), { recursive: true });
   mkdirSync(runDir, { recursive: true });
+  // A killed run (e.g. stopped for low memory) runs no cleanup: reap the
+  // browsers and servers it left behind before starting new ones.
+  const reaped = reapStale();
+  if (reaped > 0) log(`reaped ${reaped} process(es) left by a killed run`);
   const manifestFile = path.join(out, 'manifest.json');
   const manifest = loadManifest(manifestFile);
   const failed: string[] = [];
@@ -141,6 +145,7 @@ async function main(): Promise<void> {
       args.capture,
     );
     const capBrowser = await chromium.launch();
+    trackPid(await browserPid(capBrowser));
     try {
       await recorder.open();
       log(`GPU: ${await recorder.gpuName()}`);
@@ -166,6 +171,7 @@ async function main(): Promise<void> {
       await recorder.close();
       await capBrowser.close();
       servers.stop();
+      clearTracked();
     }
   }
 
