@@ -67,6 +67,17 @@ export interface ArtHandle {
   fx?: FxArt | null;
   /** Why it failed (bake error, too big, over the memory budget). */
   reason?: string;
+  /** Atlas group: 0 for effect textures (shared by every sector), otherwise
+   *  the sector visit it was requested in. */
+  group?: number;
+  /** Replaced or released by `collect`: ask the service for this art again. */
+  stale?: boolean;
+  /** Its replacement in the current group (set when re-homed). */
+  next?: ArtHandle;
+  /** For a replacement: the original it re-homes (restored if it won't fit). */
+  prev?: ArtHandle;
+  /** A re-home of it didn't fit: don't retry until pages are freed. */
+  stuck?: boolean;
 }
 
 /** Packs frames into GPU pages. `Atlas` in the game; a fake in tests. */
@@ -80,6 +91,10 @@ export interface ArtPacker {
   readonly pageCount: number;
   /** The most pages the budget allows (undefined: no cap). */
   readonly maxPageCount?: number;
+  /** Pack into this group's pages from now on (see Atlas.setGroup). */
+  setGroup?(group: number): void;
+  /** Free a group's pages and textures; returns pages freed. */
+  freeGroup?(group: number): number;
   readonly gpuBytes: number;
   destroy(): void;
 }
@@ -132,17 +147,32 @@ export interface ArtStats {
   /** Diagnostic: the art kinds using the most packed texels. */
   topTexels?: string[];
   /** Diagnostic: atlas page (re)uploads so far, and the texels they sent. */
+  /** Diagnostic: atlas pages freed by `collect`, and the page budget. */
+  freedPages?: number;
+  maxPages?: number;
   uploads?: number;
   uploadTexels?: number;
 }
 
 /** Defaults by device: phones get small pages and a tight page budget. */
-export function atlasOptsFor(touch: boolean): AtlasOpts {
+/**
+ * The atlas budget for this device. Pages are 2048² (16 MB each with mips).
+ * Desktop: 16 pages. Phones: by the memory the device reports
+ * (`navigator.deviceMemory`, GB, capped at 8 by the browser): a budget too
+ * small left base-heavy sectors drawing bare art (phone run 2026-11-07); too
+ * big risks a low-memory phone. Unknown memory keeps the old 6 pages.
+ */
+export function atlasOptsFor(touch: boolean, deviceMemoryGb?: number): AtlasOpts {
+  if (touch) {
+    const gb = deviceMemoryGb;
+    const pages = gb === undefined || !Number.isFinite(gb) ? 6 : gb <= 2 ? 4 : gb <= 4 ? 6 : gb < 8 ? 10 : 14;
+    return { pageSize: 2048, maxPages: pages };
+  }
   // Desktop: the same 64M-texel budget as 16 pages of 2048² (was 4 of 4096²).
   // Adding art re-uploads its WHOLE page (+ mips): a 4096² page is ~64 MB per
   // upload, a visible GPU stall (~0.4 s on integrated graphics) whenever new
   // art lands, e.g. flying into a new sector (Phase 4 travel state, 2026-11-07).
-  return touch ? { pageSize: 2048, maxPages: 6 } : { pageSize: 2048, maxPages: 16 };
+  return { pageSize: 2048, maxPages: 16 };
 }
 
 /** Cut a flipbook sheet texture into its cells (same source, so they batch). */
@@ -157,6 +187,11 @@ export function flipCells(sheet: Texture, flip: NonNullable<FxSpec['flip']>): Te
   }
   return out;
 }
+
+/** Why a bake that didn't fit failed (collect retries these after a free). */
+const OVER_BUDGET = 'over the texture memory budget';
+/** Art re-packed per `collect` (each re-uploads a page; keep it gentle). */
+const REHOME_PER_COLLECT = 8;
 
 export class ArtService {
   private readonly handles = new Map<string, ArtHandle>();
@@ -174,9 +209,119 @@ export class ArtService {
   /** The sector changed: new requests are lit by its sun. Art already baked
    *  for other suns stays usable until it's released. */
   setSector(sectorKey: string | null): void {
-    this.rig = sunRigForSector(sectorKey);
-    this.rigTag = rigTag(this.rig);
+    const rig = sunRigForSector(sectorKey);
+    const tag = rigTag(rig);
+    if (tag === this.rigTag) return;
+    this.rig = rig;
+    this.rigTag = tag;
+    this.gen++;
   }
+
+  /**
+   * The player entered another sector. New art goes into fresh atlas pages
+   * (a new group), so the pages of the sectors left behind can be freed whole
+   * once nothing draws them (`collect`).
+   */
+  newVisit(): void { this.gen++; }
+
+  /** The current group of new lit art (one per sector visit). */
+  private gen = 1;
+  /** Re-homed handles whose old art a sprite may still show. */
+  private readonly retired: ArtHandle[] = [];
+
+  /**
+   * Give older visits' texture space back. `inUse`: every handle a sprite or
+   * gun holds right now; `shown`: the art sprites actually display (a sprite
+   * keeps its old art until a replacement is ready).
+   *
+   *  - A past visit's group that nothing holds or shows is freed whole.
+   *  - When the budget is tight, art from a past visit that is still in use is
+   *    re-packed into the current group (from the bake cache, no re-bake); the
+   *    sprites swap to it when ready, and the old group is then freed.
+   *  - After pages are freed, art that failed for space is asked for again.
+   *
+   * Effect textures (group 0) are never freed. Returns the pages freed.
+   * Phone report 2026-11-07: art from every sector visited filled a phone's
+   * few pages, so ~67 bakes failed in base-heavy sectors.
+   */
+  collect(inUse: Iterable<ArtHandle>, shown?: ReadonlySet<object>): number {
+    const live = this.liveGroups;
+    live.clear();
+    for (const h of inUse) if (h.group !== undefined) live.add(h.group);
+    if (shown && shown.size > 0) {
+      for (const h of this.handles.values()) this.noteShown(h, shown, live);
+      for (const h of this.retired) this.noteShown(h, shown, live);
+    }
+    const dead = this.deadGroups;
+    dead.clear();
+    for (const h of this.handles.values()) this.noteDead(h, live, dead);
+    for (const h of this.retired) this.noteDead(h, live, dead);
+    let freed = 0;
+    if (dead.size > 0) {
+      for (const [key, h] of this.handles) {
+        if (!dead.has(h.group ?? 0)) continue;
+        this.handles.delete(key);
+        this.urgentKeys.delete(key);
+        this.ownKeys.delete(key);
+        h.stale = true;
+      }
+      for (let i = this.retired.length - 1; i >= 0; i--) if (dead.has(this.retired[i]!.group ?? 0)) this.retired.splice(i, 1);
+      for (const g of dead) freed += this.deps.packer.freeGroup?.(g) ?? 0;
+    }
+    const packer = this.deps.packer;
+    const max = packer.maxPageCount;
+    const tight = max !== undefined && Number.isFinite(max) && packer.pageCount >= max - 2;
+    let failedForSpace = 0;
+    for (const h of this.handles.values()) if (h.state === 'failed' && h.reason === OVER_BUDGET) failedForSpace++;
+    if (packer.freeGroup && (tight || failedForSpace > 0)) {
+      let moves = 0;
+      for (const [key, h] of this.handles) {
+        if (moves >= REHOME_PER_COLLECT) break;
+        const g = h.group ?? 0;
+        if (g === 0 || g >= this.gen || h.stale || h.stuck) continue;
+        if (h.state !== 'ready') { this.handles.delete(key); h.stale = true; continue; }
+        const n: ArtHandle = { key, job: h.job, rig: h.rig, state: 'pending', ship: null, struct: null, group: this.gen, prev: h };
+        h.stale = true;
+        h.next = n;
+        this.retired.push(h);
+        this.handles.set(key, n);
+        this.urgentKeys.add(key);
+        void this.start(n, true);
+        moves++;
+      }
+    }
+    if (freed > 0) {
+      for (const h of this.handles.values()) h.stuck = false;
+      for (const [key, h] of this.handles) {
+        if (h.state !== 'failed' || h.reason !== OVER_BUDGET) continue;
+        this.handles.delete(key);
+        h.stale = true;
+      }
+    }
+    return freed;
+  }
+  /** Undo a re-home whose copy didn't fit: the original serves again. */
+  private restore(n: ArtHandle): void {
+    const old = n.prev!;
+    old.stale = false;
+    old.next = undefined;
+    old.stuck = true;
+    const i = this.retired.indexOf(old);
+    if (i >= 0) this.retired.splice(i, 1);
+    if (this.handles.get(n.key) === n) this.handles.set(n.key, old);
+    n.stale = true;
+    n.next = old;
+  }
+  private noteShown(h: ArtHandle, shown: ReadonlySet<object>, live: Set<number>): void {
+    const a = h.ship ?? h.struct;
+    if (a && h.group !== undefined && shown.has(a)) live.add(h.group);
+  }
+  private noteDead(h: ArtHandle, live: Set<number>, dead: Set<number>): void {
+    const g = h.group ?? 0;
+    if (g !== 0 && g < this.gen && !live.has(g)) dead.add(g);
+  }
+  private readonly liveGroups = new Set<number>();
+  private readonly deadGroups = new Set<number>();
 
   get lightRig(): LightRig { return this.rig; }
 
@@ -230,7 +375,7 @@ export class ArtService {
       }
       return h;
     }
-    h = { key, job, rig: this.rig, state: 'pending', ship: null, struct: null };
+    h = { key, job, rig: this.rig, state: 'pending', ship: null, struct: null, group: job.type === 'fx' ? 0 : this.gen };
     this.handles.set(key, h);
     if (urgent) this.urgentKeys.add(key);
     void this.start(h, urgent);
@@ -304,6 +449,9 @@ export class ArtService {
   /** Place a bake's frames; false (handle failed) if it won't fit the budget. */
   private pack(h: ArtHandle, b: Baked): boolean {
     const packer = this.deps.packer;
+    // Released by `collect` while it was baking: nothing wants it.
+    if (this.handles.get(h.key) !== h) return false;
+    packer.setGroup?.(h.group ?? 0);
     if (h.job.type === 'fx') return this.packFx(h, h.job.id, b);
     // Warm-up bakes are a guess: they may only use half the budget, so art
     // something on screen needs always has room (phone report 2026-11-07: the
@@ -321,8 +469,10 @@ export class ArtService {
     // of its own (phone report 2026-11-07, "the ship isn't textured").
     const ownOverflow = (b.tiles ?? 1) <= 1 && this.ownKeys.has(h.key) && !packer.canFit(b.frames);
     if (!ownOverflow && (b.tiles ?? 1) <= 1 && !packer.canFit(b.frames)) {
+      // A re-homed copy that won't fit: keep using the original.
+      if (h.prev) { this.restore(h); return false; }
       h.state = 'failed';
-      h.reason = 'over the texture memory budget';
+      h.reason = OVER_BUDGET;
       return false;
     }
     const tex: Texture[] = [];
@@ -338,6 +488,7 @@ export class ArtService {
         h.struct = { tex: tex[0]!, albedo: tex[1]!, w: b.w, h: b.h, density: b.density, navLights: b.navLights };
       }
       h.state = 'ready';
+      h.prev = undefined;
     });
     return true;
   }
@@ -353,7 +504,7 @@ export class ArtService {
       this.pendingFill.push(() => { h.fx = { tex, frames: [tex], w: fr.w, h: fr.h }; h.state = 'ready'; });
       return true;
     }
-    if (!this.deps.packer.canFit(b.frames)) { h.state = 'failed'; h.reason = 'over the texture memory budget'; return false; }
+    if (!this.deps.packer.canFit(b.frames)) { h.state = 'failed'; h.reason = OVER_BUDGET; return false; }
     const out: Texture[] = [];
     this.deps.packer.add(fr, out, 0);
     this.pendingFill.push(() => {
@@ -385,6 +536,7 @@ export class ArtService {
       ready, pending, failed, fromCache: this.fromCache,
       pages: this.deps.packer.pageCount, gpuBytes: this.deps.packer.gpuBytes, workers: this.deps.runner.workers, fxReady, fxPending, ...(lastFailure ? { lastFailure } : {}),
       uploads: (this.deps.packer as { uploads?: number }).uploads, uploadTexels: (this.deps.packer as { uploadTexels?: number }).uploadTexels,
+      freedPages: (this.deps.packer as { freedPages?: number }).freedPages, maxPages: this.deps.packer.maxPageCount,
       topTexels: [...this.texels.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => `${k} ${(v / 1e6).toFixed(2)}Mpx`),
     };
   }
@@ -522,7 +674,7 @@ function pageRunner(o: CreateArtServiceOpts): BakeRunner {
 
 export function createArtService(o: CreateArtServiceOpts): ArtService {
   return new ArtService({
-    packer: new Atlas(false, atlasOptsFor(o.touch)),
+    packer: new Atlas(false, atlasOptsFor(o.touch, (globalThis.navigator as { deviceMemory?: number } | undefined)?.deviceMemory)),
     runner: pageRunner(o),
     cache: { load: loadBakes, save: saveBakes },
     now: () => performance.now(),

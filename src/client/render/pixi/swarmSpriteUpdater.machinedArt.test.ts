@@ -38,15 +38,19 @@ const shipArt = (): ShipArt => ({
   frames: Array.from({ length: 16 }, () => Texture.EMPTY), w: 40, h: 40, density: 4, nozzles: [], navLights: [],
 });
 
+/** One sun for the stub service (handles match it, so nothing re-acquires). */
+const RIG = {} as ArtHandle['rig'];
+
 /** A stub art service: every request returns a handle the test flips. */
 function stubArt(): { svc: ArtService; handles: ArtHandle[]; makeReady: () => void } {
   const handles: ArtHandle[] = [];
   const mk = (job: ArtHandle['job']): ArtHandle => {
-    const h: ArtHandle = { key: JSON.stringify(job), job, rig: {} as ArtHandle['rig'], state: 'pending', ship: null, struct: null };
+    const h: ArtHandle = { key: JSON.stringify(job), job, rig: RIG, state: 'pending', ship: null, struct: null };
     handles.push(h);
     return h;
   };
   const svc = {
+    lightRig: RIG,
     ship: (id: string, paint?: number) => mk({ type: 'ship', id, paint }),
     struct: (id: string, seed: number, rot = 0) => mk({ type: 'struct', id, seed, rot }),
     scrap: (id: string, component: number) => mk({ type: 'scrap', id, component }),

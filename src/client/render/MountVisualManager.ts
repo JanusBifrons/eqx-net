@@ -267,6 +267,17 @@ export class MountVisualManager {
   /** Machined guns drawn now, or -1 when the new look is off. */
   machinedGunCount(): number { return this.actx?.turrets ? this.machinedGuns : -1; }
 
+  /** Add every art handle a Machined gun draws right now (art collection). */
+  addArtHandlesTo(out: Set<ArtHandle>): void {
+    for (const c of this.clusters.values()) {
+      for (const m of c.perMount.values()) {
+        if (!m.gun) continue;
+        out.add(m.gun.handle);
+        if (m.gun.aa) out.add(m.gun.aa.handle);
+      }
+    }
+  }
+
   setAimLinesVisible(visible: boolean): void {
     this.aimLinesVisible = visible;
     for (const c of this.clusters.values()) {
@@ -630,6 +641,9 @@ export class MountVisualManager {
       gfx.aimLine.rotation = spriteRotation;
       const gun = gfx.gun;
       if (gun) {
+        // Art collection re-packed this gun's art: use the new copy once ready.
+        while (gun.handle.next && gun.handle.next.state === 'ready') gun.handle = gun.handle.next;
+        if (gun.aa) while (gun.aa.handle.next && gun.aa.handle.next.state === 'ready') gun.aa.handle = gun.aa.handle.next;
         if (!gun.layers && gun.handle.state === 'ready' && gun.handle.ship) {
           // The bake just finished: build the gun (once) and retire the bar.
           const art = gun.handle.ship;
