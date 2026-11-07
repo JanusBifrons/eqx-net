@@ -6,6 +6,24 @@
 import { PERF_SCENES } from '@shared-types/perf/perfScenes';
 
 const list = document.getElementById('list')!;
+
+// Phase 4 travel state: a real sector-to-sector trip (needs the server run with
+// EQX_SOLAR_SECTORS=1 and EQX_GALAXY_SECTORS=sol-prime,vega-reach).
+{
+  const p = new URLSearchParams({
+    galaxy: 'sol-prime', solar: '1', spawnX: '0', spawnY: '0', shipKind: 'fighter',
+    art: 'machined', fx: 'new', diag: '0', perfprobe: '1', perftrip: 'vega-reach',
+  });
+  const a = document.createElement('a');
+  a.className = 'scene';
+  a.href = `/?${p}`;
+  const b = document.createElement('b');
+  b.textContent = 'Sector trip (Sol Prime → Vega Reach)';
+  const s = document.createElement('span');
+  s.textContent = '~70 s · 30 s spool, the trip, the landing';
+  a.append(b, s);
+  list.appendChild(a);
+}
 for (const scene of PERF_SCENES) {
   const p = new URLSearchParams({
     room: `perf-${scene.id}`,
