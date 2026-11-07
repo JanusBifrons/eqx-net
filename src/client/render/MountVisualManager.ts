@@ -40,7 +40,7 @@ import { Container, Graphics, Sprite } from 'pixi.js';
 import type { ArtHandle } from './art/ArtService.js';
 import { isMachinedSprite, type ShipArtCtx } from './art/shipArtSprites.js';
 import { muzzleReach, shipTurrets, structureTurrets, type TurretPlace } from './art/turretLayout.js';
-import { flashFrameAt, heatAfter, recoilAt, NAVAL_FLASH_LIFE_S, navalFlashSize, SALVO_WINDOW_S } from './art/fx/turretFx.js';
+import { flashFrameAt, heatAfter, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff } from './art/fx/turretFx.js';
 import { NAVAL_BARREL_SPAN } from '@core/combat/muzzle';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import { applySunBlend } from './art/machinedShipLight.js';
@@ -71,6 +71,11 @@ interface MachinedGun {
   // beam holds. Times are seconds on the renderer clock.
   flash: Sprite | null;
   tip: Sprite | null;
+  /** Naval turrets: one flash per barrel, and propellant smoke puffs per
+   *  barrel (`MUZZLE_SMOKE_PUFFS` each), all children of the pivot so they
+   *  turn and recoil with the barrels. */
+  barrelFlashes: Sprite[] | null;
+  smokes: Sprite[] | null;
   lastShot: number;
   beamUntil: number;
   heat: number;
@@ -171,12 +176,12 @@ export class MountVisualManager {
 
   /** A bolt or missile was first seen at Pixi-space (x, y), fired by
    *  `shipId`: kick the nearest of its guns (recoil, flash, heat). */
-  noteShotNear(shipId: string, x: number, y: number): boolean {
+  noteShotNear(shipId: string, x: number, y: number): void {
     const cluster = this.clusters.get(shipId);
     const parent = cluster?.container.parent;
-    if (!cluster || !parent) return false;
+    if (!cluster || !parent) return;
     const c = Math.cos(parent.rotation), s = Math.sin(parent.rotation);
-    let best: MachinedGun | null = null, bd = Infinity, bestX = 0, bestY = 0;
+    let best: MachinedGun | null = null, bd = Infinity;
     for (const m of cluster.perMount.values()) {
       const g = m.gun;
       if (!g?.layers) continue;
@@ -189,26 +194,13 @@ export class MountVisualManager {
       // pivot to muzzle, shoots shells first seen hundreds of units out;
       // invariant #18). Fighter guns keep SHOT_MATCH_DIST.
       const lim = Math.max(SHOT_MATCH_DIST, g.reach);
-      if (d <= lim * lim && d < bd) { bd = d; best = g; bestX = parent.x + lx * c - ly * s; bestY = parent.y + lx * s + ly * c; }
+      if (d <= lim * lim && d < bd) { bd = d; best = g; }
     }
-    if (!best) return false;
-    // A new salvo (not another barrel of the same one) — the caller may add a
-    // muzzle blast at `shotTipX/Y` (Pixi space) for big guns.
-    const newSalvo = this.nowS - best.lastShot > SALVO_WINDOW_S;
+    if (!best) return;
     best.lastShot = this.nowS;
     best.heat = heatAfter(best.heat, 0, 1);
     this.shotsMatched++;
-    this.shotTipX = bestX;
-    this.shotTipY = bestY;
-    this.shotBarrelWid = best.place.naval ? best.place.wid : 0;
-    return newSalvo;
   }
-
-  /** Muzzle of the gun the last `noteShotNear` matched (Pixi space), and its
-   *  barrel width when it is a naval turret (0 otherwise). */
-  shotTipX = 0;
-  shotTipY = 0;
-  shotBarrelWid = 0;
 
   /** Shots matched to a Machined gun so far, or -1 when the new look is off. */
   turretShotCount(): number { return this.actx?.turrets ? this.shotsMatched : -1; }
@@ -361,24 +353,24 @@ export class MountVisualManager {
       if (gun.tip) gun.tip.visible = false;
       return;
     }
-    if (!gun.flash || !gun.tip) this.buildReactionSprites(gun);
+    if (!gun.flash || !gun.tip || (gun.place.naval && (!gun.smokes || !gun.barrelFlashes))) this.buildReactionSprites(gun);
     const flash = gun.flash, tip = gun.tip;
-    if (flash) {
+    const naval = gun.place.naval;
+    if (naval) {
+      // A capital salvo: a long, directed flash out of EACH barrel and
+      // propellant smoke blown forward along it (children of the pivot, so
+      // they follow the barrels' rotation and recoil).
+      if (flash) flash.visible = false;
+      this.animateNavalMuzzles(gun, naval, kicks ? since : -1, kick);
+    } else if (flash) {
       const frames = this.flashFrames();
-      const naval = gun.place.naval;
-      const fr = kicks && frames ? flashFrameAt(since, frames.length, naval ? NAVAL_FLASH_LIFE_S : undefined) : -1;
+      const fr = kicks && frames ? flashFrameAt(since, frames.length) : -1;
       flash.visible = fr >= 0;
       if (fr >= 0) {
         flash.texture = frames![fr]!;
         flash.y = -gun.reach + kick;
         const w = gun.place.wid;
-        if (naval) {
-          // A capital salvo: one flash across the whole barrel bank, long.
-          const s = navalFlashSize(w, naval.houseW * NAVAL_BARREL_SPAN);
-          flash.scale.set(s.w / 64, s.h / 64);
-        } else {
-          flash.scale.set((w * 3.2) / 64, (w * 4.2) / 64);
-        }
+        flash.scale.set((w * 3.2) / 64, (w * 4.2) / 64);
       }
     }
     if (tip) {
@@ -392,6 +384,45 @@ export class MountVisualManager {
     }
   }
 
+  /** Per-barrel flash + forward smoke for a naval turret, `since` seconds
+   *  after its last salvo (-1 = not firing). Alloc-free (#14). */
+  private animateNavalMuzzles(gun: MachinedGun, naval: { barrels: number; houseW: number }, since: number, kick: number): void {
+    const w = gun.place.wid;
+    const n = naval.barrels;
+    const pitch = n > 1 ? (naval.houseW * NAVAL_BARREL_SPAN) / (n - 1) : 0;
+    const frames = this.flashFrames();
+    const fr = since >= 0 && frames ? flashFrameAt(since, frames.length, NAVAL_FLASH_LIFE_S) : -1;
+    const flashes = gun.barrelFlashes;
+    if (flashes) {
+      for (let b = 0; b < flashes.length; b++) {
+        const f = flashes[b]!;
+        f.visible = fr >= 0;
+        if (fr < 0) continue;
+        f.texture = frames![fr]!;
+        f.x = (b - (n - 1) / 2) * pitch;
+        f.y = -gun.reach + kick;
+        f.scale.set((w * 7) / 64, (w * 22) / 64);
+      }
+    }
+    const smokes = gun.smokes;
+    if (!smokes) return;
+    const tex = smokes[0]!.texture;
+    const tw = Math.max(1, tex.width);
+    for (let b = 0; b < n; b++) {
+      for (let k = 0; k < MUZZLE_SMOKE_PUFFS; k++) {
+        const s = smokes[b * MUZZLE_SMOKE_PUFFS + k];
+        if (!s) continue;
+        const p = muzzleSmokePuff(since, k, w, this._puff);
+        s.visible = p.alpha > 0.01;
+        if (!s.visible) continue;
+        s.x = (b - (n - 1) / 2) * pitch;
+        s.y = -gun.reach - p.d;
+        s.alpha = p.alpha;
+        s.scale.set(p.size / tw);
+      }
+    }
+  }
+
   /** The flash flipbook cells, once baked. */
   private flashFrames(): readonly import('pixi.js').Texture[] | null {
     const art = this.actx?.art;
@@ -401,6 +432,9 @@ export class MountVisualManager {
   }
   private flashHandle: ArtHandle | null = null;
   private glowHandle: ArtHandle | null = null;
+  private smokeHandle: ArtHandle | null = null;
+  /** Scratch for one smoke puff (alloc-free per frame). */
+  private readonly _puff: SmokePuff = { d: 0, size: 0, alpha: 0 };
 
   /** Make a gun's flash + tip glow sprites (once, when their textures are ready). */
   private buildReactionSprites(gun: MachinedGun): void {
@@ -417,6 +451,28 @@ export class MountVisualManager {
     if (!gun.tip && glow) {
       const g = new Sprite(glow); g.anchor.set(0.5); g.blendMode = 'add'; g.tint = gun.place.family === 'bolt' ? 0xff6a2a : tint; g.visible = false;
       gun.pivot.addChild(g); gun.tip = g;
+    }
+    const naval = gun.place.naval;
+    if (naval && !gun.smokes) {
+      this.smokeHandle ??= art.fx('smoke', undefined, undefined, false);
+      const smoke = this.smokeHandle.state === 'ready' && this.smokeHandle.fx ? this.smokeHandle.fx.tex : null;
+      if (smoke) {
+        // Smoke under the flash (added first), normal blend, warm grey.
+        const list: Sprite[] = [];
+        for (let i = 0; i < naval.barrels * MUZZLE_SMOKE_PUFFS; i++) {
+          const s = new Sprite(smoke); s.anchor.set(0.5); s.tint = 0xb8b0a4; s.visible = false;
+          gun.pivot.addChildAt(s, 0); list.push(s);
+        }
+        gun.smokes = list;
+      }
+    }
+    if (naval && !gun.barrelFlashes && frames) {
+      const list: Sprite[] = [];
+      for (let b = 0; b < naval.barrels; b++) {
+        const f = new Sprite(frames[0]!); f.anchor.set(0.5, 1); f.blendMode = 'add'; f.tint = tint; f.visible = false;
+        gun.pivot.addChild(f); list.push(f);
+      }
+      gun.barrelFlashes = list;
     }
   }
 
@@ -450,7 +506,7 @@ export class MountVisualManager {
     });
     return {
       place, pivot, handle, layers: null, reach: muzzleReach(place),
-      flash: null, tip: null, lastShot: -9, beamUntil: -1, heat: 0, lastT: this.nowS,
+      flash: null, tip: null, barrelFlashes: null, smokes: null, lastShot: -9, beamUntil: -1, heat: 0, lastT: this.nowS,
     };
   }
 
