@@ -743,8 +743,13 @@ export interface TurretGunSpec {
   ppu: number;
   /** Capital naval turret (capital-ship R&D): a faceted gunhouse centred on
    *  the pivot, `barrels` parallel barrels of `len` from its front face. */
-  naval?: { barrels: number; houseW: number; houseL: number };
+  naval?: NavalTurretSpec;
 }
+
+/** Naval turret geometry. `part` bakes the gunhouse alone or ONE barrel
+ *  alone (at x 0, same face position), so a quad AA can recoil its barrels
+ *  one at a time; absent = the whole turret in one image. */
+export interface NavalTurretSpec { barrels: number; houseW: number; houseL: number; part?: 'house' | 'barrel' }
 
 /**
  * A WW2-style naval turret seen from above (capital-ship R&D): a gunhouse
@@ -763,9 +768,10 @@ function forgeNavalTurret(spec: TurretGunSpec): Fields {
   const n = Math.max(1, nv.barrels);
   const pitch = n > 1 ? (W * NAVAL_BARREL_SPAN) / (n - 1) : 0;
   const xs: number[] = [];
-  for (let k = 0; k < n; k++) xs.push((k - (n - 1) / 2) * pitch);
+  if (nv.part === 'barrel') xs.push(0);
+  else if (nv.part !== 'house') for (let k = 0; k < n; k++) xs.push((k - (n - 1) / 2) * pitch);
   const barrelPolys: Poly[] = xs.map((x): Poly => [[x - bw, -hl - len], [x + bw, -hl - len], [x + bw, -hl + 0.5], [x - bw, -hl + 0.5]]);
-  const polys = [housePoly, ...barrelPolys];
+  const polys = nv.part === 'barrel' ? barrelPolys : [housePoly, ...barrelPolys];
   const g = gridFor(polys, spec.ppu, 1.5);
   const f = newFields(g, paintOf(spec.paint));
   for (const poly of polys) { const c = rasterPoly(g, poly); for (let i = 0; i < c.length; i++) if (c[i]! > f.cov[i]!) f.cov[i] = c[i]!; }
@@ -781,7 +787,7 @@ function forgeNavalTurret(spec: TurretGunSpec): Fields {
       const nz = valueNoise(wx * 0.5, wy * 0.5, seed);
       let h = -1, mat: number = MAT.NONE, col = metal, kk = 1, key = PALETTE.metal;
       // Gunhouse: flat armoured roof, slight chamfer to the edges.
-      const inHouse = wy >= -hl && wy <= hl && Math.abs(wx) <= hw;
+      const inHouse = nv.part !== 'barrel' && wy >= -hl && wy <= hl && Math.abs(wx) <= hw;
       if (inHouse) {
         const edge = Math.min(hw - Math.abs(wx), wy + hl, hl - wy);
         h = Hh * (0.82 + 0.18 * Math.min(1, edge / Math.max(0.5, W * 0.06)));

@@ -371,7 +371,9 @@ export const capitalGunsFighter: Shot = {
 
 /** Bystander spot in the battleship's own frame (forward, starboard): ahead of
  *  the forward turrets, clear of their line of fire to a target on the
- *  starboard beam. The target sits TARGET_OFF u off that beam. */
+ *  starboard beam, so the guns swing across it as they train round (the feel
+ *  the user wants, review 2026-11-07). The target sits TARGET_OFF u off that
+ *  beam. */
 const BYSTANDER = { fwd: 2200, stbd: 500 };
 const TARGET_OFF = 4000;
 

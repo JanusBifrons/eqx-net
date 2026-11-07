@@ -42,6 +42,7 @@ import { isMachinedSprite, type ShipArtCtx } from './art/shipArtSprites.js';
 import { muzzleReach, shipTurrets, structureTurrets, type TurretPlace } from './art/turretLayout.js';
 import { flashFrameAt, heatAfter, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff } from './art/fx/turretFx.js';
 import { NAVAL_BARREL_SPAN } from '@core/combat/muzzle';
+import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import { applySunBlend } from './art/machinedShipLight.js';
 import { isStructureKindId } from '../../shared-types/structureKinds';
@@ -67,6 +68,10 @@ interface MachinedGun {
   layers: { a: Sprite; b: Sprite } | null;
   /** Pivot → tip, where a shot leaves (local world units). */
   reach: number;
+  /** How far from the tip a new shot of this gun may first be seen: its
+   *  barrel reach, or how far its shot flies in ~1.5 snapshots (a 1,600 u/s
+   *  AA bolt is ~80 u out a snapshot later), whichever is more. */
+  matchDist: number;
   // Firing reactions (T2): recoil + flash + tip heat, emitter glow while a
   // beam holds. Times are seconds on the renderer clock.
   flash: Sprite | null;
@@ -76,10 +81,24 @@ interface MachinedGun {
    *  turn and recoil with the barrels. */
   barrelFlashes: Sprite[] | null;
   smokes: Sprite[] | null;
+  /** Quad AA: the barrels are their own sprites so each recoils alone as it
+   *  fires (review 2026-11-07); the gunhouse bakes without them. */
+  aa: AaBarrels | null;
   lastShot: number;
   beamUntil: number;
   heat: number;
   lastT: number;
+}
+
+interface AaBarrels {
+  handle: ArtHandle;
+  /** Barrel x across the gunhouse (Pixi-up local, same pitch as the bake). */
+  xs: Float32Array;
+  /** Renderer time each barrel last fired. */
+  shot: Float64Array;
+  sprites: Array<{ a: Sprite; b: Sprite }> | null;
+  /** The barrel that fired last (its flash). */
+  last: number;
 }
 
 /** Shot / beam colour at the muzzle, per family. */
@@ -87,6 +106,8 @@ const MUZZLE_TINT = { bolt: 0xffc060, beam: 0x6fd0ff, missile: 0xffa050, charge:
 /** Furthest a new bolt may spawn from a barrel tip and still be that barrel's
  *  (world units; bolts are first seen a frame or two after leaving). */
 const SHOT_MATCH_DIST = 60;
+/** A shot is first seen up to ~1.5 snapshots (20 Hz) after it leaves. */
+const SHOT_FIRST_SEEN_S = 0.075;
 
 /** Bookkeeping per ship — one cluster of mount graphics parented to the
  *  ship's sprite. The cluster `Container` rotates with the ship (because
@@ -175,16 +196,22 @@ export class MountVisualManager {
   }
 
   /** A bolt or missile was first seen at Pixi-space (x, y), fired by
-   *  `shipId`: kick the nearest of its guns (recoil, flash, heat). */
-  noteShotNear(shipId: string, x: number, y: number): void {
+   *  `shipId`: kick the nearest of its guns that fires `weaponId` (recoil,
+   *  flash, heat). Without the weapon filter a capital's big-reach main
+   *  turrets claimed its AA and 5" shots and fired "like a gatling"
+   *  (smoke report 2026-11-07). */
+  noteShotNear(shipId: string, x: number, y: number, weaponId?: string): void {
+    this._lastShotMountId = null;
+    this._lastShotBarrel = -1;
     const cluster = this.clusters.get(shipId);
     const parent = cluster?.container.parent;
     if (!cluster || !parent) return;
     const c = Math.cos(parent.rotation), s = Math.sin(parent.rotation);
-    let best: MachinedGun | null = null, bd = Infinity;
-    for (const m of cluster.perMount.values()) {
+    let best: MachinedGun | null = null, bd = Infinity, bestId: string | null = null;
+    for (const [mountId, m] of cluster.perMount) {
       const g = m.gun;
       if (!g?.layers) continue;
+      if (weaponId !== undefined && g.place.mount.weaponId !== weaponId) continue;
       const r = g.pivot.rotation;
       const lx = g.pivot.x + Math.sin(r) * g.reach, ly = g.pivot.y - Math.cos(r) * g.reach;
       const dx = parent.x + lx * c - ly * s - x, dy = parent.y + lx * s + ly * c - y;
@@ -193,14 +220,33 @@ export class MountVisualManager {
       // the match radius grows with the gun (a capital's 16" gun, ~700 u from
       // pivot to muzzle, shoots shells first seen hundreds of units out;
       // invariant #18). Fighter guns keep SHOT_MATCH_DIST.
-      const lim = Math.max(SHOT_MATCH_DIST, g.reach);
-      if (d <= lim * lim && d < bd) { bd = d; best = g; }
+      const lim = g.matchDist;
+      if (d <= lim * lim && d < bd) { bd = d; best = g; bestId = mountId; }
     }
     if (!best) return;
+    this._lastShotMountId = bestId;
+    if (best.aa) {
+      // Which barrel: the shot's offset across the gun's own axis.
+      const r = best.pivot.rotation + parent.rotation;
+      const pxw = parent.x + best.pivot.x * c - best.pivot.y * s, pyw = parent.y + best.pivot.x * s + best.pivot.y * c;
+      const lat = (x - pxw) * Math.cos(r) + (y - pyw) * Math.sin(r);
+      let k = 0;
+      for (let b = 1; b < best.aa.xs.length; b++) if (Math.abs(best.aa.xs[b]! - lat) < Math.abs(best.aa.xs[k]! - lat)) k = b;
+      best.aa.shot[k] = this.nowS;
+      best.aa.last = k;
+      this._lastShotBarrel = k;
+    }
     best.lastShot = this.nowS;
     best.heat = heatAfter(best.heat, 0, 1);
     this.shotsMatched++;
   }
+
+  private _lastShotMountId: string | null = null;
+  private _lastShotBarrel = -1;
+  /** Test hook: the AA barrel the last matched shot came from (-1 = none). */
+  lastShotBarrel(): number { return this._lastShotBarrel; }
+  /** Test hook: the mount id the last matched shot kicked. */
+  lastShotMountId(): string | null { return this._lastShotMountId; }
 
   /** Shots matched to a Machined gun so far, or -1 when the new look is off. */
   turretShotCount(): number { return this.actx?.turrets ? this.shotsMatched : -1; }
@@ -344,7 +390,20 @@ export class MountVisualManager {
     const kicks = fam === 'bolt' || fam === 'missile';
     const since = t - gun.lastShot;
     const kick = kicks ? recoilAt(since) * Math.max(gun.place.len, gun.place.wid) * (fam === 'missile' ? 0.06 : 0.2) : 0;
-    layers.a.y = kick; layers.b.y = kick;
+    const aa = gun.aa;
+    const houseKick = aa ? 0 : kick;
+    layers.a.y = houseKick; layers.b.y = houseKick;
+    let flashKick = kick, flashX = 0;
+    if (aa) {
+      const len = Math.max(gun.place.len, gun.place.wid) * 0.2;
+      for (let b = 0; b < aa.xs.length; b++) {
+        const k = recoilAt(t - aa.shot[b]!) * len;
+        const sp = aa.sprites?.[b];
+        if (sp) { sp.a.y = k; sp.b.y = k; }
+        if (b === aa.last) flashKick = k;
+      }
+      flashX = aa.last >= 0 ? aa.xs[aa.last]! : 0;
+    }
     const beamOn = t < gun.beamUntil;
     gun.heat = heatAfter(gun.heat, dt, 0) + (beamOn ? dt * 1.2 : 0);
     if (gun.heat > 1) gun.heat = 1;
@@ -369,7 +428,8 @@ export class MountVisualManager {
       flash.visible = fr >= 0;
       if (fr >= 0) {
         flash.texture = frames![fr]!;
-        flash.y = -gun.reach + kick;
+        flash.x = flashX;
+        flash.y = -gun.reach + flashKick;
         const w = gun.place.wid;
         flash.scale.set((w * 3.2) / 64, (w * 4.2) / 64);
       }
@@ -379,7 +439,8 @@ export class MountVisualManager {
       tip.visible = glow > 0.02;
       if (tip.visible) {
         tip.alpha = glow;
-        tip.y = -gun.reach + kick;
+        tip.x = flashX;
+        tip.y = -gun.reach + flashKick;
         tip.scale.set(((gun.place.wid * (fam === 'bolt' ? 1.6 : 3)) / 64) * (1 + 0.4 * glow));
       }
     }
@@ -504,11 +565,29 @@ export class MountVisualManager {
       // the texture budget (capital R&D, measured 365 MB at the fighter ppu).
       type: 'turret', id: place.family, paint, len: Math.max(place.len, 0.1), wid: place.wid, cap: place.cap,
       ppu: structure ? 2.5 : place.naval ? Math.min(6, 160 / (place.naval.houseL / 2 + place.len)) : 6,
-      ...(place.naval ? { naval: place.naval } : {}),
+      ...(place.naval ? { naval: place.naval.barrels > 1 && mount.size === 'AA' ? { ...place.naval, part: 'house' as const } : place.naval } : {}),
     });
+    let aa: AaBarrels | null = null;
+    if (place.naval && mount.size === 'AA' && place.naval.barrels > 1) {
+      const n = place.naval.barrels;
+      const pitch = (place.naval.houseW * NAVAL_BARREL_SPAN) / (n - 1);
+      const xs = new Float32Array(n);
+      for (let k = 0; k < n; k++) xs[k] = (k - (n - 1) / 2) * pitch;
+      aa = {
+        handle: actx.art.acquire({
+          type: 'turret', id: place.family, paint, len: Math.max(place.len, 0.1), wid: place.wid, cap: place.cap,
+          ppu: Math.min(6, 160 / (place.naval.houseL / 2 + place.len)),
+          naval: { ...place.naval, part: 'barrel' },
+        }),
+        xs, shot: new Float64Array(n).fill(-9), sprites: null, last: -1,
+      };
+    }
+    const reach = muzzleReach(place);
+    const w = isWeaponId(mount.weaponId) ? getWeapon(mount.weaponId) : null;
+    const travel = w && w.mode !== 'hitscan' ? w.speed * SHOT_FIRST_SEEN_S : 0;
     return {
-      place, pivot, handle, layers: null, reach: muzzleReach(place),
-      flash: null, tip: null, barrelFlashes: null, smokes: null, lastShot: -9, beamUntil: -1, heat: 0, lastT: this.nowS,
+      place, pivot, handle, layers: null, reach, matchDist: Math.max(SHOT_MATCH_DIST, reach, travel),
+      flash: null, tip: null, barrelFlashes: null, smokes: null, aa, lastShot: -9, beamUntil: -1, heat: 0, lastT: this.nowS,
     };
   }
 
@@ -566,6 +645,20 @@ export class MountVisualManager {
           // Lit by the gun's own world rotation, like a hull.
           const parentRot = cluster.container.parent?.rotation ?? 0;
           applySunBlend(gun.layers, gun.handle.ship.frames, this.actx?.sunAz ?? 0, parentRot + spriteRotation);
+          const aa = gun.aa;
+          if (aa && !aa.sprites && aa.handle.state === 'ready' && aa.handle.ship) {
+            const art = aa.handle.ship;
+            aa.sprites = [];
+            for (let k = 0; k < aa.xs.length; k++) {
+              const a = new Sprite(art.frames[0]!), b = new Sprite(art.frames[1 % art.frames.length]!);
+              for (const sp of [a, b]) { sp.anchor.set(0.5); sp.scale.set(1 / art.density); sp.x = aa.xs[k]!; gun.pivot.addChild(sp); }
+              b.alpha = 0;
+              aa.sprites.push({ a, b });
+            }
+          }
+          if (aa?.sprites && aa.handle.ship) {
+            for (const sp of aa.sprites) applySunBlend(sp, aa.handle.ship.frames, this.actx?.sunAz ?? 0, parentRot + spriteRotation);
+          }
           this.animateGun(gun);
         }
       }

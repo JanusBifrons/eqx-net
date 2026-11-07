@@ -2288,7 +2288,7 @@ export class PixiRenderer implements IRenderer {
       if (p.beam) continue; // instant beam lines: handled as beams
       if (!this._turretShotSeen.has(id)) {
         const key = this.shooterSpriteKey(p.ownerId);
-        if (key) mv.noteShotNear(key, p.x, -p.y);
+        if (key) mv.noteShotNear(key, p.x, -p.y, p.weaponId);
       }
       this._turretShotSeen.set(id, gen);
       // Naval shells: remember where each one is, for its impact burst.
