@@ -4,10 +4,8 @@
  * validates it, the worker spools, runs and drops the ship there. A request
  * for a point that isn't a pocket rim is ignored.
  */
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-
-process.env['EQX_SOLAR_SECTORS'] = '1';
 
 type Harness = Awaited<ReturnType<typeof import('./harness.js')['bootSectorTestServer']>>;
 let boot: typeof import('./harness.js')['bootSectorTestServer'];
@@ -19,10 +17,9 @@ beforeAll(async () => {
   sites = await import('../../../src/core/galaxy/sectorSites.js');
 });
 afterEach(async () => { await harness?.cleanup(); harness = null; });
-afterAll(() => { delete process.env['EQX_SOLAR_SECTORS']; });
 
 async function flyWithWarp(warp: { x: number; y: number }, ms: number): Promise<{ x: number; y: number }> {
-  harness = await boot({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [], galaxyBases: false, alienGates: false });
+  harness = await boot({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [], galaxyBases: false, alienGates: false, solarSectors: true });
   const pid = randomUUID();
   const room = await harness.connectActive(pid, { spawnX: 0, spawnY: 0 });
   const server = harness.getServerRoom() as unknown as { serverTick: number; shipPoseCache: Map<string, { x: number; y: number }> };
@@ -50,7 +47,7 @@ describe('SectorRoom integration — warp-to (solar-system sectors)', () => {
   });
 
   it('an onlooker sees the warp in the snapshot: spool, then the run (#16)', { timeout: 40_000 }, async () => {
-    harness = await boot({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [], galaxyBases: false, alienGates: false });
+    harness = await boot({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [], galaxyBases: false, alienGates: false, solarSectors: true });
     const pilot = randomUUID(), onlooker = randomUUID();
     const room = await harness.connectActive(pilot, { spawnX: 0, spawnY: 0 });
     const watch = await harness.connectActive(onlooker, { spawnX: 300, spawnY: 0 });
