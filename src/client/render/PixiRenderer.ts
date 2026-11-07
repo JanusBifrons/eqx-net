@@ -34,7 +34,7 @@ import { Backdrop } from './art/fx/Backdrop.js';
 import { speedFxFullSpeed } from './art/fx/depth.js';
 import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
-import { shellImpactRadius } from './art/fx/turretFx.js';
+import { shellImpactRadius, shellEndedOnHit } from './art/fx/turretFx.js';
 import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import { FxEngines } from './art/fx/FxEngines.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
@@ -120,6 +120,9 @@ export { shouldFireRemoteWarpVisual };
 // Sprite/Graphics builders moved to ./pixi/spriteBuilders.ts — pure
 // constructors of Pixi Graphics instances, no class state. The
 // orchestrator below imports them from that module.
+
+/** A live naval shell: last + first-seen Pixi position, burst radius, full travel. */
+interface NavalShellRec { x: number; y: number; r: number; sx: number; sy: number; reach: number }
 
 export class PixiRenderer implements IRenderer {
   /** True on touch devices (Equinox P6.1). The placement ghost seeds at
@@ -2292,19 +2295,24 @@ export class PixiRenderer implements IRenderer {
       if (p.weaponId !== undefined && p.weaponId.startsWith('naval_')) {
         let rec = this._navalShells.get(id);
         if (rec === undefined) {
-          rec = this._navalShellFree.pop() ?? { x: 0, y: 0, r: 0 };
+          rec = this._navalShellFree.pop() ?? { x: 0, y: 0, r: 0, sx: 0, sy: 0, reach: 0 };
           const w = isWeaponId(p.weaponId) ? getWeapon(p.weaponId) : null;
           rec.r = shellImpactRadius(w && w.mode !== 'hitscan' ? w.radius : 3);
+          rec.reach = w && w.mode !== 'hitscan' ? (w.speed * (w.mode === 'projectile' ? w.maxTicks : w.lifetimeTicks)) / 60 : 0;
+          rec.sx = p.x; rec.sy = -p.y;
           this._navalShells.set(id, rec);
         }
         rec.x = p.x; rec.y = -p.y;
       }
     }
     for (const [id, g] of this._turretShotSeen) if (g !== gen) this._turretShotSeen.delete(id);
-    // A shell gone this frame (hit or spent): burst where it was last seen.
+    // A shell gone this frame: burst where it was last seen if it HIT
+    // something. A shell that ran out of range just fades (a salvo's outer
+    // shells fly past a small target; bursting them in empty space read as
+    // explosions in the wrong place, review 2026-11-07).
     for (const [id, rec] of this._navalShells) {
       if (this._turretShotSeen.has(id)) continue;
-      this._fxExplosions?.spawn(rec.x, rec.y, rec.r, now);
+      if (shellEndedOnHit(Math.hypot(rec.x - rec.sx, rec.y - rec.sy), rec.reach)) this._fxExplosions?.spawn(rec.x, rec.y, rec.r, now);
       this._navalShells.delete(id);
       this._navalShellFree.push(rec);
     }
@@ -2704,8 +2712,8 @@ export class PixiRenderer implements IRenderer {
    *  owner id → sprite key (structures fire as their bare entity id). */
   private readonly _turretShotSeen = new Map<string, number>();
   /** Live naval shells (last Pixi-space position + impact radius), pooled. */
-  private readonly _navalShells = new Map<string, { x: number; y: number; r: number }>();
-  private readonly _navalShellFree: Array<{ x: number; y: number; r: number }> = [];
+  private readonly _navalShells = new Map<string, NavalShellRec>();
+  private readonly _navalShellFree: NavalShellRec[] = [];
   private readonly _turretMissileSeen = new Map<number, number>();
   private _turretShotGen = 0;
   private readonly _ownerSpriteKey = new Map<string, string>();

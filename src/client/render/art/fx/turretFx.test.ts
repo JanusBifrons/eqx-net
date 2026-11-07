@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { familyFor, flashFrameAt, heatAfter, muzzleFlashFlipbook, nearestMuzzle, recoilAt, NAVAL_FLASH_LIFE_S, shellImpactRadius, muzzleSmokePuff, MUZZLE_SMOKE_LIFE_S } from './turretFx.js';
+import { familyFor, flashFrameAt, heatAfter, muzzleFlashFlipbook, nearestMuzzle, recoilAt, NAVAL_FLASH_LIFE_S, shellImpactRadius, muzzleSmokePuff, MUZZLE_SMOKE_LIFE_S, shellEndedOnHit } from './turretFx.js';
 
 describe('turret bakes', () => {
   it('the flash shrinks frame by frame', () => {
@@ -57,7 +57,7 @@ describe('capital naval gun effects (review round 2026-11-07)', () => {
 });
 
 describe('naval muzzle smoke is a directed cone (review 2026-11-07)', () => {
-  const out = { d: 0, size: 0, alpha: 0 };
+  const out = { d: 0, size: 0, alpha: 0, lat: 0, rot: 0 };
   it('blows forward along the barrel and fades out', () => {
     const near = muzzleSmokePuff(0.1, 0, 40, { ...out }).d;
     const later = muzzleSmokePuff(0.8, 0, 40, { ...out }).d;
@@ -68,5 +68,12 @@ describe('naval muzzle smoke is a directed cone (review 2026-11-07)', () => {
   });
   it('scales with the barrel (invariant #18)', () => {
     expect(muzzleSmokePuff(0.5, 1, 40, { ...out }).size).toBeCloseTo(muzzleSmokePuff(0.5, 1, 10, { ...out }).size * 4, 6);
+  });
+});
+
+describe('naval shell impacts (review 2026-11-07)', () => {
+  it('a shell that stopped short burst on a hit; one that ran its range just fades', () => {
+    expect(shellEndedOnHit(2000, 4200)).toBe(true);
+    expect(shellEndedOnHit(4000, 4200)).toBe(false);
   });
 });

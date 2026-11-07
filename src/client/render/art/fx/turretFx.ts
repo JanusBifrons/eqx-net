@@ -95,9 +95,9 @@ export function shellImpactRadius(shellRadius: number): number {
 }
 
 /** Smoke puffs per barrel after a naval shot, and how long they last. */
-export const MUZZLE_SMOKE_PUFFS = 6;
+export const MUZZLE_SMOKE_PUFFS = 8;
 export const MUZZLE_SMOKE_LIFE_S = 1.6;
-export interface SmokePuff { d: number; size: number; alpha: number }
+export interface SmokePuff { d: number; size: number; alpha: number; lat: number; rot: number }
 /**
  * Puff `k` (0 = nearest the muzzle) of a barrel's propellant smoke, `t`
  * seconds after the shot: blown FORWARD along the barrel (`d`, distance past
@@ -106,11 +106,22 @@ export interface SmokePuff { d: number; size: number; alpha: number }
  * barrel width (invariant #18). Writes `out`; alpha 0 = not drawn.
  */
 export function muzzleSmokePuff(t: number, k: number, barrelWid: number, out: SmokePuff): SmokePuff {
-  if (t < 0 || t >= MUZZLE_SMOKE_LIFE_S) { out.alpha = 0; out.d = 0; out.size = 0; return out; }
+  if (t < 0 || t >= MUZZLE_SMOKE_LIFE_S) { out.alpha = 0; out.d = 0; out.size = 0; out.lat = 0; out.rot = 0; return out; }
   const p = t / MUZZLE_SMOKE_LIFE_S;
   const ease = 1 - (1 - Math.min(1, t / 0.35)) ** 3; // fast push out, then drift
-  out.d = barrelWid * (1 + 2.2 * k) * (0.5 + 1.5 * ease) + barrelWid * 2 * p;
+  out.d = barrelWid * (1 + 1.5 * k) * (0.5 + 1.5 * ease) + barrelWid * 2 * p;
   out.size = barrelWid * (3 + 1.6 * k + 6 * p);
-  out.alpha = 0.6 * (1 - p) ** 1.4 * (1 - 0.1 * k);
+  out.alpha = 0.55 * (1 - p) ** 1.4 * (1 - 0.07 * k);
+  // A plume, not a row of tiles: alternate a little to each side as it
+  // spreads, and turn each puff differently.
+  out.lat = (k % 2 === 0 ? 1 : -1) * barrelWid * 0.35 * (0.3 + p) * (1 + k * 0.15);
+  out.rot = k * 1.37 + p * 0.6;
   return out;
+}
+
+/** Did a shell end on a HIT (true) or run out of range (false)? It is first
+ *  seen a little past the muzzle, so a spent shell has covered most of its
+ *  travel from there; anything well short of that stopped on a target. */
+export function shellEndedOnHit(travelledSinceSeen: number, fullTravel: number): boolean {
+  return fullTravel <= 0 || travelledSinceSeen < fullTravel * 0.8;
 }
