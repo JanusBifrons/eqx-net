@@ -126,6 +126,9 @@ export class StarfieldBackground {
     }
   }
 
+  /** Whether today's starfield is drawing (diagnostic). */
+  isVisible(): boolean { return this.gfx?.visible === true; }
+
   /** Hide it while the new backdrop draws instead (plan iridescent-seeking-rainbow v3, B2). */
   setHidden(hidden: boolean): void {
     if (this.gfx && hidden) { this.gfx.visible = false; }

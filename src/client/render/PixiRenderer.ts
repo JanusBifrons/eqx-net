@@ -2821,9 +2821,9 @@ export class PixiRenderer implements IRenderer {
   private _sectorKey: string | null = null;
 
   /** DEV/E2E: what the backdrop is showing. */
-  backdropStats(): { on: boolean; nebula: string | null; landmarks: number; sky: string; density: number; speed: number; speedZoom: number; speedLevel: string } {
+  backdropStats(): { classicStars: boolean; on: boolean; nebula: string | null; landmarks: number; sky: string; density: number; speed: number; speedZoom: number; speedLevel: string } {
     const b = this._backdrop;
-    return { on: b?.sky.visible === true, nebula: b?.nebulaKey() ?? null, landmarks: b?.visibleLandmarks ?? 0, sky: b?.skySignature ?? '', density: b?.density ?? 0,
+    return { classicStars: this.starfield?.isVisible() === true, on: b?.sky.visible === true, nebula: b?.nebulaKey() ?? null, landmarks: b?.visibleLandmarks ?? 0, sky: b?.skySignature ?? '', density: b?.density ?? 0,
       speed: b?.speed.sf ?? 0, speedZoom: this.camera.speedZoom(), speedLevel: b?.speedLevel ?? 'off' };
   }
 

@@ -17,6 +17,8 @@ import { perfSceneById } from '@shared-types/perf/perfScenes';
 import { getGameClient } from '../../net/clientSingleton';
 import { useUIStore } from '../../state/store';
 
+/** The art part of a reading. */
+type PerfReadingArt = { mode: string; pending?: number; failed?: number; pages?: number; maxPages?: number; freedPages?: number; failedKinds?: Record<string, number>; lastFailure?: string; ownArt?: string | null };
 export interface PerfReading {
   elapsedMs: number;
   main: FrameTimeSummary;
@@ -26,7 +28,7 @@ export interface PerfReading {
   heapMb: number | null;
   worker: boolean;
   /** Which art was on screen (main-thread renderer only; null in the worker). */
-  art: { mode: string; pending?: number; failed?: number } | null;
+  art: { mode: string; pending?: number; failed?: number; pages?: number; maxPages?: number; freedPages?: number; failedKinds?: Record<string, number>; lastFailure?: string; ownArt?: string | null } | null;
   /** The worst main-thread frame gaps in the window: when (ms after reset)
    *  and how long, longest first. Shows WHERE a run hitched, not just that it did. */
   worst: Array<{ atMs: number; ms: number }>;
@@ -39,8 +41,12 @@ export function perfProbeEnabled(search: string): boolean {
 }
 
 function readArt(): PerfReading['art'] {
-  const s = (globalThis as { __eqxArtStats?: () => { mode: string; pending?: number; failed?: number } }).__eqxArtStats?.();
-  return s ? { mode: s.mode, ...(s.pending !== undefined ? { pending: s.pending } : {}), ...(s.failed !== undefined ? { failed: s.failed } : {}) } : null;
+  const s = (globalThis as { __eqxArtStats?: () => NonNullable<PerfReadingArt> }).__eqxArtStats?.();
+  if (!s) return null;
+  return {
+    mode: s.mode, pending: s.pending, failed: s.failed, pages: s.pages, maxPages: s.maxPages, freedPages: s.freedPages,
+    failedKinds: s.failedKinds, lastFailure: s.lastFailure, ownArt: s.ownArt,
+  };
 }
 
 let current: { renderer: IRenderer; useWorker: boolean } | null = null;
