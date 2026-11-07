@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
-import { wobbleFromCsv, wobbleProblem, netProblem } from '../../showcase/wobble';
+import { wobbleFromCsv, wobbleProblem, netProblem, poseHealth, poseProblem } from '../../showcase/wobble';
 import { netDelta } from '../../showcase/recorder';
 
 const HEAD = 'f,t,dt,shipX,shipY,sdx,sdy,bgdx,bgdy,bgN,bgSpread,greenN';
@@ -60,5 +60,38 @@ describe('server pace gate', () => {
     expect(netDelta(a, b)).toEqual({ serverHz: 60, corrections: 1, snapshots: 40 });
     expect(netDelta(null, b)).toBeNull();
     expect(netDelta(a, { ...b, snapshots: 10 })).toBeNull(); // no snapshots applied
+  });
+});
+
+describe('pose-trace gate (what the game drew, frame by frame)', () => {
+  // rows [t, meX, meY, meA, bigX, bigY, bigA, lerpX, lerpY, inputTick, frameTimeMs, tickDueMs, physX, physY, physVx, physVy]
+  const flight = (n: number, edit?: (i: number, r: number[]) => void): number[][] => {
+    const rows: number[][] = [];
+    for (let i = 0; i < n; i++) {
+      const x = i * 3; // 180 u/s at one tick per frame
+      const r = [i * 16.7, x, 0, 0, 0, 0, 0, 0, 0, 100 + i, i * 16.7, i * 16.7, x, 0, 180, 0];
+      edit?.(i, r);
+      rows.push(r);
+    }
+    return rows;
+  };
+
+  it('a steady flight passes', () => {
+    const h = poseHealth(flight(120));
+    expect(h).toMatchObject({ corrections: 0, tickJumps: 0 });
+    expect(poseProblem(h)).toBeNull();
+  });
+
+  it('flags a one-tick jump (the 2026-11-07 ack bug signature)', () => {
+    // From frame 60 the physics state sits one tick (3 u) ahead.
+    const h = poseHealth(flight(120, (i, r) => { if (i >= 60 && i < 70) r[12]! += 3; }));
+    expect(h!.tickJumps).toBe(2); // the jump in and the jump back
+    expect(poseProblem(h)).toMatch(/tick jumps from 1.0 s/);
+  });
+
+  it('flags a take with more than a couple of corrections', () => {
+    const h = poseHealth(flight(120, (i, r) => { if (i % 30 === 10) r[7] = 2; }));
+    expect(h!.corrections).toBe(4);
+    expect(poseProblem(h)).toMatch(/prediction corrections: 4/);
   });
 });

@@ -146,6 +146,7 @@ import { updateAnchor } from './clockAnchor';
 import { getSector } from '@core/galaxy/galaxy';
 import { AiController, type AiIntentSink } from '@core/ai/AiController';
 import { getShipKind, type WeaponMount } from '@shared-types/shipKinds';
+import { slewDisplayMountAngles } from './displayMountAngles';
 import {
   resolvePlacementPreviewStatus,
   type PlacementPreview,
@@ -4322,6 +4323,11 @@ export class ColyseusGameClient {
         entry.x = this._swarmInterpScratch.x;
         entry.y = this._swarmInterpScratch.y;
         entry.angle = this._swarmInterpScratch.angle;
+        // Turret angles: carried forward between 20 Hz snapshots, at the same
+        // single per-frame resolve as the pose (displayMountAngles.ts).
+        if (entry.kind === 1 && (entry.mountAngles || entry.displayMountAngles)) {
+          slewDisplayMountAngles(entry, entry.shipKind ? getShipKind(entry.shipKind).mounts : undefined, this.lastFrameMs / 1000);
+        }
         let bodyKey = keyCache.get(entityId);
         if (bodyKey === undefined) {
           bodyKey = `swarm-${entityId}`;

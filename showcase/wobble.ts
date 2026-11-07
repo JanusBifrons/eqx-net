@@ -114,3 +114,47 @@ export function netProblem(n: NetHealth | null): string | null {
   if (n.serverHz < SERVER_HZ_MIN) return `server behind: ${n.serverHz} Hz (min ${SERVER_HZ_MIN})`;
   return null;
 }
+
+/**
+ * Game-side smoothness gate (2026-11-07), from the per-frame `pose-trace.json`
+ * the recorder writes (rows [t, meX, meY, meA, bigX, bigY, bigA, lerpX, lerpY,
+ * inputTick, frameTimeMs, tickDueMs, physX, physY, physVx, physVy]). The video
+ * gates can't see a correction: the camera follows the ship, so a correction
+ * moves the WORLD. This reads what the game itself did:
+ *  - correction onsets: frames where the prediction's lerp offset jumps up;
+ *  - one-tick jumps: frames whose physics state moved a whole tick more or
+ *    less than the ticks that ran (the 2026-11-07 ack bug's signature).
+ */
+export const POSE_MAX_CORRECTIONS = 2;
+const ONSET_U = 0.3;
+
+export interface PoseHealth { frames: number; corrections: number; tickJumps: number; firstAtMs: number }
+
+export function poseHealth(rows: number[][]): PoseHealth | null {
+  if (rows.length < 30) return null;
+  const t0 = rows[0]![10]!;
+  let corrections = 0, tickJumps = 0, firstAtMs = -1;
+  for (let i = 1; i < rows.length; i++) {
+    const a = rows[i - 1]!, b = rows[i]!;
+    const la = Math.hypot(a[7]!, a[8]!), lb = Math.hypot(b[7]!, b[8]!);
+    let bad = false;
+    if (lb > ONSET_U && lb > la + ONSET_U) { corrections++; bad = true; }
+    const ticks = b[9]! - a[9]!;
+    const one = Math.hypot(b[14]!, b[15]!) / 60;
+    const moved = Math.hypot(b[12]! - a[12]!, b[13]! - a[13]!);
+    if (one > 0.5 && ticks >= 0 && ticks <= 3 && Math.abs(moved - ticks * one) > 0.6 * one) { tickJumps++; bad = true; }
+    if (bad && firstAtMs < 0) firstAtMs = b[10]! - t0;
+  }
+  return { frames: rows.length, corrections, tickJumps, firstAtMs };
+}
+
+export function poseSummary(p: PoseHealth | null): string {
+  return p ? `pose: ${p.corrections} corrections, ${p.tickJumps} tick jumps` : 'pose: not traced';
+}
+
+export function poseProblem(p: PoseHealth | null): string | null {
+  if (!p) return null;
+  if (p.tickJumps === 0 && p.corrections <= POSE_MAX_CORRECTIONS) return null;
+  const at = p.firstAtMs >= 0 ? ` from ${(p.firstAtMs / 1000).toFixed(1)} s` : '';
+  return `prediction corrections: ${p.corrections} (max ${POSE_MAX_CORRECTIONS}), ${p.tickJumps} tick jumps${at}`;
+}
