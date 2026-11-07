@@ -51,6 +51,8 @@ import {
   FLAG_INPUT_BOOST,
   FLAG_INPUT_REVERSE,
   INPUT_FLAGS_MASK,
+  FLAG_WARP_SPOOL,
+  FLAG_WARP_CRUISE,
   slotBase,
 } from '../../shared-types/sabLayout.js';
 
@@ -445,6 +447,11 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         if (lastInputForSlot.boost)     nextFlags |= FLAG_INPUT_BOOST;
         if (lastInputForSlot.reverse)   nextFlags |= FLAG_INPUT_REVERSE;
       }
+      // Phase 4 warp-to: the body's warp phase (public: every client draws it).
+      nextFlags &= ~(FLAG_WARP_SPOOL | FLAG_WARP_CRUISE);
+      const wp = physics.warpPhase(playerId);
+      if (wp === 'spool') nextFlags |= FLAG_WARP_SPOOL;
+      else if (wp === 'cruise') nextFlags |= FLAG_WARP_CRUISE;
       u32[base + SLOT_FLAGS_OFF] = nextFlags;
     }
     Atomics.store(u32, TICK_IDX, tick);

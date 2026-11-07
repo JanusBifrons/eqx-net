@@ -71,6 +71,12 @@ export const FLAG_INPUT_BOOST      = 1 << 6;
 export const FLAG_INPUT_REVERSE    = 1 << 7;
 /** Mask of all 5 input bits — convenient for clearing the input portion of
  *  the FLAGS word before re-writing. */
+/** Phase 4 warp-to: the body's warp phase, written by the worker each tick
+ *  (spool / cruise; neither = idle). Read into the PUBLIC snapshot
+ *  `states[*].warp` so every client can draw the build-up and the run (#16). */
+export const FLAG_WARP_SPOOL  = 1 << 8;
+export const FLAG_WARP_CRUISE = 1 << 9;
+
 export const INPUT_FLAGS_MASK =
   FLAG_INPUT_THRUST |
   FLAG_INPUT_TURN_LEFT |
