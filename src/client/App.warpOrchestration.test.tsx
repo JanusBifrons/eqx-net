@@ -1,40 +1,16 @@
 /**
- * Phase G — Bug A regression lock: the single arrival flash.
+ * Phase 4 travel state (plan prancy-squishing-donut, 2026-11-07): a
+ * sector-to-sector trip IS the loading screen. The pilot keeps the normal view
+ * (own ship flying, engines, sky) while the destination loads; the curtain
+ * never rises for a transit, the old shader warp envelope and arrival flash are
+ * gone (the user: "they're incredibly expensive and suck"), and the trip ends
+ * on the loading→ready edge (the ship drops in, drawn by WarpFx).
  *
- * User smoke-test report: an inter-sector transit shows the warp burst
- * TWICE (spool-exit burst + arrival-reveal flash, ~200-500 ms apart).
+ * The very first join (no trip under way) keeps the curtain.
  *
- * Root cause (verified): Bug A is a *consequence* of Bug B. The
- * SPOOLING→IN_TRANSIT `setWarpMode(false)` spool-climax burst is meant
- * to fire behind an already-opaque load curtain. Pre-Phase-G the
- * curtain only rose when `loading` flipped true via the explicit
- * `transitState==='IN_TRANSIT'` term — i.e. in the SAME store
- * transition as the burst (curtain tween barely started → burst
- * visible). Phase G's `rearmJoinReadiness()` (from the `transit_ready`
- * handler) flips `gameReady→false` BEFORE `IN_TRANSIT`, so `loading`
- * (=`!gameReady|IN_TRANSIT|ARRIVED`) goes true at `transit_ready` and
- * the curtain rises a whole room-swap window EARLIER — opaque by the
- * time the burst fires → only the single arrival flash is seen.
- *
- * LEVEL (Invariant #13): the bug lives in App.tsx's transit→renderer
- * effect ORCHESTRATION (the relative timing of `setLoadCurtain` vs the
- * spool-exit `setWarpMode(false)`), NOT in `PixiRenderer` internals
- * (`fireBurst` is correct and already locked by
- * `PixiRenderer.warpDetach.test.ts`). So the faithful level is the
- * extracted `useWarpOrchestration` hook driven through the real store
- * sequence with a spy `IRenderer` recording an ordered call log — not
- * a renderer probe page (this is main-thread React effect ordering,
- * not a worker/postMessage boundary). The hook is a behaviour-
- * preserving extraction of the prior inline App.tsx effects, made so
- * this invariant is unit-lockable.
- *
- * The fix landed in G1 (the `rearmJoinReadiness` coupling); this spec
- * is the orchestration-ordering lock + the characterization that
- * proves the test distinguishes the pre/post regimes. Reverting the
- * G1 re-arm makes real transits take the "characterization" path; the
- * Bug-B locks (`ColyseusClient.transitRearmReadiness.test.ts` /
- * `WarpScreen.transit.test.tsx`) re-fail on that revert, and removing
- * the `rearmJoinReadiness` store action fails this spec at compile.
+ * LEVEL: the orchestration lives in `useWarpOrchestration` (main-thread React
+ * effect ordering against the real store), so this drives the real store
+ * sequence with a spy `IRenderer` recording calls.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, act } from '@testing-library/react';
@@ -66,9 +42,6 @@ function Harness({ rr }: { rr: RefObject<IRenderer | null> }): null {
   return null;
 }
 
-/** Steady "post-arrival, fully ready, docked" baseline.
- *  Plan: crispy-kazoo, Commit 2 — `useGameReady()` is now the 9-gate
- *  predicate; the handshake gates must be true for the steady state. */
 function settle(): void {
   useUIStore.setState({
     phase: 'game',
@@ -82,55 +55,33 @@ function settle(): void {
     arrivalTickFromServer: 123,
     arrivalAcked: true,
     transitState: 'DOCKED',
+    travelling: false,
   });
 }
-const lastCurtainBefore = (i: number): boolean | null => {
-  for (let k = i - 1; k >= 0; k--) {
-    const c = calls[k]!;
-    if (c.fn === 'setLoadCurtain') return c.arg;
-  }
-  return null;
-};
 
-describe('useWarpOrchestration — single arrival flash (Phase G, Bug A)', () => {
+describe('useWarpOrchestration — the trip is the loading screen (Phase 4 travel)', () => {
   beforeEach(() => {
     calls = [];
     settle();
   });
 
-  it('Phase-G: curtain rises at transit_ready, BEFORE the spool-exit burst → single flash', () => {
+  it('a transit never raises the curtain, never runs the old shader, and ends the trip on arrival', () => {
     const rr: RefObject<IRenderer | null> = { current: makeSpyRenderer() };
     render(<Harness rr={rr} />);
-    calls = []; // drop mount baseline (setLoadCurtain(false)+setWarpMode(false))
+    calls = [];
 
-    // Engage: SPOOLING. gameReady still true (rearm not yet) → loading
-    // false → no curtain. The spool envelope starts.
     act(() => { useUIStore.getState().setTransitState('SPOOLING'); });
-    expect(calls.some((c) => c.fn === 'setLoadCurtain' && c.arg === true)).toBe(false);
-    expect(calls.some((c) => c.fn === 'setWarpMode' && c.arg === true)).toBe(true);
-
-    // transit_ready re-arm (the G1 fix the handler performs). gameReady
-    // → false → loading → true → curtain UP, now, before IN_TRANSIT.
-    act(() => { (useUIStore.getState() as unknown as { rearmJoinReadiness: () => void }).rearmJoinReadiness(); });
-    const curtainUpIdx = calls.findIndex((c) => c.fn === 'setLoadCurtain' && c.arg === true);
-    expect(curtainUpIdx).toBeGreaterThanOrEqual(0); // THE LOCK: curtain up at transit_ready
-
-    // IN_TRANSIT → the spool-exit burst. It must come AFTER the curtain
-    // was already raised (→ masked).
+    // transit_ready: the trip starts, then readiness re-arms (destination loading).
+    act(() => {
+      useUIStore.getState().setTravelling(true);
+      (useUIStore.getState() as unknown as { rearmJoinReadiness: () => void }).rearmJoinReadiness();
+    });
     act(() => { useUIStore.getState().setTransitState('IN_TRANSIT'); });
-    const burstIdx = calls.findIndex(
-      (c, i) => c.fn === 'setWarpMode' && c.arg === false && i > curtainUpIdx,
-    );
-    expect(burstIdx).toBeGreaterThan(curtainUpIdx);
-    expect(lastCurtainBefore(burstIdx)).toBe(true); // curtain opaque when burst fires
 
-    // Arrival completes → single flash on the loading→ready edge.
-    // Plan: crispy-kazoo, Commit 2 — handshake gates must also flip
-    // for the curtain to drop. The bootstrap gates (firstSnapshotApplied,
-    // joinMinimumElapsed) flip first, then sendClientReady fires, then
-    // warp_in arrives with arrivalTick, then arrivalAcked. Drive the
-    // post-handshake terminal state here so the test asserts the
-    // curtain-drop and single-flash invariants.
+    expect(calls.some((c) => c.fn === 'setLoadCurtain' && c.arg === true)).toBe(false);
+    expect(calls.some((c) => c.fn === 'setWarpMode' && c.arg === true)).toBe(false);
+
+    // The destination is loaded: the trip ends, with no old arrival flash.
     act(() => {
       useUIStore.getState().setFirstSnapshotApplied(true);
       useUIStore.getState().setJoinMinimumElapsed(true);
@@ -140,33 +91,15 @@ describe('useWarpOrchestration — single arrival flash (Phase G, Bug A)', () =>
       useUIStore.getState().setArrivalAcked(true);
       useUIStore.getState().setTransitState('DOCKED');
     });
-    expect(calls.filter((c) => c.fn === 'triggerWarpIn')).toHaveLength(1);
-    const flashIdx = calls.findIndex((c) => c.fn === 'triggerWarpIn');
-    expect(flashIdx).toBeGreaterThan(curtainUpIdx);
+    expect(calls.some((c) => c.fn === 'triggerWarpIn')).toBe(false);
+    expect(calls.some((c) => c.fn === 'setLoadCurtain' && c.arg === true)).toBe(false);
+    expect(useUIStore.getState().travelling).toBe(false);
   });
 
-  it('characterization: WITHOUT the re-arm the curtain has no head-start (pre-G1 double-flash window)', () => {
+  it('the first join (no trip) still raises the curtain until ready', () => {
+    useUIStore.setState({ firstSnapshotApplied: false, travelling: false });
     const rr: RefObject<IRenderer | null> = { current: makeSpyRenderer() };
     render(<Harness rr={rr} />);
-    calls = [];
-
-    // SPOOLING with gameReady stuck-true (the pre-G1 reality — no
-    // rearmJoinReadiness on transit). No curtain during the spool.
-    act(() => { useUIStore.getState().setTransitState('SPOOLING'); });
-    expect(calls.some((c) => c.fn === 'setLoadCurtain' && c.arg === true)).toBe(false);
-
-    // IN_TRANSIT: the FIRST curtain-up coincides with the spool-exit
-    // burst (same store transition) — the curtain tween only starts as
-    // the burst fires, so the burst is visible: the double-flash
-    // window. This proves the spec distinguishes the regimes (the
-    // Phase-G case raised the curtain a whole step earlier).
-    act(() => { useUIStore.getState().setTransitState('IN_TRANSIT'); });
-    const firstCurtainUp = calls.findIndex((c) => c.fn === 'setLoadCurtain' && c.arg === true);
-    const burst = calls.findIndex((c) => c.fn === 'setWarpMode' && c.arg === false);
-    expect(firstCurtainUp).toBeGreaterThanOrEqual(0); // it does rise…
-    expect(burst).toBeGreaterThanOrEqual(0);          // …but only now,
-    // …in the SAME act() as the burst — no earlier transit_ready
-    // head-start (contrast the Phase-G test, where curtainUpIdx was
-    // established by the rearm step BEFORE IN_TRANSIT was driven).
+    expect(calls.some((c) => c.fn === 'setLoadCurtain' && c.arg === true)).toBe(true);
   });
 });

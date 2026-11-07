@@ -392,6 +392,20 @@ export interface ProjectileRenderState {
 }
 
 export interface RenderMirror {
+  /** Phase 4 travel state: a sector-to-sector trip is under way (the backdrop
+   *  fades to deep space; the local ship flies on). Absent = no trip. */
+  travelling?: boolean;
+  /** Phase 4 travel state: in the empty middle of a trip (the sky thins to deep
+   *  space); false while flying out of the old sector and into the new one. */
+  travelDeep?: boolean;
+  /** Phase 4 travel state: the total jump (game space) made by placing the
+   *  ship on its approach; the renderer shifts the sky by it so the stars
+   *  carry on unbroken. */
+  travelJumpX?: number;
+  travelJumpY?: number;
+  /** Phase 4 travel state: the sector a transit is heading for, set during the
+   *  spool so the renderer prepares its sky early. Absent = none. */
+  prewarmSector?: string;
   /** The frame timestamp the local ship's pose is drawn at (main-thread
    *  performance.now base; deltas only). The cinematic camera's velocity
    *  estimate uses it. Absent ⇒ the renderer's clock. */

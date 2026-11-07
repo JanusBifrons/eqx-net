@@ -30,7 +30,7 @@ export function profileEnv(profile: ServerProfile): Record<string, string> {
     case 'capitals':
       return { EQX_DISABLE_LIVING_WORLD: '1', EQX_SECTOR_SCALE: '4', EQX_GALAXY_SECTORS: 'none' };
     case 'solar':
-      return { EQX_DISABLE_LIVING_WORLD: '1', EQX_SOLAR_SECTORS: '1', EQX_GALAXY_SECTORS: 'sol-prime' };
+      return { EQX_DISABLE_LIVING_WORLD: '1', EQX_SOLAR_SECTORS: '1', EQX_GALAXY_SECTORS: 'sol-prime,vega-reach' };
   }
 }
 

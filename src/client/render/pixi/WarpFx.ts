@@ -62,6 +62,8 @@ interface ShipWarpView {
   /** Pose while spooling (Pixi space): where a departure starts, and the
    *  heading it leaves on (the spool turns the ship to face its target). */
   sx: number; sy: number; srot: number;
+  /** The ship's stern distance (for a departure drawn after it vanished). */
+  stern: number;
   gen: number;
   glowC: Graphics; glowL: Graphics; glowR: Graphics;
   streak: Sprite;
@@ -79,6 +81,9 @@ interface Burst {
   core: Sprite[]; out: Sprite[];
   streak: Sprite; flash: Graphics;
   live: boolean;
+  /** The pilot's own departure: its trails only reach as far as the ship has
+   *  flown (it accelerates away behind them, never past them). */
+  follow: boolean;
 }
 
 export interface WarpFxShip {
@@ -105,6 +110,11 @@ export class WarpFx {
   /** World units per screen pixel this frame. */
   private px = 1;
   private activeBursts = 0;
+  /** Speed-line fade (0..1) and the run's direction for them. */
+  private lineFade = 0;
+  private lineLastT = 0;
+  private lineFx = 0;
+  private lineFy = -1;
   private spooling = 0;
 
   constructor() {
@@ -139,6 +149,7 @@ export class WarpFx {
       this.ships.set(id, v);
     }
     v.gen = this.gen;
+    if (ship.isLocal) { this.localX = ship.x; this.localY = ship.y; }
     const raw = ship.warp ?? 0;
     const phase: 0 | 1 | 2 = raw === 3 ? 0 : raw;
     const fx = Math.sin(ship.rotation), fy = -Math.cos(ship.rotation); // nose direction (Pixi)
@@ -152,7 +163,7 @@ export class WarpFx {
         const spooled = v.phase === 1;
         const dx = spooled ? Math.sin(v.srot) : fx, dy = spooled ? -Math.cos(v.srot) : fy;
         const ox = v.phase === 1 ? v.sx : ship.x, oy = v.phase === 1 ? v.sy : ship.y;
-        this.spawn('depart', ox - dx * ship.stern, oy - dy * ship.stern, dx, dy, ship.stern);
+        this.spawn('depart', ox - dx * ship.stern, oy - dy * ship.stern, dx, dy, ship.stern, ship.isLocal);
       }
       if (phase === 0 && v.phase === 2) { this.spawn('arrive', ship.x, ship.y, fx, fy, ship.stern); v.arrivedDrawn = true; }
       v.phase = phase;
@@ -162,7 +173,7 @@ export class WarpFx {
     if (raw !== 3 && phase !== 0) v.arrivedDrawn = false;
     const px = this.px;
     if (phase === 1) {
-      v.sx = ship.x; v.sy = ship.y; v.srot = ship.rotation;
+      v.sx = ship.x; v.sy = ship.y; v.srot = ship.rotation; v.stern = ship.stern;
       this.spooling++;
       const p = Math.min(1, (this.now - v.spoolStart) / SPOOL_S);
       // A steady build: brightness and size ramp with charge, with only a
@@ -183,16 +194,30 @@ export class WarpFx {
       // ships are out of the world on the run).
       const len = ship.isLocal ? 600 * px : 900 * px;
       line(v.streak, ship.x - fx * ship.stern * 0.5, ship.y - fy * ship.stern * 0.5, Math.atan2(-fy, -fx), len, Math.max(ship.stern * 0.6, px * 3), 0.22);
-      if (ship.isLocal) this.drawSpeedLines(ship.x, ship.y, fx, fy);
+      if (ship.isLocal) { this.lineFx = fx; this.lineFy = fy; }
     } else {
       v.streak.visible = false;
     }
-    if (ship.isLocal && phase !== 2) for (const l of this.lines) l.visible = false;
+    if (ship.isLocal) {
+      // Speed lines ease in with the run (0.4 s) and out after it (0.35 s),
+      // so the drop never cuts them off in one frame.
+      const dt = Math.min(0.1, Math.max(0, this.now - this.lineLastT));
+      this.lineLastT = this.now;
+      this.lineFade = phase === 2 ? Math.min(1, this.lineFade + dt / 0.4) : Math.max(0, this.lineFade - dt / 0.35);
+      if (this.lineFade > 0) this.drawSpeedLines(ship.x, ship.y, this.lineFx, this.lineFy);
+      else for (const l of this.lines) l.visible = false;
+    }
   }
 
   endFrame(): void {
     for (const [id, v] of this.ships) {
       if (v.gen === this.gen) continue;
+      // Gone mid-spool: it left for another sector. Draw its departure along
+      // the spool heading, where it stood.
+      if (v.phase === 1) {
+        const dx = Math.sin(v.srot), dy = -Math.cos(v.srot);
+        this.spawn('depart', v.sx - dx * v.stern, v.sy - dy * v.stern, dx, dy, v.stern);
+      }
       v.glowC.destroy(); v.glowL.destroy(); v.glowR.destroy(); v.streak.destroy();
       this.ships.delete(id);
     }
@@ -206,6 +231,12 @@ export class WarpFx {
 
   /** Live departure/arrival effects (diagnostic / E2E). */
   burstCount(): number { return this.activeBursts; }
+  /** Longest departure trail reach this frame (diagnostic / tests). */
+  departReach(): number { return this.lastDepartReach; }
+  private lastDepartReach = 0;
+  /** The pilot's own ship position this frame (Pixi space). */
+  private localX = 0;
+  private localY = 0;
   /** Direction of the last burst spawned (diagnostic / tests). */
   lastBurstDir(): { x: number; y: number } { return this.lastDir; }
   private readonly lastDir = { x: 0, y: 0 };
@@ -217,10 +248,10 @@ export class WarpFx {
     const streak = bar(STREAK);
     glowC.visible = glowL.visible = glowR.visible = streak.visible = false;
     this.layer.addChild(streak, glowC, glowL, glowR);
-    return { phase: 0, arrivedDrawn: false, spoolStart: 0, sx: 0, sy: 0, srot: 0, gen: 0, glowC, glowL, glowR, streak };
+    return { phase: 0, arrivedDrawn: false, spoolStart: 0, sx: 0, sy: 0, srot: 0, stern: 0, gen: 0, glowC, glowL, glowR, streak };
   }
 
-  private spawn(kind: 'depart' | 'arrive', x: number, y: number, dx: number, dy: number, stern: number): void {
+  private spawn(kind: 'depart' | 'arrive', x: number, y: number, dx: number, dy: number, stern: number, follow = false): void {
     let b: Burst | undefined;
     for (const q of this.bursts) if (!q.live) { b = q; break; }
     if (!b) {
@@ -230,10 +261,11 @@ export class WarpFx {
       const streak = bar(STREAK), flash = glowGfx(0xfff4dc);
       root.addChild(...out, ...core, streak, flash);
       this.layer.addChild(root);
-      b = { kind, t0: 0, x: 0, y: 0, dx: 0, dy: 0, stern: 0, root, core, out, streak, flash, live: false };
+      b = { kind, t0: 0, x: 0, y: 0, dx: 0, dy: 0, stern: 0, root, core, out, streak, flash, live: false, follow: false };
       this.bursts.push(b);
     }
     this.lastDir.x = dx; this.lastDir.y = dy;
+    b.follow = follow;
     b.kind = kind; b.t0 = this.now; b.x = x; b.y = y; b.dx = dx; b.dy = dy; b.stern = Math.max(4, stern); b.live = true;
     b.root.visible = true;
     this.stepBurst(b);
@@ -251,7 +283,11 @@ export class WarpFx {
     const nx = -b.dy * gap, ny = b.dx * gap;
     const fade = 1 - t / life;
     // Trails reach out fast (the acceleration), then hold and burn down.
-    const reach = depart ? TRAIL_LEN * Math.min(1, t / TRAIL_GROW_S) : ARRIVE_TRAIL_LEN;
+    let reach = depart ? TRAIL_LEN * Math.min(1, t / TRAIL_GROW_S) : ARRIVE_TRAIL_LEN;
+    // The pilot's own ship accelerates away: its trails stop at its stern.
+    const flown = depart && b.follow ? Math.max(0, (this.localX - b.x) * b.dx + (this.localY - b.y) * b.dy) : Infinity;
+    if (reach > flown) reach = flown;
+    if (depart) this.lastDepartReach = reach;
     // Arrival trails lie BEHIND the ship (it came from there).
     const sx = depart ? b.x : b.x - b.dx * reach, sy = depart ? b.y : b.y - b.dy * reach;
     const coreW = Math.max(b.stern * 0.06, px * 1.2);
@@ -275,7 +311,7 @@ export class WarpFx {
     // The blur streak: shoots out along the run and fades fast.
     const st = Math.min(1, t / STREAK_LIFE_S);
     const sw = Math.max(b.stern * 0.8, px * 4);
-    if (depart) line(b.streak, b.x, b.y, ang, STREAK_LEN * (0.3 + 0.7 * st), sw, 0.4 * (1 - st));
+    if (depart) line(b.streak, b.x, b.y, ang, Math.min(flown, STREAK_LEN * (0.3 + 0.7 * st)), sw, 0.4 * (1 - st));
     else {
       const l = ARRIVE_STREAK_LEN * (1 - st);
       line(b.streak, b.x - b.dx * l, b.y - b.dy * l, ang, l, sw * 0.7, 0.22 * (1 - st));
@@ -295,7 +331,7 @@ export class WarpFx {
       const p = (this.linePhase[i]! + this.now * 2.2) % 1;
       const along = span * (1 - 2 * p);
       const lat = this.lineLat[i]! * span * 0.9;
-      line(this.lines[i]!, x + fx * along - fy * lat, y + fy * along + fx * lat, ang, span * this.lineLen[i]!, 1.6 * this.px, 0.35 * Math.sin(p * Math.PI));
+      line(this.lines[i]!, x + fx * along - fy * lat, y + fy * along + fx * lat, ang, span * this.lineLen[i]!, 1.6 * this.px, 0.35 * Math.sin(p * Math.PI) * this.lineFade);
     }
   }
 }

@@ -464,6 +464,14 @@ Recovery thresholds are 2 ms lower than the downshift trigger AND require a 3× 
 
 **Do not re-disable the chain wholesale** if a mobile regression appears post-M3 — first instrument the budget to confirm which tier is active during the regression, and dial `minimal` per-device if needed via the touch-default pin. The 2026-05-21 disable was a hammer; the budget tier dial is the surgical replacement.
 
+## Sector-to-sector trips are the loading screen (Phase 4 travel state)
+
+- A transit never raises the curtain or `WarpScreen`: the store's `travelling` covers the trip, and `computeShowLoadingScreen` / `useWarpOrchestration` keep them down (HUD stays up). Only the first join uses the curtain.
+- The trip is `ColyseusClient.stepTravel` (out → cruise → approach). It writes the local ship's mirror entry LAST in `updateMirror`, overriding prediction while it lasts.
+- Nothing fades: the old sector is flown out of (the room swap waits for it), the new one is flown into. Never add a fade or a cut to hide loading; stretch the trip instead.
+- A new jump of the local ship during a trip must add to `mirror.travelJumpX/Y` so the sky carries across it.
+- Story: [docs/architecture/travel-state.md](../../docs/architecture/travel-state.md).
+
 ## Composite ship + scrap render (2026-06-13)
 
 - **Composite ships**: `buildCompositeShipGfx` (`render/pixi/spriteBuilders.ts`)

@@ -2023,6 +2023,7 @@ export class SectorRoom extends Room<SectorState> {
       depositProgressOf: (shipInstanceId) => this.depositProgress.get(shipInstanceId),
       warpArrived: (playerId) => this.warpTravel.arrivedRecently(playerId, this.serverTick),
       isJoining: (playerId) => this.pendingJoin.has(playerId),
+      transitSpooling: (playerId) => this.transitOrchestrator?.isInFlight(playerId) === true,
       playerMountAngles: this.mountTicker.playerMountAngles,
       droneMountAngles: this.mountTicker.droneMountAngles,
       missileSim: this.missileSim,

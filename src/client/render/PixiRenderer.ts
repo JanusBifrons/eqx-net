@@ -1982,7 +1982,21 @@ export class PixiRenderer implements IRenderer {
     // Speed effects follow the pilot's own ship: full speed is its top speed
     // (the default kind's when spectating). Catalogue lookups are cached.
     const speedShip = mirror.localPlayerId ? mirror.ships.get(mirror.localPlayerId) : undefined;
-    const backdropOn = this._backdrop?.update(this.camera, performance.now(), speedFxFullSpeed(speedShip?.kind)) ?? false;
+    // Phase 4 travel state: in the empty middle of a trip the sky thins to deep
+    // space (it fills back in as the ship flies into the new sector).
+    this._backdrop?.setDeepSpace(mirror.travelDeep === true);
+    this._backdrop?.setTravelHold(mirror.travelling === true);
+    if (mirror.prewarmSector !== undefined) this._backdrop?.prewarm(mirror.prewarmSector);
+    // Placing the ship on its approach into a new sector jumps the camera; the
+    // sky is shifted back by the same amount so the stars carry on unbroken.
+    // (Game space y up; Pixi y down.)
+    const skyCam = this._skyCam;
+    skyCam.center.x = this.camera.center.x - (mirror.travelJumpX ?? 0);
+    skyCam.center.y = this.camera.center.y + (mirror.travelJumpY ?? 0);
+    skyCam.scale.x = this.camera.scale.x;
+    skyCam.screenWidth = this.camera.screenWidth;
+    skyCam.screenHeight = this.camera.screenHeight;
+    const backdropOn = this._backdrop?.update(skyCam, performance.now(), speedFxFullSpeed(speedShip?.kind)) ?? false;
     // Speed effects (C3): the backdrop's eased speed asks the camera to zoom
     // out a little; applied on the camera's next tick (none while it's baking).
     this.camera.setSpeedZoom(backdropOn ? this._backdrop!.speedZoom() : 1);
@@ -2743,6 +2757,10 @@ export class PixiRenderer implements IRenderer {
   private readonly _ownerSpriteKey = new Map<string, string>();
   private _fxEnginesLastMs = 0;
   private readonly _warpFx = new WarpFx();
+  /** Phase 4 travel state: the camera the sky is drawn from (shifted by the
+   *  trip's approach jump). */
+  private readonly _skyCam = { center: { x: 0, y: 0 }, scale: { x: 1 }, screenWidth: 0, screenHeight: 0 };
+
   private readonly _warpShipScratch: WarpFxShip = { x: 0, y: 0, rotation: 0, warp: undefined, stern: 0, isLocal: false };
   private readonly _warpStern = new Map<string, number>();
   /** Scratch for the test-only particle count in `artStats`. */

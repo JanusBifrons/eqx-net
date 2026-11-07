@@ -126,3 +126,15 @@ describe('the ?fx= switch', () => {
   });
 });
 
+
+describe('effect textures are shared across sectors (Phase 4 travel state)', () => {
+  it('an fx texture asked for under one sector is the same handle after a sector change; lit art is not', () => {
+    const { svc } = make();
+    svc.setSector('sol-prime');
+    const neb = svc.fx('nebula', 'emission', 3, false);
+    const ship = svc.ship('fighter');
+    svc.setSector('vega-reach');
+    expect(svc.fx('nebula', 'emission', 3)).toBe(neb);
+    expect(svc.ship('fighter')).not.toBe(ship);
+  });
+});

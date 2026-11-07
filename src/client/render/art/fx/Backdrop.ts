@@ -143,6 +143,57 @@ export class Backdrop {
   private nebSeed = 0;
   private readonly nebBack = new Container();
   private readonly nebFront = new Container();
+  /** Phase 4 travel state: 0 = this sector's full sky, 1 = deep space between
+   *  sectors (nebulae and bodies faded out, stars kept). Eased toward the
+   *  target set by `setDeepSpace`. */
+  private deep = 0;
+  private deepTarget = 0;
+  private deepLastT = -1;
+
+  /** Between sectors (a trip under way): fade the sky to empty space; when the
+   *  trip ends the (new) sector's sky fades back in. */
+  setDeepSpace(on: boolean): void { this.deepTarget = on ? 1 : 0; }
+  /** A trip between sectors is under way: hold any sector switch until the
+   *  old sky has thinned to deep space (or the trip ends). */
+  private travelHold = false;
+  setTravelHold(on: boolean): void { this.travelHold = on; }
+  /** A sector switch asked for mid-trip, applied once the old sky has faded
+   *  (undefined = none waiting). */
+  private pendingSector: string | null | undefined = undefined;
+  /** Phase 4 travel state: the next sector's sky textures, baked and
+   *  uploaded ahead of time (during a transit's spool). Each ready texture is
+   *  drawn once on a tiny, near-invisible sprite so the GPU upload happens now,
+   *  not as a stall mid-trip. */
+  private prewarmFor = '';
+  private readonly prewarmHandles: ArtHandle[] = [];
+  private readonly prewarmSprites: Sprite[] = [];
+
+  /** Bake + upload a sector's sky textures ahead of a switch to it. */
+  prewarm(sectorKey: string): void {
+    if (sectorKey === this.prewarmFor) return;
+    this.prewarmFor = sectorKey;
+    const n = sectorNebula(sectorKey);
+    this.prewarmHandles.length = 0;
+    this.prewarmHandles.push(this.art.fx('nebula', n.variant === 'dark' ? 'reflection' : n.variant, n.seed, false));
+    if (LANES_ALPHA[n.variant] > 0) this.prewarmHandles.push(this.art.fx('nebula', 'dark', n.seed + 40, false));
+  }
+
+  private updatePrewarm(): void {
+    for (let i = 0; i < this.prewarmHandles.length; i++) {
+      let sp = this.prewarmSprites[i];
+      if (!sp) {
+        sp = new Sprite(); sp.alpha = 0.004; sp.width = 2; sp.height = 2; sp.position.set(0, 0);
+        this.sky.addChild(sp);
+        this.prewarmSprites.push(sp);
+      }
+      const tex = readyTex(this.prewarmHandles[i]!);
+      if (tex && sp.texture !== tex) { sp.texture = tex; sp.width = 2; sp.height = 2; }
+      sp.visible = tex !== null;
+    }
+    for (let i = this.prewarmHandles.length; i < this.prewarmSprites.length; i++) this.prewarmSprites[i]!.visible = false;
+  }
+  /** Current deep-space fade, 0..1 (diagnostic / tests). */
+  deepSpace(): number { return this.deep; }
   private readonly wisps: Wisp[][] = [];
   private readonly grade = new Sprite();
   private readonly scratchR: NebulaRegion = { x: 0, y: 0, r: 0, variant: 'emission', seed: 0 };
@@ -261,6 +312,10 @@ export class Backdrop {
   /** The sector changed: pick its nebula and lay out its sky (baked on the
    *  first visit, cached after). */
   setSector(sectorKey: string | null): void {
+    // Mid-trip: hold the switch until the old sky has faded to deep space,
+    // so the new sky never pops in behind the pilot (it fades in on arrival).
+    if (this.travelHold && this.deep < 0.98) { this.pendingSector = sectorKey; return; }
+    this.pendingSector = undefined;
     const key = sectorKey ?? '';
     if (key === this.nebulaFor) return;
     this.nebulaFor = key;
@@ -296,6 +351,22 @@ export class Backdrop {
     this.sky.visible = true;
     this.t = nowMs / 1000;
     const zoom = cam.scale.x, W = cam.screenWidth, H = cam.screenHeight;
+    // Ease the deep-space fade (~1.5 s each way).
+    const dts = this.deepLastT < 0 ? 0 : Math.min(0.1, Math.max(0, this.t - this.deepLastT));
+    this.deepLastT = this.t;
+    if (this.deep !== this.deepTarget) {
+      // Thins over 2 s once clear of the old sector; fills back in over the
+      // approach into the new one (~3 s).
+      this.deep = this.deepTarget > this.deep ? Math.min(this.deepTarget, this.deep + dts / 2) : Math.max(this.deepTarget, this.deep - dts / 3);
+    }
+    if (this.pendingSector !== undefined && (this.deep >= 0.98 || !this.travelHold)) {
+      const k = this.pendingSector; this.pendingSector = undefined;
+      this.setSector(k);
+    }
+    this.updatePrewarm();
+    const skyKeep = 1 - this.deep;
+    this.farLands.alpha = skyKeep; this.nearLands.alpha = skyKeep;
+    this.nebBack.alpha = skyKeep; this.nebFront.alpha = skyKeep;
     const cx = cam.center.x, cy = cam.center.y;
     const q = this.getQuality();
     stepSpeedFx(this.speed, cx, cy, nowMs, fullSpeed);
@@ -313,7 +384,7 @@ export class Backdrop {
       backdropXf(cx, cy, zoom, tl.parallax, tl.zoomPow, W, H, this.xf);
       tl.s.tileScale.set(this.xf.scale * tl.texScale);
       tl.s.tilePosition.set(this.xf.x, this.xf.y);
-      tl.s.alpha = tl.alpha * (tl.win ? zoomWindow(zoom, tl.win[0], tl.win[1], tl.win[2], tl.win[3]) : 1) * (tl.star ? 1 - 0.55 * d : 1);
+      tl.s.alpha = tl.alpha * (tl.win ? zoomWindow(zoom, tl.win[0], tl.win[1], tl.win[2], tl.win[3]) : 1) * (tl.star ? 1 - 0.55 * d : skyKeep);
     }
     for (let i = 0; i < this.sprites.length; i++) {
       const ss = this.sprites[i]!;
@@ -324,7 +395,7 @@ export class Backdrop {
       backdropXf(cx, cy, zoom, ss.parallax, ss.zoomPow, W, H, this.xf);
       ss.s.position.set(this.xf.x + ss.lx * this.xf.scale, this.xf.y + ss.ly * this.xf.scale);
       ss.s.scale.set((ss.size * this.xf.scale) / tex.width);
-      ss.s.alpha = ss.alpha * (ss.twinkle ? 0.75 + 0.25 * Math.sin(this.t * (1.3 + i * 0.37) + i * 2.1) : 1);
+      ss.s.alpha = ss.alpha * (ss.twinkle ? 0.75 + 0.25 * Math.sin(this.t * (1.3 + i * 0.37) + i * 2.1) : 1) * skyKeep;
     }
     // Landmarks: each sky layer's cells around the camera, pooled sprites.
     this.vCx = cx; this.vCy = cy; this.vZoom = zoom; this.vW = W; this.vH = H;

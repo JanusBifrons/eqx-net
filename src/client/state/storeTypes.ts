@@ -232,6 +232,11 @@ export interface UIStore {
    *  countdown alongside the progress fill. Cleared back to null on
    *  DOCKED / ARRIVED. */
   transitSpoolMs: number | null;
+  /** Phase 4 travel state: a sector-to-sector trip is under way (from the
+   *  commit until the ship drops in at the destination). The trip IS the
+   *  loading screen: the curtain and warp screen stay down and the pilot
+   *  keeps the normal view (docs/architecture/travel-state.md). */
+  travelling: boolean;
   /** Currently selected weapon SLOT id (weapons/energy/AI overhaul §5.2).
    *  UI-only discrete selection — NOT spatial. Replaces the old per-weapon
    *  `activeWeapon`: each ship now fires its catalogue-bound loadout, and the
@@ -480,6 +485,7 @@ export interface UIStore {
   setTransitProgress: (p: number) => void;
   setTransitTargetSectorKey: (key: string | null) => void;
   setTransitSpoolMs: (ms: number | null) => void;
+  setTravelling: (on: boolean) => void;
   setActiveSlotId: (id: string) => void;
   setPlacementKind: (k: StructureKindId | null) => void;
   /** Phase 4 WS-B1 — set / clear the pending local level-up acknowledgement

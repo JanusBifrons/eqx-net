@@ -158,6 +158,9 @@ export interface SnapshotBroadcasterDeps {
    *  sent to its own pilot only, never to others (it would show as a parked
    *  hull, then blink to active). Absent ⇒ never. */
   isJoining?: (playerId: string) => boolean;
+  /** Phase 4 travel: the player is spooling an inter-sector transit (shown as
+   *  the same warp build-up, 1). Absent ⇒ never. */
+  transitSpooling?: (playerId: string) => boolean;
   /** Living World P5 — the blueprints fitted to a ship instance (own active
    *  ship only on the wire). A SHARED reference; undefined ⇒ none known. */
   fittedOf?: (shipInstanceId: string) => readonly string[] | undefined;
@@ -635,6 +638,7 @@ export class SnapshotBroadcaster {
       entry.lastInput.boost     = !!(flags & FLAG_INPUT_BOOST);
       entry.lastInput.reverse   = !!(flags & FLAG_INPUT_REVERSE);
       entry.warp = flags & FLAG_WARP_CRUISE ? 2 : flags & FLAG_WARP_SPOOL ? 1
+        : this.deps.transitSpooling?.(playerId) === true ? 1
         : this.deps.warpArrived?.(playerId) === true ? 3 : 0;
       entry.joining = !ship.isActive && this.deps.isJoining?.(playerId) === true;
       entry.energy = ship.energy;

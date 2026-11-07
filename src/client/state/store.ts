@@ -150,6 +150,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   transitProgress: 0,
   transitTargetSectorKey: null,
   transitSpoolMs: null,
+  travelling: false,
   activeSlotId: 'primary',
   placementKind: null,
   selectedEntityId: null,
@@ -261,6 +262,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setTransitProgress: (p) => set({ transitProgress: p }),
   setTransitTargetSectorKey: (key) => set({ transitTargetSectorKey: key }),
   setTransitSpoolMs: (ms) => set({ transitSpoolMs: ms }),
+  setTravelling: (on) => set({ travelling: on }),
   // Switching slot resets the wall-clock cooldown anchor so a fresh slot
   // fires immediately (no carry-over cooldown across slots).
   setActiveSlotId: (id) => set({ activeSlotId: id, lastFireMs: null }),
@@ -498,7 +500,19 @@ export function useIsLoadingActive(): boolean {
 
 /** Convenience: HUD components return `null` when this is false. */
 export function useShouldRenderHud(): boolean {
-  return useUIStore((s) => !computeIsLoadingActive(s));
+  // The trip between sectors is a loading period the pilot shouldn't notice:
+  // the HUD stays up.
+  return useUIStore((s) => s.travelling || !computeIsLoadingActive(s));
+}
+
+/** The loading curtain / warp screen show: loading, but never during a
+ *  sector-to-sector trip (the trip itself is the loading screen). */
+export function computeShowLoadingScreen(s: UIStore): boolean {
+  return computeIsLoadingActive(s) && !s.travelling;
+}
+
+export function useShowLoadingScreen(): boolean {
+  return useUIStore(computeShowLoadingScreen);
 }
 
 /**
