@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SpatialGrid, CELL_SIZE } from './SpatialGrid.js';
+import { SpatialGrid, CELL_SIZE, SPATIAL_COORD_LIMIT } from './SpatialGrid.js';
 
 describe('SpatialGrid', () => {
   it('insert / query9 returns entities in the 3x3 window', () => {
@@ -94,11 +94,26 @@ describe('SpatialGrid', () => {
     }
   });
 
-  it('clamps coords beyond ±32_000 instead of corrupting cell index', () => {
+  it('keeps entities at solar-system distances (±200,000 u) in their own cells', () => {
+    // Phase 4 (plan prancy-squishing-donut): sectors span ±200,000 u. The old
+    // ±32,000 clamp put every entity beyond it into the same edge cell.
     const g = new SpatialGrid();
-    g.insert(1, 1_000_000, 0);  // way out of bounds — clamped to 32_000
+    g.insert(1, 200_000, -180_000);
+    g.insert(2, 150_000, -180_000);
+    g.insert(3, -200_000, 199_000);
     const out = new Set<number>();
-    g.query9(Math.floor(32_000 / CELL_SIZE), 0, out);
+    g.query9(Math.floor(200_000 / CELL_SIZE), Math.floor(-180_000 / CELL_SIZE), out);
+    expect([...out]).toEqual([1]);
+    out.clear();
+    g.query9(Math.floor(-200_000 / CELL_SIZE), Math.floor(199_000 / CELL_SIZE), out);
+    expect([...out]).toEqual([3]);
+  });
+
+  it('clamps coords beyond the packed cell range instead of corrupting cell index', () => {
+    const g = new SpatialGrid();
+    g.insert(1, 1e12, 0); // far beyond int16 cells: clamped, not wrapped
+    const out = new Set<number>();
+    g.query9(Math.floor(SPATIAL_COORD_LIMIT / CELL_SIZE), 0, out);
     expect(out.has(1)).toBe(true);
   });
 
