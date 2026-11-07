@@ -83,7 +83,8 @@ export class Atlas {
   }
 
   /** True when every frame fits without exceeding the page budget. */
-  canFit(frames: readonly Frame[]): boolean {
+  canFit(frames: readonly Frame[], reservePages = 0): boolean {
+    const maxPages = this.maxPages - reservePages;
     // Simulate the shelf placement without touching the pages.
     const S = this.pageSize, P = this.PAD;
     let pages = this.pages.length;
@@ -93,7 +94,7 @@ export class Atlas {
       if (f.w + P * 2 > S || f.h + P * 2 > S) return false;
       if (x + f.w + P > S) { x = P; y += rowH + P; rowH = 0; }
       if (y + f.h + P > S) {
-        if (pages >= this.maxPages) return false;
+        if (pages >= maxPages) return false;
         pages++; x = P; y = P; rowH = 0;
       }
       x += f.w + P; rowH = Math.max(rowH, f.h);
@@ -133,6 +134,8 @@ export class Atlas {
       } else {
         p.tex.source.update();
       }
+      this.uploads++;
+      this.uploadTexels += this.pageSize * this.pageSize;
       p.dirty = false;
     }
     for (const q of this.pending) q.out[q.idx] = new Texture({ source: q.page.tex!.source, frame: q.frame });
@@ -159,6 +162,10 @@ export class Atlas {
   }
 
   get pageCount(): number { return this.pages.length; }
+  get maxPageCount(): number { return this.maxPages; }
+  /** Diagnostic: page (re)uploads so far, and the texels they sent. */
+  uploads = 0;
+  uploadTexels = 0;
 
   /** GPU memory the pages cost: whole pages, RGBA, plus a third for mipmaps. */
   get gpuBytes(): number {
