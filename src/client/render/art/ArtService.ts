@@ -71,12 +71,15 @@ export interface ArtHandle {
 
 /** Packs frames into GPU pages. `Atlas` in the game; a fake in tests. */
 export interface ArtPacker {
-  canFit(frames: readonly Frame[]): boolean;
+  /** Would these frames fit, still leaving `reservePages` pages unopened? */
+  canFit(frames: readonly Frame[], reservePages?: number): boolean;
   add(fr: Frame, out: Texture[], idx: number): boolean;
   commit(): void;
   /** A texture outside the pages (wrapping textures). */
   standalone(fr: Frame, repeat: boolean, mip: boolean): Texture;
   readonly pageCount: number;
+  /** The most pages the budget allows (undefined: no cap). */
+  readonly maxPageCount?: number;
   readonly gpuBytes: number;
   destroy(): void;
 }
@@ -128,6 +131,9 @@ export interface ArtStats {
   lastFailure?: string;
   /** Diagnostic: the art kinds using the most packed texels. */
   topTexels?: string[];
+  /** Diagnostic: atlas page (re)uploads so far, and the texels they sent. */
+  uploads?: number;
+  uploadTexels?: number;
 }
 
 /** Defaults by device: phones get small pages and a tight page budget. */
@@ -233,6 +239,9 @@ export class ArtService {
 
   /** Handles something on screen asked for (vs warm-up only). */
   private readonly urgentKeys = new Set<string>();
+  /** The pilot's own ship: always textured, even past the budget (its own
+   *  texture outside the pages; one small ship). */
+  private readonly ownKeys = new Set<string>();
 
   private async start(h: ArtHandle, urgent: boolean): Promise<void> {
     const sk = storeKey(bakeKey(h.job), h.rig);
@@ -296,7 +305,22 @@ export class ArtService {
   private pack(h: ArtHandle, b: Baked): boolean {
     const packer = this.deps.packer;
     if (h.job.type === 'fx') return this.packFx(h, h.job.id, b);
-    if ((b.tiles ?? 1) <= 1 && !packer.canFit(b.frames)) {
+    // Warm-up bakes are a guess: they may only use half the budget, so art
+    // something on screen needs always has room (phone report 2026-11-07: the
+    // warm-up filled a phone's 6 pages and the pilot's own ship drew bare).
+    // One that doesn't fit is dropped, not failed: asking for it later bakes it.
+    if ((b.tiles ?? 1) <= 1 && !this.urgentKeys.has(h.key)) {
+      const max = packer.maxPageCount;
+      const reserve = max !== undefined && Number.isFinite(max) ? Math.ceil(max / 2) : 0;
+      if (!packer.canFit(b.frames, reserve)) {
+        this.handles.delete(h.key);
+        return false;
+      }
+    }
+    // The pilot's own ship never goes bare: past the budget it gets textures
+    // of its own (phone report 2026-11-07, "the ship isn't textured").
+    const ownOverflow = (b.tiles ?? 1) <= 1 && this.ownKeys.has(h.key) && !packer.canFit(b.frames);
+    if (!ownOverflow && (b.tiles ?? 1) <= 1 && !packer.canFit(b.frames)) {
       h.state = 'failed';
       h.reason = 'over the texture memory budget';
       return false;
@@ -304,7 +328,7 @@ export class ArtService {
     const tex: Texture[] = [];
     // Tiled capital frames get their own textures: tall frames waste most of
     // an atlas shelf (capital-ship R&D round 2 finding).
-    if ((b.tiles ?? 1) > 1) for (let i = 0; i < b.frames.length; i++) tex[i] = packer.standalone(b.frames[i]!, false, false);
+    if ((b.tiles ?? 1) > 1 || ownOverflow) for (let i = 0; i < b.frames.length; i++) tex[i] = packer.standalone(b.frames[i]!, false, false);
     else for (let i = 0; i < b.frames.length; i++) packer.add(b.frames[i]!, tex, i);
     // Textures resolve on commit (end of this tick); fill the handle then.
     this.pendingFill.push(() => {
@@ -360,6 +384,7 @@ export class ArtService {
     return {
       ready, pending, failed, fromCache: this.fromCache,
       pages: this.deps.packer.pageCount, gpuBytes: this.deps.packer.gpuBytes, workers: this.deps.runner.workers, fxReady, fxPending, ...(lastFailure ? { lastFailure } : {}),
+      uploads: (this.deps.packer as { uploads?: number }).uploads, uploadTexels: (this.deps.packer as { uploadTexels?: number }).uploadTexels,
       topTexels: [...this.texels.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => `${k} ${(v / 1e6).toFixed(2)}Mpx`),
     };
   }
@@ -367,6 +392,7 @@ export class ArtService {
   /** Move a still-queued bake to the front of the queue (the pilot's own ship). */
   prioritize(h: ArtHandle): void {
     if (h.state !== 'pending') return;
+    this.ownKeys.add(h.key);
     this.urgentKeys.add(h.key);
     this.deps.runner.promote?.(h.job);
   }

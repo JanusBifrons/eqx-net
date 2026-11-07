@@ -14,6 +14,8 @@
 import type { IRenderer, RenderPerfReading } from '@core/contracts/IRenderer';
 import { FrameTimeRing, type FrameTimeSummary } from '@core/perf/FrameTimeRing';
 import { perfSceneById } from '@shared-types/perf/perfScenes';
+import { getGameClient } from '../../net/clientSingleton';
+import { useUIStore } from '../../state/store';
 
 export interface PerfReading {
   elapsedMs: number;
@@ -25,7 +27,12 @@ export interface PerfReading {
   worker: boolean;
   /** Which art was on screen (main-thread renderer only; null in the worker). */
   art: { mode: string; pending?: number; failed?: number } | null;
+  /** The worst main-thread frame gaps in the window: when (ms after reset)
+   *  and how long, longest first. Shows WHERE a run hitched, not just that it did. */
+  worst: Array<{ atMs: number; ms: number }>;
 }
+
+const WORST_KEEP = 10;
 
 export function perfProbeEnabled(search: string): boolean {
   return new URLSearchParams(search).get('perfprobe') === '1';
@@ -46,12 +53,21 @@ export function installPerfProbe(rendererIn: IRenderer, useWorkerIn: boolean): v
   let t0 = performance.now();
   let last = 0;
   let longTasks = 0, longTaskMs = 0;
+  const worst: Array<{ atMs: number; ms: number }> = [];
 
   // Fault injection for the runner's self-test (`?perfburn=N`): busy-wait N ms a frame.
   const burnMs = Number(new URLSearchParams(location.search).get('perfburn') ?? 0);
   const frame = (now: number): void => {
     if (burnMs > 0) { const end = performance.now() + burnMs; while (performance.now() < end) { /* burn */ } }
-    if (last > 0) ring.push(now - last);
+    if (last > 0) {
+      const gap = now - last;
+      ring.push(gap);
+      if (gap > 50 && (worst.length < WORST_KEEP || gap > worst[worst.length - 1]!.ms)) {
+        worst.push({ atMs: Math.round(now - t0), ms: Math.round(gap) });
+        worst.sort((a, b) => b.ms - a.ms);
+        if (worst.length > WORST_KEEP) worst.length = WORST_KEEP;
+      }
+    }
     last = now;
     requestAnimationFrame(frame);
   };
@@ -70,6 +86,7 @@ export function installPerfProbe(rendererIn: IRenderer, useWorkerIn: boolean): v
     async reset(): Promise<void> {
       ring.reset();
       last = 0;
+      worst.length = 0;
       longTasks = 0; longTaskMs = 0;
       await cur.renderer.perfProbe?.('enable');
       await cur.renderer.perfProbe?.('reset');
@@ -86,6 +103,7 @@ export function installPerfProbe(rendererIn: IRenderer, useWorkerIn: boolean): v
         heapMb: mem ? Math.round(mem.usedJSHeapSize / 1048576) : null,
         worker: cur.useWorker,
         art: readArt(),
+        worst: worst.slice(),
       };
     },
   };
@@ -99,6 +117,58 @@ export function installPerfProbe(rendererIn: IRenderer, useWorkerIn: boolean): v
  * countdown (updated once a second) and a link back to the scene list.
  */
 let labStarted = false;
+
+/**
+ * Perf lab: a SECTOR TRIP on a real device (`?perftrip=<target sector>`,
+ * Phase 4 travel state). Once in game it engages a transit to the target,
+ * measures from the engage through the spool, the trip and the landing (plus
+ * 3 s), and posts the reading (with the worst frame gaps and when they were)
+ * as scene `sector-trip`. The person watching only judges how it looks.
+ */
+export function runPerfLabTrip(target: string): void {
+  if (labStarted) return;
+  labStarted = true;
+  if (!current) return;
+  const cur = current;
+  const chip = document.createElement('div');
+  chip.setAttribute('data-testid', 'perf-lab-chip');
+  chip.style.cssText = 'position:fixed;left:50%;top:max(8px,env(safe-area-inset-top));transform:translateX(-50%);z-index:3000;'
+    + 'font:600 11px system-ui,sans-serif;color:#cfe;background:rgba(5,7,13,.75);border:1px solid #2a3a4a;border-radius:10px;padding:4px 10px;';
+  chip.textContent = 'Sector trip · loading…';
+  document.body.appendChild(chip);
+  const lifted = (): boolean => document.querySelector('[data-testid="warp-screen"][data-warp-visible="0"]') !== null;
+  const start = async (): Promise<void> => {
+    const perf = (globalThis as unknown as { __eqxPerf: { reset(): Promise<void>; read(): Promise<PerfReading> } }).__eqxPerf;
+    await new Promise((r) => setTimeout(r, 2000)); // let the sector settle first
+    await perf.reset();
+    getGameClient()?.getRoom()?.send('engage_transit', { type: 'engage_transit', targetSectorKey: target });
+    let sawTrip = false;
+    const t0 = performance.now();
+    await new Promise<void>((resolve) => {
+      const poll = setInterval(() => {
+        const s = useUIStore.getState();
+        if (s.travelling) sawTrip = true;
+        const secs = Math.round((performance.now() - t0) / 1000);
+        chip.textContent = `Sector trip · ${s.travelling ? 'travelling' : sawTrip ? 'arrived' : 'spooling'} · ${secs} s`;
+        if ((sawTrip && !s.travelling) || performance.now() - t0 > 120_000) { clearInterval(poll); resolve(); }
+      }, 250);
+    });
+    await new Promise((r) => setTimeout(r, 3000));
+    const reading = await perf.read();
+    const body = {
+      scene: 'sector-trip',
+      device: {
+        userAgent: navigator.userAgent, width: window.innerWidth, height: window.innerHeight,
+        dpr: window.devicePixelRatio, touch: navigator.maxTouchPoints > 0, worker: cur.useWorker,
+      },
+      reading: { ...reading, tripCompleted: sawTrip && !useUIStore.getState().travelling },
+    };
+    const ok = await fetch('/dev/perf/client', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      .then((r) => r.ok).catch(() => false);
+    chip.textContent = ok ? 'Done, numbers sent ✓' : 'Done (could not send numbers)';
+  };
+  const wait = setInterval(() => { if (lifted()) { clearInterval(wait); void start(); } }, 500);
+}
 
 export function runPerfLabScene(sceneId: string): void {
   if (labStarted) return; // a remounted game surface must not start a second window
