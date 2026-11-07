@@ -1,5 +1,5 @@
 import type { Shot } from '../types.js';
-import { SURVIVE } from './_helpers.js';
+import { sendRoom } from './_helpers.js';
 import { startZoomForScale } from '../../src/shared-types/shipScale/tuning.js';
 import { getShipKind } from '../../src/shared-types/shipKinds.js';
 import { localPose } from './_pilot.js';
@@ -97,13 +97,18 @@ export const capitalBroadside: Shot = {
   docs: ['ship-kinds'],
   reel: false,
   server: 'capitals',
-  target: { room: 'showcase-capitals', params: { sectorScale: '4', shipKind: 'fighter', art: 'machined', fx: 'new', ...SURVIVE } },
+  // The fight starts on cue (test_aggro) once the art has baked, not at join.
+  target: { room: 'showcase-capitals-combat', params: { sectorScale: '4', shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
   hud: 'none',
   durationMs: 14_000,
   async startWhen(ctx) {
     await artSettled(ctx);
   },
   camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'frame', group: 'all', padding: 0.2, maxZoom: 2.5 } }],
+  async run(ctx) {
+    await sendRoom(ctx, 'test_aggro', { type: 'test_aggro' });
+    await ctx.sleep(13_500);
+  },
 };
 
 /** Wait until no ship / structure art is still baking (a 10x battleship
@@ -210,3 +215,110 @@ export const capitalPilot: Shot = {
     await ctx.cinema.play([{ atMs: 0, smoothMs: 3000, shot: { kind: 'track', target: 'local', zoom: 0.09 * k, leadMs: 400 } }]);
   },
 };
+
+/**
+ * Capitals review round, item 1: the engines. The battleship holds full thrust
+ * in a straight line (spawned nose +y, so the stern is at -y). The camera sits
+ * on the stern close enough to see each nozzle's flame and ribbon, then pulls
+ * back to the whole hull under way.
+ */
+export const capitalEngines: Shot = {
+  id: 'capital-engines',
+  section: 'mechanics',
+  title: 'Capital engines',
+  caption: 'A battleship at full thrust: four engines, each with its own flame and exhaust trail.',
+  features: ['CAP'],
+  docs: ['ship-kinds'],
+  reel: false,
+  server: 'capitals',
+  target: { room: 'showcase-capitals', params: { sectorScale: '4', shipKind: 'battleship', art: 'machined', fx: 'new', spawnX: 0, spawnY: -9000, initialHull: 1_000_000 } },
+  hud: 'none',
+  durationMs: 22_000,
+  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'track', target: 'local', zoom: 0.6, offsetY: -3000 } }],
+  async startWhen(ctx) {
+    await artSettled(ctx);
+  },
+  async run(ctx) {
+    const k = ctx.viewport.width / 1920;
+    await ctx.page.keyboard.down('ArrowUp');
+    try {
+      await ctx.sleep(9000);
+      await ctx.cinema.play([{ atMs: 0, smoothMs: 4000, shot: { kind: 'track', target: 'local', zoom: 0.08 * k } }]);
+      await ctx.sleep(12_500);
+    } finally {
+      await ctx.page.keyboard.up('ArrowUp');
+    }
+  },
+};
+
+/**
+ * Capitals review round, item 2: the battleship's turrets. The pilot (a
+ * fighter that can't die) sits 5,000 u off the starboard beam with the fleet
+ * hostile: beyond every gun but the 16" main battery (Phase 3 fire control).
+ * The camera holds on the battleship's turrets as they swing, then frames the
+ * ship and the pilot so the salvos are seen crossing the gap.
+ */
+export const capitalTurrets: Shot = {
+  id: 'capital-turrets',
+  section: 'mechanics',
+  title: 'Capital turrets',
+  caption: 'The battleship turns its 16-inch guns onto a fighter 4,000 units off its beam and opens fire.',
+  features: ['CAP'],
+  docs: ['ship-kinds'],
+  reel: false,
+  server: 'capitals',
+  // One battleship, the pilot 4,000 u off its beam (showcase-capital-duel). No
+  // startHostile: the fight starts on cue in run(), after the art has baked.
+  target: { room: 'showcase-capital-duel', params: { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
+  hud: 'none',
+  durationMs: 30_000,
+  async startWhen(ctx) {
+    await artSettled(ctx);
+    // The battleship must be in the client's view before the camera tracks it.
+    await ctx.page.waitForFunction(() => {
+      const c = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number }> } } }).__eqxClient;
+      let n = 0;
+      c?.mirror.swarm.forEach((e) => { if (e.kind === 1) n++; });
+      return n > 0;
+    }, null, { timeout: 60_000, polling: 250 });
+    // Start the fight off camera: at the real 4°/s a 16" turret takes ~25 s to
+    // train onto the beam, so the take opens with the guns finishing the swing.
+    await keepHostile(ctx, 18_000);
+  },
+  async run(ctx) {
+    const k = ctx.viewport.width / 1920;
+    const id = await ctx.page.evaluate(() => {
+      const c = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number }> } } }).__eqxClient;
+      let found: number | null = null;
+      c?.mirror.swarm.forEach((e, eid) => { if (found === null && e.kind === 1) found = eid; });
+      return found;
+    });
+    const bs = id === null ? 'local' : `swarm-${id}`;
+    // Close on the battleship (offset toward the pilot) through the first salvos.
+    // Offset toward the pilot so the salvos cross the frame (the hull may have
+    // drifted while the art baked, so read the live positions).
+    const toward = await ctx.page.evaluate(() => {
+      const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId?: string; ships: Map<string, { x: number; y: number }>; swarm: Map<number, { kind: number; x: number; y: number }> } } }).__eqxClient?.mirror;
+      const me = m?.localPlayerId ? m.ships.get(m.localPlayerId) : undefined;
+      let bx = 0, by = 0;
+      m?.swarm.forEach((e) => { if (e.kind === 1) { bx = e.x; by = e.y; } });
+      return me ? { x: (me.x - bx) * 0.35, y: (me.y - by) * 0.35 } : { x: 1200, y: 0 };
+    });
+    await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'track', target: bs, zoom: 0.18 * k, offsetX: toward.x, offsetY: toward.y } }]);
+    await keepHostile(ctx, 13_000);
+    // Then the whole gap, so the salvos are seen crossing it.
+    await ctx.cinema.play([{ atMs: 0, smoothMs: 3500, shot: { kind: 'frame', ids: [bs, 'local'], padding: 0.2 } }]);
+    await keepHostile(ctx, 16_500);
+  },
+};
+
+/** Hold the fight for `ms`: drone hostility decays after 30 s without a hit
+ *  on the drone, so re-send the test cue every 9 s (a pilot that never shoots
+ *  back would otherwise be forgotten mid-take). */
+async function keepHostile(ctx: ShotContext, ms: number): Promise<void> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    await sendRoom(ctx, 'test_aggro', { type: 'test_aggro' });
+    await ctx.sleep(Math.min(9000, end - Date.now()));
+  }
+}

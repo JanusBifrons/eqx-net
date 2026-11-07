@@ -175,7 +175,7 @@ export class MountVisualManager {
     const parent = cluster?.container.parent;
     if (!cluster || !parent) return;
     const c = Math.cos(parent.rotation), s = Math.sin(parent.rotation);
-    let best: MachinedGun | null = null, bd = SHOT_MATCH_DIST * SHOT_MATCH_DIST;
+    let best: MachinedGun | null = null, bd = Infinity;
     for (const m of cluster.perMount.values()) {
       const g = m.gun;
       if (!g?.layers) continue;
@@ -183,7 +183,12 @@ export class MountVisualManager {
       const lx = g.pivot.x + Math.sin(r) * g.reach, ly = g.pivot.y - Math.cos(r) * g.reach;
       const dx = parent.x + lx * c - ly * s - x, dy = parent.y + lx * s + ly * c - y;
       const d = dx * dx + dy * dy;
-      if (d <= bd) { bd = d; best = g; }
+      // A shot is first seen up to a snapshot after it leaves the muzzle, so
+      // the match radius grows with the gun (a capital's 16" gun, ~700 u from
+      // pivot to muzzle, shoots shells first seen hundreds of units out;
+      // invariant #18). Fighter guns keep SHOT_MATCH_DIST.
+      const lim = Math.max(SHOT_MATCH_DIST, g.reach);
+      if (d <= lim * lim && d < bd) { bd = d; best = g; }
     }
     if (!best) return;
     best.lastShot = this.nowS;

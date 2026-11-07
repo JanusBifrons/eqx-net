@@ -95,6 +95,15 @@ export const EngageTransitSchema = z
   })
   .strict();
 
+/** testMode only (showcase / tests): turn every drone in the room hostile to
+ *  the sender NOW, the same as joining with `startHostile`. Lets a shot start
+ *  a fight on cue (after art has baked) instead of at join. */
+export const TestAggroSchema = z
+  .object({
+    type: z.literal('test_aggro'),
+  })
+  .strict();
+
 /** Client → server: cancel an in-flight spool. No effect once the server
  *  has committed (state is IN_TRANSIT or beyond). */
 export const CancelTransitSchema = z
@@ -322,6 +331,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   FireMessageSchema,
   EngageTransitSchema,
   CancelTransitSchema,
+  TestAggroSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,

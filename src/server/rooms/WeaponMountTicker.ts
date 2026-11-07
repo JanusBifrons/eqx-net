@@ -30,7 +30,8 @@ import {
   PLAYER_AIM_SWITCH_MARGIN,
   type MountTargetView,
 } from '../../core/ai/WeaponMountController.js';
-import { HITSCAN_RANGE } from '../../core/combat/Weapons.js';
+import { mountTargetReach, mountWeaponReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
+import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { droneMaxHealthOf } from './droneKindHelpers.js';
 import {
   DEFAULT_SHIP_KIND,
@@ -114,9 +115,19 @@ export interface WeaponMountTickerDeps {
    *  only these aim at the target; every other instance mount slews to base.
    *  Reads `ship.mounts` + the active slotId. */
   resolveInstanceFireMounts: (ship: ShipState) => ReadonlyArray<WeaponMount>;
+  /** Capital fire control (plan prancy-squishing-donut Phase 3). The current
+   *  server tick, for per-mount reload timing. Optional: absent ⇒ no turret
+   *  fire control (unit harnesses that only test aim). */
+  currentTick?: () => number;
+  /** Fire ONE mount of a capital drone along its barrel (the resolver reads
+   *  the slewed angle). Called only when that mount is on target, in reach
+   *  and reloaded. */
+  fireDroneMount?: (droneId: string, mountIdx: number) => void;
 }
 
 const DT_SEC = 1 / 60;
+/** A capital turret fires once its barrel is within this of the lead bearing. */
+export const TURRET_FIRE_TOLERANCE = 0.05;
 
 export class WeaponMountTicker {
   /** Per-mount slewed arc-local angles, keyed by playerId. */
@@ -127,6 +138,8 @@ export class WeaponMountTicker {
   /** Sticky targetId per shooter (for pickTarget hysteresis). */
   readonly playerSlotTargets = new Map<string, string | null>();
   readonly droneSlotTargets = new Map<string, string | null>();
+  /** Capital fire control: last fire tick per mount, keyed by drone id. */
+  readonly droneMountReload = new Map<string, Int32Array>();
 
   /** Pooled per-tick target lists — drone candidates (rebuilt by tickPlayer).
    *  Logical-length-over-physical-slot pattern (plan: quirky-rabbit,
@@ -256,7 +269,7 @@ export class WeaponMountTicker {
           return ho ? ho.has(playerId) : false;
         },
         {
-          maxDistance: HITSCAN_RANGE,
+          maxDistance: mountTargetReach(getShipKind(ship.kind ?? null), mounts),
           healthWeight: PLAYER_AIM_HEALTH_WEIGHT,
           switchMargin: PLAYER_AIM_SWITCH_MARGIN,
         },
@@ -377,7 +390,7 @@ export class WeaponMountTicker {
 
       const prevTargetId = this.droneSlotTargets.get(rec.id) ?? null;
       const target = pickTarget(droneX, droneY, targets, prevTargetId, isHostile, {
-        maxDistance: HITSCAN_RANGE,
+        maxDistance: mountTargetReach(kind, mounts),
       });
       this.droneSlotTargets.set(rec.id, target?.id ?? null);
 
@@ -396,15 +409,49 @@ export class WeaponMountTicker {
 
       const cosA = Math.cos(droneAngle);
       const sinA = Math.sin(droneAngle);
+      // Capitals run turret fire control: each mount leads the target with
+      // its own shell speed and fires on its own reload when on target and in
+      // reach. Every other drone keeps the hull-aimed salvo (AiFireResolver).
+      const fireControl = hasTurretFireControl(kind) && d.fireDroneMount !== undefined && d.currentTick !== undefined;
+      let reload: Int32Array | undefined;
+      let tick = 0;
+      let selfVx = 0, selfVy = 0;
+      if (fireControl) {
+        tick = d.currentTick!();
+        reload = this.droneMountReload.get(rec.id);
+        if (!reload || reload.length !== mounts.length) {
+          reload = new Int32Array(mounts.length).fill(-1_000_000);
+          this.droneMountReload.set(rec.id, reload);
+        }
+        selfVx = d.sabF32[b + SLOT_VX_OFF]!;
+        selfVy = d.sabF32[b + SLOT_VY_OFF]!;
+      }
       for (let i = 0; i < mounts.length; i++) {
         const mount = mounts[i]!;
         const mountWorldX = droneX + (mount.localX * cosA - mount.localY * sinA);
         const mountWorldY = droneY + (mount.localX * sinA + mount.localY * cosA);
-        const dx = target.x - mountWorldX;
-        const dy = target.y - mountWorldY;
+        let dx = target.x - mountWorldX;
+        let dy = target.y - mountWorldY;
+        let dist = 0;
+        if (fireControl) {
+          // First-order intercept with this gun's shell speed (shells inherit
+          // the hull's velocity, so lead on the RELATIVE velocity).
+          const w = getWeapon(mount.weaponId);
+          dist = Math.hypot(dx, dy);
+          const t = w.mode === 'hitscan' ? 0 : dist / w.speed;
+          dx += (target.vx - selfVx) * t;
+          dy += (target.vy - selfVy) * t;
+        }
         const worldBearing = Math.atan2(-dx, dy);
         const mountLocalBearing = wrapPi(worldBearing - droneAngle - mount.baseAngle);
         angles[i] = rotateMountToward(angles[i]!, mountLocalBearing, mount, DT_SEC);
+        if (!fireControl) continue;
+        const w = getWeapon(mount.weaponId);
+        if (tick - reload![i]! < w.cooldownTicks) continue;
+        if (dist > mountWeaponReach(mount)) continue;
+        if (Math.abs(wrapPi(mountLocalBearing - angles[i]!)) > TURRET_FIRE_TOLERANCE) continue;
+        reload![i] = tick;
+        d.fireDroneMount!(rec.id, i);
       }
     }
   }
@@ -419,5 +466,6 @@ export class WeaponMountTicker {
   clearDrone(droneId: string): void {
     this.droneMountAngles.delete(droneId);
     this.droneSlotTargets.delete(droneId);
+    this.droneMountReload.delete(droneId);
   }
 }

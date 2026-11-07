@@ -75,7 +75,11 @@ export class SpatialGrid {
     if (radius > CELL_SIZE / 2) this.wideReach.set(entityId, reach); else this.wideReach.delete(entityId);
   }
 
-  insert(entityId: number, x: number, y: number): void {
+  /** `radius` marks an entity wider than a cell (see `setWide`). Pass it at
+   *  spawn: `move` only marks an entity on its FIRST sighting, so one inserted
+   *  here without a radius was never wide (capitals Phase 3 bug). */
+  insert(entityId: number, x: number, y: number, radius = 0): void {
+    if (radius > 0) this.setWide(entityId, radius);
     if (Math.abs(x) > COORD_LIMIT || Math.abs(y) > COORD_LIMIT) {
       // Clamp into bounds rather than throw: an out-of-bounds entity would be
       // a worse failure mode than a slightly-misplaced one. Phase 6's soft

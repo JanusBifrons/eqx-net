@@ -391,7 +391,7 @@ export class SwarmSpawner {
     // Phase 5d: insert into the interest grid so this entity participates in
     // per-client filtering. Indexed by the dense u16 entityId since that's
     // what the binary broadcast writes on the wire.
-    this.hooks.interestGrid?.insert(rec.entityId, a.x, a.y);
+    this.hooks.interestGrid?.insert(rec.entityId, a.x, a.y, a.radius);
 
     // Register every dynamic swarm entity with the lag-comp ring so the hit
     // resolver can rewind its pose. Mass-independent: any moving obstacle

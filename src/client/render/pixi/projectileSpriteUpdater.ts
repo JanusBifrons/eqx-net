@@ -16,6 +16,7 @@
 
 import type { Container, Graphics } from 'pixi.js';
 import { fxProjectileStyle, type FxProjectiles } from '../art/fx/FxWeapons.js';
+import { getWeapon, isWeaponId, type WeaponId } from '@core/combat/WeaponCatalogue';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import {
   buildBeamGfx,
@@ -23,6 +24,12 @@ import {
   buildProjectileGfx,
   buildPulseOrbGfx,
 } from './spriteBuilders.js';
+
+/** A shell's drawn size is its gun's shell radius (FxProjectiles SHELL). */
+function shellSize(id: WeaponId): number {
+  const w = getWeapon(id);
+  return w.mode === 'hitscan' ? 1 : w.radius;
+}
 
 export interface ProjectileSpriteCtx {
   shipContainer: Container;
@@ -65,7 +72,7 @@ export function updateProjectileSprites(
     ps.alpha = proj.alpha ?? 1;
     const style = fx ? fxProjectileStyle(proj.weaponId, !!proj.beam) : null;
     ps.visible = style === null;
-    if (style) fx!.draw(projId, style, proj.x, proj.y, proj.vx, proj.vy, proj.alpha ?? 1);
+    if (style) fx!.draw(projId, style, proj.x, proj.y, proj.vx, proj.vy, proj.alpha ?? 1, style === 'shell' && isWeaponId(proj.weaponId) ? shellSize(proj.weaponId) : 1);
     // Rotate laser bolts to face their velocity heading.
     if (proj.weaponId === 'laser' && !proj.beam) {
       ps.rotation = -Math.atan2(proj.vy, proj.vx) + Math.PI / 2;

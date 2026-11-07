@@ -48,7 +48,7 @@ export const SHOWCASE_SHIP_GALLERY_OPTS = {
  * and fire (the broadside shot).
  */
 const CAPITAL_IDS = ['destroyer', 'light-cruiser', 'heavy-cruiser', 'battlecruiser', 'battleship'] as const;
-function capitalLineup(): Array<{ kind: string; x: number; y: number; angle: number }> {
+function capitalLineup(spread: 'beam' | 'turn' = 'beam'): Array<{ kind: string; x: number; y: number; angle: number }> {
   const beamOf = (id: string): number => {
     const hull = (getShipKind(id).shape as { hull?: ReadonlyArray<readonly [number, number]> }).hull ?? [];
     let w = 10;
@@ -56,7 +56,9 @@ function capitalLineup(): Array<{ kind: string; x: number; y: number; angle: num
     return 2 * w;
   };
   let gap = 0;
-  for (const id of CAPITAL_IDS) gap = Math.max(gap, beamOf(id) * 2.6);
+  // Parked: 2.6 beams apart. Fighting (`turn`): clear of each other at any
+  // heading — a turning hull sweeps a circle of its radius.
+  for (const id of CAPITAL_IDS) gap = Math.max(gap, spread === 'turn' ? getShipKind(id).radius * 2.2 : beamOf(id) * 2.6);
   const n = CAPITAL_IDS.length;
   const poses = CAPITAL_IDS.map((kind, i) => ({ kind: kind as string, x: (i - (n - 1) / 2) * gap, y: 0, angle: 0 }));
   poses.push({ kind: 'fighter', x: -((n - 1) / 2) * gap - gap * 0.8, y: 0, angle: 0 });
@@ -80,6 +82,20 @@ export const SHOWCASE_CAPITALS_OPTS = {
   maxClients: 4,
   /** Round 3 D: join `?shipKind=battleship` to fly a capital with helm orders. */
   pilotCapitals: true,
+};
+
+/** Capitals Phase 3: the same line-up with live drone brains, so a join with
+ *  `startHostile=1` draws real broadsides (the main room is peaceful). */
+export const SHOWCASE_CAPITALS_COMBAT_OPTS = { ...SHOWCASE_CAPITALS_OPTS, peacefulDrones: false, dronePoses: capitalLineup('turn') };
+
+/** Capitals Phase 3 review: one battleship and the pilot 4,000 u off its
+ *  starboard beam — beyond every gun but the 16" main battery. */
+export const SHOWCASE_CAPITAL_DUEL_OPTS = {
+  ...SHOWCASE_CAPITALS_COMBAT_OPTS,
+  dronePoses: [{ kind: 'battleship', x: 0, y: 0, angle: 0 }],
+  prebuiltStructures: [],
+  defaultSpawnX: 4000,
+  defaultSpawnY: 0,
 };
 
 /**
@@ -333,4 +349,6 @@ export const SHOWCASE_ROOMS = {
   'showcase-garrison': SHOWCASE_GARRISON_OPTS,
   'showcase-hub': SHOWCASE_HUB_OPTS,
   'showcase-capitals': SHOWCASE_CAPITALS_OPTS,
+  'showcase-capitals-combat': SHOWCASE_CAPITALS_COMBAT_OPTS,
+  'showcase-capital-duel': SHOWCASE_CAPITAL_DUEL_OPTS,
 } as const;

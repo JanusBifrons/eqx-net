@@ -322,6 +322,7 @@ import { setSession } from '../transit/sessionRegistry.js';
 import {
   EngageTransitSchema,
   CancelTransitSchema,
+  TestAggroSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,
@@ -1689,6 +1690,9 @@ export class SectorRoom extends Room<SectorState> {
       resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
       resolveInstanceMounts: (ship) => this.resolveInstanceMounts(ship),
       resolveInstanceFireMounts: (ship) => this.resolveInstanceFireMounts(ship),
+      // Capital turret fire control (the resolver is built later; resolve lazily).
+      currentTick: () => this.serverTick,
+      fireDroneMount: (id, i) => this.aiFireResolver.fireMount(id, i),
     });
 
     // Player weapon-fire resolver. Owns the zod parse, cooldown gate,
@@ -2786,6 +2790,17 @@ export class SectorRoom extends Room<SectorState> {
         parsed.data.arrival,
         parsed.data.shipId,
       );
+    });
+
+    this.onMessage('test_aggro', (client: Client, raw: unknown) => {
+      if (!(this.testMode || ALLOW_DEV_OVERRIDES)) return;
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      if (!TestAggroSchema.safeParse(raw).success) {
+        this.malformed.record(client.sessionId, 'test_aggro');
+        return;
+      }
+      this.markAllDronesHostileTo(playerId);
     });
 
     this.onMessage('cancel_transit', (client: Client, raw: unknown) => {
@@ -6682,6 +6697,22 @@ export class SectorRoom extends Room<SectorState> {
    * or already has an arrivalTick is silently dropped + logged for
    * diag.
    */
+  /** testMode: every drone in the room turns hostile to `playerId` (ledger +
+   *  `bot_aggro`). Shared by the `startHostile` join option and `test_aggro`. */
+  private markAllDronesHostileTo(playerId: string): void {
+    const tick = this.serverTick;
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== 1) continue; // drones only — asteroids stay inert
+      this.aiController.markHostile(rec.id, playerId, tick);
+      this.broadcast('bot_aggro', {
+        type: 'bot_aggro',
+        botEntityId: `swarm-${rec.entityId}`,
+        targetPlayerId: playerId,
+        tick,
+      });
+    }
+  }
+
   private handleClientReady(client: Client): void {
     const playerId = this.sessionToPlayer.get(client.sessionId);
     if (!playerId) {
@@ -7595,17 +7626,7 @@ export class SectorRoom extends Room<SectorState> {
     }
 
     if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.startHostile === true) {
-      const tick = this.serverTick;
-      for (const rec of this.swarmRegistry.all()) {
-        if (rec.kind !== 1) continue; // drones only — asteroids stay inert
-        this.aiController.markHostile(rec.id, playerId, tick);
-        this.broadcast('bot_aggro', {
-          type: 'bot_aggro',
-          botEntityId: `swarm-${rec.entityId}`,
-          targetPlayerId: playerId,
-          tick,
-        });
-      }
+      this.markAllDronesHostileTo(playerId);
     }
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a

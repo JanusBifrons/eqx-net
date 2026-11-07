@@ -1,6 +1,7 @@
 import { combatDistanceScale } from '../../shared-types/shipScale/tuning.js';
 export type WeaponMode = 'hitscan' | 'projectile' | 'missile';
-export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'charge-laser' | 'autocannon';
+export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'charge-laser' | 'autocannon'
+  | 'naval_s' | 'naval_m' | 'naval_l' | 'naval_xl';
 
 interface WeaponDefBase {
   id: WeaponId;
@@ -259,6 +260,40 @@ const CHARGE_LASER_DEF: HitscanWeaponDef = {
 };
 
 /**
+ * Capital naval guns (plan prancy-squishing-donut Phase 3), one per mount size.
+ * Ratios follow the WW2 calibres in docs/research/ww2-surface-combatants.md:
+ *
+ *   | size | gun     | shell   | max range | rate   |
+ *   |------|---------|---------|-----------|--------|
+ *   | S    | 5"/38   | 25 kg   | 16.6 km   | 15 rpm |
+ *   | M    | 6"–8"   | ~100 kg | ~25.5 km  | 4–10   |
+ *   | L    | 12"/50  | 517 kg  | 35 km     | 2.7    |
+ *   | XL   | 16"/50  | 1225 kg | 38.7 km   | 2      |
+ *
+ * Reach keeps the real range ratio (1 : 1.54 : 2.12 : 2.34). Damage follows
+ * the square root of shell weight (1 : 2 : 4.5 : 7) and the reload follows
+ * rate of fire to the 0.75 power, both compressed so a battleship salvo hurts
+ * without one-shotting everything. Shells fly ~2 s to full reach: dodgeable.
+ * Authored at 1×; `profiled` scales the reach with the ship-scale combat profile.
+ */
+const NAVAL_S_DEF: ProjectileWeaponDef = {
+  id: 'naval_s', displayName: '5" gun', mode: 'projectile',
+  damage: 15, cooldownTicks: 30, speed: 1800, radius: 3, maxTicks: 60, energyCost: 1,
+};
+const NAVAL_M_DEF: ProjectileWeaponDef = {
+  id: 'naval_m', displayName: '8" gun', mode: 'projectile',
+  damage: 30, cooldownTicks: 45, speed: 2000, radius: 4, maxTicks: 83, energyCost: 1,
+};
+const NAVAL_L_DEF: ProjectileWeaponDef = {
+  id: 'naval_l', displayName: '12" gun', mode: 'projectile',
+  damage: 68, cooldownTicks: 108, speed: 2200, radius: 5, maxTicks: 104, energyCost: 1,
+};
+const NAVAL_XL_DEF: ProjectileWeaponDef = {
+  id: 'naval_xl', displayName: '16" gun', mode: 'projectile',
+  damage: 105, cooldownTicks: 135, speed: 2300, radius: 6, maxTicks: 110, energyCost: 1,
+};
+
+/**
  * Weapon distances under the ship scale's combat profile (shipScale/config):
  * reach (hitscan range, projectile / missile flight time) and splash. Profile
  * A, or scale 1, returns the definition unchanged. Pure.
@@ -285,9 +320,13 @@ export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, Weapo
   ['pulse-orb', profiled(PULSE_ORB_DEF)],
   ['charge-laser', profiled(CHARGE_LASER_DEF)],
   ['autocannon', profiled(AUTOCANNON_DEF)],
+  ['naval_s', profiled(NAVAL_S_DEF)],
+  ['naval_m', profiled(NAVAL_M_DEF)],
+  ['naval_l', profiled(NAVAL_L_DEF)],
+  ['naval_xl', profiled(NAVAL_XL_DEF)],
 ]);
 
-export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon'] as const;
+export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl'] as const;
 
 export const DEFAULT_WEAPON: WeaponId = 'hitscan';
 
@@ -296,7 +335,7 @@ export function getWeapon(id: WeaponId): WeaponDef {
 }
 
 export function isWeaponId(v: unknown): v is WeaponId {
-  return v === 'hitscan' || v === 'laser' || v === 'heat-seeker' || v === 'pulse-orb' || v === 'charge-laser' || v === 'autocannon';
+  return typeof v === 'string' && (WEAPON_IDS as readonly string[]).includes(v);
 }
 
 /**

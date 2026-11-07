@@ -133,6 +133,7 @@ import {
 } from '../combat/HitPrediction.client';
 import { localFireSpawnsGhost, liveBeamVisible, LIVE_BEAM_PERSIST_MS, buildLocalAimTargets, type LocalAimTarget } from '../combat/LocalBeam';
 import { tickLocalMountAngles } from '../combat/localMountAim';
+import { mountTargetReach } from '@core/combat/mountReach';
 import { flowMaterialToCode } from '../render/pixi/connectorVisual';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
@@ -246,11 +247,11 @@ function _pa5(n: number): number { return parseFloat(n.toFixed(5)); }
 // this callback is never invoked (pickTarget reads `t.hostile`); it exists only
 // to satisfy the signature. Options mirror the server's WeaponMountTicker.
 const LOCAL_AIM_NOOP_HOSTILE = (): boolean => true;
-const LOCAL_AIM_OPTS = {
+const LOCAL_AIM_OPTS: { maxDistance: number; healthWeight: number; switchMargin: number } = {
   maxDistance: HITSCAN_RANGE,
   healthWeight: PLAYER_AIM_HEALTH_WEIGHT,
   switchMargin: PLAYER_AIM_SWITCH_MARGIN,
-} as const;
+};
 
 export class ColyseusGameClient {
   /**
@@ -5305,7 +5306,8 @@ export class ColyseusGameClient {
     // mountAngles for activated mounts land at the matching index.
     // Un-upgraded ⇒ exactly `kind.mounts` (byte-identical). Indexing by the
     // active-slot order instead is the latent index bug — see combat/localMountAim.ts.
-    const catalogueMounts = resolveInstanceMounts(getShipKind(ship.kind ?? null), ship.activatedMounts);
+    const localKind = getShipKind(ship.kind ?? null);
+    const catalogueMounts = resolveInstanceMounts(localKind, ship.activatedMounts);
     if (catalogueMounts.length === 0) {
       if (ship.mountAngles) ship.mountAngles = undefined;
       return;
@@ -5354,6 +5356,9 @@ export class ColyseusGameClient {
     // into the beam direction — the secondary laser-detach cause (on-device
     // smoke handoff 2026-06-06, Issue 1 Bug #2). Locked by
     // ColyseusClient.liveBeamMountAimPose.test.ts.
+    // Capitals look as far as their longest gun; every other kind keeps
+    // HITSCAN_RANGE. Shared with the server ticker (mountReach.ts, #15).
+    LOCAL_AIM_OPTS.maxDistance = mountTargetReach(localKind, catalogueMounts);
     const target = pickTarget(
       ship.x, ship.y, targets, this._localSlotTarget, LOCAL_AIM_NOOP_HOSTILE, LOCAL_AIM_OPTS,
     );

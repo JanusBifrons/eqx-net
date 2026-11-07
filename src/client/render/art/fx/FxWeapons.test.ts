@@ -23,6 +23,18 @@ describe('fxProjectileStyle', () => {
     expect(fxProjectileStyle('pulse-orb', false)).toBeNull();
     expect(fxProjectileStyle('laser', true)).toBeNull();
   });
+
+  it('capital naval guns fire calibre-scaled shells (visible at capital zoom)', () => {
+    for (const id of ['naval_s', 'naval_m', 'naval_l', 'naval_xl']) expect(fxProjectileStyle(id, false)).toBe('shell');
+    const p = new FxProjectiles(fakeArt());
+    p.beginFrame();
+    p.draw('small', 'shell', 0, 0, 100, 0, 1, 3);
+    p.draw('big', 'shell', 0, 0, 100, 0, 1, 6);
+    p.endFrame();
+    const kids = p.container.children as Array<{ visible: boolean; scale: { x: number } }>;
+    // Each view adds head, core and 3 trail sprites, in that order.
+    expect(kids[5]!.scale.x).toBeCloseTo(kids[0]!.scale.x * 2, 5);
+  });
 });
 
 describe('FxProjectiles', () => {

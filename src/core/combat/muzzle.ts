@@ -69,6 +69,16 @@ export function navalTurret(kind: ShipKind, m?: WeaponMount): NavalTurret | null
   }
   return t;
 }
+/** Barrels of a naval turret span this fraction of the gunhouse width (the
+ *  bake and the fire path both read it, so each shell leaves a drawn tip). */
+export const NAVAL_BARREL_SPAN = 0.62;
+/** Sideways offset of barrel `k` (0..barrels-1) from the turret centreline,
+ *  in world units, + to the gun's right. 0 for a single barrel. */
+export function navalBarrelOffset(t: NavalTurret, k: number): number {
+  if (t.barrels <= 1) return 0;
+  const pitch = (t.houseW * NAVAL_BARREL_SPAN) / (t.barrels - 1);
+  return (k - (t.barrels - 1) / 2) * pitch;
+}
 function capitalTurret(kind: ShipKind, m?: WeaponMount): { len: number; wid: number; cap: number } | null {
   const t = navalTurret(kind, m);
   return t === null ? null : { len: t.len, wid: t.wid, cap: t.houseW / 2 };
