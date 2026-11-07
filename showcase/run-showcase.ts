@@ -21,7 +21,7 @@ import { PROFILE_ORDER } from './types.js';
 import { CaptureServers } from './servers.js';
 import { Recorder, type RecordResult } from './recorder.js';
 import { smoothnessProblems, smoothScore, type TakeStats } from './smoothness.js';
-import { measureWobble, wobbleProblem, wobbleSummary, netProblem, netSummary } from './wobble.js';
+import { measureWobble, wobbleProblem, wobbleSummary, netProblem, netSummary, poseHealth, poseProblem, poseSummary } from './wobble.js';
 import { encodeClip, encodeCard, assemble, qaClip } from './compositor.js';
 import { captionOverlay, endCard, sectionCard, titleCard } from './cards.js';
 import { gitSha, resolveFfmpeg } from './tools.js';
@@ -249,8 +249,13 @@ async function takeWithRetry(
       if (wp) problems.push(wp);
       const np = netProblem(rec.net);
       if (np) problems.push(np);
+      // What the game itself drew, frame by frame (corrections move the world).
+      const tracePath = path.join(dir, 'pose-trace.json');
+      const pose = existsSync(tracePath) ? poseHealth(JSON.parse(readFileSync(tracePath, 'utf8')) as number[][]) : null;
+      const pp = poseProblem(pose);
+      if (pp) problems.push(pp);
       const verdict = problems.length ? ` — ${problems.join('; ')}` : '';
-      log(`  ${problems.length ? '·' : '✓'} ${rec.deliveredFps} fps, worst gap ${rec.gapMaxMs} ms, ${wobble ? wobbleSummary(wobble) : 'ship wobble: not measured'}, ${netSummary(rec.net)}${verdict}`);
+      log(`  ${problems.length ? '·' : '✓'} ${rec.deliveredFps} fps, worst gap ${rec.gapMaxMs} ms, ${wobble ? wobbleSummary(wobble) : 'ship wobble: not measured'}, ${netSummary(rec.net)}, ${poseSummary(pose)}${verdict}`);
       // What ran in the take's longest frames, so a hitch says where it came from.
       for (const f of rec.longFrames.slice(0, 3)) log(`    long frame ${f.ms} ms at ${(f.atMs / 1000).toFixed(1)} s: ${f.scripts}`);
       // Fewer QA problems first (a jittery take never beats a clean one), then the smoother.
