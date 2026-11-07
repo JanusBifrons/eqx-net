@@ -83,3 +83,23 @@ export function familyFor(weaponId: string, mode: string, charge: boolean): Turr
   if (mode === 'hitscan') return charge ? 'charge' : 'beam';
   return weaponId === 'pulse-orb' ? 'charge' : 'bolt';
 }
+
+/** Capital naval guns (review round 2026-11-07, "bigger effects"): a flash
+ *  that lasts and spreads across the whole barrel bank, a blast of fire and
+ *  smoke at the muzzle, and a burst where the shell lands. Sizes follow the
+ *  gun, never a fixed number (invariant #18). */
+export const NAVAL_FLASH_LIFE_S = 0.22;
+/** Flash size (world units) for a naval turret: across every barrel, long. */
+export function navalFlashSize(barrelWid: number, bankSpan: number): { w: number; h: number } {
+  return { w: bankSpan + barrelWid * 4, h: barrelWid * 14 };
+}
+/** Muzzle blast (fire + smoke) radius for a naval gun's barrel width. */
+export function navalMuzzleBlastRadius(barrelWid: number): number {
+  return Math.max(30, barrelWid * 5);
+}
+/** Impact burst radius for a shell of collision radius `shellRadius`. */
+export function shellImpactRadius(shellRadius: number): number {
+  return Math.max(30, shellRadius * 35);
+}
+/** Seconds after a shot within which another shot counts as the same salvo. */
+export const SALVO_WINDOW_S = 0.15;
