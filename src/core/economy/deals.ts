@@ -35,6 +35,10 @@ export interface TradeRun {
   unitPrice: number;
   partial: boolean;
   phaseStartedAtMs: number;
+  /** Extra inbound time for the leg from where the hauler entered to the dock
+   *  (Phase 4: across a solar-system sector that leg is long on purpose, out
+   *  in open space). Absent ⇒ 0 (runs saved before it). */
+  inboundLegMs?: number;
   /** Players who damaged the hauler during this run (piracy / self-raid). */
   attackers: string[];
   /** Economy v2 W1 — credits debited from the owner's WALLET at dock (a buy's

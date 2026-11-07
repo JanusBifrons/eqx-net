@@ -600,7 +600,8 @@ export class TradeDirector implements TradeSink {
     }
     const runId = randomUUID().slice(0, 12);
     const haulerId = `${HAULER_ID_PREFIX}${runId}`;
-    const edge = sectorEdgePose(this.rng);
+    // Solar-system sectors: through one of the sector's gate pockets.
+    const edge = sectorEdgePose(this.rng, deal.sectorKey);
     if (!room!.spawnLivingWorldBot({ botId: haulerId, kind: 'trader-hauler', x: edge.x, y: edge.y })) {
       this.skipVisit(deal, 'Visit skipped: the hauler could not enter the sector');
       return;
@@ -621,6 +622,9 @@ export class TradeDirector implements TradeSink {
       attackers: [],
       dockX: snap!.x + (ax / len) * this.opts.dockOffset,
       dockY: snap!.y + (ay / len) * this.opts.dockOffset,
+      // The leg at 200 u/s (well under the hauler's cruise): a 170 km
+      // solar-system leg must not time out on the way.
+      inboundLegMs: Math.round((len / 200) * 1000),
     };
     const next: TradeDeal = { ...deal, state: 'inbound', run };
     const op = this.store.dealOp(next);
@@ -653,7 +657,7 @@ export class TradeDirector implements TradeSink {
       if (pose === null) return; // destroyed — the bus handler settles it
       if (Math.hypot(pose.x - run.dockX, pose.y - run.dockY) <= this.opts.dockRadius) {
         this.dock(deal, run, room);
-      } else if (elapsed >= this.opts.inboundTimeoutMs) {
+      } else if (elapsed >= this.opts.inboundTimeoutMs + (run.inboundLegMs ?? 0)) {
         this.abortRun(deal, run, room, 'Visit aborted: the hauler never reached the base');
       } else {
         room.setBotMoveTarget(run.haulerId, run.dockX, run.dockY);
