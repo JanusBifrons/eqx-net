@@ -91,3 +91,26 @@ export function wobbleProblem(w: Wobble): string | null {
   const at = w.firstSpikeMs >= 0 ? ` from ${(w.firstSpikeMs / 1000).toFixed(0)} s` : '';
   return `ship jitter: p99 ${w.p99Px.toFixed(2)} px, ${w.spikes} jumps > ${SPIKE_PX} px${at}`;
 }
+
+/**
+ * Server pace gate (2026-11-07). When the host can't give the server its CPU,
+ * the physics worker drops time rather than replaying it, so the server runs
+ * slower than wall-clock while the client keeps wall-clock time: the client's
+ * lead swings and every swing is a correction (measured: 25 Hz on this laptop
+ * with two browsers + Vite; 60.0 Hz alone, zero corrections in steady flight).
+ * A take recorded on a starved server shows that jitter, so it is retaken.
+ */
+export const SERVER_HZ_MIN = 57;
+
+export interface NetHealth { serverHz: number; corrections: number; snapshots: number }
+
+export function netSummary(n: NetHealth | null): string {
+  if (!n) return 'net: no local pilot';
+  return `server ${n.serverHz} Hz, ${n.corrections}/${n.snapshots} snapshots corrected`;
+}
+
+export function netProblem(n: NetHealth | null): string | null {
+  if (!n) return null;
+  if (n.serverHz < SERVER_HZ_MIN) return `server behind: ${n.serverHz} Hz (min ${SERVER_HZ_MIN})`;
+  return null;
+}

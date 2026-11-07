@@ -26,6 +26,17 @@ export interface RecordResult {
   deliveredFps: number;
   gapP95Ms: number;
   gapMaxMs: number;
+  /** Netcode health over the take (null when there is no local pilot). */
+  net: NetStats | null;
+}
+
+/** How the server and the local prediction behaved while a take recorded. */
+export interface NetStats {
+  /** Server ticks per wall-clock second (60 when it keeps pace). */
+  serverHz: number;
+  /** Snapshots whose prediction drift exceeded the noise floor. */
+  corrections: number;
+  snapshots: number;
 }
 
 const GPU_ARGS = [
@@ -152,6 +163,7 @@ export class Recorder {
     const quality = Number(process.env['EQX_CAPTURE_QUALITY'] ?? 80);
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality, everyNthFrame: 1, ...size });
     index.startT = Date.now();
+    const net0 = await readNet(page);
     if (shot.camera) await ctx.cinema.play(scaleCues(shot.camera, phone ? 1 : ctx.viewport.width / 1920));
     // A failed action means the take did not show what the caption says:
     // fail the take (after stopping the screencast) so it is retaken.
@@ -162,6 +174,7 @@ export class Recorder {
         })
       : null;
     await sleep(shot.durationMs);
+    const net1 = await readNet(page);
     await cdp.send('Page.stopScreencast');
     index.endT = Date.now();
     await actions;
@@ -174,7 +187,7 @@ export class Recorder {
       for (const f of index.frames) f.t -= t0;
     }
     writeFileSync(path.join(clipDir, 'frames.json'), JSON.stringify(index));
-    return { clipDir, index, ...frameStats(index, shot.durationMs) };
+    return { clipDir, index, ...frameStats(index, shot.durationMs), net: netDelta(net0, net1) };
   }
 
   private makeContext(page: Page, hud: HudMode, viewport: { width: number; height: number }): ShotContext {
@@ -280,6 +293,27 @@ export function targetUrl(baseUrl: string, target: ShotTarget, testId: string, h
  * be catching up, which films as a 20 Hz judder of the ship (round 3 fly-by,
  * 2026-11-05). Shots with no local ship (landing, galaxy) pass at once.
  */
+interface NetSample { t: number; serverTick: number; corrections: number; snapshots: number }
+
+/** The local client's prediction counters (null with no local pilot). */
+async function readNet(page: Page): Promise<NetSample | null> {
+  // A string, not a function: tsx injects `__name` into named functions.
+  return page.evaluate<NetSample | null>(`(() => {
+    const c = globalThis.__eqxClient;
+    if (!c || !c.stats || !c.mirror || !c.mirror.localPlayerId) return null;
+    return { t: performance.now(), serverTick: c.stats.lastServerTick, corrections: c.stats.significantCorrectionCount, snapshots: c.stats.snapshotCount };
+  })()`).catch(() => null);
+}
+
+export function netDelta(a: NetSample | null, b: NetSample | null): NetStats | null {
+  if (!a || !b || b.t <= a.t || b.snapshots <= a.snapshots) return null;
+  return {
+    serverHz: Math.round(((b.serverTick - a.serverTick) / ((b.t - a.t) / 1000)) * 10) / 10,
+    corrections: b.corrections - a.corrections,
+    snapshots: b.snapshots - a.snapshots,
+  };
+}
+
 async function waitForSteadyPrediction(page: Page, log: (m: string) => void): Promise<void> {
   // A string, not a function: tsx injects `__name` into named functions,
   // which doesn't exist in the page.

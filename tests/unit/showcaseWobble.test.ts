@@ -7,7 +7,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
-import { wobbleFromCsv, wobbleProblem } from '../../showcase/wobble';
+import { wobbleFromCsv, wobbleProblem, netProblem } from '../../showcase/wobble';
+import { netDelta } from '../../showcase/recorder';
 
 const HEAD = 'f,t,dt,shipX,shipY,sdx,sdy,bgdx,bgdy,bgN,bgSpread,greenN';
 function csv(n: number, sdx: (i: number) => number, green = 40): string {
@@ -43,5 +44,21 @@ describe('showcase wobble gate', () => {
     const f = 'diag/_clip-jitter/good-round2.csv';
     if (!existsSync(f)) return;
     expect(wobbleProblem(wobbleFromCsv(readFileSync(f, 'utf8')))).toBeNull();
+  });
+});
+
+describe('server pace gate', () => {
+  it('flags a take recorded on a server running behind wall-clock', () => {
+    expect(netProblem({ serverHz: 25.1, corrections: 17, snapshots: 19 })).toMatch(/server behind: 25.1 Hz/);
+    expect(netProblem({ serverHz: 59.8, corrections: 0, snapshots: 120 })).toBeNull();
+    expect(netProblem(null)).toBeNull();
+  });
+
+  it('derives server Hz and corrections from two samples', () => {
+    const a = { t: 1000, serverTick: 600, corrections: 4, snapshots: 10 };
+    const b = { t: 3000, serverTick: 720, corrections: 5, snapshots: 50 };
+    expect(netDelta(a, b)).toEqual({ serverHz: 60, corrections: 1, snapshots: 40 });
+    expect(netDelta(null, b)).toBeNull();
+    expect(netDelta(a, { ...b, snapshots: 10 })).toBeNull(); // no snapshots applied
   });
 });
