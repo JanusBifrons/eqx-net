@@ -212,6 +212,18 @@ const takeStats = (rec: RecordResult): TakeStats => ({
  * `MAX_TAKES`), keep the smoothest, and encode only that one. A take that
  * crashes restarts the server first (a broken room is the usual cause).
  */
+/** Delete a take that lost, or keep it for diagnosis (`EQX_KEEP_TAKES=1`) when QA flagged it. */
+function dropTake(dir: string, problems: string[]): void {
+  if (process.env['EQX_KEEP_TAKES'] === '1' && problems.length > 0) {
+    const kept = dir.replace(/\.take(\d+)$/, '.rejected-take$1');
+    rmSync(kept, { recursive: true, force: true });
+    renameSync(dir, kept);
+    log(`  kept rejected take for diagnosis: ${kept}`);
+    return;
+  }
+  rmSync(dir, { recursive: true, force: true });
+}
+
 async function takeWithRetry(
   shot: Shot,
   recorder: Recorder,
@@ -241,10 +253,10 @@ async function takeWithRetry(
       log(`  ${problems.length ? '·' : '✓'} ${rec.deliveredFps} fps, worst gap ${rec.gapMaxMs} ms, ${wobble ? wobbleSummary(wobble) : 'ship wobble: not measured'}, ${netSummary(rec.net)}${verdict}`);
       // Fewer QA problems first (a jittery take never beats a clean one), then the smoother.
       if (!best || problems.length < best.problems.length || (problems.length === best.problems.length && smoothScore(takeStats(rec)) > smoothScore(takeStats(best.rec)))) {
-        if (best) rmSync(best.dir, { recursive: true, force: true });
+        if (best) dropTake(best.dir, best.problems);
         best = { rec, dir, problems };
       } else {
-        rmSync(dir, { recursive: true, force: true });
+        dropTake(dir, problems);
       }
       if (problems.length === 0) break;
     } catch (e) {

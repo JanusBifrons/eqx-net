@@ -3,6 +3,8 @@
 // frames in arrival order. Usage: node motion.mjs <clipDir> [start] [count] [out.csv]
 // Used by showcase QA (showcase/wobble.ts) to flag jittery takes.
 import { spawn } from 'node:child_process';
+import process from 'node:process';
+import { Buffer } from 'node:buffer';
 import fs from 'node:fs';
 const dir = process.argv[2];
 const start = +(process.argv[3] ?? 0);
@@ -13,7 +15,7 @@ const n = Math.min(count, idx.length - start);
 const ff = spawn('ffmpeg', ['-loglevel', 'error', '-start_number', String(start), '-i', `${dir}/frames/%06d.jpg`, '-frames:v', String(n), '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']);
 let pend = Buffer.alloc(0);
 let fi = 0;
-let prevG = null, cur = null;
+let prevG = null;
 let ship = null; // [x,y]
 let shipV = [0, 0];
 const T = 24; // half template ship
