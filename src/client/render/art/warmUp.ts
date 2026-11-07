@@ -8,35 +8,32 @@
  * structures, asteroids — unique per rock) still bakes on demand.
  *
  * Order matters: ships first (they appear first), then the structures every
- * base has, then the rest of the common set. On a device's second visit all
- * of it comes from the cache in a fraction of a second.
+ * base has. On a device's second visit all of it comes from the cache in a
+ * fraction of a second.
+ *
+ * Kept SMALL on purpose (memory, 2026-11-07): every baked image is packed into
+ * an atlas page that lives on the GPU (64 MB per 4096 px page) and as a
+ * packing canvas, cached or not. Baking every ship kind ahead filled all four
+ * desktop pages in a fighters-only room (348 MB of art textures; the robot
+ * nexus alone 4.2 Mpx). Only what every pilot sees is warmed; the rest bakes
+ * on first sight (today's look shows until it is ready).
  */
-import { SHIP_KINDS_LIST } from '../../../shared-types/shipKinds.js';
+import { STARTER_HULL_KINDS } from '../../../shared-types/blueprints.js';
 import { FX_WARM } from './fx/fxTextures.js';
 import type { BakeJob } from './bake.js';
 import { seedVariant } from './bake.js';
-import { shipExtent } from './fields.js';
 
-/** Structures worth baking ahead, most common first. All at their usual
- *  (unturned) orientation; other turns bake on demand. */
-export const WARM_STRUCTURES: readonly string[] = [
-  'capital', 'connector', 'solar', 'turret', 'miner', 'battery', 'shield_pylon',
-  'laser_bolt_turret', 'missile_turret', 'autocannon_turret', 'cargo_bay', 'shield_gate',
-  'reactor', 'battery_bank', 'storage_vault', 'habitat_module', 'tower_module', 'mine_layer',
-];
-
-/** Ships bigger than this (world units of outline half-extent) are test or
- *  capital hulls players rarely meet; they bake on demand. */
-const WARM_SHIP_MAX_EXTENT = 100;
+/** Structures worth baking ahead: the starter base every player builds. All
+ *  at their usual (unturned) orientation; other turns bake on demand. */
+export const WARM_STRUCTURES: readonly string[] = ['capital', 'connector', 'solar', 'turret', 'miner', 'battery'];
 
 /** `fx`: also the effect textures every sector uses (the new effects). */
 export function warmUpJobs(fx = false): BakeJob[] {
   const jobs: BakeJob[] = [];
   // Effects first: they are few, small and on screen in every fight.
   if (fx) for (const id of FX_WARM) jobs.push({ type: 'fx', id });
-  for (const k of SHIP_KINDS_LIST) {
-    if (shipExtent(k.id) < WARM_SHIP_MAX_EXTENT) jobs.push({ type: 'ship', id: k.id });
-  }
+  // The hulls a pilot can start in; every other kind bakes on first sight.
+  for (const id of STARTER_HULL_KINDS) jobs.push({ type: 'ship', id });
   // Seed 1 is what the renderer asks for (structHandleFor), so the keys match.
   for (const id of WARM_STRUCTURES) jobs.push({ type: 'struct', id, seed: seedVariant(1), rot: 0 });
   return jobs;

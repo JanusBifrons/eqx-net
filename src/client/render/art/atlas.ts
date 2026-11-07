@@ -25,6 +25,10 @@ interface Page {
   y: number;
   rowH: number;
   dirty: boolean;
+  /** A newer page exists: this one is never written again. Once uploaded
+   *  its packing canvas is released (see commit). */
+  sealed: boolean;
+  released: boolean;
 }
 
 export interface AtlasOpts {
@@ -63,7 +67,9 @@ export class Atlas {
 
   private newPage(): Page {
     const { canvas, ctx } = makeCanvas(this.pageSize);
-    const p: Page = { canvas, ctx, tex: null, x: this.PAD, y: this.PAD, rowH: 0, dirty: true };
+    const prev = this.pages[this.pages.length - 1];
+    if (prev) prev.sealed = true;
+    const p: Page = { canvas, ctx, tex: null, x: this.PAD, y: this.PAD, rowH: 0, dirty: true, sealed: false, released: false };
     this.pages.push(p);
     return p;
   }
@@ -137,7 +143,41 @@ export class Atlas {
     }
     for (const q of this.pending) q.out[q.idx] = new Texture({ source: q.page.tex!.source, frame: q.frame });
     this.pending.length = 0;
+    this.tidy();
   }
+
+  /** Release every sealed page's canvas whose texture is on the GPU. Cheap
+   *  (a handful of pages); the art service calls it every tick. */
+  tidy(): void {
+    if (this.releaseSealed) for (const p of this.pages) if (p.sealed && !p.released && p.tex) this.release(p);
+  }
+
+  /**
+   * Free a sealed page's packing canvas once its texture is on the GPU
+   * (memory, 2026-11-07): each page otherwise exists twice, the canvas (64 MB
+   * at 4096 px) beside the GPU texture. The texture must then never be
+   * evicted and re-uploaded from the canvas, so automatic texture GC is off
+   * for it. Caveat: after a lost WebGL context it would come back blank (the
+   * game has no context-loss handling today).
+   */
+  private release(p: Page): void {
+    const src = p.tex!.source as { autoGarbageCollect?: boolean };
+    src.autoGarbageCollect = false;
+    // The texture uploads on its first draw: shrink the canvas only after
+    // that (Pixi fills `_gpuData` per renderer on upload), or the GPU would
+    // receive the 1x1 canvas. Retried on later commits until then.
+    const gpu = (p.tex!.source as unknown as { _gpuData?: Record<number, unknown> })._gpuData;
+    if (!gpu || Object.keys(gpu).length === 0) return;
+    p.canvas.width = 1;
+    p.canvas.height = 1;
+    p.released = true;
+    this.releasedBytes += this.pageSize * this.pageSize * 4;
+  }
+
+  /** Release sealed pages' canvases (off in unit tests that read pixels back). */
+  releaseSealed = true;
+  /** CPU bytes freed by released page canvases (diagnostic). */
+  releasedBytes = 0;
 
   private readonly singles: Array<{ tex: Texture; bytes: number }> = [];
 

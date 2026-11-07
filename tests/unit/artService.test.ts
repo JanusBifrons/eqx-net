@@ -217,13 +217,16 @@ describe('art mode and sun', () => {
 });
 
 describe('warm-up (bake before it is needed)', () => {
-  it('lists every regular ship kind, then the common structures, skipping test-size hulls', async () => {
+  it('warms only the starter hulls and the starter base (memory, 2026-11-07)', async () => {
+    // Every warmed image is packed into a GPU atlas page, cached or not:
+    // warming every kind filled all four desktop pages (348 MB) in a
+    // fighters-only room. Everything else bakes on first sight.
     const { warmUpJobs, WARM_STRUCTURES } = await import('../../src/client/render/art/warmUp');
     const jobs = warmUpJobs();
     const ships = jobs.filter((j) => j.type === 'ship').map((j) => j.id);
-    expect(ships).toEqual(expect.arrayContaining(['fighter', 'scout', 'heavy', 'interceptor', 'gunship', 'missile-frigate', 'trader-hauler', 'patrol-fighter']));
-    expect(ships).not.toContain('crossguard');
-    expect(ships).not.toContain('el');
+    expect(ships).toEqual(['scout', 'fighter']);
+    for (const big of ['robot-nexus', 'missile-frigate', 'trader-hauler', 'battleship']) expect(ships).not.toContain(big);
+    expect(WARM_STRUCTURES.length).toBeLessThanOrEqual(6);
     expect(jobs.filter((j) => j.type === 'struct').map((j) => j.id)).toEqual([...WARM_STRUCTURES]);
     // Ships come first: they're what appears first.
     expect(jobs.findIndex((j) => j.type === 'struct')).toBe(ships.length);

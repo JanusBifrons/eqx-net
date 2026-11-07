@@ -78,6 +78,10 @@ export interface ArtPacker {
   standalone(fr: Frame, repeat: boolean, mip: boolean): Texture;
   readonly pageCount: number;
   readonly gpuBytes: number;
+  /** Free what's no longer needed CPU-side (sealed page canvases). Optional. */
+  tidy?(): void;
+  /** CPU bytes freed by tidy (diagnostic). */
+  readonly releasedBytes?: number;
   destroy(): void;
 }
 
@@ -120,6 +124,8 @@ export interface ArtStats {
   fromCache: number;
   pages: number;
   gpuBytes: number;
+  /** CPU bytes freed by releasing sealed atlas page canvases. */
+  cpuReleasedBytes: number;
   workers: number;
   /** Effect textures ready / still baking. */
   fxReady: number;
@@ -283,6 +289,7 @@ export class ArtService {
     }
     // Upload, then hand out the textures: a handle turns `ready` only here.
     if (packed > 0) { this.deps.packer.commit(); this.flushFills(); }
+    this.deps.packer.tidy?.();
   }
 
   /** Place a bake's frames; false (handle failed) if it won't fit the budget. */
@@ -352,7 +359,7 @@ export class ArtService {
     }
     return {
       ready, pending, failed, fromCache: this.fromCache,
-      pages: this.deps.packer.pageCount, gpuBytes: this.deps.packer.gpuBytes, workers: this.deps.runner.workers, fxReady, fxPending, ...(lastFailure ? { lastFailure } : {}),
+      pages: this.deps.packer.pageCount, gpuBytes: this.deps.packer.gpuBytes, cpuReleasedBytes: this.deps.packer.releasedBytes ?? 0, workers: this.deps.runner.workers, fxReady, fxPending, ...(lastFailure ? { lastFailure } : {}),
       topTexels: [...this.texels.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => `${k} ${(v / 1e6).toFixed(2)}Mpx`),
     };
   }
