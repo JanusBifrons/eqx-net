@@ -42,11 +42,19 @@ export const SECTOR_BASE_HALF_EXTENT = 5000;
  */
 export const SOLAR_SECTOR_HALF_EXTENT = 200_000;
 function readSolar(): boolean {
-  const g = globalThis as unknown as { process?: { env?: Record<string, string | undefined> }; __EQX_SOLAR_SECTORS__?: unknown };
+  const g = globalThis as unknown as { process?: { env?: Record<string, string | undefined> }; __EQX_SOLAR_SECTORS__?: unknown; name?: unknown; WorkerGlobalScope?: unknown };
   const raw = g.process?.env?.['EQX_SOLAR_SECTORS'] ?? g.__EQX_SOLAR_SECTORS__;
-  return raw === '1' || raw === 'true' || raw === true;
+  if (raw === '1' || raw === 'true' || raw === true) return true;
+  // A Web Worker (the renderer) has no page globals: the page passes the
+  // switch in the worker's name (solarWorkerNameSuffix).
+  return typeof g.WorkerGlobalScope !== 'undefined' && typeof g.name === 'string' && /(^|;)solar=1(;|$)/.test(g.name);
 }
 export const SOLAR_SECTORS: boolean = readSolar();
+
+/** Appended to a worker's name so workers see the same solar switch. */
+export function solarWorkerNameSuffix(): string {
+  return SOLAR_SECTORS ? ';solar=1' : '';
+}
 
 /** Today's sector extent: with solar-system sectors on, the HOME pocket at
  *  the origin (the sector's bases, belts and spawns as they are today). */

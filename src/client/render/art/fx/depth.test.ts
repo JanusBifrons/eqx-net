@@ -2,7 +2,7 @@
  * Depth, scale and speed (plan iridescent-seeking-rainbow v4, round 2).
  */
 import { describe, it, expect } from 'vitest';
-import { DEPTH_LADDER, hashKey, landmarkScreen, nebulaCell, nebulaDensityAt, nebulaDensityAtSeed, nebulaRegions, visitNebulae, sectorSky, skyCell, SKY_LAYERS, SPEED_FX, speedFactor, visitSkyLayer, newSpeedFxState, stepSpeedFx, speedZoomFor, speedFxFullSpeed } from './depth.js';
+import { DEPTH_LADDER, hashKey, landmarkScreen, nebulaCell, nebulaDensityAt, nebulaDensityAtSeed, nebulaRegions, visitNebulae, sectorSky, skyCell, SKY_LAYERS, SPEED_FX, speedFactor, visitSkyLayer, newSpeedFxState, stepSpeedFx, speedZoomFor, speedFxFullSpeed, SOLAR_SKY_SCALE } from './depth.js';
 import { getShipKind } from '../../../../shared-types/shipKinds.js';
 
 describe('depth ladder', () => {
@@ -180,5 +180,35 @@ describe('speedFxFullSpeed — full speed is the ship\'s own top speed', () => {
 
   it('with no ship it falls back to the default kind', () => {
     expect(speedFxFullSpeed(null)).toBe(getShipKind(null).maxSpeed);
+  });
+});
+
+describe('solar-system sky (Phase 4 step 2)', () => {
+  // Distinct planets, moons and gas giants that cross the screen when the
+  // camera travels from (0,0) to (170 km, 0), sampled every 2 km.
+  function bodiesPassed(scale: number): number {
+    const seen = new Set<string>();
+    const l = { kind: 'planet', wx: 0, wy: 0, parallax: 0, size: 0, tint: 0, seed: 0 } as Parameters<typeof skyCell>[4];
+    for (let x = 0; x <= 170_000; x += 2000) {
+      for (let li = 0; li < SKY_LAYERS.length; li++) {
+        const k = SKY_LAYERS[li]!.kind;
+        if (k !== 'planet' && k !== 'moon' && k !== 'gasGiant') continue;
+        visitSkyLayer(42, li, x, 0, 1, 1920, 1080, l, (v) => { seen.add(`${li}:${Math.round(v.wx)}:${Math.round(v.wy)}`); }, scale);
+      }
+    }
+    return seen.size;
+  }
+
+  it('a 170 km warp passes dozens of bodies on the endless sky (the bug) but only a few in a solar system', () => {
+    expect(bodiesPassed(1)).toBeGreaterThan(20);
+    expect(bodiesPassed(SOLAR_SKY_SCALE)).toBeLessThanOrEqual(6);
+  });
+
+  it('the system sky is the same bodies wherever you look from (fixed per seed)', () => {
+    const l = { kind: 'planet', wx: 0, wy: 0, parallax: 0, size: 0, tint: 0, seed: 0 } as Parameters<typeof skyCell>[4];
+    const a: string[] = [], b: string[] = [];
+    visitSkyLayer(7, 3, 0, 0, 1, 1920, 1080, l, (v) => a.push(`${Math.round(v.wx)}`), SOLAR_SKY_SCALE);
+    visitSkyLayer(7, 3, 0, 0, 1, 1920, 1080, l, (v) => b.push(`${Math.round(v.wx)}`), SOLAR_SKY_SCALE);
+    expect(a).toEqual(b);
   });
 });

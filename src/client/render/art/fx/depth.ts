@@ -89,6 +89,14 @@ export const SKY_LAYERS: readonly SkyLayer[] = [
   { kind: 'moon', parallax: 0.26, zoomPow: 0.3, cell: 1300, chance: 0.3, minSize: 45, maxSize: 85 },
 ];
 
+/**
+ * Solar-system sectors (Phase 4 step 2): the landmark layers drift this much
+ * slower. Sectors are ±200 km there, and at the 1x drift a 170 km warp swept
+ * dozens of planets past; at this scale the whole system shows a few bodies
+ * that shift a little as you cross it (the system's own planets and moons).
+ */
+export const SOLAR_SKY_SCALE = 0.04;
+
 const cellHash = (ix: number, iy: number, salt: number): number =>
   (Math.imul(ix, 73856093) ^ Math.imul(iy, 19349663) ^ salt) >>> 0;
 
@@ -97,8 +105,9 @@ const cellHash = (ix: number, iy: number, salt: number): number =>
  * `hashKey(sectorKey)`), written into `out`; false if the cell is empty.
  * Deterministic and allocation-free.
  */
-export function skyCell(seed: number, layerIndex: number, ix: number, iy: number, out: Landmark): boolean {
+export function skyCell(seed: number, layerIndex: number, ix: number, iy: number, out: Landmark, scale = 1): boolean {
   const L = SKY_LAYERS[layerIndex]!;
+  const parallax = L.parallax * scale;
   const c = cellHash(ix, iy, seed + layerIndex * 977);
   if (h01(c, 1) >= L.chance) return false;
   // Layer-space position inside the cell (kept off the edges), back to the
@@ -106,9 +115,9 @@ export function skyCell(seed: number, layerIndex: number, ix: number, iy: number
   const lx = (ix + 0.15 + 0.7 * h01(c, 2)) * L.cell;
   const ly = (iy + 0.15 + 0.7 * h01(c, 3)) * L.cell;
   out.kind = L.kind;
-  out.parallax = L.parallax;
-  out.wx = lx / L.parallax;
-  out.wy = ly / L.parallax;
+  out.parallax = parallax;
+  out.wx = lx / parallax;
+  out.wy = ly / parallax;
   out.size = L.minSize + (L.maxSize - L.minSize) * h01(c, 4);
   out.seed = c % 997;
   out.tint = L.kind === 'nebulaPatch' ? PATCH_TINTS[c % PATCH_TINTS.length]! : L.kind === 'moon' ? 0x9a9a9a : PLANET_TINTS[c % PLANET_TINTS.length]!;
@@ -121,17 +130,18 @@ export function skyCell(seed: number, layerIndex: number, ix: number, iy: number
  * (copy what you keep). Allocation-free.
  */
 export function visitSkyLayer(seed: number, layerIndex: number, cx: number, cy: number, zoom: number, W: number, H: number,
-  scratch: Landmark, visit: (l: Landmark) => void): void {
+  scratch: Landmark, visit: (l: Landmark) => void, scale = 1): void {
   const L = SKY_LAYERS[layerIndex]!;
+  const parallax = L.parallax * scale;
   const s = Math.pow(Math.max(1e-3, zoom), L.zoomPow);
   // Layer-space view half-size, padded by the biggest landmark.
   const hx = W / 2 / s + L.maxSize, hy = H / 2 / s + L.maxSize;
-  const lcx = cx * L.parallax, lcy = cy * L.parallax;
+  const lcx = cx * parallax, lcy = cy * parallax;
   const x0 = Math.floor((lcx - hx) / L.cell), x1 = Math.floor((lcx + hx) / L.cell);
   const y0 = Math.floor((lcy - hy) / L.cell), y1 = Math.floor((lcy + hy) / L.cell);
   for (let iy = y0; iy <= y1; iy++) {
     for (let ix = x0; ix <= x1; ix++) {
-      if (skyCell(seed, layerIndex, ix, iy, scratch)) visit(scratch);
+      if (skyCell(seed, layerIndex, ix, iy, scratch, scale)) visit(scratch);
     }
   }
 }
