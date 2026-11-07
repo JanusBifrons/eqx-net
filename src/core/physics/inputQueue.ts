@@ -84,17 +84,25 @@ export function tickInputQueue(
   lastAckTick: Map<number, number>,
   currentTick: number,
 ): InputTickResult {
+  const baseline = lastAckTick.get(slot);
+  // One sim step = one acked tick (2026-11-07). An input whose tick the worker
+  // already simulated (it arrived late, after the held input stood in for it)
+  // must NOT consume another step: that stepped twice while the ack moved
+  // once, so the snapshot pose sat a tick ahead of its ackedTick and every
+  // late arrival showed as a one-tick prediction correction. Its content
+  // still counts: it becomes the held input this step applies.
+  if (baseline !== undefined) {
+    while (queue.length > 0 && queue[0]!.tick <= baseline) lastApplied.set(slot, queue.shift()!);
+  }
   if (queue.length > 0 && queue[0]!.tick <= currentTick) {
     const entry = queue.shift()!;
     lastApplied.set(slot, entry);
-    const baseline = lastAckTick.get(slot) ?? -1;
-    const newAck = entry.tick > baseline ? entry.tick : baseline;
-    lastAckTick.set(slot, newAck);
-    return { applied: entry, ackTick: newAck };
+    lastAckTick.set(slot, entry.tick);
+    return { applied: entry, ackTick: entry.tick };
   }
   const held = lastApplied.get(slot);
   if (!held) return { applied: null, ackTick: null };
-  const next = (lastAckTick.get(slot) ?? held.tick) + 1;
+  const next = (baseline ?? held.tick) + 1;
   lastAckTick.set(slot, next);
   return { applied: held, ackTick: next };
 }

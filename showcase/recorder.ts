@@ -46,6 +46,9 @@ export interface NetStats {
   snapshots: number;
 }
 
+/** How long the screencast runs before a take starts (its start-up stall). */
+const SCREENCAST_SETTLE_MS = 900;
+
 const GPU_ARGS = [
   '--use-angle=d3d11',
   '--ignore-gpu-blocklist',
@@ -173,6 +176,15 @@ export class Recorder {
     // detailed hulls costs Chrome more to encode, and fewer frames arrive.
     const quality = Number(process.env['EQX_CAPTURE_QUALITY'] ?? 80);
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality, everyNthFrame: 1, ...size });
+    // Starting the screencast stalls the page for a few hundred ms (long
+    // frames of 125-760 ms at 0.1-0.6 s in every take, no script: the
+    // capture spinning up). Let it settle, then discard those frames so the
+    // take starts on steady capture.
+    await sleep(SCREENCAST_SETTLE_MS);
+    await writing;
+    for (const f of index.frames) rmSync(path.join(clipDir, f.file), { force: true });
+    index.frames.length = 0;
+    n = 0;
     index.startT = Date.now();
     // EQX_TRACE=1: a Chrome performance trace of the take (trace.json), to see
     // what runs inside a long frame (GPU uploads, shader compiles, GC).

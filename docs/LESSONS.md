@@ -2696,3 +2696,21 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - the projectile box was a fixed 3,072 u, so a wide ship's shells were hidden until close;
   - drone projectiles carried the drone's internal id, so the renderer never matched a shot to its gun (no drone turret ever recoiled).
 - **Lesson.** Every fighter-scale constant on the path from "a gun fires" to "a viewer sees it" breaks at capital scale (invariant #18). A green integration test that a hit LANDS proves nothing about what a viewer SEES: lock the client's view too (turret angles, shell positions, wire owner id), as `capitalEngagement.test.ts` now does.
+
+## 2026-11-07 — "Jitter" was a one-tick ack bug, found from game-side ground truth (showcase capital clips)
+
+- **Symptom:** the user saw jitter and jumpiness in the capital-gun clips, with every QA gate green.
+- **Wrong turns first:**
+  - "being hit causes corrections": disproved, 12 vs 13 with and without hits;
+  - "server starvation": real only with two browsers + Vite on the laptop;
+  - a dead-reckon "half step": an artefact of my sampler using its own clock instead of the game's frame time.
+- **What found it:**
+  - a per-frame pose trace from inside the client (drawn pose, physics state, tick, the game's own frame time; `pose-trace.json`);
+  - a hostile audit of the capture chain.
+- **Two real causes:**
+  1. **Encode.** CDP screencast frames arrive out of timestamp order with noisy times, and the encoder used arrival order, so frames held and skipped about 5×/s. A late epoch-stamped frame also broke the clip's end. Fix: sort, snap to the 60 Hz grid (#325).
+  2. **Netcode.** Every correction was exactly one tick of motion along the path, flipping back later. The worker applied a late input as an extra step without advancing the ack (`inputQueue.ts`): the pose one tick ahead of its `ackedTick`. Fix: one sim step = one acked tick. Corrections went from 9-61 per take to 0.
+- **Rules:**
+  - A camera-locked ship can't show its own jitter. Measure the world, or the game's own trace, not the followed ship.
+  - A correction that is exactly v/60 is a tick-labelling bug, not a physics mismatch.
+  - Time a sampled trace by the game's frame time, never the sampler's clock.
