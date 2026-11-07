@@ -7470,9 +7470,18 @@ export class SectorRoom extends Room<SectorState> {
     // persists in-world via the sector snapshot (`lingeringHulls[]`). A join
     // without a resolvable owned shipId fresh-spawns.
 
-    // T1 — never spawn inside a structure (an NPC base can fill much of a
-    // sector): nudge to the nearest clear point. Join path, not the hot loop.
-    if (this.structureRegistry.size > 0) {
+    // A sector trip lands clear of other pilots' ships and parked hulls (and
+    // asteroids), like an in-sector warp. Every trip lands on the same point,
+    // and a ship dropped on top of parked hulls is shoved away by the physics
+    // (phone run 2026-11-07: "I arrived inside the base"). Only trip arrivals:
+    // other joins keep their exact placement (tests set up collisions).
+    if (transitToken !== undefined) {
+      const clear = this.landingPoint(playerId, spawnX, spawnY, chosenKind);
+      spawnX = clear.x;
+      spawnY = clear.y;
+    } else if (this.structureRegistry.size > 0) {
+      // T1 — never spawn inside a structure (an NPC base can fill much of a
+      // sector): nudge to the nearest clear point. Join path, not the hot loop.
       const boxes: SiteBox[] = [];
       for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
       const clear = nearestClearPoint(spawnX, spawnY, boxes, tuningFor(chosenKind).spawnClearance);
@@ -9056,6 +9065,12 @@ export class SectorRoom extends Room<SectorState> {
    * the run starts (a discrete event, not the per-tick loop).
    */
   private warpLandingPoint(playerId: string, x: number, y: number): { x: number; y: number } {
+    return this.landingPoint(playerId, x, y, this.getActiveShip(playerId)?.kind);
+  }
+
+  /** The nearest spot to (x, y) clear of structures, swarm entities, and other
+   *  players' ships and parked hulls (the pilot's own are not obstacles). */
+  private landingPoint(playerId: string, x: number, y: number, kind: string | undefined): { x: number; y: number } {
     const near = 8000;
     const boxes: SiteBox[] = [];
     for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
@@ -9071,11 +9086,12 @@ export class SectorRoom extends Room<SectorState> {
       const kind = this.getActiveShip(pid)?.kind;
       circles.push({ x: pose.x, y: pose.y, r: kind ? tuningFor(kind).spawnClearance : 60 });
     }
-    for (const [, pose] of this.lingeringPoseCache) {
+    for (const [shipId, pose] of this.lingeringPoseCache) {
       if (Math.abs(pose.x - x) > near || Math.abs(pose.y - y) > near) continue;
-      circles.push({ x: pose.x, y: pose.y, r: 60 });
+      const hull = this.state.ships.get(shipId);
+      if (hull?.playerId === playerId) continue;
+      circles.push({ x: pose.x, y: pose.y, r: hull?.kind ? tuningFor(hull.kind).spawnClearance : 60 });
     }
-    const kind = this.getActiveShip(playerId)?.kind;
     return nearestClearPoint(x, y, boxes, kind ? tuningFor(kind).spawnClearance : 60, 6000, circles);
   }
 

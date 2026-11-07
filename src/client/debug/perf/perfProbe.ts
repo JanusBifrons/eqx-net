@@ -17,6 +17,8 @@ import { perfSceneById } from '@shared-types/perf/perfScenes';
 import { getGameClient } from '../../net/clientSingleton';
 import { useUIStore } from '../../state/store';
 
+/** The art part of a reading. */
+type PerfReadingArt = { mode: string; pending?: number; failed?: number; pages?: number; maxPages?: number; freedPages?: number; failedKinds?: Record<string, number>; lastFailure?: string; ownArt?: string | null };
 export interface PerfReading {
   elapsedMs: number;
   main: FrameTimeSummary;
@@ -26,7 +28,7 @@ export interface PerfReading {
   heapMb: number | null;
   worker: boolean;
   /** Which art was on screen (main-thread renderer only; null in the worker). */
-  art: { mode: string; pending?: number; failed?: number } | null;
+  art: { mode: string; pending?: number; failed?: number; pages?: number; maxPages?: number; freedPages?: number; failedKinds?: Record<string, number>; lastFailure?: string; ownArt?: string | null } | null;
   /** The worst main-thread frame gaps in the window: when (ms after reset)
    *  and how long, longest first. Shows WHERE a run hitched, not just that it did. */
   worst: Array<{ atMs: number; ms: number }>;
@@ -39,8 +41,12 @@ export function perfProbeEnabled(search: string): boolean {
 }
 
 function readArt(): PerfReading['art'] {
-  const s = (globalThis as { __eqxArtStats?: () => { mode: string; pending?: number; failed?: number } }).__eqxArtStats?.();
-  return s ? { mode: s.mode, ...(s.pending !== undefined ? { pending: s.pending } : {}), ...(s.failed !== undefined ? { failed: s.failed } : {}) } : null;
+  const s = (globalThis as { __eqxArtStats?: () => NonNullable<PerfReadingArt> }).__eqxArtStats?.();
+  if (!s) return null;
+  return {
+    mode: s.mode, pending: s.pending, failed: s.failed, pages: s.pages, maxPages: s.maxPages, freedPages: s.freedPages,
+    failedKinds: s.failedKinds, lastFailure: s.lastFailure, ownArt: s.ownArt,
+  };
 }
 
 let current: { renderer: IRenderer; useWorker: boolean } | null = null;
@@ -118,6 +124,12 @@ export function installPerfProbe(rendererIn: IRenderer, useWorkerIn: boolean): v
  */
 let labStarted = false;
 
+/** The sky layers drawing now (sector-trip readings compare before/after). */
+function skySample(): unknown {
+  const s = (globalThis as { __eqxArtStats?: () => { backdrop?: unknown; effectQuality?: string } }).__eqxArtStats?.();
+  return s ? { backdrop: s.backdrop, effectQuality: s.effectQuality } : null;
+}
+
 /**
  * Perf lab: a SECTOR TRIP on a real device (`?perftrip=<target sector>`,
  * Phase 4 travel state). Once in game it engages a transit to the target,
@@ -141,6 +153,7 @@ export function runPerfLabTrip(target: string): void {
     const perf = (globalThis as unknown as { __eqxPerf: { reset(): Promise<void>; read(): Promise<PerfReading> } }).__eqxPerf;
     await new Promise((r) => setTimeout(r, 2000)); // let the sector settle first
     await perf.reset();
+    const skyBefore = skySample();
     getGameClient()?.getRoom()?.send('engage_transit', { type: 'engage_transit', targetSectorKey: target });
     let sawTrip = false;
     const t0 = performance.now();
@@ -161,7 +174,8 @@ export function runPerfLabTrip(target: string): void {
         userAgent: navigator.userAgent, width: window.innerWidth, height: window.innerHeight,
         dpr: window.devicePixelRatio, touch: navigator.maxTouchPoints > 0, worker: cur.useWorker,
       },
-      reading: { ...reading, tripCompleted: sawTrip && !useUIStore.getState().travelling },
+      reading: { ...reading, tripCompleted: sawTrip && !useUIStore.getState().travelling, sky: { before: skyBefore, after: skySample() } },
+      deviceMemory: (navigator as { deviceMemory?: number }).deviceMemory ?? null,
     };
     const ok = await fetch('/dev/perf/client', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
       .then((r) => r.ok).catch(() => false);

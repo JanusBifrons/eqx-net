@@ -103,8 +103,6 @@ export class WarpFx {
   private readonly bursts: Burst[] = [];
   private readonly lines: Sprite[] = [];
   private readonly linePhase: number[] = [];
-  private readonly lineLat: number[] = [];
-  private readonly lineLen: number[] = [];
   private gen = 0;
   private now = 0;
   /** World units per screen pixel this frame. */
@@ -128,8 +126,6 @@ export class WarpFx {
       this.layer.addChild(l);
       this.lines.push(l);
       this.linePhase.push(rnd());
-      this.lineLat.push(rnd() * 2 - 1);
-      this.lineLen.push(0.25 + rnd() * 0.55);
     }
   }
 
@@ -328,12 +324,34 @@ export class WarpFx {
     const ang = Math.atan2(-fy, -fx);
     for (let i = 0; i < SPEED_LINES; i++) {
       // Each line runs from ahead of the ship to behind it, then wraps.
-      const p = (this.linePhase[i]! + this.now * 2.2) % 1;
+      // Each pass takes a new lane, so the view never repeats (phone report
+      // 2026-11-07: "the same star kept flying past ... in the same spot").
+      const t = this.linePhase[i]! + this.now * 2.2;
+      const p = t - Math.floor(t);
+      const lane = speedLineLane(i, Math.floor(t));
       const along = span * (1 - 2 * p);
-      const lat = this.lineLat[i]! * span * 0.9;
-      line(this.lines[i]!, x + fx * along - fy * lat, y + fy * along + fx * lat, ang, span * this.lineLen[i]!, 1.6 * this.px, 0.35 * Math.sin(p * Math.PI) * this.lineFade);
+      const lat = lane.lat * span * 0.9;
+      line(this.lines[i]!, x + fx * along - fy * lat, y + fy * along + fx * lat, ang, span * lane.len, 1.6 * this.px, 0.35 * Math.sin(p * Math.PI) * this.lineFade);
     }
   }
+}
+
+const laneScratch = { lat: 0, len: 0 };
+/**
+ * Speed line `i`'s lane on pass `pass`: lateral offset (-1..1 of the view)
+ * and length (fraction of the span). Hashed, so each pass is new but every run
+ * looks the same. Returns a reused object (read it before the next call).
+ */
+export function speedLineLane(i: number, pass: number): { lat: number; len: number } {
+  let h = Math.imul(i + 1, 0x9e3779b1) ^ Math.imul(pass + 7, 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+  h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
+  h ^= h >>> 15;
+  const u = (h >>> 0) / 0x100000000;
+  const v = (Math.imul(h, 0x165667b1) >>> 0) / 0x100000000;
+  laneScratch.lat = u * 2 - 1;
+  laneScratch.len = 0.25 + v * 0.55;
+  return laneScratch;
 }
 
 /** Fire flicker, 0.64..1. */

@@ -99,6 +99,13 @@ function layerJob(li: number, v: number): { id: 'planet' | 'wisp' | 'galaxy'; va
   }
 }
 
+/** `v` folded into [0, period) (a tiled layer looks the same either way). */
+function wrapTile(v: number, period: number): number {
+  if (!(period > 0)) return v;
+  const r = v % period;
+  return r < 0 ? r + period : r;
+}
+
 export class Backdrop {
   /** Behind the world. */
   readonly sky = new Container();
@@ -191,6 +198,13 @@ export class Backdrop {
       sp.visible = tex !== null;
     }
     for (let i = this.prewarmHandles.length; i < this.prewarmSprites.length; i++) this.prewarmSprites[i]!.visible = false;
+  }
+  /** Dust motes drawing now: behind and in front of the world (diagnostic). */
+  moteCounts(): { near: number; fore: number } {
+    let near = 0, fore = 0;
+    for (const m of this.nearMotes) if (m.s.visible) near++;
+    for (const m of this.foreMotes) if (m.s.visible) fore++;
+    return { near, fore };
   }
   /** Current deep-space fade, 0..1 (diagnostic / tests). */
   deepSpace(): number { return this.deep; }
@@ -382,8 +396,13 @@ export class Backdrop {
       if (tl.s.width !== W) tl.s.width = W;
       if (tl.s.height !== H) tl.s.height = H;
       backdropXf(cx, cy, zoom, tl.parallax, tl.zoomPow, W, H, this.xf);
-      tl.s.tileScale.set(this.xf.scale * tl.texScale);
-      tl.s.tilePosition.set(this.xf.x, this.xf.y);
+      const ts = this.xf.scale * tl.texScale;
+      tl.s.tileScale.set(ts);
+      // A tile repeats every texture width: keep the offset within one tile.
+      // After a sector trip it would otherwise be tens of thousands of pixels,
+      // and phone GPUs sampling at half precision make the stars jump there
+      // (phone run 2026-11-07, "jerky/jumpy stars").
+      tl.s.tilePosition.set(wrapTile(this.xf.x, tex.width * ts), wrapTile(this.xf.y, tex.height * ts));
       tl.s.alpha = tl.alpha * (tl.win ? zoomWindow(zoom, tl.win[0], tl.win[1], tl.win[2], tl.win[3]) : 1) * (tl.star ? 1 - 0.55 * d : skyKeep);
     }
     for (let i = 0; i < this.sprites.length; i++) {

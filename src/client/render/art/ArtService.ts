@@ -150,6 +150,8 @@ export interface ArtStats {
   /** Diagnostic: atlas pages freed by `collect`, and the page budget. */
   freedPages?: number;
   maxPages?: number;
+  /** Failed bakes by art type (diagnostic). */
+  failedKinds?: Record<string, number>;
   uploads?: number;
   uploadTexels?: number;
 }
@@ -165,7 +167,11 @@ export interface ArtStats {
 export function atlasOptsFor(touch: boolean, deviceMemoryGb?: number): AtlasOpts {
   if (touch) {
     const gb = deviceMemoryGb;
-    const pages = gb === undefined || !Number.isFinite(gb) ? 6 : gb <= 2 ? 4 : gb <= 4 ? 6 : gb < 8 ? 10 : 14;
+    // Chrome reports only 0.25/0.5/1/2/4/8 GB (4 = "4 to 8 GB") and hides it
+    // on plain-http pages; iPhones never report it. Unknown is the common
+    // case, so it gets the full phone budget (phone run 2026-11-07: the old
+    // 6-page fallback left a base-heavy sector's asteroids bare).
+    const pages = gb === undefined || !Number.isFinite(gb) ? 14 : gb < 2 ? 4 : gb < 4 ? 6 : gb < 8 ? 10 : 14;
     return { pageSize: 2048, maxPages: pages };
   }
   // Desktop: the same 64M-texel budget as 16 pages of 2048² (was 4 of 4096²).
@@ -526,16 +532,23 @@ export class ArtService {
   stats(): ArtStats {
     let ready = 0, pending = 0, failed = 0, fxReady = 0, fxPending = 0;
     let lastFailure: string | undefined;
+    let failedKinds: Record<string, number> | undefined;
     for (const h of this.handles.values()) {
       const isFx = h.job.type === 'fx';
       if (h.state === 'ready') { ready++; if (isFx) fxReady++; }
       else if (h.state === 'pending') { pending++; if (isFx) fxPending++; }
-      else { failed++; lastFailure = `${h.key}: ${h.reason ?? "?"}`; }
+      else {
+        failed++;
+        lastFailure = `${h.key}: ${h.reason ?? "?"}`;
+        failedKinds ??= {};
+        failedKinds[h.job.type] = (failedKinds[h.job.type] ?? 0) + 1;
+      }
     }
     return {
       ready, pending, failed, fromCache: this.fromCache,
       pages: this.deps.packer.pageCount, gpuBytes: this.deps.packer.gpuBytes, workers: this.deps.runner.workers, fxReady, fxPending, ...(lastFailure ? { lastFailure } : {}),
       uploads: (this.deps.packer as { uploads?: number }).uploads, uploadTexels: (this.deps.packer as { uploadTexels?: number }).uploadTexels,
+      ...(failedKinds ? { failedKinds } : {}),
       freedPages: (this.deps.packer as { freedPages?: number }).freedPages, maxPages: this.deps.packer.maxPageCount,
       topTexels: [...this.texels.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => `${k} ${(v / 1e6).toFixed(2)}Mpx`),
     };
