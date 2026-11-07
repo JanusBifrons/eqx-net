@@ -2714,3 +2714,13 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - A camera-locked ship can't show its own jitter. Measure the world, or the game's own trace, not the followed ship.
   - A correction that is exactly v/60 is a tick-labelling bug, not a physics mismatch.
   - Time a sampled trace by the game's frame time, never the sampler's clock.
+
+## 2026-11-07 — The idle server held ~2 GB: one physics worker per sector
+
+- **Symptom:** showcase takes stalled 100-800 ms with no Chrome thread busy (a CDP trace showed no task over 30 ms), on an 8 GB laptop down to 212 MB free.
+- **Measured** (`GET /dev/memory`, new): an idle dev server was 1,966 MB rss. 817 MB was the heaps of 21 physics workers, one per galaxy sector. A bare worker costs ~37 MB before any body: its own V8 isolate, an 894 KB bundle (half of it zod, pulled in through the ship-kind types) and the ship catalogue built at load.
+- **Fix:** a worker pool (one worker per core, several sector worlds each). Rss 1,966 → 908 MB, worker heap 817 → 173 MB, 60 Hz kept. Test and showcase servers that only use test rooms boot no galaxy sectors (`EQX_GALAXY_SECTORS=none`): 268 MB.
+- **Rules:**
+  - A `worker_threads` worker is a whole engine. Count its floor before making one per entity.
+  - A stall with no busy thread is the host (memory, paging, driver), not game code. Measure the process before profiling frames.
+- **Not yet done:** the worker still loads zod and builds the whole catalogue; the main-thread heap (163-266 MB) is unexamined; the client side is unmeasured.
