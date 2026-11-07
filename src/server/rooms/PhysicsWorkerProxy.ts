@@ -1,8 +1,10 @@
 /**
- * Owns the lifecycle + message-routing for the physics worker thread.
+ * Owns the lifecycle + message-routing for this room's physics WORLD, hosted
+ * on the shared worker pool (PhysicsWorkerPool.ts, 2026-11-07: one worker
+ * per sector cost ~37 MB each before any body).
  *
  * Encapsulates:
- *   - `bundleWorker` esbuild bundle + Worker constructor
+ *   - attaching / detaching the world on the pool
  *   - the `READY` handshake (Promise resolution gate)
  *   - the `SLEEP_TRANSITION` and `CONTACT_BATCH` message routing
  *   - error / exit handlers with structured logger output
@@ -18,10 +20,9 @@
  * Extracted from SectorRoom (commit 20 of v3 refactor plan).
  */
 
-import { Worker } from 'node:worker_threads';
 import type { Logger } from 'pino';
 import type { Vec2 } from '../../core/swarm/asteroidShape.js';
-import { bundleWorker } from '../workers/bundleWorker.js';
+import { getPhysicsWorkerPool, type PooledWorld } from './PhysicsWorkerPool.js';
 
 /**
  * The closed-set discriminated union of worker commands. Mirrored from
@@ -84,6 +85,7 @@ export interface ContactPayload {
  *  doesn't have a strict union today — see CLAUDE.md note). */
 interface WorkerToMainMsg {
   type: string;
+  worldId?: number;
   entityId?: string;
   sleeping?: boolean;
   tick?: number;
@@ -106,92 +108,51 @@ export interface PhysicsWorkerProxyDeps {
 }
 
 export class PhysicsWorkerProxy {
-  private worker: Worker | null = null;
+  private world: PooledWorld | null = null;
 
   constructor(private readonly deps: PhysicsWorkerProxyDeps) {}
 
+  /** This room's worker heap (shared with the other worlds on that worker),
+   *  for /dev/memory. Null before start. */
+  async heapStats(): Promise<{ usedBytes: number; totalBytes: number; workerIndex: number } | null> {
+    const w = this.world;
+    if (!w) return null;
+    const h = await w.heapStats();
+    return h ? { ...h, workerIndex: w.workerIndex } : null;
+  }
+
   /**
-   * Bundle + spawn the physics worker. Resolves after the worker posts
-   * `READY`. Rejects if the worker errors / exits / times out before
-   * 10 s. Mirrors the original `spawnWorker` exactly.
+   * Host this room's physics world on the shared worker pool
+   * (PhysicsWorkerPool.ts). Resolves once the world is READY; rejects if it
+   * isn't within 10 s.
    */
   async start(): Promise<void> {
-    const workerCode = await bundleWorker({
-      entryPoint: this.deps.workerEntryPath,
-      // Rapier ships a pre-built WASM binary; keep it external so the
-      // worker accesses the same copy as the main thread (avoids
-      // double-init).
-      external: ['@dimforge/rapier2d-compat'],
-    });
-    return new Promise<void>((resolve, reject) => {
-      this.worker = new Worker(workerCode, {
-        eval: true,
-        workerData: { sab: this.deps.sab },
-      });
+    const pool = getPhysicsWorkerPool(this.deps.workerEntryPath, this.deps.logger);
+    try {
+      this.world = await pool.attach(this.deps.sab, (msg) => this.onMessage(msg));
+    } catch (err) {
+      this.deps.logger.error({ err, ...this.deps.stats() }, 'physics world failed to start');
+      throw err;
+    }
+  }
 
-      let ready = false;
-
-      this.worker.on('message', (msg: WorkerToMainMsg) => {
-        if (!ready && msg.type === 'READY') {
-          ready = true;
-          resolve();
-          return;
-        }
-        if (msg.type === 'SLEEP_TRANSITION' && typeof msg.entityId === 'string' && typeof msg.sleeping === 'boolean') {
-          this.deps.onSleepTransition(msg.entityId, msg.sleeping);
-        }
-        if (msg.type === 'CONTACT_BATCH' && Array.isArray(msg.contacts) && typeof msg.tick === 'number') {
-          this.deps.onContactBatch(msg.tick, msg.contacts);
-        }
-      });
-
-      this.worker.on('error', (err) => {
-        // Surface the full error — message, stack, name, code — so
-        // OOM / assertion failures from Rapier WASM are diagnostic
-        // rather than mute. Without `err.stack`, pino's serializer may
-        // drop the underlying crash site.
-        const errAny = err as Error & { code?: string };
-        const stats = this.deps.stats();
-        this.deps.logger.error(
-          {
-            err,
-            errMessage: errAny?.message,
-            errStack: errAny?.stack,
-            errName: errAny?.name,
-            errCode: errAny?.code,
-            ...stats,
-          },
-          'physics worker error',
-        );
-        if (!ready) reject(err);
-      });
-
-      this.worker.on('exit', (code) => {
-        if (code !== 0) {
-          const stats = this.deps.stats();
-          this.deps.logger.error(
-            { code, ...stats },
-            'physics worker exited unexpectedly',
-          );
-          if (!ready) reject(new Error(`physics worker exited with code ${code}`));
-        }
-      });
-
-      setTimeout(() => {
-        if (!ready) reject(new Error('physics worker did not become READY within 10 s'));
-      }, 10_000);
-    });
+  private onMessage(msg: WorkerToMainMsg): void {
+    if (msg.type === 'SLEEP_TRANSITION' && typeof msg.entityId === 'string' && typeof msg.sleeping === 'boolean') {
+      this.deps.onSleepTransition(msg.entityId, msg.sleeping);
+    }
+    if (msg.type === 'CONTACT_BATCH' && Array.isArray(msg.contacts) && typeof msg.tick === 'number') {
+      this.deps.onContactBatch(msg.tick, msg.contacts);
+    }
   }
 
   /** Type-safe postMessage facade — the only sanctioned path to the worker. */
   postCommand(cmd: WorkerCmd): void {
-    if (!this.worker) return;
-    this.worker.postMessage(cmd);
+    this.world?.post(cmd);
   }
 
-  /** Used by `onDispose`. Worker may not exist if start() never ran. */
+  /** Used by `onDispose`: frees this room's world (the pool worker stays). */
   terminate(): void {
-    this.worker?.terminate();
-    this.worker = null;
+    this.world?.detach();
+    this.world = null;
   }
 }

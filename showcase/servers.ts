@@ -16,17 +16,19 @@ export interface ServerPorts {
 
 export const DEFAULT_PORTS: ServerPorts = { server: 2767, vite: 5373 };
 
-/** Env per profile. Living world off unless a shot needs galaxy life. */
+/** Env per profile. Living world off unless a shot needs galaxy life; the
+ *  test-room-only profiles boot no galaxy sectors (EQX_GALAXY_SECTORS=none:
+ *  memory, 2026-11-07 — each sector is a room plus a physics world). */
 export function profileEnv(profile: ServerProfile): Record<string, string> {
   switch (profile) {
     case 'lean':
-      return { EQX_DISABLE_LIVING_WORLD: '1' };
+      return { EQX_DISABLE_LIVING_WORLD: '1', EQX_GALAXY_SECTORS: 'none' };
     case 'living':
       return {};
     case 'wave':
       return { EQX_E2E_WAVE: '1', EQX_BOT_SPOOL_MS: '5000', EQX_BOT_HOP_MS: '500' };
     case 'capitals':
-      return { EQX_DISABLE_LIVING_WORLD: '1', EQX_SECTOR_SCALE: '4' };
+      return { EQX_DISABLE_LIVING_WORLD: '1', EQX_SECTOR_SCALE: '4', EQX_GALAXY_SECTORS: 'none' };
   }
 }
 

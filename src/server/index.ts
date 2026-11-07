@@ -8,6 +8,7 @@ import path from 'node:path';
 import { createServer } from 'node:http';
 import { pino } from 'pino';
 import { SectorRoom } from './rooms/SectorRoom.js';
+import { galaxySectorsToBoot } from './rooms/galaxyBoot.js';
 import { GATE_TEST_PREBUILT, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './rooms/scenarioLayouts.js';
 import { SHOWCASE_ROOMS } from './rooms/showcaseRooms.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
@@ -223,6 +224,33 @@ if (process.env['NODE_ENV'] !== 'production') {
   // E2E can localise DC throughput variance.
   app.get('/dev/webrtc-counters', (req, res) => {
     void devWebrtcCountersHandler(req, res);
+  });
+
+  // GET /dev/memory — where the server's memory goes: the process (rss, V8
+  // heap, external/array buffers) and each room's physics worker heap. Found
+  // 2026-11-07: an idle dev server held ~1.7 GB, ~37 MB of it per sector
+  // worker before any body exists.
+  app.get('/dev/memory', (_req, res) => {
+    void (async () => {
+      const MB = 1048576;
+      const m = process.memoryUsage();
+      const listings = await matchMaker.query({});
+      const rooms: Array<{ room: string; roomId: string; clients: number; worker: number | null }> = [];
+      const workers = new Map<number, number>(); // pool worker → heap MB (shared by its rooms)
+      for (const l of listings) {
+        const r = matchMaker.getLocalRoomById(l.roomId) as unknown as SectorRoom | undefined;
+        const h = r && typeof r.workerHeapStats === 'function' ? await r.workerHeapStats() : null;
+        if (h) workers.set(h.workerIndex, Math.round(h.usedBytes / MB));
+        rooms.push({ room: l.name, roomId: l.roomId, clients: l.clients, worker: h ? h.workerIndex : null });
+      }
+      res.json({
+        rssMb: Math.round(m.rss / MB), heapUsedMb: Math.round(m.heapUsed / MB), heapTotalMb: Math.round(m.heapTotal / MB),
+        externalMb: Math.round(m.external / MB), arrayBuffersMb: Math.round(m.arrayBuffers / MB),
+        rooms: rooms.length, physicsWorkers: workers.size,
+        workerHeapMb: Object.fromEntries(workers), workerHeapTotalMb: [...workers.values()].reduce((s, v) => s + v, 0),
+        perRoom: rooms,
+      });
+    })().catch((err: unknown) => res.status(500).json({ error: String(err) }));
   });
 
   // GET /dev/population — Living World director snapshot (per-sector
@@ -1252,7 +1280,13 @@ async function main(): Promise<void> {
   // reservations always find a live destination. Sequential await: the
   // matchmaker doesn't love parallel `create` calls during boot.
   const galaxyRooms = new Map<string, SectorRoom>();
+  // EQX_GALAXY_SECTORS (memory, 2026-11-07): which sectors boot eagerly. Unset
+  // = all (normal play). A test or showcase server that only uses test rooms
+  // boots none; a sector left out still starts on demand when someone joins.
+  const bootSectors = galaxySectorsToBoot(GALAXY_SECTORS.map((s) => s.key));
+  if (bootSectors.length !== GALAXY_SECTORS.length) logger.info({ sectors: bootSectors }, 'EQX_GALAXY_SECTORS: booting a subset of the galaxy');
   for (const sector of GALAXY_SECTORS) {
+    if (!bootSectors.includes(sector.key)) continue;
     try {
       const listing = await matchMaker.createRoom(`galaxy-${sector.key}`, {});
       const room = matchMaker.getLocalRoomById(listing.roomId) as unknown as SectorRoom;

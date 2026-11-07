@@ -743,6 +743,10 @@ export class SectorRoom extends Room<SectorState> {
    *  postMessage facade). Extracted to PhysicsWorkerProxy.ts (commit 20
    *  of v3 refactor plan). */
   private physicsWorkerProxy!: PhysicsWorkerProxy;
+  /** /dev/memory: this room's physics worker heap. */
+  workerHeapStats(): Promise<{ usedBytes: number; totalBytes: number; workerIndex: number } | null> {
+    return this.physicsWorkerProxy ? this.physicsWorkerProxy.heapStats() : Promise.resolve(null);
+  }
   private sab!: SharedArrayBuffer;
   private sabU32!: Uint32Array;
   private sabF32!: Float32Array;

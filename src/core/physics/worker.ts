@@ -109,8 +109,24 @@ interface SetPadFieldCmd    { type: 'SET_PAD_FIELD';   id: string; cx: number; c
 interface RemovePadFieldCmd { type: 'REMOVE_PAD_FIELD'; id: string }
 type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd;
 
-async function main(): Promise<void> {
-  const { sab } = workerData as { sab: SharedArrayBuffer };
+/** Pool commands (main → pooled worker): host / free one sector's world. */
+interface AddWorldCmd    { type: 'ADD_WORLD'; worldId: number; sab: SharedArrayBuffer }
+interface RemoveWorldCmd { type: 'REMOVE_WORLD'; worldId: number }
+
+/** One sector's simulation: its Rapier world, input queues and SAB writer. */
+interface WorldHandle {
+  handle(cmd: WorkerCommand): void;
+  step(): void;
+  dispose(): void;
+}
+
+/**
+ * Build one sector world over its SAB. `post` sends a worker→main message
+ * for THIS world (a pooled worker tags it with the world id). Everything a
+ * world owns lives in this closure, so one worker can host several
+ * (memory: one V8 isolate + one code copy per worker, not per sector).
+ */
+async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [k: string]: unknown }) => void): Promise<WorldHandle> {
   const u32 = new Uint32Array(sab);
   const f32 = new Float32Array(sab);
 
@@ -147,9 +163,7 @@ async function main(): Promise<void> {
   const prevVel = new Map<string, { vx: number; vy: number }>();
   let tick = 0;
 
-  // Register command handler BEFORE signalling READY so commands sent
-  // immediately after READY are not dropped.
-  parentPort!.on('message', (cmd: WorkerCommand) => {
+  const handle = (cmd: WorkerCommand): void => {
     switch (cmd.type) {
       case 'SPAWN': {
         physics.spawnShip(cmd.playerId, cmd.x, cmd.y, cmd.kindId);
@@ -299,16 +313,8 @@ async function main(): Promise<void> {
         break;
       }
     }
-  });
+  };
 
-  parentPort!.postMessage({ type: 'READY' });
-
-  // Hi-res tick loop. `setInterval(fn, 16.67)` on Windows quantises to the
-  // ~15.6 ms multimedia-clock granularity and fires every ~31 ms (≈ 32 Hz),
-  // which is what made the May 2026 capture show 37–46 Hz instead of 60.
-  // setImmediate has ~1 ms granularity and lets us hit 60 Hz reliably.
-  const TICK_MS_HR = 1000 / 60;
-  let nextTickAt = performance.now();
   // Per-step scratch (campaign 1.4, invariant #14): `step()` is the 60 Hz hot
   // loop — these were `new Map()` / `[]` + per-transition literals allocated
   // EVERY step. Reused across steps: the map clears at step top; the
@@ -450,7 +456,7 @@ async function main(): Promise<void> {
     // discrete event arrive in a consistent order on the main thread.
     for (let i = 0; i < transitionCount; i++) {
       const t = transitionScratch[i]!;
-      parentPort!.postMessage({ type: 'SLEEP_TRANSITION', entityId: t.id, sleeping: t.sleeping, tick });
+      post({ type: 'SLEEP_TRANSITION', entityId: t.id, sleeping: t.sleeping, tick });
     }
 
     // Stage 2 — drain contact-force events and post a single batched
@@ -461,7 +467,7 @@ async function main(): Promise<void> {
     // tag each contact with its impact (closing) speed for the damage gate.
     const contacts = drainContacts(eventQueue, physics, CONTACT_FORCE_FLOOR, prevVel);
     if (contacts.length > 0) {
-      parentPort!.postMessage({ type: 'CONTACT_BATCH', tick, contacts });
+      post({ type: 'CONTACT_BATCH', tick, contacts });
     }
 
     // Snapshot THIS tick's post-step velocities as NEXT tick's pre-step
@@ -491,6 +497,65 @@ async function main(): Promise<void> {
     const stepUs = Math.max(0, Math.round((performance.now() - tStepStart) * 1000));
     u32[WORKER_TICK_US_IDX] = stepUs > 0xffff_ffff ? 0xffff_ffff : stepUs;
   };
+
+  return {
+    handle,
+    step,
+    dispose: () => {
+      eventQueue.free();
+      physics.dispose();
+    },
+  };
+}
+
+/**
+ * Two modes:
+ *  - **single world** (`workerData.sab`): one sector, untagged messages. Tests
+ *    that spawn a bare worker use this.
+ *  - **pooled** (`workerData.pooled`): `ADD_WORLD` / `REMOVE_WORLD` host and
+ *    free sector worlds; every other command carries `worldId`, and every
+ *    message back is tagged with it. Memory, 2026-11-07: a worker costs
+ *    ~37 MB before any body (isolate + code + the ship catalogue), and the
+ *    galaxy runs 21 sectors — one worker per sector held ~800 MB of heap.
+ */
+async function main(): Promise<void> {
+  const data = workerData as { sab?: SharedArrayBuffer; pooled?: boolean };
+  const worlds = new Map<number, WorldHandle>();
+  if (data.sab) {
+    const world = await createWorld(data.sab, (m) => parentPort!.postMessage(m));
+    worlds.set(0, world);
+    // Register the handler BEFORE signalling READY so commands sent right
+    // after READY are not dropped.
+    parentPort!.on('message', (cmd: WorkerCommand) => world.handle(cmd));
+    parentPort!.postMessage({ type: 'READY' });
+  } else {
+    parentPort!.on('message', (cmd: WorkerCommand | AddWorldCmd | RemoveWorldCmd) => {
+      if (cmd.type === 'ADD_WORLD') {
+        const worldId = cmd.worldId;
+        void createWorld(cmd.sab, (m) => { m['worldId'] = worldId; parentPort!.postMessage(m); }).then((w) => {
+          worlds.set(worldId, w);
+          parentPort!.postMessage({ type: 'READY', worldId });
+        });
+        return;
+      }
+      if (cmd.type === 'REMOVE_WORLD') {
+        worlds.get(cmd.worldId)?.dispose();
+        worlds.delete(cmd.worldId);
+        return;
+      }
+      worlds.get((cmd as { worldId?: number }).worldId ?? -1)?.handle(cmd);
+    });
+    parentPort!.postMessage({ type: 'POOL_READY' });
+  }
+
+  // Hi-res tick loop. `setInterval(fn, 16.67)` on Windows quantises to the
+  // ~15.6 ms multimedia-clock granularity and fires every ~31 ms (≈ 32 Hz),
+  // which is what made the May 2026 capture show 37–46 Hz instead of 60.
+  // setImmediate has ~1 ms granularity and lets us hit 60 Hz reliably.
+  // Every hosted world steps once per tick, in insertion order.
+  const TICK_MS_HR = 1000 / 60;
+  let nextTickAt = performance.now();
+  const step = (): void => { for (const w of worlds.values()) w.step(); };
 
   // The schedule pattern uses `setImmediate` only on tick-due frames so a
   // backlog (post-GC pause) drains in one event-loop turn; otherwise yields

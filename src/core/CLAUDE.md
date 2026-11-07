@@ -113,6 +113,10 @@ Test coverage at [physics/inputQueue.test.ts](physics/inputQueue.test.ts) locks 
 
 ---
 
+## Physics Worker — one worker, many worlds (2026-11-07)
+
+`worker.ts` builds each sector world with `createWorld(sab, post)`: its Rapier world, input queues, sleep state and SAB writer all live in that closure. Single-world mode (`workerData.sab`, untagged messages) is what tests that spawn a bare worker use; pooled mode (`workerData.pooled`) takes `ADD_WORLD { worldId, sab }` / `REMOVE_WORLD { worldId }`, routes every other command by its `worldId`, tags every reply with it, posts `POOL_READY` at start and `READY { worldId }` per world, and steps every hosted world once per tick. Never put per-sector state at module scope in the worker: several sectors share it now. Server side: `src/server/rooms/PhysicsWorkerPool.ts`.
+
 ## Physics Worker — Worker→Main Message Variants
 
 The worker posts three discrete message types to the main thread:
