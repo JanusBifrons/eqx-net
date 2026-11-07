@@ -28,7 +28,14 @@ export interface RecordResult {
   gapMaxMs: number;
   /** Netcode health over the take (null when there is no local pilot). */
   net: NetStats | null;
+  /** The longest frames of the take with what ran in them (Chrome's
+   *  long-animation-frame API), worst first. Empty when none ran long. */
+  longFrames: LongFrame[];
 }
+
+/** One long frame: its time into the take, length, and the scripts it ran. */
+export interface LongFrame { atMs: number; ms: number; blockingMs: number; scripts: string }
+
 
 /** How the server and the local prediction behaved while a take recorded. */
 export interface NetStats {
@@ -148,7 +155,11 @@ export class Recorder {
     const index: FrameIndex = { frames: [], startT: 0, endT: 0 };
     let n = 0;
     let writing = Promise.resolve();
+    let stopped = false;
     cdp.on('Page.screencastFrame', (f: { data: string; sessionId: number; metadata: { timestamp?: number } }) => {
+      // A frame that arrives after the take ended would keep an absolute
+      // time (the rebase below has run) and wreck the encode timeline.
+      if (stopped) { void cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {}); return; }
       const t = (f.metadata.timestamp ?? Date.now() / 1000) * 1000;
       const file = `frames/${String(n++).padStart(6, '0')}.jpg`;
       index.frames.push({ file, t });
@@ -164,6 +175,8 @@ export class Recorder {
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality, everyNthFrame: 1, ...size });
     index.startT = Date.now();
     const net0 = await readNet(page);
+    await startLongFrames(page);
+    await startPoseTrace(page);
     if (shot.camera) await ctx.cinema.play(scaleCues(shot.camera, phone ? 1 : ctx.viewport.width / 1920));
     // A failed action means the take did not show what the caption says:
     // fail the take (after stopping the screencast) so it is retaken.
@@ -175,6 +188,10 @@ export class Recorder {
       : null;
     await sleep(shot.durationMs);
     const net1 = await readNet(page);
+    const longFrames = await takeLongFrames(page);
+    const trace = await takePoseTrace(page);
+    if (trace) writeFileSync(path.join(clipDir, 'pose-trace.json'), trace);
+    stopped = true;
     await cdp.send('Page.stopScreencast');
     index.endT = Date.now();
     await actions;
@@ -187,7 +204,7 @@ export class Recorder {
       for (const f of index.frames) f.t -= t0;
     }
     writeFileSync(path.join(clipDir, 'frames.json'), JSON.stringify(index));
-    return { clipDir, index, ...frameStats(index, shot.durationMs), net: netDelta(net0, net1) };
+    return { clipDir, index, ...frameStats(index, shot.durationMs), net: netDelta(net0, net1), longFrames };
   }
 
   private makeContext(page: Page, hud: HudMode, viewport: { width: number; height: number }): ShotContext {
@@ -293,6 +310,71 @@ export function targetUrl(baseUrl: string, target: ShotTarget, testId: string, h
  * be catching up, which films as a 20 Hz judder of the ship (round 3 fly-by,
  * 2026-11-05). Shots with no local ship (landing, galaxy) pass at once.
  */
+/**
+ * Game-side ground truth for smoothness: every animation frame, the RENDERED
+ * pose of the local ship and of the biggest other ship (the mirror after the
+ * frame's single pose resolve), plus the prediction lerp offset. Video-based
+ * gates infer motion from pixels; this says what the game itself drew.
+ */
+async function startPoseTrace(page: Page): Promise<void> {
+  await page.evaluate(`(() => {
+    const g = globalThis;
+    g.__eqxTrace = [];
+    g.__eqxTraceOn = true;
+    const step = () => {
+      if (!g.__eqxTraceOn) return;
+      const c = g.__eqxClient;
+      const m = c && c.mirror;
+      if (m) {
+        const me = m.localPlayerId ? m.ships.get(m.localPlayerId) : null;
+        let big = null, br = 0;
+        if (m.swarm) m.swarm.forEach((e) => { if (e.kind === 1 && (e.radius || 0) > br) { br = e.radius || 0; big = e; } });
+        const lo = c.reconciler && c.reconciler.lerpOffset;
+        const ps = c.predWorld && m.localPlayerId ? c.predWorld.getShipState(m.localPlayerId) : null;
+        g.__eqxTrace.push([performance.now(), me ? me.x : NaN, me ? me.y : NaN, me ? me.angle : NaN, big ? big.x : NaN, big ? big.y : NaN, big ? big.angle : NaN, lo ? lo.x : 0, lo ? lo.y : 0, c.inputTick || 0, m.frameTimeMs || 0, c._lastLocalTickAtMs ?? -1, ps ? ps.x : NaN, ps ? ps.y : NaN, ps ? ps.vx : NaN, ps ? ps.vy : NaN]);
+      }
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  })()`).catch(() => undefined);
+}
+
+/** Stop the pose trace; JSON rows [t, meX, meY, meA, bigX, bigY, bigA, lerpX, lerpY, inputTick, frameTimeMs, tickDueMs, physX, physY, physVx, physVy]. */
+async function takePoseTrace(page: Page): Promise<string | null> {
+  return page.evaluate<string | null>(`(() => { const g = globalThis; g.__eqxTraceOn = false; return g.__eqxTrace ? JSON.stringify(g.__eqxTrace) : null; })()`).catch(() => null);
+}
+
+/** Start collecting long animation frames (> 50 ms) in the page. */
+async function startLongFrames(page: Page): Promise<void> {
+  // A string, not a function: tsx injects `__name` into named functions.
+  await page.evaluate(`(() => {
+    const g = globalThis;
+    g.__eqxLoaf = [];
+    g.__eqxLoafT0 = performance.now();
+    try {
+      g.__eqxLoafObs?.disconnect();
+      g.__eqxLoafObs = new PerformanceObserver((list) => { for (const e of list.getEntries()) g.__eqxLoaf.push(e); });
+      g.__eqxLoafObs.observe({ type: 'long-animation-frame', buffered: false });
+    } catch { /* API missing: no attribution */ }
+  })()`).catch(() => undefined);
+}
+
+/** The take's five longest frames with their top scripts (stop collecting). */
+async function takeLongFrames(page: Page): Promise<LongFrame[]> {
+  return page.evaluate<LongFrame[]>(`(() => {
+    const g = globalThis;
+    g.__eqxLoafObs?.disconnect();
+    const t0 = g.__eqxLoafT0 ?? 0;
+    const all = (g.__eqxLoaf ?? []).slice().sort((a, b) => b.duration - a.duration).slice(0, 5);
+    return all.map((e) => {
+      const scripts = (e.scripts ?? []).slice().sort((a, b) => b.duration - a.duration).slice(0, 3)
+        .map((s) => (s.sourceFunctionName || s.invoker || '?') + ' (' + String(s.sourceURL || '').split('/').pop().split('?')[0] + ') ' + Math.round(s.duration) + 'ms')
+        .join('; ');
+      return { atMs: Math.round(e.startTime - t0), ms: Math.round(e.duration), blockingMs: Math.round(e.blockingDuration ?? 0), scripts: scripts || 'no script (render/GC/GPU)' };
+    });
+  })()`).catch(() => []);
+}
+
 interface NetSample { t: number; serverTick: number; corrections: number; snapshots: number }
 
 /** The local client's prediction counters (null with no local pilot). */
