@@ -96,6 +96,9 @@ export function updateShipSprites(mirror: RenderMirror, ctx: ShipSpriteCtx): voi
     sprite.x = ship.x;
     sprite.y = -ship.y;
     sprite.rotation = -ship.angle;
+    // Phase 4 warp travel: another pilot's ship on its warp run is out of the
+    // world (its departure and arrival are drawn by WarpFx).
+    sprite.visible = !(ship.warp === 2 && playerId !== mirror.localPlayerId);
     updateArtShipLight(ctx.art, sprite);
 
     // Damage flash takes priority; beam hit tint is secondary.

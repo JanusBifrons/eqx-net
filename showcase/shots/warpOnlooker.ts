@@ -11,6 +11,13 @@ import { sectorSites, warpDropPoint } from '../../src/core/galaxy/sectorSites.js
  */
 const PILOT_X = 600;
 const PILOT_Y = 250;
+/** Where the filmed ship waits for the arrival: 900 u past the pilot's drop
+ *  point along the run, so both sit in frame without moving the camera. */
+const ARRIVE_WATCH = (() => {
+  const gate = sectorSites('sol-prime').find((s) => s.kind === 'gate')!;
+  const d = warpDropPoint(gate, PILOT_X, PILOT_Y);
+  return { x: Math.round(d.x + 600), y: Math.round(d.y + 400) };
+})();
 
 export const warpOnlooker: Shot = {
   id: 'warp-onlooker',
@@ -18,18 +25,20 @@ export const warpOnlooker: Shot = {
   title: 'Someone warps out',
   caption: 'Seen from outside: the engines build, the ship streaks away and leaves two burning trails behind it.',
   features: ['P4'],
-  docs: [],
+  docs: ['warp-to', 'travel-state'],
   reel: false,
   server: 'solar',
   target: { galaxy: 'sol-prime', params: { solar: '1', spawnX: 0, spawnY: 0, art: 'machined', fx: 'new' } },
   hud: 'clean',
-  durationMs: 15_000,
+  durationMs: 13_000,
   async run(ctx) {
     const gate = sectorSites('sol-prime').find((s) => s.kind === 'gate')!;
     const drop = warpDropPoint(gate, PILOT_X, PILOT_Y);
     const len = Math.hypot(drop.x - PILOT_X, drop.y - PILOT_Y);
     const dx = (drop.x - PILOT_X) / len, dy = (drop.y - PILOT_Y) / len;
 
+    // Settle the camera first, so nothing moves while the other pilot arrives.
+    await ctx.cinema.play([{ atMs: 0, smoothMs: 800, shot: { kind: 'hold', x: PILOT_X + dx * 900, y: PILOT_Y + dy * 900, zoom: 0.32 } }]);
     const browser = ctx.page.context().browser() as Browser;
     const other: BrowserContext = await browser.newContext({ viewport: { width: 480, height: 270 } });
     try {
@@ -47,14 +56,59 @@ export const warpOnlooker: Shot = {
         const c = (globalThis as unknown as { __eqxClient?: { mirror?: { ships?: Map<string, unknown> } } }).__eqxClient;
         return (c?.mirror?.ships?.size ?? 0) >= 2;
       }, undefined, { timeout: 30_000 });
-      // Frame the pilot with room ahead for the trails.
-      await ctx.cinema.play([{ atMs: 0, smoothMs: 800, shot: { kind: 'hold', x: PILOT_X + dx * 900, y: PILOT_Y + dy * 900, zoom: 0.32 } }]);
       await ctx.sleep(1500);
       ctx.log(`pilot warps to (${Math.round(drop.x)}, ${Math.round(drop.y)})`);
       await pilot.evaluate(`globalThis.__eqxClient && globalThis.__eqxClient.requestWarp(${drop.x}, ${drop.y})`);
-      await ctx.sleep(11_000);
+      await ctx.sleep(8_000);
     } finally {
       await other.close().catch(() => undefined);
     }
   },
 };
+
+/**
+ * The other end: the filmed ship waits at the gate pocket while a second
+ * pilot warps in from home. It drops out beside you with the arrival effect,
+ * at a spot clear of anything (the travel state's landing rule).
+ */
+export const warpArrival: Shot = {
+  id: 'warp-arrival',
+  section: 'mechanics',
+  title: 'Someone warps in',
+  caption: 'Seen at the destination: a ship drops out of warp beside you, clear of anything in the way.',
+  features: ['P4'],
+  docs: ['warp-to', 'travel-state'],
+  reel: false,
+  server: 'solar',
+  // Filled in by run(): the filmed ship spawns beside the pilot's drop point.
+  target: { galaxy: 'sol-prime', params: { solar: '1', spawnX: ARRIVE_WATCH.x, spawnY: ARRIVE_WATCH.y, art: 'machined', fx: 'new' } },
+  hud: 'clean',
+  durationMs: 24_000,
+  async run(ctx) {
+    const drop = arrivalDrop();
+    // Frame the drop point and the filmed ship at once (no camera move).
+    await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: drop.x + 300, y: drop.y + 200, zoom: 0.5 } }]);
+    const browser = ctx.page.context().browser() as Browser;
+    const other: BrowserContext = await browser.newContext({ viewport: { width: 480, height: 270 } });
+    try {
+      const pilot: Page = await other.newPage();
+      const url = targetUrl(ctx.baseUrl, { galaxy: 'sol-prime', params: { solar: '1', spawnX: PILOT_X, spawnY: PILOT_Y } }, ctx.testId, 'none').replace('worker=0', 'worker=1');
+      await pilot.goto(url);
+      await pilot.waitForFunction(() => {
+        const c = (globalThis as unknown as { __eqxClient?: { mirror?: { localPlayerId?: string | null; ships?: Map<string, unknown> } } }).__eqxClient;
+        const id = c?.mirror?.localPlayerId;
+        return !!id && !!c?.mirror?.ships?.get(id);
+      }, undefined, { timeout: 30_000 });
+      ctx.log(`pilot warps to (${Math.round(drop.x)}, ${Math.round(drop.y)})`);
+      await pilot.evaluate(`globalThis.__eqxClient && globalThis.__eqxClient.requestWarp(${drop.x}, ${drop.y})`);
+      await ctx.sleep(21_000);
+    } finally {
+      await other.close().catch(() => undefined);
+    }
+  },
+};
+
+function arrivalDrop(): { x: number; y: number } {
+  const gate = sectorSites('sol-prime').find((s) => s.kind === 'gate')!;
+  return warpDropPoint(gate, PILOT_X, PILOT_Y);
+}

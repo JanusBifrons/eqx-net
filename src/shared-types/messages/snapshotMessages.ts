@@ -211,9 +211,11 @@ export interface SnapshotMessage {
       /** v4 A — this (own, active) ship is DISABLED by an alien gate for this
        *  many more ms (engines and weapons offline); emitted when > 0. */
       disabledMs?: number;
-      /** Phase 4 warp-to — 1 spooling, 2 on the run; absent = idle. PUBLIC:
-       *  every client draws the build-up and the run (#16). */
-      warp?: 1 | 2;
+      /** Phase 4 warp-to — 1 spooling, 2 on the run, 3 just dropped out;
+       *  absent = idle. PUBLIC (#16): every client draws the build-up and the
+       *  arrival. A ship on its run (2) is out of the world: other clients hide
+       *  it and drop its collision body; only its own pilot keeps flying it. */
+      warp?: 1 | 2 | 3;
       /** Living World P5 — the OWN active ship's fitted blueprint ids (emit-when-
        *  non-empty). Drives the cargo capacity + the upgrade modal's weapon gate. */
       fitted?: string[];

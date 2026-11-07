@@ -151,6 +151,13 @@ export interface SnapshotBroadcasterDeps {
   /** Living World P1a-2 — auto-deposit progress 0..100 for a ship instance
    *  (undefined ⇒ not depositing). Own active ship only on the wire. */
   depositProgressOf?: (shipInstanceId: string) => number | undefined;
+  /** Phase 4 warp travel — the player's ship dropped out of a warp in the last
+   *  moment (others draw the arrival). Absent ⇒ never. */
+  warpArrived?: (playerId: string) => boolean;
+  /** The player's ship is still joining (its client hasn't said ready): it is
+   *  sent to its own pilot only, never to others (it would show as a parked
+   *  hull, then blink to active). Absent ⇒ never. */
+  isJoining?: (playerId: string) => boolean;
   /** Living World P5 — the blueprints fitted to a ship instance (own active
    *  ship only on the wire). A SHARED reference; undefined ⇒ none known. */
   fittedOf?: (shipInstanceId: string) => readonly string[] | undefined;
@@ -212,8 +219,11 @@ interface AllShipEntry {
   mounts: MountsRef;
   /** v4 T2 — the hull's teleport epoch (0 = never teleported). */
   poseEpoch: number;
-  /** Phase 4 warp-to phase from the SAB flags: 0 idle, 1 spool, 2 cruise. */
+  /** Phase 4 warp-to phase from the SAB flags: 0 idle, 1 spool, 2 cruise,
+   *  3 just arrived (the drop effect window). */
   warp: number;
+  /** Still joining: sent to its own pilot only. */
+  joining: boolean;
 }
 
 /** Read-only reference shape for the per-instance stat allocation (mirrors
@@ -253,7 +263,7 @@ type MutableStateEntry = {
   wallet?: number;
   poseEpoch?: number;
   disabledMs?: number;
-  warp?: 1 | 2;
+  warp?: 1 | 2 | 3;
   // Typed mutable to match the wire `SnapshotMessage['states'][...].mounts`; the
   // value assigned is a SHARED reference to `ShipState.mounts` (the encoder
   // reads it synchronously and never mutates it).
@@ -573,6 +583,7 @@ export class SnapshotBroadcaster {
         mounts: EMPTY_MOUNTS,
         poseEpoch: 0,
         warp: 0,
+        joining: false,
       };
       this._allShipsScratch[index] = entry;
     }
@@ -623,7 +634,9 @@ export class SnapshotBroadcaster {
       entry.lastInput.turnRight = !!(flags & FLAG_INPUT_TURN_RIGHT);
       entry.lastInput.boost     = !!(flags & FLAG_INPUT_BOOST);
       entry.lastInput.reverse   = !!(flags & FLAG_INPUT_REVERSE);
-      entry.warp = flags & FLAG_WARP_CRUISE ? 2 : flags & FLAG_WARP_SPOOL ? 1 : 0;
+      entry.warp = flags & FLAG_WARP_CRUISE ? 2 : flags & FLAG_WARP_SPOOL ? 1
+        : this.deps.warpArrived?.(playerId) === true ? 3 : 0;
+      entry.joining = !ship.isActive && this.deps.isJoining?.(playerId) === true;
       entry.energy = ship.energy;
       entry.shieldDown = ship.shield <= 0; // R2.32 — hull exposed → render aura off
       entry.level = ship.level; // Phase 4 WS-B1 — public level
@@ -666,6 +679,7 @@ export class SnapshotBroadcaster {
       entry.mounts = ship.mounts ?? EMPTY_MOUNTS;
       entry.poseEpoch = 0;
       entry.warp = 0;
+      entry.joining = false;
       allShipsCount++;
       this._aliveShipInstanceIds.add(shipInstanceId);
     }
@@ -710,6 +724,8 @@ export class SnapshotBroadcaster {
       // `_stateEntryPool` keyed by shipInstanceId.
       const states: SnapshotMessage['states'] = {};
       for (const ship of allShips) {
+        // A ship still joining is its own pilot's business until it arrives.
+        if (ship.joining && ship.playerId !== recipientPlayerId) continue;
         const includeLastInput = shouldIncludeLastInput(lastInputCache, ship.playerId, ship.lastInput);
         const angles = d.playerMountAngles.get(ship.playerId);
         let mountAnglesArr: number[] | undefined;
@@ -776,9 +792,10 @@ export class SnapshotBroadcaster {
         entry.wallet = ownActive ? this.deps.walletOf?.(ship.playerId) : undefined;
         // v4 T2 (#16) — teleport epoch: the owner re-seeds prediction on a change.
         entry.poseEpoch = ownActive && ship.poseEpoch > 0 ? ship.poseEpoch : undefined;
-        // Phase 4 (#16) — warp phase, PUBLIC (others see the build-up and the
-        // run), emitted only while warping (zero bytes otherwise).
-        entry.warp = ship.warp === 2 ? 2 : ship.warp === 1 ? 1 : undefined;
+        // Phase 4 (#16) — warp phase, PUBLIC: the build-up (1), the run (2:
+        // out of the world, other clients hide the ship) and the arrival (3).
+        // Zero bytes otherwise.
+        entry.warp = ship.warp === 1 || ship.warp === 2 || ship.warp === 3 ? ship.warp : undefined;
         // v4 A (#16) — the alien-gate disable, emitted while it runs.
         const dis = ownActive ? (this.deps.disabledMsOf?.(ship.playerId) ?? 0) : 0;
         entry.disabledMs = dis > 0 ? Math.ceil(dis) : undefined;

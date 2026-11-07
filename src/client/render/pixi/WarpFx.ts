@@ -23,7 +23,7 @@ import { WARP_SPOOL_TICKS } from '@core/physics/warpDrive';
 
 const SPOOL_S = WARP_SPOOL_TICKS / 60;
 /** Engine trails: reach along the path (world u), grow time, burn time (s). */
-const TRAIL_LEN = 2600;
+const TRAIL_LEN = 1600;
 const TRAIL_GROW_S = 0.15;
 const TRAIL_LIFE_S = 2.2;
 /** Trail segments; each fades a little more towards the far end. */
@@ -31,9 +31,9 @@ const SEGS = 5;
 const STREAK_LEN = 1400;
 const STREAK_LIFE_S = 0.35;
 const FLASH_LIFE_S = 0.3;
-const ARRIVE_STREAK_LEN = 1100;
-const ARRIVE_TRAIL_LEN = 700;
-const ARRIVE_LIFE_S = 1.4;
+const ARRIVE_STREAK_LEN = 160;
+const ARRIVE_TRAIL_LEN = 160;
+const ARRIVE_LIFE_S = 0.6;
 const SPEED_LINES = 28;
 const FIRE_CORE = 0xffe6a8, FIRE_OUT = 0xff6a1c, BLUE_GLOW = 0x8fd0ff, STREAK = 0xcfe4ff;
 
@@ -56,9 +56,12 @@ function bar(color: number): Sprite {
 
 interface ShipWarpView {
   phase: 0 | 1 | 2;
+  /** The arrival (3) was already drawn for this drop. */
+  arrivedDrawn: boolean;
   spoolStart: number;
-  /** Pose while spooling (Pixi space): where a departure starts. */
-  sx: number; sy: number;
+  /** Pose while spooling (Pixi space): where a departure starts, and the
+   *  heading it leaves on (the spool turns the ship to face its target). */
+  sx: number; sy: number; srot: number;
   gen: number;
   glowC: Graphics; glowL: Graphics; glowR: Graphics;
   streak: Sprite;
@@ -81,8 +84,8 @@ interface Burst {
 export interface WarpFxShip {
   /** Sprite pose (Pixi space). */
   x: number; y: number; rotation: number;
-  /** Phase from the mirror: undefined idle, 1 spool, 2 run. */
-  warp: 1 | 2 | undefined;
+  /** Phase from the mirror: undefined idle, 1 spool, 2 run, 3 just dropped out. */
+  warp: 1 | 2 | 3 | undefined;
   /** Stern distance from the centre, world u (engineProfileForKind). */
   stern: number;
   isLocal: boolean;
@@ -136,41 +139,48 @@ export class WarpFx {
       this.ships.set(id, v);
     }
     v.gen = this.gen;
-    const phase: 0 | 1 | 2 = ship.warp ?? 0;
+    const raw = ship.warp ?? 0;
+    const phase: 0 | 1 | 2 = raw === 3 ? 0 : raw;
     const fx = Math.sin(ship.rotation), fy = -Math.cos(ship.rotation); // nose direction (Pixi)
     if (phase !== v.phase) {
       if (phase === 1) v.spoolStart = this.now;
       if (phase === 2) {
-        // Engage: leave from where it spooled, along the line it took.
-        let dx = ship.x - v.sx, dy = ship.y - v.sy;
-        const len = Math.hypot(dx, dy);
-        if (v.phase === 1 && len > 1) { dx /= len; dy /= len; } else { dx = fx; dy = fy; }
+        // Engage: leave from where it spooled, along the heading it had while
+        // spooling (aligned to its target). The pose on this frame is
+        // unreliable: another pilot's ship on its run has no prediction body,
+        // so its mirror falls back to a stale position and heading.
+        const spooled = v.phase === 1;
+        const dx = spooled ? Math.sin(v.srot) : fx, dy = spooled ? -Math.cos(v.srot) : fy;
         const ox = v.phase === 1 ? v.sx : ship.x, oy = v.phase === 1 ? v.sy : ship.y;
         this.spawn('depart', ox - dx * ship.stern, oy - dy * ship.stern, dx, dy, ship.stern);
       }
-      if (phase === 0 && v.phase === 2) this.spawn('arrive', ship.x, ship.y, fx, fy, ship.stern);
+      if (phase === 0 && v.phase === 2) { this.spawn('arrive', ship.x, ship.y, fx, fy, ship.stern); v.arrivedDrawn = true; }
       v.phase = phase;
     }
+    // Another pilot just dropped out here (snapshot 3): draw the arrival once.
+    if (raw === 3 && !v.arrivedDrawn) { this.spawn('arrive', ship.x, ship.y, fx, fy, ship.stern); v.arrivedDrawn = true; }
+    if (raw !== 3 && phase !== 0) v.arrivedDrawn = false;
     const px = this.px;
     if (phase === 1) {
-      v.sx = ship.x; v.sy = ship.y;
+      v.sx = ship.x; v.sy = ship.y; v.srot = ship.rotation;
       this.spooling++;
       const p = Math.min(1, (this.now - v.spoolStart) / SPOOL_S);
-      // Pulse quickens from 2 Hz to 10 Hz; brightness and size build with charge.
-      const hz = 2 + 8 * p * p;
-      const pulse = 0.78 + 0.22 * Math.sin((this.now - v.spoolStart) * hz * Math.PI * 2);
-      const r = Math.max(ship.stern * (0.25 + 0.55 * p), px * (3 + 7 * p)) * pulse;
+      // A steady build: brightness and size ramp with charge, with only a
+      // faint shimmer (it should read as charging, not blinking).
+      const pulse = 0.94 + 0.06 * Math.sin((this.now - v.spoolStart) * 14);
+      const r = Math.max(ship.stern * (0.3 + 0.5 * p), px * (4 + 8 * p)) * pulse;
       const ex = ship.x - fx * ship.stern, ey = ship.y - fy * ship.stern;
       const gap = Math.max(ship.stern * 0.45, px * 4);
       const lx = -fy * gap, ly = fx * gap;
-      place(v.glowC, ex, ey, r * 1.2, 0.1 + 0.25 * p);
-      place(v.glowL, ex + lx, ey + ly, r * 0.6, 0.2 + 0.5 * p);
-      place(v.glowR, ex - lx, ey - ly, r * 0.6, 0.2 + 0.5 * p);
+      place(v.glowC, ex, ey, r * 1.2, 0.12 + 0.3 * p);
+      place(v.glowL, ex + lx, ey + ly, r * 0.6, 0.3 + 0.6 * p);
+      place(v.glowR, ex - lx, ey - ly, r * 0.6, 0.3 + 0.6 * p);
     } else {
       v.glowC.visible = v.glowL.visible = v.glowR.visible = false;
     }
-    if (phase === 2) {
-      // A hull streak trailing the ship while it runs.
+    if (phase === 2 && ship.isLocal) {
+      // A hull streak trailing the pilot's own ship while it runs (others'
+      // ships are out of the world on the run).
       const len = ship.isLocal ? 600 * px : 900 * px;
       line(v.streak, ship.x - fx * ship.stern * 0.5, ship.y - fy * ship.stern * 0.5, Math.atan2(-fy, -fx), len, Math.max(ship.stern * 0.6, px * 3), 0.22);
       if (ship.isLocal) this.drawSpeedLines(ship.x, ship.y, fx, fy);
@@ -196,6 +206,9 @@ export class WarpFx {
 
   /** Live departure/arrival effects (diagnostic / E2E). */
   burstCount(): number { return this.activeBursts; }
+  /** Direction of the last burst spawned (diagnostic / tests). */
+  lastBurstDir(): { x: number; y: number } { return this.lastDir; }
+  private readonly lastDir = { x: 0, y: 0 };
   /** Ships spooling this frame (diagnostic / E2E). */
   spoolCount(): number { return this.spooling; }
 
@@ -204,7 +217,7 @@ export class WarpFx {
     const streak = bar(STREAK);
     glowC.visible = glowL.visible = glowR.visible = streak.visible = false;
     this.layer.addChild(streak, glowC, glowL, glowR);
-    return { phase: 0, spoolStart: 0, sx: 0, sy: 0, gen: 0, glowC, glowL, glowR, streak };
+    return { phase: 0, arrivedDrawn: false, spoolStart: 0, sx: 0, sy: 0, srot: 0, gen: 0, glowC, glowL, glowR, streak };
   }
 
   private spawn(kind: 'depart' | 'arrive', x: number, y: number, dx: number, dy: number, stern: number): void {
@@ -220,6 +233,7 @@ export class WarpFx {
       b = { kind, t0: 0, x: 0, y: 0, dx: 0, dy: 0, stern: 0, root, core, out, streak, flash, live: false };
       this.bursts.push(b);
     }
+    this.lastDir.x = dx; this.lastDir.y = dy;
     b.kind = kind; b.t0 = this.now; b.x = x; b.y = y; b.dx = dx; b.dy = dy; b.stern = Math.max(4, stern); b.live = true;
     b.root.visible = true;
     this.stepBurst(b);
@@ -253,8 +267,9 @@ export class WarpFx {
         const x0 = sx + b.dx * seg * k + ox, y0 = sy + b.dy * seg * k + oy;
         const f = flick(t, side * 7 + k);
         const i = side * SEGS + k;
-        line(b.out[i]!, x0, y0, ang, seg, outW, 0.22 * heat * fade * fade * f);
-        line(b.core[i]!, x0, y0, ang, seg, coreW, 0.6 * heat * fade * f);
+        const soft = depart ? 1 : 0.6; // arrival trails: a softer touch
+        line(b.out[i]!, x0, y0, ang, seg, outW, 0.22 * soft * heat * fade * fade * f);
+        line(b.core[i]!, x0, y0, ang, seg, coreW, 0.6 * soft * heat * fade * f);
       }
     }
     // The blur streak: shoots out along the run and fades fast.
@@ -263,10 +278,12 @@ export class WarpFx {
     if (depart) line(b.streak, b.x, b.y, ang, STREAK_LEN * (0.3 + 0.7 * st), sw, 0.4 * (1 - st));
     else {
       const l = ARRIVE_STREAK_LEN * (1 - st);
-      line(b.streak, b.x - b.dx * l, b.y - b.dy * l, ang, l, sw, 0.4 * (1 - st));
+      line(b.streak, b.x - b.dx * l, b.y - b.dy * l, ang, l, sw * 0.7, 0.22 * (1 - st));
     }
     const ft = Math.min(1, t / FLASH_LIFE_S);
-    place(b.flash, b.x, b.y, Math.max(b.stern * (1 + 2 * ft), px * (6 + 12 * ft)), 0.6 * (1 - ft));
+    // The arrival flash is the only sign of a ship dropping in: a touch bigger and brighter.
+    const fa = depart ? 0.6 : 0.9, fr = depart ? 1 : 1.4;
+    place(b.flash, b.x, b.y, Math.max(b.stern * (1 + 2 * ft), px * (6 + 12 * ft)) * fr, fa * (1 - ft));
     return true;
   }
 

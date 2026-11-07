@@ -34,7 +34,7 @@ export interface AiTickCtx {
   aiController: AiController;
   serverTick: number;
   playerToSlot: Map<string, number>;
-  getActiveShip: (playerId: string) => { alive: boolean; isActive: boolean; health: number; maxHealth: number } | undefined;
+  getActiveShip: (playerId: string) => { alive: boolean; isActive: boolean; health: number; maxHealth: number; travelling?: boolean } | undefined;
   shipPoseCache: Map<string, PoseRecord>;
   aiPlayerScratch: AiPlayerView[];
   /** Wave-system Phase 2 — reused per-tick buffer for the faction-filtered
@@ -77,6 +77,8 @@ export function runAiTick(ctx: AiTickCtx): void {
   for (const [pid] of ctx.playerToSlot) {
     const ship = ctx.getActiveShip(pid);
     if (!ship?.alive) continue;
+    // Phase 4 warp travel: a ship on its run is out of the world.
+    if (ship.travelling === true) continue;
     // Liveness (#17) — `isAiTargetableHull`: ACTIVE hulls, PLUS (Living World
     // P1a-2, user decision 7 — hardcore) a hull whose pilot has DISCONNECTED
     // (lingering in the field is a real risk). A CONNECTED-but-inactive hull is

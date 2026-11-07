@@ -273,13 +273,18 @@ import {
   SLOT_VY_OFF,
   SLOT_ANGLE_OFF,
   SLOT_ANGVEL_OFF,
-  // FLAG_INPUT_* + SLOT_FLAGS_OFF now used inside SnapshotBroadcaster.ts
+  // FLAG_INPUT_* now used inside SnapshotBroadcaster.ts; the warp flags feed
+  // the warp travel tracker below.
+  SLOT_FLAGS_OFF,
+  FLAG_WARP_SPOOL,
+  FLAG_WARP_CRUISE,
   // SEQLOCK_IDX + SLOT_APPLIED_TICK_OFF moved into SabPoseMirror.ts
   slotBase,
   SAB_TOTAL_BYTES,
   MAX_ENTITIES,
 } from '../../shared-types/sabLayout.js';
 import { SnapshotRing } from '../lagcomp/SnapshotRing.js';
+import { WarpTravelTracker } from './warpTravel.js';
 // checkBackpressure now used inside SnapshotBroadcaster.ts + SwarmBroadcaster.ts
 import { validateToken, getUser } from '../auth/AuthService.js';
 import { recordGameJoin, recordKill, saveSnapshot } from '../stats/StatsService.js';
@@ -1098,6 +1103,27 @@ export class SectorRoom extends Room<SectorState> {
    * Keyed by playerId for symmetry with `playerToSlot` / `lastFireClientTick`.
    */
   private pendingJoin = new Map<string, PendingJoinRecord>();
+  /** Phase 4 warp travel: a ship on its warp run is out of the world
+   *  (rooms/warpTravel.ts). Ticked after the pending-join drain. */
+  private readonly warpTravel = new WarpTravelTracker({
+    phaseOf: (pid) => {
+      const slot = this.playerToSlot.get(pid);
+      if (slot === undefined) return 0;
+      const f = this.sabU32[slotBase(slot) + SLOT_FLAGS_OFF] ?? 0;
+      return f & FLAG_WARP_CRUISE ? 2 : f & FLAG_WARP_SPOOL ? 1 : 0;
+    },
+    clearPointNear: (pid, x, y) => this.warpLandingPoint(pid, x, y),
+    retarget: (pid, x, y) => this.postToWorker({ type: 'WARP_RETARGET', entityId: pid, x, y }),
+    setTravelling: (pid, on) => {
+      const ship = this.getActiveShip(pid);
+      if (ship) ship.travelling = on;
+    },
+    bumpPoseEpoch: (pid) => {
+      const ship = this.getActiveShip(pid);
+      if (ship) ship.poseEpoch++;
+      this.forceBroadcastUntilTick = Math.max(this.forceBroadcastUntilTick, this.serverTick + 60);
+    },
+  });
   private testMode = false;
   /** Economy v2 W5b — a fresh spawn of a non-starter hull needs one you own
    *  (galaxy rooms). Off in test rooms unless `enforceHullGate` is set, so the
@@ -1995,6 +2021,8 @@ export class SectorRoom extends Room<SectorState> {
       disabledMsOf: (playerId) => this.gateGuard.remainingMs(playerId, Date.now()),
       droneFactionOf: (id) => (this.patrols.count > 0 ? this.patrols.factionOf(id) : undefined),
       depositProgressOf: (shipInstanceId) => this.depositProgress.get(shipInstanceId),
+      warpArrived: (playerId) => this.warpTravel.arrivedRecently(playerId, this.serverTick),
+      isJoining: (playerId) => this.pendingJoin.has(playerId),
       playerMountAngles: this.mountTicker.playerMountAngles,
       droneMountAngles: this.mountTicker.droneMountAngles,
       missileSim: this.missileSim,
@@ -2128,6 +2156,7 @@ export class SectorRoom extends Room<SectorState> {
       snapshotBroadcaster: this.snapshotBroadcaster,
       logger,
       viewerRadius: (playerId) => getShipKind(this.getActiveShip(playerId)?.kind).radius,
+      interestPointOf: (playerId) => this.warpTravel.interestPoint(playerId),
     });
 
     // GEP B4 — the single orchestration entry point for per-tick entity sync.
@@ -2838,6 +2867,7 @@ export class SectorRoom extends Room<SectorState> {
       serverTick: () => this.serverTick,
       shipEnergyOf: (playerId) => this.getActiveShip(playerId)?.energy,
       isDisabled: (playerId) => this.gateGuard.isDisabled(playerId, Date.now()),
+      onWarpRequest: (playerId, x, y) => this.warpTravel.noteRequest(playerId, x, y),
       validWarpPoint: (x, y) => this.sectorKey !== null && isWarpDropPoint(this.sectorKey, x, y, this.solar),
       logger,
       malformed: this.malformed,
@@ -4276,6 +4306,8 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
+    // Phase 4 warp travel: a ship on its run is out of the world.
+    if (this.warpTravel.isTravelling(targetId)) return;
     // v4 A — alien gates can't be damaged; whoever hits one is disabled.
     if (this.gateGuard.gateCount > 0 && this.gateGuard.isGate(targetId)) {
       if (damage > 0) this.gateGuard.onGateAttacked(targetId, shooterId, Date.now());
@@ -6804,6 +6836,9 @@ export class SectorRoom extends Room<SectorState> {
         const ship = this.getActiveShip(playerId);
         if (ship) {
           ship.isActive = true;
+          // Phase 4: a ship joining the sector drops in with the same arrival
+          // effect as a warp (snapshot warp 3, #16); the old shader is gone.
+          this.warpTravel.markArrived(playerId, currentTick);
           serverLogEvent('ship_activated', {
             playerId,
             entityId: ship.shipInstanceId,
@@ -9013,6 +9048,36 @@ export class SectorRoom extends Room<SectorState> {
     return out;
   }
 
+  /**
+   * Phase 4 warp travel — where a warping ship lands: the nearest spot to its
+   * drop point clear of structures, other ships and swarm entities (asteroids,
+   * drones, scrap), with the ship's spawn clearance. Runs once per warp, when
+   * the run starts (a discrete event, not the per-tick loop).
+   */
+  private warpLandingPoint(playerId: string, x: number, y: number): { x: number; y: number } {
+    const near = 8000;
+    const boxes: SiteBox[] = [];
+    for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
+    const circles: Array<{ x: number; y: number; r: number }> = [];
+    for (const rec of this.swarmRegistry.all()) {
+      const b = slotBase(rec.slot);
+      const ex = this.sabF32[b + SLOT_X_OFF]!, ey = this.sabF32[b + SLOT_Y_OFF]!;
+      if (Math.abs(ex - x) > near || Math.abs(ey - y) > near) continue;
+      circles.push({ x: ex, y: ey, r: rec.radius });
+    }
+    for (const [pid, pose] of this.shipPoseCache) {
+      if (pid === playerId || Math.abs(pose.x - x) > near || Math.abs(pose.y - y) > near) continue;
+      const kind = this.getActiveShip(pid)?.kind;
+      circles.push({ x: pose.x, y: pose.y, r: kind ? tuningFor(kind).spawnClearance : 60 });
+    }
+    for (const [, pose] of this.lingeringPoseCache) {
+      if (Math.abs(pose.x - x) > near || Math.abs(pose.y - y) > near) continue;
+      circles.push({ x: pose.x, y: pose.y, r: 60 });
+    }
+    const kind = this.getActiveShip(playerId)?.kind;
+    return nearestClearPoint(x, y, boxes, kind ? tuningFor(kind).spawnClearance : 60, 6000, circles);
+  }
+
   /** T2 — the nearest point clear of every structure (convoy hauler spawns). */
   clearPointNear(x: number, y: number): { x: number; y: number } {
     if (this.structureRegistry.size === 0) return { x, y };
@@ -9716,6 +9781,9 @@ export class SectorRoom extends Room<SectorState> {
     // is empty (most ticks); short-circuits at the top of the
     // method.
     this.drainPendingJoin();
+    // Phase 4 warp travel: into / out of the world on a warp run (no-op when
+    // nobody is warping).
+    this.warpTravel.tick(this.serverTick);
 
     // Phase 4 abandon detection — galaxy-rooms only, every 30 ticks
     // (~500ms). See sectorIdleEvaluator.ts.

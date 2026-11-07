@@ -2097,16 +2097,12 @@ export class ColyseusGameClient {
             msUntilArrival: Math.round(msUntilArrival),
           });
         }, msUntilCurtainDrop);
-        setTimeout(() => {
-          if (this.disposed) return;
-          this.mirror.pendingWarpEvents?.push({ x: msg.x, y: msg.y });
-          logEvent('warp_in_flash_fired', { arrivalTick });
-        }, msUntilArrival);
+        // Phase 4 (user, 2026-11-07): the old shader warp-in flash is gone.
+        // Arrivals are drawn by WarpFx from the snapshot (warp 3).
         return;
       }
-      // Remote warp event: push immediately (legacy path).
-      if (!this.mirror.pendingWarpEvents) return;
-      this.mirror.pendingWarpEvents.push({ x: msg.x, y: msg.y });
+      // Remote warp event: the old shader burst is retired; WarpFx draws the
+      // arrival from the snapshot's warp phase (#16).
     };
     room.onMessage('warp_in', (msg) => handleWarpEvent(msg, 'warp_in'));
     room.onMessage('warp_out', (msg) => handleWarpEvent(msg, 'warp_out'));
@@ -3066,6 +3062,7 @@ export class ColyseusGameClient {
     // router (mirror.lingeringShips), above.
     applyShipLevels(snap, this.mirror);
     applyShipWarp(snap, this.mirror);
+    this.syncRemoteWarpBodies(snap);
 
     // Phase 4 WS-B3 — mirror each ACTIVE hull's PUBLIC activated latent mounts
     // (states[].mounts, playerId-keyed post-route) onto mirror.ships so the
@@ -3813,8 +3810,9 @@ export class ColyseusGameClient {
           this.mirror.ships.set(playerId, mirrorEntry);
         }
 
-        // Guard: only spawn if we know who the local player is.
-        if (this.predWorld && !this.predWorld.hasShip(playerId) && localId !== null) {
+        // Guard: only spawn if we know who the local player is. A ship on its
+        // warp run is out of the world (syncRemoteWarpBodies restores it).
+        if (this.predWorld && !this.predWorld.hasShip(playerId) && localId !== null && this.mirror.ships.get(playerId)?.warp !== 2) {
           this.predWorld.spawnShip(playerId, parsed.x, parsed.y, kind);
           this.predWorld.setShipState(playerId, parsed);
           this.predRemoteShipIds.add(playerId);
@@ -5657,6 +5655,50 @@ export class ColyseusGameClient {
   public cancelWarp(): void {
     this.warpRequest = null;
   }
+
+  /**
+   * Phase 4 warp travel: another pilot's ship on its warp run is out of the
+   * world, so it has no collision body here (nothing can bump into it); the
+   * body comes back AT THE SNAPSHOT'S landing pose (the mirror still holds a
+   * stale mid-run pose, so a body built from it would slide in from far
+   * away and the arrival would be drawn off-screen). Per snapshot, alloc-free.
+   */
+  private syncRemoteWarpBodies(snap: SnapshotMessage): void {
+    const pw = this.predWorld;
+    const localId = this.mirror.localPlayerId;
+    if (!pw || localId === null) return;
+    for (const [id, ship] of this.mirror.ships) {
+      if (id === localId) continue;
+      if (ship.warp === 2) {
+        if (this.predRemoteShipIds.has(id)) {
+          pw.despawnShip(id);
+          this.predRemoteShipIds.delete(id);
+          this._remoteShipOffsets.delete(id);
+        }
+      } else if (ship.warp === 3) {
+        // Just arrived (a warp drop or a join): put it at the snapshot pose
+        // ONCE, before anything draws it, so the ship and its arrival effect
+        // start at the same place (its body may be posed from a stale
+        // room-state pose; drawing from that, the ship jumped ~500 u a frame
+        // after appearing and the effect sat beside it).
+        if (this._arrivalSnapped.has(id)) continue;
+        const st = snap.states[id];
+        if (st === undefined || ship.kind === undefined) continue;
+        ship.x = st.x; ship.y = st.y; ship.vx = st.vx; ship.vy = st.vy; ship.angle = st.angle;
+        if (!pw.hasShip(id)) {
+          pw.spawnShip(id, st.x, st.y, ship.kind);
+          this.predRemoteShipIds.add(id);
+        }
+        pw.setShipState(id, st);
+        this._remoteShipOffsets.delete(id);
+        this._arrivalSnapped.add(id);
+      } else if (this._arrivalSnapped.size > 0) {
+        this._arrivalSnapped.delete(id);
+      }
+    }
+  }
+  /** Remote ships already snapped to their arrival pose (warp 3). */
+  private readonly _arrivalSnapped = new Set<string>();
 
   /** The local ship's predicted warp phase (`idle` / `spool` / `cruise`). */
   public getWarpPhase(): 'idle' | 'spool' | 'cruise' {
