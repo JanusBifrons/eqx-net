@@ -68,7 +68,7 @@ const CONTACT_FORCE_FLOOR = 200;
 
 interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
 interface DespawnCmd       { type: 'DESPAWN';        slot: number; playerId: string }
-interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean }
+interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean; warpX?: number; warpY?: number }
 interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string }
 interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
 interface ClockRateCmd     { type: 'CLOCK_RATE';     rate: number }
@@ -216,7 +216,7 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         if (!q) { q = []; inputQueues.set(cmd.slot, q); }
         // Cap queue to prevent unbounded growth if client briefly outruns physics.
         if (q.length < 20) {
-          q.push({ tick: cmd.inputTick, thrust: cmd.thrust, turnLeft: cmd.turnLeft, turnRight: cmd.turnRight, boost: cmd.boost, reverse: cmd.reverse });
+          q.push({ tick: cmd.inputTick, thrust: cmd.thrust, turnLeft: cmd.turnLeft, turnRight: cmd.turnRight, boost: cmd.boost, reverse: cmd.reverse, warpX: cmd.warpX, warpY: cmd.warpY });
         }
         break;
       }

@@ -18,6 +18,11 @@ export const InputMessageSchema = z
      *  impulse opposite to the ship's facing. Optional for back-compat with
      *  clients that pre-date the car-physics rework. */
     reverse: z.boolean().optional(),
+    /** In-sector warp-to (Phase 4): the drop point asked for, held while the
+     *  pilot wants the warp. The server keeps it only when it is a pocket's
+     *  rim in this sector (solar-system sectors); both or neither. */
+    warpX: z.number().finite().optional(),
+    warpY: z.number().finite().optional(),
   })
   .strict();
 

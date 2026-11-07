@@ -162,7 +162,7 @@ import type { SectorFeature } from '../../core/galaxy/galaxy.js';
 /** Clear space kept between two NPC bases in one sector (bastions, mines, traffic). */
 const NPC_BASE_GAP = sectorSpace(900);
 import { HOME_POCKET_HALF_EXTENT, SECTOR_PLAYABLE_HALF_EXTENT, SOLAR_SECTORS, sectorSpace } from '../../shared-types/sectorBounds.js';
-import { sectorSites } from '../../core/galaxy/sectorSites.js';
+import { isWarpDropPoint, sectorSites } from '../../core/galaxy/sectorSites.js';
 import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
@@ -2830,6 +2830,7 @@ export class SectorRoom extends Room<SectorState> {
       serverTick: () => this.serverTick,
       shipEnergyOf: (playerId) => this.getActiveShip(playerId)?.energy,
       isDisabled: (playerId) => this.gateGuard.isDisabled(playerId, Date.now()),
+      validWarpPoint: (x, y) => this.sectorKey !== null && isWarpDropPoint(this.sectorKey, x, y, SOLAR_SECTORS),
       logger,
       malformed: this.malformed,
     }));

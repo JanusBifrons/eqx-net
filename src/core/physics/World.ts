@@ -9,6 +9,7 @@ import {
 } from '../../shared-types/shipKinds.js';
 import { configureShipCollider, shipShieldColliderDesc } from './colliderConfig.js';
 import { applyShipInput, type ShipInputMultipliers } from './applyShipInput.js';
+import { newWarpState, stepWarp, WARP_EXIT_SPEED, WARP_SPEED, type WarpPhase, type WarpState } from './warpDrive.js';
 import { castHitscan } from './hitscanRay.js';
 import { wallGeometry } from '../structures/ShieldWall.js';
 import { PAD_PUSH_ACCEL, padPushDir } from '../../shared-types/teleport.js';
@@ -59,6 +60,11 @@ export interface ShipInput {
    *  are pressed. Optional for back-compat with replay buffers / unit tests
    *  written before reverse landed. */
   reverse?: boolean;
+  /** In-sector warp-to (Phase 4): the drop point asked for this tick. Held
+   *  while the pilot wants the warp; absent = no request (cancels a spool).
+   *  Run through `stepWarp` (warpDrive.ts) identically on both sides. */
+  warpX?: number;
+  warpY?: number;
 }
 
 interface ShipBody {
@@ -72,6 +78,8 @@ interface ShipBody {
    *  so the server sim + client prediction scale movement identically (risk
    *  #1). `undefined` ⇒ no upgrades ⇒ byte-identical to the legacy path. */
   statMul?: ShipInputMultipliers;
+  /** In-sector warp-to state; created on the first warp request. */
+  warp?: WarpState;
 }
 
 export class PhysicsWorld {
@@ -542,7 +550,54 @@ export class PhysicsWorld {
   applyInput(id: string, input: ShipInput): void {
     const rec = this.bodies.get(id);
     if (!rec) return;
+    if (input.warpX !== undefined || rec.warp !== undefined) {
+      const hasReq = input.warpX !== undefined && input.warpY !== undefined;
+      if (hasReq) { this._warpReq.x = input.warpX!; this._warpReq.y = input.warpY!; }
+      rec.warp ??= newWarpState();
+      const body = rec.body;
+      const t = body.translation();
+      const w = rec.warp;
+      const act = stepWarp(w, hasReq ? this._warpReq : null, t.x, t.y, 1 / 60);
+      if (act === 'engage') {
+        // Face the run (nose = (-sin θ, cos θ)), go, and stop colliding: at
+        // ~330 u a tick a body would tunnel or slam into whatever it met.
+        body.setRotation(Math.atan2(-w.dx, w.dy), true);
+        body.setAngvel(0, true);
+        body.setLinvel({ x: w.dx * WARP_SPEED, y: w.dy * WARP_SPEED }, true);
+        this.setCollidersEnabled(rec, false);
+        return;
+      }
+      if (act === 'cruise') {
+        body.setAngvel(0, true);
+        body.setLinvel({ x: w.dx * WARP_SPEED, y: w.dy * WARP_SPEED }, true);
+        return;
+      }
+      if (act === 'drop') {
+        body.setTranslation({ x: w.tx, y: w.ty }, true);
+        body.setLinvel({ x: w.dx * WARP_EXIT_SPEED, y: w.dy * WARP_EXIT_SPEED }, true);
+        this.setCollidersEnabled(rec, true);
+        return;
+      }
+    }
     applyShipInput(rec.body, rec.kind, input, rec.statMul);
+  }
+
+  private readonly _warpReq = { x: 0, y: 0 };
+
+  private setCollidersEnabled(rec: ShipBody, on: boolean): void {
+    const body = rec.body;
+    for (let i = 0; i < body.numColliders(); i++) body.collider(i).setEnabled(on);
+  }
+
+  /** In-sector warp phase of a ship (`idle` when it never warped). */
+  warpPhase(id: string): WarpPhase {
+    return this.bodies.get(id)?.warp?.phase ?? 'idle';
+  }
+
+  /** True once a ship has arrived at its warp target and its pilot still
+   *  holds that request (the client clears its request on this). */
+  warpArrived(id: string): boolean {
+    return this.bodies.get(id)?.warp?.latched === true;
   }
 
   /**

@@ -43,6 +43,9 @@ export interface InputHandlerCtx {
   shipEnergyOf: (playerId: string) => number | undefined;
   /** v4 A — the pilot is disabled (an alien gate's guns): engines off. */
   isDisabled?: (playerId: string) => boolean;
+  /** Phase 4 warp-to: true when (x, y) is a drop point this room allows (a
+   *  pocket's rim in a solar-system sector). Absent ⇒ warp requests dropped. */
+  validWarpPoint?: (x: number, y: number) => boolean;
   logger: pino.Logger;
   /** Per-connection malformed-packet counter + sampled warn (campaign 1.3;
    *  invariant #3's second half). The input channel is the flood vector —
@@ -89,11 +92,15 @@ export function makeInputHandler(
     if (boost && !canAfford(ctx.shipEnergyOf(playerId) ?? 0, BOOST_TICK_COST)) {
       boost = false;
     }
+    // Warp-to: kept only for an allowed drop point; a disabled ship can't warp.
+    const { warpX, warpY } = result.data;
+    const warp = warpX !== undefined && warpY !== undefined && !(ctx.isDisabled?.(playerId) ?? false)
+      && (ctx.validWarpPoint?.(warpX, warpY) ?? false);
     const slot = ctx.playerToSlot.get(playerId);
     if (slot !== undefined) {
-      ctx.postToWorker({
-        type: 'INPUT', slot, inputTick: tick, thrust, turnLeft, turnRight, boost, reverse,
-      });
+      ctx.postToWorker(warp
+        ? { type: 'INPUT', slot, inputTick: tick, thrust, turnLeft, turnRight, boost, reverse, warpX, warpY }
+        : { type: 'INPUT', slot, inputTick: tick, thrust, turnLeft, turnRight, boost, reverse });
     }
     // Boost is now an independent forward thrust along the ship's facing,
     // applied whenever boost is held (energy-affordable — the bit was stripped
