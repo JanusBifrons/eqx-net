@@ -168,6 +168,8 @@ export async function bootSectorTestServer(opts: {
   galaxyBases?: boolean;
   /** v4 A — seed the alien gates (`SectorRoom.seedAlienGates`). */
   alienGates?: boolean;
+  /** Phase 4 — solar-system sector rules for this room (warp-to). */
+  solarSectors?: boolean;
   /** C2 — every break-in takes this long (bespoke trigger). */
   breakInMs?: number;
   /** P2d — stock the prebuilt Capital's hold. */
@@ -248,6 +250,7 @@ export async function bootSectorTestServer(opts: {
     npcBases: opts.npcBases,
     galaxyBases: opts.galaxyBases,
     alienGates: opts.alienGates,
+    solarSectors: opts.solarSectors,
     breakInMs: opts.breakInMs,
     prebuiltStorageGoods: opts.prebuiltStorageGoods,
     teleportCycleScale: opts.teleportCycleScale,

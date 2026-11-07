@@ -20,6 +20,9 @@ export interface QueuedInput {
   /** Drifty-arcade reverse — S / Down arrow held. Optional in the wire schema
    *  for back-compat; missing = `false`. */
   reverse: boolean;
+  /** Warp-to drop point (Phase 4); absent = no request. Held like any input. */
+  warpX?: number;
+  warpY?: number;
 }
 
 export interface InputTickResult {

@@ -138,3 +138,27 @@ export function pocketCentre(sectorKey: string, kind: SiteKind, enabled: boolean
   const s = sectorSites(sectorKey).find((p) => p.kind === kind);
   return s ? { x: s.x, y: s.y } : { x: 0, y: 0 };
 }
+
+/** How far off a pocket's rim a warp drop point may be (u). */
+export const WARP_DROP_TOLERANCE = 400;
+
+/**
+ * Warp-to (Phase 4): the drop point for warping from (x, y) to `site`: its
+ * rim on the side facing the ship ("the arrival point is just sensibly
+ * calculated", user 2026-11-07). Computed by the client; the server only
+ * checks it with `isWarpDropPoint`.
+ */
+export function warpDropPoint(site: SectorSite, x: number, y: number): { x: number; y: number } {
+  const dx = x - site.x, dy = y - site.y, len = Math.hypot(dx, dy) || 1;
+  return { x: Math.round(site.x + (dx / len) * site.r), y: Math.round(site.y + (dy / len) * site.r) };
+}
+
+/** True when (x, y) lies on some pocket's rim in `sectorKey` (within
+ *  WARP_DROP_TOLERANCE) and solar-system sectors are on. */
+export function isWarpDropPoint(sectorKey: string, x: number, y: number, enabled: boolean): boolean {
+  if (!enabled) return false;
+  for (const s of sectorSites(sectorKey)) {
+    if (Math.abs(Math.hypot(x - s.x, y - s.y) - s.r) <= WARP_DROP_TOLERANCE) return true;
+  }
+  return false;
+}
