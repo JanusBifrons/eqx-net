@@ -8,24 +8,29 @@
  * fidelity vs decimate.
  *
  * Cell index is packed into a single i32: `(floor(x/CELL) << 16) | (floor(y/CELL) & 0xffff)`
- * Both axes are clamped to ±32_000 units in `insert()` to keep cell indices
- * inside int16 range (the soft 100_000-unit world clamp from the master plan
- * is deferred to Phase 6; the assertion here is defensive).
+ * Both axes are clamped to the packed int16 cell range (±32,767 cells, about
+ * ±67 million units) so a cell index never wraps. Solar-system sectors
+ * (plan prancy-squishing-donut Phase 4) span ±200,000 u: the old ±32,000
+ * clamp put everything beyond it into one edge cell.
  *
  * No allocation in the per-tick hot path: `move()` returns early when the
  * entity hasn't crossed a cell boundary, and `query9()` writes its result
  * into a caller-provided `Set<number>` rather than allocating a fresh one.
  */
 export const CELL_SIZE = 2048;
-const COORD_LIMIT = 32_000;
+/** Largest |coordinate| with its own cell: the packed int16 cell range. */
+export const SPATIAL_COORD_LIMIT = 32_767 * CELL_SIZE - 1;
+
 
 /** Pack a cell coordinate pair into a single i32 key. */
 function cellKey(cx: number, cy: number): number {
   return ((cx & 0xffff) << 16) | (cy & 0xffff);
 }
 
+/** Cell of a coordinate, clamped into the packed range (never wraps). */
 function coordToCell(coord: number): number {
-  return Math.floor(coord / CELL_SIZE);
+  const c = coord > SPATIAL_COORD_LIMIT ? SPATIAL_COORD_LIMIT : coord < -SPATIAL_COORD_LIMIT ? -SPATIAL_COORD_LIMIT : coord;
+  return Math.floor(c / CELL_SIZE);
 }
 
 /**
@@ -80,13 +85,8 @@ export class SpatialGrid {
    *  here without a radius was never wide (capitals Phase 3 bug). */
   insert(entityId: number, x: number, y: number, radius = 0): void {
     if (radius > 0) this.setWide(entityId, radius);
-    if (Math.abs(x) > COORD_LIMIT || Math.abs(y) > COORD_LIMIT) {
-      // Clamp into bounds rather than throw: an out-of-bounds entity would be
-      // a worse failure mode than a slightly-misplaced one. Phase 6's soft
-      // 100k-unit world clamp will prevent this entirely.
-      x = Math.max(-COORD_LIMIT, Math.min(COORD_LIMIT, x));
-      y = Math.max(-COORD_LIMIT, Math.min(COORD_LIMIT, y));
-    }
+    // Clamped into the packed cell range rather than thrown: an entity off
+    // the edge is better slightly misplaced than corrupting a cell index.
     const key = cellKey(coordToCell(x), coordToCell(y));
     this.entityCell.set(entityId, key);
     let bucket = this.cellMembers.get(key);
