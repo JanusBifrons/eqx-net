@@ -167,7 +167,11 @@ export interface ArtStats {
 export function atlasOptsFor(touch: boolean, deviceMemoryGb?: number): AtlasOpts {
   if (touch) {
     const gb = deviceMemoryGb;
-    const pages = gb === undefined || !Number.isFinite(gb) ? 6 : gb <= 2 ? 4 : gb <= 4 ? 6 : gb < 8 ? 10 : 14;
+    // Chrome reports only 0.25/0.5/1/2/4/8 GB (4 = "4 to 8 GB") and hides it
+    // on plain-http pages; iPhones never report it. Unknown is the common
+    // case, so it gets the full phone budget (phone run 2026-11-07: the old
+    // 6-page fallback left a base-heavy sector's asteroids bare).
+    const pages = gb === undefined || !Number.isFinite(gb) ? 14 : gb < 2 ? 4 : gb < 4 ? 6 : gb < 8 ? 10 : 14;
     return { pageSize: 2048, maxPages: pages };
   }
   // Desktop: the same 64M-texel budget as 16 pages of 2048² (was 4 of 4096²).

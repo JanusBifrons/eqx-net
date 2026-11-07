@@ -124,6 +124,12 @@ export function installPerfProbe(rendererIn: IRenderer, useWorkerIn: boolean): v
  */
 let labStarted = false;
 
+/** The sky layers drawing now (sector-trip readings compare before/after). */
+function skySample(): unknown {
+  const s = (globalThis as { __eqxArtStats?: () => { backdrop?: unknown; effectQuality?: string } }).__eqxArtStats?.();
+  return s ? { backdrop: s.backdrop, effectQuality: s.effectQuality } : null;
+}
+
 /**
  * Perf lab: a SECTOR TRIP on a real device (`?perftrip=<target sector>`,
  * Phase 4 travel state). Once in game it engages a transit to the target,
@@ -147,6 +153,7 @@ export function runPerfLabTrip(target: string): void {
     const perf = (globalThis as unknown as { __eqxPerf: { reset(): Promise<void>; read(): Promise<PerfReading> } }).__eqxPerf;
     await new Promise((r) => setTimeout(r, 2000)); // let the sector settle first
     await perf.reset();
+    const skyBefore = skySample();
     getGameClient()?.getRoom()?.send('engage_transit', { type: 'engage_transit', targetSectorKey: target });
     let sawTrip = false;
     const t0 = performance.now();
@@ -167,7 +174,8 @@ export function runPerfLabTrip(target: string): void {
         userAgent: navigator.userAgent, width: window.innerWidth, height: window.innerHeight,
         dpr: window.devicePixelRatio, touch: navigator.maxTouchPoints > 0, worker: cur.useWorker,
       },
-      reading: { ...reading, tripCompleted: sawTrip && !useUIStore.getState().travelling },
+      reading: { ...reading, tripCompleted: sawTrip && !useUIStore.getState().travelling, sky: { before: skyBefore, after: skySample() } },
+      deviceMemory: (navigator as { deviceMemory?: number }).deviceMemory ?? null,
     };
     const ok = await fetch('/dev/perf/client', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
       .then((r) => r.ok).catch(() => false);
