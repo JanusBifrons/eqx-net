@@ -415,8 +415,9 @@ export class MountVisualManager {
         const p = muzzleSmokePuff(since, k, w, this._puff);
         s.visible = p.alpha > 0.01;
         if (!s.visible) continue;
-        s.x = (b - (n - 1) / 2) * pitch;
+        s.x = (b - (n - 1) / 2) * pitch + p.lat;
         s.y = -gun.reach - p.d;
+        s.rotation = p.rot;
         s.alpha = p.alpha;
         s.scale.set(p.size / tw);
       }
@@ -434,7 +435,7 @@ export class MountVisualManager {
   private glowHandle: ArtHandle | null = null;
   private smokeHandle: ArtHandle | null = null;
   /** Scratch for one smoke puff (alloc-free per frame). */
-  private readonly _puff: SmokePuff = { d: 0, size: 0, alpha: 0 };
+  private readonly _puff: SmokePuff = { d: 0, size: 0, alpha: 0, lat: 0, rot: 0 };
 
   /** Make a gun's flash + tip glow sprites (once, when their textures are ready). */
   private buildReactionSprites(gun: MachinedGun): void {

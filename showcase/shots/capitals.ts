@@ -2,7 +2,7 @@ import type { Shot } from '../types.js';
 import { sendRoom } from './_helpers.js';
 import { startZoomForScale } from '../../src/shared-types/shipScale/tuning.js';
 import { getShipKind } from '../../src/shared-types/shipKinds.js';
-import { localPose } from './_pilot.js';
+import { localPose, flyTo } from './_pilot.js';
 import type { ShotContext } from '../types.js';
 
 /** Steer through waypoints with W / A / D (the flight shot's keys): turn
@@ -322,3 +322,48 @@ async function keepHostile(ctx: ShotContext, ms: number): Promise<void> {
     await ctx.sleep(Math.min(9000, end - Date.now()));
   }
 }
+
+/**
+ * Review round (2026-11-07): "how does it look from a fighter at normal zoom
+ * nearby the guns as they fire?" The pilot sits ~1,500 u off the battleship's
+ * aft turret with the ordinary follow camera (no script), so this is what a
+ * player sees: the turrets swing round, then 16" and 5" salvos at close range.
+ */
+export const capitalGunsFighter: Shot = {
+  id: 'capital-guns-fighter',
+  section: 'mechanics',
+  title: 'Capital guns, up close',
+  caption: 'A battleship\'s 16-inch and 5-inch guns firing at a fighter alongside, seen from the fighter at normal zoom.',
+  features: ['CAP'],
+  docs: ['ship-kinds'],
+  reel: false,
+  server: 'capitals',
+  target: { room: 'showcase-capital-duel', params: { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1, spawnX: 1500, spawnY: -1800 } },
+  hud: 'none',
+  durationMs: 22_000,
+  async startWhen(ctx) {
+    await artSettled(ctx);
+    await ctx.page.waitForFunction(() => {
+      const c = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number }> } } }).__eqxClient;
+      let n = 0;
+      c?.mirror.swarm.forEach((e) => { if (e.kind === 1) n++; });
+      return n > 0;
+    }, null, { timeout: 60_000, polling: 250 });
+    // Start the fight off camera so the turrets are already swinging round.
+    await keepHostile(ctx, 14_000);
+  },
+  async run(ctx) {
+    // The battleship holds a ~4,000 u stand-off, wider than a fighter's normal
+    // view, so the pilot dives in at its aft turret, the way a player would.
+    const bs = await ctx.page.evaluate(() => {
+      const m = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number; x: number; y: number }> } } }).__eqxClient?.mirror;
+      let p: { x: number; y: number } | null = null;
+      m?.swarm.forEach((e) => { if (e.kind === 1) p = { x: e.x, y: e.y }; });
+      return p as { x: number; y: number } | null;
+    });
+    await Promise.all([
+      keepHostile(ctx, 21_500),
+      bs ? flyTo(ctx, bs.x + 1100, bs.y - 1200, { arrive: 250, maxMs: 14_000, cruise: 420 }) : ctx.sleep(1),
+    ]);
+  },
+};
