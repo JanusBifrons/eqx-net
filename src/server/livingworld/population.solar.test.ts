@@ -71,3 +71,12 @@ describe('solar-system sector belts', () => {
     expect(new Set(cfg.asteroidConfig.map((a) => a.id)).size).toBe(cfg.asteroidConfig.length);
   });
 });
+
+describe('solar-system sector flocking', () => {
+  it('a roaming squad flocks round the pocket it is in, not the sector origin', async () => {
+    const lwd = await import('./LivingWorldDirector.js');
+    const gate = sites.sectorSites('sol-prime').find((s) => s.kind === 'gate')!;
+    expect(lwd.flockCentre('sol-prime', gate.x + 800, gate.y - 500)).toEqual({ x: gate.x, y: gate.y });
+    expect(lwd.flockCentre('sol-prime', 300, -200)).toEqual({ x: 0, y: 0 }); // home pocket
+  });
+});

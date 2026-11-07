@@ -21,7 +21,8 @@
  * (extracted to `LivingWorldRoom.ts` so the type lives beside the
  * sub-modules that consume it).
  */
-import { sectorSpace } from '../../shared-types/sectorBounds.js';
+import { sectorSpace, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
+import { nearestSite, sectorSites } from '../../core/galaxy/sectorSites.js';
 import type { Bus } from '../../core/events/Bus.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { canonicalPlayerId } from '../identity/AccountPlayerRegistry.js';
@@ -360,6 +361,14 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
  *  the central-arrival experiment was reverted; visibility comes from the long
  *  dwell + long legs, not from arriving on top). */
 export const FORMATION_DEST_RANGE = sectorSpace(2000);
+
+/** Centre a roaming squad's flock course circles: the pocket nearest (x, y)
+ *  in a solar-system sector, else the sector origin (today). */
+export function flockCentre(sectorKey: string, x: number, y: number): { x: number; y: number } {
+  if (!SOLAR_SECTORS) return { x: 0, y: 0 };
+  const site = nearestSite(sectorSites(sectorKey), x, y);
+  return site ? { x: site.x, y: site.y } : { x: 0, y: 0 };
+}
 /** Re-pick the leader's course once it's within this distance of it (so the herd
  *  continuously flies new A→B legs rather than parking). */
 const FORMATION_DEST_ARRIVE = 250;
@@ -1081,11 +1090,16 @@ export class LivingWorldDirector {
         dest === undefined ||
         Math.hypot(dest.x - leaderPose.x, dest.y - leaderPose.y) < FORMATION_DEST_ARRIVE
       ) {
+        // The course circles the squad's POCKET (solar-system sectors, Phase 4:
+        // the one nearest the leader; off = the sector origin, as today), so a
+        // squad that arrived at a gate pocket flocks there instead of setting
+        // off on a 170 km drift toward home.
+        const c = flockCentre(sq.sectorKey, leaderPose.x, leaderPose.y);
         const awayAng =
-          Math.atan2(leaderPose.y, leaderPose.x) + Math.PI + (this.rng() - 0.5) * FORMATION_LEG_SPREAD;
+          Math.atan2(leaderPose.y - c.y, leaderPose.x - c.x) + Math.PI + (this.rng() - 0.5) * FORMATION_LEG_SPREAD;
         dest = {
-          x: Math.cos(awayAng) * FORMATION_DEST_RANGE,
-          y: Math.sin(awayAng) * FORMATION_DEST_RANGE,
+          x: c.x + Math.cos(awayAng) * FORMATION_DEST_RANGE,
+          y: c.y + Math.sin(awayAng) * FORMATION_DEST_RANGE,
         };
         this.squadFormationDest.set(sq.squadId, dest);
       }
