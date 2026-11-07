@@ -189,6 +189,16 @@ export interface SwarmRenderState {
    *  mounts. Out-of-interest drones leave it undefined (renderer falls
    *  back to baseAngle). Same field shape as `ShipRenderState.mountAngles`. */
   mountAngles?: number[];
+  /** The angles to DRAW: `mountAngles` (20 Hz snapshots) carried forward
+   *  at the turret's turning rate each frame, so turrets turn smoothly
+   *  (client `displayMountAngles.ts`). Renderer prefers it when present. */
+  displayMountAngles?: number[];
+  /** Follower state for `displayMountAngles` (renderer ignores these). */
+  _dmRef?: number[];
+  _dmBase?: number[];
+  _dmRate?: number[];
+  _dmSince?: number;
+  _dmInterval?: number;
   /** True when the server told us this entity is at rest. Renderer keeps the sprite static. */
   sleeping: boolean;
   /** Server tick of the most recent packet that included this entity. */

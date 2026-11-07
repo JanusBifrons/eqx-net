@@ -318,7 +318,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       const swarmKind = getShipKind(entry.shipKind);
       const swarmMounts = swarmKind.mounts ?? EMPTY_MOUNTS;
       if (swarmMounts.length > 0) {
-        ctx.mountVisuals.applyMountAngles(spriteKey, swarmMounts, entry.mountAngles);
+        ctx.mountVisuals.applyMountAngles(spriteKey, swarmMounts, entry.displayMountAngles ?? entry.mountAngles);
       }
     } else if (entry.kind === 2) {
       // Structures (turret 'barrel' / miner 'drill') carry a mounts entry in
