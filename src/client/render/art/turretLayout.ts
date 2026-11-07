@@ -38,7 +38,7 @@ export interface TurretPlace {
    *  so the drawn tip and the server's fire point agree (#15). */
   muzzle: number;
   /** Capital naval turret: gunhouse + barrel count (shared geometry). */
-  naval?: { barrels: number; houseW: number; houseL: number };
+  naval?: { barrels: number; houseW: number; houseL: number; part?: 'house' | 'barrel' };
 }
 
 function familyOf(m: WeaponMount): TurretFamily {

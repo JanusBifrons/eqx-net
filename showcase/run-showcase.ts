@@ -21,6 +21,7 @@ import { PROFILE_ORDER } from './types.js';
 import { CaptureServers } from './servers.js';
 import { Recorder, type RecordResult } from './recorder.js';
 import { smoothnessProblems, smoothScore, type TakeStats } from './smoothness.js';
+import { measureWobble, wobbleProblem, wobbleSummary, netProblem, netSummary } from './wobble.js';
 import { encodeClip, encodeCard, assemble, qaClip } from './compositor.js';
 import { captionOverlay, endCard, sectionCard, titleCard } from './cards.js';
 import { gitSha, resolveFfmpeg } from './tools.js';
@@ -211,6 +212,18 @@ const takeStats = (rec: RecordResult): TakeStats => ({
  * `MAX_TAKES`), keep the smoothest, and encode only that one. A take that
  * crashes restarts the server first (a broken room is the usual cause).
  */
+/** Delete a take that lost, or keep it for diagnosis (`EQX_KEEP_TAKES=1`) when QA flagged it. */
+function dropTake(dir: string, problems: string[]): void {
+  if (process.env['EQX_KEEP_TAKES'] === '1' && problems.length > 0) {
+    const kept = dir.replace(/\.take(\d+)$/, '.rejected-take$1');
+    rmSync(kept, { recursive: true, force: true });
+    renameSync(dir, kept);
+    log(`  kept rejected take for diagnosis: ${kept}`);
+    return;
+  }
+  rmSync(dir, { recursive: true, force: true });
+}
+
 async function takeWithRetry(
   shot: Shot,
   recorder: Recorder,
@@ -229,13 +242,21 @@ async function takeWithRetry(
       log(`▶ ${shot.id} (take ${take})`);
       const rec = await recorder.record(shot, dir);
       const problems = smoothnessProblems(takeStats(rec), fps);
+      // Ship jitter (prediction corrections) — invisible to the frame-rate
+      // gate, so every take is measured too (review 2026-11-07).
+      const wobble = await measureWobble(dir).catch(() => null);
+      const wp = wobble ? wobbleProblem(wobble) : null;
+      if (wp) problems.push(wp);
+      const np = netProblem(rec.net);
+      if (np) problems.push(np);
       const verdict = problems.length ? ` — ${problems.join('; ')}` : '';
-      log(`  ${problems.length ? '·' : '✓'} ${rec.deliveredFps} fps, worst gap ${rec.gapMaxMs} ms${verdict}`);
-      if (!best || smoothScore(takeStats(rec)) > smoothScore(takeStats(best.rec))) {
-        if (best) rmSync(best.dir, { recursive: true, force: true });
+      log(`  ${problems.length ? '·' : '✓'} ${rec.deliveredFps} fps, worst gap ${rec.gapMaxMs} ms, ${wobble ? wobbleSummary(wobble) : 'ship wobble: not measured'}, ${netSummary(rec.net)}${verdict}`);
+      // Fewer QA problems first (a jittery take never beats a clean one), then the smoother.
+      if (!best || problems.length < best.problems.length || (problems.length === best.problems.length && smoothScore(takeStats(rec)) > smoothScore(takeStats(best.rec)))) {
+        if (best) dropTake(best.dir, best.problems);
         best = { rec, dir, problems };
       } else {
-        rmSync(dir, { recursive: true, force: true });
+        dropTake(dir, problems);
       }
       if (problems.length === 0) break;
     } catch (e) {

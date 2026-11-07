@@ -56,7 +56,7 @@ export type BakeJob =
    *  sector's sun rather than having its lighting turn with it. */
   | { type: 'struct'; id: string; seed: number; accent?: number; rot?: number; rings?: boolean }
   /** The turning part of a turret (R&D, rnd/turrets); lit at every sun step like a ship. */
-  | { type: 'turret'; id: GunFamily; paint: number; len: number; wid: number; cap: number; ppu: number; naval?: { barrels: number; houseW: number; houseL: number } }
+  | { type: 'turret'; id: GunFamily; paint: number; len: number; wid: number; cap: number; ppu: number; naval?: { barrels: number; houseW: number; houseL: number; part?: 'house' | 'barrel' } }
   /** One component of a destroyed ship; tumbles, so baked like a ship. */
   | { type: 'scrap'; id: string; component: number }
   /** An asteroid, by its seeded outline; static, so one frame at its turn. */
@@ -71,7 +71,7 @@ const SCALE_TAG = SHIP_SCALE === 1 ? '' : `@s${SHIP_SCALE}`;
 /** The cache key a job's result is stored under (shared by main and workers). */
 export function bakeKey(j: BakeJob): string {
   if (j.type === 'ship') return `m:${j.id}:${j.paint ?? ''}${j.rings ? ':R' : ''}${isCapitalKind(j.id) ? ':T' : ''}${SCALE_TAG}`;
-  if (j.type === 'turret') return `g:${j.id}:${j.paint}:${j.len.toFixed(2)}:${j.wid.toFixed(2)}:${j.cap.toFixed(2)}:${j.ppu}${j.naval ? `:n${j.naval.barrels}:${j.naval.houseW.toFixed(2)}:${j.naval.houseL.toFixed(2)}` : ''}`;
+  if (j.type === 'turret') return `g:${j.id}:${j.paint}:${j.len.toFixed(2)}:${j.wid.toFixed(2)}:${j.cap.toFixed(2)}:${j.ppu}${j.naval ? `:n${j.naval.barrels}:${j.naval.houseW.toFixed(2)}:${j.naval.houseL.toFixed(2)}${j.naval.part ? `:${j.naval.part}` : ''}` : ''}`;
   if (j.type === 'scrap') return `s:${j.id}:${j.component}${SCALE_TAG}`;
   if (j.type === 'fx') return `x:${FX_VERSION}:${j.id}:${j.variant ?? ''}:${j.seed ?? ''}`;
   if (j.type === 'rock') return `r:${j.entityId}:${j.radius}:${j.resource ?? ''}:${quarterTurnsFine(j.rot ?? 0)}`;
