@@ -1,6 +1,6 @@
 /** Process + ffmpeg helpers for the showcase pipeline (Node-only tooling). */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 /** Resolve ffmpeg/ffprobe: $EQX_FFMPEG, PATH, then the winget install dir. */
@@ -101,4 +101,70 @@ export function killPort(port: number): void {
 export function gitSha(cwd: string): string {
   const r = spawnSync('git', ['rev-parse', '--short=8', 'HEAD'], { cwd, encoding: 'utf8' });
   return (r.stdout ?? '').trim() || 'unknown';
+}
+
+/**
+ * Child processes a run started, so the NEXT run can reap what a killed run
+ * left behind (memory, 2026-11-07: Claude Code killed two takes for low
+ * memory and each left ~1 GB of headless capture browsers running; free
+ * memory fell to 42 MB). A killed process runs no cleanup, so the reaping
+ * happens at start. A recorded PID is killed only while it still runs the
+ * same program (PIDs are reused).
+ */
+const pidFile = (): string => process.env['EQX_SHOWCASE_pidFile()'] ?? path.join(process.cwd(), 'showcase-out', '.showcase-pids.json');
+
+interface TrackedPid { pid: number; image: string }
+
+function imageOf(pid: number): string | null {
+  if (process.platform === 'win32') {
+    const out = spawnSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8' }).stdout ?? '';
+    const m = /^"([^"]+)"/.exec(out.trim());
+    return m ? m[1]!.toLowerCase() : null;
+  }
+  const r = spawnSync('ps', ['-o', 'comm=', '-p', String(pid)], { encoding: 'utf8' });
+  return (r.stdout ?? '').trim().toLowerCase() || null;
+}
+
+function readTracked(): TrackedPid[] {
+  try { return JSON.parse(readFileSync(pidFile(), 'utf8')) as TrackedPid[]; } catch { return []; }
+}
+
+/** Remember a child process this run started (browser, server). */
+export function trackPid(pid: number | undefined): void {
+  if (!pid) return;
+  const image = imageOf(pid);
+  if (!image) return;
+  const all = readTracked().filter((t) => t.pid !== pid);
+  all.push({ pid, image });
+  mkdirSync(path.dirname(pidFile()), { recursive: true });
+  writeFileSync(pidFile(), JSON.stringify(all));
+}
+
+/** Kill processes a previous (killed) run left behind. Returns how many. */
+export function reapStale(): number {
+  let n = 0;
+  for (const t of readTracked()) {
+    if (imageOf(t.pid) !== t.image) continue; // gone, or the PID was reused
+    if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(t.pid), '/T', '/F'], { stdio: 'ignore' });
+    else spawnSync('kill', ['-9', String(t.pid)], { stdio: 'ignore' });
+    n++;
+  }
+  writeFileSync(pidFile(), '[]');
+  return n;
+}
+
+/** A run ended normally: nothing to reap. */
+export function clearTracked(): void {
+  try { writeFileSync(pidFile(), '[]'); } catch { /* no output dir yet */ }
+}
+
+/** The browser process PID of a launched Playwright Chromium (via CDP:
+ *  Playwright's `Browser` doesn't expose its process). Undefined if unknown. */
+export async function browserPid(browser: { newBrowserCDPSession(): Promise<{ send(m: string): Promise<unknown>; detach(): Promise<void> }> }): Promise<number | undefined> {
+  try {
+    const cdp = await browser.newBrowserCDPSession();
+    const info = (await cdp.send('SystemInfo.getProcessInfo')) as { processInfo?: Array<{ type: string; id: number }> };
+    await cdp.detach();
+    return info.processInfo?.find((p) => p.type === 'browser')?.id;
+  } catch { return undefined; }
 }
