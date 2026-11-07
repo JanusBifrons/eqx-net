@@ -471,6 +471,7 @@ Recovery thresholds are 2 ms lower than the downshift trigger AND require a 3× 
 - Nothing fades: the old sector is flown out of (the room swap waits for it), the new one is flown into. Never add a fade or a cut to hide loading; stretch the trip instead.
 - A new jump of the local ship during a trip must add to `mirror.travelJumpX/Y` so the sky carries across it.
 - Story: [docs/architecture/travel-state.md](../../docs/architecture/travel-state.md).
+- **Art budget follows the device and each sector visit.** Touch devices get atlas pages by `navigator.deviceMemory` (`atlasOptsFor`: 4–14 pages; desktop 16 × 2048²). `setSector` starts a new art visit (`ArtService.newVisit`): new lit art packs into that visit's pages, and `PixiRenderer.collectUnusedArt` (every ~2 s) frees a past visit's pages once no sprite or gun holds or shows its art. When the budget is tight, art still in use is re-packed from the bake cache into the current visit (a copy that won't fit leaves the original in place). Sprite helpers re-acquire a handle marked `stale`; guns switch to `handle.next` when it is ready. Effect textures (group 0) are never freed. Lock: `tests/unit/artSectorCollect.test.ts`.
 
 ## Composite ship + scrap render (2026-06-13)
 

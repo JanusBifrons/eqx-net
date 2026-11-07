@@ -28,7 +28,9 @@ import { decideLingeringSpriteAction, decideExplosionPosition, type SpriteDecisi
 import { shouldLatchFirstFrame } from './firstFrameLatch.js';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
 import { readFxKillSwitches } from './fxKillSwitches';
-import { createArtService } from './art/ArtService.js';
+import { createArtService, type ArtHandle } from './art/ArtService.js';
+import { MachinedShipSprite } from './art/MachinedShipSprite.js';
+import { MachinedFlatSprite } from './art/MachinedFlatSprite.js';
 import { warmUpJobs } from './art/warmUp.js';
 import { Backdrop } from './art/fx/Backdrop.js';
 import { speedFxFullSpeed } from './art/fx/depth.js';
@@ -124,6 +126,14 @@ export { shouldFireRemoteWarpVisual };
 
 /** A live naval shell: last + first-seen Pixi position, burst radius, full travel. */
 interface NavalShellRec { x: number; y: number; r: number; sx: number; sy: number; reach: number }
+
+/** How often (frames) unused older-sector art is freed (~2 s at 60 fps). */
+const ART_COLLECT_EVERY_FRAMES = 120;
+
+/** Record the Machined art a sprite draws (for art collection). */
+function noteShownArt(sprite: Container, out: Set<object>): void {
+  if (sprite instanceof MachinedShipSprite || sprite instanceof MachinedFlatSprite) out.add(sprite.art);
+}
 
 export class PixiRenderer implements IRenderer {
   /** True on touch devices (Equinox P6.1). The placement ghost seeds at
@@ -249,6 +259,28 @@ export class PixiRenderer implements IRenderer {
    *  swarm and lingering updaters. `art` is set in `init` when `?art=machined`
    *  (or the default) asks for it; null ⇒ today's vector look everywhere. */
   private readonly _artCtx: ShipArtCtx = { art: null, handles: new Map(), sunAz: 0 };
+  /** Frames since the last art collection, and its reused in-use set. */
+  private _artCollectFrame = 0;
+  private readonly _artInUse = new Set<ArtHandle>();
+  private readonly _artShown = new Set<object>();
+
+  /** Free the atlas pages of an older sector's art once no sprite or gun
+   *  draws it (after a sector trip), so a phone's few pages don't fill. */
+  private collectUnusedArt(): void {
+    const art = this._artCtx.art;
+    if (!art) return;
+    const inUse = this._artInUse;
+    inUse.clear();
+    for (const h of this._artCtx.handles.values()) inUse.add(h);
+    this.mountVisuals.addArtHandlesTo(inUse);
+    const shown = this._artShown;
+    shown.clear();
+    for (const sp of this.sprites.values()) noteShownArt(sp, shown);
+    for (const e of this.lingeringSprites.values()) noteShownArt(e.sprite, shown);
+    art.collect(inUse, shown);
+    inUse.clear();
+    shown.clear();
+  }
   /** Bound once in `init` (DOM path only); assigned to the global each frame. */
   private _artStatsHook: (() => unknown) | null = null;
   /** Scratch for `feedback.artReady` (see the end of `update()`). */
@@ -907,6 +939,10 @@ export class PixiRenderer implements IRenderer {
       // galaxy map / warp screen, where `update()` doesn't run, so the
       // warm-up lands before the player joins.
       this._artCtx.art?.tick();
+      if (this._artCtx.art && ++this._artCollectFrame >= ART_COLLECT_EVERY_FRAMES) {
+        this._artCollectFrame = 0;
+        this.collectUnusedArt();
+      }
       if (this._artStatsHook) (globalThis as { __eqxArtStats?: () => unknown }).__eqxArtStats = this._artStatsHook;
     });
 
@@ -2719,6 +2755,9 @@ export class PixiRenderer implements IRenderer {
   setSector(sectorKey: string | null): void {
     this._sectorKey = sectorKey;
     this._backdrop?.setSector(sectorKey);
+    // A new sector visit: its art goes into fresh pages, so the old sector's
+    // can be freed once nothing draws them (collectUnusedArt).
+    this._artCtx.art?.newVisit();
   }
 
   /** The baked glow texture for impact sparks (null until baked). */

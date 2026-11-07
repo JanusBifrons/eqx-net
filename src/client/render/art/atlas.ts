@@ -18,6 +18,8 @@ type AnyCanvas = HTMLCanvasElement | OffscreenCanvas;
 type AnyCtx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
 interface Page {
+  /** Which group the page belongs to (see `setGroup`). */
+  group: number;
   canvas: AnyCanvas;
   ctx: AnyCtx;
   tex: Texture | null;
@@ -63,17 +65,55 @@ export class Atlas {
 
   private newPage(): Page {
     const { canvas, ctx } = makeCanvas(this.pageSize);
-    const p: Page = { canvas, ctx, tex: null, x: this.PAD, y: this.PAD, rowH: 0, dirty: true };
+    const p: Page = { group: this.group, canvas, ctx, tex: null, x: this.PAD, y: this.PAD, rowH: 0, dirty: true };
     this.pages.push(p);
     return p;
   }
+
+  /**
+   * Pages are grouped (the art service uses one group per sector's sun, and
+   * group 0 for effect textures that every sector shares). New frames go into
+   * the current group's pages only, so a group's pages can be freed whole once
+   * nothing draws its art (`freeGroup`).
+   */
+  private group = 0;
+  setGroup(group: number): void { this.group = group; }
+
+  /** The newest page of the current group (where the shelf continues). */
+  private openPage(): Page | undefined {
+    for (let i = this.pages.length - 1; i >= 0; i--) if (this.pages[i]!.group === this.group) return this.pages[i];
+    return undefined;
+  }
+
+  /** Free every page (and stand-alone texture) of a group; its budget returns.
+   *  The caller guarantees nothing draws them any more. */
+  freeGroup(group: number): number {
+    let freed = 0;
+    for (let i = this.pages.length - 1; i >= 0; i--) {
+      const p = this.pages[i]!;
+      if (p.group !== group) continue;
+      p.tex?.destroy(true);
+      this.pages.splice(i, 1);
+      freed++;
+    }
+    for (let i = this.singles.length - 1; i >= 0; i--) {
+      if (this.singles[i]!.group !== group) continue;
+      this.singles[i]!.tex.destroy(true);
+      this.singles.splice(i, 1);
+    }
+    for (let i = this.pending.length - 1; i >= 0; i--) if (this.pending[i]!.page.group === group) this.pending.splice(i, 1);
+    this.freedPages += freed;
+    return freed;
+  }
+  /** Diagnostic: pages freed so far. */
+  freedPages = 0;
 
   /** Where a frame of this size would go: the current page, a new page, or
    *  nowhere (too big, or the page budget is spent). */
   private slotFor(w: number, h: number): { page: Page | null; newPage: boolean; wrap: boolean } | null {
     const S = this.pageSize, P = this.PAD;
     if (w + P * 2 > S || h + P * 2 > S) return null;
-    const p = this.pages[this.pages.length - 1];
+    const p = this.openPage();
     if (p) {
       if (p.x + w + P <= S && p.y + h + P <= S) return { page: p, newPage: false, wrap: false };
       if (p.y + p.rowH + P + h + P <= S && P + w + P <= S) return { page: p, newPage: false, wrap: true };
@@ -88,7 +128,7 @@ export class Atlas {
     // Simulate the shelf placement without touching the pages.
     const S = this.pageSize, P = this.PAD;
     let pages = this.pages.length;
-    const last = this.pages[this.pages.length - 1];
+    const last = this.openPage();
     let x = last ? last.x : S, y = last ? last.y : S, rowH = last ? last.rowH : 0;
     for (const f of frames) {
       if (f.w + P * 2 > S || f.h + P * 2 > S) return false;
@@ -142,7 +182,7 @@ export class Atlas {
     this.pending.length = 0;
   }
 
-  private readonly singles: Array<{ tex: Texture; bytes: number }> = [];
+  private readonly singles: Array<{ tex: Texture; bytes: number; group: number }> = [];
 
   /**
    * A texture of its own, outside the pages: for textures that wrap (drawn as
@@ -157,7 +197,7 @@ export class Atlas {
     if (repeat) tex.source.addressMode = 'repeat';
     if (mip) tex.source.autoGenerateMipmaps = true;
     const bytes = fr.w * fr.h * 4;
-    this.singles.push({ tex, bytes: mip ? Math.round((bytes * 4) / 3) : bytes });
+    this.singles.push({ tex, bytes: mip ? Math.round((bytes * 4) / 3) : bytes, group: this.group });
     return tex;
   }
 

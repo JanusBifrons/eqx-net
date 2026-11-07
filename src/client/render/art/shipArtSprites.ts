@@ -31,7 +31,7 @@ export function shipHandleFor(actx: ShipArtCtx, key: string, kindId: string, pai
   if (!actx.art) return null;
   let h = actx.handles.get(key);
   const rings = actx.turrets === true && hasTurrets(kindId, false);
-  if (!h || h.job.type !== 'ship' || h.job.id !== kindId || h.job.paint !== paint || (h.job.rings === true) !== rings) {
+  if (!h || h.stale === true || h.job.type !== 'ship' || h.job.id !== kindId || h.job.paint !== paint || (h.job.rings === true) !== rings) {
     h = actx.art.ship(kindId, paint, true, rings);
     actx.handles.set(key, h);
   }
@@ -43,7 +43,7 @@ export function structHandleFor(actx: ShipArtCtx, key: string, kindId: string, r
   if (!actx.art) return null;
   let h = actx.handles.get(key);
   const rings = actx.turrets === true && hasTurrets(kindId, true);
-  if (!h || h.job.type !== 'struct' || h.job.id !== kindId || quarterTurns(h.job.rot ?? 0) !== quarterTurns(rot) || (h.job.rings === true) !== rings) {
+  if (!h || h.stale === true || h.job.type !== 'struct' || h.job.id !== kindId || quarterTurns(h.job.rot ?? 0) !== quarterTurns(rot) || (h.job.rings === true) !== rings) {
     h = actx.art.struct(kindId, 1, rot, undefined, true, rings);
     actx.handles.set(key, h);
   }
@@ -54,7 +54,7 @@ export function structHandleFor(actx: ShipArtCtx, key: string, kindId: string, r
 export function scrapHandleFor(actx: ShipArtCtx, key: string, parentKind: string, component: number): ArtHandle | null {
   if (!actx.art) return null;
   let h = actx.handles.get(key);
-  if (!h || h.job.type !== 'scrap' || h.job.id !== parentKind || h.job.component !== component) {
+  if (!h || h.stale === true || h.job.type !== 'scrap' || h.job.id !== parentKind || h.job.component !== component) {
     h = actx.art.scrap(parentKind, component);
     actx.handles.set(key, h);
   }
@@ -68,7 +68,7 @@ export function rockHandleFor(
 ): ArtHandle | null {
   if (!actx.art) return null;
   let h = actx.handles.get(key);
-  if (!h || h.job.type !== 'rock' || h.job.entityId !== entityId || h.job.radius !== radius || h.job.resource !== resource) {
+  if (!h || h.stale === true || h.job.type !== 'rock' || h.job.entityId !== entityId || h.job.radius !== radius || h.job.resource !== resource) {
     h = actx.art.rock(entityId, radius, resource, rot);
     actx.handles.set(key, h);
   }
