@@ -99,7 +99,7 @@ import {
 import { applySnapshotPerfStats } from './snapshotPerfStats.js';
 import { syncTidiFromRoom } from './tidiSync.js';
 import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
-import { preResetRemoteShips, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyActivatedMounts, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
+import { preResetRemoteShips, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets } from './remoteLerpOffsets.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled, isFullDiagMode, isRammingProbeEnabled, isGhostProbeEnabled } from '../debug/ClientLogger';
@@ -3065,6 +3065,7 @@ export class ColyseusGameClient {
     // the in-world level badge. Lingering hulls carry their level via the
     // router (mirror.lingeringShips), above.
     applyShipLevels(snap, this.mirror);
+    applyShipWarp(snap, this.mirror);
 
     // Phase 4 WS-B3 — mirror each ACTIVE hull's PUBLIC activated latent mounts
     // (states[].mounts, playerId-keyed post-route) onto mirror.ships so the
@@ -3795,7 +3796,22 @@ export class ColyseusGameClient {
         hist.push({ ts: now, state: parsed });
         if (hist.length > HISTORY_MAX) hist.shift();
         this.remoteHistory.set(playerId, hist);
-        this.mirror.ships.set(playerId, mirrorEntry);
+        // Update the existing entry IN PLACE: replacing it wiped the fields
+        // only the snapshot writes (warp, level, shieldDown, mountAngles), so
+        // they flickered at the patch rate (an onlooker's warp spool glow never
+        // built). Lock: ColyseusClient.remoteMirrorPreserve.test.ts.
+        const prevEntry = this.mirror.ships.get(playerId);
+        if (prevEntry) {
+          prevEntry.x = parsed.x;
+          prevEntry.y = parsed.y;
+          prevEntry.vx = parsed.vx;
+          prevEntry.vy = parsed.vy;
+          prevEntry.angle = parsed.angle;
+          if (kind !== undefined) prevEntry.kind = kind;
+          if (displayName !== undefined) prevEntry.displayName = displayName;
+        } else {
+          this.mirror.ships.set(playerId, mirrorEntry);
+        }
 
         // Guard: only spawn if we know who the local player is.
         if (this.predWorld && !this.predWorld.hasShip(playerId) && localId !== null) {
@@ -3968,6 +3984,13 @@ export class ColyseusGameClient {
           entry.vx = state.vx;
           entry.vy = state.vy;
           entry.angle = drAngle + oa;
+        }
+        // Warp-to (#16): the local ship shows its PREDICTED phase (others take
+        // the snapshot's), so the build-up starts on the frame the pilot asks.
+        {
+          const wp = this.predWorld ? this.predWorld.warpPhase(localId) : 'idle';
+          const w = wp === 'spool' ? 1 : wp === 'cruise' ? 2 : undefined;
+          if (entry.warp !== w) entry.warp = w;
         }
 
         // Structure placement ghost preview (smoke handoff 2026-06-06, Issue 5;

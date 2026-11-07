@@ -7,6 +7,7 @@
 import type { Shot } from './types.js';
 import { galaxyLanding } from './shots/galaxyLanding.js';
 import { warpTo } from './shots/warpTo.js';
+import { warpOnlooker } from './shots/warpOnlooker.js';
 import { joinSector } from './shots/joinSector.js';
 import { shipGallery } from './shots/shipGallery.js';
 import { capitalLineup, capitalBroadside, capitalFlyby, capitalPilot, capitalEngines, capitalTurrets, capitalGunsFighter, capitalGunsBystander } from './shots/capitals.js';
@@ -46,6 +47,7 @@ import { cockpitBounty, cockpitHaul, cockpitRobots, cockpitStronghold } from './
 /** Every shot, in reel order. Catalogue = all of them; reel = `reel: true`. */
 export const SHOTS: readonly Shot[] = [
   warpTo,
+  warpOnlooker,
   galaxyLanding,
   joinSector,
   shipGallery,
