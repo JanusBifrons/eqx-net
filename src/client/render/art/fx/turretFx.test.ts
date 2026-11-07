@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { familyFor, flashFrameAt, heatAfter, muzzleFlashFlipbook, nearestMuzzle, recoilAt, NAVAL_FLASH_LIFE_S, navalFlashSize, navalMuzzleBlastRadius, shellImpactRadius } from './turretFx.js';
+import { familyFor, flashFrameAt, heatAfter, muzzleFlashFlipbook, nearestMuzzle, recoilAt, NAVAL_FLASH_LIFE_S, shellImpactRadius, muzzleSmokePuff, MUZZLE_SMOKE_LIFE_S } from './turretFx.js';
 
 describe('turret bakes', () => {
   it('the flash shrinks frame by frame', () => {
@@ -51,12 +51,22 @@ describe('capital naval gun effects (review round 2026-11-07)', () => {
     expect(flashFrameAt(NAVAL_FLASH_LIFE_S, 4, NAVAL_FLASH_LIFE_S)).toBe(-1);
   });
 
-  it('flash, muzzle blast and impact grow with the gun (invariant #18)', () => {
-    const small = navalFlashSize(10, 60), big = navalFlashSize(40, 240);
-    expect(big.w).toBeGreaterThan(small.w * 3);
-    expect(big.h).toBeGreaterThan(small.h * 3);
-    expect(big.w).toBeGreaterThan(240); // covers the whole barrel bank
-    expect(navalMuzzleBlastRadius(40)).toBeGreaterThan(navalMuzzleBlastRadius(10));
+  it('the impact burst grows with the shell (invariant #18)', () => {
     expect(shellImpactRadius(6)).toBeGreaterThan(shellImpactRadius(3));
+  });
+});
+
+describe('naval muzzle smoke is a directed cone (review 2026-11-07)', () => {
+  const out = { d: 0, size: 0, alpha: 0 };
+  it('blows forward along the barrel and fades out', () => {
+    const near = muzzleSmokePuff(0.1, 0, 40, { ...out }).d;
+    const later = muzzleSmokePuff(0.8, 0, 40, { ...out }).d;
+    expect(later).toBeGreaterThan(near);
+    expect(muzzleSmokePuff(0.8, 2, 40, { ...out }).d).toBeGreaterThan(muzzleSmokePuff(0.8, 0, 40, { ...out }).d);
+    expect(muzzleSmokePuff(MUZZLE_SMOKE_LIFE_S, 0, 40, { ...out }).alpha).toBe(0);
+    expect(muzzleSmokePuff(0.1, 0, 40, { ...out }).alpha).toBeGreaterThan(muzzleSmokePuff(1.2, 0, 40, { ...out }).alpha);
+  });
+  it('scales with the barrel (invariant #18)', () => {
+    expect(muzzleSmokePuff(0.5, 1, 40, { ...out }).size).toBeCloseTo(muzzleSmokePuff(0.5, 1, 10, { ...out }).size * 4, 6);
   });
 });

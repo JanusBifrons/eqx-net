@@ -34,7 +34,7 @@ import { Backdrop } from './art/fx/Backdrop.js';
 import { speedFxFullSpeed } from './art/fx/depth.js';
 import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
-import { navalMuzzleBlastRadius, shellImpactRadius } from './art/fx/turretFx.js';
+import { shellImpactRadius } from './art/fx/turretFx.js';
 import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import { FxEngines } from './art/fx/FxEngines.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
@@ -2285,10 +2285,7 @@ export class PixiRenderer implements IRenderer {
       if (p.beam) continue; // instant beam lines: handled as beams
       if (!this._turretShotSeen.has(id)) {
         const key = this.shooterSpriteKey(p.ownerId);
-        // A capital salvo: fire and smoke at the muzzle, once per salvo.
-        if (key && mv.noteShotNear(key, p.x, -p.y) && mv.shotBarrelWid > 0) {
-          this._fxExplosions?.spawn(mv.shotTipX, mv.shotTipY, navalMuzzleBlastRadius(mv.shotBarrelWid), now);
-        }
+        if (key) mv.noteShotNear(key, p.x, -p.y);
       }
       this._turretShotSeen.set(id, gen);
       // Naval shells: remember where each one is, for its impact burst.

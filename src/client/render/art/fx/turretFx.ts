@@ -84,22 +84,33 @@ export function familyFor(weaponId: string, mode: string, charge: boolean): Turr
   return weaponId === 'pulse-orb' ? 'charge' : 'bolt';
 }
 
-/** Capital naval guns (review round 2026-11-07, "bigger effects"): a flash
- *  that lasts and spreads across the whole barrel bank, a blast of fire and
- *  smoke at the muzzle, and a burst where the shell lands. Sizes follow the
+/** Capital naval guns (review round 2026-11-07, "bigger effects"): a long
+ *  directed flash out of each barrel, propellant smoke blown forward along it
+ *  (`muzzleSmokePuff`), and a burst where the shell lands. Sizes follow the
  *  gun, never a fixed number (invariant #18). */
 export const NAVAL_FLASH_LIFE_S = 0.22;
-/** Flash size (world units) for a naval turret: across every barrel, long. */
-export function navalFlashSize(barrelWid: number, bankSpan: number): { w: number; h: number } {
-  return { w: bankSpan + barrelWid * 4, h: barrelWid * 14 };
-}
-/** Muzzle blast (fire + smoke) radius for a naval gun's barrel width. */
-export function navalMuzzleBlastRadius(barrelWid: number): number {
-  return Math.max(30, barrelWid * 5);
-}
 /** Impact burst radius for a shell of collision radius `shellRadius`. */
 export function shellImpactRadius(shellRadius: number): number {
   return Math.max(30, shellRadius * 35);
 }
-/** Seconds after a shot within which another shot counts as the same salvo. */
-export const SALVO_WINDOW_S = 0.15;
+
+/** Smoke puffs per barrel after a naval shot, and how long they last. */
+export const MUZZLE_SMOKE_PUFFS = 6;
+export const MUZZLE_SMOKE_LIFE_S = 1.6;
+export interface SmokePuff { d: number; size: number; alpha: number }
+/**
+ * Puff `k` (0 = nearest the muzzle) of a barrel's propellant smoke, `t`
+ * seconds after the shot: blown FORWARD along the barrel (`d`, distance past
+ * the muzzle, grows), swelling and fading. A directed cone, not a round blast
+ * (review 2026-11-07: "a directed propellent type one"). Sizes follow the
+ * barrel width (invariant #18). Writes `out`; alpha 0 = not drawn.
+ */
+export function muzzleSmokePuff(t: number, k: number, barrelWid: number, out: SmokePuff): SmokePuff {
+  if (t < 0 || t >= MUZZLE_SMOKE_LIFE_S) { out.alpha = 0; out.d = 0; out.size = 0; return out; }
+  const p = t / MUZZLE_SMOKE_LIFE_S;
+  const ease = 1 - (1 - Math.min(1, t / 0.35)) ** 3; // fast push out, then drift
+  out.d = barrelWid * (1 + 2.2 * k) * (0.5 + 1.5 * ease) + barrelWid * 2 * p;
+  out.size = barrelWid * (3 + 1.6 * k + 6 * p);
+  out.alpha = 0.6 * (1 - p) ** 1.4 * (1 - 0.1 * k);
+  return out;
+}
