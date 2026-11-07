@@ -270,27 +270,29 @@ const CHARGE_LASER_DEF: HitscanWeaponDef = {
  *   | L    | 12"/50  | 517 kg  | 35 km     | 2.7    |
  *   | XL   | 16"/50  | 1225 kg | 38.7 km   | 2      |
  *
- * Reach keeps the real range ratio (1 : 1.54 : 2.12 : 2.34). Damage follows
- * the square root of shell weight (1 : 2 : 4.5 : 7) and the reload follows
- * rate of fire to the 0.75 power, both compressed so a battleship salvo hurts
- * without one-shotting everything. Shells fly ~2 s to full reach: dodgeable.
+ * Reach keeps the real range ratio (1 : 1.54 : 2.12 : 2.34). Reloads are the
+ * real ones (review round 2026-11-07): 16" 30 s, 12" 22 s, 6-8" 10 s, 5" 4 s.
+ * Damage is scaled to match, so a 16" salvo is a heavy blow even to a capital
+ * (a direct hit wipes a small ship's shields). Main guns never TARGET small
+ * craft (core/combat/mountTargeting.ts), but a shell hits whatever it meets.
+ * Shells fly ~2 s to full reach: dodgeable.
  * Authored at 1×; `profiled` scales the reach with the ship-scale combat profile.
  */
 const NAVAL_S_DEF: ProjectileWeaponDef = {
   id: 'naval_s', displayName: '5" gun', mode: 'projectile',
-  damage: 15, cooldownTicks: 30, speed: 1800, radius: 3, maxTicks: 60, energyCost: 1,
+  damage: 60, cooldownTicks: 240, speed: 1800, radius: 3, maxTicks: 60, energyCost: 1,
 };
 const NAVAL_M_DEF: ProjectileWeaponDef = {
   id: 'naval_m', displayName: '8" gun', mode: 'projectile',
-  damage: 30, cooldownTicks: 45, speed: 2000, radius: 4, maxTicks: 83, energyCost: 1,
+  damage: 350, cooldownTicks: 600, speed: 2000, radius: 4, maxTicks: 83, energyCost: 1,
 };
 const NAVAL_L_DEF: ProjectileWeaponDef = {
   id: 'naval_l', displayName: '12" gun', mode: 'projectile',
-  damage: 68, cooldownTicks: 108, speed: 2200, radius: 5, maxTicks: 104, energyCost: 1,
+  damage: 800, cooldownTicks: 1320, speed: 2200, radius: 5, maxTicks: 104, energyCost: 1,
 };
 const NAVAL_XL_DEF: ProjectileWeaponDef = {
   id: 'naval_xl', displayName: '16" gun', mode: 'projectile',
-  damage: 105, cooldownTicks: 135, speed: 2300, radius: 6, maxTicks: 110, energyCost: 1,
+  damage: 1400, cooldownTicks: 1800, speed: 2300, radius: 6, maxTicks: 110, energyCost: 1,
 };
 
 /**

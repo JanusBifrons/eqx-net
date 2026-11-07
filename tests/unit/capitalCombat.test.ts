@@ -9,6 +9,7 @@ import { getWeapon, weaponAutoFireRange, WEAPON_IDS, isWeaponId } from '../../sr
 import { mountTargetReach, mountWeaponReach, hasTurretFireControl } from '../../src/core/combat/mountReach';
 import { HITSCAN_RANGE } from '../../src/core/combat/Weapons';
 import { navalTurret, navalBarrelOffset, NAVAL_BARREL_SPAN } from '../../src/core/combat/muzzle';
+import { canTrack, mountLineClear, mountPriority, targetClass } from '../../src/core/combat/mountTargeting';
 import { HostileDroneBehaviour, BROADSIDE_STANDOFF } from '../../src/core/ai/HostileDroneBehaviour';
 import { getShipKind } from '../../src/shared-types/shipKinds';
 import type { AiWorldView } from '../../src/core/contracts/IAiBehaviour';
@@ -46,12 +47,13 @@ describe('naval guns follow the WW2 calibre ratios', () => {
 
 describe('capital mounts', () => {
   for (const id of CAPITALS) {
-    it(`${id}: every mount fires the naval gun of its size`, () => {
+    it(`${id}: every gun fires its calibre's weapon; AA mounts fire laser bolts from 4 barrels`, () => {
       const kind = getShipKind(id);
       expect(kind.mounts.length).toBeGreaterThan(0);
+      expect(kind.mounts.some((m) => m.size === 'AA')).toBe(true);
       for (const m of kind.mounts) {
-        const size = (m as { size?: string }).size;
-        expect(m.weaponId).toBe(`naval_${size!.toLowerCase()}`);
+        if (m.size === 'AA') { expect(m.weaponId).toBe('laser'); expect(m.barrels).toBe(4); continue; }
+        expect(m.weaponId).toBe(`naval_${m.size!.toLowerCase()}`);
       }
     });
 
@@ -69,7 +71,7 @@ describe('capital mounts', () => {
     it(`${id}: main turrets train ±135° at near-real rates, and gunhouses never touch`, () => {
       const kind = getShipKind(id);
       const mains = kind.mounts.filter((m) => m.id.startsWith('main-'));
-      const realMax: Record<string, number> = { S: 0.27, M: 0.15, L: 0.09, XL: 0.075 }; // ~15/8/5/4 °/s
+      const realMax: Record<string, number> = { AA: 0.5, S: 0.27, M: 0.15, L: 0.09, XL: 0.075 }; // ~15/8/5/4 °/s
       for (const m of kind.mounts) expect(m.rotationSpeed).toBeLessThanOrEqual(realMax[m.size!]!);
       for (const m of mains) {
         expect(m.arcMax).toBeCloseTo((3 * Math.PI) / 4, 5);
@@ -152,5 +154,41 @@ describe('broadside steering', () => {
     b.markHostile('p', 100);
     const intent = b.tick(self, view(0, mainReach() * 2));
     expect(Math.hypot(intent.fx, intent.fy)).toBeCloseTo(getShipKind('battleship').ai.thrust, 3);
+  });
+});
+
+describe('turret targeting: priority + what a turret can practically engage', () => {
+  it('each gun size prefers its own class, but no class is banned', () => {
+    expect(targetClass(getShipKind('fighter'))).toBe('small');
+    expect(targetClass(getShipKind('crossguard'))).toBe('subcapital');
+    expect(targetClass(getShipKind('destroyer'))).toBe('small-capital');
+    expect(targetClass(getShipKind('battleship'))).toBe('capital');
+    expect(mountPriority('XL', 'capital')).toBeLessThan(mountPriority('XL', 'small'));
+    expect(mountPriority('S', 'subcapital')).toBeLessThan(mountPriority('S', 'capital'));
+    expect(mountPriority('S', 'capital')).toBeLessThan(mountPriority('S', 'small'));
+    expect(mountPriority('AA', 'small')).toBeLessThan(mountPriority('AA', 'capital'));
+    for (const s of ['AA', 'S', 'M', 'L', 'XL'] as const) expect(Number.isFinite(mountPriority(s, 'small'))).toBe(true);
+  });
+
+  it('a 16" turret cannot track a fighter darting past close by, but can a slow or distant one', () => {
+    const xl = getShipKind('battleship').mounts.find((m) => m.size === 'XL')!;
+    const aa = getShipKind('battleship').mounts.find((m) => m.size === 'AA')!;
+    // Fighter 1,500 u abeam crossing at 300 u/s: bearing rate 0.2 rad/s.
+    expect(canTrack(xl.rotationSpeed, 1500, 0, 0, 300)).toBe(false);
+    expect(canTrack(aa.rotationSpeed, 1500, 0, 0, 300)).toBe(true);
+    // The same fighter sitting still, or far off, is trackable by the 16".
+    expect(canTrack(xl.rotationSpeed, 1500, 0, 0, 0)).toBe(true);
+    expect(canTrack(xl.rotationSpeed, 6000, 0, 0, 300)).toBe(true);
+  });
+
+  it('guns fire outwards, never down the length of their own hull', () => {
+    const bs = getShipKind('battleship');
+    const fore = bs.mounts.find((m) => m.id === 'main-1')!;
+    expect(mountLineClear(bs, fore, Math.PI / 2)).toBe(true); // abeam to port
+    expect(mountLineClear(bs, fore, -Math.PI / 2)).toBe(true); // abeam to starboard
+    expect(mountLineClear(bs, fore, Math.PI)).toBe(false); // straight aft, along the deck
+    const aaStbd = bs.mounts.find((m) => m.size === 'AA' && m.localX > 0)!;
+    expect(mountLineClear(bs, aaStbd, -Math.PI / 2)).toBe(true); // outboard
+    expect(mountLineClear(bs, aaStbd, Math.PI / 2)).toBe(false); // across its own deck
   });
 });

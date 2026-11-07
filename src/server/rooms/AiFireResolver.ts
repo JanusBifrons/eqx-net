@@ -198,6 +198,9 @@ export class AiFireResolver implements WeaponFireSink {
     if (!self) return;
     this.fireNow(shooterId, -Math.sin(self.angle), Math.cos(self.angle), mountIdx);
   }
+  /** Quad AA: the next barrel to fire, per shooter and mount index. */
+  private readonly aaBarrel = new Map<string, Uint8Array>();
+
   /** Release every charge whose wind-up has elapsed (call once per server
    *  tick, after the AI tick). Fires from the shooter's CURRENT pose along the
    *  LOCKED direction — a dodgeable telegraph. Allocation-free. */
@@ -218,6 +221,7 @@ export class AiFireResolver implements WeaponFireSink {
   /** The shooter left the world — drop its charge. */
   forget(shooterId: string): void {
     this.charges.delete(shooterId);
+    this.aaBarrel.delete(shooterId);
   }
 
   /** P3c — per-shooter wind-up records (reused; never per-tick allocated). */
@@ -282,6 +286,18 @@ export class AiFireResolver implements WeaponFireSink {
         continue;
       }
       const rightX = ndy, rightY = -ndx;
+      if (mount.size === 'AA') {
+        // Quad AA: the barrels fire in turn, one per trigger (a stream).
+        let cyc = this.aaBarrel.get(shooterId);
+        if (cyc === undefined || cyc.length < slotMounts.length) { cyc = new Uint8Array(slotMounts.length); this.aaBarrel.set(shooterId, cyc); }
+        const k = cyc[mIdx]! % naval.barrels;
+        cyc[mIdx] = k + 1;
+        const off = navalBarrelOffset(naval, k);
+        ctx.fromX = rayFromX + rightX * off;
+        ctx.fromY = rayFromY + rightY * off;
+        getWeaponObject(mount.weaponId).resolveFire(ctx, this);
+        continue;
+      }
       for (let k = 0; k < naval.barrels; k++) {
         const off = navalBarrelOffset(naval, k);
         ctx.fromX = rayFromX + rightX * off;

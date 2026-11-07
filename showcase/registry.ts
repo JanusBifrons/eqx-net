@@ -8,7 +8,7 @@ import type { Shot } from './types.js';
 import { galaxyLanding } from './shots/galaxyLanding.js';
 import { joinSector } from './shots/joinSector.js';
 import { shipGallery } from './shots/shipGallery.js';
-import { capitalLineup, capitalBroadside, capitalFlyby, capitalPilot, capitalEngines, capitalTurrets, capitalGunsFighter } from './shots/capitals.js';
+import { capitalLineup, capitalBroadside, capitalFlyby, capitalPilot, capitalEngines, capitalTurrets, capitalGunsFighter, capitalGunsBystander } from './shots/capitals.js';
 import { machinedArt } from './shots/machinedArt.js';
 import { newEffects } from './shots/newEffects.js';
 import { crossingSector } from './shots/crossingSector.js';
@@ -54,6 +54,7 @@ export const SHOTS: readonly Shot[] = [
   capitalEngines,
   capitalTurrets,
   capitalGunsFighter,
+  capitalGunsBystander,
   machinedArt,
   flight,
   beamCombat,

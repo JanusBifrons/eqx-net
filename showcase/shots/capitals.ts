@@ -1,5 +1,6 @@
 import type { Shot } from '../types.js';
 import { sendRoom } from './_helpers.js';
+import { targetUrl } from '../recorder.js';
 import { startZoomForScale } from '../../src/shared-types/shipScale/tuning.js';
 import { getShipKind } from '../../src/shared-types/shipKinds.js';
 import { localPose, flyTo } from './_pilot.js';
@@ -367,3 +368,82 @@ export const capitalGunsFighter: Shot = {
     ]);
   },
 };
+
+/** Bystander spot off the battleship's starboard bow, beside the forward
+ *  turrets but clear of their line of fire toward the target (4,000, 0). */
+const BYSTANDER = { x: 600, y: 2300 };
+
+/**
+ * Review round (2026-11-07): "leave the fighter where it was and spawn another
+ * one near the turrets so someone who isn't a target gets a feeling for what
+ * it's like." The RECORDED pilot is a bystander parked beside the battleship's
+ * starboard turrets on the normal follow camera; a second, unrecorded client
+ * flies the target 4,000 u off the beam and is the only one the battleship is
+ * hostile to (test_aggro from its own session).
+ */
+export const capitalGunsBystander: Shot = {
+  id: 'capital-guns-bystander',
+  section: 'mechanics',
+  title: 'Capital guns, from beside them',
+  caption: 'A battleship firing at a fighter 4,000 units away, seen from another fighter parked beside its turrets.',
+  features: ['CAP'],
+  docs: ['ship-kinds'],
+  reel: false,
+  server: 'capitals',
+  target: { room: 'showcase-capital-duel', params: { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1, spawnX: BYSTANDER.x, spawnY: BYSTANDER.y } },
+  hud: 'none',
+  durationMs: 24_000,
+  async startWhen(ctx) {
+    await artSettled(ctx);
+    // The target: a separate browser context (its own player id) at the
+    // room's default spawn, 4,000 u off the battleship's starboard beam.
+    const browser = ctx.page.context().browser();
+    if (!browser) throw new Error('no browser for the target client');
+    const tctx = await browser.newContext({ viewport: { width: 640, height: 360 } });
+    const tpage = await tctx.newPage();
+    targetPages.set(ctx.testId, { tctx, tpage });
+    await tpage.goto(targetUrl(ctx.baseUrl, { room: 'showcase-capital-duel', params: { shipKind: 'fighter', art: 'classic', initialHull: 1_000_000, noselfdmg: 1 } }, ctx.testId, 'none'));
+    await tpage.waitForSelector('[data-testid="warp-screen"][data-warp-visible="0"]', { state: 'attached', timeout: 60_000 });
+    // Start the fight off camera so the turrets are already training round.
+    await keepHostileFrom(ctx, tpage, 14_000);
+  },
+  async run(ctx) {
+    const t = targetPages.get(ctx.testId);
+    try {
+      if (t) await Promise.all([keepHostileFrom(ctx, t.tpage, 23_500), keepStation(ctx, 23_500)]);
+      else await ctx.sleep(23_500);
+    } finally {
+      await t?.tctx.close();
+      targetPages.delete(ctx.testId);
+    }
+  },
+};
+
+/** Hold the bystander at BYSTANDER relative to the battleship as it moves. */
+async function keepStation(ctx: ShotContext, ms: number): Promise<void> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    const bs = await ctx.page.evaluate(() => {
+      const m = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number; x: number; y: number }> } } }).__eqxClient?.mirror;
+      let p: { x: number; y: number } | null = null;
+      m?.swarm.forEach((e) => { if (e.kind === 1) p = { x: e.x, y: e.y }; });
+      return p as { x: number; y: number } | null;
+    });
+    if (bs) await flyTo(ctx, bs.x + BYSTANDER.x, bs.y + BYSTANDER.y, { arrive: 120, maxMs: Math.min(3000, end - Date.now()), cruise: 260 });
+    else await ctx.sleep(500);
+  }
+}
+
+const targetPages = new Map<string, { tctx: import('@playwright/test').BrowserContext; tpage: import('@playwright/test').Page }>();
+
+/** keepHostile, sent from another client's session (that client is the target). */
+async function keepHostileFrom(ctx: ShotContext, page: import('@playwright/test').Page, ms: number): Promise<void> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    await page.evaluate(() => {
+      const c = (window as unknown as { __eqxClient?: { getRoom?: () => { send: (ch: string, x: unknown) => void } | null } }).__eqxClient;
+      c?.getRoom?.()?.send('test_aggro', { type: 'test_aggro' });
+    });
+    await ctx.sleep(Math.min(9000, end - Date.now()));
+  }
+}

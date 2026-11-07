@@ -100,6 +100,9 @@ const TRAVERSE: Readonly<Record<CapitalMountSize, number>> = { S: 0.26, M: 0.14,
 /** Main-battery training limit either side of the rest bearing (±135°, about
  *  the Iowa limits: never back across its own superstructure). */
 const MAIN_ARC = (3 * Math.PI) / 4;
+/** Quad 40 mm AA traverse (rad/s): ~26°/s, quick but not quick enough for a
+ *  fighter crossing close by. */
+const AA_TRAVERSE = 0.45;
 /** Each mount size fires its calibre's naval gun (core/combat/WeaponCatalogue). */
 const NAVAL_GUN = { S: 'naval_s', M: 'naval_m', L: 'naval_l', XL: 'naval_xl' } as const satisfies Record<CapitalMountSize, string>;
 
@@ -245,17 +248,21 @@ export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: Capi
   // Superstructure tiers and heat-sink stacks on top of the deck.
   for (const [t0, t1, w] of s.superstructure) part(rect(0, yAt((t0 + t1) / 2), B * w, L * (t1 - t0)), s.colors.upper, 'superstructure');
   for (const [tt, len, w] of s.stacks) part(rect(0, yAt(tt), B * w, L * len, 0.45), s.colors.stack, 'stack');
-  // Quad-40 mm AA tubs: a ring with four short barrels pointing outboard.
-  for (const [tt, xb] of AA[id]) {
+  // Quad-40 mm AA: working mounts in their tubs (review round 2026-11-07).
+  // Four barrels firing in turn (laser bolts), facing outboard; they engage
+  // only small craft and, traverse-limited, struggle against close, crossing
+  // targets (core/combat/mountTargeting.ts).
+  AA[id].forEach(([tt, xb], i) => {
     for (const side of [1, -1] as const) {
-      const cx = side * B * xb, cy = yAt(tt), r = B * 0.045;
-      part(circle(cx, cy, r, 10), s.colors.aa, 'aa');
-      for (let k = 0; k < 4; k++) {
-        const by = cy + (k - 1.5) * r * 0.45;
-        part(rect(cx + side * r * 1.1, by, r * 1.1, r * 0.16, 0), s.colors.aa, 'aa');
-      }
+      const cx = side * B * xb, cy = yAt(tt);
+      part(circle(cx, cy, B * CAPITAL_TURRETS.AA.barbette, 10), s.colors.aa, 'barbette');
+      mounts.push({
+        id: `aa-${side > 0 ? 's' : 'p'}${i + 1}`, localX: cx, localY: L / 2 - tt * L,
+        baseAngle: side > 0 ? -Math.PI / 2 : Math.PI / 2, arcMin: -1.6, arcMax: 1.6,
+        rotationSpeed: AA_TRAVERSE, weaponId: 'laser', size: 'AA', barrels: 4,
+      });
     }
-  }
+  });
 
   const hull = convexHull(parts.flatMap((q) => q['points'] as Pt[]));
   const massRatio = t.mass / CAPITAL_MAPPINGS[map].destroyerMass;

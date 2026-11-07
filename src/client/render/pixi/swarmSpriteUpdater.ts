@@ -386,10 +386,14 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     }
     // Damage flash + beam-hit tint (both render as the damage colour so
     // a drone clearly registers a hit even when no beam is currently on it).
+    // A capital never washes its whole hull red: a fighter's bolt on a 5,000 u
+    // battleship read as the battleship itself flashing (review 2026-11-07).
+    const capital = entry.kind === 1 && entry.shipKind !== undefined && getShipKind(entry.shipKind).sizeClass === 'capital';
     if (
-      mirror.damagedShips?.has(spriteKey) ||
-      ctx.localHitTargets.has(spriteKey) ||
-      ctx.remoteHitTargets.has(spriteKey)
+      !capital && (
+        mirror.damagedShips?.has(spriteKey) ||
+        ctx.localHitTargets.has(spriteKey) ||
+        ctx.remoteHitTargets.has(spriteKey))
     ) {
       sprite.tint = DAMAGE_FLASH_COLOR;
     } else {

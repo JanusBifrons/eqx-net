@@ -353,9 +353,10 @@ export class MountVisualManager {
       if (gun.tip) gun.tip.visible = false;
       return;
     }
-    if (!gun.flash || !gun.tip || (gun.place.naval && (!gun.smokes || !gun.barrelFlashes))) this.buildReactionSprites(gun);
+    if (!gun.flash || !gun.tip || (gun.place.naval && gun.place.mount.size !== 'AA' && (!gun.smokes || !gun.barrelFlashes))) this.buildReactionSprites(gun);
     const flash = gun.flash, tip = gun.tip;
-    const naval = gun.place.naval;
+    // Quad AA fires barrel by barrel: it keeps the ordinary single flash.
+    const naval = gun.place.naval && gun.place.mount.size !== 'AA' ? gun.place.naval : undefined;
     if (naval) {
       // A capital salvo: a long, directed flash out of EACH barrel and
       // propellant smoke blown forward along it (children of the pivot, so
@@ -453,7 +454,7 @@ export class MountVisualManager {
       const g = new Sprite(glow); g.anchor.set(0.5); g.blendMode = 'add'; g.tint = gun.place.family === 'bolt' ? 0xff6a2a : tint; g.visible = false;
       gun.pivot.addChild(g); gun.tip = g;
     }
-    const naval = gun.place.naval;
+    const naval = gun.place.naval && gun.place.mount.size !== 'AA' ? gun.place.naval : undefined;
     if (naval && !gun.smokes) {
       this.smokeHandle ??= art.fx('smoke', undefined, undefined, false);
       const smoke = this.smokeHandle.state === 'ready' && this.smokeHandle.fx ? this.smokeHandle.fx.tex : null;
