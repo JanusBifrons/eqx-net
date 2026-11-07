@@ -101,12 +101,15 @@ export class FxBeams {
 }
 
 /** How a projectile looks. */
-export type FxProjStyle = 'bolt' | 'tracer';
+export type FxProjStyle = 'bolt' | 'tracer' | 'shell';
 
 interface ProjView { head: Sprite; core: Sprite; trail: Sprite[]; gen: number }
 
 const BOLT = { len: 30, width: 9, trail: 3, tint: 0xffc860 };
 const TRACER = { len: 38, width: 4, trail: 0, tint: 0xffe6a0 };
+/** Capital naval shells, per unit of the gun's shell radius (a 16" shell,
+ *  radius 6, draws ~240 u long) so they read at capital zoom. */
+const SHELL = { len: 40, width: 4, trail: 3, tint: 0xffb347 };
 
 export class FxProjectiles {
   readonly container = new Container();
@@ -127,31 +130,33 @@ export class FxProjectiles {
   beginFrame(): void { this.gen++; }
 
   /** Draw projectile `id` at game-space (x, y) moving (vx, vy). */
-  draw(id: string, style: FxProjStyle, x: number, y: number, vx: number, vy: number, alpha: number): void {
+  draw(id: string, style: FxProjStyle, x: number, y: number, vx: number, vy: number, alpha: number, size = 1): void {
     let v = this.live.get(id);
     if (!v) {
       v = this.free.pop() ?? this.make();
       this.live.set(id, v);
     }
     v.gen = this.gen;
-    const sp = style === 'bolt' ? BOLT : TRACER;
+    const base = style === 'bolt' ? BOLT : style === 'shell' ? SHELL : TRACER;
+    const k0 = style === 'shell' ? size : 1;
+    const spLen = base.len * k0, spWid = base.width * k0;
     const px = x, py = -y;
     const sl = Math.hypot(vx, vy) || 1;
     const ux = vx / sl, uy = -vy / sl;
     const ang = Math.atan2(uy, ux);
     const w = v.head.texture.width, h = v.head.texture.height;
     v.head.visible = true; v.core.visible = true;
-    v.head.position.set(px, py); v.head.rotation = ang; v.head.tint = sp.tint;
-    v.head.scale.set(sp.len / w, sp.width / h); v.head.alpha = alpha * (style === 'bolt' ? 0.85 : 1);
+    v.head.position.set(px, py); v.head.rotation = ang; v.head.tint = base.tint;
+    v.head.scale.set(spLen / w, spWid / h); v.head.alpha = alpha * (style === 'bolt' ? 0.85 : 1);
     v.core.position.set(px, py); v.core.rotation = ang;
-    v.core.scale.set((sp.len * 0.6) / w, (sp.width * 0.33 + 0.8) / h); v.core.alpha = alpha;
+    v.core.scale.set((spLen * 0.6) / w, (spWid * 0.33 + 0.8) / h); v.core.alpha = alpha;
     for (let k = 0; k < v.trail.length; k++) {
       const tr = v.trail[k]!;
-      tr.visible = k < sp.trail;
+      tr.visible = k < base.trail;
       if (!tr.visible) continue;
-      const back = (k + 1) * 12;
-      tr.position.set(px - ux * back, py - uy * back); tr.rotation = ang; tr.tint = sp.tint;
-      tr.scale.set((sp.len * (0.9 - k * 0.15)) / w, (sp.width * (0.8 - k * 0.18)) / h);
+      const back = (k + 1) * 12 * k0;
+      tr.position.set(px - ux * back, py - uy * back); tr.rotation = ang; tr.tint = base.tint;
+      tr.scale.set((spLen * (0.9 - k * 0.15)) / w, (spWid * (0.8 - k * 0.18)) / h);
       tr.alpha = alpha * (0.42 - k * 0.12);
     }
   }
@@ -183,5 +188,6 @@ export class FxProjectiles {
 export function fxProjectileStyle(weaponId: string | undefined, isBeam: boolean): FxProjStyle | null {
   if (isBeam) return null;
   if (weaponId === 'pulse-orb') return null;
+  if (weaponId !== undefined && weaponId.startsWith('naval_')) return 'shell';
   return weaponId === 'laser' ? 'bolt' : 'tracer';
 }

@@ -16,6 +16,7 @@ export {
   FireMessageSchema,
   EngageTransitSchema,
   CancelTransitSchema,
+  TestAggroSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,

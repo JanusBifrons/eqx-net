@@ -95,6 +95,9 @@ export interface SwarmDroneRec {
 
 export interface SwarmLookupByEid {
   getByEntityId(entityId: number): SwarmDroneRec | null | undefined;
+  /** By internal id: a projectile owner's entity id + radius (wide owners'
+   *  shells reach viewers beyond the projectile box). Optional for fakes. */
+  get?(id: string): { entityId: number; radius: number } | null | undefined;
 }
 
 /** Narrow view of MissileSimulation the broadcaster uses. */
@@ -362,6 +365,25 @@ export class SnapshotBroadcaster {
   private readonly _stateEntryPool = new Map<string, MutableStateEntry>();
   private readonly _aliveShipInstanceIds = new Set<string>();
   private readonly _projectilesScratch: MutableProjectileEntry[] = [];
+  /** Swarm entity id → its wire id (`swarm-<eid>`), built once per entity. */
+  private readonly _wireOwnerIds = new Map<number, string>();
+
+  /** A projectile's owner on the wire. A drone shooter's internal id means
+   *  nothing to the client, which knows it as `swarm-<entityId>`: without this
+   *  the renderer never matched a drone's shot to its gun, so drone and capital
+   *  turrets never recoiled or flashed (capitals review, 2026-11-07). Players
+   *  and structures pass through. Alloc-free once each entity is cached. */
+  private wireOwnerId(ownerId: string): string {
+    const rec = this.deps.swarmRegistry.get?.(ownerId);
+    if (!rec) return ownerId;
+    let w = this._wireOwnerIds.get(rec.entityId);
+    if (w === undefined) {
+      if (this._wireOwnerIds.size > 4096) this._wireOwnerIds.clear();
+      w = `swarm-${rec.entityId}`;
+      this._wireOwnerIds.set(rec.entityId, w);
+    }
+    return w;
+  }
   private readonly _missilesScratch: MutableMissileEntry[] = [];
   private readonly _dronesScratch: MutableDroneEntry[] = [];
   private readonly _asteroidsScratch: MutableAsteroidEntry[] = [];
@@ -766,13 +788,19 @@ export class SnapshotBroadcaster {
       const projectilesScratch = this._projectilesScratch;
       let projectilesCount = 0;
       if (d.liveProjectiles.size > 0) {
+        const projInterest = this.interestScratch.get(client.sessionId);
         for (const [projId, proj] of d.liveProjectiles) {
-          if (Math.abs(proj.x - recipientPose.x) > interestRadius) continue;
-          if (Math.abs(proj.y - recipientPose.y) > interestRadius) continue;
+          if (Math.abs(proj.x - recipientPose.x) > interestRadius || Math.abs(proj.y - recipientPose.y) > interestRadius) {
+            // Out of the box: still send it if a WIDE owner (a capital, seen
+            // from several cells away) is in this viewer's interest, so its
+            // salvo is seen leaving the barrels. Everything else is unchanged.
+            const owner = d.swarmRegistry.get?.(proj.ownerId);
+            if (!owner || owner.radius <= CELL_SIZE / 2 || !projInterest?.has(owner.entityId)) continue;
+          }
           SnapshotBroadcaster.writeProjectileSlot(
             projectilesScratch, projectilesCount,
             projId, proj.x, proj.y, proj.vx, proj.vy,
-            proj.ownerId, proj.weaponId,
+            this.wireOwnerId(proj.ownerId), proj.weaponId,
           );
           projectilesCount++;
         }

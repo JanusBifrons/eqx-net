@@ -435,8 +435,8 @@ describe('havok composite kind — catalogue registration (composite-ships Phase
     expect(SHIP_KINDS_LIST[8]!.id).toBe('havok'); // index 8 is wire-stable; robots append after (allegiances P0)
   });
 
-  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 21 (capital flat transom; 20 = turrets T3: gunship mounts moved to nose / tail; 19 = P3c orb charge-laser mount; 18 = P3b robot-harvester)', () => {
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(21);
+  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 22 (capital naval guns, turret rates + spacing; 21 = capital flat transom; 20 = turrets T3: gunship mounts moved to nose / tail; 19 = P3c orb charge-laser mount; 18 = P3b robot-harvester)', () => {
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(22);
   });
 
   it('HAVOK is registered in SHIP_KINDS and parses its own schema', () => {

@@ -141,4 +141,17 @@ describe('SpatialGrid', () => {
     g.query9(0, 0, out, SpatialGrid.viewerReachFor(2880));
     expect(out.has(1)).toBe(true);
   });
+
+  it('a capital INSERTED at spawn with its radius is wide (later moves keep it)', () => {
+    // The spawner inserts every swarm entity once; `move` only marks an entity
+    // on its first sighting, so an insert without the radius left spawned
+    // capitals narrow and invisible from outside their own 3x3 (Phase 3).
+    const g = new SpatialGrid();
+    const radius = CELL_SIZE * 1.4;
+    g.insert(7, CELL_SIZE * 2.4, 0, radius);
+    g.move(7, CELL_SIZE * 2.4, 0, radius);
+    const out = new Set<number>();
+    g.query9(-1, -1, out); // a fighter 3 cells away: inside 1 + reach 2
+    expect(out.has(7)).toBe(true);
+  });
 });

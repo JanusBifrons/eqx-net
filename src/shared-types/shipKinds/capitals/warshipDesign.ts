@@ -94,8 +94,14 @@ const AA: Readonly<Record<CapitalClassId, Array<[number, number]>>> = {
   battlecruiser: [[0.34, 0.26], [0.69, 0.3], [0.88, 0.22]],
   battleship: [[0.34, 0.24], [0.68, 0.3], [0.74, 0.22], [0.9, 0.2], [0.14, 0.14]],
 };
-/** Barrel traverse (rad/s); real 16" turrets swing ~4°/s, compressed for play. */
-const TRAVERSE: Readonly<Record<CapitalMountSize, number>> = { S: 1.6, M: 1.0, L: 0.7, XL: 0.5 };
+/** Turret traverse (rad/s), near the real rates (review round, 2026-11-06):
+ *  16" ~4°/s, 12" ~5°/s, 8" ~8°/s, 5"/38 ~15°/s. */
+const TRAVERSE: Readonly<Record<CapitalMountSize, number>> = { S: 0.26, M: 0.14, L: 0.087, XL: 0.07 };
+/** Main-battery training limit either side of the rest bearing (±135°, about
+ *  the Iowa limits: never back across its own superstructure). */
+const MAIN_ARC = (3 * Math.PI) / 4;
+/** Each mount size fires its calibre's naval gun (core/combat/WeaponCatalogue). */
+const NAVAL_GUN = { S: 'naval_s', M: 'naval_m', L: 'naval_l', XL: 'naval_xl' } as const satisfies Record<CapitalMountSize, string>;
 
 const CLASS_NAMES: Readonly<Record<CapitalClassId, string>> = {
   destroyer: 'Destroyer',
@@ -132,6 +138,21 @@ function hullOutline(s: StyleParams, L: number, B: number): Pt[] {
   return out;
 }
 
+/**
+ * Main turret stations (t, bow 0 → stern 1) pushed apart so neighbouring
+ * gunhouses never touch at any training angle: `gap` is the minimum spacing
+ * in t (two gunhouse half-diagonals). The fore group spreads aft from the bow
+ * turret, the aft group forward from the stern turret. The MAIN tables list
+ * each group in order (fore ascending, aft ascending), so ids stay stable.
+ */
+export function spaceStations(raw: readonly number[], gap: number): number[] {
+  const out = raw.slice();
+  const fore: number[] = [], aft: number[] = [];
+  out.forEach((x, i) => (x < 0.5 ? fore : aft).push(i));
+  for (let k = 1; k < fore.length; k++) out[fore[k]!] = Math.max(out[fore[k]!]!, out[fore[k - 1]!]! + gap);
+  for (let k = aft.length - 2; k >= 0; k--) out[aft[k]!] = Math.min(out[aft[k]!]!, out[aft[k + 1]!]! - gap);
+  return out;
+}
 function rect(cx: number, cy: number, w: number, h: number, chamfer = 0.18): Pt[] {
   const c = Math.min(w, h) * chamfer;
   const x0 = cx - w / 2, x1 = cx + w / 2, y0 = cy - h / 2, y1 = cy + h / 2;
@@ -194,17 +215,18 @@ export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: Capi
   const main = MAIN[id];
   const scale = id === 'destroyer' ? DESTROYER_S_SCALE : 1;
   const geo = CAPITAL_TURRETS[mainSize];
-  main.stations.forEach((tt, i) => {
+  const stations = spaceStations(main.stations, (2 * Math.hypot(geo.houseW / 2, geo.houseL / 2) * B * scale * 1.05) / L);
+  stations.forEach((tt, i) => {
     const fwd = tt < 0.5;
     // Superfiring: the inner turret of a fore/aft pair sits on a raised,
     // wider barbette (drawn later, so on top).
-    const inner = fwd ? main.stations.filter((x) => x < 0.5).length > 1 && tt === Math.max(...main.stations.filter((x) => x < 0.5))
-      : main.stations.filter((x) => x >= 0.5).length > 1 && tt === Math.min(...main.stations.filter((x) => x >= 0.5));
+    const inner = fwd ? stations.filter((x) => x < 0.5).length > 1 && tt === Math.max(...stations.filter((x) => x < 0.5))
+      : stations.filter((x) => x >= 0.5).length > 1 && tt === Math.min(...stations.filter((x) => x >= 0.5));
     part(circle(0, yAt(tt), B * geo.barbette * scale * (inner ? 1.12 : 1)), s.colors.barbette, inner ? 'barbette-raised' : 'barbette');
     mounts.push({
       id: `main-${i + 1}`, localX: 0, localY: L / 2 - tt * L,
-      baseAngle: fwd ? 0 : Math.PI, arcMin: -2.5, arcMax: 2.5,
-      rotationSpeed: TRAVERSE[mainSize], weaponId: mainSize === 'S' ? 'laser' : 'autocannon', size: mainSize,
+      baseAngle: fwd ? 0 : Math.PI, arcMin: -MAIN_ARC, arcMax: MAIN_ARC,
+      rotationSpeed: TRAVERSE[mainSize], weaponId: NAVAL_GUN[mainSize], size: mainSize,
       barrels: main.barrels, ...(scale !== 1 ? { turretScale: scale } : {}),
     });
   });
@@ -216,7 +238,7 @@ export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: Capi
         id: `sec-${side > 0 ? 's' : 'p'}${i + 1}`, localX: x, localY: L / 2 - tt * L,
         // Starboard (+x) faces −π/2 in the mount frame (0 = forward), port +π/2.
         baseAngle: side > 0 ? -Math.PI / 2 : Math.PI / 2, arcMin: -1.4, arcMax: 1.4,
-        rotationSpeed: TRAVERSE.S, weaponId: 'laser', size: 'S', barrels: 2,
+        rotationSpeed: TRAVERSE.S, weaponId: NAVAL_GUN.S, size: 'S', barrels: 2,
       });
     }
   });

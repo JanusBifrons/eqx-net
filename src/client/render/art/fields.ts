@@ -15,6 +15,7 @@ import { boxBlur, distanceInside, gridFor, hashStr, insidePoly, rasterPoly, rng,
 import { shipScrapGroups } from '../../../core/geometry/shipScrapGroups.js';
 import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
 import { generateAsteroidVertices } from '../../../core/swarm/asteroidShape.js';
+import { NAVAL_BARREL_SPAN } from '../../../core/combat/muzzle.js';
 
 export const MAT = {
   NONE: 0,
@@ -760,7 +761,7 @@ function forgeNavalTurret(spec: TurretGunSpec): Fields {
     [hw * 0.82, hl], [-hw * 0.82, hl], [-hw, hl * 0.7], [-hw, -hl + face],
   ];
   const n = Math.max(1, nv.barrels);
-  const pitch = n > 1 ? (W * 0.62) / (n - 1) : 0;
+  const pitch = n > 1 ? (W * NAVAL_BARREL_SPAN) / (n - 1) : 0;
   const xs: number[] = [];
   for (let k = 0; k < n; k++) xs.push((k - (n - 1) / 2) * pitch);
   const barrelPolys: Poly[] = xs.map((x): Poly => [[x - bw, -hl - len], [x + bw, -hl - len], [x + bw, -hl + 0.5], [x - bw, -hl + 0.5]]);

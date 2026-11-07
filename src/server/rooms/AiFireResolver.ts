@@ -16,6 +16,7 @@
  * "Multi-mount fire path" section).
  */
 
+import { hasTurretFireControl } from '../../core/combat/mountReach.js';
 import { DEFAULT_SHIP_KIND, getShipKind, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
 import {
   getWeapon,
@@ -29,7 +30,7 @@ import { rayHitsBox, rayHitsSphere } from '../../core/combat/Weapons.js';
 import type { AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import type { LaserFiredEvent } from '../../shared-types/messages.js';
 import type { ShipState } from './schema/SectorState.js';
-import { shipShotMuzzle } from '../../core/combat/muzzle.js';
+import { shipShotMuzzle, navalTurret, navalBarrelOffset } from '../../core/combat/muzzle.js';
 import { isFriendly, isNpcAllegianceId, type NpcAllegianceId } from '../../shared-types/allegiances.js';
 
 /** Per-player pose the resolver reads to test target hits. */
@@ -147,6 +148,9 @@ export class AiFireResolver implements WeaponFireSink {
     const shooterRec = d.swarmRegistry.get(shooterId);
     const droneKindId = shooterRec?.shipKind ?? DEFAULT_SHIP_KIND;
     const droneKind = getShipKind(droneKindId);
+    // Capitals fire turret by turret under WeaponMountTicker fire control
+    // (fireMount), never as a hull-aimed salvo.
+    if (hasTurretFireControl(droneKind)) return;
     const slotMounts = d.resolveSlotMounts(droneKind);
     if (slotMounts.length === 0) return;
 
@@ -185,6 +189,15 @@ export class AiFireResolver implements WeaponFireSink {
     this.fireNow(shooterId, dirNdx, dirNdy);
   }
 
+
+  /** Capital fire control: fire ONE mount along its barrel (hull angle +
+   *  base angle + the slewed mount angle). Reload, reach and on-target checks
+   *  are the caller's (WeaponMountTicker.tickDrone). */
+  fireMount(shooterId: string, mountIdx: number): void {
+    const self = this.deps.swarmEntitySnapshot(shooterId);
+    if (!self) return;
+    this.fireNow(shooterId, -Math.sin(self.angle), Math.cos(self.angle), mountIdx);
+  }
   /** Release every charge whose wind-up has elapsed (call once per server
    *  tick, after the AI tick). Fires from the shooter's CURRENT pose along the
    *  LOCKED direction — a dodgeable telegraph. Allocation-free. */
@@ -211,7 +224,7 @@ export class AiFireResolver implements WeaponFireSink {
   private readonly charges = new Map<string, { active: boolean; readyTick: number; dirX: number; dirY: number }>();
 
   /** Fire the shooter's active slot now along a unit direction. */
-  private fireNow(shooterId: string, dirNdx: number, dirNdy: number): void {
+  private fireNow(shooterId: string, dirNdx: number, dirNdy: number, onlyMount = -1): void {
     const d = this.deps;
     const self = d.swarmEntitySnapshot(shooterId);
     if (!self) return;
@@ -242,6 +255,7 @@ export class AiFireResolver implements WeaponFireSink {
     // per-mode fire dispatch collapses to one virtual call (GEP B3): the weapon
     // flyweight calls back the matching sink method below.
     for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
+      if (onlyMount >= 0 && mIdx !== onlyMount) continue;
       const mount = slotMounts[mIdx]!;
       const mountWorld = d.mountWorldOrigin(self.x, self.y, self.angle, mount);
       const currentMountAngle = droneAngles?.[mIdx] ?? 0;
@@ -260,7 +274,20 @@ export class AiFireResolver implements WeaponFireSink {
       ctx.shooterVx = self.vx;
       ctx.shooterVy = self.vy;
       ctx.mountId = mount.id;
-      getWeaponObject(mount.weaponId).resolveFire(ctx, this);
+      // A naval turret fires a full salvo: one shell per barrel, each from
+      // its own drawn barrel tip (shared offsets, core/combat/muzzle.ts).
+      const naval = navalTurret(droneKind, mount);
+      if (naval === null || naval.barrels <= 1) {
+        getWeaponObject(mount.weaponId).resolveFire(ctx, this);
+        continue;
+      }
+      const rightX = ndy, rightY = -ndx;
+      for (let k = 0; k < naval.barrels; k++) {
+        const off = navalBarrelOffset(naval, k);
+        ctx.fromX = rayFromX + rightX * off;
+        ctx.fromY = rayFromY + rightY * off;
+        getWeaponObject(mount.weaponId).resolveFire(ctx, this);
+      }
     }
   }
 

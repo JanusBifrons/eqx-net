@@ -2686,3 +2686,13 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
 - **Cause.** The ribbon spans a fixed 16/60 s of each nozzle's path. The lab ran at 1×; the game ships at 2×, where hulls are twice as long and ~0.7× as fast (`motionFactors`), so the ribbon came out ~2.8× shorter against the hull while the flame (sized from the nozzle) grew. The reference screenshot hid it: it was taken in `auto-fire-test`, whose 10× physics speed makes any trail long.
 - **Fix.** `shipTuning(kind).exhaustTrailS` (invariant #18): the lab's 1× window, grown with the size so the ribbon stays the same number of hull lengths at top speed. Locks: `tests/e2e/engine-ribbon-length.spec.ts` (reads the local ship's drawn ribbon, `__eqxArtStats().localEngine`) and `shipScaleInvariants.test.ts`.
 - **Lesson.** A look approved in a lab or at 1× must be re-checked at the shipping scale, and never judged from a capture in a time-scaled test room. An "every ship" count (`fxRibbons ≥ 1`) passed while the filmed ship was wrong; assert on the ship the user looked at.
+
+## 2026-11-07 — Capital guns: four bugs that only a film showed
+
+- **Symptom.** The first capital-combat clip showed no fire at all, then shells only once they were near the pilot, then no recoil or flash ("Quiet underwhelming… only one shot I could see instead of 9").
+- **Causes, one per layer:**
+  - drone turrets picked targets within 250 u of the hull's centre, so a battleship could never engage anything outside its own hull;
+  - `SwarmSpawner` inserted every entity into the interest grid without its radius, so spawned capitals were never "wide" and their turret angles never reached a viewer 5,000 u away;
+  - the projectile box was a fixed 3,072 u, so a wide ship's shells were hidden until close;
+  - drone projectiles carried the drone's internal id, so the renderer never matched a shot to its gun (no drone turret ever recoiled).
+- **Lesson.** Every fighter-scale constant on the path from "a gun fires" to "a viewer sees it" breaks at capital scale (invariant #18). A green integration test that a hit LANDS proves nothing about what a viewer SEES: lock the client's view too (turret angles, shell positions, wire owner id), as `capitalEngagement.test.ts` now does.

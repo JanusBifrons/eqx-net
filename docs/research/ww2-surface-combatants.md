@@ -55,6 +55,20 @@ Turning, where documented: Fletcher had a 950 yd (869 m) tactical diameter at 30
    - **Large cruisers and battlecruisers:** speed with heavy guns, light armour for their size.
    - **Battleships:** slow to manoeuvre, heaviest guns and armour, the fleet's centre.
 
+### Guns (Phase 3 naval weapons)
+
+Standard figures for the five calibres (NavWeaps):
+
+| Gun | Shell | Max range | Rate of fire | Game weapon |
+|---|---|---|---|---|
+| 5"/38 | 25 kg | 16.6 km | 15 rpm | `naval_s` |
+| 6"/47 | 59 kg | 24 km | 10 rpm | `naval_m` |
+| 8"/55 | 152 kg | 27 km | 4 rpm | `naval_m` |
+| 12"/50 | 517 kg | 35 km | 2.7 rpm | `naval_l` |
+| 16"/50 | 1,225 kg | 38.7 km | 2 rpm | `naval_xl` |
+
+The game keeps the range ratio (1 : 1.54 : 2.12 : 2.34). Damage follows the square root of shell weight (1 : 2 : 4.5 : 7), and reload follows rate of fire to the 0.75 power. Both are compressed so one salvo hurts without deleting a ship. Shells take about 2 s to reach full range, so a fighter can dodge them.
+
 ### What the game doesn't copy
 
 - **Absolute speeds and distances.** 33 kn is 17 m/s. The game keeps the *ratios* and sets two anchors (a destroyer's length in game units, and its top speed) in `capitalReference.ts`, so the whole class tunes together.

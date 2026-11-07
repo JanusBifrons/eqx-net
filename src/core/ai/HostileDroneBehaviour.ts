@@ -5,6 +5,7 @@ import {
   type IAiBehaviour,
 } from '../contracts/IAiBehaviour.js';
 import { getWeapon, type WeaponMode } from '../combat/WeaponCatalogue.js';
+import { hasTurretFireControl, mountWeaponReach } from '../combat/mountReach.js';
 import { getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
 import {
   isOnSightHostile,
@@ -42,6 +43,12 @@ const POINT_BLANK_RATIO = 0.4;
  *  gets a thrust boost to close engagement faster. Tuned so the boost
  *  fires only when the drone is meaningfully out of combat range. */
 const ENGAGE_DISTANCE_RATIO = 1.5;
+/** Capital broadside (Phase 3): hold this fraction of main-battery reach. */
+export const BROADSIDE_STANDOFF = 0.75;
+/** Max heading bias (rad) toward / away from the target to keep the stand-off. */
+const BROADSIDE_RANGE_STEER = 0.6;
+/** Thrust while broadside, per unit of range error (fraction of cruise). */
+const BROADSIDE_THRUST = 0.6;
 /** Multiplier applied to forward thrust when the drone is engaging from
  *  beyond `ENGAGE_DISTANCE_RATIO * DRONE_FIRE_RANGE`. Rapier damping +
  *  per-kind `maxSpeed` keep this from running away. */
@@ -203,6 +210,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  the mount's reach. For single-mount legacy kinds (zero arc) this is
    *  0 and the gate collapses to the pre-4c body-only tolerance. */
   private readonly maxTurretHalfArc: number;
+  /** Capitals fight broadside: hold a stand-off at main-battery reach with the
+   *  beam toward the target so fore and aft turrets bear. Their turrets fire
+   *  under WeaponMountTicker fire control, never with the hull's aim. */
+  private readonly broadside: boolean;
 
   // ── Weapon-aware engagement (weapons/energy/AI overhaul §4) ───────────
   // Computed once in the constructor from this drone's bound weapon (no
@@ -294,6 +305,15 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this.fireRange = 1400;
       this.stopDistFactor = 0.9;
       this.backoffInsideFactor = 0.4;
+    }
+    this.broadside = hasTurretFireControl(this.kind);
+    if (this.broadside) {
+      // Engage at the longest gun's reach (the main battery).
+      let reach = 0;
+      for (const m of this.kind.mounts ?? []) reach = Math.max(reach, mountWeaponReach(m));
+      this.fireRange = reach;
+      this.stopDistFactor = BROADSIDE_STANDOFF;
+      this.backoffInsideFactor = 0;
     }
   }
 
@@ -573,6 +593,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       zero.fire = undefined;
       return zero;
     }
+    if (this.broadside) return this.tickBroadside(self, rawDx, rawDy, dist);
 
     // Lead-aim: estimate where the target will be when our shot lands.
     // For hitscan `t` is tiny so this barely shifts the aim; for moving
@@ -708,6 +729,44 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * Linear ramp inside `±TURN_RAMP_WINDOW` so the drone slows into
    * the bearing instead of overshooting.
    */
+  /**
+   * Capital engagement (plan prancy-squishing-donut Phase 3). Out of reach:
+   * close bow-first at full thrust. In reach: turn the beam toward the target
+   * (whichever side is nearer the current heading) so fore AND aft turrets
+   * bear, biased in or out to hold `fireRange × BROADSIDE_STANDOFF`, at reduced
+   * thrust, so the hull circles its target. Never fires: the turrets do, under
+   * WeaponMountTicker fire control. Allocation-free.
+   */
+  private tickBroadside(self: AiEntity, dx: number, dy: number, dist: number): AiIntent {
+    const bearing = Math.atan2(-dx, dy);
+    let desired = bearing;
+    let thrust = this.kind.ai.thrust;
+    if (dist > this.fireRange) {
+      // Closing: turn first. A capital turns slowly, so full thrust while
+      // facing away steams it further from the target it can't yet shoot.
+      thrust *= Math.max(0, Math.cos(wrapPi(bearing - self.angle)));
+    } else {
+      const port = wrapPi(bearing + Math.PI / 2);
+      const stbd = wrapPi(bearing - Math.PI / 2);
+      const usePort = Math.abs(wrapPi(port - self.angle)) <= Math.abs(wrapPi(stbd - self.angle));
+      const standoff = this.fireRange * BROADSIDE_STANDOFF;
+      // + when too far (turn in toward the target), − when too close.
+      const err = Math.max(-1, Math.min(1, (dist - standoff) / standoff));
+      const bias = err * BROADSIDE_RANGE_STEER;
+      desired = usePort ? wrapPi(port - bias) : wrapPi(stbd + bias);
+      // Hold station: thrust only to correct range (none at the stand-off),
+      // or the hull steams out of its own guns' reach.
+      thrust *= BROADSIDE_THRUST * Math.abs(err);
+    }
+    const intent = this._intentScratch;
+    intent.fx = -Math.sin(self.angle) * thrust;
+    intent.fy = Math.cos(self.angle) * thrust;
+    intent.torque = 0;
+    intent.setAngvel = this.angvelTarget(wrapPi(desired - self.angle));
+    intent.fire = undefined;
+    return intent;
+  }
+
   /** Set/clear the in-sector move target — the LEADER's course (or a lone
    *  drone's destination). Setting a course clears any FOLLOWER role (you lead /
    *  move independently now), so a former follower promoted to leader stops
