@@ -120,3 +120,28 @@ describe('NearestPointGrid.nearestWhere (B2: NPC turrets keep hostile targets on
     expect(g.nearestWhere(0, 0, 100, (i) => i === 1)).toBe(1);
   });
 });
+
+describe('NearestPointGrid at solar-system extents (Phase 4)', () => {
+  /** Every room builds two of these for ±400,000 u (DRONE_MAX_BOUNDS): a dense
+   *  grid over that is 2.4 M cells (~10 MB each, 410 MB for 21 sectors, and a
+   *  2.4 M-cell walk per rebuild). Cells follow the points, under a budget. */
+  it('stays within its cell budget and is still exact over ±200,000 u', () => {
+    const g = new NearestPointGrid(512, 400_000, 64);
+    expect(g.cellCapacity).toBeLessThanOrEqual(65_536);
+    let seed = 7;
+    const r = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    const pts: Array<[number, number]> = [];
+    for (let i = 0; i < 300; i++) pts.push([(r() * 2 - 1) * 200_000, (r() * 2 - 1) * 200_000]);
+    // A cluster in one pocket too.
+    for (let i = 0; i < 100; i++) pts.push([150_000 + r() * 3000, -120_000 + r() * 3000]);
+    g.reset();
+    for (const [x, y] of pts) g.add(x, y);
+    g.build();
+    for (let q = 0; q < 200; q++) {
+      const qx = (r() * 2 - 1) * 200_000, qy = (r() * 2 - 1) * 200_000, range = 2000 + r() * 40_000;
+      let best = -1, bd = range * range;
+      pts.forEach(([x, y], i) => { const d = (x - qx) ** 2 + (y - qy) ** 2; if (d < bd || (d === bd && i > best)) { bd = d; best = i; } });
+      expect(g.nearest(qx, qy, range)).toBe(best);
+    }
+  });
+});

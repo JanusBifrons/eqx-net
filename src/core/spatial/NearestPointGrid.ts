@@ -13,13 +13,28 @@
  * doubling only when a build exceeds capacity; `reset`/`add`/`build`/`nearest`
  * allocate nothing otherwise. Points outside the extent are clamped into the
  * edge cells (their true position is still used for distance), so nothing is
- * ever dropped.
+ * ever dropped. Cells cover the points' bounding box, rebuilt per `build`,
+ * within a fixed cell budget (NEAREST_GRID_MAX_CELLS).
  */
+/** Most cells a grid uses, whatever the extent (memory, Phase 4: a dense
+ *  grid over ±400,000 u at 512 u was 2.4 M cells, ~10 MB per grid). */
+export const NEAREST_GRID_MAX_CELLS = 65_536;
+
 export class NearestPointGrid {
-  private readonly cols: number;
-  private readonly cellCount: number;
-  private readonly inv: number;
-  private readonly half: number;
+  /** Cells laid over the points' bounding box at build time (adaptive: a
+   *  solar-system sector is mostly empty, its points sit in pockets). */
+  private cols = 1;
+  private rows = 1;
+  private cellCount = 1;
+  private inv: number;
+  private originX = 0;
+  private originY = 0;
+  private readonly baseCell: number;
+  private readonly maxCells: number;
+  private minX = Infinity;
+  private minY = Infinity;
+  private maxX = -Infinity;
+  private maxY = -Infinity;
   private xs: Float64Array;
   private ys: Float64Array;
   private cellOf: Int32Array;
@@ -32,16 +47,19 @@ export class NearestPointGrid {
   lastVisited = 0;
 
   /**
-   * @param cellSize  bucket edge (world units)
-   * @param halfExtent  the grid covers [-halfExtent, +halfExtent]² (outside is clamped)
+   * @param cellSize  bucket edge (world units); grows only when the points
+   *   spread so wide that the cells would exceed the budget
+   * @param halfExtent  bounds the cell budget: at most the cells a dense grid
+   *   over [-halfExtent, +halfExtent]² would need, and never more than
+   *   NEAREST_GRID_MAX_CELLS
    * @param initialCapacity  starting point capacity (grows by doubling)
    */
   constructor(cellSize: number, halfExtent: number, initialCapacity = 256) {
-    this.half = halfExtent;
+    this.baseCell = cellSize;
     this.inv = 1 / cellSize;
-    this.cols = Math.max(1, Math.ceil((2 * halfExtent) / cellSize));
-    this.cellCount = this.cols * this.cols;
-    this.start = new Int32Array(this.cellCount + 1);
+    const dense = Math.max(1, Math.ceil((2 * halfExtent) / cellSize)) ** 2;
+    this.maxCells = Math.min(dense, NEAREST_GRID_MAX_CELLS);
+    this.start = new Int32Array(this.maxCells + 1);
     this.xs = new Float64Array(initialCapacity);
     this.ys = new Float64Array(initialCapacity);
     this.cellOf = new Int32Array(initialCapacity);
@@ -52,13 +70,25 @@ export class NearestPointGrid {
     return this.n;
   }
 
+  /** Cells this grid may use (its memory, fixed at construction). */
+  get cellCapacity(): number {
+    return this.maxCells;
+  }
+
   reset(): void {
     this.n = 0;
+    this.minX = this.minY = Infinity;
+    this.maxX = this.maxY = -Infinity;
   }
 
   private col(v: number): number {
-    const c = Math.floor((v + this.half) * this.inv);
+    const c = Math.floor((v - this.originX) * this.inv);
     return c < 0 ? 0 : c >= this.cols ? this.cols - 1 : c;
+  }
+
+  private row(v: number): number {
+    const r = Math.floor((v - this.originY) * this.inv);
+    return r < 0 ? 0 : r >= this.rows ? this.rows - 1 : r;
   }
 
   /** Add a point; returns its index (0, 1, 2… in add order). */
@@ -67,7 +97,10 @@ export class NearestPointGrid {
     const i = this.n++;
     this.xs[i] = x;
     this.ys[i] = y;
-    this.cellOf[i] = this.col(y) * this.cols + this.col(x);
+    if (x < this.minX) this.minX = x;
+    if (x > this.maxX) this.maxX = x;
+    if (y < this.minY) this.minY = y;
+    if (y > this.maxY) this.maxY = y;
     return i;
   }
 
@@ -79,10 +112,27 @@ export class NearestPointGrid {
     this.order = new Int32Array(cap);
   }
 
-  /** Bucket the added points (counting sort). Call after the last `add`. */
+  /** Lay the cells over the points and bucket them (counting sort). Call
+   *  after the last `add`. */
   build(): void {
+    const w = this.n > 0 ? this.maxX - this.minX : 0;
+    const h = this.n > 0 ? this.maxY - this.minY : 0;
+    let cell = this.baseCell;
+    let cols = Math.floor(w / cell) + 1, rows = Math.floor(h / cell) + 1;
+    while (cols * rows > this.maxCells) {
+      cell *= 1.25;
+      cols = Math.floor(w / cell) + 1;
+      rows = Math.floor(h / cell) + 1;
+    }
+    this.cols = cols;
+    this.rows = rows;
+    this.cellCount = cols * rows;
+    this.inv = 1 / cell;
+    this.originX = this.n > 0 ? this.minX : 0;
+    this.originY = this.n > 0 ? this.minY : 0;
+    for (let i = 0; i < this.n; i++) this.cellOf[i] = this.row(this.ys[i]!) * this.cols + this.col(this.xs[i]!);
     const start = this.start;
-    start.fill(0);
+    start.fill(0, 0, this.cellCount + 1);
     for (let i = 0; i < this.n; i++) start[this.cellOf[i]! + 1]!++;
     for (let c = 0; c < this.cellCount; c++) start[c + 1]! += start[c]!;
     // Place in add order within each cell (stable), using start[] as a cursor
@@ -99,7 +149,7 @@ export class NearestPointGrid {
   nearest(x: number, y: number, range: number): number {
     if (this.n === 0 || !(range >= 0)) return -1;
     const c0 = this.col(x - range), c1 = this.col(x + range);
-    const r0 = this.col(y - range), r1 = this.col(y + range);
+    const r0 = this.row(y - range), r1 = this.row(y + range);
     let best = -1;
     let bestD2 = range * range;
     let visited = 0;
@@ -133,7 +183,7 @@ export class NearestPointGrid {
   nearestWhere(x: number, y: number, range: number, accept: (i: number) => boolean): number {
     if (this.n === 0 || !(range >= 0)) return -1;
     const c0 = this.col(x - range), c1 = this.col(x + range);
-    const r0 = this.col(y - range), r1 = this.col(y + range);
+    const r0 = this.row(y - range), r1 = this.row(y + range);
     let best = -1;
     let bestD2 = range * range;
     let visited = 0;

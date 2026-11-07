@@ -50,3 +50,21 @@ describe('sectorSites', () => {
     expect(nearestSite(sites, belt.x + 100, belt.y, 'belt')?.id).toBe(belt.id);
   });
 });
+
+describe('alien gate site search at solar-system extents', () => {
+  it('searches a window around the ideal site, not the whole ±200,000 u sector', async () => {
+    const { alienGateCandidates } = await import('./alienGates.js');
+    const site = { neighbour: 'x', x: 170_000, y: 20_000 };
+    const c = alienGateCandidates(site, 800, 200_000);
+    // The whole-sector grid was ~2.56 M candidates per gate (boot time + heap).
+    expect(c.length).toBeLessThan(30_000);
+    expect(c[0]).toEqual({ x: 170_000, y: 20_000 });
+    for (const p of c) expect(Math.abs(p.x)).toBeLessThanOrEqual(200_000 - 800);
+  });
+  it('is unchanged for today’s 5,000 u sectors (the window covers them)', async () => {
+    const { alienGateCandidates } = await import('./alienGates.js');
+    const c = alienGateCandidates({ neighbour: 'x', x: 4100, y: 0 }, 800, 5000);
+    const lim = Math.floor((5000 - 800) / 250) * 250;
+    expect(c.length).toBe(((2 * lim) / 250 + 1) ** 2 + 1);
+  });
+});

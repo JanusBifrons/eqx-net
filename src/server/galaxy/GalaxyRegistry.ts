@@ -5,7 +5,8 @@
  *
  * See docs/architecture/galaxy-graph.md for the walkthrough.
  */
-import { sectorSpace } from '../../shared-types/sectorBounds.js';
+import { sectorSpace, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
+import { sectorSites } from '../../core/galaxy/sectorSites.js';
 import { GALAXY_SECTORS, getSector } from '../../core/galaxy/galaxy.js';
 import type { GalaxySector } from '../../core/galaxy/galaxy.js';
 import { ASTEROID_CONFIGS } from './asteroidConfigs.js';
@@ -36,12 +37,34 @@ export function resolveSectorConfig(key: string): ResolvedSectorConfig {
   return {
     sectorKey: sector.key,
     // Fields spread with the sector space; rock sizes stay (round 3 C).
-    asteroidConfig: ASTEROID_CONFIGS[sector.asteroidConfigKey].map((a) => ({ ...a, x: sectorSpace(a.x), y: sectorSpace(a.y) })),
+    asteroidConfig: [
+      ...ASTEROID_CONFIGS[sector.asteroidConfigKey].map((a) => ({ ...a, x: sectorSpace(a.x), y: sectorSpace(a.y) })),
+      ...(SOLAR_SECTORS ? beltPocketAsteroids(sector.key) : []),
+    ],
     droneCount: sector.droneCount,
     maxClients: DEFAULT_MAX_CLIENTS,
     galaxyBases: true,
     alienGates: true,
   };
+}
+
+/**
+ * Solar-system sectors (Phase 4): each belt pocket is a mining field, two
+ * rings of the dense pattern around its centre (rock sizes as authored).
+ */
+export function beltPocketAsteroids(sectorKey: string): AsteroidSpec[] {
+  const out: AsteroidSpec[] = [];
+  for (const site of sectorSites(sectorKey)) {
+    if (site.kind !== 'belt') continue;
+    for (const [ring, spread, turn] of [[0, 3, 0], [1, 5, Math.PI]] as const) {
+      const c = Math.cos(turn), sn = Math.sin(turn);
+      for (const a of ASTEROID_CONFIGS.dense) {
+        const ox = (a.x * c - a.y * sn) * spread, oy = (a.x * sn + a.y * c) * spread;
+        out.push({ ...a, id: `${site.id}-${ring}-${a.id}`, x: Math.round(site.x + ox), y: Math.round(site.y + oy) });
+      }
+    }
+  }
+  return out;
 }
 
 export function listGalaxySectors(): readonly GalaxySector[] {

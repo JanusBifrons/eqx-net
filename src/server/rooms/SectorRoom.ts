@@ -161,7 +161,7 @@ import { galaxyBasePlan, type GalaxyBasePlan } from '../../core/bases/galaxyBase
 import type { SectorFeature } from '../../core/galaxy/galaxy.js';
 /** Clear space kept between two NPC bases in one sector (bastions, mines, traffic). */
 const NPC_BASE_GAP = sectorSpace(900);
-import { SECTOR_PLAYABLE_HALF_EXTENT, sectorSpace } from '../../shared-types/sectorBounds.js';
+import { HOME_POCKET_HALF_EXTENT, SECTOR_PLAYABLE_HALF_EXTENT, sectorSpace } from '../../shared-types/sectorBounds.js';
 import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
@@ -4723,7 +4723,9 @@ export class SectorRoom extends Room<SectorState> {
     }
     const ext = grownExtent(grown.placements);
     const site = chooseBaseSite(ext, hard, soft, {
-      halfExtent: SECTOR_PLAYABLE_HALF_EXTENT, margin: 250, step: sectorSpace(250), seed,
+      // The home pocket (today's whole sector; the same bound when solar-system
+      // sectors are off).
+      halfExtent: HOME_POCKET_HALF_EXTENT, margin: 250, step: sectorSpace(250), seed,
     });
     if (site === null) {
       logger.warn({ sectorKey, baseId: plan.baseId, tier: profile.tier, role: profile.role }, 'npc base: no site fits; base skipped');

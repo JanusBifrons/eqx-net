@@ -16,9 +16,10 @@
  * Pure (no I/O, no randomness beyond the seeded stream).
  */
 import { getNeighbours, getSector, axialToPixel, type GalaxySector } from './galaxy.js';
+import { SOLAR_SECTOR_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
 
 /** Half extent of a solar-system sector (world units). */
-export const SOLAR_HALF_EXTENT = 200_000;
+export const SOLAR_HALF_EXTENT = SOLAR_SECTOR_HALF_EXTENT;
 /** Pockets sit at least this far apart, centre to centre. */
 export const POCKET_MIN_GAP = 50_000;
 /** Every pocket has another within this distance (no isolated outpost). */

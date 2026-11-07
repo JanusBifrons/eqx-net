@@ -1503,7 +1503,7 @@ export class LivingWorldDirector {
       const epoch = Math.floor(now / SQUAD_RESPAWN_EPOCH_MS);
       const pose = squadKey
         ? squadEdgePose(squadKey, sector, rec.botId, epoch)
-        : sectorEdgePose(this.rng);
+        : sectorEdgePose(this.rng, sector);
       const ok = room.spawnLivingWorldBot({
         botId: rec.botId,
         kind: rec.kind,

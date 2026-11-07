@@ -8,13 +8,17 @@
  * neighbour on the galaxy map. Its twin sits in the neighbour, on the edge
  * facing back, so flying through the pair carries you across the border.
  */
-import { sectorSpace } from '../../shared-types/sectorBounds.js';
+import { sectorSpace, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
+import { GATE_POCKET_RADIUS } from './sectorSites.js';
 import { axialToPixel, getNeighbours, getSector } from './galaxy.js';
 
 /** Distance from the sector centre to a gate's centre (world units): as far
  *  out as the 1600-wide gate fits inside the 5000-unit playable half-extent,
  *  so the sector's middle stays clear for bases. */
-export const ALIEN_GATE_EDGE_RADIUS = sectorSpace(4100);
+export const ALIEN_GATE_EDGE_RADIUS = SOLAR_SECTORS ? GATE_POCKET_RADIUS : sectorSpace(4100);
+
+/** A gate searches for a free spot this far either side of its ideal site. */
+export const GATE_SEARCH_RADIUS = 20_000;
 
 /** Owner string for every alien gate (the Ancients faction). */
 export const ALIEN_GATE_OWNER = 'npc:ancients:gates';
@@ -70,8 +74,13 @@ export function alienGateSites(sectorKey: string): AlienGateSite[] {
 export function alienGateCandidates(site: AlienGateSite, gateHalf: number, halfExtent: number): Array<{ x: number; y: number }> {
   const out: Array<{ x: number; y: number; d: number }> = [];
   const lim = Math.floor((halfExtent - gateHalf) / 250) * 250;
-  for (let x = -lim; x <= lim; x += 250) {
-    for (let y = -lim; y <= lim; y += 250) out.push({ x, y, d: Math.hypot(x - site.x, y - site.y) });
+  // Only a window round the ideal site (Phase 4): over a ±200,000 u sector the
+  // whole grid was ~2.5 M candidates and 2 s per gate. Today's 5,000 u
+  // sectors fit inside the window, so their search is unchanged.
+  const x0 = Math.max(-lim, Math.ceil((site.x - GATE_SEARCH_RADIUS) / 250) * 250), x1 = Math.min(lim, site.x + GATE_SEARCH_RADIUS);
+  const y0 = Math.max(-lim, Math.ceil((site.y - GATE_SEARCH_RADIUS) / 250) * 250), y1 = Math.min(lim, site.y + GATE_SEARCH_RADIUS);
+  for (let x = x0; x <= x1; x += 250) {
+    for (let y = y0; y <= y1; y += 250) out.push({ x, y, d: Math.hypot(x - site.x, y - site.y) });
   }
   out.push({ x: site.x, y: site.y, d: -1 }); // the ideal site itself, first
   out.sort((a, b) => a.d - b.d || a.x - b.x || a.y - b.y);
