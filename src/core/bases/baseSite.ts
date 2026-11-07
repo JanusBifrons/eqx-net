@@ -33,8 +33,13 @@ export function grownExtent(placements: readonly GrownPlacement[]): BaseExtent {
 }
 
 export interface ChooseSiteOptions {
-  /** The sector's playable half extent (square, centred on the origin). */
+  /** Half extent of the square searched (centred on the origin, or on
+   *  `centreX/centreY`). */
   halfExtent: number;
+  /** Centre of the search (default the origin): a solar-system sector's
+   *  outer base pocket (Phase 4). Sites score by distance from it. */
+  centreX?: number;
+  centreY?: number;
   /** Clear space kept around the base (and inside the sector edge). */
   margin: number;
   /** Candidate grid spacing (u). */
@@ -68,8 +73,9 @@ export function chooseBaseSite(
   o: ChooseSiteOptions,
 ): BaseSite | null {
   const lim = o.halfExtent - o.margin;
-  const cxMin = -lim - ext.x0, cxMax = lim - ext.x1;
-  const cyMin = -lim - ext.y0, cyMax = lim - ext.y1;
+  const ox = o.centreX ?? 0, oy = o.centreY ?? 0;
+  const cxMin = ox - lim - ext.x0, cxMax = ox + lim - ext.x1;
+  const cyMin = oy - lim - ext.y0, cyMax = oy + lim - ext.y1;
   if (cxMin > cxMax || cyMin > cyMax) return null;
   const rnd = seededRandom(o.seed);
   let best: { x: number; y: number; soft: number; score: number } | null = null;
@@ -84,7 +90,7 @@ export function chooseBaseSite(
       for (const c of soft) if (boxHitsCircle(x0, x1, y0, y1, c)) n++;
       // Fewest asteroids first, then farthest from the origin (spawn), then a
       // small seeded jitter so equal sites don't all pick the same corner.
-      const score = Math.hypot(cx, cy) + rnd() * o.step * 0.5;
+      const score = Math.hypot(cx - ox, cy - oy) + rnd() * o.step * 0.5;
       if (best === null || n < best.soft || (n === best.soft && score > best.score)) {
         best = { x: cx, y: cy, soft: n, score };
       }

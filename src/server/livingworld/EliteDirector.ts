@@ -16,7 +16,8 @@
  * the galaxy snapshot (`SectorLiveState.elite`, via `sectorElite`) — the
  * notices are accelerators only (#16).
  */
-import { sectorSpace } from '../../shared-types/sectorBounds.js';
+import { sectorSpace, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
+import { pocketCentre } from '../../core/galaxy/sectorSites.js';
 import type { Bus } from '../../core/events/Bus.js';
 import { ELITE_ID_PREFIX, ELITE_KINDS, eliteName } from '../../shared-types/elites.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
@@ -113,7 +114,8 @@ export class EliteDirector {
       if (!room) continue;
       const a = this.rng() * Math.PI * 2;
       const r = this.rng() * ELITE_ROAM_RADIUS;
-      room.setBotMoveTarget(slot.id, Math.cos(a) * r, Math.sin(a) * r);
+      const c = pocketCentre(slot.sectorKey, 'combat', SOLAR_SECTORS);
+      room.setBotMoveTarget(slot.id, c.x + Math.cos(a) * r, c.y + Math.sin(a) * r);
       slot.nextRoamAtMs = nowMs + ELITE_ROAM_INTERVAL_MS;
     }
   }
@@ -141,8 +143,10 @@ export class EliteDirector {
     const kind = this.opts.kind ?? ELITE_KINDS[Math.floor(this.rng() * ELITE_KINDS.length)]!;
     const id = `${ELITE_ID_PREFIX}${this.generation++}`;
     const a = this.rng() * Math.PI * 2;
-    const x = Math.cos(a) * ELITE_SPAWN_RADIUS;
-    const y = Math.sin(a) * ELITE_SPAWN_RADIUS;
+    // Solar-system sectors: elites hunt round the combat pocket.
+    const c = pocketCentre(sectorKey, 'combat', SOLAR_SECTORS);
+    const x = c.x + Math.cos(a) * ELITE_SPAWN_RADIUS;
+    const y = c.y + Math.sin(a) * ELITE_SPAWN_RADIUS;
     if (!room.spawnLivingWorldBot({ botId: id, kind, x, y })) return;
     const name = eliteName(this.rng);
     if (room.markElite?.(id, name) !== true) {

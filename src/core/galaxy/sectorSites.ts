@@ -127,3 +127,14 @@ export function nearestSite(sites: readonly SectorSite[], x: number, y: number, 
   }
   return best;
 }
+
+/**
+ * Where a kind of activity centres in `sectorKey`: the pocket's centre when
+ * solar-system sectors are on (`enabled`), else the sector origin (today).
+ * Events and elites use the combat pocket; the first pocket of the kind wins.
+ */
+export function pocketCentre(sectorKey: string, kind: SiteKind, enabled: boolean): { x: number; y: number } {
+  if (!enabled) return { x: 0, y: 0 };
+  const s = sectorSites(sectorKey).find((p) => p.kind === kind);
+  return s ? { x: s.x, y: s.y } : { x: 0, y: 0 };
+}

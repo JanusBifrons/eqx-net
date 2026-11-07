@@ -68,3 +68,13 @@ describe('alien gate site search at solar-system extents', () => {
     expect(c.length).toBe(((2 * lim) / 250 + 1) ** 2 + 1);
   });
 });
+
+describe('pocketCentre', () => {
+  it('is the sector origin when solar-system sectors are off, the pocket when on', async () => {
+    const { pocketCentre } = await import('./sectorSites.js');
+    expect(pocketCentre('sol-prime', 'combat', false)).toEqual({ x: 0, y: 0 });
+    const combat = sectorSites('sol-prime').find((s) => s.kind === 'combat')!;
+    expect(pocketCentre('sol-prime', 'combat', true)).toEqual({ x: combat.x, y: combat.y });
+    expect(pocketCentre('nowhere', 'combat', true)).toEqual({ x: 0, y: 0 });
+  });
+});

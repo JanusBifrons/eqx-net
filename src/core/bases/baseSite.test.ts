@@ -75,3 +75,13 @@ describe('nearestClearPoint (T1 spawn clearance)', () => {
     expect(Math.hypot(p.x, p.y)).toBeLessThan(600);
   });
 });
+
+describe('chooseBaseSite centred on a solar-system pocket (Phase 4)', () => {
+  it('searches round the given centre and stays inside its square', () => {
+    const ext = { x0: -400, x1: 400, y0: -300, y1: 300 };
+    const site = chooseBaseSite(ext, [], [], { halfExtent: 5000, margin: 250, step: 250, seed: 3, centreX: 120_000, centreY: -60_000 })!;
+    expect(site).not.toBeNull();
+    expect(Math.abs(site.x - 120_000)).toBeLessThanOrEqual(5000);
+    expect(Math.abs(site.y + 60_000)).toBeLessThanOrEqual(5000);
+  });
+});

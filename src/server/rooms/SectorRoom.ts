@@ -161,7 +161,8 @@ import { galaxyBasePlan, type GalaxyBasePlan } from '../../core/bases/galaxyBase
 import type { SectorFeature } from '../../core/galaxy/galaxy.js';
 /** Clear space kept between two NPC bases in one sector (bastions, mines, traffic). */
 const NPC_BASE_GAP = sectorSpace(900);
-import { HOME_POCKET_HALF_EXTENT, SECTOR_PLAYABLE_HALF_EXTENT, sectorSpace } from '../../shared-types/sectorBounds.js';
+import { HOME_POCKET_HALF_EXTENT, SECTOR_PLAYABLE_HALF_EXTENT, SOLAR_SECTORS, sectorSpace } from '../../shared-types/sectorBounds.js';
+import { sectorSites } from '../../core/galaxy/sectorSites.js';
 import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
@@ -4688,10 +4689,15 @@ export class SectorRoom extends Room<SectorState> {
       setHealth: (id, hp) => this.swarmHealth.set(id, hp),
     });
     const seededBases: SiteBox[] = [];
-    for (const plan of galaxyBasePlan(sectorKey)) {
-      const box = this.seedOneGalaxyBase(sectorKey, sector.features, plan, sub, seededBases);
+    const plans = galaxyBasePlan(sectorKey);
+    // Solar-system sectors (Phase 4): with two or more bases, the last grows
+    // at the sector's outer base pocket, out in the system, not at home.
+    const outer = SOLAR_SECTORS && plans.length >= 2 ? sectorSites(sectorKey).find((s) => s.kind === 'base') ?? null : null;
+    plans.forEach((plan, i) => {
+      const at = outer && i === plans.length - 1 ? { x: outer.x, y: outer.y } : null;
+      const box = this.seedOneGalaxyBase(sectorKey, sector.features, plan, sub, seededBases, at);
       if (box !== null) seededBases.push(box);
-    }
+    });
     this.structureGridTick();
   }
 
@@ -4703,6 +4709,8 @@ export class SectorRoom extends Room<SectorState> {
     plan: GalaxyBasePlan,
     sub: NpcBaseSubsystem,
     seededBases: readonly SiteBox[],
+    /** Grow round this point instead of in the home pocket (outer base pocket). */
+    at: { x: number; y: number } | null = null,
   ): SiteBox | null {
     const { seed, profile } = plan;
     const spec: NpcBaseSpec = {
@@ -4726,6 +4734,7 @@ export class SectorRoom extends Room<SectorState> {
       // The home pocket (today's whole sector; the same bound when solar-system
       // sectors are off).
       halfExtent: HOME_POCKET_HALF_EXTENT, margin: 250, step: sectorSpace(250), seed,
+      ...(at ? { centreX: at.x, centreY: at.y } : {}),
     });
     if (site === null) {
       logger.warn({ sectorKey, baseId: plan.baseId, tier: profile.tier, role: profile.role }, 'npc base: no site fits; base skipped');
