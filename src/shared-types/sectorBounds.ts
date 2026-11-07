@@ -32,7 +32,26 @@ export const SECTOR_SPACE_SCALE: number = readSectorScale();
 
 /** The 1x half extent the world layouts were authored at. */
 export const SECTOR_BASE_HALF_EXTENT = 5000;
-export const SECTOR_PLAYABLE_HALF_EXTENT = SECTOR_BASE_HALF_EXTENT * SECTOR_SPACE_SCALE;
+
+/**
+ * Solar-system sectors (plan prancy-squishing-donut Phase 4): ±200,000 u,
+ * mostly empty, with active pockets (core/galaxy/sectorSites.ts). Behind a
+ * switch until pocket-to-pocket travel lands: env `EQX_SOLAR_SECTORS=1`
+ * (Node), `globalThis.__EQX_SOLAR_SECTORS__` (page, from `?solar=1`). Off:
+ * today's sectors, unchanged. Read once, the same way on every side.
+ */
+export const SOLAR_SECTOR_HALF_EXTENT = 200_000;
+function readSolar(): boolean {
+  const g = globalThis as unknown as { process?: { env?: Record<string, string | undefined> }; __EQX_SOLAR_SECTORS__?: unknown };
+  const raw = g.process?.env?.['EQX_SOLAR_SECTORS'] ?? g.__EQX_SOLAR_SECTORS__;
+  return raw === '1' || raw === 'true' || raw === true;
+}
+export const SOLAR_SECTORS: boolean = readSolar();
+
+/** Today's sector extent: with solar-system sectors on, the HOME pocket at
+ *  the origin (the sector's bases, belts and spawns as they are today). */
+export const HOME_POCKET_HALF_EXTENT = SECTOR_BASE_HALF_EXTENT * SECTOR_SPACE_SCALE;
+export const SECTOR_PLAYABLE_HALF_EXTENT = SOLAR_SECTORS ? SOLAR_SECTOR_HALF_EXTENT : HOME_POCKET_HALF_EXTENT;
 
 /** A world-placement distance authored at 1x sector space, at the current scale. */
 export function sectorSpace(d: number): number {

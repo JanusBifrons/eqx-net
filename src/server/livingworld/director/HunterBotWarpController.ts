@@ -149,7 +149,7 @@ export class HunterBotWarpController {
       pvy = carryPose.vy;
     } else {
       const squadKey = this.squadKeyOf?.(rec.botId);
-      const pose = squadKey ? squadEdgePose(squadKey, to, rec.botId) : sectorEdgePose(this.rng);
+      const pose = squadKey ? squadEdgePose(squadKey, to, rec.botId) : sectorEdgePose(this.rng, to);
       px = pose.x;
       py = pose.y;
       pvx = pose.vx;

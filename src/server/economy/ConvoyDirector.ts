@@ -43,7 +43,13 @@ import { emptyHold } from '../../core/cargo/hold.js';
 import { matchConvoys, type BaseTradeView, type ConvoyPlan } from '../../core/economy/convoys.js';
 import type { Hold, GoodId } from '../../shared-types/goods.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
-import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
+import { SECTOR_PLAYABLE_HALF_EXTENT, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
+import { sectorSites } from '../../core/galaxy/sectorSites.js';
+import { axialToPixel } from '../../core/galaxy/galaxy.js';
+
+/** Speed a convoy phase is budgeted at (u/s): well under the hauler's 420 u/s
+ *  cruise, so a long solar-system leg (170 km ≈ 7 min) is never cut short. */
+const HAULER_BUDGET_SPEED = 200;
 import type { HoldStore } from '../cargo/HoldStore.js';
 import type { TradeTransferResult, TradeTransferSpec } from '../cargo/StorageService.js';
 import { CONVOY_HAULER_ID_PREFIX } from '../livingworld/directorBotIds.js';
@@ -161,6 +167,10 @@ interface Convoy {
   /** The sector the hauler is currently in (null while in transit). */
   inSector: string | null;
   phaseAtMs: number;
+  /** How long this phase may run: the fixed timeout plus its leg's length at
+   *  HAULER_BUDGET_SPEED (Phase 4: legs across a solar-system sector are long
+   *  on purpose, so a convoy is out in open space long enough to intercept). */
+  phaseBudgetMs: number;
   transitUntilMs: number;
   target: { x: number; y: number };
 }
@@ -196,6 +206,33 @@ export function edgeNear(box: NpcBaseTrade['box'], r: number, clear: number): { 
   }
   // The box covers the whole ray (a base around the centre): its nearest side.
   return dockPoint(box, clear, 0, 0);
+}
+
+/**
+ * Solar-system sectors: where a hauler enters / leaves `sectorKey` toward
+ * `otherSector`: the rim of the gate pocket facing that way, on the side of
+ * the base. Not a neighbour: the gate whose neighbour lies nearest the far
+ * sector on the map; same sector: the gate nearest the base. Null when the
+ * sector has no gate pockets.
+ */
+export function solarLanePoint(sectorKey: string, otherSector: string, box: { x0: number; y0: number; x1: number; y1: number }): { x: number; y: number } | null {
+  const gates = sectorSites(sectorKey).filter((g) => g.kind === 'gate');
+  if (gates.length === 0) return null;
+  const bx = (box.x0 + box.x1) / 2, by = (box.y0 + box.y1) / 2;
+  let gate = gates.find((g) => g.neighbour === otherSector);
+  if (!gate) {
+    const far = otherSector !== sectorKey ? getSector(otherSector) : undefined;
+    const fp = far ? axialToPixel(far.hex, 1) : null;
+    let best = Infinity;
+    for (const g of gates) {
+      const ns = g.neighbour ? getSector(g.neighbour) : undefined;
+      const np = ns ? axialToPixel(ns.hex, 1) : null;
+      const d = fp && np ? Math.hypot(np.x - fp.x, np.y - fp.y) : Math.hypot(g.x - bx, g.y - by);
+      if (d < best) { best = d; gate = g; }
+    }
+  }
+  const dx = bx - gate!.x, dy = by - gate!.y, len = Math.hypot(dx, dy) || 1;
+  return { x: Math.round(gate!.x + (dx / len) * gate!.r), y: Math.round(gate!.y + (dy / len) * gate!.r) };
 }
 
 export class ConvoyDirector {
@@ -370,12 +407,24 @@ export class ConvoyDirector {
   }
 
   /** Spawn a hauler at the edge facing away from `box`. Null when it can't. */
-  private enter(sectorKey: string, haulerId: string, box: NpcBaseTrade['box']): { x: number; y: number } | null {
+  private enter(sectorKey: string, otherSector: string, haulerId: string, box: NpcBaseTrade['box']): { x: number; y: number } | null {
     const room = this.rooms.get(sectorKey);
     if (!room || !room.hasFreeSlot() || this.inSectorCount(sectorKey) >= this.opts.maxPerSector) return null;
-    const edge = edgeNear(box, this.opts.edgeRadius, this.opts.dockMargin + 300);
+    const edge = this.lanePoint(sectorKey, otherSector, box);
     const at = room.clearPointNear(edge.x, edge.y);
     return room.spawnLivingWorldBot({ botId: haulerId, kind: 'trader-hauler', x: at.x, y: at.y }) ? at : null;
+  }
+
+  /**
+   * Where a hauler enters or leaves `sectorKey` on its way to / from
+   * `otherSector`. Solar-system sectors: the rim of the gate pocket facing
+   * that way (toward the base), so convoys fly the open space between the
+   * gate and the base: long, on a real lane, interceptable (user,
+   * 2026-11-07). Otherwise: today's edge point away from the base.
+   */
+  private lanePoint(sectorKey: string, otherSector: string, box: NpcBaseTrade['box']): { x: number; y: number } {
+    return (SOLAR_SECTORS ? solarLanePoint(sectorKey, otherSector, box) : null)
+      ?? edgeNear(box, this.opts.edgeRadius, this.opts.dockMargin + 300);
   }
 
   private launch(
@@ -384,7 +433,7 @@ export class ConvoyDirector {
   ): void {
     const id = `${now.toString(36)}${(this.seq++).toString(36)}`;
     const haulerId = `${CONVOY_HAULER_ID_PREFIX}${id}`;
-    const at = this.enter(fromSector, haulerId, from.box);
+    const at = this.enter(fromSector, toSector, haulerId, from.box);
     if (at === null) return;
     const ownerFaction = parseOwner(from.owner).faction;
     const { carrier, cut } = chooseCarrier(ownerFaction, getSector(fromSector)?.region ?? null);
@@ -396,26 +445,34 @@ export class ConvoyDirector {
       ...(priced.fromPlayer !== undefined ? { fromPlayer: priced.fromPlayer } : {}),
       ...(priced.toPlayer !== undefined ? { toPlayer: priced.toPlayer } : {}),
       ...(priced.unit !== undefined ? { unit: priced.unit } : {}),
-      phase: 'pickup', inSector: fromSector, phaseAtMs: now, transitUntilMs: 0,
+      phase: 'pickup', inSector: fromSector, phaseAtMs: now, phaseBudgetMs: 0, transitUntilMs: 0,
       target: dockPoint(from.box, this.opts.dockMargin, at.x, at.y),
     };
+    c.phaseBudgetMs = this.legBudget(at.x, at.y, c.target);
     this.convoys.set(id, c);
     serverLogEvent('convoy_launch', { haulerId, from: plan.from, to: plan.to, good: plan.good, qty: plan.qty, carrier, cut });
   }
 
-  private setPhase(c: Convoy, phase: Phase, now: number): void {
+  /** Set the phase; `from` (where the hauler is) sizes the phase budget to
+   *  the leg toward the target already set. */
+  private setPhase(c: Convoy, phase: Phase, now: number, from?: { x: number; y: number }): void {
     c.phase = phase;
     c.phaseAtMs = now;
+    c.phaseBudgetMs = from ? this.legBudget(from.x, from.y, c.target) : this.opts.phaseTimeoutMs;
+  }
+
+  private legBudget(x: number, y: number, target: { x: number; y: number }): number {
+    return this.opts.phaseTimeoutMs + (Math.hypot(target.x - x, target.y - y) / HAULER_BUDGET_SPEED) * 1000;
   }
 
   private advance(c: Convoy, now: number): void {
     if (c.phase === 'transit') {
       if (now < c.transitUntilMs) return;
-      const at = this.enter(c.toSector, c.haulerId, c.to.box);
+      const at = this.enter(c.toSector, c.fromSector, c.haulerId, c.to.box);
       if (at === null) { c.transitUntilMs = now + 5_000; return; } // sector busy: wait
       c.inSector = c.toSector;
       c.target = dockPoint(c.to.box, this.opts.dockMargin, at.x, at.y);
-      this.setPhase(c, 'delivery', now);
+      this.setPhase(c, 'delivery', now, at);
       return;
     }
     const room = c.inSector !== null ? this.rooms.get(c.inSector) : undefined;
@@ -423,7 +480,7 @@ export class ConvoyDirector {
     const pose = room.getBotPose(c.haulerId);
     if (pose === null) return; // destroyed — the bus handler finishes it
     const arrived = Math.hypot(pose.x - c.target.x, pose.y - c.target.y) <= this.opts.arriveRadius;
-    const timedOut = now - c.phaseAtMs >= this.opts.phaseTimeoutMs;
+    const timedOut = now - c.phaseAtMs >= c.phaseBudgetMs;
     if (!arrived && !timedOut) {
       room.setBotMoveTarget(c.haulerId, c.target.x, c.target.y);
       return;
@@ -447,14 +504,14 @@ export class ConvoyDirector {
         });
         const got = res?.taken.goods[c.plan.good] ?? 0;
         if (c.fromPlayer !== undefined && got > 0) this.settlePlayer(c.fromPlayer, c.plan.good, got, 'export', paid);
-        if (got <= 0) { this.holds.delete(c.haulerId); this.depart(c, now); return; } // nothing to carry
+        if (got <= 0) { this.holds.delete(c.haulerId); this.depart(c, now, pose); return; } // nothing to carry
         serverLogEvent('convoy_loaded', { haulerId: c.haulerId, good: c.plan.good, qty: got });
         if (c.toSector === c.fromSector) {
           c.target = dockPoint(c.to.box, this.opts.dockMargin, pose.x, pose.y);
-          this.setPhase(c, 'delivery', now);
+          this.setPhase(c, 'delivery', now, pose);
         } else {
-          c.target = edgeNear(c.from.box, this.opts.edgeRadius, this.opts.dockMargin + 300);
-          this.setPhase(c, 'outbound', now);
+          c.target = this.lanePoint(c.fromSector, c.toSector, c.from.box);
+          this.setPhase(c, 'outbound', now, pose);
         }
         return;
       }
@@ -476,7 +533,7 @@ export class ConvoyDirector {
           const op = cost > 0 ? this.pay.wallet.debitDeferred(c.toPlayer, cost, 'freight_import') : null;
           if (cost > 0 && op === null) {
             serverLogEvent('convoy_unpaid', { haulerId: c.haulerId, to: c.plan.to });
-            this.depart(c, now);
+            this.depart(c, now, pose);
             return;
           }
           if (op) extraOps = [op];
@@ -497,7 +554,7 @@ export class ConvoyDirector {
           room.tradeDropAt(res.overflow, c.target.x, c.target.y);
         }
         serverLogEvent('convoy_delivered', { haulerId: c.haulerId, to: c.plan.to, good: c.plan.good, timedOut: !arrived });
-        this.depart(c, now);
+        this.depart(c, now, pose);
         return;
       }
       case 'leaving':
@@ -513,10 +570,11 @@ export class ConvoyDirector {
   }
 
   /** Head for the edge, away from the base it's at. */
-  private depart(c: Convoy, now: number): void {
-    const box = c.phase === 'pickup' ? c.from.box : c.to.box;
-    c.target = edgeNear(box, this.opts.edgeRadius, this.opts.dockMargin + 300);
-    this.setPhase(c, 'leaving', now);
+  private depart(c: Convoy, now: number, from: { x: number; y: number }): void {
+    const atPickup = c.phase === 'pickup';
+    const box = atPickup ? c.from.box : c.to.box;
+    c.target = atPickup ? this.lanePoint(c.fromSector, c.toSector, box) : this.lanePoint(c.toSector, c.fromSector, box);
+    this.setPhase(c, 'leaving', now, from);
   }
 
   private leave(c: Convoy, room: ConvoyRoom): void {

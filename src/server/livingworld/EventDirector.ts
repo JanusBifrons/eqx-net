@@ -19,7 +19,8 @@
  * Driven by the drone director's `onTick` (~1.5 s) — allocation here is fine.
  * Not persisted: a restart simply starts a fresh lull.
  */
-import { sectorSpace } from '../../shared-types/sectorBounds.js';
+import { sectorSpace, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
+import { pocketCentre } from '../../core/galaxy/sectorSites.js';
 import type { Bus } from '../../core/events/Bus.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import {
@@ -132,8 +133,10 @@ export class EventDirector {
     const room = this.rooms.get(sectorKey);
     if (!room) return false;
     const a = this.rng() * Math.PI * 2;
-    const x = Math.cos(a) * WORLD_EVENT_RADIUS;
-    const y = Math.sin(a) * WORLD_EVENT_RADIUS;
+    // Solar-system sectors: world events play out at the combat pocket.
+    const c = pocketCentre(sectorKey, 'combat', SOLAR_SECTORS);
+    const x = c.x + Math.cos(a) * WORLD_EVENT_RADIUS;
+    const y = c.y + Math.sin(a) * WORLD_EVENT_RADIUS;
     const ev: ActiveEvent = {
       kind, sectorKey, x, y, endsAtMs: nowMs + WORLD_EVENT_DURATION_MS[kind], mobs: new Set(), bossId: null,
     };

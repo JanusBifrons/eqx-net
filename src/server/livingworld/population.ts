@@ -11,7 +11,8 @@
  * subscriptions and room references. This module owns only the decisions.
  */
 import { getSector, getNeighbours, getEntrySectors } from '../../core/galaxy/galaxy.js';
-import { clampToSectorBounds, SECTOR_PLAYABLE_HALF_EXTENT, SECTOR_SPACE_SCALE } from '../../shared-types/sectorBounds.js';
+import { clampToSectorBounds, SECTOR_PLAYABLE_HALF_EXTENT, SECTOR_SPACE_SCALE, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
+import { sectorSites, type SectorSite } from '../../core/galaxy/sectorSites.js';
 
 /** A source of randomness in `[0, 1)` — `Math.random` in production, a
  *  seeded generator in tests. Mirrors the `SpawnerHooks.pickDroneKind`
@@ -450,9 +451,30 @@ export interface EdgePose {
  * `atan2(-dirX, dirY)`). Position is clamped defensively even though the
  * edge fraction keeps it well inside the playable bounds.
  */
-export function sectorEdgePose(rng: Rng): EdgePose {
+export function sectorEdgePose(rng: Rng, sectorKey?: string): EdgePose {
   const bearing = rng() * Math.PI * 2;
+  const gates = sectorKey ? solarGatePockets(sectorKey) : null;
+  if (gates) return pocketRimPose(gates[Math.floor(rng() * gates.length) % gates.length]!, bearing, 0);
   return edgePoseAtBearing(bearing, SECTOR_PLAYABLE_HALF_EXTENT * RESPAWN_EDGE_FRACTION);
+}
+
+/** Solar-system sectors (Phase 4): the gate pockets arrivals land in, or
+ *  null when the switch is off / the sector has none (today's edge spawn). */
+function solarGatePockets(sectorKey: string): SectorSite[] | null {
+  if (!SOLAR_SECTORS) return null;
+  const gates = sectorSites(sectorKey).filter((s) => s.kind === 'gate');
+  return gates.length > 0 ? gates : null;
+}
+
+/** An arrival on the rim of a pocket, nose and velocity toward its centre:
+ *  a ship that has just come through the pocket's gate. */
+function pocketRimPose(site: SectorSite, bearing: number, rJitter: number): EdgePose {
+  const r = site.r + rJitter;
+  const ex = site.x + Math.cos(bearing) * r;
+  const ey = site.y + Math.sin(bearing) * r;
+  const dirX = -Math.cos(bearing), dirY = -Math.sin(bearing);
+  const { x, y } = clampToSectorBounds(ex, ey);
+  return { x, y, vx: dirX * RESPAWN_INBOUND_SPEED, vy: dirY * RESPAWN_INBOUND_SPEED, angle: Math.atan2(-dirX, dirY) };
 }
 
 /** Build an inward-facing edge pose at a specific bearing + radius (shared by
@@ -522,6 +544,10 @@ export function squadEdgePose(
   const base = (hashStr(anchorKey) / 0xffffffff) * Math.PI * 2;
   const aJit = (hashStr(`${botKey}:a`) / 0xffffffff - 0.5) * 2 * SQUAD_SPAWN_ANGULAR_JITTER;
   const rJit = (hashStr(`${botKey}:r`) / 0xffffffff - 0.5) * 2 * SQUAD_SPAWN_RADIAL_JITTER;
+  // Solar-system sectors: the squad arrives together at ONE gate pocket
+  // (picked by the shared anchor), on its rim.
+  const gates = solarGatePockets(sectorKey);
+  if (gates) return pocketRimPose(gates[hashStr(`${anchorKey}:gate`) % gates.length]!, base + aJit, rJit);
   return edgePoseAtBearing(base + aJit, SECTOR_PLAYABLE_HALF_EXTENT * RESPAWN_EDGE_FRACTION + rJit);
 }
 
