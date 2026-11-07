@@ -121,9 +121,10 @@ describe('tickInputQueue — held-input ack advance (2026-05-06 regression)', ()
   });
 
   it('a freshly-arrived input picks up the ack from the held trail', () => {
-    // Throttle scenario: input at 100, held for 5 ticks, then a new input at
-    // 105 arrives. The new ack must be 105 (the message's own tick), not 106
-    // (the held trail's next value) — the message's authority dominates.
+    // Throttle scenario: input at 100, held for 5 ticks (ack 105), then an
+    // input claiming 105 arrives. The worker already simulated 105 with the
+    // held input, so this NEW step is 106 (one step = one acked tick,
+    // 2026-11-07); the late input's content is what it applies.
     const queue: QueuedInput[] = [{ ...idle, tick: 100, thrust: true }];
     const lastApplied = new Map<number, QueuedInput>();
     const lastAckTick = new Map<number, number>();
@@ -135,15 +136,15 @@ describe('tickInputQueue — held-input ack advance (2026-05-06 regression)', ()
     const r = tickInputQueue(0, queue, lastApplied, lastAckTick, 105);
 
     expect(r.applied?.thrust).toBe(false);
-    expect(r.ackTick).toBe(105);
-    expect(lastAckTick.get(0)).toBe(105);
+    expect(r.ackTick).toBe(106);
+    expect(lastAckTick.get(0)).toBe(106);
   });
 
   it('does not regress ack when an out-of-order packet arrives with an older tick', () => {
     // Held trail has reached 110. A delayed packet from tick 103 arrives.
-    // Apply the input (it's still authoritative for its tick) but keep the
-    // ack at 110 — regressing it would tell the client to replay inputs the
-    // worker has already applied.
+    // Its content becomes the held input (better late than never) and the
+    // ack never regresses; this new step is 111 (one step = one acked tick,
+    // 2026-11-07 — pinning it at 110 stepped without acking).
     const queue: QueuedInput[] = [{ ...idle, tick: 100 }];
     const lastApplied = new Map<number, QueuedInput>();
     const lastAckTick = new Map<number, number>();
@@ -156,7 +157,7 @@ describe('tickInputQueue — held-input ack advance (2026-05-06 regression)', ()
     const r = tickInputQueue(0, queue, lastApplied, lastAckTick, 110);
 
     expect(r.applied?.turnLeft).toBe(true); // input applied to physics
-    expect(r.ackTick).toBe(110); // ack pinned at the held trail's high-water mark
+    expect(r.ackTick).toBe(111); // never regresses; this step is the next tick
   });
 });
 
@@ -293,5 +294,49 @@ describe('tickInputQueue — multi-slot independence', () => {
     tickInputQueue(0, slotAQueue, lastApplied, lastAckTick, 51);
     expect(lastAckTick.get(0)).toBe(51);
     expect(lastAckTick.get(1)).toBe(1000);
+  });
+});
+
+describe('tickInputQueue — one sim step, one acked tick (2026-11-07 regression)', () => {
+  /**
+   * Showcase jitter (2026-11-07): the pose trace showed every prediction
+   * correction was exactly ONE TICK of motion along the ship's path, flipping
+   * back a little later. Cause: an input that arrived late (after the worker
+   * had already simulated its tick with the held input) was applied as a
+   * SECOND step while `max(claim, prior)` pinned the ack. The worker had
+   * stepped twice, acked once, so the snapshot pose sat one tick ahead of its
+   * ackedTick and the client's replay disagreed by a tick of motion.
+   * Invariant: across any arrival pattern, every step advances ack by
+   * exactly one (after the first message).
+   */
+  it('a late input for an already-simulated tick never consumes an extra step', () => {
+    const queue: QueuedInput[] = [];
+    const lastApplied = new Map<number, QueuedInput>();
+    const lastAckTick = new Map<number, number>();
+    // The client sends one held-thrust input per tick, but arrivals jitter:
+    // some steps see nothing (late), the next sees two.
+    const arrivals: number[][] = [[100], [101], [], [102, 103], [104], [], [], [105, 106, 107], [108], [109]];
+    let prevAck: number | null = null;
+    let tick = 100;
+    for (const batch of arrivals) {
+      for (const t of batch) queue.push({ ...idle, tick: t, thrust: true });
+      const r = tickInputQueue(0, queue, lastApplied, lastAckTick, tick);
+      if (prevAck !== null) expect(r.ackTick, `step at sim tick ${tick}`).toBe(prevAck + 1);
+      prevAck = r.ackTick;
+      tick++;
+    }
+    expect(queue.length, 'no backlog left behind').toBeLessThanOrEqual(1);
+  });
+
+  it('a late input still sets what the ship does next (its content becomes the held input)', () => {
+    const queue: QueuedInput[] = [{ ...idle, tick: 100, thrust: true }];
+    const lastApplied = new Map<number, QueuedInput>();
+    const lastAckTick = new Map<number, number>();
+    tickInputQueue(0, queue, lastApplied, lastAckTick, 100); // ack 100
+    tickInputQueue(0, queue, lastApplied, lastAckTick, 101); // held → ack 101
+    queue.push({ ...idle, tick: 101, thrust: false }); // the real 101 arrives late: released
+    const r = tickInputQueue(0, queue, lastApplied, lastAckTick, 102);
+    expect(r.ackTick).toBe(102);
+    expect(r.applied?.thrust).toBe(false);
   });
 });
