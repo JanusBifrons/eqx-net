@@ -538,11 +538,14 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
     }
     case 'teleporter':
     case 'teleporter_large':
+    case 'pocket_pad':
     case 'alien_gate': {
       // Teleporter (v4 T1): an open pad ringed by its posts. The pad is a
       // faint disc with concentric guide rings; ships hover over it. The posts
       // are the only solid parts (they match the collider).
-      const big = kindId !== 'teleporter';
+      const big = kindId === 'teleporter_large' || kindId === 'alien_gate';
+      // W1b — a transit pad needs no grid either: its posts are always lit.
+      const free = kindId === 'alien_gate' || kindId === 'pocket_pad';
       // v4 A — the Ancients' gate: the same pad, with glowing monolith posts
       // that are always lit (it needs no grid) and a bright centre glyph.
       const alien = kindId === 'alien_gate';
@@ -556,13 +559,13 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       for (const [cx, cy] of padPostCenters(kindId)) {
         slab(rects, cx - post / 2, cy - post / 2, post, post, alien ? mixColor(accent, STEEL_DARK, 0.7) : STEEL_DARK, post * 0.25);
         box(rects, cx - post / 4, cy - post / 4, post / 2, post / 2, mixColor(accent, STEEL_LIGHT, alien ? 0.15 : 0.4), 0.95);
-        lit(cx, cy, alien ? post / 5 : post / 8, live || alien ? accent : 0x553322);
+        lit(cx, cy, alien ? post / 5 : post / 8, live || free ? accent : 0x553322);
       }
       if (alien) {
         box(rects, -90, -90, 180, 180, mixColor(accent, STEEL_DARK, 0.5), 0.6);
         box(rects, -45, -45, 90, 90, accent, 0.8);
       }
-      lit(0, 0, alien ? 60 : big ? 40 : 18, live || alien ? accent : 0x553322);
+      lit(0, 0, alien ? 60 : big ? 40 : 18, live || free ? accent : 0x553322);
       break;
     }
     case 'tower_module': {

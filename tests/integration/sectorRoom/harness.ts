@@ -170,6 +170,7 @@ export async function bootSectorTestServer(opts: {
   alienGates?: boolean;
   /** Phase 4 — solar-system sector rules for this room (warp-to). */
   solarSectors?: boolean;
+  pocketPads?: boolean;
   /** C2 — every break-in takes this long (bespoke trigger). */
   breakInMs?: number;
   /** P2d — stock the prebuilt Capital's hold. */
@@ -251,6 +252,7 @@ export async function bootSectorTestServer(opts: {
     galaxyBases: opts.galaxyBases,
     alienGates: opts.alienGates,
     solarSectors: opts.solarSectors,
+    pocketPads: opts.pocketPads,
     breakInMs: opts.breakInMs,
     prebuiltStorageGoods: opts.prebuiltStorageGoods,
     teleportCycleScale: opts.teleportCycleScale,

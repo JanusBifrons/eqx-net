@@ -57,6 +57,12 @@ describe('WarpPicker', () => {
     window.history.replaceState(null, '', '/');
   });
 
+  it('list: a pocket with a transit pad says where it goes (instant)', () => {
+    render(<WarpPicker />);
+    const pad = warpDestinations('sol-prime', 0, 0).find((d) => d.padTo !== null)!;
+    expect(screen.getByTestId(`warp-pad-${pad.id}`).textContent).toContain('instant');
+  });
+
   it('reads the prototype from the URL', () => {
     expect(readWarpUi('?warpui=map')).toBe('map');
     expect(readWarpUi('')).toBe('list');
