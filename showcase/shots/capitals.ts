@@ -470,3 +470,56 @@ async function keepStation(ctx: ShotContext, ms: number): Promise<void> {
 
 const targetPages = new Map<string, { tctx: import('@playwright/test').BrowserContext; tpage: import('@playwright/test').Page; timer?: ReturnType<typeof setInterval> }>();
 
+
+/**
+ * Wrap-up W2c: a flagship fleet spools and warps (the NPC warp, W2a). Seen
+ * from a pilot beside it: the battleship and its escorts spool up together and
+ * jump west as one, leaving burning trails (`showcase-fleet-warp`, the jump cued
+ * with `test_fleet_warp` once the art has baked).
+ */
+export const capitalFleetWarp: Shot = {
+  id: 'capital-fleet-warp',
+  section: 'mechanics',
+  title: 'A capital fleet jumps',
+  caption: 'A flagship and its escorts spool up together and warp out as one, leaving their engine trails burning behind them.',
+  features: ['CAP', 'P4'],
+  docs: ['capital-ships', 'warp-to'],
+  reel: false,
+  server: 'capitals',
+  target: { room: 'showcase-fleet-warp', params: { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
+  hud: 'none',
+  durationMs: 12_000,
+  async startWhen(ctx) {
+    await artSettled(ctx);
+  },
+  // A HELD camera: 'frame all' followed the fleet to its arrival point,
+  // where the formation looks the same, so the jump didn't read (first take).
+  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 0, y: -Math.round(getShipKind('battleship-b').radius * 0.6), zoom: 0.15 } }],
+  async run(ctx) {
+    await ctx.sleep(1200);
+    await sendRoom(ctx, 'test_fleet_warp', { type: 'test_fleet_warp', x: -45_000, y: 0 });
+    await ctx.sleep(10_500);
+  },
+};
+
+/** The other end: a pilot waiting where the fleet drops out of warp. */
+export const capitalFleetArrive: Shot = {
+  id: 'capital-fleet-arrive',
+  section: 'mechanics',
+  title: 'A capital fleet arrives',
+  caption: 'Out of nowhere the fleet drops out of warp in formation, flagship in the middle.',
+  features: ['CAP', 'P4'],
+  docs: ['capital-ships'],
+  reel: false,
+  server: 'capitals',
+  // The pilot waits 45 km west, south of where the flagship will land.
+  target: { room: 'showcase-fleet-warp', params: { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1, spawnX: -45_000, spawnY: -Math.round(getShipKind('battleship-b').radius * 2.2) } },
+  hud: 'none',
+  durationMs: 12_000,
+  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: -45_000, y: -Math.round(getShipKind('battleship-b').radius * 0.6), zoom: 0.15 } }],
+  async run(ctx) {
+    await ctx.sleep(1500);
+    await sendRoom(ctx, 'test_fleet_warp', { type: 'test_fleet_warp', x: -45_000, y: 0 });
+    await ctx.sleep(10_000);
+  },
+};

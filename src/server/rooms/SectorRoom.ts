@@ -330,6 +330,7 @@ import {
   EngageTransitSchema,
   CancelTransitSchema,
   TestAggroSchema,
+  TestFleetWarpSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,
@@ -2861,6 +2862,27 @@ export class SectorRoom extends Room<SectorState> {
         return;
       }
       this.markAllDronesHostileTo(playerId);
+    });
+
+    // W2c showcase: warp the room's ships to (x, y), keeping the formation
+    // (offsets from the biggest ship, the flagship).
+    this.onMessage('test_fleet_warp', (client: Client, raw: unknown) => {
+      if (!(this.testMode || ALLOW_DEV_OVERRIDES)) return;
+      const parsed = TestFleetWarpSchema.safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, 'test_fleet_warp');
+        return;
+      }
+      let lead: { id: string; slot: number; radius: number } | null = null;
+      for (const rec of this.swarmRegistry.all()) if (rec.kind === 1 && (lead === null || rec.radius > lead.radius)) lead = rec;
+      if (lead === null) return;
+      const lb = slotBase(lead.slot);
+      const lx = this.sabF32[lb + SLOT_X_OFF]!, ly = this.sabF32[lb + SLOT_Y_OFF]!;
+      for (const rec of [...this.swarmRegistry.all()]) { // TODO: alloc-debt (test cue only)
+        if (rec.kind !== 1) continue;
+        const b = slotBase(rec.slot);
+        this.warpBot(rec.id, parsed.data.x + this.sabF32[b + SLOT_X_OFF]! - lx, parsed.data.y + this.sabF32[b + SLOT_Y_OFF]! - ly);
+      }
     });
 
     this.onMessage('cancel_transit', (client: Client, raw: unknown) => {
