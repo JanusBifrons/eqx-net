@@ -340,7 +340,7 @@ describe('TransitOrchestrator', () => {
     it('clamps out-of-bounds arrival to sector half-extent', async () => {
       const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
       const { orch, store, shipId } = withFakeReserve(reserve);
-      orch.beginTransit('p1', 'cygnus-arm', { x: 999_999, y: -50_000 });
+      orch.beginTransit('p1', 'cygnus-arm', { x: 999_999, y: -999_999 });
       vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       const rec = store.get(shipId)!;

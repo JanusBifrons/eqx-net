@@ -18,6 +18,8 @@ import { EliteDirector, ELITE_SPAWN_RADIUS } from '../../../src/server/livingwor
 import { ELITE_HEALTH_MUL } from '../../../src/shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS } from '../../../src/shared-types/contracts.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
+import { pocketCentre } from '../../../src/core/galaxy/sectorSites.js';
+import { SOLAR_SECTORS } from '../../../src/shared-types/sectorBounds.js';
 import { getHoldStore, getWallet } from '../../../src/server/db/PersistenceWorker.js';
 import type { LivingWorldRoom } from '../../../src/server/livingworld/LivingWorldRoom.js';
 import type { SnapshotMessage } from '../../../src/shared-types/messages.js';
@@ -46,7 +48,9 @@ describe('SectorRoom integration — named elites (P4a)', () => {
     // sector space grows that radius): park the pilot beside it so it is
     // inside the interest window at any sector size.
     const ea = 0.1 * Math.PI * 2;
-    const pilot = await h.connectActive(randomUUID(), 'greenfall', { initialHull: 99999, spawnX: Math.round(Math.cos(ea) * (ELITE_SPAWN_RADIUS - 600)), spawnY: Math.round(Math.sin(ea) * (ELITE_SPAWN_RADIUS - 600)) });
+    // Solar-system sectors: elites play out in the battle-zone pocket.
+    const c = pocketCentre('greenfall', 'combat', SOLAR_SECTORS);
+    const pilot = await h.connectActive(randomUUID(), 'greenfall', { initialHull: 99999, spawnX: Math.round(c.x + Math.cos(ea) * (ELITE_SPAWN_RADIUS - 600)), spawnY: Math.round(c.y + Math.sin(ea) * (ELITE_SPAWN_RADIUS - 600)) });
     let seenName: string | null = null;
     const notices: WorldNotice[] = [];
     pilot.onMessage('snapshot', (snap: SnapshotMessage) => {

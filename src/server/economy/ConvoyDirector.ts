@@ -43,7 +43,7 @@ import { emptyHold } from '../../core/cargo/hold.js';
 import { matchConvoys, type BaseTradeView, type ConvoyPlan } from '../../core/economy/convoys.js';
 import type { Hold, GoodId } from '../../shared-types/goods.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
-import { SECTOR_PLAYABLE_HALF_EXTENT, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
+import { HOME_POCKET_HALF_EXTENT, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
 import { sectorSites } from '../../core/galaxy/sectorSites.js';
 import { axialToPixel } from '../../core/galaxy/galaxy.js';
 
@@ -140,7 +140,8 @@ export const DEFAULT_CONVOY_OPTIONS: ConvoyDirectorOptions = {
   maxPerSector: 4,
   dockMargin: 250,
   arriveRadius: 300,
-  edgeRadius: SECTOR_PLAYABLE_HALF_EXTENT * 0.9,
+  // The classic edge; solar-system sectors use the gate-pocket lanes instead.
+  edgeRadius: HOME_POCKET_HALF_EXTENT * 0.9,
 };
 
 type Phase = 'pickup' | 'outbound' | 'transit' | 'delivery' | 'leaving';
