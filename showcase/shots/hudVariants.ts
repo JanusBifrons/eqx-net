@@ -144,8 +144,10 @@ const STICK_R = 52;
  * between sweeps. Works for a heading stick (the ship weaves around the
  * fight) and a turn stick (it circles) alike.
  */
-async function steer(ctx: ShotContext, finger: Finger, anchor: Pt, clock: Clock): Promise<void> {
+async function steer(ctx: ShotContext, finger: Finger, anchor0: Pt, clock: Clock): Promise<void> {
   const up = -Math.PI / 2;
+  let anchor = anchor0;
+  let lifted = false;
   await finger.down(anchor.x, anchor.y);
   await finger.dragTo(anchor.x, anchor.y - STICK_R, { ms: 320 });
   let current = up;
@@ -165,6 +167,17 @@ async function steer(ctx: ShotContext, finger: Finger, anchor: Pt, clock: Clock)
     if (clock.left() > 900 && leg % 2 === 1) await finger.wiggle({ amp: 7, cycles: 2, ms: clock.fit(600) });
     side = -side;
     leg++;
+    // Once, mid-clip: lift the thumb so the stick visibly glides home, then
+    // land somewhere else so it visibly spawns under the thumb.
+    if (!lifted && leg === 3 && clock.left() > 4000) {
+      lifted = true;
+      await finger.up();
+      await ctx.sleep(900);
+      anchor = { x: anchor0.x + 46, y: anchor0.y - 30 };
+      await finger.down(anchor.x, anchor.y);
+      const resume = polar(anchor, STICK_R, current);
+      await finger.dragTo(resume.x, resume.y, { ms: 200 });
+    }
   }
   // Ease back to centre and let go.
   await finger.dragTo(anchor.x, anchor.y, { ms: 180 });
@@ -264,14 +277,18 @@ async function aimDrag(
   if (v === 'b') {
     const zone = await rectOf(ctx, 'hud-aim-zone');
     origin = zone
-      ? clampTo({ x: zone.x + zone.width * 0.62, y: zone.y + zone.height * 0.6 }, zone, 70)
+      ? // Low and inboard: the ring that spawns under the thumb stays clear
+        // of BOOST and the AUTO pill above the aim stick's home.
+        clampTo({ x: zone.x + zone.width * 0.45, y: zone.y + zone.height * 0.72 }, zone, 70)
       : await locate('hud-aim-home', aimFallback);
   } else {
     origin = await locate('hud-attack', attackFallback);
   }
-  const r = v === 'b' ? 56 : 64;
+  // c: a short pull keeps the thumb on the attack button's ring (not over
+  // BOOST beside it, nor off the screen).
+  const r = v === 'b' ? 56 : 30;
   const { width: w, height: h } = ctx.viewport;
-  const bounds = { x: 6, y: 6, width: w - 12, height: h - 12 };
+  const bounds = { x: 28, y: 28, width: w - 56, height: h - 56 };
   let a = (await droneAngle(ctx)) ?? -Math.PI / 2;
   await finger.down(origin.x, origin.y);
   const first = clampTo(polar(origin, r, a), bounds);
@@ -373,7 +390,8 @@ async function runDesktop(ctx: ShotContext, durationMs: number): Promise<void> {
   const clock = startClock(ctx, durationMs);
   const { width: w, height: h } = ctx.viewport;
   const c = { x: w / 2, y: h / 2 };
-  const R = Math.min(w, h) * 0.32;
+  // Keep the cursor below the top HUD row (pilot toggle, status capsule).
+  const R = Math.min(w, h) * 0.26;
   const m = await mouse(page, { x: c.x + R * 0.6, y: c.y - R * 0.6 });
 
   const keys = async (): Promise<void> => {

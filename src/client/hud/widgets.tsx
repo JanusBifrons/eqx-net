@@ -385,7 +385,10 @@ export function StatusStack({ scale }: { scale: number }): JSX.Element {
   const shield = useUIStore((s) => s.shieldPct);
   const hull = useUIStore((s) => s.hullPct);
   const energyRef = useEnergyFill();
-  const w = Math.round(84 * scale);
+  // Narrow (portrait) phones: shorter bars so the stack clears the
+  // top-centre Pilot/Spectate toggle.
+  const narrow = typeof window !== 'undefined' && window.innerWidth < 500;
+  const w = Math.round((narrow ? 58 : 84) * scale);
   const h = Math.max(3, Math.round(3 * scale));
   const ls = Math.round(7.5 * scale);
   return (

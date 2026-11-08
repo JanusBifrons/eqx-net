@@ -79,11 +79,15 @@ export class TouchPad {
     await this.emit('touchEnd', lifted);
   }
 
-  /** Release fingers and detach the CDP session. */
+  /**
+   * Release fingers. The CDP session is NOT detached: detaching it drops the
+   * page's touch emulation, so `(pointer: coarse)` flips to false and
+   * desktop-only UI (the app header) pops into the last frames of a phone
+   * take. It closes with the page.
+   */
   async dispose(): Promise<void> {
     await this.releaseAll().catch(() => {});
     await this.chain.catch(() => {});
-    await this.cdp.detach().catch(() => {});
   }
 
   /** @internal */ press(id: number, p: Pt): Promise<void> {
