@@ -2753,6 +2753,19 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - Before widening a heap bound, swap the mocks for plain functions and re-measure. Growth that vanishes is the harness.
   - A suite no CI job runs rots. `test:gc` now runs in the `gc-tests` job.
 
+## 2026-11-08 — Melee corrections: the drone collision body is on the wrong timeline (WS7.1, open)
+
+- **Symptom:** the `pack-battle` and `new-effects` showcase shots (both `feel-test-25`, a hostile 25-drone pack) failed the pose-trace gate on a fast desktop with the server at 60 Hz: 4–14 prediction corrections per take (max 2). Other shots: 0.
+- **Not host starvation.** A browser probe (own ports, the shot's input script, the pose gate's 0.3 u onset rule) found every onset within ~30 u of a drone hull, and the one take with no local contact had zero corrections.
+- **Cause:** the local ship is predicted AHEAD of the server (inputTick ≈ serverTick + lead), but a drone's predWorld body is the kinematic follower posed at the DISPLAY-DELAYED interpolated pose (now − 100 ms; `ColyseusClient.updateMirror`). So the predicted ship meets each drone where it was ~(100 ms + lead) ago, the server meets it where it is, the contacts differ, and the next snapshot corrects the ship. The replay can't help: it re-runs against the same lagging bodies.
+- **Not the cause (measured):** `collision_resolved` overwriting the local ship's velocity. Dropping it in-page gave 2 / 6 / 1 / 9 onsets per take, inside the noise of 8 / 9 / 7.
+- **Evidence for a fix direction:** an in-page patch that dead-reckons each drone body to the tick being predicted (latest server pose + v·(tick − poseTick)/60, re-seated at ackedTick+1 before the replay) took the shot from mean 6.4 onsets per take (1 of 8 takes within the gate) to 1.9 (8 of 10). The deterministic model in `tests/scenarios/meleeDroneContactPrediction.test.ts` agrees: peak contact correction 16 u → 1.9 u.
+- **Why it isn't shipped:** it makes the collision body lead the drawn sprite by ~(100 ms + lead)·speed, against the documented render == collision rule for the follower (src/client/CLAUDE.md), and the local hitscan rays test predWorld bodies. Options to decide between: (a) collision on the predicted timeline, sprite delayed (classic, the patch above); (b) also draw drones near the local ship on the predicted timeline; (c) accept contact corrections and exempt contact frames from the showcase gate. The residual ~1–2 u after (a) is the follower being re-posed every frame, which throws away the client's own push on the drone.
+- **Rules:**
+  - A contact between a predicted body and an interpolated one is resolved on two different timelines. Any correction that only happens near another entity is this, not the network.
+  - Before blaming a "second correction path", A/B it: switch it off in-page and count.
+- **Lock:** `tests/scenarios/meleeDroneContactPrediction.test.ts` (`it.fails` on the production follower; flip to `it` with the fix).
+
 ## 2026-11-08 — A unit test killed a live perf run (misspelt env override)
 
 - **Symptom:** a `perf:scenes` self-test lost its base arm mid-run ("fetch failed", then ERR_CONNECTION_REFUSED on 5373) the moment `vitest run showcase` started in the same checkout.
