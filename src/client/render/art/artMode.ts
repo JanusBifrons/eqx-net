@@ -39,8 +39,14 @@ export function readArtMode(search: string): ArtMode | null {
 }
 
 export function resolveArtMode(search: string, isAutomation: boolean, saved: ArtMode | null): ArtMode {
-  return readArtMode(search) ?? saved ?? (isAutomation ? 'classic' : 'machined');
+  // GPU-lit art needs the Machined look: asking for it implies Machined (an
+  // automated browser would otherwise get classic and the flag do nothing).
+  const explicit = readArtMode(search);
+  if (explicit === null && SHIPLIGHT_RE.test(search)) return 'machined';
+  return explicit ?? saved ?? (isAutomation ? 'classic' : 'machined');
 }
+
+const SHIPLIGHT_RE = /[?&]shiplight=gpu\b/;
 
 /**
  * The new effects and backdrop (plan iridescent-seeking-rainbow v3). They
@@ -61,7 +67,7 @@ export function resolveFxMode(search: string, mode: ArtMode, isAutomation = fals
  * with the Machined art. Off otherwise (today's baked art, unchanged).
  */
 export function resolveShipLighting(search: string, mode: ArtMode): LightingSettings | undefined {
-  if (mode !== 'machined' || !/[?&]shiplight=gpu\b/.test(search)) return undefined;
+  if (mode !== 'machined' || !SHIPLIGHT_RE.test(search)) return undefined;
   return lightingFromSearch(search, LOOK_NIGHT);
 }
 
