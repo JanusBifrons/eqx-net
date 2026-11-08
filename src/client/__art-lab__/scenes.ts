@@ -49,7 +49,7 @@ export interface Scene {
   duration: number;
 }
 
-export const SCENE_IDS = ['ships', 'factions', 'structures', 'base', 'explosion', 'sweep', 'bench', 'fleet', 'capitals', 'industry', 'mega', 'combat'] as const;
+export const SCENE_IDS = ['ships', 'factions', 'structures', 'base', 'explosion', 'sweep', 'bench', 'fleet', 'capitals', 'industry', 'mega', 'combat', 'spin', 'spinfleet'] as const;
 
 /** Sheet scenes fit their content into this view (the capture size). */
 const SHEET_W = 1600, SHEET_H = 900;
@@ -207,6 +207,31 @@ export function buildScene(id: SceneId, zoomOverride?: number, n = 40): Scene {
           c.x = 330 * e; c.y = 380 * e;
         },
       };
+    case 'spin':
+      // GPU-lit R&D: one ship turning a full circle in 8 s, close up, so the
+      // light can be watched moving across the hull (baked: 16 blended steps).
+      return {
+        ships: [{ id: 'missile-frigate', trail: false, pose: (t, o) => { o.x = 0; o.y = 0; o.rot = (t / 8) * Math.PI * 2; o.thrust = 0; } }],
+        structs: [],
+        booms: [],
+        duration: 8,
+        camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = 4.5; },
+      };
+    case 'spinfleet': {
+      // GPU-lit R&D: six different ships turning in place, a full turn in 8 s.
+      const ids = ['fighter', 'missile-frigate', 'robot-hexagon', 'interceptor', 'trader-hauler', 'gunship'];
+      const SP = 150;
+      return {
+        ships: ids.map((id, i) => ({
+          id, trail: false,
+          pose: (t: number, o: Pose) => { o.x = ((i % 3) - 1) * SP; o.y = (Math.floor(i / 3) - 0.5) * SP; o.rot = (t / 8) * Math.PI * 2 + i * 0.9; o.thrust = 0; },
+        })),
+        structs: [],
+        booms: [],
+        duration: 8,
+        camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = 1.6; },
+      };
+    }
     case 'fleet':
       return shipSheet(SHIP_KINDS_LIST.filter((k) => shipExtent(k.id) < 100).map((k) => k.id), zoomOr);
     case 'capitals':

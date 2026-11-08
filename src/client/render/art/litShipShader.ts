@@ -43,7 +43,7 @@ function matFunctions(): string {
 }
 
 /** Most shadow steps a ship may ask for (the loop bound must be constant). */
-export const LIT_MAX_SHADOW_STEPS = 64;
+export const LIT_MAX_SHADOW_STEPS = 128;
 
 export const LIT_FRAGMENT = /* glsl */ `
 precision highp float;
@@ -63,6 +63,9 @@ uniform vec3 uRim;
 uniform vec4 uScale;
 // x: shadow steps (0 = none), y: march step (texels), z: rise per step (world u).
 uniform vec3 uShadow;
+// x: how dark a full shadow is (0..1; the bake uses 0.85), y: edge softness
+// (world u of occluder height to reach full shadow; the bake uses 0.6).
+uniform vec2 uShadowLook;
 
 float srgbToLin(float c) { return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
 float linToSrgb(float c) { return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
@@ -97,9 +100,9 @@ void main() {
       // Slice A ends LIT_GUTTER texels before slice B starts.
       if (p.x < 0.0 || p.y < 0.0 || p.x >= uSlices.x - ${LIT_GUTTER}.0 * uSlices.z || p.y >= 1.0) break;
       float d = texture(uMaps, p + vec2(uSlices.x, 0.0)).b * uScale.y - ray;
-      if (d > 0.0) { occl = max(occl, min(1.0, d / 0.6)); if (occl >= 1.0) break; }
+      if (d > 0.0) { occl = max(occl, min(1.0, d / uShadowLook.y)); if (occl >= 1.0) break; }
     }
-    shadow = 1.0 - occl * 0.85;
+    shadow = 1.0 - occl * uShadowLook.x;
   }
 
   float ndl = max(0.0, dot(n, uL));
@@ -152,6 +155,7 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
       uRim: { value: new Float32Array(3), type: 'vec3<f32>' },
       uScale: { value: new Float32Array([1, maps.maxH, maps.emisMax, maps.ppu]), type: 'vec4<f32>' },
       uShadow: { value: new Float32Array([0, 1, 0]), type: 'vec3<f32>' },
+      uShadowLook: { value: new Float32Array([0.85, 0.6]), type: 'vec2<f32>' },
     });
     const shader = new Shader({ glProgram: litProgram(), resources: { litUniforms: uni, uMaps: tex.source, uMapsSampler: tex.source.style } });
     super({ geometry: geometry ?? litShipGeometry(maps), shader });
@@ -161,7 +165,9 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
 
   /** Light for this frame: the sector's sun and the ship's world rotation.
    *  `shadowSteps` 0 = no cast shadows. */
-  setLight(rig: LightRig, worldRotation: number, shadowSteps: number): void {
+  setLight(rig: LightRig, worldRotation: number, shadowSteps: number, look: ShadowLook = BAKED_SHADOW): void {
+    const sl = this.u['uShadowLook']!;
+    sl[0] = look.strength; sl[1] = look.edge;
     const localAz = rig.sunAz - worldRotation;
     const ce = Math.cos(rig.sunElev);
     const L = this.u['uL']!, H = this.u['uH']!;
@@ -172,14 +178,29 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
     for (let k = 0; k < 3; k++) { sc[k] = rig.sunColor[k]!; am[k] = rig.ambient[k]!; rm[k] = rig.rim[k]!; }
     this.u['uScale']![0] = rig.exposure;
     // Same march as shade.ts: ~0.75 world units a step, clipped at 40 u.
+    // A longer shadow: the ray rises more slowly, so it walks more steps of
+    // the same size (no staircase banding), and the 40 u clip grows with it.
+    const len = Math.max(0.25, look.length ?? 1);
     const stepT = Math.max(1, this.maps.ppu * 0.75);
-    const rise = (Math.tan(rig.sunElev) / this.maps.ppu) * stepT;
-    const maxSteps = Math.min(shadowSteps, LIT_MAX_SHADOW_STEPS, Math.ceil(40 / 0.75), Math.ceil(this.maps.maxH / Math.max(1e-4, rise)) + 2);
+    const rise = (Math.tan(rig.sunElev) / this.maps.ppu) * stepT / len;
+    const maxSteps = Math.min(shadowSteps, LIT_MAX_SHADOW_STEPS, Math.ceil((40 * len) / 0.75), Math.ceil(this.maps.maxH / Math.max(1e-4, rise)) + 2);
     const sh = this.u['uShadow']!;
     sh[0] = shadowSteps > 0 ? maxSteps : 0; sh[1] = stepT; sh[2] = rise;
     this.uni.update();
   }
 }
+
+/** How harsh cast shadows are. */
+export interface ShadowLook {
+  /** How dark a full shadow is, 0..1 (the bake: 0.85). */
+  strength: number;
+  /** Occluder height (world u) that reaches full shadow: lower = sharper edge (the bake: 0.6). */
+  edge: number;
+  /** Shadow length × (the bake: 1). Lengthens shadows without lowering the sun. */
+  length?: number;
+}
+/** The look the baked frames use. */
+export const BAKED_SHADOW: ShadowLook = { strength: 0.85, edge: 0.6, length: 1 };
 
 /** The quad for a ship's maps: slice A's UVs, world-unit size, centred. */
 export function litShipGeometry(m: LitMaps): Geometry {

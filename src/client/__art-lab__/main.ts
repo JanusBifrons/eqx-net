@@ -30,7 +30,14 @@ const STYLE = (['current', 'machined', 'pixel', 'lit'].includes(qs.get('style') 
 /** `lit`: ships lit on the GPU (R&D); everything else as `machined`. */
 const MACHINED = STYLE === 'machined' || STYLE === 'lit';
 /** `lit` cast shadows: `?shadow=0` off, else this many march steps. */
-const SHADOW_STEPS = qs.get('shadow') === '0' ? 0 : 48;
+const SHADOW_STEPS = qs.get('shadow') === '0' ? 0 : 128;
+/** `lit` shadow look (R&D): `?shadowk=` strength, `?shadowedge=` softness, `?elev=` sun height (deg). */
+const SHADOW_LOOK = {
+  strength: qs.has('shadowk') ? Number(qs.get('shadowk')) : 0.85,
+  edge: qs.has('shadowedge') ? Number(qs.get('shadowedge')) : 0.6,
+  length: qs.has('shadowlen') ? Number(qs.get('shadowlen')) : 1,
+};
+const SUN_ELEV = qs.has('elev') ? (Number(qs.get('elev')) * Math.PI) / 180 : null;
 const SCENE = ((SCENE_IDS as readonly string[]).includes(qs.get('scene') ?? '') ? qs.get('scene') : 'ships') as SceneId;
 const ZOOM = qs.has('zoom') ? Number(qs.get('zoom')) : undefined;
 const BENCH_N = qs.has('n') ? Number(qs.get('n')) : 40;
@@ -402,7 +409,7 @@ async function main(): Promise<void> {
         v.gfx.position.set(p.x, p.y); v.gfx.rotation = p.rot;
       } else if (v.lit) {
         v.lit.position.set(p.x, p.y); v.lit.rotation = p.rot;
-        v.lit.setLight(cache.rig, p.rot, SHADOW_STEPS);
+        v.lit.setLight(SUN_ELEV === null ? cache.rig : { ...cache.rig, sunElev: SUN_ELEV }, p.rot, SHADOW_STEPS, SHADOW_LOOK); // TODO: alloc-debt (art lab only, R&D)
       } else if (STYLE === 'machined') {
         const localAz = cache.rig.sunAz - p.rot;
         let u = (localAz / (Math.PI * 2)) * SUN_STEPS;
