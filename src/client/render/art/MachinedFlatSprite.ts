@@ -8,6 +8,7 @@ import { Container, Sprite } from 'pixi.js';
 import type { StructArt } from './ArtService.js';
 import { LitShipMesh } from './litShipShader.js';
 import { litPass } from './litPass.js';
+import { flatLook } from './lightingSettings.js';
 
 export class MachinedFlatSprite extends Container {
   readonly body: Sprite;
@@ -20,7 +21,7 @@ export class MachinedFlatSprite extends Container {
     if (art.lit && settings) {
       this.body = new Sprite();
       const l = art.lit;
-      this.lit = new LitShipMesh({ tex: art.tex, w: l.w, rows: l.h, y0: 0, hullH: l.h, ppu: l.ppu, maxH: l.maxH, emisMax: l.emisMax }, settings);
+      this.lit = new LitShipMesh({ tex: art.tex, w: l.w, rows: l.h, y0: 0, hullH: l.h, ppu: l.ppu, maxH: l.maxH, emisMax: l.emisMax }, flatLook(settings));
       this.addChild(this.lit);
       litPass.register(this.lit);
       return;

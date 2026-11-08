@@ -99,9 +99,9 @@ export const LOOK_NIGHT: LightingSettings = {
   // bake's, and a dark deck in them went blacker than space at 0.8 (review
   // 2026-11-08, base film). Sunlit faces gain only ~15%.
   ambientBoost: 2,
-  // A shadowed deck lives on what sun the shadow lets through (ambient is
-  // tiny): at 0.9 a dark deck in a 3x shadow went blacker than space.
-  shadow: { strength: 0.65, edge: 0.3, length: 2.5 },
+  // Long, firm shadows on ships (the user's F); structures and rocks use
+  // real-length ones (flatLook), or tall modules bury a base's deck.
+  shadow: { strength: 0.85, edge: 0.3, length: 3 },
   litStructures: true,
   litAsteroids: true,
 };
@@ -191,6 +191,20 @@ export function engineLightReach(nozzleR: number): number { return nozzleR * 14 
  */
 export function engineLightAstern(nozzleR: number): number { return nozzleR * 3; }
 export function engineLightHeight(nozzleR: number): number { return nozzleR * 0.5; }
+
+/**
+ * The settings structures and rocks are lit with: real-length shadows. The
+ * stretched shadow is a look chosen for ships; a base's modules stand up to
+ * ~85 u tall, and stretched they bury the whole deck in shadow, sun side
+ * included (review 2026-11-08, base film). Cached: same object per input.
+ */
+export function flatLook(s: LightingSettings): LightingSettings {
+  if (s.shadow.length === 1) return s;
+  let f = flatCache.get(s);
+  if (!f) { f = { ...s, shadow: { ...s.shadow, length: 1 } }; flatCache.set(s, f); }
+  return f;
+}
+const flatCache = new WeakMap<LightingSettings, LightingSettings>();
 
 /** Any capital effect on (they share the occluder list). */
 export function usesOccluders(s: LightingSettings): boolean {

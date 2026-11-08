@@ -5,7 +5,7 @@
  * off is not compiled into the shader at all.
  */
 import { describe, it, expect } from 'vitest';
-import { BAKED_LOOK, LOOK_F, LOOK_REAL, ALL_ON, lightingDefines, lightingFromSearch, engineLightIntensity, engineLightReach } from './lightingSettings.js';
+import { BAKED_LOOK, LOOK_F, LOOK_NIGHT, LOOK_REAL, ALL_ON, flatLook, lightingDefines, lightingFromSearch, engineLightIntensity, engineLightReach } from './lightingSettings.js';
 
 describe('lighting settings', () => {
   it('the baked look compiles only the self shadow', () => {
@@ -30,6 +30,14 @@ describe('lighting settings', () => {
     expect(lightingFromSearch('?look=all&points=0&capshadow=0').pointLights).toBe(0);
     expect(lightingFromSearch('?look=real&engines=0').engineLights).toBe(false);
     expect(LOOK_REAL.engineLights).toBe(true);
+  });
+
+  it('structures and rocks get real-length shadows (cached), ships keep the look', () => {
+    const f = flatLook(LOOK_NIGHT);
+    expect(f.shadow.length).toBe(1);
+    expect(f.shadow.strength).toBe(LOOK_NIGHT.shadow.strength);
+    expect(flatLook(LOOK_NIGHT)).toBe(f);
+    expect(flatLook(BAKED_LOOK)).toBe(BAKED_LOOK);
   });
 
   it('engines light by size and thrust', () => {
