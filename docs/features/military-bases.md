@@ -13,7 +13,8 @@ Military bases are placed by their own deterministic pass (`militarySites`, `gal
 ## What one is
 
 - **Fenced, every time,** with its gates set to **owner + allies**. Anyone else stays outside.
-- **Turret-heavy.** Its production list is every kind of gun (laser, bolt, autocannon, missile), repeated while its wealth lasts. Garrisons are funded at twice their tier's top wealth.
+- **Turret-heavy.** Its production list is every kind of gun (laser, bolt, autocannon, missile, and the coastal batteries up to the 11" triple turret — [coastal-defences.md](coastal-defences.md)), repeated while its wealth lasts. Garrisons are funded at twice their tier's top wealth.
+- **A heart garrison mounts the region's super-guns**: the 80 cm siege gun and the 40.6 cm Lindemann battery, funded on top.
 - **Guns outside the fence.** A fence stops its owner's own shots, so every gun sits on a bastion outside it. A garrison gets a bastion row for every six guns it buys.
 - **One more mine layer** than a trading base of its size.
 - **No freight dock.** It trades nothing: its cargo bay holds the munitions and fuel it's stocked with.

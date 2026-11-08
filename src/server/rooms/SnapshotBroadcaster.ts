@@ -43,6 +43,7 @@ import {
   slotBase,
 } from '../../shared-types/sabLayout.js';
 import { CELL_SIZE } from '../interest/SpatialGrid.js';
+import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import {
   shouldBroadcastFar,
   shouldIncludeLastInput,
@@ -99,7 +100,7 @@ export interface SwarmLookupByEid {
   getByEntityId(entityId: number): SwarmDroneRec | null | undefined;
   /** By internal id: a projectile owner's entity id + radius (wide owners'
    *  shells reach viewers beyond the projectile box). Optional for fakes. */
-  get?(id: string): { entityId: number; radius: number } | null | undefined;
+  get?(id: string): { entityId: number; radius: number; kind?: number } | null | undefined;
 }
 
 /** Narrow view of MissileSimulation the broadcaster uses. */
@@ -829,9 +830,11 @@ export class SnapshotBroadcaster {
           if (Math.abs(proj.x - recipientPose.x) > interestRadius || Math.abs(proj.y - recipientPose.y) > interestRadius) {
             // Out of the box: still send it if a WIDE owner (a capital, seen
             // from several cells away) is in this viewer's interest, so its
-            // salvo is seen leaving the barrels. Everything else is unchanged.
+            // salvo is seen leaving the barrels. Coastal defences: the same for a
+            // STRUCTURE in view (a coast gun's shells fly thousands of units).
+            // Everything else is unchanged.
             const owner = d.swarmRegistry.get?.(proj.ownerId);
-            if (!owner || owner.radius <= CELL_SIZE / 2 || !projInterest?.has(owner.entityId)) continue;
+            if (!owner || (owner.radius <= CELL_SIZE / 2 && owner.kind !== SWARM_KIND_STRUCTURE) || !projInterest?.has(owner.entityId)) continue;
           }
           SnapshotBroadcaster.writeProjectileSlot(
             projectilesScratch, projectilesCount,

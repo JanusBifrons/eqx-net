@@ -2742,3 +2742,10 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - In a heap-delta test, nothing called per iteration may be a `vi.fn` (or any recorder). Use a plain function over a mutable flag; keep `vi.fn` for calls you assert on that happen rarely.
   - Before widening a heap bound, swap the mocks for plain functions and re-measure. Growth that vanishes is the harness.
   - A suite no CI job runs rots. `test:gc` now runs in the `gc-tests` job.
+
+## 2026-11-08 — Coastal guns: the shells were fired, but no one could see them
+
+- **Symptom.** In the coastal-defences gun-line test every battery fired (its magazine emptied, the battleship took hits), but the pilot's snapshots never carried a 40.6 cm or 80 cm shell.
+- **Cause.** The projectile slice only sends shells inside the viewer's box, with an exception for a WIDE owner (a capital) in view. A coast gun is a small structure, so its 7,000 u shells vanished a few thousand units out — exactly the "only seen near the pilot" bug the capital round fixed for ships.
+- **Fix.** A structure in the viewer's interest sends its shells too (`SnapshotBroadcaster`), locked by `tests/integration/sectorRoom/coastalDefences.test.ts`, which now asserts the pilot sees every calibre.
+- **Lesson.** Same as the capital round: "it fired" and "a viewer sees it" are separate claims. Any new long-range shooter (ship OR structure) needs the view locked, not just the hit.

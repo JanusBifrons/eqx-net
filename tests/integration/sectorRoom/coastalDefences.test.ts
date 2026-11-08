@@ -53,14 +53,15 @@ describe('SectorRoom integration — coastal defences', () => {
       maxXl = Math.max(maxXl, xl);
       if ((snap.structureMountAngles?.length ?? 0) > 0) anglesSeen++;
     });
-    // Every battery fires (server side: the super-guns' shells fly far from
-    // the pilot, outside its snapshot interest, so read the guns themselves).
+    // Every battery fires, and the pilot sees every calibre's shells — the
+    // super-guns' too, though they fly thousands of units beyond the
+    // projectile box (a structure in view sends its shells, like a capital).
+    const want = ['autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege'];
     const deadline = Date.now() + 70_000;
     const allFired = () => guns.every((g) => g.lastTurretFireMs !== undefined);
-    while (Date.now() < deadline && !(allFired() && seen.has('naval_xl'))) await new Promise((r) => setTimeout(r, 200));
+    while (Date.now() < deadline && !(allFired() && want.every((w) => seen.has(w)))) await new Promise((r) => setTimeout(r, 200));
     for (const g of guns) expect(g.lastTurretFireMs, `${g.kind} fired`).toBeDefined();
-    // And the shells the pilot can see are the batteries' own calibres.
-    for (const w of ['autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl']) expect(seen.has(w), `a ${w} shell flew (seen: ${[...seen].join(', ')})`).toBe(true);
+    for (const w of want) expect(seen.has(w), `a ${w} shell flew (seen: ${[...seen].join(', ')})`).toBe(true);
     expect(maxXl, 'the 16" barbette fires a two-shell salvo').toBeGreaterThanOrEqual(2);
     expect(anglesSeen, 'the turning barrels ride the snapshot').toBeGreaterThan(0);
   });
