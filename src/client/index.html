@@ -79,6 +79,21 @@
       html.eqx-hud-none [data-anchor^="bottom-"] {
         visibility: hidden !important;
       }
+      /* Experimental HUDs (exp/hud-mobile-first, ?ui=a|b|c). The idle
+         "Nothing incoming" chip goes — only real threats show. */
+      html.eqx-ui-exp [data-testid="warp-warning-idle"] { display: none !important; }
+      /* Invisible oversize hit area for small round controls (HoldButton). */
+      .eqx-holdbtn::before {
+        content: '';
+        position: absolute;
+        inset: calc(-1 * var(--slop, 0px));
+        border-radius: 50%;
+      }
+      .eqx-holdbtn[data-pressed='1'] { transform: scale(0.94); filter: brightness(1.35); }
+      @keyframes eqxPipSpin { to { transform: rotate(360deg); } }
+      .eqx-pip-spin { animation: eqxPipSpin 0.9s linear infinite; }
+      html.eqx-ui-exp.eqx-hud-minimal [data-hud-exclusion],
+      html.eqx-ui-exp.eqx-hud-none [data-hud-exclusion] { visibility: hidden !important; }
     </style>
   </head>
   <body>

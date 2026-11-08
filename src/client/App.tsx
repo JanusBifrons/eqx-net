@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { installPerfProbe, perfProbeEnabled, runPerfLabScene, runPerfLabTrip } from './debug/perf/perfProbe';
 import { cyclePlacementRotation } from './structures/structurePlacementClient';
 import { installWindowLogger, refreshAutoCaptureLatch } from './debug/ClientLogger';
@@ -66,6 +66,12 @@ import { HudTestAttributes } from './components/HudTestAttributes';
 import { ShieldHullBar } from './components/ShieldHullBar';
 import { CargoChip } from './components/CargoChip';
 import { WalletChip } from './components/WalletChip';
+import { ExperimentalHud } from './hud/ExperimentalHud';
+import { TouchViz } from './hud/TouchViz';
+import { getUiVariant } from './hud/uiVariant';
+
+/** Fixed for the page load (switching variant reloads). */
+const uiVariant = getUiVariant();
 import { TradeToasts } from './components/TradeToasts';
 import { WhileAwayDialog } from './components/WhileAwayDialog';
 import { WarpInWarningBanner } from './components/WarpInWarningBanner';
@@ -857,13 +863,22 @@ function GameSurface({
         />
       ) : (
         <>
-      <Slot anchor="top-left" order={1}><SectorInfoPanel /></Slot>
-      <Slot anchor="top-left" order={2}><ShieldHullBar /></Slot>
+      {/* exp/hud-mobile-first: `?ui=a|b|c` swaps the piloting HUD (status,
+       *  credits, sector, thumb controls, fire/auto, dial) for one of three
+       *  experimental layouts. No param = the legacy HUD below, unchanged. */}
+      {uiVariant !== 'legacy' && (
+        <ExperimentalHud
+          variant={uiVariant}
+          touchInput={isTouchRef.current ? touchInputRef.current : null}
+        />
+      )}
+      {uiVariant === 'legacy' && <Slot anchor="top-left" order={1}><SectorInfoPanel /></Slot>}
+      {uiVariant === 'legacy' && <Slot anchor="top-left" order={2}><ShieldHullBar /></Slot>}
       {/* Living World P1a — carried cargo + pickup popups. */}
       <Slot anchor="top-left" order={3}><CargoChip /></Slot>
-      <Slot anchor="top-left" order={4}><WalletChip /></Slot>
+      {uiVariant === 'legacy' && <Slot anchor="top-left" order={4}><WalletChip /></Slot>}
       <Slot anchor="top-left" order={10}><Hud /></Slot>
-      <Slot anchor="top-center" order={1}><EnergyBar /></Slot>
+      {uiVariant === 'legacy' && <Slot anchor="top-center" order={1}><EnergyBar /></Slot>}
       {/* The toll / pair prompts sit right under the energy bar: nothing above
        *  them changes height, so their buttons hold still while the phase
        *  warning below them changes text (a moving button misses taps). */}
@@ -888,7 +903,7 @@ function GameSurface({
        *  is removed. Death transitions INSTANTLY into spectator (free-roam
        *  construction camera); re-entry is via the galaxy map or (WS-A2) an
        *  owned ship's in-world Pilot action. */}
-      {isTouchRef.current && touchInputRef.current && (
+      {uiVariant === 'legacy' && isTouchRef.current && touchInputRef.current && (
         <MobileControls touchInput={touchInputRef.current} />
       )}
       {/* Speed-dial UI refactor (Phase 1): the discrete (tap) HUD actions —
@@ -903,15 +918,15 @@ function GameSurface({
        *  order=5 keeps it rightmost in the row-reverse cluster; on touch it sits
        *  where FIRE would be when auto-fire is OFF (MobileControls hides FIRE
        *  while ON). */}
-      <Slot anchor="bottom-right" order={5}><AutoFireToggleButton /></Slot>
+      {uiVariant === 'legacy' && <Slot anchor="bottom-right" order={5}><AutoFireToggleButton /></Slot>}
       {/* Speed-dial at order=1 = the corner-most control (lowest order wins the
        *  corner in the row-reverse bottom-right anchor), to the right of AUTO
        *  (5) and FIRE/BOOST (10/20). Smoke handoff 2026-06-06, Issue 3:
        *  "the speed dial is in the wrong place" → bottom-right corner. */}
-      <Slot anchor="bottom-right" order={1}><SpeedDialMenu /></Slot>
+      {uiVariant === 'legacy' && <Slot anchor="bottom-right" order={1}><SpeedDialMenu /></Slot>}
       {/* Phase 5 WS-4 — desktop RTS control strip (weapons when piloting,
        *  buildings when spectating). Self-gates to desktop + in-game. */}
-      <Slot anchor="bottom-center" order={1}><BottomControlPanel /></Slot>
+      {uiVariant === 'legacy' && <Slot anchor="bottom-center" order={1}><BottomControlPanel /></Slot>}
       {/* Click-to-inspect live stats (structures follow-up Item B6). Visible
        *  only while an entity is selected. WS-9 (R2.30) — WORLD-ANCHORED: rendered
        *  OUTSIDE the Slot system as a `position:fixed` element that gameRafLoop
@@ -964,6 +979,7 @@ function GameSurface({
         </>
       )}
       <HudTestAttributes />
+      <TouchViz />
     </Box>
   );
 }

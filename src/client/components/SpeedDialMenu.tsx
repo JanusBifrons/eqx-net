@@ -99,7 +99,14 @@ import { useTouchClickActivate } from './touchClickActivate';
  * per the drawer-perf rules). The dial's open/closed + drilled view are local
  * React state — pure presentation, never Zustand (invariant #2).
  */
-export function SpeedDialMenu(): JSX.Element | null {
+export interface SpeedDialMenuProps {
+  /** Opening direction. Legacy HUD: 'up' from the bottom-right corner. The
+   *  experimental HUDs (exp/hud-mobile-first) park it top-right opening 'down'
+   *  so it never competes with the thumb zones. */
+  direction?: 'up' | 'down';
+}
+
+export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JSX.Element | null {
   const shouldRender = useShouldRenderHud();
   const isDead = useUIStore((s) => s.isDead);
   const isGalaxyMapOpen = useUIStore((s) => s.isGalaxyMapOpen);
@@ -309,7 +316,7 @@ export function SpeedDialMenu(): JSX.Element | null {
       ariaLabel="Game actions"
       data-testid="speed-dial"
       icon={fabIcon}
-      direction="up"
+      direction={direction}
       open={open}
       // Ignore the MUI 'toggle' reason (its synthesized-click open/close) within
       // the suppression window — our `onTouchStart` already toggled `open`, so
@@ -336,7 +343,7 @@ export function SpeedDialMenu(): JSX.Element | null {
         // 'blur' / 'mouseLeave' → ignored: the dial stays open.
       }}
       FabProps={{ ...FAB_PROPS, onTouchStart: touchActivate(toggleOpen) }}
-      sx={DIAL_SX}
+      sx={direction === 'down' ? DIAL_SX_DOWN : DIAL_SX}
     >
       {actions}
     </SpeedDial>
@@ -443,6 +450,24 @@ const DIAL_SX = {
   '& .MuiSpeedDialAction-staticTooltipLabel': {
     whiteSpace: 'nowrap',
     maxWidth: 'none',
+  },
+} as const;
+
+/** Downward variant: smaller FAB; the collapsed actions park BELOW it. */
+const DIAL_SX_DOWN = {
+  ...DIAL_SX,
+  '& .MuiSpeedDial-fab': {
+    ...DIAL_SX['& .MuiSpeedDial-fab'],
+    width: 36,
+    height: 36,
+    minHeight: 36,
+  },
+  '& .MuiSpeedDial-actionsClosed': {
+    position: 'absolute',
+    top: 44,
+    right: 0,
+    height: 0,
+    pointerEvents: 'none',
   },
 } as const;
 

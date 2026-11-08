@@ -11,6 +11,7 @@
   "scripts": {
     "typecheck": "tsc -b tsconfig.core.json tsconfig.server.json tsconfig.client.json && tsc -p tsconfig.showcase.json",
     "showcase": "tsx showcase/run-showcase.ts",
+    "showcase:hud": "tsx showcase/run-showcase.ts --shot \"hud-*\" --no-assemble --export showcase-out/hud",
     "perf:scenes": "tsx perf/run-perf.ts",
     "perf:lab": "tsx perf/lab-server.ts",
     "lint": "eslint .",
@@ -58,6 +59,8 @@
     "@dimforge/rapier2d-compat": "^0.14.0",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.0",
+    "@fontsource/chakra-petch": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
     "@mui/icons-material": "^6.5.0",
     "@mui/material": "^6.1.10",
     "@pixi/particle-emitter": "^5.0.10",
