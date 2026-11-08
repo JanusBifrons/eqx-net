@@ -10,6 +10,7 @@ import { setGameClient } from './net/clientSingleton';
 import { HowlerAudioService } from './audio/HowlerAudioService';
 import { selectRenderer, installProfileWindow } from './app/gameSurfaceBootstrap';
 import { runGameSurfaceConnectFlow } from './app/gameSurfaceConnectFlow';
+import { shouldPauseTickerUnderUi, safeLocalStorage } from './app/automationTickerPause';
 import {
   useServerHealthPoll,
   useShipSwapDispatcher,
@@ -794,18 +795,19 @@ function GameSurface({
   const isGalaxyOverviewOpen = useUIStore((s) => s.isGalaxyOverviewOpen);
   // **Real users get full 60 fps even when overlays are open** — the
   // drawer is partial-width and the gameplay underneath should keep
-  // animating at full rate. We ONLY intervene under Playwright
-  // automation (navigator.webdriver === true), where Pixi's rAF tax
-  // starves the CDP protocol loop to ~500 ms median roundtrip. There
-  // we pause the ticker entirely while the drawer/overview is open so
-  // E2E specs aren't flaky against a 120 s test budget. Production
-  // never hits the pause path.
+  // animating at full rate. We ONLY intervene when the E2E harness sets
+  // the explicit `e2ePause` flag (see `app/automationTickerPause.ts`),
+  // where Pixi's rAF tax starves the CDP protocol loop to ~500 ms median
+  // roundtrip. There we pause the ticker entirely while the
+  // drawer/overview is open. NOT keyed on `navigator.webdriver`: the
+  // Playwright showcase recorder must film a live game behind menus.
   const uiCoversGame = isDrawerOpen || isGalaxyOverviewOpen;
   useEffect(() => {
     const renderer = rendererRef.current;
     if (!renderer) return;
-    const isAutomation = typeof navigator !== 'undefined' && navigator.webdriver === true;
-    if (!isAutomation) {
+    const pauseUnderUi = typeof window !== 'undefined'
+      && shouldPauseTickerUnderUi(window.location.search, safeLocalStorage());
+    if (!pauseUnderUi) {
       renderer.setTickerMaxFPS(undefined);
       return;
     }

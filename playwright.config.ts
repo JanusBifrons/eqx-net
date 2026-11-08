@@ -181,6 +181,13 @@ const FEATURE_SPECS: string[] = [
 
 const GATE_SPECS: string[] = ['**/netcode-health.spec.ts'];
 
+/** Auth token + the explicit `eqxE2ePause` flag (written by global-setup).
+ *  ONLY the e2e projects use it: it pauses the Pixi ticker while a drawer /
+ *  the galaxy overview is open (CDP starvation, LESSONS 2026-05-13 §6). The
+ *  showcase/perf configs inherit the top-level auth-only `storageState`, so
+ *  they record and measure a live game. */
+const E2E_STORAGE_STATE = 'tests/e2e/.auth/e2e-storage-state.json';
+
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 30_000,
@@ -233,19 +240,19 @@ export default defineConfig({
       // `workers: N` at the top level — different spec files run on
       // different workers concurrently, each with its own per-test
       // rooms via `filterBy(['testId'])`.
-      use: { ...devices['Desktop Chrome'] },
+      use: { ...devices['Desktop Chrome'], storageState: E2E_STORAGE_STATE },
     },
     {
       name: 'feature',
       testMatch: FEATURE_SPECS,
       // Same rationale as smoke.
-      use: { ...devices['Desktop Chrome'] },
+      use: { ...devices['Desktop Chrome'], storageState: E2E_STORAGE_STATE },
     },
     {
       name: 'gate',
       testMatch: GATE_SPECS,
       // gate stays serial — netcode-health is load-sensitive by design.
-      use: { ...devices['Desktop Chrome'] },
+      use: { ...devices['Desktop Chrome'], storageState: E2E_STORAGE_STATE },
     },
   ],
   webServer: process.env.CI_SKIP_WEBSERVER
