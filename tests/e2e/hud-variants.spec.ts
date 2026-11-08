@@ -48,27 +48,34 @@ async function boot(browser: Browser, v: Variant, vp: (typeof VIEWPORTS)[number]
   return { page, close: () => ctx.close() };
 }
 
-interface Box { id: string; x: number; y: number; w: number; h: number }
+interface Box { id: string; x: number; y: number; w: number; h: number; /** ids of HUD elements nested inside this one */ inner: string[] }
 
 async function hudBoxes(page: Page): Promise<Box[]> {
   return page.evaluate((ids) => {
-    const out: { id: string; x: number; y: number; w: number; h: number }[] = [];
+    const els: { id: string; el: Element }[] = [];
     for (const id of ids) {
       const el =
         id === 'hud-auto-toggle-visual'
           ? (document.querySelector('[data-testid="hud-auto-toggle"]')?.firstElementChild as Element | null)
           : document.querySelector(`[data-testid="${id}"]`);
-      if (!el) continue;
+      if (el) els.push({ id, el });
+    }
+    const out: { id: string; x: number; y: number; w: number; h: number; inner: string[] }[] = [];
+    for (const { id, el } of els) {
       const r = el.getBoundingClientRect();
       const cs = getComputedStyle(el);
       if (r.width < 1 || r.height < 1 || cs.visibility === 'hidden' || cs.display === 'none') continue;
-      out.push({ id, x: r.left, y: r.top, w: r.width, h: r.height });
+      // A widget that CONTAINS another (the capsule holds the credits; the
+      // desktop chip holds the fire-mode badge) isn't an overlap.
+      const inner = els.filter((o) => o.id !== id && (el.contains(o.el) || o.el.contains(el))).map((o) => o.id);
+      out.push({ id, x: r.left, y: r.top, w: r.width, h: r.height, inner });
     }
     return out;
   }, IDS);
 }
 
 function overlaps(a: Box, b: Box): boolean {
+  if (a.inner.includes(b.id)) return false;
   const pad = 1; // sub-pixel rounding
   return a.x + pad < b.x + b.w && b.x + pad < a.x + a.w && a.y + pad < b.y + b.h && b.y + pad < a.y + a.h;
 }

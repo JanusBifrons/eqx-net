@@ -26,11 +26,15 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { EqxLatencyProxy } from './eqxLatencyProxy';
 import { PROFILE_PRIMARY, PROFILE_REGRESSION_INJECT } from './latencyProfile';
 
-const SERVER_PORT = 2567;
-const PROXY_BASE_PORT = 2568; // baseline arm → proxy
-const PROXY_HEAD_PORT = 2569; // HEAD arm → proxy
-const VITE_BASE_PORT = 5274;
-const VITE_HEAD_PORT = 5273;
+// NETGATE_PORT_OFFSET shifts every port (default 0 = the canonical set), so
+// the gate can run beside a dev session on 2567/5173 that another session
+// owns — killPort() below would otherwise reclaim it.
+const PORT_OFFSET = Number(process.env['NETGATE_PORT_OFFSET'] ?? 0);
+const SERVER_PORT = 2567 + PORT_OFFSET;
+const PROXY_BASE_PORT = 2568 + PORT_OFFSET; // baseline arm → proxy
+const PROXY_HEAD_PORT = 2569 + PORT_OFFSET; // HEAD arm → proxy
+const VITE_BASE_PORT = 5274 + PORT_OFFSET;
+const VITE_HEAD_PORT = 5273 + PORT_OFFSET;
 const PORTS = [SERVER_PORT, PROXY_BASE_PORT, PROXY_HEAD_PORT, VITE_BASE_PORT, VITE_HEAD_PORT];
 const isWin = process.platform === 'win32';
 
@@ -163,6 +167,8 @@ function startVite(cwd: string, port: number, wsProxyPort: number): ReturnType<t
     env: {
       ...process.env,
       VITE_WS_URL: `http://127.0.0.1:${wsProxyPort}`,
+      // HTTP routes (/auth, /dev, …) proxy to the gate's server, not 2567.
+      EQX_SERVER_PORT: String(SERVER_PORT),
       // The gate never edits files mid-run — disable HMR entirely on
       // BOTH arms (symmetric, zero-noise; kills the 24678 collision).
       VITE_HMR_PORT: 'off',
@@ -224,11 +230,11 @@ async function main(): Promise<void> {
     applyGateHarness(baseDir, repoRoot);
     if (headDir !== baseDir) applyGateHarness(headDir, repoRoot);
 
-    log('booting Colyseus server (dev:server:nowatch :2567)…');
+    log(`booting Colyseus server (dev:server:nowatch :${SERVER_PORT})…`);
     serverProc = spawn('pnpm', ['dev:server:nowatch'], {
       stdio: 'ignore',
       shell: isWin,
-      env: process.env,
+      env: { ...process.env, PORT: String(SERVER_PORT) },
     });
     await waitFor('/healthz', async () => !!(await httpOk(`http://127.0.0.1:${SERVER_PORT}/healthz`)));
     log('server ready');
