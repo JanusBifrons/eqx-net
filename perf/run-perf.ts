@@ -4,6 +4,9 @@
  *
  *   pnpm perf:scenes [--scenes fleet-fight,teleport-raid] [--reps 5]
  *                    [--base origin/main] [--head-only] [--headed]
+ *                    [--base-params k=v&k=v] [--head-params k=v&k=v]
+ *   (extra URL flags per arm: e.g. `--base HEAD --head-params shiplight=gpu`
+ *   measures one switch on the same build)
  *
  * Plays each scene in a real browser (real GPU) against an isolated server
  * pair per arm, interleaved base/head/base/head on the same machine in the
@@ -25,7 +28,7 @@ import { compareArms, type RunMetrics, type ArmVerdict } from './verdict.js';
 
 const GPU_ARGS = ['--use-angle=d3d11', '--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'];
 
-interface Args { scenes: string[]; reps: number; base: string; headOnly: boolean; headed: boolean; out: string; burnServerMs: number; burnClientMs: number; append: string | undefined }
+interface Args { scenes: string[]; reps: number; base: string; headOnly: boolean; headed: boolean; out: string; burnServerMs: number; burnClientMs: number; append: string | undefined; baseParams: string; headParams: string }
 
 function parseArgs(argv: string[]): Args {
   const get = (k: string): string | undefined => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
@@ -42,6 +45,8 @@ function parseArgs(argv: string[]): Args {
     // Add this run's reps to an existing ledger file and re-judge all of them
     // (lets a long A/B run as short foreground chunks).
     append: get('--append'),
+    baseParams: get('--base-params') ?? '',
+    headParams: get('--head-params') ?? '',
   };
 }
 
@@ -157,6 +162,7 @@ async function main(): Promise<void> {
     const head = name === 'head';
     const env: Record<string, string> = head && args.burnServerMs > 0 ? { EQX_PERF_BURN_MS: String(args.burnServerMs) } : {};
     const clientParams: Record<string, string> = head && args.burnClientMs > 0 ? { perfburn: String(args.burnClientMs) } : {};
+    for (const [k, v] of new URLSearchParams(head ? args.headParams : args.baseParams)) clientParams[k] = v;
     return { name, dir, ports, servers: new CaptureServers(dir, rd, ports, env), sha: gitSha(dir), clientParams };
   };
   if (!args.headOnly) arms.push(mk('base', prepareBase(args.base), { server: 2767, vite: 5373 }));
