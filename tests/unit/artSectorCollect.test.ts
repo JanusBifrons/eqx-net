@@ -64,7 +64,7 @@ describe('a sector trip frees the old sector art', () => {
     expect(packer.used).toBe(4); // budget full of Sol Prime art
 
     svc.setSector('vega-reach');
-    svc.collect([]);
+    svc.collect(new Set());
     expect(packer.used).toBe(0);
     const next = svc.ship('a');
     await settle(svc);
@@ -80,13 +80,13 @@ describe('a sector trip frees the old sector art', () => {
     await settle(svc);
     svc.setSector('vega-reach');
     // Held by a handle: the whole old group stays.
-    svc.collect([held]);
+    svc.collect(new Set([held]));
     expect(packer.used).toBe(2);
     // Only displayed by a sprite (its new handle is still baking): still kept.
-    svc.collect([], new Set<object>([shownH.ship!]));
+    svc.collect(new Set(), new Set<object>([shownH.ship!]));
     expect(packer.used).toBe(2);
     // Nothing holds or shows it: freed.
-    svc.collect([], new Set());
+    svc.collect(new Set(), new Set());
     expect(packer.used).toBe(0);
   });
 
@@ -97,10 +97,10 @@ describe('a sector trip frees the old sector art', () => {
     svc.ship('here');
     await settle(svc);
     const before = packer.used;
-    svc.collect([]);
+    svc.collect(new Set());
     expect(packer.used).toBe(before); // current sector + fx stay
     svc.setSector('vega-reach');
-    svc.collect([]);
+    svc.collect(new Set());
     expect(packer.used).toBe(before - 1); // only the old ship went
   });
 
@@ -114,7 +114,7 @@ describe('a sector trip frees the old sector art', () => {
 
     svc.newVisit(); // same sector lighting, new visit
     // The pilot's ship is still drawn: its art is re-packed into the new visit.
-    svc.collect([mine], new Set<object>([mine.ship!]));
+    svc.collect(new Set([mine]), new Set<object>([mine.ship!]));
     expect(mine.stale).toBe(true);
     expect(packer.used).toBe(4); // nothing freed yet (it is still shown)
     // Budget full, so the replacement can't fit until the old pages go: the
@@ -122,7 +122,7 @@ describe('a sector trip frees the old sector art', () => {
     await settle(svc);
     // The others aren't drawn any more; once only the old copy of "mine" is
     // shown, its group stays; when the sprite drops it, everything old goes.
-    svc.collect([], new Set());
+    svc.collect(new Set(), new Set());
     expect(packer.used).toBe(0);
     const again = svc.ship('mine');
     await settle(svc);
@@ -138,7 +138,7 @@ describe('a sector trip frees the old sector art', () => {
     const late = svc.ship('c');
     await settle(svc);
     expect(late.state).toBe('failed');
-    svc.collect([late]);
+    svc.collect(new Set([late]));
     expect(late.stale).toBe(true); // the sprite's helper re-acquires it
     const retry = svc.ship('c');
     await settle(svc);
@@ -152,7 +152,7 @@ describe('a sector trip frees the old sector art', () => {
     const b = svc.ship('b');
     await settle(svc);
     svc.newVisit();
-    svc.collect([a, b], new Set<object>([a.ship!, b.ship!])); // full: re-home both
+    svc.collect(new Set([a, b]), new Set<object>([a.ship!, b.ship!])); // full: re-home both
     expect(a.stale).toBe(true);
     await settle(svc); // the copies don't fit
     expect(a.stale).toBe(false);
@@ -160,4 +160,25 @@ describe('a sector trip frees the old sector art', () => {
     expect(a.state).toBe('ready');
     expect(packer.used).toBe(2);
   });
+
+  it("with room to spare, the pilot's ship moves to the new visit and the old sector is freed", async () => {
+    // Phone run 2026-11-07: 14 pages, 0 freed, asteroids bare. The pilot's
+    // own ship (still drawn) pinned Sol Prime's pages for the whole trip.
+    const packer = new GroupPacker(14);
+    const svc = newService(packer);
+    const mine = svc.ship('mine');
+    for (const id of ['base1', 'base2', 'base3', 'drone']) svc.ship(id);
+    await settle(svc);
+    expect(packer.used).toBe(5);
+    svc.newVisit(); // flew to another sector
+    svc.collect(new Set([mine]), new Set<object>([mine.ship!]));
+    expect(mine.next).toBeDefined(); // moving, though the budget isn't tight
+    await settle(svc);
+    const moved = mine.next!;
+    expect(moved.state).toBe('ready');
+    // The sprite now draws the moved copy: Sol Prime's pages go.
+    svc.collect(new Set([moved]), new Set<object>([moved.ship!]));
+    expect(packer.used).toBe(1);
+  });
+
 });
