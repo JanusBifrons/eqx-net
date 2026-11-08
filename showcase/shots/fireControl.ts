@@ -61,6 +61,8 @@ async function rectOf(ctx: ShotContext, sel: string, nth = 0): Promise<Rect | nu
 const centre = (r: Rect): Pt => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 });
 
 interface Pick {
+  /** Swarm entity id. */
+  id: number;
   /** Screen angle (0 = right, −π/2 = up) from the ship to the drone. */
   angle: number;
   /** Game-space drone position (for the selection hook). */
@@ -69,9 +71,9 @@ interface Pick {
 }
 
 /** Nearest live drone that no weapon group has locked yet (else the nearest). */
-async function pickDrone(ctx: ShotContext): Promise<Pick | null> {
+async function pickDrone(ctx: ShotContext, followId: number | null = null): Promise<Pick | null> {
   return ctx.page
-    .evaluate(() => {
+    .evaluate((follow) => {
       const c = (window as unknown as {
         __eqxClient?: {
           mirror?: {
@@ -91,15 +93,22 @@ async function pickDrone(ctx: ShotContext): Promise<Pick | null> {
       let any: { x: number; y: number } | null = null;
       let bf = Infinity;
       let ba = Infinity;
+      let freeId = -1;
+      let anyId = -1;
+      if (follow !== null) {
+        const e = m.swarm.get(follow);
+        if (e && e.kind === 1) return { id: follow, angle: Math.atan2(-(e.y - me.y), e.x - me.x), x: e.x, y: e.y };
+      }
       for (const [id, e] of m.swarm) {
         if (e.kind !== 1) continue;
         const d = (e.x - me.x) ** 2 + (e.y - me.y) ** 2;
-        if (d < ba) { ba = d; any = e; }
-        if (!locked.has(`s:${id}`) && d < bf) { bf = d; free = e; }
+        if (d < ba) { ba = d; any = e; anyId = id; }
+        if (!locked.has(`s:${id}`) && d < bf) { bf = d; free = e; freeId = id; }
       }
       const t = free ?? any;
-      return t ? { angle: Math.atan2(-(t.y - me.y), t.x - me.x), x: t.x, y: t.y } : null;
-    })
+      const tid = free ? freeId : anyId;
+      return t ? { id: tid, angle: Math.atan2(-(t.y - me.y), t.x - me.x), x: t.x, y: t.y } : null;
+    }, followId)
     .catch(() => null);
 }
 
@@ -167,8 +176,9 @@ async function thumbLock(
   const end = t0 + clock.fit(opts.maxMs ?? 4500);
   const until = opts.untilLocked ?? true;
   let shot = false;
+  const follow = pick.id;
   while (Date.now() < end - 80) {
-    pick = (await pickDrone(ctx)) ?? pick;
+    pick = (await pickDrone(ctx, follow)) ?? pick; // keep the line on THIS ship
     const p = polar(origin, 40, pick.angle);
     await finger.dragTo(p.x, p.y, { ms: 180 });
     if (still && !shot && Date.now() - t0 >= (opts.stillAtMs ?? 700)) { shot = true; await snap(ctx, still); }
@@ -496,6 +506,10 @@ async function runDuelPhone(ctx: ShotContext, durationMs: number): Promise<void>
         await ctx.sleep(700);
         await snap(ctx, 'd6-lock-button');
         await tapSel(ctx, right, TARGET);
+        await ctx.sleep(250);
+        // The info box follows its ship; if the tap missed, tap again.
+        const st = await ctx.page.locator(TARGET).first().getAttribute('data-state', { timeout: 300 }).catch(() => null);
+        if (st === 'lock') await tapSel(ctx, right, TARGET);
         await ctx.sleep(900);
         await snap(ctx, 'd7-lock-button-running');
       }
@@ -531,8 +545,9 @@ async function runDuelDesktop(ctx: ShotContext, durationMs: number): Promise<voi
     const before = await activeLocked(ctx);
     await m.down('left');
     const end = Date.now() + clock.fit(4500);
+    const follow = pick.id;
     while (Date.now() < end - 100) {
-      pick = (await pickDrone(ctx)) ?? pick;
+      pick = (await pickDrone(ctx, follow)) ?? pick;
       const p = polar(c, R, pick.angle);
       await m.glideTo(p.x, p.y, { ms: 220 });
       if ((await activeLocked(ctx)) > before) { await ctx.sleep(300); break; }

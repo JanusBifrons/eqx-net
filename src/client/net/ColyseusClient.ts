@@ -5923,15 +5923,20 @@ export class ColyseusGameClient {
     const dirY = Math.cos(bearing);
     let best: string | null = null;
     let bestScore = Infinity;
+    // Sticky: the target the line already holds wins while the line stays
+    // within a wider cone of it, so a held lock isn't stolen by a ship that
+    // drifts across the line (each switch would drain the held lock).
+    const held = m.localLockCandidate ?? null;
     const consider = (key: string, x: number, y: number, radius: number): void => {
       const dx = x - ship.x;
       const dy = y - ship.y;
       const along = dx * dirX + dy * dirY;
       if (along < 0 || along > reach * 1.1) return;
       const perp = Math.abs(dx * dirY - dy * dirX);
-      const tol = Math.max(70, radius * 1.5) + along * 0.12; // a cone, wider far out
+      const keep = key === held;
+      const tol = (Math.max(70, radius * 1.5) + along * 0.12) * (keep ? 1.6 : 1); // a cone, wider far out
       if (perp > tol) return;
-      const score = perp / tol + (along / reach) * 0.3;
+      const score = keep ? -1 : perp / tol + (along / reach) * 0.3;
       if (score < bestScore) { bestScore = score; best = key; }
     };
     if (m.swarm) {
