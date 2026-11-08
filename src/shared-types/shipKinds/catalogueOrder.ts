@@ -31,7 +31,11 @@ import { ROBOT_SQUARE, ROBOT_CIRCLE, ROBOT_HEXAGON, ROBOT_NEXUS, ROBOT_HARVESTER
 import { CARGO_POD } from './cargoPod.js';
 import { TRADER_HAULER } from './traders.js';
 import { PATROL_FIGHTER } from './patrols.js';
-import { DESTROYER, LIGHT_CRUISER, HEAVY_CRUISER, BATTLECRUISER, BATTLESHIP } from './capitals/index.js';
+import {
+  DESTROYER, LIGHT_CRUISER, HEAVY_CRUISER, BATTLECRUISER, BATTLESHIP,
+  DESTROYER_B, DESTROYER_C, LIGHT_CRUISER_B, LIGHT_CRUISER_C, HEAVY_CRUISER_B, HEAVY_CRUISER_C,
+  BATTLECRUISER_B, BATTLECRUISER_C, BATTLESHIP_B, BATTLESHIP_C,
+} from './capitals/index.js';
 
 /**
  * Insertion order = canonical catalogue order. Fighter is first so it
@@ -71,4 +75,10 @@ export const SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze([
   HEAVY_CRUISER,
   BATTLECRUISER,
   BATTLESHIP,
+  // Wrap-up W2b: each class's style B and C hulls (variety in a fleet). APPEND ONLY.
+  DESTROYER_B, DESTROYER_C,
+  LIGHT_CRUISER_B, LIGHT_CRUISER_C,
+  HEAVY_CRUISER_B, HEAVY_CRUISER_C,
+  BATTLECRUISER_B, BATTLECRUISER_C,
+  BATTLESHIP_B, BATTLESHIP_C,
 ]);
