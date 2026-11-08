@@ -2871,6 +2871,10 @@ export class SectorRoom extends Room<SectorState> {
       isDisabled: (playerId) => this.gateGuard.isDisabled(playerId, Date.now()),
       onWarpRequest: (playerId, x, y) => this.warpTravel.noteRequest(playerId, x, y),
       validWarpPoint: (x, y) => this.sectorKey !== null && isWarpDropPoint(this.sectorKey, x, y, this.solar),
+      setPlayerAim: (playerId, aim) => {
+        if (aim === null) this.mountTicker.playerManualAim.delete(playerId);
+        else this.mountTicker.playerManualAim.set(playerId, aim);
+      },
       logger,
       malformed: this.malformed,
     }));

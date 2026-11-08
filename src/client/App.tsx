@@ -69,6 +69,8 @@ import { WalletChip } from './components/WalletChip';
 import { ExperimentalHud } from './hud/ExperimentalHud';
 import { TouchViz } from './hud/TouchViz';
 import { getUiVariant } from './hud/uiVariant';
+import { installMouseAim } from './input/MouseAim';
+import { aimInput } from './input/AimInput';
 
 /** Fixed for the page load (switching variant reloads). */
 const uiVariant = getUiVariant();
@@ -244,10 +246,12 @@ function GameSurface({
       if (isLoadingActive) audio?.suspendAll();
       keyboard?.setEnabled(false);
       touch?.setEnabled(false);
+      aimInput.setEnabled(false);
     } else {
       audio?.resumeAll();
       keyboard?.setEnabled(true);
       touch?.setEnabled(true);
+      aimInput.setEnabled(true);
     }
     // Phase 5 — WASD free-pan is the spectator's camera control on DESKTOP. Arm
     // it ONLY while spectating + not loading + not touch (mobile pans by drag);
@@ -490,6 +494,8 @@ function GameSurface({
     let disposed = false;
 
     const keyboard = new Keyboard();
+    // Experimental HUD, desktop only: hold left mouse = aim + fire, right = boost.
+    const disposeMouseAim = uiVariant !== 'legacy' && !isTouchRef.current ? installMouseAim(el) : null;
     keyboardRef.current = keyboard;
 
     // Renderer-path selection + profile-window opt-in. Extracted to
@@ -732,6 +738,7 @@ function GameSurface({
       };
       try { setGameClient(null); } catch (e) { stepLog('setGameClient(null)', e); }
       try { keyboard.dispose(); } catch (e) { stepLog('keyboard.dispose', e); }
+      try { disposeMouseAim?.(); } catch (e) { stepLog('mouseAim.dispose', e); }
       try { spectatorPanRef.current?.dispose(); spectatorPanRef.current = null; } catch (e) { stepLog('spectatorPan.dispose', e); }
       // Layer is a child of renderer.app.stage — the renderer's destroy({
       // children: true }) frees it. Nulling the ref so the React-side

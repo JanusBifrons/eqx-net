@@ -165,6 +165,10 @@ import { mountTargetReach } from '@core/combat/mountReach';
 import { flowMaterialToCode } from '../render/pixi/connectorVisual';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
+import { aimInput } from '../input/AimInput';
+import { getUiVariant } from '../hud/uiVariant';
+import { encodeAim, allMountsFixed } from '@core/combat/manualAim';
+import { resolveAimSteer, makeAimSteerState, resetAimSteer } from '../input/aimSteer';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
   interpolateSwarmPose,
@@ -979,7 +983,24 @@ export class ColyseusGameClient {
    *  missing ticks: a tick with no inbound input simply gets no impulse, and
    *  drag handles the rest. Reconciliation replays only inputs we actually
    *  recorded locally (still 60 Hz), so the prediction model is unaffected. */
-  private lastSentInputState: { thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean; warpX?: number; warpY?: number } | null = null;
+  private lastSentInputState: { thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean; warpX?: number; warpY?: number; aim?: number } | null = null;
+  /** Experimental HUD (exp/hud-mobile-first) — read once; legacy ⇒ every
+   *  manual-aim branch below is skipped, so legacy behaviour is unchanged. */
+  private readonly _hudVariant = getUiVariant();
+  private readonly _expHud = this._hudVariant !== 'legacy';
+  /** Fixed-gun hull steer state (aimSteer hysteresis), reused per tick. */
+  private readonly _aimSteer = makeAimSteerState();
+  /** Cache: does the local kind have only fixed mounts? Keyed by kind. */
+  private _aimFixedKindKey: string | null = null;
+  private _aimFixedAll = false;
+  /** Input payload while aiming: its own pooled object (like the warp one) so
+   *  an ordinary input never carries an undefined `aim` (→ null → strict
+   *  schema reject). */
+  private readonly _sendAimInputScratch = {
+    type: 'input' as const, tick: 0, thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false, aim: 0,
+  };
+  /** Reused status scratch for the variant-B ship arcs (mirror.localStatus). */
+  private readonly _localStatusScratch = { shield: 1, hull: 1, energy: 1 };
   /** In-sector warp-to (Phase 4): the drop point the pilot asked for, held in
    *  every input until the local ship arrives (then cleared, which releases
    *  the server's latch). Null = none. */
@@ -4774,6 +4795,9 @@ export class ColyseusGameClient {
     // locked by `joystickToInput.test.ts` and a resulting corr-rate spiral
     // would trip the netcode-health gate (`pnpm e2e:netgate`).
     const kb = this.keyboard.read();
+    // Experimental HUD: aim/boost are only live while piloting (spectating
+    // has no ship). The loading curtain already skips tickPhysics.
+    if (this._expHud) aimInput.setEnabled(useUIStore.getState().pilotMode !== 'spectator');
     this.updateHelmAvailability();
     while (this.inputTick < targetTick && stepsThisFrame < MAX_CATCH_UP_TICKS) {
       // Over-prediction cap. `lastAckedTick > 0` excludes the
@@ -4817,6 +4841,26 @@ export class ColyseusGameClient {
           tcThrust = next.thrust;
         }
       }
+      // Manual aim (experimental HUD only): a FIXED-gun hull can't slew its
+      // guns, so aiming turns the hull toward the aim while the move stick
+      // just supplies thrust. Turret ships keep stick steering (the turrets
+      // slew to the aim instead — tickLocalMountAim + the server ticker).
+      if (this._expHud) {
+        if (aimInput.isAiming() && this.localKindAllFixed()) {
+          const sid = this.mirror.localPlayerId;
+          const ps = sid ? this.predWorld?.getShipState(sid) ?? null : null;
+          if (ps) {
+            const mv = this.touchInput?.getJoystickVector() ?? null;
+            const mag = mv ? Math.sqrt(mv.x * mv.x + mv.y * mv.y) : 0;
+            const st = resolveAimSteer(aimInput.getBearing(), ps.angle, mag, this._aimSteer);
+            tcTurnLeft = st.turnLeft;
+            tcTurnRight = st.turnRight;
+            tcThrust = st.thrust;
+          }
+        } else {
+          resetAimSteer(this._aimSteer);
+        }
+      }
       // v4 A — a disabled ship's engines and weapons are off: the SAME shared
       // gate the server applies to our input (#15), so prediction agrees.
       // Helm orders: WASD / the stick override (and cancel) a course.
@@ -4829,7 +4873,7 @@ export class ColyseusGameClient {
       db.thrust = kb.thrust || tcThrust || (helm?.thrust ?? false);
       db.turnLeft = kb.turnLeft || tcTurnLeft || (helm?.turnLeft ?? false);
       db.turnRight = kb.turnRight || tcTurnRight || (helm?.turnRight ?? false);
-      db.boost = kb.boost || (this.touchInput?.getBoostHeld() ?? false);
+      db.boost = kb.boost || (this.touchInput?.getBoostHeld() ?? false) || (this._expHud && aimInput.getBoostHeld());
       // Reverse is keyboard-only in v1 — no on-screen button on touch yet.
       db.reverse = kb.reverse;
       const disabledNow = gateDisabledInput(this.isLocallyDisabled(), db);
@@ -4839,6 +4883,8 @@ export class ColyseusGameClient {
       const fireHeld  = !disabledNow && (kb.fireHeld || tcFire);
       const boost     = db.boost;
       const reverse   = db.reverse ?? false;
+      // Manual aim (experimental HUD): the quantised aim, or -1 when not aiming.
+      const aimQ = this._expHud && !disabledNow && aimInput.isAiming() ? encodeAim(aimInput.getBearing()) : -1;
       const tick = this.inputTick++;
 
       // Replay-grade input-intent capture (plan: replay infra Phase A).
@@ -4925,8 +4971,9 @@ export class ColyseusGameClient {
         // adds zero impulse, so a skipped tick is physically equivalent.
         const last = this.lastSentInputState;
         // A held warp request is never idle (the server must keep receiving it).
-        const allIdle = !thrust && !turnLeft && !turnRight && !boostApplied && !reverse && wx === undefined;
-        const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost && !last.reverse && last.warpX === undefined;
+        // A held aim is never idle either (the server must keep receiving it).
+        const allIdle = !thrust && !turnLeft && !turnRight && !boostApplied && !reverse && wx === undefined && aimQ < 0;
+        const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost && !last.reverse && last.warpX === undefined && (last.aim ?? -1) < 0;
         const stateChanged = !last
           || last.thrust !== thrust
           || last.turnLeft !== turnLeft
@@ -4934,7 +4981,8 @@ export class ColyseusGameClient {
           || last.boost !== boostApplied
           || last.reverse !== reverse
           || last.warpX !== wx
-          || last.warpY !== wy;
+          || last.warpY !== wy
+          || (last.aim ?? -1) !== aimQ;
         const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
         const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
         if (!throttle) {
@@ -4945,6 +4993,11 @@ export class ColyseusGameClient {
             w.tick = tick; w.thrust = thrust; w.turnLeft = turnLeft; w.turnRight = turnRight;
             w.boost = boostApplied; w.reverse = reverse; w.warpX = wx; w.warpY = wy;
             this.room.send('input', w);
+          } else if (aimQ >= 0) {
+            const a = this._sendAimInputScratch;
+            a.tick = tick; a.thrust = thrust; a.turnLeft = turnLeft; a.turnRight = turnRight;
+            a.boost = boostApplied; a.reverse = reverse; a.aim = aimQ;
+            this.room.send('input', a);
           } else {
           const sendArg = this._sendInputScratch;
           sendArg.tick = tick;
@@ -4968,8 +5021,9 @@ export class ColyseusGameClient {
             stored.reverse = reverse;
             stored.warpX = wx;
             stored.warpY = wy;
+            stored.aim = aimQ;
           } else {
-            this.lastSentInputState = { thrust, turnLeft, turnRight, boost: boostApplied, reverse, warpX: wx, warpY: wy };
+            this.lastSentInputState = { thrust, turnLeft, turnRight, boost: boostApplied, reverse, warpX: wx, warpY: wy, aim: aimQ };
           }
           this.lastSentInputAtMs = nowMs;
           if ((stateChanged || (tick % 60) === 0) && isFullDiagMode()) {
@@ -5095,7 +5149,10 @@ export class ColyseusGameClient {
     // the touch branch broke firing entirely on phone (the smoke-test
     // class that surfaced this hoist's regression — kb.fireHeld is
     // always false on touch devices).
-    const manualFire = kb.fireHeld || (this.touchInput?.getFireHeld() ?? false);
+    // Experimental HUD: a held aim is manual fire too (aim = point + shoot).
+    const aimingNow = this._expHud && aimInput.isAiming();
+    const manualFire = kb.fireHeld || (this.touchInput?.getFireHeld() ?? false) || aimingNow;
+    let autoEngagedNow = false;
     // Auto-fire (default ON): fire automatically at an in-range HOSTILE without
     // any input. Manual fire (Space / FIRE button) still works as an override.
     const autoFireEnabled = useUIStore.getState().autoFireEnabled;
@@ -5144,7 +5201,11 @@ export class ColyseusGameClient {
       const aimSt = this.predWorld.getShipState(this.mirror.localPlayerId);
       const hostileInRange = aimSt ? this.hasHostileInRange(aimSt.x, aimSt.y, weaponAutoFireRange(slotWeaponDef)) : false;
       if (hostileInRange) this.mirror.localAimMountIds = this._afSlotMountIds;
-      if (!fireWanted && autoFireEnabled && !this.isLocallyDisabled()) fireWanted = hostileInRange;
+      if (!fireWanted && autoFireEnabled && !this.isLocallyDisabled()) {
+        fireWanted = hostileInRange;
+        autoEngagedNow = hostileInRange;
+      }
+      if (this._expHud) this.mirror.localAimReach = weaponAutoFireRange(slotWeaponDef);
       if (fireWanted) {
         if (slotWeaponDef.mode === 'hitscan') {
           this.updateLiveBeam();
@@ -5179,6 +5240,7 @@ export class ColyseusGameClient {
         }
       }
     }
+    if (this._expHud) this.publishAimFeedback(manualFire, autoEngagedNow, aimingNow);
 
     // Predict the energy pool for the frame (weapons/energy/AI overhaul
     // §3.2): regen every stepped tick + drain a boost tick while boosting,
@@ -5239,13 +5301,20 @@ export class ColyseusGameClient {
           tcThrust2 = next.thrust;
         }
       }
+      // Manual aim on a fixed-gun hull: re-send the aim-steer bits (no new
+      // tick to step, so the last resolved state stands).
+      if (this._expHud && aimInput.isAiming() && this.localKindAllFixed()) {
+        tcTurnLeft2 = this._aimSteer.turnLeft;
+        tcTurnRight2 = this._aimSteer.turnRight;
+        tcThrust2 = this._aimSteer.thrust;
+      }
       // Helm: the sentinel re-sends the last helm bits (no new tick to step).
       const helm2 = this._helmOrder.active ? this._helmOut : null;
       const db2 = this._disableBits;
       db2.thrust = kb.thrust || tcThrust2 || (helm2?.thrust ?? false);
       db2.turnLeft = kb.turnLeft || tcTurnLeft2 || (helm2?.turnLeft ?? false);
       db2.turnRight = kb.turnRight || tcTurnRight2 || (helm2?.turnRight ?? false);
-      db2.boost = kb.boost || (this.touchInput?.getBoostHeld() ?? false);
+      db2.boost = kb.boost || (this.touchInput?.getBoostHeld() ?? false) || (this._expHud && aimInput.getBoostHeld());
       db2.reverse = kb.reverse;
       gateDisabledInput(this.isLocallyDisabled(), db2);
       const thrust    = db2.thrust;
@@ -5266,8 +5335,9 @@ export class ColyseusGameClient {
       const nowMs = this.clock.now();
       const last = this.lastSentInputState;
       const wx = this.warpRequest?.x, wy = this.warpRequest?.y;
-      const allIdle = !thrust && !turnLeft && !turnRight && !boostApplied && !reverse && wx === undefined;
-      const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost && !last.reverse && last.warpX === undefined;
+      const aimQ = this._expHud && !this.isLocallyDisabled() && aimInput.isAiming() ? encodeAim(aimInput.getBearing()) : -1;
+      const allIdle = !thrust && !turnLeft && !turnRight && !boostApplied && !reverse && wx === undefined && aimQ < 0;
+      const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost && !last.reverse && last.warpX === undefined && (last.aim ?? -1) < 0;
       const stateChanged = !last
         || last.thrust !== thrust
         || last.turnLeft !== turnLeft
@@ -5275,7 +5345,8 @@ export class ColyseusGameClient {
         || last.boost !== boostApplied
         || last.reverse !== reverse
         || last.warpX !== wx
-        || last.warpY !== wy;
+        || last.warpY !== wy
+        || (last.aim ?? -1) !== aimQ;
       const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
       const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
       if (!throttle) {
@@ -5288,6 +5359,11 @@ export class ColyseusGameClient {
           w.tick = tick; w.thrust = thrust; w.turnLeft = turnLeft; w.turnRight = turnRight;
           w.boost = boostApplied; w.reverse = reverse; w.warpX = wx; w.warpY = wy;
           this.room.send('input', w);
+        } else if (aimQ >= 0) {
+          const a = this._sendAimInputScratch;
+          a.tick = tick; a.thrust = thrust; a.turnLeft = turnLeft; a.turnRight = turnRight;
+          a.boost = boostApplied; a.reverse = reverse; a.aim = aimQ;
+          this.room.send('input', a);
         } else {
         const sendArg = this._sendInputScratch;
         sendArg.tick = tick;
@@ -5309,8 +5385,9 @@ export class ColyseusGameClient {
           stored.reverse = reverse;
           stored.warpX = wx;
           stored.warpY = wy;
+          stored.aim = aimQ;
         } else {
-          this.lastSentInputState = { thrust, turnLeft, turnRight, boost: boostApplied, reverse, warpX: wx, warpY: wy };
+          this.lastSentInputState = { thrust, turnLeft, turnRight, boost: boostApplied, reverse, warpX: wx, warpY: wy, aim: aimQ };
         }
         this.lastSentInputAtMs = nowMs;
         // Always log on sentinel send (no stateChanged / tick%60 gate) so
@@ -5424,6 +5501,36 @@ export class ColyseusGameClient {
    * reach) so the ship doesn't auto-engage neutral ambient drones or waste the
    * energy pool. Drone-vs-drone hit authority stays server-side.
    */
+  /** Experimental HUD: does the local ship carry only FIXED mounts (so aiming
+   *  must turn the hull)? Cached by kind — recomputed only on a kind change. */
+  private localKindAllFixed(): boolean {
+    const id = this.mirror.localPlayerId;
+    const kindStr = id ? this.mirror.ships.get(id)?.kind ?? null : null;
+    if (kindStr !== this._aimFixedKindKey) {
+      this._aimFixedKindKey = kindStr;
+      this._aimFixedAll = allMountsFixed(getShipKind(kindStr).mounts ?? []);
+    }
+    return this._aimFixedAll;
+  }
+
+  /** Experimental HUD: publish the discrete aim state to Zustand (change-only
+   *  setters) and the per-frame aim feedback to the render mirror (scalars,
+   *  reused objects — no allocation, #14). */
+  private publishAimFeedback(manualFire: boolean, autoEngaged: boolean, aiming: boolean): void {
+    const ui = useUIStore.getState();
+    ui.setAimMode(manualFire ? 'manual' : 'auto');
+    ui.setAutoEngaged(autoEngaged);
+    const m = this.mirror;
+    m.localManualAim = aiming ? aimInput.getBearing() : Number.NaN;
+    m.localAutoLockId = autoEngaged && !manualFire ? this._localSlotTarget : null;
+    m.hudVariant = this._hudVariant === 'legacy' ? undefined : this._hudVariant;
+    const st = this._localStatusScratch;
+    st.shield = Math.max(0, Math.min(1, ui.shieldPct / 100));
+    st.hull = Math.max(0, Math.min(1, ui.hullPct / 100));
+    st.energy = ui.energyMax > 0 ? Math.max(0, Math.min(1, this.predEnergy / ui.energyMax)) : 0;
+    m.localStatus = st;
+  }
+
   private hasHostileInRange(x: number, y: number, range: number): boolean {
     const r2 = range * range;
     const targets = this._lastAimTargets;
@@ -5526,6 +5633,7 @@ export class ColyseusGameClient {
     tickLocalMountAngles(
       angles, catalogueMounts, activeMountIds, target,
       ship.x, ship.y, ship.angle, dtSec,
+      this._expHud && aimInput.isAiming() ? aimInput.getBearing() : undefined,
     );
   }
 

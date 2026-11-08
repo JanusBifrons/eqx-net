@@ -22,6 +22,7 @@ import type { Client } from 'colyseus';
 import { InputMessageSchema } from '../../shared-types/messages.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { canAfford, BOOST_TICK_COST } from '../../core/combat/Energy.js';
+import { decodeAim } from '../../core/combat/manualAim.js';
 import type pino from 'pino';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import type { MalformedMessageTracker } from './MalformedMessageTracker.js';
@@ -48,6 +49,9 @@ export interface InputHandlerCtx {
   validWarpPoint?: (x: number, y: number) => boolean;
   /** Phase 4 warp travel: a validated warp request (the tracker's target). */
   onWarpRequest?: (playerId: string, x: number, y: number) => void;
+  /** Manual aim (exp/hud-mobile-first): the pilot's held aim bearing, or null
+   *  when the input carries none. Absent ⇒ aim ignored. */
+  setPlayerAim?: (playerId: string, aim: number | null) => void;
   logger: pino.Logger;
   /** Per-connection malformed-packet counter + sampled warn (campaign 1.3;
    *  invariant #3's second half). The input channel is the flood vector —
@@ -99,6 +103,10 @@ export function makeInputHandler(
     const warp = warpX !== undefined && warpY !== undefined && !(ctx.isDisabled?.(playerId) ?? false)
       && (ctx.validWarpPoint?.(warpX, warpY) ?? false);
     if (warp) ctx.onWarpRequest?.(playerId, warpX!, warpY!);
+    // Manual aim: the latest held aim (cleared by an input without one). A
+    // disabled ship's weapons are offline, so its aim is dropped too.
+    const aim = result.data.aim;
+    ctx.setPlayerAim?.(playerId, aim !== undefined && !(ctx.isDisabled?.(playerId) ?? false) ? decodeAim(aim) : null);
     const slot = ctx.playerToSlot.get(playerId);
     if (slot !== undefined) {
       ctx.postToWorker(warp

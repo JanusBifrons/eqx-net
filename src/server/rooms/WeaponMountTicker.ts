@@ -30,6 +30,7 @@ import {
   PLAYER_AIM_SWITCH_MARGIN,
   type MountTargetView,
 } from '../../core/ai/WeaponMountController.js';
+import { manualAimMountBearing } from '../../core/combat/manualAim.js';
 import { mountTargetReach, mountWeaponReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
 import { canTrack, mountLineClear, mountPriority, targetClass } from '../../core/combat/mountTargeting.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
@@ -145,6 +146,9 @@ export class WeaponMountTicker {
   readonly droneMountAngles = new Map<string, Float32Array>();
   /** Sticky targetId per shooter (for pickTarget hysteresis). */
   readonly playerSlotTargets = new Map<string, string | null>();
+  /** Manual aim (exp/hud-mobile-first): a pilot's held aim world bearing,
+   *  written by the input handler, absent when not aiming. */
+  readonly playerManualAim = new Map<string, number>();
   readonly droneSlotTargets = new Map<string, string | null>();
   /** Capital fire control: last fire tick per mount, keyed by drone id. */
   readonly droneMountReload = new Map<string, Int32Array>();
@@ -294,6 +298,21 @@ export class WeaponMountTicker {
       if (!angles || angles.length !== mounts.length) {
         angles = new Float32Array(mounts.length);
         this.playerMountAngles.set(playerId, angles);
+      }
+
+      // Manual aim (exp/hud-mobile-first): a held pilot aim overrides the
+      // auto-picked target for the FIRING set. Same rule + same helper as the
+      // client's `tickLocalMountAngles` (core/combat/manualAim.ts, #15).
+      const manualAim = this.playerManualAim.get(playerId);
+      if (manualAim !== undefined) {
+        for (let i = 0; i < mounts.length; i++) {
+          const mount = mounts[i]!;
+          const want = firingIds.has(mount.id)
+            ? manualAimMountBearing(manualAim, pose.angle, mount.baseAngle)
+            : 0;
+          angles[i] = rotateMountToward(angles[i]!, want, mount, DT_SEC);
+        }
+        continue;
       }
 
       if (target === null) {
@@ -551,6 +570,7 @@ export class WeaponMountTicker {
   clearPlayer(playerId: string): void {
     this.playerMountAngles.delete(playerId);
     this.playerSlotTargets.delete(playerId);
+    this.playerManualAim.delete(playerId);
   }
 
   /** Cleanup hook: drop all per-drone state on eviction/destroy/shed. */

@@ -619,6 +619,23 @@ export interface RenderMirror {
    * these. A reused array owned by the client: read it, never keep it.
    */
   localAimMountIds?: readonly string[];
+  /**
+   * Experimental HUD (exp/hud-mobile-first) aim feedback, written by the
+   * client only when an experimental HUD (`?ui=a|b|c`) is on:
+   *  - `localManualAim`: the pilot's held aim world bearing (NaN when not aiming)
+   *    → amber aim line + crosshair at the weapon's reach.
+   *  - `localAimReach`: that weapon's effective reach (world units).
+   *  - `localAutoLockId`: the drone the turrets auto-picked (`swarm-<id>`)
+   *    while auto-fire is engaging, else null → cyan lock bracket.
+   *  - `hudVariant`: 'a' | 'b' | 'c' (b also draws status arcs on the ship),
+   *    absent in the legacy HUD.
+   *  - `localStatus`: shield/hull/energy fractions 0..1 for the ship arcs.
+   */
+  localManualAim?: number;
+  localAimReach?: number;
+  localAutoLockId?: string | null;
+  hudVariant?: 'a' | 'b' | 'c';
+  localStatus?: { shield: number; hull: number; energy: number };
   /** When false, the renderer hides the orange server-ghost diamond. Default true. */
   showServerGhost?: boolean;
   /**
