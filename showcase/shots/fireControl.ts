@@ -408,7 +408,154 @@ function warpShot(id: string, viewport: Shot['viewport'], phone: boolean): Shot 
   };
 }
 
-function fcShot(id: string, viewport: Shot['viewport'], durationMs: number, hostile: boolean, title: string, caption: string, run: (ctx: ShotContext) => Promise<void>): Shot {
+// ---------------------------------------------------------------------------
+// The 1v3 (`fc-duel`): two fighters and a heavy wait ~1400 u ahead. Paced so
+// every beat reads: they lock you as you close (HUD band + red arcs on your
+// ring), you lock them one group at a time (closing ring, ticks, LOCKING %),
+// then fire, then hand both groups back to AUTO.
+
+/** Hold still-ish (tiny thumb wiggle) on the move stick for `ms`. */
+async function cruise(finger: Finger, anchor: Pt, angle: number, ms: number): Promise<void> {
+  const p = polar(anchor, 30, angle);
+  await finger.dragTo(p.x, p.y, { ms: 250 });
+  await finger.wiggle({ amp: 3, cycles: Math.max(1, Math.round(ms / 900)), ms });
+}
+
+async function runDuelPhone(ctx: ShotContext, durationMs: number): Promise<void> {
+  const clock = startClock(ctx, durationMs);
+  const pad = await touch(ctx.page, ctx.log);
+  try {
+    const left = pad.finger();
+    const right = pad.finger();
+    const zone = await rectOf(ctx, '[data-testid="hud-move-zone"]');
+    const anchor = zone
+      ? { x: zone.x + Math.min(120, zone.width * 0.3), y: zone.y + zone.height * 0.62 }
+      : { x: 120, y: ctx.viewport.height - 110 };
+    const up = -Math.PI / 2;
+    const fly = async (): Promise<void> => {
+      await left.down(anchor.x, anchor.y);
+      await cruise(left, anchor, up, clock.fit(5200)); // close the distance
+      await cruise(left, anchor, up - 0.5, clock.fit(2600)); // swing left of the pack
+      await cruise(left, anchor, up + 0.4, clock.fit(3000));
+      await left.dragTo(anchor.x, anchor.y, { ms: 300 }); // ease off: hold the line while locking
+      await left.up();
+      await clock.at(17_500);
+      if (clock.left() > 1500) {
+        await left.down(anchor.x, anchor.y);
+        await cruise(left, anchor, up + 0.9, clock.fit(4500)); // circle while AUTO works
+        await cruise(left, anchor, up - 0.9, clock.fit(clock.left() - 400));
+        await left.up();
+      }
+    };
+    const act = async (): Promise<void> => {
+      // Both groups to MAN: nothing locks or fires unless the pilot says so.
+      await clock.at(600);
+      await tapSel(ctx, right, MODE, 0);
+      await ctx.sleep(350);
+      await tapSel(ctx, right, MODE, 1);
+      await clock.at(5600);
+      await snap(ctx, 'd1-being-locked');
+      // Fore: lock a fighter, then hold the chip to fire.
+      await clock.at(8200);
+      await tapSel(ctx, right, CHIP, 0);
+      await thumbLock(ctx, right, clock, 'd2-lock-line');
+      await clock.at(9600);
+      await snap(ctx, 'd3-fore-locking');
+      await clock.at(11_600);
+      const fore = await rectOf(ctx, CHIP, 0);
+      if (fore) { const c = centre(fore); await right.down(c.x, c.y); await right.hold(clock.fit(1800)); await right.up(); }
+      // Aft: lock the next one (the heavy), hold to fire.
+      await clock.at(13_600);
+      await tapSel(ctx, right, CHIP, 1);
+      await thumbLock(ctx, right, clock);
+      await clock.at(15_300);
+      await snap(ctx, 'd4-two-groups');
+      const aft = await rectOf(ctx, CHIP, 1);
+      if (aft) { const c = centre(aft); await right.down(c.x, c.y); await right.hold(clock.fit(1800)); await right.up(); }
+      // Hand both back to AUTO and let them work while circling.
+      await clock.at(19_500);
+      await tapSel(ctx, right, MODE, 0);
+      await ctx.sleep(350);
+      await tapSel(ctx, right, MODE, 1);
+      await clock.at(23_000);
+      await snap(ctx, 'd5-auto');
+      const boost = await rectOf(ctx, '[data-testid="hud-boost"]');
+      if (boost && clock.left() > 1500) { const b = centre(boost); await right.down(b.x, b.y); await right.hold(clock.fit(1000)); await right.up(); }
+    };
+    await ctx.sleep(300);
+    await Promise.all([fly(), act()]);
+  } finally {
+    await pad.dispose();
+  }
+}
+
+async function runDuelDesktop(ctx: ShotContext, durationMs: number): Promise<void> {
+  const { page } = ctx;
+  const clock = startClock(ctx, durationMs);
+  const { width: w, height: h } = ctx.viewport;
+  const c = { x: w / 2, y: h / 2 };
+  const m: Mouse = await mouse(page, { x: c.x + 160, y: c.y + 90 });
+  const hold = async (key: string, ms: number): Promise<void> => { await page.keyboard.down(key); await ctx.sleep(clock.fit(ms)); await page.keyboard.up(key); };
+  const dragLock = async (): Promise<void> => {
+    let pick = await pickDrone(ctx);
+    if (!pick) return;
+    const R = Math.min(w, h) * 0.26;
+    const p0 = polar(c, 40, pick.angle);
+    await m.glideTo(p0.x, p0.y, { ms: 300 });
+    await m.down('left');
+    const end = Date.now() + clock.fit(1400);
+    while (Date.now() < end - 100) {
+      pick = (await pickDrone(ctx)) ?? pick;
+      const p = polar(c, R, pick.angle);
+      await m.glideTo(p.x, p.y, { ms: 280 });
+    }
+    await m.up('left');
+    await m.glideTo(c.x + 160, c.y + 90, { ms: 400 });
+  };
+  const fly = async (): Promise<void> => {
+    await hold('w', 5200);
+    await hold('a', 500);
+    await hold('w', 2400);
+    await clock.at(17_500);
+    while (clock.left() > 900) { await hold('w', 900); await hold('d', 500); }
+  };
+  const act = async (): Promise<void> => {
+    await clock.at(600);
+    await page.keyboard.press('Shift+Digit1');
+    await ctx.sleep(300);
+    await page.keyboard.press('Shift+Digit2');
+    await clock.at(5600);
+    await snap(ctx, 'd6-being-locked-desktop');
+    await clock.at(8200);
+    await page.keyboard.press('1');
+    await dragLock();
+    await clock.at(9600);
+    await snap(ctx, 'd7-fore-locking-desktop');
+    await clock.at(11_600);
+    const fore = await rectOf(ctx, CHIP, 0);
+    if (fore) { const p = centre(fore); await m.glideTo(p.x, p.y, { ms: 400 }); await m.down('left'); await ctx.sleep(clock.fit(1600)); await m.up('left'); }
+    await clock.at(13_600);
+    await page.keyboard.press('2');
+    await dragLock();
+    await clock.at(16_000);
+    const aft = await rectOf(ctx, CHIP, 1);
+    if (aft) { const p = centre(aft); await m.glideTo(p.x, p.y, { ms: 400 }); await m.down('left'); await ctx.sleep(clock.fit(1600)); await m.up('left'); }
+    await clock.at(19_500);
+    await page.keyboard.press('Shift+Digit1');
+    await ctx.sleep(300);
+    await page.keyboard.press('Shift+Digit2');
+    await clock.at(23_500);
+    await m.down('right'); await ctx.sleep(clock.fit(900)); await m.up('right');
+  };
+  try {
+    await Promise.all([fly(), act()]);
+  } finally {
+    await m.releaseAll();
+    for (const k of ['w', 'a', 'd']) await page.keyboard.up(k).catch(() => {});
+  }
+}
+
+function fcShot(id: string, viewport: Shot['viewport'], durationMs: number, hostile: boolean, title: string, caption: string, run: (ctx: ShotContext) => Promise<void>, room = 'feel-test'): Shot {
   return {
     id,
     section: 'tech',
@@ -421,7 +568,7 @@ function fcShot(id: string, viewport: Shot['viewport'], durationMs: number, host
     viewport,
     ...(viewport === 'desktop' ? { captionLayout: 'none' as const } : {}),
     maxBitrateKbps: MAX_KBPS,
-    target: { room: 'feel-test', params: PARAMS(hostile) },
+    target: { room, params: PARAMS(hostile) },
     hud: 'full',
     durationMs,
     prepare: waitForStrip,
@@ -430,6 +577,12 @@ function fcShot(id: string, viewport: Shot['viewport'], durationMs: number, host
 }
 
 export const fireControlShots: readonly Shot[] = [
+  fcShot('fc-duel-phone', 'phone-landscape', 30_000, true, 'HUD D · 1v3',
+    'Fly in: they lock you (red), you lock them one group at a time, fire, then hand both groups to AUTO.',
+    (ctx) => runDuelPhone(ctx, 30_000), 'fc-duel'),
+  fcShot('fc-duel-desktop', 'desktop', 30_000, true, 'HUD D · 1v3 (desktop)',
+    'Same fight on desktop: 1/2 picks a group, drag to lock, hold a MAN chip to fire, Shift+n for AUTO.',
+    (ctx) => runDuelDesktop(ctx, 30_000), 'fc-duel'),
   fcShot('fc-phone-landscape', 'phone-landscape', 20_000, true, 'HUD D · Fire Control',
     'Weapon groups lock their own targets — drag a lock line, switch groups, hold to fire in MAN.',
     (ctx) => runPhone(ctx, 20_000)),
