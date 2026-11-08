@@ -1,5 +1,7 @@
 # Off-screen indicators ("ring radar") — research, diagnosis, target design
 
+> **Status (2026-11-08):** Wave 2 shipped the edge radar (`render/halo/edgeRadar.ts`, radar sandbox room) and account identity (PR 3a, #171). The plan's last two steps, settings saved per account/ship (PR 3b) and the radar settings window (PR 4), were **dropped** by the user; see `docs/SHELF.md` ("Radar settings saved per account") for the reasoning and how to revive them. The Wave 1 status below is kept for history.
+
 > **Status (2026-10-31):** Wave 1 of plan `sparkling-wondering-rose` — the
 > researched replacement for the 2026-06 "tuned from first principles" version
 > of this doc (which listed a deeper research pass as its open follow-up).
