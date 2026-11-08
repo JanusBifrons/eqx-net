@@ -59,6 +59,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
           ...(msg.artDelayMs ? { delayMs: msg.artDelayMs } : {}),
           ...(msg.fx ? { fx: true } : {}),
           ...(msg.speedFxOff ? { speedFx: false } : {}),
+          ...(msg.lighting ? { lighting: msg.lighting } : {}),
         });
         await renderer.init({
           canvas: msg.canvas,

@@ -11,6 +11,8 @@
  *     rule as the WebRTC transport) — the Machined specs ask for it;
  *  4. everyone else gets `machined`.
  */
+import { LOOK_NIGHT, lightingFromSearch, type LightingSettings } from './lightingSettings.js';
+
 export type ArtMode = 'classic' | 'machined';
 
 export interface ArtOptions {
@@ -23,6 +25,10 @@ export interface ArtOptions {
   /** Speed effects (C3): dust streaks + a slight zoom-out when flying fast.
    *  Absent means on. Only drawn with the new backdrop (`fx`). */
   speedFx?: boolean;
+  /** GPU-lit art (plan prancy-squishing-donut R2, `?shiplight=gpu`): ships,
+   *  guns, scrap (and per settings structures and rocks) lit live from maps
+   *  instead of baked sun frames. Absent = today's baked art. */
+  lighting?: LightingSettings;
 }
 
 export const ART_OFF: ArtOptions = { mode: 'classic' };
@@ -47,6 +53,16 @@ export function resolveFxMode(search: string, mode: ArtMode, isAutomation = fals
   if (mode !== 'machined') return false;
   const m = /[?&]fx=(new|classic)\b/.exec(search);
   return m ? m[1] === 'new' : !isAutomation;
+}
+
+/**
+ * GPU lighting (R&D): `?shiplight=gpu` turns it on with the night-side look;
+ * `look=` and the per-feature switches (lightingSettings.ts) adjust it. Only
+ * with the Machined art. Off otherwise (today's baked art, unchanged).
+ */
+export function resolveShipLighting(search: string, mode: ArtMode): LightingSettings | undefined {
+  if (mode !== 'machined' || !/[?&]shiplight=gpu\b/.test(search)) return undefined;
+  return lightingFromSearch(search, LOOK_NIGHT);
 }
 
 /** Test-only: delay every bake by this many ms (`?artDelayMs=`), so an E2E can
