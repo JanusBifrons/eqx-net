@@ -2067,6 +2067,13 @@ export class PixiRenderer implements IRenderer {
           if (!this._fxFences?.hitAt(ev.worldX, ev.worldY, performance.now())) {
             this.effects.spawnBurst('impact', ev.worldX, ev.worldY, { tint: 0x88ddff });
           }
+        } else if (ev.kind === 'shield-contact') {
+          // A collision touched a shield: the same flash as a shot's hit,
+          // facing the other body (drawn only if the shield is up).
+          if (ev.entityId) {
+            this.effects.pulseShield(ev.entityId);
+            if (this._fxShieldsOn) this._fxShields!.hitAt(ev.entityId, ev.worldX, ev.worldY, performance.now(), this._fxShieldPose);
+          }
         } else if (ev.kind === 'destruction-shock' || ev.kind === 'shield-flash') {
           this.effects.triggerOneShotFilter(ev.kind, ev.worldX, ev.worldY);
         } else {

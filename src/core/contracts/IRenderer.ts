@@ -541,7 +541,10 @@ export interface RenderMirror {
       | 'destruction-shock'
       | 'shield-flash'
       /** A shield fence stopped a bolt or missile at (worldX, worldY). */
-      | 'wall-hit';
+      | 'wall-hit'
+      /** A collision touched `entityId`'s shield; (worldX, worldY) is the
+       *  other body, which the contact faces. Drawn only on a raised shield. */
+      | 'shield-contact';
     worldX: number;
     worldY: number;
     intensity?: number;

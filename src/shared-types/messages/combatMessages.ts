@@ -142,6 +142,12 @@ export const CollisionResolvedMessageSchema = z
      *  out-of-order guard: events with tick < lastSnapshotServerTick are
      *  dropped (snapshot is authoritative for stale events). */
     tick: z.number().int().nonnegative(),
+    /** Which client entity each side is (so the client can draw a shield
+     *  contact): -1 = a pilot's ship (its id is the playerId), >= 0 = the
+     *  swarm entity id (drones, asteroids, structures, scrap). Absent when
+     *  the side is neither (e.g. a parked hull). User report 2026-11-07. */
+    eA: z.number().int().min(-1).optional(),
+    eB: z.number().int().min(-1).optional(),
   })
   .strict();
 

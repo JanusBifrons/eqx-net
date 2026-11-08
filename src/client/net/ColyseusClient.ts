@@ -35,6 +35,7 @@ import {
   createCollisionGuard,
   type CollisionGuardState,
 } from './applyCollisionResolved';
+import { pushCollisionShieldContacts } from './collisionShieldContacts';
 import { MineDetonatedSchema } from '@shared-types/mines';
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, WallHitEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
@@ -488,6 +489,8 @@ export class ColyseusGameClient {
    *  plus latest snapshot tick for the stale-event drop check. Updated by
    *  the collision_resolved handler and by handleSnapshot. */
   private readonly _collisionGuard: CollisionGuardState = createCollisionGuard();
+  /** Last shield contact per shield (ms), to throttle grinding contacts. */
+  private readonly _shieldContactAt = new Map<string, number>();
 
   /** Stage 3 — per-remote `lastInput` from the latest snapshot. Used by
    *  applyRemoteInputs() during the replay and tickPhysics input loops to
@@ -2049,6 +2052,10 @@ export class ColyseusGameClient {
       );
       if (outcome.applied.length > 0) {
         this.stats.collisionEventsApplied++;
+      }
+      // A raised shield shows the contact, like a shot's hit (user 2026-11-07).
+      if (this.mirror.pendingEffectTriggers) {
+        pushCollisionShieldContacts(result.data, this.mirror, this.clock.now(), this._shieldContactAt, this.mirror.pendingEffectTriggers);
       }
     });
 
