@@ -24,6 +24,9 @@ import { mkdirSync } from 'node:fs';
 /** Stills for the write-up: showcase-out/fc/stills/<name>.png. */
 const STILLS = 'showcase-out/fc/stills';
 async function snap(ctx: ShotContext, name: string): Promise<void> {
+  // A screenshot stalls the page ~150-300 ms, so stills are a separate pass:
+  // FC_STILLS=1 pnpm showcase:fc (stills) vs plain pnpm showcase:fc (clean video).
+  if (process.env['FC_STILLS'] !== '1') return;
   try {
     mkdirSync(STILLS, { recursive: true });
     await ctx.page.screenshot({ path: `${STILLS}/${name}.png` });
@@ -364,7 +367,17 @@ async function runWarp(ctx: ShotContext, durationMs: number, phone: boolean): Pr
   const dest = ctx.page.locator('[data-testid^="warp-dest-"]:not([disabled])');
   const n = await dest.count();
   if (n > 0) await dest.nth(n - 1).click({ timeout: 2000 }).catch(() => {});
-  else ctx.log('  ⚠ [fc] no warp destinations listed');
+  else {
+    // Map view (desktop): click a far pocket on the map, then Warp.
+    const pockets = ctx.page.locator('g[data-testid^="warp-map-"]:not([data-testid="warp-map-ship"])');
+    const pocket = pockets.nth(Math.max(0, (await pockets.count()) - 1));
+    if (await pocket.count()) {
+      await pocket.click({ timeout: 2000 }).catch(() => {});
+      await ctx.sleep(900);
+      await snap(ctx, `11b-warp-map-picked-${tag}`);
+      await click('[data-testid="warp-map-go"]');
+    } else ctx.log('  ⚠ [fc] no warp destinations listed');
+  }
   await clock.at(7000);
   await snap(ctx, `12-warp-spooling-${tag}`);
   await clock.at(durationMs - 2500);
