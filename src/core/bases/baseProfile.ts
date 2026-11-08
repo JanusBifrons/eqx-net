@@ -21,6 +21,7 @@
 import { getSector, isEntrySector, type SectorFeature } from '../galaxy/galaxy.js';
 import { regionHeart } from '../galaxy/control.js';
 import type { FactionId } from '../../shared-types/factions.js';
+import type { StructureKindId } from '../../shared-types/structureKinds.js';
 
 export const BASE_TIERS = ['outpost', 'settlement', 'stronghold', 'citadel'] as const;
 export type BaseTier = (typeof BASE_TIERS)[number];
@@ -77,6 +78,10 @@ export interface BaseProfile {
   /** Highest structure level the generator may upgrade to. */
   levelCap: number;
   fenced: boolean;
+  /** Coastal defences — guns bought FIRST, ahead of the tier's defence mix
+   *  (a region heart's garrison: the 80 cm siege gun and the 40.6 cm super
+   *  battery; `galaxyBases.addMilitaryBase`). Absent ⇒ none. */
+  superGuns?: readonly StructureKindId[];
 }
 
 /** Wealth range per tier (minerals-equivalent spend). */

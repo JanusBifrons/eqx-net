@@ -258,6 +258,10 @@ export interface StructureRenderState {
   /** Phase 5 — drone entityId a Turret is aiming at (draws the aim line), or
    *  undefined. */
   turretTargetId?: number;
+  /** Coastal defences — the server's turret angles for a defence structure
+   *  (arc-local radians, catalogue order), or undefined while they rest. The
+   *  drawn barrels ease toward these (the server is the only writer, #12). */
+  mountAngles?: number[];
   /** B2 — playerId a Turret is aiming at (an NPC turret engaging a hostile
    *  pilot), or undefined. Mutually exclusive with `turretTargetId`. */
   turretTargetPlayerId?: string;

@@ -32,7 +32,7 @@ import {
   structureLevelFactor,
   structureUpgradeCost, structureUpgradeGoods,
 } from '../../core/leveling/structureLevel.js';
-import { getWeapon, isWeaponId, type WeaponDef, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
+import { isWeaponId, type WeaponDef, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { MINING_BEAM_PLAYER_DPS, resolveMiningBeamEndpoint, type MiningBeamObstacle } from '../../core/combat/miningBeamHazard.js';
 import { Grid, type GridObstacle } from '../../core/structures/Grid.js';
 import { chargeStep, dischargeStep, drainPower } from '../../core/structures/batteryPower.js';
@@ -46,15 +46,21 @@ import {
   CONNECTION_THROUGHPUT,
   MINING_BEAM_CADENCE_MS,
   TRANSFER_PULSE_MS,
+  TURRET_TICK_MS,
 } from '../../core/structures/structureGridConstants.js';
 import { autoConnectStructure, buildGridNodes } from './structureGridView.js';
-import { structureTurretMuzzle } from '../../core/combat/muzzle.js';
+import { structureMountMuzzle, structureNavalTurret, navalBarrelOffset } from '../../core/combat/muzzle.js';
+import type { WeaponMount } from '../../shared-types/shipKinds.js';
+import type { StructureKind } from '../../shared-types/structureKinds.js';
+import { StructureMountTicker, type TurretTargetView } from './StructureMountTicker.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
 /** Cap on reconnect attempts per pulse so a sector full of permanently-stranded
  *  structures (e.g. collinear-blocked leaves) can't make the 1 Hz pulse rescan
  *  the whole registry every beat. Bounded work; the next pulse retries the rest. */
 const MAX_RECONNECT_ATTEMPTS_PER_PULSE = 8;
+/** Turret ticks between sweeps of fire-control state for removed structures. */
+const PRUNE_EVERY_TICKS = 50;
 
 /** Shared empty obstacle list for the mining-beam surface clip (the building-block
  *  leg is deferred — see `resolveMiningClip`). Module const ⇒ no per-pulse alloc. */
@@ -127,6 +133,12 @@ export interface StructureGridHooks {
     range: number,
     owner: string,
   ): { id: string; entityId: number; x: number; y: number; playerId?: string } | null;
+  /** Coastal defences — EVERY target hostile to `owner` within `range` of
+   *  (x, y), written into the pooled `out` with its velocity and target class;
+   *  returns how many. Each turret then picks by its own calibre's priority
+   *  (`StructureMountTicker`). Absent ⇒ the nearest from `findNearestDrone`,
+   *  standing still, as a small craft (unit harnesses). */
+  turretTargets?(x: number, y: number, range: number, owner: string, out: TurretTargetView[]): number;
   /** Phase 5 — apply turret damage to a target through the standard path. */
   applyDamage?(targetId: string, shooterId: string, damage: number): void;
   /** A fence blocks every shot, its owner's turret beams included (user
@@ -187,7 +199,27 @@ export class StructureGridSubsystem {
    *  `powerSummaryFor`, so the gates + the snapshot slice agree. */
   private readonly batteryRescued = new Set<string>();
 
-  constructor(private readonly hooks: StructureGridHooks) {}
+  /** Coastal defences — per-mount fire control for every defence structure. */
+  private readonly mounts: StructureMountTicker;
+  /** Quad AA: the next barrel to fire, per structure. */
+  private readonly aaBarrel = new Map<string, number>();
+  private turretTicks = 0;
+  /** Fallback candidate for rooms without `turretTargets` (unit harnesses). */
+  private readonly nearestView: TurretTargetView = { id: '', entityId: -1, x: 0, y: 0, vx: 0, vy: 0, cls: 'small' };
+
+  constructor(private readonly hooks: StructureGridHooks) {
+    this.mounts = new StructureMountTicker({
+      targets: (x, y, range, owner, out) => this.turretTargets(x, y, range, owner, out),
+      fire: (rec, kind, mountIdx, mount, def, ndx, ndy, target, nowMs) =>
+        this.fireMount(rec, kind, mountIdx, mount, def, ndx, ndy, target, nowMs),
+    });
+  }
+
+  /** A defence structure's slewed mount angles (arc-local, catalogue order),
+   *  for the snapshot. Undefined before its first turret tick. */
+  mountAnglesOf(id: string): Float32Array | undefined {
+    return this.mounts.anglesOf(id);
+  }
 
   /** Effective power for a structure, read by the turret/miner gates AND the
    *  snapshot slice. `netPower` is the raw generation balance (may be negative
@@ -203,97 +235,137 @@ export class StructureGridSubsystem {
 
   /**
    * Phase 5 — aim + fire turrets. Called on the faster turret tick (NOT the
-   * 1 Hz pulse) so turrets engage drones responsively. Each built + powered
-   * turret targets the nearest drone in `weaponRange`, aims at it, and fires
-   * (damage + beam) when its per-kind `fireRateMs` cooldown has elapsed.
-   * Reads the live grid built by the most recent `pulse()` rebuild.
+   * 1 Hz pulse) so turrets engage responsively. Reads the live grid built by
+   * the most recent `pulse()` rebuild.
+   *
+   * Coastal defences (plan coastal-defences): every built + powered defence
+   * structure runs the capital-ship fire control, mount by mount
+   * (`StructureMountTicker`): its own target by calibre priority, arcs,
+   * tracking, lead, a turning barrel, fire only when on target. The shot is
+   * dispatched by the bound weapon's MODE (`fireMount`): hitscan = the
+   * continuous beam; projectile = shells / bolts, one per barrel; missile = a
+   * homing missile.
    */
   tickTurrets(nowMs: number): void {
-    if (!this.hooks.findNearestDrone || !this.hooks.applyDamage) return;
-    // WS-8 (R2.15) — generalised from the hard-coded 'turret' kind to ANY defence
-    // turret, dispatched by its bound weapon's MODE: hitscan = the continuous
-    // beam (existing); projectile = a dodgeable bolt (Bolt Turret); missile = a
-    // homing missile (Missile Turret). `TURRET_TICK_MS` stays the targeting
-    // cadence; the per-mode cooldown gates the actual shot.
+    if ((!this.hooks.findNearestDrone && !this.hooks.turretTargets) || !this.hooks.applyDamage) return;
+    const dt = this.mounts.beginTick(nowMs, TURRET_TICK_MS / 1000);
     for (const rec of this.hooks.registry.all()) {
       if (!rec.isConstructed) continue;
       const kind = getStructureKind(rec.kind);
-      const mountWeaponId = kind.mounts?.[0]?.weaponId;
+      const mounts = kind.mounts;
       // A DEFENCE TURRET = a structure with a `weaponRange` AND a weaponised
-      // mount. Data-driven (Open/Closed): auto-includes turret/laser_bolt_turret/
-      // missile_turret and EXCLUDES the Miner (it has `miningRange` + a 'laser'
-      // DRILL, driven by tickMiners — NOT a `weaponRange`).
-      if (kind.weaponRange == null || !isWeaponId(mountWeaponId)) continue;
+      // mount. Data-driven (Open/Closed): includes every turret and coastal gun
+      // and EXCLUDES the Miner (it has `miningRange` + a 'laser' DRILL, driven
+      // by tickMiners — NOT a `weaponRange`).
+      if (kind.weaponRange == null || mounts === undefined || mounts.length === 0 || !isWeaponId(mounts[0]!.weaponId)) continue;
       if (!this.powerSummaryFor(rec.id).powered) {
         rec.turretTargetEntityId = undefined;
         rec.turretTargetPlayer = undefined;
+        this.mounts.idle(rec);
         this.setActive(rec, false);
         continue;
       }
-      // Phase 4 WS-B4 — a leveled turret targets FARTHER + hits HARDER. The
-      // single scalar factor (alloc-free) scales the kind's catalogue range +
-      // damage; level 1 is the identity (byte-identical to pre-WS-B4).
-      const lvlMul = structureLevelFactor(rec.level);
-      const range = kind.weaponRange * lvlMul;
-      const damage = (kind.weaponDamage ?? 0) * lvlMul;
-      const target = this.hooks.findNearestDrone(rec.x, rec.y, range, rec.owner);
+      // Phase 4 WS-B4 — a leveled turret targets FARTHER + hits HARDER (one
+      // scalar; level 1 is the identity).
+      const target = this.mounts.tick(rec, kind, mounts, nowMs, dt, structureLevelFactor(rec.level));
       // B2 — a player target has no swarm entity id; it rides as a player id.
       rec.turretTargetPlayer = target?.playerId;
       rec.turretTargetEntityId = target && target.playerId === undefined ? target.entityId : undefined;
       this.setActive(rec, target !== null);
-      if (!target) continue;
-      const def = getWeapon(mountWeaponId);
-      if (def.mode === 'hitscan') {
-        // Continuous beam: a steady stream of small hits the client renders as
-        // one beam (Issue 5). DPS-budget DoT on the beam cadence.
-        const { cooldownMs, perHitDamage } = resolveTurretBeam(
-          damage,
-          kind.fireRateMs ?? 600,
-          def.cooldownTicks,
-        );
-        if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cooldownMs) continue;
-        rec.lastTurretFireMs = nowMs;
-        // A shield wall in the way (its owner's own fence included) takes the
-        // hit and the beam ends there.
-        const bdx = target.x - rec.x;
-        const bdy = target.y - rec.y;
-        const blen = Math.hypot(bdx, bdy);
-        const wallT = blen > 1e-6 && this.hooks.blockBeamAtWall
-          ? this.hooks.blockBeamAtWall(rec.x, rec.y, bdx / blen, bdy / blen, blen, perHitDamage)
-          : null;
-        // Drawn from the barrel tip (the shared muzzle, #15); the hit is unchanged.
-        const tip = blen > 1e-6 ? Math.min(blen, structureTurretMuzzle(rec.kind, def.id)) / blen : 0;
-        const fromX = rec.x + bdx * tip, fromY = rec.y + bdy * tip;
-        if (wallT !== null) {
-          this.hooks.broadcastBeam?.(rec.id, fromX, fromY, rec.x + (bdx / blen) * wallT, rec.y + (bdy / blen) * wallT, '');
-          continue;
-        }
-        this.hooks.applyDamage!(target.id, rec.id, perHitDamage);
-        this.hooks.broadcastBeam?.(rec.id, fromX, fromY, target.x, target.y, target.id);
-      } else if (def.mode === 'projectile') {
-        // SHOT model: one dodgeable bolt per the KIND's `fireRateMs` (NOT the
-        // weapon's rapid player cooldown — at 10 ticks that would be a firehose).
-        // Damage lands on impact via the projectile sim; the client renders the
-        // bolt off the `projectiles[]` slice (pose-authoritative).
-        const cadence = kind.fireRateMs ?? 600;
-        if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cadence) continue;
-        // P2d — physical ordnance spends munitions (lasers never reach here).
-        if (!this.spendAmmo(rec)) continue;
-        rec.lastTurretFireMs = nowMs;
-        this.fireTurretShot(rec, damage, def, target.x, target.y);
-      } else if (def.mode === 'missile') {
-        // SHOT model: one homing missile per the kind's `fireRateMs` (a slow
-        // salvo). The missile homes via MissileSimulation — restricted to DRONES
-        // for a pstruct- owner (SectorRoom.isMissileTargetHostile) — and renders
-        // off the `missiles[]` slice. Its splash CAN hit the owner's own base
-        // (realistic, by user choice — no friendly-structure skip).
-        const cadence = kind.fireRateMs ?? 1500;
-        if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cadence) continue;
-        // P2d — physical ordnance spends munitions (lasers never reach here).
-        if (!this.spendAmmo(rec)) continue;
-        rec.lastTurretFireMs = nowMs;
-        this.fireTurretMissile(rec, def, target.x, target.y);
+    }
+    // Forget fire-control state of structures that are gone (every ~5 s).
+    if (++this.turretTicks % PRUNE_EVERY_TICKS === 0) {
+      const reg = this.hooks.registry;
+      this.mounts.prune((id) => reg.get(id) !== undefined);
+      for (const id of this.aaBarrel.keys()) if (reg.get(id) === undefined) this.aaBarrel.delete(id);
+    }
+  }
+
+  /** Every hostile in range (the room's hook), else the nearest one from
+   *  `findNearestDrone`, standing still, as a small craft. */
+  private turretTargets(x: number, y: number, range: number, owner: string, out: TurretTargetView[]): number {
+    if (this.hooks.turretTargets) return this.hooks.turretTargets(x, y, range, owner, out);
+    const t = this.hooks.findNearestDrone?.(x, y, range, owner) ?? null;
+    if (t === null) return 0;
+    const v = this.nearestView;
+    v.id = t.id; v.entityId = t.entityId; v.playerId = t.playerId; v.x = t.x; v.y = t.y;
+    out[0] = v;
+    return 1;
+  }
+
+  /**
+   * Fire one mount along its barrel (unit ndx, ndy). Damage scales with the
+   * structure's level. A naval mount fires a salvo, one shell per barrel from
+   * each drawn barrel tip; quad AA fires its barrels in turn. A shield wall
+   * between the gun and its muzzle takes the shot (a fence blocks its owner's
+   * own fire, user ruling 2026-11-02). False when it couldn't fire (no
+   * munitions), so the mount keeps its reload.
+   */
+  private fireMount(
+    rec: StructureRecord, kind: StructureKind, _mountIdx: number, mount: WeaponMount, def: WeaponDef,
+    ndx: number, ndy: number, target: TurretTargetView, nowMs: number,
+  ): boolean {
+    const lvlMul = structureLevelFactor(rec.level);
+    const damage = (kind.weaponDamage ?? def.damage) * lvlMul;
+    const muzzle = structureMountMuzzle(rec.kind, mount);
+    if (def.mode === 'hitscan') {
+      // Continuous beam: a steady stream of small hits the client renders as
+      // one beam (Issue 5). DPS-budget DoT on the beam cadence; the barrel is
+      // on target, so the hit lands on it.
+      const { perHitDamage } = resolveTurretBeam(damage, kind.fireRateMs ?? 600, def.cooldownTicks);
+      rec.lastTurretFireMs = nowMs;
+      const bdx = target.x - rec.x;
+      const bdy = target.y - rec.y;
+      const blen = Math.hypot(bdx, bdy);
+      // A shield wall in the way (its owner's own fence included) takes the
+      // hit and the beam ends there.
+      const wallT = blen > 1e-6 && this.hooks.blockBeamAtWall
+        ? this.hooks.blockBeamAtWall(rec.x, rec.y, bdx / blen, bdy / blen, blen, perHitDamage)
+        : null;
+      // Drawn from the barrel tip (the shared muzzle, #15).
+      const tip = blen > 1e-6 ? Math.min(blen, muzzle) / blen : 0;
+      const fromX = rec.x + bdx * tip, fromY = rec.y + bdy * tip;
+      if (wallT !== null) {
+        this.hooks.broadcastBeam?.(rec.id, fromX, fromY, rec.x + (bdx / blen) * wallT, rec.y + (bdy / blen) * wallT, '');
+        return true;
       }
+      this.hooks.applyDamage!(target.id, rec.id, perHitDamage);
+      this.hooks.broadcastBeam?.(rec.id, fromX, fromY, target.x, target.y, target.id);
+      return true;
+    }
+    // P2d — physical ordnance spends munitions (one per salvo).
+    if (!this.spendAmmo(rec)) return false;
+    rec.lastTurretFireMs = nowMs;
+    if (this.hooks.blockBeamAtWall?.(rec.x, rec.y, ndx, ndy, muzzle, damage) != null) return true;
+    if (def.mode === 'projectile') this.fireShells(rec, mount, damage, def, ndx, ndy, muzzle);
+    else if (def.mode === 'missile') this.hooks.spawnMissile?.(rec.id, rec.x + ndx * muzzle, rec.y + ndy * muzzle, ndx, ndy, def);
+    return true;
+  }
+
+  /** Spawn a mount's shells: one per barrel of a naval gun (from each drawn
+   *  tip, shared offsets #15), the next barrel of a quad AA, or a single bolt.
+   *  A static structure has no velocity to inherit. Alloc-free. */
+  private fireShells(
+    rec: StructureRecord, mount: WeaponMount, damage: number, def: WeaponDef, ndx: number, ndy: number, muzzle: number,
+  ): void {
+    if (!this.hooks.spawnProjectile || def.mode !== 'projectile') return;
+    const ox = rec.x + ndx * muzzle, oy = rec.y + ndy * muzzle;
+    const naval = structureNavalTurret(mount);
+    const rightX = ndy, rightY = -ndx;
+    if (naval === null || naval.barrels <= 1) {
+      this.hooks.spawnProjectile(rec.id, ox, oy, ndx * def.speed, ndy * def.speed, damage, def.radius, def.maxTicks, def.id);
+      return;
+    }
+    if (mount.size === 'AA') {
+      const k = (this.aaBarrel.get(rec.id) ?? 0) % naval.barrels;
+      this.aaBarrel.set(rec.id, k + 1);
+      const off = navalBarrelOffset(naval, k);
+      this.hooks.spawnProjectile(rec.id, ox + rightX * off, oy + rightY * off, ndx * def.speed, ndy * def.speed, damage, def.radius, def.maxTicks, def.id);
+      return;
+    }
+    for (let k = 0; k < naval.barrels; k++) {
+      const off = navalBarrelOffset(naval, k);
+      this.hooks.spawnProjectile(rec.id, ox + rightX * off, oy + rightY * off, ndx * def.speed, ndy * def.speed, damage, def.radius, def.maxTicks, def.id);
     }
   }
 
@@ -316,63 +388,6 @@ export class StructureGridSubsystem {
     rec.ammo = (rec.ammo ?? 0) - 1;
     rec.noAmmo = false;
     return true;
-  }
-
-  /** WS-8 — spawn ONE bolt from a projectile turret toward (tx, ty), offset
-   *  ahead of the barrel so it clears the firing structure's own collider (the
-   *  projectile pipeline also skips the firing owner). Alloc-free (scalars). */
-  private fireTurretShot(
-    rec: StructureRecord,
-    weaponDamage: number | undefined,
-    def: WeaponDef,
-    tx: number,
-    ty: number,
-  ): void {
-    if (!this.hooks.spawnProjectile || def.mode !== 'projectile') return;
-    const dx = tx - rec.x;
-    const dy = ty - rec.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    const ndx = dx / dist;
-    const ndy = dy / dist;
-    // Emerge from the barrel tip — the shared muzzle (core/combat/muzzle.ts),
-    // inside the footprint: the projectile pipeline skips the firing owner. A
-    // static structure has no velocity to inherit (pure aim × speed).
-    const muzzle = structureTurretMuzzle(rec.kind, def.id);
-    // A wall between the turret and its muzzle takes the bolt (a fence blocks
-    // its owner's own fire, user ruling 2026-11-02).
-    if (this.hooks.blockBeamAtWall?.(rec.x, rec.y, ndx, ndy, muzzle, weaponDamage ?? def.damage) != null) return;
-    this.hooks.spawnProjectile(
-      rec.id,
-      rec.x + ndx * muzzle,
-      rec.y + ndy * muzzle,
-      ndx * def.speed,
-      ndy * def.speed,
-      weaponDamage ?? def.damage,
-      def.radius,
-      def.maxTicks,
-      def.id,
-    );
-  }
-
-  /** WS-8 — launch ONE homing missile from a missile turret toward (tx, ty),
-   *  offset ahead of the launcher. `dirX`/`dirY` are the UNIT aim direction (the
-   *  missile sim owns speed). Alloc-free (scalars). */
-  private fireTurretMissile(
-    rec: StructureRecord,
-    def: WeaponDef,
-    tx: number,
-    ty: number,
-  ): void {
-    if (!this.hooks.spawnMissile || def.mode !== 'missile') return;
-    const dx = tx - rec.x;
-    const dy = ty - rec.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    const ndx = dx / dist;
-    const ndy = dy / dist;
-    const muzzle = structureTurretMuzzle(rec.kind, def.id);
-    // A wall between the launcher and its muzzle takes the missile.
-    if (this.hooks.blockBeamAtWall?.(rec.x, rec.y, ndx, ndy, muzzle, def.damage) != null) return;
-    this.hooks.spawnMissile(rec.id, rec.x + ndx * muzzle, rec.y + ndy * muzzle, ndx, ndy, def);
   }
 
   /** One grid heartbeat. `nowMs` stamps connection flashes. */

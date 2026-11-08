@@ -31,7 +31,8 @@ import {
   type MountTargetView,
 } from '../../core/ai/WeaponMountController.js';
 import { mountTargetReach, mountWeaponReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
-import { canTrack, mountLineClear, mountPriority, targetClass } from '../../core/combat/mountTargeting.js';
+import { mountLineClear, mountPriority, targetClass } from '../../core/combat/mountTargeting.js';
+import { leadArcBearing, mountCanEngage, onTarget } from '../../core/combat/mountFireControl.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { droneMaxHealthOf } from './droneKindHelpers.js';
 import {
@@ -127,11 +128,10 @@ export interface WeaponMountTickerDeps {
 }
 
 const DT_SEC = 1 / 60;
-/** A capital turret fires once its barrel is within this of the lead bearing. */
-/** A capital turret fires once its barrel is within this of the lead bearing
- *  (rad) AND would pass within TURRET_FIRE_MISS (world units) of the aim point. */
-export const TURRET_FIRE_TOLERANCE = 0.05;
-export const TURRET_FIRE_MISS = 60;
+/** The on-target rules live with the shared fire control (plan
+ *  coastal-defences: capitals and defence structures use one set);
+ *  re-exported for existing callers. */
+export { TURRET_FIRE_TOLERANCE, TURRET_FIRE_MISS } from '../../core/combat/mountFireControl.js';
 /** A capital turret searches for a new target this often (ticks), staggered. */
 export const RETARGET_TICKS = 30;
 /** ...and keeps aiming at a target it briefly can't engage for this long. */
@@ -451,12 +451,9 @@ export class WeaponMountTicker {
   ): boolean {
     if (!isHostile(t.id)) return false;
     const dx = t.x - mx, dy = t.y - my;
-    if (dx * dx + dy * dy > reach * reach) return false;
-    const shipBearing = wrapPi(Math.atan2(-dx, dy) - ang);
-    const local = wrapPi(shipBearing - mount.baseAngle);
-    if (local < mount.arcMin || local > mount.arcMax) return false;
-    if (!mountLineClear(kind, mount, shipBearing)) return false;
-    return canTrack(mount.rotationSpeed, dx, dy, t.vx - selfVx, t.vy - selfVy);
+    // Reach, arc and tracking: the shared fire control (structures use it too).
+    if (!mountCanEngage(mount, ang, dx, dy, reach, t.vx - selfVx, t.vy - selfVy)) return false;
+    return mountLineClear(kind, mount, wrapPi(Math.atan2(-dx, dy) - ang));
   }
 
   /**
@@ -528,19 +525,15 @@ export class WeaponMountTicker {
       // First-order intercept with this gun's shell speed (shells inherit the
       // hull's velocity, so lead on the RELATIVE velocity).
       const w = getWeapon(mount.weaponId);
-      let dx = t.x - mx, dy = t.y - my;
+      const dx = t.x - mx, dy = t.y - my;
       const dist = Math.hypot(dx, dy);
-      const lead = w.mode === 'hitscan' ? 0 : dist / w.speed;
-      dx += (t.vx - selfVx) * lead;
-      dy += (t.vy - selfVy) * lead;
-      const want = wrapPi(Math.atan2(-dx, dy) - ang - mount.baseAngle);
+      const want = leadArcBearing(dx, dy, t.vx - selfVx, t.vy - selfVy, w.mode === 'hitscan' ? 0 : w.speed, ang, mount.baseAngle);
       angles[i] = rotateMountToward(angles[i]!, want, mount, DT_SEC);
       if (!engageable) continue; // held through a brief loss: aim, don't fire
       if (tick - reload[i]! < w.cooldownTicks) continue;
       // On target = the shot would pass within TURRET_FIRE_MISS of the aim
       // point (an angle alone is a 250 u miss at 5,000 u).
-      const tol = Math.min(TURRET_FIRE_TOLERANCE, Math.atan2(TURRET_FIRE_MISS, Math.max(1, dist)));
-      if (Math.abs(wrapPi(want - angles[i]!)) > tol) continue;
+      if (!onTarget(want, angles[i]!, dist)) continue;
       if (!mountLineClear(kind, mount, mount.baseAngle + angles[i]!)) continue;
       reload[i] = tick;
       d.fireDroneMount!(droneId, i);

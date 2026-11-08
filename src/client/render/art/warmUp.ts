@@ -23,6 +23,8 @@ export const WARM_STRUCTURES: readonly string[] = [
   'capital', 'connector', 'solar', 'turret', 'miner', 'battery', 'shield_pylon',
   'laser_bolt_turret', 'missile_turret', 'autocannon_turret', 'cargo_bay', 'shield_gate',
   'reactor', 'battery_bank', 'storage_vault', 'habitat_module', 'tower_module', 'mine_layer',
+  // Coastal defences: the common batteries every base now carries.
+  'aa_quad_40mm', 'dp_mount_5in',
 ];
 
 /** Ships bigger than this (world units of outline half-extent) are test or

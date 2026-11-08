@@ -121,6 +121,35 @@ describe('NearestPointGrid.nearestWhere (B2: NPC turrets keep hostile targets on
   });
 });
 
+describe('NearestPointGrid.within (coastal defences: every target a turret can reach)', () => {
+  it('returns exactly the points a linear scan finds in range, edge inclusive', () => {
+    const r = rng(21);
+    const g = new NearestPointGrid(512, 10_000, 4);
+    const xs: number[] = [], ys: number[] = [];
+    for (let i = 0; i < 800; i++) {
+      const x = (r() - 0.5) * 24_000, y = (r() - 0.5) * 24_000;
+      xs.push(x); ys.push(y); g.add(x, y);
+    }
+    g.add(0, 300); xs.push(0); ys.push(300); // exactly on the edge of a 300 query at the origin
+    g.build();
+    const out: number[] = [];
+    for (let q = 0; q < 2000; q++) {
+      const x = q === 0 ? 0 : (r() - 0.5) * 22_000, y = q === 0 ? 0 : (r() - 0.5) * 22_000;
+      const range = q === 0 ? 300 : 50 + r() * 4000;
+      const n = g.within(x, y, range, out);
+      const got = out.slice(0, n).sort((a, b) => a - b);
+      const want: number[] = [];
+      for (let i = 0; i < xs.length; i++) if ((xs[i]! - x) ** 2 + (ys[i]! - y) ** 2 <= range * range) want.push(i);
+      expect(got).toEqual(want);
+    }
+  });
+
+  it('is empty on an empty grid', () => {
+    const g = new NearestPointGrid(512, 1000);
+    expect(g.within(0, 0, 500, [])).toBe(0);
+  });
+});
+
 describe('NearestPointGrid at solar-system extents (Phase 4)', () => {
   /** Every room builds two of these for ±400,000 u (DRONE_MAX_BOUNDS): a dense
    *  grid over that is 2.4 M cells (~10 MB each, 410 MB for 21 sectors, and a

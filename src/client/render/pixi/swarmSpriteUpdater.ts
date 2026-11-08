@@ -126,6 +126,9 @@ export interface SwarmSpriteCtx {
  *  so a prior structure's angle can never contaminate the next (invariant
  *  #14 — no per-frame allocation; reused in place). */
 const _structureMountAngles: number[] = [];
+/** A defence structure's drawn barrel eases toward the server's angle this
+ *  much faster than its traverse, so it catches up within a turret tick. */
+const SERVER_AIM_CATCH_UP = 1.5;
 
 /** Shared frozen empty mount-list. `?? EMPTY_MOUNTS` is the fallback for a
  *  kind with no mounts (capital / connector / solar structures, mountless
@@ -358,6 +361,14 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
           for (let i = 0; i < structMounts.length; i++) slew.push(0);
           ctx.structureMountAngles.set(spriteKey, slew);
         }
+        // Coastal defences — a DEFENCE structure's guns are aimed by the
+        // server's fire control (per-mount targets, lead, traverse) and their
+        // angles ride the snapshot (`row.mountAngles`; the server is the only
+        // writer, #12): ease toward those, a little faster than the traverse so
+        // the drawn barrel never lags a 100 ms turret tick. Only the Miner's
+        // drill still aims from its target here.
+        const serverAngles = sk.weaponRange !== undefined ? st?.mountAngles : undefined;
+        const defence = sk.weaponRange !== undefined;
         for (let i = 0; i < structMounts.length; i++) {
           const mount = structMounts[i]!;
           // Desired bearing in the mount's arc-local frame (canonical aim
@@ -365,6 +376,13 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
           // or 0 (base) with no target. `rotateMountToward` clamps to the arc +
           // limits per-frame travel; `applyMountAngles` draws -(baseAngle+arc).
           let desiredArc = 0;
+          if (defence) {
+            desiredArc = serverAngles !== undefined && i < serverAngles.length ? serverAngles[i]! : 0;
+            const nextArc = rotateMountToward(slew[i] ?? 0, desiredArc, mount, slewDtSec * SERVER_AIM_CATCH_UP);
+            slew[i] = nextArc;
+            _structureMountAngles.push(nextArc);
+            continue;
+          }
           if (targetEntry) {
             // Mount pivot in world space (structure mounts sit at the body
             // centre, localX=localY=0, but compute generally for correctness).

@@ -56,6 +56,13 @@ describe('structureKinds catalogue', () => {
       'teleporter_large',
       'alien_gate', // v4 A — appended
       'pocket_pad', // wrap-up W1b transit pads — appended
+      'aa_quad_40mm', // coastal defences — appended
+      'dp_mount_5in',
+      'coastal_casemate_8in',
+      'coastal_turret_11in',
+      'coastal_barbette_16in',
+      'coastal_lindemann',
+      'siege_gun_80cm',
     ]);
   });
 

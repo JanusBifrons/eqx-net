@@ -360,4 +360,11 @@ export interface SnapshotMessage {
    *  none) for structures that currently have a target. Absent when none. See
    *  src/shared-types/structureStateWire.ts. */
   structureTargets?: number[];
+  /** Coastal defences (plan coastal-defences) — the server's slewed turret
+   *  angles for defence structures that are off their rest bearing, as flat
+   *  runs `[structureEntityId, mountCount, q0, q1, …]` with each angle in
+   *  milliradians (arc-local, catalogue order). The server is the only writer
+   *  (#12); the client eases its drawn barrels toward these. Absent when every
+   *  turret rests. See `encodeStructureMountAngles` in structureStateWire.ts. */
+  structureMountAngles?: number[];
 }

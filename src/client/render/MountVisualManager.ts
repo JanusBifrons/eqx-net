@@ -606,7 +606,8 @@ export class MountVisualManager {
       // long side near 160 px (plenty at play zoom), or a capital fleet blows
       // the texture budget (capital R&D, measured 365 MB at the fighter ppu).
       type: 'turret', id: place.family, paint, len: Math.max(place.len, 0.1), wid: place.wid, cap: place.cap,
-      ppu: structure ? 2.5 : place.naval ? Math.min(6, 160 / (place.naval.houseL / 2 + place.len)) : 6,
+      // Structure naval guns (coastal defences) follow the naval rule too.
+      ppu: place.naval ? Math.min(6, 160 / (place.naval.houseL / 2 + place.len)) : structure ? 2.5 : 6,
       ...(place.naval ? { naval: place.naval.barrels > 1 && mount.size === 'AA' ? { ...place.naval, part: 'house' as const } : place.naval } : {}),
     });
     let aa: AaBarrels | null = null;

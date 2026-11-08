@@ -39,6 +39,39 @@ export const STRUCTURE_FLAG_BREACH = 128;
 export const STRUCTURE_ETA_NONE = -1;
 export const STRUCTURE_ETA_STALLED = -2;
 
+/** Coastal defences — `SnapshotMessage.structureMountAngles` carries each
+ *  angle in milliradians (±π fits easily; 1 mrad is 5 u at 5,000 u). */
+export const MOUNT_ANGLE_QUANTUM = 1000;
+
+/**
+ * Append one structure's mount angles to the flat `structureMountAngles` run
+ * `[entityId, count, q0, …]` at `at`; returns the new length. A structure
+ * whose every mount rests (all 0 after quantising) is skipped, so a quiet base
+ * costs nothing. Server side; writes into a reused array (#14).
+ */
+export function encodeStructureMountAngles(out: number[], at: number, entityId: number, angles: ArrayLike<number>): number {
+  let any = false;
+  for (let i = 0; i < angles.length; i++) if (Math.round(angles[i]! * MOUNT_ANGLE_QUANTUM) !== 0) { any = true; break; }
+  if (!any) return at;
+  out[at++] = entityId;
+  out[at++] = angles.length;
+  for (let i = 0; i < angles.length; i++) out[at++] = Math.round(angles[i]! * MOUNT_ANGLE_QUANTUM);
+  return at;
+}
+
+/** Walk a `structureMountAngles` run: `visit(entityId, flat, start, count)`
+ *  for each structure, its angles being `flat[start + k] / MOUNT_ANGLE_QUANTUM`. */
+export function forEachStructureMountAngles(
+  flat: readonly number[], visit: (entityId: number, flat: readonly number[], start: number, count: number) => void,
+): void {
+  let i = 0;
+  while (i + 1 < flat.length) {
+    const count = flat[i + 1]!;
+    visit(flat[i]!, flat, i + 2, count);
+    i += 2 + count;
+  }
+}
+
 /** `SnapshotMessage.structureTargets` is flat triples
  *  `[structureEntityId, turretTargetEntityId, miningTargetEntityId]`, with
  *  `-1` for "no target". */

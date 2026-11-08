@@ -41,6 +41,13 @@ import HomeWorkIcon from '@mui/icons-material/HomeWork';
 import BlurCircularIcon from '@mui/icons-material/BlurCircular';
 import TripOriginIcon from '@mui/icons-material/TripOrigin';
 import AllOutIcon from '@mui/icons-material/AllOut';
+import FlareIcon from '@mui/icons-material/Flare';
+import TrackChangesIcon from '@mui/icons-material/TrackChanges';
+import FortIcon from '@mui/icons-material/Fort';
+import AdjustIcon from '@mui/icons-material/Adjust';
+import AnchorIcon from '@mui/icons-material/Anchor';
+import CastleIcon from '@mui/icons-material/Castle';
+import TrainIcon from '@mui/icons-material/Train';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
 import { type StructureKindId } from '@shared-types/structureKinds';
@@ -423,6 +430,14 @@ export const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
   teleporter_large: <AllOutIcon />,
   alien_gate: <AllOutIcon />, // never in a build menu (unbuildable)
   pocket_pad: <AllOutIcon />, // never in a build menu (unbuildable)
+  // Coastal defences — the gun batteries.
+  aa_quad_40mm: <FlareIcon />,
+  dp_mount_5in: <TrackChangesIcon />,
+  coastal_casemate_8in: <FortIcon />,
+  coastal_turret_11in: <AdjustIcon />,
+  coastal_barbette_16in: <AnchorIcon />,
+  coastal_lindemann: <CastleIcon />,
+  siege_gun_80cm: <TrainIcon />,
 };
 
 // ── Hoisted static sx / props (no per-render allocation) ───────────────────
