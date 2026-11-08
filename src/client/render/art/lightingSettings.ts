@@ -27,6 +27,8 @@ export interface LightingSettings {
   ambientBoost: number;
   /** A second, coloured light from the far side (no shadows). */
   fillLight: boolean;
+  /** How bright that fill is (1 = the "everything" look's). */
+  fillStrength: number;
   /** Dynamic lights per hull: explosions, weapons fire (0 = off). */
   pointLights: 0 | 4 | 8;
   /** Engines are lights too (their own stern, nearby hulls); needs pointLights. */
@@ -50,6 +52,7 @@ export const BAKED_LOOK: LightingSettings = {
   sunElevDeg: null,
   ambientBoost: 1,
   fillLight: false,
+  fillStrength: 1,
   pointLights: 0,
   engineLights: false,
   capitalShadows: false,
@@ -80,6 +83,20 @@ export const LOOK_REAL: LightingSettings = {
   engineLights: true,
   capitalShadows: true,
   capitalBounce: true,
+};
+
+/**
+ * "Night side" (2026-11-08, the middle ground between realistic and
+ * everything): no ambient, but a faint cool fill from the far side (a
+ * nebula / second star) so dark sides show their shape without the flat,
+ * washed-out look; structures and asteroids lit live.
+ */
+export const LOOK_NIGHT: LightingSettings = {
+  ...LOOK_REAL,
+  fillLight: true,
+  fillStrength: 0.35,
+  litStructures: true,
+  litAsteroids: true,
 };
 
 /** Everything on (the experiment's showcase look). */
@@ -115,16 +132,16 @@ function num(q: URLSearchParams, k: string, d: number): number {
 }
 
 /**
- * Settings from URL switches over a base (testing): `look=baked|f|real|all`, then
+ * Settings from URL switches over a base (testing): `look=baked|f|real|night|all`, then
  * per feature `selfshadow=0|16|48|128`, `shadowk=`, `shadowedge=`,
- * `shadowlen=`, `elev=`, `ambient=`, `fill=0|1`, `points=0|4|8`,
+ * `shadowlen=`, `elev=`, `ambient=`, `fill=0|1`, `fillk=` (fill strength), `points=0|4|8`,
  * `capshadow=0|1`, `capao=0|1`, `capbounce=0|1`, `litstruct=0|1`, `litrock=0|1`,
  * `engines=0|1` (engines as lights; turns on 4 point lights if none).
  */
 export function lightingFromSearch(search: string, base: LightingSettings = BAKED_LOOK): LightingSettings {
   const q = new URLSearchParams(search);
   const look = q.get('look');
-  const b = look === 'f' ? LOOK_F : look === 'all' ? ALL_ON : look === 'real' ? LOOK_REAL : look === 'baked' ? BAKED_LOOK : base;
+  const b = look === 'night' ? LOOK_NIGHT : look === 'f' ? LOOK_F : look === 'all' ? ALL_ON : look === 'real' ? LOOK_REAL : look === 'baked' ? BAKED_LOOK : base;
   const elev = q.get('elev');
   return {
     selfShadowSteps: nearest(STEPS, num(q, 'selfshadow', b.selfShadowSteps)),
@@ -136,6 +153,7 @@ export function lightingFromSearch(search: string, base: LightingSettings = BAKE
     sunElevDeg: elev !== null ? num(q, 'elev', 38) : b.sunElevDeg,
     ambientBoost: num(q, 'ambient', b.ambientBoost),
     fillLight: bool(q, 'fill', b.fillLight),
+    fillStrength: Math.max(0, num(q, 'fillk', b.fillStrength)),
     pointLights: nearest(POINTS, num(q, 'points', bool(q, 'engines', false) && !q.has('points') ? Math.max(4, b.pointLights) : b.pointLights)),
     engineLights: bool(q, 'engines', b.engineLights),
     capitalShadows: bool(q, 'capshadow', b.capitalShadows),

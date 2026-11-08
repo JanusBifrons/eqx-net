@@ -15,7 +15,12 @@
  *
  * Dev-only page: /__art-lab__/index.html?style=…&scene=…&zoom=…
  */
-import { Application, Container, Graphics, RenderTexture, Sprite, Texture, TilingSprite } from 'pixi.js';
+import { Application, CanvasSource, Container, Graphics, RenderTexture, Sprite, Texture, TilingSprite } from 'pixi.js';
+import { FxEngines } from '../render/art/fx/FxEngines.js';
+import { bakeFxImg, type FxId, type Img } from '../render/art/fx/fxTextures.js';
+import type { ArtService } from '../render/art/ArtService.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
+import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { buildShipGfxFromShape, buildStructureGfx, shapeForKind } from '../render/pixi/spriteBuilders.js';
 import { ArtCache, PIXEL_ROT_STEPS, SUN_STEPS, type PixelSettings, type ShipArt, type StructArt } from './assets.js';
 import { buildScene, SCENE_IDS, type Cam, type Pose, type Scene, type SceneId, type ShipE, type Shot } from './scenes.js';
@@ -146,6 +151,8 @@ interface ShipView {
   /** Pixel art per zoom band (index = band + BAND_OFFSET). */
   bandArt: Array<ShipArt | undefined>;
   phase: number;
+  /** FxEngines key (the game's exhaust: flames + ribbons). */
+  fxKey: string;
 }
 
 interface StructView {
@@ -173,7 +180,7 @@ interface BoomView {
 /** One weapon stream's sprites, all created up front. */
 interface ShotView {
   s: Shot;
-  core: Sprite; halo: Sprite; flare: Sprite; rim: Sprite;
+  core: Sprite; halo: Sprite; flare: Sprite; rim: Sprite; flash: Sprite;
   bolts: Sprite[]; sparks: Sprite[];
 }
 const SPARKS = 6;
@@ -191,6 +198,14 @@ function bandFor(zoom: number): { band: number; pd: number; px: number } {
   const px = pxFor(zoom);
   const band = Math.round(Math.log2(zoom / px) * 4);
   return { band, pd: Math.pow(2, band / 4), px };
+}
+
+/** An effects image as a texture (the lab bakes the game's fx images itself). */
+function imgTexture(i: Img): Texture {
+  const c = document.createElement('canvas');
+  c.width = i.w; c.height = i.h;
+  c.getContext('2d')!.putImageData(new ImageData(i.data as Uint8ClampedArray<ArrayBuffer>, i.w, i.h), 0, 0);
+  return new Texture({ source: new CanvasSource({ resource: c, scaleMode: 'linear' }) });
 }
 
 async function main(): Promise<void> {
@@ -227,6 +242,17 @@ async function main(): Promise<void> {
   const shipL = new Container(), glowL = new Container(), fxL = new Container();
   for (const l of [litL, trailL, glowL, fxL]) l.blendMode = 'add';
   world.addChild(structL, litL, trailL, shipL, glowL, fxL);
+  // The game's exhaust (flame + ribbon per nozzle, PR #288), not the lab's
+  // old dots, on the art styles. `?oldengines=1` restores the dots.
+  const fxEng = (STYLE === 'machined' || STYLE === 'lit') && qs.get('oldengines') !== '1'
+    ? new FxEngines({ fx: (id: FxId) => ({ state: 'ready', fx: { tex: imgTexture(bakeFxImg(id, undefined, undefined, 0)) } }) } as unknown as ArtService, () => 'high')
+    : null;
+  if (fxEng) {
+    world.addChildAt(fxEng.trailLayer, world.getChildIndex(shipL));
+    world.addChildAt(fxEng.flameLayer, world.getChildIndex(shipL));
+    world.addChildAt(fxEng.glowLayer, world.getChildIndex(shipL) + 1);
+  }
+  let lastFxT = -1;
 
   const pixel = STYLE === 'pixel';
   const stars = new TilingSprite({ texture: starTile(pixel), width: W, height: H });
@@ -310,7 +336,7 @@ async function main(): Promise<void> {
   const ships: ShipView[] = scene.ships.map((e, i) => {
     const v: ShipView = {
       e, pose: { x: 0, y: 0, rot: 0, thrust: 0 }, a: new Sprite(), b: new Sprite(), gfx: null,
-      trails: [], nozzles: [], navs: [], art: null, bandArt: [], phase: hash01(i, 5),
+      trails: [], nozzles: [], navs: [], art: null, bandArt: [], phase: hash01(i, 5), fxKey: `s${i}`,
     };
     v.a.anchor.set(0.5); v.b.anchor.set(0.5);
     if (STYLE === 'current') {
@@ -352,10 +378,10 @@ async function main(): Promise<void> {
   // ---- weapons
   const shotViews: ShotView[] = (scene.shots ?? []).map((sh) => {
     const mk = (tex: Texture, tint: number): Sprite => { const sp = new Sprite(tex); sp.anchor.set(0.5); sp.tint = tint; sp.alpha = 0; fxL.addChild(sp); return sp; };
-    const nBolts = sh.kind === 'bolt' ? Math.ceil(1.2 / (sh.period ?? 0.3)) + 1 : 0;
+    const nBolts = sh.kind === 'bolt' ? Math.ceil((sh.at || sh.muzzle ? 3 : 1.2) / (sh.period ?? 0.3)) + 1 : 0;
     const v: ShotView = {
       s: sh,
-      core: mk(STREAK, 0xffffff), halo: mk(STREAK, sh.color), flare: mk(GLOW, sh.color), rim: mk(RING, 0x7fd8ff),
+      core: mk(STREAK, 0xffffff), halo: mk(STREAK, sh.color), flare: mk(GLOW, sh.color), rim: mk(RING, 0x7fd8ff), flash: mk(GLOW, 0xfff0c8),
       bolts: [], sparks: [],
     };
     v.core.anchor.set(0, 0.5); v.halo.anchor.set(0, 0.5);
@@ -383,7 +409,7 @@ async function main(): Promise<void> {
     out.x = p.x + lx * c - ly * s;
     out.y = p.y + lx * s + ly * c;
   };
-  const pt = { x: 0, y: 0 }, lpt = { x: 0, y: 0 };
+  const pt = { x: 0, y: 0 }, lpt = { x: 0, y: 0 }, mpt = { x: 0, y: 0 };
 
   function update(t: number): void {
     curT = t;
@@ -422,6 +448,9 @@ async function main(): Promise<void> {
     nebula.position.set(-vw * 0.3 - cam.x * zoom * 0.02, -vh * 0.3 - cam.y * zoom * 0.02);
 
     const glowScale = 1 / 64; // GLOW texture px → world units
+    const dtFx = lastFxT < 0 || t <= lastFxT || t - lastFxT > 0.25 ? 1 / 30 : t - lastFxT;
+    lastFxT = t;
+    fxEng?.beginFrame();
 
     // Ships.
     for (const v of ships) {
@@ -449,6 +478,10 @@ async function main(): Promise<void> {
         v.a.scale.set(1 / art.density);
         v.a.position.set(p.x, p.y);
       }
+      if (fxEng) {
+        const k = getShipKind(v.e.id);
+        fxEng.draw(v.fxKey, art.nozzles, p.x, p.y, p.rot, p.thrust >= 0.3 ? 1 : -1, -1, k.maxSpeed, dtFx, t * 1000, shipTuning(k).exhaustTrailS);
+      }
       // Engines: a hot core at each nozzle, flickering deterministically.
       let ti = 0;
       for (let n = 0; n < art.nozzles.length; n++) {
@@ -458,13 +491,13 @@ async function main(): Promise<void> {
         const s = v.nozzles[n]!;
         s.position.set(pt.x, pt.y);
         s.scale.set(nz.r * 3.2 * glowScale * (0.6 + 0.6 * p.thrust) * fl);
-        s.alpha = 0.55 + 0.45 * p.thrust;
+        s.alpha = fxEng ? 0 : 0.55 + 0.45 * p.thrust;
         // GPU-lit hulls: the engine is a light (its own stern, nearby hulls).
         if (LIGHTING.engineLights && STYLE === 'lit') {
           local(p, nz.x, nz.y + engineLightAstern(nz.r), lpt); // in the plume, astern
           litScene.addLight(lpt.x, lpt.y, engineLightHeight(nz.r), 0xffa24a, engineLightIntensity(nz.r, p.thrust) * fl, engineLightReach(nz.r), v.lit ? v.lit.lightOwnerId : -1);
         }
-        if (v.e.trail) {
+        if (v.e.trail && !fxEng) {
           for (let k = 1; k <= TRAIL; k++) {
             v.e.pose(t - k * TRAIL_DT, scratch);
             local(scratch, nz.x, nz.y + nz.r, pt);
@@ -485,6 +518,7 @@ async function main(): Promise<void> {
         s.position.set(pt.x, pt.y); s.scale.set(5 * glowScale); s.alpha = blink;
       }
     }
+    fxEng?.endFrame();
 
     // Structure lamps: a slow, offset pulse.
     for (const v of structs) {
@@ -501,12 +535,16 @@ async function main(): Promise<void> {
     for (const v of shotViews) {
       const sh = v.s, a = ships[sh.from]!.pose, b = ships[sh.to]!.pose;
       const tr = ships[sh.to]!.art!;
-      const hitR = (Math.max(tr.w, tr.h) / tr.density) * 0.32; // ~hull radius
-      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+      const K = sh.size ?? 1;
+      const hitR = sh.at ? 0 : (Math.max(tr.w, tr.h) / tr.density) * 0.32; // ~hull radius
+      let ax = a.x, ay = a.y;
+      if (sh.muzzle) { local(a, sh.muzzle[0], sh.muzzle[1], mpt); ax = mpt.x; ay = mpt.y; }
+      const bx = sh.at ? sh.at[0] : b.x, by = sh.at ? sh.at[1] : b.y;
+      const dx = bx - ax, dy = by - ay, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
       // Muzzle a little ahead of the shooter; impact on the near side of the target.
-      const mx = a.x + ux * 10, my = a.y + uy * 10;
+      const mx = ax + ux * 10, my = ay + uy * 10;
       const stand = hitR * (sh.shield ? 1.25 : 0.7);
-      const ix = b.x - ux * stand, iy = b.y - uy * stand;
+      const ix = bx - ux * stand, iy = by - uy * stand;
       const len = Math.hypot(ix - mx, iy - my), ang = Math.atan2(iy - my, ix - mx);
       let hitI = 0;
       if (sh.kind === 'beam') {
@@ -530,19 +568,24 @@ async function main(): Promise<void> {
           if (age < 0 || age > flight) continue;
           const f = age / flight;
           bo.position.set(mx + (ix - mx) * f, my + (iy - my) * f);
-          bo.rotation = ang; bo.scale.set(26 / 64, 6 / 64); bo.alpha = 1;
+          bo.rotation = ang; bo.scale.set((26 * K) / 64, (6 * K) / 64); bo.alpha = 1;
         }
         // Hit pulse: the most recent arrival.
         const sinceHit = (((t - sh.t0 - flight) % per) + per) % per;
-        hitI = t - sh.t0 > flight && t - flight <= sh.t1 ? Math.exp(-sinceHit * 14) : 0;
+        hitI = t - sh.t0 > flight && t - flight <= sh.t1 ? Math.exp(-sinceHit * (K > 1 ? 6 : 14)) : 0;
+        // Muzzle flash: the most recent firing.
+        const sinceFire = (((t - sh.t0) % per) + per) % per;
+        const fI = sh.muzzle && t >= sh.t0 && t - sinceFire <= sh.t1 ? Math.exp(-sinceFire * 9) : 0;
+        v.flash.position.set(mx, my); v.flash.scale.set(30 * K * glowScale * (0.6 + 0.6 * fI)); v.flash.alpha = fI;
+        if (fI > 0.01) litScene.addLight(mx, my, 20 * K, 0xffd9a0, fI * 1.2 * K, 110 * K);
       }
       // Lights for GPU-lit hulls: the impact, and each bolt in flight.
-      if (hitI > 0.01) litScene.addLight(ix, iy, 6, sh.color, hitI * (sh.kind === 'beam' ? 2.2 : 1.6), sh.kind === 'beam' ? 120 : 90);
+      if (hitI > 0.01) litScene.addLight(ix, iy, 6 * K, sh.color, hitI * (sh.kind === 'beam' ? 2.2 : 1.6) * (K > 1 ? K * 0.6 : 1), (sh.kind === 'beam' ? 120 : 90) * K);
       if (sh.kind === 'beam' && hitI > 0.01) litScene.addLight((mx + ix) / 2, (my + iy) / 2, 6, sh.color, hitI * 0.8, len * 0.6 + 30);
-      for (const bo of v.bolts) if (bo.alpha > 0) litScene.addLight(bo.x, bo.y, 5, sh.color, 0.9, 55);
+      for (const bo of v.bolts) if (bo.alpha > 0) litScene.addLight(bo.x, bo.y, 5 * K, sh.color, 0.9 * (K > 1 ? K * 0.4 : 1), 55 * K);
       // Impact: a flare + sparks on the hull, or a rim flash on the shield.
       v.flare.position.set(ix, iy);
-      v.flare.scale.set((sh.kind === 'beam' ? 22 : 16) * glowScale * (0.7 + 0.5 * hitI));
+      v.flare.scale.set((sh.kind === 'beam' ? 22 : 16) * K * glowScale * (0.7 + 0.5 * hitI));
       v.flare.alpha = hitI;
       v.rim.position.set(b.x, b.y); v.rim.scale.set((hitR * 2.6) / 128);
       v.rim.alpha = sh.shield ? hitI * 0.55 : 0;

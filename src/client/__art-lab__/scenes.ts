@@ -38,6 +38,12 @@ export interface Shot {
   speed?: number;
   /** Target has its shield up: hits flash a rim instead of sparking the hull. */
   shield?: boolean;
+  /** Fire from this point in the shooter's frame (art-local units), with a muzzle flash. */
+  muzzle?: [number, number];
+  /** Aim at this world point instead of the target ship (`to` is ignored). */
+  at?: [number, number];
+  /** Size of the round, its flash, impact and lights (1 = a bolt; a 16" shell ~6). */
+  size?: number;
 }
 
 export interface Scene {
@@ -49,7 +55,7 @@ export interface Scene {
   duration: number;
 }
 
-export const SCENE_IDS = ['ships', 'factions', 'structures', 'base', 'explosion', 'sweep', 'bench', 'fleet', 'capitals', 'industry', 'mega', 'combat', 'spin', 'spinfleet', 'capfleet'] as const;
+export const SCENE_IDS = ['ships', 'factions', 'structures', 'base', 'explosion', 'sweep', 'bench', 'fleet', 'capitals', 'industry', 'mega', 'combat', 'spin', 'spinfleet', 'capfleet', 'broadside'] as const;
 
 /** Sheet scenes fit their content into this view (the capture size). */
 const SHEET_W = 1600, SHEET_H = 900;
@@ -217,6 +223,49 @@ export function buildScene(id: SceneId, zoomOverride?: number, n = 40): Scene {
         duration: 8,
         camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = 4.5; },
       };
+    case 'broadside': {
+      // GPU-lit R&D (1b): a battleship's 16" broadside on a base, escorts
+      // around it, so the shells' muzzle flashes, flight and impacts light
+      // the hulls and the structures. Wide on the battleship, then the
+      // camera drops to the base as the shells land.
+      const bsY = -2100, bsRot = Math.PI / 2;
+      // The battleship's local +x points at the base (its starboard side).
+      const world = (lx: number, ly: number): [number, number] => [-ly, bsY + lx];
+      const mains = [-1496, -984, 1841]; // turret stations (art-local y)
+      const salvos: Array<[number, Array<[number, number]>]> = [
+        [0.8, [[-360, 0], [0, -40], [360, 0]]],
+        [4.0, [[620, -110], [-620, 150], [0, 360]]],
+        [6.6, [[330, 380], [-330, 380], [-360, 0]]],
+      ];
+      const SPEED = 1700;
+      const shots: Shot[] = [];
+      const booms: Boom[] = [];
+      for (const [t0, aims] of salvos) {
+        mains.forEach((ly, i) => {
+          const at = aims[i]!, m = world(340, ly);
+          const flight = Math.hypot(at[0] - m[0], at[1] - m[1]) / SPEED;
+          shots.push({ kind: 'bolt', from: 0, to: 0, t0: t0 + i * 0.12, t1: t0 + i * 0.12, color: 0xffc070, period: 20, speed: SPEED, muzzle: [340, ly], at, size: 6 });
+          booms.push({ x: at[0], y: at[1], t0: t0 + i * 0.12 + flight, size: 0.9 });
+        });
+      }
+      const orbit = (r: number, w: number, ph: number) => (t: number): [number, number] => [Math.cos(ph + t * w) * r, 300 + Math.sin(ph + t * w) * r * 0.7];
+      const ships: ShipE[] = [
+        { id: 'battleship', trail: false, pose: (_t, o) => { o.x = 0; o.y = bsY; o.rot = bsRot; o.thrust = 0.15; } },
+        flyer('fighter', orbit(820, 0.35, 0.3)),
+        flyer('heavy', orbit(900, 0.3, 2.2)),
+        flyer('gunship', orbit(760, 0.4, 4.1)),
+        flyer('interceptor', orbit(980, 0.33, 5.3)),
+      ];
+      // Secondary battery (5" class) on the escorts.
+      [-690, 0, 690].forEach((ly, i) => shots.push({ kind: 'bolt', from: 0, to: 1 + i, t0: 1.6 + i * 0.4, t1: 9.5, color: 0xffd890, period: 1.4, speed: 1500, muzzle: [260, ly], size: 2 }));
+      return {
+        ships, structs: baseStructs(), booms, shots, duration: 10,
+        camera: (t, c) => {
+          const k = Math.min(1, Math.max(0, (t - 1.8) / 1.8)), e = k * k * (3 - 2 * k);
+          c.x = 0; c.y = -1400 + 1700 * e; c.zoom = zoomOr(0.18 + 0.34 * e);
+        },
+      };
+    }
     case 'capfleet': {
       // GPU-lit R&D (1b): a destroyer with escorts alongside on its shadow side
       // (capital shadows, occlusion, bounce), robots firing at them and

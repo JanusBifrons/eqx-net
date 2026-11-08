@@ -358,6 +358,8 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
       const az2 = localAz + Math.PI * 0.8, e2 = 0.35;
       const L2 = this.u['uL2']!;
       L2[0] = Math.cos(az2) * Math.cos(e2); L2[1] = Math.sin(az2) * Math.cos(e2); L2[2] = Math.sin(e2);
+      const fc = this.u['uFillColor']!;
+      for (let k = 0; k < 3; k++) fc[k] = FILL_COLOR[k]! * s.fillStrength;
     }
     if (scene) this.fillScene(scene, x, y, worldRotation);
     this.uni.update();
