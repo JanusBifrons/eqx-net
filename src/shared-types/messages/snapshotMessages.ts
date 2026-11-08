@@ -227,6 +227,9 @@ export interface SnapshotMessage {
        *  s: stage 0 failsafe / 1 acquiring / 2 locked, p: progress 0..100).
        *  Absent ⇒ not a fire-control pilot (or no groups). */
       groups?: Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number }> }>;
+      /** Fire control — NPCs locking this pilot: `t` = `s:<entityId>`,
+       *  `s` 1 acquiring / 2 locked, `p` 0..100. Own pilot only; absent ⇒ none. */
+      lockedBy?: Array<{ t: string; s: 1 | 2; p: number }>;
       /** Phase 4 (Dynamic weapon mounts, WS-B3) — the hull's ACTIVATED latent
        *  mount slots (`{ slotId, weaponId }[]`). PUBLIC (unlike `statAlloc`):
        *  emitted for EVERY ship (active + lingering) that has ≥ 1 activated

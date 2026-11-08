@@ -226,6 +226,7 @@ import { isLatentSlot, resolveInstanceMounts, resolveInstanceFireMounts } from '
 import { ROSTER_CAP, type ActivatedMount } from '../playerShips/PlayerShipStore.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { LockSubsystem, type LockTargetView } from './LockSubsystem.js';
+import { NpcLockSubsystem } from './NpcLockSubsystem.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { MissileSimulation } from './MissileSimulation.js';
@@ -1036,6 +1037,8 @@ export class SectorRoom extends Room<SectorState> {
   private mountTicker!: WeaponMountTicker;
   /** Fire control (exp/fire-control): per-player, per-weapon-group target locks. */
   private locks!: LockSubsystem;
+  /** Fire control: NPCs lock fire-control pilots before firing at them. */
+  private npcLocks!: NpcLockSubsystem;
   /** Alias accessors so the rest of SectorRoom keeps the old field-style
    *  reads (`this.playerMountAngles.get(id)`). Initialised in `onCreate`
    *  after the ticker is constructed. */
@@ -1734,6 +1737,7 @@ export class SectorRoom extends Room<SectorState> {
     // droneMountAngles + the sticky targets + the pooled scratches.
     // Extracted from SectorRoom (commit 21 of v3 refactor plan).
     this.locks = this.buildLockSubsystem();
+    this.npcLocks = this.buildNpcLockSubsystem();
 
     this.mountTicker = new WeaponMountTicker({
       sabF32: this.sabF32,
@@ -1795,6 +1799,7 @@ export class SectorRoom extends Room<SectorState> {
     // AI drone weapon-fire resolver. Composes the per-mount hitscan +
     // laser_fired broadcast path that mirrors the player handleFire.
     this.aiFireResolver = new AiFireResolver({
+      fireBlocked: (id, kind, x, y, dx, dy) => this.npcLocks.fireBlocked(id, kind, x, y, dx, dy),
       lastFireClientTick: this.lastFireClientTick,
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       swarmRegistry: this.swarmRegistry,
@@ -2044,6 +2049,7 @@ export class SectorRoom extends Room<SectorState> {
       droneFactionOf: (id) => (this.patrols.count > 0 ? this.patrols.factionOf(id) : undefined),
       depositProgressOf: (shipInstanceId) => this.depositProgress.get(shipInstanceId),
       lockGroupsOf: (pid) => this.locks.wireFor(pid),
+      lockedByOf: (pid) => this.npcLocks.wireFor(pid),
       warpArrived: (playerId) => this.warpTravel.arrivedRecently(playerId, this.serverTick),
       isJoining: (playerId) => this.pendingJoin.has(playerId),
       transitSpooling: (playerId) => this.transitOrchestrator?.isInFlight(playerId) === true,
@@ -3952,6 +3958,31 @@ export class SectorRoom extends Room<SectorState> {
   /** Activated-mount geometry per player, cached by the ship's `mounts` ref. */
   private readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
 
+  private buildNpcLockSubsystem(): NpcLockSubsystem {
+    return new NpcLockSubsystem({
+      pilots: () => this.locks.enabledPlayers(),
+      pilotPose: (pid, out) => {
+        const p = this.shipPoseCache.get(pid);
+        const ship = this.getActiveShip(pid);
+        if (!p || !ship || !ship.alive) return null;
+        out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
+        return getShipKind(ship.kind);
+      },
+      forEachHostileNpc: (pid, visit) => {
+        for (const rec of this.swarmRegistry.all()) {
+          if (rec.kind !== 1 || !this.npcHostileTo(rec.id, pid)) continue;
+          visit(rec.id, rec.entityId);
+        }
+      },
+      npcPose: (id, out) => {
+        const rec = this.swarmRegistry.get(id);
+        if (!rec || !this.swarmEntityPoseInto(id, this._lockPose)) return null;
+        out.x = this._lockPose.x; out.y = this._lockPose.y; out.vx = this._lockPose.vx; out.vy = this._lockPose.vy;
+        return getShipKind(rec.shipKind ?? null);
+      },
+    });
+  }
+
   private buildLockSubsystem(): LockSubsystem {
     return new LockSubsystem({
       resolveTarget: (pid, key, out) => this.resolveLockTarget(pid, key, out),
@@ -4621,6 +4652,7 @@ export class SectorRoom extends Room<SectorState> {
     this.npcTargetGridFresh = false;
     // P3c — a removed shooter's pending charge never fires.
     this.aiFireResolver.forget(rec.id);
+    this.npcLocks.forgetNpc(rec.id);
     // v4 A — its slot may be reused; a new ship must not inherit a disable.
     if (this.gateGuard.gateCount > 0) this.gateGuard.forget(rec.id);
     // Gameplay audit log — record a REAL combat death (the `emitDestroyed`
@@ -7917,7 +7949,7 @@ export class SectorRoom extends Room<SectorState> {
     }
     // Fire control: this client locks targets; its groups fire only at locks.
     if (parsed.success && parsed.data.fireControl === true) this.locks.enable(playerId);
-    else this.locks.forget(playerId);
+    else { this.locks.forget(playerId); this.npcLocks.forget(playerId); }
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a
     // sane value (e.g. a fire request resolved on this same client.send turn).
@@ -10127,6 +10159,7 @@ export class SectorRoom extends Room<SectorState> {
       this.autoDepositTick();
       // Fire control: advance every pilot's target locks (~10 Hz).
       this.locks.step();
+      this.npcLocks.step();
     }
     if (this.broadcastCounter % 60 === 0) this.loot.sweep();
 

@@ -76,7 +76,7 @@ interface PlayerLocks {
 const SIZE_RANK: Record<MountSize | 'none', number> = { none: 0, AA: 1, S: 2, M: 3, L: 4, XL: 5 };
 
 /** Build a group's lock geometry from its mounts (largest size wins). */
-function groupGeometry(mounts: ReadonlyArray<WeaponMount>): { refSize: number; tracking: number; reach: number } {
+export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): { refSize: number; tracking: number; reach: number } {
   let size: MountSize | 'none' = 'none';
   let reach = 0;
   for (const m of mounts) {
@@ -128,6 +128,11 @@ export class LockSubsystem {
     if (!this.players.has(playerId)) {
       this.players.set(playerId, { kindId: '', activatedSig: -1, sensor: 1, groups: [], wire: [] });
     }
+  }
+
+  /** Fire-control pilots (iteration only; do not mutate while iterating). */
+  enabledPlayers(): IterableIterator<string> {
+    return this.players.keys();
   }
 
   isEnabled(playerId: string): boolean {

@@ -154,6 +154,8 @@ export interface SnapshotBroadcasterDeps {
   /** Fire control (exp/fire-control) — the pilot's weapon groups + lock
    *  queues (shared ref, mutated in place). Own active ship only. */
   lockGroupsOf?: (playerId: string) => Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number }> }> | undefined;
+  /** Fire control — NPCs locking the pilot (shared ref, #16). */
+  lockedByOf?: (playerId: string) => Array<{ t: string; s: 1 | 2; p: number }> | undefined;
   /** Phase 4 warp travel — the player's ship dropped out of a warp in the last
    *  moment (others draw the arrival). Absent ⇒ never. */
   warpArrived?: (playerId: string) => boolean;
@@ -266,6 +268,7 @@ type MutableStateEntry = {
   cargo?: Hold;
   depositing?: number;
   groups?: Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number }> }>;
+  lockedBy?: Array<{ t: string; s: 1 | 2; p: number }>;
   fitted?: string[];
   wallet?: number;
   poseEpoch?: number;
@@ -794,6 +797,7 @@ export class SnapshotBroadcaster {
         entry.depositing = ownActive ? this.deps.depositProgressOf?.(ship.shipInstanceId) : undefined;
         // Fire control (#16): the own pilot's groups + locks (shared ref).
         entry.groups = ownActive ? this.deps.lockGroupsOf?.(ship.playerId) : undefined;
+        entry.lockedBy = ownActive ? this.deps.lockedByOf?.(ship.playerId) : undefined;
         // P5 (#16) — the own ACTIVE hull's fitted blueprints, emit-when-non-empty
         // (shared reference; the encoder never mutates it).
         const fitted = ownActive ? this.deps.fittedOf?.(ship.shipInstanceId) : undefined;
