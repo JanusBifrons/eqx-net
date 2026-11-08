@@ -2790,3 +2790,8 @@ Unit tests: convoyBudget now gates candidate checks per planning pass (988, dete
 - **Context:** GPU lighting went default (#344–#346), phones on Medium/Low, on 3-rep A/Bs (laptop and phone-proxy) that could never go RED (entry above). Whether it costs frames on weak hardware is open, and the desktop (not a target platform) can't answer it.
 - **Now:** `pnpm perf:phone` runs the same 8-rep A/B on a real phone over adb; `pnpm perf:scenes --device phone-proxy --cpu-rate 2` is the no-phone fallback. Commands and the decision rule: `docs/architecture/gpu-lit-ships.md`, "Open question: cost on weak hardware".
 - **Rule:** a default that "passed perf" must cite a ledger whose verdict could have failed (≥ 4 reps per arm, on the machine class it targets).
+
+## 2026-11-08 — `lsof -ti tcp:PORT` lists the CLIENTS too: `killPort` killed its own caller on Linux
+Commit: perf/count-budgets (PR #356)
+
+`perf:counts` died with exit 137 on the first CI run, right after its last scene. `CaptureServers.stop()` → `killPort()` ran `lsof -ti tcp:3167 | xargs kill -9`; without `-sTCP:LISTEN`, lsof also lists every process holding a CLIENT connection to that port, and the runner had a keep-alive connection open from polling `/dev/perf`. So it SIGKILLed itself. Windows (`netstat … LISTENING`) never had the bug, which is why local runs were fine. Fix: `lsof -ti tcp:PORT -sTCP:LISTEN`. Rule: any "kill whatever is on port N" must match listeners only.

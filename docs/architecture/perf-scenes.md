@@ -114,6 +114,8 @@ Budgets live in `src/shared-types/perf/perfBudgets.ts` (`COUNT_BUDGETS`, `CLIENT
 
 **Ports.** `perf:counts` shifts the capture ports by `EQX_SHOWCASE_PORT_OFFSET` (default 400: server 3167, Vite 5773), so it never touches the dev ports or a parallel session. It refuses to start if anything listens on its ports, and kills nothing it didn't start.
 
+**Local vs CI (2026-11-08, PR #356).** The server work counts on a GitHub runner fell inside the desktop's run-to-run range on every metric (fleet-fight bodies 38.6 vs 38.4–39.9; teleport-raid identical to 0.1). Client: wide-view draw calls p95 matched exactly (20 / 25); fleet-fight stayed inside the desktop spread. The one host difference is atlas pages on wide-view/baked: 9 on CI vs 8 on the desktop (bake completion order packs one more page), so that budget comes from the CI max. The runner renders only ~27 frames in the 7.5 s window under SwiftShader (the desktop renders ~90), so a run needs ≥ 20 frames. Counts depend on the VIEWPORT (the camera zoom scales with width; at 640 px the fleet fight drops to LOD dots), so it is fixed at 960×540.
+
 **Self-tests (2026-11-08):**
 - Server: fleet-fight with 45-ship waves instead of 30 failed rx (281 > 275 KB/s), bodies (52.7 > 50), AI agents (51.8 > 48) and entities/snapshot (90.9 > 86). With 40-ship waves (+33 %) it passed: fights thin out, so bodies rose 22 %. The gate catches ~25 %+ growth in per-tick work, not 10 %.
 - Client: 40 shapes with alternating blend modes (each breaks the batch) put wide-view at 61–62 draw calls p95 against budgets of 28 / 32: both failed.

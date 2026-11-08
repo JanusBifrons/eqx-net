@@ -16,7 +16,7 @@ export interface ClientCountReading {
 }
 
 /** Fewer rendered frames than this and the draw-call p95 means nothing. */
-export const MIN_COUNT_FRAMES = 30;
+export const MIN_COUNT_FRAMES = 20;
 
 /** Every broken budget, as a line each; empty = within budget. */
 export function judgeCounts(r: ClientCountReading, b: ClientCountBudget): string[] {

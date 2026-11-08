@@ -41,19 +41,19 @@ export const COUNT_BUDGETS: Record<string, CountBudget> = {
   // 2026-11-06, laptop, two runs: 216 / 218 KB/s (swarm 67); browser runs 216–263.
   'fleet-fight': {
     rxKBps: 275, minSwarm: 30,
-    measured: 'rx 216–218 KB/s laptop 2026-11-06. Work, desktop 4 runs 2026-11-08: bodies 38.4–39.9, ai 37.1–38.1, swarm recs 33.4–35.8, bytes 1141–1226, ents/snap 61.9–68.5',
+    measured: 'rx 216–218 KB/s laptop 2026-11-06. Work, desktop 4 runs 2026-11-08: bodies 38.4–39.9, ai 37.1–38.1, swarm recs 33.4–35.8, bytes 1141–1226, ents/snap 61.9–68.5; CI (ubuntu, PR #356): 38.6 / 37.5 / 35.8 / 1224 / 66.2, rx 211.9',
     work: { bodiesPerTick: 50, aiAgentsPerTick: 48, swarmRecordsPerTick: 45, swarmBytesPerTick: 1533, entitiesPerSnapshot: 86 },
   },
   // 2026-11-06, laptop, two runs: 67.8 / 67.8 KB/s (174 entities: citadel + raid).
   'teleport-raid': {
     rxKBps: 85, minSwarm: 100,
-    measured: 'rx 67.8 KB/s laptop 2026-11-06. Work, desktop 4 runs 2026-11-08: bodies 157.1–157.2, ai 22.2–22.4, swarm recs 26.2–26.7, bytes 894–911, ents/snap 0',
+    measured: 'rx 67.8 KB/s laptop 2026-11-06. Work, desktop 4 runs 2026-11-08: bodies 157.1–157.2, ai 22.2–22.4, swarm recs 26.2–26.7, bytes 894–911, ents/snap 0; CI (ubuntu, PR #356): 157.2 / 22.3 / 26.5 / 906 / 0, rx 67.8',
     work: { bodiesPerTick: 197, aiAgentsPerTick: 28, swarmRecordsPerTick: 34, swarmBytesPerTick: 1139, entitiesPerSnapshot: 1 },
   },
   // 2026-11-08: the 80-ship sustained fight seen from the zoom-out floor (asteroids on).
   'wide-view': {
     rxKBps: 418, minSwarm: 50,
-    measured: 'desktop 3 runs 2026-11-08: rx 308–334 KB/s, swarm 104–118. Work: bodies 73.6–77.9, ai 69.5–73.8, swarm recs 69.8–73.7, bytes 2380–2513, ents/snap 80.3–93.4',
+    measured: 'desktop 3 runs 2026-11-08: rx 308–334 KB/s, swarm 104–118. Work: bodies 73.6–77.9, ai 69.5–73.8, swarm recs 69.8–73.7, bytes 2380–2513, ents/snap 80.3–93.4; CI (ubuntu, PR #356): 73.1 / 68.6 / 69.3 / 2363 / 91.7, rx 327.7, swarm 101',
     work: { bodiesPerTick: 98, aiAgentsPerTick: 93, swarmRecordsPerTick: 93, swarmBytesPerTick: 3142, entitiesPerSnapshot: 117 },
   },
 };
@@ -89,18 +89,20 @@ export const UPLOAD_TEXELS_FLOOR = 2048 * 2048;
 export const CLIENT_COUNT_BUDGETS: Record<string, ClientCountBudget> = {
   'fleet-fight/baked': {
     drawCallsP95: 93, displayObjects: 6990, uploadTexels: UPLOAD_TEXELS_FLOOR, atlasPages: 10,
-    measured: 'desktop SwiftShader 960×540, 3 runs 2026-11-08: draw p95 40–74, objects 4920–5592, uploads 0, pages 8',
+    measured: 'SwiftShader 960×540 2026-11-08, desktop 3 runs: draw p95 40–74, objects 4920–5592, uploads 0, pages 8; CI (ubuntu, PR #356): draw p95 60, objects 5077, uploads 0, pages 8',
   },
   'fleet-fight/high': {
     drawCallsP95: 230, displayObjects: 9053, uploadTexels: UPLOAD_TEXELS_FLOOR, atlasPages: 7,
-    measured: 'desktop SwiftShader 960×540, 3 runs 2026-11-08: draw p95 145–184, objects 5353–7242, uploads 0, pages 5',
+    measured: 'SwiftShader 960×540 2026-11-08, desktop 3 runs: draw p95 145–184, objects 5353–7242, uploads 0, pages 5; CI (ubuntu, PR #356): draw p95 160, objects 4818, uploads 0, pages 5',
   },
   'wide-view/baked': {
-    drawCallsP95: 28, displayObjects: 13198, uploadTexels: UPLOAD_TEXELS_FLOOR, atlasPages: 10,
-    measured: 'desktop SwiftShader 960×540, 3 runs 2026-11-08: draw p95 20–22, objects 6977–10558, uploads 0, pages 8',
+    // Atlas pages: 9 on CI vs 8 on the desktop (one more 2048² page; bake
+    // completion order packs differently). Budget from the CI max.
+    drawCallsP95: 28, displayObjects: 13198, uploadTexels: UPLOAD_TEXELS_FLOOR, atlasPages: 12,
+    measured: 'SwiftShader 960×540 2026-11-08, desktop 3 runs: draw p95 20–22, objects 6977–10558, uploads 0, pages 8; CI (ubuntu, PR #356): draw p95 20, objects 6433, uploads 0, pages 9',
   },
   'wide-view/high': {
     drawCallsP95: 32, displayObjects: 12590, uploadTexels: UPLOAD_TEXELS_FLOOR, atlasPages: 7,
-    measured: 'desktop SwiftShader 960×540, 3 runs 2026-11-08: draw p95 25–25, objects 8313–10072, uploads 0, pages 5',
+    measured: 'SwiftShader 960×540 2026-11-08, desktop 3 runs: draw p95 25–25, objects 8313–10072, uploads 0, pages 5; CI (ubuntu, PR #356): draw p95 25, objects 6615, uploads 0, pages 5',
   },
 };

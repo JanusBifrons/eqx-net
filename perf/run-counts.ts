@@ -41,8 +41,11 @@ const SOFTWARE_GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshade
 export const WINDOW_START_MS = 12_000;
 export const WINDOW_END_MS = 19_500;
 const DEFAULT_OFFSET = '400';
-/** Small enough that SwiftShader keeps a frame rate on a 2-core runner; the
- *  camera zoom scales with the width, so the same world is in view. */
+/** Small enough that SwiftShader keeps ~25 frames in the window on a 2-core
+ *  runner. Not smaller: the camera zoom scales with the width, and at 640 px
+ *  the fleet fight drops to LOD dots (17 draw calls instead of ~150 lit
+ *  ships), so the gate would stop covering the lit-ship path. Counts DO depend
+ *  on the viewport: keep it fixed. */
 const VIEWPORT = { width: 960, height: 540 };
 
 interface Args { scenes: string[]; shiplight: string[]; worker: string | null; calibrate: boolean; headed: boolean; out: string | undefined }
