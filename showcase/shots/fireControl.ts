@@ -141,20 +141,38 @@ async function steer(ctx: ShotContext, finger: Finger, clock: Clock): Promise<vo
 }
 
 /** Right thumb: drag a lock line toward a drone, hold so the guide shows, release. */
-async function thumbLock(ctx: ShotContext, finger: Finger, clock: Clock, still?: string): Promise<void> {
+/** Locked count on the active group's chip. */
+async function activeLocked(ctx: ShotContext): Promise<number> {
+  const v = await ctx.page.locator('[data-testid^="fc-chip-"][data-active="1"]').first().getAttribute('data-locked', { timeout: 300 }).catch(() => null);
+  return Number(v ?? 0);
+}
+
+/**
+ * Right thumb: hold the lock line on a drone. The lock only builds while it's
+ * held, so by default keep holding until the active group shows LOCKED (capped
+ * at `maxMs`); with `untilLocked: false` hold `maxMs` and let go part-way.
+ */
+async function thumbLock(
+  ctx: ShotContext, finger: Finger, clock: Clock, still?: string,
+  opts: { maxMs?: number; untilLocked?: boolean; stillAtMs?: number } = {},
+): Promise<void> {
   const { width: w, height: h } = ctx.viewport;
   const origin = { x: w - 250, y: h - 105 };
   let pick = await pickDrone(ctx);
   if (!pick) return;
+  const before = await activeLocked(ctx);
   await finger.down(origin.x, origin.y);
   await finger.dragTo(polar(origin, 18, pick.angle).x, polar(origin, 18, pick.angle).y, { ms: 160 });
-  const end = Date.now() + clock.fit(1100);
+  const t0 = Date.now();
+  const end = t0 + clock.fit(opts.maxMs ?? 4500);
+  const until = opts.untilLocked ?? true;
   let shot = false;
   while (Date.now() < end - 80) {
     pick = (await pickDrone(ctx)) ?? pick;
     const p = polar(origin, 40, pick.angle);
-    await finger.dragTo(p.x, p.y, { ms: 200 });
-    if (still && !shot) { shot = true; await snap(ctx, still); }
+    await finger.dragTo(p.x, p.y, { ms: 180 });
+    if (still && !shot && Date.now() - t0 >= (opts.stillAtMs ?? 700)) { shot = true; await snap(ctx, still); }
+    if (until && (await activeLocked(ctx)) > before) { await ctx.sleep(350); break; }
   }
   await finger.up();
 }
@@ -250,16 +268,15 @@ async function runFailsafe(ctx: ShotContext, durationMs: number): Promise<void> 
   try {
     const right = pad.finger();
     await clock.at(1000);
-    await thumbLock(ctx, right, clock); // yellow failsafe ring starts
-    await clock.at(2300);
-    await snap(ctx, '6-failsafe-ring');
-    await clock.at(3000);
-    await tapSel(ctx, right, '[data-testid^="fc-clear-"]'); // abort: no harm done
-    await clock.at(5000);
-    await thumbLock(ctx, right, clock); // again — and let it finish
-    // Failsafe completes (hostile act), then the red lock runs → brackets.
-    await clock.at(9000);
-    await snap(ctx, '7-failsafe-finished-hostile');
+    // Hold the line on a neutral: the yellow failsafe builds… then let go.
+    await thumbLock(ctx, right, clock, 'f1-failsafe-building', { maxMs: 1800, untilLocked: false, stillAtMs: 1300 });
+    await ctx.sleep(500);
+    await snap(ctx, 'f2-let-go-drains'); // LOSING LOCK: draining, no harm done
+    await clock.at(6000);
+    // Again, and hold it all the way: hostile act, then the red lock, then LOCKED.
+    await thumbLock(ctx, right, clock, 'f3-failsafe-held', { maxMs: 9000, stillAtMs: 2500 });
+    await ctx.sleep(400);
+    await snap(ctx, 'f4-locked');
   } finally {
     await pad.dispose();
   }
@@ -439,7 +456,7 @@ async function runDuelPhone(ctx: ShotContext, durationMs: number): Promise<void>
       await cruise(left, anchor, up + 0.4, clock.fit(3000));
       await left.dragTo(anchor.x, anchor.y, { ms: 300 }); // ease off: hold the line while locking
       await left.up();
-      await clock.at(17_500);
+      await clock.at(21_000);
       if (clock.left() > 1500) {
         await left.down(anchor.x, anchor.y);
         await cruise(left, anchor, up + 0.9, clock.fit(4500)); // circle while AUTO works
@@ -473,11 +490,20 @@ async function runDuelPhone(ctx: ShotContext, durationMs: number): Promise<void>
       const aft = await rectOf(ctx, CHIP, 1);
       if (aft) { const c = centre(aft); await right.down(c.x, c.y); await right.hold(clock.fit(1800)); await right.up(); }
       // Hand both back to AUTO and let them work while circling.
-      await clock.at(19_500);
+      // Hands-off: tap a ship, then LOCK in its info box (runs to the end).
+      await clock.at(21_500);
+      if (await selectDrone(ctx)) {
+        await ctx.sleep(700);
+        await snap(ctx, 'd6-lock-button');
+        await tapSel(ctx, right, TARGET);
+        await ctx.sleep(900);
+        await snap(ctx, 'd7-lock-button-running');
+      }
+      await clock.at(25_500);
       await tapSel(ctx, right, MODE, 0);
       await ctx.sleep(350);
       await tapSel(ctx, right, MODE, 1);
-      await clock.at(23_000);
+      await clock.at(29_000);
       await snap(ctx, 'd5-auto');
       const boost = await rectOf(ctx, '[data-testid="hud-boost"]');
       if (boost && clock.left() > 1500) { const b = centre(boost); await right.down(b.x, b.y); await right.hold(clock.fit(1000)); await right.up(); }
@@ -502,12 +528,14 @@ async function runDuelDesktop(ctx: ShotContext, durationMs: number): Promise<voi
     const R = Math.min(w, h) * 0.26;
     const p0 = polar(c, 40, pick.angle);
     await m.glideTo(p0.x, p0.y, { ms: 300 });
+    const before = await activeLocked(ctx);
     await m.down('left');
-    const end = Date.now() + clock.fit(1400);
+    const end = Date.now() + clock.fit(4500);
     while (Date.now() < end - 100) {
       pick = (await pickDrone(ctx)) ?? pick;
       const p = polar(c, R, pick.angle);
-      await m.glideTo(p.x, p.y, { ms: 280 });
+      await m.glideTo(p.x, p.y, { ms: 220 });
+      if ((await activeLocked(ctx)) > before) { await ctx.sleep(300); break; }
     }
     await m.up('left');
     await m.glideTo(c.x + 160, c.y + 90, { ms: 400 });
@@ -562,7 +590,7 @@ function fcShot(id: string, viewport: Shot['viewport'], durationMs: number, host
     title,
     caption,
     features: ['U8'],
-    docs: ['hud-variants'],
+    docs: ['weapon-groups-and-locking', 'fire-control', 'hud-variants'],
     reel: false,
     server: 'lean',
     viewport,
@@ -577,21 +605,21 @@ function fcShot(id: string, viewport: Shot['viewport'], durationMs: number, host
 }
 
 export const fireControlShots: readonly Shot[] = [
-  fcShot('fc-duel-phone', 'phone-landscape', 30_000, true, 'HUD D · 1v3',
-    'Fly in: they lock you (red), you lock them one group at a time, fire, then hand both groups to AUTO.',
-    (ctx) => runDuelPhone(ctx, 30_000), 'fc-duel'),
-  fcShot('fc-duel-desktop', 'desktop', 30_000, true, 'HUD D · 1v3 (desktop)',
-    'Same fight on desktop: 1/2 picks a group, drag to lock, hold a MAN chip to fire, Shift+n for AUTO.',
-    (ctx) => runDuelDesktop(ctx, 30_000), 'fc-duel'),
+  fcShot('fc-duel-phone', 'phone-landscape', 36_000, true, 'HUD D · 1v3',
+    'Fly in: they lock you (red). Hold the lock line on a ship until it locks, fire, lock one from its info box, then hand both groups to AUTO.',
+    (ctx) => runDuelPhone(ctx, 36_000), 'fc-duel'),
+  fcShot('fc-duel-desktop', 'desktop', 34_000, true, 'HUD D · 1v3 (desktop)',
+    'Same fight on desktop: 1/2 picks a group, hold the mouse on a ship to lock, hold a MAN chip to fire, Shift+n for AUTO.',
+    (ctx) => runDuelDesktop(ctx, 34_000), 'fc-duel'),
   fcShot('fc-phone-landscape', 'phone-landscape', 20_000, true, 'HUD D · Fire Control',
     'Weapon groups lock their own targets — drag a lock line, switch groups, hold to fire in MAN.',
     (ctx) => runPhone(ctx, 20_000)),
   fcShot('fc-desktop', 'desktop', 20_000, true, 'HUD D · Fire Control (desktop)',
     'Drag to lock, 1–9 to pick a group, Shift+n for AUTO/MAN, T to lock the selection.',
     (ctx) => runDesktop(ctx, 20_000)),
-  fcShot('fc-failsafe-phone', 'phone-landscape', 12_000, false, 'HUD D · Failsafe lock',
-    'Locking a neutral runs a yellow failsafe first — stop and nothing happens; finish and it is a hostile act.',
-    (ctx) => runFailsafe(ctx, 12_000)),
+  fcShot('fc-failsafe-phone', 'phone-landscape', 18_000, false, 'HUD D · Failsafe lock',
+    'Locking a neutral runs a yellow failsafe first — let go and it drains away harmlessly; hold it to the end and it is a hostile act.',
+    (ctx) => runFailsafe(ctx, 18_000)),
   warpShot('fc-warp-phone', 'phone-landscape', true),
   warpShot('fc-warp-desktop', 'desktop', false),
 ];
