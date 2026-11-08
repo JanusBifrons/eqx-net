@@ -36,6 +36,7 @@ import { canUpgradeStructure, structureUpgradeGoods } from '@core/leveling/struc
 import { GOOD_DEFS, type GoodId } from '@shared-types/goods';
 import { structureDraw } from '@shared-types/structurePower';
 import type { PickedEntityKind } from '../render/pickEntity';
+import { TargetAction } from './TargetAction';
 import type { StructureRenderState } from '@core/contracts/IRenderer';
 
 /**
@@ -463,6 +464,7 @@ export function EntityStatsPanel(): JSX.Element | null {
       {data.isForeignTeleporter === true && data.entityId !== undefined && <ForeignTeleporterPanel key={data.entityId} entityId={data.entityId} />}
       {data.hasCargo === true && data.entityId !== undefined && <CargoAction key={data.entityId} entityId={data.entityId} />}
       {data.cargoShip !== undefined && <CargoAction key={data.cargoShip} ship={data.cargoShip} />}
+      <TargetAction isOwn={data.isOwn === true || data.pilotShipId !== undefined} />
       {data.pilotShipId !== undefined && (
         // Phase 4 WS-A2 — in-world Pilot action on the local player's OWN
         // lingering hull. Same-sector instant swap (no spool/curtain); the camera

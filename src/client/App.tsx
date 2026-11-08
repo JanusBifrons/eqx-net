@@ -71,6 +71,7 @@ import { ExperimentalHud } from './hud/ExperimentalHud';
 import { TouchViz } from './hud/TouchViz';
 import { getUiVariant } from './hud/uiVariant';
 import { installMouseAim } from './input/MouseAim';
+import { installFcKeys, installMouseLock } from './input/MouseLock';
 import { aimInput } from './input/AimInput';
 
 /** Fixed for the page load (switching variant reloads). */
@@ -496,7 +497,9 @@ function GameSurface({
 
     const keyboard = new Keyboard();
     // Experimental HUD, desktop only: hold left mouse = aim + fire, right = boost.
-    const disposeMouseAim = uiVariant !== 'legacy' && !isTouchRef.current ? installMouseAim(el) : null;
+    const disposeMouseAim = uiVariant === 'legacy' ? null
+      : isTouchRef.current ? (uiVariant === 'd' ? installFcKeys() : null)
+      : uiVariant === 'd' ? installMouseLock(el) : installMouseAim(el);
     keyboardRef.current = keyboard;
 
     // Renderer-path selection + profile-window opt-in. Extracted to

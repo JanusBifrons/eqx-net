@@ -33,6 +33,8 @@ import { RollingCounter } from './RollingCounter';
 import { HUD, hullColor } from './tokens';
 import { hudScale, useHudSize } from './useHudScale';
 import type { UiVariant } from './uiVariant';
+import { WeaponStrip } from './WeaponStrip';
+import { stickToWorldBearing } from '@core/combat/manualAim';
 import {
   AutoPip,
   CooldownRing,
@@ -99,12 +101,22 @@ export function ExperimentalHud({ variant, touchInput }: Props): JSX.Element | n
           <Slot anchor="top-left" order={1}><SectorChip size={Math.round(9 * scale)} /></Slot>
         </>
       )}
+      {variant === 'd' && (
+        <>
+          <Slot anchor="top-center" order={0}><StatusCapsule scale={scale} /></Slot>
+          <Slot anchor="top-left" order={1}><SectorChip size={Math.round(9 * scale)} /></Slot>
+          {flying && <FcStripDock scale={scale} />}
+        </>
+      )}
       <Slot anchor="top-right" order={2}><SpeedDialMenu direction="down" /></Slot>
 
       {/* ── Desktop ─────────────────────────────────────────────────────── */}
       {!touch && <Slot anchor="bottom-center" order={1}><BottomControlPanel /></Slot>}
-      {!touch && flying && (
+      {!touch && flying && variant !== 'd' && (
         <Slot anchor="bottom-right" order={1}><DesktopFireChip scale={scale} /></Slot>
+      )}
+      {!touch && flying && variant === 'd' && (
+        <Slot anchor="bottom-right" order={1}><DesktopFcHint scale={scale} /></Slot>
       )}
 
       {/* ── Touch controls ──────────────────────────────────────────────── */}
@@ -114,6 +126,7 @@ export function ExperimentalHud({ variant, touchInput }: Props): JSX.Element | n
           {variant === 'a' && <ClusterA touchInput={touchInput} />}
           {variant === 'b' && <ClusterB touchInput={touchInput} />}
           {variant === 'c' && <ClusterC touchInput={touchInput} />}
+          {variant === 'd' && <ClusterD touchInput={touchInput} />}
         </>
       )}
     </>
@@ -527,6 +540,87 @@ function DesktopFireChip({ scale }: { scale: number }): JSX.Element {
       <div style={{ fontSize: fs - 1, color: HUD.color.inkFaint, letterSpacing: 0.6 }}>
         HOLD <b style={{ color: HUD.color.inkDim }}>LMB</b> aim+fire · <b style={{ color: HUD.color.inkDim }}>RMB</b> boost · <b style={{ color: HUD.color.inkDim }}>F</b> auto
       </div>
+    </div>
+  );
+}
+
+// ── D: Fire Control ──────────────────────────────────────────────────────────
+
+/** Weapon strip, right edge, vertically centred (above the right thumb zone). */
+function FcStripDock({ scale }: { scale: number }): JSX.Element {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        right: 'calc(env(safe-area-inset-right, 0px) + 14px)',
+        top: '50%',
+        transform: 'translateY(-62%)',
+        zIndex: 18,
+        pointerEvents: 'none',
+      }}
+    >
+      <WeaponStrip scale={scale} />
+    </div>
+  );
+}
+
+/**
+ * Right thumb: smart-aim lock. Drag anywhere in the right zone — a guideline
+ * leaves the ship along the drag; the lockable target nearest it lights up;
+ * release starts the lock for the active group. A tap does nothing (taps
+ * select entities, and the inspector's Target button locks the selection).
+ */
+function ClusterD({ touchInput }: { touchInput: TouchInput }): JSX.Element {
+  const onMove = useCallback((v: StickVec) => {
+    getGameClient()?.updateLockGuide(v.mag > 0.25 ? stickToWorldBearing(v.x, v.y) : NaN);
+  }, []);
+  const onEnd = useCallback((tapped: boolean) => {
+    const c = getGameClient();
+    if (tapped) c?.updateLockGuide(NaN);
+    else c?.commitLockGuide();
+  }, []);
+  const base = THUMB_INSET + 6;
+  return (
+    <>
+      <FloatingStick
+        id="hud-lock"
+        zone={{ right: 0, top: '28%', width: '44%', bottom: 0 }}
+        home={{ right: base + 70, bottom: base }}
+        radius={46}
+        knob={36}
+        color={HUD.color.danger}
+        onMove={onMove}
+        onEnd={onEnd}
+        idleOpacity={0.5}
+        zIndex={16}
+      >
+        <svg width={18} height={18} viewBox="0 0 20 20" style={{ opacity: 0.9 }}>
+          <path d="M2 7V2h5M13 2h5v5M18 13v5h-5M7 18H2v-5" fill="none" stroke="#fff" strokeWidth={1.6} />
+        </svg>
+      </FloatingStick>
+      <div
+        style={{
+          position: 'fixed',
+          right: `calc(env(safe-area-inset-right, 0px) + ${base}px)`,
+          bottom: `calc(env(safe-area-inset-bottom, 0px) + ${base}px)`,
+          zIndex: 17,
+        }}
+      >
+        <HoldButton testId="hud-boost" size={46} color={HUD.color.boost} onHold={(d) => touchInput.setBoostHeld(d)}>
+          BOOST
+        </HoldButton>
+      </div>
+    </>
+  );
+}
+
+function DesktopFcHint({ scale }: { scale: number }): JSX.Element {
+  const fs = Math.round(9 * scale) - 1;
+  const k = (t: string): JSX.Element => <b style={{ color: HUD.color.inkDim }}>{t}</b>;
+  return (
+    <div data-testid="hud-fc-hint" style={{ fontFamily: HUD.font.label, fontSize: fs, color: HUD.color.inkFaint, letterSpacing: 0.6, textAlign: 'right', lineHeight: 1.6 }}>
+      <div>{k('DRAG LMB')} lock · {k('T')} lock selected · {k('X')} clear</div>
+      <div>{k('1–9')} group · {k('SHIFT+1–9')} auto/man · {k('RMB')} boost</div>
     </div>
   );
 }

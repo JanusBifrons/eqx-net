@@ -5889,6 +5889,80 @@ export class ColyseusGameClient {
     this._fcHeld = groupId;
   }
 
+  /**
+   * Smart-aim lock: the pilot is dragging a guideline along `bearing` (world,
+   * ship-angle convention). Picks the lockable target nearest the line within
+   * the active group's reach and publishes guide + candidate for the renderer.
+   * Called from pointer handlers (not the frame loop). NaN clears the guide.
+   */
+  updateLockGuide(bearing: number): string | null {
+    const m = this.mirror;
+    if (!this._fireControl || Number.isNaN(bearing)) {
+      m.localLockGuide = NaN;
+      m.localLockCandidate = null;
+      return null;
+    }
+    const localId = m.localPlayerId;
+    const ship = localId ? m.ships.get(localId) : undefined;
+    if (!localId || !ship) return null;
+    this.fcSyncKind(ship.kind ?? null);
+    const active = useUIStore.getState().activeGroupId;
+    const reach = (active && this._fcInfo.get(active)?.reach) || 600;
+    m.localLockGuide = bearing;
+    m.localAimReach = reach;
+    const dirX = -Math.sin(bearing);
+    const dirY = Math.cos(bearing);
+    let best: string | null = null;
+    let bestScore = Infinity;
+    const consider = (key: string, x: number, y: number, radius: number): void => {
+      const dx = x - ship.x;
+      const dy = y - ship.y;
+      const along = dx * dirX + dy * dirY;
+      if (along < 0 || along > reach * 1.1) return;
+      const perp = Math.abs(dx * dirY - dy * dirX);
+      const tol = Math.max(70, radius * 1.5) + along * 0.12; // a cone, wider far out
+      if (perp > tol) return;
+      const score = perp / tol + (along / reach) * 0.3;
+      if (score < bestScore) { bestScore = score; best = key; }
+    };
+    if (m.swarm) {
+      for (const [entityId, e] of m.swarm) {
+        if (e.kind !== 1 && e.kind !== 2) continue;
+        if (e.kind === 2 && m.structures?.get(entityId)?.owner === localId) continue;
+        consider(`s:${entityId}`, e.x, e.y, e.radius ?? 20);
+      }
+    }
+    for (const [pid, s] of m.ships) {
+      if (pid === localId) continue;
+      consider(`p:${pid}`, s.x, s.y, getShipKind(s.kind ?? null).radius);
+    }
+    m.localLockCandidate = best;
+    return best;
+  }
+
+  /** Release the guideline: lock the candidate with the active group. */
+  commitLockGuide(): void {
+    const key = this.mirror.localLockCandidate ?? null;
+    const active = useUIStore.getState().activeGroupId;
+    this.mirror.localLockGuide = NaN;
+    this.mirror.localLockCandidate = null;
+    if (key !== null && active !== null) this.requestLock(active, key);
+  }
+
+  /** Lock whatever the pilot has selected (inspector Target button / T key). */
+  lockSelected(): boolean {
+    const st = useUIStore.getState();
+    const id = st.selectedEntityId;
+    const active = st.activeGroupId;
+    if (!id || !active) return false;
+    let key: string | null = null;
+    if (id.startsWith('swarm-')) key = `s:${id.slice(6)}`;
+    else if (this.mirror.ships.has(id) && id !== this.mirror.localPlayerId) key = `p:${id}`;
+    if (key === null) return false;
+    this.requestLock(active, key);
+    return true;
+  }
+
   /** Rebuild per-kind group info (only when the ship kind changes). */
   private fcSyncKind(kindStr: string | null): void {
     if (kindStr === this._fcInfoKind) return;
