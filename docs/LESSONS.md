@@ -2752,3 +2752,13 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - In a heap-delta test, nothing called per iteration may be a `vi.fn` (or any recorder). Use a plain function over a mutable flag; keep `vi.fn` for calls you assert on that happen rarely.
   - Before widening a heap bound, swap the mocks for plain functions and re-measure. Growth that vanishes is the harness.
   - A suite no CI job runs rots. `test:gc` now runs in the `gc-tests` job.
+
+## 2026-11-08 — A unit test killed a live perf run (misspelt env override)
+
+- **Symptom:** a `perf:scenes` self-test lost its base arm mid-run ("fetch failed", then ERR_CONNECTION_REFUSED on 5373) the moment `vitest run showcase` started in the same checkout.
+- **Cause:** `showcase/tools.ts` read `process.env['EQX_SHOWCASE_pidFile()']`, a find/replace slip for `EQX_SHOWCASE_PID_FILE`. The reap test's temp-file override was ignored, so `reapStale()` read the real `showcase-out/.showcase-pids.json` and killed every live process the perf runner had tracked there (2 servers, plus its own test child: "expected 3 to be 1"). The same file's writes also crashed with ENOENT on a fresh checkout (no `showcase-out/`).
+- **Fix:** correct the variable name; every pid-file write creates its directory; each entry records its owning run, and `reapStale()` never kills the children of a run that is still alive. Locked by `tests/unit/showcaseReap.test.ts`.
+- **Rules:**
+  - A test that kills processes must prove its isolation override took effect (assert the temp file is the one written) before it kills anything.
+  - Shared state files (pid lists, ledgers) record their owner; a reaper checks the owner is dead.
+  - Bulk find/replace on identifiers can rewrite string keys too. Grep env-var names after a rename.

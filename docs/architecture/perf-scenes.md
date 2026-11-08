@@ -63,6 +63,18 @@ The scene is RED if any metric is RED, else INCONCLUSIVE if any gated metric is,
 
 **Noise floor (`--noise-check`).** Adds a third arm, `aa`: the base build with the base params again, booted fresh. Per metric, the spread is max(base/aa, aa/base) of the two arm medians, the same statistic as the head/base ratio over the same number of reps. A head move no bigger than that can't be RED. It is on by default when base and head are the same commit with the same params (an A/A run), and opt-in otherwise; it adds 50 % to the run time. With three arms the order walks all six permutations, and base-before-head still flips every rep. A laptop's same-code spread reached ×2 on hitches (2026-11-08), so on a laptop a hitch "regression" under ×2 is noise until shown otherwise.
 
+**Host-load gate (2026-11-08).** A parallel Claude session once ran its own game server through a whole perf run and nobody noticed. Before and after every rep the runner samples the host (`showcase/hostLoad.ts`):
+- system CPU % over 1 s, from `os.cpus()` tick deltas;
+- free RAM;
+- listeners on the game's ports (2567/5173 dev, 2667/5273 netgate, 2767/5373 capture, +1 and the usual offsets) or EQX node processes, owned by a PID outside this run's process tree.
+
+A rep is **INVALID** (excluded from the verdict, kept in the ledger with its samples) and repeated up to 2 more times, 15 s apart, when free RAM < 1 GB, CPU > 25 % of all cores before it starts, or a foreign game server / Vite is listening. Flags:
+- `--ignore-ports 2567,5173` acknowledges a known listener (logged in the ledger);
+- `--max-cpu-pct N` moves the CPU limit;
+- `--no-load-gate` records only.
+
+Parallel sessions: `EQX_SHOWCASE_PORT_OFFSET=<n>` moves the perf arms to 2767+n / 5373+n (head +1). The capture servers kill whatever listens on their own ports at start, so two runs on one machine must use different offsets.
+
 **The ledger records the run's conditions**: each arm's SHA, full client URL params (`art`, `fx`, `shiplight`, `worker`, …) and server env (the injected burn), the device, the GPU renderer string the browser really used (`UNMASKED_RENDERER_WEBGL`), and the host (CPU model, threads, total and free RAM). Two ledgers from different hosts or renderers are not comparable.
 
 The base arm is a worktree at `.claude/worktrees/perf-base` that shares the root `node_modules` through a junction. Never remove it with `git worktree remove` while the junction is there: that deletes through the link (2026-11-06). Run `cmd /c rmdir <dir>\node_modules` first.

@@ -31,6 +31,16 @@
  * it can't be RED. On by default when base and head are the same commit with
  * the same params (an A/A run), opt-in otherwise.
  *
+ * Host load (WS2, showcase/hostLoad.ts): before and after every rep the runner
+ * samples system CPU, free RAM and foreign game servers / Vites (another
+ * session's). A rep is INVALID and repeated (up to 2 more times) when free RAM
+ * < 1 GB, CPU > 25 % of all cores before it starts, or a foreign game server
+ * or Vite is listening. `--ignore-ports 2567,5173` acknowledges known
+ * listeners (recorded in the ledger). `--max-cpu-pct N` moves the CPU limit;
+ * `--no-load-gate` records only.
+ *
+ * Ports: base 2767/5373, head 2768/5374, shifted by EQX_SHOWCASE_PORT_OFFSET.
+ *
  * The base arm is a git worktree at `.claude/worktrees/perf-base`, linked to
  * the root `node_modules`. `--head-only` skips the A/B (a quick look).
  */
@@ -40,14 +50,15 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { CaptureServers, type ServerPorts } from '../showcase/servers.js';
+import { CaptureServers, defaultPorts, portOffset, type ServerPorts } from '../showcase/servers.js';
+import { DEFAULT_LIMITS, judgeLoad, sampleHostLoad, type LoadLimits } from '../showcase/hostLoad.js';
 import { PERF_SCENES, type PerfScene } from '../src/shared-types/perf/perfScenes.js';
 import { compareArms, MIN_DECISIVE_REPS, type RunMetrics, type ArmVerdict } from './verdict.js';
 import { armOrder, evenReps } from './order.js';
 
 const GPU_ARGS = ['--use-angle=d3d11', '--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'];
 
-interface Args { scenes: string[]; reps: number; base: string; headOnly: boolean; headed: boolean; out: string; burnServerMs: number; burnClientMs: number; append: string | undefined; baseParams: string; headParams: string; device: 'desktop' | 'phone-proxy'; cpuRate: number; noiseCheck: boolean | undefined }
+interface Args { scenes: string[]; reps: number; base: string; headOnly: boolean; headed: boolean; out: string; burnServerMs: number; burnClientMs: number; append: string | undefined; baseParams: string; headParams: string; device: 'desktop' | 'phone-proxy'; cpuRate: number; noiseCheck: boolean | undefined; ignorePorts: number[]; loadGate: boolean; limits: LoadLimits }
 
 function parseArgs(argv: string[]): Args {
   const get = (k: string): string | undefined => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
@@ -70,10 +81,16 @@ function parseArgs(argv: string[]): Args {
     headParams: get('--head-params') ?? '',
     // undefined = decide from the arms (on for an A/A run).
     noiseCheck: argv.includes('--noise-check') ? true : argv.includes('--no-noise-check') ? false : undefined,
+    ignorePorts: (get('--ignore-ports') ?? '').split(',').filter(Boolean).map(Number),
+    loadGate: !argv.includes('--no-load-gate'),
+    limits: { ...DEFAULT_LIMITS, ...(get('--max-cpu-pct') ? { maxCpuPct: Number(get('--max-cpu-pct')) } : {}) },
   };
 }
 
 const ROOT = process.cwd();
+/** A rep measured on a busy host is repeated at most this many more times. */
+const MAX_LOAD_RETRIES = 2;
+const LOAD_RETRY_WAIT_MS = 15_000;
 
 function prepareBase(ref: string): string {
   const dir = path.join(ROOT, '.claude', 'worktrees', 'perf-base');
@@ -216,7 +233,7 @@ async function main(): Promise<void> {
   const runDir = path.join(runRoot, String(process.pid));
   const log = (m: string): void => { console.log(m); };
 
-  const reps = evenReps(args.reps);
+  const reps = args.headOnly ? Math.max(1, Math.floor(args.reps)) : evenReps(args.reps);
   if (reps !== args.reps) log(`--reps ${args.reps} rounded up to ${reps}: an even count runs each arm second equally often`);
   if (!args.headOnly && reps < MIN_DECISIVE_REPS) log(`note: ${reps} reps per arm can never reach p < 0.05; the verdict will be INCONCLUSIVE at best`);
 
@@ -229,8 +246,8 @@ async function main(): Promise<void> {
     for (const [k, v] of new URLSearchParams(head ? args.headParams : args.baseParams)) clientParams[k] = v;
     return { name, dir, ports, servers: new CaptureServers(dir, rd, ports, serverEnv), sha: gitSha(dir), clientParams, serverEnv };
   };
-  const basePorts: ServerPorts = { server: 2767, vite: 5373 };
-  const headPorts: ServerPorts = { server: 2768, vite: 5374 };
+  const basePorts: ServerPorts = defaultPorts();
+  const headPorts: ServerPorts = { server: basePorts.server + 1, vite: basePorts.vite + 1 };
   let baseDir: string | null = null;
   if (!args.headOnly) { baseDir = prepareBase(args.base); arms.push(mk('base', baseDir, basePorts)); }
   arms.push(mk('head', ROOT, headPorts));
@@ -252,6 +269,11 @@ async function main(): Promise<void> {
   }
   const priorReps = prior ? prior.reps : 0;
 
+  const loadOpts = { ignorePorts: args.ignorePorts, portOffsets: [portOffset()] };
+  if (args.ignorePorts.length) log(`load gate: ignoring listeners on ${args.ignorePorts.join(', ')} (acknowledged)`);
+  const startLoad = await sampleHostLoad(loadOpts);
+  log(`host load: CPU ${startLoad.cpuPct}% of ${startLoad.threads} threads · free RAM ${startLoad.freeMemMb} MB · other node ${startLoad.foreignProcs.node} / chrome ${startLoad.foreignProcs.chrome}${startLoad.foreignListeners.length ? ` · foreign listeners ${startLoad.foreignListeners.map((l) => `:${l.port} pid ${l.pid}`).join(', ')}` : ''}`);
+
   const browser = await chromium.launch({ headless: !args.headed, args: GPU_ARGS });
   const results: Record<string, Record<ArmName, RunMetrics[]>> = {};
   let gpu = 'unknown';
@@ -270,12 +292,33 @@ async function main(): Promise<void> {
         log(`rep ${rep + 1}/${reps}: ${a.name} servers…`);
         await a.servers.ensure('lean');
         for (const scene of scenes) {
-          let m: RunMetrics;
-          try { m = await runOnce(browser, a, scene, log, args.device, args.cpuRate); } catch (e) {
-            log(`  ${a.name} ${scene.id}: FAILED ${(e as Error).message}`);
-            m = { valid: false, invalidReason: (e as Error).message, timing: {}, counts: {}, raw: null };
+          // Host-load gate: a rep measured on a loaded host is INVALID and is
+          // repeated (at most MAX_LOAD_RETRIES more times). Every attempt
+          // stays in the ledger; the verdict only counts valid ones.
+          for (let attempt = 0; attempt <= MAX_LOAD_RETRIES; attempt++) {
+            const before = await sampleHostLoad(loadOpts);
+            const pre = judgeLoad(before, { gateCpu: true, limits: args.limits });
+            let m: RunMetrics;
+            if (args.loadGate && pre.length) {
+              // Don't spend a scene on a host already known to be busy.
+              m = { valid: false, invalidReason: `host busy: ${pre.join('; ')}`, timing: {}, counts: {}, raw: null };
+            } else {
+              try { m = await runOnce(browser, a, scene, log, args.device, args.cpuRate); } catch (e) {
+                log(`  ${a.name} ${scene.id}: FAILED ${(e as Error).message}`);
+                m = { valid: false, invalidReason: (e as Error).message, timing: {}, counts: {}, raw: null };
+              }
+            }
+            const after = await sampleHostLoad(loadOpts);
+            const post = judgeLoad(after, { gateCpu: false, limits: args.limits });
+            m.load = { before, after };
+            const busy = args.loadGate && (pre.length > 0 || post.length > 0);
+            if (busy && m.valid) { m.valid = false; m.invalidReason = `host busy: ${[...pre, ...post].join('; ')}`; }
+            results[scene.id]![a.name].push(m);
+            if (!busy) break;
+            const left = MAX_LOAD_RETRIES - attempt;
+            log(`  ${a.name} ${scene.id}: INVALID (${m.invalidReason})${left > 0 ? ` — repeating (${attempt + 1}/${MAX_LOAD_RETRIES}) in ${LOAD_RETRY_WAIT_MS / 1000} s` : ' — no retries left'}`);
+            if (left > 0) await new Promise((r) => setTimeout(r, LOAD_RETRY_WAIT_MS));
           }
-          results[scene.id]![a.name].push(m);
         }
       }
     }
@@ -304,10 +347,12 @@ async function main(): Promise<void> {
   const file = args.append ?? path.join(args.out, `${stamp}-${head.sha}-${args.device}.json`);
   const strip = (runs: RunMetrics[]): RunMetrics[] => runs.map(({ raw: _raw, ...rest }) => ({ ...rest, raw: null }));
   writeFileSync(file, JSON.stringify({
-    when: new Date().toISOString(), device: args.device, reps: results[scenes[0]!.id]!.head.length,
+    // Rounds played (every attempt, valid or not, is in the arm lists).
+    when: new Date().toISOString(), device: args.device, reps: priorReps + reps,
     cpuRate: args.device === 'phone-proxy' ? args.cpuRate : undefined,
     noiseCheck,
     host: { ...hostProfile(), gpuRenderer: gpu, browserArgs: GPU_ARGS, headed: args.headed },
+    load: { gate: args.loadGate, limits: args.limits, ignorePorts: args.ignorePorts, portOffset: portOffset(), atStart: startLoad },
     arms: arms.map((a) => ({ name: a.name, sha: a.sha, clientParams: { ...BASE_CLIENT_PARAMS, ...a.clientParams }, serverEnv: a.serverEnv })),
     scenes: Object.fromEntries(scenes.map((s) => [s.id, {
       title: s.title,
