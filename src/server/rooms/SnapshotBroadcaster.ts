@@ -58,6 +58,7 @@ import type { ShipState } from './schema/SectorState.js';
 import type { ProjectileRecord } from './ProjectilePipeline.js';
 import type { Hold } from '../../shared-types/goods.js';
 import { isHoldEmpty } from '../../core/cargo/hold.js';
+import type { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 
 /** Shared empty stat-allocation reference (Phase 4 WS-B2). A frozen singleton so
  *  the per-broadcast scratch initializer + every un-upgraded ship reuse ONE
@@ -192,6 +193,8 @@ export interface SnapshotBroadcasterDeps {
   /** Structures plan, Phase 3 — the cached structures slice (rebuilt at the
    *  1 Hz grid pulse, attached by reference). Undefined ⇒ no structures. */
   getStructuresSlice?: () => SnapshotMessage['structureTargets'];
+  /** Perf scenes (WS3): snapshots + entities sent, counted while a scene runs. */
+  work?: SceneWorkCounters;
 }
 
 interface AllShipEntry {
@@ -995,6 +998,11 @@ export class SnapshotBroadcaster {
         });
       }
       anySnapshotSent = true;
+      const work = d.work;
+      if (work !== undefined && work.active) {
+        work.snapshots++;
+        work.snapshotEntities += projectilesCount + missilesCount + dronesCount + asteroidsCount;
+      }
     }
 
     // Sweep state-entry pool — drop entries for shipInstanceIds that
