@@ -26,3 +26,37 @@ export const warpTo: Shot = {
     await ctx.page.evaluate(`globalThis.__eqxClient && globalThis.__eqxClient.requestWarp(${drop.x}, ${drop.y})`);
   },
 };
+
+/**
+ * Wrap-up W1a: the warp destination picker, driven through the real UI (speed
+ * dial → Warp ▸ → a pocket). Films whichever prototype the URL picks:
+ * `EQX_SHOWCASE_PARAMS=warpui=map` for the system map, default the list.
+ */
+export const warpPicker: Shot = {
+  id: 'warp-picker',
+  section: 'mechanics',
+  title: 'Choosing where to warp',
+  caption: 'Open Warp from the menu, pick a pocket of the system by name and distance, and the drive spools up.',
+  features: ['P4'],
+  docs: ['warp-to'],
+  reel: false,
+  server: 'solar',
+  target: { galaxy: 'sol-prime', params: { solar: '1', spawnX: 0, spawnY: 0, art: 'machined', fx: 'new' } },
+  hud: 'full',
+  durationMs: 20_000,
+  async run(ctx) {
+    await ctx.sleep(1500);
+    await ctx.page.getByTestId('speed-dial-fab').click();
+    await ctx.sleep(600);
+    await ctx.page.getByTestId('speed-dial-warp').click();
+    await ctx.sleep(2500);
+    const gate = sectorSites('sol-prime').find((s) => s.kind === 'gate')!;
+    if (await ctx.page.getByTestId('warp-map').count()) {
+      await ctx.page.getByTestId(`warp-map-${gate.id}`).click();
+      await ctx.sleep(1200);
+      await ctx.page.getByTestId('warp-map-go').click();
+    } else {
+      await ctx.page.getByTestId(`warp-dest-${gate.id}`).click();
+    }
+  },
+};

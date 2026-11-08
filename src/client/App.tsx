@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { installPerfProbe, perfProbeEnabled, runPerfLabScene, runPerfLabTrip } from './debug/perf/perfProbe';
 import { cyclePlacementRotation } from './structures/structurePlacementClient';
 import { installWindowLogger, refreshAutoCaptureLatch } from './debug/ClientLogger';
@@ -52,6 +52,7 @@ import { useWarpOrchestration } from './useWarpOrchestration';
 import { EnergyBar } from './components/EnergyBar';
 import { HelmPanel } from './components/HelmPanel';
 import { SpeedDialMenu } from './components/SpeedDialMenu';
+import { WarpPicker } from './components/WarpPicker';
 import { BottomControlPanel } from './components/BottomControlPanel';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
 import { PlacementFenceHint } from './components/PlacementFenceHint';
@@ -909,6 +910,8 @@ function GameSurface({
        *  (5) and FIRE/BOOST (10/20). Smoke handoff 2026-06-06, Issue 3:
        *  "the speed dial is in the wrong place" → bottom-right corner. */}
       <Slot anchor="bottom-right" order={1}><SpeedDialMenu /></Slot>
+      {/* Phase 4 warp-to destination picker (portalled; solar sectors only). */}
+      <WarpPicker />
       {/* Phase 5 WS-4 — desktop RTS control strip (weapons when piloting,
        *  buildings when spectating). Self-gates to desktop + in-game. */}
       <Slot anchor="bottom-center" order={1}><BottomControlPanel /></Slot>

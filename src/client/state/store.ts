@@ -153,6 +153,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   travelling: false,
   activeSlotId: 'primary',
   placementKind: null,
+  warpPickerOpen: false,
   selectedEntityId: null,
   selectedEntityKind: null,
   helmAvailable: false,
@@ -267,6 +268,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   // fires immediately (no carry-over cooldown across slots).
   setActiveSlotId: (id) => set({ activeSlotId: id, lastFireMs: null }),
   setPlacementKind: (k) => set({ placementKind: k }),
+  setWarpPickerOpen: (open) => set({ warpPickerOpen: open }),
   setSelectedEntity: (id, kind) => set({ selectedEntityId: id, selectedEntityKind: kind }),
   setEnergyMax: (max) => set({ energyMax: max }),
   setHelmState: (available, active, speed) => set({ helmAvailable: available, helmActive: active, helmSpeed: speed }),
