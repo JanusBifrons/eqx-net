@@ -18,6 +18,8 @@ import InventoryIcon from '@mui/icons-material/Inventory2';
 import SecurityIcon from '@mui/icons-material/Security';
 import BoltIcon from '@mui/icons-material/Bolt';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
+import FastForwardIcon from '@mui/icons-material/FastForward';
+import { SOLAR_SECTORS } from '../../shared-types/sectorBounds';
 import DoorSlidingIcon from '@mui/icons-material/DoorSliding';
 import MeetingRoomIcon from '@mui/icons-material/MeetingRoom';
 import AirIcon from '@mui/icons-material/Air';
@@ -109,6 +111,10 @@ export function SpeedDialMenu(): JSX.Element | null {
   const shipKindId = useUIStore((s) => s.selectedShipKind);
   const setActiveSlotId = useUIStore((s) => s.setActiveSlotId);
   const setPlacementKind = useUIStore((s) => s.setPlacementKind);
+  // Phase 4: warp-to in a solar-system sector (the picker; wrap-up W1a).
+  const sectorKey = useUIStore((s) => s.currentSectorKey);
+  const setWarpPickerOpen = useUIStore((s) => s.setWarpPickerOpen);
+  const canWarp = SOLAR_SECTORS && sectorKey !== null;
 
   const [open, setOpen] = useState(false);
   // The dial's drilled view (pure presentation — local state, never Zustand).
@@ -138,6 +144,11 @@ export function SpeedDialMenu(): JSX.Element | null {
     close();
     setDrawerOpen(true);
   }, [close, setDrawerOpen]);
+
+  const handleWarp = useCallback(() => {
+    close();
+    setWarpPickerOpen(true);
+  }, [close, setWarpPickerOpen]);
 
   const handleMap = useCallback(() => {
     close();
@@ -281,6 +292,19 @@ export function SpeedDialMenu(): JSX.Element | null {
           onTouchStart: touchActivate(handleWeapon),
         })}
       />,
+      ...(canWarp ? [
+        <SpeedDialAction
+          key="warp"
+          icon={<FastForwardIcon />}
+          tooltipTitle="Warp ▸"
+          tooltipOpen
+          FabProps={fab(ACTION_FAB_BASE, {
+            'data-testid': 'speed-dial-warp',
+            onClick: clickActivate(handleWarp),
+            onTouchStart: touchActivate(handleWarp),
+          })}
+        />,
+      ] : []),
       <SpeedDialAction
         key="build"
         icon={<ConstructionIcon />}
