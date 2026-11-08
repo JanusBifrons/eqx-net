@@ -297,6 +297,10 @@ export interface SnapshotMessage {
     /** v4 M2 — a garrison's patrol ship: the faction it flies for (clients
      *  tint it). Absent for every other NPC. */
     fac?: string;
+    /** W2a NPC warp-to (flagship fleets): 1 spooling, 2 on the run (drawn
+     *  hidden, the departure effect plays), 3 just dropped out (the arrival
+     *  effect). Absent = not warping. */
+    warp?: 1 | 2 | 3;
     /** Hull health PERCENT (0-100 integer) for health-weighted player turret
      *  aim (Part C — the player turret + auto-fire focus the wounded). Emitted
      *  only for DAMAGED in-interest drones (full-HP omit it → client treats

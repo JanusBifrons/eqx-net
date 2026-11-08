@@ -133,6 +133,11 @@ export interface LivingWorldRoom {
    *  IDLE behaviour flies to it via an arrive ramp. No-op if the bot isn't an
    *  in-sector drone here. */
   setBotMoveTarget(botId: string, x: number, y: number): void;
+  /** W2a NPC warp-to: send a bot on an in-sector warp to (x, y) (spool, run,
+   *  drop; the same machine as a pilot's). False for an unknown id. */
+  warpBot?(botId: string, x: number, y: number): boolean;
+  /** W2a: a bot's warp phase (1 spool, 2 run, 3 just arrived, 0 none). */
+  botWarpPhase?(botId: string): 0 | 1 | 2 | 3;
   /** Leader-led flocking (non-combat herding): mark a bot a FOLLOWER of
    *  `leaderId`; while IDLE it flocks (cohesion/alignment/separation) to the
    *  leader's LIVE pose each tick (`memberIds` drive separation), instead of a

@@ -289,7 +289,7 @@ import {
   MAX_ENTITIES,
 } from '../../shared-types/sabLayout.js';
 import { SnapshotRing } from '../lagcomp/SnapshotRing.js';
-import { WarpTravelTracker } from './warpTravel.js';
+import { ARRIVED_TICKS, WarpTravelTracker } from './warpTravel.js';
 // checkBackpressure now used inside SnapshotBroadcaster.ts + SwarmBroadcaster.ts
 import { validateToken, getUser } from '../auth/AuthService.js';
 import { recordGameJoin, recordKill, saveSnapshot } from '../stats/StatsService.js';
@@ -1120,6 +1120,9 @@ export class SectorRoom extends Room<SectorState> {
    * Keyed by playerId for symmetry with `playerToSlot` / `lastFireClientTick`.
    */
   private pendingJoin = new Map<string, PendingJoinRecord>();
+  /** W2a NPC warp-to: bots sent on a warp (`warpBot`), until they have
+   *  landed and their arrival window has passed. Empty in normal play. */
+  private readonly npcWarps = new Map<string, { lastPhase: 0 | 1 | 2; arrivedUntil: number; started: boolean; idleTicks: number }>();
   /** Phase 4 warp travel: a ship on its warp run is out of the world
    *  (rooms/warpTravel.ts). Ticked after the pending-join drain. */
   private readonly warpTravel = new WarpTravelTracker({
@@ -2050,6 +2053,7 @@ export class SectorRoom extends Room<SectorState> {
       walletOf: (playerId) => getWallet().balance(playerId),
       disabledMsOf: (playerId) => this.gateGuard.remainingMs(playerId, Date.now()),
       droneFactionOf: (id) => (this.patrols.count > 0 ? this.patrols.factionOf(id) : undefined),
+      droneWarpOf: (id) => (this.npcWarps.size > 0 ? this.botWarpPhase(id) : 0),
       depositProgressOf: (shipInstanceId) => this.depositProgress.get(shipInstanceId),
       lockGroupsOf: (pid) => this.locks.wireFor(pid),
       lockedByOf: (pid) => this.npcLocks.wireFor(pid),
@@ -4520,8 +4524,9 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
-    // Phase 4 warp travel: a ship on its run is out of the world.
+    // Phase 4 warp travel: a ship on its run is out of the world (an NPC's too, W2a).
     if (this.warpTravel.isTravelling(targetId)) return;
+    if (this.npcWarps.size > 0 && this.botWarpPhase(targetId) === 2) return;
     // v4 A — alien gates can't be damaged; whoever hits one is disabled.
     if (this.gateGuard.gateCount > 0 && this.gateGuard.isGate(targetId)) {
       if (damage > 0) this.gateGuard.onGateAttacked(targetId, shooterId, Date.now());
@@ -6820,6 +6825,53 @@ export class SectorRoom extends Room<SectorState> {
   /** Roaming-formation (Phase 5) — assign a bot's in-sector move target. The
    *  drone's IDLE `HostileDroneBehaviour` flies to it (arrive ramp). No-op for a
    *  bot with no behaviour registered here (e.g. mid-transit). */
+  /**
+   * W2a NPC warp-to (flagship fleets): send a living-world bot on a warp to
+   * (x, y) through the same spool → run → drop machine as a pilot's
+   * (World.botWarp). The bot's AI is overridden while it spools and runs;
+   * point its move target at the destination too, so it carries on from
+   * there. Returns false for an unknown or non-ship id.
+   */
+  warpBot(botId: string, x: number, y: number): boolean {
+    const rec = this.swarmRegistry.get(botId);
+    if (!rec || rec.kind !== 1) return false;
+    const lim = this.solar ? SOLAR_HALF_EXTENT : SECTOR_PLAYABLE_HALF_EXTENT;
+    this.postToWorker({ type: 'BOT_WARP', slot: rec.slot, x: Math.max(-lim, Math.min(lim, x)), y: Math.max(-lim, Math.min(lim, y)) });
+    if (!this.npcWarps.has(botId)) this.npcWarps.set(botId, { lastPhase: 0, arrivedUntil: -1, started: false, idleTicks: 0 });
+    return true;
+  }
+
+  /** Drop a bot's warp request (cancels a spool; a run can't be stopped). */
+  cancelBotWarp(botId: string): void {
+    const rec = this.swarmRegistry.get(botId);
+    if (rec) this.postToWorker({ type: 'BOT_WARP', slot: rec.slot });
+  }
+
+  /** A bot's NPC warp phase: 1 spool, 2 run, 3 just arrived, 0 none. */
+  botWarpPhase(botId: string): 0 | 1 | 2 | 3 {
+    const w = this.npcWarps.get(botId);
+    if (w === undefined) return 0;
+    if (w.lastPhase !== 0) return w.lastPhase;
+    return w.arrivedUntil >= this.serverTick ? 3 : 0;
+  }
+
+  /** W2a: follow each warping bot's phase from its SAB flags; mark a drop as
+   *  "just arrived" for ARRIVED_TICKS (clients draw the drop flash). */
+  private tickNpcWarps(): void {
+    for (const [id, w] of this.npcWarps) {
+      const rec = this.swarmRegistry.get(id);
+      if (!rec) { this.npcWarps.delete(id); continue; }
+      const f = this.sabU32[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0;
+      const phase: 0 | 1 | 2 = f & FLAG_WARP_CRUISE ? 2 : f & FLAG_WARP_SPOOL ? 1 : 0;
+      if (phase !== 0) w.started = true;
+      if (w.lastPhase === 2 && phase === 0) w.arrivedUntil = this.serverTick + ARRIVED_TICKS;
+      w.lastPhase = phase;
+      // Done: idle after the arrival window (or a spool that was cancelled /
+      // never began within a second of the request).
+      if (phase === 0 && this.serverTick > w.arrivedUntil && (w.started || ++w.idleTicks > 60)) this.npcWarps.delete(id);
+    }
+  }
+
   setBotMoveTarget(botId: string, x: number, y: number): void {
     this.aiController.getBehaviour(botId)?.setMoveTarget?.(x, y);
   }
@@ -10078,6 +10130,7 @@ export class SectorRoom extends Room<SectorState> {
     // Phase 4 warp travel: into / out of the world on a warp run (no-op when
     // nobody is warping).
     this.warpTravel.tick(this.serverTick);
+    if (this.npcWarps.size > 0) this.tickNpcWarps();
 
     // Phase 4 abandon detection — galaxy-rooms only, every 30 ticks
     // (~500ms). See sectorIdleEvaluator.ts.
