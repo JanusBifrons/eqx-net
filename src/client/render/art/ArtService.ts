@@ -14,8 +14,9 @@
  */
 import { Rectangle, Texture } from 'pixi.js';
 import { FX_SPECS, isFxId, type FxId, type FxSpec } from './fx/fxTextures.js';
-import { Atlas, type AtlasOpts } from './atlas.js';
-import { bakeKey, runBake, seedVariant, type Baked, type BakeJob } from './bake.js';
+import { Atlas, PageBudget, type AtlasOpts } from './atlas.js';
+import { bakeKey, runBake, seedVariant, type Baked, type BakeJob, type LitMeta } from './bake.js';
+import type { LightingSettings } from './lightingSettings.js';
 import { loadBakes, saveBakes, storeKey } from './bakeStore.js';
 import type { Frame, LightRig } from './shade.js';
 import { sunRigForSector } from './sunRig.js';
@@ -36,9 +37,14 @@ export interface ShipArt {
   density: number;
   nozzles: Baked['nozzles'];
   navLights: Baked['navLights'];
+  /** GPU-lit art (`?shiplight=gpu`): `frames` holds the map frame (one per
+   *  tile, data pages) and these are its facts; absent = baked sun frames. */
+  lit?: LitMeta;
 }
 
 export interface StructArt {
+  /** GPU-lit art: the map frame (data page) and its facts. */
+  lit?: LitMeta;
   tex: Texture;
   /** Unlit copy at half resolution: what blast light lifts. */
   albedo: Texture;
@@ -117,6 +123,10 @@ export interface BakeCache {
 
 export interface ArtServiceDeps {
   packer: ArtPacker;
+  /** GPU-lit art (`?shiplight=gpu`): which art is lit live, and the data
+   *  atlas its maps pack into (sharing the packer's page budget). */
+  lighting?: LightingSettings;
+  litPacker?: ArtPacker;
   runner: BakeRunner;
   cache: BakeCache | null;
   now: () => number;
@@ -279,7 +289,7 @@ export class ArtService {
         h.stale = true;
       }
       for (let i = this.retired.length - 1; i >= 0; i--) if (dead.has(this.retired[i]!.group ?? 0)) this.retired.splice(i, 1);
-      for (const g of dead) freed += this.deps.packer.freeGroup?.(g) ?? 0;
+      for (const g of dead) freed += (this.deps.packer.freeGroup?.(g) ?? 0) + (this.deps.litPacker?.freeGroup?.(g) ?? 0);
     }
     // Art from a past visit that is still drawn pins that visit's pages, so
     // move it into the current visit right away (phone run 2026-11-07: the
@@ -381,7 +391,9 @@ export class ArtService {
     // Effect textures aren't lit by the sector's sun: one bake serves every
     // sector (a sky prepared during a transit's spool is the one used after
     // the switch, so its upload doesn't land mid-trip).
-    const key = job.type === 'fx' ? bakeKey(job) : `${bakeKey(job)}|${this.rigTag}`;
+    if (this.wantsLit(job)) job = { ...job, lit: true } as BakeJob;
+    // Lit maps don't depend on the sun either: one bake for every sector.
+    const key = job.type === 'fx' || job.lit ? bakeKey(job) : `${bakeKey(job)}|${this.rigTag}`;
     let h = this.handles.get(key);
     if (h) {
       // A warm-up bake still queued: something now needs it, so move it up.
@@ -396,6 +408,21 @@ export class ArtService {
     if (urgent) this.urgentKeys.add(key);
     void this.start(h, urgent);
     return h;
+  }
+
+  /** GPU lighting on for this kind of art? */
+  private wantsLit(job: BakeJob): boolean {
+    const s = this.deps.lighting;
+    if (!s || !this.deps.litPacker) return false;
+    if (job.type === 'ship' || job.type === 'scrap' || job.type === 'turret') return true;
+    if (job.type === 'struct') return s.litStructures;
+    if (job.type === 'rock') return s.litAsteroids;
+    return false;
+  }
+
+  /** The atlas a bake packs into: lit maps need data pages. */
+  private packerFor(b: Baked): ArtPacker {
+    return b.lit && this.deps.litPacker ? this.deps.litPacker : this.deps.packer;
   }
 
   /** Handles something on screen asked for (vs warm-up only). */
@@ -459,17 +486,18 @@ export class ArtService {
       if (cached) this.fromCache++;
     }
     // Upload, then hand out the textures: a handle turns `ready` only here.
-    if (packed > 0) { this.deps.packer.commit(); this.flushFills(); }
+    if (packed > 0) { this.deps.packer.commit(); this.deps.litPacker?.commit(); this.flushFills(); }
   }
 
   /** Place a bake's frames; false (handle failed) if it won't fit the budget. */
   private pack(h: ArtHandle, b: Baked): boolean {
-    const packer = this.deps.packer;
+    const packer = this.packerFor(b);
     // Released by `collect` while it was baking: nothing wants it.
     if (this.handles.get(h.key) !== h) return false;
     // A bake asked for in a past visit lands in this one (not the old pages).
     if (h.group !== undefined && h.group !== 0 && h.group < this.gen) h.group = this.gen;
-    packer.setGroup?.(h.group ?? 0);
+    this.deps.packer.setGroup?.(h.group ?? 0);
+    this.deps.litPacker?.setGroup?.(h.group ?? 0);
     if (h.job.type === 'fx') return this.packFx(h, h.job.id, b);
     // Warm-up bakes are a guess: they may only use half the budget, so art
     // something on screen needs always has room (phone report 2026-11-07: the
@@ -501,9 +529,10 @@ export class ArtService {
     // Textures resolve on commit (end of this tick); fill the handle then.
     this.pendingFill.push(() => {
       if (h.job.type === 'ship' || h.job.type === 'scrap' || h.job.type === 'turret') {
-        h.ship = { frames: tex, w: b.w, h: b.h, tiles: b.tiles ?? 1, tileH: b.tileH ?? b.h, density: b.density, nozzles: b.nozzles, navLights: b.navLights };
+        // Lit: `w` is the hull's width (one slice), not the 3-slice frame's.
+        h.ship = { frames: tex, w: b.lit ? b.lit.w : b.w, h: b.h, tiles: b.tiles ?? 1, tileH: b.tileH ?? b.h, density: b.density, nozzles: b.nozzles, navLights: b.navLights, ...(b.lit ? { lit: b.lit } : {}) };
       } else {
-        h.struct = { tex: tex[0]!, albedo: tex[1]!, w: b.w, h: b.h, density: b.density, navLights: b.navLights };
+        h.struct = { tex: tex[0]!, albedo: tex[1] ?? tex[0]!, w: b.lit ? b.lit.w : b.w, h: b.h, density: b.density, navLights: b.navLights, ...(b.lit ? { lit: b.lit } : {}) };
       }
       h.state = 'ready';
       h.prev = undefined;
@@ -558,7 +587,7 @@ export class ArtService {
     }
     return {
       ready, pending, failed, fromCache: this.fromCache,
-      pages: this.deps.packer.pageCount, gpuBytes: this.deps.packer.gpuBytes, workers: this.deps.runner.workers, fxReady, fxPending, ...(lastFailure ? { lastFailure } : {}),
+      pages: this.deps.packer.pageCount + (this.deps.litPacker?.pageCount ?? 0), gpuBytes: this.deps.packer.gpuBytes + (this.deps.litPacker?.gpuBytes ?? 0), workers: this.deps.runner.workers, fxReady, fxPending, ...(lastFailure ? { lastFailure } : {}),
       uploads: (this.deps.packer as { uploads?: number }).uploads, uploadTexels: (this.deps.packer as { uploadTexels?: number }).uploadTexels,
       ...(failedKinds ? { failedKinds } : {}),
       visit: this.gen, pins: this.pins.slice(),
@@ -579,6 +608,7 @@ export class ArtService {
     this.destroyed = true;
     if (this.deps.ownsRunner !== false) this.deps.runner.destroy();
     this.deps.packer.destroy();
+    this.deps.litPacker?.destroy();
     this.handles.clear();
     this.toPack.length = 0;
   }
@@ -674,6 +704,9 @@ export interface CreateArtServiceOpts {
   /** Test-only bake delay (`?artDelayMs=`). */
   delayMs?: number;
   maxWorkers?: number;
+  /** GPU-lit art (`?shiplight=gpu`): lit maps go into a data atlas that
+   *  shares the ordinary atlas's page budget. */
+  lighting?: LightingSettings;
 }
 
 /** The real thing: atlas sized for the device, a worker pool (inline if
@@ -699,8 +732,11 @@ function pageRunner(o: CreateArtServiceOpts): BakeRunner {
 }
 
 export function createArtService(o: CreateArtServiceOpts): ArtService {
+  const opts = atlasOptsFor(o.touch, (globalThis.navigator as { deviceMemory?: number } | undefined)?.deviceMemory);
+  const budget = new PageBudget(opts.maxPages ?? Infinity);
   return new ArtService({
-    packer: new Atlas(false, atlasOptsFor(o.touch, (globalThis.navigator as { deviceMemory?: number } | undefined)?.deviceMemory)),
+    packer: new Atlas(false, { ...opts, budget }),
+    ...(o.lighting ? { lighting: o.lighting, litPacker: new Atlas(false, { ...opts, budget, data: true }) } : {}),
     runner: pageRunner(o),
     cache: { load: loadBakes, save: saveBakes },
     now: () => performance.now(),

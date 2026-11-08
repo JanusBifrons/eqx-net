@@ -26,7 +26,7 @@ import { ArtCache, PIXEL_ROT_STEPS, SUN_STEPS, type PixelSettings, type ShipArt,
 import { buildScene, SCENE_IDS, type Cam, type Pose, type Scene, type SceneId, type ShipE, type Shot } from './scenes.js';
 import { hash01, valueNoise } from '../render/art/fields.js';
 import { seedVariant, type BakeJob } from '../render/art/bake.js';
-import { LitScene, LitShipMesh } from '../render/art/litShipShader.js';
+import { LitScene, LitShipMesh, litTileFromMaps } from '../render/art/litShipShader.js';
 import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach, lightingFromSearch } from '../render/art/lightingSettings.js';
 
 type Style = 'current' | 'machined' | 'pixel' | 'lit';
@@ -318,7 +318,7 @@ async function main(): Promise<void> {
     v.radius = Math.max(art.w, art.h) / art.density / 2;
     if (STYLE === 'lit' && LIGHTING.litStructures) {
       const l = cache.litStruct(st.id, st.seed);
-      v.litMesh = new LitShipMesh(l.maps, l.tex, LIGHTING);
+      v.litMesh = new LitShipMesh(litTileFromMaps(l.maps, l.tex), LIGHTING);
       v.litMesh.position.set(st.x, st.y);
       v.litMesh.rotation = st.rot;
       v.sprite.visible = false;
@@ -348,7 +348,7 @@ async function main(): Promise<void> {
     } else if (STYLE === 'lit') {
       v.art = cache.machinedShip(e.id, e.paint); // nozzles + nav lights
       const l = cache.litShip(e.id, e.paint);
-      v.lit = new LitShipMesh(l.maps, l.tex, LIGHTING);
+      v.lit = new LitShipMesh(litTileFromMaps(l.maps, l.tex), LIGHTING);
       v.lit.lightOwnerId = i; // its own engines barely light it
       // A capital-sized hull shades the ships around it.
       const hw = l.maps.w / l.maps.ppu / 2, hh = l.maps.h / l.maps.ppu / 2;

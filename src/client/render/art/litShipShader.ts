@@ -70,6 +70,9 @@ out vec4 finalColor;
 uniform sampler2D uMaps;
 // x: slice B offset (uv), y: slice C offset (uv), zw: one texel (uv).
 uniform vec4 uSlices;
+// Slice A's rectangle on its page (uv): u0, v0, u1, v1. The shadow march
+// stays inside it (art shares atlas pages).
+uniform vec4 uFrame;
 // Sun direction in the hull's frame (xyz) and the half vector.
 uniform vec3 uL;
 uniform vec3 uH;
@@ -133,7 +136,7 @@ void main() {
       float ray = h0 + uShadow.z * float(s);
       if (ray > uScale.y) break;
       vec2 p = vUV + dir * float(s);
-      if (p.x < 0.0 || p.y < 0.0 || p.x >= uSlices.x - ${LIT_GUTTER}.0 * uSlices.z || p.y >= 1.0) break;
+      if (p.x < uFrame.x || p.y < uFrame.y || p.x >= uFrame.z || p.y >= uFrame.w) break;
       float d = texture(uMaps, p + vec2(uSlices.x, 0.0)).b * uScale.y - ray;
       if (d > 0.0) { occl = max(occl, min(1.0, d / uShadowLook.y)); if (occl >= 1.0) break; }
     }
@@ -156,6 +159,9 @@ void main() {
       if (S.z <= 0.0) continue;
       mat2 Rt = mat2(P.z, -P.w, P.w, P.z); // rotate into the box's frame
       vec2 q = Rt * (vLocal - P.xy);
+      // On top of the box (its own tiles, guns on its deck, a ship flying
+      // over it): the box doesn't shade it; the hull's own shading does.
+      if (abs(q.x) < S.x && abs(q.y) < S.y) continue;
 #ifdef OCC_SHADOW
       {
         // Ray toward the sun through the box (slabs): in shadow if it passes
@@ -284,9 +290,26 @@ const _pick = new Int32Array(MAX_POINT_LIGHTS + MAX_OCCLUDERS);
 const _pickD = new Float64Array(MAX_POINT_LIGHTS + MAX_OCCLUDERS);
 
 /**
- * One GPU-lit hull: a quad the size of the hull (world units, centred), lit
- * by the shader. `setLight` once per frame with the sun, the hull's world
- * pose and the scene's lights / occluders.
+ * One piece of lit art on a page: slice A's frame is `tex.frame` (the three
+ * slices sit side by side, `LIT_GUTTER` apart), `w` × `rows` texels of a
+ * hull `hullH` texels long, starting at row `y0` (capital tiles; 0 and
+ * `hullH` otherwise). `tex.source` is a data page (no premultiplication).
+ */
+export interface LitTile {
+  tex: Texture;
+  w: number; rows: number; y0: number; hullH: number;
+  ppu: number; maxH: number; emisMax: number;
+}
+
+/** A whole lit frame as one tile (the art lab's stand-alone maps). */
+export function litTileFromMaps(m: LitMaps, tex: Texture): LitTile {
+  return { tex, w: m.w, rows: m.h, y0: 0, hullH: m.h, ppu: m.ppu, maxH: m.maxH, emisMax: m.emisMax };
+}
+
+/**
+ * One GPU-lit hull (or one tile of a capital): a quad in hull-local world
+ * units, lit by the shader. `setLight` once per frame with the sun, the
+ * hull's world pose and the scene's lights / occluders.
  */
 export class LitShipMesh extends Mesh<Geometry, Shader> {
   private readonly uni: UniformGroup;
@@ -301,17 +324,20 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
   private readonly hx: number;
   private readonly hy: number;
 
-  constructor(readonly maps: LitMaps, tex: Texture, readonly settings: LightingSettings = BAKED_LOOK, geometry?: Geometry) {
-    const W = maps.frame.w;
+  constructor(readonly tile: LitTile, readonly settings: LightingSettings = BAKED_LOOK) {
+    const tex = tile.tex, f = tex.frame;
+    const PW = tex.source.width, PH = tex.source.height;
+    const u0 = f.x / PW, v0 = f.y / PH, u1 = (f.x + tile.w) / PW, v1 = (f.y + tile.rows) / PH;
     const NL = Math.max(1, settings.pointLights), NO = MAX_OCCLUDERS;
     const uni = new UniformGroup({
-      uSlices: { value: new Float32Array([sliceX(maps.w, 1) / W, sliceX(maps.w, 2) / W, 1 / W, 1 / maps.h]), type: 'vec4<f32>' },
+      uSlices: { value: new Float32Array([sliceX(tile.w, 1) / PW, sliceX(tile.w, 2) / PW, 1 / PW, 1 / PH]), type: 'vec4<f32>' },
+      uFrame: { value: new Float32Array([u0, v0, u1, v1]), type: 'vec4<f32>' },
       uL: { value: new Float32Array([0, 0, 1]), type: 'vec3<f32>' },
       uH: { value: new Float32Array([0, 0, 1]), type: 'vec3<f32>' },
       uSunColor: { value: new Float32Array(3), type: 'vec3<f32>' },
       uAmbient: { value: new Float32Array(3), type: 'vec3<f32>' },
       uRim: { value: new Float32Array(3), type: 'vec3<f32>' },
-      uScale: { value: new Float32Array([1, maps.maxH, maps.emisMax, maps.ppu]), type: 'vec4<f32>' },
+      uScale: { value: new Float32Array([1, tile.maxH, tile.emisMax, tile.ppu]), type: 'vec4<f32>' },
       uShadow: { value: new Float32Array([0, 1, 0]), type: 'vec3<f32>' },
       uShadowLook: { value: new Float32Array([0.85, 0.6, 1]), type: 'vec3<f32>' },
       uL2: { value: new Float32Array([0, 0, 1]), type: 'vec3<f32>' },
@@ -323,10 +349,10 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
       uOccCol: { value: new Float32Array(NO * 4), type: 'vec4<f32>', size: NO },
     });
     const shader = new Shader({ glProgram: litProgram(settings), resources: { litUniforms: uni, uMaps: tex.source, uMapsSampler: tex.source.style } });
-    super({ geometry: geometry ?? litShipGeometry(maps), shader });
+    super({ geometry: litTileGeometry(tile, u0, v0, u1, v1), shader });
     this.uni = uni;
     this.u = uni.uniforms as Record<string, Float32Array>;
-    this.hx = maps.w / maps.ppu / 2; this.hy = maps.h / maps.ppu / 2;
+    this.hx = tile.w / tile.ppu / 2; this.hy = tile.hullH / tile.ppu / 2;
   }
 
   /** Light for this frame: the sector's sun, the hull's world pose (Pixi
@@ -346,9 +372,9 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
     // Self shadow, as shade.ts: ~0.75 world units a step, clipped at 40 u ×
     // the length (a longer shadow rises more slowly over more steps).
     const len = Math.max(0.25, s.shadow.length);
-    const stepT = Math.max(1, this.maps.ppu * 0.75);
-    const rise = (Math.tan(elev) / this.maps.ppu) * stepT / len;
-    const maxSteps = Math.min(s.selfShadowSteps, LIT_MAX_SHADOW_STEPS, Math.ceil((40 * len) / 0.75), Math.ceil(this.maps.maxH / Math.max(1e-4, rise)) + 2);
+    const stepT = Math.max(1, this.tile.ppu * 0.75);
+    const rise = (Math.tan(elev) / this.tile.ppu) * stepT / len;
+    const maxSteps = Math.min(s.selfShadowSteps, LIT_MAX_SHADOW_STEPS, Math.ceil((40 * len) / 0.75), Math.ceil(this.tile.maxH / Math.max(1e-4, rise)) + 2);
     const sh = this.u['uShadow']!;
     sh[0] = s.selfShadowSteps > 0 ? maxSteps : 0; sh[1] = stepT; sh[2] = rise;
     const look = this.u['uShadowLook']!;
@@ -378,7 +404,7 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
         const l = scene.lights[_pick[i]!]!;
         const dx = l.x - x, dy = l.y - y;
         const isOwn = this.lightOwnerId >= 0 && l.owner === this.lightOwnerId;
-        P[i * 4] = dx * c - dy * sn; P[i * 4 + 1] = dx * sn + dy * c; P[i * 4 + 2] = isOwn ? l.z - this.maps.maxH : l.z; P[i * 4 + 3] = l.reach; // own engines sit low at the stern, not over the deck
+        P[i * 4] = dx * c - dy * sn; P[i * 4 + 1] = dx * sn + dy * c; P[i * 4 + 2] = isOwn ? l.z - this.tile.maxH : l.z; P[i * 4 + 3] = l.reach; // own engines sit low at the stern, not over the deck
         const own = isOwn ? LitShipMesh.OWN_LIGHT : 1;
         C[i * 4] = l.r; C[i * 4 + 1] = l.g; C[i * 4 + 2] = l.b; C[i * 4 + 3] = l.intensity * own;
       }
@@ -447,13 +473,15 @@ function nearestInto(items: ReadonlyArray<{ x: number; y: number; id?: number }>
 }
 
 /** The quad for a hull's maps: slice A's UVs, world-unit size, centred. */
-export function litShipGeometry(m: LitMaps): Geometry {
-  const hw = m.w / m.ppu / 2, hh = m.h / m.ppu / 2;
-  const u1 = m.w / m.frame.w;
+/** A tile's quad in hull-local world units (the hull centred at 0), with
+ *  its slice-A rectangle on the page as UVs. */
+function litTileGeometry(t: LitTile, u0: number, v0: number, u1: number, v1: number): Geometry {
+  const hw = t.w / t.ppu / 2;
+  const top = (t.y0 - t.hullH / 2) / t.ppu, bot = (t.y0 + t.rows - t.hullH / 2) / t.ppu;
   return new Geometry({
     attributes: {
-      aPosition: new Float32Array([-hw, -hh, hw, -hh, hw, hh, -hw, hh]),
-      aUV: new Float32Array([0, 0, u1, 0, u1, 1, 0, 1]),
+      aPosition: new Float32Array([-hw, top, hw, top, hw, bot, -hw, bot]),
+      aUV: new Float32Array([u0, v0, u1, v0, u1, v1, u0, v1]),
     },
     indexBuffer: new Uint32Array([0, 1, 2, 0, 2, 3]),
   });

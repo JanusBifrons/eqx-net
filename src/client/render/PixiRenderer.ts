@@ -30,6 +30,7 @@ import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService'
 import { readFxKillSwitches } from './fxKillSwitches';
 import { createArtService, type ArtHandle } from './art/ArtService.js';
 import { MachinedShipSprite } from './art/MachinedShipSprite.js';
+import { litPass } from './art/litPass.js';
 import { MachinedFlatSprite } from './art/MachinedFlatSprite.js';
 import { warmUpJobs } from './art/warmUp.js';
 import { Backdrop } from './art/fx/Backdrop.js';
@@ -676,9 +677,11 @@ export class PixiRenderer implements IRenderer {
     // Machined art: bakes run on workers; until an entity's art is ready it
     // draws today's look. The mode is resolved on the main thread (artMode.ts).
     if (this._artOpts.mode === 'machined') {
-      const art = createArtService({ touch: this._isTouch, delayMs: this._artOpts.delayMs ?? 0 });
+      const art = createArtService({ touch: this._isTouch, delayMs: this._artOpts.delayMs ?? 0, ...(this._artOpts.lighting ? { lighting: this._artOpts.lighting } : {}) });
       this._artCtx.art = art;
       this._artCtx.sunAz = art.lightRig.sunAz;
+      // GPU-lit art (`?shiplight=gpu`): lit meshes are built with these.
+      litPass.settings = this._artOpts.lighting ?? null;
       // Machined turrets ride the new effects (rings in the bakes, baked guns).
       this._artCtx.turrets = this._artOpts.fx === true;
       this.mountVisuals.setArt(this._artCtx);
@@ -939,6 +942,8 @@ export class PixiRenderer implements IRenderer {
       // galaxy map / warp screen, where `update()` doesn't run, so the
       // warm-up lands before the player joins.
       this._artCtx.art?.tick();
+      // GPU-lit art: light every lit mesh from this frame's lights, before render.
+      if (litPass.settings && this._artCtx.art && litPass.count > 0) litPass.finish(this.world, this._artCtx.art.lightRig);
       if (this._artCtx.art && ++this._artCollectFrame >= ART_COLLECT_EVERY_FRAMES) {
         this._artCollectFrame = 0;
         this.collectUnusedArt();
@@ -1460,6 +1465,8 @@ export class PixiRenderer implements IRenderer {
   }
 
   update(mirror: RenderMirror): void {
+    // GPU-lit art: this frame's lights are added by the effects below.
+    if (litPass.settings) litPass.begin();
     // F1 — bracket the whole update() for `rendererUpdateMs`. Single
     // exit point (the method has no early `return`), so a start-stamp +
     // tail-write is exact. Sub-µs, unconditional (markers-off baseline =

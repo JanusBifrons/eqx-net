@@ -43,7 +43,7 @@ export function structHandleFor(actx: ShipArtCtx, key: string, kindId: string, r
   if (!actx.art) return null;
   let h = actx.handles.get(key);
   const rings = actx.turrets === true && hasTurrets(kindId, true);
-  if (!h || h.stale === true || h.job.type !== 'struct' || h.job.id !== kindId || quarterTurns(h.job.rot ?? 0) !== quarterTurns(rot) || (h.job.rings === true) !== rings) {
+  if (!h || h.stale === true || h.job.type !== 'struct' || h.job.id !== kindId || (!h.job.lit && quarterTurns(h.job.rot ?? 0) !== quarterTurns(rot)) || (h.job.rings === true) !== rings) {
     h = actx.art.struct(kindId, 1, rot, undefined, true, rings);
     actx.handles.set(key, h);
   }

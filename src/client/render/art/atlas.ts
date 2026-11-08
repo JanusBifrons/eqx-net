@@ -216,6 +216,17 @@ export class Atlas {
    * a TilingSprite), which an atlas slot can't do. Counted in `gpuBytes`.
    */
   standalone(fr: Frame, repeat: boolean, mip: boolean): Texture {
+    if (this.data) {
+      // Lit maps: raw bytes, no premultiplication (capital tiles, own ship).
+      const tex = new Texture({ source: new BufferImageSource({
+        resource: new Uint8Array(fr.data.buffer, fr.data.byteOffset, fr.data.byteLength).slice(), width: fr.w, height: fr.h,
+        alphaMode: 'no-premultiply-alpha', scaleMode: 'linear', autoGenerateMipmaps: mip,
+        ...(repeat ? { addressMode: 'repeat' as const } : {}),
+      }) });
+      const bytes = fr.w * fr.h * 4;
+      this.singles.push({ tex, bytes: mip ? Math.round((bytes * 4) / 3) : bytes, group: this.group });
+      return tex;
+    }
     const { canvas, ctx } = makeCanvas(Math.max(fr.w, fr.h));
     if (canvas.width !== fr.w || canvas.height !== fr.h) { canvas.width = fr.w; canvas.height = fr.h; }
     ctx.putImageData(new ImageData(fr.data as unknown as Uint8ClampedArray<ArrayBuffer>, fr.w, fr.h), 0, 0);
