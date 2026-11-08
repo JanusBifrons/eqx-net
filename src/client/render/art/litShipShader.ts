@@ -41,8 +41,10 @@ void main() {
   vColor = uColor * uWorldColorAlpha;
 }`;
 
-/** The blurriest mip level the shader reads: 2^4 = 16 texels, the gutter. */
-export const LIT_MAX_LOD = 4;
+/** The blurriest mip level the shader reads: 2^5 = 32 texels, the gutter.
+ *  Naval guns (6 texels / unit) seen from far need level 5; capping lower
+ *  under-filters their thin barrels into beads (review 2026-11-08). */
+export const LIT_MAX_LOD = 5;
 
 /** Most self-shadow steps (the loop bound must be constant). */
 export const LIT_MAX_SHADOW_STEPS = 128;
@@ -456,10 +458,14 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
  */
 export function strongestLightsInto(scene: LitScene, x: number, y: number, rot: number, hx: number, hy: number, n: number, owner: number): number {
   const c = Math.cos(-rot), sn = Math.sin(-rot);
+  const hr = Math.hypot(hx, hy);
   let k = 0;
   for (let i = 0; i < scene.lightCount; i++) {
     const l = scene.lights[i]!;
     const dx = l.x - x, dy = l.y - y;
+    // Cheap reject first: out of reach of the hull's bounding circle.
+    const rr = l.reach + hr;
+    if (dx * dx + dy * dy >= rr * rr) continue;
     const ox = Math.max(0, Math.abs(dx * c - dy * sn) - hx), oy = Math.max(0, Math.abs(dx * sn + dy * c) - hy);
     const edge = Math.hypot(ox, oy);
     if (edge >= l.reach) continue; // out of reach (the shader fades to 0 at reach)

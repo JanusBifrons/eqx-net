@@ -40,8 +40,8 @@ describe('Atlas data pages', () => {
 
   it('two atlases on one budget stop at the shared cap, and freeing returns pages', () => {
     const budget = new PageBudget(2);
-    const art = new Atlas(false, { pageSize: 128, data: true, budget });
-    const lit = new Atlas(false, { pageSize: 128, data: true, budget });
+    const art = new Atlas(false, { pageSize: 160, data: true, budget });
+    const lit = new Atlas(false, { pageSize: 160, data: true, budget });
     const big = frame(90, 90, 3), out: Texture[] = [];
     expect(art.add(big, out, 0)).toBe(true);
     expect(lit.add(big, out, 1)).toBe(true);
