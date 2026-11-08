@@ -291,6 +291,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // A3 — don't draw structures that are off screen (static, so the bounding
     // radius is a safe margin; mount barrels are children and hide with it).
     if (entry.kind === 2) sprite.visible = isSpriteInView(sprite.x, sprite.y, entry.radius, ctx.viewBounds);
+    // W2a — an NPC on its warp run is out of the world: hidden (WarpFx draws
+    // the departure from its spool pose), like a remote pilot's ship.
+    else if (entry.kind === 1) sprite.visible = entry.warp !== 2;
     sprite.rotation = -lerped.angle;
     if (entry.kind === 1 || entry.kind === 3) updateArtShipLight(ctx.art, sprite); // ships + tumbling scrap
     if (entry.kind === 1) {
