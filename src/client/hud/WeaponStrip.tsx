@@ -15,7 +15,9 @@ import { useEffect, useRef } from 'react';
 import { useUIStore } from '../state/store';
 import type { FcGroupSummary } from '../state/storeTypes';
 import { getGameClient } from '../net/clientSingleton';
-import { groupColourHex } from './groupColours';
+import { FAILSAFE_COLOUR, groupColourHex } from './groupColours';
+
+const FAILSAFE_HEX = `#${FAILSAFE_COLOUR.toString(16)}`;
 import { HUD } from './tokens';
 
 const CHIP_W = 58;
@@ -51,6 +53,24 @@ function Chip({ group, index, active, scale }: { group: FcGroupSummary; index: n
   const locked = group.locks.filter((l) => l.stage === 2).length;
   const acquiring = group.locks.length - locked;
   const manual = group.mode === 'manual';
+
+  // Lock progress bar: polled from the render mirror at 10 Hz, written to the
+  // DOM directly (no React render per percent).
+  const bar = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    const h = window.setInterval(() => {
+      const el = bar.current;
+      const grp = getGameClient()?.mirror.localGroups?.[index];
+      if (!el) return;
+      let pct = 0;
+      let failsafe = false;
+      if (grp) for (const l of grp.l) if (l.s !== 2 && l.p >= pct) { pct = l.p; failsafe = l.s === 0; }
+      el.style.width = `${pct}%`;
+      el.style.background = failsafe ? FAILSAFE_HEX : HUD.color.danger;
+      el.parentElement!.style.opacity = pct > 0 ? '1' : '0';
+    }, 100);
+    return () => window.clearInterval(h);
+  }, [index]);
 
   // Pointer handling on the chip body: select; MAN groups fire while held.
   useEffect(() => {
@@ -132,6 +152,9 @@ function Chip({ group, index, active, scale }: { group: FcGroupSummary; index: n
           <span>{group.name.toUpperCase()}</span>
           <span style={{ fontFamily: HUD.font.num, fontSize: fs - 1, color: HUD.color.inkFaint }}>{index + 1}</span>
         </div>
+        <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 3, background: 'rgba(255,255,255,.12)', opacity: 0, transition: 'opacity .15s' }}>
+          <span ref={bar} data-testid={`fc-progress-${group.id}`} style={{ display: 'block', height: '100%', width: 0 }} />
+        </span>
         <div style={{ display: 'flex', gap: 3 }}>
           {Array.from({ length: group.capacity }, (_, k) => (
             <span

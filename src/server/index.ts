@@ -416,6 +416,23 @@ gameServer
 // the-ship assertion stays deterministic). Replaces the old spec's live
 // `galaxy-sol-prime` + `diag=1` join.
 gameServer
+// exp/fire-control — a 1v3 for the Fire Control footage + e2e: two fighters and a
+// heavy parked ~1400 u ahead of spawn. Join with ?startHostile=1&ui=d: you fly in
+// and lock them while they lock you (locking goes both ways).
+gameServer
+  .define('fc-duel', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    dronePoses: [
+      { kind: 'fighter', x: -320, y: 1400, angle: Math.PI },
+      { kind: 'heavy', x: 0, y: 1550, angle: Math.PI },
+      { kind: 'fighter', x: 320, y: 1400, angle: Math.PI },
+    ],
+    defaultSpawnX: 0,
+    defaultSpawnY: 0,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
   .define('cascade-test', SectorRoom, {
     testMode: true,
     asteroidConfig: [],

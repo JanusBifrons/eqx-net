@@ -288,6 +288,9 @@ const LOCAL_AIM_OPTS: { maxDistance: number; healthWeight: number; switchMargin:
   healthWeight: PLAYER_AIM_HEALTH_WEIGHT,
   switchMargin: PLAYER_AIM_SWITCH_MARGIN,
 };
+
+/** Shared empty `lockedBy` (no allocation per snapshot). */
+const NO_LOCKED_BY: ReadonlyArray<{ t: string; s: number; p: number }> = [];
 
 export class ColyseusGameClient {
   /**
@@ -1306,6 +1309,8 @@ export class ColyseusGameClient {
    * `ColyseusClient.transitArrivalDrift.test.ts`.
    */
   private resetPredictionState(): void {
+    // Fire control: NPC locks belong to the old sector.
+    this.mirror.localLockedBy = NO_LOCKED_BY;
     // A new sector / ship: seed the energy pool again from the new ship.
     this._energySeeded = false;
     // v4 T2 — a new sector's first snapshot only records the teleport epoch.
@@ -3303,7 +3308,10 @@ export class ColyseusGameClient {
       const dep = serverState.depositing === undefined ? null : Math.floor(serverState.depositing / 10) * 10;
       if (useUIStore.getState().depositPct !== dep) useUIStore.getState().setDepositPct(dep);
       // Fire control (exp/fire-control, #16): the pilot's groups + locks.
-      if (this._fireControl) this.applyFcGroups(serverState.groups);
+      if (this._fireControl) {
+        this.applyFcGroups(serverState.groups);
+        this.mirror.localLockedBy = serverState.lockedBy ?? NO_LOCKED_BY;
+      }
 
       // Drone snapshot slice (slim turret/shield slice; pose flows on the
       // binary swarm wire). See snapshotRemoteSync.ts. Campaign 2.1: the

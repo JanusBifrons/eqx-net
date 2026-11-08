@@ -645,6 +645,9 @@ export interface RenderMirror {
    *  bearing in radians; NaN = not dragging) and the target it would lock. */
   localLockGuide?: number;
   localLockCandidate?: string | null;
+  /** Fire control: NPCs locking the local pilot (own-ship `lockedBy` slice, shared ref).
+   *  `t` = `s:<entityId>`, `s` 1 acquiring / 2 locked, `p` 0..100. */
+  localLockedBy?: ReadonlyArray<{ t: string; s: number; p: number }>;
   localStatus?: { shield: number; hull: number; energy: number };
   /** When false, the renderer hides the orange server-ghost diamond. Default true. */
   showServerGhost?: boolean;

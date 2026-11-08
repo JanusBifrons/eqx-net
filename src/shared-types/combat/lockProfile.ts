@@ -40,7 +40,7 @@ export interface LockTuning {
 }
 
 export const LOCK_TUNING: LockTuning = {
-  baseSeconds: 1.0,
+  baseSeconds: 1.5,
   sizeExp: 0.6,
   trackFactor: 1.5,
   rangeFactor: 0.6,

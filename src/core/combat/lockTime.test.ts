@@ -15,8 +15,8 @@ function inputs(over: Partial<LockInputs>): LockInputs {
 describe('lockSeconds', () => {
   it('a matched weapon vs a still target locks in about baseSeconds', () => {
     const s = lockSeconds(inputs({ dx: 1 }), LOCK_TUNING);
-    expect(s).toBeGreaterThan(0.9);
-    expect(s).toBeLessThan(1.1);
+    expect(s).toBeGreaterThan(LOCK_TUNING.baseSeconds * 0.9);
+    expect(s).toBeLessThan(LOCK_TUNING.baseSeconds * 1.1);
   });
 
   it('out of reach cannot lock', () => {

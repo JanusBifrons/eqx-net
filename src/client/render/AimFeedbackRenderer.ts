@@ -1,7 +1,7 @@
-import { Container, Graphics } from 'pixi.js';
+import { Container, Graphics, Text } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '@shared-types/shipKinds';
-import { ACQUIRE_COLOUR, FAILSAFE_COLOUR, groupColour } from '../hud/groupColours';
+import { ACQUIRE_COLOUR, FAILSAFE_COLOUR, THREAT_COLOUR, groupColour } from '../hud/groupColours';
 
 /**
  * Experimental HUD (exp/hud-mobile-first) world-space aim feedback. Drawn only
@@ -55,8 +55,14 @@ export class AimFeedbackRenderer {
   /** Parsed lock keys → swarm entityId (or -1 + player id), so per-frame draws never slice. */
   private readonly keyCache = new Map<string, { swarm: number; player: string | null }>();
   private readonly tp = { x: 0, y: 0, r: 16 };
-  /** Test hook: locks drawn last frame. */
+  /** "LOCKING 62%" tags over targets being locked (pooled; text set only on change). */
+  private readonly tags: Text[] = [];
+  /** Last label code per tag (stage * 1000 + percent): text is rebuilt only when it changes. */
+  private readonly tagCode: number[] = [];
+  private readonly tagLayer = new Container();
+  /** Test hooks: locks drawn last frame, and NPC locks on the local ship. */
   lastFcLocks = 0;
+  lastThreats = 0;
   /** Test hooks: what was drawn last frame. */
   lastLockId: string | null = null;
   lastAimDrawn = false;
@@ -67,7 +73,9 @@ export class AimFeedbackRenderer {
     this.aim.visible = false;
     this.arcs.visible = false;
     this.fc.visible = false;
+      this.tagLayer.visible = false;
     parent.addChild(this.fc);
+    parent.addChild(this.tagLayer);
     parent.addChild(this.arcs);
     parent.addChild(this.aim);
     parent.addChild(this.lock);
@@ -82,6 +90,7 @@ export class AimFeedbackRenderer {
       this.aim.visible = false;
       this.arcs.visible = false;
       this.fc.visible = false;
+      this.tagLayer.visible = false;
       this.lastFcLocks = 0;
       this.lastLockId = null;
       this.lastAimDrawn = false;
@@ -98,6 +107,7 @@ export class AimFeedbackRenderer {
       return;
     }
     this.fc.visible = false;
+      this.tagLayer.visible = false;
     this.drawLock(mirror, px);
     this.drawAim(mirror, ship.x, ship.y, px);
     if (variant === 'b') this.drawArcs(mirror, ship.x, ship.y, getShipKind(ship.kind ?? null).radius ?? 20, px);
@@ -129,16 +139,45 @@ export class AimFeedbackRenderer {
     return true;
   }
 
+  /** Show tag `i` ("LOCKING 62%") at (x, y) in `colour`, counter-scaled to screen size. */
+  private tag(i: number, x: number, y: number, stage: number, pct: number, colour: number, px: number): void {
+    let t = this.tags[i];
+    if (!t) {
+      t = new Text({ text: '', style: { fontFamily: 'Chakra Petch, system-ui, sans-serif', fontSize: 22, fontWeight: '700', letterSpacing: 2, fill: 0xffffff, stroke: { color: 0x000000, width: 4 } } });
+      t.anchor.set(0.5, 1);
+      this.tags[i] = t;
+      this.tagCode[i] = -1;
+      this.tagLayer.addChild(t);
+    }
+    const code = stage * 1000 + pct;
+    if (this.tagCode[i] !== code) {
+      t.text = (stage === 0 ? 'FAILSAFE ' : 'LOCKING ') + pct + '%';
+      this.tagCode[i] = code;
+    }
+    t.tint = colour;
+    t.position.set(x, y);
+    t.scale.set(px * 0.5);
+    t.visible = true;
+  }
+
   /**
-   * Fire control (variant d): for every weapon group's lock — a yellow FAILSAFE
-   * ring (non-hostile, before the hostile act), a red ACQUIRING ring, or
-   * group-coloured brackets once LOCKED (nested when several groups share a
-   * target) plus a faint firing line from the ship. Then the smart-aim guide.
+   * Fire control (variant d). Own locks, per weapon group:
+   *  - LOCKING (red) / FAILSAFE (yellow): a heavy closing ring with progress,
+   *    four ticks that tighten in as it builds, a dashed link from the ship and
+   *    a "LOCKING 62%" tag;
+   *  - LOCKED: corner brackets in the group's colour (nested when several groups
+   *    share a target) and a faint firing line.
+   * Locks ON the local ship (`localLockedBy`): a red arc on a ring round the
+   * ship facing each NPC, narrowing as its lock builds; once locked, a solid
+   * caret pointing at it and a pulsing diamond on the NPC.
+   * Then the smart-aim guide.
    */
   private drawFireControl(mirror: RenderMirror, sx: number, sy: number, px: number): void {
     const g = this.fc;
     g.clear();
+    const now = performance.now();
     let drawn = 0;
+    let tags = 0;
     const groups = mirror.localGroups;
     if (groups) {
       for (let gi = 0; gi < groups.length; gi++) {
@@ -158,22 +197,92 @@ export class AimFeedbackRenderer {
               const cx = x + kx * half, cy = y + ky * half;
               g.moveTo(cx - kx * arm, cy).lineTo(cx, cy).lineTo(cx, cy - ky * arm);
             }
-            g.stroke({ width: 2 * px, color: col, alpha: 0.95 });
-            g.moveTo(sx, -sy).lineTo(x, y).stroke({ width: 1 * px, color: col, alpha: 0.22 });
+            g.stroke({ width: 2.5 * px, color: col, alpha: 0.95 });
+            g.moveTo(sx, -sy).lineTo(x, y).stroke({ width: 1 * px, color: col, alpha: 0.3 });
           } else {
             const col = l.s === 0 ? FAILSAFE_COLOUR : ACQUIRE_COLOUR;
-            const r = base * 1.25;
             const frac = Math.max(0, Math.min(1, l.p / 100));
-            g.circle(x, y, r).stroke({ width: 1.5 * px, color: col, alpha: 0.28 });
+            const r = base * 1.35;
+            // Dashed link: which of your targets is being locked.
+            const dx = x - sx, dy = y + sy;
+            const len = Math.hypot(dx, dy);
+            if (len > r + 4 * px) {
+              const ux = dx / len, uy = dy / len;
+              const on = 6 * px, off = 7 * px;
+              const stop = len - r;
+              for (let d = 18 * px; d < stop; d += on + off) {
+                const e = Math.min(stop, d + on);
+                g.moveTo(sx + ux * d, -sy + uy * d).lineTo(sx + ux * e, -sy + uy * e);
+              }
+              g.stroke({ width: 1.5 * px, color: col, alpha: 0.55 });
+            }
+            // Track + heavy progress arc.
+            g.circle(x, y, r).stroke({ width: 2 * px, color: col, alpha: 0.3 });
             if (frac > 0.001) {
               const a0 = -Math.PI / 2;
               g.moveTo(x + Math.cos(a0) * r, y + Math.sin(a0) * r);
-              g.arc(x, y, r, a0, a0 + Math.PI * 2 * frac).stroke({ width: 3 * px, color: col, alpha: 0.95 });
+              g.arc(x, y, r, a0, a0 + Math.PI * 2 * frac).stroke({ width: 4.5 * px, color: col, alpha: 1 });
             }
+            // Four ticks closing in from 2x to the ring as the lock builds.
+            const rt = r * (2 - frac);
+            const spin = now * 0.0025;
+            const tick = 9 * px;
+            for (let k = 0; k < 4; k++) {
+              const a = spin + (k * Math.PI) / 2;
+              const c = Math.cos(a), sn = Math.sin(a);
+              g.moveTo(x + c * rt, y + sn * rt).lineTo(x + c * (rt - tick), y + sn * (rt - tick));
+            }
+            g.stroke({ width: 3 * px, color: col, alpha: 0.9 });
+            this.tag(tags++, x, y - r * (2 - frac) - 6 * px, l.s, l.p, col, px);
           }
         }
       }
     }
+    for (let i = tags; i < this.tags.length; i++) this.tags[i]!.visible = false;
+
+    // Locks on the local ship.
+    let threats = 0;
+    const lockedBy = mirror.localLockedBy;
+    if (lockedBy && lockedBy.length > 0) {
+      const localKind = mirror.localPlayerId ? mirror.ships.get(mirror.localPlayerId)?.kind : undefined;
+      const R = getShipKind(localKind ?? null).radius * 1.9 + 10 * px;
+      const pulse = 0.55 + 0.45 * Math.sin(now * 0.012);
+      for (const l of lockedBy) {
+        if (!this.targetPose(mirror, l.t)) continue;
+        threats++;
+        const nx = this.tp.x, ny = -this.tp.y;
+        const th = Math.atan2(ny + sy, nx - sx);
+        const cx = sx, cy = -sy;
+        if (l.s === 2) {
+          // Solid caret on the ring pointing at the NPC.
+          const tipR = R + 14 * px;
+          const w = 0.16;
+          g.moveTo(cx + Math.cos(th) * tipR, cy + Math.sin(th) * tipR)
+            .lineTo(cx + Math.cos(th - w) * R, cy + Math.sin(th - w) * R)
+            .lineTo(cx + Math.cos(th + w) * R, cy + Math.sin(th + w) * R)
+            .closePath()
+            .fill({ color: THREAT_COLOUR, alpha: 0.95 });
+          g.moveTo(cx + Math.cos(th - 0.5) * R, cy + Math.sin(th - 0.5) * R);
+          g.arc(cx, cy, R, th - 0.5, th + 0.5).stroke({ width: 3 * px, color: THREAT_COLOUR, alpha: 0.9 });
+          // Pulsing diamond on the NPC.
+          const dr = Math.max(LOCK_MIN_HALF, this.tp.r + LOCK_PAD) * 1.2;
+          g.moveTo(nx, ny - dr).lineTo(nx + dr, ny).lineTo(nx, ny + dr).lineTo(nx - dr, ny).closePath()
+            .stroke({ width: 2.5 * px, color: THREAT_COLOUR, alpha: pulse });
+        } else {
+          // Acquiring: an arc facing the NPC that narrows as its lock builds.
+          const frac = Math.max(0, Math.min(1, l.p / 100));
+          const half = 0.15 + 0.85 * (1 - frac);
+          g.moveTo(cx + Math.cos(th - half) * R, cy + Math.sin(th - half) * R);
+          g.arc(cx, cy, R, th - half, th + half).stroke({ width: 3 * px, color: THREAT_COLOUR, alpha: 0.35 + 0.5 * pulse });
+          // Small notch at the exact bearing.
+          g.moveTo(cx + Math.cos(th) * (R - 5 * px), cy + Math.sin(th) * (R - 5 * px))
+            .lineTo(cx + Math.cos(th) * (R + 7 * px), cy + Math.sin(th) * (R + 7 * px))
+            .stroke({ width: 2.5 * px, color: THREAT_COLOUR, alpha: 0.9 });
+        }
+      }
+    }
+    this.lastThreats = threats;
+
     // Smart-aim guideline + candidate.
     const b = mirror.localLockGuide;
     if (b !== undefined && !Number.isNaN(b)) {
@@ -192,6 +301,7 @@ export class AimFeedbackRenderer {
       }
     }
     g.visible = true;
+    this.tagLayer.visible = true;
     this.lastFcLocks = drawn;
   }
 

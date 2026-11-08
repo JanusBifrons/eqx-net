@@ -34,6 +34,7 @@ import { HUD, hullColor } from './tokens';
 import { hudScale, useHudSize } from './useHudScale';
 import type { UiVariant } from './uiVariant';
 import { WeaponStrip } from './WeaponStrip';
+import { LockStatusBand } from './LockStatusBand';
 import { stickToWorldBearing } from '@core/combat/manualAim';
 import {
   AutoPip,
@@ -104,6 +105,7 @@ export function ExperimentalHud({ variant, touchInput }: Props): JSX.Element | n
       {variant === 'd' && (
         <>
           <Slot anchor="top-center" order={0}><StatusCapsule scale={scale} /></Slot>
+          {flying && <Slot anchor="top-center" order={1}><LockStatusBand scale={scale} /></Slot>}
           <Slot anchor="top-left" order={1}><SectorChip size={Math.round(9 * scale)} /></Slot>
           {flying && <FcStripDock scale={scale} />}
         </>
