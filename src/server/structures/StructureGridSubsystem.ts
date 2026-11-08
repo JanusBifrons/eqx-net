@@ -221,6 +221,11 @@ export class StructureGridSubsystem {
     return this.mounts.anglesOf(id);
   }
 
+  /** testMode trigger (`test_reload_turrets`): reload every structure gun. */
+  reloadAllTurrets(): void {
+    this.mounts.reloadAll();
+  }
+
   /** Effective power for a structure, read by the turret/miner gates AND the
    *  snapshot slice. `netPower` is the raw generation balance (may be negative
    *  while batteries carry the load); `powered` is BATTERY-BACKED — a

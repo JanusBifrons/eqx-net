@@ -98,6 +98,11 @@ export class StructureMountTicker {
     for (const id of this.states.keys()) if (!isLive(id)) this.states.delete(id);
   }
 
+  /** Test trigger (`test_reload_turrets`): every mount is reloaded now. */
+  reloadAll(): void {
+    for (const st of this.states.values()) st.reloadMs.fill(-Infinity);
+  }
+
   /** Clear a structure's targets (unpowered / destroyed); its barrels stay put. */
   idle(rec: StructureRecord): void {
     const st = this.states.get(rec.id);

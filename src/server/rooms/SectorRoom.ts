@@ -333,6 +333,7 @@ import {
   EngageTransitSchema,
   CancelTransitSchema,
   TestAggroSchema,
+  TestReloadTurretsSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,
@@ -2872,6 +2873,16 @@ export class SectorRoom extends Room<SectorState> {
         return;
       }
       this.markAllDronesHostileTo(playerId);
+    });
+
+    // Coastal defences — testMode only: reload every structure gun now.
+    this.onMessage('test_reload_turrets', (client: Client, raw: unknown) => {
+      if (!(this.testMode || ALLOW_DEV_OVERRIDES)) return;
+      if (!TestReloadTurretsSchema.safeParse(raw).success) {
+        this.malformed.record(client.sessionId, 'test_reload_turrets');
+        return;
+      }
+      this.structureGrid.reloadAllTurrets();
     });
 
     this.onMessage('cancel_transit', (client: Client, raw: unknown) => {
