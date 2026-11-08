@@ -99,7 +99,9 @@ export const LOOK_NIGHT: LightingSettings = {
   // bake's, and a dark deck in them went blacker than space at 0.8 (review
   // 2026-11-08, base film). Sunlit faces gain only ~15%.
   ambientBoost: 2,
-  shadow: { strength: 0.9, edge: 0.3, length: 3 },
+  // A shadowed deck lives on what sun the shadow lets through (ambient is
+  // tiny): at 0.9 a dark deck in a 3x shadow went blacker than space.
+  shadow: { strength: 0.65, edge: 0.3, length: 2.5 },
   litStructures: true,
   litAsteroids: true,
 };
