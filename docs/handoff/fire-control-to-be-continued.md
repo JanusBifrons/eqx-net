@@ -5,12 +5,32 @@ work… the other work we had planned will have to go into a markdown file and
 committed as to be continued and picked up at a later date." Delete this file in
 the PR that finishes the work.
 
+## How to pick this up (any machine)
+
+```
+git fetch origin
+git worktree add .claude/worktrees/fire-control -b exp/fire-control-2 origin/main   # once the PR has merged
+# or, while the PR is still open:
+git worktree add .claude/worktrees/fire-control origin/exp/fire-control
+cd .claude/worktrees/fire-control && pnpm install
+```
+
+- Read [weapon-groups-and-locking.md](../features/weapon-groups-and-locking.md) and
+  [fire-control.md](../architecture/fire-control.md) first, then the lists below.
+- Try it: `/?room=fc-duel&startHostile=1&shipKind=gunship&ui=d` (1v3), or
+  `room=feel-test` without `startHostile` for the failsafe.
+- Re-film: `EQX_SHOWCASE_PORT_OFFSET=<free> pnpm showcase:fc` (clean video);
+  `FC_STILLS=1 …` for stills (screenshots stall a take, so keep them separate).
+- Lock-related tests: `src/server/rooms/LockSubsystem.test.ts`,
+  `tests/integration/sectorRoom/{fireControlLocks,npcLocks,fireControlArc}.test.ts`,
+  `tests/e2e/fire-control-lock.spec.ts`, `tests/e2e/hud-variants.spec.ts`.
+
 ## Where things stand
 
-- **Branch:** `exp/fire-control` (worktree `.claude/worktrees/fire-control`). It
-  was cut from `exp/hud-mobile-first` with `origin/main` and
-  `origin/feat/warp-picker-keep-both` merged in. **Not pushed, no PR**: the user
-  asked for no PR until they say so.
+- **Branch:** `exp/fire-control`, pushed and opened as one PR (it contains
+  phase 1, `exp/hud-mobile-first`, too). Synced with `origin/main` on
+  2026-11-08. Everything is opt-in behind `?ui=a|b|c|d`, so default players are
+  unaffected.
 - **Plan:** `i-d-like-you-to-synchronous-hippo.md` (in `~/.claude/plans/` on the
   first machine). Summary of what it covers is below, so this file stands alone.
 - **Review page:** https://claude.ai/artifact/T6jfa4pAhHScbvz3C2NPxd (private):
@@ -170,11 +190,11 @@ they're fixed.
 
 ### Before any PR
 
-- [ ] Sync with `origin/main` (last merged at the start of this branch) and
-  re-run the inner loop.
+- [x] Synced with `origin/main` (2026-11-08); typecheck, lint and the unit
+  suite pass locally. Integration, netgate and e2e are left to CI.
 - [ ] `pnpm e2e:netgate` (live loop: fire path, snapshot slices, mount aim),
   perf scenes, full `pnpm lint` + `pnpm e2e` feature tier.
-- [ ] CLAUDE.md: fire-control rules for src/server and src/client (lock-gated
+- [ ] CLAUDE.md (the worktree/port-owner rule is now in the root CLAUDE.md): fire-control rules for src/server and src/client (lock-gated
   fire, `lock_track`, the own-ship `groups` / `lockedBy` slices).
 - [ ] Pre-existing, not from this branch: `energy-bar` e2e fails on `main` too;
   `auto-fire` e2e is quarantined.
