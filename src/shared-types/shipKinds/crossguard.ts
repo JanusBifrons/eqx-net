@@ -165,7 +165,9 @@ export const CROSSGUARD: ShipKind = defineShipKind({
       weaponId: 'hitscan',
     },
   ],
+  // exp/fire-control: each crossbar beam is its own group (lock two targets).
   slots: [
-    { id: 'primary', displayName: 'Primary', mountIds: ['cross-l', 'cross-r'] },
+    { id: 'port', displayName: 'Port', mountIds: ['cross-l'], colour: 0 },
+    { id: 'starboard', displayName: 'Starboard', mountIds: ['cross-r'], colour: 1 },
   ],
 });
