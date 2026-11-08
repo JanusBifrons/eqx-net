@@ -155,6 +155,7 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 
 /** Docs whose feature exists but cannot be staged on main yet — with what unblocks it. */
 export const SHOWCASE_PENDING: Record<string, string> = {
+  'capital-ships': 'Wrap-up W2c films a flagship fleet spooling and warping between pockets; the page lands first (W2a).',
   'gpu-lit-ships': 'R&D behind ?shiplight=gpu: filmed by running existing shots with EQX_SHOWCASE_PARAMS=shiplight=gpu (capital-turrets, a base fight); a dedicated shot lands with the rollout.',
   'ship-scale': 'R&D: the 1×/2×A/2×B comparison clips are filmed by running existing shots at EQX_SHIP_SCALE; a dedicated shot lands with the rollout.',
   allegiances: 'AI-vs-AI sides fight in the living galaxy but not on cue; needs a staged two-faction room.',

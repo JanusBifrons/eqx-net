@@ -26,6 +26,14 @@ describe('buildSectorTooltip (Living Galaxy Phase 6)', () => {
     expect(tip.structures).toBe(0);
   });
 
+  it('W2a: names a flagship fleet in the sector (capital sighted), else null', () => {
+    const stats: SectorLiveState[] = [
+      { key: sector.key, players: 0, enemies: 0, neutrals: 7, structures: 0, owner: null, capital: { name: 'Battleship Warspite', kind: 'battleship' } },
+    ];
+    expect(buildSectorTooltip(sector.key, stats)!.capital).toBe('Battleship Warspite');
+    expect(buildSectorTooltip(sector.key, [])!.capital).toBeNull();
+  });
+
   it('merges the live counts + Held status from the snapshot slice', () => {
     const stats: SectorLiveState[] = [
       { key: sector.key, players: 2, enemies: 5, neutrals: 1, structures: 3, owner: { factionId: 'core', contested: false } },

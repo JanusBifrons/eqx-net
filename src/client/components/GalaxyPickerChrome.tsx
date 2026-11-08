@@ -514,6 +514,11 @@ export function GalaxyPickerChrome({
               ⚑ {sectorTip.event} underway
             </Typography>
           )}
+          {sectorTip.capital !== null && (
+            <Typography sx={{ color: '#9ec9ff', fontSize: 10, mt: 0.25 }} data-testid="galaxy-tooltip-capital">
+              ⚓ Capital sighted: the {sectorTip.capital}
+            </Typography>
+          )}
           {sectorTip.elite !== null && (
             <Typography sx={{ color: '#ffc850', fontSize: 10, mt: 0.25 }} data-testid="galaxy-tooltip-elite">
               ★ {sectorTip.elite} sighted

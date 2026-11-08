@@ -63,6 +63,9 @@ export interface SectorLiveState {
   /** Living World P4a — the name of a named ELITE roaming this sector, or
    *  null/absent. Additive (optional). */
   elite?: string | null;
+  /** W2a — a flagship fleet in this sector (capital sighted): its name and
+   *  class. Additive (optional). */
+  capital?: { name: string; kind: string } | null;
   /** Living World P4b — the world event running in this sector, or null/absent. */
   event?: WorldEventView | null;
 }
@@ -99,6 +102,8 @@ export const SectorLiveStateSchema = z
     recentCombat: RecentCombatSchema.nullable().optional(),
     // P4a — additive, optional.
     elite: z.string().max(60).nullable().optional(),
+    // W2a — additive, optional.
+    capital: z.object({ name: z.string().max(60), kind: z.string().max(40) }).strict().nullable().optional(),
     // P4b — additive, optional.
     event: WorldEventViewSchema.nullable().optional(),
   })

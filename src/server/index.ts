@@ -50,6 +50,7 @@ import { setGalaxyStatsProvider } from './livingworld/galaxyStatsProvider.js';
 import { ROBOT_DIRECTOR_OPTIONS, ROBOT_BOT_COUNT, isRobotsDisabled } from './livingworld/robotDirector.js';
 import { RobotTerritory } from './livingworld/RobotTerritory.js';
 import { EliteDirector } from './livingworld/EliteDirector.js';
+import { FlagshipDirector, type FlagshipStatePayload } from './livingworld/FlagshipDirector.js';
 import { EventDirector } from './livingworld/EventDirector.js';
 import { sumCounts } from './livingworld/countMaps.js';
 import { setContractsProvider } from './livingworld/contractsProvider.js';
@@ -133,6 +134,7 @@ let robotDirector: LivingWorldDirector | null = null;
 let robotTerritory: RobotTerritory | null = null;
 /** Living World P4a — named elites (null when the Living World is disabled). */
 let eliteDirector: EliteDirector | null = null;
+let flagshipDirector: FlagshipDirector | null = null;
 /** Living World P4b — world events (null when the Living World is disabled). */
 let eventDirector: EventDirector | null = null;
 const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
@@ -1421,13 +1423,38 @@ async function main(): Promise<void> {
         // marked on the galaxy map.
         onTick: (now) => {
           eliteDirector?.tick(now);
+          flagshipDirector?.tick(now);
           eventDirector?.tick(now);
         },
         sectorElite: (key) => eliteDirector?.sectorElite(key) ?? null,
+        // W2a — flagship fleets show as capital sightings on the galaxy map.
+        sectorCapital: (key) => flagshipDirector?.sectorCapital(key) ?? null,
         // P4b — world events show on the galaxy map.
         sectorEvent: (key) => eventDirector?.sectorEvent(key) ?? null,
       },
     });
+    // W2a — flagship fleets: capital ships + escorts roaming pocket to pocket
+    // (solar-system sectors). Persisted in allegiance_director_state ('flagships').
+    if (process.env['EQX_DISABLE_FLAGSHIPS'] === '1' || process.env['EQX_DISABLE_FLAGSHIPS'] === 'true') {
+      logger.warn('flagship fleets DISARMED (EQX_DISABLE_FLAGSHIPS set)');
+    } else {
+      let restore: FlagshipStatePayload | null = null;
+      try {
+        const row = db
+          .prepare("SELECT payload_json, created_at FROM allegiance_director_state WHERE allegiance = 'flagships'")
+          .get() as { payload_json: string; created_at: number } | undefined;
+        if (row && Date.now() - row.created_at < 24 * 60 * 60 * 1000) restore = JSON.parse(row.payload_json) as FlagshipStatePayload;
+      } catch (err) {
+        logger.warn({ err }, 'flagship state unreadable — fresh fleets');
+      }
+      flagshipDirector = new FlagshipDirector(galaxyRooms, {
+        restore,
+        save: (payload) => persistence.enqueueCritical({
+          type: 'ALLEGIANCE_DIRECTOR_STATE_PUT', allegiance: 'flagships', payloadJson: JSON.stringify(payload), ts: Date.now(),
+        }),
+      });
+      flagshipDirector.start();
+    }
     eliteDirector = new EliteDirector(galaxyRooms);
     eliteDirector.start();
     eventDirector = new EventDirector(galaxyRooms);
@@ -1544,6 +1571,8 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
     robotDirector?.stop();
     robotTerritory?.stop();
     eliteDirector?.stop();
+    flagshipDirector?.persist();
+    flagshipDirector?.stop();
     eventDirector?.stop();
     setContractsProvider(null);
     setBountyBoard(null);
