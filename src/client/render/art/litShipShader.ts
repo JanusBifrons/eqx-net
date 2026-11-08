@@ -142,7 +142,9 @@ void main() {
 #ifdef SELF_SHADOW
   {
     vec2 dir = normalize(uL.xy) * uShadow.y * uSlices.zw;
-    float h0 = height + 0.05;
+    // Bias of a few height steps (heights are 8-bit): low sun + long sharp
+    // shadows otherwise turn every step into a sawtooth (review 2026-11-08).
+    float h0 = height + max(0.05, uScale.y * 0.012);
     float occl = 0.0;
     for (int s = 1; s < ${LIT_MAX_SHADOW_STEPS}; s++) {
       if (float(s) >= uShadow.x) break;

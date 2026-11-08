@@ -95,6 +95,8 @@ export const LOOK_NIGHT: LightingSettings = {
   ...LOOK_REAL,
   fillLight: true,
   fillStrength: 0.35,
+  // A faint floor, so a wall facing neither light isn't blacker than space.
+  ambientBoost: 0.15,
   litStructures: true,
   litAsteroids: true,
 };

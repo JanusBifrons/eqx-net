@@ -2361,7 +2361,7 @@ export class PixiRenderer implements IRenderer {
       const age = (now - b.t0) / 900;
       if (age < 0 || age >= 1) continue;
       const k = (1 - age) * (1 - age);
-      sc.addLight(b.x, b.y, 25, 0xff8a30, 2.4 * k, b.r * 2.2 + 40);
+      sc.addLight(b.x, b.y, 25, 0xff8a30, 3 * k, b.r * 3 + 90);
     }
     if (mirror.projectiles) for (const p of mirror.projectiles.values()) {
       if (p.beam) continue;

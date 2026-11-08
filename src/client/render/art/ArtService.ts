@@ -95,6 +95,8 @@ export interface ArtPacker {
   /** A texture outside the pages (wrapping textures). */
   standalone(fr: Frame, repeat: boolean, mip: boolean): Texture;
   readonly pageCount: number;
+  /** Page side in texels (frames wider than this can't be packed). */
+  readonly pageSize?: number;
   /** The most pages the budget allows (undefined: no cap). */
   readonly maxPageCount?: number;
   /** Pack into this group's pages from now on (see Atlas.setGroup). */
@@ -499,11 +501,17 @@ export class ArtService {
     this.deps.packer.setGroup?.(h.group ?? 0);
     this.deps.litPacker?.setGroup?.(h.group ?? 0);
     if (h.job.type === 'fx') return this.packFx(h, h.job.id, b);
+    // A lit frame is three slices wide: a big structure's (~3,100 texels) is
+    // wider than a page, so it gets textures of its own like capital tiles
+    // (it failed and drew the vector look, review 2026-11-08).
+    const ps = packer.pageSize;
+    const oversize = b.lit !== undefined && ps !== undefined && b.frames.some((f) => f.w + 64 > ps);
+    const single = (b.tiles ?? 1) <= 1 && !oversize;
     // Warm-up bakes are a guess: they may only use half the budget, so art
     // something on screen needs always has room (phone report 2026-11-07: the
     // warm-up filled a phone's 6 pages and the pilot's own ship drew bare).
     // One that doesn't fit is dropped, not failed: asking for it later bakes it.
-    if ((b.tiles ?? 1) <= 1 && !this.urgentKeys.has(h.key)) {
+    if (single && !this.urgentKeys.has(h.key)) {
       const max = packer.maxPageCount;
       const reserve = max !== undefined && Number.isFinite(max) ? Math.ceil(max / 2) : 0;
       if (!packer.canFit(b.frames, reserve)) {
@@ -513,8 +521,8 @@ export class ArtService {
     }
     // The pilot's own ship never goes bare: past the budget it gets textures
     // of its own (phone report 2026-11-07, "the ship isn't textured").
-    const ownOverflow = (b.tiles ?? 1) <= 1 && this.ownKeys.has(h.key) && !packer.canFit(b.frames);
-    if (!ownOverflow && (b.tiles ?? 1) <= 1 && !packer.canFit(b.frames)) {
+    const ownOverflow = single && this.ownKeys.has(h.key) && !packer.canFit(b.frames);
+    if (!ownOverflow && single && !packer.canFit(b.frames)) {
       // A re-homed copy that won't fit: keep using the original.
       if (h.prev) { this.restore(h); return false; }
       h.state = 'failed';
@@ -524,7 +532,7 @@ export class ArtService {
     const tex: Texture[] = [];
     // Tiled capital frames get their own textures: tall frames waste most of
     // an atlas shelf (capital-ship R&D round 2 finding).
-    if ((b.tiles ?? 1) > 1 || ownOverflow) for (let i = 0; i < b.frames.length; i++) tex[i] = packer.standalone(b.frames[i]!, false, false);
+    if (!single || ownOverflow) for (let i = 0; i < b.frames.length; i++) tex[i] = packer.standalone(b.frames[i]!, false, false);
     else for (let i = 0; i < b.frames.length; i++) packer.add(b.frames[i]!, tex, i);
     // Textures resolve on commit (end of this tick); fill the handle then.
     this.pendingFill.push(() => {

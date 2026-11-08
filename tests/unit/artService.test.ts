@@ -339,3 +339,42 @@ describe('ArtService — work carries over when the renderer is replaced', () =>
     expect(runner.promoted).toEqual([h.job]);
   });
 });
+
+describe('ArtService: GPU-lit art (plan prancy-squishing-donut R2)', () => {
+  /** A runner returning lit bakes of a given width (one 3-slice frame). */
+  class LitRunner implements BakeRunner {
+    readonly workers = 1;
+    constructor(private readonly w: number) {}
+    run(): Promise<Baked> {
+      return Promise.resolve({ frames: [frame(this.w, 40)], w: this.w, h: 40, density: 2, nozzles: [], navLights: [], lit: { w: (this.w - 64) / 3, h: 40, ppu: 2, maxH: 5, emisMax: 1 } });
+    }
+    destroy(): void { /* nothing */ }
+  }
+  const settings = { selfShadowSteps: 48, shadow: { strength: 1, edge: 0.2, length: 3 }, sunElevDeg: 25, ambientBoost: 0, fillLight: false, fillStrength: 1, pointLights: 0, engineLights: false, capitalShadows: false, capitalOcclusion: false, capitalBounce: false, litStructures: true, litAsteroids: false } as const;
+
+  it('a lit frame wider than a page gets a texture of its own instead of failing', async () => {
+    const lit = new FakePacker();
+    Object.defineProperty(lit, 'pageSize', { value: 2048 });
+    const svc = new ArtService({ packer: new FakePacker(), litPacker: lit, lighting: { ...settings }, runner: new LitRunner(3136), cache: null, packBudgetMs: 1000, now: () => 0 });
+    const h = svc.struct('capital', 1);
+    await flush();
+    svc.tick();
+    expect(h.state).toBe('ready');
+    expect(h.struct!.lit).toBeDefined();
+    expect(h.struct!.tex).toEqual({ fake: -1 }); // stand-alone
+    expect(lit.placed).toBe(0);
+  });
+
+  it('a lit frame that fits goes on the lit atlas, not the ordinary one', async () => {
+    const lit = new FakePacker(), plain = new FakePacker();
+    Object.defineProperty(lit, 'pageSize', { value: 2048 });
+    const svc = new ArtService({ packer: plain, litPacker: lit, lighting: { ...settings }, runner: new LitRunner(560), cache: null, packBudgetMs: 1000, now: () => 0 });
+    const h = svc.ship('fighter');
+    await flush();
+    svc.tick();
+    expect(h.state).toBe('ready');
+    expect(h.job.type === 'ship' && h.job.lit).toBe(true);
+    expect(lit.placed).toBe(1);
+    expect(plain.placed).toBe(0);
+  });
+});
