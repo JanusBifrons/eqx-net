@@ -38,7 +38,7 @@ import { judgeCounts, calibrate, type ClientCountReading } from './countsGate.js
 /** Software GL everywhere: the same rasteriser on a laptop, a desktop and CI. */
 const SOFTWARE_GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'];
 /** Scene-time window: after the t = 10 s reinforcements land, before t = 20 s. */
-export const WINDOW_START_MS = 12_000;
+export const WINDOW_START_MS = 11_000;
 export const WINDOW_END_MS = 19_500;
 const DEFAULT_OFFSET = '400';
 /** Small enough that SwiftShader keeps ~25 frames in the window on a 2-core
@@ -47,6 +47,11 @@ const DEFAULT_OFFSET = '400';
  *  ships), so the gate would stop covering the lit-ship path. Counts DO depend
  *  on the viewport: keep it fixed. */
 const VIEWPORT = { width: 960, height: 540 };
+/** Render at half resolution (a 480×270 backbuffer): SwiftShader's cost is
+ *  fill, and a 2-core runner rendered only ~18 frames in the window at full
+ *  size. Layout, camera and LOD follow the CSS size, so what is drawn (and
+ *  so the counts) is unchanged. */
+const DEVICE_SCALE = 0.5;
 
 interface Args { scenes: string[]; shiplight: string[]; worker: string | null; calibrate: boolean; headed: boolean; out: string | undefined }
 
@@ -84,7 +89,7 @@ async function measure(browser: Browser, servers: CaptureServers, sceneId: strin
   const key = `${sceneId}/${shiplight}`;
   const scene = perfSceneById(sceneId);
   if (!scene) return { key, reading: null, error: `unknown scene ${sceneId}` };
-  const ctx = await browser.newContext({ viewport: VIEWPORT });
+  const ctx = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: DEVICE_SCALE });
   const page = await ctx.newPage();
   try {
     const p = new URLSearchParams({

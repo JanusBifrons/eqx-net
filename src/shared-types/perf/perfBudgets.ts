@@ -87,22 +87,25 @@ export const UPLOAD_TEXELS_FLOOR = 2048 * 2048;
 // explosions and live ships on screen differ. Draw calls on the wide shots are
 // near-constant (LOD dots); the close fleet fight swings with the effects.
 export const CLIENT_COUNT_BUDGETS: Record<string, ClientCountBudget> = {
+  // The close fleet fight's draw calls swing with the explosions on screen
+  // (p95 40–140 over 6 runs, two hosts): a loose gate that still catches a
+  // batching collapse (per-sprite draws run to hundreds). wide-view is tight.
   'fleet-fight/baked': {
-    drawCallsP95: 93, displayObjects: 6990, uploadTexels: UPLOAD_TEXELS_FLOOR, atlasPages: 10,
-    measured: 'SwiftShader 960×540 2026-11-08, desktop 3 runs: draw p95 40–74, objects 4920–5592, uploads 0, pages 8; CI (ubuntu, PR #356): draw p95 60, objects 5077, uploads 0, pages 8',
+    drawCallsP95: 175, displayObjects: 6990, uploadTexels: UPLOAD_TEXELS_FLOOR, atlasPages: 10,
+    measured: 'SwiftShader 960×540 2026-11-08, desktop 4 runs: draw p95 40–140, objects 4920–5592, uploads 0, pages 8; CI (ubuntu, PR #356) 2 runs: draw p95 60–96, objects 5077–5157, uploads 0, pages 8',
   },
   'fleet-fight/high': {
     drawCallsP95: 230, displayObjects: 9053, uploadTexels: UPLOAD_TEXELS_FLOOR, atlasPages: 7,
-    measured: 'SwiftShader 960×540 2026-11-08, desktop 3 runs: draw p95 145–184, objects 5353–7242, uploads 0, pages 5; CI (ubuntu, PR #356): draw p95 160, objects 4818, uploads 0, pages 5',
+    measured: 'SwiftShader 960×540 2026-11-08, desktop 4 runs: draw p95 145–184, objects 4607–7242, uploads 0, pages 5; CI (ubuntu, PR #356) 2 runs: draw p95 157–160, objects 4818–4848, uploads 0–1 page (4194304 texels), pages 5',
   },
   'wide-view/baked': {
     // Atlas pages: 9 on CI vs 8 on the desktop (one more 2048² page; bake
     // completion order packs differently). Budget from the CI max.
     drawCallsP95: 28, displayObjects: 13198, uploadTexels: UPLOAD_TEXELS_FLOOR, atlasPages: 12,
-    measured: 'SwiftShader 960×540 2026-11-08, desktop 3 runs: draw p95 20–22, objects 6977–10558, uploads 0, pages 8; CI (ubuntu, PR #356): draw p95 20, objects 6433, uploads 0, pages 9',
+    measured: 'SwiftShader 960×540 2026-11-08, desktop 4 runs: draw p95 20–22, objects 6977–10558, uploads 0, pages 8; CI (ubuntu, PR #356) 2 runs: draw p95 20, objects 6243–6433, uploads 0, pages 8–9',
   },
   'wide-view/high': {
     drawCallsP95: 32, displayObjects: 12590, uploadTexels: UPLOAD_TEXELS_FLOOR, atlasPages: 7,
-    measured: 'SwiftShader 960×540 2026-11-08, desktop 3 runs: draw p95 25–25, objects 8313–10072, uploads 0, pages 5; CI (ubuntu, PR #356): draw p95 25, objects 6615, uploads 0, pages 5',
+    measured: 'SwiftShader 960×540 2026-11-08, desktop 4 runs: draw p95 24–25, objects 6631–10072, uploads 0, pages 5; CI (ubuntu, PR #356) 2 runs: draw p95 25, objects 6360–6615, uploads 0, pages 5',
   },
 };

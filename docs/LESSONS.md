@@ -2783,7 +2783,7 @@ The laptop's timings were mostly host noise, the desktop isn't always there, and
 
 1. **Window on scene ticks, not wall time.** The scene script is tick-driven; a wall-clock window on a slow host covers an earlier part of the scene. Both gates read at fixed scene times.
 2. **Pin adaptive quality.** `EffectsBudget` drops tiers when frames are slow, so a slow host draws fewer effects and "improves" the count. `?perfcounts=1` pins High.
-3. **Same rasteriser everywhere.** SwiftShader (`--use-angle=swiftshader --enable-unsafe-swiftshader`) on every host, at 960×540 so a 2-core runner still renders ~70–90 frames in the window.
+3. **Same rasteriser everywhere.** SwiftShader (`--use-angle=swiftshader --enable-unsafe-swiftshader`) on every host, at 960×540 CSS with a 0.5 device scale, so a 2-core runner still renders 20+ frames in the window.
 4. **Count frames on the renderer, not on `update()`.** The worker's Pixi ticker renders independently of the mirror updates; draw calls are closed per frame on Pixi's `postrender` runner.
 
 What still varies is the SCENE: combat outcomes differ run to run (wide-view ended with 50 ships one run, 135 another), so display objects and close-up draw calls carry a real spread. That is not host noise, but it widens the budgets; contacts per tick (±25 % on one machine) stayed print-only.
