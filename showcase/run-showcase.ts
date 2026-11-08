@@ -16,9 +16,10 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { chromium } from '@playwright/test';
 import { SHOTS, SECTION_CARDS, TITLE_SUB, END_CARD_POINTS } from './registry.js';
-import type { ClipRecord, Shot } from './types.js';
+import type { ClipRecord, Shot, TakeHostLoad } from './types.js';
 import { PROFILE_ORDER } from './types.js';
-import { CaptureServers } from './servers.js';
+import { CaptureServers, portOffset } from './servers.js';
+import { judgeLoad, sampleHostLoad } from './hostLoad.js';
 import { Recorder, type RecordResult } from './recorder.js';
 import { smoothnessProblems, smoothScore, type TakeStats } from './smoothness.js';
 import { measureWobble, wobbleProblem, wobbleSummary, netProblem, netSummary, poseHealth, poseProblem, poseSummary } from './wobble.js';
@@ -242,13 +243,20 @@ async function takeWithRetry(
   fps: number,
 ): Promise<ClipRecord> {
   const clipDir = path.join(out, 'clips', shot.id);
-  let best: { rec: RecordResult; dir: string; problems: string[] } | null = null;
+  let best: { rec: RecordResult; dir: string; problems: string[]; hostLoad: TakeHostLoad } | null = null;
   let lastError: Error | null = null;
   for (let take = 1; take <= MAX_TAKES; take++) {
     const dir = `${clipDir}.take${take}`;
     try {
       log(`▶ ${shot.id} (take ${take})`);
+      // Host load around the take: recorded in the manifest, never fails it
+      // (plan machine-independent-perf WS2). A hitchy take filmed while
+      // another session's server ran says so.
+      const before = await sampleHostLoad({ portOffsets: [portOffset()] });
       const rec = await recorder.record(shot, dir);
+      const after = await sampleHostLoad({ portOffsets: [portOffset()] });
+      const hostLoad: TakeHostLoad = { before, after, flags: [...judgeLoad(before, { gateCpu: true }), ...judgeLoad(after, { gateCpu: false })] };
+      if (hostLoad.flags.length) log(`  host busy during take: ${hostLoad.flags.join('; ')}`);
       const problems = smoothnessProblems(takeStats(rec), fps);
       // Ship jitter (prediction corrections) — invisible to the frame-rate
       // gate, so every take is measured too (review 2026-11-07).
@@ -269,7 +277,7 @@ async function takeWithRetry(
       // Fewer QA problems first (a jittery take never beats a clean one), then the smoother.
       if (!best || problems.length < best.problems.length || (problems.length === best.problems.length && smoothScore(takeStats(rec)) > smoothScore(takeStats(best.rec)))) {
         if (best) dropTake(best.dir, best.problems);
-        best = { rec, dir, problems };
+        best = { rec, dir, problems, hostLoad };
       } else {
         dropTake(dir, problems);
       }
@@ -302,6 +310,7 @@ async function takeWithRetry(
     gapP95Ms: best.rec.gapP95Ms,
     gapMaxMs: best.rec.gapMaxMs,
     qa: { ok: problems.length === 0, problems },
+    hostLoad: best.hostLoad,
   };
 }
 

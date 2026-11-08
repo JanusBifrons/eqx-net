@@ -50,6 +50,13 @@ Executing on branch `claude/test-coverage-refactor-exec`. A read-only audit (one
 
 Gating PRs on those would make CI red on environment noise. `@feature` stays runnable via `pnpm e2e` (full) / `pnpm e2e:feature` for thorough local + manual checks, and specs are incrementally de-flaked (deterministic spawns + shared `testId` + state predicates) and **promoted back into the CI smoke gate** as they harden — the deterministic combat split (`tests/e2e/combat/*`) is the first promotion candidate once its behaviour is confirmed on the CI ubuntu runner.
 
+**Advisory runs (2026-11-08, not required checks).** Two backstops so non-gating tiers can't rot unseen:
+- **`e2e-feature-affected`** (ci.yml, per PR): the `@feature` specs the PR's paths map to (`tests/e2e/featureTriggers.mjs`), 3 shards.
+- **`.github/workflows/e2e-feature-weekly.yml`** (Mondays 04:17 UTC + `workflow_dispatch`): the FULL `@feature` tier, 6 shards, blob reports merged into one HTML artifact + a pass/flaky/fail table in the run summary. Not in `auto-retry.yml`, so a red there is read as-is.
+- **`gc-tests`** (ci.yml, per PR) runs `pnpm test:gc` (the heap-delta suite) — not E2E, but the same "ran only locally, rotted" story.
+
+Making any of these required needs the user's sign-off.
+
 ## Why this doc exists
 
 On 2026-05-19 a 6-commit wrap-up shipped with the full deterministic suite green (typecheck 0 / lint 0 / 1031 unit / integration / boot / bench) and was unplayable on-device. Phase 1 of the e2e-rebuild plan built the netcode-health gate (`pnpm e2e:netgate`) to answer the playability question the deterministic suite was never trying to answer; this doc Phase-0b — the prerequisite for Phase 2's framework restructure — classifies every existing E2E spec so the runner can ship a coherent four-tier story instead of one unsorted bag of `tests/e2e/*.spec.ts`.
