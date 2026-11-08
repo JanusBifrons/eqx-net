@@ -14,7 +14,11 @@ export interface ServerPorts {
   vite: number;
 }
 
-export const DEFAULT_PORTS: ServerPorts = { server: 2767, vite: 5373 };
+// EQX_SHOWCASE_PORT_OFFSET shifts both ports (default 0 = 2767/5373) so two
+// sessions can film at once: each one's killPort() would otherwise reclaim the
+// other's servers, and a take could load the OTHER session's client.
+const PORT_OFFSET = Number(process.env['EQX_SHOWCASE_PORT_OFFSET'] ?? 0) || 0;
+export const DEFAULT_PORTS: ServerPorts = { server: 2767 + PORT_OFFSET, vite: 5373 + PORT_OFFSET };
 
 /** Env per profile. Living world off unless a shot needs galaxy life; the
  *  test-room-only profiles boot no galaxy sectors (EQX_GALAXY_SECTORS=none:
