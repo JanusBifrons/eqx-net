@@ -15,6 +15,7 @@ import {
   type GcPauseEvent,
 } from '../debug/GcMonitor.js';
 import type { GcPauseEventMessage } from '../../shared-types/messages.js';
+import type { CollisionResolvedMessage } from '../../shared-types/messages.js';
 import type { WarpWarningEvent, WarpWarningClearEvent } from '../../shared-types/messages.js';
 import type { GridFlowMaterial } from '../../shared-types/messages.js';
 import { SESSION_REPLACED_CLOSE_CODE, type SessionReplacedMessage } from '../../shared-types/messages.js';
@@ -6993,7 +6994,9 @@ export class SectorRoom extends Room<SectorState> {
             impulse: p.force,
             tick,
           });
-          this.broadcast('collision_resolved', {
+          // eA/eB name each side as the client knows it, so it can draw a
+          // shield contact on a raised shield (user report 2026-11-07).
+          const msg: CollisionResolvedMessage = {
             type: 'collision_resolved',
             aId: p.aId,
             bId: p.bId,
@@ -7001,7 +7004,11 @@ export class SectorRoom extends Room<SectorState> {
             vB: p.vB,
             impulse: p.force,
             tick,
-          });
+          };
+          const eA = this.clientEntityCode(p.aId), eB = this.clientEntityCode(p.bId);
+          if (eA !== undefined) msg.eA = eA;
+          if (eB !== undefined) msg.eB = eB;
+          this.broadcast('collision_resolved', msg);
           serverLogEvent('collision_resolved', {
             aId: p.aId,
             bId: p.bId,
@@ -7042,6 +7049,14 @@ export class SectorRoom extends Room<SectorState> {
       },
     });
     await this.physicsWorkerProxy.start();
+  }
+
+  /** How the client knows a physics body: -1 = an active pilot's ship (id is
+   *  the playerId), >= 0 = a swarm entity id, undefined = neither. */
+  private clientEntityCode(id: string): number | undefined {
+    const rec = this.swarmRegistry.get(id);
+    if (rec) return rec.entityId;
+    return this.getActiveShip(id)?.isActive === true ? -1 : undefined;
   }
 
   private postToWorker(cmd: WorkerCmd): void {

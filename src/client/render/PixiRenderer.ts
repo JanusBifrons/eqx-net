@@ -30,6 +30,9 @@ import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService'
 import { readFxKillSwitches } from './fxKillSwitches';
 import { createArtService, type ArtHandle } from './art/ArtService.js';
 import { MachinedShipSprite } from './art/MachinedShipSprite.js';
+import { WarpSpoolFx, type SpoolFxShip, type Nozzle } from './pixi/WarpSpoolFx.js';
+import type { ShipRenderState } from '@core/contracts/IRenderer';
+import { WARP_SPOOL_TICKS } from '@core/physics/warpDrive';
 import { MachinedFlatSprite } from './art/MachinedFlatSprite.js';
 import { warmUpJobs } from './art/warmUp.js';
 import { Backdrop } from './art/fx/Backdrop.js';
@@ -778,6 +781,8 @@ export class PixiRenderer implements IRenderer {
     // Warp-to visuals (Phase 4): engine build-up, blur streak, burning trails.
     // Cheap sprites, under the hulls; drawn for every render mode.
     this.shipContainer.addChild(this._warpFx.layer);
+    // Warp spool-up: the engines overcharge (glow + sparks, under the hulls).
+    this.shipContainer.addChild(this._spoolFx.layer);
 
     // 2026-05-26 heap-growth gate step 12 — pool ctx objects for the
     // per-frame sprite updaters. All fields are permanent references;
@@ -2067,6 +2072,13 @@ export class PixiRenderer implements IRenderer {
           if (!this._fxFences?.hitAt(ev.worldX, ev.worldY, performance.now())) {
             this.effects.spawnBurst('impact', ev.worldX, ev.worldY, { tint: 0x88ddff });
           }
+        } else if (ev.kind === 'shield-contact') {
+          // A collision touched a shield: the same flash as a shot's hit,
+          // facing the other body (drawn only if the shield is up).
+          if (ev.entityId) {
+            this.effects.pulseShield(ev.entityId);
+            if (this._fxShieldsOn) this._fxShields!.hitAt(ev.entityId, ev.worldX, ev.worldY, performance.now(), this._fxShieldPose);
+          }
         } else if (ev.kind === 'destruction-shock' || ev.kind === 'shield-flash') {
           this.effects.triggerOneShotFilter(ev.kind, ev.worldX, ev.worldY);
         } else {
@@ -2391,6 +2403,7 @@ export class PixiRenderer implements IRenderer {
   private drawWarpFx(mirror: RenderMirror): void {
     const fx = this._warpFx;
     fx.beginFrame(performance.now(), this.world.scale.x);
+    this._spoolFx.beginFrame(performance.now(), this.world.scale.x);
     const local = mirror.localPlayerId;
     const s = this._warpShipScratch;
     for (const [id, ship] of mirror.ships) {
@@ -2402,8 +2415,36 @@ export class PixiRenderer implements IRenderer {
       if (stern === undefined) { stern = engineProfileForKind(ship.kind).sternOffset; this._warpStern.set(kind, stern); }
       s.x = sp.x; s.y = sp.y; s.rotation = sp.rotation; s.warp = ship.warp; s.stern = stern; s.isLocal = id === local;
       fx.draw(id, s);
+      this.drawSpoolFx(id, ship, sp, id === local ? mirror.localSpoolMs : undefined);
     }
     fx.endFrame();
+    this._spoolFx.endFrame();
+  }
+
+  /** One ship's spool-up (progress-driven, sized from its own nozzles). */
+  private drawSpoolFx(id: string, ship: ShipRenderState, sp: Container, spoolMs: number | undefined): void {
+    const now = performance.now();
+    const phase = ship.warp === 1 ? 1 : 0;
+    if (phase !== (this._spoolPhase.get(id) ?? 0)) {
+      if (phase === 1) { this._spoolPhase.set(id, 1); this._spoolStart.set(id, now); }
+      else { this._spoolPhase.delete(id); this._spoolStart.delete(id); }
+    }
+    const kindId = ship.kind ?? 'fighter';
+    let k = this._spoolKind.get(kindId);
+    if (!k) {
+      // Classic-look ships have no baked nozzles: one at the stern.
+      const stern = engineProfileForKind(kindId).sternOffset;
+      k = { half: stern, nozzles: [{ x: 0, y: stern, r: Math.max(2, stern * 0.25) }] };
+      this._spoolKind.set(kindId, k);
+    }
+    const s = this._spoolShip;
+    s.x = sp.x; s.y = sp.y; s.rotation = sp.rotation;
+    const dur = spoolMs ?? (WARP_SPOOL_TICKS / 60) * 1000;
+    s.progress = phase === 1 ? Math.min(1, (now - (this._spoolStart.get(id) ?? now)) / dur) : -1;
+    const art = this._artCtx.handles.get(id)?.ship;
+    s.nozzles = art && art.nozzles.length > 0 ? art.nozzles : k.nozzles;
+    s.half = k.half;
+    this._spoolFx.draw(id, s);
   }
 
   private drawFxEngines(mirror: RenderMirror): void {
@@ -2798,6 +2839,13 @@ export class PixiRenderer implements IRenderer {
   private readonly _ownerSpriteKey = new Map<string, string>();
   private _fxEnginesLastMs = 0;
   private readonly _warpFx = new WarpFx();
+  private readonly _spoolFx = new WarpSpoolFx();
+  private readonly _spoolShip: SpoolFxShip = { x: 0, y: 0, rotation: 0, progress: -1, nozzles: [], half: 0 };
+  /** Per ship: when its spool started (ms) and its last warp phase. */
+  private readonly _spoolStart = new Map<string, number>();
+  private readonly _spoolPhase = new Map<string, number>();
+  /** Per kind: hull half length and a stern nozzle for classic-look ships. */
+  private readonly _spoolKind = new Map<string, { half: number; nozzles: Nozzle[] }>();
   /** Phase 4 travel state: the camera the sky is drawn from (shifted by the
    *  trip's approach jump). */
   private readonly _skyCam = { center: { x: 0, y: 0 }, scale: { x: 1 }, screenWidth: 0, screenHeight: 0 };
@@ -3032,7 +3080,7 @@ export class PixiRenderer implements IRenderer {
 
   /** Machined art status: the service's counts plus how many ship sprites
    *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; lodDots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']>; warpBursts: number; warpSpooling: number; ownArt: string | null } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; lodDots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']>; warpBursts: number; warpSpooling: number; spoolFxDrawn: number; ownArt: string | null } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;
@@ -3042,7 +3090,7 @@ export class PixiRenderer implements IRenderer {
       if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
     const art = this._artCtx.art;
-    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), lodDots: this._lodDots.dotCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), ownArt: this._lastMirror?.localPlayerId ? (this._artCtx.handles.get(this._lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
+    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), lodDots: this._lodDots.dotCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), spoolFxDrawn: this._spoolFx.spooling, ownArt: this._lastMirror?.localPlayerId ? (this._artCtx.handles.get(this._lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
   }
 
   dispose(): void {

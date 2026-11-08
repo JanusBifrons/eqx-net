@@ -50,7 +50,7 @@ describe('WarpFx', () => {
     frame(fx, 0, ship(undefined));
     const n = fx.layer.children.length;
     fx.beginFrame(16); fx.endFrame();
-    expect(fx.layer.children.length).toBe(n - 4);
+    expect(fx.layer.children.length).toBe(n - 1); // its streak (the spool glow moved to WarpSpoolFx)
   });
 
   it("another pilot's warp: departure on 1→2, arrival once on 3", () => {
