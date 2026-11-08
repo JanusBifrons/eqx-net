@@ -335,6 +335,8 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
   lightOwnerId = -1;
   /** How much of its own engines' light a hull takes (they point away from it). */
   static OWN_LIGHT = 0.15;
+  /** Texels per screen pixel (litPass sets it each frame; 1 until then). */
+  private texelsPerPx = 1;
   /** The hull's half extents (world u): lights are judged at its rectangle. */
   private readonly hx: number;
   private readonly hy: number;
@@ -376,7 +378,8 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
    * mip level at LIT_MAX_LOD or below (further, the slices blur together).
    */
   setScreenScale(pxPerUnit: number): void {
-    const level = Math.log2(this.tile.ppu / Math.max(1e-6, pxPerUnit));
+    this.texelsPerPx = this.tile.ppu / Math.max(1e-6, pxPerUnit);
+    const level = Math.log2(this.texelsPerPx);
     (this.uni.uniforms as Record<string, number>)['uLodBias'] = Math.min(0, LIT_MAX_LOD - level);
   }
 
@@ -397,9 +400,13 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
     // Self shadow, as shade.ts: ~0.75 world units a step, clipped at 40 u ×
     // the length (a longer shadow rises more slowly over more steps).
     const len = Math.max(0.25, s.shadow.length);
-    const stepT = Math.max(1, this.tile.ppu * 0.75);
+    // Steps no finer than a screen pixel: far away, one pixel covers several
+    // texels and the fine march only burned fill (fleet-fight hitches,
+    // 2026-11-08). Same shadow length, fewer and longer steps.
+    const fine = Math.max(1, this.tile.ppu * 0.75);
+    const stepT = Math.max(fine, this.texelsPerPx);
     const rise = (Math.tan(elev) / this.tile.ppu) * stepT / len;
-    const maxSteps = Math.min(s.selfShadowSteps, LIT_MAX_SHADOW_STEPS, Math.ceil((40 * len) / 0.75), Math.ceil(this.tile.maxH / Math.max(1e-4, rise)) + 2);
+    const maxSteps = Math.min(s.selfShadowSteps, LIT_MAX_SHADOW_STEPS, Math.ceil((40 * len * fine) / (0.75 * stepT)), Math.ceil(this.tile.maxH / Math.max(1e-4, rise)) + 2);
     const sh = this.u['uShadow']!;
     sh[0] = s.selfShadowSteps > 0 ? maxSteps : 0; sh[1] = stepT; sh[2] = rise;
     const look = this.u['uShadowLook']!;
