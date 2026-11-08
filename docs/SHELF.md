@@ -55,3 +55,71 @@ Estimated one to two weeks with tests. The trigger must also include lateness
   starvation on a real server is visible.
 - The showcase already retakes a take whose server ran below 57 Hz
   (`showcase/wobble.ts` `netProblem`).
+
+## Radar settings saved per account, and a radar settings window (dropped 2026-11-08)
+
+**Was:** the last two steps of the ring-radar plan (`sparkling-wondering-rose`,
+Wave 2): **PR 3b** stored radar settings per user, player and ship on the
+server (a settings table, a `SettingsStore`, an `/auth/settings` route); **PR 4**
+added a radar config window to edit them.
+
+**Today:** the edge radar shipped (Wave 2 PR 2: `render/halo/edgeRadar.ts`,
+settings shape in `shared-types/settings/radar.ts`, `tests/e2e/radar-sandbox.spec.ts`)
+and the in-game id is bound to the account (PR 3a, #171). Settings use their
+defaults; there is no per-account storage and no window.
+
+**Why dropped (user, 2026-11-08):** the edge radar works as it is; the
+settings plumbing wasn't worth building now.
+
+**To revive:** PR 3b first (server table + store + route, client fetch at
+login, defaults when absent), then PR 4 (MUI dialog over the settings shape,
+live preview in the radar sandbox room). The plan file has the full design.
+
+## Ship weapons using up ammunition (not now, 2026-11-08)
+
+**Was:** economy v2 (`peppy-jumping-pinwheel`): ship missiles and autocannons
+draw `munitions` from the ship's hold, the way base turrets already do.
+
+**Today:** only base structures spend munitions: missile and autocannon
+turrets (`SectorRoom` `takeMunition`) and the Mine Layer. Ship weapons fire
+for free (energy only).
+
+**Why not now (user, 2026-11-08):** leave ships free to fire; revisit with an
+economy pass.
+
+**To revive:** a per-weapon munition cost in `WeaponCatalogue`, a hold check
+in the server fire path and the client's predicted fire gate (both sides,
+invariant #15), an "out of ammo" HUD state, and how NPC ships resupply.
+
+## Blind perf-threshold test (parked 2026-11-08)
+
+**Was:** perf plan step P3b: serve the same scene 4 times with a hidden
+slowdown (none / small / medium / large) in random order on desktop and
+phone; the user rates each, and the levels they notice set the absolute
+budgets.
+
+**Today:** real-device readings exist (perf lab, `perf/ledger/devices/`), and
+an unattended phone-class proxy (`pnpm perf:scenes --device phone-proxy`).
+Absolute budgets are set from measured ledgers instead.
+
+**Why parked (2026-11-08):** it needs the user to rate clips by hand, and the
+user asked for no more manual tests.
+
+**To revive:** a hidden-slowdown switch in the perf lab (`perfburn` already
+injects client cost), a rating page that records answers, and budgets derived
+from the noticed levels.
+
+## Freeing the CPU copy of finished atlas pages (from PR #330, 2026-11-08)
+
+**Was:** PR #330 freed a sealed atlas page's packing canvas once its texture
+was on the GPU (one tab 1.45 GB → 1.02 GB on the old shelf packer).
+
+**Today:** pages pack first-fit across a sector visit's group (skyline,
+#341) and are freed per visit (#339), so no page is "sealed": any page can
+still receive frames, and a freed canvas could be written to again. #330
+was closed as superseded.
+
+**To revive:** mark a page full when the skyline can't take the smallest
+common frame, then release its canvas (or a data page's byte buffer) after
+the first upload, with texture GC off for it; handle WebGL context loss
+(re-bake from the bake cache). Folded into the GPU-lit heap follow-up.
