@@ -143,6 +143,8 @@ import { shipTuning } from '@shared-types/shipScale/tuning';
 import { tuningFor } from '@shared-types/shipScale/lookup';
 
 /** No aim guides (the mirror's `localAimMountIds` when nothing is in range). */
+/** Fire control: a fixed gun fires only within this many radians of the nose. */
+const FC_FIXED_FIRE_TOLERANCE = 0.12;
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
 import { getWeapon, weaponAutoFireRange, type WeaponDef } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
@@ -166,7 +168,7 @@ import { flowMaterialToCode } from '../render/pixi/connectorVisual';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { aimInput } from '../input/AimInput';
-import { getUiVariant } from '../hud/uiVariant';
+import { getUiVariant, isFireControlHud } from '../hud/uiVariant';
 import { encodeAim, allMountsFixed } from '@core/combat/manualAim';
 import { resolveAimSteer, makeAimSteerState, resetAimSteer } from '../input/aimSteer';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
@@ -187,7 +189,8 @@ import {
 } from '../structures/structurePlacementClient.js';
 import { shouldEnterSpectatorOnDeath } from '../spectator/spectatorMode.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
-import { pickTarget, PLAYER_AIM_HEALTH_WEIGHT, PLAYER_AIM_SWITCH_MARGIN } from '@core/ai/WeaponMountController';
+import { pickTarget, PLAYER_AIM_HEALTH_WEIGHT, PLAYER_AIM_SWITCH_MARGIN, rotateMountToward, wrapPi } from '@core/ai/WeaponMountController';
+import type { FcGroupSummary } from '../state/storeTypes';
 
 export interface ColyseusClientCallbacks {
   onConnectionStatus: (s: ConnectionStatus) => void;
@@ -3299,6 +3302,8 @@ export class ColyseusGameClient {
       // the 2 s dwell costs ≤ 10 store writes, not one per snapshot).
       const dep = serverState.depositing === undefined ? null : Math.floor(serverState.depositing / 10) * 10;
       if (useUIStore.getState().depositPct !== dep) useUIStore.getState().setDepositPct(dep);
+      // Fire control (exp/fire-control, #16): the pilot's groups + locks.
+      if (this._fireControl) this.applyFcGroups(serverState.groups);
 
       // Drone snapshot slice (slim turret/shield slice; pose flows on the
       // binary swarm wire). See snapshotRemoteSync.ts. Campaign 2.1: the
@@ -5168,7 +5173,9 @@ export class ColyseusGameClient {
     // Aim guides (new look): cleared each frame, set below while the active
     // weapon has a hostile in range.
     this.mirror.localAimMountIds = EMPTY_AIM_IDS;
-    if ((manualFire || autoFireEnabled) && this.mirror.localPlayerId && !this.localDead && this.predWorld && this.room) {
+    // Fire control: groups fire at their own LOCKED targets (no free fire).
+    if (this._fireControl) this.fcFireTick(kb.fireHeld);
+    else if ((manualFire || autoFireEnabled) && this.mirror.localPlayerId && !this.localDead && this.predWorld && this.room) {
       // Weapons/energy/AI overhaul (§5.2): the firing weapon is the active
       // SLOT's bound weapon, not a per-weapon picker. Slot cooldown = max
       // over the slot's mounts (mirrors the server gate); the energy gate
@@ -5641,6 +5648,11 @@ export class ColyseusGameClient {
     // Slew each catalogue mount: the active-slot mounts aim at the target,
     // the rest return to base. Catalogue-indexed write — see
     // combat/localMountAim.ts for the index-space contract.
+    if (this._fireControl) {
+      this.fcSyncKind(ship.kind ?? null);
+      this.fcTickMountAngles(angles, catalogueMounts, ship.x, ship.y, ship.angle, dtSec);
+      return;
+    }
     tickLocalMountAngles(
       angles, catalogueMounts, activeMountIds, target,
       ship.x, ship.y, ship.angle, dtSec,
@@ -5828,6 +5840,234 @@ export class ColyseusGameClient {
     return -1;
   }
 
+  // ── Fire control (exp/fire-control) ─────────────────────────────────────
+  /** This pilot locks targets; its weapon groups fire only at locks. */
+  private readonly _fireControl = isFireControlHud();
+  /** The own-ship snapshot's groups (server truth; replaced each snapshot). */
+  private _fcGroups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number }> }> = [];
+  /** Hash of the HUD-visible group summary; the store is written on change only. */
+  private _fcSummarySig = -1;
+  /** Group the pilot is holding to fire (manual mode), or null. */
+  private _fcHeld: string | null = null;
+  private readonly _fcLastFireMs = new Map<string, number>();
+  private readonly _fcLastFireTick = new Map<string, number>();
+  /** Per-kind group info, rebuilt when the ship kind changes. */
+  private _fcInfoKind: string | null | undefined = undefined;
+  private readonly _fcInfo = new Map<string, { cooldownMs: number; cooldownTicks: number; mode: WeaponDef['mode']; allFixed: boolean; reach: number; energyCost: number; name: string; colour: number; capacity: number }>();
+  private readonly _fcMountGroup = new Map<string, string>();
+  /** Parsed lock keys (`s:<n>` / `p:<id>`), so per-frame lookups never slice strings. */
+  private readonly _fcKeys = new Map<string, { swarm: number; player: string | null }>();
+  private readonly _fcPose = { x: 0, y: 0 };
+  /** Slot to fire in `sendFire` / `localShipMounts` instead of the store's active slot. */
+  private _fireSlotOverride: string | null = null;
+
+  isFireControl(): boolean {
+    return this._fireControl;
+  }
+
+  /** Ask the server to lock `targetKey` with weapon group `groupId`. */
+  requestLock(groupId: string, targetKey: string): void {
+    if (!this._fireControl || !this.room) return;
+    this.room.send('lock_request', { type: 'lock_request', groupId, target: targetKey });
+  }
+
+  /** Drop one lock (or all of a group's locks when no key). */
+  cancelLock(groupId: string, targetKey?: string): void {
+    if (!this._fireControl || !this.room) return;
+    this.room.send('lock_cancel', targetKey === undefined
+      ? { type: 'lock_cancel', groupId }
+      : { type: 'lock_cancel', groupId, target: targetKey });
+  }
+
+  setGroupMode(groupId: string, mode: 'auto' | 'manual'): void {
+    if (!this._fireControl || !this.room) return;
+    this.room.send('set_group_mode', { type: 'set_group_mode', groupId, mode });
+  }
+
+  /** Manual mode: hold a group's chip to fire it (null = release). */
+  setGroupHeld(groupId: string | null): void {
+    this._fcHeld = groupId;
+  }
+
+  /** Rebuild per-kind group info (only when the ship kind changes). */
+  private fcSyncKind(kindStr: string | null): void {
+    if (kindStr === this._fcInfoKind) return;
+    this._fcInfoKind = kindStr;
+    this._fcInfo.clear();
+    this._fcMountGroup.clear();
+    const kind = getShipKind(kindStr);
+    const slots = kind.slots ?? [];
+    for (let si = 0; si < slots.length; si++) {
+      const slot = slots[si]!;
+      const mounts = resolveSlotMounts(kind, slot.id);
+      let cd = 0;
+      let reach = 0;
+      let allFixed = true;
+      for (const m of mounts) {
+        const w = getWeapon(m.weaponId);
+        if (w.cooldownTicks > cd) cd = w.cooldownTicks;
+        const r = weaponAutoFireRange(w);
+        if (r > reach) reach = r;
+        if (m.arcMax - m.arcMin > 1e-3) allFixed = false;
+        this._fcMountGroup.set(m.id, slot.id);
+      }
+      this._fcInfo.set(slot.id, {
+        cooldownMs: (cd * 1000) / 60,
+        cooldownTicks: cd,
+        mode: getWeapon(mounts[0]?.weaponId ?? 'hitscan').mode,
+        allFixed,
+        reach,
+        energyCost: resolveSlotEnergyCost(kind, slot.id),
+        name: slot.displayName,
+        colour: slot.colour ?? si,
+        capacity: slot.lockCapacity ?? (kind.sizeClass === 'capital' ? 3 : 1),
+      });
+    }
+  }
+
+  /** Parse a lock key once; cached. */
+  private fcKey(key: string): { swarm: number; player: string | null } {
+    let k = this._fcKeys.get(key);
+    if (!k) {
+      k = key.startsWith('s:') ? { swarm: Number(key.slice(2)), player: null } : { swarm: -1, player: key.slice(2) };
+      if (this._fcKeys.size > 512) this._fcKeys.clear();
+      this._fcKeys.set(key, k);
+    }
+    return k;
+  }
+
+  /** World pose of a lock target from the render mirror (false = not visible). */
+  private fcTargetPose(key: string, out: { x: number; y: number }): boolean {
+    const k = this.fcKey(key);
+    if (k.player !== null) {
+      const s = this.mirror.ships.get(k.player);
+      if (!s) return false;
+      out.x = s.x; out.y = s.y;
+      return true;
+    }
+    const e = this.mirror.swarm?.get(k.swarm);
+    if (!e) return false;
+    out.x = e.x; out.y = e.y;
+    return true;
+  }
+
+  /** The group's aim key: first LOCKED target, else first acquiring (pre-slew). */
+  private fcGroupAimKey(groupId: string): string | null {
+    for (const g of this._fcGroups) {
+      if (g.id !== groupId) continue;
+      let acquiring: string | null = null;
+      for (const l of g.l) {
+        if (l.s === 2) return l.t;
+        if (acquiring === null && l.s === 1) acquiring = l.t;
+      }
+      return acquiring;
+    }
+    return null;
+  }
+
+  /** Apply the own-ship snapshot's groups (#16). Store write only on change. */
+  private applyFcGroups(groups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number }> }> | undefined): void {
+    this._fcGroups = groups ?? [];
+    this.mirror.localGroups = this._fcGroups;
+    // Cheap change signature over ids / modes / lock targets / stages.
+    let sig = this._fcGroups.length;
+    for (const g of this._fcGroups) {
+      sig = (sig * 31 + g.m + 7) | 0;
+      for (let i = 0; i < g.id.length; i++) sig = (sig * 31 + g.id.charCodeAt(i)) | 0;
+      for (const l of g.l) {
+        sig = (sig * 31 + l.s + 3) | 0;
+        for (let i = 0; i < l.t.length; i++) sig = (sig * 31 + l.t.charCodeAt(i)) | 0;
+      }
+    }
+    if (sig === this._fcSummarySig) return;
+    this._fcSummarySig = sig;
+    this.fcSyncKind(this.mirror.ships.get(this.mirror.localPlayerId ?? '')?.kind ?? null);
+    const summary: FcGroupSummary[] = this._fcGroups.map((g) => {
+      const info = this._fcInfo.get(g.id);
+      return {
+        id: g.id,
+        name: info?.name ?? (g.id === 'wing' ? 'Wing' : g.id),
+        mode: g.m === 1 ? 'manual' : 'auto',
+        colour: info?.colour ?? 0,
+        capacity: info?.capacity ?? 1,
+        locks: g.l.map((l) => ({ target: l.t, stage: l.s })),
+      };
+    });
+    const st = useUIStore.getState();
+    st.setFcGroups(summary);
+    if (st.activeGroupId === null || !summary.some((g) => g.id === st.activeGroupId)) {
+      st.setActiveGroupId(summary[0]?.id ?? null);
+    }
+  }
+
+  /** Turret aim for a fire-control pilot: each mount at its group's lock. Mirrors
+   *  WeaponMountTicker's fire-control branch (#12/#15). */
+  private fcTickMountAngles(
+    angles: number[], mounts: ReadonlyArray<WeaponMount>, x: number, y: number, angle: number, dtSec: number,
+  ): void {
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+    for (let i = 0; i < mounts.length; i++) {
+      const mount = mounts[i]!;
+      const gid = this._fcMountGroup.get(mount.id) ?? null;
+      const key = gid === null ? null : this.fcGroupAimKey(gid);
+      if (key === null || !this.fcTargetPose(key, this._fcPose)) {
+        angles[i] = rotateMountToward(angles[i]!, 0, mount, dtSec);
+        continue;
+      }
+      const mx = x + (mount.localX * cosA - mount.localY * sinA);
+      const my = y + (mount.localX * sinA + mount.localY * cosA);
+      const bearing = Math.atan2(-(this._fcPose.x - mx), this._fcPose.y - my);
+      angles[i] = rotateMountToward(angles[i]!, wrapPi(bearing - angle - mount.baseAngle), mount, dtSec);
+    }
+  }
+
+  /**
+   * Fire control's per-frame fire pass: every group with a LOCKED target fires
+   * on its own cooldown (auto always; manual while held / Space on the active
+   * group). Fixed guns wait until the target is inside their nose cone.
+   */
+  private fcFireTick(spaceHeld: boolean): void {
+    const localId = this.mirror.localPlayerId;
+    if (!localId || this.localDead || !this.predWorld || !this.room || this.isLocallyDisabled()) return;
+    const st = this.predWorld.getShipState(localId);
+    if (!st) return;
+    this.fcSyncKind(this.mirror.ships.get(localId)?.kind ?? null);
+    const activeGroup = useUIStore.getState().activeGroupId;
+    const nowMs = this.clock.now();
+    for (const g of this._fcGroups) {
+      let lockedKey: string | null = null;
+      for (const l of g.l) if (l.s === 2) { lockedKey = l.t; break; }
+      if (lockedKey === null) continue;
+      const wants = g.m === 0 || this._fcHeld === g.id || (spaceHeld && g.id === activeGroup);
+      if (!wants) continue;
+      const info = this._fcInfo.get(g.id);
+      if (!info || !this.fcTargetPose(lockedKey, this._fcPose)) continue;
+      const dx = this._fcPose.x - st.x;
+      const dy = this._fcPose.y - st.y;
+      if (dx * dx + dy * dy > info.reach * info.reach * 1.1) continue;
+      if (info.allFixed) {
+        // Fixed guns: only once the nose is on the target.
+        const rel = wrapPi(Math.atan2(-dx, dy) - st.angle);
+        if (Math.abs(rel) > FC_FIXED_FIRE_TOLERANCE) continue;
+      }
+      const last = this._fcLastFireMs.get(g.id);
+      if (last !== undefined && nowMs - last < info.cooldownMs) continue;
+      if (!canAfford(this.predEnergy, info.energyCost)) continue;
+      const floor = (this._fcLastFireTick.get(g.id) ?? -1e9) + info.cooldownTicks;
+      const sendTick = Math.max(this.inputTick, floor);
+      this._fireSlotOverride = g.id;
+      try {
+        this.sendFire(sendTick);
+      } finally {
+        this._fireSlotOverride = null;
+      }
+      this._fcLastFireMs.set(g.id, nowMs);
+      this._fcLastFireTick.set(g.id, sendTick);
+      this.lastFiredAtTick = sendTick;
+    }
+  }
+
   private localShipMounts(): ReadonlyArray<WeaponMount> {
     const localId = this.mirror.localPlayerId;
     if (!localId) return [];
@@ -5838,7 +6078,7 @@ export class ColyseusGameClient {
     // the server fires each mount's bound weapon. Same shared resolver the
     // server uses (resolveInstanceFireMounts) so client ghost geometry matches.
     // Un-upgraded ⇒ exactly the active slot (byte-identical).
-    return resolveInstanceFireMounts(getShipKind(kindId), ship?.activatedMounts, useUIStore.getState().activeSlotId);
+    return resolveInstanceFireMounts(getShipKind(kindId), ship?.activatedMounts, this._fireSlotOverride ?? useUIStore.getState().activeSlotId);
   }
 
   /**
@@ -6123,7 +6363,7 @@ export class ColyseusGameClient {
     if (!localId || !this.predWorld || !this.room) return;
     const state = this.predWorld.getShipState(localId);
     if (!state) return;
-    const activeSlotId = useUIStore.getState().activeSlotId;
+    const activeSlotId = this._fireSlotOverride ?? useUIStore.getState().activeSlotId;
     const shotId = nextShotId();
 
     // Multi-mount/turret refactor (Phase 3 fix-up): spawn one ghost per mount

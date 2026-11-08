@@ -15,6 +15,7 @@
  */
 
 import { PixiRenderer } from '../render/PixiRenderer.js';
+import { isFireControlHud } from '../hud/uiVariant.js';
 import { loadArtPreference, loadLightingPreference, loadSpeedFxPreference, readArtDelayMs, resolveArtMode, resolveFxMode, resolveShipLighting, resolveSpeedFx, type ArtOptions } from '../render/art/artMode.js';
 import {
   WorkerRendererClient,
@@ -191,6 +192,9 @@ export function buildJoinSpec(
   // hostile to the joining player at spawn, so a CDP allocation profile
   // hits steady-state combat without an IDLE→COMBAT warmup tail.
   // testMode-gated server-side; harmless on galaxy rooms.
+  // exp/fire-control — the Fire Control HUD locks targets; tell the server so
+  // this pilot's weapon groups fire only at locks.
+  if (isFireControlHud()) extraJoinOptions['fireControl'] = true;
   if (urlParams.has('startHostile'))
     extraJoinOptions['startHostile'] = urlParams.get('startHostile') === '1';
   if (urlParams.has('injectLeak'))

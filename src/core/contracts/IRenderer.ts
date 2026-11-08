@@ -634,7 +634,17 @@ export interface RenderMirror {
   localManualAim?: number;
   localAimReach?: number;
   localAutoLockId?: string | null;
-  hudVariant?: 'a' | 'b' | 'c';
+  hudVariant?: 'a' | 'b' | 'c' | 'd';
+  /** Fire control (exp/fire-control): the local pilot's weapon groups with
+   *  their lock queues (t target key, s stage, p progress 0..100), from the
+   *  own-ship snapshot. Drives the lock rings + group-coloured brackets. */
+  localGroups?: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number }> }>;
+  /** Fire control: the group new locks go to (its colour leads the HUD). */
+  localActiveGroupId?: string | null;
+  /** Fire control: the smart-aim guideline while the pilot drags (world
+   *  bearing in radians; NaN = not dragging) and the target it would lock. */
+  localLockGuide?: number;
+  localLockCandidate?: string | null;
   localStatus?: { shield: number; hull: number; energy: number };
   /** When false, the renderer hides the orange server-ghost diamond. Default true. */
   showServerGhost?: boolean;

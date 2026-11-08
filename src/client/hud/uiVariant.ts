@@ -10,11 +10,13 @@
  *  - a: "Corner Clusters"   — floating move stick, big always-on FIRE.
  *  - b: "Twin-Stick"        — floating move + aim sticks, status arcs on ship.
  *  - c: "Smart Attack"      — floating move stick, tap/drag attack button.
+ *  - d: "Fire Control"      — weapon groups that fire at LOCKED targets
+ *                              (exp/fire-control): weapon strip, smart-aim lock.
  */
-export type UiVariant = 'legacy' | 'a' | 'b' | 'c';
+export type UiVariant = 'legacy' | 'a' | 'b' | 'c' | 'd';
 
 const KEY = 'eqxHudVariant';
-const VARIANTS: readonly UiVariant[] = ['legacy', 'a', 'b', 'c'];
+const VARIANTS: readonly UiVariant[] = ['legacy', 'a', 'b', 'c', 'd'];
 
 export function isUiVariant(v: unknown): v is UiVariant {
   return typeof v === 'string' && (VARIANTS as readonly string[]).includes(v);
@@ -74,4 +76,9 @@ export function switchUiVariant(v: UiVariant): void {
   const url = new URL(window.location.href);
   url.searchParams.set('ui', v);
   window.location.href = url.toString();
+}
+
+/** Fire control (exp/fire-control): weapon groups fire only at locked targets. */
+export function isFireControlHud(): boolean {
+  return current === 'd';
 }
