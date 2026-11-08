@@ -126,8 +126,10 @@ const LOW: LightingSettings = {
 
 /**
  * The level a device gets until its player chooses: desktop High, phones
- * Medium, phones that report under 4 GB Low. (The phone-proxy A/B put High's
- * renderer cost level with the baked art; this keeps headroom on phones.)
+ * Medium, phones that report under 4 GB Low. (Headroom on phones, unproven: the
+ * phone-proxy A/B behind this ran 3 reps, which can never go RED, so it was
+ * inconclusive. The 8-rep phone A/B is the open question in
+ * docs/architecture/gpu-lit-ships.md.)
  */
 export function defaultLightingPreset(touch: boolean, deviceMemoryGb?: number): LightingPreset {
   if (!touch) return 'high';

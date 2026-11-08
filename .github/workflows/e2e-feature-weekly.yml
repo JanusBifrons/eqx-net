@@ -1,0 +1,124 @@
+name: E2E feature tier (weekly)
+
+# The FULL @feature tier, every spec, once a week (plan machine-independent-perf
+# WS6.2). The per-PR `e2e-feature-affected` job in ci.yml only runs the specs a
+# PR's paths map to (tests/e2e/featureTriggers.mjs), so a spec whose area nobody
+# touches can rot for months unseen — ~30 did before 2026-11-06. This run is the
+# backstop: it reports, it never blocks (not a required check, not on PRs, and
+# deliberately NOT listed in auto-retry.yml so a red here is read as-is).
+#
+# Setup + sharding mirror ci.yml's e2e-feature-affected job (own dev server per
+# shard, PLAYWRIGHT_RETRIES=2, Playwright called via `pnpm exec` so --shard is a
+# real flag). Each shard writes a blob report; the `report` job merges them into
+# one HTML report (artifact) and a pass/fail table in the run summary.
+
+on:
+  schedule:
+    # Mondays 04:17 UTC (off the hour to dodge the scheduled-run rush).
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-feature-weekly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  feature:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Playwright E2E (full feature tier, shard ${{ matrix.shard }}/6)
+        run: pnpm exec playwright test --project=feature --shard=${{ matrix.shard }}/6 --reporter=blob,github
+        env:
+          CI: 'true'
+          PLAYWRIGHT_RETRIES: '2'
+      - name: Upload blob report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: blob-report-${{ matrix.shard }}
+          path: blob-report
+          retention-days: 7
+
+  report:
+    needs: feature
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Download blob reports
+        uses: actions/download-artifact@v4
+        with:
+          path: all-blob-reports
+          pattern: blob-report-*
+          merge-multiple: true
+      - name: Merge into HTML + JSON
+        run: |
+          pnpm exec playwright merge-reports --reporter=html all-blob-reports
+          PLAYWRIGHT_JSON_OUTPUT_NAME=merged.json pnpm exec playwright merge-reports --reporter=json all-blob-reports
+      - name: Write run summary
+        run: |
+          node -e '
+            const r = require("./merged.json");
+            const rows = [];
+            const walk = (s) => {
+              for (const c of s.suites ?? []) walk(c);
+              for (const sp of s.specs ?? []) for (const t of sp.tests ?? []) {
+                rows.push({ file: sp.file, title: sp.title, status: t.status });
+              }
+            };
+            for (const s of r.suites ?? []) walk(s);
+            const by = (k) => rows.filter((x) => x.status === k);
+            const out = [
+              "## Weekly @feature tier",
+              "",
+              `| expected | flaky | unexpected | skipped |`,
+              `|---|---|---|---|`,
+              `| ${by("expected").length} | ${by("flaky").length} | ${by("unexpected").length} | ${by("skipped").length} |`,
+              "",
+            ];
+            for (const [k, label] of [["unexpected", "Failed"], ["flaky", "Flaky (passed on retry)"]]) {
+              const xs = by(k);
+              if (!xs.length) continue;
+              out.push(`### ${label}`, "");
+              for (const x of xs) out.push(`- \`${x.file}\` — ${x.title}`);
+              out.push("");
+            }
+            out.push("Full HTML report: the `playwright-report-feature-weekly` artifact.");
+            require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, out.join("\n") + "\n");
+          '
+      - name: Upload HTML report
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-feature-weekly
+          path: playwright-report
+          retention-days: 14

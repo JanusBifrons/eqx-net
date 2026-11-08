@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { resolveSectorConfig, listGalaxySectors } from './GalaxyRegistry.js';
 import { GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
+import { HOME_POCKET_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
 
 describe('GalaxyRegistry', () => {
   it('resolves sol-prime to dense asteroids and ZERO boot-seeded drones', () => {
@@ -17,7 +18,9 @@ describe('GalaxyRegistry', () => {
 
   it('resolves cygnus-arm to no asteroids (open void) and zero boot-seeded drones', () => {
     const cfg = resolveSectorConfig('cygnus-arm');
-    expect(cfg.asteroidConfig).toEqual([]);
+    // The authored field is empty; with solar-system sectors on, the only
+    // rocks are the belt pocket's, far from the home pocket.
+    for (const a of cfg.asteroidConfig) expect(Math.hypot(a.x, a.y)).toBeGreaterThan(HOME_POCKET_HALF_EXTENT * 4);
     expect(cfg.droneCount).toBe(0);
   });
 
