@@ -8,9 +8,9 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { chromium, devices, type Browser, type BrowserContext, type Page } from '@playwright/test';
+import { chromium, devices, type Browser, type BrowserContext, type BrowserContextOptions, type Page } from '@playwright/test';
 import type { CameraCue } from '../src/core/contracts/cameraScript.js';
-import type { HudMode, Shot, ShotContext, ShotTarget } from './types.js';
+import type { HudMode, Shot, ShotContext, ShotTarget, ShotViewport } from './types.js';
 import { browserPid, sleep, trackPid } from './tools.js';
 
 export interface FrameIndex {
@@ -124,18 +124,17 @@ export class Recorder {
     rmSync(clipDir, { recursive: true, force: true });
     mkdirSync(path.join(clipDir, 'frames'), { recursive: true });
 
-    const phone = shot.viewport === 'phone';
-    const context = await this.browser.newContext(
-      phone ? { ...devices['Pixel 5'] } : { viewport: this.capture, deviceScaleFactor: 1 },
-    );
+    const viewport = shot.viewport ?? 'desktop';
+    const context = await this.browser.newContext(contextOptionsFor(viewport, this.capture));
     try {
-      return await this.recordIn(context, shot, clipDir, phone);
+      return await this.recordIn(context, shot, clipDir, viewport);
     } finally {
       await context.close();
     }
   }
 
-  private async recordIn(context: BrowserContext, shot: Shot, clipDir: string, phone: boolean): Promise<RecordResult> {
+  private async recordIn(context: BrowserContext, shot: Shot, clipDir: string, viewport: ShotViewport): Promise<RecordResult> {
+    const phone = viewport !== 'desktop';
     const storage: Record<string, string> = { ...(shot.storage ?? {}) };
     if (shot.auth !== false) {
       const res = await fetch(`${this.serverUrl}/auth/dev/test-token`, { method: 'POST' });
@@ -172,7 +171,7 @@ export class Recorder {
       writing = writing.then(() => writeFile(path.join(clipDir, file), Buffer.from(f.data, 'base64')));
       void cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {});
     });
-    const size = phone ? { maxWidth: 1080, maxHeight: 2340 } : { maxWidth: this.capture.width, maxHeight: this.capture.height };
+    const size = screencastSize(viewport, this.capture);
     // EQX_CAPTURE_QUALITY: JPEG quality of the screencast. A frame full of bright,
     // detailed hulls costs Chrome more to encode, and fewer frames arrive.
     const quality = Number(process.env['EQX_CAPTURE_QUALITY'] ?? 80);
@@ -263,6 +262,42 @@ export class Recorder {
     };
     return ctx;
   }
+}
+
+/** Landscape phone: an iPhone-12-class screen held sideways. 2× DPR gives a
+ *  1688×780 capture — crisp in the 1920×1080 bezel frame, and much cheaper
+ *  for the GPU than Pixel 5's 2.75× (the take must hold 60 fps under capture). */
+export const PHONE_LANDSCAPE = { width: 844, height: 390, deviceScaleFactor: 2 } as const;
+
+/** Browser context for a shot's viewport. Phones are real touch devices
+ *  (isMobile + hasTouch), so the game takes its touch/mobile paths. */
+export function contextOptionsFor(viewport: ShotViewport, capture: { width: number; height: number }): BrowserContextOptions {
+  if (viewport === 'phone') return { ...devices['Pixel 5'] };
+  if (viewport === 'phone-landscape') {
+    const { width, height, deviceScaleFactor } = PHONE_LANDSCAPE;
+    return {
+      ...devices['Pixel 5 landscape'],
+      viewport: { width, height },
+      screen: { width, height },
+      deviceScaleFactor,
+      isMobile: true,
+      hasTouch: true,
+    };
+  }
+  return { viewport: capture, deviceScaleFactor: 1 };
+}
+
+/** Screencast frame-size cap (device pixels) for a shot's viewport. */
+export function screencastSize(
+  viewport: ShotViewport,
+  capture: { width: number; height: number },
+): { maxWidth: number; maxHeight: number } {
+  if (viewport === 'phone') return { maxWidth: 1080, maxHeight: 2340 };
+  if (viewport === 'phone-landscape') {
+    const k = PHONE_LANDSCAPE.deviceScaleFactor;
+    return { maxWidth: PHONE_LANDSCAPE.width * k, maxHeight: PHONE_LANDSCAPE.height * k };
+  }
+  return { maxWidth: capture.width, maxHeight: capture.height };
 }
 
 interface CinemaWindow {

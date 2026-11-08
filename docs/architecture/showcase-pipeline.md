@@ -195,3 +195,36 @@ screen), and `_pilot.ts` steers with the arrow keys (`flyTo`, `flyRoute`,
   the same main-thread renderer, so this is worth profiling for players too.
 - **Trade rooms share one sector name,** so each take's Capital is saved and
   restored into the next take's room. `placeHome` tries a ring of spots.
+
+## Phone takes and scripted touch
+
+- **Viewports.** `viewport: 'phone'` is Pixel 5 portrait (393×727 CSS px at
+  2.75× DPR). `viewport: 'phone-landscape'` is a touch phone held sideways
+  (844×390 CSS px at 2× DPR, a 1688×780 capture). Both are `isMobile` +
+  `hasTouch`, so the game takes its touch paths. Desktop takes use the
+  `--capture` size.
+- **Framing.** Phone takes are not pillarboxed any more. The compositor
+  (`deviceLayout`) scales them into a screen rect on the 1920×1080 output, and
+  `cards.deviceFrame` draws a dark bezel with a transparent rounded screen over
+  them. Portrait sits centred with the caption in the left margin (`side`).
+  Landscape leaves a ~150 px band above the device for a compact `top` caption.
+  `shot.captionLayout` overrides this (`none` drops the caption).
+- **Small standalone clips.** `shot.maxBitrateKbps` encodes at CRF 20 under a
+  VBV ceiling (`-maxrate`/`-bufsize`), still h264 yuv420p + faststart.
+  `--export <dir>` copies each new clip to `<dir>/<id>.mp4`. `--shot` accepts
+  `*` wildcards, and `--no-assemble` skips cutting the picked shots together.
+- **Scripted input** (`showcase/touch.ts`). `touch(page)` drives CDP
+  `Input.dispatchTouchEvent` with a stable id per finger, so two thumbs can be
+  down at once. Each event carries every finger still down: Chrome diffs the
+  set, so `touchEnd` lists the fingers that REMAIN. Gestures (`dragTo`,
+  `circle`, `wiggle`, `hold`, `tap`) sample pure curves (`showcase/touchPath.ts`)
+  against wall-clock time, so a slow round-trip never stretches them. Moves
+  coalesce while one is in flight. `mouse(page)` does smooth glides and sweeps
+  with buttons held for desktop takes.
+- **Seeing the thumbs.** `?touchviz=1` mounts `src/client/hud/TouchViz.tsx`:
+  translucent finger dots under every active pointer, plus a small hover dot
+  for a mouse (a screencast shows no cursor).
+- **HUD experiment takes** (`showcase/shots/hudVariants.ts`, catalogue-only):
+  `pnpm showcase:hud` films `hud-<a|b|c>-<phone-landscape|desktop|phone-portrait>`
+  into `showcase-out/hud/`. Controls are found by `data-testid` at run time,
+  with a logged warning and a thumb-position fallback when one is missing.

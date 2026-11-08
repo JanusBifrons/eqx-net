@@ -79,20 +79,60 @@ export async function captionOverlay(
   out: string,
   title: string,
   caption: string,
-  layout: 'lower-third' | 'side' = 'lower-third',
+  layout: 'lower-third' | 'side' | 'top' = 'lower-third',
 ): Promise<void> {
+  // `top`: a compact one-block caption in the band above a landscape phone
+  // frame (`compositor.deviceLayout` leaves ~150 px there).
   const place =
     layout === 'side'
       ? 'left:96px;top:50%;transform:translateY(-50%);max-width:540px;'
-      : 'left:72px;bottom:72px;max-width:1150px;';
+      : layout === 'top'
+        ? 'left:50%;top:22px;transform:translateX(-50%);max-width:1500px;padding:12px 24px 14px !important;'
+        : 'left:72px;bottom:72px;max-width:1150px;';
+  const compact = layout === 'top' ? '.t{font-size:18px;margin-bottom:4px}.c{font-size:24px;white-space:nowrap}' : '';
   await shoot(
     browser,
     `<style>${BASE_CSS} html,body{background:transparent}
-      .box{position:absolute;${place}padding:20px 28px 22px;
+      .box{position:absolute;padding:20px 28px 22px;${place}
         background:linear-gradient(90deg,rgba(3,8,10,.82),rgba(3,8,10,.55));border-left:4px solid #00f58a;border-radius:4px}
       .t{font-size:22px;letter-spacing:5px;text-transform:uppercase;color:#00f58a;margin-bottom:8px}
-      .c{font-size:32px;line-height:1.35;color:#eef8f3}</style>
+      .c{font-size:32px;line-height:1.35;color:#eef8f3}${compact}</style>
      <body><div class="box"><div class="t">${esc(title)}</div><div class="c">${esc(caption)}</div></div></body>`,
+    out,
+    true,
+  );
+}
+
+/**
+ * Device frame overlay for a phone take (1920×1080 PNG): the background, a
+ * dark bezel with a soft rim highlight and a camera dot, and a TRANSPARENT
+ * rounded screen the footage shows through. One element does the cut-out: a
+ * transparent box whose border is the bezel (inner radius = screen radius) and
+ * whose huge spread shadow paints everything outside the device.
+ */
+export async function deviceFrame(
+  browser: Browser,
+  out: string,
+  layout: { screen: { x: number; y: number; w: number; h: number }; bezel: number; radius: number; orientation: 'portrait' | 'landscape' },
+): Promise<void> {
+  const { screen: s, bezel: b, radius: r } = layout;
+  const outer = r + b;
+  const dev = `left:${s.x - b}px;top:${s.y - b}px;width:${s.w + 2 * b}px;height:${s.h + 2 * b}px;border-radius:${outer}px;`;
+  // Camera dot in the bezel: top-centre in portrait, left-middle in landscape.
+  const cam =
+    layout.orientation === 'portrait'
+      ? `left:${s.x + s.w / 2 - 5}px;top:${s.y - b / 2 - 5}px;`
+      : `left:${s.x - b / 2 - 5}px;top:${s.y + s.h / 2 - 5}px;`;
+  await shoot(
+    browser,
+    `<style>${BASE_CSS} html,body{background:transparent}
+      .dev{position:absolute;${dev}box-sizing:border-box;border:${b}px solid #14171c;
+        box-shadow:0 0 0 4000px #05070d, inset 0 0 0 1px rgba(0,0,0,.9)}
+      .rim{position:absolute;${dev}box-sizing:border-box;border:1.5px solid rgba(190,215,205,.16);
+        box-shadow:0 0 60px rgba(0,245,138,.05)}
+      .cam{position:absolute;${cam}width:10px;height:10px;border-radius:50%;
+        background:radial-gradient(circle at 35% 35%,#2a3340,#07090c 70%);box-shadow:0 0 0 1px rgba(255,255,255,.06)}</style>
+     <body><div class="dev"></div><div class="rim"></div><div class="cam"></div></body>`,
     out,
     true,
   );

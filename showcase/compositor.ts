@@ -3,7 +3,7 @@
  *
  * - `encodeClip`: timestamp-accurate CFR encode (each frame holds until the
  *   next one's capture time, so a dropped frame freezes for a beat instead of
- *   speeding the clip up), cut windows removed, phone shots pillarboxed, caption
+ *   speeding the clip up), cut windows removed, phone shots framed in a device bezel, caption
  *   lower-third faded in/out, dip from/to black.
  * - `encodeCard`: a still card as a short clip.
  * - `assemble`: concatenates clips (identical encode params ⇒ stream copy) and
@@ -13,10 +13,55 @@
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { FrameIndex } from './recorder.js';
+import type { ShotViewport } from './types.js';
 import { ffmpeg, ffmpegInfo, probeDurationMs } from './tools.js';
 
 export interface EncodeOpts {
   fps: number;
+}
+
+/** A phone take's place on the 1920×1080 output: the screen rect the frames
+ *  scale into, and the bezel drawn around it (see `cards.deviceFrame`). */
+export interface DeviceLayout {
+  /** Screen rect on the output (even numbers: safe for yuv420 chroma). */
+  screen: { x: number; y: number; w: number; h: number };
+  /** Bezel thickness around the screen, px. */
+  bezel: number;
+  /** Screen corner radius, px (the bezel's outer radius adds `bezel`). */
+  radius: number;
+  orientation: 'portrait' | 'landscape';
+}
+
+const even = (n: number): number => Math.round(n / 2) * 2;
+
+/**
+ * Where a phone take sits on the output. Portrait: a tall device centred
+ * (side caption in the left margin). Landscape: a wide device centred with a
+ * ~150 px band above it for the `top` caption. Desktop takes fill the frame
+ * (null). `aspect` = the take's CSS width / height.
+ */
+export function deviceLayout(viewport: ShotViewport, aspect: number): DeviceLayout | null {
+  if (viewport === 'desktop') return null;
+  if (viewport === 'phone') {
+    const h = 968;
+    const w = even(h * aspect);
+    return { screen: { x: even((W - w) / 2), y: even((H - h) / 2), w, h }, bezel: 18, radius: 34, orientation: 'portrait' };
+  }
+  const w = 1600;
+  const h = Math.min(even(w / aspect), 780);
+  // Sit slightly low so the top caption band is a little taller than the bottom margin.
+  const y = even((H - h) / 2 + 12);
+  return { screen: { x: even((W - w) / 2), y, w, h }, bezel: 20, radius: 40, orientation: 'landscape' };
+}
+
+/** x264 rate control: quality-only by default; with a cap, CRF 20 under a VBV ceiling. */
+export function x264Args(maxBitrateKbps?: number): string[] {
+  if (!maxBitrateKbps) return X264;
+  return [
+    '-c:v', 'libx264', '-preset', 'slow', '-crf', '20',
+    '-maxrate', `${maxBitrateKbps}k`, '-bufsize', `${maxBitrateKbps * 2}k`,
+    '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+  ];
 }
 
 const W = 1920;
@@ -86,28 +131,50 @@ export async function encodeClip(
   index: FrameIndex,
   durationMs: number,
   captionPng: string | null,
-  opts: EncodeOpts & { cuts?: ReadonlyArray<{ fromMs: number; toMs: number }> },
+  opts: EncodeOpts & {
+    cuts?: ReadonlyArray<{ fromMs: number; toMs: number }>;
+    /** Phone takes: scale into this screen rect and overlay `framePng` (the
+     *  bezel + background, transparent over the screen). */
+    device?: { layout: DeviceLayout; framePng: string } | null;
+    maxBitrateKbps?: number;
+  },
 ): Promise<string> {
   const out = path.join(clipDir, 'clip.mp4');
   const total = writeConcatList(clipDir, index, durationMs, opts.cuts);
   const fadeOut = Math.max(0, total - FADE);
-  const base =
-    `[0:v]fps=${opts.fps},scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=lanczos:out_range=tv,` +
-    `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=${BG},setsar=1,format=yuv420p,` +
-    `fade=t=in:st=0:d=${FADE},fade=t=out:st=${fadeOut.toFixed(3)}:d=${FADE}`;
+  const fades = `fade=t=in:st=0:d=${FADE},fade=t=out:st=${fadeOut.toFixed(3)}:d=${FADE}`;
   const args = ['-f', 'concat', '-safe', '0', '-i', path.join(clipDir, 'frames.ffconcat')];
+  let next = 1;
+  let base: string;
+  if (opts.device) {
+    const s = opts.device.layout.screen;
+    args.push('-loop', '1', '-i', opts.device.framePng);
+    const fi = next++;
+    base =
+      `[0:v]fps=${opts.fps},scale=${s.w}:${s.h}:flags=lanczos:out_range=tv,` +
+      `pad=${W}:${H}:${s.x}:${s.y}:color=${BG},setsar=1[scr];` +
+      `[${fi}:v]format=rgba[bez];[scr][bez]overlay=0:0:shortest=1,format=yuv420p,${fades}`;
+  } else {
+    base =
+      `[0:v]fps=${opts.fps},scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=lanczos:out_range=tv,` +
+      `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=${BG},setsar=1,format=yuv420p,${fades}`;
+  }
   let filter: string;
   if (captionPng) {
     const capIn = 0.6;
     const capOut = Math.max(capIn + 1, total - 1.0);
     args.push('-loop', '1', '-i', captionPng);
+    const ci = next++;
     filter =
-      `${base}[v];[1:v]format=rgba,fade=t=in:st=${capIn}:d=0.5:alpha=1,` +
+      `${base}[v];[${ci}:v]format=rgba,fade=t=in:st=${capIn}:d=0.5:alpha=1,` +
       `fade=t=out:st=${capOut.toFixed(3)}:d=0.5:alpha=1[c];[v][c]overlay=0:0:shortest=1,format=yuv420p[o]`;
   } else {
     filter = `${base}[o]`;
   }
-  await ffmpeg([...args, '-filter_complex', filter, '-map', '[o]', '-t', total.toFixed(3), '-r', String(opts.fps), ...X264, out]);
+  await ffmpeg([
+    ...args, '-filter_complex', filter, '-map', '[o]', '-t', total.toFixed(3), '-r', String(opts.fps),
+    ...x264Args(opts.maxBitrateKbps), out,
+  ]);
   return out;
 }
 
