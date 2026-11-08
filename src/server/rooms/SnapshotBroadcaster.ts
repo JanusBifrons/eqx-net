@@ -170,6 +170,11 @@ export interface SnapshotBroadcasterDeps {
   droneFactionOf?: (droneId: string) => string | undefined;
   /** W2a — a drone's NPC warp phase: 1 spool, 2 run, 3 just arrived, 0 none. */
   droneWarpOf?: (droneId: string) => 0 | 1 | 2 | 3;
+  /** W2c — the bots warping right now (keys = drone ids). Their phase goes to
+   *  EVERY client, not only those with them in interest: a capital is seen
+   *  from far outside its interest window (coarse out-of-interest poses), and
+   *  without the phase a far onlooker saw it slide off instead of jump. */
+  warpingDrones?: () => ReadonlyMap<string, { entityId: number }>;
   /** v4 A — ms left on a player's alien-gate disable (0 when none). */
   disabledMsOf?: (playerId: string) => number;
   playerMountAngles: Map<string, Float32Array>;
@@ -923,6 +928,17 @@ export class SnapshotBroadcaster {
             dronesScratch, dronesCount,
             eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct, hostile, charging, elite, fac, warp,
           );
+          dronesCount++;
+        }
+      }
+      // W2c — warping NPCs outside this client's interest: the phase only.
+      const warping = d.warpingDrones?.();
+      if (warping && warping.size > 0) {
+        for (const [id, w] of warping) { // TODO: alloc-debt (iterator; only while an NPC warps)
+          if (interest && interest.has(w.entityId)) continue;
+          const warp = d.droneWarpOf?.(id) ?? 0;
+          if (warp === 0) continue;
+          SnapshotBroadcaster.writeDroneSlot(dronesScratch, dronesCount, w.entityId, undefined, false, undefined, false, false, undefined, undefined, warp);
           dronesCount++;
         }
       }

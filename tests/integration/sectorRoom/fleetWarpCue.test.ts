@@ -20,12 +20,19 @@ describe('SectorRoom integration — showcase fleet warp cue (W2c)', () => {
     const ships = [...internals.swarmRegistry.all()].filter((r) => r.kind === 1).map((r) => r.id);
     expect(ships.length).toBe(SHOWCASE_FLEET_WARP_OPTS.dronePoses.length);
     const before = new Map(ships.map((id) => [id, internals.swarmPose(id)!]));
+    // Clients must SEE the jump: the warp phase rides the drone slice (#16),
+    // even for a pilot outside the fleet's interest window (this one is ~6 km
+    // south: a far onlooker first saw the fleet slide off instead of jump).
+    const phases = new Set<number>();
+        client.onMessage('snapshot', (snap: { drones?: Array<{ id: number; warp?: number }> }) => { for (const d of snap.drones ?? []) if (d.warp) phases.add(d.warp); });
     client.send('test_fleet_warp', { type: 'test_fleet_warp', x: -45_000, y: 0 });
     const end = Date.now() + 15_000;
     while (Date.now() < end) {
       await harness.advance(250);
-      if (ships.every((id) => internals.swarmPose(id)!.x < -30_000)) break;
+      const room = harness.getServerRoom() as unknown as { botWarpPhase(id: string): number };
+      if (ships.every((id) => internals.swarmPose(id)!.x < -30_000 && room.botWarpPhase(id) === 0)) break; // all landed
     }
+    expect([...phases].sort()).toEqual(expect.arrayContaining([1, 2]));
     for (const id of ships) {
       const a = before.get(id)!, b = internals.swarmPose(id)!;
       expect(b.x - a.x).toBeLessThan(-35_000); // jumped ~45 km west (to the nearest clear spot)

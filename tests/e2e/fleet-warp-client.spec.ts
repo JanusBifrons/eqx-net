@@ -1,5 +1,5 @@
 /**
- * W2c — a client sees an NPC fleet warp (the NPC warp, W2a, end to end over
+ * W2c — a client sees an NPC fleet warp (spool, run, gone) (the NPC warp, W2a, end to end over
  * the real wire into a browser): after `test_fleet_warp` no ship of the staged
  * fleet (`showcase-fleet-warp`) is still drawn where it started. Written when
  * the first fleet film seemed to show the fleet staying put; it passed, and
@@ -34,9 +34,13 @@ test('after test_fleet_warp no fleet ship is still shown at its start', async ({
   const before = await fleetView(page);
   expect(before.every((s) => Math.abs(s.x) < 10_000)).toBe(true);
 
+  // Record every warp phase the client's mirror shows for the fleet.
   await page.evaluate(() => {
-    const c = (globalThis as unknown as { __eqxClient?: { getRoom?: () => { send: (ch: string, m: unknown) => void } | null } }).__eqxClient;
-    c?.getRoom?.()?.send('test_fleet_warp', { type: 'test_fleet_warp', x: -45_000, y: 0 });
+    const g = globalThis as unknown as { __seen?: Set<number>; __eqxClient?: { mirror: { swarm: Map<number, { kind: number; warp?: number }> }; getRoom?: () => { send: (ch: string, m: unknown) => void } | null } };
+    const seen = new Set<number>();
+    g.__seen = seen;
+    setInterval(() => { for (const e of g.__eqxClient?.mirror.swarm.values() ?? []) if (e.kind === 1 && e.warp) seen.add(e.warp); }, 30);
+    g.__eqxClient?.getRoom?.()?.send('test_fleet_warp', { type: 'test_fleet_warp', x: -45_000, y: 0 });
   });
   // Spool 3 s + run ~2.3 s: wait (with a deadline) until none is left at the start.
   await page.waitForFunction(() => {
@@ -47,4 +51,8 @@ test('after test_fleet_warp no fleet ship is still shown at its start', async ({
   const after = await fleetView(page);
   const stillHere = after.filter((s) => s.visible && Math.abs(s.x) < 10_000);
   expect(stillHere, JSON.stringify(after)).toHaveLength(0);
+  // The pilot is ~6 km south, outside the fleet's interest window: it must
+  // still see the spool and the run (not a slide off screen).
+  const seen = await page.evaluate(() => [...((globalThis as unknown as { __seen?: Set<number> }).__seen ?? [])].sort());
+  expect(seen).toEqual(expect.arrayContaining([1, 2]));
 });
