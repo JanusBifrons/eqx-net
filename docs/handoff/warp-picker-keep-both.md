@@ -61,7 +61,7 @@ Paused 2026-11-08 because it overlapped another agent's work. Delete this file i
    - run typecheck, lint and test;
    - open a PR and turn auto-merge on (`gh pr merge <n> --auto --merge`);
    - send the user the map clip and the answer to their "only flies right" question.
-5. **Then continue the wrap-up plan:**
+5. **Then continue the wrap-up plan** (the full plan with status is in `docs/handoff/wrap-up-plan.md`):
    - W1c: solar sectors on by default, with the netgate, a 10-minute soak, and a perf A/B on desktop and the phone proxy;
    - W1d: a `docs/architecture/solar-system-sectors.md` page;
    - then W2 onward.
