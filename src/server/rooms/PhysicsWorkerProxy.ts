@@ -115,10 +115,10 @@ export class PhysicsWorkerProxy {
 
   /** This room's worker heap (shared with the other worlds on that worker),
    *  for /dev/memory. Null before start. */
-  async heapStats(): Promise<{ usedBytes: number; totalBytes: number; workerIndex: number } | null> {
+  async heapStats(gc = false): Promise<{ usedBytes: number; totalBytes: number; workerIndex: number } | null> {
     const w = this.world;
     if (!w) return null;
-    const h = await w.heapStats();
+    const h = await w.heapStats(gc);
     return h ? { ...h, workerIndex: w.workerIndex } : null;
   }
 

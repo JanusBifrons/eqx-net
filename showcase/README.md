@@ -10,6 +10,11 @@ pnpm showcase --shot <id>[,<id>]     # re-take shots
 - `registry.ts`: reel order, section cards, end-card lines, and the exempt /
   pending docs the coverage test accepts.
 - `recorder.ts` / `compositor.ts` / `cards.ts` / `servers.ts`: the machinery.
+- `hostLoad.ts`: CPU / free RAM / foreign game-server sampling around every
+  take (recorded in `manifest.json`) and every perf rep (gates it).
+- Another session already recording or running perf on this machine? Set
+  `EQX_SHOWCASE_PORT_OFFSET=300` (ports 3067 / 5673) so neither kills the
+  other's servers.
 
 Full guide: [docs/architecture/showcase-pipeline.md](../docs/architecture/showcase-pipeline.md).
 Camera scripts: [docs/architecture/cinematic-camera.md](../docs/architecture/cinematic-camera.md).

@@ -7,6 +7,7 @@
  */
 import type { Page } from '@playwright/test';
 import type { CameraCue } from '../src/core/contracts/cameraScript.js';
+import type { LoadSample } from './hostLoad.js';
 
 /** Which server boot a shot needs. Shots are recorded grouped by profile. */
 export type ServerProfile =
@@ -121,4 +122,12 @@ export interface ClipRecord {
   gapMaxMs: number;
   /** QA verdict; failed clips are flagged for a re-take, never silently used. */
   qa: { ok: boolean; problems: string[] };
+  /** Host load around the kept take (record only; `flags` say why it may be untrustworthy). */
+  hostLoad?: TakeHostLoad;
+}
+
+export interface TakeHostLoad {
+  before: LoadSample;
+  after: LoadSample;
+  flags: string[];
 }

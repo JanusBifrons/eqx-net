@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { GALAXY_SECTORS, getEntrySectors, isEntrySector } from '../../core/galaxy/galaxy.js';
-import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
+import { HOME_POCKET_HALF_EXTENT, SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
 import {
   apportion,
   computeDesiredDistribution,
@@ -386,11 +386,12 @@ describe('pickRoamGoal', () => {
 
 describe('sectorEdgePose', () => {
   it('spawns near the edge, in bounds, heading + drifting inward', () => {
+    // No sector key (no solar pockets): the edge of a classic sector.
     const p = sectorEdgePose(makeSeededRng(7));
-    expect(Math.abs(p.x)).toBeLessThanOrEqual(SECTOR_PLAYABLE_HALF_EXTENT);
-    expect(Math.abs(p.y)).toBeLessThanOrEqual(SECTOR_PLAYABLE_HALF_EXTENT);
+    expect(Math.abs(p.x)).toBeLessThanOrEqual(HOME_POCKET_HALF_EXTENT);
+    expect(Math.abs(p.y)).toBeLessThanOrEqual(HOME_POCKET_HALF_EXTENT);
     const r = Math.hypot(p.x, p.y);
-    expect(r).toBeGreaterThan(SECTOR_PLAYABLE_HALF_EXTENT * 0.8);
+    expect(r).toBeGreaterThan(HOME_POCKET_HALF_EXTENT * 0.8);
     // Velocity points toward the centre: dot(v, -pos) > 0.
     expect(p.vx * -p.x + p.vy * -p.y).toBeGreaterThan(0);
     // Nose (-sin a, cos a) aligns with the inward unit vector.

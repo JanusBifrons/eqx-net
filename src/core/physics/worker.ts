@@ -117,6 +117,10 @@ type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiInt
 /** Pool commands (main → pooled worker): host / free one sector's world. */
 interface AddWorldCmd    { type: 'ADD_WORLD'; worldId: number; sab: SharedArrayBuffer }
 interface RemoveWorldCmd { type: 'REMOVE_WORLD'; worldId: number }
+/** Dev diagnostics (`/dev/memory?gc=1`): collect garbage now, so a heap
+ *  reading shows what is live. Needs the process started with --expose-gc;
+ *  otherwise a no-op. */
+interface GcCmd          { type: 'GC' }
 
 /** One sector's simulation: its Rapier world, input queues and SAB writer. */
 interface WorldHandle {
@@ -543,7 +547,11 @@ async function main(): Promise<void> {
     parentPort!.on('message', (cmd: WorkerCommand) => world.handle(cmd));
     parentPort!.postMessage({ type: 'READY' });
   } else {
-    parentPort!.on('message', (cmd: WorkerCommand | AddWorldCmd | RemoveWorldCmd) => {
+    parentPort!.on('message', (cmd: WorkerCommand | AddWorldCmd | RemoveWorldCmd | GcCmd) => {
+      if (cmd.type === 'GC') {
+        (globalThis as { gc?: () => void }).gc?.();
+        return;
+      }
       if (cmd.type === 'ADD_WORLD') {
         const worldId = cmd.worldId;
         void createWorld(cmd.sab, (m) => { m['worldId'] = worldId; parentPort!.postMessage(m); }).then((w) => {
