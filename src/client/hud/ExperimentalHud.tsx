@@ -345,7 +345,7 @@ function ClusterA({ touchInput }: { touchInput: TouchInput }): JSX.Element {
         <CooldownRing size={FIRE + 10} color={color} />
         <span style={{ fontSize: 11 }}>{look === 'manual' ? 'FIRE' : look === 'off' ? 'FIRE' : 'AUTO'}</span>
       </HoldButton>
-      <ModePill style={{ right: FIRE - 22, top: -20 }} />
+      <ModePill style={{ right: FIRE - 10, top: -28 }} />
       <div style={{ position: 'absolute', right: FIRE + 14, bottom: 6 }}>
         <HoldButton testId="hud-boost" size={BOOST} color={HUD.color.boost} onHold={(d) => touchInput.setBoostHeld(d)}>
           BOOST

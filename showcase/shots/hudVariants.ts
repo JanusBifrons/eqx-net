@@ -481,7 +481,7 @@ function hudShot(v: Variant, vk: ViewportKey): Shot {
         ? `${VARIANT_NAMES[v]} on desktop — WASD to fly, hold the mouse to aim and fire, right mouse to boost, F for auto.`
         : `${VARIANT_NAMES[v]} (${where}) — steer with the left thumb, auto-fire, manual aim and boost.`,
     features: ['U8'],
-    docs: [],
+    docs: ['hud-variants'],
     reel: false,
     server: 'lean',
     viewport: vk === 'phone-portrait' ? 'phone' : vk,
