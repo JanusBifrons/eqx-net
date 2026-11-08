@@ -47,7 +47,19 @@ const FADE_RISE_RATE = 1.0;
  * only adds another 50 %.
  */
 const BASE_FONT_SCALE = 1.0;
-const MAX_FONT_SCALE = 2.8;
+// Reined in 2026-11-08 (user: "really good, but need reigning in a bit and
+// making more crisp"): growth caps at 1.7× (was 2.8×) on a gentler curve.
+const MAX_FONT_SCALE = 1.7;
+
+/**
+ * Crispness: the glyphs are rasterised at TEXT_RASTER_SCALE × their on-screen
+ * size and scaled DOWN, so the zoom counter-scale (≈2× at the default 0.5
+ * zoom) and the total-growth never stretch a small bitmap up (the old 14 px
+ * raster was upscaled ~2–5×, which read soft/blurry). Exported for tests.
+ */
+export const TEXT_RASTER_SCALE = 3;
+/** On-screen size of a first-hit number, CSS px. */
+const DISPLAY_FONT_PX = 13;
 
 /**
  * `fontScaleForTotal(total)` — pure, exported for tests. 1.0 at total
@@ -57,7 +69,7 @@ const MAX_FONT_SCALE = 2.8;
 export function fontScaleForTotal(total: number): number {
   if (total <= 0) return BASE_FONT_SCALE;
   // 1 at total=0, ~1.32 at 50, ~1.6 at 100, ~2.2 at 500, capped at 2.8.
-  const grown = BASE_FONT_SCALE + Math.log10(1 + total / 25) * 0.6;
+  const grown = BASE_FONT_SCALE + Math.log10(1 + total / 25) * 0.35;
   return grown > MAX_FONT_SCALE ? MAX_FONT_SCALE : grown;
 }
 
@@ -66,8 +78,8 @@ export function fontScaleForTotal(total: number): number {
 // deepens toward saturated red as the running total grows; healing
 // (`heal: true` — not yet emitted by gameplay, wired ahead) starts light
 // green and deepens. White outline gives contrast over any background.
-const DMG_LIGHT = 0xff8c8c; // light red — small hit
-const DMG_DEEP = 0xff0000; // saturated red — big hit
+const DMG_LIGHT = 0xffc4c4; // pale red — small hit (reads crisp on black)
+const DMG_DEEP = 0xff3a3a; // bright red — big hit (pure 0xff0000 muddied against the black stroke)
 const HEAL_LIGHT = 0x9cff9c; // light green — small heal
 const HEAL_DEEP = 0x00c400; // saturated green — big heal
 
@@ -131,9 +143,9 @@ interface DamageNumberEntry {
  *  subtle dark drop-shadow for legibility over bright FX. */
 function makeNumberStyle(): TextStyle {
   return new TextStyle({
-    fontFamily: 'monospace',
-    fontSize: 14,
-    fontWeight: 'bold',
+    fontFamily: '"JetBrains Mono", "Roboto Mono", monospace',
+    fontSize: DISPLAY_FONT_PX * TEXT_RASTER_SCALE,
+    fontWeight: '800',
     fill: DMG_LIGHT,
     // Two-layer outline (2026-06-03): a crisp BLACK stroke hugging the
     // glyph, then a WHITE halo just outside it via a zero-distance white
@@ -141,8 +153,11 @@ function makeNumberStyle(): TextStyle {
     // without the cost of stacking a second Text per bucket. (Pixi v8
     // TextStyle supports only one `stroke`, so the outer ring is the
     // shadow.)
-    stroke: { color: '#000000', width: 4 },
-    dropShadow: { color: '#ffffff', alpha: 1, blur: 3, distance: 0, angle: 0 },
+    // Crisp pass (2026-11-08): a tight black stroke plus a small HARD drop
+    // shadow (no blur). The old blurred white halo made every number look
+    // soft. Widths are in raster px (÷ TEXT_RASTER_SCALE on screen).
+    stroke: { color: '#000000', width: 2.5 * TEXT_RASTER_SCALE, join: 'round' },
+    dropShadow: { color: '#000000', alpha: 0.6, blur: 0, distance: 1.25 * TEXT_RASTER_SCALE, angle: Math.PI / 2 },
   });
 }
 
@@ -314,7 +329,7 @@ export class DamageNumberManager {
       entry.curX += (entry.targetX - entry.curX) * POSITION_GLIDE;
       entry.curY += (entry.targetY - entry.curY) * POSITION_GLIDE;
 
-      const visualScale = invScale * fontScaleForTotal(entry.total);
+      const visualScale = (invScale * fontScaleForTotal(entry.total)) / TEXT_RASTER_SCALE;
       entry.text.scale.set(visualScale);
 
       if (entry.stayLeft > 0) {
