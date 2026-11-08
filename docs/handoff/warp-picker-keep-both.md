@@ -61,7 +61,4 @@ Paused 2026-11-08 because it overlapped another agent's work. Delete this file i
    - run typecheck, lint and test;
    - open a PR and turn auto-merge on (`gh pr merge <n> --auto --merge`);
    - send the user the map clip and the answer to their "only flies right" question.
-5. **Then continue the wrap-up plan** (the full plan with status is in `docs/handoff/wrap-up-plan.md`):
-   - W1c: solar sectors on by default, with the netgate, a 10-minute soak, and a perf A/B on desktop and the phone proxy;
-   - W1d: a `docs/architecture/solar-system-sectors.md` page;
-   - then W2 onward.
+5. **Stop there: the rest of the wrap-up plan is NOT yours.** The user split the work (2026-11-08): this UI/UX work (the warp picker) is yours; the wrap-up plan (W1c solar sectors on by default, W1d docs, W2 capitals through W7 showcase) belongs to another session. Don't start any of it.
