@@ -113,6 +113,7 @@ The runner can slow the head arm on purpose: `--inject-server-burn N` busy-waits
 
   Ledger: `perf/ledger/inject-2026-11-06.json`.
 - **How sensitive it is:** the laptop is noisy. Base fleet-fight tick p95 ranged from 10 to 19 ms across one session, so the gate catches large regressions (around 1.5× or more), not 10 %. It needs at least 4 reps per arm: with 3, Mann-Whitney can never reach p < 0.05. Until 2026-11-08 the verdict still called such runs GREEN; now they are INCONCLUSIVE (see above).
+- **Re-run with the three-way verdict (desktop, RTX 5070 Ti, 2026-11-08):** `--reps 3` with the same burns rounds up to 4 reps and goes RED (server tick p95 2.15 → 8.08 ms, frame p95 16.8 → 33.4 ms, hitches 0 → 323 a minute, each p = 0.03). The same ledger's first 3 reps per arm re-judged give INCONCLUSIVE on every gated metric (min p 0.10). Ledger: `perf/ledger/inject-2026-11-08.json`.
 - **A finding:** a sustained 60-ship fight (180 ships over the window) pushes the laptop server's p99 tick to about 40 ms with load shedding off, against a 16.7 ms budget. In real play, time dilation and shedding absorb it.
 
 ## Adding a scene
