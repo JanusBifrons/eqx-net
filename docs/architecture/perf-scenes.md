@@ -42,7 +42,11 @@ pnpm perf:scenes                                  # every scene, 8 reps, head vs
 pnpm perf:scenes --scenes fleet-fight --reps 4    # one scene, the fewest reps that can decide
 pnpm perf:scenes --base HEAD --head-params shiplight=gpu --noise-check   # one switch, with a noise floor
 pnpm perf:scenes --head-only --reps 1             # a quick look, no A/B
+pnpm perf:scenes --device phone-proxy --cpu-rate 2 --base HEAD --base-params shiplight=baked --head-params shiplight=medium   # phone-class, on the laptop
+pnpm perf:phone --base HEAD --base-params shiplight=baked --head-params shiplight=medium      # on a real phone over adb (below)
 ```
+
+`--base HEAD` means this checkout's HEAD (resolved before the perf-base worktree is checked out; before 2026-11-08 it silently meant that worktree's own, stale HEAD).
 
 ## Reading the verdict: RED, GREEN, INCONCLUSIVE (2026-11-08)
 
@@ -131,6 +135,27 @@ The harness's numbers come from a headless laptop browser with an idle pilot. To
 4. The viewer only says whether it looked smooth. Nobody pastes numbers.
 
 Those verdicts, next to the numbers from the same take, set the absolute budgets per device (`perf/budgets.{desktop,phone}.ts`, still to come).
+
+## The phone lane: `pnpm perf:phone` (2026-11-08)
+
+The perf lab gives one reading per tap. The phone lane runs a full A/B on a real Android phone, unattended: the same arms (base, head, optional `aa` noise arm), the same arm order (`perf/order.ts`), the same probe reads (`?perfprobe=1` + `GET /dev/perf` + DevTools socket bytes), the same verdict (`perf/verdict.ts`) and the same ledger shape as `pnpm perf:scenes`. Only the browser differs: Chrome on the phone, driven through Playwright's `_android` over adb (the path `tests/mobile-perf/helpers/androidConnect.ts` proved).
+
+```
+pnpm perf:phone --scenes fleet-fight,wide-view --reps 8 --base HEAD --base-params shiplight=baked --head-params shiplight=medium --noise-check
+```
+
+- **Where things run.** The game servers run on the laptop (one arm at a time, ports as for perf:scenes). The phone reaches Vite through `adb reverse tcp:<port>` (USB or wireless adb, no Wi-Fi routing needed, and `localhost` is a secure context); `--lan` uses the laptop's LAN IP instead (`HOST_LAN_IP` overrides the pick). Chrome is relaunched for every run, like perf:scenes' fresh context per run.
+- **Fails fast.** Before any worktree or server is touched it runs `adb devices -l` and stops (exit 4) with what to do: adb not on PATH, no device, the USB-debugging prompt not accepted, a device offline, or several devices and no `--serial` (or `ANDROID_SERIAL`). Flags that only mean something for the laptop proxy (`--device`, `--cpu-rate`, `--headed`, the burn injections) are refused.
+- **The phone's own noise.** A hot phone throttles its clocks. Before every run the lane reads `dumpsys thermalservice`; at or above `--max-thermal` (default 2, MODERATE), or with the screen off or locked, the run is INVALID and repeated after 30 s (up to 2 more times), the same way a busy laptop is. The laptop's host-load gate still applies too (the server arm runs there). Every sample is kept in the ledger (`load.before/after.{host,phone}`).
+- **Saved settings.** Chrome on the phone keeps its localStorage between launches, so an arm without `shiplight` would run the phone's saved Lighting level. The lane warns when only one arm pins it; pin both.
+- **Ledger.** `perf/ledger/<stamp>-<sha>-phone-<model>.json`. `device` is the phone ("phone · Google Pixel 7 · Android 14 · Mali-G710": model, Android version, and the GPU renderer string Chrome reported), `phone` has the getprop identity, SoC and thermal status at start, `host` is the laptop that ran the servers. `--append <ledger>` adds chunks, as for perf:scenes.
+- **Exit codes:** 0 GREEN, 1 RED or INVALID, 3 INCONCLUSIVE, 2 crashed, 4 no usable phone.
+
+On the phone, first time: Developer options → USB debugging on; accept the "Allow USB debugging?" prompt; in Chrome enable `chrome://flags/#enable-command-line-on-non-rooted-devices` and Relaunch; set a long screen timeout. The laptop needs adb (Android platform-tools) on PATH.
+
+**No phone?** `pnpm perf:scenes --device phone-proxy --cpu-rate 2 ...` runs the same A/B on the laptop with Chrome's CPU throttled and a phone screen. It is a proxy: CPU only, with the laptop's GPU. When the two disagree, the phone wins. The GPU-lighting question's exact commands for both lanes are in [gpu-lit-ships.md](gpu-lit-ships.md#open-question-cost-on-weak-hardware).
+
+Code: `perf/run-phone.ts` (the CLI) and `perf/phoneLane.ts` (arg parsing, the adb device check, the thermal gate, arm plan; unit-tested with adb mocked in `perf/phoneLane.test.ts`). The per-run measurement mirrors `run-perf.ts` `runOnce`; a metric added there must be added to the phone lane too.
 
 ## Proving the gate sees a regression
 

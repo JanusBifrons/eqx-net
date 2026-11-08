@@ -2778,3 +2778,15 @@ What still varies is the SCENE: combat outcomes differ run to run (wide-view end
 CPU time is NOT a fix for noisy timing here: the room's tick loop is a `setImmediate` spin, so process / main-thread CPU reads ~100 % busy whatever the tick does. `process.threadCpuUsage()` sampled around `update()` is the only meaningful main-thread figure, it needs Node ≥ 23.9 (CI runs 22), and Windows rounds it to ~15.6 ms. Print-only.
 
 Unit tests: convoyBudget now gates candidate checks per planning pass (988, deterministic; budget 1235) and prints the time; the Reconciler "replay under 50 ms" now counts physics steps (≤ 128).
+
+## 2026-11-08 — `--base HEAD` measured the perf-base worktree's own HEAD
+
+- **Symptom (found reading the code while building the phone lane):** `pnpm perf:scenes --base HEAD --head-params ...` is the documented way to A/B one switch on one build, but `prepareBase` ran `git checkout --detach HEAD` *inside* `.claude/worktrees/perf-base`. There `HEAD` is that worktree's own commit, so after the first run the base arm stayed where the worktree was created while head moved on. A "same build" A/B could have been two builds (the ledger's per-arm SHAs show it).
+- **Fix:** both runners resolve the ref to a SHA in the calling checkout (`git rev-parse --verify <ref>^{commit}`) before touching the worktree.
+- **Rule:** a symbolic ref handed to `git` in another worktree means something else there (`HEAD`, `@{-1}`). Resolve refs where the user typed them.
+
+## 2026-11-08 — The GPU-lighting phone defaults have no evidence yet
+
+- **Context:** GPU lighting went default (#344–#346), phones on Medium/Low, on 3-rep A/Bs (laptop and phone-proxy) that could never go RED (entry above). Whether it costs frames on weak hardware is open, and the desktop (not a target platform) can't answer it.
+- **Now:** `pnpm perf:phone` runs the same 8-rep A/B on a real phone over adb; `pnpm perf:scenes --device phone-proxy --cpu-rate 2` is the no-phone fallback. Commands and the decision rule: `docs/architecture/gpu-lit-ships.md`, "Open question: cost on weak hardware".
+- **Rule:** a default that "passed perf" must cite a ledger whose verdict could have failed (≥ 4 reps per arm, on the machine class it targets).

@@ -14,6 +14,7 @@
     "perf:scenes": "tsx perf/run-perf.ts",
     "perf:lab": "tsx perf/lab-server.ts",
     "perf:counts": "tsx perf/run-counts.ts",
+    "perf:phone": "tsx perf/run-phone.ts",
     "lint": "eslint .",
     "audit:god-files": "node scripts/audit-god-files.mjs",
     "audit:thin-wrappers": "node scripts/audit-thin-wrappers.mjs",
