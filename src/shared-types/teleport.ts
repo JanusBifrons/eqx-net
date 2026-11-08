@@ -11,16 +11,25 @@
 import { z } from 'zod';
 import { GOOD_IDS } from './goods.js';
 
-export const TELEPORTER_KINDS = ['teleporter', 'teleporter_large', 'alien_gate'] as const;
+export const TELEPORTER_KINDS = ['teleporter', 'teleporter_large', 'alien_gate', 'pocket_pad'] as const;
 export type TeleporterKind = (typeof TELEPORTER_KINDS)[number];
 
 export function isTeleporterKind(kind: string | null | undefined): kind is TeleporterKind {
-  return kind === 'teleporter' || kind === 'teleporter_large' || kind === 'alien_gate';
+  return kind === 'teleporter' || kind === 'teleporter_large' || kind === 'alien_gate' || kind === 'pocket_pad';
 }
 
 /** v4 A — the Ancients' border gate: a teleporter nobody owns or builds. */
 export function isAlienGateKind(kind: string | null | undefined): kind is 'alien_gate' {
   return kind === 'alien_gate';
+}
+
+/**
+ * A teleporter that costs nothing and belongs to no grid: the Ancients' gates
+ * and the transit pads between pockets (W1b). No capacitor, always "powered",
+ * ships only (no pad hold), can't be damaged. Only gates jump on a timetable.
+ */
+export function isFreeTeleporterKind(kind: string | null | undefined): kind is 'alien_gate' | 'pocket_pad' {
+  return kind === 'alien_gate' || kind === 'pocket_pad';
 }
 
 export interface PadSpec {
@@ -43,6 +52,8 @@ export const PAD_SPECS: Readonly<Record<TeleporterKind, PadSpec>> = Object.freez
   teleporter_large: { padRadius: 900, padCapacity: 4000, post: 160, posts: 8 },
   // v4 A — bigger than a small pad; no hold (alien gates carry ships only).
   alien_gate: { padRadius: 640, padCapacity: 0, post: 100, posts: 12 },
+  // W1b — a small pad's size; ships only.
+  pocket_pad: { padRadius: 320, padCapacity: 0, post: 80, posts: 4 },
 });
 
 // ── Charge ──────────────────────────────────────────────────────────────────

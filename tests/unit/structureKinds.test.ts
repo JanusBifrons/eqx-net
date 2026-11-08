@@ -55,6 +55,7 @@ describe('structureKinds catalogue', () => {
       'teleporter', // v4 T1 — appended
       'teleporter_large',
       'alien_gate', // v4 A — appended
+      'pocket_pad', // wrap-up W1b transit pads — appended
     ]);
   });
 

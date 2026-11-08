@@ -81,6 +81,8 @@ export const StructureKindIdSchema = z.enum([
   'teleporter_large',
   // v4 A — the Ancients' border gates (never built by anyone) — APPEND ONLY.
   'alien_gate',
+  // Wrap-up W1b — transit pads between solar-system pockets (never built) — APPEND ONLY.
+  'pocket_pad',
 ]);
 export type StructureKindId = z.infer<typeof StructureKindIdSchema>;
 
@@ -969,6 +971,31 @@ export const ALIEN_GATE: StructureKind = {
   color: 0x3fe0c5,
 };
 
+/**
+ * Transit pad (wrap-up plan W1b, solar-system sectors): a free, safe, instant
+ * hop between two pockets of a system, for pilots who'd rather not cross open
+ * space (user, 2026-11-08: "instant and safe for starters", but rarer than
+ * warp: only a seeded few systems have a pair, home to one other pocket). Like
+ * an alien gate it costs nothing and can't be damaged, but it jumps when a
+ * ship boards rather than on a timetable. Nobody builds one.
+ */
+export const POCKET_PAD: StructureKind = {
+  id: 'pocket_pad',
+  displayName: 'Transit Pad',
+  description:
+    'A free pad linked to another pocket of this system. Fly onto it and it jumps you across, instantly and safely.',
+  radius: 566, // bounding circle of the 800×800 footprint
+  footprint: { w: 800, h: 800 },
+  maxHealth: 1_000_000,
+  maxConnections: 0,
+  isHub: false,
+  powerOutput: 0,
+  powerConsumption: 0,
+  storageCapacity: 0,
+  constructionCost: 0,
+  color: 0x5ad7ff,
+};
+
 export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   CAPITAL,
   CONNECTOR,
@@ -1015,6 +1042,8 @@ export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   TELEPORTER_LARGE,
   // v4 A — APPENDED. Never reorder.
   ALIEN_GATE,
+  // Wrap-up W1b — APPENDED. Never reorder.
+  POCKET_PAD,
 ]);
 
 /** Id-keyed lookup, derived from the canonical list (the list is the source of
@@ -1057,7 +1086,7 @@ export const DEFAULT_STRUCTURE_KIND: StructureKindId = 'capital';
  * or pack recipe, and a player's `place_structure` of one is refused. The
  * world places them itself (the Ancients' gates).
  */
-export const UNBUILDABLE_STRUCTURE_KINDS: readonly StructureKindId[] = ['alien_gate'];
+export const UNBUILDABLE_STRUCTURE_KINDS: readonly StructureKindId[] = ['alien_gate', 'pocket_pad'];
 
 export function isBuildableStructureKind(id: string): boolean {
   return !(UNBUILDABLE_STRUCTURE_KINDS as readonly string[]).includes(id);
@@ -1137,6 +1166,7 @@ export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
   teleporter: 4,
   teleporter_large: 4,
   alien_gate: 12,
+  pocket_pad: 4,
 };
 
 /**

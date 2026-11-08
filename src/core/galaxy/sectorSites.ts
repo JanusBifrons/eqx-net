@@ -117,6 +117,46 @@ export function sectorSites(sectorKey: string): SectorSite[] {
   return sites;
 }
 
+/**
+ * Transit pads (wrap-up plan W1b): the share of systems that get a pair. The
+ * user wants them "a bit more rare" than warp (2026-11-08): instant and safe
+ * for starters, so not in every system.
+ */
+export const POCKET_PAD_CHANCE = 0.5;
+
+/** Who owns the transit pads: the Traders (neutral to everyone; NPC-owned,
+ *  so never saved). */
+export const POCKET_PAD_OWNER = 'npc:traders:pads';
+
+export interface PocketPadPair {
+  /** Home, and the one other pocket it links to. */
+  a: SectorSite;
+  b: SectorSite;
+  /** Ideal pad centres: inside each pocket, toward the other. */
+  ax: number; ay: number; bx: number; by: number;
+}
+
+/**
+ * The system's transit-pad pair, or null (most systems' odds: see
+ * POCKET_PAD_CHANCE). At most one pair, always from home to one belt, base or
+ * battle zone. Deterministic per sector key, like the pockets themselves.
+ */
+export function pocketPadPair(sectorKey: string): PocketPadPair | null {
+  const sites = sectorSites(sectorKey);
+  const home = sites.find((s) => s.kind === 'home');
+  const others = sites.filter((s) => s.kind === 'belt' || s.kind === 'base' || s.kind === 'combat');
+  if (!home || others.length === 0) return null;
+  const rand = rng(hash(`pads:${sectorKey}`));
+  if (rand() >= POCKET_PAD_CHANCE) return null;
+  const b = others[Math.floor(rand() * others.length)]!;
+  const dx = b.x - home.x, dy = b.y - home.y, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
+  return {
+    a: home, b,
+    ax: Math.round(home.x + ux * home.r * 0.7), ay: Math.round(home.y + uy * home.r * 0.7),
+    bx: Math.round(b.x - ux * b.r * 0.7), by: Math.round(b.y - uy * b.r * 0.7),
+  };
+}
+
 /** The pocket of `kind` nearest (x, y), or null. */
 export function nearestSite(sites: readonly SectorSite[], x: number, y: number, kind?: SiteKind): SectorSite | null {
   let best: SectorSite | null = null, bd = Infinity;

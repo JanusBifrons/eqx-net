@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { GALAXY_SECTORS, getNeighbours, getSector, axialToPixel } from './galaxy.js';
-import { sectorSites, nearestSite, SOLAR_HALF_EXTENT, POCKET_MIN_GAP, POCKET_MAX_GAP } from './sectorSites.js';
+import { sectorSites, nearestSite, SOLAR_HALF_EXTENT, POCKET_MIN_GAP, POCKET_MAX_GAP, pocketPadPair, POCKET_PAD_CHANCE } from './sectorSites.js';
 
 describe('sectorSites', () => {
   it('is deterministic per sector key', () => {
@@ -76,5 +76,26 @@ describe('pocketCentre', () => {
     const combat = sectorSites('sol-prime').find((s) => s.kind === 'combat')!;
     expect(pocketCentre('sol-prime', 'combat', true)).toEqual({ x: combat.x, y: combat.y });
     expect(pocketCentre('nowhere', 'combat', true)).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe('pocketPadPair (wrap-up W1b: rare transit pads)', () => {
+  it('is deterministic, links home to one belt/base/battle pocket, pads inside each pocket', () => {
+    for (const s of GALAXY_SECTORS) {
+      const p = pocketPadPair(s.key);
+      expect(pocketPadPair(s.key)).toEqual(p);
+      if (p === null) continue;
+      expect(p.a.kind).toBe('home');
+      expect(['belt', 'base', 'combat']).toContain(p.b.kind);
+      expect(Math.hypot(p.ax - p.a.x, p.ay - p.a.y)).toBeLessThan(p.a.r);
+      expect(Math.hypot(p.bx - p.b.x, p.by - p.b.y)).toBeLessThan(p.b.r);
+    }
+  });
+
+  it('is rare: some systems have none, and none has more than one pair', () => {
+    const withPads = GALAXY_SECTORS.filter((s) => pocketPadPair(s.key) !== null).length;
+    expect(withPads).toBeGreaterThan(0);
+    expect(withPads).toBeLessThan(GALAXY_SECTORS.length);
+    expect(withPads / GALAXY_SECTORS.length).toBeLessThanOrEqual(POCKET_PAD_CHANCE + 0.25);
   });
 });

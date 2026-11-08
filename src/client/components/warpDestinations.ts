@@ -7,7 +7,7 @@
  * open, never per frame.
  */
 import { getSector } from '../../core/galaxy/galaxy.js';
-import { sectorSites, warpDropPoint, type SectorSite, type SiteKind } from '../../core/galaxy/sectorSites.js';
+import { pocketPadPair, sectorSites, warpDropPoint, type SectorSite, type SiteKind } from '../../core/galaxy/sectorSites.js';
 
 export interface WarpDestination {
   id: string;
@@ -26,6 +26,9 @@ export interface WarpDestination {
   here: boolean;
   /** Far enough to list under "Far" (EVE-style grouping). */
   far: boolean;
+  /** This pocket has a transit pad to another (its label): instant and
+   *  free, an alternative to warping. Null when it has none. */
+  padTo: string | null;
 }
 
 /** Distance (km) beyond which a destination is listed under "Far". */
@@ -46,6 +49,8 @@ export function siteLabel(site: SectorSite, beltIndex: number, beltCount: number
 export function warpDestinations(sectorKey: string, x: number, y: number): WarpDestination[] {
   const sites = sectorSites(sectorKey);
   const belts = sites.filter((s) => s.kind === 'belt');
+  const label = (s: SectorSite): string => siteLabel(s, belts.indexOf(s), belts.length);
+  const pads = pocketPadPair(sectorKey);
   const out: WarpDestination[] = [];
   for (const s of sites) {
     const drop = warpDropPoint(s, x, y);
@@ -53,8 +58,9 @@ export function warpDestinations(sectorKey: string, x: number, y: number): WarpD
     const here = centre <= s.r * 1.2;
     const distKm = here ? 0 : Math.hypot(drop.x - x, drop.y - y) / 1000;
     out.push({
-      id: s.id, kind: s.kind, label: siteLabel(s, belts.indexOf(s), belts.length),
+      id: s.id, kind: s.kind, label: label(s),
       x: s.x, y: s.y, r: s.r, distKm, dropX: drop.x, dropY: drop.y, here, far: distKm > WARP_FAR_KM,
+      padTo: pads === null ? null : pads.a.id === s.id ? label(pads.b) : pads.b.id === s.id ? label(pads.a) : null,
     });
   }
   out.sort((a, b) => a.distKm - b.distKm);

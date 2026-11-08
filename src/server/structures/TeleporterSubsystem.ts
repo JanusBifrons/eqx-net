@@ -29,6 +29,7 @@ import {
   ALIEN_GATE_INTERVAL_MS,
   alienGateOffsetMs,
   isAlienGateKind,
+  isFreeTeleporterKind,
   isTeleporterKind,
   jumpCharge,
   jumpDistance,
@@ -130,14 +131,14 @@ export class TeleporterSubsystem {
   /** The charge this teleporter's jump needs (0 when unpaired or unreachable,
    *  and always 0 for an alien gate: they are free). */
   required(rec: StructureRecord): number {
-    if (isAlienGateKind(rec.kind)) return 0;
+    if (isFreeTeleporterKind(rec.kind)) return 0;
     const l = this.link(rec);
     if (l === null) return 0;
     return jumpCharge(jumpDistance(l.hops, rec.x, rec.y, l.rec.x, l.rec.y));
   }
 
   isCharged(rec: StructureRecord): boolean {
-    if (isAlienGateKind(rec.kind)) return true;
+    if (isFreeTeleporterKind(rec.kind)) return true;
     const req = this.required(rec);
     return req > 0 && (rec.tpCharge ?? 0) >= req;
   }
@@ -165,7 +166,7 @@ export class TeleporterSubsystem {
   }
 
   private wantsCharge(r: StructureRecord): boolean {
-    return isTeleporterKind(r.kind) && !isAlienGateKind(r.kind) && r.isConstructed && (r.tpCharge ?? 0) < this.required(r);
+    return isTeleporterKind(r.kind) && !isFreeTeleporterKind(r.kind) && r.isConstructed && (r.tpCharge ?? 0) < this.required(r);
   }
 
   /** Pair with one of the same owner's teleporters, here or (T3) in another
@@ -234,8 +235,8 @@ export class TeleporterSubsystem {
   fire(rec: StructureRecord, nowMs: number): boolean {
     const l = this.link(rec);
     if (l === null || this.busy(rec) || l.sys.busy(l.rec)) return false;
-    const alien = isAlienGateKind(rec.kind);
-    if (!rec.isConstructed || (!alien && (!this.h.isPowered(rec) || !this.isCharged(rec)))) return false;
+    const free = isFreeTeleporterKind(rec.kind); // alien gates + transit pads: no grid, no charge
+    if (!rec.isConstructed || (!free && (!this.h.isPowered(rec) || !this.isCharged(rec)))) return false;
     armCycle(this.cycle, nowMs, this.scaleFor(rec));
     rec.tpInitiator = true;
     l.rec.tpInitiator = false;
@@ -282,7 +283,7 @@ export class TeleporterSubsystem {
       if (!rules.whenCharged && !rules.shipBoards && rules.loaded === null) continue;
       const pad = rec.padHold;
       const fireNow = rulesSayFire(rules, {
-        charged: this.isCharged(rec) && this.h.isPowered(rec),
+        charged: this.isCharged(rec) && (isFreeTeleporterKind(rec.kind) || this.h.isPowered(rec)),
         boardedForMs: rec.tpBoardedSinceMs === undefined ? 0 : nowMs - rec.tpBoardedSinceMs,
         padGoods: pad?.goods ?? EMPTY_GOODS,
         padWeight: pad === undefined ? 0 : holdWeight(pad),
@@ -362,7 +363,7 @@ export class TeleporterSubsystem {
   pulse(): void {
     for (const rec of this.h.registry.all()) {
       if (!isTeleporterKind(rec.kind) || !rec.isConstructed || this.busy(rec)) continue;
-      if (isAlienGateKind(rec.kind)) continue; // ships only: no pad hold
+      if (isFreeTeleporterKind(rec.kind)) continue; // ships only: no pad hold
       if (rec.tpArrived === true) {
         this.h.storage.padUnload(rec);
         rec.tpArrived = false;

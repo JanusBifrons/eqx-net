@@ -87,7 +87,7 @@ export const WarpPicker = memo(function WarpPicker(): JSX.Element | null {
   const near = dests.filter((d) => !d.far), far = dests.filter((d) => d.far);
   const row = (d: WarpDestination): JSX.Element => (
     <Button key={d.id} sx={ROW_SX} disabled={d.here} disableRipple onClick={() => warpTo(d)} data-testid={`warp-dest-${d.id}`} data-km={Math.round(d.distKm)}>
-      <span>{d.label}</span>
+      <span>{d.label}{d.padTo && <span style={{ color: '#5ad7ff', fontSize: 10 }} data-testid={`warp-pad-${d.id}`}>{` · pad to ${d.padTo} (instant)`}</span>}</span>
       <span style={{ color: '#8fa0b8' }}>{d.here ? 'here' : formatKm(d.distKm)}</span>
     </Button>
   );
@@ -168,6 +168,11 @@ function SystemMap({ dests, pose, target, onPick, onWarp }: {
     <Box>
       <svg viewBox={`${-H} ${-H} ${2 * H} ${2 * H}`} width="100%" style={{ display: 'block', background: '#070b14', borderRadius: 4 }} data-testid="warp-map">
         <circle cx={0} cy={0} r={H * 0.98} fill="none" stroke="#1d2a40" strokeWidth={H / 120} />
+        {dests.filter((d) => d.kind === 'home' && d.padTo).map((d) => {
+          const o = dests.find((x) => x.label === d.padTo);
+          return o ? <line key={`pad-${d.id}`} x1={d.x} y1={-d.y} x2={o.x} y2={-o.y} stroke="#5ad7ff" strokeWidth={H / 150}
+            strokeDasharray={`${H / 40} ${H / 60}`} opacity={0.7} data-testid="warp-map-pad" /> : null;
+        })}
         {dests.map((d) => (
           <g key={d.id} onClick={() => !d.here && onPick(d.id)} style={{ cursor: d.here ? 'default' : 'pointer' }} data-testid={`warp-map-${d.id}`}>
             <circle cx={d.x} cy={-d.y} r={H / 9} fill="transparent" />

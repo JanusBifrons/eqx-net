@@ -422,6 +422,7 @@ export const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
   teleporter: <TripOriginIcon />, // v4 T1
   teleporter_large: <AllOutIcon />,
   alien_gate: <AllOutIcon />, // never in a build menu (unbuildable)
+  pocket_pad: <AllOutIcon />, // never in a build menu (unbuildable)
 };
 
 // ── Hoisted static sx / props (no per-render allocation) ───────────────────
