@@ -1,7 +1,7 @@
 /** `?shiplight=gpu` (plan prancy-squishing-donut R2): off unless asked, only with Machined art. */
 import { describe, expect, it } from 'vitest';
 import { resolveArtMode, resolveShipLighting } from './artMode.js';
-import { LOOK_NIGHT } from './lightingSettings.js';
+import { LOOK_NIGHT, defaultLightingPreset, presetSettings } from './lightingSettings.js';
 
 describe('resolveShipLighting', () => {
   it('is off by default and with classic art', () => {
@@ -23,4 +23,29 @@ describe('resolveShipLighting', () => {
     const s = resolveShipLighting('?shiplight=gpu', 'machined')!;
     expect(structuredClone(s)).toEqual(s);
   });
+
+describe('lighting levels (default on for players)', () => {
+  it('players get their device default; automation stays baked unless the URL asks', () => {
+    expect(resolveShipLighting('', 'machined', { touch: false })).toEqual(LOOK_NIGHT);
+    expect(resolveShipLighting('', 'machined', { touch: true })).toEqual(presetSettings('medium'));
+    expect(resolveShipLighting('', 'machined', { touch: true, deviceMemoryGb: 2 })).toEqual(presetSettings('low'));
+    expect(resolveShipLighting('', 'machined', { touch: false, automation: true })).toBeUndefined();
+    expect(resolveShipLighting('?shiplight=medium', 'machined', { automation: true })).toEqual(presetSettings('medium'));
+  });
+  it('URL beats saved beats default; baked is the old look; classic art is never lit', () => {
+    expect(resolveShipLighting('', 'machined', { saved: 'baked', touch: false })).toBeUndefined();
+    expect(resolveShipLighting('?shiplight=low', 'machined', { saved: 'high' })).toEqual(presetSettings('low'));
+    expect(resolveShipLighting('?shiplight=baked', 'machined', { saved: 'high' })).toBeUndefined();
+    expect(resolveShipLighting('', 'classic', { saved: 'high' })).toBeUndefined();
+    expect(defaultLightingPreset(false)).toBe('high');
+    expect(resolveArtMode('?shiplight=baked', true, null)).toBe('classic');
+    expect(resolveArtMode('?shiplight=low', true, null)).toBe('machined');
+  });
+  it('lower levels do less per pixel', () => {
+    const lo = presetSettings('low'), md = presetSettings('medium'), hi = presetSettings('high');
+    expect(lo.selfShadowSteps).toBeLessThan(md.selfShadowSteps);
+    expect(md.selfShadowSteps).toBeLessThan(hi.selfShadowSteps);
+    expect(md.pointLights).toBeLessThanOrEqual(hi.pointLights);
+  });
+});
 });

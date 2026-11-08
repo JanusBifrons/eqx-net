@@ -1,6 +1,17 @@
-# GPU-lit art (R&D, behind `?shiplight=gpu`)
+# GPU-lit art
 
-Today every ship is baked 16 times (capitals 4), fully lit, once per sun angle, and the sprite cross-fades between the two nearest frames. GPU-lit art keeps the **unlit inputs** of that light pass instead and lets the GPU light them every frame. It is off by default and lives on the R&D branch until the user approves it.
+Before this, every ship was baked 16 times (capitals 4), fully lit, once per sun angle, and the sprite cross-faded between the two nearest frames. GPU-lit art keeps the **unlit inputs** of that light pass instead and lets the GPU light them every frame.
+
+## Levels (Settings → Graphics → Lighting)
+
+| Level | What | Default for |
+|---|---|---|
+| High | The night side: long sharp shadows on ships (real length on structures), fill light, 8 point lights, engines as lights, capital shadows and bounce | desktop |
+| Medium | High with 48 shadow steps and 4 point lights | phones |
+| Low | 16 shadow steps, 4 point lights, no engine lights, fill or capital effects | phones reporting < 4 GB |
+| Baked | Today's baked frames (the old look) | automated browsers (tests, netgate, showcase) |
+
+Precedence: `?shiplight=gpu|high|medium|low|baked` > the saved level (per device, `eqxShipLight`) > the device default (`defaultLightingPreset`). A change applies on the next load. Automated browsers stay on Baked unless the URL asks, so tests are unchanged.
 
 ## Why
 

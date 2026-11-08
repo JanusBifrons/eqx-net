@@ -9,7 +9,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 vi.mock('../../../components/PushNotificationToggle', () => ({ PushNotificationToggle: () => null }));
 
 import { SettingsTab } from './SettingsTab.js';
-import { loadArtPreference, loadSpeedFxPreference, resolveSpeedFx } from '../../../render/art/artMode.js';
+import { loadArtPreference, loadLightingPreference, loadSpeedFxPreference, resolveShipLighting, resolveSpeedFx } from '../../../render/art/artMode.js';
 
 beforeEach(() => {
   localStorage.clear();
@@ -44,5 +44,17 @@ describe('SettingsTab — Graphics', () => {
     localStorage.setItem('eqxArtStyle', 'classic');
     render(<SettingsTab />);
     expect((screen.getByTestId('settings-toggle-machined-art') as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('lighting shows the device default, and a pick is saved for this device and used next load', () => {
+    render(<SettingsTab />);
+    const g = screen.getByTestId('settings-lighting');
+    expect(g.getAttribute('data-value')).toBe('high'); // desktop (jsdom: no touch)
+    fireEvent.click(screen.getByTestId('settings-lighting-low'));
+    expect(loadLightingPreference()).toBe('low');
+    expect(screen.getByTestId('settings-lighting').getAttribute('data-value')).toBe('low');
+    expect(resolveShipLighting('', 'machined', { saved: loadLightingPreference() })!.selfShadowSteps).toBe(16);
+    fireEvent.click(screen.getByTestId('settings-lighting-baked'));
+    expect(resolveShipLighting('', 'machined', { saved: loadLightingPreference() })).toBeUndefined();
   });
 });

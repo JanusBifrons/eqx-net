@@ -473,11 +473,11 @@ Recovery thresholds are 2 ms lower than the downshift trigger AND require a 3× 
 - Story: [docs/architecture/travel-state.md](../../docs/architecture/travel-state.md).
 - **Art budget follows the device and each sector visit.** Touch devices get atlas pages by `navigator.deviceMemory` (`atlasOptsFor`: 4–14 pages; desktop 16 × 2048²). `setSector` starts a new art visit (`ArtService.newVisit`): new lit art packs into that visit's pages, and `PixiRenderer.collectUnusedArt` (every ~2 s) frees a past visit's pages once no sprite or gun holds or shows its art. When the budget is tight, art still in use is re-packed from the bake cache into the current visit (a copy that won't fit leaves the original in place). Sprite helpers re-acquire a handle marked `stale`; guns switch to `handle.next` when it is ready. Effect textures (group 0) are never freed. Lock: `tests/unit/artSectorCollect.test.ts`.
 
-## GPU-lit art (R&D, `?shiplight=gpu`)
+## GPU-lit art (default for players; Settings → Graphics → Lighting)
 
 - Lit maps pack into **data** atlas pages (no premultiplication) that share the ordinary atlas's page budget; never put them on a canvas page.
 - Every lit mesh registers with `litPass`; effect lights go into `litPass.scene` during `update()`, or are pinned to the sprite that draws the effect (`attachLight`). The pass lights everything once in the ticker before render. Keep it alloc-free.
-- Off (no flag) must stay byte-identical to the baked look. Story: [docs/architecture/gpu-lit-ships.md](../../docs/architecture/gpu-lit-ships.md).
+- Players get a live level by default (desktop High, phones Medium/Low); automated browsers get Baked unless `?shiplight=` asks. The Baked level must stay byte-identical to the old baked look. Story: [docs/architecture/gpu-lit-ships.md](../../docs/architecture/gpu-lit-ships.md).
 
 ## Composite ship + scrap render (2026-06-13)
 

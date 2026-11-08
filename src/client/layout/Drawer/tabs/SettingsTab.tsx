@@ -1,9 +1,14 @@
-import { Box, Button, Divider, FormControlLabel, Stack, Switch, Typography } from '@mui/material';
+import { Box, Button, Divider, FormControlLabel, Stack, Switch, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
 import HomeIcon from '@mui/icons-material/Home';
 import { useUIStore } from '../../../state/store';
 import { PushNotificationToggle } from '../../../components/PushNotificationToggle';
 import { useState } from 'react';
-import { loadArtPreference, loadSpeedFxPreference, saveArtPreference, saveSpeedFxPreference } from '../../../render/art/artMode';
+import { loadArtPreference, loadLightingPreference, loadSpeedFxPreference, saveArtPreference, saveLightingPreference, saveSpeedFxPreference } from '../../../render/art/artMode';
+import { defaultLightingPreset, type LightingPreset } from '../../../render/art/lightingSettings';
+import { isTouchDevice } from '../../../input/TouchInput';
+
+const LIGHTING_LABELS: ReadonlyArray<[LightingPreset, string]> = [['baked', 'Baked'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']];
+const LIGHTING_GROUP_SX = { mt: 0.5, '& .MuiToggleButton-root': { fontSize: 11, px: 1, py: 0.25 } } as const;
 
 /**
  * Mobile-drawer Settings tab.
@@ -38,6 +43,16 @@ export function SettingsTab(): JSX.Element {
   const onSpeedFxToggle = (on: boolean): void => {
     setSpeedFx(on);
     saveSpeedFxPreference(on);
+  };
+
+  // Lighting: ships and structures lit live on the GPU (GPU-lit art), or the
+  // baked look. Shows the device's default until the player picks.
+  const [lighting, setLighting] = useState<LightingPreset>(() => loadLightingPreference()
+    ?? defaultLightingPreset(isTouchDevice(), (navigator as { deviceMemory?: number }).deviceMemory));
+  const onLighting = (p: LightingPreset | null): void => {
+    if (!p) return;
+    setLighting(p);
+    saveLightingPreference(p);
   };
 
   const onReturnToMenu = (): void => {
@@ -105,6 +120,25 @@ export function SettingsTab(): JSX.Element {
             </Box>
           }
         />
+        <Box sx={{ mt: 1 }}>
+          <Typography variant="body2">Lighting</Typography>
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={lighting}
+            onChange={(_e, v: LightingPreset | null) => onLighting(v)}
+            sx={LIGHTING_GROUP_SX}
+            data-testid="settings-lighting"
+            data-value={lighting}
+          >
+            {LIGHTING_LABELS.map(([id, label]) => (
+              <ToggleButton key={id} value={id} data-testid={`settings-lighting-${id}`}>{label}</ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+            Ships and structures lit live: long shadows, light from engines, weapons and explosions, and less texture memory. Lower levels suit slower devices; Baked is the older look. Needs detailed art. Applies the next time the game loads.
+          </Typography>
+        </Box>
       </Box>
 
       <Divider />

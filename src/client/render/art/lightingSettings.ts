@@ -106,6 +106,34 @@ export const LOOK_NIGHT: LightingSettings = {
   litAsteroids: true,
 };
 
+/** The player-facing levels (Settings → Graphics → Lighting). `baked` is
+ *  today's look; the others light live, trimmed for weaker devices. */
+export type LightingPreset = 'baked' | 'low' | 'medium' | 'high';
+export const LIGHTING_PRESET_IDS: readonly LightingPreset[] = ['baked', 'low', 'medium', 'high'];
+
+/** Settings per live level: High is the night side the user approved
+ *  (2026-11-08, "phenomenal"); Medium and Low trim the per-pixel work. */
+export function presetSettings(p: Exclude<LightingPreset, 'baked'>): LightingSettings {
+  if (p === 'high') return LOOK_NIGHT;
+  if (p === 'medium') return MEDIUM;
+  return LOW;
+}
+const MEDIUM: LightingSettings = { ...LOOK_NIGHT, selfShadowSteps: 48, pointLights: 4 };
+const LOW: LightingSettings = {
+  ...LOOK_NIGHT, selfShadowSteps: 16, pointLights: 4, engineLights: false,
+  fillLight: false, capitalShadows: false, capitalBounce: false,
+};
+
+/**
+ * The level a device gets until its player chooses: desktop High, phones
+ * Medium, phones that report under 4 GB Low. (The phone-proxy A/B put High's
+ * renderer cost level with the baked art; this keeps headroom on phones.)
+ */
+export function defaultLightingPreset(touch: boolean, deviceMemoryGb?: number): LightingPreset {
+  if (!touch) return 'high';
+  return deviceMemoryGb !== undefined && Number.isFinite(deviceMemoryGb) && deviceMemoryGb < 4 ? 'low' : 'medium';
+}
+
 /** Everything on (the experiment's showcase look). */
 export const ALL_ON: LightingSettings = {
   ...LOOK_F,
