@@ -77,6 +77,18 @@ describe('physics worker — SET_HULL_EXPOSED (real worker boundary)', () => {
     return null;
   }
 
+  /** readSlot, retried across short waits: 100 back-to-back tries can all
+   *  land mid-write while the worker steps (an intermittent null, 2026-11-07). */
+  async function readSlotWait(slot: number, timeoutMs = 2000): Promise<{ id: number; x: number; y: number; vx: number }> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const st = readSlot(slot);
+      if (st) return st;
+      if (Date.now() > deadline) throw new Error(`slot ${slot} never read cleanly`);
+      await sleep(2);
+    }
+  }
+
   async function waitTicks(n: number, timeoutMs = 3000): Promise<void> {
     const start = Atomics.load(u32, TICK_IDX);
     const deadline = Date.now() + timeoutMs;
@@ -98,7 +110,7 @@ describe('physics worker — SET_HULL_EXPOSED (real worker boundary)', () => {
     worker.postMessage({ type: 'SPAWN', slot: 0, playerId: 's', x: 300, y: 400, kindId: 'fighter' });
     await waitSlotOccupied(0);
     await waitTicks(5);
-    let st = readSlot(0)!;
+    let st = (await readSlotWait(0));
     expect(st.id).toBe(1); // slot 0 ⇒ slotId = slot + 1
     expect(st.x).toBeCloseTo(300, 0);
     expect(st.y).toBeCloseTo(400, 0);
@@ -109,7 +121,7 @@ describe('physics worker — SET_HULL_EXPOSED (real worker boundary)', () => {
     await waitTicks(6);
     expect(exited).toBe(false);
     expect(errors).toHaveLength(0);
-    st = readSlot(0)!;
+    st = (await readSlotWait(0));
     expect(st.id).toBe(1);
     expect(Number.isFinite(st.x) && Number.isFinite(st.y)).toBe(true);
     expect(st.x).toBeCloseTo(300, 0);
@@ -119,7 +131,7 @@ describe('physics worker — SET_HULL_EXPOSED (real worker boundary)', () => {
     //    mass model would leave inverse-mass 0 ⇒ no response).
     worker.postMessage({ type: 'AI_INTENT', slot: 0, fx: 120, fy: 0, torque: 0 });
     await waitTicks(8);
-    st = readSlot(0)!;
+    st = (await readSlotWait(0));
     expect(st.vx).toBeGreaterThan(0);
     expect(st.x).toBeGreaterThan(300);
 
@@ -128,6 +140,6 @@ describe('physics worker — SET_HULL_EXPOSED (real worker boundary)', () => {
     await waitTicks(5);
     expect(exited).toBe(false);
     expect(errors).toHaveLength(0);
-    expect(readSlot(0)!.id).toBe(1);
+    expect((await readSlotWait(0)).id).toBe(1);
   }, 20_000);
 });
