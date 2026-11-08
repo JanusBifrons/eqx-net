@@ -7,6 +7,10 @@
  *                    [--base-params k=v&k=v] [--head-params k=v&k=v]
  *   (extra URL flags per arm: e.g. `--base HEAD --head-params shiplight=gpu`
  *   measures one switch on the same build)
+ *                    [--device phone-proxy] [--cpu-rate 4]
+ *   (phone-class run on this machine, no phone needed: CPU throttled 4x, a
+ *   landscape phone screen at DPR 2.625, touch. A proxy, not the device:
+ *   the laptop's integrated GPU stands in for a phone GPU)
  *
  * Plays each scene in a real browser (real GPU) against an isolated server
  * pair per arm, interleaved base/head/base/head on the same machine in the
@@ -28,7 +32,7 @@ import { compareArms, type RunMetrics, type ArmVerdict } from './verdict.js';
 
 const GPU_ARGS = ['--use-angle=d3d11', '--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'];
 
-interface Args { scenes: string[]; reps: number; base: string; headOnly: boolean; headed: boolean; out: string; burnServerMs: number; burnClientMs: number; append: string | undefined; baseParams: string; headParams: string }
+interface Args { scenes: string[]; reps: number; base: string; headOnly: boolean; headed: boolean; out: string; burnServerMs: number; burnClientMs: number; append: string | undefined; baseParams: string; headParams: string; device: 'desktop' | 'phone-proxy'; cpuRate: number }
 
 function parseArgs(argv: string[]): Args {
   const get = (k: string): string | undefined => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
@@ -45,6 +49,8 @@ function parseArgs(argv: string[]): Args {
     // Add this run's reps to an existing ledger file and re-judge all of them
     // (lets a long A/B run as short foreground chunks).
     append: get('--append'),
+    device: get('--device') === 'phone-proxy' ? 'phone-proxy' : 'desktop',
+    cpuRate: Number(get('--cpu-rate') ?? PHONE_PROXY.cpuRate),
     baseParams: get('--base-params') ?? '',
     headParams: get('--head-params') ?? '',
   };
@@ -76,9 +82,16 @@ async function devPerf(serverUrl: string): Promise<{ rooms: Array<Record<string,
   return fetch(`${serverUrl}/dev/perf`).then((r) => r.json() as Promise<{ rooms: Array<Record<string, any>> }>);
 }
 
-async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: string) => void): Promise<RunMetrics> {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+/** Phone-class proxy: a mid phone's CPU (Chrome throttle) and screen. */
+const PHONE_PROXY = { viewport: { width: 915, height: 412 }, deviceScaleFactor: 2.625, isMobile: true, hasTouch: true, cpuRate: 4 };
+
+async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: string) => void, device: Args['device'] = 'desktop', cpuRate = PHONE_PROXY.cpuRate): Promise<RunMetrics> {
+  const phone = device === 'phone-proxy';
+  const ctx = await browser.newContext(phone
+    ? { viewport: PHONE_PROXY.viewport, deviceScaleFactor: PHONE_PROXY.deviceScaleFactor, isMobile: true, hasTouch: true }
+    : { viewport: { width: 1280, height: 720 } });
   const page = await ctx.newPage();
+  if (phone) await (await ctx.newCDPSession(page)).send('Emulation.setCPUThrottlingRate', { rate: cpuRate });
   // Bytes received over the game socket, from DevTools network events: exact,
   // and no app instrumentation (works the same on a phone over adb).
   let rxBytes = 0;
@@ -98,7 +111,7 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
     await page.waitForFunction(() => !!(globalThis as { __eqxPerf?: unknown }).__eqxPerf, null, { timeout: 120_000 });
     // The loading curtain holds while art bakes; measure only after it lifts.
     await page.waitForSelector('[data-testid="warp-screen"][data-warp-visible="0"]', { state: 'attached', timeout: 180_000 });
-    await page.evaluate((c) => (globalThis as unknown as { __eqxCinema?: { play(c: unknown[]): void } }).__eqxCinema?.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: c.x, y: c.y, zoom: c.zoom * (1280 / 1920) } }]), scene.camera);
+    await page.evaluate((c) => (globalThis as unknown as { __eqxCinema?: { play(c: unknown[]): void } }).__eqxCinema?.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: c.x, y: c.y, zoom: c.zoom * (c.vw / 1920) } }]), { ...scene.camera, vw: phone ? PHONE_PROXY.viewport.width : 1280 });
     await page.evaluate(() => (globalThis as unknown as { __eqxPerf: { reset(): Promise<void> } }).__eqxPerf.reset());
     rxBytes = 0;
     // Wait for the scene to end (server side).
@@ -196,7 +209,7 @@ async function main(): Promise<void> {
         await a.servers.ensure('lean');
         for (const scene of scenes) {
           let m: RunMetrics;
-          try { m = await runOnce(browser, a, scene, log); } catch (e) {
+          try { m = await runOnce(browser, a, scene, log, args.device, args.cpuRate); } catch (e) {
             log(`  ${a.name} ${scene.id}: FAILED ${(e as Error).message}`);
             m = { valid: false, invalidReason: (e as Error).message, timing: {}, counts: {}, raw: null };
           }
@@ -227,7 +240,7 @@ async function main(): Promise<void> {
   const head = arms.find((a) => a.name === 'head')!;
   const file = args.append ?? path.join(args.out, `${stamp}-${head.sha}-desktop.json`);
   writeFileSync(file, JSON.stringify({
-    when: new Date().toISOString(), device: 'desktop', reps: results[scenes[0]!.id]!['head']!.length,
+    when: new Date().toISOString(), device: args.device, reps: results[scenes[0]!.id]!['head']!.length,
     arms: arms.map((a) => ({ name: a.name, sha: a.sha })),
     scenes: Object.fromEntries(scenes.map((s) => [s.id, {
       title: s.title,

@@ -322,6 +322,7 @@ Scripted scenes in real rooms (a fleet fight, a raid warping in beside a base, a
 - **Percentiles and hitch counts, never mean FPS.**
 - **An invalid run is never "fast".** Refused spawns, a scene that never ended or too few frames ⇒ INVALID.
 - **Trust a metric only after its self-test.** main-vs-main must come back GREEN, and `--inject-server-burn` / `--inject-client-burn` must go RED on that metric.
+- **Phone-class checks need no phone (2026-11-08, user: "I can't do that").** `--device phone-proxy [--cpu-rate 2]` runs the same A/B on this machine with a throttled CPU and a phone screen. Its absolute numbers are far slower than a real phone; trust only base-vs-head. Don't ask the user to run phone tests or set up adb.
 - **Claude runs it, not the user.** It is part of Claude's own verification before a PR that touches rendering, the server tick, the snapshot path or combat at scale. The verdict table goes in the PR body.
 
 Adding a scene is one entry in `src/server/rooms/scene/perfScenes.ts`. Full story: [docs/architecture/perf-scenes.md](docs/architecture/perf-scenes.md).

@@ -367,7 +367,7 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
       uOccCol: { value: new Float32Array(NO * 4), type: 'vec4<f32>', size: NO },
     });
     const shader = new Shader({ glProgram: litProgram(settings), resources: { litUniforms: uni, uMaps: tex.source, uMapsSampler: tex.source.style } });
-    super({ geometry: litTileGeometry(tile, u0, v0, u1, v1), shader });
+    super({ geometry: sharedTileGeometry(tile, u0, v0, u1, v1), shader });
     this.uni = uni;
     this.u = uni.uniforms as unknown as Record<string, Float32Array>;
     this.hx = tile.w / tile.ppu / 2; this.hy = tile.hullH / tile.ppu / 2;
@@ -511,6 +511,22 @@ function nearestInto(items: ReadonlyArray<{ x: number; y: number; id?: number }>
 /** The quad for a hull's maps: slice A's UVs, world-unit size, centred. */
 /** A tile's quad in hull-local world units (the hull centred at 0), with
  *  its slice-A rectangle on the page as UVs. */
+/**
+ * Meshes showing the same art share one geometry (Pixi doesn't destroy a
+ * mesh's geometry with it): a reinforcement wave of 20 fighters made 20
+ * vertex buffers on the GPU at once (fleet-fight hitches, 2026-11-08).
+ * Looked up only when a mesh is built.
+ */
+const geoCache = new WeakMap<Texture, Map<string, Geometry>>();
+function sharedTileGeometry(t: LitTile, u0: number, v0: number, u1: number, v1: number): Geometry {
+  let m = geoCache.get(t.tex);
+  if (!m) { m = new Map(); geoCache.set(t.tex, m); }
+  const key = `${t.w}|${t.rows}|${t.y0}|${t.hullH}|${t.ppu}`;
+  let g = m.get(key);
+  if (!g) { g = litTileGeometry(t, u0, v0, u1, v1); m.set(key, g); }
+  return g;
+}
+
 function litTileGeometry(t: LitTile, u0: number, v0: number, u1: number, v1: number): Geometry {
   const hw = t.w / t.ppu / 2;
   const top = (t.y0 - t.hullH / 2) / t.ppu, bot = (t.y0 + t.rows - t.hullH / 2) / t.ppu;
