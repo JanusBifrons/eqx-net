@@ -89,3 +89,27 @@ describe('SectorRoom integration — fire-control target locks', () => {
     expect(acks.find((a) => a.clientShotId === 'legacy')?.rejected).not.toBe(true);
   }, 15_000);
 });
+
+describe('SectorRoom integration — fire-control AUTO groups', () => {
+  let harness: SectorTestHarness;
+  beforeEach(async () => {
+    harness = await bootSectorTestServer({
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true,
+      dronePoses: [{ kind: 'fighter', x: 0, y: 150, angle: 0, hullExposed: true }],
+    });
+  }, 15_000);
+  afterEach(async () => { if (harness) await harness.cleanup(); }, 10_000);
+
+  it('an idle AUTO group locks a drone hostile to the pilot on its own', async () => {
+    const pid = randomUUID();
+    const room = (await harness.connectActive(pid, {
+      shipKind: 'interceptor', spawnX: 0, spawnY: 0, fireControl: true, startHostile: true,
+    })) as ClientRoom<SectorState>;
+    let groups: SnapGroups[] | undefined;
+    room.onMessage('snapshot', (snap: { states?: Record<string, { playerId?: string; groups?: SnapGroups[] }> }) => {
+      for (const st of Object.values(snap.states ?? {})) if (st.playerId === pid) groups = st.groups;
+    });
+    await waitUntil(() => groups?.[0]?.l[0]?.s === 2, 10_000, 'auto locked');
+    expect(groups![0]!.m).toBe(0);
+  }, 20_000);
+});

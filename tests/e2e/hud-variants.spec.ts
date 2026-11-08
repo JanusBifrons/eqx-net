@@ -10,8 +10,8 @@ import { test, expect, type Browser, type Page } from '@playwright/test';
  */
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
-type Variant = 'a' | 'b' | 'c';
-const VARIANTS: Variant[] = ['a', 'b', 'c'];
+type Variant = 'a' | 'b' | 'c' | 'd';
+const VARIANTS: Variant[] = ['a', 'b', 'c', 'd'];
 
 const VIEWPORTS = [
   { name: 'phone-landscape', width: 844, height: 390, touch: true },
@@ -29,6 +29,9 @@ const IDS = [
   'hud-move-home',
   'hud-aim-home',
   'hud-attack-home',
+  'hud-lock-home',
+  'fc-strip',
+  'hud-fc-hint',
   'hud-fire',
   'hud-boost',
   'hud-slot',
@@ -45,6 +48,7 @@ async function boot(browser: Browser, v: Variant, vp: (typeof VIEWPORTS)[number]
   await page.goto(`${BASE_URL}/?room=test-sector&ui=${v}&fakeCredits=1`);
   await page.waitForSelector('[data-testid="game-surface"]', { timeout: 30_000 });
   await page.locator('[data-testid="hud-status"]').first().waitFor({ timeout: 30_000 });
+  if (v === 'd') await page.locator('[data-testid="fc-strip"]').first().waitFor({ timeout: 30_000 });
   return { page, close: () => ctx.close() };
 }
 
@@ -97,9 +101,13 @@ test.describe('experimental HUD variants', () => {
           if (v === 'a') expect(ids).toContain('hud-fire');
           if (v === 'b') expect(ids).toContain('hud-aim-home');
           if (v === 'c') expect(ids).toContain('hud-attack-home');
+          if (v === 'd') expect(ids).toContain('hud-lock-home');
+        } else if (v === 'd') {
+          expect(ids).toContain('hud-fc-hint'); // desktop lock hints
         } else {
           expect(ids).toContain('hud-fire'); // desktop fire-mode chip
         }
+        if (v === 'd') expect(ids).toContain('fc-strip');
         for (const b of boxes) {
           expect.soft(b.x, `${b.id} left`).toBeGreaterThanOrEqual(0);
           expect.soft(b.y, `${b.id} top`).toBeGreaterThanOrEqual(0);
