@@ -56,18 +56,40 @@ export class LitPass {
   get count(): number { return this.meshes.length; }
 
   /** Start a frame: clear the lights (the effects add this frame's). */
-  begin(): void { this.scene.begin(); }
+  begin(): void { this.scene.begin(); this.attachedCount = 0; }
+
+  // Lights pinned to a display object (a gun's muzzle flash): placed at the
+  // object's position in the world when the frame is lit.
+  private readonly attObj: Container[] = [];
+  private attNum = new Float64Array(5 * 16);
+  private attachedCount = 0;
+
+  /** A light at `obj`'s origin this frame (it follows rotation and recoil). */
+  attachLight(obj: Container, color: number, intensity: number, reach: number, z: number): void {
+    const i = this.attachedCount++;
+    this.attObj[i] = obj;
+    if (this.attNum.length < (i + 1) * 5) { const n = new Float64Array(this.attNum.length * 2); n.set(this.attNum); this.attNum = n; }
+    const a = this.attNum;
+    a[i * 5] = color; a[i * 5 + 1] = intensity; a[i * 5 + 2] = reach; a[i * 5 + 3] = z;
+  }
 
   /** Light every visible registered mesh under `world` (call before render). */
-  finish(world: Container, rig: LightRig): void {
+  finish(world: Container, rig: LightRig, resolution = 1): void {
     const n = this.meshes.length;
     if (this.px.length < n) { this.px = new Float64Array(n * 2); this.py = new Float64Array(n * 2); this.pr = new Float64Array(n * 2); }
     world.getGlobalTransform(this.w, false).invert();
+    for (let i = 0; i < this.attachedCount; i++) {
+      this.attObj[i]!.getGlobalTransform(this.m, false);
+      this.r.copyFrom(this.w).append(this.m);
+      const a = this.attNum;
+      this.scene.addLight(this.r.tx, this.r.ty, a[i * 5 + 3]!, a[i * 5]!, a[i * 5 + 1]!, a[i * 5 + 2]!);
+    }
     // Poses first (and capitals as occluders), so every hull sees them all.
     for (let i = 0; i < n; i++) {
       const mesh = this.meshes[i]!;
       if (!shownUnder(mesh, world)) { this.px[i] = NaN; continue; }
       mesh.getGlobalTransform(this.m, false);
+      mesh.setScreenScale(Math.hypot(this.m.a, this.m.b) * resolution);
       this.r.copyFrom(this.w).append(this.m);
       const x = this.r.tx, y = this.r.ty, rot = Math.atan2(this.r.b, this.r.a);
       this.px[i] = x; this.py[i] = y; this.pr[i] = rot;

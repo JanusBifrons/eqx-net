@@ -79,7 +79,8 @@ export class Atlas {
   /** Mipmapped pages need a wider gutter, or small mips bleed between frames. */
   private readonly PAD: number;
   constructor(private readonly nearest: boolean, opts: AtlasOpts = {}) {
-    this.PAD = nearest ? 1 : 8;
+    // Data pages (lit maps) are read down to mip 4 (litShipShader LIT_MAX_LOD).
+    this.PAD = nearest ? 1 : opts.data ? 16 : 8;
     this.pageSize = opts.pageSize ?? 4096;
     this.budget = opts.budget ?? new PageBudget(opts.maxPages ?? Infinity);
     this.maxPages = this.budget.max;

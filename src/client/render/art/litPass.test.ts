@@ -52,4 +52,22 @@ describe('LitPass', () => {
     expect(pass.scene.occluderCount).toBe(1);
     expect(o.x).toBeCloseTo(100); expect(o.y).toBeCloseTo(-40); expect(o.rot).toBeCloseTo(0.7);
   });
+  it('an attached light lands at its object in the world (a gun tip under a turned hull)', () => {
+    const pass = new LitPass();
+    const world = new Container();
+    world.position.set(400, 200); world.scale.set(0.25); // camera
+    const hull = new Container(); hull.position.set(1000, 0); hull.rotation = Math.PI / 2;
+    const tipOf = new Container(); tipOf.position.set(0, -50); // 50 u ahead of the gun
+    world.addChild(hull); hull.addChild(tipOf);
+    pass.begin();
+    pass.attachLight(tipOf, 0xffc480, 3, 200, 10);
+    pass.finish(world, DEFAULT_RIG);
+    const l = pass.scene.lights[0]!;
+    expect(pass.scene.lightCount).toBe(1);
+    expect(l.x).toBeCloseTo(1050); expect(l.y).toBeCloseTo(0); // turned 90°: -y → +x
+    expect(l.intensity).toBe(3); expect(l.reach).toBe(200);
+    pass.begin();
+    pass.finish(world, DEFAULT_RIG);
+    expect(pass.scene.lightCount).toBe(0); // one frame only
+  });
 });

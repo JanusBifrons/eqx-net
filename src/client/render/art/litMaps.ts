@@ -23,7 +23,7 @@ import { derivedMaps, matTables, tone, type Frame, type LightRig } from './shade
 import { linToSrgb, srgbToLin } from './color.js';
 
 /** Clear texels between slices, so filtering never reads the next slice. */
-export const LIT_GUTTER = 4;
+export const LIT_GUTTER = 16; // = 2^LIT_MAX_LOD: mip levels up to 4 stay apart
 
 export interface LitMaps {
   /** One frame: three slices of `w` texels, `LIT_GUTTER` apart. */

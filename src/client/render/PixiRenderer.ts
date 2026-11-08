@@ -944,7 +944,7 @@ export class PixiRenderer implements IRenderer {
       // warm-up lands before the player joins.
       this._artCtx.art?.tick();
       // GPU-lit art: light every lit mesh from this frame's lights, before render.
-      if (litPass.settings && this._artCtx.art && litPass.count > 0) litPass.finish(this.world, this._artCtx.art.lightRig);
+      if (litPass.settings && this._artCtx.art && litPass.count > 0) litPass.finish(this.world, this._artCtx.art.lightRig, this.app.renderer.resolution);
       if (this._artCtx.art && ++this._artCollectFrame >= ART_COLLECT_EVERY_FRAMES) {
         this._artCollectFrame = 0;
         this.collectUnusedArt();
@@ -2336,8 +2336,6 @@ export class PixiRenderer implements IRenderer {
   // ---- GPU-lit art: lights from the frame's weapons fire and explosions.
   private readonly _blastLights: Array<{ x: number; y: number; r: number; t0: number }> = [];
   private _blastLightNext = 0;
-  private readonly _litShotSeen = new Map<string, number>();
-  private _litShotGen = 0;
 
   /** An explosion lights the hulls around it for ~0.9 s (sprite space). */
   private noteBlastLight(x: number, y: number, r: number): void {
@@ -2351,9 +2349,9 @@ export class PixiRenderer implements IRenderer {
 
   /**
    * GPU-lit art: add this frame's lights to the lighting pass (sprite space):
-   * explosions (fading), projectiles in flight (naval shells by calibre, with
-   * a muzzle flash the frame they appear), missiles and beams. Alloc-free
-   * apart from the seen-map's entries (one per live shot).
+   * explosions (fading), projectiles in flight (naval shells by calibre),
+   * missiles and beams. Muzzle flashes are lit by the guns themselves
+   * (MountVisualManager, pinned to the flash sprite). Alloc-free.
    */
   private feedLitScene(mirror: RenderMirror): void {
     const ls = litPass.settings;
@@ -2365,39 +2363,17 @@ export class PixiRenderer implements IRenderer {
       const k = (1 - age) * (1 - age);
       sc.addLight(b.x, b.y, 25, 0xff8a30, 2.4 * k, b.r * 2.2 + 40);
     }
-    const gen = ++this._litShotGen;
-    if (mirror.projectiles) for (const [id, p] of mirror.projectiles) {
+    if (mirror.projectiles) for (const p of mirror.projectiles.values()) {
       if (p.beam) continue;
       const w = p.weaponId ?? '';
       const K = w === 'naval_xl' ? 6 : w === 'naval_l' ? 4.5 : w === 'naval_m' ? 3 : w === 'naval_s' ? 2 : 1;
       const color = w.startsWith('naval_') || w === 'autocannon' ? 0xffc070 : 0x9fd8ff;
       const x = p.x, y = -p.y;
       sc.addLight(x, y, 5 * K, color, K > 1 ? 0.36 * K : 0.9, 55 * K);
-      if (!this._litShotSeen.has(id) && K > 1) {
-        // Muzzle flash: the shell's first frame, as a short blast.
-        this.noteMuzzleFlash(x, y, K);
-      }
-      this._litShotSeen.set(id, gen);
-    }
-    for (const [id, g] of this._litShotSeen) if (g !== gen) this._litShotSeen.delete(id);
-    for (const f of this._flashLights) {
-      const age = (now - f.t0) / 250;
-      if (age < 0 || age >= 1) continue;
-      sc.addLight(f.x, f.y, 20 * f.k, 0xffd9a0, 1.2 * f.k * (1 - age), 110 * f.k);
     }
     if (mirror.missiles) for (const m of mirror.missiles.values()) sc.addLight(m.x, -m.y, 8, 0xffa060, 1.2, 70);
     for (let i = 0; i < this._liveBeamCacheCount; i++) this.beamLights(this._liveBeamCache[i]!);
     for (let i = 0; i < this._remoteBeamCacheCount; i++) this.beamLights(this._remoteBeamCache[i]!);
-  }
-
-  private readonly _flashLights: Array<{ x: number; y: number; k: number; t0: number }> = [];
-  private _flashLightNext = 0;
-  private noteMuzzleFlash(x: number, y: number, k: number): void {
-    const L = this._flashLights;
-    if (L.length < 32) { L.push({ x, y, k, t0: performance.now() }); return; }
-    const f = L[this._flashLightNext]!;
-    this._flashLightNext = (this._flashLightNext + 1) % L.length;
-    f.x = x; f.y = y; f.k = k; f.t0 = performance.now();
   }
 
   /** A beam lights where it hits and along its length. */

@@ -11,7 +11,7 @@ import { isLitKey, type Baked } from './bake.js';
 import type { LightRig } from './shade.js';
 
 /** Bump whenever forge output changes, or old art would be served. */
-export const FORGE_VERSION = 'r2.2';
+export const FORGE_VERSION = 'r2.3';
 
 const DB = 'eqx-art-lab';
 const STORE = 'bakes';

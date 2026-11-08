@@ -465,6 +465,7 @@ export class MountVisualManager {
         flash.texture = frames![fr]!;
         flash.x = flashX;
         flash.y = -gun.reach + flashKick;
+        if (litPass.settings && litPass.settings.pointLights > 0) litPass.attachLight(flash, 0xffd090, 1.0, 60, 6);
         const w = gun.place.wid;
         flash.scale.set((w * 3.2) / 64, (w * 4.2) / 64);
       }
@@ -491,6 +492,12 @@ export class MountVisualManager {
     const fr = since >= 0 && frames ? flashFrameAt(since, frames.length, NAVAL_FLASH_LIFE_S) : -1;
     const flashes = gun.barrelFlashes;
     if (flashes) {
+      // GPU-lit art: the salvo lights the gun, its neighbours and the deck.
+      if (fr >= 0 && litPass.settings && litPass.settings.pointLights > 0 && flashes.length > 0) {
+        const K = Math.min(6, Math.max(1, w / 2));
+        const k = Math.max(0, 1 - since / NAVAL_FLASH_LIFE_S);
+        litPass.attachLight(flashes[flashes.length >> 1]!, 0xffc480, 1.4 * K * k, 110 * K, 6 * K);
+      }
       for (let b = 0; b < flashes.length; b++) {
         const f = flashes[b]!;
         f.visible = fr >= 0;

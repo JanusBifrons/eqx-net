@@ -41,6 +41,9 @@ void main() {
   vColor = uColor * uWorldColorAlpha;
 }`;
 
+/** The blurriest mip level the shader reads: 2^4 = 16 texels, the gutter. */
+export const LIT_MAX_LOD = 4;
+
 /** Most self-shadow steps (the loop bound must be constant). */
 export const LIT_MAX_SHADOW_STEPS = 128;
 /** Point lights and occluders a hull can take at most. */
@@ -73,6 +76,8 @@ uniform vec4 uSlices;
 // Slice A's rectangle on its page (uv): u0, v0, u1, v1. The shadow march
 // stays inside it (art shares atlas pages).
 uniform vec4 uFrame;
+// Mip bias keeping reads at or under LIT_MAX_LOD (set per mesh by litPass).
+uniform float uLodBias;
 // Sun direction in the hull's frame (xyz) and the half vector.
 uniform vec3 uL;
 uniform vec3 uH;
@@ -108,11 +113,17 @@ float tone(float x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.
 ${matFunctions()}
 
 void main() {
-  vec4 A = texture(uMaps, vUV);
+  // One mip level for all three slices, capped where the gutters still keep
+  // the slices apart (level ${LIT_MAX_LOD}): far away, a small gun's maps otherwise
+  // blur into each other and its normals mix with its colours (review
+  // 2026-11-08: guns dark and dotted when zoomed out).
+  // GLSL ES 1 has no explicit LOD: the CPU works the mesh's level out (it is
+  // flat and evenly scaled) and uLodBias pulls it back to that level.
+  vec4 A = texture(uMaps, vUV, uLodBias);
   float cov = A.a;
   if (cov <= 0.0) discard;
-  vec4 B = texture(uMaps, vUV + vec2(uSlices.x, 0.0));
-  vec4 C = texture(uMaps, vUV + vec2(uSlices.y, 0.0));
+  vec4 B = texture(uMaps, vUV + vec2(uSlices.x, 0.0), uLodBias);
+  vec4 C = texture(uMaps, vUV + vec2(uSlices.y, 0.0), uLodBias);
   vec3 alb = vec3(srgbToLin(A.r), srgbToLin(A.g), srgbToLin(A.b));
   vec2 nxy = B.rg * 2.0 - 1.0;
   vec3 n = vec3(nxy, sqrt(max(0.0, 1.0 - dot(nxy, nxy))));
@@ -137,7 +148,7 @@ void main() {
       if (ray > uScale.y) break;
       vec2 p = vUV + dir * float(s);
       if (p.x < uFrame.x || p.y < uFrame.y || p.x >= uFrame.z || p.y >= uFrame.w) break;
-      float d = texture(uMaps, p + vec2(uSlices.x, 0.0)).b * uScale.y - ray;
+      float d = texture(uMaps, p + vec2(uSlices.x, 0.0), uLodBias).b * uScale.y - ray;
       if (d > 0.0) { occl = max(occl, min(1.0, d / uShadowLook.y)); if (occl >= 1.0) break; }
     }
     shadow = 1.0 - occl * uShadowLook.x;
@@ -332,6 +343,7 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
     const uni = new UniformGroup({
       uSlices: { value: new Float32Array([sliceX(tile.w, 1) / PW, sliceX(tile.w, 2) / PW, 1 / PW, 1 / PH]), type: 'vec4<f32>' },
       uFrame: { value: new Float32Array([u0, v0, u1, v1]), type: 'vec4<f32>' },
+      uLodBias: { value: 0, type: 'f32' },
       uL: { value: new Float32Array([0, 0, 1]), type: 'vec3<f32>' },
       uH: { value: new Float32Array([0, 0, 1]), type: 'vec3<f32>' },
       uSunColor: { value: new Float32Array(3), type: 'vec3<f32>' },
@@ -351,8 +363,17 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
     const shader = new Shader({ glProgram: litProgram(settings), resources: { litUniforms: uni, uMaps: tex.source, uMapsSampler: tex.source.style } });
     super({ geometry: litTileGeometry(tile, u0, v0, u1, v1), shader });
     this.uni = uni;
-    this.u = uni.uniforms as Record<string, Float32Array>;
+    this.u = uni.uniforms as unknown as Record<string, Float32Array>;
     this.hx = tile.w / tile.ppu / 2; this.hy = tile.hullH / tile.ppu / 2;
+  }
+
+  /**
+   * The mesh is drawn at `pxPerUnit` screen pixels per world unit: hold its
+   * mip level at LIT_MAX_LOD or below (further, the slices blur together).
+   */
+  setScreenScale(pxPerUnit: number): void {
+    const level = Math.log2(this.tile.ppu / Math.max(1e-6, pxPerUnit));
+    (this.uni.uniforms as Record<string, number>)['uLodBias'] = Math.min(0, LIT_MAX_LOD - level);
   }
 
   /** Light for this frame: the sector's sun, the hull's world pose (Pixi
