@@ -230,16 +230,26 @@ if (process.env['NODE_ENV'] !== 'production') {
   // heap, external/array buffers) and each room's physics worker heap. Found
   // 2026-11-07: an idle dev server held ~1.7 GB, ~37 MB of it per sector
   // worker before any body exists.
-  app.get('/dev/memory', (_req, res) => {
+  // `?gc=1` collects garbage first (main thread + each physics worker), so the
+  // reading is what is live, not what V8 has not collected yet. Needs the
+  // server started with --expose-gc (scripts/soak-galaxy.ts does); else a no-op.
+  app.get('/dev/memory', (req, res) => {
     void (async () => {
       const MB = 1048576;
+      const gc = req.query['gc'] === '1';
+      if (gc) (globalThis as { gc?: () => void }).gc?.();
       const m = process.memoryUsage();
       const listings = await matchMaker.query({});
+      const gcDone = new Set<number>();
       const rooms: Array<{ room: string; roomId: string; clients: number; worker: number | null }> = [];
       const workers = new Map<number, number>(); // pool worker → heap MB (shared by its rooms)
       for (const l of listings) {
         const r = matchMaker.getLocalRoomById(l.roomId) as unknown as SectorRoom | undefined;
-        const h = r && typeof r.workerHeapStats === 'function' ? await r.workerHeapStats() : null;
+        // One collection per pool worker (several rooms share one).
+        const idx = r && typeof r.workerHeapStats === 'function' ? (await r.workerHeapStats(false))?.workerIndex : undefined;
+        const wantGc = gc && idx !== undefined && !gcDone.has(idx);
+        if (wantGc) gcDone.add(idx);
+        const h = r && typeof r.workerHeapStats === 'function' ? await r.workerHeapStats(wantGc) : null;
         if (h) workers.set(h.workerIndex, Math.round(h.usedBytes / MB));
         rooms.push({ room: l.name, roomId: l.roomId, clients: l.clients, worker: h ? h.workerIndex : null });
       }

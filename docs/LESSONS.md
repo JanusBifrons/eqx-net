@@ -2733,3 +2733,68 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - Look R&D goes in the game behind a flag on a branch, not in a parallel renderer: the art lab lacked turrets, the game's effects, shields and sky, and the user called it "some weird parallel system".
   - Pin effect lights to the sprite that draws the effect.
   - Packed multi-slice textures need gutters at least 2^(highest mip level read).
+
+## 2026-11-08 — A 3-rep exact Mann-Whitney can never reject at 0.05
+
+- **Symptom:** every GPU-lighting A/B (#344–#346) came back GREEN at 3 reps per arm. A desktop re-check showed the verdict could not have been anything else.
+- **Cause:** the exact two-sided Mann-Whitney's smallest possible p is 2 / C(n1+n2, n1): 2/20 = 0.10 at 3 v 3, 0.057 at 3 v 4, 0.029 at 4 v 4. With RED requiring p < 0.05, a 3-rep run is GREEN for any effect, however large. Odd rep counts also gave one arm the warmer second slot more often, and the laptop's same-code spread reached ×2 on hitches.
+- **Fix:** `perf/verdict.ts` gives RED / GREEN / INCONCLUSIVE. GREEN needs the sample sizes to have been able to reach p < 0.05; a move over the thresholds that isn't significant, or that sits inside the A/A noise floor (`--noise-check`), is INCONCLUSIVE. `--reps` defaults to 8 and rounds odd counts up.
+- **Rules:**
+  - Before trusting "no significant difference", check the test could have found one: compute the minimum achievable p for your n.
+  - "Not RED" is not "GREEN". A verdict needs a third state for "couldn't tell".
+  - Measure the host's own same-code spread in the same session before calling a move a regression.
+
+## 2026-11-08 — Heap-delta tests: a `vi.fn` on the hot path is the leak you measure
+
+- **Context:** `pnpm test:gc` ran in no CI job and had 5 failures nobody saw for months. Two were stale fixtures (the damage-number "no sign" restyle `eca1f32c`; the selection/helm-course fields `98e76b32`/`8906d5bb` the `gameRafLoop` stub feedback lacked). The third looked like a hot-loop allocation regression: `gameRafLoop` retained 500–507 KB over 3000 RAFs against a 500 KB bound.
+- **Finding:** the growth was the test's own mock. `isFullDiagMode` was a `vi.fn()` called every RAF; a `vi.fn` retains `mock.calls` / `results` / `contexts` / `invocationCallOrder` per call (~165 B × 3000 ≈ 500 KB). Its comment said "use a plain function", but the code didn't. Backed by a plain flag, the loop retains ~1–100 KB. No game code changed.
+- **Rules:**
+  - In a heap-delta test, nothing called per iteration may be a `vi.fn` (or any recorder). Use a plain function over a mutable flag; keep `vi.fn` for calls you assert on that happen rarely.
+  - Before widening a heap bound, swap the mocks for plain functions and re-measure. Growth that vanishes is the harness.
+  - A suite no CI job runs rots. `test:gc` now runs in the `gc-tests` job.
+
+## 2026-11-08 — Melee corrections: the drone collision body is on the wrong timeline (WS7.1, open)
+
+- **Symptom:** the `pack-battle` and `new-effects` showcase shots (both `feel-test-25`, a hostile 25-drone pack) failed the pose-trace gate on a fast desktop with the server at 60 Hz: 4–14 prediction corrections per take (max 2). Other shots: 0.
+- **Not host starvation.** A browser probe (own ports, the shot's input script, the pose gate's 0.3 u onset rule) found every onset within ~30 u of a drone hull, and the one take with no local contact had zero corrections.
+- **Cause:** the local ship is predicted AHEAD of the server (inputTick ≈ serverTick + lead), but a drone's predWorld body is the kinematic follower posed at the DISPLAY-DELAYED interpolated pose (now − 100 ms; `ColyseusClient.updateMirror`). So the predicted ship meets each drone where it was ~(100 ms + lead) ago, the server meets it where it is, the contacts differ, and the next snapshot corrects the ship. The replay can't help: it re-runs against the same lagging bodies.
+- **Not the cause (measured):** `collision_resolved` overwriting the local ship's velocity. Dropping it in-page gave 2 / 6 / 1 / 9 onsets per take, inside the noise of 8 / 9 / 7.
+- **Evidence for a fix direction:** an in-page patch that dead-reckons each drone body to the tick being predicted (latest server pose + v·(tick − poseTick)/60, re-seated at ackedTick+1 before the replay) took the shot from mean 6.4 onsets per take (1 of 8 takes within the gate) to 1.9 (8 of 10). The deterministic model in `tests/scenarios/meleeDroneContactPrediction.test.ts` agrees: peak contact correction 16 u → 1.9 u.
+- **Why it isn't shipped:** it makes the collision body lead the drawn sprite by ~(100 ms + lead)·speed, against the documented render == collision rule for the follower (src/client/CLAUDE.md), and the local hitscan rays test predWorld bodies. Options to decide between: (a) collision on the predicted timeline, sprite delayed (classic, the patch above); (b) also draw drones near the local ship on the predicted timeline; (c) accept contact corrections and exempt contact frames from the showcase gate. The residual ~1–2 u after (a) is the follower being re-posed every frame, which throws away the client's own push on the drone.
+- **Rules:**
+  - A contact between a predicted body and an interpolated one is resolved on two different timelines. Any correction that only happens near another entity is this, not the network.
+  - Before blaming a "second correction path", A/B it: switch it off in-page and count.
+- **Lock:** `tests/scenarios/meleeDroneContactPrediction.test.ts` (`it.fails` on the production follower; flip to `it` with the fix).
+
+## 2026-11-08 — A unit test killed a live perf run (misspelt env override)
+
+- **Symptom:** a `perf:scenes` self-test lost its base arm mid-run ("fetch failed", then ERR_CONNECTION_REFUSED on 5373) the moment `vitest run showcase` started in the same checkout.
+- **Cause:** `showcase/tools.ts` read `process.env['EQX_SHOWCASE_pidFile()']`, a find/replace slip for `EQX_SHOWCASE_PID_FILE`. The reap test's temp-file override was ignored, so `reapStale()` read the real `showcase-out/.showcase-pids.json` and killed every live process the perf runner had tracked there (2 servers, plus its own test child: "expected 3 to be 1"). The same file's writes also crashed with ENOENT on a fresh checkout (no `showcase-out/`).
+- **Fix:** correct the variable name; every pid-file write creates its directory; each entry records its owning run, and `reapStale()` never kills the children of a run that is still alive. Locked by `tests/unit/showcaseReap.test.ts`.
+- **Rules:**
+  - A test that kills processes must prove its isolation override took effect (assert the temp file is the one written) before it kills anything.
+  - Shared state files (pid lists, ledgers) record their owner; a reaper checks the owner is dead.
+  - Bulk find/replace on identifiers can rewrite string keys too. Grep env-var names after a rename.
+
+## 2026-11-08 — `--base HEAD` measured the perf-base worktree's own HEAD
+
+- **Symptom (found reading the code while building the phone lane):** `pnpm perf:scenes --base HEAD --head-params ...` is the documented way to A/B one switch on one build, but `prepareBase` ran `git checkout --detach HEAD` *inside* `.claude/worktrees/perf-base`. There `HEAD` is that worktree's own commit, so after the first run the base arm stayed where the worktree was created while head moved on. A "same build" A/B could have been two builds (the ledger's per-arm SHAs show it).
+- **Fix:** both runners resolve the ref to a SHA in the calling checkout (`git rev-parse --verify <ref>^{commit}`) before touching the worktree.
+- **Rule:** a symbolic ref handed to `git` in another worktree means something else there (`HEAD`, `@{-1}`). Resolve refs where the user typed them.
+
+## 2026-11-08 — The GPU-lighting phone defaults have no evidence yet
+
+- **Context:** GPU lighting went default (#344–#346), phones on Medium/Low, on 3-rep A/Bs (laptop and phone-proxy) that could never go RED (entry above). Whether it costs frames on weak hardware is open, and the desktop (not a target platform) can't answer it.
+- **Now:** `pnpm perf:phone` runs the same 8-rep A/B on a real phone over adb; `pnpm perf:scenes --device phone-proxy --cpu-rate 2` is the no-phone fallback. Commands and the decision rule: `docs/architecture/gpu-lit-ships.md`, "Open question: cost on weak hardware".
+- **Rule:** a default that "passed perf" must cite a ledger whose verdict could have failed (≥ 4 reps per arm, on the machine class it targets).
+
+## 2026-11-08 — Turning solar-system sectors on by default
+
+- **Context:** W1c flipped `EQX_SOLAR_SECTORS` to on. Unit tests, integration tests and a 10-minute live-galaxy soak (`scripts/soak-galaxy.ts`) were run with it on and off.
+- **Findings:**
+  - Three integration specs failed only with it on. Two were a real bug: arrival placement for a sector with no solar pockets fell back to `SECTOR_PLAYABLE_HALF_EXTENT`, now ±200 km, so test-room haulers spawned 190 km out and never docked. The third (elites) was a test parked at Home while elites now play out in the battle-zone pocket.
+  - `sectorSpace.measure.test.ts` wrote `scale-1.json` regardless of mode, so a solar run silently overwrote the committed classic ledger. It now writes `solar.json`.
+- **Rules:**
+  - A fallback for "no pockets" means the classic sector (`HOME_POCKET_HALF_EXTENT`), not the current extent.
+  - A measurement that writes a ledger file must key the file on every switch that changes what it measures.
+- **Soak memory readings (same day):** without a forced collection the physics-worker heap appeared to climb from 190 to 374 MB in 5 minutes with solar on. After a forced collection (`/dev/memory?gc=1`, server started with `--expose-gc`, as `scripts/soak-galaxy.ts` does) it stayed flat at about 150 MB. V8 collects lazily, so per-tick garbage looks like growth. Rule: judge a memory trend only from post-collection readings.

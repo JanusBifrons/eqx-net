@@ -14,11 +14,25 @@ export interface ServerPorts {
   vite: number;
 }
 
-// EQX_SHOWCASE_PORT_OFFSET shifts both ports (default 0 = 2767/5373) so two
-// sessions can film at once: each one's killPort() would otherwise reclaim the
-// other's servers, and a take could load the OTHER session's client.
-const PORT_OFFSET = Number(process.env['EQX_SHOWCASE_PORT_OFFSET'] ?? 0) || 0;
-export const DEFAULT_PORTS: ServerPorts = { server: 2767 + PORT_OFFSET, vite: 5373 + PORT_OFFSET };
+/**
+ * `EQX_SHOWCASE_PORT_OFFSET` shifts every capture port (server 2767+off, Vite
+ * 5373+off; the perf runner's head arm is +1 on top), so parallel sessions or
+ * recorders on one machine don't collide or kill each other's servers.
+ */
+export function portOffset(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env['EQX_SHOWCASE_PORT_OFFSET'];
+  if (raw === undefined || raw === '') return 0;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0 || n > 20_000) throw new Error(`EQX_SHOWCASE_PORT_OFFSET must be a whole number 0-20000, got "${raw}"`);
+  return n;
+}
+
+export function defaultPorts(env: NodeJS.ProcessEnv = process.env): ServerPorts {
+  const off = portOffset(env);
+  return { server: 2767 + off, vite: 5373 + off };
+}
+
+export const DEFAULT_PORTS: ServerPorts = defaultPorts();
 
 /** Env per profile. Living world off unless a shot needs galaxy life; the
  *  test-room-only profiles boot no galaxy sectors (EQX_GALAXY_SECTORS=none:

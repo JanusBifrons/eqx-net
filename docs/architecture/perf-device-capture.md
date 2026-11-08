@@ -78,6 +78,12 @@ The on-device JSON disambiguates the same way the LESSONS 2026-05-08 checklist d
 | `rafP50Ms` healthy + `tickBudget.totalAvgMs` > 12 ms + `tickBudget.overBudgetRatio` > 0 | Server CPU-bound | TiDi may be engaging or near. Mitigation: optimise SectorRoom hot subsystem. |
 | `rafGapCount30s` > 2 + correlated `longtaskCount30s` spikes | Main-thread block / GC pause | Run the user-paired CDP profile (the existing `analyze-cdp-profile.mjs` tooling) to attribute. |
 
+## Automated alternative on Android: the phone lane (2026-11-08)
+
+For an A/B question on Android ("does this change cost frames on a phone?"), the manual capture above is the wrong tool: one capture per arm has no spread, so it can't give a verdict. `pnpm perf:phone` drives Chrome on a USB- or wireless-adb-attached phone through the perf scenes, interleaved base/head (and an optional A/A arm), 8 reps by default, judged by the same RED / GREEN / INCONCLUSIVE verdict as the laptop runner. It needs no tapping, gates each run on the phone's thermal status, and writes a ledger whose `device` names the phone model, Android version and GPU. See [perf-scenes.md](perf-scenes.md#the-phone-lane-pnpm-perfphone) for setup and flags, and [gpu-lit-ships.md](gpu-lit-ships.md#open-question-cost-on-weak-hardware) for the commands that settle the GPU-lighting cost.
+
+Keep this manual protocol for what the lane can't do: iOS Safari, a person actually flying (thrust + pan), and cellular radio behaviour (the lane goes over adb reverse or Wi-Fi).
+
 ## What this protocol does NOT cover
 
 - Synthetic stress tests (`swarm-soak`, `swarm-tidi`). Those exercise rescue paths (LoadShedder, TiDi); they're outside the "ambient floor" scope the user chose at plan time.

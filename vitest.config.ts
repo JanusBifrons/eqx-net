@@ -46,6 +46,8 @@ export default defineConfig({
       'tests/netgate/**/*.test.ts',
       // Perf-scene runner pure modules (verdict maths).
       'perf/**/*.test.ts',
+      // Showcase / perf tooling pure modules (host-load sensing, pid files).
+      'showcase/**/*.test.ts',
       // Bench-budget pure module unit lock (plan: perf-floor, Phase 0).
       // The .bench.ts files in this directory are still excluded from the
       // unit run via the `benchmark.include` glob below — only .test.ts
