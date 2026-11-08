@@ -36,10 +36,22 @@ the PR that finishes the work.
    - the held lock line that drains when let go;
    - LOCK / CANCEL / UNLOCK in the info box;
    - "HAVE YOU LOCKED" wording;
-   - the Pilot/Spectate toggle moved off the ship.
+   - the Pilot/Spectate toggle moved off the ship;
+   - a sticky lock line (a held target isn't stolen by a ship drifting across
+     the line).
 
 ## Still to do (from the approved plan, in rough priority)
 
+0. **Bug to check first: the info-box LOCK press in the 1v3 clip didn't start
+   a lock** (the button still read LOCK after a tap and a retry). The e2e
+   "hands-off" test passes in `auto-fire-test`. Suspects:
+   - the info box is world-anchored and slides as the ship moves, so taps miss;
+   - the target was out of the group's reach, and an unreachable lock is
+     dropped after the 1.5 s grace with no feedback.
+
+   Either way, add feedback: an "OUT OF RANGE" state on the button and on the
+   ring. Also: the review page's 1v3 and failsafe clips predate the sticky
+   line; its stills show it.
 1. **Edge radar for locks.** Tint HaloRadar wedges for off-screen ships that
    are locking you (red) and for your own locked targets (group colour).
 2. **Capitals:**
