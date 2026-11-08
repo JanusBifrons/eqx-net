@@ -375,8 +375,9 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
         if (i >= k) { C[i * 4 + 3] = 0; continue; }
         const l = scene.lights[_pick[i]!]!;
         const dx = l.x - x, dy = l.y - y;
-        P[i * 4] = dx * c - dy * sn; P[i * 4 + 1] = dx * sn + dy * c; P[i * 4 + 2] = l.z; P[i * 4 + 3] = l.reach;
-        const own = this.lightOwnerId >= 0 && l.owner === this.lightOwnerId ? LitShipMesh.OWN_LIGHT : 1;
+        const isOwn = this.lightOwnerId >= 0 && l.owner === this.lightOwnerId;
+        P[i * 4] = dx * c - dy * sn; P[i * 4 + 1] = dx * sn + dy * c; P[i * 4 + 2] = isOwn ? l.z - this.maps.maxH : l.z; P[i * 4 + 3] = l.reach; // own engines sit low at the stern, not over the deck
+        const own = isOwn ? LitShipMesh.OWN_LIGHT : 1;
         C[i * 4] = l.r; C[i * 4 + 1] = l.g; C[i * 4 + 2] = l.b; C[i * 4 + 3] = l.intensity * own;
       }
     }
