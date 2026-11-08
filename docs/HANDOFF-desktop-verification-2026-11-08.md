@@ -38,6 +38,7 @@ This doc is self-contained. Pick it up on any machine.
 |---|---|---|
 | #356 | Count budgets that gate every PR on any machine. Server work counters are gated in integration (CI matches desktop). `pnpm perf:counts` client draw calls / atlas pages run as an advisory CI job. Two flaky wall-clock unit tests converted to counts. Linux `killPort` self-kill fixed. | Confirm the `perf-counts` CI job renders at least 20 frames after the half-resolution change. If it doesn't, lower the device scale or lengthen the window. |
 | #359 | E2E: join helpers wait for play by default. beam-appears, energy-bar, auto-fire, interceptor-beam and wave-attack are fixed. wave-attack also had a **real** gap: a one-shot `warp_warning` was missed by late joiners, now replayed on `client_ready`. | Touches SectorRoom, so the netgate applies. |
+| #362 | **WS6.4:** the automation ticker pause is keyed on an explicit flag (`localStorage.eqxE2ePause` / `?e2ePause=1`, set via the E2E storage state for the smoke, feature and gate projects) instead of `navigator.webdriver`. Showcase and perf now film and measure the live game behind menus. Trade-tab and energy-bar doc notes are corrected. | Stacked on #359. Perf drawer specs (e.g. `mobile-perf-probe4`) no longer get the pause; that's intended. Re-record trade-deal to confirm `DrawFrame` gaps of about 17 ms. |
 | #360 | **One collision paradigm:** players, drones and scrap anchor to the latest server state and step on the predicted timeline. The per-frame follower is deleted. Rendering is unchanged. Local rays test drones at the drawn pose (`DisplayPoseHitscan`). Model corrections went 7 → 0 (drones) and 17 → 0 (scrap). | **Live-loop change: the netgate decides.** If RED survives the automatic retry, treat it as real and investigate; don't dismiss it as host noise. |
 
 If any in-flight PR fails CI: read the failing job, fix on its branch, and sync with main first (CLAUDE.md).
@@ -48,6 +49,9 @@ If any in-flight PR fails CI: read the failing job, fix on its branch, and sync 
 - missile-frigate-homing `:414`, `:562`: fix landed (cooldown from the catalogue; the impact test waits the real 6 s lifetime).
 - machined-art nebula `:162`: maths moved to the browser.
 - fence-hits, fx-turrets `:63`, gate-fly-through: they now wait for play.
+- **Next:** run each 6×, remove it from `QUARANTINE` when it passes, then run the full feature tier once.
+
+**Flaky, not investigated:** sector-alpha `:424` (playerId reload), fx-weapons `:65`, galaxy-drawer-rich `:48`, sync-health `:17`. They may share the curtain race where they join with their own `page.goto`.
 
 **From #356:**
 - The close-up fleet-fight draw-call budget is loose (175) because of battle randomness. It needs a seeded battle, or gate on p50.
@@ -65,7 +69,6 @@ If any in-flight PR fails CI: read the failing job, fix on its branch, and sync 
 - `melee-drone-corrections.spec.ts` prints corrections and gates only peak drift. Consider gating on the count once it's stable.
 
 **Never started:**
-- **WS6.4:** key the automation ticker pause on an explicit E2E flag (e.g. `?e2ePause=1` set by the helpers) instead of `navigator.webdriver`. Then re-record trade-deal (expect DrawFrame gaps about 17 ms) and correct `docs/architecture/showcase-pipeline.md` (Trade-tab "main thread" note) and `docs/refactors/test-coverage-audit.md:256` (energy-bar "slow runner").
 - **WS7.2:** budget per-frame art upload size on `sector-travel`. A 769 ms stall was seen once even on an RTX 5070 Ti, and #356's upload counter is the hook.
 - **WS7.3:** overlapping damage numbers smear into dark blocks inside fireballs. Repro on the `damage-number-probe` page first, then fix the z-order or blend.
 - **WS8.1:** refuse to start a showcase recorder when another recorder's ports are live (#353's host-load sampler is the hook).
@@ -79,15 +82,15 @@ If any in-flight PR fails CI: read the failing job, fix on its branch, and sync 
 
 ## Recommended next steps (in order)
 
-1. **Let #356, #359 and #360 land.** Fix anything CI flags on their branches.
+1. **Let #356, #359, #360 and #362 land.** Fix anything CI flags on their branches.
 2. **Settle GPU lighting on weak hardware.** On the laptop, phone attached; about 1 h each; commands are in `docs/architecture/gpu-lit-ships.md`:
    ```
    pnpm perf:phone  --scenes fleet-fight,wide-view --reps 8 --base HEAD --base-params shiplight=baked --head-params shiplight=medium --noise-check
    pnpm perf:scenes --device phone-proxy --cpu-rate 2 --scenes fleet-fight,wide-view --reps 8 --base HEAD --base-params shiplight=baked --head-params shiplight=medium --noise-check
    ```
    Then repeat with `shiplight=low`. If RED, lower the phone default level. The first `perf:phone` run is also the lane's first live test.
-3. **WS6.4 ticker-pause flag.** Small, and unblocks honest showcase footage behind menus.
-4. **Finish the quarantined specs** from #359 (verify 6/6, un-quarantine).
+3. **Re-record trade-deal** now that #362 has landed, to confirm footage behind menus is live.
+4. **Finish the quarantined specs** from #359 (verify 6/6, un-quarantine), then triage the 4 flaky specs.
 5. **Decide which advisory CI jobs become required** (user's call): `gc-tests`, `perf-counts`, `e2e-feature-affected`. Suggest after a week green.
 6. **WS7.3 damage numbers and WS7.2 upload budget.**
 7. **WS8 showcase re-staging + `staticFrames` gate.** Then re-record the reel one shot at a time on the laptop.
