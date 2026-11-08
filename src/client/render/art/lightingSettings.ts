@@ -95,10 +95,10 @@ export const LOOK_NIGHT: LightingSettings = {
   ...LOOK_REAL,
   fillLight: true,
   fillStrength: 0.5,
-  // Most of today's (dim) ambient: a shadow or a wall facing neither light
-  // stays readable instead of a black hole blacker than space (review
-  // 2026-11-08, base film).
-  ambientBoost: 0.8,
+  // Twice today's (dim) ambient: the long shadows cover far more than the
+  // bake's, and a dark deck in them went blacker than space at 0.8 (review
+  // 2026-11-08, base film). Sunlit faces gain only ~15%.
+  ambientBoost: 2,
   shadow: { strength: 0.9, edge: 0.3, length: 3 },
   litStructures: true,
   litAsteroids: true,
