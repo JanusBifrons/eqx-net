@@ -569,8 +569,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   // v4 M — a garrison is mostly guns: give it a row (two bastions, up to six
   // guns) for every six it bought.
   if (profile.role === 'military') {
-    // Big batteries crowd a bastion, so budget a row per four guns.
-    const need = Math.ceil(posts.length / 4);
+    const need = Math.ceil(posts.length / 6);
     for (let k = 1; [...rowConn.keys()].filter((j) => j !== 0).length < need && k <= 6; k++) {
       for (const j of [-k, k]) {
         if (rowConn.has(j)) continue;
