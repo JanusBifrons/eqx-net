@@ -73,3 +73,24 @@ test.describe('fire control — target locking (ui=d)', () => {
     await ctx.close();
   });
 });
+
+test.describe('fire control — locks go both ways (fc-duel 1v3)', () => {
+  test('flying in: the HUD names who is locking you, and your own lock shows its progress', async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true });
+    const page = await ctx.newPage();
+    await page.goto(`${BASE_URL}/?room=fc-duel&startHostile=1&ui=d&initialHull=100000&shipKind=gunship&worker=0&testId=${randomUUID()}`);
+    await page.locator('[data-testid^="fc-chip-"]').first().waitFor({ timeout: 30_000 });
+    // Steer forward (toward the pack) with the left thumb.
+    const cdp = await ctx.newCDPSession(page);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 120, y: 300, id: 1 }] });
+    for (let i = 1; i <= 5; i++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 120, y: 300 - i * 9, id: 1 }] });
+    const threats = page.locator('[data-testid="fc-threats"]');
+    await threats.waitFor({ timeout: 20_000 });
+    await page.screenshot({ path: 'diag/e2e-screenshots/fire-control/duel-being-locked.png' });
+    await expect.poll(async () => Number(await threats.getAttribute('data-locked')), { timeout: 15_000 }).toBeGreaterThan(0);
+    await expect(threats).not.toContainText(/s:\d/); // names, never ids
+    await page.screenshot({ path: 'diag/e2e-screenshots/fire-control/duel-locked-on.png' });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await ctx.close();
+  });
+});

@@ -18,12 +18,16 @@ describe('summariseThreats', () => {
   it('null when nobody is locking you', () => {
     expect(summariseThreats(mirror({ localLockedBy: [] }))).toBeNull();
   });
+  it('mixed kinds read as a count of ships, not a kind', () => {
+    const t = summariseThreats(mirror({ localLockedBy: [{ t: 's:4', s: 2, p: 100 }, { t: 's:6', s: 2, p: 100 }, { t: 's:5', s: 2, p: 100 }] }))!;
+    expect(t.lockedName).toBe('3 ships');
+  });
   it('counts locked vs acquiring, names by ship kind, picks the furthest-along lock', () => {
     const t = summariseThreats(mirror({
       localLockedBy: [{ t: 's:4', s: 2, p: 100 }, { t: 's:5', s: 2, p: 100 }, { t: 's:6', s: 1, p: 60 }],
     }))!;
     expect(t.locked).toBe(2);
-    expect(t.lockedName).toMatch(/fighter/i);
+    expect(t.lockedName).toMatch(/fighter/i); // one kind ⇒ its name (the view adds ×2)
     expect(t.acquiring).toBe(1);
     expect(t.acquiringPct).toBe(60);
     expect(t.lockedName).not.toMatch(/s:\d/); // never an id

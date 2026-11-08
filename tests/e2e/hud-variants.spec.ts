@@ -23,6 +23,7 @@ const VIEWPORTS = [
 const IDS = [
   'hud-status',
   'hud-sector',
+  'pilot-spectator-toggle',
   'wallet-chip',
   'speed-dial-fab',
   'drawer-toggle',

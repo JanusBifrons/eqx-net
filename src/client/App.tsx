@@ -71,6 +71,7 @@ import { ExperimentalHud } from './hud/ExperimentalHud';
 import { TouchViz } from './hud/TouchViz';
 import { getUiVariant } from './hud/uiVariant';
 import { installMouseAim } from './input/MouseAim';
+import { useIsCompact } from './layout/useIsCompact';
 import { installFcKeys, installMouseLock } from './input/MouseLock';
 import { aimInput } from './input/AimInput';
 
@@ -908,7 +909,9 @@ function GameSurface({
        *  HUD bars + the in-world stat panel carry that info. */}
       {/* Phase 5 — always-visible Pilot/Spectate toggle (out of the speed-dial)
        *  + a spectator-mode status badge. */}
-      <Slot anchor="top-center" order={3}><PilotSpectatorToggle /></Slot>
+      {/* Experimental HUDs: the top-centre column carries status + lock warnings, so the
+          toggle sits under the sector chip instead of over the ship. */}
+      <PilotToggleSlot />
       <Slot anchor="top-center" order={4}><SpectatorIndicator /></Slot>
       <AdvancedDrawer />
       {/* Phase 4 WS-A1 (D3) — the blocking DeathOverlay "You Died/Respawn" modal
@@ -1166,4 +1169,16 @@ export function App(): JSX.Element {
       </LayoutProvider>
     </ErrorBoundary>
   );
+}
+
+/**
+ * Pilot/Spectate toggle placement. Legacy: top-centre. Experimental HUDs: the
+ * top-centre column carries status + lock warnings, so on a wide screen the
+ * toggle sits top-left under the sector chip (never over the ship); on a
+ * narrow (portrait) screen it stays last in the top-centre column.
+ */
+function PilotToggleSlot(): JSX.Element {
+  const compact = useIsCompact();
+  if (uiVariant !== 'legacy' && !compact) return <Slot anchor="top-left" order={2}><PilotSpectatorToggle /></Slot>;
+  return <Slot anchor="top-center" order={uiVariant === 'legacy' ? 3 : 9}><PilotSpectatorToggle /></Slot>;
 }

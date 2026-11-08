@@ -60,7 +60,8 @@ export function summariseThreats(mirror: RenderMirror): ThreatSummary | null {
       if (l.p > out.acquiringPct) { out.acquiringPct = l.p; out.acquiringName = n; }
     }
   }
-  out.lockedName = lockedNames.size === 1 ? [...lockedNames][0]! : `${lockedNames.size} ships`;
+  // One kind: "Fighter" (+ " ×2" in the view). Mixed kinds: "3 ships".
+  out.lockedName = lockedNames.size === 1 ? [...lockedNames][0]! : `${out.locked} ships`;
   return out;
 }
 
@@ -126,7 +127,7 @@ export function LockStatusBand({ scale = 1 }: { scale?: number }): JSX.Element |
           }}
         >
           <span aria-hidden>⚠</span>
-          {t.locked > 0 && <span>LOCKED · {t.lockedName}{t.locked > 1 && t.lockedName !== `${t.locked} ships` ? ` ×${t.locked}` : ''}</span>}
+          {t.locked > 0 && <span>LOCKED · {t.lockedName}{t.locked > 1 && !t.lockedName.endsWith(' ships') ? ` ×${t.locked}` : ''}</span>}
           {t.locked > 0 && t.acquiring > 0 && <span style={{ opacity: 0.6 }}>|</span>}
           {t.acquiring > 0 && (
             <span>
