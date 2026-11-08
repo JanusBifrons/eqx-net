@@ -157,6 +157,18 @@ export class ArtCache {
   }
   private lit = new Map<string, { maps: LitMaps; tex: Texture }>();
 
+  /** GPU-lit maps for a structure (R&D). */
+  litStruct(id: string, rawSeed = 1): { maps: LitMaps; tex: Texture } {
+    const k = `lits:${id}:${rawSeed}`;
+    let hit = this.lit.get(k);
+    if (!hit) {
+      const maps = encodeLitMaps(this.structFields(id, seedVariant(rawSeed)));
+      hit = { maps, tex: litMapsTexture(maps) };
+      this.lit.set(k, hit);
+    }
+    return hit;
+  }
+
   private shipFields(id: string, paint?: number): Fields {
     const k = `s:${id}:${paint ?? ''}`;
     let f = this.fieldCache.get(k);

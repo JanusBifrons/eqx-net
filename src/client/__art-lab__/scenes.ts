@@ -49,7 +49,7 @@ export interface Scene {
   duration: number;
 }
 
-export const SCENE_IDS = ['ships', 'factions', 'structures', 'base', 'explosion', 'sweep', 'bench', 'fleet', 'capitals', 'industry', 'mega', 'combat', 'spin', 'spinfleet'] as const;
+export const SCENE_IDS = ['ships', 'factions', 'structures', 'base', 'explosion', 'sweep', 'bench', 'fleet', 'capitals', 'industry', 'mega', 'combat', 'spin', 'spinfleet', 'capfleet'] as const;
 
 /** Sheet scenes fit their content into this view (the capture size). */
 const SHEET_W = 1600, SHEET_H = 900;
@@ -217,6 +217,36 @@ export function buildScene(id: SceneId, zoomOverride?: number, n = 40): Scene {
         duration: 8,
         camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = 4.5; },
       };
+    case 'capfleet': {
+      // GPU-lit R&D (1b): a destroyer with escorts alongside on its shadow side
+      // (capital shadows, occlusion, bounce), robots firing at them and
+      // explosions among them (point lights).
+      const capRot = (t: number): number => 0.25 + t * 0.03;
+      const along = (lx: number, ly: number, t: number, o: Pose, bob: number): void => {
+        const r = capRot(t), c = Math.cos(r), s = Math.sin(r);
+        const x = lx + Math.sin(t * 0.9 + bob) * 6, y = ly + Math.cos(t * 0.7 + bob) * 8;
+        o.x = x * c - y * s; o.y = x * s + y * c; o.rot = r + Math.sin(t * 1.1 + bob) * 0.08; o.thrust = 0.4;
+      };
+      const escorts: Array<[string, number, number]> = [['fighter', -175, -380], ['interceptor', -190, -180], ['heavy', -215, 30], ['gunship', -180, 230], ['missile-frigate', -260, 420], ['fighter', -165, 560]];
+      const ships: ShipE[] = [
+        { id: 'destroyer', trail: false, pose: (t, o) => { o.x = 0; o.y = 0; o.rot = capRot(t); o.thrust = 0.2; } },
+        ...escorts.map(([id, lx, ly], i): ShipE => ({ id, trail: false, pose: (t, o) => along(lx, ly, t, o, i * 1.7) })),
+        { id: 'robot-hexagon', trail: false, pose: (t, o) => { o.x = -760 + Math.sin(t) * 10; o.y = -120 + Math.cos(t * 0.8) * 12; o.rot = Math.PI / 2 + Math.sin(t * 0.6) * 0.1; o.thrust = 0.3; } },
+        { id: 'robot-circle', trail: false, pose: (t, o) => { o.x = -720 + Math.cos(t) * 10; o.y = 300 + Math.sin(t * 0.9) * 12; o.rot = Math.PI / 2 + Math.sin(t * 0.5) * 0.1; o.thrust = 0.3; } },
+      ];
+      return {
+        ships,
+        structs: [],
+        booms: [{ x: -330, y: -60, t0: 1.6, size: 0.35 }, { x: -300, y: 340, t0: 4.2, size: 0.45 }],
+        shots: [
+          { kind: 'bolt', from: 7, to: 2, t0: 0.3, t1: 7.5, color: 0xff6a5a, period: 0.35, speed: 520 },
+          { kind: 'beam', from: 8, to: 4, t0: 2.5, t1: 5.5, color: 0xff4fd0 },
+          { kind: 'bolt', from: 3, to: 7, t0: 0.8, t1: 7.5, color: 0x8fd8ff, period: 0.3, speed: 600 },
+        ],
+        duration: 8,
+        camera: (_t, c) => { c.x = -330; c.y = 90; c.zoom = 0.62; },
+      };
+    }
     case 'spinfleet': {
       // GPU-lit R&D: six different ships turning in place, a full turn in 8 s.
       const ids = ['fighter', 'missile-frigate', 'robot-hexagon', 'interceptor', 'trader-hauler', 'gunship'];

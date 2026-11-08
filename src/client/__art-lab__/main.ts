@@ -21,7 +21,8 @@ import { ArtCache, PIXEL_ROT_STEPS, SUN_STEPS, type PixelSettings, type ShipArt,
 import { buildScene, SCENE_IDS, type Cam, type Pose, type Scene, type SceneId, type ShipE, type Shot } from './scenes.js';
 import { hash01, valueNoise } from '../render/art/fields.js';
 import { seedVariant, type BakeJob } from '../render/art/bake.js';
-import { LitShipMesh } from '../render/art/litShipShader.js';
+import { LitScene, LitShipMesh } from '../render/art/litShipShader.js';
+import { engineLightIntensity, engineLightReach, lightingFromSearch } from '../render/art/lightingSettings.js';
 
 type Style = 'current' | 'machined' | 'pixel' | 'lit';
 
@@ -29,15 +30,14 @@ const qs = new URLSearchParams(location.search);
 const STYLE = (['current', 'machined', 'pixel', 'lit'].includes(qs.get('style') ?? '') ? qs.get('style') : 'machined') as Style;
 /** `lit`: ships lit on the GPU (R&D); everything else as `machined`. */
 const MACHINED = STYLE === 'machined' || STYLE === 'lit';
-/** `lit` cast shadows: `?shadow=0` off, else this many march steps. */
-const SHADOW_STEPS = qs.get('shadow') === '0' ? 0 : 128;
-/** `lit` shadow look (R&D): `?shadowk=` strength, `?shadowedge=` softness, `?elev=` sun height (deg). */
-const SHADOW_LOOK = {
-  strength: qs.has('shadowk') ? Number(qs.get('shadowk')) : 0.85,
-  edge: qs.has('shadowedge') ? Number(qs.get('shadowedge')) : 0.6,
-  length: qs.has('shadowlen') ? Number(qs.get('shadowlen')) : 1,
-};
-const SUN_ELEV = qs.has('elev') ? (Number(qs.get('elev')) * Math.PI) / 180 : null;
+/** `lit` lighting features (R&D): `?look=baked|f|all` and per-feature
+ *  switches (lightingSettings.ts `lightingFromSearch`); `?shadow=0` is the
+ *  old "no self shadow" switch. */
+const LIGHTING = lightingFromSearch(qs.get('shadow') === '0' ? `${location.search}&selfshadow=0` : location.search);
+/** The lights and big hulls around this frame (refilled every update). */
+const litScene = new LitScene();
+/** A capital is this many times taller than its baked relief (towering hulls). */
+const CAPITAL_HEIGHT_FRAC = 0.12;
 const SCENE = ((SCENE_IDS as readonly string[]).includes(qs.get('scene') ?? '') ? qs.get('scene') : 'ships') as SceneId;
 const ZOOM = qs.has('zoom') ? Number(qs.get('zoom')) : undefined;
 const BENCH_N = qs.has('n') ? Number(qs.get('n')) : 40;
@@ -137,6 +137,8 @@ interface ShipView {
   gfx: Graphics | null;
   /** `lit` style: the GPU-lit hull. */
   lit?: LitShipMesh;
+  /** `lit` style: a big hull that shades others (box half size, height). */
+  occ?: { hx: number; hy: number; h: number; color: number };
   trails: Sprite[];
   nozzles: Sprite[];
   navs: Sprite[];
@@ -152,6 +154,9 @@ interface StructView {
   gfx: Graphics | null;
   /** Machined: albedo copy, added on top when an explosion lights the area. */
   lit: Sprite | null;
+  /** `lit` style with live-lit structures: the GPU-lit structure. */
+  litMesh?: LitShipMesh;
+  rot: number;
   lamps: Sprite[];
   lampXY: Array<{ x: number; y: number }>;
   art: StructArt | null;
@@ -259,7 +264,7 @@ async function main(): Promise<void> {
 
   // ---- structures
   const structs: StructView[] = scene.structs.map((st) => {
-    const v: StructView = { x: st.x, y: st.y, sprite: null, gfx: null, lit: null, lamps: [], lampXY: [], art: null, bandArt: [], id: st.id, seed: st.seed, radius: 100 };
+    const v: StructView = { x: st.x, y: st.y, sprite: null, gfx: null, lit: null, rot: st.rot, lamps: [], lampXY: [], art: null, bandArt: [], id: st.id, seed: st.seed, radius: 100 };
     if (STYLE === 'current') {
       v.gfx = buildStructureGfx(st.id, undefined, st.seed);
       v.gfx.position.set(st.x, st.y);
@@ -285,6 +290,15 @@ async function main(): Promise<void> {
     v.sprite.position.set(st.x, st.y);
     structL.addChildAt(v.sprite, 0);
     v.radius = Math.max(art.w, art.h) / art.density / 2;
+    if (STYLE === 'lit' && LIGHTING.litStructures) {
+      const l = cache.litStruct(st.id, st.seed);
+      v.litMesh = new LitShipMesh(l.maps, l.tex, LIGHTING);
+      v.litMesh.position.set(st.x, st.y);
+      v.litMesh.rotation = st.rot;
+      v.sprite.visible = false;
+      if (v.lit) v.lit.visible = false;
+      structL.addChildAt(v.litMesh, 0);
+    }
     for (const l of art.navLights) {
       v.lamps.push(glow(glowL, l.color));
       v.lampXY.push({ x: st.x + l.x, y: st.y + l.y });
@@ -308,7 +322,13 @@ async function main(): Promise<void> {
     } else if (STYLE === 'lit') {
       v.art = cache.machinedShip(e.id, e.paint); // nozzles + nav lights
       const l = cache.litShip(e.id, e.paint);
-      v.lit = new LitShipMesh(l.maps, l.tex);
+      v.lit = new LitShipMesh(l.maps, l.tex, LIGHTING);
+      // A capital-sized hull shades the ships around it.
+      const hw = l.maps.w / l.maps.ppu / 2, hh = l.maps.h / l.maps.ppu / 2;
+      if (Math.max(hw, hh) >= 150) {
+        v.occ = { hx: hw * 0.8, hy: hh * 0.85, h: Math.max(l.maps.maxH, Math.max(hw, hh) * 2 * CAPITAL_HEIGHT_FRAC), color: e.paint ?? 0x8a96a8 };
+        v.lit.occluderId = i;
+      }
       shipL.addChild(v.lit);
     } else if (STYLE === 'machined') {
       v.art = cache.machinedShip(e.id, e.paint);
@@ -366,6 +386,7 @@ async function main(): Promise<void> {
 
   function update(t: number): void {
     curT = t;
+    litScene.begin();
     scene.camera(t, cam);
     let zoom = cam.zoom;
     let px = 1;
@@ -408,8 +429,9 @@ async function main(): Promise<void> {
       if (v.gfx) {
         v.gfx.position.set(p.x, p.y); v.gfx.rotation = p.rot;
       } else if (v.lit) {
+        // Lit in the final pass, once every light of this frame is known.
         v.lit.position.set(p.x, p.y); v.lit.rotation = p.rot;
-        v.lit.setLight(SUN_ELEV === null ? cache.rig : { ...cache.rig, sunElev: SUN_ELEV }, p.rot, SHADOW_STEPS, SHADOW_LOOK); // TODO: alloc-debt (art lab only, R&D)
+        if (v.occ) litScene.addOccluder(v.lit.occluderId, p.x, p.y, p.rot, v.occ.hx, v.occ.hy, v.occ.h, v.occ.color, 0.8);
       } else if (STYLE === 'machined') {
         const localAz = cache.rig.sunAz - p.rot;
         let u = (localAz / (Math.PI * 2)) * SUN_STEPS;
@@ -436,6 +458,8 @@ async function main(): Promise<void> {
         s.position.set(pt.x, pt.y);
         s.scale.set(nz.r * 3.2 * glowScale * (0.6 + 0.6 * p.thrust) * fl);
         s.alpha = 0.55 + 0.45 * p.thrust;
+        // GPU-lit hulls: the engine is a light (its own stern, nearby hulls).
+        if (LIGHTING.engineLights && STYLE === 'lit') litScene.addLight(pt.x, pt.y, nz.r * 1.2, 0xffa24a, engineLightIntensity(nz.r, p.thrust) * fl, engineLightReach(nz.r));
         if (v.e.trail) {
           for (let k = 1; k <= TRAIL; k++) {
             v.e.pose(t - k * TRAIL_DT, scratch);
@@ -508,6 +532,10 @@ async function main(): Promise<void> {
         const sinceHit = (((t - sh.t0 - flight) % per) + per) % per;
         hitI = t - sh.t0 > flight && t - flight <= sh.t1 ? Math.exp(-sinceHit * 14) : 0;
       }
+      // Lights for GPU-lit hulls: the impact, and each bolt in flight.
+      if (hitI > 0.01) litScene.addLight(ix, iy, 6, sh.color, hitI * (sh.kind === 'beam' ? 2.2 : 1.6), sh.kind === 'beam' ? 70 : 50);
+      if (sh.kind === 'beam' && hitI > 0.01) litScene.addLight((mx + ix) / 2, (my + iy) / 2, 6, sh.color, hitI * 0.8, len * 0.35 + 20);
+      for (const bo of v.bolts) if (bo.alpha > 0) litScene.addLight(bo.x, bo.y, 5, sh.color, 0.9, 32);
       // Impact: a flare + sparks on the hull, or a rim flash on the shield.
       v.flare.position.set(ix, iy);
       v.flare.scale.set((sh.kind === 'beam' ? 22 : 16) * glowScale * (0.7 + 0.5 * hitI));
@@ -536,7 +564,8 @@ async function main(): Promise<void> {
       b.flash.alpha = I * 0.85;
       b.pool.position.set(b.x, b.y);
       b.pool.scale.set(R * 2.4 * glowScale);
-      b.pool.alpha = I * 0.32;
+      // GPU-lit hulls take the blast's real light: no fake pool on top.
+      b.pool.alpha = STYLE === 'lit' && LIGHTING.pointLights > 0 ? 0 : I * 0.32;
       const ra = Math.max(0, age);
       b.ring.position.set(b.x, b.y);
       b.ring.scale.set((R * 0.25 + ra * R * 1.3) / 64);
@@ -549,6 +578,7 @@ async function main(): Promise<void> {
         s.scale.set(R * (0.12 + 0.12 * hash01(k, 79)) * glowScale * (1 + ra));
         s.alpha = on ? Math.max(0, Math.exp(-ra * (1.6 + hash01(k, 83))) * Math.min(1, ra * 20)) : 0;
       }
+      if (I > 0.01) litScene.addLight(b.x, b.y, 25, 0xffa050, I * 5, R * 1.1);
       // Light the structures near the blast (machined: real albedo lift).
       if (I > 0.01) {
         for (const v of structs) {
@@ -560,6 +590,9 @@ async function main(): Promise<void> {
       }
     }
 
+    // GPU-lit hulls: now every light and occluder of this frame is known.
+    for (const v of ships) if (v.lit) v.lit.setLight(cache.rig, v.pose.x, v.pose.y, v.pose.rot, litScene);
+    for (const v of structs) if (v.litMesh) v.litMesh.setLight(cache.rig, v.x, v.y, v.rot, litScene);
     if (pixel) app.renderer.render({ container: sceneRoot, target: rt!, clear: true, clearColor: 0x04060d });
     app.render();
   }

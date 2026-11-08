@@ -31,8 +31,24 @@ const FX_RUNS: Run[] = [
   { label: 'fx: battle, new (24 a side)', q: 'fx=new&scene=battle&n=24&dpr=1', benchMs: 8000, page: 'fx.html' },
 ];
 
+/** GPU-lit ships (plan prancy-squishing-donut 1b): each lighting feature's cost. `?set=lit`. */
+const LIT_RUNS: Run[] = [
+  { label: 'lit: 40 ships, baked (today)', q: 'style=machined&scene=bench&n=40&dpr=1', benchMs: 6000 },
+  { label: 'lit: 40 ships, lit no shadows', q: 'style=lit&look=f&selfshadow=0&scene=bench&n=40&dpr=1', benchMs: 6000 },
+  { label: 'lit: 40 ships, F shadows 16', q: 'style=lit&look=f&selfshadow=16&scene=bench&n=40&dpr=1', benchMs: 6000 },
+  { label: 'lit: 40 ships, F shadows 48', q: 'style=lit&look=f&selfshadow=48&scene=bench&n=40&dpr=1', benchMs: 6000 },
+  { label: 'lit: 40 ships, F shadows 128', q: 'style=lit&look=f&scene=bench&n=40&dpr=1', benchMs: 6000 },
+  { label: 'lit: 40 ships, F + 8 lights + engines', q: 'style=lit&look=f&points=8&engines=1&scene=bench&n=40&dpr=1', benchMs: 6000 },
+  { label: 'lit: 40 ships, F + lit structures', q: 'style=lit&look=f&litstruct=1&scene=bench&n=40&dpr=1', benchMs: 6000 },
+  { label: 'lit: 40 ships, everything', q: 'style=lit&look=all&scene=bench&n=40&dpr=1', benchMs: 6000 },
+  { label: 'lit: capital fleet, F', q: 'style=lit&look=f&scene=capfleet&dpr=1', benchMs: 6000 },
+  { label: 'lit: capital fleet, F + capital shadow/occl/bounce', q: 'style=lit&look=f&capshadow=1&capao=1&capbounce=1&scene=capfleet&dpr=1', benchMs: 6000 },
+  { label: 'lit: capital fleet, everything', q: 'style=lit&look=all&scene=capfleet&dpr=1', benchMs: 6000 },
+  { label: 'lit: capital fleet, realistic', q: 'style=lit&look=real&scene=capfleet&dpr=1', benchMs: 6000 },
+];
+
 const qs = new URLSearchParams(location.search);
-const RUNS = qs.get('set') === 'fx' ? FX_RUNS : ART_RUNS;
+const RUNS = qs.get('set') === 'fx' ? FX_RUNS : qs.get('set') === 'lit' ? LIT_RUNS : ART_RUNS;
 // Default: the receiver on the same machine that served this page.
 const REPORT = qs.get('report') ?? `${location.protocol}//${location.hostname}:5375/`;
 const frame = document.getElementById('stage') as HTMLIFrameElement;
