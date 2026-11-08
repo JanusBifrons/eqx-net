@@ -22,7 +22,7 @@ import { buildScene, SCENE_IDS, type Cam, type Pose, type Scene, type SceneId, t
 import { hash01, valueNoise } from '../render/art/fields.js';
 import { seedVariant, type BakeJob } from '../render/art/bake.js';
 import { LitScene, LitShipMesh } from '../render/art/litShipShader.js';
-import { engineLightIntensity, engineLightReach, lightingFromSearch } from '../render/art/lightingSettings.js';
+import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach, lightingFromSearch } from '../render/art/lightingSettings.js';
 
 type Style = 'current' | 'machined' | 'pixel' | 'lit';
 
@@ -383,7 +383,7 @@ async function main(): Promise<void> {
     out.x = p.x + lx * c - ly * s;
     out.y = p.y + lx * s + ly * c;
   };
-  const pt = { x: 0, y: 0 };
+  const pt = { x: 0, y: 0 }, lpt = { x: 0, y: 0 };
 
   function update(t: number): void {
     curT = t;
@@ -460,7 +460,10 @@ async function main(): Promise<void> {
         s.scale.set(nz.r * 3.2 * glowScale * (0.6 + 0.6 * p.thrust) * fl);
         s.alpha = 0.55 + 0.45 * p.thrust;
         // GPU-lit hulls: the engine is a light (its own stern, nearby hulls).
-        if (LIGHTING.engineLights && STYLE === 'lit') litScene.addLight(pt.x, pt.y, nz.r * 1.2, 0xffa24a, engineLightIntensity(nz.r, p.thrust) * fl, engineLightReach(nz.r), v.lit ? v.lit.lightOwnerId : -1);
+        if (LIGHTING.engineLights && STYLE === 'lit') {
+          local(p, nz.x, nz.y + engineLightAstern(nz.r), lpt); // in the plume, astern
+          litScene.addLight(lpt.x, lpt.y, engineLightHeight(nz.r), 0xffa24a, engineLightIntensity(nz.r, p.thrust) * fl, engineLightReach(nz.r), v.lit ? v.lit.lightOwnerId : -1);
+        }
         if (v.e.trail) {
           for (let k = 1; k <= TRAIL; k++) {
             v.e.pose(t - k * TRAIL_DT, scratch);
@@ -534,9 +537,9 @@ async function main(): Promise<void> {
         hitI = t - sh.t0 > flight && t - flight <= sh.t1 ? Math.exp(-sinceHit * 14) : 0;
       }
       // Lights for GPU-lit hulls: the impact, and each bolt in flight.
-      if (hitI > 0.01) litScene.addLight(ix, iy, 6, sh.color, hitI * (sh.kind === 'beam' ? 2.2 : 1.6), sh.kind === 'beam' ? 70 : 50);
-      if (sh.kind === 'beam' && hitI > 0.01) litScene.addLight((mx + ix) / 2, (my + iy) / 2, 6, sh.color, hitI * 0.8, len * 0.35 + 20);
-      for (const bo of v.bolts) if (bo.alpha > 0) litScene.addLight(bo.x, bo.y, 5, sh.color, 0.9, 32);
+      if (hitI > 0.01) litScene.addLight(ix, iy, 6, sh.color, hitI * (sh.kind === 'beam' ? 2.2 : 1.6), sh.kind === 'beam' ? 120 : 90);
+      if (sh.kind === 'beam' && hitI > 0.01) litScene.addLight((mx + ix) / 2, (my + iy) / 2, 6, sh.color, hitI * 0.8, len * 0.6 + 30);
+      for (const bo of v.bolts) if (bo.alpha > 0) litScene.addLight(bo.x, bo.y, 5, sh.color, 0.9, 55);
       // Impact: a flare + sparks on the hull, or a rim flash on the shield.
       v.flare.position.set(ix, iy);
       v.flare.scale.set((sh.kind === 'beam' ? 22 : 16) * glowScale * (0.7 + 0.5 * hitI));
@@ -579,7 +582,7 @@ async function main(): Promise<void> {
         s.scale.set(R * (0.12 + 0.12 * hash01(k, 79)) * glowScale * (1 + ra));
         s.alpha = on ? Math.max(0, Math.exp(-ra * (1.6 + hash01(k, 83))) * Math.min(1, ra * 20)) : 0;
       }
-      if (I > 0.01) litScene.addLight(b.x, b.y, 25, 0xff8a30, I * 2.4, R * 1.1);
+      if (I > 0.01) litScene.addLight(b.x, b.y, 25, 0xff8a30, I * 2.4, R * 2.2);
       // Light the structures near the blast (machined: real albedo lift).
       if (I > 0.01) {
         for (const v of structs) {

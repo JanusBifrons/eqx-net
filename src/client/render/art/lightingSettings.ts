@@ -158,6 +158,14 @@ export function engineLightIntensity(nozzleR: number, thrust: number): number {
 }
 /** How far an engine's light reaches (world units): grows with the nozzle. */
 export function engineLightReach(nozzleR: number): number { return nozzleR * 14 + 40; }
+/**
+ * Where an engine's light sits: in the plume, astern of the nozzle and low,
+ * not on the hull. A light on the nozzle sits over the ship's own deck and
+ * lights the whole hull like a lamp overhead, filling its shadows (hostile
+ * review 2026-11-08). Astern, it lights the stern and whatever is behind.
+ */
+export function engineLightAstern(nozzleR: number): number { return nozzleR * 3; }
+export function engineLightHeight(nozzleR: number): number { return nozzleR * 0.5; }
 
 /** Any capital effect on (they share the occluder list). */
 export function usesOccluders(s: LightingSettings): boolean {

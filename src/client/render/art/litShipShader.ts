@@ -207,10 +207,14 @@ void main() {
     vec4 lp = uPLPos[i];
     vec4 lc = uPLCol[i];
     if (lc.a <= 0.0) continue;
-    vec3 d = vec3(lp.xy - vLocal, lp.z - height);
+    // Height is above the hull's top (a capital's deck stands taller than a
+    // blast beside it would otherwise sit), and the light fades to nothing
+    // at its reach.
+    vec3 d = vec3(lp.xy - vLocal, lp.z + uScale.y - height);
     float dist = length(d);
     float k = dist / lp.w;
-    float att = lc.a / (1.0 + k * k) * clamp(2.0 - k, 0.0, 1.0);
+    float w = clamp(1.0 - k * k, 0.0, 1.0);
+    float att = lc.a * w * w;
     vec3 Lp = d / max(dist, 1e-3);
     float nd = max(0.0, dot(n, Lp));
     vec3 Hp = normalize(Lp + vec3(0.0, 0.0, 1.0));
@@ -293,8 +297,9 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
   lightOwnerId = -1;
   /** How much of its own engines' light a hull takes (they point away from it). */
   static OWN_LIGHT = 0.15;
-  /** The hull's bounding radius (world u): lights are judged at its edge. */
-  private readonly hullR: number;
+  /** The hull's half extents (world u): lights are judged at its rectangle. */
+  private readonly hx: number;
+  private readonly hy: number;
 
   constructor(readonly maps: LitMaps, tex: Texture, readonly settings: LightingSettings = BAKED_LOOK, geometry?: Geometry) {
     const W = maps.frame.w;
@@ -321,7 +326,7 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
     super({ geometry: geometry ?? litShipGeometry(maps), shader });
     this.uni = uni;
     this.u = uni.uniforms as Record<string, Float32Array>;
-    this.hullR = Math.hypot(maps.w, maps.h) / maps.ppu / 2;
+    this.hx = maps.w / maps.ppu / 2; this.hy = maps.h / maps.ppu / 2;
   }
 
   /** Light for this frame: the sector's sun, the hull's world pose (Pixi
@@ -364,7 +369,7 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
     const s = this.settings;
     if (s.pointLights > 0) {
       const n = Math.min(s.pointLights, MAX_POINT_LIGHTS);
-      const k = strongestLightsInto(scene, x, y, this.hullR, n, this.lightOwnerId);
+      const k = strongestLightsInto(scene, x, y, rot, this.hx, this.hy, n, this.lightOwnerId);
       const P = this.u['uPLPos']!, C = this.u['uPLCol']!;
       for (let i = 0; i < n; i++) {
         if (i >= k) { C[i * 4 + 3] = 0; continue; }
@@ -393,19 +398,24 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
 
 /**
  * The `n` lights that reach this hull hardest into `_pick`: judged at the
- * hull's EDGE (a capital is kilometres long; its centre is far from a blast
- * by its side), weighted by intensity and falloff; the hull's own engines
- * count for little. Returns how many.
+ * hull's own rectangle (`hx` × `hy` half extents, rotated by `rot`), not a
+ * circle round it. A long capital's circle touches every ship nearby, so
+ * escorts' engines crowded a blast off its deck (hostile review 2026-11-08).
+ * Weighted by intensity and falloff; the hull's own engines count for little.
+ * Returns how many; the picks are in `_pick` (read by `pickedLight`).
  */
-function strongestLightsInto(scene: LitScene, x: number, y: number, hullR: number, n: number, owner: number): number {
+export function strongestLightsInto(scene: LitScene, x: number, y: number, rot: number, hx: number, hy: number, n: number, owner: number): number {
+  const c = Math.cos(-rot), sn = Math.sin(-rot);
   let k = 0;
   for (let i = 0; i < scene.lightCount; i++) {
     const l = scene.lights[i]!;
-    const edge = Math.max(0, Math.hypot(l.x - x, l.y - y) - hullR);
-    if (edge > l.reach * 2) continue; // out of reach (the shader cuts off at 2× reach)
-    const q = edge / l.reach;
+    const dx = l.x - x, dy = l.y - y;
+    const ox = Math.max(0, Math.abs(dx * c - dy * sn) - hx), oy = Math.max(0, Math.abs(dx * sn + dy * c) - hy);
+    const edge = Math.hypot(ox, oy);
+    if (edge >= l.reach) continue; // out of reach (the shader fades to 0 at reach)
+    const q = edge / l.reach, w = 1 - q * q;
     const own = owner >= 0 && l.owner === owner ? LitShipMesh.OWN_LIGHT : 1;
-    const d = -(l.intensity * own) / (1 + q * q); // lower = stronger
+    const d = -(l.intensity * own) * w * w; // lower = stronger
     let j: number;
     if (k < n) j = k++;
     else { if (d >= _pickD[n - 1]!) continue; j = n - 1; }
@@ -414,6 +424,8 @@ function strongestLightsInto(scene: LitScene, x: number, y: number, hullR: numbe
   }
   return k;
 }
+/** The scene index of the `i`th light `strongestLightsInto` picked. */
+export function pickedLight(i: number): number { return _pick[i]!; }
 
 /** The `n` items nearest (x, y) into `_pick` (skipping occluder `skipId`); returns how many. */
 function nearestInto(items: ReadonlyArray<{ x: number; y: number; id?: number }>, count: number, x: number, y: number, n: number, skipId: number): number {
