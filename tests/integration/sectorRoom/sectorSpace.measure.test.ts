@@ -13,7 +13,8 @@
  * Run once per scale (the knob is read at module load):
  *   EQX_SECTOR_SCALE=1 npx vitest run tests/integration/sectorRoom/sectorSpace.measure.test.ts
  *   EQX_SECTOR_SCALE=4 npx vitest run tests/integration/sectorRoom/sectorSpace.measure.test.ts
- * Each run writes `diag/sector-space/scale-<n>.json`. It asserts only that the
+ * Each run writes `diag/sector-space/scale-<n>.json` (`solar.json` with
+ * solar-system sectors on, the default; `EQX_SOLAR_SECTORS=0` for scale rows). It asserts only that the
  * room ran (ticks happened, bytes arrived); the numbers are for the ledger.
  */
 import { describe, it, expect, afterEach } from 'vitest';
@@ -22,7 +23,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { matchMaker } from 'colyseus';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
-import { SECTOR_SPACE_SCALE, SECTOR_PLAYABLE_HALF_EXTENT } from '../../../src/shared-types/sectorBounds.js';
+import { SECTOR_SPACE_SCALE, SECTOR_PLAYABLE_HALF_EXTENT, SOLAR_SECTORS } from '../../../src/shared-types/sectorBounds.js';
 
 const DRONES = 200;
 const ROCKS = 300;
@@ -108,7 +109,8 @@ describe('round 3 C — sector space measurement', () => {
         bytesPerSec: Math.round((bytes * 1000) / elapsed),
       };
       mkdirSync('diag/sector-space', { recursive: true });
-      writeFileSync(`diag/sector-space/scale-${SECTOR_SPACE_SCALE}.json`, JSON.stringify(row, null, 2));
+      // Solar-system sectors (±200 km, on by default since W1c) get their own row.
+      writeFileSync(SOLAR_SECTORS ? 'diag/sector-space/solar.json' : `diag/sector-space/scale-${SECTOR_SPACE_SCALE}.json`, JSON.stringify(row, null, 2));
       console.log('[sector-space]', JSON.stringify(row));
 
       expect(tickMs.length).toBeGreaterThan(60);

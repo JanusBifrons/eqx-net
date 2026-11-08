@@ -1,0 +1,83 @@
+{
+  "solar": true,
+  "minutes": 8,
+  "sector": "sol-prime",
+  "at": "2026-11-08T19:03:55.044Z",
+  "roomSeconds": 10074,
+  "ticks": 604440,
+  "tickAvgMs": {
+    "p50": 0.163,
+    "p95": 0.77,
+    "max": 2.066
+  },
+  "worstTickPerSecondMs": {
+    "p50": 0.381,
+    "p95": 1.632,
+    "p99": 2.658,
+    "max": 21.908
+  },
+  "ticksOverBudget": 3,
+  "overBudgetShare": 0,
+  "swarmMaxInARoom": 220,
+  "pilotBytesPerSec": 14620,
+  "memory": {
+    "rssMbStart": 824,
+    "rssMbEnd": 1006,
+    "heapUsedMbStart": 64,
+    "heapUsedMbEnd": 65,
+    "workerHeapTotalMbStart": 146,
+    "workerHeapTotalMbEnd": 183,
+    "rooms": 21,
+    "perMinute": [
+      {
+        "min": 1,
+        "rssMb": 842,
+        "heapUsedMb": 63,
+        "workerHeapTotalMb": 128
+      },
+      {
+        "min": 2,
+        "rssMb": 869,
+        "heapUsedMb": 64,
+        "workerHeapTotalMb": 151
+      },
+      {
+        "min": 3,
+        "rssMb": 876,
+        "heapUsedMb": 64,
+        "workerHeapTotalMb": 147
+      },
+      {
+        "min": 4,
+        "rssMb": 888,
+        "heapUsedMb": 64,
+        "workerHeapTotalMb": 154
+      },
+      {
+        "min": 5,
+        "rssMb": 917,
+        "heapUsedMb": 64,
+        "workerHeapTotalMb": 153
+      },
+      {
+        "min": 6,
+        "rssMb": 923,
+        "heapUsedMb": 64,
+        "workerHeapTotalMb": 153
+      },
+      {
+        "min": 7,
+        "rssMb": 921,
+        "heapUsedMb": 64,
+        "workerHeapTotalMb": 145
+      },
+      {
+        "min": 8,
+        "rssMb": 1006,
+        "heapUsedMb": 65,
+        "workerHeapTotalMb": 173
+      }
+    ]
+  },
+  "population": null
+}
