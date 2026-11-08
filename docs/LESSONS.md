@@ -2762,3 +2762,19 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - A test that kills processes must prove its isolation override took effect (assert the temp file is the one written) before it kills anything.
   - Shared state files (pid lists, ledgers) record their owner; a reaper checks the owner is dead.
   - Bulk find/replace on identifiers can rewrite string keys too. Grep env-var names after a rename.
+
+## 2026-11-08 — Gate on counts, not timings: what makes a count really host-independent
+Commit: perf/count-budgets (plan machine-independent-perf WS3)
+
+The laptop's timings were mostly host noise, the desktop isn't always there, and a hosted runner failed a "≤ 2 ms" unit test at 2.07 ms with no code change (convoyBudget, PR #352). So the per-PR perf gate is now COUNTS: server work per tick (bodies, AI agents, swarm records/bytes, entities per snapshot) and client draw calls / display objects / uploads / atlas pages. Four things a count needed before it stopped depending on the machine:
+
+1. **Window on scene ticks, not wall time.** The scene script is tick-driven; a wall-clock window on a slow host covers an earlier part of the scene. Both gates read at fixed scene times.
+2. **Pin adaptive quality.** `EffectsBudget` drops tiers when frames are slow, so a slow host draws fewer effects and "improves" the count. `?perfcounts=1` pins High.
+3. **Same rasteriser everywhere.** SwiftShader (`--use-angle=swiftshader --enable-unsafe-swiftshader`) on every host, at 960×540 so a 2-core runner still renders ~70–90 frames in the window.
+4. **Count frames on the renderer, not on `update()`.** The worker's Pixi ticker renders independently of the mirror updates; draw calls are closed per frame on Pixi's `postrender` runner.
+
+What still varies is the SCENE: combat outcomes differ run to run (wide-view ended with 50 ships one run, 135 another), so display objects and close-up draw calls carry a real spread. That is not host noise, but it widens the budgets; contacts per tick (±25 % on one machine) stayed print-only.
+
+CPU time is NOT a fix for noisy timing here: the room's tick loop is a `setImmediate` spin, so process / main-thread CPU reads ~100 % busy whatever the tick does. `process.threadCpuUsage()` sampled around `update()` is the only meaningful main-thread figure, it needs Node ≥ 23.9 (CI runs 22), and Windows rounds it to ~15.6 ms. Print-only.
+
+Unit tests: convoyBudget now gates candidate checks per planning pass (988, deterministic; budget 1235) and prints the time; the Reconciler "replay under 50 ms" now counts physics steps (≤ 128).

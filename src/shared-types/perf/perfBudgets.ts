@@ -57,3 +57,50 @@ export const COUNT_BUDGETS: Record<string, CountBudget> = {
     work: { bodiesPerTick: 98, aiAgentsPerTick: 93, swarmRecordsPerTick: 93, swarmBytesPerTick: 3142, entitiesPerSnapshot: 117 },
   },
 };
+
+/**
+ * CLIENT count budgets (WS3), gated by `pnpm perf:counts` (`perf/run-counts.ts`,
+ * CI job `perf-counts`). Keyed `<scene>/<shiplight>`. Read in a real browser
+ * with software WebGL (SwiftShader, the same on every host) and the effects
+ * tier pinned to High, over a fixed stretch of SCENE time.
+ */
+export interface ClientCountBudget {
+  /** WebGL draw calls per rendered frame, 95th percentile. */
+  drawCallsP95: number;
+  /** Nodes in the Pixi stage tree at the end of the window. */
+  displayObjects: number;
+  /** Texels uploaded to atlas pages during the window. */
+  uploadTexels: number;
+  /** Atlas pages live at the end of the window. */
+  atlasPages: number;
+  measured: string;
+}
+
+/** No upload is expected inside the window (art is baked before the curtain
+ *  lifts; every calibration run read 0), so the floor is one 2048² atlas page:
+ *  a whole new page mid-scene fails. */
+export const UPLOAD_TEXELS_FLOOR = 2048 * 2048;
+
+// Max of the runs in `measured` + 25 %, rounded up. The spread in draw calls
+// and display objects is the SCENE, not the host: combat plays out differently
+// run to run (wide-view ended one run with 50 ships, another with 135), so
+// explosions and live ships on screen differ. Draw calls on the wide shots are
+// near-constant (LOD dots); the close fleet fight swings with the effects.
+export const CLIENT_COUNT_BUDGETS: Record<string, ClientCountBudget> = {
+  'fleet-fight/baked': {
+    drawCallsP95: 93, displayObjects: 6990, uploadTexels: UPLOAD_TEXELS_FLOOR, atlasPages: 10,
+    measured: 'desktop SwiftShader 960×540, 3 runs 2026-11-08: draw p95 40–74, objects 4920–5592, uploads 0, pages 8',
+  },
+  'fleet-fight/high': {
+    drawCallsP95: 230, displayObjects: 9053, uploadTexels: UPLOAD_TEXELS_FLOOR, atlasPages: 7,
+    measured: 'desktop SwiftShader 960×540, 3 runs 2026-11-08: draw p95 145–184, objects 5353–7242, uploads 0, pages 5',
+  },
+  'wide-view/baked': {
+    drawCallsP95: 28, displayObjects: 13198, uploadTexels: UPLOAD_TEXELS_FLOOR, atlasPages: 10,
+    measured: 'desktop SwiftShader 960×540, 3 runs 2026-11-08: draw p95 20–22, objects 6977–10558, uploads 0, pages 8',
+  },
+  'wide-view/high': {
+    drawCallsP95: 32, displayObjects: 12590, uploadTexels: UPLOAD_TEXELS_FLOOR, atlasPages: 7,
+    measured: 'desktop SwiftShader 960×540, 3 runs 2026-11-08: draw p95 25–25, objects 8313–10072, uploads 0, pages 5',
+  },
+};
