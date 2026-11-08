@@ -20,7 +20,7 @@
  * callbacks, iterates a tiny map, and clears by key — alloc-light (invariant #14).
  */
 import type { LivingWorldRoom } from './LivingWorldRoom.js';
-import type { WarpDisposition } from '../../shared-types/messages.js';
+import type { WarpDisposition, WarpWarningEvent } from '../../shared-types/messages.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 
 export interface IncomingEntry {
@@ -69,6 +69,9 @@ export class IncomingRegistry {
   private readonly entries = new Map<string, IncomingEntry>();
   /** `${destSectorKey}|${id}` → last warp_warning broadcast time (ms). */
   private readonly lastBroadcastAt = new Map<string, number>();
+  /** `${destSectorKey}|${id}` → when the latest leg was registered (ms): the
+   *  base for the countdown left when replaying to a late joiner. */
+  private readonly registeredAt = new Map<string, number>();
   private readonly nowMs: () => number;
   private readonly onUnknownDest: ((destSectorKey: string, id: string) => void) | undefined;
 
@@ -95,12 +98,14 @@ export class IncomingRegistry {
       if (e.id === entry.id && e.destSectorKey !== entry.destSectorKey) {
         this.entries.delete(k);
         this.lastBroadcastAt.delete(k);
+        this.registeredAt.delete(k);
         this.rooms.get(e.destSectorKey)?.broadcastWarpWarningClear({ type: 'warp_warning_clear', id: e.id });
       }
     }
     const key = this.keyOf(entry.id, entry.destSectorKey);
     const existing = this.entries.get(key);
     this.entries.set(key, entry);
+    this.registeredAt.set(key, this.nowMs());
     // Skip redundant re-broadcasts: an 8-member squad departing for the SAME
     // destination in one control tick calls register() 8 times — broadcast once.
     // Only a NEW inbound or a meaningfully CHANGED one (count/label/disposition)
@@ -155,6 +160,7 @@ export class IncomingRegistry {
     const key = this.keyOf(id, destSectorKey);
     if (!this.entries.delete(key)) return;
     this.lastBroadcastAt.delete(key); // next register broadcasts immediately
+    this.registeredAt.delete(key);
     this.rooms.get(destSectorKey)?.broadcastWarpWarningClear({ type: 'warp_warning_clear', id });
   }
 
@@ -168,8 +174,36 @@ export class IncomingRegistry {
     return this.entries.values();
   }
 
+  /**
+   * Replay what is still inbound to `destSectorKey`, each with the countdown
+   * LEFT, for a pilot who arrives mid-approach (2026-11-08). `warp_warning` is
+   * a one-shot broadcast to the room's occupants at the time, so without this
+   * a pilot joining during a wave's ~30 s final approach never saw the warning
+   * (the wave-attack E2E's owner joined 2.7 s after the broadcast). Entries
+   * whose countdown has run out are skipped. Called once per join, never per
+   * tick.
+   */
+  forEachInbound(destSectorKey: string, send: (msg: WarpWarningEvent) => void): void {
+    const now = this.nowMs();
+    for (const [key, e] of this.entries) {
+      if (e.destSectorKey !== destSectorKey) continue;
+      const left = e.etaMs - (now - (this.registeredAt.get(key) ?? now));
+      if (left <= 0) continue;
+      send({
+        type: 'warp_warning',
+        id: e.id,
+        label: e.label,
+        count: e.count,
+        countdownMs: left,
+        disposition: e.disposition,
+        ...(e.kind !== undefined ? { kind: e.kind } : {}),
+      });
+    }
+  }
+
   /** Drop every entry without broadcasting (teardown — rooms are going away). */
   reset(): void {
     this.entries.clear();
+    this.registeredAt.clear();
   }
 }

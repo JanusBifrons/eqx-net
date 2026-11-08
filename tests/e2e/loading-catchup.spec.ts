@@ -31,6 +31,7 @@ test('after a long loading hold the prediction clock resumes in step, not by rep
   const { ctx, page } = await launchTestClient(browser, {
     room: 'test-sector', spawnX: 0, spawnY: 0, shipKind: 'fighter',
     extraParams: { worker: '0', art: 'machined', artDelayMs: '12000' },
+    waitForInPlay: false, // the spec measures the curtain lift itself
   });
   try {
     const r = await page.evaluate(() => new Promise<{ steps: number[]; ahead: number[]; waitedMs: number; fps: number }>((resolve, reject) => {

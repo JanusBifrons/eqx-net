@@ -23,6 +23,17 @@
  * a small tolerance across a coast. Under the bug the drawn origin freezes
  * while the recompute glides away → large divergence → FAIL.
  *
+ * 2026-11-08: the check is now MOUNT-aware. `data-beam-from-x/y` is the
+ * ship NOSE (centre + 20 u), but the drawn beam starts at the first live
+ * mount's barrel (wing mount pivot + 20 u along the slewing turret angle),
+ * so comparing to the nose read a constant ~16 u "detach" on a correct
+ * build. We now check the drawn origin lies 20 u from that mount's pivot,
+ * using the ship pose from the SAME dataset write (a pose read from the live
+ * mirror is a frame or two newer and read up to ~13 u off while coasting).
+ * And the spec joined the live `sector` room, whose drones killed the
+ * 120-hull interceptor mid-coast (respawn at 0,0, beam off): it now uses the
+ * drone-free `test-sector`.
+ *
  * ── Proving RED (next agent, on a browser host) ──
  * Temporarily restore the `if (dirty)` gate in PixiRenderer's live-beam
  * block → this spec must fail with a CLEAN assertion ("drawn beam origin
@@ -35,6 +46,8 @@
 import { waitForInPlay } from '../helpers/gameScenario';
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import { getShipKind } from '../../../src/shared-types/shipKinds';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
@@ -45,7 +58,7 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 test.describe.configure({ timeout: 90_000 });
 
 async function joinSector(page: Page): Promise<void> {
-  await page.goto(`${BASE_URL}?room=sector&shipKind=interceptor&worker=0`);
+  await page.goto(`${BASE_URL}?room=test-sector&testId=${randomUUID()}&shipKind=interceptor&worker=0`);
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
@@ -58,30 +71,46 @@ async function joinSector(page: Page): Promise<void> {
 }
 
 interface Sample {
-  recomputeX: number | null;
-  recomputeY: number | null;
-  drawnX: number | null;
-  drawnY: number | null;
+  /** | |drawn origin − first live mount's pivot| − 20 |, from ONE frame's dataset. */
+  detach: number | null;
   shipX: number;
   shipY: number;
   beamActive: boolean;
 }
 
+type MountGeom = { id: string; localX: number; localY: number };
+const INTERCEPTOR_MOUNTS: MountGeom[] = getShipKind('interceptor').mounts.map((m) => ({
+  id: m.id, localX: m.localX, localY: m.localY,
+}));
+
 async function sample(page: Page): Promise<Sample> {
-  return page.evaluate<Sample>(() => {
+  return page.evaluate<Sample, MountGeom[]>((mounts) => {
     const el = document.querySelector('[data-testid="game-surface"]') as HTMLElement | null;
     const ds = el?.dataset ?? ({} as DOMStringMap);
     const num = (v: string | undefined): number | null => (v !== undefined ? parseFloat(v) : null);
-    return {
-      recomputeX: num(ds['beamFromX']),
-      recomputeY: num(ds['beamFromY']),
-      drawnX: num(ds['beamRenderedFromX']),
-      drawnY: num(ds['beamRenderedFromY']),
-      shipX: parseFloat(ds['shipX'] ?? 'NaN'),
-      shipY: parseFloat(ds['shipY'] ?? 'NaN'),
-      beamActive: ds['beamActive'] === '1',
-    };
-  });
+    const shipX = parseFloat(ds['shipX'] ?? 'NaN');
+    const shipY = parseFloat(ds['shipY'] ?? 'NaN');
+    const shipAngle = parseFloat(ds['shipAngle'] ?? 'NaN');
+    const drawnX = num(ds['beamRenderedFromX']);
+    const drawnY = num(ds['beamRenderedFromY']);
+    // The renderer draws a live beam from its MOUNT pivot + 20 u along the
+    // mount's (slewing) fire angle; the pool's rendered origin is slot 0 =
+    // the first live beam. So the drawn origin sits exactly 20 u from that
+    // mount's pivot whatever the turret angle. Every pose here comes from the
+    // SAME dataset write as the drawn origin (one frame, no publish lag).
+    type C = { mirror: { liveBeams?: Map<string, unknown> } };
+    const firstMountId = (window as unknown as { __eqxClient?: C }).__eqxClient?.mirror.liveBeams?.keys().next().value as string | undefined;
+    const m = mounts.find((mm) => mm.id === firstMountId);
+    let detach: number | null = null;
+    if (m && drawnX !== null && drawnY !== null && Number.isFinite(shipAngle)) {
+      const cosA = Math.cos(shipAngle);
+      const sinA = Math.sin(shipAngle);
+      const px = shipX + (m.localX * cosA - m.localY * sinA);
+      const py = shipY + (m.localX * sinA + m.localY * cosA);
+      detach = Math.abs(Math.hypot(drawnX - px, drawnY - py) - 20);
+    }
+    return { detach, shipX, shipY, beamActive: ds['beamActive'] === '1' };
+  }, INTERCEPTOR_MOUNTS);
 }
 
 test('drawn beam origin tracks the ship while coasting (no render-cache freeze)', async ({ browser }) => {
@@ -110,22 +139,17 @@ test('drawn beam origin tracks the ship while coasting (no render-cache freeze)'
     const active = samples.filter(
       (s) =>
         s.beamActive &&
-        s.drawnX !== null && s.drawnY !== null &&
-        s.recomputeX !== null && s.recomputeY !== null &&
+        s.detach !== null &&
         Number.isFinite(s.shipX) && Number.isFinite(s.shipY),
     );
     expect(active.length, 'beam should be active for most coast frames').toBeGreaterThan(20);
 
-    // The DRAWN beam origin must equal the live recompute every frame. A few
-    // units of tolerance covers the ≤1-frame publish/draw ordering lag and
-    // the toFixed(3) rounding; the bug detaches by tens of units as the ship
-    // glides away from the frozen drawn beam.
+    // The DRAWN beam origin must sit on its mount's 20 u muzzle circle every
+    // frame. A few units of tolerance covers the toFixed rounding; the bug
+    // detaches by tens of units as the ship glides away from the frozen
+    // drawn beam.
     let maxDetach = 0;
-    for (const s of active) {
-      const dx = s.drawnX! - s.recomputeX!;
-      const dy = s.drawnY! - s.recomputeY!;
-      maxDetach = Math.max(maxDetach, Math.hypot(dx, dy));
-    }
+    for (const s of active) maxDetach = Math.max(maxDetach, s.detach!);
     expect(maxDetach, `drawn beam origin detached from the live ship by ${maxDetach.toFixed(1)} u`).toBeLessThan(6);
 
     // Sanity: the ship actually MOVED during the coast (else the test would
