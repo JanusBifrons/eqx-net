@@ -7,7 +7,7 @@
  * best-effort: a private window, a full disk or a blocked store just means
  * "not cached", never an error.
  */
-import type { Baked } from './bake.js';
+import { isLitKey, type Baked } from './bake.js';
 import type { LightRig } from './shade.js';
 
 /** Bump whenever forge output changes, or old art would be served. */
@@ -35,6 +35,8 @@ function open(): Promise<IDBDatabase | null> {
 }
 
 export function storeKey(key: string, rig: LightRig): string {
+  // GPU-lit maps don't depend on the sun: one stored copy for every sector.
+  if (isLitKey(key)) return `${FORGE_VERSION}|${key}`;
   return `${FORGE_VERSION}|${key}|${rig.sunAz.toFixed(4)}|${rig.sunElev.toFixed(4)}|${rig.exposure}`;
 }
 

@@ -9,6 +9,7 @@ import { forgeRock, forgeScrap, forgeShip, forgeStructure, forgeTurretGun, shipE
 import { shipTurrets, structureTurrets } from './turretLayout.js';
 import { bakeFxImg, FX_VERSION, isFxId } from './fx/fxTextures.js';
 import { litFrame, type Frame, type LightRig } from './shade.js';
+import { encodeLitMaps } from './litMaps.js';
 import { linToSrgb } from './color.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
@@ -46,21 +47,35 @@ export interface Baked {
   density: number;
   nozzles: Fields['nozzles'];
   navLights: Fields['navLights'];
+  /** GPU-lit bakes: the one frame is three map slices side by side
+   *  (litMaps.ts); these are the facts the shader needs to read them. */
+  lit?: LitMeta;
 }
+
+/** A GPU-lit bake's map facts (one slice's size, texels per unit, scales). */
+export interface LitMeta { w: number; h: number; ppu: number; maxH: number; emisMax: number }
+
+/**
+ * GPU-lit art (plan prancy-squishing-donut R2, `?shiplight=gpu`): a job with
+ * `lit: true` keeps the unlit maps instead of lit frames, and the GPU lights
+ * them every frame. The maps don't depend on the sun, so the key carries no
+ * sun and one bake serves every sector.
+ */
+export type LitFlag = { lit?: boolean };
 
 export type BakeJob =
   /** `rings` (R&D, rnd/turrets): cut turret rings into the hull at its mounts. */
-  | { type: 'ship'; id: string; paint?: number; rings?: boolean }
+  | ({ type: 'ship'; id: string; paint?: number; rings?: boolean } & LitFlag)
   /** `rot`: the structure's sprite rotation (radians, quarter turns). The sun
    *  is baked relative to it, so a turned structure is still lit from the
    *  sector's sun rather than having its lighting turn with it. */
-  | { type: 'struct'; id: string; seed: number; accent?: number; rot?: number; rings?: boolean }
+  | ({ type: 'struct'; id: string; seed: number; accent?: number; rot?: number; rings?: boolean } & LitFlag)
   /** The turning part of a turret (R&D, rnd/turrets); lit at every sun step like a ship. */
-  | { type: 'turret'; id: GunFamily; paint: number; len: number; wid: number; cap: number; ppu: number; naval?: { barrels: number; houseW: number; houseL: number; part?: 'house' | 'barrel' } }
+  | ({ type: 'turret'; id: GunFamily; paint: number; len: number; wid: number; cap: number; ppu: number; naval?: { barrels: number; houseW: number; houseL: number; part?: 'house' | 'barrel' } } & LitFlag)
   /** One component of a destroyed ship; tumbles, so baked like a ship. */
-  | { type: 'scrap'; id: string; component: number }
+  | ({ type: 'scrap'; id: string; component: number } & LitFlag)
   /** An asteroid, by its seeded outline; static, so one frame at its turn. */
-  | { type: 'rock'; id: string; entityId: number; radius: number; resource?: string; rot?: number }
+  | ({ type: 'rock'; id: string; entityId: number; radius: number; resource?: string; rot?: number } & LitFlag)
   /** An effect or backdrop texture (art/fx/fxTextures.ts, plan iridescent-seeking-rainbow v3). */
   | { type: 'fx'; id: string; variant?: string; seed?: number };
 
@@ -70,6 +85,7 @@ const SCALE_TAG = SHIP_SCALE === 1 ? '' : `@s${SHIP_SCALE}`;
 
 /** The cache key a job's result is stored under (shared by main and workers). */
 export function bakeKey(j: BakeJob): string {
+  if (j.type !== 'fx' && j.lit) return `L${litKeyBody(j)}`;
   if (j.type === 'ship') return `m:${j.id}:${j.paint ?? ''}${j.rings ? ':R' : ''}${isCapitalKind(j.id) ? ':T' : ''}${SCALE_TAG}`;
   if (j.type === 'turret') return `g:${j.id}:${j.paint}:${j.len.toFixed(2)}:${j.wid.toFixed(2)}:${j.cap.toFixed(2)}:${j.ppu}${j.naval ? `:n${j.naval.barrels}:${j.naval.houseW.toFixed(2)}:${j.naval.houseL.toFixed(2)}${j.naval.part ? `:${j.naval.part}` : ''}` : ''}`;
   if (j.type === 'scrap') return `s:${j.id}:${j.component}${SCALE_TAG}`;
@@ -77,6 +93,31 @@ export function bakeKey(j: BakeJob): string {
   if (j.type === 'rock') return `r:${j.entityId}:${j.radius}:${j.resource ?? ''}:${quarterTurnsFine(j.rot ?? 0)}`;
   const q = quarterTurns(j.rot ?? 0);
   return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}${j.rings ? ':R' : ''}`;
+}
+
+/** A lit job's key (prefixed `L` by bakeKey): no sun, and no turn for
+ *  structures and rocks (the mesh turns; the maps don't change). */
+function litKeyBody(j: Exclude<BakeJob, { type: 'fx' }>): string {
+  if (j.type === 'struct') return `m:${j.id}:${j.seed}:${j.accent ?? ''}${j.rings ? ':R' : ''}`;
+  if (j.type === 'rock') return `r:${j.entityId}:${j.radius}:${j.resource ?? ''}`;
+  return bakeKey({ ...j, lit: false });
+}
+
+/** True for a GPU-lit bake key (its stored copy doesn't depend on the sun). */
+export function isLitKey(key: string): boolean { return key.charCodeAt(0) === 76; /* 'L' */ }
+
+/** Lit maps as a bake: one frame (tiled along rows for capitals). */
+function litBaked(f: Fields, tileRows: number): Baked {
+  const m = encodeLitMaps(f);
+  const frames: Frame[] = [];
+  const tiled = f.g.h > tileRows;
+  if (tiled) splitRows(m.frame, tileRows, frames); else frames.push(m.frame);
+  const tiles = tiled ? Math.ceil(f.g.h / tileRows) : 1;
+  return {
+    frames, w: m.frame.w, h: m.h, density: f.g.ppu, nozzles: f.nozzles, navLights: f.navLights,
+    lit: { w: m.w, h: m.h, ppu: m.ppu, maxH: m.maxH, emisMax: m.emisMax },
+    ...(tiles > 1 ? { tiles, tileH: tileRows } : {}),
+  };
 }
 
 /** Asteroid turns snapped to 1/16 of a circle (they sit at any angle). */
@@ -158,11 +199,13 @@ export function runBake(j: BakeJob, rig: LightRig): Baked {
   if (j.type === 'rock') {
     const ppu = Math.min(1.5, ROCK_MAX_SIDE / (j.radius * 2.6 + 4));
     const f = forgeRock(j.entityId, j.radius, j.resource, { ppu });
+    if (j.lit) return litBaked(f, Infinity);
     const turn = quarterTurnsFine(j.rot ?? 0) * (Math.PI / 8);
     return { frames: [litFrame(f, rig, rig.sunAz - turn), albedoHalf(f)], w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: [], navLights: [] };
   }
   if (j.type === 'turret') {
     const f = forgeTurretGun({ family: j.id, paint: j.paint, len: j.len, wid: j.wid, cap: j.cap, ppu: j.ppu, ...(j.naval ? { naval: j.naval } : {}) });
+    if (j.lit) return litBaked(f, Infinity);
     const frames: Frame[] = [];
     for (let k = 0; k < SUN_STEPS; k++) frames.push(litFrame(f, rig, (k / SUN_STEPS) * Math.PI * 2));
     return { frames, w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: [], navLights: [] };
@@ -172,6 +215,7 @@ export function runBake(j: BakeJob, rig: LightRig): Baked {
     const f = j.type === 'ship'
       ? forgeShip(j.id, { ppu: shipPpu(j.id), paint: j.paint, rings })
       : forgeScrap(j.id, j.component, { ppu: scrapPpu(j.id) });
+    if (j.lit) return litBaked(f, j.type === 'ship' && isCapitalKind(j.id) ? TILE_MAX_SIDE : Infinity);
     const frames: Frame[] = [];
     const tiled = j.type === 'ship' && isCapitalKind(j.id) && f.g.h > TILE_MAX_SIDE;
     const steps = j.type === 'ship' && isCapitalKind(j.id) ? CAPITAL_SUN_STEPS : SUN_STEPS;
@@ -184,6 +228,7 @@ export function runBake(j: BakeJob, rig: LightRig): Baked {
   }
   const rings = j.rings ? structureTurrets(j.id).map((t) => ({ x: t.px, y: t.py, r: t.ring })) : undefined;
   const f = forgeStructure(j.id, { ppu: STRUCT_PPU, maxSide: STRUCT_MAX_SIDE, seed: j.seed, accent: j.accent, rings });
+  if (j.lit) return litBaked(f, Infinity);
   return {
     frames: [litFrame(f, rig, rig.sunAz - quarterTurns(j.rot ?? 0) * (Math.PI / 2)), albedoHalf(f)],
     w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: f.nozzles, navLights: f.navLights,
