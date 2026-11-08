@@ -30,6 +30,8 @@ export interface RunMetrics {
   timing: Record<string, number>;
   counts: Record<string, number>;
   raw: unknown;
+  /** Host-load samples around the run (perf runner; showcase/hostLoad.ts `LoadSample`). */
+  load?: { before: unknown; after: unknown };
 }
 
 export interface Threshold { rel: number; abs: number }

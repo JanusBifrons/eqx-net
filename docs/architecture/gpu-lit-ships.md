@@ -44,7 +44,41 @@ Lights come from the game's own effects: engine plumes (`FxEngines.thrustOf`), b
 
 ## Cost (laptop, same build, `pnpm perf:scenes --base <sha> --head-params shiplight=gpu`)
 
-Both perf scenes GREEN. Typical frames and renderer CPU are unchanged; the fleet fight drops about one more frame every 2 s (p99 16.8 → 33.4 ms). The CPU side is the lighting pass (~0.9 ms a frame at 50 ships, mostly light picking) plus one draw call per lit mesh. Next: a custom batcher (plan R3) and the phone run. Ledger: `perf/ledger/gpu-light-ab.json`.
+**Correction (2026-11-08): these A/Bs were inconclusive, not GREEN.** Every GPU-lighting A/B behind #344–#346 ran 3 reps per arm: `gpu-light-ab.json`, `gpu-light-ab2.json`, the `hitch-*.json` investigation and the phone-proxy A/B (`phone-proxy-ab.json`, CPU ×2) behind the phone defaults. At 3 v 3 the exact Mann-Whitney test's smallest possible p is 0.10, so none of them could have gone RED, whatever the cost (`docs/LESSONS.md`, 2026-11-08, "A 3-rep exact Mann-Whitney can never reject at 0.05"; #352). Under today's verdict (`perf/verdict.ts`) each reads INCONCLUSIVE. The medians below are observations, not a verdict:
+
+- typical frames and renderer CPU looked unchanged;
+- the fleet fight dropped about one more frame every 2 s (p99 16.8 → 33.4 ms), and hitches roughly doubled against baked (10 → 20 a minute after geometry sharing, p = 0.7), inside this laptop's same-code spread (×2 on hitches);
+- the CPU side is the lighting pass (~0.9 ms a frame at 50 ships, mostly light picking) plus one draw call per lit mesh.
+
+So GPU lighting is on by default without evidence that it is free on weak hardware. See the open question below. Ledger: `perf/ledger/gpu-light-ab.json`.
+
+## Open question: cost on weak hardware
+
+Does GPU lighting (Medium on phones, Low on phones under 4 GB) cost frames or hitches on a phone? Unanswered (2026-11-08). The phone defaults (`defaultLightingPreset`) rest on the 3-rep phone-proxy A/B above, which could not have failed. Two lanes settle it, neither needs the desktop (the desktop is not a target platform and is not always on):
+
+**1. The real phone** (`pnpm perf:phone`, [perf-scenes.md](perf-scenes.md#the-phone-lane-pnpm-perfphone)). Run on the laptop with the phone plugged in by USB, USB debugging on, unlocked, screen timeout long, Chrome's `chrome://flags/#enable-command-line-on-non-rooted-devices` Enabled, and nothing else running on the laptop:
+
+```
+pnpm perf:phone --scenes fleet-fight,wide-view --reps 8 --base HEAD --base-params shiplight=baked --head-params shiplight=medium --noise-check
+pnpm perf:phone --scenes fleet-fight,wide-view --reps 8 --base HEAD --base-params shiplight=baked --head-params shiplight=low --noise-check
+```
+
+**2. The laptop's phone proxy** (no phone: Chrome on the laptop with its CPU throttled ×2, a phone-sized screen at DPR 2.625, touch):
+
+```
+pnpm perf:scenes --device phone-proxy --cpu-rate 2 --scenes fleet-fight,wide-view --reps 8 --base HEAD --base-params shiplight=baked --head-params shiplight=medium --noise-check
+pnpm perf:scenes --device phone-proxy --cpu-rate 2 --scenes fleet-fight,wide-view --reps 8 --base HEAD --base-params shiplight=baked --head-params shiplight=low --noise-check
+```
+
+Notes:
+- `--base HEAD` with only the params differing measures the switch on one build. Both arms pin `shiplight`: an arm without it runs the device's saved level or its default (Medium on a phone), not baked.
+- `--noise-check` adds the A/A arm (baked against baked), so a move smaller than the host's own same-code spread can't read RED. Each command is 3 arms × 8 reps × 2 scenes: roughly an hour (more on the phone, which reloads the art each run). To split one into chunks, re-run the same command with `--append <ledger>` and `--reps 2` (or 4); the reps add up and the verdict is re-judged over all of them.
+- Exit code: 0 GREEN, 1 RED or INVALID, 3 INCONCLUSIVE (`perf:phone` also 4 = no usable phone, with what to fix).
+- Read `clientFrameP95`, `clientHitchesPerMin` and `renderP95`. If the laptop proxy and the phone disagree, the phone wins: the proxy throttles CPU only, and its GPU is the laptop's.
+
+**Decision rule.** RED on the phone at Medium → phones default to Low (or baked) until a batcher (plan R3) fixes it. RED at Low too → phones default to baked. GREEN on both → the defaults stand, with evidence this time. INCONCLUSIVE → more reps (`--append`), not a decision.
+
+**Result:** not yet run. Record each verdict here with its ledger file name.
 
 ## Status and next steps
 
