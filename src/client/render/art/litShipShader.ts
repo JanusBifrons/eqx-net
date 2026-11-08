@@ -245,7 +245,7 @@ export function litMapsTexture(m: LitMaps): Texture {
 }
 
 /** A light in the world (Pixi space): explosions, weapons fire. */
-export interface PointLight { x: number; y: number; z: number; r: number; g: number; b: number; intensity: number; reach: number }
+export interface PointLight { x: number; y: number; z: number; r: number; g: number; b: number; intensity: number; reach: number; owner: number }
 /** A big hull that shades others (Pixi space): a box with a height. */
 export interface Occluder { id: number; x: number; y: number; rot: number; hx: number; hy: number; height: number; r: number; g: number; b: number; sunlit: number }
 
@@ -256,10 +256,11 @@ export class LitScene {
   readonly occluders: Occluder[] = [];
   occluderCount = 0;
   begin(): void { this.lightCount = 0; this.occluderCount = 0; }
-  addLight(x: number, y: number, z: number, color: number, intensity: number, reach: number): void {
+  /** `owner`: the hull this light belongs to (its engines), -1 for none. */
+  addLight(x: number, y: number, z: number, color: number, intensity: number, reach: number, owner = -1): void {
     let l = this.lights[this.lightCount];
-    if (!l) { l = { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, intensity: 0, reach: 1 }; this.lights.push(l); }
-    l.x = x; l.y = y; l.z = z; l.intensity = intensity; l.reach = reach;
+    if (!l) { l = { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, intensity: 0, reach: 1, owner: -1 }; this.lights.push(l); }
+    l.x = x; l.y = y; l.z = z; l.intensity = intensity; l.reach = reach; l.owner = owner;
     l.r = ((color >> 16) & 255) / 255; l.g = ((color >> 8) & 255) / 255; l.b = (color & 255) / 255;
     this.lightCount++;
   }
@@ -288,6 +289,12 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
   private readonly u: Record<string, Float32Array>;
   /** Occluder id of this hull (so it never shades itself), -1 for none. */
   occluderId = -1;
+  /** Owner id of this hull's own lights (its engines), -1 for none. */
+  lightOwnerId = -1;
+  /** How much of its own engines' light a hull takes (they point away from it). */
+  static OWN_LIGHT = 0.15;
+  /** The hull's bounding radius (world u): lights are judged at its edge. */
+  private readonly hullR: number;
 
   constructor(readonly maps: LitMaps, tex: Texture, readonly settings: LightingSettings = BAKED_LOOK, geometry?: Geometry) {
     const W = maps.frame.w;
@@ -314,6 +321,7 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
     super({ geometry: geometry ?? litShipGeometry(maps), shader });
     this.uni = uni;
     this.u = uni.uniforms as Record<string, Float32Array>;
+    this.hullR = Math.hypot(maps.w, maps.h) / maps.ppu / 2;
   }
 
   /** Light for this frame: the sector's sun, the hull's world pose (Pixi
@@ -356,14 +364,15 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
     const s = this.settings;
     if (s.pointLights > 0) {
       const n = Math.min(s.pointLights, MAX_POINT_LIGHTS);
-      const k = nearestInto(scene.lights, scene.lightCount, x, y, n, -1);
+      const k = strongestLightsInto(scene, x, y, this.hullR, n, this.lightOwnerId);
       const P = this.u['uPLPos']!, C = this.u['uPLCol']!;
       for (let i = 0; i < n; i++) {
         if (i >= k) { C[i * 4 + 3] = 0; continue; }
         const l = scene.lights[_pick[i]!]!;
         const dx = l.x - x, dy = l.y - y;
         P[i * 4] = dx * c - dy * sn; P[i * 4 + 1] = dx * sn + dy * c; P[i * 4 + 2] = l.z; P[i * 4 + 3] = l.reach;
-        C[i * 4] = l.r; C[i * 4 + 1] = l.g; C[i * 4 + 2] = l.b; C[i * 4 + 3] = l.intensity;
+        const own = this.lightOwnerId >= 0 && l.owner === this.lightOwnerId ? LitShipMesh.OWN_LIGHT : 1;
+        C[i * 4] = l.r; C[i * 4 + 1] = l.g; C[i * 4 + 2] = l.b; C[i * 4 + 3] = l.intensity * own;
       }
     }
     if (s.capitalShadows || s.capitalOcclusion || s.capitalBounce) {
@@ -380,6 +389,30 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
       }
     }
   }
+}
+
+/**
+ * The `n` lights that reach this hull hardest into `_pick`: judged at the
+ * hull's EDGE (a capital is kilometres long; its centre is far from a blast
+ * by its side), weighted by intensity and falloff; the hull's own engines
+ * count for little. Returns how many.
+ */
+function strongestLightsInto(scene: LitScene, x: number, y: number, hullR: number, n: number, owner: number): number {
+  let k = 0;
+  for (let i = 0; i < scene.lightCount; i++) {
+    const l = scene.lights[i]!;
+    const edge = Math.max(0, Math.hypot(l.x - x, l.y - y) - hullR);
+    if (edge > l.reach * 2) continue; // out of reach (the shader cuts off at 2× reach)
+    const q = edge / l.reach;
+    const own = owner >= 0 && l.owner === owner ? LitShipMesh.OWN_LIGHT : 1;
+    const d = -(l.intensity * own) / (1 + q * q); // lower = stronger
+    let j: number;
+    if (k < n) j = k++;
+    else { if (d >= _pickD[n - 1]!) continue; j = n - 1; }
+    while (j > 0 && _pickD[j - 1]! > d) { _pickD[j] = _pickD[j - 1]!; _pick[j] = _pick[j - 1]!; j--; }
+    _pickD[j] = d; _pick[j] = i;
+  }
+  return k;
 }
 
 /** The `n` items nearest (x, y) into `_pick` (skipping occluder `skipId`); returns how many. */

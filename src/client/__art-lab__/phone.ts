@@ -118,4 +118,6 @@ async function run(): Promise<void> {
 }
 
 go.addEventListener('click', () => { void run(); });
+// A direct link starts on its own (`?auto=1`): nothing to tap on the phone.
+if (qs.get('auto') === '1') void run();
 export {};

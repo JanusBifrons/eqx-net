@@ -323,6 +323,7 @@ async function main(): Promise<void> {
       v.art = cache.machinedShip(e.id, e.paint); // nozzles + nav lights
       const l = cache.litShip(e.id, e.paint);
       v.lit = new LitShipMesh(l.maps, l.tex, LIGHTING);
+      v.lit.lightOwnerId = i; // its own engines barely light it
       // A capital-sized hull shades the ships around it.
       const hw = l.maps.w / l.maps.ppu / 2, hh = l.maps.h / l.maps.ppu / 2;
       if (Math.max(hw, hh) >= 150) {
@@ -459,7 +460,7 @@ async function main(): Promise<void> {
         s.scale.set(nz.r * 3.2 * glowScale * (0.6 + 0.6 * p.thrust) * fl);
         s.alpha = 0.55 + 0.45 * p.thrust;
         // GPU-lit hulls: the engine is a light (its own stern, nearby hulls).
-        if (LIGHTING.engineLights && STYLE === 'lit') litScene.addLight(pt.x, pt.y, nz.r * 1.2, 0xffa24a, engineLightIntensity(nz.r, p.thrust) * fl, engineLightReach(nz.r));
+        if (LIGHTING.engineLights && STYLE === 'lit') litScene.addLight(pt.x, pt.y, nz.r * 1.2, 0xffa24a, engineLightIntensity(nz.r, p.thrust) * fl, engineLightReach(nz.r), v.lit ? v.lit.lightOwnerId : -1);
         if (v.e.trail) {
           for (let k = 1; k <= TRAIL; k++) {
             v.e.pose(t - k * TRAIL_DT, scratch);
@@ -578,7 +579,7 @@ async function main(): Promise<void> {
         s.scale.set(R * (0.12 + 0.12 * hash01(k, 79)) * glowScale * (1 + ra));
         s.alpha = on ? Math.max(0, Math.exp(-ra * (1.6 + hash01(k, 83))) * Math.min(1, ra * 20)) : 0;
       }
-      if (I > 0.01) litScene.addLight(b.x, b.y, 25, 0xffa050, I * 5, R * 1.1);
+      if (I > 0.01) litScene.addLight(b.x, b.y, 25, 0xff8a30, I * 2.4, R * 1.1);
       // Light the structures near the blast (machined: real albedo lift).
       if (I > 0.01) {
         for (const v of structs) {
