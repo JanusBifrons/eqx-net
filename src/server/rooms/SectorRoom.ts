@@ -2882,7 +2882,9 @@ export class SectorRoom extends Room<SectorState> {
       for (const rec of [...this.swarmRegistry.all()]) { // TODO: alloc-debt (test cue only)
         if (rec.kind !== 1) continue;
         const b = slotBase(rec.slot);
-        this.warpBot(rec.id, parsed.data.x + this.sabF32[b + SLOT_X_OFF]! - lx, parsed.data.y + this.sabF32[b + SLOT_Y_OFF]! - ly);
+        const tx = parsed.data.x + this.sabF32[b + SLOT_X_OFF]! - lx, ty = parsed.data.y + this.sabF32[b + SLOT_Y_OFF]! - ly;
+        this.warpBot(rec.id, tx, ty);
+        this.setBotMoveTarget(rec.id, tx, ty); // hold there after the drop
       }
     });
 

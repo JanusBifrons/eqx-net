@@ -4,7 +4,7 @@
  * drop leaves an arrival burst. Pooled: a second warp reuses the burst.
  */
 import { describe, it, expect } from 'vitest';
-import { WarpFx, type WarpFxShip } from './WarpFx.js';
+import { WarpFx, warpFxSizes, type WarpFxShip } from './WarpFx.js';
 
 const ship = (warp: 1 | 2 | undefined, x = 0, y = 0): WarpFxShip => ({ x, y, rotation: 0, warp, stern: 30, isLocal: false });
 
@@ -107,5 +107,23 @@ describe('WarpFx', () => {
     f(1000, me(2, -40));   // departs: has only moved 40 u
     f(1300, me(2, -120));  // 0.3 s in: 120 u
     expect(fx.departReach()).toBeLessThanOrEqual(120 + 30 + 1);
+  });
+});
+
+describe('warpFxSizes (W2c: warp effects at capital size)', () => {
+  it('fighter-sized ships keep the original effect numbers', () => {
+    for (const stern of [10, 30, 80]) {
+      const s = warpFxSizes(stern);
+      expect(s).toMatchObject({ trailLen: 1600, streakLen: 1400, arriveLen: 160, gapK: 0.4, coreK: 0.06, outK: 0.2, streakK: 0.8, flashK: 1 });
+    }
+  });
+
+  it('a capital gets long, thin trails close to its hull and a modest flash', () => {
+    const stern = 2876; // a battleship
+    const s = warpFxSizes(stern);
+    expect(s.trailLen).toBeGreaterThan(stern * s.outK * 40); // a line, not a box
+    expect(s.streakLen).toBeGreaterThan(stern * s.streakK * 20);
+    expect(stern * s.gapK).toBeLessThan(stern * 0.15); // trails hug a long thin hull
+    expect(stern * s.flashK * 3).toBeLessThan(stern * 1.2); // not a 9 km bloom
   });
 });
