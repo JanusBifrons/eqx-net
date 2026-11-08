@@ -21,11 +21,16 @@ import { ArtCache, PIXEL_ROT_STEPS, SUN_STEPS, type PixelSettings, type ShipArt,
 import { buildScene, SCENE_IDS, type Cam, type Pose, type Scene, type SceneId, type ShipE, type Shot } from './scenes.js';
 import { hash01, valueNoise } from '../render/art/fields.js';
 import { seedVariant, type BakeJob } from '../render/art/bake.js';
+import { LitShipMesh } from '../render/art/litShipShader.js';
 
-type Style = 'current' | 'machined' | 'pixel';
+type Style = 'current' | 'machined' | 'pixel' | 'lit';
 
 const qs = new URLSearchParams(location.search);
-const STYLE = (['current', 'machined', 'pixel'].includes(qs.get('style') ?? '') ? qs.get('style') : 'machined') as Style;
+const STYLE = (['current', 'machined', 'pixel', 'lit'].includes(qs.get('style') ?? '') ? qs.get('style') : 'machined') as Style;
+/** `lit`: ships lit on the GPU (R&D); everything else as `machined`. */
+const MACHINED = STYLE === 'machined' || STYLE === 'lit';
+/** `lit` cast shadows: `?shadow=0` off, else this many march steps. */
+const SHADOW_STEPS = qs.get('shadow') === '0' ? 0 : 48;
 const SCENE = ((SCENE_IDS as readonly string[]).includes(qs.get('scene') ?? '') ? qs.get('scene') : 'ships') as SceneId;
 const ZOOM = qs.has('zoom') ? Number(qs.get('zoom')) : undefined;
 const BENCH_N = qs.has('n') ? Number(qs.get('n')) : 40;
@@ -123,6 +128,8 @@ interface ShipView {
   a: Sprite;
   b: Sprite;
   gfx: Graphics | null;
+  /** `lit` style: the GPU-lit hull. */
+  lit?: LitShipMesh;
   trails: Sprite[];
   nozzles: Sprite[];
   navs: Sprite[];
@@ -192,7 +199,7 @@ async function main(): Promise<void> {
   const t0Bake = performance.now();
   // Machined: bake everything the scene needs on worker threads first
   // (`?workers=0` bakes on the main thread instead, for comparison).
-  if (STYLE === 'machined' && qs.get('workers') !== '0') {
+  if (MACHINED && qs.get('workers') !== '0') {
     const jobs: BakeJob[] = [];
     for (const st of scene.structs) jobs.push({ type: 'struct', id: st.id, seed: seedVariant(st.seed) });
     for (const sh of scene.ships) jobs.push({ type: 'ship', id: sh.id, paint: sh.paint });
@@ -254,7 +261,7 @@ async function main(): Promise<void> {
       return v;
     }
     let art: StructArt;
-    if (STYLE === 'machined') {
+    if (MACHINED) {
       art = cache.machinedStruct(st.id, st.seed);
       v.lit = new Sprite(art.albedo!);
       v.lit.anchor.set(0.5); v.lit.scale.set(2 / art.density); // half-res albedo v.lit.position.set(st.x, st.y);
@@ -291,6 +298,11 @@ async function main(): Promise<void> {
       // Today's renderer has no baked nozzle data; reuse the forge's for the
       // shared engine glow so only the hull art differs between arms.
       v.art = cache.machinedShip(e.id, e.paint);
+    } else if (STYLE === 'lit') {
+      v.art = cache.machinedShip(e.id, e.paint); // nozzles + nav lights
+      const l = cache.litShip(e.id, e.paint);
+      v.lit = new LitShipMesh(l.maps, l.tex);
+      shipL.addChild(v.lit);
     } else if (STYLE === 'machined') {
       v.art = cache.machinedShip(e.id, e.paint);
       v.a.scale.set(1 / v.art.density); v.b.scale.set(1 / v.art.density);
@@ -388,6 +400,9 @@ async function main(): Promise<void> {
       const p = v.pose, art = v.art!;
       if (v.gfx) {
         v.gfx.position.set(p.x, p.y); v.gfx.rotation = p.rot;
+      } else if (v.lit) {
+        v.lit.position.set(p.x, p.y); v.lit.rotation = p.rot;
+        v.lit.setLight(cache.rig, p.rot, SHADOW_STEPS);
       } else if (STYLE === 'machined') {
         const localAz = cache.rig.sunAz - p.rot;
         let u = (localAz / (Math.PI * 2)) * SUN_STEPS;

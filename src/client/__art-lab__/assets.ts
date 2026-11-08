@@ -10,6 +10,8 @@
 import type { Texture } from 'pixi.js';
 import { Atlas } from '../render/art/atlas.js';
 import { forgeShip, forgeStructure, type Fields } from '../render/art/fields.js';
+import { encodeLitMaps, type LitMaps } from '../render/art/litMaps.js';
+import { litMapsTexture } from '../render/art/litShipShader.js';
 import { DEFAULT_RIG, type LightRig } from '../render/art/shade.js';
 import { pixelFrame } from './pixel.js';
 import {
@@ -141,6 +143,19 @@ export class ArtCache {
     if (hit) { this.prebaked.delete(k); return hit; }
     return runBake(job, this.rig);
   }
+
+  /** GPU-lit maps for a ship (R&D): built once per kind + paint. */
+  litShip(id: string, paint?: number): { maps: LitMaps; tex: Texture } {
+    const k = `lit:${id}:${paint ?? ''}`;
+    let hit = this.lit.get(k);
+    if (!hit) {
+      const maps = encodeLitMaps(this.shipFields(id, paint));
+      hit = { maps, tex: litMapsTexture(maps) };
+      this.lit.set(k, hit);
+    }
+    return hit;
+  }
+  private lit = new Map<string, { maps: LitMaps; tex: Texture }>();
 
   private shipFields(id: string, paint?: number): Fields {
     const k = `s:${id}:${paint ?? ''}`;
