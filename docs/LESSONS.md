@@ -2733,3 +2733,13 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - Look R&D goes in the game behind a flag on a branch, not in a parallel renderer: the art lab lacked turrets, the game's effects, shields and sky, and the user called it "some weird parallel system".
   - Pin effect lights to the sprite that draws the effect.
   - Packed multi-slice textures need gutters at least 2^(highest mip level read).
+
+## 2026-11-08 — Turning solar-system sectors on by default
+
+- **Context:** W1c flipped `EQX_SOLAR_SECTORS` to on. Unit tests, integration tests and a 10-minute live-galaxy soak (`scripts/soak-galaxy.ts`) were run with it on and off.
+- **Findings:**
+  - Three integration specs failed only with it on. Two were a real bug: arrival placement for a sector with no solar pockets fell back to `SECTOR_PLAYABLE_HALF_EXTENT`, now ±200 km, so test-room haulers spawned 190 km out and never docked. The third (elites) was a test parked at Home while elites now play out in the battle-zone pocket.
+  - `sectorSpace.measure.test.ts` wrote `scale-1.json` regardless of mode, so a solar run silently overwrote the committed classic ledger. It now writes `solar.json`.
+- **Rules:**
+  - A fallback for "no pockets" means the classic sector (`HOME_POCKET_HALF_EXTENT`), not the current extent.
+  - A measurement that writes a ledger file must key the file on every switch that changes what it measures.
