@@ -836,6 +836,7 @@ export class PixiRenderer implements IRenderer {
       // B4: explosions (ship / drone / structure deaths, missile detonations)
       // and missile smoke trails.
       this._fxExplosions = new FxExplosions(art, () => this.effects?.getQuality() ?? 'medium');
+      this._fxExplosions.onSpawn = (x, y, r): void => this.noteBlastLight(x, y, r);
       this._fxMissileTrails = new FxMissileTrails(art);
       this.shipContainer.addChild(this._fxMissileTrails.smokeLayer, this._fxExplosions.smokeLayer, this._fxMissileTrails.glowLayer, this._fxExplosions.fireLayer);
       this._missileUpdaterCtx.fxTrails = this._fxMissileTrails;
@@ -1546,7 +1547,6 @@ export class PixiRenderer implements IRenderer {
         // particle burst + shock filter when its textures are ready.
         const dying = this.sprites.get(targetId);
         const diameter = dying ? Math.max(dying.width, dying.height) : 40;
-        this.noteBlastLight(pose.x, -pose.y, blastRadiusFor(diameter));
         if (this._fxExplosions?.spawn(pose.x, -pose.y, blastRadiusFor(diameter), performance.now())) {
           // drawn by FxExplosions
         } else if (this.effects) {
@@ -2428,7 +2428,7 @@ export class PixiRenderer implements IRenderer {
     // explosions in the wrong place, review 2026-11-07).
     for (const [id, rec] of this._navalShells) {
       if (this._turretShotSeen.has(id)) continue;
-      if (shellEndedOnHit(Math.hypot(rec.x - rec.sx, rec.y - rec.sy), rec.reach)) { this._fxExplosions?.spawn(rec.x, rec.y, rec.r, now); this.noteBlastLight(rec.x, rec.y, rec.r); }
+      if (shellEndedOnHit(Math.hypot(rec.x - rec.sx, rec.y - rec.sy), rec.reach)) this._fxExplosions?.spawn(rec.x, rec.y, rec.r, now);
       this._navalShells.delete(id);
       this._navalShellFree.push(rec);
     }

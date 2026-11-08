@@ -94,9 +94,12 @@ export const LOOK_REAL: LightingSettings = {
 export const LOOK_NIGHT: LightingSettings = {
   ...LOOK_REAL,
   fillLight: true,
-  fillStrength: 0.35,
-  // A faint floor, so a wall facing neither light isn't blacker than space.
-  ambientBoost: 0.15,
+  fillStrength: 0.5,
+  // Most of today's (dim) ambient: a shadow or a wall facing neither light
+  // stays readable instead of a black hole blacker than space (review
+  // 2026-11-08, base film).
+  ambientBoost: 0.8,
+  shadow: { strength: 0.9, edge: 0.3, length: 3 },
   litStructures: true,
   litAsteroids: true,
 };
