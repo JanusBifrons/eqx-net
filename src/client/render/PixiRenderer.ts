@@ -31,6 +31,7 @@ import { readFxKillSwitches } from './fxKillSwitches';
 import { createArtService, type ArtHandle } from './art/ArtService.js';
 import { MachinedShipSprite } from './art/MachinedShipSprite.js';
 import { litPass } from './art/litPass.js';
+import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach } from './art/lightingSettings.js';
 import { MachinedFlatSprite } from './art/MachinedFlatSprite.js';
 import { warmUpJobs } from './art/warmUp.js';
 import { Backdrop } from './art/fx/Backdrop.js';
@@ -48,7 +49,7 @@ import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { SHIELD_RADIUS_PAD } from '../../shared-types/shipKinds.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
 import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
-import { BeamSpritePool } from './BeamSpritePool';
+import { BeamSpritePool, type BeamView } from './BeamSpritePool';
 import {
   CameraDirector,
   type CameraTargetLookup,
@@ -1545,6 +1546,7 @@ export class PixiRenderer implements IRenderer {
         // particle burst + shock filter when its textures are ready.
         const dying = this.sprites.get(targetId);
         const diameter = dying ? Math.max(dying.width, dying.height) : 40;
+        this.noteBlastLight(pose.x, -pose.y, blastRadiusFor(diameter));
         if (this._fxExplosions?.spawn(pose.x, -pose.y, blastRadiusFor(diameter), performance.now())) {
           // drawn by FxExplosions
         } else if (this.effects) {
@@ -1614,6 +1616,7 @@ export class PixiRenderer implements IRenderer {
     updateSwarmSprites(mirror, this._swarmUpdaterCtx);
     this._lodDots.update(mirror, this.sprites, this.world.scale.x);
     this.noteTurretShots(mirror);
+    this.feedLitScene(mirror);
 
     for (const [id, sprite] of this.sprites) {
       if (!seen.has(id)) {
@@ -2330,6 +2333,81 @@ export class PixiRenderer implements IRenderer {
     return this.sprites.has(k) ? k : null;
   }
 
+  // ---- GPU-lit art: lights from the frame's weapons fire and explosions.
+  private readonly _blastLights: Array<{ x: number; y: number; r: number; t0: number }> = [];
+  private _blastLightNext = 0;
+  private readonly _litShotSeen = new Map<string, number>();
+  private _litShotGen = 0;
+
+  /** An explosion lights the hulls around it for ~0.9 s (sprite space). */
+  private noteBlastLight(x: number, y: number, r: number): void {
+    if (!litPass.settings || litPass.settings.pointLights <= 0) return;
+    const L = this._blastLights;
+    if (L.length < 24) { L.push({ x, y, r, t0: performance.now() }); return; }
+    const b = L[this._blastLightNext]!;
+    this._blastLightNext = (this._blastLightNext + 1) % L.length;
+    b.x = x; b.y = y; b.r = r; b.t0 = performance.now();
+  }
+
+  /**
+   * GPU-lit art: add this frame's lights to the lighting pass (sprite space):
+   * explosions (fading), projectiles in flight (naval shells by calibre, with
+   * a muzzle flash the frame they appear), missiles and beams. Alloc-free
+   * apart from the seen-map's entries (one per live shot).
+   */
+  private feedLitScene(mirror: RenderMirror): void {
+    const ls = litPass.settings;
+    if (!ls || ls.pointLights <= 0) return;
+    const sc = litPass.scene, now = performance.now();
+    for (const b of this._blastLights) {
+      const age = (now - b.t0) / 900;
+      if (age < 0 || age >= 1) continue;
+      const k = (1 - age) * (1 - age);
+      sc.addLight(b.x, b.y, 25, 0xff8a30, 2.4 * k, b.r * 2.2 + 40);
+    }
+    const gen = ++this._litShotGen;
+    if (mirror.projectiles) for (const [id, p] of mirror.projectiles) {
+      if (p.beam) continue;
+      const w = p.weaponId ?? '';
+      const K = w === 'naval_xl' ? 6 : w === 'naval_l' ? 4.5 : w === 'naval_m' ? 3 : w === 'naval_s' ? 2 : 1;
+      const color = w.startsWith('naval_') || w === 'autocannon' ? 0xffc070 : 0x9fd8ff;
+      const x = p.x, y = -p.y;
+      sc.addLight(x, y, 5 * K, color, K > 1 ? 0.36 * K : 0.9, 55 * K);
+      if (!this._litShotSeen.has(id) && K > 1) {
+        // Muzzle flash: the shell's first frame, as a short blast.
+        this.noteMuzzleFlash(x, y, K);
+      }
+      this._litShotSeen.set(id, gen);
+    }
+    for (const [id, g] of this._litShotSeen) if (g !== gen) this._litShotSeen.delete(id);
+    for (const f of this._flashLights) {
+      const age = (now - f.t0) / 250;
+      if (age < 0 || age >= 1) continue;
+      sc.addLight(f.x, f.y, 20 * f.k, 0xffd9a0, 1.2 * f.k * (1 - age), 110 * f.k);
+    }
+    if (mirror.missiles) for (const m of mirror.missiles.values()) sc.addLight(m.x, -m.y, 8, 0xffa060, 1.2, 70);
+    for (let i = 0; i < this._liveBeamCacheCount; i++) this.beamLights(this._liveBeamCache[i]!);
+    for (let i = 0; i < this._remoteBeamCacheCount; i++) this.beamLights(this._remoteBeamCache[i]!);
+  }
+
+  private readonly _flashLights: Array<{ x: number; y: number; k: number; t0: number }> = [];
+  private _flashLightNext = 0;
+  private noteMuzzleFlash(x: number, y: number, k: number): void {
+    const L = this._flashLights;
+    if (L.length < 32) { L.push({ x, y, k, t0: performance.now() }); return; }
+    const f = L[this._flashLightNext]!;
+    this._flashLightNext = (this._flashLightNext + 1) % L.length;
+    f.x = x; f.y = y; f.k = k; f.t0 = performance.now();
+  }
+
+  /** A beam lights where it hits and along its length. */
+  private beamLights(b: BeamView): void {
+    const sc = litPass.scene;
+    const len = Math.hypot(b.toX - b.fromX, b.toY - b.fromY);
+    sc.addLight(b.toX, b.toY, 6, 0xff6a9a, 2.2, 120);
+    sc.addLight((b.fromX + b.toX) / 2, (b.fromY + b.toY) / 2, 6, 0xff6a9a, 0.8, len * 0.6 + 30);
+  }
+
   /** Firing reactions for Machined guns (turrets T2): held beams by mount
    *  id, and each bolt / missile the frame it first appears, matched to its
    *  owner's nearest gun tip. Render-only; no wire change. */
@@ -2374,7 +2452,7 @@ export class PixiRenderer implements IRenderer {
     // explosions in the wrong place, review 2026-11-07).
     for (const [id, rec] of this._navalShells) {
       if (this._turretShotSeen.has(id)) continue;
-      if (shellEndedOnHit(Math.hypot(rec.x - rec.sx, rec.y - rec.sy), rec.reach)) this._fxExplosions?.spawn(rec.x, rec.y, rec.r, now);
+      if (shellEndedOnHit(Math.hypot(rec.x - rec.sx, rec.y - rec.sy), rec.reach)) { this._fxExplosions?.spawn(rec.x, rec.y, rec.r, now); this.noteBlastLight(rec.x, rec.y, rec.r); }
       this._navalShells.delete(id);
       this._navalShellFree.push(rec);
     }
@@ -2438,6 +2516,16 @@ export class PixiRenderer implements IRenderer {
         this._fxTopSpeed.set(h.job.id, top); this._fxTrailS.set(h.job.id, trail);
       }
       fx.draw(key, h.ship.nozzles, sp.x, sp.y, sp.rotation, thrust, boost, top, dt, now, trail);
+      // GPU-lit art: each engine is a light in its plume (its own hull takes little).
+      const ls = litPass.settings;
+      if (ls && ls.engineLights && ls.pointLights > 0) {
+        const owner = sp instanceof MachinedShipSprite && sp.lit.length > 0 ? sp.lit[0]!.lightOwnerId : -1;
+        const th = fx.thrustOf(key), c = Math.cos(sp.rotation), s = Math.sin(sp.rotation);
+        for (const nz of h.ship.nozzles) {
+          const ly = nz.y + engineLightAstern(nz.r);
+          litPass.scene.addLight(sp.x + nz.x * c - ly * s, sp.y + nz.x * s + ly * c, engineLightHeight(nz.r), 0xffa24a, engineLightIntensity(nz.r, th), engineLightReach(nz.r), owner);
+        }
+      }
     }
     fx.endFrame();
   }
