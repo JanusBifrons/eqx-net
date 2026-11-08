@@ -22,3 +22,18 @@ The run looks like a real flight, but once a ship has left it is out of the worl
 ## The system sky
 
 In a solar-system sector the sky shows the system's own few distant bodies, drifting slowly as you cross it, instead of the endless planet pattern used in small sectors (where a 170 km warp swept dozens of planets past).
+
+## Picking a destination
+
+The **Warp ▸** action in the speed dial (solar-system sectors only) opens the destination picker: every pocket by name ("Home", "Asteroid belt", "Thornfield gate", "Battle zone"), nearest first with its distance, the far ones grouped. The pocket you're in can't be picked. While a warp is held, a chip under the energy bar says where it goes, with a Cancel.
+
+## Transit pads (rare)
+
+Some systems also have a **transit pad pair**: one pad in the home pocket, one in a belt, base or battle-zone pocket. Fly onto a pad and it carries you to the other one: instant, free (no charge, no grid, no toll) and safe, which makes pads the starter's way across a system. The picker marks a pocket that has one ("pad to Battle zone (instant)") and the system map draws the link.
+
+They are rare on purpose (user, 2026-11-08: warp-to makes pads less valuable but "far from redundant, it's instant and safe for starters ... just make them a bit more rare"):
+
+- at most one pair per system, always from home;
+- a system gets one with chance `POCKET_PAD_CHANCE` (0.5), seeded by its key, so about a third of today's 21 systems do and the rest have none.
+
+Pads are owned by the Traders (`npc:traders:pads`), so they are never saved and regrow on every boot. Code: `pocketPadPair` (`src/core/galaxy/sectorSites.ts`), `SectorRoom.seedPocketPads`; the `pocket_pad` structure kind shares the teleporter cycle with the alien gates' free rules (`isFreeTeleporterKind`). Locks: `sectorSites.test.ts` (deterministic, rare), `tests/integration/sectorRoom/pocketPads.test.ts` (seeded, paired, a pilot rides it).

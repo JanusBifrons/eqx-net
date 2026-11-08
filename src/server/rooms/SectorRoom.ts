@@ -122,7 +122,7 @@ import { linkEnds } from '../../core/bases/transitNetwork.js';
 import { hopDistance } from '../livingworld/population.js';
 import {
   DEFAULT_TELEPORT_RULES,
-  isAlienGateKind,
+  isFreeTeleporterKind,
   PAD_SPECS,
   SetTeleportRulesSchema,
   TeleportFireSchema,
@@ -163,7 +163,7 @@ import type { SectorFeature } from '../../core/galaxy/galaxy.js';
 /** Clear space kept between two NPC bases in one sector (bastions, mines, traffic). */
 const NPC_BASE_GAP = sectorSpace(900);
 import { HOME_POCKET_HALF_EXTENT, SECTOR_PLAYABLE_HALF_EXTENT, SOLAR_SECTORS, sectorSpace } from '../../shared-types/sectorBounds.js';
-import { isWarpDropPoint, sectorSites } from '../../core/galaxy/sectorSites.js';
+import { isWarpDropPoint, pocketPadPair, POCKET_PAD_OWNER, SOLAR_HALF_EXTENT, sectorSites } from '../../core/galaxy/sectorSites.js';
 import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
@@ -1597,6 +1597,10 @@ export class SectorRoom extends Room<SectorState> {
        *  set it explicitly, because the shared-module integration run reads
        *  the env switch once for every file. */
       solarSectors?: boolean;
+      /** Wrap-up W1b — seed the system's transit-pad pair (`pocketPadPair`)
+       *  when solar-system sectors are on. Defaults to `alienGates` (every
+       *  galaxy room). */
+      pocketPads?: boolean;
       /** v4 A — testMode: seed one alien gate here (no twin room), for E2E. */
       testAlienGate?: { x: number; y: number; neighbour: string };
       /** C2 bespoke trigger: every break-in takes this long (ms). testMode-only. */
@@ -2322,6 +2326,11 @@ export class SectorRoom extends Room<SectorState> {
         this.swarmShield.delete(id);
       },
       clamp: (x, y) => {
+        // Solar-system rules are per room (tests set them without the env).
+        if (this.solar) {
+          const lim = SOLAR_HALF_EXTENT;
+          return { x: Math.max(-lim, Math.min(lim, x)), y: Math.max(-lim, Math.min(lim, y)) };
+        }
         const c = clampToSectorBounds(x, y);
         return { x: c.x, y: c.y };
       },
@@ -2779,6 +2788,9 @@ export class SectorRoom extends Room<SectorState> {
     if (this.testMode && roomOpts.testAlienGate !== undefined) {
       this.seedAlienGates(this.sectorKey ?? 'test', [roomOpts.testAlienGate]);
     }
+    if ((roomOpts.pocketPads ?? roomOpts.alienGates) === true && this.solar && this.sectorKey !== null && getSector(this.sectorKey)) {
+      this.seedPocketPads(this.sectorKey);
+    }
 
     // Phase 8 sub-phase B — explicit 15s seat-reservation TTL for incoming
     // hyperspace travellers. Default is already 15 in Colyseus 0.16; making
@@ -3160,7 +3172,7 @@ export class SectorRoom extends Room<SectorState> {
       if (!pid || !target || !isTeleporterKind(target.kind) || !target.isConstructed || target.owner === pid || target.uid === undefined) return;
       // v4 A — alien gates only ever link to each other; v4 H — an NPC
       // teleporter is pre-linked by the transit network.
-      if (isAlienGateKind(target.kind) || isNpcOwner(target.owner)) return;
+      if (isFreeTeleporterKind(target.kind) || isNpcOwner(target.owner)) return;
       if (relationOf(pid, target.owner, this.relationCtx) === 'hostile') return;
       const here = this.sectorKey ?? '';
       const mine = parsed.data.sectorKey === here
@@ -4688,6 +4700,52 @@ export class SectorRoom extends Room<SectorState> {
       this.swarmHealth.delete(placed);
       this.gateGuard.addGate(rec);
     }
+    this.rebuildStructuresSlice();
+  }
+
+  /**
+   * Wrap-up W1b — the system's transit pads: home and one other pocket, if
+   * this system has a pair at all (`pocketPadPair`, rare by design). Neutral
+   * (Traders-owned), free (no charge, no grid), fire when a ship boards, no
+   * toll. Each takes the nearest free spot to its ideal centre. Not persisted
+   * (NPC-owned): every boot regenerates them.
+   */
+  private seedPocketPads(sectorKey: string): void {
+    const pair = pocketPadPair(sectorKey);
+    if (pair === null) return;
+    const half = getStructureKind('pocket_pad').footprint.w / 2;
+    const placeNear = (x: number, y: number): StructureRecord | null => {
+      for (let ring = 0; ring < 8; ring++) {
+        const steps = ring === 0 ? 1 : ring * 8;
+        for (let k = 0; k < steps; k++) {
+          const t = (k / steps) * Math.PI * 2;
+          const cx = Math.round(x + Math.cos(t) * ring * half * 2.5), cy = Math.round(y + Math.sin(t) * ring * half * 2.5);
+          let blocked = false;
+          for (const r of this.structureRegistry.all()) {
+            if (Math.abs(r.x - cx) < half + (r.halfW ?? r.radius) && Math.abs(r.y - cy) < half + (r.halfH ?? r.radius)) { blocked = true; break; }
+          }
+          if (blocked) continue;
+          const id = this.structurePlacement.place(POCKET_PAD_OWNER, 'pocket_pad', cx, cy, { skipAutoConnect: true });
+          if (id !== null) return this.structureRegistry.get(id) ?? null;
+        }
+      }
+      return null;
+    };
+    const a = placeNear(pair.ax, pair.ay);
+    const b = a === null ? null : placeNear(pair.bx, pair.by);
+    if (a === null || b === null) {
+      logger.warn({ sectorKey, to: pair.b.id }, 'pocket pads: no free spot; pads skipped');
+      if (a !== null) this.structurePlacement.remove(POCKET_PAD_OWNER, a.id);
+      this.rebuildStructuresSlice();
+      return;
+    }
+    for (const rec of [a, b]) {
+      rec.isConstructed = true;
+      rec.constructionProgress = rec.constructionCost;
+      rec.tpRules = { ...DEFAULT_TELEPORT_RULES, shipBoards: true };
+      this.swarmHealth.delete(rec.id);
+    }
+    this.teleporters.pair(a, b);
     this.rebuildStructuresSlice();
   }
 

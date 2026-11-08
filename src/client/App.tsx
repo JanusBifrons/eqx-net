@@ -52,6 +52,7 @@ import { useWarpOrchestration } from './useWarpOrchestration';
 import { EnergyBar } from './components/EnergyBar';
 import { HelmPanel } from './components/HelmPanel';
 import { SpeedDialMenu } from './components/SpeedDialMenu';
+import { WarpPicker, WarpStatusChip } from './components/WarpPicker';
 import { BottomControlPanel } from './components/BottomControlPanel';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
 import { PlacementFenceHint } from './components/PlacementFenceHint';
@@ -893,6 +894,7 @@ function GameSurface({
       <Slot anchor="top-center" order={3}><WarpInWarningBanner /></Slot>
       <Slot anchor="top-center" order={3}><TeleportWarning /></Slot>
       <Slot anchor="top-center" order={3}><DisabledIndicator /></Slot>
+      <Slot anchor="top-center" order={3}><WarpStatusChip /></Slot>
       {/* Capital-ship R&D round 3 D: helm orders (only while flying a capital). */}
       <Slot anchor="top-center" order={4}><HelmPanel /></Slot>
       {/* Living World P2 — trade toasts (escort prompt when red). */}
@@ -931,6 +933,8 @@ function GameSurface({
        *  (5) and FIRE/BOOST (10/20). Smoke handoff 2026-06-06, Issue 3:
        *  "the speed dial is in the wrong place" → bottom-right corner. */}
       {uiVariant === 'legacy' && <Slot anchor="bottom-right" order={1}><SpeedDialMenu /></Slot>}
+      {/* Phase 4 warp-to destination picker (portalled; solar sectors only). */}
+      <WarpPicker />
       {/* Phase 5 WS-4 — desktop RTS control strip (weapons when piloting,
        *  buildings when spectating). Self-gates to desktop + in-game. */}
       {uiVariant === 'legacy' && <Slot anchor="bottom-center" order={1}><BottomControlPanel /></Slot>}
