@@ -18,7 +18,7 @@
  * Desktop (fine pointer) gets the same top layout per variant plus a
  * fire-mode chip; aiming is the mouse (hold left button), see MouseAim.ts.
  */
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useShouldRenderHud, useUIStore } from '../state/store';
 import type { TouchInput } from '../input/TouchInput';
 import { aimInput } from '../input/AimInput';
@@ -567,20 +567,28 @@ function FcStripDock({ scale }: { scale: number }): JSX.Element {
 }
 
 /**
- * Right thumb: smart-aim lock. Drag anywhere in the right zone — a guideline
- * leaves the ship along the drag; the lockable target nearest it lights up;
- * release starts the lock for the active group. A tap does nothing (taps
- * select entities, and the inspector's Target button locks the selection).
+ * Right thumb: the lock line. Drag anywhere in the right zone — a line leaves
+ * the ship along the drag and the target nearest it lights up. Keep it there
+ * and the active group's lock builds; slide off or let go before it finishes
+ * and the lock drains back to 0. (Hands-off: tap a ship, then Lock in its
+ * info box.) Re-checked 10×/s while held, so a moving target stays held.
  */
 function ClusterD({ touchInput }: { touchInput: TouchInput }): JSX.Element {
+  const bearing = useRef(NaN);
+  const timer = useRef<number | null>(null);
   const onMove = useCallback((v: StickVec) => {
-    getGameClient()?.updateLockGuide(v.mag > 0.25 ? stickToWorldBearing(v.x, v.y) : NaN);
+    bearing.current = v.mag > 0.25 ? stickToWorldBearing(v.x, v.y) : NaN;
+    getGameClient()?.guideLock(bearing.current);
+    if (timer.current === null) {
+      timer.current = window.setInterval(() => getGameClient()?.guideLock(bearing.current), 100);
+    }
   }, []);
-  const onEnd = useCallback((tapped: boolean) => {
-    const c = getGameClient();
-    if (tapped) c?.updateLockGuide(NaN);
-    else c?.commitLockGuide();
+  const onEnd = useCallback(() => {
+    if (timer.current !== null) { window.clearInterval(timer.current); timer.current = null; }
+    bearing.current = NaN;
+    getGameClient()?.releaseLockGuide();
   }, []);
+  useEffect(() => () => { if (timer.current !== null) window.clearInterval(timer.current); }, []);
   const base = THUMB_INSET + 6;
   return (
     <>
@@ -621,7 +629,7 @@ function DesktopFcHint({ scale }: { scale: number }): JSX.Element {
   const k = (t: string): JSX.Element => <b style={{ color: HUD.color.inkDim }}>{t}</b>;
   return (
     <div data-testid="hud-fc-hint" style={{ fontFamily: HUD.font.label, fontSize: fs, color: HUD.color.inkFaint, letterSpacing: 0.6, textAlign: 'right', lineHeight: 1.6 }}>
-      <div>{k('DRAG LMB')} lock · {k('T')} lock selected · {k('X')} clear</div>
+      <div>{k('HOLD LMB')} on a ship to lock · {k('T')} lock selected · {k('X')} clear</div>
       <div>{k('1–9')} group · {k('SHIFT+1–9')} auto/man · {k('RMB')} boost</div>
     </div>
   );

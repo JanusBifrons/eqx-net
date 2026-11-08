@@ -144,7 +144,8 @@ import { tuningFor } from '@shared-types/shipScale/lookup';
 
 /** No aim guides (the mirror's `localAimMountIds` when nothing is in range). */
 /** Fire control: a fixed gun fires only within this many radians of the nose. */
-const FC_FIXED_FIRE_TOLERANCE = 0.12;
+/** A group fires only when a barrel is this close to its lock (rad); matches the server. */
+const FC_MOUNT_FIRE_TOLERANCE = 0.2;
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
 import { getWeapon, weaponAutoFireRange, type WeaponDef } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
@@ -5948,13 +5949,39 @@ export class ColyseusGameClient {
     return best;
   }
 
-  /** Release the guideline: lock the candidate with the active group. */
-  commitLockGuide(): void {
-    const key = this.mirror.localLockCandidate ?? null;
-    const active = useUIStore.getState().activeGroupId;
+  /**
+   * Held lock line: point the line along `bearing` and hold whatever it lands
+   * on. The server builds a lock only while it's held; moving off (or letting
+   * go) releases it and it drains back to 0. Sends only when the held target
+   * changes. Call on every drag move AND periodically while held (targets move).
+   */
+  guideLock(bearing: number): void {
+    const key = this.updateLockGuide(bearing);
+    this.trackLock(key);
+  }
+
+  /** Let go of the lock line: whatever it held drains unless already locked. */
+  releaseLockGuide(): void {
     this.mirror.localLockGuide = NaN;
     this.mirror.localLockCandidate = null;
-    if (key !== null && active !== null) this.requestLock(active, key);
+    this.trackLock(null);
+  }
+
+  /** Last `lock_track` sent: group + target (dedup — the line moves at frame rate). */
+  private _trackGroup: string | null = null;
+  private _trackKey: string | null = null;
+  private trackLock(key: string | null): void {
+    if (!this._fireControl || !this.room) return;
+    const group = useUIStore.getState().activeGroupId;
+    if (group === null) return;
+    if (group !== this._trackGroup && this._trackGroup !== null && this._trackKey !== null) {
+      // Switched group mid-hold: let the old group's line go.
+      this.room.send('lock_track', { type: 'lock_track', groupId: this._trackGroup, target: null });
+    }
+    if (group === this._trackGroup && key === this._trackKey) return;
+    this._trackGroup = group;
+    this._trackKey = key;
+    this.room.send('lock_track', { type: 'lock_track', groupId: group, target: key });
   }
 
   /** Lock whatever the pilot has selected (inspector Target button / T key). */
@@ -6048,7 +6075,7 @@ export class ColyseusGameClient {
   }
 
   /** Apply the own-ship snapshot's groups (#16). Store write only on change. */
-  private applyFcGroups(groups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number }> }> | undefined): void {
+  private applyFcGroups(groups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number; r?: number }> }> | undefined): void {
     this._fcGroups = groups ?? [];
     this.mirror.localGroups = this._fcGroups;
     // Cheap change signature over ids / modes / lock targets / stages.
@@ -6109,6 +6136,21 @@ export class ColyseusGameClient {
    * on its own cooldown (auto always; manual while held / Space on the active
    * group). Fixed guns wait until the target is inside their nose cone.
    */
+  /** Does any mount of `groupId` point within tolerance of world bearing `want`? */
+  private fcGroupBears(groupId: string, shipAngle: number, want: number): boolean {
+    const localId = this.mirror.localPlayerId;
+    const ship = localId ? this.mirror.ships.get(localId) : undefined;
+    const mounts = getShipKind(ship?.kind ?? null).mounts ?? [];
+    const angles = ship?.mountAngles;
+    for (let i = 0; i < mounts.length; i++) {
+      const m = mounts[i]!;
+      if (this._fcMountGroup.get(m.id) !== groupId) continue;
+      const a = shipAngle + m.baseAngle + (angles?.[i] ?? 0);
+      if (Math.abs(wrapPi(want - a)) <= FC_MOUNT_FIRE_TOLERANCE) return true;
+    }
+    return false;
+  }
+
   private fcFireTick(spaceHeld: boolean): void {
     const localId = this.mirror.localPlayerId;
     if (!localId || this.localDead || !this.predWorld || !this.room || this.isLocallyDisabled()) return;
@@ -6128,11 +6170,10 @@ export class ColyseusGameClient {
       const dx = this._fcPose.x - st.x;
       const dy = this._fcPose.y - st.y;
       if (dx * dx + dy * dy > info.reach * info.reach * 1.1) continue;
-      if (info.allFixed) {
-        // Fixed guns: only once the nose is on the target.
-        const rel = wrapPi(Math.atan2(-dx, dy) - st.angle);
-        if (Math.abs(rel) > FC_FIXED_FIRE_TOLERANCE) continue;
-      }
+      // Only when a barrel of this group is on the target (fixed guns: the
+      // nose; turrets: their slewed angle — a turret parked at its arc limit
+      // never is). Same rule the server enforces (#15).
+      if (!this.fcGroupBears(g.id, st.angle, Math.atan2(-dx, dy))) continue;
       const last = this._fcLastFireMs.get(g.id);
       if (last !== undefined && nowMs - last < info.cooldownMs) continue;
       if (!canAfford(this.predEnergy, info.energyCost)) continue;

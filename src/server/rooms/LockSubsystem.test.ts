@@ -6,7 +6,7 @@ import { getShipKind } from '../../shared-types/shipKinds.js';
  * exp/fire-control P2 — the server lock rules, hand-rolled mocks (no server).
  * One player 'p1' in a fighter at the origin; targets are a map of key → view.
  */
-function harness(): {
+function harness(kindId = 'fighter'): {
   locks: LockSubsystem;
   targets: Map<string, LockTargetView>;
   commits: string[];
@@ -23,11 +23,15 @@ function harness(): {
       return true;
     },
     shooterPose: (_p, out) => {
-      out.x = 0; out.y = 0; out.vx = 0; out.vy = 0;
+      out.x = 0; out.y = 0; out.vx = 0; out.vy = 0; out.angle = 0;
       return true;
     },
-    shipOf: () => ({ kind: getShipKind('fighter'), activated: [] }),
-    autoPick: () => auto,
+    shipOf: () => ({ kind: getShipKind(kindId), activated: [] }),
+    autoPick: (_p, _r, _x, _y, bears) => {
+      if (auto === null) return null;
+      const t = targets.get(auto);
+      return t && bears(t.x, t.y) ? auto : null;
+    },
     commitHostileAct: (_p, key) => commits.push(key),
   };
   const locks = new LockSubsystem(deps);
@@ -76,13 +80,13 @@ describe('LockSubsystem', () => {
 
   it('auto groups acquire their own hostile target; manual groups do not', () => {
     const h = harness();
-    h.targets.set('s:4', still(200, true));
+    h.targets.set('s:4', { x: 0, y: 200, vx: 0, vy: 0, signature: 30, hostile: true } /* ahead: inside the fixed guns' window */);
     h.setAuto('s:4');
     steps(h.locks, 40);
     expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
 
     const m = harness();
-    m.targets.set('s:4', still(200, true));
+    m.targets.set('s:4', { x: 0, y: 200, vx: 0, vy: 0, signature: 30, hostile: true } /* ahead: inside the fixed guns' window */);
     m.setAuto('s:4');
     m.locks.setMode('p1', 'primary', 'manual');
     steps(m.locks, 40);
@@ -127,5 +131,73 @@ describe('LockSubsystem', () => {
     steps(h.locks, 5);
     expect(h.locks.wireFor('p1')![0]!.l[0]).toBe(ref); // same object, progress updated
     expect(ref.p).toBeGreaterThan(0);
+  });
+
+  describe('held locks (the lock line)', () => {
+    const pct = (h: ReturnType<typeof harness>): number => h.locks.wireFor('p1')![0]!.l[0]?.p ?? -1;
+    const ahead = (y: number): LockTargetView => ({ x: 0, y, vx: 0, vy: 0, signature: 30, hostile: true });
+
+    it('builds only while held: let go part-way and it drains back to 0, then drops', () => {
+      const h = harness();
+      h.targets.set('s:1', ahead(200));
+      h.locks.trackLock('p1', 'primary', 's:1');
+      steps(h.locks, 6);
+      const built = pct(h);
+      expect(built).toBeGreaterThan(10);
+      expect(h.locks.hasLocked('p1', 'primary')).toBe(false);
+      h.locks.trackLock('p1', 'primary', null); // let go
+      steps(h.locks, 1);
+      expect(pct(h)).toBeLessThan(built);
+      expect(h.locks.wireFor('p1')![0]!.l[0]!.r).toBe(1);
+      steps(h.locks, 40);
+      expect(h.locks.wireFor('p1')![0]!.l.length).toBe(0);
+    });
+
+    it('the line coming back onto a draining target resumes it; held to the end it locks', () => {
+      const h = harness();
+      h.targets.set('s:1', ahead(200));
+      h.locks.trackLock('p1', 'primary', 's:1');
+      steps(h.locks, 5);
+      h.locks.trackLock('p1', 'primary', null);
+      steps(h.locks, 2);
+      const low = pct(h);
+      h.locks.trackLock('p1', 'primary', 's:1'); // back on it
+      steps(h.locks, 2);
+      expect(pct(h)).toBeGreaterThan(low);
+      expect(h.locks.wireFor('p1')![0]!.l[0]!.r).toBeUndefined();
+      steps(h.locks, 40);
+      expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
+      // Once locked, letting go keeps the lock.
+      h.locks.trackLock('p1', 'primary', null);
+      steps(h.locks, 30);
+      expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
+    });
+
+    it('a draining held lock pressed with Lock (requestLock) now runs to completion', () => {
+      const h = harness();
+      h.targets.set('s:1', ahead(200));
+      h.locks.trackLock('p1', 'primary', 's:1');
+      steps(h.locks, 4);
+      h.locks.trackLock('p1', 'primary', null);
+      h.locks.requestLock('p1', 'primary', 's:1');
+      steps(h.locks, 40);
+      expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
+    });
+  });
+
+  it('AUTO only picks a target inside the group arc (gunship Aft ignores a ship dead ahead)', () => {
+    const h = harness('gunship');
+    h.targets.set('s:9', { x: 0, y: 300, vx: 0, vy: 0, signature: 30, hostile: true });
+    h.setAuto('s:9');
+    steps(h.locks, 3);
+    const wire = h.locks.wireFor('p1')!;
+    expect(wire.find((g) => g.id === 'fore')!.l.length).toBe(1);
+    expect(wire.find((g) => g.id === 'aft')!.l.length).toBe(0);
+    // Behind the ship: Aft takes it, Fore doesn't.
+    h.targets.set('s:9', { x: 0, y: -300, vx: 0, vy: 0, signature: 30, hostile: true });
+    h.locks.cancelLock('p1', 'fore');
+    steps(h.locks, 3);
+    const w2 = h.locks.wireFor('p1')!;
+    expect(w2.find((g) => g.id === 'aft')!.l.length).toBe(1);
   });
 });

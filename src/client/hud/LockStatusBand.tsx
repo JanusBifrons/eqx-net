@@ -34,6 +34,8 @@ export interface OwnLockSummary {
   target: string;
   pct: number;
   failsafe: boolean;
+  /** Let go before it finished: draining back to 0. */
+  losing: boolean;
 }
 
 function nameOf(mirror: RenderMirror, key: string): string {
@@ -74,7 +76,7 @@ export function summariseOwnLock(mirror: RenderMirror, names: ReadonlyArray<stri
     for (const l of groups[gi]!.l) {
       if (l.s === 2) continue;
       if (best && l.p <= best.pct) continue;
-      best = { group: names[gi] ?? groups[gi]!.id, groupIndex: gi, target: nameOf(mirror, l.t), pct: l.p, failsafe: l.s === 0 };
+      best = { group: names[gi] ?? groups[gi]!.id, groupIndex: gi, target: nameOf(mirror, l.t), pct: l.p, failsafe: l.s === 0, losing: l.r === 1 };
     }
   }
   return best;
@@ -84,7 +86,7 @@ const FLASH_CSS = '@keyframes eqxFcThreat{0%,100%{opacity:1}50%{opacity:.55}}.eq
 
 function sig(t: ThreatSummary | null, o: OwnLockSummary | null): string {
   return `${t ? `${t.locked}|${t.lockedName}|${t.acquiring}|${t.acquiringName}|${Math.floor(t.acquiringPct / 5)}` : '-'}#${
-    o ? `${o.group}|${o.target}|${Math.floor(o.pct / 2)}|${o.failsafe}` : '-'}`;
+    o ? `${o.group}|${o.target}|${Math.floor(o.pct / 2)}|${o.failsafe}|${o.losing}` : '-'}`;
 }
 
 export function LockStatusBand({ scale = 1 }: { scale?: number }): JSX.Element | null {
@@ -127,11 +129,17 @@ export function LockStatusBand({ scale = 1 }: { scale?: number }): JSX.Element |
           }}
         >
           <span aria-hidden>⚠</span>
-          {t.locked > 0 && <span>LOCKED · {t.lockedName}{t.locked > 1 && !t.lockedName.endsWith(' ships') ? ` ×${t.locked}` : ''}</span>}
+          {t.locked > 0 && (
+            <span>
+              {t.lockedName.endsWith(' ships')
+                ? `${t.lockedName.toUpperCase()} HAVE YOU LOCKED`
+                : `${t.lockedName.toUpperCase()}${t.locked > 1 ? ` ×${t.locked}` : ''} ${t.locked > 1 ? 'HAVE' : 'HAS'} YOU LOCKED`}
+            </span>
+          )}
           {t.locked > 0 && t.acquiring > 0 && <span style={{ opacity: 0.6 }}>|</span>}
           {t.acquiring > 0 && (
             <span>
-              {t.locked > 0 ? '+' : 'LOCKING YOU · '}{t.acquiringName} <span style={{ fontFamily: HUD.font.num }}>{t.acquiringPct}%</span>
+              {t.locked > 0 ? '+ ' : ''}{t.acquiringName} LOCKING ON YOU <span style={{ fontFamily: HUD.font.num }}>{t.acquiringPct}%</span>
             </span>
           )}
         </div>
@@ -140,6 +148,7 @@ export function LockStatusBand({ scale = 1 }: { scale?: number }): JSX.Element |
         <div
           data-testid="fc-own-lock"
           data-pct={o.pct}
+          data-losing={o.losing ? '1' : '0'}
           style={{
             ...row,
             color: o.failsafe ? `#${FAILSAFE_COLOUR.toString(16)}` : groupColourHex(o.groupIndex),
@@ -148,7 +157,7 @@ export function LockStatusBand({ scale = 1 }: { scale?: number }): JSX.Element |
           }}
         >
           <span>{o.group.toUpperCase()} → {o.target}</span>
-          <span style={{ opacity: 0.7 }}>{o.failsafe ? 'FAILSAFE' : 'LOCKING'}</span>
+          <span style={{ opacity: 0.7 }}>{o.losing ? 'LOSING LOCK' : o.failsafe ? 'FAILSAFE' : 'LOCKING'}</span>
           <span style={{ fontFamily: HUD.font.num }}>{o.pct}%</span>
           <span style={{ width: 46, height: 3, background: 'rgba(255,255,255,.15)', borderRadius: 2, overflow: 'hidden' }}>
             <span style={{ display: 'block', height: '100%', width: `${o.pct}%`, background: 'currentColor' }} />

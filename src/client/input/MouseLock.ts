@@ -1,9 +1,10 @@
 /**
  * Desktop smart-aim lock (exp/fire-control, `?ui=d`, non-touch only).
  *
- *  - LEFT button press-and-drag on the game surface draws a guideline from the
- *    ship toward the cursor; the lockable target nearest the line is
- *    highlighted; release starts the lock for the active weapon group.
+ *  - LEFT button held on the game surface draws a lock line from the ship
+ *    toward the cursor; the target nearest it is highlighted and the active
+ *    group's lock builds while you keep it there. Move off it, or let go before
+ *    it finishes, and it drains back to 0.
  *    A quick click (no drag, released before HOLD_MS) is left alone, so
  *    click-to-select keeps working.
  *  - RIGHT button held = boost (context menu suppressed).
@@ -77,13 +78,16 @@ export function installMouseLock(el: HTMLElement): () => void {
   el.style.cursor = 'crosshair';
   const disposeKeys = installFcKeys();
 
+  let refresh: ReturnType<typeof setInterval> | null = null;
   const guide = (): void => {
-    getGameClient()?.updateLockGuide(cursorBearing(lastX, lastY, el.getBoundingClientRect()));
+    getGameClient()?.guideLock(cursorBearing(lastX, lastY, el.getBoundingClientRect()));
   };
   const start = (): void => {
     if (!down || dragging) return;
     dragging = true;
     guide();
+    // Targets move under a still cursor: keep re-checking while held.
+    refresh = setInterval(guide, 100);
   };
   const onDown = (e: PointerEvent): void => {
     if (e.pointerType !== 'mouse') return;
@@ -111,12 +115,14 @@ export function installMouseLock(el: HTMLElement): () => void {
     if (e.button !== 0) return;
     down = false;
     if (timer) { clearTimeout(timer); timer = null; }
-    if (dragging) getGameClient()?.commitLockGuide();
+    if (refresh) { clearInterval(refresh); refresh = null; }
+    if (dragging) getGameClient()?.releaseLockGuide();
     dragging = false;
   };
   const onContext = (e: Event): void => { e.preventDefault(); };
   const onBlur = (): void => {
-    if (dragging) getGameClient()?.updateLockGuide(NaN);
+    if (refresh) { clearInterval(refresh); refresh = null; }
+    if (dragging) getGameClient()?.releaseLockGuide();
     down = false;
     dragging = false;
     if (timer) { clearTimeout(timer); timer = null; }

@@ -153,7 +153,7 @@ export interface SnapshotBroadcasterDeps {
   depositProgressOf?: (shipInstanceId: string) => number | undefined;
   /** Fire control (exp/fire-control) — the pilot's weapon groups + lock
    *  queues (shared ref, mutated in place). Own active ship only. */
-  lockGroupsOf?: (playerId: string) => Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number }> }> | undefined;
+  lockGroupsOf?: (playerId: string) => Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1 }> }> | undefined;
   /** Fire control — NPCs locking the pilot (shared ref, #16). */
   lockedByOf?: (playerId: string) => Array<{ t: string; s: 1 | 2; p: number }> | undefined;
   /** Phase 4 warp travel — the player's ship dropped out of a warp in the last
@@ -267,7 +267,7 @@ type MutableStateEntry = {
   statAlloc?: Record<string, number>;
   cargo?: Hold;
   depositing?: number;
-  groups?: Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number }> }>;
+  groups?: Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1 }> }>;
   lockedBy?: Array<{ t: string; s: 1 | 2; p: number }>;
   fitted?: string[];
   wallet?: number;

@@ -227,6 +227,8 @@ import { ROSTER_CAP, type ActivatedMount } from '../playerShips/PlayerShipStore.
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { LockSubsystem, type LockTargetView } from './LockSubsystem.js';
 import { NpcLockSubsystem } from './NpcLockSubsystem.js';
+/** Fire control: a mount fires only when its barrel is within this of its lock (rad). */
+const FC_MOUNT_FIRE_TOLERANCE = 0.2;
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { MissileSimulation } from './MissileSimulation.js';
@@ -349,7 +351,7 @@ import {
   RespecShipSchema,
   ActivateMountSchema,
   LockRequestSchema,
-  LockCancelSchema,
+  LockCancelSchema, LockTrackSchema,
   SetGroupModeSchema,
   SelectEntitySchema,
   DeselectEntitySchema,
@@ -1794,6 +1796,7 @@ export class SectorRoom extends Room<SectorState> {
       logger,
       malformed: this.malformed,
       fireAllowed: (pid, slotId) => this.locks.hasLocked(pid, slotId),
+      mountBearsOnLock: (pid, mountId, ox, oy, angle) => this.mountBearsOnLock(pid, mountId, ox, oy, angle),
     });
 
     // AI drone weapon-fire resolver. Composes the per-mount hitscan +
@@ -3716,6 +3719,12 @@ export class SectorRoom extends Room<SectorState> {
       const pid = this.sessionToPlayer.get(client.sessionId);
       if (pid !== undefined) this.locks.requestLock(pid, parsed.data.groupId, parsed.data.target);
     });
+    this.onMessage('lock_track', (client: Client, raw: unknown) => {
+      const parsed = LockTrackSchema.safeParse(raw);
+      if (!parsed.success) { this.malformed.record(client.sessionId, 'lock_track'); return; }
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      if (pid !== undefined) this.locks.trackLock(pid, parsed.data.groupId, parsed.data.target);
+    });
     this.onMessage('lock_cancel', (client: Client, raw: unknown) => {
       const parsed = LockCancelSchema.safeParse(raw);
       if (!parsed.success) { this.malformed.record(client.sessionId, 'lock_cancel'); return; }
@@ -3990,7 +3999,7 @@ export class SectorRoom extends Room<SectorState> {
         const p = this.shipPoseCache.get(pid);
         const ship = this.getActiveShip(pid);
         if (!p || !ship || !ship.alive) return false;
-        out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
+        out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle;
         return true;
       },
       shipOf: (pid) => {
@@ -4005,7 +4014,7 @@ export class SectorRoom extends Room<SectorState> {
         }
         return { kind, activated: c.mounts };
       },
-      autoPick: (pid, reach, sx, sy) => {
+      autoPick: (pid, reach, sx, sy, bears) => {
         // Nearest drone already hostile to this pilot, within reach.
         let best: string | null = null;
         let bestD = reach * reach;
@@ -4015,7 +4024,7 @@ export class SectorRoom extends Room<SectorState> {
           const dx = this._lockPose.x - sx;
           const dy = this._lockPose.y - sy;
           const d = dx * dx + dy * dy;
-          if (d < bestD) { bestD = d; best = `s:${rec.entityId}`; }
+          if (d < bestD && bears(this._lockPose.x, this._lockPose.y)) { bestD = d; best = `s:${rec.entityId}`; }
         }
         return best;
       },
@@ -4072,6 +4081,21 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /** Turret aim for a fire-control pilot: the mount's group lock target pose. */
+  /**
+   * Fire control: true when a mount's barrel points at its group's lock within
+   * `FC_MOUNT_FIRE_TOLERANCE`. Legacy pilots always pass. A turret clamped at
+   * its arc limit with the target outside the arc fails, so it can't fire.
+   */
+  private mountBearsOnLock(pid: string, mountId: string, ox: number, oy: number, angle: number): boolean {
+    if (!this.locks.isEnabled(pid)) return true;
+    if (!this.lockAimTarget(pid, mountId, this._fcBearPose)) return false;
+    const want = Math.atan2(-(this._fcBearPose.x - ox), this._fcBearPose.y - oy);
+    let d = want - angle;
+    d -= Math.round(d / (2 * Math.PI)) * 2 * Math.PI;
+    return Math.abs(d) <= FC_MOUNT_FIRE_TOLERANCE;
+  }
+  private readonly _fcBearPose = { x: 0, y: 0, vx: 0, vy: 0 };
+
   private lockAimTarget(pid: string, mountId: string, out: { x: number; y: number; vx: number; vy: number }): boolean {
     if (!this.locks.isEnabled(pid)) return false;
     const key = this.locks.aimKeyFor(pid, mountId);

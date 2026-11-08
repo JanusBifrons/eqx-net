@@ -117,6 +117,10 @@ export interface PlayerFireResolverDeps {
   /** Fire control (exp/fire-control): may this pilot's group fire now? A
    *  fire-control pilot's group fires only at a LOCKED target; absent ⇒ legacy. */
   fireAllowed?: (playerId: string, slotId: string | undefined) => boolean;
+  /** Fire control: does this mount's barrel (world origin + world angle) bear on
+   *  its group's lock target? A turret parked at its arc limit never does, so it
+   *  never fires out of its arc. Absent ⇒ every mount fires (legacy). */
+  mountBearsOnLock?: (playerId: string, mountId: string, ox: number, oy: number, angle: number) => boolean;
   /** Lag-comp pose ring. */
   snapshotRing: SnapshotRingReader;
   /** Per-tick cached player poses (fallback when ring misses). */
@@ -278,6 +282,31 @@ export class PlayerFireResolver implements WeaponFireSink {
       client.send('hit_ack', ack);
       return;
     }
+    // Fire control: only mounts aimed at their lock fire. None ⇒ refuse, and
+    // spend neither cooldown nor energy (the turret is still slewing, or the
+    // target is outside every mount's arc).
+    let bearMask = -1;
+    if (d.fireAllowed && d.mountBearsOnLock) {
+      const pose = d.shipPoseCache.get(shooterId);
+      const angles = d.playerMountAngles.get(shooterId);
+      const inst = d.resolveInstanceMounts(ship);
+      bearMask = 0;
+      if (pose) {
+        for (let mIdx = 0; mIdx < slotMounts.length && mIdx < 31; mIdx++) {
+          const mount = slotMounts[mIdx]!;
+          let k = mIdx;
+          for (let j = 0; j < inst.length; j++) if (inst[j]!.id === mount.id) { k = j; break; }
+          const a = pose.angle + mount.baseAngle + (angles?.[k] ?? 0);
+          const o = d.mountWorldOrigin(pose.x, pose.y, pose.angle, mount);
+          if (d.mountBearsOnLock(shooterId, mount.id, o.x, o.y, a)) bearMask |= 1 << mIdx;
+        }
+      }
+      if (bearMask === 0) {
+        const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
+        client.send('hit_ack', ack);
+        return;
+      }
+    }
     const groupKey = slotId ?? '';
     let groupTicks = this._lastFireByGroup.get(shooterId);
     // The scalar is deleted on leave/death/transit — drop the stale group map.
@@ -342,6 +371,7 @@ export class PlayerFireResolver implements WeaponFireSink {
     const instanceMounts = d.resolveInstanceMounts(ship);
     const ctx = this._fireCtx;
     for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
+      if (mIdx < 31 && (bearMask & (1 << mIdx)) === 0) continue; // not on its lock
       const mount = slotMounts[mIdx]!;
       // Each barrel fires its own catalogue weapon (data-driven loadout).
       const weaponId: WeaponId = mount.weaponId;

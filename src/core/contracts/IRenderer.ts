@@ -638,7 +638,7 @@ export interface RenderMirror {
   /** Fire control (exp/fire-control): the local pilot's weapon groups with
    *  their lock queues (t target key, s stage, p progress 0..100), from the
    *  own-ship snapshot. Drives the lock rings + group-coloured brackets. */
-  localGroups?: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number }> }>;
+  localGroups?: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number; r?: number }> }>;
   /** Fire control: the group new locks go to (its colour leads the HUD). */
   localActiveGroupId?: string | null;
   /** Fire control: the smart-aim guideline while the pilot drags (world

@@ -132,6 +132,17 @@ export const LockRequestSchema = z
   })
   .strict();
 
+/** Client → server: the pilot's lock line is on `target` (null = on nothing /
+ *  let go). The held target builds; a let-go one drains back to 0. Sent only
+ *  when the line's target changes, not per frame. */
+export const LockTrackSchema = z
+  .object({
+    type: z.literal('lock_track'),
+    groupId: z.string().min(1).max(32),
+    target: LockTargetKeySchema.nullable(),
+  })
+  .strict();
+
 /** Client → server: drop one lock (or every lock in the group when no target). */
 export const LockCancelSchema = z
   .object({
@@ -152,6 +163,7 @@ export const SetGroupModeSchema = z
 
 export type LockRequestMessage = z.infer<typeof LockRequestSchema>;
 export type LockCancelMessage = z.infer<typeof LockCancelSchema>;
+export type LockTrackMessage = z.infer<typeof LockTrackSchema>;
 export type SetGroupModeMessage = z.infer<typeof SetGroupModeSchema>;
 
 /** Client → server: cancel an in-flight spool. No effect once the server
@@ -384,6 +396,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   TestAggroSchema,
   LockRequestSchema,
   LockCancelSchema,
+  LockTrackSchema,
   SetGroupModeSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,

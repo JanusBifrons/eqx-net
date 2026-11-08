@@ -23,6 +23,8 @@ export type MountSize = 'AA' | 'S' | 'M' | 'L' | 'XL';
 export interface LockTuning {
   /** Seconds for a matched weapon/target at point-blank, sitting still. */
   baseSeconds: number;
+  /** A released (let-go) lock drains at this × its build rate. */
+  decayMul: number;
   /** Exponent on (weapon reference size ÷ target signature) when > 1. */
   sizeExp: number;
   /** Weight of (angular rate ÷ tracking)² — fast crossers are hard to lock. */
@@ -41,6 +43,7 @@ export interface LockTuning {
 
 export const LOCK_TUNING: LockTuning = {
   baseSeconds: 1.5,
+  decayMul: 1.5,
   sizeExp: 0.6,
   trackFactor: 1.5,
   rangeFactor: 0.6,

@@ -151,7 +151,7 @@ export class AimFeedbackRenderer {
     }
     const code = stage * 1000 + pct;
     if (this.tagCode[i] !== code) {
-      t.text = (stage === 0 ? 'FAILSAFE ' : 'LOCKING ') + pct + '%';
+      t.text = (stage === 3 ? 'LOSING LOCK ' : stage === 0 ? 'FAILSAFE ' : 'LOCKING ') + pct + '%';
       this.tagCode[i] = code;
     }
     t.tint = colour;
@@ -202,6 +202,8 @@ export class AimFeedbackRenderer {
           } else {
             const col = l.s === 0 ? FAILSAFE_COLOUR : ACQUIRE_COLOUR;
             const frac = Math.max(0, Math.min(1, l.p / 100));
+            const losing = l.r === 1; // let go: draining back to 0
+            const dim = losing ? 0.45 : 1;
             const r = base * 1.35;
             // Dashed link: which of your targets is being locked.
             const dx = x - sx, dy = y + sy;
@@ -214,16 +216,17 @@ export class AimFeedbackRenderer {
                 const e = Math.min(stop, d + on);
                 g.moveTo(sx + ux * d, -sy + uy * d).lineTo(sx + ux * e, -sy + uy * e);
               }
-              g.stroke({ width: 1.5 * px, color: col, alpha: 0.55 });
+              g.stroke({ width: 1.5 * px, color: col, alpha: 0.55 * dim });
             }
             // Track + heavy progress arc.
             g.circle(x, y, r).stroke({ width: 2 * px, color: col, alpha: 0.3 });
             if (frac > 0.001) {
               const a0 = -Math.PI / 2;
               g.moveTo(x + Math.cos(a0) * r, y + Math.sin(a0) * r);
-              g.arc(x, y, r, a0, a0 + Math.PI * 2 * frac).stroke({ width: 4.5 * px, color: col, alpha: 1 });
+              g.arc(x, y, r, a0, a0 + Math.PI * 2 * frac).stroke({ width: 4.5 * px, color: col, alpha: dim });
             }
-            // Four ticks closing in from 2x to the ring as the lock builds.
+            // Four ticks closing in from 2x to the ring as the lock builds
+            // (they open back out as a let-go lock drains).
             const rt = r * (2 - frac);
             const spin = now * 0.0025;
             const tick = 9 * px;
@@ -232,8 +235,8 @@ export class AimFeedbackRenderer {
               const c = Math.cos(a), sn = Math.sin(a);
               g.moveTo(x + c * rt, y + sn * rt).lineTo(x + c * (rt - tick), y + sn * (rt - tick));
             }
-            g.stroke({ width: 3 * px, color: col, alpha: 0.9 });
-            this.tag(tags++, x, y - r * (2 - frac) - 6 * px, l.s, l.p, col, px);
+            g.stroke({ width: 3 * px, color: col, alpha: 0.9 * dim });
+            this.tag(tags++, x, y - r * (2 - frac) - 6 * px, losing ? 3 : l.s, l.p, col, px);
           }
         }
       }

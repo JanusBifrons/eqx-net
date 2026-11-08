@@ -22,12 +22,23 @@ export function TargetAction({ isOwn }: { isOwn: boolean }): JSX.Element | null 
   const idx = groups.findIndex((g) => g.id === active);
   if (idx < 0) return null;
   const col = groupColourHex(idx);
+  const group = groups[idx]!;
+  const key = selected === null ? null : selected.startsWith('swarm-') ? `s:${selected.slice(6)}` : `p:${selected}`;
+  const lock = key === null ? undefined : group.locks.find((l) => l.target === key);
+  const state = lock === undefined ? 'lock' : lock.stage === 2 ? 'unlock' : 'cancel';
+  const onClick = (): void => {
+    const c = getGameClient();
+    if (!c) return;
+    if (state === 'lock') c.lockSelected();
+    else if (key !== null) c.cancelLock(group.id, key);
+  };
   return (
     <Box
       component="button"
       data-testid="fc-target"
       data-group={active ?? ''}
-      onClick={() => getGameClient()?.lockSelected()}
+      data-state={state}
+      onClick={onClick}
       sx={{
         pointerEvents: 'auto',
         mt: 0.5,
@@ -44,7 +55,7 @@ export function TargetAction({ isOwn }: { isOwn: boolean }): JSX.Element | null 
         cursor: 'pointer',
       }}
     >
-      {`TARGET · ${groups[idx]!.name.toUpperCase()}`}
+      {state === 'lock' ? `LOCK · ${group.name.toUpperCase()}` : state === 'cancel' ? 'CANCEL LOCK' : `UNLOCK · ${group.name.toUpperCase()}`}
     </Box>
   );
 }

@@ -26,12 +26,23 @@ export interface LockEntry {
   progress: number;
   /** Seconds the target has been out of reach / unlockable. */
   lostFor: number;
+  /**
+   * How the lock is driven: COMMIT (0) runs to completion on its own (AUTO, or
+   * the inspector's Lock button); HELD (1) builds only while the pilot keeps
+   * the lock line on the target; RELEASED (2) was held and let go, so it drains
+   * back to 0 and drops (the line coming back resumes it). Once LOCKED the
+   * mode no longer matters.
+   */
+  track: LockTrack;
 }
+
+export const LOCK_TRACK = { commit: 0, held: 1, released: 2 } as const;
+export type LockTrack = 0 | 1 | 2;
 
 export type LockEvent = 'none' | 'commit' | 'locked' | 'dropped';
 
-export function newLock(target: string, hostile: boolean): LockEntry {
-  return { target, stage: hostile ? 'acquiring' : 'failsafe', progress: 0, lostFor: 0 };
+export function newLock(target: string, hostile: boolean, track: LockTrack = LOCK_TRACK.commit): LockEntry {
+  return { target, stage: hostile ? 'acquiring' : 'failsafe', progress: 0, lostFor: 0, track };
 }
 
 /**
@@ -45,7 +56,17 @@ export function stepLock(
   lockSecs: number,
   failsafeSecs: number,
   lostGrace: number,
+  decayMul = 1.5,
 ): LockEvent {
+  // Released before it finished: drain back to 0 (`decayMul`× the build
+  // rate), then drop. A failsafe drained to 0 did no harm.
+  if (e.track === LOCK_TRACK.released && e.stage !== 'locked') {
+    const secs = e.stage === 'failsafe' ? failsafeSecs : lockSecs;
+    const rate = Number.isFinite(secs) ? decayMul / Math.max(1e-6, secs) : 2;
+    e.progress -= dt * rate;
+    if (e.progress <= 0) return 'dropped';
+    return 'none';
+  }
   const unlockable = !Number.isFinite(lockSecs);
   if (unlockable) {
     e.lostFor += dt;

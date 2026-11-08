@@ -36,7 +36,7 @@ export {
   RespecShipSchema,
   ActivateMountSchema,
   LockRequestSchema,
-  LockCancelSchema,
+  LockCancelSchema, LockTrackSchema,
   SetGroupModeSchema,
   ClientMessageSchema,
 } from './messages/clientMessages.js';

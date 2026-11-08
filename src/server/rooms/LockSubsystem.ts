@@ -11,7 +11,7 @@
  */
 import { LOCK_TUNING, WEAPON_LOCK_PROFILE, lockCapacityFor, sensorFor, NO_PILOT_MODS, type MountSize } from '../../shared-types/combat/lockProfile.js';
 import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
-import { newLock, stepLock, LOCK_STAGE_CODE, type LockEntry } from '../../core/combat/lockState.js';
+import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
 import { getWeapon, weaponAutoFireRange } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind, WeaponMount, WeaponSlot } from '../../shared-types/shipKinds/types.js';
 
@@ -32,6 +32,8 @@ export interface LockShooterView {
   y: number;
   vx: number;
   vy: number;
+  /** Hull heading (game convention: forward = (-sin, cos)). */
+  angle: number;
 }
 
 export interface LockSubsystemDeps {
@@ -41,16 +43,18 @@ export interface LockSubsystemDeps {
   shooterPose(playerId: string, out: LockShooterView): boolean;
   /** The player's active ship kind + activated mounts, or null. */
   shipOf(playerId: string): { kind: ShipKind; activated: ReadonlyArray<WeaponMount> } | null;
-  /** Best auto target for a group (hostile, in reach), or null. */
-  autoPick(playerId: string, reach: number, sx: number, sy: number): string | null;
+  /** Best auto target for a group (hostile, in reach, and `bears(x, y)` —
+   *  inside the group's arc), or null. */
+  autoPick(playerId: string, reach: number, sx: number, sy: number, bears: (x: number, y: number) => boolean): string | null;
   /** A failsafe finished: the player has committed a hostile act on `key`. */
   commitHostileAct(playerId: string, key: string): void;
 }
 
 export type GroupMode = 'auto' | 'manual';
 
-/** Wire shape of one group in the own-ship snapshot (`states[].groups`). */
-export interface WireLock { t: string; s: number; p: number }
+/** Wire shape of one group in the own-ship snapshot (`states[].groups`).
+ *  `r: 1` = released (draining back to 0); absent otherwise. */
+export interface WireLock { t: string; s: number; p: number; r?: 1 }
 export interface WireGroup { id: string; m: 0 | 1; l: WireLock[] }
 
 interface GroupState {
@@ -60,6 +64,9 @@ interface GroupState {
   refSize: number;
   tracking: number;
   reach: number;
+  /** Where the group's barrels can point, relative to the hull heading:
+   *  [lo0, hi0, lo1, hi1, …] (fixed guns get a small window). */
+  arcs: number[];
   mountIds: Set<string>;
   locks: LockEntry[];
   wire: WireGroup;
@@ -89,6 +96,19 @@ export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): { refSize: nu
   return { refSize: p.refSize, tracking: p.tracking, reach };
 }
 
+/** Half-width (rad) a fixed gun counts as bearing on a target. */
+const FIXED_BEAR = 0.3;
+
+/** Relative arcs a group's barrels cover: [lo, hi] per mount. */
+export function groupArcs(mounts: ReadonlyArray<WeaponMount>): number[] {
+  const out: number[] = [];
+  for (const m of mounts) {
+    const fixed = m.arcMin === m.arcMax;
+    out.push(m.baseAngle + (fixed ? -FIXED_BEAR : m.arcMin), m.baseAngle + (fixed ? FIXED_BEAR : m.arcMax));
+  }
+  return out;
+}
+
 /** Weapon groups of a ship: its slots, with activated latent mounts as their own 'wing' group. */
 export function shipGroups(
   kind: ShipKind,
@@ -116,7 +136,24 @@ const LOCK_DT = 0.1; // seconds per lock step (every 6 server ticks)
 export class LockSubsystem {
   private readonly players = new Map<string, PlayerLocks>();
   private readonly target: LockTargetView = { x: 0, y: 0, vx: 0, vy: 0, signature: 1, hostile: false };
-  private readonly shooter: LockShooterView = { x: 0, y: 0, vx: 0, vy: 0 };
+  private readonly shooter: LockShooterView = { x: 0, y: 0, vx: 0, vy: 0, angle: 0 };
+  /** The group `bears` is testing (set before each autoPick; no closure per call). */
+  private bearGroup: GroupState | null = null;
+  private readonly bears = (x: number, y: number): boolean => {
+    const g = this.bearGroup;
+    if (!g) return true;
+    let rel = Math.atan2(-(x - this.shooter.x), y - this.shooter.y) - this.shooter.angle;
+    rel -= Math.round(rel / (2 * Math.PI)) * 2 * Math.PI;
+    for (let i = 0; i < g.arcs.length; i += 2) {
+      let lo = g.arcs[i]!, hi = g.arcs[i + 1]!;
+      // Normalise the arc around rel so wrap-around arcs (e.g. the rear) work.
+      const mid = (lo + hi) / 2;
+      const shift = Math.round((rel - mid) / (2 * Math.PI)) * 2 * Math.PI;
+      lo += shift; hi += shift;
+      if (rel >= lo && rel <= hi) return true;
+    }
+    return false;
+  };
   private readonly inputs: LockInputs = {
     refSize: 1, tracking: 1, reach: 1, sensor: 1, pilotSpeed: 1, signature: 1, dx: 0, dy: 0, dvx: 0, dvy: 0,
   };
@@ -178,6 +215,7 @@ export class LockSubsystem {
         refSize: geo.refSize,
         tracking: geo.tracking,
         reach: geo.reach,
+        arcs: groupArcs(mounts),
         mountIds: new Set(mounts.map((m) => m.id)),
         locks: [],
         wire,
@@ -198,14 +236,53 @@ export class LockSubsystem {
     if (!p || !this.sync(playerId, p)) return false;
     const g = this.group(p, groupId);
     if (!g) return false;
-    for (const e of g.locks) if (e.target === key) return true; // already locking it
+    for (const e of g.locks) {
+      if (e.target !== key) continue;
+      e.track = LOCK_TRACK.commit; // e.g. a draining held lock: now it runs to completion
+      this.syncWireShape(g);
+      return true;
+    }
     if (!this.deps.resolveTarget(playerId, key, this.target)) return false;
     const entry = newLock(key, this.target.hostile);
-    if (g.locks.length >= g.capacity) g.locks.shift(); // queue full: the oldest goes
+    this.makeRoom(g);
     g.locks.push(entry);
     g.wire.l.push({ t: key, s: LOCK_STAGE_CODE[entry.stage], p: 0 });
     this.syncWireShape(g);
     return true;
+  }
+
+  /**
+   * The pilot's lock line is on `key` (null = on nothing / let go). The held
+   * target builds; any other held lock in the group is released and drains.
+   * The line coming back onto a draining target resumes it.
+   */
+  trackLock(playerId: string, groupId: string, key: string | null): void {
+    const p = this.players.get(playerId);
+    if (!p || !this.sync(playerId, p)) return;
+    const g = this.group(p, groupId);
+    if (!g) return;
+    let found = false;
+    for (const e of g.locks) {
+      if (key !== null && e.target === key) {
+        found = true;
+        if (e.track === LOCK_TRACK.released) e.track = LOCK_TRACK.held;
+      } else if (e.track === LOCK_TRACK.held) {
+        e.track = LOCK_TRACK.released;
+      }
+    }
+    if (key !== null && !found && this.deps.resolveTarget(playerId, key, this.target)) {
+      this.makeRoom(g);
+      g.locks.push(newLock(key, this.target.hostile, LOCK_TRACK.held));
+    }
+    this.syncWireShape(g);
+  }
+
+  /** Free a slot when the group is full: a draining lock goes first, else the oldest. */
+  private makeRoom(g: GroupState): void {
+    if (g.locks.length < g.capacity) return;
+    let i = g.locks.findIndex((e) => e.track === LOCK_TRACK.released && e.stage !== 'locked');
+    if (i < 0) i = 0;
+    g.locks.splice(i, 1);
   }
 
   /** Cancel one lock (or every lock in the group when `key` is absent). */
@@ -279,7 +356,9 @@ export class LockSubsystem {
   private stepGroup(playerId: string, p: PlayerLocks, g: GroupState): void {
     // Auto groups acquire their own target when idle.
     if (g.locks.length === 0 && g.mode === 'auto') {
-      const key = this.deps.autoPick(playerId, g.reach, this.shooter.x, this.shooter.y);
+      this.bearGroup = g;
+      const key = this.deps.autoPick(playerId, g.reach, this.shooter.x, this.shooter.y, this.bears);
+      this.bearGroup = null;
       if (key !== null && this.deps.resolveTarget(playerId, key, this.target)) {
         g.locks.push(newLock(key, true));
         g.wire.l.push({ t: key, s: LOCK_STAGE_CODE.acquiring, p: 0 });
@@ -309,7 +388,7 @@ export class LockSubsystem {
         continue;
       }
       const failsafeSecs = Number.isFinite(secs) ? secs * LOCK_TUNING.failsafeMul : LOCK_TUNING.baseSeconds * LOCK_TUNING.failsafeMul;
-      const ev = stepLock(e, LOCK_DT, secs, failsafeSecs, LOCK_TUNING.lostGraceSeconds);
+      const ev = stepLock(e, LOCK_DT, secs, failsafeSecs, LOCK_TUNING.lostGraceSeconds, LOCK_TUNING.decayMul);
       if (ev === 'commit') this.deps.commitHostileAct(playerId, e.target);
       if (ev === 'dropped') {
         g.locks.splice(i, 1);
@@ -323,7 +402,9 @@ export class LockSubsystem {
   private writeWire(w: WireLock, e: LockEntry): void {
     w.t = e.target;
     w.s = LOCK_STAGE_CODE[e.stage];
-    w.p = Math.round(Math.min(1, e.progress) * 100);
+    w.p = Math.round(Math.max(0, Math.min(1, e.progress)) * 100);
+    if (e.track === LOCK_TRACK.released && e.stage !== 'locked') w.r = 1;
+    else if (w.r !== undefined) delete w.r;
   }
 
   /** Re-shape a group's wire list to match its locks (only on add/remove). */
