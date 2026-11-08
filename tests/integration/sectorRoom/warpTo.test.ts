@@ -41,6 +41,17 @@ describe('SectorRoom integration — warp-to (solar-system sectors)', () => {
     expect(Math.hypot(pos.x - drop.x, pos.y - drop.y)).toBeLessThan(1500);
   });
 
+  // User 2026-11-08 ("does it only ever fly right?!"): the filmed pick was the
+  // gate due east. A pocket to the south-west must be reached too.
+  it('flies any direction: a south-west pocket, not just east', { timeout: 40_000 }, async () => {
+    const belt = sites.sectorSites('sol-prime').find((s) => s.kind === 'belt' && s.x < 0 && s.y < 0)!;
+    const drop = sites.warpDropPoint(belt, 0, 0);
+    const pos = await flyWithWarp(drop, 13_000);
+    expect(pos.x).toBeLessThan(-10_000);
+    expect(pos.y).toBeLessThan(-10_000);
+    expect(Math.hypot(pos.x - drop.x, pos.y - drop.y)).toBeLessThan(1500);
+  });
+
   it('ignores a warp to a point that is not a pocket rim', { timeout: 30_000 }, async () => {
     const pos = await flyWithWarp({ x: 90_000, y: 90_000 }, 5_000);
     expect(Math.hypot(pos.x, pos.y)).toBeLessThan(200);
