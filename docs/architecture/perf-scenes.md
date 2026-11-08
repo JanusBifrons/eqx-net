@@ -33,15 +33,37 @@ Three rules make the numbers trustworthy:
 | Client numbers: main-thread frame interval, renderer cost (worker or main), long tasks, display objects, heap | `?perfprobe=1` → `window.__eqxPerf` (`src/client/debug/perf/perfProbe.ts`) |
 | Network bytes | the runner, from DevTools network events (no app code; works on a phone too) |
 | Runner, A/B and ledger | `pnpm perf:scenes` (`perf/run-perf.ts`) → `perf/ledger/*.json` |
-| Verdict | `perf/verdict.ts`: exact Mann-Whitney U plus a relative AND an absolute floor per metric |
+| Verdict | `perf/verdict.ts`: exact Mann-Whitney U plus a relative AND an absolute floor per metric; RED / GREEN / INCONCLUSIVE, optional A/A noise floor |
 
 ## Running it
 
 ```
-pnpm perf:scenes                                  # every scene, 5 reps, head vs origin/main
-pnpm perf:scenes --scenes fleet-fight --reps 3    # one scene
+pnpm perf:scenes                                  # every scene, 8 reps, head vs origin/main
+pnpm perf:scenes --scenes fleet-fight --reps 4    # one scene, the fewest reps that can decide
+pnpm perf:scenes --base HEAD --head-params shiplight=gpu --noise-check   # one switch, with a noise floor
 pnpm perf:scenes --head-only --reps 1             # a quick look, no A/B
 ```
+
+## Reading the verdict: RED, GREEN, INCONCLUSIVE (2026-11-08)
+
+Each gated metric gets one of three verdicts (`perf/verdict.ts`):
+
+| Verdict | Means |
+|---|---|
+| **RED** | head is worse by more than the metric's relative AND absolute threshold, p < 0.05 (exact two-sided Mann-Whitney), and (with `--noise-check`) the move is bigger than this host's same-code spread. |
+| **GREEN** | the move is under the thresholds, **and** the rep count could have produced p < 0.05. A real regression would have shown. |
+| **INCONCLUSIVE** | the run can't tell. Too few reps to ever reject; or over the thresholds but not significant; or over the thresholds but inside the A/A noise ("within host noise (×N)"). |
+
+The scene is RED if any metric is RED, else INCONCLUSIVE if any gated metric is, else GREEN. The runner exits 0 GREEN, 1 RED or INVALID, 3 INCONCLUSIVE.
+
+**Minimum reps.** The exact test's smallest possible p is 2 / C(2n, n): 0.10 at 3 v 3, 0.029 at 4 v 4. A 3-rep A/B can never go RED, so before this change its "GREEN" meant nothing (the GPU-lighting A/Bs in #344–#346 were 3 reps). So:
+- `--reps` defaults to 8;
+- odd counts round up to even (each arm runs second in a round equally often; the second slot runs on a warmer machine);
+- below 4 reps per arm a metric is INCONCLUSIVE, never GREEN.
+
+**Noise floor (`--noise-check`).** Adds a third arm, `aa`: the base build with the base params again, booted fresh. Per metric, the spread is max(base/aa, aa/base) of the two arm medians, the same statistic as the head/base ratio over the same number of reps. A head move no bigger than that can't be RED. It is on by default when base and head are the same commit with the same params (an A/A run), and opt-in otherwise; it adds 50 % to the run time. With three arms the order walks all six permutations, and base-before-head still flips every rep. A laptop's same-code spread reached ×2 on hitches (2026-11-08), so on a laptop a hitch "regression" under ×2 is noise until shown otherwise.
+
+**The ledger records the run's conditions**: each arm's SHA, full client URL params (`art`, `fx`, `shiplight`, `worker`, …) and server env (the injected burn), the device, the GPU renderer string the browser really used (`UNMASKED_RENDERER_WEBGL`), and the host (CPU model, threads, total and free RAM). Two ledgers from different hosts or renderers are not comparable.
 
 The base arm is a worktree at `.claude/worktrees/perf-base` that shares the root `node_modules` through a junction. Never remove it with `git worktree remove` while the junction is there: that deletes through the link (2026-11-06). Run `cmd /c rmdir <dir>\node_modules` first.
 
@@ -90,7 +112,8 @@ The runner can slow the head arm on purpose: `--inject-server-burn N` busy-waits
   | hitches | RED | 18 a minute | 482 a minute | 0.03 |
 
   Ledger: `perf/ledger/inject-2026-11-06.json`.
-- **How sensitive it is:** the laptop is noisy. Base fleet-fight tick p95 ranged from 10 to 19 ms across one session, so the gate catches large regressions (around 1.5× or more), not 10 %. It needs at least 4 reps per arm: with 3, Mann-Whitney can never reach p < 0.05.
+- **How sensitive it is:** the laptop is noisy. Base fleet-fight tick p95 ranged from 10 to 19 ms across one session, so the gate catches large regressions (around 1.5× or more), not 10 %. It needs at least 4 reps per arm: with 3, Mann-Whitney can never reach p < 0.05. Until 2026-11-08 the verdict still called such runs GREEN; now they are INCONCLUSIVE (see above).
+- **Re-run with the three-way verdict (desktop, RTX 5070 Ti, 2026-11-08):** `--reps 3` with the same burns rounds up to 4 reps and goes RED (server tick p95 2.15 → 8.08 ms, frame p95 16.8 → 33.4 ms, hitches 0 → 323 a minute, each p = 0.03). The same ledger's first 3 reps per arm re-judged give INCONCLUSIVE on every gated metric (min p 0.10). Ledger: `perf/ledger/inject-2026-11-08.json`.
 - **A finding:** a sustained 60-ship fight (180 ships over the window) pushes the laptop server's p99 tick to about 40 ms with load shedding off, against a 16.7 ms budget. In real play, time dilation and shedding absorb it.
 
 ## Adding a scene
