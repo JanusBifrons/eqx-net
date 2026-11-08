@@ -141,8 +141,8 @@ function MiniNumbers({ scale }: { scale: number }): JSX.Element {
       data-hud-exclusion=""
       style={{ fontFamily: HUD.font.num, fontSize: fs, display: 'flex', gap: 8, pointerEvents: 'none', letterSpacing: 0.3 }}
     >
-      <span style={{ color: HUD.color.shield }}>◈ {Math.round(shield)}</span>
-      <span style={{ color: hullColor(hull) }}>✚ {Math.round(hull)}</span>
+      <span style={{ color: HUD.color.shield }}>◈ {Math.min(100, Math.round(shield))}</span>
+      <span style={{ color: hullColor(hull) }}>✚ {Math.min(100, Math.round(hull))}</span>
     </div>
   );
 }

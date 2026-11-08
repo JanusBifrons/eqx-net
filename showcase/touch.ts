@@ -74,8 +74,9 @@ export class TouchPad {
   /** Lift every finger still down. */
   async releaseAll(): Promise<void> {
     if (this.active.size === 0) return;
+    const lifted = [...this.active];
     this.active.clear();
-    await this.emit('touchEnd');
+    await this.emit('touchEnd', lifted);
   }
 
   /** Release fingers and detach the CDP session. */
@@ -99,8 +100,13 @@ export class TouchPad {
   }
 
   /** @internal */ release(id: number): Promise<void> {
-    if (!this.active.delete(id)) return Promise.resolve();
-    return this.emit('touchEnd');
+    const p = this.active.get(id);
+    if (!p || !this.active.delete(id)) return Promise.resolve();
+    // CDP ends exactly the points LISTED in a touchEnd. Listing the fingers
+    // still down (the old behaviour) lifted the OTHER thumb and left this one
+    // stuck down, so every later press of this finger was ignored (a held
+    // BOOST, a dead twin-stick aim in the landscape take).
+    return this.emit('touchEnd', [[id, p]]);
   }
 
   /**
@@ -108,7 +114,7 @@ export class TouchPad {
    * this one is dropped — the queued one reads the fingers' positions when it
    * is SENT, so it carries the latest state anyway. Start/end never coalesce.
    */
-  private emit(type: TouchType): Promise<void> {
+  private emit(type: TouchType, endPoints?: [number, Pt][]): Promise<void> {
     if (type === 'touchMove') {
       if (this.moveQueued) return this.chain;
       this.moveQueued = true;
@@ -116,7 +122,7 @@ export class TouchPad {
     this.chain = this.chain
       .then(async () => {
         if (type === 'touchMove') this.moveQueued = false;
-        const touchPoints = [...this.active].map(([id, p]) => ({
+        const touchPoints = (endPoints ?? [...this.active]).map(([id, p]) => ({
           x: p.x,
           y: p.y,
           id,

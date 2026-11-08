@@ -988,6 +988,9 @@ export class ColyseusGameClient {
    *  manual-aim branch below is skipped, so legacy behaviour is unchanged. */
   private readonly _hudVariant = getUiVariant();
   private readonly _expHud = this._hudVariant !== 'legacy';
+  /** HUD demo: `?fakeCredits=1` drives the wallet client-side (see hud/widgets). */
+  private readonly _fakeCredits =
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('fakeCredits') === '1';
   /** Fixed-gun hull steer state (aimSteer hysteresis), reused per tick. */
   private readonly _aimSteer = makeAimSteerState();
   /** Cache: does the local kind have only fixed mounts? Keyed by kind. */
@@ -1934,8 +1937,12 @@ export class ColyseusGameClient {
         // captures of similar issues should now show the rejection cluster
         // directly.
         logEvent('fireRejected', { clientShotId: ack.clientShotId, hit: ack.hit, targetId: ack.targetId });
-        useUIStore.getState().setSectorAlert('shot_rejected');
-        setTimeout(() => useUIStore.getState().setSectorAlert(null), 1500);
+        // The raw 'shot_rejected' id is a diagnostic, not a player message —
+        // the experimental HUDs keep it in the log only.
+        if (!this._expHud) {
+          useUIStore.getState().setSectorAlert('shot_rejected');
+          setTimeout(() => useUIStore.getState().setSectorAlert(null), 1500);
+        }
       }
     });
 
@@ -3283,7 +3290,9 @@ export class ColyseusGameClient {
       // Living World P1a (#16) — the authoritative own-ship cargo slice.
       this.applyLocalCargo(localId, serverState.cargo, serverState.fitted);
       // Economy v2 W1 (#16) — the wallet balance (store write only on change).
-      if (serverState.wallet !== undefined && useUIStore.getState().wallet !== serverState.wallet) {
+      // `?fakeCredits=1` (HUD demo only) owns the wallet: skip the server write
+      // so the demo drip isn't reset to the real balance every snapshot.
+      if (serverState.wallet !== undefined && !this._fakeCredits && useUIStore.getState().wallet !== serverState.wallet) {
         useUIStore.getState().setWallet(serverState.wallet);
       }
       // Living World P1a-2 — auto-deposit progress ring (quantised to 10 % so
