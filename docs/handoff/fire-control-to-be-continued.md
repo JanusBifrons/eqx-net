@@ -89,6 +89,98 @@ the PR that finishes the work.
 7. **Later (not in this plan):** D replacing the legacy HUD, drawer/menu
    restyle, pilot skills feeding `PilotLockMods`.
 
+## Known issues and polish
+
+Everything known to be wrong, rough or unfinished on this branch, beyond the
+planned features above. Tick items off (or move them into a PR description) as
+they're fixed.
+
+### Bugs
+
+- [ ] **Info-box LOCK didn't register in the 1v3 clip.** The button still read
+  LOCK after a tap and a retry; the e2e "hands-off" test passes in
+  `auto-fire-test`. Reproduce in a failing test first (invariant #13). Suspects:
+  - the world-anchored info box slides as the ship moves, so taps miss;
+  - the target was out of reach and the lock was dropped silently.
+- [ ] **Switching a group to MAN doesn't cancel the lock AUTO already started.**
+  In the footage both groups ended up on the same fighter because their AUTO
+  locks were already building when the pilot flipped them to MAN.
+- [ ] **Capital multi-mount groups** can show a predicted (ghost) bolt from a
+  mount that isn't on target. The server correctly refuses it; the client
+  gates per group, not per mount, in `sendFire`.
+
+### Missing feedback / UX
+
+- [ ] **No "can't lock" feedback.** An out-of-reach or untrackable target
+  (`lockSeconds` = Infinity) sits at 0 % and is dropped after the 1.5 s grace
+  with nothing shown. The plan's broken "can't lock" ring isn't built, and the
+  LOCK button should say OUT OF RANGE.
+- [ ] **No edge-radar marks** (HaloRadar): off-screen ships locking you are
+  only shown by the caret on your ring and the top band.
+- [ ] **Hostile drones draw in their own colours** (often green) next to red
+  lock rings and diamonds; hostility should read at a glance.
+- [ ] **The legacy weapon-slot bar** (PRIMARY / EMPTY / EMPTY) still shows at
+  the bottom on desktop in D; the weapon strip replaces it.
+- [ ] **The info box moves with its ship**, so its buttons are a moving target
+  on touch. Consider pinning it while a finger is down, or docking it.
+- [ ] **Pilot/Spectate toggle in portrait** is last in the top-centre column;
+  with both lock bands showing on a short screen it can sit close to the ship.
+- [ ] **Locking a player** (`p:` keys) always runs the failsafe and logs a
+  hostile act, but there's no PvP flag or notice to the target yet (plan P2).
+- [ ] **Warp-to in D** still uses the speed-dial "Warp ▸" and the existing chip;
+  the NAV button and the status-band slot aren't built (see "Still to do" 3).
+
+### Gameplay / server gaps
+
+- [ ] **`lock_track` is trusted.** The server believes the client's line is on
+  the target; it doesn't check the bearing. Verify server-side (target within a
+  cone of the pilot's last guide bearing, or within the group's arc) before this
+  leaves the experiment.
+- [ ] **No rate limit on the lock messages** (`lock_request`, `lock_track`,
+  `lock_cancel`, `set_group_mode`). The client sends `lock_track` only on
+  change, but the server should cap it like inputs.
+- [ ] **NPC capitals' turret fire isn't lock-gated** (`AiFireResolver.fireMount`);
+  only the hull-aimed `resolve` path is.
+- [ ] **The NPC fire gate is a line-of-fire cone** (0.45 rad, `NpcLockSubsystem`).
+  A shot aimed elsewhere that then hits a tracked pilot isn't gated.
+- [ ] **Player capital turrets** aim at the group's first lock only
+  (`aimKeyFor`), not split across its 3 locks.
+- [ ] **NPC locks start from beyond the screen edge** (weapon reach is long).
+  Realistic, but tune or add the radar marks above so it reads.
+
+### Tuning (all untested on a real device)
+
+- Base lock 1.5 s, failsafe 1.75×, drain 1.5× (`LOCK_TUNING`, `lockProfile.ts`).
+- Sticky line: the held target's cone is 1.6× wider (`updateLockGuide`).
+- Fire tolerance 0.2 rad, server and client (`FC_MOUNT_FIRE_TOLERANCE`).
+- Fixed-gun AUTO window ±0.3 rad (`FIXED_BEAR`, `LockSubsystem.ts`).
+- Lock-line cone: 70 u minimum, widening 0.12 u per unit of distance.
+
+### Tech debt
+
+- [ ] `updateLockGuide` builds a key string per candidate (10 Hz while a line
+  is held, plus each pointer move): small allocation; precompute keys.
+- [ ] `_fcInfo.allFixed` is now unused on the client (the arc check replaced it).
+- [ ] Unmeasured cost: `NpcLockSubsystem.step` is O(drones × fire-control
+  pilots) at 10 Hz, and `fireBlocked` runs per NPC shot. Add a bench before any
+  PR.
+- [ ] Older showcase shots `fc-phone-landscape` / `fc-desktop` predate locking
+  both ways and the held line; retire or re-script them. The review page's 1v3
+  and failsafe clips predate the sticky line (the stills show it).
+
+### Before any PR
+
+- [ ] Sync with `origin/main` (last merged at the start of this branch) and
+  re-run the inner loop.
+- [ ] `pnpm e2e:netgate` (live loop: fire path, snapshot slices, mount aim),
+  perf scenes, full `pnpm lint` + `pnpm e2e` feature tier.
+- [ ] CLAUDE.md: fire-control rules for src/server and src/client (lock-gated
+  fire, `lock_track`, the own-ship `groups` / `lockedBy` slices).
+- [ ] Pre-existing, not from this branch: `energy-bar` e2e fails on `main` too;
+  `auto-fire` e2e is quarantined.
+- [ ] Housekeeping: the old phase-1 worktree `../eqx-net-hud` couldn't be moved
+  under `.claude/worktrees/` (Permission denied).
+
 ## Gotchas learned
 
 - Several Claude sessions share this machine and the showcase recorder uses
