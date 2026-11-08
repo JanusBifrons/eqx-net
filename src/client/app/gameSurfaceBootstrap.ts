@@ -15,7 +15,7 @@
  */
 
 import { PixiRenderer } from '../render/PixiRenderer.js';
-import { loadArtPreference, loadSpeedFxPreference, readArtDelayMs, resolveArtMode, resolveFxMode, resolveShipLighting, resolveSpeedFx, type ArtOptions } from '../render/art/artMode.js';
+import { loadArtPreference, loadLightingPreference, loadSpeedFxPreference, readArtDelayMs, resolveArtMode, resolveFxMode, resolveShipLighting, resolveSpeedFx, type ArtOptions } from '../render/art/artMode.js';
 import {
   WorkerRendererClient,
   supportsOffscreenRenderer,
@@ -56,7 +56,14 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
   };
   art.fx = resolveFxMode(search, art.mode, navigator.webdriver === true);
   art.speedFx = resolveSpeedFx(search, loadSpeedFxPreference());
-  const lighting = resolveShipLighting(search, art.mode);
+  // GPU lighting: URL > saved level > the device's default (live for players,
+  // baked under automation unless the URL asks).
+  const lighting = resolveShipLighting(search, art.mode, {
+    saved: loadLightingPreference(),
+    touch: isTouch,
+    deviceMemoryGb: (navigator as { deviceMemory?: number }).deviceMemory,
+    automation: navigator.webdriver === true,
+  });
   if (lighting) art.lighting = lighting;
   const renderer: IRenderer = useWorker ? new WorkerRendererClient(isTouch, art) : new PixiRenderer(isTouch, art);
   // Click-to-inspect (Item B) — DEV/E2E deterministic selection hook. Only the
