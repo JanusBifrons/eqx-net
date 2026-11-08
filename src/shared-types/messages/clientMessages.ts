@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { RECIPE_IDS } from '../recipes.js';
 import { StructureKindIdSchema } from '../structureKinds.js';
 import { GATE_ACCESS_IDS } from '../gateAccess.js';
+import { MountWeaponIdSchema } from '../shipKinds/types.js';
 import { SelectEntitySchema, DeselectEntitySchema } from './selectionMessages.js';
 
 export const InputMessageSchema = z
@@ -45,7 +46,11 @@ export const FireMessageSchema = z
     // Bounded to cap payload size (S5) — a client-generated correlation id,
     // never longer than a UUID-ish token.
     clientShotId: z.string().min(1).max(64),
-    weapon: z.enum(['hitscan', 'laser', 'heat-seeker']).default('hitscan'),
+    // Any mount weapon (the server ignores this field and fires each mount's
+    // own bound weapon). It was a 3-value enum, so a group whose first mount
+    // carried e.g. an autocannon or naval gun had EVERY fire dropped as
+    // malformed (exp/fire-control P0).
+    weapon: MountWeaponIdSchema.default('hitscan'),
     /** Fire direction in radians, [-π, π]. Replaces the previous 4-number
      *  `rayFromX/Y, rayDirX/Y` payload (network-discipline P5). The server
      *  reconstructs the ray origin from the shooter's lag-compensated pose

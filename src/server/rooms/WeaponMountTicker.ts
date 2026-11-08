@@ -268,7 +268,10 @@ export class WeaponMountTicker {
       // Firing-set ids — only these track the target. Reused scratch set.
       const firingIds = this._firingIdsScratch;
       firingIds.clear();
-      for (const m of d.resolveInstanceFireMounts(ship)) firingIds.add(m.id);
+      // Every weapon group aims (exp/fire-control): groups fire independently,
+      // so aiming only slots[0] left every other group's turrets at base while
+      // the pilot fired them. Matches the client's tickLocalMountAim (#12/#15).
+      for (const m of mounts) firingIds.add(m.id);
 
       const prevTargetId = this.playerSlotTargets.get(playerId) ?? null;
       // Part C — hostile-only (per-player ledger), health-weighted, commitment-

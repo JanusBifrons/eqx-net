@@ -5578,7 +5578,9 @@ export class ColyseusGameClient {
     // Active-slot mount ids — reused scratch set (alloc-free, invariant #14).
     const activeMountIds = this._activeMountIdsScratch;
     activeMountIds.clear();
-    for (const m of this.localShipMounts()) activeMountIds.add(m.id);
+    // Every weapon group aims (exp/fire-control): each group fires on its own,
+    // so no mount idles at base. Matches WeaponMountTicker.tickPlayer (#12/#15).
+    for (const m of catalogueMounts) activeMountIds.add(m.id);
 
     // Gather drone auto-aim targets from the SINGLE per-frame display
     // pose. `buildLocalAimTargets` reads the pose `updateMirror` already
@@ -5704,7 +5706,8 @@ export class ColyseusGameClient {
       const mount = mounts[i]!;
       const mountWorldX = ship.x + (mount.localX * cosA - mount.localY * sinA);
       const mountWorldY = ship.y + (mount.localX * sinA + mount.localY * cosA);
-      const currentMountAngle = mountAngles?.[i] ?? 0;
+      const angleIdx = this.instanceMountIndex(ship.kind, ship.activatedMounts, mount.id);
+      const currentMountAngle = angleIdx >= 0 ? (mountAngles?.[angleIdx] ?? 0) : 0;
       const mountAngle = ship.angle + mount.baseAngle + currentMountAngle;
       const fwdX = -Math.sin(mountAngle);
       const fwdY = Math.cos(mountAngle);
@@ -5799,6 +5802,30 @@ export class ColyseusGameClient {
   private localMuzzle(mount: WeaponMount): number {
     const kind = getShipKind(this.mirror.ships.get(this.mirror.localPlayerId ?? '')?.kind ?? null);
     return shipShotMuzzle(kind, mount);
+  }
+
+  // Per-instance mount list cache (kind + activated-mounts identity), so the
+  // per-frame index lookup below never re-resolves or allocates (#14).
+  private _instMountsKind: string | null | undefined = undefined;
+  private _instMountsAct: unknown = undefined;
+  private _instMounts: ReadonlyArray<WeaponMount> = [];
+
+  /**
+   * Index of `mountId` in the ship's full per-instance mount list
+   * (`[...kind.mounts, ...activated]`) — the index space `mountAngles` is
+   * written in on both sides. The fire set is a SUBSET/REORDER of that list
+   * once a ship has several weapon groups, so reading `mountAngles[i]` by
+   * fire-set position aimed the wrong barrel (exp/fire-control P0).
+   */
+  private instanceMountIndex(kindId: string | null | undefined, activated: unknown, mountId: string): number {
+    if (kindId !== this._instMountsKind || activated !== this._instMountsAct) {
+      this._instMountsKind = kindId;
+      this._instMountsAct = activated;
+      this._instMounts = resolveInstanceMounts(getShipKind(kindId ?? null), activated as Parameters<typeof resolveInstanceMounts>[1]);
+    }
+    const list = this._instMounts;
+    for (let i = 0; i < list.length; i++) if (list[i]!.id === mountId) return i;
+    return -1;
   }
 
   private localShipMounts(): ReadonlyArray<WeaponMount> {
@@ -6152,7 +6179,9 @@ export class ColyseusGameClient {
         // Phase 4b.2: include the per-mount slewed angle in the fire
         // direction so the ghost emerges in the same direction the
         // visible barrel is aimed.
-        const currentMountAngle = mountAngles?.[i] ?? 0;
+        const localShip = this.mirror.ships.get(localId);
+        const angleIdx = this.instanceMountIndex(localShip?.kind, localShip?.activatedMounts, mount.id);
+        const currentMountAngle = angleIdx >= 0 ? (mountAngles?.[angleIdx] ?? 0) : 0;
         const mountFireAngle = state.angle + mount.baseAngle + currentMountAngle;
         const fwdX = -Math.sin(mountFireAngle);
         const fwdY = Math.cos(mountFireAngle);

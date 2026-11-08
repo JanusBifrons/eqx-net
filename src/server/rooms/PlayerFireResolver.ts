@@ -198,6 +198,12 @@ export class PlayerFireResolver implements WeaponFireSink {
   };
   // Per-fire-event sink state — set in resolve() before the salvo, read by the
   // sink methods. resolve() is synchronous + single-threaded, so race-free.
+  /** Per-(shooter, weapon group) fire tick. Groups fire independently, so
+   *  each keeps its own cooldown (exp/fire-control P0). The per-shooter
+   *  scalar `lastFireClientTick` still records the latest fire of ANY group
+   *  (it is what persistence / transit restore carry); an empty group map
+   *  falls back to it, so a restored ship can't skip its cooldown. */
+  private readonly _lastFireByGroup = new Map<string, Map<string, number>>();
   private _shooterId = '';
   private _effTick = 0;
   // Review must-fix #1 — the shooter's per-instance outgoing-DAMAGE multiplier
@@ -263,7 +269,13 @@ export class PlayerFireResolver implements WeaponFireSink {
       const c = getWeapon(slotMounts[i]!.weaponId).cooldownTicks;
       if (c > slotCooldown) slotCooldown = c;
     }
-    const lastFireCt = d.lastFireClientTick.get(shooterId) ?? -999;
+    const groupKey = slotId ?? '';
+    let groupTicks = this._lastFireByGroup.get(shooterId);
+    // The scalar is deleted on leave/death/transit — drop the stale group map.
+    if (groupTicks && !d.lastFireClientTick.has(shooterId)) groupTicks.clear();
+    const lastFireCt = groupTicks && groupTicks.size > 0
+      ? (groupTicks.get(groupKey) ?? -999)
+      : (d.lastFireClientTick.get(shooterId) ?? -999);
     if (tick - lastFireCt < slotCooldown) {
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
       client.send('hit_ack', ack);
@@ -280,6 +292,11 @@ export class PlayerFireResolver implements WeaponFireSink {
       client.send('hit_ack', ack);
       return;
     }
+    if (!groupTicks) {
+      groupTicks = new Map(); // once per shooter, not per fire
+      this._lastFireByGroup.set(shooterId, groupTicks);
+    }
+    groupTicks.set(groupKey, tick);
     d.lastFireClientTick.set(shooterId, tick);
     ship.energy = spendEnergy(ship.energy, slotEnergyCost);
 
