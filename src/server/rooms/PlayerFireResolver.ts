@@ -114,6 +114,9 @@ export interface PlayerFireResolverDeps {
   getActiveShip: (playerId: string) => ShipState | undefined;
   /** Per-shooter cooldown ledger. */
   lastFireClientTick: Map<string, number>;
+  /** Fire control (exp/fire-control): may this pilot's group fire now? A
+   *  fire-control pilot's group fires only at a LOCKED target; absent ⇒ legacy. */
+  fireAllowed?: (playerId: string, slotId: string | undefined) => boolean;
   /** Lag-comp pose ring. */
   snapshotRing: SnapshotRingReader;
   /** Per-tick cached player poses (fallback when ring misses). */
@@ -268,6 +271,12 @@ export class PlayerFireResolver implements WeaponFireSink {
     for (let i = 0; i < slotMounts.length; i++) {
       const c = getWeapon(slotMounts[i]!.weaponId).cooldownTicks;
       if (c > slotCooldown) slotCooldown = c;
+    }
+    if (d.fireAllowed && !d.fireAllowed(shooterId, slotId)) {
+      // No lock for this group: refuse without spending its cooldown.
+      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
+      client.send('hit_ack', ack);
+      return;
     }
     const groupKey = slotId ?? '';
     let groupTicks = this._lastFireByGroup.get(shooterId);

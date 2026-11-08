@@ -225,6 +225,7 @@ import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { isLatentSlot, resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
 import { ROSTER_CAP, type ActivatedMount } from '../playerShips/PlayerShipStore.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
+import { LockSubsystem, type LockTargetView } from './LockSubsystem.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { MissileSimulation } from './MissileSimulation.js';
@@ -346,6 +347,9 @@ import {
   ApplyShipUpgradeSchema,
   RespecShipSchema,
   ActivateMountSchema,
+  LockRequestSchema,
+  LockCancelSchema,
+  SetGroupModeSchema,
   SelectEntitySchema,
   DeselectEntitySchema,
 } from '../../shared-types/messages.js';
@@ -504,6 +508,11 @@ const JoinOptionsSchema = z
      *  testMode-gated; ignored on galaxy rooms so a malicious client
      *  can't force-aggro a live sector. plan: imperative-taco. */
     startHostile: z.boolean().optional(),
+    /** Fire control (exp/fire-control): this client uses target locking —
+     *  its weapon groups fire only at locked targets. Absent = legacy rules.
+     *  Not testMode-gated: it is a client capability, not a cheat (it only
+     *  ever ADDS a gate to the joining player's own fire). */
+    fireControl: z.boolean().optional(),
     /** Test-only: override the disconnect-linger TTL (ms) for THIS player.
      *  On disconnect the room normally lingers the hull for
      *  `LIMBO_DISCONNECT_TTL_MS` (15 min) before the ownerless-evict timer
@@ -1025,6 +1034,8 @@ export class SectorRoom extends Room<SectorState> {
    * Extracted to `WeaponMountTicker.ts` (commit 21 of the v3 refactor plan).
    */
   private mountTicker!: WeaponMountTicker;
+  /** Fire control (exp/fire-control): per-player, per-weapon-group target locks. */
+  private locks!: LockSubsystem;
   /** Alias accessors so the rest of SectorRoom keeps the old field-style
    *  reads (`this.playerMountAngles.get(id)`). Initialised in `onCreate`
    *  after the ticker is constructed. */
@@ -1722,6 +1733,8 @@ export class SectorRoom extends Room<SectorState> {
     // Per-tick weapon-mount aim updater. Owns playerMountAngles +
     // droneMountAngles + the sticky targets + the pooled scratches.
     // Extracted from SectorRoom (commit 21 of v3 refactor plan).
+    this.locks = this.buildLockSubsystem();
+
     this.mountTicker = new WeaponMountTicker({
       sabF32: this.sabF32,
       playerToSlot: this.playerToSlot,
@@ -1736,6 +1749,9 @@ export class SectorRoom extends Room<SectorState> {
       // Capital turret fire control (the resolver is built later; resolve lazily).
       currentTick: () => this.serverTick,
       fireDroneMount: (id, i) => this.aiFireResolver.fireMount(id, i),
+      isFireControl: (pid) => this.locks.isEnabled(pid),
+      onClearPlayer: (pid) => this.locks.clearLocks(pid),
+      aimTargetFor: (pid, mountId, out) => this.lockAimTarget(pid, mountId, out),
     });
 
     // Player weapon-fire resolver. Owns the zod parse, cooldown gate,
@@ -1773,6 +1789,7 @@ export class SectorRoom extends Room<SectorState> {
       serverLogEvent,
       logger,
       malformed: this.malformed,
+      fireAllowed: (pid, slotId) => this.locks.hasLocked(pid, slotId),
     });
 
     // AI drone weapon-fire resolver. Composes the per-mount hitscan +
@@ -2026,6 +2043,7 @@ export class SectorRoom extends Room<SectorState> {
       disabledMsOf: (playerId) => this.gateGuard.remainingMs(playerId, Date.now()),
       droneFactionOf: (id) => (this.patrols.count > 0 ? this.patrols.factionOf(id) : undefined),
       depositProgressOf: (shipInstanceId) => this.depositProgress.get(shipInstanceId),
+      lockGroupsOf: (pid) => this.locks.wireFor(pid),
       warpArrived: (playerId) => this.warpTravel.arrivedRecently(playerId, this.serverTick),
       isJoining: (playerId) => this.pendingJoin.has(playerId),
       transitSpooling: (playerId) => this.transitOrchestrator?.isInFlight(playerId) === true,
@@ -3685,6 +3703,26 @@ export class SectorRoom extends Room<SectorState> {
     // `selectionStatsTimer` (off the hot path); these handlers only register /
     // clear the per-connection selection. Per-session cleanup on disconnect /
     // transit lives in `onLeave` (no 5 Hz leak).
+    // Fire control (exp/fire-control): lock / unlock / group mode.
+    this.onMessage('lock_request', (client: Client, raw: unknown) => {
+      const parsed = LockRequestSchema.safeParse(raw);
+      if (!parsed.success) { this.malformed.record(client.sessionId, 'lock_request'); return; }
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      if (pid !== undefined) this.locks.requestLock(pid, parsed.data.groupId, parsed.data.target);
+    });
+    this.onMessage('lock_cancel', (client: Client, raw: unknown) => {
+      const parsed = LockCancelSchema.safeParse(raw);
+      if (!parsed.success) { this.malformed.record(client.sessionId, 'lock_cancel'); return; }
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      if (pid !== undefined) this.locks.cancelLock(pid, parsed.data.groupId, parsed.data.target);
+    });
+    this.onMessage('set_group_mode', (client: Client, raw: unknown) => {
+      const parsed = SetGroupModeSchema.safeParse(raw);
+      if (!parsed.success) { this.malformed.record(client.sessionId, 'set_group_mode'); return; }
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      if (pid !== undefined) this.locks.setMode(pid, parsed.data.groupId, parsed.data.mode);
+    });
+
     this.onMessage('select_entity', (client: Client, raw: unknown) => {
       const parsed = SelectEntitySchema.safeParse(raw);
       if (!parsed.success) {
@@ -3908,6 +3946,109 @@ export class SectorRoom extends Room<SectorState> {
    * (isActive=false). Use this everywhere a Phase 6a callsite did
    * `state.ships.get(playerId)`.
    */
+  // ── Fire control (exp/fire-control) ─────────────────────────────────────
+  private readonly _lockPose: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+  private readonly _lockTarget: LockTargetView = { x: 0, y: 0, vx: 0, vy: 0, signature: 1, hostile: false };
+  /** Activated-mount geometry per player, cached by the ship's `mounts` ref. */
+  private readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
+
+  private buildLockSubsystem(): LockSubsystem {
+    return new LockSubsystem({
+      resolveTarget: (pid, key, out) => this.resolveLockTarget(pid, key, out),
+      shooterPose: (pid, out) => {
+        const p = this.shipPoseCache.get(pid);
+        const ship = this.getActiveShip(pid);
+        if (!p || !ship || !ship.alive) return false;
+        out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
+        return true;
+      },
+      shipOf: (pid) => {
+        const ship = this.getActiveShip(pid);
+        if (!ship) return null;
+        const kind = getShipKind(ship.kind);
+        let c = this._lockActivated.get(pid);
+        if (!c || c.ref !== ship.mounts) {
+          const all = this.resolveInstanceMounts(ship);
+          c = { ref: ship.mounts, mounts: all.slice((kind.mounts ?? []).length) };
+          this._lockActivated.set(pid, c);
+        }
+        return { kind, activated: c.mounts };
+      },
+      autoPick: (pid, reach, sx, sy) => {
+        // Nearest drone already hostile to this pilot, within reach.
+        let best: string | null = null;
+        let bestD = reach * reach;
+        for (const rec of this.swarmRegistry.all()) {
+          if (rec.kind !== 1 || !this.npcHostileTo(rec.id, pid)) continue;
+          if (!this.swarmEntityPoseInto(rec.id, this._lockPose)) continue;
+          const dx = this._lockPose.x - sx;
+          const dy = this._lockPose.y - sy;
+          const d = dx * dx + dy * dy;
+          if (d < bestD) { bestD = d; best = `s:${rec.entityId}`; }
+        }
+        return best;
+      },
+      commitHostileAct: (pid, key) => this.commitLockHostileAct(pid, key),
+    });
+  }
+
+  /** Resolve a lock key (`s:<entityId>` | `p:<playerId>`) to a damageable target. */
+  private resolveLockTarget(pid: string, key: string, out: LockTargetView): boolean {
+    if (key.startsWith('s:')) {
+      const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
+      if (!rec || (rec.kind !== 1 && rec.kind !== 2)) return false; // asteroids / scrap: no
+      if (rec.kind === 2) {
+        const owner = this.structureRegistry.get(rec.id)?.owner;
+        if (owner === undefined || owner === pid) return false; // never your own base
+        out.hostile = relationOf(pid, owner, this.relationCtx) === 'hostile';
+      } else {
+        out.hostile = this.npcHostileTo(rec.id, pid);
+      }
+      if (!this.swarmEntityPoseInto(rec.id, this._lockPose)) return false;
+      out.x = this._lockPose.x; out.y = this._lockPose.y; out.vx = this._lockPose.vx; out.vy = this._lockPose.vy;
+      out.signature = rec.kind === 1 ? getShipKind(rec.shipKind ?? null).radius : rec.radius;
+      return true;
+    }
+    if (key.startsWith('p:')) {
+      const other = key.slice(2);
+      if (other === pid) return false;
+      const ship = this.getActiveShip(other);
+      const p = this.shipPoseCache.get(other);
+      if (!ship || !ship.alive || !p) return false;
+      out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
+      out.signature = getShipKind(ship.kind).radius;
+      out.hostile = false; // PvP always runs the failsafe first
+      return true;
+    }
+    return false;
+  }
+
+  /** A failsafe finished: `pid` committed a hostile act against the target. */
+  private commitLockHostileAct(pid: string, key: string): void {
+    const tick = this.serverTick;
+    if (key.startsWith('s:')) {
+      const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
+      if (!rec) return;
+      if (rec.kind === 2) {
+        const owner = this.structureRegistry.get(rec.id)?.owner;
+        if (owner !== undefined) this.hostileActs.record(pid, owner, Date.now());
+      } else {
+        this.aiController.markHostile(rec.id, pid, tick);
+        this.broadcast('bot_aggro', { type: 'bot_aggro', botEntityId: `swarm-${rec.entityId}`, targetPlayerId: pid, tick });
+      }
+    }
+    serverLogEvent('lock_hostile_act', { playerId: pid, target: key });
+  }
+
+  /** Turret aim for a fire-control pilot: the mount's group lock target pose. */
+  private lockAimTarget(pid: string, mountId: string, out: { x: number; y: number; vx: number; vy: number }): boolean {
+    if (!this.locks.isEnabled(pid)) return false;
+    const key = this.locks.aimKeyFor(pid, mountId);
+    if (key === null || !this.resolveLockTarget(pid, key, this._lockTarget)) return false;
+    out.x = this._lockTarget.x; out.y = this._lockTarget.y; out.vx = this._lockTarget.vx; out.vy = this._lockTarget.vy;
+    return true;
+  }
+
   private getActiveShip(playerId: string): ShipState | undefined {
     const shipKey = this.resolveActiveShipKey(playerId);
     if (shipKey === undefined) return undefined;
@@ -7774,6 +7915,9 @@ export class SectorRoom extends Room<SectorState> {
     if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.startHostile === true) {
       this.markAllDronesHostileTo(playerId);
     }
+    // Fire control: this client locks targets; its groups fire only at locks.
+    if (parsed.success && parsed.data.fireControl === true) this.locks.enable(playerId);
+    else this.locks.forget(playerId);
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a
     // sane value (e.g. a fire request resolved on this same client.send turn).
@@ -9981,6 +10125,8 @@ export class SectorRoom extends Room<SectorState> {
       this.loot.collectTick();
       // Living World P1a-2 — auto-deposit: hold position near your own storage.
       this.autoDepositTick();
+      // Fire control: advance every pilot's target locks (~10 Hz).
+      this.locks.step();
     }
     if (this.broadcastCounter % 60 === 0) this.loot.sweep();
 

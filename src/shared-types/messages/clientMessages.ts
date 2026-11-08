@@ -119,6 +119,41 @@ export const TestAggroSchema = z
   })
   .strict();
 
+/** Fire control (exp/fire-control): a lock target key — `s:<entityId>` for a
+ *  swarm entity (drone, robot, structure…), `p:<playerId>` for an active ship. */
+export const LockTargetKeySchema = z.string().regex(/^(s:\d{1,10}|p:[A-Za-z0-9_-]{1,64})$/);
+
+/** Client → server: start locking `target` with weapon group `groupId`. */
+export const LockRequestSchema = z
+  .object({
+    type: z.literal('lock_request'),
+    groupId: z.string().min(1).max(32),
+    target: LockTargetKeySchema,
+  })
+  .strict();
+
+/** Client → server: drop one lock (or every lock in the group when no target). */
+export const LockCancelSchema = z
+  .object({
+    type: z.literal('lock_cancel'),
+    groupId: z.string().min(1).max(32),
+    target: LockTargetKeySchema.optional(),
+  })
+  .strict();
+
+/** Client → server: a weapon group's fire mode. */
+export const SetGroupModeSchema = z
+  .object({
+    type: z.literal('set_group_mode'),
+    groupId: z.string().min(1).max(32),
+    mode: z.enum(['auto', 'manual']),
+  })
+  .strict();
+
+export type LockRequestMessage = z.infer<typeof LockRequestSchema>;
+export type LockCancelMessage = z.infer<typeof LockCancelSchema>;
+export type SetGroupModeMessage = z.infer<typeof SetGroupModeSchema>;
+
 /** Client → server: cancel an in-flight spool. No effect once the server
  *  has committed (state is IN_TRANSIT or beyond). */
 export const CancelTransitSchema = z
@@ -347,6 +382,9 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   EngageTransitSchema,
   CancelTransitSchema,
   TestAggroSchema,
+  LockRequestSchema,
+  LockCancelSchema,
+  SetGroupModeSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,

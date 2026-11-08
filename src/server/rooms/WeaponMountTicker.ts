@@ -121,6 +121,12 @@ export interface WeaponMountTickerDeps {
    *  server tick, for per-mount reload timing. Optional: absent ⇒ no turret
    *  fire control (unit harnesses that only test aim). */
   currentTick?: () => number;
+  /** Called when a pilot's turret state is cleared (leave, respawn, evict). */
+  onClearPlayer?: (playerId: string) => void;
+  /** Fire control: is this pilot on lock-driven aim? */
+  isFireControl?: (playerId: string) => boolean;
+  /** Fire control: the lock target pose for one of the pilot's mounts (false = none). */
+  aimTargetFor?: (playerId: string, mountId: string, out: { x: number; y: number; vx: number; vy: number }) => boolean;
   /** Fire ONE mount of a capital drone along its barrel (the resolver reads
    *  the slewed angle). Called only when that mount is on target, in reach
    *  and reloaded. */
@@ -175,6 +181,8 @@ export class WeaponMountTicker {
   /** WS-B3 — reused per-player firing-mount-id set (alloc-free, invariant #14).
    *  Rebuilt per player in `tickPlayer` from `resolveInstanceFireMounts`. */
   private readonly _firingIdsScratch = new Set<string>();
+  /** Fire control: reused lock-target pose (alloc-free, #14). */
+  private readonly _fcTarget = { x: 0, y: 0, vx: 0, vy: 0 };
 
   /** Acquire-or-create a MountTargetView slot. Subsequent calls
    *  overwrite the SAME instance, eliminating per-tick literal allocs.
@@ -301,6 +309,27 @@ export class WeaponMountTicker {
       if (!angles || angles.length !== mounts.length) {
         angles = new Float32Array(mounts.length);
         this.playerMountAngles.set(playerId, angles);
+      }
+
+      // Fire control (exp/fire-control): each mount aims at ITS group's lock
+      // target; a group with no target slews home. Same rule as the client's
+      // tickLocalMountAim (#12/#15).
+      if (d.isFireControl?.(playerId) && d.aimTargetFor) {
+        const fcCos = Math.cos(pose.angle);
+        const fcSin = Math.sin(pose.angle);
+        const t = this._fcTarget;
+        for (let i = 0; i < mounts.length; i++) {
+          const mount = mounts[i]!;
+          if (!d.aimTargetFor(playerId, mount.id, t)) {
+            angles[i] = rotateMountToward(angles[i]!, 0, mount, DT_SEC);
+            continue;
+          }
+          const mx = pose.x + (mount.localX * fcCos - mount.localY * fcSin);
+          const my = pose.y + (mount.localX * fcSin + mount.localY * fcCos);
+          const bearing = Math.atan2(-(t.x - mx), t.y - my);
+          angles[i] = rotateMountToward(angles[i]!, wrapPi(bearing - pose.angle - mount.baseAngle), mount, DT_SEC);
+        }
+        continue;
       }
 
       // Manual aim (exp/hud-mobile-first): a held pilot aim overrides the
@@ -574,6 +603,7 @@ export class WeaponMountTicker {
     this.playerMountAngles.delete(playerId);
     this.playerSlotTargets.delete(playerId);
     this.playerManualAim.delete(playerId);
+    this.deps.onClearPlayer?.(playerId);
   }
 
   /** Cleanup hook: drop all per-drone state on eviction/destroy/shed. */
