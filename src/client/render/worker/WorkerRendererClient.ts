@@ -194,6 +194,7 @@ export class WorkerRendererClient implements IRenderer {
       ...(this._art.delayMs ? { artDelayMs: this._art.delayMs } : {}),
       ...(this._art.fx ? { fx: true } : {}),
       ...(this._art.speedFx === false ? { speedFxOff: true } : {}),
+      ...(this._art.lighting ? { lighting: this._art.lighting } : {}),
     }, [offscreen]);
 
     // F1 — tell the worker once whether to emit per-frame markers.

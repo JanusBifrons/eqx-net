@@ -70,8 +70,13 @@ export class FxExplosions {
   }
 
   /** Start a blast of radius `r` at game-space (x, y). False if not ready. */
+  /** Told of every drawn burst, at its drawn (Pixi-space) position (GPU-lit
+   *  art lights the world from it, whatever spawned it). */
+  onSpawn: ((x: number, y: number, r: number) => void) | null = null;
+
   spawn(x: number, y: number, r: number, nowMs: number): boolean {
     if (!this.ready()) return false;
+    this.onSpawn?.(x, -y, r);
     let b: Burst | undefined;
     for (const c of this.bursts) if (!c.active) { b = c; break; }
     if (!b) {

@@ -30,6 +30,8 @@ import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService'
 import { readFxKillSwitches } from './fxKillSwitches';
 import { createArtService, type ArtHandle } from './art/ArtService.js';
 import { MachinedShipSprite } from './art/MachinedShipSprite.js';
+import { litPass } from './art/litPass.js';
+import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach } from './art/lightingSettings.js';
 import { WarpSpoolFx, type SpoolFxShip, type Nozzle } from './pixi/WarpSpoolFx.js';
 import type { ShipRenderState } from '@core/contracts/IRenderer';
 import { WARP_SPOOL_TICKS } from '@core/physics/warpDrive';
@@ -50,7 +52,7 @@ import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { SHIELD_RADIUS_PAD } from '../../shared-types/shipKinds.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
 import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
-import { BeamSpritePool } from './BeamSpritePool';
+import { BeamSpritePool, type BeamView } from './BeamSpritePool';
 import {
   CameraDirector,
   type CameraTargetLookup,
@@ -679,9 +681,11 @@ export class PixiRenderer implements IRenderer {
     // Machined art: bakes run on workers; until an entity's art is ready it
     // draws today's look. The mode is resolved on the main thread (artMode.ts).
     if (this._artOpts.mode === 'machined') {
-      const art = createArtService({ touch: this._isTouch, delayMs: this._artOpts.delayMs ?? 0 });
+      const art = createArtService({ touch: this._isTouch, delayMs: this._artOpts.delayMs ?? 0, ...(this._artOpts.lighting ? { lighting: this._artOpts.lighting } : {}) });
       this._artCtx.art = art;
       this._artCtx.sunAz = art.lightRig.sunAz;
+      // GPU-lit art (`?shiplight=gpu`): lit meshes are built with these.
+      litPass.settings = this._artOpts.lighting ?? null;
       // Machined turrets ride the new effects (rings in the bakes, baked guns).
       this._artCtx.turrets = this._artOpts.fx === true;
       this.mountVisuals.setArt(this._artCtx);
@@ -837,6 +841,7 @@ export class PixiRenderer implements IRenderer {
       // B4: explosions (ship / drone / structure deaths, missile detonations)
       // and missile smoke trails.
       this._fxExplosions = new FxExplosions(art, () => this.effects?.getQuality() ?? 'medium');
+      this._fxExplosions.onSpawn = (x, y, r): void => this.noteBlastLight(x, y, r);
       this._fxMissileTrails = new FxMissileTrails(art);
       this.shipContainer.addChild(this._fxMissileTrails.smokeLayer, this._fxExplosions.smokeLayer, this._fxMissileTrails.glowLayer, this._fxExplosions.fireLayer);
       this._missileUpdaterCtx.fxTrails = this._fxMissileTrails;
@@ -944,6 +949,8 @@ export class PixiRenderer implements IRenderer {
       // galaxy map / warp screen, where `update()` doesn't run, so the
       // warm-up lands before the player joins.
       this._artCtx.art?.tick();
+      // GPU-lit art: light every lit mesh from this frame's lights, before render.
+      if (litPass.settings && this._artCtx.art && litPass.count > 0) litPass.finish(this.world, this._artCtx.art.lightRig, this.app.renderer.resolution);
       if (this._artCtx.art && ++this._artCollectFrame >= ART_COLLECT_EVERY_FRAMES) {
         this._artCollectFrame = 0;
         this.collectUnusedArt();
@@ -1465,6 +1472,8 @@ export class PixiRenderer implements IRenderer {
   }
 
   update(mirror: RenderMirror): void {
+    // GPU-lit art: this frame's lights are added by the effects below.
+    if (litPass.settings) litPass.begin();
     // F1 — bracket the whole update() for `rendererUpdateMs`. Single
     // exit point (the method has no early `return`), so a start-stamp +
     // tail-write is exact. Sub-µs, unconditional (markers-off baseline =
@@ -1612,6 +1621,7 @@ export class PixiRenderer implements IRenderer {
     updateSwarmSprites(mirror, this._swarmUpdaterCtx);
     this._lodDots.update(mirror, this.sprites, this.world.scale.x);
     this.noteTurretShots(mirror);
+    this.feedLitScene(mirror);
 
     for (const [id, sprite] of this.sprites) {
       if (!seen.has(id)) {
@@ -2335,6 +2345,57 @@ export class PixiRenderer implements IRenderer {
     return this.sprites.has(k) ? k : null;
   }
 
+  // ---- GPU-lit art: lights from the frame's weapons fire and explosions.
+  private readonly _blastLights: Array<{ x: number; y: number; r: number; t0: number }> = [];
+  private _blastLightNext = 0;
+
+  /** An explosion lights the hulls around it for ~0.9 s (sprite space). */
+  private noteBlastLight(x: number, y: number, r: number): void {
+    if (!litPass.settings || litPass.settings.pointLights <= 0) return;
+    const L = this._blastLights;
+    if (L.length < 24) { L.push({ x, y, r, t0: performance.now() }); return; }
+    const b = L[this._blastLightNext]!;
+    this._blastLightNext = (this._blastLightNext + 1) % L.length;
+    b.x = x; b.y = y; b.r = r; b.t0 = performance.now();
+  }
+
+  /**
+   * GPU-lit art: add this frame's lights to the lighting pass (sprite space):
+   * explosions (fading), projectiles in flight (naval shells by calibre),
+   * missiles and beams. Muzzle flashes are lit by the guns themselves
+   * (MountVisualManager, pinned to the flash sprite). Alloc-free.
+   */
+  private feedLitScene(mirror: RenderMirror): void {
+    const ls = litPass.settings;
+    if (!ls || ls.pointLights <= 0) return;
+    const sc = litPass.scene, now = performance.now();
+    for (const b of this._blastLights) {
+      const age = (now - b.t0) / 900;
+      if (age < 0 || age >= 1) continue;
+      const k = (1 - age) * (1 - age);
+      sc.addLight(b.x, b.y, 25, 0xff8a30, 3 * k, b.r * 3 + 90);
+    }
+    if (mirror.projectiles) for (const p of mirror.projectiles.values()) {
+      if (p.beam) continue;
+      const w = p.weaponId ?? '';
+      const K = w === 'naval_xl' ? 6 : w === 'naval_l' ? 4.5 : w === 'naval_m' ? 3 : w === 'naval_s' ? 2 : 1;
+      const color = w.startsWith('naval_') || w === 'autocannon' ? 0xffc070 : 0x9fd8ff;
+      const x = p.x, y = -p.y;
+      sc.addLight(x, y, 5 * K, color, K > 1 ? 0.36 * K : 0.9, 55 * K);
+    }
+    if (mirror.missiles) for (const m of mirror.missiles.values()) sc.addLight(m.x, -m.y, 8, 0xffa060, 1.2, 70);
+    for (let i = 0; i < this._liveBeamCacheCount; i++) this.beamLights(this._liveBeamCache[i]!);
+    for (let i = 0; i < this._remoteBeamCacheCount; i++) this.beamLights(this._remoteBeamCache[i]!);
+  }
+
+  /** A beam lights where it hits and along its length. */
+  private beamLights(b: BeamView): void {
+    const sc = litPass.scene;
+    const len = Math.hypot(b.toX - b.fromX, b.toY - b.fromY);
+    sc.addLight(b.toX, b.toY, 6, 0xff6a9a, 2.2, 120);
+    sc.addLight((b.fromX + b.toX) / 2, (b.fromY + b.toY) / 2, 6, 0xff6a9a, 0.8, len * 0.6 + 30);
+  }
+
   /** Firing reactions for Machined guns (turrets T2): held beams by mount
    *  id, and each bolt / missile the frame it first appears, matched to its
    *  owner's nearest gun tip. Render-only; no wire change. */
@@ -2472,6 +2533,16 @@ export class PixiRenderer implements IRenderer {
         this._fxTopSpeed.set(h.job.id, top); this._fxTrailS.set(h.job.id, trail);
       }
       fx.draw(key, h.ship.nozzles, sp.x, sp.y, sp.rotation, thrust, boost, top, dt, now, trail);
+      // GPU-lit art: each engine is a light in its plume (its own hull takes little).
+      const ls = litPass.settings;
+      if (ls && ls.engineLights && ls.pointLights > 0) {
+        const owner = sp instanceof MachinedShipSprite && sp.lit.length > 0 ? sp.lit[0]!.lightOwnerId : -1;
+        const th = fx.thrustOf(key), c = Math.cos(sp.rotation), s = Math.sin(sp.rotation);
+        for (const nz of h.ship.nozzles) {
+          const ly = nz.y + engineLightAstern(nz.r);
+          litPass.scene.addLight(sp.x + nz.x * c - ly * s, sp.y + nz.x * s + ly * c, engineLightHeight(nz.r), 0xffa24a, engineLightIntensity(nz.r, th), engineLightReach(nz.r), owner);
+        }
+      }
     }
     fx.endFrame();
   }

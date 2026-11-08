@@ -45,6 +45,30 @@ import { NAVAL_BARREL_SPAN } from '@core/combat/muzzle';
 import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import { applySunBlend } from './art/machinedShipLight.js';
+import { LitShipMesh } from './art/litShipShader.js';
+import { litPass } from './art/litPass.js';
+import type { ShipArt } from './art/ArtService.js';
+
+/** A gun's (or AA barrel's) two layers: baked sun frames cross-faded, or
+ *  (GPU-lit art) one lit mesh in `a`, lit by `litPass`, and `b` unused. */
+interface GunLayers { a: Sprite | LitShipMesh; b: Sprite; lit: boolean }
+
+/** Build a gun's layers under `parent` at x. */
+function gunLayers(art: ShipArt, parent: Container, x: number): GunLayers {
+  const settings = litPass.settings;
+  if (art.lit && settings) {
+    const l = art.lit, tex = art.frames[0]!;
+    const mesh = new LitShipMesh({ tex, w: l.w, rows: tex.frame.height, y0: 0, hullH: l.h, ppu: l.ppu, maxH: l.maxH, emisMax: l.emisMax }, settings);
+    mesh.x = x;
+    parent.addChild(mesh);
+    litPass.register(mesh);
+    return { a: mesh, b: new Sprite(), lit: true };
+  }
+  const a = new Sprite(art.frames[0]!), b = new Sprite(art.frames[1 % art.frames.length]!);
+  for (const sp of [a, b]) { sp.anchor.set(0.5); sp.scale.set(1 / art.density); sp.x = x; parent.addChild(sp); }
+  b.alpha = 0;
+  return { a, b, lit: false };
+}
 import { isStructureKindId } from '../../shared-types/structureKinds';
 import { getShipKind, type WeaponMount } from '../../shared-types/shipKinds';
 import { shipPrimaryColor } from '@core/geometry/shipHullOutline';
@@ -65,7 +89,7 @@ interface MachinedGun {
   place: TurretPlace;
   pivot: Container;
   handle: ArtHandle;
-  layers: { a: Sprite; b: Sprite } | null;
+  layers: GunLayers | null;
   /** Pivot → tip, where a shot leaves (local world units). */
   reach: number;
   /** How far from the tip a new shot of this gun may first be seen: its
@@ -96,7 +120,7 @@ interface AaBarrels {
   xs: Float32Array;
   /** Renderer time each barrel last fired. */
   shot: Float64Array;
-  sprites: Array<{ a: Sprite; b: Sprite }> | null;
+  sprites: GunLayers[] | null;
   /** The barrel that fired last (its flash). */
   last: number;
 }
@@ -441,6 +465,7 @@ export class MountVisualManager {
         flash.texture = frames![fr]!;
         flash.x = flashX;
         flash.y = -gun.reach + flashKick;
+        if (litPass.settings && litPass.settings.pointLights > 0) litPass.attachLight(flash, 0xffa050, 1.0, 60, 6);
         const w = gun.place.wid;
         flash.scale.set((w * 3.2) / 64, (w * 4.2) / 64);
       }
@@ -467,6 +492,12 @@ export class MountVisualManager {
     const fr = since >= 0 && frames ? flashFrameAt(since, frames.length, NAVAL_FLASH_LIFE_S) : -1;
     const flashes = gun.barrelFlashes;
     if (flashes) {
+      // GPU-lit art: the salvo lights the gun, its neighbours and the deck.
+      if (fr >= 0 && litPass.settings && litPass.settings.pointLights > 0 && flashes.length > 0) {
+        const K = Math.min(6, Math.max(1, w / 2));
+        const k = Math.max(0, 1 - since / NAVAL_FLASH_LIFE_S);
+        litPass.attachLight(flashes[flashes.length >> 1]!, 0xff9a48, 1.4 * K * k, 110 * K, 6 * K);
+      }
       for (let b = 0; b < flashes.length; b++) {
         const f = flashes[b]!;
         f.visible = fr >= 0;
@@ -646,11 +677,7 @@ export class MountVisualManager {
         if (gun.aa) while (gun.aa.handle.next && gun.aa.handle.next.state === 'ready') gun.aa.handle = gun.aa.handle.next;
         if (!gun.layers && gun.handle.state === 'ready' && gun.handle.ship) {
           // The bake just finished: build the gun (once) and retire the bar.
-          const art = gun.handle.ship;
-          const a = new Sprite(art.frames[0]!), b = new Sprite(art.frames[1 % art.frames.length]!);
-          for (const sp of [a, b]) { sp.anchor.set(0.5); sp.scale.set(1 / art.density); gun.pivot.addChild(sp); }
-          b.alpha = 0;
-          gun.layers = { a, b };
+          gun.layers = gunLayers(gun.handle.ship, gun.pivot, 0);
           gfx.turret.visible = false;
           this.machinedGuns++;
         }
@@ -658,20 +685,15 @@ export class MountVisualManager {
           gun.pivot.rotation = spriteRotation;
           // Lit by the gun's own world rotation, like a hull.
           const parentRot = cluster.container.parent?.rotation ?? 0;
-          applySunBlend(gun.layers, gun.handle.ship.frames, this.actx?.sunAz ?? 0, parentRot + spriteRotation);
+          if (!gun.layers.lit) applySunBlend(gun.layers as { a: Sprite; b: Sprite }, gun.handle.ship.frames, this.actx?.sunAz ?? 0, parentRot + spriteRotation);
           const aa = gun.aa;
           if (aa && !aa.sprites && aa.handle.state === 'ready' && aa.handle.ship) {
             const art = aa.handle.ship;
             aa.sprites = [];
-            for (let k = 0; k < aa.xs.length; k++) {
-              const a = new Sprite(art.frames[0]!), b = new Sprite(art.frames[1 % art.frames.length]!);
-              for (const sp of [a, b]) { sp.anchor.set(0.5); sp.scale.set(1 / art.density); sp.x = aa.xs[k]!; gun.pivot.addChild(sp); }
-              b.alpha = 0;
-              aa.sprites.push({ a, b });
-            }
+            for (let k = 0; k < aa.xs.length; k++) aa.sprites.push(gunLayers(art, gun.pivot, aa.xs[k]!));
           }
           if (aa?.sprites && aa.handle.ship) {
-            for (const sp of aa.sprites) applySunBlend(sp, aa.handle.ship.frames, this.actx?.sunAz ?? 0, parentRot + spriteRotation);
+            for (const sp of aa.sprites) if (!sp.lit) applySunBlend(sp as { a: Sprite; b: Sprite }, aa.handle.ship.frames, this.actx?.sunAz ?? 0, parentRot + spriteRotation);
           }
           this.animateGun(gun);
         }

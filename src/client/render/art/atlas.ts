@@ -11,7 +11,7 @@
  * allocated whole (plus a third again for mipmaps), so `gpuBytes` counts page
  * capacity. Phones use smaller pages (2048²) than desktop (4096²).
  */
-import { Rectangle, Texture } from 'pixi.js';
+import { BufferImageSource, Rectangle, Texture } from 'pixi.js';
 import type { Frame } from './shade.js';
 import { Skyline } from './skyline.js';
 
@@ -21,8 +21,11 @@ type AnyCtx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 interface Page {
   /** Which group the page belongs to (see `setGroup`). */
   group: number;
-  canvas: AnyCanvas;
-  ctx: AnyCtx;
+  /** Canvas pages (ordinary art); `null` on a data page. */
+  canvas: AnyCanvas | null;
+  ctx: AnyCtx | null;
+  /** Data pages (GPU-lit maps): raw RGBA, uploaded as-is. */
+  buf: Uint8Array | null;
   tex: Texture | null;
   /** Where the next frames can go (skyline packing). */
   sky: Skyline;
@@ -34,6 +37,22 @@ export interface AtlasOpts {
   pageSize?: number;
   /** Most pages this atlas may allocate (the GPU-memory budget). Default: no cap. */
   maxPages?: number;
+  /**
+   * Data pages: frames are copied byte for byte and uploaded without alpha
+   * premultiplication. For GPU-lit maps (litMaps.ts), whose every channel is
+   * data: a canvas premultiplies, which wipes the colour of any texel whose
+   * alpha is 0 (cavity 0, material 0) and destroys the maps.
+   */
+  data?: boolean;
+  /** A page budget shared with other atlases (overrides `maxPages`), so the
+   *  ordinary and the lit atlas together stay within the device's memory. */
+  budget?: PageBudget;
+}
+
+/** Pages in use across atlases, against one cap. */
+export class PageBudget {
+  used = 0;
+  constructor(readonly max: number) {}
 }
 
 function makeCanvas(size: number): { canvas: AnyCanvas; ctx: AnyCtx } {
@@ -54,19 +73,31 @@ export class Atlas {
   bytes = 0;
   readonly pageSize: number;
   readonly maxPages: number;
+  private readonly data: boolean;
+  private readonly budget: PageBudget;
 
   /** Mipmapped pages need a wider gutter, or small mips bleed between frames. */
   private readonly PAD: number;
   constructor(private readonly nearest: boolean, opts: AtlasOpts = {}) {
-    this.PAD = nearest ? 1 : 8;
+    // Data pages (lit maps) are read down to mip 5 (litShipShader LIT_MAX_LOD).
+    this.PAD = nearest ? 1 : opts.data ? 32 : 8;
     this.pageSize = opts.pageSize ?? 4096;
-    this.maxPages = opts.maxPages ?? Infinity;
+    this.budget = opts.budget ?? new PageBudget(opts.maxPages ?? Infinity);
+    this.maxPages = this.budget.max;
+    this.data = opts.data === true;
   }
 
   private newPage(): Page {
-    const { canvas, ctx } = makeCanvas(this.pageSize);
-    const p: Page = { group: this.group, canvas, ctx, tex: null, sky: new Skyline(this.pageSize, this.PAD), dirty: true };
+    const sky = new Skyline(this.pageSize, this.PAD);
+    let p: Page;
+    if (this.data) {
+      p = { group: this.group, canvas: null, ctx: null, buf: new Uint8Array(this.pageSize * this.pageSize * 4), tex: null, sky, dirty: true };
+    } else {
+      const { canvas, ctx } = makeCanvas(this.pageSize);
+      p = { group: this.group, canvas, ctx, buf: null, tex: null, sky, dirty: true };
+    }
     this.pages.push(p);
+    this.budget.used++;
     return p;
   }
 
@@ -88,6 +119,7 @@ export class Atlas {
       if (p.group !== group) continue;
       p.tex?.destroy(true);
       this.pages.splice(i, 1);
+      this.budget.used--;
       freed++;
     }
     for (let i = this.singles.length - 1; i >= 0; i--) {
@@ -108,7 +140,7 @@ export class Atlas {
     const S = this.pageSize, P = this.PAD;
     const sims: Skyline[] = [];
     for (const p of this.pages) if (p.group === this.group) sims.push(p.sky.clone());
-    let pages = this.pages.length;
+    let pages = this.budget.used;
     const maxPages = this.maxPages - reservePages;
     for (const f of frames) {
       if (f.w + P * 2 > S || f.h + P * 2 > S) return false;
@@ -137,13 +169,17 @@ export class Atlas {
       if (at) { p = q; break; }
     }
     if (!p) {
-      if (this.pages.length >= this.maxPages) return false;
+      if (this.budget.used >= this.maxPages) return false;
       p = this.newPage();
       at = p.sky.place(fr.w, fr.h);
       if (!at) return false;
     }
-    const img = new ImageData(fr.data as unknown as Uint8ClampedArray<ArrayBuffer>, fr.w, fr.h);
-    p.ctx.putImageData(img, at!.x, at!.y);
+    if (p.buf) {
+      const S4 = S * 4, row = fr.w * 4;
+      for (let y = 0; y < fr.h; y++) p.buf.set(fr.data.subarray(y * row, y * row + row), (at!.y + y) * S4 + at!.x * 4);
+    } else {
+      p.ctx!.putImageData(new ImageData(fr.data as unknown as Uint8ClampedArray<ArrayBuffer>, fr.w, fr.h), at!.x, at!.y);
+    }
     this.pending.push({ page: p, frame: new Rectangle(at!.x, at!.y, fr.w, fr.h), out, idx });
     p.dirty = true;
     this.bytes += fr.w * fr.h * 4;
@@ -154,7 +190,12 @@ export class Atlas {
   commit(): void {
     for (const p of this.pages) {
       if (!p.dirty) continue;
-      if (!p.tex) {
+      if (!p.tex && p.buf) {
+        p.tex = new Texture({ source: new BufferImageSource({
+          resource: p.buf, width: this.pageSize, height: this.pageSize,
+          alphaMode: 'no-premultiply-alpha', scaleMode: 'linear', autoGenerateMipmaps: true,
+        }) });
+      } else if (!p.tex) {
         p.tex = Texture.from(p.canvas as HTMLCanvasElement);
         p.tex.source.scaleMode = this.nearest ? 'nearest' : 'linear';
         if (!this.nearest) { p.tex.source.autoGenerateMipmaps = true; }
@@ -176,6 +217,17 @@ export class Atlas {
    * a TilingSprite), which an atlas slot can't do. Counted in `gpuBytes`.
    */
   standalone(fr: Frame, repeat: boolean, mip: boolean): Texture {
+    if (this.data) {
+      // Lit maps: raw bytes, no premultiplication (capital tiles, own ship).
+      const tex = new Texture({ source: new BufferImageSource({
+        resource: new Uint8Array(fr.data.buffer, fr.data.byteOffset, fr.data.byteLength).slice(), width: fr.w, height: fr.h,
+        alphaMode: 'no-premultiply-alpha', scaleMode: 'linear', autoGenerateMipmaps: mip,
+        ...(repeat ? { addressMode: 'repeat' as const } : {}),
+      }) });
+      const bytes = fr.w * fr.h * 4;
+      this.singles.push({ tex, bytes: mip ? Math.round((bytes * 4) / 3) : bytes, group: this.group });
+      return tex;
+    }
     const { canvas, ctx } = makeCanvas(Math.max(fr.w, fr.h));
     if (canvas.width !== fr.w || canvas.height !== fr.h) { canvas.width = fr.w; canvas.height = fr.h; }
     ctx.putImageData(new ImageData(fr.data as unknown as Uint8ClampedArray<ArrayBuffer>, fr.w, fr.h), 0, 0);
@@ -201,7 +253,11 @@ export class Atlas {
     return atlasGpuBytes(this.pages.length, this.pageSize, !this.nearest) + singles;
   }
 
+  /** The raw bytes of a data page (tests). */
+  pageData(i: number): Uint8Array | null { return this.pages[i]?.buf ?? null; }
+
   destroy(): void {
+    this.budget.used -= this.pages.length;
     for (const p of this.pages) p.tex?.destroy(true);
     for (const s of this.singles) s.tex.destroy(true);
     this.singles.length = 0;

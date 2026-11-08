@@ -2724,3 +2724,12 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - A `worker_threads` worker is a whole engine. Count its floor before making one per entity.
   - A stall with no busy thread is the host (memory, paging, driver), not game code. Measure the process before profiling frames.
 - **Not yet done:** the worker still loads zod and builds the whole catalogue; the main-thread heap (163-266 MB) is unexamined; the client side is unmeasured.
+
+## 2026-11-08 — GPU-lit art: what only the in-game film showed
+
+- **Context:** GPU-lit ships (`?shiplight=gpu`, docs/architecture/gpu-lit-ships.md) looked right in the art lab, then broke four ways in the game.
+- **Findings:** a capital's own occluder shaded its other tiles and guns (hull rendered black); muzzle-flash lights placed at a shell's first-seen position sat past the barrels; data in side-by-side map slices blended at far mip levels (guns dark, then beaded when the cap was too low); a canvas atlas page premultiplies alpha and wipes data in alpha-0 texels.
+- **Rules:**
+  - Look R&D goes in the game behind a flag on a branch, not in a parallel renderer: the art lab lacked turrets, the game's effects, shields and sky, and the user called it "some weird parallel system".
+  - Pin effect lights to the sprite that draws the effect.
+  - Packed multi-slice textures need gutters at least 2^(highest mip level read).

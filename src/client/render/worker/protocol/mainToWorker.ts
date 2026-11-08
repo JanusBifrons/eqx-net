@@ -45,6 +45,8 @@ export interface BootMsg {
   fx?: boolean;
   /** Speed effects off (Settings → Graphics / `?speedfx=0`). Absent = on. */
   speedFxOff?: boolean;
+  /** GPU-lit art settings (`?shiplight=gpu`), plain data; absent = baked. */
+  lighting?: import('../../art/lightingSettings.js').LightingSettings;
   /**
    * Touch-device flag (Equinox P6.1). The worker has no reliable
    * `window.matchMedia`, so the main thread (which knows via `isTouchDevice()`)

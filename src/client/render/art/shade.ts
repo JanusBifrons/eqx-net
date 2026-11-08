@@ -34,7 +34,7 @@ export const DEFAULT_RIG: LightRig = {
 
 interface MatParams { gloss: number; spec: number }
 /** Size of the per-material lookup tables (one past the highest MAT id). */
-const MAT_COUNT = Math.max(...Object.values(MAT)) + 1;
+export const MAT_COUNT = Math.max(...Object.values(MAT)) + 1;
 const MATP: Record<number, MatParams> = {
   [MAT.NONE]: { gloss: 8, spec: 0 },
   [MAT.METAL]: { gloss: 34, spec: 0.35 },
@@ -50,6 +50,10 @@ const MATP: Record<number, MatParams> = {
 /** Per-field-set cache of derived maps (normals, cavity). */
 interface Derived { nx: Float32Array; ny: Float32Array; nz: Float32Array; cav: Float32Array }
 const derivedCache = new WeakMap<Fields, Derived>();
+
+/** The derived maps (normals, cavity) the light pass uses; the GPU-lit
+ *  maps (litMaps.ts) store them instead of lighting them. Cached. */
+export function derivedMaps(f: Fields): Readonly<Derived> { return derived(f); }
 
 function derived(f: Fields): Derived {
   const hit = derivedCache.get(f);
@@ -176,7 +180,14 @@ function radianceUncached(f: Fields, rig: LightRig, localAz: number, shadows: bo
   return out;
 }
 
-function tone(x: number): number {
+/** Per-material gloss and spec, indexed by MAT id (the GPU-lit shader's table). */
+export function matTables(): { gloss: Float32Array; spec: Float32Array } {
+  const gloss = new Float32Array(MAT_COUNT), spec = new Float32Array(MAT_COUNT);
+  for (let k = 0; k < MAT_COUNT; k++) { const m = MATP[k] ?? MATP[MAT.METAL]!; gloss[k] = m.gloss; spec[k] = m.spec; }
+  return { gloss, spec };
+}
+
+export function tone(x: number): number {
   // ACES fitted (Narkowicz).
   return Math.max(0, Math.min(1, (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)));
 }

@@ -15,17 +15,34 @@
  *
  * Dev-only page: /__art-lab__/index.html?style=…&scene=…&zoom=…
  */
-import { Application, Container, Graphics, RenderTexture, Sprite, Texture, TilingSprite } from 'pixi.js';
+import { Application, CanvasSource, Container, Graphics, RenderTexture, Sprite, Texture, TilingSprite } from 'pixi.js';
+import { FxEngines } from '../render/art/fx/FxEngines.js';
+import { bakeFxImg, type FxId, type Img } from '../render/art/fx/fxTextures.js';
+import type { ArtService } from '../render/art/ArtService.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
+import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { buildShipGfxFromShape, buildStructureGfx, shapeForKind } from '../render/pixi/spriteBuilders.js';
 import { ArtCache, PIXEL_ROT_STEPS, SUN_STEPS, type PixelSettings, type ShipArt, type StructArt } from './assets.js';
 import { buildScene, SCENE_IDS, type Cam, type Pose, type Scene, type SceneId, type ShipE, type Shot } from './scenes.js';
 import { hash01, valueNoise } from '../render/art/fields.js';
 import { seedVariant, type BakeJob } from '../render/art/bake.js';
+import { LitScene, LitShipMesh, litTileFromMaps } from '../render/art/litShipShader.js';
+import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach, lightingFromSearch } from '../render/art/lightingSettings.js';
 
-type Style = 'current' | 'machined' | 'pixel';
+type Style = 'current' | 'machined' | 'pixel' | 'lit';
 
 const qs = new URLSearchParams(location.search);
-const STYLE = (['current', 'machined', 'pixel'].includes(qs.get('style') ?? '') ? qs.get('style') : 'machined') as Style;
+const STYLE = (['current', 'machined', 'pixel', 'lit'].includes(qs.get('style') ?? '') ? qs.get('style') : 'machined') as Style;
+/** `lit`: ships lit on the GPU (R&D); everything else as `machined`. */
+const MACHINED = STYLE === 'machined' || STYLE === 'lit';
+/** `lit` lighting features (R&D): `?look=baked|f|all` and per-feature
+ *  switches (lightingSettings.ts `lightingFromSearch`); `?shadow=0` is the
+ *  old "no self shadow" switch. */
+const LIGHTING = lightingFromSearch(qs.get('shadow') === '0' ? `${location.search}&selfshadow=0` : location.search);
+/** The lights and big hulls around this frame (refilled every update). */
+const litScene = new LitScene();
+/** A capital is this many times taller than its baked relief (towering hulls). */
+const CAPITAL_HEIGHT_FRAC = 0.12;
 const SCENE = ((SCENE_IDS as readonly string[]).includes(qs.get('scene') ?? '') ? qs.get('scene') : 'ships') as SceneId;
 const ZOOM = qs.has('zoom') ? Number(qs.get('zoom')) : undefined;
 const BENCH_N = qs.has('n') ? Number(qs.get('n')) : 40;
@@ -123,6 +140,10 @@ interface ShipView {
   a: Sprite;
   b: Sprite;
   gfx: Graphics | null;
+  /** `lit` style: the GPU-lit hull. */
+  lit?: LitShipMesh;
+  /** `lit` style: a big hull that shades others (box half size, height). */
+  occ?: { hx: number; hy: number; h: number; color: number };
   trails: Sprite[];
   nozzles: Sprite[];
   navs: Sprite[];
@@ -130,6 +151,8 @@ interface ShipView {
   /** Pixel art per zoom band (index = band + BAND_OFFSET). */
   bandArt: Array<ShipArt | undefined>;
   phase: number;
+  /** FxEngines key (the game's exhaust: flames + ribbons). */
+  fxKey: string;
 }
 
 interface StructView {
@@ -138,6 +161,9 @@ interface StructView {
   gfx: Graphics | null;
   /** Machined: albedo copy, added on top when an explosion lights the area. */
   lit: Sprite | null;
+  /** `lit` style with live-lit structures: the GPU-lit structure. */
+  litMesh?: LitShipMesh;
+  rot: number;
   lamps: Sprite[];
   lampXY: Array<{ x: number; y: number }>;
   art: StructArt | null;
@@ -154,7 +180,7 @@ interface BoomView {
 /** One weapon stream's sprites, all created up front. */
 interface ShotView {
   s: Shot;
-  core: Sprite; halo: Sprite; flare: Sprite; rim: Sprite;
+  core: Sprite; halo: Sprite; flare: Sprite; rim: Sprite; flash: Sprite;
   bolts: Sprite[]; sparks: Sprite[];
 }
 const SPARKS = 6;
@@ -172,6 +198,14 @@ function bandFor(zoom: number): { band: number; pd: number; px: number } {
   const px = pxFor(zoom);
   const band = Math.round(Math.log2(zoom / px) * 4);
   return { band, pd: Math.pow(2, band / 4), px };
+}
+
+/** An effects image as a texture (the lab bakes the game's fx images itself). */
+function imgTexture(i: Img): Texture {
+  const c = document.createElement('canvas');
+  c.width = i.w; c.height = i.h;
+  c.getContext('2d')!.putImageData(new ImageData(i.data as Uint8ClampedArray<ArrayBuffer>, i.w, i.h), 0, 0);
+  return new Texture({ source: new CanvasSource({ resource: c, scaleMode: 'linear' }) });
 }
 
 async function main(): Promise<void> {
@@ -192,7 +226,7 @@ async function main(): Promise<void> {
   const t0Bake = performance.now();
   // Machined: bake everything the scene needs on worker threads first
   // (`?workers=0` bakes on the main thread instead, for comparison).
-  if (STYLE === 'machined' && qs.get('workers') !== '0') {
+  if (MACHINED && qs.get('workers') !== '0') {
     const jobs: BakeJob[] = [];
     for (const st of scene.structs) jobs.push({ type: 'struct', id: st.id, seed: seedVariant(st.seed) });
     for (const sh of scene.ships) jobs.push({ type: 'ship', id: sh.id, paint: sh.paint });
@@ -208,6 +242,17 @@ async function main(): Promise<void> {
   const shipL = new Container(), glowL = new Container(), fxL = new Container();
   for (const l of [litL, trailL, glowL, fxL]) l.blendMode = 'add';
   world.addChild(structL, litL, trailL, shipL, glowL, fxL);
+  // The game's exhaust (flame + ribbon per nozzle, PR #288), not the lab's
+  // old dots, on the art styles. `?oldengines=1` restores the dots.
+  const fxEng = (STYLE === 'machined' || STYLE === 'lit') && qs.get('oldengines') !== '1'
+    ? new FxEngines({ fx: (id: FxId) => ({ state: 'ready', fx: { tex: imgTexture(bakeFxImg(id, undefined, undefined, 0)) } }) } as unknown as ArtService, () => 'high')
+    : null;
+  if (fxEng) {
+    world.addChildAt(fxEng.trailLayer, world.getChildIndex(shipL));
+    world.addChildAt(fxEng.flameLayer, world.getChildIndex(shipL));
+    world.addChildAt(fxEng.glowLayer, world.getChildIndex(shipL) + 1);
+  }
+  let lastFxT = -1;
 
   const pixel = STYLE === 'pixel';
   const stars = new TilingSprite({ texture: starTile(pixel), width: W, height: H });
@@ -245,7 +290,7 @@ async function main(): Promise<void> {
 
   // ---- structures
   const structs: StructView[] = scene.structs.map((st) => {
-    const v: StructView = { x: st.x, y: st.y, sprite: null, gfx: null, lit: null, lamps: [], lampXY: [], art: null, bandArt: [], id: st.id, seed: st.seed, radius: 100 };
+    const v: StructView = { x: st.x, y: st.y, sprite: null, gfx: null, lit: null, rot: st.rot, lamps: [], lampXY: [], art: null, bandArt: [], id: st.id, seed: st.seed, radius: 100 };
     if (STYLE === 'current') {
       v.gfx = buildStructureGfx(st.id, undefined, st.seed);
       v.gfx.position.set(st.x, st.y);
@@ -254,7 +299,7 @@ async function main(): Promise<void> {
       return v;
     }
     let art: StructArt;
-    if (STYLE === 'machined') {
+    if (MACHINED) {
       art = cache.machinedStruct(st.id, st.seed);
       v.lit = new Sprite(art.albedo!);
       v.lit.anchor.set(0.5); v.lit.scale.set(2 / art.density); // half-res albedo v.lit.position.set(st.x, st.y);
@@ -271,6 +316,15 @@ async function main(): Promise<void> {
     v.sprite.position.set(st.x, st.y);
     structL.addChildAt(v.sprite, 0);
     v.radius = Math.max(art.w, art.h) / art.density / 2;
+    if (STYLE === 'lit' && LIGHTING.litStructures) {
+      const l = cache.litStruct(st.id, st.seed);
+      v.litMesh = new LitShipMesh(litTileFromMaps(l.maps, l.tex), LIGHTING);
+      v.litMesh.position.set(st.x, st.y);
+      v.litMesh.rotation = st.rot;
+      v.sprite.visible = false;
+      if (v.lit) v.lit.visible = false;
+      structL.addChildAt(v.litMesh, 0);
+    }
     for (const l of art.navLights) {
       v.lamps.push(glow(glowL, l.color));
       v.lampXY.push({ x: st.x + l.x, y: st.y + l.y });
@@ -282,7 +336,7 @@ async function main(): Promise<void> {
   const ships: ShipView[] = scene.ships.map((e, i) => {
     const v: ShipView = {
       e, pose: { x: 0, y: 0, rot: 0, thrust: 0 }, a: new Sprite(), b: new Sprite(), gfx: null,
-      trails: [], nozzles: [], navs: [], art: null, bandArt: [], phase: hash01(i, 5),
+      trails: [], nozzles: [], navs: [], art: null, bandArt: [], phase: hash01(i, 5), fxKey: `s${i}`,
     };
     v.a.anchor.set(0.5); v.b.anchor.set(0.5);
     if (STYLE === 'current') {
@@ -291,6 +345,18 @@ async function main(): Promise<void> {
       // Today's renderer has no baked nozzle data; reuse the forge's for the
       // shared engine glow so only the hull art differs between arms.
       v.art = cache.machinedShip(e.id, e.paint);
+    } else if (STYLE === 'lit') {
+      v.art = cache.machinedShip(e.id, e.paint); // nozzles + nav lights
+      const l = cache.litShip(e.id, e.paint);
+      v.lit = new LitShipMesh(litTileFromMaps(l.maps, l.tex), LIGHTING);
+      v.lit.lightOwnerId = i; // its own engines barely light it
+      // A capital-sized hull shades the ships around it.
+      const hw = l.maps.w / l.maps.ppu / 2, hh = l.maps.h / l.maps.ppu / 2;
+      if (Math.max(hw, hh) >= 150) {
+        v.occ = { hx: hw * 0.8, hy: hh * 0.85, h: Math.max(l.maps.maxH, Math.max(hw, hh) * 2 * CAPITAL_HEIGHT_FRAC), color: e.paint ?? 0x8a96a8 };
+        v.lit.occluderId = i;
+      }
+      shipL.addChild(v.lit);
     } else if (STYLE === 'machined') {
       v.art = cache.machinedShip(e.id, e.paint);
       v.a.scale.set(1 / v.art.density); v.b.scale.set(1 / v.art.density);
@@ -312,10 +378,10 @@ async function main(): Promise<void> {
   // ---- weapons
   const shotViews: ShotView[] = (scene.shots ?? []).map((sh) => {
     const mk = (tex: Texture, tint: number): Sprite => { const sp = new Sprite(tex); sp.anchor.set(0.5); sp.tint = tint; sp.alpha = 0; fxL.addChild(sp); return sp; };
-    const nBolts = sh.kind === 'bolt' ? Math.ceil(1.2 / (sh.period ?? 0.3)) + 1 : 0;
+    const nBolts = sh.kind === 'bolt' ? Math.ceil((sh.at || sh.muzzle ? 3 : 1.2) / (sh.period ?? 0.3)) + 1 : 0;
     const v: ShotView = {
       s: sh,
-      core: mk(STREAK, 0xffffff), halo: mk(STREAK, sh.color), flare: mk(GLOW, sh.color), rim: mk(RING, 0x7fd8ff),
+      core: mk(STREAK, 0xffffff), halo: mk(STREAK, sh.color), flare: mk(GLOW, sh.color), rim: mk(RING, 0x7fd8ff), flash: mk(GLOW, 0xfff0c8),
       bolts: [], sparks: [],
     };
     v.core.anchor.set(0, 0.5); v.halo.anchor.set(0, 0.5);
@@ -343,10 +409,11 @@ async function main(): Promise<void> {
     out.x = p.x + lx * c - ly * s;
     out.y = p.y + lx * s + ly * c;
   };
-  const pt = { x: 0, y: 0 };
+  const pt = { x: 0, y: 0 }, lpt = { x: 0, y: 0 }, mpt = { x: 0, y: 0 };
 
   function update(t: number): void {
     curT = t;
+    litScene.begin();
     scene.camera(t, cam);
     let zoom = cam.zoom;
     let px = 1;
@@ -381,6 +448,9 @@ async function main(): Promise<void> {
     nebula.position.set(-vw * 0.3 - cam.x * zoom * 0.02, -vh * 0.3 - cam.y * zoom * 0.02);
 
     const glowScale = 1 / 64; // GLOW texture px → world units
+    const dtFx = lastFxT < 0 || t <= lastFxT || t - lastFxT > 0.25 ? 1 / 30 : t - lastFxT;
+    lastFxT = t;
+    fxEng?.beginFrame();
 
     // Ships.
     for (const v of ships) {
@@ -388,6 +458,10 @@ async function main(): Promise<void> {
       const p = v.pose, art = v.art!;
       if (v.gfx) {
         v.gfx.position.set(p.x, p.y); v.gfx.rotation = p.rot;
+      } else if (v.lit) {
+        // Lit in the final pass, once every light of this frame is known.
+        v.lit.position.set(p.x, p.y); v.lit.rotation = p.rot;
+        if (v.occ) litScene.addOccluder(v.lit.occluderId, p.x, p.y, p.rot, v.occ.hx, v.occ.hy, v.occ.h, v.occ.color, 0.8);
       } else if (STYLE === 'machined') {
         const localAz = cache.rig.sunAz - p.rot;
         let u = (localAz / (Math.PI * 2)) * SUN_STEPS;
@@ -404,6 +478,10 @@ async function main(): Promise<void> {
         v.a.scale.set(1 / art.density);
         v.a.position.set(p.x, p.y);
       }
+      if (fxEng) {
+        const k = getShipKind(v.e.id);
+        fxEng.draw(v.fxKey, art.nozzles, p.x, p.y, p.rot, p.thrust >= 0.3 ? 1 : -1, -1, k.maxSpeed, dtFx, t * 1000, shipTuning(k).exhaustTrailS);
+      }
       // Engines: a hot core at each nozzle, flickering deterministically.
       let ti = 0;
       for (let n = 0; n < art.nozzles.length; n++) {
@@ -413,8 +491,13 @@ async function main(): Promise<void> {
         const s = v.nozzles[n]!;
         s.position.set(pt.x, pt.y);
         s.scale.set(nz.r * 3.2 * glowScale * (0.6 + 0.6 * p.thrust) * fl);
-        s.alpha = 0.55 + 0.45 * p.thrust;
-        if (v.e.trail) {
+        s.alpha = fxEng ? 0 : 0.55 + 0.45 * p.thrust;
+        // GPU-lit hulls: the engine is a light (its own stern, nearby hulls).
+        if (LIGHTING.engineLights && STYLE === 'lit') {
+          local(p, nz.x, nz.y + engineLightAstern(nz.r), lpt); // in the plume, astern
+          litScene.addLight(lpt.x, lpt.y, engineLightHeight(nz.r), 0xffa24a, engineLightIntensity(nz.r, p.thrust) * fl, engineLightReach(nz.r), v.lit ? v.lit.lightOwnerId : -1);
+        }
+        if (v.e.trail && !fxEng) {
           for (let k = 1; k <= TRAIL; k++) {
             v.e.pose(t - k * TRAIL_DT, scratch);
             local(scratch, nz.x, nz.y + nz.r, pt);
@@ -435,6 +518,7 @@ async function main(): Promise<void> {
         s.position.set(pt.x, pt.y); s.scale.set(5 * glowScale); s.alpha = blink;
       }
     }
+    fxEng?.endFrame();
 
     // Structure lamps: a slow, offset pulse.
     for (const v of structs) {
@@ -451,12 +535,16 @@ async function main(): Promise<void> {
     for (const v of shotViews) {
       const sh = v.s, a = ships[sh.from]!.pose, b = ships[sh.to]!.pose;
       const tr = ships[sh.to]!.art!;
-      const hitR = (Math.max(tr.w, tr.h) / tr.density) * 0.32; // ~hull radius
-      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+      const K = sh.size ?? 1;
+      const hitR = sh.at ? 0 : (Math.max(tr.w, tr.h) / tr.density) * 0.32; // ~hull radius
+      let ax = a.x, ay = a.y;
+      if (sh.muzzle) { local(a, sh.muzzle[0], sh.muzzle[1], mpt); ax = mpt.x; ay = mpt.y; }
+      const bx = sh.at ? sh.at[0] : b.x, by = sh.at ? sh.at[1] : b.y;
+      const dx = bx - ax, dy = by - ay, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
       // Muzzle a little ahead of the shooter; impact on the near side of the target.
-      const mx = a.x + ux * 10, my = a.y + uy * 10;
+      const mx = ax + ux * 10, my = ay + uy * 10;
       const stand = hitR * (sh.shield ? 1.25 : 0.7);
-      const ix = b.x - ux * stand, iy = b.y - uy * stand;
+      const ix = bx - ux * stand, iy = by - uy * stand;
       const len = Math.hypot(ix - mx, iy - my), ang = Math.atan2(iy - my, ix - mx);
       let hitI = 0;
       if (sh.kind === 'beam') {
@@ -480,15 +568,24 @@ async function main(): Promise<void> {
           if (age < 0 || age > flight) continue;
           const f = age / flight;
           bo.position.set(mx + (ix - mx) * f, my + (iy - my) * f);
-          bo.rotation = ang; bo.scale.set(26 / 64, 6 / 64); bo.alpha = 1;
+          bo.rotation = ang; bo.scale.set((26 * K) / 64, (6 * K) / 64); bo.alpha = 1;
         }
         // Hit pulse: the most recent arrival.
         const sinceHit = (((t - sh.t0 - flight) % per) + per) % per;
-        hitI = t - sh.t0 > flight && t - flight <= sh.t1 ? Math.exp(-sinceHit * 14) : 0;
+        hitI = t - sh.t0 > flight && t - flight <= sh.t1 ? Math.exp(-sinceHit * (K > 1 ? 6 : 14)) : 0;
+        // Muzzle flash: the most recent firing.
+        const sinceFire = (((t - sh.t0) % per) + per) % per;
+        const fI = sh.muzzle && t >= sh.t0 && t - sinceFire <= sh.t1 ? Math.exp(-sinceFire * 9) : 0;
+        v.flash.position.set(mx, my); v.flash.scale.set(30 * K * glowScale * (0.6 + 0.6 * fI)); v.flash.alpha = fI;
+        if (fI > 0.01) litScene.addLight(mx, my, 20 * K, 0xffd9a0, fI * 1.2 * K, 110 * K);
       }
+      // Lights for GPU-lit hulls: the impact, and each bolt in flight.
+      if (hitI > 0.01) litScene.addLight(ix, iy, 6 * K, sh.color, hitI * (sh.kind === 'beam' ? 2.2 : 1.6) * (K > 1 ? K * 0.6 : 1), (sh.kind === 'beam' ? 120 : 90) * K);
+      if (sh.kind === 'beam' && hitI > 0.01) litScene.addLight((mx + ix) / 2, (my + iy) / 2, 6, sh.color, hitI * 0.8, len * 0.6 + 30);
+      for (const bo of v.bolts) if (bo.alpha > 0) litScene.addLight(bo.x, bo.y, 5 * K, sh.color, 0.9 * (K > 1 ? K * 0.4 : 1), 55 * K);
       // Impact: a flare + sparks on the hull, or a rim flash on the shield.
       v.flare.position.set(ix, iy);
-      v.flare.scale.set((sh.kind === 'beam' ? 22 : 16) * glowScale * (0.7 + 0.5 * hitI));
+      v.flare.scale.set((sh.kind === 'beam' ? 22 : 16) * K * glowScale * (0.7 + 0.5 * hitI));
       v.flare.alpha = hitI;
       v.rim.position.set(b.x, b.y); v.rim.scale.set((hitR * 2.6) / 128);
       v.rim.alpha = sh.shield ? hitI * 0.55 : 0;
@@ -514,7 +611,8 @@ async function main(): Promise<void> {
       b.flash.alpha = I * 0.85;
       b.pool.position.set(b.x, b.y);
       b.pool.scale.set(R * 2.4 * glowScale);
-      b.pool.alpha = I * 0.32;
+      // GPU-lit hulls take the blast's real light: no fake pool on top.
+      b.pool.alpha = STYLE === 'lit' && LIGHTING.pointLights > 0 ? 0 : I * 0.32;
       const ra = Math.max(0, age);
       b.ring.position.set(b.x, b.y);
       b.ring.scale.set((R * 0.25 + ra * R * 1.3) / 64);
@@ -527,6 +625,7 @@ async function main(): Promise<void> {
         s.scale.set(R * (0.12 + 0.12 * hash01(k, 79)) * glowScale * (1 + ra));
         s.alpha = on ? Math.max(0, Math.exp(-ra * (1.6 + hash01(k, 83))) * Math.min(1, ra * 20)) : 0;
       }
+      if (I > 0.01) litScene.addLight(b.x, b.y, 25, 0xff8a30, I * 2.4, R * 2.2);
       // Light the structures near the blast (machined: real albedo lift).
       if (I > 0.01) {
         for (const v of structs) {
@@ -538,6 +637,9 @@ async function main(): Promise<void> {
       }
     }
 
+    // GPU-lit hulls: now every light and occluder of this frame is known.
+    for (const v of ships) if (v.lit) v.lit.setLight(cache.rig, v.pose.x, v.pose.y, v.pose.rot, litScene);
+    for (const v of structs) if (v.litMesh) v.litMesh.setLight(cache.rig, v.x, v.y, v.rot, litScene);
     if (pixel) app.renderer.render({ container: sceneRoot, target: rt!, clear: true, clearColor: 0x04060d });
     app.render();
   }

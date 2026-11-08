@@ -159,6 +159,8 @@ export class FxEngines {
 
   /** Ships drawn this frame. */
   drawn(): number { return this.drawnCount; }
+  /** A ship's eased thrust, 0..1 (GPU-lit art: engines as lights). */
+  thrustOf(key: string): number { return this.live.get(key)?.thrust ?? 0; }
   /** Engine ribbons drawn this frame. */
   ribbons(): number { return this.ribbonCount; }
   /** Whether `key` was drawn this frame (the caller skips today's emitter). */

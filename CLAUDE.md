@@ -311,6 +311,8 @@ The showcase reel is a **repeatable build artefact**, not a one-off edit: `pnpm 
 
 **A hostile reviewer checks every clip before the user sees it (2026-11-07, standing user directive).** The take QA gates measure frame pacing, not whether the clip shows what it should. Before handing a clip to the user, give a hostile reviewer agent full-resolution frames around every key moment (10 fps crops, not a contact sheet) plus the clip's goal in one sentence, and ask it to find anything that looks wrong: an effect not lined up with its ship, a ship jumping or appearing in the wrong place, something pointing the wrong way, old effects that should be gone. Fix what it finds and re-film; only then show the user. The user's words: "this is easy to identify surely? It just doesn't look right".
 
+**Look and feature R&D happens in the game, behind a flag, on a branch (2026-11-08, standing user directive).** Not in a parallel renderer: the art lab lacked turrets, the game's effects, shields, fences and sky, so its clips misled ("I just don't think doing all of this work on some weird parallel system makes sense. It should be in the game, just use flags and switches and ultimately git branches to isolate"). Film it with `EQX_SHOWCASE_PARAMS=<flag>` on existing shots and measure it with `pnpm perf:scenes --base <sha> --head-params <flag>`. Example: GPU-lit art (`?shiplight=gpu`, [docs/architecture/gpu-lit-ships.md](docs/architecture/gpu-lit-ships.md)).
+
 ---
 
 ## Perf scenes (`pnpm perf:scenes`) — measure what a change costs

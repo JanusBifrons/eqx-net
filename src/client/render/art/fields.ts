@@ -805,10 +805,12 @@ function forgeNavalTurret(spec: TurretGunSpec): Fields {
         if (Math.abs(u) > 1 || wy > -hl + 0.5 || wy < -hl - len) continue;
         const v = (-hl - wy) / len; // 0 at the face .. 1 at the muzzle
         const cyl = Math.sqrt(Math.max(0, 1 - u * u));
-        const bh = Hh * 0.7 + bw * cyl;
+        // The barrel's top stays under the gunhouse roof (user, 2026-11-08:
+        // the house shades the barrels, never the reverse).
+        const bh = Math.max(0.05, Hh * 0.72 - bw * (1 - cyl));
         if (bh > h) {
           h = bh; mat = MAT.METAL; col = metal; key = PALETTE.metal; kk = 0.95 + 0.08 * nz;
-          if (v < 0.07) { col = worn; h += bw * 0.3; } // blast bag collar
+          if (v < 0.07) { col = worn; h = Math.min(Hh * 0.8, h + bw * 0.3); } // blast bag collar
           if (v > 0.97 && Math.abs(u) < 0.55) { mat = MAT.NOZZLE; col = bore; key = PALETTE.nozzle; h -= bw * 0.6; }
         }
       }
@@ -884,7 +886,9 @@ export function forgeTurretGun(spec: TurretGunSpec): Fields {
         const u = wx / half;
         if (Math.abs(u) <= 1) {
           const cyl = Math.sqrt(Math.max(0, 1 - u * u));
-          const bh = capH * 0.75 + half * cyl;
+          // The barrel's top stays under the casing's crown, so the casing
+          // shades the barrel, not the reverse (user, 2026-11-08).
+          const bh = Math.max(0.05, capH * 0.62 - half * (1 - cyl));
           if (bh > h) {
             h = bh; mat = MAT.METAL; col = metal; key = PALETTE.metal; kk = 0.95 + 0.08 * nz;
             if (v < 0.86 && Math.abs(((len * v) % seam) - seam * 0.5) < Math.max(0.18, 0.6 / ppu)) { mat = MAT.TRIM; col = trim; key = PALETTE.trim; h -= 0.08 * half; }
