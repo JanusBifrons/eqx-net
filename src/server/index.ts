@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import 'dotenv/config';
 import { PERF_SCENES } from '../shared-types/perf/perfScenes.js';
 import { scenePerfViews, recordClientReading, clientPerfReadings } from './rooms/scene/scenePerfRegistry.js';
 import { Server, matchMaker } from 'colyseus';
@@ -416,6 +416,13 @@ gameServer
 // the-ship assertion stays deterministic). Replaces the old spec's live
 // `galaxy-sol-prime` + `diag=1` join.
 gameServer
+  .define('cascade-test', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    droneCount: 4,
+    maxClients: 8,
+  })
+  .filterBy(['testId']);
 // exp/fire-control — a 1v3 for the Fire Control footage + e2e: two fighters and a
 // heavy parked ~1400 u ahead of spawn. Join with ?startHostile=1&ui=d: you fly in
 // and lock them while they lock you (locking goes both ways).
@@ -431,13 +438,6 @@ gameServer
     defaultSpawnX: 0,
     defaultSpawnY: 0,
     maxClients: 4,
-  })
-  .filterBy(['testId']);
-  .define('cascade-test', SectorRoom, {
-    testMode: true,
-    asteroidConfig: [],
-    droneCount: 4,
-    maxClients: 8,
   })
   .filterBy(['testId']);
 // Phase 5e soak room. swarmCount can be overridden per join via room
