@@ -6621,9 +6621,6 @@ export class SectorRoom extends Room<SectorState> {
     return true;
   }
 
-  /** Roaming-formation (Phase 5) — assign a bot's in-sector move target. The
-   *  drone's IDLE `HostileDroneBehaviour` flies to it (arrive ramp). No-op for a
-   *  bot with no behaviour registered here (e.g. mid-transit). */
   /**
    * W2a NPC warp-to (flagship fleets): send a living-world bot on a warp to
    * (x, y) through the same spool → run → drop machine as a pilot's
@@ -6635,7 +6632,10 @@ export class SectorRoom extends Room<SectorState> {
     const rec = this.swarmRegistry.get(botId);
     if (!rec || rec.kind !== 1) return false;
     const lim = this.solar ? SOLAR_HALF_EXTENT : SECTOR_PLAYABLE_HALF_EXTENT;
-    this.postToWorker({ type: 'BOT_WARP', slot: rec.slot, x: Math.max(-lim, Math.min(lim, x)), y: Math.max(-lim, Math.min(lim, y)) });
+    // Land clear of rocks, structures and ships, like a pilot's warp (a drop
+    // inside an asteroid belt rock killed an escort in the first test run).
+    const p = this.landingPoint(botId, Math.max(-lim, Math.min(lim, x)), Math.max(-lim, Math.min(lim, y)), rec.shipKind);
+    this.postToWorker({ type: 'BOT_WARP', slot: rec.slot, x: p.x, y: p.y });
     if (!this.npcWarps.has(botId)) this.npcWarps.set(botId, { lastPhase: 0, arrivedUntil: -1, started: false, idleTicks: 0 });
     return true;
   }
@@ -6671,6 +6671,9 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
+  /** Roaming-formation (Phase 5) — assign a bot's in-sector move target. The
+   *  drone's IDLE `HostileDroneBehaviour` flies to it (arrive ramp). No-op for a
+   *  bot with no behaviour registered here (e.g. mid-transit). */
   setBotMoveTarget(botId: string, x: number, y: number): void {
     this.aiController.getBehaviour(botId)?.setMoveTarget?.(x, y);
   }
