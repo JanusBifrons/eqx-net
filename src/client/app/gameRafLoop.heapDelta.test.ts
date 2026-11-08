@@ -34,13 +34,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock ClientLogger so we can both control isFullDiagMode + spy on logEvent.
 // `vi.hoisted` ensures the mocks are created before the imports below resolve.
-const { logEventMock, isFullDiagModeMock } = vi.hoisted(() => ({
+const { logEventMock, diagMode } = vi.hoisted(() => ({
   logEventMock: vi.fn(),
-  isFullDiagModeMock: vi.fn(),
+  diagMode: { full: false },
 }));
 vi.mock('../debug/ClientLogger.js', () => ({
   logEvent: (...args: unknown[]) => logEventMock(...args),
-  isFullDiagMode: () => isFullDiagModeMock(),
+  isFullDiagMode: () => diagMode.full,
 }));
 
 // Zustand store — provide the fields writeE2EDataset reads so the
@@ -109,7 +109,21 @@ function makeDeps(): GameRafLoopDeps {
       // Stable feedback object so the stub itself doesn't allocate
       // per-frame — the heap-delta test measures the loop body's
       // allocation, not the stub's.
-      const stableFeedback = { firstFrameRendered: false, mountCounts: new Map(), haloArrowCount: 0 };
+      // Carries the selection-bridge (98e76b32) + helm-course (8906d5bb)
+      // fields at their idle values so the loop's transition checks see "no
+      // change" and never reach setSelectedEntity / setHelmCourse (not on the
+      // stubs) — same shape as gameRafLoop.pause.test.ts's feedback stub.
+      const stableFeedback = {
+        firstFrameRendered: false,
+        artReady: false,
+        mountCounts: new Map(),
+        haloArrowCount: 0,
+        selectedPickId: null,
+        selectedPickKind: null,
+        helmCourseSeq: 0,
+        helmCourseX: 0,
+        helmCourseY: 0,
+      };
       return {
         update: () => {},
         glideCameraTo: () => {},
@@ -142,11 +156,11 @@ function postGcHeap(): number {
 describe('gameRafLoop — rafWork logEvent + writeE2EDataset gates (plan: imperative-taco)', () => {
   beforeEach(() => {
     logEventMock.mockReset();
-    isFullDiagModeMock.mockReset();
+    diagMode.full = false;
   });
 
   it('does NOT call logEvent for rafWork when isFullDiagMode returns false', () => {
-    isFullDiagModeMock.mockReturnValue(false);
+    diagMode.full = false;
     const loop = createGameRafLoop(makeDeps());
     for (let i = 0; i < 10; i++) loop(i * 16);
     const rafWorkCalls = logEventMock.mock.calls.filter((c) => c[0] === 'rafWork');
@@ -154,7 +168,7 @@ describe('gameRafLoop — rafWork logEvent + writeE2EDataset gates (plan: impera
   });
 
   it('DOES call logEvent for rafWork when isFullDiagMode returns true', () => {
-    isFullDiagModeMock.mockReturnValue(true);
+    diagMode.full = true;
     const loop = createGameRafLoop(makeDeps());
     loop(16);
     const rafWorkCalls = logEventMock.mock.calls.filter((c) => c[0] === 'rafWork');
@@ -170,7 +184,7 @@ describe('gameRafLoop — rafWork logEvent + writeE2EDataset gates (plan: impera
   });
 
   it('does NOT write `data-shipPositions` on `el.dataset` when navigator.webdriver is unset (production)', () => {
-    isFullDiagModeMock.mockReturnValue(false);
+    diagMode.full = false;
     const deps = makeDeps();
     // Provide a localShip so the every-5th-frame block has something to render.
     const mirror = deps.gameClient.mirror as { ships: Map<string, { x: number; y: number; angle: number }>; localPlayerId: string | null };
@@ -190,11 +204,15 @@ describe('gameRafLoop — rafWork logEvent + writeE2EDataset gates (plan: impera
   });
 
   it('heap growth bounded across 3000 loop iterations in production env', () => {
-    // Use a plain function (NOT a vi.fn mock) so the heap measurement
-    // captures the loop body's allocation, not vitest's per-call mock
-    // bookkeeping (`.mock.calls` etc. append every call → ~250 KB across
-    // 3000 iters from the mock infrastructure alone).
-    isFullDiagModeMock.mockImplementation(() => false);
+    // `isFullDiagMode` is backed by the plain `diagMode` flag, NOT a vi.fn:
+    // the loop calls it every RAF, and a vi.fn retains `.mock.calls` /
+    // `.results` / `.contexts` / `invocationCallOrder` per call — ~165 B ×
+    // 3000 ≈ 500 KB of RETAINED heap from the mock alone. That bookkeeping
+    // (not the loop) is what pushed this test to 500–507 KB and over the
+    // bound (2026-11-08); with the plain flag the loop's retained growth
+    // measures ~1–100 KB. The comment used to say "plain function" while
+    // the code still used `vi.fn().mockImplementation` — that was the bug.
+    diagMode.full = false;
     const deps = makeDeps();
     // Populate the mirror so the per-frame iteration has non-empty maps.
     const mirror = deps.gameClient.mirror as {
@@ -215,8 +233,7 @@ describe('gameRafLoop — rafWork logEvent + writeE2EDataset gates (plan: impera
     // Clear mock call tracking accumulated during warmup so it doesn't
     // count toward `after - before`.
     logEventMock.mockClear();
-    isFullDiagModeMock.mockClear();
-    isFullDiagModeMock.mockImplementation(() => false);
+    diagMode.full = false;
 
     const before = postGcHeap();
     for (let i = 0; i < 3000; i++) loop((500 + i) * 16);
@@ -228,8 +245,8 @@ describe('gameRafLoop — rafWork logEvent + writeE2EDataset gates (plan: impera
     // 5 `toFixed(2)` strings every RAF and the writeE2EDataset
     // map/JSON.stringify churn every 5th RAF). Post-fix the gates
     // suppress all of that on production phones. The residual baseline
-    // is V8 compilation cache + IC stabilisation + vitest mock
-    // bookkeeping (~100 KB for an empty 3000-iter loop, measured).
+    // is V8 compilation cache + IC stabilisation (~1–100 KB measured
+    // 2026-11-08 once the isFullDiagMode vi.fn was replaced by a flag).
     // 500 KB threshold = 53 % below the pre-fix floor; a regression
     // re-enabling rafWork or writeE2EDataset would blow past it.
     expect(growthBytes).toBeLessThan(500_000);

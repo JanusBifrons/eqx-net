@@ -2733,3 +2733,12 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - Look R&D goes in the game behind a flag on a branch, not in a parallel renderer: the art lab lacked turrets, the game's effects, shields and sky, and the user called it "some weird parallel system".
   - Pin effect lights to the sprite that draws the effect.
   - Packed multi-slice textures need gutters at least 2^(highest mip level read).
+
+## 2026-11-08 — Heap-delta tests: a `vi.fn` on the hot path is the leak you measure
+
+- **Context:** `pnpm test:gc` ran in no CI job and had 5 failures nobody saw for months. Two were stale fixtures (the damage-number "no sign" restyle `eca1f32c`; the selection/helm-course fields `98e76b32`/`8906d5bb` the `gameRafLoop` stub feedback lacked). The third looked like a hot-loop allocation regression: `gameRafLoop` retained 500–507 KB over 3000 RAFs against a 500 KB bound.
+- **Finding:** the growth was the test's own mock. `isFullDiagMode` was a `vi.fn()` called every RAF; a `vi.fn` retains `mock.calls` / `results` / `contexts` / `invocationCallOrder` per call (~165 B × 3000 ≈ 500 KB). Its comment said "use a plain function", but the code didn't. Backed by a plain flag, the loop retains ~1–100 KB. No game code changed.
+- **Rules:**
+  - In a heap-delta test, nothing called per iteration may be a `vi.fn` (or any recorder). Use a plain function over a mutable flag; keep `vi.fn` for calls you assert on that happen rarely.
+  - Before widening a heap bound, swap the mocks for plain functions and re-measure. Growth that vanishes is the harness.
+  - A suite no CI job runs rots. `test:gc` now runs in the `gc-tests` job.
