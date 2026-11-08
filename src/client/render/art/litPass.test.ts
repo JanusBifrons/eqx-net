@@ -3,12 +3,16 @@
  * R2): meshes register when built and leave when destroyed; `finish` lights
  * only meshes shown under the world container, from their pose in it.
  */
-import { describe, expect, it } from 'vitest';
-import { Container, Texture } from 'pixi.js';
+import { describe, expect, it, vi } from 'vitest';
+import { Container, GlProgram, Texture } from 'pixi.js';
 import { LitPass } from './litPass.js';
 import { LitShipMesh, type LitTile } from './litShipShader.js';
 import { LOOK_NIGHT } from './lightingSettings.js';
 import { DEFAULT_RIG } from './shade.js';
+
+// Compiling the GLSL needs a WebGL test context (none under Node); this test
+// covers the pass's bookkeeping and poses, not the shader.
+vi.spyOn(GlProgram, 'from').mockImplementation(() => ({}) as GlProgram);
 
 function tile(): LitTile {
   return { tex: Texture.WHITE, w: 1, rows: 1, y0: 0, hullH: 1, ppu: 1, maxH: 1, emisMax: 1 };
