@@ -25,7 +25,12 @@ In a solar-system sector the sky shows the system's own few distant bodies, drif
 
 ## Picking a destination
 
-The **Warp ▸** action in the speed dial (solar-system sectors only) opens the destination picker: every pocket by name ("Home", "Asteroid belt", "Thornfield gate", "Battle zone"), nearest first with its distance, the far ones grouped. The pocket you're in can't be picked. While a warp is held, a chip under the energy bar says where it goes, with a Cancel.
+The **Warp ▸** action in the speed dial (solar-system sectors only) opens the destination picker. It has two views (both kept, user 2026-11-08), chosen by device; `?warpui=list|map` overrides:
+
+- **List (touch devices):** every pocket by name ("Home", "Asteroid belt", "Vega Reach gate", "Battle zone"), nearest first with its distance, the far ones grouped. Big rows, readable on a phone.
+- **System map (desktop):** the whole ±200 km system with each pocket, the ship and any pad link. Click a pocket, then Warp.
+
+Gates sit on the bearing toward the system they lead to, so in Sol Prime the Vega Reach gate is due east and warping there flies straight right. Warps go any direction (locked by `warpTo.test.ts`, "flies any direction"). The pocket you're in can't be picked. While a warp is held, a chip under the energy bar says where it goes, with a Cancel.
 
 ## Transit pads (rare)
 
