@@ -181,6 +181,21 @@ window.
 - Every Vite proxy entry must target `SERVER_PORT` (locked by
   `tests/unit/viteProxyPort.test.ts`). A hard-coded `localhost:2567` sends the
   isolated capture's requests to whatever dev server owns that port.
+- **Parallel sessions: `EQX_SHOWCASE_PORT_OFFSET=<n>`** moves the capture
+  servers to 2767+n / 5373+n (`defaultPorts()` in `showcase/servers.ts`; the
+  perf runner uses the same base, its head arm +1). The capture servers kill
+  whatever listens on their own ports at start, so two recorders on one machine
+  MUST use different offsets.
+- **Host load is recorded per take (2026-11-08).** `showcase/hostLoad.ts`
+  samples system CPU, free RAM and foreign game servers / Vites (listeners on
+  the known game ports, or EQX node processes, outside this run's process
+  tree) before and after each take; the kept take's samples and any flags go
+  in `manifest.json` (`hostLoad`). Record only: a take is never failed on it,
+  but a hitchy take with a "host busy" flag was filmed on a loaded machine.
+- The pid file (`showcase-out/.showcase-pids.json`, override
+  `EQX_SHOWCASE_PID_FILE`) records each child's owning run; `reapStale()` never
+  kills the children of a run that is still alive, and every write creates
+  `showcase-out/` first (a fresh checkout crashed with ENOENT).
 
 ## Piloted shots
 

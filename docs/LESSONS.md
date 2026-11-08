@@ -2734,6 +2734,16 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - Pin effect lights to the sprite that draws the effect.
   - Packed multi-slice textures need gutters at least 2^(highest mip level read).
 
+## 2026-11-08 — A 3-rep exact Mann-Whitney can never reject at 0.05
+
+- **Symptom:** every GPU-lighting A/B (#344–#346) came back GREEN at 3 reps per arm. A desktop re-check showed the verdict could not have been anything else.
+- **Cause:** the exact two-sided Mann-Whitney's smallest possible p is 2 / C(n1+n2, n1): 2/20 = 0.10 at 3 v 3, 0.057 at 3 v 4, 0.029 at 4 v 4. With RED requiring p < 0.05, a 3-rep run is GREEN for any effect, however large. Odd rep counts also gave one arm the warmer second slot more often, and the laptop's same-code spread reached ×2 on hitches.
+- **Fix:** `perf/verdict.ts` gives RED / GREEN / INCONCLUSIVE. GREEN needs the sample sizes to have been able to reach p < 0.05; a move over the thresholds that isn't significant, or that sits inside the A/A noise floor (`--noise-check`), is INCONCLUSIVE. `--reps` defaults to 8 and rounds odd counts up.
+- **Rules:**
+  - Before trusting "no significant difference", check the test could have found one: compute the minimum achievable p for your n.
+  - "Not RED" is not "GREEN". A verdict needs a third state for "couldn't tell".
+  - Measure the host's own same-code spread in the same session before calling a move a regression.
+
 ## 2026-11-08 — Heap-delta tests: a `vi.fn` on the hot path is the leak you measure
 
 - **Context:** `pnpm test:gc` ran in no CI job and had 5 failures nobody saw for months. Two were stale fixtures (the damage-number "no sign" restyle `eca1f32c`; the selection/helm-course fields `98e76b32`/`8906d5bb` the `gameRafLoop` stub feedback lacked). The third looked like a hot-loop allocation regression: `gameRafLoop` retained 500–507 KB over 3000 RAFs against a 500 KB bound.
@@ -2755,3 +2765,25 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - A contact between a predicted body and an interpolated one is resolved on two different timelines. Any correction that only happens near another entity is this, not the network.
   - Before blaming a "second correction path", A/B it: switch it off in-page and count.
 - **Lock:** `tests/scenarios/meleeDroneContactPrediction.test.ts` (`it.fails` on the production follower; flip to `it` with the fix).
+
+## 2026-11-08 — A unit test killed a live perf run (misspelt env override)
+
+- **Symptom:** a `perf:scenes` self-test lost its base arm mid-run ("fetch failed", then ERR_CONNECTION_REFUSED on 5373) the moment `vitest run showcase` started in the same checkout.
+- **Cause:** `showcase/tools.ts` read `process.env['EQX_SHOWCASE_pidFile()']`, a find/replace slip for `EQX_SHOWCASE_PID_FILE`. The reap test's temp-file override was ignored, so `reapStale()` read the real `showcase-out/.showcase-pids.json` and killed every live process the perf runner had tracked there (2 servers, plus its own test child: "expected 3 to be 1"). The same file's writes also crashed with ENOENT on a fresh checkout (no `showcase-out/`).
+- **Fix:** correct the variable name; every pid-file write creates its directory; each entry records its owning run, and `reapStale()` never kills the children of a run that is still alive. Locked by `tests/unit/showcaseReap.test.ts`.
+- **Rules:**
+  - A test that kills processes must prove its isolation override took effect (assert the temp file is the one written) before it kills anything.
+  - Shared state files (pid lists, ledgers) record their owner; a reaper checks the owner is dead.
+  - Bulk find/replace on identifiers can rewrite string keys too. Grep env-var names after a rename.
+
+## 2026-11-08 — `--base HEAD` measured the perf-base worktree's own HEAD
+
+- **Symptom (found reading the code while building the phone lane):** `pnpm perf:scenes --base HEAD --head-params ...` is the documented way to A/B one switch on one build, but `prepareBase` ran `git checkout --detach HEAD` *inside* `.claude/worktrees/perf-base`. There `HEAD` is that worktree's own commit, so after the first run the base arm stayed where the worktree was created while head moved on. A "same build" A/B could have been two builds (the ledger's per-arm SHAs show it).
+- **Fix:** both runners resolve the ref to a SHA in the calling checkout (`git rev-parse --verify <ref>^{commit}`) before touching the worktree.
+- **Rule:** a symbolic ref handed to `git` in another worktree means something else there (`HEAD`, `@{-1}`). Resolve refs where the user typed them.
+
+## 2026-11-08 — The GPU-lighting phone defaults have no evidence yet
+
+- **Context:** GPU lighting went default (#344–#346), phones on Medium/Low, on 3-rep A/Bs (laptop and phone-proxy) that could never go RED (entry above). Whether it costs frames on weak hardware is open, and the desktop (not a target platform) can't answer it.
+- **Now:** `pnpm perf:phone` runs the same 8-rep A/B on a real phone over adb; `pnpm perf:scenes --device phone-proxy --cpu-rate 2` is the no-phone fallback. Commands and the decision rule: `docs/architecture/gpu-lit-ships.md`, "Open question: cost on weak hardware".
+- **Rule:** a default that "passed perf" must cite a ledger whose verdict could have failed (≥ 4 reps per arm, on the machine class it targets).

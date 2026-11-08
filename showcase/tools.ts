@@ -111,9 +111,20 @@ export function gitSha(cwd: string): string {
  * happens at start. A recorded PID is killed only while it still runs the
  * same program (PIDs are reused).
  */
-const pidFile = (): string => process.env['EQX_SHOWCASE_pidFile()'] ?? path.join(process.cwd(), 'showcase-out', '.showcase-pids.json');
+const pidFile = (): string => process.env['EQX_SHOWCASE_PID_FILE'] ?? path.join(process.cwd(), 'showcase-out', '.showcase-pids.json');
 
-interface TrackedPid { pid: number; image: string }
+/** Write the pid file, creating its directory first (a fresh checkout has no
+ *  `showcase-out/`: `pnpm showcase` crashed with ENOENT, 2026-11-08). */
+function writePidFile(body: string): void {
+  mkdirSync(path.dirname(pidFile()), { recursive: true });
+  writeFileSync(pidFile(), body);
+}
+
+/** `owner` is the run that started the process: a run that is still alive
+ *  (a parallel run in the same checkout) is never reaped (2026-11-08: the
+ *  reap unit test, reading the real pid file through a misspelt env var,
+ *  killed a live perf run's servers). */
+interface TrackedPid { pid: number; image: string; owner?: number; ownerImage?: string }
 
 function imageOf(pid: number): string | null {
   if (process.platform === 'win32') {
@@ -135,27 +146,31 @@ export function trackPid(pid: number | undefined): void {
   const image = imageOf(pid);
   if (!image) return;
   const all = readTracked().filter((t) => t.pid !== pid);
-  all.push({ pid, image });
-  mkdirSync(path.dirname(pidFile()), { recursive: true });
-  writeFileSync(pidFile(), JSON.stringify(all));
+  all.push({ pid, image, owner: process.pid, ownerImage: imageOf(process.pid) ?? undefined });
+  writePidFile(JSON.stringify(all));
 }
 
 /** Kill processes a previous (killed) run left behind. Returns how many. */
 export function reapStale(): number {
   let n = 0;
+  const keep: TrackedPid[] = [];
   for (const t of readTracked()) {
     if (imageOf(t.pid) !== t.image) continue; // gone, or the PID was reused
+    // Its run is still going (and isn't us): not stale.
+    if (t.owner && t.owner !== process.pid && t.ownerImage && imageOf(t.owner) === t.ownerImage) { keep.push(t); continue; }
     if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(t.pid), '/T', '/F'], { stdio: 'ignore' });
     else spawnSync('kill', ['-9', String(t.pid)], { stdio: 'ignore' });
     n++;
   }
-  writeFileSync(pidFile(), '[]');
+  writePidFile(JSON.stringify(keep));
   return n;
 }
 
-/** A run ended normally: nothing to reap. */
+/** A run ended normally: nothing of ours to reap (a live parallel run's entries stay). */
 export function clearTracked(): void {
-  try { writeFileSync(pidFile(), '[]'); } catch { /* no output dir yet */ }
+  try {
+    writePidFile(JSON.stringify(readTracked().filter((t) => t.owner && t.owner !== process.pid)));
+  } catch { /* unwritable output dir: nothing to clear */ }
 }
 
 /** The browser process PID of a launched Playwright Chromium (via CDP:
