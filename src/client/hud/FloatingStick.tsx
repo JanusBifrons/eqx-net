@@ -49,7 +49,9 @@ export interface FloatingStickProps {
   zIndex?: number;
 }
 
-const GLIDE = 'transform 170ms cubic-bezier(.2,.8,.2,1), opacity 170ms linear';
+// Snap-back glide: quick, but long enough to read as motion (170 ms looked
+// like a jump on camera).
+const GLIDE = 'transform 240ms cubic-bezier(.2,.8,.2,1), opacity 240ms linear';
 
 export function FloatingStick(props: FloatingStickProps): JSX.Element {
   const {

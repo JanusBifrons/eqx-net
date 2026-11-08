@@ -169,7 +169,7 @@ async function steer(ctx: ShotContext, finger: Finger, anchor0: Pt, clock: Clock
     leg++;
     // Once, mid-clip: lift the thumb so the stick visibly glides home, then
     // land somewhere else so it visibly spawns under the thumb.
-    if (!lifted && leg === 3 && clock.left() > 4000) {
+    if (!lifted && leg === 1 && clock.left() > 2500) {
       lifted = true;
       await finger.up();
       await ctx.sleep(900);
@@ -188,7 +188,10 @@ async function moveAnchor(ctx: ShotContext, locate: ReturnType<typeof makeLocato
   const zone = await rectOf(ctx, 'hud-move-zone');
   if (zone) {
     // Left-middle of the zone, kept a stick-radius clear of its edges.
-    return clampTo({ x: zone.x + zone.width * 0.32, y: zone.y + zone.height * 0.6 }, zone, STICK_R + 8);
+    // Portrait zones are narrow: start mid-zone so the steering arcs (and the
+    // thumb dot) stay on the screen.
+    const portrait = ctx.viewport.height > ctx.viewport.width;
+    return clampTo({ x: zone.x + zone.width * (portrait ? 0.55 : 0.32), y: zone.y + zone.height * 0.6 }, zone, STICK_R + 8);
   }
   return locate('hud-move-home', thumbs(ctx).left);
 }
@@ -276,7 +279,12 @@ async function aimDrag(
   let origin: Pt;
   if (v === 'b') {
     const zone = await rectOf(ctx, 'hud-aim-zone');
-    origin = zone
+    const home = ctx.viewport.height > ctx.viewport.width ? await rectOf(ctx, 'hud-aim-home') : null;
+    // Portrait: BOOST sits right above the aim stick, inside the zone — start
+    // on the stick's own home instead (just inboard of its centre).
+    origin = home
+      ? { x: home.x + home.width / 2 - 18, y: home.y + home.height / 2 }
+      : zone
       ? // Low and inboard: the ring that spawns under the thumb stays clear
         // of BOOST and the AUTO pill above the aim stick's home.
         clampTo({ x: zone.x + zone.width * 0.45, y: zone.y + zone.height * 0.72 }, zone, 70)
@@ -413,7 +421,10 @@ async function runDesktop(ctx: ShotContext, durationMs: number): Promise<void> {
   /** Hold left mouse and sweep the cursor ±30° across the nearest drone. */
   const sweep = async (ms: number): Promise<void> => {
     let a = (await droneAngle(ctx)) ?? -Math.PI / 2;
-    const p0 = polar(c, R, a);
+    // Never into the top HUD row (pilot toggle, capsule): clamp the cursor.
+    const minY = h * 0.42;
+    const keepLow = (p: Pt): Pt => (p.y < minY ? { x: p.x, y: minY } : p);
+    const p0 = keepLow(polar(c, R, a));
     await m.glideTo(p0.x, p0.y, { ms: 260 });
     await m.down('left');
     const deadline = Date.now() + clock.fit(ms);
@@ -422,7 +433,7 @@ async function runDesktop(ctx: ShotContext, durationMs: number): Promise<void> {
       const bearing = (await droneAngle(ctx)) ?? a;
       const to = bearing + dir * 0.5;
       const from = a;
-      await m.follow((u) => polar(c, R * (0.85 + 0.15 * Math.sin(Math.PI * u)), from + (to - from) * u), {
+      await m.follow((u) => keepLow(polar(c, R * (0.85 + 0.15 * Math.sin(Math.PI * u)), from + (to - from) * u)), {
         ms: Math.min(1000, deadline - Date.now()),
       });
       a = to;
