@@ -7,7 +7,7 @@
  *                    [--base-params k=v&k=v] [--head-params k=v&k=v]
  *   (extra URL flags per arm: e.g. `--base HEAD --head-params shiplight=gpu`
  *   measures one switch on the same build)
- *                    [--device phone-proxy]
+ *                    [--device phone-proxy] [--cpu-rate 4]
  *   (phone-class run on this machine, no phone needed: CPU throttled 4x, a
  *   landscape phone screen at DPR 2.625, touch. A proxy, not the device:
  *   the laptop's integrated GPU stands in for a phone GPU)
@@ -32,7 +32,7 @@ import { compareArms, type RunMetrics, type ArmVerdict } from './verdict.js';
 
 const GPU_ARGS = ['--use-angle=d3d11', '--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'];
 
-interface Args { scenes: string[]; reps: number; base: string; headOnly: boolean; headed: boolean; out: string; burnServerMs: number; burnClientMs: number; append: string | undefined; baseParams: string; headParams: string; device: 'desktop' | 'phone-proxy' }
+interface Args { scenes: string[]; reps: number; base: string; headOnly: boolean; headed: boolean; out: string; burnServerMs: number; burnClientMs: number; append: string | undefined; baseParams: string; headParams: string; device: 'desktop' | 'phone-proxy'; cpuRate: number }
 
 function parseArgs(argv: string[]): Args {
   const get = (k: string): string | undefined => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
@@ -50,6 +50,7 @@ function parseArgs(argv: string[]): Args {
     // (lets a long A/B run as short foreground chunks).
     append: get('--append'),
     device: get('--device') === 'phone-proxy' ? 'phone-proxy' : 'desktop',
+    cpuRate: Number(get('--cpu-rate') ?? PHONE_PROXY.cpuRate),
     baseParams: get('--base-params') ?? '',
     headParams: get('--head-params') ?? '',
   };
@@ -84,13 +85,13 @@ async function devPerf(serverUrl: string): Promise<{ rooms: Array<Record<string,
 /** Phone-class proxy: a mid phone's CPU (Chrome throttle) and screen. */
 const PHONE_PROXY = { viewport: { width: 915, height: 412 }, deviceScaleFactor: 2.625, isMobile: true, hasTouch: true, cpuRate: 4 };
 
-async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: string) => void, device: Args['device'] = 'desktop'): Promise<RunMetrics> {
+async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: string) => void, device: Args['device'] = 'desktop', cpuRate = PHONE_PROXY.cpuRate): Promise<RunMetrics> {
   const phone = device === 'phone-proxy';
   const ctx = await browser.newContext(phone
     ? { viewport: PHONE_PROXY.viewport, deviceScaleFactor: PHONE_PROXY.deviceScaleFactor, isMobile: true, hasTouch: true }
     : { viewport: { width: 1280, height: 720 } });
   const page = await ctx.newPage();
-  if (phone) await (await ctx.newCDPSession(page)).send('Emulation.setCPUThrottlingRate', { rate: PHONE_PROXY.cpuRate });
+  if (phone) await (await ctx.newCDPSession(page)).send('Emulation.setCPUThrottlingRate', { rate: cpuRate });
   // Bytes received over the game socket, from DevTools network events: exact,
   // and no app instrumentation (works the same on a phone over adb).
   let rxBytes = 0;
@@ -208,7 +209,7 @@ async function main(): Promise<void> {
         await a.servers.ensure('lean');
         for (const scene of scenes) {
           let m: RunMetrics;
-          try { m = await runOnce(browser, a, scene, log, args.device); } catch (e) {
+          try { m = await runOnce(browser, a, scene, log, args.device, args.cpuRate); } catch (e) {
             log(`  ${a.name} ${scene.id}: FAILED ${(e as Error).message}`);
             m = { valid: false, invalidReason: (e as Error).message, timing: {}, counts: {}, raw: null };
           }
