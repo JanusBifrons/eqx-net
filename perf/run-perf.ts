@@ -95,6 +95,9 @@ const LOAD_RETRY_WAIT_MS = 15_000;
 function prepareBase(ref: string): string {
   const dir = path.join(ROOT, '.claude', 'worktrees', 'perf-base');
   execFileSync('git', ['fetch', '-q', 'origin'], { cwd: ROOT, stdio: 'inherit' });
+  // Resolve the ref HERE: `HEAD` checked out inside the perf-base worktree is
+  // that worktree's own (stale) HEAD, not this checkout's.
+  ref = execFileSync('git', ['rev-parse', '--verify', `${ref}^{commit}`], { cwd: ROOT }).toString().trim();
   if (!existsSync(dir)) {
     execFileSync('git', ['worktree', 'add', '--detach', dir, ref], { cwd: ROOT, stdio: 'inherit' });
   } else {
