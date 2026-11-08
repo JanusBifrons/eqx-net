@@ -74,7 +74,7 @@ export function readFxKillSwitches(
     // hid it (hostile review 2026-11-08). Read from the URL so the worker
     // renderer sees it too; `noselfdmg=0` turns them back on.
     selfDmgNumbersDisabled:
-      /\bnoselfdmg=1\b/.test(search) || (/\bui=[abc]\b/.test(search) && !/\bnoselfdmg=0\b/.test(search)),
+      /\bnoselfdmg=1\b/.test(search) || (/\bui=[abcd]\b/.test(search) && !/\bnoselfdmg=0\b/.test(search)),
     cleanWorld: /\bcleanworld=1\b/.test(search),
   };
 }

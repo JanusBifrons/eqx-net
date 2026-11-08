@@ -45,6 +45,7 @@ import { alienGate, garrisonPatrol, teleporterRide, transitHub } from './shots/v
 import { tradeDeal, tradeRaid } from './shots/trade.js';
 import { cockpitBounty, cockpitHaul, cockpitRobots, cockpitStronghold } from './shots/cockpit.js';
 import { hudVariantShots } from './shots/hudVariants.js';
+import { fireControlShots } from './shots/fireControl.js';
 
 /** Every shot, in reel order. Catalogue = all of them; reel = `reel: true`. */
 export const SHOTS: readonly Shot[] = [
@@ -105,6 +106,7 @@ export const SHOTS: readonly Shot[] = [
   mobile,
   // Catalogue-only: the exp/hud-mobile-first HUD takes (`pnpm showcase:hud`).
   ...hudVariantShots,
+  ...fireControlShots,
 ];
 
 export const SECTION_CARDS: Record<Shot['section'], { title: string; sub: string } | null> = {
