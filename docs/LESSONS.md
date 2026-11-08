@@ -2733,3 +2733,13 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - Look R&D goes in the game behind a flag on a branch, not in a parallel renderer: the art lab lacked turrets, the game's effects, shields and sky, and the user called it "some weird parallel system".
   - Pin effect lights to the sprite that draws the effect.
   - Packed multi-slice textures need gutters at least 2^(highest mip level read).
+
+## 2026-11-08 — A 3-rep exact Mann-Whitney can never reject at 0.05
+
+- **Symptom:** every GPU-lighting A/B (#344–#346) came back GREEN at 3 reps per arm. A desktop re-check showed the verdict could not have been anything else.
+- **Cause:** the exact two-sided Mann-Whitney's smallest possible p is 2 / C(n1+n2, n1): 2/20 = 0.10 at 3 v 3, 0.057 at 3 v 4, 0.029 at 4 v 4. With RED requiring p < 0.05, a 3-rep run is GREEN for any effect, however large. Odd rep counts also gave one arm the warmer second slot more often, and the laptop's same-code spread reached ×2 on hitches.
+- **Fix:** `perf/verdict.ts` gives RED / GREEN / INCONCLUSIVE. GREEN needs the sample sizes to have been able to reach p < 0.05; a move over the thresholds that isn't significant, or that sits inside the A/A noise floor (`--noise-check`), is INCONCLUSIVE. `--reps` defaults to 8 and rounds odd counts up.
+- **Rules:**
+  - Before trusting "no significant difference", check the test could have found one: compute the minimum achievable p for your n.
+  - "Not RED" is not "GREEN". A verdict needs a third state for "couldn't tell".
+  - Measure the host's own same-code spread in the same session before calling a move a regression.
