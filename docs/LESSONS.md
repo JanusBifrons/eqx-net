@@ -2743,3 +2743,4 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
 - **Rules:**
   - A fallback for "no pockets" means the classic sector (`HOME_POCKET_HALF_EXTENT`), not the current extent.
   - A measurement that writes a ledger file must key the file on every switch that changes what it measures.
+- **Soak memory readings (same day):** without a forced collection the physics-worker heap appeared to climb from 190 to 374 MB in 5 minutes with solar on. After a forced collection (`/dev/memory?gc=1`, server started with `--expose-gc`, as `scripts/soak-galaxy.ts` does) it stayed flat at about 150 MB. V8 collects lazily, so per-tick garbage looks like growth. Rule: judge a memory trend only from post-collection readings.

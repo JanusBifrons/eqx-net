@@ -49,11 +49,13 @@ function killTree(c: ChildProcess | null): void {
 async function main(): Promise<void> {
   const runDir = mkdtempSync(path.join(tmpdir(), 'eqx-soak-'));
   const fd = openSync(path.join(runDir, 'server.log'), 'a');
-  const server = spawn('pnpm dev:server:nowatch', {
+  // dev:server:nowatch's flags plus --expose-gc, so /dev/memory?gc=1 can
+  // collect before reading (a reading shows what is live, not uncollected).
+  const server = spawn('pnpm exec tsx --tsconfig tsconfig.server.json src/server/index.ts', {
     shell: true, stdio: ['ignore', fd, fd],
     env: {
       ...process.env, PORT: String(PORT), DB_PATH: path.join(runDir, 'eqx.db'), EQX_AUDIT_DIR: path.join(runDir, 'audit'),
-      EQX_SOLAR_SECTORS: SOLAR, EQX_DEV_EVENTS_MAX: '20000',
+      EQX_SOLAR_SECTORS: SOLAR, EQX_DEV_EVENTS_MAX: '20000', NODE_OPTIONS: '--max-semi-space-size=128 --expose-gc',
     },
   });
   closeSync(fd);
@@ -76,12 +78,13 @@ async function main(): Promise<void> {
     ws.addEventListener('message', (e) => { const d = e.data; bytes += typeof d === 'string' ? d.length : d instanceof ArrayBuffer ? d.byteLength : (d as Uint8Array).length; });
 
     await sleep(15_000); // settle: directors populate, first waves
-    const memStart = await getJson<Record<string, unknown>>('/dev/memory');
+    const memStart = await getJson<Record<string, unknown>>('/dev/memory?gc=1');
     await fetch(BASE + '/dev/events/clear', { method: 'POST' });
     bytes = 0;
     const t0 = Date.now();
     const avg: number[] = [], worst: number[] = [];
     let over = 0, ticks = 0, swarmMax = 0;
+    const memTrend: Array<{ min: number; rssMb: unknown; heapUsedMb: unknown; workerHeapTotalMb: unknown }> = [];
     const endAt = t0 + MINUTES * 60_000;
     let nextLog = t0 + 60_000;
     while (Date.now() < endAt) {
@@ -98,11 +101,13 @@ async function main(): Promise<void> {
       }
       if (Date.now() >= nextLog) {
         nextLog += 60_000;
-        console.log(`[soak] ${Math.round((Date.now() - t0) / 60_000)} min: tick avg p50 ${pct(avg, 0.5)} ms, worst p95 ${pct(worst, 0.95)} ms, ${Math.round((bytes * 1000) / (Date.now() - t0))} B/s`);
+        const m = await getJson<Record<string, unknown>>('/dev/memory?gc=1');
+        memTrend.push({ min: Math.round((Date.now() - t0) / 60_000), rssMb: m?.['rssMb'], heapUsedMb: m?.['heapUsedMb'], workerHeapTotalMb: m?.['workerHeapTotalMb'] });
+        console.log(`[soak] ${Math.round((Date.now() - t0) / 60_000)} min: tick avg p50 ${pct(avg, 0.5)} ms, worst p95 ${pct(worst, 0.95)} ms, ${Math.round((bytes * 1000) / (Date.now() - t0))} B/s, worker heap ${String(m?.['workerHeapTotalMb'])} MB, rss ${String(m?.['rssMb'])} MB`);
       }
     }
     const elapsed = Date.now() - t0;
-    const memEnd = await getJson<Record<string, unknown>>('/dev/memory');
+    const memEnd = await getJson<Record<string, unknown>>('/dev/memory?gc=1');
     const pop = await getJson<Record<string, unknown>>('/dev/population');
     const row = {
       solar: SOLAR !== '0', minutes: MINUTES, sector: SECTOR, at: new Date().toISOString(),
@@ -117,6 +122,7 @@ async function main(): Promise<void> {
         heapUsedMbStart: memStart?.['heapUsedMb'], heapUsedMbEnd: memEnd?.['heapUsedMb'],
         workerHeapTotalMbStart: memStart?.['workerHeapTotalMb'], workerHeapTotalMbEnd: memEnd?.['workerHeapTotalMb'],
         rooms: memEnd?.['rooms'],
+        perMinute: memTrend,
       },
       population: pop?.['totals'] ?? null,
     };

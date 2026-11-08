@@ -47,7 +47,18 @@ Measured on the same machine in the same session (2026-11-08):
 - **Synthetic, 500 ships spread over the whole sector** (`sectorSpace.measure.test.ts`, `diag/sector-space/`):
   - classic: tick median 1.33 ms, p95 2.54 ms, 305 KB/s to the pilot, 281 entities in view;
   - solar: tick median 1.26 ms, p95 3.26 ms, 141 KB/s, 0 in view.
-- **The live galaxy:** `scripts/soak-galaxy.ts` boots the real server with every sector and the directors, parks a pilot in Sol Prime and samples for 10 minutes. Results are in `diag/soak/`, and the numbers are in the W1c PR.
+- **The live galaxy** (`scripts/soak-galaxy.ts`): boots the real server with all 21 sectors and the directors, parks a pilot in Sol Prime, and samples for 8 minutes per mode. Memory is read after a forced collection (`/dev/memory?gc=1`). Results are in `diag/soak/`.
+
+  | | Solar on | Solar off |
+  |---|---|---|
+  | Avg tick, p50 | 0.16 ms | 0.15 ms |
+  | Worst tick per second, p99 | 3.2 ms | 3.2 ms |
+  | Ticks over budget (of ~600k) | 3 | 1 |
+  | Bytes/s to the pilot | 14.6 KB | 21.2 KB |
+  | Physics worker live heap, start → end | 146 → 183 MB | 145 → 165 MB |
+  | Process memory, start → end | 824 → 1,006 MB | 861 → 987 MB |
+
+  Live heap is flat apart from warm-up, so there is no leak. An earlier run without the forced collection showed the worker heap "climbing" from 190 to 374 MB; that was uncollected garbage, because V8 collects lazily. Read memory trends only after a collection.
 
 ## Tests
 
