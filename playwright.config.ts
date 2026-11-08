@@ -163,6 +163,8 @@ const FEATURE_SPECS: string[] = [
   '**/gate-fly-through.spec.ts',
   '**/ramming-probe-armpit.spec.ts',
   '**/scrap-collision-stress.spec.ts',
+  // WS7.1 — melee contact corrections (remote-entity collision paradigm).
+  '**/melee-drone-corrections.spec.ts',
   '**/warp-engage-cancel.spec.ts',
   '**/wreck-render-probe.spec.ts',
   '**/structure-visible-damageable.spec.ts',

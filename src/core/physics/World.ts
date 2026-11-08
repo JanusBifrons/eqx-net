@@ -110,7 +110,7 @@ export class PhysicsWorld {
   private readonly wallHandleToId = new Map<number, string>();
   /** 2026-05-25 heap-growth fix — per-tick pooled scratches for the
    *  Rapier `setTranslation` / `setLinvel` Vector2 arguments. `setShipState`
-   *  is called per-drone per-RAF on the client (kinematic follower for
+   *  was called per-drone per-RAF on the client (the since-retired follower for
    *  snapshot-interpolated drones) — at 25 drones × 90 RAFs/sec the
    *  prior `{x, y}` literals were 2 × 2250 = 4500 allocations/sec just
    *  from this method. Rapier's API takes Vector2-like objects, so we
@@ -879,9 +879,15 @@ export class PhysicsWorld {
     dirX: number, dirY: number,
     maxDist: number,
     excludeId: string,
+    /** Optional: body ids the ray passes through. The client passes its
+     *  remote drones/scrap here: their collision bodies run on the predicted
+     *  timeline, while the turret aims at the drawn pose, so the caller tests
+     *  them at the drawn pose itself. Absent ⇒ every body counts (unchanged). */
+    skipId?: (id: string) => boolean,
   ): { hitId: string; dist: number } | null {
     const excludeRec = this.bodies.get(excludeId);
-    return castHitscan(
+    this._raySkip = skipId ?? null;
+    const hit = castHitscan(
       this.world,
       this.handleToId,
       fromX,
@@ -891,8 +897,24 @@ export class PhysicsWorld {
       maxDist,
       excludeRec?.body,
       this.wallHandleToId,
+      skipId ? this._rayPredicate : undefined,
     );
+    this._raySkip = null;
+    return hit;
   }
+
+  /** The skip test for the `hitscan` call in progress (null outside one). */
+  private _raySkip: ((id: string) => boolean) | null = null;
+  /** Built once, not per call (invariant #14): keeps a collider unless its
+   *  body's id is skipped. Walls (not in `handleToId`) are never skipped. */
+  private readonly _rayPredicate = (collider: RAPIER.Collider): boolean => {
+    const skip = this._raySkip;
+    if (skip === null) return true;
+    const parent = collider.parent();
+    if (!parent) return true;
+    const id = this.handleToId.get(parent.handle);
+    return id === undefined || !skip(id);
+  };
 
   dispose(): void {
     this.world.free();

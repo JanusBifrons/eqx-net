@@ -15,9 +15,10 @@
  * ship shove the light debris aside, so every snapshot reconciled that
  * divergence as a correction spike (the user's "huge spike in corrections").
  * The fix mirrors the DRONE leaf exactly: an unlocked dynamic body that is NOT
- * reposed here — `ColyseusClient.updateMirror` drives it KINEMATICALLY each
- * frame to the single interpolated pose (one-pose-per-frame), so render ==
- * collision and the player's predicted deflection matches the server.
+ * reposed here. Since 2026-11-08 it follows the remote-entity anchor like
+ * drones and remote ships (latest server state each snapshot, stepped on the
+ * prediction timeline, never re-posed per frame), so the player's predicted
+ * shove matches the server's. The sprite draws the interpolated pose.
  *
  * Damage is server-authoritative through the swarm path (EntityResolver →
  * drone leaf), so there is nothing damage-specific here.
@@ -63,16 +64,15 @@ export class ScrapClientLeaf extends ClientEntityLeafBase {
       SCRAP_LINEAR_DAMPING,
       SCRAP_COLLISION_GROUPS,
     );
-    // UNLOCKED + NOT reposed here: the body is a kinematic follower driven each
-    // frame by `ColyseusClient.updateMirror` at the single interpolated pose,
-    // exactly like the drone leaf. Locking it (the old behaviour) was the
+    // UNLOCKED + NOT reposed here: the remote-entity anchor owns the body's
+    // pose, exactly like the drone leaf. Locking it (the old behaviour) was the
     // Phase-5 desync — an infinite-mass wall the player bounced off while the
     // server let them shove it.
   }
 
   onSync(_ctx: ClientSyncCtx): void {
     // No-op: scrap has no shield to swap, and re-posing here would be a second,
-    // fighting correction path against the `updateMirror` kinematic follower
-    // (the one-pose-per-frame rule — see the drone leaf).
+    // fighting pose writer against the per-snapshot remote-entity anchor
+    // (see the drone leaf).
   }
 }

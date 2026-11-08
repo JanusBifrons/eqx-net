@@ -11,6 +11,15 @@
  *     mirrors the server's per-mount angles into mirror.ships so the
  *     remote-turret rendering follows the server.
  *
+ *     The SAME step anchors the other remote moving entities, drones
+ *     and scrap (`anchorRemoteSwarmBodies`), from their latest
+ *     authoritative binary-wire state. One paradigm for every remote
+ *     moving entity: predWorld collision runs on the predicted timeline
+ *     from the latest server state; rendering is per entity type
+ *     (remote ships: predWorld + decaying lerp offset; drones/scrap:
+ *     the display-delayed interpolated pose). See
+ *     docs/architecture/drone-snapshot-interpolation.md.
+ *
  *   - `applyDroneMountAngles` pushes the slim drone snapshot slice
  *     (`{ id, mountAngles?, shieldDown? }`) into mirror.swarm —
  *     drones are pure binary-wire-interpolated; the JSON snapshot
@@ -18,8 +27,9 @@
  */
 
 import type { SnapshotMessage } from '@shared-types/messages';
-import type { RenderMirror } from '@core/contracts/IRenderer';
-import type { PhysicsWorld } from '@core/physics/World';
+import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '@core/contracts/IRenderer';
+import type { PhysicsWorld, ShipPhysicsState } from '@core/physics/World';
+import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP } from '@shared-types/swarmWireFormat';
 
 type RemoteInput = {
   thrust: boolean;
@@ -42,6 +52,11 @@ export interface PreResetRemoteCtx {
   preResetRemotePosEntries: PreResetEntry[];
   remoteLastInputs: Map<string, RemoteInput>;
   remoteForwardTicks: Map<string, number>;
+  /** `swarm-${id}` body keys (`ColyseusClient._swarmBodyKeyCache`). With the
+   *  scratch below, turns on the drone/scrap half of the anchor. */
+  swarmBodyKeys?: ReadonlyMap<number, string>;
+  /** Reused state object for the drone/scrap anchor (#14). */
+  swarmAnchorScratch?: ShipPhysicsState;
 }
 
 /**
@@ -110,7 +125,90 @@ export function preResetRemoteShips(
       ctx.remoteForwardTicks.delete(tracked);
     }
   }
+  // The same anchor for the other remote MOVING entities (drones, scrap):
+  // latest authoritative state at this snapshot's serverTick. The replay and
+  // every tickPhysics step then carry them on the prediction timeline exactly
+  // like the remote ships above.
+  if (ctx.predWorld && ctx.mirror.swarm && ctx.swarmBodyKeys && ctx.swarmAnchorScratch) {
+    anchorRemoteSwarmBodies(ctx.predWorld, ctx.mirror.swarm, snap.serverTick, ctx.swarmBodyKeys, ctx.swarmAnchorScratch);
+  }
   return preReset;
+}
+
+/** True for the swarm kinds that MOVE and get a dynamic predWorld body that
+ *  follows the remote-entity anchor: drones (1) and scrap (3). Asteroids (0)
+ *  and structures (2) keep their own static/locked handling. */
+export function isRemoteMovingSwarmKind(kind: number): boolean {
+  return kind === SWARM_KIND_DRONE || kind === SWARM_KIND_SCRAP;
+}
+
+/**
+ * Fill `out` with the entity's AUTHORITATIVE server state at `tick`, read off
+ * the decoder-fed pose ring (never the interpolated, display-delayed
+ * `entry.x/y`, which `updateMirror` overwrites every frame). The binary swarm
+ * wire and the JSON snapshot run on the same server tick counter but at
+ * different cadences, so the ring may not hold `tick` exactly: then the newest
+ * pose at or before `tick` (else the oldest after it) is carried to `tick` with
+ * its own velocity, over at most `MAX_ALIGN_TICKS`. Returns false when the ring
+ * is empty. Allocation-free.
+ */
+export function authoritativeSwarmStateAt(entry: SwarmRenderState, tick: number, out: ShipPhysicsState): boolean {
+  const ring = entry.poseRing;
+  let best: PoseRingEntry | null = null;
+  let after: PoseRingEntry | null = null;
+  for (let i = 0; i < ring.length; i++) {
+    const s = ring[i]!;
+    if (s.empty) continue;
+    if (s.serverTick <= tick) {
+      if (best === null || s.serverTick > best.serverTick) best = s;
+    } else if (after === null || s.serverTick < after.serverTick) {
+      after = s;
+    }
+  }
+  const src = best ?? after;
+  if (src === null) return false;
+  let dTicks = tick - src.serverTick;
+  if (dTicks > MAX_ALIGN_TICKS) dTicks = MAX_ALIGN_TICKS;
+  else if (dTicks < -MAX_ALIGN_TICKS) dTicks = -MAX_ALIGN_TICKS;
+  const dt = dTicks / 60;
+  out.x = src.x + src.vx * dt;
+  out.y = src.y + src.vy * dt;
+  out.vx = src.vx;
+  out.vy = src.vy;
+  out.angle = src.angle + src.angvel * dt;
+  out.angvel = src.angvel;
+  return true;
+}
+
+/** Cap on how far `authoritativeSwarmStateAt` carries a pose to the anchor
+ *  tick (the out-of-interest wire cadence is every 6 ticks). */
+const MAX_ALIGN_TICKS = 12;
+
+/**
+ * Anchor every remote drone/scrap predWorld body to its latest authoritative
+ * server state at `anchorTick` — the same reset `preResetRemoteShips` does for
+ * remote player ships, and part of that one step. After it the reconciler
+ * replay and the per-tick `tickPhysics` steps move the bodies forward on the
+ * local prediction's timeline; nothing re-poses them per frame, so the local
+ * ship's own push on a drone or scrap survives until the next snapshot (as the
+ * server keeps it). Drawing is separate: sprites still read the interpolated
+ * pose (`updateMirror`). `keyCache` is `ColyseusClient._swarmBodyKeyCache`;
+ * an entity with no cached key has no body yet. Allocation-free (#14).
+ */
+export function anchorRemoteSwarmBodies(
+  predWorld: PhysicsWorld,
+  swarm: ReadonlyMap<number, SwarmRenderState>,
+  anchorTick: number,
+  keyCache: ReadonlyMap<number, string>,
+  scratch: ShipPhysicsState,
+): void {
+  for (const [entityId, entry] of swarm) {
+    if (!isRemoteMovingSwarmKind(entry.kind)) continue;
+    const key = keyCache.get(entityId);
+    if (key === undefined || !predWorld.hasShip(key)) continue;
+    if (!authoritativeSwarmStateAt(entry, anchorTick, scratch)) continue;
+    predWorld.setShipState(key, scratch);
+  }
 }
 
 /**
