@@ -398,6 +398,10 @@ export interface RenderMirror {
   /** Phase 4 travel state: in the empty middle of a trip (the sky thins to deep
    *  space); false while flying out of the old sector and into the new one. */
   travelDeep?: boolean;
+  /** The local ship's sector-transit spool length (ms) while it spools, so
+   *  the spool-up builds over the whole spool (a 3 s in-system warp spool
+   *  is the default when absent). */
+  localSpoolMs?: number;
   /** Phase 4 travel state: the total jump (game space) made by placing the
    *  ship on its approach; the renderer shifts the sky by it so the stars
    *  carry on unbroken. */
@@ -541,7 +545,10 @@ export interface RenderMirror {
       | 'destruction-shock'
       | 'shield-flash'
       /** A shield fence stopped a bolt or missile at (worldX, worldY). */
-      | 'wall-hit';
+      | 'wall-hit'
+      /** A collision touched `entityId`'s shield; (worldX, worldY) is the
+       *  other body, which the contact faces. Drawn only on a raised shield. */
+      | 'shield-contact';
     worldX: number;
     worldY: number;
     intensity?: number;

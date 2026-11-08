@@ -6,7 +6,7 @@
  * 1 spool, 2 run; the local ship's is its predicted phase) and the ship's
  * resolved sprite pose (Pixi space, never re-interpolated):
  *
- *  - SPOOL: a glow builds at the engines, pulsing faster as the drive charges.
+ *  - SPOOL: drawn by WarpSpoolFx (the engines overcharge).
  *  - ENGAGE (1→2): a flash at the engines, a hull streak shooting out along
  *    the run (the blur of the acceleration) and two burning engine trails left
  *    on the path that flicker and burn out (the "Back to the Future" look). An
@@ -19,9 +19,7 @@
  * frame only scalar writes (#14).
  */
 import { Container, Graphics, Sprite, Texture } from 'pixi.js';
-import { WARP_SPOOL_TICKS } from '@core/physics/warpDrive';
 
-const SPOOL_S = WARP_SPOOL_TICKS / 60;
 /** Engine trails: reach along the path (world u), grow time, burn time (s). */
 const TRAIL_LEN = 1600;
 const TRAIL_GROW_S = 0.15;
@@ -35,7 +33,7 @@ const ARRIVE_STREAK_LEN = 160;
 const ARRIVE_TRAIL_LEN = 160;
 const ARRIVE_LIFE_S = 0.6;
 const SPEED_LINES = 28;
-const FIRE_CORE = 0xffe6a8, FIRE_OUT = 0xff6a1c, BLUE_GLOW = 0x8fd0ff, STREAK = 0xcfe4ff;
+const FIRE_CORE = 0xffe6a8, FIRE_OUT = 0xff6a1c, STREAK = 0xcfe4ff;
 
 /** A soft round glow, built once and scaled (centre at 0,0, radius 1). */
 function glowGfx(color: number): Graphics {
@@ -65,7 +63,6 @@ interface ShipWarpView {
   /** The ship's stern distance (for a departure drawn after it vanished). */
   stern: number;
   gen: number;
-  glowC: Graphics; glowL: Graphics; glowR: Graphics;
   streak: Sprite;
 }
 
@@ -171,19 +168,6 @@ export class WarpFx {
     if (phase === 1) {
       v.sx = ship.x; v.sy = ship.y; v.srot = ship.rotation; v.stern = ship.stern;
       this.spooling++;
-      const p = Math.min(1, (this.now - v.spoolStart) / SPOOL_S);
-      // A steady build: brightness and size ramp with charge, with only a
-      // faint shimmer (it should read as charging, not blinking).
-      const pulse = 0.94 + 0.06 * Math.sin((this.now - v.spoolStart) * 14);
-      const r = Math.max(ship.stern * (0.3 + 0.5 * p), px * (4 + 8 * p)) * pulse;
-      const ex = ship.x - fx * ship.stern, ey = ship.y - fy * ship.stern;
-      const gap = Math.max(ship.stern * 0.45, px * 4);
-      const lx = -fy * gap, ly = fx * gap;
-      place(v.glowC, ex, ey, r * 1.2, 0.12 + 0.3 * p);
-      place(v.glowL, ex + lx, ey + ly, r * 0.6, 0.3 + 0.6 * p);
-      place(v.glowR, ex - lx, ey - ly, r * 0.6, 0.3 + 0.6 * p);
-    } else {
-      v.glowC.visible = v.glowL.visible = v.glowR.visible = false;
     }
     if (phase === 2 && ship.isLocal) {
       // A hull streak trailing the pilot's own ship while it runs (others'
@@ -214,7 +198,7 @@ export class WarpFx {
         const dx = Math.sin(v.srot), dy = -Math.cos(v.srot);
         this.spawn('depart', v.sx - dx * v.stern, v.sy - dy * v.stern, dx, dy, v.stern);
       }
-      v.glowC.destroy(); v.glowL.destroy(); v.glowR.destroy(); v.streak.destroy();
+      v.streak.destroy();
       this.ships.delete(id);
     }
     let live = 0;
@@ -240,11 +224,10 @@ export class WarpFx {
   spoolCount(): number { return this.spooling; }
 
   private newView(): ShipWarpView {
-    const glowC = glowGfx(BLUE_GLOW), glowL = glowGfx(FIRE_CORE), glowR = glowGfx(FIRE_CORE);
     const streak = bar(STREAK);
-    glowC.visible = glowL.visible = glowR.visible = streak.visible = false;
-    this.layer.addChild(streak, glowC, glowL, glowR);
-    return { phase: 0, arrivedDrawn: false, spoolStart: 0, sx: 0, sy: 0, srot: 0, stern: 0, gen: 0, glowC, glowL, glowR, streak };
+    streak.visible = false;
+    this.layer.addChild(streak);
+    return { phase: 0, arrivedDrawn: false, spoolStart: 0, sx: 0, sy: 0, srot: 0, stern: 0, gen: 0, streak };
   }
 
   private spawn(kind: 'depart' | 'arrive', x: number, y: number, dx: number, dy: number, stern: number, follow = false): void {

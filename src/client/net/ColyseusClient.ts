@@ -35,6 +35,7 @@ import {
   createCollisionGuard,
   type CollisionGuardState,
 } from './applyCollisionResolved';
+import { pushCollisionShieldContacts } from './collisionShieldContacts';
 import { MineDetonatedSchema } from '@shared-types/mines';
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, WallHitEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
@@ -488,6 +489,8 @@ export class ColyseusGameClient {
    *  plus latest snapshot tick for the stale-event drop check. Updated by
    *  the collision_resolved handler and by handleSnapshot. */
   private readonly _collisionGuard: CollisionGuardState = createCollisionGuard();
+  /** Last shield contact per shield (ms), to throttle grinding contacts. */
+  private readonly _shieldContactAt = new Map<string, number>();
 
   /** Stage 3 — per-remote `lastInput` from the latest snapshot. Used by
    *  applyRemoteInputs() during the replay and tickPhysics input loops to
@@ -2050,6 +2053,10 @@ export class ColyseusGameClient {
       if (outcome.applied.length > 0) {
         this.stats.collisionEventsApplied++;
       }
+      // A raised shield shows the contact, like a shot's hit (user 2026-11-07).
+      if (this.mirror.pendingEffectTriggers) {
+        pushCollisionShieldContacts(result.data, this.mirror, this.clock.now(), this._shieldContactAt, this.mirror.pendingEffectTriggers);
+      }
     });
 
     // Remote-warp visual broadcasts. Both `warp_in` (a ship just arrived
@@ -2312,6 +2319,7 @@ export class ColyseusGameClient {
         const start = this.clock.now();
         const dur = msg.spoolMs ?? SPOOL_DURATION_MS;
         ui.setTransitSpoolMs(dur);
+        this.mirror.localSpoolMs = dur;
         // Surface the destination once via the alert toast — the new
         // left-edge hyperspace bar is too narrow to carry the sector name,
         // and the player picked the destination on the map seconds ago, so
@@ -2354,6 +2362,7 @@ export class ColyseusGameClient {
         ui.setTransitProgress(0);
         ui.setTransitTargetSectorKey(null);
         ui.setTransitSpoolMs(null);
+        this.mirror.localSpoolMs = undefined;
         if (msg.reason) {
           ui.setSectorAlert(`transit cancelled: ${msg.reason}`);
           setTimeout(() => useUIStore.getState().setSectorAlert(null), 2000);
@@ -2362,6 +2371,7 @@ export class ColyseusGameClient {
         // Brief fade then back to DOCKED so the overlay clears.
         ui.setTransitProgress(1);
         ui.setTransitSpoolMs(null);
+        this.mirror.localSpoolMs = undefined;
         setTimeout(() => {
           const cur = useUIStore.getState();
           cur.setTransitState('DOCKED');
