@@ -251,6 +251,8 @@ export interface UIStore {
   placementKind: StructureKindId | null;
   /** Phase 4 warp-to: the warp destination picker is open (discrete UI flag). */
   warpPickerOpen: boolean;
+  /** Where a held warp goes (the picker's label), shown by the warp chip; null when none. */
+  warpHeldTo: string | null;
   /** Click-to-inspect selection (structures follow-up Item B3). The id of the
    *  entity the player tapped to inspect, or null when nothing is selected.
    *  Drives `EntityStatsPanel` VISIBILITY only — purity-clean (a discrete id
@@ -491,6 +493,7 @@ export interface UIStore {
   setActiveSlotId: (id: string) => void;
   setPlacementKind: (k: StructureKindId | null) => void;
   setWarpPickerOpen: (open: boolean) => void;
+  setWarpHeldTo: (label: string | null) => void;
   /** Phase 4 WS-B1 — set / clear the pending local level-up acknowledgement
    *  (the level just reached, or null to clear). WS-B2's upgrade modal reads it. */
   setPendingLevelUp: (level: number | null) => void;

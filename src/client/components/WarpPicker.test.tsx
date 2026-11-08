@@ -18,19 +18,19 @@ vi.mock('../net/clientSingleton', () => ({
   }),
 }));
 
-import { WarpPicker, readWarpUi } from './WarpPicker';
+import { WarpPicker, WarpStatusChip, readWarpUi } from './WarpPicker';
 import { useUIStore } from '../state/store';
 import { warpDestinations } from './warpDestinations';
 
 beforeEach(() => {
   requestWarp.mockClear(); cancelWarp.mockClear(); warping = false;
-  useUIStore.setState({ currentSectorKey: 'sol-prime', warpPickerOpen: true });
+  useUIStore.setState({ currentSectorKey: 'sol-prime', warpPickerOpen: true, warpHeldTo: null });
 });
 afterEach(() => { useUIStore.setState({ warpPickerOpen: false }); });
 
 describe('WarpPicker', () => {
   it('list: picking a pocket warps to its rim, closes, and shows a cancellable chip', () => {
-    render(<WarpPicker />);
+    render(<><WarpPicker /><WarpStatusChip /></>);
     const target = warpDestinations('sol-prime', 0, 0).find((d) => !d.here)!;
     fireEvent.click(screen.getByTestId(`warp-dest-${target.id}`));
     expect(requestWarp).toHaveBeenCalledWith(target.dropX, target.dropY);

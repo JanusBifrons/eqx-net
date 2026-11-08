@@ -19,7 +19,7 @@ describe('warpDestinations', () => {
     expect(home.here).toBe(true);
     expect(home.distKm).toBe(0);
     const gate = d.find((x) => x.kind === 'gate');
-    if (gate) expect(gate.label).toMatch(/^Gate to /);
+    if (gate) expect(gate.label).toMatch(/ gate$/);
     for (const x of d) expect(x.far).toBe(x.distKm > WARP_FAR_KM);
   });
 

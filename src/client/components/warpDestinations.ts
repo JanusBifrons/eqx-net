@@ -29,13 +29,13 @@ export interface WarpDestination {
 }
 
 /** Distance (km) beyond which a destination is listed under "Far". */
-export const WARP_FAR_KM = 80;
+export const WARP_FAR_KM = 100;
 
 /** The player-facing name of a pocket. */
 export function siteLabel(site: SectorSite, beltIndex: number, beltCount: number): string {
   switch (site.kind) {
     case 'home': return 'Home';
-    case 'gate': return `Gate to ${(site.neighbour && getSector(site.neighbour)?.name) || 'the next system'}`;
+    case 'gate': return `${(site.neighbour && getSector(site.neighbour)?.name) || 'Next system'} gate`;
     case 'belt': return beltCount > 1 ? `Asteroid belt ${beltIndex + 1}` : 'Asteroid belt';
     case 'base': return 'Outer base';
     case 'combat': return 'Battle zone';
