@@ -192,6 +192,12 @@ export interface UIStore {
   /** Auto-fire mode (default ON, persisted): weapons fire automatically at
    *  in-range hostiles. When OFF, the manual FIRE button / Space-key returns. */
   autoFireEnabled: boolean;
+  /** Experimental HUD (exp/hud-mobile-first): 'manual' while the pilot aims
+   *  or holds fire, else 'auto'. Discrete, written only on change. */
+  aimMode: 'auto' | 'manual';
+  /** Experimental HUD: auto-fire currently has a hostile in range and is
+   *  engaging. Discrete, written only on change. */
+  autoEngaged: boolean;
   /** Player's chosen ship kind for the next spawn. Persisted per-user via
    *  `shipSelectionStorage`. Defaults to `DEFAULT_SHIP_KIND` until the user
    *  picks one or `applyUserPrefs(userId)` re-reads from storage. */
@@ -325,6 +331,12 @@ export interface UIStore {
   /** Living World P1a-2 — auto-deposit progress 0..100 (10 % steps), null when
    *  not depositing. Drives the chip's deposit bar. */
   depositPct: number | null;
+  /** Fire control (exp/fire-control): the pilot's weapon groups — id, name,
+   *  mode and lock queue (target key + stage 0 failsafe / 1 acquiring /
+   *  2 locked). Written only when this summary changes, never per frame. */
+  fcGroups: FcGroupSummary[];
+  /** The weapon group new locks go to (the strip's highlighted chip). */
+  activeGroupId: string | null;
   /** Phase 4 (Leveling & XP, WS-B1) — the level the LOCAL player's ship just
    *  reached, set on a `ship_level_up` for the own hull. Discrete scalar
    *  (purity-clean, #2). The upgrade-modal trigger (WS-B2) reads + clears this;
@@ -472,6 +484,8 @@ export interface UIStore {
   setShowLogPanel: (v: boolean) => void;
   setShowServerGhost: (v: boolean) => void;
   setAutoFireEnabled: (v: boolean) => void;
+  setAimMode: (m: 'auto' | 'manual') => void;
+  setAutoEngaged: (v: boolean) => void;
   setSelectedShipKind: (id: ShipKindId) => void;
   toggleDevOverlay: () => void;
   setShipCount: (n: number) => void;
@@ -528,6 +542,8 @@ export interface UIStore {
   expireTradeToast: (id: number) => void;
   clearTradeUnread: () => void;
   setDepositPct: (pct: number | null) => void;
+  setFcGroups: (groups: FcGroupSummary[]) => void;
+  setActiveGroupId: (id: string | null) => void;
   setLastFireMs: (ms: number | null) => void;
   setDrawerOpen: (v: boolean) => void;
   setDrawerTab: (id: string) => void;
@@ -624,4 +640,14 @@ export interface UIStore {
   setMaxProgressSeen: (p: number) => void;
   setLoadingCosmeticOnly: (v: boolean) => void;
   setSectorReentryInFlight: (v: boolean) => void;
+}
+
+/** Fire control (exp/fire-control): one weapon group as the HUD sees it. */
+export interface FcGroupSummary {
+  id: string;
+  name: string;
+  mode: 'auto' | 'manual';
+  colour: number;
+  capacity: number;
+  locks: Array<{ target: string; stage: number }>;
 }

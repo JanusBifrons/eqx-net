@@ -69,7 +69,12 @@ export function readFxKillSwitches(
     beamsDisabled: /\bnobeams=1\b/.test(search),
     dmgNumbersDisabled: /\bnodmgnumbers=1\b/.test(search),
     healthBarsDisabled: /\bnohealthbars=1\b/.test(search),
-    selfDmgNumbersDisabled: /\bnoselfdmg=1\b/.test(search),
+    // The experimental HUDs (?ui=a|b|c, exp/hud-mobile-first) show your own
+    // hull/shield in the HUD, so incoming damage totals over your ship only
+    // hid it (hostile review 2026-11-08). Read from the URL so the worker
+    // renderer sees it too; `noselfdmg=0` turns them back on.
+    selfDmgNumbersDisabled:
+      /\bnoselfdmg=1\b/.test(search) || (/\bui=[abcd]\b/.test(search) && !/\bnoselfdmg=0\b/.test(search)),
     cleanWorld: /\bcleanworld=1\b/.test(search),
   };
 }

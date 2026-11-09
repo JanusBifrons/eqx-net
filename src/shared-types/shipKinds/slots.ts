@@ -30,9 +30,11 @@ export interface ActivatedMountSpec {
  * (defensive — every shipped kind has them, but a malformed catalogue
  * shouldn't crash the room).
  *
- * When `slotId` is undefined, falls back to the first slot in catalogue
- * order. When the named slot isn't found, also falls back to the first
- * slot — matches the pre-2c "primary == default" semantics.
+ * When `slotId` is undefined, or names no slot on this kind, it returns EVERY
+ * mount (exp/fire-control): ships now have several weapon groups, and the
+ * callers without a slot are NPC drones (which fire every group) and legacy
+ * clients that send 'primary' (which keep firing everything, as before).
+ * Single-slot kinds are unchanged (their one slot holds every mount).
  */
 export function resolveSlotMounts(
   kind: ShipKind,
@@ -41,7 +43,8 @@ export function resolveSlotMounts(
   const mounts = kind.mounts;
   const slots = kind.slots;
   if (!mounts || !slots || slots.length === 0) return [];
-  const slot = slotId ? slots.find((s) => s.id === slotId) ?? slots[0]! : slots[0]!;
+  const slot = slotId ? slots.find((s) => s.id === slotId) : undefined;
+  if (!slot) return mounts;
   const out: WeaponMount[] = [];
   for (const mid of slot.mountIds) {
     const m = mounts.find((mm) => mm.id === mid);

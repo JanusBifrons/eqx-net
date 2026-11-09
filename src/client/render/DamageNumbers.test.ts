@@ -37,6 +37,7 @@ import {
   LIFETIME_FRAMES,
   POOL_CAP,
   fontScaleForTotal,
+  TEXT_RASTER_SCALE,
   colorForTotal,
 } from './DamageNumbers.js';
 import type { Camera } from './worker/Camera.js';
@@ -146,7 +147,8 @@ describe('DamageNumberManager — accumulation on same target', () => {
     expect(fontScaleForTotal(50)).toBeGreaterThan(fontScaleForTotal(10));
     expect(fontScaleForTotal(500)).toBeGreaterThan(fontScaleForTotal(50));
     // Cap holds for absurd totals.
-    expect(fontScaleForTotal(1_000_000)).toBeLessThanOrEqual(2.8);
+    // Reined in 2026-11-08: growth caps at 1.7×.
+    expect(fontScaleForTotal(1_000_000)).toBeLessThanOrEqual(1.7);
   });
 
   it('damage <= 0 is a no-op (does not open a fresh bucket, does not change total)', () => {
@@ -175,8 +177,9 @@ describe('colorForTotal — light→deep colour ramp (no sign)', () => {
     expect(blue(big)).toBeLessThan(blue(small));
   });
 
-  it('saturates to pure red for very large totals', () => {
-    expect(colorForTotal(1_000_000)).toBe(0xff0000);
+  it('saturates to the deep red for very large totals', () => {
+    // Deep end is a bright red (0xff3a3a) — pure 0xff0000 muddied against the black stroke.
+    expect(colorForTotal(1_000_000)).toBe(0xff3a3a);
   });
 
   it('heal flavour is green-dominant (green channel exceeds red)', () => {
@@ -263,7 +266,8 @@ describe('DamageNumberManager — per-frame update is unconditional', () => {
     setScale(camera, 1);
     mgr.update();
     // 1.0 zoom × fontScale(10) — neither huge nor tiny.
-    const baseScale = fontScaleForTotal(10);
+    // Rasterised at TEXT_RASTER_SCALE× and scaled down for crispness.
+    const baseScale = fontScaleForTotal(10) / TEXT_RASTER_SCALE;
     expect(text.scale.x).toBeCloseTo(baseScale, 5);
 
     setScale(camera, 2);

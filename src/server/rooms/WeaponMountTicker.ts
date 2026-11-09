@@ -30,8 +30,10 @@ import {
   PLAYER_AIM_SWITCH_MARGIN,
   type MountTargetView,
 } from '../../core/ai/WeaponMountController.js';
+import { manualAimMountBearing } from '../../core/combat/manualAim.js';
 import { mountTargetReach, mountWeaponReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
-import { canTrack, mountLineClear, mountPriority, targetClass } from '../../core/combat/mountTargeting.js';
+import { mountLineClear, mountPriority, targetClass } from '../../core/combat/mountTargeting.js';
+import { leadArcBearing, mountCanEngage, onTarget } from '../../core/combat/mountFireControl.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { droneMaxHealthOf } from './droneKindHelpers.js';
 import {
@@ -120,6 +122,12 @@ export interface WeaponMountTickerDeps {
    *  server tick, for per-mount reload timing. Optional: absent ⇒ no turret
    *  fire control (unit harnesses that only test aim). */
   currentTick?: () => number;
+  /** Called when a pilot's turret state is cleared (leave, respawn, evict). */
+  onClearPlayer?: (playerId: string) => void;
+  /** Fire control: is this pilot on lock-driven aim? */
+  isFireControl?: (playerId: string) => boolean;
+  /** Fire control: the lock target pose for one of the pilot's mounts (false = none). */
+  aimTargetFor?: (playerId: string, mountId: string, out: { x: number; y: number; vx: number; vy: number }) => boolean;
   /** Fire ONE mount of a capital drone along its barrel (the resolver reads
    *  the slewed angle). Called only when that mount is on target, in reach
    *  and reloaded. */
@@ -127,11 +135,10 @@ export interface WeaponMountTickerDeps {
 }
 
 const DT_SEC = 1 / 60;
-/** A capital turret fires once its barrel is within this of the lead bearing. */
-/** A capital turret fires once its barrel is within this of the lead bearing
- *  (rad) AND would pass within TURRET_FIRE_MISS (world units) of the aim point. */
-export const TURRET_FIRE_TOLERANCE = 0.05;
-export const TURRET_FIRE_MISS = 60;
+/** The on-target rules live with the shared fire control (plan
+ *  coastal-defences: capitals and defence structures use one set);
+ *  re-exported for existing callers. */
+export { TURRET_FIRE_TOLERANCE, TURRET_FIRE_MISS } from '../../core/combat/mountFireControl.js';
 /** A capital turret searches for a new target this often (ticks), staggered. */
 export const RETARGET_TICKS = 30;
 /** ...and keeps aiming at a target it briefly can't engage for this long. */
@@ -145,6 +152,9 @@ export class WeaponMountTicker {
   readonly droneMountAngles = new Map<string, Float32Array>();
   /** Sticky targetId per shooter (for pickTarget hysteresis). */
   readonly playerSlotTargets = new Map<string, string | null>();
+  /** Manual aim (exp/hud-mobile-first): a pilot's held aim world bearing,
+   *  written by the input handler, absent when not aiming. */
+  readonly playerManualAim = new Map<string, number>();
   readonly droneSlotTargets = new Map<string, string | null>();
   /** Capital fire control: last fire tick per mount, keyed by drone id. */
   readonly droneMountReload = new Map<string, Int32Array>();
@@ -171,6 +181,8 @@ export class WeaponMountTicker {
   /** WS-B3 — reused per-player firing-mount-id set (alloc-free, invariant #14).
    *  Rebuilt per player in `tickPlayer` from `resolveInstanceFireMounts`. */
   private readonly _firingIdsScratch = new Set<string>();
+  /** Fire control: reused lock-target pose (alloc-free, #14). */
+  private readonly _fcTarget = { x: 0, y: 0, vx: 0, vy: 0 };
 
   /** Acquire-or-create a MountTargetView slot. Subsequent calls
    *  overwrite the SAME instance, eliminating per-tick literal allocs.
@@ -264,7 +276,10 @@ export class WeaponMountTicker {
       // Firing-set ids — only these track the target. Reused scratch set.
       const firingIds = this._firingIdsScratch;
       firingIds.clear();
-      for (const m of d.resolveInstanceFireMounts(ship)) firingIds.add(m.id);
+      // Every weapon group aims (exp/fire-control): groups fire independently,
+      // so aiming only slots[0] left every other group's turrets at base while
+      // the pilot fired them. Matches the client's tickLocalMountAim (#12/#15).
+      for (const m of mounts) firingIds.add(m.id);
 
       const prevTargetId = this.playerSlotTargets.get(playerId) ?? null;
       // Part C — hostile-only (per-player ledger), health-weighted, commitment-
@@ -294,6 +309,42 @@ export class WeaponMountTicker {
       if (!angles || angles.length !== mounts.length) {
         angles = new Float32Array(mounts.length);
         this.playerMountAngles.set(playerId, angles);
+      }
+
+      // Fire control (exp/fire-control): each mount aims at ITS group's lock
+      // target; a group with no target slews home. Same rule as the client's
+      // tickLocalMountAim (#12/#15).
+      if (d.isFireControl?.(playerId) && d.aimTargetFor) {
+        const fcCos = Math.cos(pose.angle);
+        const fcSin = Math.sin(pose.angle);
+        const t = this._fcTarget;
+        for (let i = 0; i < mounts.length; i++) {
+          const mount = mounts[i]!;
+          if (!d.aimTargetFor(playerId, mount.id, t)) {
+            angles[i] = rotateMountToward(angles[i]!, 0, mount, DT_SEC);
+            continue;
+          }
+          const mx = pose.x + (mount.localX * fcCos - mount.localY * fcSin);
+          const my = pose.y + (mount.localX * fcSin + mount.localY * fcCos);
+          const bearing = Math.atan2(-(t.x - mx), t.y - my);
+          angles[i] = rotateMountToward(angles[i]!, wrapPi(bearing - pose.angle - mount.baseAngle), mount, DT_SEC);
+        }
+        continue;
+      }
+
+      // Manual aim (exp/hud-mobile-first): a held pilot aim overrides the
+      // auto-picked target for the FIRING set. Same rule + same helper as the
+      // client's `tickLocalMountAngles` (core/combat/manualAim.ts, #15).
+      const manualAim = this.playerManualAim.get(playerId);
+      if (manualAim !== undefined) {
+        for (let i = 0; i < mounts.length; i++) {
+          const mount = mounts[i]!;
+          const want = firingIds.has(mount.id)
+            ? manualAimMountBearing(manualAim, pose.angle, mount.baseAngle)
+            : 0;
+          angles[i] = rotateMountToward(angles[i]!, want, mount, DT_SEC);
+        }
+        continue;
       }
 
       if (target === null) {
@@ -451,12 +502,9 @@ export class WeaponMountTicker {
   ): boolean {
     if (!isHostile(t.id)) return false;
     const dx = t.x - mx, dy = t.y - my;
-    if (dx * dx + dy * dy > reach * reach) return false;
-    const shipBearing = wrapPi(Math.atan2(-dx, dy) - ang);
-    const local = wrapPi(shipBearing - mount.baseAngle);
-    if (local < mount.arcMin || local > mount.arcMax) return false;
-    if (!mountLineClear(kind, mount, shipBearing)) return false;
-    return canTrack(mount.rotationSpeed, dx, dy, t.vx - selfVx, t.vy - selfVy);
+    // Reach, arc and tracking: the shared fire control (structures use it too).
+    if (!mountCanEngage(mount, ang, dx, dy, reach, t.vx - selfVx, t.vy - selfVy)) return false;
+    return mountLineClear(kind, mount, wrapPi(Math.atan2(-dx, dy) - ang));
   }
 
   /**
@@ -528,19 +576,15 @@ export class WeaponMountTicker {
       // First-order intercept with this gun's shell speed (shells inherit the
       // hull's velocity, so lead on the RELATIVE velocity).
       const w = getWeapon(mount.weaponId);
-      let dx = t.x - mx, dy = t.y - my;
+      const dx = t.x - mx, dy = t.y - my;
       const dist = Math.hypot(dx, dy);
-      const lead = w.mode === 'hitscan' ? 0 : dist / w.speed;
-      dx += (t.vx - selfVx) * lead;
-      dy += (t.vy - selfVy) * lead;
-      const want = wrapPi(Math.atan2(-dx, dy) - ang - mount.baseAngle);
+      const want = leadArcBearing(dx, dy, t.vx - selfVx, t.vy - selfVy, w.mode === 'hitscan' ? 0 : w.speed, ang, mount.baseAngle);
       angles[i] = rotateMountToward(angles[i]!, want, mount, DT_SEC);
       if (!engageable) continue; // held through a brief loss: aim, don't fire
       if (tick - reload[i]! < w.cooldownTicks) continue;
       // On target = the shot would pass within TURRET_FIRE_MISS of the aim
       // point (an angle alone is a 250 u miss at 5,000 u).
-      const tol = Math.min(TURRET_FIRE_TOLERANCE, Math.atan2(TURRET_FIRE_MISS, Math.max(1, dist)));
-      if (Math.abs(wrapPi(want - angles[i]!)) > tol) continue;
+      if (!onTarget(want, angles[i]!, dist)) continue;
       if (!mountLineClear(kind, mount, mount.baseAngle + angles[i]!)) continue;
       reload[i] = tick;
       d.fireDroneMount!(droneId, i);
@@ -551,6 +595,8 @@ export class WeaponMountTicker {
   clearPlayer(playerId: string): void {
     this.playerMountAngles.delete(playerId);
     this.playerSlotTargets.delete(playerId);
+    this.playerManualAim.delete(playerId);
+    this.deps.onClearPlayer?.(playerId);
   }
 
   /** Cleanup hook: drop all per-drone state on eviction/destroy/shed. */

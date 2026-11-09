@@ -219,6 +219,15 @@ If port 2567 is already taken, **kill the existing process and reclaim it** — 
 
 ---
 
+## Work in a worktree; check port owners before using a port (standing user directive, 2026-11-08)
+
+Several Claude sessions run on the same machine at once. So:
+
+- **All work happens in a git worktree** under `.claude/worktrees/<name>` on its own branch, never in the main checkout.
+- **Before starting, using or opening any port, check who owns it** (`netstat -ano | findstr LISTENING | findstr ":<port>"`, then the PID's command line). Only stop processes your session started (match the worktree path in the command line); another session's server is never yours to kill, even on the canonical ports.
+- **Check immediately before launching, not in parallel with the launch:** a recorder or server another session started a second earlier will otherwise collide. Prefer offset ports (`EQX_SHOWCASE_PORT_OFFSET`, `NETGATE_PORT_OFFSET`, or `PORT=` + `EQX_SERVER_PORT=` + `vite --port … --strictPort` for a manual dev pair) when another session is active.
+- The "Claude owns the servers, kill before starting" rule below applies to processes **this** session or worktree started.
+
 ## Stale dev servers cause "phantom" E2E failures — Claude owns the servers, kill before starting
 
 `playwright.config.ts` sets `reuseExistingServer: true` for both `pnpm dev:server` (port 2567) and `pnpm dev:client` (port 5173). That's convenient for the live-dev loop, but it has a sharp edge:

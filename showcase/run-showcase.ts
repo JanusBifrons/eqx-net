@@ -7,24 +7,28 @@
  *   pnpm showcase --catalogue           record every shot, not just the reel
  *   pnpm showcase --compose-only        rebuild the reel from existing clips
  *   pnpm showcase --fps 60              output frame rate (default 30)
+ *   pnpm showcase --shot 'hud-*'        a shot id may use * wildcards
+ *   pnpm showcase --export <dir>        also copy each new clip to <dir>/<id>.mp4
+ *   pnpm showcase --no-assemble         with --shot: skip cutting them together
  *
  * Output (gitignored): showcase-out/{clips/<id>/clip.mp4, contact-sheets/,
  * reel-1080p.mp4, reel-720p.mp4, manifest.json}.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { chromium } from '@playwright/test';
+import { chromium, devices } from '@playwright/test';
 import { SHOTS, SECTION_CARDS, TITLE_SUB, END_CARD_POINTS } from './registry.js';
-import type { ClipRecord, Shot, TakeHostLoad } from './types.js';
+import type { ClipRecord, Shot, ShotViewport, TakeHostLoad } from './types.js';
 import { PROFILE_ORDER } from './types.js';
 import { CaptureServers, portOffset } from './servers.js';
 import { judgeLoad, sampleHostLoad } from './hostLoad.js';
-import { Recorder, type RecordResult } from './recorder.js';
+import { PHONE_LANDSCAPE, Recorder, type RecordResult } from './recorder.js';
+import { expandShotPatterns } from './shotFilter.js';
 import { smoothnessProblems, smoothScore, type TakeStats } from './smoothness.js';
 import { measureWobble, wobbleProblem, wobbleSummary, netProblem, netSummary, poseHealth, poseProblem, poseSummary } from './wobble.js';
-import { encodeClip, encodeCard, assemble, qaClip } from './compositor.js';
-import { captionOverlay, endCard, sectionCard, titleCard } from './cards.js';
+import { encodeClip, encodeCard, assemble, qaClip, deviceLayout } from './compositor.js';
+import { captionOverlay, deviceFrame, endCard, sectionCard, titleCard } from './cards.js';
 import { browserPid, clearTracked, gitSha, reapStale, resolveFfmpeg, trackPid } from './tools.js';
 
 interface Args {
@@ -35,6 +39,10 @@ interface Args {
   fps: number;
   headed: boolean;
   out: string;
+  /** Also copy each newly encoded clip to `<export>/<id>.mp4`. */
+  exportDir: string | null;
+  /** With --shot: don't cut the shots together into one review file. */
+  assemble: boolean;
   /** Browser render size for desktop takes (see Recorder `capture`). */
   capture: { width: number; height: number };
 }
@@ -54,6 +62,8 @@ function parseArgs(argv: string[]): Args {
     fps: 60,
     headed: false,
     out: 'showcase-out',
+    exportDir: null,
+    assemble: true,
     capture: CAPTURE_SIZES['720p']!,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -70,6 +80,8 @@ function parseArgs(argv: string[]): Args {
     else if (k === '--fps') a.fps = Number(v());
     else if (k === '--headed') a.headed = true;
     else if (k === '--out') a.out = v();
+    else if (k === '--export') a.exportDir = v();
+    else if (k === '--no-assemble') a.assemble = false;
     else if (k === '--capture') {
       const size = CAPTURE_SIZES[v()];
       if (!size) throw new Error('--capture must be 720p, 900p or 1080p');
@@ -124,6 +136,9 @@ async function main(): Promise<void> {
   const manifest = loadManifest(manifestFile);
   const failed: string[] = [];
 
+  if (args.shots) args.shots = expandShotPatterns(args.shots, SHOTS.map((s) => s.id));
+  const exportDir = args.exportDir ? path.resolve(repo, args.exportDir) : null;
+  if (exportDir) mkdirSync(exportDir, { recursive: true });
   const wanted = SHOTS.filter((s) =>
     args.shots ? args.shots.includes(s.id) : args.catalogue || s.reel,
   );
@@ -160,6 +175,11 @@ async function main(): Promise<void> {
           // One shot with no usable take must not lose the rest of the run.
           try {
             manifest[shot.id] = await takeWithRetry(shot, recorder, servers, capBrowser, out, sha, args.fps);
+            if (exportDir) {
+              const dest = path.join(exportDir, `${shot.id}.mp4`);
+              copyFileSync(path.join(out, 'clips', shot.id, 'clip.mp4'), dest);
+              log(`  exported ${dest}`);
+            }
           } catch (e) {
             failed.push(shot.id);
             log(`✗ ${shot.id}: no usable take (${(e as Error).message.split('\n')[0]}) — skipped`);
@@ -178,10 +198,13 @@ async function main(): Promise<void> {
 
   if (args.shots && !args.composeOnly) {
     // Re-takes / test clips: cut just these shots together (no cards) so they
-    // can be reviewed without touching the full reel.
+    // can be reviewed without touching the full reel. --no-assemble (e.g.
+    // `showcase:hud`) wants the separate clips only.
     const parts = SHOTS.filter((s) => args.shots!.includes(s.id) && !failed.includes(s.id)).map((s) => path.join(out, 'clips', s.id, 'clip.mp4'));
-    const { master } = await assemble(parts, out, 'shots');
-    log(`wrote ${master}`);
+    if (args.assemble && parts.length > 0) {
+      const { master } = await assemble(parts, out, 'shots');
+      log(`wrote ${master}`);
+    }
   } else {
     await compose(args, out, manifest, args.catalogue);
   }
@@ -294,9 +317,26 @@ async function takeWithRetry(
   if (!best) throw lastError ?? new Error(`no usable take for ${shot.id}`);
 
   await replaceDir(best.dir, clipDir);
-  const caption = path.join(clipDir, 'caption.png');
-  await captionOverlay(capBrowser, caption, shot.title, shot.caption, shot.viewport === 'phone' ? 'side' : 'lower-third');
-  const mp4 = await encodeClip(clipDir, best.rec.index, shot.durationMs, caption, { fps, cuts: shot.cuts });
+  const viewport = shot.viewport ?? 'desktop';
+  const layout = shot.captionLayout ?? defaultCaptionLayout(viewport);
+  let caption: string | null = null;
+  if (layout !== 'none') {
+    caption = path.join(clipDir, 'caption.png');
+    await captionOverlay(capBrowser, caption, shot.title, shot.caption, layout);
+  }
+  const dl = deviceLayout(viewport, viewportAspect(shot));
+  let device: { layout: NonNullable<typeof dl>; framePng: string } | null = null;
+  if (dl) {
+    const framePng = path.join(clipDir, 'device-frame.png');
+    await deviceFrame(capBrowser, framePng, dl);
+    device = { layout: dl, framePng };
+  }
+  const mp4 = await encodeClip(clipDir, best.rec.index, shot.durationMs, caption, {
+    fps,
+    cuts: shot.cuts,
+    device,
+    ...(shot.maxBitrateKbps ? { maxBitrateKbps: shot.maxBitrateKbps } : {}),
+  });
   const qa = await qaClip(mp4, path.join(out, 'contact-sheets', `${shot.id}.png`));
   const problems = [...best.problems];
   if (qa.blankSeconds >= 1) problems.push(`${qa.blankSeconds}s of blank frames`);
@@ -312,6 +352,17 @@ async function takeWithRetry(
     qa: { ok: problems.length === 0, problems },
     hostLoad: best.hostLoad,
   };
+}
+
+function defaultCaptionLayout(viewport: ShotViewport): 'lower-third' | 'side' | 'top' {
+  return viewport === 'phone' ? 'side' : viewport === 'phone-landscape' ? 'top' : 'lower-third';
+}
+
+/** CSS aspect of a phone take (what its frames' aspect is too). */
+function viewportAspect(shot: Shot): number {
+  if (shot.viewport === 'phone-landscape') return PHONE_LANDSCAPE.width / PHONE_LANDSCAPE.height;
+  const vp = devices['Pixel 5'].viewport;
+  return vp.width / vp.height;
 }
 
 async function compose(args: Args, out: string, manifest: Record<string, ClipRecord>, catalogue: boolean): Promise<void> {

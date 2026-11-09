@@ -181,8 +181,10 @@ describe('updateSwarmSprites — structure mount visuals (kind===2)', () => {
       [turretId, turret],
       [droneId, target],
     ]);
+    // Coastal defences: a defence turret's angle is the SERVER's (fire control,
+    // #12) — the snapshot carries it; the target drone is 90° to the right.
     const structures = new Map<number, StructureRenderState>([
-      [turretId, structureState({ turretTargetId: droneId })],
+      [turretId, structureState({ turretTargetId: droneId, mountAngles: [Math.atan2(-400, 0)] })],
     ]);
     const mirror: RenderMirror = { swarm, structures } as unknown as RenderMirror;
 
@@ -306,5 +308,29 @@ describe('updateSwarmSprites — structure mount visuals (kind===2)', () => {
     const barrel = cluster.perMount.get(mount.id)!.turret;
     // No target → barrel at base angle (0 for the structure mounts).
     expect(barrel.rotation).toBeCloseTo(-mount.baseAngle, 5);
+  });
+
+  it("a defence gun follows the SERVER's angle, not its own guess from the target (single writer, #12)", () => {
+    // The server leads a moving target, so its angle differs from the
+    // present bearing; the drawn barrel must agree with the server.
+    const gunId = 104;
+    const droneId = 204;
+    const gun = structureEntry('dp_mount_5in', 0, 0, 0);
+    const swarm = new Map<number, SwarmRenderState>([[gunId, gun], [droneId, droneEntry(0, 1500)]]);
+    const lead = -0.05; // server: lead slightly right of dead ahead
+    const structures = new Map<number, StructureRenderState>([
+      [gunId, structureState({ turretTargetId: droneId, mountAngles: [lead] })],
+    ]);
+    const mirror: RenderMirror = { swarm, structures } as unknown as RenderMirror;
+    ctx.slewDtSec = 1 / 60;
+    for (let f = 0; f < 120; f++) updateSwarmSprites(mirror, ctx);
+    const mount = getStructureKind('dp_mount_5in').mounts![0]!;
+    const key = `swarm-${gunId}`;
+    const cluster = (ctx.mountVisuals as unknown as {
+      clusters: Map<string, { perMount: Map<string, { turret?: Graphics; root?: { rotation: number } }> }>;
+    }).clusters.get(key)!;
+    const parts = cluster.perMount.get(mount.id)!;
+    const drawn = (parts.turret ?? parts.root)!.rotation;
+    expect(drawn).toBeCloseTo(-(mount.baseAngle + lead), 3);
   });
 });

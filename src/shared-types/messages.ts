@@ -17,6 +17,7 @@ export {
   EngageTransitSchema,
   CancelTransitSchema,
   TestAggroSchema,
+  TestReloadTurretsSchema,
   TestFleetWarpSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
@@ -36,6 +37,9 @@ export {
   ApplyShipUpgradeSchema,
   RespecShipSchema,
   ActivateMountSchema,
+  LockRequestSchema,
+  LockCancelSchema, LockTrackSchema,
+  SetGroupModeSchema,
   ClientMessageSchema,
 } from './messages/clientMessages.js';
 export type {
@@ -57,6 +61,9 @@ export type {
   ApplyShipUpgradeMessage,
   RespecShipMessage,
   ActivateMountMessage,
+  LockRequestMessage,
+  LockCancelMessage,
+  SetGroupModeMessage,
   ClientMessage,
 } from './messages/clientMessages.js';
 

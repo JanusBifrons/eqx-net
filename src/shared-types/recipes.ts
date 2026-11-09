@@ -71,6 +71,14 @@ export const RECIPE_IDS = [
   // v4 T1 — teleporters.
   'pack_teleporter',
   'pack_teleporter_large',
+  // Coastal defences — the static gun catalogue.
+  'pack_aa_quad_40mm',
+  'pack_dp_mount_5in',
+  'pack_coastal_casemate_8in',
+  'pack_coastal_turret_11in',
+  'pack_coastal_barbette_16in',
+  'pack_coastal_lindemann',
+  'pack_siege_gun_80cm',
 ] as const;
 export type RecipeId = (typeof RECIPE_IDS)[number];
 
@@ -363,6 +371,43 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
     id: 'pack_teleporter_large', displayName: packName('teleporter_large'),
     inputs: { alloy: 80, components: 20, electronics: 20, machinery: 4 }, outputs: [{ packed: 'teleporter_large' }],
     cyclePulses: 90, processors: ['assembly_plant'], blueprintRequired: true,
+  }),
+  // Coastal defences: light mounts at a Fabricator, the heavy guns at an
+  // Assembly Plant; the bill grows with calibre.
+  pack_aa_quad_40mm: r({
+    id: 'pack_aa_quad_40mm', displayName: packName('aa_quad_40mm'),
+    inputs: { alloy: 10, components: 3, electronics: 1 }, outputs: [{ packed: 'aa_quad_40mm' }],
+    cyclePulses: 14, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_dp_mount_5in: r({
+    id: 'pack_dp_mount_5in', displayName: packName('dp_mount_5in'),
+    inputs: { alloy: 16, components: 4, electronics: 2 }, outputs: [{ packed: 'dp_mount_5in' }],
+    cyclePulses: 20, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  pack_coastal_casemate_8in: r({
+    id: 'pack_coastal_casemate_8in', displayName: packName('coastal_casemate_8in'),
+    inputs: { alloy: 40, components: 8, machinery: 2 }, outputs: [{ packed: 'coastal_casemate_8in' }],
+    cyclePulses: 40, processors: ['assembly_plant'], blueprintRequired: true,
+  }),
+  pack_coastal_turret_11in: r({
+    id: 'pack_coastal_turret_11in', displayName: packName('coastal_turret_11in'),
+    inputs: { alloy: 60, components: 12, machinery: 4, electronics: 2 }, outputs: [{ packed: 'coastal_turret_11in' }],
+    cyclePulses: 60, processors: ['assembly_plant'], blueprintRequired: true,
+  }),
+  pack_coastal_barbette_16in: r({
+    id: 'pack_coastal_barbette_16in', displayName: packName('coastal_barbette_16in'),
+    inputs: { alloy: 90, components: 16, machinery: 6, electronics: 4 }, outputs: [{ packed: 'coastal_barbette_16in' }],
+    cyclePulses: 80, processors: ['assembly_plant'], blueprintRequired: true,
+  }),
+  pack_coastal_lindemann: r({
+    id: 'pack_coastal_lindemann', displayName: packName('coastal_lindemann'),
+    inputs: { alloy: 140, components: 24, machinery: 10, electronics: 6 }, outputs: [{ packed: 'coastal_lindemann' }],
+    cyclePulses: 110, processors: ['assembly_plant'], blueprintRequired: true,
+  }),
+  pack_siege_gun_80cm: r({
+    id: 'pack_siege_gun_80cm', displayName: packName('siege_gun_80cm'),
+    inputs: { alloy: 200, components: 30, machinery: 14, electronics: 6, core: 2 }, outputs: [{ packed: 'siege_gun_80cm' }],
+    cyclePulses: 150, processors: ['assembly_plant'], blueprintRequired: true,
   }),
   pack_tower_module: r({
     id: 'pack_tower_module', displayName: packName('tower_module'),

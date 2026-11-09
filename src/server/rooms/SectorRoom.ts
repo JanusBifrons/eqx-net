@@ -40,6 +40,7 @@ import {
 import { MineState, SectorState, ShipState, StructureState } from './schema/SectorState.js';
 import { MineFieldSubsystem, type MineRecord, type MineTarget } from '../structures/MineFieldSubsystem.js';
 import { MINE_BLAST_RADIUS, MINE_CLEARANCE, MINE_DAMAGE, type MineDetonated } from '../../shared-types/mines.js';
+import type { ShellBlast } from '../../shared-types/shellBlast.js';
 import {
   STRUCTURE_ETA_NONE,
   STRUCTURE_ETA_STALLED,
@@ -79,6 +80,8 @@ import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPose
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isPlayableShipKindId, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { targetClass } from '../../core/combat/mountTargeting.js';
+import type { TurretTargetView } from '../structures/StructureMountTicker.js';
 import { isOnSightHostile } from '../../shared-types/allegiances.js';
 import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
 import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
@@ -169,7 +172,7 @@ import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
 import { RECIPES, blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
-import { rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
+import { asteroidYield, asteroidYieldWeightPerUnit, rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
 import { usesAmmo } from '../../shared-types/ammo.js';
@@ -198,7 +201,7 @@ import {
   type FactionPolicy,
 } from '../../shared-types/factions.js';
 import { SetFactionPolicySchema } from '../../shared-types/messages/factionMessages.js';
-import { encodePlayerTurretTarget } from '../../shared-types/structureStateWire.js';
+import { encodePlayerTurretTarget, encodeStructureMountAngles } from '../../shared-types/structureStateWire.js';
 
 /** B2 — the party string of each roaming NPC side (`npc:<allegiance>`), built
  *  once so turret and missile queries never build strings. */
@@ -225,6 +228,10 @@ import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { isLatentSlot, resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
 import { ROSTER_CAP, type ActivatedMount } from '../playerShips/PlayerShipStore.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
+import { LockSubsystem, type LockTargetView } from './LockSubsystem.js';
+import { NpcLockSubsystem } from './NpcLockSubsystem.js';
+/** Fire control: a mount fires only when its barrel is within this of its lock (rad). */
+const FC_MOUNT_FIRE_TOLERANCE = 0.2;
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { MissileSimulation } from './MissileSimulation.js';
@@ -333,6 +340,7 @@ import {
   EngageTransitSchema,
   CancelTransitSchema,
   TestAggroSchema,
+  TestReloadTurretsSchema,
   TestFleetWarpSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
@@ -350,6 +358,9 @@ import {
   ApplyShipUpgradeSchema,
   RespecShipSchema,
   ActivateMountSchema,
+  LockRequestSchema,
+  LockCancelSchema, LockTrackSchema,
+  SetGroupModeSchema,
   SelectEntitySchema,
   DeselectEntitySchema,
 } from '../../shared-types/messages.js';
@@ -508,6 +519,11 @@ const JoinOptionsSchema = z
      *  testMode-gated; ignored on galaxy rooms so a malicious client
      *  can't force-aggro a live sector. plan: imperative-taco. */
     startHostile: z.boolean().optional(),
+    /** Fire control (exp/fire-control): this client uses target locking —
+     *  its weapon groups fire only at locked targets. Absent = legacy rules.
+     *  Not testMode-gated: it is a client capability, not a cheat (it only
+     *  ever ADDS a gate to the joining player's own fire). */
+    fireControl: z.boolean().optional(),
     /** Test-only: override the disconnect-linger TTL (ms) for THIS player.
      *  On disconnect the room normally lingers the hull for
      *  `LIMBO_DISCONNECT_TTL_MS` (15 min) before the ownerless-evict timer
@@ -970,6 +986,10 @@ export class SectorRoom extends Room<SectorState> {
   /** A2 — the snapshot's slim cosmetic slice (turret / mining targets only);
    *  structure grid state itself lives in `state.structures`. */
   private structuresSlice: SnapshotMessage['structureTargets'] = undefined;
+  /** Coastal defences — the defence turrets' angles, rebuilt each turret tick
+   *  into one reused array (#14); undefined while every turret rests. */
+  private readonly structureMountAnglesBuf: number[] = [];
+  private structureMountAnglesSlice: SnapshotMessage['structureMountAngles'] = undefined;
   /** A2 — entityId key → generation last synced (stale-row sweep, alloc-free). */
   private readonly structureStateGen = new Map<string, number>();
   private structureStateGeneration = 0;
@@ -1029,6 +1049,10 @@ export class SectorRoom extends Room<SectorState> {
    * Extracted to `WeaponMountTicker.ts` (commit 21 of the v3 refactor plan).
    */
   private mountTicker!: WeaponMountTicker;
+  /** Fire control (exp/fire-control): per-player, per-weapon-group target locks. */
+  private locks!: LockSubsystem;
+  /** Fire control: NPCs lock fire-control pilots before firing at them. */
+  private npcLocks!: NpcLockSubsystem;
   /** Alias accessors so the rest of SectorRoom keeps the old field-style
    *  reads (`this.playerMountAngles.get(id)`). Initialised in `onCreate`
    *  after the ticker is constructed. */
@@ -1736,6 +1760,9 @@ export class SectorRoom extends Room<SectorState> {
     // Per-tick weapon-mount aim updater. Owns playerMountAngles +
     // droneMountAngles + the sticky targets + the pooled scratches.
     // Extracted from SectorRoom (commit 21 of v3 refactor plan).
+    this.locks = this.buildLockSubsystem();
+    this.npcLocks = this.buildNpcLockSubsystem();
+
     this.mountTicker = new WeaponMountTicker({
       sabF32: this.sabF32,
       playerToSlot: this.playerToSlot,
@@ -1750,6 +1777,9 @@ export class SectorRoom extends Room<SectorState> {
       // Capital turret fire control (the resolver is built later; resolve lazily).
       currentTick: () => this.serverTick,
       fireDroneMount: (id, i) => this.aiFireResolver.fireMount(id, i),
+      isFireControl: (pid) => this.locks.isEnabled(pid),
+      onClearPlayer: (pid) => this.locks.clearLocks(pid),
+      aimTargetFor: (pid, mountId, out) => this.lockAimTarget(pid, mountId, out),
     });
 
     // Player weapon-fire resolver. Owns the zod parse, cooldown gate,
@@ -1787,11 +1817,14 @@ export class SectorRoom extends Room<SectorState> {
       serverLogEvent,
       logger,
       malformed: this.malformed,
+      fireAllowed: (pid, slotId) => this.locks.hasLocked(pid, slotId),
+      mountBearsOnLock: (pid, mountId, ox, oy, angle) => this.mountBearsOnLock(pid, mountId, ox, oy, angle),
     });
 
     // AI drone weapon-fire resolver. Composes the per-mount hitscan +
     // laser_fired broadcast path that mirrors the player handleFire.
     this.aiFireResolver = new AiFireResolver({
+      fireBlocked: (id, kind, x, y, dx, dy) => this.npcLocks.fireBlocked(id, kind, x, y, dx, dy),
       lastFireClientTick: this.lastFireClientTick,
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       swarmRegistry: this.swarmRegistry,
@@ -1947,6 +1980,11 @@ export class SectorRoom extends Room<SectorState> {
         const rec = this.swarmRegistry.get(ownerId);
         return rec != null && rec.kind === SWARM_KIND_DRONE ? allegianceOfKind(rec.shipKind) : undefined;
       },
+      // Coastal defences — a siege shell's blast (the damage lands separately).
+      onBlast: (x, y, radius) => {
+        const msg: ShellBlast = { type: 'shell_blast', x, y, radius };
+        this.broadcast('shell_blast', msg);
+      },
     });
 
     // Missile subsystem — guidance, splash damage, impulse queue. The
@@ -2042,6 +2080,8 @@ export class SectorRoom extends Room<SectorState> {
       droneWarpOf: (id) => (this.npcWarps.size > 0 ? this.botWarpPhase(id) : 0),
       warpingDrones: () => this.npcWarps,
       depositProgressOf: (shipInstanceId) => this.depositProgress.get(shipInstanceId),
+      lockGroupsOf: (pid) => this.locks.wireFor(pid),
+      lockedByOf: (pid) => this.npcLocks.wireFor(pid),
       warpArrived: (playerId) => this.warpTravel.arrivedRecently(playerId, this.serverTick),
       isJoining: (playerId) => this.pendingJoin.has(playerId),
       transitSpooling: (playerId) => this.transitOrchestrator?.isInFlight(playerId) === true,
@@ -2070,6 +2110,7 @@ export class SectorRoom extends Room<SectorState> {
       // Structures plan, Phase 3 — the cached slice (rebuilt at the 1 Hz grid
       // pulse / on placement), attached by reference to every recipient.
       getStructuresSlice: () => this.structuresSlice,
+      getStructureMountAngles: () => this.structureMountAnglesSlice,
     });
 
     // Player onLeave handler. Three branches: shouldLinger / transit-
@@ -2398,6 +2439,8 @@ export class SectorRoom extends Room<SectorState> {
       // Allegiances P0: base turrets defend against combat allegiances (drones,
       // robots) but never open fire on NEUTRAL traders (their haulers).
       findNearestDrone: (x, y, range, owner) => this.findNearestTurretTarget(x, y, range, owner),
+      // Coastal defences — every hostile in reach, for per-mount fire control.
+      turretTargets: (x, y, range, owner, out) => this.collectTurretTargets(x, y, range, owner, out),
       applyDamage: (targetId, shooterId, damage) => this.applyDamage(targetId, shooterId, damage),
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) => this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) => {
@@ -2880,6 +2923,16 @@ export class SectorRoom extends Room<SectorState> {
       this.markAllDronesHostileTo(playerId);
     });
 
+    // Coastal defences — testMode only: reload every structure gun now.
+    this.onMessage('test_reload_turrets', (client: Client, raw: unknown) => {
+      if (!(this.testMode || ALLOW_DEV_OVERRIDES)) return;
+      if (!TestReloadTurretsSchema.safeParse(raw).success) {
+        this.malformed.record(client.sessionId, 'test_reload_turrets');
+        return;
+      }
+      this.structureGrid.reloadAllTurrets();
+    });
+
     // W2c showcase: warp the room's ships to (x, y), keeping the formation
     // (offsets from the biggest ship, the flagship).
     this.onMessage('test_fleet_warp', (client: Client, raw: unknown) => {
@@ -2927,6 +2980,10 @@ export class SectorRoom extends Room<SectorState> {
       isDisabled: (playerId) => this.gateGuard.isDisabled(playerId, Date.now()),
       onWarpRequest: (playerId, x, y) => this.warpTravel.noteRequest(playerId, x, y),
       validWarpPoint: (x, y) => this.sectorKey !== null && isWarpDropPoint(this.sectorKey, x, y, this.solar),
+      setPlayerAim: (playerId, aim) => {
+        if (aim === null) this.mountTicker.playerManualAim.delete(playerId);
+        else this.mountTicker.playerManualAim.set(playerId, aim);
+      },
       logger,
       malformed: this.malformed,
     }));
@@ -3725,6 +3782,32 @@ export class SectorRoom extends Room<SectorState> {
     // `selectionStatsTimer` (off the hot path); these handlers only register /
     // clear the per-connection selection. Per-session cleanup on disconnect /
     // transit lives in `onLeave` (no 5 Hz leak).
+    // Fire control (exp/fire-control): lock / unlock / group mode.
+    this.onMessage('lock_request', (client: Client, raw: unknown) => {
+      const parsed = LockRequestSchema.safeParse(raw);
+      if (!parsed.success) { this.malformed.record(client.sessionId, 'lock_request'); return; }
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      if (pid !== undefined) this.locks.requestLock(pid, parsed.data.groupId, parsed.data.target);
+    });
+    this.onMessage('lock_track', (client: Client, raw: unknown) => {
+      const parsed = LockTrackSchema.safeParse(raw);
+      if (!parsed.success) { this.malformed.record(client.sessionId, 'lock_track'); return; }
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      if (pid !== undefined) this.locks.trackLock(pid, parsed.data.groupId, parsed.data.target);
+    });
+    this.onMessage('lock_cancel', (client: Client, raw: unknown) => {
+      const parsed = LockCancelSchema.safeParse(raw);
+      if (!parsed.success) { this.malformed.record(client.sessionId, 'lock_cancel'); return; }
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      if (pid !== undefined) this.locks.cancelLock(pid, parsed.data.groupId, parsed.data.target);
+    });
+    this.onMessage('set_group_mode', (client: Client, raw: unknown) => {
+      const parsed = SetGroupModeSchema.safeParse(raw);
+      if (!parsed.success) { this.malformed.record(client.sessionId, 'set_group_mode'); return; }
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      if (pid !== undefined) this.locks.setMode(pid, parsed.data.groupId, parsed.data.mode);
+    });
+
     this.onMessage('select_entity', (client: Client, raw: unknown) => {
       const parsed = SelectEntitySchema.safeParse(raw);
       if (!parsed.success) {
@@ -3948,6 +4031,149 @@ export class SectorRoom extends Room<SectorState> {
    * (isActive=false). Use this everywhere a Phase 6a callsite did
    * `state.ships.get(playerId)`.
    */
+  // ── Fire control (exp/fire-control) ─────────────────────────────────────
+  private readonly _lockPose: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+  private readonly _lockTarget: LockTargetView = { x: 0, y: 0, vx: 0, vy: 0, signature: 1, hostile: false };
+  /** Activated-mount geometry per player, cached by the ship's `mounts` ref. */
+  private readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
+
+  private buildNpcLockSubsystem(): NpcLockSubsystem {
+    return new NpcLockSubsystem({
+      pilots: () => this.locks.enabledPlayers(),
+      pilotPose: (pid, out) => {
+        const p = this.shipPoseCache.get(pid);
+        const ship = this.getActiveShip(pid);
+        if (!p || !ship || !ship.alive) return null;
+        out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
+        return getShipKind(ship.kind);
+      },
+      forEachHostileNpc: (pid, visit) => {
+        for (const rec of this.swarmRegistry.all()) {
+          if (rec.kind !== 1 || !this.npcHostileTo(rec.id, pid)) continue;
+          visit(rec.id, rec.entityId);
+        }
+      },
+      npcPose: (id, out) => {
+        const rec = this.swarmRegistry.get(id);
+        if (!rec || !this.swarmEntityPoseInto(id, this._lockPose)) return null;
+        out.x = this._lockPose.x; out.y = this._lockPose.y; out.vx = this._lockPose.vx; out.vy = this._lockPose.vy;
+        return getShipKind(rec.shipKind ?? null);
+      },
+    });
+  }
+
+  private buildLockSubsystem(): LockSubsystem {
+    return new LockSubsystem({
+      resolveTarget: (pid, key, out) => this.resolveLockTarget(pid, key, out),
+      shooterPose: (pid, out) => {
+        const p = this.shipPoseCache.get(pid);
+        const ship = this.getActiveShip(pid);
+        if (!p || !ship || !ship.alive) return false;
+        out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle;
+        return true;
+      },
+      shipOf: (pid) => {
+        const ship = this.getActiveShip(pid);
+        if (!ship) return null;
+        const kind = getShipKind(ship.kind);
+        let c = this._lockActivated.get(pid);
+        if (!c || c.ref !== ship.mounts) {
+          const all = this.resolveInstanceMounts(ship);
+          c = { ref: ship.mounts, mounts: all.slice((kind.mounts ?? []).length) };
+          this._lockActivated.set(pid, c);
+        }
+        return { kind, activated: c.mounts };
+      },
+      autoPick: (pid, reach, sx, sy, bears) => {
+        // Nearest drone already hostile to this pilot, within reach.
+        let best: string | null = null;
+        let bestD = reach * reach;
+        for (const rec of this.swarmRegistry.all()) {
+          if (rec.kind !== 1 || !this.npcHostileTo(rec.id, pid)) continue;
+          if (!this.swarmEntityPoseInto(rec.id, this._lockPose)) continue;
+          const dx = this._lockPose.x - sx;
+          const dy = this._lockPose.y - sy;
+          const d = dx * dx + dy * dy;
+          if (d < bestD && bears(this._lockPose.x, this._lockPose.y)) { bestD = d; best = `s:${rec.entityId}`; }
+        }
+        return best;
+      },
+      commitHostileAct: (pid, key) => this.commitLockHostileAct(pid, key),
+    });
+  }
+
+  /** Resolve a lock key (`s:<entityId>` | `p:<playerId>`) to a damageable target. */
+  private resolveLockTarget(pid: string, key: string, out: LockTargetView): boolean {
+    if (key.startsWith('s:')) {
+      const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
+      if (!rec || (rec.kind !== 1 && rec.kind !== 2)) return false; // asteroids / scrap: no
+      if (rec.kind === 2) {
+        const owner = this.structureRegistry.get(rec.id)?.owner;
+        if (owner === undefined || owner === pid) return false; // never your own base
+        out.hostile = relationOf(pid, owner, this.relationCtx) === 'hostile';
+      } else {
+        out.hostile = this.npcHostileTo(rec.id, pid);
+      }
+      if (!this.swarmEntityPoseInto(rec.id, this._lockPose)) return false;
+      out.x = this._lockPose.x; out.y = this._lockPose.y; out.vx = this._lockPose.vx; out.vy = this._lockPose.vy;
+      out.signature = rec.kind === 1 ? getShipKind(rec.shipKind ?? null).radius : rec.radius;
+      return true;
+    }
+    if (key.startsWith('p:')) {
+      const other = key.slice(2);
+      if (other === pid) return false;
+      const ship = this.getActiveShip(other);
+      const p = this.shipPoseCache.get(other);
+      if (!ship || !ship.alive || !p) return false;
+      out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
+      out.signature = getShipKind(ship.kind).radius;
+      out.hostile = false; // PvP always runs the failsafe first
+      return true;
+    }
+    return false;
+  }
+
+  /** A failsafe finished: `pid` committed a hostile act against the target. */
+  private commitLockHostileAct(pid: string, key: string): void {
+    const tick = this.serverTick;
+    if (key.startsWith('s:')) {
+      const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
+      if (!rec) return;
+      if (rec.kind === 2) {
+        const owner = this.structureRegistry.get(rec.id)?.owner;
+        if (owner !== undefined) this.hostileActs.record(pid, owner, Date.now());
+      } else {
+        this.aiController.markHostile(rec.id, pid, tick);
+        this.broadcast('bot_aggro', { type: 'bot_aggro', botEntityId: `swarm-${rec.entityId}`, targetPlayerId: pid, tick });
+      }
+    }
+    serverLogEvent('lock_hostile_act', { playerId: pid, target: key });
+  }
+
+  /** Turret aim for a fire-control pilot: the mount's group lock target pose. */
+  /**
+   * Fire control: true when a mount's barrel points at its group's lock within
+   * `FC_MOUNT_FIRE_TOLERANCE`. Legacy pilots always pass. A turret clamped at
+   * its arc limit with the target outside the arc fails, so it can't fire.
+   */
+  private mountBearsOnLock(pid: string, mountId: string, ox: number, oy: number, angle: number): boolean {
+    if (!this.locks.isEnabled(pid)) return true;
+    if (!this.lockAimTarget(pid, mountId, this._fcBearPose)) return false;
+    const want = Math.atan2(-(this._fcBearPose.x - ox), this._fcBearPose.y - oy);
+    let d = want - angle;
+    d -= Math.round(d / (2 * Math.PI)) * 2 * Math.PI;
+    return Math.abs(d) <= FC_MOUNT_FIRE_TOLERANCE;
+  }
+  private readonly _fcBearPose = { x: 0, y: 0, vx: 0, vy: 0 };
+
+  private lockAimTarget(pid: string, mountId: string, out: { x: number; y: number; vx: number; vy: number }): boolean {
+    if (!this.locks.isEnabled(pid)) return false;
+    const key = this.locks.aimKeyFor(pid, mountId);
+    if (key === null || !this.resolveLockTarget(pid, key, this._lockTarget)) return false;
+    out.x = this._lockTarget.x; out.y = this._lockTarget.y; out.vx = this._lockTarget.vx; out.vy = this._lockTarget.vy;
+    return true;
+  }
+
   private getActiveShip(playerId: string): ShipState | undefined {
     const shipKey = this.resolveActiveShipKey(playerId);
     if (shipKey === undefined) return undefined;
@@ -4521,6 +4747,7 @@ export class SectorRoom extends Room<SectorState> {
     this.npcTargetGridFresh = false;
     // P3c — a removed shooter's pending charge never fires.
     this.aiFireResolver.forget(rec.id);
+    this.npcLocks.forgetNpc(rec.id);
     // v4 A — its slot may be reused; a new ship must not inherit a disable.
     if (this.gateGuard.gateCount > 0) this.gateGuard.forget(rec.id);
     // Gameplay audit log — record a REAL combat death (the `emitDestroyed`
@@ -5302,6 +5529,23 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
+  /** Coastal defences — pack every defence turret that is off its rest
+   *  bearing into the snapshot's `structureMountAngles` (the server's slewed
+   *  angles, the only writer, #12). One reused array (#14). */
+  private rebuildStructureMountAngles(): void {
+    const buf = this.structureMountAnglesBuf;
+    let n = 0;
+    for (const rec of this.structureRegistry.all()) {
+      const angles = this.structureGrid.mountAnglesOf(rec.id);
+      if (angles === undefined) continue;
+      const entityId = this.swarmRegistry.get(rec.id)?.entityId;
+      if (entityId === undefined) continue;
+      n = encodeStructureMountAngles(buf, n, entityId, angles);
+    }
+    buf.length = n;
+    this.structureMountAnglesSlice = n > 0 ? buf : undefined;
+  }
+
   /** Phase 5 — turret aim/fire tick (faster cadence than the grid pulse).
    *  No-op when the sector has no structures. */
   private structureTurretTick(): void {
@@ -5319,6 +5563,7 @@ export class SectorRoom extends Room<SectorState> {
     this.npcTargetGridFresh = false;
     this.relationCtx.nowMs = nowMs;
     this.structureGrid.tickTurrets(nowMs);
+    this.rebuildStructureMountAngles();
     // Mine Layers lay and mines go off (same target grids as the turrets).
     this.mineField.tick(nowMs);
     // v4 T1 — teleporter rules and jump cycles.
@@ -5540,6 +5785,102 @@ export class SectorRoom extends Room<SectorState> {
     return out;
   }
 
+  /** A1 — the player-turret drone grid, built once per turret tick. */
+  private ensureTurretTargetGrid(): void {
+    if (this.turretTargetGridFresh) return;
+    const g = this.turretTargetGrid;
+    const recs = this.turretTargetRecs;
+    g.reset();
+    recs.length = 0;
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== 1 || !this._isTurretTargetable(rec)) continue;
+      const base = slotBase(rec.slot);
+      g.add(this.sabF32[base + SLOT_X_OFF]!, this.sabF32[base + SLOT_Y_OFF]!);
+      recs.push(rec);
+    }
+    g.build();
+    this.turretTargetGridFresh = true;
+  }
+
+  /** Coastal defences — pooled target views + grid-index scratch for
+   *  `collectTurretTargets` (grow once, reused every tick, #14). */
+  private readonly turretViewPool: TurretTargetView[] = [];
+  private readonly turretIdxScratch: number[] = [];
+
+  /** Write pool view `n` (made on first use) and return it. */
+  private turretView(n: number): TurretTargetView {
+    let v = this.turretViewPool[n];
+    if (!v) { v = { id: '', entityId: -1, x: 0, y: 0, vx: 0, vy: 0, cls: 'small' }; this.turretViewPool[n] = v; }
+    return v;
+  }
+
+  private writeSwarmTurretView(n: number, rec: SwarmEntityRecord): TurretTargetView {
+    const v = this.turretView(n);
+    const b = slotBase(rec.slot);
+    v.id = rec.id; v.entityId = rec.entityId; v.playerId = undefined;
+    v.x = this.sabF32[b + SLOT_X_OFF]!; v.y = this.sabF32[b + SLOT_Y_OFF]!;
+    v.vx = this.sabF32[b + SLOT_VX_OFF]!; v.vy = this.sabF32[b + SLOT_VY_OFF]!;
+    v.cls = targetClass(getShipKind(rec.shipKind));
+    return v;
+  }
+
+  private writePilotTurretView(n: number, playerId: string): TurretTargetView | null {
+    const pose = this.shipPoseCache.get(playerId);
+    if (!pose) return null;
+    const v = this.turretView(n);
+    v.id = playerId; v.entityId = -1; v.playerId = playerId;
+    v.x = pose.x; v.y = pose.y; v.vx = pose.vx; v.vy = pose.vy;
+    v.cls = targetClass(getShipKind(this.getActiveShip(playerId)?.kind));
+    return v;
+  }
+
+  /**
+   * Coastal defences (plan coastal-defences) — EVERY target hostile to `owner`
+   * within `range` of (x, y), with its velocity and target class, for the
+   * per-mount fire control (each gun picks by its calibre's priority). Same
+   * target rules as `findNearestTurretTarget`: an NPC turret takes whatever
+   * `relationOf` says is hostile (players included); a player turret takes
+   * combat drones/robots (never traders) and, once anyone has committed a
+   * hostile act or by policy, hostile pilots. Allocation-free in steady state.
+   */
+  private collectTurretTargets(x: number, y: number, range: number, owner: string, out: TurretTargetView[]): number {
+    const idx = this.turretIdxScratch;
+    let n = 0;
+    if (isNpcOwner(owner)) {
+      if (!this.npcTargetGridFresh) this.buildNpcTargetGrid();
+      this.npcTurretOwner = owner;
+      const k = this.npcTargetGrid.within(x, y, range, idx);
+      for (let j = 0; j < k; j++) {
+        const i = idx[j]!;
+        if (!this._npcTargetAccept(i)) continue;
+        const rec = this.npcTargetRecs[i];
+        const v = rec ? this.writeSwarmTurretView(n, rec) : this.writePilotTurretView(n, this.npcTargetParty[i]!);
+        if (v) out[n++] = v;
+      }
+      return n;
+    }
+    this.ensureTurretTargetGrid();
+    const k = this.turretTargetGrid.within(x, y, range, idx);
+    for (let j = 0; j < k; j++) {
+      out[n] = this.writeSwarmTurretView(n, this.turretTargetRecs[idx[j]!]!);
+      n++;
+    }
+    if (this.hostileActs.size() > 0 || policyActsOnStanding(ROOM_POLICY(parseOwner(owner).faction))) {
+      const r2 = range * range;
+      for (const [pid] of this.playerToSlot) {
+        if (pid === owner) continue;
+        const ship = this.getActiveShip(pid);
+        if (!ship?.alive || !ship.isActive) continue;
+        const pose = this.shipPoseCache.get(pid);
+        if (!pose || (pose.x - x) ** 2 + (pose.y - y) ** 2 > r2) continue;
+        if (relationOf(pid, owner, this.relationCtx) !== 'hostile') continue;
+        const v = this.writePilotTurretView(n, pid);
+        if (v) out[n++] = v;
+      }
+    }
+    return n;
+  }
+
   private findNearestTurretTarget(
     x: number,
     y: number,
@@ -5549,20 +5890,7 @@ export class SectorRoom extends Room<SectorState> {
     // B2 — NPC-owned turrets engage by relation (players included); player
     // turrets keep the A1 drone grid below, unchanged.
     if (isNpcOwner(owner)) return this.findNearestNpcTurretTarget(x, y, range, owner);
-    if (!this.turretTargetGridFresh) {
-      const g = this.turretTargetGrid;
-      const recs = this.turretTargetRecs;
-      g.reset();
-      recs.length = 0;
-      for (const rec of this.swarmRegistry.all()) {
-        if (rec.kind !== 1 || !this._isTurretTargetable(rec)) continue;
-        const base = slotBase(rec.slot);
-        g.add(this.sabF32[base + SLOT_X_OFF]!, this.sabF32[base + SLOT_Y_OFF]!);
-        recs.push(rec);
-      }
-      g.build();
-      this.turretTargetGridFresh = true;
-    }
+    this.ensureTurretTargetGrid();
     const i = this.turretTargetGrid.nearest(x, y, range);
     // C2 — a player's turrets also engage pilots hostile to their owner (a
     // break-in is a hostile act). Skipped entirely while nobody has committed
@@ -7872,6 +8200,9 @@ export class SectorRoom extends Room<SectorState> {
     if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.startHostile === true) {
       this.markAllDronesHostileTo(playerId);
     }
+    // Fire control: this client locks targets; its groups fire only at locks.
+    if (parsed.success && parsed.data.fireControl === true) this.locks.enable(playerId);
+    else { this.locks.forget(playerId); this.npcLocks.forget(playerId); }
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a
     // sane value (e.g. a fire request resolved on this same client.send turn).
@@ -9127,6 +9458,43 @@ export class SectorRoom extends Room<SectorState> {
   /** P3c — a harvester steals up to `stepWeight` (rarest goods first, plus up
    *  credits — never: they're virtual) from the storage network at `uid`, as
    *  ONE atomic `tradeTransfer` group into its own ownerless hold. */
+  /** W6 — LivingWorldRoom hook: nearest asteroid with ore left. Control cadence. */
+  nearestOreAsteroid(x: number, y: number, range: number): { entityId: number; x: number; y: number; radius: number } | null {
+    const a = this.findNearestAsteroid(x, y, range);
+    return a === null ? null : { entityId: a.entityId, x: a.x, y: a.y, radius: a.radius };
+  }
+
+  /** W6 — LivingWorldRoom hook: a robot harvester mines a rock. Ore comes out
+   *  of the SAME finite pool the Miner draws from (`drawAsteroidResources`)
+   *  and splits by the SAME yield (`asteroidYield`); the draw is sized to the
+   *  hold's free weight first, so no ore is burned into a full hold. The new
+   *  hold is one commit (an ownerless NPC hold, like LootCollector's npc
+   *  pickups), so a killed harvester spills what it mined. Control cadence. */
+  mineAsteroid(harvesterId: string, entityId: number, maxUnits: number, capacity: number): number {
+    const rock = this.swarmRegistry.getByEntityId(entityId);
+    if (!rock || rock.kind !== 0) return 0;
+    const store = getHoldStore();
+    const cur = store.get(harvesterId);
+    const hold = cur ? cloneHold(cur.hold) : emptyHold();
+    const before = holdWeight(hold);
+    const resource = rock.asteroidResource ?? 'rock';
+    const want = Math.min(maxUnits, Math.floor((capacity - before) / asteroidYieldWeightPerUnit(resource)));
+    if (want <= 0) return 0;
+    const drawn = this.drawAsteroidResources(entityId, want);
+    if (drawn <= 0) return 0;
+    const yieldOf = asteroidYield(resource, drawn);
+    for (const g of GOOD_IDS) {
+      const n = yieldOf[g] ?? 0;
+      if (n > 0) hold.goods[g] = (hold.goods[g] ?? 0) + n;
+    }
+    store.commit(
+      [{ holderUid: harvesterId, holderType: 'hauler', ownerId: null, sectorKey: this.sectorKey, x: null, y: null, hold, expiresAt: null }],
+      [],
+      this.sectorKey !== null,
+    );
+    return holdWeight(hold) - before;
+  }
+
   raidStorage(harvesterId: string, owner: string, uid: string, stepWeight: number): number {
     const snap = this.storage.tradeSnapshot(owner, uid);
     if (snap === null || stepWeight <= 0) return 0;
@@ -10091,6 +10459,9 @@ export class SectorRoom extends Room<SectorState> {
       this.loot.collectTick();
       // Living World P1a-2 — auto-deposit: hold position near your own storage.
       this.autoDepositTick();
+      // Fire control: advance every pilot's target locks (~10 Hz).
+      this.locks.step();
+      this.npcLocks.step();
     }
     if (this.broadcastCounter % 60 === 0) this.loot.sweep();
 

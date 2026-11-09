@@ -22,6 +22,7 @@ import { LevelUpIconManager } from './LevelUpIcons';
 import { HealthBarManager } from './HealthBars';
 import { LabelManager } from './Labels';
 import { SelectionBracket } from './SelectionBracket';
+import { AimFeedbackRenderer } from './AimFeedbackRenderer';
 import { HoverBracket } from './HoverBracket';
 import { pickEntityAt, type PickedEntityKind } from './pickEntity';
 import { decideLingeringSpriteAction, decideExplosionPosition, type SpriteDecision } from './spriteUpdateDecisions';
@@ -457,6 +458,8 @@ export class PixiRenderer implements IRenderer {
   private healthBars: HealthBarManager | null = null;
   private labels: LabelManager | null = null;
   private selectionBracket: SelectionBracket | null = null;
+  /** Experimental HUD aim feedback (lock bracket / aim line / ship arcs). */
+  private aimFeedback: AimFeedbackRenderer | null = null;
   private hoverBracket: HoverBracket | null = null;
   /** WS-9 (R2.30) — reused scratch for the selection screen-projection (#14). */
   private readonly _selScreenScratch = { x: 0, y: 0 };
@@ -1000,6 +1003,7 @@ export class PixiRenderer implements IRenderer {
     // 4-corner bracket tracks the selected entity as it (and the camera) moves.
     this.selectionBracket = new SelectionBracket(this.world);
     this.hoverBracket = new HoverBracket(this.world);
+    this.aimFeedback = new AimFeedbackRenderer(this.world);
 
     // Drive Camera momentum + follow each frame (works in both contexts).
     this.app.ticker.add(() => {
@@ -2200,6 +2204,7 @@ export class PixiRenderer implements IRenderer {
       mirror.pendingHealthBarHits.length = 0;
     }
     if (!this._healthBarsDisabled) this.healthBars?.update(mirror);
+    this.aimFeedback?.update(mirror, this.camera.scale.x);
 
     // Click-to-inspect selection bracket (Item B4). The renderer owns
     // `_selectedId`; the bracket resolves its live pose from the mirror each
@@ -2439,7 +2444,7 @@ export class PixiRenderer implements IRenderer {
     if (mirror.projectiles) for (const p of mirror.projectiles.values()) {
       if (p.beam) continue;
       const w = p.weaponId ?? '';
-      const K = w === 'naval_xl' ? 6 : w === 'naval_l' ? 4.5 : w === 'naval_m' ? 3 : w === 'naval_s' ? 2 : 1;
+      const K = w === 'naval_siege' ? 10 : w === 'naval_xxl' ? 7 : w === 'naval_xl' ? 6 : w === 'naval_l' ? 4.5 : w === 'naval_m' ? 3 : w === 'naval_s' ? 2 : 1;
       const color = w.startsWith('naval_') || w === 'autocannon' ? 0xffc070 : 0x9fd8ff;
       const x = p.x, y = -p.y;
       sc.addLight(x, y, 5 * K, color, K > 1 ? 0.36 * K : 0.9, 55 * K);

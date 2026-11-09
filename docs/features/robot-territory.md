@@ -138,6 +138,20 @@ the merge is a plan re-made every control tick (`director/clusterJoins.ts`),
 on only for the robot director (`mergeClusters`). Drone squads never merge.
 Tests: `clusterJoins.test.ts`, `robotClusters.test.ts`.
 
-## Next
+## Harvesters mine asteroids (wrap-up W6, 2026-11-09)
 
-Harvesters mining asteroids.
+With no loot pod, hauler or player storage to go after, a harvester **mines the nearest rock that still has ore**.
+
+- It parks just off the rock and draws 30 units a control tick (about every 1.5 s).
+- The ore comes out of the **same finite pool** a Miner drills, and splits by the **same yield** (`asteroidYield`: rock → minerals, ice → ice, crystal-veined → 8 minerals + 2 crystal per 10). A rock the robots strip is gone for your Miners too.
+- Each draw is sized to the hold's free weight first, so no ore is burned into a full hold. The ore lands in the harvester's ownerless hold in one commit, so **killing a mining harvester spills its ore**.
+- It starts mining only with an empty hold (anything it scooped is banked first), then keeps at it until three quarters full or the rock runs dry, and banks the ore at the nexus.
+- Pods, haulers and raids still come first.
+
+| Tuning | Value |
+|---|---|
+| Ore per step | 30 units |
+| Reach | 120 u from the rock's surface |
+| Search range | 3000 u from the harvester |
+
+Tests: `robotTerritory.test.ts` ("mines a rock, from its finite ore", "never burns ore into a full hold"), `asteroidResources.test.ts` (the shared yield).

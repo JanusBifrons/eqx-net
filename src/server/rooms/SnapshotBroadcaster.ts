@@ -43,6 +43,7 @@ import {
   slotBase,
 } from '../../shared-types/sabLayout.js';
 import { CELL_SIZE } from '../interest/SpatialGrid.js';
+import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import {
   shouldBroadcastFar,
   shouldIncludeLastInput,
@@ -100,7 +101,7 @@ export interface SwarmLookupByEid {
   getByEntityId(entityId: number): SwarmDroneRec | null | undefined;
   /** By internal id: a projectile owner's entity id + radius (wide owners'
    *  shells reach viewers beyond the projectile box). Optional for fakes. */
-  get?(id: string): { entityId: number; radius: number } | null | undefined;
+  get?(id: string): { entityId: number; radius: number; kind?: number } | null | undefined;
 }
 
 /** Narrow view of MissileSimulation the broadcaster uses. */
@@ -152,6 +153,11 @@ export interface SnapshotBroadcasterDeps {
   /** Living World P1a-2 — auto-deposit progress 0..100 for a ship instance
    *  (undefined ⇒ not depositing). Own active ship only on the wire. */
   depositProgressOf?: (shipInstanceId: string) => number | undefined;
+  /** Fire control (exp/fire-control) — the pilot's weapon groups + lock
+   *  queues (shared ref, mutated in place). Own active ship only. */
+  lockGroupsOf?: (playerId: string) => Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1 }> }> | undefined;
+  /** Fire control — NPCs locking the pilot (shared ref, #16). */
+  lockedByOf?: (playerId: string) => Array<{ t: string; s: 1 | 2; p: number }> | undefined;
   /** Phase 4 warp travel — the player's ship dropped out of a warp in the last
    *  moment (others draw the arrival). Absent ⇒ never. */
   warpArrived?: (playerId: string) => boolean;
@@ -200,6 +206,9 @@ export interface SnapshotBroadcasterDeps {
   /** Structures plan, Phase 3 — the cached structures slice (rebuilt at the
    *  1 Hz grid pulse, attached by reference). Undefined ⇒ no structures. */
   getStructuresSlice?: () => SnapshotMessage['structureTargets'];
+  /** Coastal defences — the defence turrets' angles (rebuilt each turret
+   *  tick, attached by reference). Undefined ⇒ every turret at rest. */
+  getStructureMountAngles?: () => SnapshotMessage['structureMountAngles'];
   /** Perf scenes (WS3): snapshots + entities sent, counted while a scene runs. */
   work?: SceneWorkCounters;
 }
@@ -272,6 +281,8 @@ type MutableStateEntry = {
   statAlloc?: Record<string, number>;
   cargo?: Hold;
   depositing?: number;
+  groups?: Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1 }> }>;
+  lockedBy?: Array<{ t: string; s: 1 | 2; p: number }>;
   fitted?: string[];
   wallet?: number;
   poseEpoch?: number;
@@ -333,6 +344,7 @@ type MutableSnapshotMessage = {
   drones?: SnapshotMessage['drones'];
   asteroids?: SnapshotMessage['asteroids'];
   structureTargets?: SnapshotMessage['structureTargets'];
+  structureMountAngles?: SnapshotMessage['structureMountAngles'];
 };
 
 export class SnapshotBroadcaster {
@@ -803,6 +815,9 @@ export class SnapshotBroadcaster {
           : undefined;
         entry.cargo = hold !== undefined && !isHoldEmpty(hold) ? hold : undefined;
         entry.depositing = ownActive ? this.deps.depositProgressOf?.(ship.shipInstanceId) : undefined;
+        // Fire control (#16): the own pilot's groups + locks (shared ref).
+        entry.groups = ownActive ? this.deps.lockGroupsOf?.(ship.playerId) : undefined;
+        entry.lockedBy = ownActive ? this.deps.lockedByOf?.(ship.playerId) : undefined;
         // P5 (#16) — the own ACTIVE hull's fitted blueprints, emit-when-non-empty
         // (shared reference; the encoder never mutates it).
         const fitted = ownActive ? this.deps.fittedOf?.(ship.shipInstanceId) : undefined;
@@ -840,9 +855,11 @@ export class SnapshotBroadcaster {
           if (Math.abs(proj.x - recipientPose.x) > interestRadius || Math.abs(proj.y - recipientPose.y) > interestRadius) {
             // Out of the box: still send it if a WIDE owner (a capital, seen
             // from several cells away) is in this viewer's interest, so its
-            // salvo is seen leaving the barrels. Everything else is unchanged.
+            // salvo is seen leaving the barrels. Coastal defences: the same for a
+            // STRUCTURE in view (a coast gun's shells fly thousands of units).
+            // Everything else is unchanged.
             const owner = d.swarmRegistry.get?.(proj.ownerId);
-            if (!owner || owner.radius <= CELL_SIZE / 2 || !projInterest?.has(owner.entityId)) continue;
+            if (!owner || (owner.radius <= CELL_SIZE / 2 && owner.kind !== SWARM_KIND_STRUCTURE) || !projInterest?.has(owner.entityId)) continue;
           }
           SnapshotBroadcaster.writeProjectileSlot(
             projectilesScratch, projectilesCount,
@@ -992,6 +1009,7 @@ export class SnapshotBroadcaster {
       // 1 Hz pulse, NOT per tick) is attached by reference to every recipient.
       // Undefined when no structures exist (zero cost).
       snap.structureTargets = this.deps.getStructuresSlice?.();
+      snap.structureMountAngles = this.deps.getStructureMountAngles?.();
       // plan: imperative-taco-r2 — stamp server-send time so the client
       // can separate network in-transit delay from server-side silence
       // during recv_gap_long events. `performance.now()` is a primitive

@@ -225,9 +225,11 @@ export const GUNSHIP: ShipKind = defineShipKind({
       weaponId: 'laser',
     },
   ],
+  // exp/fire-control: two independent weapon groups — the fore turret and
+  // the aft turret lock and fire on their own (the old single 'primary' slot
+  // fired both at one target).
   slots: [
-    // energyCost override (3) — the two-barrel slot costs a touch more than
-    // a single-barrel bolt ship's weapon-derived 2. (plan §3.3)
-    { id: 'primary', displayName: 'Primary', mountIds: ['forward', 'rear'], energyCost: 3 },
+    { id: 'fore', displayName: 'Fore', mountIds: ['forward'], colour: 0 },
+    { id: 'aft', displayName: 'Aft', mountIds: ['rear'], colour: 1 },
   ],
 });

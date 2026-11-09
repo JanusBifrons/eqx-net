@@ -222,6 +222,14 @@ export interface SnapshotMessage {
       /** Living World P1a-2 — auto-deposit progress 0..100 (own active ship only;
        *  absent ⇒ not depositing). Drives the HUD deposit ring. */
       depositing?: number;
+      /** Fire control (exp/fire-control) — the OWN active pilot's weapon groups:
+       *  id, mode (m: 0 auto / 1 manual) and lock queue (t: target key,
+       *  s: stage 0 failsafe / 1 acquiring / 2 locked, p: progress 0..100).
+       *  Absent ⇒ not a fire-control pilot (or no groups). */
+      groups?: Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1 }> }>;
+      /** Fire control — NPCs locking this pilot: `t` = `s:<entityId>`,
+       *  `s` 1 acquiring / 2 locked, `p` 0..100. Own pilot only; absent ⇒ none. */
+      lockedBy?: Array<{ t: string; s: 1 | 2; p: number }>;
       /** Phase 4 (Dynamic weapon mounts, WS-B3) — the hull's ACTIVATED latent
        *  mount slots (`{ slotId, weaponId }[]`). PUBLIC (unlike `statAlloc`):
        *  emitted for EVERY ship (active + lingering) that has ≥ 1 activated
@@ -364,4 +372,11 @@ export interface SnapshotMessage {
    *  none) for structures that currently have a target. Absent when none. See
    *  src/shared-types/structureStateWire.ts. */
   structureTargets?: number[];
+  /** Coastal defences (plan coastal-defences) — the server's slewed turret
+   *  angles for defence structures that are off their rest bearing, as flat
+   *  runs `[structureEntityId, mountCount, q0, q1, …]` with each angle in
+   *  milliradians (arc-local, catalogue order). The server is the only writer
+   *  (#12); the client eases its drawn barrels toward these. Absent when every
+   *  turret rests. See `encodeStructureMountAngles` in structureStateWire.ts. */
+  structureMountAngles?: number[];
 }

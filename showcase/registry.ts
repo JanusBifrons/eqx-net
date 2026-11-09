@@ -25,6 +25,7 @@ import { scrap } from './shots/scrap.js';
 import { buildBase } from './shots/buildBase.js';
 import { gridAlive } from './shots/gridAlive.js';
 import { defence } from './shots/defence.js';
+import { coastalCatalogue, coastalAa, coastalDuel, coastalSuperGuns, garrisonDefences } from './shots/coastalDefences.js';
 import { waveAttack } from './shots/waveAttack.js';
 import { levelUp } from './shots/levelUp.js';
 import { spectator } from './shots/spectator.js';
@@ -44,6 +45,8 @@ import { npcCitadel } from './shots/npcCitadel.js';
 import { alienGate, garrisonPatrol, teleporterRide, transitHub } from './shots/v4.js';
 import { tradeDeal, tradeRaid } from './shots/trade.js';
 import { cockpitBounty, cockpitHaul, cockpitRobots, cockpitStronghold } from './shots/cockpit.js';
+import { hudVariantShots } from './shots/hudVariants.js';
+import { fireControlShots } from './shots/fireControl.js';
 
 /** Every shot, in reel order. Catalogue = all of them; reel = `reel: true`. */
 export const SHOTS: readonly Shot[] = [
@@ -89,6 +92,11 @@ export const SHOTS: readonly Shot[] = [
   buildBase,
   gridAlive,
   defence,
+  coastalCatalogue,
+  coastalAa,
+  coastalDuel,
+  coastalSuperGuns,
+  garrisonDefences,
   shieldGates,
   waveAttack,
   levelUp,
@@ -105,6 +113,9 @@ export const SHOTS: readonly Shot[] = [
   garrisonPatrol,
   habitatStation,
   mobile,
+  // Catalogue-only: the exp/hud-mobile-first HUD takes (`pnpm showcase:hud`).
+  ...hudVariantShots,
+  ...fireControlShots,
 ];
 
 export const SECTION_CARDS: Record<Shot['section'], { title: string; sub: string } | null> = {

@@ -165,9 +165,14 @@ window.
   do not appear in the screencast frames, although the DOM has them and a page
   screenshot shows them. The `break-in` shot is catalogue-only until that is
   understood. Drawers, dialogs and toasts record fine.
-- **UI-heavy takes record slowly.** The Trade tab with the full offers board
-  captures at ~25–30 fps on the reference laptop (main-thread renderer plus
-  React), so `trade-deal` fails the smoothness gate there.
+- **Menus no longer freeze the game in takes (corrected 2026-11-08).** The
+  `trade-deal` smoothness failures (~34 fps, 1.2–1.5 s frame gaps) were NOT the
+  Trade tab's cost. The client stopped the Pixi ticker whenever a drawer or the
+  galaxy overview was open under `navigator.webdriver` (an E2E workaround for
+  CDP starvation), and the recorder is Playwright, so it filmed a paused game
+  behind every menu. The pause is now keyed on an explicit flag only the e2e
+  projects set (`localStorage.eqxE2ePause`, or `?e2ePause=1`; see
+  `src/client/app/automationTickerPause.ts`), so takes run the game live.
 
 ## Failure handling
 
@@ -204,9 +209,43 @@ camera tracks `local`, the HUD is `clean` (shield/hull, cargo, wallet stay on
 screen), and `_pilot.ts` steers with the arrow keys (`flyTo`, `flyRoute`,
 `face`). Prefer this over a free camera for anything a player does.
 
-- **Trade tab stalls the capture.** With the Trade tab open, each refresh blocks
-  the main thread for up to ~1 s on the reference laptop (frame gaps of
-  0.9–1.9 s every ~0.9 s), so `trade-deal` fails the smoothness gate. Phones use
-  the same main-thread renderer, so this is worth profiling for players too.
+- **The Trade tab does not block the main thread.** The frame gaps seen with
+  it open (0.9–1.9 s) were the automation ticker pause behind an open drawer
+  (see "Menus no longer freeze the game in takes" above), not Trade-tab work.
+  Re-record `trade-deal` and check its `DrawFrame` gaps (about 17 ms expected)
+  before profiling the tab itself.
 - **Trade rooms share one sector name,** so each take's Capital is saved and
   restored into the next take's room. `placeHome` tries a ring of spots.
+
+## Phone takes and scripted touch
+
+- **Viewports.** `viewport: 'phone'` is Pixel 5 portrait (393×727 CSS px at
+  2.75× DPR). `viewport: 'phone-landscape'` is a touch phone held sideways
+  (844×390 CSS px at 2× DPR, a 1688×780 capture). Both are `isMobile` +
+  `hasTouch`, so the game takes its touch paths. Desktop takes use the
+  `--capture` size.
+- **Framing.** Phone takes are not pillarboxed any more. The compositor
+  (`deviceLayout`) scales them into a screen rect on the 1920×1080 output, and
+  `cards.deviceFrame` draws a dark bezel with a transparent rounded screen over
+  them. Portrait sits centred with the caption in the left margin (`side`).
+  Landscape leaves a ~150 px band above the device for a compact `top` caption.
+  `shot.captionLayout` overrides this (`none` drops the caption).
+- **Small standalone clips.** `shot.maxBitrateKbps` encodes at CRF 20 under a
+  VBV ceiling (`-maxrate`/`-bufsize`), still h264 yuv420p + faststart.
+  `--export <dir>` copies each new clip to `<dir>/<id>.mp4`. `--shot` accepts
+  `*` wildcards, and `--no-assemble` skips cutting the picked shots together.
+- **Scripted input** (`showcase/touch.ts`). `touch(page)` drives CDP
+  `Input.dispatchTouchEvent` with a stable id per finger, so two thumbs can be
+  down at once. Each event carries every finger still down: Chrome diffs the
+  set, so `touchEnd` lists the fingers that REMAIN. Gestures (`dragTo`,
+  `circle`, `wiggle`, `hold`, `tap`) sample pure curves (`showcase/touchPath.ts`)
+  against wall-clock time, so a slow round-trip never stretches them. Moves
+  coalesce while one is in flight. `mouse(page)` does smooth glides and sweeps
+  with buttons held for desktop takes.
+- **Seeing the thumbs.** `?touchviz=1` mounts `src/client/hud/TouchViz.tsx`:
+  translucent finger dots under every active pointer, plus a small hover dot
+  for a mouse (a screencast shows no cursor).
+- **HUD experiment takes** (`showcase/shots/hudVariants.ts`, catalogue-only):
+  `pnpm showcase:hud` films `hud-<a|b|c>-<phone-landscape|desktop|phone-portrait>`
+  into `showcase-out/hud/`. Controls are found by `data-testid` at run time,
+  with a logged warning and a thumb-position fallback when one is missing.

@@ -41,6 +41,13 @@ import HomeWorkIcon from '@mui/icons-material/HomeWork';
 import BlurCircularIcon from '@mui/icons-material/BlurCircular';
 import TripOriginIcon from '@mui/icons-material/TripOrigin';
 import AllOutIcon from '@mui/icons-material/AllOut';
+import FlareIcon from '@mui/icons-material/Flare';
+import TrackChangesIcon from '@mui/icons-material/TrackChanges';
+import FortIcon from '@mui/icons-material/Fort';
+import AdjustIcon from '@mui/icons-material/Adjust';
+import AnchorIcon from '@mui/icons-material/Anchor';
+import CastleIcon from '@mui/icons-material/Castle';
+import TrainIcon from '@mui/icons-material/Train';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
 import { type StructureKindId } from '@shared-types/structureKinds';
@@ -101,7 +108,14 @@ import { useTouchClickActivate } from './touchClickActivate';
  * per the drawer-perf rules). The dial's open/closed + drilled view are local
  * React state — pure presentation, never Zustand (invariant #2).
  */
-export function SpeedDialMenu(): JSX.Element | null {
+export interface SpeedDialMenuProps {
+  /** Opening direction. Legacy HUD: 'up' from the bottom-right corner. The
+   *  experimental HUDs (exp/hud-mobile-first) park it top-right opening 'down'
+   *  so it never competes with the thumb zones. */
+  direction?: 'up' | 'down';
+}
+
+export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JSX.Element | null {
   const shouldRender = useShouldRenderHud();
   const isDead = useUIStore((s) => s.isDead);
   const isGalaxyMapOpen = useUIStore((s) => s.isGalaxyMapOpen);
@@ -333,7 +347,7 @@ export function SpeedDialMenu(): JSX.Element | null {
       ariaLabel="Game actions"
       data-testid="speed-dial"
       icon={fabIcon}
-      direction="up"
+      direction={direction}
       open={open}
       // Ignore the MUI 'toggle' reason (its synthesized-click open/close) within
       // the suppression window — our `onTouchStart` already toggled `open`, so
@@ -360,7 +374,7 @@ export function SpeedDialMenu(): JSX.Element | null {
         // 'blur' / 'mouseLeave' → ignored: the dial stays open.
       }}
       FabProps={{ ...FAB_PROPS, onTouchStart: touchActivate(toggleOpen) }}
-      sx={DIAL_SX}
+      sx={direction === 'down' ? DIAL_SX_DOWN : DIAL_SX}
     >
       {actions}
     </SpeedDial>
@@ -423,6 +437,14 @@ export const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
   teleporter_large: <AllOutIcon />,
   alien_gate: <AllOutIcon />, // never in a build menu (unbuildable)
   pocket_pad: <AllOutIcon />, // never in a build menu (unbuildable)
+  // Coastal defences — the gun batteries.
+  aa_quad_40mm: <FlareIcon />,
+  dp_mount_5in: <TrackChangesIcon />,
+  coastal_casemate_8in: <FortIcon />,
+  coastal_turret_11in: <AdjustIcon />,
+  coastal_barbette_16in: <AnchorIcon />,
+  coastal_lindemann: <CastleIcon />,
+  siege_gun_80cm: <TrainIcon />,
 };
 
 // ── Hoisted static sx / props (no per-render allocation) ───────────────────
@@ -468,6 +490,24 @@ const DIAL_SX = {
   '& .MuiSpeedDialAction-staticTooltipLabel': {
     whiteSpace: 'nowrap',
     maxWidth: 'none',
+  },
+} as const;
+
+/** Downward variant: smaller FAB; the collapsed actions park BELOW it. */
+const DIAL_SX_DOWN = {
+  ...DIAL_SX,
+  '& .MuiSpeedDial-fab': {
+    ...DIAL_SX['& .MuiSpeedDial-fab'],
+    width: 36,
+    height: 36,
+    minHeight: 36,
+  },
+  '& .MuiSpeedDial-actionsClosed': {
+    position: 'absolute',
+    top: 44,
+    right: 0,
+    height: 0,
+    pointerEvents: 'none',
   },
 } as const;
 

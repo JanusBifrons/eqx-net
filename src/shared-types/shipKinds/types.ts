@@ -132,7 +132,7 @@ export type ShipShape = z.infer<typeof ShipShapeSchema>;
 
 /** Catalogue-id of the weapon installed in a mount. Must match a
  *  `WeaponId` from `src/core/combat/WeaponCatalogue.ts`. */
-export const MountWeaponIdSchema = z.enum(['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl']);
+export const MountWeaponIdSchema = z.enum(['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege']);
 
 export const WeaponMountSchema = z
   .object({
@@ -194,6 +194,14 @@ export const WeaponSlotSchema = z
      *  kind wants a per-chassis tweak — e.g. the gunship's two-barrel slot
      *  costs slightly more than a single-barrel bolt ship. (plan §3.3) */
     energyCost: z.number().nonnegative().optional(),
+    /** How many targets this weapon group can hold locked (exp/fire-control).
+     *  Absent ⇒ 1 for sub-capitals, 3 for capitals (`lockCapacityFor`). */
+    lockCapacity: z.number().int().min(1).max(8).optional(),
+    /** Starting fire mode for the group: 'auto' fires at its lock whenever it
+     *  can; 'manual' only while the pilot holds the group. Absent ⇒ 'auto'. */
+    defaultMode: z.enum(['auto', 'manual']).optional(),
+    /** Index into the HUD's group colour palette (what's shooting what). */
+    colour: z.number().int().min(0).max(7).optional(),
   })
   .strict();
 export type WeaponSlot = z.infer<typeof WeaponSlotSchema>;

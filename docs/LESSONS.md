@@ -2753,6 +2753,13 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - Before widening a heap bound, swap the mocks for plain functions and re-measure. Growth that vanishes is the harness.
   - A suite no CI job runs rots. `test:gc` now runs in the `gc-tests` job.
 
+## 2026-11-08 — Coastal guns: the shells were fired, but no one could see them
+
+- **Symptom.** In the coastal-defences gun-line test every battery fired (its magazine emptied, the battleship took hits), but the pilot's snapshots never carried a 40.6 cm or 80 cm shell.
+- **Cause.** The projectile slice only sends shells inside the viewer's box, with an exception for a WIDE owner (a capital) in view. A coast gun is a small structure, so its 7,000 u shells vanished a few thousand units out — exactly the "only seen near the pilot" bug the capital round fixed for ships.
+- **Fix.** A structure in the viewer's interest sends its shells too (`SnapshotBroadcaster`), locked by `tests/integration/sectorRoom/coastalDefences.test.ts`, which now asserts the pilot sees every calibre.
+- **Lesson.** Same as the capital round: "it fired" and "a viewer sees it" are separate claims. Any new long-range shooter (ship OR structure) needs the view locked, not just the hit.
+
 ## 2026-11-08 — Melee corrections: the drone collision body is on the wrong timeline (WS7.1, fixed)
 
 - **Symptom:** the `pack-battle` and `new-effects` showcase shots (both `feel-test-25`, a hostile 25-drone pack) failed the pose-trace gate on a fast desktop with the server at 60 Hz: 4–14 prediction corrections per take (max 2). Other shots: 0.
@@ -2836,3 +2843,12 @@ Commit: perf/count-budgets (PR #356)
   - A test helper that says "joined" must mean "can act": wait for play in the helper, not in every spec.
   - Read tuning from the catalogue in specs, never copy a number.
   - A one-shot broadcast needs a replay path for whoever arrives later.
+
+## 2026-11-08 — The showcase filmed a paused game behind every menu (ticker pause keyed on webdriver)
+
+- **Symptom:** the `trade-deal` showcase shot failed the smoothness gate (~34 fps, 1.2–1.5 s frame gaps). The pipeline doc blamed the Trade tab "blocking the main thread ~1 s".
+- **Cause:** `App.tsx` stopped the Pixi ticker while a drawer or the galaxy overview was open whenever `navigator.webdriver === true` (the 2026-05-13 §6 CDP-starvation workaround for drawer E2Es). The showcase recorder is Playwright, so it met the same condition and filmed a paused game.
+- **Fix:** the pause is keyed on an explicit flag only the E2E harness sets (`localStorage.eqxE2ePause`, written into the e2e projects' storageState by `global-setup.ts`; or `?e2ePause=1`). See `src/client/app/automationTickerPause.ts`.
+- **Rules:**
+  - Never infer "this is a test" from `navigator.webdriver` for behaviour that changes what is shown: the recorder, perf runs and the netgate are automation too. Use an explicit flag the harness sets.
+  - Before profiling a recorded stall, check whether automation-only code is running in the recording.

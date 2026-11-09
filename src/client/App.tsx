@@ -10,6 +10,7 @@ import { setGameClient } from './net/clientSingleton';
 import { HowlerAudioService } from './audio/HowlerAudioService';
 import { selectRenderer, installProfileWindow } from './app/gameSurfaceBootstrap';
 import { runGameSurfaceConnectFlow } from './app/gameSurfaceConnectFlow';
+import { shouldPauseTickerUnderUi, safeLocalStorage } from './app/automationTickerPause';
 import {
   useServerHealthPoll,
   useShipSwapDispatcher,
@@ -67,6 +68,16 @@ import { HudTestAttributes } from './components/HudTestAttributes';
 import { ShieldHullBar } from './components/ShieldHullBar';
 import { CargoChip } from './components/CargoChip';
 import { WalletChip } from './components/WalletChip';
+import { ExperimentalHud } from './hud/ExperimentalHud';
+import { TouchViz } from './hud/TouchViz';
+import { getUiVariant } from './hud/uiVariant';
+import { installMouseAim } from './input/MouseAim';
+import { useIsCompact } from './layout/useIsCompact';
+import { installFcKeys, installMouseLock } from './input/MouseLock';
+import { aimInput } from './input/AimInput';
+
+/** Fixed for the page load (switching variant reloads). */
+const uiVariant = getUiVariant();
 import { TradeToasts } from './components/TradeToasts';
 import { WhileAwayDialog } from './components/WhileAwayDialog';
 import { WarpInWarningBanner } from './components/WarpInWarningBanner';
@@ -239,10 +250,12 @@ function GameSurface({
       if (isLoadingActive) audio?.suspendAll();
       keyboard?.setEnabled(false);
       touch?.setEnabled(false);
+      aimInput.setEnabled(false);
     } else {
       audio?.resumeAll();
       keyboard?.setEnabled(true);
       touch?.setEnabled(true);
+      aimInput.setEnabled(true);
     }
     // Phase 5 — WASD free-pan is the spectator's camera control on DESKTOP. Arm
     // it ONLY while spectating + not loading + not touch (mobile pans by drag);
@@ -485,6 +498,10 @@ function GameSurface({
     let disposed = false;
 
     const keyboard = new Keyboard();
+    // Experimental HUD, desktop only: hold left mouse = aim + fire, right = boost.
+    const disposeMouseAim = uiVariant === 'legacy' ? null
+      : isTouchRef.current ? (uiVariant === 'd' ? installFcKeys() : null)
+      : uiVariant === 'd' ? installMouseLock(el) : installMouseAim(el);
     keyboardRef.current = keyboard;
 
     // Renderer-path selection + profile-window opt-in. Extracted to
@@ -727,6 +744,7 @@ function GameSurface({
       };
       try { setGameClient(null); } catch (e) { stepLog('setGameClient(null)', e); }
       try { keyboard.dispose(); } catch (e) { stepLog('keyboard.dispose', e); }
+      try { disposeMouseAim?.(); } catch (e) { stepLog('mouseAim.dispose', e); }
       try { spectatorPanRef.current?.dispose(); spectatorPanRef.current = null; } catch (e) { stepLog('spectatorPan.dispose', e); }
       // Layer is a child of renderer.app.stage — the renderer's destroy({
       // children: true }) frees it. Nulling the ref so the React-side
@@ -794,18 +812,19 @@ function GameSurface({
   const isGalaxyOverviewOpen = useUIStore((s) => s.isGalaxyOverviewOpen);
   // **Real users get full 60 fps even when overlays are open** — the
   // drawer is partial-width and the gameplay underneath should keep
-  // animating at full rate. We ONLY intervene under Playwright
-  // automation (navigator.webdriver === true), where Pixi's rAF tax
-  // starves the CDP protocol loop to ~500 ms median roundtrip. There
-  // we pause the ticker entirely while the drawer/overview is open so
-  // E2E specs aren't flaky against a 120 s test budget. Production
-  // never hits the pause path.
+  // animating at full rate. We ONLY intervene when the E2E harness sets
+  // the explicit `e2ePause` flag (see `app/automationTickerPause.ts`),
+  // where Pixi's rAF tax starves the CDP protocol loop to ~500 ms median
+  // roundtrip. There we pause the ticker entirely while the
+  // drawer/overview is open. NOT keyed on `navigator.webdriver`: the
+  // Playwright showcase recorder must film a live game behind menus.
   const uiCoversGame = isDrawerOpen || isGalaxyOverviewOpen;
   useEffect(() => {
     const renderer = rendererRef.current;
     if (!renderer) return;
-    const isAutomation = typeof navigator !== 'undefined' && navigator.webdriver === true;
-    if (!isAutomation) {
+    const pauseUnderUi = typeof window !== 'undefined'
+      && shouldPauseTickerUnderUi(window.location.search, safeLocalStorage());
+    if (!pauseUnderUi) {
       renderer.setTickerMaxFPS(undefined);
       return;
     }
@@ -858,13 +877,22 @@ function GameSurface({
         />
       ) : (
         <>
-      <Slot anchor="top-left" order={1}><SectorInfoPanel /></Slot>
-      <Slot anchor="top-left" order={2}><ShieldHullBar /></Slot>
+      {/* exp/hud-mobile-first: `?ui=a|b|c` swaps the piloting HUD (status,
+       *  credits, sector, thumb controls, fire/auto, dial) for one of three
+       *  experimental layouts. No param = the legacy HUD below, unchanged. */}
+      {uiVariant !== 'legacy' && (
+        <ExperimentalHud
+          variant={uiVariant}
+          touchInput={isTouchRef.current ? touchInputRef.current : null}
+        />
+      )}
+      {uiVariant === 'legacy' && <Slot anchor="top-left" order={1}><SectorInfoPanel /></Slot>}
+      {uiVariant === 'legacy' && <Slot anchor="top-left" order={2}><ShieldHullBar /></Slot>}
       {/* Living World P1a — carried cargo + pickup popups. */}
       <Slot anchor="top-left" order={3}><CargoChip /></Slot>
-      <Slot anchor="top-left" order={4}><WalletChip /></Slot>
+      {uiVariant === 'legacy' && <Slot anchor="top-left" order={4}><WalletChip /></Slot>}
       <Slot anchor="top-left" order={10}><Hud /></Slot>
-      <Slot anchor="top-center" order={1}><EnergyBar /></Slot>
+      {uiVariant === 'legacy' && <Slot anchor="top-center" order={1}><EnergyBar /></Slot>}
       {/* The toll / pair prompts sit right under the energy bar: nothing above
        *  them changes height, so their buttons hold still while the phase
        *  warning below them changes text (a moving button misses taps). */}
@@ -883,14 +911,16 @@ function GameSurface({
        *  HUD bars + the in-world stat panel carry that info. */}
       {/* Phase 5 — always-visible Pilot/Spectate toggle (out of the speed-dial)
        *  + a spectator-mode status badge. */}
-      <Slot anchor="top-center" order={3}><PilotSpectatorToggle /></Slot>
+      {/* Experimental HUDs: the top-centre column carries status + lock warnings, so the
+          toggle sits under the sector chip instead of over the ship. */}
+      <PilotToggleSlot />
       <Slot anchor="top-center" order={4}><SpectatorIndicator /></Slot>
       <AdvancedDrawer />
       {/* Phase 4 WS-A1 (D3) — the blocking DeathOverlay "You Died/Respawn" modal
        *  is removed. Death transitions INSTANTLY into spectator (free-roam
        *  construction camera); re-entry is via the galaxy map or (WS-A2) an
        *  owned ship's in-world Pilot action. */}
-      {isTouchRef.current && touchInputRef.current && (
+      {uiVariant === 'legacy' && isTouchRef.current && touchInputRef.current && (
         <MobileControls touchInput={touchInputRef.current} />
       )}
       {/* Speed-dial UI refactor (Phase 1): the discrete (tap) HUD actions —
@@ -905,17 +935,17 @@ function GameSurface({
        *  order=5 keeps it rightmost in the row-reverse cluster; on touch it sits
        *  where FIRE would be when auto-fire is OFF (MobileControls hides FIRE
        *  while ON). */}
-      <Slot anchor="bottom-right" order={5}><AutoFireToggleButton /></Slot>
+      {uiVariant === 'legacy' && <Slot anchor="bottom-right" order={5}><AutoFireToggleButton /></Slot>}
       {/* Speed-dial at order=1 = the corner-most control (lowest order wins the
        *  corner in the row-reverse bottom-right anchor), to the right of AUTO
        *  (5) and FIRE/BOOST (10/20). Smoke handoff 2026-06-06, Issue 3:
        *  "the speed dial is in the wrong place" → bottom-right corner. */}
-      <Slot anchor="bottom-right" order={1}><SpeedDialMenu /></Slot>
+      {uiVariant === 'legacy' && <Slot anchor="bottom-right" order={1}><SpeedDialMenu /></Slot>}
       {/* Phase 4 warp-to destination picker (portalled; solar sectors only). */}
       <WarpPicker />
       {/* Phase 5 WS-4 — desktop RTS control strip (weapons when piloting,
        *  buildings when spectating). Self-gates to desktop + in-game. */}
-      <Slot anchor="bottom-center" order={1}><BottomControlPanel /></Slot>
+      {uiVariant === 'legacy' && <Slot anchor="bottom-center" order={1}><BottomControlPanel /></Slot>}
       {/* Click-to-inspect live stats (structures follow-up Item B6). Visible
        *  only while an entity is selected. WS-9 (R2.30) — WORLD-ANCHORED: rendered
        *  OUTSIDE the Slot system as a `position:fixed` element that gameRafLoop
@@ -968,6 +998,7 @@ function GameSurface({
         </>
       )}
       <HudTestAttributes />
+      <TouchViz />
     </Box>
   );
 }
@@ -1140,4 +1171,16 @@ export function App(): JSX.Element {
       </LayoutProvider>
     </ErrorBoundary>
   );
+}
+
+/**
+ * Pilot/Spectate toggle placement. Legacy: top-centre. Experimental HUDs: the
+ * top-centre column carries status + lock warnings, so on a wide screen the
+ * toggle sits top-left under the sector chip (never over the ship); on a
+ * narrow (portrait) screen it stays last in the top-centre column.
+ */
+function PilotToggleSlot(): JSX.Element {
+  const compact = useIsCompact();
+  if (uiVariant !== 'legacy' && !compact) return <Slot anchor="top-left" order={2}><PilotSpectatorToggle /></Slot>;
+  return <Slot anchor="top-center" order={uiVariant === 'legacy' ? 3 : 9}><PilotSpectatorToggle /></Slot>;
 }
