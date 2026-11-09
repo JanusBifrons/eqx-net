@@ -1,8 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import { Box, Tooltip } from '@mui/material';
-import GpsFixedIcon from '@mui/icons-material/GpsFixed';
 import { useUIStore } from '../state/store';
-import { getShipKind } from '@shared-types/shipKinds';
 import { type StructureKindId } from '@shared-types/structureKinds';
 import { BUILD_CATEGORIES } from './buildCategories';
 import { BUILD_ICONS } from './SpeedDialMenu';
@@ -11,17 +9,17 @@ import { usePackedStock } from '../structures/usePackedStock';
 import { isTouchDevice } from '../input/TouchInput';
 
 /**
- * Phase 5 WS-4 — the DESKTOP RTS-style bottom control panel. A dynamic strip of
- * labelled squares with corner number-key badges:
- *   - PILOTING: the ship's WEAPON slots (number key 1..n switches the active
- *     slot) plus greyed EMPTY squares for the ship's unassigned latent mounts.
- *   - SPECTATING: the flattened BUILDING palette (every structure kind, no
- *     category hierarchy); number key / click selects it for placement.
+ * Phase 5 WS-4 — the DESKTOP RTS-style bottom build palette, shown while
+ * SPECTATING: the flattened BUILDING palette (every structure kind, no category
+ * hierarchy) as labelled squares with corner number-key badges; number key /
+ * click selects it for placement. While piloting it renders nothing: the
+ * weapon strip (fire control) replaced the old weapon-slot row, and 1–9 select
+ * weapon GROUPS there (MouseLock.ts `installFcKeys`).
  *
  * DESKTOP-ONLY (`!isTouchDevice()`) — mobile keeps the speed-dial untouched. The
- * panel reuses the SAME discrete store actions the speed-dial drives
- * (`setActiveSlotId` / `setPlacementKind`), so it's a parallel control surface,
- * not a new mechanism. All store reads are discrete enums/ids (Invariant #2).
+ * panel reuses the SAME discrete store action the speed-dial drives
+ * (`setPlacementKind`), so it's a parallel control surface, not a new
+ * mechanism. All store reads are discrete enums/ids (Invariant #2).
  */
 
 /** The building palette, flattened in category order (Core → Economy → Defence). */
@@ -96,9 +94,6 @@ function cellColors(cell: PanelCell): { color: string; borderColor: string; bgco
 export function BottomControlPanel(): JSX.Element | null {
   const phase = useUIStore((s) => s.phase);
   const pilotMode = useUIStore((s) => s.pilotMode);
-  const shipKindId = useUIStore((s) => s.selectedShipKind);
-  const activeSlotId = useUIStore((s) => s.activeSlotId);
-  const setActiveSlotId = useUIStore((s) => s.setActiveSlotId);
   const placementKind = useUIStore((s) => s.placementKind);
   const setPlacementKind = useUIStore((s) => s.setPlacementKind);
 
@@ -106,32 +101,25 @@ export function BottomControlPanel(): JSX.Element | null {
   // Economy v2 — packed-structure stock while the build row is showing.
   const packedStock = usePackedStock(phase === 'game' && spectating && !isTouchDevice());
 
-  // Number-key (1..9) selection — weapon slot when piloting, building when
-  // spectating. Desktop-only + in-game; ignores keystrokes while a text field
-  // has focus so it never hijacks typing.
+  // Number-key (1..9) building selection while spectating. Desktop-only +
+  // in-game; ignores keystrokes while a text field has focus so it never
+  // hijacks typing.
   useEffect(() => {
-    if (phase !== 'game' || isTouchDevice()) return;
+    if (phase !== 'game' || isTouchDevice() || !spectating) return;
     const onKey = (e: KeyboardEvent): void => {
       if (e.altKey || e.ctrlKey || e.metaKey) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       const n = Number(e.key);
       if (!Number.isInteger(n) || n < 1 || n > 9) return;
-      const idx = n - 1;
-      if (spectating) {
-        const b = BUILDINGS[idx];
-        if (b && !buildEntry(b, packedStock).locked) setPlacementKind(b);
-      } else {
-        const slots = getShipKind(shipKindId).slots ?? [];
-        const s = slots[idx];
-        if (s) setActiveSlotId(s.id);
-      }
+      const b = BUILDINGS[n - 1];
+      if (b && !buildEntry(b, packedStock).locked) setPlacementKind(b);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [phase, spectating, shipKindId, setActiveSlotId, setPlacementKind, packedStock]);
+  }, [phase, spectating, setPlacementKind, packedStock]);
 
-  if (phase !== 'game' || isTouchDevice()) return null;
+  if (phase !== 'game' || isTouchDevice() || !spectating) return null;
 
   const cells: PanelCell[] = [];
   if (spectating) {
@@ -148,37 +136,12 @@ export function BottomControlPanel(): JSX.Element | null {
         onSelect: entry.locked ? null : () => setPlacementKind(k),
       });
     });
-  } else {
-    const kind = getShipKind(shipKindId);
-    (kind.slots ?? []).forEach((slot, i) => {
-      cells.push({
-        key: `slot:${slot.id}`,
-        num: i + 1,
-        label: slot.displayName,
-        icon: <GpsFixedIcon />,
-        active: activeSlotId === slot.id,
-        empty: false,
-        onSelect: () => setActiveSlotId(slot.id),
-      });
-    });
-    // Greyed EMPTY squares for the ship's unassigned latent hardpoints.
-    (kind.latentMounts ?? []).forEach((m, i) => {
-      cells.push({
-        key: `latent:${m.id ?? i}`,
-        num: null,
-        label: 'Empty',
-        icon: null,
-        active: false,
-        empty: true,
-        onSelect: null,
-      });
-    });
   }
 
   if (cells.length === 0) return null;
 
   return (
-    <Box sx={ROW_SX} data-testid="bottom-control-panel" data-panel-mode={spectating ? 'build' : 'weapons'}>
+    <Box sx={ROW_SX} data-testid="bottom-control-panel" data-panel-mode="build">
       {cells.map((cell) => {
         const c = cellColors(cell);
         return (

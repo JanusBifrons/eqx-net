@@ -3,8 +3,8 @@
  * authority: a group may only fire at a target it has LOCKED, so locks gate
  * fire (`PlayerFireResolver`) and drive turret aim (`WeaponMountTicker`).
  *
- * Only players who joined with `fireControl` are tracked; everyone else plays
- * the legacy rules untouched.
+ * Every player is tracked from join (lock-to-fire is universal): an untracked
+ * player has no locks, so it can't fire.
  *
  * Steady state allocates nothing (#14): group/lock/wire objects are created on
  * join, on a new lock or on a ship change, then mutated in place.
@@ -12,6 +12,7 @@
 import { LOCK_TUNING, WEAPON_LOCK_PROFILE, lockCapacityFor, sensorFor, NO_PILOT_MODS, type MountSize } from '../../shared-types/combat/lockProfile.js';
 import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
+import { lockLineHolds } from '../../core/combat/lockLine.js';
 import { getWeapon, weaponAutoFireRange } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind, WeaponMount, WeaponSlot } from '../../shared-types/shipKinds/types.js';
 
@@ -43,9 +44,10 @@ export interface LockSubsystemDeps {
   shooterPose(playerId: string, out: LockShooterView): boolean;
   /** The player's active ship kind + activated mounts, or null. */
   shipOf(playerId: string): { kind: ShipKind; activated: ReadonlyArray<WeaponMount> } | null;
-  /** Best auto target for a group (hostile, in reach, and `bears(x, y)` —
-   *  inside the group's arc), or null. */
-  autoPick(playerId: string, reach: number, sx: number, sy: number, bears: (x: number, y: number) => boolean): string | null;
+  /** Best auto target for a group (hostile — or, with `anyTarget` (the testMode
+   *  `instantLock` trigger), any lockable non-player target — in reach and
+   *  `bears(x, y)`: inside the group's arc), or null. */
+  autoPick(playerId: string, reach: number, sx: number, sy: number, bears: (x: number, y: number) => boolean, anyTarget: boolean): string | null;
   /** A failsafe finished: the player has committed a hostile act on `key`. */
   commitHostileAct(playerId: string, key: string): void;
 }
@@ -74,6 +76,8 @@ interface GroupState {
 }
 
 interface PlayerLocks {
+  /** testMode `instantLock`: AUTO picks any target, every lock completes at once. */
+  instant: boolean;
   kindId: string;
   activatedSig: number;
   sensor: number;
@@ -161,20 +165,17 @@ export class LockSubsystem {
 
   constructor(private readonly deps: LockSubsystemDeps) {}
 
-  /** Opt a player in (they joined with `fireControl`). */
-  enable(playerId: string): void {
-    if (!this.players.has(playerId)) {
-      this.players.set(playerId, { kindId: '', activatedSig: -1, sensor: 1, groups: [], wire: [] });
-    }
+  /** Start tracking a player (every player, on join). `instant` = the testMode
+   *  `instantLock` trigger. */
+  enable(playerId: string, instant = false): void {
+    const p = this.players.get(playerId);
+    if (p) { p.instant = instant; return; }
+    this.players.set(playerId, { instant, kindId: '', activatedSig: -1, sensor: 1, groups: [], wire: [] });
   }
 
-  /** Fire-control pilots (iteration only; do not mutate while iterating). */
+  /** Tracked pilots (iteration only; do not mutate while iterating). */
   enabledPlayers(): IterableIterator<string> {
     return this.players.keys();
-  }
-
-  isEnabled(playerId: string): boolean {
-    return this.players.has(playerId);
   }
 
   /** Forget a player (leave, transit, death). */
@@ -256,12 +257,19 @@ export class LockSubsystem {
    * The pilot's lock line is on `key` (null = on nothing / let go). The held
    * target builds; any other held lock in the group is released and drains.
    * The line coming back onto a draining target resumes it.
+   *
+   * Verified, not trusted: the target must lie on the line along `bearing`
+   * (world, ship-angle convention) by the shared rule `lockLineHolds`
+   * (core/combat/lockLine.ts: the client's own pick rule, sticky cone). A claim
+   * that fails, or carries no bearing, counts as "on nothing": the held lock
+   * is released.
    */
-  trackLock(playerId: string, groupId: string, key: string | null): void {
+  trackLock(playerId: string, groupId: string, key: string | null, bearing?: number): void {
     const p = this.players.get(playerId);
     if (!p || !this.sync(playerId, p)) return;
     const g = this.group(p, groupId);
     if (!g) return;
+    if (key !== null && !this.onLine(playerId, g, key, bearing)) key = null;
     let found = false;
     for (const e of g.locks) {
       if (key !== null && e.target === key) {
@@ -276,6 +284,42 @@ export class LockSubsystem {
       g.locks.push(newLock(key, this.target.hostile, LOCK_TRACK.held));
     }
     this.syncWireShape(g);
+  }
+
+  /** Does `key` lie on the pilot's lock line along `bearing`? (Fills `this.target`.) */
+  private onLine(playerId: string, g: GroupState, key: string, bearing: number | undefined): boolean {
+    if (bearing === undefined || !Number.isFinite(bearing)) return false;
+    if (!this.deps.shooterPose(playerId, this.shooter)) return false;
+    if (!this.deps.resolveTarget(playerId, key, this.target)) return false;
+    return lockLineHolds(this.target.x - this.shooter.x, this.target.y - this.shooter.y, bearing, this.target.signature, g.reach);
+  }
+
+  /**
+   * Test hook (integration `_internals.forceLock`): make `key` a completed
+   * lock of `groupId` (every group when absent) now. Returns how many groups
+   * took it (0 when the pilot, group or target doesn't resolve).
+   */
+  forceLock(playerId: string, key: string, groupId?: string): number {
+    const p = this.players.get(playerId);
+    if (!p || !this.sync(playerId, p)) return 0;
+    if (!this.deps.resolveTarget(playerId, key, this.target)) return 0;
+    let n = 0;
+    for (const g of p.groups) {
+      if (groupId !== undefined && g.id !== groupId) continue;
+      let e: LockEntry | undefined;
+      for (const x of g.locks) if (x.target === key) e = x;
+      if (!e) {
+        this.makeRoom(g);
+        e = newLock(key, true);
+        g.locks.push(e);
+      }
+      e.stage = 'locked';
+      e.progress = 1;
+      e.lostFor = 0;
+      this.syncWireShape(g);
+      n++;
+    }
+    return n;
   }
 
   /** Free a slot when the group is full: a draining lock goes first, else the oldest. */
@@ -312,7 +356,7 @@ export class LockSubsystem {
   /** True when `groupId` holds at least one LOCKED target — the fire gate. */
   hasLocked(playerId: string, groupId: string | undefined): boolean {
     const p = this.players.get(playerId);
-    if (!p) return true; // not fire-control: legacy rules
+    if (!p) return false; // untracked: no locks, so no fire
     const g = groupId === undefined ? p.groups[0] : this.group(p, groupId);
     if (!g) return false;
     for (const e of g.locks) if (e.stage === 'locked') return true;
@@ -358,7 +402,7 @@ export class LockSubsystem {
     // Auto groups acquire their own target when idle.
     if (g.locks.length === 0 && g.mode === 'auto') {
       this.bearGroup = g;
-      const key = this.deps.autoPick(playerId, g.reach, this.shooter.x, this.shooter.y, this.bears);
+      const key = this.deps.autoPick(playerId, g.reach, this.shooter.x, this.shooter.y, this.bears, p.instant);
       this.bearGroup = null;
       if (key !== null && this.deps.resolveTarget(playerId, key, this.target)) {
         g.locks.push(newLock(key, true));
@@ -389,6 +433,14 @@ export class LockSubsystem {
         continue;
       }
       const failsafeSecs = Number.isFinite(secs) ? secs * LOCK_TUNING.failsafeMul : LOCK_TUNING.baseSeconds * LOCK_TUNING.failsafeMul;
+      if (p.instant && Number.isFinite(secs) && e.stage !== 'locked' && e.track !== LOCK_TRACK.released) {
+        // testMode `instantLock`: the lock completes now (a failsafe still commits).
+        if (e.stage === 'failsafe') this.deps.commitHostileAct(playerId, e.target);
+        e.stage = 'locked';
+        e.progress = 1;
+        e.lostFor = 0;
+        continue;
+      }
       const ev = stepLock(e, LOCK_DT, secs, failsafeSecs, LOCK_TUNING.lostGraceSeconds, LOCK_TUNING.decayMul);
       if (ev === 'commit') this.deps.commitHostileAct(playerId, e.target);
       if (ev === 'dropped') {

@@ -16,8 +16,8 @@ import { useCallback, useRef, type TouchEvent } from 'react';
  * window (so the trailing synthesized click doesn't double-fire — the historic
  * AutoFireToggleButton double-toggle trap).
  *
- * This hook is the ONE implementation of that pattern, shared by
- * `SpeedDialMenu` and `AutoFireToggleButton`.
+ * This hook is the ONE implementation of that pattern (used by
+ * `SpeedDialMenu`).
  */
 
 /**

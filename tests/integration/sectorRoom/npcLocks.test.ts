@@ -1,8 +1,8 @@
 /**
- * exp/fire-control — locking goes both ways. A hostile NPC must LOCK a
- * fire-control pilot before it may fire at them; the pilot sees the lock
- * building in the own-ship `lockedBy` snapshot slice (acquiring → locked).
- * A legacy pilot (no fireControl) is shot at as before, with no slice.
+ * Fire control — locking goes both ways. A hostile NPC must LOCK a pilot
+ * before it may fire at them; the pilot sees the lock building in the
+ * own-ship `lockedBy` snapshot slice (acquiring → locked). Every pilot is
+ * tracked (lock-to-fire is universal): this one joins with no options.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -22,7 +22,7 @@ async function waitUntil(predicate: () => boolean, timeoutMs: number, label: str
   if (!predicate()) throw new Error(`waitUntil timed out: ${label}`);
 }
 
-describe('SectorRoom integration — NPCs lock fire-control pilots', () => {
+describe('SectorRoom integration — NPCs lock pilots', () => {
   let harness: SectorTestHarness;
   beforeEach(async () => {
     harness = await bootSectorTestServer({
@@ -35,7 +35,7 @@ describe('SectorRoom integration — NPCs lock fire-control pilots', () => {
   it('a hostile drone locks the pilot (acquiring → locked) before it lands a hit', async () => {
     const pid = randomUUID();
     const room = (await harness.connectActive(pid, {
-      shipKind: 'interceptor', spawnX: 0, spawnY: 0, fireControl: true, startHostile: true, initialHull: 100_000,
+      shipKind: 'interceptor', spawnX: 0, spawnY: 0, startHostile: true, initialHull: 100_000,
     })) as ClientRoom<SectorState>;
     let lockedBy: LockedBy[] | undefined;
     let sawAcquiring = false;
@@ -59,19 +59,4 @@ describe('SectorRoom integration — NPCs lock fire-control pilots', () => {
     if (firstHitAt) expect(firstHitAt).toBeGreaterThanOrEqual(lockedAt - 120);
     await waitUntil(() => firstHitAt > 0, 8_000, 'drone fires once locked');
   }, 30_000);
-
-  it('a legacy pilot gets no lockedBy slice and is still shot at', async () => {
-    const pid = randomUUID();
-    const room = (await harness.connectActive(pid, {
-      shipKind: 'interceptor', spawnX: 0, spawnY: 0, startHostile: true, initialHull: 100_000,
-    })) as ClientRoom<SectorState>;
-    let slice = false;
-    let hit = false;
-    room.onMessage('snapshot', (snap: { states?: Record<string, { playerId?: string; lockedBy?: LockedBy[] }> }) => {
-      for (const st of Object.values(snap.states ?? {})) if (st.playerId === pid && st.lockedBy) slice = true;
-    });
-    room.onMessage('damage', (m: DamageMsg) => { if (m.targetId === pid) hit = true; });
-    await waitUntil(() => hit, 10_000, 'legacy pilot hit');
-    expect(slice).toBe(false);
-  }, 20_000);
 });

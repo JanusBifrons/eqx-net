@@ -30,7 +30,7 @@ import { ForeignTeleporterPanel, TeleporterPanel } from './TeleporterPanel';
 import { isAlienGateKind, isTeleporterKind } from '../../shared-types/teleport';
 import { alienGateLine } from './alienGateInfo';
 import { HullUnpack } from './HullUnpack';
-import { hullColor } from './ShieldHullBar';
+import { hullColor } from '../hud/tokens';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { canUpgradeStructure, structureUpgradeGoods } from '@core/leveling/structureLevel';
 import { GOOD_DEFS, type GoodId } from '@shared-types/goods';

@@ -114,12 +114,13 @@ export interface PlayerFireResolverDeps {
   getActiveShip: (playerId: string) => ShipState | undefined;
   /** Per-shooter cooldown ledger. */
   lastFireClientTick: Map<string, number>;
-  /** Fire control (exp/fire-control): may this pilot's group fire now? A
-   *  fire-control pilot's group fires only at a LOCKED target; absent ⇒ legacy. */
+  /** Fire control (universal): may this pilot's group fire now? A group fires
+   *  only at a LOCKED target. The room always supplies it; absent only in
+   *  resolver unit harnesses that test geometry, not the gate. */
   fireAllowed?: (playerId: string, slotId: string | undefined) => boolean;
   /** Fire control: does this mount's barrel (world origin + world angle) bear on
    *  its group's lock target? A turret parked at its arc limit never does, so it
-   *  never fires out of its arc. Absent ⇒ every mount fires (legacy). */
+   *  never fires out of its arc. Absent only in resolver unit harnesses. */
   mountBearsOnLock?: (playerId: string, mountId: string, ox: number, oy: number, angle: number) => boolean;
   /** Lag-comp pose ring. */
   snapshotRing: SnapshotRingReader;

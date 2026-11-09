@@ -6,7 +6,7 @@
  *     arc-local angles, indexed by mount-catalogue order.
  *   - `playerSlotTargets` / `droneSlotTargets` — sticky pickTarget
  *     prevTargetId hysteresis (10 % distance via STICKY_HYSTERESIS_FACTOR).
- *   - `mountTargetsScratch` + `droneMountTargetsScratch` — pooled
+ *   - `droneMountTargetsScratch` — pooled
  *     MountTargetView arrays, rebuilt once per tick and shared across all
  *     shooters that tick.
  *
@@ -26,16 +26,14 @@ import {
   pickTarget,
   rotateMountToward,
   wrapPi,
-  PLAYER_AIM_HEALTH_WEIGHT,
-  PLAYER_AIM_SWITCH_MARGIN,
   type MountTargetView,
 } from '../../core/ai/WeaponMountController.js';
-import { manualAimMountBearing } from '../../core/combat/manualAim.js';
+
 import { mountTargetReach, mountWeaponReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
 import { mountLineClear, mountPriority, targetClass } from '../../core/combat/mountTargeting.js';
 import { leadArcBearing, mountCanEngage, onTarget } from '../../core/combat/mountFireControl.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
-import { droneMaxHealthOf } from './droneKindHelpers.js';
+
 import {
   DEFAULT_SHIP_KIND,
   getShipKind,
@@ -124,9 +122,8 @@ export interface WeaponMountTickerDeps {
   currentTick?: () => number;
   /** Called when a pilot's turret state is cleared (leave, respawn, evict). */
   onClearPlayer?: (playerId: string) => void;
-  /** Fire control: is this pilot on lock-driven aim? */
-  isFireControl?: (playerId: string) => boolean;
-  /** Fire control: the lock target pose for one of the pilot's mounts (false = none). */
+  /** Fire control: the lock target pose for one of the pilot's mounts (false =
+   *  none: the mount slews home). Absent (aim-only unit harnesses) ⇒ none. */
   aimTargetFor?: (playerId: string, mountId: string, out: { x: number; y: number; vx: number; vy: number }) => boolean;
   /** Fire ONE mount of a capital drone along its barrel (the resolver reads
    *  the slewed angle). Called only when that mount is on target, in reach
@@ -152,25 +149,14 @@ export class WeaponMountTicker {
   readonly droneMountAngles = new Map<string, Float32Array>();
   /** Sticky targetId per shooter (for pickTarget hysteresis). */
   readonly playerSlotTargets = new Map<string, string | null>();
-  /** Manual aim (exp/hud-mobile-first): a pilot's held aim world bearing,
-   *  written by the input handler, absent when not aiming. */
-  readonly playerManualAim = new Map<string, number>();
+
   readonly droneSlotTargets = new Map<string, string | null>();
   /** Capital fire control: last fire tick per mount, keyed by drone id. */
   readonly droneMountReload = new Map<string, Int32Array>();
 
-  /** Pooled per-tick target lists — drone candidates (rebuilt by tickPlayer).
-   *  Logical-length-over-physical-slot pattern (plan: quirky-rabbit,
-   *  Phase 5): pre-fix `targets.push({ id, x, y, vx, vy })` minted a
-   *  fresh 5-field literal per swarm entity per tick. Now we reuse the
-   *  array's slot instances and `targets.length = i` to truncate
-   *  logically. Safe per WeaponMountController.pickTarget — it returns
-   *  the MountTargetView reference but the caller (tickPlayer below)
-   *  only reads `target?.id` (a string), never retaining the view past
-   *  the tick. */
-  private readonly mountTargetsScratch: MountTargetView[] = [];
-  /** Pooled per-tick player candidates (rebuilt by tickDrone). Same
-   *  logical-length pattern as `mountTargetsScratch`. */
+  /** Pooled per-tick player candidates (rebuilt by tickDrone). Logical-length
+   *  over physical slot (plan: quirky-rabbit, Phase 5): slots are reused and
+   *  `targets.length = n` truncates, so no literal per candidate per tick. */
   private readonly droneMountTargetsScratch: MountTargetView[] = [];
   /** Ship kind of each droneMountTargetsScratch entry (same index). */
   private readonly droneTargetKinds: string[] = [];
@@ -178,9 +164,7 @@ export class WeaponMountTicker {
   readonly droneMountLastOk = new Map<string, Int32Array>();
   /** Capitals: each mount's current target id, keyed by drone id. */
   readonly droneMountTargetIds = new Map<string, (string | null)[]>();
-  /** WS-B3 — reused per-player firing-mount-id set (alloc-free, invariant #14).
-   *  Rebuilt per player in `tickPlayer` from `resolveInstanceFireMounts`. */
-  private readonly _firingIdsScratch = new Set<string>();
+
   /** Fire control: reused lock-target pose (alloc-free, #14). */
   private readonly _fcTarget = { x: 0, y: 0, vx: 0, vy: 0 };
 
@@ -228,153 +212,42 @@ export class WeaponMountTicker {
   /**
    * Compute every player's mount angles for this tick.
    *
-   * Drone candidate list is rebuilt once and shared across all players.
-   * No-op when no players are bound to slots.
+   * Lock-to-fire is universal: each mount aims at ITS weapon group's lock
+   * target (the first LOCKED one, else the one being acquired, so turrets
+   * pre-slew), and a group with no target slews home. There is no player
+   * auto-target any more. Same rule as the client's `fcTickMountAngles`
+   * (#12/#15). No-op when no players are bound to slots.
    */
   tickPlayer(): void {
     const d = this.deps;
     if (d.playerToSlot.size === 0) return;
-
-    // Build the drone candidate list once per tick — same list re-used
-    // for every player's pickTarget call. Logical-length over physical
-    // slot: reuse view instances across ticks (Phase 5 — invariant #14).
-    const targets = this.mountTargetsScratch;
-    const swarmHealth = d.swarmHealth();
-    let count = 0;
-    for (const rec of d.swarmRegistry.all()) {
-      if (rec.kind !== 1) continue;
-      const b = slotBase(rec.slot);
-      // Part C — carry drone health so the player turret can focus the wounded.
-      // Per-drone (shared across players); hostility is per-player (callback
-      // below). maxHealth from the kind; undefined when unknown ⇒ distance-only.
-      const maxHp = droneMaxHealthOf(rec) ?? undefined;
-      const curHp = maxHp !== undefined ? swarmHealth.get(rec.id) : undefined;
-      WeaponMountTicker.writeTargetSlot(
-        targets, count, rec.id,
-        d.sabF32[b + SLOT_X_OFF]!,
-        d.sabF32[b + SLOT_Y_OFF]!,
-        d.sabF32[b + SLOT_VX_OFF]!,
-        d.sabF32[b + SLOT_VY_OFF]!,
-        curHp, maxHp,
-      );
-      count++;
-    }
-    targets.length = count;
-
+    const t = this._fcTarget;
     for (const [playerId] of d.playerToSlot) {
       const ship = d.getActiveShip(playerId);
       if (!ship?.alive) continue;
       const pose = d.shipPoseCache.get(playerId);
       if (!pose) continue;
       // WS-B3 — the angle index space is the FULL per-instance list
-      // `[...kind.mounts, ...activated]`; only the FIRING subset (active slot +
-      // activated) aims, the rest slew to base. For un-upgraded single-slot
-      // ships `mounts` == the active slot == the catalogue order, so this is
-      // byte-identical to the pre-WS-B3 active-slot-only loop.
+      // `[...kind.mounts, ...activated]`.
       const mounts = d.resolveInstanceMounts(ship);
       if (mounts.length === 0) continue;
-      // Firing-set ids — only these track the target. Reused scratch set.
-      const firingIds = this._firingIdsScratch;
-      firingIds.clear();
-      // Every weapon group aims (exp/fire-control): groups fire independently,
-      // so aiming only slots[0] left every other group's turrets at base while
-      // the pilot fired them. Matches the client's tickLocalMountAim (#12/#15).
-      for (const m of mounts) firingIds.add(m.id);
-
-      const prevTargetId = this.playerSlotTargets.get(playerId) ?? null;
-      // Part C — hostile-only (per-player ledger), health-weighted, commitment-
-      // sticky aim. Identical options to the client's `tickLocalMountAim` so the
-      // predicted beam and this authoritative mount angle agree (lockstep).
-      const target = pickTarget(
-        pose.x, pose.y, targets, prevTargetId,
-        (id) => {
-          // Same hostility source as HostileDroneBehaviour / tickDrone: the
-          // drone's `hostileTo` set. Mirrors the client's `isHostileToLocal`
-          // (kept in sync via the damage/bot_aggro markHostile mirror), so the
-          // server + client picks agree.
-          const b = d.aiController.getBehaviour(id);
-          if (!b) return false;
-          const ho = (b as { hostileTo?: Set<string> }).hostileTo;
-          return ho ? ho.has(playerId) : false;
-        },
-        {
-          maxDistance: mountTargetReach(getShipKind(ship.kind ?? null), mounts),
-          healthWeight: PLAYER_AIM_HEALTH_WEIGHT,
-          switchMargin: PLAYER_AIM_SWITCH_MARGIN,
-        },
-      );
-      this.playerSlotTargets.set(playerId, target?.id ?? null);
-
       let angles = this.playerMountAngles.get(playerId);
       if (!angles || angles.length !== mounts.length) {
         angles = new Float32Array(mounts.length);
         this.playerMountAngles.set(playerId, angles);
       }
-
-      // Fire control (exp/fire-control): each mount aims at ITS group's lock
-      // target; a group with no target slews home. Same rule as the client's
-      // tickLocalMountAim (#12/#15).
-      if (d.isFireControl?.(playerId) && d.aimTargetFor) {
-        const fcCos = Math.cos(pose.angle);
-        const fcSin = Math.sin(pose.angle);
-        const t = this._fcTarget;
-        for (let i = 0; i < mounts.length; i++) {
-          const mount = mounts[i]!;
-          if (!d.aimTargetFor(playerId, mount.id, t)) {
-            angles[i] = rotateMountToward(angles[i]!, 0, mount, DT_SEC);
-            continue;
-          }
-          const mx = pose.x + (mount.localX * fcCos - mount.localY * fcSin);
-          const my = pose.y + (mount.localX * fcSin + mount.localY * fcCos);
-          const bearing = Math.atan2(-(t.x - mx), t.y - my);
-          angles[i] = rotateMountToward(angles[i]!, wrapPi(bearing - pose.angle - mount.baseAngle), mount, DT_SEC);
-        }
-        continue;
-      }
-
-      // Manual aim (exp/hud-mobile-first): a held pilot aim overrides the
-      // auto-picked target for the FIRING set. Same rule + same helper as the
-      // client's `tickLocalMountAngles` (core/combat/manualAim.ts, #15).
-      const manualAim = this.playerManualAim.get(playerId);
-      if (manualAim !== undefined) {
-        for (let i = 0; i < mounts.length; i++) {
-          const mount = mounts[i]!;
-          const want = firingIds.has(mount.id)
-            ? manualAimMountBearing(manualAim, pose.angle, mount.baseAngle)
-            : 0;
-          angles[i] = rotateMountToward(angles[i]!, want, mount, DT_SEC);
-        }
-        continue;
-      }
-
-      if (target === null) {
-        // No target in range — slew every mount back to forward (0 in
-        // arc-local frame). Matches user-requested behaviour: "return
-        // the weapons to aiming forwards when an enemy ship is out of
-        // range".
-        for (let i = 0; i < mounts.length; i++) {
-          angles[i] = rotateMountToward(angles[i]!, 0, mounts[i]!, DT_SEC);
-        }
-        continue;
-      }
-
       const cosA = Math.cos(pose.angle);
       const sinA = Math.sin(pose.angle);
       for (let i = 0; i < mounts.length; i++) {
         const mount = mounts[i]!;
-        // Non-firing instance mounts (e.g. a future inactive slot's mounts)
-        // slew back to base — only the firing set tracks the target.
-        if (!firingIds.has(mount.id)) {
+        if (!d.aimTargetFor || !d.aimTargetFor(playerId, mount.id, t)) {
           angles[i] = rotateMountToward(angles[i]!, 0, mount, DT_SEC);
           continue;
         }
-        const mountWorldX = pose.x + (mount.localX * cosA - mount.localY * sinA);
-        const mountWorldY = pose.y + (mount.localX * sinA + mount.localY * cosA);
-        const dx = target.x - mountWorldX;
-        const dy = target.y - mountWorldY;
-        const worldBearing = Math.atan2(-dx, dy);
-        const mountLocalBearing = wrapPi(worldBearing - pose.angle - mount.baseAngle);
-        angles[i] = rotateMountToward(angles[i]!, mountLocalBearing, mount, DT_SEC);
+        const mx = pose.x + (mount.localX * cosA - mount.localY * sinA);
+        const my = pose.y + (mount.localX * sinA + mount.localY * cosA);
+        const bearing = Math.atan2(-(t.x - mx), t.y - my);
+        angles[i] = rotateMountToward(angles[i]!, wrapPi(bearing - pose.angle - mount.baseAngle), mount, DT_SEC);
       }
     }
   }
@@ -595,7 +468,7 @@ export class WeaponMountTicker {
   clearPlayer(playerId: string): void {
     this.playerMountAngles.delete(playerId);
     this.playerSlotTargets.delete(playerId);
-    this.playerManualAim.delete(playerId);
+
     this.deps.onClearPlayer?.(playerId);
   }
 

@@ -89,6 +89,11 @@ describe('SectorRoom integration — dynamic weapon mounts (Phase 4 WS-B3)', () 
     const firedMounts = new Set<string>();
     collectLaserMountIds(cr, firedMounts);
 
+    // Lock-to-fire is universal: put a ship dead ahead and lock it.
+    const target = randomUUID();
+    await harness.connectActive(target, { shipKind: 'fighter', spawnX: 0, spawnY: 300 });
+    harness.lockTarget(player, target);
+
     // Let the worker write the shooter's pose so the fire path resolves a ray.
     await harness.advance(100);
 
@@ -109,6 +114,9 @@ describe('SectorRoom integration — dynamic weapon mounts (Phase 4 WS-B3)', () 
     expect(getPlayerShipStore().get(shipId)!.mounts).toEqual([{ slotId: 'latent-wing-l', weaponId: 'hitscan' }]);
     const state = (room as unknown as { state: SectorState }).state;
     expect(state.ships.get(shipId)!.mounts).toEqual([{ slotId: 'latent-wing-l', weaponId: 'hitscan' }]);
+    // The activated mount forms the new 'wing' group (groups rebuild, locks reset): lock again.
+    harness.lockTarget(player, target);
+    await harness.advance(100);
 
     // AFTER activation: a fire (well past the slot cooldown — tick 100) now
     // resolves the activated latent mount, so a `laser_fired` carries its

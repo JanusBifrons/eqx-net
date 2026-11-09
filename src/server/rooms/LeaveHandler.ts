@@ -85,6 +85,9 @@ export interface LeaveHandlerDeps {
   lingerMs: (playerId: string) => number | undefined;
   /** Drop the captured lingerMs override for a player (called on leave). */
   clearLingerMs: (playerId: string) => void;
+  /** Fire control: stop tracking the pilot's locks (and NPC locks on them).
+   *  Every player is tracked from join, so leaving must free the entry. */
+  forgetLocks?: (playerId: string) => void;
   postToWorker: (cmd: WorkerCmd) => void;
   bus: Bus;
   logger: Logger;
@@ -171,6 +174,7 @@ export class LeaveHandler {
       // Override consumed for this disconnect; drop it so a later rejoin
       // without lingerMs reverts to the production TTL.
       d.clearLingerMs(playerId);
+      d.forgetLocks?.(playerId);
 
       d.serverLogEvent('player_lingered', { playerId });
       auditEvent({ event: 'ship_lingered', sector: d.sectorKey() ?? undefined, playerId, shipInstanceId });
@@ -188,6 +192,7 @@ export class LeaveHandler {
     d.snapshotRing.unregisterEntity(playerId);
     d.playerToActiveShipInstance.delete(playerId);
     d.clearLingerMs(playerId);
+    d.forgetLocks?.(playerId);
 
     if (slot !== undefined) {
       d.playerToSlot.delete(playerId);

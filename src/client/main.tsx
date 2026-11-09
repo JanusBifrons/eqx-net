@@ -12,7 +12,6 @@ import '@fontsource/chakra-petch/500.css';
 import '@fontsource/chakra-petch/700.css';
 import '@fontsource/jetbrains-mono/500.css';
 import '@fontsource/jetbrains-mono/700.css';
-import { isExperimentalHud } from './hud/uiVariant';
 import { HUD } from './hud/tokens';
 import { apiGetMe, exchangeAuthCode } from './auth/authApi';
 
@@ -59,9 +58,8 @@ const theme = createTheme({
     background: { default: '#05070f', paper: '#0d1117' },
   },
   typography: {
-    // The experimental HUDs adopt the HUD label font app-wide so the drawer
-    // and dialogs match; legacy keeps the old stack untouched.
-    fontFamily: isExperimentalHud() ? HUD.font.label : '"Inter", "Roboto Mono", monospace',
+    // The HUD label font app-wide, so the drawer and dialogs match the HUD.
+    fontFamily: HUD.font.label,
   },
 });
 

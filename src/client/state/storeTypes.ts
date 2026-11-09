@@ -189,15 +189,6 @@ export interface UIStore {
   showDevOverlay: boolean;
   showLogPanel: boolean;
   showServerGhost: boolean;
-  /** Auto-fire mode (default ON, persisted): weapons fire automatically at
-   *  in-range hostiles. When OFF, the manual FIRE button / Space-key returns. */
-  autoFireEnabled: boolean;
-  /** Experimental HUD (exp/hud-mobile-first): 'manual' while the pilot aims
-   *  or holds fire, else 'auto'. Discrete, written only on change. */
-  aimMode: 'auto' | 'manual';
-  /** Experimental HUD: auto-fire currently has a hostile in range and is
-   *  engaging. Discrete, written only on change. */
-  autoEngaged: boolean;
   /** Player's chosen ship kind for the next spawn. Persisted per-user via
    *  `shipSelectionStorage`. Defaults to `DEFAULT_SHIP_KIND` until the user
    *  picks one or `applyUserPrefs(userId)` re-reads from storage. */
@@ -279,7 +270,7 @@ export interface UIStore {
   helmActive: boolean;
   helmSpeed: 0 | 1 | 2 | 3;
   /** The local ship's full energy pool — the denominator for the top-center
-   *  EnergyBar (the fill comes per-frame from
+   *  HUD energy fill (the fill comes per-frame from
    *  `ColyseusClient.getPredictedEnergy()`). Set once on spawn from the
    *  ship-kind catalogue; constant per kind, so it lives safely in Zustand
    *  (no per-frame churn). */
@@ -483,9 +474,6 @@ export interface UIStore {
   setShowDevOverlay: (v: boolean) => void;
   setShowLogPanel: (v: boolean) => void;
   setShowServerGhost: (v: boolean) => void;
-  setAutoFireEnabled: (v: boolean) => void;
-  setAimMode: (m: 'auto' | 'manual') => void;
-  setAutoEngaged: (v: boolean) => void;
   setSelectedShipKind: (id: ShipKindId) => void;
   toggleDevOverlay: () => void;
   setShipCount: (n: number) => void;

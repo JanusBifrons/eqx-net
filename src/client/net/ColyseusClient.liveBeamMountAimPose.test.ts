@@ -8,8 +8,8 @@
  * ship *was predicted*, snapping to the drawn pose only after the
  * reconciler lerp settles.
  *
- * Root cause: `tickLocalMountAim` computes the per-mount turret angle
- * (`pickTarget` + `tickLocalMountAngles`) from the PREDICTED pose
+ * Root cause: `tickLocalMountAim` computed the per-mount turret angle
+ * from the PREDICTED pose
  * (`predWorld.getShipState(localId)` → `state.x/y/angle`), but the beam
  * is DRAWN from the RENDERED (mirror) pose (`mirror.ships.get(localId)` →
  * `ship.x/y/angle`, locked by `liveBeamPose.test.ts`). The reconciler
@@ -21,16 +21,16 @@
  * is the POSE `tickLocalMountAim` derives the mount bearing from. We
  * instantiate the real client + a real predWorld, set the mirror angle
  * DIFFERENT from the predWorld angle (the mid-turn lerp-offset condition),
- * place one hostile drone, run the aim tick with a large `dtSec` so the
+ * place one drone the weapon group has LOCKED (fire control: turrets aim at
+ * their group's lock — `fcTickMountAngles`), run the aim tick with a large `dtSec` so the
  * slew saturates to the clamped desired bearing, and assert each active
  * mount's resulting angle matches the MIRROR-pose computation — the pose
  * the beam is drawn from — NOT the predicted pose. Same integration seam
  * as `ColyseusClient.liveBeamPose.test.ts`.
  *
  * The fix is in the CALLER (`tickLocalMountAim`): pass mirror
- * `ship.x/y/angle` to `pickTarget` + `tickLocalMountAngles` instead of the
- * predicted `state.*`. The pure helper `combat/localMountAim.ts` is
- * unchanged.
+ * `ship.x/y/angle` to `fcTickMountAngles` instead of the predicted
+ * `state.*`.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ColyseusGameClient } from './ColyseusClient.js';
@@ -42,6 +42,7 @@ import type { SwarmRenderState } from '@core/contracts/IRenderer';
 interface Internals {
   tickLocalMountAim(dtSec: number): void;
   predWorld: PhysicsWorld | null;
+  _fcGroups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number }> }>;
   mirror: {
     ships: Map<
       string,
@@ -53,7 +54,7 @@ interface Internals {
 }
 const asInternals = (c: ColyseusGameClient): Internals => c as unknown as Internals;
 
-/** Mirror the production aim maths (`combat/localMountAim.ts`) for a given
+/** Mirror the production aim maths (`fcTickMountAngles`) for a given
  *  ship pose, returning the per-mount angle after a saturated slew (clamped
  *  desired bearing). Used to compute BOTH the mirror-pose expectation and
  *  the pred-pose value the bug would produce. */
@@ -106,6 +107,8 @@ describe('local turret aim is computed from the RENDERED (mirror) pose, not the 
       kind: 1, x: DRONE.x, y: DRONE.y, vx: 0, vy: 0, angle: 0,
       radius: 8, isHostileToLocal: true,
     } as unknown as SwarmRenderState);
+    // The interceptor's one weapon group holds a completed lock on it.
+    internals._fcGroups = [{ id: 'primary', m: 0, l: [{ t: 's:1', s: 2, p: 100 }] }];
   });
 
   it('slews each active wing mount toward the target as seen from the mirror pose', () => {
@@ -137,7 +140,7 @@ describe('local turret aim is computed from the RENDERED (mirror) pose, not the 
         `  got        = ${got.toFixed(4)}`,
         `  mirror exp = ${expMirror.toFixed(4)}  <- the pose the beam is DRAWN from`,
         `  pred  exp  = ${expPred.toFixed(4)}  <- the lagging predicted pose (the bug)`,
-        `Fix: tickLocalMountAim must pass mirror ship.x/y/angle to pickTarget + tickLocalMountAngles.`,
+        `Fix: tickLocalMountAim must pass mirror ship.x/y/angle to fcTickMountAngles.`,
       ].join('\n');
 
       expect(got, msg).toBeCloseTo(expMirror, 4);

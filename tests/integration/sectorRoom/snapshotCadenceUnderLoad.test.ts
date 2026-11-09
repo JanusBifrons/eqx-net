@@ -60,6 +60,8 @@ describe('snapshot cadence under hostile combat (plan: imperative-taco-r2)', () 
     // combat — no IDLE→COMBAT warmup tail.
     const room = await harness.connectAs('test-player', {
       startHostile: true,
+      // Lock-to-fire is universal: AUTO groups lock the nearest drone at once.
+      instantLock: true,
       spawnX: 0,
       spawnY: 0,
     });

@@ -144,12 +144,16 @@ export const LockRequestSchema = z
 
 /** Client → server: the pilot's lock line is on `target` (null = on nothing /
  *  let go). The held target builds; a let-go one drains back to 0. Sent only
- *  when the line's target changes, not per frame. */
+ *  when the line's target changes, not per frame. `b` is the line's world
+ *  bearing (`encodeAim`, 0..4095); the server holds a target only when it lies
+ *  on that line (`core/combat/lockLine.ts`, shared with the client's pick), so
+ *  a non-null `target` without `b` is ignored. */
 export const LockTrackSchema = z
   .object({
     type: z.literal('lock_track'),
     groupId: z.string().min(1).max(32),
     target: LockTargetKeySchema.nullable(),
+    b: z.number().int().min(0).max(4095).optional(),
   })
   .strict();
 

@@ -1,17 +1,14 @@
 /**
- * Manual aim (exp/hud-mobile-first) — the shared rule for "the pilot is
- * pointing the guns". ONE owner for both sides of the wire (invariant #15):
- * the client's predicted turret slew (`localMountAim.tickLocalMountAngles`)
- * and the server's authoritative one (`WeaponMountTicker.tickPlayer`) both
- * call `manualAimMountBearing`, and the wire encoding is `encodeAim` /
- * `decodeAim` on both ends.
+ * Aim bearings: the wire encoding (`encodeAim` / `decodeAim`, used by
+ * `lock_track.b`, the lock line's bearing) and the screen-stick / vector →
+ * world-bearing helpers the lock line uses. A WORLD BEARING is radians in the
+ * ship-angle convention: 0 = +y world, `atan2(-dx, dy)`.
  *
- * Aim is a WORLD BEARING (radians, ship-angle convention: 0 = +y world,
- * `atan2(-dx, dy)`), not a point — the guns fire parallel along it. While a
- * pilot aims, each rotating mount slews toward the aim bearing (clamped to
- * its arc by `rotateMountToward`) instead of the auto-picked target.
- * Fixed mounts can't slew; for those the CLIENT turns the hull toward the
- * aim (ordinary turn bits — nothing new crosses the wire for that).
+ * History: this was the manual-aim rule (exp/hud-mobile-first: turrets slewed
+ * to a held aim bearing via `manualAimMountBearing`). Lock-to-fire retired
+ * manual aim (turrets aim at their group's lock); the input `aim` field is
+ * still accepted by the server and ignored. `manualAimMountBearing` stays for
+ * its parity test until the field is dropped from the wire.
  */
 import { wrapPi } from '../ai/WeaponMountController.js';
 
