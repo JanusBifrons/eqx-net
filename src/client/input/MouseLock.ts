@@ -31,6 +31,16 @@ export function cursorBearing(clientX: number, clientY: number, rect: { left: nu
   return stickToWorldBearing(clientX - (rect.left + rect.width / 2), clientY - (rect.top + rect.height / 2));
 }
 
+/**
+ * Pure: does the lock line take this mouse press? Not while a structure is
+ * being placed: placement owns left (place / drag the ghost) and right (cancel)
+ * — see `PixiRenderer.routePlacementPointer` — so a press-drag mustn't also
+ * draw a lock line, nor a right-click cancel also boost.
+ */
+export function mouseLockTakesPress(placementKind: string | null): boolean {
+  return placementKind === null;
+}
+
 /** Pure: key event → fire-control key action (null = not ours). */
 export function fcKeyAction(
   key: string,
@@ -102,6 +112,7 @@ export function installMouseLock(el: HTMLElement): () => void {
   };
   const onDown = (e: PointerEvent): void => {
     if (e.pointerType !== 'mouse') return;
+    if (!mouseLockTakesPress(useUIStore.getState().placementKind)) return;
     if (e.button === 2) { aimInput.setBoostHeld(true); return; }
     if (e.button !== 0) return;
     down = true;
