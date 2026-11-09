@@ -82,6 +82,9 @@ interface GroupState {
 interface PlayerLocks {
   /** testMode `instantLock`: AUTO picks any target, every lock completes at once. */
   instant: boolean;
+  /** testMode `groupMode: 'manual'`: every group starts in MAN (a later
+   *  `setMode` still switches it). */
+  startManual: boolean;
   kindId: string;
   activatedSig: number;
   sensor: number;
@@ -170,11 +173,14 @@ export class LockSubsystem {
   constructor(private readonly deps: LockSubsystemDeps) {}
 
   /** Start tracking a player (every player, on join). `instant` = the testMode
-   *  `instantLock` trigger. */
-  enable(playerId: string, instant = false): void {
+   *  `instantLock` trigger; `groupMode: 'manual'` = the testMode trigger that
+   *  starts every weapon group in MAN (AUTO never self-picks until the test
+   *  switches a group). */
+  enable(playerId: string, instant = false, groupMode: GroupMode | null = null): void {
+    const startManual = groupMode === 'manual';
     const p = this.players.get(playerId);
-    if (p) { p.instant = instant; return; }
-    this.players.set(playerId, { instant, kindId: '', activatedSig: -1, sensor: 1, groups: [], wire: [] });
+    if (p) { p.instant = instant; p.startManual = startManual; return; }
+    this.players.set(playerId, { instant, startManual, kindId: '', activatedSig: -1, sensor: 1, groups: [], wire: [] });
   }
 
   /** The testMode `instantLock` trigger is on for this player. */
@@ -217,7 +223,7 @@ export class LockSubsystem {
     p.wire.length = 0;
     for (const { slot, mounts } of shipGroups(ship.kind, ship.activated)) {
       const geo = groupGeometry(mounts);
-      const mode: GroupMode = prevModes.get(slot.id) ?? slot.defaultMode ?? 'auto';
+      const mode: GroupMode = prevModes.get(slot.id) ?? (p.startManual ? 'manual' : slot.defaultMode ?? 'auto');
       const wire: WireGroup = { id: slot.id, m: mode === 'auto' ? 0 : 1, l: [] };
       p.groups.push({
         id: slot.id,

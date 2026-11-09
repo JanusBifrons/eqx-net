@@ -197,6 +197,10 @@ export function buildJoinSpec(
   // target in reach + arc, and every lock completes at once, so a combat test
   // fires without driving the lock line. testMode-gated server-side.
   if (urlParams.get('instantLock') === '1') extraJoinOptions['instantLock'] = true;
+  // Fire control — `?groupMode=manual`: every weapon group starts in MAN, so
+  // AUTO (wide under instantLock) never kills a target before the test picks
+  // its group. testMode-gated server-side.
+  if (urlParams.get('groupMode') === 'manual') extraJoinOptions['groupMode'] = 'manual';
   if (urlParams.has('injectLeak'))
     extraJoinOptions['injectLeak'] = parseInt(urlParams.get('injectLeak')!, 10);
   if (urlParams.has('initialAngle'))

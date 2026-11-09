@@ -525,6 +525,11 @@ const JoinOptionsSchema = z
      *  that isn't about locking can fire without waiting ~1.5 s per lock.
      *  testMode-gated (ignored on galaxy rooms). */
     instantLock: z.boolean().optional(),
+    /** Test-only bespoke trigger (fire control): every weapon group of this
+     *  pilot starts in MAN, so AUTO never self-picks a target before the test
+     *  sets the group it wants (`instantLock` lets AUTO lock anything at once,
+     *  which can kill a fragile target first). testMode-gated. */
+    groupMode: z.enum(['manual']).optional(),
     /** Test-only: override the disconnect-linger TTL (ms) for THIS player.
      *  On disconnect the room normally lingers the hull for
      *  `LIMBO_DISCONNECT_TTL_MS` (15 min) before the ownerless-evict timer
@@ -8237,7 +8242,8 @@ export class SectorRoom extends Room<SectorState> {
     // Fire control (universal): every pilot is tracked; its groups fire only
     // at LOCKED targets. `instantLock` is the testMode shortcut.
     const instantLock = (this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.instantLock === true;
-    this.locks.enable(playerId, instantLock);
+    const groupMode = (this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success ? parsed.data.groupMode ?? null : null;
+    this.locks.enable(playerId, instantLock, groupMode);
     // Structure turrets lock too; an `instantLock` joiner makes this room's
     // structure locks instant as well (room-wide, test rooms only).
     if (instantLock) this.structureGrid.setInstantTurretLocks(true);
