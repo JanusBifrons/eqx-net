@@ -109,6 +109,17 @@ export const TestAggroSchema = z
   })
   .strict();
 
+/** testMode only (showcase): warp every ship in the room to (x, y), keeping
+ *  their formation (the NPC warp, W2a), so a shot can film a capital fleet
+ *  spooling and jumping on cue. */
+export const TestFleetWarpSchema = z
+  .object({
+    type: z.literal('test_fleet_warp'),
+    x: z.number().finite(),
+    y: z.number().finite(),
+  })
+  .strict();
+
 /** Client → server: cancel an in-flight spool. No effect once the server
  *  has committed (state is IN_TRANSIT or beyond). */
 export const CancelTransitSchema = z
@@ -337,6 +348,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   EngageTransitSchema,
   CancelTransitSchema,
   TestAggroSchema,
+  TestFleetWarpSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,

@@ -77,6 +77,11 @@ describe('FlagshipDirector', () => {
     d.start();
     clock.advance(2000);
     d.tick(now());
+    // The flagship goes first (it must turn to face the jump; capitals turn slowly).
+    expect(new Set(room.warps.map((w) => w.id))).toEqual(new Set(['flagship-0-lead']));
+    // Once it faces the jump (this fake has no spool), the escorts follow.
+    clock.advance(1500);
+    d.tick(now());
     const ids = new Set(room.warps.map((w) => w.id));
     expect(ids.size).toBe(1 + FLEET_ESCORT_KINDS.length); // flagship + every escort
     const lead = room.warps.find((w) => w.id.endsWith('-lead'))!;

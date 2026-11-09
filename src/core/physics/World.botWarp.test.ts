@@ -42,6 +42,19 @@ describe('World.botWarp', () => {
     expect(Math.hypot(end.x - target.x, end.y - target.y)).toBeLessThan(50);
   });
 
+  it('a slow-turning capital keeps spooling until it faces its target, then engages (no snap round)', async () => {
+    const w = await PhysicsWorld.create();
+    w.spawnShip('bot', 0, 0, 'battleship'); // nose north; the target is due west
+    const target = { x: -60_000, y: 0 };
+    let ticks = 0;
+    while (w.warpPhase('bot') !== 'cruise' && ticks < 3000) { step(w, target); ticks++; } // 90° at the 9°/s floor ≈ 10 s
+    expect(ticks).toBeGreaterThan(WARP_SPOOL_TICKS + 30); // a longer spool than a fighter's
+    expect(w.warpPhase('bot')).toBe('cruise');
+    // It engaged facing the target: nose (-sin θ, cos θ) ≈ (-1, 0).
+    const s0 = w.getShipState('bot')!;
+    expect(-Math.sin(s0.angle)).toBeLessThan(-0.99);
+  });
+
   it('dropping the request during the spool cancels it; with no warp it never owns the body', async () => {
     const w = await bot();
     expect(w.botWarp('bot', null)).toBe(false);

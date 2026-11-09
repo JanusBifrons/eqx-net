@@ -26,7 +26,7 @@ describe('SectorRoom integration — flagship fleets (W2a)', () => {
     return room.getBotPose(id)!;
   }
 
-  it('arrives at a gate pocket with escorts on station round it, warps on, and resumes after a restart', { timeout: 60_000 }, async () => {
+  it('arrives at a gate pocket with escorts on station round it, warps on, and resumes after a restart', { timeout: 90_000 }, async () => {
     h = await bootLivingWorldTestServer({ sectors: [A, B], botCount: 0, seed: 5, solarSectors: true } as never);
     const rooms = new Map<string, LivingWorldRoom>([
       [A, h.getRoom(A) as unknown as LivingWorldRoom],
@@ -55,13 +55,19 @@ describe('SectorRoom integration — flagship fleets (W2a)', () => {
     // Dwell over: the whole fleet warps to another (non-gate) pocket.
     clock.now += 61_000;
     d.tick(clock.now);
-    const end = Date.now() + 20_000;
+    // The flagship turns to face the jump first (up to ~20 s for a capital);
+    // the director sends the escorts when it is nearly lined up. Tick it on
+    // its real cadence meanwhile.
+    const end = Date.now() + 45_000;
     let landed: { x: number; y: number } | null = null;
+    let sinceTick = 0;
     while (Date.now() < end) {
       await h.advance(250);
+      if ((sinceTick += 250) >= 1500) { sinceTick = 0; clock.now += 1500; d.tick(clock.now); }
       const p = poseOf(room, lead);
       const site = sectorSites(A).find((s) => s.kind !== 'gate' && Math.hypot(p.x - s.x, p.y - s.y) < s.r + 300);
-      if (site && (room.botWarpPhase?.(lead) ?? 0) === 0) { landed = p; break; }
+      const escortsIn = FLEET_ESCORT_KINDS.every((_, i) => { const e = poseOf(room, `flagship-0-e${i}`); return (room.botWarpPhase?.(`flagship-0-e${i}`) ?? 0) === 0 && Math.hypot(e.x - p.x, e.y - p.y) < escortRing(fleet!.kind, FLEET_ESCORT_KINDS[i]!) + 2000; });
+      if (site && escortsIn && (room.botWarpPhase?.(lead) ?? 0) === 0) { landed = p; break; }
     }
     expect(landed).not.toBeNull();
     for (let i = 0; i < FLEET_ESCORT_KINDS.length; i++) {

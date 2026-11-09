@@ -35,11 +35,43 @@ const ARRIVE_LIFE_S = 0.6;
 const SPEED_LINES = 28;
 const FIRE_CORE = 0xffe6a8, FIRE_OUT = 0xff6a1c, STREAK = 0xcfe4ff;
 
+/** Effect proportions for a ship whose stern sits `stern` u behind its centre. */
+export interface WarpFxSizes {
+  trailLen: number; streakLen: number; arriveLen: number;
+  /** Multiples of the stern. */
+  gapK: number; coreK: number; outK: number; streakK: number; flashK: number;
+}
+
+/**
+ * W2c — warp effects at any ship size. Up to fighter size (stern ≤ 80 u)
+ * these are exactly the original numbers. A capital (stern in the thousands)
+ * used fixed fighter lengths with stern-sized widths: its trails came out
+ * shorter than they were wide (blocky rectangles), 2 km apart, and its flash
+ * ~9 km across. Bigger ships get lengths that grow with the hull and widths
+ * that shrink relative to it (a long thin hull), reaching full scale by
+ * stern 800 u. Pure (tests).
+ */
+export function warpFxSizes(stern: number): WarpFxSizes {
+  const big = Math.max(0, Math.min(1, (stern - 80) / 720));
+  return {
+    trailLen: Math.max(TRAIL_LEN, stern * 10 * big),
+    streakLen: Math.max(STREAK_LEN, stern * 6 * big),
+    arriveLen: Math.max(ARRIVE_TRAIL_LEN, stern * 1.5 * big),
+    gapK: 0.4 - 0.3 * big,
+    coreK: 0.06 - 0.04 * big,
+    outK: 0.2 - 0.15 * big,
+    streakK: 0.8 - 0.7 * big,
+    flashK: 1 - 0.65 * big,
+  };
+}
+
 /** A soft round glow, built once and scaled (centre at 0,0, radius 1). */
 function glowGfx(color: number): Graphics {
   const g = new Graphics();
-  const rings = 7;
-  for (let i = rings; i >= 1; i--) g.circle(0, 0, i / rings).fill({ color, alpha: 0.14 });
+  // 14 fine rings (same total as the old 7 at 0.14): at capital size the
+  // coarse rings showed as hard bands.
+  const rings = 14;
+  for (let i = rings; i >= 1; i--) g.circle(0, 0, i / rings).fill({ color, alpha: 0.07 });
   g.blendMode = 'add';
   return g;
 }
@@ -258,19 +290,20 @@ export class WarpFx {
     if (t >= life) { b.live = false; b.root.visible = false; return false; }
     const px = this.px;
     const ang = Math.atan2(b.dy, b.dx);
-    const gap = Math.max(b.stern * 0.4, px * 4);
+    const sz = warpFxSizes(b.stern);
+    const gap = Math.max(b.stern * sz.gapK, px * 4);
     const nx = -b.dy * gap, ny = b.dx * gap;
     const fade = 1 - t / life;
     // Trails reach out fast (the acceleration), then hold and burn down.
-    let reach = depart ? TRAIL_LEN * Math.min(1, t / TRAIL_GROW_S) : ARRIVE_TRAIL_LEN;
+    let reach = depart ? sz.trailLen * Math.min(1, t / TRAIL_GROW_S) : sz.arriveLen;
     // The pilot's own ship accelerates away: its trails stop at its stern.
     const flown = depart && b.follow ? Math.max(0, (this.localX - b.x) * b.dx + (this.localY - b.y) * b.dy) : Infinity;
     if (reach > flown) reach = flown;
     if (depart) this.lastDepartReach = reach;
     // Arrival trails lie BEHIND the ship (it came from there).
     const sx = depart ? b.x : b.x - b.dx * reach, sy = depart ? b.y : b.y - b.dy * reach;
-    const coreW = Math.max(b.stern * 0.06, px * 1.2);
-    const outW = Math.max(b.stern * 0.2, px * 3.5);
+    const coreW = Math.max(b.stern * sz.coreK, px * 1.2);
+    const outW = Math.max(b.stern * sz.outK, px * 3.5);
     const seg = reach / SEGS;
     for (let side = 0; side < 2; side++) {
       const ox = side === 0 ? nx : -nx, oy = side === 0 ? ny : -ny;
@@ -289,16 +322,16 @@ export class WarpFx {
     }
     // The blur streak: shoots out along the run and fades fast.
     const st = Math.min(1, t / STREAK_LIFE_S);
-    const sw = Math.max(b.stern * 0.8, px * 4);
-    if (depart) line(b.streak, b.x, b.y, ang, Math.min(flown, STREAK_LEN * (0.3 + 0.7 * st)), sw, 0.4 * (1 - st));
+    const sw = Math.max(b.stern * sz.streakK, px * 4);
+    if (depart) line(b.streak, b.x, b.y, ang, Math.min(flown, sz.streakLen * (0.3 + 0.7 * st)), sw, 0.4 * (1 - st));
     else {
-      const l = ARRIVE_STREAK_LEN * (1 - st);
+      const l = Math.max(ARRIVE_STREAK_LEN, sz.arriveLen) * (1 - st);
       line(b.streak, b.x - b.dx * l, b.y - b.dy * l, ang, l, sw * 0.7, 0.22 * (1 - st));
     }
     const ft = Math.min(1, t / FLASH_LIFE_S);
     // The arrival flash is the only sign of a ship dropping in: a touch bigger and brighter.
     const fa = depart ? 0.6 : 0.9, fr = depart ? 1 : 1.4;
-    place(b.flash, b.x, b.y, Math.max(b.stern * (1 + 2 * ft), px * (6 + 12 * ft)) * fr, fa * (1 - ft));
+    place(b.flash, b.x, b.y, Math.max(b.stern * sz.flashK * (1 + 2 * ft), px * (6 + 12 * ft)) * fr, fa * (1 - ft));
     return true;
   }
 

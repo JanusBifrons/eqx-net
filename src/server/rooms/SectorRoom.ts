@@ -330,6 +330,7 @@ import {
   EngageTransitSchema,
   CancelTransitSchema,
   TestAggroSchema,
+  TestFleetWarpSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,
@@ -1106,7 +1107,7 @@ export class SectorRoom extends Room<SectorState> {
   private pendingJoin = new Map<string, PendingJoinRecord>();
   /** W2a NPC warp-to: bots sent on a warp (`warpBot`), until they have
    *  landed and their arrival window has passed. Empty in normal play. */
-  private readonly npcWarps = new Map<string, { lastPhase: 0 | 1 | 2; arrivedUntil: number; started: boolean; idleTicks: number }>();
+  private readonly npcWarps = new Map<string, { entityId: number; lastPhase: 0 | 1 | 2; arrivedUntil: number; started: boolean; idleTicks: number }>();
   /** Phase 4 warp travel: a ship on its warp run is out of the world
    *  (rooms/warpTravel.ts). Ticked after the pending-join drain. */
   private readonly warpTravel = new WarpTravelTracker({
@@ -2029,6 +2030,7 @@ export class SectorRoom extends Room<SectorState> {
       disabledMsOf: (playerId) => this.gateGuard.remainingMs(playerId, Date.now()),
       droneFactionOf: (id) => (this.patrols.count > 0 ? this.patrols.factionOf(id) : undefined),
       droneWarpOf: (id) => (this.npcWarps.size > 0 ? this.botWarpPhase(id) : 0),
+      warpingDrones: () => this.npcWarps,
       depositProgressOf: (shipInstanceId) => this.depositProgress.get(shipInstanceId),
       warpArrived: (playerId) => this.warpTravel.arrivedRecently(playerId, this.serverTick),
       isJoining: (playerId) => this.pendingJoin.has(playerId),
@@ -2861,6 +2863,29 @@ export class SectorRoom extends Room<SectorState> {
         return;
       }
       this.markAllDronesHostileTo(playerId);
+    });
+
+    // W2c showcase: warp the room's ships to (x, y), keeping the formation
+    // (offsets from the biggest ship, the flagship).
+    this.onMessage('test_fleet_warp', (client: Client, raw: unknown) => {
+      if (!(this.testMode || ALLOW_DEV_OVERRIDES)) return;
+      const parsed = TestFleetWarpSchema.safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, 'test_fleet_warp');
+        return;
+      }
+      let lead: { id: string; slot: number; radius: number } | null = null;
+      for (const rec of this.swarmRegistry.all()) if (rec.kind === 1 && (lead === null || rec.radius > lead.radius)) lead = rec;
+      if (lead === null) return;
+      const lb = slotBase(lead.slot);
+      const lx = this.sabF32[lb + SLOT_X_OFF]!, ly = this.sabF32[lb + SLOT_Y_OFF]!;
+      for (const rec of [...this.swarmRegistry.all()]) { // TODO: alloc-debt (test cue only)
+        if (rec.kind !== 1) continue;
+        const b = slotBase(rec.slot);
+        const tx = parsed.data.x + this.sabF32[b + SLOT_X_OFF]! - lx, ty = parsed.data.y + this.sabF32[b + SLOT_Y_OFF]! - ly;
+        this.warpBot(rec.id, tx, ty);
+        this.setBotMoveTarget(rec.id, tx, ty); // hold there after the drop
+      }
     });
 
     this.onMessage('cancel_transit', (client: Client, raw: unknown) => {
@@ -6636,7 +6661,7 @@ export class SectorRoom extends Room<SectorState> {
     // inside an asteroid belt rock killed an escort in the first test run).
     const p = this.landingPoint(botId, Math.max(-lim, Math.min(lim, x)), Math.max(-lim, Math.min(lim, y)), rec.shipKind);
     this.postToWorker({ type: 'BOT_WARP', slot: rec.slot, x: p.x, y: p.y });
-    if (!this.npcWarps.has(botId)) this.npcWarps.set(botId, { lastPhase: 0, arrivedUntil: -1, started: false, idleTicks: 0 });
+    if (!this.npcWarps.has(botId)) this.npcWarps.set(botId, { entityId: rec.entityId, lastPhase: 0, arrivedUntil: -1, started: false, idleTicks: 0 });
     return true;
   }
 

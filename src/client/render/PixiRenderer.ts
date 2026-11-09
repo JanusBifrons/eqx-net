@@ -2884,6 +2884,10 @@ export class PixiRenderer implements IRenderer {
   setSector(sectorKey: string | null): void {
     const prev = this._sectorKey;
     this._sectorKey = sectorKey;
+    // W3: each sector has its own sun. GPU-lit art re-lights at once (the lit
+    // pass reads the rig each frame); baked art re-bakes, keyed by the rig.
+    const art = this._artCtx.art;
+    if (art) { art.setSector(sectorKey); this._artCtx.sunAz = art.lightRig.sunAz; }
     this._backdrop?.setSector(sectorKey);
     // Moving to another sector starts a new art visit: its art goes into
     // fresh pages, and the old sector's are freed once nothing draws them
