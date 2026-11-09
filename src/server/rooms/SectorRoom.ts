@@ -230,8 +230,7 @@ import { ROSTER_CAP, type ActivatedMount } from '../playerShips/PlayerShipStore.
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { LockSubsystem, type LockTargetView } from './LockSubsystem.js';
 import { NpcLockSubsystem } from './NpcLockSubsystem.js';
-/** Fire control: a mount fires only when its barrel is within this of its lock (rad). */
-const FC_MOUNT_FIRE_TOLERANCE = 0.2;
+import { barrelBearsOn } from '../../core/combat/fireControlBearing.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { MissileSimulation } from './MissileSimulation.js';
@@ -4159,10 +4158,8 @@ export class SectorRoom extends Room<SectorState> {
   private mountBearsOnLock(pid: string, mountId: string, ox: number, oy: number, angle: number): boolean {
     if (!this.locks.isEnabled(pid)) return true;
     if (!this.lockAimTarget(pid, mountId, this._fcBearPose)) return false;
-    const want = Math.atan2(-(this._fcBearPose.x - ox), this._fcBearPose.y - oy);
-    let d = want - angle;
-    d -= Math.round(d / (2 * Math.PI)) * 2 * Math.PI;
-    return Math.abs(d) <= FC_MOUNT_FIRE_TOLERANCE;
+    // Shared with the client's ghost-bolt pass (#15).
+    return barrelBearsOn(ox, oy, angle, this._fcBearPose.x, this._fcBearPose.y);
   }
   private readonly _fcBearPose = { x: 0, y: 0, vx: 0, vy: 0 };
 

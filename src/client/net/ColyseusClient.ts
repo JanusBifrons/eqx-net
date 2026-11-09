@@ -148,8 +148,8 @@ import { tuningFor } from '@shared-types/shipScale/lookup';
 
 /** No aim guides (the mirror's `localAimMountIds` when nothing is in range). */
 /** Fire control: a fixed gun fires only within this many radians of the nose. */
-/** A group fires only when a barrel is this close to its lock (rad); matches the server. */
-const FC_MOUNT_FIRE_TOLERANCE = 0.2;
+// A group fires only when a barrel bears on its lock: the shared rule (#15).
+import { barrelBearsOn } from '@core/combat/fireControlBearing';
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
 import { getWeapon, weaponAutoFireRange, type WeaponDef } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
@@ -6186,20 +6186,37 @@ export class ColyseusGameClient {
    * on its own cooldown (auto always; manual while held / Space on the active
    * group). Fixed guns wait until the target is inside their nose cone.
    */
-  /** Does any mount of `groupId` point within tolerance of world bearing `want`? */
-  private fcGroupBears(groupId: string, shipAngle: number, want: number): boolean {
+  /**
+   * Does any mount of `groupId` bear on the target at (tx, ty)? Measured from
+   * each mount's world origin along its barrel, exactly as the server's fire
+   * gate does (shared `barrelBearsOn`, #15).
+   */
+  private fcGroupBears(groupId: string, sx: number, sy: number, shipAngle: number, tx: number, ty: number): boolean {
     const localId = this.mirror.localPlayerId;
     const ship = localId ? this.mirror.ships.get(localId) : undefined;
     const mounts = getShipKind(ship?.kind ?? null).mounts ?? [];
     const angles = ship?.mountAngles;
+    const cosA = Math.cos(shipAngle);
+    const sinA = Math.sin(shipAngle);
     for (let i = 0; i < mounts.length; i++) {
       const m = mounts[i]!;
       if (this._fcMountGroup.get(m.id) !== groupId) continue;
-      const a = shipAngle + m.baseAngle + (angles?.[i] ?? 0);
-      if (Math.abs(wrapPi(want - a)) <= FC_MOUNT_FIRE_TOLERANCE) return true;
+      const ox = sx + (m.localX * cosA - m.localY * sinA);
+      const oy = sy + (m.localX * sinA + m.localY * cosA);
+      if (barrelBearsOn(ox, oy, shipAngle + m.baseAngle + (angles?.[i] ?? 0), tx, ty)) return true;
     }
     return false;
   }
+
+  /** Does this one mount (world origin + barrel angle) bear on its group's aim target? */
+  private fcMountBears(mountId: string, ox: number, oy: number, angle: number): boolean {
+    const gid = this._fcMountGroup.get(mountId);
+    if (gid === undefined) return false;
+    const key = this.fcGroupAimKey(gid);
+    if (key === null || !this.fcTargetPose(key, this._fcBearPose)) return false;
+    return barrelBearsOn(ox, oy, angle, this._fcBearPose.x, this._fcBearPose.y);
+  }
+  private readonly _fcBearPose = { x: 0, y: 0 };
 
   private fcFireTick(spaceHeld: boolean): void {
     const localId = this.mirror.localPlayerId;
@@ -6223,7 +6240,7 @@ export class ColyseusGameClient {
       // Only when a barrel of this group is on the target (fixed guns: the
       // nose; turrets: their slewed angle — a turret parked at its arc limit
       // never is). Same rule the server enforces (#15).
-      if (!this.fcGroupBears(g.id, st.angle, Math.atan2(-dx, dy))) continue;
+      if (!this.fcGroupBears(g.id, st.x, st.y, st.angle, this._fcPose.x, this._fcPose.y)) continue;
       const last = this._fcLastFireMs.get(g.id);
       if (last !== undefined && nowMs - last < info.cooldownMs) continue;
       if (!canAfford(this.predEnergy, info.energyCost)) continue;
@@ -6596,6 +6613,10 @@ export class ColyseusGameClient {
         const angleIdx = this.instanceMountIndex(localShip?.kind, localShip?.activatedMounts, mount.id);
         const currentMountAngle = angleIdx >= 0 ? (mountAngles?.[angleIdx] ?? 0) : 0;
         const mountFireAngle = state.angle + mount.baseAngle + currentMountAngle;
+        // Fire control: the server fires only mounts that bear on their lock,
+        // so a mount that doesn't gets no predicted bolt (the "ghost bolts"
+        // from capital turrets still slewing). Same rule, shared (#15).
+        if (this._fireSlotOverride !== null && !this.fcMountBears(mount.id, mountWorldX, mountWorldY, mountFireAngle)) continue;
         const fwdX = -Math.sin(mountFireAngle);
         const fwdY = Math.cos(mountFireAngle);
         const muzzleD = this.localMuzzle(mount);
