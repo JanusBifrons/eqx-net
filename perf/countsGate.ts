@@ -38,3 +38,17 @@ export function calibrate(values: readonly number[], floor = 1): number {
   const max = Math.max(...values);
   return Math.max(floor, Math.ceil(max * 1.25));
 }
+
+/** Pool several runs of one scene × lighting window into one reading. Frames
+ *  add up (more samples of the same window: how a slow host reaches
+ *  MIN_COUNT_FRAMES without lowering it); every count takes its WORST run, so
+ *  pooling can never hide a regression one run shows. */
+export function poolReadings(rs: readonly ClientCountReading[]): ClientCountReading {
+  if (rs.length === 0) throw new Error('poolReadings: no readings');
+  const worst = (k: 'drawCallsP95' | 'displayObjects' | 'uploadTexels' | 'atlasPages'): number => Math.max(...rs.map((r) => r[k]));
+  return {
+    drawCallsP95: worst('drawCallsP95'), displayObjects: worst('displayObjects'),
+    uploadTexels: worst('uploadTexels'), atlasPages: worst('atlasPages'),
+    frames: rs.reduce((n, r) => n + r.frames, 0),
+  };
+}

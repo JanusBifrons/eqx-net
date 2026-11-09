@@ -33,7 +33,7 @@ import { CaptureServers, defaultPorts } from '../showcase/servers.js';
 import { listListeners } from '../showcase/hostLoad.js';
 import { perfSceneById } from '../src/shared-types/perf/perfScenes.js';
 import { CLIENT_COUNT_BUDGETS } from '../src/shared-types/perf/perfBudgets.js';
-import { judgeCounts, calibrate, type ClientCountReading } from './countsGate.js';
+import { judgeCounts, calibrate, poolReadings, type ClientCountReading } from './countsGate.js';
 
 /** Software GL everywhere: the same rasteriser on a laptop, a desktop and CI. */
 const SOFTWARE_GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'];
@@ -53,7 +53,7 @@ const VIEWPORT = { width: 960, height: 540 };
  *  so the counts) is unchanged. */
 const DEVICE_SCALE = 0.5;
 
-interface Args { scenes: string[]; shiplight: string[]; worker: string | null; calibrate: boolean; headed: boolean; out: string | undefined }
+interface Args { scenes: string[]; shiplight: string[]; worker: string | null; calibrate: boolean; headed: boolean; out: string | undefined; runs: number }
 
 function parseArgs(argv: string[]): Args {
   const get = (k: string): string | undefined => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
@@ -64,6 +64,9 @@ function parseArgs(argv: string[]): Args {
     calibrate: argv.includes('--calibrate'),
     headed: argv.includes('--headed'),
     out: get('--out'),
+    // Runs per scene × lighting, pooled (poolReadings): a slow host renders
+    // too few frames in one window (CI SwiftShader: 15–18 against the 20 bar).
+    runs: Math.max(1, Number(get('--runs') ?? '1') || 1),
   };
 }
 
@@ -137,7 +140,7 @@ async function main(): Promise<void> {
   const runDir = path.resolve('perf', '.run', `counts-${process.pid}`);
   mkdirSync(runDir, { recursive: true });
   const servers = new CaptureServers(process.cwd(), runDir, ports);
-  console.log(`perf:counts · scenes ${args.scenes.join(', ')} · shiplight ${args.shiplight.join(', ')} · ports ${ports.server}/${ports.vite} · window t = ${WINDOW_START_MS}–${WINDOW_END_MS} ms scene time`);
+  console.log(`perf:counts · scenes ${args.scenes.join(', ')} · shiplight ${args.shiplight.join(', ')} · ${args.runs} run(s) each · ports ${ports.server}/${ports.vite} · window t = ${WINDOW_START_MS}–${WINDOW_END_MS} ms scene time`);
   const rows: Row[] = [];
   let browser: Browser | null = null;
   try {
@@ -145,7 +148,10 @@ async function main(): Promise<void> {
     browser = await chromium.launch({ headless: !args.headed, args: SOFTWARE_GL_ARGS });
     for (const sceneId of args.scenes) {
       for (const sl of args.shiplight) {
-        const row = await measure(browser, servers, sceneId, sl, args.worker);
+        const runs: Row[] = [];
+        for (let i = 0; i < args.runs; i++) runs.push(await measure(browser, servers, sceneId, sl, args.worker));
+        const bad = runs.find((x) => !x.reading);
+        const row: Row = bad ?? { ...runs[0]!, reading: poolReadings(runs.map((x) => x.reading!)), raw: runs.map((x) => x.raw) };
         rows.push(row);
         const r = row.reading;
         console.log(r

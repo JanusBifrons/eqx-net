@@ -25,7 +25,7 @@ export const warpOnlooker: Shot = {
   title: 'Someone warps out',
   caption: 'Seen from outside: the engines build, the ship streaks away and leaves two burning trails behind it.',
   features: ['P4'],
-  docs: ['warp-to', 'travel-state'],
+  docs: ['warp-to', 'travel-state', 'solar-system-sectors'],
   reel: false,
   server: 'solar',
   target: { galaxy: 'sol-prime', params: { solar: '1', spawnX: 0, spawnY: 0, art: 'machined', fx: 'new' } },

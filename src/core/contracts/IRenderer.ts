@@ -180,6 +180,10 @@ export interface SwarmRenderState {
   /** v4 M2 — a garrison's patrol ship: the faction it flies for (snapshot
    *  `drones[].fac`). The sprite takes the faction's colour. */
   faction?: string;
+  /** W2a NPC warp-to (snapshot `drones[].warp`): 1 spool, 2 run (sprite
+   *  hidden, departure drawn), 3 just arrived. Same meaning as
+   *  `ShipRenderState.warp`; the renderer feeds both to WarpFx. */
+  warp?: 1 | 2 | 3;
   /** Mineable resource pool for an asteroid (kind 0), decoded from the snapshot
    *  `asteroids[]` slice (WS-4 Phase 6 / R2.23 enabler). The server emits these
    *  ONLY for MINED in-interest asteroids (`resources < resourcesMax`), so

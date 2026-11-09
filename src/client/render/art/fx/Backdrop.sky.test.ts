@@ -8,6 +8,7 @@ import { Sprite, Texture } from 'pixi.js';
 import type { ArtHandle, ArtService } from '../ArtService.js';
 import { DEFAULT_RIG } from '../shade.js';
 import { Backdrop } from './Backdrop.js';
+import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../../../shared-types/sectorBounds.js';
 
 function fakeArt(): ArtService {
   const h = (): ArtHandle => ({ key: 'k', job: { type: 'fx', id: 'x' }, rig: DEFAULT_RIG, state: 'ready', ship: null, struct: null,
@@ -30,7 +31,9 @@ describe('Backdrop sky (C1)', () => {
     const b = new Backdrop(fakeArt(), () => 'high');
     b.setSector('emerald-span');
     const seen = new Set<number>();
-    for (let x = -5000; x <= 5000; x += 500) {
+    // Sweep the whole sector (±5,000 u classic, ±200,000 u solar-system).
+    const H = SECTOR_PLAYABLE_HALF_EXTENT;
+    for (let x = -H; x <= H; x += H / 10) {
       b.update(cam(x, 0), 0);
       expect(b.visibleLandmarks).toBeLessThanOrEqual(40);
       seen.add(b.visibleLandmarks);

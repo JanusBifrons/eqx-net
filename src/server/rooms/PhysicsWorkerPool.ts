@@ -41,7 +41,8 @@ export interface PooledWorld {
   /** Free the world (on room dispose). */
   detach(): void;
   /** This world's worker heap (shared with its other worlds). */
-  heapStats(): Promise<{ usedBytes: number; totalBytes: number } | null>;
+  /** `gc`: ask the worker to collect first (dev only; needs --expose-gc). */
+  heapStats(gc?: boolean): Promise<{ usedBytes: number; totalBytes: number } | null>;
   /** This world's worker event-loop utilisation (shared with its other worlds).
    *  Perf scenes report it as the worker's busy fraction (print-only). */
   elu(prev?: EventLoopUtilization): EventLoopUtilization | null;
@@ -119,9 +120,13 @@ export class PhysicsWorkerPool {
         const p = (worker as Worker & { performance?: { eventLoopUtilization?: (a?: EventLoopUtilization) => EventLoopUtilization } }).performance;
         return p?.eventLoopUtilization ? p.eventLoopUtilization(prev) : null;
       },
-      heapStats: async () => {
+      heapStats: async (gc = false) => {
         const w = worker as Worker & { getHeapStatistics?: () => Promise<{ used_heap_size: number; total_heap_size: number }> };
         if (!w.getHeapStatistics) return null;
+        if (gc) {
+          worker.postMessage({ type: 'GC' });
+          await new Promise((r) => setTimeout(r, 300)); // let the worker run it first
+        }
         try {
           const h = await w.getHeapStatistics();
           return { usedBytes: h.used_heap_size, totalBytes: h.total_heap_size };

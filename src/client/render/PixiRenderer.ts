@@ -33,7 +33,6 @@ import { MachinedShipSprite } from './art/MachinedShipSprite.js';
 import { litPass } from './art/litPass.js';
 import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach } from './art/lightingSettings.js';
 import { WarpSpoolFx, type SpoolFxShip, type Nozzle } from './pixi/WarpSpoolFx.js';
-import type { ShipRenderState } from '@core/contracts/IRenderer';
 import { WARP_SPOOL_TICKS } from '@core/physics/warpDrive';
 import { MachinedFlatSprite } from './art/MachinedFlatSprite.js';
 import { warmUpJobs } from './art/warmUp.js';
@@ -2538,21 +2537,39 @@ export class PixiRenderer implements IRenderer {
       if (stern === undefined) { stern = engineProfileForKind(ship.kind).sternOffset; this._warpStern.set(kind, stern); }
       s.x = sp.x; s.y = sp.y; s.rotation = sp.rotation; s.warp = ship.warp; s.stern = stern; s.isLocal = id === local;
       fx.draw(id, s);
-      this.drawSpoolFx(id, ship, sp, id === local ? mirror.localSpoolMs : undefined);
+      this.drawSpoolFx(id, ship.warp, ship.kind, sp, id === local ? mirror.localSpoolMs : undefined);
+    }
+    // W2a — NPCs warping (flagship fleets). Fed while their phase is set and
+    // one frame after it clears, so a cancelled spool settles to idle instead
+    // of WarpFx reading the disappearance as a departure.
+    const fed = this._droneWarpFed;
+    if (mirror.swarm) for (const [eid, e] of mirror.swarm) {
+      if (e.kind !== 1) continue;
+      const key = this.droneWarpKey(eid);
+      if (e.warp === undefined && !fed.has(key)) continue;
+      const sp = this.sprites.get(key);
+      if (!sp) continue;
+      const kindId = e.shipKind ?? '';
+      let stern = this._warpStern.get(kindId);
+      if (stern === undefined) { stern = engineProfileForKind(e.shipKind).sternOffset; this._warpStern.set(kindId, stern); }
+      s.x = sp.x; s.y = sp.y; s.rotation = sp.rotation; s.warp = e.warp; s.stern = stern; s.isLocal = false;
+      fx.draw(key, s);
+      this.drawSpoolFx(key, e.warp, e.shipKind, sp, undefined);
+      if (e.warp === undefined) fed.delete(key); else fed.add(key);
     }
     fx.endFrame();
     this._spoolFx.endFrame();
   }
 
   /** One ship's spool-up (progress-driven, sized from its own nozzles). */
-  private drawSpoolFx(id: string, ship: ShipRenderState, sp: Container, spoolMs: number | undefined): void {
+  private drawSpoolFx(id: string, warp: number | undefined, kind: string | undefined, sp: Container, spoolMs: number | undefined): void {
     const now = performance.now();
-    const phase = ship.warp === 1 ? 1 : 0;
+    const phase = warp === 1 ? 1 : 0;
     if (phase !== (this._spoolPhase.get(id) ?? 0)) {
       if (phase === 1) { this._spoolPhase.set(id, 1); this._spoolStart.set(id, now); }
       else { this._spoolPhase.delete(id); this._spoolStart.delete(id); }
     }
-    const kindId = ship.kind ?? 'fighter';
+    const kindId = kind ?? 'fighter';
     let k = this._spoolKind.get(kindId);
     if (!k) {
       // Classic-look ships have no baked nozzles: one at the stern.
@@ -2929,6 +2946,10 @@ export class PixiRenderer implements IRenderer {
   setSector(sectorKey: string | null): void {
     const prev = this._sectorKey;
     this._sectorKey = sectorKey;
+    // W3: each sector has its own sun. GPU-lit art re-lights at once (the lit
+    // pass reads the rig each frame); baked art re-bakes, keyed by the rig.
+    const art = this._artCtx.art;
+    if (art) { art.setSector(sectorKey); this._artCtx.sunAz = art.lightRig.sunAz; }
     this._backdrop?.setSector(sectorKey);
     // Moving to another sector starts a new art visit: its art goes into
     // fresh pages, and the old sector's are freed once nothing draws them
@@ -2985,6 +3006,19 @@ export class PixiRenderer implements IRenderer {
 
   private readonly _warpShipScratch: WarpFxShip = { x: 0, y: 0, rotation: 0, warp: undefined, stern: 0, isLocal: false };
   private readonly _warpStern = new Map<string, number>();
+  /** W2a — drones fed to WarpFx last frame (their sprite keys). */
+  private readonly _droneWarpFed = new Set<string>();
+  /** W2a — `swarm-<id>` keys, built once per drone (no per-frame string). */
+  private readonly _droneWarpKeys = new Map<number, string>();
+  private droneWarpKey(eid: number): string {
+    let k = this._droneWarpKeys.get(eid);
+    if (k === undefined) {
+      k = `swarm-${eid}`;
+      if (this._droneWarpKeys.size > 4096) this._droneWarpKeys.clear(); // bound it; rebuilt on demand
+      this._droneWarpKeys.set(eid, k);
+    }
+    return k;
+  }
   /** Scratch for the test-only particle count in `artStats`. */
   private readonly _engineDbgScratch: number[] = [];
   /** Top speed per ship kind (normalises a drone's engine level). */

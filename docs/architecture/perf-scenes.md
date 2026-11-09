@@ -124,6 +124,7 @@ Budgets live in `src/shared-types/perf/perfBudgets.ts` (`COUNT_BUDGETS`, `CLIENT
 pnpm perf:counts                          # gate: 2 scenes × 2 lighting levels, ~2–3 min
 pnpm perf:counts --calibrate              # print readings + the budgets they'd set
 pnpm perf:counts --scenes wide-view --shiplight baked --worker 0
+pnpm perf:counts --runs 2                  # pool 2 runs per window (CI: SwiftShader renders 15–18 frames a run; frames add, counts take the worst run)
 ```
 
 `pnpm bench:gc` stays out of CI. It gates GC pause times and major-GC counts, which depend on the machine (its baseline had 0 major GCs and a run on 2026-11-06 had 1). A true per-tick allocation count needs a heap-profiling harness; that's a follow-up.

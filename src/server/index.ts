@@ -50,6 +50,7 @@ import { setGalaxyStatsProvider } from './livingworld/galaxyStatsProvider.js';
 import { ROBOT_DIRECTOR_OPTIONS, ROBOT_BOT_COUNT, isRobotsDisabled } from './livingworld/robotDirector.js';
 import { RobotTerritory } from './livingworld/RobotTerritory.js';
 import { EliteDirector } from './livingworld/EliteDirector.js';
+import { FlagshipDirector, type FlagshipStatePayload } from './livingworld/FlagshipDirector.js';
 import { EventDirector } from './livingworld/EventDirector.js';
 import { sumCounts } from './livingworld/countMaps.js';
 import { setContractsProvider } from './livingworld/contractsProvider.js';
@@ -133,6 +134,7 @@ let robotDirector: LivingWorldDirector | null = null;
 let robotTerritory: RobotTerritory | null = null;
 /** Living World P4a — named elites (null when the Living World is disabled). */
 let eliteDirector: EliteDirector | null = null;
+let flagshipDirector: FlagshipDirector | null = null;
 /** Living World P4b — world events (null when the Living World is disabled). */
 let eventDirector: EventDirector | null = null;
 const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
@@ -230,16 +232,26 @@ if (process.env['NODE_ENV'] !== 'production') {
   // heap, external/array buffers) and each room's physics worker heap. Found
   // 2026-11-07: an idle dev server held ~1.7 GB, ~37 MB of it per sector
   // worker before any body exists.
-  app.get('/dev/memory', (_req, res) => {
+  // `?gc=1` collects garbage first (main thread + each physics worker), so the
+  // reading is what is live, not what V8 has not collected yet. Needs the
+  // server started with --expose-gc (scripts/soak-galaxy.ts does); else a no-op.
+  app.get('/dev/memory', (req, res) => {
     void (async () => {
       const MB = 1048576;
+      const gc = req.query['gc'] === '1';
+      if (gc) (globalThis as { gc?: () => void }).gc?.();
       const m = process.memoryUsage();
       const listings = await matchMaker.query({});
+      const gcDone = new Set<number>();
       const rooms: Array<{ room: string; roomId: string; clients: number; worker: number | null }> = [];
       const workers = new Map<number, number>(); // pool worker → heap MB (shared by its rooms)
       for (const l of listings) {
         const r = matchMaker.getLocalRoomById(l.roomId) as unknown as SectorRoom | undefined;
-        const h = r && typeof r.workerHeapStats === 'function' ? await r.workerHeapStats() : null;
+        // One collection per pool worker (several rooms share one).
+        const idx = r && typeof r.workerHeapStats === 'function' ? (await r.workerHeapStats(false))?.workerIndex : undefined;
+        const wantGc = gc && idx !== undefined && !gcDone.has(idx);
+        if (wantGc) gcDone.add(idx);
+        const h = r && typeof r.workerHeapStats === 'function' ? await r.workerHeapStats(wantGc) : null;
         if (h) workers.set(h.workerIndex, Math.round(h.usedBytes / MB));
         rooms.push({ room: l.name, roomId: l.roomId, clients: l.clients, worker: h ? h.workerIndex : null });
       }
@@ -1411,13 +1423,38 @@ async function main(): Promise<void> {
         // marked on the galaxy map.
         onTick: (now) => {
           eliteDirector?.tick(now);
+          flagshipDirector?.tick(now);
           eventDirector?.tick(now);
         },
         sectorElite: (key) => eliteDirector?.sectorElite(key) ?? null,
+        // W2a — flagship fleets show as capital sightings on the galaxy map.
+        sectorCapital: (key) => flagshipDirector?.sectorCapital(key) ?? null,
         // P4b — world events show on the galaxy map.
         sectorEvent: (key) => eventDirector?.sectorEvent(key) ?? null,
       },
     });
+    // W2a — flagship fleets: capital ships + escorts roaming pocket to pocket
+    // (solar-system sectors). Persisted in allegiance_director_state ('flagships').
+    if (process.env['EQX_DISABLE_FLAGSHIPS'] === '1' || process.env['EQX_DISABLE_FLAGSHIPS'] === 'true') {
+      logger.warn('flagship fleets DISARMED (EQX_DISABLE_FLAGSHIPS set)');
+    } else {
+      let restore: FlagshipStatePayload | null = null;
+      try {
+        const row = db
+          .prepare("SELECT payload_json, created_at FROM allegiance_director_state WHERE allegiance = 'flagships'")
+          .get() as { payload_json: string; created_at: number } | undefined;
+        if (row && Date.now() - row.created_at < 24 * 60 * 60 * 1000) restore = JSON.parse(row.payload_json) as FlagshipStatePayload;
+      } catch (err) {
+        logger.warn({ err }, 'flagship state unreadable — fresh fleets');
+      }
+      flagshipDirector = new FlagshipDirector(galaxyRooms, {
+        restore,
+        save: (payload) => persistence.enqueueCritical({
+          type: 'ALLEGIANCE_DIRECTOR_STATE_PUT', allegiance: 'flagships', payloadJson: JSON.stringify(payload), ts: Date.now(),
+        }),
+      });
+      flagshipDirector.start();
+    }
     eliteDirector = new EliteDirector(galaxyRooms);
     eliteDirector.start();
     eventDirector = new EventDirector(galaxyRooms);
@@ -1534,6 +1571,8 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
     robotDirector?.stop();
     robotTerritory?.stop();
     eliteDirector?.stop();
+    flagshipDirector?.persist();
+    flagshipDirector?.stop();
     eventDirector?.stop();
     setContractsProvider(null);
     setBountyBoard(null);

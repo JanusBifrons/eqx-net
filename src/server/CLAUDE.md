@@ -757,3 +757,18 @@ is EXCLUDED from `SectorPersistence` (transient debris). Wire: `SWARM_KIND_SCRAP
 + a `componentIndex` byte bumped `SWARM_WIRE_VERSION 3 → 4` → **netgate applies**
 (invariant #8). Locks: `ScrapSpawner.test.ts` + `scrapOnDeath.test.ts`
 (integration). See [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).
+
+## Solar-system sectors are on by default (wrap-up W1c, 2026-11-08)
+
+- `SECTOR_PLAYABLE_HALF_EXTENT` is ±200,000 u unless `EQX_SOLAR_SECTORS=0`. Arrivals, convoys, elites and events place themselves by POCKET (`sectorSites`, `pocketCentre`, the gate-pocket rims), never by "the edge of the playable area".
+- A sector with no pockets (a test room whose key isn't a galaxy sector) falls back to the classic edge, `HOME_POCKET_HALF_EXTENT`. Never fall back to `SECTOR_PLAYABLE_HALF_EXTENT`: in solar mode that is 190 km away (test-room trade haulers never docked).
+- Story: [docs/architecture/solar-system-sectors.md](../../docs/architecture/solar-system-sectors.md).
+
+## Flagship fleets (wrap-up W2a, 2026-11-08)
+
+- **`FlagshipDirector`** (`livingworld/`) is ticked on the drone director's `onTick`. It keeps `FLEET_COUNT` capital fleets: an elite-marked flagship plus escorts with `flagship-` ids, which `LoadShedder` never sheds.
+- **Moving.** Fleets move pocket to pocket with `SectorRoom.warpBot`, the NPC warp: `World.botWarp` → `BOT_WARP` → `drones[].warp`. They cross systems by gate.
+- **Escort stations come from hull radii** (`escortRing`), never a flock distance: fighter-scale flocking rammed escorts into a battleship's hull.
+- **`warpBot` lands at `landingPoint`.** A drop inside a belt rock killed an escort, so the bot lands at the nearest clear spot, like a pilot.
+- **The map's truth is `SectorLiveState.capital`.** Persisted as `allegiance_director_state` row `flagships`; kill switch `EQX_DISABLE_FLAGSHIPS`.
+- Story: [docs/features/capital-ships.md](../../docs/features/capital-ships.md).

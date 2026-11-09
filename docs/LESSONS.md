@@ -2808,3 +2808,13 @@ Unit tests: convoyBudget now gates candidate checks per planning pass (988, dete
 Commit: perf/count-budgets (PR #356)
 
 `perf:counts` died with exit 137 on the first CI run, right after its last scene. `CaptureServers.stop()` → `killPort()` ran `lsof -ti tcp:3167 | xargs kill -9`; without `-sTCP:LISTEN`, lsof also lists every process holding a CLIENT connection to that port, and the runner had a keep-alive connection open from polling `/dev/perf`. So it SIGKILLed itself. Windows (`netstat … LISTENING`) never had the bug, which is why local runs were fine. Fix: `lsof -ti tcp:PORT -sTCP:LISTEN`. Rule: any "kill whatever is on port N" must match listeners only.
+## 2026-11-08 — Turning solar-system sectors on by default
+
+- **Context:** W1c flipped `EQX_SOLAR_SECTORS` to on. Unit tests, integration tests and a 10-minute live-galaxy soak (`scripts/soak-galaxy.ts`) were run with it on and off.
+- **Findings:**
+  - Three integration specs failed only with it on. Two were a real bug: arrival placement for a sector with no solar pockets fell back to `SECTOR_PLAYABLE_HALF_EXTENT`, now ±200 km, so test-room haulers spawned 190 km out and never docked. The third (elites) was a test parked at Home while elites now play out in the battle-zone pocket.
+  - `sectorSpace.measure.test.ts` wrote `scale-1.json` regardless of mode, so a solar run silently overwrote the committed classic ledger. It now writes `solar.json`.
+- **Rules:**
+  - A fallback for "no pockets" means the classic sector (`HOME_POCKET_HALF_EXTENT`), not the current extent.
+  - A measurement that writes a ledger file must key the file on every switch that changes what it measures.
+- **Soak memory readings (same day):** without a forced collection the physics-worker heap appeared to climb from 190 to 374 MB in 5 minutes with solar on. After a forced collection (`/dev/memory?gc=1`, server started with `--expose-gc`, as `scripts/soak-galaxy.ts` does) it stayed flat at about 150 MB. V8 collects lazily, so per-tick garbage looks like growth. Rule: judge a memory trend only from post-collection readings.

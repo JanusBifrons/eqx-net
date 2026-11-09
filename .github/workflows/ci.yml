@@ -215,7 +215,7 @@ jobs:
   perf-counts:
     needs: changes
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -235,7 +235,7 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: Client count gate (perf:counts)
         if: needs.changes.outputs.code == 'true'
-        run: pnpm perf:counts --out perf-counts.json
+        run: pnpm perf:counts --runs 2 --out perf-counts.json
       - name: Upload readings
         if: always() && needs.changes.outputs.code == 'true'
         uses: actions/upload-artifact@v4

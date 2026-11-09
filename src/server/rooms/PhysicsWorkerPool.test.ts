@@ -27,6 +27,12 @@ function readX(v: { u32: Uint32Array; f32: Float32Array }, slot: number): number
   }
   return null;
 }
+/** readX, retried until the worker is not mid-write (a busy machine can hold
+ *  the seqlock past readX's 100 spins; seen once in a full-suite run). */
+async function settledX(v: { u32: Uint32Array; f32: Float32Array }, slot: number): Promise<number | null> {
+  for (let i = 0; i < 100; i++) { const x = readX(v, slot); if (x !== null) return x; await sleep(5); }
+  return null;
+}
 async function until(cond: () => boolean, ms = 3000): Promise<void> {
   const end = Date.now() + ms;
   while (!cond()) { if (Date.now() > end) throw new Error('timed out'); await sleep(15); }
@@ -53,8 +59,8 @@ describe('PhysicsWorkerPool', () => {
     await sleep(400);
     expect(Atomics.load(a.u32, TICK_IDX)).toBeGreaterThan(t0a + 10);
     expect(Atomics.load(b.u32, TICK_IDX)).toBeGreaterThan(t0b + 10);
-    expect(readX(a, 0)).toBeCloseTo(100, 0); // A untouched by B's command
-    expect(readX(b, 0)!).toBeGreaterThan(-480); // B moved
+    expect(await settledX(a, 0)).toBeCloseTo(100, 0); // A untouched by B's command
+    expect((await settledX(b, 0))!).toBeGreaterThan(-480); // B moved
 
     // Detach A: it stops; B keeps ticking.
     wa.detach();

@@ -29,6 +29,18 @@ describe('applyDroneMountAngles — P3c charge telegraph', () => {
     expect(m.swarm!.get(1)!.charging).toBe(false);
   });
 
+  it('W2a — carries an NPC warp phase, and clears it when the bot stops warping', () => {
+    const m = mirrorWith([1, 2]);
+    applyDroneMountAngles(snap([{ id: 1, warp: 1 }, { id: 2, hostile: true }]), m);
+    expect(m.swarm!.get(1)!.warp).toBe(1);
+    expect(m.swarm!.get(2)!.warp).toBeUndefined();
+    applyDroneMountAngles(snap([{ id: 1, warp: 2 }]), m);
+    expect(m.swarm!.get(1)!.warp).toBe(2);
+    // Idle again: the server omits it, so the phase must clear.
+    applyDroneMountAngles(snap(undefined), m);
+    expect(m.swarm!.get(1)!.warp).toBeUndefined();
+  });
+
   it('P4a — carries an elite name, and clears it when the elite drops out', () => {
     const m = mirrorWith([1, 2]);
     applyDroneMountAngles(snap([{ id: 1, elite: 'Dread Vexis' }]), m);
