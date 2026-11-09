@@ -647,7 +647,9 @@ export class PhysicsWorld {
     if (act === 'drop') {
       this._botVec.x = w.tx; this._botVec.y = w.ty;
       body.setTranslation(this._botVec, true);
-      this.setBotVel(body, w.dx * WARP_EXIT_SPEED, w.dy * WARP_EXIT_SPEED);
+      // An NPC drops out at rest (its AI takes over); a capital coasting on at
+      // the pilot's exit speed drifted off its station (fleet film review).
+      this.setBotVel(body, 0, 0);
       this.setCollidersEnabled(rec, true);
       return true;
     }

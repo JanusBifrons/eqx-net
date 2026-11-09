@@ -34,6 +34,8 @@ const ARRIVE_TRAIL_LEN = 160;
 const ARRIVE_LIFE_S = 0.6;
 const SPEED_LINES = 28;
 const FIRE_CORE = 0xffe6a8, FIRE_OUT = 0xff6a1c, STREAK = 0xcfe4ff;
+/** Glow discs are drawn at this radius (fine tessellation) and scaled down. */
+const GLOW_R = 256;
 
 /** Effect proportions for a ship whose stern sits `stern` u behind its centre. */
 export interface WarpFxSizes {
@@ -57,10 +59,13 @@ export function warpFxSizes(stern: number): WarpFxSizes {
     trailLen: Math.max(TRAIL_LEN, stern * 10 * big),
     streakLen: Math.max(STREAK_LEN, stern * 6 * big),
     arriveLen: Math.max(ARRIVE_TRAIL_LEN, stern * 1.5 * big),
-    gapK: 0.4 - 0.3 * big,
-    coreK: 0.06 - 0.04 * big,
-    outK: 0.2 - 0.15 * big,
-    streakK: 0.8 - 0.7 * big,
+    // A capital's engines sit close together at the stern of a long thin
+    // hull: trails a few percent of the stern apart, thin, and a streak no
+    // taller than its engines (round 2 review: boxes at the hull edges).
+    gapK: 0.4 - 0.37 * big,
+    coreK: 0.06 - 0.052 * big,
+    outK: 0.2 - 0.18 * big,
+    streakK: 0.8 - 0.77 * big,
     flashK: 1 - 0.65 * big,
   };
 }
@@ -70,8 +75,10 @@ function glowGfx(color: number): Graphics {
   const g = new Graphics();
   // 14 fine rings (same total as the old 7 at 0.14): at capital size the
   // coarse rings showed as hard bands.
+  // Drawn at radius GLOW_R (scaled by 1/GLOW_R in place()): a unit circle is
+  // tessellated with ~8 sides, which showed as octagons at capital size.
   const rings = 14;
-  for (let i = rings; i >= 1; i--) g.circle(0, 0, i / rings).fill({ color, alpha: 0.07 });
+  for (let i = rings; i >= 1; i--) g.circle(0, 0, (GLOW_R * i) / rings).fill({ color, alpha: 0.07 });
   g.blendMode = 'add';
   return g;
 }
@@ -375,7 +382,7 @@ function flick(t: number, k: number): number { return 0.82 + 0.18 * Math.sin(t *
 function place(g: Graphics, x: number, y: number, r: number, alpha: number): void {
   g.visible = alpha > 0.01;
   g.x = x; g.y = y;
-  g.scale.set(r);
+  g.scale.set(r / GLOW_R);
   g.alpha = alpha;
 }
 function line(s: Sprite, x: number, y: number, rot: number, len: number, width: number, alpha: number): void {

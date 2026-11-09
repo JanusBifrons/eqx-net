@@ -193,6 +193,15 @@ export function interpolateSwarmPose(
 
   const targetMs = nowMs - _displayDelayMs;
   const newest = _populatedScratch[count - 1]!;
+  // W2c — an NPC on its warp run or just dropped out: show where it IS. Through
+  // the display delay it slid in from its in-flight poses (a fleet arriving
+  // ~1 km east of its landing spot, then gliding into place).
+  if (entry.warp === 2 || entry.warp === 3) {
+    out.x = newest.x;
+    out.y = newest.y;
+    out.angle = newest.angle;
+    return out;
+  }
   const oldest = _populatedScratch[0]!;
 
   // Single arrival or render time before our oldest sample: pin to oldest
