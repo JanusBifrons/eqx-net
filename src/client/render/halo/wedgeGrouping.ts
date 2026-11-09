@@ -89,6 +89,9 @@ export interface Candidate {
    *  silhouette so the player can distinguish a single off-screen target
    *  from an aggregated group at a glance. */
   grouped?: boolean;
+  /** Lock mark (own locked target / a ship locking you, `halo/lockMarks.ts`):
+   *  never folded into a wedge, so the tint stays on the contact's own icon. */
+  marked?: boolean;
 }
 
 /** Caller-owned scratch for `partitionAndGroupCandidates` — paradigm
@@ -172,7 +175,7 @@ export function partitionAndGroupCandidates(
   _wedgeCounts.fill(0);
   for (const c of candidates) {
     if (c.dist > maxDistance) continue;
-    if (c.dist <= groupingDistance) {
+    if (c.dist <= groupingDistance || c.marked === true) {
       result.push(c);
       continue;
     }

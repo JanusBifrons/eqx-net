@@ -104,3 +104,18 @@ describe('partitionAndGroupCandidates', () => {
     void RADAR_WEDGE_COUNT;
   });
 });
+
+describe('partitionAndGroupCandidates — lock-marked contacts', () => {
+  it('never folds a marked contact into a wedge', () => {
+    const far = 5000;
+    const cs: Candidate[] = [
+      { key: 'a', x: far, y: 0, color: 1, dist: far },
+      { key: 'b', x: far + 10, y: 0, color: 1, dist: far + 10 },
+      { key: 'm', x: far + 20, y: 0, color: 2, dist: far + 20, marked: true },
+    ];
+    const out = partitionAndGroupCandidates({ x: 0, y: 0 }, cs, 250, 1e9, RADAR_WEDGE_COUNT, makeScratch());
+    const keys = out.map((x) => x.key);
+    expect(keys).toContain('m');
+    expect(out.filter((x) => x.grouped === true)).toHaveLength(1);
+  });
+});
