@@ -25,6 +25,7 @@ import { warpDestinations } from './warpDestinations';
 beforeEach(() => {
   requestWarp.mockClear(); cancelWarp.mockClear(); warping = false;
   useUIStore.setState({ currentSectorKey: 'sol-prime', warpPickerOpen: true, warpHeldTo: null });
+  window.history.replaceState(null, '', '/?warpui=list');
 });
 afterEach(() => { useUIStore.setState({ warpPickerOpen: false }); });
 
@@ -54,7 +55,6 @@ describe('WarpPicker', () => {
     act(() => { fireEvent.click(screen.getByTestId(`warp-map-${target.id}`)); });
     fireEvent.click(screen.getByTestId('warp-map-go'));
     expect(requestWarp).toHaveBeenCalledWith(target.dropX, target.dropY);
-    window.history.replaceState(null, '', '/');
   });
 
   it('list: a pocket with a transit pad says where it goes (instant)', () => {
@@ -64,7 +64,10 @@ describe('WarpPicker', () => {
   });
 
   it('reads the prototype from the URL', () => {
-    expect(readWarpUi('?warpui=map')).toBe('map');
-    expect(readWarpUi('')).toBe('list');
+    expect(readWarpUi('?warpui=map', true)).toBe('map');
+    expect(readWarpUi('?warpui=list', false)).toBe('list');
+    // Both views stay (user 2026-11-08): the list on touch, the map on desktop.
+    expect(readWarpUi('', true)).toBe('list');
+    expect(readWarpUi('', false)).toBe('map');
   });
 });
