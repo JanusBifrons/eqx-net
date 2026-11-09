@@ -33,7 +33,6 @@ import { MachinedShipSprite } from './art/MachinedShipSprite.js';
 import { litPass } from './art/litPass.js';
 import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach } from './art/lightingSettings.js';
 import { WarpSpoolFx, type SpoolFxShip, type Nozzle } from './pixi/WarpSpoolFx.js';
-import type { ShipRenderState } from '@core/contracts/IRenderer';
 import { WARP_SPOOL_TICKS } from '@core/physics/warpDrive';
 import { MachinedFlatSprite } from './art/MachinedFlatSprite.js';
 import { warmUpJobs } from './art/warmUp.js';
@@ -79,7 +78,7 @@ import {
 import { getStructureKind } from '@shared-types/structureKinds';
 import { setCanvasPointerCapture } from './pointerCapture.js';
 import { FrameTimeRing } from '@core/perf/FrameTimeRing';
-import type { RenderPerfReading, PerfProbeOp } from '@core/contracts/IRenderer';
+import type { RenderPerfReading, PerfProbeOp, RenderCountReading } from '@core/contracts/IRenderer';
 
 // Most colour + builder constants moved to pixi/spriteBuilders.ts;
 // the constants below are PixiRenderer-specific (background tint,
@@ -537,10 +536,71 @@ export class PixiRenderer implements IRenderer {
    *  recorded only after `perfProbeSync('enable')` (`?perfprobe=1`). */
   private _perfRing: FrameTimeRing | null = null;
 
+  /** Count probe (WS3): draw calls per rendered frame + upload baselines. */
+  private _drawRing: FrameTimeRing | null = null;
+  private _drawCount = 0;
+  private _drawMark = 0;
+  private _uploadsBase = 0;
+  private _uploadTexelsBase = 0;
+
+  /** Count mode (`?perfcounts=1`): pin the effects tier (what is drawn must not
+   *  depend on the host's speed), count WebGL draw calls by wrapping the
+   *  context's draw entry points, and close each rendered frame on Pixi's
+   *  `postrender` runner. Perf runs only; players never reach it. */
+  private enableCountProbe(): void {
+    if (this._drawRing || !this.app?.renderer) return;
+    this._drawRing = new FrameTimeRing();
+    this.effects?.pinQuality('high');
+    const gl = (this.app.renderer as unknown as { gl?: WebGL2RenderingContext }).gl;
+    if (gl) {
+      // Fixed-arity wrappers: no rest-array per draw call (#14).
+      const de = gl.drawElements.bind(gl);
+      gl.drawElements = (m, c, t, o) => { this._drawCount++; de(m, c, t, o); };
+      const da = gl.drawArrays.bind(gl);
+      gl.drawArrays = (m, f, c) => { this._drawCount++; da(m, f, c); };
+      if (typeof gl.drawElementsInstanced === 'function') {
+        const dei = gl.drawElementsInstanced.bind(gl);
+        gl.drawElementsInstanced = (m, c, t, o, n) => { this._drawCount++; dei(m, c, t, o, n); };
+      }
+      if (typeof gl.drawArraysInstanced === 'function') {
+        const dai = gl.drawArraysInstanced.bind(gl);
+        gl.drawArraysInstanced = (m, f, c, n) => { this._drawCount++; dai(m, f, c, n); };
+      }
+    }
+    const runners = (this.app.renderer as unknown as { runners?: { postrender?: { add(o: { postrender(): void }): void } } }).runners;
+    runners?.postrender?.add({ postrender: () => {
+      this._drawRing?.push(this._drawCount - this._drawMark);
+      this._drawMark = this._drawCount;
+    } });
+    this.resetCountProbe();
+  }
+
+  private resetCountProbe(): void {
+    this._drawRing?.reset();
+    this._drawMark = this._drawCount;
+    const s = this._artCtx.art?.stats();
+    this._uploadsBase = s?.uploads ?? 0;
+    this._uploadTexelsBase = s?.uploadTexels ?? 0;
+  }
+
+  private readCountProbe(): RenderCountReading | null {
+    if (!this._drawRing) return null;
+    const d = this._drawRing.summary();
+    const s = this._artCtx.art?.stats();
+    return {
+      drawCalls: { frames: d.frames, p50: d.p50, p95: d.p95, max: d.max },
+      textureUploads: (s?.uploads ?? 0) - this._uploadsBase,
+      uploadTexels: (s?.uploadTexels ?? 0) - this._uploadTexelsBase,
+      atlasPages: s?.pages ?? 0,
+      gpuBytes: s?.gpuBytes ?? 0,
+    };
+  }
+
   perfProbeSync(op: PerfProbeOp): RenderPerfReading | null {
     if (op === 'enable') { this._perfRing ??= new FrameTimeRing(); return null; }
+    if (op === 'counts') { this._perfRing ??= new FrameTimeRing(); this.enableCountProbe(); return null; }
     if (!this._perfRing) return null;
-    if (op === 'reset') { this._perfRing.reset(); return null; }
+    if (op === 'reset') { this._perfRing.reset(); this.resetCountProbe(); return null; }
     let displayObjects = 0;
     const walk = (c: Container): void => { displayObjects++; for (const ch of c.children) walk(ch as Container); };
     if (this.app?.stage) walk(this.app.stage);
@@ -552,6 +612,7 @@ export class PixiRenderer implements IRenderer {
       mirrorShips: m?.ships.size ?? 0,
       mirrorSwarm: m?.swarm?.size ?? 0,
       effectQuality: this.effects?.getQuality() ?? 'none',
+      counts: this.readCountProbe(),
     };
   }
 
@@ -2476,21 +2537,39 @@ export class PixiRenderer implements IRenderer {
       if (stern === undefined) { stern = engineProfileForKind(ship.kind).sternOffset; this._warpStern.set(kind, stern); }
       s.x = sp.x; s.y = sp.y; s.rotation = sp.rotation; s.warp = ship.warp; s.stern = stern; s.isLocal = id === local;
       fx.draw(id, s);
-      this.drawSpoolFx(id, ship, sp, id === local ? mirror.localSpoolMs : undefined);
+      this.drawSpoolFx(id, ship.warp, ship.kind, sp, id === local ? mirror.localSpoolMs : undefined);
+    }
+    // W2a — NPCs warping (flagship fleets). Fed while their phase is set and
+    // one frame after it clears, so a cancelled spool settles to idle instead
+    // of WarpFx reading the disappearance as a departure.
+    const fed = this._droneWarpFed;
+    if (mirror.swarm) for (const [eid, e] of mirror.swarm) {
+      if (e.kind !== 1) continue;
+      const key = this.droneWarpKey(eid);
+      if (e.warp === undefined && !fed.has(key)) continue;
+      const sp = this.sprites.get(key);
+      if (!sp) continue;
+      const kindId = e.shipKind ?? '';
+      let stern = this._warpStern.get(kindId);
+      if (stern === undefined) { stern = engineProfileForKind(e.shipKind).sternOffset; this._warpStern.set(kindId, stern); }
+      s.x = sp.x; s.y = sp.y; s.rotation = sp.rotation; s.warp = e.warp; s.stern = stern; s.isLocal = false;
+      fx.draw(key, s);
+      this.drawSpoolFx(key, e.warp, e.shipKind, sp, undefined);
+      if (e.warp === undefined) fed.delete(key); else fed.add(key);
     }
     fx.endFrame();
     this._spoolFx.endFrame();
   }
 
   /** One ship's spool-up (progress-driven, sized from its own nozzles). */
-  private drawSpoolFx(id: string, ship: ShipRenderState, sp: Container, spoolMs: number | undefined): void {
+  private drawSpoolFx(id: string, warp: number | undefined, kind: string | undefined, sp: Container, spoolMs: number | undefined): void {
     const now = performance.now();
-    const phase = ship.warp === 1 ? 1 : 0;
+    const phase = warp === 1 ? 1 : 0;
     if (phase !== (this._spoolPhase.get(id) ?? 0)) {
       if (phase === 1) { this._spoolPhase.set(id, 1); this._spoolStart.set(id, now); }
       else { this._spoolPhase.delete(id); this._spoolStart.delete(id); }
     }
-    const kindId = ship.kind ?? 'fighter';
+    const kindId = kind ?? 'fighter';
     let k = this._spoolKind.get(kindId);
     if (!k) {
       // Classic-look ships have no baked nozzles: one at the stern.
@@ -2867,6 +2946,10 @@ export class PixiRenderer implements IRenderer {
   setSector(sectorKey: string | null): void {
     const prev = this._sectorKey;
     this._sectorKey = sectorKey;
+    // W3: each sector has its own sun. GPU-lit art re-lights at once (the lit
+    // pass reads the rig each frame); baked art re-bakes, keyed by the rig.
+    const art = this._artCtx.art;
+    if (art) { art.setSector(sectorKey); this._artCtx.sunAz = art.lightRig.sunAz; }
     this._backdrop?.setSector(sectorKey);
     // Moving to another sector starts a new art visit: its art goes into
     // fresh pages, and the old sector's are freed once nothing draws them
@@ -2923,6 +3006,19 @@ export class PixiRenderer implements IRenderer {
 
   private readonly _warpShipScratch: WarpFxShip = { x: 0, y: 0, rotation: 0, warp: undefined, stern: 0, isLocal: false };
   private readonly _warpStern = new Map<string, number>();
+  /** W2a — drones fed to WarpFx last frame (their sprite keys). */
+  private readonly _droneWarpFed = new Set<string>();
+  /** W2a — `swarm-<id>` keys, built once per drone (no per-frame string). */
+  private readonly _droneWarpKeys = new Map<number, string>();
+  private droneWarpKey(eid: number): string {
+    let k = this._droneWarpKeys.get(eid);
+    if (k === undefined) {
+      k = `swarm-${eid}`;
+      if (this._droneWarpKeys.size > 4096) this._droneWarpKeys.clear(); // bound it; rebuilt on demand
+      this._droneWarpKeys.set(eid, k);
+    }
+    return k;
+  }
   /** Scratch for the test-only particle count in `artStats`. */
   private readonly _engineDbgScratch: number[] = [];
   /** Top speed per ship kind (normalises a drone's engine level). */

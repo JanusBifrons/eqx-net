@@ -17,7 +17,7 @@
  *     max-tick-clamp to jump ahead of physics steps the client's
  *     prediction did apply.
  *
- * The existing `sync-health.spec.ts` measures steady-state drift
+ * The existing `tests/perf/sync-health.spec.ts` measures steady-state drift
  * during continuous thrust (3 s W-hold). What's NEW here is the
  * **rapid state-change** scenario — exactly the pattern the buggy
  * throttling silently dropped. 8 pulses in 1.6 s exercises the

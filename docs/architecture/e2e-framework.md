@@ -144,7 +144,7 @@ The tier choice above is "how deterministic / how fast"; this is the orthogonal 
 | `swarm-stationary-stability.spec.ts` | `@feature` | Stationary asteroids: rendered position stays within 0.5u over 3 s. | LOCK | 🚶 medium | KEEP |
 | `swarm-tidi.spec.ts` | `@feature` | Phase 6c full TiDi+LoadShedder acceptance: clockRate < 0.99, ramp to floor ≤0.71, LoadShedder fires, ship remains controllable. 4-stage gate. | LOCK | 🐢 slow (60 s) | KEEP |
 | `sync-diagnostics.spec.ts` | `@feature` | Sync diagnostics: idle → W-thrust → release. | LOCK | 🚶 medium | KEEP |
-| `sync-health.spec.ts` | `@feature` | W-thrust correction rate < 15% after 3 s; idle correction rate near-zero. | LOCK | 🚶 medium | KEEP |
+| `sync-health.spec.ts` | `@feature` | W-thrust correction rate < 15% after 3 s; idle correction rate near-zero. | MEASUREMENT | 🚶 medium | **moved to `tests/perf/`** (wrap-up W4, 2026-11-09): a host-load timing lock like `robustness`; the netgate gates this signal |
 | `tidi-overlay.spec.ts` | `@feature` | Phase 6b TiDi overlay — `data-sector-alert` = "Temporal Anomaly", clockRate < 0.99 within 30 s. | LOCK | 🐢 slow (75 s timeout) | KEEP |
 | `warp-engage-cancel.spec.ts` | `@feature` | Phase 3b — full warp/transit state-machine roundtrip E2E: engage_transit wire → SPOOLING overlay (`data-testid="hyperspace-overlay"` + `data-transit-state="SPOOLING"`) → cancel_transit wire → DOCKED (overlay unmounts). The wire roundtrip lock the plan called the biggest Phase-3b gap; commit/arrive side covered by integration tests (warpBroadcasts / TransitOrchestrator / transitArrivalDrift / WarpScreen.transit / rearmJoinReadiness). | LOCK | 🚶 medium (~20 s; dominated by warp curtain wait, not game-time) | KEEP |
 | `renderer-worker-probe.spec.ts` | `@feature` | Renderer worker boot + mirror + feedback round-trip lock. Same caveat — "probe" filename, real assertions. | LOCK | 🚶 medium | KEEP |
@@ -257,6 +257,7 @@ The clustering means most fixes are mechanically similar — once `sector-alpha.
 | `initialCargo` / `initialWallet` | Start with goods aboard / a wallet balance (hauling and trading takes). Cargo needs a roster-backed room. | URL `?initialCargo=salvage:40,alloy:12`, `?initialWallet=N`. testMode-gated JoinOptions. |
 | `dronePoses[].elite` | A posed drone becomes a named elite with a bounty, on cue (room opt `{ name, healthMul?, bounty? }`). | Room `showcase-bounty`. Lock: `tests/integration/sectorRoom/showcaseRooms.test.ts`. |
 | `testWaveArrival: { x, y }` (room opt) | Where a WAVE squad lands in this room instead of its carry pose (members on a 60 u ring, at rest), so the attack lands inside the spec's window. `galaxy-wave-test` uses (-900, 700): bolt reach of a Solar, outside the Turret. | testMode room option (`SectorRoom.testWaveArrival()` → `LivingWorldDirector.arrivalPoseFor`). With `persistSector: false` on that room and a fresh director under `EQX_E2E_WAVE=1`, every run starts from the seeded ready base. |
+| `waveNeedsOwner: true` (room opt) | A base in this room is wave-ready only while its owner has an active ship there. Waves ignore presence in play, so without it the wave fired at server boot and a spec that ran after others joined too late for the banner. | testMode room option, read in `SectorRoom.factionBaseReadiness`; `galaxy-wave-test` sets it. | Test rooms only. |
 
 ### Adding a new primitive
 

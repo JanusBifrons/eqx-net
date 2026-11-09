@@ -42,6 +42,7 @@ export type WorkerCmd =
   | { type: 'CLOCK_RATE';     rate: number }
   | { type: 'SET_POSITION';   entityId: string; x: number; y: number; angle: number; vx: number; vy: number; angvel: number }
   | { type: 'WARP_RETARGET';  entityId: string; x: number; y: number }
+  | { type: 'BOT_WARP';       slot: number; x?: number; y?: number }
   | { type: 'SET_HULL_EXPOSED'; id: string; exposed: boolean; kindId: string; tick: number }
   /** Phase 4 WS-B2 — set (or clear) a ship instance's per-instance PHYSICS stat
    *  multipliers (`topSpeed` / `turnRate`) on its worker body, so `applyShipInput`
@@ -120,6 +121,11 @@ export class PhysicsWorkerProxy {
     if (!w) return null;
     const h = await w.heapStats(gc);
     return h ? { ...h, workerIndex: w.workerIndex } : null;
+  }
+
+  /** Worker event-loop utilisation since `prev` (perf scenes, print-only). */
+  elu(prev?: import('node:perf_hooks').EventLoopUtilization): import('node:perf_hooks').EventLoopUtilization | null {
+    return this.world?.elu(prev) ?? null;
   }
 
   /**

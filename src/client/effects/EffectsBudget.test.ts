@@ -169,3 +169,24 @@ describe('EffectsBudget — getStats', () => {
     expect(b.getStats()).toBe(b.getStats());
   });
 });
+
+describe('EffectsBudget — pin (perf count gate, WS3)', () => {
+  // Counts (draw calls, display objects) must not depend on how fast the
+  // host is, so the count gate pins the tier: a slow CI runner must draw the
+  // same effects as a fast desktop.
+  it('a pinned tier holds under any load and any push', () => {
+    const b = new EffectsBudget();
+    b.pin('high');
+    feed(b, 50, 600);
+    b.setQuality('minimal');
+    expect(b.getQuality()).toBe('high');
+  });
+
+  it('unpinning returns to the measured tier', () => {
+    const b = new EffectsBudget();
+    b.pin('high');
+    feed(b, 50, 600);
+    b.pin(null);
+    expect(b.getQuality()).not.toBe('high');
+  });
+});

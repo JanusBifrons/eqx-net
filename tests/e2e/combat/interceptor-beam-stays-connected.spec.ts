@@ -83,8 +83,13 @@ const INTERCEPTOR_MOUNTS: MountGeom[] = getShipKind('interceptor').mounts.map((m
   id: m.id, localX: m.localX, localY: m.localY,
 }));
 
-async function sample(page: Page): Promise<Sample> {
-  return page.evaluate<Sample, MountGeom[]>((mounts) => {
+/** Take `n` samples `everyMs` apart INSIDE the page: one round-trip, not two
+ *  per sample. On a CPU-starved host (CI's small runners, the laptop with
+ *  software WebGL) each driver round-trip took ~1 s, so 40 samples overran the
+ *  90 s budget before any assertion ran. */
+async function sampleMany(page: Page, n: number, everyMs: number): Promise<Sample[]> {
+  return page.evaluate<Promise<Sample[]>, { mounts: MountGeom[]; n: number; everyMs: number }>(async ({ mounts, n, everyMs }) => {
+  const one = (): Sample => {
     const el = document.querySelector('[data-testid="game-surface"]') as HTMLElement | null;
     const ds = el?.dataset ?? ({} as DOMStringMap);
     const num = (v: string | undefined): number | null => (v !== undefined ? parseFloat(v) : null);
@@ -110,7 +115,14 @@ async function sample(page: Page): Promise<Sample> {
       detach = Math.abs(Math.hypot(drawnX - px, drawnY - py) - 20);
     }
     return { detach, shipX, shipY, beamActive: ds['beamActive'] === '1' };
-  }, INTERCEPTOR_MOUNTS);
+  };
+  const out: Sample[] = [];
+  for (let i = 0; i < n; i++) {
+    await new Promise((res) => setTimeout(res, everyMs));
+    out.push(one());
+  }
+  return out;
+  }, { mounts: INTERCEPTOR_MOUNTS, n, everyMs });
 }
 
 test('drawn beam origin tracks the ship while coasting (no render-cache freeze)', async ({ browser }) => {
@@ -129,11 +141,7 @@ test('drawn beam origin tracks the ship while coasting (no render-cache freeze)'
     await page.waitForTimeout(250);
     await page.keyboard.up('w');
 
-    const samples: Sample[] = [];
-    for (let i = 0; i < 40; i++) {
-      await page.waitForTimeout(50);
-      samples.push(await sample(page));
-    }
+    const samples = await sampleMany(page, 40, 50);
     await page.keyboard.up('Space');
 
     const active = samples.filter(

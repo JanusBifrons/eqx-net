@@ -258,3 +258,25 @@ CI runs only the **17 smoke specs** on a PR. The **88 feature specs** run only w
 **Next decisions:**
 1. Fix or delete each row above.
 2. Decide which feature specs earn a place in per-PR CI. Without that, a feature spec protects nothing until someone runs `pnpm e2e`, which is how all of the above rotted unnoticed.
+
+## 2026-11-09: part 2 closed (wrap-up W4, plan prancy-squishing-donut)
+
+Groups C and D, checked against the tree:
+
+| Item | Outcome | What covers it |
+|---|---|---|
+| Group C investigation specs | Deleted earlier, except `webrtc-vs-ws-recv-gap-comparison` and `spiral-disconnect-reconnect`, which live in `tests/perf/` | n/a (measurements) |
+| `happy-path-ui-switch`, `prediction-diagnostics`, `sync-diagnostics`, `rotate-jitter`, `network-feel-combat`, `held-fire-continuous-damage` | Deleted earlier | `happy-path-switch-ship`, `prediction-idle-bounded`, the netgate, the combat split |
+| `drawer-galaxy-map-open-close` + `drawer-galaxy-overview-spawn` | Merged earlier into `drawer-galaxy.spec.ts` | itself |
+| `swarm-stationary-stability`, `tidi-overlay` | Merged earlier into `swarm-jitter` (now `tests/perf/`) and `swarm-tidi` | those specs |
+| `feel-test-lockstep`, `feel-tuning` | **Kept** (e2e-framework.md audit correction): the only live 25-drone client+server+wire smoke, and the only slow-down displacement lock | themselves |
+| `laser-smoothness` + `drone-laser-smoothness` | **Kept apart**: they lock different seams (the local beam origin vs a drone's wire-shipped beam origin); a merged file would only share a name | themselves |
+| `sync-health` | **Moved to `tests/perf/`** (this PR): a tight correction-rate timing lock, the same call as `robustness` on 2026-11-06 | the netgate (`ticksAhead`, drift) |
+
+The netgate's print-only `structures-load` and `scrap-load` scenarios were removed in the same PR: they gated nothing and never reached their promotion bar. Structure and scrap load is measured by the perf scenes.
+
+## 2026-11-09: smoke flakes (wrap-up W5)
+
+- **join-art-ready** was the only smoke spec that failed CI in the last 60 runs (3 times). Cause: its 30 s budget held the join (13 s page load on a cold Vite + 5 s join) as well as the deliberate 8 s art hold, so the reveal landed just past 30 s. It now has 60 s, with the trace in the comment. Reproduced locally (30.1 s timeout), then 1/1.
+- **persistence-kill** and **combat-lifecycle** never failed on CI; they failed only on this laptop under load (two browsers, software WebGL). Both pass here now (1/1, 5/5).
+- **combat-lifecycle D**: the `test.fixme` respawn case clicked a Respawn button that no longer exists. It now locks today's contract with a real server kill: the victim drops into spectator mode with no death modal (`spectator-mode.spec.ts` only fakes the death client-side).

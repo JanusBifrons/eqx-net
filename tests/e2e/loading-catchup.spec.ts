@@ -34,6 +34,15 @@ test('after a long loading hold the prediction clock resumes in step, not by rep
     waitForInPlay: false, // the spec measures the curtain lift itself
   });
   try {
+    // Skip at once on a software rasteriser (Linux CI, a box without a GPU):
+    // the fps check below comes only after the 12 s hold and the slow curtain,
+    // which on CI ran past the 90 s budget three times out of three.
+    const gl = await page.evaluate(() => {
+      const c = document.createElement('canvas').getContext('webgl');
+      const ext = c?.getExtension('WEBGL_debug_renderer_info');
+      return ext && c ? String(c.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : 'unknown';
+    });
+    test.skip(/swiftshader|llvmpipe|software|unknown/i.test(gl), `needs a real GPU to judge ticks per frame (renderer: ${gl})`);
     const r = await page.evaluate(() => new Promise<{ steps: number[]; ahead: number[]; waitedMs: number; fps: number }>((resolve, reject) => {
       const c = (globalThis as unknown as { __eqxClient?: { inputTick: number; stats: { ticksAhead: number } } }).__eqxClient;
       if (!c) { reject(new Error('no __eqxClient')); return; }

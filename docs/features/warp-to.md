@@ -23,6 +23,10 @@ The run looks like a real flight, but once a ship has left it is out of the worl
 
 In a solar-system sector the sky shows the system's own few distant bodies, drifting slowly as you cross it, instead of the endless planet pattern used in small sectors (where a 170 km warp swept dozens of planets past).
 
+## NPCs warp too
+
+NPC ships can warp within a sector the same way (wrap-up W2a, for flagship fleets): `SectorRoom.warpBot(id, x, y)` sends a `BOT_WARP` to the physics worker, which runs the bot through the same spool → run → drop machine as a pilot (`World.botWarp`); its AI is overridden until it lands. Onlookers see the same effects: the phase rides the drone snapshot slice (`drones[].warp`: 1 spool, 2 run, 3 just arrived), the sprite hides on the run, and `WarpFx` draws the spool, departure and drop. A bot on its run can't be damaged. Lock: `tests/integration/sectorRoom/npcWarp.test.ts`.
+
 ## Picking a destination
 
 The **Warp ▸** action in the speed dial (solar-system sectors only) opens the destination picker: every pocket by name ("Home", "Asteroid belt", "Thornfield gate", "Battle zone"), nearest first with its distance, the far ones grouped. The pocket you're in can't be picked. While a warp is held, a chip under the energy bar says where it goes, with a Cancel.
