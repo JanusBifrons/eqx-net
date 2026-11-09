@@ -40,6 +40,7 @@ import {
   rayHitsConvexPolygon,
 } from '../../core/combat/Weapons.js';
 import { shipShotMuzzle } from '../../core/combat/muzzle.js';
+import { hasTurretFireControl } from '../../core/combat/mountReach.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { getWeaponObject } from '../../core/combat/weapons/index.js';
 import type { WeaponFireContext, WeaponFireSink } from '../../core/combat/weapons/Weapon.js';
@@ -212,6 +213,8 @@ export class PlayerFireResolver implements WeaponFireSink {
    *  (it is what persistence / transit restore carry); an empty group map
    *  falls back to it, so a restored ship can't skip its cooldown. */
   private readonly _lastFireByGroup = new Map<string, Map<string, number>>();
+  /** Per-(shooter, mount) fire tick: capital turrets reload one by one. */
+  private readonly _lastFireByMount = new Map<string, Map<string, number>>();
   private _shooterId = '';
   private _effTick = 0;
   // Review must-fix #1 — the shooter's per-instance outgoing-DAMAGE multiplier
@@ -308,24 +311,56 @@ export class PlayerFireResolver implements WeaponFireSink {
         return;
       }
     }
+    // Capital turrets fire independently (PR 1d slice 4): each mount on its
+    // OWN weapon reload, as soon as it bears on its target, instead of the
+    // whole group waiting out one group cooldown. A multi-barrel turret is
+    // still one mount, so its barrels still fire together.
+    const perMount = bearMask !== -1 && hasTurretFireControl(shipKind);
     const groupKey = slotId ?? '';
     let groupTicks = this._lastFireByGroup.get(shooterId);
-    // The scalar is deleted on leave/death/transit — drop the stale group map.
-    if (groupTicks && !d.lastFireClientTick.has(shooterId)) groupTicks.clear();
-    const lastFireCt = groupTicks && groupTicks.size > 0
-      ? (groupTicks.get(groupKey) ?? -999)
-      : (d.lastFireClientTick.get(shooterId) ?? -999);
-    if (tick - lastFireCt < slotCooldown) {
-      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
-      client.send('hit_ack', ack);
-      return;
+    let mountTicks = this._lastFireByMount.get(shooterId);
+    // The scalar is deleted on leave/death/transit — drop the stale maps.
+    if (!d.lastFireClientTick.has(shooterId)) {
+      groupTicks?.clear();
+      mountTicks?.clear();
+    }
+    let slotEnergyCost = resolveSlotEnergyCost(shipKind, slotId);
+    if (perMount) {
+      // An empty mount map (a restored ship) falls back to the per-shooter
+      // tick, so a restored ship can't skip its reload.
+      const fallback = mountTicks && mountTicks.size > 0 ? -999 : (d.lastFireClientTick.get(shooterId) ?? -999);
+      let fired = 0;
+      let bearing = 0;
+      for (let mIdx = 0; mIdx < slotMounts.length && mIdx < 31; mIdx++) {
+        if ((bearMask & (1 << mIdx)) === 0) continue;
+        bearing++;
+        const mount = slotMounts[mIdx]!;
+        const last = mountTicks?.get(mount.id) ?? fallback;
+        if (tick - last < getWeapon(mount.weaponId).cooldownTicks) bearMask &= ~(1 << mIdx);
+        else fired++;
+      }
+      if (bearing === 0 || fired === 0) {
+        const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
+        client.send('hit_ack', ack);
+        return;
+      }
+      // A partial salvo pays its share of the group's energy cost.
+      slotEnergyCost = (slotEnergyCost * fired) / Math.min(slotMounts.length, 31);
+    } else {
+      const lastFireCt = groupTicks && groupTicks.size > 0
+        ? (groupTicks.get(groupKey) ?? -999)
+        : (d.lastFireClientTick.get(shooterId) ?? -999);
+      if (tick - lastFireCt < slotCooldown) {
+        const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
+        client.send('hit_ack', ack);
+        return;
+      }
     }
 
     // Energy gate (weapons/energy/AI overhaul §3.1). The slot trigger drains
     // its cost ONCE (not per mount). Reject — WITHOUT consuming the cooldown,
     // so a depleted ship keeps trying and fires the instant it can afford —
     // when the pool is short. Drain atomically on a successful gate.
-    const slotEnergyCost = resolveSlotEnergyCost(shipKind, slotId);
     if (!canAfford(ship.energy, slotEnergyCost)) {
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
       client.send('hit_ack', ack);
@@ -336,6 +371,15 @@ export class PlayerFireResolver implements WeaponFireSink {
       this._lastFireByGroup.set(shooterId, groupTicks);
     }
     groupTicks.set(groupKey, tick);
+    if (perMount) {
+      if (!mountTicks) {
+        mountTicks = new Map(); // once per shooter
+        this._lastFireByMount.set(shooterId, mountTicks);
+      }
+      for (let mIdx = 0; mIdx < slotMounts.length && mIdx < 31; mIdx++) {
+        if ((bearMask & (1 << mIdx)) !== 0) mountTicks.set(slotMounts[mIdx]!.id, tick);
+      }
+    }
     d.lastFireClientTick.set(shooterId, tick);
     ship.energy = spendEnergy(ship.energy, slotEnergyCost);
 
