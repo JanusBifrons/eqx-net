@@ -1798,6 +1798,7 @@ export class SectorRoom extends Room<SectorState> {
       // Capital turret fire control (the resolver is built later; resolve lazily).
       currentTick: () => this.serverTick,
       fireDroneMount: (id, i) => this.aiFireResolver.fireMount(id, i),
+      fireBlocked: (id, targetId) => this.npcLocks.fireBlocked(id, targetId),
       onClearPlayer: (pid) => this.locks.clearLocks(pid),
       aimTargetFor: (pid, mountId, out) => this.lockAimTarget(pid, mountId, out),
     });
@@ -4083,6 +4084,7 @@ export class SectorRoom extends Room<SectorState> {
         out.x = this._lockPose.x; out.y = this._lockPose.y; out.vx = this._lockPose.vx; out.vy = this._lockPose.vy;
         return getShipKind(rec.shipKind ?? null);
       },
+      instantLock: (pid) => this.locks.isInstant(pid),
     });
   }
 
