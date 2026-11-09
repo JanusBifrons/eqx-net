@@ -1,4 +1,5 @@
 import type { Shot } from '../types.js';
+import { allGroupsManual, lockAhead } from './_helpers.js';
 import { SHOWCASE_HUB_PAD, SHOWCASE_PORT_PAD } from '../../src/server/rooms/showcaseRooms.js';
 
 /**
@@ -46,7 +47,8 @@ export const alienGate: Shot = {
   docs: ['alien-gates'],
   reel: true,
   server: 'lean',
-  target: { room: 'alien-gate-test', params: { shipKind: 'fighter' } },
+  // Lock-to-fire: instantLock + MAN — the pilot locks the gate and opens fire on cue.
+  target: { room: 'alien-gate-test', params: { shipKind: 'fighter', instantLock: 1 } },
   hud: 'minimal',
   durationMs: 10_000,
   camera: [
@@ -54,8 +56,10 @@ export const alienGate: Shot = {
     { atMs: 5000, smoothMs: 1200, shot: { kind: 'hold', x: 0, y: -800, zoom: 0.5 } },
   ],
   async run(ctx) {
+    await allGroupsManual(ctx);
     await ctx.sleep(1200);
     await ctx.hold(['w'], 900);
+    await lockAhead(ctx);
     await ctx.hold(['Space'], 1600);
     // Engines are off now: holding thrust does nothing until it wears off.
     await ctx.hold(['w'], 2000);
@@ -77,7 +81,8 @@ export const garrisonPatrol: Shot = {
   reel: true,
   server: 'lean',
   // (Damage numbers on the pilot stay on: they show the patrol's hits.)
-  target: { room: 'showcase-garrison', params: { shipKind: 'heavy', initialHull: 1_000_000 } },
+  // instantLock + MAN groups: the pilot locks + opens fire ON CUE (lock-to-fire).
+  target: { room: 'showcase-garrison', params: { shipKind: 'heavy', initialHull: 1_000_000, instantLock: 1 } },
   hud: 'none',
   durationMs: 26_000,
   // The patrol flies the base's south side (~y -4400); hold there so it
@@ -90,16 +95,20 @@ export const garrisonPatrol: Shot = {
   ],
   async run(ctx) {
     // The patrol circles; the pilot is left alone.
+    await allGroupsManual(ctx);
     await ctx.sleep(2500);
     await ctx.hold(['w'], 1500);
     await ctx.hold(['s'], 400);
     // Opens fire on the base: now it's hostile, and the patrol closes in.
+    await lockAhead(ctx);
     await ctx.hold(['Space'], 3000);
     // Turn west and fly to meet the patrol (patrol craft cruise ~90 u/s).
     await ctx.hold(['a'], 800);
     await ctx.hold(['w'], 2200);
+    await lockAhead(ctx);
     await ctx.hold(['Space'], 3000);
     await ctx.sleep(2000);
+    await lockAhead(ctx);
     await ctx.hold(['Space'], 3000);
   },
 };

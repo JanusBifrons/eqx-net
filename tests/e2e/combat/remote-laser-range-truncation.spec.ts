@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
-import { launchTestClient, getRemoteHitTargets, getRemoteLaserRanges } from '../helpers/gameScenario';
+import { launchTestClient, getRemoteHitTargets, getRemoteLaserRanges, getLocalPlayerId } from '../helpers/gameScenario';
+import { lockOn } from '../helpers/fireControl';
 
 /**
  * 2026-06-03 deterministic combat split — replaces old combat.spec.ts test 12
@@ -35,6 +36,7 @@ test('remote laser range is truncated to the impact point when the beam hits a v
     spawnY: 0,
     initialAngle: 0,
     shipKind: 'interceptor',
+    instantLock: true,
     testId,
   });
   const victim = await launchTestClient(browser, {
@@ -49,6 +51,8 @@ test('remote laser range is truncated to the impact point when the beam hits a v
     testId,
   });
   try {
+    // Lock-to-fire: lock the victim first (instantLock completes it at once).
+    await lockOn(shooter.page, { kind: 'ship', playerId: await getLocalPlayerId(victim.page) });
     await shooter.page.keyboard.down('Space');
     await victim.page.waitForFunction(
       (fullRange) => {

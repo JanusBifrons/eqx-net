@@ -21,10 +21,9 @@
  *     2400 u lock range). Since the impact-only change (2026-06-06) the
  *     proximity fuse is disabled, so detonation here is always 'sweep'
  *     (a direct homing hit) — the assertion stays `cause !== 'lifetime'`.
- *   - Shooter cycles weapon to heat-seeker (Q twice from default
- *     hitscan) and holds Space for ~1.2 s to maximise the chance of
- *     catching the fire-dispatch wall-clock-anchored catch-up loop on
- *     an iteration where its per-RAF deficit is positive.
+ *   - Lock-to-fire (2026-11-09): the shooter (`?instantLock=1`) locks the
+ *     target with its 'missiles' group through the LOCK button, then the
+ *     AUTO group fires at the completed lock (`lockMissiles` below).
  *
  * Assertions via `GET /dev/events` (the in-memory ServerEventLog ring):
  *   1. A `missile_spawned` event arrives with this shooter's playerId.
@@ -37,8 +36,9 @@
  *
  * Run:
  *   pnpm e2e --project=feature tests/e2e/missile-frigate-homing.spec.ts --reporter=line
- */
+ */
 import { waitForInPlay } from './helpers/gameScenario';
+import { lockOn, setActiveGroup, toAuto, toManual } from './helpers/fireControl';
 import { test, expect } from '@playwright/test';
 import type { Browser, Page, APIRequestContext } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
@@ -67,9 +67,9 @@ test.describe.configure({ timeout: 90_000 });
 
 async function joinShip(
   browser: Browser,
-  opts: { testId: string; spawnX: number; spawnY: number; shipKind: string; room?: string },
+  opts: { testId: string; spawnX: number; spawnY: number; shipKind: string; room?: string; extra?: Record<string, string>; touch?: boolean },
 ): Promise<{ ctx: Awaited<ReturnType<Browser['newContext']>>; page: Page; playerId: string }> {
-  const ctx = await browser.newContext();
+  const ctx = await browser.newContext(opts.touch ? { hasTouch: true } : {});
   const page = await ctx.newPage();
   const params = new URLSearchParams({
     room: opts.room ?? 'test-sector-fast',
@@ -77,6 +77,7 @@ async function joinShip(
     spawnX: String(opts.spawnX),
     spawnY: String(opts.spawnY),
     shipKind: opts.shipKind,
+    ...(opts.extra ?? {}),
   });
   // `fpscap=0` disables the internal work-loop cap so the catch-up
   // loop iterates every RAF — the fire dispatch lives inside that loop
@@ -127,6 +128,24 @@ async function fetchEvents(
   return null;
 }
 
+/**
+ * Lock-to-fire (universal since 2026-11-09): the frigate's missile group fires
+ * only at a COMPLETED lock. Make 'missiles' the active group, put the point-
+ * defence laser in MAN (so it never adds its own fire / damage to the scene),
+ * then lock `target` through the LOCK button. With `mode: 'auto'` the group then
+ * fires on its own at the lock (no keyboard — synthetic Space on a freshly
+ * loaded canvas was the flake the old `triggerFireForTest` dodged); with
+ * `'manual'` it waits for held fire (Space / touch). The shooter must join with
+ * `instantLock=1` so a non-hostile target locks in ≤ 100 ms.
+ */
+async function lockMissiles(page: Page, target: Parameters<typeof lockOn>[1], mode: 'auto' | 'manual'): Promise<void> {
+  await toManual(page, 'pd');
+  await setActiveGroup(page, 'missiles');
+  await toManual(page, 'missiles');
+  await lockOn(page, target);
+  if (mode === 'auto') await toAuto(page, 'missiles');
+}
+
 test('heat-seeker locks onto in-range player and detonates via homing — not lifetime', async ({
   browser,
   request,
@@ -137,7 +156,7 @@ test('heat-seeker locks onto in-range player and detonates via homing — not li
   // the 36 u proximity fuse — clean homing + sweep-collision path.
   // Parallel join to keep the test under the 30 s per-test cap.
   const [shooter, target] = await Promise.all([
-    joinShip(browser, { testId, spawnX: 0, spawnY: 0, shipKind: 'missile-frigate' }),
+    joinShip(browser, { testId, spawnX: 0, spawnY: 0, shipKind: 'missile-frigate', extra: { instantLock: '1' } }),
     joinShip(browser, { testId, spawnX: 0, spawnY: 1000, shipKind: 'fighter' }),
   ]);
 
@@ -146,37 +165,13 @@ test('heat-seeker locks onto in-range player and detonates via homing — not li
     expect(target.playerId).not.toBe('');
     expect(shooter.playerId).not.toBe(target.playerId);
 
-    // Let the snapshot loop settle so the missile lock sees the target
-    // in `shipPoseCache` / `playerToSlot`. test-sector-fast ticks 10x
-    // so 300 ms wall-clock ≈ 3 s game-time of settle.
-    await shooter.page.waitForTimeout(300);
-
-    // Fire the heat-seeker by calling `__eqxClient.triggerFireForTest(
-    // 'heat-seeker')` directly. This bypasses BOTH the keyboard event
-    // pipeline (synthetic Space-keydowns in Playwright headless are
-    // unreliable on a freshly-loaded canvas page) AND the wall-clock-
-    // anchored catch-up loop's fire dispatch (silently skipped when
-    // `inputTick > targetTick` — a headless-RAF quirk that swallowed
-    // every heat-seeker fire in keyboard-driven iterations, while the
-    // SAME setup fires hitscan reliably; the cooldown-tick gap between
-    // 10 (hitscan) and 180 (heat-seeker) is what made it weapon-
-    // specific). `triggerFireForTest` returns true iff `sendFire` ran
-    // (predWorld + ship + room present); the missile_spawned assertion
-    // below confirms the round-trip.
+    // Lock the frigate's missile group on the target (LOCK button; the shooter
+    // joined with instantLock so the PvP failsafe completes in ≤ 100 ms), then
+    // flip it to AUTO: it fires on its own at the completed lock. No keyboard
+    // (synthetic Space on a fresh canvas was the flake `triggerFireForTest`
+    // used to dodge).
     const fireTs = Date.now();
-    const fired = await shooter.page.evaluate(() => {
-      const w = window as unknown as {
-        __eqxClient?: { triggerFireForTest?: (id: string) => boolean };
-      };
-      if (!w.__eqxClient?.triggerFireForTest) return 'hook missing';
-      return w.__eqxClient.triggerFireForTest('heat-seeker') ? 'ok' : 'sendFire bailed';
-    });
-    expect(
-      fired,
-      `triggerFireForTest result was '${fired}' — expected 'ok'. ` +
-      `'hook missing' ⇒ App.tsx DEV exposure not loaded; 'sendFire bailed' ⇒ ` +
-      `predWorld/ship/room not ready (race on initial spawn).`,
-    ).toBe('ok');
+    await lockMissiles(shooter.page, { kind: 'ship', playerId: target.playerId }, 'auto');
 
     // Assertion 1: missile_spawned arrives for this shooter.
     const spawned = await fetchEvents(
@@ -312,36 +307,31 @@ test('heat-seeker damages a drone (swarm target) — not just other players', as
   // `rec.kind === 0` so missiles never select an asteroid in the first
   // place. This spec asserts a drone genuinely takes non-zero damage.
   //
-  // `mount-test` (testMode=true) spawns 6 drones in a 250 u ring around
-  // origin. No asteroids. No testTimeScale, so missile lifetime is full
-  // 6 s wall-clock — the test runs ~8-12 s total, comfortably under the
-  // 30 s per-test cap.
+  // Lock-to-fire (2026-11-09): a missile fires only at a lock, so the target
+  // must be one the racks bear on. `auto-fire-test` parks one peaceful,
+  // hull-exposed fighter 150 u dead ahead (was `mount-test`'s 250 u ring,
+  // where most drones sit outside the racks' ±15° arc). No asteroids.
+  // `startHostile=1` marks it hostile, so the AUTO missile group locks it
+  // on its own (normal lock time, no instantLock) and fires. The point-
+  // defence laser goes to MAN at once so the damage asserted below is the
+  // missile's, not the laser's.
   const testId = randomUUID();
+  // Before the join: an AUTO salvo may leave as soon as the curtain lifts.
+  const fireTs = Date.now();
   const shooter = await joinShip(browser, {
     testId,
     spawnX: 0,
     spawnY: 0,
     shipKind: 'missile-frigate',
-    room: 'mount-test',
+    room: 'auto-fire-test',
+    extra: { startHostile: '1', initialHull: '5000' },
   });
 
   try {
     expect(shooter.playerId).not.toBe('');
-
-    // Let the snapshot loop settle so the drones are in `playerToSlot`
-    // / `swarmRegistry`. mount-test doesn't accelerate physics.
-    await shooter.page.waitForTimeout(500);
-
-    // Fire heat-seeker via the dev-only test hook — same path as the
-    // first spec.
-    const fireTs = Date.now();
-    const fired = await shooter.page.evaluate(() => {
-      const w = window as unknown as {
-        __eqxClient?: { triggerFireForTest?: (id: string) => boolean };
-      };
-      return w.__eqxClient?.triggerFireForTest?.('heat-seeker') ? 'ok' : 'failed';
-    });
-    expect(fired, 'triggerFireForTest did not succeed').toBe('ok');
+    await toManual(shooter.page, 'pd');
+    await setActiveGroup(shooter.page, 'missiles');
+    await toAuto(shooter.page, 'missiles');
 
     // Assertion 1: missile spawned with a lock on a DRONE (swarm-kind
     // target, NOT an asteroid). Asteroid exclusion is now at the
@@ -352,19 +342,21 @@ test('heat-seeker damages a drone (swarm target) — not just other players', as
       (e) => e.tag === 'missile_spawned'
         && e.data['ownerId'] === shooter.playerId
         && e.ts >= fireTs,
-      { timeoutMs: 4000 },
+      // Covers the AUTO group's real (hostile-target) lock time before the
+      // first salvo — the state under test, not a pacing wait.
+      { timeoutMs: 15_000 },
     );
     expect(spawned, 'no missile_spawned event for shooter').not.toBeNull();
     const lockedTargetId = spawned!.data['lockedTargetId'] as string | null;
     const candidateCount = spawned!.data['candidateCount'] as number;
     expect(
       lockedTargetId,
-      `lock was null — candidateCount=${candidateCount}. mount-test should have 6 drones in range; ` +
+      `lock was null — candidateCount=${candidateCount}. auto-fire-test has one drone 150 u ahead; ` +
       `if candidateCount=0 the candidate build is broken; if > 0 the predicate rejected all of them.`,
     ).not.toBeNull();
     expect(
-      typeof lockedTargetId === 'string' && (lockedTargetId.startsWith('swarm-drone-') || lockedTargetId.startsWith('lwbot-')),
-      `missile locked onto unexpected target '${String(lockedTargetId)}' — expected a drone (swarm-drone-* or lwbot-*).`,
+      typeof lockedTargetId === 'string' && /^(swarm-drone-|pose-drone-|lwbot-)/.test(lockedTargetId),
+      `missile locked onto unexpected target '${String(lockedTargetId)}' — expected a drone (swarm-drone-* / pose-drone-* / lwbot-*).`,
     ).toBe(true);
 
     // Assertion 2: missile detonates via homing — not lifetime.
@@ -433,27 +425,20 @@ test('held fire auto-refires heat-seeker every cooldown — no need to tap', asy
   // game-time; this spec holds the fire input for ~7 s (well over two
   // cooldowns) and asserts ≥ 2 distinct missile_spawned events from
   // this shooter.
+  //
+  // Lock-to-fire (2026-11-09): held fire only fires a MAN group at a
+  // completed lock, so the shooter locks a second pilot 600 u ahead (huge
+  // hull, so the first salvo never kills it and drops the lock) in the
+  // real-time `test-sector` (wall-clock cooldown bands below).
   const testId = randomUUID();
-  const shooter = await joinShip(browser, {
-    testId,
-    spawnX: 0,
-    spawnY: 0,
-    shipKind: 'missile-frigate',
-    room: 'mount-test',
-  });
+  const [shooter, target] = await Promise.all([
+    joinShip(browser, { testId, spawnX: 0, spawnY: 0, shipKind: 'missile-frigate', room: 'test-sector', extra: { instantLock: '1' } }),
+    joinShip(browser, { testId, spawnX: 0, spawnY: 600, shipKind: 'fighter', room: 'test-sector', extra: { initialHull: '100000' } }),
+  ]);
 
   try {
     expect(shooter.playerId).not.toBe('');
-    await shooter.page.waitForTimeout(500);
-
-    // Set activeWeapon to heat-seeker via the test hook (skips KeyQ-
-    // cycle race conditions documented above).
-    await shooter.page.evaluate(() => {
-      const w = window as unknown as {
-        __eqxSetActiveWeapon?: (id: string) => void;
-      };
-      w.__eqxSetActiveWeapon?.('heat-seeker');
-    });
+    await lockMissiles(shooter.page, { kind: 'ship', playerId: target.playerId }, 'manual');
 
     // Click to focus + hold Space for ~2.33 cooldown windows (HS_HOLD_MS).
     // Expect ≥ 2 distinct salvos (the initial one at hold-start, then a
@@ -562,7 +547,7 @@ test('held fire auto-refires heat-seeker every cooldown — no need to tap', asy
       expect(gap).toBeLessThanOrEqual(HS_COOLDOWN_MS + 700);
     }
   } finally {
-    await shooter.ctx.close();
+    await Promise.all([shooter.ctx.close(), target.ctx.close()]);
   }
 });
 
@@ -578,30 +563,24 @@ test('impact-only: a missile with no target FIZZLES on expiry — no lifetime/fu
   // detonated 'fuse' (proximityFuseRadius=36) → this test FAILS on the old
   // code, satisfying Invariant #13.
   //
-  // Scenario: a LONE missile-frigate in test-sector-fast (no other players,
-  // no drones) fires a heat-seeker. With no hostile in the sector the
-  // missile flies straight (dumb mode) and never hits anything.
-  // testTimeScale=10 compresses the 6 s lifetime to ~600 ms wall-clock.
+  // Scenario (lock-to-fire, 2026-11-09 — a missile can no longer be fired
+  // with nothing locked): a missile-frigate in the real-time `test-sector`
+  // (no drones, no asteroids) locks a second pilot 1100 u ahead (inside the
+  // 1200 u missile reach, ~2.7 s of flight) and the AUTO group fires. The
+  // moment the first missile spawns the target LEAVES the room, so the
+  // missile has nothing left to hit and must fizzle at the end of its 6 s
+  // lifetime.
   const testId = randomUUID();
-  const shooter = await joinShip(browser, {
-    testId,
-    spawnX: 0,
-    spawnY: 0,
-    shipKind: 'missile-frigate',
-  });
+  const [shooter, target] = await Promise.all([
+    joinShip(browser, { testId, spawnX: 0, spawnY: 0, shipKind: 'missile-frigate', room: 'test-sector', extra: { instantLock: '1' } }),
+    joinShip(browser, { testId, spawnX: 0, spawnY: 1100, shipKind: 'fighter', room: 'test-sector' }),
+  ]);
+  let targetOpen = true;
 
   try {
     expect(shooter.playerId).not.toBe('');
-    await shooter.page.waitForTimeout(300);
-
     const fireTs = Date.now();
-    const fired = await shooter.page.evaluate(() => {
-      const w = window as unknown as {
-        __eqxClient?: { triggerFireForTest?: (id: string) => boolean };
-      };
-      return w.__eqxClient?.triggerFireForTest?.('heat-seeker') ? 'ok' : 'failed';
-    });
-    expect(fired, 'triggerFireForTest did not succeed').toBe('ok');
+    await lockMissiles(shooter.page, { kind: 'ship', playerId: target.playerId }, 'auto');
 
     // Confirm the missile actually spawned (so "no detonation" means
     // "fizzled", not "never fired").
@@ -611,6 +590,9 @@ test('impact-only: a missile with no target FIZZLES on expiry — no lifetime/fu
       { timeoutMs: 4000 },
     );
     expect(spawned, 'no missile_spawned — fire never reached the simulation').not.toBeNull();
+    // Take the only target out of the world: the missile is now a miss.
+    await target.ctx.close();
+    targetOpen = false;
 
     // The missile must EXPIRE. Missiles step once per server update, which
     // `testTimeScale` does not speed up, so the lifetime is the catalogue's
@@ -650,90 +632,41 @@ test('impact-only: a missile with no target FIZZLES on expiry — no lifetime/fu
     );
     expect(damageApplied, 'a missed missile dealt damage — impact-only violated').toBeNull();
   } finally {
-    await shooter.ctx.close();
+    await Promise.all([shooter.ctx.close(), targetOpen ? target.ctx.close() : Promise.resolve()]);
   }
 });
 
-test('touch fire path: setting touchInput.fireHeld dispatches a missile', async ({
+test("touch fire path: holding a MAN group's chip dispatches a missile", async ({
   browser,
   request,
 }) => {
-  // Regression lock for the touch-fire branch of the hoisted per-RAF
-  // fire dispatch (2026-05-27 — the hoist initially used `kb.fireHeld`
-  // only, breaking firing entirely on real phones where the keyboard
-  // is never the source of the FIRE button. The other tests use
-  // `keyboard.down('Space')` and trivially passed despite the bug).
+  // Regression lock for the touch-fire branch (2026-05-27: the hoisted fire
+  // dispatch once read the keyboard only, so phones could not fire at all;
+  // the Space-driven tests trivially passed despite the bug).
   //
-  // This spec drives fire through the same code path real touch users
-  // hit: `MobileControls` → `touchInput.setFireHeld(true)`. We poke the
-  // touchInput directly via the dev-only `__eqxClient` window hook
-  // (skipping the React `onTouchStart` UI ceremony — the regression
-  // would have been in the wire-up between `touchInput.getFireHeld()`
-  // and the fire dispatch, not in the React layer).
+  // Lock-to-fire (2026-11-09): a touch pilot fires a MAN weapon group by
+  // HOLDING its weapon-strip chip (the old FIRE button / touchInput.fireHeld
+  // path is gone). This drives a real touch press on the chip (CDP touch
+  // events → pointerdown/pointerup) with the missiles locked on a pilot ahead.
   const testId = randomUUID();
-  const shooter = await joinShip(browser, {
-    testId,
-    spawnX: 0,
-    spawnY: 0,
-    shipKind: 'missile-frigate',
-    room: 'mount-test',
-  });
+  const [shooter, target] = await Promise.all([
+    joinShip(browser, { testId, spawnX: 0, spawnY: 0, shipKind: 'missile-frigate', room: 'test-sector', extra: { instantLock: '1' }, touch: true }),
+    joinShip(browser, { testId, spawnX: 0, spawnY: 600, shipKind: 'fighter', room: 'test-sector', extra: { initialHull: '100000' } }),
+  ]);
   try {
-    await shooter.page.waitForTimeout(500);
+    await lockMissiles(shooter.page, { kind: 'ship', playerId: target.playerId }, 'manual');
 
-    // Switch to heat-seeker.
-    await shooter.page.evaluate(() => {
-      const w = window as unknown as { __eqxSetActiveWeapon?: (id: string) => void };
-      w.__eqxSetActiveWeapon?.('heat-seeker');
-    });
-
-    // Drive fire via touchInput. The client constructor lazily attaches
-    // a TouchInput only on devices the renderer detects as touch — in
-    // Playwright headless that's normally null, so the test also
-    // attaches one if missing (mirrors `App.tsx`'s init path).
+    const box = await shooter.page.locator('[data-testid="fc-chip-missiles"]').boundingBox();
+    expect(box, 'missiles chip not on screen').not.toBeNull();
+    const x = box!.x + box!.width / 2;
+    const y = box!.y + box!.height / 2;
+    const cdp = await shooter.ctx.newCDPSession(shooter.page);
     const fireTs = Date.now();
-    const result = await shooter.page.evaluate(() => {
-      // Reach into the private `touchInput` field. The class field name
-      // survives TS `private` at runtime.
-      const w = window as unknown as {
-        __eqxClient?: {
-          touchInput: { setFireHeld: (v: boolean) => void } | null;
-          setTouchInput?: (ti: unknown) => void;
-        };
-      };
-      const client = w.__eqxClient;
-      if (!client) return 'no __eqxClient';
-      if (!client.touchInput) {
-        // Attach a minimal TouchInput-shaped stub so the cleanup path
-        // doesn't crash. Only `getFireHeld` matters for the fire gate.
-        const stub = {
-          _fireHeld: false,
-          setFireHeld(v: boolean) { this._fireHeld = v; },
-          getFireHeld(): boolean { return this._fireHeld; },
-          getJoystickVector() { return null; },
-          getBoostHeld() { return false; },
-          setJoystick() { /* noop */ },
-          setJoystickIdle() { /* noop */ },
-          setBoostHeld() { /* noop */ },
-        };
-        // @ts-expect-error — runtime mutation through the dev hook.
-        client.touchInput = stub;
-      }
-      client.touchInput!.setFireHeld(true);
-      return 'ok';
-    });
-    expect(result).toBe('ok');
-
-    // Hold for one full salvo (≥ 1 RAF + 1 server tick). 300 ms is
-    // generous; cooldown is 3000 ms so only ONE fire happens.
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
+    // Hold for one salvo (≥ 1 RAF + 1 server tick); the cooldown means
+    // only ONE fire happens.
     await shooter.page.waitForTimeout(300);
-
-    await shooter.page.evaluate(() => {
-      const w = window as unknown as {
-        __eqxClient?: { touchInput: { setFireHeld: (v: boolean) => void } | null };
-      };
-      w.__eqxClient?.touchInput?.setFireHeld(false);
-    });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 
     // Touch fire must produce a missile_spawned event server-side.
     const spawned = await fetchEvents(
@@ -745,9 +678,9 @@ test('touch fire path: setting touchInput.fireHeld dispatches a missile', async 
     );
     expect(
       spawned,
-      'touch FIRE did not produce a missile_spawned — the fire dispatch is ignoring touchInput.getFireHeld()',
+      'holding the MAN missiles chip did not produce a missile_spawned — the chip-hold fire path is broken',
     ).not.toBeNull();
   } finally {
-    await shooter.ctx.close();
+    await Promise.all([shooter.ctx.close(), target.ctx.close()]);
   }
 });

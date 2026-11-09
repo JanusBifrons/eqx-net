@@ -22,6 +22,9 @@ test('bolts fired into a closed fence ripple on it', async ({ browser }) => {
   const params = new URLSearchParams({
     room: 'gate-test', spawnX: '400', spawnY: '-1150', shipKind: 'fighter', testId: randomUUID(),
     worker: '0', art: 'machined', fx: 'new', zoom: '1',
+    // Lock-to-fire (2026-11-09): instantLock makes the AUTO group lock the
+    // (non-hostile, not-ours) fence gate ahead and fire on its own.
+    instantLock: '1',
   });
   await page.goto(`${BASE_URL}?${params}`);
   type S = { fxFences?: number; fxFenceHits?: number };
@@ -30,7 +33,7 @@ test('bolts fired into a closed fence ripple on it', async ({ browser }) => {
   // Fire only counts once the loading curtain lifts: before this the 12
   // presses could all land behind the curtain and no bolt left the ship.
   await waitForInPlay(page);
-  // Fire repeatedly (one bolt per keypress) at the fence ahead.
+  // AUTO fires at the locked gate; the presses add the active group if it is MAN.
   await page.locator('canvas').first().click({ position: { x: 640, y: 600 } });
   for (let i = 0; i < 12; i++) await page.keyboard.press('Space', { delay: 30 });
   await page.waitForFunction(() => ((window as unknown as { __eqxArtStats?: () => S }).__eqxArtStats?.().fxFenceHits ?? 0) > 0,

@@ -6,9 +6,10 @@ export const beamCombat: Shot = {
   id: 'beam-combat',
   section: 'mechanics',
   title: 'Shields, then hull',
-  caption: 'Auto-fire locks onto hostiles. Beams taper with range; shields must fall before the hull takes damage.',
+  caption: 'AUTO weapon groups lock onto hostiles, then fire. Beams taper with range; shields must fall before the hull takes damage.',
   features: ['M9', 'M12', 'M13', 'M14', 'U6'],
-  docs: ['shield-hull', 'auto-fire-and-boost'],
+  // Lock-to-fire is universal (2026-11-09): this take films the AUTO lock + fire.
+  docs: ['shield-hull', 'auto-fire-and-boost', 'fire-control', 'weapon-groups-and-locking'],
   reel: true,
   server: 'lean',
   target: { room: 'feel-test', params: { shipKind: 'interceptor', ...SURVIVE } },

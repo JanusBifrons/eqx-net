@@ -41,7 +41,7 @@ describe('resolveScenarios', () => {
     const core = SCENARIOS.find((s) => s.name === 'core');
     expect(core?.room).toBe('feel-test-25');
     expect(core?.gating).toBe('gate');
-    expect(core?.urlParams).toBe('');
+    expect(core?.urlParams).toBe('&instantLock=1'); // lock-to-fire: strafe-fire needs locks
   });
 });
 

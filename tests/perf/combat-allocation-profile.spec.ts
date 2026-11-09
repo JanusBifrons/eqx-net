@@ -46,6 +46,9 @@ test('combat allocation profile: rank top 20 per-tick allocators', async () => {
 
   const params = new URLSearchParams({
     room: 'feel-test-25',
+    // Lock-to-fire (2026-11-09): held Space fires only at a completed lock;
+    // instantLock makes the AUTO group lock the drone ahead within ~0.1 s.
+    instantLock: '1',
     diag: '1',
     testId: `alloc-profile-${Date.now()}`,
     spawnX: '0',

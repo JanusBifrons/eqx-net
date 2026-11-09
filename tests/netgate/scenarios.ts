@@ -117,7 +117,11 @@ export const SCENARIOS: readonly NetgateScenario[] = [
   {
     name: 'core',
     room: 'feel-test-25',
-    urlParams: '',
+    // Lock-to-fire (2026-11-09): `strafe-fire` only shoots at completed locks;
+    // `instantLock` makes the AUTO group lock the (neutral) drones it sweeps
+    // past within ~0.1 s, so the interaction stays a combat strafe. A baseline
+    // ref that predates the flag ignores it (and fires freely, as it always did).
+    urlParams: '&instantLock=1',
     liveSelector: '[data-testid="ship-count"]',
     interaction: 'strafe-fire',
     reps: 8,

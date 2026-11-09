@@ -80,10 +80,10 @@ test('boost without thrust drains the energy pool (A5 energy gate is live)', asy
   // reads its hydrated spawn-full value, not a first-frame transient.
   const { ctx, page } = await joinFast(browser, 'scout');
   try {
-    await expect(page.locator('[data-testid="energy-bar"]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="hud-energy"]')).toBeVisible({ timeout: 5000 });
     await page.waitForTimeout(400);
     const before = parseInt(
-      (await page.locator('[data-testid="energy-bar"]').getAttribute('data-energy-pct')) ?? '0',
+      (await page.locator('[data-testid="hud-energy"]').getAttribute('data-energy-pct')) ?? '0',
       10,
     );
     expect(before).toBeGreaterThan(80);
@@ -92,7 +92,7 @@ test('boost without thrust drains the energy pool (A5 energy gate is live)', asy
     // of thrust (and the client predicts that drain).
     await page.keyboard.down('Shift');
     const drained = await page.waitForFunction(
-      (b) => parseInt(document.querySelector('[data-testid="energy-bar"]')
+      (b) => parseInt(document.querySelector('[data-testid="hud-energy"]')
         ?.getAttribute('data-energy-pct') ?? '100', 10) < (b as number) - 10,
       before,
       { timeout: 8000 },

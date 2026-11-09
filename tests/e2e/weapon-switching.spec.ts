@@ -12,26 +12,25 @@
  *   4. The bolt ghost is cleaned up after expiry (no stuck duplicates).
  *
  * Determinism (test-harness philosophy — "bespoke trigger, never bump
- * timeouts"): fire is driven by the framework's `__eqxClient.triggerFireForTest`
- * hook, NOT synthetic keyboard events (headless keyboard focus + the
- * wall-clock-anchored per-RAF fire dispatch made `keyboard.down('Space')`
- * flaky). The trigger calls the same `sendFire` path directly. Because the
- * fired weapon resolves from the local ship's MIRROR kind (set by the first
- * snapshot, not instantly on join), each fire test RE-FIRES inside a
- * `waitForFunction` until the visual appears — self-settling past the spawn
- * window with no fixed sleep, and the wait succeeding IS the assertion. Room
- * is the controlled `test-sector-fast` engineering room (testMode, no drones,
- * 10× time so case 4's ghost-TTL expiry is a few hundred ms).
+ * timeouts"): lock-to-fire (2026-11-09) means a weapon group fires only at a
+ * COMPLETED lock, so the fire tests join `auto-fire-test` (one peaceful drone
+ * 150 u dead ahead, 10× time so case 4's ghost-TTL expiry is a few hundred
+ * ms) with `instantLock=1`: the AUTO group locks the drone within ~0.1 s and
+ * fires on its own — no synthetic keyboard (headless focus made Space flaky)
+ * and no test-only fire hook. The wait succeeding IS the assertion.
  */
 import { test, expect } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
+import { toManual } from './helpers/fireControl';
+import { waitForInPlay } from './helpers/gameScenario';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
-async function joinClient(browser: Browser, shipKind = 'scout') {
+async function joinClient(browser: Browser, shipKind = 'scout', fire = false) {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=${shipKind}`);
+  const room = fire ? 'auto-fire-test&instantLock=1&initialHull=5000' : 'test-sector-fast';
+  await page.goto(`${BASE_URL}?room=${room}&shipKind=${shipKind}`);
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');
@@ -39,6 +38,8 @@ async function joinClient(browser: Browser, shipKind = 'scout') {
     }, undefined,
     { timeout: 12000 },
   );
+  // Fire (and the AUTO lock) only start once the loading curtain lifts.
+  if (fire) await waitForInPlay(page);
   return { ctx, page };
 }
 
@@ -73,14 +74,12 @@ test('slot selector replaces the per-weapon picker', async ({ browser }) => {
 // 2. A bolt ship fires PROJECTILES, never a hitscan beam
 // ---------------------------------------------------------------------------
 test('a scout (bolt loadout) fires projectiles, not a beam', async ({ browser }) => {
-  const { ctx, page } = await joinClient(browser, 'scout');
+  const { ctx, page } = await joinClient(browser, 'scout', true);
   try {
-    // Re-fire until a projectile (ghost bolt) registers — self-settles past
-    // the spawn window where the mirror kind isn't set yet.
+    // The AUTO group locks the drone ahead and fires; wait for a projectile
+    // (ghost bolt) — the HUD/curtain and the lock are the only waits.
     await page.waitForFunction(
       () => {
-        (window as unknown as { __eqxClient?: { triggerFireForTest(id: string): boolean } })
-          .__eqxClient?.triggerFireForTest('laser');
         const el = document.querySelector('[data-testid="game-surface"]');
         return (
           el !== null &&
@@ -102,17 +101,14 @@ test('a scout (bolt loadout) fires projectiles, not a beam', async ({ browser })
 // 3. A beam ship fires a hitscan BEAM
 // ---------------------------------------------------------------------------
 test('an interceptor (beam loadout) fires a hitscan beam', async ({ browser }) => {
-  const { ctx, page } = await joinClient(browser, 'interceptor');
+  const { ctx, page } = await joinClient(browser, 'interceptor', true);
   try {
-    // Re-fire until the beam is active — the wait succeeding IS the assertion
-    // (the live beam only persists ~220 ms per fire, so a post-wait read would
-    // race the fade).
+    // The AUTO group locks the drone ahead and fires; wait for the beam — the
+    // wait succeeding IS the assertion (the live beam only persists ~220 ms
+    // per fire, so a post-wait read would race the fade).
     await page.waitForFunction(
-      () => {
-        (window as unknown as { __eqxClient?: { triggerFireForTest(id: string): boolean } })
-          .__eqxClient?.triggerFireForTest('hitscan');
-        return document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '1';
-      }, undefined,
+      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '1',
+      undefined,
       { timeout: 10_000 },
     );
   } finally {
@@ -124,21 +120,20 @@ test('an interceptor (beam loadout) fires a hitscan beam', async ({ browser }) =
 // 4. Regression: bolt ghost sprites are cleaned up after expiry
 // ---------------------------------------------------------------------------
 test('bolt ghost sprites are cleaned up after expiry — no static duplicates', async ({ browser }) => {
-  const { ctx, page } = await joinClient(browser, 'scout');
+  const { ctx, page } = await joinClient(browser, 'scout', true);
   try {
-    // Fire (re-trying past the spawn window) until a ghost exists…
+    // The AUTO group fires at the drone until a ghost exists…
     await page.waitForFunction(
       () => {
-        (window as unknown as { __eqxClient?: { triggerFireForTest(id: string): boolean } })
-          .__eqxClient?.triggerFireForTest('laser');
         const el = document.querySelector('[data-testid="game-surface"]');
         return el !== null && parseInt(el.getAttribute('data-projectile-count') ?? '0', 10) > 0;
       }, undefined,
       { timeout: 10_000 },
     );
-    // …then STOP firing and wait for it to expire (ghost TTL + projectile
+    // …then STOP firing (MAN drops the lock; nothing is held) and wait for it to expire (ghost TTL + projectile
     // lifetime, compressed 10× in test-sector-fast). The point is the ghost
     // ISN'T stuck at its spawn position.
+    await toManual(page);
     await page.waitForFunction(
       () => {
         const el = document.querySelector('[data-testid="game-surface"]');

@@ -10,6 +10,10 @@
  *   P1 at (0, -200) — fires north along the Y axis
  *   P2 at (0, +200) — sits 400 units north of P1 (within HITSCAN_RANGE=500)
  *
+ * Lock-to-fire (2026-11-09): every shooter joins with `instantLock` and locks
+ * its victim with `lockOn` before firing (the server refuses unlocked fire);
+ * the locked AUTO group then fires on its own and the held Space is kept.
+ *
  * Run headed for visual verification:
  *   pnpm e2e:headed tests/e2e/scenarios/combat-lifecycle.spec.ts
  */
@@ -25,7 +29,19 @@ import {
   getBeamActive,
   waitForDeath,
   waitForInPlay,
+  getLocalPlayerId,
 } from '../helpers/gameScenario.js';
+import { lockOn, toManual } from '../helpers/fireControl.js';
+import type { Page } from '@playwright/test';
+
+/** Lock `victim`'s ship with `shooter`'s active group (instantLock ⇒ at once).
+ *  `manual`: put the group in MAN first, so it holds fire until Space — for a
+ *  one-shot kill, where an AUTO group would kill the victim on the lock step
+ *  and drop the lock before the chip ever read LOCKED. */
+async function lockVictim(shooter: Page, victim: Page, manual = false): Promise<void> {
+  if (manual) await toManual(shooter);
+  await lockOn(shooter, { kind: 'ship', playerId: await getLocalPlayerId(victim) });
+}
 
 // ---------------------------------------------------------------------------
 // A. No asteroids in test-sector
@@ -72,7 +88,7 @@ test('P1 destroys P2: hull reaches 0, SHIP DESTROYED alert fires', async ({ brow
   // (Colyseus filterBy routes by testId).
   const testId = randomUUID();
   const [p1, p2] = await Promise.all([
-    launchTestClient(browser, { spawnX: 0, spawnY: -200, testId }),
+    launchTestClient(browser, { spawnX: 0, spawnY: -200, testId, instantLock: true }),
     // A near-dead, unshielded target: the kill is a few hits, not a fighter's
     // full ~750 hull + shield (the old "100 HP, ~0.8 s" comment predates the
     // slow-down retune; it only passed while the 5 s wait below had no deadline).
@@ -89,6 +105,7 @@ test('P1 destroys P2: hull reaches 0, SHIP DESTROYED alert fires', async ({ brow
     // post-smooth-beam retune 4 HP × 33 ms = same DPS as the prior 20 HP × 167 ms,
     // see `src/core/combat/WeaponCatalogue.ts` HITSCAN_DEF). 100 HP ship → kill
     // in ~0.8 s + RTT; comfortable within the 5 s budget below.
+    await lockVictim(p1.page, p2.page, true);
     await p1.page.keyboard.down('Space');
     // 15 s: before the 2026-11-06 waitForFunction fix this deadline never
     // applied (it ran to the 30 s test timeout); two clients on a CI runner
@@ -131,13 +148,14 @@ test('full lifecycle: P2 is killed by P1 and drops into spectator, no death moda
   // reads 0 % at spawn and waitForDeath would return before P1 fires.
   const testId = randomUUID();
   const [p1, p2] = await Promise.all([
-    launchTestClient(browser, { spawnX: 0, spawnY: -200, testId }),
+    launchTestClient(browser, { spawnX: 0, spawnY: -200, testId, instantLock: true }),
     launchTestClient(browser, { spawnX: 0, spawnY: 200, initialHull: 10, initialShield: 0, testId }),
   ]);
   try {
     // A ship is targetable only once its loading curtain lifts.
     await Promise.all([waitForInPlay(p1.page), waitForInPlay(p2.page)]);
     expect(await p2.page.locator('[data-testid="game-surface"]').getAttribute('data-pilot-mode')).toBe('pilot');
+    await lockVictim(p1.page, p2.page, true);
     await p1.page.keyboard.down('Space');
     await waitForDeath(p2.page, 10_000);
     await p1.page.keyboard.up('Space');
@@ -172,30 +190,18 @@ test('shooter sees target hull decrease in shared ship positions', async ({ brow
   test.setTimeout(60_000);
   const testId = randomUUID();
   const [p1, p2] = await Promise.all([
-    launchTestClient(browser, { spawnX: 0, spawnY: -200, testId }),
+    launchTestClient(browser, { spawnX: 0, spawnY: -200, testId, instantLock: true }),
     launchTestClient(browser, { spawnX: 0, spawnY: 200, initialShield: 0, testId }),
   ]);
   try {
-    await Promise.all([p1.page.waitForTimeout(1000), p2.page.waitForTimeout(1000)]);
-
     const hullBefore = await getHullPct(p2.page);
 
-    // Fire P1's loadout at P2 via the framework trigger (deterministic — no
-    // keyboard focus / per-RAF dispatch flakiness). Re-fire past the spawn /
-    // cooldown window — the fired weapon resolves from P1's mirror kind, which
-    // the first snapshot sets shortly after join — until P2's hull drops.
-    let hullAfter = hullBefore;
-    for (let i = 0; i < 40 && hullAfter >= hullBefore; i++) {
-      await p1.page.evaluate(
-        () =>
-          (
-            window as unknown as { __eqxClient?: { triggerFireForTest(id: string): boolean } }
-          ).__eqxClient?.triggerFireForTest('hitscan'),
-      );
-      await p1.page.waitForTimeout(100);
-      hullAfter = await getHullPct(p2.page);
-    }
-    expect(hullAfter).toBeLessThan(hullBefore);
+    // Lock-to-fire: P1 locks P2 (instantLock ⇒ at once); P1's AUTO group then
+    // fires at its lock with no input (the old `triggerFireForTest` loop sent
+    // unlocked fire, which the server now refuses).
+    await lockVictim(p1.page, p2.page);
+    await expect.poll(() => getHullPct(p2.page), { timeout: 5_000 }).toBeLessThan(hullBefore);
+    const hullAfter = await getHullPct(p2.page);
     console.log(`\nDamage propagated: hull ${hullBefore} → ${hullAfter} ✓\n`);
   } finally {
     await Promise.all([p1.ctx.close(), p2.ctx.close()]);

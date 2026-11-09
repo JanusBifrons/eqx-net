@@ -15,6 +15,7 @@
 import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
 import { launchTestClient, getRemoteHitTargets, getLocalPlayerId } from '../helpers/gameScenario';
+import { lockOn } from '../helpers/fireControl';
 
 test('shooter remote-hit broadcast names the parked victim by id', async ({ browser }) => {
   const testId = randomUUID();
@@ -23,6 +24,7 @@ test('shooter remote-hit broadcast names the parked victim by id', async ({ brow
     spawnY: 0,
     initialAngle: 0,
     shipKind: 'interceptor',
+    instantLock: true,
     testId,
   });
   const victim = await launchTestClient(browser, {
@@ -46,6 +48,8 @@ test('shooter remote-hit broadcast names the parked victim by id', async ({ brow
     const victimId = await getLocalPlayerId(victim.page);
     expect(victimId).not.toBe('');
 
+    // Lock-to-fire: lock the victim first (instantLock completes it at once).
+    await lockOn(shooter.page, { kind: 'ship', playerId: victimId });
     await shooter.page.keyboard.down('Space');
     await victim.page.waitForFunction(
       (id) => {

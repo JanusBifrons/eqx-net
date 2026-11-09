@@ -17,6 +17,9 @@
  */
 import { test, expect } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import { launchTestClient } from './helpers/gameScenario';
+import { lockOn, toManual } from './helpers/fireControl';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
@@ -42,7 +45,7 @@ async function joinClient(browser: Browser, shipKind = 'scout', room = 'test-sec
 }
 
 async function energyPct(page: Page): Promise<number> {
-  const v = await page.locator('[data-testid="energy-bar"]').getAttribute('data-energy-pct');
+  const v = await page.locator('[data-testid="hud-energy"]').getAttribute('data-energy-pct');
   return parseInt(v ?? '100', 10);
 }
 
@@ -57,7 +60,7 @@ async function energyPct(page: Page): Promise<number> {
 test('energy bar is visible and full on spawn', async ({ browser }) => {
   const { ctx, page } = await joinClient(browser, 'scout');
   try {
-    await expect(page.locator('[data-testid="energy-bar"]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="hud-energy"]')).toBeVisible({ timeout: 5000 });
     expect(await energyPct(page), 'the bar must be full the moment it appears').toBeGreaterThan(80);
   } finally {
     await ctx.close();
@@ -72,9 +75,21 @@ test('sustained fire drains the pool, then it recovers when firing stops', async
   // to 97–100 % under held fire. (Even at 1× a scout's bolts only break even:
   // 12/s drain vs 12/s regen.) The interceptor's beam drains 5 × 6 = 30/s
   // against 0.4 × 60 = 24/s regen — a net −6/s, so −15 % of 180 takes ~4.5 s.
-  const { ctx, page } = await joinClient(browser, 'interceptor', 'test-sector');
+  //
+  // Lock-to-fire (2026-11-09): there is no free fire any more, so the beam
+  // needs a locked target for the whole drain window. A second pilot parked
+  // 150 u dead ahead with a huge hull is that target (a drone would die
+  // before the pool drains); the shooter locks it with `instantLock` and
+  // holds Space on its MAN group.
+  const testId = randomUUID();
+  const [{ ctx, page }, victim] = await Promise.all([
+    launchTestClient(browser, { spawnX: 0, spawnY: 0, initialAngle: 0, shipKind: 'interceptor', testId, instantLock: true }),
+    launchTestClient(browser, { spawnX: 0, spawnY: 150, shipKind: 'fighter', testId, initialHull: 100_000 }),
+  ]);
   try {
-    await page.waitForTimeout(400);
+    const victimId = (await victim.page.locator('[data-testid="game-surface"]').getAttribute('data-local-player-id')) ?? '';
+    await toManual(page);
+    await lockOn(page, { kind: 'ship', playerId: victimId });
     const before = await energyPct(page);
 
     // Hold fire long enough to draw the pool down.
@@ -84,7 +99,7 @@ test('sustained fire drains the pool, then it recovers when firing stops', async
     // the start value as the arg: `waitForFunction(fn, { timeout })` treats the object
     // as the ARGUMENT, so the 8 s deadline never applied.
     await page.waitForFunction(
-      (b: number) => parseInt(document.querySelector('[data-testid="energy-bar"]')?.getAttribute('data-energy-pct') ?? '100', 10) < b - 15,
+      (b: number) => parseInt(document.querySelector('[data-testid="hud-energy"]')?.getAttribute('data-energy-pct') ?? '100', 10) < b - 15,
       before,
       { timeout: 8000 },
     );
@@ -94,14 +109,14 @@ test('sustained fire drains the pool, then it recovers when firing stops', async
 
     // Stop firing → steady regen brings it back up.
     await page.waitForFunction(
-      (low: number) => parseInt(document.querySelector('[data-testid="energy-bar"]')?.getAttribute('data-energy-pct') ?? '0', 10) > low + 10,
+      (low: number) => parseInt(document.querySelector('[data-testid="hud-energy"]')?.getAttribute('data-energy-pct') ?? '0', 10) > low + 10,
       drained,
       { timeout: 8000 },
     );
     expect(await energyPct(page)).toBeGreaterThan(drained);
   } finally {
     await page.keyboard.up('Space').catch(() => undefined);
-    await ctx.close();
+    await Promise.all([ctx.close(), victim.ctx.close()]);
   }
 });
 
@@ -114,7 +129,7 @@ test('boosting drains the energy pool', async ({ browser }) => {
     await page.keyboard.down('ArrowUp');
     await page.keyboard.down('ShiftLeft');
     await page.waitForFunction(
-      (b: number) => parseInt(document.querySelector('[data-testid="energy-bar"]')?.getAttribute('data-energy-pct') ?? '100', 10) < b - 10,
+      (b: number) => parseInt(document.querySelector('[data-testid="hud-energy"]')?.getAttribute('data-energy-pct') ?? '100', 10) < b - 10,
       before,
       { timeout: 8000 },
     );

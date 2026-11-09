@@ -7,7 +7,8 @@
  *   2. Open two browser contexts, inject each user's JWT into localStorage.
  *   3. Spawn the killer at (0,0) and the victim at (60,0) — within hitscan
  *      range and inside each other's interest grid window.
- *   4. Killer holds Space while sweeping rotation; victim takes hits until
+ *   4. Killer locks the victim (lock-to-fire, 2026-11-09: `instantLock` +
+ *      `lockOn`), then holds Space; victim takes hits until
  *      hull <= 0 and ship is destroyed.
  *   5. Wait ~250 ms (covers the 50 ms WAB flush + worker IPC latency).
  *   6. GET /dev/stats?email=victim → assert deaths >= 1.
@@ -19,6 +20,8 @@
 import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
 import type { Browser } from '@playwright/test';
+import { getLocalPlayerId, waitForInPlay } from './helpers/gameScenario';
+import { lockOn, toManual } from './helpers/fireControl';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? 'http://localhost:2567';
@@ -54,7 +57,7 @@ async function joinClientAt(
   token: string,
   spawnX: number,
   spawnY: number,
-  opts: { initialHull?: number; initialShield?: number; testId?: string } = {},
+  opts: { initialHull?: number; initialShield?: number; testId?: string; instantLock?: boolean } = {},
 ) {
   // CRITICAL: pass an EXPLICIT empty storageState. `undefined` falls back to
   // the project-level default in playwright.config.ts (the globalSetup file),
@@ -76,6 +79,7 @@ async function joinClientAt(
   if (opts.initialHull !== undefined) params.set('initialHull', String(opts.initialHull));
   if (opts.initialShield !== undefined) params.set('initialShield', String(opts.initialShield));
   if (opts.testId !== undefined) params.set('testId', opts.testId);
+  if (opts.instantLock) params.set('instantLock', '1');
   await page.goto(`${BASE_URL}?${params}`);
   await page.waitForFunction(
     () => {
@@ -88,7 +92,7 @@ async function joinClientAt(
 }
 
 test('kill is recorded in player_kills and queryable via /dev/stats', async ({ browser }) => {
-  // Tight budget: victim spawns with 1 HP + 0 shield (testMode-only
+  // Tight budget: victim spawns with 10 HP + 0 shield (testMode-only
   // override). One beam tick kills. Pre-override the test needed ~25 s
   // to deplete 500 HP + 750 shield post-slow-down; now < 5 s end-to-end.
   test.setTimeout(45_000);
@@ -107,26 +111,32 @@ test('kill is recorded in player_kills and queryable via /dev/stats', async ({ b
   // Align ships on +Y so no rotation is needed: ships spawn at angle 0,
   // and the forward direction is `(-sin(0), cos(0)) = (0, 1)`. Putting
   // the victim 100 u directly forward of the killer means the beam holds
-  // on target from the moment Space goes down. Victim spawns at 1 HP +
+  // on target from the moment Space goes down. Victim spawns at 10 HP +
   // 0 shield so a single hit kills — we're testing the persistence
   // write path, not the time-to-kill mechanics. Shared testId so both
   // clients land in the same per-test-isolated room.
   const testId = randomUUID();
   const [killer, victim] = await Promise.all([
-    joinClientAt(browser, killerToken.token, 0, 0, { testId }),
-    joinClientAt(browser, victimToken.token, 0, 100, { initialHull: 1, initialShield: 0, testId }),
+    joinClientAt(browser, killerToken.token, 0, 0, { testId, instantLock: true }),
+    // 10 HP, not 1: data-hull-pct is a percent of maxHealth, so 1 HP reads
+    // 0 % at spawn and the hull<=0 poll below would pass before any shot.
+    // One 12-dmg laser bolt still kills.
+    joinClientAt(browser, victimToken.token, 0, 100, { initialHull: 10, initialShield: 0, testId }),
   ]);
 
   try {
     // Settle: let both clients reconcile and let the server snapshot
     // population catch up to both ships.
-    await Promise.all([
-      killer.page.waitForTimeout(2000),
-      victim.page.waitForTimeout(2000),
-    ]);
+    await Promise.all([waitForInPlay(killer.page), waitForInPlay(victim.page)]);
+
+    // Lock-to-fire: the killer locks the victim (instantLock ⇒ at once) in MAN,
+    // so nothing fires until Space (an AUTO group would one-shot the victim on
+    // the lock step and drop the lock before the chip read LOCKED).
+    await toManual(killer.page);
+    await lockOn(killer.page, { kind: 'ship', playerId: await getLocalPlayerId(victim.page) });
 
     // Hold Space — the beam fires straight forward (+Y). Victim is at
-    // 1 HP + 0 shield, so the first hit kills. 5 s fire window absorbs
+    // 10 HP + 0 shield, so the first hit kills. 5 s fire window absorbs
     // RTT + cooldown variance without bloating the budget.
     const start = Date.now();
     let killed = false;

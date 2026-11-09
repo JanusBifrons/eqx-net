@@ -26,6 +26,7 @@ import type { Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { lockOn, toManual } from './helpers/fireControl';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 const STEP = process.env['STEP'] ?? 'after';
@@ -52,8 +53,8 @@ async function joinInterceptor(page: Page, room: string, extra = ''): Promise<vo
 
 async function fireAndShoot(page: Page, name: string): Promise<{ beamActive: boolean; beams: Beam[] }> {
   mkdirSync(OUT_DIR, { recursive: true });
-  // Hold manual fire (override — engages with no hostile in range, the empty-
-  // space repro). Sample a few frames so the continuous beam is mid-render.
+  // Hold fire on the (locked, MAN) active group. Sample a few frames so the
+  // continuous beam is mid-render.
   await page.keyboard.down('Space');
   await page.waitForTimeout(400);
   const diag = await page.evaluate(() => {
@@ -74,7 +75,13 @@ async function fireAndShoot(page: Page, name: string): Promise<{ beamActive: boo
   return diag;
 }
 
-test('no-hit beam (empty space) — bounded length with a visible fade tail', async ({ browser }) => {
+// Lock-to-fire (2026-11-09): a beam fires only at a COMPLETED lock, so there is
+// no empty-space shot to film any more — a fixed beam that is allowed to fire
+// is, by construction, on its target. The miss-beam taper (bounded length,
+// fade tail) stays locked deterministically by BeamSpritePool.solidTaper.test.ts.
+// Kept as fixme (not deleted) so the repro recipe survives if a miss path
+// (e.g. a target dodging mid-beam) is ever wanted again.
+test.fixme('no-hit beam (empty space) — bounded length with a visible fade tail', async ({ browser }) => {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await ctx.newPage();
   try {
@@ -100,8 +107,12 @@ test('hit beam (target 150u ahead) — clips solid to the target, no tail', asyn
   const page = await ctx.newPage();
   try {
     // auto-fire-test parks a hull-exposed fighter at (0,150) — within the 250u
-    // beam range. Manual fire (Space) lands on it; the beam clips there, solid.
-    await joinInterceptor(page, 'auto-fire-test', '&initialHull=5000');
+    // beam range. Lock it (instantLock; the group goes MAN first so it does not
+    // shoot the drone dead during the settle), then held fire (Space) lands on
+    // it; the beam clips there, solid.
+    await joinInterceptor(page, 'auto-fire-test', '&initialHull=5000&instantLock=1');
+    await toManual(page);
+    await lockOn(page, 'first-drone');
     const { beamActive, beams } = await fireAndShoot(page, 'hit');
     expect(beamActive, 'beam should be actively firing').toBe(true);
     const hitBeams = beams.filter((b) => b.hitId !== undefined);

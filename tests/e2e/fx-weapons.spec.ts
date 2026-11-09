@@ -2,7 +2,8 @@
  * New weapon effects in the real game (plan iridescent-seeking-rainbow v3, B3).
  *
  * `auto-fire-test` parks a hull-exposed drone 150 u ahead; with
- * `startHostile=1` the local ship auto-fires at it with no input. With
+ * `startHostile=1` (+ `instantLock=1`) the local ship's AUTO group locks it and
+ * fires with no input. With
  * `?fx=new` (and Machined art) a fighter's bolts must draw as the new pooled
  * sprite views, and an interceptor's beam must get the new glow layer; without
  * the flag nothing new draws. `?worker=0` so the stats hook and screenshots
@@ -24,7 +25,9 @@ async function join(browser: Browser, shipKind: string, fx: boolean) {
   const page = await ctx.newPage();
   const params = new URLSearchParams({
     room: 'auto-fire-test', shipKind, initialHull: '5000', testId: randomUUID(),
-    startHostile: '1', worker: '0', art: 'machined', zoom: '2',
+    // Lock-to-fire (2026-11-09): AUTO groups fire only at a completed lock;
+    // instantLock makes the lock on the hostile drone complete in ≤ 100 ms.
+    startHostile: '1', instantLock: '1', worker: '0', art: 'machined', zoom: '2',
   });
   if (fx) params.set('fx', 'new');
   await page.goto(`${BASE_URL}?${params}`);

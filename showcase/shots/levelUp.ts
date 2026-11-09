@@ -17,6 +17,8 @@ export const levelUp: Shot = {
     params: {
       shipKind: 'interceptor',
       startHostile: 1,
+      // Lock-to-fire: the AUTO group locks the heavy at once and fires on its own.
+      instantLock: 1,
       // One kill of the room's heavy crosses the first threshold.
       initialXp: xpToNext(1) - xpForKill(getShipKind('heavy').maxHealth),
     },

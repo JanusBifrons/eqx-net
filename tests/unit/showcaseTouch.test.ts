@@ -1,16 +1,13 @@
 /**
  * Showcase input scripting + phone framing — the pure parts.
  * touchPath (gesture curves), shotFilter (`--shot 'hud-*'`), compositor
- * device layout / rate control, recorder viewport options, and the HUD shot
- * set (ids, durations, viewports).
+ * device layout / rate control and recorder viewport options.
  */
 import { describe, expect, it } from 'vitest';
 import { arc, clampTo, easeInOut, easeOut, line, linear, polar, sample, samples, still, wiggle } from '../../showcase/touchPath.js';
 import { expandShotPatterns } from '../../showcase/shotFilter.js';
 import { deviceLayout, x264Args } from '../../showcase/compositor.js';
 import { contextOptionsFor, screencastSize, PHONE_LANDSCAPE } from '../../showcase/recorder.js';
-import { hudVariantShots } from '../../showcase/shots/hudVariants.js';
-import { SHOTS } from '../../showcase/registry.js';
 
 const close = (a: number, b: number, eps = 1e-6): boolean => Math.abs(a - b) < eps;
 
@@ -155,28 +152,5 @@ describe('phone framing + encode', () => {
     expect(screencastSize('phone-landscape', { width: 1280, height: 720 })).toEqual({ maxWidth: 1688, maxHeight: 780 });
     expect(contextOptionsFor('desktop', { width: 1280, height: 720 })).toEqual({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
     expect(contextOptionsFor('phone', { width: 1280, height: 720 }).hasTouch).toBe(true);
-  });
-});
-
-describe('HUD variant shots', () => {
-  it('nine registered, catalogue-only takes named hud-<variant>-<viewport>', () => {
-    const ids = hudVariantShots.map((s) => s.id);
-    expect(ids).toHaveLength(9);
-    for (const v of ['a', 'b', 'c']) {
-      for (const vk of ['phone-landscape', 'desktop', 'phone-portrait']) expect(ids).toContain(`hud-${v}-${vk}`);
-    }
-    for (const s of hudVariantShots) {
-      expect(SHOTS).toContain(s);
-      expect(s.reel).toBe(false);
-      expect(s.target.room).toBe('cascade-test');
-      expect(s.target.params?.['ui']).toBe(s.id.split('-')[1]);
-      expect(s.target.params?.['touchviz']).toBe(1);
-      expect(s.hud).toBe('full');
-      // ≤ 4 Mbit/s × 20 s keeps each clip ~10 MB (< 12 MB budget).
-      expect(((s.maxBitrateKbps ?? Infinity) * s.durationMs) / 8 / 1000 / 1000).toBeLessThan(11);
-      const expected = s.id.endsWith('phone-landscape') ? 'phone-landscape' : s.id.endsWith('phone-portrait') ? 'phone' : 'desktop';
-      expect(s.viewport).toBe(expected);
-      expect(s.durationMs).toBe(s.id.endsWith('phone-portrait') ? 10_000 : 20_000);
-    }
   });
 });

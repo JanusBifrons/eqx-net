@@ -18,6 +18,8 @@
  * event shapes appear during a representative play session.
  */
 import { test, expect, type Browser, type Page } from '@playwright/test';
+import { lockOn, toManual } from '../e2e/helpers/fireControl.js';
+import { getLocalPlayerId } from '../e2e/helpers/gameScenario.js';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
@@ -100,15 +102,18 @@ test.describe('Probe 4 — roster polling dedupe', () => {
 test.describe('Probe 4 — damage_number event shape', () => {
   test('firing a hitscan weapon emits ONE damage_number_scheduled per shot, with matching damage_number_spawned events', async ({ browser }) => {
     test.setTimeout(30_000);
+    // Lock-to-fire (2026-11-09): nothing fires without a completed lock, so
+    // empty space is no longer shootable. `auto-fire-test` parks a drone
+    // 150 u ahead and `instantLock=1` makes the AUTO group lock it at once.
     const { ctx, page } = await joinWithDiag(browser, {
+      room: 'auto-fire-test',
+      instantLock: '1',
+      initialHull: '5000',
       spawnX: '0',
       spawnY: '0',
     });
-    // Spawn a target via the standard combat-spec pattern: launch a
-    // second client and have it sit nearby. Simpler proxy here: just
-    // fire the weapon — even into empty space the `predictShotOutcome`
-    // path won't emit damage numbers (no hit). What we CAN verify is
-    // that NO `damage_number_predicted` events are emitted (old shape).
+    // What we verify: NO `damage_number_predicted` events are emitted
+    // (old shape) while the weapon fires.
     // The new event names are wired and the schedule/spawn/cancel
     // flow is locked at the unit level — this E2E confirms the OLD
     // event name is gone.
@@ -149,12 +154,12 @@ test.describe('Probe 4 — damage_number event shape', () => {
     // Two clients: shooter at origin, victim slightly offset for a
     // guaranteed hit.
     const { ctx: c1, page: shooter } = await joinWithDiag(browser, {
-      spawnX: '0', spawnY: '0', testId: 'probe4-dmg-shape',
+      spawnX: '0', spawnY: '0', testId: 'probe4-dmg-shape', instantLock: '1',
     });
     // Victim page just sits in the same room so the shooter sees a
-    // target; we don't read from it directly, just keep the context alive.
-    const { ctx: c2 } = await joinWithDiag(browser, {
-      spawnX: '50', spawnY: '0', testId: 'probe4-dmg-shape',
+    // target; we only read its player id (to lock it).
+    const { ctx: c2, page: victim } = await joinWithDiag(browser, {
+      spawnX: '50', spawnY: '0', testId: 'probe4-dmg-shape', instantLock: '1',
     });
     // Wait for both to see each other.
     await shooter.waitForFunction(
@@ -163,6 +168,9 @@ test.describe('Probe 4 — damage_number event shape', () => {
       ) >= 2, undefined,
       { timeout: 12_000 },
     );
+    // Lock-to-fire: MAN (so the group fires only on Space) + lock the victim.
+    await toManual(shooter);
+    await lockOn(shooter, { kind: 'ship', playerId: await getLocalPlayerId(victim) });
     await shooter.evaluate(() => { (window as unknown as EqxWindow).__eqxClearLogs?.(); });
     // Fire once and let the schedule + spawn cycle complete (~167 ms
     // cooldown + 5 splits at ~33 ms each).

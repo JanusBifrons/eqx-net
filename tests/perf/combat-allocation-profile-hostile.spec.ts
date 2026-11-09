@@ -54,6 +54,9 @@ test('hostile combat allocation profile: rank top 25 per-tick allocators', async
 
   const params = new URLSearchParams({
     room: 'feel-test-25',
+    // Lock-to-fire (2026-11-09): held Space fires only at a completed lock;
+    // instantLock makes the AUTO group lock the drone ahead within ~0.1 s.
+    instantLock: '1',
     // `?diag=0` URL override — Playwright sets `navigator.webdriver=true`
     // which auto-enables diag; without the override every sample includes
     // ClientLogger.logEvent traffic that no production player ever runs.

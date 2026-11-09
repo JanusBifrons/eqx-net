@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
 /**
- * exp/fire-control — variant D (`?ui=d`): universal target locking.
+ * Fire control — universal target locking (the only HUD since 2026-11-09).
  *
  * Uses the `auto-fire-test` room (a hostile fighter parked 150 u ahead of
  * spawn). Locks:
@@ -19,7 +19,7 @@ import { randomUUID } from 'node:crypto';
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
 async function boot(page: Page, extra = ''): Promise<void> {
-  await page.goto(`${BASE_URL}/?room=auto-fire-test&startHostile=1&ui=d&initialHull=5000&testId=${randomUUID()}${extra}`);
+  await page.goto(`${BASE_URL}/?room=auto-fire-test&startHostile=1&initialHull=5000&testId=${randomUUID()}${extra}`);
   await page.locator('[data-testid^="fc-chip-"]').first().waitFor({ timeout: 30_000 });
 }
 
@@ -43,7 +43,7 @@ async function toManualAndClear(page: Page): Promise<void> {
 // "Test-harness philosophy").
 const FC_TEST_TIMEOUT_MS = 60_000;
 
-test.describe('fire control — target locking (ui=d)', () => {
+test.describe('fire control — target locking', () => {
   test.describe.configure({ timeout: FC_TEST_TIMEOUT_MS });
   test('desktop: MAN + LMB held on the drone locks it', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
@@ -145,7 +145,7 @@ test.describe('fire control — locks go both ways (fc-duel 1v3)', () => {
   test('flying in: the HUD names who is locking you, and your own lock shows its progress', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true });
     const page = await ctx.newPage();
-    await page.goto(`${BASE_URL}/?room=fc-duel&startHostile=1&ui=d&initialHull=100000&shipKind=gunship&worker=0&testId=${randomUUID()}`);
+    await page.goto(`${BASE_URL}/?room=fc-duel&startHostile=1&initialHull=100000&shipKind=gunship&worker=0&testId=${randomUUID()}`);
     await page.locator('[data-testid^="fc-chip-"]').first().waitFor({ timeout: 30_000 });
     // Steer forward (toward the pack) with the left thumb.
     const cdp = await ctx.newCDPSession(page);

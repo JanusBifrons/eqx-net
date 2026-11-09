@@ -78,7 +78,9 @@ interface RepSample {
 
 /** Fixed, deterministic input sequence — identical for every arm/rep.
  *  `strafe-fire` mirrors `feel-test-lockstep.spec.ts:138-151` (strafe the
- *  drone pack while firing). */
+ *  drone pack while firing). Lock-to-fire (2026-11-09): fire only lands on
+ *  completed locks, so the `core` scenario joins with `instantLock=1` (its
+ *  `urlParams`) — the AUTO group locks drones in its arc as it sweeps past. */
 async function runInteraction(page: Page, interaction: InteractionId): Promise<void> {
   switch (interaction) {
     case 'strafe-fire':

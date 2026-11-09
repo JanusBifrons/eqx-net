@@ -17,10 +17,15 @@
  *   expect() is unconditional.
  *
  * Each test mints a fresh testId (separate rooms) so the two cases never share state.
+ *
+ * Lock-to-fire (2026-11-09): the shooter locks the victim first (`lockOn`,
+ * completed at once by `instantLock`). Test 10 puts the group in MAN first, so
+ * fire follows the Space key (an AUTO group keeps firing at its lock).
  */
 import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
-import { launchTestClient, getRemoteLaserCount, getRemoteHitTargets } from '../helpers/gameScenario';
+import { launchTestClient, getRemoteLaserCount, getRemoteHitTargets, getLocalPlayerId } from '../helpers/gameScenario';
+import { lockOn, toManual } from '../helpers/fireControl';
 
 test('observer sees the shooter beam', async ({ browser }) => {
   const testId = randomUUID();
@@ -29,6 +34,7 @@ test('observer sees the shooter beam', async ({ browser }) => {
     spawnY: 0,
     initialAngle: 0,
     shipKind: 'interceptor',
+    instantLock: true,
     testId,
   });
   const victim = await launchTestClient(browser, {
@@ -41,6 +47,7 @@ test('observer sees the shooter beam', async ({ browser }) => {
     testId,
   });
   try {
+    await lockOn(shooter.page, { kind: 'ship', playerId: await getLocalPlayerId(victim.page) });
     await shooter.page.keyboard.down('Space');
     await victim.page.waitForFunction(
       () =>
@@ -66,6 +73,7 @@ test('remote beam + hit targets clear after the shooter stops', async ({ browser
     spawnY: 0,
     initialAngle: 0,
     shipKind: 'interceptor',
+    instantLock: true,
     testId,
   });
   const victim = await launchTestClient(browser, {
@@ -78,6 +86,8 @@ test('remote beam + hit targets clear after the shooter stops', async ({ browser
     testId,
   });
   try {
+    await toManual(shooter.page);
+    await lockOn(shooter.page, { kind: 'ship', playerId: await getLocalPlayerId(victim.page) });
     await shooter.page.keyboard.down('Space');
     await victim.page.waitForFunction(
       () => {

@@ -24,7 +24,7 @@ import { test, expect, type Page } from '@playwright/test';
  *      mount created its replacement → bug repros.
  *
  * WHAT THE TEST ASSERTS:
- *   - One `[data-testid="mobile-joystick"]` zone.
+ *   - One `[data-testid="hud-move-zone"]` zone.
  *   - One `.joystick` element (nipplejs's joystick handle DOM) globally
  *     across the page (counting in/around the zone catches both
  *     child-of-zone and sibling-of-zone leak shapes).
@@ -64,7 +64,7 @@ interface StoreWindow extends Window {
 }
 
 async function waitForLocalShip(page: Page, timeoutMs = 25_000): Promise<void> {
-  await expect(page.locator('[data-testid="sector-info-panel"]')).toBeVisible({ timeout: timeoutMs });
+  await expect(page.locator('[data-testid="hud-sector"]')).toBeVisible({ timeout: timeoutMs });
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
@@ -82,7 +82,7 @@ async function waitForJoystickMounted(page: Page, timeoutMs = 10_000): Promise<v
 
 async function countJoysticks(page: Page): Promise<{ zones: number; joysticks: number }> {
   return page.evaluate(() => ({
-    zones: document.querySelectorAll('[data-testid="mobile-joystick"]').length,
+    zones: document.querySelectorAll('[data-testid="hud-move-zone"]').length,
     joysticks: document.querySelectorAll('.joystick').length,
   }));
 }
@@ -161,7 +161,7 @@ test('in-game ship swap does NOT leave a stale joystick (two thumbsticks bug)', 
   const after = await countJoysticks(page);
   expect(
     after.zones,
-    `Expected exactly 1 [data-testid="mobile-joystick"] after ship-swap, got ${after.zones}. ` +
+    `Expected exactly 1 [data-testid="hud-move-zone"] after ship-swap, got ${after.zones}. ` +
       'Two zones means TWO MobileControls instances mounted simultaneously — ' +
       'GameSurface unmount race.',
   ).toBe(1);

@@ -31,6 +31,9 @@ test('a kind=2 structure renders and is shootable (GEP P4 "for free" proof)', as
     spawnY: 0,
     initialAngle: 0,
     shipKind: 'interceptor', // hitscan beam
+    // Lock-to-fire (2026-11-09): the AUTO group locks the (non-hostile)
+    // structure ahead within ~0.1 s and fires on its own.
+    instantLock: true,
     testId,
   });
   const observer = await launchTestClient(browser, {
@@ -52,7 +55,8 @@ test('a kind=2 structure renders and is shootable (GEP P4 "for free" proof)', as
       { timeout: 10_000 },
     );
 
-    // DAMAGE: fire straight up at the structure; the observer sees the hit
+    // DAMAGE: the AUTO group fires straight up at the locked structure (Space
+    // adds the active group if it is MAN); the observer sees the hit
     // resolved against the structure's swarm-N id.
     await shooter.page.keyboard.down('Space');
     await observer.page.waitForFunction(
