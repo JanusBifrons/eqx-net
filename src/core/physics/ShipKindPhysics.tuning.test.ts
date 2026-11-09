@@ -81,7 +81,10 @@ describe.runIf(AT_AUTHORED_SHIP_SCALE)('ship-kind tuning lock (2026-05-18 slow-d
     // 16 → 17 on P3: appended robot-nexus. 17 → 18 on P3b: robot-harvester.
     // 18 → 19 on P3c: robot-circle's mount → charge-laser. 19 → 20 on turrets
     // T3: the gunship's two mounts moved to the nose / tail (positions only).
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(23);
+    // 23 → 24 on Fire Control (#367): real weapon groups per kind (gunship fore/aft,
+    // frigate missiles + PD, crossguard port/stbd, capitals main/sec/AA), on top
+    // of the capital hull-style bump (#366) that took main to 23.
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(24);
   });
 
   for (const kindKey of Object.keys(EXPECTED) as (keyof typeof EXPECTED)[]) {
