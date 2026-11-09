@@ -274,3 +274,9 @@ Groups C and D, checked against the tree:
 | `sync-health` | **Moved to `tests/perf/`** (this PR): a tight correction-rate timing lock, the same call as `robustness` on 2026-11-06 | the netgate (`ticksAhead`, drift) |
 
 The netgate's print-only `structures-load` and `scrap-load` scenarios were removed in the same PR: they gated nothing and never reached their promotion bar. Structure and scrap load is measured by the perf scenes.
+
+## 2026-11-09: smoke flakes (wrap-up W5)
+
+- **join-art-ready** was the only smoke spec that failed CI in the last 60 runs (3 times). Cause: its 30 s budget held the join (13 s page load on a cold Vite + 5 s join) as well as the deliberate 8 s art hold, so the reveal landed just past 30 s. It now has 60 s, with the trace in the comment. Reproduced locally (30.1 s timeout), then 1/1.
+- **persistence-kill** and **combat-lifecycle** never failed on CI; they failed only on this laptop under load (two browsers, software WebGL). Both pass here now (1/1, 5/5).
+- **combat-lifecycle D**: the `test.fixme` respawn case clicked a Respawn button that no longer exists. It now locks today's contract with a real server kill: the victim drops into spectator mode with no death modal (`spectator-mode.spec.ts` only fakes the death client-side).
