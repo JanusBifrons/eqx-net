@@ -257,7 +257,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly _intentScratch: AiIntent = {
     fx: 0, fy: 0, torque: 0, setAngvel: undefined, fire: undefined,
   };
-  private readonly _fireScratch: { dirX: number; dirY: number } = { dirX: 0, dirY: 0 };
+  private readonly _fireScratch: { dirX: number; dirY: number; targetId: string } = { dirX: 0, dirY: 0, targetId: '' };
 
   constructor(kind?: ShipKind | string) {
     // Accept the kind as either a `ShipKind` record or a kind id (string), so
@@ -715,6 +715,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         f.dirX = fwdX;
         f.dirY = fwdY;
       }
+      f.targetId = target.id;
       intent.fire = f;
     } else {
       intent.fire = undefined;

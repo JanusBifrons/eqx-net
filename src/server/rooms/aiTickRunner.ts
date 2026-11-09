@@ -65,7 +65,7 @@ export interface AiTickCtx {
    *  owned buffer (server-only; no client brain). Feeds a follower its leader's
    *  + neighbours' live poses each tick. */
   resolveEntityInto: (id: string, out: AiEntityPoseOut) => boolean;
-  handleAiFire: (shooterId: string, dirX: number, dirY: number, tick: number) => void;
+  handleAiFire: (shooterId: string, dirX: number, dirY: number, tick: number, targetId: string) => void;
   /** Phase-time callback — fires for 'aiTick' after the controller tick
    *  and 'aiFire' after the fire pipeline drains. */
   phaseTime: (key: string) => void;
@@ -117,6 +117,6 @@ export function runAiTick(ctx: AiTickCtx): void {
   ctx.phaseTime('aiTick');
 
   const fires = ctx.aiController.drainFireRequests();
-  for (const f of fires) ctx.handleAiFire(f.shooterId, f.dirX, f.dirY, f.tick);
+  for (const f of fires) ctx.handleAiFire(f.shooterId, f.dirX, f.dirY, f.tick, f.targetId);
   ctx.phaseTime('aiFire');
 }
