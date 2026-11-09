@@ -44,12 +44,22 @@ describe('SectorRoom integration — structure scenario seeding (Phase 3-5)', ()
     expect(capital.minerals).toBeGreaterThan(bankBefore);
     expect(miner.miningTargetEntityId).toBeDefined();
 
-    // Turret: a tick locks + damages the parked drone.
+    // Turret: it locks, trains onto the parked drone, then damages it.
+    // Since coastal defences (#365) structure guns traverse at their real rate
+    // and fire only when on target, so the first tick may only turn the mount.
+    // Traverse is timed off Date.now (StructureMountTicker.beginTick), so let
+    // real time pass between ticks: up to 50 × 100 ms = 5 s, far more than any
+    // traverse to this drone needs.
     // The scenario drone id is deterministic (`scenario-drone-*`).
     const droneId = [...internals.swarmRegistry.all()].find((r) => r.kind === 1)!.id;
     const droneHpBefore = internals.swarmHealth.get(droneId)!;
     expect(droneHpBefore).toBeGreaterThan(0);
-    internals.tickStructureTurrets();
+    for (let i = 0; i < 50; i++) {
+      if (i > 0) await harness.advance(100);
+      internals.tickStructureTurrets();
+      const hp = internals.swarmHealth.get(droneId);
+      if (hp === undefined || hp < droneHpBefore) break;
+    }
     const after = internals.swarmHealth.get(droneId);
     if (after !== undefined) {
       expect(after).toBeLessThan(droneHpBefore);
