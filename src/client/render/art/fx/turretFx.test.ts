@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { familyFor, flashFrameAt, heatAfter, muzzleFlashFlipbook, nearestMuzzle, recoilAt, NAVAL_FLASH_LIFE_S, shellImpactRadius, muzzleSmokePuff, MUZZLE_SMOKE_LIFE_S, shellEndedOnHit } from './turretFx.js';
+import { familyFor, flashFrameAt, heatAfter, muzzleFlashFlipbook, nearestMuzzle, recoilAt, NAVAL_FLASH_LIFE_S, shellImpactRadius, muzzleSmokePuff, MUZZLE_SMOKE_LIFE_S, shellEndedOnHit, muzzleLightAt, MUZZLE_LIGHT_TAIL_S, navalMuzzleLight } from './turretFx.js';
 
 describe('turret bakes', () => {
   it('the flash shrinks frame by frame', () => {
@@ -75,5 +75,50 @@ describe('naval shell impacts (review 2026-11-07)', () => {
   it('a shell that stopped short burst on a hit; one that ran its range just fades', () => {
     expect(shellEndedOnHit(2000, 4200)).toBe(true);
     expect(shellEndedOnHit(4000, 4200)).toBe(false);
+  });
+});
+describe('muzzle-flash light (gpu-lit review 2026-11-09)', () => {
+  it('holds while the flash sprite shows, then eases out over a short tail', () => {
+    expect(muzzleLightAt(-1, 0.07)).toBe(0);
+    expect(muzzleLightAt(0, 0.07)).toBe(1);
+    expect(muzzleLightAt(0.069, 0.07)).toBe(1);
+    // Still lit after the sprite ends: the light outlives the 1–2 frame flash.
+    expect(muzzleLightAt(0.07 + 1 / 60, 0.07)).toBeGreaterThan(0.5);
+    expect(muzzleLightAt(0.07 + MUZZLE_LIGHT_TAIL_S * 0.5, 0.07)).toBeGreaterThan(0.1);
+    expect(muzzleLightAt(0.07 + MUZZLE_LIGHT_TAIL_S, 0.07)).toBe(0);
+    expect(MUZZLE_LIGHT_TAIL_S).toBeGreaterThanOrEqual(0.08);
+    expect(MUZZLE_LIGHT_TAIL_S).toBeLessThanOrEqual(0.12);
+  });
+
+  it('the tail is an ease-out: it falls fastest first and never rises', () => {
+    let prev = 1;
+    for (let i = 1; i <= 20; i++) {
+      const v = muzzleLightAt(0.22 + (i / 20) * MUZZLE_LIGHT_TAIL_S, NAVAL_FLASH_LIFE_S);
+      expect(v).toBeLessThanOrEqual(prev);
+      prev = v;
+    }
+    const a = 1 - muzzleLightAt(0.22 + MUZZLE_LIGHT_TAIL_S * 0.25, 0.22);
+    const b = muzzleLightAt(0.22 + MUZZLE_LIGHT_TAIL_S * 0.5, 0.22) - muzzleLightAt(0.22 + MUZZLE_LIGHT_TAIL_S * 0.75, 0.22);
+    expect(a).toBeGreaterThan(b);
+  });
+
+  it('a naval flash lights in proportion to its gun: 16" > 5" > nothing', () => {
+    const out = { intensity: 0, reach: 0, z: 0 };
+    const big = { ...navalMuzzleLight(34.7, out) }; // battleship 16"
+    const five = { ...navalMuzzleLight(15.3, out) }; // battleship 5"
+    const dd = { ...navalMuzzleLight(11.2, out) }; // destroyer 5"
+    // The 5" was clamped to the same light as the 16" (width / 2 capped at 6).
+    expect(big.reach).toBeGreaterThan(five.reach * 1.5);
+    expect(big.intensity).toBeGreaterThan(five.intensity);
+    expect(five.reach).toBeGreaterThan(dd.reach);
+    // ...but the 5" still reads on the deck around it.
+    expect(five.intensity).toBeGreaterThan(3);
+    expect(five.reach).toBeGreaterThan(200);
+    expect(five.z).toBeGreaterThan(0);
+  });
+
+  it('writes into the scratch it is given (alloc-free, #14)', () => {
+    const out = { intensity: 0, reach: 0, z: 0 };
+    expect(navalMuzzleLight(20, out)).toBe(out);
   });
 });
