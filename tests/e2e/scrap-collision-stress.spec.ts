@@ -1,3 +1,4 @@
+// diag: CI baseline run of this spec on plain main (throwaway PR, will be closed)
 /**
  * Phase-1 issue 5 — scrap-collision reconciliation stress (reproduction-first).
  *
