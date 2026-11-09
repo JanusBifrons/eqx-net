@@ -351,6 +351,17 @@ export class LockSubsystem {
     if (!g) return;
     g.mode = mode;
     g.wire.m = mode === 'auto' ? 0 : 1;
+    if (mode === 'manual') {
+      // A lock AUTO was still building belongs to AUTO: MAN never self-picks, so
+      // drop it (1v3 clip: both groups ended up on one fighter). Finished locks
+      // and locks the pilot asked for stay.
+      let removed = false;
+      for (let i = g.locks.length - 1; i >= 0; i--) {
+        const e = g.locks[i]!;
+        if (e.auto && e.stage !== 'locked') { g.locks.splice(i, 1); removed = true; }
+      }
+      if (removed) this.syncWireShape(g);
+    }
   }
 
   /** True when `groupId` holds at least one LOCKED target — the fire gate. */
@@ -405,7 +416,9 @@ export class LockSubsystem {
       const key = this.deps.autoPick(playerId, g.reach, this.shooter.x, this.shooter.y, this.bears, p.instant);
       this.bearGroup = null;
       if (key !== null && this.deps.resolveTarget(playerId, key, this.target)) {
-        g.locks.push(newLock(key, true));
+        const auto = newLock(key, true);
+        auto.auto = true;
+        g.locks.push(auto);
         g.wire.l.push({ t: key, s: LOCK_STAGE_CODE.acquiring, p: 0 });
       }
     }

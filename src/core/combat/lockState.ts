@@ -34,6 +34,8 @@ export interface LockEntry {
    * mode no longer matters.
    */
   track: LockTrack;
+  /** AUTO picked this target itself; switching the group to MAN cancels it if not yet locked. */
+  auto: boolean;
 }
 
 export const LOCK_TRACK = { commit: 0, held: 1, released: 2 } as const;
@@ -42,7 +44,7 @@ export type LockTrack = 0 | 1 | 2;
 export type LockEvent = 'none' | 'commit' | 'locked' | 'dropped';
 
 export function newLock(target: string, hostile: boolean, track: LockTrack = LOCK_TRACK.commit): LockEntry {
-  return { target, stage: hostile ? 'acquiring' : 'failsafe', progress: 0, lostFor: 0, track };
+  return { target, stage: hostile ? 'acquiring' : 'failsafe', progress: 0, lostFor: 0, track, auto: false };
 }
 
 /**

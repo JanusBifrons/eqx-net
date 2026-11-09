@@ -95,6 +95,31 @@ describe('LockSubsystem', () => {
     expect(m.locks.hasLocked('p1', 'primary')).toBe(false);
   });
 
+  it('switching to MAN cancels the lock AUTO was still building, keeps a manual one', () => {
+    // User report (1v3 clip, 2026-11-08): both groups ended up on the same
+    // fighter because their AUTO locks were already building when the pilot
+    // flipped them to MAN.
+    const h = harness();
+    h.targets.set('s:4', { x: 0, y: 200, vx: 0, vy: 0, signature: 30, hostile: true });
+    h.setAuto('s:4');
+    steps(h.locks, 1); // AUTO picks s:4 and starts acquiring
+    expect(h.locks.wireFor('p1')?.find((g) => g.id === 'primary')?.l.length).toBe(1);
+    h.setAuto(null);
+    h.locks.setMode('p1', 'primary', 'manual');
+    expect(h.locks.wireFor('p1')?.find((g) => g.id === 'primary')?.l.length ?? 0).toBe(0);
+    steps(h.locks, 40);
+    expect(h.locks.hasLocked('p1', 'primary')).toBe(false);
+
+    // A lock the pilot asked for themselves survives the switch.
+    const m = harness();
+    m.targets.set('s:5', still(200, true));
+    m.locks.requestLock('p1', 'primary', 's:5');
+    steps(m.locks, 1);
+    m.locks.setMode('p1', 'primary', 'manual');
+    steps(m.locks, 40);
+    expect(m.locks.hasLocked('p1', 'primary')).toBe(true);
+  });
+
   it('a target that disappears is dropped; out of reach drops after grace', () => {
     const h = harness();
     h.targets.set('s:5', still(200, true));
