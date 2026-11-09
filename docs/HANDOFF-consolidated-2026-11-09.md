@@ -47,7 +47,7 @@ It lives in git (`docs/HANDOFF-consolidated-2026-11-09.md`), so it works on both
 
 ## Tests & CI
 
-- **Feature specs broken on plain `main` (found while landing).** They fail the same way on `main` locally and on CI, so they are rot, not PR regressions. `laser-falloff-probe:77` (first test times out on a cold join, 30 s cap; `:98` also fails on CI), `structure-build-placement:48/:82/:152`, `structure-grid-web:41` and `speed-dial:91/:177` (the build / dial flow hits its 30 s cap; on `main` locally `:48` stalls waiting for the placement banner to hide after Confirm), `laser-smoothness:71`. Fix each with a failing run first, or quarantine it with a reason. *Status:* not started. *Who:* Claude. *Source:* #360, #365, #380 CI
+- **Feature specs broken on plain `main` (found while landing).** They fail the same way on `main` locally and on CI, so they are rot, not PR regressions. `laser-falloff-probe:77` (first test times out on a cold join, 30 s cap; `:98` also fails on CI), `structure-build-placement:48/:82/:152`, `structure-grid-web:41` and `speed-dial:91/:177` (the build / dial flow hits its 30 s cap; on `main` locally `:48` stalls waiting for the placement banner to hide after Confirm), `laser-smoothness:71`, `configurable-arrival:84` (mobile out-of-bounds X stays 200000 instead of clamping to 5000; also fails on main at 071ad183). Fix each with a failing run first, or quarantine it with a reason. *Status:* not started. *Who:* Claude. *Source:* #360, #365, #380 CI
 - **`scrap-collision-stress` is flaky on CI.** Plain `main` on CI (throwaway #378) read 123.7 u and 101 u peak drift, then 24.9 u on retry (limit 30). Locally it reads 0.8–27.8 u. CI flights run ~3× more snapshots (110–140 v ~45), so the spike comes from slow hosts. Find the spike mechanism; don’t widen the margin. *Status:* not started. *Who:* Claude. *Source:* #360, #378
 - **`fire-control-lock:105` fails on CI** (hands-off: LOCK in the info box runs to the end; CANCEL stops it). Likely the same bug as "Info-box LOCK didn’t start a lock" in Fire Control; start from this failing spec. *Status:* not started. *Who:* Claude. *Source:* #380 CI
 - **Finish the quarantined specs.** Run each 6×, remove from `QUARANTINE` when green: `missile-frigate-homing` (:414, :562), `machined-art` (nebula :162; its speed-effects case also timed out on the laptop, #299), `fence-hits`, `fx-turrets` (:63), plus `gate-fly-through` (fixed in #359, not yet verified 6/6). Then run the full feature tier once. *Status:* partial. *Who:* Claude. *Source:* [DV-handoff], #359, `tests/e2e/featureTriggers.mjs`, [audit], #299
@@ -148,11 +148,26 @@ Fire Control is on `main` (#367 via #380). **Since PR 1b+1c (feat/lock-to-fire-u
 - **Tuning untested on a device.** Base lock 1.5 s, failsafe 1.75×, drain 1.5×, sticky cone 1.6×, fire tolerance 0.2 rad, fixed-gun AUTO ±0.3 rad, lock-line cone 70 u + 0.12 u/u. *Status:* blocked on user (device). *Who:* user + Claude. *Source:* [fc-handoff] "Tuning"
 - **Before Fire Control leaves opt-in.** Netgate, perf scenes, full lint and feature-tier E2E, CLAUDE.md rules for src/server and src/client (lock-gated fire, `lock_track`, the `groups` / `lockedBy` slices; invariants #12/#15 now cover lock-gated fire). *Status:* not started. *Who:* Claude. *Source:* [fc-handoff] "Before any PR"
 - **HUD D beyond piloting.** Drawer, main menu, spectator mode and building keep the old UI; fonts and tokens are ready. D replaces legacy (decided 2026-11-09). *Status:* not started. *Who:* Claude. *Source:* [hud-variants] "Not in scope", [fc-handoff] "Later"
+- **PR 1d, in small slices (one change + tests each, ~10–20 min; user 2026-11-09):**
+  1. NPC drones fire only with a completed lock on the target they fire at (replaces the 0.45 rad cone gate).
+  2. NPC capital turrets (`AiFireResolver.fireMount`) go through the same lock gate.
+  3. Structure / coastal turrets (`StructureMountTicker`) lock before firing.
+  4. Player capital turrets: each turret its own reload, and split across the group's up to 3 locks (`tickCapitalMounts` / `aimKeyFor`). User rule: separate turrets fire independently when on target and share the group's target(s); one multi-barrel turret fires all barrels together.
+
+  Slices 1 and 3 can run in parallel. *Status:* not started. *Who:* Claude.
+- **Follow-ups found finishing PR 1b+1c.**
+  - Test option to start every weapon group in MAN (e.g. testMode `groupMode=manual`). Then `missile-frigate-homing`'s drone test can use `instantLock` and drop its 15 s deadline back to 4 s (today the PD laser on AUTO would kill the target first).
+  - `?instantLock=1` also widens AUTO to ANY target (`anyTarget`, test-only). Consider splitting it so "instant lock" and "target anything" are separate options.
+  - `laser-falloff-probe:77` (fire into empty space) is `test.fixme`: there's no firing without a target now. Rework it to fire at a locked target at long range, or retire it.
+  - Dead code: the `aim` wire field and `manualAimMountBearing` are unused since manual aim went.
+  - Stale docs: `showcase-pipeline.md:249`; `docs/handoff/fire-control-to-be-continued.md` (delete it in the PR that finishes PR 1d).
+  *Status:* not started. *Who:* Claude.
 
 ## Showcase (landing is done: these can start)
 
 Every item here waits until all PRs are merged (user, 2026-11-09). Before each recording: clean up ports, leftover node / headless Chrome / ffmpeg, and check free RAM (root CLAUDE.md). Every clip gets a hostile review before the user sees it.
 
+- **Lock-to-fire in combat takes.** The `SURVIVE` params (13 shots) now carry `instantLock`, which also lets AUTO target ANY NPC or structure in reach. In the re-films, check no take shows the pilot firing on a neutral structure; where one does, drop `instantLock` and lock the intended target. *Status:* not started. *Who:* Claude. *Source:* PR 1b+1c
 - **gpu-lit-ships clip.** Re-film after the game-side fixes in Art & lighting; fix the framing (hull near the left edge, caption over the stern; the follow camera beat two scripted track cameras). Publish only after a clean review. *Status:* partial. *Who:* Claude. *Source:* #376, [gpu-lit]
 - **Warp picker map view.** Re-film `pnpm showcase --shot warp-picker` with the label fix (the interrupted clip in `showcase-out/clips/warp-picker/` may be incomplete: ignore it). Review: labels by their dots and readable, Home dot visible, Warp button readable. Send the user the clip with the "only flies right" answer. *Status:* not started. *Who:* Claude. *Source:* [warp-picker-handoff]
 - **Fleet warp final review.** The last re-film from #368/#369 never had its final hostile review. *Status:* not started. *Who:* Claude. *Source:* #368, #369
