@@ -40,6 +40,11 @@ export interface TestClientOpts {
    *  that needs to SHOOT something but isn't about locking. Never auto-picks
    *  other players — lock those with `lockOn` (helpers/fireControl.ts). */
   instantLock?: boolean;
+  /** Fire-control trigger (`?groupMode=manual`, testMode rooms only): every
+   *  weapon group starts in MAN, so AUTO never self-picks before the spec sets
+   *  the group it wants (`toAuto` / `lockOn`). Pair with `instantLock` when an
+   *  AUTO group would otherwise kill a fragile target first. */
+  groupMode?: 'manual';
   /** Per-test room isolation. Pass a unique value (e.g. randomUUID) for
    *  the first client; pass the SAME value for additional clients that
    *  must share a room with the first. Omit ⇒ a fresh UUID is minted
@@ -77,6 +82,7 @@ export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
   if (opts.shipKind !== undefined) params.set('shipKind', opts.shipKind);
   if (opts.injectLeak !== undefined) params.set('injectLeak', String(opts.injectLeak));
   if (opts.instantLock) params.set('instantLock', '1');
+  if (opts.groupMode) params.set('groupMode', opts.groupMode);
   for (const [k, v] of Object.entries(opts.extraParams ?? {})) params.set(k, v);
   await page.goto(`${BASE_URL}?${params}`);
   await page.waitForFunction(

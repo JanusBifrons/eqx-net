@@ -37,6 +37,10 @@ AUTO groups also lock non-hostile NPCs and non-own structures in reach + arc, an
 every lock completes on the next step (a failsafe still commits its hostile
 act). Integration: `harness.lockTarget(playerId, target, groupId?)` →
 `_internals.forceLock`. E2E: `tests/e2e/helpers` `lockOn`.
+testMode join option `groupMode: 'manual'` (URL `?groupMode=manual`,
+`TestClientOpts.groupMode`): every weapon group of that pilot starts in MAN, so
+AUTO (which `instantLock` widens to any target) never kills a fragile target
+before the test switches the group it wants to AUTO or locks it.
 
 ## Server
 

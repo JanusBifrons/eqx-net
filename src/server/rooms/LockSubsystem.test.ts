@@ -185,6 +185,26 @@ describe('LockSubsystem', () => {
     expect(h.commits).toEqual(['s:1']);
   });
 
+  it('testMode groupMode=manual: every group starts in MAN and AUTO never self-picks', () => {
+    const h = harness('missile-frigate');
+    h.locks.enable('p1', true, 'manual');
+    h.targets.set('s:1', { x: 0, y: 200, vx: 0, vy: 0, signature: 30, hostile: true }); // dead ahead
+    h.setAuto('s:1');
+    steps(h.locks, 5);
+    const wire = h.locks.wireFor('p1')!;
+    expect(wire.map((g) => g.id)).toEqual(['missiles', 'pd']);
+    for (const g of wire) {
+      expect(g.m).toBe(1);
+      expect(g.l).toEqual([]);
+      expect(h.locks.hasLocked('p1', g.id)).toBe(false);
+    }
+    // A group switched to AUTO afterwards picks + locks as usual.
+    h.locks.setMode('p1', 'missiles', 'auto');
+    steps(h.locks, 2);
+    expect(h.locks.hasLocked('p1', 'missiles')).toBe(true);
+    expect(h.locks.hasLocked('p1', 'pd')).toBe(false);
+  });
+
   it('forceLock (integration test hook) locks every group at once, or one group', () => {
     const h = harness();
     h.targets.set('s:1', still(200, true));

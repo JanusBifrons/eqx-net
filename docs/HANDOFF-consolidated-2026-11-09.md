@@ -156,7 +156,7 @@ Fire Control is on `main` (#367 via #380). **Since PR 1b+1c (feat/lock-to-fire-u
 
   Slices 1 and 3 can run in parallel. *Status:* not started. *Who:* Claude.
 - **Follow-ups found finishing PR 1b+1c.**
-  - Test option to start every weapon group in MAN (e.g. testMode `groupMode=manual`). Then `missile-frigate-homing`'s drone test can use `instantLock` and drop its 15 s deadline back to 4 s (today the PD laser on AUTO would kill the target first).
+  - ~~Test option to start every weapon group in MAN (e.g. testMode `groupMode=manual`). Then `missile-frigate-homing`'s drone test can use `instantLock` and drop its 15 s deadline back to 4 s (today the PD laser on AUTO would kill the target first).~~ Done: testMode `groupMode: 'manual'` (`?groupMode=manual`); the drone test uses it with `instantLock`, deadline 4 s.
   - `?instantLock=1` also widens AUTO to ANY target (`anyTarget`, test-only). Consider splitting it so "instant lock" and "target anything" are separate options.
   - `laser-falloff-probe:77` (fire into empty space) is `test.fixme`: there's no firing without a target now. Rework it to fire at a locked target at long range, or retire it.
   - ~~Dead code: the `aim` wire field and `manualAimMountBearing` are unused since manual aim went.~~ Done (chore/remove-dead-aim).
