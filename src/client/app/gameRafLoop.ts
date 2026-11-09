@@ -38,6 +38,7 @@ import { resetSelectionStats } from '../net/selectionStats.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { IRenderer } from '@core/contracts/IRenderer';
 import { placeInspector, type InspectorAnchor } from './inspectorPlacement.js';
+import { isInspectorHeld } from './inspectorHold.js';
 
 /** Reused each frame (no per-frame allocation, #14). */
 const inspectorAt: InspectorAnchor = { left: 0, top: 0 };
@@ -368,7 +369,8 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     const ssy = selFb.selectionScreenY;
     if (typeof ssx === 'number' && typeof ssy === 'number') {
       const panel = document.querySelector('[data-testid="entity-stats-panel"]') as HTMLElement | null;
-      if (panel) {
+      // Hold still while a pointer is on it, so taps land (inspectorHold.ts).
+      if (panel && !isInspectorHeld(panel)) {
         // The panel is centred ABOVE its anchor, so the anchor is clamped by
         // the panel's size and the whole panel stays on screen, below the
         // header (inspectorPlacement.ts). Read the size before writing.
