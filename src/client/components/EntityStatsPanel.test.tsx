@@ -279,6 +279,33 @@ describe('EntityStatsPanel', () => {
     expect(screen.getByTestId('entity-stats-panel')).not.toHaveAttribute('data-conn-count');
   });
 
+  it('a coastal battery shows its reload + firing arc; a solar shows none', () => {
+    setGameClient(
+      fakeClient({
+        structures: new Map([
+          [8, { powered: true, netPower: 30, connTo: [3], built: true, buildPct: 1, deconstructPct: 0 }],
+        ]),
+        swarm: new Map([[8, { kind: 2, shipKind: 'coastal_barbette_16in', radius: 368, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '8', name: '16" Barbette', hp: 6000, hpMax: 6000 });
+    useUIStore.setState({ selectedEntityId: 'swarm-8', selectedEntityKind: 'structure' });
+    const { unmount } = render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-guns')).toHaveTextContent('16" ×2 · reload 30 s · arc 144°');
+    unmount();
+    setGameClient(
+      fakeClient({
+        structures: new Map([
+          [9, { powered: true, netPower: 30, connTo: [3], built: true, buildPct: 1, deconstructPct: 0 }],
+        ]),
+        swarm: new Map([[9, { kind: 2, shipKind: 'solar', radius: 40, x: 0, y: 0 }]]),
+      }),
+    );
+    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.queryByTestId('entity-stats-guns')).toBeNull();
+  });
+
   it('C1: a BUILT storage structure offers Open cargo (anyone at all); a solar does not', () => {
     const swarm = new Map([
       [8, { kind: 2, shipKind: 'cargo_bay', radius: 40, x: 0, y: 0 }],

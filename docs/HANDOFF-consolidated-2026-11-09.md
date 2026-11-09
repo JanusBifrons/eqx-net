@@ -94,7 +94,7 @@ It lives in git (`docs/HANDOFF-consolidated-2026-11-09.md`), so it works on both
 
 - **Coastal plan tracker is stale.** Stages 6 (docs) and 7 (showcase) are on `main` (#380) but unticked in `plans/coastal-defences.md`; tick them, leaving "filmed review + artifact" for after landing. *Status:* not started. *Who:* Claude. *Source:* [coastal-plan]
 - **Reconcile the ship research doc.** Its formulas (√weight, rate^0.75) don't match the shipped naval numbers; the coastal doc follows the shipped curves. *Status:* not started. *Who:* Claude. *Source:* #365, [coastal-plan] decision log
-- **Reload and arc UI.** Casemate arcs and reload timers aren't shown in the inspector or the placement ghost. *Status:* not started. *Who:* Claude. *Source:* #365
+- **Reload and arc UI.** Casemate arcs and reload timers aren't shown in the inspector or the placement ghost. *Status:* done (the inspector shows `16" ×2 · reload 30 s · arc 144°` per gun size; the ghost draws a faint firing-arc wedge). *Who:* Claude. *Source:* #365
 - **Bastion crowding.** Small light guns are sometimes dropped when big batteries take the bastion slots (a citadel losing its second AA). Fix once the user picks the approach (see "Waiting on the user"). *Status:* blocked on user. *Who:* Claude. *Source:* #365
 - **Quad AA traverse and German casemate arcs.** Research or accept the design values (see "Waiting on the user"). *Status:* blocked on user. *Who:* Claude. *Source:* #365
 - **NPC capitals' turret fire isn't lock-gated.** Gate `AiFireResolver.fireMount` with the NPC lock (today only the hull-aimed `resolve` path is). Fire Control only. *Status:* not started. *Who:* Claude. *Source:* [fc-handoff]
