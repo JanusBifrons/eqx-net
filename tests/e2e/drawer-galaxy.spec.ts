@@ -224,10 +224,11 @@ test('drawer Galaxy tab → roster card opens detail modal (real clicks)', async
   // setState (no navigation). Without it Playwright's waitForScheduledNavigations
   // hangs the full 5 s on Pixi's continuous rAF, misreading it as "navigation
   // pending". The next assertion (ship-detail-modal) is the sync point.
-  await page
-    .locator(`[data-testid="ship-roster-card-${localShipInstanceId}"]`)
-    .first()
-    .click({ force: true, timeout: 5_000, noWaitAfter: true });
+  // The drawer slides in from the right: wait until the card has arrived on
+  // screen, or the click lands mid-slide ("Element is outside of the viewport").
+  const card = page.locator(`[data-testid="ship-roster-card-${localShipInstanceId}"]`).first();
+  await expect(card).toBeInViewport({ timeout: 10_000 });
+  await card.click({ force: true, timeout: 5_000, noWaitAfter: true });
 
   // === 6. ShipDetailModal mounts. ===
   await expect(page.locator('[data-testid="ship-detail-modal"]')).toBeVisible({ timeout: 5_000 });
