@@ -8,14 +8,16 @@ It lives in git (`docs/HANDOFF-consolidated-2026-11-09.md`), so it works on both
 
 **Scope.** The ~25 older `docs/HANDOFF-*.md` files (May–June) are out of scope: they predate the weekend, and the wrap-up plan already swept them. Parked and dropped ideas live in [`docs/SHELF.md`][SHELF] (friendly fire, whole-game time dilation, radar settings, ship munitions, blind perf test, atlas CPU-copy release); they are not repeated here.
 
-**Landing in progress (2026-11-09).** Another session is merging the open PRs one at a time: #376 (merged), #359, #356, #371, #369, #375, a new warp-picker PR from `feat/warp-picker-keep-both`, #362, #360, #365, #367 (opt-in only). Their follow-ups are listed below as outstanding. **No filming, re-recording or clip review until everything is merged** (user, 2026-11-09): every such item is in the Showcase section, marked "after landing".
+**Landed (2026-11-09).** Every weekend PR is on `main`: #376, #377, #359, #356, #360, #371, #379 (warp picker), then #369, #375, #362, #365 and #367 together through merge train #380. No weekend PR is left open. Their follow-ups are listed below. **No filming, re-recording or clip review was done during landing** (user, 2026-11-09): every such item is in the Showcase section and can start now.
+
+**Found while landing** (details in "Tests & CI" and "Perf"): the advisory feature-spec failures on the PRs were specs already broken or flaky on plain `main`, not PR regressions; two real merge interactions were fixed in the train (the ship catalogue version lock, 23 → 24, and #365's turret test, which assumed instant traverse).
 
 ---
 
 ## Waiting on the user
 
 - **Other-machine check.** On the other machine run `git status -s | head; git branch -vv | grep -v 'gone\]'; git stash list` and share the output, plus the open items in its local plans `machine-independent-perf` and `synchronous-hippo` (`~/.claude/plans/`). Those plans are not visible here; their git-tracked handoffs are covered below. *Status:* blocked on user. *Who:* user. *Source:* [tidy-wiggling-frost]
-- **Answer owed: "does the warp map only fly right?"** No. The pick in the clip was the Vega Reach gate, which is due east of Home in Sol Prime (gates sit on the bearing to their neighbour, here (170000, 0)). `warpTo.test.ts` "flies any direction: a south-west pocket, not just east" proves warps go any way. Tell the user. *Status:* not started. *Who:* Claude (just say it). *Source:* [warp-picker-handoff], [tidy-wiggling-frost]
+- **Answered 2026-11-09: "does the warp map only fly right?"** No. The pick in the clip was the Vega Reach gate, which is due east of Home in Sol Prime (gates sit on the bearing to their neighbour, here (170000, 0)). `warpTo.test.ts` "flies any direction: a south-west pocket, not just east" proves warps go any way. Tell the user. *Status:* not started. *Who:* Claude (just say it). *Source:* [warp-picker-handoff], [tidy-wiggling-frost]
 - **Which advisory CI jobs become required.** `gc-tests`, `perf-counts` (after #356), `e2e-feature-affected`, and possibly the weekly full `@feature` run. Suggestion: after a week green. *Status:* blocked on user. *Who:* user. *Source:* [DV-handoff] step 5, #351, #310, [audit]
 - **GPU lighting on a real phone.** Plug the phone into the laptop (USB debugging, unlocked, long screen timeout, Chrome command-line flag on) so Claude can run `pnpm perf:phone` baked vs `medium`, then vs `low`, 8 reps with `--noise-check`. This is also the phone lane's first live test (#354 was built without a device). *Status:* blocked on user. *Who:* user + Claude. *Source:* [gpu-lit], [DV-handoff] step 2, #354
 - **Phone default lighting level.** After the phone and phone-proxy runs: the agreed rule is RED at Medium → phones default to Low or baked; RED at Low → baked; GREEN → defaults stand. Confirm the call. *Status:* blocked on runs. *Who:* user. *Source:* [gpu-lit] "Decision rule", #346
@@ -27,7 +29,6 @@ It lives in git (`docs/HANDOFF-consolidated-2026-11-09.md`), so it works on both
 
 ## Netcode & prediction
 
-- **Land #360 (one collision paradigm).** Fix its own regression first: `laser-falloff-probe.spec:77/:98` (beam hit/clip), with a failing test at the right level. Live-loop: the netgate decides; a RED that survives the auto-retry is real. *Status:* partial (landing). *Who:* Claude. *Source:* #360, [tidy-wiggling-frost], [DV-handoff]
 - **Melee residual corrections.** Browser melee still shows 14 / 6 / 2 corrections per flight (was 20 / 17). Likely source: client drone bodies coast at their last server velocity between anchors (no damping, no AI thrust). Investigate after #360 lands. *Status:* not started. *Who:* Claude. *Source:* [DV-handoff] "From #360", #360
 - **Scrap angular velocity.** Scrap now takes the server's spin; a June A/B found that harmful under the old per-frame re-pose. Check spin on its own. *Status:* not started. *Who:* Claude. *Source:* [DV-handoff]
 - **Gate melee on correction count.** `melee-drone-corrections.spec.ts` prints corrections and gates only peak drift; gate the count once it is stable. *Status:* not started. *Who:* Claude. *Source:* [DV-handoff], #360
@@ -40,8 +41,9 @@ It lives in git (`docs/HANDOFF-consolidated-2026-11-09.md`), so it works on both
 
 ## Tests & CI
 
-- **Land #359 (join helpers wait for play; rotted specs).** It removes `wave-attack`, `auto-fire` and `interceptor-beam-stays-connected` from `QUARANTINE`. *Status:* partial (landing). *Who:* Claude. *Source:* #359
-- **Land #362 (E2E ticker pause on an explicit flag).** Fix its own regressions first: `wave-attack.spec:56`, `loading-catchup.spec:28`. Stacked on #359. *Status:* partial (landing). *Who:* Claude. *Source:* #362, [tidy-wiggling-frost]
+- **Feature specs broken on plain `main` (found while landing).** They fail the same way on `main` locally and on CI, so they are rot, not PR regressions. `laser-falloff-probe:77` (first test times out on a cold join, 30 s cap; `:98` also fails on CI), `structure-build-placement:48/:82/:152`, `structure-grid-web:41` and `speed-dial:91/:177` (the build / dial flow hits its 30 s cap; on `main` locally `:48` stalls waiting for the placement banner to hide after Confirm), `laser-smoothness:71`. Fix each with a failing run first, or quarantine it with a reason. *Status:* not started. *Who:* Claude. *Source:* #360, #365, #380 CI
+- **`scrap-collision-stress` is flaky on CI.** Plain `main` on CI (throwaway #378) read 123.7 u and 101 u peak drift, then 24.9 u on retry (limit 30). Locally it reads 0.8–27.8 u. CI flights run ~3× more snapshots (110–140 v ~45), so the spike comes from slow hosts. Find the spike mechanism; don’t widen the margin. *Status:* not started. *Who:* Claude. *Source:* #360, #378
+- **`fire-control-lock:105` fails on CI** (hands-off: LOCK in the info box runs to the end; CANCEL stops it). Likely the same bug as "Info-box LOCK didn’t start a lock" in Fire Control; start from this failing spec. *Status:* not started. *Who:* Claude. *Source:* #380 CI
 - **Finish the quarantined specs.** Run each 6×, remove from `QUARANTINE` when green: `missile-frigate-homing` (:414, :562), `machined-art` (nebula :162; its speed-effects case also timed out on the laptop, #299), `fence-hits`, `fx-turrets` (:63), plus `gate-fly-through` (fixed in #359, not yet verified 6/6). Then run the full feature tier once. *Status:* partial. *Who:* Claude. *Source:* [DV-handoff], #359, `tests/e2e/featureTriggers.mjs`, [audit], #299
 - **Triage 4 flaky specs.** `sector-alpha:424` (playerId reload), `fx-weapons:65`, `galaxy-drawer-rich:48`, `sync-health:17` (now in `tests/perf/`). They may share the curtain race where they join with their own `page.goto`. *Status:* not started. *Who:* Claude. *Source:* [DV-handoff], #363
 - **Interceptor beam active-frames question.** With the curtain wait it went 4 → 16 of 40 coast frames (test wants > 20): pulsed by cooldown, energy-limited, or a sampling artefact? Re-check once #359 lands (its fix changed the test). *Status:* partial. *Who:* Claude. *Source:* [audit] table
@@ -54,8 +56,8 @@ It lives in git (`docs/HANDOFF-consolidated-2026-11-09.md`), so it works on both
 
 ## Perf
 
-- **Land #356 (count budgets).** Confirm the `perf-counts` CI job renders ≥ 20 frames after the half-resolution change (else lower the device scale or lengthen the window). Also fixes the flaky `convoyBudget` "≤ 2 ms" unit assert. *Status:* partial (landing). *Who:* Claude. *Source:* #356, [DV-handoff]
-- **Land #371 (capital-fleet and capital-duel scenes).** Resolve its `perfBudgets.ts` / `perf-scenes.md` conflict with #356 by keeping both. Then run the timing A/B of the new scenes in the next `pnpm perf:scenes` pass. *Status:* partial (landing). *Who:* Claude. *Source:* #371, [tidy-wiggling-frost]
+- **`perf-counts` sees art uploads mid-scene since #365/#367.** On #380 `fleet-fight/baked` uploaded 20.9 M texels (5 pages) and `fleet-fight/high` 8.4 M against the one-page floor; on #365 alone, `wide-view/high` uploaded 12.6 M in one of two runs. New art (coastal guns, weapon-group art) likely bakes after the curtain. Bake it before the curtain, or prove it is noise, before making `perf-counts` required. *Status:* not started. *Who:* Claude. *Source:* #365, #380 CI
+- **Capital scenes have no work budget.** `capital-fleet` / `capital-duel` (#371) gate rx and busyness only. One local run on 2026-11-09: capital-fleet bodies 20.7, AI 19.7, swarm records 3.3, bytes 115 per tick; capital-duel 1.95 / 0.95 / 0.06 / 3. Calibrate (4 runs + CI) and add `work` budgets. *Status:* not started. *Who:* Claude. *Source:* #371
 - **Count-budget gaps.** Close-up fleet-fight draw-call budget is loose (175) from battle randomness: seed the battle or gate on p50. Display-object budgets are wide for the same reason. `teleport-raid` and `idle` have no client count budgets; `idle` has no server budget. *Status:* not started. *Who:* Claude. *Source:* [DV-handoff] "From #356"
 - **Per-frame / per-tick allocation counter.** No harness counts allocations per frame or tick yet (needs heap profiling). *Status:* not started. *Who:* Claude. *Source:* [DV-handoff], [`docs/architecture/perf-scenes.md`][perf-scenes]
 - **Physics-worker thread CPU.** Node 22 lacks `threadCpuUsage`; event-loop utilisation is the proxy. Revisit on a newer Node. *Status:* not started. *Who:* Claude. *Source:* [DV-handoff]
@@ -84,9 +86,7 @@ It lives in git (`docs/HANDOFF-consolidated-2026-11-09.md`), so it works on both
 
 ## Capitals & coastal defences
 
-- **Land #369 (fleet warp polish).** *Status:* partial (landing). *Who:* Claude. *Source:* #369
-- **Land #365 (coastal defences).** Resolve conflicts with main (`SectorRoom.ts`, `showcaseRooms.ts`, `messages.ts`, `clientMessages.ts`) and with #356/#369/#375. Fix the real failure: `structureScenario.test.ts` "seeds a pre-built grid that mines + fires", where a turret never fires (looks like a fire-control regression; failing test first). Netgate: it adds `snapshot.structureMountAngles` and sends structure shells beyond the projectile box, so check the byte deltas. *Status:* partial (landing). *Who:* Claude. *Source:* #365, [tidy-wiggling-frost]
-- **Coastal plan tracker is stale.** Stages 6 (docs) and 7 (showcase) are committed on the branch but unticked in `plans/coastal-defences.md`; tick them, leaving "filmed review + artifact" for after landing. *Status:* not started. *Who:* Claude. *Source:* [coastal-plan]
+- **Coastal plan tracker is stale.** Stages 6 (docs) and 7 (showcase) are on `main` (#380) but unticked in `plans/coastal-defences.md`; tick them, leaving "filmed review + artifact" for after landing. *Status:* not started. *Who:* Claude. *Source:* [coastal-plan]
 - **Reconcile the ship research doc.** Its formulas (√weight, rate^0.75) don't match the shipped naval numbers; the coastal doc follows the shipped curves. *Status:* not started. *Who:* Claude. *Source:* #365, [coastal-plan] decision log
 - **Reload and arc UI.** Casemate arcs and reload timers aren't shown in the inspector or the placement ghost. *Status:* not started. *Who:* Claude. *Source:* #365
 - **Bastion crowding.** Small light guns are sometimes dropped when big batteries take the bastion slots (a citadel losing its second AA). Fix once the user picks the approach (see "Waiting on the user"). *Status:* blocked on user. *Who:* Claude. *Source:* #365
@@ -94,11 +94,9 @@ It lives in git (`docs/HANDOFF-consolidated-2026-11-09.md`), so it works on both
 - **NPC capitals' turret fire isn't lock-gated.** Gate `AiFireResolver.fireMount` with the NPC lock (today only the hull-aimed `resolve` path is). Fire Control only. *Status:* not started. *Who:* Claude. *Source:* [fc-handoff]
 - **Player capital turrets split across locks.** Generalise `WeaponMountTicker.tickCapitalMounts` so each turret picks among its group's up to 3 locks, not just the first (`aimKeyFor`). *Status:* not started. *Who:* Claude. *Source:* [fc-handoff]
 - **Capital fly-by-wire layer.** Vertical speed telegraph (Astern / Stop / ⅓ / ⅔ / Full) replacing the HelmPanel buttons; course line + destination marker; heading ghost; orders chips (Hold, Come about, Face target, Broadside), client-side in `core/helm/helm.ts`. *Status:* not started. *Who:* Claude. *Source:* [fc-handoff] "Still to do" 4
-- **#365 and #367 both rework fire control.** When #367 merges after #365, do a meaning-level merge of the two fire-control reworks (`WeaponMountTicker`, `ColyseusClient.ts`, `clientMessages.ts`), not just a text fix; legacy HUD must be unchanged without `?ui=`. *Status:* not started (landing step 9). *Who:* Claude. *Source:* [tidy-wiggling-frost]
 
 ## Solar sectors & warp
 
-- **Ship the warp picker "keep both" PR.** From `feat/warp-picker-keep-both`: list on touch, map on desktop, `?warpui=` overrides; bigger map labels, readable Warp button. Full `pnpm lint` and `pnpm test` were never run on it. It must land before #367 (which contains its commits). *Status:* partial (landing). *Who:* Claude. *Source:* [warp-picker-handoff], [tidy-wiggling-frost]
 - **Picker polish.** Tap feedback in the list (hover highlight sticks on the row under the cursor); the pad hint shows on both ends (Home row and far row); the warp status chip pushes the Pilot/Spectate toggle down ~40 px. *Status:* not started. *Who:* Claude. *Source:* [warp-picker-handoff] step 3
 - **Speed-dial open hitch.** ~150–250 ms long frame when the speed dial opens (`dispatchDiscreteEvent` 30–45 ms twice; maybe the SpeedDial `tooltipOpen` labels), plus ~35 ms for the picker. Profile it. *Status:* not started. *Who:* Claude. *Source:* [warp-picker-handoff], #348
 - **NAV button and status band.** Rebuild the picker as a NAV button in the top rail (list on touch, system map on desktop) with the spool ring + Cancel in a fixed status slot, replacing the speed-dial "Warp ▸". Planned under Fire Control HUD D. *Status:* not started. *Who:* Claude. *Source:* [fc-handoff] "Still to do" 3
@@ -106,7 +104,7 @@ It lives in git (`docs/HANDOFF-consolidated-2026-11-09.md`), so it works on both
 
 ## Fire Control & HUD
 
-All of this is on `exp/fire-control` (#367), merging as opt-in behind `?ui=`. The full list with context is [fc-handoff]; delete that file in the PR that finishes it.
+Fire Control is on `main` (#367 via #380), opt-in behind `?ui=`; default players keep the legacy HUD. The full list with context is [fc-handoff]; delete that file in the PR that finishes it.
 
 - **Info-box LOCK didn't start a lock (bug, check first).** In the 1v3 clip the button still read LOCK after a tap and a retry; the E2E passes in `auto-fire-test`. Suspects: the world-anchored info box slides so taps miss; or the target was out of reach and dropped silently after the 1.5 s grace. Failing test first. *Status:* not started. *Who:* Claude. *Source:* [fc-handoff] "Still to do" 0, "Bugs"
 - **"Can't lock" feedback.** An out-of-reach or untrackable target sits at 0 % and drops after 1.5 s with nothing shown. Add OUT OF RANGE on the LOCK button and a broken ring. *Status:* not started. *Who:* Claude. *Source:* [fc-handoff]
@@ -124,7 +122,7 @@ All of this is on `exp/fire-control` (#367), merging as opt-in behind `?ui=`. Th
 - **Before Fire Control leaves opt-in.** Netgate, perf scenes, full lint and feature-tier E2E, CLAUDE.md rules for src/server and src/client (lock-gated fire, `lock_track`, the `groups` / `lockedBy` slices; invariants #12/#15 now cover lock-gated fire). *Status:* not started. *Who:* Claude. *Source:* [fc-handoff] "Before any PR"
 - **HUD D beyond piloting.** Drawer, main menu, spectator mode and building keep the old UI; fonts and tokens are ready. Waits on the "D replaces legacy" decision. *Status:* blocked on user. *Who:* Claude. *Source:* [hud-variants] "Not in scope", [fc-handoff] "Later"
 
-## Showcase (all after landing)
+## Showcase (landing is done: these can start)
 
 Every item here waits until all PRs are merged (user, 2026-11-09). Before each recording: clean up ports, leftover node / headless Chrome / ffmpeg, and check free RAM (root CLAUDE.md). Every clip gets a hostile review before the user sees it.
 
@@ -144,7 +142,6 @@ Every item here waits until all PRs are merged (user, 2026-11-09). Before each r
 
 ## Living world & economy
 
-- **Land #375 (harvesters mine asteroids).** *Status:* partial (landing). *Who:* Claude. *Source:* #375, [robot-territory]
 - **Blueprint contracts on the Contracts tab.** Economy v2 W6 planned blueprint contracts there; the blueprint market (#230) shipped, but no blueprint contract code was found on main. Confirm, then build or drop. *Status:* not started (unverified). *Who:* Claude. *Source:* [peppy] W6
 - **Ship weapons using munitions.** Parked, see [`docs/SHELF.md`][SHELF]. *Status:* parked. *Who:* user (to revive). *Source:* [peppy] W5, [SHELF]
 
@@ -181,12 +178,12 @@ No branch below has an open PR. "Ahead" counts non-merge commits not on `main`. 
 | `claude/game-object-polymorphism-BvyED` | 1 | 2026-06-04 | Plan doc: generic entity pipeline refactor | Ask (GEP shipped) |
 | `claude/handoff-issues-plan-aopm6` | 1 | 2026-06-07 | CI: netgate auto-retry up to 3× (superseded by `auto-retry.yml`, once) | Delete |
 | `claude/test-coverage-audit-qfT03` | 1 | 2026-06-02 | Plan doc: test-coverage audit (now `docs/refactors/test-coverage-audit.md`) | Delete |
-| `feat/warp-picker-keep-both` | 3 | 2026-11-08 | Warp picker keep-both; PR being opened | Lands this pass |
+| `feat/warp-picker-keep-both` | 0 | 2026-11-08 | Warp picker keep-both; merged as #379 (branch auto-deleted) | Done |
 | `archive/rnd-capital-ships` (tag) | — | — | The deleted `rnd/capital-ships` branch, archived by #371 | Keep |
 
 ## Suggested priority order
 
-1. **Finish landing the open PRs** in the agreed order, fixing each one's own regression: #359, #356, #371, #369, #375, warp picker, #362 (`wave-attack:56`, `loading-catchup:28`), #360 (`laser-falloff-probe`), #365 (turret never fires + conflicts), #367 (meaning-level fire-control merge).
+1. **Feature specs broken on `main`** (found while landing): laser probe, build placement / speed dial / grid web, laser smoothness, the CI-only scrap drift spike and `fire-control-lock`. They stop the advisory feature job meaning anything.
 2. **Other-machine check** (user): surface anything unpushed there.
 3. **Quarantined specs:** verify 6/6, un-quarantine, run the feature tier, triage the 4 flaky specs.
 4. **GPU lighting on weak hardware:** the 8-rep phone-proxy runs now; the real-phone runs when the user plugs in; then the default-level call.
@@ -226,12 +223,12 @@ Items per source = bullets that cite it. An item with several sources counts onc
 | ✓ | [`docs/refactors/test-coverage-audit.md`][audit] + `QUARANTINE` in `tests/e2e/featureTriggers.mjs` (7 entries on main) | 5 |
 | ✓ | Branch docs: [coastal-defences] + [military-bases] (`feat/coastal-defences`, no open items beyond #365); [robot-territory] (`feat/harvesters-mine`, "Next" closed by #375); [hud-variants], [weapon-groups] and [fire-control-arch] (`exp/fire-control`, open work points to fc-handoff) | 2 (robot-territory 1, hud-variants 1) |
 | ✓ | [`docs/SHELF.md`][SHELF]: referenced, not duplicated | 1 |
-| ✓ | [prancy] local plan `prancy-squishing-donut.md` (wrap-up W0–W7; checked against git: W0–W3, W5 done; W1a E2E, W4 select-scenes/budget files and W7 reel open; W6 landing) | 5 |
+| ✓ | [prancy] local plan `prancy-squishing-donut.md` (wrap-up W0–W7; checked against git: W0–W3, W5 done; W1a E2E, W4 select-scenes/budget files and W7 reel open; W6 merged #375) | 5 |
 | ✓ | [peppy] local plan `peppy-jumping-pinwheel.md` (economy v2: W1–W6 merged; blueprint contracts unverified; munitions on SHELF) | 3 |
 | ✓ | [soft-leaping-truffle] local plan (art v5: patrol tint fixed #269; big surfaces, deck shadows, nebula left) | 4 |
 | ✓ | [hazy-cerf] local plan `i-want-you-to-hazy-cerf.md` (catalogue run deferred) | 1 |
 | ✓ | Closed plans `eager-sauteeing-curry`, `iridescent-seeking-rainbow`, `sparkling-wondering-rose`: pointer only; headers say leftovers moved to the wrap-up plan and SHELF | 0 |
-| ✓ | [tidy-wiggling-frost] local plan (the current landing plan) | 13 |
+| ✓ | [tidy-wiggling-frost] local plan (the landing plan, done 2026-11-09) | 13 |
 | ✓ | Auto-memory [wrap-up-memory] `wrap-up-plan-status.md`, [gpu-lit-memory] `gpu-lit-art-status.md` | 4 (2 + 2) |
 | ☐ | Other machine: `machine-independent-perf` and `synchronous-hippo` local plans, unpushed work | pending user |
 | ✓ | `git status` / `git stash list` / `git worktree list` on this machine | 3 |
@@ -249,15 +246,15 @@ Older `docs/HANDOFF-*.md` (May–June, ~25 files): out of scope, see Scope above
 [art-direction]: architecture/art-direction.md
 [registry]: ../showcase/registry.ts
 [audit]: refactors/test-coverage-audit.md
-[fc-handoff]: https://github.com/JanusBifrons/eqx-net/blob/exp/fire-control/docs/handoff/fire-control-to-be-continued.md
-[warp-picker-handoff]: https://github.com/JanusBifrons/eqx-net/blob/feat/warp-picker-keep-both/docs/handoff/warp-picker-keep-both.md
-[coastal-plan]: https://github.com/JanusBifrons/eqx-net/blob/feat/coastal-defences/plans/coastal-defences.md
-[coastal-defences]: https://github.com/JanusBifrons/eqx-net/blob/feat/coastal-defences/docs/features/coastal-defences.md
-[military-bases]: https://github.com/JanusBifrons/eqx-net/blob/feat/coastal-defences/docs/features/military-bases.md
-[robot-territory]: https://github.com/JanusBifrons/eqx-net/blob/feat/harvesters-mine/docs/features/robot-territory.md
-[hud-variants]: https://github.com/JanusBifrons/eqx-net/blob/exp/fire-control/docs/features/hud-variants.md
-[weapon-groups]: https://github.com/JanusBifrons/eqx-net/blob/exp/fire-control/docs/features/weapon-groups-and-locking.md
-[fire-control-arch]: https://github.com/JanusBifrons/eqx-net/blob/exp/fire-control/docs/architecture/fire-control.md
+[fc-handoff]: handoff/fire-control-to-be-continued.md
+[warp-picker-handoff]: https://github.com/JanusBifrons/eqx-net/blob/7ff8e159/docs/handoff/warp-picker-keep-both.md
+[coastal-plan]: ../plans/coastal-defences.md
+[coastal-defences]: features/coastal-defences.md
+[military-bases]: features/military-bases.md
+[robot-territory]: features/robot-territory.md
+[hud-variants]: features/hud-variants.md
+[weapon-groups]: features/weapon-groups-and-locking.md
+[fire-control-arch]: architecture/fire-control.md
 [prancy]: <~/.claude/plans/prancy-squishing-donut.md (local, first machine)>
 [peppy]: <~/.claude/plans/peppy-jumping-pinwheel.md (local, first machine)>
 [soft-leaping-truffle]: <~/.claude/plans/soft-leaping-truffle.md (local, first machine)>
