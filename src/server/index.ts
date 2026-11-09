@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import 'dotenv/config';
 import { PERF_SCENES } from '../shared-types/perf/perfScenes.js';
 import { scenePerfViews, recordClientReading, clientPerfReadings } from './rooms/scene/scenePerfRegistry.js';
 import { Server, matchMaker } from 'colyseus';
@@ -433,6 +433,23 @@ gameServer
     asteroidConfig: [],
     droneCount: 4,
     maxClients: 8,
+  })
+  .filterBy(['testId']);
+// exp/fire-control — a 1v3 for the Fire Control footage + e2e: two fighters and a
+// heavy parked ~1400 u ahead of spawn. Join with ?startHostile=1&ui=d: you fly in
+// and lock them while they lock you (locking goes both ways).
+gameServer
+  .define('fc-duel', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    dronePoses: [
+      { kind: 'fighter', x: -320, y: 1400, angle: Math.PI },
+      { kind: 'heavy', x: 0, y: 1550, angle: Math.PI },
+      { kind: 'fighter', x: 320, y: 1400, angle: Math.PI },
+    ],
+    defaultSpawnX: 0,
+    defaultSpawnY: 0,
+    maxClients: 4,
   })
   .filterBy(['testId']);
 // Phase 5e soak room. swarmCount can be overridden per join via room

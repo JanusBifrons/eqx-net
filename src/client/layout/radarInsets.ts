@@ -51,6 +51,20 @@ export function measureRadarInsets(surface: Element): RadarInsets {
       });
     }
   }
+  // Experimental HUD controls that live OUTSIDE the slot hosts (floating stick
+  // home rings, the fire/attack clusters) opt in with `data-hud-exclusion`.
+  // Elements already inside an anchor host were measured above — skip them.
+  for (const el of Array.from(document.querySelectorAll('[data-hud-exclusion]'))) {
+    if (el.closest('[data-anchor]')) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) continue;
+    exclusions.push({
+      x: Math.round(r.left - origin.left),
+      y: Math.round(r.top - origin.top),
+      w: Math.round(r.width),
+      h: Math.round(r.height),
+    });
+  }
   return { top: Math.max(0, appBarHeightPx() - origin.top), right: 0, bottom: 0, left: 0, exclusions };
 }
 

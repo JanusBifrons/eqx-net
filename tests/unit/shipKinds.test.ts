@@ -209,7 +209,8 @@ describe('weapon mounts + slots (Phase 1, 2026-05-11)', () => {
     expect(weaponOf('heavy')).toEqual(new Set(['laser']));
     expect(weaponOf('gunship')).toEqual(new Set(['laser']));
     expect(weaponOf('interceptor')).toEqual(new Set(['hitscan']));
-    expect(weaponOf('missile-frigate')).toEqual(new Set(['heat-seeker']));
+    // exp/fire-control: the frigate gained a point-defence laser turret.
+    expect(weaponOf('missile-frigate')).toEqual(new Set(['heat-seeker', 'laser']));
   });
 
   it('every gameplay kind defines a positive energy pool + regen rate (§3)', () => {
@@ -384,8 +385,9 @@ describe('multi-mount kinds (Phase 3, 2026-05-11)', () => {
     // Both mounts rotate at the same speed (single chassis hardware).
     expect(forward.rotationSpeed).toBe(rear.rotationSpeed);
     expect(forward.rotationSpeed).toBeGreaterThan(0);
-    expect(k.slots).toHaveLength(1);
-    expect(k.slots![0]!.mountIds).toEqual(['forward', 'rear']);
+    // exp/fire-control: fore and aft are independent weapon groups.
+    expect(k.slots).toHaveLength(2);
+    expect(k.slots!.map((s) => s.mountIds)).toEqual([['forward'], ['rear']]);
   });
 
   it('Heavy is still the deepest hull (multi-mount kinds slot between)', () => {
@@ -435,8 +437,8 @@ describe('havok composite kind — catalogue registration (composite-ships Phase
     expect(SHIP_KINDS_LIST[8]!.id).toBe('havok'); // index 8 is wire-stable; robots append after (allegiances P0)
   });
 
-  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 23 (capital AA mounts + realistic reloads; 22 = capital naval guns, turret rates + spacing; 21 = capital flat transom; 20 = turrets T3: gunship mounts moved to nose / tail; 19 = P3c orb charge-laser mount; 18 = P3b robot-harvester)', () => {
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(23);
+  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 24 (fire-control weapon groups + frigate PD turret; 23 = capital AA mounts + realistic reloads; 22 = capital naval guns, turret rates + spacing; 21 = capital flat transom; 20 = turrets T3: gunship mounts moved to nose / tail; 19 = P3c orb charge-laser mount; 18 = P3b robot-harvester)', () => {
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(24);
   });
 
   it('HAVOK is registered in SHIP_KINDS and parses its own schema', () => {

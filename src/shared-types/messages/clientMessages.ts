@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { RECIPE_IDS } from '../recipes.js';
 import { StructureKindIdSchema } from '../structureKinds.js';
 import { GATE_ACCESS_IDS } from '../gateAccess.js';
+import { MountWeaponIdSchema } from '../shipKinds/types.js';
 import { SelectEntitySchema, DeselectEntitySchema } from './selectionMessages.js';
 
 export const InputMessageSchema = z
@@ -23,6 +24,11 @@ export const InputMessageSchema = z
      *  rim in this sector (solar-system sectors); both or neither. */
     warpX: z.number().finite().optional(),
     warpY: z.number().finite().optional(),
+    /** Manual aim (exp/hud-mobile-first): the pilot's aim as a quantised world
+     *  bearing (`core/combat/manualAim.ts` `encodeAim`, 4096 steps per turn).
+     *  Present ONLY while the pilot is aiming (resent every tick while held);
+     *  absent ⇒ turrets use the auto-picked target as before. */
+    aim: z.number().int().min(0).max(4095).optional(),
   })
   .strict();
 
@@ -40,7 +46,11 @@ export const FireMessageSchema = z
     // Bounded to cap payload size (S5) — a client-generated correlation id,
     // never longer than a UUID-ish token.
     clientShotId: z.string().min(1).max(64),
-    weapon: z.enum(['hitscan', 'laser', 'heat-seeker']).default('hitscan'),
+    // Any mount weapon (the server ignores this field and fires each mount's
+    // own bound weapon). It was a 3-value enum, so a group whose first mount
+    // carried e.g. an autocannon or naval gun had EVERY fire dropped as
+    // malformed (exp/fire-control P0).
+    weapon: MountWeaponIdSchema.default('hitscan'),
     /** Fire direction in radians, [-π, π]. Replaces the previous 4-number
      *  `rayFromX/Y, rayDirX/Y` payload (network-discipline P5). The server
      *  reconstructs the ray origin from the shooter's lag-compensated pose
@@ -118,6 +128,53 @@ export const TestReloadTurretsSchema = z
     type: z.literal('test_reload_turrets'),
   })
   .strict();
+
+/** Fire control (exp/fire-control): a lock target key — `s:<entityId>` for a
+ *  swarm entity (drone, robot, structure…), `p:<playerId>` for an active ship. */
+export const LockTargetKeySchema = z.string().regex(/^(s:\d{1,10}|p:[A-Za-z0-9_-]{1,64})$/);
+
+/** Client → server: start locking `target` with weapon group `groupId`. */
+export const LockRequestSchema = z
+  .object({
+    type: z.literal('lock_request'),
+    groupId: z.string().min(1).max(32),
+    target: LockTargetKeySchema,
+  })
+  .strict();
+
+/** Client → server: the pilot's lock line is on `target` (null = on nothing /
+ *  let go). The held target builds; a let-go one drains back to 0. Sent only
+ *  when the line's target changes, not per frame. */
+export const LockTrackSchema = z
+  .object({
+    type: z.literal('lock_track'),
+    groupId: z.string().min(1).max(32),
+    target: LockTargetKeySchema.nullable(),
+  })
+  .strict();
+
+/** Client → server: drop one lock (or every lock in the group when no target). */
+export const LockCancelSchema = z
+  .object({
+    type: z.literal('lock_cancel'),
+    groupId: z.string().min(1).max(32),
+    target: LockTargetKeySchema.optional(),
+  })
+  .strict();
+
+/** Client → server: a weapon group's fire mode. */
+export const SetGroupModeSchema = z
+  .object({
+    type: z.literal('set_group_mode'),
+    groupId: z.string().min(1).max(32),
+    mode: z.enum(['auto', 'manual']),
+  })
+  .strict();
+
+export type LockRequestMessage = z.infer<typeof LockRequestSchema>;
+export type LockCancelMessage = z.infer<typeof LockCancelSchema>;
+export type LockTrackMessage = z.infer<typeof LockTrackSchema>;
+export type SetGroupModeMessage = z.infer<typeof SetGroupModeSchema>;
 
 /** testMode only (showcase): warp every ship in the room to (x, y), keeping
  *  their formation (the NPC warp, W2a), so a shot can film a capital fleet
@@ -359,6 +416,10 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   CancelTransitSchema,
   TestAggroSchema,
   TestReloadTurretsSchema,
+  LockRequestSchema,
+  LockCancelSchema,
+  LockTrackSchema,
+  SetGroupModeSchema,
   TestFleetWarpSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,

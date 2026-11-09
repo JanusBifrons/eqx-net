@@ -296,7 +296,22 @@ export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: Capi
     ai: { thrust: p.thrustImpulse, turnKp: 2, maxTorque: p.turnTorque },
     shape: { kind: 'composite', scale: 1, hull, parts },
     mounts,
-    slots: [{ id: 'primary', displayName: 'Batteries', mountIds: mounts.map((m) => m['id'] as string) }],
+    // exp/fire-control: three weapon groups (3 locks each, the capital default):
+    // main battery, secondaries, quad AA. Each mount still picks among ITS
+    // group's locks via the capital per-turret fire control.
+    slots: capitalGroups(mounts.map((m) => m['id'] as string)),
   };
   return { record, length: L, beam: B, mainMountSize: mainSize, mountCount: mounts.length };
+}
+
+/** Split a capital's mounts into Main / Secondary / AA weapon groups by id
+ *  prefix (main-, sec-, aa-). A group with no mounts (a destroyer has no
+ *  secondaries) is left out. */
+function capitalGroups(ids: string[]): Array<{ id: string; displayName: string; mountIds: string[]; colour: number }> {
+  const groups = [
+    { id: 'main', displayName: 'Main battery', mountIds: ids.filter((i) => i.startsWith('main-')), colour: 0 },
+    { id: 'sec', displayName: 'Secondaries', mountIds: ids.filter((i) => i.startsWith('sec-')), colour: 1 },
+    { id: 'aa', displayName: 'AA', mountIds: ids.filter((i) => i.startsWith('aa-')), colour: 2 },
+  ];
+  return groups.filter((g) => g.mountIds.length > 0);
 }

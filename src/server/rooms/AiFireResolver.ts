@@ -46,6 +46,9 @@ export interface SwarmRecLookup {
 }
 
 export interface AiFireResolverDeps {
+  /** Fire control (exp/fire-control): refuse a shot aimed at a fire-control
+   *  pilot this NPC hasn't locked. Absent ⇒ never blocked. */
+  fireBlocked?: (shooterId: string, kind: ShipKind, x: number, y: number, dirX: number, dirY: number) => boolean;
   /** Cooldown ledger — keyed by shooter id (drone). */
   lastFireClientTick: Map<string, number>;
   /** Pose snapshot for the firing drone (SAB read). */
@@ -153,6 +156,9 @@ export class AiFireResolver implements WeaponFireSink {
     if (hasTurretFireControl(droneKind)) return;
     const slotMounts = d.resolveSlotMounts(droneKind);
     if (slotMounts.length === 0) return;
+    // Fire control: no lock on the fire-control pilot in the line of fire ⇒
+    // no shot (the cooldown is not spent).
+    if (d.fireBlocked?.(shooterId, droneKind, self.x, self.y, dirNdx, dirNdy)) return;
 
     // Slot-level cooldown gate (mirrors PlayerFireResolver). The slot fires
     // as one trigger; its cooldown is the MAX over its mounts' weapons.

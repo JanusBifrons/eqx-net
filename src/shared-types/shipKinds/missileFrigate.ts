@@ -99,8 +99,23 @@ export const MISSILE_FRIGATE: ShipKind = defineShipKind({
       rotationSpeed: 1.5,
       weaponId: 'heat-seeker',
     },
+    // exp/fire-control: a point-defence turret on the bow — a light, fast
+    // all-round gun so the frigate has a second group to lock fighters with
+    // while its missile racks hold a slower target.
+    {
+      id: 'pd',
+      localX: 0,
+      localY: 18,
+      baseAngle: 0,
+      arcMin: -Math.PI * 0.85,
+      arcMax: Math.PI * 0.85,
+      rotationSpeed: 4,
+      weaponId: 'laser',
+      size: 'AA',
+    },
   ],
   slots: [
-    { id: 'primary', displayName: 'Primary', mountIds: ['rack-l', 'rack-r'] },
+    { id: 'missiles', displayName: 'Missiles', mountIds: ['rack-l', 'rack-r'], colour: 0 },
+    { id: 'pd', displayName: 'Point defence', mountIds: ['pd'], colour: 1 },
   ],
 });

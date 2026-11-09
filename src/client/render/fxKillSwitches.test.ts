@@ -33,6 +33,12 @@ describe('readFxKillSwitches', () => {
     expect(readFxKillSwitches('?noselfdmg=1')).toEqual({ ...ALL_FALSE, selfDmgNumbersDisabled: true });
   });
 
+  it('experimental HUDs (?ui=a|b|c|d) hide own-ship damage numbers unless noselfdmg=0', () => {
+    expect(readFxKillSwitches('?ui=b').selfDmgNumbersDisabled).toBe(true);
+    expect(readFxKillSwitches('?ui=b&noselfdmg=0').selfDmgNumbersDisabled).toBe(false);
+    expect(readFxKillSwitches('?ui=legacy').selfDmgNumbersDisabled).toBe(false);
+  });
+
   it('reads ?cleanworld=1 (showcase capture: no debug world overlays)', () => {
     expect(readFxKillSwitches('?cleanworld=1')).toEqual({ ...ALL_FALSE, cleanWorld: true });
   });

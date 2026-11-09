@@ -1,3 +1,4 @@
+import { manualAimMountBearing } from '@core/combat/manualAim';
 import { rotateMountToward, wrapPi } from '@core/ai/WeaponMountController';
 import type { WeaponMount } from '@shared-types/shipKinds';
 
@@ -52,6 +53,10 @@ export function tickLocalMountAngles(
   shipY: number,
   shipAngle: number,
   dtSec: number,
+  /** Manual aim (exp/hud-mobile-first): a held world aim bearing overrides
+   *  `target` for the firing mounts — the SAME rule the server ticker uses
+   *  (`core/combat/manualAim.ts`, #15). Undefined ⇒ auto aim (unchanged). */
+  manualAim?: number,
 ): void {
   const cosA = Math.cos(shipAngle);
   const sinA = Math.sin(shipAngle);
@@ -60,7 +65,9 @@ export function tickLocalMountAngles(
     // Default desired bearing = base (0): a mount that isn't firing, or
     // has no target, slews back to forward.
     let desired = 0;
-    if (target !== null && activeMountIds.has(mount.id)) {
+    if (manualAim !== undefined) {
+      if (activeMountIds.has(mount.id)) desired = manualAimMountBearing(manualAim, shipAngle, mount.baseAngle);
+    } else if (target !== null && activeMountIds.has(mount.id)) {
       // Mount pivot in world space, then world bearing to the target,
       // rotated into the mount's arc-local frame (same convention as
       // ship.angle: forward = -y, right = +x → atan2(-dx, dy)).

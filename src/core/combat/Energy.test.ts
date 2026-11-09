@@ -107,10 +107,12 @@ describe('Energy — resolveSlotEnergyCost', () => {
     expect(resolveSlotEnergyCost(SHIP_KINDS['missile-frigate'])).toBe(missile);
   });
 
-  it('honours a per-slot energyCost override (gunship two-barrel slot = 3)', () => {
-    // Gunship bolts cost 2 each, but the slot overrides to 3 to reflect the
-    // fore-and-aft volume.
-    expect(resolveSlotEnergyCost(SHIP_KINDS.gunship)).toBe(3);
-    expect(getWeapon('laser').energyCost).toBe(2);
+  it('honours a per-slot energyCost override', () => {
+    // exp/fire-control split the gunship into fore/aft groups (no override, so
+    // each is its weapon cost); the override itself is checked on a synthetic
+    // kind.
+    expect(resolveSlotEnergyCost(SHIP_KINDS.gunship, 'fore')).toBe(getWeapon('laser').energyCost);
+    const k = { ...SHIP_KINDS.gunship, slots: [{ id: 'x', displayName: 'X', mountIds: ['forward', 'rear'], energyCost: 3 }] };
+    expect(resolveSlotEnergyCost(k, 'x')).toBe(3);
   });
 });

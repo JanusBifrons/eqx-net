@@ -34,6 +34,12 @@ export type HudMode = 'full' | 'clean' | 'minimal' | 'none';
 
 export type Section = 'opener' | 'mechanics' | 'tech';
 
+/** `desktop` = the `--capture` size; `phone` = Pixel 5 portrait;
+ *  `phone-landscape` = a touch phone held sideways (844×390 CSS px, 2× DPR). */
+export type ShotViewport = 'desktop' | 'phone' | 'phone-landscape';
+
+export type CaptionLayout = 'lower-third' | 'side' | 'top' | 'none';
+
 export interface ShotTarget {
   /** Engineering/showcase room name (`?room=`). */
   room?: string;
@@ -91,7 +97,15 @@ export interface Shot {
   target: ShotTarget;
   /** HUD while recording (default 'minimal'). */
   hud?: HudMode;
-  viewport?: 'desktop' | 'phone';
+  /** Browser the take renders in (default desktop). Phone takes are framed
+   *  in a device bezel on the 1920×1080 output (`compositor.deviceLayout`). */
+  viewport?: ShotViewport;
+  /** Where the caption sits. Default: `side` for phone, `top` for
+   *  phone-landscape, `lower-third` for desktop. `none` = no caption. */
+  captionLayout?: CaptionLayout;
+  /** Cap the clip's video bitrate (kbit/s) for clips shared on their own
+   *  that must stay small. Default: quality-only (CRF 18). */
+  maxBitrateKbps?: number;
   /** Log in with the dev test-token account first (default true). */
   auth?: boolean;
   /** Seed localStorage before load (e.g. the wave base owner id). */
