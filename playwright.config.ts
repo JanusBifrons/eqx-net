@@ -156,7 +156,6 @@ const FEATURE_SPECS: string[] = [
   '**/swarm-sleep.spec.ts',
   '**/swarm-tidi.spec.ts',
   '**/wave-attack.spec.ts',
-  '**/sync-health.spec.ts',
   '**/t-ship-no-self-collision.spec.ts',
   '**/tship-collision-probe.spec.ts',
   '**/structure-ram-blocked.spec.ts',

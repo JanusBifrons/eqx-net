@@ -48,7 +48,7 @@ on:
         required: false
         default: '4'
       scenarios:
-        description: 'CSV of scenario names to run (default core; e.g. structures-load,scrap-load for characterisation)'
+        description: 'CSV of scenario names to run (default core)'
         required: false
         default: 'core'
 
