@@ -1,5 +1,6 @@
 import { test, expect, devices } from '@playwright/test';
 import { DEFAULT_BASE_URL } from './helpers/ports';
+import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../src/shared-types/sectorBounds';
 
 /**
  * Configurable hyperspace arrival picker (Phase: configurable-arrival, 2026-05-10).
@@ -91,11 +92,13 @@ test.describe('configurable-arrival picker', () => {
 
     await page.locator('[data-testid="arrival-mode-xy"]').click();
     const xInput = page.locator('[data-testid="arrival-x-input"]');
-    await xInput.fill('999999');
+    // Past the bound, whatever it is: ±200,000 with solar-system sectors on
+    // (the default since W1c), ±5,000 with ?solar=0.
+    await xInput.fill(String(SECTOR_PLAYABLE_HALF_EXTENT * 5));
     // Trigger blur by clicking somewhere else inside the panel.
     await page.locator('[data-testid="drawer-panel-galaxy"]').click({ position: { x: 5, y: 5 } });
-    // Clamped to +5000 (SECTOR_PLAYABLE_HALF_EXTENT) — no decimals.
-    await expect(xInput).toHaveValue('5000');
+    // Clamped to +SECTOR_PLAYABLE_HALF_EXTENT — no decimals.
+    await expect(xInput).toHaveValue(String(SECTOR_PLAYABLE_HALF_EXTENT));
     // Toast appears with the warning text.
     const toast = page.locator('[data-testid="arrival-clamp-toast"]');
     await expect(toast).toBeVisible();
