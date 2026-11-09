@@ -12,19 +12,25 @@ It lives in git (`docs/HANDOFF-consolidated-2026-11-09.md`), so it works on both
 
 **Found while landing** (details in "Tests & CI" and "Perf"): the advisory feature-spec failures on the PRs were specs already broken or flaky on plain `main`, not PR regressions; two real merge interactions were fixed in the train (the ship catalogue version lock, 23 → 24, and #365's turret test, which assumed instant traverse).
 
+**Decisions (user, 2026-11-09 evening).**
+- **Lock-to-fire is the rule, not an experiment.** Nobody fires without a completed lock: players, NPC drones, NPC capitals and defence/structure turrets alike. Fire Control's opt-in (`?ui=d`, the `fireControl` join flag, `LockSubsystem.hasLocked()` passing untracked players) goes away. See "Fire Control & HUD".
+- **HUD D is the only HUD.** Legacy and variants A–C are retired with the `?ui=` switch.
+- **No PvP flag.** The failsafe (slower locks on friendlies and players, logged as a hostile act) already guards against locking a friendly by accident.
+- **Housekeeping deletions approved** (branches marked "Delete", the stash, untracked scratch).
+
 ---
 
 ## Waiting on the user
 
-- **Other-machine check.** On the other machine run `git status -s | head; git branch -vv | grep -v 'gone\]'; git stash list` and share the output, plus the open items in its local plans `machine-independent-perf` and `synchronous-hippo` (`~/.claude/plans/`). Those plans are not visible here; their git-tracked handoffs are covered below. *Status:* blocked on user. *Who:* user. *Source:* [tidy-wiggling-frost]
-- **Answered 2026-11-09: "does the warp map only fly right?"** No. The pick in the clip was the Vega Reach gate, which is due east of Home in Sol Prime (gates sit on the bearing to their neighbour, here (170000, 0)). `warpTo.test.ts` "flies any direction: a south-west pocket, not just east" proves warps go any way. Tell the user. *Status:* not started. *Who:* Claude (just say it). *Source:* [warp-picker-handoff], [tidy-wiggling-frost]
+- **Other-machine check: done 2026-11-09.** The desktop has no commits missing from the remote and no stash; its dirty worktrees held only regenerated screenshots and snapshots. The open items in its local plans `machine-independent-perf` and `synchronous-hippo` are already in this list. *Status:* done. *Source:* [tidy-wiggling-frost]
+- **Answered 2026-11-09: "does the warp map only fly right?"** No. The pick in the clip was the Vega Reach gate, which is due east of Home in Sol Prime (gates sit on the bearing to their neighbour, here (170000, 0)). `warpTo.test.ts` "flies any direction: a south-west pocket, not just east" proves warps go any way. *Status:* done (told the user 2026-11-09). *Source:* [warp-picker-handoff], [tidy-wiggling-frost]
 - **Which advisory CI jobs become required.** `gc-tests`, `perf-counts` (after #356), `e2e-feature-affected`, and possibly the weekly full `@feature` run. Suggestion: after a week green. *Status:* blocked on user. *Who:* user. *Source:* [DV-handoff] step 5, #351, #310, [audit]
 - **GPU lighting on a real phone.** Plug the phone into the laptop (USB debugging, unlocked, long screen timeout, Chrome command-line flag on) so Claude can run `pnpm perf:phone` baked vs `medium`, then vs `low`, 8 reps with `--noise-check`. This is also the phone lane's first live test (#354 was built without a device). *Status:* blocked on user. *Who:* user + Claude. *Source:* [gpu-lit], [DV-handoff] step 2, #354
 - **Phone default lighting level.** After the phone and phone-proxy runs: the agreed rule is RED at Medium → phones default to Low or baked; RED at Low → baked; GREEN → defaults stand. Confirm the call. *Status:* blocked on runs. *Who:* user. *Source:* [gpu-lit] "Decision rule", #346
 - **Older phone runs never done.** 2× B ship scale (#295), `?fx=new` vs classic turrets (#292), per-sector sun "not yet checked on device" (#368), Fire Control lock tuning "untested on a real device". Most fold into the phone session above; say which still matter. *Status:* blocked on user. *Who:* user. *Source:* #292, #295, #368, [fc-handoff]
-- **Fire Control design calls.** Whether HUD D replaces the legacy HUD; whether locking a player needs a PvP flag and a notice to the target; whether pilot skills feed `PilotLockMods`. *Status:* blocked on user. *Who:* user. *Source:* [fc-handoff] "Later", "Missing feedback"
+- **Fire Control design calls.** Decided 2026-11-09: D replaces the legacy HUD, locking is universal, and there is no PvP flag (the failsafe covers friendlies). Still open, for later: whether pilot skills feed `PilotLockMods`. *Status:* blocked on user (pilot skills only). *Who:* user. *Source:* [fc-handoff] "Later", "Missing feedback"
 - **Coastal design values.** Accept or replace: quad AA traverse 0.45 rad/s (copied from the ship AA; real Bofors quad rate unconfirmed); German casemate arcs 120° (design value; only the US 16" 145° arc is sourced); bastion crowding fix (seat by buy priority, or add bastions). *Status:* blocked on user. *Who:* user (Claude can propose). *Source:* #365
-- **Stale branches and local leftovers.** Approve deleting the branches marked "delete" in the Parked table, and say whether to drop `stash@{0}` and the untracked scratch (see Housekeeping). Nothing is deleted without a yes. *Status:* blocked on user. *Who:* user. *Source:* [tidy-wiggling-frost]
+- **Stale branches and local leftovers.** Approved 2026-11-09. On the desktop the untracked scratch is gone (the one capture `living-world.md` cites is kept) and `stash@{0}` no longer exists. Removing worktrees and branches still needs the session doing it to be granted permission. *Status:* partial. *Who:* user. *Source:* [tidy-wiggling-frost]
 - **Network-feel roadmap: continue or retire?** Stages 5b, 6 and 7 of the May roadmap were never done (see Netcode). Decide whether they still matter after the weekend's netcode work. *Status:* blocked on user. *Who:* user. *Source:* [nf-roadmap]
 
 ## Netcode & prediction
@@ -104,7 +110,28 @@ It lives in git (`docs/HANDOFF-consolidated-2026-11-09.md`), so it works on both
 
 ## Fire Control & HUD
 
-Fire Control is on `main` (#367 via #380), opt-in behind `?ui=`; default players keep the legacy HUD. The full list with context is [fc-handoff]; delete that file in the PR that finishes it.
+Fire Control is on `main` (#367 via #380), opt-in behind `?ui=`; default players keep the legacy HUD. **That changes (see the decisions at the top): lock-to-fire becomes universal and HUD D the only HUD.** The full list with context is [fc-handoff]; delete that file in the PR that finishes it.
+
+- **Make lock-to-fire universal.** In order:
+  1. Fix the bugs below while the feature is still opt-in.
+  2. One PR for the server and client switch:
+     - drop the `fireControl` join flag and have `LockSubsystem` track every player;
+     - remove the legacy pass-throughs (`hasLocked`, `mountBearsOnLock`, `isFireControl`, `lockAimTarget`);
+     - close the `lock_track` and rate-limit gaps;
+     - collapse the client to HUD D: delete `uiVariant` legacy/a/b/c, `installMouseAim`, the auto-fire toggle and the legacy slot bar.
+  3. NPCs and structures lock too:
+     - generalise `NpcLockSubsystem` to any target;
+     - replace the 0.45 rad cone gate with "locked on the target it fired at";
+     - gate `AiFireResolver.fireMount` and `StructureMountTicker`.
+
+  Tests (about 50 files):
+  - add `lockTarget` (integration) and `lockOn` (e2e) helpers instead of editing each spec by hand;
+  - flip `fireControlLocks.test.ts:80` and the `npcLocks` legacy case to assert refusal;
+  - make the netgate `strafe-fire` scenario lock first.
+
+  Docs: remove the opt-in sections, and add a root CLAUDE.md invariant "no weapon fires without a completed lock".
+
+  *Status:* not started. *Who:* Claude. *Source:* user 2026-11-09
 
 - **Info-box LOCK didn't start a lock (bug, check first).** In the 1v3 clip the button still read LOCK after a tap and a retry; the E2E passes in `auto-fire-test`. Suspects: the world-anchored info box slides so taps miss; or the target was out of reach and dropped silently after the 1.5 s grace. Failing test first. *Status:* not started. *Who:* Claude. *Source:* [fc-handoff] "Still to do" 0, "Bugs"
 - **"Can't lock" feedback.** An out-of-reach or untrackable target sits at 0 % and drops after 1.5 s with nothing shown. Add OUT OF RANGE on the LOCK button and a broken ring. *Status:* not started. *Who:* Claude. *Source:* [fc-handoff]
@@ -120,7 +147,7 @@ Fire Control is on `main` (#367 via #380), opt-in behind `?ui=`; default players
 - **Tech debt.** `updateLockGuide` builds a key string per candidate (precompute keys; invariant #14); `_fcInfo.allFixed` is unused on the client. *Status:* not started. *Who:* Claude. *Source:* [fc-handoff]
 - **Tuning untested on a device.** Base lock 1.5 s, failsafe 1.75×, drain 1.5×, sticky cone 1.6×, fire tolerance 0.2 rad, fixed-gun AUTO ±0.3 rad, lock-line cone 70 u + 0.12 u/u. *Status:* blocked on user (device). *Who:* user + Claude. *Source:* [fc-handoff] "Tuning"
 - **Before Fire Control leaves opt-in.** Netgate, perf scenes, full lint and feature-tier E2E, CLAUDE.md rules for src/server and src/client (lock-gated fire, `lock_track`, the `groups` / `lockedBy` slices; invariants #12/#15 now cover lock-gated fire). *Status:* not started. *Who:* Claude. *Source:* [fc-handoff] "Before any PR"
-- **HUD D beyond piloting.** Drawer, main menu, spectator mode and building keep the old UI; fonts and tokens are ready. Waits on the "D replaces legacy" decision. *Status:* blocked on user. *Who:* Claude. *Source:* [hud-variants] "Not in scope", [fc-handoff] "Later"
+- **HUD D beyond piloting.** Drawer, main menu, spectator mode and building keep the old UI; fonts and tokens are ready. D replaces legacy (decided 2026-11-09). *Status:* not started. *Who:* Claude. *Source:* [hud-variants] "Not in scope", [fc-handoff] "Later"
 
 ## Showcase (landing is done: these can start)
 
@@ -184,7 +211,7 @@ No branch below has an open PR. "Ahead" counts non-merge commits not on `main`. 
 ## Suggested priority order
 
 1. **Feature specs broken on `main`** (found while landing): laser probe, build placement / speed dial / grid web, laser smoothness, the CI-only scrap drift spike and `fire-control-lock`. They stop the advisory feature job meaning anything.
-2. **Other-machine check** (user): surface anything unpushed there.
+2. **Lock-to-fire universal** (decided 2026-11-09): Fire Control bug fixes first, then the universal switch, then NPCs and structures.
 3. **Quarantined specs:** verify 6/6, un-quarantine, run the feature tier, triage the 4 flaky specs.
 4. **GPU lighting on weak hardware:** the 8-rep phone-proxy runs now; the real-phone runs when the user plugs in; then the default-level call.
 5. **Coastal follow-ups that touch correctness:** netgate byte deltas and perf against count budgets for #365.
