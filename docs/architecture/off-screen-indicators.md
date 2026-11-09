@@ -105,6 +105,15 @@ beyond a banded grouping distance → project → spring-smooth → fade-in.
 8. **Categories are radar-only** (hostile, neutral, player, structure, asteroid,
    scrap, lingering); the first four reuse the shared `ENTITY_VISUALS` shapes and
    colours. Off-by-default categories are range-filtered before the sort.
+9. **Lock marks** (fire control). NPC locks start beyond the screen edge, so an
+   off-screen contact locking the local ship (own-ship `lockedBy`, acquiring or
+   locked) draws in threat red, and one of the pilot's own LOCKED targets
+   (`groups[gi].l[].s === 2`) in that group's colour (`hud/groupColours.ts`);
+   threat wins when both apply. Marked contacts sort first for the icon cap,
+   get the hostile minimum size and are never folded into a wedge. The decision
+   is the pure `halo/lockMarks.ts` `radarLockTint` over `mirror.localGroups` /
+   `mirror.localLockedBy` (both on the structured-cloned mirror, so the worker
+   path has them). On-screen lock visuals are unchanged (AimFeedbackRenderer).
 
 ## 4. Defaults
 
