@@ -20,4 +20,8 @@ export const COUNT_BUDGETS: Record<string, CountBudget> = {
   'fleet-fight': { rxKBps: 275, minSwarm: 30, measured: '216–218 KB/s, 2026-11-06' },
   // 2026-11-06, laptop, two runs: 67.8 / 67.8 KB/s (174 entities: citadel + raid).
   'teleport-raid': { rxKBps: 85, minSwarm: 100, measured: '67.8 KB/s, 2026-11-06' },
+  // 2026-11-09, laptop, two runs: 17.1 / 16.9 KB/s (swarm 29: the fleet + two robot waves).
+  'capital-fleet': { rxKBps: 22, minSwarm: 20, measured: '16.9–17.1 KB/s, 2026-11-09' },
+  // 2026-11-09, laptop, two runs: 11.6 / 11.6 KB/s (one battleship firing on the pilot).
+  'capital-duel': { rxKBps: 15, minSwarm: 1, measured: '11.6 KB/s, 2026-11-09' },
 };

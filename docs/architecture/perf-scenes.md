@@ -91,7 +91,7 @@ A run is **INVALID**, never fast, if any of these happen:
 
 ## The per-PR counts gate
 
-`tests/integration/sectorRoom/perfSceneCounts.test.ts` (the integration suite, so CI runs it on every PR) plays `fleet-fight` and `teleport-raid` in a real room with a connected pilot. It counts the bytes that pilot's socket receives over 10 s, and fails if:
+`tests/integration/sectorRoom/perfSceneCounts.test.ts` (the integration suite, so CI runs it on every PR) plays `fleet-fight`, `teleport-raid`, `capital-fleet` and `capital-duel` (the capital baseline, wrap-up W2d: capital turret fire control and naval shells) in a real room with a connected pilot. It counts the bytes that pilot's socket receives over 10 s, and fails if:
 - any spawn is refused;
 - the scene isn't busy enough;
 - bytes per second are over the budget in `src/shared-types/perf/perfBudgets.ts`.
