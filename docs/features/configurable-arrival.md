@@ -14,7 +14,7 @@ The Galaxy drawer tab now hosts an "Arrival" section below the **Show galaxy map
 
 | Mode | Behaviour | UI state |
 |---|---|---|
-| **X/Y** | User-typed coords. On blur, values are clamped to ±`SECTOR_PLAYABLE_HALF_EXTENT` (5000) with a warning toast. | Inputs editable. |
+| **X/Y** | User-typed coords. On blur, values are clamped to ±`SECTOR_PLAYABLE_HALF_EXTENT` (200,000 with solar-system sectors on, the default; 5,000 with `?solar=0` / `EQX_SOLAR_SECTORS=0`) with a warning toast. | Inputs editable. |
 | **Same** | Server falls back to the SAB pose at commit time (legacy default). | Inputs disabled, showing a 5-second snapshot of the local ship's current x/y read from the render mirror. |
 | **Home** | Lands at the per-user "home" coord. Today the UI hardcodes this to (0, 0); the value is persisted so a future feature can let the player set their own. | Inputs disabled, showing the home coord. |
 
@@ -35,7 +35,7 @@ All optional in the decoder so existing stored payloads (without these keys) loa
 ## Wire & server
 
 - **Schema:** `EngageTransitSchema` (`src/shared-types/messages.ts`) gained `arrival: { x: finite-number, y: finite-number }` as an optional, strict object. Malformed payloads are dropped silently by the standard validation pipeline.
-- **Bounds:** `SECTOR_PLAYABLE_HALF_EXTENT = 5000` and `clampToSectorBounds(x, y)` live in `src/shared-types/sectorBounds.ts`. Both client (blur clamp + toast) and server (defense-in-depth) use the same helper.
+- **Bounds:** `SECTOR_PLAYABLE_HALF_EXTENT` (200,000 by default, 5,000 with solar sectors off) and `clampToSectorBounds(x, y)` live in `src/shared-types/sectorBounds.ts`. Both client (blur clamp + toast) and server (defense-in-depth) use the same helper.
 - **Orchestrator:** `TransitOrchestrator.beginTransit(playerId, targetSectorKey, arrival?)` stashes the optional arrival on the in-flight record. `commitTransit` builds the `LimboPayload` x/y from the clamped arrival when present, otherwise from SAB. Velocity, angle, and angvel are always SAB.
 
 ## Render-mirror polling — the 5-second snapshot
