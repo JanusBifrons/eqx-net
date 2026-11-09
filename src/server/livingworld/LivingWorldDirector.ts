@@ -65,7 +65,7 @@ import { planClusterJoins, type ClusterCandidate } from './director/clusterJoins
 import { EscalatingWavePattern } from './director/WavePattern.js';
 import { WaveDirector, type WaveStep } from './director/WaveDirector.js';
 import { IncomingRegistry } from './IncomingRegistry.js';
-import type { WarpDisposition } from '../../shared-types/messages.js';
+import type { WarpDisposition, WarpWarningEvent } from '../../shared-types/messages.js';
 import { DIRECTOR_STATE_VERSION, type DirectorPersistence } from './DirectorPersistence.js';
 
 // Re-export the room type so existing imports from this module keep working.
@@ -1415,6 +1415,13 @@ export class LivingWorldDirector {
     this.incoming.clear(playerId, destSectorKey);
   }
 
+  /** 2026-11-08 — replay what is still inbound to `destSectorKey` (with the
+   *  countdown left) to a pilot who just arrived there; the original
+   *  `warp_warning` only reached the occupants at the time. */
+  replayIncomingTo(destSectorKey: string, send: (msg: WarpWarningEvent) => void): void {
+    this.incoming.forEachInbound(destSectorKey, send);
+  }
+
   /**
    * WS-E #15 — build the optional `hostileToFaction` spawn spec for a bot landing
    * in `sectorKey`. A member is marked hostile INLINE at spawn ONLY when its
@@ -1457,11 +1464,20 @@ export class LivingWorldDirector {
    */
   private arrivalPoseFor(
     botId: string,
-    _to: string,
+    to: string,
     carry: BotCarry,
   ): { x: number; y: number; vx: number; vy: number } | null {
     const squad = this.squadPool.squadOf(botId);
     if (!squad || squad.targetFactionId === null) return null; // roaming ⇒ edge spawn
+    // TestMode rooms may name the landing point (the wave E2E's base is at the
+    // origin; a carry pose up to ~7000 u away made the attack land in its
+    // window by luck). Members are spread on a small ring, at rest.
+    const fixed = this.rooms.get(to)?.testWaveArrival?.() ?? null;
+    if (fixed) {
+      const i = Math.max(0, squad.botIds.indexOf(botId));
+      const a = (i / Math.max(1, squad.botIds.length)) * Math.PI * 2;
+      return { x: fixed.x + Math.cos(a) * 60, y: fixed.y + Math.sin(a) * 60, vx: 0, vy: 0 };
+    }
     const { x, y } = clampToSectorBounds(carry.x, carry.y);
     return { x, y, vx: carry.vx, vy: carry.vy };
   }

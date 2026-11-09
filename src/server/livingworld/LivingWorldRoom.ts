@@ -170,4 +170,8 @@ export interface LivingWorldRoom {
   /** Phase-4 P0 — clear a pending warp-in warning (the inbound arrived / retreated
    *  / cancelled). Companion to `broadcastWarpWarning`; keyed by the same `id`. */
   broadcastWarpWarningClear(msg: WarpWarningClearEvent): void;
+  /** TestMode-only (2026-11-08): the point a WAVE squad lands at in this room,
+   *  instead of its carry pose. The wave E2E needs the squad within reach of
+   *  the base inside its window; otherwise null / absent. */
+  testWaveArrival?(): { x: number; y: number } | null;
 }
