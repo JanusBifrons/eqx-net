@@ -541,4 +541,7 @@ export const gpuLitShips: Shot = {
   docs: ['gpu-lit-ships'],
   reel: false,
   target: { room: 'showcase-capital-duel', params: { ...capitalGunsFighter.target.params, shiplight: 'high' } },
+  // Known (review 2026-11-09): the follow camera keeps the hull near the left
+  // edge and the caption over the stern; two scripted track cameras framed it
+  // worse. Flash light shows for 1-2 frames and 5" turrets cast none (game-side).
 };
