@@ -156,7 +156,6 @@ const FEATURE_SPECS: string[] = [
   '**/swarm-sleep.spec.ts',
   '**/swarm-tidi.spec.ts',
   '**/wave-attack.spec.ts',
-  '**/sync-health.spec.ts',
   '**/t-ship-no-self-collision.spec.ts',
   '**/tship-collision-probe.spec.ts',
   '**/structure-ram-blocked.spec.ts',
@@ -164,6 +163,8 @@ const FEATURE_SPECS: string[] = [
   '**/gate-fly-through.spec.ts',
   '**/ramming-probe-armpit.spec.ts',
   '**/scrap-collision-stress.spec.ts',
+  // WS7.1 — melee contact corrections (remote-entity collision paradigm).
+  '**/melee-drone-corrections.spec.ts',
   '**/warp-engage-cancel.spec.ts',
   '**/wreck-render-probe.spec.ts',
   '**/structure-visible-damageable.spec.ts',

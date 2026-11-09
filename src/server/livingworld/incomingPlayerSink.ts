@@ -11,6 +11,8 @@
  * null-guards, so a missing sink simply means no player-incoming banner (peaceful
  * building mode), never a crash.
  */
+import type { WarpWarningEvent } from '../../shared-types/messages.js';
+
 export interface IncomingPlayerSink {
   registerIncomingPlayer(spec: {
     playerId: string;
@@ -20,6 +22,10 @@ export interface IncomingPlayerSink {
     etaMs: number;
   }): void;
   clearIncomingPlayer(playerId: string, destSectorKey: string): void;
+  /** Send a pilot who just arrived in `destSectorKey` every warning still
+   *  inbound there, with the countdown left (the broadcast only reached the
+   *  occupants at the time). Called once per join from `handleClientReady`. */
+  replayIncomingTo(destSectorKey: string, send: (msg: WarpWarningEvent) => void): void;
 }
 
 let sink: IncomingPlayerSink | null = null;

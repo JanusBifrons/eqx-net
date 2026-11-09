@@ -127,7 +127,8 @@ export function travelApproach(tau: number): [number, number] {
   const s = Math.min(TRAVEL_GLIDE_S, tau - TRAVEL_BRAKE_S);
   return [TRAVEL_BRAKE_D + TRAVEL_GLIDE_V * (s - (s * s) / (2 * TRAVEL_GLIDE_S)), TRAVEL_GLIDE_V * (1 - s / TRAVEL_GLIDE_S)];
 }
-import { preResetRemoteShips, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
+import { DisplayPoseHitscan } from '../combat/displayPoseHitscan.js';
+import { preResetRemoteShips, anchorRemoteSwarmBodies, authoritativeSwarmStateAt, isRemoteMovingSwarmKind, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets } from './remoteLerpOffsets.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled, isFullDiagMode, isRammingProbeEnabled, isGhostProbeEnabled } from '../debug/ClientLogger';
@@ -762,17 +763,23 @@ export class ColyseusGameClient {
    *  remote-ship count; grows once, never shrinks (bounded by max
    *  concurrent remotes in the room). */
   private readonly _preResetRemotePosEntries: { x: number; y: number }[] = [];
-  /** 2026-05-25 heap-growth gate step 5 — pooled state object for the
-   *  swarm-kinematic-follower setShipState loop in updateMirror. Pre-
-   *  fix the loop allocated `{x, y, vx, vy, angle, angvel: 0}` literal
-   *  PER drone PER RAF (25 × 90 = 2250/sec). Mutate, then pass; the
-   *  World copies into Rapier synchronously so next iteration reuses. */
-  private readonly _swarmKinematicScratch = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+  /** Reused state object for the per-snapshot drone/scrap body anchor
+   *  (`anchorRemoteSwarmBodies`, part of the remote-entity anchor). Mutate,
+   *  then pass; the World copies into Rapier synchronously (#14). */
+  private readonly _swarmAnchorScratch = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+  /** Body keys of the remote MOVING swarm entities (drones, scrap). Their
+   *  predWorld bodies run on the predicted timeline, so the local beam and
+   *  hit-prediction rays skip them in predWorld and test the drawn pose
+   *  instead (`DisplayPoseHitscan`). Maintained by `syncSwarmIntoPredWorld`. */
+  private readonly _movingSwarmKeys = new Set<string>();
   /** 2026-05-25 heap-growth gate step 5 — pre-computed `swarm-${id}`
    *  body-key strings, cached on first encounter. Pre-fix the swarm-
    *  kinematic loop did `` `swarm-${entityId}` `` per drone per RAF =
    *  2250 template-literal string allocs/sec. Keyed by entityId. */
   private readonly _swarmBodyKeyCache = new Map<number, string>();
+  /** The local beam / hit-prediction ray: predWorld for everything except
+   *  remote drones/scrap, which it tests at the drawn pose. */
+  private readonly _displayHitscan = new DisplayPoseHitscan(this._movingSwarmKeys, this._swarmBodyKeyCache);
   /** 2026-05-25 heap-growth gate step 5 — persistent Set scratch for
    *  syncSwarmIntoPredWorld's per-packet "seen" sweep. Pre-fix
    *  allocated `new Set<string>()` per binary swarm packet (~60 Hz). */
@@ -919,6 +926,8 @@ export class ColyseusGameClient {
     preResetRemotePosEntries: this._preResetRemotePosEntries,
     remoteLastInputs: this._remoteLastInputs,
     remoteForwardTicks: this._remoteForwardTicks,
+    swarmBodyKeys: this._swarmBodyKeyCache,
+    swarmAnchorScratch: this._swarmAnchorScratch,
   };
   private disposed = false;
 
@@ -1712,7 +1721,7 @@ export class ColyseusGameClient {
       // did not address"): the binary swarm decode + predWorld sync is the
       // uninstrumented post-pivot dominant per-frame surface. `applyMs`
       // measures only JSON `handleSnapshot`; this path runs separately at
-      // ~60 Hz with the kinematic follower writing ~N drone bodies. Wrap
+      // ~60 Hz (spawn, shield swaps, the static-body sweep). Wrap
       // with `performance.now()` to feed rolling max/avg into `heap_sample`
       // and to log slow individual packets (> 5 ms) as discrete events.
       const decodeStartMs = performance.now();
@@ -2825,6 +2834,7 @@ export class ColyseusGameClient {
     this.mirror.swarm?.delete(entityId);
     if (this.predWorld?.hasShip(wireId)) this.predWorld.despawnShip(wireId);
     this.predSwarmKeys.delete(wireId);
+    this._movingSwarmKeys.delete(wireId);
     this._damageFlashFrames.delete(wireId);
     // Reuse the explosion sprite path — the renderer keys explosions off
     // sprite position (looked up by id), and `swarm-${entityId}` is the
@@ -3204,6 +3214,10 @@ export class ColyseusGameClient {
           const state = snap.states[remoteId]!;
           if (this.predWorld.hasShip(remoteId)) this.predWorld.setShipState(remoteId, state);
         }
+        // Same anchor for drones/scrap (the remote-entity paradigm).
+        if (this.mirror.swarm) {
+          anchorRemoteSwarmBodies(this.predWorld, this.mirror.swarm, snap.serverTick, this._swarmBodyKeyCache, this._swarmAnchorScratch);
+        }
       }
       return;
     }
@@ -3538,11 +3552,21 @@ export class ColyseusGameClient {
           this._aiRegisteredIds.add(ctx.registeredAiId);
         }
         this.predSwarmKeys.add(key);
+        if (isRemoteMovingSwarmKind(entry.kind)) {
+          this._movingSwarmKeys.add(key);
+          // Seed the new body with its latest server state (velocity
+          // included) so it moves from birth; the next snapshot's
+          // remote-entity anchor puts it on the prediction timeline.
+          if (authoritativeSwarmStateAt(entry, entry.lastUpdateTick, this._swarmAnchorScratch)) {
+            this.predWorld.setShipState(key, this._swarmAnchorScratch);
+          }
+        }
       }
       // Idempotent per-sync upkeep: shield-collider swap (drone) or static
-      // repose (asteroid / structure). Drones are NOT re-posed here — the
-      // `updateMirror` kinematic follower is the single per-frame pose writer
-      // (one-pose-per-frame rule); the leaf's onSync only swaps the shield.
+      // repose (asteroid / structure). Drones and scrap are NOT re-posed
+      // here: their body pose has ONE writer, the per-snapshot remote-entity
+      // anchor (`anchorRemoteSwarmBodies`); the leaf's onSync only swaps the
+      // shield collider (same body, pose and velocity kept).
       leaf.onSync(ctx);
     }
     // Sweep predWorld bodies whose entityId no longer appears in mirror.swarm.
@@ -3550,6 +3574,7 @@ export class ColyseusGameClient {
       if (!seen.has(key)) {
         this.predWorld.despawnShip(key);
         this.predSwarmKeys.delete(key);
+        this._movingSwarmKeys.delete(key);
         // If the swept body was a drone, unregister it from the hostility
         // ledger (`_aiController` is ledger-only post-pivot — never ticked).
         // Numeric entityId is encoded in the key as `swarm-${id}`.
@@ -4395,29 +4420,28 @@ export class ColyseusGameClient {
     // `interpolateSwarmPose` the renderer uses (display-delay buffer + teleport
     // guard), computed ONCE here and written into the mirror entry so every
     // reader — renderer, HaloRadar, labels, health bars, MountVisualManager,
-    // damage numbers — sees one consistent pose. We also drive the predWorld
-    // body KINEMATICALLY to that same interpolated pose so the local player's
-    // predicted ship collides with the entity where it is drawn (the folded
-    // "kinematic follower"). For scrap this is what fixes the desync: the
-    // server simulates scrap as a dynamic mass-1 body, and an UNLOCKED follower
-    // at the interpolated pose makes render == collision and the player's
-    // predicted deflection match the server (a locked body was an infinite-mass
-    // wall — the "huge spike in corrections"). No client AI, no re-sim, no
-    // reconcile anchor — the server stays fully hit-authoritative.
+    // damage numbers, the local beam's hit test — sees one consistent pose.
+    //
+    // This loop does NOT touch the predWorld body any more (2026-11-08, the
+    // remote-entity paradigm). The old "kinematic follower" re-posed the body
+    // here every frame to this display-delayed pose (now − DISPLAY_DELAY_MS),
+    // so the local ship, predicted AHEAD of the server, met each drone where
+    // it was ~(100 ms + lead) ago: a correction on every melee contact
+    // (docs/LESSONS.md 2026-11-08). Drone and scrap bodies now follow the same
+    // path as remote player ships: anchored to the latest server state on
+    // each snapshot (`anchorRemoteSwarmBodies`, inside `preResetRemoteShips`)
+    // and stepped forward by the replay + `tickPhysics`, so they sit on the
+    // local prediction's timeline and keep the local ship's own push. The
+    // body may lead the sprite, exactly as a remote ship's body can lead its
+    // lerp-offset sprite. Scrap stays a dynamic mass-1 body (never locked).
     //
     // Asteroids (kind=0) + structures (kind=2) keep their predWorld pose from
     // the binary packet (set in `syncSwarmIntoPredWorld`) and the renderer
     // interpolates them off the same poseRing — nothing to do for them here.
     if (this.predWorld && this.mirror.swarm) {
       const nowMs = this.clock.now();
-      // 2026-05-25 heap-growth gate step 5: pooled outer state object
-      // + cached `swarm-${id}` keys. Per drone per RAF, this loop was
-      // the biggest single allocator in the combat repro (25 × 90 ≈
-      // 2250 object literals + 2250 strings/sec). Both pooled now.
-      const kinematicScratch = this._swarmKinematicScratch;
-      const keyCache = this._swarmBodyKeyCache;
-      for (const [entityId, entry] of this.mirror.swarm) {
-        if (entry.kind !== 1 && entry.kind !== 3) continue;
+      for (const entry of this.mirror.swarm.values()) {
+        if (!isRemoteMovingSwarmKind(entry.kind)) continue;
         interpolateSwarmPose(entry, nowMs, this._swarmInterpScratch);
         entry.x = this._swarmInterpScratch.x;
         entry.y = this._swarmInterpScratch.y;
@@ -4427,29 +4451,7 @@ export class ColyseusGameClient {
         if (entry.kind === 1 && (entry.mountAngles || entry.displayMountAngles)) {
           slewDisplayMountAngles(entry, entry.shipKind ? getShipKind(entry.shipKind).mounts : undefined, this.lastFrameMs / 1000);
         }
-        let bodyKey = keyCache.get(entityId);
-        if (bodyKey === undefined) {
-          bodyKey = `swarm-${entityId}`;
-          keyCache.set(entityId, bodyKey);
-        }
-        if (this.predWorld.hasShip(bodyKey)) {
-          kinematicScratch.x = entry.x;
-          kinematicScratch.y = entry.y;
-          kinematicScratch.vx = entry.vx;
-          kinematicScratch.vy = entry.vy;
-          kinematicScratch.angle = entry.angle;
-          // angvel stays 0 for the kinematic follower (drones AND scrap). The
-          // body is hard-set to the single interpolated pose each frame; a
-          // non-zero angvel lets it spin off between frames then snap back,
-          // which MEASURABLY worsened scrap-flythrough corrections (Phase-1
-          // issue 5 A/B: peak corr-rate 0.40→0.80, drift 18→39 u — the
-          // scrap-collision-stress E2E falsified the "feed scrap its spin"
-          // hypothesis). Holding the interpolated angle is correct.
-          kinematicScratch.angvel = 0;
-          this.predWorld.setShipState(bodyKey, kinematicScratch);
-        }
-      }
-    }
+      }    }
 
     // Remote ships — read from predWorld at 60 Hz with decaying lerp offsets.
     if (this.predWorld) {
@@ -5540,6 +5542,15 @@ export class ColyseusGameClient {
    *  direction = `ship.angle + mount.baseAngle + currentMountAngle` (4b.2
    *  adds rotation; pre-4b.2 the current angle was always 0). The 20 u
    *  barrel offset is applied along the mount's world fire direction. */
+  /** The beam / hit-prediction ray world, pointed at the live predWorld and
+   *  swarm mirror (both can be replaced across a sector handoff). */
+  private displayHitscan(): DisplayPoseHitscan {
+    const h = this._displayHitscan;
+    h.world = this.predWorld;
+    h.swarm = this.mirror.swarm;
+    return h;
+  }
+
   private updateLiveBeam(): void {
     const localId = this.mirror.localPlayerId;
     if (!localId || !this.predWorld) return;
@@ -5602,7 +5613,9 @@ export class ColyseusGameClient {
       const wdef = getWeapon(mount.weaponId);
       const optimalDist = beamOptimalDist(wdef);
       const beamMax = beamMaxDist(wdef);
-      const hit = skipHitscan ? null : this.predWorld.hitscan(fromX, fromY, fwdX, fwdY, beamMax, localId);
+      // Remote drones/scrap are tested at their DRAWN pose (the pose the
+      // turret aims at), not their predicted-timeline body.
+      const hit = skipHitscan ? null : this.displayHitscan().hitscan(fromX, fromY, fwdX, fwdY, beamMax, localId);
       // `?probe=ghost` diagnostic (laser "ghost at (0,0)" investigation,
       // 2026-06-03). When the beam stops on a body whose pose is within
       // ε of world origin, log the hitId — its namespace prefix names the
@@ -6177,7 +6190,7 @@ export class ColyseusGameClient {
     predictShotOutcome({
       ledger: this._hitLedger,
       sink: predSink,
-      world: this.predWorld,
+      world: this.displayHitscan(),
       clientShotId: shotId,
       mode: weaponDef.mode,
       damage: weaponDef.damage,
@@ -6298,6 +6311,7 @@ export class ColyseusGameClient {
     this.predRemoteShipIds.clear();
     this._remoteShipOffsets.clear();
     this.predSwarmKeys.clear();
+    this._movingSwarmKeys.clear();
 
     // Maps + sets on the client itself (combat surfaces).
     this._damageFlashFrames.clear();

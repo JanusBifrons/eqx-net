@@ -14,6 +14,7 @@
  */
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { waitForInPlay } from './helpers/gameScenario';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 const GATE_Y = -900;
@@ -35,6 +36,8 @@ async function joinAt(page: Page, x: number): Promise<void> {
     }, undefined,
     { timeout: 30_000 },
   );
+  // Thrust only counts once the loading curtain lifts.
+  await waitForInPlay(page);
 }
 
 async function localY(page: Page): Promise<number | null> {

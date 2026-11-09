@@ -86,11 +86,14 @@ free-floating scrap piece.
 - **Client render**: `scrapClientLeaf` builds the predWorld collider (same
   component collider + scrap group). It is **DRONE-like, NOT asteroid-like**
   (Phase-5 desync fix, 2026-06-14): the body is spawned **UNLOCKED** at the
-  server's `SCRAP_DEFAULT_MASS` and is a **kinematic follower** driven each frame
-  by `ColyseusClient.updateMirror` to the single interpolated pose (the
-  one-pose-per-frame rule — `entry.kind === 3` joins the `=== 1` branch), so
-  render == collision and the local player's predicted deflection matches the
-  server's dynamic mass-1 scrap. **Why it changed:** scrap was originally
+  server's `SCRAP_DEFAULT_MASS`. Since 2026-11-08 its body follows the
+  remote-entity anchor, like drones and remote ships (latest server state each
+  snapshot, stepped on the predicted timeline, never re-posed per frame — see
+  `drone-snapshot-interpolation.md`), so the local player's predicted shove
+  matches the server's dynamic mass-1 scrap; its sprite draws the single
+  interpolated pose (`entry.kind === 3` joins the `=== 1` drawn-pose branch).
+  It was a per-frame kinematic follower of the drawn pose from 2026-06-14 to
+  2026-11-08. **Why it was made dynamic:** scrap was originally
   locked + reposed like an asteroid, making it an infinite-mass wall the player
   bounced off in prediction while the server let them shove it — every snapshot
   reconciled that divergence as a "huge spike in corrections" (the user's
