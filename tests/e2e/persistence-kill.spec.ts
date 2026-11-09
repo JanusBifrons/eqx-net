@@ -22,9 +22,10 @@ import { test, expect } from '@playwright/test';
 import type { Browser } from '@playwright/test';
 import { getLocalPlayerId, waitForInPlay } from './helpers/gameScenario';
 import { lockOn, toManual } from './helpers/fireControl';
+import { DEFAULT_BASE_URL, DEFAULT_SERVER_URL } from './helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
-const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? 'http://localhost:2567';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
+const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? DEFAULT_SERVER_URL;
 
 interface TestTokenResponse {
   token: string;

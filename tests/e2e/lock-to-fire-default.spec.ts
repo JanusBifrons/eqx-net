@@ -16,9 +16,10 @@ import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { getBeamActive, waitForInPlay } from './helpers/gameScenario';
 import { fcChips, lockOn, toManual, waitForFireControlHud } from './helpers/fireControl';
+import { DEFAULT_BASE_URL, DEFAULT_SERVER_URL } from './helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
-const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? 'http://localhost:2567';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
+const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? DEFAULT_SERVER_URL;
 
 test.describe.configure({ timeout: 60_000 });
 

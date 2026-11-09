@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Equinox Phase 7 (Item 1) — in-game full-page WARP map regression lock.
@@ -13,7 +14,7 @@ import { test, expect, type Page } from '@playwright/test';
  * `?galaxy=sol-prime` autojoins the core hub; `cygnus-arm` is a real graph
  * neighbour (see warp-engage-cancel.spec.ts), so it's a valid warp target.
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function bootInGame(page: Page): Promise<void> {
   await page.goto(`${BASE_URL}/?galaxy=sol-prime`, { waitUntil: 'domcontentloaded', timeout: 60_000 });

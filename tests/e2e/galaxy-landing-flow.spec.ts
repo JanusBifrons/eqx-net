@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Living Galaxy P5 — landing-flow merge regression locks.
@@ -12,7 +13,7 @@ import type { Page } from '@playwright/test';
  * Deep-links (?room=/?galaxy=) still skip straight to the game.
  */
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function waitForGalaxyPickHook(page: Page): Promise<void> {
   await page.waitForFunction(

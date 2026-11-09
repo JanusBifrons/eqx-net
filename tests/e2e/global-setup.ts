@@ -17,8 +17,9 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { FullConfig } from '@playwright/test';
+import { DEFAULT_BASE_URL, DEFAULT_SERVER_URL, E2E_PORT_OFFSET } from './helpers/ports';
 
-const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? 'http://localhost:2567';
+const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? DEFAULT_SERVER_URL;
 const STORAGE_STATE_PATH = path.resolve('tests/e2e/.auth/storage-state.json');
 const E2E_STORAGE_STATE_PATH = path.resolve('tests/e2e/.auth/e2e-storage-state.json');
 
@@ -28,7 +29,7 @@ interface TestTokenResponse {
 }
 
 export default async function globalSetup(_config: FullConfig): Promise<void> {
-  const baseURL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+  const baseURL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
   let payload: TestTokenResponse;
   try {
@@ -39,7 +40,8 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
     payload = (await res.json()) as TestTokenResponse;
   } catch (err) {
     const hint =
-      'Is the dev server running on port 2567? Playwright should start it automatically via the `webServer` config; ' +
+      `Is the dev server running on ${DEFAULT_SERVER_URL} (EQX_E2E_PORT_OFFSET=${E2E_PORT_OFFSET})? ` +
+      'Playwright should start it automatically via the `webServer` config; ' +
       'if you set CI_SKIP_WEBSERVER, also set PLAYWRIGHT_SERVER_URL to point at the deployed dev server.';
     throw new Error(`[e2e/global-setup] failed to mint test JWT: ${(err as Error).message}\n${hint}`);
   }

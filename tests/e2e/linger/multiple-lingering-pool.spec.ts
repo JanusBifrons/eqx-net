@@ -16,8 +16,9 @@ import {
   getLingeringPositions,
 } from '../helpers/gameScenario';
 import { captureGameScene } from '../helpers/screenshot';
+import { DEFAULT_BASE_URL } from '../helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 /** Lingering hulls to accumulate (kept small for slot/wall-clock headroom;
  *  the limit is ROSTER_CAP=10, not this — each swap is a full page-reload
  *  join ≈ 10-15 s, so this is deliberately minimal). The assertion proves

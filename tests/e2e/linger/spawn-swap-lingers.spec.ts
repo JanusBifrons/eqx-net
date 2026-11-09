@@ -19,8 +19,9 @@ import {
   getLingeringPositions,
 } from '../helpers/gameScenario';
 import { captureGameScene } from '../helpers/screenshot';
+import { DEFAULT_BASE_URL } from '../helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 test.describe('linger: spawn → swap → original lingers @feature', () => {
   test('an observer sees the swapped-away hull lingering and the pool grows to 2', async ({

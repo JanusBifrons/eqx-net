@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { waitForInPlay, launchGalaxyTestClient } from './helpers/gameScenario';
 import { test, expect, type Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Phase 4 WS-A1 — Spectator / Construction mode (locked decisions D3–D7).
@@ -17,7 +18,7 @@ import { test, expect, type Page } from '@playwright/test';
  * fire / TTK wait needed — a 1-2 s spec.
  */
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function join(page: Page, opts: { worker0?: boolean } = {}): Promise<void> {
   const params = new URLSearchParams({

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Phase A coverage lock — ShipRosterPanel data flow.
@@ -20,7 +21,7 @@ import { test, expect, type Page } from '@playwright/test';
  * Excluded: 3-second polling refresh. Too timing-sensitive for E2E;
  * the fetch is exercised at unit level via the panel's own roster.
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function waitForLocalShip(page: Page, timeoutMs = 20_000): Promise<void> {
   await expect(page.locator('[data-testid="hud-sector"]')).toBeVisible({ timeout: timeoutMs });

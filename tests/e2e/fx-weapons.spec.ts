@@ -12,8 +12,9 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { test, expect, type Browser } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 type Stats = { fxBeam?: boolean; fxProjectiles?: number; fxReady?: number; failed?: number; lastFailure?: string };
 
 // Infrastructure cost only: a cold join plus the first-visit bake of the

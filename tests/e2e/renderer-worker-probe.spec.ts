@@ -1,4 +1,5 @@
 import { test, expect, type ConsoleMessage } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Phase 4 verification — loads the renderer-probe page that uses the
@@ -7,7 +8,7 @@ import { test, expect, type ConsoleMessage } from '@playwright/test';
  * updates, and posts FEEDBACK back. Diagnostic only — result is in
  * the printed `PROBE LOG`.
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 test('renderer worker — boot + mirror + feedback round-trip', async ({ page }) => {
   test.setTimeout(45_000);

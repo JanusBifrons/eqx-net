@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Happy-path regression lock for the 2026-05-13 smoke-test failure:
@@ -34,7 +35,7 @@ import { test, expect, type Page } from '@playwright/test';
  * different-ship swap from the renderer/predWorld perspective — both
  * leave the old room and join a new one with `joinOptions.shipId`.
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function waitForLocalShip(page: Page, timeoutMs = 20_000): Promise<void> {
   await expect(page.locator('[data-testid="hud-sector"]')).toBeVisible({ timeout: timeoutMs });

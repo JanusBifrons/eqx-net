@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Regression: clicking a sector on the spawn-select Galaxy Overview screen
@@ -14,7 +15,7 @@ import { test, expect } from '@playwright/test';
  * GameSurface bootstrap.
  */
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 test('post-auth spawn-select → click sector → game surface mounts', async ({ page }) => {
   const errors: string[] = [];

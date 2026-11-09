@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * WS-D (#21) — always-on defensive RANGE circles for built turrets. The baked
@@ -17,7 +18,7 @@ import { randomUUID } from 'node:crypto';
  * tests/e2e/structure-turret-range.spec.ts --reporter=line`.
  */
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 test('a built scenario turret draws a defensive range circle', async ({ browser }) => {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });

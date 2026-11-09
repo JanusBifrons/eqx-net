@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
+import { DEFAULT_BASE_URL, SERVER_URL } from './helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function joinSector(page: import('@playwright/test').Page): Promise<void> {
   // Post-auth flow (storageState pre-pops the JWT). The old "Enter Sector
@@ -517,7 +518,7 @@ test.describe('physics worker', () => {
 
     // Fire-and-forget burn from inside the browser (CORS * origin is set on the server).
     await page.evaluate(() =>
-      fetch('http://localhost:2567/test/burn', { method: 'POST' }).catch(() => undefined),
+      fetch(`${SERVER_URL}/test/burn`, { method: 'POST' }).catch(() => undefined),
     );
 
     await page.waitForTimeout(500); // let physics accumulate during and after the burn

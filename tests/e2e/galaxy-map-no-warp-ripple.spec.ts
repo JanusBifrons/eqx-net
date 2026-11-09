@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * #7 — the remote-warp ripple must NOT bleed onto the galaxy map.
@@ -25,7 +26,7 @@ import { test, expect } from '@playwright/test';
  * gate would report `true` even with the map open (no hook existed; this spec is
  * the regression lock for the wiring).
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 declare global {
   interface Window {

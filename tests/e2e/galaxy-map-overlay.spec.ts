@@ -1,4 +1,5 @@
 import { test, expect, devices } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Galaxy Map refactor (2026-05-10) — Map B regression lock.
@@ -21,7 +22,7 @@ import { test, expect, devices } from '@playwright/test';
  * enforcement is locked by `src/server/transit/TransitOrchestrator.test.ts`.
  */
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 // `?galaxy=sol-prime` autoJoins the Sol Prime sector room so the spawn-select
 // flow is bypassed. Sol Prime is the centre node, so all six other sectors
 // are neighbours — useful for covering the "selectable" tier visually.

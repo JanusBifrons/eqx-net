@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * #16 — galaxy-map sector badges are ICON + ADJACENT LABEL, not a count knocked
@@ -20,7 +21,7 @@ import { test, expect } from '@playwright/test';
  * FAIL on a regression that drops the badge row or breaks the hook: the count
  * would be 0 instead of 2.
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 interface InjectedSectorStat {
   key: string;

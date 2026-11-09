@@ -27,8 +27,9 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { lockOn, toManual } from './helpers/fireControl';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 const STEP = process.env['STEP'] ?? 'after';
 // Force a KNOWN, fixed camera zoom (`?zoom=`) so the screenshot is deterministic
 // (without it the spawn camera ease lands captures at different scales, making

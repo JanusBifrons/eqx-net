@@ -59,8 +59,9 @@ import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { getShipKind } from '../../../src/shared-types/shipKinds';
+import { DEFAULT_BASE_URL } from '../helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 // `?worker=0` forces the main-thread PixiRenderer (the touch default), whose
 // BeamSpritePool transform the feedback reads directly. `interceptor` mounts
