@@ -114,7 +114,7 @@ describe('warpFxSizes (W2c: warp effects at capital size)', () => {
   it('fighter-sized ships keep the original effect numbers', () => {
     for (const stern of [10, 30, 80]) {
       const s = warpFxSizes(stern);
-      expect(s).toMatchObject({ trailLen: 1600, streakLen: 1400, arriveLen: 160, gapK: 0.4, coreK: 0.06, outK: 0.2, streakK: 0.8, flashK: 1 });
+      expect(s).toMatchObject({ trailLen: 1600, streakLen: 1400, arriveLen: 160, gapK: 0.4, coreK: 0.06, outK: 0.2, streakK: 0.8, flashK: 1, growS: 0.15 });
     }
   });
 

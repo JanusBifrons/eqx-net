@@ -488,17 +488,17 @@ export const capitalFleetWarp: Shot = {
   server: 'capitals',
   target: { room: 'showcase-fleet-warp', params: { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
   hud: 'none',
-  durationMs: 12_000,
+  durationMs: 7_000,
   async startWhen(ctx) {
     await artSettled(ctx);
   },
   // A HELD camera: 'frame all' followed the fleet to its arrival point,
   // where the formation looks the same, so the jump didn't read (first take).
-  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 0, y: -Math.round(getShipKind('battleship-b').radius * 0.8), zoom: 0.15 } }],
+  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 0, y: 0, zoom: 0.15 } }],
   async run(ctx) {
-    await ctx.sleep(1200);
+    await ctx.sleep(1000);
     await sendRoom(ctx, 'test_fleet_warp', { type: 'test_fleet_warp', x: -45_000, y: 0 });
-    await ctx.sleep(10_500);
+    await ctx.sleep(5_800);
   },
 };
 
@@ -515,12 +515,16 @@ export const capitalFleetArrive: Shot = {
   // The pilot waits 45 km west, south of where the flagship will land.
   target: { room: 'showcase-fleet-warp', params: { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1, spawnX: -45_000, spawnY: -Math.round(getShipKind('battleship-b').radius * 2.2) } },
   hud: 'none',
-  durationMs: 12_000,
-  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: -45_000, y: -Math.round(getShipKind('battleship-b').radius * 0.8), zoom: 0.15 } }],
-  async run(ctx) {
-    await ctx.sleep(1500);
+  durationMs: 7_000,
+  // Cue the jump before the take: it spools ~3 s and runs ~2 s unseen, so the
+  // recording starts ~1.5 s before the drop (review: 5 s of empty sky).
+  async startWhen(ctx) {
     await sendRoom(ctx, 'test_fleet_warp', { type: 'test_fleet_warp', x: -45_000, y: 0 });
-    await ctx.sleep(10_000);
+    await ctx.sleep(1_800);
+  },
+  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: -45_000, y: 0, zoom: 0.15 } }],
+  async run(ctx) {
+    await ctx.sleep(6_800);
   },
 };
 

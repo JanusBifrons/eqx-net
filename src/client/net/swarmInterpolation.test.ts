@@ -263,3 +263,17 @@ describe('extrapolation dead-reckon glides angle by angvel (Step 4, 2026-05-18)'
     expect(out.angle).toBeCloseTo(1.23, 6);
   });
 });
+
+describe('interpolateSwarmPose — W2c NPC warp', () => {
+  it('a warping or just-arrived drone shows its newest pose, not a slide through the display delay', () => {
+    const arrivals = [{ x: 0, y: 0, arrivalMs: 1000 }, { x: -40_000, y: 0, arrivalMs: 1050 }];
+    const out: InterpolatedPose = { x: 0, y: 0, angle: 0 };
+    // Normally the display delay renders somewhere between the two.
+    interpolateSwarmPose(entryWithArrivals(arrivals), 1050 + DISPLAY_DELAY_MS / 2, out);
+    expect(out.x).toBeGreaterThan(-40_000);
+    for (const warp of [2, 3] as const) {
+      interpolateSwarmPose(entryWithArrivals(arrivals, { warp }), 1050 + DISPLAY_DELAY_MS / 2, out);
+      expect(out.x).toBe(-40_000);
+    }
+  });
+});
