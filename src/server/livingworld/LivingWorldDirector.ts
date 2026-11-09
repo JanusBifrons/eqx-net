@@ -259,6 +259,8 @@ export interface LivingWorldHooks {
   sectorOwner?: (sectorKey: string) => SectorOwner | null;
   /** P4a — the name of a named elite roaming a sector (galaxy snapshot), or null. */
   sectorElite?: (sectorKey: string) => string | null;
+  /** W2a — a flagship fleet in a sector (galaxy snapshot), or null. */
+  sectorCapital?: (sectorKey: string) => { name: string; kind: string } | null;
   /** P4b — the world event running in a sector (galaxy snapshot), or null. */
   sectorEvent?: (sectorKey: string) => WorldEventView | null;
 }
@@ -779,6 +781,8 @@ export class LivingWorldDirector {
         recentCombat: room.recentCombat?.() ?? null,
         // P4a — a named elite in this sector (the map's elite marker).
         elite: this.hooks.sectorElite?.(key) ?? null,
+        // W2a — a capital fleet here (the map's capital marker).
+        capital: this.hooks.sectorCapital?.(key) ?? null,
         // P4b — a world event in this sector.
         event: this.hooks.sectorEvent?.(key) ?? null,
       });

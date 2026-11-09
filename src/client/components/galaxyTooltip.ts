@@ -23,6 +23,8 @@ export interface SectorTooltipData {
   structures: number;
   /** Living World P4a — a named elite roaming here (its name), or null. */
   elite: string | null;
+  /** W2a — a flagship fleet here: its name, or null. */
+  capital: string | null;
   /** Living World P4b — the title of the world event running here, or null. */
   event: string | null;
 }
@@ -76,6 +78,7 @@ export function buildSectorTooltip(
     neutrals: live?.neutrals ?? 0,
     structures: live?.structures ?? 0,
     elite: live?.elite ?? null,
+    capital: live?.capital?.name ?? null,
     event: live?.event?.title ?? null,
   };
 }
