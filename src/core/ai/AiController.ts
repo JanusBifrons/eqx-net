@@ -19,6 +19,8 @@ export interface AiFireRequest {
   shooterId: string;
   dirX: number;
   dirY: number;
+  /** The entity the shot is aimed at (the AI target). */
+  targetId: string;
   /** Server tick at which the AI declared the shot. */
   tick: number;
 }
@@ -239,6 +241,7 @@ export class AiController {
         shooterId: id,
         dirX: intent.fire.dirX,
         dirY: intent.fire.dirY,
+        targetId: intent.fire.targetId,
         tick,
       });
     }

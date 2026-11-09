@@ -7,8 +7,10 @@
  * slice (#16).
  *
  * Every connected pilot is tracked (lock-to-fire is universal), so the step
- * is O(pilots × hostile NPCs) every 6 ticks. Capitals' per-turret fire
- * (`fireMount`) and structure turrets are not gated yet (PR 1d).
+ * is O(pilots × hostile NPCs) every 6 ticks. A drone fires at a pilot only
+ * with a completed lock on that pilot (`fireBlocked`, keyed by the drone's AI
+ * target). Capitals' per-turret fire (`fireMount`) and structure turrets are
+ * not gated yet (PR 1d).
  *
  * Steady state allocates nothing (#14): an entry and its wire row are created
  * when an NPC starts locking someone, then mutated in place; the per-step
@@ -52,8 +54,6 @@ interface PilotState {
 interface Geo { refSize: number; tracking: number; reach: number; sensor: number }
 
 const LOCK_DT = 0.1;
-/** Line-of-fire half-angle (rad): a shot this close to a pilot's bearing is "at" them. */
-const FIRE_CONE = 0.45;
 
 export class NpcLockSubsystem {
   private readonly pilots = new Map<string, PilotState>();
@@ -102,24 +102,17 @@ export class NpcLockSubsystem {
   }
 
   /**
-   * Gate for an NPC shot from (sx, sy) along (dirX, dirY): refused when a
-   * fire-control pilot is in its line of fire within reach and the NPC hasn't
-   * locked them.
+   * Gate for an NPC drone shot at `targetId` (the drone's AI target): refused
+   * when the target is a tracked pilot and `npcId` holds no COMPLETED lock on
+   * them. Aim direction plays no part, so a lock on one pilot never licenses
+   * a shot at another. Non-pilot targets (NPCs, structures, displaced hulls)
+   * are not gated here.
    */
-  fireBlocked(npcId: string, kind: ShipKind, sx: number, sy: number, dirX: number, dirY: number): boolean {
-    if (this.pilots.size === 0) return false;
-    const reach = this.geo(kind).reach * LOCK_TUNING.reachSlack;
-    const cosCone = Math.cos(FIRE_CONE);
-    for (const [pilotId, st] of this.pilots) {
-      if (!this.deps.pilotPose(pilotId, this.pilot)) continue;
-      const dx = this.pilot.x - sx;
-      const dy = this.pilot.y - sy;
-      const d = Math.hypot(dx, dy);
-      if (d > reach || d < 1e-3) continue;
-      if ((dx * dirX + dy * dirY) / d < cosCone) continue;
-      if (st.entries.get(npcId)?.locked !== true) return true;
-    }
-    return false;
+  fireBlocked(npcId: string, targetId: string): boolean {
+    const st = this.pilots.get(targetId);
+    if (st) return st.entries.get(npcId)?.locked !== true;
+    // A pilot no step has seen yet: nobody holds a lock on them.
+    return this.isPilot(targetId);
   }
 
   /** Advance every NPC lock by one lock step. Call every 6 server ticks. */
