@@ -4120,8 +4120,7 @@ export class SectorRoom extends Room<SectorState> {
           if (rec.kind === 1) {
             if (!anyTarget && !this.npcHostileTo(rec.id, pid)) continue;
           } else if (rec.kind === 2 && anyTarget) {
-            const owner = this.structureRegistry.get(rec.id)?.owner;
-            if (owner === undefined || owner === pid) continue;
+            if (this.structureRegistry.get(rec.id)?.owner === pid) continue;
           } else continue;
           if (!this.swarmEntityPoseInto(rec.id, this._lockPose)) continue;
           const dx = this._lockPose.x - sx;
@@ -4141,9 +4140,11 @@ export class SectorRoom extends Room<SectorState> {
       const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
       if (!rec || (rec.kind !== 1 && rec.kind !== 2)) return false; // asteroids / scrap: no
       if (rec.kind === 2) {
+        // A structure outside the registry (testMode `structurePoses`
+        // fixtures) has no owner: lockable, never hostile (failsafe first).
         const owner = this.structureRegistry.get(rec.id)?.owner;
-        if (owner === undefined || owner === pid) return false; // never your own base
-        out.hostile = relationOf(pid, owner, this.relationCtx) === 'hostile';
+        if (owner === pid) return false; // never your own base
+        out.hostile = owner !== undefined && relationOf(pid, owner, this.relationCtx) === 'hostile';
       } else {
         out.hostile = this.npcHostileTo(rec.id, pid);
       }
