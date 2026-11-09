@@ -129,6 +129,10 @@ export interface WeaponMountTickerDeps {
    *  the slewed angle). Called only when that mount is on target, in reach
    *  and reloaded. */
   fireDroneMount?: (droneId: string, mountIdx: number) => void;
+  /** Fire control (PR 1d slice 2): true ⇒ the capital holds no COMPLETED
+   *  lock on this mount's target (a pilot), so the mount aims but holds fire
+   *  (reload not spent). Absent ⇒ never blocked (unit harnesses). */
+  fireBlocked?: (droneId: string, targetId: string) => boolean;
 }
 
 const DT_SEC = 1 / 60;
@@ -459,6 +463,9 @@ export class WeaponMountTicker {
       // point (an angle alone is a 250 u miss at 5,000 u).
       if (!onTarget(want, angles[i]!, dist)) continue;
       if (!mountLineClear(kind, mount, mount.baseAngle + angles[i]!)) continue;
+      // Lock-to-fire: each turret needs the capital's completed lock on ITS
+      // own target; a lock on another pilot doesn't license this one.
+      if (d.fireBlocked?.(droneId, t.id)) continue;
       reload[i] = tick;
       d.fireDroneMount!(droneId, i);
     }
