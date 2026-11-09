@@ -1661,6 +1661,10 @@ export class SectorRoom extends Room<SectorState> {
       /** testMode — where a WAVE squad lands in this room (the wave E2E;
        *  `LivingWorldRoom.testWaveArrival`). */
       testWaveArrival?: { x: number; y: number };
+      /** testMode — a base here is wave-ready only while its owner has an
+       *  active ship in the room, so a wave E2E draws its wave after it joins,
+       *  however long the server ran before (waves otherwise ignore presence). */
+      waveNeedsOwner?: boolean;
     };
     // Payload-DoS bound (S5): onCreate options are client-suppliable on room
     // create, so reject oversized seed arrays before they seed the sector.
@@ -2613,6 +2617,7 @@ export class SectorRoom extends Room<SectorState> {
       this.persistSector = roomOpts.persistSector !== false;
       const twa = roomOpts.testWaveArrival;
       if (twa && Number.isFinite(twa.x) && Number.isFinite(twa.y)) this.testWaveArrivalPose = { x: twa.x, y: twa.y };
+      this.waveNeedsOwner = roomOpts.waveNeedsOwner === true;
     }
     // Phase-1 issue 5 — scrap-stress seed: a dense corridor of free-floating
     // scrap ahead of spawn for the fly-through reconciliation E2E.
@@ -6783,7 +6788,8 @@ export class SectorRoom extends Room<SectorState> {
     }
     const out: FactionBaseReadiness[] = [];
     for (const [factionId, agg] of byOwner) {
-      const ready = isBaseReady(agg);
+      const ownerPresent = this.getActiveShip(factionId)?.isActive === true;
+      const ready = isBaseReady(agg) && (!this.waveNeedsOwner || ownerPresent);
       // WS-11 (R2.24 Part B) — one-shot "your base is operational" toast the
       // first time a base qualifies for waves; re-arm when it drops below ready
       // (a razed-then-rebuilt base re-toasts). Evaluated at the director's
@@ -6812,7 +6818,7 @@ export class SectorRoom extends Room<SectorState> {
         sectorKey,
         ready,
         // The owner is "present" when they have an active hull in this sector.
-        ownerPresent: this.getActiveShip(factionId)?.isActive === true,
+        ownerPresent,
         minerCount: agg.minerCount,
         hostileToDrones: state?.hostileToDrones ?? false,
         underWave: state?.underWave ?? false,
@@ -9318,6 +9324,8 @@ export class SectorRoom extends Room<SectorState> {
   private persistSector = true;
   /** testMode: where a wave squad lands here (null ⇒ its carry pose). */
   private testWaveArrivalPose: { x: number; y: number } | null = null;
+  /** testMode `waveNeedsOwner` (see the room option). */
+  private waveNeedsOwner = false;
   /** LivingWorldRoom hook — see `testWaveArrival` in LivingWorldRoom.ts. */
   testWaveArrival(): { x: number; y: number } | null { return this.testWaveArrivalPose; }
 

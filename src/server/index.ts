@@ -869,8 +869,8 @@ gameServer
 // (Capital + Miner + Solar + Turret, owner `wave-tester`). Single eager
 // instance (NO filterBy) so the LivingWorldDirector can hold a reference (it's
 // added to the director's room map at boot when `EQX_E2E_WAVE=1`). The base is
-// ready at boot but the owner-presence gate holds the wave until the test
-// client joins AS `wave-tester` — killing the pre-join race. Asteroids + a
+// ready at boot; `waveNeedsOwner` holds the wave until the test client joins
+// AS the owner, so the spec draws its wave whenever it runs. Asteroids + a
 // parked drone give the seeded turret + miner something to do. droneCount 0 so
 // the only drones that appear are the incoming wave squad.
 gameServer.define('galaxy-wave-test', SectorRoom, {
@@ -901,6 +901,9 @@ gameServer.define('galaxy-wave-test', SectorRoom, {
   // the Turret's 600 u (it sits at 150, -400), so the attack lands in the
   // spec's window instead of after a flight from anywhere in the sector.
   testWaveArrival: { x: -900, y: 700 },
+  // Waves ignore owner presence in play, so without this a wave fired at
+  // server boot and landed before a spec that ran later joined (2026-11-09).
+  waveNeedsOwner: true,
 });
 // 2026-05-28 — POSITIVE control for hull-collision-test. Two crossguards
 // at exactly the same world position (0, 0), hull-exposed. The polygons

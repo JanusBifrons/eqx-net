@@ -256,6 +256,7 @@ The clustering means most fixes are mechanically similar — once `sector-alpha.
 | `initialCargo` / `initialWallet` | Start with goods aboard / a wallet balance (hauling and trading takes). Cargo needs a roster-backed room. | URL `?initialCargo=salvage:40,alloy:12`, `?initialWallet=N`. testMode-gated JoinOptions. |
 | `dronePoses[].elite` | A posed drone becomes a named elite with a bounty, on cue (room opt `{ name, healthMul?, bounty? }`). | Room `showcase-bounty`. Lock: `tests/integration/sectorRoom/showcaseRooms.test.ts`. |
 | `testWaveArrival: { x, y }` (room opt) | Where a WAVE squad lands in this room instead of its carry pose (members on a 60 u ring, at rest), so the attack lands inside the spec's window. `galaxy-wave-test` uses (-900, 700): bolt reach of a Solar, outside the Turret. | testMode room option (`SectorRoom.testWaveArrival()` → `LivingWorldDirector.arrivalPoseFor`). With `persistSector: false` on that room and a fresh director under `EQX_E2E_WAVE=1`, every run starts from the seeded ready base. |
+| `waveNeedsOwner: true` (room opt) | A base in this room is wave-ready only while its owner has an active ship there. Waves ignore presence in play, so without it the wave fired at server boot and a spec that ran after others joined too late for the banner. | testMode room option, read in `SectorRoom.factionBaseReadiness`; `galaxy-wave-test` sets it. | Test rooms only. |
 
 ### Adding a new primitive
 
