@@ -9,8 +9,11 @@
  * Every connected pilot is tracked (lock-to-fire is universal), so the step
  * is O(pilots × hostile NPCs) every 6 ticks. A drone fires at a pilot only
  * with a completed lock on that pilot (`fireBlocked`, keyed by the drone's AI
- * target). Capitals' per-turret fire (`fireMount`) and structure turrets are
- * not gated yet (PR 1d).
+ * target). A capital's turrets each fire only with the capital's completed
+ * lock on THEIR own target (`WeaponMountTicker.tickCapitalMounts`), so a
+ * capital holds one lock per pilot it engages, built with whichever of its
+ * gun sizes locks that pilot fastest (AA on a fighter, the main battery on a
+ * capital). Structure turrets are not gated yet (PR 1d).
  *
  * Steady state allocates nothing (#14): an entry and its wire row are created
  * when an NPC starts locking someone, then mutated in place; the per-step
@@ -20,6 +23,8 @@ import { LOCK_TUNING, sensorFor, signatureFor } from '../../shared-types/combat/
 import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { groupGeometry } from './LockSubsystem.js';
+import { hasTurretFireControl } from '../../core/combat/mountReach.js';
+import type { WeaponMount } from '../../shared-types/shipKinds/types.js';
 
 /** Wire row: who is locking the pilot. `t` = `s:<entityId>`, `s` 1 acquiring / 2 locked, `p` 0..100. */
 export interface WireLockedBy { t: string; s: 1 | 2; p: number }
@@ -35,6 +40,9 @@ export interface NpcLockDeps {
   forEachHostileNpc(pilotId: string, visit: (npcId: string, entityId: number) => void): void;
   /** NPC pose + kind; null when gone. */
   npcPose(npcId: string, out: NpcPose): ShipKind | null;
+  /** testMode `instantLock` on the pilot: every NPC lock on them completes
+   *  the step it starts, whatever the size/tracking terms, while in reach. */
+  instantLock?(pilotId: string): boolean;
 }
 
 interface Entry {
@@ -57,7 +65,9 @@ const LOCK_DT = 0.1;
 
 export class NpcLockSubsystem {
   private readonly pilots = new Map<string, PilotState>();
-  private readonly geoByKind = new Map<string, Geo>();
+  /** Lock profiles per kind: one for a drone (its whole loadout); one per
+   *  mount size for a capital (each turret engages on its own). */
+  private readonly geoByKind = new Map<string, Geo[]>();
   private readonly pilot: NpcPose = { x: 0, y: 0, vx: 0, vy: 0 };
   private readonly npc: NpcPose = { x: 0, y: 0, vx: 0, vy: 0 };
   private readonly inputs: LockInputs = {
@@ -67,17 +77,30 @@ export class NpcLockSubsystem {
   // Per-step scratch for the visitor (no closure allocation per pilot).
   private curState: PilotState | null = null;
   private curSignature = 1;
+  private curInstant = false;
 
   constructor(private readonly deps: NpcLockDeps) {}
 
-  private geo(kind: ShipKind): Geo {
-    let g = this.geoByKind.get(kind.id);
-    if (!g) {
-      const base = groupGeometry(kind.mounts ?? []);
-      g = { ...base, sensor: sensorFor(kind) };
-      this.geoByKind.set(kind.id, g);
+  private geos(kind: ShipKind): Geo[] {
+    let gs = this.geoByKind.get(kind.id);
+    if (!gs) {
+      const mounts = kind.mounts ?? [];
+      const sensor = sensorFor(kind);
+      gs = [];
+      if (hasTurretFireControl(kind)) {
+        const bySize = new Map<string, WeaponMount[]>();
+        for (const m of mounts) {
+          const k = m.size ?? 'none';
+          const list = bySize.get(k);
+          if (list) list.push(m); else bySize.set(k, [m]);
+        }
+        for (const ms of bySize.values()) gs.push({ ...groupGeometry(ms), sensor });
+      } else {
+        gs.push({ ...groupGeometry(mounts), sensor });
+      }
+      this.geoByKind.set(kind.id, gs);
     }
-    return g;
+    return gs;
   }
 
   forget(pilotId: string): void {
@@ -131,6 +154,7 @@ export class NpcLockSubsystem {
       }
       this.curState = st;
       this.curSignature = signatureFor(kind);
+      this.curInstant = this.deps.instantLock?.(pilotId) === true;
       this.deps.forEachHostileNpc(pilotId, this.visit);
       // Sweep: NPCs that stopped locking this step keep their progress for the
       // grace window, then drop.
@@ -157,20 +181,27 @@ export class NpcLockSubsystem {
     const st = this.curState!;
     const kind = this.deps.npcPose(npcId, this.npc);
     if (!kind) return;
-    const g = this.geo(kind);
-    if (g.reach <= 0) return;
+    const gs = this.geos(kind);
     const inp = this.inputs;
-    inp.refSize = g.refSize;
-    inp.tracking = g.tracking;
-    inp.reach = g.reach;
-    inp.sensor = g.sensor;
     inp.pilotSpeed = 1;
     inp.signature = this.curSignature;
     inp.dx = this.pilot.x - this.npc.x;
     inp.dy = this.pilot.y - this.npc.y;
     inp.dvx = this.pilot.vx - this.npc.vx;
     inp.dvy = this.pilot.vy - this.npc.vy;
-    const secs = lockSeconds(inp, LOCK_TUNING);
+    // The fastest of the NPC's lock profiles (a drone has one).
+    let secs = Infinity;
+    for (let i = 0; i < gs.length; i++) {
+      const g = gs[i]!;
+      if (g.reach <= 0) continue;
+      inp.refSize = g.refSize;
+      inp.tracking = g.tracking;
+      inp.reach = g.reach;
+      inp.sensor = g.sensor;
+      const s = lockSeconds(inp, LOCK_TUNING);
+      if (s < secs) secs = s;
+    }
+    if (this.curInstant && this.inReach(gs)) secs = 0;
     let e = st.entries.get(npcId);
     if (!Number.isFinite(secs)) {
       // Out of reach or can't track: not locking this step (grace applies).
@@ -183,12 +214,19 @@ export class NpcLockSubsystem {
     e.gen = this.gen;
     e.lostFor = 0;
     if (!e.locked) {
-      e.progress = Math.min(1, e.progress + LOCK_DT / Math.max(0.05, secs));
+      e.progress = secs === 0 ? 1 : Math.min(1, e.progress + LOCK_DT / Math.max(0.05, secs));
       if (e.progress >= 1) e.locked = true;
     }
     e.wire.s = e.locked ? 2 : 1;
     e.wire.p = Math.round(e.progress * 100);
   };
+
+  /** The pilot (this.inputs dx/dy) is within reach of any lock profile. */
+  private inReach(gs: Geo[]): boolean {
+    const d = Math.hypot(this.inputs.dx, this.inputs.dy);
+    for (let i = 0; i < gs.length; i++) if (gs[i]!.reach > 0 && d <= gs[i]!.reach * LOCK_TUNING.reachSlack) return true;
+    return false;
+  }
 
   private rebuildWire(st: PilotState): void {
     st.wire.length = 0;
