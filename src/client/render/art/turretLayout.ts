@@ -17,7 +17,8 @@ import { getStructureKind } from '../../../shared-types/structureKinds.js';
 import { getWeapon, type WeaponId } from '../../../core/combat/WeaponCatalogue.js';
 import { familyFor, type TurretFamily } from './fx/turretFx.js';
 import {
-  isChinMount, navalTurret, shipBarrelLength, shipBarrelWidth, shipCapRadius, shipMountMuzzle, structureTurretMuzzle, structureTurretRadius,
+  isChinMount, navalTurret, shipBarrelLength, shipBarrelWidth, shipCapRadius, shipMountMuzzle, structureMountMuzzle,
+  structureNavalTurret, structureTurretMuzzle, structureTurretRadius,
 } from '../../../core/combat/muzzle.js';
 import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
 
@@ -81,6 +82,15 @@ export function structureTurrets(kindId: string): TurretPlace[] {
   const R = structureTurretRadius(kindId);
   return (sk.mounts ?? []).filter((m) => m.id !== 'drill').map((m) => {
     const family = familyOf(m);
+    // Coastal defences: a calibre-sized mount is a ship's naval gun, drawn
+    // (and fired, shared muzzle #15) exactly as on a capital.
+    const nt = structureNavalTurret(m);
+    if (nt !== null) {
+      return {
+        mount: m, family, px: m.localX, py: -m.localY, len: nt.len, wid: nt.wid, cap: nt.houseW / 2, ring: nt.barbette, chin: false,
+        muzzle: structureMountMuzzle(kindId, m), naval: { barrels: nt.barrels, houseW: nt.houseW, houseL: nt.houseL },
+      };
+    }
     const muzzle = structureTurretMuzzle(kindId, m.weaponId);
     if (family === 'missile') {
       const cap = R * 0.4;

@@ -107,6 +107,81 @@ const DECK = 0x1d2433;
 const GLASS = 0x7cf7ff;
 const WARM = 0xffd27a;
 const RED = 0xff4d5e;
+// Coastal defences — poured concrete and earth for the gun batteries.
+const CONCRETE = 0x8b877c;
+const CONCRETE_DARK = 0x57544c;
+const EARTH = 0x3a3a2c;
+
+/**
+ * A gun battery's emplacement (plan coastal-defences). In local space the gun
+ * rests facing -y (the top edge, game +y), so the embrasure / open arc is at
+ * the top. The gunhouse and barrels are the mount visuals drawn on top
+ * (naval turret art, the same as a ship's guns).
+ *  - 'pad':  an all-round barbette — a concrete apron with the ring cut in.
+ *  - 'tub':  a sandbagged AA tub with ready-use lockers.
+ *  - 'casemate': a thick concrete bunker; the roof steps back, and a dark
+ *    embrasure is cut across the front (its width ≈ the arc of fire).
+ *  - 'rail': a siege gun's carriage on two lengths of track.
+ */
+function gunBattery(
+  out: RectOp[], style: 'pad' | 'tub' | 'casemate' | 'rail', x0: number, y0: number, W: number, H: number,
+  ringR: number, embrasure: number, accent: number, seed: number,
+): void {
+  if (style === 'rail') {
+    // Ballast bed, sleepers and two rails along the length.
+    box(out, x0 + W * 0.15, y0, W * 0.7, H, EARTH, 0.9);
+    for (let y = y0 + 10; y < y0 + H - 10; y += 34) box(out, x0 + W * 0.1, y, W * 0.8, 12, 0x4a3b2a);
+    for (const rx of [-W * 0.22, W * 0.22]) box(out, rx - 4, y0, 8, H, STEEL_LIGHT);
+    // The carriage: bogies at each end, the cradle in the middle.
+    slab(out, x0 + W * 0.12, y0 + H * 0.06, W * 0.76, H * 0.18, STEEL_DARK, 6);
+    slab(out, x0 + W * 0.12, y0 + H * 0.76, W * 0.76, H * 0.18, STEEL_DARK, 6);
+    slab(out, x0 + W * 0.05, y0 + H * 0.28, W * 0.9, H * 0.44, mixColor(STEEL, accent, 0.4), 10);
+    box(out, -ringR, -ringR, ringR * 2, ringR * 2, mixColor(accent, STEEL_DARK, 0.5));
+    return;
+  }
+  if (style === 'tub') {
+    // Sandbag ring: a chamfered square of bags around the mount.
+    const bag = 18;
+    for (let x = x0; x < x0 + W - bag / 2; x += bag) {
+      box(out, x + 1, y0, bag - 2, bag, (hash(seed, x) & 1) ? 0x8a7a55 : 0x9a8a62);
+      box(out, x + 1, y0 + H - bag, bag - 2, bag, (hash(seed, x + 7) & 1) ? 0x8a7a55 : 0x9a8a62);
+    }
+    for (let y = y0 + bag; y < y0 + H - bag - bag / 2; y += bag) {
+      box(out, x0, y + 1, bag, bag - 2, (hash(seed, y) & 1) ? 0x8a7a55 : 0x9a8a62);
+      box(out, x0 + W - bag, y + 1, bag, bag - 2, (hash(seed, y + 7) & 1) ? 0x8a7a55 : 0x9a8a62);
+    }
+    box(out, x0 + bag, y0 + bag, W - 2 * bag, H - 2 * bag, CONCRETE_DARK);
+    // Ready-use ammunition lockers in the corners.
+    for (const [lx, ly] of [[x0 + bag + 4, y0 + bag + 4], [x0 + W - bag - 22, y0 + H - bag - 16]] as const) box(out, lx, ly, 18, 12, 0x4d5a3a);
+    box(out, -ringR, -ringR, ringR * 2, ringR * 2, mixColor(accent, CONCRETE_DARK, 0.5));
+    return;
+  }
+  // Concrete apron, lightly weathered.
+  slab(out, x0, y0, W, H, CONCRETE_DARK, 10);
+  box(out, x0 + 10, y0 + 10, W - 20, H - 20, CONCRETE);
+  for (let k = 0; k < 6; k++) {
+    // Weathering streaks, kept inside the apron (render == collider).
+    const h = hash(seed, k);
+    const sw = 30 + (h % 40);
+    box(out, x0 + 14 + (h % Math.max(1, W - 28 - sw)), y0 + 14 + ((h >>> 8) % Math.max(1, H - 34)), sw, 6, CONCRETE_DARK, 0.35);
+  }
+  if (style === 'casemate') {
+    // Stepped roof (thick overhead cover), set back from the front.
+    slab(out, x0 + W * 0.08, y0 + H * 0.3, W * 0.84, H * 0.62, mixColor(CONCRETE, 0xffffff, 0.08), 8);
+    slab(out, x0 + W * 0.18, y0 + H * 0.45, W * 0.64, H * 0.4, mixColor(CONCRETE, 0xffffff, 0.14), 6);
+    // Embrasure: the dark firing slot across the front face.
+    box(out, -embrasure / 2, y0, embrasure, H * 0.3, 0x15171a);
+    box(out, -embrasure / 2, y0 + H * 0.3 - 4, embrasure, 4, CONCRETE_DARK);
+    // Camouflage netting patches on the roof.
+    for (let k = 0; k < 4; k++) {
+      const h = hash(seed + 3, k);
+      box(out, x0 + W * 0.15 + (h % Math.max(1, Math.floor(W * 0.6))), y0 + H * 0.5 + ((h >>> 9) % Math.max(1, Math.floor(H * 0.35))), 40, 24, 0x4a5236, 0.45);
+    }
+  }
+  // The barbette ring the gun turns on.
+  box(out, -ringR - 6, -ringR - 6, ringR * 2 + 12, ringR * 2 + 12, CONCRETE_DARK);
+  box(out, -ringR, -ringR, ringR * 2, ringR * 2, mixColor(accent, STEEL_DARK, 0.55));
+}
 
 function hash(a: number, b: number): number {
   let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ b;
@@ -623,6 +698,38 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       lit(x0 + W - 20, y0 + H - 20, 8, RED);
       break;
     }
+    // Coastal defences — gun batteries (the guns themselves are mount art).
+    case 'aa_quad_40mm':
+      gunBattery(rects, 'tub', x0, y0, W, H, W * 0.24, 0, accent, seed);
+      lit(x0 + 10, y0 + 10, 4, RED);
+      break;
+    case 'dp_mount_5in':
+      gunBattery(rects, 'pad', x0, y0, W, H, W * 0.3, 0, accent, seed);
+      lit(x0 + 14, y0 + 14, 5, RED);
+      break;
+    case 'coastal_casemate_8in':
+      gunBattery(rects, 'casemate', x0, y0, W, H, H * 0.22, W * 0.6, accent, seed);
+      lit(x0 + 16, y0 + H - 16, 6, RED);
+      break;
+    case 'coastal_turret_11in':
+      gunBattery(rects, 'pad', x0, y0, W, H, W * 0.3, 0, accent, seed);
+      lit(x0 + 18, y0 + 18, 6, RED);
+      lit(x0 + W - 18, y0 + H - 18, 6, RED);
+      break;
+    case 'coastal_barbette_16in':
+      gunBattery(rects, 'casemate', x0, y0, W, H, H * 0.24, W * 0.72, accent, seed);
+      lit(x0 + 20, y0 + H - 20, 7, RED);
+      lit(x0 + W - 20, y0 + H - 20, 7, RED);
+      break;
+    case 'coastal_lindemann':
+      gunBattery(rects, 'casemate', x0, y0, W, H, H * 0.2, W * 0.6, accent, seed);
+      lit(x0 + 24, y0 + H - 24, 8, RED);
+      lit(x0 + W - 24, y0 + H - 24, 8, RED);
+      break;
+    case 'siege_gun_80cm':
+      gunBattery(rects, 'rail', x0, y0, W, H, W * 0.22, 0, accent, seed);
+      lit(0, y0 + H * 0.15, 8, RED);
+      break;
     default:
       slab(rects, x0, y0, W, H, mixColor(STEEL, accent, 0.25), 6);
   }

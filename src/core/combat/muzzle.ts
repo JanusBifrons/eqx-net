@@ -27,6 +27,7 @@ import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { getWeapon, type WeaponId } from './WeaponCatalogue.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { CAPITAL_TURRETS } from '../../shared-types/shipScale/capitalTurrets.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 
 /** A fixed gun at the hull centre (no arc): drawn as a chin gun. */
 export function isChinMount(m: WeaponMount): boolean {
@@ -137,4 +138,37 @@ export function structureTurretRadius(kindId: string): number {
 export function structureTurretMuzzle(kindId: string, weaponId: string): number {
   const R = structureTurretRadius(kindId);
   return isRackWeapon(weaponId) ? R * 0.32 : R * 0.68;
+}
+
+/**
+ * Coastal defences (plan coastal-defences): a structure mount with a calibre
+ * `size` is a naval gun, drawn and fired exactly like the same calibre on a
+ * ship. Its geometry is `CAPITAL_TURRETS[size]` × the beam of the ship class
+ * that carries that calibre (5" and quad AA: the battleship's secondaries;
+ * 8": a heavy cruiser; 11-12": a battlecruiser; 16": a battleship) ×
+ * `turretScale`. So a 16" barbette's gunhouse is a battleship turret's size.
+ */
+const STRUCTURE_GUN_REFERENCE: Readonly<Record<NonNullable<WeaponMount['size']>, string>> = {
+  AA: 'battleship', S: 'battleship', M: 'heavy-cruiser', L: 'battlecruiser', XL: 'battleship',
+};
+const structureNavalCache = new WeakMap<WeaponMount, NavalTurret>();
+export function structureNavalTurret(m: WeaponMount | undefined): NavalTurret | null {
+  if (m === undefined || m.size === undefined) return null;
+  let t = structureNavalCache.get(m);
+  if (t === undefined) {
+    const g = CAPITAL_TURRETS[m.size];
+    const s = hullBeam(getShipKind(STRUCTURE_GUN_REFERENCE[m.size])) * (m.turretScale ?? 1);
+    t = { houseW: g.houseW * s, houseL: g.houseL * s, barbette: g.barbette * s, len: g.len * s, wid: g.wid * s, barrels: m.barrels ?? 1 };
+    structureNavalCache.set(m, t);
+  }
+  return t;
+}
+
+/** Where a structure mount's shot leaves, from the mount pivot: a naval
+ *  gun's barrel tip (gunhouse front + barrel), else the footprint-sized
+ *  turret's muzzle. One source for the server fire path and the art (#15). */
+export function structureMountMuzzle(kindId: string, m: WeaponMount): number {
+  const nt = structureNavalTurret(m);
+  if (nt !== null) return nt.houseL / 2 + nt.len;
+  return structureTurretMuzzle(kindId, m.weaponId);
 }

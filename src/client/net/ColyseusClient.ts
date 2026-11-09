@@ -5,6 +5,8 @@ import {
   STRUCTURE_TARGET_NONE,
   decodePlayerTurretTarget,
   STRUCTURE_TARGET_STRIDE,
+  MOUNT_ANGLE_QUANTUM,
+  forEachStructureMountAngles,
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
 import { Client, Room } from 'colyseus.js';
@@ -37,6 +39,7 @@ import {
 } from './applyCollisionResolved';
 import { pushCollisionShieldContacts } from './collisionShieldContacts';
 import { MineDetonatedSchema } from '@shared-types/mines';
+import { ShellBlastSchema } from '@shared-types/shellBlast';
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, WallHitEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
 import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
@@ -2044,6 +2047,19 @@ export class ColyseusGameClient {
       });
     });
 
+    // Coastal defences — a siege shell burst: the same explosion visual, at
+    // the size of its blast (the damage arrives as damage events).
+    room.onMessage('shell_blast', (raw: unknown) => {
+      const result = ShellBlastSchema.safeParse(raw);
+      if (!result.success) return;
+      (this.mirror.pendingMissileExplosions ??= []).push({
+        x: result.data.x,
+        y: result.data.y,
+        splashRadius: result.data.radius,
+        missileId: -1,
+      });
+    });
+
     // Stage 2 of the network-feel roadmap — server-broadcast collision
     // events. Apply post-collision velocities to predWorld immediately;
     // eliminates the ~50 ms snapshot wait for the same correction.
@@ -3123,7 +3139,7 @@ export class ColyseusGameClient {
 
     // Structures plan, Phase 3 — mirror the slim grid slice (web + power +
     // construction). Pose lives in `mirror.swarm` (kind=2); joined by entityId.
-    this.syncStructures(snap.structureTargets);
+    this.syncStructures(snap.structureTargets, snap.structureMountAngles);
 
     // Server-authoritative boost + thrust sets — exhaust-trail renderer.
     applyBoostingThrustingSets(snap, this.mirror);
@@ -3665,7 +3681,19 @@ export class ColyseusGameClient {
     row.turretTargetId = undefined;
     row.turretTargetPlayerId = undefined;
     row.miningTargetId = undefined;
+    // Coastal defences — refilled from this snapshot's angles (empty = at rest).
+    if (row.mountAngles) row.mountAngles.length = 0;
     this._structureGen.set(id, this._structureGenN);
+  };
+
+  /** Coastal defences — copy one structure's server turret angles onto its
+   *  row (the array is reused, #14). Bound once. */
+  private readonly _applyStructureMountAngles = (entityId: number, flat: readonly number[], start: number, count: number): void => {
+    const row = this._structureMap?.get(entityId);
+    if (!row) return;
+    const a = row.mountAngles ?? (row.mountAngles = []);
+    a.length = count;
+    for (let k = 0; k < count; k++) a[k] = flat[start + k]! / MOUNT_ANGLE_QUANTUM;
   };
 
   /**
@@ -3675,7 +3703,10 @@ export class ColyseusGameClient {
    * place, then overlay the snapshot's fast cosmetics (turret / mining targets).
    * Allocation-free once every row exists.
    */
-  private syncStructures(targets: SnapshotMessage['structureTargets']): void {
+  private syncStructures(
+    targets: SnapshotMessage['structureTargets'],
+    mountAngles?: SnapshotMessage['structureMountAngles'],
+  ): void {
     type StrMap = { forEach(cb: (v: string, k: string) => void): void };
     const state = this.room?.state as
       | {
@@ -3719,6 +3750,7 @@ export class ColyseusGameClient {
           if (targets[i + 2] !== STRUCTURE_TARGET_NONE) row.miningTargetId = targets[i + 2];
         }
       }
+      if (mountAngles) forEachStructureMountAngles(mountAngles, this._applyStructureMountAngles);
     }
     this.syncPredWalls();
     this.syncPadFields();

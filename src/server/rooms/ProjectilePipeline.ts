@@ -18,6 +18,11 @@
  * Earliest-entry wins. On hit: emit damage, drop the projectile.
  * On miss + alive: commit integration. On lifetime expiry: drop.
  *
+ * A shell whose weapon has a `splash` (the 80 cm siege gun, plan
+ * coastal-defences) also bursts where it stops — on a hit or when it falls at
+ * the end of its flight: everything else within the blast takes
+ * `shellBlastDamage`, and `onBlast` shows it.
+ *
  * Extracted from SectorRoom (commit 21 of v3 refactor plan; Combat
  * Architecture section of src/server/CLAUDE.md).
  */
@@ -30,7 +35,8 @@ import {
   SLOT_ANGLE_OFF,
   slotBase,
 } from '../../shared-types/sabLayout.js';
-import type { WeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { getWeapon, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { shellBlastDamage } from '../../shared-types/shellBlast.js';
 import { allegianceOfKind } from '../../shared-types/shipKinds.js';
 import type { ShipState } from './schema/SectorState.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
@@ -110,6 +116,9 @@ export interface ProjectilePipelineDeps {
    *  undefined for a player / structure owner. Called once per SPAWN (fire is
    *  low-frequency), never per tick. Absent ⇒ no friendly-fire filter. */
   ownerAllegianceOf?: (ownerId: string) => string | undefined;
+  /** A shell with a blast burst at (x, y): show it (plan coastal-defences).
+   *  Absent ⇒ no visual (unit harnesses); the damage still lands. */
+  onBlast?: (x: number, y: number, radius: number) => void;
 }
 
 const DT_SEC = 1 / 60;
@@ -229,6 +238,7 @@ export class ProjectilePipeline {
 
       if (bestTargetId !== null) {
         d.applyDamage(bestTargetId, proj.ownerId, proj.damage, bestHitX, bestHitY);
+        this.blast(proj, bestHitX, bestHitY, bestTargetId);
         this.liveProjectiles.delete(projId);
         continue;
       }
@@ -245,8 +255,50 @@ export class ProjectilePipeline {
       proj.x += stepX;
       proj.y += stepY;
       if (serverTick - proj.birthTick >= proj.maxTicks) {
+        // A shell with a blast lands and bursts where it falls.
+        this.blast(proj, proj.x, proj.y, null);
         this.liveProjectiles.delete(projId);
       }
     }
+  }
+
+  /**
+   * Burst a blast shell at (x, y): every ship, drone, structure and lingering
+   * hull within the blast — except the firer and the target the shell struck
+   * directly (it already took the full hit) — takes `shellBlastDamage` by its
+   * distance from the centre, measured to its edge. No-op for a plain shell.
+   * Rare (one siege shell every two minutes), so a plain scan is fine.
+   */
+  private blast(proj: ProjectileRecord, x: number, y: number, directId: string | null): void {
+    const w = getWeapon(proj.weaponId);
+    const splash = w.mode === 'projectile' ? w.splash : undefined;
+    if (splash === undefined) return;
+    const d = this.deps;
+    const R = splash.radius;
+    const hurt = (id: string, cx: number, cy: number, r: number): void => {
+      if (id === proj.ownerId || id === directId) return;
+      const dist = Math.max(0, Math.hypot(cx - x, cy - y) - r);
+      const dmg = shellBlastDamage(proj.damage, dist, R, splash.falloffMin);
+      if (dmg > 0) d.applyDamage(id, proj.ownerId, dmg, x, y);
+    };
+    for (const [pid] of d.playerToSlot) {
+      const ship = d.getActiveShip(pid);
+      if (!ship || !ship.alive) continue;
+      const pose = d.shipPoseCache.get(pid);
+      if (pose) hurt(pid, pose.x, pose.y, GLOBAL_SHIP_TUNING.hitRadius);
+    }
+    for (const rec of d.swarmRegistry.all()) {
+      if (rec.kind !== 1 && rec.kind !== 2) continue; // ships and structures; rocks shrug it off
+      if (proj.ownerAllegiance !== undefined && rec.kind === 1
+        && allegianceOfKind(rec.shipKind) === proj.ownerAllegiance) continue;
+      const b = slotBase(rec.slot);
+      const r = rec.halfW !== undefined && rec.halfH !== undefined ? Math.min(rec.halfW, rec.halfH) : rec.radius;
+      hurt(rec.id, d.sabF32[b + SLOT_X_OFF]!, d.sabF32[b + SLOT_Y_OFF]!, r);
+    }
+    for (const [shipInstanceId, slot] of d.lingeringSlots) {
+      const b = slotBase(slot);
+      hurt(shipInstanceId, d.sabF32[b + SLOT_X_OFF]!, d.sabF32[b + SLOT_Y_OFF]!, GLOBAL_SHIP_TUNING.hitRadius);
+    }
+    d.onBlast?.(x, y, R);
   }
 }

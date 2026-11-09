@@ -5,7 +5,8 @@ import SecurityIcon from '@mui/icons-material/Security';
 import FactoryIcon from '@mui/icons-material/Factory';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import TripOriginIcon from '@mui/icons-material/TripOrigin';
-import { type StructureKindId } from '@shared-types/structureKinds';
+import CrisisAlertIcon from '@mui/icons-material/CrisisAlert';
+import { COASTAL_DEFENCE_KINDS, type StructureKindId } from '@shared-types/structureKinds';
 
 /**
  * Build speed-dial category tier (WS-13 / R2.6).
@@ -25,7 +26,7 @@ import { type StructureKindId } from '@shared-types/structureKinds';
  * (no orphan, no duplicate) — locked by `buildCategories.test.ts`, which fails
  * closed the moment a 10th kind is appended to the catalogue without a category.
  */
-export type BuildCategoryId = 'core' | 'economy' | 'industry' | 'defence' | 'habitation' | 'transport';
+export type BuildCategoryId = 'core' | 'economy' | 'industry' | 'defence' | 'batteries' | 'habitation' | 'transport';
 
 export interface BuildCategory {
   readonly id: BuildCategoryId;
@@ -67,6 +68,8 @@ export const BUILD_CATEGORIES: readonly BuildCategory[] = [
     icon: <SecurityIcon />,
     kinds: ['turret', 'laser_bolt_turret', 'missile_turret', 'autocannon_turret', 'mine_layer', 'shield_pylon', 'shield_gate', 'shield_airlock'],
   },
+  // Coastal defences: the naval gun catalogue, light AA up to the siege gun.
+  { id: 'batteries', label: 'Gun Batteries', icon: <CrisisAlertIcon />, kinds: COASTAL_DEFENCE_KINDS },
   // D3 — habitation: station residents use provisions and consumer goods and pay taxes.
   { id: 'habitation', label: 'Habitation', icon: <ApartmentIcon />, kinds: ['habitat_module', 'tower_module'] },
   // v4 T1 — teleporters: paired pads that swap ships and cargo.
@@ -79,6 +82,7 @@ export const CATEGORY_ICON: Record<BuildCategoryId, ReactNode> = {
   economy: <BoltIcon />,
   industry: <FactoryIcon />,
   defence: <SecurityIcon />,
+  batteries: <CrisisAlertIcon />,
   habitation: <ApartmentIcon />,
   transport: <TripOriginIcon />,
 };

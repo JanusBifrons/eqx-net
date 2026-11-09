@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { SHIP_KINDS_LIST } from '../../src/shared-types/shipKinds.js';
 import { STRUCTURE_KINDS_LIST } from '../../src/shared-types/structureKinds.js';
-import { isChinMount, shipMountMuzzle, structureTurretMuzzle } from '../../src/core/combat/muzzle.js';
+import { isChinMount, shipMountMuzzle, structureMountMuzzle } from '../../src/core/combat/muzzle.js';
 import { shipTuning } from '../../src/shared-types/shipScale/tuning.js';
 import { muzzleReach, shipTurrets, structureTurrets } from '../../src/client/render/art/turretLayout.js';
 
@@ -47,7 +47,8 @@ describe('muzzle parity (turrets T3, #15)', () => {
   it('every structure turret\'s drawn tip is its fire point', () => {
     for (const sk of STRUCTURE_KINDS_LIST) {
       for (const t of structureTurrets(sk.id)) {
-        expect(muzzleReach(t), `${sk.id}/${t.mount.id}`).toBeCloseTo(structureTurretMuzzle(sk.id, t.mount.weaponId), 6);
+        // Coastal defences: naval guns' tip is gunhouse front + barrel (structureMountMuzzle).
+        expect(muzzleReach(t), `${sk.id}/${t.mount.id}`).toBeCloseTo(structureMountMuzzle(sk.id, t.mount), 6);
       }
     }
   });
@@ -57,7 +58,9 @@ describe('muzzle parity (turrets T3, #15)', () => {
     expect(src('src/server/rooms/PlayerFireResolver.ts')).toMatch(/shipShotMuzzle\(shipKind, mount\)/);
     expect(src('src/server/rooms/AiFireResolver.ts')).toMatch(/shipShotMuzzle\(droneKind, mount, true\)/);
     const grid = src('src/server/structures/StructureGridSubsystem.ts');
-    expect(grid.match(/structureTurretMuzzle\(rec\.kind, def\.id\)/g)?.length).toBe(3); // beam, bolt, missile
+    // Coastal defences: one shared muzzle for every structure mount's fire (beam, shells, missile).
+    expect(grid).toMatch(/const muzzle = structureMountMuzzle\(rec\.kind, mount\)/);
+    expect(grid).not.toMatch(/structureTurretMuzzle\(/);
     expect(grid).not.toMatch(/radius \+ 8/);
     const client = src('src/client/net/ColyseusClient.ts');
     expect(client).toMatch(/shipShotMuzzle\(kind, mount\)/);

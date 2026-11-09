@@ -22,7 +22,7 @@
  * `canConnect`, checked AS the base is built (a slot that fails is skipped), so
  * the result is buildable by construction; `growBase.test.ts` re-checks it.
  */
-import { getStructureKind, structureHalfExtents, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { COASTAL_DEFENCE_KINDS, getStructureKind, structureHalfExtents, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { RECIPES, packRecipeFor, recipesFor, type RecipeId } from '../../shared-types/recipes.js';
 import { BASE_PRICES } from '../../shared-types/economy.js';
 import { IDLE_DRAW_FRAC } from '../../shared-types/structurePower.js';
@@ -35,8 +35,11 @@ import type { SectorFeature } from '../galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
 
 /** Bump on ANY change to the generator's output (NPC bases regenerate from the
- *  seed, so a change moves every base). */
-export const BASE_GROWTH_VERSION = 9;
+ *  seed, so a change moves every base).
+ *  9→10 (plan coastal-defences): bases buy a tiered mix of gun batteries
+ *  (AA, 5" mounts, coastal guns, region-heart super-guns) from their own
+ *  random stream; casemates face outward. */
+export const BASE_GROWTH_VERSION = 10;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -112,6 +115,9 @@ export const EXPECTED_ACTIVE: Readonly<Partial<Record<StructureKindId, number>>>
   reclaimer: 1, smelter: 1, refinery: 1, silicon_works: 1, hydroponics: 1,
   fabricator: 1, munitions_works: 1, ore_processing_complex: 1, assembly_plant: 1,
   turret: 0.15, laser_bolt_turret: 0.15, missile_turret: 0.15, autocannon_turret: 0.15,
+  // Coastal defences: guns draw full power only while engaged, like turrets.
+  aa_quad_40mm: 0.15, dp_mount_5in: 0.15, coastal_casemate_8in: 0.15, coastal_turret_11in: 0.15,
+  coastal_barbette_16in: 0.15, coastal_lindemann: 0.15, siege_gun_80cm: 0.15,
   // A mine layer lays only until its field is full.
   mine_layer: 0.2,
   // D3 — residents live there around the clock.
@@ -129,11 +135,64 @@ const HUGE: ReadonlySet<StructureKindId> = new Set(['deep_core_rig', 'ore_proces
 /** Weapons that fire SHOTS. A fence blocks every shot, its owner's own
  *  included (user ruling 2026-11-02), so a fenced base puts these OUTSIDE its
  *  fence, on bastions (see growOnce). */
-const TURRET_KINDS: ReadonlySet<StructureKindId> = new Set(['turret', 'laser_bolt_turret', 'missile_turret', 'autocannon_turret']);
+export const TURRET_KINDS: ReadonlySet<StructureKindId> = new Set<StructureKindId>([
+  'turret', 'laser_bolt_turret', 'missile_turret', 'autocannon_turret', ...COASTAL_DEFENCE_KINDS,
+]);
+/** Guns that fire only through an arc (casemates, the siege gun): a base
+ *  turns them to face outward. */
+const ARC_LIMITED: ReadonlySet<StructureKindId> = new Set(
+  COASTAL_DEFENCE_KINDS.filter((k) => {
+    const m = getStructureKind(k).mounts![0]!;
+    return m.arcMax - m.arcMin < 2 * Math.PI - 1e-6;
+  }),
+);
+/** Rotation that turns an arc-limited gun (rest bearing +y at 0) to face
+ *  (dx, dy): +y → 0, −x → 90, −y → 180, +x → 270. */
+function facingRot(dx: number, dy: number): number {
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 270 : 90;
+  return dy >= 0 ? 0 : 180;
+}
+/** Random stream for the defence mix, apart from the role/level stream so
+ *  picking guns never shifts what else a base builds. */
+const DEFENCE_STREAM = 0x3c6ef372;
+
+/**
+ * Coastal defences — the guns a base buys for its tier (plan coastal-defences),
+ * in buy order: the cheap screen first, the big guns last (wealth runs out on
+ * the biggest). Light energy turrets keep the old role; the quad AA screens
+ * fighters, the 5" mounts take gunships, the coastal guns take capitals.
+ */
+function defenceMix(profile: BaseProfile, drnd: () => number): StructureKindId[] {
+  const energy = (): StructureKindId => (drnd() < 0.5 ? 'turret' : 'laser_bolt_turret');
+  const out: StructureKindId[] = [...(profile.superGuns ?? [])];
+  switch (profile.tier) {
+    case 'outpost':
+      out.push(energy());
+      if (drnd() < 0.5) out.push('aa_quad_40mm');
+      break;
+    case 'settlement':
+      out.push(energy(), 'aa_quad_40mm', 'dp_mount_5in');
+      if (drnd() < 0.5) out.push('dp_mount_5in');
+      break;
+    case 'stronghold':
+      out.push(energy(), energy(), 'aa_quad_40mm', 'dp_mount_5in', 'dp_mount_5in');
+      out.push(drnd() < 0.65 ? 'coastal_casemate_8in' : 'coastal_turret_11in');
+      break;
+    case 'citadel':
+      out.push(energy(), energy(), 'aa_quad_40mm', 'aa_quad_40mm', 'dp_mount_5in', 'dp_mount_5in');
+      out.push(drnd() < 0.5 ? 'coastal_casemate_8in' : 'coastal_turret_11in', 'coastal_barbette_16in');
+      if (drnd() < 0.5) out.push('coastal_lindemann');
+      break;
+  }
+  return out;
+}
 /** A bastion's inside relay sits this far inside the fence line, its hub this
  *  far outside (both clear of the pylons' boxes). */
 const BASTION_IN = 120;
 const BASTION_OUT = 220;
+/** How far a bastion's outward gun stands off past its hub, so guns above
+ *  and below the hub (half-width up to this) fit beside a big battery. */
+const OUTWARD_CLEAR = 130;
 
 /** Stage each processor kind's main output belongs to (for the coverage rule). */
 function stageOf(kind: StructureKindId, recipe: RecipeId | undefined): number | null {
@@ -200,8 +259,12 @@ function roleUnits(profile: BaseProfile, features: readonly SectorFeature[], rnd
       return [{ kind: 'cargo_bay' }];
     case 'military':
       // v4 M — turret-heavy: every kind of gun, repeated while wealth lasts
-      // (a fenced base puts them on bastions outside the fence).
-      return [{ kind: 'laser_bolt_turret' }, { kind: 'autocannon_turret' }, { kind: 'missile_turret' }, { kind: 'turret' }];
+      // (a fenced base puts them on bastions outside the fence). Coastal
+      // defences: the AA screen, 5" mounts and the medium coastal guns too.
+      return [
+        { kind: 'laser_bolt_turret' }, { kind: 'autocannon_turret' }, { kind: 'missile_turret' }, { kind: 'turret' },
+        { kind: 'aa_quad_40mm' }, { kind: 'dp_mount_5in' }, { kind: 'coastal_casemate_8in' }, { kind: 'coastal_turret_11in' },
+      ];
     case 'colony': {
       // A habitat station: housing first, spires once it's a settlement or bigger, and
       // hydroponics to grow part of its own provisions.
@@ -218,7 +281,7 @@ function roleUnits(profile: BaseProfile, features: readonly SectorFeature[], rnd
 }
 
 /** The build list: what the base buys, within its wealth and tier budget. */
-function planBuild(profile: BaseProfile, features: readonly SectorFeature[], rnd: () => number): { wants: Want[]; spent: number } {
+function planBuild(profile: BaseProfile, features: readonly SectorFeature[], rnd: () => number, drnd: () => number): { wants: Want[]; spent: number } {
   const wants: Want[] = [];
   let budget = profile.wealth;
   let spent = 0;
@@ -245,8 +308,8 @@ function planBuild(profile: BaseProfile, features: readonly SectorFeature[], rnd
   // (A military base trades nothing: its cargo bay holds munitions and fuel.)
   if (profile.role !== 'military') buy({ kind: 'freight_dock' });
   buy({ kind: 'cargo_bay' });
-  const turrets = { outpost: 1, settlement: 2, stronghold: 4, citadel: 6 }[profile.tier];
-  for (let t = 0; t < turrets; t++) buy({ kind: 'turret' });
+  // Coastal defences: a tiered mix of gun batteries (super-guns first).
+  for (const kind of defenceMix(profile, drnd)) buy({ kind });
   // Big bases mine their approaches.
   const mineLayers = { outpost: 0, settlement: 0, stronghold: 1, citadel: 2 }[profile.tier] + (profile.role === 'military' ? 1 : 0);
   for (let t = 0; t < mineLayers; t++) buy({ kind: 'mine_layer' });
@@ -358,7 +421,7 @@ function balanced(profile: BaseProfile, seed: number, features: readonly SectorF
 
 function growOnce(profile: BaseProfile, seed: number, features: readonly SectorFeature[], extraSolars: number): GrownBase {
   const rnd = seededRandom(seed ^ 0x5bd1e995);
-  const { wants, spent } = planBuild(profile, features, rnd);
+  const { wants, spent } = planBuild(profile, features, rnd, seededRandom(seed ^ DEFENCE_STREAM));
   // v4 H — one teleporter per transit link this base ends (outside the budget:
   // the network needs both ends).
   for (const id of profile.links ?? []) wants.push({ kind: 'teleporter', link: id });
@@ -458,6 +521,8 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
             const conn = B.placements[c]!;
             const fp = getStructureKind(w.kind).footprint;
             const p: GrownPlacement = { kind: w.kind, x: conn.x, y: conn.y + side * (CONN_HALF + GAP + fp.h / 2) };
+            // An arc-limited gun (unfenced base) faces away from the Capital.
+            if (ARC_LIMITED.has(w.kind)) p.rot = p.y + side >= 0 ? 0 : 180;
             if (w.recipe) p.recipe = w.recipe;
             if (w.link) p.link = w.link;
             const li = B.tryPlace(p);
@@ -577,10 +642,15 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
     // (between two pylons) to a hub just outside; turrets hang off the hub.
     // Rows nearest the middle first, off the gate row; each hub takes up to 3.
     const rowsByDistance = [...rowConn.keys()].filter((j) => j !== 0).sort((a, b) => Math.abs(a) - Math.abs(b) || a - b);
-    let postIdx = 0;
+    // Coastal defences: build the bastions first (enough hubs for the guns at
+    // up to three each), then seat the guns biggest first: the big batteries
+    // take the outward slots (clear water, no fence beside them), the rest go
+    // above and below. An arc-limited gun turns to face out from the base.
+    const hubs: Array<{ hub: number; sideX: number; y: number }> = [];
+    const hubsNeeded = Math.ceil(posts.length / 3);
     for (const j of rowsByDistance) {
       for (const sideX of [1, -1]) {
-        if (postIdx >= posts.length) break;
+        if (hubs.length >= hubsNeeded) break;
         const end = (rowConn.get(j) ?? []).find((c) => B.placements[c]!.x === sideX * cols * PITCH_X);
         if (end === undefined) continue;
         const y = B.placements[end]!.y;
@@ -590,24 +660,38 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
         const hub = B.tryPlace({ kind: 'connector', x: sideX * (fx + BASTION_OUT), y });
         if (hub < 0) continue;
         if (!B.tryLink(relay, hub)) { B.undoLast(); continue; }
-        // Up to three turrets: outward, then above and below the hub.
-        for (const slot of [0, 1, -1]) {
-          if (postIdx >= posts.length) break;
-          const w = posts[postIdx]!;
-          const fp = getStructureKind(w.kind).footprint;
-          const hx = B.placements[hub]!.x;
-          const p: GrownPlacement = slot === 0
-            ? { kind: w.kind, x: hx + sideX * (CONN_HALF + GAP + fp.w / 2), y }
-            : { kind: w.kind, x: hx, y: y + slot * (CONN_HALF + GAP + fp.h / 2) };
-          const li = B.tryPlace(p);
-          if (li < 0) continue;
-          if (!B.tryLink(hub, li)) { B.undoLast(); continue; }
-          postIdx++;
-        }
+        hubs.push({ hub, sideX, y });
       }
-      if (postIdx >= posts.length) break;
+      if (hubs.length >= hubsNeeded) break;
     }
-    // Turrets that found no bastion are left out rather than placed inside
+    const byArea = [...posts].sort((a, b) => {
+      const fa = getStructureKind(a.kind).footprint, fb = getStructureKind(b.kind).footprint;
+      return fb.w * fb.h - fa.w * fa.h;
+    });
+    const seated = new Array<boolean>(byArea.length).fill(false);
+    const seat = (h: { hub: number; sideX: number; y: number }, slot: number): void => {
+      for (let k = 0; k < byArea.length; k++) {
+        if (seated[k]) continue;
+        const w = byArea[k]!;
+        const rot = ARC_LIMITED.has(w.kind) ? facingRot(h.sideX, 0) : 0;
+        const { hw, hh } = structureHalfExtents(w.kind, rot);
+        const hx = B.placements[h.hub]!.x;
+        // The outward gun stands off past the hub so guns above and below it
+        // (up to OUTWARD_CLEAR half-width) still fit beside it.
+        const p: GrownPlacement = slot === 0
+          ? { kind: w.kind, x: hx + h.sideX * (CONN_HALF + GAP + OUTWARD_CLEAR + hw), y: h.y }
+          : { kind: w.kind, x: hx, y: h.y + slot * (CONN_HALF + GAP + hh) };
+        if (rot !== 0) p.rot = rot;
+        const li = B.tryPlace(p);
+        if (li < 0) continue; // try a smaller gun in this slot
+        if (!B.tryLink(h.hub, li)) { B.undoLast(); continue; }
+        seated[k] = true;
+        return;
+      }
+    };
+    for (const h of hubs) seat(h, 0);
+    for (const slot of [1, -1]) for (const h of hubs) seat(h, slot);
+    // Guns that found no bastion are left out rather than placed inside
     // the fence, where their own wall would stop every shot.
     // Taps: every row's end connectors link the nearest side emitter.
     for (const [, row] of rowConn) {

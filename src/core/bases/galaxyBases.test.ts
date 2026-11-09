@@ -7,8 +7,26 @@ import { regionHeart, sectorController } from '../galaxy/control.js';
 import { isNpcFactionId, npcFactionDef } from '../../shared-types/factions.js';
 import { NPC_STRUCTURES_PER_SECTOR_MAX } from '../../shared-types/structureBudgets.js';
 import { baseProfileFor, contextForSector, hashString } from './baseProfile.js';
-import { galaxyBasePlan } from './galaxyBases.js';
-import { TIER_MAX_STRUCTURES } from './growBase.js';
+import { HEART_SUPER_GUNS, galaxyBasePlan, heartSuperGunFunds } from './galaxyBases.js';
+import { TIER_MAX_STRUCTURES, growBase } from './growBase.js';
+import { chooseBaseSite, grownExtent, type SiteBox } from './baseSite.js';
+import { getSector } from '../galaxy/galaxy.js';
+import { HOME_POCKET_HALF_EXTENT, sectorSpace } from '../../shared-types/sectorBounds.js';
+
+describe('galaxy bases fit their sectors (coastal defences grew the bastions)', () => {
+  it("every sector's bases find a site in turn, a base gap apart (the room's site rule)", () => {
+    for (const s of GALAXY_SECTORS) {
+      const hard: SiteBox[] = [];
+      for (const b of galaxyBasePlan(s.key)) {
+        const e = grownExtent(growBase(b.profile, b.seed, getSector(s.key)!.features).placements);
+        const site = chooseBaseSite(e, hard, [], { halfExtent: HOME_POCKET_HALF_EXTENT, margin: 250, step: sectorSpace(250), seed: b.seed });
+        expect(site, `${s.key}/${b.baseId} (${b.profile.tier} ${b.profile.role}) fits`).not.toBeNull();
+        const gap = sectorSpace(900); // SectorRoom NPC_BASE_GAP
+        hard.push({ x: site!.x + (e.x0 + e.x1) / 2, y: site!.y + (e.y0 + e.y1) / 2, hw: (e.x1 - e.x0) / 2 + gap, hh: (e.y1 - e.y0) / 2 + gap });
+      }
+    }
+  });
+});
 
 describe('galaxyBasePlan', () => {
   it("base 0 is exactly the sector's original base (no existing base moves)", () => {
@@ -17,10 +35,31 @@ describe('galaxyBasePlan', () => {
       const [b0] = galaxyBasePlan(s.key);
       expect(b0!.baseId).toBe('b0');
       expect(b0!.seed).toBe(seed);
-      // Only the owner (F2) and its transit links (v4 H) are added on top of
-      // the original profile.
-      const { links: _links, ...rest } = b0!.profile;
+      // Only the owner (F2), its transit links (v4 H) and — for a big base
+      // holding a region heart alone — the region's super-guns with their own
+      // funding (coastal defences) are added on top of the original profile.
+      const { links: _links, superGuns, ...rest } = b0!.profile;
+      if (superGuns !== undefined) {
+        expect(superGuns).toEqual(HEART_SUPER_GUNS);
+        expect(regionHeart(s.region)).toBe(s.key);
+        rest.wealth -= heartSuperGunFunds();
+      }
       expect({ ...rest, ownerFaction: 'traders' }).toEqual(baseProfileFor(contextForSector(s.key), seed));
+    }
+  });
+
+  it('every region heart mounts one 80 cm siege gun and a 40.6 cm battery (coastal defences)', () => {
+    const regions = [...new Set(GALAXY_SECTORS.map((s) => s.region))];
+    for (const region of regions) {
+      const plan = galaxyBasePlan(regionHeart(region));
+      const armed = plan.filter((b) => b.profile.superGuns !== undefined);
+      expect(armed, region).toHaveLength(1);
+      expect(armed[0]!.profile.superGuns).toEqual(HEART_SUPER_GUNS);
+    }
+    // Nowhere else.
+    for (const s of GALAXY_SECTORS) {
+      if (regionHeart(s.region) === s.key) continue;
+      expect(galaxyBasePlan(s.key).some((b) => b.profile.superGuns !== undefined), s.key).toBe(false);
     }
   });
 

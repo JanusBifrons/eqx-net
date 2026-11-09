@@ -1,7 +1,9 @@
 import { combatDistanceScale } from '../../shared-types/shipScale/tuning.js';
 export type WeaponMode = 'hitscan' | 'projectile' | 'missile';
 export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'charge-laser' | 'autocannon'
-  | 'naval_s' | 'naval_m' | 'naval_l' | 'naval_xl';
+  | 'naval_s' | 'naval_m' | 'naval_l' | 'naval_xl'
+  // Coastal defences (plan coastal-defences): land guns bigger than any ship's.
+  | 'naval_xxl' | 'naval_siege';
 
 interface WeaponDefBase {
   id: WeaponId;
@@ -41,6 +43,11 @@ export interface ProjectileWeaponDef extends WeaponDefBase {
   speed: number;
   radius: number;
   maxTicks: number;
+  /** Optional blast where the shell lands (plan coastal-defences: the 80 cm
+   *  siege gun). On a hit, and when it falls at the end of its flight, every
+   *  ship and structure within `radius` takes `damage × (falloffMin / d)²`
+   *  (capped at full damage inside `falloffMin`). Absent ⇒ a plain shell. */
+  splash?: { radius: number; falloffMin: number };
 }
 
 /** Heat-seeking missile weapon. Locked at launch via `pickTarget`, chases the
@@ -296,6 +303,29 @@ const NAVAL_XL_DEF: ProjectileWeaponDef = {
 };
 
 /**
+ * Coastal super-guns (plan coastal-defences), from
+ * docs/research/ww2-coastal-defences.md. Land guns were not bigger in calibre
+ * than the biggest battleship guns, but freed from a ship's stability limits
+ * they elevated higher and reached further; the truly biggest guns were
+ * railway siege guns.
+ *
+ *  - naval_xxl, Batterie Lindemann's 40.6 cm SK C/34: the light 600 kg coast
+ *    shell reached 56 km (1.44× the Iowa's 38.7 km); damage from the 1,030 kg
+ *    standard shell at the same 2 rounds a minute as the 16"/50.
+ *  - naval_siege, Schwerer Gustav's 80 cm: a 4.8 t HE shell to 47 km, one shot
+ *    in 30–45 minutes (capped here at 120 s). Its worth is the blast.
+ */
+const NAVAL_XXL_DEF: ProjectileWeaponDef = {
+  id: 'naval_xxl', displayName: '40.6 cm coast gun', mode: 'projectile',
+  damage: 1200, cooldownTicks: 1800, speed: 2600, radius: 7, maxTicks: 140, energyCost: 1,
+};
+const NAVAL_SIEGE_DEF: ProjectileWeaponDef = {
+  id: 'naval_siege', displayName: '80 cm siege gun', mode: 'projectile',
+  damage: 4200, cooldownTicks: 7200, speed: 1900, radius: 12, maxTicks: 160, energyCost: 1,
+  splash: { radius: 160, falloffMin: 30 },
+};
+
+/**
  * Weapon distances under the ship scale's combat profile (shipScale/config):
  * reach (hitscan range, projectile / missile flight time) and splash. Profile
  * A, or scale 1, returns the definition unchanged. Pure.
@@ -303,7 +333,11 @@ const NAVAL_XL_DEF: ProjectileWeaponDef = {
 export function scaleWeaponDef<T extends WeaponDef>(def: T, reach: number, splash: number): T {
   if (reach === 1 && splash === 1) return def;
   if (def.mode === 'hitscan') return { ...def, range: def.range * reach };
-  if (def.mode === 'projectile') return { ...def, maxTicks: Math.round(def.maxTicks * reach) };
+  if (def.mode === 'projectile') {
+    const out: ProjectileWeaponDef = { ...def, maxTicks: Math.round(def.maxTicks * reach) };
+    if (def.splash) out.splash = { radius: def.splash.radius * splash, falloffMin: def.splash.falloffMin * splash };
+    return out as T;
+  }
   return {
     ...def,
     lifetimeTicks: Math.round(def.lifetimeTicks * reach),
@@ -326,9 +360,11 @@ export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, Weapo
   ['naval_m', profiled(NAVAL_M_DEF)],
   ['naval_l', profiled(NAVAL_L_DEF)],
   ['naval_xl', profiled(NAVAL_XL_DEF)],
+  ['naval_xxl', profiled(NAVAL_XXL_DEF)],
+  ['naval_siege', profiled(NAVAL_SIEGE_DEF)],
 ]);
 
-export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl'] as const;
+export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege'] as const;
 
 export const DEFAULT_WEAPON: WeaponId = 'hitscan';
 

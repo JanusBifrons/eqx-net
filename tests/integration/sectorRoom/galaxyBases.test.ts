@@ -18,7 +18,7 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { resolveSectorConfig } from '../../../src/server/galaxy/GalaxyRegistry.js';
 import { MILITARY_BASE_ID, galaxyBasePlan } from '../../../src/core/bases/galaxyBases.js';
 import { gateAccessFromIndex } from '../../../src/shared-types/gateAccess.js';
-import { growBase } from '../../../src/core/bases/growBase.js';
+import { TURRET_KINDS, growBase } from '../../../src/core/bases/growBase.js';
 import { getSector } from '../../../src/core/galaxy/galaxy.js';
 import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../../src/shared-types/sectorBounds.js';
 
@@ -112,7 +112,8 @@ describe('SectorRoom integration — galaxy NPC bases (T1)', () => {
     const mine = [...internal.structureRegistry.all()].filter((r) => r.owner === `npc:${mil.profile.ownerFaction}:${MILITARY_BASE_ID}`);
     const expected = growBase(mil.profile, mil.seed, getSector(key)!.features).placements.length;
     expect(mine.length, 'every structure of the garrison is placed').toBe(expected);
-    expect(mine.filter((r) => /turret/.test(r.kind)).length).toBeGreaterThanOrEqual(4);
+    // Every gun kind counts (coastal defences: AA, 5" mounts, coastal guns).
+    expect(mine.filter((r) => TURRET_KINDS.has(r.kind)).length).toBeGreaterThanOrEqual(4);
     const gates = mine.filter((r) => r.kind === 'shield_gate');
     expect(gates.length).toBeGreaterThan(0);
     for (const g of gates) expect(gateAccessFromIndex(g.gateAccess)).toBe('allies');

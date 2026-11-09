@@ -18,6 +18,8 @@ import { TIER_LEVEL_CAP, TIER_WEALTH, type BaseProfile } from '../../core/bases/
 import { growBase } from '../../core/bases/growBase.js';
 import { grownExtent } from '../../core/bases/baseSite.js';
 import { linkId } from '../../core/bases/transitNetwork.js';
+import { HEART_SUPER_GUNS, heartSuperGunFunds } from '../../core/bases/galaxyBases.js';
+import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 
 import { getShipKind } from '../../shared-types/shipKinds.js';
 
@@ -294,14 +296,137 @@ export const SHOWCASE_TELEPORT_OPTS = {
   maxClients: 4,
 } as const;
 
-/** v4 M — a region power's garrison (a fenced gun-base) with its patrol. */
+// ── Coastal defences (plan coastal-defences) ───────────────────────────────
+
+/** The power plant + magazine every coastal showcase battery runs on: the
+ *  Capital with a Reactor on each flank (fuel and munitions stocked). */
+const COASTAL_PLANT: ReadonlyArray<{ kind: StructureKindId; x: number; y: number }> = [
+  { kind: 'capital', x: 0, y: -1400 },
+  { kind: 'connector', x: 700, y: -1400 },
+  { kind: 'connector', x: -700, y: -1400 },
+  { kind: 'reactor', x: 700, y: -2000 },
+  { kind: 'reactor', x: -700, y: -2000 },
+];
+const COASTAL_STOCK = { munitions: 400, fuel: 400 } as const;
+/** Relays along y = SPINE_Y every 600 u (inside the 600 u edge-to-edge link
+ *  range), reached from the Capital's north side. */
+const SPINE_Y = -650;
+function spine(x0: number, x1: number): Array<{ kind: StructureKindId; x: number; y: number }> {
+  const out: Array<{ kind: StructureKindId; x: number; y: number }> = [];
+  for (let x = x0; x <= x1; x += 600) out.push({ kind: 'connector', x, y: SPINE_Y });
+  return out;
+}
+/** A gun facing north (+y), its south edge 150 u above the spine relay at x. */
+function gunAt(kind: StructureKindId, x: number): { kind: StructureKindId; x: number; y: number } {
+  return { kind, x, y: SPINE_Y + 32 + 150 + getStructureKind(kind).footprint.h / 2 };
+}
+
+/** The whole catalogue in one line, smallest to largest, west to east (each
+ *  over a spine relay). */
+export const COASTAL_LINE: ReadonlyArray<{ kind: StructureKindId; x: number }> = [
+  { kind: 'aa_quad_40mm', x: -3300 },
+  { kind: 'dp_mount_5in', x: -2700 },
+  { kind: 'coastal_casemate_8in', x: -2100 },
+  { kind: 'coastal_turret_11in', x: -900 },
+  { kind: 'coastal_barbette_16in', x: 300 },
+  { kind: 'coastal_lindemann', x: 1500 },
+  { kind: 'siege_gun_80cm', x: 2700 },
+];
+
+/**
+ * The gun catalogue on the range: every battery in a line facing north,
+ * owned by the pilot, with parked targets at each gun's reach — fighters for
+ * the AA, gunships for the 5", a destroyer for the coastal guns and a
+ * battleship far out for the super-guns. Peaceful targets: the guns do the
+ * shooting (a player's guns engage every combat drone).
+ */
+export const SHOWCASE_COASTAL_OPTS = {
+  testMode: true,
+  asteroidConfig: [],
+  peacefulDrones: true,
+  structureGridPulseMs: 100,
+  prebuiltStructuresOwner: SHOWCASE_PILOT_ID,
+  prebuiltStructures: [...COASTAL_PLANT, ...spine(-3300, 3300), ...COASTAL_LINE.map((g) => gunAt(g.kind, g.x))],
+  prebuiltStorageGoods: COASTAL_STOCK,
+  dronePoses: [
+    // Within the quad AA's ~1,070 u reach of (-3300, -393).
+    { kind: 'fighter', x: -3550, y: 420, angle: Math.PI / 2 },
+    { kind: 'fighter', x: -3300, y: 520, angle: -Math.PI / 2 },
+    { kind: 'fighter', x: -3050, y: 450, angle: Math.PI / 2 },
+    { kind: 'gunship', x: -2900, y: 1700, angle: Math.PI / 2 },
+    { kind: 'gunship', x: -2300, y: 1850, angle: -Math.PI / 2 },
+    { kind: 'destroyer', x: -1500, y: 3100, angle: Math.PI / 2 },
+    { kind: 'battleship', x: 1900, y: 5100, angle: -Math.PI / 2 },
+  ],
+  defaultSpawnX: 0,
+  defaultSpawnY: -2700,
+  maxClients: 4,
+};
+
+/**
+ * The AA screen: quad Bofors and 5" mounts round the pilot, and a fighter pack
+ * with gunships that attacks (join with `startHostile=1`). The AA takes the
+ * fighters, the 5" the gunships (calibre priority).
+ */
+export const SHOWCASE_COASTAL_AA_OPTS = {
+  testMode: true,
+  asteroidConfig: [],
+  structureGridPulseMs: 100,
+  prebuiltStructuresOwner: SHOWCASE_PILOT_ID,
+  prebuiltStructures: [
+    ...COASTAL_PLANT, ...spine(-1500, 1500),
+    gunAt('aa_quad_40mm', -1500), gunAt('dp_mount_5in', -900), gunAt('aa_quad_40mm', -300),
+    gunAt('aa_quad_40mm', 300), gunAt('dp_mount_5in', 900), gunAt('aa_quad_40mm', 1500),
+  ],
+  prebuiltStorageGoods: COASTAL_STOCK,
+  dronePoses: [
+    { kind: 'fighter', x: -800, y: 1700, angle: Math.PI },
+    { kind: 'fighter', x: -400, y: 1900, angle: Math.PI },
+    { kind: 'fighter', x: 0, y: 1750, angle: Math.PI },
+    { kind: 'fighter', x: 400, y: 1900, angle: Math.PI },
+    { kind: 'fighter', x: 800, y: 1700, angle: Math.PI },
+    { kind: 'interceptor', x: -200, y: 2200, angle: Math.PI },
+    { kind: 'gunship', x: -1200, y: 2600, angle: Math.PI },
+    { kind: 'gunship', x: 1200, y: 2600, angle: Math.PI },
+  ],
+  defaultSpawnX: 0,
+  defaultSpawnY: 0,
+  maxClients: 4,
+};
+
+/**
+ * The coastal duel: an 8" casemate, an 11" triple turret and a 16" barbette
+ * against a battleship standing off to the north. The pilot (who can't die)
+ * sits behind the battery; `test_aggro` turns the battleship on, and its
+ * broadsides and the battery's salvos cross the gap.
+ */
+export const SHOWCASE_COASTAL_DUEL_OPTS = {
+  testMode: true,
+  asteroidConfig: [],
+  structureGridPulseMs: 100,
+  prebuiltStructuresOwner: SHOWCASE_PILOT_ID,
+  prebuiltStructures: [
+    ...COASTAL_PLANT, ...spine(-1800, 1800),
+    gunAt('coastal_casemate_8in', -1800), gunAt('coastal_turret_11in', -600),
+    gunAt('coastal_barbette_16in', 600), gunAt('aa_quad_40mm', 1800),
+  ],
+  prebuiltStorageGoods: COASTAL_STOCK,
+  dronePoses: [{ kind: 'battleship', x: 0, y: 5200, angle: Math.PI / 2 }],
+  defaultSpawnX: 0,
+  defaultSpawnY: -2700,
+  maxClients: 4,
+};
+
+/** v4 M — a region power's garrison (a fenced gun-base) with its patrol.
+ *  Coastal defences: a region-heart garrison, so it mounts the super-guns. */
 const GARRISON_PROFILE: BaseProfile = {
   tier: 'stronghold',
   role: 'military',
   ownerFaction: 'core',
-  wealth: TIER_WEALTH.stronghold[1] * 2,
+  wealth: TIER_WEALTH.stronghold[1] * 2 + heartSuperGunFunds(),
   levelCap: TIER_LEVEL_CAP.stronghold[1],
   fenced: true,
+  superGuns: HEART_SUPER_GUNS,
 };
 export const GARRISON_EXTENT = grownExtent(growBase(GARRISON_PROFILE, 7, []).placements);
 export const SHOWCASE_GARRISON_OPTS = {
@@ -374,5 +499,8 @@ export const SHOWCASE_ROOMS = {
   'showcase-capitals': SHOWCASE_CAPITALS_OPTS,
   'showcase-capitals-combat': SHOWCASE_CAPITALS_COMBAT_OPTS,
   'showcase-capital-duel': SHOWCASE_CAPITAL_DUEL_OPTS,
+  'showcase-coastal': SHOWCASE_COASTAL_OPTS,
+  'showcase-coastal-aa': SHOWCASE_COASTAL_AA_OPTS,
+  'showcase-coastal-duel': SHOWCASE_COASTAL_DUEL_OPTS,
   'showcase-fleet-warp': SHOWCASE_FLEET_WARP_OPTS,
 } as const;

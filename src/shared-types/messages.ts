@@ -17,6 +17,7 @@ export {
   EngageTransitSchema,
   CancelTransitSchema,
   TestAggroSchema,
+  TestReloadTurretsSchema,
   TestFleetWarpSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,

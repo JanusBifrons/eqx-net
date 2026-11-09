@@ -306,6 +306,14 @@ Update this section when a threshold is set.
 - **Patrols (M2).** `PatrolSubsystem` (`bases/`, room-owned, 1 Hz on the structure pulse): `patrol-fighter`s (Traders allegiance, so never hostile on sight) fly the base's corners outside its fence and are marked hostile (`markBotHostileToFaction`, quiet refresh once already hostile) to any pilot near the base whose `relationOf` to the owner is hostile. `drones[].fac` is emitted for every patrol in interest (it is in the slice's "anything to report" check). Ids start `patrol-` (in `isDirectorBotId`).
 - Story: [docs/features/military-bases.md](../../docs/features/military-bases.md).
 
+## Defence fire control (plan coastal-defences)
+
+- `StructureGridSubsystem.tickTurrets` (100 ms turret tick) runs `StructureMountTicker` for every built, powered defence structure: per-mount target by calibre priority, arc (turned by `rec.rot`), tracking, lead, traverse at real elapsed time, fire when on target. The old nearest-target/instant-aim path is gone; `findNearestDrone` is only the unit-harness fallback for `turretTargets`.
+- `turretTargets` = `SectorRoom.collectTurretTargets`: every hostile in reach (same rules as `findNearestTurretTarget`), with velocity and `targetClass`, from the turret target grids' `within` query, into pooled views (#14).
+- The server is the only writer of structure mount angles (#12): `rebuildStructureMountAngles` packs them each turret tick into `snapshot.structureMountAngles` (`encodeStructureMountAngles`); the client eases toward them.
+- A naval mount fires one shell per barrel (quad AA one barrel per shot) from `structureMountMuzzle`; one munition per salvo. A projectile weapon with `splash` (the siege gun) bursts on hit or at end of flight (`ProjectilePipeline.blast`, `shell_blast` message for the visual).
+- Story: [docs/features/coastal-defences.md](../../docs/features/coastal-defences.md).
+
 ## Faction standing events and policies (plan soft-leaping-truffle v4, F3)
 
 - **One rule for hits:** `applyDamage` → `noteStandingHit` lowers the victim faction's view of the attacker's faction once per pair per window (`STANDING_HIT_*`). Victims are structures (their owner) and player ships, with at least one player side. Steady state is nested Map lookups only (#14). Break-ins cost `STANDING_BREAK_IN_DELTA`. Don't add standing deltas elsewhere without a reason; trade keeps its own (`REP_*`).

@@ -17,7 +17,8 @@
 import { NPC_STRUCTURES_PER_SECTOR_MAX } from '../../shared-types/structureBudgets.js';
 import { TIER_LEVEL_CAP, TIER_WEALTH, baseProfileFor, contextForSector, hashString, seededRandom, type BaseProfile } from './baseProfile.js';
 import { TRANSIT_HUB_BASE_ID, buildTransitNetwork, routeHops, type TransitNetwork } from './transitNetwork.js';
-import { TIER_MAX_STRUCTURES } from './growBase.js';
+import { TIER_MAX_STRUCTURES, expectedDraw, generatedCost } from './growBase.js';
+import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { sectorController } from '../galaxy/control.js';
 import { GALAXY_SECTORS, getSector, isEntrySector } from '../galaxy/galaxy.js';
 import { regionHeart } from '../galaxy/control.js';
@@ -155,8 +156,12 @@ let MILITARY: Map<string, 'heart' | 'edge'> | null = null;
 function addMilitaryBase(sectorKey: string, out: GalaxyBasePlan[]): void {
   const site = militarySites().get(sectorKey);
   if (site === undefined) return;
-  // A stronghold or citadel holds its sector alone (it garrisons itself).
-  if (BIG.has(out[0]!.profile.tier)) return;
+  // A stronghold or citadel holds its sector alone (it garrisons itself), so
+  // at a heart it mounts the region's super-guns itself.
+  if (BIG.has(out[0]!.profile.tier)) {
+    if (site === 'heart') out[0] = { ...out[0]!, profile: withSuperGuns(out[0]!.profile) };
+    return;
+  }
   // A fence alone is ~20 structures, so a garrison needs room for its guns:
   // a stronghold beside a small base 0, else a settlement (it must still fit).
   const tier = site === 'heart' && out[0]!.profile.tier === 'outpost' ? ('stronghold' as const) : ('settlement' as const);
@@ -174,19 +179,34 @@ function addMilitaryBase(sectorKey: string, out: GalaxyBasePlan[]): void {
   const owner: FactionId = site === 'heart' ? (controller ?? region) : (militia ?? region);
   const seed = hashString(`${sectorKey}#${MILITARY_BASE_ID}`);
   const w1 = TIER_WEALTH[tier][1];
-  out.push({
-    baseId: MILITARY_BASE_ID,
-    seed,
-    profile: {
-      tier,
-      role: 'military',
-      ownerFaction: owner,
-      // A garrison is better funded than a trading base of its size: guns.
-      wealth: Math.round(w1 * 2),
-      levelCap: TIER_LEVEL_CAP[tier][1],
-      fenced: true,
-    },
-  });
+  const profile: BaseProfile = {
+    tier,
+    role: 'military',
+    ownerFaction: owner,
+    // A garrison is better funded than a trading base of its size: guns.
+    wealth: Math.round(w1 * 2),
+    levelCap: TIER_LEVEL_CAP[tier][1],
+    fenced: true,
+  };
+  out.push({ baseId: MILITARY_BASE_ID, seed, profile: site === 'heart' ? withSuperGuns(profile) : profile });
+}
+
+/**
+ * Coastal defences (plan coastal-defences) — each region heart mounts the
+ * region's super-guns: the 80 cm siege gun (one per region) and the 40.6 cm
+ * super battery. They come with their own funding (on top of the base's
+ * wealth, power included), so a garrison doesn't trade its whole gun line
+ * for them.
+ */
+export const HEART_SUPER_GUNS: readonly StructureKindId[] = ['siege_gun_80cm', 'coastal_lindemann'];
+export function heartSuperGunFunds(): number {
+  const solar = getStructureKind('solar');
+  let funds = 0;
+  for (const k of HEART_SUPER_GUNS) funds += generatedCost(k) + Math.ceil(expectedDraw(k) / solar.powerOutput) * solar.constructionCost;
+  return funds;
+}
+function withSuperGuns(p: BaseProfile): BaseProfile {
+  return { ...p, superGuns: HEART_SUPER_GUNS, wealth: p.wealth + heartSuperGunFunds() };
 }
 
 let NETWORK: TransitNetwork | null = null;

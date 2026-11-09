@@ -12,6 +12,15 @@ export const AMMO_SHOTS_PER_UNIT: Readonly<Partial<Record<StructureKindId, numbe
   autocannon_turret: 40,
   // Mines laid per munition (a mine is a whole charge, not a burst).
   mine_layer: 2,
+  // Coastal defences: salvos per munition fall with calibre (a salvo is one
+  // shell per barrel; the AA fires its barrels in turn, one burst a shot).
+  aa_quad_40mm: 40,
+  dp_mount_5in: 16,
+  coastal_casemate_8in: 8,
+  coastal_turret_11in: 4,
+  coastal_barbette_16in: 3,
+  coastal_lindemann: 2,
+  siege_gun_80cm: 1,
 });
 
 /** Does this structure kind spend munitions to fire? */

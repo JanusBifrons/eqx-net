@@ -209,6 +209,34 @@ export class NearestPointGrid {
     return best;
   }
 
+  /**
+   * Every point within `range` of (x, y), written into `out` as indices (in
+   * no particular order); returns how many. `out` is the caller's reused
+   * array: it only grows (invariant #14). Coastal defences: a turret weighs
+   * every target it can reach by its own priority, not just the nearest.
+   */
+  within(x: number, y: number, range: number, out: number[]): number {
+    if (this.n === 0 || !(range >= 0)) return 0;
+    const c0 = this.col(x - range), c1 = this.col(x + range);
+    const r0 = this.row(y - range), r1 = this.row(y + range);
+    const r2 = range * range;
+    let count = 0;
+    for (let r = r0; r <= r1; r++) {
+      const rowBase = r * this.cols;
+      for (let c = c0; c <= c1; c++) {
+        const cell = rowBase + c;
+        const end = this.start[cell + 1]!;
+        for (let k = this.start[cell]!; k < end; k++) {
+          const i = this.order[k]!;
+          const dx = this.xs[i]! - x;
+          const dy = this.ys[i]! - y;
+          if (dx * dx + dy * dy <= r2) out[count++] = i;
+        }
+      }
+    }
+    return count;
+  }
+
   x(i: number): number {
     return this.xs[i]!;
   }

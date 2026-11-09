@@ -109,6 +109,16 @@ export const TestAggroSchema = z
   })
   .strict();
 
+/** testMode only (showcase / tests): every structure gun in the room is
+ *  reloaded NOW (coastal defences: the 80 cm siege gun reloads for two
+ *  minutes, so a shot cues its salvo on camera). Aim and targeting are
+ *  untouched: a gun still fires only when on target. */
+export const TestReloadTurretsSchema = z
+  .object({
+    type: z.literal('test_reload_turrets'),
+  })
+  .strict();
+
 /** testMode only (showcase): warp every ship in the room to (x, y), keeping
  *  their formation (the NPC warp, W2a), so a shot can film a capital fleet
  *  spooling and jumping on cue. */
@@ -348,6 +358,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   EngageTransitSchema,
   CancelTransitSchema,
   TestAggroSchema,
+  TestReloadTurretsSchema,
   TestFleetWarpSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,

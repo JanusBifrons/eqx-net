@@ -12,7 +12,7 @@ import { placementRejection } from '../structures/placementRules.js';
 import { isShieldEmitterKind } from '../structures/gateGeometry.js';
 import { GALAXY_SECTORS } from '../galaxy/galaxy.js';
 import { BASE_ROLES, baseProfileFor, contextForSector, type BaseProfile, type BaseRole, type BaseTier } from './baseProfile.js';
-import { TIER_MAX_STRUCTURES, growBase, type GrownBase } from './growBase.js';
+import { TIER_MAX_STRUCTURES, TURRET_KINDS, growBase, type GrownBase } from './growBase.js';
 
 function node(id: string, kind: string, x: number, y: number, rot = 0): GridNode {
   const k = getStructureKind(kind);
@@ -110,7 +110,7 @@ describe('growBase — valid under the real building rules', () => {
   });
 
   it("a fenced base's turrets stand OUTSIDE its fence (a fence blocks its owner's own fire), still on the grid", () => {
-    const TURRETS = ['turret', 'laser_bolt_turret', 'missile_turret', 'autocannon_turret'];
+    const TURRETS = [...TURRET_KINDS] as string[];
     for (const tier of ['outpost', 'settlement', 'stronghold', 'citadel'] as const) {
       for (const seed of [1, 7, 42, 99]) {
         const b = growBase(profile(tier, 'refinery', true), seed, ['minerals']);
@@ -159,5 +159,44 @@ describe('growBase — valid under the real building rules', () => {
         expect(b.netPower, `${s.key} seed ${seed} power`).toBeGreaterThanOrEqual(0);
       }
     }
+  });
+});
+
+describe('growBase — coastal defences (plan coastal-defences)', () => {
+  const guns = (b: GrownBase) => b.placements.filter((p) => TURRET_KINDS.has(p.kind));
+  const has = (b: GrownBase, kind: string) => b.placements.some((p) => p.kind === kind);
+
+  it('defence grows with tier: outposts a light turret, settlements 5" mounts, strongholds a coastal gun, citadels a 16"', () => {
+    for (const seed of [1, 7, 42, 99]) {
+      const out = growBase(profile('outpost', 'refinery'), seed, ['minerals']);
+      expect(guns(out).length, `outpost/${seed}`).toBeGreaterThan(0);
+      expect(guns(out).every((g) => ['turret', 'laser_bolt_turret', 'aa_quad_40mm'].includes(g.kind)), `outpost/${seed} light guns only`).toBe(true);
+      expect(has(growBase(profile('settlement', 'refinery'), seed, ['minerals']), 'dp_mount_5in'), `settlement/${seed}`).toBe(true);
+      const sh = growBase(profile('stronghold', 'refinery'), seed, ['minerals']);
+      expect(has(sh, 'coastal_casemate_8in') || has(sh, 'coastal_turret_11in'), `stronghold/${seed}`).toBe(true);
+      expect(has(growBase(profile('citadel', 'refinery'), seed, ['minerals']), 'coastal_barbette_16in'), `citadel/${seed}`).toBe(true);
+    }
+  });
+
+  it('a gun that fires through an arc faces out from the base', () => {
+    for (const seed of [1, 7, 42, 99]) {
+      for (const fenced of [true, false]) {
+        const b = growBase(profile('citadel', 'refinery', fenced), seed, ['minerals']);
+        for (const g of guns(b)) {
+          const m = getStructureKind(g.kind).mounts![0]!;
+          if (m.arcMax - m.arcMin >= 2 * Math.PI - 1e-6) continue;
+          // Facing (rotation 0 = +y, game convention) points away from the Capital.
+          const a = ((g.rot ?? 0) * Math.PI) / 180;
+          const fx = -Math.sin(a), fy = Math.cos(a);
+          expect(fx * g.x + fy * g.y, `${g.kind} at ${g.x},${g.y} rot ${g.rot}`).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
+  it('the defence mix is deterministic per seed', () => {
+    const a = guns(growBase(profile('citadel', 'military'), 11, [])).map((g) => `${g.kind}@${g.x},${g.y},${g.rot ?? 0}`);
+    const b = guns(growBase(profile('citadel', 'military'), 11, [])).map((g) => `${g.kind}@${g.x},${g.y},${g.rot ?? 0}`);
+    expect(a).toEqual(b);
   });
 });

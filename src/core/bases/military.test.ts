@@ -6,11 +6,12 @@ import { describe, expect, it } from 'vitest';
 import { getSector, isEntrySector } from '../galaxy/galaxy.js';
 import { regionHeart, sectorController } from '../galaxy/control.js';
 import { MILITARY_BASE_ID, galaxyBasePlan, militarySites } from './galaxyBases.js';
-import { growBase } from './growBase.js';
+import { TURRET_KINDS, growBase } from './growBase.js';
 import { minorFactionsOf } from '../../shared-types/factions.js';
 import { structureHalfExtents } from '../../shared-types/structureKinds.js';
 
-const TURRETS = new Set(['turret', 'laser_bolt_turret', 'missile_turret', 'autocannon_turret']);
+// Coastal defences: every gun kind (energy turrets and the gun batteries).
+const TURRETS: ReadonlySet<string> = TURRET_KINDS;
 const FENCE = new Set(['shield_pylon', 'shield_gate']);
 const POWER = new Set(['connector', 'capital', 'solar', 'reactor', 'battery', 'battery_bank']);
 
