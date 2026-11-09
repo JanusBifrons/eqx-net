@@ -45,7 +45,7 @@ describe('SectorRoom integration — fire control respects mount arcs', () => {
   it('the rear group does not fire at a target dead ahead (outside its arc)', async () => {
     const pid = randomUUID();
     const room = (await harness.connectActive(pid, {
-      shipKind: 'gunship', spawnX: 0, spawnY: 0, fireControl: true, startHostile: true, initialHull: 100_000,
+      shipKind: 'gunship', spawnX: 0, spawnY: 0, startHostile: true, initialHull: 100_000,
     })) as ClientRoom<SectorState>;
     const acks = new Map<string, boolean>(); // clientShotId → rejected
     room.onMessage('hit_ack', (m: { clientShotId: string; rejected?: boolean }) => acks.set(m.clientShotId, m.rejected === true));

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { clampStickOrigin, isTap, leashOrigin, stickVector } from './floatingStickMath';
 import { formatCredits, scrambleChangedDigits } from './RollingCounter';
-import { resolveUiVariant } from './uiVariant';
 import { hudSizeFor } from './useHudScale';
 
 describe('floating stick maths', () => {
@@ -55,14 +54,7 @@ describe('credits counter', () => {
   });
 });
 
-describe('ui variant + size class', () => {
-  it('URL param wins, then stored, else legacy', () => {
-    expect(resolveUiVariant('?ui=b', 'a')).toBe('b');
-    expect(resolveUiVariant('', 'c')).toBe('c');
-    expect(resolveUiVariant('?ui=nope', null)).toBe('legacy');
-    expect(resolveUiVariant('', 'junk')).toBe('legacy');
-  });
-
+describe('size class', () => {
   it('sizes by the SHORT side + pointer, so a landscape phone stays "phone"', () => {
     expect(hudSizeFor(844, 390, true)).toBe('phone');
     expect(hudSizeFor(390, 844, true)).toBe('phone');

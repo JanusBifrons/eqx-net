@@ -69,6 +69,9 @@ test('heap snapshot diff: 25s held-fire hostile combat', async () => {
 
   const params = new URLSearchParams({
     room: 'feel-test-25',
+    // Lock-to-fire (2026-11-09): held Space fires only at a completed lock;
+    // instantLock makes the AUTO group lock the drone ahead within ~0.1 s.
+    instantLock: '1',
     diag: '0',
     testId: `heap-snap-diff-${Date.now()}`,
     spawnX: '0',

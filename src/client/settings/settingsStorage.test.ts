@@ -27,16 +27,9 @@ describe('settingsStorage', () => {
     });
   });
 
-  it('round-trips the autoFireEnabled toggle', () => {
-    saveSettings('alice', { autoFireEnabled: false } as never);
-    expect(loadSettings('alice').autoFireEnabled).toBe(false);
-    saveSettings('alice', { autoFireEnabled: true } as never);
-    expect(loadSettings('alice').autoFireEnabled).toBe(true);
-  });
-
-  it('drops a non-boolean autoFireEnabled', () => {
-    localStorage.setItem('eqxSettings:alice', JSON.stringify({ autoFireEnabled: 'yes' }));
-    expect(loadSettings('alice').autoFireEnabled).toBeUndefined();
+  it('ignores the retired autoFireEnabled key', () => {
+    localStorage.setItem('eqxSettings:alice', JSON.stringify({ autoFireEnabled: false }));
+    expect('autoFireEnabled' in loadSettings('alice')).toBe(false);
   });
 
   it('keeps users isolated', () => {
@@ -114,7 +107,7 @@ describe('settingsStorage', () => {
     localStorage.setItem('eqxSettings:carol', JSON.stringify({ showDevOverlay: true, showLogPanel: false, showServerGhost: true }));
     expect(loadSettings('carol').showServerGhost).toBeUndefined();
     // A player who switches it on keeps that choice.
-    saveSettings('carol', { showDevOverlay: true, showLogPanel: false, showServerGhost: true, autoFireEnabled: true, arrivalMode: 'same', arrivalTargetX: 0, arrivalTargetY: 0, homePosX: 0, homePosY: 0 });
+    saveSettings('carol', { showDevOverlay: true, showLogPanel: false, showServerGhost: true, arrivalMode: 'same', arrivalTargetX: 0, arrivalTargetY: 0, homePosX: 0, homePosY: 0 });
     expect(loadSettings('carol').showServerGhost).toBe(true);
   });
 });

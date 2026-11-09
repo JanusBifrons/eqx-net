@@ -1,5 +1,5 @@
 /**
- * Mutable input state written by MobileControls (React) and consumed by
+ * Mutable input state written by the HUD thumb controls (GameHud) and consumed by
  * ColyseusClient (game loop). Plain class — no Zustand, no event bus —
  * because it is updated every frame.
  *
@@ -15,7 +15,7 @@ export class TouchInput {
   /**
    * Plan: crispy-kazoo, Commit 4 — pause boundary.
    * When false, every setter is masked and every getter returns the
-   * idle value. The MobileControls React listeners keep posting (so
+   * idle value. The HUD's React listeners keep posting (so
    * the touch-bleed during curtain rise is captured + dropped), but
    * no input crosses to the game loop.
    */

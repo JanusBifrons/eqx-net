@@ -106,7 +106,7 @@ test('join → WarpScreen visible immediately, hides when ready, ship not at (0,
   // canvas (different rendering passes confuse the occlusion test).
   // For the regression lock we only need to know the HUD is in the
   // DOM after warp hides.
-  await expect(page.locator('[data-testid="sector-info-panel"]')).toBeAttached({
+  await expect(page.locator('[data-testid="hud-sector"]')).toBeAttached({
     timeout: 5_000,
   });
   const events = await page.evaluate(() => {
@@ -206,7 +206,7 @@ test('viewport rotation forwards a resize to the worker (no stretched aspect)', 
   });
   await expect(page.locator('[data-testid="warp-screen"]'))
     .toHaveAttribute('data-warp-visible', '0', { timeout: 15_000 });
-  await expect(page.locator('[data-testid="sector-info-panel"]')).toBeAttached({
+  await expect(page.locator('[data-testid="hud-sector"]')).toBeAttached({
     timeout: 5_000,
   });
 

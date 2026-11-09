@@ -1,5 +1,5 @@
 /**
- * Desktop smart-aim lock (exp/fire-control, `?ui=d`, non-touch only).
+ * Desktop smart-aim lock (fire control, non-touch only).
  *
  *  - LEFT button held on the game surface draws a lock line from the ship
  *    toward the cursor; the target nearest it is highlighted and the active
@@ -13,12 +13,23 @@
  *    group's locks.
  *
  * The ship is the screen centre (the pilot camera follows it with no lag), so
- * the bearing is the cursor's offset from the surface centre — see MouseAim.
+ * the bearing is the cursor's offset from the surface centre (no camera
+ * round-trip to the render worker needed).
  */
 import { aimInput } from './AimInput';
-import { cursorBearing, MOUSE_AIM_DRAG_PX, MOUSE_AIM_HOLD_MS } from './MouseAim';
+import { stickToWorldBearing } from '@core/combat/manualAim';
 import { getGameClient } from '../net/clientSingleton';
 import { useUIStore } from '../state/store';
+
+/** A press held this long (or dragged past MOUSE_AIM_DRAG_PX) starts the lock line;
+ *  a quicker click is left alone so click-to-select keeps working. */
+export const MOUSE_AIM_HOLD_MS = 160;
+export const MOUSE_AIM_DRAG_PX = 8;
+
+/** Pure: cursor (client px) → world bearing, relative to the surface centre. */
+export function cursorBearing(clientX: number, clientY: number, rect: { left: number; top: number; width: number; height: number }): number {
+  return stickToWorldBearing(clientX - (rect.left + rect.width / 2), clientY - (rect.top + rect.height / 2));
+}
 
 /** Pure: key event → fire-control key action (null = not ours). */
 export function fcKeyAction(

@@ -9,35 +9,19 @@
  *
  * Fix: the beam mirror now stores only `dist`, and the renderer derives the
  * geometry per frame from `mirror.ships[localId]` — the same source the
- * ship sprite uses. This test holds Space + D to fire while continuously
- * rotating, samples ship pose and beam-from across many frames, and asserts
+ * ship sprite uses. This test holds fire on a locked target while
+ * wiggling the hull, samples ship pose and beam-from across many frames, and asserts
  * the relationship `beam.from === ship + 20*forward(ship.angle)` holds at
  * every sample. If anyone reverts the beam to cache its origin, the
  * arithmetic relationship will start drifting during corrections and this
  * test will fail.
- */
-import { waitForInPlay } from './helpers/gameScenario';
+ */
+
+import { launchTestClient } from './helpers/gameScenario';
+import { lockOn, toManual } from './helpers/fireControl';
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
-
-// Use the ?room= auto-join URL so this test bypasses the auth gate (LoginPage)
-// the same way preserved E2E test compatibility was originally designed.
-async function joinSector(page: Page): Promise<void> {
-  // The interceptor is the beam ship (each kind fires its own loadout since the
-  // weapons overhaul; the default fighter fires bolts, so there was no beam).
-  await page.goto(`${BASE_URL}?room=sector&shipKind=interceptor`);
-  await page.waitForFunction(
-    () => {
-      const el = document.querySelector('[data-testid="ship-count"]');
-      return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
-    }, undefined,
-    { timeout: 15000 },
-  );
-  // Input only counts once the loading curtain lifts.
-  await waitForInPlay(page);
-}
+import { randomUUID } from 'node:crypto';
 
 interface BeamSample {
   shipX: number;
@@ -68,31 +52,41 @@ async function sampleBeam(page: Page): Promise<BeamSample> {
 }
 
 test('local laser beam stays attached to ship pose during fire+rotation', async ({ browser }) => {
-  const ctx = await browser.newContext();
-  const page = await ctx.newPage();
+  // Lock-to-fire (2026-11-09): the beam fires only at a locked target, so a
+  // second pilot (huge hull) sits 150 u dead ahead and the interceptor locks
+  // it (instantLock) on its MAN group. The interceptor's beams are ±30°
+  // turrets, so the ship WIGGLES (alternating short D / A holds, ≈ ±0.2 rad)
+  // instead of spinning: ship.angle still changes every frame, and the
+  // target stays inside the arc so the beam keeps firing.
+  const testId = randomUUID();
+  const [{ ctx, page }, victim] = await Promise.all([
+    launchTestClient(browser, { spawnX: 0, spawnY: 0, initialAngle: 0, shipKind: 'interceptor', testId, instantLock: true }),
+    launchTestClient(browser, { spawnX: 0, spawnY: 150, shipKind: 'fighter', testId, initialHull: 100_000 }),
+  ]);
   try {
-    await joinSector(page);
+    const victimId = (await victim.page.locator('[data-testid="game-surface"]').getAttribute('data-local-player-id')) ?? '';
+    await toManual(page);
+    await lockOn(page, { kind: 'ship', playerId: victimId });
 
     // Let the connection stabilise so prediction has had a few snapshots to
     // settle into a steady-state lerp cadence.
     await page.waitForTimeout(1500);
 
-    // Fire continuously while turning right — the rotation forces ship.angle
-    // to change every frame, exercising the case where the beam's direction
-    // must also update every frame.
     await page.keyboard.down('Space');
-    await page.keyboard.down('d');
 
     // Sample over ~2 seconds (~40 samples at 50 ms cadence) to cover at least
-    // a handful of snapshot intervals (~167 ms each).
+    // a handful of snapshot intervals (~167 ms each), turning every sample.
     const samples: BeamSample[] = [];
     const SAMPLE_COUNT = 40;
     for (let i = 0; i < SAMPLE_COUNT; i++) {
+      // 3 samples (~150 ms) per direction, starting with half a swing.
+      const key = Math.floor((i + 1.5) / 3) % 2 === 0 ? 'd' : 'a';
+      await page.keyboard.down(key);
       await page.waitForTimeout(50);
+      await page.keyboard.up(key);
       samples.push(await sampleBeam(page));
     }
 
-    await page.keyboard.up('d');
     await page.keyboard.up('Space');
 
     // Filter to samples where the beam was active and the ship pose was valid.
@@ -124,6 +118,7 @@ test('local laser beam stays attached to ship pose during fire+rotation', async 
     const maxA = Math.max(...angles);
     expect(maxA - minA).toBeGreaterThan(0.1);
   } finally {
-    await ctx.close();
+    await page.keyboard.up('Space').catch(() => undefined);
+    await Promise.all([ctx.close(), victim.ctx.close()]);
   }
 });

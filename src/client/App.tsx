@@ -38,8 +38,6 @@ import { TouchInput, isTouchDevice } from './input/TouchInput';
 import { useUIStore, useGameReady, useIsLoadingActive } from './state/store';
 import { useAuthStore } from './auth/authStore';
 import { decideContextMenuPlacement } from './structures/contextMenuPlacement';
-import { MobileControls } from './components/MobileControls';
-import { AutoFireToggleButton } from './components/AutoFireToggleButton';
 import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { WarpScreen } from './components/WarpScreen';
@@ -50,11 +48,8 @@ import { logEvent } from './debug/ClientLogger';
 import { captureDeviceInfo } from './debug/deviceInfo';
 import { useMountLog } from './debug/useMountLog';
 import { useWarpOrchestration } from './useWarpOrchestration';
-import { EnergyBar } from './components/EnergyBar';
 import { HelmPanel } from './components/HelmPanel';
-import { SpeedDialMenu } from './components/SpeedDialMenu';
 import { WarpPicker, WarpStatusChip } from './components/WarpPicker';
-import { BottomControlPanel } from './components/BottomControlPanel';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
 import { PlacementFenceHint } from './components/PlacementFenceHint';
 import { TeleportWarning } from './components/TeleportWarning';
@@ -63,21 +58,13 @@ import { DisabledIndicator } from './components/DisabledIndicator';
 import { EntityStatsPanel } from './components/EntityStatsPanel';
 import { UpgradeModalHost } from './components/UpgradeModalHost';
 import { Hud } from './components/Hud';
-import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
-import { ShieldHullBar } from './components/ShieldHullBar';
 import { CargoChip } from './components/CargoChip';
-import { WalletChip } from './components/WalletChip';
-import { ExperimentalHud } from './hud/ExperimentalHud';
+import { GameHud } from './hud/GameHud';
 import { TouchViz } from './hud/TouchViz';
-import { getUiVariant } from './hud/uiVariant';
-import { installMouseAim } from './input/MouseAim';
 import { useIsCompact } from './layout/useIsCompact';
 import { installFcKeys, installMouseLock } from './input/MouseLock';
 import { aimInput } from './input/AimInput';
-
-/** Fixed for the page load (switching variant reloads). */
-const uiVariant = getUiVariant();
 import { TradeToasts } from './components/TradeToasts';
 import { WhileAwayDialog } from './components/WhileAwayDialog';
 import { WarpInWarningBanner } from './components/WarpInWarningBanner';
@@ -498,10 +485,9 @@ function GameSurface({
     let disposed = false;
 
     const keyboard = new Keyboard();
-    // Experimental HUD, desktop only: hold left mouse = aim + fire, right = boost.
-    const disposeMouseAim = uiVariant === 'legacy' ? null
-      : isTouchRef.current ? (uiVariant === 'd' ? installFcKeys() : null)
-      : uiVariant === 'd' ? installMouseLock(el) : installMouseAim(el);
+    // Fire control: desktop holds left mouse to draw the lock line (right =
+    // boost) + the group keys; touch gets the keys (the lock line is a stick).
+    const disposeMouseLock = isTouchRef.current ? installFcKeys() : installMouseLock(el);
     keyboardRef.current = keyboard;
 
     // Renderer-path selection + profile-window opt-in. Extracted to
@@ -744,7 +730,7 @@ function GameSurface({
       };
       try { setGameClient(null); } catch (e) { stepLog('setGameClient(null)', e); }
       try { keyboard.dispose(); } catch (e) { stepLog('keyboard.dispose', e); }
-      try { disposeMouseAim?.(); } catch (e) { stepLog('mouseAim.dispose', e); }
+      try { disposeMouseLock(); } catch (e) { stepLog('mouseLock.dispose', e); }
       try { spectatorPanRef.current?.dispose(); spectatorPanRef.current = null; } catch (e) { stepLog('spectatorPan.dispose', e); }
       // Layer is a child of renderer.app.stage — the renderer's destroy({
       // children: true }) frees it. Nulling the ref so the React-side
@@ -877,23 +863,13 @@ function GameSurface({
         />
       ) : (
         <>
-      {/* exp/hud-mobile-first: `?ui=a|b|c` swaps the piloting HUD (status,
-       *  credits, sector, thumb controls, fire/auto, dial) for one of three
-       *  experimental layouts. No param = the legacy HUD below, unchanged. */}
-      {uiVariant !== 'legacy' && (
-        <ExperimentalHud
-          variant={uiVariant}
-          touchInput={isTouchRef.current ? touchInputRef.current : null}
-        />
-      )}
-      {uiVariant === 'legacy' && <Slot anchor="top-left" order={1}><SectorInfoPanel /></Slot>}
-      {uiVariant === 'legacy' && <Slot anchor="top-left" order={2}><ShieldHullBar /></Slot>}
+      {/* The piloting HUD: status capsule, sector chip, weapon strip + lock
+       *  band, speed dial, thumb sticks (touch) / lock line (desktop). */}
+      <GameHud touchInput={isTouchRef.current ? touchInputRef.current : null} />
       {/* Living World P1a — carried cargo + pickup popups. */}
       <Slot anchor="top-left" order={3}><CargoChip /></Slot>
-      {uiVariant === 'legacy' && <Slot anchor="top-left" order={4}><WalletChip /></Slot>}
       <Slot anchor="top-left" order={10}><Hud /></Slot>
-      {uiVariant === 'legacy' && <Slot anchor="top-center" order={1}><EnergyBar /></Slot>}
-      {/* The toll / pair prompts sit right under the energy bar: nothing above
+      {/* The toll / pair prompts sit right under the status capsule: nothing above
        *  them changes height, so their buttons hold still while the phase
        *  warning below them changes text (a moving button misses taps). */}
       <Slot anchor="top-center" order={2}><TeleportPrompts /></Slot>
@@ -911,7 +887,7 @@ function GameSurface({
        *  HUD bars + the in-world stat panel carry that info. */}
       {/* Phase 5 — always-visible Pilot/Spectate toggle (out of the speed-dial)
        *  + a spectator-mode status badge. */}
-      {/* Experimental HUDs: the top-centre column carries status + lock warnings, so the
+      {/* The top-centre column carries status + lock warnings, so on a wide screen the
           toggle sits under the sector chip instead of over the ship. */}
       <PilotToggleSlot />
       <Slot anchor="top-center" order={4}><SpectatorIndicator /></Slot>
@@ -920,32 +896,8 @@ function GameSurface({
        *  is removed. Death transitions INSTANTLY into spectator (free-roam
        *  construction camera); re-entry is via the galaxy map or (WS-A2) an
        *  owned ship's in-world Pilot action. */}
-      {uiVariant === 'legacy' && isTouchRef.current && touchInputRef.current && (
-        <MobileControls touchInput={touchInputRef.current} />
-      )}
-      {/* Speed-dial UI refactor (Phase 1): the discrete (tap) HUD actions —
-       *  Map toggle, weapon-slot select, and the drawer/panels entry — are
-       *  consolidated into a single SpeedDial in the bottom-right anchor. It
-       *  sits to the LEFT of the held FIRE/BOOST cluster on touch (order 30 >
-       *  their 10/20 in the row-reverse anchor, so those keep their corner
-       *  positions) and in the corner on desktop. The held controls
-       *  (joystick/FIRE/BOOST) stay dedicated in MobileControls. Phase 2 adds
-       *  the "Build ▸" structure-placement actions to the same dial. */}
-      {/* Auto-fire mode toggle — shown on BOTH desktop and touch (default ON).
-       *  order=5 keeps it rightmost in the row-reverse cluster; on touch it sits
-       *  where FIRE would be when auto-fire is OFF (MobileControls hides FIRE
-       *  while ON). */}
-      {uiVariant === 'legacy' && <Slot anchor="bottom-right" order={5}><AutoFireToggleButton /></Slot>}
-      {/* Speed-dial at order=1 = the corner-most control (lowest order wins the
-       *  corner in the row-reverse bottom-right anchor), to the right of AUTO
-       *  (5) and FIRE/BOOST (10/20). Smoke handoff 2026-06-06, Issue 3:
-       *  "the speed dial is in the wrong place" → bottom-right corner. */}
-      {uiVariant === 'legacy' && <Slot anchor="bottom-right" order={1}><SpeedDialMenu /></Slot>}
       {/* Phase 4 warp-to destination picker (portalled; solar sectors only). */}
       <WarpPicker />
-      {/* Phase 5 WS-4 — desktop RTS control strip (weapons when piloting,
-       *  buildings when spectating). Self-gates to desktop + in-game. */}
-      {uiVariant === 'legacy' && <Slot anchor="bottom-center" order={1}><BottomControlPanel /></Slot>}
       {/* Click-to-inspect live stats (structures follow-up Item B6). Visible
        *  only while an entity is selected. WS-9 (R2.30) — WORLD-ANCHORED: rendered
        *  OUTSIDE the Slot system as a `position:fixed` element that gameRafLoop
@@ -1174,13 +1126,13 @@ export function App(): JSX.Element {
 }
 
 /**
- * Pilot/Spectate toggle placement. Legacy: top-centre. Experimental HUDs: the
- * top-centre column carries status + lock warnings, so on a wide screen the
+ * Pilot/Spectate toggle placement. The top-centre column carries status + lock
+ * warnings, so on a wide screen the
  * toggle sits top-left under the sector chip (never over the ship); on a
  * narrow (portrait) screen it stays last in the top-centre column.
  */
 function PilotToggleSlot(): JSX.Element {
   const compact = useIsCompact();
-  if (uiVariant !== 'legacy' && !compact) return <Slot anchor="top-left" order={2}><PilotSpectatorToggle /></Slot>;
-  return <Slot anchor="top-center" order={uiVariant === 'legacy' ? 3 : 9}><PilotSpectatorToggle /></Slot>;
+  if (!compact) return <Slot anchor="top-left" order={2}><PilotSpectatorToggle /></Slot>;
+  return <Slot anchor="top-center" order={9}><PilotSpectatorToggle /></Slot>;
 }

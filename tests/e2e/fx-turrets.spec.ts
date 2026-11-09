@@ -8,7 +8,8 @@
  *    drone's chin gun) draw Machined.
  *  - `structure-scenario-test`: the seeded Turret structure gets a gun too,
  *    on top of the pilot's own chin gun.
- *  - Firing (T2): with `startHostile=1` the gunship auto-fires at the drone;
+ *  - Firing (T2): with `startHostile=1` (+ `instantLock=1`) the gunship's AUTO
+ *    groups lock the drone and fire;
  *    each new bolt is matched to the gun it left (recoil, flash, heat), so
  *    `turretShots` counts up.
  *  - Without the flag nothing new draws.
@@ -70,7 +71,7 @@ test('auto-fire kicks the gunship\'s guns (recoil, flash, heat)', async ({ brows
   // second join (a fresh room with a fresh hostile drone) has them at once.
   const { ctx, page } = await join(browser, 'auto-fire-test', 'gunship', true);
   await turretsAtLeast(page, 3);
-  const params = new URLSearchParams({ room: 'auto-fire-test', shipKind: 'gunship', testId: randomUUID(), worker: '0', art: 'machined', fx: 'new', zoom: '2.5', initialHull: '5000', startHostile: '1' });
+  const params = new URLSearchParams({ room: 'auto-fire-test', shipKind: 'gunship', testId: randomUUID(), worker: '0', art: 'machined', fx: 'new', zoom: '2.5', initialHull: '5000', startHostile: '1', instantLock: '1' });
   await page.goto(`${BASE_URL}?${params}`);
   await turretsAtLeast(page, 2);
   await waitForInPlay(page);

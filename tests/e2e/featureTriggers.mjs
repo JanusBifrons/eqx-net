@@ -26,8 +26,16 @@ export const FEATURE_TRIGGERS = [
   },
   {
     area: 'energy and boost',
-    paths: ['src/core/combat/Energy', 'src/client/components/EnergyBar', 'src/core/physics/applyShipInput'],
+    paths: ['src/core/combat/Energy', 'src/client/hud/GameHud', 'src/client/hud/widgets', 'src/core/physics/applyShipInput'],
     specs: ['energy-bar', 'boost-facing'],
+  },
+  {
+    // Lock-to-fire (universal 2026-11-09): a group fires only at a completed lock.
+    area: 'fire control and combat',
+    paths: ['src/server/rooms/LockSubsystem', 'src/server/rooms/NpcLockSubsystem', 'src/server/rooms/PlayerFireResolver',
+      'src/core/combat/lock', 'src/shared-types/combat/lockProfile', 'src/client/hud/WeaponStrip', 'src/client/components/TargetAction',
+      'src/client/input/MouseLock', 'tests/e2e/helpers/fireControl'],
+    specs: ['lock-to-fire-default', 'fire-control-lock', 'auto-fire', 'auto-fire-multitouch', 'fx-weapons', 'drone-destruction'],
   },
   {
     area: 'beams',

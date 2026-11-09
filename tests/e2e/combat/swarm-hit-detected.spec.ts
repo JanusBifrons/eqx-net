@@ -9,6 +9,10 @@
  * straight up +y (200u < 250u range) and is GUARANTEED to hit the drone. An
  * observer in the same room receives the shooter's laser_fired broadcast and
  * sees the drone's `swarm-…` id in its remote-hit-targets list.
+ *
+ * Lock-to-fire (2026-11-09): the shooter joins with `instantLock`, so its AUTO
+ * group locks the (neutral) drone ahead at once and fires; the observer does
+ * not, so it never engages.
  */
 import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
@@ -16,18 +20,21 @@ import { launchTestClient, getRemoteHitTargets } from '../helpers/gameScenario';
 
 test('observer sees the shooter hit a parked drone (swarm-N targetId)', async ({ browser }) => {
   const testId = randomUUID();
+  // Observer FIRST: the shooter's AUTO group opens fire the moment it is in
+  // play, so the observer must already be watching.
+  const observer = await launchTestClient(browser, {
+    room: 'combat-drone-test',
+    spawnX: 300,
+    spawnY: 0,
+    testId,
+  });
   const shooter = await launchTestClient(browser, {
     room: 'combat-drone-test',
     spawnX: 0,
     spawnY: 0,
     initialAngle: 0,
     shipKind: 'interceptor',
-    testId,
-  });
-  const observer = await launchTestClient(browser, {
-    room: 'combat-drone-test',
-    spawnX: 300,
-    spawnY: 0,
+    instantLock: true,
     testId,
   });
   try {

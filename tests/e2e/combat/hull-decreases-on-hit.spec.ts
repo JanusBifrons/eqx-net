@@ -8,10 +8,15 @@
  * along +y. Victim parked at (0,200), inside the 250u beam range, with shields
  * down (initialShield:0) so the first beam tick lands on the hull. A held beam
  * is then a repeatable, unconditional hit.
+ *
+ * Lock-to-fire (2026-11-09): the shooter locks the victim first (`lockOn`,
+ * completed at once by `instantLock`); its AUTO group then fires on its own
+ * and the held Space keeps the active group firing too.
  */
 import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
-import { launchTestClient, getHullPct } from '../helpers/gameScenario';
+import { launchTestClient, getHullPct, getLocalPlayerId } from '../helpers/gameScenario';
+import { lockOn } from '../helpers/fireControl';
 
 test('hitscan beam hits a parked victim: hull decreases', async ({ browser }) => {
   const testId = randomUUID();
@@ -20,6 +25,7 @@ test('hitscan beam hits a parked victim: hull decreases', async ({ browser }) =>
     spawnY: 0,
     initialAngle: 0,
     shipKind: 'interceptor',
+    instantLock: true,
     testId,
   });
   const victim = await launchTestClient(browser, {
@@ -33,6 +39,7 @@ test('hitscan beam hits a parked victim: hull decreases', async ({ browser }) =>
     const initialHull = await getHullPct(victim.page);
     expect(initialHull, 'victim should spawn with hull > 0').toBeGreaterThan(0);
 
+    await lockOn(shooter.page, { kind: 'ship', playerId: await getLocalPlayerId(victim.page) });
     await shooter.page.keyboard.down('Space');
     await victim.page.waitForFunction(
       (init) => {

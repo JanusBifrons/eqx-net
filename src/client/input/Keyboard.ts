@@ -1,15 +1,3 @@
-
-import { useUIStore } from '../state/store';
-import { isExperimentalHud } from '../hud/uiVariant';
-
-/** Read once: the experimental HUD adds the F = toggle auto-fire binding. */
-const EXPERIMENTAL_HUD = isExperimentalHud();
-
-function isTypingTarget(t: EventTarget | null): boolean {
-  const el = t as HTMLElement | null;
-  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable === true);
-}
-
 export interface InputState {
   thrust: boolean;
   turnLeft: boolean;
@@ -82,13 +70,6 @@ export class Keyboard {
       case 'ShiftLeft':
       case 'ShiftRight':
         this.boost = true;
-        break;
-      case 'KeyF':
-        // Experimental HUD only: F toggles auto-fire (legacy has no binding).
-        if (EXPERIMENTAL_HUD && !e.repeat && !isTypingTarget(e.target)) {
-          const ui = useUIStore.getState();
-          ui.setAutoFireEnabled(!ui.autoFireEnabled);
-        }
         break;
       // Weapon-type hotkeys (1/2/Q) removed in the weapons/energy/AI overhaul
       // (§5.2): each ship fires its catalogue-bound loadout, so there is no

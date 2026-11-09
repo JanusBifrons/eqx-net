@@ -6,7 +6,6 @@ const cancelLock = vi.fn();
 const lockSelected = vi.fn();
 vi.mock('../net/clientSingleton', () => ({
   getGameClient: () => ({
-    isFireControl: () => true,
     mirror: { localPlayerId: 'me' },
     cancelLock,
     lockSelected,

@@ -13,7 +13,7 @@
  * still fires only when it is on its target.
  */
 import type { Shot, ShotContext } from '../types.js';
-import { sendRoom } from './_helpers.js';
+import { allGroupsManual, lockAhead, sendRoom } from './_helpers.js';
 import { COASTAL_LINE, GARRISON_EXTENT } from '../../src/server/rooms/showcaseRooms.js';
 
 const PARAMS = { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } as const;
@@ -230,13 +230,15 @@ export const garrisonDefences: Shot = {
   docs: ['coastal-defences', 'military-bases'],
   reel: true,
   server: 'lean',
-  target: { room: 'showcase-garrison', params: { shipKind: 'heavy', initialHull: 1_000_000, noselfdmg: 1, art: 'machined', fx: 'new' } },
+  // instantLock + MAN groups: the pilot locks + opens fire ON CUE (lock-to-fire).
+  target: { room: 'showcase-garrison', params: { shipKind: 'heavy', initialHull: 1_000_000, noselfdmg: 1, art: 'machined', fx: 'new', instantLock: 1 } },
   hud: 'none',
   durationMs: 30_000,
   async startWhen(ctx) {
     await artSettled(ctx);
   },
   async run(ctx) {
+    await allGroupsManual(ctx);
     const k = ctx.viewport.width / 1920;
     const e = GARRISON_EXTENT;
     const cx = (e.x0 + e.x1) / 2, cy = (e.y0 + e.y1) / 2;
@@ -255,6 +257,7 @@ export const garrisonDefences: Shot = {
     // The pilot (south of the base) opens fire on it: now it's hostile.
     await ctx.sleep(20_000);
     await ctx.cinema.play([{ atMs: 0, smoothMs: 2500, shot: { kind: 'track', target: 'local', zoom: 0.2 * k, offsetY: 1800 } }]);
+    await lockAhead(ctx);
     await ctx.hold(['Space'], 2500);
     await ctx.sleep(7000);
   },

@@ -86,11 +86,11 @@ test('dial opens and the map toggles via a SECOND touch while the joystick is he
       { timeout: 15000 },
     );
     // Joystick + dial FAB must be present (touch device → MobileControls mounts).
-    await expect(page.locator('[data-testid="mobile-joystick"]')).toBeVisible();
+    await expect(page.locator('[data-testid="hud-move-home"]')).toBeVisible();
     await expect(page.locator('[data-testid="speed-dial-fab"]')).toBeVisible();
 
     const cdp = await page.context().newCDPSession(page);
-    const joystick = await centreOf(page, 'mobile-joystick');
+    const joystick = await centreOf(page, 'hud-move-home');
     const fab = await centreOf(page, 'speed-dial-fab');
 
     const mapToggle = page.locator('[data-testid="galaxy-map-toggle"]');

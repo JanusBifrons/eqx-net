@@ -1,15 +1,11 @@
 /**
- * Shared experimental-HUD widgets (exp/hud-mobile-first): hold/tap buttons
- * with oversized touch areas, the cooldown ring, the sector chip, status
- * bars, and the fake-credits demo drip.
+ * Shared HUD widgets: hold/tap buttons with oversized touch areas, the sector
+ * chip, the energy fill, and the fake-credits demo drip.
  */
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useUIStore } from '../state/store';
 import { getGameClient } from '../net/clientSingleton';
-import { getWeapon } from '../../core/combat/WeaponCatalogue';
-import { getShipKind } from '@shared-types/shipKinds';
-import { resolveSlotMounts } from '@shared-types/shipKinds/slots';
-import { HUD, hullColor } from './tokens';
+import { HUD } from './tokens';
 
 // ── HoldButton ──────────────────────────────────────────────────────────────
 
@@ -119,119 +115,6 @@ export function HoldButton(p: HoldButtonProps): JSX.Element {
   );
 }
 
-// ── CooldownRing (live ship) ─────────────────────────────────────────────────
-
-function liveSlotCooldownMs(slotId: string): number {
-  const c = getGameClient();
-  const id = c?.mirror.localPlayerId;
-  const kind = id ? c?.mirror.ships.get(id)?.kind : undefined;
-  if (!kind) return 0;
-  const mounts = resolveSlotMounts(getShipKind(kind), slotId);
-  let ticks = 0;
-  for (let i = 0; i < mounts.length; i++) {
-    const t = getWeapon(mounts[i]!.weaponId).cooldownTicks;
-    if (t > ticks) ticks = t;
-  }
-  return (ticks * 1000) / 60;
-}
-
-/** Draining ring around a control: full at fire, empty when ready. Reads the
- *  LIVE ship's slot cooldown (the legacy ring read the next-spawn pick). */
-export function CooldownRing({ size, color }: { size: number; color: string }): JSX.Element {
-  const lastFireMs = useUIStore((s) => s.lastFireMs);
-  const activeSlotId = useUIStore((s) => s.activeSlotId);
-  const ref = useRef<SVGCircleElement | null>(null);
-  const stroke = 3;
-  const r = (size - stroke) / 2;
-  const circ = 2 * Math.PI * r;
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || lastFireMs === null) return;
-    const cd = liveSlotCooldownMs(activeSlotId);
-    if (cd <= 0) return;
-    let raf = 0;
-    const tick = (): void => {
-      const rem = Math.max(0, 1 - (performance.now() - lastFireMs) / cd);
-      el.style.strokeDashoffset = String(circ * (1 - rem));
-      el.style.opacity = rem > 0.01 ? '1' : '0';
-      if (rem > 0) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [lastFireMs, activeSlotId, circ]);
-
-  return (
-    <svg
-      width={size}
-      height={size}
-      style={{ position: 'absolute', left: '50%', top: '50%', marginLeft: -size / 2, marginTop: -size / 2, pointerEvents: 'none' }}
-    >
-      <circle
-        ref={ref}
-        cx={size / 2}
-        cy={size / 2}
-        r={r}
-        fill="none"
-        stroke={color}
-        strokeWidth={stroke}
-        strokeLinecap="round"
-        strokeDasharray={circ}
-        strokeDashoffset={circ}
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        style={{ opacity: 0, transition: 'opacity 120ms linear' }}
-      />
-    </svg>
-  );
-}
-
-// ── Fire-mode state ──────────────────────────────────────────────────────────
-
-export type FireLook = 'manual' | 'engaged' | 'auto' | 'off';
-
-/**
- * One answer to "what is my gun doing?" for every variant:
- *  - manual  : you are aiming / holding fire (amber)
- *  - engaged : auto is firing at a locked target (bright cyan, spinning pip)
- *  - auto    : auto is armed, nothing in range (dim cyan)
- *  - off     : auto disabled, not firing (grey)
- */
-export function useFireLook(): FireLook {
-  const autoOn = useUIStore((s) => s.autoFireEnabled);
-  const aimMode = useUIStore((s) => s.aimMode);
-  const engaged = useUIStore((s) => s.autoEngaged);
-  if (aimMode === 'manual') return 'manual';
-  if (!autoOn) return 'off';
-  return engaged ? 'engaged' : 'auto';
-}
-
-export function fireLookColor(l: FireLook): string {
-  if (l === 'manual') return HUD.color.manual;
-  if (l === 'off') return 'rgba(170,180,195,0.75)';
-  return HUD.color.auto;
-}
-
-/** Small orbiting pip that spins while auto is engaged. */
-export function AutoPip({ size, look }: { size: number; look: FireLook }): JSX.Element | null {
-  if (look !== 'engaged' && look !== 'auto') return null;
-  return (
-    <div
-      className={look === 'engaged' ? 'eqx-pip-spin' : undefined}
-      style={{
-        position: 'absolute',
-        inset: -5,
-        borderRadius: '50%',
-        border: `2px solid transparent`,
-        borderTopColor: HUD.color.auto,
-        opacity: look === 'engaged' ? 1 : 0.35,
-        pointerEvents: 'none',
-        width: size + 10,
-        height: size + 10,
-      }}
-    />
-  );
-}
-
 // ── SectorChip ───────────────────────────────────────────────────────────────
 
 const GRID_CELL = 500;
@@ -325,79 +208,6 @@ export function useEnergyFill(): React.MutableRefObject<HTMLDivElement | null> {
     return () => cancelAnimationFrame(raf);
   }, [energyMax]);
   return ref;
-}
-
-interface BarProps {
-  label: string;
-  color: string;
-  pct?: number;
-  width: number;
-  height: number;
-  fillRef?: React.MutableRefObject<HTMLDivElement | null>;
-  testId: string;
-  labelSize: number;
-}
-
-export function ThinBar({ label, color, pct, width, height, fillRef, testId, labelSize }: BarProps): JSX.Element {
-  return (
-    <div data-testid={testId} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-      <span
-        style={{
-          width: labelSize * 3.2,
-          fontFamily: HUD.font.label,
-          fontSize: labelSize,
-          letterSpacing: 0.8,
-          color: HUD.color.inkFaint,
-          textTransform: 'uppercase',
-        }}
-      >
-        {label}
-      </span>
-      <div
-        style={{
-          width,
-          height,
-          background: 'rgba(255,255,255,0.10)',
-          borderRadius: height,
-          overflow: 'hidden',
-          boxShadow: `0 0 6px ${color}33`,
-        }}
-      >
-        <div
-          ref={fillRef}
-          style={{
-            width: '100%',
-            height: '100%',
-            background: color,
-            transformOrigin: 'left center',
-            transform: pct === undefined ? undefined : `scaleX(${Math.max(0, Math.min(1, pct / 100))})`,
-            transition: pct === undefined ? undefined : 'transform 900ms ease-out, background 300ms',
-            willChange: 'transform',
-          }}
-        />
-      </div>
-    </div>
-  );
-}
-
-/** Shield / hull / energy as three hairline bars (variant A). */
-export function StatusStack({ scale }: { scale: number }): JSX.Element {
-  const shield = useUIStore((s) => s.shieldPct);
-  const hull = useUIStore((s) => s.hullPct);
-  const energyRef = useEnergyFill();
-  // Narrow (portrait) phones: shorter bars so the stack clears the
-  // top-centre Pilot/Spectate toggle.
-  const narrow = typeof window !== 'undefined' && window.innerWidth < 500;
-  const w = Math.round((narrow ? 58 : 84) * scale);
-  const h = Math.max(3, Math.round(3 * scale));
-  const ls = Math.round(7.5 * scale);
-  return (
-    <div data-testid="hud-status" data-hud-exclusion="" style={{ display: 'flex', flexDirection: 'column', gap: 3, pointerEvents: 'none' }}>
-      <ThinBar testId="hud-shield" label="SHD" color={HUD.color.shield} pct={shield} width={w} height={h} labelSize={ls} />
-      <ThinBar testId="hud-hull" label="HUL" color={hullColor(hull)} pct={hull} width={w} height={h} labelSize={ls} />
-      <ThinBar testId="hud-energy" label="NRG" color={HUD.color.energy} fillRef={energyRef} width={w} height={h} labelSize={ls} />
-    </div>
-  );
 }
 
 // ── Fake credits (demo only) ─────────────────────────────────────────────────

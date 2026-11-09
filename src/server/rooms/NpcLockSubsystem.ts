@@ -1,13 +1,14 @@
 /**
- * NPC target locks on fire-control pilots (exp/fire-control). Locking goes
- * both ways: an NPC must LOCK a fire-control pilot before it may fire at them,
+ * NPC target locks on pilots (fire control). Locking goes both ways: an NPC
+ * must LOCK a pilot before it may fire at them,
  * by the same rules a pilot locks with (`lockSeconds`: the NPC's sensor and
  * weapon tracking vs the pilot's size, crossing speed and range). The pilot
  * sees every lock building on them through the own-ship `lockedBy` snapshot
  * slice (#16).
  *
- * Legacy pilots (no `fireControl`) are never tracked: NPCs fire at them as
- * before. Capitals' per-turret fire (`fireMount`) is not gated yet.
+ * Every connected pilot is tracked (lock-to-fire is universal), so the step
+ * is O(pilots × hostile NPCs) every 6 ticks. Capitals' per-turret fire
+ * (`fireMount`) and structure turrets are not gated yet (PR 1d).
  *
  * Steady state allocates nothing (#14): an entry and its wire row are created
  * when an NPC starts locking someone, then mutated in place; the per-step
@@ -24,7 +25,7 @@ export interface WireLockedBy { t: string; s: 1 | 2; p: number }
 export interface NpcPose { x: number; y: number; vx: number; vy: number }
 
 export interface NpcLockDeps {
-  /** Fire-control pilots to protect. */
+  /** Pilots to protect (every tracked player). */
   pilots(): Iterable<string>;
   /** The pilot's active ship pose + kind; false when they have none. */
   pilotPose(pilotId: string, out: NpcPose): ShipKind | null;

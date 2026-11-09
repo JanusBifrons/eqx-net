@@ -627,23 +627,10 @@ export interface RenderMirror {
    * these. A reused array owned by the client: read it, never keep it.
    */
   localAimMountIds?: readonly string[];
-  /**
-   * Experimental HUD (exp/hud-mobile-first) aim feedback, written by the
-   * client only when an experimental HUD (`?ui=a|b|c`) is on:
-   *  - `localManualAim`: the pilot's held aim world bearing (NaN when not aiming)
-   *    → amber aim line + crosshair at the weapon's reach.
-   *  - `localAimReach`: that weapon's effective reach (world units).
-   *  - `localAutoLockId`: the drone the turrets auto-picked (`swarm-<id>`)
-   *    while auto-fire is engaging, else null → cyan lock bracket.
-   *  - `hudVariant`: 'a' | 'b' | 'c' (b also draws status arcs on the ship),
-   *    absent in the legacy HUD.
-   *  - `localStatus`: shield/hull/energy fractions 0..1 for the ship arcs.
-   */
-  localManualAim?: number;
+  /** Fire control: the active group's reach (world units) — the length of the
+   *  smart-aim guideline. */
   localAimReach?: number;
-  localAutoLockId?: string | null;
-  hudVariant?: 'a' | 'b' | 'c' | 'd';
-  /** Fire control (exp/fire-control): the local pilot's weapon groups with
+  /** Fire control: the local pilot's weapon groups with
    *  their lock queues (t target key, s stage, p progress 0..100), from the
    *  own-ship snapshot. Drives the lock rings + group-coloured brackets. */
   localGroups?: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number; r?: number }> }>;
@@ -656,7 +643,6 @@ export interface RenderMirror {
   /** Fire control: NPCs locking the local pilot (own-ship `lockedBy` slice, shared ref).
    *  `t` = `s:<entityId>`, `s` 1 acquiring / 2 locked, `p` 0..100. */
   localLockedBy?: ReadonlyArray<{ t: string; s: number; p: number }>;
-  localStatus?: { shield: number; hull: number; energy: number };
   /** When false, the renderer hides the orange server-ghost diamond. Default true. */
   showServerGhost?: boolean;
   /**

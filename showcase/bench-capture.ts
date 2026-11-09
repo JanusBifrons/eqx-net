@@ -65,7 +65,7 @@ async function openScene(w: number, h: number): Promise<{ ctx: BrowserContext; p
   await ctx.addInitScript((t) => localStorage.setItem('eqxAuthToken', t), tok.token);
   const page = await ctx.newPage();
   await page.goto(
-    `${servers.baseUrl}/?room=feel-test&worker=0&diag=0&hud=minimal&cleanworld=1&noselfdmg=1&startHostile=1&initialHull=1000000&shipKind=interceptor&testId=bench-${Date.now()}`,
+    `${servers.baseUrl}/?room=feel-test&worker=0&diag=0&hud=minimal&cleanworld=1&noselfdmg=1&startHostile=1&instantLock=1&initialHull=1000000&shipKind=interceptor&testId=bench-${Date.now()}`,
     { waitUntil: 'domcontentloaded', timeout: 180_000 },
   );
   await page.waitForFunction(

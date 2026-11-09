@@ -23,7 +23,7 @@ async function bootGame(page: import('@playwright/test').Page): Promise<void> {
   // Wait for the top-left sector-info panel so layout has settled. The Phase-5
   // removal of the top-right ShipStatsCard made the always-present top-left
   // SectorInfoPanel the canonical "the game has rendered" signal.
-  await page.locator('[data-testid="sector-info-panel"]').waitFor({ timeout: 30_000 });
+  await page.locator('[data-testid="hud-sector"]').waitFor({ timeout: 30_000 });
 }
 
 test.describe('layout-slots', () => {
@@ -45,7 +45,7 @@ test.describe('layout-slots', () => {
     // Phase 5 — the top-right ShipStatsCard was removed; the always-present
     // top-left SectorInfoPanel is now the canonical top-anchored element that
     // must sit BELOW the AppBar (the safe-area-top regression this guards).
-    const card = page.locator('[data-testid="sector-info-panel"]');
+    const card = page.locator('[data-testid="hud-sector"]');
     const box = await card.boundingBox();
     expect(box).not.toBeNull();
     expect(box!.y).toBeGreaterThanOrEqual(APP_BAR_HEIGHT);
@@ -53,7 +53,7 @@ test.describe('layout-slots', () => {
     await ctx.close();
   });
 
-  test('mobile landscape: joystick lives in the bottom-left, fire button in the bottom-right', async ({ browser }) => {
+  test('mobile landscape: move stick lives in the bottom-left, lock stick in the bottom-right', async ({ browser }) => {
     const iPhone = devices['iPhone SE'];
     const ctx = await browser.newContext({
       ...iPhone,
@@ -62,18 +62,13 @@ test.describe('layout-slots', () => {
     const page = await ctx.newPage();
     await bootGame(page);
 
-    const joystick = page.locator('[data-testid="mobile-joystick"]');
-    const fire = page.locator('[data-testid="mobile-fire"]');
-    const autoToggle = page.locator('[data-testid="auto-fire-toggle"]');
+    const joystick = page.locator('[data-testid="hud-move-home"]');
+    // Fire control (the only HUD since 2026-11-09): the right thumb is the
+    // lock line — its stick home sits bottom-right. There is no FIRE button.
+    const fire = page.locator('[data-testid="hud-lock-home"]');
     await expect(joystick).toBeVisible();
-    // Auto-fire defaults ON → the AUTO toggle is shown and the manual FIRE
-    // button is hidden (auto-fire handles firing). Turning AUTO off reveals the
-    // original manual FIRE button.
-    await expect(autoToggle).toBeVisible();
-    await expect(autoToggle).toHaveAttribute('data-state', 'on');
-    await expect(fire).toHaveCount(0);
-    await autoToggle.click();
     await expect(fire).toBeVisible();
+    await expect(page.locator('[data-testid="mobile-fire"]')).toHaveCount(0);
 
     const joyBox = await joystick.boundingBox();
     const fireBox = await fire.boundingBox();
@@ -116,12 +111,12 @@ test.describe('layout-slots', () => {
     await bootGame(page);
 
     await expect(page.locator('[data-testid="portrait-block-overlay"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="mobile-joystick"]')).toBeVisible();
+    await expect(page.locator('[data-testid="hud-move-home"]')).toBeVisible();
 
     // Rotate to landscape — joystick stays interactive, still no overlay.
     await page.setViewportSize({ width: 667, height: 375 });
     await expect(page.locator('[data-testid="portrait-block-overlay"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="mobile-joystick"]')).toBeVisible();
+    await expect(page.locator('[data-testid="hud-move-home"]')).toBeVisible();
 
     await ctx.close();
   });

@@ -1114,6 +1114,9 @@ gameServer
     asteroidConfig: [],
     peacefulDrones: true,
     testAlienGate: { x: 0, y: 0, neighbour: 'vega-reach' },
+    // Lock-to-fire: a peaceful fighter just ahead of the spawn (inside the
+    // gate's zone) gives the pilot something to lock and fire at.
+    dronePoses: [{ kind: 'fighter', x: 0, y: -1350, angle: 0, hullExposed: true }],
     defaultSpawnX: 0,
     defaultSpawnY: -1500,
     maxClients: 4,

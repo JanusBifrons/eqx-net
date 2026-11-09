@@ -81,6 +81,7 @@ import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isPlayableShipKindId, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { targetClass } from '../../core/combat/mountTargeting.js';
+import { decodeAim } from '../../core/combat/manualAim.js';
 import type { TurretTargetView } from '../structures/StructureMountTicker.js';
 import { isOnSightHostile } from '../../shared-types/allegiances.js';
 import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
@@ -518,11 +519,12 @@ const JoinOptionsSchema = z
      *  testMode-gated; ignored on galaxy rooms so a malicious client
      *  can't force-aggro a live sector. plan: imperative-taco. */
     startHostile: z.boolean().optional(),
-    /** Fire control (exp/fire-control): this client uses target locking —
-     *  its weapon groups fire only at locked targets. Absent = legacy rules.
-     *  Not testMode-gated: it is a client capability, not a cheat (it only
-     *  ever ADDS a gate to the joining player's own fire). */
-    fireControl: z.boolean().optional(),
+    /** Test-only bespoke trigger (fire control): this pilot's AUTO groups
+     *  also lock NON-hostile targets (NPC ships, structures not their own) in
+     *  reach + arc, and every lock completes on the next lock step, so a spec
+     *  that isn't about locking can fire without waiting ~1.5 s per lock.
+     *  testMode-gated (ignored on galaxy rooms). */
+    instantLock: z.boolean().optional(),
     /** Test-only: override the disconnect-linger TTL (ms) for THIS player.
      *  On disconnect the room normally lingers the hull for
      *  `LIMBO_DISCONNECT_TTL_MS` (15 min) before the ownerless-evict timer
@@ -558,6 +560,10 @@ const JoinOptionsSchema = z
   .passthrough();
 
 const MAX_INPUTS_PER_TICK = 3;
+/** Fire control: lock messages per session per tick (all four kinds together).
+ *  A pilot sends one on a lock-line change, two when switching groups mid-hold;
+ *  a flood beyond this is silently dropped (src/server/CLAUDE.md thresholds). */
+export const MAX_LOCK_MSGS_PER_TICK = 3;
 // LAG_COMP_WINDOW now used inside PlayerFireResolver.ts
 
 /** Click-to-inspect live-stats emit cadence (Item B5). ~5 Hz on its OWN
@@ -1076,6 +1082,16 @@ export class SectorRoom extends Room<SectorState> {
   private sessionToPlayer = new Map<string, string>();
   private playerToSession = new Map<string, string>();
   private inputCountThisTick = new Map<string, number>();
+  /** Fire control: lock messages (`lock_request` / `lock_track` /
+   *  `lock_cancel` / `set_group_mode`) received this tick, per session. */
+  private readonly lockMsgCountThisTick = new Map<string, number>();
+  /** Count one lock message for `sessionId`; false = over this tick's cap (drop it). */
+  private lockMsgAllowed(sessionId: string): boolean {
+    const n = this.lockMsgCountThisTick.get(sessionId) ?? 0;
+    if (n >= MAX_LOCK_MSGS_PER_TICK) return false;
+    this.lockMsgCountThisTick.set(sessionId, n + 1);
+    return true;
+  }
   /** PlayerIds currently holding boost (energy-affordable), regardless of
    *  thrust. Surfaced on every snapshot so all clients can render an exhaust
    *  trail for that ship; also drives the per-tick boost energy drain. */
@@ -1255,6 +1271,11 @@ export class SectorRoom extends Room<SectorState> {
     restoreLingeringHulls: (rows: readonly SectorSnapshotLingeringHull[]) => void;
     aiPlayerScratch: AiPlayerView[];
     postToWorker: (cmd: WorkerCmd) => void;
+    /** Fire control test hook: make `targetKey` (`s:<entityId>` | `p:<playerId>`)
+     *  a completed lock of `groupId` (every group when absent) for `playerId`,
+     *  so a test that isn't about locking can fire (lock-to-fire is universal).
+     *  Returns how many groups took it. */
+    forceLock: (playerId: string, targetKey: string, groupId?: string) => number;
     applyDamage: (
       targetId: string,
       shooterId: string,
@@ -1325,6 +1346,7 @@ export class SectorRoom extends Room<SectorState> {
       restoreLingeringHulls: (rows) => this.restoreLingeringHullsFromSnapshot(rows),
       aiPlayerScratch: this.aiPlayerScratch,
       postToWorker: (cmd) => this.postToWorker(cmd),
+      forceLock: (pid, key, groupId) => this.locks.forceLock(pid, key, groupId),
       blockShotAtWall: (fx, fy, dx, dy, maxDist, damage) => this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
@@ -1776,7 +1798,6 @@ export class SectorRoom extends Room<SectorState> {
       // Capital turret fire control (the resolver is built later; resolve lazily).
       currentTick: () => this.serverTick,
       fireDroneMount: (id, i) => this.aiFireResolver.fireMount(id, i),
-      isFireControl: (pid) => this.locks.isEnabled(pid),
       onClearPlayer: (pid) => this.locks.clearLocks(pid),
       aimTargetFor: (pid, mountId, out) => this.lockAimTarget(pid, mountId, out),
     });
@@ -2132,6 +2153,7 @@ export class SectorRoom extends Room<SectorState> {
       ownerlessShips: this.ownerlessShips,
       lingerMs: (pid) => this.playerToLingerMs.get(pid),
       clearLingerMs: (pid) => { this.playerToLingerMs.delete(pid); },
+      forgetLocks: (pid) => { this.locks.forget(pid); this.npcLocks.forget(pid); },
       boostingPlayers: this.boostingPlayers,
       thrustingPlayers: this.thrustingPlayers,
       snapshotBroadcaster: this.snapshotBroadcaster,
@@ -2979,10 +3001,8 @@ export class SectorRoom extends Room<SectorState> {
       isDisabled: (playerId) => this.gateGuard.isDisabled(playerId, Date.now()),
       onWarpRequest: (playerId, x, y) => this.warpTravel.noteRequest(playerId, x, y),
       validWarpPoint: (x, y) => this.sectorKey !== null && isWarpDropPoint(this.sectorKey, x, y, this.solar),
-      setPlayerAim: (playerId, aim) => {
-        if (aim === null) this.mountTicker.playerManualAim.delete(playerId);
-        else this.mountTicker.playerManualAim.set(playerId, aim);
-      },
+      // No `setPlayerAim`: lock-to-fire retired manual aim (turrets aim at
+      // their group's lock); a stray `aim` field is accepted and ignored.
       logger,
       malformed: this.malformed,
     }));
@@ -3781,26 +3801,33 @@ export class SectorRoom extends Room<SectorState> {
     // `selectionStatsTimer` (off the hot path); these handlers only register /
     // clear the per-connection selection. Per-session cleanup on disconnect /
     // transit lives in `onLeave` (no 5 Hz leak).
-    // Fire control (exp/fire-control): lock / unlock / group mode.
+    // Fire control: lock / unlock / group mode. The four lock messages share a
+    // per-session cap of MAX_LOCK_MSGS_PER_TICK per tick (like inputs); the
+    // excess is silently dropped.
     this.onMessage('lock_request', (client: Client, raw: unknown) => {
+      if (!this.lockMsgAllowed(client.sessionId)) return;
       const parsed = LockRequestSchema.safeParse(raw);
       if (!parsed.success) { this.malformed.record(client.sessionId, 'lock_request'); return; }
       const pid = this.sessionToPlayer.get(client.sessionId);
       if (pid !== undefined) this.locks.requestLock(pid, parsed.data.groupId, parsed.data.target);
     });
     this.onMessage('lock_track', (client: Client, raw: unknown) => {
+      if (!this.lockMsgAllowed(client.sessionId)) return;
       const parsed = LockTrackSchema.safeParse(raw);
       if (!parsed.success) { this.malformed.record(client.sessionId, 'lock_track'); return; }
       const pid = this.sessionToPlayer.get(client.sessionId);
-      if (pid !== undefined) this.locks.trackLock(pid, parsed.data.groupId, parsed.data.target);
+      const b = parsed.data.b;
+      if (pid !== undefined) this.locks.trackLock(pid, parsed.data.groupId, parsed.data.target, b === undefined ? undefined : decodeAim(b));
     });
     this.onMessage('lock_cancel', (client: Client, raw: unknown) => {
+      if (!this.lockMsgAllowed(client.sessionId)) return;
       const parsed = LockCancelSchema.safeParse(raw);
       if (!parsed.success) { this.malformed.record(client.sessionId, 'lock_cancel'); return; }
       const pid = this.sessionToPlayer.get(client.sessionId);
       if (pid !== undefined) this.locks.cancelLock(pid, parsed.data.groupId, parsed.data.target);
     });
     this.onMessage('set_group_mode', (client: Client, raw: unknown) => {
+      if (!this.lockMsgAllowed(client.sessionId)) return;
       const parsed = SetGroupModeSchema.safeParse(raw);
       if (!parsed.success) { this.malformed.record(client.sessionId, 'set_group_mode'); return; }
       const pid = this.sessionToPlayer.get(client.sessionId);
@@ -4083,19 +4110,25 @@ export class SectorRoom extends Room<SectorState> {
         }
         return { kind, activated: c.mounts };
       },
-      autoPick: (pid, reach, sx, sy, bears) => {
-        // Nearest drone already hostile to this pilot, within reach.
-        let best: string | null = null;
+      autoPick: (pid, reach, sx, sy, bears, anyTarget) => {
+        // Nearest NPC ship already hostile to this pilot, within reach and arc.
+        // testMode `instantLock` (`anyTarget`): any NPC ship or a structure
+        // that isn't the pilot's own.
+        let best = -1;
         let bestD = reach * reach;
         for (const rec of this.swarmRegistry.all()) {
-          if (rec.kind !== 1 || !this.npcHostileTo(rec.id, pid)) continue;
+          if (rec.kind === 1) {
+            if (!anyTarget && !this.npcHostileTo(rec.id, pid)) continue;
+          } else if (rec.kind === 2 && anyTarget) {
+            if (this.structureRegistry.get(rec.id)?.owner === pid) continue;
+          } else continue;
           if (!this.swarmEntityPoseInto(rec.id, this._lockPose)) continue;
           const dx = this._lockPose.x - sx;
           const dy = this._lockPose.y - sy;
           const d = dx * dx + dy * dy;
-          if (d < bestD && bears(this._lockPose.x, this._lockPose.y)) { bestD = d; best = `s:${rec.entityId}`; }
+          if (d < bestD && bears(this._lockPose.x, this._lockPose.y)) { bestD = d; best = rec.entityId; }
         }
-        return best;
+        return best < 0 ? null : `s:${best}`;
       },
       commitHostileAct: (pid, key) => this.commitLockHostileAct(pid, key),
     });
@@ -4107,9 +4140,11 @@ export class SectorRoom extends Room<SectorState> {
       const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
       if (!rec || (rec.kind !== 1 && rec.kind !== 2)) return false; // asteroids / scrap: no
       if (rec.kind === 2) {
+        // A structure outside the registry (testMode `structurePoses`
+        // fixtures) has no owner: lockable, never hostile (failsafe first).
         const owner = this.structureRegistry.get(rec.id)?.owner;
-        if (owner === undefined || owner === pid) return false; // never your own base
-        out.hostile = relationOf(pid, owner, this.relationCtx) === 'hostile';
+        if (owner === pid) return false; // never your own base
+        out.hostile = owner !== undefined && relationOf(pid, owner, this.relationCtx) === 'hostile';
       } else {
         out.hostile = this.npcHostileTo(rec.id, pid);
       }
@@ -4149,22 +4184,20 @@ export class SectorRoom extends Room<SectorState> {
     serverLogEvent('lock_hostile_act', { playerId: pid, target: key });
   }
 
-  /** Turret aim for a fire-control pilot: the mount's group lock target pose. */
   /**
    * Fire control: true when a mount's barrel points at its group's lock within
-   * `FC_MOUNT_FIRE_TOLERANCE`. Legacy pilots always pass. A turret clamped at
-   * its arc limit with the target outside the arc fails, so it can't fire.
+   * `FC_MOUNT_FIRE_TOLERANCE`. A turret clamped at its arc limit with the
+   * target outside the arc fails, so it can't fire.
    */
   private mountBearsOnLock(pid: string, mountId: string, ox: number, oy: number, angle: number): boolean {
-    if (!this.locks.isEnabled(pid)) return true;
     if (!this.lockAimTarget(pid, mountId, this._fcBearPose)) return false;
     // Shared with the client's ghost-bolt pass (#15).
     return barrelBearsOn(ox, oy, angle, this._fcBearPose.x, this._fcBearPose.y);
   }
   private readonly _fcBearPose = { x: 0, y: 0, vx: 0, vy: 0 };
 
+  /** Turret aim: the pose of the mount's group lock target (false = none). */
   private lockAimTarget(pid: string, mountId: string, out: { x: number; y: number; vx: number; vy: number }): boolean {
-    if (!this.locks.isEnabled(pid)) return false;
     const key = this.locks.aimKeyFor(pid, mountId);
     if (key === null || !this.resolveLockTarget(pid, key, this._lockTarget)) return false;
     out.x = this._lockTarget.x; out.y = this._lockTarget.y; out.vx = this._lockTarget.vx; out.vy = this._lockTarget.vy;
@@ -8197,9 +8230,9 @@ export class SectorRoom extends Room<SectorState> {
     if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.startHostile === true) {
       this.markAllDronesHostileTo(playerId);
     }
-    // Fire control: this client locks targets; its groups fire only at locks.
-    if (parsed.success && parsed.data.fireControl === true) this.locks.enable(playerId);
-    else { this.locks.forget(playerId); this.npcLocks.forget(playerId); }
+    // Fire control (universal): every pilot is tracked; its groups fire only
+    // at LOCKED targets. `instantLock` is the testMode shortcut.
+    this.locks.enable(playerId, (this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.instantLock === true);
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a
     // sane value (e.g. a fire request resolved on this same client.send turn).
@@ -10298,6 +10331,7 @@ export class SectorRoom extends Room<SectorState> {
 
   private update(): void {
     this.inputCountThisTick.clear();
+    this.lockMsgCountThisTick.clear();
     // Phase 8 — galaxy sectors always run the simulation step regardless of
     // player count, so the world feels alive (drones patrol, asteroids drift,
     // sleep transitions fire) even when nobody's logged in. Engineering rooms

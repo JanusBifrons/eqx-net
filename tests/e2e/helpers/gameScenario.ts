@@ -33,6 +33,12 @@ export interface TestClientOpts {
    *  `jsHeapGrowthMb` metric can be exercised end-to-end. DEV-build
    *  only; the hook tree-shakes from prod via `import.meta.env.DEV`. */
   injectLeak?: number;
+  /** Lock-to-fire bespoke trigger (`?instantLock=1`, testMode rooms only): AUTO
+   *  weapon groups also lock NON-hostile NPCs/structures in reach + arc, and
+   *  every lock completes on the next lock step (≤ 100 ms). Use it in any spec
+   *  that needs to SHOOT something but isn't about locking. Never auto-picks
+   *  other players — lock those with `lockOn` (helpers/fireControl.ts). */
+  instantLock?: boolean;
   /** Per-test room isolation. Pass a unique value (e.g. randomUUID) for
    *  the first client; pass the SAME value for additional clients that
    *  must share a room with the first. Omit ⇒ a fresh UUID is minted
@@ -69,6 +75,7 @@ export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
   if (opts.initialAngle !== undefined) params.set('initialAngle', String(opts.initialAngle));
   if (opts.shipKind !== undefined) params.set('shipKind', opts.shipKind);
   if (opts.injectLeak !== undefined) params.set('injectLeak', String(opts.injectLeak));
+  if (opts.instantLock) params.set('instantLock', '1');
   for (const [k, v] of Object.entries(opts.extraParams ?? {})) params.set(k, v);
   await page.goto(`${BASE_URL}?${params}`);
   await page.waitForFunction(
@@ -104,6 +111,8 @@ export interface GalaxyTestClientOpts {
   /** Renderer zoom override (`?zoom=`). > 1 zooms IN — handy for visual
    *  capture specs that want the ship + effects larger on screen. */
   zoom?: number;
+  /** See `TestClientOpts.instantLock`. */
+  instantLock?: boolean;
   /** See `TestClientOpts.waitForInPlay` — default `true`. */
   waitForInPlay?: boolean;
 }
@@ -137,6 +146,7 @@ export async function launchGalaxyTestClient(browser: Browser, opts: GalaxyTestC
   if (opts.lingerMs !== undefined) params.set('lingerMs', String(opts.lingerMs));
   if (opts.newShip) params.set('newShip', '1');
   if (opts.zoom !== undefined) params.set('zoom', String(opts.zoom));
+  if (opts.instantLock) params.set('instantLock', '1');
   await page.goto(`${BASE_URL}?${params}`);
   // Galaxy rooms lazy-create + boot a physics worker on first join, so allow
   // a longer ready window than the engineering-room helper.

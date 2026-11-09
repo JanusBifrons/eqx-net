@@ -15,10 +15,14 @@
  * transient alert + possible respawn don't race the read):
  *   (1) victim data-hull-pct reaches 0,
  *   (2) victim data-sector-alert === 'SHIP DESTROYED'.
+ *
+ * Lock-to-fire (2026-11-09): the shooter locks the victim first (`lockOn`,
+ * completed at once by `instantLock`) — the server refuses unlocked fire.
  */
 import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
-import { launchTestClient, getHullPct, getSectorAlert } from '../helpers/gameScenario';
+import { launchTestClient, getHullPct, getSectorAlert, getLocalPlayerId } from '../helpers/gameScenario';
+import { lockOn, toManual } from '../helpers/fireControl';
 
 test('victim sees its own death: hull hits 0, alert reads SHIP DESTROYED', async ({
   browser,
@@ -29,6 +33,7 @@ test('victim sees its own death: hull hits 0, alert reads SHIP DESTROYED', async
     spawnY: 0,
     initialAngle: 0,
     shipKind: 'interceptor',
+    instantLock: true,
     testId,
   });
   const victim = await launchTestClient(browser, {
@@ -42,7 +47,11 @@ test('victim sees its own death: hull hits 0, alert reads SHIP DESTROYED', async
   try {
     expect(await getHullPct(victim.page)).toBeGreaterThan(0);
 
-    // Shooter holds Space: one 26-dmg trigger kills the 10-hull victim.
+    // Shooter locks in MAN (an AUTO group would kill the victim on the lock
+    // step, dropping the lock before the chip read LOCKED), then holds Space:
+    // one 26-dmg trigger kills the 10-hull victim.
+    await toManual(shooter.page);
+    await lockOn(shooter.page, { kind: 'ship', playerId: await getLocalPlayerId(victim.page) });
     await shooter.page.keyboard.down('Space');
 
     // Catch the death lifecycle ATOMICALLY: at destruction the victim's own

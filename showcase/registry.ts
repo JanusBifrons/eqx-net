@@ -45,7 +45,6 @@ import { npcCitadel } from './shots/npcCitadel.js';
 import { alienGate, garrisonPatrol, teleporterRide, transitHub } from './shots/v4.js';
 import { tradeDeal, tradeRaid } from './shots/trade.js';
 import { cockpitBounty, cockpitHaul, cockpitRobots, cockpitStronghold } from './shots/cockpit.js';
-import { hudVariantShots } from './shots/hudVariants.js';
 import { fireControlShots } from './shots/fireControl.js';
 
 /** Every shot, in reel order. Catalogue = all of them; reel = `reel: true`. */
@@ -113,8 +112,7 @@ export const SHOTS: readonly Shot[] = [
   garrisonPatrol,
   habitatStation,
   mobile,
-  // Catalogue-only: the exp/hud-mobile-first HUD takes (`pnpm showcase:hud`).
-  ...hudVariantShots,
+  // Catalogue-only: the fire-control HUD takes (`pnpm showcase:fc`).
   ...fireControlShots,
 ];
 
@@ -165,6 +163,7 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
   'cinematic-camera': 'The tool that films the video.',
   'showcase-pipeline': 'The pipeline itself.',
   'procedural-bases-research': 'Research record.',
+  'hud-variants': 'historical: HUD variants retired (fire control is the only HUD since 2026-11-09).',
 };
 
 /** Docs whose feature exists but cannot be staged on main yet — with what unblocks it. */

@@ -46,13 +46,11 @@ test('shield+hull HUD wiring is live end-to-end on join', async ({ browser }) =>
     await expect(shieldTestId).toHaveText(/^\d+$/);
     await expect(hullTestId).toHaveText(/^\d+$/);
 
-    // The tiny HUD widget renders with both bars + E2E hooks.
-    const bar = page.locator('[data-testid="shield-hull-bar"]');
-    await expect(bar).toBeVisible();
-    expect(await bar.getAttribute('data-shield-pct')).toMatch(/^\d+$/);
-    expect(await bar.getAttribute('data-hull-pct')).toMatch(/^\d+$/);
-    await expect(bar.getByText('SHLD')).toBeVisible();
-    await expect(bar.getByText('HULL')).toBeVisible();
+    // The GameHud status capsule (the only HUD since 2026-11-09) draws the
+    // segmented shield + hull rings.
+    await expect(page.locator('[data-testid="hud-status"]')).toBeVisible();
+    await expect(page.locator('[data-testid="hud-shield"]')).toBeAttached();
+    await expect(page.locator('[data-testid="hud-hull"]')).toBeAttached();
 
     // Game-surface mirror (the channel combat.spec.ts reads): a fresh,
     // undamaged ship is full shield AND full hull.

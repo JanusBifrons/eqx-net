@@ -71,7 +71,7 @@ import { useTouchClickActivate } from './touchClickActivate';
  * held) HUD actions — what used to be scattered across the bottom-center MAP
  * button (`GalaxyMapToggleButton`), the bottom thumb-cluster weapon toggle
  * (`SlotSelector`), and the drawer toggle. The continuous/held controls
- * (joystick + FIRE + BOOST in `MobileControls`) deliberately stay as their own
+ * (move stick, lock line + BOOST in `GameHud`) deliberately stay as their own
  * dedicated buttons — a tap-to-expand FAB is the wrong affordance for an input
  * you hold down (confirmed with the user).
  *
@@ -138,7 +138,7 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
   // Multitouch support (smoke handoff 2026-06-06). We drive the FAB + actions on
   // `onTouchStart` so a SECOND simultaneous touch opens/activates them; the
   // trailing synthesized click is dropped within the suppress window. `onClick`
-  // stays live for desktop. Shared with `AutoFireToggleButton` (one impl).
+  // stays live for desktop (one impl: `useTouchClickActivate`).
   const { touchActivate, clickActivate, isWithinSuppressWindow } = useTouchClickActivate();
 
   const close = useCallback(() => {

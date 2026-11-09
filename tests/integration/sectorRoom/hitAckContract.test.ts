@@ -82,6 +82,8 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
     // the 2026-06-01 rebalance) and clear of the 20 u barrel + self radius.
     await harness.connectActive(targetPid, { shipKind: 'fighter', spawnX: 0, spawnY: 120 });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === targetPid });
+    // Lock-to-fire is universal: the shooter's groups need a completed lock.
+    harness.lockTarget(shooterPid, targetPid);
 
     const hitAcks: Array<Record<string, unknown>> = [];
     const damages: Array<Record<string, unknown>> = [];
@@ -133,7 +135,7 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
 
   it('a miss fire: hit_ack.hit === false, NO damage field, NO DamageEvent (damage rides only hit:true)', async () => {
     const shooterPid = randomUUID();
-    const shooter = (await harness.connectAs(shooterPid, {
+    const shooter = (await harness.connectActive(shooterPid, {
       // weapons/energy/AI overhaul (2026-06-01): the fighter now fires
       // BOLTS (projectiles), which ack hit:false. This contract is about the
       // HITSCAN hit_ack ↔ DamageEvent relationship, so the shooter is an
@@ -150,6 +152,11 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
     shooter.onMessage('hit_ack', (m: Record<string, unknown>) => hitAcks.push(m));
     shooter.onMessage('damage', (m: Record<string, unknown>) => damages.push(m));
 
+    // Lock-to-fire is universal, so a miss needs a lock too: a ship dead ahead
+    // on the +Y ray but far past the beam's reach (250, ×1.3 falloff).
+    const farPid = randomUUID();
+    await harness.connectActive(farPid, { shipKind: 'fighter', spawnX: 0, spawnY: 1500 });
+    harness.lockTarget(shooterPid, farPid);
     await harness.advance(300); // symmetry with the hit test (ring-recorded shooter)
 
     const serverTick = (harness.getServerRoom() as unknown as SectorRoom)._internals.serverTick;
@@ -195,6 +202,8 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === shooterPid });
     await harness.connectActive(targetPid, { shipKind: 'fighter', spawnX: 0, spawnY: 120 });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === targetPid });
+    // Lock-to-fire is universal: the shooter's groups need a completed lock.
+    harness.lockTarget(shooterPid, targetPid);
 
     const hitAcks: Array<Record<string, unknown>> = [];
     const damages: Array<Record<string, unknown>> = [];

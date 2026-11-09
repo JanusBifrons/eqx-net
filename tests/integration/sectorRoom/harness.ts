@@ -109,6 +109,17 @@ export interface SectorTestHarness {
   connectActive(playerId: string, joinOpts?: Record<string, unknown>): Promise<ClientRoom<SectorState>>;
   /** Send a `leave()` from the client side. */
   disconnectClient(room: ClientRoom<SectorState>): Promise<void>;
+  /**
+   * Lock-to-fire is universal: a pilot fires only at a target its weapon
+   * group has a COMPLETED lock on. For a test that isn't about locking, this
+   * completes a lock instantly through `_internals.forceLock`. `target` is a
+   * lock key (`s:<entityId>` | `p:<playerId>`), a swarm record id (e.g. a
+   * drone id) or a playerId. `groupId` absent ⇒ every group of the pilot.
+   * Throws when nothing took the lock (unknown target / pilot not spawned).
+   * Alternatively join with `instantLock: true` (AUTO groups lock any NPC or
+   * non-own structure in reach + arc at once).
+   */
+  lockTarget(playerId: string, target: string, groupId?: string): number;
   /** Wait for the next snapshot. Note: snapshot broadcasts are suppressed
    *  while the sector is idle (no motion / projectiles). Use {@link sendThrust}
    *  before this call to wake the broadcast loop. */
@@ -340,6 +351,19 @@ export async function bootSectorTestServer(opts: {
         await new Promise((r) => setTimeout(r, 40));
       }
       throw new Error(`connectActive: ship for ${playerId} never activated`);
+    },
+    lockTarget(playerId, target, groupId) {
+      const server = this.getServerRoom() as unknown as SectorRoom | null;
+      if (!server) throw new Error('lockTarget: no server room yet');
+      const internals = server._internals;
+      let key = target;
+      if (!key.startsWith('s:') && !key.startsWith('p:')) {
+        const rec = internals.swarmRegistry.get(key);
+        key = rec ? `s:${rec.entityId}` : `p:${key}`;
+      }
+      const n = internals.forceLock(playerId, key, groupId);
+      if (n === 0) throw new Error(`lockTarget: ${playerId} could not lock ${key}${groupId ? ` (group ${groupId})` : ''}`);
+      return n;
     },
     async disconnectClient(room) {
       try { await room.leave(); } catch { /* ignore */ }

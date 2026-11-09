@@ -59,9 +59,17 @@ describe('SectorRoom integration — slot firing + energy authority', () => {
     throw new Error('ship not found after join');
   }
 
+  /** Lock-to-fire is universal: park a sturdy ship dead ahead and lock it. */
+  async function lockAhead(pid: string): Promise<void> {
+    const target = randomUUID();
+    await harness.connectActive(target, { shipKind: 'fighter', spawnX: 0, spawnY: 150, initialHull: 100_000 });
+    harness.lockTarget(pid, target);
+  }
+
   it('a twin-beam slot drains energy ONCE per trigger, not per mount', async () => {
     const shooter = await join('interceptor');
     const internals = shooter.room as unknown as EnergyTestInternals;
+    await lockAhead(shooter.pid);
     await harness.advance(100);
 
     const slotCost = resolveSlotEnergyCost(SHIP_KINDS.interceptor); // = one beam (5)
@@ -96,6 +104,7 @@ describe('SectorRoom integration — slot firing + energy authority', () => {
   it('the recipient OWN snapshot entry carries energy and it drops on fire', async () => {
     const shooter = await join('scout');
     const internals = shooter.room as unknown as EnergyTestInternals;
+    await lockAhead(shooter.pid);
 
     let lastSnap: SnapshotMessage | null = null;
     shooter.cr.onMessage('snapshot', (s: SnapshotMessage) => { lastSnap = s; });

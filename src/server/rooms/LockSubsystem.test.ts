@@ -40,12 +40,14 @@ function harness(kindId = 'fighter'): {
 }
 
 const still = (x: number, hostile: boolean): LockTargetView => ({ x, y: 0, vx: 0, vy: 0, signature: 30, hostile });
+/** Lock-line bearing straight ahead (+y; ship-angle convention: forward = (-sin b, cos b)). */
+const AHEAD = 0;
 const steps = (l: LockSubsystem, n: number): void => { for (let i = 0; i < n; i++) l.step(); };
 
 describe('LockSubsystem', () => {
-  it('players without fire control are never gated', () => {
+  it('an untracked player has no locks, so it may not fire (lock-to-fire is universal)', () => {
     const h = harness();
-    expect(h.locks.hasLocked('someone-else', 'primary')).toBe(true);
+    expect(h.locks.hasLocked('someone-else', 'primary')).toBe(false);
   });
 
   it('a hostile target locks after its lock time, then the group may fire', () => {
@@ -173,6 +175,26 @@ describe('LockSubsystem', () => {
     expect(ref.p).toBeGreaterThan(0);
   });
 
+  it('testMode instantLock: a lock completes on the next step (a failsafe still commits)', () => {
+    const h = harness();
+    h.locks.enable('p1', true);
+    h.targets.set('s:1', still(200, false));
+    h.locks.requestLock('p1', 'primary', 's:1');
+    steps(h.locks, 1);
+    expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
+    expect(h.commits).toEqual(['s:1']);
+  });
+
+  it('forceLock (integration test hook) locks every group at once, or one group', () => {
+    const h = harness();
+    h.targets.set('s:1', still(200, true));
+    expect(h.locks.forceLock('p1', 's:1', 'nope')).toBe(0);
+    expect(h.locks.forceLock('p1', 's:9')).toBe(0);
+    expect(h.locks.forceLock('p1', 's:1')).toBeGreaterThan(0);
+    expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
+    expect(h.locks.forceLock('nobody', 's:1')).toBe(0);
+  });
+
   describe('held locks (the lock line)', () => {
     const pct = (h: ReturnType<typeof harness>): number => h.locks.wireFor('p1')![0]!.l[0]?.p ?? -1;
     const ahead = (y: number): LockTargetView => ({ x: 0, y, vx: 0, vy: 0, signature: 30, hostile: true });
@@ -180,7 +202,7 @@ describe('LockSubsystem', () => {
     it('builds only while held: let go part-way and it drains back to 0, then drops', () => {
       const h = harness();
       h.targets.set('s:1', ahead(200));
-      h.locks.trackLock('p1', 'primary', 's:1');
+      h.locks.trackLock('p1', 'primary', 's:1', AHEAD);
       steps(h.locks, 6);
       const built = pct(h);
       expect(built).toBeGreaterThan(10);
@@ -196,12 +218,12 @@ describe('LockSubsystem', () => {
     it('the line coming back onto a draining target resumes it; held to the end it locks', () => {
       const h = harness();
       h.targets.set('s:1', ahead(200));
-      h.locks.trackLock('p1', 'primary', 's:1');
+      h.locks.trackLock('p1', 'primary', 's:1', AHEAD);
       steps(h.locks, 5);
       h.locks.trackLock('p1', 'primary', null);
       steps(h.locks, 2);
       const low = pct(h);
-      h.locks.trackLock('p1', 'primary', 's:1'); // back on it
+      h.locks.trackLock('p1', 'primary', 's:1', AHEAD); // back on it
       steps(h.locks, 2);
       expect(pct(h)).toBeGreaterThan(low);
       expect(h.locks.wireFor('p1')![0]!.l[0]!.r).toBeUndefined();
@@ -213,10 +235,38 @@ describe('LockSubsystem', () => {
       expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
     });
 
+    it('lock_track is verified: a target off the claimed line (or with no bearing) is not held', () => {
+      const h = harness();
+      h.targets.set('s:1', ahead(200));
+      h.locks.trackLock('p1', 'primary', 's:1', Math.PI / 2); // line points the other way
+      steps(h.locks, 6);
+      expect(h.locks.wireFor('p1')![0]!.l.length).toBe(0);
+      h.locks.trackLock('p1', 'primary', 's:1'); // no bearing
+      steps(h.locks, 6);
+      expect(h.locks.wireFor('p1')![0]!.l.length).toBe(0);
+      h.targets.set('s:2', ahead(5000)); // on the line but far past reach
+      h.locks.trackLock('p1', 'primary', 's:2', AHEAD);
+      steps(h.locks, 1);
+      expect(h.locks.wireFor('p1')![0]!.l.length).toBe(0);
+      h.locks.trackLock('p1', 'primary', 's:1', AHEAD); // on the line: held
+      steps(h.locks, 1);
+      expect(h.locks.wireFor('p1')![0]!.l[0]!.t).toBe('s:1');
+    });
+
+    it('a claim that leaves the line releases the held lock', () => {
+      const h = harness();
+      h.targets.set('s:1', ahead(200));
+      h.locks.trackLock('p1', 'primary', 's:1', AHEAD);
+      steps(h.locks, 4);
+      h.locks.trackLock('p1', 'primary', 's:1', Math.PI); // same key, line now behind
+      steps(h.locks, 1);
+      expect(h.locks.wireFor('p1')![0]!.l[0]!.r).toBe(1);
+    });
+
     it('a draining held lock pressed with Lock (requestLock) now runs to completion', () => {
       const h = harness();
       h.targets.set('s:1', ahead(200));
-      h.locks.trackLock('p1', 'primary', 's:1');
+      h.locks.trackLock('p1', 'primary', 's:1', AHEAD);
       steps(h.locks, 4);
       h.locks.trackLock('p1', 'primary', null);
       h.locks.requestLock('p1', 'primary', 's:1');

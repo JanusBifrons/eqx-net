@@ -21,8 +21,11 @@
  * The flip must happen EXACTLY once (locks the dead-button bug AND the
  * historical double-toggle).
  *
- * ⚠️ AUTHORED, UNVERIFIED in the CI container (Playwright browsers blocked).
- * Run on a browser-capable host.
+ * Lock-to-fire (2026-11-09): the global AUTO-fire toggle is gone. Its
+ * successor is each weapon group's AUTO/MAN switch on the weapon strip
+ * (`fc-mode-<group>`, bound to `pointerdown`), so the same lock now drives
+ * that switch: a second touch on it while steering must flip the group's mode
+ * exactly once.
  */
 import { test, expect } from '@playwright/test';
 import type { Page, CDPSession } from '@playwright/test';
@@ -65,7 +68,7 @@ async function secondTouchTap(cdp: CDPSession, held: Pt, tap: Pt): Promise<void>
   });
 }
 
-test('AUTO toggles via a SECOND touch while the joystick is held — exactly once', async ({
+test("a weapon group's AUTO/MAN switch flips via a SECOND touch while the joystick is held — exactly once", async ({
   browser,
 }) => {
   const ctx = await browser.newContext({
@@ -83,22 +86,23 @@ test('AUTO toggles via a SECOND touch while the joystick is held — exactly onc
       }, undefined,
       { timeout: 15000 },
     );
-    await expect(page.locator('[data-testid="mobile-joystick"]')).toBeVisible();
-    const auto = page.locator('[data-testid="auto-fire-toggle"]');
-    await expect(auto).toBeVisible();
+    await expect(page.locator('[data-testid="hud-move-home"]')).toBeVisible();
+    const auto = page.locator('[data-testid^="fc-mode-"]').first();
+    await expect(auto).toBeVisible({ timeout: 30_000 }); // the HUD mounts when the loading curtain lifts
+    const autoId = (await auto.getAttribute('data-testid')) ?? '';
 
-    const stateBefore = await auto.getAttribute('data-state'); // 'on' by default
+    const stateBefore = await auto.getAttribute('data-state'); // 'auto' | 'manual'
 
     const cdp = await page.context().newCDPSession(page);
-    const joystick = await centreOf(page, 'mobile-joystick');
-    const autoPt = await centreOf(page, 'auto-fire-toggle');
+    const joystick = await centreOf(page, 'hud-move-home');
+    const autoPt = await centreOf(page, autoId);
 
     // A SECOND touch on AUTO while the joystick is held must flip it once.
     await secondTouchTap(cdp, joystick, autoPt);
 
     await expect
       .poll(async () => auto.getAttribute('data-state'), {
-        message: 'AUTO did not toggle from a second-touch tap while steering (dead-button bug)',
+        message: 'the AUTO/MAN switch did not flip from a second-touch tap while steering (dead-button bug)',
         timeout: 2000,
       })
       .not.toBe(stateBefore);
@@ -109,7 +113,7 @@ test('AUTO toggles via a SECOND touch while the joystick is held — exactly onc
     await page.waitForTimeout(300);
     expect(
       await auto.getAttribute('data-state'),
-      'AUTO double-toggled back (synthesized click not suppressed)',
+      'the AUTO/MAN switch double-toggled back (synthesized click not suppressed)',
     ).toBe(stateAfter);
   } finally {
     await ctx.close();

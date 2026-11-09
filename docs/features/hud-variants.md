@@ -1,5 +1,7 @@
 # Experimental piloting HUDs (`?ui=a|b|c`)
 
+> **Historical (2026-11-09).** The variant switch is retired: variant D (Fire Control) is the only HUD, and the legacy HUD, A/B/C and `?ui=` are deleted. See [weapon-groups-and-locking.md](weapon-groups-and-locking.md). This page is kept as the record of the experiment.
+
 Branch `exp/hud-mobile-first`. Three switchable HUD layouts for flying and
 fighting, built mobile-first (landscape phone first, portrait and desktop must
 still work). With no `?ui` the legacy HUD is untouched.

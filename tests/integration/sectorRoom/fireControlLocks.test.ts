@@ -1,11 +1,11 @@
 /**
  * exp/fire-control P2 — target locking through the REAL room.
  *
- * A pilot who joins with `fireControl` may only fire a weapon group at a
+ * Lock-to-fire is universal: every pilot may only fire a weapon group at a
  * LOCKED target. Locking a non-hostile target (here another player) runs the
  * failsafe ring first; finishing it is logged as a hostile act; then the
  * lock acquires, the snapshot reports it LOCKED, and fire is accepted.
- * A legacy pilot (no `fireControl`) is never gated.
+ * A pilot who never locks is refused (no legacy pass-through any more).
  *
  * Deterministic poses: both ships spawn at fixed points (angle 0).
  */
@@ -43,7 +43,7 @@ describe('SectorRoom integration — fire-control target locks', () => {
     const shooterPid = randomUUID();
     const targetPid = randomUUID();
     const shooter = (await harness.connectActive(shooterPid, {
-      shipKind: 'interceptor', spawnX: 0, spawnY: 0, fireControl: true,
+      shipKind: 'interceptor', spawnX: 0, spawnY: 0,
     })) as ClientRoom<SectorState>;
     await harness.connectActive(targetPid, { spawnX: 0, spawnY: 180 });
 
@@ -77,7 +77,7 @@ describe('SectorRoom integration — fire-control target locks', () => {
     expect(acks.find((a) => a.clientShotId === 'after')?.rejected).not.toBe(true);
   }, 30_000);
 
-  it('a legacy pilot (no fireControl) fires without any lock', async () => {
+  it('lock-to-fire is universal: a pilot who joined with no options cannot fire without a lock', async () => {
     const pid = randomUUID();
     const room = (await harness.connectActive(pid, { shipKind: 'interceptor', spawnX: 0, spawnY: 0 })) as ClientRoom<SectorState>;
     const acks: Ack[] = [];
@@ -86,7 +86,7 @@ describe('SectorRoom integration — fire-control target locks', () => {
     const tick = (harness.getServerRoom() as unknown as SectorRoom)._internals.serverTick;
     room.send('fire', { type: 'fire', tick, clientShotId: 'legacy', weapon: 'hitscan', dirAngle: 0, slotId: 'primary' });
     await waitUntil(() => acks.some((a) => a.clientShotId === 'legacy'), 3000, 'legacy ack');
-    expect(acks.find((a) => a.clientShotId === 'legacy')?.rejected).not.toBe(true);
+    expect(acks.find((a) => a.clientShotId === 'legacy')?.rejected).toBe(true);
   }, 15_000);
 });
 
@@ -103,7 +103,7 @@ describe('SectorRoom integration — fire-control AUTO groups', () => {
   it('an idle AUTO group locks a drone hostile to the pilot on its own', async () => {
     const pid = randomUUID();
     const room = (await harness.connectActive(pid, {
-      shipKind: 'interceptor', spawnX: 0, spawnY: 0, fireControl: true, startHostile: true,
+      shipKind: 'interceptor', spawnX: 0, spawnY: 0, startHostile: true,
     })) as ClientRoom<SectorState>;
     let groups: SnapGroups[] | undefined;
     room.onMessage('snapshot', (snap: { states?: Record<string, { playerId?: string; groups?: SnapGroups[] }> }) => {

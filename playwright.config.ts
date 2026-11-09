@@ -70,10 +70,10 @@ const FEATURE_SPECS: string[] = [
   // locks but in no tier, so nothing ever ran them. All pass; now they run with
   // the feature tier.
   '**/auto-fire-multitouch.spec.ts',
-  // exp/hud-mobile-first — the ?ui=a|b|c HUD variants (overlap + floating stick).
-  '**/hud-variants.spec.ts',
-  // exp/fire-control — ?ui=d target locking (auto lock, mouse drag, thumb drag).
+  // Fire control — target locking (auto lock, mouse drag, thumb drag); the only HUD since 2026-11-09.
   '**/fire-control-lock.spec.ts',
+  // Lock-to-fire is universal: default join can't fire before a LOCK, fires after.
+  '**/lock-to-fire-default.spec.ts',
   '**/galaxy-map-no-warp-ripple.spec.ts',
   '**/galaxy-sector-badge-icon-label.spec.ts',
   '**/galaxy-sector-transit-adjacency.spec.ts',

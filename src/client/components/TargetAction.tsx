@@ -2,8 +2,8 @@
  * Fire control (exp/fire-control) — the inspector's "Target" button: lock the
  * selected ship / drone / structure with the ACTIVE weapon group, so the pilot
  * doesn't have to track it with the smart-aim drag. Drawn in the active
- * group's colour (the same colour its lock brackets will be). Shown only for a
- * fire-control pilot, for something lockable that isn't theirs.
+ * group's colour (the same colour its lock brackets will be). Shown for
+ * something lockable that isn't the pilot's own.
  */
 import Box from '@mui/material/Box';
 import { useUIStore } from '../state/store';
@@ -18,7 +18,7 @@ export function TargetAction({ isOwn }: { isOwn: boolean }): JSX.Element | null 
   const groups = useUIStore((s) => s.fcGroups);
   const active = useUIStore((s) => s.activeGroupId);
   const client = getGameClient();
-  if (!client?.isFireControl?.() || isOwn || selected === client.mirror.localPlayerId || kind === null || !LOCKABLE.has(kind)) return null;
+  if (!client || isOwn || selected === client.mirror.localPlayerId || kind === null || !LOCKABLE.has(kind)) return null;
   const idx = groups.findIndex((g) => g.id === active);
   if (idx < 0) return null;
   const col = groupColourHex(idx);

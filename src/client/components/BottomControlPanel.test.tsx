@@ -1,15 +1,14 @@
 /**
  * Phase 5 WS-4 — the desktop RTS bottom control panel. Locks:
  *   - desktop + in-game gating (renders nothing off-game);
- *   - PILOTING shows the ship's weapon slots (active highlighted) + empty latent
- *     squares; number key 1..n + click switch the active slot;
+ *   - PILOTING renders nothing and leaves the number keys alone (the fire-control
+ *     weapon strip replaced the weapon-slot row; 1–9 select weapon groups);
  *   - SPECTATING flips to the flattened building palette; number key / click
  *     selects a building for placement.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
-import { getShipKind } from '../../shared-types/shipKinds.js';
 import { BottomControlPanel } from './BottomControlPanel.js';
 
 const pressKey = (key: string): void => {
@@ -33,21 +32,13 @@ describe('BottomControlPanel (Phase 5 WS-4)', () => {
     expect(screen.queryByTestId('bottom-control-panel')).toBeNull();
   });
 
-  it('PILOTING — shows the weapon panel with the active slot highlighted + empty latent squares', () => {
-    render(<BottomControlPanel />);
-    const panel = screen.getByTestId('bottom-control-panel');
-    expect(panel).toHaveAttribute('data-panel-mode', 'weapons');
-    const firstSlotId = getShipKind('fighter').slots![0]!.id;
-    expect(screen.getByTestId(`bcp-cell-slot:${firstSlotId}`)).toHaveAttribute('data-active', '1');
-    // The fighter's two latent wing hardpoints render as empty squares.
-    expect(screen.getAllByText('Empty').length).toBeGreaterThan(0);
-  });
-
-  it('PILOTING — number key 1 switches to the first weapon slot', () => {
+  it('PILOTING — renders nothing; number keys leave the slot + placement alone', () => {
     useUIStore.setState({ activeSlotId: 'bogus' });
     render(<BottomControlPanel />);
+    expect(screen.queryByTestId('bottom-control-panel')).toBeNull();
     pressKey('1');
-    expect(useUIStore.getState().activeSlotId).toBe(getShipKind('fighter').slots![0]!.id);
+    expect(useUIStore.getState().activeSlotId).toBe('bogus');
+    expect(useUIStore.getState().placementKind).toBeNull();
   });
 
   it('SPECTATING — economy v2: packed counts label non-starter kinds; one you have none of is greyed + unpickable', () => {
