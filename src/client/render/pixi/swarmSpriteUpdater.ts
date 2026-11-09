@@ -151,6 +151,13 @@ export function chargeRangeForKind(shipKind: string | undefined): number {
 }
 
 
+/** Classic-look rocks: ice and crystal-veined ones read apart from plain rock
+ *  (a Machined rock bakes its resource colour instead). W3: this used to be
+ *  set once at build, and the reset below wiped it every frame. */
+function classicRockTint(resource: string | undefined): number | undefined {
+  return resource === 'ice' ? 0xa8dcff : resource === 'crystal' ? 0xd2a8ff : undefined;
+}
+
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
   if (!mirror.swarm) return;
   const now = performance.now();
@@ -262,10 +269,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         sprite = buildArtShipSprite(artHandle, () => buildAsteroidGfx(entityId, rockRadius));
         // P2c — ice and crystal-veined rocks read apart from plain rock (the
         // Machined rock bakes its resource colour instead).
-        if (!isMachinedSprite(sprite)) {
-          if (entry.asteroidResource === 'ice') sprite.tint = 0xa8dcff;
-          else if (entry.asteroidResource === 'crystal') sprite.tint = 0xd2a8ff;
-        }
+        // (Applied in the per-frame tint block below, the one tint site.)
       }
       ctx.shipContainer.addChild(sprite);
       ctx.sprites.set(spriteKey, sprite);
@@ -405,7 +409,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       // A Machined patrol has its faction paint baked in, so it stays untinted.
       const fc = entry.kind === 1 && entry.faction !== undefined && !(sprite instanceof MachinedShipSprite)
         ? npcFactionDef(entry.faction)?.color
-        : undefined;
+        : entry.kind === 0 && !isMachinedSprite(sprite)
+          ? classicRockTint(entry.asteroidResource)
+          : undefined;
       sprite.tint = fc ?? 0xffffff;
     }
     // Structures plan, Phase 3 — blueprints (not yet built) render dimmed
