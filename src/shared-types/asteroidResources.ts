@@ -9,7 +9,7 @@
  *
  * **Append-only:** `ASTEROID_RESOURCE_IDS` order will ride the wire.
  */
-import type { GoodId } from './goods.js';
+import { GOOD_DEFS, GOOD_IDS, type GoodId } from './goods.js';
 
 export const ASTEROID_RESOURCE_IDS = ['rock', 'ice', 'crystal'] as const;
 export type AsteroidResourceId = (typeof ASTEROID_RESOURCE_IDS)[number];
@@ -63,4 +63,32 @@ export function asteroidResourceIndex(id: AsteroidResourceId): number {
 
 export function asteroidResourceFromIndex(i: number): AsteroidResourceId {
   return ASTEROID_RESOURCE_IDS[i] ?? 'rock';
+}
+
+/** The goods `drawn` units of a rock yield, by ASTEROID_YIELD (minerals first,
+ *  the rest shared by the other goods; floors, like the Miner). Shared by every
+ *  extractor that mines into a hold (robot harvesters). */
+export function asteroidYield(resource: AsteroidResourceId, drawn: number): Partial<Record<GoodId, number>> {
+  const y = ASTEROID_YIELD[resource];
+  const out: Partial<Record<GoodId, number>> = {};
+  const ym = y.minerals ?? 0;
+  const minerals = Math.floor((drawn * ym) / 10);
+  if (minerals > 0) out.minerals = minerals;
+  const rest = drawn - minerals;
+  for (const g of GOOD_IDS) {
+    if (g === 'minerals') continue;
+    const share = y[g] ?? 0;
+    if (share <= 0) continue;
+    const n = Math.floor((rest * share) / (10 - ym));
+    if (n > 0) out[g] = n;
+  }
+  return out;
+}
+
+/** Cargo weight one mined unit of this rock becomes (so a hold can size a draw). */
+export function asteroidYieldWeightPerUnit(resource: AsteroidResourceId): number {
+  const y = ASTEROID_YIELD[resource];
+  let w = 0;
+  for (const g of GOOD_IDS) w += ((y[g] ?? 0) / 10) * GOOD_DEFS[g].weight;
+  return w;
 }

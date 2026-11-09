@@ -61,6 +61,13 @@ export const HAULER_HUNT_RANGE = sectorSpace(2500);
 export const RAID_DOCK_RADIUS = 200;
 export const RAID_STEP_WEIGHT = 30;
 export const RAID_PRIORITY: readonly GoodId[] = ['core', 'alloy', 'salvage', 'minerals'];
+/** W6 — mining: with nothing else to do, a harvester mines the nearest rock
+ *  with ore left within MINE_RANGE of itself, MINE_STEP_UNITS of ore per
+ *  control tick (~1.5 s) while within MINE_REACH of the rock's surface, and
+ *  banks it at the nexus once full. Same pool and yield as a Miner (20 a s). */
+export const MINE_RANGE = sectorSpace(3000);
+export const MINE_STEP_UNITS = 30;
+export const MINE_REACH = 120;
 /** The owner is warned at most this often per room. */
 export const RAID_NOTICE_THROTTLE_MS = 60_000;
 
@@ -83,7 +90,7 @@ export class RobotTerritory {
   private readonly subs: Array<{ bus: Bus; fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void }> = [];
   private readonly scratch: ControlInputs = { robots: 0, nexus: false, playerStructures: 0, players: 0 };
   /** P3b — harvester id → where it lives + when it may respawn. */
-  private readonly harvesters = new Map<string, { alive: boolean; sectorKey: string | null; respawnAtMs: number }>();
+  private readonly harvesters = new Map<string, { alive: boolean; sectorKey: string | null; respawnAtMs: number; mining: boolean }>();
   private readonly harvesterRespawnMs: number;
 
   constructor(
@@ -97,7 +104,7 @@ export class RobotTerritory {
     this.harvesterRespawnMs = opts.harvesterRespawnMs ?? HARVESTER_RESPAWN_MS;
     this.lastTickMs = this.now();
     for (let i = 0; i < HARVESTERS_PER_NEXUS; i++) {
-      this.harvesters.set(`${HARVESTER_ID_PREFIX}${i}`, { alive: false, sectorKey: null, respawnAtMs: 0 });
+      this.harvesters.set(`${HARVESTER_ID_PREFIX}${i}`, { alive: false, sectorKey: null, respawnAtMs: 0, mining: false });
     }
   }
 
@@ -215,7 +222,8 @@ export class RobotTerritory {
    *     something and no pod is left), and banks the whole hold into the
    *     nexus within HARVESTER_BANK_RADIUS;
    *   - otherwise chases the nearest loot pod (the room's collector does the
-   *     actual pickup), or idles beside the nexus.
+   *     actual pickup); with no pod, hauler or storage to raid it mines the
+   *     nearest rock with ore (W6), or idles beside the nexus.
    * Control cadence (~1.5 s); allocation here is fine.
    */
   private harvesterStep(nowMs: number): void {
@@ -252,7 +260,13 @@ export class RobotTerritory {
       const prey = !full && pod === null ? (room.nearestHauler?.(pose.x, pose.y, HAULER_HUNT_RANGE) ?? null) : null;
       // P3c — no pod and no hauler: raid the nearest player storage near the nexus.
       const raid = !full && pod === null && prey === null ? (room.nearestPlayerStorage?.(n.x, n.y, RAID_RANGE) ?? null) : null;
-      const goHome = full || (carried > 0 && pod === null && prey === null && raid === null);
+      // W6 — nothing to scoop, hunt or raid: mine the nearest rock with ore.
+      // It starts mining only empty-handed (anything it scooped is banked first)
+      // and then keeps at it until full or the ore runs out.
+      const rock = !full && pod === null && prey === null && raid === null && (carried === 0 || h.mining)
+        ? (room.nearestOreAsteroid?.(pose.x, pose.y, MINE_RANGE) ?? null) : null;
+      h.mining = rock !== null;
+      const goHome = full || (carried > 0 && pod === null && prey === null && raid === null && rock === null);
       if (prey !== null) {
         room.setBotMoveTarget(id, prey.x, prey.y);
       } else if (raid !== null) {
@@ -263,6 +277,16 @@ export class RobotTerritory {
         } else {
           room.setBotMoveTarget(id, raid.x, raid.y);
         }
+      } else if (rock !== null) {
+        // Park just off the rock's surface on our side (flying at its centre rams it).
+        const dx = pose.x - rock.x, dy = pose.y - rock.y;
+        const d = Math.hypot(dx, dy) || 1;
+        if (d <= rock.radius + MINE_REACH) {
+          const took = room.mineAsteroid?.(id, rock.entityId, MINE_STEP_UNITS, HARVESTER_CAPACITY) ?? 0;
+          if (took > 0) serverLogEvent('robot_harvester_mined', { id, weight: took });
+        }
+        const stand = rock.radius + MINE_REACH * 0.5;
+        room.setBotMoveTarget(id, rock.x + (dx / d) * stand, rock.y + (dy / d) * stand);
       } else if (goHome) {
         if (Math.hypot(pose.x - n.x, pose.y - n.y) <= HARVESTER_BANK_RADIUS) {
           const moved = room.bankHold?.(id, NEXUS_ID) ?? 0;
@@ -283,6 +307,7 @@ export class RobotTerritory {
     if (!h || !h.alive) return;
     h.alive = false;
     h.sectorKey = null;
+    h.mining = false;
     h.respawnAtMs = this.now() + this.harvesterRespawnMs;
     serverLogEvent('robot_harvester_destroyed', { id });
   }

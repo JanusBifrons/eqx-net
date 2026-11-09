@@ -169,7 +169,7 @@ import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
 import { RECIPES, blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
-import { rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
+import { asteroidYield, asteroidYieldWeightPerUnit, rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
 import { usesAmmo } from '../../shared-types/ammo.js';
@@ -9127,6 +9127,43 @@ export class SectorRoom extends Room<SectorState> {
   /** P3c — a harvester steals up to `stepWeight` (rarest goods first, plus up
    *  credits — never: they're virtual) from the storage network at `uid`, as
    *  ONE atomic `tradeTransfer` group into its own ownerless hold. */
+  /** W6 — LivingWorldRoom hook: nearest asteroid with ore left. Control cadence. */
+  nearestOreAsteroid(x: number, y: number, range: number): { entityId: number; x: number; y: number; radius: number } | null {
+    const a = this.findNearestAsteroid(x, y, range);
+    return a === null ? null : { entityId: a.entityId, x: a.x, y: a.y, radius: a.radius };
+  }
+
+  /** W6 — LivingWorldRoom hook: a robot harvester mines a rock. Ore comes out
+   *  of the SAME finite pool the Miner draws from (`drawAsteroidResources`)
+   *  and splits by the SAME yield (`asteroidYield`); the draw is sized to the
+   *  hold's free weight first, so no ore is burned into a full hold. The new
+   *  hold is one commit (an ownerless NPC hold, like LootCollector's npc
+   *  pickups), so a killed harvester spills what it mined. Control cadence. */
+  mineAsteroid(harvesterId: string, entityId: number, maxUnits: number, capacity: number): number {
+    const rock = this.swarmRegistry.getByEntityId(entityId);
+    if (!rock || rock.kind !== 0) return 0;
+    const store = getHoldStore();
+    const cur = store.get(harvesterId);
+    const hold = cur ? cloneHold(cur.hold) : emptyHold();
+    const before = holdWeight(hold);
+    const resource = rock.asteroidResource ?? 'rock';
+    const want = Math.min(maxUnits, Math.floor((capacity - before) / asteroidYieldWeightPerUnit(resource)));
+    if (want <= 0) return 0;
+    const drawn = this.drawAsteroidResources(entityId, want);
+    if (drawn <= 0) return 0;
+    const yieldOf = asteroidYield(resource, drawn);
+    for (const g of GOOD_IDS) {
+      const n = yieldOf[g] ?? 0;
+      if (n > 0) hold.goods[g] = (hold.goods[g] ?? 0) + n;
+    }
+    store.commit(
+      [{ holderUid: harvesterId, holderType: 'hauler', ownerId: null, sectorKey: this.sectorKey, x: null, y: null, hold, expiresAt: null }],
+      [],
+      this.sectorKey !== null,
+    );
+    return holdWeight(hold) - before;
+  }
+
   raidStorage(harvesterId: string, owner: string, uid: string, stepWeight: number): number {
     const snap = this.storage.tradeSnapshot(owner, uid);
     if (snap === null || stepWeight <= 0) return 0;
