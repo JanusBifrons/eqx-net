@@ -2760,7 +2760,7 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
 - **Fix.** A structure in the viewer's interest sends its shells too (`SnapshotBroadcaster`), locked by `tests/integration/sectorRoom/coastalDefences.test.ts`, which now asserts the pilot sees every calibre.
 - **Lesson.** Same as the capital round: "it fired" and "a viewer sees it" are separate claims. Any new long-range shooter (ship OR structure) needs the view locked, not just the hit.
 
-## 2026-11-08 — Melee corrections: the drone collision body is on the wrong timeline (WS7.1, open)
+## 2026-11-08 — Melee corrections: the drone collision body is on the wrong timeline (WS7.1, fixed)
 
 - **Symptom:** the `pack-battle` and `new-effects` showcase shots (both `feel-test-25`, a hostile 25-drone pack) failed the pose-trace gate on a fast desktop with the server at 60 Hz: 4–14 prediction corrections per take (max 2). Other shots: 0.
 - **Not host starvation.** A browser probe (own ports, the shot's input script, the pose gate's 0.3 u onset rule) found every onset within ~30 u of a drone hull, and the one take with no local contact had zero corrections.
@@ -2771,7 +2771,10 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
 - **Rules:**
   - A contact between a predicted body and an interpolated one is resolved on two different timelines. Any correction that only happens near another entity is this, not the network.
   - Before blaming a "second correction path", A/B it: switch it off in-page and count.
-- **Lock:** `tests/scenarios/meleeDroneContactPrediction.test.ts` (`it.fails` on the production follower; flip to `it` with the fix).
+- **Decision and fix (user: "I don't want two systems, it should be one system and paradigm"):** option (a), done as ONE path rather than a drone-specific dead-reckoner. Drone and scrap bodies now take exactly the route remote player ships always took: `preResetRemoteShips` anchors them to their latest server state on each snapshot (`anchorRemoteSwarmBodies`, from the pose ring at `snap.serverTick`), and the replay + `tickPhysics` step them forward. The per-frame follower is gone. Sprites still draw the interpolated pose; local beam / hit-prediction rays test drones and scrap at the drawn pose (`DisplayPoseHitscan`), the pose the turret aims at.
+- **The residual went too.** Because nothing re-poses the body per frame, the local ship's own push on a drone survives until the server's answer, as on the server. Model: peak 16 u (follower) → 1.9 u (re-posed dead-reckon prototype) → 0.06 u (unified path); scrap 17 corrections → 0.
+- **Rule:** one collision paradigm for every remote moving entity: predWorld on the predicted timeline from the latest server state; rendering is a separate, per-type choice. A new moving entity kind joins `isRemoteMovingSwarmKind`, not a new path.
+- **Lock:** `tests/scenarios/meleeDroneContactPrediction.test.ts` (production anchor within the pose gate, drones and scrap; the retired follower kept as the failing contrast).
 
 ## 2026-11-08 — A unit test killed a live perf run (misspelt env override)
 

@@ -12,10 +12,12 @@
  * `isEntityHostileToPlayer` for HaloRadar threat colour), and swaps its shield
  * collider on the authoritative shield-down bit.
  *
- * NOT posed in `spawnBody` / `onSync`: the drone's predWorld body is a KINEMATIC
- * follower driven each frame by `ColyseusClient.updateMirror` at the single
- * interpolated pose (the one-pose-per-frame rule). Re-posing here would be a
- * second, fighting correction path (the 2026-05-19 jitter bug class).
+ * NOT posed in `onSync`: the drone's predWorld body follows the remote-entity
+ * anchor, like a remote player ship (latest server state on each snapshot via
+ * `anchorRemoteSwarmBodies`, then stepped on the prediction timeline). Its
+ * SPRITE draws the interpolated pose. Re-posing the body here would be a
+ * second, fighting pose writer. Spawned with linear damping 0 (no client AI
+ * thrust: between anchors it coasts at the server's velocity).
  */
 import { getShipKind } from '@shared-types/shipKinds';
 import { HostileDroneBehaviour } from '@core/ai/HostileDroneBehaviour';
