@@ -523,3 +523,22 @@ export const capitalFleetArrive: Shot = {
     await ctx.sleep(10_000);
   },
 };
+
+/**
+ * Wrap-up W7: GPU-lit art (default for players since #344–#346; automated
+ * browsers stay on Baked unless the URL asks). The capital-guns-fighter take
+ * with : seen from a fighter ~1,500 u off the aft turret, the
+ * 16- and 5-inch muzzle flashes light the gunhouses and deck around them.
+ * (The capital-turrets framing was tried first: at 4,000 u only two salvos
+ * land, the bow ran off frame and no light read; review 2026-11-09.)
+ */
+export const gpuLitShips: Shot = {
+  ...capitalGunsFighter,
+  id: 'gpu-lit-ships',
+  section: 'tech',
+  title: 'GPU-lit ships',
+  caption: 'Ships are lit on the GPU every frame: each muzzle flash lights the gunhouses and deck around it.',
+  docs: ['gpu-lit-ships'],
+  reel: false,
+  target: { room: 'showcase-capital-duel', params: { ...capitalGunsFighter.target.params, shiplight: 'high' } },
+};
