@@ -6,7 +6,7 @@
  * the old `else`-is-drone branch had).
  *
  * This is the approved type-guard / switch seam — LOW frequency (once per body,
- * on first spawn). The per-entity sync and the per-frame kinematic follower
+ * on first spawn). The per-entity sync and the per-snapshot remote-entity anchor
  * route by descriptor DATA, never by re-resolving a leaf in the hot loop.
  */
 import {

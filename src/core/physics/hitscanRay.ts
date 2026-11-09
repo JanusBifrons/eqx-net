@@ -32,6 +32,9 @@ export function castHitscan(
    *  resolves a wall hit to its sentinel id. A DISABLED (down) wall is excluded
    *  from `castRay` by Rapier, so it is naturally passable. */
   wallHandleToId?: ReadonlyMap<number, string>,
+  /** Optional Rapier `filterPredicate`: return false to let the ray pass
+   *  through that collider. Pass a long-lived function, not a fresh closure. */
+  filterPredicate?: (collider: RAPIER.Collider) => boolean,
 ): { hitId: string; dist: number } | null {
   const ray = new RAPIER.Ray({ x: fromX, y: fromY }, { x: dirX, y: dirY });
   const hit = world.castRay(
@@ -42,6 +45,7 @@ export function castHitscan(
     undefined,
     undefined,
     excludeBody,
+    filterPredicate,
   );
   if (!hit) return null;
   const parentBody = hit.collider.parent();

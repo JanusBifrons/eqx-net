@@ -39,15 +39,78 @@ model asteroids and remote players already used. The client drone brain is
 - Drone pose renders via `interpolateSwarmPose` (the existing
   display-delay interpolator) off the decoder-fed `poseRing`, exactly like
   asteroids. The `PixiRenderer` `kind===1` bypass is gone.
-- The predWorld drone body is kept (collidable-entity invariant) as a
-  **kinematic follower**: `ColyseusClient.updateMirror` writes the
-  interpolated pose into the mirror entry AND into the predWorld body each
-  frame, so render == collision by construction and the local ship still
-  physically bumps drones. Server stays 100 % hit-authoritative (there is
-  no client drone ray).
+- The predWorld drone body is kept (collidable-entity invariant). It was
+  first a **kinematic follower** of the interpolated pose; since
+  2026-11-08 it follows the remote-entity anchor instead (next section).
 
 No client brain ⇒ no divergent inputs ⇒ nothing to snap. The interpolation
 delay is a deliberate, tunable, standard cheat.
+
+## One paradigm for every remote moving entity (2026-11-08)
+
+> **All remote moving entities (players, drones, scrap): predWorld
+> collision runs on the predicted timeline from the latest server state;
+> rendering is per entity type.**
+
+**Why it changed.** The local ship is predicted AHEAD of the server
+(`inputTick ≈ serverTick + leadTicks`). The kinematic follower re-posed
+each drone body every frame to the DISPLAY-DELAYED pose (now − 100 ms). So
+in predWorld the local ship met each drone where it was ~(100 ms + lead)
+ago, the server resolved the same contact against the drone's real pose,
+and the next snapshot corrected the ship. The replay couldn't help: it
+re-ran against the same lagging bodies. The showcase `pack-battle` shot
+saw 4–14 corrections per take (gate: 2); the deterministic model
+(`tests/scenarios/meleeDroneContactPrediction.test.ts`) 7 corrections,
+16 u peak. See `docs/LESSONS.md` 2026-11-08.
+
+**What it is now — the same path remote player ships always used.**
+
+1. **Anchor.** On every snapshot, `preResetRemoteShips`
+   (`src/client/net/snapshotRemoteSync.ts`) resets remote ships to
+   `snap.states` and, in the same step, every drone/scrap body to its
+   latest authoritative state at `snap.serverTick`
+   (`anchorRemoteSwarmBodies`). The state is read off the decoder-fed pose
+   ring (never `entry.x/y`, which `updateMirror` overwrites with the drawn
+   pose); `authoritativeSwarmStateAt` carries the nearest ring pose to the
+   anchor tick when the 60 Hz binary wire and the 20 Hz snapshot don't
+   coincide (capped at 12 ticks). Velocity and angular velocity come with
+   it, as they do for remote ships.
+2. **Step.** The reconcile replay and every `tickPhysics` tick step all
+   bodies forward together, so drones and scrap sit on the local
+   prediction's timeline. Remote ships also get their `lastInput` applied;
+   drones/scrap have no inputs on the wire and coast (client drone damping
+   is 0, scrap keeps its server damping).
+3. **Nothing re-poses them per frame.** So a contact the local ship makes
+   pushes the drone/scrap body and the push stays until the next anchor —
+   as on the server. (The prototype that re-posed a dead-reckoned body
+   every frame left ~1–2 u of correction per contact for exactly this
+   reason; the unified path takes the model's peak to ~0.06 u.)
+4. **Rendering is per type.** Remote ships draw predWorld + a decaying lerp
+   offset; drones/scrap draw the display-delayed interpolated pose (the
+   one-pose-per-frame rule below is unchanged). A drone's collision body
+   therefore LEADS its sprite by ~(100 ms + lead)·speed.
+5. **Local rays test the drawn pose.** The local turrets aim at the drawn
+   pose (`buildLocalAimTargets`), and the server aims its own copy of the
+   mounts at the real drone. So the local beam end and the optimistic hit
+   prediction use `DisplayPoseHitscan` (`src/client/combat/displayPoseHitscan.ts`):
+   predWorld for everything else, drones/scrap skipped there and tested at
+   the drawn `entry.x/y/angle` with their collider shapes (shield circle,
+   hull once the shield is down, scrap component polygon). The beam keeps
+   ending on the sprite; the server stays hit-authoritative.
+
+Spawn: a new drone/scrap body is seeded with its latest server state
+(velocity included) by `syncSwarmIntoPredWorld`; the next snapshot anchors
+it. Teleports and large jumps need no guard on the body: each anchor is a
+plain reset to server state. Shield-collider swaps (`setHullExposed`) keep
+the body's pose and velocity. Scrap stays an unlocked dynamic mass-1 body
+(locking it was the 2026-06-14 correction spike).
+
+Locks: `tests/scenarios/meleeDroneContactPrediction.test.ts` (production
+anchor within the pose gate for drones and scrap; the retired follower as
+the contrast), `src/client/net/snapshotRemoteSync.remoteEntityAnchor.test.ts`
+(anchor source, tick alignment, remote-ship regression lock),
+`src/client/combat/displayPoseHitscan.test.ts`,
+`src/client/net/remoteEntityAnchor.heapDelta.test.ts`.
 
 ## One pose per frame, one `now` — the rule, actually enforced (2026-05-19)
 
@@ -112,8 +175,8 @@ the JSON snapshot ~90 % in the `network-bandwidth` baseline (312 878 →
 ## The feel core — display delay sized to the *binary* cadence
 
 `DISPLAY_DELAY_MS` 0 → **100 ms**. The old "0 ms aligns render with the
-predWorld collision body" rationale is obsolete: render and the kinematic
-collision body are now the *same* interpolated pose. 100 ms backward-buffers
+predWorld collision body" rationale is obsolete: the delay only affects
+drawing (the collision body runs on the predicted timeline, above). 100 ms backward-buffers
 the in-interest combat cadence (binary ships ~per server tick, ≈16.7 ms) so
 two bracketing samples essentially always exist → a true lerp of buffered
 authoritative truth, immune to wire jitter ≤ 100 ms. The adaptive delay is
@@ -132,10 +195,12 @@ lag … ship jumping, lasers lagging — not just drones"). The interpolator
 reads at `now − 100 ms`; a 4-deep ring at the ~16.7 ms in-interest cadence
 spans only ~64 ms, so the read point fell *before the oldest entry* →
 `interpolateSwarmPose` pinned every drone to its stale oldest pose and
-lurched one packet-of-motion every 16 ms. Because the kinematic follower
-drives the drone **collision** bodies to that pose **inside the player's
-prediction world**, the lurch propagated to the player ship and client beam
-geometry — one root cause, global symptom.
+lurched one packet-of-motion every 16 ms. Because the (since retired)
+kinematic follower drove the drone **collision** bodies to that pose
+**inside the player's prediction world**, the lurch propagated to the
+player ship and client beam geometry — one root cause, global symptom.
+(Today a stale ring would still lurch the sprite and the beam end, but no
+longer the collision bodies.)
 
 **Load-bearing invariant:** `POSE_RING_DEPTH ≥ ceil(maxDisplayDelay /
 minBinaryInterArrival) + headroom`, where the binding case is the
@@ -166,8 +231,13 @@ structural-invariant + interleaved-liveness tests in
   cheat). Beam-vs-impact is bounded ≈ `droneSpeed × delay`; hits stay
   server-authoritative so it never changes whether you land a shot.
 - **Player-vs-drone collision fidelity** during the player's reconcile
-  replay is reduced (drones no longer re-sim in lockstep) — far smaller /
-  rarer than the 50–400 u pre-pivot rubberbanding this killed.
+  replay: drones coast from their anchor (no client AI thrust), so a drone
+  that turns hard inside the replay window can still cost a small
+  correction. Far smaller than the retired follower's (100 ms + lead) lag.
+- **Collision body leads the sprite** (since 2026-11-08): a fast drone's
+  body is ~(100 ms + lead)·speed ahead of where it is drawn. The local ship
+  can touch a drone slightly before the sprites meet; that is the server's
+  answer too.
 - **Residual "occasional ship/combat snap"** on device is the *separate,
   already-on-`main`* combat-lag baseline (Option A + bulk-gap + in-pack
   k-cap, see `reconciler-replay-scaling.md`) plus the explicitly-deferred
