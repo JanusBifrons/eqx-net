@@ -25,7 +25,9 @@ const TRAIL_LEN = 1600;
 const TRAIL_GROW_S = 0.15;
 const TRAIL_LIFE_S = 2.2;
 /** Trail segments; each fades a little more towards the far end. */
-const SEGS = 5;
+/** 12 segments: with 5, the brightness steps showed along a capital's 28 km
+ *  trail (fleet film review). */
+const SEGS = 12;
 const STREAK_LEN = 1400;
 const STREAK_LIFE_S = 0.35;
 const FLASH_LIFE_S = 0.3;
@@ -42,6 +44,9 @@ export interface WarpFxSizes {
   trailLen: number; streakLen: number; arriveLen: number;
   /** Multiples of the stern. */
   gapK: number; coreK: number; outK: number; streakK: number; flashK: number;
+  /** Seconds for the departure trail to reach full length (a capital's long
+   *  trail visibly shoots out instead of appearing at once). */
+  growS: number;
 }
 
 /**
@@ -66,7 +71,8 @@ export function warpFxSizes(stern: number): WarpFxSizes {
     coreK: 0.06 - 0.052 * big,
     outK: 0.2 - 0.18 * big,
     streakK: 0.8 - 0.785 * big,
-    flashK: 1 - 0.65 * big,
+    flashK: 1 - 0.82 * big,
+    growS: TRAIL_GROW_S + 0.45 * big,
   };
 }
 
@@ -331,7 +337,7 @@ export class WarpFx {
     const nx = -b.dy * gap, ny = b.dx * gap;
     const fade = 1 - t / life;
     // Trails reach out fast (the acceleration), then hold and burn down.
-    let reach = depart ? sz.trailLen * Math.min(1, t / TRAIL_GROW_S) : sz.arriveLen;
+    let reach = depart ? sz.trailLen * Math.min(1, t / sz.growS) : sz.arriveLen;
     // The pilot's own ship accelerates away: its trails stop at its stern.
     const flown = depart && b.follow ? Math.max(0, (this.localX - b.x) * b.dx + (this.localY - b.y) * b.dy) : Infinity;
     if (reach > flown) reach = flown;
