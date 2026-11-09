@@ -2798,3 +2798,18 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - A fallback for "no pockets" means the classic sector (`HOME_POCKET_HALF_EXTENT`), not the current extent.
   - A measurement that writes a ledger file must key the file on every switch that changes what it measures.
 - **Soak memory readings (same day):** without a forced collection the physics-worker heap appeared to climb from 190 to 374 MB in 5 minutes with solar on. After a forced collection (`/dev/memory?gc=1`, server started with `--expose-gc`, as `scripts/soak-galaxy.ts` does) it stayed flat at about 150 MB. V8 collects lazily, so per-tick garbage looks like growth. Rule: judge a memory trend only from post-collection readings.
+
+## 2026-11-08 — 14 feature specs "broke" when their deadlines became real
+
+- **Context:** #310 (23b15fb0) moved 126 `waitForFunction` `{timeout}`s out of the arg slot, so their deadlines finally applied. A batch of feature specs went red; the desktop verification proved one (`beam-appears`: 6/6 pass on the parent, 6/6 fail after).
+- **Causes, spec by spec (each measured, not guessed):**
+  - **Acting behind the loading curtain** (beam-appears, fence-hits, fx-turrets, gate-fly-through): the join helpers returned on `ship-count > 0` while the curtain was still up (~2.4 s more). Input is dead and the ship is untargetable until it lifts. Fix: `launchTestClient` / `launchGalaxyTestClient` now wait for play by default (`waitForInPlay: false` opts out for specs that watch the curtain).
+  - **The test asserted against old tuning:** missile-frigate (cooldown 180 → 90; it now reads the catalogue); energy-bar (a scout's bolts drain 12/s and regen is 12/s, and in the 10× room regen is 120/s, so the bar never fell — now an interceptor at 1×); auto-fire (the 150-hull fighter died to the "short" manual burst plus the auto-fire that took over, so the beam's drop-then-return never happened — now asserts on server `fire_received` after release).
+  - **The test's own geometry was stale:** interceptor-beam compared the drawn beam to the ship NOSE; the beam starts at an offset wing mount (a constant ~16 u "detach" on a correct build). It also joined the live `sector` room, whose drones killed it mid-coast.
+  - **Node, not the game:** machined-art's nebula test did `await import('../../src/…/depth')`; on Node 22.6+ that goes to Node's strip-only TypeScript loader, which rejects parameter properties. Now the maths runs in the browser through Vite.
+  - **A real game gap** (wave-attack): `warp_warning` is a one-shot broadcast to the room's occupants at the time. Once Phase 8 dropped the owner-presence gate, the wave fired 2.7 s before the owner joined and the banner never showed. A real pilot arriving mid-approach had the same problem. The server now replays live inbounds on `client_ready` (`IncomingRegistry.forEachInbound`). Its next step ("a drone hits a structure") passed only when a drone RAMMED the base: the room's `peacefulDrones: true` gave the wave's own bots the passive brain, so they never fired.
+- **Rules:**
+  - A deadline that "never applied" hid every one of these. When a lint or harness fix makes waits real, expect old specs to surface stale assumptions, and triage each from measurements.
+  - A test helper that says "joined" must mean "can act": wait for play in the helper, not in every spec.
+  - Read tuning from the catalogue in specs, never copy a number.
+  - A one-shot broadcast needs a replay path for whoever arrives later.

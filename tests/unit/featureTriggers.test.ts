@@ -27,8 +27,8 @@ describe('path-triggered feature specs', () => {
     expect(select(['tests/e2e/missile-frigate-homing.spec.ts'])).toEqual([]);
   });
 
-  it('smoke specs (already run on every PR) and quarantined subfolder specs are skipped', () => {
-    expect(select(['tests/e2e/boot.spec.ts', 'tests/e2e/combat/interceptor-beam-stays-connected.spec.ts'])).toEqual([]);
+  it('smoke specs (already run on every PR) and quarantined specs are skipped', () => {
+    expect(select(['tests/e2e/boot.spec.ts', 'tests/e2e/missile-frigate-homing.spec.ts'])).toEqual([]);
   });
 
   it('an unrelated change runs nothing extra', () => {
