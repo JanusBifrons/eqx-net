@@ -517,9 +517,9 @@ test.describe('physics worker', () => {
     await page.keyboard.down('w');
 
     // Fire-and-forget burn from inside the browser (CORS * origin is set on the server).
-    await page.evaluate(() =>
-      fetch(`${SERVER_URL}/test/burn`, { method: 'POST' }).catch(() => undefined),
-    );
+    await page.evaluate((serverUrl) =>
+      fetch(`${serverUrl}/test/burn`, { method: 'POST' }).catch(() => undefined),
+    SERVER_URL);
 
     await page.waitForTimeout(500); // let physics accumulate during and after the burn
     await page.keyboard.up('w');
