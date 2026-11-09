@@ -59,6 +59,7 @@ import type { ShipState } from './schema/SectorState.js';
 import type { ProjectileRecord } from './ProjectilePipeline.js';
 import type { Hold } from '../../shared-types/goods.js';
 import { isHoldEmpty } from '../../core/cargo/hold.js';
+import type { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 
 /** Shared empty stat-allocation reference (Phase 4 WS-B2). A frozen singleton so
  *  the per-broadcast scratch initializer + every un-upgraded ship reuse ONE
@@ -203,6 +204,8 @@ export interface SnapshotBroadcasterDeps {
   /** Coastal defences — the defence turrets' angles (rebuilt each turret
    *  tick, attached by reference). Undefined ⇒ every turret at rest. */
   getStructureMountAngles?: () => SnapshotMessage['structureMountAngles'];
+  /** Perf scenes (WS3): snapshots + entities sent, counted while a scene runs. */
+  work?: SceneWorkCounters;
 }
 
 interface AllShipEntry {
@@ -1028,6 +1031,11 @@ export class SnapshotBroadcaster {
         });
       }
       anySnapshotSent = true;
+      const work = d.work;
+      if (work !== undefined && work.active) {
+        work.snapshots++;
+        work.snapshotEntities += projectilesCount + missilesCount + dronesCount + asteroidsCount;
+      }
     }
 
     // Sweep state-entry pool — drop entries for shipInstanceIds that

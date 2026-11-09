@@ -94,7 +94,11 @@ export function killPort(port: number): void {
     }
     for (const pid of pids) spawnSync('taskkill', ['/PID', pid, '/T', '/F'], { stdio: 'ignore' });
   } else {
-    spawnSync('sh', ['-c', `lsof -ti tcp:${port} | xargs -r kill -9`], { stdio: 'ignore' });
+    // LISTEN only: without it lsof also lists every process with a CLIENT
+    // connection to the port, the caller included (perf:counts polls
+    // /dev/perf on it), and kill -9 took the runner down with exit 137 (CI,
+    // 2026-11-08).
+    spawnSync('sh', ['-c', `lsof -ti tcp:${port} -sTCP:LISTEN | xargs -r kill -9`], { stdio: 'ignore' });
   }
 }
 

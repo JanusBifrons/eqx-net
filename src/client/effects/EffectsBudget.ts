@@ -115,8 +115,18 @@ export class EffectsBudget {
     this.pushedTier = level;
   }
 
-  /** Effective quality for this frame — the more restrictive of local + pushed. */
+  /** Perf count gate (WS3): a pinned tier overrides both the measured and the
+   *  pushed tier, so what is drawn doesn't depend on how fast the host is.
+   *  Null unpins. Only the `perfcounts` probe pins; players never do. */
+  private pinnedTier: EffectQuality | null = null;
+  pin(level: EffectQuality | null): void {
+    this.pinnedTier = level;
+  }
+
+  /** Effective quality for this frame — the pinned tier, else the more
+   *  restrictive of local + pushed. */
   getQuality(): EffectQuality {
+    if (this.pinnedTier !== null) return this.pinnedTier;
     return pickMoreRestrictiveQuality(this.localTier, this.pushedTier);
   }
 
