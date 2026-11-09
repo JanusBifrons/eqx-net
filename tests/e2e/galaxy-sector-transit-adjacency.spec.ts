@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * #17 — sector-transit ADJACENCY regression lock. The galaxy graph is correct
@@ -22,7 +23,7 @@ import { test, expect, type Page } from '@playwright/test';
  * `TransitOrchestrator.test.ts` (#17 Thornfield→Cygnus rejection) and
  * `galaxy.test.ts` (#17 thornfield/cygnus-arm non-neighbour).
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function waitForGameSurface(page: Page): Promise<void> {
   await page.waitForSelector('[data-testid="game-surface"]', { timeout: 15_000 });

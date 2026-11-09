@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Smoke-test regression lock — 2026-05-14 mobile bug:
@@ -39,7 +40,7 @@ import { test, expect, type Page } from '@playwright/test';
  *     destroy event carries `leftoverInZone` + `leftoverSiblings`
  *     counters — non-zero values are the smoking gun for the bug.
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 // Force touch + mobile viewport so isTouchDevice() returns true and
 // the joystick mounts at all. Without this, MobileControls is gated

@@ -22,8 +22,9 @@
  */
 import { test, expect } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function joinAndOpenBuild(
   browser: Browser,

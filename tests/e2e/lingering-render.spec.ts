@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * WS-12 / R2.32 — a lingering (parked) hull must render its weapon barrels.
@@ -15,7 +16,7 @@ import { test, expect } from '@playwright/test';
  *
  * Failing-first: pre-R2.32 the lingering hull had no cluster → mount count 0.
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 interface LingerProbeApi {
   seedLingering: (shieldDown: boolean) => void;

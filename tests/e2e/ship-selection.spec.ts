@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Ship-picker UX coverage on the galaxy-map screen (post-refactor).
@@ -20,7 +21,7 @@ import { test, expect, type Page } from '@playwright/test';
  * spawn-select-flow.spec.ts).
  */
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 const FAKE_TOKEN = 'fake-test-token';
 const FAKE_USER = {
   id: 'test-user-aaaaaaaa',

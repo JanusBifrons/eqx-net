@@ -1,4 +1,5 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Drawer → Galaxy flow locks (2026-05-13 user-smoke regressions).
@@ -14,7 +15,7 @@ import { test, expect, type BrowserContext, type Page } from '@playwright/test';
  * the open→close lag of the full-page map; Test 2 locks the drawer Galaxy-tab's
  * own roster card → ShipDetailModal path (the in-game ship-swap surface).
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 interface StoreState {
   phase: string;

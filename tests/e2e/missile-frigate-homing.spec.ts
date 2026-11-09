@@ -43,6 +43,7 @@ import { test, expect } from '@playwright/test';
 import type { Browser, Page, APIRequestContext } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { getWeapon } from '../../src/core/combat/WeaponCatalogue';
+import { DEFAULT_BASE_URL, DEFAULT_SERVER_URL } from './helpers/ports';
 
 // Heat-seeker cooldown read from the catalogue. It was 180 ticks (3 s) when
 // the held-fire test was written; c795302d made it 90 (1.5 s) and the
@@ -52,8 +53,8 @@ const HS_COOLDOWN_MS = (HS_COOLDOWN_TICKS * 1000) / 60;
 // Hold for ~2.33 cooldowns: one initial salvo + at least one rollover.
 const HS_HOLD_MS = Math.round(HS_COOLDOWN_MS * 2.33);
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
-const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? 'http://localhost:2567';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
+const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? DEFAULT_SERVER_URL;
 
 interface ServerLogEntry {
   ts: number;

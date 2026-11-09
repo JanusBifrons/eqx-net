@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Equinox R2 WS-4 Phase 4 (R2.27) — the Miner's mining BEAM renders as a
@@ -27,7 +28,7 @@ import { randomUUID } from 'node:crypto';
  * screenshots/reads identically here, but main-thread is deterministic).
  */
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function joinScenario(
   browser: Browser,

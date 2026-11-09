@@ -21,8 +21,9 @@
  */
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 test('tap a drone shows the selection bracket + a stats panel; empty tap clears it', async ({ browser }) => {
   const ctx = await browser.newContext();

@@ -10,6 +10,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { launchTestClient } from './helpers/gameScenario';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 interface ArtStats { mode: string; machinedSprites: number; classicShipSprites: number; ready?: number; pending?: number; failed?: number; pages?: number; workers?: number }
 const stats = (page: Page): Promise<ArtStats> =>
@@ -68,7 +69,7 @@ test.describe('Machined art — structures and asteroids', () => {
   test('a prebuilt base draws structures and its asteroid in Machined once baked', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
     const page = await ctx.newPage();
-    const base = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+    const base = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
     await page.goto(`${base}?room=structure-scenario-test&worker=0&art=machined&zoom=0.4&spawnX=0&spawnY=520&testId=${crypto.randomUUID()}`);
     // Capital + 2 solar + miner + turret (+ the asteroid) all become Machined.
     await page.waitForFunction(
@@ -87,7 +88,7 @@ test.describe('Machined art — warm-up', () => {
   test('the landing galaxy map bakes the common art before any sector is joined', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
     const page = await ctx.newPage();
-    const base = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+    const base = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
     await page.goto(`${base}?worker=0&art=machined`);
     // No room joined: only the warm-up is asking for art. Ships (~15) and the
     // common structures (~18) all become ready while the map is up.
@@ -104,7 +105,7 @@ test.describe('Machined art — warm-up', () => {
   test('with ?fx=new the effect textures bake too, through the worker pool (plan iridescent-seeking-rainbow v3, B1)', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
     const page = await ctx.newPage();
-    const base = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+    const base = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
     await page.goto(`${base}?worker=0&art=machined&fx=new`);
     type FxStats = { fxReady?: number; fxPending?: number; failed?: number; lastFailure?: string };
     await page.waitForFunction(
@@ -170,7 +171,7 @@ test.describe('Nebulae you can fly into (plan iridescent-seeking-rainbow v5, C2)
     // "TypeScript parameter property is not supported in strip-only mode",
     // 2026-11-08, Node 24).
     const probe = await browser.newPage();
-    await probe.goto(`${process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173'}/favicon.ico`);
+    await probe.goto(`${process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL}/favicon.ico`);
     const { best, fx } = await probe.evaluate(async (modPath) => {
       type G = { x: number; y: number; r: number; variant: 'emission'; seed: number };
       const d = (await import(modPath)) as {

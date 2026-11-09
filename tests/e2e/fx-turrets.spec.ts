@@ -19,8 +19,9 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { test, expect, type Browser, type Page } from '@playwright/test';
 import { waitForInPlay } from './helpers/gameScenario';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 type Stats = { turrets?: number; turretShots?: number; failed?: number; lastFailure?: string; ready?: number };
 
 // Infrastructure cost only: a cold join plus the first-visit bakes.

@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Engine-exhaust VISUAL probe (screenshot-first). Drives the
@@ -18,7 +19,7 @@ import { join } from 'node:path';
  * The screenshot NAME PREFIX is parameterised by `STEP` so re-running after
  * each fix produces `baseline-*`, `step1-*`, ... side by side for comparison.
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 /** Screenshot name prefix. Override per fix-step for side-by-side comparison:
  *  `ENGINE_FX_STEP=baseline pnpm exec playwright test …`. The neutral default
  *  keeps the committed/CI artifact name stable. */

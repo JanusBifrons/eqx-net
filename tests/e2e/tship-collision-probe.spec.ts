@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * T-ship collision VISUAL probe (screenshot-first) — playtest 2026-06-10
@@ -23,7 +24,7 @@ import { join } from 'node:path';
  * interlock closed + same-point → contacts fire) and the full-stack E2E
  * `t-ship-no-self-collision.spec.ts`; this spec is the human/agent eyeball.
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 /** Camera zoom (higher = closer). ~1.8 frames both ~280×280 crossguards. */
 const ZOOM = 1.8;
 const OUT_DIR = join(process.cwd(), 'diag', 'e2e-screenshots', 'tship-collision');

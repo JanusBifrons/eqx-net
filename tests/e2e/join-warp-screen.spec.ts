@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Regression lock for the 2026-05-14 mobile smoke-test report:
@@ -30,7 +31,7 @@ import { test, expect, type Page } from '@playwright/test';
  *
  * Mobile viewport matches the user's diagnostic capture environment.
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 test.use({
   hasTouch: true,

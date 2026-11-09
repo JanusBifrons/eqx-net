@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Structures plan, Phase 2 — Build → place flow (CLIENT half) regression lock.
@@ -19,7 +20,7 @@ import type { Browser, Page } from '@playwright/test';
  * the swarm count starts at a stable baseline.
  */
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function joinClient(browser: Browser): Promise<{ ctx: Awaited<ReturnType<Browser['newContext']>>; page: Page }> {
   // The Confirm/Cancel banner is the TOUCH placement flow (desktop places on
