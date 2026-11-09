@@ -291,3 +291,26 @@ describe('LockSubsystem', () => {
     expect(w2.find((g) => g.id === 'aft')!.l.length).toBe(1);
   });
 });
+
+describe('LockSubsystem capital turret split (PR 1d slice 4)', () => {
+  it('a 3-lock capital group spreads its turrets across the locked targets', () => {
+    const h = harness('destroyer');
+    // Three hostiles on the starboard beam, where every main turret bears.
+    h.targets.set('s:1', { ...still(1500, true), y: 0 });
+    h.targets.set('s:2', { ...still(1500, true), y: 400 });
+    h.targets.set('s:3', { ...still(1500, true), y: -400 });
+    for (const k of ['s:1', 's:2', 's:3']) expect(h.locks.forceLock('p1', k, 'main')).toBe(1);
+    const aims = ['main-1', 'main-2', 'main-3'].map((m) => h.locks.aimKeyFor('p1', m));
+    // Same rule as the client (shared pickTurretLock): turret i takes lock i % n.
+    expect(aims).toEqual(['s:1', 's:2', 's:3']);
+    expect(h.locks.aimKeyFor('p1', 'main-4')).toBe('s:1');
+    expect(h.locks.aimKeyFor('p1', 'main-5')).toBe('s:2');
+  });
+
+  it('a one-lock group aims every turret at it (unchanged)', () => {
+    const h = harness('destroyer');
+    h.targets.set('s:1', { ...still(1500, true), y: 0 });
+    h.locks.forceLock('p1', 's:1', 'main');
+    for (const m of ['main-1', 'main-2', 'main-3', 'main-4', 'main-5']) expect(h.locks.aimKeyFor('p1', m)).toBe('s:1');
+  });
+});
