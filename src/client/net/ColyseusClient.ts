@@ -148,6 +148,8 @@ import { tuningFor } from '@shared-types/shipScale/lookup';
 
 // A group fires only when a barrel bears on its lock: the shared rule (#15).
 import { barrelBearsOn } from '@core/combat/fireControlBearing';
+import { pickTurretLock } from '@core/combat/turretLockPick';
+import { hasTurretFireControl, mountWeaponReach } from '@core/combat/mountReach';
 /** No aim guides (the mirror's `localAimMountIds`): the lock rings replace them. */
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
 import { getWeapon, weaponAutoFireRange, type WeaponDef } from '@core/combat/WeaponCatalogue';
@@ -5549,6 +5551,19 @@ export class ColyseusGameClient {
   private _fcInfoKind: string | null | undefined = undefined;
   private readonly _fcInfo = new Map<string, { cooldownMs: number; cooldownTicks: number; mode: WeaponDef['mode']; reach: number; energyCost: number; name: string; colour: number; capacity: number }>();
   private readonly _fcMountGroup = new Map<string, string>();
+  /** Per mount: its definition, its place in its group (the `pickTurretLock`
+   *  ordinal) and its reach. Rebuilt with `_fcMountGroup`. */
+  private readonly _fcMountDef = new Map<string, { mount: WeaponMount; ordinal: number; reach: number }>();
+  /** True when the ship's turrets fire one by one on their own reload (capitals). */
+  private _fcPerMount = false;
+  /** Per-mount fire ledger (capitals): wall ms + input tick of each mount's last shot. */
+  private readonly _fcMountLastMs = new Map<string, number>();
+  private readonly _fcMountLastTick = new Map<string, number>();
+  /** Mounts in the salvo being sent (capitals; empty = every bearing mount). */
+  private readonly _fcSalvo = new Set<string>();
+  private readonly _fcPickX = new Float64Array(8);
+  private readonly _fcPickY = new Float64Array(8);
+  private readonly _fcPickKeys: string[] = [];
   /** Parsed lock keys (`s:<n>` / `p:<id>`), so per-frame lookups never slice strings. */
   private readonly _fcKeys = new Map<string, { swarm: number; player: string | null }>();
   private readonly _fcPose = { x: 0, y: 0 };
@@ -5740,19 +5755,25 @@ export class ColyseusGameClient {
     this._fcInfoKind = kindStr;
     this._fcInfo.clear();
     this._fcMountGroup.clear();
+    this._fcMountDef.clear();
+    this._fcMountLastMs.clear();
+    this._fcMountLastTick.clear();
     const kind = getShipKind(kindStr);
+    this._fcPerMount = hasTurretFireControl(kind);
     const slots = kind.slots ?? [];
     for (let si = 0; si < slots.length; si++) {
       const slot = slots[si]!;
       const mounts = resolveSlotMounts(kind, slot.id);
       let cd = 0;
       let reach = 0;
-      for (const m of mounts) {
+      for (let mi = 0; mi < mounts.length; mi++) {
+        const m = mounts[mi]!;
         const w = getWeapon(m.weaponId);
         if (w.cooldownTicks > cd) cd = w.cooldownTicks;
         const r = weaponAutoFireRange(w);
         if (r > reach) reach = r;
         this._fcMountGroup.set(m.id, slot.id);
+        this._fcMountDef.set(m.id, { mount: m, ordinal: mi, reach: mountWeaponReach(m) });
       }
       this._fcInfo.set(slot.id, {
         cooldownMs: (cd * 1000) / 60,
@@ -5807,6 +5828,43 @@ export class ColyseusGameClient {
     return null;
   }
 
+  /**
+   * The lock one mount aims at. One lock (every non-capital group): the
+   * group's aim key. Several: the shared `pickTurretLock` share-out, the same
+   * rule as the server's `LockSubsystem.aimKeyFor` (#15). (sx, sy, sAngle) is
+   * the ship pose the mount is placed from.
+   */
+  private fcMountAimKey(mountId: string, sx: number, sy: number, sAngle: number): string | null {
+    const gid = this._fcMountGroup.get(mountId);
+    if (gid === undefined) return null;
+    let group: (typeof this._fcGroups)[number] | null = null;
+    for (const g of this._fcGroups) if (g.id === gid) { group = g; break; }
+    if (group === null) return null;
+    let locked = 0;
+    let first: string | null = null;
+    for (const l of group.l) if (l.s === 2) { if (first === null) first = l.t; locked++; }
+    if (locked <= 1) return this.fcGroupAimKey(gid);
+    const def = this._fcMountDef.get(mountId);
+    if (!def) return first;
+    const keys = this._fcPickKeys;
+    keys.length = 0;
+    for (const l of group.l) {
+      if (l.s !== 2 || keys.length >= this._fcPickX.length) continue;
+      if (!this.fcTargetPose(l.t, this._fcPickPose)) continue;
+      this._fcPickX[keys.length] = this._fcPickPose.x;
+      this._fcPickY[keys.length] = this._fcPickPose.y;
+      keys.push(l.t);
+    }
+    if (keys.length === 0) return first;
+    const m = def.mount;
+    const cosA = Math.cos(sAngle);
+    const sinA = Math.sin(sAngle);
+    const mx = sx + (m.localX * cosA - m.localY * sinA);
+    const my = sy + (m.localX * sinA + m.localY * cosA);
+    return keys[pickTurretLock(m, sAngle, mx, my, def.reach, def.ordinal, keys.length, this._fcPickX, this._fcPickY)]!;
+  }
+  private readonly _fcPickPose = { x: 0, y: 0 };
+
   /** Apply the own-ship snapshot's groups (#16). Store write only on change. */
   private applyFcGroups(groups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number; r?: number; c?: number }> }> | undefined): void {
     this._fcGroups = groups ?? [];
@@ -5851,8 +5909,7 @@ export class ColyseusGameClient {
     const sinA = Math.sin(angle);
     for (let i = 0; i < mounts.length; i++) {
       const mount = mounts[i]!;
-      const gid = this._fcMountGroup.get(mount.id) ?? null;
-      const key = gid === null ? null : this.fcGroupAimKey(gid);
+      const key = this.fcMountAimKey(mount.id, x, y, angle);
       if (key === null || !this.fcTargetPose(key, this._fcPose)) {
         angles[i] = rotateMountToward(angles[i]!, 0, mount, dtSec);
         continue;
@@ -5893,9 +5950,11 @@ export class ColyseusGameClient {
 
   /** Does this one mount (world origin + barrel angle) bear on its group's aim target? */
   private fcMountBears(mountId: string, ox: number, oy: number, angle: number): boolean {
-    const gid = this._fcMountGroup.get(mountId);
-    if (gid === undefined) return false;
-    const key = this.fcGroupAimKey(gid);
+    // Capitals fire one turret at a time: only the mounts in this salvo.
+    if (this._fcSalvo.size > 0 && !this._fcSalvo.has(mountId)) return false;
+    const localId = this.mirror.localPlayerId;
+    const ship = localId ? this.mirror.ships.get(localId) : undefined;
+    const key = this.fcMountAimKey(mountId, ship?.x ?? ox, ship?.y ?? oy, ship?.angle ?? 0);
     if (key === null || !this.fcTargetPose(key, this._fcBearPose)) return false;
     return barrelBearsOn(ox, oy, angle, this._fcBearPose.x, this._fcBearPose.y);
   }
@@ -5917,7 +5976,14 @@ export class ColyseusGameClient {
       const wants = g.m === 0 || this._fcHeld === g.id || (spaceHeld && g.id === activeGroup);
       if (!wants) continue;
       const info = this._fcInfo.get(g.id);
-      if (!info || !this.fcTargetPose(lockedKey, this._fcPose)) continue;
+      if (!info) continue;
+      if (this._fcPerMount) {
+        // Capitals: each turret fires on its own reload once it bears on its
+        // own share of the group's locks (server: PlayerFireResolver per-mount).
+        if (this.fcFireMounts(g.id, info, st, nowMs) && beamGroup === null && info.mode === 'hitscan') beamGroup = g.id;
+        continue;
+      }
+      if (!this.fcTargetPose(lockedKey, this._fcPose)) continue;
       const dx = this._fcPose.x - st.x;
       const dy = this._fcPose.y - st.y;
       if (dx * dx + dy * dy > info.reach * info.reach * 1.1) continue;
@@ -5952,6 +6018,68 @@ export class ColyseusGameClient {
         this._fireSlotOverride = null;
       }
     }
+  }
+
+  /**
+   * Capital fire pass for one group: every mount that bears on ITS lock
+   * (`fcMountAimKey`) and has reloaded joins the salvo, which goes out as one
+   * group fire carrying only those mounts' ghosts. Returns true when any
+   * mount of the group bears (reloaded or not), for the live beam.
+   */
+  private fcFireMounts(
+    groupId: string, info: { energyCost: number; mode: WeaponDef['mode'] },
+    st: { x: number; y: number; angle: number }, nowMs: number,
+  ): boolean {
+    const localId = this.mirror.localPlayerId;
+    const ship = localId ? this.mirror.ships.get(localId) : undefined;
+    const mounts = getShipKind(ship?.kind ?? null).mounts ?? [];
+    const angles = ship?.mountAngles;
+    const cosA = Math.cos(st.angle);
+    const sinA = Math.sin(st.angle);
+    const salvo = this._fcSalvo;
+    salvo.clear();
+    let bears = false;
+    for (let i = 0; i < mounts.length; i++) {
+      const m = mounts[i]!;
+      if (this._fcMountGroup.get(m.id) !== groupId) continue;
+      const def = this._fcMountDef.get(m.id);
+      if (!def) continue;
+      const key = this.fcMountAimKey(m.id, st.x, st.y, st.angle);
+      if (key === null || !this.fcTargetPose(key, this._fcPose)) continue;
+      const ox = st.x + (m.localX * cosA - m.localY * sinA);
+      const oy = st.y + (m.localX * sinA + m.localY * cosA);
+      const dx = this._fcPose.x - ox;
+      const dy = this._fcPose.y - oy;
+      if (dx * dx + dy * dy > def.reach * def.reach * 1.1) continue;
+      if (!barrelBearsOn(ox, oy, st.angle + m.baseAngle + (angles?.[i] ?? 0), this._fcPose.x, this._fcPose.y)) continue;
+      bears = true;
+      const cd = getWeapon(m.weaponId).cooldownTicks;
+      const lastMs = this._fcMountLastMs.get(m.id);
+      if (lastMs !== undefined && nowMs - lastMs < (cd * 1000) / 60) continue;
+      if (this.inputTick < (this._fcMountLastTick.get(m.id) ?? -1e9) + cd) continue;
+      salvo.add(m.id);
+    }
+    if (salvo.size === 0 || !canAfford(this.predEnergy, info.energyCost)) {
+      salvo.clear();
+      return bears;
+    }
+    const sendTick = this.inputTick;
+    for (const id of salvo) {
+      this._fcMountLastMs.set(id, nowMs);
+      this._fcMountLastTick.set(id, sendTick);
+    }
+    this._fireSlotOverride = groupId;
+    try {
+      this.sendFire(sendTick);
+    } finally {
+      this._fireSlotOverride = null;
+      salvo.clear();
+    }
+    this._fcLastFireMs.set(groupId, nowMs);
+    this._fcLastFireTick.set(groupId, sendTick);
+    this.lastFiredAtTick = sendTick;
+    if (info.mode === 'hitscan') this._lastHitscanFireMs = nowMs;
+    return bears;
   }
 
   private localShipMounts(): ReadonlyArray<WeaponMount> {
