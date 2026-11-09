@@ -57,7 +57,7 @@ It lives in git (`docs/HANDOFF-consolidated-2026-11-09.md`), so it works on both
 - **Warp picker E2E.** The plan asked for an E2E in a solar test room: open the picker, pick, spool starts, arrive at the rim. Only component and integration tests exist. *Status:* not started. *Who:* Claude. *Source:* [prancy] W1a
 - **E2E renders on software WebGL.** `playwright.config.ts` has no GPU flags (SwiftShader on the desktop). Check the laptop and CI renderer strings; treat E2E timings as non-GPU. *Status:* not started. *Who:* Claude. *Source:* [DV-report] F1, [hostile-review] 10
 - **Decide which feature specs earn per-PR CI.** Today only smoke gates; feature specs run advisory. Pairs with the CI-required decision above. *Status:* blocked on user. *Who:* user + Claude. *Source:* [audit] "Next decisions"
-- **`TickBudgetTelemetry` "no hitch" asserts are wall-clock.** Convert to counts like #356 did for the others. *Status:* not started. *Who:* Claude. *Source:* [DV-handoff] "From #356"
+- **`TickBudgetTelemetry` "no hitch" asserts are wall-clock.** Convert to counts like #356 did for the others. *Status:* done (the test now drives `performance.now()` from a scripted clock: injected durations, exact event counts, no busy-wait). *Who:* Claude. *Source:* [DV-handoff] "From #356"
 - **`NETGATE_PORT_OFFSET` to main.** So parallel sessions can each run a netgate. *Status:* not started. *Who:* Claude. *Source:* [DV-handoff]
 
 ## Perf
