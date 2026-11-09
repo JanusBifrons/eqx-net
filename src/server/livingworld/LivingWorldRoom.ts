@@ -97,6 +97,13 @@ export interface LivingWorldRoom {
    *  some credits) from that storage's network into its own hold, as ONE atomic
    *  group; the owner is warned (throttled). Returns the weight taken. */
   raidStorage?(harvesterId: string, owner: string, uid: string, stepWeight: number): number;
+  /** W6 — nearest asteroid to (x, y) within `range` that still has ore.
+   *  Control cadence only. OPTIONAL. */
+  nearestOreAsteroid?(x: number, y: number, range: number): { entityId: number; x: number; y: number; radius: number } | null;
+  /** W6 — a harvester mines up to `maxUnits` of that rock's finite ore (the
+   *  Miner's pool and yield rule) into its own hold, never past `capacity`
+   *  weight, as ONE hold commit. Returns the weight added. */
+  mineAsteroid?(harvesterId: string, entityId: number, maxUnits: number, capacity: number): number;
   /** P4a — promote a just-spawned bot to a named elite (boosted hull). */
   markElite?(botId: string, name: string, healthMul?: number, bounty?: number): boolean;
   /** P4b — drop a world-event reward (a cache / a salvage-field pod) at (x, y). */

@@ -185,6 +185,55 @@ describe('SectorRoom integration — robot nexus + territory (P3)', () => {
   }, 30_000);
 
   /**
+   * W6 (wrap-up plan) — with no pod, hauler or storage to raid, a harvester
+   * mines the nearest rock with ore. The ore comes from the SAME finite pool a
+   * Miner draws from and splits by the SAME yield (crystal-veined rock: 8
+   * minerals + 2 crystal per 10), into the harvester's ownerless hold.
+   */
+  it('a harvester with nothing else to do mines a rock, from its finite ore', async () => {
+    let clock: { now: number };
+    ({ h, t, clock } = await boot());
+    const room = h.getRoom('greenfall');
+    clock.now += 1000;
+    t.tick(clock.now);
+    const hid = t.liveHarvesters()[0]!;
+    const pose = room.getBotPose(hid)!;
+    expect(room._internals.spawnTestAsteroid('test-ore-rock', pose.x + 60, pose.y, 30, 'crystal')).toBe(true);
+    const rock = room._internals.swarmRegistry.get('test-ore-rock')!;
+    rock.resources = 45; // 30 this tick, the last 15 the next
+
+    clock.now += 1000;
+    t.tick(clock.now);
+    expect(getHoldStore().get(hid)?.hold.goods).toEqual({ minerals: 24, crystal: 6 });
+    expect(getHoldStore().get(hid)?.ownerId).toBeNull();
+    expect(rock.resources).toBe(15);
+
+    clock.now += 1000;
+    t.tick(clock.now);
+    expect(getHoldStore().get(hid)?.hold.goods).toEqual({ minerals: 36, crystal: 9 });
+    expect(rock.resources).toBe(0);
+  }, 30_000);
+
+  it('mining never burns ore into a full hold', async () => {
+    let clock: { now: number };
+    ({ h, t, clock } = await boot());
+    const room = h.getRoom('greenfall');
+    clock.now += 1000;
+    t.tick(clock.now);
+    const hid = t.liveHarvesters()[0]!;
+    const pose = room.getBotPose(hid)!;
+    room._internals.spawnTestAsteroid('test-ore-rock-2', pose.x + 2000, pose.y, 30, 'rock');
+    const rock = room._internals.swarmRegistry.get('test-ore-rock-2')!;
+    rock.resources = 100;
+    // Room for 0.5 weight: 5 minerals (0.1 each), however much is asked for.
+    const added = room.mineAsteroid(hid, rock.entityId, 30, room.holdWeight(hid) + 0.5);
+    expect(added).toBeCloseTo(0.5);
+    expect(rock.resources).toBe(95);
+    expect(room.mineAsteroid(hid, rock.entityId, 30, room.holdWeight(hid))).toBe(0);
+    expect(rock.resources).toBe(95);
+  }, 30_000);
+
+  /**
    * Harvesters hunt haulers: with no pod to scoop, a harvester goes after a
    * trade/convoy hauler nearby BEFORE raiding storage (robots are hostile to
    * traders on sight, so closing in starts the attack; the killed hauler's
