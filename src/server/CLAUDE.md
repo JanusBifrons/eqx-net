@@ -316,7 +316,8 @@ Update this section when a threshold is set.
 - **`lock_track` is verified**, not trusted: it carries the line bearing `b`; `LockSubsystem.trackLock` holds the target only when the shared `lockLineHolds` (`core/combat/lockLine.ts`, sticky cone, the client's own pick rule) accepts it. A failing claim (or no `b`) counts as "on nothing" and releases the held lock. Lock: `LockSubsystem.test.ts` "lock_track is verified".
 - **Snapshot slices (#16):** own active pilot only, shared refs mutated in place: `states[].groups` (`LockSubsystem.wireFor`) and `states[].lockedBy` (`NpcLockSubsystem.wireFor`). Every pilot now gets them.
 - **Test triggers:** testMode join option `instantLock` (AUTO also locks non-hostile NPCs and non-own structures; every lock completes next step) and `_internals.forceLock(pid, key, groupId?)` (integration `harness.lockTarget`). Use them; never add a test-only fire bypass.
-- **Not yet gated (PR 1d):** NPC capitals' per-turret fire (`AiFireResolver.fireMount`) and structure turrets; the NPC drone gate is still the 0.45 rad cone in `NpcLockSubsystem.fireBlocked`.
+- **NPC drones fire only with a completed lock on their target** (PR 1d slice 1): `HostileDroneBehaviour` puts its AI target on `intent.fire.targetId`, threaded `AiFireRequest` → `handleAiFire` → `AiFireResolver.resolve` → `NpcLockSubsystem.fireBlocked(npcId, targetId)`. A pilot target needs that drone's completed lock (acquiring is not enough; a lock on another pilot doesn't count); non-pilot targets (NPCs, structures, displaced hulls) are not gated. Lock: `NpcLockSubsystem.test.ts`.
+- **Not yet gated (PR 1d):** NPC capitals' per-turret fire (`AiFireResolver.fireMount`) and structure turrets. A drone shot at a non-pilot target that strays into a pilot is not gated either.
 - Story: [docs/architecture/fire-control.md](../../docs/architecture/fire-control.md).
 
 ## Defence fire control (plan coastal-defences)
