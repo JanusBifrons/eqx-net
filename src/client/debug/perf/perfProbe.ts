@@ -40,6 +40,13 @@ export function perfProbeEnabled(search: string): boolean {
   return new URLSearchParams(search).get('perfprobe') === '1';
 }
 
+/** Count mode (`?perfcounts=1`, with `perfprobe=1`; plan machine-independent-perf
+ *  WS3): the renderer pins the effects tier and counts draw calls, so the
+ *  reading's `render.counts` is the same on any host. Used by `pnpm perf:counts`. */
+export function perfCountsEnabled(search: string): boolean {
+  return new URLSearchParams(search).get('perfcounts') === '1';
+}
+
 function readArt(): PerfReading['art'] {
   const s = (globalThis as { __eqxArtStats?: () => NonNullable<PerfReadingArt> }).__eqxArtStats?.();
   if (!s) return null;
@@ -53,7 +60,8 @@ let current: { renderer: IRenderer; useWorker: boolean } | null = null;
 
 export function installPerfProbe(rendererIn: IRenderer, useWorkerIn: boolean): void {
   // A remounted game surface brings a new renderer: re-point, never re-wrap.
-  if (current) { current.renderer = rendererIn; current.useWorker = useWorkerIn; void rendererIn.perfProbe?.('enable'); return; }
+  const probeOp = perfCountsEnabled(location.search) ? 'counts' : 'enable';
+  if (current) { current.renderer = rendererIn; current.useWorker = useWorkerIn; void rendererIn.perfProbe?.(probeOp); return; }
   const cur = (current = { renderer: rendererIn, useWorker: useWorkerIn });
   const ring = new FrameTimeRing();
   let t0 = performance.now();
@@ -86,7 +94,7 @@ export function installPerfProbe(rendererIn: IRenderer, useWorkerIn: boolean): v
   } catch { /* longtask unsupported (Safari): stays 0 */ }
 
 
-  void cur.renderer.perfProbe?.('enable');
+  void cur.renderer.perfProbe?.(probeOp);
 
   (globalThis as { __eqxPerf?: unknown }).__eqxPerf = {
     async reset(): Promise<void> {
@@ -94,7 +102,7 @@ export function installPerfProbe(rendererIn: IRenderer, useWorkerIn: boolean): v
       last = 0;
       worst.length = 0;
       longTasks = 0; longTaskMs = 0;
-      await cur.renderer.perfProbe?.('enable');
+      await cur.renderer.perfProbe?.(probeOp);
       await cur.renderer.perfProbe?.('reset');
       t0 = performance.now();
     },

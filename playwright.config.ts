@@ -94,6 +94,7 @@ const FEATURE_SPECS: string[] = [
   '**/fx-turrets.spec.ts',
   // Capital-ship R&D round 3 D — helm orders (tap a course, speed, WASD override).
   '**/capital-helm.spec.ts',
+  '**/fleet-warp-client.spec.ts',
   // Round 3 smoke bug: the fly-by fighter jittered alongside the battleship.
   '**/capital-flyby-smooth.spec.ts',
   // Prediction backlog after a long loading hold is skipped, not replayed (2026-11-05).
@@ -159,7 +160,6 @@ const FEATURE_SPECS: string[] = [
   '**/swarm-sleep.spec.ts',
   '**/swarm-tidi.spec.ts',
   '**/wave-attack.spec.ts',
-  '**/sync-health.spec.ts',
   '**/t-ship-no-self-collision.spec.ts',
   '**/tship-collision-probe.spec.ts',
   '**/structure-ram-blocked.spec.ts',

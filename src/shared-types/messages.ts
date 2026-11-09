@@ -17,6 +17,7 @@ export {
   EngageTransitSchema,
   CancelTransitSchema,
   TestAggroSchema,
+  TestFleetWarpSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,

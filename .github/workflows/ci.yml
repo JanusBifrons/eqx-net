@@ -204,6 +204,46 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         run: pnpm run test:gc
 
+  # Client count gate (plan machine-independent-perf WS3): fleet-fight and
+  # wide-view at shiplight=baked and high in a real browser with software
+  # WebGL (SwiftShader, the same rasteriser on every host) and the effects tier
+  # pinned, asserting draw calls / display objects / upload texels / atlas
+  # pages (CLIENT_COUNT_BUDGETS, perfBudgets.ts). Counts, not timings, so a
+  # hosted runner can gate them. The SERVER work counts gate in
+  # integration-tests (perfSceneCounts.test.ts). ADVISORY: not a required
+  # check until it has proven stable here (the user approves required checks).
+  perf-counts:
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        if: needs.changes.outputs.code == 'true'
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        if: needs.changes.outputs.code == 'true'
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: needs.changes.outputs.code == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright browsers
+        if: needs.changes.outputs.code == 'true'
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Client count gate (perf:counts)
+        if: needs.changes.outputs.code == 'true'
+        run: pnpm perf:counts --runs 2 --out perf-counts.json
+      - name: Upload readings
+        if: always() && needs.changes.outputs.code == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-counts
+          path: perf-counts.json
+          if-no-files-found: ignore
+
   # E2 (plan squishy-canyon): build-only docker image to catch Dockerfile rot.
   # No push, no boot smoke (a real boot needs JWT_SECRET + a writable volume and
   # is a deploy-pipeline step, not a PR gate). See docs/ops/deployment.md.

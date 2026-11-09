@@ -18,6 +18,7 @@
 import { Worker } from 'node:worker_threads';
 import { availableParallelism } from 'node:os';
 import type { Logger } from 'pino';
+import type { EventLoopUtilization } from 'node:perf_hooks';
 import { bundleWorker } from '../workers/bundleWorker.js';
 
 /** A message from a pooled worker for one world. */
@@ -42,6 +43,9 @@ export interface PooledWorld {
   /** This world's worker heap (shared with its other worlds). */
   /** `gc`: ask the worker to collect first (dev only; needs --expose-gc). */
   heapStats(gc?: boolean): Promise<{ usedBytes: number; totalBytes: number } | null>;
+  /** This world's worker event-loop utilisation (shared with its other worlds).
+   *  Perf scenes report it as the worker's busy fraction (print-only). */
+  elu(prev?: EventLoopUtilization): EventLoopUtilization | null;
 }
 
 export function physicsPoolSize(env: NodeJS.ProcessEnv = process.env): number {
@@ -111,6 +115,10 @@ export class PhysicsWorkerPool {
         this.handlers.delete(worldId);
         pw.worlds--;
         worker.postMessage({ type: 'REMOVE_WORLD', worldId });
+      },
+      elu: (prev) => {
+        const p = (worker as Worker & { performance?: { eventLoopUtilization?: (a?: EventLoopUtilization) => EventLoopUtilization } }).performance;
+        return p?.eventLoopUtilization ? p.eventLoopUtilization(prev) : null;
       },
       heapStats: async (gc = false) => {
         const w = worker as Worker & { getHeapStatistics?: () => Promise<{ used_heap_size: number; total_heap_size: number }> };

@@ -300,12 +300,15 @@ describe.runIf(AT_AUTHORED_SHIP_SCALE)('Reconciler', () => {
     // Record enough inputs to fill the ring buffer.
     for (let t = 0; t < 50; t++) r.recordInput(makeInput(t));
 
-    const t0 = performance.now();
+    // Count the physics steps the replay runs, not the wall time (a wall-time
+    // bound flakes on a slow host; plan machine-independent-perf WS3).
+    let steps = 0;
+    const tick = world.tick.bind(world);
+    world.tick = (dt: number) => { steps++; tick(dt); };
     r.reconcile({ x: 100, y: 200, vx: 0, vy: 0, angle: 0 }, 0, 5000, 0);
-    const elapsedMs = performance.now() - t0;
 
-    // 5000-tick replay would take 100s of ms even on a workstation; capped
-    // replay is bounded by BUFFER_SIZE=128 ticks — finishes in under 50 ms.
-    expect(elapsedMs).toBeLessThan(50);
+    // A 5000-tick replay would step 5000 times; the replay is capped at
+    // BUFFER_SIZE = 128 ticks.
+    expect(steps).toBeLessThanOrEqual(128);
   });
 });

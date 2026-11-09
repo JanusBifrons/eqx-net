@@ -113,6 +113,8 @@ export class Backdrop {
   readonly fore = new Container();
   private readonly tiles: Tile[] = [];
   private readonly sprites: SkySprite[] = [];
+  /** The sun disc: placed along the light direction (moves per sector). */
+  private sun!: SkySprite;
   private readonly nebula: Tile;
   private readonly far: Tile;
   private readonly lanes: Tile;
@@ -272,7 +274,8 @@ export class Backdrop {
     this.sky.addChild(this.farLands);
     // The sun sits far out along the light direction, so it agrees with the hulls.
     const az = art.lightRig.sunAz;
-    this.sprite(art.fx('sun', undefined, undefined, false), Math.cos(az) * 700, Math.sin(az) * 700, 0.004, 0.03, 520, 0.95, false).s.tint = 0xfff0d8;
+    this.sun = this.sprite(art.fx('sun', undefined, undefined, false), Math.cos(az) * 700, Math.sin(az) * 700, 0.004, 0.03, 520, 0.95, false);
+    this.sun.s.tint = 0xfff0d8;
     this.tile(art.fx('starsMid', undefined, undefined, false), 0.08, 0.25, 1, 0.9, 'add', this.sky, null).star = true;
     // Dark lanes sit in front of the far stars and the glow, hiding them.
     this.lanes = this.tile(null, 0.03, 0.15, 2.2, 0.55, 'normal', this.sky, null);
@@ -330,6 +333,11 @@ export class Backdrop {
     // so the new sky never pops in behind the pilot (it fades in on arrival).
     if (this.travelHold && this.deep < 0.98) { this.pendingSector = sectorKey; return; }
     this.pendingSector = undefined;
+    // W3: each sector has its own sun (ArtService.setSector): keep the sky's
+    // sun on the hulls' light direction.
+    const az = this.art.lightRig.sunAz;
+    this.sun.lx = Math.cos(az) * 700;
+    this.sun.ly = Math.sin(az) * 700;
     const key = sectorKey ?? '';
     if (key === this.nebulaFor) return;
     this.nebulaFor = key;

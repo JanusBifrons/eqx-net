@@ -4,6 +4,12 @@
  * the realistic WORST case (every NPC base in today's galaxy starved of every
  * input, every output piled up); `benchmarks/convoys.bench.ts` reports the
  * same figure as a bench. The live cap is the director's `maxPerSector`.
+ *
+ * The per-PR gate is a COUNT (plan machine-independent-perf WS3): the
+ * candidate exporter checks one pass makes (the planner's inner loop, read
+ * through its `allowPair` hook). The "≤ 2 ms" wall-clock assert failed on a
+ * hosted runner at 2.07 ms (PR #352) with no code change: host speed, not
+ * the planner. The time is still printed here and measured by the bench.
  */
 import { describe, expect, it } from 'vitest';
 import { matchConvoys } from '../../src/core/economy/convoys.js';
@@ -11,8 +17,11 @@ import { hopDistance } from '../../src/server/livingworld/population.js';
 import { DEFAULT_CONVOY_OPTIONS } from '../../src/server/economy/ConvoyDirector.js';
 import { galaxyConvoyViews } from '../../benchmarks/convoyGalaxyFixture.js';
 
-/** The plan's budget for one planning pass. */
+/** The plan's budget for one planning pass (bench + printout; not asserted). */
 const CONVOY_PLAN_MAX_MS = 2;
+/** Candidate exporter checks in one worst-case pass: 988 measured 2026-11-08
+ *  (deterministic, any host), + 25 %. The 2 ms pass did this much work. */
+const CONVOY_PLAN_MAX_CHECKS = 1235;
 /** The plan's cap on live convoys in one sector. */
 const CONVOYS_PER_SECTOR_MAX = 6;
 
@@ -29,7 +38,14 @@ describe('convoy budgets', () => {
     expect(matchConvoys(views, opts).length).toBeGreaterThanOrEqual(DEFAULT_CONVOY_OPTIONS.maxActive - 1);
   });
 
-  it(`a planning pass over the whole galaxy stays within ${CONVOY_PLAN_MAX_MS} ms (fastest of 25: host noise only adds)`, () => {
+  it(`a planning pass over the whole galaxy makes at most ${CONVOY_PLAN_MAX_CHECKS} candidate checks`, () => {
+    let checks = 0;
+    matchConvoys(views, { ...opts, allowPair: () => { checks++; return true; } });
+    console.log(`[convoy plan] ${views.length} bases: ${checks} candidate checks`);
+    expect(checks).toBeLessThanOrEqual(CONVOY_PLAN_MAX_CHECKS);
+  });
+
+  it(`prints the pass time against the ${CONVOY_PLAN_MAX_MS} ms design budget (print-only: host speed)`, () => {
     for (let i = 0; i < 5; i++) matchConvoys(views, opts); // warm up
     const times: number[] = [];
     for (let i = 0; i < 25; i++) {
@@ -40,8 +56,8 @@ describe('convoy budgets', () => {
     times.sort((a, b) => a - b);
     const median = times[12]!;
     const best = times[0]!;
-    console.log(`[convoy plan] ${views.length} bases: median ${median.toFixed(3)} ms, max ${times[24]!.toFixed(3)} ms`);
-    expect(best).toBeLessThanOrEqual(CONVOY_PLAN_MAX_MS);
+    console.log(`[convoy plan] ${views.length} bases: best ${best.toFixed(3)} ms, median ${median.toFixed(3)} ms, max ${times[24]!.toFixed(3)} ms (design budget ${CONVOY_PLAN_MAX_MS} ms${best > CONVOY_PLAN_MAX_MS ? ': OVER on this host' : ''})`);
+    expect(best).toBeGreaterThan(0);
   });
 
   it(`the director keeps at most ${CONVOYS_PER_SECTOR_MAX} live convoys in a sector`, () => {

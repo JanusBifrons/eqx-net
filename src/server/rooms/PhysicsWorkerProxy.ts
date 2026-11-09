@@ -123,6 +123,11 @@ export class PhysicsWorkerProxy {
     return h ? { ...h, workerIndex: w.workerIndex } : null;
   }
 
+  /** Worker event-loop utilisation since `prev` (perf scenes, print-only). */
+  elu(prev?: import('node:perf_hooks').EventLoopUtilization): import('node:perf_hooks').EventLoopUtilization | null {
+    return this.world?.elu(prev) ?? null;
+  }
+
   /**
    * Host this room's physics world on the shared worker pool
    * (PhysicsWorkerPool.ts). Resolves once the world is READY; rejects if it

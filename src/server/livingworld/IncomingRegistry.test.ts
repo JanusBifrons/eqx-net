@@ -109,3 +109,42 @@ describe('IncomingRegistry', () => {
     expect(dest.clears).toHaveLength(0);
   });
 });
+
+/**
+ * Late joiner (2026-11-08, wave-attack E2E): the warning is a one-shot
+ * broadcast to the room's CURRENT occupants, so a pilot who arrives during
+ * the ~30 s final approach never saw it ("the attack came out of nowhere").
+ * The audit showed `wave_incoming` 2.7 s BEFORE the owner's `player_joined`.
+ * `forEachInbound` replays what is still inbound, with the countdown left.
+ */
+describe('IncomingRegistry — replay to a pilot who joins mid-approach', () => {
+  it('replays each live inbound to the destination with the remaining countdown', () => {
+    let now = 1_000;
+    const reg = new IncomingRegistry(new Map([['sol-prime', fakeRoom()], ['vega-reach', fakeRoom()]]), { nowMs: () => now });
+    reg.register(entry({ id: 'squad-0', disposition: 'enemy', etaMs: 30_000 }));
+    reg.register(entry({ id: 'squad-1', destSectorKey: 'vega-reach' }));
+    now += 12_000;
+    const got: WarpWarningEvent[] = [];
+    reg.forEachInbound('sol-prime', (m) => got.push(m));
+    expect(got).toEqual([{ type: 'warp_warning', id: 'squad-0', label: 'Legionnaire', count: 8, countdownMs: 18_000, disposition: 'enemy' }]);
+  });
+
+  it('skips an inbound whose countdown has run out (the clear may still be pending)', () => {
+    let now = 0;
+    const reg = new IncomingRegistry(new Map([['sol-prime', fakeRoom()]]), { nowMs: () => now });
+    reg.register(entry({ etaMs: 5_000 }));
+    now = 5_001;
+    const got: WarpWarningEvent[] = [];
+    reg.forEachInbound('sol-prime', (m) => got.push(m));
+    expect(got).toHaveLength(0);
+  });
+
+  it('replays nothing after the inbound is cleared', () => {
+    const reg = new IncomingRegistry(new Map([['sol-prime', fakeRoom()]]));
+    reg.register(entry());
+    reg.clear('squad-0', 'sol-prime');
+    const got: WarpWarningEvent[] = [];
+    reg.forEachInbound('sol-prime', (m) => got.push(m));
+    expect(got).toHaveLength(0);
+  });
+});

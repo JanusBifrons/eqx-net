@@ -317,6 +317,11 @@ export class EffectsService implements IEffects {
     return this.budget.getQuality();
   }
 
+  /** Perf count gate (WS3): hold the tier whatever the host's speed (null unpins). */
+  pinQuality(level: EffectQuality | null): void {
+    this.budget.pin(level);
+  }
+
   getStats(): { activeBursts: number; activeContinuous: number; activeFilters: number; quality: EffectQuality } {
     this.statsScratch.activeBursts = this.counters.activeBursts;
     this.statsScratch.activeContinuous = this.counters.activeContinuous;

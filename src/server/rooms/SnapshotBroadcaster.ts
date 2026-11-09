@@ -58,6 +58,7 @@ import type { ShipState } from './schema/SectorState.js';
 import type { ProjectileRecord } from './ProjectilePipeline.js';
 import type { Hold } from '../../shared-types/goods.js';
 import { isHoldEmpty } from '../../core/cargo/hold.js';
+import type { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 
 /** Shared empty stat-allocation reference (Phase 4 WS-B2). A frozen singleton so
  *  the per-broadcast scratch initializer + every un-upgraded ship reuse ONE
@@ -175,6 +176,11 @@ export interface SnapshotBroadcasterDeps {
   droneFactionOf?: (droneId: string) => string | undefined;
   /** W2a — a drone's NPC warp phase: 1 spool, 2 run, 3 just arrived, 0 none. */
   droneWarpOf?: (droneId: string) => 0 | 1 | 2 | 3;
+  /** W2c — the bots warping right now (keys = drone ids). Their phase goes to
+   *  EVERY client, not only those with them in interest: a capital is seen
+   *  from far outside its interest window (coarse out-of-interest poses), and
+   *  without the phase a far onlooker saw it slide off instead of jump. */
+  warpingDrones?: () => ReadonlyMap<string, { entityId: number }>;
   /** v4 A — ms left on a player's alien-gate disable (0 when none). */
   disabledMsOf?: (playerId: string) => number;
   playerMountAngles: Map<string, Float32Array>;
@@ -199,6 +205,8 @@ export interface SnapshotBroadcasterDeps {
   /** Structures plan, Phase 3 — the cached structures slice (rebuilt at the
    *  1 Hz grid pulse, attached by reference). Undefined ⇒ no structures. */
   getStructuresSlice?: () => SnapshotMessage['structureTargets'];
+  /** Perf scenes (WS3): snapshots + entities sent, counted while a scene runs. */
+  work?: SceneWorkCounters;
 }
 
 interface AllShipEntry {
@@ -936,6 +944,17 @@ export class SnapshotBroadcaster {
           dronesCount++;
         }
       }
+      // W2c — warping NPCs outside this client's interest: the phase only.
+      const warping = d.warpingDrones?.();
+      if (warping && warping.size > 0) {
+        for (const [id, w] of warping) { // TODO: alloc-debt (iterator; only while an NPC warps)
+          if (interest && interest.has(w.entityId)) continue;
+          const warp = d.droneWarpOf?.(id) ?? 0;
+          if (warp === 0) continue;
+          SnapshotBroadcaster.writeDroneSlot(dronesScratch, dronesCount, w.entityId, undefined, false, undefined, false, false, undefined, undefined, warp);
+          dronesCount++;
+        }
+      }
       dronesScratch.length = dronesCount;
 
       // WS-4 Phase 6 (R2.23 enabler) — slim resource slice for MINED asteroids
@@ -1014,6 +1033,11 @@ export class SnapshotBroadcaster {
         });
       }
       anySnapshotSent = true;
+      const work = d.work;
+      if (work !== undefined && work.active) {
+        work.snapshots++;
+        work.snapshotEntities += projectilesCount + missilesCount + dronesCount + asteroidsCount;
+      }
     }
 
     // Sweep state-entry pool — drop entries for shipInstanceIds that

@@ -17,6 +17,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { test, expect, type Browser, type Page } from '@playwright/test';
+import { waitForInPlay } from './helpers/gameScenario';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 type Stats = { turrets?: number; turretShots?: number; failed?: number; lastFailure?: string; ready?: number };
@@ -35,6 +36,8 @@ async function join(browser: Browser, room: string, shipKind: string, fx: boolea
     const el = document.querySelector('[data-testid="game-surface"]');
     return el !== null && el.getAttribute('data-local-player-id') !== '';
   }, undefined, { timeout: 30_000 });
+  // Auto-fire and the drone's hostility only run once the curtain lifts.
+  await waitForInPlay(page);
   return { ctx, page };
 }
 
@@ -70,6 +73,7 @@ test('auto-fire kicks the gunship\'s guns (recoil, flash, heat)', async ({ brows
   const params = new URLSearchParams({ room: 'auto-fire-test', shipKind: 'gunship', testId: randomUUID(), worker: '0', art: 'machined', fx: 'new', zoom: '2.5', initialHull: '5000', startHostile: '1' });
   await page.goto(`${BASE_URL}?${params}`);
   await turretsAtLeast(page, 2);
+  await waitForInPlay(page);
   await page.waitForFunction(() => ((window as unknown as { __eqxArtStats?: () => Stats }).__eqxArtStats?.().turretShots ?? -1) > 0, undefined, { timeout: 20_000 });
   await page.screenshot({ path: 'diag/e2e-screenshots/fx-turrets/firing.png' });
   await ctx.close();

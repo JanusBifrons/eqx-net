@@ -256,6 +256,8 @@ import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
 import { registerScenePerfRoom, unregisterScenePerfRoom, type ScenePerfView } from './scene/scenePerfRegistry.js';
+import { SceneWorkCounters } from './scene/SceneWorkCounters.js';
+import type { EventLoopUtilization } from 'node:perf_hooks';
 import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
 import { LeaveHandler } from './LeaveHandler.js';
@@ -272,6 +274,7 @@ import { makeInputHandler } from './InputHandler.js';
 import {
   TICK_IDX,
   WORKER_TICK_US_IDX,
+  COUNT_IDX,
   SLOT_X_OFF,
   SLOT_Y_OFF,
   SLOT_VX_OFF,
@@ -334,6 +337,7 @@ import {
   EngageTransitSchema,
   CancelTransitSchema,
   TestAggroSchema,
+  TestFleetWarpSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,
@@ -1122,7 +1126,7 @@ export class SectorRoom extends Room<SectorState> {
   private pendingJoin = new Map<string, PendingJoinRecord>();
   /** W2a NPC warp-to: bots sent on a warp (`warpBot`), until they have
    *  landed and their arrival window has passed. Empty in normal play. */
-  private readonly npcWarps = new Map<string, { lastPhase: 0 | 1 | 2; arrivedUntil: number; started: boolean; idleTicks: number }>();
+  private readonly npcWarps = new Map<string, { entityId: number; lastPhase: 0 | 1 | 2; arrivedUntil: number; started: boolean; idleTicks: number }>();
   /** Phase 4 warp travel: a ship on its warp run is out of the world
    *  (rooms/warpTravel.ts). Ticked after the pending-join drain. */
   private readonly warpTravel = new WarpTravelTracker({
@@ -1673,6 +1677,13 @@ export class SectorRoom extends Room<SectorState> {
       /** testMode — false: never save or restore this sector's snapshot (a
        *  test room that needs a sectorKey for the roster, not persistence). */
       persistSector?: boolean;
+      /** testMode — where a WAVE squad lands in this room (the wave E2E;
+       *  `LivingWorldRoom.testWaveArrival`). */
+      testWaveArrival?: { x: number; y: number };
+      /** testMode — a base here is wave-ready only while its owner has an
+       *  active ship in the room, so a wave E2E draws its wave after it joins,
+       *  however long the server ran before (waves otherwise ignore presence). */
+      waveNeedsOwner?: boolean;
     };
     // Payload-DoS bound (S5): onCreate options are client-suppliable on room
     // create, so reject oversized seed arrays before they seed the sector.
@@ -2054,6 +2065,7 @@ export class SectorRoom extends Room<SectorState> {
       disabledMsOf: (playerId) => this.gateGuard.remainingMs(playerId, Date.now()),
       droneFactionOf: (id) => (this.patrols.count > 0 ? this.patrols.factionOf(id) : undefined),
       droneWarpOf: (id) => (this.npcWarps.size > 0 ? this.botWarpPhase(id) : 0),
+      warpingDrones: () => this.npcWarps,
       depositProgressOf: (shipInstanceId) => this.depositProgress.get(shipInstanceId),
       lockGroupsOf: (pid) => this.locks.wireFor(pid),
       lockedByOf: (pid) => this.npcLocks.wireFor(pid),
@@ -2065,6 +2077,7 @@ export class SectorRoom extends Room<SectorState> {
       missileSim: this.missileSim,
       logger,
       serverLogEvent,
+      work: this.sceneWork,
       // Phase 1 swift-otter DI seam — when the WebRtc manager is live
       // (galaxy rooms), route via DC with WS fallback; on engineering
       // rooms the seam stays undefined and the legacy WS-only path runs.
@@ -2181,6 +2194,7 @@ export class SectorRoom extends Room<SectorState> {
     // The interestScratch Set populated here is REUSED by the snapshot
     // broadcaster's drone slice (same per-(client,tick) cell window).
     this.swarmBroadcaster = new SwarmBroadcaster({
+      work: this.sceneWork,
       serverTick: () => this.serverTick,
       sabF32: this.sabF32,
       sabU32: this.sabU32,
@@ -2633,6 +2647,9 @@ export class SectorRoom extends Room<SectorState> {
       if (roomOpts.sceneScript !== undefined) this.initSceneScript(roomOpts.sceneScript);
       this.perfFixedLoad = roomOpts.perfFixedLoad === true;
       this.persistSector = roomOpts.persistSector !== false;
+      const twa = roomOpts.testWaveArrival;
+      if (twa && Number.isFinite(twa.x) && Number.isFinite(twa.y)) this.testWaveArrivalPose = { x: twa.x, y: twa.y };
+      this.waveNeedsOwner = roomOpts.waveNeedsOwner === true;
     }
     // Phase-1 issue 5 — scrap-stress seed: a dense corridor of free-floating
     // scrap ahead of spawn for the fly-through reconciliation E2E.
@@ -2888,6 +2905,29 @@ export class SectorRoom extends Room<SectorState> {
         return;
       }
       this.markAllDronesHostileTo(playerId);
+    });
+
+    // W2c showcase: warp the room's ships to (x, y), keeping the formation
+    // (offsets from the biggest ship, the flagship).
+    this.onMessage('test_fleet_warp', (client: Client, raw: unknown) => {
+      if (!(this.testMode || ALLOW_DEV_OVERRIDES)) return;
+      const parsed = TestFleetWarpSchema.safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, 'test_fleet_warp');
+        return;
+      }
+      let lead: { id: string; slot: number; radius: number } | null = null;
+      for (const rec of this.swarmRegistry.all()) if (rec.kind === 1 && (lead === null || rec.radius > lead.radius)) lead = rec;
+      if (lead === null) return;
+      const lb = slotBase(lead.slot);
+      const lx = this.sabF32[lb + SLOT_X_OFF]!, ly = this.sabF32[lb + SLOT_Y_OFF]!;
+      for (const rec of [...this.swarmRegistry.all()]) { // TODO: alloc-debt (test cue only)
+        if (rec.kind !== 1) continue;
+        const b = slotBase(rec.slot);
+        const tx = parsed.data.x + this.sabF32[b + SLOT_X_OFF]! - lx, ty = parsed.data.y + this.sabF32[b + SLOT_Y_OFF]! - ly;
+        this.warpBot(rec.id, tx, ty);
+        this.setBotMoveTarget(rec.id, tx, ty); // hold there after the drop
+      }
     });
 
     this.onMessage('cancel_transit', (client: Client, raw: unknown) => {
@@ -6822,9 +6862,6 @@ export class SectorRoom extends Room<SectorState> {
     return true;
   }
 
-  /** Roaming-formation (Phase 5) — assign a bot's in-sector move target. The
-   *  drone's IDLE `HostileDroneBehaviour` flies to it (arrive ramp). No-op for a
-   *  bot with no behaviour registered here (e.g. mid-transit). */
   /**
    * W2a NPC warp-to (flagship fleets): send a living-world bot on a warp to
    * (x, y) through the same spool → run → drop machine as a pilot's
@@ -6836,8 +6873,11 @@ export class SectorRoom extends Room<SectorState> {
     const rec = this.swarmRegistry.get(botId);
     if (!rec || rec.kind !== 1) return false;
     const lim = this.solar ? SOLAR_HALF_EXTENT : SECTOR_PLAYABLE_HALF_EXTENT;
-    this.postToWorker({ type: 'BOT_WARP', slot: rec.slot, x: Math.max(-lim, Math.min(lim, x)), y: Math.max(-lim, Math.min(lim, y)) });
-    if (!this.npcWarps.has(botId)) this.npcWarps.set(botId, { lastPhase: 0, arrivedUntil: -1, started: false, idleTicks: 0 });
+    // Land clear of rocks, structures and ships, like a pilot's warp (a drop
+    // inside an asteroid belt rock killed an escort in the first test run).
+    const p = this.landingPoint(botId, Math.max(-lim, Math.min(lim, x)), Math.max(-lim, Math.min(lim, y)), rec.shipKind);
+    this.postToWorker({ type: 'BOT_WARP', slot: rec.slot, x: p.x, y: p.y });
+    if (!this.npcWarps.has(botId)) this.npcWarps.set(botId, { entityId: rec.entityId, lastPhase: 0, arrivedUntil: -1, started: false, idleTicks: 0 });
     return true;
   }
 
@@ -6872,6 +6912,9 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
+  /** Roaming-formation (Phase 5) — assign a bot's in-sector move target. The
+   *  drone's IDLE `HostileDroneBehaviour` flies to it (arrive ramp). No-op for a
+   *  bot with no behaviour registered here (e.g. mid-transit). */
   setBotMoveTarget(botId: string, x: number, y: number): void {
     this.aiController.getBehaviour(botId)?.setMoveTarget?.(x, y);
   }
@@ -6951,7 +6994,8 @@ export class SectorRoom extends Room<SectorState> {
     }
     const out: FactionBaseReadiness[] = [];
     for (const [factionId, agg] of byOwner) {
-      const ready = isBaseReady(agg);
+      const ownerPresent = this.getActiveShip(factionId)?.isActive === true;
+      const ready = isBaseReady(agg) && (!this.waveNeedsOwner || ownerPresent);
       // WS-11 (R2.24 Part B) — one-shot "your base is operational" toast the
       // first time a base qualifies for waves; re-arm when it drops below ready
       // (a razed-then-rebuilt base re-toasts). Evaluated at the director's
@@ -6980,7 +7024,7 @@ export class SectorRoom extends Room<SectorState> {
         sectorKey,
         ready,
         // The owner is "present" when they have an active hull in this sector.
-        ownerPresent: this.getActiveShip(factionId)?.isActive === true,
+        ownerPresent,
         minerCount: agg.minerCount,
         hostileToDrones: state?.hostileToDrones ?? false,
         underWave: state?.underWave ?? false,
@@ -7117,6 +7161,11 @@ export class SectorRoom extends Room<SectorState> {
     // their transit raised in this sector. Idempotent (non-transit joins clear a
     // non-existent entry harmlessly); galaxy-only (engineering rooms have no key).
     if (this.sectorKey) getIncomingPlayerSink()?.clearIncomingPlayer(playerId, this.sectorKey);
+    // 2026-11-08 — a `warp_warning` only reaches the occupants at broadcast
+    // time, so a pilot arriving during a wave's ~30 s final approach never saw
+    // it. Replay what is still inbound here, with the countdown left (once per
+    // join; discrete, off the tick).
+    if (this.sectorKey) getIncomingPlayerSink()?.replayIncomingTo(this.sectorKey, (m) => client.send('warp_warning', m));
 
     serverLogEvent('client_ready_received', {
       playerId,
@@ -7270,6 +7319,7 @@ export class SectorRoom extends Room<SectorState> {
         }
       },
       onContactBatch: (tick, contacts) => {
+        if (this.sceneWork.active) this.sceneWork.contacts += contacts.length;
         // Stage 2 of the network-feel roadmap: each contact above the
         // worker's CONTACT_FORCE_FLOOR is broadcast to all clients in
         // the room as `collision_resolved`. AOI filter is deferred —
@@ -9482,6 +9532,12 @@ export class SectorRoom extends Room<SectorState> {
   private perfFixedLoad = false;
   /** testMode: false ⇒ SectorPersistence sees no sector (no save/restore). */
   private persistSector = true;
+  /** testMode: where a wave squad lands here (null ⇒ its carry pose). */
+  private testWaveArrivalPose: { x: number; y: number } | null = null;
+  /** testMode `waveNeedsOwner` (see the room option). */
+  private waveNeedsOwner = false;
+  /** LivingWorldRoom hook — see `testWaveArrival` in LivingWorldRoom.ts. */
+  testWaveArrival(): { x: number; y: number } | null { return this.testWaveArrivalPose; }
 
   /** Scene status for `/dev/perf` and tests (null: no scene). */
   sceneStatus(): Readonly<SceneStatus> | null { return this.sceneRunner?.getStatus() ?? null; }
@@ -9489,6 +9545,9 @@ export class SectorRoom extends Room<SectorState> {
   /** Server tick cost while the scene runs (start → end), for `/dev/perf`. */
   private sceneTickRing: FrameTimeRing | null = null;
   private sceneWorkerRing: FrameTimeRing | null = null;
+  /** Perf scenes (WS3): per-tick work counters, counted while the scene runs. */
+  private readonly sceneWork = new SceneWorkCounters();
+  private sceneEluStart: EventLoopUtilization | null = null;
 
   scenePerf(): ScenePerfView | null {
     if (!this.sceneRunner || !this.sceneTickRing || !this.sceneWorkerRing) return null;
@@ -9500,6 +9559,7 @@ export class SectorRoom extends Room<SectorState> {
       swarm: this.swarmRegistry.size(),
       players: this.playerToSlot.size,
       structures: this.structureRegistry.size,
+      work: this.sceneWork.view(this.sceneEluStart ? (this.physicsWorkerProxy?.elu(this.sceneEluStart)?.utilization ?? null) : null),
     };
   }
 
@@ -10089,6 +10149,7 @@ export class SectorRoom extends Room<SectorState> {
     ) return;
 
     const tStart = performance.now();
+    this.sceneWork.beginUpdate();
 
     // Phase 6 synthetic load: busy-wait `tickBurnMs` so the budget tracker
     // measures it as real work and TiDi engages. Only enabled when the
@@ -10297,7 +10358,13 @@ export class SectorRoom extends Room<SectorState> {
     });
     if (this.sceneRunner) {
       const st = this.sceneRunner.getStatus();
-      if (st.started && !st.ended) { this.sceneTickRing!.push(totalMs); this.sceneWorkerRing!.push(workerTickMs); }
+      const running = st.started && !st.ended;
+      if (running) {
+        this.sceneTickRing!.push(totalMs); this.sceneWorkerRing!.push(workerTickMs);
+        if (!this.sceneWork.active) this.sceneEluStart = this.physicsWorkerProxy?.elu() ?? null;
+        this.sceneWork.endTick(this.sabU32[COUNT_IDX] ?? 0, this.aiController.size());
+      }
+      this.sceneWork.active = running;
     }
 
     // Phase 6 — drive the TiDi clock from whichever side is the bottleneck.

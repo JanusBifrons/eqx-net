@@ -73,7 +73,11 @@ import { ROBOT_SQUARE, ROBOT_CIRCLE, ROBOT_HEXAGON, ROBOT_NEXUS, ROBOT_HARVESTER
 import { CARGO_POD } from './shipKinds/cargoPod.js';
 import { TRADER_HAULER } from './shipKinds/traders.js';
 import { PATROL_FIGHTER } from './shipKinds/patrols.js';
-import { DESTROYER, LIGHT_CRUISER, HEAVY_CRUISER, BATTLECRUISER, BATTLESHIP } from './shipKinds/capitals/index.js';
+import {
+  DESTROYER, LIGHT_CRUISER, HEAVY_CRUISER, BATTLECRUISER, BATTLESHIP,
+  DESTROYER_B, DESTROYER_C, LIGHT_CRUISER_B, LIGHT_CRUISER_C, HEAVY_CRUISER_B, HEAVY_CRUISER_C,
+  BATTLECRUISER_B, BATTLECRUISER_C, BATTLESHIP_B, BATTLESHIP_C,
+} from './shipKinds/capitals/index.js';
 import { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 import type { NpcAllegianceId } from './allegiances.js';
 import type { ShipKind, ShipKindId } from './shipKinds/types.js';
@@ -140,6 +144,16 @@ export const SHIP_KINDS = Object.freeze({
   'heavy-cruiser': HEAVY_CRUISER,
   battlecruiser: BATTLECRUISER,
   battleship: BATTLESHIP,
+  'destroyer-b': DESTROYER_B,
+  'destroyer-c': DESTROYER_C,
+  'light-cruiser-b': LIGHT_CRUISER_B,
+  'light-cruiser-c': LIGHT_CRUISER_C,
+  'heavy-cruiser-b': HEAVY_CRUISER_B,
+  'heavy-cruiser-c': HEAVY_CRUISER_C,
+  'battlecruiser-b': BATTLECRUISER_B,
+  'battlecruiser-c': BATTLECRUISER_C,
+  'battleship-b': BATTLESHIP_B,
+  'battleship-c': BATTLESHIP_C,
 } as const) satisfies Readonly<Record<string, ShipKind>>;
 
 /**

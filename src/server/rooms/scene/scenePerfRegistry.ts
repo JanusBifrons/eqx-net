@@ -5,6 +5,7 @@
  */
 import type { FrameTimeSummary } from '../../../core/perf/FrameTimeRing.js';
 import type { SceneStatus } from './SceneScriptRunner.js';
+import type { SceneWorkView } from './SceneWorkCounters.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -18,6 +19,9 @@ export interface ScenePerfView {
   swarm: number;
   players: number;
   structures: number;
+  /** Work counters per tick (WS3; gated by perfSceneCounts.test.ts) plus
+   *  print-only CPU time. */
+  work: SceneWorkView;
 }
 
 export interface ScenePerfSource { scenePerf(): ScenePerfView | null }
