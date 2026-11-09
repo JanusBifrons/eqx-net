@@ -11,8 +11,12 @@ through `LeaveHandler.forgetLocks`), and NPC drones must lock every player
 false for an untracked player, `mountBearsOnLock` / `lockAimTarget` always
 consult the locks, and player turrets always aim at their group's lock (the old
 player auto-target in `WeaponMountTicker.tickPlayer` is gone). The `fireControl`
-join option and the `?ui=` HUD switch were removed. NPC capitals' per-turret
-fire and structure turrets are not lock-gated yet (PR 1d).
+join option and the `?ui=` HUD switch were removed. NPC capitals' turrets each
+fire only with the capital's completed lock on their OWN target (PR 1d slice 2):
+a capital holds one lock per pilot, built with whichever of its gun sizes locks
+that pilot fastest, so its AA can engage a fighter while its 16" guns (which can
+never lock a fighter-sized hull) wait for a capital. Structure turrets are not
+lock-gated yet (PR 1d).
 
 **Trust.** The server never takes the client's word for a lock:
 - `lock_track` carries the lock line's bearing (`b`, `encodeAim`); the server
@@ -41,7 +45,7 @@ act). Integration: `harness.lockTarget(playerId, target, groupId?)` →
 | Lock time | `core/combat/lockTime.ts` | Pure `lockSeconds(inputs, tuning)`; Infinity = can't lock now |
 | Lock state | `core/combat/lockState.ts` | `LockEntry` + `stepLock`: failsafe → acquiring → locked; `track` = commit / held / released (released drains at `decayMul`× and drops at 0) |
 | Player locks | `server/rooms/LockSubsystem.ts` | Per pilot, per group: queue (capacity 1 sub-capital, 3 capital), AUTO pick (arc-filtered), `requestLock` (commit), `trackLock` (held line), `cancelLock`, `setMode`; stepped every 6 ticks |
-| NPC locks | `server/rooms/NpcLockSubsystem.ts` | Every NPC hostile to a tracked pilot builds a lock on them by the same rules; `fireBlocked(npcId, targetId)` refuses a drone shot at a pilot target it has not completed a lock on (the target id rides `intent.fire.targetId`; non-pilot targets are not gated) |
+| NPC locks | `server/rooms/NpcLockSubsystem.ts` | Every NPC hostile to a tracked pilot builds a lock on them by the same rules; `fireBlocked(npcId, targetId)` refuses a drone shot at a pilot target it has not completed a lock on (the target id rides `intent.fire.targetId`; non-pilot targets are not gated); `WeaponMountTicker.tickCapitalMounts` asks the same question per capital turret with that turret's own target. A capital's lock time is the fastest over its per-mount-size profiles; testMode `instantLock` on a pilot completes NPC locks on them in reach |
 | Player fire gate | `PlayerFireResolver` deps `fireAllowed` + `mountBearsOnLock` | A group fires only with a LOCKED target, and only mounts whose barrel is within `FC_MOUNT_FIRE_TOLERANCE` (0.2 rad) of it; otherwise refused without spending cooldown or energy |
 | Turret aim | `WeaponMountTicker.tickPlayer` → `LockSubsystem.aimKeyFor` | Each mount slews toward its group's locked (else acquiring) target; no target ⇒ home. With several locks (capitals) the turrets share them out via the shared `pickTurretLock` (`core/combat/turretLockPick.ts`): turret *i* of the group prefers lock *i mod n*, else the next lock round the list it can engage (reach + arc), else the first. The client's predicted aim and ghost gate (`fcMountAimKey`) call the same function (#15) |
 | Capital fire cadence | `PlayerFireResolver` (per-mount ledger) + `ColyseusClient.fcFireMounts` | Capitals (`hasTurretFireControl`) fire each turret on its OWN weapon reload as soon as it bears on its own target; the group fire carries only the reloaded, bearing mounts and pays that share of the group energy cost. A multi-barrel turret is one mount, so its barrels still fire together. Other ships keep the one group cooldown |
