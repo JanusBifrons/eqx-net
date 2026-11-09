@@ -61,6 +61,8 @@ import type { StructureRecord, StructureRegistry } from './StructureRegistry.js'
 const MAX_RECONNECT_ATTEMPTS_PER_PULSE = 8;
 /** Turret ticks between sweeps of fire-control state for removed structures. */
 const PRUNE_EVERY_TICKS = 50;
+/** Lock signature (u) of the unit-harness fallback target ("a small craft": fighter-sized). */
+const FALLBACK_TARGET_SIGNATURE = 10;
 
 /** Shared empty obstacle list for the mining-beam surface clip (the building-block
  *  leg is deferred — see `resolveMiningClip`). Module const ⇒ no per-pulse alloc. */
@@ -205,7 +207,7 @@ export class StructureGridSubsystem {
   private readonly aaBarrel = new Map<string, number>();
   private turretTicks = 0;
   /** Fallback candidate for rooms without `turretTargets` (unit harnesses). */
-  private readonly nearestView: TurretTargetView = { id: '', entityId: -1, x: 0, y: 0, vx: 0, vy: 0, cls: 'small' };
+  private readonly nearestView: TurretTargetView = { id: '', entityId: -1, x: 0, y: 0, vx: 0, vy: 0, cls: 'small', signature: FALLBACK_TARGET_SIGNATURE };
 
   constructor(private readonly hooks: StructureGridHooks) {
     this.mounts = new StructureMountTicker({
@@ -219,6 +221,11 @@ export class StructureGridSubsystem {
    *  for the snapshot. Undefined before its first turret tick. */
   mountAnglesOf(id: string): Float32Array | undefined {
     return this.mounts.anglesOf(id);
+  }
+
+  /** testMode `instantLock`: every structure-turret lock completes on the step it starts. */
+  setInstantTurretLocks(on: boolean): void {
+    this.mounts.setInstantLocks(on);
   }
 
   /** testMode trigger (`test_reload_turrets`): reload every structure gun. */
