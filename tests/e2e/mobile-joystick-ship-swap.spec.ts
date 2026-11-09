@@ -75,15 +75,16 @@ async function waitForLocalShip(page: Page, timeoutMs = 25_000): Promise<void> {
 }
 
 async function waitForJoystickMounted(page: Page, timeoutMs = 10_000): Promise<void> {
-  // `.joystick` is the nipplejs joystick handle DOM. One mount creates
-  // exactly one `.joystick` element inside the joystick zone.
-  await expect(page.locator('.joystick').first()).toBeAttached({ timeout: timeoutMs });
+  // The GameHud move stick (FloatingStick id="hud-move"): one mount renders
+  // exactly one `hud-move-home` ring (and one `hud-move-zone`). It replaced
+  // the nipplejs `.joystick` when HUD D became the only HUD.
+  await expect(page.locator('[data-testid="hud-move-home"]').first()).toBeAttached({ timeout: timeoutMs });
 }
 
 async function countJoysticks(page: Page): Promise<{ zones: number; joysticks: number }> {
   return page.evaluate(() => ({
     zones: document.querySelectorAll('[data-testid="hud-move-zone"]').length,
-    joysticks: document.querySelectorAll('.joystick').length,
+    joysticks: document.querySelectorAll('[data-testid="hud-move-home"]').length,
   }));
 }
 
@@ -108,7 +109,7 @@ test('in-game ship swap does NOT leave a stale joystick (two thumbsticks bug)', 
 
   const before = await countJoysticks(page);
   expect(before.zones, 'sanity: exactly one joystick zone before swap').toBe(1);
-  expect(before.joysticks, 'sanity: exactly one nipplejs handle before swap').toBe(1);
+  expect(before.joysticks, 'sanity: exactly one move stick before swap').toBe(1);
 
   // Step 2 — read the spawned shipId out of the Zustand singleton.
   // The roster fetch may not have populated yet — sync via the
@@ -167,8 +168,8 @@ test('in-game ship swap does NOT leave a stale joystick (two thumbsticks bug)', 
   ).toBe(1);
   expect(
     after.joysticks,
-    `Expected exactly 1 .joystick element after ship-swap, got ${after.joysticks}. ` +
-      'Two nipplejs handles mean the old MobileControls cleanup did not tear down ' +
+    `Expected exactly 1 move stick (hud-move-home) after ship-swap, got ${after.joysticks}. ` +
+      'Two sticks mean the old HUD mount did not tear down ' +
       'its joystick DOM before the new mount created its replacement. ' +
       'Smoking gun for the 2026-05-14 user-reported "two thumbsticks" bug.',
   ).toBe(1);
