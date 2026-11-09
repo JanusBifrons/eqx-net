@@ -162,7 +162,9 @@ export interface AiIntent {
    *  input path so a drone can match a player's turn rate without fighting
    *  damping. */
   setAngvel?: number;
-  fire?: { dirX: number; dirY: number };
+  /** `targetId`: the entity the shot is aimed at (the fire gate checks the
+   *  shooter holds a lock on it when it is a pilot). */
+  fire?: { dirX: number; dirY: number; targetId: string };
 }
 
 export interface IAiBehaviour {

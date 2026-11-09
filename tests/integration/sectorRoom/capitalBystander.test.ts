@@ -7,6 +7,8 @@
  * Layout: battleship at (5000, 0), 50° (as capitalEngagement.test); the
  * target at the origin (startHostile); the bystander 900 u off the
  * battleship on the side AWAY from the target, inside AA and 5" reach.
+ * The target joins with `instantLock` (its 16" lock completes at once; see
+ * capitalEngagement.test).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -25,7 +27,7 @@ describe('SectorRoom integration — capital bystander', () => {
 
   it('turrets never target or hit a non-hostile pilot beside the battleship', { timeout: 60_000 }, async () => {
     const target = randomUUID(), bystander = randomUUID();
-    const tr = await harness.connectActive(target, { initialHull: 1_000_000, initialShield: 0, startHostile: true });
+    const tr = await harness.connectActive(target, { initialHull: 1_000_000, initialShield: 0, startHostile: true, instantLock: true });
     const br = await harness.connectActive(bystander, { initialHull: 1_000_000, initialShield: 0, spawnX: 5900, spawnY: 0 });
     const targetHits: DamageEvent[] = [], bystanderHits: DamageEvent[] = [];
     tr.onMessage('damage', (e: DamageEvent) => { if (e.targetId === target) targetHits.push(e); });
