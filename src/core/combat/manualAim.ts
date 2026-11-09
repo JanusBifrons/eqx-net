@@ -4,11 +4,9 @@
  * world-bearing helpers the lock line uses. A WORLD BEARING is radians in the
  * ship-angle convention: 0 = +y world, `atan2(-dx, dy)`.
  *
- * History: this was the manual-aim rule (exp/hud-mobile-first: turrets slewed
- * to a held aim bearing via `manualAimMountBearing`). Lock-to-fire retired
- * manual aim (turrets aim at their group's lock); the input `aim` field is
- * still accepted by the server and ignored. `manualAimMountBearing` stays for
- * its parity test until the field is dropped from the wire.
+ * History: this was the manual-aim rule (exp/hud-mobile-first). Lock-to-fire
+ * retired manual aim (turrets aim at their group's lock) and the input `aim`
+ * field was dropped from the wire.
  */
 import { wrapPi } from '../ai/WeaponMountController.js';
 
@@ -27,21 +25,6 @@ export function encodeAim(bearing: number): number {
 /** Wire integer → world bearing in (-π, π]. */
 export function decodeAim(q: number): number {
   return wrapPi((q / AIM_STEPS) * TWO_PI);
-}
-
-/** Desired arc-local mount bearing for a manual aim — the value handed to
- *  `rotateMountToward` (which clamps it to the mount's arc). */
-export function manualAimMountBearing(aimWorldBearing: number, shipAngle: number, mountBaseAngle: number): number {
-  return wrapPi(aimWorldBearing - shipAngle - mountBaseAngle);
-}
-
-/** True when every mount is fixed (arc 0 / no slew) — the hull must turn to aim. */
-export function allMountsFixed(mounts: ReadonlyArray<{ rotationSpeed: number; arcMin: number; arcMax: number }>): boolean {
-  for (let i = 0; i < mounts.length; i++) {
-    const m = mounts[i]!;
-    if (m.rotationSpeed > 0 && m.arcMax > m.arcMin) return false;
-  }
-  return true;
 }
 
 /** Screen-space stick (x right, y DOWN, pointer convention) → world bearing.

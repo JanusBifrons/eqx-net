@@ -245,7 +245,8 @@ screen), and `_pilot.ts` steers with the arrow keys (`flyTo`, `flyRoute`,
 - **Seeing the thumbs.** `?touchviz=1` mounts `src/client/hud/TouchViz.tsx`:
   translucent finger dots under every active pointer, plus a small hover dot
   for a mouse (a screencast shows no cursor).
-- **HUD experiment takes** (`showcase/shots/hudVariants.ts`, catalogue-only):
-  `pnpm showcase:hud` films `hud-<a|b|c>-<phone-landscape|desktop|phone-portrait>`
-  into `showcase-out/hud/`. Controls are found by `data-testid` at run time,
-  with a logged warning and a thumb-position fallback when one is missing.
+- **Fire Control HUD takes** (`showcase/shots/fireControl.ts`, catalogue-only):
+  `pnpm showcase:fc` films the `fc-*` shots into `showcase-out/fc/`. Controls
+  are found by `data-testid` at run time, with a logged warning and a
+  thumb-position fallback when one is missing. (The `?ui=a|b|c` variant takes,
+  the auto-fire toggle and manual aim are retired; lock-to-fire is universal.)

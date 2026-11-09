@@ -1,5 +1,11 @@
 # Auto-fire & facing-direction boost
 
+> **Auto-fire is retired.** Lock-to-fire is universal: nobody fires without a
+> completed lock, and the `autoFireEnabled` toggle, `AutoFireToggleButton` and
+> `MobileControls` are deleted. See
+> [weapon-groups-and-locking.md](weapon-groups-and-locking.md). The boost
+> sections below still apply; the auto-fire sections are the historical record.
+
 _Plan: `wiggly-snowflake` (weapon-autofire-boost-mechanics)._
 
 Two combat/feel changes so players spend attention on positioning, not trigger
