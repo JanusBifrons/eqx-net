@@ -56,7 +56,9 @@ export function recoilAt(t: number): number {
 }
 
 /** Muzzle flash frame for `t` seconds after a shot (`-1` = done). */
-export function flashFrameAt(t: number, frames: number, lifeS = 0.07): number {
+/** An ordinary gun's muzzle flash sprite lasts this long. */
+export const MUZZLE_FLASH_LIFE_S = 0.07;
+export function flashFrameAt(t: number, frames: number, lifeS = MUZZLE_FLASH_LIFE_S): number {
   if (t < 0 || t >= lifeS) return -1;
   return Math.min(frames - 1, Math.floor((t / lifeS) * frames));
 }
@@ -89,6 +91,34 @@ export function familyFor(weaponId: string, mode: string, charge: boolean): Turr
  *  (`muzzleSmokePuff`), and a burst where the shell lands. Sizes follow the
  *  gun, never a fixed number (invariant #18). */
 export const NAVAL_FLASH_LIFE_S = 0.22;
+
+/** How long a muzzle flash's light outlives the flash sprite (GPU-lit art):
+ *  the sprite is 1–2 frames, too brief for its light to read (showcase
+ *  review 2026-11-09). */
+export const MUZZLE_LIGHT_TAIL_S = 0.1;
+/** Muzzle-flash light, 0..1, `t` s after a shot: full while the flash sprite
+ *  shows (`lifeS`), then an ease-out over `tailS`. 0 before the shot / after. */
+export function muzzleLightAt(t: number, lifeS: number, tailS = MUZZLE_LIGHT_TAIL_S): number {
+  if (t < 0) return 0;
+  if (t < lifeS) return 1;
+  const u = (t - lifeS) / tailS;
+  if (u >= 1) return 0;
+  return (1 - u) * (1 - u);
+}
+
+export interface MuzzleLight { intensity: number; reach: number; z: number }
+/** The light of a naval salvo for a gun of barrel width `barrelW` (world u),
+ *  into `out`: reach and height in proportion to the gun, brightness by its
+ *  square root, so a 5" mount lights its own patch of deck and a 16" turret
+ *  the whole foredeck. (Width / 2 capped at 6 gave a battleship's 5" the
+ *  same light as its 16"; review 2026-11-09.) Sizes follow the gun (#18). */
+export function navalMuzzleLight(barrelW: number, out: MuzzleLight): MuzzleLight {
+  const k = Math.min(6, Math.max(1, barrelW / 5.8));
+  out.intensity = 8.4 * Math.sqrt(k / 6);
+  out.reach = 110 * k;
+  out.z = 6 * k;
+  return out;
+}
 /** Impact burst radius for a shell of collision radius `shellRadius`. */
 export function shellImpactRadius(shellRadius: number): number {
   return Math.max(30, shellRadius * 35);
