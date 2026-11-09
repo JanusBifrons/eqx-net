@@ -488,7 +488,7 @@ export const capitalFleetWarp: Shot = {
   server: 'capitals',
   target: { room: 'showcase-fleet-warp', params: { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
   hud: 'none',
-  durationMs: 9_000,
+  durationMs: 7_000,
   async startWhen(ctx) {
     await artSettled(ctx);
   },
@@ -498,7 +498,7 @@ export const capitalFleetWarp: Shot = {
   async run(ctx) {
     await ctx.sleep(1000);
     await sendRoom(ctx, 'test_fleet_warp', { type: 'test_fleet_warp', x: -45_000, y: 0 });
-    await ctx.sleep(7_800);
+    await ctx.sleep(5_800);
   },
 };
 
@@ -515,10 +515,15 @@ export const capitalFleetArrive: Shot = {
   // The pilot waits 45 km west, south of where the flagship will land.
   target: { room: 'showcase-fleet-warp', params: { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1, spawnX: -45_000, spawnY: -Math.round(getShipKind('battleship-b').radius * 2.2) } },
   hud: 'none',
-  durationMs: 10_000,
+  durationMs: 7_000,
+  // Cue the jump before the take: it spools ~3 s and runs ~2 s unseen, so the
+  // recording starts ~1.5 s before the drop (review: 5 s of empty sky).
+  async startWhen(ctx) {
+    await sendRoom(ctx, 'test_fleet_warp', { type: 'test_fleet_warp', x: -45_000, y: 0 });
+    await ctx.sleep(1_800);
+  },
   camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: -45_000, y: 0, zoom: 0.15 } }],
   async run(ctx) {
-    await sendRoom(ctx, 'test_fleet_warp', { type: 'test_fleet_warp', x: -45_000, y: 0 });
-    await ctx.sleep(9_600);
+    await ctx.sleep(6_800);
   },
 };

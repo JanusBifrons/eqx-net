@@ -226,11 +226,11 @@ export class WarpFx {
         const ox = v.phase === 1 ? v.sx : ship.x, oy = v.phase === 1 ? v.sy : ship.y;
         this.spawn('depart', ox - dx * ship.stern, oy - dy * ship.stern, dx, dy, ship.stern, ship.isLocal);
       }
-      if (phase === 0 && v.phase === 2) { this.spawn('arrive', ship.x, ship.y, fx, fy, ship.stern); v.arrivedDrawn = true; }
+      if (phase === 0 && v.phase === 2) { this.spawn('arrive', ship.x - fx * ship.stern, ship.y - fy * ship.stern, fx, fy, ship.stern); v.arrivedDrawn = true; }
       v.phase = phase;
     }
     // Another pilot just dropped out here (snapshot 3): draw the arrival once.
-    if (raw === 3 && !v.arrivedDrawn) { this.spawn('arrive', ship.x, ship.y, fx, fy, ship.stern); v.arrivedDrawn = true; }
+    if (raw === 3 && !v.arrivedDrawn) { this.spawn('arrive', ship.x - fx * ship.stern, ship.y - fy * ship.stern, fx, fy, ship.stern); v.arrivedDrawn = true; }
     if (raw !== 3 && phase !== 0) v.arrivedDrawn = false;
     const px = this.px;
     if (phase === 1) {
