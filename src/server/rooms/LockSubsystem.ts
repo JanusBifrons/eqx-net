@@ -13,6 +13,8 @@ import { LOCK_TUNING, WEAPON_LOCK_PROFILE, lockCapacityFor, sensorFor, NO_PILOT_
 import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
 import { lockLineHolds } from '../../core/combat/lockLine.js';
+import { pickTurretLock } from '../../core/combat/turretLockPick.js';
+import { mountWeaponReach } from '../../core/combat/mountReach.js';
 import { getWeapon, weaponAutoFireRange } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind, WeaponMount, WeaponSlot } from '../../shared-types/shipKinds/types.js';
 
@@ -71,6 +73,8 @@ interface GroupState {
    *  [lo0, hi0, lo1, hi1, …] (fixed guns get a small window). */
   arcs: number[];
   mountIds: Set<string>;
+  /** The group's mounts in slot order (a mount's index is its ordinal for `pickTurretLock`). */
+  mounts: WeaponMount[];
   locks: LockEntry[];
   wire: WireGroup;
 }
@@ -219,6 +223,7 @@ export class LockSubsystem {
         reach: geo.reach,
         arcs: groupArcs(mounts),
         mountIds: new Set(mounts.map((m) => m.id)),
+        mounts,
         locks: [],
         wire,
       });
@@ -384,13 +389,52 @@ export class LockSubsystem {
     for (const g of p.groups) {
       if (!g.mountIds.has(mountId)) continue;
       let acquiring: string | null = null;
+      let first: LockEntry | null = null;
+      let n = 0;
       for (const e of g.locks) {
-        if (e.stage === 'locked') return e.target;
-        if (acquiring === null && e.stage === 'acquiring') acquiring = e.target;
+        if (e.stage === 'locked') {
+          if (first === null) first = e;
+          n++;
+        } else if (acquiring === null && e.stage === 'acquiring') acquiring = e.target;
       }
-      return acquiring;
+      if (first === null) return acquiring;
+      if (n === 1) return first.target;
+      return this.pickLocked(playerId, g, mountId) ?? first.target;
     }
     return null;
+  }
+
+  private readonly pickX = new Float64Array(8);
+  private readonly pickY = new Float64Array(8);
+  private readonly pickKeys: string[] = [];
+
+  /**
+   * Several locks: which one this turret takes (shared `pickTurretLock`, the
+   * same rule as the client's predicted aim, #15). Null when the ship pose or
+   * the mount can't be resolved (the caller falls back to the first lock).
+   */
+  private pickLocked(playerId: string, g: GroupState, mountId: string): string | null {
+    let ordinal = -1;
+    for (let i = 0; i < g.mounts.length; i++) if (g.mounts[i]!.id === mountId) { ordinal = i; break; }
+    if (ordinal < 0 || !this.deps.shooterPose(playerId, this.shooter)) return null;
+    const keys = this.pickKeys;
+    keys.length = 0;
+    for (const e of g.locks) {
+      if (e.stage !== 'locked' || keys.length >= this.pickX.length) continue;
+      if (!this.deps.resolveTarget(playerId, e.target, this.target)) continue;
+      this.pickX[keys.length] = this.target.x;
+      this.pickY[keys.length] = this.target.y;
+      keys.push(e.target);
+    }
+    if (keys.length === 0) return null;
+    const m = g.mounts[ordinal]!;
+    const s = this.shooter;
+    const cosA = Math.cos(s.angle);
+    const sinA = Math.sin(s.angle);
+    const mx = s.x + (m.localX * cosA - m.localY * sinA);
+    const my = s.y + (m.localX * sinA + m.localY * cosA);
+    const i = pickTurretLock(m, s.angle, mx, my, mountWeaponReach(m), ordinal, keys.length, this.pickX, this.pickY);
+    return keys[i]!;
   }
 
   /** Own-ship snapshot slice (shared ref, mutated in place), or undefined when empty. */
