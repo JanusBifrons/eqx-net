@@ -352,9 +352,13 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
       // Ignore the MUI 'toggle' reason (its synthesized-click open/close) within
       // the suppression window — our `onTouchStart` already toggled `open`, so
       // letting the trailing click toggle again would immediately undo it.
-      // Non-toggle reasons (focus / blur / escape / mouseLeave) still apply.
+      // Only a deliberate toggle opens the dial: MUI also opens on 'mouseEnter'
+      // and 'focus' (after a 0 ms timer), and then the click that follows the
+      // hover saw the dial open and toggled it SHUT. Ignoring them matches
+      // onClose, which ignores 'blur' / 'mouseLeave'.
       onOpen={(_e, reason) => {
-        if (reason === 'toggle' && isWithinSuppressWindow()) return;
+        if (reason !== 'toggle') return;
+        if (isWithinSuppressWindow()) return;
         setOpen(true);
       }}
       // The dial STAYS OPEN across a placement (R2.6): picking a kind raises the

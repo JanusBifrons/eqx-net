@@ -78,6 +78,25 @@ test('dial actions are collapsed until the FAB is opened', async ({ browser }) =
   }
 });
 
+test('hovering the FAB first does not make the click close the dial', async ({ browser }) => {
+  // MUI SpeedDial opens on 'mouseEnter' / 'focus' after a 0 ms timer. If that
+  // timer fired before the click (a hover, or a slow CI runner between
+  // Playwright's mousemove and click), the click saw the dial open and toggled
+  // it shut. That made the build / dial specs time out on CI. Bespoke trigger:
+  // hover, let the 0 ms timer run, then click.
+  const { ctx, page } = await joinClient(browser);
+  try {
+    const fab = page.locator('[data-testid="speed-dial-fab"]');
+    await fab.hover();
+    await page.evaluate(() => new Promise((r) => setTimeout(r, 50)));
+    await expect(page.locator('[data-testid="galaxy-map-toggle"]')).toBeHidden();
+    await fab.click();
+    await expect(page.locator('[data-testid="galaxy-map-toggle"]')).toBeVisible({ timeout: 5_000 });
+  } finally {
+    await ctx.close();
+  }
+});
+
 test('Menu action opens the AdvancedDrawer', async ({ browser }) => {
   const { ctx, page } = await joinClient(browser);
   try {
