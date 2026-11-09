@@ -11,8 +11,14 @@
  * renders in the HUD, and the squad warps in and ATTACKS the structures.
  *
  * Determinism: the `galaxy-wave-test` room (EQX_E2E_WAVE=1) seeds a player-owned
- * READY base; the owner-presence gate holds the wave until this client joins AS
- * the base owner (face0000-…), killing the pre-join race. Every assertion is
+ * READY base and this client joins AS the base owner (face0000-…). The old
+ * owner-presence gate is gone (Equinox Phase 8: a ready base draws a wave
+ * whether or not its owner is there), so the warning can be broadcast before
+ * this client is in the room — on 2026-11-08 `wave_incoming` landed 2.7 s
+ * before `player_joined` and the banner never showed. The server now replays
+ * whatever is still inbound to a pilot on arrival (`IncomingRegistry
+ * .forEachInbound`, from `handleClientReady`), which is also what a real
+ * player arriving mid-approach needs. Every assertion is
  * OUTCOME-gated (HUD testids + /dev/events), never tick/perf-gated, so a slow
  * env just takes longer. `EQX_BOT_SPOOL_MS=5000` keeps the warning banner on
  * screen ~5 s (a comfortable polling window) before the squad commits.
@@ -27,20 +33,8 @@ const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? 'http://localhost:256
 
 // Must match `prebuiltStructuresOwner` on the `galaxy-wave-test` room define
 // (src/server/index.ts). The client joins AS this id so it OWNS the seeded base
-// and the owner-presence gate releases the wave.
+// (the wave no longer waits for the owner: Equinox Phase 8).
 const WAVE_OWNER_ID = 'face0000-0000-4000-8000-000000000001';
-
-interface ServerEvent {
-  ts: number;
-  tag: string;
-  data: Record<string, unknown>;
-}
-
-async function recentEvents(): Promise<ServerEvent[]> {
-  const res = await fetch(`${SERVER_URL}/dev/events?limit=500`);
-  const body = (await res.json()) as { events?: ServerEvent[] };
-  return body.events ?? [];
-}
 
 interface GalaxySector {
   key: string;
@@ -67,6 +61,7 @@ test('wave attack: a ready base draws an 8 × Legionnaires squad that warps in a
   // Start from a clean event ring so the structure-damage assertion only sees
   // hits from THIS wave.
   await fetch(`${SERVER_URL}/dev/events/clear`, { method: 'POST' });
+  const startedAt = Date.now();
 
   // Join the wave room AS the base owner (localStorage identity seeded before
   // load) so ownerPresent flips true → the director releases the wave.
@@ -108,14 +103,17 @@ test('wave attack: a ready base draws an 8 × Legionnaires squad that warps in a
     { timeout: 45_000 },
   );
 
-  // 3. The squad ATTACKS the structures: a drone hit lands on a structure
-  //    (pose-core kind 2), logged as `damage_applied` with swarmKind 2. Poll the
-  //    server event ring until one appears.
+  // 3. The squad ATTACKS the structures: a drone hit lands on a structure,
+  //    recorded in the gameplay audit as `structure_attacked` by a drone. Read
+  //    the AUDIT, not the `/dev/events` ring: that ring keeps the last 500
+  //    events and a wave fight writes collision/tick events fast enough to roll
+  //    a lone `damage_applied` out between 1 s polls (2026-11-08).
   await expect
     .poll(
       async () => {
-        const events = await recentEvents();
-        return events.some((e) => e.tag === 'damage_applied' && e.data['swarmKind'] === 2);
+        const res = await fetch(`${SERVER_URL}/dev/audit?source=ring&sector=galaxy-wave-test&event=structure_attacked`);
+        const body = (await res.json()) as { events?: { ts: number; attackerKind?: string }[] };
+        return (body.events ?? []).some((e) => e.ts >= startedAt && e.attackerKind === 'drone');
       },
       { timeout: 45_000, intervals: [1000], message: 'a drone should hit a base structure' },
     )

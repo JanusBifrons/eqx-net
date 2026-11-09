@@ -27,9 +27,10 @@
 import { test, expect } from '@playwright/test';
 import type { Browser } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { getBeamActive } from './helpers/gameScenario';
+import { getBeamActive, waitForInPlay } from './helpers/gameScenario';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? 'http://localhost:2567';
 
 async function joinAutoFire(browser: Browser, opts: { startHostile: boolean }) {
   const ctx = await browser.newContext();
@@ -49,6 +50,8 @@ async function joinAutoFire(browser: Browser, opts: { startHostile: boolean }) {
     }, undefined,
     { timeout: 12000 },
   );
+  // Input and auto-fire only run once the loading curtain lifts.
+  await waitForInPlay(page);
   return { ctx, page };
 }
 
@@ -133,33 +136,41 @@ test('neutral drone: fire once → it turns hostile → auto-fire takes over wit
     await page.waitForTimeout(1200);
     expect(await getBeamActive(page)).toBe(false);
 
-    // 2) Make first contact: a brief manual burst lands hits on the drone
-    //    150 u ahead → the `damage` handler calls markHostile → the drone is
-    //    now hostile to this player. Short enough not to kill it.
+    // 2) Make first contact: a manual burst lands a hit on the drone 150 u
+    //    ahead → the `damage` handler calls markHostile → the drone is now
+    //    hostile to this player. Release on the FIRST server-confirmed hit.
+    const localId = (await page.locator('[data-testid="game-surface"]').getAttribute('data-local-player-id')) ?? '';
+    type Ev = { ts: number; tag: string; data: Record<string, unknown> };
+    const ourEvents = async (tag: string): Promise<Ev[]> => {
+      const res = await fetch(`${SERVER_URL}/dev/events?limit=500`);
+      const body = (await res.json()) as { events?: Ev[] };
+      return (body.events ?? []).filter((e) => e.tag === tag && e.data['shooterId'] === localId);
+    };
     await page.keyboard.down('Space');
     await page.waitForFunction(
       () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '1',
       undefined,
       { timeout: 5000 },
     );
-    await page.waitForTimeout(400);
+    await expect
+      .poll(async () => (await ourEvents('damage_applied')).length > 0,
+        { timeout: 5000, intervals: [50], message: 'the manual burst should land a hit on the drone' })
+      .toBe(true);
     await page.keyboard.up('Space');
+    const releasedAt = Date.now();
 
-    // 3) Beam must drop while we wait out the manual-fire persistence window…
-    await page.waitForFunction(
-      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '0',
-      undefined,
-      { timeout: 3000 },
-    );
-
-    // 4) …then RE-ENGAGE on its own: the drone is hostile now, so auto-fire
-    //    takes over with zero further input. THIS is "auto-fire works".
-    await page.waitForFunction(
-      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '1',
-      undefined,
-      { timeout: 6000 },
-    );
-    expect(await getBeamActive(page)).toBe(true);
+    // 3) With NO further input, auto-fire keeps shooting: the server keeps
+    //    receiving our fire after the release. (Read on the server, not off
+    //    `data-beam-active`: the fighter has 150 hull and the twin beam deals
+    //    26 a trigger at 6 Hz, so auto-fire takes over within a frame or two
+    //    of the first hit and kills the drone in about a second. The old
+    //    "beam drops to 0, then comes back to 1" check only ever saw the
+    //    drop: by then the drone was scrap — 2026-11-08 probe.) The 150 ms
+    //    margin keeps a manual shot already in flight at the release out.
+    await expect
+      .poll(async () => (await ourEvents('fire_received')).filter((e) => e.ts > releasedAt + 150).length,
+        { timeout: 5000, intervals: [100], message: 'auto-fire should keep firing at the now-hostile drone with no input' })
+      .toBeGreaterThan(0);
   } finally {
     await page.keyboard.up('Space').catch(() => undefined);
     await ctx.close();

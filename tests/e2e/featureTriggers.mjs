@@ -60,11 +60,10 @@ export const FEATURE_TRIGGERS = [
  * PR that fixes it.
  */
 export const QUARANTINE = new Set([
-  'interceptor-beam-stays-connected',
+  // 2026-11-08: fixes landed for these four but they are not yet verified
+  // 6/6 (see test-coverage-audit.md); remove each once it is.
   'missile-frigate-homing',
   'machined-art',
   'fence-hits',
   'fx-turrets',
-  'auto-fire',
-  'wave-attack',
 ]);

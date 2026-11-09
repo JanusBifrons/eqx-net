@@ -31,6 +31,7 @@ test.describe('Join loading screen and Machined art', () => {
     const { ctx, page } = await launchTestClient(browser, {
       spawnX: 0, spawnY: 0, room: 'test-sector-fast', shipKind: 'heavy',
       extraParams: { worker: '0', art: 'machined', artDelayMs: '8000' },
+      waitForInPlay: false, // the spec watches the curtain rise and lift
     });
     // The flag reads 0 for a moment before the join's loading screen goes up,
     // so wait for it to rise first, then for the reveal.
