@@ -139,6 +139,19 @@ const chargeTelegraphs = new WeakMap<Container, Graphics>();
  *  is known to be an elite (once per sprite, #14), then shown/hidden. */
 const eliteRings = new WeakMap<Container, Graphics>();
 
+/** A6 — fresh wreckage glows hot and cools to its own colour over this long. */
+export const SCRAP_COOL_MS = 5000;
+/** When each scrap sprite was first drawn (dies with the sprite). */
+const scrapBorn = new WeakMap<Container, number>();
+/** The heat tint of wreckage `ageMs` after it broke off: hot orange easing to
+ *  none (undefined = cool). Pure; allocation-free. */
+export function scrapHeatTint(ageMs: number): number | undefined {
+  if (!(ageMs >= 0) || ageMs >= SCRAP_COOL_MS) return undefined;
+  const h = 1 - ageMs / SCRAP_COOL_MS, k = h * h;
+  const g = Math.round(255 - (255 - 0x7a) * k), b = Math.round(255 - (255 - 0x30) * k);
+  return (0xff << 16) | (g << 8) | b;
+}
+
 /** The longest charge weapon range a kind carries (0 ⇒ no charge weapon). */
 export function chargeRangeForKind(shipKind: string | undefined): number {
   if (!shipKind) return 0;
@@ -257,6 +270,8 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // sprite matches the predWorld collision body (Phase-5 desync fix).
         const parentKind = entry.shipKind, component = entry.componentIndex ?? 0;
         sprite = buildArtShipSprite(artHandle, () => buildScrapGfx(parentKind, component));
+        // A6 — wreckage starts hot (loot pods ride this channel too: they don't).
+        if (parentKind !== 'cargo-pod') scrapBorn.set(sprite, now);
       } else {
         const rockRadius = entry.radius;
         sprite = buildArtShipSprite(artHandle, () => buildAsteroidGfx(entityId, rockRadius));
@@ -405,7 +420,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       // A Machined patrol has its faction paint baked in, so it stays untinted.
       const fc = entry.kind === 1 && entry.faction !== undefined && !(sprite instanceof MachinedShipSprite)
         ? npcFactionDef(entry.faction)?.color
-        : undefined;
+        : entry.kind === 3
+          ? scrapHeatTint(now - (scrapBorn.get(sprite) ?? -Infinity))
+          : undefined;
       sprite.tint = fc ?? 0xffffff;
     }
     // Structures plan, Phase 3 — blueprints (not yet built) render dimmed
