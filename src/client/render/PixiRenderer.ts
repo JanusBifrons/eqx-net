@@ -78,7 +78,7 @@ import {
 import { getStructureKind } from '@shared-types/structureKinds';
 import { setCanvasPointerCapture } from './pointerCapture.js';
 import { FrameTimeRing } from '@core/perf/FrameTimeRing';
-import type { RenderPerfReading, PerfProbeOp } from '@core/contracts/IRenderer';
+import type { RenderPerfReading, PerfProbeOp, RenderCountReading } from '@core/contracts/IRenderer';
 
 // Most colour + builder constants moved to pixi/spriteBuilders.ts;
 // the constants below are PixiRenderer-specific (background tint,
@@ -536,10 +536,71 @@ export class PixiRenderer implements IRenderer {
    *  recorded only after `perfProbeSync('enable')` (`?perfprobe=1`). */
   private _perfRing: FrameTimeRing | null = null;
 
+  /** Count probe (WS3): draw calls per rendered frame + upload baselines. */
+  private _drawRing: FrameTimeRing | null = null;
+  private _drawCount = 0;
+  private _drawMark = 0;
+  private _uploadsBase = 0;
+  private _uploadTexelsBase = 0;
+
+  /** Count mode (`?perfcounts=1`): pin the effects tier (what is drawn must not
+   *  depend on the host's speed), count WebGL draw calls by wrapping the
+   *  context's draw entry points, and close each rendered frame on Pixi's
+   *  `postrender` runner. Perf runs only; players never reach it. */
+  private enableCountProbe(): void {
+    if (this._drawRing || !this.app?.renderer) return;
+    this._drawRing = new FrameTimeRing();
+    this.effects?.pinQuality('high');
+    const gl = (this.app.renderer as unknown as { gl?: WebGL2RenderingContext }).gl;
+    if (gl) {
+      // Fixed-arity wrappers: no rest-array per draw call (#14).
+      const de = gl.drawElements.bind(gl);
+      gl.drawElements = (m, c, t, o) => { this._drawCount++; de(m, c, t, o); };
+      const da = gl.drawArrays.bind(gl);
+      gl.drawArrays = (m, f, c) => { this._drawCount++; da(m, f, c); };
+      if (typeof gl.drawElementsInstanced === 'function') {
+        const dei = gl.drawElementsInstanced.bind(gl);
+        gl.drawElementsInstanced = (m, c, t, o, n) => { this._drawCount++; dei(m, c, t, o, n); };
+      }
+      if (typeof gl.drawArraysInstanced === 'function') {
+        const dai = gl.drawArraysInstanced.bind(gl);
+        gl.drawArraysInstanced = (m, f, c, n) => { this._drawCount++; dai(m, f, c, n); };
+      }
+    }
+    const runners = (this.app.renderer as unknown as { runners?: { postrender?: { add(o: { postrender(): void }): void } } }).runners;
+    runners?.postrender?.add({ postrender: () => {
+      this._drawRing?.push(this._drawCount - this._drawMark);
+      this._drawMark = this._drawCount;
+    } });
+    this.resetCountProbe();
+  }
+
+  private resetCountProbe(): void {
+    this._drawRing?.reset();
+    this._drawMark = this._drawCount;
+    const s = this._artCtx.art?.stats();
+    this._uploadsBase = s?.uploads ?? 0;
+    this._uploadTexelsBase = s?.uploadTexels ?? 0;
+  }
+
+  private readCountProbe(): RenderCountReading | null {
+    if (!this._drawRing) return null;
+    const d = this._drawRing.summary();
+    const s = this._artCtx.art?.stats();
+    return {
+      drawCalls: { frames: d.frames, p50: d.p50, p95: d.p95, max: d.max },
+      textureUploads: (s?.uploads ?? 0) - this._uploadsBase,
+      uploadTexels: (s?.uploadTexels ?? 0) - this._uploadTexelsBase,
+      atlasPages: s?.pages ?? 0,
+      gpuBytes: s?.gpuBytes ?? 0,
+    };
+  }
+
   perfProbeSync(op: PerfProbeOp): RenderPerfReading | null {
     if (op === 'enable') { this._perfRing ??= new FrameTimeRing(); return null; }
+    if (op === 'counts') { this._perfRing ??= new FrameTimeRing(); this.enableCountProbe(); return null; }
     if (!this._perfRing) return null;
-    if (op === 'reset') { this._perfRing.reset(); return null; }
+    if (op === 'reset') { this._perfRing.reset(); this.resetCountProbe(); return null; }
     let displayObjects = 0;
     const walk = (c: Container): void => { displayObjects++; for (const ch of c.children) walk(ch as Container); };
     if (this.app?.stage) walk(this.app.stage);
@@ -551,6 +612,7 @@ export class PixiRenderer implements IRenderer {
       mirrorShips: m?.ships.size ?? 0,
       mirrorSwarm: m?.swarm?.size ?? 0,
       effectQuality: this.effects?.getQuality() ?? 'none',
+      counts: this.readCountProbe(),
     };
   }
 

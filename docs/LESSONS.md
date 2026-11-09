@@ -2779,6 +2779,22 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - Shared state files (pid lists, ledgers) record their owner; a reaper checks the owner is dead.
   - Bulk find/replace on identifiers can rewrite string keys too. Grep env-var names after a rename.
 
+## 2026-11-08 — Gate on counts, not timings: what makes a count really host-independent
+Commit: perf/count-budgets (plan machine-independent-perf WS3)
+
+The laptop's timings were mostly host noise, the desktop isn't always there, and a hosted runner failed a "≤ 2 ms" unit test at 2.07 ms with no code change (convoyBudget, PR #352). So the per-PR perf gate is now COUNTS: server work per tick (bodies, AI agents, swarm records/bytes, entities per snapshot) and client draw calls / display objects / uploads / atlas pages. Four things a count needed before it stopped depending on the machine:
+
+1. **Window on scene ticks, not wall time.** The scene script is tick-driven; a wall-clock window on a slow host covers an earlier part of the scene. Both gates read at fixed scene times.
+2. **Pin adaptive quality.** `EffectsBudget` drops tiers when frames are slow, so a slow host draws fewer effects and "improves" the count. `?perfcounts=1` pins High.
+3. **Same rasteriser everywhere.** SwiftShader (`--use-angle=swiftshader --enable-unsafe-swiftshader`) on every host, at 960×540 CSS with a 0.5 device scale, so a 2-core runner still renders 20+ frames in the window.
+4. **Count frames on the renderer, not on `update()`.** The worker's Pixi ticker renders independently of the mirror updates; draw calls are closed per frame on Pixi's `postrender` runner.
+
+What still varies is the SCENE: combat outcomes differ run to run (wide-view ended with 50 ships one run, 135 another), so display objects and close-up draw calls carry a real spread. That is not host noise, but it widens the budgets; contacts per tick (±25 % on one machine) stayed print-only.
+
+CPU time is NOT a fix for noisy timing here: the room's tick loop is a `setImmediate` spin, so process / main-thread CPU reads ~100 % busy whatever the tick does. `process.threadCpuUsage()` sampled around `update()` is the only meaningful main-thread figure, it needs Node ≥ 23.9 (CI runs 22), and Windows rounds it to ~15.6 ms. Print-only.
+
+Unit tests: convoyBudget now gates candidate checks per planning pass (988, deterministic; budget 1235) and prints the time; the Reconciler "replay under 50 ms" now counts physics steps (≤ 128).
+
 ## 2026-11-08 — `--base HEAD` measured the perf-base worktree's own HEAD
 
 - **Symptom (found reading the code while building the phone lane):** `pnpm perf:scenes --base HEAD --head-params ...` is the documented way to A/B one switch on one build, but `prepareBase` ran `git checkout --detach HEAD` *inside* `.claude/worktrees/perf-base`. There `HEAD` is that worktree's own commit, so after the first run the base arm stayed where the worktree was created while head moved on. A "same build" A/B could have been two builds (the ledger's per-arm SHAs show it).
@@ -2791,6 +2807,10 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
 - **Now:** `pnpm perf:phone` runs the same 8-rep A/B on a real phone over adb; `pnpm perf:scenes --device phone-proxy --cpu-rate 2` is the no-phone fallback. Commands and the decision rule: `docs/architecture/gpu-lit-ships.md`, "Open question: cost on weak hardware".
 - **Rule:** a default that "passed perf" must cite a ledger whose verdict could have failed (≥ 4 reps per arm, on the machine class it targets).
 
+## 2026-11-08 — `lsof -ti tcp:PORT` lists the CLIENTS too: `killPort` killed its own caller on Linux
+Commit: perf/count-budgets (PR #356)
+
+`perf:counts` died with exit 137 on the first CI run, right after its last scene. `CaptureServers.stop()` → `killPort()` ran `lsof -ti tcp:3167 | xargs kill -9`; without `-sTCP:LISTEN`, lsof also lists every process holding a CLIENT connection to that port, and the runner had a keep-alive connection open from polling `/dev/perf`. So it SIGKILLed itself. Windows (`netstat … LISTENING`) never had the bug, which is why local runs were fine. Fix: `lsof -ti tcp:PORT -sTCP:LISTEN`. Rule: any "kill whatever is on port N" must match listeners only.
 ## 2026-11-08 — Turning solar-system sectors on by default
 
 - **Context:** W1c flipped `EQX_SOLAR_SECTORS` to on. Unit tests, integration tests and a 10-minute live-galaxy soak (`scripts/soak-galaxy.ts`) were run with it on and off.

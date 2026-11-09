@@ -178,6 +178,11 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
         clientHitchesPerMin: client.main.hitches / minutes,
         renderP95: client.render?.render.p95 ?? 0, renderP99: client.render?.render.p99 ?? 0,
         longTaskMsPerMin: client.longTaskMs / minutes,
+        // Server CPU time (WS3, print-only): process CPU per tick (includes the
+        // tick loop's setImmediate spin + workers), sampled update() CPU, worker ELU.
+        ...(s['work']?.cpuMsPerTick != null ? { serverCpuMsPerTick: s['work'].cpuMsPerTick } : {}),
+        ...(s['work']?.updateCpuMsPerTick != null ? { serverUpdateCpuMsPerTick: s['work'].updateCpuMsPerTick } : {}),
+        ...(s['work']?.workerElu != null ? { workerElu: s['work'].workerElu } : {}),
       },
       counts: {
         rxKBps: rxBytes / 1024 / (client.elapsedMs / 1000),
@@ -185,6 +190,12 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
         sprites: client.render?.sprites ?? 0,
         swarmAtEnd: s['swarm'],
         heapMb: client.heapMb ?? 0,
+        // Server work per tick (WS3; gated per PR by perfSceneCounts.test.ts).
+        ...(s['work'] ? {
+          serverBodiesPerTick: s['work'].bodiesPerTick, serverContactsPerTick: s['work'].contactsPerTick,
+          serverAiAgentsPerTick: s['work'].aiAgentsPerTick, serverSwarmRecordsPerTick: s['work'].swarmRecordsPerTick,
+          serverSwarmBytesPerTick: s['work'].swarmBytesPerTick, serverEntitiesPerSnapshot: s['work'].entitiesPerSnapshot,
+        } : {}),
       },
       raw: { client, server: s },
     };
