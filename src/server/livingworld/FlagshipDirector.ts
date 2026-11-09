@@ -24,6 +24,7 @@ import { getNeighbours, getSector } from '../../core/galaxy/galaxy.js';
 import type { Bus } from '../../core/events/Bus.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { CAPITAL_STYLE_VARIANTS } from '../../shared-types/shipKinds/capitals/index.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { FLAGSHIP_BOT_ID_PREFIX } from './directorBotIds.js';
@@ -67,7 +68,25 @@ export function fleetCapitalKind(sectorKey: string, rng: Rng): ShipKindId {
   return pool[Math.floor(rng() * pool.length) % pool.length]!;
 }
 
-const CLASS_PREFIX: Partial<Record<ShipKindId, string>> = {
+/**
+ * W2b — a capital's hull style (A, B or C), seeded from the ship's own id so
+ * a fleet's ships differ and the same ship keeps its style. Non-capital kinds
+ * pass through. Pure (tests).
+ */
+export function styledKind(kind: ShipKindId, shipId: string): ShipKindId {
+  const styles = CAPITAL_STYLE_VARIANTS[kind];
+  if (!styles) return kind;
+  let h = 2166136261;
+  for (let i = 0; i < shipId.length; i++) { h ^= shipId.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return styles[(h >>> 0) % styles.length] as ShipKindId;
+}
+
+/** The class of a capital kind (a style variant's base). */
+function classOf(kind: ShipKindId): string {
+  return kind.replace(/-[bc]$/, '');
+}
+
+const CLASS_PREFIX: Partial<Record<string, string>> = {
   battleship: 'Battleship', battlecruiser: 'Battlecruiser', 'heavy-cruiser': 'Cruiser', 'light-cruiser': 'Cruiser', destroyer: 'Destroyer',
 };
 
@@ -225,10 +244,12 @@ export class FlagshipDirector {
       ?? this.pick(sites.filter((s) => s.kind === 'gate'))
       ?? sites[0];
     if (!site) return;
-    const kind = resume?.kind ?? fleetCapitalKind(sectorKey, this.rng);
-    const name = resume?.name ?? `${CLASS_PREFIX[kind] ?? 'Capital'} ${this.pick(HULL_NAMES) ?? 'Resolute'}`;
     const escorts = resume?.escorts ?? [...FLEET_ESCORT_KINDS];
     this.assignIds(f, escorts);
+    // Each capital in the fleet takes its own hull style (W2b).
+    const kind = resume?.kind ?? styledKind(fleetCapitalKind(sectorKey, this.rng), f.leadId);
+    if (!resume) for (const e of f.escorts) e.kind = styledKind(e.kind, e.id);
+    const name = resume?.name ?? `${CLASS_PREFIX[classOf(kind)] ?? 'Capital'} ${this.pick(HULL_NAMES) ?? 'Resolute'}`;
     if (!this.spawnFleetAt(f, sectorKey, site, kind, name)) return;
     Object.assign(f, { alive: true, sectorKey, pocketId: site.id, kind, name, moves: resume?.moves ?? 0, leavingFor: null });
     f.nextMoveAtMs = nowMs + this.dwellMs;

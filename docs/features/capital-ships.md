@@ -21,3 +21,7 @@ Somewhere in the galaxy there is always a **flagship fleet**: one capital ship w
 - The map reads `SectorLiveState.capital` (snapshot, #16); notices are accelerators.
 - Persisted in `allegiance_director_state`, row `flagships`. Kill switch: `EQX_DISABLE_FLAGSHIPS=1`.
 - Locks: `FlagshipDirector.test.ts`, `LoadShedder.test.ts`, `tests/integration/sectorRoom/flagshipFleet.test.ts`, `galaxyTooltip.test.ts`.
+
+## Hull styles (wrap-up W2b)
+
+Every capital class comes in three hull styles: A (Iowa line), B and C (user, 2026-11-08: keep all three for variety). Each ship in a fleet gets its own style, seeded from its id (`styledKind`), so a fleet never looks cloned and a ship keeps its look across a restart. Styles are separate kinds appended to the catalogue (`<class>-b`, `<class>-c`; the user chose this over threading a style through every system), so the collider, turrets, art, wrecks and the wire all work through the ordinary kind path. `?capStyle=` / `EQX_CAPITAL_STYLE` still sets the base kinds' style for R&D. Locks: `capitalShips.test.ts` (the variants are their class in another hull), `FlagshipDirector.test.ts` (`styledKind`).

@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { EventEmitter } from 'eventemitter3';
-import { escortRing, FlagshipDirector, FLEET_ESCORT_KINDS, fleetCapitalKind } from './FlagshipDirector.js';
+import { escortRing, FlagshipDirector, FLEET_ESCORT_KINDS, fleetCapitalKind, styledKind } from './FlagshipDirector.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { LivingWorldRoom } from './LivingWorldRoom.js';
 import { sectorSites } from '../../core/galaxy/sectorSites.js';
@@ -141,5 +141,15 @@ describe('FlagshipDirector', () => {
       expect(['battleship', 'battlecruiser']).toContain(fleetCapitalKind(held, () => r));
       expect(['light-cruiser', 'heavy-cruiser']).toContain(fleetCapitalKind(neutral, () => r));
     }
+  });
+});
+
+describe('styledKind (W2b: a hull style per ship)', () => {
+  it('keeps a ship its style, varies it across ships, and leaves non-capitals alone', () => {
+    expect(styledKind('battleship', 'flagship-3-lead')).toBe(styledKind('battleship', 'flagship-3-lead'));
+    const seen = new Set<string>();
+    for (let i = 0; i < 30; i++) seen.add(styledKind('battleship', `flagship-${i}-lead`));
+    expect([...seen].sort()).toEqual(['battleship', 'battleship-b', 'battleship-c']);
+    expect(styledKind('gunship', 'flagship-1-e3')).toBe('gunship');
   });
 });
