@@ -281,7 +281,7 @@ type MutableStateEntry = {
   statAlloc?: Record<string, number>;
   cargo?: Hold;
   depositing?: number;
-  groups?: Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1 }> }>;
+  groups?: Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1; c?: 1 }> }>;
   lockedBy?: Array<{ t: string; s: 1 | 2; p: number }>;
   fitted?: string[];
   wallet?: number;

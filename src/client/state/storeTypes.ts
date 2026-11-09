@@ -649,5 +649,6 @@ export interface FcGroupSummary {
   mode: 'auto' | 'manual';
   colour: number;
   capacity: number;
-  locks: Array<{ target: string; stage: number }>;
+  /** `blocked`: the server can't progress this lock right now (out of reach / untrackable). */
+  locks: Array<{ target: string; stage: number; blocked?: boolean }>;
 }

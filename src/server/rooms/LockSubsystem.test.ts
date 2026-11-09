@@ -110,6 +110,21 @@ describe('LockSubsystem', () => {
     expect(h.locks.hasLocked('p1', 'primary')).toBe(false);
   });
 
+  it('an out-of-reach lock is marked blocked on the wire (c=1) until it is in reach again', () => {
+    // User report (1v3 clip, 2026-11-08): LOCK in the info box "did nothing".
+    // The target was out of reach: the lock sat at 0 % and dropped after the
+    // grace with no feedback. The wire must say "can't lock" so the HUD can.
+    const h = harness();
+    h.targets.set('s:9', still(50_000, true));
+    h.locks.requestLock('p1', 'primary', 's:9');
+    steps(h.locks, 1);
+    const wire = () => h.locks.wireFor('p1')?.find((g) => g.id === 'primary')?.l[0];
+    expect(wire()?.c).toBe(1);
+    h.targets.set('s:9', still(200, true)); // back in reach
+    steps(h.locks, 1);
+    expect(wire()?.c).toBeUndefined();
+  });
+
   it('a full queue drops the oldest lock (fighter capacity 1)', () => {
     const h = harness();
     h.targets.set('s:7', still(200, true));
