@@ -74,6 +74,15 @@ export const SENSOR_BY_CLASS: Record<string, number> = {
   capital: 0.85,
 };
 
+/**
+ * Sensor quality of a defence structure's fire control (coastal guns, quad
+ * AA, plain turrets). A fixed installation carries a bigger director than a
+ * hull, so its heavy guns can still lock a capital near their reach (an XL
+ * gun on a 190 u capital at full reach takes ~9 s at sensor 1, past
+ * `maxSeconds`; ~6 s here).
+ */
+export const STRUCTURE_SENSOR = 1.5;
+
 /** Lock-queue size defaults: sub-capitals hold 1 target per group, capitals 3. */
 export const LOCK_CAPACITY_DEFAULT = 1;
 export const LOCK_CAPACITY_CAPITAL = 3;

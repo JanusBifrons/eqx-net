@@ -68,7 +68,9 @@ describe('SectorRoom integration — NPC-owned structures (B2)', () => {
   it('a robot base engages a pilot on sight', async () => {
     const { turret, aim } = await boot('npc:robots:r1');
     const pilot = randomUUID();
-    const client = await harness.connectActive(pilot);
+    // Structure turrets lock before they fire; this test is about WHO it
+    // engages, so the lock completes at once (testMode `instantLock`).
+    const client = await harness.connectActive(pilot, { instantLock: true });
     const hits: Array<{ shooterId?: string }> = [];
     client.onMessage('damage', (m: { shooterId?: string }) => {
       if (m.shooterId === turret.id) hits.push(m);
