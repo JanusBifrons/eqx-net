@@ -20,7 +20,7 @@ describe('PassiveDroneBehaviour hostility ledger', () => {
   });
 
   it('flows through AiController.isEntityHostileToPlayer (the server npcHostileTo path)', () => {
-    const ai = new AiController();
+    const ai = new AiController({ postIntent: () => {} } as unknown as ConstructorParameters<typeof AiController>[0]);
     ai.register('d1', 0, new PassiveDroneBehaviour());
     ai.markHostile('d1', 'p1', 5);
     expect(ai.isEntityHostileToPlayer('d1', 'p1')).toBe(true);
