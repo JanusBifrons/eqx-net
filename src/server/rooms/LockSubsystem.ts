@@ -173,6 +173,11 @@ export class LockSubsystem {
     this.players.set(playerId, { instant, kindId: '', activatedSig: -1, sensor: 1, groups: [], wire: [] });
   }
 
+  /** The testMode `instantLock` trigger is on for this player. */
+  isInstant(playerId: string): boolean {
+    return this.players.get(playerId)?.instant === true;
+  }
+
   /** Tracked pilots (iteration only; do not mutate while iterating). */
   enabledPlayers(): IterableIterator<string> {
     return this.players.keys();
