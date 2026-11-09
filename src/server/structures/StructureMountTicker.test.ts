@@ -10,6 +10,9 @@ import { getStructureKind, type StructureKindId } from '../../shared-types/struc
 import type { StructureRecord } from './StructureRegistry.js';
 import type { TargetClass } from '../../core/combat/mountTargeting.js';
 
+/** Lock signatures (hull radius, u) by class, like the ship catalogue's. */
+const SIG: Record<TargetClass, number> = { small: 10, subcapital: 30, 'small-capital': 55, capital: 200 };
+
 interface Shot { mountIdx: number; ndx: number; ndy: number; target: string }
 
 function setup(kindId: StructureKindId, rot = 0) {
@@ -34,7 +37,7 @@ function setup(kindId: StructureKindId, rot = 0) {
     }
   };
   const set = (list: Array<{ id: string; x: number; y: number; vx?: number; vy?: number; cls?: TargetClass }>) => {
-    cands = list.map((c) => ({ id: c.id, entityId: 1, x: c.x, y: c.y, vx: c.vx ?? 0, vy: c.vy ?? 0, cls: c.cls ?? 'capital' }));
+    cands = list.map((c) => ({ id: c.id, entityId: 1, x: c.x, y: c.y, vx: c.vx ?? 0, vy: c.vy ?? 0, cls: c.cls ?? 'capital', signature: SIG[c.cls ?? 'capital'] }));
   };
   return { ticker, shots, rec, kind, step, set, angle: () => ticker.anglesOf('g')?.[0] ?? 0 };
 }
@@ -51,7 +54,7 @@ describe('StructureMountTicker — the capital fire-control rules on defence str
   it("a casemate's embrasure turns with the structure: rotation 270 faces +x", () => {
     const h = setup('coastal_casemate_8in', 270);
     h.set([{ id: 'east', x: 2000, y: 0 }]);
-    h.step(20);
+    h.step(80); // turn (none needed) + lock (~2-3 s) before the first shot
     expect(h.shots.length).toBeGreaterThan(0);
     expect(h.shots[0]!.ndx).toBeCloseTo(1, 2);
     const w = setup('coastal_casemate_8in', 270);
@@ -93,11 +96,11 @@ describe('StructureMountTicker — the capital fire-control rules on defence str
     ];
     const dp = setup('dp_mount_5in');
     dp.set(targets);
-    dp.step(5);
+    dp.step(80); // long enough to lock
     expect(dp.shots[0]?.target).toBe('gunship');
     const aa = setup('aa_quad_40mm');
     aa.set(targets);
-    aa.step(5);
+    aa.step(80);
     expect(aa.shots[0]?.target).toBe('fighter');
   });
 
@@ -113,6 +116,7 @@ describe('StructureMountTicker — the capital fire-control rules on defence str
 
   it('keeps its target through a brief loss and fires on its own reload', () => {
     const h = setup('dp_mount_5in');
+    h.ticker.setInstantLocks(true); // this one is about reload cadence, not lock time
     h.set([{ id: 'gunship', x: 0, y: 1500, cls: 'subcapital' }]);
     h.step(1);
     expect(h.shots).toHaveLength(1);
@@ -120,5 +124,31 @@ describe('StructureMountTicker — the capital fire-control rules on defence str
     expect(h.shots).toHaveLength(1);
     h.step(31);
     expect(h.shots).toHaveLength(2);
+  });
+
+  it('fires only once its lock on the current target completes; a target switch restarts the lock', () => {
+    const h = setup('dp_mount_5in');
+    h.set([{ id: 'a', x: 0, y: 1500, cls: 'subcapital' }]);
+    h.step(5); // 0.5 s: on target (no traverse needed) but the lock is still building
+    expect(h.shots).toHaveLength(0);
+    h.step(60); // 6.5 s: locked → fires
+    expect(h.shots.length).toBeGreaterThan(0);
+    expect(h.shots[0]!.target).toBe('a');
+    const before = h.shots.length;
+    h.set([{ id: 'b', x: 0, y: 1500, cls: 'subcapital' }]); // same spot, a new target
+    h.ticker.reloadAll();
+    h.step(5);
+    expect(h.shots).toHaveLength(before); // a fresh lock on 'b' is building
+    h.step(60);
+    expect(h.shots.length).toBeGreaterThan(before);
+    expect(h.shots[before]!.target).toBe('b');
+  });
+
+  it('testMode instant locks: a mount fires on the tick after it picks a target', () => {
+    const h = setup('aa_quad_40mm');
+    h.ticker.setInstantLocks(true);
+    h.set([{ id: 'f', x: 0, y: 500, cls: 'small' }]);
+    h.step(1);
+    expect(h.shots.length).toBeGreaterThan(0);
   });
 });
