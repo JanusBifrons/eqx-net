@@ -11,6 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
+import { waitForInPlay } from './helpers/gameScenario';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 test.describe.configure({ timeout: 90_000 });
@@ -26,6 +27,9 @@ test('bolts fired into a closed fence ripple on it', async ({ browser }) => {
   type S = { fxFences?: number; fxFenceHits?: number };
   await page.waitForFunction(() => ((window as unknown as { __eqxArtStats?: () => S }).__eqxArtStats?.().fxFences ?? 0) > 0,
     undefined, { timeout: 60_000 });
+  // Fire only counts once the loading curtain lifts: before this the 12
+  // presses could all land behind the curtain and no bolt left the ship.
+  await waitForInPlay(page);
   // Fire repeatedly (one bolt per keypress) at the fence ahead.
   await page.locator('canvas').first().click({ position: { x: 640, y: 600 } });
   for (let i = 0; i < 12; i++) await page.keyboard.press('Space', { delay: 30 });

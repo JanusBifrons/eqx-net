@@ -89,14 +89,43 @@ A run is **INVALID**, never fast, if any of these happen:
 - too few ships were left;
 - too few frames were recorded.
 
-## The per-PR counts gate
+## The per-PR count gates (plan machine-independent-perf WS3, 2026-11-08)
 
-`tests/integration/sectorRoom/perfSceneCounts.test.ts` (the integration suite, so CI runs it on every PR) plays `fleet-fight`, `teleport-raid`, `capital-fleet` and `capital-duel` (the capital baseline, wrap-up W2d: capital turret fire control and naval shells) in a real room with a connected pilot. It counts the bytes that pilot's socket receives over 10 s, and fails if:
-- any spawn is refused;
-- the scene isn't busy enough;
-- bytes per second are over the budget in `src/shared-types/perf/perfBudgets.ts`.
+The user's laptop is noisy (×2 on hitches, same code) and the desktop isn't always there, so wall-clock timing can't gate a PR anywhere. What gates is **counts**: numbers the host can't move. Timing stays in `pnpm perf:scenes` as an A/B tool.
 
-The budgets are the measurement plus about 25 %. Three runs on the laptop gave 214–218 KB/s for the fleet fight and 67.5–67.8 KB/s for the raid, matching the browser runs.
+Two gates, both on every PR, both on any machine:
+
+| Gate | Where | What it asserts |
+|---|---|---|
+| **Server** | `tests/integration/sectorRoom/perfSceneCounts.test.ts` (integration-tests job) | per scene (`fleet-fight`, `teleport-raid`, `wide-view`, and the capital baseline `capital-fleet` / `capital-duel`, wrap-up W2d: rx and busyness only, no work budget yet): no refused spawns, the scene busy enough, rx KB/s, and the work per tick over the first 720 **scene ticks**: bodies stepped, AI agents ticked, binary swarm records and bytes encoded, entities per JSON snapshot |
+| **Client** | `pnpm perf:counts` (`perf/run-counts.ts`, CI job `perf-counts`, advisory) | per scene × `shiplight` (`fleet-fight`, `wide-view` × `baked`, `high`): WebGL draw calls per frame (p95), display objects, texels uploaded in the window, atlas pages |
+
+Budgets live in `src/shared-types/perf/perfBudgets.ts` (`COUNT_BUDGETS`, `CLIENT_COUNT_BUDGETS`): max of the calibration runs + 25 %, rounded up, each naming its runs in `measured`. Both tests report EVERY budget a run broke, not just the first.
+
+**Why these are host-independent:**
+- The scene script is **tick-driven** (`SceneScriptRunner`), so a slow host plays the same ticks. The server gate reads its counters after a fixed number of scene ticks; the client gate measures between two **scene** times (t = 11 s – 19.5 s, polled from `/dev/perf`), not wall time.
+- The client gate renders with **SwiftShader** (`--use-angle=swiftshader`) on every host, so the GL driver is the same on a laptop, a desktop and a GitHub runner.
+- `?perfcounts=1` **pins the effects tier to High** (`EffectsBudget.pin`). Without it a slow host's budget drops effects and draws less, which would read as an improvement.
+- Draw calls are counted by wrapping the WebGL context's draw entry points (fixed-arity wrappers, no allocation) and closing each frame on Pixi's `postrender` runner. It works on the worker renderer and on `?worker=0` (same counts: 22 draws p95 wide-view/baked both ways).
+
+**What varies, and why it's not the host.** Combat plays out differently every run: wide-view ended one run with 50 ships and another with 135. So display objects (4.9k–7.2k fleet-fight) and the close fleet-fight's draw calls (40–140 p95 baked, over 6 runs on two hosts) swing with the battle. The wide shots' draw calls barely move (LOD dots: 20–22 baked, 25 high). Contacts per tick swing ±25 % on one machine, so they are print-only.
+
+**Server work counters** (`SceneWorkCounters`, in `/dev/perf` as `work`): plain numeric fields bumped on the tick path only while a scene runs (#14). Alongside, print-only CPU time: process CPU per tick over 60-tick batches (`process.cpuUsage()`), the main thread's CPU inside `update()` on 1 tick in 10 (`process.threadCpuUsage()`, Node ≥ 23.9 only; Windows rounds it to ~15.6 ms ticks, so treat it as rough), and the physics worker's event-loop utilisation. **Process CPU is NOT the tick's work**: the room's tick loop is a `setImmediate` spin, so the main thread reads ~100 % busy whatever it does. The perf ledger records all of these.
+
+**Ports.** `perf:counts` shifts the capture ports by `EQX_SHOWCASE_PORT_OFFSET` (default 400: server 3167, Vite 5773), so it never touches the dev ports or a parallel session. It refuses to start if anything listens on its ports, and kills nothing it didn't start.
+
+**Local vs CI (2026-11-08, PR #356).** The server work counts on a GitHub runner fell inside the desktop's run-to-run range on every metric (fleet-fight bodies 38.6 vs 38.4–39.9; teleport-raid identical to 0.1). Client: wide-view draw calls p95 matched exactly (20 / 25); fleet-fight stayed inside the desktop spread. The one host difference is atlas pages on wide-view/baked: 9 on CI vs 8 on the desktop (bake completion order packs one more page), so that budget comes from the CI max. The runner rendered only 17–27 frames in the window under SwiftShader at full size, so the page renders at device scale 0.5 (a 480×270 backbuffer; layout, camera and LOD follow the CSS size, so the counts are unchanged) and a run needs ≥ 20 frames. Counts depend on the VIEWPORT (the camera zoom scales with width; at 640 px the fleet fight drops to LOD dots), so it is fixed at 960×540 CSS. The close fleet fight's draw calls are a loose gate: p95 40–140 over 6 runs on both hosts, all scene (explosions on screen), none host.
+
+**Self-tests (2026-11-08):**
+- Server: fleet-fight with 45-ship waves instead of 30 failed rx (281 > 275 KB/s), bodies (52.7 > 50), AI agents (51.8 > 48) and entities/snapshot (90.9 > 86). With 40-ship waves (+33 %) it passed: fights thin out, so bodies rose 22 %. The gate catches ~25 %+ growth in per-tick work, not 10 %.
+- Client: 40 shapes with alternating blend modes (each breaks the batch) put wide-view at 61–62 draw calls p95 against budgets of 28 / 32: both failed.
+
+```
+pnpm perf:counts                          # gate: 2 scenes × 2 lighting levels, ~2–3 min
+pnpm perf:counts --calibrate              # print readings + the budgets they'd set
+pnpm perf:counts --scenes wide-view --shiplight baked --worker 0
+pnpm perf:counts --runs 2                  # pool 2 runs per window (CI: SwiftShader renders 15–18 frames a run; frames add, counts take the worst run)
+```
 
 `pnpm bench:gc` stays out of CI. It gates GC pause times and major-GC counts, which depend on the machine (its baseline had 0 major GCs and a run on 2026-11-06 had 1). A true per-tick allocation count needs a heap-profiling harness; that's a follow-up.
 

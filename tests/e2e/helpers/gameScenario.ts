@@ -45,6 +45,13 @@ export interface TestClientOpts {
   /** How long to wait for the join (ms, default 12 s). Capitals take longer
    *  (their art bakes on spawn): load time, not game time. */
   joinTimeoutMs?: number;
+  /** Return only once the client is IN PLAY (loading curtain lifted, ship
+   *  active) — default `true`. A ship that exists but sits behind the
+   *  curtain ignores input and is not yet targetable, so a spec that acts
+   *  straight after the join races the curtain (2026-11-08: beam-appears'
+   *  2 s deadline missed the ~2.4 s curtain). Pass `false` ONLY in a spec
+   *  that observes the curtain itself (join-art-ready, loading-catchup). */
+  waitForInPlay?: boolean;
 }
 
 export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
@@ -72,6 +79,7 @@ export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
       ) > 0, undefined,
     { timeout: opts.joinTimeoutMs ?? 12_000 },
   );
+  if (opts.waitForInPlay !== false) await waitForInPlay(page);
   return { ctx, page };
 }
 
@@ -96,6 +104,8 @@ export interface GalaxyTestClientOpts {
   /** Renderer zoom override (`?zoom=`). > 1 zooms IN — handy for visual
    *  capture specs that want the ship + effects larger on screen. */
   zoom?: number;
+  /** See `TestClientOpts.waitForInPlay` — default `true`. */
+  waitForInPlay?: boolean;
 }
 
 /**
@@ -138,6 +148,7 @@ export async function launchGalaxyTestClient(browser: Browser, opts: GalaxyTestC
       ) > 0, undefined,
     { timeout: 20_000 },
   );
+  if (opts.waitForInPlay !== false) await waitForInPlay(page);
   return { ctx, page, playerId };
 }
 

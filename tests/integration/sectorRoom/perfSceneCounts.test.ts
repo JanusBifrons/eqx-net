@@ -15,10 +15,11 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { perfSceneById } from '../../../src/shared-types/perf/perfScenes.js';
-import { COUNT_BUDGETS } from '../../../src/shared-types/perf/perfBudgets.js';
+import { COUNT_BUDGETS, WORK_WINDOW_TICKS, type WorkBudget } from '../../../src/shared-types/perf/perfBudgets.js';
 import type { SceneStatus } from '../../../src/server/rooms/scene/SceneScriptRunner.js';
+import type { ScenePerfView } from '../../../src/server/rooms/scene/scenePerfRegistry.js';
 
-type SceneRoom = { sceneStatus(): SceneStatus | null; swarmRegistry: { size(): number } };
+type SceneRoom = { sceneStatus(): SceneStatus | null; swarmRegistry: { size(): number }; scenePerf(): ScenePerfView | null };
 const WINDOW_MS = 10_000;
 
 describe('perf scenes — counts stay under budget', () => {
@@ -26,7 +27,7 @@ describe('perf scenes — counts stay under budget', () => {
   afterEach(async () => { if (harness) await harness.cleanup(); harness = undefined; }, 15_000);
 
   for (const id of Object.keys(COUNT_BUDGETS)) {
-    it(`${id}: bytes a pilot receives per second`, { timeout: 60_000 }, async () => {
+    it(`${id}: bytes a pilot receives per second, server work per tick`, { timeout: 90_000 }, async () => {
       const scene = perfSceneById(id)!;
       const budget = COUNT_BUDGETS[id]!;
       const r = scene.room as Record<string, unknown>;
@@ -57,7 +58,23 @@ describe('perf scenes — counts stay under budget', () => {
       console.log(`[perf-counts] ${id}: ${kbps.toFixed(1)} KB/s, swarm ${swarm}, spawned ${status.spawned}`);
       expect(status.refused, 'a scene spawn was refused: the run is invalid').toBe(0);
       expect(swarm, 'the scene must actually be busy').toBeGreaterThanOrEqual(budget.minSwarm);
-      expect(kbps, `${id}: ${kbps.toFixed(1)} KB/s over the ${budget.rxKBps} KB/s budget (${budget.measured})`).toBeLessThanOrEqual(budget.rxKBps);
+      // Soft: one run reports EVERY budget it broke, not just the first.
+      expect.soft(kbps, `${id}: ${kbps.toFixed(1)} KB/s over the ${budget.rxKBps} KB/s budget (${budget.measured})`).toBeLessThanOrEqual(budget.rxKBps);
+
+      // Server work per tick, over a fixed number of SCENE ticks (the script
+      // is tick-driven, so a slow runner covers the same part of the scene;
+      // only the wall-clock wait gets longer).
+      const deadline = Date.now() + 60_000;
+      while ((room.scenePerf()?.work.ticks ?? 0) < WORK_WINDOW_TICKS) {
+        if (Date.now() > deadline) throw new Error(`${id}: scene reached only ${room.scenePerf()?.work.ticks} of ${WORK_WINDOW_TICKS} ticks`);
+        await new Promise((res) => setTimeout(res, 20));
+      }
+      const work = room.scenePerf()!.work;
+      console.log(`[perf-counts] ${id} work: ${JSON.stringify(work)}`);
+      if (!budget.work) return;
+      for (const k of Object.keys(budget.work) as Array<keyof WorkBudget>) {
+        expect.soft(work[k], `${id}: ${k} ${work[k]} over the ${budget.work[k]} budget (${budget.measured})`).toBeLessThanOrEqual(budget.work[k]);
+      }
     });
   }
 });

@@ -20,6 +20,9 @@ test.describe('Machined art', () => {
     const { ctx, page } = await launchTestClient(browser, {
       spawnX: 0, spawnY: 0, room: 'test-sector-fast', shipKind: 'heavy',
       extraParams: { worker: '0', art: 'machined', artDelayMs: '9000', zoom: '3' },
+      // Reads the fallback look while bakes are held back, i.e. behind the
+      // curtain (which now waits for the Machined art), so don't wait for play.
+      waitForInPlay: false,
     });
     await page.waitForFunction(() => {
       const s = (window as unknown as { __eqxArtStats?: () => { classicShipSprites: number; machinedSprites: number } }).__eqxArtStats?.();
@@ -160,12 +163,32 @@ test.describe('Nebulae you can fly into (plan iridescent-seeking-rainbow v5, C2)
   test.describe.configure({ timeout: 90_000 });
   type Bd = { backdrop?: { on: boolean; density: number } };
   test('spawning inside a nebula reports being inside it; far away reports 0', async ({ browser }) => {
-    const { hashKey, nebulaCell, nebulaDensityAtSeed } = await import('../../src/client/render/art/fx/depth');
-    // test-sector-fast has no sector key, so its sky is seeded from 'none'.
-    const seed = hashKey('neb:none');
-    const g = { x: 0, y: 0, r: 0, variant: 'emission' as const, seed: 0 };
-    let best: { x: number; y: number } | null = null;
-    for (let iy = -2; iy <= 1 && !best; iy++) for (let ix = -2; ix <= 1 && !best; ix++) if (nebulaCell(seed, ix, iy, g)) best = { x: g.x, y: g.y };
+    // Find the spots with the game's own nebula maths, loaded IN THE BROWSER
+    // through Vite. Not a Node `import()` of the .ts: on Node 22.6+ that
+    // reaches Node's strip-only TypeScript loader, which rejects the
+    // parameter properties in depth.ts's module graph (this spec failed with
+    // "TypeScript parameter property is not supported in strip-only mode",
+    // 2026-11-08, Node 24).
+    const probe = await browser.newPage();
+    await probe.goto(`${process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173'}/favicon.ico`);
+    const { best, fx } = await probe.evaluate(async (modPath) => {
+      type G = { x: number; y: number; r: number; variant: 'emission'; seed: number };
+      const d = (await import(modPath)) as {
+        hashKey: (k: string) => number;
+        nebulaCell: (seed: number, ix: number, iy: number, out: G) => boolean;
+        nebulaDensityAtSeed: (seed: number, x: number, y: number, scratch: G) => number;
+      };
+      // test-sector-fast has no sector key, so its sky is seeded from 'none'.
+      const seed = d.hashKey('neb:none');
+      const g: G = { x: 0, y: 0, r: 0, variant: 'emission', seed: 0 };
+      let found: { x: number; y: number } | null = null;
+      for (let iy = -2; iy <= 1 && !found; iy++) for (let ix = -2; ix <= 1 && !found; ix++) if (d.nebulaCell(seed, ix, iy, g)) found = { x: g.x, y: g.y };
+      // Somewhere with no nebula.
+      let x = 0;
+      while (d.nebulaDensityAtSeed(seed, x, 0, { x: 0, y: 0, r: 0, variant: 'emission', seed: 0 }) > 0) x += 500;
+      return { best: found, fx: x };
+    }, '/render/art/fx/depth.ts'); // Vite's root is src/client
+    await probe.close();
     expect(best, 'a nebula near the centre').not.toBeNull();
     const inside = await launchTestClient(browser, {
       spawnX: Math.round(best!.x), spawnY: Math.round(best!.y), room: 'test-sector-fast', shipKind: 'fighter',
@@ -178,9 +201,6 @@ test.describe('Nebulae you can fly into (plan iridescent-seeking-rainbow v5, C2)
     mkdirSync('diag/e2e-screenshots/machined-art', { recursive: true });
     await inside.page.screenshot({ path: 'diag/e2e-screenshots/machined-art/inside-nebula.png' });
     await inside.ctx.close();
-    // Somewhere with no nebula.
-    let fx = 0;
-    while (nebulaDensityAtSeed(seed, fx, 0, { x: 0, y: 0, r: 0, variant: 'emission', seed: 0 }) > 0) fx += 500;
     const outside = await launchTestClient(browser, {
       spawnX: fx, spawnY: 0, room: 'test-sector-fast', shipKind: 'fighter',
       extraParams: { worker: '0', art: 'machined', fx: 'new' },

@@ -9,7 +9,7 @@
  *
  * Run with --reporter=list to see the console output inline.
  */
-import { test, expect } from './fixtures/test-with-logs';
+import { test, expect } from '../e2e/fixtures/test-with-logs';
 
 // ---------------------------------------------------------------------------
 // Thrust correction rate
