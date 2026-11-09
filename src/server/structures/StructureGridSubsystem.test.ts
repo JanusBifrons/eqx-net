@@ -77,6 +77,10 @@ function makeHarness(
     spawnMissile: (shooterId, x, y, dirX, dirY, def) =>
       missiles.push({ shooterId, x, y, dirX, dirY, weaponId: def.id }),
   });
+  // These tests cover cadence, weapon modes and ammo, not lock timing
+  // (StructureMountTicker.test.ts locks that): opt into the testMode instant
+  // lock so "the first tick fires" still holds.
+  grid.setInstantTurretLocks(true);
 
   let now = 0;
   const pulse = () => { now += 1000; return grid.pulse(now); };
