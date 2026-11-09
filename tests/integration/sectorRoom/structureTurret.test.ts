@@ -7,6 +7,11 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { STARTER_STRUCTURE_KINDS } from '../../../src/shared-types/blueprints.js';
 
+/** Turrets lock before they fire (root invariant #19); these tests check what
+ *  a turret fires, so the room's structure locks complete at once (testMode
+ *  `instantLock`, honoured room-wide for structure turrets). */
+const INSTANT_LOCK = { instantLock: true };
+
 /** Room-PRIVATE collaborators the WS-8 shot tests observe — `missileSim` +
  *  `projectiles.liveProjectiles` are private fields (not on the `_internals`
  *  surface), reached by the same room-cast the missileLifecycle test uses. */
@@ -51,7 +56,7 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
 
   it('a powered turret damages a drone in range; an idle one (no drone) does not', async () => {
     harness = await bootSectorTestServer({ asteroidConfig: [] });
-    const room = await harness.connectAs('player-1');
+    const room = await harness.connectAs('player-1', INSTANT_LOCK);
     const internals = harness.getServerRoom()!._internals;
 
     // Idle drone parked in range of the turret-to-be.
@@ -85,7 +90,7 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
 
   it('a Bolt Turret SPAWNS a travelling projectile owned by the turret (WS-8, real room)', async () => {
     harness = await bootSectorTestServer({ asteroidConfig: [] });
-    const room = await harness.connectAs('player-1');
+    const room = await harness.connectAs('player-1', INSTANT_LOCK);
     const serverRoom = harness.getServerRoom()!;
     const internals = serverRoom._internals;
     const priv = serverRoom as unknown as RoomShotPrivates;
@@ -112,7 +117,7 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
 
   it('a Missile Turret LAUNCHES a homing missile; it never targets the friendly Capital (WS-8 drones-only)', async () => {
     harness = await bootSectorTestServer({ asteroidConfig: [] });
-    const room = await harness.connectAs('player-1');
+    const room = await harness.connectAs('player-1', INSTANT_LOCK);
     const serverRoom = harness.getServerRoom()!;
     const internals = serverRoom._internals;
     const priv = serverRoom as unknown as RoomShotPrivates;
@@ -143,7 +148,7 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
 
   it('P2d: a Missile Turret with no munitions in storage does not fire, and says so', async () => {
     harness = await bootSectorTestServer({ asteroidConfig: [] });
-    const room = await harness.connectAs('player-1');
+    const room = await harness.connectAs('player-1', INSTANT_LOCK);
     const serverRoom = harness.getServerRoom()!;
     const internals = serverRoom._internals;
     const priv = serverRoom as unknown as RoomShotPrivates;
@@ -169,7 +174,7 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
 
   it('an unpowered turret (grid overdrawn by a DRILLING miner) does not fire', async () => {
     harness = await bootSectorTestServer({ asteroidConfig: [] });
-    const room = await harness.connectAs('player-1');
+    const room = await harness.connectAs('player-1', INSTANT_LOCK);
     const internals = harness.getServerRoom()!._internals;
     internals.spawnTestDrone('mob-2', 400, 700);
     // Active power: an idle miner only trickles, so give it a rock to drill;
