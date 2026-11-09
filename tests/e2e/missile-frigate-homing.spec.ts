@@ -42,6 +42,15 @@ import { waitForInPlay } from './helpers/gameScenario';
 import { test, expect } from '@playwright/test';
 import type { Browser, Page, APIRequestContext } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { getWeapon } from '../../src/core/combat/WeaponCatalogue';
+
+// Heat-seeker cooldown read from the catalogue. It was 180 ticks (3 s) when
+// the held-fire test was written; c795302d made it 90 (1.5 s) and the
+// hard-coded 3 s band went stale (2026-11-08).
+const HS_COOLDOWN_TICKS = getWeapon('heat-seeker').cooldownTicks;
+const HS_COOLDOWN_MS = (HS_COOLDOWN_TICKS * 1000) / 60;
+// Hold for ~2.33 cooldowns: one initial salvo + at least one rollover.
+const HS_HOLD_MS = Math.round(HS_COOLDOWN_MS * 2.33);
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? 'http://localhost:2567';
@@ -446,15 +455,14 @@ test('held fire auto-refires heat-seeker every cooldown — no need to tap', asy
       w.__eqxSetActiveWeapon?.('heat-seeker');
     });
 
-    // Click to focus + hold Space for 7 s (covers 2× the 3 s cooldown
-    // with margin). 7 s × 60 Hz / 16.67 ms/tick ≈ 420 RAFs ≈ 2.33×
-    // cooldown windows. Expect 3 distinct fires (the initial one at
-    // hold-start, and 2 more on cooldown rollover).
+    // Click to focus + hold Space for ~2.33 cooldown windows (HS_HOLD_MS).
+    // Expect ≥ 2 distinct salvos (the initial one at hold-start, then a
+    // cooldown rollover).
     await shooter.page.locator('[data-testid="game-surface"]').click();
     await shooter.page.waitForTimeout(40);
     const fireTs = Date.now();
     await shooter.page.keyboard.down('Space');
-    await shooter.page.waitForTimeout(7000);
+    await shooter.page.waitForTimeout(HS_HOLD_MS);
     await shooter.page.keyboard.up('Space');
 
     // Collect every `missile_spawned` event from this shooter since the
@@ -469,8 +477,8 @@ test('held fire auto-refires heat-seeker every cooldown — no need to tap', asy
     );
     // Group missiles into distinct SALVOS — missiles fired within one
     // catch-up burst share a tight `ts` cluster. Use a 500 ms gap as
-    // the salvo boundary (well under the 3000 ms cooldown, well over
-    // any intra-salvo Δ).
+    // the salvo boundary (well under the cooldown, well over any
+    // intra-salvo Δ).
     const salvoTs: number[] = [];
     for (const m of ourMissiles) {
       if (salvoTs.length === 0 || m.ts - salvoTs[salvoTs.length - 1]! > 500) {
@@ -481,19 +489,19 @@ test('held fire auto-refires heat-seeker every cooldown — no need to tap', asy
     console.log(`HOLD-FIRE: ${ourMissiles.length} missiles, ${salvoTs.length} salvos at ts:`, salvoTs);
     expect(
       salvoTs.length,
-      `held-fire produced ${salvoTs.length} salvo(s) in 7 s but expected ≥ 2 ` +
-      `(cooldownTicks=180 = 3.0 s wallclock — 7 s should fit one initial fire + ≥ 1 cooldown rollover). ` +
+      `held-fire produced ${salvoTs.length} salvo(s) in ${HS_HOLD_MS} ms but expected ≥ 2 ` +
+      `(cooldownTicks=${HS_COOLDOWN_TICKS} — the hold fits one initial fire + ≥ 1 cooldown rollover). ` +
       `If only 1 salvo, the held-fire path is broken (fireHeld not sampled across cooldown).`,
     ).toBeGreaterThanOrEqual(2);
-    // Inter-salvo gap should be ≈ 3000 ms (cooldown). Allow ±500 ms
+    // Inter-salvo gap should be ≈ the cooldown. Allow -500/+700 ms
     // for tick-quantisation + RAF jitter.
     if (salvoTs.length >= 2) {
       const gap = salvoTs[1]! - salvoTs[0]!;
       // Diagnostic on a too-wide gap: dump the client's input_intent
       // log so we can see whether fireHeld was actually held throughout
       // and what inputTick was doing.
-      if (gap > 3700) {
-        const intents = await shooter.page.evaluate(() => {
+      if (gap > HS_COOLDOWN_MS + 700) {
+        const intents = await shooter.page.evaluate((cooldownTicks) => {
           const w = window as unknown as {
             __eqxLogs?: Array<{ tag: string; data: Record<string, unknown> }>;
           };
@@ -505,10 +513,10 @@ test('held fire auto-refires heat-seeker every cooldown — no need to tap', asy
           }));
           const ii = logs.filter((l) => l.tag === 'input_intent');
           // Sliding 30-tick windows around interesting boundaries:
-          //   the first fire tick, the expected-second-fire tick (=first+180),
+          //   the first fire tick, the expected-second-fire tick (=first+cooldown),
           //   the actual-second-fire tick.
           const fireTicks = fires.map((f) => f.tick);
-          const expectedSecond = fireTicks[0] !== undefined ? fireTicks[0] + 180 : null;
+          const expectedSecond = fireTicks[0] !== undefined ? fireTicks[0] + cooldownTicks : null;
           const interesting = new Set<number>();
           for (const t of fireTicks) interesting.add(t);
           if (expectedSecond !== null) interesting.add(expectedSecond);
@@ -542,16 +550,16 @@ test('held fire auto-refires heat-seeker every cooldown — no need to tap', asy
             rafTotal: rafs.length,
             rafSamples,
           };
-        });
+        }, HS_COOLDOWN_TICKS);
         // eslint-disable-next-line no-console
         console.log('HOLD-FIRE DIAG:', JSON.stringify(intents, null, 2));
       }
       expect(
         gap,
-        `first inter-salvo gap was ${gap} ms — expected ≈ 3000 ms (cooldownTicks 180 @ 60 Hz). ` +
-        `A gap < 2500 ms ⇒ cooldown not enforced; > 3500 ms ⇒ tick rate stalled.`,
-      ).toBeGreaterThanOrEqual(2500);
-      expect(gap).toBeLessThanOrEqual(3700);
+        `first inter-salvo gap was ${gap} ms — expected ≈ ${HS_COOLDOWN_MS} ms (cooldownTicks ${HS_COOLDOWN_TICKS} @ 60 Hz). ` +
+        `Well under ⇒ cooldown not enforced; well over ⇒ tick rate stalled.`,
+      ).toBeGreaterThanOrEqual(HS_COOLDOWN_MS - 500);
+      expect(gap).toBeLessThanOrEqual(HS_COOLDOWN_MS + 700);
     }
   } finally {
     await shooter.ctx.close();
@@ -604,28 +612,33 @@ test('impact-only: a missile with no target FIZZLES on expiry — no lifetime/fu
     );
     expect(spawned, 'no missile_spawned — fire never reached the simulation').not.toBeNull();
 
-    // Wait out the full lifetime (≈600 ms at 10× + margin) so the expiry
-    // path has definitely run.
-    await shooter.page.waitForTimeout(1500);
-
-    // The missile must have EXPIRED (non-damaging despawn), and NOT
-    // detonated for any reason.
+    // The missile must EXPIRE. Missiles step once per server update, which
+    // `testTimeScale` does not speed up, so the lifetime is the catalogue's
+    // `lifetimeTicks` in real time (6 s), not "~600 ms at 10×" as this spec
+    // once assumed (it waited 1.5 s + 2 s and never saw the expiry,
+    // 2026-11-08). Poll with the lifetime as a deadline, not a pace.
+    const lifetimeMs = (getWeapon('heat-seeker') as { lifetimeTicks: number }).lifetimeTicks * (1000 / 60);
     const expired = await fetchEvents(
       request,
       (e) => e.tag === 'missile_expired' && e.data['ownerId'] === shooter.playerId && e.ts >= fireTs,
-      { timeoutMs: 2000 },
+      { timeoutMs: lifetimeMs + 3000 },
     );
     expect(expired, 'missile never logged missile_expired — the impact-only despawn path did not run').not.toBeNull();
 
-    // No detonation of ANY cause from this shooter (pre-change: 'lifetime').
-    const detonated = await fetchEvents(
+    // No IMPACT detonation from this shooter. Since WS-C #14 an expiring
+    // missile still broadcasts a `missile_detonated` with cause 'lifetime'
+    // (so the client removes it instead of freezing a ghost), with NO splash;
+    // a 'sweep' / 'fuse' / 'wall' detonation here would be an in-place
+    // explosion with no target present.
+    const impact = await fetchEvents(
       request,
-      (e) => e.tag === 'missile_detonated' && e.data['ownerId'] === shooter.playerId && e.ts >= fireTs,
+      (e) => e.tag === 'missile_detonated' && e.data['ownerId'] === shooter.playerId && e.ts >= fireTs
+        && e.data['cause'] !== 'lifetime',
       { timeoutMs: 500 },
     );
     expect(
-      detonated,
-      `a missile detonated (cause '${String(detonated?.data['cause'])}') with no target present — ` +
+      impact,
+      `a missile detonated (cause '${String(impact?.data['cause'])}') with no target present — ` +
       `impact-only means a missed missile must fizzle, never explode in-place.`,
     ).toBeNull();
 

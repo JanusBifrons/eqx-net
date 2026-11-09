@@ -24,11 +24,10 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 // handshake, up to ~16 s under suite load), so the default 30 s is too tight.
 test.describe.configure({ timeout: 90_000 });
 
-async function joinClient(browser: Browser, shipKind = 'scout') {
+async function joinClient(browser: Browser, shipKind = 'scout', room = 'test-sector-fast') {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  // testTimeScale=10 compresses fire/regen cadence to a second or two.
-  await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=${shipKind}`);
+  await page.goto(`${BASE_URL}?room=${room}&shipKind=${shipKind}`);
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');
@@ -66,12 +65,19 @@ test('energy bar is visible and full on spawn', async ({ browser }) => {
 });
 
 test('sustained fire drains the pool, then it recovers when firing stops', async ({ browser }) => {
-  const { ctx, page } = await joinClient(browser, 'scout');
+  // Interceptor in the REAL-TIME `test-sector` (2026-11-08 fix). The old scout
+  // in `test-sector-fast` could never drain: testTimeScale=10 runs the server's
+  // per-tick regen 10× faster (scout 0.2/tick → 120/s) while fire stays at the
+  // client's wall-clock 6 Hz (2 × 6 = 12/s), so the snapshot re-filled the bar
+  // to 97–100 % under held fire. (Even at 1× a scout's bolts only break even:
+  // 12/s drain vs 12/s regen.) The interceptor's beam drains 5 × 6 = 30/s
+  // against 0.4 × 60 = 24/s regen — a net −6/s, so −15 % of 180 takes ~4.5 s.
+  const { ctx, page } = await joinClient(browser, 'interceptor', 'test-sector');
   try {
     await page.waitForTimeout(400);
     const before = await energyPct(page);
 
-    // Hold fire long enough (testTimeScale=10) to draw the pool down.
+    // Hold fire long enough to draw the pool down.
     await page.keyboard.down('Space');
     // Relative to the start: this used to wait for "< 60 %", which only held
     // because the pool wrongly started near-empty (fixed alongside). And pass

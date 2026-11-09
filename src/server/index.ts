@@ -838,8 +838,8 @@ gameServer
 // (Capital + Miner + Solar + Turret, owner `wave-tester`). Single eager
 // instance (NO filterBy) so the LivingWorldDirector can hold a reference (it's
 // added to the director's room map at boot when `EQX_E2E_WAVE=1`). The base is
-// ready at boot but the owner-presence gate holds the wave until the test
-// client joins AS `wave-tester` — killing the pre-join race. Asteroids + a
+// ready at boot; `waveNeedsOwner` holds the wave until the test client joins
+// AS the owner, so the spec draws its wave whenever it runs. Asteroids + a
 // parked drone give the seeded turret + miner something to do. droneCount 0 so
 // the only drones that appear are the incoming wave squad.
 gameServer.define('galaxy-wave-test', SectorRoom, {
@@ -847,7 +847,10 @@ gameServer.define('galaxy-wave-test', SectorRoom, {
   testMode: true,
   droneCount: 0,
   asteroidConfig: [],
-  peacefulDrones: true,
+  // NOT peacefulDrones: the room has no ambient drones, and the option gave
+  // the WAVE's own bots the passive brain (spawnDrone uses the room's drone
+  // behaviour), so the squad never fired at the base; the spec passed only
+  // when a drone happened to ram a structure (2026-11-08).
   structureGridPulseMs: 100,
   // Phase V footprints — the shared powered scenario grid (see scenarioLayouts.ts).
   prebuiltStructures: [...STRUCTURE_SCENARIO_PREBUILT],
@@ -860,6 +863,16 @@ gameServer.define('galaxy-wave-test', SectorRoom, {
   defaultSpawnX: 0,
   defaultSpawnY: 900,
   maxClients: 4,
+  // Every run must start from the seeded READY base: a saved snapshot brought
+  // back the last run's razed base and parked hull (2026-11-08).
+  persistSector: false,
+  // The wave lands within bolt reach of the Solar NW (-250, 400) and outside
+  // the Turret's 600 u (it sits at 150, -400), so the attack lands in the
+  // spec's window instead of after a flight from anywhere in the sector.
+  testWaveArrival: { x: -900, y: 700 },
+  // Waves ignore owner presence in play, so without this a wave fired at
+  // server boot and landed before a spec that ran later joined (2026-11-09).
+  waveNeedsOwner: true,
 });
 // 2026-05-28 — POSITIVE control for hull-collision-test. Two crossguards
 // at exactly the same world position (0, 0), hull-exposed. The polygons
@@ -1330,10 +1343,16 @@ async function main(): Promise<void> {
           ts: Date.now(),
         });
       },
+      // The wave E2E server (EQX_E2E_WAVE=1) starts the director fresh: a
+      // restored squad already assigned to the test base, or the faction's
+      // last dispatch time (5-min cadence), meant a run a minute after the
+      // previous one drew no wave (2026-11-08).
       loadRow: () =>
-        db
-          .prepare('SELECT payload_json, created_at FROM director_state WHERE id = 1')
-          .get() as { payload_json: string; created_at: number } | undefined,
+        process.env['EQX_E2E_WAVE'] === '1'
+          ? undefined
+          : (db
+              .prepare('SELECT payload_json, created_at FROM director_state WHERE id = 1')
+              .get() as { payload_json: string; created_at: number } | undefined),
       logger,
     });
     // Living World P1b — the ROBOT side: a second director instance (mixed-tier
