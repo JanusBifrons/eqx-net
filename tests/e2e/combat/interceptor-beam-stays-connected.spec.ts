@@ -37,7 +37,9 @@
  * Lock-to-fire (2026-11-09): fire needs a completed lock, so the old
  * "no enemy present" hold no longer fires at all. The spec now joins
  * `combat-drone-test` (one peaceful heavy parked at (0,200)) 300 u south of
- * the drone, facing it, with `instantLock`; the group goes MAN (so the beam
+ * the drone, facing it, WITHOUT `instantLock` (with it, AUTO targets anything
+ * and destroys the hull-exposed drone within a second of joining); the group
+ * goes MAN (so the beam
  * follows Space) and locks the drone, then the ship thrusts toward it and
  * coasts. The freeze mechanism under test is unchanged: the coast is still
  * sub-epsilon motion with the beam held.
@@ -68,7 +70,7 @@ test.describe.configure({ timeout: 90_000 });
 
 async function joinSector(page: Page): Promise<void> {
   await page.goto(
-    `${BASE_URL}?room=combat-drone-test&spawnX=0&spawnY=-100&initialAngle=0&instantLock=1&testId=${randomUUID()}&shipKind=interceptor&worker=0`,
+    `${BASE_URL}?room=combat-drone-test&spawnX=0&spawnY=-100&initialAngle=0&testId=${randomUUID()}&shipKind=interceptor&worker=0`,
   );
   await page.waitForFunction(
     () => {
