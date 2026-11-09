@@ -78,6 +78,18 @@ describe('LoadShedder', () => {
     expect(evicted.length).toBe(0);
   });
 
+  it('never sheds flagship fleet escorts (W2a): it sheds the ordinary drone instead', () => {
+    const { registry, posByRec } = makeRegistry([
+      { id: 'flagship-0-e0', kind: 1, x: 9999, y: 0 },
+      { id: 'flagship-0-e1', kind: 1, x: 9500, y: 0 },
+      { id: 'lwbot-1', kind: 1, x: 300, y: 0 },
+    ]);
+    const evicted: SwarmEntityRecord[] = [];
+    const shedder = makeShedder({ registry, posByRec, players: [{ x: 0, y: 0 }], evicted });
+    shedder.consider(0.7, 18);
+    expect(evicted.map((r) => r.id)).toEqual(['lwbot-1']);
+  });
+
   it('evicts the farthest-from-closest-player drones in batches of 10% (capped at 8)', () => {
     // 100 drones at random radii, 2 players at (0,0) and (1000,0).
     const positions = Array.from({ length: 100 }, (_, i) => ({

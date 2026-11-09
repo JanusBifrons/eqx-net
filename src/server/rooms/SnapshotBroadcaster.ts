@@ -169,6 +169,13 @@ export interface SnapshotBroadcasterDeps {
   walletOf?: (playerId: string) => number;
   /** v4 M2 — the faction a patrol ship flies for (undefined for other NPCs). */
   droneFactionOf?: (droneId: string) => string | undefined;
+  /** W2a — a drone's NPC warp phase: 1 spool, 2 run, 3 just arrived, 0 none. */
+  droneWarpOf?: (droneId: string) => 0 | 1 | 2 | 3;
+  /** W2c — the bots warping right now (keys = drone ids). Their phase goes to
+   *  EVERY client, not only those with them in interest: a capital is seen
+   *  from far outside its interest window (coarse out-of-interest poses), and
+   *  without the phase a far onlooker saw it slide off instead of jump. */
+  warpingDrones?: () => ReadonlyMap<string, { entityId: number }>;
   /** v4 A — ms left on a player's alien-gate disable (0 when none). */
   disabledMsOf?: (playerId: string) => number;
   playerMountAngles: Map<string, Float32Array>;
@@ -300,6 +307,8 @@ type MutableDroneEntry = {
   charging?: boolean;
   elite?: string;
   fac?: string;
+  /** W2a NPC warp-to: 1 spool, 2 run, 3 just arrived (emit-when-non-zero). */
+  warp?: 1 | 2 | 3;
 };
 
 type MutableAsteroidEntry = {
@@ -509,7 +518,7 @@ export class SnapshotBroadcaster {
   private static writeDroneSlot(
     arr: MutableDroneEntry[], i: number,
     id: number, mountAngles: number[] | undefined, shieldDown: boolean,
-    hp: number | undefined, hostile: boolean, charging = false, elite?: string, fac?: string,
+    hp: number | undefined, hostile: boolean, charging = false, elite?: string, fac?: string, warp: 0 | 1 | 2 | 3 = 0,
   ): void {
     const slot = arr[i];
     if (!slot) {
@@ -520,6 +529,7 @@ export class SnapshotBroadcaster {
       if (charging) fresh.charging = true;
       if (elite !== undefined) fresh.elite = elite;
       if (fac !== undefined) fresh.fac = fac;
+      if (warp !== 0) fresh.warp = warp;
       arr[i] = fresh;
       return;
     }
@@ -529,6 +539,8 @@ export class SnapshotBroadcaster {
     else delete slot.elite;
     if (fac !== undefined) slot.fac = fac;
     else delete slot.fac;
+    if (warp !== 0) slot.warp = warp;
+    else delete slot.warp;
     slot.id = id;
     // Always assign; undefined means "drop the field on the wire" via
     // notepack.io's encoder which skips undefined values.
@@ -916,11 +928,24 @@ export class SnapshotBroadcaster {
           const elite = rec.elite?.name;
           // v4 M2 — a patrol always reports whose it is (#16: the client tint).
           const fac = d.droneFactionOf?.(rec.id);
-          if (!droneMountAnglesArr && !rec.shieldDown && hpPct === undefined && !hostile && !charging && elite === undefined && fac === undefined) continue;
+          // W2a — an NPC warp (spool / run / just arrived) drives the client fx (#16).
+          const warp = d.droneWarpOf?.(rec.id) ?? 0;
+          if (!droneMountAnglesArr && !rec.shieldDown && hpPct === undefined && !hostile && !charging && elite === undefined && fac === undefined && warp === 0) continue;
           SnapshotBroadcaster.writeDroneSlot(
             dronesScratch, dronesCount,
-            eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct, hostile, charging, elite, fac,
+            eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct, hostile, charging, elite, fac, warp,
           );
+          dronesCount++;
+        }
+      }
+      // W2c — warping NPCs outside this client's interest: the phase only.
+      const warping = d.warpingDrones?.();
+      if (warping && warping.size > 0) {
+        for (const [id, w] of warping) { // TODO: alloc-debt (iterator; only while an NPC warps)
+          if (interest && interest.has(w.entityId)) continue;
+          const warp = d.droneWarpOf?.(id) ?? 0;
+          if (warp === 0) continue;
+          SnapshotBroadcaster.writeDroneSlot(dronesScratch, dronesCount, w.entityId, undefined, false, undefined, false, false, undefined, undefined, warp);
           dronesCount++;
         }
       }

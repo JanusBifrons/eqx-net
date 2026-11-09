@@ -101,6 +101,30 @@ export const SHOWCASE_CAPITAL_DUEL_OPTS = {
 };
 
 /**
+ * Wrap-up W2c: a flagship fleet to film warping (the NPC warp). A style-B
+ * battleship at the origin, a destroyer off each beam, four gunships on the
+ * pilot's side (small ships stream only within a few km of a pilot; capitals
+ * are wide entities and show from further out). The pilot sits south, clear
+ * of the hull. Cue the jump with `test_fleet_warp` once the art has baked.
+ */
+const FLEET_BS_R = getShipKind('battleship-b').radius;
+export const SHOWCASE_FLEET_WARP_OPTS = {
+  testMode: true,
+  asteroidConfig: [],
+  peacefulDrones: true,
+  solarSectors: true,
+  dronePoses: [
+    { kind: 'battleship-b', x: 0, y: 0, angle: Math.PI / 2 },
+    { kind: 'destroyer-c', x: -Math.round(FLEET_BS_R * 1.7), y: 0, angle: Math.PI / 2 },
+    { kind: 'destroyer', x: Math.round(FLEET_BS_R * 1.7), y: 0, angle: Math.PI / 2 },
+    ...[-1, -0.35, 0.35, 1].map((t) => ({ kind: 'gunship', x: Math.round(t * FLEET_BS_R * 0.8), y: -Math.round(FLEET_BS_R * 1.25), angle: Math.PI / 2 })),
+  ],
+  defaultSpawnX: 0,
+  defaultSpawnY: -Math.round(FLEET_BS_R * 2.2),
+  maxClients: 4,
+};
+
+/**
  * A powered base with a shield-pylon WALL, battery, bolt + missile turrets and
  * a drone pack beyond the wall (join with `startHostile=1`). The spawn sits
  * BEHIND the wall, so drone fire lands on the wall. Layout honours the grid
@@ -479,4 +503,5 @@ export const SHOWCASE_ROOMS = {
   'showcase-coastal': SHOWCASE_COASTAL_OPTS,
   'showcase-coastal-aa': SHOWCASE_COASTAL_AA_OPTS,
   'showcase-coastal-duel': SHOWCASE_COASTAL_DUEL_OPTS,
+  'showcase-fleet-warp': SHOWCASE_FLEET_WARP_OPTS,
 } as const;

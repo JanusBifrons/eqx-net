@@ -18,6 +18,7 @@ export {
   CancelTransitSchema,
   TestAggroSchema,
   TestReloadTurretsSchema,
+  TestFleetWarpSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,
