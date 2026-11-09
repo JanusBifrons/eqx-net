@@ -20,6 +20,7 @@ import type { FullConfig } from '@playwright/test';
 
 const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? 'http://localhost:2567';
 const STORAGE_STATE_PATH = path.resolve('tests/e2e/.auth/storage-state.json');
+const E2E_STORAGE_STATE_PATH = path.resolve('tests/e2e/.auth/e2e-storage-state.json');
 
 interface TestTokenResponse {
   token: string;
@@ -56,7 +57,26 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
     ],
   };
 
+  // The e2e projects (smoke/feature/gate) use a second file that also sets the
+  // explicit ticker-pause flag (`src/client/app/automationTickerPause.ts`):
+  // drawer-heavy specs need the game paused behind the drawer (CDP
+  // starvation). The showcase / perf configs keep the auth-only file, so
+  // they film and measure a LIVE game behind menus.
+  const e2eStorageState = {
+    cookies: [],
+    origins: [
+      {
+        origin,
+        localStorage: [
+          { name: 'eqxAuthToken', value: payload.token },
+          { name: 'eqxE2ePause', value: '1' },
+        ],
+      },
+    ],
+  };
+
   await mkdir(path.dirname(STORAGE_STATE_PATH), { recursive: true });
   await writeFile(STORAGE_STATE_PATH, JSON.stringify(storageState, null, 2), 'utf8');
+  await writeFile(E2E_STORAGE_STATE_PATH, JSON.stringify(e2eStorageState, null, 2), 'utf8');
   console.log(`[e2e/global-setup] wrote auth storageState for ${origin} (user ${payload.user.email})`);
 }

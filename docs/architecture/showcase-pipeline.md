@@ -165,9 +165,14 @@ window.
   do not appear in the screencast frames, although the DOM has them and a page
   screenshot shows them. The `break-in` shot is catalogue-only until that is
   understood. Drawers, dialogs and toasts record fine.
-- **UI-heavy takes record slowly.** The Trade tab with the full offers board
-  captures at ~25–30 fps on the reference laptop (main-thread renderer plus
-  React), so `trade-deal` fails the smoothness gate there.
+- **Menus no longer freeze the game in takes (corrected 2026-11-08).** The
+  `trade-deal` smoothness failures (~34 fps, 1.2–1.5 s frame gaps) were NOT the
+  Trade tab's cost. The client stopped the Pixi ticker whenever a drawer or the
+  galaxy overview was open under `navigator.webdriver` (an E2E workaround for
+  CDP starvation), and the recorder is Playwright, so it filmed a paused game
+  behind every menu. The pause is now keyed on an explicit flag only the e2e
+  projects set (`localStorage.eqxE2ePause`, or `?e2ePause=1`; see
+  `src/client/app/automationTickerPause.ts`), so takes run the game live.
 
 ## Failure handling
 
@@ -204,9 +209,10 @@ camera tracks `local`, the HUD is `clean` (shield/hull, cargo, wallet stay on
 screen), and `_pilot.ts` steers with the arrow keys (`flyTo`, `flyRoute`,
 `face`). Prefer this over a free camera for anything a player does.
 
-- **Trade tab stalls the capture.** With the Trade tab open, each refresh blocks
-  the main thread for up to ~1 s on the reference laptop (frame gaps of
-  0.9–1.9 s every ~0.9 s), so `trade-deal` fails the smoothness gate. Phones use
-  the same main-thread renderer, so this is worth profiling for players too.
+- **The Trade tab does not block the main thread.** The frame gaps seen with
+  it open (0.9–1.9 s) were the automation ticker pause behind an open drawer
+  (see "Menus no longer freeze the game in takes" above), not Trade-tab work.
+  Re-record `trade-deal` and check its `DrawFrame` gaps (about 17 ms expected)
+  before profiling the tab itself.
 - **Trade rooms share one sector name,** so each take's Capital is saved and
   restored into the next take's room. `placeHome` tries a ring of spots.
