@@ -44,8 +44,63 @@ Lights come from the game's own effects: engine plumes (`FxEngines.thrustOf`), b
 
 ## Cost (laptop, same build, `pnpm perf:scenes --base <sha> --head-params shiplight=gpu`)
 
-Both perf scenes GREEN. Typical frames and renderer CPU are unchanged; the fleet fight drops about one more frame every 2 s (p99 16.8 → 33.4 ms). The CPU side is the lighting pass (~0.9 ms a frame at 50 ships, mostly light picking) plus one draw call per lit mesh. Next: a custom batcher (plan R3) and the phone run. Ledger: `perf/ledger/gpu-light-ab.json`.
+**Correction (2026-11-08): these A/Bs were inconclusive, not GREEN.** Every GPU-lighting A/B behind #344–#346 ran 3 reps per arm: `gpu-light-ab.json`, `gpu-light-ab2.json`, the `hitch-*.json` investigation and the phone-proxy A/B (`phone-proxy-ab.json`, CPU ×2) behind the phone defaults. At 3 v 3 the exact Mann-Whitney test's smallest possible p is 0.10, so none of them could have gone RED, whatever the cost (`docs/LESSONS.md`, 2026-11-08, "A 3-rep exact Mann-Whitney can never reject at 0.05"; #352). Under today's verdict (`perf/verdict.ts`) each reads INCONCLUSIVE. The medians below are observations, not a verdict:
+
+- typical frames and renderer CPU looked unchanged;
+- the fleet fight dropped about one more frame every 2 s (p99 16.8 → 33.4 ms), and hitches roughly doubled against baked (10 → 20 a minute after geometry sharing, p = 0.7), inside this laptop's same-code spread (×2 on hitches);
+- the CPU side is the lighting pass (~0.9 ms a frame at 50 ships, mostly light picking) plus one draw call per lit mesh.
+
+So GPU lighting is on by default without evidence that it is free on weak hardware. See the open question below. Ledger: `perf/ledger/gpu-light-ab.json`.
+
+## Open question: cost on weak hardware
+
+Does GPU lighting (Medium on phones, Low on phones under 4 GB) cost frames or hitches on a phone? Unanswered (2026-11-08). The phone defaults (`defaultLightingPreset`) rest on the 3-rep phone-proxy A/B above, which could not have failed. Two lanes settle it, neither needs the desktop (the desktop is not a target platform and is not always on):
+
+**1. The real phone** (`pnpm perf:phone`, [perf-scenes.md](perf-scenes.md#the-phone-lane-pnpm-perfphone)). Run on the laptop with the phone plugged in by USB, USB debugging on, unlocked, screen timeout long, Chrome's `chrome://flags/#enable-command-line-on-non-rooted-devices` Enabled, and nothing else running on the laptop:
+
+```
+pnpm perf:phone --scenes fleet-fight,wide-view --reps 8 --base HEAD --base-params shiplight=baked --head-params shiplight=medium --noise-check
+pnpm perf:phone --scenes fleet-fight,wide-view --reps 8 --base HEAD --base-params shiplight=baked --head-params shiplight=low --noise-check
+```
+
+**2. The laptop's phone proxy** (no phone: Chrome on the laptop with its CPU throttled ×2, a phone-sized screen at DPR 2.625, touch):
+
+```
+pnpm perf:scenes --device phone-proxy --cpu-rate 2 --scenes fleet-fight,wide-view --reps 8 --base HEAD --base-params shiplight=baked --head-params shiplight=medium --noise-check
+pnpm perf:scenes --device phone-proxy --cpu-rate 2 --scenes fleet-fight,wide-view --reps 8 --base HEAD --base-params shiplight=baked --head-params shiplight=low --noise-check
+```
+
+Notes:
+- `--base HEAD` with only the params differing measures the switch on one build. Both arms pin `shiplight`: an arm without it runs the device's saved level or its default (Medium on a phone), not baked.
+- `--noise-check` adds the A/A arm (baked against baked), so a move smaller than the host's own same-code spread can't read RED. Each command is 3 arms × 8 reps × 2 scenes: roughly an hour (more on the phone, which reloads the art each run). To split one into chunks, re-run the same command with `--append <ledger>` and `--reps 2` (or 4); the reps add up and the verdict is re-judged over all of them.
+- Exit code: 0 GREEN, 1 RED or INVALID, 3 INCONCLUSIVE (`perf:phone` also 4 = no usable phone, with what to fix).
+- Read `clientFrameP95`, `clientHitchesPerMin` and `renderP95`. If the laptop proxy and the phone disagree, the phone wins: the proxy throttles CPU only, and its GPU is the laptop's.
+
+**Decision rule.** RED on the phone at Medium → phones default to Low (or baked) until a batcher (plan R3) fixes it. RED at Low too → phones default to baked. GREEN on both → the defaults stand, with evidence this time. INCONCLUSIVE → more reps (`--append`), not a decision.
+
+**Result:** not yet run. Record each verdict here with its ledger file name.
+
+## Memory (wrap-up W3, 2026-11-09)
+
+The phone-proxy A/B read GPU lighting as **+33 % heap**. That reading was taken without a garbage collection, so it counts uncollected garbage (the same trap as the galaxy soak, LESSONS 2026-11-08). Measured properly, with fleet-fight, desktop Chrome, a forced collection (CDP `HeapProfiler.collectGarbage`) and a 20 s sampling profile:
+
+| | GPU lighting | Baked |
+|---|---|---|
+| Live heap after collection | 45.1 MB | 43.3 MB |
+| Everything allocated in 20 s (collected included) | 76.8 MB | 65.3 MB |
+
+- **Retained memory:** +4 %. No growth to fix.
+- **Garbage:** GPU lighting allocates about 18 % more (+0.6 MB/s), mostly in Pixi's per-mesh uniform update (`uni.update()`, once per lit mesh per frame). Our own lighting code (`fillScene`, `strongestLightsInto`, `addLight`) writes only into typed arrays and caches.
+- **If GC pauses ever show on a phone:** update a mesh's uniforms only when its lighting changed.
+- **The data atlas pages' CPU copies** (16 MB per 2048² page) live outside the JS heap. Freeing them is the parked atlas-release idea in `docs/SHELF.md`; it needs a context-loss path that re-packs from the bake cache.
 
 ## Status and next steps
 
 Plan `prancy-squishing-donut`, R2 (branch `rnd/gpu-lit-ingame`). Open: R3 batcher, phone measurement, per-device presets in Settings, the gunhouse recoiling with its barrels (one sprite, same in baked art).
+
+**Showcase review findings (2026-11-09, `gpu-lit-ships` shot, `capital-guns-fighter` take with `shiplight=high`).** The clip is not published until these are fixed:
+- A muzzle flash's light lasts only 1–2 frames: it follows the flash sprite, which is that brief. A short decay after the sprite ends would let the light read.
+- The 5-inch turrets' flashes cast no visible light on the deck.
+- A thin dark rod sticks out behind each 5-inch turret, opposite its barrels.
+- Far shell streaks run nearly vertical while the barrels that fired them point south-east.
+- Framing: the follow camera keeps the hull near the left edge, and the caption covers the stern.

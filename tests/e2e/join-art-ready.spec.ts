@@ -22,9 +22,16 @@ test.describe('Join loading screen and Machined art', () => {
    * up until every ship on screen has its art (ready or failed).
    */
   test('the loading screen stays up until the ships on screen have their Machined art', async ({ browser }) => {
+    // 60 s, not the 30 s default: the CI flake (main, 2026-11-08/09) and a local
+    // repro both ran out at ~30 s on INFRASTRUCTURE, not game time. Trace: page
+    // load 13 s (Vite cold compile, first spec in the shard), join 5 s, curtain
+    // up at ~20 s, then the deliberate 8 s art hold (it must outlast the 5 s
+    // minimum curtain to prove anything) plus the bake.
+    test.setTimeout(60_000);
     const { ctx, page } = await launchTestClient(browser, {
       spawnX: 0, spawnY: 0, room: 'test-sector-fast', shipKind: 'heavy',
       extraParams: { worker: '0', art: 'machined', artDelayMs: '8000' },
+      waitForInPlay: false, // the spec watches the curtain rise and lift
     });
     // The flag reads 0 for a moment before the join's loading screen goes up,
     // so wait for it to rise first, then for the reveal.

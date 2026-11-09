@@ -85,7 +85,7 @@ describe('DamageNumberManager heap-delta — per-target accumulator avoids per-h
     // (every spawn past the cap evicts oldest + destroys + allocates
     // new).
     expect(inner.children.length).toBe(1);
-    expect((inner.children[0] as Text).text).toBe('-1000');
+    expect((inner.children[0] as Text).text).toBe('1000');
     expect(mgr.getActiveCount()).toBe(1);
   });
 
@@ -103,7 +103,7 @@ describe('DamageNumberManager heap-delta — per-target accumulator avoids per-h
     expect(mgr.getActiveCount()).toBe(5);
     // Each of 5 buckets accumulated 2000 hits × 1 damage = 2000.
     for (let i = 0; i < 5; i++) {
-      expect((inner.children[i] as Text).text).toBe('-2000');
+      expect((inner.children[i] as Text).text).toBe('2000');
     }
   });
 

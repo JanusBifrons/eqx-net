@@ -33,15 +33,53 @@ Three rules make the numbers trustworthy:
 | Client numbers: main-thread frame interval, renderer cost (worker or main), long tasks, display objects, heap | `?perfprobe=1` → `window.__eqxPerf` (`src/client/debug/perf/perfProbe.ts`) |
 | Network bytes | the runner, from DevTools network events (no app code; works on a phone too) |
 | Runner, A/B and ledger | `pnpm perf:scenes` (`perf/run-perf.ts`) → `perf/ledger/*.json` |
-| Verdict | `perf/verdict.ts`: exact Mann-Whitney U plus a relative AND an absolute floor per metric |
+| Verdict | `perf/verdict.ts`: exact Mann-Whitney U plus a relative AND an absolute floor per metric; RED / GREEN / INCONCLUSIVE, optional A/A noise floor |
 
 ## Running it
 
 ```
-pnpm perf:scenes                                  # every scene, 5 reps, head vs origin/main
-pnpm perf:scenes --scenes fleet-fight --reps 3    # one scene
+pnpm perf:scenes                                  # every scene, 8 reps, head vs origin/main
+pnpm perf:scenes --scenes fleet-fight --reps 4    # one scene, the fewest reps that can decide
+pnpm perf:scenes --base HEAD --head-params shiplight=gpu --noise-check   # one switch, with a noise floor
 pnpm perf:scenes --head-only --reps 1             # a quick look, no A/B
+pnpm perf:scenes --device phone-proxy --cpu-rate 2 --base HEAD --base-params shiplight=baked --head-params shiplight=medium   # phone-class, on the laptop
+pnpm perf:phone --base HEAD --base-params shiplight=baked --head-params shiplight=medium      # on a real phone over adb (below)
 ```
+
+`--base HEAD` means this checkout's HEAD (resolved before the perf-base worktree is checked out; before 2026-11-08 it silently meant that worktree's own, stale HEAD).
+
+## Reading the verdict: RED, GREEN, INCONCLUSIVE (2026-11-08)
+
+Each gated metric gets one of three verdicts (`perf/verdict.ts`):
+
+| Verdict | Means |
+|---|---|
+| **RED** | head is worse by more than the metric's relative AND absolute threshold, p < 0.05 (exact two-sided Mann-Whitney), and (with `--noise-check`) the move is bigger than this host's same-code spread. |
+| **GREEN** | the move is under the thresholds, **and** the rep count could have produced p < 0.05. A real regression would have shown. |
+| **INCONCLUSIVE** | the run can't tell. Too few reps to ever reject; or over the thresholds but not significant; or over the thresholds but inside the A/A noise ("within host noise (×N)"). |
+
+The scene is RED if any metric is RED, else INCONCLUSIVE if any gated metric is, else GREEN. The runner exits 0 GREEN, 1 RED or INVALID, 3 INCONCLUSIVE.
+
+**Minimum reps.** The exact test's smallest possible p is 2 / C(2n, n): 0.10 at 3 v 3, 0.029 at 4 v 4. A 3-rep A/B can never go RED, so before this change its "GREEN" meant nothing (the GPU-lighting A/Bs in #344–#346 were 3 reps). So:
+- `--reps` defaults to 8;
+- odd counts round up to even (each arm runs second in a round equally often; the second slot runs on a warmer machine);
+- below 4 reps per arm a metric is INCONCLUSIVE, never GREEN.
+
+**Noise floor (`--noise-check`).** Adds a third arm, `aa`: the base build with the base params again, booted fresh. Per metric, the spread is max(base/aa, aa/base) of the two arm medians, the same statistic as the head/base ratio over the same number of reps. A head move no bigger than that can't be RED. It is on by default when base and head are the same commit with the same params (an A/A run), and opt-in otherwise; it adds 50 % to the run time. With three arms the order walks all six permutations, and base-before-head still flips every rep. A laptop's same-code spread reached ×2 on hitches (2026-11-08), so on a laptop a hitch "regression" under ×2 is noise until shown otherwise.
+
+**Host-load gate (2026-11-08).** A parallel Claude session once ran its own game server through a whole perf run and nobody noticed. Before and after every rep the runner samples the host (`showcase/hostLoad.ts`):
+- system CPU % over 1 s, from `os.cpus()` tick deltas;
+- free RAM;
+- listeners on the game's ports (2567/5173 dev, 2667/5273 netgate, 2767/5373 capture, +1 and the usual offsets) or EQX node processes, owned by a PID outside this run's process tree.
+
+A rep is **INVALID** (excluded from the verdict, kept in the ledger with its samples) and repeated up to 2 more times, 15 s apart, when free RAM < 1 GB, CPU > 25 % of all cores before it starts, or a foreign game server / Vite is listening. Flags:
+- `--ignore-ports 2567,5173` acknowledges a known listener (logged in the ledger);
+- `--max-cpu-pct N` moves the CPU limit;
+- `--no-load-gate` records only.
+
+Parallel sessions: `EQX_SHOWCASE_PORT_OFFSET=<n>` moves the perf arms to 2767+n / 5373+n (head +1). The capture servers kill whatever listens on their own ports at start, so two runs on one machine must use different offsets.
+
+**The ledger records the run's conditions**: each arm's SHA, full client URL params (`art`, `fx`, `shiplight`, `worker`, …) and server env (the injected burn), the device, the GPU renderer string the browser really used (`UNMASKED_RENDERER_WEBGL`), and the host (CPU model, threads, total and free RAM). Two ledgers from different hosts or renderers are not comparable.
 
 The base arm is a worktree at `.claude/worktrees/perf-base` that shares the root `node_modules` through a junction. Never remove it with `git worktree remove` while the junction is there: that deletes through the link (2026-11-06). Run `cmd /c rmdir <dir>\node_modules` first.
 
@@ -72,6 +110,27 @@ The harness's numbers come from a headless laptop browser with an idle pilot. To
 
 Those verdicts, next to the numbers from the same take, set the absolute budgets per device (`perf/budgets.{desktop,phone}.ts`, still to come).
 
+## The phone lane: `pnpm perf:phone` (2026-11-08)
+
+The perf lab gives one reading per tap. The phone lane runs a full A/B on a real Android phone, unattended: the same arms (base, head, optional `aa` noise arm), the same arm order (`perf/order.ts`), the same probe reads (`?perfprobe=1` + `GET /dev/perf` + DevTools socket bytes), the same verdict (`perf/verdict.ts`) and the same ledger shape as `pnpm perf:scenes`. Only the browser differs: Chrome on the phone, driven through Playwright's `_android` over adb (the path `tests/mobile-perf/helpers/androidConnect.ts` proved).
+
+```
+pnpm perf:phone --scenes fleet-fight,wide-view --reps 8 --base HEAD --base-params shiplight=baked --head-params shiplight=medium --noise-check
+```
+
+- **Where things run.** The game servers run on the laptop (one arm at a time, ports as for perf:scenes). The phone reaches Vite through `adb reverse tcp:<port>` (USB or wireless adb, no Wi-Fi routing needed, and `localhost` is a secure context); `--lan` uses the laptop's LAN IP instead (`HOST_LAN_IP` overrides the pick). Chrome is relaunched for every run, like perf:scenes' fresh context per run.
+- **Fails fast.** Before any worktree or server is touched it runs `adb devices -l` and stops (exit 4) with what to do: adb not on PATH, no device, the USB-debugging prompt not accepted, a device offline, or several devices and no `--serial` (or `ANDROID_SERIAL`). Flags that only mean something for the laptop proxy (`--device`, `--cpu-rate`, `--headed`, the burn injections) are refused.
+- **The phone's own noise.** A hot phone throttles its clocks. Before every run the lane reads `dumpsys thermalservice`; at or above `--max-thermal` (default 2, MODERATE), or with the screen off or locked, the run is INVALID and repeated after 30 s (up to 2 more times), the same way a busy laptop is. The laptop's host-load gate still applies too (the server arm runs there). Every sample is kept in the ledger (`load.before/after.{host,phone}`).
+- **Saved settings.** Chrome on the phone keeps its localStorage between launches, so an arm without `shiplight` would run the phone's saved Lighting level. The lane warns when only one arm pins it; pin both.
+- **Ledger.** `perf/ledger/<stamp>-<sha>-phone-<model>.json`. `device` is the phone ("phone · Google Pixel 7 · Android 14 · Mali-G710": model, Android version, and the GPU renderer string Chrome reported), `phone` has the getprop identity, SoC and thermal status at start, `host` is the laptop that ran the servers. `--append <ledger>` adds chunks, as for perf:scenes.
+- **Exit codes:** 0 GREEN, 1 RED or INVALID, 3 INCONCLUSIVE, 2 crashed, 4 no usable phone.
+
+On the phone, first time: Developer options → USB debugging on; accept the "Allow USB debugging?" prompt; in Chrome enable `chrome://flags/#enable-command-line-on-non-rooted-devices` and Relaunch; set a long screen timeout. The laptop needs adb (Android platform-tools) on PATH.
+
+**No phone?** `pnpm perf:scenes --device phone-proxy --cpu-rate 2 ...` runs the same A/B on the laptop with Chrome's CPU throttled and a phone screen. It is a proxy: CPU only, with the laptop's GPU. When the two disagree, the phone wins. The GPU-lighting question's exact commands for both lanes are in [gpu-lit-ships.md](gpu-lit-ships.md#open-question-cost-on-weak-hardware).
+
+Code: `perf/run-phone.ts` (the CLI) and `perf/phoneLane.ts` (arg parsing, the adb device check, the thermal gate, arm plan; unit-tested with adb mocked in `perf/phoneLane.test.ts`). The per-run measurement mirrors `run-perf.ts` `runOnce`; a metric added there must be added to the phone lane too.
+
 ## Proving the gate sees a regression
 
 The runner can slow the head arm on purpose: `--inject-server-burn N` busy-waits N ms in every server tick of the perf rooms, and `--inject-client-burn N` does the same in every client frame. Before a metric gates anything, two runs must hold:
@@ -90,7 +149,8 @@ The runner can slow the head arm on purpose: `--inject-server-burn N` busy-waits
   | hitches | RED | 18 a minute | 482 a minute | 0.03 |
 
   Ledger: `perf/ledger/inject-2026-11-06.json`.
-- **How sensitive it is:** the laptop is noisy. Base fleet-fight tick p95 ranged from 10 to 19 ms across one session, so the gate catches large regressions (around 1.5× or more), not 10 %. It needs at least 4 reps per arm: with 3, Mann-Whitney can never reach p < 0.05.
+- **How sensitive it is:** the laptop is noisy. Base fleet-fight tick p95 ranged from 10 to 19 ms across one session, so the gate catches large regressions (around 1.5× or more), not 10 %. It needs at least 4 reps per arm: with 3, Mann-Whitney can never reach p < 0.05. Until 2026-11-08 the verdict still called such runs GREEN; now they are INCONCLUSIVE (see above).
+- **Re-run with the three-way verdict (desktop, RTX 5070 Ti, 2026-11-08):** `--reps 3` with the same burns rounds up to 4 reps and goes RED (server tick p95 2.15 → 8.08 ms, frame p95 16.8 → 33.4 ms, hitches 0 → 323 a minute, each p = 0.03). The same ledger's first 3 reps per arm re-judged give INCONCLUSIVE on every gated metric (min p 0.10). Ledger: `perf/ledger/inject-2026-11-08.json`.
 - **A finding:** a sustained 60-ship fight (180 ships over the window) pushes the laptop server's p99 tick to about 40 ms with load shedding off, against a 16.7 ms budget. In real play, time dilation and shedding absorb it.
 
 ## Adding a scene

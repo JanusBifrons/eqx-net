@@ -133,6 +133,11 @@ export interface LivingWorldRoom {
    *  IDLE behaviour flies to it via an arrive ramp. No-op if the bot isn't an
    *  in-sector drone here. */
   setBotMoveTarget(botId: string, x: number, y: number): void;
+  /** W2a NPC warp-to: send a bot on an in-sector warp to (x, y) (spool, run,
+   *  drop; the same machine as a pilot's). False for an unknown id. */
+  warpBot?(botId: string, x: number, y: number): boolean;
+  /** W2a: a bot's warp phase (1 spool, 2 run, 3 just arrived, 0 none). */
+  botWarpPhase?(botId: string): 0 | 1 | 2 | 3;
   /** Leader-led flocking (non-combat herding): mark a bot a FOLLOWER of
    *  `leaderId`; while IDLE it flocks (cohesion/alignment/separation) to the
    *  leader's LIVE pose each tick (`memberIds` drive separation), instead of a
@@ -165,4 +170,8 @@ export interface LivingWorldRoom {
   /** Phase-4 P0 — clear a pending warp-in warning (the inbound arrived / retreated
    *  / cancelled). Companion to `broadcastWarpWarning`; keyed by the same `id`. */
   broadcastWarpWarningClear(msg: WarpWarningClearEvent): void;
+  /** TestMode-only (2026-11-08): the point a WAVE squad lands at in this room,
+   *  instead of its carry pose. The wave E2E needs the squad within reach of
+   *  the base inside its window; otherwise null / absent. */
+  testWaveArrival?(): { x: number; y: number } | null;
 }

@@ -84,6 +84,9 @@ interface SetPositionCmd   { type: 'SET_POSITION';   entityId: string; x: number
 /** Warp travel: move a running warp's drop point (the server lands a ship at the
  *  nearest clear spot when its drop point is blocked). Server-only. */
 interface WarpRetargetCmd { type: 'WARP_RETARGET'; entityId: string; x: number; y: number }
+/** NPC warp-to (W2a): hold a bot's warp target (x/y absent = drop the
+ *  request). While the warp owns the body its AI intents are skipped. */
+interface BotWarpCmd      { type: 'BOT_WARP'; slot: number; x?: number; y?: number }
 /** Rename a ship body's lookup key without destroying it. Used by the
  *  fresh-spawn-displace flow so a displaced hull's body outlives its
  *  original playerId (rekeyed to `linger-${shipInstanceId}`) on rejoin. */
@@ -112,11 +115,15 @@ interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
 /** v4 T2 — a teleporter pad's closing-iris push (PhysicsWorld.setPadField). */
 interface SetPadFieldCmd    { type: 'SET_PAD_FIELD';   id: string; cx: number; cy: number; half: number; active: boolean }
 interface RemovePadFieldCmd { type: 'REMOVE_PAD_FIELD'; id: string }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd;
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd | BotWarpCmd;
 
 /** Pool commands (main → pooled worker): host / free one sector's world. */
 interface AddWorldCmd    { type: 'ADD_WORLD'; worldId: number; sab: SharedArrayBuffer }
 interface RemoveWorldCmd { type: 'REMOVE_WORLD'; worldId: number }
+/** Dev diagnostics (`/dev/memory?gc=1`): collect garbage now, so a heap
+ *  reading shows what is live. Needs the process started with --expose-gc;
+ *  otherwise a no-op. */
+interface GcCmd          { type: 'GC' }
 
 /** One sector's simulation: its Rapier world, input queues and SAB writer. */
 interface WorldHandle {
@@ -157,6 +164,9 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
   const lastAckTick = new Map<number, number>();
   /** Pending AI intents per slot, applied once on the next physics step then cleared. */
   const aiIntents = new Map<number, { fx: number; fy: number; torque: number; setAngvel?: number }>();
+  /** NPC warp-to: slot → held target (`on` false = request dropped, kept
+   *  until the warp is idle so a run in progress finishes). */
+  const botWarps = new Map<number, { x: number; y: number; on: boolean }>();
   /** Per-slot consecutive-sleep counter; FLAG_SLEEPING is written when this >= hysteresis. */
   const sleepCount = new Map<number, number>();
   /** Per-slot last-broadcast sleep flag, used to detect transitions for SLEEP_TRANSITION. */
@@ -184,6 +194,7 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         lastApplied.delete(cmd.slot);
         lastAckTick.delete(cmd.slot);
         aiIntents.delete(cmd.slot);
+        botWarps.delete(cmd.slot);
         sleepCount.delete(cmd.slot);
         sleepState.delete(cmd.slot);
         // Mark slot empty in SAB.
@@ -243,6 +254,12 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         if (cmd.staticBody) physics.lockBody(cmd.obstacleId);
         playerToSlot.set(cmd.obstacleId, cmd.slot);
         slotToPlayer.set(cmd.slot, cmd.obstacleId);
+        break;
+      }
+      case 'BOT_WARP': {
+        let r = botWarps.get(cmd.slot);
+        if (!r) { r = { x: 0, y: 0, on: false }; botWarps.set(cmd.slot, r); }
+        if (cmd.x !== undefined && cmd.y !== undefined) { r.x = cmd.x; r.y = cmd.y; r.on = true; } else r.on = false;
         break;
       }
       case 'AI_INTENT': {
@@ -368,6 +385,14 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
     // `setAngvel` runs BEFORE `applyImpulse`'s torque term so a behaviour
     // that wants player-equivalent snap-turn just sets the target angvel
     // and leaves `torque = 0`. (Setting both is allowed but redundant.)
+    // NPC warp-to first: while a warp owns a bot's body its intent is dropped.
+    for (const [slot, r] of botWarps) {
+      const id = slotToPlayer.get(slot);
+      if (id === undefined) { botWarps.delete(slot); continue; }
+      if (physics.botWarp(id, r.on ? r : null)) { aiIntents.delete(slot); continue; }
+      // Idle: arrived (or cancelled). Clear the latch and forget the slot.
+      if (!r.on || physics.warpArrived(id)) { physics.botWarp(id, null); botWarps.delete(slot); }
+    }
     for (const [slot, intent] of aiIntents) {
       const id = slotToPlayer.get(slot);
       if (id === undefined) continue;
@@ -543,7 +568,11 @@ async function main(): Promise<void> {
     parentPort!.on('message', (cmd: WorkerCommand) => world.handle(cmd));
     parentPort!.postMessage({ type: 'READY' });
   } else {
-    parentPort!.on('message', (cmd: WorkerCommand | AddWorldCmd | RemoveWorldCmd) => {
+    parentPort!.on('message', (cmd: WorkerCommand | AddWorldCmd | RemoveWorldCmd | GcCmd) => {
+      if (cmd.type === 'GC') {
+        (globalThis as { gc?: () => void }).gc?.();
+        return;
+      }
       if (cmd.type === 'ADD_WORLD') {
         const worldId = cmd.worldId;
         void createWorld(cmd.sab, (m) => { m['worldId'] = worldId; parentPort!.postMessage(m); }).then((w) => {

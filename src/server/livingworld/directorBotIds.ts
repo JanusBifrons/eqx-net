@@ -22,12 +22,15 @@ export const ELITE_BOT_ID_PREFIX = 'elite-';
 export const EVENT_BOT_ID_PREFIX = 'event-';
 /** v4 M2 — a garrison's patrol ships (owned by the room's `PatrolSubsystem`). */
 export const PATROL_BOT_ID_PREFIX = 'patrol-';
+/** W2a — a flagship fleet's capital + escorts (owned by the `FlagshipDirector`). */
+export const FLAGSHIP_BOT_ID_PREFIX = 'flagship-';
 
 /** True for any director-owned NPC id (drone, robot, trade hauler, elite or event NPC). Alloc-free. */
 export function isDirectorBotId(id: string): boolean {
   return id.startsWith(DRONE_BOT_ID_PREFIX) || id.startsWith(ROBOT_BOT_ID_PREFIX)
     || id.startsWith(HAULER_ID_PREFIX) || id.startsWith(ELITE_BOT_ID_PREFIX)
-    || id.startsWith(EVENT_BOT_ID_PREFIX) || id.startsWith(PATROL_BOT_ID_PREFIX);
+    || id.startsWith(EVENT_BOT_ID_PREFIX) || id.startsWith(PATROL_BOT_ID_PREFIX)
+    || id.startsWith(FLAGSHIP_BOT_ID_PREFIX);
 }
 
 export function isHaulerId(id: string): boolean {

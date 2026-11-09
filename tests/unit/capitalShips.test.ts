@@ -57,8 +57,27 @@ describe.each(['A', 'B', 'C'] as const)('style %s', (style) => {
 describe('the catalogue capitals', () => {
   it('are appended after every existing kind, NPC-only, not pilotable', () => {
     const ids = SHIP_KINDS_LIST.map((k) => k.id);
-    expect(ids.slice(-5)).toEqual([...CAPITAL_CLASS_IDS]);
-    for (const id of CAPITAL_CLASS_IDS) expect(isPlayableShipKindId(id)).toBe(false);
+    // The five classes, then (W2b) each class's style B and C hulls.
+    const variants = CAPITAL_CLASS_IDS.flatMap((id) => [`${id}-b`, `${id}-c`]);
+    expect(ids.slice(-15)).toEqual([...CAPITAL_CLASS_IDS, ...variants]);
+    for (const id of [...CAPITAL_CLASS_IDS, ...variants]) expect(isPlayableShipKindId(id)).toBe(false);
+  });
+
+  it('W2b: a style variant is its class in another hull style (same class, size within a few percent)', () => {
+    for (const id of CAPITAL_CLASS_IDS) {
+      const base = getShipKind(id);
+      for (const v of [getShipKind(`${id}-b`), getShipKind(`${id}-c`)]) {
+        expect(v.id).not.toBe('fighter'); // a real kind, not the unknown-id fallback
+        expect(v.displayName).toBe(base.displayName);
+        expect(v.sizeClass).toBe('capital');
+        expect(Math.abs(v.radius - base.radius) / base.radius).toBeLessThan(0.05);
+        expect(v.mounts.length).toBeGreaterThan(0);
+      }
+      expect(getShipKind(`${id}-b`).description).toContain('style B');
+      // A different hull, not a renamed copy: the collider outline differs.
+      const hull = (k: string): string => JSON.stringify((getShipKind(k).shape as { hull: unknown }).hull);
+      expect(hull(`${id}-b`)).not.toBe(hull(`${id}-c`));
+    }
   });
 
   it('keep their authored game-unit size (the global ship scale does not apply)', () => {

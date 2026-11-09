@@ -209,4 +209,30 @@ describe('LivingWorldDirector.arrivalPoseFor — REAL carry-clamp vs edge-fallba
     const pose = pierce(director).arrivalPoseFor('lwbot-0', 'sol-prime', carryAt(1234, -987));
     expect(pose).toBeNull();
   });
+
+  // 2026-11-08 — the wave E2E's squad landed at its CARRY pose (anywhere in
+  // the sector, up to ~7000 u from the base), so whether it hit a structure
+  // inside the spec's window was luck (1 of 6 runs). A testMode room may name
+  // the point a WAVE lands at (`testWaveArrival`), each member a little apart.
+  it('a WAVE hop into a room with a test arrival point lands there, members spread, at rest', () => {
+    const dest = { ...makeRoom('sol-prime'), testWaveArrival: () => ({ x: -900, y: 700 }) };
+    const rooms = new Map<string, LivingWorldRoom>([
+      ['sol-prime', dest],
+      ['orion-belt', makeRoom('orion-belt')],
+    ]);
+    director = new LivingWorldDirector(rooms, OPTS);
+    director.start();
+    const sp = pierce(director).squadPool;
+    sp.assignTarget(sp.squadOf('lwbot-0')!, 'sol-prime', 'alice');
+
+    const a = pierce(director).arrivalPoseFor('lwbot-0', 'sol-prime', carryAt(4000, -4000, 9, 9));
+    const b = pierce(director).arrivalPoseFor('lwbot-1', 'sol-prime', carryAt(4000, -4000, 9, 9));
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(Math.hypot(a!.x + 900, a!.y - 700)).toBeLessThan(200);
+    expect(Math.hypot(b!.x + 900, b!.y - 700)).toBeLessThan(200);
+    expect(a!.x !== b!.x || a!.y !== b!.y).toBe(true);
+    expect(a!.vx).toBe(0);
+    expect(a!.vy).toBe(0);
+  });
 });

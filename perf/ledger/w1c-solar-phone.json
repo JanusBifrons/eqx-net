@@ -1,0 +1,1113 @@
+{
+  "when": "2026-11-08T19:49:14.398Z",
+  "device": "phone-proxy",
+  "reps": 3,
+  "arms": [
+    {
+      "name": "base",
+      "sha": "855dc3cb"
+    },
+    {
+      "name": "head",
+      "sha": "eeb7ef14"
+    }
+  ],
+  "scenes": {
+    "idle": {
+      "title": "Empty sector, pilot idle: the harness floor",
+      "injected": {
+        "serverBurnMs": 0,
+        "clientBurnMs": 0
+      },
+      "verdict": {
+        "status": "GREEN",
+        "rows": [
+          {
+            "metric": "clientFrameP95",
+            "base": 16.8,
+            "head": 16.8,
+            "ratio": 1,
+            "p": 1,
+            "status": "GREEN"
+          },
+          {
+            "metric": "clientFrameP99",
+            "base": 33.4,
+            "head": 33.3,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "clientHitchesPerMin",
+            "base": 34.9,
+            "head": 33.11,
+            "ratio": 0.95,
+            "p": 1,
+            "status": "GREEN"
+          },
+          {
+            "metric": "displayObjects",
+            "base": 710,
+            "head": 710,
+            "ratio": 1,
+            "p": 1,
+            "status": "GREEN"
+          },
+          {
+            "metric": "heapMb",
+            "base": 69,
+            "head": 78,
+            "ratio": 1.13,
+            "p": 0.6,
+            "status": "PRINT"
+          },
+          {
+            "metric": "longTaskMsPerMin",
+            "base": 1059.42,
+            "head": 1492.78,
+            "ratio": 1.41,
+            "p": 0.4,
+            "status": "PRINT"
+          },
+          {
+            "metric": "renderP95",
+            "base": 2,
+            "head": 1.9,
+            "ratio": 0.95,
+            "p": 0.6,
+            "status": "GREEN"
+          },
+          {
+            "metric": "renderP99",
+            "base": 2.8,
+            "head": 3,
+            "ratio": 1.07,
+            "p": 0.9,
+            "status": "PRINT"
+          },
+          {
+            "metric": "rxKBps",
+            "base": 9.9,
+            "head": 9.88,
+            "ratio": 1,
+            "p": 0.4,
+            "status": "GREEN"
+          },
+          {
+            "metric": "serverTickMax",
+            "base": 65.46,
+            "head": 69.82,
+            "ratio": 1.07,
+            "p": 0.7,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverTickP95",
+            "base": 1.22,
+            "head": 1.15,
+            "ratio": 0.94,
+            "p": 1,
+            "status": "GREEN"
+          },
+          {
+            "metric": "serverTickP99",
+            "base": 4.22,
+            "head": 5.99,
+            "ratio": 1.42,
+            "p": 0.7,
+            "status": "GREEN"
+          },
+          {
+            "metric": "sprites",
+            "base": 1,
+            "head": 1,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "swarmAtEnd",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "workerTickP95",
+            "base": 0.43,
+            "head": 0.41,
+            "ratio": 0.95,
+            "p": 1,
+            "status": "PRINT"
+          }
+        ]
+      },
+      "base": [
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 1.22,
+            "serverTickP99": 6.13,
+            "serverTickMax": 65.46,
+            "workerTickP95": 0.43,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 33.4,
+            "clientHitchesPerMin": 42.016806722689076,
+            "renderP95": 2,
+            "renderP99": 2.8,
+            "longTaskMsPerMin": 1059.4237695078032
+          },
+          "counts": {
+            "rxKBps": 9.905720100540215,
+            "displayObjects": 733,
+            "sprites": 1,
+            "swarmAtEnd": 0,
+            "heapMb": 69
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 1.25,
+            "serverTickP99": 4.22,
+            "serverTickMax": 118.35,
+            "workerTickP95": 0.48,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 33.4,
+            "clientHitchesPerMin": 34.904013961605585,
+            "renderP95": 2,
+            "renderP99": 2.8,
+            "longTaskMsPerMin": 1193.0826590512454
+          },
+          "counts": {
+            "rxKBps": 9.896700975725846,
+            "displayObjects": 710,
+            "sprites": 1,
+            "swarmAtEnd": 0,
+            "heapMb": 69
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.89,
+            "serverTickP99": 1.24,
+            "serverTickMax": 4.69,
+            "workerTickP95": 0.35,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 8.818342151675484,
+            "renderP95": 2.1,
+            "renderP99": 3,
+            "longTaskMsPerMin": 261.6108171663727
+          },
+          "counts": {
+            "rxKBps": 9.89164232436802,
+            "displayObjects": 710,
+            "sprites": 1,
+            "swarmAtEnd": 0,
+            "heapMb": 93
+          },
+          "raw": null
+        }
+      ],
+      "head": [
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 1.04,
+            "serverTickP99": 4.12,
+            "serverTickMax": 20.03,
+            "workerTickP95": 0.41,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 33.3,
+            "clientHitchesPerMin": 33.10593900481541,
+            "renderP95": 1.9,
+            "renderP99": 2.7,
+            "longTaskMsPerMin": 1492.776886035313
+          },
+          "counts": {
+            "rxKBps": 9.882404945826645,
+            "displayObjects": 710,
+            "sprites": 1,
+            "swarmAtEnd": 0,
+            "heapMb": 78
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 1.15,
+            "serverTickP99": 5.99,
+            "serverTickMax": 389.47,
+            "workerTickP95": 0.4,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 33.4,
+            "clientHitchesPerMin": 47.16285924834193,
+            "renderP95": 1.9,
+            "renderP99": 3,
+            "longTaskMsPerMin": 2157.700810611643
+          },
+          "counts": {
+            "rxKBps": 9.824060427413412,
+            "displayObjects": 710,
+            "sprites": 1,
+            "swarmAtEnd": 0,
+            "heapMb": 93
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 1.65,
+            "serverTickP99": 7.21,
+            "serverTickMax": 69.82,
+            "workerTickP95": 0.45,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 33.3,
+            "clientHitchesPerMin": 33.0760749724366,
+            "renderP95": 2.1,
+            "renderP99": 3.2,
+            "longTaskMsPerMin": 715.6459857672647
+          },
+          "counts": {
+            "rxKBps": 9.899037317079282,
+            "displayObjects": 710,
+            "sprites": 1,
+            "swarmAtEnd": 0,
+            "heapMb": 73
+          },
+          "raw": null
+        }
+      ]
+    },
+    "fleet-fight": {
+      "title": "Two 30-ship fleets fight, reinforced every 10 s (drones vs robots)",
+      "injected": {
+        "serverBurnMs": 0,
+        "clientBurnMs": 0
+      },
+      "verdict": {
+        "status": "GREEN",
+        "rows": [
+          {
+            "metric": "clientFrameP95",
+            "base": 99.9,
+            "head": 83.4,
+            "ratio": 0.83,
+            "p": 0.4,
+            "status": "GREEN"
+          },
+          {
+            "metric": "clientFrameP99",
+            "base": 116.8,
+            "head": 116.8,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "clientHitchesPerMin",
+            "base": 623.13,
+            "head": 605.92,
+            "ratio": 0.97,
+            "p": 0.4,
+            "status": "GREEN"
+          },
+          {
+            "metric": "displayObjects",
+            "base": 5972,
+            "head": 6075,
+            "ratio": 1.02,
+            "p": 1,
+            "status": "GREEN"
+          },
+          {
+            "metric": "heapMb",
+            "base": 78,
+            "head": 78,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "longTaskMsPerMin",
+            "base": 7260.01,
+            "head": 6944.73,
+            "ratio": 0.96,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "renderP95",
+            "base": 15,
+            "head": 13.6,
+            "ratio": 0.91,
+            "p": 0.4,
+            "status": "GREEN"
+          },
+          {
+            "metric": "renderP99",
+            "base": 23.9,
+            "head": 23.2,
+            "ratio": 0.97,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "rxKBps",
+            "base": 255.72,
+            "head": 259.18,
+            "ratio": 1.01,
+            "p": 0.7,
+            "status": "GREEN"
+          },
+          {
+            "metric": "serverTickMax",
+            "base": 51.69,
+            "head": 94.37,
+            "ratio": 1.83,
+            "p": 0.7,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverTickP95",
+            "base": 7.87,
+            "head": 9.54,
+            "ratio": 1.21,
+            "p": 0.1,
+            "status": "GREEN"
+          },
+          {
+            "metric": "serverTickP99",
+            "base": 12.28,
+            "head": 20.99,
+            "ratio": 1.71,
+            "p": 0.2,
+            "status": "GREEN"
+          },
+          {
+            "metric": "sprites",
+            "base": 50,
+            "head": 51,
+            "ratio": 1.02,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "swarmAtEnd",
+            "base": 49,
+            "head": 50,
+            "ratio": 1.02,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "workerTickP95",
+            "base": 1.37,
+            "head": 1.43,
+            "ratio": 1.04,
+            "p": 0.1,
+            "status": "PRINT"
+          }
+        ]
+      },
+      "base": [
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 7.74,
+            "serverTickP99": 12.28,
+            "serverTickMax": 47.86,
+            "workerTickP95": 1.36,
+            "clientFrameP95": 83.4,
+            "clientFrameP99": 133.3,
+            "clientHitchesPerMin": 565.9792749681551,
+            "renderP95": 15,
+            "renderP99": 21.5,
+            "longTaskMsPerMin": 8266.60240300203
+          },
+          "counts": {
+            "rxKBps": 255.7200533833098,
+            "displayObjects": 5972,
+            "sprites": 50,
+            "swarmAtEnd": 49,
+            "heapMb": 78
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 8.21,
+            "serverTickP99": 15.53,
+            "serverTickMax": 57.76,
+            "workerTickP95": 1.41,
+            "clientFrameP95": 99.9,
+            "clientFrameP99": 116.7,
+            "clientHitchesPerMin": 623.130093882183,
+            "renderP95": 14.9,
+            "renderP99": 23.9,
+            "longTaskMsPerMin": 5946.559372743216
+          },
+          "counts": {
+            "rxKBps": 264.36099988393687,
+            "displayObjects": 6146,
+            "sprites": 52,
+            "swarmAtEnd": 51,
+            "heapMb": 82
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 7.87,
+            "serverTickP99": 11.75,
+            "serverTickMax": 51.69,
+            "workerTickP95": 1.37,
+            "clientFrameP95": 100,
+            "clientFrameP99": 116.8,
+            "clientHitchesPerMin": 630.5119107957426,
+            "renderP95": 16.1,
+            "renderP99": 26.7,
+            "longTaskMsPerMin": 7260.01013684744
+          },
+          "counts": {
+            "rxKBps": 242.81016377344147,
+            "displayObjects": 5778,
+            "sprites": 50,
+            "swarmAtEnd": 49,
+            "heapMb": 78
+          },
+          "raw": null
+        }
+      ],
+      "head": [
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 8.82,
+            "serverTickP99": 14.98,
+            "serverTickMax": 43.18,
+            "workerTickP95": 1.43,
+            "clientFrameP95": 83.4,
+            "clientFrameP99": 150,
+            "clientHitchesPerMin": 605.9173196433396,
+            "renderP95": 15.7,
+            "renderP99": 31.9,
+            "longTaskMsPerMin": 7406.781950824102
+          },
+          "counts": {
+            "rxKBps": 268.03315932349363,
+            "displayObjects": 6075,
+            "sprites": 48,
+            "swarmAtEnd": 47,
+            "heapMb": 78
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 9.54,
+            "serverTickP99": 20.99,
+            "serverTickMax": 94.37,
+            "workerTickP95": 1.48,
+            "clientFrameP95": 83.4,
+            "clientFrameP99": 116.8,
+            "clientHitchesPerMin": 531.56595543232,
+            "renderP95": 13.4,
+            "renderP99": 19.1,
+            "longTaskMsPerMin": 6622.256788286612
+          },
+          "counts": {
+            "rxKBps": 259.1825868401921,
+            "displayObjects": 6086,
+            "sprites": 57,
+            "swarmAtEnd": 56,
+            "heapMb": 78
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 9.79,
+            "serverTickP99": 23.33,
+            "serverTickMax": 159.19,
+            "workerTickP95": 1.43,
+            "clientFrameP95": 83.4,
+            "clientFrameP99": 116.7,
+            "clientHitchesPerMin": 617.2624237140367,
+            "renderP95": 13.6,
+            "renderP99": 23.2,
+            "longTaskMsPerMin": 6944.725370531823
+          },
+          "counts": {
+            "rxKBps": 253.5999822907585,
+            "displayObjects": 5813,
+            "sprites": 51,
+            "swarmAtEnd": 50,
+            "heapMb": 78
+          },
+          "raw": null
+        }
+      ]
+    },
+    "teleport-raid": {
+      "title": "40 ships warp in beside an NPC citadel at t = 5 s",
+      "injected": {
+        "serverBurnMs": 0,
+        "clientBurnMs": 0
+      },
+      "verdict": {
+        "status": "GREEN",
+        "rows": [
+          {
+            "metric": "clientFrameP95",
+            "base": 50,
+            "head": 50,
+            "ratio": 1,
+            "p": 1,
+            "status": "GREEN"
+          },
+          {
+            "metric": "clientFrameP99",
+            "base": 66.7,
+            "head": 66.7,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "clientHitchesPerMin",
+            "base": 581.91,
+            "head": 678.43,
+            "ratio": 1.17,
+            "p": 0.4,
+            "status": "GREEN"
+          },
+          {
+            "metric": "displayObjects",
+            "base": 4408,
+            "head": 4408,
+            "ratio": 1,
+            "p": 1,
+            "status": "GREEN"
+          },
+          {
+            "metric": "heapMb",
+            "base": 82,
+            "head": 82,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "longTaskMsPerMin",
+            "base": 609.8,
+            "head": 991.16,
+            "ratio": 1.63,
+            "p": 0.7,
+            "status": "PRINT"
+          },
+          {
+            "metric": "renderP95",
+            "base": 11.4,
+            "head": 11.9,
+            "ratio": 1.04,
+            "p": 0.7,
+            "status": "GREEN"
+          },
+          {
+            "metric": "renderP99",
+            "base": 14.5,
+            "head": 14,
+            "ratio": 0.97,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "rxKBps",
+            "base": 79.24,
+            "head": 78.61,
+            "ratio": 0.99,
+            "p": 0.4,
+            "status": "GREEN"
+          },
+          {
+            "metric": "serverTickMax",
+            "base": 18.44,
+            "head": 8.91,
+            "ratio": 0.48,
+            "p": 0.4,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverTickP95",
+            "base": 1.92,
+            "head": 2.02,
+            "ratio": 1.05,
+            "p": 1,
+            "status": "GREEN"
+          },
+          {
+            "metric": "serverTickP99",
+            "base": 2.48,
+            "head": 2.49,
+            "ratio": 1,
+            "p": 1,
+            "status": "GREEN"
+          },
+          {
+            "metric": "sprites",
+            "base": 175,
+            "head": 175,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "swarmAtEnd",
+            "base": 174,
+            "head": 174,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "workerTickP95",
+            "base": 1.76,
+            "head": 1.82,
+            "ratio": 1.03,
+            "p": 0.7,
+            "status": "PRINT"
+          }
+        ]
+      },
+      "base": [
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 2.06,
+            "serverTickP99": 2.69,
+            "serverTickMax": 26.54,
+            "workerTickP95": 2.01,
+            "clientFrameP95": 50,
+            "clientFrameP99": 66.7,
+            "clientHitchesPerMin": 574.2981362272926,
+            "renderP95": 11.4,
+            "renderP99": 14.5,
+            "longTaskMsPerMin": 1474.1666947524518
+          },
+          "counts": {
+            "rxKBps": 79.91448141704021,
+            "displayObjects": 4408,
+            "sprites": 175,
+            "swarmAtEnd": 174,
+            "heapMb": 78
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 1.92,
+            "serverTickP99": 2.48,
+            "serverTickMax": 10.38,
+            "workerTickP95": 1.76,
+            "clientFrameP95": 50.1,
+            "clientFrameP99": 66.7,
+            "clientHitchesPerMin": 724.2809454766159,
+            "renderP95": 12.2,
+            "renderP99": 15,
+            "longTaskMsPerMin": 538.1528812759213
+          },
+          "counts": {
+            "rxKBps": 79.24440662196109,
+            "displayObjects": 4328,
+            "sprites": 175,
+            "swarmAtEnd": 174,
+            "heapMb": 82
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 1.85,
+            "serverTickP99": 2.44,
+            "serverTickMax": 18.44,
+            "workerTickP95": 1.75,
+            "clientFrameP95": 50,
+            "clientFrameP99": 66.7,
+            "clientHitchesPerMin": 581.9051414906337,
+            "renderP95": 10.4,
+            "renderP99": 12.2,
+            "longTaskMsPerMin": 609.8047030689518
+          },
+          "counts": {
+            "rxKBps": 78.40747916874253,
+            "displayObjects": 4408,
+            "sprites": 175,
+            "swarmAtEnd": 174,
+            "heapMb": 82
+          },
+          "raw": null
+        }
+      ],
+      "head": [
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 2.28,
+            "serverTickP99": 2.81,
+            "serverTickMax": 8.91,
+            "workerTickP95": 1.83,
+            "clientFrameP95": 50.1,
+            "clientFrameP99": 66.7,
+            "clientHitchesPerMin": 746.8467573741186,
+            "renderP95": 11.9,
+            "renderP99": 14,
+            "longTaskMsPerMin": 991.1609891746947
+          },
+          "counts": {
+            "rxKBps": 78.93328998659251,
+            "displayObjects": 4408,
+            "sprites": 175,
+            "swarmAtEnd": 174,
+            "heapMb": 82
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 1.76,
+            "serverTickP99": 2.28,
+            "serverTickMax": 24.4,
+            "workerTickP95": 1.81,
+            "clientFrameP95": 50,
+            "clientFrameP99": 66.7,
+            "clientHitchesPerMin": 678.4269513893494,
+            "renderP95": 12.4,
+            "renderP99": 15.3,
+            "longTaskMsPerMin": 978.8447509781815
+          },
+          "counts": {
+            "rxKBps": 78.60515348332117,
+            "displayObjects": 4314,
+            "sprites": 175,
+            "swarmAtEnd": 174,
+            "heapMb": 69
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 2.02,
+            "serverTickP99": 2.49,
+            "serverTickMax": 8.69,
+            "workerTickP95": 1.82,
+            "clientFrameP95": 50,
+            "clientFrameP99": 66.8,
+            "clientHitchesPerMin": 632.5421031693409,
+            "renderP95": 11.1,
+            "renderP99": 13.4,
+            "longTaskMsPerMin": 1205.4104230208195
+          },
+          "counts": {
+            "rxKBps": 78.16673150319917,
+            "displayObjects": 4408,
+            "sprites": 175,
+            "swarmAtEnd": 174,
+            "heapMb": 93
+          },
+          "raw": null
+        }
+      ]
+    },
+    "wide-view": {
+      "title": "Fleet fight seen from the zoom-out floor",
+      "injected": {
+        "serverBurnMs": 0,
+        "clientBurnMs": 0
+      },
+      "verdict": {
+        "status": "GREEN",
+        "rows": [
+          {
+            "metric": "clientFrameP95",
+            "base": 100,
+            "head": 100,
+            "ratio": 1,
+            "p": 0.6,
+            "status": "GREEN"
+          },
+          {
+            "metric": "clientFrameP99",
+            "base": 166.6,
+            "head": 166.6,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "clientHitchesPerMin",
+            "base": 769.63,
+            "head": 745.59,
+            "ratio": 0.97,
+            "p": 0.2,
+            "status": "GREEN"
+          },
+          {
+            "metric": "displayObjects",
+            "base": 6247,
+            "head": 6357,
+            "ratio": 1.02,
+            "p": 0.4,
+            "status": "GREEN"
+          },
+          {
+            "metric": "heapMb",
+            "base": 78,
+            "head": 78,
+            "ratio": 1,
+            "p": 0.6,
+            "status": "PRINT"
+          },
+          {
+            "metric": "longTaskMsPerMin",
+            "base": 8221.16,
+            "head": 8331.9,
+            "ratio": 1.01,
+            "p": 0.4,
+            "status": "PRINT"
+          },
+          {
+            "metric": "renderP95",
+            "base": 16.9,
+            "head": 18.2,
+            "ratio": 1.08,
+            "p": 0.1,
+            "status": "GREEN"
+          },
+          {
+            "metric": "renderP99",
+            "base": 30,
+            "head": 28.5,
+            "ratio": 0.95,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "rxKBps",
+            "base": 344.41,
+            "head": 351.29,
+            "ratio": 1.02,
+            "p": 0.4,
+            "status": "GREEN"
+          },
+          {
+            "metric": "serverTickMax",
+            "base": 85.41,
+            "head": 28.19,
+            "ratio": 0.33,
+            "p": 0.7,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverTickP95",
+            "base": 10.32,
+            "head": 10.93,
+            "ratio": 1.06,
+            "p": 1,
+            "status": "GREEN"
+          },
+          {
+            "metric": "serverTickP99",
+            "base": 15.05,
+            "head": 14.15,
+            "ratio": 0.94,
+            "p": 0.7,
+            "status": "GREEN"
+          },
+          {
+            "metric": "sprites",
+            "base": 54,
+            "head": 48,
+            "ratio": 0.89,
+            "p": 0.4,
+            "status": "PRINT"
+          },
+          {
+            "metric": "swarmAtEnd",
+            "base": 53,
+            "head": 47,
+            "ratio": 0.89,
+            "p": 0.4,
+            "status": "PRINT"
+          },
+          {
+            "metric": "workerTickP95",
+            "base": 1.73,
+            "head": 1.7,
+            "ratio": 0.98,
+            "p": 1,
+            "status": "PRINT"
+          }
+        ]
+      },
+      "base": [
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 10.32,
+            "serverTickP99": 15.05,
+            "serverTickMax": 96.82,
+            "workerTickP95": 1.73,
+            "clientFrameP95": 100,
+            "clientFrameP99": 166.6,
+            "clientHitchesPerMin": 769.6324825380246,
+            "renderP95": 16.4,
+            "renderP99": 30,
+            "longTaskMsPerMin": 8221.163261309484
+          },
+          "counts": {
+            "rxKBps": 344.40667277971795,
+            "displayObjects": 6247,
+            "sprites": 54,
+            "swarmAtEnd": 53,
+            "heapMb": 82
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 11.19,
+            "serverTickP99": 24.13,
+            "serverTickMax": 85.41,
+            "workerTickP95": 1.73,
+            "clientFrameP95": 100,
+            "clientFrameP99": 166.7,
+            "clientHitchesPerMin": 763.3587786259542,
+            "renderP95": 17.3,
+            "renderP99": 32.9,
+            "longTaskMsPerMin": 8304.95204541006
+          },
+          "counts": {
+            "rxKBps": 336.40513753303,
+            "displayObjects": 6370,
+            "sprites": 62,
+            "swarmAtEnd": 61,
+            "heapMb": 78
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 9.72,
+            "serverTickP99": 12.57,
+            "serverTickMax": 16.68,
+            "workerTickP95": 1.56,
+            "clientFrameP95": 99.9,
+            "clientFrameP99": 150,
+            "clientHitchesPerMin": 835.9658165131514,
+            "renderP95": 16.9,
+            "renderP99": 27.8,
+            "longTaskMsPerMin": 7783.061217703588
+          },
+          "counts": {
+            "rxKBps": 348.17465001828884,
+            "displayObjects": 6141,
+            "sprites": 52,
+            "swarmAtEnd": 51,
+            "heapMb": 78
+          },
+          "raw": null
+        }
+      ],
+      "head": [
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 11,
+            "serverTickP99": 14.46,
+            "serverTickMax": 26.73,
+            "workerTickP95": 2.04,
+            "clientFrameP95": 100,
+            "clientFrameP99": 166.8,
+            "clientHitchesPerMin": 768.6691005642217,
+            "renderP95": 18.2,
+            "renderP99": 28.5,
+            "longTaskMsPerMin": 8331.895121141719
+          },
+          "counts": {
+            "rxKBps": 357.88267118528046,
+            "displayObjects": 6357,
+            "sprites": 47,
+            "swarmAtEnd": 46,
+            "heapMb": 73
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 9.93,
+            "serverTickP99": 14.02,
+            "serverTickMax": 43.05,
+            "workerTickP95": 1.55,
+            "clientFrameP95": 100,
+            "clientFrameP99": 150,
+            "clientHitchesPerMin": 745.5892613881781,
+            "renderP95": 18,
+            "renderP99": 34.9,
+            "longTaskMsPerMin": 7792.803269428846
+          },
+          "counts": {
+            "rxKBps": 337.81943590723324,
+            "displayObjects": 6500,
+            "sprites": 61,
+            "swarmAtEnd": 60,
+            "heapMb": 78
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 10.93,
+            "serverTickP99": 14.15,
+            "serverTickMax": 28.19,
+            "workerTickP95": 1.7,
+            "clientFrameP95": 100.1,
+            "clientFrameP99": 166.6,
+            "clientHitchesPerMin": 715.3531931852146,
+            "renderP95": 18.4,
+            "renderP99": 27.5,
+            "longTaskMsPerMin": 9265.716847663643
+          },
+          "counts": {
+            "rxKBps": 351.2912380442363,
+            "displayObjects": 6290,
+            "sprites": 48,
+            "swarmAtEnd": 47,
+            "heapMb": 78
+          },
+          "raw": null
+        }
+      ]
+    }
+  }
+}

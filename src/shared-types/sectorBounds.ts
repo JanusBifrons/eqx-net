@@ -35,25 +35,27 @@ export const SECTOR_BASE_HALF_EXTENT = 5000;
 
 /**
  * Solar-system sectors (plan prancy-squishing-donut Phase 4): ±200,000 u,
- * mostly empty, with active pockets (core/galaxy/sectorSites.ts). Behind a
- * switch until pocket-to-pocket travel lands: env `EQX_SOLAR_SECTORS=1`
- * (Node), `globalThis.__EQX_SOLAR_SECTORS__` (page, from `?solar=1`). Off:
- * today's sectors, unchanged. Read once, the same way on every side.
+ * mostly empty, with active pockets (core/galaxy/sectorSites.ts). ON by
+ * default (wrap-up plan W1c, 2026-11-08). The way out is env
+ * `EQX_SOLAR_SECTORS=0` (Node) or `globalThis.__EQX_SOLAR_SECTORS__ = '0'`
+ * (page, from `?solar=0`), which gives the old ±5,000 u sectors. Read once,
+ * the same way on every side.
  */
 export const SOLAR_SECTOR_HALF_EXTENT = 200_000;
 function readSolar(): boolean {
   const g = globalThis as unknown as { process?: { env?: Record<string, string | undefined> }; __EQX_SOLAR_SECTORS__?: unknown; name?: unknown; WorkerGlobalScope?: unknown };
   const raw = g.process?.env?.['EQX_SOLAR_SECTORS'] ?? g.__EQX_SOLAR_SECTORS__;
-  if (raw === '1' || raw === 'true' || raw === true) return true;
+  if (raw === '0' || raw === 'false' || raw === false) return false;
+  if (raw !== undefined) return true;
   // A Web Worker (the renderer) has no page globals: the page passes the
-  // switch in the worker's name (solarWorkerNameSuffix).
-  return typeof g.WorkerGlobalScope !== 'undefined' && typeof g.name === 'string' && /(^|;)solar=1(;|$)/.test(g.name);
+  // switch in the worker's name (solarWorkerNameSuffix) when it is off.
+  return !(typeof g.WorkerGlobalScope !== 'undefined' && typeof g.name === 'string' && /(^|;)solar=0(;|$)/.test(g.name));
 }
 export const SOLAR_SECTORS: boolean = readSolar();
 
 /** Appended to a worker's name so workers see the same solar switch. */
 export function solarWorkerNameSuffix(): string {
-  return SOLAR_SECTORS ? ';solar=1' : '';
+  return SOLAR_SECTORS ? '' : ';solar=0';
 }
 
 /** Today's sector extent: with solar-system sectors on, the HOME pocket at

@@ -50,6 +50,7 @@ import { setGalaxyStatsProvider } from './livingworld/galaxyStatsProvider.js';
 import { ROBOT_DIRECTOR_OPTIONS, ROBOT_BOT_COUNT, isRobotsDisabled } from './livingworld/robotDirector.js';
 import { RobotTerritory } from './livingworld/RobotTerritory.js';
 import { EliteDirector } from './livingworld/EliteDirector.js';
+import { FlagshipDirector, type FlagshipStatePayload } from './livingworld/FlagshipDirector.js';
 import { EventDirector } from './livingworld/EventDirector.js';
 import { sumCounts } from './livingworld/countMaps.js';
 import { setContractsProvider } from './livingworld/contractsProvider.js';
@@ -133,6 +134,7 @@ let robotDirector: LivingWorldDirector | null = null;
 let robotTerritory: RobotTerritory | null = null;
 /** Living World P4a — named elites (null when the Living World is disabled). */
 let eliteDirector: EliteDirector | null = null;
+let flagshipDirector: FlagshipDirector | null = null;
 /** Living World P4b — world events (null when the Living World is disabled). */
 let eventDirector: EventDirector | null = null;
 const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
@@ -230,16 +232,26 @@ if (process.env['NODE_ENV'] !== 'production') {
   // heap, external/array buffers) and each room's physics worker heap. Found
   // 2026-11-07: an idle dev server held ~1.7 GB, ~37 MB of it per sector
   // worker before any body exists.
-  app.get('/dev/memory', (_req, res) => {
+  // `?gc=1` collects garbage first (main thread + each physics worker), so the
+  // reading is what is live, not what V8 has not collected yet. Needs the
+  // server started with --expose-gc (scripts/soak-galaxy.ts does); else a no-op.
+  app.get('/dev/memory', (req, res) => {
     void (async () => {
       const MB = 1048576;
+      const gc = req.query['gc'] === '1';
+      if (gc) (globalThis as { gc?: () => void }).gc?.();
       const m = process.memoryUsage();
       const listings = await matchMaker.query({});
+      const gcDone = new Set<number>();
       const rooms: Array<{ room: string; roomId: string; clients: number; worker: number | null }> = [];
       const workers = new Map<number, number>(); // pool worker → heap MB (shared by its rooms)
       for (const l of listings) {
         const r = matchMaker.getLocalRoomById(l.roomId) as unknown as SectorRoom | undefined;
-        const h = r && typeof r.workerHeapStats === 'function' ? await r.workerHeapStats() : null;
+        // One collection per pool worker (several rooms share one).
+        const idx = r && typeof r.workerHeapStats === 'function' ? (await r.workerHeapStats(false))?.workerIndex : undefined;
+        const wantGc = gc && idx !== undefined && !gcDone.has(idx);
+        if (wantGc) gcDone.add(idx);
+        const h = r && typeof r.workerHeapStats === 'function' ? await r.workerHeapStats(wantGc) : null;
         if (h) workers.set(h.workerIndex, Math.round(h.usedBytes / MB));
         rooms.push({ room: l.name, roomId: l.roomId, clients: l.clients, worker: h ? h.workerIndex : null });
       }
@@ -462,40 +474,10 @@ gameServer.define('feel-test-25', SectorRoom, {
   defaultSpawnY: 0,
   maxClients: 4,
 });
-// 2026-06-15 (plan: misty-teapot) — netgate PERF scenario `structures-load`.
-// feel-test-25's 25-drone combat churn PLUS a pre-built, powered structure
-// grid (Capital + connectors + solars + miner@asteroid + turret) on a fast
-// 100 ms grid pulse: a "base under attack" workload that exercises the
-// `structures[]` snapshot slice, the grid pulse, the power aggregation, and
-// the turret-fire path the pure-drone feel-test-25 never touches. The grid
-// sits at origin with the drone ring; the player spawns at (700,0) — clear of
-// the structures but at the edge of the pack — and joins with `?startHostile=1`
-// so the player auto-fires and the drones engage (the turret picks the nearest
-// drone). PRINT-ONLY in the netgate until characterised (see
-// tests/netgate/scenarios.ts header — the local-player metrics only move if
-// this load actually stresses the server tick/broadcast budget).
-gameServer.define('feel-test-structures', SectorRoom, {
-  testMode: true,
-  asteroidConfig: [],
-  swarmCount: 25,
-  swarmRatio: 0,
-  swarmRadius: 500,
-  structureGridPulseMs: 100,
-  // Phase V footprints — the shared powered scenario grid (see scenarioLayouts.ts).
-  prebuiltStructures: [...STRUCTURE_SCENARIO_PREBUILT],
-  scenarioAsteroids: [{ ...SCENARIO.asteroid }],
-  defaultSpawnX: 900, // clear of the origin grid; within the drone pack + interest
-  defaultSpawnY: 0,
-  maxClients: 4,
-});
-// 2026-06-15 (plan: misty-teapot) — netgate PERF scenario `scrap-load`. Six
-// hull-exposed `havok` COMPOSITE drones ringed close to the player spawn; with
-// `?startHostile=1` the player auto-fires and each kill breaks into one
-// SWARM_KIND_SCRAP (kind 3) entity per component — the binary-wire v4 scrap
-// path (parentShipKind + componentIndex byte) that feel-test-25's polygon
-// drones never produce. hull-exposed ⇒ shield down ⇒ fast death ⇒ a scrap
-// burst inside the 8 s window. PRINT-ONLY until characterised (a steady
-// `scenarioScrap` pre-seed is the promotion follow-up — see scenarios.ts).
+// Six hull-exposed `havok` COMPOSITE drones ringed close to the player spawn;
+// with `?startHostile=1` the player auto-fires and each kill breaks into one
+// scrap entity per component. Was the netgate `scrap-load` scenario (removed in
+// wrap-up W4); still used by the scrap showcase shot.
 gameServer.define('feel-test-scrap', SectorRoom, {
   testMode: true,
   asteroidConfig: [],
@@ -512,9 +494,8 @@ gameServer.define('feel-test-scrap', SectorRoom, {
   maxClients: 4,
 });
 // Phase-1 issue 5 (2026-06-18) — scrap-collision reproduction. Pre-seeds 50
-// free-floating SCRAP pieces in a dense corridor AHEAD of spawn (the promotion
-// follow-up the feel-test-scrap comment names: a steady `scenarioScrap` seed
-// instead of death-timing-dependent drone kills). The E2E flies the player
+// free-floating SCRAP pieces in a dense corridor AHEAD of spawn (a steady `scenarioScrap` seed
+// instead of death-timing-dependent drone kills (cf. feel-test-scrap)). The E2E flies the player
 // straight through to measure prediction corrections/drift through a scrap
 // cascade. testMode-true + filterBy(testId) for isolation. Drives
 // `tests/e2e/scrap-collision-stress.spec.ts`.
@@ -857,8 +838,8 @@ gameServer
 // (Capital + Miner + Solar + Turret, owner `wave-tester`). Single eager
 // instance (NO filterBy) so the LivingWorldDirector can hold a reference (it's
 // added to the director's room map at boot when `EQX_E2E_WAVE=1`). The base is
-// ready at boot but the owner-presence gate holds the wave until the test
-// client joins AS `wave-tester` — killing the pre-join race. Asteroids + a
+// ready at boot; `waveNeedsOwner` holds the wave until the test client joins
+// AS the owner, so the spec draws its wave whenever it runs. Asteroids + a
 // parked drone give the seeded turret + miner something to do. droneCount 0 so
 // the only drones that appear are the incoming wave squad.
 gameServer.define('galaxy-wave-test', SectorRoom, {
@@ -866,7 +847,10 @@ gameServer.define('galaxy-wave-test', SectorRoom, {
   testMode: true,
   droneCount: 0,
   asteroidConfig: [],
-  peacefulDrones: true,
+  // NOT peacefulDrones: the room has no ambient drones, and the option gave
+  // the WAVE's own bots the passive brain (spawnDrone uses the room's drone
+  // behaviour), so the squad never fired at the base; the spec passed only
+  // when a drone happened to ram a structure (2026-11-08).
   structureGridPulseMs: 100,
   // Phase V footprints — the shared powered scenario grid (see scenarioLayouts.ts).
   prebuiltStructures: [...STRUCTURE_SCENARIO_PREBUILT],
@@ -879,6 +863,16 @@ gameServer.define('galaxy-wave-test', SectorRoom, {
   defaultSpawnX: 0,
   defaultSpawnY: 900,
   maxClients: 4,
+  // Every run must start from the seeded READY base: a saved snapshot brought
+  // back the last run's razed base and parked hull (2026-11-08).
+  persistSector: false,
+  // The wave lands within bolt reach of the Solar NW (-250, 400) and outside
+  // the Turret's 600 u (it sits at 150, -400), so the attack lands in the
+  // spec's window instead of after a flight from anywhere in the sector.
+  testWaveArrival: { x: -900, y: 700 },
+  // Waves ignore owner presence in play, so without this a wave fired at
+  // server boot and landed before a spec that ran later joined (2026-11-09).
+  waveNeedsOwner: true,
 });
 // 2026-05-28 — POSITIVE control for hull-collision-test. Two crossguards
 // at exactly the same world position (0, 0), hull-exposed. The polygons
@@ -1349,10 +1343,16 @@ async function main(): Promise<void> {
           ts: Date.now(),
         });
       },
+      // The wave E2E server (EQX_E2E_WAVE=1) starts the director fresh: a
+      // restored squad already assigned to the test base, or the faction's
+      // last dispatch time (5-min cadence), meant a run a minute after the
+      // previous one drew no wave (2026-11-08).
       loadRow: () =>
-        db
-          .prepare('SELECT payload_json, created_at FROM director_state WHERE id = 1')
-          .get() as { payload_json: string; created_at: number } | undefined,
+        process.env['EQX_E2E_WAVE'] === '1'
+          ? undefined
+          : (db
+              .prepare('SELECT payload_json, created_at FROM director_state WHERE id = 1')
+              .get() as { payload_json: string; created_at: number } | undefined),
       logger,
     });
     // Living World P1b — the ROBOT side: a second director instance (mixed-tier
@@ -1411,13 +1411,38 @@ async function main(): Promise<void> {
         // marked on the galaxy map.
         onTick: (now) => {
           eliteDirector?.tick(now);
+          flagshipDirector?.tick(now);
           eventDirector?.tick(now);
         },
         sectorElite: (key) => eliteDirector?.sectorElite(key) ?? null,
+        // W2a — flagship fleets show as capital sightings on the galaxy map.
+        sectorCapital: (key) => flagshipDirector?.sectorCapital(key) ?? null,
         // P4b — world events show on the galaxy map.
         sectorEvent: (key) => eventDirector?.sectorEvent(key) ?? null,
       },
     });
+    // W2a — flagship fleets: capital ships + escorts roaming pocket to pocket
+    // (solar-system sectors). Persisted in allegiance_director_state ('flagships').
+    if (process.env['EQX_DISABLE_FLAGSHIPS'] === '1' || process.env['EQX_DISABLE_FLAGSHIPS'] === 'true') {
+      logger.warn('flagship fleets DISARMED (EQX_DISABLE_FLAGSHIPS set)');
+    } else {
+      let restore: FlagshipStatePayload | null = null;
+      try {
+        const row = db
+          .prepare("SELECT payload_json, created_at FROM allegiance_director_state WHERE allegiance = 'flagships'")
+          .get() as { payload_json: string; created_at: number } | undefined;
+        if (row && Date.now() - row.created_at < 24 * 60 * 60 * 1000) restore = JSON.parse(row.payload_json) as FlagshipStatePayload;
+      } catch (err) {
+        logger.warn({ err }, 'flagship state unreadable — fresh fleets');
+      }
+      flagshipDirector = new FlagshipDirector(galaxyRooms, {
+        restore,
+        save: (payload) => persistence.enqueueCritical({
+          type: 'ALLEGIANCE_DIRECTOR_STATE_PUT', allegiance: 'flagships', payloadJson: JSON.stringify(payload), ts: Date.now(),
+        }),
+      });
+      flagshipDirector.start();
+    }
     eliteDirector = new EliteDirector(galaxyRooms);
     eliteDirector.start();
     eventDirector = new EventDirector(galaxyRooms);
@@ -1534,6 +1559,8 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
     robotDirector?.stop();
     robotTerritory?.stop();
     eliteDirector?.stop();
+    flagshipDirector?.persist();
+    flagshipDirector?.stop();
     eventDirector?.stop();
     setContractsProvider(null);
     setBountyBoard(null);

@@ -342,6 +342,11 @@ export function SectorInfoDrawer({
                 ⚑ Event: {tip.event}
               </Typography>
             )}
+            {tip.capital !== null && (
+              <Typography sx={{ color: '#9ec9ff', fontSize: 10, mt: 0.5 }} data-testid="sector-drawer-capital">
+                ⚓ Capital sighted: the {tip.capital}
+              </Typography>
+            )}
             {tip.elite !== null && (
               <Typography sx={{ color: '#ffc850', fontSize: 10, mt: 0.5 }} data-testid="sector-drawer-elite">
                 ★ Elite: {tip.elite}

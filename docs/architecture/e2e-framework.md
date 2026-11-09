@@ -36,6 +36,9 @@ Executing on branch `claude/test-coverage-refactor-exec`. A read-only audit (one
 
 > The per-spec triage table below still lists several now-deleted specs (`sync-diagnostics`, `rotate-jitter`, `network-feel-combat`, `happy-path-ui-switch`) as KEEP — those rows are superseded by this section pending the full table refresh (final refactor commit).
 
+## Join helpers wait for play (2026-11-08)
+
+- **`launchTestClient` / `launchGalaxyTestClient` return only once the client is IN PLAY** (`waitForInPlay`: the loading curtain `warp-screen[data-warp-visible="0"]` has lifted). A ship that exists behind the curtain ignores input and is not targetable yet. Commit 23b15fb0 (#310) made 126 `waitForFunction` deadlines real, and a spec that acted on `ship-count > 0` then missed its 2 s deadline by the ~2.4 s curtain (`beam-appears`: 6/6 pass before that commit, 6/6 fail after). Pass `waitForInPlay: false` only in a spec that watches the curtain itself (`join-art-ready`, `loading-catchup`). Specs that join with their own `page.goto` call `waitForInPlay(page)` themselves.
 ## CI scope — @smoke only, sharded + reruns (2026-06-03)
 
 **`.github/workflows/ci.yml` gates PR merges on the `@smoke` tier ONLY**, not `@smoke`+`@feature`. Two jobs:
@@ -49,6 +52,13 @@ Executing on branch `claude/test-coverage-refactor-exec`. A read-only audit (one
 - **Host-load-sensitive timing** — tight correction-rate locks (`sync-health` W-thrust, `prediction-idle-bounded` idle, `robustness:281` post-collision, `ramming-probe-armpit`) that fail on a loaded runner; the netcode-health gate is their machine-insensitive replacement.
 
 Gating PRs on those would make CI red on environment noise. `@feature` stays runnable via `pnpm e2e` (full) / `pnpm e2e:feature` for thorough local + manual checks, and specs are incrementally de-flaked (deterministic spawns + shared `testId` + state predicates) and **promoted back into the CI smoke gate** as they harden — the deterministic combat split (`tests/e2e/combat/*`) is the first promotion candidate once its behaviour is confirmed on the CI ubuntu runner.
+
+**Advisory runs (2026-11-08, not required checks).** Two backstops so non-gating tiers can't rot unseen:
+- **`e2e-feature-affected`** (ci.yml, per PR): the `@feature` specs the PR's paths map to (`tests/e2e/featureTriggers.mjs`), 3 shards.
+- **`.github/workflows/e2e-feature-weekly.yml`** (Mondays 04:17 UTC + `workflow_dispatch`): the FULL `@feature` tier, 6 shards, blob reports merged into one HTML artifact + a pass/flaky/fail table in the run summary. Not in `auto-retry.yml`, so a red there is read as-is.
+- **`gc-tests`** (ci.yml, per PR) runs `pnpm test:gc` (the heap-delta suite) — not E2E, but the same "ran only locally, rotted" story.
+
+Making any of these required needs the user's sign-off.
 
 ## Why this doc exists
 
@@ -133,7 +143,7 @@ The tier choice above is "how deterministic / how fast"; this is the orthogonal 
 | `swarm-stationary-stability.spec.ts` | `@feature` | Stationary asteroids: rendered position stays within 0.5u over 3 s. | LOCK | 🚶 medium | KEEP |
 | `swarm-tidi.spec.ts` | `@feature` | Phase 6c full TiDi+LoadShedder acceptance: clockRate < 0.99, ramp to floor ≤0.71, LoadShedder fires, ship remains controllable. 4-stage gate. | LOCK | 🐢 slow (60 s) | KEEP |
 | `sync-diagnostics.spec.ts` | `@feature` | Sync diagnostics: idle → W-thrust → release. | LOCK | 🚶 medium | KEEP |
-| `sync-health.spec.ts` | `@feature` | W-thrust correction rate < 15% after 3 s; idle correction rate near-zero. | LOCK | 🚶 medium | KEEP |
+| `sync-health.spec.ts` | `@feature` | W-thrust correction rate < 15% after 3 s; idle correction rate near-zero. | MEASUREMENT | 🚶 medium | **moved to `tests/perf/`** (wrap-up W4, 2026-11-09): a host-load timing lock like `robustness`; the netgate gates this signal |
 | `tidi-overlay.spec.ts` | `@feature` | Phase 6b TiDi overlay — `data-sector-alert` = "Temporal Anomaly", clockRate < 0.99 within 30 s. | LOCK | 🐢 slow (75 s timeout) | KEEP |
 | `warp-engage-cancel.spec.ts` | `@feature` | Phase 3b — full warp/transit state-machine roundtrip E2E: engage_transit wire → SPOOLING overlay (`data-testid="hyperspace-overlay"` + `data-transit-state="SPOOLING"`) → cancel_transit wire → DOCKED (overlay unmounts). The wire roundtrip lock the plan called the biggest Phase-3b gap; commit/arrive side covered by integration tests (warpBroadcasts / TransitOrchestrator / transitArrivalDrift / WarpScreen.transit / rearmJoinReadiness). | LOCK | 🚶 medium (~20 s; dominated by warp curtain wait, not game-time) | KEEP |
 | `renderer-worker-probe.spec.ts` | `@feature` | Renderer worker boot + mirror + feedback round-trip lock. Same caveat — "probe" filename, real assertions. | LOCK | 🚶 medium | KEEP |
@@ -245,6 +255,8 @@ The clustering means most fixes are mechanically similar — once `sector-alpha.
 | `initialXp: number` | Pre-load the joining ship's roster XP so ONE kill crosses a level threshold (the showcase level-up shot; ~8 kills otherwise). Needs a roster-backed room (real `sectorKey`, e.g. `showcase-levelup`). | URL `?initialXp=N`. testMode-gated; applied in `SectorRoom.onJoin` via `PlayerShipStore.setProgress`. Lock: `tests/integration/sectorRoom/showcaseRooms.test.ts`. |
 | `initialCargo` / `initialWallet` | Start with goods aboard / a wallet balance (hauling and trading takes). Cargo needs a roster-backed room. | URL `?initialCargo=salvage:40,alloy:12`, `?initialWallet=N`. testMode-gated JoinOptions. |
 | `dronePoses[].elite` | A posed drone becomes a named elite with a bounty, on cue (room opt `{ name, healthMul?, bounty? }`). | Room `showcase-bounty`. Lock: `tests/integration/sectorRoom/showcaseRooms.test.ts`. |
+| `testWaveArrival: { x, y }` (room opt) | Where a WAVE squad lands in this room instead of its carry pose (members on a 60 u ring, at rest), so the attack lands inside the spec's window. `galaxy-wave-test` uses (-900, 700): bolt reach of a Solar, outside the Turret. | testMode room option (`SectorRoom.testWaveArrival()` → `LivingWorldDirector.arrivalPoseFor`). With `persistSector: false` on that room and a fresh director under `EQX_E2E_WAVE=1`, every run starts from the seeded ready base. |
+| `waveNeedsOwner: true` (room opt) | A base in this room is wave-ready only while its owner has an active ship there. Waves ignore presence in play, so without it the wave fired at server boot and a spec that ran after others joined too late for the banner. | testMode room option, read in `SectorRoom.factionBaseReadiness`; `galaxy-wave-test` sets it. | Test rooms only. |
 
 ### Adding a new primitive
 
