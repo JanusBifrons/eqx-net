@@ -1,7 +1,10 @@
-# Weapon groups and target locking (Fire Control HUD)
+# Weapon groups and target locking (Fire Control)
 
-Status: experimental, behind `?ui=d` on branch `exp/fire-control`. Players on the
-legacy HUD and on `?ui=a|b|c` play exactly as before.
+Status: **how the game works for every player** (user decision 2026-11-09:
+"Shooting only happens if you lock a target, and that's a universal rule").
+The Fire Control HUD is the only HUD; the `?ui=` switch, the legacy HUD and the
+auto-fire toggle are gone. NPC drones must lock players too; NPC capitals' turrets
+and structure turrets follow in a later PR (1d).
 
 ## The idea
 
@@ -73,8 +76,10 @@ nose on the target.
 
 ## Try it
 
-`/?room=fc-duel&startHostile=1&shipKind=gunship&ui=d` is a 1v3: two fighters and a
+`/?room=fc-duel&startHostile=1&shipKind=gunship` is a 1v3: two fighters and a
 heavy wait ahead. Drop `startHostile=1` and use `room=feel-test` to try the
-failsafe on neutral drones.
+failsafe on neutral drones. Locking a player always runs the failsafe (there is
+no PvP flag: the slower failsafe, logged as a hostile act, guards against
+locking a friend by accident).
 
 Internals: [docs/architecture/fire-control.md](../architecture/fire-control.md).
