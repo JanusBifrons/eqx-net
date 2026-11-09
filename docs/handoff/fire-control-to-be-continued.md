@@ -1,5 +1,7 @@
 # To be continued: Fire Control HUD (branch `exp/fire-control`)
 
+> **Superseded 2026-11-09** by [HANDOFF-consolidated-2026-11-09](../HANDOFF-consolidated-2026-11-09.md), the single list of outstanding work. This file keeps the detail; track and tick items there.
+
 Paused 2026-11-08 at the user's request: "wrap up and close out this unit of
 work… the other work we had planned will have to go into a markdown file and
 committed as to be continued and picked up at a later date." Delete this file in

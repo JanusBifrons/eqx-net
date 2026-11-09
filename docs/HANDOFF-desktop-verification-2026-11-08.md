@@ -1,5 +1,7 @@
 # Handoff: desktop verification + machine-independent perf (2026-11-08)
 
+> **Superseded 2026-11-09** by [HANDOFF-consolidated-2026-11-09](HANDOFF-consolidated-2026-11-09.md), the single list of outstanding work. This file keeps the detail; track and tick items there.
+
 Plan: `machine-independent-perf` (WS1–WS8). WS4, a desktop runner, was **dropped by the user**: nothing may depend on the gaming desktop.
 
 Evidence is in [`diag/measurements/2026-11-08-desktop-verify/`](../diag/measurements/2026-11-08-desktop-verify/):
