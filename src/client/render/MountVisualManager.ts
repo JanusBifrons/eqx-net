@@ -40,7 +40,7 @@ import { Container, Graphics, Sprite } from 'pixi.js';
 import type { ArtHandle } from './art/ArtService.js';
 import { isMachinedSprite, type ShipArtCtx } from './art/shipArtSprites.js';
 import { muzzleReach, shipTurrets, structureTurrets, type TurretPlace } from './art/turretLayout.js';
-import { flashFrameAt, heatAfter, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff } from './art/fx/turretFx.js';
+import { flashFrameAt, heatAfter, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_FLASH_LIFE_S, muzzleLightAt, navalMuzzleLight, type MuzzleLight, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff } from './art/fx/turretFx.js';
 import { NAVAL_BARREL_SPAN } from '@core/combat/muzzle';
 import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import type { EffectQuality } from '@core/contracts/IEffects';
@@ -463,12 +463,13 @@ export class MountVisualManager {
       flash.visible = fr >= 0;
       if (fr >= 0) {
         flash.texture = frames![fr]!;
-        flash.x = flashX;
-        flash.y = -gun.reach + flashKick;
-        if (litPass.settings && litPass.settings.pointLights > 0) litPass.attachLight(flash, 0xffa050, 1.0, 60, 6);
         const w = gun.place.wid;
         flash.scale.set((w * 3.2) / 64, (w * 4.2) / 64);
       }
+      // The light outlives the 1–2 frame sprite by a short ease-out tail.
+      const lk = kicks && frames ? muzzleLightAt(since, MUZZLE_FLASH_LIFE_S) : 0;
+      if (fr >= 0 || lk > 0) { flash.x = flashX; flash.y = -gun.reach + flashKick; }
+      if (lk > 0 && litPass.settings && litPass.settings.pointLights > 0) litPass.attachLight(flash, 0xffa050, lk, 60, 6);
     }
     if (tip) {
       const glow = fam === 'bolt' ? gun.heat * 0.8 : beamOn ? 0.9 : 0;
@@ -493,10 +494,14 @@ export class MountVisualManager {
     const flashes = gun.barrelFlashes;
     if (flashes) {
       // GPU-lit art: the salvo lights the gun, its neighbours and the deck.
-      if (fr >= 0 && litPass.settings && litPass.settings.pointLights > 0 && flashes.length > 0) {
-        const K = Math.min(6, Math.max(1, w / 2));
-        const k = Math.max(0, 1 - since / NAVAL_FLASH_LIFE_S);
-        litPass.attachLight(flashes[flashes.length >> 1]!, 0xff9a48, 1.4 * K * k, 110 * K, 6 * K);
+      // Every naval calibre (16" down to the 5" secondaries) lights in
+      // proportion to its gun, and the light outlives the flash briefly.
+      const lk = since >= 0 && frames ? muzzleLightAt(since, NAVAL_FLASH_LIFE_S) : 0;
+      if (lk > 0 && litPass.settings && litPass.settings.pointLights > 0 && flashes.length > 0) {
+        const L = navalMuzzleLight(w, this._light);
+        const mid = flashes[flashes.length >> 1]!;
+        if (fr < 0) { mid.x = ((flashes.length >> 1) - (n - 1) / 2) * pitch; mid.y = -gun.reach + kick; }
+        litPass.attachLight(mid, 0xff9a48, L.intensity * lk, L.reach, L.z);
       }
       for (let b = 0; b < flashes.length; b++) {
         const f = flashes[b]!;
@@ -540,6 +545,8 @@ export class MountVisualManager {
   private smokeHandle: ArtHandle | null = null;
   /** Scratch for one smoke puff (alloc-free per frame). */
   private readonly _puff: SmokePuff = { d: 0, size: 0, alpha: 0, lat: 0, rot: 0 };
+  /** Scratch for a naval salvo light (alloc-free per frame). */
+  private readonly _light: MuzzleLight = { intensity: 0, reach: 0, z: 0 };
 
   /** Make a gun's flash + tip glow sprites (once, when their textures are ready). */
   private buildReactionSprites(gun: MachinedGun): void {
