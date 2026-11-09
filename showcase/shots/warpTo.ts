@@ -30,7 +30,8 @@ export const warpTo: Shot = {
 /**
  * Wrap-up W1a: the warp destination picker, driven through the real UI (speed
  * dial → Warp ▸ → a pocket). Films whichever prototype the URL picks:
- * `EQX_SHOWCASE_PARAMS=warpui=map` for the system map, default the list.
+ * The capture is desktop, so the system map; `EQX_SHOWCASE_PARAMS=warpui=list`
+ * films the list (the touch default).
  */
 export const warpPicker: Shot = {
   id: 'warp-picker',

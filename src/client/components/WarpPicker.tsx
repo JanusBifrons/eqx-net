@@ -1,7 +1,7 @@
 /**
  * Warp destination picker (wrap-up plan W1a, Phase 4 solar-system sectors).
- * Two prototypes behind `?warpui=list|map` (default list); the user picks one
- * and the other goes:
+ * Both views stay (user, 2026-11-08): the list on touch devices, the map on
+ * desktop; `?warpui=list|map` overrides.
  *  - **list**: EVE-style, destinations by name with distances, near ones
  *    listed one by one and far ones grouped under "Far";
  *  - **map**: a small map of the system (±200 km) with its pockets and the
@@ -20,10 +20,15 @@ import { useUIStore } from '../state/store';
 import { getGameClient } from '../net/clientSingleton';
 import { formatKm, warpDestinations, type WarpDestination } from './warpDestinations';
 import { SOLAR_HALF_EXTENT } from '../../core/galaxy/sectorSites';
+import { isTouchDevice } from '../input/TouchInput';
 
 type WarpUi = 'list' | 'map';
-export function readWarpUi(search: string): WarpUi {
-  return /[?&]warpui=map\b/.test(search) ? 'map' : 'list';
+/** `?warpui=` wins; else the list on touch (big rows, readable on a phone)
+ *  and the map on desktop. */
+export function readWarpUi(search: string, touch: boolean): WarpUi {
+  if (/[?&]warpui=map\b/.test(search)) return 'map';
+  if (/[?&]warpui=list\b/.test(search)) return 'list';
+  return touch ? 'list' : 'map';
 }
 
 const PANEL_SX = {
@@ -31,11 +36,12 @@ const PANEL_SX = {
   width: 280, maxHeight: '60dvh', overflowY: 'auto' as const, p: 0.75, bgcolor: 'rgba(12,16,26,0.94)', color: '#e6ecf5',
   border: '1px solid #2c3a52',
 };
+const MAP_PANEL_SX = { ...PANEL_SX, width: 360 };
 const ROW_SX = {
   justifyContent: 'space-between', textTransform: 'none' as const, fontSize: 12, py: 0.25, px: 0.75, width: '100%', color: '#e6ecf5',
   '&:hover': { backgroundColor: 'rgba(90,168,255,0.14)' }, '&.Mui-focusVisible': { backgroundColor: 'transparent' },
 };
-const HEAD_SX = { fontSize: 9, letterSpacing: '0.08em', color: '#8fa0b8', mt: 0.5, mb: 0.25, display: 'block' };
+const HEAD_SX = { fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: '#a9b8cc', mt: 0.5, mb: 0.25, display: 'block' };
 const CHIP_SX = {
   display: 'flex', alignItems: 'center', gap: 0.75, px: 1, py: 0.25, borderRadius: '4px', fontSize: 11, fontWeight: 700,
   color: '#e8f4ff', backgroundColor: 'rgba(20,60,120,0.9)', border: '1px solid #5aa8ff', pointerEvents: 'auto' as const,
@@ -69,7 +75,7 @@ export const WarpPicker = memo(function WarpPicker(): JSX.Element | null {
   const setOpen = useUIStore((s) => s.setWarpPickerOpen);
   const setHeldTo = useUIStore((s) => s.setWarpHeldTo);
   const sectorKey = useUIStore((s) => s.currentSectorKey);
-  const ui = useMemo(() => readWarpUi(typeof location !== 'undefined' ? location.search : ''), []);
+  const ui = useMemo(() => readWarpUi(typeof location !== 'undefined' ? location.search : '', isTouchDevice()), []);
   const [target, setTarget] = useState<string | null>(null);
   const { pose } = usePolledShip(open);
 
@@ -87,14 +93,14 @@ export const WarpPicker = memo(function WarpPicker(): JSX.Element | null {
   const near = dests.filter((d) => !d.far), far = dests.filter((d) => d.far);
   const row = (d: WarpDestination): JSX.Element => (
     <Button key={d.id} sx={ROW_SX} disabled={d.here} disableRipple onClick={() => warpTo(d)} data-testid={`warp-dest-${d.id}`} data-km={Math.round(d.distKm)}>
-      <span>{d.label}{d.padTo && <span style={{ color: '#5ad7ff', fontSize: 10 }} data-testid={`warp-pad-${d.id}`}>{` · pad to ${d.padTo} (instant)`}</span>}</span>
+      <span>{d.label}{d.padTo && <span style={{ color: '#5ad7ff', fontSize: 11 }} data-testid={`warp-pad-${d.id}`}>{` · pad to ${d.padTo} (instant)`}</span>}</span>
       <span style={{ color: '#8fa0b8' }}>{d.here ? 'here' : formatKm(d.distKm)}</span>
     </Button>
   );
 
   return (
     <Portal>
-      <Paper sx={PANEL_SX} data-testid="warp-picker" data-ui={ui}>
+      <Paper sx={ui === 'map' ? MAP_PANEL_SX : PANEL_SX} data-testid="warp-picker" data-ui={ui}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography sx={{ fontSize: 12, fontWeight: 700 }}>Warp to</Typography>
           <Button size="small" sx={{ fontSize: 10, minWidth: 0 }} onClick={() => setOpen(false)} data-testid="warp-picker-close">Close</Button>
@@ -150,18 +156,20 @@ function SystemMap({ dests, pose, target, onPick, onWarp }: {
 }): JSX.Element {
   const H = SOLAR_HALF_EXTENT;
   const sel = dests.find((d) => d.id === target) ?? null;
-  const font = H / 8.5, edge = H * 0.97;
-  // Labels: anchored inward near the edges; one placed close below another
-  // moves under its dot instead of beside it.
-  const placed: Array<{ x: number; y: number }> = [];
+  const font = H / 7, edge = H * 0.97, dotR = H / 22;
+  // Each label sits just under its own dot (above it when there's no room
+  // below, or when a label already sits there), anchored inward at the edges.
+  const placed: Array<{ x: number; y: number; w: number }> = [];
+  const clash = (x: number, y: number, w: number): boolean =>
+    placed.some((p) => Math.abs(p.y - y) < font * 1.05 && Math.abs(p.x - x) < (p.w + w) / 2);
   const labels = dests.map((d) => {
-    const sx = d.x, sy = -d.y;
-    const anchor: 'start' | 'middle' | 'end' = sx > H * 0.45 ? 'end' : sx < -H * 0.45 ? 'start' : 'middle';
-    let ly = sy + H / 6;
-    for (const p of placed) if (Math.abs(p.x - sx) < H * 0.7 && Math.abs(p.y - ly) < font * 1.1) ly = p.y + font * 1.2;
-    if (ly > edge) ly = sy - H / 9;
-    placed.push({ x: sx, y: ly });
-    const lx = anchor === 'end' ? Math.min(sx + H / 25, edge) : anchor === 'start' ? Math.max(sx - H / 25, -edge) : sx;
+    const sx = d.x, sy = -d.y, w = d.label.length * font * 0.55;
+    const anchor: 'start' | 'middle' | 'end' = sx > H * 0.55 ? 'end' : sx < -H * 0.55 ? 'start' : 'middle';
+    const cx = anchor === 'end' ? sx - w / 2 : anchor === 'start' ? sx + w / 2 : sx;
+    let ly = sy + dotR + font;
+    if (ly > edge || clash(cx, ly, w)) ly = sy - dotR - font * 0.35;
+    placed.push({ x: cx, y: ly, w });
+    const lx = anchor === 'end' ? Math.min(sx + dotR, edge) : anchor === 'start' ? Math.max(sx - dotR, -edge) : sx;
     return { d, lx, ly, anchor };
   });
   return (
@@ -176,7 +184,7 @@ function SystemMap({ dests, pose, target, onPick, onWarp }: {
         {dests.map((d) => (
           <g key={d.id} onClick={() => !d.here && onPick(d.id)} style={{ cursor: d.here ? 'default' : 'pointer' }} data-testid={`warp-map-${d.id}`}>
             <circle cx={d.x} cy={-d.y} r={H / 9} fill="transparent" />
-            <circle cx={d.x} cy={-d.y} r={Math.max(d.r, H / 22)} fill={KIND_COLOUR[d.kind]} fillOpacity={d.id === target ? 0.95 : 0.5}
+            <circle cx={d.x} cy={-d.y} r={Math.max(d.r, dotR)} fill={KIND_COLOUR[d.kind]} fillOpacity={d.id === target ? 0.95 : 0.5}
               stroke={d.id === target ? '#ffffff' : 'none'} strokeWidth={H / 90} />
           </g>
         ))}
@@ -186,11 +194,11 @@ function SystemMap({ dests, pose, target, onPick, onWarp }: {
         ))}
         {pose && (
           <g transform={`translate(${pose.x} ${-pose.y}) rotate(${(-pose.angle * 180) / Math.PI})`} data-testid="warp-map-ship">
-            <polygon points={`0,${-H / 14} ${H / 22},${H / 18} ${-H / 22},${H / 18}`} fill="#ffffff" />
+            <polygon points={`0,${-H / 20} ${H / 32},${H / 26} ${-H / 32},${H / 26}`} fill="#ffffff" stroke="#070b14" strokeWidth={H / 200} />
           </g>
         )}
       </svg>
-      <Button fullWidth size="small" variant="contained" disabled={!sel} sx={{ mt: 0.5, fontSize: 11 }}
+      <Button fullWidth size="small" variant="contained" disabled={!sel} sx={{ mt: 0.5, fontSize: 12, fontWeight: 700, color: '#04130a', textTransform: 'none' }}
         onClick={() => sel && onWarp(sel)} data-testid="warp-map-go">
         {sel ? `Warp: ${sel.label} (${formatKm(sel.distKm)})` : 'Pick a destination'}
       </Button>

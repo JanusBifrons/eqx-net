@@ -50,6 +50,10 @@ export const COUNT_BUDGETS: Record<string, CountBudget> = {
     measured: 'rx 67.8 KB/s laptop 2026-11-06. Work, desktop 4 runs 2026-11-08: bodies 157.1–157.2, ai 22.2–22.4, swarm recs 26.2–26.7, bytes 894–911, ents/snap 0; CI (ubuntu, PR #356): 157.2 / 22.3 / 26.5 / 906 / 0, rx 67.8',
     work: { bodiesPerTick: 197, aiAgentsPerTick: 28, swarmRecordsPerTick: 34, swarmBytesPerTick: 1139, entitiesPerSnapshot: 1 },
   },
+  // 2026-11-09, laptop, two runs: 17.1 / 16.9 KB/s (swarm 29: the fleet + two robot waves).
+  'capital-fleet': { rxKBps: 22, minSwarm: 20, measured: '16.9–17.1 KB/s, 2026-11-09' },
+  // 2026-11-09, laptop, two runs: 11.6 / 11.6 KB/s (one battleship firing on the pilot).
+  'capital-duel': { rxKBps: 15, minSwarm: 1, measured: '11.6 KB/s, 2026-11-09' },
   // 2026-11-08: the 80-ship sustained fight seen from the zoom-out floor (asteroids on).
   'wide-view': {
     rxKBps: 418, minSwarm: 50,

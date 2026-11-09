@@ -97,7 +97,7 @@ Two gates, both on every PR, both on any machine:
 
 | Gate | Where | What it asserts |
 |---|---|---|
-| **Server** | `tests/integration/sectorRoom/perfSceneCounts.test.ts` (integration-tests job) | per scene (`fleet-fight`, `teleport-raid`, `wide-view`): no refused spawns, the scene busy enough, rx KB/s, and the work per tick over the first 720 **scene ticks**: bodies stepped, AI agents ticked, binary swarm records and bytes encoded, entities per JSON snapshot |
+| **Server** | `tests/integration/sectorRoom/perfSceneCounts.test.ts` (integration-tests job) | per scene (`fleet-fight`, `teleport-raid`, `wide-view`, and the capital baseline `capital-fleet` / `capital-duel`, wrap-up W2d: rx and busyness only, no work budget yet): no refused spawns, the scene busy enough, rx KB/s, and the work per tick over the first 720 **scene ticks**: bodies stepped, AI agents ticked, binary swarm records and bytes encoded, entities per JSON snapshot |
 | **Client** | `pnpm perf:counts` (`perf/run-counts.ts`, CI job `perf-counts`, advisory) | per scene × `shiplight` (`fleet-fight`, `wide-view` × `baked`, `high`): WebGL draw calls per frame (p95), display objects, texels uploaded in the window, atlas pages |
 
 Budgets live in `src/shared-types/perf/perfBudgets.ts` (`COUNT_BUDGETS`, `CLIENT_COUNT_BUDGETS`): max of the calibration runs + 25 %, rounded up, each naming its runs in `measured`. Both tests report EVERY budget a run broke, not just the first.
