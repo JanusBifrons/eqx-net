@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { test, expect, type Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Cinematic camera + clean-frame HUD (docs/architecture/cinematic-camera.md).
@@ -16,7 +17,7 @@ import { test, expect, type Page } from '@playwright/test';
  * `?worker=0` so `__eqxCameraCenter` can read the main-thread camera.
  */
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 type Cue = { atMs: number; shot: Record<string, unknown>; smoothMs?: number };
 

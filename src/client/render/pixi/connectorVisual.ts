@@ -479,3 +479,54 @@ export function shieldWallVisualParams(
   out.shimmerWidth = 0;
   return out;
 }
+
+// ── Coastal defences — placement FIRING-ARC wedge ───────────────────────────
+/** The ghost's firing-arc wedge tint — the built-turret warm red, so it reads
+ *  as "where this gun can shoot", not connection reach. */
+export const ARC_WEDGE_COLOR = BUILT_RANGE_CIRCLE_COLOR;
+
+/** Screen-space (Pixi, Y-down) start/end angles of an arc-limited mount's wedge. */
+export interface ArcWedgeAngles {
+  start: number;
+  end: number;
+}
+
+/**
+ * A mount's firing arc as Pixi `arc()` angles, written INTO `out` (no alloc —
+ * the placement preview runs every frame, #14).
+ *
+ * Game space: a mount at total bearing `a = rot + baseAngle + θ` fires along
+ * `(-sin a, cos a)` (rotation 0 faces +y, `StructureMountTicker`). Pixi is
+ * Y-down, so that direction sits at Pixi angle `-π/2 - a`. θ ∈ [arcMin, arcMax]
+ * maps to Pixi `[-π/2 - rot - baseAngle - arcMax, -π/2 - rot - baseAngle - arcMin]`
+ * (start < end ⇒ Pixi's default clockwise sweep covers exactly the arc).
+ */
+export function arcWedgeScreenAnglesInto(
+  out: ArcWedgeAngles,
+  rotRad: number,
+  baseAngle: number,
+  arcMin: number,
+  arcMax: number,
+): ArcWedgeAngles {
+  const c = -Math.PI / 2 - rotRad - baseAngle;
+  out.start = c - arcMax;
+  out.end = c - arcMin;
+  return out;
+}
+
+/** True when a mount's arc is narrower than a full circle (worth a wedge). */
+export function isArcLimited(arcMin: number, arcMax: number): boolean {
+  return arcMax - arcMin < Math.PI * 2 - 1e-6;
+}
+
+/** Fill + edge params for the placement firing-arc wedge: very faint fill,
+ *  ~1 screen-px edge (scale-aware, like the rings). */
+export function arcWedgeVisualParams(scale: number): {
+  color: number;
+  fillAlpha: number;
+  lineAlpha: number;
+  width: number;
+} {
+  const safeScale = scale > 0 ? scale : 1;
+  return { color: ARC_WEDGE_COLOR, fillAlpha: 0.06, lineAlpha: 0.22, width: Math.max(1 / safeScale, 1) };
+}

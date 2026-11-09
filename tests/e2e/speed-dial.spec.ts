@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Speed-dial UI refactor (Phase 1) — regression lock for the consolidated
@@ -29,7 +30,7 @@ import type { Browser, Page } from '@playwright/test';
  * drones) so the HUD settles quickly and the dial mounts.
  */
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function joinClient(browser: Browser, touch = false): Promise<{ ctx: Awaited<ReturnType<Browser['newContext']>>; page: Page }> {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: touch });

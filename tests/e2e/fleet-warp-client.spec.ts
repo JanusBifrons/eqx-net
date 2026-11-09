@@ -8,8 +8,9 @@
  */
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
-const BASE_URL = process.env['BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['BASE_URL'] ?? DEFAULT_BASE_URL;
 
 interface ShipView { kind: number; x: number; visible: boolean }
 

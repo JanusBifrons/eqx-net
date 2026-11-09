@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fcKeyAction } from './MouseLock';
+import { fcKeyAction, mouseLockTakesPress } from './MouseLock';
 
 describe('fcKeyAction', () => {
   it('digits select a group, shift+digit toggles its mode', () => {
@@ -15,5 +15,17 @@ describe('fcKeyAction', () => {
     expect(fcKeyAction('0', 'Digit0', false)).toBeNull();
     expect(fcKeyAction('w', 'KeyW', false)).toBeNull();
     expect(fcKeyAction(' ', 'Space', false)).toBeNull();
+  });
+});
+
+describe('mouseLockTakesPress', () => {
+  it('takes the press when not placing a structure', () => {
+    expect(mouseLockTakesPress(null)).toBe(true);
+  });
+  it('leaves the press to structure placement while a kind is being placed', () => {
+    // Placement owns left (place / drag the ghost) and right (cancel); the lock
+    // line must not also start, nor right-click boost.
+    expect(mouseLockTakesPress('capital')).toBe(false);
+    expect(mouseLockTakesPress('turret')).toBe(false);
   });
 });

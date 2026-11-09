@@ -19,8 +19,9 @@ import { test, expect } from '@playwright/test';
 import type { Browser } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { launchTestClient, getShipX, getShipY } from './helpers/gameScenario';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 /** Mirror energy-bar.spec's proven join: direct nav to the fast room, wait for
  *  the LOCAL player id to be established (energy hydrates with it). */

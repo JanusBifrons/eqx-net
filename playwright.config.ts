@@ -1,4 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
+import {
+  DEFAULT_BASE_URL,
+  E2E_CLIENT_PORT,
+  E2E_HMR_PORT,
+  E2E_PORT_OFFSET,
+  E2E_SERVER_PORT,
+} from './tests/e2e/helpers/ports';
 
 /**
  * ── E2E policy (2026-05-11; tier taxonomy 2026-05-20) ───────────────────
@@ -194,6 +201,15 @@ const GATE_SPECS: string[] = ['**/netcode-health.spec.ts'];
  *  they record and measure a live game. */
 const E2E_STORAGE_STATE = 'tests/e2e/.auth/e2e-storage-state.json';
 
+// ── Port lane (EQX_E2E_PORT_OFFSET, default 0) ─────────────────────────────
+// Offset N runs the game server on 2567+N and Vite on 5173+N (--strictPort,
+// HMR 24678+N, proxy -> 2567+N via EQX_SERVER_PORT), so parallel worktrees can
+// each run E2E without colliding. Offset 0 is the canonical pair, unchanged
+// (same commands, reuseExistingServer stays on). A non-zero offset is its own
+// lane: it never reuses an existing server, so a taken port fails loudly
+// instead of silently testing another worktree's stale code.
+const IS_OFFSET_LANE = E2E_PORT_OFFSET !== 0;
+
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 30_000,
@@ -222,7 +238,7 @@ export default defineConfig({
   // gate transparent to specs without bypass logic in App.tsx.
   globalSetup: './tests/e2e/global-setup.ts',
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5173',
+    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? DEFAULT_BASE_URL,
     trace: 'retain-on-failure',
     headless: !process.env['PWHEADED'],
     // Pre-loaded localStorage with the auth token from globalSetup. Applied to
@@ -272,8 +288,8 @@ export default defineConfig({
           // useless for Playwright anyway since each suite spawns a
           // fresh process.
           command: 'pnpm dev:server:nowatch',
-          port: 2567,
-          reuseExistingServer: true,
+          port: E2E_SERVER_PORT,
+          reuseExistingServer: !IS_OFFSET_LANE,
           timeout: 30_000,
           // Wave-system E2E (wave-attack.spec.ts): boot the director-managed
           // `galaxy-wave-test` room + a fast drone spool so the wave fires in
@@ -282,12 +298,24 @@ export default defineConfig({
           // traversal to the base completes in-test. Inert for other specs (the
           // wave room only acts when the base owner is present; no other spec
           // touches it). Merged onto process.env by Playwright.
-          env: { EQX_E2E_WAVE: '1', EQX_BOT_SPOOL_MS: '5000', EQX_BOT_HOP_MS: '500' },
+          env: {
+            EQX_E2E_WAVE: '1',
+            EQX_BOT_SPOOL_MS: '5000',
+            EQX_BOT_HOP_MS: '500',
+            ...(IS_OFFSET_LANE ? { PORT: String(E2E_SERVER_PORT) } : {}),
+          },
         },
         {
-          command: 'pnpm dev:client',
-          port: 5173,
-          reuseExistingServer: true,
+          command: IS_OFFSET_LANE
+            ? `pnpm dev:client --port ${E2E_CLIENT_PORT} --strictPort`
+            : 'pnpm dev:client',
+          port: E2E_CLIENT_PORT,
+          reuseExistingServer: !IS_OFFSET_LANE,
+          // Offset lane: point Vite's proxy at the lane's server and move HMR
+          // off the shared 24678. (Offset 0 passes no env, exactly as before.)
+          ...(IS_OFFSET_LANE
+            ? { env: { EQX_SERVER_PORT: String(E2E_SERVER_PORT), VITE_HMR_PORT: String(E2E_HMR_PORT) } }
+            : {}),
           timeout: 60_000,
         },
       ],

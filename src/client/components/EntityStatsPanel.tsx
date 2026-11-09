@@ -32,6 +32,7 @@ import { alienGateLine } from './alienGateInfo';
 import { HullUnpack } from './HullUnpack';
 import { hullColor } from '../hud/tokens';
 import { getStructureKind } from '@shared-types/structureKinds';
+import { structureGunLines } from './structureGunLines';
 import { canUpgradeStructure, structureUpgradeGoods } from '@core/leveling/structureLevel';
 import { GOOD_DEFS, type GoodId } from '@shared-types/goods';
 import { structureDraw } from '@shared-types/structurePower';
@@ -122,6 +123,9 @@ interface PanelData {
   canChangeRecipe?: boolean;
   /** P2e — goods the next upgrade takes from base storage ("3 Alloy, 1 Components"). */
   upgradeGoods?: string;
+  /** Coastal defences — per-gun-size reload + arc lines, newline-joined
+   *  (`16" ×2 · reload 30 s · arc 144°`). Naval-mount structures only. */
+  gunLine?: string;
   /** P2d — an ammo-using turret is out of munitions. */
   noAmmo?: boolean;
   /** D1 — a Reactor has no fuel. */
@@ -263,6 +267,12 @@ export function EntityStatsPanel(): JSX.Element | null {
             : data.powered
               ? `PWR ${Math.round(data.selfPower)}`
               : 'UNPOWERED'}
+        </Box>
+      )}
+      {data.gunLine !== undefined && (
+        // Coastal defences — reload + firing arc per gun size.
+        <Box sx={GUN_SX} data-testid="entity-stats-guns">
+          {data.gunLine}
         </Box>
       )}
       {data.connCount !== undefined && (
@@ -496,7 +506,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
-  'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'noAmmo', 'noFuel', 'breach', 'upgradeGoods',
+  'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'gunLine', 'noAmmo', 'noFuel', 'breach', 'upgradeGoods',
   'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter', 'alienGateLine',
 ];
 
@@ -561,6 +571,9 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         const k = getStructureKind(subtype);
         // Active power — what it draws NOW (full while active, else idle).
         data.selfPower = k.powerOutput - Math.round(structureDraw(k.powerConsumption, st.drawFull === true));
+        // Coastal defences — reload + firing arc per gun size (catalogue read).
+        const guns = structureGunLines(k);
+        if (guns.length > 0) data.gunLine = guns.join('\n');
       }
       // C4 — connection count "N / 6", CONNECTORS ONLY. Client-resident (slice
       // connTo.length + catalogue maxConnections), so it renders instantly with
@@ -832,6 +845,14 @@ const POWER_SX = {
   letterSpacing: 0.4,
   color: 'rgba(180,220,255,0.85)',
   textTransform: 'uppercase' as const,
+};
+const GUN_SX = {
+  gridColumn: '1 / -1',
+  fontSize: { xs: 9, sm: 16 },
+  fontWeight: 600,
+  letterSpacing: 0.3,
+  color: 'rgba(180,220,255,0.85)',
+  whiteSpace: 'pre-line' as const,
 };
 const INFO_SX = {
   gridColumn: '1 / -1',

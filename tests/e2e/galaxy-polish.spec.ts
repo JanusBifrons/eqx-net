@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Regression lock for the Phase 1 (2026-05-12) galaxy polish.
@@ -25,7 +26,7 @@ import { test, expect, type Page } from '@playwright/test';
  * it. Smoke-testing the marketing-text-on-spawn case would feel obvious
  * to a human; this lock keeps it that way.
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function goToGalaxyMap(page: Page): Promise<void> {
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });

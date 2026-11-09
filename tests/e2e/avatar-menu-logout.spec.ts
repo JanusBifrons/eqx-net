@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Avatar context menu — desktop header path.
@@ -17,7 +18,7 @@ import { test, expect } from '@playwright/test';
  * rendered. The desktop AvatarMenu only mounts when `useAuthStore.user` is set.
  */
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 const BOOT_URL = `${BASE_URL}/?room=test-sector`;
 
 async function bootGame(page: import('@playwright/test').Page): Promise<void> {

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Plan: crispy-kazoo — RED-first regression lock for the
@@ -37,7 +38,7 @@ import { test, expect } from '@playwright/test';
  * + real Colyseus + real test-sector room is the right level.
  */
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 test.describe('spawn handshake — curtain must drop within a reasonable window', () => {
   test('engineering test-sector: handshake completes, data-loading-active flips 1→0', async ({ page }) => {

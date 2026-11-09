@@ -20,8 +20,9 @@ import type { Browser, Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { launchTestClient } from './helpers/gameScenario';
 import { lockOn, toManual } from './helpers/fireControl';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 // The join waits for the loading curtain (infrastructural: art + spawn
 // handshake, up to ~16 s under suite load), so the default 30 s is too tight.

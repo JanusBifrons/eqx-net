@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * 2026-06-19 playtest pop-in lock (the fix that failed twice before — now with an
@@ -12,7 +13,7 @@ import { test, expect } from '@playwright/test';
  * no screenshots. `?worker=0` forces the main-thread (DOM) renderer so the
  * `__eqxGalaxyBadgeCount` debug hook (DOM-path only) is live.
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 const SNAPSHOT_FIXTURE = {
   sectors: [

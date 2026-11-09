@@ -226,7 +226,7 @@ Several Claude sessions run on the same machine at once. So:
 
 - **All work happens in a git worktree** under `.claude/worktrees/<name>` on its own branch, never in the main checkout.
 - **Before starting, using or opening any port, check who owns it** (`netstat -ano | findstr LISTENING | findstr ":<port>"`, then the PID's command line). Only stop processes your session started (match the worktree path in the command line); another session's server is never yours to kill, even on the canonical ports.
-- **Check immediately before launching, not in parallel with the launch:** a recorder or server another session started a second earlier will otherwise collide. Prefer offset ports (`EQX_SHOWCASE_PORT_OFFSET`, `NETGATE_PORT_OFFSET`, or `PORT=` + `EQX_SERVER_PORT=` + `vite --port … --strictPort` for a manual dev pair) when another session is active.
+- **Check immediately before launching, not in parallel with the launch:** a recorder or server another session started a second earlier will otherwise collide. Prefer offset ports (`EQX_E2E_PORT_OFFSET` for Playwright, `EQX_SHOWCASE_PORT_OFFSET`, `NETGATE_PORT_OFFSET`, or `PORT=` + `EQX_SERVER_PORT=` + `vite --port … --strictPort` for a manual dev pair) when another session is active.
 - The "Claude owns the servers, kill before starting" rule below applies to processes **this** session or worktree started.
 
 ## Stale dev servers cause "phantom" E2E failures — Claude owns the servers, kill before starting
@@ -264,6 +264,8 @@ Playwright runs are slow (a single spec can take 30–120 s; the full suite is m
 > **`waitForFunction(fn, arg?, options?)`:** the second argument is the function's ARG. Write `waitForFunction(fn, undefined, { timeout })`, or the deadline is ignored (a lint rule enforces it).
 >
 > **Measurement specs live in `tests/perf/`, never in `pnpm e2e`.** Fixed-window heap/allocation/bandwidth/worker-A-B specs that hold a wall-clock window to gather a number (and are inherently host-load-variance-prone) run **only** via `pnpm e2e:perf` (`playwright.perf.config.ts`, 150 s per-test cap) — they are NOT part of the per-PR `pnpm e2e` regression suite. Adding a spec that waits out a fixed window for a measurement? It belongs in `tests/perf/`, not `tests/e2e/`. See `docs/refactors/test-coverage-audit.md` + the Determinism-refactor section of `docs/architecture/e2e-framework.md`.
+
+> **Parallel E2E lanes: `EQX_E2E_PORT_OFFSET=N`** (integer, default 0). Playwright then boots its own game server on 2567+N and Vite on 5173+N (`--strictPort`, HMR 24678+N, proxy → 2567+N) and every spec/helper URL follows, via `tests/e2e/helpers/ports.ts` (never hard-code `localhost:2567`/`5173` in a spec; `PLAYWRIGHT_BASE_URL`/`PLAYWRIGHT_SERVER_URL` still override). A non-zero offset is its own lane and never reuses an existing server, so a taken port fails loudly. Pick a free N per worktree (check `netstat -ano | findstr LISTENING` for 2567+N/5173+N first), e.g. `EQX_E2E_PORT_OFFSET=410 pnpm e2e tests/e2e/boot.spec.ts`. Offset 0 is the canonical pair, unchanged (reuse included). Covers `playwright.config.ts` only; the perf/diag/mobile configs still use 2567/5173.
 
 **Default playbook:**
 

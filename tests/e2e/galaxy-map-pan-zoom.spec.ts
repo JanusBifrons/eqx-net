@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Galaxy map pan/zoom restored (2026-06-06). The single-canvas refactor
@@ -18,7 +19,7 @@ import { test, expect } from '@playwright/test';
  */
 test.use({ hasTouch: true, isMobile: true, viewport: { width: 914, height: 411 } });
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 interface GalaxyTransform { x: number; y: number; scale: number }
 declare global {

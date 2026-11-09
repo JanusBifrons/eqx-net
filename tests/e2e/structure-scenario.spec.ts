@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Structures plan, Phase 3-5 — the full grid CLIENT-integration lock, via the
@@ -20,7 +21,7 @@ import { randomUUID } from 'node:crypto';
  * this is the "the wire actually reaches the client" lock.
  */
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function joinScenario(browser: Browser): Promise<{ ctx: Awaited<ReturnType<Browser['newContext']>>; page: Page }> {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });

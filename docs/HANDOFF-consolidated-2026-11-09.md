@@ -57,7 +57,7 @@ It lives in git (`docs/HANDOFF-consolidated-2026-11-09.md`), so it works on both
 - **Warp picker E2E.** The plan asked for an E2E in a solar test room: open the picker, pick, spool starts, arrive at the rim. Only component and integration tests exist. *Status:* not started. *Who:* Claude. *Source:* [prancy] W1a
 - **E2E renders on software WebGL.** `playwright.config.ts` has no GPU flags (SwiftShader on the desktop). Check the laptop and CI renderer strings; treat E2E timings as non-GPU. *Status:* not started. *Who:* Claude. *Source:* [DV-report] F1, [hostile-review] 10
 - **Decide which feature specs earn per-PR CI.** Today only smoke gates; feature specs run advisory. Pairs with the CI-required decision above. *Status:* blocked on user. *Who:* user + Claude. *Source:* [audit] "Next decisions"
-- **`TickBudgetTelemetry` "no hitch" asserts are wall-clock.** Convert to counts like #356 did for the others. *Status:* not started. *Who:* Claude. *Source:* [DV-handoff] "From #356"
+- **`TickBudgetTelemetry` "no hitch" asserts are wall-clock.** Convert to counts like #356 did for the others. *Status:* done (the test now drives `performance.now()` from a scripted clock: injected durations, exact event counts, no busy-wait). *Who:* Claude. *Source:* [DV-handoff] "From #356"
 - **`NETGATE_PORT_OFFSET` to main.** So parallel sessions can each run a netgate. *Status:* not started. *Who:* Claude. *Source:* [DV-handoff]
 
 ## Perf
@@ -94,7 +94,7 @@ It lives in git (`docs/HANDOFF-consolidated-2026-11-09.md`), so it works on both
 
 - **Coastal plan tracker is stale.** Stages 6 (docs) and 7 (showcase) are on `main` (#380) but unticked in `plans/coastal-defences.md`; tick them, leaving "filmed review + artifact" for after landing. *Status:* not started. *Who:* Claude. *Source:* [coastal-plan]
 - **Reconcile the ship research doc.** Its formulas (√weight, rate^0.75) don't match the shipped naval numbers; the coastal doc follows the shipped curves. *Status:* not started. *Who:* Claude. *Source:* #365, [coastal-plan] decision log
-- **Reload and arc UI.** Casemate arcs and reload timers aren't shown in the inspector or the placement ghost. *Status:* not started. *Who:* Claude. *Source:* #365
+- **Reload and arc UI.** Casemate arcs and reload timers aren't shown in the inspector or the placement ghost. *Status:* done (the inspector shows `16" ×2 · reload 30 s · arc 144°` per gun size; the ghost draws a faint firing-arc wedge). *Who:* Claude. *Source:* #365
 - **Bastion crowding.** Small light guns are sometimes dropped when big batteries take the bastion slots (a citadel losing its second AA). Fix once the user picks the approach (see "Waiting on the user"). *Status:* blocked on user. *Who:* Claude. *Source:* #365
 - **Quad AA traverse and German casemate arcs.** Research or accept the design values (see "Waiting on the user"). *Status:* blocked on user. *Who:* Claude. *Source:* #365
 - **NPC capitals' turret fire isn't lock-gated.** Gate `AiFireResolver.fireMount` with the NPC lock (today only the hull-aimed `resolve` path is). Fire Control only. *Status:* not started. *Who:* Claude. *Source:* [fc-handoff]
@@ -159,8 +159,8 @@ Fire Control is on `main` (#367 via #380). **Since PR 1b+1c (feat/lock-to-fire-u
   - Test option to start every weapon group in MAN (e.g. testMode `groupMode=manual`). Then `missile-frigate-homing`'s drone test can use `instantLock` and drop its 15 s deadline back to 4 s (today the PD laser on AUTO would kill the target first).
   - `?instantLock=1` also widens AUTO to ANY target (`anyTarget`, test-only). Consider splitting it so "instant lock" and "target anything" are separate options.
   - `laser-falloff-probe:77` (fire into empty space) is `test.fixme`: there's no firing without a target now. Rework it to fire at a locked target at long range, or retire it.
-  - Dead code: the `aim` wire field and `manualAimMountBearing` are unused since manual aim went.
-  - Stale docs: `showcase-pipeline.md:249`; `docs/handoff/fire-control-to-be-continued.md` (delete it in the PR that finishes PR 1d).
+  - ~~Dead code: the `aim` wire field and `manualAimMountBearing` are unused since manual aim went.~~ Done (chore/remove-dead-aim).
+  - Stale docs: ~~`showcase-pipeline.md:249`~~ (done); `docs/handoff/fire-control-to-be-continued.md` (delete it in the PR that finishes PR 1d).
   *Status:* not started. *Who:* Claude.
 
 ## Showcase (landing is done: these can start)

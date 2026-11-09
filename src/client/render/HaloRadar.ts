@@ -49,6 +49,7 @@ import {
   GROUPED_SIZE_MUL,
 } from './halo/arrowGraphics.js';
 import { resolveRadarReference } from './halo/radarReference.js';
+import { radarLockTint, LOCK_TINT_NONE } from './halo/lockMarks.js';
 import {
   circleTouchesViewport,
   deOverlapAlongTrack,
@@ -94,23 +95,27 @@ const CATEGORY_RANK: Record<RadarCategory, number> = {
 };
 
 function compareCandidates(a: Candidate, b: Candidate): number {
-  const ra = a.cat ? CATEGORY_RANK[a.cat] : 9;
-  const rb = b.cat ? CATEGORY_RANK[b.cat] : 9;
+  // Lock-marked contacts (locking you / your locked targets) are kept first.
+  const ra = a.marked === true ? -1 : a.cat ? CATEGORY_RANK[a.cat] : 9;
+  const rb = b.marked === true ? -1 : b.cat ? CATEGORY_RANK[b.cat] : 9;
   return ra !== rb ? ra - rb : a.dist - b.dist;
 }
 
 function writeCandidate(
   arr: Candidate[], i: number, key: string, x: number, y: number,
-  cat: RadarCategory, color: number, dist: number, radius: number,
+  cat: RadarCategory, color: number, dist: number, radius: number, tint: number,
 ): void {
   const slot = arr[i];
   const hostile = cat === 'hostile';
+  const marked = tint !== LOCK_TINT_NONE;
+  const c = marked ? tint : color;
   if (!slot) {
-    arr[i] = { key, x, y, color, cat, dist, radius, hostile, grouped: false };
+    arr[i] = { key, x, y, color: c, cat, dist, radius, hostile, grouped: false, marked };
     return;
   }
-  slot.key = key; slot.x = x; slot.y = y; slot.color = color; slot.cat = cat;
+  slot.key = key; slot.x = x; slot.y = y; slot.color = c; slot.cat = cat;
   slot.dist = dist; slot.radius = radius; slot.hostile = hostile; slot.grouped = false;
+  slot.marked = marked;
 }
 
 interface IconEntry {
@@ -142,6 +147,8 @@ export interface RadarDebugIcon {
   size: number;
   alpha: number;
   grouped: boolean;
+  /** Drawn colour (a lock mark overrides the category colour). */
+  color: number;
 }
 
 export class HaloRadar {
@@ -164,6 +171,9 @@ export class HaloRadar {
   private readonly swarmKeys = new Map<number, string>();
   private readonly shipKeys = new Map<string, string>();
   private readonly lingerKeys = new Map<string, string>();
+  /** Fire-control lock keys (`s:<id>` / `p:<id>`), built once per id. */
+  private readonly swarmLockKeys = new Map<number, string>();
+  private readonly shipLockKeys = new Map<string, string>();
   private readonly ref = { x: 0, y: 0 };
   private readonly camCentre = { x: 0, y: 0 };
   private readonly pt = { x: 0, y: 0 };
@@ -278,6 +288,11 @@ export class HaloRadar {
     let closest = Infinity;
     const maxRange = prefs.maxRange;
     const hyst = prefs.hysteresisPx;
+    // Lock marks: own locked targets (group colour) + ships locking you (red).
+    const lockGroups = mirror.localGroups;
+    const lockedBy = mirror.localLockedBy;
+    const anyLocks = (lockGroups !== undefined && lockGroups.length > 0)
+      || (lockedBy !== undefined && lockedBy.length > 0);
 
     if (mirror.swarm) {
       for (const [id, e] of mirror.swarm) {
@@ -297,7 +312,13 @@ export class HaloRadar {
         if (this.consider(key, x, y, e.radius > 0 ? e.radius : DEFAULT_RADIUS, refX, refY, W, H, s, maxRange, hyst, frameId)) {
           const dist = Math.hypot(x - refX, y - refY);
           if (dist < closest) closest = dist;
-          writeCandidate(raw, n++, key, x, y, cat, cats[cat].color, dist, e.radius);
+          let tint = LOCK_TINT_NONE;
+          if (anyLocks) {
+            let lk = this.swarmLockKeys.get(id);
+            if (lk === undefined) { lk = `s:${id}`; this.swarmLockKeys.set(id, lk); }
+            tint = radarLockTint(lk, lockGroups, lockedBy);
+          }
+          writeCandidate(raw, n++, key, x, y, cat, cats[cat].color, dist, e.radius, tint);
         }
       }
     }
@@ -310,7 +331,13 @@ export class HaloRadar {
         if (this.consider(key, sh.x, sh.y, r, refX, refY, W, H, s, maxRange, hyst, frameId)) {
           const dist = Math.hypot(sh.x - refX, sh.y - refY);
           if (dist < closest) closest = dist;
-          writeCandidate(raw, n++, key, sh.x, sh.y, 'player', cats.player.color, dist, r);
+          let tint = LOCK_TINT_NONE;
+          if (anyLocks) {
+            let lk = this.shipLockKeys.get(id);
+            if (lk === undefined) { lk = `p:${id}`; this.shipLockKeys.set(id, lk); }
+            tint = radarLockTint(lk, lockGroups, lockedBy);
+          }
+          writeCandidate(raw, n++, key, sh.x, sh.y, 'player', cats.player.color, dist, r, tint);
         }
       }
     }
@@ -322,7 +349,7 @@ export class HaloRadar {
         if (this.consider(key, sh.x, sh.y, r, refX, refY, W, H, s, maxRange, hyst, frameId)) {
           const dist = Math.hypot(sh.x - refX, sh.y - refY);
           if (dist < closest) closest = dist;
-          writeCandidate(raw, n++, key, sh.x, sh.y, 'lingering', cats.lingering.color, dist, r);
+          writeCandidate(raw, n++, key, sh.x, sh.y, 'lingering', cats.lingering.color, dist, r, LOCK_TINT_NONE);
         }
       }
     }
@@ -375,7 +402,7 @@ export class HaloRadar {
       const t = distanceT(dOffPx > 0 ? dOffPx / s : 0, prefs.nearDistance, prefs.farDistance);
       let size = rampNearFar(t, prefs.sizeNearPx, prefs.sizeFarPx, prefs.sizeGamma) * cp.sizeMul;
       if (c.grouped === true) size *= GROUPED_SIZE_MUL;
-      if (cat === 'hostile' && size < prefs.hostileMinSizePx) size = prefs.hostileMinSizePx;
+      if ((cat === 'hostile' || c.marked === true) && size < prefs.hostileMinSizePx) size = prefs.hostileMinSizePx;
       let a = rampNearFar(t, prefs.opacityNear, prefs.opacityFar, prefs.sizeGamma)
         * cp.opacityMul * rangeFade(c.dist, maxRange, prefs.fadeBand);
       if (a > 1) a = 1;
@@ -396,20 +423,23 @@ export class HaloRadar {
       const cat = c.cat ?? 'neutral';
       const cp = cats[cat];
       const glow = cat === 'hostile' && prefs.hostileGlow;
+      // A lock mark (`c.marked`) carries its tint in `c.color`; a wedge rep
+      // inherits it from its nearest member only if that member is marked.
+      const color = c.marked === true ? c.color : cp.color;
       trackPoint(this.param[k]!, track, this.pt);
       let entry = this.icons.get(c.key);
       if (!entry) {
-        const gfx = buildRadarGlyph(cp.shape, cp.color, glow);
+        const gfx = buildRadarGlyph(cp.shape, color, glow);
         this.container.addChild(gfx);
         entry = {
-          gfx, cat, wx: c.x, wy: c.y, shape: cp.shape, color: cp.color, glow,
+          gfx, cat, wx: c.x, wy: c.y, shape: cp.shape, color, glow,
           sx: { x: this.pt.x, v: 0 }, sy: { x: this.pt.y, v: 0 },
           lastVisible: false, presentAtFrame: frameId, renderedAtFrame: 0, fade: 0,
         };
         this.icons.set(c.key, entry);
-      } else if (entry.shape !== cp.shape || entry.color !== cp.color || entry.glow !== glow) {
-        paintRadarGlyph(entry.gfx, cp.shape, cp.color, glow);
-        entry.shape = cp.shape; entry.color = cp.color; entry.glow = glow;
+      } else if (entry.shape !== cp.shape || entry.color !== color || entry.glow !== glow) {
+        paintRadarGlyph(entry.gfx, cp.shape, color, glow);
+        entry.shape = cp.shape; entry.color = color; entry.glow = glow;
       }
       entry.cat = cat;
       entry.wx = c.x;
@@ -513,6 +543,7 @@ export class HaloRadar {
         size: e.gfx.scale.x * GLYPH_BASE_DIAMETER,
         alpha: e.gfx.alpha,
         grouped: key.startsWith('wedge:'),
+        color: e.color,
       });
     }
     return out;

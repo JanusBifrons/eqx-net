@@ -18,6 +18,7 @@
 import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
 import { launchTestClient, getRemoteHitTargets } from './helpers/gameScenario';
+import { lockOn, toManual } from './helpers/fireControl';
 
 test('a kind=2 structure renders and is shootable (GEP P4 "for free" proof)', async ({ browser }) => {
   // Infrastructural headroom: two sequential browser launches + Colyseus joins
@@ -31,9 +32,10 @@ test('a kind=2 structure renders and is shootable (GEP P4 "for free" proof)', as
     spawnY: 0,
     initialAngle: 0,
     shipKind: 'interceptor', // hitscan beam
-    // Lock-to-fire (2026-11-09): the AUTO group locks the (non-hostile)
-    // structure ahead within ~0.1 s and fires on its own.
-    instantLock: true,
+    // Lock-to-fire (2026-11-09): NO instantLock — with it the AUTO group locks
+    // the structure the instant the pilot spawns and shoots it dead before the
+    // RENDER check below can see it. The test locks it itself (MAN group, real
+    // failsafe-ring lock time: the ownerless structure is neutral).
     testId,
   });
   const observer = await launchTestClient(browser, {
@@ -55,9 +57,17 @@ test('a kind=2 structure renders and is shootable (GEP P4 "for free" proof)', as
       { timeout: 10_000 },
     );
 
-    // DAMAGE: the AUTO group fires straight up at the locked structure (Space
-    // adds the active group if it is MAN); the observer sees the hit
-    // resolved against the structure's swarm-N id.
+    // DAMAGE: lock the structure on the (MAN) active group, then hold fire —
+    // the beam goes straight up onto it; the observer sees the hit resolved
+    // against the structure's swarm-N id.
+    const structureId = await shooter.page.evaluate(() => {
+      const w = window as unknown as { __eqxClient?: { mirror?: { swarm?: Map<number, { kind: number }> } } };
+      for (const [eid, e] of w.__eqxClient?.mirror?.swarm ?? []) if (e.kind === 2) return eid;
+      return null;
+    });
+    expect(structureId).not.toBeNull();
+    await toManual(shooter.page);
+    await lockOn(shooter.page, { kind: 'structure', entityId: structureId! });
     await shooter.page.keyboard.down('Space');
     await observer.page.waitForFunction(
       () => {

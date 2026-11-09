@@ -20,9 +20,10 @@
  */
 import { randomUUID } from 'node:crypto';
 import { test, expect, type Browser } from '@playwright/test';
+import { DEFAULT_BASE_URL, DEFAULT_SERVER_URL } from './helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
-const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? 'http://localhost:2567';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
+const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? DEFAULT_SERVER_URL;
 
 async function registerAccount(): Promise<string> {
   const email = `acct-${randomUUID().slice(0, 8)}@e2e.test`;

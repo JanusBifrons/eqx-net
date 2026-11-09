@@ -27,8 +27,9 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { lockOn, toManual } from './helpers/fireControl';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 const STEP = process.env['STEP'] ?? 'after';
 // Force a KNOWN, fixed camera zoom (`?zoom=`) so the screenshot is deterministic
 // (without it the spawn camera ease lands captures at different scales, making
@@ -107,10 +108,10 @@ test('hit beam (target 150u ahead) — clips solid to the target, no tail', asyn
   const page = await ctx.newPage();
   try {
     // auto-fire-test parks a hull-exposed fighter at (0,150) — within the 250u
-    // beam range. Lock it (instantLock; the group goes MAN first so it does not
-    // shoot the drone dead during the settle), then held fire (Space) lands on
-    // it; the beam clips there, solid.
-    await joinInterceptor(page, 'auto-fire-test', '&initialHull=5000&instantLock=1');
+    // beam range. Lock it through the real lock flow (NO instantLock: with it the
+    // AUTO group locks + kills the drone during the join settle, before the test
+    // can act), then held fire (Space) lands on it; the beam clips there, solid.
+    await joinInterceptor(page, 'auto-fire-test', '&initialHull=5000');
     await toManual(page);
     await lockOn(page, 'first-drone');
     const { beamActive, beams } = await fireAndShoot(page, 'hit');

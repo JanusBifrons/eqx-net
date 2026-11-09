@@ -19,6 +19,10 @@ import {
   codeToFlowMaterial,
   previewLineVisualParams,
   rangeCircleVisualParams,
+  arcWedgeScreenAnglesInto,
+  arcWedgeVisualParams,
+  isArcLimited,
+  type ArcWedgeAngles,
   builtRangeCircleVisualInto,
   cometSegment,
   shieldWallVisualParams,
@@ -200,6 +204,12 @@ export class ConnectorRenderer {
    * `placementPreviewConnectionCount`); read by the unit lock.
    */
   lastRangeCircleRadius = 0;
+
+  /** Coastal defences — firing-arc wedges drawn on the placement ghost this
+   *  frame (arc-limited mounts only) and their radius. Test hooks. */
+  lastArcWedgeCount = 0;
+  lastArcWedgeRadius = 0;
+  private readonly _arcScratch: ArcWedgeAngles = { start: 0, end: 0 };
 
   /**
    * WS-D (#21) — number of always-on defensive range circles the LAST `update()`
@@ -446,6 +456,8 @@ export class ConnectorRenderer {
     this.placementPreviewSelectedCount = 0;
     this.placementPreviewDeferredCount = 0;
     this.lastRangeCircleRadius = 0;
+    this.lastArcWedgeCount = 0;
+    this.lastArcWedgeRadius = 0;
     this.builtTurretRangeCount = 0;
     this.lastBuiltTurretRangeRadius = 0;
     this.lastBuiltTurretRangeWidth = 0;
@@ -744,6 +756,36 @@ export class ConnectorRenderer {
     const rc = rangeCircleVisualParams(scale);
     this.gfx.circle(ax, ay, circleR);
     this.gfx.stroke({ color: rc.color, alpha: rc.alpha, width: rc.width });
+
+    // Coastal defences — a casemate's FIRING ARC: a faint wedge out to the
+    // weapon range per arc-limited mount, turned by the placement rotation
+    // (`preview.angle`, radians), so the player sees where it can shoot before
+    // committing. All-round mounts draw nothing. Alloc-free: catalogue lookup +
+    // the reused `_arcScratch`.
+    const kindDef = getStructureKind(preview.kind);
+    const mounts = kindDef.mounts;
+    const reach = kindDef.weaponRange ?? 0;
+    if (mounts && reach > 0) {
+      let wv: ReturnType<typeof arcWedgeVisualParams> | null = null;
+      const cosR = Math.cos(preview.angle);
+      const sinR = Math.sin(preview.angle);
+      for (let i = 0; i < mounts.length; i++) {
+        const m = mounts[i]!;
+        if (!isArcLimited(m.arcMin, m.arcMax)) continue;
+        wv ??= arcWedgeVisualParams(scale);
+        const w = arcWedgeScreenAnglesInto(this._arcScratch, preview.angle, m.baseAngle, m.arcMin, m.arcMax);
+        // Mount offset rotated into game space, then Y-flipped into Pixi.
+        const mx = ax + (m.localX * cosR - m.localY * sinR);
+        const my = ay - (m.localX * sinR + m.localY * cosR);
+        this.gfx.moveTo(mx, my);
+        this.gfx.arc(mx, my, reach, w.start, w.end);
+        this.gfx.closePath();
+        this.gfx.fill({ color: wv.color, alpha: wv.fillAlpha });
+        this.gfx.stroke({ color: wv.color, alpha: wv.lineAlpha, width: wv.width });
+        this.lastArcWedgeCount++;
+        this.lastArcWedgeRadius = reach;
+      }
+    }
 
     // WS-5 (R2.17) — gather the 'ok' (would-connect) hubs into scratch so we can
     // sort them by distance and split GREEN (nearest, within the cap) vs RED

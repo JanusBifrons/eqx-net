@@ -11,8 +11,9 @@
  */
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 const GATE_Y = -900;
 
 // Infra budget: cold Vite compile + join.

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Equinox Phase 9 (item 2) — the docked SectorInfoDrawer (replaces the old fixed
@@ -8,7 +9,7 @@ import { test, expect } from '@playwright/test';
  * BOTTOM in portrait. `?worker=0` forces the main-thread renderer (DOM hooks +
  * screenshot-able). Captures before/after screenshots for the look/feel review.
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 declare global {
   interface Window {

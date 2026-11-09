@@ -27,9 +27,10 @@
  * the test is deterministic by construction.
  */
 import { test, expect } from '@playwright/test';
+import { DEFAULT_BASE_URL, DEFAULT_SERVER_URL } from './helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
-const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? 'http://localhost:2567';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
+const SERVER_URL = process.env['PLAYWRIGHT_SERVER_URL'] ?? DEFAULT_SERVER_URL;
 
 // Must match `prebuiltStructuresOwner` on the `galaxy-wave-test` room define
 // (src/server/index.ts). The client joins AS this id so it OWNS the seeded base

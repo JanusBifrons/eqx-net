@@ -19,6 +19,7 @@ Seven structure kinds, in the build menu's **Gun Batteries** category. Each fire
 - **Bigger than ships.** The two super-guns use new weapons. The Lindemann out-ranges every ship gun (its light coast shell reached 56 km against the Iowa's 38.7 km). The siege gun fires once every two minutes, and its shell bursts where it stops — on a hit, or where it falls at the end of its flight — hurting everything within 320 u (`ProjectileWeaponDef.splash`, `shellBlastDamage`).
 - **Same size as the ship gun.** A battery's gunhouse and barrels are the ship turret of the same calibre (`structureNavalTurret`, sized from the beam of the ship class that carries it), drawn by the same naval turret art, with the shot leaving the drawn barrel tip (`structureMountMuzzle`, #15).
 - **Casemates face their embrasure.** A gun with an arc trains only through it, turned with the structure's rotation (rotation 0 faces +y).
+- **Reload and arc on screen.** The structure inspector shows one line per gun size, read from the catalogue (`components/structureGunLines.ts`): `16" ×2 · reload 30 s · arc 144°`, or `all round`. While placing, the ghost draws a faint wedge for each arc-limited gun out to its range, turned with the placement rotation (`ConnectorRenderer.drawPlacementPreview`, pure angles in `connectorVisual.arcWedgeScreenAnglesInto`).
 - **The four energy and missile turrets are unchanged** (their records, and so every saved structure, stay valid). They now aim with the same fire control.
 
 ## Fire control

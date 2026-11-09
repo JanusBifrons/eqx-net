@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Fire control — universal target locking (the only HUD since 2026-11-09).
@@ -16,7 +17,7 @@ import { randomUUID } from 'node:crypto';
  *  - the smart-aim drag (mouse on desktop, right-thumb drag on touch) toward
  *     the drone starts a lock for the active group.
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function boot(page: Page, extra = ''): Promise<void> {
   await page.goto(`${BASE_URL}/?room=auto-fire-test&startHostile=1&initialHull=5000&testId=${randomUUID()}${extra}`);

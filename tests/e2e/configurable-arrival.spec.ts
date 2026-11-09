@@ -1,4 +1,5 @@
 import { test, expect, devices } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Configurable hyperspace arrival picker (Phase: configurable-arrival, 2026-05-10).
@@ -11,7 +12,7 @@ import { test, expect, devices } from '@playwright/test';
  * vitest unit suite (`src/server/transit/TransitOrchestrator.test.ts`).
  */
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 // The arrival picker only renders inside the in-game drawer, so we boot
 // straight into a sector via the `?room=` deep-link escape hatch the E2E
 // suite uses elsewhere. test-sector is an engineering room (sectorKey===null)

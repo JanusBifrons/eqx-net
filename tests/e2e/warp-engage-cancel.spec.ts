@@ -54,8 +54,9 @@
  * `target: 'cygnus-arm'` is a real neighbour.
  */
 import { test, expect, type Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function waitForGameSurface(page: Page): Promise<void> {
   await page.waitForSelector('[data-testid="game-surface"]', { timeout: 15_000 });

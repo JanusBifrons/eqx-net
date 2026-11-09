@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Equinox Phase 9 — visual coverage for the drawer states that need live data:
@@ -7,7 +8,7 @@ import { test, expect, type Page } from '@playwright/test';
  * `__eqxSetGalaxyStats` dev hook, since a real recentCombat needs a kill).
  * Captures screenshots for sign-off into diag/e2e-screenshots/galaxy-drawer/.
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 declare global {
   interface Window {

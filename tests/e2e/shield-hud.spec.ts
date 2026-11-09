@@ -20,8 +20,9 @@
  * Run: pnpm e2e --project=chromium tests/e2e/shield-hud.spec.ts
  */
 import { test, expect } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 test('shield+hull HUD wiring is live end-to-end on join', async ({ browser }) => {
   const ctx = await browser.newContext();

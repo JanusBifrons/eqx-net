@@ -68,10 +68,22 @@ export const FEATURE_TRIGGERS = [
  * PR that fixes it.
  */
 export const QUARANTINE = new Set([
-  // 2026-11-08: fixes landed for these four but they are not yet verified
-  // 6/6 (see test-coverage-audit.md); remove each once it is.
+  // 2026-11-09 6x re-run (lane 1000, lock-to-fire universal); machined-art
+  // went 6/6 and left the list. Still red, each without a quick fix:
+  //
+  // held-fire test (:415) 0/5: one salvo per hold, never a cooldown
+  // rollover (heat-seeker cooldown 90 ticks; energy is not the limit). The
+  // other five tests in the file pass 5/5.
   'missile-frigate-homing',
-  'machined-art',
+  // 0/6: the fighter's AUTO group locks the gate (chip data-locked=1 with
+  // instantLock) but fires no bolts (fxProjectiles stays 0 for 10 s), so the
+  // fence never ripples. Is AUTO fire held against a locked non-hostile
+  // structure?
   'fence-hits',
+  // auto-fire test (:68) 0/5: the gunship kills the hostile drone in about
+  // 3 s, before its Machined turrets are drawn (turrets is 0 until about 4 s,
+  // even after the warm-up join), so turretShots never counts. Needs a way to
+  // join with the groups in MAN and switch to AUTO once the guns are drawn
+  // (no `groupMode` join option yet). The other three tests pass 5/5.
   'fx-turrets',
 ]);

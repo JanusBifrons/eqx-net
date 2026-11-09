@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Living Galaxy Phase 6 (bug-doc galaxy-map polish) — desktop hover affordance:
@@ -9,7 +10,7 @@ import { test, expect } from '@playwright/test';
  * FAIL on pre-Phase-6 code: there is no `__eqxGalaxyHoveredSector` hook, no
  * `galaxy-sector-tooltip`, and the cursor never changes.
  */
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 declare global {
   interface Window {

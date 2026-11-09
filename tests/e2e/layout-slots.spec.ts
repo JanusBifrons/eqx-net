@@ -1,11 +1,12 @@
 import { test, expect, devices } from '@playwright/test';
+import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
  * Layout-slot regression coverage. Phase 1 cases are below; Phase 2
  * (drawer-driven layout, mobile/desktop split, meta landing) extends them.
  */
 
-const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 const BOOT_URL = `${BASE_URL}/?room=test-sector`;
 
