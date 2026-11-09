@@ -139,5 +139,13 @@ test('flying through 50 scrap pieces — corrections + drift stay playable (issu
   // philosophy the netgate uses for snapshotJitterMs.
   expect(peakDrift, `peak prediction drift through the scrap cascade = ${peakDrift.toFixed(1)} u (baseline ~18 u; angvel-regression ~39 u)`).toBeLessThan(30);
 
+  // (c) Remote-entity paradigm (2026-11-08): scrap bodies are anchored to the
+  // latest server state each snapshot and stepped on the predicted timeline
+  // (no per-frame follower), so the flythrough corrects on ~11–15 % of
+  // snapshots. The retired display-delayed follower measured 46–48 % on the
+  // same harness (2 runs each, own ports). The whole-flight share is far
+  // steadier than the rolling rate.
+  expect(corrPerSnapshot, `share of snapshots corrected through the scrap (follower era ~47 %)`).toBeLessThan(0.3);
+
   await ctx.close();
 });

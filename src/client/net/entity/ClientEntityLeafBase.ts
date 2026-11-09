@@ -12,7 +12,7 @@ import type { IClientEntityLeaf, ClientSpawnCtx, ClientSyncCtx } from './IClient
 export abstract class ClientEntityLeafBase implements IClientEntityLeaf {
   readonly poseCoreKind: number;
   /** True for asteroid / structure (locked + posed from the packet); false for
-   *  the drone (the kinematic follower owns its pose). DERIVED from the core
+   *  drone + scrap (the per-snapshot remote-entity anchor owns their pose). DERIVED from the core
    *  descriptor — never restated per leaf. */
   protected readonly staticBody: boolean;
   private readonly _poseScratch: ShipPhysicsState = {

@@ -27,6 +27,7 @@ import { SpatialGrid } from '../interest/SpatialGrid.js';
 import type { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { BinarySwarmBroadcast } from '../net/BinarySwarmBroadcast.js';
 import type { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
+import type { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 
 export interface SwarmBroadcasterDeps {
   serverTick: () => number;
@@ -49,6 +50,8 @@ export interface SwarmBroadcasterDeps {
    *  window sits on the landing point (nothing along the route is sent; the
    *  destination streams in early). Null ⇒ the ship's own pose. */
   interestPointOf?: (playerId: string) => { x: number; y: number } | null;
+  /** Perf scenes (WS3): swarm records + bytes encoded, counted while a scene runs. */
+  work?: SceneWorkCounters;
 }
 
 export class SwarmBroadcaster {
@@ -83,7 +86,15 @@ export class SwarmBroadcaster {
         inInterest = scratch;
       }
       const swarmPacket = d.swarmEncoder.encode(d.swarmRegistry, d.sabF32, d.sabU32, serverTick, inInterest);
-      if (swarmPacket) client.send('swarm', swarmPacket);
+      if (swarmPacket) {
+        const w = d.work;
+        if (w !== undefined && w.active) {
+          // Header bytes 2..3 = record count (u16 LE); see BinarySwarmBroadcast.
+          w.swarmRecords += swarmPacket[2]! | (swarmPacket[3]! << 8);
+          w.swarmBytes += swarmPacket.byteLength;
+        }
+        client.send('swarm', swarmPacket);
+      }
     }
   }
 }

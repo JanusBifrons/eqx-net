@@ -2753,7 +2753,7 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - Before widening a heap bound, swap the mocks for plain functions and re-measure. Growth that vanishes is the harness.
   - A suite no CI job runs rots. `test:gc` now runs in the `gc-tests` job.
 
-## 2026-11-08 — Melee corrections: the drone collision body is on the wrong timeline (WS7.1, open)
+## 2026-11-08 — Melee corrections: the drone collision body is on the wrong timeline (WS7.1, fixed)
 
 - **Symptom:** the `pack-battle` and `new-effects` showcase shots (both `feel-test-25`, a hostile 25-drone pack) failed the pose-trace gate on a fast desktop with the server at 60 Hz: 4–14 prediction corrections per take (max 2). Other shots: 0.
 - **Not host starvation.** A browser probe (own ports, the shot's input script, the pose gate's 0.3 u onset rule) found every onset within ~30 u of a drone hull, and the one take with no local contact had zero corrections.
@@ -2764,7 +2764,10 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
 - **Rules:**
   - A contact between a predicted body and an interpolated one is resolved on two different timelines. Any correction that only happens near another entity is this, not the network.
   - Before blaming a "second correction path", A/B it: switch it off in-page and count.
-- **Lock:** `tests/scenarios/meleeDroneContactPrediction.test.ts` (`it.fails` on the production follower; flip to `it` with the fix).
+- **Decision and fix (user: "I don't want two systems, it should be one system and paradigm"):** option (a), done as ONE path rather than a drone-specific dead-reckoner. Drone and scrap bodies now take exactly the route remote player ships always took: `preResetRemoteShips` anchors them to their latest server state on each snapshot (`anchorRemoteSwarmBodies`, from the pose ring at `snap.serverTick`), and the replay + `tickPhysics` step them forward. The per-frame follower is gone. Sprites still draw the interpolated pose; local beam / hit-prediction rays test drones and scrap at the drawn pose (`DisplayPoseHitscan`), the pose the turret aims at.
+- **The residual went too.** Because nothing re-poses the body per frame, the local ship's own push on a drone survives until the server's answer, as on the server. Model: peak 16 u (follower) → 1.9 u (re-posed dead-reckon prototype) → 0.06 u (unified path); scrap 17 corrections → 0.
+- **Rule:** one collision paradigm for every remote moving entity: predWorld on the predicted timeline from the latest server state; rendering is a separate, per-type choice. A new moving entity kind joins `isRemoteMovingSwarmKind`, not a new path.
+- **Lock:** `tests/scenarios/meleeDroneContactPrediction.test.ts` (production anchor within the pose gate, drones and scrap; the retired follower kept as the failing contrast).
 
 ## 2026-11-08 — A unit test killed a live perf run (misspelt env override)
 
@@ -2775,6 +2778,22 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
   - A test that kills processes must prove its isolation override took effect (assert the temp file is the one written) before it kills anything.
   - Shared state files (pid lists, ledgers) record their owner; a reaper checks the owner is dead.
   - Bulk find/replace on identifiers can rewrite string keys too. Grep env-var names after a rename.
+
+## 2026-11-08 — Gate on counts, not timings: what makes a count really host-independent
+Commit: perf/count-budgets (plan machine-independent-perf WS3)
+
+The laptop's timings were mostly host noise, the desktop isn't always there, and a hosted runner failed a "≤ 2 ms" unit test at 2.07 ms with no code change (convoyBudget, PR #352). So the per-PR perf gate is now COUNTS: server work per tick (bodies, AI agents, swarm records/bytes, entities per snapshot) and client draw calls / display objects / uploads / atlas pages. Four things a count needed before it stopped depending on the machine:
+
+1. **Window on scene ticks, not wall time.** The scene script is tick-driven; a wall-clock window on a slow host covers an earlier part of the scene. Both gates read at fixed scene times.
+2. **Pin adaptive quality.** `EffectsBudget` drops tiers when frames are slow, so a slow host draws fewer effects and "improves" the count. `?perfcounts=1` pins High.
+3. **Same rasteriser everywhere.** SwiftShader (`--use-angle=swiftshader --enable-unsafe-swiftshader`) on every host, at 960×540 CSS with a 0.5 device scale, so a 2-core runner still renders 20+ frames in the window.
+4. **Count frames on the renderer, not on `update()`.** The worker's Pixi ticker renders independently of the mirror updates; draw calls are closed per frame on Pixi's `postrender` runner.
+
+What still varies is the SCENE: combat outcomes differ run to run (wide-view ended with 50 ships one run, 135 another), so display objects and close-up draw calls carry a real spread. That is not host noise, but it widens the budgets; contacts per tick (±25 % on one machine) stayed print-only.
+
+CPU time is NOT a fix for noisy timing here: the room's tick loop is a `setImmediate` spin, so process / main-thread CPU reads ~100 % busy whatever the tick does. `process.threadCpuUsage()` sampled around `update()` is the only meaningful main-thread figure, it needs Node ≥ 23.9 (CI runs 22), and Windows rounds it to ~15.6 ms. Print-only.
+
+Unit tests: convoyBudget now gates candidate checks per planning pass (988, deterministic; budget 1235) and prints the time; the Reconciler "replay under 50 ms" now counts physics steps (≤ 128).
 
 ## 2026-11-08 — `--base HEAD` measured the perf-base worktree's own HEAD
 
@@ -2788,6 +2807,10 @@ PR #298 failed the netgate after its auto-retry (rollingCorrRate HEAD 0.9 vs bas
 - **Now:** `pnpm perf:phone` runs the same 8-rep A/B on a real phone over adb; `pnpm perf:scenes --device phone-proxy --cpu-rate 2` is the no-phone fallback. Commands and the decision rule: `docs/architecture/gpu-lit-ships.md`, "Open question: cost on weak hardware".
 - **Rule:** a default that "passed perf" must cite a ledger whose verdict could have failed (≥ 4 reps per arm, on the machine class it targets).
 
+## 2026-11-08 — `lsof -ti tcp:PORT` lists the CLIENTS too: `killPort` killed its own caller on Linux
+Commit: perf/count-budgets (PR #356)
+
+`perf:counts` died with exit 137 on the first CI run, right after its last scene. `CaptureServers.stop()` → `killPort()` ran `lsof -ti tcp:3167 | xargs kill -9`; without `-sTCP:LISTEN`, lsof also lists every process holding a CLIENT connection to that port, and the runner had a keep-alive connection open from polling `/dev/perf`. So it SIGKILLed itself. Windows (`netstat … LISTENING`) never had the bug, which is why local runs were fine. Fix: `lsof -ti tcp:PORT -sTCP:LISTEN`. Rule: any "kill whatever is on port N" must match listeners only.
 ## 2026-11-08 — Turning solar-system sectors on by default
 
 - **Context:** W1c flipped `EQX_SOLAR_SECTORS` to on. Unit tests, integration tests and a 10-minute live-galaxy soak (`scripts/soak-galaxy.ts`) were run with it on and off.

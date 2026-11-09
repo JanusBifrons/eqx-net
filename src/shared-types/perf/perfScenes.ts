@@ -89,6 +89,46 @@ export const PERF_SCENES: readonly PerfScene[] = [
     durationMs: 30_000,
     minSwarm: 1,
   },
+  {
+    // Wrap-up W2d (capitals P5 baseline): capital turret fire control, naval
+    // shells and big hulls in a real fight. Capitals are drone-side; robots
+    // are hostile to them on sight, so the two sides engage without orders.
+    id: 'capital-fleet',
+    title: 'A capital fleet (battleship, 2 destroyers, 6 gunships) against 30 robots, reinforced',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      sceneScript: [
+        { atMs: 0, action: 'spawn', tag: 'flagship', kind: 'battleship', count: 1, x: 0, y: 0, spread: 0 },
+        { atMs: 0, action: 'spawn', tag: 'destroyers', kind: 'destroyer', count: 2, x: 0, y: 0, spread: 4000 },
+        { atMs: 0, action: 'spawn', tag: 'gunships', kind: 'gunship', count: 6, x: 0, y: -3500, spread: 800 },
+        ...[0, 10_000, 20_000].map((t, i) => fight(`robots${i}`, 'robot-square', 0, 9000, 10, t)),
+        { atMs: 30_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: -9000 },
+    camera: { x: 0, y: 2500, zoom: 0.15 },
+    durationMs: 30_000,
+    minSwarm: 5,
+  },
+  {
+    // Wrap-up W2d: one battleship's main battery on the pilot (the duel shot
+    // as a measurement): slow turrets, 16" shells, the lit hull up close.
+    id: 'capital-duel',
+    title: 'One battleship engages the pilot from 4 km',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      sceneScript: [
+        { atMs: 0, action: 'spawn', tag: 'battleship', kind: 'battleship', count: 1, x: 0, y: 0, spread: 0, hostile: true },
+        { atMs: 30_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 4000, y: 0 },
+    camera: { x: 2000, y: 0, zoom: 0.2 },
+    durationMs: 30_000,
+    minSwarm: 1,
+  },
 ];
 
 export function perfSceneById(id: string): PerfScene | undefined {
