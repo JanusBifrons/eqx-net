@@ -46,9 +46,9 @@ export interface SwarmRecLookup {
 }
 
 export interface AiFireResolverDeps {
-  /** Fire control (exp/fire-control): refuse a shot aimed at a fire-control
-   *  pilot this NPC hasn't locked. Absent ⇒ never blocked. */
-  fireBlocked?: (shooterId: string, kind: ShipKind, x: number, y: number, dirX: number, dirY: number) => boolean;
+  /** Fire control: refuse a shot at `targetId` when it is a pilot this NPC
+   *  holds no completed lock on. Absent ⇒ never blocked. */
+  fireBlocked?: (shooterId: string, targetId: string) => boolean;
   /** Cooldown ledger — keyed by shooter id (drone). */
   lastFireClientTick: Map<string, number>;
   /** Pose snapshot for the firing drone (SAB read). */
@@ -136,7 +136,7 @@ export class AiFireResolver implements WeaponFireSink {
    * broadcast with its own ray geometry; aggregate hit goes to the
    * damage sink (`applyDamage`).
    */
-  resolve(shooterId: string, dirX: number, dirY: number, tick: number): void {
+  resolve(shooterId: string, dirX: number, dirY: number, tick: number, targetId: string): void {
     const d = this.deps;
 
     const len = Math.hypot(dirX, dirY);
@@ -156,9 +156,9 @@ export class AiFireResolver implements WeaponFireSink {
     if (hasTurretFireControl(droneKind)) return;
     const slotMounts = d.resolveSlotMounts(droneKind);
     if (slotMounts.length === 0) return;
-    // Fire control: no lock on the fire-control pilot in the line of fire ⇒
+    // Fire control: a pilot target needs a COMPLETED lock by this drone ⇒
     // no shot (the cooldown is not spent).
-    if (d.fireBlocked?.(shooterId, droneKind, self.x, self.y, dirNdx, dirNdy)) return;
+    if (d.fireBlocked?.(shooterId, targetId)) return;
 
     // Slot-level cooldown gate (mirrors PlayerFireResolver). The slot fires
     // as one trigger; its cooldown is the MAX over its mounts' weapons.

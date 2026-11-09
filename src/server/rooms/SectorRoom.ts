@@ -1844,7 +1844,7 @@ export class SectorRoom extends Room<SectorState> {
     // AI drone weapon-fire resolver. Composes the per-mount hitscan +
     // laser_fired broadcast path that mirrors the player handleFire.
     this.aiFireResolver = new AiFireResolver({
-      fireBlocked: (id, kind, x, y, dx, dy) => this.npcLocks.fireBlocked(id, kind, x, y, dx, dy),
+      fireBlocked: (id, targetId) => this.npcLocks.fireBlocked(id, targetId),
       lastFireClientTick: this.lastFireClientTick,
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       swarmRegistry: this.swarmRegistry,
@@ -4472,7 +4472,7 @@ export class SectorRoom extends Room<SectorState> {
    * broadcast tail with this method, eliminating the duplication. For 5c+
    * preview the duplication is contained to this single method.
    */
-  private handleAiFire(shooterId: string, dirX: number, dirY: number, tick: number): void {
+  private handleAiFire(shooterId: string, dirX: number, dirY: number, tick: number, targetId: string): void {
     if (this.gateGuard.gateCount > 0) {
       const now = Date.now();
       if (this.gateGuard.isDisabled(shooterId, now)) return;
@@ -4483,7 +4483,7 @@ export class SectorRoom extends Room<SectorState> {
         if (this.gateGuard.isDisabled(shooterId, now)) return;
       }
     }
-    this.aiFireResolver.resolve(shooterId, dirX, dirY, tick);
+    this.aiFireResolver.resolve(shooterId, dirX, dirY, tick, targetId);
   }
 
   private spawnServerProjectile(ownerId: string, x: number, y: number, vx: number, vy: number, damage: number, radius: number, maxTicks: number, weaponId: WeaponId): void {
@@ -10515,7 +10515,7 @@ export class SectorRoom extends Room<SectorState> {
       visitLingeringTargets: this._visitLingeringTargets,
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       resolveEntityInto: (id, out) => this.swarmEntityPoseInto(id, out),
-      handleAiFire: (shooterId, dirX, dirY, tick) => this.handleAiFire(shooterId, dirX, dirY, tick),
+      handleAiFire: (shooterId, dirX, dirY, tick, targetId) => this.handleAiFire(shooterId, dirX, dirY, tick, targetId),
       phaseTime,
     });
     // Living World P3c — fire every NPC charge weapon whose wind-up elapsed.
