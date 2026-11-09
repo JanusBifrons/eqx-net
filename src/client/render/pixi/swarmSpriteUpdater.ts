@@ -139,6 +139,19 @@ const chargeTelegraphs = new WeakMap<Container, Graphics>();
  *  is known to be an elite (once per sprite, #14), then shown/hidden. */
 const eliteRings = new WeakMap<Container, Graphics>();
 
+/** A6 — fresh wreckage glows hot and cools to its own colour over this long. */
+export const SCRAP_COOL_MS = 5000;
+/** When each scrap sprite was first drawn (dies with the sprite). */
+const scrapBorn = new WeakMap<Container, number>();
+/** The heat tint of wreckage `ageMs` after it broke off: hot orange easing to
+ *  none (undefined = cool). Pure; allocation-free. */
+export function scrapHeatTint(ageMs: number): number | undefined {
+  if (!(ageMs >= 0) || ageMs >= SCRAP_COOL_MS) return undefined;
+  const h = 1 - ageMs / SCRAP_COOL_MS, k = h * h;
+  const g = Math.round(255 - (255 - 0x7a) * k), b = Math.round(255 - (255 - 0x30) * k);
+  return (0xff << 16) | (g << 8) | b;
+}
+
 /** The longest charge weapon range a kind carries (0 ⇒ no charge weapon). */
 export function chargeRangeForKind(shipKind: string | undefined): number {
   if (!shipKind) return 0;
@@ -150,6 +163,13 @@ export function chargeRangeForKind(shipKind: string | undefined): number {
   return r;
 }
 
+
+/** Classic-look rocks: ice and crystal-veined ones read apart from plain rock
+ *  (a Machined rock bakes its resource colour instead). W3: this used to be
+ *  set once at build, and the reset below wiped it every frame. */
+function classicRockTint(resource: string | undefined): number | undefined {
+  return resource === 'ice' ? 0xa8dcff : resource === 'crystal' ? 0xd2a8ff : undefined;
+}
 
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
   if (!mirror.swarm) return;
@@ -257,15 +277,14 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // sprite matches the predWorld collision body (Phase-5 desync fix).
         const parentKind = entry.shipKind, component = entry.componentIndex ?? 0;
         sprite = buildArtShipSprite(artHandle, () => buildScrapGfx(parentKind, component));
+        // A6 — wreckage starts hot (loot pods ride this channel too: they don't).
+        if (parentKind !== 'cargo-pod') scrapBorn.set(sprite, now);
       } else {
         const rockRadius = entry.radius;
         sprite = buildArtShipSprite(artHandle, () => buildAsteroidGfx(entityId, rockRadius));
         // P2c — ice and crystal-veined rocks read apart from plain rock (the
         // Machined rock bakes its resource colour instead).
-        if (!isMachinedSprite(sprite)) {
-          if (entry.asteroidResource === 'ice') sprite.tint = 0xa8dcff;
-          else if (entry.asteroidResource === 'crystal') sprite.tint = 0xd2a8ff;
-        }
+        // (Applied in the per-frame tint block below, the one tint site.)
       }
       ctx.shipContainer.addChild(sprite);
       ctx.sprites.set(spriteKey, sprite);
@@ -291,6 +310,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // A3 — don't draw structures that are off screen (static, so the bounding
     // radius is a safe margin; mount barrels are children and hide with it).
     if (entry.kind === 2) sprite.visible = isSpriteInView(sprite.x, sprite.y, entry.radius, ctx.viewBounds);
+    // W2a — an NPC on its warp run is out of the world: hidden (WarpFx draws
+    // the departure from its spool pose), like a remote pilot's ship.
+    else if (entry.kind === 1) sprite.visible = entry.warp !== 2;
     sprite.rotation = -lerped.angle;
     if (entry.kind === 1 || entry.kind === 3) updateArtShipLight(ctx.art, sprite); // ships + tumbling scrap
     if (entry.kind === 1) {
@@ -402,7 +424,11 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       // A Machined patrol has its faction paint baked in, so it stays untinted.
       const fc = entry.kind === 1 && entry.faction !== undefined && !(sprite instanceof MachinedShipSprite)
         ? npcFactionDef(entry.faction)?.color
-        : undefined;
+        : entry.kind === 0 && !isMachinedSprite(sprite)
+          ? classicRockTint(entry.asteroidResource)
+          : entry.kind === 3
+            ? scrapHeatTint(now - (scrapBorn.get(sprite) ?? -Infinity))
+            : undefined;
       sprite.tint = fc ?? 0xffffff;
     }
     // Structures plan, Phase 3 — blueprints (not yet built) render dimmed

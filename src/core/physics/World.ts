@@ -9,7 +9,12 @@ import {
 } from '../../shared-types/shipKinds.js';
 import { configureShipCollider, shipShieldColliderDesc } from './colliderConfig.js';
 import { applyShipInput, type ShipInputMultipliers } from './applyShipInput.js';
-import { newWarpState, stepWarp, WARP_ALIGN_GAIN, WARP_EXIT_SPEED, WARP_SPEED, type WarpPhase, type WarpState } from './warpDrive.js';
+import { newWarpState, stepWarp, WARP_ALIGN_GAIN, WARP_EXIT_SPEED, WARP_SPEED, WARP_SPOOL_TICKS, type WarpPhase, type WarpState } from './warpDrive.js';
+/** NPC warp-to: a bot engages only once within this of facing its target (rad). */
+const BOT_WARP_ALIGN_RAD = 0.06;
+/** NPC warp-to: the slowest a bot turns to face its jump (rad/s; 9°/s, so a
+ *  battleship comes about in ~20 s instead of 2.5 min at its 1.2°/s helm). */
+const BOT_WARP_MIN_TURN = Math.PI / 20;
 import { castHitscan } from './hitscanRay.js';
 import { wallGeometry } from '../structures/ShieldWall.js';
 import { PAD_PUSH_ACCEL, padPushDir } from '../../shared-types/teleport.js';
@@ -593,14 +598,84 @@ export class PhysicsWorld {
     this.alignToWarp(rec, rec.warp!);
   }
 
+  /**
+   * NPC warp-to (wrap-up W2a, flagship fleets): the same spool → run → drop
+   * machine as a pilot's (`stepWarp`), driven by a held target instead of the
+   * input stream. Server worker only: drones are snapshot-interpolated on the
+   * client, never predicted. `target` null drops the request (cancels a
+   * spool; a run can't be cancelled).
+   *
+   * Returns true while the warp owns the body this tick (spooling, running or
+   * dropping): the caller skips the AI's impulse. While spooling the ship
+   * holds still and turns to face its target.
+   */
+  botWarp(id: string, target: { x: number; y: number } | null): boolean {
+    const rec = this.bodies.get(id);
+    if (!rec) return false;
+    if (target === null && rec.warp === undefined) return false;
+    rec.warp ??= newWarpState();
+    const body = rec.body;
+    const t = body.translation();
+    const w = rec.warp;
+    // A slow-turning ship (a capital) keeps spooling until it faces its
+    // target: engaging early snapped the hull round in one frame (first fleet
+    // film). This is what makes a capital's spool the long one.
+    if (target !== null && w.phase === 'spool' && w.ticks >= WARP_SPOOL_TICKS - 1) {
+      const want = Math.atan2(-(target.x - t.x), target.y - t.y);
+      const d = Math.atan2(Math.sin(want - body.rotation()), Math.cos(want - body.rotation()));
+      if (Math.abs(d) > BOT_WARP_ALIGN_RAD) {
+        w.tx = target.x; w.ty = target.y;
+        const v = body.linvel(); // TODO: alloc-debt (Rapier returns a fresh vector)
+        this.setBotVel(body, v.x * 0.9, v.y * 0.9);
+        this.alignToWarp(rec, w, BOT_WARP_MIN_TURN);
+        return true;
+      }
+    }
+    const act = stepWarp(w, target, t.x, t.y, 1 / 60);
+    if (act === 'engage') {
+      body.setRotation(Math.atan2(-w.dx, w.dy), true);
+      body.setAngvel(0, true);
+      this.setBotVel(body, w.dx * WARP_SPEED, w.dy * WARP_SPEED);
+      this.setCollidersEnabled(rec, false);
+      return true;
+    }
+    if (act === 'cruise') {
+      body.setAngvel(0, true);
+      this.setBotVel(body, w.dx * WARP_SPEED, w.dy * WARP_SPEED);
+      return true;
+    }
+    if (act === 'drop') {
+      this._botVec.x = w.tx; this._botVec.y = w.ty;
+      body.setTranslation(this._botVec, true);
+      this.setBotVel(body, w.dx * WARP_EXIT_SPEED, w.dy * WARP_EXIT_SPEED);
+      this.setCollidersEnabled(rec, true);
+      return true;
+    }
+    if (w.phase === 'spool') {
+      // Hold position and face the target (a capital turns slowly: its own
+      // turn rate caps the align, so a long spool is part of the look).
+      const v = body.linvel(); // TODO: alloc-debt (Rapier returns a fresh vector)
+      this.setBotVel(body, v.x * 0.9, v.y * 0.9);
+      this.alignToWarp(rec, w, BOT_WARP_MIN_TURN);
+      return true;
+    }
+    return false;
+  }
+
+  private readonly _botVec = { x: 0, y: 0 };
+  private setBotVel(body: RAPIER.RigidBody, vx: number, vy: number): void {
+    this._botVec.x = vx; this._botVec.y = vy;
+    body.setLinvel(this._botVec, true);
+  }
+
   /** Turn toward the warp target at up to the ship's turn rate. */
-  private alignToWarp(rec: ShipBody, w: WarpState): void {
+  private alignToWarp(rec: ShipBody, w: WarpState, minRate = 0): void {
     const body = rec.body;
     const t = body.translation();
     const want = Math.atan2(-(w.tx - t.x), w.ty - t.y);
     let d = want - body.rotation();
     d = Math.atan2(Math.sin(d), Math.cos(d));
-    const cap = rec.kind.maxAngvel * (rec.statMul !== undefined && rec.statMul.turnRate > 0 ? rec.statMul.turnRate : 1);
+    const cap = Math.max(minRate, rec.kind.maxAngvel * (rec.statMul !== undefined && rec.statMul.turnRate > 0 ? rec.statMul.turnRate : 1));
     // Proportional: full rate when far off, easing in over the last few degrees.
     const rate = d * WARP_ALIGN_GAIN;
     body.setAngvel(rate > cap ? cap : rate < -cap ? -cap : rate, true);

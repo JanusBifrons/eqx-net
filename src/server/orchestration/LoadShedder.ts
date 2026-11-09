@@ -14,6 +14,7 @@
  */
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { isEventId } from '../../shared-types/worldEvents.js';
+import { FLAGSHIP_BOT_ID_PREFIX } from '../livingworld/directorBotIds.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { Bus } from '../../core/events/Bus.js';
 import { OVER_BUDGET_MS, TIDI_FLOOR } from '../../core/clock/SimulationClock.js';
@@ -61,7 +62,8 @@ export class LoadShedder {
       // silently evicted — that would destroy value / break a world state machine.
       // P4a/P4b — elites and world-event NPCs are never shed (a quiet shed has
       // no ENTITY_DESTROYED, so their director would never learn they left).
-      if (getShipKind(rec.shipKind).shedImmune || rec.elite !== undefined || isEventId(rec.id)) continue;
+      // W2a — a flagship fleet's escorts too (the flagship itself is an elite).
+      if (getShipKind(rec.shipKind).shedImmune || rec.elite !== undefined || isEventId(rec.id) || rec.id.startsWith(FLAGSHIP_BOT_ID_PREFIX)) continue;
       const pos = this.deps.getPosition(rec);
       let best = Infinity;
       for (const p of players) {

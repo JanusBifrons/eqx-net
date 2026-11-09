@@ -225,6 +225,8 @@ export function anchorRemoteSwarmBodies(
 const chargingIds = new Set<number>();
 /** Entity ids named as elites by the previous snapshot (reused — #14). */
 const eliteIds = new Set<number>();
+/** Entity ids warping per the previous snapshot (reused — #14). */
+const warpIds = new Set<number>();
 
 export function applyDroneMountAngles(
   snap: SnapshotMessage,
@@ -254,6 +256,14 @@ export function applyDroneMountAngles(
     }
     eliteIds.clear();
   }
+  // W2a — an NPC warp phase clears on absence (the server omits idle drones).
+  if (warpIds.size > 0) {
+    for (const id of warpIds) {
+      const sw = mirror.swarm?.get(id);
+      if (sw) sw.warp = undefined;
+    }
+    warpIds.clear();
+  }
   if (!snap.drones || snap.drones.length === 0) return;
   for (const d of snap.drones) {
     if (d.hostile === true && onHostile) onHostile(d.id);
@@ -266,6 +276,10 @@ export function applyDroneMountAngles(
     if (d.elite !== undefined) {
       sw.eliteName = d.elite;
       eliteIds.add(d.id);
+    }
+    if (d.warp !== undefined) {
+      sw.warp = d.warp;
+      warpIds.add(d.id);
     }
     // v4 M2 — a patrol ship's faction never changes, so it is kept once seen.
     if (d.fac !== undefined) sw.faction = d.fac;

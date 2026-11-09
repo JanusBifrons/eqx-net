@@ -133,7 +133,7 @@ const MIN_SNAPSHOTS = 40;
  * scenario tune the relative/absolute margins of EXISTING gated metrics
  * without changing the gated SET (the set stays locked by the unit test).
  * A scenario with a heavier or lighter workload than `core` (e.g. a
- * structures-load or scrap-load room) may legitimately sit at a different
+ * heavier perf room) may legitimately sit at a different
  * steady-state for a metric; the override merges over `NET_HEALTH_BUDGET`
  * per-metric. Absent ⇒ the default `core` budget (back-compatible — the
  * 2-arg call is unchanged).

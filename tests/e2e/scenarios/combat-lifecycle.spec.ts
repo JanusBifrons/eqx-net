@@ -24,7 +24,6 @@ import {
   getObstaclePositions,
   getBeamActive,
   waitForDeath,
-  waitForRespawn,
   waitForInPlay,
 } from '../helpers/gameScenario.js';
 
@@ -118,68 +117,40 @@ test('P1 destroys P2: hull reaches 0, SHIP DESTROYED alert fires', async ({ brow
 });
 
 // ---------------------------------------------------------------------------
-// D. Full lifecycle: death → respawn → hull restored → back at initial position
+// D. A real server kill drops the victim into spectator, with no death modal
 // ---------------------------------------------------------------------------
-// fixme: respawn flow refactored. The DeathOverlay Respawn button now
-// calls `setPhase('galaxy-map')` (App.tsx:167) — the player has to pick
-// a new sector + ship from the post-death galaxy-map screen rather than
-// respawning in-place. The "respawn at initial position" assertion this
-// test was built for is no longer a meaningful contract: a new spawn
-// after death is a fresh sector pick + URL re-entry, not a return to
-// the prior spawnX/spawnY. The death-side coverage (hull -> 0, SHIP
-// DESTROYED alert, dead ship cannot fire) is locked by :65 just above;
-// the new respawn-via-galaxy-map flow needs its own spec when the
-// repair queue gets to it.
-// (e2e-rebuild Phase 5 repair queue, 2026-05-20.)
-test.fixme('full lifecycle: P2 dies, respawns at initial position with full hull', async ({ browser }) => {
-  // P2 spawns with 10 HP + 0 shield (testMode-only override) so one beam
-  // tick kills — we're testing the death -> respawn lifecycle, not the
-  // time-to-kill mechanics. P1 spawns at full HP so it survives.
-  //
-  // initialHull = 10 (not 1) because `data-hull-pct` is a percent against
-  // the kind's maxHealth (750 post-slow-down) — hull=1 rounds to 0 % at
-  // spawn, which would make waitForDeath return immediately before P1
-  // even fires. hull=10 reports ~1 % which is non-zero, and one 20-dmg
-  // hitscan tick still drops it to 0.
+// Replaces the old test.fixme 'P2 dies, respawns at initial position': there is
+// no Respawn button any more. Since Equinox WS-A1 a dead pilot goes straight to
+// spectator mode (free camera; re-entry via the galaxy map or the Pilot
+// action). spectator-mode.spec.ts fakes the death client-side
+// (__eqxKillLocalShip); this drives the real path: a server kill → the
+// destroy message → spectator, on the victim's own client.
+test('full lifecycle: P2 is killed by P1 and drops into spectator, no death modal', async ({ browser }) => {
+  test.setTimeout(60_000); // two cold browser joins (infrastructure); the kill itself is one tick
+  // initialHull 10 (not 1): data-hull-pct is a percent of maxHealth, so 1 HP
+  // reads 0 % at spawn and waitForDeath would return before P1 fires.
   const testId = randomUUID();
   const [p1, p2] = await Promise.all([
     launchTestClient(browser, { spawnX: 0, spawnY: -200, testId }),
     launchTestClient(browser, { spawnX: 0, spawnY: 200, initialHull: 10, initialShield: 0, testId }),
   ]);
   try {
-    await Promise.all([p1.page.waitForTimeout(1000), p2.page.waitForTimeout(1000)]);
-
-    // Kill P2. waitForDeath default 10 s budget is fine for a 1 HP target.
+    // A ship is targetable only once its loading curtain lifts.
+    await Promise.all([waitForInPlay(p1.page), waitForInPlay(p2.page)]);
+    expect(await p2.page.locator('[data-testid="game-surface"]').getAttribute('data-pilot-mode')).toBe('pilot');
     await p1.page.keyboard.down('Space');
     await waitForDeath(p2.page, 10_000);
     await p1.page.keyboard.up('Space');
-
     expect(await getHullPct(p2.page)).toBe(0);
 
-    // P2 clicks Respawn.
-    await p2.page.getByRole('button', { name: /respawn/i }).click();
-    await waitForRespawn(p2.page, 10_000);
-
-    // Hull is restored.
-    expect(await getHullPct(p2.page)).toBe(100);
-
-    // Alert clears after respawn.
     await p2.page.waitForFunction(
-      () => {
-        const alert = document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-sector-alert') ?? '';
-        return alert === '' || alert === 'null';
-      }, undefined,
-      { timeout: 2_000 },
+      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator', undefined,
+      { timeout: 5_000 },
     );
-
-    // Respawn position is deterministic (within ±10 units of initial spawn).
-    await p2.page.waitForTimeout(300);
-    const rx = await getShipX(p2.page);
-    const ry = await getShipY(p2.page);
-    expect(Math.abs(rx - 0)).toBeLessThan(10);
-    expect(Math.abs(ry - 200)).toBeLessThan(10);
-
-    console.log(`\nFull lifecycle: respawn at x=${rx.toFixed(1)}, y=${ry.toFixed(1)}, hull=100 ✓\n`);
+    // No blocking modal: the old DeathOverlay and its Respawn button are gone.
+    await expect(p2.page.getByRole('button', { name: /respawn/i })).toHaveCount(0);
+    // The shooter keeps flying.
+    expect(await p1.page.locator('[data-testid="game-surface"]').getAttribute('data-pilot-mode')).toBe('pilot');
   } finally {
     await Promise.all([p1.ctx.close(), p2.ctx.close()]);
   }

@@ -11,7 +11,7 @@ import { warpOnlooker, warpArrival } from './shots/warpOnlooker.js';
 import { sectorTravel } from './shots/sectorTravel.js';
 import { joinSector } from './shots/joinSector.js';
 import { shipGallery } from './shots/shipGallery.js';
-import { capitalLineup, capitalBroadside, capitalFlyby, capitalPilot, capitalEngines, capitalTurrets, capitalGunsFighter, capitalGunsBystander } from './shots/capitals.js';
+import { capitalFleetWarp, capitalFleetArrive, capitalLineup, capitalBroadside, capitalFlyby, capitalPilot, capitalEngines, capitalTurrets, capitalGunsFighter, capitalGunsBystander, gpuLitShips } from './shots/capitals.js';
 import { machinedArt } from './shots/machinedArt.js';
 import { newEffects } from './shots/newEffects.js';
 import { crossingSector } from './shots/crossingSector.js';
@@ -57,10 +57,13 @@ export const SHOTS: readonly Shot[] = [
   shipGallery,
   capitalLineup,
   capitalBroadside,
+  capitalFleetWarp,
+  capitalFleetArrive,
   capitalFlyby,
   capitalPilot,
   capitalEngines,
   capitalTurrets,
+  gpuLitShips,
   capitalGunsFighter,
   capitalGunsBystander,
   machinedArt,
@@ -155,7 +158,6 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 
 /** Docs whose feature exists but cannot be staged on main yet — with what unblocks it. */
 export const SHOWCASE_PENDING: Record<string, string> = {
-  'gpu-lit-ships': 'R&D behind ?shiplight=gpu: filmed by running existing shots with EQX_SHOWCASE_PARAMS=shiplight=gpu (capital-turrets, a base fight); a dedicated shot lands with the rollout.',
   'ship-scale': 'R&D: the 1×/2×A/2×B comparison clips are filmed by running existing shots at EQX_SHIP_SCALE; a dedicated shot lands with the rollout.',
   allegiances: 'AI-vs-AI sides fight in the living galaxy but not on cue; needs a staged two-faction room.',
   factions:

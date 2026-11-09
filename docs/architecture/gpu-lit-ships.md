@@ -80,6 +80,27 @@ Notes:
 
 **Result:** not yet run. Record each verdict here with its ledger file name.
 
+## Memory (wrap-up W3, 2026-11-09)
+
+The phone-proxy A/B read GPU lighting as **+33 % heap**. That reading was taken without a garbage collection, so it counts uncollected garbage (the same trap as the galaxy soak, LESSONS 2026-11-08). Measured properly, with fleet-fight, desktop Chrome, a forced collection (CDP `HeapProfiler.collectGarbage`) and a 20 s sampling profile:
+
+| | GPU lighting | Baked |
+|---|---|---|
+| Live heap after collection | 45.1 MB | 43.3 MB |
+| Everything allocated in 20 s (collected included) | 76.8 MB | 65.3 MB |
+
+- **Retained memory:** +4 %. No growth to fix.
+- **Garbage:** GPU lighting allocates about 18 % more (+0.6 MB/s), mostly in Pixi's per-mesh uniform update (`uni.update()`, once per lit mesh per frame). Our own lighting code (`fillScene`, `strongestLightsInto`, `addLight`) writes only into typed arrays and caches.
+- **If GC pauses ever show on a phone:** update a mesh's uniforms only when its lighting changed.
+- **The data atlas pages' CPU copies** (16 MB per 2048² page) live outside the JS heap. Freeing them is the parked atlas-release idea in `docs/SHELF.md`; it needs a context-loss path that re-packs from the bake cache.
+
 ## Status and next steps
 
 Plan `prancy-squishing-donut`, R2 (branch `rnd/gpu-lit-ingame`). Open: R3 batcher, phone measurement, per-device presets in Settings, the gunhouse recoiling with its barrels (one sprite, same in baked art).
+
+**Showcase review findings (2026-11-09, `gpu-lit-ships` shot, `capital-guns-fighter` take with `shiplight=high`).** The clip is not published until these are fixed:
+- A muzzle flash's light lasts only 1–2 frames: it follows the flash sprite, which is that brief. A short decay after the sprite ends would let the light read.
+- The 5-inch turrets' flashes cast no visible light on the deck.
+- A thin dark rod sticks out behind each 5-inch turret, opposite its barrels.
+- Far shell streaks run nearly vertical while the barrels that fired them point south-east.
+- Framing: the follow camera keeps the hull near the left edge, and the caption covers the stern.
