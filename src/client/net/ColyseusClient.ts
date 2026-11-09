@@ -5898,7 +5898,7 @@ export class ColyseusGameClient {
   /** This pilot locks targets; its weapon groups fire only at locks. */
   private readonly _fireControl = isFireControlHud();
   /** The own-ship snapshot's groups (server truth; replaced each snapshot). */
-  private _fcGroups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number }> }> = [];
+  private _fcGroups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number; c?: number }> }> = [];
   /** Hash of the HUD-visible group summary; the store is written on change only. */
   private _fcSummarySig = -1;
   /** Group the pilot is holding to fire (manual mode), or null. */
@@ -6125,7 +6125,7 @@ export class ColyseusGameClient {
   }
 
   /** Apply the own-ship snapshot's groups (#16). Store write only on change. */
-  private applyFcGroups(groups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number; r?: number }> }> | undefined): void {
+  private applyFcGroups(groups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number; r?: number; c?: number }> }> | undefined): void {
     this._fcGroups = groups ?? [];
     this.mirror.localGroups = this._fcGroups;
     // Cheap change signature over ids / modes / lock targets / stages.
@@ -6134,7 +6134,7 @@ export class ColyseusGameClient {
       sig = (sig * 31 + g.m + 7) | 0;
       for (let i = 0; i < g.id.length; i++) sig = (sig * 31 + g.id.charCodeAt(i)) | 0;
       for (const l of g.l) {
-        sig = (sig * 31 + l.s + 3) | 0;
+        sig = (sig * 31 + l.s + 3 + (l.c === 1 ? 11 : 0)) | 0;
         for (let i = 0; i < l.t.length; i++) sig = (sig * 31 + l.t.charCodeAt(i)) | 0;
       }
     }
@@ -6149,7 +6149,7 @@ export class ColyseusGameClient {
         mode: g.m === 1 ? 'manual' : 'auto',
         colour: info?.colour ?? 0,
         capacity: info?.capacity ?? 1,
-        locks: g.l.map((l) => ({ target: l.t, stage: l.s })),
+        locks: g.l.map((l) => (l.c === 1 ? { target: l.t, stage: l.s, blocked: true } : { target: l.t, stage: l.s })),
       };
     });
     const st = useUIStore.getState();

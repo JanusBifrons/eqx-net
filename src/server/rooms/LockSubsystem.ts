@@ -54,7 +54,8 @@ export type GroupMode = 'auto' | 'manual';
 
 /** Wire shape of one group in the own-ship snapshot (`states[].groups`).
  *  `r: 1` = released (draining back to 0); absent otherwise. */
-export interface WireLock { t: string; s: number; p: number; r?: 1 }
+/** `r`: released (draining). `c`: can't lock right now (out of reach / untrackable); the HUD shows OUT OF RANGE. */
+export interface WireLock { t: string; s: number; p: number; r?: 1; c?: 1 }
 export interface WireGroup { id: string; m: 0 | 1; l: WireLock[] }
 
 interface GroupState {
@@ -405,6 +406,8 @@ export class LockSubsystem {
     w.p = Math.round(Math.max(0, Math.min(1, e.progress)) * 100);
     if (e.track === LOCK_TRACK.released && e.stage !== 'locked') w.r = 1;
     else if (w.r !== undefined) delete w.r;
+    if (e.lostFor > 0) w.c = 1;
+    else if (w.c !== undefined) delete w.c;
   }
 
   /** Re-shape a group's wire list to match its locks (only on add/remove). */

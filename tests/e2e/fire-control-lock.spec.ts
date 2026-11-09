@@ -35,7 +35,16 @@ async function toManualAndClear(page: Page): Promise<void> {
   await expect(chip(page)).toHaveAttribute('data-acquiring', '0');
 }
 
+// boot() allows the cold join (Vite compile + Colyseus join + first snapshot, on
+// SwiftShader with worker=0 for some cases) up to 30 s, which on a cold CI runner
+// used the whole default 30 s test budget before LOCK was ever pressed (#380 CI:
+// "Test timeout of 30000ms exceeded" inside toManualAndClear). That is
+// infrastructure cost, not game time, so the budget covers it (root CLAUDE.md
+// "Test-harness philosophy").
+const FC_TEST_TIMEOUT_MS = 60_000;
+
 test.describe('fire control — target locking (ui=d)', () => {
+  test.describe.configure({ timeout: FC_TEST_TIMEOUT_MS });
   test('desktop: MAN + LMB held on the drone locks it', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
     const page = await ctx.newPage();
@@ -132,6 +141,7 @@ test.describe('fire control — target locking (ui=d)', () => {
 });
 
 test.describe('fire control — locks go both ways (fc-duel 1v3)', () => {
+  test.describe.configure({ timeout: FC_TEST_TIMEOUT_MS });
   test('flying in: the HUD names who is locking you, and your own lock shows its progress', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true });
     const page = await ctx.newPage();
