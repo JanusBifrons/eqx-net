@@ -474,40 +474,10 @@ gameServer.define('feel-test-25', SectorRoom, {
   defaultSpawnY: 0,
   maxClients: 4,
 });
-// 2026-06-15 (plan: misty-teapot) — netgate PERF scenario `structures-load`.
-// feel-test-25's 25-drone combat churn PLUS a pre-built, powered structure
-// grid (Capital + connectors + solars + miner@asteroid + turret) on a fast
-// 100 ms grid pulse: a "base under attack" workload that exercises the
-// `structures[]` snapshot slice, the grid pulse, the power aggregation, and
-// the turret-fire path the pure-drone feel-test-25 never touches. The grid
-// sits at origin with the drone ring; the player spawns at (700,0) — clear of
-// the structures but at the edge of the pack — and joins with `?startHostile=1`
-// so the player auto-fires and the drones engage (the turret picks the nearest
-// drone). PRINT-ONLY in the netgate until characterised (see
-// tests/netgate/scenarios.ts header — the local-player metrics only move if
-// this load actually stresses the server tick/broadcast budget).
-gameServer.define('feel-test-structures', SectorRoom, {
-  testMode: true,
-  asteroidConfig: [],
-  swarmCount: 25,
-  swarmRatio: 0,
-  swarmRadius: 500,
-  structureGridPulseMs: 100,
-  // Phase V footprints — the shared powered scenario grid (see scenarioLayouts.ts).
-  prebuiltStructures: [...STRUCTURE_SCENARIO_PREBUILT],
-  scenarioAsteroids: [{ ...SCENARIO.asteroid }],
-  defaultSpawnX: 900, // clear of the origin grid; within the drone pack + interest
-  defaultSpawnY: 0,
-  maxClients: 4,
-});
-// 2026-06-15 (plan: misty-teapot) — netgate PERF scenario `scrap-load`. Six
-// hull-exposed `havok` COMPOSITE drones ringed close to the player spawn; with
-// `?startHostile=1` the player auto-fires and each kill breaks into one
-// SWARM_KIND_SCRAP (kind 3) entity per component — the binary-wire v4 scrap
-// path (parentShipKind + componentIndex byte) that feel-test-25's polygon
-// drones never produce. hull-exposed ⇒ shield down ⇒ fast death ⇒ a scrap
-// burst inside the 8 s window. PRINT-ONLY until characterised (a steady
-// `scenarioScrap` pre-seed is the promotion follow-up — see scenarios.ts).
+// Six hull-exposed `havok` COMPOSITE drones ringed close to the player spawn;
+// with `?startHostile=1` the player auto-fires and each kill breaks into one
+// scrap entity per component. Was the netgate `scrap-load` scenario (removed in
+// wrap-up W4); still used by the scrap showcase shot.
 gameServer.define('feel-test-scrap', SectorRoom, {
   testMode: true,
   asteroidConfig: [],
@@ -524,9 +494,8 @@ gameServer.define('feel-test-scrap', SectorRoom, {
   maxClients: 4,
 });
 // Phase-1 issue 5 (2026-06-18) — scrap-collision reproduction. Pre-seeds 50
-// free-floating SCRAP pieces in a dense corridor AHEAD of spawn (the promotion
-// follow-up the feel-test-scrap comment names: a steady `scenarioScrap` seed
-// instead of death-timing-dependent drone kills). The E2E flies the player
+// free-floating SCRAP pieces in a dense corridor AHEAD of spawn (a steady `scenarioScrap` seed
+// instead of death-timing-dependent drone kills (cf. feel-test-scrap)). The E2E flies the player
 // straight through to measure prediction corrections/drift through a scrap
 // cascade. testMode-true + filterBy(testId) for isolation. Drives
 // `tests/e2e/scrap-collision-stress.spec.ts`.
