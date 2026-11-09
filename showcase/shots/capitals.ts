@@ -488,17 +488,17 @@ export const capitalFleetWarp: Shot = {
   server: 'capitals',
   target: { room: 'showcase-fleet-warp', params: { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
   hud: 'none',
-  durationMs: 12_000,
+  durationMs: 9_000,
   async startWhen(ctx) {
     await artSettled(ctx);
   },
   // A HELD camera: 'frame all' followed the fleet to its arrival point,
   // where the formation looks the same, so the jump didn't read (first take).
-  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 0, y: Math.round(getShipKind('battleship-b').radius * 0.3), zoom: 0.15 } }],
+  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 0, y: 0, zoom: 0.15 } }],
   async run(ctx) {
-    await ctx.sleep(1200);
+    await ctx.sleep(1000);
     await sendRoom(ctx, 'test_fleet_warp', { type: 'test_fleet_warp', x: -45_000, y: 0 });
-    await ctx.sleep(10_500);
+    await ctx.sleep(7_800);
   },
 };
 
@@ -515,11 +515,10 @@ export const capitalFleetArrive: Shot = {
   // The pilot waits 45 km west, south of where the flagship will land.
   target: { room: 'showcase-fleet-warp', params: { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1, spawnX: -45_000, spawnY: -Math.round(getShipKind('battleship-b').radius * 2.2) } },
   hud: 'none',
-  durationMs: 12_000,
-  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: -45_000, y: Math.round(getShipKind('battleship-b').radius * 0.3), zoom: 0.15 } }],
+  durationMs: 10_000,
+  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: -45_000, y: 0, zoom: 0.15 } }],
   async run(ctx) {
-    await ctx.sleep(1500);
     await sendRoom(ctx, 'test_fleet_warp', { type: 'test_fleet_warp', x: -45_000, y: 0 });
-    await ctx.sleep(10_000);
+    await ctx.sleep(9_600);
   },
 };

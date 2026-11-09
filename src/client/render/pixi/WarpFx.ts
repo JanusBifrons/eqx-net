@@ -65,13 +65,42 @@ export function warpFxSizes(stern: number): WarpFxSizes {
     gapK: 0.4 - 0.37 * big,
     coreK: 0.06 - 0.052 * big,
     outK: 0.2 - 0.18 * big,
-    streakK: 0.8 - 0.77 * big,
+    streakK: 0.8 - 0.785 * big,
     flashK: 1 - 0.65 * big,
   };
 }
 
-/** A soft round glow, built once and scaled (centre at 0,0, radius 1). */
-function glowGfx(color: number): Graphics {
+/** A smooth radial falloff (white → clear), radius GLOW_R, built once on a
+ *  canvas; null where there is no canvas (unit tests). Stacked rings showed
+ *  as stepped bands at capital size (fleet film review). */
+let glowTex: Texture | null | undefined;
+function glowTexture(): Texture | null {
+  if (glowTex !== undefined) return glowTex;
+  glowTex = null;
+  const C = (globalThis as { OffscreenCanvas?: new (w: number, h: number) => OffscreenCanvas }).OffscreenCanvas;
+  if (!C) return null;
+  const cv = new C(GLOW_R * 2, GLOW_R * 2);
+  const ctx = cv.getContext('2d');
+  if (!ctx) return null;
+  const grad = ctx.createRadialGradient(GLOW_R, GLOW_R, 0, GLOW_R, GLOW_R, GLOW_R);
+  // The old 14-ring stack's profile (alpha ≈ 0.98 · (1 − r)), smoothed.
+  for (let i = 0; i <= 16; i++) { const t = i / 16; grad.addColorStop(t, `rgba(255,255,255,${(0.98 * (1 - t) ** 1.15).toFixed(3)})`); }
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, GLOW_R * 2, GLOW_R * 2);
+  glowTex = Texture.from(cv as unknown as HTMLCanvasElement);
+  return glowTex;
+}
+
+/** A soft round glow, built once and scaled (centre at 0,0, radius GLOW_R). */
+function glowGfx(color: number): Container {
+  const tex = glowTexture();
+  if (tex) {
+    const sp = new Sprite(tex);
+    sp.anchor.set(0.5);
+    sp.tint = color;
+    sp.blendMode = 'add';
+    return sp;
+  }
   const g = new Graphics();
   // 14 fine rings (same total as the old 7 at 0.14): at capital size the
   // coarse rings showed as hard bands.
@@ -115,7 +144,7 @@ interface Burst {
   root: Container;
   /** [side * SEGS + seg]: two trails, SEGS pieces each. */
   core: Sprite[]; out: Sprite[];
-  streak: Sprite; flash: Graphics;
+  streak: Sprite; flash: Container;
   live: boolean;
   /** The pilot's own departure: its trails only reach as far as the ship has
    *  flown (it accelerates away behind them, never past them). */
@@ -337,7 +366,8 @@ export class WarpFx {
     }
     const ft = Math.min(1, t / FLASH_LIFE_S);
     // The arrival flash is the only sign of a ship dropping in: a touch bigger and brighter.
-    const fa = depart ? 0.6 : 0.9, fr = depart ? 1 : 1.4;
+    // (Not bigger for a capital: its arrival flash spilled across the frame.)
+    const fa = depart ? 0.6 : 0.9, fr = depart || sz.flashK < 0.9 ? 1 : 1.4;
     place(b.flash, b.x, b.y, Math.max(b.stern * sz.flashK * (1 + 2 * ft), px * (6 + 12 * ft)) * fr, fa * (1 - ft));
     return true;
   }
@@ -379,7 +409,7 @@ export function speedLineLane(i: number, pass: number): { lat: number; len: numb
 
 /** Fire flicker, 0.64..1. */
 function flick(t: number, k: number): number { return 0.82 + 0.18 * Math.sin(t * 37 + k) * Math.sin(t * 23 + k * 2.3); }
-function place(g: Graphics, x: number, y: number, r: number, alpha: number): void {
+function place(g: Container, x: number, y: number, r: number, alpha: number): void {
   g.visible = alpha > 0.01;
   g.x = x; g.y = y;
   g.scale.set(r / GLOW_R);
