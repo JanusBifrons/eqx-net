@@ -85,8 +85,8 @@ extended: `Keyboard` + `TouchInput` are `setEnabled(false)` when
 `isLoadingActive || spectating`. With input disabled, WASD/Space produce no
 thrust/fire intent, while the canvas pointer/wheel path (untouched by the gate)
 keeps panning/zooming the camera — so the same surface becomes "pan/zoom only."
-The held thumb cluster (`MobileControls`) and the `AutoFireToggleButton` also
-hide while spectating.
+The touch controls (move stick, weapon strip, boost) also hide while
+spectating (`GameHud` renders them only while `flying`).
 
 ## Construction without an active ship (D4)
 
@@ -114,7 +114,7 @@ never requires an active ship to place**. The only ship-coupling was client-side
 | Death → spectator guard | `src/client/spectator/spectatorMode.ts` |
 | Death transition + reset | `src/client/net/ColyseusClient.ts` (`killEntity`, `dispose`, `devKillLocalShip`) |
 | Free-roam camera | `IRenderer.setSpectator`, `PixiRenderer.setSpectator` + the `update()` follow gate, `WorkerRendererClient` + `SET_SPECTATOR` protocol |
-| Input swap | `src/client/App.tsx` (input-gate + `setSpectator` effects), `AutoFireToggleButton`, `MobileControls` |
+| Input swap | `src/client/App.tsx` (input-gate + `setSpectator` effects), `src/client/hud/GameHud.tsx` (`flying` gate) |
 | Speed-dial toggle | `src/client/components/SpeedDialMenu.tsx` (`data-testid="spectator-toggle"`, gated `phase==='game'`) |
 | Spectator placement | `ColyseusClient.updateMirror` spectator block + `shouldCentreGhostOnActivate(..., spectator)` |
 | Server (no change needed) | `RespawnHandler.ts` (doc only — no longer on the death path) |

@@ -3002,8 +3002,6 @@ export class SectorRoom extends Room<SectorState> {
       isDisabled: (playerId) => this.gateGuard.isDisabled(playerId, Date.now()),
       onWarpRequest: (playerId, x, y) => this.warpTravel.noteRequest(playerId, x, y),
       validWarpPoint: (x, y) => this.sectorKey !== null && isWarpDropPoint(this.sectorKey, x, y, this.solar),
-      // No `setPlayerAim`: lock-to-fire retired manual aim (turrets aim at
-      // their group's lock); a stray `aim` field is accepted and ignored.
       logger,
       malformed: this.malformed,
     }));

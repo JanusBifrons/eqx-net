@@ -24,11 +24,6 @@ export const InputMessageSchema = z
      *  rim in this sector (solar-system sectors); both or neither. */
     warpX: z.number().finite().optional(),
     warpY: z.number().finite().optional(),
-    /** Manual aim (exp/hud-mobile-first): the pilot's aim as a quantised world
-     *  bearing (`core/combat/manualAim.ts` `encodeAim`, 4096 steps per turn).
-     *  Present ONLY while the pilot is aiming (resent every tick while held);
-     *  absent ⇒ turrets use the auto-picked target as before. */
-    aim: z.number().int().min(0).max(4095).optional(),
   })
   .strict();
 
