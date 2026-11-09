@@ -13,7 +13,7 @@
  * still fires only when it is on its target.
  */
 import type { Shot, ShotContext } from '../types.js';
-import { allGroupsManual, lockAhead, sendRoom } from './_helpers.js';
+import { allGroupsManual, AS_PILOT, lockAhead, sendRoom, toScreen } from './_helpers.js';
 import { COASTAL_LINE, GARRISON_EXTENT } from '../../src/server/rooms/showcaseRooms.js';
 
 const PARAMS = { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } as const;
@@ -260,5 +260,51 @@ export const garrisonDefences: Shot = {
     await lockAhead(ctx);
     await ctx.hold(['Space'], 2500);
     await ctx.sleep(7000);
+  },
+};
+
+/**
+ * #397: placing a casemate shows its firing arc. The 16" barbette's ghost
+ * draws a faint wedge out to its 5,380 u reach; R turns the ghost (and the
+ * wedge) a quarter turn at a time. Nothing is placed.
+ */
+const ARC_CAM = { x: 200, y: 150, zoom: 0.17 };
+export const coastalArcGhost: Shot = {
+  id: 'coastal-arc-ghost',
+  section: 'mechanics',
+  title: 'Firing arc while placing',
+  caption: 'Placing a 16-inch barbette shows where it can shoot; R turns the ghost and its arc.',
+  features: ['COAST'],
+  docs: ['coastal-defences'],
+  reel: false,
+  server: 'lean',
+  ...AS_PILOT,
+  target: { room: 'showcase-base' },
+  hud: 'clean',
+  durationMs: 12_000,
+  async run(ctx) {
+    const { page } = ctx;
+    const k = ctx.viewport.width / 1920;
+    await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: ARC_CAM.x, y: ARC_CAM.y, zoom: ARC_CAM.zoom * k } }]);
+    const at = (x: number, y: number): { x: number; y: number } => toScreen(x, y, ARC_CAM.x, ARC_CAM.y, ARC_CAM.zoom * k, ctx.viewport);
+    const a = at(-600, -1200);
+    await page.mouse.move(a.x, a.y);
+    await ctx.sleep(500);
+    // Straight into placement (the Build menu lists coastal kinds only once a
+    // packed one is owned); the ghost and its wedge are the same either way.
+    await page.evaluate(() => {
+      const s = (window as unknown as { __eqxStore?: { getState: () => { setPlacementKind: (k: string | null) => void } } }).__eqxStore;
+      s?.getState().setPlacementKind('coastal_barbette_16in');
+    });
+    await ctx.sleep(1500);
+    const b = at(200, -1600);
+    await page.mouse.move(b.x, b.y, { steps: 40 });
+    await ctx.sleep(1200);
+    for (let i = 0; i < 4; i++) {
+      await page.keyboard.press('r');
+      await ctx.sleep(1600);
+    }
+    await page.keyboard.press('Escape');
+    await ctx.sleep(600);
   },
 };

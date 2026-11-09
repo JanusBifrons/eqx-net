@@ -25,7 +25,7 @@ import { scrap } from './shots/scrap.js';
 import { buildBase } from './shots/buildBase.js';
 import { gridAlive } from './shots/gridAlive.js';
 import { defence } from './shots/defence.js';
-import { coastalCatalogue, coastalAa, coastalDuel, coastalSuperGuns, garrisonDefences } from './shots/coastalDefences.js';
+import { coastalCatalogue, coastalAa, coastalDuel, coastalSuperGuns, garrisonDefences, coastalArcGhost } from './shots/coastalDefences.js';
 import { waveAttack } from './shots/waveAttack.js';
 import { levelUp } from './shots/levelUp.js';
 import { spectator } from './shots/spectator.js';
@@ -95,6 +95,7 @@ export const SHOTS: readonly Shot[] = [
   coastalAa,
   coastalDuel,
   coastalSuperGuns,
+  coastalArcGhost,
   garrisonDefences,
   shieldGates,
   waveAttack,
