@@ -8,6 +8,12 @@
  * turrets only looked 250 u from the hull's centre (a battleship could never
  * engage anything outside its own hull), capitals carried the fighter bolt and
  * autocannon, and every mount fired along the hull's aim.
+ *
+ * Lock-to-fire (PR 1d slice 2): a turret fires only with the battleship's
+ * completed lock on its pilot, and by the shared lock rules a 16" gun can never
+ * lock a fighter-sized hull (no playable hull is big enough). The pilot joins
+ * with the testMode `instantLock` trigger, which also completes NPC locks on
+ * them in reach, so these tests keep measuring the main battery itself.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -35,7 +41,7 @@ describe('SectorRoom integration — capital main battery (Phase 3)', () => {
 
   it('fires 16" shells that hit a pilot 5,000 u away', { timeout: 60_000 }, async () => {
     const pid = randomUUID();
-    const cr = await harness.connectActive(pid, { initialHull: 1_000_000, initialShield: 0, startHostile: true });
+    const cr = await harness.connectActive(pid, { initialHull: 1_000_000, initialShield: 0, startHostile: true, instantLock: true });
     const hits: DamageEvent[] = [];
     cr.onMessage('damage', (e: DamageEvent) => {
       if (e.targetId === pid) hits.push(e);
@@ -50,7 +56,7 @@ describe('SectorRoom integration — capital main battery (Phase 3)', () => {
 
   it('a triple turret fires a three-shell salvo (one per barrel)', { timeout: 60_000 }, async () => {
     const pid = randomUUID();
-    const cr = await harness.connectActive(pid, { initialHull: 1_000_000, initialShield: 0, startHostile: true });
+    const cr = await harness.connectActive(pid, { initialHull: 1_000_000, initialShield: 0, startHostile: true, instantLock: true });
     let maxXl = 0;
     const owners = new Set<string>();
     cr.onMessage('snapshot', (snap: SnapshotMessage) => {
@@ -72,7 +78,7 @@ describe('SectorRoom integration — capital main battery (Phase 3)', () => {
     // must be too: the fixed 3,072 u projectile box hid them until they were
     // close, so a viewer never saw a salvo fired (review round, 2026-11-07).
     const pid = randomUUID();
-    const cr = await harness.connectActive(pid, { initialHull: 1_000_000, initialShield: 0, startHostile: true });
+    const cr = await harness.connectActive(pid, { initialHull: 1_000_000, initialShield: 0, startHostile: true, instantLock: true });
     let farthest = 0;
     cr.onMessage('snapshot', (snap: SnapshotMessage) => {
       for (const p of snap.projectiles ?? []) if (p.weaponId === 'naval_xl') farthest = Math.max(farthest, Math.abs(p.x));
@@ -87,7 +93,7 @@ describe('SectorRoom integration — capital main battery (Phase 3)', () => {
     // battleship can shoot must also SEE the turrets aim, or the guns fire
     // from barrels drawn pointing along the hull.
     const pid = randomUUID();
-    const cr = await harness.connectActive(pid, { initialHull: 1_000_000, initialShield: 0, startHostile: true });
+    const cr = await harness.connectActive(pid, { initialHull: 1_000_000, initialShield: 0, startHostile: true, instantLock: true });
     let maxTurn = 0;
     cr.onMessage('snapshot', (snap: SnapshotMessage) => {
       for (const d of snap.drones ?? []) for (const a of d.mountAngles ?? []) maxTurn = Math.max(maxTurn, Math.abs(a));
