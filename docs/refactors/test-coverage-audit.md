@@ -258,3 +258,9 @@ CI runs only the **17 smoke specs** on a PR. The **88 feature specs** run only w
 **Next decisions:**
 1. Fix or delete each row above.
 2. Decide which feature specs earn a place in per-PR CI. Without that, a feature spec protects nothing until someone runs `pnpm e2e`, which is how all of the above rotted unnoticed.
+
+## 2026-11-09: smoke flakes (wrap-up W5)
+
+- **join-art-ready** was the only smoke spec that failed CI in the last 60 runs (3 times). Cause: its 30 s budget held the join (13 s page load on a cold Vite + 5 s join) as well as the deliberate 8 s art hold, so the reveal landed just past 30 s. It now has 60 s, with the trace in the comment. Reproduced locally (30.1 s timeout), then 1/1.
+- **persistence-kill** and **combat-lifecycle** never failed on CI; they failed only on this laptop under load (two browsers, software WebGL). Both pass here now (1/1, 5/5).
+- **combat-lifecycle D**: the `test.fixme` respawn case clicked a Respawn button that no longer exists. It now locks today's contract with a real server kill: the victim drops into spectator mode with no death modal (`spectator-mode.spec.ts` only fakes the death client-side).
