@@ -5840,7 +5840,7 @@ export class SectorRoom extends Room<SectorState> {
   /** Write pool view `n` (made on first use) and return it. */
   private turretView(n: number): TurretTargetView {
     let v = this.turretViewPool[n];
-    if (!v) { v = { id: '', entityId: -1, x: 0, y: 0, vx: 0, vy: 0, cls: 'small' }; this.turretViewPool[n] = v; }
+    if (!v) { v = { id: '', entityId: -1, x: 0, y: 0, vx: 0, vy: 0, cls: 'small', signature: 1 }; this.turretViewPool[n] = v; }
     return v;
   }
 
@@ -5850,7 +5850,9 @@ export class SectorRoom extends Room<SectorState> {
     v.id = rec.id; v.entityId = rec.entityId; v.playerId = undefined;
     v.x = this.sabF32[b + SLOT_X_OFF]!; v.y = this.sabF32[b + SLOT_Y_OFF]!;
     v.vx = this.sabF32[b + SLOT_VX_OFF]!; v.vy = this.sabF32[b + SLOT_VY_OFF]!;
-    v.cls = targetClass(getShipKind(rec.shipKind));
+    const kind = getShipKind(rec.shipKind);
+    v.cls = targetClass(kind);
+    v.signature = rec.kind === 1 ? kind.radius : rec.radius;
     return v;
   }
 
@@ -5860,7 +5862,9 @@ export class SectorRoom extends Room<SectorState> {
     const v = this.turretView(n);
     v.id = playerId; v.entityId = -1; v.playerId = playerId;
     v.x = pose.x; v.y = pose.y; v.vx = pose.vx; v.vy = pose.vy;
-    v.cls = targetClass(getShipKind(this.getActiveShip(playerId)?.kind));
+    const kind = getShipKind(this.getActiveShip(playerId)?.kind);
+    v.cls = targetClass(kind);
+    v.signature = kind.radius;
     return v;
   }
 
@@ -8232,7 +8236,11 @@ export class SectorRoom extends Room<SectorState> {
     }
     // Fire control (universal): every pilot is tracked; its groups fire only
     // at LOCKED targets. `instantLock` is the testMode shortcut.
-    this.locks.enable(playerId, (this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.instantLock === true);
+    const instantLock = (this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.instantLock === true;
+    this.locks.enable(playerId, instantLock);
+    // Structure turrets lock too; an `instantLock` joiner makes this room's
+    // structure locks instant as well (room-wide, test rooms only).
+    if (instantLock) this.structureGrid.setInstantTurretLocks(true);
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a
     // sane value (e.g. a fire request resolved on this same client.send turn).
