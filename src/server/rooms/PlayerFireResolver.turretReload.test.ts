@@ -12,16 +12,16 @@ import type { Client } from 'colyseus';
  * just after a sister turret fired must not wait out a whole group reload.
  * Non-capital groups still fire as one trigger (PlayerFireResolver.groupCooldown).
  */
-function harness(): {
+function harness(kindId = 'destroyer'): {
   fire: (tick: number, shot: string) => void;
   bearing: Set<string>;
   fired: string[];
   acks: Array<{ shot: string; rejected: boolean }>;
   ship: ShipState;
 } {
-  const kind = getShipKind('destroyer');
+  const kind = getShipKind(kindId);
   const main = resolveSlotMounts(kind, 'main');
-  const ship = { kind: 'destroyer', alive: true, energy: 10_000, statAlloc: {}, mounts: [] } as unknown as ShipState;
+  const ship = { kind: kindId, alive: true, energy: 10_000, statAlloc: {}, mounts: [] } as unknown as ShipState;
   const acks: Array<{ shot: string; rejected: boolean }> = [];
   const fired: string[] = [];
   const bearing = new Set<string>();
@@ -106,5 +106,23 @@ describe('PlayerFireResolver — capital turrets fire on their own reload', () =
     const mid = h.ship.energy;
     h.fire(101, 'b');
     expect(mid - h.ship.energy).toBeCloseTo(one * 4, 6);
+  });
+});
+
+describe('PlayerFireResolver — a slow gun fires its first shot at once', () => {
+  // The "never fired" reload sentinel was -999 ticks. A 16" reloads in 1,800
+  // ticks, so a battleship's first salvo was refused until server tick 801
+  // (~13 s into a fresh room), locked and on target or not.
+  it('a battleship 16" turret fires as soon as it bears, early in a fresh room', () => {
+    const cd16 = getWeapon(getShipKind('battleship').mounts!.find((m) => m.id === 'main-1')!.weaponId).cooldownTicks;
+    expect(cd16).toBeGreaterThan(1_000);
+    const h = harness('battleship');
+    h.bearing.add('main-1');
+    h.fire(100, 'first');
+    expect(rejected(h.acks, 'first')).toBe(false);
+    expect(h.fired).toEqual(['main-1']);
+    // …and then reloads as usual.
+    h.fire(101, 'again');
+    expect(rejected(h.acks, 'again')).toBe(true);
   });
 });
