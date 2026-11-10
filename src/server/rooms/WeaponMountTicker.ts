@@ -34,7 +34,7 @@ import { mountLineClear, mountPriority, targetClass, type TargetClass } from '..
 import { leadArcBearing, mountCanEngage, onTarget } from '../../core/combat/mountFireControl.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { newLock, stepLock, type LockEntry } from '../../core/combat/lockState.js';
-import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
+import { capLockSeconds, lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { LOCK_TUNING, WEAPON_LOCK_PROFILE, sensorFor, type MountSize } from '../../shared-types/combat/lockProfile.js';
 
 import {
@@ -141,6 +141,10 @@ export interface WeaponMountTickerDeps {
    *  each under its own turret lock (`tickCapitalMounts`). Absent ⇒ pilots
    *  only. */
   hostileStructures?: () => ReadonlyArray<{ readonly id: string; readonly x: number; readonly y: number; readonly radius: number }>;
+  /** testMode `lockTimeCapS` (room option): no capital-turret lock on a
+   *  structure takes longer than this many seconds while in reach (0 = the
+   *  first tick). Absent / undefined = the lock rules unchanged. */
+  lockTimeCapS?: () => number | undefined;
 }
 
 /** A structure is a fixed, armoured target: every naval calibre engages it
@@ -582,7 +586,7 @@ export class WeaponMountTicker {
     inp.dy = t.y - my;
     inp.dvx = t.vx - selfVx;
     inp.dvy = t.vy - selfVy;
-    return lockSeconds(inp, LOCK_TUNING);
+    return capLockSeconds(lockSeconds(inp, LOCK_TUNING), inp, LOCK_TUNING, this.deps.lockTimeCapS?.());
   }
 
   /** Cleanup hook: drop all per-drone state on eviction/destroy/shed. */

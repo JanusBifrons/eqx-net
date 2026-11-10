@@ -19,7 +19,8 @@
  *    fires only once that lock is COMPLETE. A new
  *    target restarts the lock; a target it can't lock for `lostGraceSeconds`
  *    restarts it too. testMode `instantLock` (`setInstantLocks`) completes a
- *    lock on the step it starts.
+ *    lock on the step it starts; testMode `lockTimeCapS` (`setLockTimeCap`)
+ *    caps how long one may take.
  *
  * Runs on the room's turret tick (100 ms, `TURRET_TICK_MS`), not the 60 Hz
  * loop: slewing uses the real elapsed time, so a 16" barbette turns at
@@ -35,7 +36,7 @@ import { leadArcBearing, mountCanEngage, onTarget } from '../../core/combat/moun
 import { mountPriority, type TargetClass } from '../../core/combat/mountTargeting.js';
 import { getWeapon, type WeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { newLock, stepLock, type LockEntry } from '../../core/combat/lockState.js';
-import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
+import { capLockSeconds, lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { LOCK_TUNING, STRUCTURE_SENSOR, WEAPON_LOCK_PROFILE, type MountSize } from '../../shared-types/combat/lockProfile.js';
 import type { StructureKind } from '../../shared-types/structureKinds.js';
 import type { WeaponMount } from '../../shared-types/shipKinds.js';
@@ -95,6 +96,8 @@ export class StructureMountTicker {
   private readonly candidates: TurretTargetView[] = [];
   private lastTickMs = -1;
   private instantLocks = false;
+  /** testMode `lockTimeCapS`: the longest a structure lock may take (s). */
+  private lockTimeCapS: number | undefined = undefined;
   /** Reused lock-time inputs (#14). */
   private readonly lockIn: LockInputs = {
     refSize: 1, tracking: 1, reach: 1, sensor: STRUCTURE_SENSOR, pilotSpeed: 1, signature: 1, dx: 0, dy: 0, dvx: 0, dvy: 0,
@@ -105,6 +108,17 @@ export class StructureMountTicker {
   /** testMode `instantLock`: every structure lock completes on the step it starts. */
   setInstantLocks(on: boolean): void {
     this.instantLocks = on;
+  }
+
+  /** testMode `lockTimeCapS`: no structure lock takes longer than `capS`
+   *  seconds while in reach (0 = the step it starts). Undefined = off. */
+  setLockTimeCap(capS: number | undefined): void {
+    this.lockTimeCapS = capS;
+  }
+
+  /** Test seam: mount `i`'s lock on structure `id` (undefined before its first tick). */
+  lockOf(id: string, i: number): Readonly<LockEntry> | undefined {
+    return this.states.get(id)?.locks[i];
   }
 
   /** Seconds since the previous turret tick (clamped), for slewing. Call
@@ -246,7 +260,9 @@ export class StructureMountTicker {
     // (a 16" gun on a destroyer) takes `maxSeconds` instead of being
     // impossible, so a heavy gun never sits blind on the only target it has.
     // Out of reach stays unlockable (Infinity).
-    const secs = Math.min(lockSeconds(inp, STRUCTURE_LOCK_TUNING), LOCK_TUNING.maxSeconds);
+    const secs = capLockSeconds(
+      Math.min(lockSeconds(inp, STRUCTURE_LOCK_TUNING), LOCK_TUNING.maxSeconds), inp, LOCK_TUNING, this.lockTimeCapS,
+    );
     const ev = stepLock(e, dtSec, secs, secs * LOCK_TUNING.failsafeMul, LOCK_TUNING.lostGraceSeconds, LOCK_TUNING.decayMul);
     // Unlockable past the grace: start over on the same target (it stays the
     // mount's target; targeting is the arc/tracking rules', not the lock's).

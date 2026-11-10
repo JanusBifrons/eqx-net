@@ -144,6 +144,30 @@ describe('StructureMountTicker — the capital fire-control rules on defence str
     expect(h.shots[before]!.target).toBe('b');
   });
 
+  it('testMode lockTimeCapS 0: a mount whose lock would take seconds fires on its first tick on target', () => {
+    const capped = setup('dp_mount_5in');
+    capped.ticker.setLockTimeCap(0);
+    capped.set([{ id: 'a', x: 0, y: 1500, cls: 'subcapital' }]);
+    capped.step(1);
+    expect(capped.ticker.lockOf('g', 0)?.stage).toBe('locked');
+    expect(capped.shots.length).toBeGreaterThan(0);
+    const normal = setup('dp_mount_5in');
+    normal.set([{ id: 'a', x: 0, y: 1500, cls: 'subcapital' }]);
+    normal.step(5);
+    expect(normal.ticker.lockOf('g', 0)?.stage).toBe('acquiring');
+    expect(normal.shots).toHaveLength(0);
+  });
+
+  it('testMode lockTimeCapS N: a 16" lock on a fighter (capped at maxSeconds) takes N seconds instead', () => {
+    const h = setup('coastal_barbette_16in');
+    h.ticker.setLockTimeCap(1);
+    h.set([{ id: 'f', x: 0, y: 3000, cls: 'small' }]);
+    h.step(8);
+    expect(h.ticker.lockOf('g', 0)?.stage).toBe('acquiring');
+    h.step(4);
+    expect(h.ticker.lockOf('g', 0)?.stage).toBe('locked');
+  });
+
   it('testMode instant locks: a mount fires on the tick after it picks a target', () => {
     const h = setup('aa_quad_40mm');
     h.ticker.setInstantLocks(true);

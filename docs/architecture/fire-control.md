@@ -41,6 +41,17 @@ act); AUTO targeting is unchanged. testMode join option `anyTarget: true` (URL
 `?anyTarget=1`): AUTO groups also pick non-hostile NPCs and non-own structures
 in reach + arc (never players); usually paired with `instantLock`. Integration: `harness.lockTarget(playerId, target, groupId?)` →
 `_internals.forceLock`. E2E: `tests/e2e/helpers` `lockOn`.
+testMode room option `lockTimeCapS: N` (or the room-creating client's join
+option / URL `?lockTimeCapS=N`, `TestClientOpts.lockTimeCapS`): no NON-player
+lock in the room takes longer than N seconds while the target is in reach
+(0 = the first lock step): NPC drones and capitals on pilots
+(`NpcLockSubsystem`), capital turrets on structures (`WeaponMountTicker`) and
+structure / coastal turrets (`StructureMountTicker`). A lock the rules call
+impossible (past `maxSeconds`) but in reach locks in N too; out of reach stays
+unlockable. The math is `capLockSeconds` (`core/combat/lockTime.ts`). For tests
+and recordings that need the big guns locked without the long (by design)
+wait. Player locks keep `instantLock`: an N-second player cap would make the
+client's predicted lock ring (`lockSeconds`, #15) disagree with the server.
 testMode join option `groupMode: 'manual'` (URL `?groupMode=manual`,
 `TestClientOpts.groupMode`): every weapon group of that pilot starts in MAN, so
 AUTO (which `anyTarget` widens to any target) never kills a fragile target
