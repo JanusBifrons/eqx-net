@@ -22,6 +22,9 @@ import { lockMarkFrame, threatRingRadius, type LockMarkFrame } from './lockMarkF
 const CORNER_FRAC = 0.35;
 const DASH_ON = 14;
 const DASH_OFF = 10;
+/** The faint full threat ring drawn while anything locks you (owner's choice 2026-11-10). */
+const THREAT_RING_FAINT_WIDTH = 1.5;
+const THREAT_RING_FAINT_ALPHA = 0.22;
 
 export class AimFeedbackRenderer {
   /** Lock rings, group brackets, firing lines, threats, guide. */
@@ -36,6 +39,8 @@ export class AimFeedbackRenderer {
   /** Last label code per tag (stage * 1000 + percent): text is rebuilt only when it changes. */
   private readonly tagCode: number[] = [];
   private readonly tagLayer = new Container();
+  /** Faint full threat-ring stroke (reused; width set per frame, #14). */
+  private readonly ringStroke = { width: THREAT_RING_FAINT_WIDTH, color: THREAT_COLOUR, alpha: THREAT_RING_FAINT_ALPHA };
   /** Test hooks: locks drawn last frame, and NPC locks on the local ship. */
   lastFcLocks = 0;
   lastThreats = 0;
@@ -120,8 +125,8 @@ export class AimFeedbackRenderer {
    *    a "LOCKING 62%" tag;
    *  - LOCKED: corner brackets in the group's colour (nested when several groups
    *    share a target) and a faint firing line.
-   * Locks ON the local ship (`localLockedBy`): a red arc on a ring round the
-   * ship facing each NPC, narrowing as its lock builds; once locked, a solid
+   * Locks ON the local ship (`localLockedBy`): the whole ring round the ship
+   * drawn faintly, and on it a red arc facing each NPC, narrowing as its lock builds; once locked, a solid
    * caret pointing at it and a pulsing diamond on the NPC.
    * Then the smart-aim guide.
    */
@@ -204,6 +209,10 @@ export class AimFeedbackRenderer {
       const localKind = mirror.localPlayerId ? mirror.ships.get(mirror.localPlayerId)?.kind : undefined;
       const R = threatRingRadius(getShipKind(localKind ?? null).radius, px);
       const pulse = 0.55 + 0.45 * Math.sin(now * 0.012);
+      // The whole ring, faint, under the arcs: so they read as pointers on a
+      // ring centred on the ship, not a reticle floating beside it.
+      this.ringStroke.width = THREAT_RING_FAINT_WIDTH * px;
+      g.circle(sx, -sy, R).stroke(this.ringStroke);
       for (const l of lockedBy) {
         if (!this.targetPose(mirror, l.t)) continue;
         threats++;
