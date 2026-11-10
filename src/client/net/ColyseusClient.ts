@@ -5581,6 +5581,17 @@ export class ColyseusGameClient {
     this.room.send('lock_request', { type: 'lock_request', groupId, target: targetKey });
   }
 
+  /** A weapon group's lock-reach basis (u, before `LOCK_TUNING.reachSlack`) for the local
+   *  ship: the same `weaponAutoFireRange` max the server's `groupGeometry` uses. 0 = unknown.
+   *  Read by the contacts overview at 4 Hz, never per frame. */
+  fcGroupReach(groupId: string): number {
+    const id = this.mirror.localPlayerId;
+    const ship = id ? this.mirror.ships.get(id) : undefined;
+    if (!ship) return 0;
+    this.fcSyncKind(ship.kind ?? null);
+    return this._fcInfo.get(groupId)?.reach ?? 0;
+  }
+
   /** Drop one lock (or all of a group's locks when no key). */
   cancelLock(groupId: string, targetKey?: string): void {
     if (!this.room) return;

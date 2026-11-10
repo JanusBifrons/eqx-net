@@ -26,6 +26,7 @@ import { HUD, hullColor } from './tokens';
 import { hudScale, useHudSize } from './useHudScale';
 import { WeaponStrip } from './WeaponStrip';
 import { LockStatusBand } from './LockStatusBand';
+import { ContactsOverview } from '../components/ContactsOverview';
 import { stickToWorldBearing } from '@core/combat/manualAim';
 import { HoldButton, SectorChip, useEnergyFill, useFakeCredits } from './widgets';
 
@@ -60,6 +61,8 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
       {flying && <Slot anchor="top-center" order={1}><LockStatusBand scale={scale} /></Slot>}
       <Slot anchor="top-left" order={1}><SectorChip size={Math.round(9 * scale)} /></Slot>
       {flying && <FcStripDock scale={scale} />}
+      {/* Contacts overview (lock list): left edge, the strip's mirror. */}
+      {flying && <ContactsOverview />}
       <Slot anchor="top-right" order={2}><SpeedDialMenu direction="down" /></Slot>
 
       {/* ── Desktop ─────────────────────────────────────────────────────── */}
@@ -254,7 +257,7 @@ function DesktopFcHint({ scale }: { scale: number }): JSX.Element {
   const k = (t: string): JSX.Element => <b style={{ color: HUD.color.inkDim }}>{t}</b>;
   return (
     <div data-testid="hud-fc-hint" style={{ fontFamily: HUD.font.label, fontSize: fs, color: HUD.color.inkFaint, letterSpacing: 0.6, textAlign: 'right', lineHeight: 1.6 }}>
-      <div>{k('HOLD LMB')} on a ship to lock · {k('T')} lock selected · {k('X')} clear</div>
+      <div>{k('HOLD LMB')} on a ship to lock · {k('T')} lock selected · {k('X')} clear · {k('O')} contacts</div>
       <div>{k('1–9')} group · {k('SHIFT+1–9')} auto/man · {k('RMB')} boost</div>
     </div>
   );

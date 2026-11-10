@@ -107,6 +107,11 @@ Target keys: `s:<entityId>` (swarm) or `p:<playerId>`.
   Lock: `lockMarkFrame.test.ts`.
 - HUD: `WeaponStrip`, `LockStatusBand` (polls the mirror at 10 Hz, re-renders on
   change), `TargetAction` (LOCK / CANCEL LOCK / UNLOCK), `MouseLock` (desktop).
+- Contacts overview (`ContactsOverview`, O key / CONTACTS tab, left edge): an
+  EVE-style list of lockable contacts with distance, reach and lock state;
+  a tap sends `lock_request` for the active group, a tap on its own lock
+  sends `lock_cancel`. Reach is `fcGroupReach` × `reachSlack`. See
+  [contacts-overview.md](../features/contacts-overview.md).
 
 ## Tests
 
