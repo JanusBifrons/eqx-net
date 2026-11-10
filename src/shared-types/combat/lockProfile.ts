@@ -7,7 +7,8 @@
  *   seconds = base
  *           × size      (weapon reference size vs target signature)
  *           × tracking  (target's angular rate across the weapon vs its tracking)
- *           × range     (further = slower)
+ *           × range     (further = slower: share of reach for small guns,
+ *                        ABSOLUTE distance for heavy M/L/XL mounts)
  *           ÷ sensor    (shooter hull's sensors)
  *           ÷ pilot     (later: skills / stat allocation)
  *   above `maxSeconds` → can't lock (Infinity).
@@ -31,8 +32,18 @@ export interface LockTuning {
   trackFactor: number;
   /** Extra multiple at the very edge of reach (linear in range ÷ reach). */
   rangeFactor: number;
-  /** A lock beyond this many seconds is impossible (shown "can't lock"). */
+  /** Heavy mounts (`WEAPON_LOCK_PROFILE[size].absRange`): the range term is
+   *  1 + (range ÷ absRangeScale)^absRangeExp, on ABSOLUTE distance (u). */
+  absRangeScale: number;
+  /** Exponent of the absolute range term: > 1 so long shots take ages. */
+  absRangeExp: number;
+  /** A lock beyond this many seconds is impossible (shown "can't lock").
+   *  Judged on size, speed and the reach-share range term only: absolute
+   *  distance (heavy mounts) makes a lock slower, never impossible. */
   maxSeconds: number;
+  /** Fixed batteries: a lock past `maxSeconds` takes `maxSeconds` instead of
+   *  being impossible (a heavy mount then still stretches it for distance). */
+  clampAtMax?: boolean;
   /** Failsafe ring duration multiple for neutral / allied targets. */
   failsafeMul: number;
   /** A locked/acquiring target may be out of reach this long before it drops. */
@@ -47,6 +58,11 @@ export const LOCK_TUNING: LockTuning = {
   sizeExp: 0.6,
   trackFactor: 1.5,
   rangeFactor: 0.6,
+  // Heavy mounts: 1 + (range / 7000)^1.5. At today's 3–5k u capital
+  // engagements this matches the reach-share term within ~5 %; at 30k u it
+  // is ~9.9 (a 16" on a battleship ≈ 17 s, on a destroyer ≈ 22 s).
+  absRangeScale: 7000,
+  absRangeExp: 1.5,
   maxSeconds: 8,
   failsafeMul: 1.75,
   lostGraceSeconds: 1.5,
@@ -58,14 +74,17 @@ export const LOCK_TUNING: LockTuning = {
  * follow comfortably). A gun built for capitals (XL) finds a fighter-sized
  * signature tiny and slow to resolve, and can't follow a fast crosser; the
  * quad AA is built for exactly that. `none` = small-craft guns.
+ * `absRange`: the range term reads ABSOLUTE distance (heavy capital and
+ * coastal guns: a 30 km shot takes ages to lock) instead of the share of the
+ * gun's reach. Sub-capital and fighter guns keep the reach share.
  */
-export const WEAPON_LOCK_PROFILE: Record<MountSize | 'none', { refSize: number; tracking: number }> = {
-  none: { refSize: 40, tracking: 2.5 },
-  AA: { refSize: 40, tracking: 2.0 },
-  S: { refSize: 120, tracking: 0.9 },
-  M: { refSize: 600, tracking: 0.35 },
-  L: { refSize: 1200, tracking: 0.2 },
-  XL: { refSize: 1800, tracking: 0.15 },
+export const WEAPON_LOCK_PROFILE: Record<MountSize | 'none', { refSize: number; tracking: number; absRange: boolean }> = {
+  none: { refSize: 40, tracking: 2.5, absRange: false },
+  AA: { refSize: 40, tracking: 2.0, absRange: false },
+  S: { refSize: 120, tracking: 0.9, absRange: false },
+  M: { refSize: 600, tracking: 0.35, absRange: true },
+  L: { refSize: 1200, tracking: 0.2, absRange: true },
+  XL: { refSize: 1800, tracking: 0.15, absRange: true },
 };
 
 /** Hull sensor quality by size class (higher = faster locks). */

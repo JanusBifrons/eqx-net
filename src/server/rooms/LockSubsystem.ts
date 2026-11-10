@@ -68,6 +68,8 @@ interface GroupState {
   capacity: number;
   refSize: number;
   tracking: number;
+  /** Heavy group (M/L/XL): lock time reads absolute distance. */
+  absRange: boolean;
   reach: number;
   /** Where the group's barrels can point, relative to the hull heading:
    *  [lo0, hi0, lo1, hi1, …] (fixed guns get a small window). */
@@ -98,7 +100,7 @@ interface PlayerLocks {
 const SIZE_RANK: Record<MountSize | 'none', number> = { none: 0, AA: 1, S: 2, M: 3, L: 4, XL: 5 };
 
 /** Build a group's lock geometry from its mounts (largest size wins). */
-export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): { refSize: number; tracking: number; reach: number } {
+export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): { refSize: number; tracking: number; reach: number; absRange: boolean } {
   let size: MountSize | 'none' = 'none';
   let reach = 0;
   for (const m of mounts) {
@@ -108,7 +110,7 @@ export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): { refSize: nu
     if (r > reach) reach = r;
   }
   const p = WEAPON_LOCK_PROFILE[size];
-  return { refSize: p.refSize, tracking: p.tracking, reach };
+  return { refSize: p.refSize, tracking: p.tracking, reach, absRange: p.absRange };
 }
 
 /** Half-width (rad) a fixed gun counts as bearing on a target. */
@@ -235,6 +237,7 @@ export class LockSubsystem {
         capacity: lockCapacityFor(ship.kind, slot, NO_PILOT_MODS),
         refSize: geo.refSize,
         tracking: geo.tracking,
+        absRange: geo.absRange,
         reach: geo.reach,
         arcs: groupArcs(mounts),
         mountIds: new Set(mounts.map((m) => m.id)),
@@ -489,6 +492,7 @@ export class LockSubsystem {
         const inp = this.inputs;
         inp.refSize = g.refSize;
         inp.tracking = g.tracking;
+        inp.absRange = g.absRange;
         inp.reach = g.reach;
         inp.sensor = p.sensor;
         inp.pilotSpeed = 1;
