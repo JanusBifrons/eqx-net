@@ -113,11 +113,11 @@ function firstSnapIds(viewers: Viewer[], projectiles: Map<string, ProjectileReco
 }
 
 describe('shellViewHalfExtent — the widest view per hull (#15: the client camera floor)', () => {
-  it('is SHELL_VIEW_HALF_PX at the zoom-out floor zoomRangeForKind gives the client', () => {
+  it('covers the 1920-px reference view at the zoom-out floor zoomRangeForKind gives the client', () => {
     for (const id of ['fighter', 'scout', 'destroyer', 'battleship']) {
       const kind = getShipKind(id);
       const { minScale } = zoomRangeForKind(kind, 1, { minScale: 0, startZoom: 0 });
-      expect(shellViewHalfExtent(kind)).toBeCloseTo(SHELL_VIEW_HALF_PX / minScale, 6);
+      expect(shellViewHalfExtent(kind)).toBeGreaterThanOrEqual(SHELL_VIEW_HALF_PX / minScale - 1e-6);
     }
     // A sub-capital: half of a 1920-px view at the ordinary floor.
     expect(shellViewHalfExtent({ radius: 100 })).toBeCloseTo(SHELL_VIEW_HALF_PX / GAMEPLAY_MIN_ZOOM, 6);

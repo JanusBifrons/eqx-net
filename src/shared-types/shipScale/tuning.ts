@@ -347,13 +347,13 @@ export function gunneryViewHalfExtent(kind: ZoomKind, mode: NavalRangeMode = NAV
 
 const FLOOR_CACHE = new WeakMap<object, number>();
 
-/** THE gameplay zoom-out floor for the ship you fly: the one function the
- *  client camera (`zoomRangeForKind`) and the server's far-shell interest
- *  (`shellViewHalfExtent`) share (#15). The hull floor `GAMEPLAY_MIN_ZOOM /
- *  hullZoomFactor`, lowered for a capital in `real` naval-range mode until a
- *  `SHELL_VIEW_HALF_PX` half-width (a 1920-px 16:9 desktop) shows
- *  `gunneryViewHalfExtent`. Cached per kind object for this process's mode
- *  (the server calls it once per recipient per snapshot). */
+/** The REFERENCE gameplay zoom-out floor for the ship you fly, at a
+ *  `SHELL_VIEW_HALF_PX` half-width (a 1920-px desktop): the hull floor
+ *  `GAMEPLAY_MIN_ZOOM / hullZoomFactor`, lowered for a capital in `real`
+ *  naval-range mode until that half-width shows `gunneryViewHalfExtent`. The
+ *  live camera uses `zoomFloorForView` (the actual viewport); this one is the
+ *  viewport-free reference (starfield tuning, tests). Cached per kind object
+ *  for this process's mode. */
 export function zoomFloorForKind(kind: ZoomKind, mode: NavalRangeMode = NAVAL_RANGE): number {
   const cache = mode === NAVAL_RANGE;
   if (cache) {
@@ -367,30 +367,66 @@ export function zoomFloorForKind(kind: ZoomKind, mode: NavalRangeMode = NAVAL_RA
   return floor;
 }
 
+/** The widest screen aspect (long side / short side) for which a capital's
+ *  zoom floor fits its gun reach to the SHORT side. Past it (wider than 21:9,
+ *  taller than a 19.5:9 phone) the floor fits the long side to
+ *  `MAX_VIEW_ASPECT × reach` instead, so no viewport ever shows more than that
+ *  — the bound the server's far-shell interest uses (`shellViewHalfExtent`,
+ *  #15). */
+export const MAX_VIEW_ASPECT = 2.4;
+
+/** The live gameplay zoom-out floor for the ship you fly in a `viewW × viewH`
+ *  (CSS px) viewport. As `zoomFloorForKind`, except a capital in `real` mode
+ *  fits its gun reach to the viewport's SHORTER half-dimension (the camera is
+ *  north-up, so a target can lie in any direction), clamped so the longer half
+ *  never shows more than `MAX_VIEW_ASPECT × gunneryViewHalfExtent`. Never
+ *  above the hull floor. No viewport size ⇒ the reference floor. */
+export function zoomFloorForView(kind: ZoomKind, viewW: number, viewH: number, mode: NavalRangeMode = NAVAL_RANGE): number {
+  const gun = gunneryViewHalfExtent(kind, mode);
+  if (gun <= 0 || !(viewW > 0) || !(viewH > 0)) return zoomFloorForKind(kind, mode);
+  const longHalf = Math.max(viewW, viewH) / 2;
+  const fitHalf = Math.max(Math.min(viewW, viewH) / 2, longHalf / MAX_VIEW_ASPECT);
+  return Math.min(GAMEPLAY_MIN_ZOOM / hullZoomFactor(kind), fitHalf / gun);
+}
+
 /** The gameplay zoom range for the ship you fly: the zoom-out floor is
- *  `zoomFloorForKind`, and the start zoom divides by `hullZoomFactor`, so a
- *  battleship pilot can pull back to see the ship and several kilometres
- *  around it (in `real` naval-range mode, its longest gun's reach), while a
- *  fighter's range is unchanged. `base` is the 1x start zoom. Writes into
- *  `out`. */
+ *  `zoomFloorForView` for the live `viewW × viewH` viewport (the reference
+ *  `zoomFloorForKind` when no size is given), and the start zoom divides by
+ *  `hullZoomFactor`, so a battleship pilot can pull back to see the ship and
+ *  several kilometres around it (in `real` naval-range mode, its longest gun's
+ *  reach), while a fighter's range is unchanged. `base` is the 1x start zoom.
+ *  Writes into `out`. */
 export function zoomRangeForKind(
   kind: ZoomKind, base: number, out: { minScale: number; startZoom: number }, mode: NavalRangeMode = NAVAL_RANGE,
+  viewW = 0, viewH = 0,
 ): { minScale: number; startZoom: number } {
-  out.minScale = zoomFloorForKind(kind, mode);
+  out.minScale = zoomFloorForView(kind, viewW, viewH, mode);
   out.startZoom = startZoomForScale(base) / hullZoomFactor(kind);
   return out;
 }
 
+const SHELL_VIEW_CACHE = new WeakMap<object, number>();
+
 /** Half-extent (u) of the square around a viewer inside which a naval shell,
- *  or the point where it will fall, is sent to that viewer: the widest view the
- *  pilot of `kind` can pull the camera out to (`SHELL_VIEW_HALF_PX` at the
- *  zoom-out floor `zoomFloorForKind`, the client camera's floor). Legacy:
- *  fighter / sub-capital 6,400 u; destroyer (r 1,220) ~13,000 u; battleship
- *  (r 2,876) ~30,700 u. Real: a capital's covers its longest gun's reach
- *  × `GUN_VIEW_MARGIN`. Shared by the server's interest filter and the client
- *  camera floor (#15). */
+ *  or the point where it will fall, is sent to that viewer: at least the widest
+ *  view the pilot of `kind` can pull the camera out to (#15). The hull floor's
+ *  view at a `SHELL_VIEW_HALF_PX` half-width (legacy: fighter / sub-capital
+ *  6,400 u; destroyer (r 1,220) ~13,000 u; battleship (r 2,876) ~30,700 u);
+ *  in `real` mode a capital's camera floor follows the viewport
+ *  (`zoomFloorForView`), so the server keeps a fixed conservative bound: gun
+ *  reach × `GUN_VIEW_MARGIN` × `MAX_VIEW_ASPECT`, which no viewport's longer
+ *  half exceeds at the floor. Cached per kind for this process's mode (called
+ *  once per recipient per snapshot). */
 export function shellViewHalfExtent(kind: ZoomKind, mode: NavalRangeMode = NAVAL_RANGE): number {
-  return SHELL_VIEW_HALF_PX / zoomFloorForKind(kind, mode);
+  const cache = mode === NAVAL_RANGE;
+  if (cache) {
+    const hit = SHELL_VIEW_CACHE.get(kind);
+    if (hit !== undefined) return hit;
+  }
+  const hullView = SHELL_VIEW_HALF_PX / (GAMEPLAY_MIN_ZOOM / hullZoomFactor(kind));
+  const half = Math.max(hullView, gunneryViewHalfExtent(kind, mode) * MAX_VIEW_ASPECT);
+  if (cache) SHELL_VIEW_CACHE.set(kind, half);
+  return half;
 }
 
 /** The radius shield EFFECTS are sized to (hit flash, break dome, the legacy
