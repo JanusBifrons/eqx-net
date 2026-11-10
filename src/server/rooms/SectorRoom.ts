@@ -389,6 +389,7 @@ import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { refineRayHit } from '../../core/combat/capitalHits.js';
 import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
+import type { LockEntry } from '../../core/combat/lockState.js';
 
 /** Stamp the ship scale onto a welcome (shared contract: shipScale/welcomeScale.ts). */
 const withShipScale = (w: WelcomeMessage): WelcomeMessage => stampShipScale(w);
@@ -448,6 +449,13 @@ const WORKER_TS_PATH = fileURLToPath(
 // conditions (near-invulnerable ship under heavy combat). Off in
 // production; set via `EQX_ALLOW_DEV_OVERRIDES=1` for E2E only.
 const ALLOW_DEV_OVERRIDES = process.env['EQX_ALLOW_DEV_OVERRIDES'] === '1';
+
+/**
+ * testMode `lockTimeCapS` (room option, join option, URL `?lockTimeCapS=`):
+ * the longest any NON-player lock may take, in seconds. 0 = the first step.
+ * Applied by `capLockSeconds` (core/combat/lockTime.ts).
+ */
+const LockTimeCapSchema = z.number().finite().min(0).max(600);
 
 const JoinOptionsSchema = z
   .object({
@@ -526,6 +534,13 @@ const JoinOptionsSchema = z
      *  fire without waiting ~1.5 s per lock. It does NOT widen AUTO targeting
      *  (that is `anyTarget`). testMode-gated (ignored on galaxy rooms). */
     instantLock: z.boolean().optional(),
+    /** Test-only bespoke trigger (fire control): the longest any NON-player
+     *  lock in this room may take, in seconds (NPC drones and capitals on
+     *  pilots, capital turrets on structures, structure and coastal turrets).
+     *  0 = locks complete on the first step. Room-wide: read in `onCreate`
+     *  (room option, or the room-creating client's join option) and on any
+     *  join that passes it. testMode-gated. */
+    lockTimeCapS: LockTimeCapSchema.optional(),
     /** Test-only bespoke trigger (fire control): this pilot's AUTO groups
      *  also pick NON-hostile targets (NPC ships, structures not their own) in
      *  reach + arc. Never players. Usually paired with `instantLock`.
@@ -897,6 +912,9 @@ export class SectorRoom extends Room<SectorState> {
   });
   /** C2 bespoke trigger (testMode `breakInMs`). */
   private testBreakInMs: number | null = null;
+  /** Bespoke test/recording trigger (testMode `lockTimeCapS`): the longest
+   *  any NON-player lock may take, in seconds. Undefined = off. */
+  private testLockTimeCapS: number | undefined = undefined;
   /** Round 3 D test switch (testMode `pilotCapitals`). */
   private testPilotCapitals = false;
   /** C1 — pilots who moved cargo by hand. Auto-deposit stays off for them
@@ -1027,12 +1045,19 @@ export class SectorRoom extends Room<SectorState> {
   private readonly factionLedger = new FactionLedger({
     structures: () => this.structureRegistry.all(),
   });
-  /** Wave-system Phase 2 — reused per-tick structure target buffer for the
-   *  drone brain (priority), rebuilt ONCE per tick (shared by every drone via
-   *  AiWorldView; never per-drone). Holds only this sector's hostile
-   *  (under-wave / member-attacked), constructed structures. TARGETING only:
-   *  the beam hits whatever it meets (`nonPlayerRayHit`, friendly fire). */
+  /** Wave-system Phase 2 — reused per-tick structure target buffers, rebuilt
+   *  ONCE per tick (shared by every drone via AiWorldView; never per-drone).
+   *  `aiStructureScratch` feeds the brain (priority); `hostileStructureCircles`
+   *  feeds capital turret target picks (radius). Both hold only this sector's
+   *  hostile (under-wave / member-attacked), constructed structures. TARGETING
+   *  only: a shot hits whatever it meets (`nonPlayerRayHit`, friendly fire). */
   private readonly aiStructureScratch: AiStructureView[] = [];
+  private readonly hostileStructureCircles: Array<{
+    id: string;
+    x: number;
+    y: number;
+    radius: number;
+  }> = [];
 
   // ── Phase 4b.3 (multi-mount turret refactor, 2026-05-11) ────────────────
   /** Authoritative per-mount rotation angle (ship-relative, arc-local) for
@@ -1315,6 +1340,8 @@ export class SectorRoom extends Room<SectorState> {
      *  'havok') to exercise scrap-on-death (Phase 2b-ii). */
     spawnTestDrone: (id: string, x: number, y: number, kind?: ShipKindId) => boolean;
     tickStructureTurrets: () => void;
+    /** Mount `i`'s lock on structure `id` (for `lockTimeCapS` tests). */
+    structureTurretLock: (id: string, i: number) => Readonly<LockEntry> | undefined;
     /** Fence-hit fix: spawn a bolt (integration tests aim it at a fence).
      *  `weaponId` (default 'laser') lets a test fire a real naval shell. */
     spawnTestProjectile: (ownerId: string, x: number, y: number, vx: number, vy: number, weaponId?: WeaponId, damage?: number) => void;
@@ -1374,6 +1401,7 @@ export class SectorRoom extends Room<SectorState> {
         return ok;
       },
       tickStructureTurrets: () => this.structureTurretTick(),
+      structureTurretLock: (id, i) => this.structureGrid.turretLockOf(id, i),
       spawnTestProjectile: (ownerId, x, y, vx, vy, weaponId = 'laser', damage = 10) =>
         this.projectiles.spawn(ownerId, x, y, vx, vy, damage, 4, 240, weaponId),
       aiFire: (shooterId, dirX, dirY, targetId) => this.handleAiFire(shooterId, dirX, dirY, this.serverTick, targetId),
@@ -1666,6 +1694,9 @@ export class SectorRoom extends Room<SectorState> {
       testAlienGate?: { x: number; y: number; neighbour: string };
       /** C2 bespoke trigger: every break-in takes this long (ms). testMode-only. */
       breakInMs?: number;
+      /** Bespoke test/recording trigger: no NON-player lock takes longer than
+       *  this (s); 0 = the first step. zod-checked; testMode-only. */
+      lockTimeCapS?: unknown;
       /** Capital-ship R&D (round 3 D): a player may join flying a capital
        *  (capitals stay npcOnly everywhere else). testMode-only. */
       pilotCapitals?: boolean;
@@ -1808,6 +1839,9 @@ export class SectorRoom extends Room<SectorState> {
       currentTick: () => this.serverTick,
       fireDroneMount: (id, i) => this.aiFireResolver.fireMount(id, i),
       fireBlocked: (id, targetId) => this.npcLocks.fireBlocked(id, targetId),
+      // Capital turrets engage hostile structures too (the AI's per-tick set).
+      hostileStructures: () => this.hostileStructureCircles,
+      lockTimeCapS: () => this.testLockTimeCapS,
       onClearPlayer: (pid) => this.locks.clearLocks(pid),
       aimTargetFor: (pid, mountId, out) => this.lockAimTarget(pid, mountId, out),
     });
@@ -2863,6 +2897,11 @@ export class SectorRoom extends Room<SectorState> {
       this.hydrateFromSnapshot();
     }
     if (this.testMode && roomOpts.breakInMs !== undefined) this.testBreakInMs = Math.max(1, roomOpts.breakInMs);
+    if (this.testMode && roomOpts.lockTimeCapS !== undefined) {
+      const cap = LockTimeCapSchema.safeParse(roomOpts.lockTimeCapS);
+      if (cap.success) this.setLockTimeCap(cap.data);
+      else logger.warn({ value: roomOpts.lockTimeCapS }, 'lockTimeCapS: invalid room option, ignored');
+    }
     this.testPilotCapitals = this.testMode && roomOpts.pilotCapitals === true;
     // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
     if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {
@@ -4088,6 +4127,7 @@ export class SectorRoom extends Room<SectorState> {
         return getShipKind(rec.shipKind ?? null);
       },
       instantLock: (pid) => this.locks.isInstant(pid),
+      lockTimeCapS: () => this.testLockTimeCapS,
     });
   }
 
@@ -4364,11 +4404,14 @@ export class SectorRoom extends Room<SectorState> {
    * per-drone — #14). A structure is a target iff its owning faction is
    * `hostileToDrones` (member attacked a drone) OR `underWave` (the director
    * declared a wave) AND it is constructed. Populates the brain view
-   * (`out` = `aiStructureScratch`, carries `priority`); targeting only, the
-   * beam hits whatever it meets. Object churn matches the established `aiPlayerScratch`
+   * (`out` = `aiStructureScratch`, carries `priority`) and the capital turret
+   * target circles (`hostileStructureCircles`); targeting only, a shot hits
+   * whatever it meets. Object churn matches the established `aiPlayerScratch`
    * view-build pattern (small, bounded structure count).
    */
   private fillStructureTargets(out: AiStructureView[]): void {
+    const circles = this.hostileStructureCircles;
+    circles.length = 0;
     if (this.structureRegistry.size === 0) return;
     for (const rec of this.structureRegistry.all()) {
       if (!rec.isConstructed) continue;
@@ -4381,6 +4424,7 @@ export class SectorRoom extends Room<SectorState> {
         maxHealth: getStructureKind(rec.kind).maxHealth,
         priority: structurePriority(rec.kind),
       });
+      circles.push({ id: rec.id, x: rec.x, y: rec.y, radius: rec.radius });
     }
   }
 
@@ -6316,6 +6360,19 @@ export class SectorRoom extends Room<SectorState> {
     const dx = Math.max(Math.abs(pose.x - rec.x) - (rec.halfW ?? rec.radius), 0);
     const dy = Math.max(Math.abs(pose.y - rec.y) - (rec.halfH ?? rec.radius), 0);
     return dx * dx + dy * dy <= CARGO_ACCESS_RANGE * CARGO_ACCESS_RANGE;
+  }
+
+  /**
+   * testMode `lockTimeCapS`: from now on no NON-player lock in this room takes
+   * longer than `capS` seconds (NPC drones and capitals on pilots, capital
+   * turrets on structures, structure and coastal turrets). Locks are still
+   * acquired (#19); only their time is capped. Player locks keep their own
+   * trigger (`instantLock`).
+   */
+  private setLockTimeCap(capS: number): void {
+    this.testLockTimeCapS = capS;
+    this.structureGrid.setTurretLockTimeCap(capS);
+    logger.info({ roomId: this.roomId, lockTimeCapS: capS }, 'lockTimeCapS on (test trigger)');
   }
 
   /** C2 — how long a break-in into `rec` takes. */
@@ -8336,6 +8393,10 @@ export class SectorRoom extends Room<SectorState> {
     // Structure turrets lock too; an `instantLock` joiner makes this room's
     // structure locks instant as well (room-wide, test rooms only).
     if (instantLock) this.structureGrid.setInstantTurretLocks(true);
+    // `lockTimeCapS` on a join caps every NON-player lock in this room.
+    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.lockTimeCapS !== undefined) {
+      this.setLockTimeCap(parsed.data.lockTimeCapS);
+    }
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a
     // sane value (e.g. a fire request resolved on this same client.send turn).

@@ -48,6 +48,12 @@ export interface BootMsg {
   /** GPU-lit art settings (`?shiplight=gpu`), plain data; absent = baked. */
   lighting?: import('../../art/lightingSettings.js').LightingSettings;
   /**
+   * FX kill switches (`?cleanworld=1`, `?nofilters=1`, …) resolved on the
+   * main thread by `readFxKillSwitches()`. The worker has no `window`, so
+   * reading the URL there yields all-off. Absent ⇒ the renderer reads its own.
+   */
+  fxKillSwitches?: import('../../fxKillSwitches.js').FxKillSwitches;
+  /**
    * Touch-device flag (Equinox P6.1). The worker has no reliable
    * `window.matchMedia`, so the main thread (which knows via `isTouchDevice()`)
    * forwards it; the worker's PixiRenderer seeds the placement ghost at

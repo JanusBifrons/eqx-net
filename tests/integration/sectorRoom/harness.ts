@@ -185,6 +185,8 @@ export async function bootSectorTestServer(opts: {
   pocketPads?: boolean;
   /** C2 — every break-in takes this long (bespoke trigger). */
   breakInMs?: number;
+  /** Bespoke test trigger: no NON-player lock takes longer than this (s); 0 = the first step. */
+  lockTimeCapS?: number;
   /** P2d — stock the prebuilt Capital's hold. */
   prebuiltStorageGoods?: Record<string, number>;
   /** v4 T1 — teleporter cycle speed, and pair the seeded teleporters. */
@@ -266,6 +268,7 @@ export async function bootSectorTestServer(opts: {
     solarSectors: opts.solarSectors,
     pocketPads: opts.pocketPads,
     breakInMs: opts.breakInMs,
+    lockTimeCapS: opts.lockTimeCapS,
     prebuiltStorageGoods: opts.prebuiltStorageGoods,
     teleportCycleScale: opts.teleportCycleScale,
     pairTeleporters: opts.pairTeleporters,

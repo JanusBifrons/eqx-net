@@ -110,6 +110,39 @@ describe('NpcLockSubsystem — a capital locks pilots its turrets can engage', (
   });
 });
 
+describe('testMode lockTimeCapS caps NPC locks (drones and capitals on pilots)', () => {
+  const rig = (cap: number | undefined, npcX = 5000) => {
+    const write = (x: number, kind: string, out: NpcPose) => { out.x = x; out.y = 0; out.vx = 0; out.vy = 0; return getShipKind(kind); };
+    return new NpcLockSubsystem({
+      pilots: () => ['f'],
+      pilotPose: (_id, out) => write(0, 'fighter', out),
+      forEachHostileNpc: (_pid, visit) => visit('bs', 1),
+      npcPose: (_id, out) => write(npcX, 'battleship', out), // 5,000 u: only the 16" reaches
+      lockTimeCapS: () => cap,
+    });
+  };
+  it('cap 0: a 16" lock the rules call impossible completes on the first step', () => {
+    const none = rig(undefined);
+    for (let i = 0; i < 200; i++) none.step();
+    expect(none.isLocked('bs', 'f')).toBe(false);
+    const zero = rig(0);
+    zero.step();
+    expect(zero.isLocked('bs', 'f')).toBe(true);
+  });
+  it('cap N: the lock still takes N seconds of 0.1 s lock steps (shortened, not skipped)', () => {
+    const s = rig(1);
+    for (let i = 0; i < 8; i++) s.step();
+    expect(s.isLocked('bs', 'f')).toBe(false);
+    for (let i = 0; i < 4; i++) s.step();
+    expect(s.isLocked('bs', 'f')).toBe(true);
+  });
+  it("out of every gun's reach the cap does nothing", () => {
+    const s = rig(0, 100_000);
+    for (let i = 0; i < 20; i++) s.step();
+    expect(s.isLocked('bs', 'f')).toBe(false);
+  });
+});
+
 describe('NpcLockSubsystem — testMode instantLock completes NPC locks on that pilot', () => {
   const rig = (instant: boolean) => {
     const write = (x: number, kind: string, out: NpcPose) => { out.x = x; out.y = 0; out.vx = 0; out.vy = 0; return getShipKind(kind); };
@@ -128,5 +161,68 @@ describe('NpcLockSubsystem — testMode instantLock completes NPC locks on that 
     const instant = rig(true);
     instant.step();
     expect(instant.isLocked('bs', 'f')).toBe(true);
+  });
+});
+
+/** The structure, abeam to starboard: AA and 5" mounts bear on it within a
+ *  fraction of a second, so only the lock holds their fire. */
+const ABEAM = { x: 1500, y: 0 };
+
+describe('NPC capital turrets engage hostile structures under their own lock', () => {
+  /** A battleship at the origin and one structure (radius 300) abeam, 1,500 u out. */
+  function structRig(hostile: boolean, at: { x: number; y: number } = ABEAM, lockTimeCapS?: number) {
+    const sab = new Float32Array(new ArrayBuffer(SAB_TOTAL_BYTES));
+    const b = slotBase(10);
+    sab[b + SLOT_X_OFF] = 0;
+    sab[b + SLOT_Y_OFF] = 0;
+    sab[b + SLOT_ANGLE_OFF] = 0;
+    const recs: SwarmRecord[] = [{ id: 'bs', slot: 10, kind: 1, shipKind: 'battleship' }];
+    const structs = [{ id: 'gun', x: at.x, y: at.y, radius: 300 }];
+    let tick = 0;
+    const fired: { tick: number; target: string }[] = [];
+    const t: WeaponMountTicker = new WeaponMountTicker({
+      sabF32: sab,
+      playerToSlot: new Map(),
+      swarmRegistry: { all: () => recs, size: () => 1 },
+      shipPoseCache: new Map(),
+      getActiveShip: () => undefined,
+      aiController: { getBehaviour: () => ({ hostileTo: new Set(hostile ? ['gun'] : []) }) },
+      swarmHealth: () => new Map(),
+      resolveSlotMounts: (k) => k.mounts,
+      resolveInstanceMounts: () => getShipKind('fighter').mounts,
+      resolveInstanceFireMounts: () => getShipKind('fighter').mounts,
+      currentTick: () => tick,
+      fireBlocked: () => true, // no pilot lock: only a structure lock can license a shot
+      hostileStructures: () => structs,
+      lockTimeCapS: () => lockTimeCapS,
+      fireDroneMount: (id, i) => { fired.push({ tick, target: t.droneMountTargetIds.get(id)![i]! }); },
+    });
+    const run = (ticks: number) => { const end = tick + ticks; for (; tick < end; tick++) t.tickDrone(); };
+    return { t, fired, run };
+  }
+
+  it('turrets train on a hostile structure and fire only once their lock completes', () => {
+    const { fired, run } = structRig(true);
+    run(60 * 40);
+    expect(fired.length).toBeGreaterThan(0);
+    expect(new Set(fired.map((f) => f.target))).toEqual(new Set(['gun']));
+    // The fastest lock possible is baseSeconds / capital sensor (~1.8 s): no
+    // shot comes before it, though the AA and 5" mounts bear within ~0.2 s
+    // (without the lock gate the first shot comes at tick ~11).
+    expect(fired[0]!.tick).toBeGreaterThanOrEqual(Math.floor((1.5 / 0.85) * 60));
+  });
+
+  it('testMode lockTimeCapS 0: the first turret on target fires without the ~1.8 s lock wait', () => {
+    const { fired, run } = structRig(true, ABEAM, 0);
+    run(60 * 5);
+    expect(fired.length).toBeGreaterThan(0);
+    expect(fired[0]!.tick).toBeLessThan(Math.floor((1.5 / 0.85) * 60)); // under the uncapped minimum
+  });
+
+  it('a structure the capital is not hostile to is never a target', () => {
+    const { t, fired, run } = structRig(false);
+    run(60 * 20);
+    expect(fired).toEqual([]);
+    expect((t.droneMountTargetIds.get('bs') ?? []).every((x) => x === null)).toBe(true);
   });
 });
