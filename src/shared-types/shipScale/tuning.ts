@@ -21,6 +21,8 @@
  */
 import type { ShipKind, WeaponMount } from '../shipKinds/types.js';
 import { SHIP_SCALE, SHIP_TUNING, type ShipTuningProfile } from './config.js';
+import { NAVAL_RANGE, type NavalRangeMode } from '../combat/navalRange.js';
+import { REAL_NAVAL_GUNS, navalGunEngageReach, type NavalGunId } from '../combat/navalGuns.js';
 
 export type SizeClass = 'fighter' | 'frigate' | 'cruiser' | 'capital';
 export const SIZE_CLASSES: readonly SizeClass[] = ['fighter', 'frigate', 'cruiser', 'capital'];
@@ -311,31 +313,84 @@ export function hullZoomFactor(kind: Pick<ShipKind, 'radius'>): number {
   return kind.radius > HULL_ZOOM_REF_RADIUS ? kind.radius / HULL_ZOOM_REF_RADIUS : 1;
 }
 
-/** The gameplay zoom range for the ship you fly: the zoom-out floor and the
- *  start zoom both divide by `hullZoomFactor`, so a battleship pilot can pull
- *  back to see the ship and several kilometres around it, while a fighter's
- *  range is unchanged. `base` is the 1x start zoom. Writes into `out`. */
-export function zoomRangeForKind(
-  kind: Pick<ShipKind, 'radius'>, base: number, out: { minScale: number; startZoom: number },
-): { minScale: number; startZoom: number } {
-  const f = hullZoomFactor(kind);
-  out.minScale = GAMEPLAY_MIN_ZOOM / f;
-  out.startZoom = startZoomForScale(base) / f;
-  return out;
-}
-
 /** Half the width, in CSS px, of the widest view the shell interest plans for
  *  (a 1920-px desktop window). A phone (390×844) is narrower on both axes. */
 export const SHELL_VIEW_HALF_PX = 960;
 
+/** Head-room past a capital's longest reach at its zoom-out floor, so the
+ *  range ring and a shell landing at full reach sit inside the screen edge. */
+export const GUN_VIEW_MARGIN = 1.05;
+
+/** What the zoom-out floor reads from a kind: its radius always; a capital's
+ *  class and mounts for its gun reach. */
+export type ZoomKind = Pick<ShipKind, 'radius'> & {
+  sizeClass?: SizeClass;
+  mounts?: ReadonlyArray<Pick<WeaponMount, 'weaponId' | 'localX' | 'localY'>>;
+};
+
+/** The half-width (u) a CAPITAL pilot's widest view must show to see its
+ *  longest naval gun's engage reach (from the ship's centre: reach + that
+ *  mount's offset, as `mountTargetReach`), × `GUN_VIEW_MARGIN`. 0 for every
+ *  sub-capital, and for every kind in `legacy` mode (the hull floor already
+ *  covers the legacy reaches), so both keep today's floor exactly.
+ *  Owner decision 2026-11-10: capitals may zoom out to their gun's reach. */
+export function gunneryViewHalfExtent(kind: ZoomKind, mode: NavalRangeMode = NAVAL_RANGE): number {
+  if (mode !== 'real' || kind.sizeClass !== 'capital' || !kind.mounts) return 0;
+  let r = 0;
+  for (const m of kind.mounts) {
+    if (!(m.weaponId in REAL_NAVAL_GUNS)) continue;
+    const reach = navalGunEngageReach(m.weaponId as NavalGunId, mode) + Math.hypot(m.localX, m.localY);
+    if (reach > r) r = reach;
+  }
+  return r * GUN_VIEW_MARGIN;
+}
+
+const FLOOR_CACHE = new WeakMap<object, number>();
+
+/** THE gameplay zoom-out floor for the ship you fly: the one function the
+ *  client camera (`zoomRangeForKind`) and the server's far-shell interest
+ *  (`shellViewHalfExtent`) share (#15). The hull floor `GAMEPLAY_MIN_ZOOM /
+ *  hullZoomFactor`, lowered for a capital in `real` naval-range mode until a
+ *  `SHELL_VIEW_HALF_PX` half-width (a 1920-px 16:9 desktop) shows
+ *  `gunneryViewHalfExtent`. Cached per kind object for this process's mode
+ *  (the server calls it once per recipient per snapshot). */
+export function zoomFloorForKind(kind: ZoomKind, mode: NavalRangeMode = NAVAL_RANGE): number {
+  const cache = mode === NAVAL_RANGE;
+  if (cache) {
+    const hit = FLOOR_CACHE.get(kind);
+    if (hit !== undefined) return hit;
+  }
+  const hull = GAMEPLAY_MIN_ZOOM / hullZoomFactor(kind);
+  const gun = gunneryViewHalfExtent(kind, mode);
+  const floor = gun > 0 ? Math.min(hull, SHELL_VIEW_HALF_PX / gun) : hull;
+  if (cache) FLOOR_CACHE.set(kind, floor);
+  return floor;
+}
+
+/** The gameplay zoom range for the ship you fly: the zoom-out floor is
+ *  `zoomFloorForKind`, and the start zoom divides by `hullZoomFactor`, so a
+ *  battleship pilot can pull back to see the ship and several kilometres
+ *  around it (in `real` naval-range mode, its longest gun's reach), while a
+ *  fighter's range is unchanged. `base` is the 1x start zoom. Writes into
+ *  `out`. */
+export function zoomRangeForKind(
+  kind: ZoomKind, base: number, out: { minScale: number; startZoom: number }, mode: NavalRangeMode = NAVAL_RANGE,
+): { minScale: number; startZoom: number } {
+  out.minScale = zoomFloorForKind(kind, mode);
+  out.startZoom = startZoomForScale(base) / hullZoomFactor(kind);
+  return out;
+}
+
 /** Half-extent (u) of the square around a viewer inside which a naval shell,
  *  or the point where it will fall, is sent to that viewer: the widest view the
  *  pilot of `kind` can pull the camera out to (`SHELL_VIEW_HALF_PX` at the
- *  zoom-out floor `zoomRangeForKind().minScale`). Fighter / sub-capital
- *  6,400 u; destroyer (r 1,220) ~13,000 u; battleship (r 2,876) ~30,700 u.
- *  Shared by the server's interest filter and the client camera floor (#15). */
-export function shellViewHalfExtent(kind: Pick<ShipKind, 'radius'>): number {
-  return (SHELL_VIEW_HALF_PX * hullZoomFactor(kind)) / GAMEPLAY_MIN_ZOOM;
+ *  zoom-out floor `zoomFloorForKind`, the client camera's floor). Legacy:
+ *  fighter / sub-capital 6,400 u; destroyer (r 1,220) ~13,000 u; battleship
+ *  (r 2,876) ~30,700 u. Real: a capital's covers its longest gun's reach
+ *  × `GUN_VIEW_MARGIN`. Shared by the server's interest filter and the client
+ *  camera floor (#15). */
+export function shellViewHalfExtent(kind: ZoomKind, mode: NavalRangeMode = NAVAL_RANGE): number {
+  return SHELL_VIEW_HALF_PX / zoomFloorForKind(kind, mode);
 }
 
 /** The radius shield EFFECTS are sized to (hit flash, break dome, the legacy

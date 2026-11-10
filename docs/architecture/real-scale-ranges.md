@@ -45,10 +45,21 @@ The tables live in `src/shared-types/combat/navalGuns.ts` (`REAL_NAVAL_GUNS`, de
 - **Capital turret targeting:** `mountTargetReach`.
 - **Locks:** lock reach is `reach × reachSlack` (1.1); heavy guns' lock time grows with absolute distance (`absRange`, #426): ~17 s for a 16" at 30 km.
 - **Client:** aim-guide length (`aimLineLength`), range rings and the lock guide all read the catalogue.
+- **Capital zoom-out floor (owner decision 2026-11-10).** In `real` mode a capital may zoom out until a 1920-px (16:9 desktop) half-width shows its longest naval gun's engage reach plus that mount's offset, × 1.05 (`GUN_VIEW_MARGIN`). One pure function, `zoomFloorForKind` (`shipScale/tuning.ts`), feeds the client camera (`zoomRangeForKind`) and the server's far-shell view radius (`shellViewHalfExtent`), so what the pilot can see and what the server sends match (#15). Sub-capitals and legacy mode keep the hull floor exactly; the start zoom is unchanged.
+
+| Class | Longest gun | Legacy floor (half-view) | Real floor (half-view) |
+|---|---|---|---|
+| Destroyer | `naval_s` | 0.0738 (13,013 u) | 0.0522 (18,389 u) |
+| Light cruiser | `naval_m` | 0.0455 (21,103 u) | 0.0342 (28,073 u) |
+| Heavy cruiser | `naval_m` | 0.0412 (23,292 u) | 0.0341 (28,115 u) |
+| Battlecruiser | `naval_l` | 0.0343 (27,955 u) | 0.0250 (38,356 u) |
+| Battleship | `naval_xl` | 0.0313 (30,678 u) | 0.0225 (42,574 u) |
+
+  The starfield's coarse **abyss** layer (tile 3,400 u) carries the field below 0.03 so a 4K screen stays inside the tile backstop with ~half the stars the deep layer would draw; it is gone by 0.031, so legacy views are unchanged. Locks: `tests/unit/gunneryZoomFloor.test.ts`, `lodStarfield.coverage.test.ts`.
 
 ## Known gaps (follow-up slices)
 
-- **Seeing it.** A fighter's widest view is ±6,400 u and a battleship's ±30,700 u (`shellViewHalfExtent`), so a firer cannot watch its own 16" land at 38.7 km, and a 38.7 km range ring is off screen for most hulls.
+- **Seeing it (sub-capitals).** A fighter's widest view is still ±6,400 u, so a 38.7 km range ring is off screen for it. Capitals now see their own reach (above).
 - **Entity interest.** Ships and drones ride a 3×3 grid of 2,048 u cells (±3,072 u) plus the wide-entity rule for capitals. A pilot can't see or lock a target 30 km away unless that target is wide. Server-side locks (NPC capitals, structures) are unaffected.
 - **Incoming-fire warning.** No warning for the ship being shelled from 30 km yet (the proposal's risk 4).
 - **Shells in flight.** Flights are ~10× longer, so ~10× more shells are alive at once. The projectile broadphase (#428) keeps hit-testing per step, so its cost doesn't grow with range, but snapshot bytes for far shells (#425) do.
