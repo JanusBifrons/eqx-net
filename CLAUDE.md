@@ -114,7 +114,7 @@ Rules:
 - `tests/e2e/` — Playwright multi-browser scenarios.
 - `benchmarks/` — vitest-bench suites.
 - `docs/LESSONS.md` — chronological log of non-obvious findings.
-- `docs/SHELF.md` — design work deliberately parked to revisit (friendly fire, whole-game time dilation).
+- `docs/SHELF.md` — design work deliberately parked to revisit (NPC friendly-fire awareness, whole-game time dilation).
 - `.github/workflows/ci.yml` — the enforcement pipeline.
 - `eslint.config.js` — boundary rules. Treat modifications here with great care; weakening a pattern is equivalent to weakening invariant #1.
 
