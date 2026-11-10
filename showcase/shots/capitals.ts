@@ -114,7 +114,7 @@ export const capitalBroadside: Shot = {
 
 /** Wait until no ship / structure art is still baking (a 10x battleship
  *  takes ~15 s), so the take never shows the vector stand-in. */
-async function artSettled(ctx: ShotContext): Promise<void> {
+export async function artSettled(ctx: ShotContext): Promise<void> {
   await ctx.page.waitForFunction(() => {
     const st = (globalThis as { __eqxArtStats?: () => { pending?: number; ready?: number } }).__eqxArtStats?.();
     return !!st && (st.ready ?? 0) > 0 && (st.pending ?? 1) === 0;
