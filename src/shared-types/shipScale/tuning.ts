@@ -342,3 +342,13 @@ export function shieldVisualRadius(kind: ShipKind): number {
   for (const p of hull) w = Math.max(w, Math.abs(p[0]));
   return w > 0 ? w : kind.radius;
 }
+
+/** The radius of a ship's shield BUBBLE: the shield effects' radius plus the
+ *  `shipTuning` shield pad. For every non-capital this IS the shield-up
+ *  collider (`shipShieldColliderDesc` = `ball(radius + shieldPad)`), so the
+ *  bubble that is drawn is the bubble that collides (owner's rule 2026-11-10,
+ *  #15/#18). A capital's shield collider is its hull rounded out by the pad; its
+ *  bubble is drawn at half beam + pad. Locked by `shieldColliderParity.test.ts`. */
+export function shieldBubbleRadius(kind: ShipKind): number {
+  return shieldVisualRadius(kind) + shipTuning(kind).shieldPad;
+}
