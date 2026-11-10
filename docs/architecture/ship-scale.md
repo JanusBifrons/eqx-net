@@ -79,6 +79,10 @@ row:
   numbers follow the ships.
 - **B — scaled combat:** reach × (1 + (s − 1) / 2), splash × s, applied in
   `WeaponCatalogue` (`scaleWeaponDef`).
+- **Naval guns are exempt from both.** Capital hulls are built unscaled, so the
+  `naval_*` guns are authored in absolute units
+  (`shared-types/combat/navalGuns.ts`, the shipped 2× B numbers) and read the
+  same under every profile and scale. Lock: `tests/unit/navalGunsAbsolute.test.ts`.
 
 ### Camera
 
