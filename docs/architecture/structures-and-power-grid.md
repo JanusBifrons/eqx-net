@@ -412,7 +412,8 @@ pulse (`processConstruction`) — exactly like a fresh blueprint — so an upgra
 against an empty bank simply waits for minerals. On completion `processConstruction`
 increments `level`, clears the target, restores `constructionCost` to the kind
 base, and seeds HP to the leveled effective max. The leveled stats — `maxHealth`
-(universal), `weaponRange + weaponDamage` (`tickTurrets`), `powerOutput`
+(universal), `weaponDamage` (`fireMount`; reach stays the gun's at every
+level), `powerOutput`
 (`structureToGridNode`) — read the level factor at their catalogue read-sites via
 the pure `structureLevelFactor(level)` curve. `level` rides the `StructureRecord`,
 persists in the sector snapshot (`SectorSnapshotStructure.level`, schema v6), and

@@ -4,10 +4,11 @@
  * The compositor later resamples them to constant frame rate using those
  * timestamps, so dropped frames hold rather than speed the clip up.
  */
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { distinctRuns, longestRepeat, perSecond } from './cadence.js';
 import { chromium, devices, type Browser, type BrowserContext, type BrowserContextOptions, type Page } from '@playwright/test';
 import type { CameraCue } from '../src/core/contracts/cameraScript.js';
 import type { HudMode, Shot, ShotContext, ShotTarget, ShotViewport } from './types.js';
@@ -26,6 +27,11 @@ export interface RecordResult {
   deliveredFps: number;
   gapP95Ms: number;
   gapMaxMs: number;
+  /** DIFFERENT captured frames per second: consecutive byte-identical JPEGs
+   *  (the page drew nothing new) count once. See `cadence.ts`. */
+  uniqueFps: number;
+  /** Longest run of identical captured frames (1 = none repeated). */
+  longestRepeat: number;
   /** Netcode health over the take (null when there is no local pilot). */
   net: NetStats | null;
   /** The longest frames of the take with what ran in them (Chrome's
@@ -226,7 +232,7 @@ export class Recorder {
       for (const f of index.frames) f.t -= t0;
     }
     writeFileSync(path.join(clipDir, 'frames.json'), JSON.stringify(index));
-    return { clipDir, index, ...frameStats(index, shot.durationMs), net: netDelta(net0, net1), longFrames };
+    return { clipDir, index, ...frameStats(index, shot.durationMs), ...captureCadence(clipDir, index, shot.durationMs), net: netDelta(net0, net1), longFrames };
   }
 
   private makeContext(page: Page, hud: HudMode, viewport: { width: number; height: number }): ShotContext {
@@ -250,8 +256,9 @@ export class Recorder {
         play: (cues: CameraCue[]) =>
           page.evaluate((c) => (window as unknown as CinemaWindow).__eqxCinema.play(c), cues),
         stop: () => page.evaluate(() => (window as unknown as CinemaWindow).__eqxCinema.stop()),
-        hud: (mode: HudMode) =>
-          page.evaluate((m) => (window as unknown as CinemaWindow).__eqxCinema.setHud(m), mode),
+        // Clips film the full HUD (FILM_HUD): a shot's mid-take HUD change is ignored.
+        hud: (_mode: HudMode) =>
+          page.evaluate((m) => (window as unknown as CinemaWindow).__eqxCinema.setHud(m), FILM_HUD),
       },
       restartServer: this.restartServer,
       enter: async (target: ShotTarget) => {
@@ -342,15 +349,21 @@ export function scaleCues(cues: readonly CameraCue[], k: number): CameraCue[] {
 /** URL params for a desktop player's default look (see targetUrl). */
 export const PLAYER_LOOK = { art: 'machined', fx: 'new', shiplight: 'high' } as const;
 
-export function targetUrl(baseUrl: string, target: ShotTarget, testId: string, hud: HudMode): string {
-  // cleanworld=1: no debug world overlays (spatial grid, aim guides, NPC callsigns).
+/**
+ * Clips show the game exactly as a player sees it (user, 2026-11-10: "record as
+ * is and then let me be the judge"): the full HUD and no cleanworld, so the grid,
+ * aim guides and NPC callsigns stay. A shot's `hud` field is kept for reference only.
+ */
+export const FILM_HUD: HudMode = 'full';
+
+export function targetUrl(baseUrl: string, target: ShotTarget, testId: string, _hud: HudMode): string {
   // The look a desktop player gets by default: Machined art, the new effects,
   // GPU lighting at High (self-shadows, capital shadows, engine lights). The
   // capture browser is automated, and automation otherwise falls back to the
   // classic/baked look (artMode.ts), so shots filmed without these showed a
   // flatter game than players see (user, 2026-11-10). A shot's params or
   // EQX_SHOWCASE_PARAMS still override any of them.
-  const p = new URLSearchParams({ worker: '0', diag: '0', hud, cleanworld: '1', ...PLAYER_LOOK });
+  const p = new URLSearchParams({ worker: '0', diag: '0', hud: FILM_HUD, ...PLAYER_LOOK });
   if (target.room) {
     p.set('room', target.room);
     p.set('testId', testId);
@@ -548,6 +561,25 @@ async function assertProductionPath(page: Page, target: ShotTarget): Promise<voi
   if (!target.landing && r.diag !== false) {
     throw new Error(`diag must be off while filming (got ${String(r.diag)}) — check ?diag=0 handling.`);
   }
+}
+
+/**
+ * Real capture cadence: frames in timestamp order (the encode's order), each
+ * keyed by its JPEG's hash. An unchanged page encodes to the same bytes, so a
+ * repeat is a frame that showed nothing new.
+ */
+function captureCadence(clipDir: string, index: FrameIndex, durationMs: number): { uniqueFps: number; longestRepeat: number } {
+  const keys = index.frames
+    .slice()
+    .sort((a, b) => a.t - b.t)
+    .map((f) => {
+      try {
+        return createHash('sha1').update(readFileSync(path.join(clipDir, f.file))).digest('hex');
+      } catch {
+        return f.file; // unreadable: count it as different rather than hide it
+      }
+    });
+  return { uniqueFps: perSecond(distinctRuns(keys), durationMs), longestRepeat: longestRepeat(keys) };
 }
 
 export function frameStats(index: FrameIndex, durationMs: number): {

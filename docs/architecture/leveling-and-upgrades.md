@@ -296,8 +296,13 @@ there is no structure XP, only a resource cost.
   rounded — escalating per level (`STRUCTURE_UPGRADE_COST_FRAC = 1.0`). 0 at the cap.
 - `structureLevelMultipliers(level)` / `structureLevelFactor(level)` = a single
   scalar `1 + (level-1)·STRUCTURE_LEVEL_FRAC` (`0.25`) applied to the kind's KEY
-  stats: **maxHealth** (universal), **weaponRange + weaponDamage** (turrets),
-  **powerOutput** (generators). (Storage is a documented future grant — its read
+  stats: **maxHealth** (universal), **weaponDamage** (turrets),
+  **powerOutput** (generators). **Turret reach is NOT levelled** (2026-11-10):
+  it used to be, but the shells kept the weapon's own `maxTicks`, so from
+  level 2 a turret locked and fired at targets its shells couldn't reach (a
+  level-2 Lindemann engaged at 9,669 u; its shell flies 9,100 u). Ranges are
+  physical: reach comes from the gun, and the gun doesn't change with the
+  building's level. Lock: `StructureMountTicker.test.ts`. (Storage is a documented future grant — its read
   sites span the mineral economy; deferred to keep WS-B4 surgical.) Level 1 is the
   identity (byte-identical to pre-WS-B4). All are **balance knobs** — tune on-device.
 - `effectiveStructureMaxHealth(baseMaxHealth, level)` — the ONE helper both the
@@ -317,7 +322,7 @@ upgrade started against an empty bank simply waits for minerals. On the build's
 completion `processConstruction` increments `level` to `upgradeTargetLevel`,
 clears it, restores `constructionCost` to the kind base (so a SUBSEQUENT upgrade
 re-derives cleanly), and seeds HP to the LEVELED effective max. The leveled
-turret range/damage (`tickTurrets`) + power output (`structureToGridNode`) read
+turret damage (`fireMount`) + power output (`structureToGridNode`) read
 the level factor at their catalogue read-sites.
 
 #### Upgrading the CAPITAL — a mid-upgrade Capital stays funding-capable (review must-fix #2, 2026-06-20)
