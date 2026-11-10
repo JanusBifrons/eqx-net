@@ -47,11 +47,16 @@ export interface LockSubsystemDeps {
   /** The player's active ship kind + activated mounts, or null. */
   shipOf(playerId: string): { kind: ShipKind; activated: ReadonlyArray<WeaponMount> } | null;
   /** Best auto target for a group (hostile — or, with `anyTarget` (the testMode
-   *  `instantLock` trigger), any lockable non-player target — in reach and
+   *  `anyTarget` trigger), any lockable non-player target — in reach and
    *  `bears(x, y)`: inside the group's arc), or null. */
   autoPick(playerId: string, reach: number, sx: number, sy: number, bears: (x: number, y: number) => boolean, anyTarget: boolean): string | null;
   /** A failsafe finished: the player has committed a hostile act on `key`. */
   commitHostileAct(playerId: string, key: string): void;
+  /** "Locks keep it hostile" (owner decision 2026-11-10): a lock that is
+   *  LOCKING or LOCKED on an already-hostile target re-stamps that target's
+   *  hostility to the pilot (each lock step, ~10 Hz), so a long shell flight
+   *  doesn't let an NPC forget the pilot between hits. */
+  refreshHostility(playerId: string, key: string): void;
 }
 
 export type GroupMode = 'auto' | 'manual';
@@ -68,6 +73,8 @@ interface GroupState {
   capacity: number;
   refSize: number;
   tracking: number;
+  /** Heavy group (M/L/XL): lock time reads absolute distance. */
+  absRange: boolean;
   reach: number;
   /** Where the group's barrels can point, relative to the hull heading:
    *  [lo0, hi0, lo1, hi1, …] (fixed guns get a small window). */
@@ -80,8 +87,11 @@ interface GroupState {
 }
 
 interface PlayerLocks {
-  /** testMode `instantLock`: AUTO picks any target, every lock completes at once. */
+  /** testMode `instantLock`: every lock completes at once. */
   instant: boolean;
+  /** testMode `anyTarget`: AUTO picks any lockable non-player target, not
+   *  only hostile ones. */
+  anyTarget: boolean;
   /** testMode `groupMode: 'manual'`: every group starts in MAN (a later
    *  `setMode` still switches it). */
   startManual: boolean;
@@ -95,7 +105,7 @@ interface PlayerLocks {
 const SIZE_RANK: Record<MountSize | 'none', number> = { none: 0, AA: 1, S: 2, M: 3, L: 4, XL: 5 };
 
 /** Build a group's lock geometry from its mounts (largest size wins). */
-export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): { refSize: number; tracking: number; reach: number } {
+export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): { refSize: number; tracking: number; reach: number; absRange: boolean } {
   let size: MountSize | 'none' = 'none';
   let reach = 0;
   for (const m of mounts) {
@@ -105,7 +115,7 @@ export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): { refSize: nu
     if (r > reach) reach = r;
   }
   const p = WEAPON_LOCK_PROFILE[size];
-  return { refSize: p.refSize, tracking: p.tracking, reach };
+  return { refSize: p.refSize, tracking: p.tracking, reach, absRange: p.absRange };
 }
 
 /** Half-width (rad) a fixed gun counts as bearing on a target. */
@@ -173,14 +183,15 @@ export class LockSubsystem {
   constructor(private readonly deps: LockSubsystemDeps) {}
 
   /** Start tracking a player (every player, on join). `instant` = the testMode
-   *  `instantLock` trigger; `groupMode: 'manual'` = the testMode trigger that
-   *  starts every weapon group in MAN (AUTO never self-picks until the test
-   *  switches a group). */
-  enable(playerId: string, instant = false, groupMode: GroupMode | null = null): void {
+   *  `instantLock` trigger (locks complete at once); `groupMode: 'manual'` =
+   *  the testMode trigger that starts every weapon group in MAN (AUTO never
+   *  self-picks until the test switches a group); `anyTarget` = the testMode
+   *  trigger that lets AUTO pick any lockable non-player target. */
+  enable(playerId: string, instant = false, groupMode: GroupMode | null = null, anyTarget = false): void {
     const startManual = groupMode === 'manual';
     const p = this.players.get(playerId);
-    if (p) { p.instant = instant; p.startManual = startManual; return; }
-    this.players.set(playerId, { instant, startManual, kindId: '', activatedSig: -1, sensor: 1, groups: [], wire: [] });
+    if (p) { p.instant = instant; p.startManual = startManual; p.anyTarget = anyTarget; return; }
+    this.players.set(playerId, { instant, anyTarget, startManual, kindId: '', activatedSig: -1, sensor: 1, groups: [], wire: [] });
   }
 
   /** The testMode `instantLock` trigger is on for this player. */
@@ -231,6 +242,7 @@ export class LockSubsystem {
         capacity: lockCapacityFor(ship.kind, slot, NO_PILOT_MODS),
         refSize: geo.refSize,
         tracking: geo.tracking,
+        absRange: geo.absRange,
         reach: geo.reach,
         arcs: groupArcs(mounts),
         mountIds: new Set(mounts.map((m) => m.id)),
@@ -468,7 +480,7 @@ export class LockSubsystem {
     // Auto groups acquire their own target when idle.
     if (g.locks.length === 0 && g.mode === 'auto') {
       this.bearGroup = g;
-      const key = this.deps.autoPick(playerId, g.reach, this.shooter.x, this.shooter.y, this.bears, p.instant);
+      const key = this.deps.autoPick(playerId, g.reach, this.shooter.x, this.shooter.y, this.bears, p.anyTarget);
       this.bearGroup = null;
       if (key !== null && this.deps.resolveTarget(playerId, key, this.target)) {
         const auto = newLock(key, true);
@@ -485,6 +497,7 @@ export class LockSubsystem {
         const inp = this.inputs;
         inp.refSize = g.refSize;
         inp.tracking = g.tracking;
+        inp.absRange = g.absRange;
         inp.reach = g.reach;
         inp.sensor = p.sensor;
         inp.pilotSpeed = 1;
@@ -511,6 +524,14 @@ export class LockSubsystem {
       }
       const ev = stepLock(e, LOCK_DT, secs, failsafeSecs, LOCK_TUNING.lostGraceSeconds, LOCK_TUNING.decayMul);
       if (ev === 'commit') this.deps.commitHostileAct(playerId, e.target);
+      // Being targeted is a hostile act: a live (not draining) lock past its
+      // failsafe keeps the target's hostility current. A failsafe ring is still
+      // harmless until it commits; a non-hostile target never gets here
+      // except through that commit.
+      else if (ev !== 'dropped' && this.target.hostile && e.stage !== 'failsafe'
+        && (e.track !== LOCK_TRACK.released || e.stage === 'locked')) {
+        this.deps.refreshHostility(playerId, e.target);
+      }
       if (ev === 'dropped') {
         g.locks.splice(i, 1);
         removed = true;

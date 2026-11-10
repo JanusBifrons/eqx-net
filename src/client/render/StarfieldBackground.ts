@@ -50,10 +50,19 @@ export const GAMEPLAY_STAR_LAYERS: readonly LodStarLayer[] = [
   // below 0.09 (where the deep layer carries), so it never needs more tiles
   // than the backstop allows.
   { parallax: 0.05, tileSize: 340, starsPerTile: 4, radius: 0.95, color: 0xffffff, baseAlpha: 0.85, seed: 101, fadeInAt: 0.09, fullAt: 0.15, dimAt: 0.65, fadedAt: 1.30 },
-  // Deep — a capital pilot's zoom range reaches ~0.03 (round 3 D/E): this
-  // coarse layer carries the field below the far layer, with few enough tiles
-  // that a 4K screen at 0.03 stays well inside the tile backstop.
-  { parallax: 0.05, tileSize: 1700, starsPerTile: 4, radius: 0.95, color: 0xffffff, baseAlpha: 0.85, seed: 505, fadeInAt: 0.0, fullAt: 0.02, dimAt: 0.12, fadedAt: 0.2 },
+  // Deep — a capital pilot's legacy zoom floor reaches ~0.031 (round 3 D/E):
+  // this coarse layer carries the field below the far layer, with few enough
+  // tiles that a 4K screen at 0.03 stays well inside the tile backstop. FULL by
+  // 0.026 (where the abyss starts to dim), so every legacy floor looks as
+  // before and a live capital floor (`zoomFloorForView`) never falls in a gap.
+  { parallax: 0.05, tileSize: 1700, starsPerTile: 4, radius: 0.95, color: 0xffffff, baseAlpha: 0.85, seed: 505, fadeInAt: 0.024, fullAt: 0.026, dimAt: 0.12, fadedAt: 0.2 },
+  // Abyss — real naval ranges (owner 2026-11-10): a capital may zoom out to
+  // its longest gun's reach (`zoomFloorForView`: battleship ~0.0127 on a
+  // 1920x1080 desktop, ~0.0046 on a 390-px phone; FULL by 0.003). Twice the
+  // deep tile, so the field keeps its on-screen density (~75 px tiles at the
+  // floor) and a 4K screen draws ~half the stars the deep layer would. Gone by
+  // 0.031, so no legacy view changes.
+  { parallax: 0.05, tileSize: 3400, starsPerTile: 4, radius: 0.95, color: 0xffffff, baseAlpha: 0.85, seed: 606, fadeInAt: 0.0, fullAt: 0.003, dimAt: 0.026, fadedAt: 0.031 },
   // Mid — full around the default zoom (~1.0).
   { parallax: 0.09, tileSize: 150, starsPerTile: 4, radius: 0.90, color: 0xeaf0ff, baseAlpha: 0.80, seed: 202, fadeInAt: 0.45, fullAt: 0.75, dimAt: 1.40, fadedAt: 2.20 },
   // Near — fades in as you zoom in.

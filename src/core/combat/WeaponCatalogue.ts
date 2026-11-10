@@ -1,4 +1,5 @@
 import { combatDistanceScale } from '../../shared-types/shipScale/tuning.js';
+import { NAVAL_GUN_BALLISTICS as NAVAL, NAVAL_SIEGE_SPLASH, projectileEngageReach } from '../../shared-types/combat/navalGuns.js';
 export type WeaponMode = 'hitscan' | 'projectile' | 'missile';
 export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'charge-laser' | 'autocannon'
   | 'naval_s' | 'naval_m' | 'naval_l' | 'naval_xl'
@@ -43,8 +44,9 @@ export interface ProjectileWeaponDef extends WeaponDefBase {
   speed: number;
   radius: number;
   maxTicks: number;
-  /** Optional blast where the shell lands (plan coastal-defences: the 80 cm
-   *  siege gun). On a hit, and when it falls at the end of its flight, every
+  /** Optional blast where the shell hits (plan coastal-defences: the 80 cm
+   *  siege gun). On a hit (only; a miss ends silently at the end of its
+   *  flight, owner 2026-11-10), every other
    *  ship and structure within `radius` takes `damage × (falloffMin / d)²`
    *  (capped at full damage inside `falloffMin`). Absent ⇒ a plain shell. */
   splash?: { radius: number; falloffMin: number };
@@ -282,24 +284,26 @@ const CHARGE_LASER_DEF: HitscanWeaponDef = {
  * Damage is scaled to match, so a 16" salvo is a heavy blow even to a capital
  * (a direct hit wipes a small ship's shields). Main guns never TARGET small
  * craft (core/combat/mountTargeting.ts), but a shell hits whatever it meets.
- * Shells fly ~2 s to full reach: dodgeable.
- * Authored at 1×; `profiled` scales the reach with the ship-scale combat profile.
+ * Shells fly 1.5-2.75 s to full reach: dodgeable.
+ * Speed and flight time are ABSOLUTE (shared-types/combat/navalGuns.ts): the
+ * naval guns are exempt from `profiled`, as capital hulls are from the ship
+ * scale. The numbers are the shipped 2× B ones (flight = the old 1× × 1.5).
  */
 const NAVAL_S_DEF: ProjectileWeaponDef = {
   id: 'naval_s', displayName: '5" gun', mode: 'projectile',
-  damage: 60, cooldownTicks: 240, speed: 1800, radius: 3, maxTicks: 60, energyCost: 1,
+  damage: 60, cooldownTicks: 240, ...NAVAL.naval_s, radius: 3, energyCost: 1,
 };
 const NAVAL_M_DEF: ProjectileWeaponDef = {
   id: 'naval_m', displayName: '8" gun', mode: 'projectile',
-  damage: 350, cooldownTicks: 600, speed: 2000, radius: 4, maxTicks: 83, energyCost: 1,
+  damage: 350, cooldownTicks: 600, ...NAVAL.naval_m, radius: 4, energyCost: 1,
 };
 const NAVAL_L_DEF: ProjectileWeaponDef = {
   id: 'naval_l', displayName: '12" gun', mode: 'projectile',
-  damage: 800, cooldownTicks: 1320, speed: 2200, radius: 5, maxTicks: 104, energyCost: 1,
+  damage: 800, cooldownTicks: 1320, ...NAVAL.naval_l, radius: 5, energyCost: 1,
 };
 const NAVAL_XL_DEF: ProjectileWeaponDef = {
   id: 'naval_xl', displayName: '16" gun', mode: 'projectile',
-  damage: 1400, cooldownTicks: 1800, speed: 2300, radius: 6, maxTicks: 110, energyCost: 1,
+  damage: 1400, cooldownTicks: 1800, ...NAVAL.naval_xl, radius: 6, energyCost: 1,
 };
 
 /**
@@ -317,12 +321,12 @@ const NAVAL_XL_DEF: ProjectileWeaponDef = {
  */
 const NAVAL_XXL_DEF: ProjectileWeaponDef = {
   id: 'naval_xxl', displayName: '40.6 cm coast gun', mode: 'projectile',
-  damage: 1200, cooldownTicks: 1800, speed: 2600, radius: 7, maxTicks: 140, energyCost: 1,
+  damage: 1200, cooldownTicks: 1800, ...NAVAL.naval_xxl, radius: 7, energyCost: 1,
 };
 const NAVAL_SIEGE_DEF: ProjectileWeaponDef = {
   id: 'naval_siege', displayName: '80 cm siege gun', mode: 'projectile',
-  damage: 4200, cooldownTicks: 7200, speed: 1900, radius: 12, maxTicks: 160, energyCost: 1,
-  splash: { radius: 160, falloffMin: 30 },
+  damage: 4200, cooldownTicks: 7200, ...NAVAL.naval_siege, radius: 12, energyCost: 1,
+  splash: { ...NAVAL_SIEGE_SPLASH },
 };
 
 /**
@@ -347,6 +351,7 @@ export function scaleWeaponDef<T extends WeaponDef>(def: T, reach: number, splas
 }
 
 const COMBAT = combatDistanceScale();
+/** Sub-capital weapons only: the `naval_*` guns are absolute (navalGuns.ts). */
 const profiled = <T extends WeaponDef>(d: T): T => scaleWeaponDef(d, COMBAT.reach, COMBAT.splash);
 
 export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, WeaponDef>([
@@ -356,12 +361,12 @@ export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, Weapo
   ['pulse-orb', profiled(PULSE_ORB_DEF)],
   ['charge-laser', profiled(CHARGE_LASER_DEF)],
   ['autocannon', profiled(AUTOCANNON_DEF)],
-  ['naval_s', profiled(NAVAL_S_DEF)],
-  ['naval_m', profiled(NAVAL_M_DEF)],
-  ['naval_l', profiled(NAVAL_L_DEF)],
-  ['naval_xl', profiled(NAVAL_XL_DEF)],
-  ['naval_xxl', profiled(NAVAL_XXL_DEF)],
-  ['naval_siege', profiled(NAVAL_SIEGE_DEF)],
+  ['naval_s', NAVAL_S_DEF],
+  ['naval_m', NAVAL_M_DEF],
+  ['naval_l', NAVAL_L_DEF],
+  ['naval_xl', NAVAL_XL_DEF],
+  ['naval_xxl', NAVAL_XXL_DEF],
+  ['naval_siege', NAVAL_SIEGE_DEF],
 ]);
 
 export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege'] as const;
@@ -399,7 +404,7 @@ export function weaponAutoFireRange(def: WeaponDef): number {
     case 'hitscan':
       return def.range;
     case 'projectile':
-      return ((def.speed * def.maxTicks) / 60) * 0.85;
+      return projectileEngageReach(def.speed, def.maxTicks);
     case 'missile':
       return ((def.speed * def.lifetimeTicks) / 60) * 0.5;
     default: {

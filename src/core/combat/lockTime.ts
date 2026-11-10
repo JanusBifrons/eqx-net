@@ -25,6 +25,14 @@ export interface LockInputs {
   /** Target velocity relative to the shooter (u/s). */
   dvx: number;
   dvy: number;
+  /** Heavy mount (M/L/XL, `WEAPON_LOCK_PROFILE[size].absRange`): the range
+   *  term reads absolute distance, not the share of reach. Absent = false. */
+  absRange?: boolean;
+}
+
+/** The heavy-mount range term: 1 + (range ÷ absRangeScale)^absRangeExp. */
+export function absRangeTerm(range: number, t: LockTuning): number {
+  return 1 + Math.pow(range / t.absRangeScale, t.absRangeExp);
 }
 
 /** Angular rate (rad/s) of the target across the shooter's view. */
@@ -36,7 +44,13 @@ export function angularRate(dx: number, dy: number, dvx: number, dvy: number): n
 
 /**
  * Seconds to lock, or Infinity when the target can't be locked (out of reach,
- * or the lock would take longer than `maxSeconds`).
+ * or too small / fast for the weapon: the reach-share time is past
+ * `maxSeconds`, unless `t.clampAtMax`, which takes `maxSeconds` instead).
+ *
+ * Heavy mounts (`i.absRange`) then swap the reach-share range term for the
+ * ABSOLUTE one (`absRangeTerm`): distance makes their lock slower, never
+ * impossible, and is not capped (owner, 2026-11-10: "It should take ages to
+ * lock, that's by design").
  */
 export function lockSeconds(i: LockInputs, t: LockTuning): number {
   const range = Math.sqrt(i.dx * i.dx + i.dy * i.dy);
@@ -48,6 +62,32 @@ export function lockSeconds(i: LockInputs, t: LockTuning): number {
   const trackTerm = 1 + t.trackFactor * trackRatio * trackRatio;
   const rangeTerm = 1 + t.rangeFactor * Math.min(1, range / i.reach);
   const speed = Math.max(1e-6, i.sensor * i.pilotSpeed);
-  const secs = (t.baseSeconds * sizeTerm * trackTerm * rangeTerm) / speed;
-  return secs > t.maxSeconds || !Number.isFinite(secs) ? Infinity : secs;
+  let secs = (t.baseSeconds * sizeTerm * trackTerm * rangeTerm) / speed;
+  if (!Number.isFinite(secs)) return Infinity;
+  if (secs > t.maxSeconds) {
+    if (!t.clampAtMax) return Infinity;
+    secs = t.maxSeconds;
+  }
+  return i.absRange ? (secs * absRangeTerm(range, t)) / rangeTerm : secs;
+}
+
+/** The target is within the weapon's lock reach (`reach × reachSlack`). */
+export function lockInReach(i: LockInputs, t: LockTuning): boolean {
+  if (!(i.reach > 0)) return false;
+  return Math.sqrt(i.dx * i.dx + i.dy * i.dy) <= i.reach * t.reachSlack;
+}
+
+/**
+ * testMode `lockTimeCapS` (a room option, bespoke test/recording trigger): no
+ * NON-player lock takes longer than `capS` seconds; 0 completes it on the
+ * first lock step. Lock-to-fire stays universal: a lock is still acquired,
+ * only faster. A target out of reach stays unlockable (Infinity); one in
+ * reach that the rules call too slow to lock at all (past `maxSeconds`, e.g.
+ * a 16" gun on a fighter) locks in `capS` too, so a shot can start with every
+ * gun locked. `capS` undefined = the rules unchanged.
+ */
+export function capLockSeconds(secs: number, i: LockInputs, t: LockTuning, capS: number | undefined): number {
+  if (capS === undefined) return secs;
+  if (!lockInReach(i, t)) return Infinity;
+  return Number.isNaN(secs) ? capS : Math.min(secs, capS);
 }

@@ -4,7 +4,7 @@ Plan `coastal-defences` (`plans/coastal-defences.md`). Static gun batteries buil
 
 ## The catalogue
 
-Seven structure kinds, in the build menu's **Gun Batteries** category. Each fires one shell per barrel per salvo, spends munitions, and repeats its weapon's numbers in the catalogue (`weaponRange`, `fireRateMs`, `weaponDamage`, locked by `tests/unit/coastalDefences.test.ts`).
+Seven structure kinds, in the build menu's **Gun Batteries** category. Each fires one shell per barrel per salvo, spends munitions, and repeats its weapon's numbers in the catalogue (`fireRateMs`, `weaponDamage`, locked by `tests/unit/coastalDefences.test.ts`). A naval gun's `weaponRange` is derived from the gun itself (`navalGunEngageReach`, `src/shared-types/combat/navalGuns.ts`), so the two cannot drift; the quad 40 mm's stays a literal.
 
 | Kind | Real counterpart | Gun | Barrels | Arc | Reach | Prefers |
 |---|---|---|---|---|---|---|
@@ -16,9 +16,12 @@ Seven structure kinds, in the build menu's **Gun Batteries** category. Each fire
 | 40.6 cm Super Battery | Batterie Lindemann | `naval_xxl` | 1 | 120° | ~7,740 | capitals |
 | 80 cm Siege Gun | Schwerer Gustav | `naval_siege` | 1 | 60° | ~6,460 | capitals |
 
-- **Bigger than ships.** The two super-guns use new weapons. The Lindemann out-ranges every ship gun (its light coast shell reached 56 km against the Iowa's 38.7 km). The siege gun fires once every two minutes, and its shell bursts where it stops — on a hit, or where it falls at the end of its flight — hurting everything within 320 u (`ProjectileWeaponDef.splash`, `shellBlastDamage`).
+**Real ranges (switch, off by default).** With `EQX_NAVAL_RANGE=real` on the server and `?navalRange=real` on the client, each gun reaches its real range in the game's km (1 km = 1,000 u) and its shell flies a third of the real time: 5" 16,600 u (19 s), 8" 25,500 u (24 s), 11" 35,000 u (28 s), 16" 38,700 u (30 s), Lindemann 56,000 u (36 s), Gustav 47,000 u (33 s; blast still 320 u). The `weaponRange` above follows the gun, so the range ring, the turret's target search and its lock all grow with it. Numbers and gaps: [real-scale-ranges.md](../architecture/real-scale-ranges.md).
+
+- **Bigger than ships.** The two super-guns use new weapons. The Lindemann out-ranges every ship gun (its light coast shell reached 56 km against the Iowa's 38.7 km). The siege gun fires once every two minutes, and its shell bursts where it hits, hurting everything within 320 u (`ProjectileWeaponDef.splash`, `shellBlastDamage`). Every naval shell hits the first thing in its path; one that hits nothing just ends at the end of its flight, with no burst and no splash (owner, 2026-11-10: "hit anything in-between if it's there, but only explode on target").
 - **Same size as the ship gun.** A battery's gunhouse and barrels are the ship turret of the same calibre (`structureNavalTurret`, sized from the beam of the ship class that carries it), drawn by the same naval turret art, with the shot leaving the drawn barrel tip (`structureMountMuzzle`, #15).
 - **Casemates face their embrasure.** A gun with an arc trains only through it, turned with the structure's rotation (rotation 0 faces +y).
+- **Reach is the gun's, at every level.** Upgrading a battery raises its damage and hull, never its reach: each Reach above is within its shell's flight, and a levelled reach would lock targets the shells can't get to. The inspector's range ring and the placement ghost both draw the catalogue reach (`StructureMountTicker.test.ts` locks reach ≤ flight for every gun kind at the level cap).
 - **Reload and arc on screen.** The structure inspector shows one line per gun size, read from the catalogue (`components/structureGunLines.ts`): `16" ×2 · reload 30 s · arc 144°`, or `all round`. While placing, the ghost draws a faint wedge for each arc-limited gun out to its range, turned with the placement rotation (`ConnectorRenderer.drawPlacementPreview`, pure angles in `connectorVisual.arcWedgeScreenAnglesInto`).
 - **The four energy and missile turrets are unchanged** (their records, and so every saved structure, stay valid). They now aim with the same fire control.
 

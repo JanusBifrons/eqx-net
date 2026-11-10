@@ -88,11 +88,53 @@ byte-identical behaviour and zero added cost.
 
 ## Fire paths
 
-- **Beam** (`AiFireResolver.hitscan`): a third pass tests other combatants
-  (`swarmCombatCircles`), skipping the shooter and friendlies.
-- **Bolt** (`ProjectilePipeline`): an NPC bolt carries its owner's allegiance
-  (resolved once at spawn) and passes **through** same-allegiance ships.
-  *Behaviour change:* before P0 drones shot down fellow drones in the way.
+Allegiance decides **targeting** only. It never decides what a shot hits.
+
+- **Friendly fire (owner decision 2026-11-10: "Fire hits all").** Every shot
+  hits the first thing in its path, the shooter's own side included: bolts and
+  naval shells (`ProjectilePipeline`, sweep and blast), NPC beams
+  (`AiFireResolver.hitscan` → the room's `nonPlayerRayHit`: every swarm entity
+  of any side, structures of any owner, rocks, scrap, parked hulls), structure
+  turret beams (`beamFirstHit` → `turretBeamFirstHit`, its owner's own ship
+  included), missiles (contact and splash) and player shots. Two physical
+  skips stay: a shot never hits its own shooter, and a capital turret won't
+  fire along its own deck (`mountLineClear`, the per-mount fire mask). Shield
+  fences block every shot. *History:* P0 rule 6 let NPC bolts and beams pass
+  through their own allegiance; that was removed.
+- **Line of fire (slice 2).** An NPC holds fire while a FRIENDLY body sits on
+  its shot's line from the muzzle to the target (up to the target's distance;
+  the shooter and the target themselves are never tested). The gun keeps
+  aiming, the lock stays, and no cooldown or reload is spent, so it fires the
+  moment the line clears. Where the check sits: `AiFireResolver.resolve`
+  (drone slots: bolts, beams, missiles, charge wind-ups; before the cooldown),
+  `WeaponMountTicker.tickCapitalMounts` (each capital turret, last, along its
+  barrel from its muzzle) and `StructureGridSubsystem.fireMount` (every
+  structure turret; refusing returns false so the reload is kept). All three
+  call the room (`npcShipLineBlocked` / `droneLineBlocked` /
+  `structureLineBlocked`), which runs `LineOfFireGate`.
+  **What counts as friendly** mirrors `isFriendlyFire` (a hit that would be an
+  accident): for an NPC ship, ships of a friendly allegiance and NPC structures
+  not hostile to its side; for an NPC base turret, its own base's structures,
+  its faction's other bases, and NPC ships of sides it isn't hostile to; for a
+  **player's turret**, its owner's own structures and the owner's own active
+  ship (decision 2026-11-10: a base never shoots its owner; allies' ships are
+  not protected). Hostiles, neutrals, rocks and scrap never block: the NPC
+  shoots them. **Players are never gated**: a pilot may shoot through allies.
+  **Cost:** one `ProjectileBroadphase` grid of the swarm registry per tick,
+  built lazily on the first check (none in a tick with no NPC fire), rebuilt
+  only if membership changes; each check is one grid query over the segment's
+  box, the friendly predicate per candidate, and a narrow ray test only for
+  friendly candidates (stopping at the first hit). Allocation-free. Count gate
+  `LINE_OF_FIRE_BUDGET` (`perfBudgets.ts`, synthetic 80-ship fight where
+  every ship fires every tick: 80 checks → 1,617 candidates, 236 narrow tests
+  per tick vs 30,400 for a full scan). The perf scenes print
+  `lineOfFireChecksPerTick` / `lineOfFireNarrowPerTick` (print-only until
+  calibrated on CI). Formation spacing is the remaining item (docs/SHELF.md).
+- **Accidental hits don't start wars.** A hit on an NPC from its own side
+  (`SectorRoom.isFriendlyFire`: an NPC of a friendly allegiance, or an NPC base
+  not hostile to the victim's side) does its damage but does NOT mark the
+  victim hostile and does not escalate a faction (`swarmDamageStrategy`). A
+  hit from another side, a player or a player's structure marks as before.
 - **Missile** lock-on classifies the shooter by registry (any live kind-1
   entity is an AI shooter), and targets cross-allegiance swarms by stance.
 - **Structure turrets** engage drones and robots, never neutral traders.
@@ -106,7 +148,21 @@ byte-identical behaviour and zero added cost.
   exclusion.
 - `src/core/ai/HostileDroneBehaviour.allegiance.test.ts` — robot fires at an
   unprovoked player, drone doesn't; drone fires at a robot; never at an ally.
-- `src/server/rooms/ProjectilePipeline.allegiance.test.ts` — bolt pass-through.
+- `src/server/rooms/ProjectilePipeline.friendlyFire.test.ts` — a bolt stops on
+  the first ship in its path, its own side included.
+- `tests/integration/sectorRoom/friendlyFire.test.ts` — a drone's bolt and
+  beam hit the ally in front, a battleship's shell hits its escort, a turret's
+  beam hits its owner's ship; the hit ally does not turn hostile.
+- `tests/integration/sectorRoom/npcLineOfFire.test.ts` — a drone holds with an
+  ally in the way and fires once it moves; a robot in the way doesn't block;
+  an NPC base turret holds over its own connector (control: fires with it off
+  the line); a player's turret holds over its owner's ship.
+- `tests/unit/capitalLineOfFire.test.ts` — a capital turret with its escort
+  in the line holds while a turret on the far end fires.
+- `src/server/rooms/LineOfFireGate.test.ts` — parity with a full scan, and
+  the count budget.
+- `src/client/combat/friendlyFirePrediction.test.ts` — the local beam end and
+  hit prediction stop on an ally (#15).
 - `tests/integration/sectorRoom/allegianceThreeWay.test.ts` — a real robot and
   drone fight with no player involved (verified RED with the swarm feed
   disabled); a forged join cannot pilot a robot.

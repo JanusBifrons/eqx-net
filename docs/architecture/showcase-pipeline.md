@@ -45,12 +45,16 @@ Output (gitignored) lands in `showcase-out/`:
      banner).
    - Record `durationMs` of CDP screencast frames to disk, each with its
      compositor timestamp.
-   - The shot's camera script (`__eqxCinema.play`) and its `run` actions start
-     with the recording.
+   - The shot's camera script (`__eqxCinema.play`, spectator mode only) and
+     its `run` actions start with the recording.
 5. **Encode.**
    - **Frame timing:** each frame holds until the next one's capture time, so
      a dropped frame freezes for a beat instead of speeding the clip up. Output
-     is constant 60 fps H.264 (`--fps 30` available).
+     is constant 60 fps H.264 (`--fps 30` available). The concat list reads
+     every frame at `option framerate 60` (`CONCAT_FRAMERATE`): without it
+     ffmpeg's image demuxer uses a 25 fps time base, every 1/60 s duration
+     rounds to 0 or 40 ms, and the clip shows ~25 different frames a second in
+     a 2/3-slot judder even though 60 were captured (bug 2026-11-10).
    - **Cuts:** `cuts` windows (e.g. the 30 s warp spool) are removed by
      dropping their frames.
    - **Phone shots** are pillarboxed into the 16:9 frame.
@@ -58,6 +62,13 @@ Output (gitignored) lands in `showcase-out/`:
 6. **QA.** Each shot gets up to 3 takes and keeps the smoothest (see "Frame
    rate" below). A clip is flagged, never silently used, if its best take:
    - delivered < 55 fps or had a frame gap > 100 ms (at 60 fps output);
+   - captured < 55 DIFFERENT frames a second (`uniqueFps`: consecutive
+     byte-identical JPEGs count once), or < 55 different frames a second
+     reached the encode (`encodedUniqueFps`: ffprobe reads the concat list as
+     the encode does, one frame per output slot). `deliveredFps` counts
+     arrivals, repeats included, so it alone said "60 fps" for clips that
+     moved 25 times a second. All three, plus `longestRepeat`, are in
+     `manifest.json` (`showcase/cadence.ts`);
    - it has ≥ 1 s of blank frames (judged by the brightest pixel, since space
      is dark);
    - it captured < 30 frames.
@@ -124,7 +135,6 @@ server-position ghost) and `noselfdmg=1` on invulnerable takes.
 Prefer an existing room plus URL params:
 
 - `startHostile=1`: drones engage you.
-- `initialHull=1000000`: you survive the take.
 - `shipKind`, `spawnX/Y`, `zoom`.
 - `initialXp`: one kill levels the ship.
 
@@ -140,7 +150,40 @@ Current showcase rooms:
   missile turrets, and a drone pack beyond the wall.
 - `showcase-levelup`: roster-backed, with one target, for the level-up shot.
 
-### Camera
+### Record as is: no cues that change play during the take (2026-11-10)
+
+User: "Don't hide shit for a good demo... Record as is and then let me be the
+judge." A cue is one of two kinds:
+
+- **Setup, before recording starts:** arranging the scene, like choosing a
+  room. Fine: the room, `shipKind`, `spawnX/Y`, `initialXp`, `startHostile=1`
+  at join, ONE `test_aggro` in `prepare`/`startWhen`, prebuilt structures.
+- **Changing behaviour during the take:** not allowed. Examples:
+  `test_reload_turrets` (the 16" barbette fired two salvos 0.2 s apart in
+  `coastal-duel`, which the owner saw as a bug), re-sending `test_aggro` to
+  keep drones hostile past their real 30 s decay, `instantLock` / `anyTarget`
+  / `lockTimeCapS` (lock times that aren't the game's), `initialHull=1000000`
+  / `noselfdmg=1` (an unkillable pilot, its damage numbers hidden), forced
+  spawns mid-take. If the pilot dies, the take shows what the game does next.
+
+Converted so far: `pack-battle`, `coastal-duel`, `capital-guns-fighter`. The
+other shots still carry such cues until the audit converts them.
+
+### Camera: the follow camera while piloting, a pan only in spectator mode
+
+User (2026-11-10): "It should look and feel as it would for me. If you need a
+shot which is cinematic and panning, use spectator mode." So:
+
+- While the take's pilot flies a ship, the camera is the game's normal follow
+  camera. No `camera` script, no `ctx.cinema.play`.
+- A shot that needs a pan or a free camera first calls `ctx.spectate()` (in
+  `prepare`/`startWhen`, or mid-take). It clicks the Pilot / Spectate toggle's
+  Spectate button as a player would; the ship parks in the world and the
+  spectator's HUD shows. A scripted pan then stands in for a player panning.
+- **Enforced:** `ctx.cinema.play` (and a shot's `camera` field, which goes
+  through it) throws unless the store's `pilotMode` is `spectator`. Lock:
+  `showcase/cinemaGuard.test.ts`. A shot not yet converted fails its take with
+  that message rather than filming a staged camera.
 
 See [cinematic-camera.md](cinematic-camera.md). Use `track` for a moving
 subject (feed-forward cancels spring lag), `frame` for groups, `path` for
@@ -204,10 +247,11 @@ window.
 
 ## Piloted shots
 
-Shots in `showcase/shots/cockpit.ts` are flown from one player's ship: the
-camera tracks `local`, the HUD is `clean` (shield/hull, cargo, wallet stay on
-screen), and `_pilot.ts` steers with the arrow keys (`flyTo`, `flyRoute`,
-`face`). Prefer this over a free camera for anything a player does.
+Shots are flown from one player's ship on the game's follow camera (no
+`camera` script; see "Camera" above), and `_pilot.ts` steers with the arrow
+keys (`flyTo`, `flyRoute`, `face`). Prefer this over spectator mode for
+anything a player does. (`cockpit.ts` still uses a `track local` script; it is
+in the audit's conversion list.)
 
 - **The Trade tab does not block the main thread.** The frame gaps seen with
   it open (0.9–1.9 s) were the automation ticker pause behind an open drawer

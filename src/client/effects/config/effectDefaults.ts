@@ -7,8 +7,6 @@
  * Plan: `~/.claude/plans/i-d-like-you-to-wiggly-puppy.md` §"Sandbox extension".
  */
 
-import { SHIELD_RADIUS_PAD } from '../../../shared-types/shipKinds';
-
 /** Tuned in M3 — Warp re-enable. */
 export const DEFAULT_WARP_TONING = {
   spoolCount: 2, // was 4 pre-disable
@@ -86,14 +84,10 @@ export const DEFAULT_IMPACT_PARAMS = {
 
 /** Tuned in M8 — Shield aura.
  *
- *  `ringPad` is imported from `shared-types/shipKinds` so the visible
- *  shield aura, the physics ball collider (`World.spawnShip` /
- *  `setHullExposed`), and the server hit-test bounding circle
- *  (`SectorRoom.playerHitscanDist` / `playerProjectileSweep`) all use
- *  the SAME value. Without sharing, the three sites would inevitably
- *  drift apart on tuning passes. */
+ *  The ring radius is NOT padded here: the renderer passes the full bubble
+ *  (`shieldBubbleRadiusForEntity` = the shield collider radius, from
+ *  `shipTuning`), so the drawn aura is the bubble that collides. */
 export const DEFAULT_SHIELD_PARAMS = {
-  ringPad: SHIELD_RADIUS_PAD,
   baseAlpha: 0.18,
   breatheAmplitude: 0.08,
   breathePeriodMs: 1400,

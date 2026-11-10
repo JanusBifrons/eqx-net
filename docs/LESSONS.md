@@ -2852,3 +2852,21 @@ Commit: perf/count-budgets (PR #356)
 - **Rules:**
   - Never infer "this is a test" from `navigator.webdriver` for behaviour that changes what is shown: the recorder, perf runs and the netgate are automation too. Use an explicit flag the harness sets.
   - Before profiling a recorded stall, check whether automation-only code is running in the recording.
+
+## 2026-11-10 — Showcase clips judder at ~25 fps while QA said 60 (ffmpeg concat time base)
+
+- **Symptom:** take QA reported "60.1 fps, worst gap 23–34 ms", but a frame-difference count of the encoded clips found ~24–26 different frames a second (pack-battle: 395 repeats in 720 frames, a repeating 2/3-slot hold).
+- **Cause:** not the game and not the capture. The raw screencast frames of capital-guns-fighter were 1321 different JPEGs in 22 s (60.0/s; the page's rAF also 60.0/s). The encode lost them: the concat demuxer opened each JPEG with the image demuxer's default 25 fps time base, so each `duration 0.016667` rounded to 0 or 0.04 s (ffprobe pts 0, 0, .04, .04, .08, .08, .12, .12, .12 …) and `fps=60` kept one frame per 40 ms.
+- **Fix:** `option framerate 60` on every concat entry (`CONCAT_FRAMERATE` in `showcase/compositor.ts`). The same shot re-filmed: 60.0 different frames/s in the clip (was 25.6).
+- **Rules:**
+  - A frame-rate gate must count DIFFERENT frames, at the output, not frames that arrived at the input. Take QA now records `uniqueFps` (capture) and `encodedUniqueFps` (what reaches the encode) and gates both.
+  - When feeding images to ffmpeg's concat demuxer, set the per-file framerate: a `duration` is rounded to the file's time base.
+
+## 2026-11-10 — Death froze the frame: the build palette cold-mounted in the destroy-message task
+
+- **Symptom:** a 50–67 ms stall (3–4 frames at 60 fps) exactly when the local ship dies and the client flips into spectator (`pack-battle` 0.90 s, `capital-guns-fighter` 14.47 s; one 72 ms long frame attributed to Colyseus `onMessageCallback`).
+- **Cause:** `killEntity` (run inside the `destroy` message handler) calls `setPilotMode('spectator')`. React flushes that Zustand update in the same task, and the desktop `BottomControlPanel` went from `return null` to ~40 MUI `Tooltip` cells: **864 components mounted, 2,228 rendered** in the first 300 ms, a ~70 ms React task on the death frame (headless, `worker=0`). Not the explosion, not texture creation.
+- **Fix:** the palette is mounted for the whole desktop game and hidden (`display: none`, `data-panel-mode="hidden"`) while piloting; cells are a memoised `BuildCell` with hoisted per-state `sx`. Same session, 4 reps each: React task on the death frame 67–79 ms → 8–12 ms; death-frame LoAF 164–188 ms → 103–119 ms (this host's steady frames are ~95 ms under the CPU profiler); components mounted on death 864 → 21.
+- **Rules:**
+  - Anything that appears on a gameplay event (death, lock, level-up) and holds more than a handful of MUI components is pre-mounted and toggled, like the drawer's `keepMounted`. A store flip inside a message handler renders inside that handler's task.
+  - Measure with `tests/perf/death-spectator-hitch.spec.ts`: it stubs `__REACT_DEVTOOLS_GLOBAL_HOOK__` to count components rendered and mounted per commit (skip subtrees whose `child` equals `alternate.child`, or untouched fibers read as mounts). The count lock is `BottomControlPanel.test.tsx` "the spectator flip inserts no DOM".

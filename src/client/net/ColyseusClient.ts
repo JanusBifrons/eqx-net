@@ -247,6 +247,7 @@ import {
   STAGE_3_MAX_LOOKAHEAD_TICKS,
 } from './predictionTuning.js';
 import { shipScaleMismatch } from '@shared-types/shipScale/welcomeScale';
+import { navalRangeMismatch } from '@shared-types/combat/navalRange';
 
 /** Simple monotonically incrementing shot ID generator. */
 let _shotCounter = 0;
@@ -1467,6 +1468,10 @@ export class ColyseusGameClient {
       // config; a server at another scale would desync physics and hits.
       const scaleMismatch = shipScaleMismatch(msg);
       if (scaleMismatch) logEvent('ship_scale_mismatch', scaleMismatch);
+      // Naval range mode: the client draws range and lock rings from its own
+      // catalogue, the server fires from its own (invariant #15).
+      const navalMismatch = navalRangeMismatch(msg);
+      if (navalMismatch) logEvent('naval_range_mismatch', navalMismatch);
       const idChanged = storedPlayerId && msg.playerId !== storedPlayerId;
       logEvent('cc_welcome', {
         playerId: msg.playerId,
@@ -5574,6 +5579,17 @@ export class ColyseusGameClient {
   requestLock(groupId: string, targetKey: string): void {
     if (!this.room) return;
     this.room.send('lock_request', { type: 'lock_request', groupId, target: targetKey });
+  }
+
+  /** A weapon group's lock-reach basis (u, before `LOCK_TUNING.reachSlack`) for the local
+   *  ship: the same `weaponAutoFireRange` max the server's `groupGeometry` uses. 0 = unknown.
+   *  Read by the contacts overview at 4 Hz, never per frame. */
+  fcGroupReach(groupId: string): number {
+    const id = this.mirror.localPlayerId;
+    const ship = id ? this.mirror.ships.get(id) : undefined;
+    if (!ship) return 0;
+    this.fcSyncKind(ship.kind ?? null);
+    return this._fcInfo.get(groupId)?.reach ?? 0;
   }
 
   /** Drop one lock (or all of a group's locks when no key). */

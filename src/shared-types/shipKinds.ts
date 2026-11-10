@@ -177,23 +177,11 @@ export const SHIP_KINDS = Object.freeze({
  */
 export const SHIP_KIND_CATALOGUE_VERSION = 24;
 
-/** Shield bubble pad — how far PAST each kind's hull `radius` the shield
- *  bubble extends. Shared across:
- *   - physics shield collider (`World.spawnShip` / `setHullExposed`) so the
- *     rapier ball matches the visible bubble
- *   - server hit-tests (`SectorRoom.playerHitscanDist` /
- *     `playerProjectileSweep`) so lasers/projectiles impact at the visible
- *     bubble edge instead of pre-2026-05-27's hardcoded `SHIP_COLLISION_RADIUS=12`
- *     (which only matched fighter and made every other kind's shield
- *     under- or over-sized for hit detection)
- *   - visual aura (`ShieldAura` `ringPad` in `effectDefaults.ts`)
- *
- *  Keeping a SINGLE source of truth here means a future tuning pass moves
- *  one number and the whole shield system stays internally consistent.
- *
- *  Tuning history: started at 4 u (subtle), bumped to 10 u (2026-05-27)
- *  for a clearer "bubble" silhouette per smoke feedback. */
-export const SHIELD_RADIUS_PAD = 10;
+// The shield bubble pad is `shipTuning(kind).shieldPad` (shipScale/tuning.ts),
+// and the bubble radius is `shieldBubbleRadius(kind)`. The fixed
+// `SHIELD_RADIUS_PAD = 10` that lived here was removed 2026-11-10: the drawn
+// aura still used it after the colliders moved to the size-scaled pad, so the
+// drawn bubble matched no collider (#18).
 
 export const DEFAULT_SHIP_KIND: ShipKindId = 'fighter';
 

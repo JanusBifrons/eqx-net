@@ -4,26 +4,28 @@ import type { WeaponFireContext } from '../../core/combat/weapons/Weapon.js';
 import type { ShipState } from './schema/SectorState.js';
 
 /**
- * Wave-system Phase 2 — locks the drone-beam STRUCTURE pass added to
- * `AiFireResolver.hitscan`. We call `hitscan(ctx, range, damage)` directly with
- * a hand-built ray context (bypassing `resolve()`'s mount machinery — that path
- * is unchanged) so the test isolates exactly the new player+structure
- * closest-of-both selection. Mirrors the TransitOrchestrator hand-rolled-mock
- * pattern: minimal deps, no server, no IPC.
+ * Locks the NPC beam's target selection in `AiFireResolver.hitscan`: the
+ * closest of (players, every other thing in the path). Since friendly fire
+ * (owner decision 2026-11-10) the non-player pass is the room's
+ * `nonPlayerRayHit` (every swarm entity of ANY side + lingering hulls, minus
+ * the shooter), replacing the old hostile-structure + other-allegiance passes.
+ * We call `hitscan(ctx, range, damage)` directly with a hand-built ray.
  */
 
 interface Recorded {
   damage: Array<{ targetId: string; shooterId: string; damage: number }>;
   beams: Array<{ hit: boolean; targetId?: string }>;
+  skips: string[];
 }
 
 function makeResolver(opts: {
   /** playerId → straight-line hit distance the stubbed `playerHitscanDist`
    *  returns (null ⇒ miss). */
   playerHits?: Map<string, number | null>;
-  structures?: Array<{ id: string; x: number; y: number; radius: number }>;
+  /** Non-player things along the +x ray: id + distance. */
+  others?: Array<{ id: string; dist: number }>;
 }): { resolver: AiFireResolver; rec: Recorded } {
-  const rec: Recorded = { damage: [], beams: [] };
+  const rec: Recorded = { damage: [], beams: [], skips: [] };
   const playerHits = opts.playerHits ?? new Map<string, number | null>();
   const ships = new Map<string, ShipState>();
   const poses = new Map<string, { x: number; y: number; angle: number }>();
@@ -31,9 +33,6 @@ function makeResolver(opts: {
     ships.set(pid, { alive: true } as unknown as ShipState);
     poses.set(pid, { x: 0, y: 0, angle: 0 });
   }
-  // `hitscan` calls getActiveShip(pid) then playerHitscanDist(ship, …) for the
-  // SAME player in the loop, so we stash the last-probed id and resolve its
-  // canned distance from `playerHits`.
   let probedId = '';
   const deps: AiFireResolverDeps = {
     lastFireClientTick: new Map(),
@@ -50,7 +49,17 @@ function makeResolver(opts: {
     shipPoseCache: poses,
     playerHitscanDist: () => playerHits.get(probedId) ?? null,
     applyDamage: (targetId, shooterId, damage) => rec.damage.push({ targetId, shooterId, damage }),
-    structureHitTargets: opts.structures ? () => opts.structures! : undefined,
+    nonPlayerRayHit: opts.others
+      ? (_fx, _fy, _dx, _dy, maxDist, skipId) => {
+        rec.skips.push(skipId);
+        let best: { id: string; wireId: string; dist: number } | null = null;
+        for (const o of opts.others!) {
+          if (o.id === skipId || o.dist > maxDist) continue;
+          if (best === null || o.dist < best.dist) best = { id: o.id, wireId: `swarm-${o.id}`, dist: o.dist };
+        }
+        return best;
+      }
+      : undefined,
     broadcast: (_type, msg) => rec.beams.push({ hit: msg.hit, targetId: msg.targetId }),
     spawnServerProjectile: () => {},
     spawnServerMissile: () => null,
@@ -63,44 +72,46 @@ function ray(): WeaponFireContext {
   return { fromX: 0, fromY: 0, dirX: 1, dirY: 0, shooterVx: 0, shooterVy: 0, mountId: 'm0' };
 }
 
-describe('AiFireResolver.hitscan — structure pass (wave-system Phase 2)', () => {
-  it('hits a hostile structure in the beam path when no players are present', () => {
-    const { resolver, rec } = makeResolver({
-      structures: [{ id: 'swarm-7', x: 100, y: 0, radius: 20 }],
-    });
+describe('AiFireResolver.hitscan — first thing in the path', () => {
+  it('hits a non-player thing (any side) when no players are present; wire id is the swarm key', () => {
+    const { resolver, rec } = makeResolver({ others: [{ id: '7', dist: 80 }] });
     resolver.hitscan(ray(), 500, 9);
-    expect(rec.damage).toEqual([{ targetId: 'swarm-7', shooterId: '', damage: 9 }]);
+    expect(rec.damage).toEqual([{ targetId: '7', shooterId: '', damage: 9 }]);
     expect(rec.beams[0]).toEqual({ hit: true, targetId: 'swarm-7' });
   });
 
-  it('picks the CLOSER of a player vs a structure (structure nearer → structure)', () => {
+  it('picks the CLOSER of a player vs another thing (thing nearer → thing)', () => {
     const { resolver, rec } = makeResolver({
-      playerHits: new Map([['p1', 300]]), // player at distance 300
-      structures: [{ id: 'swarm-7', x: 100, y: 0, radius: 20 }], // structure entry ~80
+      playerHits: new Map([['p1', 300]]),
+      others: [{ id: '7', dist: 80 }],
     });
     resolver.hitscan(ray(), 500, 5);
-    expect(rec.damage).toEqual([{ targetId: 'swarm-7', shooterId: '', damage: 5 }]);
+    expect(rec.damage).toEqual([{ targetId: '7', shooterId: '', damage: 5 }]);
   });
 
-  it('picks the CLOSER of a player vs a structure (player nearer → player)', () => {
+  it('picks the CLOSER of a player vs another thing (player nearer → player)', () => {
     const { resolver, rec } = makeResolver({
-      playerHits: new Map([['p1', 40]]), // player at distance 40
-      structures: [{ id: 'swarm-7', x: 100, y: 0, radius: 20 }], // structure entry ~80
+      playerHits: new Map([['p1', 40]]),
+      others: [{ id: '7', dist: 80 }],
     });
     resolver.hitscan(ray(), 500, 5);
     expect(rec.damage).toEqual([{ targetId: 'p1', shooterId: '', damage: 5 }]);
   });
 
-  it('misses a structure outside the beam path', () => {
-    const { resolver, rec } = makeResolver({
-      structures: [{ id: 'swarm-7', x: 0, y: 100, radius: 20 }], // off-axis, ray is +x
-    });
+  it('nothing in the path ⇒ a miss', () => {
+    const { resolver, rec } = makeResolver({ others: [] });
     resolver.hitscan(ray(), 500, 5);
     expect(rec.damage).toEqual([]);
     expect(rec.beams[0]).toEqual({ hit: false, targetId: undefined });
   });
 
-  it('no structureHitTargets dep ⇒ players-only (byte-identical to pre-wave)', () => {
+  it('asks the room to skip only the shooter itself', () => {
+    const { resolver, rec } = makeResolver({ others: [{ id: '7', dist: 80 }] });
+    resolver.hitscan(ray(), 500, 5);
+    expect(rec.skips).toEqual(['']); // the shooter id resolve() sets (unset here)
+  });
+
+  it('no nonPlayerRayHit dep ⇒ players only', () => {
     const { resolver, rec } = makeResolver({ playerHits: new Map([['p1', 40]]) });
     resolver.hitscan(ray(), 500, 5);
     expect(rec.damage).toEqual([{ targetId: 'p1', shooterId: '', damage: 5 }]);

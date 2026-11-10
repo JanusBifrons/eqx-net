@@ -126,7 +126,10 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
     const cap = await placeAndWait(harness, room, 'capital', 0, 0);
     await placeAndWait(harness, room, 'connector', 0, 350);
     await placeAndWait(harness, room, 'solar', 250, 400);
-    await placeAndWait(harness, room, 'solar', 0, 600); // extra power (missile draws 30)
+    // Extra power (missile draws 30), WEST of the Capital: at (0,600) it sat on the
+    // turret's line to the drone, and a turret holds fire over its own structure
+    // (NPC line of fire, friendly fire slice 2).
+    await placeAndWait(harness, room, 'solar', -550, 0);
     const mt = await placeAndWait(harness, room, 'missile_turret', -140, 420);
     for (let i = 0; i < 250; i++) internals.pulseStructureGrid();
     expect(internals.structureRegistry.get(mt)!.isConstructed).toBe(true);
@@ -156,7 +159,7 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
     const cap = await placeAndWait(harness, room, 'capital', 0, 0);
     await placeAndWait(harness, room, 'connector', 0, 350);
     await placeAndWait(harness, room, 'solar', 250, 400);
-    await placeAndWait(harness, room, 'solar', 0, 600);
+    await placeAndWait(harness, room, 'solar', -550, 0); // off the line (see above)
     const mt = await placeAndWait(harness, room, 'missile_turret', -140, 420);
     for (let i = 0; i < 250; i++) internals.pulseStructureGrid();
     internals.structureRegistry.get(cap)!.hold = { goods: {}, blueprints: [] };

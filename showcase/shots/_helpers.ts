@@ -6,7 +6,9 @@ import type { ShotContext } from '../types.js';
  * URL params for a combat take where the player must survive the whole shot.
  * Lock-to-fire (2026-11-09): weapons fire only at a completed lock, so
  * `instantLock` makes the AUTO groups lock what's in front within ~0.1 s and
- * fire on their own, as the legacy auto-fire did.
+ * fire on their own, as the legacy auto-fire did. AUTO still picks only
+ * HOSTILE targets (`startHostile` makes the drones hostile); it never fires
+ * on a neutral structure (that would need the testMode `anyTarget`).
  */
 export const SURVIVE = { initialHull: 1_000_000, startHostile: 1, noselfdmg: 1, instantLock: 1 } as const;
 

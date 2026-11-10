@@ -116,8 +116,9 @@ export interface SectorTestHarness {
    * lock key (`s:<entityId>` | `p:<playerId>`), a swarm record id (e.g. a
    * drone id) or a playerId. `groupId` absent ⇒ every group of the pilot.
    * Throws when nothing took the lock (unknown target / pilot not spawned).
-   * Alternatively join with `instantLock: true` (AUTO groups lock any NPC or
-   * non-own structure in reach + arc at once).
+   * Alternatively join with `instantLock: true` (every lock completes at once)
+   * plus `anyTarget: true` (AUTO groups also pick any NPC or non-own structure
+   * in reach + arc).
    */
   lockTarget(playerId: string, target: string, groupId?: string): number;
   /** Wait for the next snapshot. Note: snapshot broadcasts are suppressed
@@ -184,6 +185,8 @@ export async function bootSectorTestServer(opts: {
   pocketPads?: boolean;
   /** C2 — every break-in takes this long (bespoke trigger). */
   breakInMs?: number;
+  /** Bespoke test trigger: no NON-player lock takes longer than this (s); 0 = the first step. */
+  lockTimeCapS?: number;
   /** P2d — stock the prebuilt Capital's hold. */
   prebuiltStorageGoods?: Record<string, number>;
   /** v4 T1 — teleporter cycle speed, and pair the seeded teleporters. */
@@ -193,6 +196,8 @@ export async function bootSectorTestServer(opts: {
   teleportFullCharge?: boolean;
   /** Drones never attack (the room option). */
   peacefulDrones?: boolean;
+  /** Pilots may join flying a capital (`shipKind: 'battleship'`, …): the room option. */
+  pilotCapitals?: boolean;
   /** P2c — sector features for the room (asteroid mix, nebula). */
   sectorFeatures?: string[];
   /** Room-level default spawn point (forwarded to `defaultSpawnX/Y`). */
@@ -265,12 +270,14 @@ export async function bootSectorTestServer(opts: {
     solarSectors: opts.solarSectors,
     pocketPads: opts.pocketPads,
     breakInMs: opts.breakInMs,
+    lockTimeCapS: opts.lockTimeCapS,
     prebuiltStorageGoods: opts.prebuiltStorageGoods,
     teleportCycleScale: opts.teleportCycleScale,
     pairTeleporters: opts.pairTeleporters,
     teleportShipBoards: opts.teleportShipBoards,
     teleportFullCharge: opts.teleportFullCharge,
     peacefulDrones: opts.peacefulDrones,
+    pilotCapitals: opts.pilotCapitals,
     tradeEnabled: opts.tradeEnabled,
     enforceHullGate: opts.enforceHullGate,
     seedStorageHold: opts.seedStorageHold,

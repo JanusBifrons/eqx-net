@@ -25,9 +25,10 @@ import { CaptureServers, portOffset } from './servers.js';
 import { judgeLoad, sampleHostLoad } from './hostLoad.js';
 import { PHONE_LANDSCAPE, Recorder, type RecordResult } from './recorder.js';
 import { expandShotPatterns } from './shotFilter.js';
-import { smoothnessProblems, smoothScore, type TakeStats } from './smoothness.js';
+import { SMOOTH, smoothnessProblems, smoothScore, type TakeStats } from './smoothness.js';
+import { cadenceProblem } from './cadence.js';
 import { measureWobble, wobbleProblem, wobbleSummary, netProblem, netSummary, poseHealth, poseProblem, poseSummary } from './wobble.js';
-import { encodeClip, encodeCard, assemble, qaClip, deviceLayout } from './compositor.js';
+import { encodeClip, encodeCard, assemble, qaClip, deviceLayout, encodedUniqueFps } from './compositor.js';
 import { captionOverlay, deviceFrame, endCard, sectionCard, titleCard } from './cards.js';
 import { browserPid, clearTracked, gitSha, reapStale, resolveFfmpeg, trackPid } from './tools.js';
 
@@ -237,6 +238,7 @@ const takeStats = (rec: RecordResult): TakeStats => ({
   frames: rec.index.frames.length,
   deliveredFps: rec.deliveredFps,
   gapMaxMs: rec.gapMaxMs,
+  uniqueFps: rec.uniqueFps,
 });
 
 /**
@@ -294,7 +296,7 @@ async function takeWithRetry(
       const pp = poseProblem(pose);
       if (pp) problems.push(pp);
       const verdict = problems.length ? ` — ${problems.join('; ')}` : '';
-      log(`  ${problems.length ? '·' : '✓'} ${rec.deliveredFps} fps, worst gap ${rec.gapMaxMs} ms, ${wobble ? wobbleSummary(wobble) : 'ship wobble: not measured'}, ${netSummary(rec.net)}, ${poseSummary(pose)}${verdict}`);
+      log(`  ${problems.length ? '·' : '✓'} ${rec.deliveredFps} fps (${rec.uniqueFps} different, longest repeat ${rec.longestRepeat}), worst gap ${rec.gapMaxMs} ms, ${wobble ? wobbleSummary(wobble) : 'ship wobble: not measured'}, ${netSummary(rec.net)}, ${poseSummary(pose)}${verdict}`);
       // What ran in the take's longest frames, so a hitch says where it came from.
       for (const f of rec.longFrames.slice(0, 3)) log(`    long frame ${f.ms} ms at ${(f.atMs / 1000).toFixed(1)} s: ${f.scripts}`);
       // Fewer QA problems first (a jittery take never beats a clean one), then the smoother.
@@ -340,6 +342,12 @@ async function takeWithRetry(
   const qa = await qaClip(mp4, path.join(out, 'contact-sheets', `${shot.id}.png`));
   const problems = [...best.problems];
   if (qa.blankSeconds >= 1) problems.push(`${qa.blankSeconds}s of blank frames`);
+  // What reached the encode, not what the capture delivered (bug 2026-11-10:
+  // QA said 60 fps while the clip showed ~25 different frames a second).
+  const encUnique = await encodedUniqueFps(clipDir, fps, qa.durationMs).catch(() => NaN);
+  const ep = Number.isFinite(encUnique) ? cadenceProblem('encoded', encUnique, SMOOTH[fps]!.minFps) : 'encoded cadence not measured (ffprobe failed)';
+  if (ep) problems.push(ep);
+  log(`  encoded: ${encUnique} different frames/s (captured ${best.rec.uniqueFps})`);
   return {
     id: shot.id,
     sha,
@@ -347,6 +355,9 @@ async function takeWithRetry(
     frames: best.rec.index.frames.length,
     durationMs: qa.durationMs,
     deliveredFps: best.rec.deliveredFps,
+    uniqueFps: best.rec.uniqueFps,
+    longestRepeat: best.rec.longestRepeat,
+    encodedUniqueFps: encUnique,
     gapP95Ms: best.rec.gapP95Ms,
     gapMaxMs: best.rec.gapMaxMs,
     qa: { ok: problems.length === 0, problems },

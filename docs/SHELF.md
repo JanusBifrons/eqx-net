@@ -4,24 +4,32 @@ Design work deliberately parked, to revisit. Each entry says what we found,
 why it waits, and what doing it properly involves. Remove an entry in the PR
 that picks it up.
 
-## Friendly fire for every shot (shelved 2026-11-07)
+## Friendly fire for every shot (STARTED 2026-11-10)
 
-**Today:** NPC shots pass through ships of the same allegiance
-(allegiances rule 6, plan peppy-jumping-pinwheel P0). A projectile never hits
-its own shooter (`ProjectilePipeline`, owner skip), and a capital turret never
-fires along its own deck (the per-mount fire mask, `mountLineClear`).
+**Done (slice 1, owner decision 2026-11-10: "Fire hits all, but we need NPCs
+to be aware of this and not fire when blocked ... For now I don't mind them
+just being dumb and killing each other"):** every shot hits the first thing in
+its path, the shooter's own side included: bolts, naval shells, NPC beams,
+structure turret beams (its owner's own ship too), missiles, player shots. The
+allegiances-P0 rule 6 pass-through is gone. Physical skips stay: a shot never
+hits its own shooter, and a capital turret never fires along its own deck
+(`mountLineClear`). An accidental hit from the victim's own side does its
+damage but marks nothing hostile (`SectorRoom.isFriendlyFire`), so packs don't
+civil-war. See docs/architecture/allegiances.md "Fire paths".
 
-**Wanted (user, 2026-11-07):** "All fire hits allies, there is no FOF
-detector." A battleship's shells would hit its own escorts; a drone's bolts
-would hit its squadmates.
+**Done (slice 2): NPCs hold fire when a friendly is in the way.** Before a
+drone's slot fires, a capital turret fires or a structure turret fires, the
+room checks the shot's line from the muzzle to the target for a FRIENDLY body
+(`LineOfFireGate`, a per-tick broadphase); if one is there the gun holds this
+tick, keeps aiming and keeps its lock. Players are never gated. A player's
+turret holds on its owner's own ship and structures. Cost is gated as a COUNT
+(`LINE_OF_FIRE_BUDGET`). See docs/architecture/allegiances.md "Line of fire".
 
-**Why it waits:** it changes how every NPC fights:
-- **Formations** need spacing that keeps escorts out of the lines of fire
-  (flocking radii, capital escort stations).
-- **Fire decisions** need a line-of-sight check before firing (no shot through
-  a friendly), in the drone AI and every capital turret.
-- **Performance:** that LOS check runs per shot candidate, so it needs the
-  existing spatial grids, a budget and a bench before it ships.
+**Still to do: formations.** NPCs now hold rather than shoot through an ally,
+but a pack that flies in a clump still spends fire time holding. Escorts and
+flocks need spacing that keeps them out of each other's lines of fire
+(flocking separation radii, capital escort stations off the broadsides), and a
+held drone could side-step to clear its line.
 
 ## Time dilation for the whole game (shelved 2026-11-07)
 

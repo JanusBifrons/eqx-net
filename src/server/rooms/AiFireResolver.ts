@@ -26,12 +26,11 @@ import {
 } from '../../core/combat/WeaponCatalogue.js';
 import { getWeaponObject } from '../../core/combat/weapons/index.js';
 import type { WeaponFireContext, WeaponFireSink } from '../../core/combat/weapons/Weapon.js';
-import { rayHitsBox, rayHitsSphere } from '../../core/combat/Weapons.js';
 import type { AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import type { LaserFiredEvent } from '../../shared-types/messages.js';
 import type { ShipState } from './schema/SectorState.js';
 import { shipShotMuzzle, navalTurret, navalBarrelOffset } from '../../core/combat/muzzle.js';
-import { isFriendly, isNpcAllegianceId, type NpcAllegianceId } from '../../shared-types/allegiances.js';
+import { NEVER_FIRED } from '../../core/combat/fireTemporal.js';
 
 /** Per-player pose the resolver reads to test target hits. */
 export interface ShipPose {
@@ -49,6 +48,11 @@ export interface AiFireResolverDeps {
   /** Fire control: refuse a shot at `targetId` when it is a pilot this NPC
    *  holds no completed lock on. Absent ⇒ never blocked. */
   fireBlocked?: (shooterId: string, targetId: string) => boolean;
+  /** NPC line of fire (friendly fire slice 2): true ⇒ a FRIENDLY body lies
+   *  between the shooter at (fx, fy) and `targetId` along unit (dx, dy), so
+   *  the drone holds fire this tick (no cooldown spent). The room resolves the
+   *  target's distance. Absent ⇒ never blocked (unit harnesses). */
+  lineOfFireBlocked?: (shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number) => boolean;
   /** Cooldown ledger — keyed by shooter id (drone). */
   lastFireClientTick: Map<string, number>;
   /** Pose snapshot for the firing drone (SAB read). */
@@ -77,17 +81,16 @@ export interface AiFireResolverDeps {
   ) => number | null;
   /** Damage sink — invoked on a confirmed hit. */
   applyDamage: (targetId: string, shooterId: string, damage: number) => void;
-  /** Wave-system Phase 2 — hostile structures this drone may hit, as static
-   *  circles. Optional: omitted (or empty) ⇒ the beam tests players only
-   *  (pre-wave behaviour, byte-identical). The room supplies the faction-
-   *  filtered, constructed structures the drone's body target already selected
-   *  among. A structure beam hit routes through `applyDamage(structureId,
-   *  shooterId, …)` → the StructureEntity leaf (no new damage branch). */
-  structureHitTargets?: () => Iterable<{ id: string; x: number; y: number; radius: number; halfW?: number; halfH?: number; boxes?: Float32Array }>;
-  /** Allegiances P0 — other swarm combatants as circles (built once per tick;
-   *  EMPTY in a single-allegiance sector ⇒ byte-identical). The beam skips the
-   *  shooter itself and any FRIENDLY (same-allegiance) entity. */
-  swarmHitTargets?: () => Iterable<{ id: string; x: number; y: number; radius: number; allegiance: string }>;
+  /** Friendly fire (owner decision 2026-11-10) — the first non-player thing
+   *  along the beam: every swarm entity (drones of ANY side, structures of ANY
+   *  owner, asteroids, scrap) and lingering hulls, skipping only `skipId` (the
+   *  shooter). Returns a reused scratch (read it before the next call) or null.
+   *  Absent ⇒ the beam tests players only (unit harnesses). Replaced the
+   *  hostile-structure + other-allegiance passes, which let a beam pass through
+   *  its own side. */
+  nonPlayerRayHit?: (
+    fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, skipId: string,
+  ) => { id: string; wireId: string; dist: number } | null;
   /** Shield-fence plan — if an ACTIVE shield wall lies along the beam within
    *  `maxDist`, absorb the shot (apply the wall's grid-power damage model) and
    *  return the crossing distance; else null. Absent ⇒ no walls in the sector
@@ -127,7 +130,6 @@ export class AiFireResolver implements WeaponFireSink {
   // Per-fire-event sink state — set in resolve() before the salvo.
   private _shooterId = '';
   private _wireShooterId = '';
-  private _shooterAllegiance: NpcAllegianceId = 'drones';
 
   /**
    * Resolve an AI fire claim. Cooldown-rejected → silent no-op.
@@ -159,6 +161,9 @@ export class AiFireResolver implements WeaponFireSink {
     // Fire control: a pilot target needs a COMPLETED lock by this drone ⇒
     // no shot (the cooldown is not spent).
     if (d.fireBlocked?.(shooterId, targetId)) return;
+    // Line of fire: an ally (or its own base) in the way ⇒ hold this tick.
+    // Before the cooldown, so a held shot fires the moment the line clears.
+    if (d.lineOfFireBlocked?.(shooterId, targetId, self.x, self.y, dirNdx, dirNdy)) return;
 
     // Slot-level cooldown gate (mirrors PlayerFireResolver). The slot fires
     // as one trigger; its cooldown is the MAX over its mounts' weapons.
@@ -168,7 +173,7 @@ export class AiFireResolver implements WeaponFireSink {
       const c = getWeapon(slotMounts[i]!.weaponId).cooldownTicks;
       if (c > slotCooldown) slotCooldown = c;
     }
-    const lastFireCt = d.lastFireClientTick.get(shooterId) ?? -999;
+    const lastFireCt = d.lastFireClientTick.get(shooterId) ?? NEVER_FIRED;
     if (tick - lastFireCt < slotCooldown) return;
     d.lastFireClientTick.set(shooterId, tick);
 
@@ -257,7 +262,6 @@ export class AiFireResolver implements WeaponFireSink {
     const droneAngles = d.droneMountAngles.get(shooterId);
     this._shooterId = shooterId;
     this._wireShooterId = wireShooterId;
-    this._shooterAllegiance = droneKind.allegiance ?? 'drones';
     const ctx = this._fireCtx;
 
     // Per-mount weapon resolution (weapons/energy/AI overhaul §1). Each barrel
@@ -328,6 +332,7 @@ export class AiFireResolver implements WeaponFireSink {
     const ndx = ctx.dirX;
     const ndy = ctx.dirY;
     let hitId: string | null = null;
+    let wireHitId: string | null = null;
     let hitDist = Infinity;
     for (const [targetId] of d.playerToSlot) {
       const targetShip = d.getActiveShip(targetId);
@@ -338,39 +343,18 @@ export class AiFireResolver implements WeaponFireSink {
       if (dist !== null && dist < hitDist) {
         hitDist = dist;
         hitId = targetId;
+        wireHitId = targetId;
       }
     }
 
-    // Wave-system Phase 2: second pass against hostile structures (static
-    // circles). Closest-of-both-passes wins, so a structure in front of a
-    // player takes the beam. Absent/empty source ⇒ this loop never runs ⇒
-    // byte-identical to the player-only path.
-    const structs = d.structureHitTargets?.();
-    if (structs) {
-      for (const s of structs) {
-        const dist = s.halfW !== undefined && s.halfH !== undefined
-          ? rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, s.x, s.y, s.halfW, s.halfH, s.boxes)
-          : rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, s.x, s.y, s.radius);
-        if (dist !== null && dist < hitDist) {
-          hitDist = dist;
-          hitId = s.id;
-        }
-      }
-    }
-
-    // Allegiances P0: third pass against other swarm combatants (drones vs
-    // robots vs traders). Same closest-wins rule. Skips self + friendlies.
-    const swarms = d.swarmHitTargets?.();
-    if (swarms) {
-      for (const s of swarms) {
-        if (s.id === this._shooterId) continue;
-        if (isNpcAllegianceId(s.allegiance) && isFriendly(this._shooterAllegiance, s.allegiance)) continue;
-        const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, s.x, s.y, s.radius);
-        if (dist !== null && dist < hitDist) {
-          hitDist = dist;
-          hitId = s.id;
-        }
-      }
+    // Friendly fire (owner decision 2026-11-10): everything else in the path,
+    // whatever its side — drones, structures, rocks, scrap, parked hulls.
+    // Closest-of-both wins, so an ally in front of the target takes the beam.
+    const other = d.nonPlayerRayHit?.(rayFromX, rayFromY, ndx, ndy, Math.min(rayRange, hitDist), this._shooterId) ?? null;
+    if (other !== null && other.dist < hitDist) {
+      hitDist = other.dist;
+      hitId = other.id;
+      wireHitId = other.wireId;
     }
 
     // Shield-fence plan: an ACTIVE shield wall in front of the target absorbs
@@ -401,7 +385,7 @@ export class AiFireResolver implements WeaponFireSink {
       toX: beamEndX,
       toY: beamEndY,
       hit: blocked || !!hitId,
-      targetId: blocked ? undefined : (hitId ?? undefined),
+      targetId: blocked ? undefined : (wireHitId ?? undefined),
     });
   }
 

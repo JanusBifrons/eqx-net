@@ -113,6 +113,33 @@ describe('SectorRoom integration — fire-control AUTO groups', () => {
     expect(groups![0]!.m).toBe(0);
   }, 20_000);
 
+  it('testMode instantLock alone never AUTO-picks a neutral drone; with anyTarget it locks it at once', async () => {
+    const watch = (room: ClientRoom<SectorState>, pid: string): { groups(): SnapGroups[] | undefined; snaps(): number } => {
+      let groups: SnapGroups[] | undefined;
+      let snaps = 0;
+      room.onMessage('snapshot', (snap: { states?: Record<string, { playerId?: string; groups?: SnapGroups[] }> }) => {
+        for (const st of Object.values(snap.states ?? {})) if (st.playerId === pid && st.groups) { groups = st.groups; snaps++; }
+      });
+      return { groups: () => groups, snaps: () => snaps };
+    };
+    // The drone 150 u ahead is NOT hostile (no startHostile).
+    const narrowPid = randomUUID();
+    const narrow = watch((await harness.connectActive(narrowPid, {
+      shipKind: 'interceptor', spawnX: 0, spawnY: 0, instantLock: true,
+    })) as ClientRoom<SectorState>, narrowPid);
+    await waitUntil(() => narrow.snaps() >= 10, 5_000, '10 snapshots with groups');
+    for (const g of narrow.groups()!) {
+      expect(g.m).toBe(0); // AUTO
+      expect(g.l).toEqual([]);
+    }
+
+    const widePid = randomUUID();
+    const wide = watch((await harness.connectActive(widePid, {
+      shipKind: 'interceptor', spawnX: 0, spawnY: 0, instantLock: true, anyTarget: true,
+    })) as ClientRoom<SectorState>, widePid);
+    await waitUntil(() => wide.groups()?.[0]?.l[0]?.s === 2, 3_000, 'anyTarget auto locked');
+  }, 20_000);
+
   it('testMode groupMode=manual: every group starts in MAN and never self-picks, even with instantLock', async () => {
     const pid = randomUUID();
     const room = (await harness.connectActive(pid, {

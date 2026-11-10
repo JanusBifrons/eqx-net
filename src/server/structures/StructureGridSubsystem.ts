@@ -53,6 +53,7 @@ import { structureMountMuzzle, structureNavalTurret, navalBarrelOffset } from '.
 import type { WeaponMount } from '../../shared-types/shipKinds.js';
 import type { StructureKind } from '../../shared-types/structureKinds.js';
 import { StructureMountTicker, type TurretTargetView } from './StructureMountTicker.js';
+import type { LockEntry } from '../../core/combat/lockState.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
 /** Cap on reconnect attempts per pulse so a sector full of permanently-stranded
@@ -148,6 +149,24 @@ export interface StructureGridHooks {
    *  `maxDist`, it absorbs the hit; returns the crossing distance, else null.
    *  Absent ⇒ no walls (unit harnesses). */
   blockBeamAtWall?(fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, damage: number): number | null;
+  /** Friendly fire (owner decision 2026-11-10) — the first thing along the
+   *  beam within `maxDist`, of ANY side (its owner's own ship and structures
+   *  included), skipping only `skipId` (the turret). Returns the internal id
+   *  (for `applyDamage`), the wire id (for `broadcastBeam`) and the distance;
+   *  the result may be a reused scratch. Absent ⇒ the beam lands on its target
+   *  (unit harnesses). */
+  beamFirstHit?(
+    fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, skipId: string,
+  ): { id: string; wireId: string; dist: number } | null;
+  /** NPC line of fire (friendly fire slice 2): true ⇒ a body FRIENDLY to
+   *  `rec`'s owner (its own base's structures and NPC ships of its side; for
+   *  a player's turret, the owner's own ship and structures) lies on the shot
+   *  from (fx, fy) along unit (dx, dy) for `maxDist` (to `targetId`), so the
+   *  mount holds fire this turret tick: it keeps aiming, the lock stays and
+   *  the reload is not spent. Absent ⇒ never blocked (unit harnesses). */
+  lineOfFireBlocked?(
+    rec: StructureRecord, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number,
+  ): boolean;
   /** Phase 5 — broadcast the turret fire beam (laser_fired). */
   broadcastBeam?(shooterId: string, fromX: number, fromY: number, toX: number, toY: number, targetId: string, mountId?: string): void;
   /** WS-8 (R2.15) — spawn a server PROJECTILE bolt from a Bolt Turret toward its
@@ -228,6 +247,16 @@ export class StructureGridSubsystem {
     this.mounts.setInstantLocks(on);
   }
 
+  /** testMode `lockTimeCapS`: no structure-turret lock takes longer than `capS` s. */
+  setTurretLockTimeCap(capS: number | undefined): void {
+    this.mounts.setLockTimeCap(capS);
+  }
+
+  /** Test seam: mount `i`'s lock on structure `id`. */
+  turretLockOf(id: string, i: number): Readonly<LockEntry> | undefined {
+    return this.mounts.lockOf(id, i);
+  }
+
   /** testMode trigger (`test_reload_turrets`): reload every structure gun. */
   reloadAllTurrets(): void {
     this.mounts.reloadAll();
@@ -277,9 +306,9 @@ export class StructureGridSubsystem {
         this.setActive(rec, false);
         continue;
       }
-      // Phase 4 WS-B4 — a leveled turret targets FARTHER + hits HARDER (one
-      // scalar; level 1 is the identity).
-      const target = this.mounts.tick(rec, kind, mounts, nowMs, dt, structureLevelFactor(rec.level));
+      // Reach is the gun's, whatever the level (a level upgrades damage +
+      // HP; `fireMount` reads the damage factor).
+      const target = this.mounts.tick(rec, kind, mounts, nowMs, dt);
       // B2 — a player target has no swarm entity id; it rides as a player id.
       rec.turretTargetPlayer = target?.playerId;
       rec.turretTargetEntityId = target && target.playerId === undefined ? target.entityId : undefined;
@@ -320,6 +349,15 @@ export class StructureGridSubsystem {
     const lvlMul = structureLevelFactor(rec.level);
     const damage = (kind.weaponDamage ?? def.damage) * lvlMul;
     const muzzle = structureMountMuzzle(rec.kind, mount);
+    // Line of fire: hold while a friendly is between the muzzle and the
+    // target (returning false keeps the reload; the lock is untouched).
+    if (this.hooks.lineOfFireBlocked) {
+      const lx = target.x - rec.x, ly = target.y - rec.y;
+      const ll = Math.hypot(lx, ly);
+      if (ll > muzzle && this.hooks.lineOfFireBlocked(
+        rec, target.id, rec.x + (lx / ll) * muzzle, rec.y + (ly / ll) * muzzle, lx / ll, ly / ll, ll - muzzle,
+      )) return false;
+    }
     if (def.mode === 'hitscan') {
       // Continuous beam: a steady stream of small hits the client renders as
       // one beam (Issue 5). DPS-budget DoT on the beam cadence; the barrel is
@@ -329,20 +367,36 @@ export class StructureGridSubsystem {
       const bdx = target.x - rec.x;
       const bdy = target.y - rec.y;
       const blen = Math.hypot(bdx, bdy);
-      // A shield wall in the way (its owner's own fence included) takes the
-      // hit and the beam ends there.
-      const wallT = blen > 1e-6 && this.hooks.blockBeamAtWall
-        ? this.hooks.blockBeamAtWall(rec.x, rec.y, bdx / blen, bdy / blen, blen, perHitDamage)
-        : null;
       // Drawn from the barrel tip (the shared muzzle, #15).
       const tip = blen > 1e-6 ? Math.min(blen, muzzle) / blen : 0;
       const fromX = rec.x + bdx * tip, fromY = rec.y + bdy * tip;
+      // Friendly fire (owner decision 2026-11-10): the beam lands on the FIRST
+      // thing it meets between the barrel tip and the target, of any side —
+      // its owner's own ship included. Distances below are from the centre.
+      let hitId = target.id;
+      let hitT = blen;
+      let hitX = target.x, hitY = target.y;
+      if (blen > 1e-6 && this.hooks.beamFirstHit) {
+        const tipD = blen * tip;
+        const h = this.hooks.beamFirstHit(fromX, fromY, bdx / blen, bdy / blen, blen - tipD, rec.id);
+        if (h !== null && h.id !== target.id) {
+          hitId = h.id;
+          hitT = tipD + h.dist;
+          hitX = rec.x + (bdx / blen) * hitT;
+          hitY = rec.y + (bdy / blen) * hitT;
+        }
+      }
+      // A shield wall in the way (its owner's own fence included) takes the
+      // hit and the beam ends there.
+      const wallT = blen > 1e-6 && this.hooks.blockBeamAtWall
+        ? this.hooks.blockBeamAtWall(rec.x, rec.y, bdx / blen, bdy / blen, hitT, perHitDamage)
+        : null;
       if (wallT !== null) {
         this.hooks.broadcastBeam?.(rec.id, fromX, fromY, rec.x + (bdx / blen) * wallT, rec.y + (bdy / blen) * wallT, '');
         return true;
       }
-      this.hooks.applyDamage!(target.id, rec.id, perHitDamage);
-      this.hooks.broadcastBeam?.(rec.id, fromX, fromY, target.x, target.y, target.id);
+      this.hooks.applyDamage!(hitId, rec.id, perHitDamage);
+      this.hooks.broadcastBeam?.(rec.id, fromX, fromY, hitX, hitY, hitId);
       return true;
     }
     // P2d — physical ordnance spends munitions (one per salvo).

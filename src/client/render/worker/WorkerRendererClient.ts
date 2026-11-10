@@ -18,6 +18,7 @@
  */
 
 import { ART_OFF, type ArtOptions } from '../art/artMode.js';
+import { readFxKillSwitches } from '../fxKillSwitches.js';
 import type {
   IRenderer,
   RenderMirror,
@@ -195,6 +196,8 @@ export class WorkerRendererClient implements IRenderer {
       ...(this._art.fx ? { fx: true } : {}),
       ...(this._art.speedFx === false ? { speedFxOff: true } : {}),
       ...(this._art.lighting ? { lighting: this._art.lighting } : {}),
+      // The worker has no `window`: resolve `?cleanworld=1` & co. here.
+      fxKillSwitches: readFxKillSwitches(),
     }, [offscreen]);
 
     // F1 — tell the worker once whether to emit per-frame markers.

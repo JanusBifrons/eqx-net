@@ -30,9 +30,13 @@ import {
 } from '../../core/ai/WeaponMountController.js';
 
 import { mountTargetReach, mountWeaponReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
-import { mountLineClear, mountPriority, targetClass } from '../../core/combat/mountTargeting.js';
+import { mountLineClear, mountPriority, targetClass, type TargetClass } from '../../core/combat/mountTargeting.js';
 import { leadArcBearing, mountCanEngage, onTarget } from '../../core/combat/mountFireControl.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
+import { shipShotMuzzle } from '../../core/combat/muzzle.js';
+import { newLock, stepLock, type LockEntry } from '../../core/combat/lockState.js';
+import { capLockSeconds, lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
+import { LOCK_TUNING, WEAPON_LOCK_PROFILE, sensorFor, type MountSize } from '../../shared-types/combat/lockProfile.js';
 
 import {
   DEFAULT_SHIP_KIND,
@@ -133,7 +137,27 @@ export interface WeaponMountTickerDeps {
    *  lock on this mount's target (a pilot), so the mount aims but holds fire
    *  (reload not spent). Absent ⇒ never blocked (unit harnesses). */
   fireBlocked?: (droneId: string, targetId: string) => boolean;
+  /** NPC line of fire (friendly fire slice 2): true ⇒ a FRIENDLY body lies on
+   *  this turret's shot from its muzzle (fx, fy) along unit (dx, dy) for
+   *  `maxDist` (to the target), so it holds fire this tick: it keeps aiming,
+   *  the lock stays and the reload is not spent. Absent ⇒ never blocked. */
+  lineOfFireBlocked?: (
+    droneId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number,
+  ) => boolean;
+  /** Structures hostile to the drones this tick (the AI's structure target
+   *  set, built once per tick by the room). Capital turrets engage them too,
+   *  each under its own turret lock (`tickCapitalMounts`). Absent ⇒ pilots
+   *  only. */
+  hostileStructures?: () => ReadonlyArray<{ readonly id: string; readonly x: number; readonly y: number; readonly radius: number }>;
+  /** testMode `lockTimeCapS` (room option): no capital-turret lock on a
+   *  structure takes longer than this many seconds while in reach (0 = the
+   *  first tick). Absent / undefined = the lock rules unchanged. */
+  lockTimeCapS?: () => number | undefined;
 }
+
+/** A structure is a fixed, armoured target: every naval calibre engages it
+ *  (secondaries first, mains next, AA last; `mountPriority`). */
+const STRUCTURE_TARGET_CLASS: TargetClass = 'small-capital';
 
 const DT_SEC = 1 / 60;
 /** The on-target rules live with the shared fire control (plan
@@ -171,6 +195,25 @@ export class WeaponMountTicker {
 
   /** Fire control: reused lock-target pose (alloc-free, #14). */
   private readonly _fcTarget = { x: 0, y: 0, vx: 0, vy: 0 };
+
+  /** Capitals' candidates this tick: the pilots (the same views as
+   *  `droneMountTargetsScratch`), then the hostile structures. Built at most
+   *  once per tick, on the first capital (#14: slots reused). */
+  private readonly capTargets: MountTargetView[] = [];
+  private readonly capStructViews: MountTargetView[] = [];
+  /** Per capital candidate (same index): its target class, and its lock
+   *  signature (u) for a structure, or -1 for a pilot (gated by
+   *  `fireBlocked`, the capital's NPC lock). */
+  private readonly capTargetCls: TargetClass[] = [];
+  private readonly capTargetSig: number[] = [];
+  private capTargetsTick = -1;
+  /** Capitals: each turret's own lock on a STRUCTURE target, keyed by drone
+   *  id (made once per drone, reused). */
+  readonly droneMountLocks = new Map<string, LockEntry[]>();
+  /** Reused lock-time inputs (#14). */
+  private readonly lockIn: LockInputs = {
+    refSize: 1, tracking: 1, reach: 1, sensor: 1, pilotSpeed: 1, signature: 1, dx: 0, dy: 0, dvx: 0, dvy: 0,
+  };
 
   /** Acquire-or-create a MountTargetView slot. Subsequent calls
    *  overwrite the SAME instance, eliminating per-tick literal allocs.
@@ -333,7 +376,7 @@ export class WeaponMountTicker {
 
       // Capitals: every turret picks its own target (review round 2026-11-07).
       if (hasTurretFireControl(kind) && d.fireDroneMount !== undefined && d.currentTick !== undefined) {
-        this.tickCapitalMounts(rec.id, kind, mounts, b, droneX, droneY, droneAngle, targets, isHostile);
+        this.tickCapitalMounts(rec.id, kind, mounts, b, droneX, droneY, droneAngle, this.capitalTargets(targets), isHostile);
         continue;
       }
 
@@ -407,10 +450,14 @@ export class WeaponMountTicker {
     if (!reload || reload.length !== n) { reload = new Int32Array(n).fill(-1_000_000); this.droneMountReload.set(droneId, reload); }
     let lastOk = this.droneMountLastOk.get(droneId);
     if (!lastOk || lastOk.length !== n) { lastOk = new Int32Array(n); this.droneMountLastOk.set(droneId, lastOk); }
+    let locks = this.droneMountLocks.get(droneId);
+    if (!locks || locks.length !== n) { locks = Array.from({ length: n }, () => newLock('', true)); this.droneMountLocks.set(droneId, locks); }
+    const sensor = sensorFor(kind);
     const tick = d.currentTick!();
     const selfVx = d.sabF32[b + SLOT_VX_OFF]!, selfVy = d.sabF32[b + SLOT_VY_OFF]!;
     const cosA = Math.cos(ang), sinA = Math.sin(ang);
-    const kinds = this.droneTargetKinds;
+    const cls = this.capTargetCls;
+    const sig = this.capTargetSig;
     for (let i = 0; i < n; i++) {
       const mount = mounts[i]!;
       const mx = x + (mount.localX * cosA - mount.localY * sinA);
@@ -436,20 +483,39 @@ export class WeaponMountTicker {
         for (let j = 0; j < targets.length; j++) {
           const t = targets[j]!;
           if (!this.canEngage(kind, mount, t, mx, my, ang, reach, selfVx, selfVy, isHostile)) continue;
+          // A structure this gun can't lock from here (past `maxSeconds` by
+          // the shared lock rules) is no target for it: lock to fire.
+          if (sig[j]! >= 0 && !Number.isFinite(this.structureLockSecs(mount, reach, sensor, sig[j]!, t, mx, my, selfVx, selfVy))) continue;
           const dx = t.x - mx, dy = t.y - my;
           const d2 = dx * dx + dy * dy;
-          const pri = mountPriority(mount.size, targetClass(getShipKind(kinds[j] ?? DEFAULT_SHIP_KIND)));
+          const pri = mountPriority(mount.size, cls[j]!);
           if (pri < bestPri || (pri === bestPri && d2 < bestD2)) { bestPri = pri; bestD2 = d2; best = j; }
         }
         if (best >= 0) { engageable = true; lastOk[i] = tick; }
       }
+      const lock = locks[i]!;
       if (best < 0) {
         per[i] = null;
+        if (lock.target !== '') resetLock(lock, '');
         angles[i] = rotateMountToward(angles[i]!, 0, mount, DT_SEC);
         continue;
       }
       const t = targets[best]!;
       per[i] = t.id;
+      // A structure target: this turret builds its own lock on it while it
+      // trains (the shared lock rules: its size profile, the hull's sensor).
+      // A pilot target is gated below by the capital's NPC lock on them.
+      let structLocked = false;
+      if (sig[best]! >= 0) {
+        if (lock.target !== t.id) resetLock(lock, t.id);
+        if (lock.stage === 'locked') structLocked = true;
+        else {
+          const secs = this.structureLockSecs(mount, reach, sensor, sig[best]!, t, mx, my, selfVx, selfVy);
+          const ev = stepLock(lock, DT_SEC, secs, secs * LOCK_TUNING.failsafeMul, LOCK_TUNING.lostGraceSeconds, LOCK_TUNING.decayMul);
+          if (ev === 'dropped') resetLock(lock, t.id);
+          structLocked = ev === 'locked';
+        }
+      } else if (lock.target !== '') resetLock(lock, '');
       // First-order intercept with this gun's shell speed (shells inherit the
       // hull's velocity, so lead on the RELATIVE velocity).
       const w = getWeapon(mount.weaponId);
@@ -463,9 +529,19 @@ export class WeaponMountTicker {
       // point (an angle alone is a 250 u miss at 5,000 u).
       if (!onTarget(want, angles[i]!, dist)) continue;
       if (!mountLineClear(kind, mount, mount.baseAngle + angles[i]!)) continue;
-      // Lock-to-fire: each turret needs the capital's completed lock on ITS
-      // own target; a lock on another pilot doesn't license this one.
-      if (d.fireBlocked?.(droneId, t.id)) continue;
+      // Lock-to-fire: each turret needs a completed lock on ITS own target:
+      // the capital's lock for a pilot (a lock on another pilot doesn't
+      // license this one), the turret's own lock for a structure.
+      if (sig[best]! >= 0 ? !structLocked : d.fireBlocked?.(droneId, t.id)) continue;
+      // Line of fire: hold while a friendly (an escort, its own base) is on
+      // this barrel's line to the target. Last, so it runs only for a shot
+      // that would otherwise go (the cost is per fire candidate).
+      if (d.lineOfFireBlocked !== undefined) {
+        const a = ang + mount.baseAngle + angles[i]!;
+        const ndx = -Math.sin(a), ndy = Math.cos(a);
+        const muzzle = shipShotMuzzle(kind, mount, true);
+        if (d.lineOfFireBlocked(droneId, t.id, mx + ndx * muzzle, my + ndy * muzzle, ndx, ndy, dist - muzzle)) continue;
+      }
       reload[i] = tick;
       d.fireDroneMount!(droneId, i);
     }
@@ -479,12 +555,73 @@ export class WeaponMountTicker {
     this.deps.onClearPlayer?.(playerId);
   }
 
+  /**
+   * This tick's capital candidates: the pilots in `players` (the same views),
+   * then every hostile structure. Built once per tick (#14).
+   */
+  private capitalTargets(players: MountTargetView[]): MountTargetView[] {
+    const tick = this.deps.currentTick!();
+    const out = this.capTargets;
+    if (this.capTargetsTick === tick) return out;
+    this.capTargetsTick = tick;
+    const kinds = this.droneTargetKinds;
+    let n = 0;
+    for (let j = 0; j < players.length; j++, n++) {
+      out[n] = players[j]!;
+      this.capTargetCls[n] = targetClass(getShipKind(kinds[j] ?? DEFAULT_SHIP_KIND));
+      this.capTargetSig[n] = -1;
+    }
+    const structs = this.deps.hostileStructures?.();
+    if (structs) {
+      for (let k = 0; k < structs.length; k++, n++) {
+        const s = structs[k]!;
+        WeaponMountTicker.writeTargetSlot(this.capStructViews, k, s.id, s.x, s.y, 0, 0);
+        out[n] = this.capStructViews[k]!;
+        this.capTargetCls[n] = STRUCTURE_TARGET_CLASS;
+        this.capTargetSig[n] = s.radius;
+      }
+    }
+    out.length = n;
+    return out;
+  }
+
+  /** Seconds for a capital turret at (mx, my) to lock structure `t`
+   *  (signature `sig`): the shared `lockSeconds` with the mount's size
+   *  profile, its gun's reach and the hull's sensor. Infinity = can't. */
+  private structureLockSecs(
+    mount: WeaponMount, reach: number, sensor: number, sig: number, t: MountTargetView,
+    mx: number, my: number, selfVx: number, selfVy: number,
+  ): number {
+    const p = WEAPON_LOCK_PROFILE[(mount.size ?? 'none') as MountSize | 'none'];
+    const inp = this.lockIn;
+    inp.refSize = p.refSize;
+    inp.tracking = p.tracking;
+    inp.absRange = p.absRange;
+    inp.reach = reach;
+    inp.sensor = sensor;
+    inp.signature = sig;
+    inp.dx = t.x - mx;
+    inp.dy = t.y - my;
+    inp.dvx = t.vx - selfVx;
+    inp.dvy = t.vy - selfVy;
+    return capLockSeconds(lockSeconds(inp, LOCK_TUNING), inp, LOCK_TUNING, this.deps.lockTimeCapS?.());
+  }
+
   /** Cleanup hook: drop all per-drone state on eviction/destroy/shed. */
   clearDrone(droneId: string): void {
+    this.droneMountLocks.delete(droneId);
     this.droneMountAngles.delete(droneId);
     this.droneSlotTargets.delete(droneId);
     this.droneMountReload.delete(droneId);
     this.droneMountTargetIds.delete(droneId);
     this.droneMountLastOk.delete(droneId);
   }
+}
+
+/** Restart lock `e` on `target` (empty = none), in place (#14). */
+function resetLock(e: LockEntry, target: string): void {
+  e.target = target;
+  e.stage = 'acquiring';
+  e.progress = 0;
+  e.lostFor = 0;
 }

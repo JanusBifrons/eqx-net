@@ -85,6 +85,28 @@ describe('renderer-worker protocol', () => {
       }
     });
 
+    it('BOOT carries the main-thread FX kill switches through structuredClone', () => {
+      const fxKillSwitches = {
+        filtersDisabled: false,
+        particlesDisabled: true,
+        beamsDisabled: false,
+        dmgNumbersDisabled: false,
+        healthBarsDisabled: false,
+        selfDmgNumbersDisabled: true,
+        cleanWorld: true,
+      };
+      const msg: MainToWorkerMsg = {
+        type: 'BOOT',
+        canvas: {} as unknown as OffscreenCanvas,
+        width: 800,
+        height: 600,
+        dpr: 1,
+        fxKillSwitches,
+      };
+      const back = roundtrip(msg);
+      expect(back.type === 'BOOT' && back.fxKillSwitches).toEqual(fxKillSwitches);
+    });
+
     it('MIRROR_UPDATE survives roundtrip with an empty mirror', () => {
       const msg: MainToWorkerMsg = {
         type: 'MIRROR_UPDATE',

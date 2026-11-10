@@ -8,6 +8,8 @@
  * holds 60 fps and CDP screencast delivers ~52-60, so 55 is reachable on a
  * quiet host; a take below it is re-taken (best-of-N in run-showcase).
  */
+import { cadenceProblem } from './cadence.js';
+
 export const SMOOTH: Readonly<Record<number, { minFps: number; maxGapMs: number }>> = {
   60: { minFps: 55, maxGapMs: 100 },
   30: { minFps: 28, maxGapMs: 120 },
@@ -17,6 +19,10 @@ export interface TakeStats {
   frames: number;
   deliveredFps: number;
   gapMaxMs: number;
+  /** DIFFERENT captured frames per second (`cadence.ts`). `deliveredFps`
+   *  counts frames that arrived, repeats included, so on its own it can say
+   *  60 for a take that moves 25 times a second. */
+  uniqueFps?: number;
 }
 
 export function smoothnessProblems(take: TakeStats, fps: number): string[] {
@@ -25,11 +31,13 @@ export function smoothnessProblems(take: TakeStats, fps: number): string[] {
   const problems: string[] = [];
   if (take.frames < 30) problems.push(`only ${take.frames} frames captured`);
   if (take.deliveredFps < gate.minFps) problems.push(`${take.deliveredFps} fps delivered (need >= ${gate.minFps})`);
+  const cp = take.uniqueFps === undefined ? null : cadenceProblem('captured', take.uniqueFps, gate.minFps);
+  if (cp) problems.push(cp);
   if (take.gapMaxMs > gate.maxGapMs) problems.push(`a ${take.gapMaxMs} ms hitch (max ${gate.maxGapMs})`);
   return problems;
 }
 
 /** Higher is smoother: frame rate, penalised by the worst hitch. */
 export function smoothScore(take: TakeStats): number {
-  return take.deliveredFps - take.gapMaxMs / 20;
+  return Math.min(take.deliveredFps, take.uniqueFps ?? Infinity) - take.gapMaxMs / 20;
 }

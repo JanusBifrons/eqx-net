@@ -18,6 +18,7 @@ import { getGameClient } from '../net/clientSingleton';
 import { useUIStore } from '../state/store';
 import { FAILSAFE_COLOUR, THREAT_COLOUR_HEX, groupColourHex } from './groupColours';
 import { HUD } from './tokens';
+import { acquiringPct } from './lockPct';
 
 export interface ThreatSummary {
   locked: number;
@@ -62,6 +63,7 @@ export function summariseThreats(mirror: RenderMirror): ThreatSummary | null {
       if (l.p > out.acquiringPct) { out.acquiringPct = l.p; out.acquiringName = n; }
     }
   }
+  if (out.acquiring > 0) out.acquiringPct = acquiringPct(out.acquiringPct);
   // One kind: "Fighter" (+ " ×2" in the view). Mixed kinds: "3 ships".
   out.lockedName = lockedNames.size === 1 ? [...lockedNames][0]! : `${out.locked} ships`;
   return out;
@@ -79,6 +81,7 @@ export function summariseOwnLock(mirror: RenderMirror, names: ReadonlyArray<stri
       best = { group: names[gi] ?? groups[gi]!.id, groupIndex: gi, target: nameOf(mirror, l.t), pct: l.p, failsafe: l.s === 0, losing: l.r === 1 };
     }
   }
+  if (best) best.pct = acquiringPct(best.pct);
   return best;
 }
 

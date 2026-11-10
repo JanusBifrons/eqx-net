@@ -2,6 +2,8 @@ import { Container, Graphics, Text } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '@shared-types/shipKinds';
 import { ACQUIRE_COLOUR, FAILSAFE_COLOUR, THREAT_COLOUR, groupColour } from '../hud/groupColours';
+import { lockMarkFrame, threatRingRadius, type LockMarkFrame } from './lockMarkFrame';
+import { acquiringPct } from '../hud/lockPct';
 
 /**
  * Fire-control world-space feedback for the local pilot: lock rings and
@@ -12,24 +14,34 @@ import { ACQUIRE_COLOUR, FAILSAFE_COLOUR, THREAT_COLOUR, groupColour } from '../
  * `(x, -y)`. Poses are read from the RESOLVED mirror entries (drones: the one
  * per-frame interpolated pose — never re-interpolated here). One pooled
  * Graphics, cleared + redrawn per frame; no allocation (#14).
+ *
+ * Every mark on a target is placed and sized by `lockMarkFrame`: hull-sized
+ * round a fighter, capped on screen and moved onto the visible keel of a
+ * capital (a hull-sized mark on a battleship was two stray lines across the
+ * screen, showcase `capital-guns-fighter` 2026-11-10).
  */
-const LOCK_PAD = 10;
-const LOCK_MIN_HALF = 16;
 const CORNER_FRAC = 0.35;
 const DASH_ON = 14;
 const DASH_OFF = 10;
+/** The faint full threat ring drawn while anything locks you (owner's choice 2026-11-10). */
+const THREAT_RING_FAINT_WIDTH = 1.5;
+const THREAT_RING_FAINT_ALPHA = 0.22;
 
 export class AimFeedbackRenderer {
   /** Lock rings, group brackets, firing lines, threats, guide. */
   private readonly fc = new Graphics();
   /** Parsed lock keys → swarm entityId (or -1 + player id), so per-frame draws never slice. */
   private readonly keyCache = new Map<string, { swarm: number; player: string | null }>();
-  private readonly tp = { x: 0, y: 0, r: 16 };
+  private readonly tp = { x: 0, y: 0, a: 0, r: 16 };
+  /** Where + how big the current mark is (reused, #14). */
+  private readonly mf: LockMarkFrame = { x: 0, y: 0, half: 0, capped: false };
   /** "LOCKING 62%" tags over targets being locked (pooled; text set only on change). */
   private readonly tags: Text[] = [];
   /** Last label code per tag (stage * 1000 + percent): text is rebuilt only when it changes. */
   private readonly tagCode: number[] = [];
   private readonly tagLayer = new Container();
+  /** Faint full threat-ring stroke (reused; width set per frame, #14). */
+  private readonly ringStroke = { width: THREAT_RING_FAINT_WIDTH, color: THREAT_COLOUR, alpha: THREAT_RING_FAINT_ALPHA };
   /** Test hooks: locks drawn last frame, and NPC locks on the local ship. */
   lastFcLocks = 0;
   lastThreats = 0;
@@ -79,13 +91,19 @@ export class AimFeedbackRenderer {
     if (v.player !== null) {
       const s = mirror.ships.get(v.player);
       if (!s) return false;
-      this.tp.x = s.x; this.tp.y = s.y; this.tp.r = getShipKind(s.kind ?? null).radius;
+      this.tp.x = s.x; this.tp.y = s.y; this.tp.a = s.angle; this.tp.r = getShipKind(s.kind ?? null).radius;
       return true;
     }
     const e = mirror.swarm?.get(v.swarm);
     if (!e) return false;
-    this.tp.x = e.x; this.tp.y = e.y; this.tp.r = e.radius ?? 16;
+    this.tp.x = e.x; this.tp.y = e.y; this.tp.a = e.angle; this.tp.r = e.radius ?? 16;
     return true;
+  }
+
+  /** Frame (centre + half-size) for a mark on the last resolved target, seen from (sx, sy). */
+  private markFrame(sx: number, sy: number, px: number): LockMarkFrame {
+    const t = this.tp;
+    return lockMarkFrame(t.x, t.y, t.a, t.r, sx, sy, px, this.mf);
   }
 
   /** Show tag `i` ("LOCKING 62%") at (x, y) in `colour`, counter-scaled to screen size. */
@@ -116,8 +134,8 @@ export class AimFeedbackRenderer {
    *    a "LOCKING 62%" tag;
    *  - LOCKED: corner brackets in the group's colour (nested when several groups
    *    share a target) and a faint firing line.
-   * Locks ON the local ship (`localLockedBy`): a red arc on a ring round the
-   * ship facing each NPC, narrowing as its lock builds; once locked, a solid
+   * Locks ON the local ship (`localLockedBy`): the whole ring round the ship
+   * drawn faintly, and on it a red arc facing each NPC, narrowing as its lock builds; once locked, a solid
    * caret pointing at it and a pulsing diamond on the NPC.
    * Then the smart-aim guide.
    */
@@ -133,8 +151,9 @@ export class AimFeedbackRenderer {
         const grp = groups[gi]!;
         for (const l of grp.l) {
           if (!this.targetPose(mirror, l.t)) continue;
-          const x = this.tp.x, y = -this.tp.y;
-          const base = Math.max(LOCK_MIN_HALF, this.tp.r + LOCK_PAD);
+          const mf = this.markFrame(sx, sy, px);
+          const x = mf.x, y = -mf.y;
+          const base = mf.half;
           drawn++;
           if (l.s === 2) {
             const half = base + gi * 5 * px;
@@ -185,7 +204,7 @@ export class AimFeedbackRenderer {
               g.moveTo(x + c * rt, y + sn * rt).lineTo(x + c * (rt - tick), y + sn * (rt - tick));
             }
             g.stroke({ width: 3 * px, color: col, alpha: 0.9 * dim });
-            this.tag(tags++, x, y - r * (2 - frac) - 6 * px, losing ? 3 : l.s, l.p, col, px);
+            this.tag(tags++, x, y - r * (2 - frac) - 6 * px, losing ? 3 : l.s, acquiringPct(l.p), col, px);
           }
         }
       }
@@ -197,12 +216,17 @@ export class AimFeedbackRenderer {
     const lockedBy = mirror.localLockedBy;
     if (lockedBy && lockedBy.length > 0) {
       const localKind = mirror.localPlayerId ? mirror.ships.get(mirror.localPlayerId)?.kind : undefined;
-      const R = getShipKind(localKind ?? null).radius * 1.9 + 10 * px;
+      const R = threatRingRadius(getShipKind(localKind ?? null).radius, px);
       const pulse = 0.55 + 0.45 * Math.sin(now * 0.012);
+      // The whole ring, faint, under the arcs: so they read as pointers on a
+      // ring centred on the ship, not a reticle floating beside it.
+      this.ringStroke.width = THREAT_RING_FAINT_WIDTH * px;
+      g.circle(sx, -sy, R).stroke(this.ringStroke);
       for (const l of lockedBy) {
         if (!this.targetPose(mirror, l.t)) continue;
         threats++;
-        const nx = this.tp.x, ny = -this.tp.y;
+        const mf = this.markFrame(sx, sy, px);
+        const nx = mf.x, ny = -mf.y;
         const th = Math.atan2(ny + sy, nx - sx);
         const cx = sx, cy = -sy;
         if (l.s === 2) {
@@ -217,7 +241,7 @@ export class AimFeedbackRenderer {
           g.moveTo(cx + Math.cos(th - 0.5) * R, cy + Math.sin(th - 0.5) * R);
           g.arc(cx, cy, R, th - 0.5, th + 0.5).stroke({ width: 3 * px, color: THREAT_COLOUR, alpha: 0.9 });
           // Pulsing diamond on the NPC.
-          const dr = Math.max(LOCK_MIN_HALF, this.tp.r + LOCK_PAD) * 1.2;
+          const dr = mf.half * 1.2;
           g.moveTo(nx, ny - dr).lineTo(nx + dr, ny).lineTo(nx, ny + dr).lineTo(nx - dr, ny).closePath()
             .stroke({ width: 2.5 * px, color: THREAT_COLOUR, alpha: pulse });
         } else {
@@ -248,8 +272,8 @@ export class AimFeedbackRenderer {
       g.stroke({ width: 1.5 * px, color: 0xffffff, alpha: 0.7 });
       const cand = mirror.localLockCandidate;
       if (cand && this.targetPose(mirror, cand)) {
-        const r = Math.max(LOCK_MIN_HALF, this.tp.r + LOCK_PAD) * 1.5;
-        g.circle(this.tp.x, -this.tp.y, r).stroke({ width: 2 * px, color: 0xffffff, alpha: 0.9 });
+        const mf = this.markFrame(sx, sy, px);
+        g.circle(mf.x, -mf.y, mf.half * 1.5).stroke({ width: 2 * px, color: 0xffffff, alpha: 0.9 });
       }
     }
     g.visible = true;

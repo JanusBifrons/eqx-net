@@ -81,6 +81,8 @@ const FEATURE_SPECS: string[] = [
   '**/fire-control-lock.spec.ts',
   // Lock-to-fire is universal: default join can't fire before a LOCK, fires after.
   '**/lock-to-fire-default.spec.ts',
+  // Contacts overview: lock far targets from an EVE-style list (O / CONTACTS tab).
+  '**/contacts-overview.spec.ts',
   '**/galaxy-map-no-warp-ripple.spec.ts',
   '**/galaxy-sector-badge-icon-label.spec.ts',
   '**/galaxy-sector-transit-adjacency.spec.ts',
@@ -139,6 +141,8 @@ const FEATURE_SPECS: string[] = [
   '**/galaxy-warp-map.spec.ts',
   // Phase 4 WS-A1 — spectator / construction mode.
   '**/spectator-mode.spec.ts',
+  // Spectator build hotbar stays inside the viewport (frame review 2026-11-10).
+  '**/build-hotbar-fits-viewport.spec.ts',
   '**/cinematic-camera.spec.ts',
   '**/respawn-cascade-input-routing.spec.ts',
   '**/drawer-galaxy.spec.ts',

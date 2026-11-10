@@ -21,6 +21,9 @@ export type ServerProfile =
    *  (main's default sector scale is 1 until the solar-system phase). The
    *  page must ask for the same scale (`sectorScale: '4'` in its params). */
   | 'capitals'
+  /** The `capitals` boot at REAL naval ranges (`EQX_NAVAL_RANGE=real`, a
+   *  16" reaches 38.7 km). The page must ask too (`navalRange: 'real'`). */
+  | 'naval'
   /** Solar-system sectors (Phase 4, `EQX_SOLAR_SECTORS=1`), only Sol Prime
    *  booted, living world off. The page must ask too (`solar: '1'`). */
   | 'solar';
@@ -28,7 +31,7 @@ export type ServerProfile =
 /** The order the runner records server profiles in. A shot whose profile is
  *  missing here is never recorded (2026-11-06: the capital shots, profile
  *  `capitals`, were silently skipped). Lock: tests/unit/showcaseProfiles.test.ts. */
-export const PROFILE_ORDER: readonly ServerProfile[] = ['lean', 'living', 'wave', 'capitals', 'solar'];
+export const PROFILE_ORDER: readonly ServerProfile[] = ['lean', 'living', 'wave', 'capitals', 'naval', 'solar'];
 
 export type HudMode = 'full' | 'clean' | 'minimal' | 'none';
 
@@ -68,7 +71,12 @@ export interface ShotContext {
   px(x: number, y: number): { x: number; y: number };
   /** Hold keys down for `ms` (e.g. ['w', 'a']). */
   hold(keys: string[], ms: number): Promise<void>;
+  /** Switch to spectator mode as a player does (the Pilot / Spectate toggle).
+   *  The pilot's ship parks in the world; the camera becomes the free-roam one. */
+  spectate(): Promise<void>;
   cinema: {
+    /** Play a camera script. Refused (throws) unless the pilot is spectating:
+     *  while flying a ship, a take films the game's follow camera. */
     play(cues: CameraCue[]): Promise<void>;
     stop(): Promise<void>;
     hud(mode: HudMode): Promise<void>;
@@ -116,7 +124,8 @@ export interface Shot {
   startWhen?(ctx: ShotContext): Promise<void>;
   /** Recorded length. */
   durationMs: number;
-  /** Camera script, started when recording starts. */
+  /** Camera script, started when recording starts. Needs the pilot in
+   *  spectator mode by then (`ctx.spectate()` in prepare/startWhen). */
   camera?: CameraCue[];
   /** Actions during recording; must finish within `durationMs`. */
   run?(ctx: ShotContext): Promise<void>;
@@ -132,6 +141,12 @@ export interface ClipRecord {
   frames: number;
   durationMs: number;
   deliveredFps: number;
+  /** DIFFERENT captured frames per second (repeats of an unchanged page count once). */
+  uniqueFps?: number;
+  /** Longest run of identical captured frames. */
+  longestRepeat?: number;
+  /** DIFFERENT frames per second that reached the encoded clip (NaN when unmeasured). */
+  encodedUniqueFps?: number;
   gapP95Ms: number;
   gapMaxMs: number;
   /** QA verdict; failed clips are flagged for a re-take, never silently used. */

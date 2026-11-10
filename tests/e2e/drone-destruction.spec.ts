@@ -10,7 +10,7 @@
  * straight up +y (200u < 250u range) and is GUARANTEED to destroy it. Hard
  * assertion: the drone count drops by EXACTLY 1 (1 → 0).
  *
- * Lock-to-fire (2026-11-09): joins with `instantLock`, so the AUTO group locks
+ * Lock-to-fire (2026-11-09): joins with `instantLock` + `anyTarget`, so the AUTO group locks
  * the (neutral) drone ahead at once and fires; the held Space is kept.
  */
 import { test, expect, type Page } from '@playwright/test';
@@ -31,6 +31,7 @@ test('hitscan beam destroys a parked drone: count drops by exactly 1', async ({ 
     initialAngle: 0,
     shipKind: 'interceptor',
     instantLock: true,
+    anyTarget: true,
   });
   try {
     // Wait for the seeded drone to appear in the swarm mirror.

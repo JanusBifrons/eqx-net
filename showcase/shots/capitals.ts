@@ -114,7 +114,7 @@ export const capitalBroadside: Shot = {
 
 /** Wait until no ship / structure art is still baking (a 10x battleship
  *  takes ~15 s), so the take never shows the vector stand-in. */
-async function artSettled(ctx: ShotContext): Promise<void> {
+export async function artSettled(ctx: ShotContext): Promise<void> {
   await ctx.page.waitForFunction(() => {
     const st = (globalThis as { __eqxArtStats?: () => { pending?: number; ready?: number } }).__eqxArtStats?.();
     return !!st && (st.ready ?? 0) > 0 && (st.pending ?? 1) === 0;
@@ -339,7 +339,8 @@ export const capitalGunsFighter: Shot = {
   docs: ['ship-kinds'],
   reel: false,
   server: 'capitals',
-  target: { room: 'showcase-capital-duel', params: { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1, spawnX: 1500, spawnY: -1800 } },
+  // The pilot's own hull (2026-11-10: no survive params; the fight runs its course).
+  target: { room: 'showcase-capital-duel', params: { shipKind: 'fighter', art: 'machined', fx: 'new', spawnX: 1500, spawnY: -1800 } },
   hud: 'none',
   durationMs: 22_000,
   async startWhen(ctx) {
@@ -351,7 +352,9 @@ export const capitalGunsFighter: Shot = {
       return n > 0;
     }, null, { timeout: 60_000, polling: 250 });
     // Start the fight off camera so the turrets are already swinging round.
-    await keepHostile(ctx, 14_000);
+    // One cue sets the scene; nothing re-arms hostility during the take.
+    await sendRoom(ctx, 'test_aggro', { type: 'test_aggro' });
+    await ctx.sleep(14_000);
   },
   async run(ctx) {
     // The battleship holds a ~4,000 u stand-off, wider than a fighter's normal
@@ -362,10 +365,9 @@ export const capitalGunsFighter: Shot = {
       m?.swarm.forEach((e) => { if (e.kind === 1) p = { x: e.x, y: e.y }; });
       return p as { x: number; y: number } | null;
     });
-    await Promise.all([
-      keepHostile(ctx, 21_500),
-      bs ? flyTo(ctx, bs.x + 1100, bs.y - 1200, { arrive: 250, maxMs: 14_000, cruise: 420 }) : ctx.sleep(1),
-    ]);
+    const t0 = Date.now();
+    if (bs) await flyTo(ctx, bs.x + 1100, bs.y - 1200, { arrive: 250, maxMs: 14_000, cruise: 420 });
+    await ctx.sleep(Math.max(0, 21_500 - (Date.now() - t0)));
   },
 };
 

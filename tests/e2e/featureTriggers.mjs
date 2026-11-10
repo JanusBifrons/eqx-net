@@ -21,8 +21,9 @@ export const FEATURE_TRIGGERS = [
   },
   {
     area: 'spectator and ship switching',
-    paths: ['src/client/spectator/', 'src/client/components/PilotSpectatorToggle', 'src/client/net/snapshotShipRouter', 'src/client/ships/'],
-    specs: ['spectator-mode'],
+    paths: ['src/client/spectator/', 'src/client/components/PilotSpectatorToggle', 'src/client/net/snapshotShipRouter', 'src/client/ships/',
+      'src/client/components/BottomControlPanel'],
+    specs: ['spectator-mode', 'build-hotbar-fits-viewport'],
   },
   {
     area: 'energy and boost',
@@ -34,8 +35,9 @@ export const FEATURE_TRIGGERS = [
     area: 'fire control and combat',
     paths: ['src/server/rooms/LockSubsystem', 'src/server/rooms/NpcLockSubsystem', 'src/server/rooms/PlayerFireResolver',
       'src/core/combat/lock', 'src/shared-types/combat/lockProfile', 'src/client/hud/WeaponStrip', 'src/client/components/TargetAction',
-      'src/client/input/MouseLock', 'tests/e2e/helpers/fireControl'],
-    specs: ['lock-to-fire-default', 'fire-control-lock', 'auto-fire', 'auto-fire-multitouch', 'fx-weapons', 'drone-destruction'],
+      'src/client/input/MouseLock', 'tests/e2e/helpers/fireControl', 'src/client/components/ContactsOverview',
+      'src/client/components/contactRows'],
+    specs: ['lock-to-fire-default', 'fire-control-lock', 'contacts-overview', 'auto-fire', 'auto-fire-multitouch', 'fx-weapons', 'drone-destruction'],
   },
   {
     area: 'beams',

@@ -39,10 +39,15 @@ export const WORK_WINDOW_TICKS = 720;
 // budget never goes below 1, so a scene that measures 0 has room for noise).
 export const COUNT_BUDGETS: Record<string, CountBudget> = {
   // 2026-11-06, laptop, two runs: 216 / 218 KB/s (swarm 67); browser runs 216–263.
+  // 2026-11-10, NPC line of fire (friendly fire slice 2): NPCs now hold fire
+  // instead of shooting through allies, so fewer ships die in the 12 s window
+  // and more stay alive to simulate and send (end swarm 80 vs 65 with the
+  // check off, same box). The SCENE changed, not the per-ship cost; the
+  // check itself is ~3.5 per tick here (print-only `lineOfFire*`).
   'fleet-fight': {
-    rxKBps: 275, minSwarm: 30,
-    measured: 'rx 216–218 KB/s laptop 2026-11-06. Work, desktop 4 runs 2026-11-08: bodies 38.4–39.9, ai 37.1–38.1, swarm recs 33.4–35.8, bytes 1141–1226, ents/snap 61.9–68.5; CI (ubuntu, PR #356): 38.6 / 37.5 / 35.8 / 1224 / 66.2, rx 211.9',
-    work: { bodiesPerTick: 50, aiAgentsPerTick: 48, swarmRecordsPerTick: 45, swarmBytesPerTick: 1533, entitiesPerSnapshot: 86 },
+    rxKBps: 334, minSwarm: 30,
+    measured: 'rx 216–218 KB/s laptop 2026-11-06. Work, desktop 4 runs 2026-11-08: bodies 38.4–39.9, ai 37.1–38.1, swarm recs 33.4–35.8, bytes 1141–1226, ents/snap 61.9–68.5; CI (ubuntu, PR #356): 38.6 / 37.5 / 35.8 / 1224 / 66.2, rx 211.9. With NPC line of fire, laptop 3 runs 2026-11-10: bodies 49.6–50.2, ai 48.0–48.7, swarm recs 48.3–48.9, bytes 1649–1670, ents/snap 45.7–47.0, rx 256–267 (check off, same session: 38.6 / 36.8 / 37.5 / 1281 / 46.0, rx 199)',
+    work: { bodiesPerTick: 63, aiAgentsPerTick: 61, swarmRecordsPerTick: 62, swarmBytesPerTick: 2088, entitiesPerSnapshot: 86 },
   },
   // 2026-11-06, laptop, two runs: 67.8 / 67.8 KB/s (174 entities: citadel + raid).
   'teleport-raid': {
@@ -113,3 +118,29 @@ export const CLIENT_COUNT_BUDGETS: Record<string, ClientCountBudget> = {
     measured: 'SwiftShader 960×540 2026-11-08, desktop 4 runs: draw p95 24–25, objects 6631–10072, uploads 0, pages 5; CI (ubuntu, PR #356) 2 runs: draw p95 25, objects 6360–6615, uploads 0, pages 5',
   },
 };
+
+/**
+ * Projectile broadphase (ranges plan, risk 2): narrow-phase sweeps per tick
+ * with 500 shells among 1,000 entities (40 km square, naval shell speed,
+ * capitals every 50th entity). Gated by
+ * `src/server/rooms/ProjectilePipeline.broadphase.test.ts`. A synthetic scene,
+ * so the count is exact on every host. Same rule as above: max measured
+ * + 25 %, raised only with a new measurement. Measured 2026-11-10 (laptop;
+ * deterministic scene, so CI reads the same): broadphase 63, full scan 500,000.
+ */
+export const PROJECTILE_NARROW_CHECKS_BUDGET = 79;
+
+/**
+ * NPC line-of-fire gate (friendly fire slice 2): work per tick in a synthetic
+ * fleet fight where EVERY one of 80 ships is a fire candidate every tick (two
+ * 40-ship sides 1,500 u apart, 4 capitals, 300 rocks; real drones fire on a
+ * cooldown, so live play does far less). Gated by
+ * `src/server/rooms/LineOfFireGate.test.ts`; deterministic, so every host
+ * reads the same. `candidates` = bodies the broadphase returned (each costs
+ * one friendly test); `narrow` = ray tests run (friendly candidates only, the
+ * scan stops at the first hit). A full scan would test 80 × 380 = 30,400.
+ * Same rule as above: max measured + 25 %. Measured 2026-11-10 (laptop;
+ * deterministic, so CI reads the same): 80 checks, 1,617 candidates, 236
+ * narrow tests, 1 grid build per tick.
+ */
+export const LINE_OF_FIRE_BUDGET = { candidatesPerTick: 2022, narrowPerTick: 296 };

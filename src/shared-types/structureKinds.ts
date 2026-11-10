@@ -33,6 +33,7 @@
  */
 import { z } from 'zod';
 import { WeaponMountSchema } from './shipKinds/types.js';
+import { navalGunEngageReach } from './combat/navalGuns.js';
 
 export const StructureKindIdSchema = z.enum([
   'capital',
@@ -1009,7 +1010,8 @@ export const POCKET_PAD: StructureKind = {
 // sizes, weapons, traverse rates and fire control (core/combat/mountFireControl
 // + mountTargeting), so a 16" barbette fights like a battleship's 16" turret.
 // Research: docs/research/ww2-coastal-defences.md. A gun's engage reach is its
-// shell's (`weaponRange` repeats it for the range ring and the defence check;
+// shell's (`weaponRange` is derived from the gun via `navalGunEngageReach`, for
+// the range ring and the defence check; the AA mount repeats its autocannon;
 // locked by tests/unit/coastalDefences.test.ts), and `fireRateMs` /
 // `weaponDamage` repeat the weapon's reload and damage, so the structure turret
 // path and the ship path agree. Each mount salvo fires one shell per barrel;
@@ -1057,7 +1059,7 @@ export const DP_MOUNT_5IN: StructureKind = {
   storageCapacity: 0,
   constructionCost: 900,
   color: 0x9aa4ad,
-  weaponRange: 2295,
+  weaponRange: navalGunEngageReach('naval_s'),
   fireRateMs: 4000,
   weaponDamage: 60,
   mounts: [
@@ -1080,7 +1082,7 @@ export const COASTAL_CASEMATE_8IN: StructureKind = {
   storageCapacity: 0,
   constructionCost: 2000,
   color: 0x8f8a7e,
-  weaponRange: 3542,
+  weaponRange: navalGunEngageReach('naval_m'),
   fireRateMs: 10_000,
   weaponDamage: 350,
   mounts: [
@@ -1104,7 +1106,7 @@ export const COASTAL_TURRET_11IN: StructureKind = {
   storageCapacity: 0,
   constructionCost: 3500,
   color: 0x868c90,
-  weaponRange: 4862,
+  weaponRange: navalGunEngageReach('naval_l'),
   fireRateMs: 22_000,
   weaponDamage: 800,
   mounts: [
@@ -1127,7 +1129,7 @@ export const COASTAL_BARBETTE_16IN: StructureKind = {
   storageCapacity: 0,
   constructionCost: 5000,
   color: 0x7e8588,
-  weaponRange: 5376,
+  weaponRange: navalGunEngageReach('naval_xl'),
   fireRateMs: 30_000,
   weaponDamage: 1400,
   mounts: [
@@ -1150,7 +1152,7 @@ export const COASTAL_LINDEMANN: StructureKind = {
   storageCapacity: 0,
   constructionCost: 8000,
   color: 0x77756e,
-  weaponRange: 7735,
+  weaponRange: navalGunEngageReach('naval_xxl'),
   fireRateMs: 30_000,
   weaponDamage: 1200,
   mounts: [
@@ -1174,7 +1176,7 @@ export const SIEGE_GUN_80CM: StructureKind = {
   storageCapacity: 0,
   constructionCost: 12_000,
   color: 0x6f6c63,
-  weaponRange: 6460,
+  weaponRange: navalGunEngageReach('naval_siege'),
   fireRateMs: 120_000,
   weaponDamage: 4200,
   mounts: [

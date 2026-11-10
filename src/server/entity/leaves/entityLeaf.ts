@@ -160,6 +160,12 @@ export interface LeafDeps {
    *  A drone-on-drone hit resolves to no faction (factionOf → null) ⇒ no
    *  escalation (req #5 gate). Optional ⇒ no escalation (e.g. test fixtures). */
   onDroneDamaged?: (droneId: string, sourceId: string, atTick: number) => void;
+  /** Friendly fire (owner decision 2026-11-10) — true when `sourceId` is on
+   *  the hit drone's own side (an NPC of a friendly allegiance, or an NPC base
+   *  not hostile to it). Such an accidental hit still does its damage but does
+   *  NOT mark the victim hostile or escalate a faction, so one stray shot never
+   *  starts a civil war. Optional ⇒ every hit marks (test fixtures). */
+  isFriendlyFire?: (victimId: string, sourceId: string) => boolean;
   /** Scrap-on-death (Phase 2b-ii) — called for a DRONE (kind 1) the instant
    *  before it's evicted on a hull 0-cross, so a COMPOSITE-kind drone (e.g.
    *  havok) breaks into floating scrap pieces. The room reads the dying drone's

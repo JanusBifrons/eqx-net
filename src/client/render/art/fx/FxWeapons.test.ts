@@ -65,6 +65,27 @@ describe('FxProjectiles', () => {
     const head = p.container.children[0]!;
     expect(head.rotation).toBeCloseTo(-Math.PI / 2);
   });
+
+  it('a far 16" shell heading south-east draws along its velocity, trail behind it (#376 review)', () => {
+    // Review 2026-11-09: "far shell streaks run nearly vertical while their
+    // barrels point south-east". Measured in a re-take: every shell's drawn
+    // heading equalled its velocity and its frame-to-frame motion; the
+    // vertical streaks were the backdrop's speed dust stretched along the
+    // fighter's northward flight. This locks the shell side.
+    const p = new FxProjectiles(fakeArt());
+    const vx = 1626, vy = -1626; // ~2300 u/s, game space south-east
+    p.beginFrame();
+    p.draw('far', 'shell', 4000, -4000, vx, vy, 1, 6); // late in flight, far away
+    p.endFrame();
+    const [head, core, t0] = p.container.children as Array<{ rotation: number; position: { x: number; y: number } }>;
+    const screenHeading = Math.atan2(-vy, vx); // pixi Y is down
+    expect(head!.rotation).toBeCloseTo(screenHeading, 6);
+    expect(core!.rotation).toBeCloseTo(screenHeading, 6);
+    expect(t0!.rotation).toBeCloseTo(screenHeading, 6);
+    // The first trail sprite sits behind the head, opposite the travel.
+    const bx = t0!.position.x - head!.position.x, by = t0!.position.y - head!.position.y;
+    expect(Math.atan2(by, bx)).toBeCloseTo(screenHeading - Math.PI, 6);
+  });
 });
 
 describe('FxBeams', () => {

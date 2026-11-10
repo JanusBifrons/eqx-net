@@ -16,6 +16,7 @@ import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projec
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar, type RadarDebugIcon } from './HaloRadar';
+import { IncomingFireWarning } from './incoming/IncomingFireWarning.js';
 import type { RadarInsets, RadarPrefs } from '../../shared-types/settings/radar.js';
 import { DamageNumberManager } from './DamageNumbers';
 import { LevelUpIconManager } from './LevelUpIcons';
@@ -28,7 +29,7 @@ import { pickEntityAt, type PickedEntityKind } from './pickEntity';
 import { decideLingeringSpriteAction, decideExplosionPosition, type SpriteDecision } from './spriteUpdateDecisions';
 import { shouldLatchFirstFrame } from './firstFrameLatch.js';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
-import { readFxKillSwitches } from './fxKillSwitches';
+import { readFxKillSwitches, type FxKillSwitches } from './fxKillSwitches';
 import { createArtService, type ArtHandle } from './art/ArtService.js';
 import { MachinedShipSprite } from './art/MachinedShipSprite.js';
 import { litPass } from './art/litPass.js';
@@ -41,15 +42,16 @@ import { Backdrop } from './art/fx/Backdrop.js';
 import { speedFxFullSpeed } from './art/fx/depth.js';
 import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
-import { shellImpactRadius, shellEndedOnHit } from './art/fx/turretFx.js';
-import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
+import { NavalShellBursts } from './art/fx/navalShellBursts.js';
 import { FxEngines } from './art/fx/FxEngines.js';
 import { WarpFx, type WarpFxShip } from './pixi/WarpFx.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
 import { LodDots } from './pixi/LodDots';
-import { GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldVisualRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
+import { NAVAL_RANGE } from '@shared-types/combat/navalRange';
+import { GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldBubbleRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
 import { FxFences, FxShields } from './art/fx/FxShields.js';
-import { SHIELD_RADIUS_PAD } from '../../shared-types/shipKinds.js';
+import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
+import { shieldBubbleRadiusForEntity } from './pixi/shieldBubbleRadius.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
 import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
 import { BeamSpritePool, type BeamView } from './BeamSpritePool';
@@ -129,9 +131,6 @@ export { shouldFireRemoteWarpVisual };
 // constructors of Pixi Graphics instances, no class state. The
 // orchestrator below imports them from that module.
 
-/** A live naval shell: last + first-seen Pixi position, burst radius, full travel. */
-interface NavalShellRec { x: number; y: number; r: number; sx: number; sy: number; reach: number }
-
 /** How often (frames) unused older-sector art is freed (~2 s at 60 fps). */
 const ART_COLLECT_EVERY_FRAMES = 120;
 
@@ -154,12 +153,19 @@ export class PixiRenderer implements IRenderer {
    *  last applied, its hull zoom factor, and whether `?zoom=` pinned the start. */
   private _zoomKindId: string | null = null;
   private _zoomFactor = 1;
+  private _viewW = 0;
+  private _viewH = 0;
   private _zoomPinned = false;
   private readonly _zoomRange = { minScale: GAMEPLAY_MIN_ZOOM, startZoom: 0 };
 
-  constructor(isTouch = false, art: ArtOptions = ART_OFF) {
+  /** FX kill switches handed in by the worker BOOT (resolved on the main
+   *  thread — the worker has no `window`). Absent ⇒ read the URL at init. */
+  private readonly _fxKillSwitches: FxKillSwitches | undefined;
+
+  constructor(isTouch = false, art: ArtOptions = ART_OFF, fxKillSwitches?: FxKillSwitches) {
     this._isTouch = isTouch;
     this._artOpts = art;
+    this._fxKillSwitches = fxKillSwitches;
     this.halo = new HaloRadar(isTouch);
   }
 
@@ -455,6 +461,9 @@ export class PixiRenderer implements IRenderer {
    *  initializers run before the constructor body, where `_isTouch` is still
    *  undefined (WS-B #3/#4 thread touch into the halo). */
   private readonly halo: HaloRadar;
+  /** Naval shells on course for the local ship: fall-point markers + the
+   *  radar's incoming chevron (`render/incoming/`). */
+  private readonly incomingFire = new IncomingFireWarning();
   private damageNumbers: DamageNumberManager | null = null;
   /** Phase 4 WS-B1 — pooled screenspace level-up icon (own ship). */
   private levelUpIcons: LevelUpIconManager | null = null;
@@ -738,12 +747,13 @@ export class PixiRenderer implements IRenderer {
       maxScale: 3,
       followLerpFactor: 1,
     });
-    this.camera.setScreenSize(initialW, initialH);
+    this.setViewSize(initialW, initialH);
 
     // Read the bisected FX kill switches once at init. Threaded into the
     // warp chain (forceDisable) + EffectsService refs (per-effect bypasses).
     // Plan: melodic-engelbart Step 2.
-    const fxKillSwitches = readFxKillSwitches();
+    // Worker path: the switches arrive on BOOT (no `window` here).
+    const fxKillSwitches = this._fxKillSwitches ?? readFxKillSwitches();
 
     // Machined art: bakes run on workers; until an entity's art is ready it
     // draws today's look. The mode is resolved on the main thread (artMode.ts).
@@ -993,7 +1003,10 @@ export class PixiRenderer implements IRenderer {
       });
     }
 
+    // Incoming-fire markers sit under the radar's edge icons.
+    this.incomingFire.init(this.camera);
     this.halo.init(this.camera);
+    this.halo.setIncoming(this.incomingFire);
     // Damage numbers attach to the world (pan with camera, anchored at
     // impact world coord) but counter-scale per frame so they stay
     // legible at any zoom — Camera ref needed for the per-frame
@@ -1053,7 +1066,7 @@ export class PixiRenderer implements IRenderer {
         // on the main-thread path too (parity with the worker resize).
         const dpr = window.devicePixelRatio ?? 1;
         this.app.renderer.resize(w, h, dpr);
-        this.camera.setScreenSize(w, h);
+        this.setViewSize(w, h);
         this.starfield?.resize(w, h);
       };
       window.addEventListener('resize', resize);
@@ -1085,7 +1098,7 @@ export class PixiRenderer implements IRenderer {
     // (the old behaviour) kept the stale init resolution → blur after
     // such a change. `width`/`height` are LOGICAL (CSS) px.
     this.app.renderer.resize(width, height, dpr ?? this.app.renderer.resolution);
-    this.camera.setScreenSize(width, height);
+    this.setViewSize(width, height);
     this.starfield?.resize(width, height);
     if (isDiagEnabled()) {
       logEvent('render_frame_diag', {
@@ -1531,13 +1544,25 @@ export class PixiRenderer implements IRenderer {
     if (id === null || id === this._zoomKindId) return;
     this._zoomKindId = id;
     const kind = getShipKind(id);
-    zoomRangeForKind(kind, DEFAULT_GAMEPLAY_ZOOM, this._zoomRange);
+    zoomRangeForKind(kind, DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, this._viewW, this._viewH);
     this.camera.setMinScale(this._zoomRange.minScale);
     const f = hullZoomFactor(kind);
     if (f !== this._zoomFactor) {
       this._zoomFactor = f;
       if (!this._zoomPinned) this.camera.setZoom(this._zoomRange.startZoom);
     }
+  }
+
+  /** Every viewport-size change goes through here: the camera's screen size,
+   *  and (once a hull is known) the zoom-out floor, which for a capital in
+   *  `real` naval-range mode depends on the viewport (`zoomFloorForView`). */
+  private setViewSize(w: number, h: number): void {
+    this._viewW = w;
+    this._viewH = h;
+    this.camera.setScreenSize(w, h);
+    if (this._zoomKindId === null) return;
+    zoomRangeForKind(getShipKind(this._zoomKindId), DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, w, h);
+    this.camera.setMinScale(this._zoomRange.minScale);
   }
 
   update(mirror: RenderMirror): void {
@@ -1710,6 +1735,7 @@ export class PixiRenderer implements IRenderer {
 
     // Projectile + ghost-projectile sprites — see pixi/projectileSpriteUpdater.ts.
     // Ctx pooled to `this._projectileUpdaterCtx`.
+    this._projectileUpdaterCtx.cameraScale = this.world.scale.x;
     updateProjectileSprites(mirror, this._projectileUpdaterCtx);
 
     // Missile sprites + detonation VFX. Reads single-pose-per-frame via
@@ -2280,7 +2306,9 @@ export class PixiRenderer implements IRenderer {
     this.updateLingeringShips(mirror);
 
     // Halo arrows for off-screen POIs. Runs after moveCenter so the visibility
-    // test uses this frame's viewport bounds, not last frame's.
+    // test uses this frame's viewport bounds, not last frame's. Incoming fire
+    // first: the radar reads its groups for the off-screen chevron.
+    this.incomingFire.update(mirror, performance.now());
     this.halo.update(mirror);
 
     // ---------- RendererFeedback (end-of-frame, main-thread readable) ----------
@@ -2491,31 +2519,13 @@ export class PixiRenderer implements IRenderer {
         if (key) mv.noteShotNear(key, p.x, -p.y, p.weaponId);
       }
       this._turretShotSeen.set(id, gen);
-      // Naval shells: remember where each one is, for its impact burst.
-      if (p.weaponId !== undefined && p.weaponId.startsWith('naval_')) {
-        let rec = this._navalShells.get(id);
-        if (rec === undefined) {
-          rec = this._navalShellFree.pop() ?? { x: 0, y: 0, r: 0, sx: 0, sy: 0, reach: 0 };
-          const w = isWeaponId(p.weaponId) ? getWeapon(p.weaponId) : null;
-          rec.r = shellImpactRadius(w && w.mode !== 'hitscan' ? w.radius : 3);
-          rec.reach = w && w.mode !== 'hitscan' ? (w.speed * (w.mode === 'projectile' ? w.maxTicks : w.lifetimeTicks)) / 60 : 0;
-          rec.sx = p.x; rec.sy = -p.y;
-          this._navalShells.set(id, rec);
-        }
-        rec.x = p.x; rec.y = -p.y;
-      }
     }
     for (const [id, g] of this._turretShotSeen) if (g !== gen) this._turretShotSeen.delete(id);
-    // A shell gone this frame: burst where it was last seen if it HIT
-    // something. A shell that ran out of range just fades (a salvo's outer
-    // shells fly past a small target; bursting them in empty space read as
-    // explosions in the wrong place, review 2026-11-07).
-    for (const [id, rec] of this._navalShells) {
-      if (this._turretShotSeen.has(id)) continue;
-      if (shellEndedOnHit(Math.hypot(rec.x - rec.sx, rec.y - rec.sy), rec.reach)) this._fxExplosions?.spawn(rec.x, rec.y, rec.r, now);
-      this._navalShells.delete(id);
-      this._navalShellFree.push(rec);
-    }
+    // Naval shells: a shell gone this frame bursts where it was last seen if
+    // it HIT something; one that ran out of range just fades (review
+    // 2026-11-07). Game space in, game space to FxExplosions (review
+    // 2026-11-10: a Pixi-space -y here put the burst at the Y mirror).
+    this._navalShellBursts.frame(mirror.projectiles, this._fxExplosions, now);
     if (mirror.missiles) {
       for (const [id, m] of mirror.missiles) {
         if (!this._turretMissileSeen.has(id)) {
@@ -2722,26 +2732,15 @@ export class PixiRenderer implements IRenderer {
 
     for (const id of seen) {
       if (!this._activeShieldIds.has(id)) {
-        // Look up the entity's actual hull radius so the visible aura
-        // matches the physics ball collider (both use the same
-        // `kind.radius + SHIELD_RADIUS_PAD` formula on the server).
-        // Without this, ShieldAura would fall back to its 28 u default
-        // for every ship — scout's tiny shield would render the same
-        // size as a heavy's, and neither would match the physics.
-        let auraRadius: number | undefined;
-        if (id.startsWith('swarm-')) {
-          const swarmId = parseInt(id.slice('swarm-'.length), 10);
-          const sw = mirror.swarm?.get(swarmId);
-          if (sw) auraRadius = sw.shipKind ? shieldVisualRadius(getShipKind(sw.shipKind)) : sw.radius;
-        } else {
-          // mirror.ships for an active hull; mirror.lingeringShips for a parked
-          // one (lingering hulls are shipInstanceId-keyed + kept out of ships).
-          const ship = mirror.ships.get(id) ?? mirror.lingeringShips?.get(id);
-          if (ship?.kind) auraRadius = shieldVisualRadius(getShipKind(ship.kind));
-        }
-        this.effects.setContinuous(id, 'shield', true, auraRadius);
+        // The drawn bubble IS the shield collider (owner's rule 2026-11-10):
+        // `shieldBubbleRadiusForEntity` = shieldVisualRadius + shipTuning pad,
+        // the same ball `shipShieldColliderDesc` mounts (#15/#18). Both shield
+        // visuals (the legacy ring and the new FxShields) draw at it.
+        const bubble = shieldBubbleRadiusForEntity(id, mirror)
+          ?? shieldBubbleRadius(getShipKind(DEFAULT_SHIP_KIND));
+        this.effects.setContinuous(id, 'shield', true, bubble);
         this._activeShieldIds.add(id);
-        this._fxShieldRadius.set(id, (auraRadius ?? 28) + SHIELD_RADIUS_PAD);
+        this._fxShieldRadius.set(id, bubble);
       }
     }
     for (const id of this._activeShieldIds) {
@@ -2996,9 +2995,8 @@ export class PixiRenderer implements IRenderer {
    *  with the frame's generation so a new one is noticed once, and a cache of
    *  owner id → sprite key (structures fire as their bare entity id). */
   private readonly _turretShotSeen = new Map<string, number>();
-  /** Live naval shells (last Pixi-space position + impact radius), pooled. */
-  private readonly _navalShells = new Map<string, NavalShellRec>();
-  private readonly _navalShellFree: NavalShellRec[] = [];
+  /** Naval shells in flight, for their impact bursts (game space). */
+  private readonly _navalShellBursts = new NavalShellBursts();
   private readonly _turretMissileSeen = new Map<number, number>();
   private _turretShotGen = 0;
   private readonly _ownerSpriteKey = new Map<string, string>();
@@ -3077,6 +3075,7 @@ export class PixiRenderer implements IRenderer {
   /** See `IRenderer.setRadarSuppressed`. */
   setRadarSuppressed(suppressed: boolean): void {
     this.halo.setSuppressed(suppressed);
+    this.incomingFire.setSuppressed(suppressed);
   }
 
   /** See `IRenderer.setHudOverlays`. */
@@ -3257,6 +3256,8 @@ export class PixiRenderer implements IRenderer {
   resetEffectsForSectorHandoff(): void {
     this.effects?.resetForSectorHandoff();
     this._fxExplosions?.reset();
+    this._navalShellBursts.reset();
+    this.incomingFire.reset();
     this._fxShields?.reset();
     this._fxFences?.reset();
     this._activeThrustIds.clear();
@@ -3331,6 +3332,7 @@ export class PixiRenderer implements IRenderer {
     this.hoverBracket?.destroy();
     this.mountVisuals.disposeAll();
     this.halo.destroy();
+    this.incomingFire.destroy();
     this.backgroundGrid?.destroy();
     this.starfield?.destroy();
     // Warp stage + filters live on app.stage so `app.destroy({ children: true })`

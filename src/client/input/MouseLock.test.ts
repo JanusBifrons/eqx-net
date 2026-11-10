@@ -11,6 +11,10 @@ describe('fcKeyAction', () => {
     expect(fcKeyAction('t', 'KeyT', false)).toEqual({ kind: 'target' });
     expect(fcKeyAction('X', 'KeyX', true)).toEqual({ kind: 'clear' });
   });
+  it('O toggles the contacts overview', () => {
+    expect(fcKeyAction('o', 'KeyO', false)).toEqual({ kind: 'overview' });
+    expect(fcKeyAction('O', 'KeyO', true)).toEqual({ kind: 'overview' });
+  });
   it('ignores other keys (0, WASD, space)', () => {
     expect(fcKeyAction('0', 'Digit0', false)).toBeNull();
     expect(fcKeyAction('w', 'KeyW', false)).toBeNull();

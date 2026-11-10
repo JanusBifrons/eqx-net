@@ -211,9 +211,8 @@ export class PhysicsWorld {
     // FromColliders is SAFE and REQUIRED here precisely because it recomputes
     // the TOTAL (zero colliders + the stored additional = mass 1, I = 0.5 r^2)
     // -- "FromColliders" is a misnomer; it includes the additional props.
-    // Shield collider radius = kind.radius + SHIELD_RADIUS_PAD so the
-    // physics ball matches the visible shield aura (ShieldAura ring at
-    // the same pad). Pinned mass + inertia stay derived from the bare
+    // Shield collider radius = kind.radius + shipTuning(kind).shieldPad =
+    // `shieldBubbleRadius(kind)`, the radius the shield aura is drawn at. Pinned mass + inertia stay derived from the bare
     // `kind.radius` — they're a kind-feel knob, not a function of the
     // current collider geometry (the pad doesn't change ship handling).
     this.world.createCollider(shipShieldColliderDesc(kind), body);
@@ -254,8 +253,9 @@ export class PhysicsWorld {
     linearDamping = 0,
     collisionGroups?: number,
     parts?: ReadonlyArray<ReadonlyArray<Vec2>>,
-    /** Capital-ship R&D: a drone of this kind starts with its hull-shaped
-     *  shield collider (`shipShieldColliderDesc`) instead of a ball. */
+    /** A drone of this kind starts with its shield-up collider
+     *  (`shipShieldColliderDesc`): ball(radius + shieldPad), or a capital's
+     *  rounded hull. Omitted ⇒ a plain `ball(radius)` obstacle. */
     shieldKind?: ShipKind,
   ): void {
     // WS-11 (R2.25) — `linearDamping` defaults to 0 so ASTEROIDS + STRUCTURES
@@ -306,7 +306,12 @@ export class PhysicsWorld {
       }
     }
     const isBall = !(vertices && vertices.length >= 3);
-    if (!collider && shieldKind?.sizeClass === 'capital') {
+    // A drone (any `shieldKind`) spawns shield-up, so it collides as its shield
+    // bubble: the SAME `shipShieldColliderDesc` that `setHullExposed(false)`
+    // mounts on regen (ball(radius + shieldPad), or the rounded hull for a
+    // capital). One place for the server worker and the client predWorld (#15).
+    // Before 2026-11-10 non-capital drones got a bare `ball(radius)` here.
+    if (!collider && shieldKind) {
       collider = shipShieldColliderDesc(shieldKind);
     }
     if (!collider) {
@@ -506,9 +511,8 @@ export class PhysicsWorld {
         );
       }
     } else {
-      // Shield up — ball collider extends `SHIELD_RADIUS_PAD` past the hull
-      // (same constant as the visual ShieldAura ring) so the rapier
-      // collider matches what the player sees.
+      // Shield up — the shield collider (`shipTuning` pad past the hull, the
+      // same bubble the aura draws: `shieldBubbleRadius`).
       this.world.createCollider(shipShieldColliderDesc(kind), body);
     }
     // Re-fold the pinned additional mass-props now (Rapier otherwise defers

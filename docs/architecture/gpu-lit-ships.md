@@ -6,10 +6,10 @@ Before this, every ship was baked 16 times (capitals 4), fully lit, once per sun
 
 | Level | What | Default for |
 |---|---|---|
-| High | The night side: long sharp shadows on ships (real length on structures), fill light, 8 point lights, engines as lights, capital shadows and bounce | desktop |
-| Medium | High with 48 shadow steps and 4 point lights | phones |
+| High | Everything on (`ALL_ON`, since 2026-11-10): long, firm shadows on ships (real length on structures), fill light, 8 point lights, engines as lights, capital shadows, occlusion and bounce | desktop |
+| Medium | The night side (brighter ambient, softer shadows) with 48 shadow steps and 4 point lights | phones |
 | Low | 16 shadow steps, 4 point lights, no engine lights, fill or capital effects | phones reporting < 4 GB |
-| Baked | Today's baked frames (the old look) | automated browsers (tests, netgate, showcase) |
+| Baked | Today's baked frames (the old look) | automated browsers (tests, netgate); the showcase films High (#408) |
 
 Precedence: `?shiplight=gpu|high|medium|low|baked` > the saved level (per device, `eqxShipLight`) > the device default (`defaultLightingPreset`). A change applies on the next load. Automated browsers stay on Baked unless the URL asks, so tests are unchanged.
 
@@ -99,8 +99,8 @@ The phone-proxy A/B read GPU lighting as **+33 % heap**. That reading was taken 
 Plan `prancy-squishing-donut`, R2 (branch `rnd/gpu-lit-ingame`). Open: R3 batcher, phone measurement, per-device presets in Settings, the gunhouse recoiling with its barrels (one sprite, same in baked art).
 
 **Showcase review findings (2026-11-09, `gpu-lit-ships` shot, `capital-guns-fighter` take with `shiplight=high`).** The clip is not published until these are fixed:
-- A muzzle flash's light lasts only 1–2 frames: it follows the flash sprite, which is that brief. A short decay after the sprite ends would let the light read.
-- The 5-inch turrets' flashes cast no visible light on the deck.
-- A thin dark rod sticks out behind each 5-inch turret, opposite its barrels.
-- Far shell streaks run nearly vertical while the barrels that fired them point south-east.
+- ~~A muzzle flash's light lasts only 1–2 frames: it follows the flash sprite, which is that brief. A short decay after the sprite ends would let the light read.~~ Fixed in #395 (a short ease-out tail after the sprite).
+- ~~The 5-inch turrets' flashes cast no visible light on the deck.~~ Fixed in #395 (the light scales with the gun).
+- ~~A thin dark rod sticks out behind each 5-inch turret, opposite its barrels.~~ Fixed: the rod was in the HULL bake, not the turret. The hull's vent-slit greeble (sized for a fighter) is one texel thick and ~110 u long on a capital, and on the battleship it ran out of the quad 40 mm AA tubs at `aa-s2`/`aa-p2` (the small turrets), so it read as a rod behind the gun in both the baked and GPU-lit art. Slits now skip any turret ring (`forgeShip`); lock: `render/art/hullVents.test.ts`.
+- ~~Far shell streaks run nearly vertical while the barrels that fired them point south-east.~~ Not a bug (checked 2026-11-10): the faint white near-vertical streaks are the backdrop's speed dust (`Backdrop.layoutMotes`), stretched along the camera's motion while the fighter flies north. Shells are orange, and in a re-take every shell's streak matched its velocity and frame-to-frame motion (locked by `FxWeapons.test.ts`).
 - Framing: the follow camera keeps the hull near the left edge, and the caption covers the stern.
