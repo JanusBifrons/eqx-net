@@ -76,7 +76,7 @@ export const fleetMelee: Shot = {
     const left = (): number => 44_000 - (Date.now() - t0);
     while (left() > 1000 && (await piloting(ctx))) {
       const r = await nearestRobot(ctx);
-      if (!r) break;
+      if (!r) break; // the robots are gone: the pilot sits and watches the rest
       // Close to gun range, then hold the nose on it for a moment.
       await flyTo(ctx, r.x, r.y, { arrive: 220, maxMs: Math.min(3000, left()), cruise: 260, passThrough: true });
       const r2 = await nearestRobot(ctx);
