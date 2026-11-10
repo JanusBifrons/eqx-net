@@ -388,6 +388,7 @@ import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat
 import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { refineRayHit } from '../../core/combat/capitalHits.js';
+import { LineOfFireGate } from './LineOfFireGate.js';
 import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
 import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
 import type { LockEntry } from '../../core/combat/lockState.js';
@@ -1349,6 +1350,10 @@ export class SectorRoom extends Room<SectorState> {
     spawnTestProjectile: (ownerId: string, x: number, y: number, vx: number, vy: number, weaponId?: WeaponId, damage?: number) => void;
     /** Friendly fire — drive one AI fire (the real `handleAiFire` path). */
     aiFire: (shooterId: string, dirX: number, dirY: number, targetId: string) => void;
+    /** NPC line of fire: running counts (checks, broadphase candidates, narrow tests). */
+    lineOfFireCounts: () => { checks: number; candidates: number; narrow: number };
+    /** NPC line of fire on/off (the slice-1 friendly fire tests turn it off). */
+    setNpcLineOfFire: (on: boolean) => void;
     /** Does NPC `id`'s brain treat `otherId` as hostile (stance or ledger)? */
     npcHostileTo: (id: string, otherId: string) => boolean;
     /** Mine Layers' live mines (integration tests). */
@@ -1407,6 +1412,11 @@ export class SectorRoom extends Room<SectorState> {
       spawnTestProjectile: (ownerId, x, y, vx, vy, weaponId = 'laser', damage = 10) =>
         this.projectiles.spawn(ownerId, x, y, vx, vy, damage, 4, 240, weaponId),
       aiFire: (shooterId, dirX, dirY, targetId) => this.handleAiFire(shooterId, dirX, dirY, this.serverTick, targetId),
+      lineOfFireCounts: () => {
+        const g = this.lineOfFireGate;
+        return { checks: g?.checks ?? 0, candidates: g?.candidates ?? 0, narrow: g?.narrow ?? 0 };
+      },
+      setNpcLineOfFire: (on) => { this.npcLineOfFire = on; },
       npcHostileTo: (id, otherId) => this.aiController.isEntityHostileToPlayer(id, otherId),
       mineField: this.mineField,
       rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
@@ -1841,6 +1851,8 @@ export class SectorRoom extends Room<SectorState> {
       currentTick: () => this.serverTick,
       fireDroneMount: (id, i) => this.aiFireResolver.fireMount(id, i),
       fireBlocked: (id, targetId) => this.npcLocks.fireBlocked(id, targetId),
+      // Friendly fire slice 2: a turret holds while an escort is on its line.
+      lineOfFireBlocked: (id, targetId, fx, fy, dx, dy, max) => this.npcShipLineBlocked(id, targetId, fx, fy, dx, dy, max),
       // Capital turrets engage hostile structures too (the AI's per-tick set).
       hostileStructures: () => this.hostileStructureCircles,
       lockTimeCapS: () => this.testLockTimeCapS,
@@ -1891,6 +1903,8 @@ export class SectorRoom extends Room<SectorState> {
     // laser_fired broadcast path that mirrors the player handleFire.
     this.aiFireResolver = new AiFireResolver({
       fireBlocked: (id, targetId) => this.npcLocks.fireBlocked(id, targetId),
+      // Friendly fire slice 2: a drone holds while an ally is in the way.
+      lineOfFireBlocked: (id, targetId, fx, fy, dx, dy) => this.droneLineBlocked(id, targetId, fx, fy, dx, dy),
       lastFireClientTick: this.lastFireClientTick,
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       swarmRegistry: this.swarmRegistry,
@@ -2504,6 +2518,8 @@ export class SectorRoom extends Room<SectorState> {
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) => this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       // Friendly fire: a turret beam lands on the first thing in its path.
       beamFirstHit: (fx, fy, dx, dy, maxDist, skipId) => this.turretBeamFirstHit(fx, fy, dx, dy, maxDist, skipId),
+      // Friendly fire slice 2: a turret holds over its own base / its owner.
+      lineOfFireBlocked: (rec, targetId, fx, fy, dx, dy, max) => this.structureLineBlocked(rec, targetId, fx, fy, dx, dy, max),
       broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) => {
         this.broadcast('laser_fired', {
           type: 'laser_fired',
@@ -4176,6 +4192,7 @@ export class SectorRoom extends Room<SectorState> {
         return best < 0 ? null : `s:${best}`;
       },
       commitHostileAct: (pid, key) => this.commitLockHostileAct(pid, key),
+      refreshHostility: (pid, key) => this.refreshLockHostility(pid, key),
     });
   }
 
@@ -4227,6 +4244,22 @@ export class SectorRoom extends Room<SectorState> {
       }
     }
     serverLogEvent('lock_hostile_act', { playerId: pid, target: key });
+  }
+
+  /**
+   * "Locks keep it hostile" (owner 2026-11-10): a pilot's live lock on an NPC
+   * ship that is already hostile to them re-stamps the hostility ledger, so the
+   * 30 s `FORGET_TICKS` decay runs from when the lock drops, not from the last
+   * hit (a 16" shell flies ~30 s). Individual hostility only: no faction
+   * escalation, no `bot_aggro` (the client's hostility rides the snapshot
+   * `drones[].hostile` bit, #16). Structures keep their own hostile-act rules.
+   * Called per lock per lock step (~10 Hz); no allocation (#14).
+   */
+  private refreshLockHostility(pid: string, key: string): void {
+    if (!key.startsWith('s:')) return;
+    const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
+    if (rec?.kind !== 1) return;
+    this.aiController.markHostile(rec.id, pid, this.serverTick);
   }
 
   /**
@@ -7535,18 +7568,10 @@ export class SectorRoom extends Room<SectorState> {
     for (const rec of this.swarmRegistry.all()) {
       if (rec.id === skipId) continue;
       const b = slotBase(rec.slot);
-      const cx = this.sabF32[b + SLOT_X_OFF]!;
-      const cy = this.sabF32[b + SLOT_Y_OFF]!;
-      const ca = this.sabF32[b + SLOT_ANGLE_OFF]!;
-      let d: number | null;
-      if (rec.kind === 0 && rec.vertices) {
-        d = rayHitsConvexPolygon(fx, fy, dx, dy, best, cx, cy, ca, rec.vertices);
-      } else if (rec.halfW !== undefined && rec.halfH !== undefined) {
-        d = rayHitsBox(fx, fy, dx, dy, best, cx, cy, rec.halfW, rec.halfH, rec.boxes);
-      } else {
-        d = rayHitsSphere(fx, fy, dx, dy, best, cx, cy, rec.radius);
-        if (rec.kind === 1) d = refineRayHit(rec.shipKind, d, fx, fy, dx, dy, best, cx, cy, ca);
-      }
+      const d = this.swarmRayHit(
+        rec, fx, fy, dx, dy, best,
+        this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!, this.sabF32[b + SLOT_ANGLE_OFF]!,
+      );
       if (d !== null && d < best) { best = d; bestId = rec.id; bestEid = rec.entityId; }
     }
     if (bestId === null) return null;
@@ -7555,6 +7580,114 @@ export class SectorRoom extends Room<SectorState> {
     out.wireId = bestEid >= 0 ? `swarm-${bestEid}` : bestId;
     out.dist = best;
     return out;
+  }
+
+  /** Narrow phase for one swarm entity at (cx, cy, ca): the same shapes every
+   *  NPC/turret beam uses (rock polygon, structure box, ship circle + capital
+   *  hull refine). Shared by `nonPlayerRayHit` and the line-of-fire gate. */
+  private swarmRayHit(
+    rec: SwarmEntityRecord, fx: number, fy: number, dx: number, dy: number, maxDist: number,
+    cx: number, cy: number, ca: number,
+  ): number | null {
+    if (rec.kind === 0 && rec.vertices) return rayHitsConvexPolygon(fx, fy, dx, dy, maxDist, cx, cy, ca, rec.vertices);
+    if (rec.halfW !== undefined && rec.halfH !== undefined) return rayHitsBox(fx, fy, dx, dy, maxDist, cx, cy, rec.halfW, rec.halfH, rec.boxes);
+    const d = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, rec.radius);
+    return rec.kind === 1 ? refineRayHit(rec.shipKind, d, fx, fy, dx, dy, maxDist, cx, cy, ca) : d;
+  }
+
+  // ─── NPC line of fire (friendly fire slice 2) ────────────────────────────
+  //
+  // Before an NPC fires (drone slot, capital turret, structure turret) it asks
+  // whether a FRIENDLY body lies on the shot's path to its target; if so it
+  // holds fire this tick. "Friendly" mirrors `isFriendlyFire` (what a hit
+  // would count as an accident): for an NPC ship of side A, ships of a
+  // friendly allegiance and NPC structures not hostile to A; for a structure
+  // turret, its own owner's structures (an NPC base also its faction's) and,
+  // for an NPC base, ships of sides it isn't hostile to; a PLAYER's turret
+  // also holds on its owner's own ship. Players are never gated.
+
+  /** testMode switch (`_internals.setNpcLineOfFire`): the slice-1 friendly
+   *  fire tests turn it off to show what a shot hits. */
+  private npcLineOfFire = true;
+  /** Lazily built (needs the SAB). */
+  private lineOfFireGate: LineOfFireGate<SwarmEntityRecord> | null = null;
+  /** The current check's shooter (set before each `blocked` call; #14). */
+  private lofShooterKind = 0; // 1 = NPC ship, 2 = structure
+  private lofSide: NpcAllegianceId = 'drones';
+  private lofOwner = '';
+  private lofOwnerIsNpc = false;
+  /** Pre-bound predicate for the gate (made once, #14). */
+  private readonly lofFriendly = (rec: SwarmEntityRecord): boolean => {
+    if (rec.kind === SWARM_KIND_DRONE) {
+      if (this.lofShooterKind === 1) return isFriendly(this.lofSide, allegianceOfKind(rec.shipKind));
+      return this.lofOwnerIsNpc
+        && relationOf(NPC_SIDE_PARTY[allegianceOfKind(rec.shipKind)], this.lofOwner, this.relationCtx) !== 'hostile';
+    }
+    if (rec.kind !== 2) return false;
+    const owner = this.structureRegistry.get(rec.id)?.owner;
+    if (owner === undefined) return false;
+    if (this.lofShooterKind === 1) {
+      return isNpcOwner(owner) && relationOf(NPC_SIDE_PARTY[this.lofSide], owner, this.relationCtx) !== 'hostile';
+    }
+    if (owner === this.lofOwner) return true;
+    // An NPC base also holds over its own faction's other bases.
+    return this.lofOwnerIsNpc && isNpcOwner(owner) && relationOf(this.lofOwner, owner, this.relationCtx) === 'friendly';
+  };
+
+  private lofGate(): LineOfFireGate<SwarmEntityRecord> {
+    if (this.lineOfFireGate === null) {
+      this.lineOfFireGate = new LineOfFireGate<SwarmEntityRecord>({
+        registry: this.swarmRegistry,
+        sabF32: this.sabF32,
+        tick: () => this.serverTick,
+        rayHit: (rec, fx, fy, dx, dy, max, cx, cy, ca) => this.swarmRayHit(rec, fx, fy, dx, dy, max, cx, cy, ca),
+      });
+    }
+    return this.lineOfFireGate;
+  }
+
+  /** An NPC ship's line of fire (drone slot or capital turret). */
+  private npcShipLineBlocked(
+    shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number,
+  ): boolean {
+    if (!this.npcLineOfFire) return false;
+    const rec = this.swarmRegistry.get(shooterId);
+    if (rec == null || rec.kind !== SWARM_KIND_DRONE) return false;
+    this.lofShooterKind = 1;
+    this.lofSide = allegianceOfKind(rec.shipKind);
+    return this.lofGate().blocked(fx, fy, dx, dy, maxDist, shooterId, targetId, this.lofFriendly);
+  }
+
+  /** A drone's slot shot: the distance is to its target's live pose. */
+  private droneLineBlocked(shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number): boolean {
+    if (!this.npcLineOfFire || targetId === '') return false;
+    let tx: number, ty: number;
+    const pose = this.shipPoseCache.get(targetId);
+    if (pose !== undefined) { tx = pose.x; ty = pose.y; } else {
+      const t = this.swarmRegistry.get(targetId);
+      if (t == null) return false; // unknown target: nothing to measure to
+      const b = slotBase(t.slot);
+      tx = this.sabF32[b + SLOT_X_OFF]!; ty = this.sabF32[b + SLOT_Y_OFF]!;
+    }
+    return this.npcShipLineBlocked(shooterId, targetId, fx, fy, dx, dy, Math.hypot(tx - fx, ty - fy));
+  }
+
+  /** A structure turret's line of fire. */
+  private structureLineBlocked(
+    rec: StructureRecord, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number,
+  ): boolean {
+    if (!this.npcLineOfFire) return false;
+    this.lofShooterKind = 2;
+    this.lofOwner = rec.owner;
+    this.lofOwnerIsNpc = isNpcOwner(rec.owner);
+    if (this.lofGate().blocked(fx, fy, dx, dy, maxDist, rec.id, targetId, this.lofFriendly)) return true;
+    if (this.lofOwnerIsNpc || rec.owner === targetId) return false;
+    // A player's turret never fires through its owner's own ship (#17: active only).
+    const ship = this.getActiveShip(rec.owner);
+    if (!ship || !ship.alive || ship.travelling) return false;
+    const pose = this.shipPoseCache.get(rec.owner);
+    if (!pose) return false;
+    return this.playerHitscanDist(ship, fx, fy, dx, dy, maxDist, pose.x, pose.y, pose.angle) !== null;
   }
 
   /** The first thing a structure turret's beam meets, players included
@@ -10724,6 +10857,7 @@ export class SectorRoom extends Room<SectorState> {
         this.sceneTickRing!.push(totalMs); this.sceneWorkerRing!.push(workerTickMs);
         if (!this.sceneWork.active) this.sceneEluStart = this.physicsWorkerProxy?.elu() ?? null;
         this.sceneWork.endTick(this.sabU32[COUNT_IDX] ?? 0, this.aiController.size());
+        if (this.lineOfFireGate) this.sceneWork.lineOfFire(this.lineOfFireGate.checks, this.lineOfFireGate.narrow);
       }
       this.sceneWork.active = running;
     }

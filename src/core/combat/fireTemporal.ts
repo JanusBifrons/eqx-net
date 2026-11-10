@@ -36,3 +36,11 @@ export function clampFireTick(claimedTick: number, serverTick: number, lagCompWi
   const floor = serverTick - lagCompWindow;
   return claimedTick < floor ? floor : claimedTick;
 }
+
+/**
+ * "This shooter has never fired": the reload check `tick - last < cooldown`
+ * always passes against it, whatever the cooldown. It was -999 ticks, which a
+ * 16" (1,800-tick reload) failed until server tick 801, so a battleship
+ * couldn't fire its first shot in the first ~13 s of a room's life.
+ */
+export const NEVER_FIRED = -Infinity;

@@ -158,6 +158,15 @@ export interface StructureGridHooks {
   beamFirstHit?(
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, skipId: string,
   ): { id: string; wireId: string; dist: number } | null;
+  /** NPC line of fire (friendly fire slice 2): true ⇒ a body FRIENDLY to
+   *  `rec`'s owner (its own base's structures and NPC ships of its side; for
+   *  a player's turret, the owner's own ship and structures) lies on the shot
+   *  from (fx, fy) along unit (dx, dy) for `maxDist` (to `targetId`), so the
+   *  mount holds fire this turret tick: it keeps aiming, the lock stays and
+   *  the reload is not spent. Absent ⇒ never blocked (unit harnesses). */
+  lineOfFireBlocked?(
+    rec: StructureRecord, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number,
+  ): boolean;
   /** Phase 5 — broadcast the turret fire beam (laser_fired). */
   broadcastBeam?(shooterId: string, fromX: number, fromY: number, toX: number, toY: number, targetId: string, mountId?: string): void;
   /** WS-8 (R2.15) — spawn a server PROJECTILE bolt from a Bolt Turret toward its
@@ -340,6 +349,15 @@ export class StructureGridSubsystem {
     const lvlMul = structureLevelFactor(rec.level);
     const damage = (kind.weaponDamage ?? def.damage) * lvlMul;
     const muzzle = structureMountMuzzle(rec.kind, mount);
+    // Line of fire: hold while a friendly is between the muzzle and the
+    // target (returning false keeps the reload; the lock is untouched).
+    if (this.hooks.lineOfFireBlocked) {
+      const lx = target.x - rec.x, ly = target.y - rec.y;
+      const ll = Math.hypot(lx, ly);
+      if (ll > muzzle && this.hooks.lineOfFireBlocked(
+        rec, target.id, rec.x + (lx / ll) * muzzle, rec.y + (ly / ll) * muzzle, lx / ll, ly / ll, ll - muzzle,
+      )) return false;
+    }
     if (def.mode === 'hitscan') {
       // Continuous beam: a steady stream of small hits the client renders as
       // one beam (Issue 5). DPS-budget DoT on the beam cadence; the barrel is

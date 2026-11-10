@@ -46,12 +46,14 @@ export function fcKeyAction(
   key: string,
   code: string,
   shift: boolean,
-): { kind: 'select' | 'mode'; index: number } | { kind: 'target' | 'clear' } | null {
+): { kind: 'select' | 'mode'; index: number } | { kind: 'target' | 'clear' | 'overview' } | null {
   const m = /^Digit([1-9])$/.exec(code);
   if (m) return { kind: shift ? 'mode' : 'select', index: Number(m[1]) - 1 };
   const k = key.toLowerCase();
   if (k === 't') return { kind: 'target' };
   if (k === 'x') return { kind: 'clear' };
+  // O: the contacts overview (EVE's "overview"), the list to lock far targets from.
+  if (k === 'o') return { kind: 'overview' };
   return null;
 }
 
@@ -74,6 +76,11 @@ export function installFcKeys(): () => void {
       e.preventDefault();
       if (a.kind === 'select') st.setActiveGroupId(g.id);
       else client?.setGroupMode(g.id, g.mode === 'auto' ? 'manual' : 'auto');
+      return;
+    }
+    if (a.kind === 'overview') {
+      e.preventDefault();
+      st.setContactsOpen(!st.contactsOpen);
       return;
     }
     if (a.kind === 'target') {

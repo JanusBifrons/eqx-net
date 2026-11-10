@@ -196,6 +196,8 @@ export async function bootSectorTestServer(opts: {
   teleportFullCharge?: boolean;
   /** Drones never attack (the room option). */
   peacefulDrones?: boolean;
+  /** Pilots may join flying a capital (`shipKind: 'battleship'`, …): the room option. */
+  pilotCapitals?: boolean;
   /** P2c — sector features for the room (asteroid mix, nebula). */
   sectorFeatures?: string[];
   /** Room-level default spawn point (forwarded to `defaultSpawnX/Y`). */
@@ -275,6 +277,7 @@ export async function bootSectorTestServer(opts: {
     teleportShipBoards: opts.teleportShipBoards,
     teleportFullCharge: opts.teleportFullCharge,
     peacefulDrones: opts.peacefulDrones,
+    pilotCapitals: opts.pilotCapitals,
     tradeEnabled: opts.tradeEnabled,
     enforceHullGate: opts.enforceHullGate,
     seedStorageHold: opts.seedStorageHold,

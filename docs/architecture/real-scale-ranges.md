@@ -45,12 +45,25 @@ The tables live in `src/shared-types/combat/navalGuns.ts` (`REAL_NAVAL_GUNS`, de
 - **Capital turret targeting:** `mountTargetReach`.
 - **Locks:** lock reach is `reach × reachSlack` (1.1); heavy guns' lock time grows with absolute distance (`absRange`, #426): ~17 s for a 16" at 30 km.
 - **Client:** aim-guide length (`aimLineLength`), range rings and the lock guide all read the catalogue.
+- **Capital zoom-out floor (owner decision 2026-11-10; viewport-aware fix the same day).** In `real` mode a capital may zoom out until the ACTUAL viewport's shorter half-dimension shows its longest naval gun's engage reach plus that mount's offset, × 1.05 (`GUN_VIEW_MARGIN`): `zoomFloorForView` (`shipScale/tuning.ts`), recomputed by the client camera on every resize (the first cut assumed a 1920-px half-width, so in a 1280×720 window a target 30 km off the beam sat under the weapon strip and never showed). The camera is north-up, so the short axis is the one that must fit; a viewport more elongated than `MAX_VIEW_ASPECT` (2.4) fits its long side to 2.4 × reach instead. The server's far-shell view radius (`shellViewHalfExtent`) is a fixed conservative bound, reach × margin × 2.4, so it covers every viewport's long half at the floor (#15). Sub-capitals and legacy mode keep the hull floor exactly; the start zoom is unchanged.
+
+| Class | Longest gun | Legacy floor (half-view) | Real floor (half-view) |
+|---|---|---|---|
+| Destroyer | `naval_s` | 0.0738 (13,013 u) | 0.0522 (18,389 u) |
+| Light cruiser | `naval_m` | 0.0455 (21,103 u) | 0.0342 (28,073 u) |
+| Heavy cruiser | `naval_m` | 0.0412 (23,292 u) | 0.0341 (28,115 u) |
+| Battlecruiser | `naval_l` | 0.0343 (27,955 u) | 0.0250 (38,356 u) |
+| Battleship | `naval_xl` | 0.0313 (30,678 u) | 0.0225 (42,574 u) |
+
+  The starfield's coarse **abyss** layer (tile 3,400 u) carries the field below 0.03 so a 4K screen stays inside the tile backstop with ~half the stars the deep layer would draw; it is gone by 0.031, so legacy views are unchanged. Locks: `tests/unit/gunneryZoomFloor.test.ts`, `lodStarfield.coverage.test.ts`.
 
 ## Known gaps (follow-up slices)
 
-- **Seeing it.** A fighter's widest view is ±6,400 u and a battleship's ±30,700 u (`shellViewHalfExtent`), so a firer cannot watch its own 16" land at 38.7 km, and a 38.7 km range ring is off screen for most hulls.
-- **Entity interest.** Ships and drones ride a 3×3 grid of 2,048 u cells (±3,072 u) plus the wide-entity rule for capitals. A pilot can't see or lock a target 30 km away unless that target is wide. Server-side locks (NPC capitals, structures) are unaffected.
-- **Incoming-fire warning.** No warning for the ship being shelled from 30 km yet (the proposal's risk 4).
+- **Seeing it (sub-capitals).** A fighter's widest view is still ±6,400 u, so a 38.7 km range ring is off screen for it. Capitals now see their own reach (above).
+- **Far targets: what interest does and doesn't limit.** Interest (a 3×3 grid of 2,048 u cells, wider for capital pilots and wide hulls) only sets the RATE. Every drone and structure still rides the binary swarm wire out of interest: every 6 ticks (~10 Hz) while it moves, on the 1 Hz full refresh while it's parked (a parked structure every 5th refresh). Every player ship rides every snapshot (~20 Hz). The client lock-line pick and the server's `lock_track` check have no interest or distance cut-off short of reach × 1.1, so a battleship locks and hits another capital 30 km out (`tests/integration/navalReal/longRangeLock.test.ts`). The real limits:
+  - **Size gate.** A 16" can't lock a fighter or a small structure near the edge of its reach: `lockSeconds` goes past `maxSeconds` (reference size 1,800 vs a 195 u signature at 74 % of reach). It is a share-of-reach rule, so legacy does the same at ~4 km. The 5" secondaries that could lock them reach only 16.6 km.
+  - **Far drones' slim slice.** The `drones[]` snapshot slice (hostile bit, hp %, turret angles) is sent only in interest, so a far drone shows no hostility or damage.
+  - **View extent** (above).
 - **Shells in flight.** Flights are ~10× longer, so ~10× more shells are alive at once. The projectile broadphase (#428) keeps hit-testing per step, so its cost doesn't grow with range, but snapshot bytes for far shells (#425) do.
 - **Structure turret gather.** It scans every candidate in reach: more candidates at 38 km than at 5 km.
 - **AI stand-off vs pockets.** A battleship holds broadside ~29 km from its target, often outside the pocket it was spawned to guard.

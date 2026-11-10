@@ -16,6 +16,7 @@ import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projec
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar, type RadarDebugIcon } from './HaloRadar';
+import { IncomingFireWarning } from './incoming/IncomingFireWarning.js';
 import type { RadarInsets, RadarPrefs } from '../../shared-types/settings/radar.js';
 import { DamageNumberManager } from './DamageNumbers';
 import { LevelUpIconManager } from './LevelUpIcons';
@@ -46,6 +47,7 @@ import { FxEngines } from './art/fx/FxEngines.js';
 import { WarpFx, type WarpFxShip } from './pixi/WarpFx.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
 import { LodDots } from './pixi/LodDots';
+import { NAVAL_RANGE } from '@shared-types/combat/navalRange';
 import { GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldBubbleRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
 import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
@@ -151,6 +153,8 @@ export class PixiRenderer implements IRenderer {
    *  last applied, its hull zoom factor, and whether `?zoom=` pinned the start. */
   private _zoomKindId: string | null = null;
   private _zoomFactor = 1;
+  private _viewW = 0;
+  private _viewH = 0;
   private _zoomPinned = false;
   private readonly _zoomRange = { minScale: GAMEPLAY_MIN_ZOOM, startZoom: 0 };
 
@@ -454,6 +458,9 @@ export class PixiRenderer implements IRenderer {
    *  initializers run before the constructor body, where `_isTouch` is still
    *  undefined (WS-B #3/#4 thread touch into the halo). */
   private readonly halo: HaloRadar;
+  /** Naval shells on course for the local ship: fall-point markers + the
+   *  radar's incoming chevron (`render/incoming/`). */
+  private readonly incomingFire = new IncomingFireWarning();
   private damageNumbers: DamageNumberManager | null = null;
   /** Phase 4 WS-B1 — pooled screenspace level-up icon (own ship). */
   private levelUpIcons: LevelUpIconManager | null = null;
@@ -737,7 +744,7 @@ export class PixiRenderer implements IRenderer {
       maxScale: 3,
       followLerpFactor: 1,
     });
-    this.camera.setScreenSize(initialW, initialH);
+    this.setViewSize(initialW, initialH);
 
     // Read the bisected FX kill switches once at init. Threaded into the
     // warp chain (forceDisable) + EffectsService refs (per-effect bypasses).
@@ -992,7 +999,10 @@ export class PixiRenderer implements IRenderer {
       });
     }
 
+    // Incoming-fire markers sit under the radar's edge icons.
+    this.incomingFire.init(this.camera);
     this.halo.init(this.camera);
+    this.halo.setIncoming(this.incomingFire);
     // Damage numbers attach to the world (pan with camera, anchored at
     // impact world coord) but counter-scale per frame so they stay
     // legible at any zoom — Camera ref needed for the per-frame
@@ -1052,7 +1062,7 @@ export class PixiRenderer implements IRenderer {
         // on the main-thread path too (parity with the worker resize).
         const dpr = window.devicePixelRatio ?? 1;
         this.app.renderer.resize(w, h, dpr);
-        this.camera.setScreenSize(w, h);
+        this.setViewSize(w, h);
         this.starfield?.resize(w, h);
       };
       window.addEventListener('resize', resize);
@@ -1084,7 +1094,7 @@ export class PixiRenderer implements IRenderer {
     // (the old behaviour) kept the stale init resolution → blur after
     // such a change. `width`/`height` are LOGICAL (CSS) px.
     this.app.renderer.resize(width, height, dpr ?? this.app.renderer.resolution);
-    this.camera.setScreenSize(width, height);
+    this.setViewSize(width, height);
     this.starfield?.resize(width, height);
     if (isDiagEnabled()) {
       logEvent('render_frame_diag', {
@@ -1530,13 +1540,25 @@ export class PixiRenderer implements IRenderer {
     if (id === null || id === this._zoomKindId) return;
     this._zoomKindId = id;
     const kind = getShipKind(id);
-    zoomRangeForKind(kind, DEFAULT_GAMEPLAY_ZOOM, this._zoomRange);
+    zoomRangeForKind(kind, DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, this._viewW, this._viewH);
     this.camera.setMinScale(this._zoomRange.minScale);
     const f = hullZoomFactor(kind);
     if (f !== this._zoomFactor) {
       this._zoomFactor = f;
       if (!this._zoomPinned) this.camera.setZoom(this._zoomRange.startZoom);
     }
+  }
+
+  /** Every viewport-size change goes through here: the camera's screen size,
+   *  and (once a hull is known) the zoom-out floor, which for a capital in
+   *  `real` naval-range mode depends on the viewport (`zoomFloorForView`). */
+  private setViewSize(w: number, h: number): void {
+    this._viewW = w;
+    this._viewH = h;
+    this.camera.setScreenSize(w, h);
+    if (this._zoomKindId === null) return;
+    zoomRangeForKind(getShipKind(this._zoomKindId), DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, w, h);
+    this.camera.setMinScale(this._zoomRange.minScale);
   }
 
   update(mirror: RenderMirror): void {
@@ -1709,6 +1731,7 @@ export class PixiRenderer implements IRenderer {
 
     // Projectile + ghost-projectile sprites — see pixi/projectileSpriteUpdater.ts.
     // Ctx pooled to `this._projectileUpdaterCtx`.
+    this._projectileUpdaterCtx.cameraScale = this.world.scale.x;
     updateProjectileSprites(mirror, this._projectileUpdaterCtx);
 
     // Missile sprites + detonation VFX. Reads single-pose-per-frame via
@@ -2277,7 +2300,9 @@ export class PixiRenderer implements IRenderer {
     this.updateLingeringShips(mirror);
 
     // Halo arrows for off-screen POIs. Runs after moveCenter so the visibility
-    // test uses this frame's viewport bounds, not last frame's.
+    // test uses this frame's viewport bounds, not last frame's. Incoming fire
+    // first: the radar reads its groups for the off-screen chevron.
+    this.incomingFire.update(mirror, performance.now());
     this.halo.update(mirror);
 
     // ---------- RendererFeedback (end-of-frame, main-thread readable) ----------
@@ -3044,6 +3069,7 @@ export class PixiRenderer implements IRenderer {
   /** See `IRenderer.setRadarSuppressed`. */
   setRadarSuppressed(suppressed: boolean): void {
     this.halo.setSuppressed(suppressed);
+    this.incomingFire.setSuppressed(suppressed);
   }
 
   /** Test-only (DEV hook `__eqxHaloDebug`, `?worker=0`) — drawn radar icons. */
@@ -3217,6 +3243,7 @@ export class PixiRenderer implements IRenderer {
     this.effects?.resetForSectorHandoff();
     this._fxExplosions?.reset();
     this._navalShellBursts.reset();
+    this.incomingFire.reset();
     this._fxShields?.reset();
     this._fxFences?.reset();
     this._activeThrustIds.clear();
@@ -3291,6 +3318,7 @@ export class PixiRenderer implements IRenderer {
     this.hoverBracket?.destroy();
     this.mountVisuals.disposeAll();
     this.halo.destroy();
+    this.incomingFire.destroy();
     this.backgroundGrid?.destroy();
     this.starfield?.destroy();
     // Warp stage + filters live on app.stage so `app.destroy({ children: true })`

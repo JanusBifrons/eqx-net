@@ -44,7 +44,7 @@ import { hasTurretFireControl } from '../../core/combat/mountReach.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { getWeaponObject } from '../../core/combat/weapons/index.js';
 import type { WeaponFireContext, WeaponFireSink } from '../../core/combat/weapons/Weapon.js';
-import { clampFireTick } from '../../core/combat/fireTemporal.js';
+import { clampFireTick, NEVER_FIRED } from '../../core/combat/fireTemporal.js';
 import { canAfford, spendEnergy, resolveSlotEnergyCost } from '../../core/combat/Energy.js';
 import { deriveStatMultipliers } from '../../core/leveling/shipStats.js';
 import {
@@ -328,7 +328,7 @@ export class PlayerFireResolver implements WeaponFireSink {
     if (perMount) {
       // An empty mount map (a restored ship) falls back to the per-shooter
       // tick, so a restored ship can't skip its reload.
-      const fallback = mountTicks && mountTicks.size > 0 ? -999 : (d.lastFireClientTick.get(shooterId) ?? -999);
+      const fallback = mountTicks && mountTicks.size > 0 ? NEVER_FIRED : (d.lastFireClientTick.get(shooterId) ?? NEVER_FIRED);
       let fired = 0;
       let bearing = 0;
       for (let mIdx = 0; mIdx < slotMounts.length && mIdx < 31; mIdx++) {
@@ -348,8 +348,8 @@ export class PlayerFireResolver implements WeaponFireSink {
       slotEnergyCost = (slotEnergyCost * fired) / Math.min(slotMounts.length, 31);
     } else {
       const lastFireCt = groupTicks && groupTicks.size > 0
-        ? (groupTicks.get(groupKey) ?? -999)
-        : (d.lastFireClientTick.get(shooterId) ?? -999);
+        ? (groupTicks.get(groupKey) ?? NEVER_FIRED)
+        : (d.lastFireClientTick.get(shooterId) ?? NEVER_FIRED);
       if (tick - lastFireCt < slotCooldown) {
         const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
         client.send('hit_ack', ack);

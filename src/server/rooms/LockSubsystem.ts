@@ -52,6 +52,11 @@ export interface LockSubsystemDeps {
   autoPick(playerId: string, reach: number, sx: number, sy: number, bears: (x: number, y: number) => boolean, anyTarget: boolean): string | null;
   /** A failsafe finished: the player has committed a hostile act on `key`. */
   commitHostileAct(playerId: string, key: string): void;
+  /** "Locks keep it hostile" (owner decision 2026-11-10): a lock that is
+   *  LOCKING or LOCKED on an already-hostile target re-stamps that target's
+   *  hostility to the pilot (each lock step, ~10 Hz), so a long shell flight
+   *  doesn't let an NPC forget the pilot between hits. */
+  refreshHostility(playerId: string, key: string): void;
 }
 
 export type GroupMode = 'auto' | 'manual';
@@ -519,6 +524,14 @@ export class LockSubsystem {
       }
       const ev = stepLock(e, LOCK_DT, secs, failsafeSecs, LOCK_TUNING.lostGraceSeconds, LOCK_TUNING.decayMul);
       if (ev === 'commit') this.deps.commitHostileAct(playerId, e.target);
+      // Being targeted is a hostile act: a live (not draining) lock past its
+      // failsafe keeps the target's hostility current. A failsafe ring is still
+      // harmless until it commits; a non-hostile target never gets here
+      // except through that commit.
+      else if (ev !== 'dropped' && this.target.hostile && e.stage !== 'failsafe'
+        && (e.track !== LOCK_TRACK.released || e.stage === 'locked')) {
+        this.deps.refreshHostility(playerId, e.target);
+      }
       if (ev === 'dropped') {
         g.locks.splice(i, 1);
         removed = true;

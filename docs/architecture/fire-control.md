@@ -21,6 +21,30 @@ it (same `lockSeconds` rules: the mount size's profile, the hull's sensor, the
 structure's radius as signature). Structure turrets lock their targets too
 (PR 1d slice 3, `StructureMountTicker`).
 
+**Locks keep it hostile** (owner decision 2026-11-10). Being targeted is a
+hostile act. An NPC ship stays hostile to a pilot while any of that pilot's
+weapon groups is LOCKING (acquiring) or LOCKED on it, and for the usual 30 s
+(`FORGET_TICKS`) after the lock drops: every lock step, `LockSubsystem` calls
+`refreshHostility` for each live lock past its failsafe on a hostile target, and
+the room re-stamps the NPC's ledger entry (`SectorRoom.refreshLockHostility` →
+`aiController.markHostile`). Before this, an NPC forgot the pilot 30 s after the
+last HIT, and a 16" shell flies ~30 s at real-scale range, so a battleship
+dropped its lock between salvos and stopped firing.
+- **Starting a lock on a non-hostile NPC** is the failsafe, unchanged: the
+  failsafe ring is slower and harmless if cancelled; finishing it is the hostile
+  act (`commitHostileAct`: ledger + `bot_aggro` + the `lock_hostile_act` log).
+  From then the lock refreshes like any other.
+- **No faction escalation from a lock.** Refreshing and the failsafe commit
+  touch only that NPC's individual hostility; only a HIT on a drone escalates
+  the `FactionLedger`. A draining (released) lock doesn't refresh.
+- **Client (#16):** nothing new on the wire. The NPC's hostility to the viewer
+  rides the snapshot `drones[].hostile` bit, so radar colours follow.
+- **AUTO keeps it going:** an AUTO group re-picks the nearest hostile NPC, so a
+  pilot who stays in reach with AUTO groups keeps that NPC hostile; MAN or
+  leaving reach lets it forget 30 s later.
+- Lock: `LockSubsystem.test.ts` "locks keep it hostile",
+  `tests/integration/sectorRoom/lockKeepsHostile.test.ts`.
+
 **Trust.** The server never takes the client's word for a lock:
 - `lock_track` carries the lock line's bearing (`b`, `encodeAim`); the server
   holds the target only when it lies on that line by the shared rule
@@ -107,6 +131,11 @@ Target keys: `s:<entityId>` (swarm) or `p:<playerId>`.
   Lock: `lockMarkFrame.test.ts`.
 - HUD: `WeaponStrip`, `LockStatusBand` (polls the mirror at 10 Hz, re-renders on
   change), `TargetAction` (LOCK / CANCEL LOCK / UNLOCK), `MouseLock` (desktop).
+- Contacts overview (`ContactsOverview`, O key / CONTACTS tab, left edge): an
+  EVE-style list of lockable contacts with distance, reach and lock state;
+  a tap sends `lock_request` for the active group, a tap on its own lock
+  sends `lock_cancel`. Reach is `fcGroupReach` × `reachSlack`. See
+  [contacts-overview.md](../features/contacts-overview.md).
 
 ## Tests
 
