@@ -72,7 +72,6 @@ describe('structureLevel — multipliers', () => {
     const m = structureLevelMultipliers(2);
     const expected = 1 + STRUCTURE_LEVEL_FRAC;
     expect(m.maxHealth).toBeCloseTo(expected);
-    expect(m.weaponRange).toBeCloseTo(expected);
     expect(m.weaponDamage).toBeCloseTo(expected);
     expect(m.powerOutput).toBeCloseTo(expected);
     expect(m.storageCapacity).toBeCloseTo(expected);

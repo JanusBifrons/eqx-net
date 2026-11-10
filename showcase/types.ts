@@ -138,6 +138,12 @@ export interface ClipRecord {
   frames: number;
   durationMs: number;
   deliveredFps: number;
+  /** DIFFERENT captured frames per second (repeats of an unchanged page count once). */
+  uniqueFps?: number;
+  /** Longest run of identical captured frames. */
+  longestRepeat?: number;
+  /** DIFFERENT frames per second that reached the encoded clip (NaN when unmeasured). */
+  encodedUniqueFps?: number;
   gapP95Ms: number;
   gapMaxMs: number;
   /** QA verdict; failed clips are flagged for a re-take, never silently used. */

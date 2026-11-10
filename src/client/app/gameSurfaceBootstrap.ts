@@ -196,6 +196,10 @@ export function buildJoinSpec(
   // Fire control — `?instantLock=1`: every lock completes at once, so a combat
   // test fires without driving the lock line. testMode-gated server-side.
   if (urlParams.get('instantLock') === '1') extraJoinOptions['instantLock'] = true;
+  // Fire control — `?lockTimeCapS=N`: no NON-player lock (NPC ships, capital
+  // and structure turrets) takes longer than N s; 0 = the first step. Reaches
+  // onCreate on the room-creating client and caps the room. testMode-gated.
+  if (urlParams.has('lockTimeCapS')) extraJoinOptions['lockTimeCapS'] = parseFloat(urlParams.get('lockTimeCapS')!);
   // Fire control — `?anyTarget=1`: AUTO groups also pick non-hostile NPCs and
   // non-own structures in reach + arc (never players). testMode-gated server-side.
   if (urlParams.get('anyTarget') === '1') extraJoinOptions['anyTarget'] = true;

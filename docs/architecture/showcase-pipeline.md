@@ -50,7 +50,11 @@ Output (gitignored) lands in `showcase-out/`:
 5. **Encode.**
    - **Frame timing:** each frame holds until the next one's capture time, so
      a dropped frame freezes for a beat instead of speeding the clip up. Output
-     is constant 60 fps H.264 (`--fps 30` available).
+     is constant 60 fps H.264 (`--fps 30` available). The concat list reads
+     every frame at `option framerate 60` (`CONCAT_FRAMERATE`): without it
+     ffmpeg's image demuxer uses a 25 fps time base, every 1/60 s duration
+     rounds to 0 or 40 ms, and the clip shows ~25 different frames a second in
+     a 2/3-slot judder even though 60 were captured (bug 2026-11-10).
    - **Cuts:** `cuts` windows (e.g. the 30 s warp spool) are removed by
      dropping their frames.
    - **Phone shots** are pillarboxed into the 16:9 frame.
@@ -58,6 +62,13 @@ Output (gitignored) lands in `showcase-out/`:
 6. **QA.** Each shot gets up to 3 takes and keeps the smoothest (see "Frame
    rate" below). A clip is flagged, never silently used, if its best take:
    - delivered < 55 fps or had a frame gap > 100 ms (at 60 fps output);
+   - captured < 55 DIFFERENT frames a second (`uniqueFps`: consecutive
+     byte-identical JPEGs count once), or < 55 different frames a second
+     reached the encode (`encodedUniqueFps`: ffprobe reads the concat list as
+     the encode does, one frame per output slot). `deliveredFps` counts
+     arrivals, repeats included, so it alone said "60 fps" for clips that
+     moved 25 times a second. All three, plus `longestRepeat`, are in
+     `manifest.json` (`showcase/cadence.ts`);
    - it has ≥ 1 s of blank frames (judged by the brightest pixel, since space
      is dark);
    - it captured < 30 frames.
