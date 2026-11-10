@@ -25,9 +25,20 @@ import { isTouchDevice } from '../input/TouchInput';
 /** The building palette, flattened in category order (Core → Economy → Defence). */
 const BUILDINGS: readonly StructureKindId[] = BUILD_CATEGORIES.flatMap((c) => c.kinds);
 
+// The bottom-centre anchor centres with translateX(-50%), so a row wider than
+// the screen spilled off BOTH edges ("BA…" / "QUA…", frame review 2026-11-10).
+// Cap the row at the viewport (less the anchor's 16 px gutters) and wrap; a
+// very narrow window scrolls the wrapped rows inside the panel.
 const ROW_SX = {
   display: 'flex',
+  flexWrap: 'wrap',
+  justifyContent: 'center',
   alignItems: 'flex-end',
+  boxSizing: 'border-box',
+  width: 'max-content',
+  maxWidth: 'calc(100vw - 32px)',
+  maxHeight: '40vh',
+  overflowY: 'auto',
   gap: 0.75,
   px: 1,
   py: 0.5,
@@ -39,8 +50,8 @@ const ROW_SX = {
 
 const CELL_BASE = {
   position: 'relative' as const,
-  width: 56,
-  height: 56,
+  width: 44,
+  height: 44,
   display: 'flex',
   flexDirection: 'column' as const,
   alignItems: 'center',
@@ -50,13 +61,13 @@ const CELL_BASE = {
   border: '1px solid',
   cursor: 'pointer',
   userSelect: 'none' as const,
-  '& .MuiSvgIcon-root': { fontSize: 22 },
+  '& .MuiSvgIcon-root': { fontSize: 18 },
 } as const;
 
 const CELL_LABEL_SX = {
   fontSize: 8,
   lineHeight: 1,
-  maxWidth: 52,
+  maxWidth: 40,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap' as const,
