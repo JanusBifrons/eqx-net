@@ -100,6 +100,53 @@ export const SHOWCASE_CAPITAL_DUEL_OPTS = {
   defaultSpawnY: 0,
 };
 
+/** Real-scale ranges (docs/architecture/real-scale-ranges.md): the pilot
+ *  (join `shipKind=battleship`) at the origin, nose +y, and an NPC battleship
+ *  30 km off its starboard beam with a live brain. Needs a server and a page at
+ *  `EQX_NAVAL_RANGE=real` / `?navalRange=real` (the showcase `naval` profile). */
+export const SHOWCASE_LONG_GUNS_OPTS = {
+  ...SHOWCASE_CAPITALS_COMBAT_OPTS,
+  dronePoses: [{ kind: 'battleship', x: 30_000, y: 0, angle: 0 }],
+  prebuiltStructures: [],
+  defaultSpawnX: 0,
+  defaultSpawnY: 0,
+};
+
+/** A mixed fight between two NPC sides that fight on sight: a drone pack in
+ *  two ranks west, a robot squad in two ranks east, shields up. Rear ranks
+ *  shoot past their own front ranks (friendly fire and line-of-fire holds),
+ *  and the pilot spawns south of the melee. */
+export const SHOWCASE_MELEE_OPTS = {
+  testMode: true,
+  droneCount: 0,
+  asteroidConfig: [],
+  dronePoses: [
+    // Drones, facing east.
+    { kind: 'fighter', x: -450, y: -130, angle: -Math.PI / 2 },
+    { kind: 'heavy', x: -450, y: 0, angle: -Math.PI / 2 },
+    { kind: 'fighter', x: -450, y: 130, angle: -Math.PI / 2 },
+    { kind: 'gunship', x: -620, y: -70, angle: -Math.PI / 2 },
+    { kind: 'heavy', x: -620, y: 70, angle: -Math.PI / 2 },
+    { kind: 'fighter', x: -540, y: -260, angle: -Math.PI / 2 },
+    { kind: 'fighter', x: -540, y: 260, angle: -Math.PI / 2 },
+    { kind: 'scout', x: -700, y: 0, angle: -Math.PI / 2 },
+    // Robots, facing west: a bigger squad, so the fight lasts.
+    { kind: 'robot-square', x: 520, y: -150, angle: Math.PI / 2 },
+    { kind: 'robot-circle', x: 520, y: -50, angle: Math.PI / 2 },
+    { kind: 'robot-circle', x: 520, y: 50, angle: Math.PI / 2 },
+    { kind: 'robot-square', x: 520, y: 150, angle: Math.PI / 2 },
+    { kind: 'robot-hexagon', x: 700, y: -90, angle: Math.PI / 2 },
+    { kind: 'robot-hexagon', x: 700, y: 90, angle: Math.PI / 2 },
+    { kind: 'robot-circle', x: 700, y: -240, angle: Math.PI / 2 },
+    { kind: 'robot-circle', x: 700, y: 240, angle: Math.PI / 2 },
+    { kind: 'robot-square', x: 840, y: -60, angle: Math.PI / 2 },
+    { kind: 'robot-square', x: 840, y: 60, angle: Math.PI / 2 },
+  ],
+  defaultSpawnX: 0,
+  defaultSpawnY: -1100,
+  maxClients: 4,
+};
+
 /**
  * Wrap-up W2c: a flagship fleet to film warping (the NPC warp). A style-B
  * battleship at the origin with a destroyer on each beam. The pilot sits south, clear
@@ -499,6 +546,8 @@ export const SHOWCASE_ROOMS = {
   'showcase-capitals': SHOWCASE_CAPITALS_OPTS,
   'showcase-capitals-combat': SHOWCASE_CAPITALS_COMBAT_OPTS,
   'showcase-capital-duel': SHOWCASE_CAPITAL_DUEL_OPTS,
+  'showcase-long-guns': SHOWCASE_LONG_GUNS_OPTS,
+  'showcase-melee': SHOWCASE_MELEE_OPTS,
   'showcase-coastal': SHOWCASE_COASTAL_OPTS,
   'showcase-coastal-aa': SHOWCASE_COASTAL_AA_OPTS,
   'showcase-coastal-duel': SHOWCASE_COASTAL_DUEL_OPTS,

@@ -21,6 +21,8 @@ import { beamCombat } from './shots/beamCombat.js';
 import { turrets } from './shots/turrets.js';
 import { missiles } from './shots/missiles.js';
 import { packBattle } from './shots/packBattle.js';
+import { longGuns } from './shots/longGuns.js';
+import { fleetMelee } from './shots/fleetMelee.js';
 import { scrap } from './shots/scrap.js';
 import { buildBase } from './shots/buildBase.js';
 import { gridAlive } from './shots/gridAlive.js';
@@ -68,12 +70,14 @@ export const SHOTS: readonly Shot[] = [
   gpuLitShips,
   capitalGunsFighter,
   capitalGunsBystander,
+  longGuns,
   machinedArt,
   flight,
   beamCombat,
   turrets,
   missiles,
   packBattle,
+  fleetMelee,
   newEffects,
   crossingSector,
   machinedTurrets,

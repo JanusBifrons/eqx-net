@@ -21,6 +21,9 @@ export type ServerProfile =
    *  (main's default sector scale is 1 until the solar-system phase). The
    *  page must ask for the same scale (`sectorScale: '4'` in its params). */
   | 'capitals'
+  /** The `capitals` boot at REAL naval ranges (`EQX_NAVAL_RANGE=real`, a
+   *  16" reaches 38.7 km). The page must ask too (`navalRange: 'real'`). */
+  | 'naval'
   /** Solar-system sectors (Phase 4, `EQX_SOLAR_SECTORS=1`), only Sol Prime
    *  booted, living world off. The page must ask too (`solar: '1'`). */
   | 'solar';
@@ -28,7 +31,7 @@ export type ServerProfile =
 /** The order the runner records server profiles in. A shot whose profile is
  *  missing here is never recorded (2026-11-06: the capital shots, profile
  *  `capitals`, were silently skipped). Lock: tests/unit/showcaseProfiles.test.ts. */
-export const PROFILE_ORDER: readonly ServerProfile[] = ['lean', 'living', 'wave', 'capitals', 'solar'];
+export const PROFILE_ORDER: readonly ServerProfile[] = ['lean', 'living', 'wave', 'capitals', 'naval', 'solar'];
 
 export type HudMode = 'full' | 'clean' | 'minimal' | 'none';
 
