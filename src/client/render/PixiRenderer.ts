@@ -16,6 +16,7 @@ import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projec
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar, type RadarDebugIcon } from './HaloRadar';
+import { IncomingFireWarning } from './incoming/IncomingFireWarning.js';
 import type { RadarInsets, RadarPrefs } from '../../shared-types/settings/radar.js';
 import { DamageNumberManager } from './DamageNumbers';
 import { LevelUpIconManager } from './LevelUpIcons';
@@ -454,6 +455,9 @@ export class PixiRenderer implements IRenderer {
    *  initializers run before the constructor body, where `_isTouch` is still
    *  undefined (WS-B #3/#4 thread touch into the halo). */
   private readonly halo: HaloRadar;
+  /** Naval shells on course for the local ship: fall-point markers + the
+   *  radar's incoming chevron (`render/incoming/`). */
+  private readonly incomingFire = new IncomingFireWarning();
   private damageNumbers: DamageNumberManager | null = null;
   /** Phase 4 WS-B1 — pooled screenspace level-up icon (own ship). */
   private levelUpIcons: LevelUpIconManager | null = null;
@@ -992,7 +996,10 @@ export class PixiRenderer implements IRenderer {
       });
     }
 
+    // Incoming-fire markers sit under the radar's edge icons.
+    this.incomingFire.init(this.camera);
     this.halo.init(this.camera);
+    this.halo.setIncoming(this.incomingFire);
     // Damage numbers attach to the world (pan with camera, anchored at
     // impact world coord) but counter-scale per frame so they stay
     // legible at any zoom — Camera ref needed for the per-frame
@@ -1709,6 +1716,7 @@ export class PixiRenderer implements IRenderer {
 
     // Projectile + ghost-projectile sprites — see pixi/projectileSpriteUpdater.ts.
     // Ctx pooled to `this._projectileUpdaterCtx`.
+    this._projectileUpdaterCtx.cameraScale = this.world.scale.x;
     updateProjectileSprites(mirror, this._projectileUpdaterCtx);
 
     // Missile sprites + detonation VFX. Reads single-pose-per-frame via
@@ -2277,7 +2285,9 @@ export class PixiRenderer implements IRenderer {
     this.updateLingeringShips(mirror);
 
     // Halo arrows for off-screen POIs. Runs after moveCenter so the visibility
-    // test uses this frame's viewport bounds, not last frame's.
+    // test uses this frame's viewport bounds, not last frame's. Incoming fire
+    // first: the radar reads its groups for the off-screen chevron.
+    this.incomingFire.update(mirror, performance.now());
     this.halo.update(mirror);
 
     // ---------- RendererFeedback (end-of-frame, main-thread readable) ----------
@@ -3044,6 +3054,7 @@ export class PixiRenderer implements IRenderer {
   /** See `IRenderer.setRadarSuppressed`. */
   setRadarSuppressed(suppressed: boolean): void {
     this.halo.setSuppressed(suppressed);
+    this.incomingFire.setSuppressed(suppressed);
   }
 
   /** Test-only (DEV hook `__eqxHaloDebug`, `?worker=0`) — drawn radar icons. */
@@ -3217,6 +3228,7 @@ export class PixiRenderer implements IRenderer {
     this.effects?.resetForSectorHandoff();
     this._fxExplosions?.reset();
     this._navalShellBursts.reset();
+    this.incomingFire.reset();
     this._fxShields?.reset();
     this._fxFences?.reset();
     this._activeThrustIds.clear();
@@ -3291,6 +3303,7 @@ export class PixiRenderer implements IRenderer {
     this.hoverBracket?.destroy();
     this.mountVisuals.disposeAll();
     this.halo.destroy();
+    this.incomingFire.destroy();
     this.backgroundGrid?.destroy();
     this.starfield?.destroy();
     // Warp stage + filters live on app.stage so `app.destroy({ children: true })`

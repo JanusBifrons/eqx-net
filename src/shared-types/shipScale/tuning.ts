@@ -227,6 +227,13 @@ export interface ShipTuning {
   bakePpu: number;
   bakeMaxSide: number;
   mountSize: MountSize;
+  /** Incoming-fire warning: a naval shell whose predicted path passes within
+   *  this distance (u) of the ship's centre gets a fall-point marker. Twice the
+   *  shield ball (hull radius + shield pad): the ball is what a shell must
+   *  touch to hit, and the second ball-width is the margin for the ship's turn
+   *  and the straight-line prediction over a long flight. The client adds a
+   *  gun's splash radius per shot. Fighter (2x) 88 u; battleship ~5,790 u. */
+  incomingFireRadius: number;
 }
 
 const CACHE = new WeakMap<object, ShipTuning>();
@@ -263,6 +270,7 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     bakePpu: unscaledR >= BASE.ppuBigRadius ? BASE.ppuBig : BASE.ppuSmall,
     bakeMaxSide: ct.bakeMaxSide,
     mountSize: ct.mountSize,
+    incomingFireRadius: 2 * (kind.radius + BASE.shieldPad * g),
   };
   CACHE.set(kind, t);
   return t;
