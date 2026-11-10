@@ -53,6 +53,7 @@ import { structureMountMuzzle, structureNavalTurret, navalBarrelOffset } from '.
 import type { WeaponMount } from '../../shared-types/shipKinds.js';
 import type { StructureKind } from '../../shared-types/structureKinds.js';
 import { StructureMountTicker, type TurretTargetView } from './StructureMountTicker.js';
+import type { LockEntry } from '../../core/combat/lockState.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
 /** Cap on reconnect attempts per pulse so a sector full of permanently-stranded
@@ -226,6 +227,16 @@ export class StructureGridSubsystem {
   /** testMode `instantLock`: every structure-turret lock completes on the step it starts. */
   setInstantTurretLocks(on: boolean): void {
     this.mounts.setInstantLocks(on);
+  }
+
+  /** testMode `lockTimeCapS`: no structure-turret lock takes longer than `capS` s. */
+  setTurretLockTimeCap(capS: number | undefined): void {
+    this.mounts.setLockTimeCap(capS);
+  }
+
+  /** Test seam: mount `i`'s lock on structure `id`. */
+  turretLockOf(id: string, i: number): Readonly<LockEntry> | undefined {
+    return this.mounts.lockOf(id, i);
   }
 
   /** testMode trigger (`test_reload_turrets`): reload every structure gun. */

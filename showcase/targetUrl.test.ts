@@ -22,3 +22,13 @@ describe('showcase films the player look (user, 2026-11-10)', () => {
     expect(lookOf(url)).toMatchObject({ art: 'classic', fx: false, lighting: undefined });
   });
 });
+
+describe('showcase films the game as is (user, 2026-11-10)', () => {
+  it('every shot films the full HUD and no cleanworld, whatever the shot asks for', () => {
+    for (const hud of ['none', 'minimal', 'clean', 'full'] as const) {
+      const q = new URL(targetUrl('http://x', { room: 'r' }, 't', hud)).searchParams;
+      expect(q.get('hud')).toBe('full');
+      expect(q.has('cleanworld')).toBe(false);
+    }
+  });
+});

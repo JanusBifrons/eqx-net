@@ -51,3 +51,24 @@ export function lockSeconds(i: LockInputs, t: LockTuning): number {
   const secs = (t.baseSeconds * sizeTerm * trackTerm * rangeTerm) / speed;
   return secs > t.maxSeconds || !Number.isFinite(secs) ? Infinity : secs;
 }
+
+/** The target is within the weapon's lock reach (`reach × reachSlack`). */
+export function lockInReach(i: LockInputs, t: LockTuning): boolean {
+  if (!(i.reach > 0)) return false;
+  return Math.sqrt(i.dx * i.dx + i.dy * i.dy) <= i.reach * t.reachSlack;
+}
+
+/**
+ * testMode `lockTimeCapS` (a room option, bespoke test/recording trigger): no
+ * NON-player lock takes longer than `capS` seconds; 0 completes it on the
+ * first lock step. Lock-to-fire stays universal: a lock is still acquired,
+ * only faster. A target out of reach stays unlockable (Infinity); one in
+ * reach that the rules call too slow to lock at all (past `maxSeconds`, e.g.
+ * a 16" gun on a fighter) locks in `capS` too, so a shot can start with every
+ * gun locked. `capS` undefined = the rules unchanged.
+ */
+export function capLockSeconds(secs: number, i: LockInputs, t: LockTuning, capS: number | undefined): number {
+  if (capS === undefined) return secs;
+  if (!lockInReach(i, t)) return Infinity;
+  return Number.isNaN(secs) ? capS : Math.min(secs, capS);
+}
