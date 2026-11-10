@@ -53,6 +53,7 @@ import { structureMountMuzzle, structureNavalTurret, navalBarrelOffset } from '.
 import type { WeaponMount } from '../../shared-types/shipKinds.js';
 import type { StructureKind } from '../../shared-types/structureKinds.js';
 import { StructureMountTicker, type TurretTargetView } from './StructureMountTicker.js';
+import type { LockEntry } from '../../core/combat/lockState.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
 /** Cap on reconnect attempts per pulse so a sector full of permanently-stranded
@@ -228,6 +229,16 @@ export class StructureGridSubsystem {
     this.mounts.setInstantLocks(on);
   }
 
+  /** testMode `lockTimeCapS`: no structure-turret lock takes longer than `capS` s. */
+  setTurretLockTimeCap(capS: number | undefined): void {
+    this.mounts.setLockTimeCap(capS);
+  }
+
+  /** Test seam: mount `i`'s lock on structure `id`. */
+  turretLockOf(id: string, i: number): Readonly<LockEntry> | undefined {
+    return this.mounts.lockOf(id, i);
+  }
+
   /** testMode trigger (`test_reload_turrets`): reload every structure gun. */
   reloadAllTurrets(): void {
     this.mounts.reloadAll();
@@ -277,9 +288,9 @@ export class StructureGridSubsystem {
         this.setActive(rec, false);
         continue;
       }
-      // Phase 4 WS-B4 — a leveled turret targets FARTHER + hits HARDER (one
-      // scalar; level 1 is the identity).
-      const target = this.mounts.tick(rec, kind, mounts, nowMs, dt, structureLevelFactor(rec.level));
+      // Reach is the gun's, whatever the level (a level upgrades damage +
+      // HP; `fireMount` reads the damage factor).
+      const target = this.mounts.tick(rec, kind, mounts, nowMs, dt);
       // B2 — a player target has no swarm entity id; it rides as a player id.
       rec.turretTargetPlayer = target?.playerId;
       rec.turretTargetEntityId = target && target.playerId === undefined ? target.entityId : undefined;

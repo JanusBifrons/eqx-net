@@ -20,7 +20,7 @@
  * sweep uses a generation stamp.
  */
 import { LOCK_TUNING, sensorFor, signatureFor } from '../../shared-types/combat/lockProfile.js';
-import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
+import { capLockSeconds, lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { groupGeometry } from './LockSubsystem.js';
 import { hasTurretFireControl } from '../../core/combat/mountReach.js';
@@ -43,6 +43,9 @@ export interface NpcLockDeps {
   /** testMode `instantLock` on the pilot: every NPC lock on them completes
    *  the step it starts, whatever the size/tracking terms, while in reach. */
   instantLock?(pilotId: string): boolean;
+  /** testMode `lockTimeCapS` (room option): no NPC lock takes longer than
+   *  this many seconds while in reach (0 = the first step). Undefined = off. */
+  lockTimeCapS?(): number | undefined;
 }
 
 interface Entry {
@@ -78,6 +81,7 @@ export class NpcLockSubsystem {
   private curState: PilotState | null = null;
   private curSignature = 1;
   private curInstant = false;
+  private curCap: number | undefined = undefined;
 
   constructor(private readonly deps: NpcLockDeps) {}
 
@@ -155,6 +159,7 @@ export class NpcLockSubsystem {
       this.curState = st;
       this.curSignature = signatureFor(kind);
       this.curInstant = this.deps.instantLock?.(pilotId) === true;
+      this.curCap = this.deps.lockTimeCapS?.();
       this.deps.forEachHostileNpc(pilotId, this.visit);
       // Sweep: NPCs that stopped locking this step keep their progress for the
       // grace window, then drop.
@@ -199,7 +204,7 @@ export class NpcLockSubsystem {
       inp.absRange = g.absRange;
       inp.reach = g.reach;
       inp.sensor = g.sensor;
-      const s = lockSeconds(inp, LOCK_TUNING);
+      const s = capLockSeconds(lockSeconds(inp, LOCK_TUNING), inp, LOCK_TUNING, this.curCap);
       if (s < secs) secs = s;
     }
     if (this.curInstant && this.inReach(gs)) secs = 0;

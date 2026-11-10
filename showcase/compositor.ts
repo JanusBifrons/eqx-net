@@ -14,7 +14,8 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { FrameIndex } from './recorder.js';
 import type { ShotViewport } from './types.js';
-import { ffmpeg, ffmpegInfo, probeDurationMs } from './tools.js';
+import { ffmpeg, ffmpegInfo, probeDurationMs, resolveFfmpeg, run } from './tools.js';
+import { perSecond, slotsKept } from './cadence.js';
 
 export interface EncodeOpts {
   fps: number;
@@ -70,6 +71,14 @@ const BG = '0x05070d';
 const FADE = 0.35;
 /** One 60 Hz display refresh: the game draws one frame per refresh. */
 const SLOT_MS = 1000 / 60;
+/**
+ * The rate the concat demuxer reads each frame at (its time base 1/this).
+ * Without it ffmpeg's image demuxer reads a JPEG at 25 fps, so every 1/60 s
+ * duration rounded to 0 or 40 ms and `fps=60` kept ~25 different frames a
+ * second in a 2/3-slot judder, while QA said 60 (bug 2026-11-10, see
+ * `cadence.ts`). Every duration in the list is a whole number of slots.
+ */
+export const CONCAT_FRAMERATE = 60;
 const X264 = ['-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart'];
 
 /** Build an ffconcat list from the frame index, skipping cut windows. Returns total seconds. */
@@ -119,9 +128,9 @@ export function writeConcatList(
     if (cuts.some((c) => c.fromMs >= cur.t && c.fromMs < nextSlot * SLOT_MS)) dMs = 1000 / 30;
     const d = dMs / 1000;
     total += d;
-    lines.push(`file '${cur.file}'`, `duration ${d.toFixed(6)}`);
+    lines.push(`file '${cur.file}'`, `duration ${d.toFixed(6)}`, `option framerate ${CONCAT_FRAMERATE}`);
   }
-  if (slots.length > 0) lines.push(`file '${slots[slots.length - 1]!.file}'`);
+  if (slots.length > 0) lines.push(`file '${slots[slots.length - 1]!.file}'`, `option framerate ${CONCAT_FRAMERATE}`);
   writeFileSync(path.join(clipDir, 'frames.ffconcat'), lines.join('\n'));
   return total;
 }
@@ -176,6 +185,22 @@ export async function encodeClip(
     ...x264Args(opts.maxBitrateKbps), out,
   ]);
   return out;
+}
+
+/**
+ * DIFFERENT frames per second that reach the encode: ffprobe reads the
+ * written concat list the way the encode does, and the `fps` filter keeps one
+ * frame per output slot. Catches the encode losing frames the capture had
+ * (the 2026-11-10 25 fps time-base bug), which the capture counts cannot see.
+ */
+export async function encodedUniqueFps(clipDir: string, fps: number, durationMs: number): Promise<number> {
+  const out = await run(resolveFfmpeg('ffprobe'), [
+    '-v', 'error', '-f', 'concat', '-safe', '0', '-i', path.join(clipDir, 'frames.ffconcat'),
+    '-select_streams', 'v', '-show_entries', 'packet=pts_time', '-of', 'csv=p=0',
+  ]);
+  const pts = out.split('\n').map((l) => parseFloat(l)).filter((x) => Number.isFinite(x));
+  // The last list entry repeats the final frame (concat's end marker).
+  return perSecond(slotsKept(pts.slice(0, -1), fps), durationMs);
 }
 
 export async function encodeCard(png: string, out: string, seconds: number, opts: EncodeOpts): Promise<string> {

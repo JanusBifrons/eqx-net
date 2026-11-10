@@ -1,8 +1,10 @@
 /**
  * Coastal defences — the 80 cm siege shell bursts where it stops (plan
  * coastal-defences): the ship it strikes takes the full hit, everything else
- * in the blast takes inverse-square splash, and a shell that falls short at
- * the end of its flight still bursts. A plain shell never splashes.
+ * in the blast takes inverse-square splash. A shell that hits nothing just
+ * ends at the end of its flight: no burst, no splash (owner, 2026-11-10:
+ * "hit anything in-between if it's there, but only explode on target").
+ * A plain shell never splashes.
  */
 import { describe, expect, it } from 'vitest';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
@@ -62,16 +64,42 @@ describe('siege shell blast (coastal defences)', () => {
     expect(blasts).toHaveLength(1);
   });
 
-  it('a shell that falls short bursts where it lands', () => {
+  it('a shell that hits nothing ends silently at the end of its flight: no burst, no splash', () => {
+    // Owner's rule (2026-11-10): heavy shells hit anything in-between, but only
+    // explode on target. A miss just ends; no fireball, no splash where it falls.
     const { pipe, hits, blasts, fly } = makePipeline([
       { id: 'gun', slot: 0, x: 0, y: 0, kind: 2 },
-      // Lands at 1900 × 10 / 60 ≈ 317 u; this ship sits just off the line, 60 u from the fall.
+      // Flight ends at 1900 × 10 / 60 ≈ 317 u; this ship sits just off the line,
+      // 60 u from the end of the flight, well inside the blast radius.
       { id: 'by', slot: 1, x: 337, y: 60, kind: 1 },
     ]);
     pipe.spawn('gun', 20, 0, 1900, 0, 4200, 12, 10, 'naval_siege');
     fly(12);
+    expect(pipe.size()).toBe(0);
+    expect(blasts).toHaveLength(0);
+    expect(hits).toEqual([]);
+  });
+
+  it('a shell detonates on the first thing it meets mid-path, and splashes there', () => {
+    const { pipe, hits, blasts, fly } = makePipeline([
+      { id: 'gun', slot: 0, x: 0, y: 0, kind: 2 },
+      // In the line of fire, far short of full range (1900 × 160 / 60 ≈ 5067 u).
+      { id: 'inway', slot: 1, x: 600, y: 0, kind: 1 },
+      // Further along the same line: never reached.
+      { id: 'beyond', slot: 2, x: 2000, y: 0, kind: 1 },
+      // Beside the ship in the way, inside the blast.
+      { id: 'beside', slot: 3, x: 600, y: 100, kind: 1 },
+    ]);
+    pipe.spawn('gun', 20, 0, 1900, 0, 4200, 12, 160, 'naval_siege');
+    fly(60);
+    expect(pipe.size()).toBe(0);
+    expect(hits.find((h) => h.target === 'inway')?.damage).toBe(4200);
+    expect(hits.some((h) => h.target === 'beyond')).toBe(false);
+    expect(hits.find((h) => h.target === 'beside')?.damage).toBeGreaterThan(0);
     expect(blasts).toHaveLength(1);
-    expect(hits.find((h) => h.target === 'by')?.damage).toBeGreaterThan(0);
+    expect(blasts[0]!.x).toBeGreaterThan(560);
+    expect(blasts[0]!.x).toBeLessThan(600);
+    expect(blasts[0]!.r).toBe(splash.radius);
   });
 
   it('a plain shell neither splashes nor bursts', () => {

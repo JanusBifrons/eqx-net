@@ -15,8 +15,11 @@ join option and the `?ui=` HUD switch were removed. NPC capitals' turrets each
 fire only with the capital's completed lock on their OWN target (PR 1d slice 2):
 a capital holds one lock per pilot, built with whichever of its gun sizes locks
 that pilot fastest, so its AA can engage a fighter while its 16" guns (which can
-never lock a fighter-sized hull) wait for a capital. Structure turrets are not
-lock-gated yet (PR 1d).
+never lock a fighter-sized hull) wait for a capital. A capital turret whose
+target is a hostile STRUCTURE fires only with its own completed turret lock on
+it (same `lockSeconds` rules: the mount size's profile, the hull's sensor, the
+structure's radius as signature). Structure turrets lock their targets too
+(PR 1d slice 3, `StructureMountTicker`).
 
 **Trust.** The server never takes the client's word for a lock:
 - `lock_track` carries the lock line's bearing (`b`, `encodeAim`); the server
@@ -38,6 +41,17 @@ act); AUTO targeting is unchanged. testMode join option `anyTarget: true` (URL
 `?anyTarget=1`): AUTO groups also pick non-hostile NPCs and non-own structures
 in reach + arc (never players); usually paired with `instantLock`. Integration: `harness.lockTarget(playerId, target, groupId?)` →
 `_internals.forceLock`. E2E: `tests/e2e/helpers` `lockOn`.
+testMode room option `lockTimeCapS: N` (or the room-creating client's join
+option / URL `?lockTimeCapS=N`, `TestClientOpts.lockTimeCapS`): no NON-player
+lock in the room takes longer than N seconds while the target is in reach
+(0 = the first lock step): NPC drones and capitals on pilots
+(`NpcLockSubsystem`), capital turrets on structures (`WeaponMountTicker`) and
+structure / coastal turrets (`StructureMountTicker`). A lock the rules call
+impossible (past `maxSeconds`) but in reach locks in N too; out of reach stays
+unlockable. The math is `capLockSeconds` (`core/combat/lockTime.ts`). For tests
+and recordings that need the big guns locked without the long (by design)
+wait. Player locks keep `instantLock`: an N-second player cap would make the
+client's predicted lock ring (`lockSeconds`, #15) disagree with the server.
 testMode join option `groupMode: 'manual'` (URL `?groupMode=manual`,
 `TestClientOpts.groupMode`): every weapon group of that pilot starts in MAN, so
 AUTO (which `anyTarget` widens to any target) never kills a fragile target
@@ -77,7 +91,15 @@ Target keys: `s:<entityId>` (swarm) or `p:<playerId>`.
 - `AimFeedbackRenderer.drawFireControl`: your locks (closing ring, ticks,
   LOCKING / FAILSAFE / LOSING LOCK tag, dashed link; brackets + firing line when
   locked) and NPC locks on you (arcs, carets, diamonds). Tag text is rebuilt only
-  when its value changes (#14).
+  when its value changes (#14). Every mark on a target (ring, brackets,
+  diamond, candidate ring) is placed by the pure `lockMarkFrame`: hull-sized
+  and centred round anything that fits, but capped at
+  `LOCK_MARK_MAX_SCREEN_HALF` (120 px) and moved onto the target's keel line at
+  the point nearest you when the hull is bigger than that (a capital at normal
+  zoom). The threat ring round your own ship is capped at 220 px
+  (`threatRingRadius`). Before this a battleship's lock diamond was two screens
+  wide: two stray red lines (showcase `capital-guns-fighter`, 2026-11-10).
+  Lock: `lockMarkFrame.test.ts`.
 - HUD: `WeaponStrip`, `LockStatusBand` (polls the mirror at 10 Hz, re-renders on
   change), `TargetAction` (LOCK / CANCEL LOCK / UNLOCK), `MouseLock` (desktop).
 

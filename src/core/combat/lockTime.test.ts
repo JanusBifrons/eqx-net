@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { angularRate, lockSeconds, type LockInputs } from './lockTime.js';
+import { angularRate, capLockSeconds, lockSeconds, type LockInputs } from './lockTime.js';
 import { newLock, stepLock } from './lockState.js';
 import { LOCK_TUNING, WEAPON_LOCK_PROFILE, lockCapacityFor, sensorFor, signatureFor } from '../../shared-types/combat/lockProfile.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
@@ -139,6 +139,13 @@ describe('lockSeconds: absolute distance for heavy (M/L/XL) mounts', () => {
     // A fast crossing fighter is still beyond the 16" (the gate is unchanged).
     const fighter = getShipKind('fighter');
     expect(lockSeconds({ ...heavy(1500, fighter.radius, REAL_REACH), dvy: 400 }, LOCK_TUNING)).toBe(Infinity);
+  });
+
+  it('testMode lockTimeCapS still caps a long heavy lock', () => {
+    const i = heavy(30_000, battleship.radius, REAL_REACH);
+    expect(lockSeconds(i, LOCK_TUNING)).toBeGreaterThan(10);
+    expect(capLockSeconds(lockSeconds(i, LOCK_TUNING), i, LOCK_TUNING, 2)).toBe(2);
+    expect(capLockSeconds(lockSeconds(i, { ...LOCK_TUNING, clampAtMax: true }), i, LOCK_TUNING, 0)).toBe(0);
   });
 
   it('structures (clampAtMax): the size/speed part caps at maxSeconds, then distance stretches heavy guns', () => {
