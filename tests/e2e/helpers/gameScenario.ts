@@ -34,12 +34,16 @@ export interface TestClientOpts {
    *  `jsHeapGrowthMb` metric can be exercised end-to-end. DEV-build
    *  only; the hook tree-shakes from prod via `import.meta.env.DEV`. */
   injectLeak?: number;
-  /** Lock-to-fire bespoke trigger (`?instantLock=1`, testMode rooms only): AUTO
-   *  weapon groups also lock NON-hostile NPCs/structures in reach + arc, and
+  /** Lock-to-fire bespoke trigger (`?instantLock=1`, testMode rooms only):
    *  every lock completes on the next lock step (≤ 100 ms). Use it in any spec
-   *  that needs to SHOOT something but isn't about locking. Never auto-picks
-   *  other players — lock those with `lockOn` (helpers/fireControl.ts). */
+   *  that needs to SHOOT something but isn't about locking. It does NOT widen
+   *  AUTO targeting — add `anyTarget` for that. */
   instantLock?: boolean;
+  /** Fire-control bespoke trigger (`?anyTarget=1`, testMode rooms only): AUTO
+   *  weapon groups also pick NON-hostile NPCs and non-own structures in reach
+   *  + arc. Never auto-picks other players — lock those with `lockOn`
+   *  (helpers/fireControl.ts). Usually paired with `instantLock`. */
+  anyTarget?: boolean;
   /** Fire-control trigger (`?groupMode=manual`, testMode rooms only): every
    *  weapon group starts in MAN, so AUTO never self-picks before the spec sets
    *  the group it wants (`toAuto` / `lockOn`). Pair with `instantLock` when an
@@ -82,6 +86,7 @@ export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
   if (opts.shipKind !== undefined) params.set('shipKind', opts.shipKind);
   if (opts.injectLeak !== undefined) params.set('injectLeak', String(opts.injectLeak));
   if (opts.instantLock) params.set('instantLock', '1');
+  if (opts.anyTarget) params.set('anyTarget', '1');
   if (opts.groupMode) params.set('groupMode', opts.groupMode);
   for (const [k, v] of Object.entries(opts.extraParams ?? {})) params.set(k, v);
   await page.goto(`${BASE_URL}?${params}`);

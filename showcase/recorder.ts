@@ -339,9 +339,18 @@ export function scaleCues(cues: readonly CameraCue[], k: number): CameraCue[] {
   });
 }
 
+/** URL params for a desktop player's default look (see targetUrl). */
+export const PLAYER_LOOK = { art: 'machined', fx: 'new', shiplight: 'high' } as const;
+
 export function targetUrl(baseUrl: string, target: ShotTarget, testId: string, hud: HudMode): string {
   // cleanworld=1: no debug world overlays (spatial grid, aim guides, NPC callsigns).
-  const p = new URLSearchParams({ worker: '0', diag: '0', hud, cleanworld: '1' });
+  // The look a desktop player gets by default: Machined art, the new effects,
+  // GPU lighting at High (self-shadows, capital shadows, engine lights). The
+  // capture browser is automated, and automation otherwise falls back to the
+  // classic/baked look (artMode.ts), so shots filmed without these showed a
+  // flatter game than players see (user, 2026-11-10). A shot's params or
+  // EQX_SHOWCASE_PARAMS still override any of them.
+  const p = new URLSearchParams({ worker: '0', diag: '0', hud, cleanworld: '1', ...PLAYER_LOOK });
   if (target.room) {
     p.set('room', target.room);
     p.set('testId', testId);

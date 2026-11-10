@@ -97,8 +97,9 @@ async function runOneRep(
   const params = new URLSearchParams({
     room: 'feel-test-25',
     // Lock-to-fire (2026-11-09): held Space fires only at a completed lock;
-    // instantLock makes the AUTO group lock the drone ahead within ~0.1 s.
+    // instantLock + anyTarget make the AUTO group lock the (neutral) drone ahead within ~0.1 s.
     instantLock: '1',
+    anyTarget: '1',
     diag: '1',
     testId: `worker-ab-emu-${arm}-${rep}-${Date.now()}`,
     spawnX: '0',
