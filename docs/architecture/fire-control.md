@@ -15,8 +15,11 @@ join option and the `?ui=` HUD switch were removed. NPC capitals' turrets each
 fire only with the capital's completed lock on their OWN target (PR 1d slice 2):
 a capital holds one lock per pilot, built with whichever of its gun sizes locks
 that pilot fastest, so its AA can engage a fighter while its 16" guns (which can
-never lock a fighter-sized hull) wait for a capital. Structure turrets are not
-lock-gated yet (PR 1d).
+never lock a fighter-sized hull) wait for a capital. A capital turret whose
+target is a hostile STRUCTURE fires only with its own completed turret lock on
+it (same `lockSeconds` rules: the mount size's profile, the hull's sensor, the
+structure's radius as signature). Structure turrets lock their targets too
+(PR 1d slice 3, `StructureMountTicker`).
 
 **Trust.** The server never takes the client's word for a lock:
 - `lock_track` carries the lock line's bearing (`b`, `encodeAim`); the server

@@ -1808,6 +1808,8 @@ export class SectorRoom extends Room<SectorState> {
       currentTick: () => this.serverTick,
       fireDroneMount: (id, i) => this.aiFireResolver.fireMount(id, i),
       fireBlocked: (id, targetId) => this.npcLocks.fireBlocked(id, targetId),
+      // Capital turrets engage hostile structures too (the AI's per-tick set).
+      hostileStructures: () => this.hostileStructureCircles,
       onClearPlayer: (pid) => this.locks.clearLocks(pid),
       aimTargetFor: (pid, mountId, out) => this.lockAimTarget(pid, mountId, out),
     });
