@@ -47,6 +47,8 @@ export function profileEnv(profile: ServerProfile): Record<string, string> {
       return { EQX_E2E_WAVE: '1', EQX_BOT_SPOOL_MS: '5000', EQX_BOT_HOP_MS: '500' };
     case 'capitals':
       return { EQX_DISABLE_LIVING_WORLD: '1', EQX_SECTOR_SCALE: '4', EQX_GALAXY_SECTORS: 'none' };
+    case 'naval':
+      return { EQX_DISABLE_LIVING_WORLD: '1', EQX_SECTOR_SCALE: '4', EQX_GALAXY_SECTORS: 'none', EQX_NAVAL_RANGE: 'real' };
     case 'solar':
       return { EQX_DISABLE_LIVING_WORLD: '1', EQX_SOLAR_SECTORS: '1', EQX_GALAXY_SECTORS: 'sol-prime,vega-reach' };
   }
