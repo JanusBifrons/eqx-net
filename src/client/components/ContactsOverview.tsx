@@ -149,9 +149,13 @@ export const ContactsOverview = memo(function ContactsOverview(): JSX.Element {
         style={TAB_STYLE}
         data-testid="contacts-toggle"
         aria-pressed={open}
+        aria-keyshortcuts="O"
+        title={touch ? undefined : 'Contacts (O key)'}
         onClick={() => setOpen(!open)}
       >
-        {open ? '◂ CONTACTS' : `CONTACTS${touch ? '' : ' (O)'}`}
+        {/* No count and no "(O)" hotkey hint in the label: "(O)" read as a
+            zero count while closed. The shortcut lives in the tooltip. */}
+        {open ? '◂ CONTACTS' : 'CONTACTS ▸'}
       </button>
       {open && (
         <div style={PANEL_STYLE} data-testid="contacts-panel" data-count={view.rows.length}>
