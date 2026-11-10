@@ -579,6 +579,7 @@ export class WeaponMountTicker {
     const inp = this.lockIn;
     inp.refSize = p.refSize;
     inp.tracking = p.tracking;
+    inp.absRange = p.absRange;
     inp.reach = reach;
     inp.sensor = sensor;
     inp.signature = sig;
