@@ -91,6 +91,17 @@ describe('ContactsOverview', () => {
     }
   });
 
+  it('the closed tab shows no "(0)"-like count; the O shortcut is a tooltip, not label text', () => {
+    // Bug (2026-11-10 showcase): the closed tab read "CONTACTS (O)", the O
+    // hotkey hint, which reads as a zero count ("CONTACTS (0)") while closed.
+    useUIStore.setState({ contactsOpen: false });
+    render(<ContactsOverview />);
+    const tab = screen.getByTestId('contacts-toggle');
+    expect(tab.textContent).toContain('CONTACTS');
+    expect(tab.textContent).not.toMatch(/\(\s*[0-9O]+\s*\)/);
+    expect(tab.getAttribute('aria-keyshortcuts')).toBe('O');
+  });
+
   it('the toggle opens and closes the panel', () => {
     useUIStore.setState({ contactsOpen: false });
     render(<ContactsOverview />);
