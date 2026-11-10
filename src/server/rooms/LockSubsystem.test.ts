@@ -10,12 +10,15 @@ function harness(kindId = 'fighter'): {
   locks: LockSubsystem;
   targets: Map<string, LockTargetView>;
   commits: string[];
+  /** Every `refreshHostility` key, in order. */
+  refreshes: string[];
   setAuto: (key: string | null) => void;
   /** The `anyTarget` flag of every `autoPick` call, in order. */
   anyTargetArgs: boolean[];
 } {
   const targets = new Map<string, LockTargetView>();
   const commits: string[] = [];
+  const refreshes: string[] = [];
   let auto: string | null = null;
   const anyTargetArgs: boolean[] = [];
   const deps: LockSubsystemDeps = {
@@ -37,10 +40,11 @@ function harness(kindId = 'fighter'): {
       return t && bears(t.x, t.y) ? auto : null;
     },
     commitHostileAct: (_p, key) => commits.push(key),
+    refreshHostility: (_p, key) => refreshes.push(key),
   };
   const locks = new LockSubsystem(deps);
   locks.enable('p1');
-  return { locks, targets, commits, setAuto: (k) => { auto = k; }, anyTargetArgs };
+  return { locks, targets, commits, refreshes, setAuto: (k) => { auto = k; }, anyTargetArgs };
 }
 
 const still = (x: number, hostile: boolean): LockTargetView => ({ x, y: 0, vx: 0, vy: 0, signature: 30, hostile });
@@ -71,6 +75,24 @@ describe('LockSubsystem', () => {
     steps(h.locks, 80);
     expect(h.commits).toEqual(['s:2']);
     expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
+  });
+
+  it('locks keep it hostile: a live lock on a hostile target refreshes hostility every step; a failsafe or a cancelled lock does not', () => {
+    const h = harness();
+    h.targets.set('s:9', still(200, true));
+    h.targets.set('s:8', still(200, false));
+    h.locks.requestLock('p1', 'primary', 's:9');
+    steps(h.locks, 5); // acquiring counts
+    expect(h.refreshes.length).toBe(5);
+    steps(h.locks, 40); // locked counts
+    expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
+    expect(h.refreshes.length).toBe(45);
+    expect(new Set(h.refreshes)).toEqual(new Set(['s:9']));
+    h.locks.cancelLock('p1', 'primary');
+    h.locks.requestLock('p1', 'primary', 's:8'); // neutral: failsafe, no refresh
+    h.refreshes.length = 0;
+    steps(h.locks, 3);
+    expect(h.refreshes).toEqual([]);
   });
 
   it('cancelling during the failsafe is harmless', () => {
