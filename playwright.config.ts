@@ -139,6 +139,8 @@ const FEATURE_SPECS: string[] = [
   '**/galaxy-warp-map.spec.ts',
   // Phase 4 WS-A1 — spectator / construction mode.
   '**/spectator-mode.spec.ts',
+  // Spectator build hotbar stays inside the viewport (frame review 2026-11-10).
+  '**/build-hotbar-fits-viewport.spec.ts',
   '**/cinematic-camera.spec.ts',
   '**/respawn-cascade-input-routing.spec.ts',
   '**/drawer-galaxy.spec.ts',
