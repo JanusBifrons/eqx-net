@@ -111,10 +111,13 @@ export const LOOK_NIGHT: LightingSettings = {
 export type LightingPreset = 'baked' | 'low' | 'medium' | 'high';
 export const LIGHTING_PRESET_IDS: readonly LightingPreset[] = ['baked', 'low', 'medium', 'high'];
 
-/** Settings per live level: High is the night side the user approved
- *  (2026-11-08, "phenomenal"); Medium and Low trim the per-pixel work. */
+/** Settings per live level. High is ALL_ON: the long, firm cast shadows of the
+ *  showcase look, for players too (user, 2026-11-10, after a baked / night /
+ *  all-on comparison; the night side's brighter ambient washed its shadows
+ *  out). Medium and Low still build on the night side and trim the per-pixel
+ *  work for phones until a phone run says otherwise. */
 export function presetSettings(p: Exclude<LightingPreset, 'baked'>): LightingSettings {
-  if (p === 'high') return LOOK_NIGHT;
+  if (p === 'high') return ALL_ON;
   if (p === 'medium') return MEDIUM;
   return LOW;
 }

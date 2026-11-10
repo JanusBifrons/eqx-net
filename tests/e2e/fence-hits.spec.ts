@@ -23,9 +23,10 @@ test('bolts fired into a closed fence ripple on it', async ({ browser }) => {
   const params = new URLSearchParams({
     room: 'gate-test', spawnX: '400', spawnY: '-1150', shipKind: 'fighter', testId: randomUUID(),
     worker: '0', art: 'machined', fx: 'new', zoom: '1',
-    // Lock-to-fire (2026-11-09): instantLock makes the AUTO group lock the
-    // (non-hostile, not-ours) fence gate ahead and fire on its own.
+    // Lock-to-fire (2026-11-09): anyTarget lets the AUTO group pick the
+    // (non-hostile, not-ours) fence gate ahead; instantLock locks it at once.
     instantLock: '1',
+    anyTarget: '1',
   });
   await page.goto(`${BASE_URL}?${params}`);
   type S = { fxFences?: number; fxFenceHits?: number };

@@ -10,7 +10,7 @@
  * observer in the same room receives the shooter's laser_fired broadcast and
  * sees the drone's `swarm-…` id in its remote-hit-targets list.
  *
- * Lock-to-fire (2026-11-09): the shooter joins with `instantLock`, so its AUTO
+ * Lock-to-fire (2026-11-09): the shooter joins with `instantLock` + `anyTarget`, so its AUTO
  * group locks the (neutral) drone ahead at once and fires; the observer does
  * not, so it never engages.
  */
@@ -35,6 +35,7 @@ test('observer sees the shooter hit a parked drone (swarm-N targetId)', async ({
     initialAngle: 0,
     shipKind: 'interceptor',
     instantLock: true,
+    anyTarget: true,
     testId,
   });
   try {
