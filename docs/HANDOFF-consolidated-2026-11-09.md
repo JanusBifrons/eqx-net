@@ -1,5 +1,7 @@
 # Outstanding work: consolidated handoff (2026-11-09)
 
+> **Newer: [HANDOFF-2026-11-10.md](HANDOFF-2026-11-10.md)** records the 2026-11-10 decisions (real-scale ranges, friendly fire, record-as-is showcase) and what is next. Read it first.
+
 This is every task still left in EQX Peri after the 2026-11-06 → 11-08 weekend, when agents on two machines merged about 70 PRs and each left its own handoff.
 It supersedes those scattered handoffs (listed in the Sources appendix): start here, and follow a source link only for detail.
 It lives in git (`docs/HANDOFF-consolidated-2026-11-09.md`), so it works on both machines. Tick or delete items in the PR that finishes them.
