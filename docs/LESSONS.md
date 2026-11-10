@@ -2852,3 +2852,12 @@ Commit: perf/count-budgets (PR #356)
 - **Rules:**
   - Never infer "this is a test" from `navigator.webdriver` for behaviour that changes what is shown: the recorder, perf runs and the netgate are automation too. Use an explicit flag the harness sets.
   - Before profiling a recorded stall, check whether automation-only code is running in the recording.
+
+## 2026-11-10 — Showcase clips judder at ~25 fps while QA said 60 (ffmpeg concat time base)
+
+- **Symptom:** take QA reported "60.1 fps, worst gap 23–34 ms", but a frame-difference count of the encoded clips found ~24–26 different frames a second (pack-battle: 395 repeats in 720 frames, a repeating 2/3-slot hold).
+- **Cause:** not the game and not the capture. The raw screencast frames of capital-guns-fighter were 1321 different JPEGs in 22 s (60.0/s; the page's rAF also 60.0/s). The encode lost them: the concat demuxer opened each JPEG with the image demuxer's default 25 fps time base, so each `duration 0.016667` rounded to 0 or 0.04 s (ffprobe pts 0, 0, .04, .04, .08, .08, .12, .12, .12 …) and `fps=60` kept one frame per 40 ms.
+- **Fix:** `option framerate 60` on every concat entry (`CONCAT_FRAMERATE` in `showcase/compositor.ts`). The same shot re-filmed: 60.0 different frames/s in the clip (was 25.6).
+- **Rules:**
+  - A frame-rate gate must count DIFFERENT frames, at the output, not frames that arrived at the input. Take QA now records `uniqueFps` (capture) and `encodedUniqueFps` (what reaches the encode) and gates both.
+  - When feeding images to ffmpeg's concat demuxer, set the per-file framerate: a `duration` is rounded to the file's time base.
