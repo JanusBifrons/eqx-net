@@ -288,9 +288,9 @@ export class StructureGridSubsystem {
         this.setActive(rec, false);
         continue;
       }
-      // Phase 4 WS-B4 — a leveled turret targets FARTHER + hits HARDER (one
-      // scalar; level 1 is the identity).
-      const target = this.mounts.tick(rec, kind, mounts, nowMs, dt, structureLevelFactor(rec.level));
+      // Reach is the gun's, whatever the level (a level upgrades damage +
+      // HP; `fireMount` reads the damage factor).
+      const target = this.mounts.tick(rec, kind, mounts, nowMs, dt);
       // B2 — a player target has no swarm entity id; it rides as a player id.
       rec.turretTargetPlayer = target?.playerId;
       rec.turretTargetEntityId = target && target.playerId === undefined ? target.entityId : undefined;

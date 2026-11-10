@@ -8,7 +8,9 @@
  * grant to that kind's KEY stat:
  *
  *   - HP            — every kind (the universal grant);
- *   - turret range + damage — defence turrets;
+ *   - turret damage — defence turrets (NOT range: reach is the gun's, and
+ *     its shells fly only their own flight, so a levelled reach would engage
+ *     targets the shells can't reach — 2026-11-10);
  *   - power output  — solar / capital generators;
  *   - storage       — capital / miner buffers.
  *
@@ -102,9 +104,8 @@ export function structureUpgradeCost(baseConstructionCost: number, level: number
 export interface StructureLevelMultipliers {
   /** Multiplies `maxHealth` (every kind — the universal grant). */
   maxHealth: number;
-  /** Multiplies `weaponRange` (defence turrets). */
-  weaponRange: number;
-  /** Multiplies `weaponDamage` (defence turrets). */
+  /** Multiplies `weaponDamage` (defence turrets). Reach is NOT levelled: it is
+   *  the gun's, and its shells fly only their own flight (2026-11-10). */
   weaponDamage: number;
   /** Multiplies `powerOutput` (solar / capital generators). */
   powerOutput: number;
@@ -116,7 +117,6 @@ export interface StructureLevelMultipliers {
 export const NEUTRAL_STRUCTURE_LEVEL_MULTIPLIERS: Readonly<StructureLevelMultipliers> =
   Object.freeze({
     maxHealth: 1,
-    weaponRange: 1,
     weaponDamage: 1,
     powerOutput: 1,
     storageCapacity: 1,
@@ -131,7 +131,6 @@ export function structureLevelMultipliers(level: number | undefined): StructureL
   const f = 1 + (l - 1) * STRUCTURE_LEVEL_FRAC;
   return {
     maxHealth: f,
-    weaponRange: f,
     weaponDamage: f,
     powerOutput: f,
     storageCapacity: f,

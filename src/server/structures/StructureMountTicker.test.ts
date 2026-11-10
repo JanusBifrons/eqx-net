@@ -6,7 +6,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import { StructureMountTicker, type TurretTargetView } from './StructureMountTicker.js';
-import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { getStructureKind, STRUCTURE_KINDS_LIST, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { getWeapon, isWeaponId, type WeaponDef } from '../../core/combat/WeaponCatalogue.js';
+import { STRUCTURE_LEVEL_CAP, structureLevelFactor } from '../../core/leveling/structureLevel.js';
 import type { StructureRecord } from './StructureRegistry.js';
 import type { TargetClass } from '../../core/combat/mountTargeting.js';
 
@@ -15,7 +17,7 @@ const SIG: Record<TargetClass, number> = { small: 10, subcapital: 30, 'small-cap
 
 interface Shot { mountIdx: number; ndx: number; ndy: number; target: string }
 
-function setup(kindId: StructureKindId, rot = 0) {
+function setup(kindId: StructureKindId, rot = 0, level = 1) {
   let cands: TurretTargetView[] = [];
   const shots: Shot[] = [];
   const ticker = new StructureMountTicker({
@@ -27,13 +29,13 @@ function setup(kindId: StructureKindId, rot = 0) {
     fire: (_rec, _kind, mountIdx, _mount, _def, ndx, ndy, target) => { shots.push({ mountIdx, ndx, ndy, target: target.id }); return true; },
   });
   const kind = getStructureKind(kindId);
-  const rec = { id: 'g', kind: kindId, owner: 'npc:red', x: 0, y: 0, rot, isConstructed: true } as unknown as StructureRecord;
+  const rec = { id: 'g', kind: kindId, owner: 'npc:red', x: 0, y: 0, rot, level, isConstructed: true } as unknown as StructureRecord;
   let now = 0;
   const step = (n = 1, dtMs = 100) => {
     for (let i = 0; i < n; i++) {
       now += dtMs;
       const dt = ticker.beginTick(now, 0.1);
-      ticker.tick(rec, kind, kind.mounts!, now, dt, 1);
+      ticker.tick(rec, kind, kind.mounts!, now, dt);
     }
   };
   const set = (list: Array<{ id: string; x: number; y: number; vx?: number; vy?: number; cls?: TargetClass }>) => {
@@ -175,4 +177,59 @@ describe('StructureMountTicker — the capital fire-control rules on defence str
     h.step(1);
     expect(h.shots.length).toBeGreaterThan(0);
   });
+});
+
+/** How far a structure's shot physically travels (u). A structure beam is
+ *  drawn straight to its target (`fireMount`), so it reaches the kind's own
+ *  catalogue range, not the ship weapon's; a shell or missile flies speed ×
+ *  flight time. */
+function shotTravel(def: WeaponDef, beamRange: number): number {
+  if (def.mode === 'hitscan') return beamRange;
+  if (def.mode === 'projectile') return (def.speed * def.maxTicks) / 60;
+  return (def.speed * def.lifetimeTicks) / 60;
+}
+
+/** Every defence turret kind: a `weaponRange` and a weaponised mount. */
+const TURRET_KINDS = STRUCTURE_KINDS_LIST.filter(
+  (k) => k.weaponRange != null && (k.mounts?.length ?? 0) > 0 && isWeaponId(k.mounts![0]!.weaponId),
+);
+
+/**
+ * Bug (2026-11-10): a structure's level multiplied its engage reach (×2 at
+ * level 5), but its shells kept the weapon's own flight, so from level 2 up a
+ * turret locked and fired at targets its shells could not reach (a level-2
+ * Lindemann engaged at 9,669 u; its shell flies 9,100 u). Ranges are physical:
+ * reach comes from the gun, and a building's level doesn't change the gun.
+ */
+describe('StructureMountTicker — a levelled turret only engages what its shot can reach', () => {
+  it('there are turret kinds to check', () => {
+    expect(TURRET_KINDS.length).toBeGreaterThan(5);
+  });
+
+  for (const kind of TURRET_KINDS) {
+    const id = kind.id as StructureKindId;
+    const travel = Math.min(...kind.mounts!.map((m) => (isWeaponId(m.weaponId) ? shotTravel(getWeapon(m.weaponId), kind.weaponRange!) : Infinity)));
+
+    it(`${id}: its catalogue reach is within its shot's flight`, () => {
+      expect(kind.weaponRange!).toBeLessThanOrEqual(travel);
+    });
+
+    it(`${id}: at level ${STRUCTURE_LEVEL_CAP} it never fires at a target beyond its shot's flight`, () => {
+      // Past the shot's flight, yet inside the old levelled reach (×2 at the cap).
+      const d = travel + 0.5 * (kind.weaponRange! * structureLevelFactor(STRUCTURE_LEVEL_CAP) - travel);
+      const h = setup(id, 0, STRUCTURE_LEVEL_CAP);
+      h.ticker.setInstantLocks(true);
+      h.set([{ id: 'far', x: 0, y: d }]);
+      h.step(100);
+      expect(h.shots).toHaveLength(0);
+    });
+
+    it(`${id}: at level ${STRUCTURE_LEVEL_CAP} it still fires at a target inside its reach`, () => {
+      const h = setup(id, 0, STRUCTURE_LEVEL_CAP);
+      h.ticker.setInstantLocks(true);
+      h.set([{ id: 'near', x: 0, y: 0.9 * Math.min(kind.weaponRange!, travel) }]);
+      h.step(100);
+      expect(h.shots.length).toBeGreaterThan(0);
+    });
+  }
 });
