@@ -32,6 +32,9 @@ export interface WelcomeMessage {
   shipTuning?: 'A' | 'B';
   /** Per-kind size overrides (EQX_SHIP_KIND_SCALE), sent only when set. */
   shipKindScale?: string;
+  /** The server's naval range mode (`EQX_NAVAL_RANGE`), sent only when
+   *  `real`; absent ⇒ `legacy`. The client's must match (combat/navalRange.ts). */
+  navalRange?: 'legacy' | 'real';
 }
 
 /** PR 3a (account-bound identity) — sent to a session immediately before the
@@ -67,6 +70,7 @@ export const WelcomeSchema = z
     shipScale: z.number().positive().optional(),
     shipTuning: z.enum(['A', 'B']).optional(),
     shipKindScale: z.string().max(256).optional(),
+    navalRange: z.enum(['legacy', 'real']).optional(),
   })
   .strict();
 

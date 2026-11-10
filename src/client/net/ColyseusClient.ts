@@ -247,6 +247,7 @@ import {
   STAGE_3_MAX_LOOKAHEAD_TICKS,
 } from './predictionTuning.js';
 import { shipScaleMismatch } from '@shared-types/shipScale/welcomeScale';
+import { navalRangeMismatch } from '@shared-types/combat/navalRange';
 
 /** Simple monotonically incrementing shot ID generator. */
 let _shotCounter = 0;
@@ -1467,6 +1468,10 @@ export class ColyseusGameClient {
       // config; a server at another scale would desync physics and hits.
       const scaleMismatch = shipScaleMismatch(msg);
       if (scaleMismatch) logEvent('ship_scale_mismatch', scaleMismatch);
+      // Naval range mode: the client draws range and lock rings from its own
+      // catalogue, the server fires from its own (invariant #15).
+      const navalMismatch = navalRangeMismatch(msg);
+      if (navalMismatch) logEvent('naval_range_mismatch', navalMismatch);
       const idChanged = storedPlayerId && msg.playerId !== storedPlayerId;
       logEvent('cc_welcome', {
         playerId: msg.playerId,

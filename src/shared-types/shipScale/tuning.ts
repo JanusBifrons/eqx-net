@@ -316,6 +316,20 @@ export function zoomRangeForKind(
   return out;
 }
 
+/** Half the width, in CSS px, of the widest view the shell interest plans for
+ *  (a 1920-px desktop window). A phone (390×844) is narrower on both axes. */
+export const SHELL_VIEW_HALF_PX = 960;
+
+/** Half-extent (u) of the square around a viewer inside which a naval shell,
+ *  or the point where it will fall, is sent to that viewer: the widest view the
+ *  pilot of `kind` can pull the camera out to (`SHELL_VIEW_HALF_PX` at the
+ *  zoom-out floor `zoomRangeForKind().minScale`). Fighter / sub-capital
+ *  6,400 u; destroyer (r 1,220) ~13,000 u; battleship (r 2,876) ~30,700 u.
+ *  Shared by the server's interest filter and the client camera floor (#15). */
+export function shellViewHalfExtent(kind: Pick<ShipKind, 'radius'>): number {
+  return (SHELL_VIEW_HALF_PX * hullZoomFactor(kind)) / GAMEPLAY_MIN_ZOOM;
+}
+
 /** The radius shield EFFECTS are sized to (hit flash, break dome, the legacy
  *  ring). The hull radius for every kind, except capitals, whose shield follows
  *  the hull (`shipShieldColliderDesc`): their effects use the hull's half beam,
