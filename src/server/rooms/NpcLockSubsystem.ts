@@ -59,7 +59,7 @@ interface PilotState {
   wire: WireLockedBy[];
 }
 
-interface Geo { refSize: number; tracking: number; reach: number; sensor: number }
+interface Geo { refSize: number; tracking: number; reach: number; sensor: number; absRange: boolean }
 
 const LOCK_DT = 0.1;
 
@@ -196,6 +196,7 @@ export class NpcLockSubsystem {
       if (g.reach <= 0) continue;
       inp.refSize = g.refSize;
       inp.tracking = g.tracking;
+      inp.absRange = g.absRange;
       inp.reach = g.reach;
       inp.sensor = g.sensor;
       const s = lockSeconds(inp, LOCK_TUNING);

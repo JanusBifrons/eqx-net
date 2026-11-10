@@ -15,7 +15,9 @@
  *  - LOCK TO FIRE (root invariant #19, universal): each mount builds its own
  *    lock on its current target (`stepLock` with `lockSeconds`: the mount's
  *    size profile, the structure's reach, the target's signature and motion,
- *    `STRUCTURE_SENSOR`; capped at `maxSeconds` rather than impossible) and
+ *    `STRUCTURE_SENSOR`; the size/speed part capped at `maxSeconds` rather
+ *    than impossible, then stretched by ABSOLUTE distance for heavy M/L/XL
+ *    guns, uncapped: a long shot takes ages by design) and
  *    fires only once that lock is COMPLETE. A new
  *    target restarts the lock; a target it can't lock for `lostGraceSeconds`
  *    restarts it too. testMode `instantLock` (`setInstantLocks`) completes a
@@ -65,9 +67,10 @@ export const TARGET_HOLD_MS = 1000;
  *  barrel jump). */
 const MAX_DT_SEC = 0.25;
 const DEG = Math.PI / 180;
-/** The pilots' lock tuning with no "too slow to lock" cut-off (clamped to
- *  `LOCK_TUNING.maxSeconds` at the call instead). */
-const STRUCTURE_LOCK_TUNING = { ...LOCK_TUNING, maxSeconds: Infinity };
+/** The pilots' lock tuning, but a lock past `maxSeconds` takes `maxSeconds`
+ *  instead of being impossible (`clampAtMax`; heavy mounts then still stretch it
+ *  for absolute distance, see `lockSeconds`). */
+const STRUCTURE_LOCK_TUNING = { ...LOCK_TUNING, clampAtMax: true };
 
 /** What the ticker asks its owner to do. */
 export interface StructureMountSink {
@@ -236,6 +239,7 @@ export class StructureMountTicker {
     const inp = this.lockIn;
     inp.refSize = p.refSize;
     inp.tracking = p.tracking;
+    inp.absRange = p.absRange;
     inp.reach = reach;
     inp.signature = t.signature;
     inp.dx = t.x - mx;
@@ -245,8 +249,9 @@ export class StructureMountTicker {
     // A fixed battery always gets there in the end: a lock past `maxSeconds`
     // (a 16" gun on a destroyer) takes `maxSeconds` instead of being
     // impossible, so a heavy gun never sits blind on the only target it has.
-    // Out of reach stays unlockable (Infinity).
-    const secs = Math.min(lockSeconds(inp, STRUCTURE_LOCK_TUNING), LOCK_TUNING.maxSeconds);
+    // Heavy guns then stretch it for absolute distance (uncapped, see
+    // `lockSeconds`). Out of reach stays unlockable (Infinity).
+    const secs = lockSeconds(inp, STRUCTURE_LOCK_TUNING);
     const ev = stepLock(e, dtSec, secs, secs * LOCK_TUNING.failsafeMul, LOCK_TUNING.lostGraceSeconds, LOCK_TUNING.decayMul);
     // Unlockable past the grace: start over on the same target (it stays the
     // mount's target; targeting is the arc/tracking rules', not the lock's).
