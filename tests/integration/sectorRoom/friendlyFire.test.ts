@@ -53,6 +53,7 @@ describe('SectorRoom integration — friendly fire', () => {
     await harness.connectAs(randomUUID());
     const room = harness.getServerRoom()!;
     const internals = room._internals;
+    internals.setNpcLineOfFire(false); // slice 1: what a shot hits (slice 2 holds fire: npcLineOfFire.test.ts)
     // Shooter at the origin facing +y; its ally 150 u ahead; the target behind.
     expect(internals.spawnTestDrone('ff-shooter', 0, 0, 'fighter')).toBe(true);
     expect(internals.spawnTestDrone('ff-ally', 0, 150, 'fighter')).toBe(true);
@@ -75,6 +76,7 @@ describe('SectorRoom integration — friendly fire', () => {
     await harness.connectAs(randomUUID());
     const room = harness.getServerRoom()!;
     const internals = room._internals;
+    internals.setNpcLineOfFire(false); // slice 1: what a shot hits (slice 2 holds fire: npcLineOfFire.test.ts)
     expect(internals.spawnTestDrone('ff-beamer', 0, 0, 'interceptor')).toBe(true);
     expect(internals.spawnTestDrone('ff-ally', 0, 120, 'heavy')).toBe(true);
     expect(internals.spawnTestDrone('ff-target', 0, 220, 'heavy')).toBe(true);
@@ -92,6 +94,7 @@ describe('SectorRoom integration — friendly fire', () => {
     await harness.connectAs(randomUUID());
     const room = harness.getServerRoom()!;
     const internals = room._internals;
+    internals.setNpcLineOfFire(false); // slice 1: what a shot hits (slice 2 holds fire: npcLineOfFire.test.ts)
     expect(internals.spawnTestDrone('ff-bb', 0, 0, 'battleship')).toBe(true);
     expect(internals.spawnTestDrone('ff-escort', 0, 1400, 'fighter')).toBe(true);
     expect(internals.spawnTestDrone('ff-enemy', 0, 1700, 'heavy')).toBe(true);
@@ -130,6 +133,7 @@ describe('SectorRoom integration — friendly fire', () => {
     await harness.connectActive(owner);
     const room = harness.getServerRoom()!;
     const internals = room._internals;
+    internals.setNpcLineOfFire(false); // slice 1: what a shot hits (slice 2 holds fire: npcLineOfFire.test.ts)
     const turret = [...internals.structureRegistry.all()].find((r) => r.kind === 'turret')!;
     turret.owner = owner;
     for (let i = 0; i < 3; i++) internals.pulseStructureGrid();

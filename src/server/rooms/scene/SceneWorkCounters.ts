@@ -53,6 +53,11 @@ export interface SceneWorkView {
   wallMsPerTick: number | null;
   /** Print-only: physics worker busy fraction over the scene (event-loop utilisation). */
   workerElu: number | null;
+  /** Print-only (not yet calibrated on CI): NPC line-of-fire checks per tick
+   *  (one per NPC fire candidate) and the narrow ray tests they ran. The
+   *  synthetic gate is `LINE_OF_FIRE_BUDGET` (LineOfFireGate.test.ts). */
+  lineOfFireChecksPerTick: number;
+  lineOfFireNarrowPerTick: number;
 }
 
 type ThreadCpu = () => { user: number; system: number };
@@ -68,6 +73,19 @@ export class SceneWorkCounters {
   swarmBytes = 0;
   snapshots = 0;
   snapshotEntities = 0;
+  /** Line-of-fire running totals at the first counted tick, and the latest. */
+  private lofBase = -1;
+  private lofNarrowBase = 0;
+  private lofChecks = 0;
+  private lofNarrow = 0;
+
+  /** Called each counted tick with the gate's running totals (#14: numbers only). */
+  lineOfFire(checksTotal: number, narrowTotal: number): void {
+    if (!this.active) return;
+    if (this.lofBase < 0) { this.lofBase = checksTotal; this.lofNarrowBase = narrowTotal; }
+    this.lofChecks = checksTotal - this.lofBase;
+    this.lofNarrow = narrowTotal - this.lofNarrowBase;
+  }
 
   // CPU batches (print-only).
   private batchTicks = 0;
@@ -124,6 +142,8 @@ export class SceneWorkCounters {
       updateCpuMsPerTick: this.updateSamples > 0 ? r(this.updateUs / 1000 / this.updateSamples, 3) : null,
       wallMsPerTick: c > 0 ? r(this.wallMs / c, 3) : null,
       workerElu: workerElu === null ? null : r(workerElu, 3),
+      lineOfFireChecksPerTick: r(this.lofChecks / t),
+      lineOfFireNarrowPerTick: r(this.lofNarrow / t),
     };
   }
 }

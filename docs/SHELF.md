@@ -17,14 +17,19 @@ hits its own shooter, and a capital turret never fires along its own deck
 damage but marks nothing hostile (`SectorRoom.isFriendlyFire`), so packs don't
 civil-war. See docs/architecture/allegiances.md "Fire paths".
 
-**Still to do: NPCs aware of friendly fire.** Today NPCs fire at a locked
-target with an ally in the way and hit it. Doing it properly:
-- **Fire decisions** need a line-of-fire check before firing (no shot through
-  a friendly), in the drone AI and every capital turret (and NPC base turrets).
-- **Formations** need spacing that keeps escorts out of the lines of fire
-  (flocking radii, capital escort stations).
-- **Performance:** that check runs per shot candidate, so it needs the
-  existing spatial grids, a budget and a bench before it ships.
+**Done (slice 2): NPCs hold fire when a friendly is in the way.** Before a
+drone's slot fires, a capital turret fires or a structure turret fires, the
+room checks the shot's line from the muzzle to the target for a FRIENDLY body
+(`LineOfFireGate`, a per-tick broadphase); if one is there the gun holds this
+tick, keeps aiming and keeps its lock. Players are never gated. A player's
+turret holds on its owner's own ship and structures. Cost is gated as a COUNT
+(`LINE_OF_FIRE_BUDGET`). See docs/architecture/allegiances.md "Line of fire".
+
+**Still to do: formations.** NPCs now hold rather than shoot through an ally,
+but a pack that flies in a clump still spends fire time holding. Escorts and
+flocks need spacing that keeps them out of each other's lines of fire
+(flocking separation radii, capital escort stations off the broadsides), and a
+held drone could side-step to clear its line.
 
 ## Time dilation for the whole game (shelved 2026-11-07)
 

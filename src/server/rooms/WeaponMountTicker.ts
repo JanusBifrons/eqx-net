@@ -33,6 +33,7 @@ import { mountTargetReach, mountWeaponReach, hasTurretFireControl } from '../../
 import { mountLineClear, mountPriority, targetClass, type TargetClass } from '../../core/combat/mountTargeting.js';
 import { leadArcBearing, mountCanEngage, onTarget } from '../../core/combat/mountFireControl.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
+import { shipShotMuzzle } from '../../core/combat/muzzle.js';
 import { newLock, stepLock, type LockEntry } from '../../core/combat/lockState.js';
 import { capLockSeconds, lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { LOCK_TUNING, WEAPON_LOCK_PROFILE, sensorFor, type MountSize } from '../../shared-types/combat/lockProfile.js';
@@ -136,6 +137,13 @@ export interface WeaponMountTickerDeps {
    *  lock on this mount's target (a pilot), so the mount aims but holds fire
    *  (reload not spent). Absent ⇒ never blocked (unit harnesses). */
   fireBlocked?: (droneId: string, targetId: string) => boolean;
+  /** NPC line of fire (friendly fire slice 2): true ⇒ a FRIENDLY body lies on
+   *  this turret's shot from its muzzle (fx, fy) along unit (dx, dy) for
+   *  `maxDist` (to the target), so it holds fire this tick: it keeps aiming,
+   *  the lock stays and the reload is not spent. Absent ⇒ never blocked. */
+  lineOfFireBlocked?: (
+    droneId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number,
+  ) => boolean;
   /** Structures hostile to the drones this tick (the AI's structure target
    *  set, built once per tick by the room). Capital turrets engage them too,
    *  each under its own turret lock (`tickCapitalMounts`). Absent ⇒ pilots
@@ -525,6 +533,15 @@ export class WeaponMountTicker {
       // the capital's lock for a pilot (a lock on another pilot doesn't
       // license this one), the turret's own lock for a structure.
       if (sig[best]! >= 0 ? !structLocked : d.fireBlocked?.(droneId, t.id)) continue;
+      // Line of fire: hold while a friendly (an escort, its own base) is on
+      // this barrel's line to the target. Last, so it runs only for a shot
+      // that would otherwise go (the cost is per fire candidate).
+      if (d.lineOfFireBlocked !== undefined) {
+        const a = ang + mount.baseAngle + angles[i]!;
+        const ndx = -Math.sin(a), ndy = Math.cos(a);
+        const muzzle = shipShotMuzzle(kind, mount, true);
+        if (d.lineOfFireBlocked(droneId, t.id, mx + ndx * muzzle, my + ndy * muzzle, ndx, ndy, dist - muzzle)) continue;
+      }
       reload[i] = tick;
       d.fireDroneMount!(droneId, i);
     }

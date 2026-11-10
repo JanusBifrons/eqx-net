@@ -47,6 +47,11 @@ export interface AiFireResolverDeps {
   /** Fire control: refuse a shot at `targetId` when it is a pilot this NPC
    *  holds no completed lock on. Absent ⇒ never blocked. */
   fireBlocked?: (shooterId: string, targetId: string) => boolean;
+  /** NPC line of fire (friendly fire slice 2): true ⇒ a FRIENDLY body lies
+   *  between the shooter at (fx, fy) and `targetId` along unit (dx, dy), so
+   *  the drone holds fire this tick (no cooldown spent). The room resolves the
+   *  target's distance. Absent ⇒ never blocked (unit harnesses). */
+  lineOfFireBlocked?: (shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number) => boolean;
   /** Cooldown ledger — keyed by shooter id (drone). */
   lastFireClientTick: Map<string, number>;
   /** Pose snapshot for the firing drone (SAB read). */
@@ -155,6 +160,9 @@ export class AiFireResolver implements WeaponFireSink {
     // Fire control: a pilot target needs a COMPLETED lock by this drone ⇒
     // no shot (the cooldown is not spent).
     if (d.fireBlocked?.(shooterId, targetId)) return;
+    // Line of fire: an ally (or its own base) in the way ⇒ hold this tick.
+    // Before the cooldown, so a held shot fires the moment the line clears.
+    if (d.lineOfFireBlocked?.(shooterId, targetId, self.x, self.y, dirNdx, dirNdy)) return;
 
     // Slot-level cooldown gate (mirrors PlayerFireResolver). The slot fires
     // as one trigger; its cooldown is the MAX over its mounts' weapons.
