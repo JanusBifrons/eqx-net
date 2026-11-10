@@ -4192,6 +4192,7 @@ export class SectorRoom extends Room<SectorState> {
         return best < 0 ? null : `s:${best}`;
       },
       commitHostileAct: (pid, key) => this.commitLockHostileAct(pid, key),
+      refreshHostility: (pid, key) => this.refreshLockHostility(pid, key),
     });
   }
 
@@ -4243,6 +4244,22 @@ export class SectorRoom extends Room<SectorState> {
       }
     }
     serverLogEvent('lock_hostile_act', { playerId: pid, target: key });
+  }
+
+  /**
+   * "Locks keep it hostile" (owner 2026-11-10): a pilot's live lock on an NPC
+   * ship that is already hostile to them re-stamps the hostility ledger, so the
+   * 30 s `FORGET_TICKS` decay runs from when the lock drops, not from the last
+   * hit (a 16" shell flies ~30 s). Individual hostility only: no faction
+   * escalation, no `bot_aggro` (the client's hostility rides the snapshot
+   * `drones[].hostile` bit, #16). Structures keep their own hostile-act rules.
+   * Called per lock per lock step (~10 Hz); no allocation (#14).
+   */
+  private refreshLockHostility(pid: string, key: string): void {
+    if (!key.startsWith('s:')) return;
+    const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
+    if (rec?.kind !== 1) return;
+    this.aiController.markHostile(rec.id, pid, this.serverTick);
   }
 
   /**
