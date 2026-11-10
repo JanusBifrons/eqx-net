@@ -123,8 +123,12 @@ export const coastalAa: Shot = {
 
 /**
  * The coastal duel: an 8" casemate, an 11" triple turret and a 16" barbette
- * against a battleship. Wide on both, in on the battery firing, then on the
- * battleship as the shells land.
+ * against a battleship. Wide on both, in on the battery, then on the
+ * battleship. Filmed as the game plays (2026-11-10): the pilot switches to
+ * spectator mode (the Spectate toggle) and the pan is a spectating player's
+ * camera; the guns fire on their real reloads and hostility runs its real
+ * course (one `test_aggro` before the take sets the scene; nothing during
+ * it). The pilot's hull is its own (no survive params).
  */
 export const coastalDuel: Shot = {
   id: 'coastal-duel',
@@ -135,7 +139,7 @@ export const coastalDuel: Shot = {
   docs: ['coastal-defences'],
   reel: true,
   server: 'capitals',
-  target: { room: 'showcase-coastal-duel', params: PARAMS },
+  target: { room: 'showcase-coastal-duel', params: { shipKind: 'fighter', art: 'machined', fx: 'new' } },
   hud: 'none',
   durationMs: 34_000,
   async startWhen(ctx) {
@@ -144,6 +148,8 @@ export const coastalDuel: Shot = {
     await sendRoom(ctx, 'test_aggro', { type: 'test_aggro' });
     // The battleship closes to its broadside range off camera.
     await ctx.sleep(10_000);
+    // A pan needs a free camera: watch as a spectator.
+    await ctx.spectate();
   },
   async run(ctx) {
     const t0 = Date.now();
@@ -159,11 +165,6 @@ export const coastalDuel: Shot = {
       { atMs: 11_000, smoothMs: 2200, shot: { kind: 'hold', x: 0, y: 200, zoom: 0.42 * k } },
       ...(bs ? [{ atMs: 22_000, smoothMs: 2500, shot: { kind: 'track' as const, target: bs, zoom: 0.17 * k, offsetY: -1200 } }] : []),
     ]);
-    for (const at of [1000, 12_500, 20_500]) {
-      await ctx.sleep(Math.max(0, at - (Date.now() - t0)));
-      await sendRoom(ctx, 'test_aggro', { type: 'test_aggro' });
-      await reload(ctx);
-    }
     await ctx.sleep(Math.max(0, 33_800 - (Date.now() - t0)));
   },
 };
