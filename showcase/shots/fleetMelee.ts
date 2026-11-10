@@ -1,5 +1,5 @@
 import type { Shot, ShotContext } from '../types.js';
-import { flyRoute } from './_pilot.js';
+import { flyTo, face } from './_pilot.js';
 
 /** Live NPC ships in the pilot's mirror. */
 async function npcCount(ctx: ShotContext): Promise<number> {
@@ -19,23 +19,41 @@ async function piloting(ctx: ShotContext): Promise<boolean> {
   }).catch(() => false);
 }
 
+/** The nearest robot (the side hostile to the pilot), as a player picks a foe. */
+async function nearestRobot(ctx: ShotContext): Promise<{ x: number; y: number } | null> {
+  return ctx.page.evaluate(() => {
+    const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId?: string | null; ships: Map<string, { x: number; y: number }>; swarm: Map<number, { kind: number; shipKind?: string; x: number; y: number }> } } }).__eqxClient?.mirror;
+    const me = m?.localPlayerId ? m.ships.get(m.localPlayerId) : undefined;
+    if (!m || !me) return null;
+    let best: { x: number; y: number } | null = null;
+    let bd = Infinity;
+    m.swarm.forEach((e) => {
+      if (e.kind !== 1 || !e.shipKind?.startsWith('robot')) return;
+      const d = (e.x - me.x) ** 2 + (e.y - me.y) ** 2;
+      if (d < bd) { bd = d; best = { x: e.x, y: e.y }; }
+    });
+    return best;
+  }).catch(() => null);
+}
+
 /**
  * Friendly fire and the fight rules (allegiances.md "Fire paths"), filmed as a
  * player sees it. A drone pack and a robot squad (sides that fight on sight)
  * are posed in two ranks each, shields up, and are already fighting when the
- * take opens. A fighter flies in from the south with the follow camera and its
- * own guns on AUTO: they lock (lock-to-fire) and fire at the robots, which are
- * hostile to it on sight and lock it back (the threat ring). Rear ranks hold
- * fire while an ally is in the line and hit their own side when one drifts in
- * after the shot; shields meet as bubbles. No test cues at all: no aggro, no
- * survive params, no lock cues. If the fighter dies, the take keeps rolling in
- * the spectator view the game switches to.
+ * take opens. A fighter flies in from the south with the follow camera and
+ * goes after the nearest robot (robots are hostile to pilots on sight), with
+ * its gun group on AUTO: it fires only once its lock completes, and the robots
+ * lock it back (the threat ring). NPCs hold fire while an ally is in the line
+ * and hit their own side when one drifts in after the shot; shields meet as
+ * bubbles. No test cues at all: no aggro, no survive params, no lock cues. If
+ * the fighter dies, the take keeps rolling in the spectator view the game
+ * switches to.
  */
 export const fleetMelee: Shot = {
   id: 'fleet-melee',
   section: 'mechanics',
   title: 'Fleet melee',
-  caption: 'A fighter joins a drone-versus-robot fight: guns fire only once locked, NPCs hold fire when an ally is in the way and still hit their own side when one drifts in, shields collide as bubbles.',
+  caption: 'A fighter joins a drone-versus-robot fight already under way and goes after the robots, firing only once locked; the NPCs hold fire while an ally is in the line and can still hit their own side.',
   features: ['M19'],
   docs: ['allegiances', 'fire-control'],
   reel: false,
@@ -49,22 +67,23 @@ export const fleetMelee: Shot = {
       m?.swarm.forEach((e) => { if (e.kind === 1) n++; });
       return n >= 12;
     }, undefined, { timeout: 60_000, polling: 250 });
-    // The two sides close and open fire on their own; start once they are at it.
-    await ctx.sleep(5000);
+    // The two sides close and open fire on their own; roll once they meet.
+    await ctx.sleep(2000);
     ctx.log(`  [fleet-melee] NPCs at take start: ${await npcCount(ctx)}`);
   },
   async run(ctx) {
     const t0 = Date.now();
-    await ctx.sleep(1000);
-    // Fly north into the fight, then work along the robots' side of it.
-    const legs: Array<[number, number]> = [[0, -450], [250, -150], [350, 200], [0, 350], [-200, 50], [150, -250], [300, 150]];
-    for (const leg of legs) {
-      if (Date.now() - t0 > 42_000 || !(await piloting(ctx))) break;
-      await flyRoute(ctx, [leg], { arrive: 120, maxMs: Math.min(7000, 43_000 - (Date.now() - t0)) });
+    const left = (): number => 44_000 - (Date.now() - t0);
+    while (left() > 1000 && (await piloting(ctx))) {
+      const r = await nearestRobot(ctx);
+      if (!r) break;
+      // Close to gun range, then hold the nose on it for a moment.
+      await flyTo(ctx, r.x, r.y, { arrive: 220, maxMs: Math.min(3000, left()), cruise: 260, passThrough: true });
+      const r2 = await nearestRobot(ctx);
+      if (r2 && left() > 1000) await face(ctx, r2.x, r2.y, 700);
     }
     ctx.log(`  [fleet-melee] t=${((Date.now() - t0) / 1000).toFixed(1)}s piloting=${await piloting(ctx)} NPCs=${await npcCount(ctx)}`);
-    const left = 44_000 - (Date.now() - t0);
-    if (left > 0) await ctx.sleep(left);
+    if (left() > 0) await ctx.sleep(left());
     ctx.log(`  [fleet-melee] end piloting=${await piloting(ctx)} NPCs=${await npcCount(ctx)}`);
   },
 };
