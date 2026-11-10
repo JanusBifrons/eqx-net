@@ -12,14 +12,15 @@ const select = selectFeatureSpecs as (changed: string[]) => string[];
 describe('path-triggered feature specs', () => {
   it('every named spec exists (a renamed spec must not silently drop out)', () => {
     const named = [...triggers.flatMap((t) => t.specs), ...(QUARANTINE as Set<string>)];
-    const missing = named.filter((s) => !existsSync(`tests/e2e/${s}.spec.ts`) && !existsSync(`tests/e2e/combat/${s}.spec.ts`));
+    const missing = named.filter((s) => !existsSync(`tests/e2e/${s}.spec.ts`) && !existsSync(`tests/e2e/combat/${s}.spec.ts`)
+      && !existsSync(`tests/e2e/linger/${s}.spec.ts`));
     expect(missing).toEqual([]);
   });
 
   it('a structures change runs the structure specs', () => {
     const specs = select(['src/server/structures/StructureGridSubsystem.ts']);
     expect(specs).toContain('structure-build-placement');
-    expect(specs).toContain('speed-dial');
+    expect(specs).toContain('structure-grid-web');
   });
 
   it('a changed feature spec runs itself; quarantined specs never run', () => {
