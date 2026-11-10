@@ -100,6 +100,9 @@ export class SwarmEntityRegistry {
   private readonly byEntityId = new Map<number, SwarmEntityRecord>();
   private readonly freeEntityIds: number[] = [];
   private nextEntityId = 0;
+  /** Bumped on every register/unregister, so a per-tick cache (the
+   *  projectile broadphase) can tell when membership changed mid-tick. */
+  version = 0;
 
   /** Allocate a fresh dense entityId. Reuses freed ones first. */
   private allocEntityId(): number {
@@ -129,6 +132,7 @@ export class SwarmEntityRegistry {
     };
     this.byId.set(id, record);
     this.byEntityId.set(entityId, record);
+    this.version++;
     return record;
   }
 
@@ -138,6 +142,7 @@ export class SwarmEntityRegistry {
     this.byId.delete(id);
     this.byEntityId.delete(rec.entityId);
     this.freeEntityIds.push(rec.entityId);
+    this.version++;
     return rec;
   }
 
