@@ -328,6 +328,7 @@ The showcase reel is a **repeatable build artefact**, not a one-off edit: `pnpm 
 - Never hide game UI or effects, re-stage a shot, move a scene, or change behaviour only to make a clip look better.
 - Fix genuine bugs found while filming or reviewing (with the failing test first, invariant #13).
 - A hostile reviewer's "works, but makes a poor video" findings go to the owner as notes, not into changes.
+- Clips film the full HUD with no `cleanworld` (user, 2026-11-10: "Show everything"). `targetUrl` forces `FILM_HUD = 'full'` and ignores a shot's `hud`; lock `showcase/targetUrl.test.ts`.
 
 **Shots film the player's look, not the test look (2026-11-10, user: the clips "didn't have the full graphics and shadows turned on").** The capture browser is automated, and automation defaults to classic art and baked lighting (`artMode.ts`). `targetUrl` therefore adds `PLAYER_LOOK` (`art=machined&fx=new&shiplight=high`, a desktop player's default) to every shot; a shot's params or `EQX_SHOWCASE_PARAMS` override it. Lock: `showcase/targetUrl.test.ts` compares it with the game's own desktop default.
 
