@@ -104,10 +104,12 @@ test.describe('Probe 4 — damage_number event shape', () => {
     test.setTimeout(30_000);
     // Lock-to-fire (2026-11-09): nothing fires without a completed lock, so
     // empty space is no longer shootable. `auto-fire-test` parks a drone
-    // 150 u ahead and `instantLock=1` makes the AUTO group lock it at once.
+    // 150 u ahead; `anyTarget=1` lets the AUTO group pick it (neutral) and
+    // `instantLock=1` locks it at once.
     const { ctx, page } = await joinWithDiag(browser, {
       room: 'auto-fire-test',
       instantLock: '1',
+      anyTarget: '1',
       initialHull: '5000',
       spawnX: '0',
       spawnY: '0',

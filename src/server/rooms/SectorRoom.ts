@@ -519,15 +519,19 @@ const JoinOptionsSchema = z
      *  testMode-gated; ignored on galaxy rooms so a malicious client
      *  can't force-aggro a live sector. plan: imperative-taco. */
     startHostile: z.boolean().optional(),
-    /** Test-only bespoke trigger (fire control): this pilot's AUTO groups
-     *  also lock NON-hostile targets (NPC ships, structures not their own) in
-     *  reach + arc, and every lock completes on the next lock step, so a spec
-     *  that isn't about locking can fire without waiting ~1.5 s per lock.
-     *  testMode-gated (ignored on galaxy rooms). */
+    /** Test-only bespoke trigger (fire control): every lock of this pilot
+     *  completes on the next lock step, so a spec that isn't about locking can
+     *  fire without waiting ~1.5 s per lock. It does NOT widen AUTO targeting
+     *  (that is `anyTarget`). testMode-gated (ignored on galaxy rooms). */
     instantLock: z.boolean().optional(),
+    /** Test-only bespoke trigger (fire control): this pilot's AUTO groups
+     *  also pick NON-hostile targets (NPC ships, structures not their own) in
+     *  reach + arc. Never players. Usually paired with `instantLock`.
+     *  testMode-gated (ignored on galaxy rooms). */
+    anyTarget: z.boolean().optional(),
     /** Test-only bespoke trigger (fire control): every weapon group of this
      *  pilot starts in MAN, so AUTO never self-picks a target before the test
-     *  sets the group it wants (`instantLock` lets AUTO lock anything at once,
+     *  sets the group it wants (`anyTarget` + `instantLock` let AUTO lock anything at once,
      *  which can kill a fragile target first). testMode-gated. */
     groupMode: z.enum(['manual']).optional(),
     /** Test-only: override the disconnect-linger TTL (ms) for THIS player.
@@ -4119,7 +4123,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       autoPick: (pid, reach, sx, sy, bears, anyTarget) => {
         // Nearest NPC ship already hostile to this pilot, within reach and arc.
-        // testMode `instantLock` (`anyTarget`): any NPC ship or a structure
+        // testMode `anyTarget`: any NPC ship or a structure
         // that isn't the pilot's own.
         let best = -1;
         let bestD = reach * reach;
@@ -8242,10 +8246,12 @@ export class SectorRoom extends Room<SectorState> {
       this.markAllDronesHostileTo(playerId);
     }
     // Fire control (universal): every pilot is tracked; its groups fire only
-    // at LOCKED targets. `instantLock` is the testMode shortcut.
+    // at LOCKED targets. `instantLock` (locks complete at once) and
+    // `anyTarget` (AUTO picks non-hostile targets too) are testMode shortcuts.
     const instantLock = (this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.instantLock === true;
+    const anyTarget = (this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.anyTarget === true;
     const groupMode = (this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success ? parsed.data.groupMode ?? null : null;
-    this.locks.enable(playerId, instantLock, groupMode);
+    this.locks.enable(playerId, instantLock, groupMode, anyTarget);
     // Structure turrets lock too; an `instantLock` joiner makes this room's
     // structure locks instant as well (room-wide, test rooms only).
     if (instantLock) this.structureGrid.setInstantTurretLocks(true);

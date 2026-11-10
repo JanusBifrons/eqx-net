@@ -193,12 +193,14 @@ export function buildJoinSpec(
   // testMode-gated server-side; harmless on galaxy rooms.
   if (urlParams.has('startHostile'))
     extraJoinOptions['startHostile'] = urlParams.get('startHostile') === '1';
-  // Fire control — `?instantLock=1`: AUTO groups lock any non-own lockable
-  // target in reach + arc, and every lock completes at once, so a combat test
-  // fires without driving the lock line. testMode-gated server-side.
+  // Fire control — `?instantLock=1`: every lock completes at once, so a combat
+  // test fires without driving the lock line. testMode-gated server-side.
   if (urlParams.get('instantLock') === '1') extraJoinOptions['instantLock'] = true;
+  // Fire control — `?anyTarget=1`: AUTO groups also pick non-hostile NPCs and
+  // non-own structures in reach + arc (never players). testMode-gated server-side.
+  if (urlParams.get('anyTarget') === '1') extraJoinOptions['anyTarget'] = true;
   // Fire control — `?groupMode=manual`: every weapon group starts in MAN, so
-  // AUTO (wide under instantLock) never kills a target before the test picks
+  // AUTO (wide under anyTarget) never kills a target before the test picks
   // its group. testMode-gated server-side.
   if (urlParams.get('groupMode') === 'manual') extraJoinOptions['groupMode'] = 'manual';
   if (urlParams.has('injectLeak'))
