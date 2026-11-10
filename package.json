@@ -24,6 +24,7 @@
     "test:authored-scale": "node scripts/test-authored-scale.mjs",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:naval-real": "vitest run --config vitest.naval-real.config.ts",
     "test:gc": "vitest run --config vitest.gc.config.ts",
     "coverage": "vitest run --coverage --exclude \"**/*.integration.test.ts\"",
     "bench": "vitest bench --run",

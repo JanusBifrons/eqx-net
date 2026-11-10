@@ -176,6 +176,11 @@ jobs:
       - name: Integration tests
         if: needs.changes.outputs.code == 'true'
         run: pnpm run test:integration
+      # The real-scale naval range switch (EQX_NAVAL_RANGE=real) needs its own
+      # run: the catalogue is built once per process (real-scale-ranges.md).
+      - name: Integration tests (real naval ranges)
+        if: needs.changes.outputs.code == 'true'
+        run: pnpm run test:naval-real
 
   # Heap-delta suite (`vitest.gc.config.ts`: forks pool + --expose-gc, strictly
   # serial). Locks invariant #14 (no hot-loop allocation) for the pooled
