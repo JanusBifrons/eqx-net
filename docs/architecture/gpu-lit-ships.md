@@ -6,10 +6,10 @@ Before this, every ship was baked 16 times (capitals 4), fully lit, once per sun
 
 | Level | What | Default for |
 |---|---|---|
-| High | The night side: long sharp shadows on ships (real length on structures), fill light, 8 point lights, engines as lights, capital shadows and bounce | desktop |
-| Medium | High with 48 shadow steps and 4 point lights | phones |
+| High | Everything on (`ALL_ON`, since 2026-11-10): long, firm shadows on ships (real length on structures), fill light, 8 point lights, engines as lights, capital shadows, occlusion and bounce | desktop |
+| Medium | The night side (brighter ambient, softer shadows) with 48 shadow steps and 4 point lights | phones |
 | Low | 16 shadow steps, 4 point lights, no engine lights, fill or capital effects | phones reporting < 4 GB |
-| Baked | Today's baked frames (the old look) | automated browsers (tests, netgate, showcase) |
+| Baked | Today's baked frames (the old look) | automated browsers (tests, netgate); the showcase films High (#408) |
 
 Precedence: `?shiplight=gpu|high|medium|low|baked` > the saved level (per device, `eqxShipLight`) > the device default (`defaultLightingPreset`). A change applies on the next load. Automated browsers stay on Baked unless the URL asks, so tests are unchanged.
 

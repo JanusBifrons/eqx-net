@@ -1,15 +1,15 @@
 /** `?shiplight=gpu` (plan prancy-squishing-donut R2): off unless asked, only with Machined art. */
 import { describe, expect, it } from 'vitest';
 import { resolveArtMode, resolveShipLighting } from './artMode.js';
-import { LOOK_NIGHT, defaultLightingPreset, presetSettings } from './lightingSettings.js';
+import { ALL_ON, defaultLightingPreset, presetSettings } from './lightingSettings.js';
 
 describe('resolveShipLighting', () => {
   it('is off by default and with classic art', () => {
     expect(resolveShipLighting('', 'machined')).toBeUndefined();
     expect(resolveShipLighting('?shiplight=gpu', 'classic')).toBeUndefined();
   });
-  it('defaults to the night-side look; per-feature switches apply', () => {
-    expect(resolveShipLighting('?shiplight=gpu', 'machined')).toEqual(LOOK_NIGHT);
+  it('defaults to the all-on look (High); per-feature switches apply', () => {
+    expect(resolveShipLighting('?shiplight=gpu', 'machined')).toEqual(ALL_ON);
     const s = resolveShipLighting('?shiplight=gpu&look=f&points=4', 'machined')!;
     expect(s.sunElevDeg).toBe(25);
     expect(s.pointLights).toBe(4);
@@ -26,7 +26,7 @@ describe('resolveShipLighting', () => {
 
 describe('lighting levels (default on for players)', () => {
   it('players get their device default; automation stays baked unless the URL asks', () => {
-    expect(resolveShipLighting('', 'machined', { touch: false })).toEqual(LOOK_NIGHT);
+    expect(resolveShipLighting('', 'machined', { touch: false })).toEqual(ALL_ON);
     expect(resolveShipLighting('', 'machined', { touch: true })).toEqual(presetSettings('medium'));
     expect(resolveShipLighting('', 'machined', { touch: true, deviceMemoryGb: 2 })).toEqual(presetSettings('low'));
     expect(resolveShipLighting('', 'machined', { touch: false, automation: true })).toBeUndefined();
