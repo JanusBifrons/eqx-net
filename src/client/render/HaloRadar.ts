@@ -20,7 +20,9 @@
  * `update()` runs per RAF → invariant #14: no allocation in steady state
  * (scratch arrays/points are class fields; key strings are cached per id).
  */
-import { Container, type Graphics } from 'pixi.js';
+import { Container, Graphics, Text, TextStyle } from 'pixi.js';
+import { countdownLabel } from './incoming/incomingFire.js';
+import { INCOMING_COLOR, type IncomingGroups } from './incoming/IncomingFireWarning.js';
 import type { Camera } from './worker/Camera';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
@@ -224,6 +226,19 @@ export class HaloRadar {
   private cameraRelative = false;
   setCameraRelative(active: boolean): void {
     this.cameraRelative = active;
+  }
+
+  /** Incoming naval fire (`IncomingFireWarning`): when the shells of the
+   *  soonest group are off screen, one red chevron on the track points at
+   *  them, with that group's countdown. */
+  private incoming: IncomingGroups | null = null;
+  private incomingGfx: Graphics | null = null;
+  private incomingText: Text | null = null;
+  private incomingLabel = '';
+  /** Track param of the incoming chevron (debug), -1 when hidden. */
+  private incomingParam = -1;
+  setIncoming(src: IncomingGroups | null): void {
+    this.incoming = src;
   }
 
   /** In transit / arriving → clear the radar (the mirror holds the OLD sector).
@@ -463,6 +478,8 @@ export class HaloRadar {
       entry.lastVisible = true;
     }
 
+    this.drawIncoming(W, H, perimeter);
+
     // ── 5. Sweep ─────────────────────────────────────────────────────────
     for (const [key, entry] of this.icons) {
       if (entry.renderedAtFrame !== frameId) {
@@ -505,7 +522,84 @@ export class HaloRadar {
     return true;
   }
 
+  /**
+   * The incoming-fire chevron: the soonest group whose shells are off screen
+   * (its fall point is beside the ship, so the ring is usually on screen; the
+   * chevron shows where the fire is COMING FROM). On the same track, clear of
+   * the same HUD blocks, as every other icon. Alloc-free once built.
+   */
+  private drawIncoming(W: number, H: number, perimeter: number): void {
+    const src = this.incoming;
+    const cam = this.camera!;
+    let best = -1;
+    let bestT = Infinity;
+    if (src) {
+      for (let i = 0; i < src.groupCount; i++) {
+        const G = src.groups[i]!;
+        if (G.t >= bestT) continue;
+        cam.toScreenInto(G.sx, -G.sy, this.pt);
+        if (pointViewportDistance(this.pt.x, this.pt.y, W, H) <= 0) continue;
+        best = i;
+        bestT = G.t;
+      }
+    }
+    if (best < 0) { this.hideIncoming(); return; }
+    const G = src!.groups[best]!;
+    cam.toScreenInto(G.sx, -G.sy, this.pt);
+    const track = this.track;
+    placeOnTrack(this.pt.x, this.pt.y, W, H, track, this.pt2);
+    let p = trackParam(this.pt2.x, this.pt2.y, track);
+    if (this.blockedCount > 0) p = resolveBlocked(p, this.blocked, this.blockedCount, perimeter);
+    trackPoint(p, track, this.pt2);
+    if (!this.incomingGfx) {
+      const g = new Graphics();
+      // A chevron pointing +x (rotated to the bearing each frame).
+      g.moveTo(-5, -7).lineTo(7, 0).lineTo(-5, 7).lineTo(-1, 0).closePath();
+      g.fill({ color: INCOMING_COLOR, alpha: 1 });
+      g.stroke({ color: 0x000000, width: 1, alpha: 0.6 });
+      const t = new Text({
+        text: '',
+        style: new TextStyle({
+          fontFamily: '"JetBrains Mono", "Roboto Mono", monospace',
+          fontSize: 10,
+          fontWeight: '700',
+          fill: '#ff6a5a',
+          stroke: { color: '#000000', width: 2, join: 'round' },
+        }),
+      });
+      t.anchor.set(0.5, 0.5);
+      this.container.addChild(g, t);
+      this.incomingGfx = g;
+      this.incomingText = t;
+    }
+    const g = this.incomingGfx;
+    const text = this.incomingText!;
+    // Bearing from the screen centre to the shells; the label sits inward.
+    const ang = Math.atan2(this.pt.y - H * 0.5, this.pt.x - W * 0.5);
+    g.x = this.pt2.x; g.y = this.pt2.y; g.rotation = ang; g.visible = true;
+    const label = countdownLabel(G.t);
+    if (label !== this.incomingLabel) { this.incomingLabel = label; text.text = label; }
+    text.x = this.pt2.x - Math.cos(ang) * 20;
+    text.y = this.pt2.y - Math.sin(ang) * 14;
+    text.visible = true;
+    this.incomingParam = p;
+  }
+
+  private hideIncoming(): void {
+    if (this.incomingGfx) this.incomingGfx.visible = false;
+    if (this.incomingText) this.incomingText.visible = false;
+    this.incomingParam = -1;
+  }
+
+  /** Test-only — the incoming-fire chevron, or null when hidden. */
+  getDebugIncoming(): { x: number; y: number; label: string; param: number } | null {
+    const g = this.incomingGfx;
+    if (!g || !g.visible) return null;
+    return { x: g.x, y: g.y, label: this.incomingLabel, param: this.incomingParam };
+  }
+
   private hideAll(): void {
+    this.hideIncoming();
     for (const entry of this.icons.values()) {
       entry.gfx.visible = false;
       entry.lastVisible = false;
@@ -514,6 +608,7 @@ export class HaloRadar {
   }
 
   private clearAll(): void {
+    this.hideIncoming();
     for (const entry of this.icons.values()) {
       this.container.removeChild(entry.gfx);
       entry.gfx.destroy();

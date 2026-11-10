@@ -164,3 +164,40 @@ and across the edge) on a desktop viewport and a touch-emulated phone viewport
 - Nothing under `src/client/render/**` may read the Zustand store — state
   crosses into the renderer via setters / worker messages (the §1 defect 6 class).
 - `pixiY = -gameY` for every world→screen projection.
+
+## 7. Incoming fire (naval shells)
+
+At real-scale ranges a 16" shell flies up to ~30 s from a gun far off screen.
+`render/incoming/IncomingFireWarning.ts` warns the ship it is falling on.
+
+- **Source.** The naval shells (`naval_*`) already in `mirror.projectiles`
+  (snapshot-derived, #16; no event). The server sends a far shell to any
+  viewer whose view holds its path or fall point (PR #425).
+- **Prediction** (`incomingFire.ts`, pure). Closest approach of the shell to
+  the local ship, both on straight lines (relative motion), clipped to the
+  shell's remaining flight. Remaining flight = the gun's `maxTicks` minus the
+  time flown since the client first saw the shell. A shell that can land near
+  you is sent from its first snapshot, so first-seen is close to fired; one
+  first seen mid-flight only gets a longer segment past its real end, which
+  is out of view and so never inside the danger radius.
+- **Danger radius** = `shipTuning(kind).incomingFireRadius` (#18) + the gun's
+  splash radius. `incomingFireRadius` = 2 × (hull radius + shield pad): the
+  shield ball a shell must touch, plus one more ball-width for the ship's turn
+  and the straight-line error. Fighter (2× B) 88 u; battleship ~5,790 u.
+- **Grouping.** Passes whose fall points are within 2 × the radius and whose
+  arrivals are within 2 s share a marker (one salvo, one marker per fall area),
+  showing the soonest arrival.
+- **In-world marker.** A red reticle ring (danger radius on screen, clamped to
+  12–320 px) at the fall point, pulsing, with a 10 px countdown under it
+  ("3.4s"). Screen-space layer on the stage, so it keeps its size at any zoom.
+- **Off screen.** The fall point is beside the ship, so the ring is usually
+  on screen; what is off screen is the GUN. `HaloRadar.setIncoming` draws one
+  red chevron on the radar track, pointing at the soonest group's shells,
+  with its countdown just inside it. Same track and HUD-blocked intervals as
+  every other icon, so it never sits on a HUD widget (mobile or desktop).
+- **Far shell size.** `projectileSpriteUpdater` draws naval shells at least
+  `SHELL_MIN_SCREEN_PX` (3 px) wide at any zoom.
+- Renderer state only (never Zustand, #2); pooled, generation-swept, no
+  per-frame allocation (#14); lives in `PixiRenderer.update`, so both render
+  paths (main thread and worker) draw it. Locks: `incomingFire.test.ts`,
+  `IncomingFireWarning.test.ts`.
