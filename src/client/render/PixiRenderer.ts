@@ -28,7 +28,7 @@ import { pickEntityAt, type PickedEntityKind } from './pickEntity';
 import { decideLingeringSpriteAction, decideExplosionPosition, type SpriteDecision } from './spriteUpdateDecisions';
 import { shouldLatchFirstFrame } from './firstFrameLatch.js';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
-import { readFxKillSwitches } from './fxKillSwitches';
+import { readFxKillSwitches, type FxKillSwitches } from './fxKillSwitches';
 import { createArtService, type ArtHandle } from './art/ArtService.js';
 import { MachinedShipSprite } from './art/MachinedShipSprite.js';
 import { litPass } from './art/litPass.js';
@@ -154,9 +154,14 @@ export class PixiRenderer implements IRenderer {
   private _zoomPinned = false;
   private readonly _zoomRange = { minScale: GAMEPLAY_MIN_ZOOM, startZoom: 0 };
 
-  constructor(isTouch = false, art: ArtOptions = ART_OFF) {
+  /** FX kill switches handed in by the worker BOOT (resolved on the main
+   *  thread — the worker has no `window`). Absent ⇒ read the URL at init. */
+  private readonly _fxKillSwitches: FxKillSwitches | undefined;
+
+  constructor(isTouch = false, art: ArtOptions = ART_OFF, fxKillSwitches?: FxKillSwitches) {
     this._isTouch = isTouch;
     this._artOpts = art;
+    this._fxKillSwitches = fxKillSwitches;
     this.halo = new HaloRadar(isTouch);
   }
 
@@ -737,7 +742,8 @@ export class PixiRenderer implements IRenderer {
     // Read the bisected FX kill switches once at init. Threaded into the
     // warp chain (forceDisable) + EffectsService refs (per-effect bypasses).
     // Plan: melodic-engelbart Step 2.
-    const fxKillSwitches = readFxKillSwitches();
+    // Worker path: the switches arrive on BOOT (no `window` here).
+    const fxKillSwitches = this._fxKillSwitches ?? readFxKillSwitches();
 
     // Machined art: bakes run on workers; until an entity's art is ready it
     // draws today's look. The mode is resolved on the main thread (artMode.ts).

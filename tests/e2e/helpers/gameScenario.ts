@@ -39,6 +39,11 @@ export interface TestClientOpts {
    *  that needs to SHOOT something but isn't about locking. It does NOT widen
    *  AUTO targeting — add `anyTarget` for that. */
   instantLock?: boolean;
+  /** Fire-control bespoke trigger (`?lockTimeCapS=N`, testMode rooms only):
+   *  no NON-player lock in the room (NPC ships on pilots, capital turrets on
+   *  structures, structure / coastal turrets) takes longer than N seconds;
+   *  0 = the first lock step. Reaches the room on the room-creating client. */
+  lockTimeCapS?: number;
   /** Fire-control bespoke trigger (`?anyTarget=1`, testMode rooms only): AUTO
    *  weapon groups also pick NON-hostile NPCs and non-own structures in reach
    *  + arc. Never auto-picks other players — lock those with `lockOn`
@@ -86,6 +91,7 @@ export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
   if (opts.shipKind !== undefined) params.set('shipKind', opts.shipKind);
   if (opts.injectLeak !== undefined) params.set('injectLeak', String(opts.injectLeak));
   if (opts.instantLock) params.set('instantLock', '1');
+  if (opts.lockTimeCapS !== undefined) params.set('lockTimeCapS', String(opts.lockTimeCapS));
   if (opts.anyTarget) params.set('anyTarget', '1');
   if (opts.groupMode) params.set('groupMode', opts.groupMode);
   for (const [k, v] of Object.entries(opts.extraParams ?? {})) params.set(k, v);

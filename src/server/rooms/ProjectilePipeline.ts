@@ -19,9 +19,12 @@
  * On miss + alive: commit integration. On lifetime expiry: drop.
  *
  * A shell whose weapon has a `splash` (the 80 cm siege gun, plan
- * coastal-defences) also bursts where it stops — on a hit or when it falls at
- * the end of its flight: everything else within the blast takes
- * `shellBlastDamage`, and `onBlast` shows it.
+ * coastal-defences) also bursts where it HITS: everything else within the
+ * blast takes `shellBlastDamage`, and `onBlast` shows it. A shell that hits
+ * nothing ends silently at the end of its flight — no burst, no splash
+ * (owner, 2026-11-10: "hit anything in-between if it's there, but only
+ * explode on target"). The client agrees: `NavalShellBursts` lets a shell
+ * that ran its full range fade (lock: `tests/unit/navalShellMissParity.test.ts`).
  *
  * Extracted from SectorRoom (commit 21 of v3 refactor plan; Combat
  * Architecture section of src/server/CLAUDE.md).
@@ -255,8 +258,8 @@ export class ProjectilePipeline {
       proj.x += stepX;
       proj.y += stepY;
       if (serverTick - proj.birthTick >= proj.maxTicks) {
-        // A shell with a blast lands and bursts where it falls.
-        this.blast(proj, proj.x, proj.y, null);
+        // A miss just ends: shells explode only on what they hit (no burst,
+        // no splash at the end of the flight).
         this.liveProjectiles.delete(projId);
       }
     }
