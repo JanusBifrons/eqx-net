@@ -46,9 +46,10 @@ import { FxEngines } from './art/fx/FxEngines.js';
 import { WarpFx, type WarpFxShip } from './pixi/WarpFx.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
 import { LodDots } from './pixi/LodDots';
-import { GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldVisualRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
+import { GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldBubbleRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
 import { FxFences, FxShields } from './art/fx/FxShields.js';
-import { SHIELD_RADIUS_PAD } from '../../shared-types/shipKinds.js';
+import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
+import { shieldBubbleRadiusForEntity } from './pixi/shieldBubbleRadius.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
 import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
 import { BeamSpritePool, type BeamView } from './BeamSpritePool';
@@ -2694,26 +2695,15 @@ export class PixiRenderer implements IRenderer {
 
     for (const id of seen) {
       if (!this._activeShieldIds.has(id)) {
-        // Look up the entity's actual hull radius so the visible aura
-        // matches the physics ball collider (both use the same
-        // `kind.radius + SHIELD_RADIUS_PAD` formula on the server).
-        // Without this, ShieldAura would fall back to its 28 u default
-        // for every ship — scout's tiny shield would render the same
-        // size as a heavy's, and neither would match the physics.
-        let auraRadius: number | undefined;
-        if (id.startsWith('swarm-')) {
-          const swarmId = parseInt(id.slice('swarm-'.length), 10);
-          const sw = mirror.swarm?.get(swarmId);
-          if (sw) auraRadius = sw.shipKind ? shieldVisualRadius(getShipKind(sw.shipKind)) : sw.radius;
-        } else {
-          // mirror.ships for an active hull; mirror.lingeringShips for a parked
-          // one (lingering hulls are shipInstanceId-keyed + kept out of ships).
-          const ship = mirror.ships.get(id) ?? mirror.lingeringShips?.get(id);
-          if (ship?.kind) auraRadius = shieldVisualRadius(getShipKind(ship.kind));
-        }
-        this.effects.setContinuous(id, 'shield', true, auraRadius);
+        // The drawn bubble IS the shield collider (owner's rule 2026-11-10):
+        // `shieldBubbleRadiusForEntity` = shieldVisualRadius + shipTuning pad,
+        // the same ball `shipShieldColliderDesc` mounts (#15/#18). Both shield
+        // visuals (the legacy ring and the new FxShields) draw at it.
+        const bubble = shieldBubbleRadiusForEntity(id, mirror)
+          ?? shieldBubbleRadius(getShipKind(DEFAULT_SHIP_KIND));
+        this.effects.setContinuous(id, 'shield', true, bubble);
         this._activeShieldIds.add(id);
-        this._fxShieldRadius.set(id, (auraRadius ?? 28) + SHIELD_RADIUS_PAD);
+        this._fxShieldRadius.set(id, bubble);
       }
     }
     for (const id of this._activeShieldIds) {
