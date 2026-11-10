@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 import { ProjectilePipeline } from '../../src/server/rooms/ProjectilePipeline.js';
 import { getWeapon, type WeaponId } from '../../src/core/combat/WeaponCatalogue.js';
 import { shellEndedOnHit } from '../../src/client/render/art/fx/turretFx.js';
+import { NavalShellBursts, type ShellView } from '../../src/client/render/art/fx/navalShellBursts.js';
 
 const NAVAL: readonly WeaponId[] = ['naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege'];
 
@@ -41,13 +42,27 @@ describe('naval shell miss: server and client agree', () => {
       });
       pipe.spawn('gun', 0, 0, w.speed, 0, 100, w.radius, w.maxTicks, id);
       // The client first sees the shell at its spawn point and last sees it
-      // the tick before it disappears.
+      // the tick before it disappears. Feed the server's positions into the
+      // real client burst tracker, one frame per tick.
+      const bursts = new NavalShellBursts();
+      const view = new Map<string, ShellView>();
+      let drawn = 0;
+      const sink = { spawn: (): boolean => { drawn++; return true; } };
       let lastSeenX = 0;
       for (let i = 0; i < w.maxTicks + 5 && pipe.size() > 0; i++) {
-        for (const p of pipe.liveProjectiles.values()) lastSeenX = p.x;
+        view.clear();
+        for (const [pid, p] of pipe.liveProjectiles) {
+          lastSeenX = p.x;
+          view.set(pid, { x: p.x, y: p.y, weaponId: p.weaponId });
+        }
+        bursts.frame(view, sink, i * 16);
         pipe.advance();
         tick++;
       }
+      view.clear();
+      bursts.frame(view, sink, 1e6);
+      expect(drawn).toBe(0);
+      expect(bursts.count()).toBe(0);
       expect(pipe.size()).toBe(0);
       expect(blasts).toEqual([]);
       expect(hits).toEqual([]);
