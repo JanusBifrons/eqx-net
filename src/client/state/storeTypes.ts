@@ -248,6 +248,8 @@ export interface UIStore {
   placementKind: StructureKindId | null;
   /** Phase 4 warp-to: the warp destination picker is open (discrete UI flag). */
   warpPickerOpen: boolean;
+  /** The contacts overview (lock list) is open (discrete UI flag). */
+  contactsOpen: boolean;
   /** Where a held warp goes (the picker's label), shown by the warp chip; null when none. */
   warpHeldTo: string | null;
   /** Click-to-inspect selection (structures follow-up Item B3). The id of the
@@ -495,6 +497,7 @@ export interface UIStore {
   setActiveSlotId: (id: string) => void;
   setPlacementKind: (k: StructureKindId | null) => void;
   setWarpPickerOpen: (open: boolean) => void;
+  setContactsOpen: (open: boolean) => void;
   setWarpHeldTo: (label: string | null) => void;
   /** Phase 4 WS-B1 — set / clear the pending local level-up acknowledgement
    *  (the level just reached, or null to clear). WS-B2's upgrade modal reads it. */
