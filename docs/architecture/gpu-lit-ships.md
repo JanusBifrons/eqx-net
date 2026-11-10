@@ -99,8 +99,8 @@ The phone-proxy A/B read GPU lighting as **+33 % heap**. That reading was taken 
 Plan `prancy-squishing-donut`, R2 (branch `rnd/gpu-lit-ingame`). Open: R3 batcher, phone measurement, per-device presets in Settings, the gunhouse recoiling with its barrels (one sprite, same in baked art).
 
 **Showcase review findings (2026-11-09, `gpu-lit-ships` shot, `capital-guns-fighter` take with `shiplight=high`).** The clip is not published until these are fixed:
-- A muzzle flash's light lasts only 1–2 frames: it follows the flash sprite, which is that brief. A short decay after the sprite ends would let the light read.
-- The 5-inch turrets' flashes cast no visible light on the deck.
-- A thin dark rod sticks out behind each 5-inch turret, opposite its barrels.
+- ~~A muzzle flash's light lasts only 1–2 frames: it follows the flash sprite, which is that brief. A short decay after the sprite ends would let the light read.~~ Fixed in #395 (a short ease-out tail after the sprite).
+- ~~The 5-inch turrets' flashes cast no visible light on the deck.~~ Fixed in #395 (the light scales with the gun).
+- ~~A thin dark rod sticks out behind each 5-inch turret, opposite its barrels.~~ Fixed: the rod was in the HULL bake, not the turret. The hull's vent-slit greeble (sized for a fighter) is one texel thick and ~110 u long on a capital, and on the battleship it ran out of the quad 40 mm AA tubs at `aa-s2`/`aa-p2` (the small turrets), so it read as a rod behind the gun in both the baked and GPU-lit art. Slits now skip any turret ring (`forgeShip`); lock: `render/art/hullVents.test.ts`.
 - Far shell streaks run nearly vertical while the barrels that fired them point south-east.
 - Framing: the follow camera keeps the hull near the left edge, and the caption covers the stern.
