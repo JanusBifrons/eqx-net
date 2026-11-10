@@ -106,7 +106,7 @@ function Chip({ group, index, active, scale }: { group: FcGroupSummary; index: n
   const h = CHIP_H * scale;
   const fs = Math.max(8, Math.round(9 * scale));
   return (
-    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6 }}>
+    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
       {group.locks.length > 0 && (
         <div
           data-testid={`fc-clear-${group.id}`}
@@ -125,7 +125,8 @@ function Chip({ group, index, active, scale }: { group: FcGroupSummary; index: n
         data-acquiring={acquiring}
         style={{
           position: 'relative',
-          width: w,
+          // Grows with its label: a fixed width clipped "PRIMARY" + its number.
+          minWidth: w,
           height: h,
           padding: '0 6px',
           boxSizing: 'border-box',
@@ -148,9 +149,9 @@ function Chip({ group, index, active, scale }: { group: FcGroupSummary; index: n
           outline: '12px solid transparent', // oversized touch area
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: fs, fontWeight: 700, letterSpacing: 1 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4, whiteSpace: 'nowrap', fontSize: fs, fontWeight: 700, letterSpacing: 1 }}>
           <span>{group.name.toUpperCase()}</span>
-          <span style={{ fontFamily: HUD.font.num, fontSize: fs - 1, color: HUD.color.inkFaint }}>{index + 1}</span>
+          <span data-testid={`fc-num-${group.id}`} style={{ flexShrink: 0, fontFamily: HUD.font.num, fontSize: fs - 1, color: HUD.color.inkFaint }}>{index + 1}</span>
         </div>
         <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 3, background: 'rgba(255,255,255,.12)', opacity: 0, transition: 'opacity .15s' }}>
           <span ref={bar} data-testid={`fc-progress-${group.id}`} style={{ display: 'block', height: '100%', width: 0 }} />
