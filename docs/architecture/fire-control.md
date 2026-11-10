@@ -77,7 +77,15 @@ Target keys: `s:<entityId>` (swarm) or `p:<playerId>`.
 - `AimFeedbackRenderer.drawFireControl`: your locks (closing ring, ticks,
   LOCKING / FAILSAFE / LOSING LOCK tag, dashed link; brackets + firing line when
   locked) and NPC locks on you (arcs, carets, diamonds). Tag text is rebuilt only
-  when its value changes (#14).
+  when its value changes (#14). Every mark on a target (ring, brackets,
+  diamond, candidate ring) is placed by the pure `lockMarkFrame`: hull-sized
+  and centred round anything that fits, but capped at
+  `LOCK_MARK_MAX_SCREEN_HALF` (120 px) and moved onto the target's keel line at
+  the point nearest you when the hull is bigger than that (a capital at normal
+  zoom). The threat ring round your own ship is capped at 220 px
+  (`threatRingRadius`). Before this a battleship's lock diamond was two screens
+  wide: two stray red lines (showcase `capital-guns-fighter`, 2026-11-10).
+  Lock: `lockMarkFrame.test.ts`.
 - HUD: `WeaponStrip`, `LockStatusBand` (polls the mirror at 10 Hz, re-renders on
   change), `TargetAction` (LOCK / CANCEL LOCK / UNLOCK), `MouseLock` (desktop).
 
