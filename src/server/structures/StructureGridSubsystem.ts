@@ -148,6 +148,15 @@ export interface StructureGridHooks {
    *  `maxDist`, it absorbs the hit; returns the crossing distance, else null.
    *  Absent ⇒ no walls (unit harnesses). */
   blockBeamAtWall?(fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, damage: number): number | null;
+  /** Friendly fire (owner decision 2026-11-10) — the first thing along the
+   *  beam within `maxDist`, of ANY side (its owner's own ship and structures
+   *  included), skipping only `skipId` (the turret). Returns the internal id
+   *  (for `applyDamage`), the wire id (for `broadcastBeam`) and the distance;
+   *  the result may be a reused scratch. Absent ⇒ the beam lands on its target
+   *  (unit harnesses). */
+  beamFirstHit?(
+    fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, skipId: string,
+  ): { id: string; wireId: string; dist: number } | null;
   /** Phase 5 — broadcast the turret fire beam (laser_fired). */
   broadcastBeam?(shooterId: string, fromX: number, fromY: number, toX: number, toY: number, targetId: string, mountId?: string): void;
   /** WS-8 (R2.15) — spawn a server PROJECTILE bolt from a Bolt Turret toward its
@@ -329,20 +338,36 @@ export class StructureGridSubsystem {
       const bdx = target.x - rec.x;
       const bdy = target.y - rec.y;
       const blen = Math.hypot(bdx, bdy);
-      // A shield wall in the way (its owner's own fence included) takes the
-      // hit and the beam ends there.
-      const wallT = blen > 1e-6 && this.hooks.blockBeamAtWall
-        ? this.hooks.blockBeamAtWall(rec.x, rec.y, bdx / blen, bdy / blen, blen, perHitDamage)
-        : null;
       // Drawn from the barrel tip (the shared muzzle, #15).
       const tip = blen > 1e-6 ? Math.min(blen, muzzle) / blen : 0;
       const fromX = rec.x + bdx * tip, fromY = rec.y + bdy * tip;
+      // Friendly fire (owner decision 2026-11-10): the beam lands on the FIRST
+      // thing it meets between the barrel tip and the target, of any side —
+      // its owner's own ship included. Distances below are from the centre.
+      let hitId = target.id;
+      let hitT = blen;
+      let hitX = target.x, hitY = target.y;
+      if (blen > 1e-6 && this.hooks.beamFirstHit) {
+        const tipD = blen * tip;
+        const h = this.hooks.beamFirstHit(fromX, fromY, bdx / blen, bdy / blen, blen - tipD, rec.id);
+        if (h !== null && h.id !== target.id) {
+          hitId = h.id;
+          hitT = tipD + h.dist;
+          hitX = rec.x + (bdx / blen) * hitT;
+          hitY = rec.y + (bdy / blen) * hitT;
+        }
+      }
+      // A shield wall in the way (its owner's own fence included) takes the
+      // hit and the beam ends there.
+      const wallT = blen > 1e-6 && this.hooks.blockBeamAtWall
+        ? this.hooks.blockBeamAtWall(rec.x, rec.y, bdx / blen, bdy / blen, hitT, perHitDamage)
+        : null;
       if (wallT !== null) {
         this.hooks.broadcastBeam?.(rec.id, fromX, fromY, rec.x + (bdx / blen) * wallT, rec.y + (bdy / blen) * wallT, '');
         return true;
       }
-      this.hooks.applyDamage!(target.id, rec.id, perHitDamage);
-      this.hooks.broadcastBeam?.(rec.id, fromX, fromY, target.x, target.y, target.id);
+      this.hooks.applyDamage!(hitId, rec.id, perHitDamage);
+      this.hooks.broadcastBeam?.(rec.id, fromX, fromY, hitX, hitY, hitId);
       return true;
     }
     // P2d — physical ordnance spends munitions (one per salvo).

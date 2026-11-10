@@ -37,7 +37,6 @@ import {
 } from '../../shared-types/sabLayout.js';
 import { getWeapon, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { shellBlastDamage } from '../../shared-types/shellBlast.js';
-import { allegianceOfKind } from '../../shared-types/shipKinds.js';
 import type { ShipState } from './schema/SectorState.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 
@@ -52,10 +51,6 @@ export interface ProjectileRecord {
   radius: number;
   maxTicks: number;
   weaponId: WeaponId;
-  /** Allegiances P0 — the firing NPC's allegiance (resolved once at spawn), or
-   *  undefined for a player / structure shooter. A bolt passes THROUGH swarm
-   *  combatants of the same allegiance (no friendly fire between AI allies). */
-  ownerAllegiance?: string;
 }
 
 /** A successful projectile-sweep result. */
@@ -112,10 +107,6 @@ export interface ProjectilePipelineDeps {
   wallBlocksProjectile?: (
     x: number, y: number, stepX: number, stepY: number, damage: number,
   ) => boolean;
-  /** Allegiances P0 — the allegiance of an NPC (kind-1 swarm) shooter, or
-   *  undefined for a player / structure owner. Called once per SPAWN (fire is
-   *  low-frequency), never per tick. Absent ⇒ no friendly-fire filter. */
-  ownerAllegianceOf?: (ownerId: string) => string | undefined;
   /** A shell with a blast burst at (x, y): show it (plan coastal-defences).
    *  Absent ⇒ no visual (unit harnesses); the damage still lands. */
   onBlast?: (x: number, y: number, radius: number) => void;
@@ -151,7 +142,6 @@ export class ProjectilePipeline {
       x, y, vx, vy, ownerId,
       birthTick: this.deps.serverTick(),
       damage, radius, maxTicks, weaponId,
-      ownerAllegiance: this.deps.ownerAllegianceOf?.(ownerId),
     });
   }
 
@@ -200,10 +190,8 @@ export class ProjectilePipeline {
         // the lingering-hull owner skip below. Sibling structures in the line of
         // fire are still hit (realistic — place defence turrets at the perimeter).
         if (rec.id === proj.ownerId) continue;
-        // Allegiances P0 — an AI bolt passes through its own allegiance's
-        // combatants (drones no longer shoot down fellow drones in the way).
-        if (proj.ownerAllegiance !== undefined && rec.kind === 1
-          && allegianceOfKind(rec.shipKind) === proj.ownerAllegiance) continue;
+        // Friendly fire (owner decision 2026-11-10): no allegiance filter. A
+        // bolt hits the first thing in its path, its own side included.
         const b = slotBase(rec.slot);
         const cx = d.sabF32[b + SLOT_X_OFF]!;
         const cy = d.sabF32[b + SLOT_Y_OFF]!;
@@ -289,8 +277,6 @@ export class ProjectilePipeline {
     }
     for (const rec of d.swarmRegistry.all()) {
       if (rec.kind !== 1 && rec.kind !== 2) continue; // ships and structures; rocks shrug it off
-      if (proj.ownerAllegiance !== undefined && rec.kind === 1
-        && allegianceOfKind(rec.shipKind) === proj.ownerAllegiance) continue;
       const b = slotBase(rec.slot);
       const r = rec.halfW !== undefined && rec.halfH !== undefined ? Math.min(rec.halfW, rec.halfH) : rec.radius;
       hurt(rec.id, d.sabF32[b + SLOT_X_OFF]!, d.sabF32[b + SLOT_Y_OFF]!, r);

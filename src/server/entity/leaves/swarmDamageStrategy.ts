@@ -55,7 +55,10 @@ export function createSwarmPerHit(deps: LeafDeps): PerHitEffect {
       // amplified once drones actively shoot structures (wave system Phase 2).
       // Faction escalation when a structure is attacked is handled separately
       // by the FactionLedger seam, not by marking the structure "hostile".
-      if (sourceId && rec.kind === 1) {
+      // Friendly fire (owner decision 2026-11-10): an accidental hit from the
+      // drone's own side still lands, but never marks it hostile or escalates
+      // a faction — packs must not civil-war after one stray shot.
+      if (sourceId && rec.kind === 1 && deps.isFriendlyFire?.(rec.id, sourceId) !== true) {
         deps.aiController.markHostile(rec.id, sourceId, atTick);
         // Wave-system reactive escalation (req #5): if the shooter belongs to a
         // faction (player / owned structure), the room flips that faction
