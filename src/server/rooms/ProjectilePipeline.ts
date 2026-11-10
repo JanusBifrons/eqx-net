@@ -124,7 +124,7 @@ export interface ProjectilePipelineDeps {
   onBlast?: (x: number, y: number, radius: number) => void;
 }
 
-const DT_SEC = 1 / 60;
+export const DT_SEC = 1 / 60;
 
 export class ProjectilePipeline {
   readonly liveProjectiles = new Map<string, ProjectileRecord>();
