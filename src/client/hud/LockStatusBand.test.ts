@@ -51,3 +51,15 @@ describe('summariseOwnLock', () => {
     expect(summariseOwnLock(mirror({ localGroups: [{ id: 'fore', m: 0, l: [{ t: 's:4', s: 2, p: 100 }] }] }), ['Fore'])).toBeNull();
   });
 });
+
+// Frame review 2026-11-10: "Gunship LOCKING ON YOU 100%" while still acquiring.
+describe('acquiring readouts never show 100 % before LOCKED', () => {
+  it('threat banner caps a 100 % acquiring lock at 99', () => {
+    const t = summariseThreats(mirror({ localLockedBy: [{ t: 's:4', s: 1, p: 100 }] }))!;
+    expect(t.acquiringPct).toBe(99);
+  });
+  it('own lock caps a 100 % acquiring lock at 99', () => {
+    const o = summariseOwnLock(mirror({ localGroups: [{ id: 'fore', m: 0, l: [{ t: 's:4', s: 1, p: 100 }] }] }), ['Fore'])!;
+    expect(o.pct).toBe(99);
+  });
+});

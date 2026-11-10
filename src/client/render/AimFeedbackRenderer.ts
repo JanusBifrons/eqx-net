@@ -3,6 +3,7 @@ import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '@shared-types/shipKinds';
 import { ACQUIRE_COLOUR, FAILSAFE_COLOUR, THREAT_COLOUR, groupColour } from '../hud/groupColours';
 import { lockMarkFrame, threatRingRadius, type LockMarkFrame } from './lockMarkFrame';
+import { acquiringPct } from '../hud/lockPct';
 
 /**
  * Fire-control world-space feedback for the local pilot: lock rings and
@@ -190,7 +191,7 @@ export class AimFeedbackRenderer {
               g.moveTo(x + c * rt, y + sn * rt).lineTo(x + c * (rt - tick), y + sn * (rt - tick));
             }
             g.stroke({ width: 3 * px, color: col, alpha: 0.9 * dim });
-            this.tag(tags++, x, y - r * (2 - frac) - 6 * px, losing ? 3 : l.s, l.p, col, px);
+            this.tag(tags++, x, y - r * (2 - frac) - 6 * px, losing ? 3 : l.s, acquiringPct(l.p), col, px);
           }
         }
       }
