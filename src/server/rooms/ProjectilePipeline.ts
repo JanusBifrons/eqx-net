@@ -28,6 +28,7 @@
  */
 
 import { refineSweepHit } from '../../core/combat/capitalHits.js';
+import { ProjectileBroadphase } from './ProjectileBroadphase.js';
 import { projectileSweepCircle, projectileSweepBox } from '../../core/combat/Weapons.js';
 import {
   SLOT_X_OFF,
@@ -72,9 +73,18 @@ export interface ShipPose {
   angle: number;
 }
 
+/** The swarm record fields the sweep reads. */
+export interface SwarmCandidate {
+  id: string; slot: number; radius: number; kind?: number; shipKind?: string;
+  halfW?: number; halfH?: number; boxes?: Float32Array;
+}
+
 /** Narrow view of the swarm registry the pipeline iterates. */
 export interface SwarmCandidateSource {
-  all(): Iterable<{ id: string; slot: number; radius: number; kind?: number; shipKind?: string; halfW?: number; halfH?: number; boxes?: Float32Array }>;
+  all(): Iterable<SwarmCandidate>;
+  /** Bumped on every register/unregister (`SwarmEntityRegistry.version`).
+   *  Absent ⇒ the broadphase is rebuilt after every hit in a tick. */
+  readonly version?: number;
 }
 
 export interface ProjectilePipelineDeps {
@@ -119,6 +129,9 @@ export interface ProjectilePipelineDeps {
   /** A shell with a blast burst at (x, y): show it (plan coastal-defences).
    *  Absent ⇒ no visual (unit harnesses); the damage still lands. */
   onBlast?: (x: number, y: number, radius: number) => void;
+  /** Swarm pass broadphase (default on). `false` restores the full
+   *  every-shell × every-entity scan — the parity oracle in tests. */
+  broadphase?: boolean;
 }
 
 const DT_SEC = 1 / 60;
@@ -126,8 +139,30 @@ const DT_SEC = 1 / 60;
 export class ProjectilePipeline {
   readonly liveProjectiles = new Map<string, ProjectileRecord>();
   private projectileCounter = 0;
+  /** Narrow-phase sweeps (player + swarm + lingering) in the last
+   *  `advance()`. A COUNT, host-independent: the broadphase's gate. */
+  narrowChecks = 0;
+  private readonly bp = new ProjectileBroadphase<SwarmCandidate>();
+  /** The broadphase no longer matches the registry (start of tick, or a hit
+   *  may have spawned / evicted entities). */
+  private bpStale = true;
+  private bpVersion = -1;
 
   constructor(private readonly deps: ProjectilePipelineDeps) {}
+
+  /** (Re)bin every swarm entity at its current SAB pose. O(entities). */
+  private rebuildBroadphase(): void {
+    const d = this.deps;
+    const bp = this.bp;
+    bp.begin();
+    for (const rec of d.swarmRegistry.all()) {
+      const b = slotBase(rec.slot);
+      bp.add(rec, d.sabF32[b + SLOT_X_OFF]!, d.sabF32[b + SLOT_Y_OFF]!, d.sabF32[b + SLOT_ANGLE_OFF]!);
+    }
+    bp.end();
+    this.bpVersion = d.swarmRegistry.version ?? -1;
+    this.bpStale = false;
+  }
 
   /** Diagnostic — count of in-flight projectiles. */
   size(): number {
@@ -165,6 +200,10 @@ export class ProjectilePipeline {
   advance(): void {
     const d = this.deps;
     const serverTick = d.serverTick();
+    const useBp = d.broadphase !== false;
+    // Swarm entities moved since last tick: rebin before the first shell.
+    this.bpStale = true;
+    let checks = 0;
     for (const [projId, proj] of this.liveProjectiles) {
       const stepX = proj.vx * DT_SEC;
       const stepY = proj.vy * DT_SEC;
@@ -181,6 +220,7 @@ export class ProjectilePipeline {
         if (!targetShip || !targetShip.alive) continue;
         const targetPose = d.shipPoseCache.get(targetId);
         if (!targetPose) continue;
+        checks++;
         const sweep = d.playerSweep(
           targetShip, proj.x, proj.y, stepX, stepY, proj.radius,
           targetPose.x, targetPose.y, targetPose.angle,
@@ -193,31 +233,40 @@ export class ProjectilePipeline {
         }
       }
 
-      // 2. Swarm (drones + asteroids + structures — sphere).
-      for (const rec of d.swarmRegistry.all()) {
-        // WS-8 — a structure-fired bolt (ownerId = pstruct-) must not detonate on
-        // the FIRING turret (a kind-2 swarm entity at the spawn point). Mirrors
-        // the lingering-hull owner skip below. Sibling structures in the line of
-        // fire are still hit (realistic — place defence turrets at the perimeter).
-        if (rec.id === proj.ownerId) continue;
-        // Allegiances P0 — an AI bolt passes through its own allegiance's
-        // combatants (drones no longer shoot down fellow drones in the way).
-        if (proj.ownerAllegiance !== undefined && rec.kind === 1
-          && allegianceOfKind(rec.shipKind) === proj.ownerAllegiance) continue;
-        const b = slotBase(rec.slot);
-        const cx = d.sabF32[b + SLOT_X_OFF]!;
-        const cy = d.sabF32[b + SLOT_Y_OFF]!;
-        const sweep = rec.halfW !== undefined && rec.halfH !== undefined
-          ? projectileSweepBox(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.halfW, rec.halfH, rec.boxes)
-          : rec.kind === 1
-            // A capital's circle is half its hull's length: refine to the hull (#15).
-            ? refineSweepHit(rec.shipKind, projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius), proj.x, proj.y, stepX, stepY, cx, cy, d.sabF32[b + SLOT_ANGLE_OFF]!)
-            : projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius);
-        if (sweep && sweep.entry < bestEntry) {
-          bestEntry = sweep.entry;
-          bestTargetId = rec.id;
-          bestHitX = sweep.hitX;
-          bestHitY = sweep.hitY;
+      // 2. Swarm (drones + asteroids + structures — sphere). The broadphase
+      // hands back only entities near this step, in registry order, so the
+      // first-contact winner (and its tie-break) is the full scan's.
+      if (useBp) {
+        const reg = d.swarmRegistry;
+        if (this.bpStale || (reg.version ?? this.bpVersion) !== this.bpVersion) this.rebuildBroadphase();
+        const bp = this.bp;
+        bp.query(proj.x, proj.y, stepX, stepY, proj.radius);
+        for (let k = 0; k < bp.outCount; k++) {
+          const i = bp.out[k]!;
+          const rec = bp.recs[i]!;
+          if (!this.canHitSwarm(proj, rec)) continue;
+          checks++;
+          const sweep = this.sweepSwarm(proj, rec, stepX, stepY, bp.x[i]!, bp.y[i]!, bp.angle[i]!);
+          if (sweep && sweep.entry < bestEntry) {
+            bestEntry = sweep.entry;
+            bestTargetId = rec.id;
+            bestHitX = sweep.hitX;
+            bestHitY = sweep.hitY;
+          }
+        }
+      } else {
+        for (const rec of d.swarmRegistry.all()) {
+          if (!this.canHitSwarm(proj, rec)) continue;
+          checks++;
+          const b = slotBase(rec.slot);
+          const sweep = this.sweepSwarm(proj, rec, stepX, stepY,
+            d.sabF32[b + SLOT_X_OFF]!, d.sabF32[b + SLOT_Y_OFF]!, d.sabF32[b + SLOT_ANGLE_OFF]!);
+          if (sweep && sweep.entry < bestEntry) {
+            bestEntry = sweep.entry;
+            bestTargetId = rec.id;
+            bestHitX = sweep.hitX;
+            bestHitY = sweep.hitY;
+          }
         }
       }
 
@@ -227,6 +276,7 @@ export class ProjectilePipeline {
         const b = slotBase(slot);
         const cx = d.sabF32[b + SLOT_X_OFF]!;
         const cy = d.sabF32[b + SLOT_Y_OFF]!;
+        checks++;
         const sweep = projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, GLOBAL_SHIP_TUNING.hitRadius);
         if (sweep && sweep.entry < bestEntry) {
           bestEntry = sweep.entry;
@@ -240,6 +290,9 @@ export class ProjectilePipeline {
         d.applyDamage(bestTargetId, proj.ownerId, proj.damage, bestHitX, bestHitY);
         this.blast(proj, bestHitX, bestHitY, bestTargetId);
         this.liveProjectiles.delete(projId);
+        // A kill may evict / spawn swarm entities (scrap, loot). The registry
+        // version catches that; a source without one is rebuilt to be safe.
+        if (d.swarmRegistry.version === undefined) this.bpStale = true;
         continue;
       }
 
@@ -258,8 +311,37 @@ export class ProjectilePipeline {
         // A shell with a blast lands and bursts where it falls.
         this.blast(proj, proj.x, proj.y, null);
         this.liveProjectiles.delete(projId);
+        if (d.swarmRegistry.version === undefined) this.bpStale = true;
       }
     }
+    this.narrowChecks = checks;
+  }
+
+  /** The swarm skip rules (owner, same allegiance), shared by both scans. */
+  private canHitSwarm(proj: ProjectileRecord, rec: SwarmCandidate): boolean {
+    // WS-8 — a structure-fired bolt (ownerId = pstruct-) must not detonate on
+    // the FIRING turret (a kind-2 swarm entity at the spawn point). Mirrors
+    // the lingering-hull owner skip below. Sibling structures in the line of
+    // fire are still hit (realistic — place defence turrets at the perimeter).
+    if (rec.id === proj.ownerId) return false;
+    // Allegiances P0 — an AI bolt passes through its own allegiance's
+    // combatants (drones no longer shoot down fellow drones in the way).
+    if (proj.ownerAllegiance !== undefined && rec.kind === 1
+      && allegianceOfKind(rec.shipKind) === proj.ownerAllegiance) return false;
+    return true;
+  }
+
+  /** Narrow phase vs one swarm entity at (cx, cy, angle). */
+  private sweepSwarm(
+    proj: ProjectileRecord, rec: SwarmCandidate, stepX: number, stepY: number,
+    cx: number, cy: number, angle: number,
+  ): SweepHit | null {
+    return rec.halfW !== undefined && rec.halfH !== undefined
+      ? projectileSweepBox(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.halfW, rec.halfH, rec.boxes)
+      : rec.kind === 1
+        // A capital's circle is half its hull's length: refine to the hull (#15).
+        ? refineSweepHit(rec.shipKind, projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius), proj.x, proj.y, stepX, stepY, cx, cy, angle)
+        : projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius);
   }
 
   /**
