@@ -1007,6 +1007,15 @@ export interface IRenderer {
    *  old sector). NOT during SPOOLING — the player can still be attacked. */
   setRadarSuppressed(suppressed: boolean): void;
   /**
+   * HUD-mode world overlays (showcase `?hud=`, `cinematic/hudMode.ts`).
+   * `lockMarks` false hides the fire-control lock visuals drawn in the world
+   * (lock rings / brackets / firing lines, threat arcs + diamonds, the hover
+   * outline, structure turret range rings + aim lines); `radar` false hides
+   * the off-screen edge radar. Both true in normal play. Separate from
+   * `setRadarSuppressed` (transit), which it never overrides.
+   */
+  setHudOverlays(lockMarks: boolean, radar: boolean): void;
+  /**
    * Phase 4 WS-A2 (Ship entry / switch) — kick off a ONE-SHOT eased camera glide
    * from the current view to the GAME-space point `(gameX, gameY)` over
    * `durationMs`. Used by the smooth same-sector ship-switch: the camera lerps to

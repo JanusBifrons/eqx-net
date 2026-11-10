@@ -41,3 +41,34 @@ export function applyHudMode(mode: HudMode, root: { classList: DOMTokenList } = 
   for (const m of HUD_MODES) root.classList.remove(hudModeClass(m));
   root.classList.add(hudModeClass(mode));
 }
+
+/**
+ * Fire-control lock visuals in the WORLD (Pixi): lock rings, brackets and
+ * firing lines on your targets, threat arcs and pulsing diamonds on ships
+ * locking you, the hover outline, and structure turret range rings and aim
+ * lines. They are HUD, not scenery, so only `full` shows them (the `fc-*`
+ * showcase shots film fire control with `hud=full`). The DOM lock banner
+ * (`fc-lock-band`) follows the same rule through the `<html>` class
+ * (`index.html`). The renderer gets this via `IRenderer.setHudOverlays`.
+ */
+export function lockOverlaysVisible(mode: HudMode): boolean {
+  return mode === 'full';
+}
+
+/**
+ * The off-screen edge radar. Hidden with the rest of the HUD below `full`,
+ * except that `?radar=1` keeps it (the radar showcase shot films it in
+ * `minimal`).
+ */
+export function radarVisible(mode: HudMode, search: string): boolean {
+  return mode === 'full' || /[?&]radar=1(?:&|$)/.test(search);
+}
+
+/** Push the HUD mode's world-overlay switches to the renderer (both paths). */
+export function applyHudOverlays(
+  renderer: { setHudOverlays(lockMarks: boolean, radar: boolean): void } | null | undefined,
+  mode: HudMode,
+  search: string,
+): void {
+  renderer?.setHudOverlays(lockOverlaysVisible(mode), radarVisible(mode, search));
+}

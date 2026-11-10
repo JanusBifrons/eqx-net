@@ -207,6 +207,8 @@ export class WorkerRendererClient implements IRenderer {
     // filter hypothesis). Production player sessions (neither flag set)
     // still pay zero IPC cost.
     this.post({ type: 'SET_DIAG_MARKERS', enabled: isDiagEnabled() || isAutoCaptureEnabled() });
+    // HUD-mode overlays set before the worker existed (FIFO: after BOOT).
+    if (this._hudOverlays) this.post({ type: 'SET_HUD_OVERLAYS', ...this._hudOverlays });
 
     this.installEventListeners(this.canvas);
     // Resize listeners — without these, OffscreenCanvas's drawing
@@ -529,6 +531,15 @@ export class WorkerRendererClient implements IRenderer {
   setRadarSuppressed(suppressed: boolean): void {
     this.post({ type: 'SET_RADAR_SUPPRESSED', suppressed });
   }
+
+  /** See `IRenderer.setHudOverlays`. */
+  setHudOverlays(lockMarks: boolean, radar: boolean): void {
+    // Kept so a call made before `init` (App pushes it right after creating
+    // the renderer) is re-sent once the worker has booted.
+    this._hudOverlays = { lockMarks, radar };
+    this.post({ type: 'SET_HUD_OVERLAYS', lockMarks, radar });
+  }
+  private _hudOverlays: { lockMarks: boolean; radar: boolean } | null = null;
 
   /**
    * Phase 4 WS-A2 — one-shot eased camera glide to a GAME-space point. See

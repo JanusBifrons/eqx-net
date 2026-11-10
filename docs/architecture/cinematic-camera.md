@@ -66,6 +66,17 @@ keys).
    renderer directly; the HUD mode is a CSS class, not a store field.
 6. **Halo radar re-anchors** on the camera centre while a script plays
    (`HaloRadar.setCameraRelative`), since the subject may not be the ship.
+7. **Lock visuals are HUD (2026-11-10).** Below `hud=full` the fire-control
+   lock visuals are hidden, in the DOM and in the world: the lock banner
+   (`fc-lock-band`, an `index.html` rule), and through
+   `IRenderer.setHudOverlays(lockMarks, radar)` (worker `SET_HUD_OVERLAYS`)
+   the `AimFeedbackRenderer` layer (lock rings, brackets, firing lines, threat
+   arcs, pulsing diamonds), the hover outline, structure turret range rings and
+   aim lines, and the off-screen edge radar. The pure decisions are
+   `lockOverlaysVisible(mode)` and `radarVisible(mode, search)` in
+   `cinematic/hudMode.ts`; `?radar=1` keeps the radar (the `radar` shot).
+   App pushes them when it creates the renderer and on every `__eqxCinema.setHud`.
+   The `fc-*` shots use `hud=full`, so they still film fire control.
 
 ## Interest-window caveat
 

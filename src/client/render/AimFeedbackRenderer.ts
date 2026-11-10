@@ -41,6 +41,14 @@ export class AimFeedbackRenderer {
     parent.addChild(this.tagLayer);
   }
 
+  /** Draw nothing this frame (HUD mode below `full`, `IRenderer.setHudOverlays`). */
+  hide(): void {
+    this.fc.visible = false;
+    this.tagLayer.visible = false;
+    this.lastFcLocks = 0;
+    this.lastThreats = 0;
+  }
+
   update(mirror: RenderMirror, zoom: number): void {
     const localId = mirror.localPlayerId;
     const ship = localId ? mirror.ships.get(localId) : undefined;

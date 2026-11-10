@@ -232,11 +232,18 @@ export class HaloRadar {
     this.suppressed = suppressed;
   }
 
+  /** HUD mode below `full` (showcase `?hud=`) → no radar at all. Kept apart
+   *  from `suppressed` so a transit never turns it back on. */
+  private hidden = false;
+  setHidden(hidden: boolean): void {
+    this.hidden = hidden;
+  }
+
   update(mirror: RenderMirror): void {
     const camera = this.camera;
     if (!camera) return;
 
-    if (this.suppressed) {
+    if (this.suppressed || this.hidden) {
       this.clearAll();
       this.lastUpdateMs = null;
       return;

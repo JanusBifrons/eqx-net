@@ -15,7 +15,9 @@ export const radar: Shot = {
   docs: ['off-screen-indicators'],
   reel: true,
   server: 'lean',
-  target: { room: 'radar-sandbox', params: { shipKind: 'interceptor' } },
+  // `radar=1`: keep the edge radar under `hud: 'minimal'` (it is hidden below
+  // the full HUD otherwise, cinematic/hudMode.ts `radarVisible`).
+  target: { room: 'radar-sandbox', params: { shipKind: 'interceptor', radar: '1' } },
   hud: 'minimal',
   durationMs: 11_000,
   camera: [{ atMs: 0, smoothMs: 300, shot: { kind: 'track', target: 'local', zoom: 1.4, leadMs: 200 } }],

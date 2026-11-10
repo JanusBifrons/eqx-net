@@ -222,6 +222,14 @@ export interface SetRadarSuppressedMsg {
   suppressed: boolean;
 }
 
+/** HUD-mode world overlays (`IRenderer.setHudOverlays`). Posted on a HUD-mode
+ *  change only, never per frame. */
+export interface SetHudOverlaysMsg {
+  type: 'SET_HUD_OVERLAYS';
+  lockMarks: boolean;
+  radar: boolean;
+}
+
 /**
  * Phase 4 WS-A2 — kick off a one-shot eased camera glide to a GAME-space point
  * over `durationMs`. Drives `PixiRenderer.glideCameraTo` → `Camera.glideTo`. The
@@ -376,6 +384,7 @@ export type MainToWorkerMsg =
   | SetRadarPrefsMsg
   | SetRadarInsetsMsg
   | SetRadarSuppressedMsg
+  | SetHudOverlaysMsg
   | GlideCameraMsg
   | SetCameraScriptMsg
   | PanCameraMsg
