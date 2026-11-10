@@ -91,7 +91,11 @@ Target keys: `s:<entityId>` (swarm) or `p:<playerId>`.
   #12). The `groups` / `lockedBy` slices are always applied.
 - `AimFeedbackRenderer.drawFireControl`: your locks (closing ring, ticks,
   LOCKING / FAILSAFE / LOSING LOCK tag, dashed link; brackets + firing line when
-  locked) and NPC locks on you (arcs, carets, diamonds). Tag text is rebuilt only
+  locked) and NPC locks on you (arcs, carets, diamonds). While anything is
+  locking or has locked you, the whole threat ring is also drawn faintly
+  (thin, low-alpha red) under the arcs, so a lone arc reads as a pointer on a
+  ring centred on your ship rather than a reticle floating beside it (owner's
+  choice 2026-11-10; lock: `AimFeedbackRenderer.test.ts`). Tag text is rebuilt only
   when its value changes (#14). Every mark on a target (ring, brackets,
   diamond, candidate ring) is placed by the pure `lockMarkFrame`: hull-sized
   and centred round anything that fits, but capped at

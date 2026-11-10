@@ -88,11 +88,27 @@ byte-identical behaviour and zero added cost.
 
 ## Fire paths
 
-- **Beam** (`AiFireResolver.hitscan`): a third pass tests other combatants
-  (`swarmCombatCircles`), skipping the shooter and friendlies.
-- **Bolt** (`ProjectilePipeline`): an NPC bolt carries its owner's allegiance
-  (resolved once at spawn) and passes **through** same-allegiance ships.
-  *Behaviour change:* before P0 drones shot down fellow drones in the way.
+Allegiance decides **targeting** only. It never decides what a shot hits.
+
+- **Friendly fire (owner decision 2026-11-10: "Fire hits all").** Every shot
+  hits the first thing in its path, the shooter's own side included: bolts and
+  naval shells (`ProjectilePipeline`, sweep and blast), NPC beams
+  (`AiFireResolver.hitscan` → the room's `nonPlayerRayHit`: every swarm entity
+  of any side, structures of any owner, rocks, scrap, parked hulls), structure
+  turret beams (`beamFirstHit` → `turretBeamFirstHit`, its owner's own ship
+  included), missiles (contact and splash) and player shots. Two physical
+  skips stay: a shot never hits its own shooter, and a capital turret won't
+  fire along its own deck (`mountLineClear`, the per-mount fire mask). Shield
+  fences block every shot. *History:* P0 rule 6 let NPC bolts and beams pass
+  through their own allegiance; that was removed.
+- **NPCs don't yet check their line of fire.** A drone or capital fires at its
+  locked target even with an ally in the way, and hits the ally. Teaching NPCs
+  to hold fire when blocked is the next slice (docs/SHELF.md).
+- **Accidental hits don't start wars.** A hit on an NPC from its own side
+  (`SectorRoom.isFriendlyFire`: an NPC of a friendly allegiance, or an NPC base
+  not hostile to the victim's side) does its damage but does NOT mark the
+  victim hostile and does not escalate a faction (`swarmDamageStrategy`). A
+  hit from another side, a player or a player's structure marks as before.
 - **Missile** lock-on classifies the shooter by registry (any live kind-1
   entity is an AI shooter), and targets cross-allegiance swarms by stance.
 - **Structure turrets** engage drones and robots, never neutral traders.
@@ -106,7 +122,13 @@ byte-identical behaviour and zero added cost.
   exclusion.
 - `src/core/ai/HostileDroneBehaviour.allegiance.test.ts` — robot fires at an
   unprovoked player, drone doesn't; drone fires at a robot; never at an ally.
-- `src/server/rooms/ProjectilePipeline.allegiance.test.ts` — bolt pass-through.
+- `src/server/rooms/ProjectilePipeline.friendlyFire.test.ts` — a bolt stops on
+  the first ship in its path, its own side included.
+- `tests/integration/sectorRoom/friendlyFire.test.ts` — a drone's bolt and
+  beam hit the ally in front, a battleship's shell hits its escort, a turret's
+  beam hits its owner's ship; the hit ally does not turn hostile.
+- `src/client/combat/friendlyFirePrediction.test.ts` — the local beam end and
+  hit prediction stop on an ally (#15).
 - `tests/integration/sectorRoom/allegianceThreeWay.test.ts` — a real robot and
   drone fight with no player involved (verified RED with the swarm feed
   disabled); a forged join cannot pilot a robot.

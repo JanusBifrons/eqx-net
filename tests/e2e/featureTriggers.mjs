@@ -21,8 +21,9 @@ export const FEATURE_TRIGGERS = [
   },
   {
     area: 'spectator and ship switching',
-    paths: ['src/client/spectator/', 'src/client/components/PilotSpectatorToggle', 'src/client/net/snapshotShipRouter', 'src/client/ships/'],
-    specs: ['spectator-mode'],
+    paths: ['src/client/spectator/', 'src/client/components/PilotSpectatorToggle', 'src/client/net/snapshotShipRouter', 'src/client/ships/',
+      'src/client/components/BottomControlPanel'],
+    specs: ['spectator-mode', 'build-hotbar-fits-viewport'],
   },
   {
     area: 'energy and boost',

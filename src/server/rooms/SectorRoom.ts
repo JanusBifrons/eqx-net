@@ -83,7 +83,7 @@ import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isPlayableShipKindId,
 import { targetClass } from '../../core/combat/mountTargeting.js';
 import { decodeAim } from '../../core/combat/manualAim.js';
 import type { TurretTargetView } from '../structures/StructureMountTicker.js';
-import { isOnSightHostile } from '../../shared-types/allegiances.js';
+import { isFriendly, isOnSightHostile } from '../../shared-types/allegiances.js';
 import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
 import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
@@ -368,7 +368,8 @@ import type { EntityStatsMessage } from '../../shared-types/messages/selectionMe
 import { SelectionStatsSubsystem, type Selection } from './SelectionStatsSubsystem.js';
 import {
   rayHitsSphere,
-  // rayHitsConvexPolygon now used inside PlayerFireResolver.ts
+  rayHitsConvexPolygon,
+  rayHitsBox,
   projectileSweepCircle,
   rayHitsShipPolygon,
   sweptSegmentHitsShipPolygon,
@@ -385,7 +386,8 @@ import {
 import type { WeaponId, MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat/Energy.js';
 import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
-import { tuningFor } from '../../shared-types/shipScale/lookup.js';
+import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
+import { refineRayHit } from '../../core/combat/capitalHits.js';
 import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
 import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
 import type { LockEntry } from '../../core/combat/lockState.js';
@@ -1048,18 +1050,15 @@ export class SectorRoom extends Room<SectorState> {
   /** Wave-system Phase 2 — reused per-tick structure target buffers, rebuilt
    *  ONCE per tick (shared by every drone via AiWorldView; never per-drone).
    *  `aiStructureScratch` feeds the brain (priority); `hostileStructureCircles`
-   *  feeds the fire-resolver hit test (radius). Both hold only this sector's
-   *  hostile (under-wave / member-attacked), constructed structures. Object
-   *  churn matches the established `aiPlayerScratch` view-build pattern. */
+   *  feeds capital turret target picks (radius). Both hold only this sector's
+   *  hostile (under-wave / member-attacked), constructed structures. TARGETING
+   *  only: a shot hits whatever it meets (`nonPlayerRayHit`, friendly fire). */
   private readonly aiStructureScratch: AiStructureView[] = [];
   private readonly hostileStructureCircles: Array<{
     id: string;
     x: number;
     y: number;
     radius: number;
-    halfW?: number;
-    halfH?: number;
-    boxes?: Float32Array;
   }> = [];
 
   // ── Phase 4b.3 (multi-mount turret refactor, 2026-05-11) ────────────────
@@ -1345,8 +1344,13 @@ export class SectorRoom extends Room<SectorState> {
     tickStructureTurrets: () => void;
     /** Mount `i`'s lock on structure `id` (for `lockTimeCapS` tests). */
     structureTurretLock: (id: string, i: number) => Readonly<LockEntry> | undefined;
-    /** Fence-hit fix: spawn a bolt (integration tests aim it at a fence). */
-    spawnTestProjectile: (ownerId: string, x: number, y: number, vx: number, vy: number) => void;
+    /** Fence-hit fix: spawn a bolt (integration tests aim it at a fence).
+     *  `weaponId` (default 'laser') lets a test fire a real naval shell. */
+    spawnTestProjectile: (ownerId: string, x: number, y: number, vx: number, vy: number, weaponId?: WeaponId, damage?: number) => void;
+    /** Friendly fire — drive one AI fire (the real `handleAiFire` path). */
+    aiFire: (shooterId: string, dirX: number, dirY: number, targetId: string) => void;
+    /** Does NPC `id`'s brain treat `otherId` as hostile (stance or ledger)? */
+    npcHostileTo: (id: string, otherId: string) => boolean;
     /** Mine Layers' live mines (integration tests). */
     mineField: MineFieldSubsystem;
     /** A0 scale measurement — rebuild the structures snapshot slice directly. */
@@ -1400,7 +1404,10 @@ export class SectorRoom extends Room<SectorState> {
       },
       tickStructureTurrets: () => this.structureTurretTick(),
       structureTurretLock: (id, i) => this.structureGrid.turretLockOf(id, i),
-      spawnTestProjectile: (ownerId, x, y, vx, vy) => this.projectiles.spawn(ownerId, x, y, vx, vy, 10, 4, 240, 'laser'),
+      spawnTestProjectile: (ownerId, x, y, vx, vy, weaponId = 'laser', damage = 10) =>
+        this.projectiles.spawn(ownerId, x, y, vx, vy, damage, 4, 240, weaponId),
+      aiFire: (shooterId, dirX, dirY, targetId) => this.handleAiFire(shooterId, dirX, dirY, this.serverTick, targetId),
+      npcHostileTo: (id, otherId) => this.aiController.isEntityHostileToPlayer(id, otherId),
       mineField: this.mineField,
       rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
       gateMask: (id) => this.gates.maskFor(id),
@@ -1897,14 +1904,10 @@ export class SectorRoom extends Room<SectorState> {
         this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang),
       applyDamage: (targetId, shooterId, damage) =>
         this.applyDamage(targetId, shooterId, damage),
-      // Wave-system Phase 2: the beam also tests this tick's hostile-structure
-      // circles (rebuilt once per tick by `fillStructureTargets`). Same
-      // faction-filtered set the drone's body target chose among, so the beam
-      // lands on the structure it's pointed at.
-      structureHitTargets: () => this.hostileStructureCircles,
-      // Allegiances P0: the beam also tests other-allegiance swarm combatants
-      // (empty in a single-allegiance sector ⇒ byte-identical).
-      swarmHitTargets: () => this.swarmCombatCircles,
+      // Friendly fire (owner decision 2026-11-10): the beam meets whatever is
+      // in its path, its own side and neutral structures included.
+      nonPlayerRayHit: (fx, fy, dx, dy, maxDist, skipId) =>
+        this.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId),
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) =>
         this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
@@ -1946,6 +1949,7 @@ export class SectorRoom extends Room<SectorState> {
       aiController: this.aiController,
       onDroneDamaged: (droneId, sourceId, atTick) =>
         this.escalateFactionOnDroneHit(droneId, sourceId, atTick),
+      isFriendlyFire: (victimId, sourceId) => this.isFriendlyFire(victimId, sourceId),
       // Scrap-on-death (Phase 2b-ii) — a composite-kind drone breaks into scrap
       // the instant before it's evicted on death. Deferred-eval closure (the
       // ScrapSpawner is constructed later in the ctor, before any death fires).
@@ -2033,11 +2037,6 @@ export class SectorRoom extends Room<SectorState> {
         if (!this.shieldWalls.blockProjectile(x, y, sx, sy, damage, Date.now())) return false;
         this.broadcastWallHit('bolt');
         return true;
-      },
-      // Allegiances P0 — AI bolts pass through their own allegiance's ships.
-      ownerAllegianceOf: (ownerId) => {
-        const rec = this.swarmRegistry.get(ownerId);
-        return rec != null && rec.kind === SWARM_KIND_DRONE ? allegianceOfKind(rec.shipKind) : undefined;
       },
       // Coastal defences — a siege shell's blast (the damage lands separately).
       onBlast: (x, y, radius) => {
@@ -2503,6 +2502,8 @@ export class SectorRoom extends Room<SectorState> {
       turretTargets: (x, y, range, owner, out) => this.collectTurretTargets(x, y, range, owner, out),
       applyDamage: (targetId, shooterId, damage) => this.applyDamage(targetId, shooterId, damage),
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) => this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
+      // Friendly fire: a turret beam lands on the first thing in its path.
+      beamFirstHit: (fx, fy, dx, dy, maxDist, skipId) => this.turretBeamFirstHit(fx, fy, dx, dy, maxDist, skipId),
       broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) => {
         this.broadcast('laser_fired', {
           type: 'laser_fired',
@@ -4404,10 +4405,10 @@ export class SectorRoom extends Room<SectorState> {
    * shared by every drone (called ONCE per tick from `runAiTick`, never
    * per-drone — #14). A structure is a target iff its owning faction is
    * `hostileToDrones` (member attacked a drone) OR `underWave` (the director
-   * declared a wave) AND it is constructed. Populates BOTH the brain view
-   * (`out` = `aiStructureScratch`, carries `priority`) and the fire-resolver
-   * hit circles (`this.hostileStructureCircles`, carries `radius`) in one
-   * registry pass. Object churn matches the established `aiPlayerScratch`
+   * declared a wave) AND it is constructed. Populates the brain view
+   * (`out` = `aiStructureScratch`, carries `priority`) and the capital turret
+   * target circles (`hostileStructureCircles`); targeting only, a shot hits
+   * whatever it meets. Object churn matches the established `aiPlayerScratch`
    * view-build pattern (small, bounded structure count).
    */
   private fillStructureTargets(out: AiStructureView[]): void {
@@ -4425,7 +4426,7 @@ export class SectorRoom extends Room<SectorState> {
         maxHealth: getStructureKind(rec.kind).maxHealth,
         priority: structurePriority(rec.kind),
       });
-      circles.push({ id: rec.id, x: rec.x, y: rec.y, radius: rec.radius, halfW: rec.halfW, halfH: rec.halfH, boxes: this.swarmRegistry.get(rec.id)?.boxes });
+      circles.push({ id: rec.id, x: rec.x, y: rec.y, radius: rec.radius });
     }
   }
 
@@ -4453,24 +4454,21 @@ export class SectorRoom extends Room<SectorState> {
   };
 
   /** Allegiances P0 — pooled per-tick swarm-combatant views (never reallocated
-   *  once grown, #14) + the matching fire-resolver hit circles. */
+   *  once grown, #14). Targeting only. */
   private readonly _swarmViewPool: Array<{
     id: string; x: number; y: number; vx: number; vy: number;
     allegiance: string; health?: number; maxHealth?: number; radius: number;
   }> = [];
   private readonly aiSwarmScratch: AiSwarmView[] = [];
-  private readonly swarmCombatCircles: Array<{ id: string; x: number; y: number; radius: number; allegiance: string }> = [];
 
   /**
    * Allegiances P0 — rebuild this tick's swarm-combatant set (kind-1 entities),
    * ONCE per tick (#14). Only populated when ≥ 2 allegiances are present in the
    * sector: a drones-only sector leaves `out` empty, so the AI view's `swarms`
    * is absent and the brain takes its pre-P0 fast path (byte-identical, zero
-   * per-drone cost). Also fills `swarmCombatCircles` for the AI beam pass.
+   * per-drone cost). Targeting only: the beam hits whatever it meets.
    */
   private fillSwarmTargets(out: AiSwarmView[]): void {
-    const circles = this.swarmCombatCircles;
-    circles.length = 0;
     out.length = 0;
     let first: string | null = null;
     let mixed = false;
@@ -4501,7 +4499,6 @@ export class SectorRoom extends Room<SectorState> {
       v.maxHealth = getShipKind(rec.shipKind).maxHealth;
       v.radius = rec.radius;
       out.push(v);
-      circles.push(v);
       n++;
     }
   }
@@ -7279,6 +7276,30 @@ export class SectorRoom extends Room<SectorState> {
    * (`factionOf` → null) escalates nothing (the C3 self-aggro gate). Bounded:
    * one `factionOf` scan + one faction-mark per applied drone hit.
    */
+  /**
+   * Friendly fire (owner decision 2026-11-10) — is this hit on NPC `victimId`
+   * an accident from its own side? True when the source is an NPC ship of a
+   * FRIENDLY allegiance (same side) or an NPC base's structure that is not
+   * hostile to the victim's side. Such a hit still lands, but marks nothing
+   * hostile and escalates no faction (`swarmDamageStrategy`), so a pack never
+   * civil-wars after a stray shot. Players and player structures are never
+   * "friendly fire": their hits mark as before. Two Map lookups per hit.
+   */
+  private isFriendlyFire(victimId: string, sourceId: string): boolean {
+    const victim = this.swarmRegistry.get(victimId);
+    if (victim == null || victim.kind !== SWARM_KIND_DRONE) return false;
+    const side = allegianceOfKind(victim.shipKind);
+    const src = this.swarmRegistry.get(sourceId);
+    if (src == null) return false;
+    if (src.kind === SWARM_KIND_DRONE) return isFriendly(side, allegianceOfKind(src.shipKind));
+    if (src.kind === 2) {
+      const owner = this.structureRegistry.get(sourceId)?.owner;
+      return owner !== undefined && isNpcOwner(owner)
+        && relationOf(NPC_SIDE_PARTY[side], owner, this.relationCtx) !== 'hostile';
+    }
+    return false;
+  }
+
   private escalateFactionOnDroneHit(droneId: string, sourceId: string, atTick: number): void {
     // Allegiances P0 (hostile-review B1): the FactionLedger tracks war with the
     // DRONES. Shooting a robot or a trader hauler must not declare war on the
@@ -7486,6 +7507,79 @@ export class SectorRoom extends Room<SectorState> {
     const circle = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, r);
     if (circle === null || ship.shield > 0) return circle;
     return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, shipCollisionParts(ship.kind));
+  }
+
+  /** Reused result of `nonPlayerRayHit` (#14). */
+  private readonly _rayHit = { id: '', wireId: '', dist: 0 };
+
+  /**
+   * Friendly fire (owner decision 2026-11-10) — the first non-player thing a
+   * ray meets: lingering hulls and EVERY swarm entity (drones of any side,
+   * structures of any owner, asteroids, scrap), skipping only `skipId` (the
+   * shooter). Live SAB poses, the same shapes as the player beam
+   * (`PlayerFireResolver.hitscan`). Used by the NPC beam and the structure
+   * turret beam. Returns the reused `_rayHit` or null. Alloc-free.
+   */
+  private nonPlayerRayHit(
+    fx: number, fy: number, dx: number, dy: number, maxDist: number, skipId: string,
+  ): { id: string; wireId: string; dist: number } | null {
+    let best = maxDist;
+    let bestId: string | null = null;
+    let bestEid = -1; // swarm wire id built once at the end (lingering: -1)
+    for (const [shipInstanceId] of this.lingeringSlots) {
+      const p = this.lingeringPoseCache.get(shipInstanceId);
+      if (!p) continue;
+      const d = rayHitsSphere(fx, fy, dx, dy, best, p.x, p.y, GLOBAL_SHIP_TUNING.hitRadius);
+      if (d !== null && d < best) { best = d; bestId = shipInstanceId; bestEid = -1; }
+    }
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.id === skipId) continue;
+      const b = slotBase(rec.slot);
+      const cx = this.sabF32[b + SLOT_X_OFF]!;
+      const cy = this.sabF32[b + SLOT_Y_OFF]!;
+      const ca = this.sabF32[b + SLOT_ANGLE_OFF]!;
+      let d: number | null;
+      if (rec.kind === 0 && rec.vertices) {
+        d = rayHitsConvexPolygon(fx, fy, dx, dy, best, cx, cy, ca, rec.vertices);
+      } else if (rec.halfW !== undefined && rec.halfH !== undefined) {
+        d = rayHitsBox(fx, fy, dx, dy, best, cx, cy, rec.halfW, rec.halfH, rec.boxes);
+      } else {
+        d = rayHitsSphere(fx, fy, dx, dy, best, cx, cy, rec.radius);
+        if (rec.kind === 1) d = refineRayHit(rec.shipKind, d, fx, fy, dx, dy, best, cx, cy, ca);
+      }
+      if (d !== null && d < best) { best = d; bestId = rec.id; bestEid = rec.entityId; }
+    }
+    if (bestId === null) return null;
+    const out = this._rayHit;
+    out.id = bestId;
+    out.wireId = bestEid >= 0 ? `swarm-${bestEid}` : bestId;
+    out.dist = best;
+    return out;
+  }
+
+  /** The first thing a structure turret's beam meets, players included
+   *  (friendly fire: its owner's own ship too). Null ⇒ nothing in reach. */
+  private turretBeamFirstHit(
+    fx: number, fy: number, dx: number, dy: number, maxDist: number, skipId: string,
+  ): { id: string; wireId: string; dist: number } | null {
+    let best = maxDist;
+    let bestId: string | null = null;
+    for (const [pid] of this.playerToSlot) {
+      const ship = this.getActiveShip(pid);
+      if (!ship || !ship.alive || ship.travelling) continue;
+      const pose = this.shipPoseCache.get(pid);
+      if (!pose) continue;
+      const d = this.playerHitscanDist(ship, fx, fy, dx, dy, best, pose.x, pose.y, pose.angle);
+      if (d !== null && d < best) { best = d; bestId = pid; }
+    }
+    const other = this.nonPlayerRayHit(fx, fy, dx, dy, best, skipId);
+    if (other !== null && other.dist < best) return other;
+    if (bestId === null) return null;
+    const out = this._rayHit;
+    out.id = bestId;
+    out.wireId = bestId;
+    out.dist = best;
+    return out;
   }
 
   /** Projectile sweep counterpart of playerHitscanDist — same per-kind

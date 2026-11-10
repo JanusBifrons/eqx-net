@@ -8,8 +8,16 @@ the `feat(shield)` series.
 
 A ship body carries **one** of two collider shapes at a time:
 
-- **shield up** → a single `ball(kind.radius)` (the legacy circle; the
-  common case, unchanged cost).
+- **shield up** → the shield bubble, `shipShieldColliderDesc(kind)`: a
+  `ball(kind.radius + shipTuning(kind).shieldPad)` for every non-capital
+  (a capital's is its hull rounded out by the pad). Ships colliding with
+  their shields up impact each other's SHIELDS (owner's rule 2026-11-10),
+  and the drawn bubble is this radius (`shieldBubbleRadius`). Players,
+  freshly spawned drones (`World.spawnObstacle` with `shieldKind`, on the
+  server worker AND the client predWorld) and regenerated shields all
+  mount this ONE collider. Lock: `tests/unit/shieldColliderParity.test.ts`.
+  (Before 2026-11-10 a fresh non-capital drone got a bare `ball(radius)`
+  and the aura used a fixed 10 u pad, so the three disagreed.)
 - **shield down** → a **compound of zero-density triangle colliders** —
   the exact rendered `ShipShape.points` ear-clipped into CCW triangles.
 

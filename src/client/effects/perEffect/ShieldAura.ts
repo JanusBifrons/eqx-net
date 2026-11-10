@@ -214,7 +214,9 @@ export class ShieldAura {
       const oldestKey = this.rings.keys().next().value;
       if (oldestKey !== undefined) this.removeRing(oldestKey);
     }
-    const gfx = this.factories.makeRing(radius + DEFAULT_SHIELD_PARAMS.ringPad);
+    // `radius` is the full shield bubble (the renderer passes
+    // `shieldBubbleRadiusForEntity`, = the shield collider), so no pad here.
+    const gfx = this.factories.makeRing(radius);
     gfx.alpha = DEFAULT_SHIELD_PARAMS.baseAlpha;
     this.auraContainer.addChild(gfx);
     this.rings.set(entityId, {

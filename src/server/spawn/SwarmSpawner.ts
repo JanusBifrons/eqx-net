@@ -384,8 +384,10 @@ export class SwarmSpawner {
     // match the dying ship. Other kinds pass 0 (legacy axis-aligned spawn).
     // Structures (kind 2) carry their quarter-turn rotation too (phase V).
     const spawnAngle = kind === SWARM_KIND_SCRAP || kind === 2 ? angle : 0;
-    // Capital drones start with their hull-shaped shield collider (round 3).
-    const shieldKindId = kind === 1 && shipKind?.sizeClass === 'capital' ? shipKind.id : undefined;
+    // Every drone starts shield-up, so it spawns with its shield collider
+    // (`shipShieldColliderDesc`: ball(radius + shieldPad), a capital's rounded
+    // hull), the same one it gets back on regen (owner's rule 2026-11-10).
+    const shieldKindId = kind === 1 && shipKind ? shipKind.id : undefined;
     this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, mass, vertices, linearDamping, staticBody, collisionGroups, spawnAngle, structureParts, shieldKindId);
 
     // Phase 5d: insert into the interest grid so this entity participates in

@@ -66,6 +66,19 @@ describe('BottomControlPanel (Phase 5 WS-4)', () => {
     expect(useUIStore.getState().placementKind).toBe('solar');
   });
 
+  // Frame review 2026-11-10: the hotbar ran off both screen edges while
+  // spectating. jsdom has no layout (the real-browser lock is
+  // tests/e2e/build-hotbar-fits-viewport.spec.ts); this locks the CSS contract:
+  // the row is capped at the viewport and wraps instead of overflowing.
+  it('SPECTATING — the build row is capped at the viewport and wraps', () => {
+    useUIStore.setState({ pilotMode: 'spectator' });
+    render(<BottomControlPanel />);
+    const cs = getComputedStyle(screen.getByTestId('bottom-control-panel'));
+    expect(cs.flexWrap).toBe('wrap');
+    expect(cs.maxWidth).toBe('calc(100vw - 32px)');
+    expect(cs.overflowY).toBe('auto');
+  });
+
   it('SPECTATING — number key 2 selects the 2nd building (connector)', () => {
     useUIStore.setState({ pilotMode: 'spectator' });
     render(<BottomControlPanel />);
