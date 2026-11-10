@@ -140,11 +140,16 @@ export class StructureMountTicker {
   }
 
   /**
-   * One fire-control step for a built, powered defence structure. `lvlMul`
-   * scales reach (level upgrades). Returns the first mount's target (for the
-   * inspector + the target slice) or null.
+   * One fire-control step for a built, powered defence structure. Returns the
+   * first mount's target (for the inspector + the target slice) or null.
+   *
+   * Reach is the kind's catalogue `weaponRange`, never scaled by the
+   * structure's level: ranges are physical, the gun doesn't change with the
+   * building, and its shells fly only their own `maxTicks` (2026-11-10 — a
+   * levelled reach engaged targets the shells couldn't reach). Level upgrades
+   * damage and HP instead.
    */
-  tick(rec: StructureRecord, kind: StructureKind, mounts: ReadonlyArray<WeaponMount>, nowMs: number, dtSec: number, lvlMul: number): TurretTargetView | null {
+  tick(rec: StructureRecord, kind: StructureKind, mounts: ReadonlyArray<WeaponMount>, nowMs: number, dtSec: number): TurretTargetView | null {
     const n = mounts.length;
     let st = this.states.get(rec.id);
     if (!st || st.angles.length !== n) {
@@ -158,7 +163,7 @@ export class StructureMountTicker {
       this.states.set(rec.id, st);
     }
     const frame = (rec.rot ?? 0) * DEG;
-    const reach = (kind.weaponRange ?? 0) * lvlMul;
+    const reach = kind.weaponRange ?? 0;
     // One candidate gather per structure: its mounts sit at its centre.
     const count = this.sink.targets(rec.x, rec.y, reach, rec.owner, this.candidates);
     const cands = this.candidates;
