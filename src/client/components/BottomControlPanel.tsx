@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { memo, useCallback, useEffect } from 'react';
 import { Box, Tooltip } from '@mui/material';
 import { useUIStore } from '../state/store';
 import { type StructureKindId } from '@shared-types/structureKinds';
@@ -12,7 +12,7 @@ import { isTouchDevice } from '../input/TouchInput';
  * Phase 5 WS-4 — the DESKTOP RTS-style bottom build palette, shown while
  * SPECTATING: the flattened BUILDING palette (every structure kind, no category
  * hierarchy) as labelled squares with corner number-key badges; number key /
- * click selects it for placement. While piloting it renders nothing: the
+ * click selects it for placement. While piloting it is hidden (mounted, see below): the
  * weapon strip (fire control) replaced the old weapon-slot row, and 1–9 select
  * weapon GROUPS there (MouseLock.ts `installFcKeys`).
  *
@@ -24,17 +24,6 @@ import { isTouchDevice } from '../input/TouchInput';
 
 /** The building palette, flattened in category order (Core → Economy → Defence). */
 const BUILDINGS: readonly StructureKindId[] = BUILD_CATEGORIES.flatMap((c) => c.kinds);
-
-interface PanelCell {
-  key: string;
-  /** 1-based number-key hotkey, or null for a non-selectable empty slot. */
-  num: number | null;
-  label: string;
-  icon: ReactNode;
-  active: boolean;
-  empty: boolean;
-  onSelect: (() => void) | null;
-}
 
 const ROW_SX = {
   display: 'flex',
@@ -85,27 +74,78 @@ const NUM_SX = {
   lineHeight: 1,
 } as const;
 
-function cellColors(cell: PanelCell): { color: string; borderColor: string; bgcolor: string } {
-  if (cell.empty) return { color: 'rgba(255,255,255,0.28)', borderColor: 'rgba(255,255,255,0.12)', bgcolor: 'transparent' };
-  if (cell.active) return { color: '#00ff88', borderColor: '#00ff88', bgcolor: 'rgba(0,255,136,0.14)' };
-  return { color: '#cfe', borderColor: 'rgba(255,255,255,0.18)', bgcolor: 'rgba(255,255,255,0.04)' };
+// Per-state cell styles, hoisted (sx-hoist rule): a cell's sx is one of three
+// module-level objects, so a re-render serialises no new style object.
+const CELL_EMPTY_SX = { ...CELL_BASE, color: 'rgba(255,255,255,0.28)', borderColor: 'rgba(255,255,255,0.12)', bgcolor: 'transparent' } as const;
+const CELL_ACTIVE_SX = { ...CELL_BASE, color: '#00ff88', borderColor: '#00ff88', bgcolor: 'rgba(0,255,136,0.14)' } as const;
+const CELL_IDLE_SX = { ...CELL_BASE, color: '#cfe', borderColor: 'rgba(255,255,255,0.18)', bgcolor: 'rgba(255,255,255,0.04)' } as const;
+
+const ROW_HIDDEN_SX = { ...ROW_SX, display: 'none' } as const;
+
+interface BuildCellProps {
+  kind: StructureKindId;
+  /** 1-based number-key hotkey. */
+  num: number;
+  label: string;
+  active: boolean;
+  /** Economy v2 — a non-starter kind with no packed one here: greyed, unpickable. */
+  locked: boolean;
+  onPick: (kind: StructureKindId) => void;
 }
 
+/**
+ * One palette square. Memoised on primitive props, so a palette re-render (the
+ * spectator flip, a packed-stock reply, a new placement pick) re-renders only
+ * the cells whose label / lock / active state changed.
+ */
+const BuildCell = memo(function BuildCell({ kind, num, label, active, locked, onPick }: BuildCellProps): JSX.Element {
+  const onClick = useCallback(() => {
+    if (!locked) onPick(kind);
+  }, [kind, locked, onPick]);
+  return (
+    <Tooltip title={label} placement="top">
+      <Box
+        role="button"
+        data-testid={`bcp-cell-build:${kind}`}
+        data-active={active ? '1' : '0'}
+        aria-pressed={active}
+        onClick={onClick}
+        sx={locked ? CELL_EMPTY_SX : active ? CELL_ACTIVE_SX : CELL_IDLE_SX}
+      >
+        <Box component="span" sx={NUM_SX}>{num}</Box>
+        {BUILD_ICONS[kind]}
+        <Box component="span" sx={CELL_LABEL_SX}>{label}</Box>
+      </Box>
+    </Tooltip>
+  );
+});
+
+/**
+ * The palette is MOUNTED for the whole desktop game and only SHOWN while
+ * spectating (`display: none`, `data-panel-mode="hidden"` while piloting). It
+ * used to mount on death: ~40 cells of MUI Tooltip + Popper + Box + icon (~860
+ * components) cold-mounted in the same task as the destroy message, a 50–70 ms
+ * frame stall at the moment the ship explodes (2026-11-10 player-view clips,
+ * `tests/perf/death-spectator-hitch.spec.ts`). Pre-mounted, the death flip
+ * re-renders only the row (the memoised cells are unchanged) and inserts no
+ * DOM. Lock: `BottomControlPanel.test.tsx` "the spectator flip inserts no DOM".
+ */
 export function BottomControlPanel(): JSX.Element | null {
   const phase = useUIStore((s) => s.phase);
-  const pilotMode = useUIStore((s) => s.pilotMode);
+  const spectating = useUIStore((s) => s.pilotMode === 'spectator');
   const placementKind = useUIStore((s) => s.placementKind);
   const setPlacementKind = useUIStore((s) => s.setPlacementKind);
 
-  const spectating = pilotMode === 'spectator';
-  // Economy v2 — packed-structure stock while the build row is showing.
-  const packedStock = usePackedStock(phase === 'game' && spectating && !isTouchDevice());
+  const inGame = phase === 'game' && !isTouchDevice();
+  const showing = inGame && spectating;
+  // Economy v2 — packed-structure stock, asked for only while the row shows.
+  const packedStock = usePackedStock(showing);
 
   // Number-key (1..9) building selection while spectating. Desktop-only +
   // in-game; ignores keystrokes while a text field has focus so it never
-  // hijacks typing.
+  // hijacks typing. Piloting leaves 1–9 to the weapon groups.
   useEffect(() => {
-    if (phase !== 'game' || isTouchDevice() || !spectating) return;
+    if (!showing) return;
     const onKey = (e: KeyboardEvent): void => {
       if (e.altKey || e.ctrlKey || e.metaKey) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -117,48 +157,29 @@ export function BottomControlPanel(): JSX.Element | null {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [phase, spectating, setPlacementKind, packedStock]);
+  }, [showing, setPlacementKind, packedStock]);
 
-  if (phase !== 'game' || isTouchDevice() || !spectating) return null;
-
-  const cells: PanelCell[] = [];
-  if (spectating) {
-    BUILDINGS.forEach((k, i) => {
-      // Economy v2 — a non-starter kind with no packed one here is greyed out.
-      const entry = buildEntry(k, packedStock);
-      cells.push({
-        key: `build:${k}`,
-        num: i + 1,
-        label: entry.label,
-        icon: BUILD_ICONS[k],
-        active: placementKind === k,
-        empty: entry.locked,
-        onSelect: entry.locked ? null : () => setPlacementKind(k),
-      });
-    });
-  }
-
-  if (cells.length === 0) return null;
+  if (!inGame || BUILDINGS.length === 0) return null;
 
   return (
-    <Box sx={ROW_SX} data-testid="bottom-control-panel" data-panel-mode="build">
-      {cells.map((cell) => {
-        const c = cellColors(cell);
+    <Box
+      sx={showing ? ROW_SX : ROW_HIDDEN_SX}
+      aria-hidden={!showing}
+      data-testid="bottom-control-panel"
+      data-panel-mode={showing ? 'build' : 'hidden'}
+    >
+      {BUILDINGS.map((k, i) => {
+        const entry = buildEntry(k, packedStock);
         return (
-          <Tooltip key={cell.key} title={cell.label} placement="top">
-            <Box
-              role="button"
-              data-testid={`bcp-cell-${cell.key}`}
-              data-active={cell.active ? '1' : '0'}
-              aria-pressed={cell.active}
-              onClick={cell.onSelect ?? undefined}
-              sx={{ ...CELL_BASE, color: c.color, borderColor: c.borderColor, bgcolor: c.bgcolor }}
-            >
-              {cell.num !== null && <Box component="span" sx={NUM_SX}>{cell.num}</Box>}
-              {cell.icon}
-              <Box component="span" sx={CELL_LABEL_SX}>{cell.label}</Box>
-            </Box>
-          </Tooltip>
+          <BuildCell
+            key={k}
+            kind={k}
+            num={i + 1}
+            label={entry.label}
+            active={placementKind === k}
+            locked={entry.locked}
+            onPick={setPlacementKind}
+          />
         );
       })}
     </Box>
