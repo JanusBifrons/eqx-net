@@ -20,6 +20,8 @@ It lives in git (`docs/HANDOFF-consolidated-2026-11-09.md`), so it works on both
 
 **Close-out (2026-11-09 night).** Lock-to-fire is universal and on `main`: players (#385), NPC drones (#386), NPC capital turrets (#388), structure and coastal turrets (#387), player capital turrets split across locks (#390); HUD D is the only HUD; edge-radar lock marks (#393). Also landed tonight: E2E port offset (#396), desktop placement vs lock line (#398), speed dial hover bug (#402), muzzle-flash light (#395), coastal reload/arc UI (#397), test fixes (#391, #392, #400, #401) and cleanup (#394). The merge train #399 carried #387 and #390–#402.
 
+**2026-11-10 (user).** The failing feature specs are **parked, not fixed**: #405 quarantines the 11 specs lock-to-fire left red (one-line note each in `tests/e2e/featureTriggers.mjs`, `scrap-collision-stress` included). Circle back next week: check each is still relevant, then fix or retire it. Focus moves to getting ready for the showcase re-films: `instantLock` no longer widens AUTO targeting (`anyTarget` is its own option, #406), plus the gpu-lit-ships game-side fixes (5" turret rod, far shell-streak angle).
+
 **What is left**, in order:
 1. **Active (finish this unit):** the full feature E2E tier on `main` after #399, fixing anything lock-to-fire broke; the scrap-collision CI spike and the quarantined specs (agents running at close); the user's smoke test of lock feel and defence lock times (`STRUCTURE_SENSOR`, the 8 s structure lock cap, 16" guns no longer engaging fighters).
 2. **Backlog: test/CI health** (worth a background stream so CI stays trustworthy): the rest of "Tests & CI".
