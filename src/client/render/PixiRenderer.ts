@@ -41,8 +41,7 @@ import { Backdrop } from './art/fx/Backdrop.js';
 import { speedFxFullSpeed } from './art/fx/depth.js';
 import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
-import { shellImpactRadius, shellEndedOnHit } from './art/fx/turretFx.js';
-import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
+import { NavalShellBursts } from './art/fx/navalShellBursts.js';
 import { FxEngines } from './art/fx/FxEngines.js';
 import { WarpFx, type WarpFxShip } from './pixi/WarpFx.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
@@ -128,9 +127,6 @@ export { shouldFireRemoteWarpVisual };
 // Sprite/Graphics builders moved to ./pixi/spriteBuilders.ts — pure
 // constructors of Pixi Graphics instances, no class state. The
 // orchestrator below imports them from that module.
-
-/** A live naval shell: last + first-seen Pixi position, burst radius, full travel. */
-interface NavalShellRec { x: number; y: number; r: number; sx: number; sy: number; reach: number }
 
 /** How often (frames) unused older-sector art is freed (~2 s at 60 fps). */
 const ART_COLLECT_EVERY_FRAMES = 120;
@@ -2485,31 +2481,13 @@ export class PixiRenderer implements IRenderer {
         if (key) mv.noteShotNear(key, p.x, -p.y, p.weaponId);
       }
       this._turretShotSeen.set(id, gen);
-      // Naval shells: remember where each one is, for its impact burst.
-      if (p.weaponId !== undefined && p.weaponId.startsWith('naval_')) {
-        let rec = this._navalShells.get(id);
-        if (rec === undefined) {
-          rec = this._navalShellFree.pop() ?? { x: 0, y: 0, r: 0, sx: 0, sy: 0, reach: 0 };
-          const w = isWeaponId(p.weaponId) ? getWeapon(p.weaponId) : null;
-          rec.r = shellImpactRadius(w && w.mode !== 'hitscan' ? w.radius : 3);
-          rec.reach = w && w.mode !== 'hitscan' ? (w.speed * (w.mode === 'projectile' ? w.maxTicks : w.lifetimeTicks)) / 60 : 0;
-          rec.sx = p.x; rec.sy = -p.y;
-          this._navalShells.set(id, rec);
-        }
-        rec.x = p.x; rec.y = -p.y;
-      }
     }
     for (const [id, g] of this._turretShotSeen) if (g !== gen) this._turretShotSeen.delete(id);
-    // A shell gone this frame: burst where it was last seen if it HIT
-    // something. A shell that ran out of range just fades (a salvo's outer
-    // shells fly past a small target; bursting them in empty space read as
-    // explosions in the wrong place, review 2026-11-07).
-    for (const [id, rec] of this._navalShells) {
-      if (this._turretShotSeen.has(id)) continue;
-      if (shellEndedOnHit(Math.hypot(rec.x - rec.sx, rec.y - rec.sy), rec.reach)) this._fxExplosions?.spawn(rec.x, rec.y, rec.r, now);
-      this._navalShells.delete(id);
-      this._navalShellFree.push(rec);
-    }
+    // Naval shells: a shell gone this frame bursts where it was last seen if
+    // it HIT something; one that ran out of range just fades (review
+    // 2026-11-07). Game space in, game space to FxExplosions (review
+    // 2026-11-10: a Pixi-space -y here put the burst at the Y mirror).
+    this._navalShellBursts.frame(mirror.projectiles, this._fxExplosions, now);
     if (mirror.missiles) {
       for (const [id, m] of mirror.missiles) {
         if (!this._turretMissileSeen.has(id)) {
@@ -2990,9 +2968,8 @@ export class PixiRenderer implements IRenderer {
    *  with the frame's generation so a new one is noticed once, and a cache of
    *  owner id → sprite key (structures fire as their bare entity id). */
   private readonly _turretShotSeen = new Map<string, number>();
-  /** Live naval shells (last Pixi-space position + impact radius), pooled. */
-  private readonly _navalShells = new Map<string, NavalShellRec>();
-  private readonly _navalShellFree: NavalShellRec[] = [];
+  /** Naval shells in flight, for their impact bursts (game space). */
+  private readonly _navalShellBursts = new NavalShellBursts();
   private readonly _turretMissileSeen = new Map<number, number>();
   private _turretShotGen = 0;
   private readonly _ownerSpriteKey = new Map<string, string>();
@@ -3243,6 +3220,7 @@ export class PixiRenderer implements IRenderer {
   resetEffectsForSectorHandoff(): void {
     this.effects?.resetForSectorHandoff();
     this._fxExplosions?.reset();
+    this._navalShellBursts.reset();
     this._fxShields?.reset();
     this._fxFences?.reset();
     this._activeThrustIds.clear();
