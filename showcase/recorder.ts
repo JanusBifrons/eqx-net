@@ -246,9 +246,9 @@ export class Recorder {
         await sleep(ms);
         for (const k of keys) await page.keyboard.up(k);
       },
+      spectate: () => enterSpectator(page),
       cinema: {
-        play: (cues: CameraCue[]) =>
-          page.evaluate((c) => (window as unknown as CinemaWindow).__eqxCinema.play(c), cues),
+        play: (cues: CameraCue[]) => playCameraScript(page, cues),
         stop: () => page.evaluate(() => (window as unknown as CinemaWindow).__eqxCinema.stop()),
         hud: (mode: HudMode) =>
           page.evaluate((m) => (window as unknown as CinemaWindow).__eqxCinema.setHud(m), mode),
@@ -262,6 +262,49 @@ export class Recorder {
     };
     return ctx;
   }
+}
+
+/**
+ * The camera rule (user, 2026-11-10: "It should look and feel as it would for
+ * me. If you need a shot which is cinematic and panning, use spectator mode.").
+ * A camera script may play only while the pilot is in spectator mode, the
+ * game's own free-roam camera; while flying a ship the camera is the normal
+ * follow camera, as a player sees it. Throws otherwise.
+ */
+export function assertCinemaAllowed(pilotMode: string | null | undefined): void {
+  if (pilotMode === 'spectator') return;
+  throw new Error(
+    `ctx.cinema.play refused: the pilot is in '${String(pilotMode)}' mode. While piloting, a take films the ` +
+      `game's follow camera; call ctx.spectate() first for a pan or a free camera (docs/architecture/showcase-pipeline.md).`,
+  );
+}
+
+/** `ctx.cinema.play`: the camera rule's guard, then the script. While the
+ *  pilot flies a ship the camera is the game's follow camera; a scripted
+ *  move stands in for a spectating player panning. */
+export async function playCameraScript(page: Pick<Page, 'evaluate'>, cues: CameraCue[]): Promise<void> {
+  assertCinemaAllowed(await readPilotMode(page));
+  await page.evaluate((c) => (window as unknown as CinemaWindow).__eqxCinema.play(c), cues);
+}
+
+/** The store's discrete `pilotMode` ('pilot' | 'spectator'), or null with no store. */
+async function readPilotMode(page: Pick<Page, 'evaluate'>): Promise<string | null> {
+  return page.evaluate(() => {
+    const s = (window as unknown as { __eqxStore?: { getState(): { pilotMode?: string } } }).__eqxStore?.getState();
+    return s?.pilotMode ?? null;
+  });
+}
+
+/** Enter spectator mode the way a player does: click the always-visible
+ *  Pilot / Spectate toggle's Spectate button, then wait for the mode flip. */
+export async function enterSpectator(page: Page): Promise<void> {
+  if ((await readPilotMode(page)) === 'spectator') return;
+  await page.locator('[data-testid="spectator-toggle"]').first().click({ timeout: 10_000 });
+  await page.waitForFunction(
+    () => (window as unknown as { __eqxStore?: { getState(): { pilotMode?: string } } }).__eqxStore?.getState().pilotMode === 'spectator',
+    undefined,
+    { timeout: 5000 },
+  );
 }
 
 /** Landscape phone: an iPhone-12-class screen held sideways. 2× DPR gives a
