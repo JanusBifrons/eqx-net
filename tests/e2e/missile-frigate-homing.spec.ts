@@ -312,26 +312,26 @@ test('heat-seeker damages a drone (swarm target) — not just other players', as
   // must be one the racks bear on. `auto-fire-test` parks one peaceful,
   // hull-exposed fighter 150 u dead ahead (was `mount-test`'s 250 u ring,
   // where most drones sit outside the racks' ±15° arc). No asteroids.
-  // `startHostile=1` marks it hostile, so the AUTO missile group locks it
-  // on its own (normal lock time, no instantLock) and fires. The point-
-  // defence laser goes to MAN at once so the damage asserted below is the
-  // missile's, not the laser's.
+  // `startHostile=1` marks it hostile. The shooter joins with `instantLock`
+  // (no ~lock-time wait) AND `groupMode=manual` (every group starts in MAN,
+  // so the point-defence laser never kills the drone first and the damage
+  // asserted below is the missile's). Switching the missile group to AUTO
+  // then makes it lock the drone on its own and fire.
   const testId = randomUUID();
-  // Before the join: an AUTO salvo may leave as soon as the curtain lifts.
-  const fireTs = Date.now();
   const shooter = await joinShip(browser, {
     testId,
     spawnX: 0,
     spawnY: 0,
     shipKind: 'missile-frigate',
     room: 'auto-fire-test',
-    extra: { startHostile: '1', initialHull: '5000' },
+    extra: { startHostile: '1', initialHull: '5000', instantLock: '1', groupMode: 'manual' },
   });
 
   try {
     expect(shooter.playerId).not.toBe('');
-    await toManual(shooter.page, 'pd');
+    await expect(shooter.page.locator('[data-testid="fc-mode-pd"]')).toHaveAttribute('data-state', 'manual');
     await setActiveGroup(shooter.page, 'missiles');
+    const fireTs = Date.now();
     await toAuto(shooter.page, 'missiles');
 
     // Assertion 1: missile spawned with a lock on a DRONE (swarm-kind
@@ -343,9 +343,8 @@ test('heat-seeker damages a drone (swarm target) — not just other players', as
       (e) => e.tag === 'missile_spawned'
         && e.data['ownerId'] === shooter.playerId
         && e.ts >= fireTs,
-      // Covers the AUTO group's real (hostile-target) lock time before the
-      // first salvo — the state under test, not a pacing wait.
-      { timeoutMs: 15_000 },
+      // instantLock: the AUTO group locks within ~100 ms of the switch.
+      { timeoutMs: 4000 },
     );
     expect(spawned, 'no missile_spawned event for shooter').not.toBeNull();
     const lockedTargetId = spawned!.data['lockedTargetId'] as string | null;

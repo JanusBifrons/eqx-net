@@ -112,4 +112,26 @@ describe('SectorRoom integration — fire-control AUTO groups', () => {
     await waitUntil(() => groups?.[0]?.l[0]?.s === 2, 10_000, 'auto locked');
     expect(groups![0]!.m).toBe(0);
   }, 20_000);
+
+  it('testMode groupMode=manual: every group starts in MAN and never self-picks, even with instantLock', async () => {
+    const pid = randomUUID();
+    const room = (await harness.connectActive(pid, {
+      shipKind: 'interceptor', spawnX: 0, spawnY: 0, startHostile: true, instantLock: true, groupMode: 'manual',
+    })) as ClientRoom<SectorState>;
+    let groups: SnapGroups[] | undefined;
+    let snaps = 0;
+    room.onMessage('snapshot', (snap: { states?: Record<string, { playerId?: string; groups?: SnapGroups[] }> }) => {
+      for (const st of Object.values(snap.states ?? {})) if (st.playerId === pid && st.groups) { groups = st.groups; snaps++; }
+    });
+    // instantLock would lock the hostile drone 150 u ahead within ~100 ms on AUTO.
+    await waitUntil(() => snaps >= 10, 5_000, '10 snapshots with groups');
+    expect(groups!.length).toBeGreaterThan(0);
+    for (const g of groups!) {
+      expect(g.m).toBe(1);
+      expect(g.l).toEqual([]);
+    }
+    // Switching a group to AUTO afterwards locks as usual.
+    room.send('set_group_mode', { type: 'set_group_mode', groupId: groups![0]!.id, mode: 'auto' });
+    await waitUntil(() => groups?.[0]?.l[0]?.s === 2, 3_000, 'auto locked after switch');
+  }, 20_000);
 });
