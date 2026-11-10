@@ -113,3 +113,14 @@ export const CLIENT_COUNT_BUDGETS: Record<string, ClientCountBudget> = {
     measured: 'SwiftShader 960×540 2026-11-08, desktop 4 runs: draw p95 24–25, objects 6631–10072, uploads 0, pages 5; CI (ubuntu, PR #356) 2 runs: draw p95 25, objects 6360–6615, uploads 0, pages 5',
   },
 };
+
+/**
+ * Projectile broadphase (ranges plan, risk 2): narrow-phase sweeps per tick
+ * with 500 shells among 1,000 entities (40 km square, naval shell speed,
+ * capitals every 50th entity). Gated by
+ * `src/server/rooms/ProjectilePipeline.broadphase.test.ts`. A synthetic scene,
+ * so the count is exact on every host. Same rule as above: max measured
+ * + 25 %, raised only with a new measurement. Measured 2026-11-10 (laptop;
+ * deterministic scene, so CI reads the same): broadphase 63, full scan 500,000.
+ */
+export const PROJECTILE_NARROW_CHECKS_BUDGET = 79;
