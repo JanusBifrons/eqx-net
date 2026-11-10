@@ -56,7 +56,9 @@ import { droneMaxHealthOf } from './droneKindHelpers.js';
 import type { SnapshotMessage } from '../../shared-types/messages.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import type { ShipState } from './schema/SectorState.js';
-import type { ProjectileRecord } from './ProjectilePipeline.js';
+import { DT_SEC as PROJECTILE_DT_SEC, type ProjectileRecord } from './ProjectilePipeline.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
+import { shellViewHalfExtent } from '../../shared-types/shipScale/tuning.js';
 import type { Hold } from '../../shared-types/goods.js';
 import { isHoldEmpty } from '../../core/cargo/hold.js';
 import type { SceneWorkCounters } from './scene/SceneWorkCounters.js';
@@ -80,6 +82,28 @@ function hasAnyStatAlloc(alloc: Record<string, number>): boolean {
     if (typeof v === 'number' && v > 0) return true;
   }
   return false;
+}
+
+/** Naval shells: long-flight (up to ~30 s at real scale) gun rounds whose
+ *  interest is the viewer's whole widest view, not the ±1.5-cell box. */
+const NAVAL_SHELL_IDS: ReadonlySet<string> = new Set([
+  'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege',
+]);
+
+/**
+ * Naval-shell interest (ranges slice 7): is the shell, or the point where it
+ * will fall (its straight-line end after the ticks it has left), inside the
+ * square of half-extent `half` around (viewX, viewY)? Pure, allocation-free (#14).
+ */
+export function navalShellInView(
+  p: Pick<ProjectileRecord, 'x' | 'y' | 'vx' | 'vy' | 'birthTick' | 'maxTicks'>,
+  viewX: number, viewY: number, half: number, serverTick: number,
+): boolean {
+  if (Math.abs(p.x - viewX) <= half && Math.abs(p.y - viewY) <= half) return true;
+  const left = p.maxTicks - (serverTick - p.birthTick);
+  if (left <= 0) return false;
+  const t = left * PROJECTILE_DT_SEC;
+  return Math.abs(p.x + p.vx * t - viewX) <= half && Math.abs(p.y + p.vy * t - viewY) <= half;
 }
 
 /** Subset of SwarmEntityRecord the drone + asteroid slices read. */
@@ -851,8 +875,22 @@ export class SnapshotBroadcaster {
       let projectilesCount = 0;
       if (d.liveProjectiles.size > 0) {
         const projInterest = this.interestScratch.get(client.sessionId);
+        // Naval shells: the viewer's widest camera view for the hull it flies
+        // (shared with the client's zoom floor, #15). Once per recipient.
+        const viewShip = d.getActiveShip(recipientPlayerId);
+        const shellHalf = shellViewHalfExtent(getShipKind(viewShip?.kind ?? null));
+        const tickNow = d.serverTick();
         for (const [projId, proj] of d.liveProjectiles) {
-          if (Math.abs(proj.x - recipientPose.x) > interestRadius || Math.abs(proj.y - recipientPose.y) > interestRadius) {
+          if (NAVAL_SHELL_IDS.has(proj.weaponId)) {
+            // Sent while the shell or its fall point is in the viewer's widest
+            // view, so the target of a 30 km salvo sees it from the first
+            // snapshot and a far firer sees its own shell land. Else the wide-
+            // owner rule below still applies.
+            if (!navalShellInView(proj, recipientPose.x, recipientPose.y, shellHalf, tickNow)) {
+              const owner = d.swarmRegistry.get?.(proj.ownerId);
+              if (!owner || (owner.radius <= CELL_SIZE / 2 && owner.kind !== SWARM_KIND_STRUCTURE) || !projInterest?.has(owner.entityId)) continue;
+            }
+          } else if (Math.abs(proj.x - recipientPose.x) > interestRadius || Math.abs(proj.y - recipientPose.y) > interestRadius) {
             // Out of the box: still send it if a WIDE owner (a capital, seen
             // from several cells away) is in this viewer's interest, so its
             // salvo is seen leaving the barrels. Coastal defences: the same for a
