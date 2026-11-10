@@ -68,7 +68,12 @@ export interface ShotContext {
   px(x: number, y: number): { x: number; y: number };
   /** Hold keys down for `ms` (e.g. ['w', 'a']). */
   hold(keys: string[], ms: number): Promise<void>;
+  /** Switch to spectator mode as a player does (the Pilot / Spectate toggle).
+   *  The pilot's ship parks in the world; the camera becomes the free-roam one. */
+  spectate(): Promise<void>;
   cinema: {
+    /** Play a camera script. Refused (throws) unless the pilot is spectating:
+     *  while flying a ship, a take films the game's follow camera. */
     play(cues: CameraCue[]): Promise<void>;
     stop(): Promise<void>;
     hud(mode: HudMode): Promise<void>;
@@ -116,7 +121,8 @@ export interface Shot {
   startWhen?(ctx: ShotContext): Promise<void>;
   /** Recorded length. */
   durationMs: number;
-  /** Camera script, started when recording starts. */
+  /** Camera script, started when recording starts. Needs the pilot in
+   *  spectator mode by then (`ctx.spectate()` in prepare/startWhen). */
   camera?: CameraCue[];
   /** Actions during recording; must finish within `durationMs`. */
   run?(ctx: ShotContext): Promise<void>;
