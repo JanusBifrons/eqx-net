@@ -49,6 +49,8 @@ export interface Fields {
   /** Nav lights + nozzles in local world units (runtime glow sprites). */
   navLights: Array<{ x: number; y: number; color: number }>;
   nozzles: Array<{ x: number; y: number; r: number; len?: number }>;
+  /** Hull vent slits drawn (centre + half extents, local world units; ships). */
+  vents?: Array<{ x: number; y: number; hw: number; hh: number }>;
 }
 
 /** sRGB hex → linear rgb. */
@@ -324,7 +326,12 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
       const vy = vy0 + k * slitH * 2.6;
       const vx = maxDu * 0.45;
       if (distAt(vx, vy) < slitW * 1.4) continue;
+      // Never against a turret ring: on a capital a slit is one texel thick
+      // and ~110 u long, and running out of a ring it reads as a rod behind
+      // the gun (showcase review #376, the battleship's AA tubs).
+      if (opts.rings && slitHitsRing(opts.rings, vx, vy, slitW, slitH * 0.5)) continue;
       for (const sx of [vx, -vx]) {
+        (f.vents ??= []).push({ x: sx, y: vy, hw: slitW, hh: slitH * 0.5 });
         putRect(sx, vy, slitW, slitH * 0.5, (i) => {
           f.mat[i] = MAT.TRIM;
           f.key[i] = PALETTE.metal;
@@ -689,6 +696,19 @@ export function cavity(f: Fields, radiusU: number): Float32Array {
 export { insidePoly, PROPOSED_FOOTPRINTS };
 
 // ------------------------------------------------------------------ turrets (R&D)
+
+/** Does a slit rect (half extents hw × hh at ±vx, vy) touch any turret ring
+ *  (its stamped extent, r × 1.15, plus a small gap)? */
+function slitHitsRing(rings: ReadonlyArray<{ x: number; y: number; r: number }>, vx: number, vy: number, hw: number, hh: number): boolean {
+  for (const rg of rings) {
+    const R = rg.r * 1.15 + 1;
+    for (const sx of [vx, -vx]) {
+      const dx = Math.max(0, Math.abs(rg.x - sx) - hw), dy = Math.max(0, Math.abs(rg.y - vy) - hh);
+      if (dx * dx + dy * dy < R * R) return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Cut a turret ring into a hull or deck at (cx, cy), radius r (world units):
