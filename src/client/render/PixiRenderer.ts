@@ -46,6 +46,7 @@ import { FxEngines } from './art/fx/FxEngines.js';
 import { WarpFx, type WarpFxShip } from './pixi/WarpFx.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
 import { LodDots } from './pixi/LodDots';
+import { NAVAL_RANGE } from '@shared-types/combat/navalRange';
 import { GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldBubbleRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
 import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
@@ -151,6 +152,8 @@ export class PixiRenderer implements IRenderer {
    *  last applied, its hull zoom factor, and whether `?zoom=` pinned the start. */
   private _zoomKindId: string | null = null;
   private _zoomFactor = 1;
+  private _viewW = 0;
+  private _viewH = 0;
   private _zoomPinned = false;
   private readonly _zoomRange = { minScale: GAMEPLAY_MIN_ZOOM, startZoom: 0 };
 
@@ -737,7 +740,7 @@ export class PixiRenderer implements IRenderer {
       maxScale: 3,
       followLerpFactor: 1,
     });
-    this.camera.setScreenSize(initialW, initialH);
+    this.setViewSize(initialW, initialH);
 
     // Read the bisected FX kill switches once at init. Threaded into the
     // warp chain (forceDisable) + EffectsService refs (per-effect bypasses).
@@ -1052,7 +1055,7 @@ export class PixiRenderer implements IRenderer {
         // on the main-thread path too (parity with the worker resize).
         const dpr = window.devicePixelRatio ?? 1;
         this.app.renderer.resize(w, h, dpr);
-        this.camera.setScreenSize(w, h);
+        this.setViewSize(w, h);
         this.starfield?.resize(w, h);
       };
       window.addEventListener('resize', resize);
@@ -1084,7 +1087,7 @@ export class PixiRenderer implements IRenderer {
     // (the old behaviour) kept the stale init resolution → blur after
     // such a change. `width`/`height` are LOGICAL (CSS) px.
     this.app.renderer.resize(width, height, dpr ?? this.app.renderer.resolution);
-    this.camera.setScreenSize(width, height);
+    this.setViewSize(width, height);
     this.starfield?.resize(width, height);
     if (isDiagEnabled()) {
       logEvent('render_frame_diag', {
@@ -1530,13 +1533,25 @@ export class PixiRenderer implements IRenderer {
     if (id === null || id === this._zoomKindId) return;
     this._zoomKindId = id;
     const kind = getShipKind(id);
-    zoomRangeForKind(kind, DEFAULT_GAMEPLAY_ZOOM, this._zoomRange);
+    zoomRangeForKind(kind, DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, this._viewW, this._viewH);
     this.camera.setMinScale(this._zoomRange.minScale);
     const f = hullZoomFactor(kind);
     if (f !== this._zoomFactor) {
       this._zoomFactor = f;
       if (!this._zoomPinned) this.camera.setZoom(this._zoomRange.startZoom);
     }
+  }
+
+  /** Every viewport-size change goes through here: the camera's screen size,
+   *  and (once a hull is known) the zoom-out floor, which for a capital in
+   *  `real` naval-range mode depends on the viewport (`zoomFloorForView`). */
+  private setViewSize(w: number, h: number): void {
+    this._viewW = w;
+    this._viewH = h;
+    this.camera.setScreenSize(w, h);
+    if (this._zoomKindId === null) return;
+    zoomRangeForKind(getShipKind(this._zoomKindId), DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, w, h);
+    this.camera.setMinScale(this._zoomRange.minScale);
   }
 
   update(mirror: RenderMirror): void {

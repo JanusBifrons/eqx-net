@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { getShipKind } from '@shared-types/shipKinds';
 import { CAPITAL_STYLE_VARIANTS } from '@shared-types/shipKinds/capitals/index';
-import { zoomFloorForKind } from '@shared-types/shipScale/tuning';
+import { zoomFloorForKind, zoomFloorForView } from '@shared-types/shipScale/tuning';
 import { STAR_MAX_TILE_HALF, starLayerAlphaAt, starTileHalfRange } from './lodStarfield';
 import { GAMEPLAY_STAR_LAYERS } from './StarfieldBackground';
 import { GALAXY_STAR_LAYERS } from './galaxy/galaxyStarfield';
@@ -123,6 +123,22 @@ describe('starfield covers every capital zoom-out floor (real-scale naval ranges
       if (!label.endsWith('legacy')) continue;
       expect(floor, label).toBeGreaterThanOrEqual(abyss.fadedAt);
       expect(starLayerAlphaAt(abyss, floor), label).toBe(0);
+    }
+  });
+
+  it('the LIVE capital floor (zoomFloorForView) keeps a layer FULL and inside the backstop at every viewport', () => {
+    const viewports = [...VIEWPORTS, { name: '720p window', w: 1280, h: 720 }, { name: 'phone portrait css', w: 390, h: 844 }];
+    for (const id of Object.values(CAPITAL_STYLE_VARIANTS).flat()) {
+      for (const vp of viewports) {
+        const floor = zoomFloorForView(getShipKind(id), vp.w, vp.h, 'real');
+        const label = `${id} ${vp.name} @ ${floor}`;
+        expect(GAMEPLAY_STAR_LAYERS.some((l) => Math.abs(starLayerAlphaAt(l, floor) - l.baseAlpha) < 1e-9), label).toBe(true);
+        for (const l of GAMEPLAY_STAR_LAYERS) {
+          if (starLayerAlphaAt(l, floor) <= 0) continue;
+          const half = Math.max(vp.w, vp.h) / (2 * floor);
+          expect(Math.ceil(half / l.tileSize) + 1, `${label} inside backstop`).toBeLessThanOrEqual(STAR_MAX_TILE_HALF);
+        }
+      }
     }
   });
 });
