@@ -314,7 +314,6 @@ export class ProjectilePipeline {
         // A miss just ends: shells explode only on what they hit (no burst,
         // no splash at the end of the flight).
         this.liveProjectiles.delete(projId);
-        if (d.swarmRegistry.version === undefined) this.bpStale = true;
       }
     }
     this.narrowChecks = checks;
