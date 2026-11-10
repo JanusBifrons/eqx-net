@@ -102,5 +102,5 @@ Plan `prancy-squishing-donut`, R2 (branch `rnd/gpu-lit-ingame`). Open: R3 batche
 - A muzzle flash's light lasts only 1–2 frames: it follows the flash sprite, which is that brief. A short decay after the sprite ends would let the light read.
 - The 5-inch turrets' flashes cast no visible light on the deck.
 - A thin dark rod sticks out behind each 5-inch turret, opposite its barrels.
-- Far shell streaks run nearly vertical while the barrels that fired them point south-east.
+- ~~Far shell streaks run nearly vertical while the barrels that fired them point south-east.~~ Not a bug (checked 2026-11-10): the faint white near-vertical streaks are the backdrop's speed dust (`Backdrop.layoutMotes`), stretched along the camera's motion while the fighter flies north. Shells are orange, and in a re-take every shell's streak matched its velocity and frame-to-frame motion (locked by `FxWeapons.test.ts`).
 - Framing: the follow camera keeps the hull near the left edge, and the caption covers the stern.
