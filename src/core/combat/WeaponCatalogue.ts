@@ -44,8 +44,9 @@ export interface ProjectileWeaponDef extends WeaponDefBase {
   speed: number;
   radius: number;
   maxTicks: number;
-  /** Optional blast where the shell lands (plan coastal-defences: the 80 cm
-   *  siege gun). On a hit, and when it falls at the end of its flight, every
+  /** Optional blast where the shell hits (plan coastal-defences: the 80 cm
+   *  siege gun). On a hit (only; a miss ends silently at the end of its
+   *  flight, owner 2026-11-10), every other
    *  ship and structure within `radius` takes `damage × (falloffMin / d)²`
    *  (capped at full damage inside `falloffMin`). Absent ⇒ a plain shell. */
   splash?: { radius: number; falloffMin: number };
