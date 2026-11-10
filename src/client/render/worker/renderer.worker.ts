@@ -240,6 +240,12 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'SET_HUD_OVERLAYS': {
+        if (!renderer) return;
+        renderer.setHudOverlays(msg.lockMarks, msg.radar);
+        break;
+      }
+
       case 'GLIDE_CAMERA': {
         if (!renderer) return;
         renderer.glideCameraTo(msg.gameX, msg.gameY, msg.durationMs);

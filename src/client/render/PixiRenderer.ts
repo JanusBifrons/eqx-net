@@ -262,6 +262,9 @@ export class PixiRenderer implements IRenderer {
   private _dmgNumbersDisabled = false;
   private _selfDmgNumbersDisabled = false;
   private _cleanWorld = false;
+  /** HUD-mode lock marks (`setHudOverlays`): false below the full HUD. Stored,
+   *  not pushed, because the setter can arrive before `init` built the layers. */
+  private _lockMarksVisible = true;
   private _healthBarsDisabled = false;
   private sprites = new Map<string, Container>();
   /** Screen-size LOD (capital-ship R&D round 3 E1): tiny ships draw as dots. */
@@ -852,6 +855,7 @@ export class PixiRenderer implements IRenderer {
     // Structures plan, Phase 3 — the grid connector web. Added FIRST so the
     // lines render BEHIND the structure/ship sprites added later.
     this.connectorRenderer = new ConnectorRenderer();
+    this.connectorRenderer.setTurretOverlaysVisible(this._lockMarksVisible);
     // A3 — the static layer (idle web, range rings, wall rails) sits behind the
     // per-frame layer.
     this.shipContainer.addChild(this.connectorRenderer.staticGfx);
@@ -2230,7 +2234,8 @@ export class PixiRenderer implements IRenderer {
       mirror.pendingHealthBarHits.length = 0;
     }
     if (!this._healthBarsDisabled) this.healthBars?.update(mirror);
-    this.aimFeedback?.update(mirror, this.camera.scale.x);
+    if (this._lockMarksVisible) this.aimFeedback?.update(mirror, this.camera.scale.x);
+    else this.aimFeedback?.hide();
 
     // Click-to-inspect selection bracket (Item B4). The renderer owns
     // `_selectedId`; the bracket resolves its live pose from the mirror each
@@ -2254,7 +2259,8 @@ export class PixiRenderer implements IRenderer {
     // the two brackets never stack on the same target. If the hovered entity
     // vanished from the mirror, clear `_hoveredId`. Renderer-local id published
     // for the E2E bridge (data-hover-pick-id) — NEVER Zustand (#2).
-    const hoverTarget = this._hoveredId === this._selectedId ? null : this._hoveredId;
+    // Below the full HUD (showcase `?hud=`) the hover outline is not drawn.
+    const hoverTarget = this._hoveredId === this._selectedId || !this._lockMarksVisible ? null : this._hoveredId;
     if (hoverTarget !== null) {
       const stillHovered = this.hoverBracket?.update(mirror, hoverTarget) ?? false;
       if (!stillHovered) this._hoveredId = null;
@@ -3070,6 +3076,14 @@ export class PixiRenderer implements IRenderer {
   setRadarSuppressed(suppressed: boolean): void {
     this.halo.setSuppressed(suppressed);
     this.incomingFire.setSuppressed(suppressed);
+  }
+
+  /** See `IRenderer.setHudOverlays`. */
+  setHudOverlays(lockMarks: boolean, radar: boolean): void {
+    this._lockMarksVisible = lockMarks;
+    // `connectorRenderer` is built in `init`; it picks the flag up there.
+    (this.connectorRenderer as ConnectorRenderer | undefined)?.setTurretOverlaysVisible(lockMarks);
+    this.halo.setHidden(!radar);
   }
 
   /** Test-only (DEV hook `__eqxHaloDebug`, `?worker=0`) — drawn radar icons. */

@@ -90,3 +90,18 @@ describe('AimFeedbackRenderer faint threat ring', () => {
     expect(idx).toBeLessThan(Math.min(...g.arc.mock.invocationCallOrder));
   });
 });
+
+describe('AimFeedbackRenderer.hide', () => {
+  it('draws the threat marks in update() and clears them in hide()', () => {
+    const children: Array<{ visible: boolean }> = [];
+    const r = new AimFeedbackRenderer({ addChild: (c: { visible: boolean }) => children.push(c) } as never);
+    r.update(mirror([{ t: 'p:npc', s: 2, p: 100 }]), 1);
+    expect(r.lastThreats).toBe(1);
+    expect(children.some((c) => c.visible)).toBe(true);
+
+    r.hide();
+    expect(r.lastThreats).toBe(0);
+    expect(r.lastFcLocks).toBe(0);
+    expect(children.every((c) => !c.visible)).toBe(true);
+  });
+});

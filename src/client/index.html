@@ -76,7 +76,12 @@
       html.eqx-hud-none [data-testid="app-header"],
       html.eqx-hud-none [data-anchor^="top-"],
       html.eqx-hud-none [data-anchor^="middle-"],
-      html.eqx-hud-none [data-anchor^="bottom-"] {
+      html.eqx-hud-none [data-anchor^="bottom-"],
+      /* Fire-control lock banner ("N SHIPS HAVE YOU LOCKED"): full HUD only
+         (`lockOverlaysVisible` in hudMode.ts; the world lock marks follow it). */
+      html.eqx-hud-clean [data-testid="fc-lock-band"],
+      html.eqx-hud-minimal [data-testid="fc-lock-band"],
+      html.eqx-hud-none [data-testid="fc-lock-band"] {
         visibility: hidden !important;
       }
       /* In-game HUD: the idle "Nothing incoming" chip goes — only real threats show. */

@@ -296,6 +296,14 @@ export class ConnectorRenderer {
    *  they replace both wall layers here. */
   fxFences: FxFences | null = null;
   private _fxWallsOn = false;
+  /** Built-turret range rings + turret aim lines. Off below the full HUD
+   *  (showcase `?hud=`, `IRenderer.setHudOverlays`). */
+  private _turretOverlays = true;
+  setTurretOverlaysVisible(visible: boolean): void {
+    if (visible === this._turretOverlays) return;
+    this._turretOverlays = visible;
+    this._staticSig = NaN; // the range rings live on the static layer: rebuild it
+  }
   /** Draws the STEADY part of each derived shield wall (static layer). */
   private readonly _staticWallVisitor: DerivedWallVisitor = {
     // (Skipped while the new fences draw: see drawStatic.)
@@ -413,7 +421,7 @@ export class ConnectorRenderer {
       const ax = a.x;
       const ay = -a.y;
       // WS-D (#21) — always-on defensive RANGE circle for a BUILT weapon turret.
-      if (st.built && a.shipKind !== undefined && isStructureKindId(a.shipKind)) {
+      if (this._turretOverlays && st.built && a.shipKind !== undefined && isStructureKindId(a.shipKind)) {
         const wr = getStructureKind(a.shipKind).weaponRange;
         if (wr !== undefined && wr > 0) {
           const rc = builtRangeCircleVisualInto(this._builtRangeVisual, scale);
@@ -550,7 +558,7 @@ export class ConnectorRenderer {
       // Phase 5 — turret aim line toward its target drone (the fire beam
       // itself arrives as a discrete laser_fired). Faint dashed-feel via low
       // alpha; the actual shot is the bright beam.
-      if (st.turretTargetId !== undefined || st.turretTargetPlayerId !== undefined) {
+      if (this._turretOverlays && (st.turretTargetId !== undefined || st.turretTargetPlayerId !== undefined)) {
         // B2 — an NPC turret can aim at a player ship.
         const target = st.turretTargetId !== undefined
           ? swarm.get(st.turretTargetId)

@@ -76,7 +76,7 @@ import { LayoutProvider } from './layout/LayoutProvider';
 import { Slot } from './layout/Slot';
 import { AdvancedDrawer } from './layout/Drawer/AdvancedDrawer';
 import { TopRightToolbar } from './layout/TopRightToolbar';
-import { applyHudMode, isHudMode } from './cinematic/hudMode';
+import { applyHudMode, applyHudOverlays, hudModeFromSearch, isHudMode } from './cinematic/hudMode';
 import type { CameraCue } from '@core/contracts/cameraScript';
 
 /** `window.__eqxCinema` — the showcase pipeline's control surface (DEV-only). */
@@ -494,6 +494,9 @@ function GameSurface({
     // gameSurfaceBootstrap.ts — full rationale lives there.
     const { renderer, useWorker } = selectRenderer();
     rendererRef.current = renderer;
+    // HUD mode (`?hud=` / `?cinematic=1`) → the world lock marks + edge radar.
+    // `__eqxCinema.setHud` re-pushes it mid-take.
+    applyHudOverlays(renderer, hudModeFromSearch(window.location.search), window.location.search);
     // Perf scenes (`?perfprobe=1` only): frame times, long tasks, bytes.
     if (perfProbeEnabled(window.location.search)) {
       installPerfProbe(renderer, useWorker);
@@ -585,7 +588,9 @@ function GameSurface({
         play: (cues) => rendererRef.current?.setCameraScript(cues),
         stop: () => rendererRef.current?.setCameraScript(null),
         setHud: (mode) => {
-          if (isHudMode(mode)) applyHudMode(mode);
+          if (!isHudMode(mode)) return;
+          applyHudMode(mode);
+          applyHudOverlays(rendererRef.current, mode, window.location.search);
         },
         isScripted: () => {
           const r = rendererRef.current as unknown as { isCameraScripted?: () => boolean } | null;

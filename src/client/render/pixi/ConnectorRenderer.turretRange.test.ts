@@ -61,6 +61,25 @@ describe('ConnectorRenderer — built-turret range circles (WS-D #21)', () => {
     expect(r.lastBuiltTurretRangeRadius).toBe(getStructureKind('turret').weaponRange);
   });
 
+  it('drops the range circles below the full HUD and brings them back (showcase ?hud=, 2026-11-10)', () => {
+    // Review of `coastal-duel` (hud 'none'): red concentric range rings on a
+    // coastal battery. `IRenderer.setHudOverlays(false, …)` must clear them,
+    // even though the static layer's signature has not changed.
+    const swarm = new Map<number, SwarmRenderState>([[1, structureEntry('turret', 100, 200)]]);
+    const structures = new Map<number, StructureRenderState>([[1, structureState({ built: true })]]);
+    const mirror = { swarm, structures } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+    expect(r.builtTurretRangeCount).toBe(1);
+    r.setTurretOverlaysVisible(false);
+    r.update(mirror, 1, 16);
+    expect(r.builtTurretRangeCount).toBe(0);
+    r.setTurretOverlaysVisible(true);
+    r.update(mirror, 1, 32);
+    expect(r.builtTurretRangeCount).toBe(1);
+  });
+
   it('does NOT draw a range circle for an UNBUILT turret blueprint', () => {
     const swarm = new Map<number, SwarmRenderState>([[1, structureEntry('turret', 0, 0)]]);
     const structures = new Map<number, StructureRenderState>([[1, structureState({ built: false, buildPct: 0.3 })]]);
