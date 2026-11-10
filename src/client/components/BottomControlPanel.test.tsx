@@ -1,13 +1,13 @@
 /**
  * Phase 5 WS-4 — the desktop RTS bottom control panel. Locks:
  *   - desktop + in-game gating (renders nothing off-game);
- *   - PILOTING renders nothing and leaves the number keys alone (the fire-control
+ *   - PILOTING keeps the palette mounted but hidden and leaves the number keys alone (the fire-control
  *     weapon strip replaced the weapon-slot row; 1–9 select weapon groups);
  *   - SPECTATING flips to the flattened building palette; number key / click
  *     selects a building for placement.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
 import { BottomControlPanel } from './BottomControlPanel.js';
 
@@ -32,10 +32,13 @@ describe('BottomControlPanel (Phase 5 WS-4)', () => {
     expect(screen.queryByTestId('bottom-control-panel')).toBeNull();
   });
 
-  it('PILOTING — renders nothing; number keys leave the slot + placement alone', () => {
+  it('PILOTING — the palette is mounted but hidden; number keys leave the slot + placement alone', () => {
     useUIStore.setState({ activeSlotId: 'bogus' });
     render(<BottomControlPanel />);
-    expect(screen.queryByTestId('bottom-control-panel')).toBeNull();
+    const panel = screen.getByTestId('bottom-control-panel');
+    expect(panel).toHaveAttribute('data-panel-mode', 'hidden');
+    expect(panel).toHaveAttribute('aria-hidden', 'true');
+    expect(getComputedStyle(panel).display).toBe('none');
     pressKey('1');
     expect(useUIStore.getState().activeSlotId).toBe('bogus');
     expect(useUIStore.getState().placementKind).toBeNull();
@@ -77,6 +80,37 @@ describe('BottomControlPanel (Phase 5 WS-4)', () => {
     expect(cs.flexWrap).toBe('wrap');
     expect(cs.maxWidth).toBe('calc(100vw - 32px)');
     expect(cs.overflowY).toBe('auto');
+  });
+
+  // Perf lock (2026-11-10 death→spectator hitch, tests/perf/death-spectator-hitch.spec.ts):
+  // the palette used to cold-mount ~40 MUI Tooltip cells (~860 components) in
+  // the destroy-message task — a 50–70 ms frame at the explosion. It is now
+  // pre-mounted while piloting, so the flip into spectator must insert ZERO DOM
+  // nodes and keep every cell element (count-based, not wall-clock).
+  it('the spectator flip inserts no DOM (palette pre-mounted, cells memoised)', () => {
+    render(<BottomControlPanel />);
+    const panel = screen.getByTestId('bottom-control-panel');
+    const cellsBefore = Array.from(panel.querySelectorAll('[data-testid^="bcp-cell-"]'));
+    expect(cellsBefore.length).toBeGreaterThan(0);
+
+    let added = 0;
+    const obs = new MutationObserver((records) => {
+      for (const r of records) added += r.addedNodes.length;
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    act(() => {
+      useUIStore.setState({ pilotMode: 'spectator' });
+    });
+    const records = obs.takeRecords();
+    for (const r of records) added += r.addedNodes.length;
+    obs.disconnect();
+
+    expect(added).toBe(0);
+    expect(screen.getByTestId('bottom-control-panel')).toBe(panel);
+    expect(panel).toHaveAttribute('data-panel-mode', 'build');
+    const cellsAfter = Array.from(panel.querySelectorAll('[data-testid^="bcp-cell-"]'));
+    expect(cellsAfter.length).toBe(cellsBefore.length);
+    cellsAfter.forEach((el, i) => expect(el).toBe(cellsBefore[i]));
   });
 
   it('SPECTATING — number key 2 selects the 2nd building (connector)', () => {
