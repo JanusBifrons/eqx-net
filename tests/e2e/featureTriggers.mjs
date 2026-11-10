@@ -86,4 +86,32 @@ export const QUARANTINE = new Set([
   // join with the groups in MAN and switch to AUTO once the guns are drawn
   // (no `groupMode` join option yet). The other three tests pass 5/5.
   'fx-turrets',
+  // 2026-11-10: failing on CI's e2e-feature-affected since lock-to-fire went
+  // universal (#385). Parked by the user for a pass next week: check each is
+  // still relevant, then fix or retire it. CI runs 42674277690, 42694505833,
+  // 42694522168. Notes from a first look:
+  //
+  // A-K time out or the worker drag stalls; #398 didn't cure it on CI.
+  'structure-placement-ghost',
+  // :197 repeat builds across a placement (R2.6); new on train #399.
+  'speed-dial',
+  // :28 / :105 tap-to-inspect; all passed locally 2026-11-10, so likely CI flake.
+  'entity-inspect',
+  // :95 inspector clears the app header; same cluster as entity-inspect.
+  'break-in',
+  // :115 hands-off LOCK then CANCEL in the info box; the drain case is flaky.
+  'fire-control-lock',
+  // :106 hit beam; :77 is already fixme (no firing into empty space now).
+  'laser-falloff-probe',
+  // :142 beam origin while coasting: 16 of 40 coast frames active, wants > 20.
+  'interceptor-beam-stays-connected',
+  // An observer sees lingering hulls; flaky on #399 and #402.
+  'multiple-lingering-pool',
+  'spawn-swap-lingers',
+  // Idle prediction sub-pixel in feel-test-25; flaky on #399 and #402.
+  'prediction-idle-bounded',
+  // Cause known (2026-11-09): below ~15 fps the client jumps inputTick ahead
+  // without stepping the ship (recoverInputTickFromStarvation), then snaps.
+  // Fix options a/b/c are in the consolidated handoff; they wait for a phone run.
+  'scrap-collision-stress',
 ]);
