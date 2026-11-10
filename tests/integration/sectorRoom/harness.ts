@@ -116,8 +116,9 @@ export interface SectorTestHarness {
    * lock key (`s:<entityId>` | `p:<playerId>`), a swarm record id (e.g. a
    * drone id) or a playerId. `groupId` absent ⇒ every group of the pilot.
    * Throws when nothing took the lock (unknown target / pilot not spawned).
-   * Alternatively join with `instantLock: true` (AUTO groups lock any NPC or
-   * non-own structure in reach + arc at once).
+   * Alternatively join with `instantLock: true` (every lock completes at once)
+   * plus `anyTarget: true` (AUTO groups also pick any NPC or non-own structure
+   * in reach + arc).
    */
   lockTarget(playerId: string, target: string, groupId?: string): number;
   /** Wait for the next snapshot. Note: snapshot broadcasts are suppressed

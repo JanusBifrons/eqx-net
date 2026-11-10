@@ -15,7 +15,7 @@
  * timeouts"): lock-to-fire (2026-11-09) means a weapon group fires only at a
  * COMPLETED lock, so the fire tests join `auto-fire-test` (one peaceful drone
  * 150 u dead ahead, 10× time so case 4's ghost-TTL expiry is a few hundred
- * ms) with `instantLock=1`: the AUTO group locks the drone within ~0.1 s and
+ * ms) with `instantLock=1&anyTarget=1`: the AUTO group locks the drone within ~0.1 s and
  * fires on its own — no synthetic keyboard (headless focus made Space flaky)
  * and no test-only fire hook. The wait succeeding IS the assertion.
  */
@@ -30,7 +30,7 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 async function joinClient(browser: Browser, shipKind = 'scout', fire = false) {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  const room = fire ? 'auto-fire-test&instantLock=1&initialHull=5000' : 'test-sector-fast';
+  const room = fire ? 'auto-fire-test&instantLock=1&anyTarget=1&initialHull=5000' : 'test-sector-fast';
   await page.goto(`${BASE_URL}?room=${room}&shipKind=${shipKind}`);
   await page.waitForFunction(
     () => {

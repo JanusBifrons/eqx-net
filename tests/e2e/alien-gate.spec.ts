@@ -10,7 +10,7 @@
  * Lock-to-fire (2026-11-09): a pilot can only fire at a COMPLETED lock, so the
  * room must offer something lockable inside the zone and in weapon reach of
  * the spawn (the gate itself is 1500 u away, far past any gun's reach). The
- * pilot joins with `instantLock=1`: the AUTO group locks that target in front
+ * pilot joins with `instantLock=1&anyTarget=1`: the AUTO group locks that target in front
  * within ~0.1 s and fires, which is the hostile act the gate punishes.
  *
  * The engines-off input gate itself is locked by `tests/unit/disableParity`
@@ -26,7 +26,7 @@ type EqxWindow = { __eqxSelectAtWorld?: (x: number, y: number) => string | null 
 
 test('an alien gate disables a pilot who fires in its zone', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto(`${BASE_URL}?room=alien-gate-test&testId=${randomUUID()}&worker=0&instantLock=1`);
+  await page.goto(`${BASE_URL}?room=alien-gate-test&testId=${randomUUID()}&worker=0&instantLock=1&anyTarget=1`);
   await page.waitForFunction(
     () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '', undefined,
     { timeout: 90_000 },

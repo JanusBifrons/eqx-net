@@ -5,7 +5,8 @@ import { expect, type Page } from '@playwright/test';
  * ONLY at a target it has a COMPLETED lock on. Specs that are ABOUT locking use
  * `lockOn` (select → LOCK in the info box → chip `data-locked="1"`); specs that
  * merely need to shoot something should join with `instantLock` instead (the
- * AUTO group then locks whatever is in front within ~0.1 s and fires on its own).
+ * AUTO group then locks a hostile target in front within ~0.1 s and fires on its
+ * own; add `anyTarget` for it to pick neutral NPCs / structures too).
  *
  * Pair `lockOn` with `instantLock` when the lock itself is not under test —
  * otherwise a non-hostile target (another player, a neutral drone) runs the

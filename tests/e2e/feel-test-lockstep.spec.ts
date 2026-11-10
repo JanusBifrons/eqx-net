@@ -80,10 +80,10 @@ test('drone render smoothness: 25-drone pack tracks, never pins/lurches', async 
   });
 
   // 25 drones, 0 asteroids, player anchored at origin (feel-test-25 room).
-  // `instantLock=1`: lock-to-fire (2026-11-09) — the AUTO group locks the
-  // drones it sweeps past (non-hostile too) and fires, so the strafe is still
+  // `instantLock=1&anyTarget=1`: lock-to-fire (2026-11-09) — the AUTO group locks the
+  // drones it sweeps past (non-hostile too, `anyTarget`) and fires, so the strafe is still
   // a combat strafe. Space below only adds the active MAN group, if any.
-  await page.goto(`${BASE_URL}?room=feel-test-25&instantLock=1`);
+  await page.goto(`${BASE_URL}?room=feel-test-25&instantLock=1&anyTarget=1`);
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
