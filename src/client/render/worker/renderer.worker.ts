@@ -29,6 +29,7 @@ DOMAdapter.set(WebWorkerAdapter);
 import { PixiRenderer } from '../PixiRenderer';
 import { GalaxyMapLayer } from '../galaxy/GalaxyMapLayer';
 import type { MainToWorkerMsg, WorkerToMainMsg } from './protocol';
+import { rendererArgsFromBoot } from './bootRenderer';
 
 function post(msg: WorkerToMainMsg): void {
   self.postMessage(msg);
@@ -54,13 +55,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
   try {
     switch (msg.type) {
       case 'BOOT': {
-        renderer = new PixiRenderer(msg.isTouch ?? false, {
-          mode: msg.artMode ?? 'classic',
-          ...(msg.artDelayMs ? { delayMs: msg.artDelayMs } : {}),
-          ...(msg.fx ? { fx: true } : {}),
-          ...(msg.speedFxOff ? { speedFx: false } : {}),
-          ...(msg.lighting ? { lighting: msg.lighting } : {}),
-        });
+        renderer = new PixiRenderer(...rendererArgsFromBoot(msg));
         await renderer.init({
           canvas: msg.canvas,
           width: msg.width,
