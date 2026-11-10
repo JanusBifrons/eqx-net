@@ -389,10 +389,12 @@ import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { refineRayHit } from '../../core/combat/capitalHits.js';
 import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
+import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
 import type { LockEntry } from '../../core/combat/lockState.js';
 
-/** Stamp the ship scale onto a welcome (shared contract: shipScale/welcomeScale.ts). */
-const withShipScale = (w: WelcomeMessage): WelcomeMessage => stampShipScale(w);
+/** Stamp the ship scale and the naval range mode onto a welcome (shared
+ *  contracts: shipScale/welcomeScale.ts, combat/navalRange.ts). */
+const withShipScale = (w: WelcomeMessage): WelcomeMessage => stampNavalRange(stampShipScale(w));
 
 /** C3 — a ship cargo target (see `SectorRoom.shipTarget`). */
 interface ShipCargoTarget {

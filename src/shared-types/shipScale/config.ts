@@ -17,6 +17,7 @@
  */
 import { capitalWorkerNameSuffix } from '../shipKinds/capitals/capitalConfig.js';
 import { solarWorkerNameSuffix } from '../sectorBounds.js';
+import { navalRangeWorkerNameSuffix } from '../combat/navalRange.js';
 
 /** The shipping ship scale (2×, picked 2026-11-05 from the comparison footage).
  *  R&D / tuning override it via the env above. Catalogue numbers are authored
@@ -115,7 +116,7 @@ export const KIND_SCALE_OVERRIDES: ReadonlyMap<string, KindScaleOverride> = pars
 
 /** The worker `name` that carries this process's config into a worker. */
 export function shipScaleWorkerName(prefix = ''): string {
-  return `${prefix}${prefix ? ';' : ''}shipScale=${SHIP_SCALE};shipTuning=${SHIP_TUNING}${SHIP_KIND_SCALE ? `;kindScale=${SHIP_KIND_SCALE}` : ''}${capitalWorkerNameSuffix()}${solarWorkerNameSuffix()}`;
+  return `${prefix}${prefix ? ';' : ''}shipScale=${SHIP_SCALE};shipTuning=${SHIP_TUNING}${SHIP_KIND_SCALE ? `;kindScale=${SHIP_KIND_SCALE}` : ''}${capitalWorkerNameSuffix()}${solarWorkerNameSuffix()}${navalRangeWorkerNameSuffix()}`;
 }
 
 /** True at the AUTHORED scale (1×, profile A, no per-kind overrides): the
