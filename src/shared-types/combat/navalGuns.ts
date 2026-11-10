@@ -40,3 +40,11 @@ export type NavalGunId = keyof typeof NAVAL_GUN_BALLISTICS;
 
 /** Schwerer Gustav's blast, absolute (the shipped 2× B value). */
 export const NAVAL_SIEGE_SPLASH = { radius: 320, falloffMin: 60 } as const;
+
+/** A naval gun's engage reach, rounded to the unit: a coastal structure's
+ *  `weaponRange` (the range ring and the defence check). Equals
+ *  `Math.round(weaponAutoFireRange(getWeapon(id)))`. */
+export function navalGunEngageReach(id: NavalGunId): number {
+  const b = NAVAL_GUN_BALLISTICS[id];
+  return Math.round(projectileEngageReach(b.speed, b.maxTicks));
+}

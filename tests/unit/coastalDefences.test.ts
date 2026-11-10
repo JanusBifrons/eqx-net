@@ -25,6 +25,23 @@ describe('coastal defence catalogue', () => {
     }
   });
 
+  it('every naval gun emplacement takes its reach from its weapon (derived, cannot drift)', () => {
+    for (const id of COASTAL_DEFENCE_KINDS) {
+      const k = getStructureKind(id);
+      const w = getWeapon(k.mounts![0]!.weaponId);
+      if (!w.id.startsWith('naval_')) continue; // the quad 40 mm's autocannon is profile-scaled; its reach stays a literal
+      expect(k.weaponRange, id).toBe(Math.round(weaponAutoFireRange(w)));
+    }
+  });
+
+  it('the derived reaches are the numbers the catalogue shipped (record unchanged, no version bump)', () => {
+    const reach = Object.fromEntries(COASTAL_DEFENCE_KINDS.map((id) => [id, getStructureKind(id).weaponRange]));
+    expect(reach).toEqual({
+      aa_quad_40mm: 1071, dp_mount_5in: 2295, coastal_casemate_8in: 3542, coastal_turret_11in: 4862,
+      coastal_barbette_16in: 5376, coastal_lindemann: 7735, siege_gun_80cm: 6460,
+    });
+  });
+
   it('every gun spends munitions (they fire shells)', () => {
     for (const id of COASTAL_DEFENCE_KINDS) expect(AMMO_SHOTS_PER_UNIT[id], id).toBeGreaterThan(0);
   });

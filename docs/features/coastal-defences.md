@@ -4,7 +4,7 @@ Plan `coastal-defences` (`plans/coastal-defences.md`). Static gun batteries buil
 
 ## The catalogue
 
-Seven structure kinds, in the build menu's **Gun Batteries** category. Each fires one shell per barrel per salvo, spends munitions, and repeats its weapon's numbers in the catalogue (`weaponRange`, `fireRateMs`, `weaponDamage`, locked by `tests/unit/coastalDefences.test.ts`).
+Seven structure kinds, in the build menu's **Gun Batteries** category. Each fires one shell per barrel per salvo, spends munitions, and repeats its weapon's numbers in the catalogue (`fireRateMs`, `weaponDamage`, locked by `tests/unit/coastalDefences.test.ts`). A naval gun's `weaponRange` is derived from the gun itself (`navalGunEngageReach`, `src/shared-types/combat/navalGuns.ts`), so the two cannot drift; the quad 40 mm's stays a literal.
 
 | Kind | Real counterpart | Gun | Barrels | Arc | Reach | Prefers |
 |---|---|---|---|---|---|---|
