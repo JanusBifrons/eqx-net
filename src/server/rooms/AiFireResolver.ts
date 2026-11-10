@@ -32,6 +32,7 @@ import type { LaserFiredEvent } from '../../shared-types/messages.js';
 import type { ShipState } from './schema/SectorState.js';
 import { shipShotMuzzle, navalTurret, navalBarrelOffset } from '../../core/combat/muzzle.js';
 import { isFriendly, isNpcAllegianceId, type NpcAllegianceId } from '../../shared-types/allegiances.js';
+import { NEVER_FIRED } from '../../core/combat/fireTemporal.js';
 
 /** Per-player pose the resolver reads to test target hits. */
 export interface ShipPose {
@@ -168,7 +169,7 @@ export class AiFireResolver implements WeaponFireSink {
       const c = getWeapon(slotMounts[i]!.weaponId).cooldownTicks;
       if (c > slotCooldown) slotCooldown = c;
     }
-    const lastFireCt = d.lastFireClientTick.get(shooterId) ?? -999;
+    const lastFireCt = d.lastFireClientTick.get(shooterId) ?? NEVER_FIRED;
     if (tick - lastFireCt < slotCooldown) return;
     d.lastFireClientTick.set(shooterId, tick);
 
