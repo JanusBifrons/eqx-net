@@ -62,6 +62,35 @@ describe('MountVisualManager — firing reactions', () => {
     expect(mvm.turretShotCount()).toBe(0);
   });
 
+  // Found by fx-turrets.spec.ts (quarantined 2026-11-10): at 3 fps a 1,600 u/s
+  // bolt is first seen ~500-1,300 u past the muzzle, so the tip-distance match
+  // never kicked any gun. A real player sees the same after any hitch over
+  // ~75 ms. The shot is traced back along its own velocity to the gun.
+  it('a bolt first seen far down its line after a frame hitch still kicks its gun', () => {
+    const { mvm, hull } = setup();
+    frame(mvm, 1);
+    const [front, back] = pivots(hull);
+    const t0 = shipTurrets('gunship')[0]!;
+    const tipY = t0.py - muzzleReach(t0);
+    // Pixi space: the gun points to −y; the bolt flew 900 u (0.56 s at 1,600 u/s).
+    mvm.noteShotNear('p1', t0.px, tipY - 900, undefined, 0, -1600);
+    expect(mvm.turretShotCount()).toBe(1);
+    frame(mvm, 1.02);
+    expect((front!.children[0] as Sprite).y).toBeGreaterThan(0);
+    expect((back!.children[0] as Sprite).y).toBe(0);
+  });
+
+  it('the trace-back never matches a shot heading toward a gun, off its line, or too old', () => {
+    const { mvm } = setup();
+    frame(mvm, 1);
+    const t0 = shipTurrets('gunship')[0]!;
+    const tipY = t0.py - muzzleReach(t0);
+    mvm.noteShotNear('p1', t0.px, tipY - 900, undefined, 0, 1600); // flying INTO the gun
+    mvm.noteShotNear('p1', t0.px + 400, tipY - 900, undefined, 0, -1600); // 400 u off the line
+    mvm.noteShotNear('p1', t0.px, tipY - 5000, undefined, 0, -1600); // > 1.5 s of flight
+    expect(mvm.turretShotCount()).toBe(0);
+  });
+
   it('low quality keeps the recoil and drops the flash', () => {
     const { mvm, hull } = setup();
     frame(mvm, 1, 'low');

@@ -2870,3 +2870,10 @@ Commit: perf/count-budgets (PR #356)
 - **Rules:**
   - Anything that appears on a gameplay event (death, lock, level-up) and holds more than a handful of MUI components is pre-mounted and toggled, like the drawer's `keepMounted`. A store flip inside a message handler renders inside that handler's task.
   - Measure with `tests/perf/death-spectator-hitch.spec.ts`: it stubs `__REACT_DEVTOOLS_GLOBAL_HOOK__` to count components rendered and mounted per commit (skip subtrees whose `child` equals `alternate.child`, or untouched fibers read as mounts). The count lock is `BottomControlPanel.test.tsx` "the spectator flip inserts no DOM".
+
+## 2026-11-11 — Turret recoil never fired after a frame hitch (fx-turrets quarantine)
+
+- **Symptom:** `fx-turrets.spec.ts` "auto-fire kicks the gunship's guns" never saw `turretShots` count. The quarantine note blamed the drone dying before the guns were drawn; joining in MAN and switching to AUTO after the bake still failed.
+- **Cause:** headless Chrome draws the Machined scene at ~3 fps, so a 1,600 u/s bolt is first seen ~1,000 u past its muzzle, and `MountVisualManager.noteShotNear` only matched a shot within ~120 u of a gun tip. A player hits the same after any frame gap over ~75 ms: every shot fired in that gap loses its recoil, flash and heat.
+- **Fix:** when no tip is close, trace the shot back along its own velocity (up to 1.5 s of flight) and kick the gun whose tip lies on that line, nearest behind the shot. Lock: `MountVisualManager.reactions.test.ts`.
+- **Rule:** a renderer match keyed on "first seen near X" must survive a long frame. Measure the test page's real frame rate before blaming game timing (a 1 s rAF count in `page.evaluate` is enough).
