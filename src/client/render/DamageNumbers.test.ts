@@ -314,7 +314,7 @@ describe('DamageNumberManager — lifetime expiry', () => {
     mgr.spawn('drone-1', 0, 0, 10);
     const offset = Math.floor(LIFETIME_FRAMES / 3);
     for (let i = 0; i < offset; i++) mgr.update();
-    mgr.spawn('drone-2', 0, 0, 20);
+    mgr.spawn('drone-2', 500, 0, 20);
     expect(mgr.getActiveCount()).toBe(2);
 
     // After LIFETIME_FRAMES - offset more frames, drone-1 expires.
@@ -330,13 +330,13 @@ describe('DamageNumberManager — lifetime expiry', () => {
 
   it('pool cap — opening the (cap+1)th target evicts the bucket with least life left', () => {
     for (let i = 0; i < POOL_CAP; i++) {
-      mgr.spawn(`drone-${i}`, 0, 0, i + 1);
+      mgr.spawn(`drone-${i}`, i * 500, 0, i + 1);
       // Run a frame between each spawn so they have distinct "life left" values.
       mgr.update();
     }
     expect(mgr.getActiveCount()).toBe(POOL_CAP);
 
-    mgr.spawn('overflow', 0, 0, 999);
+    mgr.spawn('overflow', -500, 0, 999);
     expect(mgr.getActiveCount()).toBe(POOL_CAP);
     // drone-0 had the longest age (lowest life-left) so it was the eviction victim.
     // We can't introspect the bucket directly; assert by trying to add more
@@ -381,7 +381,7 @@ describe('DamageNumberManager — cancelByTag (predicted-hit rollback)', () => {
 
   it('cancels every bucket that recorded a contribution from the tag', () => {
     mgr.spawn('drone-1', 0, 0, 10, 'salvo');
-    mgr.spawn('drone-2', 0, 0, 10, 'salvo');
+    mgr.spawn('drone-2', 500, 0, 10, 'salvo');
     expect(mgr.cancelByTag('salvo')).toBe(2);
     expect(mgr.getActiveCount()).toBe(0);
   });
@@ -405,8 +405,8 @@ describe('DamageNumberManager — destroy cleanup', () => {
     const camera = makeMockCamera(1);
     const mgr = new DamageNumberManager(parent, camera);
     mgr.spawn('drone-1', 0, 0, 1);
-    mgr.spawn('drone-2', 0, 0, 2);
-    mgr.spawn('drone-3', 0, 0, 3);
+    mgr.spawn('drone-2', 500, 0, 2);
+    mgr.spawn('drone-3', 1000, 0, 3);
     expect(innerContainer(parent).children.length).toBe(3);
     mgr.destroy();
     expect(parent.children.length).toBe(0);
