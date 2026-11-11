@@ -1,6 +1,6 @@
 # Shells as events (design note)
 
-Status: **design, not built.** Handoff 2026-11-10, Next #3: "Shells as events (spawn/land on the wire). This fixes the false burst at the edge of the view and the incoming-fire countdown estimate, and it's needed before big fleets."
+Status: **slices 0 and 1 built** (server emits events behind `EQX_SHELL_EVENTS=1`; the client doesn't consume them yet). See "Slice 1 as built" at the end. Handoff 2026-11-10, Next #3: "Shells as events (spawn/land on the wire). This fixes the false burst at the edge of the view and the incoming-fire countdown estimate, and it's needed before big fleets."
 
 A naval shell (`naval_*`) flies in a straight line at a constant speed until it hits something or runs out of flight. Today the server re-sends every live shell in every snapshot. This note replaces that with one message when a salvo is fired and one when a shell hits, with the client drawing the flight from a shared function. It keeps invariant #16 with a compact in-flight list in the join payload and a slow keyframe on the snapshot.
 
@@ -152,3 +152,14 @@ These were settled on the owner's standing rule: record the game as it is and sh
 2. **Shells you're not part of:** **show them.** A shell whose path crosses your screen is drawn even when you're far from both the gun and the target (§3). It costs little data, and hiding real fire breaks "show everything".
 3. **Incoming markers:** for **your own ship only**, as today. Friends and structures are a later, separate decision.
 4. **Other guns:** fighter and turret bolts **stay as they are**. Their flights last a few seconds, so per-tick sending is cheap; revisit only if a perf scene says otherwise.
+
+## Slice 1 as built (2026-11-11)
+
+- **Where:** `ShellEventHub` (`src/server/rooms/ShellEventHub.ts`) routes event shells; `ProjectilePipeline` reports them through `onShellSpawn` / `onShellEnd` / `onShellExpire` when its `shellEvents` dep is on; schemas and the switch are in `src/shared-types/messages/shellEvents.ts`. The room turns it on from `EQX_SHELL_EVENTS=1`, or the testMode room option `shellEvents` (tests and showcases, without flipping the whole process).
+- **The pose follows the worker tick, not the room update (a change from §4).** The room calls `advance()` once per update, but `serverTick` is the physics worker's counter, which can skip or repeat a tick when the two drift. The Euler step moved a shell once per update while its lifetime counted worker ticks, so the server's shell slid off `shellPoseAt`. An event shell now sweeps from its pose to `shellPoseAt(…, serverTick + 1)` each advance: a skipped tick makes the step longer (no tunnelling), a repeated one makes it zero. Bolts and flag-off shells keep the Euler step. Lock: `ProjectilePipeline.shellEvents.test.ts`.
+- **The path ends one step past the fall point.** The last advance runs at `t + n` and sweeps to the pose at `t + n + 1`, so `shellPathEndTick(t, n) = t + n + 1` is the end for the view segment and the miss rule (`src/core/combat/shellFlight.ts`). Slice 2b must end a missed shell there, not at `t + n`.
+- **Salvo grouping:** consecutive spawns of one owner and one gun in one tick share a salvo id (every caller fires a turret's barrels back to back).
+- **Shield walls:** a wall stop is a `shell_end` with radius 0 at the shell's pose at the START of the step that crossed the wall (`wallBlocksProjectile` doesn't return the crossing point).
+- **Not yet:** `g` (the firer's locked target) is never filled: the hub has the `fireTargetOf` seam, but nothing wires it. Rule 1 (the path crosses your view) already covers a targeted viewer, since the fall point is at the target.
+- **Cost:** the hub allocates nothing once warm (pooled records, messages and tuples; per-viewer state is a slot in fixed typed arrays, max `SHELL_MAX_VIEWERS` = 128). A flush with nothing to send never visits the viewers.
+- **Locks:** `ShellEventHub.test.ts` (who receives, re-test on move, ends routing, keyframe rotation, join backlog, slot reuse), `ProjectilePipeline.shellEvents.test.ts`, `src/shared-types/messages/shellEvents.test.ts`, `tests/integration/sectorRoom/shellEvents.test.ts` (a 16" hit: the target gets the salvo, `shell_end` carries the `DamageEvent` point and lies on the closed-form step).

@@ -2870,3 +2870,9 @@ Commit: perf/count-budgets (PR #356)
 - **Rules:**
   - Anything that appears on a gameplay event (death, lock, level-up) and holds more than a handful of MUI components is pre-mounted and toggled, like the drawer's `keepMounted`. A store flip inside a message handler renders inside that handler's task.
   - Measure with `tests/perf/death-spectator-hitch.spec.ts`: it stubs `__REACT_DEVTOOLS_GLOBAL_HOOK__` to count components rendered and mounted per commit (skip subtrees whose `child` equals `alternate.child`, or untouched fibers read as mounts). The count lock is `BottomControlPanel.test.tsx` "the spectator flip inserts no DOM".
+
+## 2026-11-11 — A shell moved once per room update but aged by the worker tick
+
+- **Found while building shells-as-events slice 1.** `ProjectilePipeline.advance()` runs once per `SectorRoom.update()`, but `serverTick` is the physics worker's counter read from the SAB, which can skip or repeat a tick when main thread and worker drift. The Euler step (`x += vx · DT`) moved a shell once per update while its lifetime (`serverTick − birthTick ≥ maxTicks`) counted worker ticks, so a shell's pose was a function of how many updates ran, not of time. Any client that draws a shell from its spawn event (`shellPoseAt`) would drift from where the server hit-tests it.
+- **Fix (event shells only):** each advance sweeps to the closed-form pose at `serverTick + 1`. A skipped tick makes the step longer (still swept, no tunnelling); a repeated tick makes it zero. Bolts keep the Euler step. Lock: `ProjectilePipeline.shellEvents.test.ts` (updates that skip and repeat ticks stay on `shellPoseAt`).
+- **Rule:** anything both sides compute from a tick (a pose, a countdown) must be a function of `serverTick`, never of how many times a loop ran. The unit parity test (`shellFlightParity.test.ts`) could not see this because it advances exactly one tick per call.

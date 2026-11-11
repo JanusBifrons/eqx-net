@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Hold } from '../goods.js';
+import { ShellSalvoSchema, type ShellKeyRecord, type ShellSalvo } from './shellEvents.js';
 
 export interface WelcomeMessage {
   type: 'welcome';
@@ -35,6 +36,11 @@ export interface WelcomeMessage {
   /** The server's naval range mode (`EQX_NAVAL_RANGE`), sent only when
    *  `real`; absent ⇒ `legacy`. The client's must match (combat/navalRange.ts). */
   navalRange?: 'legacy' | 'real';
+  /** Shells as events (shell-events.md §7): set only when the server sends
+   *  naval shells as `shell_salvo` / `shell_end` (`EQX_SHELL_EVENTS=1`). */
+  shellEvents?: true;
+  /** The live shells this ship should see, in salvo form (§5, #16). */
+  shellsInFlight?: ShellSalvo[];
 }
 
 /** PR 3a (account-bound identity) — sent to a session immediately before the
@@ -71,6 +77,8 @@ export const WelcomeSchema = z
     shipTuning: z.enum(['A', 'B']).optional(),
     shipKindScale: z.string().max(256).optional(),
     navalRange: z.enum(['legacy', 'real']).optional(),
+    shellEvents: z.literal(true).optional(),
+    shellsInFlight: z.array(ShellSalvoSchema).max(256).optional(),
   })
   .strict();
 
@@ -383,4 +391,8 @@ export interface SnapshotMessage {
    *  (#12); the client eases its drawn barrels toward these. Absent when every
    *  turret rests. See `encodeStructureMountAngles` in structureStateWire.ts. */
   structureMountAngles?: number[];
+  /** Shells as events (shell-events.md §5): in-flight shell keyframe records,
+   *  round-robin over what this recipient was sent, at most
+   *  `SHELL_KEY_PER_SNAPSHOT`. Absent when nothing is due. */
+  shellKey?: ShellKeyRecord[];
 }
