@@ -140,6 +140,9 @@ export interface LivingWorldRoom {
    *  IDLE behaviour flies to it via an arrive ramp. No-op if the bot isn't an
    *  in-sector drone here. */
   setBotMoveTarget(botId: string, x: number, y: number): void;
+  /** Give a bot a guard post (centre + radius of the area it defends): a
+   *  capital fights from it and never steams off to its gun stand-off. */
+  setBotGuardPost?(botId: string, x: number, y: number, radius: number): void;
   /** W2a NPC warp-to: send a bot on an in-sector warp to (x, y) (spool, run,
    *  drop; the same machine as a pilot's). False for an unknown id. */
   warpBot?(botId: string, x: number, y: number): boolean;

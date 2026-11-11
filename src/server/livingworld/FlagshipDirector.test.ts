@@ -19,8 +19,9 @@ function fakeRoom() {
   const bots = new Map<string, Bot>();
   const warps: Array<{ id: string; x: number; y: number }> = [];
   const stations = new Map<string, { x: number; y: number }>();
+  const guards = new Map<string, { x: number; y: number; r: number }>();
   const room = {
-    bots, warps, stations, bus,
+    bots, warps, stations, guards, bus,
     eventBus: () => bus,
     hasFreeSlot: () => true,
     spawnLivingWorldBot: (s: { botId: string; kind: string; x: number; y: number }) => { bots.set(s.botId, { kind: s.kind, x: s.x, y: s.y }); return true; },
@@ -29,6 +30,7 @@ function fakeRoom() {
     setBotFlockFollow: () => {},
     setBotFlockLeaderCourse: () => {},
     setBotMoveTarget: (id: string, x: number, y: number) => { stations.set(id, { x, y }); },
+    setBotGuardPost: (id: string, x: number, y: number, r: number) => { guards.set(id, { x, y, r }); },
     getBotPose: (id: string) => { const b = bots.get(id); return b ? { x: b.x, y: b.y, angle: 0 } : null; },
     warpBot: (id: string, x: number, y: number) => { warps.push({ id, x, y }); const b = bots.get(id); if (b) { b.x = x; b.y = y; } return true; },
     botWarpPhase: () => 0 as const,
@@ -69,6 +71,30 @@ describe('FlagshipDirector', () => {
     }
     expect(d.sectorCapital(A)?.name).toBe(f!.name);
     expect(d.sectorCapital('vega-reach')).toBeNull();
+  });
+
+  it('posts the whole fleet on the pocket it holds, and moves the post when it warps', () => {
+    // Owner 2026-11-11: a defender "should stay close to the thing it's
+    // defending" — the fleet's capitals fight from their pocket.
+    const room = fakeRoom();
+    const { d, clock, now } = director(new Map([[A, room]]));
+    d.start();
+    clock.advance(100);
+    d.tick(now());
+    const pocket = (): string => d.state().fleets[0]!.pocketId;
+    const expectPosted = (siteId: string): void => {
+      const site = sectorSites(A).find((s) => s.id === siteId)!;
+      expect(room.guards.size).toBe(1 + FLEET_ESCORT_KINDS.length);
+      for (const id of room.bots.keys()) expect(room.guards.get(id), id).toEqual({ x: site.x, y: site.y, r: site.r });
+    };
+    const first = pocket();
+    expectPosted(first);
+    clock.advance(2000);
+    d.tick(now());
+    clock.advance(1500);
+    d.tick(now());
+    expect(pocket()).not.toBe(first);
+    expectPosted(pocket());
   });
 
   it('moves the whole fleet by warp to another pocket after its dwell', () => {
