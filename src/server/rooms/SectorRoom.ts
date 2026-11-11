@@ -385,7 +385,9 @@ import {
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
 import type { WeaponId, MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat/Energy.js';
-import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { massOf, shipTuning, shellViewHalfExtent } from '../../shared-types/shipScale/tuning.js';
+import { ShellEventHub, type ShellViewer } from './ShellEventHub.js';
+import { SHELL_EVENTS, type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { refineRayHit } from '../../core/combat/capitalHits.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
@@ -1201,6 +1203,12 @@ export class SectorRoom extends Room<SectorState> {
     },
   });
   private testMode = false;
+  /** Shells as events (shell-events.md): `EQX_SHELL_EVENTS=1`, or the
+   *  testMode `shellEvents` room option. */
+  private shellEventsOn = false;
+  private shellHub: ShellEventHub | null = null;
+  /** Reused viewer record the hub reads (alloc-free flush). */
+  private readonly shellViewer: ShellViewer = { sessionId: '', playerId: '', x: 0, y: 0, half: 0 };
   /** Economy v2 W5b — a fresh spawn of a non-starter hull needs one you own
    *  (galaxy rooms). Off in test rooms unless `enforceHullGate` is set, so the
    *  many tests/showcases that join as other kinds are unaffected. */
@@ -1765,11 +1773,15 @@ export class SectorRoom extends Room<SectorState> {
        *  active ship in the room, so a wave E2E draws its wave after it joins,
        *  however long the server ran before (waves otherwise ignore presence). */
       waveNeedsOwner?: boolean;
+      /** testMode — send naval shells as events in this room even when
+       *  `EQX_SHELL_EVENTS` is off (shell-events.md slice 1 tests). */
+      shellEvents?: boolean;
     };
     // Payload-DoS bound (S5): onCreate options are client-suppliable on room
     // create, so reject oversized seed arrays before they seed the sector.
     assertRoomSeedBounds(roomOpts as Record<string, unknown>);
     this.testMode = roomOpts.testMode ?? false;
+    this.shellEventsOn = SHELL_EVENTS || (this.testMode && roomOpts.shellEvents === true);
     this.enforceHullGate = !this.testMode || roomOpts.enforceHullGate === true;
     this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);
     // Default 1.0 (no acceleration). Only honoured when testMode is true,
@@ -2057,7 +2069,14 @@ export class SectorRoom extends Room<SectorState> {
         const msg: ShellBlast = { type: 'shell_blast', x, y, radius };
         this.broadcast('shell_blast', msg);
       },
+      // Shells as events (shell-events.md slice 1): naval shells also travel
+      // as shell_salvo / shell_end, beside the per-tick projectiles[].
+      shellEvents: this.shellEventsOn,
+      onShellSpawn: (id, rec) => this.shellHub?.onSpawn(id, rec),
+      onShellEnd: (id, tick, x, y, r) => this.shellHub?.onEnd(id, tick, x, y, r),
+      onShellExpire: (id) => this.shellHub?.onExpire(id),
     });
+    if (this.shellEventsOn) this.shellHub = this.createShellHub();
 
     // Missile subsystem — guidance, splash damage, impulse queue. The
     // queue is drained each tick and posted to the physics worker as
@@ -2122,6 +2141,7 @@ export class SectorRoom extends Room<SectorState> {
     // per-client 20Hz phase-staggered loop with the global "all alive
     // ships" digest. Extracted to SnapshotBroadcaster.ts.
     this.snapshotBroadcaster = new SnapshotBroadcaster({
+      shellEvents: () => this.shellHub,
       serverTick: () => this.serverTick,
       sabU32: this.sabU32,
       clients: this.clients,
@@ -7726,6 +7746,52 @@ export class SectorRoom extends Room<SectorState> {
    *  bounding-circle (kind.radius + SHIELD_RADIUS_PAD), same shield-up /
    *  shield-down split. Projectiles now impact at the visible shield
    *  boundary on every ship kind, not just fighter. */
+  /** Shells as events (shell-events.md slice 1): the hub that routes event
+   *  shells to viewers. Built only when `shellEventsOn`. */
+  private createShellHub(): ShellEventHub {
+    let current: Client | null = null;
+    const v = this.shellViewer;
+    return new ShellEventHub({
+      serverTick: () => this.serverTick,
+      wireOwnerId: (ownerId) => this.snapshotBroadcaster.wireOwnerId(ownerId),
+      ownerWideInView: (ownerId, sessionId) => this.snapshotBroadcaster.ownerWideInInterest(ownerId, sessionId),
+      forEachViewer: (fn) => {
+        for (const client of this.clients) {
+          const pid = this.sessionToPlayer.get(client.sessionId);
+          if (!pid) continue;
+          const pose = this.shipPoseCache.get(pid);
+          if (!pose) continue;
+          v.sessionId = client.sessionId;
+          v.playerId = pid;
+          v.x = pose.x;
+          v.y = pose.y;
+          v.half = shellViewHalfExtent(getShipKind(this.getActiveShip(pid)?.kind ?? null));
+          current = client;
+          fn(v);
+        }
+        current = null;
+      },
+      send: (sessionId, type, msg) => {
+        if (current !== null && current.sessionId === sessionId) current.send(type, msg);
+      },
+    });
+  }
+
+  /** The welcome's shell-event fields for a joining client (§5, #16). */
+  private shellWelcomeFields(client: Client, playerId: string): { shellEvents?: true; shellsInFlight?: ShellSalvo[] } {
+    if (!this.shellHub) return {};
+    const pose = this.shipPoseCache.get(playerId);
+    if (!pose) return { shellEvents: true };
+    const v = this.shellViewer;
+    v.sessionId = client.sessionId;
+    v.playerId = playerId;
+    v.x = pose.x;
+    v.y = pose.y;
+    v.half = shellViewHalfExtent(getShipKind(this.getActiveShip(playerId)?.kind ?? null));
+    const inFlight = this.shellHub.joinPayload(v);
+    return inFlight ? { shellEvents: true, shellsInFlight: inFlight } : { shellEvents: true };
+  }
+
   private playerProjectileSweep(
     ship: ShipState,
     fromX: number, fromY: number, stepX: number, stepY: number, projRadius: number,
@@ -8106,7 +8172,7 @@ export class SectorRoom extends Room<SectorState> {
           sectorKey: this.sectorKey,
           shipInstanceId: existingShip?.shipInstanceId ?? '',
         };
-        client.send('welcome', withShipScale(welcome));
+        client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId) }));
 
         setSession(client.sessionId, {
           roomId: this.roomId,
@@ -8586,7 +8652,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: ship.shipInstanceId,
     };
-    client.send('welcome', withShipScale(welcome));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId) }));
 
     // Prefer the auth-validated userId from this connect; fall back to the
     // Limbo-resumed value when this connect was anonymous (covers the
@@ -8708,7 +8774,7 @@ export class SectorRoom extends Room<SectorState> {
       shipInstanceId: '',
       spectator: true,
     };
-    client.send('welcome', withShipScale(welcome));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId) }));
 
     setSession(client.sessionId, {
       roomId: this.roomId,
@@ -9021,7 +9087,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: shipId,
     };
-    client.send('welcome', withShipScale(welcome));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId) }));
     this.pendingJoin.set(playerId, {
       joinTick: tick,
       watchdogTick: tick + CLIENT_READY_TIMEOUT_TICKS,
@@ -10843,6 +10909,9 @@ export class SectorRoom extends Room<SectorState> {
     // drone's tracked beam actually lands where the visible barrel points.
     this.tickDroneMounts();
     phaseTime('droneMounts');
+    // Shells as events: this tick's salvos (players, drones, turrets since the
+    // last update) and hits, plus the 1 Hz re-test.
+    this.shellHub?.flush();
 
     // Tick-budget telemetry. Cumulative phase totals across the last ~60 ticks
     // are emitted as one server event per second. The first capture told us

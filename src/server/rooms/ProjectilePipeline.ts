@@ -43,6 +43,10 @@ import { getWeapon, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { shellBlastDamage } from '../../shared-types/shellBlast.js';
 import type { ShipState } from './schema/SectorState.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
+import {
+  NAVAL_SHELL_WEAPON_IDS, quantiseShellSpawn, shellPoseAt,
+  type ShellPoseMut, type ShellSpawnMut,
+} from '../../core/combat/shellFlight.js';
 
 export interface ProjectileRecord {
   x: number;
@@ -55,6 +59,11 @@ export interface ProjectileRecord {
   radius: number;
   maxTicks: number;
   weaponId: WeaponId;
+  /** Shells as events: the quantised spawn point. Set only on an EVENT shell
+   *  (naval, shell events on); its pose is then the closed form
+   *  `shellPoseAt(ox, oy, vx, vy, birthTick, tick)`, never an Euler sum. */
+  ox?: number;
+  oy?: number;
 }
 
 /** A successful projectile-sweep result. */
@@ -126,9 +135,24 @@ export interface ProjectilePipelineDeps {
   /** Swarm pass broadphase (default on). `false` restores the full
    *  every-shell × every-entity scan — the parity oracle in tests. */
   broadphase?: boolean;
+  /** Shells as events (shell-events.md slice 1). When true, a naval shell is
+   *  an EVENT shell: its spawn is quantised to wire precision, it moves to the
+   *  closed-form pose at `serverTick + 1` each advance (so it follows the
+   *  worker tick even when room updates and ticks drift apart), and the hooks
+   *  below report its life. Absent/false ⇒ byte-identical to before. */
+  shellEvents?: boolean;
+  /** An event shell was spawned (after quantising). */
+  onShellSpawn?: (projId: string, rec: ProjectileRecord) => void;
+  /** An event shell hit something (or a shield wall: radius 0) at `tick`. */
+  onShellEnd?: (projId: string, tick: number, x: number, y: number, blastRadius: number) => void;
+  /** An event shell reached the end of its flight: a silent miss. */
+  onShellExpire?: (projId: string) => void;
 }
 
 export const DT_SEC = 1 / 60;
+
+const spawnQ: ShellSpawnMut = { x: 0, y: 0, vx: 0, vy: 0 };
+const poseQ: ShellPoseMut = { x: 0, y: 0 };
 
 export class ProjectilePipeline {
   readonly liveProjectiles = new Map<string, ProjectileRecord>();
@@ -176,9 +200,24 @@ export class ProjectilePipeline {
     weaponId: WeaponId,
   ): void {
     const projId = `proj-${this.projectileCounter++}`;
+    const d = this.deps;
+    if (d.shellEvents === true && NAVAL_SHELL_WEAPON_IDS.has(weaponId)) {
+      // Quantise BEFORE the first step so server and client integrate the
+      // same numbers (shell-events.md §2).
+      quantiseShellSpawn(x, y, vx, vy, spawnQ);
+      const rec: ProjectileRecord = {
+        x: spawnQ.x, y: spawnQ.y, vx: spawnQ.vx, vy: spawnQ.vy, ownerId,
+        birthTick: d.serverTick(),
+        damage, radius, maxTicks, weaponId,
+        ox: spawnQ.x, oy: spawnQ.y,
+      };
+      this.liveProjectiles.set(projId, rec);
+      d.onShellSpawn?.(projId, rec);
+      return;
+    }
     this.liveProjectiles.set(projId, {
       x, y, vx, vy, ownerId,
-      birthTick: this.deps.serverTick(),
+      birthTick: d.serverTick(),
       damage, radius, maxTicks, weaponId,
     });
   }
@@ -198,8 +237,21 @@ export class ProjectilePipeline {
     this.bpStale = true;
     let checks = 0;
     for (const [projId, proj] of this.liveProjectiles) {
-      const stepX = proj.vx * DT_SEC;
-      const stepY = proj.vy * DT_SEC;
+      let stepX: number;
+      let stepY: number;
+      const event = proj.ox !== undefined && proj.oy !== undefined;
+      if (event) {
+        // Event shell: sweep to the closed-form pose at serverTick + 1 (the
+        // parity convention: the advance at tick S ends at S − birth + 1
+        // steps). A skipped worker tick lengthens this step (no tunnelling);
+        // a repeated one makes it zero.
+        shellPoseAt(proj.ox!, proj.oy!, proj.vx, proj.vy, proj.birthTick, serverTick + 1, poseQ);
+        stepX = poseQ.x - proj.x;
+        stepY = poseQ.y - proj.y;
+      } else {
+        stepX = proj.vx * DT_SEC;
+        stepY = proj.vy * DT_SEC;
+      }
 
       let bestEntry = Infinity;
       let bestTargetId: string | null = null;
@@ -281,8 +333,9 @@ export class ProjectilePipeline {
 
       if (bestTargetId !== null) {
         d.applyDamage(bestTargetId, proj.ownerId, proj.damage, bestHitX, bestHitY);
-        this.blast(proj, bestHitX, bestHitY, bestTargetId);
+        const blastR = this.blast(proj, bestHitX, bestHitY, bestTargetId);
         this.liveProjectiles.delete(projId);
+        if (event) d.onShellEnd?.(projId, serverTick, bestHitX, bestHitY, blastR);
         // A kill may evict / spawn swarm entities (scrap, loot). The registry
         // version catches that; a source without one is rebuilt to be safe.
         if (d.swarmRegistry.version === undefined) this.bpStale = true;
@@ -294,6 +347,9 @@ export class ProjectilePipeline {
       // target is hit on an earlier step before the projectile reaches the wall).
       if (d.wallBlocksProjectile?.(proj.x, proj.y, stepX, stepY, proj.damage)) {
         this.liveProjectiles.delete(projId);
+        // The wall stopped it somewhere on this step; the shell's pose at the
+        // step start is the nearest known point (a hit with no blast).
+        if (event) d.onShellEnd?.(projId, serverTick, proj.x, proj.y, 0);
         continue;
       }
 
@@ -304,6 +360,7 @@ export class ProjectilePipeline {
         // A miss just ends: shells explode only on what they hit (no burst,
         // no splash at the end of the flight).
         this.liveProjectiles.delete(projId);
+        if (event) d.onShellExpire?.(projId);
       }
     }
     this.narrowChecks = checks;
@@ -340,11 +397,12 @@ export class ProjectilePipeline {
    * directly (it already took the full hit) — takes `shellBlastDamage` by its
    * distance from the centre, measured to its edge. No-op for a plain shell.
    * Rare (one siege shell every two minutes), so a plain scan is fine.
+   * Returns the blast radius (0 for a plain shell).
    */
-  private blast(proj: ProjectileRecord, x: number, y: number, directId: string | null): void {
+  private blast(proj: ProjectileRecord, x: number, y: number, directId: string | null): number {
     const w = getWeapon(proj.weaponId);
     const splash = w.mode === 'projectile' ? w.splash : undefined;
-    if (splash === undefined) return;
+    if (splash === undefined) return 0;
     const d = this.deps;
     const R = splash.radius;
     const hurt = (id: string, cx: number, cy: number, r: number): void => {
@@ -370,5 +428,6 @@ export class ProjectilePipeline {
       hurt(shipInstanceId, d.sabF32[b + SLOT_X_OFF]!, d.sabF32[b + SLOT_Y_OFF]!, GLOBAL_SHIP_TUNING.hitRadius);
     }
     d.onBlast?.(x, y, R);
+    return R;
   }
 }

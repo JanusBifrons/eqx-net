@@ -10,8 +10,10 @@
  * (`tests/unit/shellFlightParity.test.ts`) runs the real pipeline for every
  * naval gun's full flight in both range modes.
  *
- * Nothing here is wired yet. Every function is alloc-free (#14): results go
- * into caller-owned out objects.
+ * Slice 1 wires the server: with shell events on, `ProjectilePipeline` moves
+ * an event shell to the closed form each advance (so its pose follows
+ * `serverTick`, not the count of room updates). Every function is alloc-free
+ * (#14): results go into caller-owned out objects.
  */
 
 /** One server tick in seconds. Must equal `ProjectilePipeline`'s `DT_SEC`
@@ -52,6 +54,23 @@ export function shellPoseAt(
   out.x = x0 + vx * t;
   out.y = y0 + vy * t;
 }
+
+/**
+ * The tick whose pose ends a shell's swept path. On its last advance
+ * (`serverTick − birthTick = maxTicks`) the pipeline still tests the step
+ * from `maxTicks` to `maxTicks + 1`, so a shell can hit anything up to
+ * `shellPoseAt(…, shellPathEndTick(t, n))`; a miss ends silently there.
+ * Use this, never `t + n`, for the view-segment end and the miss rule.
+ */
+export function shellPathEndTick(fireTick: number, maxTicks: number): number {
+  return fireTick + maxTicks + 1;
+}
+
+/** The naval guns whose shells fly long, straight flights (and travel as
+ *  events when `EQX_SHELL_EVENTS=1`). One list for both sides. */
+export const NAVAL_SHELL_WEAPON_IDS: ReadonlySet<string> = new Set([
+  'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege',
+]);
 
 /** Round a shell position component to the wire precision (0.1 u). */
 export function quantiseShellPos(v: number): number {
