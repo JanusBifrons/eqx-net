@@ -143,6 +143,11 @@ interface Fleet {
   leavingFor: string | null;
   /** Restored state to spawn from (once). */
   resume: FleetState | null;
+  /** The pocket the fleet guards, cached by (sector, pocket) so the control
+   *  tick doesn't rebuild the sector's site list every time (invariant #14). */
+  guardSite?: SectorSite | null;
+  guardSiteSector?: string | null;
+  guardSitePocket?: string;
   /** Where the escorts warp to, once the flagship has nearly turned to face
    *  its jump (a capital turns slowly; escorts sent at once jumped first). */
   escortDrop: { x: number; y: number } | null;
@@ -329,6 +334,11 @@ export class FlagshipDirector {
     if (!room) return;
     const lead = room.getBotPose(f.leadId);
     if (!lead) return; // mid-hop or gone (the destroyed handler owns that)
+    // The fleet guards the pocket it holds (owner 2026-11-11: a defender
+    // "should stay close to the thing it's defending"): its capitals fight from
+    // there instead of steaming off to their gun stand-off. Refreshed every
+    // control tick, so a warp to a new pocket moves the post with it.
+    this.guardPocket(f, room);
     // Still warping (a capital's spool + run): leave it be.
     const ph = room.botWarpPhase?.(f.leadId) ?? 0;
     if (f.escortDrop !== null && (ph !== 1 || this.flagshipNearlyAligned(f, lead))) this.sendEscorts(f, room);
@@ -352,6 +362,23 @@ export class FlagshipDirector {
       }
       f.nextWanderAtMs = nowMs + FLEET_WANDER_MS;
     }
+  }
+
+  /** Post every ship of the fleet on its current pocket (centre + radius). */
+  private guardPocket(f: Fleet, room: LivingWorldRoom): void {
+    if (!room.setBotGuardPost || f.sectorKey === null) return;
+    if (f.guardSiteSector !== f.sectorKey || f.guardSitePocket !== f.pocketId) {
+      // The pocket changed (spawn or warp): look it up once.
+      // TODO: alloc-debt (sectorSites builds the list; only on a pocket change).
+      f.guardSiteSector = f.sectorKey;
+      f.guardSitePocket = f.pocketId;
+      f.guardSite = null;
+      for (const s of sectorSites(f.sectorKey)) if (s.id === f.pocketId) { f.guardSite = s; break; }
+    }
+    const site = f.guardSite;
+    if (!site) return;
+    room.setBotGuardPost(f.leadId, site.x, site.y, site.r);
+    for (const e of f.escorts) room.setBotGuardPost(e.id, site.x, site.y, site.r);
   }
 
   /** Warp the whole fleet to another pocket (or a gate, to leave). */

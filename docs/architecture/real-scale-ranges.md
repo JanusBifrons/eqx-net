@@ -41,7 +41,7 @@ The tables live in `src/shared-types/combat/navalGuns.ts` (`REAL_NAVAL_GUNS`, de
 ## What follows the switch automatically
 
 - **Coastal structures:** `weaponRange` (range ring, placement ghost ring, turret candidate gather, defence check).
-- **Capital AI:** `HostileDroneBehaviour` engages at its longest gun's reach (`mountWeaponReach`) and holds a broadside at 0.75 × that.
+- **Capital AI:** `HostileDroneBehaviour` engages at its longest gun's reach (`mountWeaponReach`) and, with no guard post, holds a broadside at 0.75 × that. A capital with a GUARD POST (owner decision 2026-11-11: a defender "should stay close to the thing it's defending") ignores the stand-off: it keeps station at its post, beam to the target, and never leaves its guard radius to hold range or chase a target out of reach (`setGuardPost`; flagship fleets guard the pocket they hold).
 - **Capital turret targeting:** `mountTargetReach`.
 - **Locks:** lock reach is `reach × reachSlack` (1.1); heavy guns' lock time grows with absolute distance (`absRange`, #426): ~17 s for a 16" at 30 km.
 - **Client:** aim-guide length (`aimLineLength`), range rings and the lock guide all read the catalogue.
@@ -66,7 +66,6 @@ The tables live in `src/shared-types/combat/navalGuns.ts` (`REAL_NAVAL_GUNS`, de
   - **View extent** (above).
 - **Shells in flight.** Flights are ~10× longer, so ~10× more shells are alive at once. The projectile broadphase (#428) keeps hit-testing per step, so its cost doesn't grow with range, but snapshot bytes for far shells (#425) do.
 - **Structure turret gather.** It scans every candidate in reach: more candidates at 38 km than at 5 km.
-- **AI stand-off vs pockets.** A battleship holds broadside ~29 km from its target, often outside the pocket it was spawned to guard.
 - **Hard-coded test layouts.** `coastal-duel` and `capitalEngagement` place ships at legacy ranges; they still pass under `real` (closer is in range), but the showcase framing assumes legacy.
 
 ## Tests
