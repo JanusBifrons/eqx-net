@@ -10,10 +10,10 @@
  *    every snapshot (~20 Hz).
  * 2. Locking: the server accepts a held lock line (`lock_track` + bearing,
  *    `lockLineHolds`) on every one of them; nothing cuts on interest or
- *    distance short of the group's reach × 1.1. The battleships lock. The
- *    fighter and the solar panel don't, by the SIZE gate (`lockSeconds` past
- *    `maxSeconds`: too small for a 16" near the edge of its reach), which is
- *    the same at legacy range at the same share of reach.
+ *    distance short of the group's reach × 1.1. Everything locks: the
+ *    battleships quickly, the fighter and the solar panel slowly (past
+ *    `maxSeconds`; a player heavy gun is never blocked by size, owner
+ *    2026-11-10).
  * 3. Firing: once locked, the main battery fires and a 16" shell hits the NPC
  *    battleship ~23 s later.
  *
@@ -53,7 +53,7 @@ describe.runIf(NAVAL_RANGE === 'real')('real naval ranges — a player battleshi
   let harness: SectorTestHarness;
   afterEach(async () => { if (harness) await harness.cleanup(); }, 10_000);
 
-  it('NPC capital, NPC fighter, structure and player at 30 km: seen, line accepted; capitals lock; the NPC capital is hit', { timeout: 90_000 }, async () => {
+  it('NPC capital, NPC fighter, structure and player at 30 km: seen, line accepted; all lock (small ones slowly); the NPC capital is hit', { timeout: 90_000 }, async () => {
     const xl = getWeapon('naval_xl');
     expect(weaponAutoFireRange(xl), 'the switch is on: the 16" reaches 38.7 km').toBeGreaterThan(38_000);
 
@@ -146,6 +146,7 @@ describe.runIf(NAVAL_RANGE === 'real')('real naval ranges — a player battleshi
       return lockSeconds({
         refSize: mainGeo.refSize, tracking: mainGeo.tracking, absRange: mainGeo.absRange, reach: mainGeo.reach,
         sensor, pilotSpeed: 1, signature, dx: x - p.x, dy: y - p.y, dvx: -p.vx, dvy: -p.vy,
+        neverImpossible: true, // the player path (LockSubsystem)
       }, LOCK_TUNING);
     };
 
@@ -160,10 +161,10 @@ describe.runIf(NAVAL_RANGE === 'real')('real naval ranges — a player battleshi
 
     // 2b. The small targets (a fighter, a solar panel) 30 km out: the server
     //     ACCEPTS the line claim (the lock entry appears: lockLineHolds +
-    //     resolveTarget passed, no interest cut-off), but the 16" can't lock
-    //     them: they are too small for the weapon near the edge of its reach
-    //     (`lockSeconds` past `maxSeconds` — the size gate, not range or
-    //     interest). The same target at a battleship's size would lock.
+    //     resolveTarget passed, no interest cut-off) and the 16" locks them
+    //     SLOWLY, never impossibly (owner 2026-11-10: "10 minutes or an hour
+    //     … working as intended"; the player path passes `neverImpossible`).
+    //     `instantLock` completes it; the rule's time is past `maxSeconds`.
     for (const [label, rec, x, sig] of [
       ['structure', st, -4_000, st.radius],
       ['fighter', ftr, 4_000, getShipKind('fighter').radius],
@@ -171,10 +172,11 @@ describe.runIf(NAVAL_RANGE === 'real')('real naval ranges — a player battleshi
       const key = `s:${rec.entityId}`;
       holdLine(key, x, RANGE);
       await waitUntil(() => lockOf(key) !== undefined, 3_000, `${label}: the line claim is accepted`);
-      await waitUntil(() => lockOf(key)?.c === 1, 3_000, `${label}: flagged can't-lock`);
-      expect(lockOf(key)?.s, `${label}: never completes`).not.toBe(2);
-      expect(lockSecsAt(sig, x, RANGE), `${label}: too small for a 16" at 30 km`).toBe(Infinity);
-      expect(Number.isFinite(lockSecsAt(getShipKind('battleship').radius, x, RANGE)), `${label}: a capital there would lock`).toBe(true);
+      await waitUntil(() => lockOf(key)?.s === 2, 5_000, `${label}: locked`);
+      expect(lockOf(key)?.c, `${label}: not flagged can't-lock`).toBeUndefined();
+      const secs = lockSecsAt(sig, x, RANGE);
+      expect(Number.isFinite(secs), `${label}: a 16" can lock it at 30 km`).toBe(true);
+      expect(secs, `${label}: slowly`).toBeGreaterThan(LOCK_TUNING.maxSeconds);
       letGo(key);
       await waitUntil(() => lockOf(key) === undefined, 5_000, `${label} released`);
     }
