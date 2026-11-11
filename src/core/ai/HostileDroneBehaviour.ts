@@ -49,6 +49,18 @@ export const BROADSIDE_STANDOFF = 0.75;
 const BROADSIDE_RANGE_STEER = 0.6;
 /** Thrust while broadside, per unit of range error (fraction of cruise). */
 const BROADSIDE_THRUST = 0.6;
+/** Guard post (owner decision 2026-11-11): a guarding capital fights from its
+ *  post. Inside this share of its guard radius it holds station with its beam
+ *  to the target; beyond it, it closes on the post. */
+const GUARD_HOLD_FRAC = 0.5;
+/** Beyond this share of the guard radius a guarding capital gives up its
+ *  broadside heading and turns its axis to the post so thrust can bring it back. */
+const GUARD_RETURN_FRAC = 0.8;
+/** Station-keeping: the most a guarding capital steams toward its post, as a
+ *  share of the kind's max speed (it must stop again inside the radius). */
+const GUARD_RETURN_SPEED = 0.5;
+/** Station-keeping: velocity error (share of max speed) that gets full thrust. */
+const GUARD_SPEED_GAIN = 0.25;
 /** Multiplier applied to forward thrust when the drone is engaging from
  *  beyond `ENGAGE_DISTANCE_RATIO * DRONE_FIRE_RANGE`. Rapier damping +
  *  per-kind `maxSpeed` keep this from running away. */
@@ -214,6 +226,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  beam toward the target so fore and aft turrets bear. Their turrets fire
    *  under WeaponMountTicker fire control, never with the hull's aim. */
   private readonly broadside: boolean;
+  /** Guard post (server-only, set by a director via `setGuardPost`): a
+   *  broadside capital with a post fights FROM it instead of holding the
+   *  stand-off (which under real naval ranges is ~29 km away from what it
+   *  guards). Plain fields, no object, so set/clear never allocates (#14). */
+  private guardOn = false;
+  private guardX = 0;
+  private guardY = 0;
+  private guardR = 0;
 
   // ── Weapon-aware engagement (weapons/energy/AI overhaul §4) ───────────
   // Computed once in the constructor from this drone's bound weapon (no
@@ -739,6 +759,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * WeaponMountTicker fire control. Allocation-free.
    */
   private tickBroadside(self: AiEntity, dx: number, dy: number, dist: number): AiIntent {
+    if (this.guardOn) return this.tickGuardBroadside(self, dx, dy);
     const bearing = Math.atan2(-dx, dy);
     let desired = bearing;
     let thrust = this.kind.ai.thrust;
@@ -766,6 +787,78 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     intent.setAngvel = this.angvelTarget(wrapPi(desired - self.angle));
     intent.fire = undefined;
     return intent;
+  }
+
+  /**
+   * A guarding capital in combat (owner decision 2026-11-11: "It should stay
+   * close to the thing it's defending, obviously"). It never chases the
+   * stand-off or a target out of reach: it keeps station at its post and lets
+   * the turrets do the fighting. Station-keeping is a velocity controller: the
+   * wanted velocity is zero inside `GUARD_HOLD_FRAC` of the radius and grows
+   * toward the post beyond it; thrust (along the hull axis, the only axis a
+   * ship thrusts on) closes the gap between wanted and actual velocity. Inside
+   * `GUARD_RETURN_FRAC` of the radius the hull turns its beam to the target so
+   * fore and aft turrets bear; beyond it, it turns its axis (bow or stern,
+   * whichever is nearer) to the correction so thrust can bring it back. Never
+   * fires itself. Allocation-free.
+   */
+  private tickGuardBroadside(self: AiEntity, dx: number, dy: number): AiIntent {
+    const px = this.guardX - self.x;
+    const py = this.guardY - self.y;
+    const dPost = Math.hypot(px, py);
+    const r = this.guardR;
+    const vMax = this.kind.maxSpeed;
+    const hold = r * GUARD_HOLD_FRAC;
+    let want = 0;
+    if (dPost > hold) want = vMax * GUARD_RETURN_SPEED * Math.min(1, (dPost - hold) / (r - hold));
+    const ux = dPost > 1e-6 ? px / dPost : 0;
+    const uy = dPost > 1e-6 ? py / dPost : 0;
+    const ex = ux * want - self.vx;
+    const ey = uy * want - self.vy;
+    const fwdX = -Math.sin(self.angle);
+    const fwdY = Math.cos(self.angle);
+    const along = ex * fwdX + ey * fwdY;
+    const thrust = this.kind.ai.thrust * Math.max(-1, Math.min(1, along / (vMax * GUARD_SPEED_GAIN)));
+    let desired: number;
+    if (dPost > r * GUARD_RETURN_FRAC && Math.hypot(ex, ey) > 1e-6) {
+      const ahead = Math.atan2(-ex, ey);
+      const astern = wrapPi(ahead + Math.PI);
+      desired = Math.abs(wrapPi(ahead - self.angle)) <= Math.abs(wrapPi(astern - self.angle)) ? ahead : astern;
+    } else {
+      const bearing = Math.atan2(-dx, dy);
+      const port = wrapPi(bearing + Math.PI / 2);
+      const stbd = wrapPi(bearing - Math.PI / 2);
+      desired = Math.abs(wrapPi(port - self.angle)) <= Math.abs(wrapPi(stbd - self.angle)) ? port : stbd;
+    }
+    const intent = this._intentScratch;
+    intent.fx = fwdX * thrust;
+    intent.fy = fwdY * thrust;
+    intent.torque = 0;
+    intent.setAngvel = this.angvelTarget(wrapPi(desired - self.angle));
+    intent.fire = undefined;
+    return intent;
+  }
+
+  /** Give this drone a GUARD POST: the area (centre + radius) it was sent to
+   *  defend. A broadside capital with a post fights from it (see
+   *  `tickGuardBroadside`) instead of holding its gun stand-off. The radius is
+   *  at least `shipTuning(kind).guardRadiusMin` (#18), so a big hull has room
+   *  to turn. Independent of the move target / flock roles (those steer the
+   *  IDLE drone). Server-only: the client never ticks the drone brain. */
+  setGuardPost(x: number, y: number, radius: number): void {
+    this.guardOn = true;
+    this.guardX = x;
+    this.guardY = y;
+    this.guardR = Math.max(radius, shipTuning(this.kind).guardRadiusMin);
+  }
+
+  clearGuardPost(): void {
+    this.guardOn = false;
+  }
+
+  /** Test-visible: the effective guard radius (0 with no post). */
+  getGuardRadius(): number {
+    return this.guardOn ? this.guardR : 0;
   }
 
   /** Set/clear the in-sector move target — the LEADER's course (or a lone
