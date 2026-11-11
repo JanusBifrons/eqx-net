@@ -143,6 +143,11 @@ interface Fleet {
   leavingFor: string | null;
   /** Restored state to spawn from (once). */
   resume: FleetState | null;
+  /** The pocket the fleet guards, cached by (sector, pocket) so the control
+   *  tick doesn't rebuild the sector's site list every time (invariant #14). */
+  guardSite?: SectorSite | null;
+  guardSiteSector?: string | null;
+  guardSitePocket?: string;
   /** Where the escorts warp to, once the flagship has nearly turned to face
    *  its jump (a capital turns slowly; escorts sent at once jumped first). */
   escortDrop: { x: number; y: number } | null;
@@ -362,7 +367,15 @@ export class FlagshipDirector {
   /** Post every ship of the fleet on its current pocket (centre + radius). */
   private guardPocket(f: Fleet, room: LivingWorldRoom): void {
     if (!room.setBotGuardPost || f.sectorKey === null) return;
-    const site = sectorSites(f.sectorKey).find((s) => s.id === f.pocketId);
+    if (f.guardSiteSector !== f.sectorKey || f.guardSitePocket !== f.pocketId) {
+      // The pocket changed (spawn or warp): look it up once.
+      // TODO: alloc-debt (sectorSites builds the list; only on a pocket change).
+      f.guardSiteSector = f.sectorKey;
+      f.guardSitePocket = f.pocketId;
+      f.guardSite = null;
+      for (const s of sectorSites(f.sectorKey)) if (s.id === f.pocketId) { f.guardSite = s; break; }
+    }
+    const site = f.guardSite;
     if (!site) return;
     room.setBotGuardPost(f.leadId, site.x, site.y, site.r);
     for (const e of f.escorts) room.setBotGuardPost(e.id, site.x, site.y, site.r);
