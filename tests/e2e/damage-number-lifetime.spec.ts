@@ -151,8 +151,9 @@ test('a single damage number expires within its lifetime on quiet frames', async
   await expect.poll(() => getActiveCount(page), { timeout: 3_000 }).toBe(1);
 
   // STEP 2: Post quiet frames (no new damage) until well past the number's
-  // lifetime. The accumulator model (2026-05-30) holds STAY_FRAMES (60) then
-  // fades over FADE_FRAMES (30) = 90 frames total before destruction; 95
+  // lifetime. The accumulator model holds STAY_FRAMES (36) then fades over
+  // FADE_FRAMES (24) = 60 frames total before destruction (2026-11-11; was
+  // 60 + 30); 95
   // deterministic frames clears it with margin. activeCount decays to 0 as
   // the per-frame PixiRenderer.update() ticks the manager's lifetime.
   for (let i = 0; i < 95; i++) {

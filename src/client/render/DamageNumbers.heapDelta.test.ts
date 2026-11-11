@@ -96,7 +96,8 @@ describe('DamageNumberManager heap-delta — per-target accumulator avoids per-h
     const inner = innerContainer(parent);
 
     for (let i = 0; i < 10_000; i++) {
-      mgr.spawn(`drone-${i % 5}`, 0, 0, 1);
+      // Spread apart on screen: hits at one spot fold into one number.
+      mgr.spawn(`drone-${i % 5}`, (i % 5) * 500, 0, 1);
     }
 
     expect(inner.children.length).toBe(5);

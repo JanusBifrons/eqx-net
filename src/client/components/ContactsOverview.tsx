@@ -81,7 +81,7 @@ const ROW_STYLE = {
 };
 const NAME_STYLE = { flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const };
 const DIST_STYLE = { flex: '0 0 auto', fontFamily: HUD.font.num, fontSize: 9, color: HUD.color.inkDim, minWidth: 38, textAlign: 'right' as const };
-const LOCK_STYLE = { flex: '0 0 30px', fontFamily: HUD.font.num, fontSize: 8, fontWeight: 700, textAlign: 'right' as const };
+const LOCK_STYLE = { flex: '0 0 36px', fontFamily: HUD.font.num, fontSize: 8, fontWeight: 700, textAlign: 'right' as const };
 const EMPTY_STYLE = { fontSize: 9, color: HUD.color.inkFaint, padding: '4px 3px' };
 
 function stopPointer(e: { stopPropagation(): void }): void {
@@ -210,7 +210,7 @@ function Row({ r, groups, activeIdx, onTap }: {
       )}
       <span title={reachTitle} style={{ color: r.inActiveReach ? reachCol : HUD.color.inkDim, fontSize: 9 }}>{reachMark}</span>
       <span style={DIST_STYLE}>{formatContactKm(r.dist)}</span>
-      <span style={{ ...LOCK_STYLE, color: lockCol }}>{lock === null ? '' : lock.stage === 2 ? 'LOCK' : `${lock.pct}%`}</span>
+      <span style={{ ...LOCK_STYLE, color: lockCol }}>{lock === null ? '' : lock.stage === 2 ? 'LOCKED' : `${lock.pct}%`}</span>
     </button>
   );
 }
