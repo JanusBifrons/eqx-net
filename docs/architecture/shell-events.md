@@ -144,9 +144,11 @@ Behind `EQX_SHELL_EVENTS=1` (per process, read once, like `EQX_NAVAL_RANGE`). Th
 
 The keyframe dominates; it is the price of #16, and its period (2 s) is a tuning knob, not a design choice.
 
-## 8. Open questions for the owner
+## 8. Defaults chosen (owner can override)
 
-1. **Salvo countdown.** When a broadside is coming at you, should the warning count down to the first shell arriving, or to the last one (when it's safe again)?
-2. **Shells you're not part of.** Should a ship far from both the gun and the target still see shells crossing its screen (it costs a little data), or only shells fired by or at ships near you?
-3. **Warnings for others.** Should the red incoming marker show only for shells that will pass near your own ship, or also near friends and your own structures?
-4. **Other guns.** Once this works for the big guns, should fighters' and turrets' bolts move to the same system, or stay as they are (their flights are a few seconds)?
+These were settled on the owner's standing rule: record the game as it is and show everything, and only ask about real design calls. Change any of them in the slice that builds it.
+
+1. **Salvo countdown:** count down to the **first** shell's arrival (the moment you need to move). The marker stays up until the last shell of the salvo has landed or passed.
+2. **Shells you're not part of:** **show them.** A shell whose path crosses your screen is drawn even when you're far from both the gun and the target (§3). It costs little data, and hiding real fire breaks "show everything".
+3. **Incoming markers:** for **your own ship only**, as today. Friends and structures are a later, separate decision.
+4. **Other guns:** fighter and turret bolts **stay as they are**. Their flights last a few seconds, so per-tick sending is cheap; revisit only if a perf scene says otherwise.
