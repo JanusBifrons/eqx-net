@@ -28,6 +28,12 @@ export interface LockInputs {
   /** Heavy mount (M/L/XL, `WEAPON_LOCK_PROFILE[size].absRange`): the range
    *  term reads absolute distance, not the share of reach. Absent = false. */
   absRange?: boolean;
+  /** PLAYER heavy gun (only with `absRange`): a lock past `maxSeconds` is
+   *  slow, never impossible; it keeps its finite, uncapped time (owner,
+   *  2026-11-10: a 16" on a fighter "10 minutes or an hour ... working as
+   *  intended"). Only the player `LockSubsystem` sets it: NPC main guns rely
+   *  on Infinity to skip small craft. Absent = false. */
+  neverImpossible?: boolean;
 }
 
 /** The heavy-mount range term: 1 + (range ÷ absRangeScale)^absRangeExp. */
@@ -51,6 +57,9 @@ export function angularRate(dx: number, dy: number, dvx: number, dvy: number): n
  * ABSOLUTE one (`absRangeTerm`): distance makes their lock slower, never
  * impossible, and is not capped (owner, 2026-11-10: "It should take ages to
  * lock, that's by design").
+ *
+ * A PLAYER heavy gun (`i.absRange && i.neverImpossible`) skips the
+ * `maxSeconds` gate: a small or fast target only makes its lock slower.
  */
 export function lockSeconds(i: LockInputs, t: LockTuning): number {
   const range = Math.sqrt(i.dx * i.dx + i.dy * i.dy);
@@ -64,7 +73,7 @@ export function lockSeconds(i: LockInputs, t: LockTuning): number {
   const speed = Math.max(1e-6, i.sensor * i.pilotSpeed);
   let secs = (t.baseSeconds * sizeTerm * trackTerm * rangeTerm) / speed;
   if (!Number.isFinite(secs)) return Infinity;
-  if (secs > t.maxSeconds) {
+  if (secs > t.maxSeconds && !(i.absRange && i.neverImpossible)) {
     if (!t.clampAtMax) return Infinity;
     secs = t.maxSeconds;
   }

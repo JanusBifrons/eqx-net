@@ -141,6 +141,31 @@ describe('lockSeconds: absolute distance for heavy (M/L/XL) mounts', () => {
     expect(lockSeconds({ ...heavy(1500, fighter.radius, REAL_REACH), dvy: 400 }, LOCK_TUNING)).toBe(Infinity);
   });
 
+  // Owner, 2026-11-10: a 16" on a fighter "takes 10 minutes or an hour ...
+  // working as intended". The PLAYER fire-control path (`neverImpossible`)
+  // gets that finite, uncapped time; NPC main guns (no opt-in) still skip.
+  it('player heavy gun (neverImpossible): a small target locks slowly, never impossibly', () => {
+    const fighter = getShipKind('fighter');
+    const near = { ...heavy(1500, fighter.radius, REAL_REACH), dvy: 400 };
+    const player = lockSeconds({ ...near, neverImpossible: true }, LOCK_TUNING);
+    expect(Number.isFinite(player)).toBe(true);
+    expect(player).toBeGreaterThan(LOCK_TUNING.maxSeconds * 10);
+    // A still fighter 30 km out: finite, and past the old cap.
+    const far = lockSeconds({ ...heavy(30_000, fighter.radius, REAL_REACH), neverImpossible: true }, LOCK_TUNING);
+    expect(Number.isFinite(far)).toBe(true);
+    expect(far).toBeGreaterThan(LOCK_TUNING.maxSeconds);
+    // The NPC path (no opt-in) is unchanged: Infinity, so NPC main guns skip it.
+    expect(lockSeconds(near, LOCK_TUNING)).toBe(Infinity);
+    // Out of reach is still impossible for the player.
+    expect(lockSeconds({ ...heavy(50_000, fighter.radius, REAL_REACH), neverImpossible: true }, LOCK_TUNING)).toBe(Infinity);
+    // A sub-capital (non-absRange) gun keeps the maxSeconds rule even with the opt-in.
+    const s = WEAPON_LOCK_PROFILE.S;
+    const sMount = { ...near, refSize: s.refSize, tracking: 0.01, reach: 2295, absRange: s.absRange, neverImpossible: true };
+    expect(lockSeconds(sMount, LOCK_TUNING)).toBe(Infinity);
+    // testMode cap still caps it.
+    expect(capLockSeconds(player, near, LOCK_TUNING, 2)).toBe(2);
+  });
+
   it('testMode lockTimeCapS still caps a long heavy lock', () => {
     const i = heavy(30_000, battleship.radius, REAL_REACH);
     expect(lockSeconds(i, LOCK_TUNING)).toBeGreaterThan(10);

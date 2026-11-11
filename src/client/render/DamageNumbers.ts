@@ -1,5 +1,6 @@
 import { Container, Text, TextStyle } from 'pixi.js';
 import type { Camera } from './worker/Camera';
+import { findCoalesceIndex, MERGE_RADIUS_PX } from './damageNumberCoalesce';
 
 /** Max concurrent accumulator buckets (one per target taking damage). */
 export const POOL_CAP = 20;
@@ -7,18 +8,19 @@ export const POOL_CAP = 20;
 /**
  * Frames the accumulator stays "open" — every new hit on the same target
  * resets this back to STAY_FRAMES, so a sustained beam keeps the number
- * growing instead of spawning a new instance. 60 frames ≈ 1 s @ 60 Hz.
+ * growing instead of spawning a new instance. 36 frames ≈ 0.6 s @ 60 Hz
+ * (was 60 + 30 fade; owner review 2026-11-10: numbers "linger").
  */
-export const STAY_FRAMES = 60;
+export const STAY_FRAMES = 36;
 
 /**
  * Frames the number takes to fade once the stay window expires. Total
  * lifetime under a single-hit scenario is STAY_FRAMES + FADE_FRAMES
- * (~1.5 s @ 60 Hz). Drives off STAY/FADE so timing tuning stays in one
+ * (1 s @ 60 Hz). Drives off STAY/FADE so timing tuning stays in one
  * place. The constant is exported so the regression-lock test follows
  * future tuning rather than hard-coding a value.
  */
-export const FADE_FRAMES = 30;
+export const FADE_FRAMES = 24;
 
 /** Backwards-compat alias for tests that referenced the old constant. */
 export const LIFETIME_FRAMES = STAY_FRAMES + FADE_FRAMES;
@@ -109,6 +111,8 @@ export function colorForTotal(total: number, heal = false): number {
 interface DamageNumberEntry {
   text: Text;
   targetId: string;
+  /** Index in `DamageNumberManager.live` (swap-remove bookkeeping). */
+  slot: number;
   total: number;
   /** True for a healing number (green ramp) vs damage (red ramp). */
   heal: boolean;
@@ -205,6 +209,13 @@ export class DamageNumberManager {
   private readonly camera: Camera;
   private readonly byTarget = new Map<string, DamageNumberEntry>();
   /**
+   * Dense list of live buckets (first `liveCount` slots). Every per-frame /
+   * per-hit loop walks this instead of the Map (no iterator allocation,
+   * invariant #14), and the screen-spot coalesce in `spawn` scans it.
+   */
+  private readonly live: DamageNumberEntry[] = [];
+  private liveCount = 0;
+  /**
    * Free list of Text instances available for reuse. Bucket destruction
    * pushes; bucket creation pops. Sprites stay in the same Pixi
    * geometry buffers (which the v8 allocator caches) across the
@@ -234,6 +245,15 @@ export class DamageNumberManager {
   spawn(targetId: string, x: number, y: number, damage: number, tag?: string, heal = false): void {
     if (damage <= 0) return;
     let entry = this.byTarget.get(targetId);
+    if (!entry) {
+      // One number per screen spot: a hit near a live number (another
+      // target in a packed melee / splash) folds into it rather than
+      // stacking a second black-stroked number on top (the pile-up that
+      // smeared into dark blocks inside fireballs, WS7.3).
+      const invScale = this.camera.scale.x > 0 ? 1 / this.camera.scale.x : 1;
+      const idx = findCoalesceIndex(this.live, this.liveCount, x, -y, MERGE_RADIUS_PX * invScale);
+      if (idx >= 0) entry = this.live[idx];
+    }
     if (entry) {
       entry.total += damage;
       entry.stayLeft = STAY_FRAMES;
@@ -253,7 +273,7 @@ export class DamageNumberManager {
       return;
     }
 
-    if (this.byTarget.size >= POOL_CAP) {
+    if (this.liveCount >= POOL_CAP) {
       this.evictOldest();
     }
 
@@ -268,6 +288,7 @@ export class DamageNumberManager {
     const fresh: DamageNumberEntry = {
       text,
       targetId,
+      slot: this.liveCount,
       total: damage,
       heal,
       stayLeft: STAY_FRAMES,
@@ -286,6 +307,7 @@ export class DamageNumberManager {
       fresh.pendingByTag.set(tag, damage);
     }
     this.byTarget.set(targetId, fresh);
+    this.live[this.liveCount++] = fresh;
   }
 
   /**
@@ -298,7 +320,9 @@ export class DamageNumberManager {
    */
   cancelByTag(tag: string): number {
     let removed = 0;
-    for (const [id, entry] of this.byTarget) {
+    // Backwards: destroyEntry swap-removes from `live`.
+    for (let i = this.liveCount - 1; i >= 0; i--) {
+      const entry = this.live[i]!;
       if (!entry.pendingByTag) continue;
       const contribution = entry.pendingByTag.get(tag);
       if (contribution === undefined) continue;
@@ -306,7 +330,7 @@ export class DamageNumberManager {
       entry.pendingByTag.delete(tag);
       removed++;
       if (entry.total <= 0) {
-        this.destroyEntry(id, entry);
+        this.destroyEntry(entry);
       } else {
         this.applyDisplay(entry);
       }
@@ -321,7 +345,8 @@ export class DamageNumberManager {
    */
   update(): void {
     const invScale = this.camera.scale.x > 0 ? 1 / this.camera.scale.x : 1;
-    for (const [id, entry] of this.byTarget) {
+    for (let i = this.liveCount - 1; i >= 0; i--) {
+      const entry = this.live[i]!;
       // Smoothly glide the rendered position toward the latest hit
       // anchor. GLIDE is a per-frame easing factor — small enough to
       // read as motion, large enough to keep up with a moving target
@@ -350,7 +375,7 @@ export class DamageNumberManager {
       entry.text.y = entry.curY + entry.riseY;
 
       if (entry.stayLeft === 0 && entry.fadeLeft === 0) {
-        this.destroyEntry(id, entry);
+        this.destroyEntry(entry);
       }
     }
   }
@@ -362,11 +387,12 @@ export class DamageNumberManager {
    * expire without rendering.
    */
   getActiveCount(): number {
-    return this.byTarget.size;
+    return this.liveCount;
   }
 
   destroy(): void {
-    for (const [, entry] of this.byTarget) {
+    for (let i = 0; i < this.liveCount; i++) {
+      const entry = this.live[i]!;
       // Pixi v8 Text owns its own glyph atlas (Texture + TextureSource
       // + WebGLTexture chain). `.destroy()` without
       // `{ texture: true, textureSource: true }` leaks the GPU
@@ -374,6 +400,8 @@ export class DamageNumberManager {
       entry.text.destroy({ texture: true, textureSource: true });
     }
     this.byTarget.clear();
+    this.live.length = 0;
+    this.liveCount = 0;
     // Free-list Texts are children of `this.container`; the
     // `destroy({ children: true, texture: true, textureSource: true })`
     // call below cascades full disposal to them.
@@ -386,10 +414,16 @@ export class DamageNumberManager {
    * off the container's child list but stays alive — its Pixi v8
    * vertex/texture buffers persist for the next acquireText() call.
    */
-  private destroyEntry(id: string, entry: DamageNumberEntry): void {
+  private destroyEntry(entry: DamageNumberEntry): void {
     this.container.removeChild(entry.text);
     this.releaseText(entry.text);
-    this.byTarget.delete(id);
+    this.byTarget.delete(entry.targetId);
+    // Swap-remove from the dense live list.
+    const lastIdx = --this.liveCount;
+    const last = this.live[lastIdx]!;
+    this.live[entry.slot] = last;
+    last.slot = entry.slot;
+    this.live.length = lastIdx;
   }
 
   /** 2026-05-31 diagnostic: count fresh allocs vs pool reuses. Exposed
@@ -445,18 +479,16 @@ export class DamageNumberManager {
    * targets above POOL_CAP simultaneously.
    */
   private evictOldest(): void {
-    let oldestId: string | null = null;
+    let oldest: DamageNumberEntry | null = null;
     let oldestLife = Infinity;
-    for (const [id, entry] of this.byTarget) {
+    for (let i = 0; i < this.liveCount; i++) {
+      const entry = this.live[i]!;
       const life = entry.stayLeft + entry.fadeLeft;
       if (life < oldestLife) {
         oldestLife = life;
-        oldestId = id;
+        oldest = entry;
       }
     }
-    if (oldestId !== null) {
-      const old = this.byTarget.get(oldestId)!;
-      this.destroyEntry(oldestId, old);
-    }
+    if (oldest !== null) this.destroyEntry(oldest);
   }
 }
