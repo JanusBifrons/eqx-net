@@ -18,6 +18,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { bootLivingWorldTestServer, type LivingWorldTestHarness } from './harness.js';
+import { tuningFor } from '../../../src/shared-types/shipScale/lookup.js';
 
 describe('LivingWorldDirector — leader-led flock (non-combat herding)', () => {
   let h: LivingWorldTestHarness | undefined;
@@ -106,10 +107,17 @@ describe('LivingWorldDirector — leader-led flock (non-combat herding)', () => 
     // (a) BORN CLUSTERED — the squad spawned as a herd (shared edge anchor), not
     //     scattered across the sector edge (which was ~9000 u, the diameter).
     expect(gap0).toBeLessThan(1500);
-    // (b) TIGHT HERD — flocking holds the farthest follower close to the leader
-    //     (cohesion pulls in, separation spaces ~150; the herd settles ~a few
-    //     hundred u across, never strung out).
-    expect(gap1).toBeLessThan(400);
+    // (b) TIGHT HERD — flocking holds the farthest follower close to the leader.
+    //     Cohesion fades to zero inside `flockFollow` (the arrival ramp), so a
+    //     settled follower rests anywhere within it; separation can nudge the
+    //     outermost one up to half a spacing further. Both follow ship size
+    //     (#18): 220 + 75 at 1×, 440 + 150 at the 2× default. This was a fixed
+    //     400, written at 1×; at 2× it sat inside the healthy band and failed
+    //     on CI whenever the herd happened to rest at 410–420 (main since
+    //     train #449; the herd itself was fine). A strung-out herd is
+    //     thousands of units across, so this still catches the real failure.
+    const tune = tuningFor('fighter');
+    expect(gap1).toBeLessThan(tune.flockFollow + tune.flockSeparation / 2);
     // (c) ALIVE — bots actually steered + moved (the herd flies, not a frozen
     //     blob). Sum every bot's displacement over the window.
     let totalDisp = 0;
