@@ -99,9 +99,23 @@ describe('LivingWorldDirector — leader-led flock (non-combat herding)', () => 
 
     const before = poseMap();
     const gap0 = maxFollowerGap(before);
-    await h.advance(16_000); // let flocking tighten the herd + the leader cruise
+    // DIAGNOSTIC (do not merge): sample the herd each second on CI.
+    const tick0 = (room as unknown as { serverTick: number }).serverTick;
+    const wall0 = Date.now();
+    for (let s = 0; s < 16; s++) {
+      await h.advance(1_000);
+      const p = poseMap();
+      const lp = p.get(leaderId);
+      const gaps: string[] = [];
+      for (const [id, q] of p) if (id !== leaderId && lp) gaps.push(Math.round(Math.hypot(q.x - lp.x, q.y - lp.y)).toString());
+      // eslint-disable-next-line no-console
+      console.log('FLOCKDIAG', s, 'ticks', (room as unknown as { serverTick: number }).serverTick - tick0, 'wall', Date.now() - wall0,
+        'max', Math.round(maxFollowerGap(p)), 'gaps', gaps.join(','), 'leader', lp ? `${Math.round(lp.x)},${Math.round(lp.y)}` : '-');
+    }
     const after = poseMap();
     const gap1 = maxFollowerGap(after);
+    // eslint-disable-next-line no-console
+    console.log('FLOCKDIAG final gap0', Math.round(gap0), 'gap1', Math.round(gap1));
 
     // (a) BORN CLUSTERED — the squad spawned as a herd (shared edge anchor), not
     //     scattered across the sector edge (which was ~9000 u, the diameter).
