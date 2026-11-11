@@ -65,7 +65,16 @@ The tables live in `src/shared-types/combat/navalGuns.ts` (`REAL_NAVAL_GUNS`, de
   - **Far drones' slim slice.** The `drones[]` snapshot slice (hostile bit, hp %, turret angles) is sent only in interest, so a far drone shows no hostility or damage.
   - **View extent** (above).
 - **Shells in flight.** Flights are ~10× longer, so ~10× more shells are alive at once. The projectile broadphase (#428) keeps hit-testing per step, so its cost doesn't grow with range, but snapshot bytes for far shells (#425) do.
-- **Structure turret gather.** It scans every candidate in reach: more candidates at 38 km than at 5 km.
+- **Structure turret gather: measured, not a problem (2026-11-11).** `collectTurretTargets` gathers every hostile in reach once per defence structure (never per mount) each 100 ms turret tick. Rig: the `npc-base-citadel` base (8 defence structures: a 16" barbette, an 11" turret, two 5" mounts, two quad AA, two light turrets) with N hostile ships in a 40 km disc, through the room's target grid and the real `StructureMountTicker` (`benchmarks/turretGatherFixture.ts`). On the laptop:
+
+  | Hostiles (40 km disc) | Mode | Candidates / tick | Max per structure | Turret tick (mean / p99) |
+  |---|---|---|---|---|
+  | 60 | legacy | 4 | 3 | 0.035 / 0.06 ms |
+  | 60 | real | 127 | 56 | 0.17 / 0.26 ms |
+  | 200 | legacy | 10 | 6 | 0.037 / 0.05 ms |
+  | 200 | real | 401 | 182 | 0.19 / 0.27 ms |
+
+  The real-range time is almost flat in the hostile count: it is the grid's cell walk (a 38.7 km query sweeps ~150 × 150 cells of 512 u), not the candidates. 200 hostiles packed within 5 km (every gun reaching all of them, 832 candidates a tick) cost only 0.045 ms. One citadel stays well under 0.3 ms a tick, so no change. A sector with several heavy-gun bases scales linearly with their big guns; revisit (a coarser grid level for long queries) only if a perf scene shows it. Count gate: `benchmarks/turretGather.count.test.ts` (one gather per defence structure; real, 60 hostiles ≤ 160 candidates a tick). Timing: `benchmarks/turret-gather.bench.ts`.
 - **AI stand-off vs pockets.** A battleship holds broadside ~29 km from its target, often outside the pocket it was spawned to guard.
 - **Hard-coded test layouts.** `coastal-duel` and `capitalEngagement` place ships at legacy ranges; they still pass under `real` (closer is in range), but the showcase framing assumes legacy.
 
