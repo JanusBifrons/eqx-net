@@ -162,3 +162,47 @@ describe('SectorRoom integration — fire-control AUTO groups', () => {
     await waitUntil(() => groups?.[0]?.l[0]?.s === 2, 3_000, 'auto locked after switch');
   }, 20_000);
 });
+
+/**
+ * Owner decision 2026-11-10 (handoff "Next" #1): a player's heavy gun locks a
+ * small target SLOWLY, never impossibly ("10 minutes or an hour ... working as
+ * intended"). Before: a 16" on a fighter was past `maxSeconds` ⇒ Infinity ⇒
+ * the lock was flagged can't-lock (`c: 1`) and dropped after the grace window.
+ */
+describe('SectorRoom integration — player heavy gun on a small target', () => {
+  let harness: SectorTestHarness;
+  beforeEach(async () => {
+    harness = await bootSectorTestServer({
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, pilotCapitals: true,
+      asteroidConfig: [],
+      dronePoses: [{ kind: 'fighter', x: 0, y: 1_500, angle: 0 }],
+    });
+  }, 15_000);
+  afterEach(async () => { if (harness) await harness.cleanup(); }, 10_000);
+
+  it('a battleship main battery lock on a fighter makes progress and is not dropped', async () => {
+    const pid = randomUUID();
+    const room = (await harness.connectActive(pid, {
+      shipKind: 'battleship', spawnX: 0, spawnY: 0, initialHull: 1_000_000, groupMode: 'manual',
+    })) as ClientRoom<SectorState>;
+    let groups: Array<{ id: string; l: Array<{ t: string; s: number; p: number; c?: 1 }> }> | undefined;
+    room.onMessage('snapshot', (snap: { states?: Record<string, { playerId?: string; groups?: typeof groups }> }) => {
+      for (const st of Object.values(snap.states ?? {})) if (st.playerId === pid && st.groups) groups = st.groups;
+    });
+    const server = harness.getServerRoom() as unknown as SectorRoom;
+    const ftr = [...server._internals.swarmRegistry.all()].find((r) => r.kind === 1 && r.shipKind === 'fighter')!;
+    expect(ftr, 'the fighter is in the room').toBeTruthy();
+    const key = `s:${ftr.entityId}`;
+    await waitUntil(() => groups?.some((g) => g.id === 'main') === true, 5_000, 'main battery group');
+    room.send('lock_request', { type: 'lock_request', groupId: 'main', target: key });
+    const lockOf = (): { s: number; p: number; c?: 1 } | undefined => groups?.find((g) => g.id === 'main')?.l.find((l) => l.t === key);
+    await waitUntil(() => lockOf() !== undefined, 3_000, 'lock appears');
+    // Past the 1.5 s lost-grace window: an impossible lock would be gone by now.
+    await harness.advance(3_000);
+    const l = lockOf();
+    expect(l, 'the lock is still held (not dropped as impossible)').toBeDefined();
+    expect(l!.c, 'not flagged can\'t-lock / out of range').toBeUndefined();
+    expect(l!.p, 'the lock ring is building').toBeGreaterThan(0);
+    expect(l!.s, 'slow: nowhere near locked yet').not.toBe(2);
+  }, 30_000);
+});

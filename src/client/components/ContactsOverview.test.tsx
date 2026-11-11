@@ -76,6 +76,13 @@ describe('ContactsOverview', () => {
     expect(requestLock).not.toHaveBeenCalled();
   });
 
+  it('a locked row reads LOCKED, not the LOCK action (owner review 2026-11-10, long-guns clip)', () => {
+    fakeMirror.localGroups[0]!.l = [{ t: 's:7', s: 2, p: 100 }];
+    render(<ContactsOverview />);
+    const row = screen.getByTestId('contact-row-s:7');
+    expect(row.textContent).toContain('LOCKED');
+  });
+
   it('acquiring shows a capped percent, and refreshes from the mirror while open', () => {
     vi.useFakeTimers();
     try {
