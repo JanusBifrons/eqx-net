@@ -109,17 +109,20 @@ export function chooseBaseSite(
  * `boxes` (spawning a ship inside a structure would trap or fling it).
  * Searches rings outward; returns (x, y) unchanged when already clear, or the
  * original point if nothing within `maxDistance` is clear.
+ * `circleRadius` (default `radius`) is the body's own extent against
+ * `circles`: a structure keeps a wide berth, but two hulls only need their
+ * own extents apart (a spawn beside a parked ship is fine).
  */
 export function nearestClearPoint(
   x: number, y: number, boxes: readonly SiteBox[], radius: number, maxDistance = 6000,
-  circles: readonly SiteCircle[] = [],
+  circles: readonly SiteCircle[] = [], circleRadius = radius,
 ): { x: number; y: number } {
   const clear = (px: number, py: number): boolean => {
     for (const b of boxes) {
       if (boxHitsCircle(b.x - b.hw, b.x + b.hw, b.y - b.hh, b.y + b.hh, { x: px, y: py, r: radius })) return false;
     }
     for (const c of circles) {
-      const rr = c.r + radius;
+      const rr = c.r + circleRadius;
       if ((c.x - px) * (c.x - px) + (c.y - py) * (c.y - py) < rr * rr) return false;
     }
     return true;
