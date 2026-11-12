@@ -12,7 +12,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { concatPts, cadenceProblem, distinctRuns, longestRepeat, perSecond, slotsKept } from './cadence.js';
+import { concatPts, cadenceProblem, distinctRuns, longestRepeat, perSecond, slotsKept, stallProblem, worldStalls } from './cadence.js';
 import { writeConcatList } from './compositor.js';
 
 const SLOT = 1000 / 60;
@@ -76,5 +76,41 @@ describe('encode list keeps every captured frame', () => {
     const pts = concatPts(timed.map((f) => f.d), timed[0]!.framerate ?? IMAGE2_DEFAULT_FPS);
     expect(slotsKept(pts, 60)).toBe(timed.length);
     expect(perSecond(slotsKept(pts, 60), n * SLOT)).toBeGreaterThanOrEqual(59);
+  });
+});
+
+/**
+ * World stalls (2026-11-12). The long-guns zoom "chugs like crazy" (owner) yet
+ * QA said 60 different frames a second: the HUD text changed while the world
+ * stood still, so every frame differed by a byte. Frame-to-frame PSNR of the
+ * clip showed it: runs of near-identical frames (> 55 dB) between moving ones.
+ */
+describe('worldStalls', () => {
+  const MOVING = 40, STILL = 65;
+  it('smooth motion has no stalls', () => {
+    expect(worldStalls(Array(120).fill(MOVING))).toMatchObject({ stalls: 0, longest: 0, motionPairs: 120 });
+  });
+  it('a still scene is not a stall, nor still frames at the ends', () => {
+    expect(worldStalls(Array(120).fill(Infinity)).stalls).toBe(0);
+    expect(worldStalls([STILL, STILL, STILL, MOVING, MOVING, STILL, STILL, STILL]).stalls).toBe(0);
+  });
+  it('a single repeated frame inside motion is not counted (the recorder repeats one now and then)', () => {
+    expect(worldStalls([MOVING, MOVING, STILL, MOVING, MOVING]).stalls).toBe(0);
+  });
+  it('the chug: the world freezes for 2-6 frames between moving runs, six times a second', () => {
+    const seg = [MOVING, MOVING, MOVING, MOVING, MOVING, MOVING, STILL, STILL, STILL, Infinity];
+    const psnr = [...seg, ...seg, ...seg, ...seg, ...seg, ...seg, ...Array(6).fill(MOVING)];
+    const s = worldStalls(psnr);
+    expect(s.stalls).toBe(6);
+    expect(s.longest).toBe(4);
+    expect(stallProblem(s, 60)).not.toBeNull();
+  });
+  it('a sparse scene resting between bursts of motion is not a stall (long-guns: ships parked, thin shells)', () => {
+    const psnr = [...Array(8).fill(MOVING), ...Array(95).fill(STILL), MOVING, STILL, STILL, MOVING, ...Array(8).fill(MOVING)];
+    expect(worldStalls(psnr).stalls).toBe(0);
+  });
+  it('the fixed take passes: single repeats only', () => {
+    const psnr = Array.from({ length: 600 }, (_, i) => (i % 9 === 4 ? STILL : MOVING));
+    expect(stallProblem(worldStalls(psnr), 60)).toBeNull();
   });
 });
