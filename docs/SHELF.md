@@ -55,7 +55,7 @@ everything, on both sides:
   the turret cadence, AI timers (many are wall-clock ms, not ticks);
 - presentation: effects, particles, animation, camera eases.
 
-Design note (2026-11-12, covers this and a chosen game speed):
+Design note (2026-11-12; owner: dynamic, galaxy-wide, performance only):
 [docs/architecture/game-time-scale.md](architecture/game-time-scale.md).
 
 Estimated one to two weeks with tests. The trigger must also include lateness
