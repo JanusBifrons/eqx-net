@@ -611,7 +611,7 @@ export const capitalBreakup: Shot = {
   async run(ctx) {
     const k = ctx.viewport.width / 1920;
     // Hold on the cruiser so the break-up fills the frame.
-    await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'track', target: 'local', zoom: 0.3 * k } }]);
+    await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 4000, y: 0, zoom: 0.22 * k } }]); // the cruiser is parked at its explicit spawn
     await ctx.sleep(23_500);
   },
 };
