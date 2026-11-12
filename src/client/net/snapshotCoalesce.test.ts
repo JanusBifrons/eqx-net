@@ -81,6 +81,33 @@ afterEach(() => {
   __resetDiagCache();
 });
 
+describe('coalescing never loses a wreck descriptor (money-shot review)', () => {
+  // A capital's `wrecks[]` rides only a few snapshots after the death (then
+  // 2 Hz). Under slow frames the newest-wins coalescer dropped the snapshot
+  // that carried it: the pieces waited 1.2–3.6 s for the next one, older
+  // than the 1.5 s break-up window, so the explosion never played.
+  const wreck = { wreckId: 1, parentKind: 'battleship', seed: 5, killX: 0, killY: 0, killBlowDamage: 1, recentDamageRate: 1, snapChance: 0, algoVersion: 6 };
+
+  it('a dropped snapshot\'s wrecks ride on with the newer one that has none', () => {
+    const co = new SnapshotCoalescer(true);
+    co.enqueue({ ...makeSnapshot(100), wrecks: [wreck] } as unknown as SnapshotMessage);
+    co.enqueue(makeSnapshot(101));
+    let applied: SnapshotMessage | null = null;
+    co.drain((s) => { applied = s; });
+    expect(applied!.serverTick).toBe(101);
+    expect((applied as unknown as { wrecks?: unknown[] }).wrecks).toEqual([wreck]);
+  });
+
+  it('a newer list (even empty: "none left") wins over a dropped one', () => {
+    const co = new SnapshotCoalescer(true);
+    co.enqueue({ ...makeSnapshot(100), wrecks: [wreck] } as unknown as SnapshotMessage);
+    co.enqueue({ ...makeSnapshot(101), wrecks: [] } as unknown as SnapshotMessage);
+    let applied: SnapshotMessage | null = null;
+    co.drain((s) => { applied = s; });
+    expect((applied as unknown as { wrecks?: unknown[] }).wrecks).toEqual([]);
+  });
+});
+
 describe('Probe 6 — snapshot coalescing constructor + URL flag', () => {
   it('default: coalesce ENABLED (no URL flag)', () => {
     setSearch('');
