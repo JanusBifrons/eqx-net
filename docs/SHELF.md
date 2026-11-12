@@ -71,47 +71,6 @@ flocks need spacing that keeps them out of each other's lines of fire
 (flocking separation radii, capital escort stations off the broadsides), and a
 held drone could side-step to clear its line.
 
-## Time dilation for the whole game (shelved 2026-11-07; IN PROGRESS 2026-11-12)
-
-**IN PROGRESS on the parallel stream `stream/time-scale` (owner, 2026-11-12).**
-Do not open a PR for that branch, merge it, put it in a train or sync from it;
-it lands only on the owner's word. This entry is removed when it lands. See
-"Parallel streams" in the newest handoff.
-
-**Found:** time dilation (`SimulationClock`, rate 0.7 to 1.0) engages only
-when a server tick costs more than 14 ms of work. When the host starves the
-server of CPU, ticks stay cheap but arrive late, and the physics worker drops
-the lost time (its catch-up cap in `core/physics/worker.ts`) while still
-reporting rate 1.0. Measured: a server at ~25 Hz with two browsers + Vite on
-the laptop (60.0 Hz alone). The client kept wall-clock time, its lead swung
-4 to 38 ticks, and every swing was a prediction correction: jitter, with one
-player. The client also reads `clockRate` only for the HUD and audio pitch;
-its prediction ignores it, so even a real slowdown would show as corrections,
-not slow motion.
-
-**Wanted:** an overloaded server (a big fight, many players) slows the whole
-game smoothly instead of jittering.
-
-**Why it waits:** it is not just ticks. Doing it properly changes the speed of
-everything, on both sides:
-- physics dt and client prediction;
-- snapshot interpolation (display delay, pose buffers);
-- gameplay timers: reloads, cooldowns, warp spool, the structure grid pulse,
-  the turret cadence, AI timers (many are wall-clock ms, not ticks);
-- presentation: effects, particles, animation, camera eases.
-
-**Shelved with a full plan (owner, 2026-11-12): "not essential for now"; raise it as a near-future item.** Design (dynamic, galaxy-wide, performance only; phased build):
-[docs/architecture/game-time-scale.md](architecture/game-time-scale.md).
-
-Estimated one to two weeks with tests. The trigger must also include lateness
-(sim time falling behind wall-clock), not only tick cost.
-
-**Small pieces that could land first:**
-- Count the worker's dropped ticks in server telemetry and perf scenes, so
-  starvation on a real server is visible.
-- The showcase already retakes a take whose server ran below 57 Hz
-  (`showcase/wobble.ts` `netProblem`).
-
 ## Radar settings saved per account, and a radar settings window (dropped 2026-11-08)
 
 **Was:** the last two steps of the ring-radar plan (`sparkling-wondering-rose`,

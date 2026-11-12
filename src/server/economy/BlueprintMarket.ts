@@ -15,6 +15,7 @@ import {
 } from '../../shared-types/blueprintMarket.js';
 import type { BlueprintItem } from '../../shared-types/items.js';
 import { repPriceFactor } from '../../core/economy/market.js';
+import { gameNow } from '../time/gameTime.js';
 
 export const BLUEPRINT_OFFERS_ON_BOARD = 4;
 export const BOARD_ORIGINAL_CHANCE = 0.1;
@@ -60,7 +61,7 @@ export class BlueprintMarket {
   }
 
   private now(): number {
-    return this.deps.now?.() ?? Date.now();
+    return this.deps.now?.() ?? gameNow();
   }
 
   /** Drop expired offers and restock the board. Control cadence. */

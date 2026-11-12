@@ -223,7 +223,7 @@ import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
 import type { GridObstacle } from '../../core/structures/Grid.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
-import type { SnapshotMessage } from '../../shared-types/messages.js';
+import type { SnapshotMessage, TimeScaleKeyframe } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { isLatentSlot, resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
@@ -258,7 +258,7 @@ import { guarded } from './guardedLoop.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
-import { registerScenePerfRoom, unregisterScenePerfRoom, type ScenePerfView } from './scene/scenePerfRegistry.js';
+import { registerScenePerfRoom, unregisterScenePerfRoom, sceneSimTime, type ScenePerfView } from './scene/scenePerfRegistry.js';
 import { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 import type { EventLoopUtilization } from 'node:perf_hooks';
 import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
@@ -277,6 +277,7 @@ import { makeInputHandler } from './InputHandler.js';
 import {
   TICK_IDX,
   WORKER_TICK_US_IDX,
+  WORKER_DROPPED_TICKS_IDX,
   COUNT_IDX,
   SLOT_X_OFF,
   SLOT_Y_OFF,
@@ -398,6 +399,11 @@ import { LineOfFireGate } from './LineOfFireGate.js';
 import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
 import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
 import type { LockEntry } from '../../core/combat/lockState.js';
+import { createSectorClock, type GameTimer } from '../time/gameTime.js';
+import { MIN_TIME_SCALE, MAX_TIME_SCALE, clampTimeScale, type GameClock } from '../../core/clock/GameClock.js';
+import { LoadSpeedController } from '../../core/clock/LoadSpeedController.js';
+import { glideToward } from '../../shared-types/timeScale.js';
+import { advanceSchedule, tickPeriodMs, type CatchUpResult } from '../../core/physics/catchUp.js';
 
 /** Stamp the ship scale and the naval range mode onto a welcome (shared
  *  contracts: shipScale/welcomeScale.ts, combat/navalRange.ts). */
@@ -465,12 +471,31 @@ const WORKER_TS_PATH = fileURLToPath(
 // production; set via `EQX_ALLOW_DEV_OVERRIDES=1` for E2E only.
 const ALLOW_DEV_OVERRIDES = process.env['EQX_ALLOW_DEV_OVERRIDES'] === '1';
 
+/** `EQX_TIME_SCALE`: every sector's starting game speed (dev, demos, video).
+ *  Ignored in production unless `EQX_ALLOW_DEV_OVERRIDES=1`. */
+const ENV_TIME_SCALE: number | null = (() => {
+  const raw = process.env['EQX_TIME_SCALE'];
+  if (raw === undefined || raw === '') return null;
+  if (process.env['NODE_ENV'] === 'production' && !ALLOW_DEV_OVERRIDES) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+})();
+
 /**
  * testMode `lockTimeCapS` (room option, join option, URL `?lockTimeCapS=`):
  * the longest any NON-player lock may take, in seconds. 0 = the first step.
  * Applied by `capLockSeconds` (core/combat/lockTime.ts).
  */
 const LockTimeCapSchema = z.number().finite().min(0).max(600);
+
+/**
+ * Game speed override for a sector (time scale stream): testMode room option,
+ * join option and URL `?timeScale=`, or `EQX_TIME_SCALE` outside production.
+ * The automatic load controller (Phase 5) may still slow a sector below it.
+ */
+const TimeScaleSchema = z.number().finite().min(MIN_TIME_SCALE).max(MAX_TIME_SCALE);
+
+
 
 const JoinOptionsSchema = z
   .object({
@@ -556,6 +581,9 @@ const JoinOptionsSchema = z
      *  (room option, or the room-creating client's join option) and on any
      *  join that passes it. testMode-gated. */
     lockTimeCapS: LockTimeCapSchema.optional(),
+    /** Test/recording trigger (time scale): set this sector's game speed
+     *  (0.25–4). Room-wide. testMode-gated. */
+    timeScale: TimeScaleSchema.optional(),
     /** Test-only bespoke trigger (fire control): this pilot's AUTO groups
      *  also pick NON-hostile targets (NPC ships, structures not their own) in
      *  reach + arc. Never players. Usually paired with `instantLock`.
@@ -917,9 +945,13 @@ export class SectorRoom extends Room<SectorState> {
   private readonly depositDwell = new Map<string, { targetId: string; sinceTick: number }>();
   /** Auto-deposit progress 0..100 by shipInstanceId (own-ship snapshot ring). */
   private readonly depositProgress = new Map<string, number>();
+  /** This sector's game clock (game speed is per sector, time scale stream).
+   *  Every gameplay read and timer in the room uses it; at 1× it IS Date.now(). */
+  readonly gameClock: GameClock = createSectorClock();
+
   /** C2 — break-ins (channels + access grants); ticked with the structure tick. */
   private readonly breakIns = new BreakInSubsystem({
-    now: () => Date.now(),
+    now: () => this.gameClock.now(),
     canContinue: (actor, sid) => {
       const rec = this.structureRegistry.get(sid);
       if (rec !== undefined) return this.pilotNear(actor, rec);
@@ -1032,9 +1064,9 @@ export class SectorRoom extends Room<SectorState> {
   /** Mine Layers' proximity mines (10 Hz with the structure tick). */
   private mineField!: MineFieldSubsystem;
   /** 1 Hz grid heartbeat timer (unref'd; off the physics tick). */
-  private structureGridTimer: ReturnType<typeof setInterval> | undefined;
+  private structureGridTimer: GameTimer | undefined;
   /** Faster turret aim/fire timer (Phase 5; unref'd). */
-  private structureTurretTimer: ReturnType<typeof setInterval> | undefined;
+  private structureTurretTimer: GameTimer | undefined;
   /** Click-to-inspect live-stats channel (structures follow-up Item B5) +
    *  its ~5 Hz emit timer (unref'd; OFF the snapshot/physics hot path). */
   private selectionStats!: SelectionStatsSubsystem;
@@ -1314,6 +1346,8 @@ export class SectorRoom extends Room<SectorState> {
 
   get _internals(): {
     serverTick: number;
+    /** Ticks the physics worker's catch-up cap dropped (a starved host). */
+    droppedTicks: number;
     /** The shield-wall beam block the player/AI fire resolvers call. */
     blockShotAtWall: (fx: number, fy: number, dx: number, dy: number, maxDist: number, damage: number) => number | null;
     /** PR 3a — which playerId each connected session was bound to (the
@@ -1419,6 +1453,7 @@ export class SectorRoom extends Room<SectorState> {
     return {
       loot: this.loot,
       serverTick: this.serverTick,
+      droppedTicks: this.sabU32[WORKER_DROPPED_TICKS_IDX] ?? 0,
       sessionToPlayer: this.sessionToPlayer,
       ownerlessShips: this.ownerlessShips,
       lingeringSlots: this.lingeringSlots,
@@ -1765,6 +1800,11 @@ export class SectorRoom extends Room<SectorState> {
       /** Bespoke test/recording trigger: no NON-player lock takes longer than
        *  this (s); 0 = the first step. zod-checked; testMode-only. */
       lockTimeCapS?: unknown;
+      /** Game speed for this sector (0.25–4). zod-checked; testMode-only. */
+      timeScale?: unknown;
+      /** testMode: run the automatic slowdown here too (on by default only in
+       *  real sectors). */
+      autoTimeScale?: boolean;
       /** Capital-ship R&D (round 3 D): a player may join flying a capital
        *  (capitals stay npcOnly everywhere else). testMode-only. */
       pilotCapitals?: boolean;
@@ -1875,7 +1915,7 @@ export class SectorRoom extends Room<SectorState> {
     this.aiController = new AiController({
       postIntent: (slot, fx, fy, torque, setAngvel) => {
         // v4 A — a disabled NPC ship's engines are off.
-        if (this.gateGuard.isSlotDisabled(slot, Date.now())) {
+        if (this.gateGuard.isSlotDisabled(slot, this.gameClock.now())) {
           fx = 0;
           fy = 0;
           torque = 0;
@@ -2116,7 +2156,7 @@ export class SectorRoom extends Room<SectorState> {
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
       wallBlocksProjectile: (x, y, sx, sy, damage) => {
-        if (!this.shieldWalls.blockProjectile(x, y, sx, sy, damage, Date.now())) return false;
+        if (!this.shieldWalls.blockProjectile(x, y, sx, sy, damage, this.gameClock.now())) return false;
         this.broadcastWallHit('bolt');
         return true;
       },
@@ -2151,7 +2191,7 @@ export class SectorRoom extends Room<SectorState> {
       broadcastDetonated: (msg) => this.broadcast('missile_detonated', msg),
       // A fence stops missiles too (user ruling 2026-11-02).
       wallBlocksMissile: (x, y, sx, sy, damage) => {
-        if (!this.shieldWalls.blockProjectile(x, y, sx, sy, damage, Date.now())) return false;
+        if (!this.shieldWalls.blockProjectile(x, y, sx, sy, damage, this.gameClock.now())) return false;
         this.broadcastWallHit('missile');
         return true;
       },
@@ -2197,6 +2237,7 @@ export class SectorRoom extends Room<SectorState> {
     // ships" digest. Extracted to SnapshotBroadcaster.ts.
     this.snapshotBroadcaster = new SnapshotBroadcaster({
       shellEvents: () => this.shellHub,
+      timeScale: () => (this.timeScaleKey.s === 1 && this.timeScaleKey.t === undefined ? undefined : this.timeScaleKey),
       serverTick: () => this.serverTick,
       sabU32: this.sabU32,
       clients: this.clients,
@@ -2222,7 +2263,7 @@ export class SectorRoom extends Room<SectorState> {
       fittedOf: (shipInstanceId) => this.fittedCache.get(shipInstanceId),
       // Economy v2 W1 — the own player's wallet balance on the snapshot.
       walletOf: (playerId) => getWallet().balance(playerId),
-      disabledMsOf: (playerId) => this.gateGuard.remainingMs(playerId, Date.now()),
+      disabledMsOf: (playerId) => this.gateGuard.remainingMs(playerId, this.gameClock.now()),
       droneFactionOf: (id) => (this.patrols.count > 0 ? this.patrols.factionOf(id) : undefined),
       droneWarpOf: (id) => (this.npcWarps.size > 0 ? this.botWarpPhase(id) : 0),
       warpingDrones: () => this.npcWarps,
@@ -2476,7 +2517,7 @@ export class SectorRoom extends Room<SectorState> {
     this.loot = new LootSubsystem({
       holdStore: getHoldStore(),
       sectorKey: () => this.sectorKey,
-      now: () => Date.now(),
+      now: () => this.gameClock.now(),
       spawnPodEntity: (id, x, y, vx, vy, tier) => {
         if (this.swarmRegistry.has(id)) return false;
         const geom = scrapColliderFor('cargo-pod', tier);
@@ -2649,6 +2690,7 @@ export class SectorRoom extends Room<SectorState> {
       powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
       setActive: (lab, active) => this.structureGrid.setActive(lab, active),
       sectorKey: () => this.sectorKey,
+      now: () => this.gameClock.now(),
     });
     // Mine Layers: lay mines from munitions; a mine goes off on a ship hostile
     // to its owner (the owner's turret-targeting rule).
@@ -2774,11 +2816,9 @@ export class SectorRoom extends Room<SectorState> {
     const pulseMs = this.testMode && roomOpts.structureGridPulseMs
       ? Math.max(20, roomOpts.structureGridPulseMs)
       : TRANSFER_PULSE_MS;
-    this.structureGridTimer = setInterval(guarded('structure-grid-tick', () => this.structureGridTick()), pulseMs);
-    this.structureGridTimer.unref?.();
+    this.structureGridTimer = this.gameClock.every(pulseMs, guarded('structure-grid-tick', () => this.structureGridTick()));
     // Phase 5 — turret aim/fire on a faster cadence than the grid pulse.
-    this.structureTurretTimer = setInterval(guarded('structure-turret-tick', () => this.structureTurretTick()), TURRET_TICK_MS);
-    this.structureTurretTimer.unref?.();
+    this.structureTurretTimer = this.gameClock.every(TURRET_TICK_MS, guarded('structure-turret-tick', () => this.structureTurretTick()));
 
     // Click-to-inspect live-stats channel (structures follow-up Item B5). Its
     // own ~5 Hz timer (200 ms), unref'd + OFF the snapshot/physics tick — the
@@ -2790,6 +2830,7 @@ export class SectorRoom extends Room<SectorState> {
         client?.send('entity_stats', this.ownerGateStats(sessionId, msg));
       },
     });
+    // eslint-disable-next-line no-restricted-globals -- real time: a UI refresh rate for the inspector, not game time
     this.selectionStatsTimer = setInterval(guarded('selection-stats-tick', () => this.selectionStats.tick()), SELECTION_STATS_INTERVAL_MS);
     this.selectionStatsTimer.unref?.();
 
@@ -3000,6 +3041,14 @@ export class SectorRoom extends Room<SectorState> {
       if (cap.success) this.setLockTimeCap(cap.data);
       else logger.warn({ value: roomOpts.lockTimeCapS }, 'lockTimeCapS: invalid room option, ignored');
     }
+    this.autoSlowdown = !this.testMode || roomOpts.autoTimeScale === true;
+    if (this.testMode && roomOpts.timeScale !== undefined) {
+      const ts = TimeScaleSchema.safeParse(roomOpts.timeScale);
+      if (ts.success) this.setTimeScale(ts.data);
+      else logger.warn({ value: roomOpts.timeScale }, 'timeScale: invalid room option, ignored');
+    } else if (ENV_TIME_SCALE !== null) {
+      this.setTimeScale(ENV_TIME_SCALE);
+    }
     this.testPilotCapitals = this.testMode && roomOpts.pilotCapitals === true;
     if (roomOpts.capitalWrecks === true || process.env['EQX_CAPITAL_WRECKS'] === '1') this.initCapitalWrecks();
     // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
@@ -3057,6 +3106,7 @@ export class SectorRoom extends Room<SectorState> {
       this.asTransitHost(),
       transitSpoolMs,
       getPlayerShipStore(),
+      this.gameClock,
     );
 
     this.onMessage('engage_transit', (client: Client, raw: unknown) => {
@@ -3158,7 +3208,7 @@ export class SectorRoom extends Room<SectorState> {
       postToWorker: (cmd) => this.postToWorker(cmd),
       serverTick: () => this.serverTick,
       shipEnergyOf: (playerId) => this.getActiveShip(playerId)?.energy,
-      isDisabled: (playerId) => this.gateGuard.isDisabled(playerId, Date.now()),
+      isDisabled: (playerId) => this.gateGuard.isDisabled(playerId, this.gameClock.now()),
       onWarpRequest: (playerId, x, y) => this.warpTravel.noteRequest(playerId, x, y),
       validWarpPoint: (x, y) => this.sectorKey !== null && isWarpDropPoint(this.sectorKey, x, y, this.solar),
       logger,
@@ -3456,7 +3506,7 @@ export class SectorRoom extends Room<SectorState> {
       const id = randomUUID();
       getTeleportBroker().addRequest({
         id, targetSector: here, targetUid: target.uid, toOwner: target.owner,
-        fromSector: parsed.data.sectorKey, fromUid: parsed.data.uid, fromOwner: pid, atMs: Date.now(),
+        fromSector: parsed.data.sectorKey, fromUid: parsed.data.uid, fromOwner: pid, atMs: this.gameClock.now(),
       });
       const fromName = this.resolveOwnerName(pid) ?? 'A pilot';
       const where = (sk: string): string => (sk === here ? 'here' : (getSector(sk)?.name ?? 'another sector'));
@@ -3471,7 +3521,7 @@ export class SectorRoom extends Room<SectorState> {
       }
       const pid = this.sessionToPlayer.get(client.sessionId);
       const broker = getTeleportBroker();
-      const req = broker.takeRequest(parsed.data.requestId, Date.now());
+      const req = broker.takeRequest(parsed.data.requestId, this.gameClock.now());
       if (!pid || !req || req.toOwner !== pid || !parsed.data.accept) return;
       const target = broker.find(req.targetSector, req.targetUid);
       const from = broker.find(req.fromSector, req.fromUid);
@@ -3489,7 +3539,7 @@ export class SectorRoom extends Room<SectorState> {
       if (f && f.rec.owner === rec.owner) this.teleporters.pair(rec, f.rec, f.room.teleporters);
     }));
     this.onMessage('teleport_unpair', tpMessage('teleport_unpair', TeleportUnpairSchema, (rec) => this.teleporters.unpair(rec)));
-    this.onMessage('teleport_fire', tpMessage('teleport_fire', TeleportFireSchema, (rec) => { this.teleporters.fire(rec, Date.now()); }));
+    this.onMessage('teleport_fire', tpMessage('teleport_fire', TeleportFireSchema, (rec) => { this.teleporters.fire(rec, this.gameClock.now()); }));
     this.onMessage('set_teleport_rules', tpMessage('set_teleport_rules', SetTeleportRulesSchema, (rec, msg) => this.teleporters.setRules(rec, msg.rules)));
     this.onMessage('teleport_pad_load', tpMessage('teleport_pad_load', TeleportPadLoadSchema, (rec, msg) => {
       if (!isTeleporterKind(rec.kind) || !rec.isConstructed) return;
@@ -4081,7 +4131,7 @@ export class SectorRoom extends Room<SectorState> {
       // deaths too). A non-prefixed shooter id is another player ⇒ PvP kill.
       const auditAttacker = evt.shooterId || undefined;
       // Equinox Phase 9 (item 5) — recent-combat tally for the galaxy map.
-      this.recentCombatLog.record('ship', Date.now());
+      this.recentCombatLog.record('ship', this.gameClock.now());
       auditEvent({
         event: 'ship_destroyed',
         sector: this.sectorKey ?? undefined,
@@ -4185,21 +4235,35 @@ export class SectorRoom extends Room<SectorState> {
     // and fires only ~32–46 times/sec instead of 60 (root cause of the May
     // 2026 mobile-corr capture's 46 Hz server rate). setImmediate has ~1 ms
     // granularity and lets us hit 60 Hz reliably across platforms.
-    const TICK_MS_HR = 1000 / 60;
+    // Game speed (time scale stream): 60 updates per GAME second, so
+    // 60 × scale per wall second. Every per-update system follows the speed
+    // with no code of its own; the period is re-read each update.
+    // This sector's physics world steps at the same game speed.
+    const applyTimeScale = (scale: number): void => {
+      this.postToWorker({ type: 'SET_TIME_SCALE', scale });
+      this.timeScaleKey.s = scale;
+      this.timeScaleKey.fromTick = this.serverTick;
+    };
+    this.gameClock.onScaleChange(applyTimeScale);
+    // A speed set earlier in onCreate (room option, EQX_TIME_SCALE) applies now.
+    if (this.gameClock.scale !== 1) applyTimeScale(this.gameClock.scale);
+    // eslint-disable-next-line no-restricted-properties -- real time: this loop schedules the room ticks
     let nextTickAt = performance.now();
+    const schedule: CatchUpResult = { nextTickAt, dropped: 0 };
     // Error boundary (campaign 1.1): a throw escaping update() used to kill
     // the whole single-process host AND end this loop (the tail setImmediate
     // never ran). One bad tick is skipped-and-logged; the loop continues.
     const guardedUpdate = guarded(`sim-update:${this.sectorKey ?? this.roomId}`, () => this.update());
     const loop = (): void => {
       if (this.simLoopStopped) return;
+      // eslint-disable-next-line no-restricted-properties -- real time: the room tick scheduler
       const now = performance.now();
       if (now >= nextTickAt) {
         guardedUpdate();
-        nextTickAt += TICK_MS_HR;
         // Catch-up cap: if we're more than 5 ticks behind (e.g. GC pause),
         // jump forward so we don't spiral.
-        if (now > nextTickAt + 5 * TICK_MS_HR) nextTickAt = now + TICK_MS_HR;
+        advanceSchedule(now, nextTickAt, tickPeriodMs(this.gameClock.scale), schedule);
+        nextTickAt = schedule.nextTickAt;
       }
       setImmediate(loop);
     };
@@ -4377,7 +4441,7 @@ export class SectorRoom extends Room<SectorState> {
       if (!rec) return;
       if (rec.kind === 2) {
         const owner = this.structureRegistry.get(rec.id)?.owner;
-        if (owner !== undefined) this.hostileActs.record(pid, owner, Date.now());
+        if (owner !== undefined) this.hostileActs.record(pid, owner, this.gameClock.now());
       } else {
         this.aiController.markHostile(rec.id, pid, tick);
         this.broadcast('bot_aggro', { type: 'bot_aggro', botEntityId: `swarm-${rec.entityId}`, targetPlayerId: pid, tick });
@@ -4569,7 +4633,7 @@ export class SectorRoom extends Room<SectorState> {
     if (this.gateGuard.gateCount > 0) {
       const pid = this.sessionToPlayer.get(client.sessionId);
       if (pid !== undefined) {
-        const now = Date.now();
+        const now = this.gameClock.now();
         if (this.gateGuard.isDisabled(pid, now)) return;
         const slot = this.playerToSlot.get(pid);
         if (slot !== undefined) {
@@ -4738,7 +4802,7 @@ export class SectorRoom extends Room<SectorState> {
    */
   private handleAiFire(shooterId: string, dirX: number, dirY: number, tick: number, targetId: string): void {
     if (this.gateGuard.gateCount > 0) {
-      const now = Date.now();
+      const now = this.gameClock.now();
       if (this.gateGuard.isDisabled(shooterId, now)) return;
       const rec = this.swarmRegistry.get(shooterId);
       if (rec) {
@@ -4894,7 +4958,7 @@ export class SectorRoom extends Room<SectorState> {
     if (this.npcWarps.size > 0 && this.botWarpPhase(targetId) === 2) return;
     // v4 A — alien gates can't be damaged; whoever hits one is disabled.
     if (this.gateGuard.gateCount > 0 && this.gateGuard.isGate(targetId)) {
-      if (damage > 0) this.gateGuard.onGateAttacked(targetId, shooterId, Date.now());
+      if (damage > 0) this.gateGuard.onGateAttacked(targetId, shooterId, this.gameClock.now());
       return;
     }
     if (damage > 0) this.noteEconomicHit(targetId, shooterId);
@@ -4918,7 +4982,7 @@ export class SectorRoom extends Room<SectorState> {
         const actor = this.playerToSlot.has(shooterId)
           ? shooterId
           : this.structureRegistry.get(shooterId)?.owner;
-        if (actor !== undefined && !isNpcOwner(actor)) this.hostileActs.record(actor, s.owner, Date.now());
+        if (actor !== undefined && !isNpcOwner(actor)) this.hostileActs.record(actor, s.owner, this.gameClock.now());
       }
       if (s !== undefined) {
         // Audit "your base is under attack" — throttled to one record per
@@ -4926,7 +4990,7 @@ export class SectorRoom extends Room<SectorState> {
         // Steady-state: Map.get + compare, no allocation (invariant #14); only
         // a fresh first-hit allocates. Fires for ANY structure hit, including a
         // pylon whose wall absorbs it just below.
-        const now = Date.now();
+        const now = this.gameClock.now();
         const last = this.structureAttackAuditAtMs.get(targetId) ?? -Infinity;
         if (now - last >= STRUCTURE_ATTACK_AUDIT_WINDOW_MS) {
           this.structureAttackAuditAtMs.set(targetId, now);
@@ -4956,7 +5020,7 @@ export class SectorRoom extends Room<SectorState> {
         }
         // R2.18 — a Shield Pylon is undamageable while its wall is up: route the
         // hit into an active wall and skip the pylon damage entirely.
-        if (s.kind === 'shield_pylon' && this.shieldWalls.absorbForPylon(targetId, damage, Date.now())) {
+        if (s.kind === 'shield_pylon' && this.shieldWalls.absorbForPylon(targetId, damage, this.gameClock.now())) {
           return;
         }
       }
@@ -5194,7 +5258,7 @@ export class SectorRoom extends Room<SectorState> {
       const s = this.structureRegistry.get(rec.id);
       if (!s) return;
       // Equinox Phase 9 (item 5) — recent-combat tally for the galaxy map.
-      this.recentCombatLog.record('structure', Date.now());
+      this.recentCombatLog.record('structure', this.gameClock.now());
       auditEvent({
         event: 'structure_destroyed',
         sector,
@@ -5211,7 +5275,7 @@ export class SectorRoom extends Room<SectorState> {
       }
     } else if (rec.kind === SWARM_KIND_DRONE) {
       // Equinox Phase 9 (item 5) — a drone is an NPC SHIP for the combat tally.
-      this.recentCombatLog.record('ship', Date.now());
+      this.recentCombatLog.record('ship', this.gameClock.now());
       auditEvent({ event: 'drone_destroyed', sector, attackerId: shooterId });
       // Living World P4a — a named elite falls (the galaxy-wide notice is the
       // EliteDirector's, off ENTITY_DESTROYED).
@@ -5240,11 +5304,11 @@ export class SectorRoom extends Room<SectorState> {
    *  slice, and broadcast the discrete `grid_pulse` flash event. No-op (and no
    *  broadcast) when the sector has no structures. */
   private structureGridTick(): void {
-    this.hostileActs.sweep(Date.now());
-    if (this.patrols.count > 0) this.patrols.tick(Date.now());
-    this.gateGuard.sweep(Date.now());
+    this.hostileActs.sweep(this.gameClock.now());
+    if (this.patrols.count > 0) this.patrols.tick(this.gameClock.now());
+    this.gateGuard.sweep(this.gameClock.now());
     if (this.structureRegistry.size === 0) return;
-    const result = this.structureGrid.pulse(Date.now());
+    const result = this.structureGrid.pulse(this.gameClock.now());
     // P2b — processors take inputs from and put outputs into network storage.
     this.production.pulse();
     // v4 T1 — teleporter pads unload arrivals and top up "keep loaded".
@@ -5256,7 +5320,7 @@ export class SectorRoom extends Room<SectorState> {
     this.storage.flushDirty();
     // Form/teardown pylon-pair walls + refresh their active state on the fresh
     // topology BEFORE the slice rebuild so `shieldWallTo`/`wallActive` are current.
-    this.shieldWalls.update(Date.now());
+    this.shieldWalls.update(this.gameClock.now());
     this.rebuildStructuresSlice();
     if (result.flashed.length > 0) {
       // Map the registry's string-id pairs to dense entityIds for the wire,
@@ -5921,10 +5985,10 @@ export class SectorRoom extends Room<SectorState> {
     this.breakIns.tick();
     if (this.structureRegistry.size === 0) {
       // Mines whose layer is gone still have to leave.
-      if (this.mineField.mines.size > 0) this.mineField.tick(Date.now());
+      if (this.mineField.mines.size > 0) this.mineField.tick(this.gameClock.now());
       return;
     }
-    const nowMs = Date.now();
+    const nowMs = this.gameClock.now();
     // A1 — the turret target grid is rebuilt (lazily, on the first query) once
     // per turret tick, instead of every turret scanning every swarm entity.
     this.turretTargetGridFresh = false;
@@ -5949,7 +6013,7 @@ export class SectorRoom extends Room<SectorState> {
     this.gates.update(nowMs);
     // Refresh wall active states at the turret cadence so a stun lifts (and a
     // power-loss drop registers) within ~100 ms, not a full grid pulse later.
-    this.shieldWalls.update(Date.now());
+    this.shieldWalls.update(this.gameClock.now());
     // Refresh the slice so the client's turret aim line tracks at the turret
     // cadence (not just the 1 Hz pulse). Cheap — few structures, off the tick.
     this.rebuildStructuresSlice();
@@ -5979,7 +6043,7 @@ export class SectorRoom extends Room<SectorState> {
   private blockShotAtWall(
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, damage: number,
   ): number | null {
-    return this.shieldWalls.blockShot(fromX, fromY, dirX, dirY, maxDist, damage, Date.now());
+    return this.shieldWalls.blockShot(fromX, fromY, dirX, dirY, maxDist, damage, this.gameClock.now());
   }
 
   /** Live asteroid obstacles (swarm kind=0) for connection line-of-sight, read
@@ -6441,7 +6505,7 @@ export class SectorRoom extends Room<SectorState> {
       if (slot === undefined) continue;
       const sb = slotBase(slot);
       if (!onPad(rec.kind, rec.x, rec.y, this.sabF32[sb + SLOT_X_OFF]!, this.sabF32[sb + SLOT_Y_OFF]!)) continue;
-      if (hostile) this.hostileActs.record(pid, rec.owner, Date.now());
+      if (hostile) this.hostileActs.record(pid, rec.owner, this.gameClock.now());
       else this.adjustStanding(ownerFaction, pid, TOLL_DODGE_STANDING);
       serverLogEvent('teleport_toll_dodged', { sectorKey: this.sectorKey ?? '', playerId: pid, owner: rec.owner, hostile });
     }
@@ -6708,6 +6772,75 @@ export class SectorRoom extends Room<SectorState> {
     logger.info({ roomId: this.roomId, lockTimeCapS: capS }, 'lockTimeCapS on (test trigger)');
   }
 
+  /**
+   * Set this sector's game speed (time scale stream; clamped 0.25–4). Its
+   * clock re-anchors, the physics world and the room loop follow, and the
+   * snapshot carries the keyframe while the speed isn't 1. Returns the speed
+   * now in force. Test/recording triggers and `POST /dev/time-scale`.
+   */
+  setTimeScale(scale: number, smooth = false): number {
+    const from = this.targetTimeScale();
+    this.chosenTimeScale = clampTimeScale(scale);
+    this.noteTimeScaleTarget('forced', from);
+    // Setup speeds (room/join option, env, tests) apply at once; `smooth`
+    // glides there like a dimmer (the dev endpoint's default).
+    if (!smooth) this.gameClock.setScale(this.targetTimeScale());
+    return this.targetTimeScale();
+  }
+
+  /** Where the sector's speed is heading: chosen × the load factor. */
+  private targetTimeScale(): number {
+    return clampTimeScale(this.chosenTimeScale * this.loadFactor);
+  }
+  private lastSlewAtMs = -1;
+
+  /**
+   * The dimmer: each update, glide the sector clock toward its target at
+   * the shared `glideToward` (a steady ratio: one doubling or halving per wall
+   * second), so a slowdown or a
+   * speed change eases in rather than lurching (owner 2026-11-12: "a dial like
+   * a dimmer"). Clients follow each small step through the snapshot keyframe
+   * on their eased anchor path.
+   */
+  private slewTimeScale(nowMs: number): void {
+    const dt = this.lastSlewAtMs < 0 ? 0 : Math.min(100, nowMs - this.lastSlewAtMs);
+    this.lastSlewAtMs = nowMs;
+    const tgt = this.targetTimeScale();
+    const cur = this.gameClock.scale;
+    if (cur !== tgt) this.gameClock.setScale(glideToward(cur, tgt, dt / 1000));
+    // The keyframe carries the glide's target so clients glide in step (#15).
+    this.timeScaleKey.t = this.gameClock.scale === tgt ? undefined : tgt;
+  }
+
+  /** The sector's chosen speed (1×, or a forced demo/test speed): the ceiling
+   *  the automatic slowdown works under. */
+  private chosenTimeScale = 1;
+  /** The automatic slowdown's factor, [0.7, 1] (Phase 5). */
+  private loadFactor = 1;
+  private readonly loadSpeed = new LoadSpeedController();
+  /** Whether the automatic slowdown runs here. On in real sectors; test rooms
+   *  opt in with `autoTimeScale: true`. A slow CI runner otherwise slows every
+   *  test room's WHOLE game (timers, pulses, spools), not just its physics as
+   *  the old TiDi did, and shifts every test's timing (12 feature specs timed
+   *  out on CI before this gate). */
+  private autoSlowdown = true;
+  private lastLoadWindowSeq = 0;
+
+  /** Log + audit a change of the sector's TARGET speed (not each slew step). */
+  private noteTimeScaleTarget(reason: 'load' | 'forced', from: number, latenessPct?: number): void {
+    const to = this.targetTimeScale();
+    if (to === from) return;
+    const r2 = (v: number): number => Math.round(v * 100) / 100;
+    logger.info({ roomId: this.roomId, sectorKey: this.sectorKey, from: r2(from), to: r2(to), reason, latenessPct }, 'time scale changed');
+    auditEvent({ event: 'time_scale_changed', sector: this.sectorKey ?? undefined, from: r2(from), to: r2(to), reason, ...(latenessPct !== undefined ? { latenessPct } : {}) });
+  }
+
+  /** `/dev/time-scale`: this room's sector key (null for engineering rooms). */
+  timeScaleSectorKey(): string | null { return this.sectorKey; }
+
+  /** This sector's speed keyframe (shared, mutated on change). */
+  private readonly timeScaleKey: TimeScaleKeyframe = { s: 1, fromTick: 0 };
+
   /** C2 — how long a break-in into `rec` takes. */
   private breakInMsFor(rec: StructureRecord): number {
     return this.testBreakInMs ?? breakInDurationMs(getStructureKind(rec.kind).holdCapacity ?? 0, rec.level ?? 1);
@@ -6729,7 +6862,7 @@ export class SectorRoom extends Room<SectorState> {
   private onBreakInStart(actor: string, sid: string): void {
     const rec = this.structureRegistry.get(sid);
     if (!rec) { this.onShipBreakInStart(actor, sid); return; }
-    const now = Date.now();
+    const now = this.gameClock.now();
     this.hostileActs.record(actor, rec.owner, now);
     this.relationCtx.nowMs = now;
     this.adjustStanding(parseOwner(rec.owner).faction, actor, STANDING_BREAK_IN_DELTA);
@@ -6764,7 +6897,7 @@ export class SectorRoom extends Room<SectorState> {
   private onShipBreakInStart(actor: string, sid: string): void {
     const t = this.shipTargetById(sid);
     if (!t) return;
-    const now = Date.now();
+    const now = this.gameClock.now();
     this.hostileActs.record(actor, t.owner, now);
     this.relationCtx.nowMs = now;
     this.adjustStanding(parseOwner(t.owner).faction, actor, STANDING_BREAK_IN_DELTA);
@@ -6872,7 +7005,7 @@ export class SectorRoom extends Room<SectorState> {
     const map = (this.state as SectorState).structures;
     const gen = ++this.structureStateGeneration;
     let targets: number[] | undefined;
-    const nowMs = Date.now();
+    const nowMs = this.gameClock.now();
     for (const rec of this.structureRegistry.all()) {
       const entityId = this.swarmRegistry.get(rec.id)?.entityId;
       if (entityId === undefined) continue; // swarm entity gone — skip
@@ -7014,7 +7147,7 @@ export class SectorRoom extends Room<SectorState> {
       st.tpPhase = phase;
       // The phase's length rides along only when the phase changes (the client
       // times the animation from when the change arrives).
-      const ms = phase === 0 ? 0 : Math.max(0, Math.min(65535, Math.round((rec.tpPhaseEndsAtMs ?? 0) - Date.now())));
+      const ms = phase === 0 ? 0 : Math.max(0, Math.min(65535, Math.round((rec.tpPhaseEndsAtMs ?? 0) - this.gameClock.now())));
       if ((st.tpPhaseMs ?? SD.tpPhaseMs) !== ms) st.tpPhaseMs = ms;
     }
     const req = this.teleporters.required(rec);
@@ -7251,7 +7384,7 @@ export class SectorRoom extends Room<SectorState> {
    *  galaxy-map "fighting happened here" icon + drawer breakdown), or null when
    *  quiet. Read by the LivingWorldDirector on its ~1.5 s control tick. */
   recentCombat(): RecentCombat | null {
-    return this.recentCombatLog.summary(Date.now());
+    return this.recentCombatLog.summary(this.gameClock.now());
   }
 
   /** Equinox Phase 7 — count of structures in THIS room owned by `playerId`
@@ -8899,6 +9032,10 @@ export class SectorRoom extends Room<SectorState> {
     if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.lockTimeCapS !== undefined) {
       this.setLockTimeCap(parsed.data.lockTimeCapS);
     }
+    // `timeScale` on a join sets this sector's game speed (test/recording).
+    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.timeScale !== undefined) {
+      this.setTimeScale(parsed.data.timeScale);
+    }
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a
     // sane value (e.g. a fire request resolved on this same client.send turn).
@@ -10058,7 +10195,7 @@ export class SectorRoom extends Room<SectorState> {
     const attacker = this.attackerFaction(shooterId);
     if (attacker === null || attacker === victim) return;
     if (isNpcFactionId(victim) && isNpcFactionId(attacker)) return;
-    const now = Date.now();
+    const now = this.gameClock.now();
     let row = this.standingHitAtMs.get(victim);
     if (row === undefined) { row = new Map(); this.standingHitAtMs.set(victim, row); }
     if (now - (row.get(attacker) ?? -Infinity) < STANDING_HIT_WINDOW_MS) return;
@@ -10210,7 +10347,7 @@ export class SectorRoom extends Room<SectorState> {
     if (res === null || isHoldEmpty(res.taken)) return 0;
     const weight = holdWeight(res.taken);
     auditEvent({ event: 'storage_raided', sector: this.sectorKey ?? undefined, playerId: owner, raider: harvesterId, weight });
-    const now = Date.now();
+    const now = this.gameClock.now();
     if (now - (this.raidNoticeAtMs.get(owner) ?? 0) >= RAID_NOTICE_THROTTLE_MS) {
       this.raidNoticeAtMs.set(owner, now);
       this.tradeNotify(owner, {
@@ -10380,7 +10517,7 @@ export class SectorRoom extends Room<SectorState> {
    *  or one of its structures was hit in the last 60 s. */
   tradeBaseUnderAttack(ownerId: string): boolean {
     if (this.factionLedger.get(ownerId)?.underWave === true) return true;
-    const now = Date.now();
+    const now = this.gameClock.now();
     for (const [sid, at] of this.structureAttackAuditAtMs) {
       if (now - at > 60_000) continue;
       if (this.structureRegistry.get(sid)?.owner === ownerId) return true;
@@ -10436,6 +10573,15 @@ export class SectorRoom extends Room<SectorState> {
   /** Perf scenes (WS3): per-tick work counters, counted while the scene runs. */
   private readonly sceneWork = new SceneWorkCounters();
   private sceneEluStart: EventLoopUtilization | null = null;
+  /** Game time vs wall time over the scene (worker tick, dropped ticks, wall ms). */
+  private readonly sceneSimStart = { ms: 0, tick: 0, dropped: 0 };
+  private readonly sceneSimEnd = { ms: 0, tick: 0, dropped: 0 };
+  private markSceneSim(m: { ms: number; tick: number; dropped: number }): void {
+    // eslint-disable-next-line no-restricted-properties -- real time: perf-scene wall-time mark (game time vs wall time)
+    m.ms = performance.now();
+    m.tick = this.sabU32[TICK_IDX] ?? 0;
+    m.dropped = this.sabU32[WORKER_DROPPED_TICKS_IDX] ?? 0;
+  }
 
   scenePerf(): ScenePerfView | null {
     if (!this.sceneRunner || !this.sceneTickRing || !this.sceneWorkerRing) return null;
@@ -10448,6 +10594,7 @@ export class SectorRoom extends Room<SectorState> {
       players: this.playerToSlot.size,
       structures: this.structureRegistry.size,
       work: this.sceneWork.view(this.sceneEluStart ? (this.physicsWorkerProxy?.elu(this.sceneEluStart)?.utilization ?? null) : null),
+      simTime: sceneSimTime(this.sceneSimStart, this.sceneSimEnd, this.gameClock.scale),
     };
   }
 
@@ -10880,16 +11027,17 @@ export class SectorRoom extends Room<SectorState> {
   override onDispose(): void {
     if (this.sceneRunner) unregisterScenePerfRoom(this);
     this.simLoopStopped = true;
+    this.gameClock.cancelAll();
     if (this.tradeRegisteredKey !== null) getTradeSink()?.unregisterRoom(this.tradeRegisteredKey, this);
     if (this.teleportRoom) getTeleportBroker().unregister(this.teleportRoom);
     // Structures plan, Phase 3 — stop the grid pulse heartbeat.
     if (this.structureGridTimer !== undefined) {
-      clearInterval(this.structureGridTimer);
+      this.structureGridTimer.cancel();
       this.structureGridTimer = undefined;
     }
     // Phase 5 — stop the turret tick.
     if (this.structureTurretTimer !== undefined) {
-      clearInterval(this.structureTurretTimer);
+      this.structureTurretTimer.cancel();
       this.structureTurretTimer = undefined;
     }
     // Shield-fence plan — tear down any wall spans (free their worker bodies).
@@ -11037,6 +11185,7 @@ export class SectorRoom extends Room<SectorState> {
       && this.swarmRegistry.size() === 0
     ) return;
 
+    // eslint-disable-next-line no-restricted-properties -- real time: measures the tick's real cost
     const tStart = performance.now();
     this.sceneWork.beginUpdate();
 
@@ -11047,6 +11196,7 @@ export class SectorRoom extends Room<SectorState> {
     // not against any specific phase.
     if (this.tickBurnMs > 0) {
       const burnDeadline = tStart + this.tickBurnMs;
+      // eslint-disable-next-line no-restricted-properties -- real time: the perf burn test spends real CPU
       while (performance.now() < burnDeadline) { /* intentional busy-wait */ }
     }
 
@@ -11247,13 +11397,17 @@ export class SectorRoom extends Room<SectorState> {
       swarmCount: this.swarmRegistry.size(),
       aiSize: this.aiController.size(),
       liveProjectileCount: this.liveProjectiles.size,
+      workerTick: this.sabU32[TICK_IDX] ?? 0,
+      workerDroppedTicks: this.sabU32[WORKER_DROPPED_TICKS_IDX] ?? 0,
+      timeScale: this.gameClock.scale,
     });
     if (this.sceneRunner) {
       const st = this.sceneRunner.getStatus();
       const running = st.started && !st.ended;
       if (running) {
         this.sceneTickRing!.push(totalMs); this.sceneWorkerRing!.push(workerTickMs);
-        if (!this.sceneWork.active) this.sceneEluStart = this.physicsWorkerProxy?.elu() ?? null;
+        if (!this.sceneWork.active) { this.sceneEluStart = this.physicsWorkerProxy?.elu() ?? null; this.markSceneSim(this.sceneSimStart); }
+        this.markSceneSim(this.sceneSimEnd);
         this.sceneWork.endTick(this.sabU32[COUNT_IDX] ?? 0, this.aiController.size());
         if (this.lineOfFireGate) this.sceneWork.lineOfFire(this.lineOfFireGate.checks, this.lineOfFireGate.narrow);
       }
@@ -11269,15 +11423,32 @@ export class SectorRoom extends Room<SectorState> {
     // turns into a slower clock and shed drones instead of slower ticks.
     if (!this.perfFixedLoad) this.simClock.report(busiestMs);
     const newRate = this.simClock.rate;
-    // testTimeScale lets testMode rooms run physics N× faster (default 1).
-    // state.clockRate stays at the UNMULTIPLIED simClock value so client
-    // audio pitch + TiDi UI don't show a fake anomaly under acceleration.
-    const outboundRate = newRate * this.testTimeScale;
+    // Game time scale, Phase 5: the automatic slowdown. Once per telemetry
+    // window, lateness (game time behind real time) + the cost rate set a
+    // load factor; the sector's whole game (its clock, loop, physics world and
+    // clients) runs at chosen × factor. This REPLACES the old TiDi path that
+    // slowed only the physics worker (CLOCK_RATE), which clients saw as
+    // jitter, not slow motion (docs/SHELF.md).
+    if (this.autoSlowdown && !this.perfFixedLoad && this.tickBudget.windowSeq !== this.lastLoadWindowSeq) {
+      this.lastLoadWindowSeq = this.tickBudget.windowSeq;
+      const l = this.tickBudget.lateness();
+      const f = this.loadSpeed.window(l.latenessTicks, l.wallTicks, newRate);
+      if (f !== this.loadFactor) {
+        const from = this.targetTimeScale();
+        this.loadFactor = f;
+        this.noteTimeScaleTarget('load', from, l.wallTicks > 0 ? Math.round((100 * Math.max(0, l.latenessTicks)) / l.wallTicks) : 0);
+      }
+    }
+    this.slewTimeScale(tStart);
+    // CLOCK_RATE now carries only `testTimeScale` (testMode physics-only
+    // accelerator, default 1). `state.clockRate` mirrors the load factor for
+    // the client's audio pitch + TiDi readout.
+    const outboundRate = this.testTimeScale;
     if (Math.abs(outboundRate - this.lastSentClockRate) >= 1e-4) {
       this.lastSentClockRate = outboundRate;
-      this.state.clockRate = newRate;
       this.postToWorker({ type: 'CLOCK_RATE', rate: outboundRate });
     }
+    if (this.state.clockRate !== this.loadFactor) this.state.clockRate = this.loadFactor;
     // Phase 6 second-lever: if rate is at floor and we're still over budget,
     // shed far drones in batches. No-op when rate > 0.71 or budget healthy.
     if (!this.perfFixedLoad) this.shedder.consider(newRate, busiestMs);

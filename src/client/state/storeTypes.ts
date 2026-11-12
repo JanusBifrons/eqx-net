@@ -178,6 +178,9 @@ export interface UIStore {
    *  from DamageEvent / ShieldEventMessage anchors; the HUD bar CSS-tweens
    *  between anchors (locked: no continuous shield wire traffic). */
   shieldPct: number;
+  /** The sector's game speed (time scale stream), from the snapshot keyframe.
+   *  1 = normal; the HUD shows a chip otherwise. Written on change only. */
+  timeScale: number;
   ammo: number;
   sectorAlert: string | null;
   /** Wave-system Phase 5 — pending warp-in warnings for THIS sector (a drone
@@ -459,6 +462,7 @@ export interface UIStore {
   setSectorName: (name: string) => void;
   setHullPct: (pct: number) => void;
   setShieldPct: (pct: number) => void;
+  setTimeScale: (scale: number) => void;
   setAmmo: (ammo: number) => void;
   setSectorAlert: (msg: string | null) => void;
   /** Add or replace a warp-in warning (keyed by id). Stamps `observedAtMs`;

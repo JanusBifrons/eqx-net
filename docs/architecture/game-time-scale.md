@@ -1,13 +1,43 @@
 # Game-wide time scale (design note, 2026-11-12)
 
-Status: **IN PROGRESS on the parallel stream `stream/time-scale` (owner, 2026-11-12).** Never PR, merge, train or sync from that branch; it lands only on the owner's word. This file on `main` is the starting design; the stream's copy is the live one.
+Status: **LANDED (2026-11-12, owner's go-ahead), built on the parallel stream `stream/time-scale`.** §0 says what was built; §1–§7 are the original design, with superseded parts marked.
+
+**Still open when it lands:**
+- **The burn perf scene in a real browser** (step 5b) has not run. It needs the laptop or a CI perf route, never this desktop. What stands in for it: the integration burn test (a loaded sector slows its whole game and audits it) and the netgate at 0.7× / 2×.
+- **A hop between sectors at different speeds** (a player or bot warping from a 0.7× sector into a 1× one) is untested. The client re-anchors on the destination's first snapshot, so it should behave like any transit.
+- **Saved timestamps drift** from wall time while a sector isn't at 1× (§0).
+- **`testTimeScale` is not folded in** (§0, 4d).
 
 **Owner decisions (2026-11-12):**
 - **What it's for:** it's a **performance mechanism, not a gameplay mechanic**: "Why can't it be dynamic? It's designed as a performance thing". So the speed is **dynamic**, never a menu.
 - **Speed goes both ways (amended 2026-11-12, owner: "It's supposed to be variable up or down").** One knob from 0.25× to 4×. The automatic load controller only ever slows (it recovers toward the chosen speed). Dev/admin, tests, demos and videos can set it faster or slower (today's `testTimeScale`, which only speeds up physics, folds into it).
 - **Game time is the default; nothing opts in (added 2026-11-12, owner: no "time dilation flags absolutely everywhere"; new gameplay and graphics must follow it automatically).** The scale enters at the few places time enters the game: the fixed-step count, one injected `GameClock` and the render frame's dt. A lint rule bans the wall clock in gameplay and render code, with a short real-time allowlist (persistence, network, UI, diagnostics), so new code gets game time without writing anything for it.
-- **Scope:** **galaxy-wide**: one speed for every sector.
+- **Scope: per sector (amended 2026-11-12, owner: "It's fine to be per sector… It will ultimately be per sector").** Each sector has its own speed. Cross-sector processes (directors, economy, convoys) keep the process clock, which stays at 1× unless forced.
 - **Indicator:** shows the current speed while it isn't 1×.
+
+## 0. Built so far (stream log: `docs/streams/time-scale.md`)
+
+- **Telemetry (step 1).** Two counters:
+  - The physics worker counts the ticks its catch-up cap drops (SAB header word 5, `WORKER_DROPPED_TICKS_IDX`).
+  - Every `tick_budget` event reports `wallTicks` / `simTicks` / `latenessTicks` / `droppedTicks`, the room's game time against wall time over that window. Perf scenes report the same as `simTime`.
+- **Per-sector speed (step 3a).** Each `SectorRoom` owns its own `GameClock` (`createSectorClock()`): the room's gameplay reads, its structure grid and turret timers, its transit spools and research labs follow that sector's speed. The room's tick loop runs 60 × speed updates per wall second (`tickPeriodMs`), and its physics world does the same: the worker keeps a schedule PER WORLD (`SET_TIME_SCALE`, sent on every speed change), so sectors sharing one worker can run at different speeds. Each tick is still one fixed 1/60 s step (invariant #4). Per-update systems, including the snapshot cadence, follow the speed with no code of their own. Lateness telemetry counts against 60 × speed.
+- **Speed override and keyframe (step 3b).** `SectorRoom.setTimeScale(s)` (clamped 0.25–4) is the one entry point: testMode room option / join option `timeScale` (URL `?timeScale=`), `EQX_TIME_SCALE` (every sector, dev only), and `GET|POST /dev/time-scale`. While a sector's speed isn't 1, every snapshot carries `timeScale: { s, fromTick }` (a shared object, emitted only when non-default, #16). `fromTick` is the room's `serverTick` when the change was applied; making it exact against the worker's first scaled tick is step 4a's parity work. `testTimeScale` (per room, 10×, physics only) stays a separate test accelerator until the client follows the speed (folded in at 4d).
+- **Client prediction follows the speed (step 4a).** `ColyseusClient.gameClock` (over the injected clock) takes its speed from the snapshot keyframe; the clock anchor, `targetTick`, the render dead-reckon and the shell display tick all read it, so the client predicts 60 ticks per GAME second like the server. A speed change re-anchors hard on that snapshot's own `serverTick` (no `fromTick` arithmetic needed: the ticks before it already ran at the new speed). Networking, stalls and RTT stay wall time. At 1× the game clock is the wall clock exactly.
+- **Display delays and presentation (steps 4b–4c).** The interpolation windows are GAME ms (swarm 100/speed .. 280/speed wall ms, missiles 100/speed), so the pose ring covers ~6 poses at every speed. `RenderMirror.timeScale` carries the speed to the renderer; `PixiRenderer.fxNow()` is the one presentation clock every effect reads, and a lint wall over `src/client/render/**` + `src/client/effects/**` keeps new effects on it. The wall made itself useful at once: it caught four effect sites (shield hits, a light's start time, the spool effect) whose partners were already on game time.
+- **The speed chip and checks (step 4d).**
+  - **The chip.** A chip in the HUD status capsule shows the speed while it isn't 1×: amber when slow, cyan when fast. Its value is a discrete Zustand `timeScale`, written on change and reset on client dispose. `data-time-scale` sits on `hud-status`. Player page: [docs/features/game-speed.md](../features/game-speed.md).
+  - **Checks.** E2E `time-scale-chip.spec.ts` (feature tier; trigger area "game time scale"). Netgate scenarios `speed-0.7` / `speed-2` are PRINT-ONLY: the baseline arm is `origin/main`, which ignores `timeScale` and runs at 1×, so a relative gate would compare different speeds.
+  - **`testTimeScale` is NOT folded in (decision 2026-11-12).** It stays the per-room, physics-only test accelerator (10×). Folding it would run all gameplay in 26 E2E specs at 10× (AI, timers, snapshots at 200 Hz) and change what each tests, and the 4× cap would have to lift for test rooms. It was a simplification, not a requirement, and it is reversible.
+- **The dimmer (2026-11-12, owner: "a dial like a dimmer so it transitions smoothly faster or slower").** The room glides its clock toward the target speed (chosen × load factor) with the shared `glideToward` at a steady RATIO (one doubling or halving per wall second): 1× → 0.5× and 1× → 2× in 1 s, 4× → 0.25× in 4 s, evenly (a linear 0.5-units-per-second glide felt uneven across the range: hostile review 2026-11-12). That covers the automatic slowdown and the dev endpoint (`&snap=1` jumps). Setup speeds (room/join option, env) still apply at once.
+  - **Audit:** events record target changes, not each step; `state.clockRate` mirrors the target load factor.
+  - **Client:** it follows each step through the keyframe on its eased anchor path. The earlier hard re-anchor is gone, since the game clock is continuous across a change.
+  - **Showcase QA** gates the server pace in ticks per GAME second, so a 0.5× take (30 ticks a wall second) passes.
+- **Game time is the default on the server (steps 2a–2d).**
+  - **The clock.** `GameClock` (`src/core/clock/GameClock.ts`) is continuous game time at 0.25–4× real time. Its `after` / `every` timers are re-armed when the speed changes. The server has ONE per process (`src/server/time/gameTime.ts`: `gameClock`, `gameNow()`, `gameSetTimeout` / `gameSetInterval` / `gameClearTimer`), built over `Date.now`, so at 1× every value is exactly the old one.
+  - **What uses it.** Every gameplay read and timer in `src/server` and `src/core` uses it: the room, the structure grid and turret ticks, break-ins, gates, walls, teleporters, the directors, the economy, transit and holds.
+  - **The lint wall.** `eslint.config.js` makes `Date.now`, `performance.now`, `setTimeout` and `setInterval` an ERROR in core and server outside a named real-time allowlist. The allowlist covers: the clocks and tick schedulers, cost measurement, persistence, networking, auth/identity, logs, process boot and client RTT. A one-off real-time line inside a gameplay file carries an inline `eslint-disable-next-line … -- real time: <why>`.
+  - **Result.** A new feature written the obvious way follows the speed with no code of its own.
+- **Saved timestamps are game time.** Economy deals, holds, wallets and bounties now stamp game time, which drifts from wall time while the speed isn't 1×. After a restart the clock re-anchors to wall time, so a long slowdown shifts saved deadlines by the accumulated drift. This is accepted while the automatic slowdown has a 0.7 floor; revisit if a long forced slow-motion is ever used in live play.
 
 ## 1. What exists today
 
@@ -54,6 +84,8 @@ Everything that measures game time must then count **steps**, not milliseconds:
 
 ## 3. Deciding the speed (dynamic)
 
+> **Scope superseded (2026-11-12):** speed is now PER SECTOR, so the controller sets each sector's speed from that sector's own load; "galaxy-wide" below is the original design.
+
 - **One controller, process-global.** It sits beside the Living World director, off the 60 Hz loop, and reads every room's load each control tick.
 - **Load signals:** tick cost (today's > 14 ms) AND **lateness**: wall time minus sim time falling behind, plus the worker's dropped ticks. Lateness is the starved-host case the shelf found.
 - **Galaxy-wide speed** = what the WORST room needs. One overloaded sector slows every sector a little, by owner decision. If that proves too punishing in play, per-sector speed is the fallback, since the client anchor (§2.4) is per room anyway.
@@ -61,6 +93,8 @@ Everything that measures game time must then count **steps**, not milliseconds:
 - **Dev/admin override:** a testMode room option and a dev endpoint force a fixed speed (or "dynamic"). `testTimeScale` folds into it: a test that wants 10× sets the override, and it applies everywhere instead of physics only.
 
 ## 4. Across sectors
+
+> **Superseded (2026-11-12):** with per-sector speed, cross-sector processes keep the process clock (1× unless forced). A hop between sectors of different speeds is the open question for Phase 5.
 
 With one galaxy-wide speed, the processes that span rooms all follow it:
 

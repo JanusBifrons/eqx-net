@@ -27,6 +27,7 @@ import { PhysicsWorld } from './World.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { tickInputQueue, type QueuedInput } from './inputQueue.js';
 import { drainContacts } from './contactDrain.js';
+import { advanceSchedule, tickPeriodMs, type CatchUpResult } from './catchUp.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import {
   SEQLOCK_IDX,
@@ -35,6 +36,7 @@ import {
   CLOCK_RATE_IDX,
   CLOCK_RATE_SCALE,
   WORKER_TICK_US_IDX,
+  WORKER_DROPPED_TICKS_IDX,
   SLOT_ID_OFF,
   SLOT_X_OFF,
   SLOT_Y_OFF,
@@ -115,7 +117,7 @@ interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
 /** v4 T2 — a teleporter pad's closing-iris push (PhysicsWorld.setPadField). */
 interface SetPadFieldCmd    { type: 'SET_PAD_FIELD';   id: string; cx: number; cy: number; half: number; active: boolean }
 interface RemovePadFieldCmd { type: 'REMOVE_PAD_FIELD'; id: string }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd | BotWarpCmd;
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd | BotWarpCmd | SetTimeScaleCmd;
 
 /** Pool commands (main → pooled worker): host / free one sector's world. */
 interface AddWorldCmd    { type: 'ADD_WORLD'; worldId: number; sab: SharedArrayBuffer }
@@ -124,11 +126,16 @@ interface RemoveWorldCmd { type: 'REMOVE_WORLD'; worldId: number }
  *  reading shows what is live. Needs the process started with --expose-gc;
  *  otherwise a no-op. */
 interface GcCmd          { type: 'GC' }
+/** Game speed of ONE world (time scale stream; speed is per sector). The world
+ *  runs 60 × scale fixed ticks per wall second; each is still one 1/60 s step. */
+interface SetTimeScaleCmd { type: 'SET_TIME_SCALE'; scale: number }
 
 /** One sector's simulation: its Rapier world, input queues and SAB writer. */
 interface WorldHandle {
   handle(cmd: WorkerCommand): void;
-  step(): void;
+  /** Step once if this world's next tick is due at `now` (wall ms), on its own
+   *  schedule (60 × its game speed per wall second). Returns whether it stepped. */
+  pump(now: number): boolean;
   dispose(): void;
 }
 
@@ -141,6 +148,11 @@ interface WorldHandle {
 async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [k: string]: unknown }) => void): Promise<WorldHandle> {
   const u32 = new Uint32Array(sab);
   const f32 = new Float32Array(sab);
+  // This world's tick schedule (time scale stream): 60 × its game speed per
+  // wall second, set by SET_TIME_SCALE. Pumped by the worker loop.
+  let tickMs = tickPeriodMs(1);
+  let nextTickAt = performance.now();
+  const schedule: CatchUpResult = { nextTickAt, dropped: 0 };
 
   const physics = await PhysicsWorld.create();
   // Stage 2 — Rapier event queue persists across all `world.step()` calls;
@@ -272,6 +284,10 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
           torque: cmd.torque,
           setAngvel: cmd.setAngvel,
         });
+        break;
+      }
+      case 'SET_TIME_SCALE': {
+        tickMs = tickPeriodMs(cmd.scale);
         break;
       }
       case 'CLOCK_RATE': {
@@ -541,7 +557,18 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
 
   return {
     handle,
-    step,
+    pump: (now: number): boolean => {
+      if (now < nextTickAt) return false;
+      step();
+      // Catch-up cap: more than 5 ticks behind (a GC pause, a starved host) jumps
+      // to "now" instead of replaying a backlog; the skipped ticks are counted.
+      advanceSchedule(now, nextTickAt, tickMs, schedule);
+      nextTickAt = schedule.nextTickAt;
+      if (schedule.dropped > 0) {
+        u32[WORKER_DROPPED_TICKS_IDX] = ((u32[WORKER_DROPPED_TICKS_IDX] ?? 0) + schedule.dropped) >>> 0;
+      }
+      return true;
+    },
     dispose: () => {
       eventQueue.free();
       physics.dispose();
@@ -597,10 +624,8 @@ async function main(): Promise<void> {
   // ~15.6 ms multimedia-clock granularity and fires every ~31 ms (≈ 32 Hz),
   // which is what made the May 2026 capture show 37–46 Hz instead of 60.
   // setImmediate has ~1 ms granularity and lets us hit 60 Hz reliably.
-  // Every hosted world steps once per tick, in insertion order.
-  const TICK_MS_HR = 1000 / 60;
-  let nextTickAt = performance.now();
-  const step = (): void => { for (const w of worlds.values()) w.step(); };
+  // Each hosted world steps on its OWN schedule (60 × its sector's game speed
+  // per wall second, time scale stream), checked in insertion order.
 
   // The schedule pattern uses `setImmediate` only on tick-due frames so a
   // backlog (post-GC pause) drains in one event-loop turn; otherwise yields
@@ -612,18 +637,14 @@ async function main(): Promise<void> {
   // absorbs any single-iteration slip so cumulative drift cannot grow.
   const loop = (): void => {
     const now = performance.now();
-    if (now >= nextTickAt) {
-      step();
-      nextTickAt += TICK_MS_HR;
-      // Catch-up cap: if we're more than 5 ticks behind (e.g. after a long GC
-      // pause), jump forward to "now" so we don't spiral. The simulation
-      // re-syncs to wall-clock instead of trying to replay a backlog.
-      if (now > nextTickAt + 5 * TICK_MS_HR) nextTickAt = now + TICK_MS_HR;
+    let stepped = false;
+    for (const w of worlds.values()) if (w.pump(now)) stepped = true;
+    if (stepped) {
       // After stepping, drain any further backlog in the same event-loop
       // turn before yielding.
       setImmediate(loop);
     } else {
-      // Not yet at next tick — yield the CPU. Replaces the unconditional
+      // Nothing due — yield the CPU. Replaces the unconditional
       // `setImmediate(loop)` busy-poll that was burning ~100 % of one core
       // per worker (×7 sectors = ~700 % parent-process CPU at idle).
       setTimeout(loop, 1);

@@ -26,6 +26,12 @@ export const FEATURE_TRIGGERS = [
     specs: ['spectator-mode', 'build-hotbar-fits-viewport', 'spectator-npc-turrets', 'spectate-no-phantom-own-ship'],
   },
   {
+    // Game time scale (stream/time-scale): per-sector speed, the snapshot keyframe and the HUD chip.
+    area: 'game time scale',
+    paths: ['src/core/clock/GameClock', 'src/server/time/', 'src/client/hud/GameHud', 'src/client/net/swarmInterpolation'],
+    specs: ['time-scale-chip'],
+  },
+  {
     // Capital helm orders + the green move marker at the course point.
     area: 'capital helm',
     paths: ['src/core/helm/', 'src/client/helm/', 'src/client/render/helm/', 'src/client/components/HelmPanel'],

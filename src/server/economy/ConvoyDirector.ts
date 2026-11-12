@@ -64,6 +64,7 @@ import { auditEvent } from '../audit/GameplayAuditLog.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import type { Wallet } from './Wallet.js';
 import type { TradeSink } from './tradeSink.js';
+import { gameNow, gameSetInterval, gameClearTimer, type GameTimer } from '../time/gameTime.js';
 
 /** Ops kill switch: `EQX_DISABLE_CONVOYS=1` (also off when NPC bases are). */
 export function isConvoysDisabled(env: Record<string, string | undefined> = process.env): boolean {
@@ -240,7 +241,7 @@ export class ConvoyDirector {
   /** v4 H2 — route length in hops (rides the transit links by default). */
   private readonly routeHops = (from: string, to: string): number => (this.opts.routeHops ?? transitRouteHops)(from, to);
   private readonly convoys = new Map<string, Convoy>();
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: GameTimer | null = null;
   private lastPlanMs = -Infinity;
   private seq = 0;
   private readonly subs: Array<{ bus: Bus; fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void }> = [];
@@ -249,7 +250,7 @@ export class ConvoyDirector {
     private readonly rooms: Map<string, ConvoyRoom>,
     private readonly holds: HoldStore,
     private readonly opts: ConvoyDirectorOptions = DEFAULT_CONVOY_OPTIONS,
-    private readonly now: () => number = Date.now,
+    private readonly now: () => number = gameNow,
     /** T4b — without it, player Freight Dock orders are ignored. */
     private readonly pay: ConvoyPayments | null = null,
   ) {}
@@ -267,12 +268,11 @@ export class ConvoyDirector {
       bus.on('ENTITY_DESTROYED', fn);
       this.subs.push({ bus, fn });
     }
-    this.timer = setInterval(guarded('convoy-director', () => this.tick()), this.opts.controlIntervalMs);
-    this.timer.unref?.();
+    this.timer = gameSetInterval(guarded('convoy-director', () => this.tick()), this.opts.controlIntervalMs);
   }
 
   stop(): void {
-    if (this.timer !== null) clearInterval(this.timer);
+    if (this.timer !== null) gameClearTimer(this.timer);
     this.timer = null;
     for (const { bus, fn } of this.subs) bus.off('ENTITY_DESTROYED', fn);
     this.subs.length = 0;

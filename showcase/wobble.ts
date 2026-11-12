@@ -102,16 +102,20 @@ export function wobbleProblem(w: Wobble): string | null {
  */
 export const SERVER_HZ_MIN = 57;
 
-export interface NetHealth { serverHz: number; corrections: number; snapshots: number }
+export interface NetHealth { serverHz: number; serverGameHz?: number; corrections: number; snapshots: number }
 
 export function netSummary(n: NetHealth | null): string {
   if (!n) return 'net: no local pilot';
-  return `server ${n.serverHz} Hz, ${n.corrections}/${n.snapshots} snapshots corrected`;
+  const game = n.serverGameHz !== undefined && Math.abs(n.serverGameHz - n.serverHz) > 1 ? ` (${n.serverGameHz} per game s)` : '';
+  return `server ${n.serverHz} Hz${game}, ${n.corrections}/${n.snapshots} snapshots corrected`;
 }
 
 export function netProblem(n: NetHealth | null): string | null {
   if (!n) return null;
-  if (n.serverHz < SERVER_HZ_MIN) return `server behind: ${n.serverHz} Hz (min ${SERVER_HZ_MIN})`;
+  // Game time scale: a 0.5× sector runs 30 ticks a WALL second by design, so
+  // gate on ticks per GAME second when the client reports it.
+  const hz = n.serverGameHz ?? n.serverHz;
+  if (hz < SERVER_HZ_MIN) return `server behind: ${hz} Hz${n.serverGameHz !== undefined ? ' per game s' : ''} (min ${SERVER_HZ_MIN})`;
   return null;
 }
 

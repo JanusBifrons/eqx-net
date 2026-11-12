@@ -30,6 +30,7 @@ import { sectorEdgePose, squadEdgePose, type Rng } from '../population.js';
 import type { LivingWorldRoom } from '../LivingWorldRoom.js';
 import type { BotCarry } from '../botTypes.js';
 import type { HunterBotPool, BotRecord } from './HunterBotPool.js';
+import { gameSetTimeout, gameClearTimer, type GameTimer } from '../../time/gameTime.js';
 
 export interface HunterBotWarpControllerOptions {
   rooms: Map<string, LivingWorldRoom>;
@@ -82,7 +83,7 @@ export class HunterBotWarpController {
   ) => { x: number; y: number; vx: number; vy: number } | null;
   /** botId → pending arrival timer (the in-flight window). Cleared on
    *  `disposePending` (director stop) so no timer fires into a torn-down room. */
-  private readonly pending = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly pending = new Map<string, GameTimer>();
 
   constructor(opts: HunterBotWarpControllerOptions) {
     this.rooms = opts.rooms;
@@ -107,11 +108,10 @@ export class HunterBotWarpController {
     const carry = src.despawnLivingWorldBot(rec.botId);
     if (!carry) return false; // already gone (killed/shed mid-spool) — handler owns it
     serverLogEvent('bot_transit_depart', { botId: rec.botId, from, to });
-    const timer = setTimeout(() => {
+    const timer = gameSetTimeout(() => {
       this.pending.delete(rec.botId);
       this.arrive(rec, from, to, carry);
     }, this.hopTravelMs);
-    (timer as unknown as { unref?: () => void }).unref?.();
     this.pending.set(rec.botId, timer);
     return true;
   }
@@ -225,7 +225,7 @@ export class HunterBotWarpController {
   /** Clear all in-flight arrival timers (director stop / teardown). Idempotent.
    *  The bots stay despawned (mid-flight) — the director is tearing down. */
   disposePending(): void {
-    for (const t of this.pending.values()) clearTimeout(t);
+    for (const t of this.pending.values()) gameClearTimer(t);
     this.pending.clear();
   }
 }

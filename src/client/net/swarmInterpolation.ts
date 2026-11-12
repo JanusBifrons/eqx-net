@@ -99,11 +99,25 @@ export const ADAPTIVE_DELAY_CEILING_MS = 280;
  *  server (e.g. burn-test or production overload) this floats up so the
  *  buffer never empties. */
 let _displayDelayMs = DISPLAY_DELAY_MS;
+/** The sector's game speed (time scale stream). The floor and ceiling are GAME
+ *  ms, so in wall ms they are 100 / speed and 280 / speed: at 4× poses arrive
+ *  4× as often and 25 wall ms still spans the same few of them (a fixed 100 ms
+ *  would reach past `POSE_RING_DEPTH` and pin drones to a stale pose); at
+ *  0.25× the buffer stretches to cover the slower arrivals. */
+let _displaySpeed = 1;
+let _lastDelayInputMs = DISPLAY_DELAY_MS;
 
 /** Let the snapshot consumer steer the buffer's lookback window. Call with
- *  the rolling EWMA of `snapshotIntervalMs` × ADAPTIVE_DELAY_FACTOR. */
+ *  the rolling EWMA of `snapshotIntervalMs` × ADAPTIVE_DELAY_FACTOR (wall ms). */
 export function setSwarmDisplayDelayMs(ms: number): void {
-  _displayDelayMs = Math.max(DISPLAY_DELAY_MS, Math.min(ADAPTIVE_DELAY_CEILING_MS, ms));
+  _lastDelayInputMs = ms;
+  _displayDelayMs = Math.max(DISPLAY_DELAY_MS / _displaySpeed, Math.min(ADAPTIVE_DELAY_CEILING_MS / _displaySpeed, ms));
+}
+
+/** The sector's game speed, from the snapshot keyframe (ColyseusClient). */
+export function setSwarmDisplaySpeed(speed: number): void {
+  _displaySpeed = Number.isFinite(speed) && speed > 0 ? speed : 1;
+  setSwarmDisplayDelayMs(_lastDelayInputMs);
 }
 
 export function getSwarmDisplayDelayMs(): number {

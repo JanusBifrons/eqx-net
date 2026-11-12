@@ -1,6 +1,7 @@
 import { Application, Graphics, Container, type Texture } from 'pixi.js';
 import { Camera } from './worker/Camera';
 import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
+import { GameClock } from '@core/clock/GameClock';
 import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
 import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/protocol';
 import { WarpFilterChain } from './pixi/WarpFilterChain.js';
@@ -1245,6 +1246,7 @@ export class PixiRenderer implements IRenderer {
   private _placementWindowMoveHandler: EventListener | null = null;
   private installCanvasEventListeners(canvas: HTMLCanvasElement): void {
     const onPointer = (e: PointerEvent): void => {
+      // eslint-disable-next-line no-restricted-properties -- real time: input event stamp
       const stamp = Date.now();
       // Galaxy selector owns pointer input (free pan/zoom; tap → sector).
       const gl = this._galaxyLayer;
@@ -1596,13 +1598,30 @@ export class PixiRenderer implements IRenderer {
     this.camera.setMaxScale(this._spectator || this._zoomKindId === null ? GAMEPLAY_MAX_ZOOM : this._zoomRange.maxScale);
   }
 
+  /**
+   * Presentation time (time scale stream): game time at the sector's speed,
+   * from `mirror.timeScale` each frame. EVERY effect and animation clock in the
+   * renderer reads `fxNow()` (explosions, beams, recoil, connector pulses,
+   * shields, fences, lights, the backdrop, the effects service), so a new
+   * effect that takes its time from here follows the speed with no code of its
+   * own. Real time stays for pose interpolation against wall-stamped arrivals,
+   * the camera and UI (warp curtain, radar, lock marks, health-bar fades) and
+   * cost measurement. At 1× it is `performance.now()` exactly.
+   */
+  // eslint-disable-next-line no-restricted-properties -- real time: the presentation clock is built over it
+  private readonly fxClock = new GameClock(() => performance.now());
+  private fxNow(): number { return this.fxClock.now(); }
+
   update(mirror: RenderMirror): void {
+    const speed = mirror.timeScale ?? 1;
+    if (speed !== this.fxClock.scale) this.fxClock.setScale(speed);
     // GPU-lit art: this frame's lights are added by the effects below.
     if (litPass.settings) litPass.begin();
     // F1 — bracket the whole update() for `rendererUpdateMs`. Single
     // exit point (the method has no early `return`), so a start-stamp +
     // tail-write is exact. Sub-µs, unconditional (markers-off baseline =
     // production cost). See `frameMarkers` / `FrameMarkers`.
+    // eslint-disable-next-line no-restricted-properties -- real time: cost measurement
     const updateStart = performance.now();
     // Stash this frame's mirror so the getEntityPose effects closure can read
     // ship velocity (the sprite carries only x/y/rotation). The effects tick
@@ -1624,7 +1643,7 @@ export class PixiRenderer implements IRenderer {
     // every frame, no per-call literal allocation.
     this.mountVisuals.setLocalAim(mirror.localPlayerId, mirror.localAimMountIds);
     this.applyHullZoom(mirror);
-    this.mountVisuals.setFrame(performance.now(), this.effects?.getQuality() ?? 'medium');
+    this.mountVisuals.setFrame(this.fxNow(), this.effects?.getQuality() ?? 'medium');
     updateShipSprites(mirror, this._shipUpdaterCtx);
 
     // Explosion sprites spawned this frame for destroyed ships.
@@ -1677,7 +1696,7 @@ export class PixiRenderer implements IRenderer {
         // particle burst + shock filter when its textures are ready.
         const dying = this.sprites.get(targetId);
         const diameter = dying ? Math.max(dying.width, dying.height) : 40;
-        if (this._fxExplosions?.spawn(pose.x, -pose.y, blastRadiusFor(diameter), performance.now())) {
+        if (this._fxExplosions?.spawn(pose.x, -pose.y, blastRadiusFor(diameter), this.fxNow())) {
           // drawn by FxExplosions
         } else if (this.effects) {
           this.effects.spawnBurst('destruction', pose.x, -pose.y);
@@ -1722,7 +1741,7 @@ export class PixiRenderer implements IRenderer {
       highlightedSel !== null && highlightedSel.startsWith('swarm-')
         ? parseInt(highlightedSel.slice('swarm-'.length), 10)
         : null;
-    this.connectorRenderer.update(mirror, this.world.scale.x, performance.now());
+    this.connectorRenderer.update(mirror, this.world.scale.x, this.fxNow());
     this.feedback.placementPreviewConnectionCount =
       this.connectorRenderer.placementPreviewConnectionCount;
     // WS-D (#21) — built-turret defensive range-circle count. DEV hook only (not
@@ -1736,6 +1755,7 @@ export class PixiRenderer implements IRenderer {
     // pixi/swarmSpriteUpdater.ts. Ctx pooled to `this._swarmUpdaterCtx`.
     // P3.8 — feed the structure-mount slew its dt (clamped so a tab-resume /
     // first-frame gap eases rather than teleporting).
+    // eslint-disable-next-line no-restricted-properties -- real time: swarm poses are wall-stamped arrivals
     const swarmNow = performance.now();
     this._swarmUpdaterCtx.slewDtSec =
       this._lastSwarmUpdateNow > 0
@@ -1771,8 +1791,9 @@ export class PixiRenderer implements IRenderer {
 
     // Missile sprites + detonation VFX. Reads single-pose-per-frame via
     // resolveMissileDisplayPose (one-pose-per-frame rule — same as drones).
+    // eslint-disable-next-line no-restricted-properties -- real time: missile poses are wall-stamped arrivals
     updateMissileSprites(mirror, this._missileUpdaterCtx, performance.now());
-    this._fxExplosions?.tick(performance.now());
+    this._fxExplosions?.tick(this.fxNow());
 
     // Server ghost: the debug marker showing where the server's last snapshot
     // put the ship, before any client-side prediction replay. OFF unless the
@@ -1820,7 +1841,7 @@ export class PixiRenderer implements IRenderer {
       // transform writes (no Graphics triangulation), so always-calling
       // for a handful of beams is free and adds no allocation (invariant
       // #14 — reuses the pooled slot array + pooled sprites).
-      const now = performance.now();
+      const now = this.fxNow();
       let slotIdx = 0;
       // WS-4 Phase 4 — drill beams route to the dedicated mining pool instead.
       let miningIdx = 0;
@@ -1961,7 +1982,7 @@ export class PixiRenderer implements IRenderer {
       // the transform writes are cheap (see the always-call rationale above).
       this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx);
       this.remoteBeamGfx!.visible = true;
-      this._fxRemoteBeams?.setBeams(this._remoteBeamCache, slotIdx, performance.now(), this._fxRemoteHit);
+      this._fxRemoteBeams?.setBeams(this._remoteBeamCache, slotIdx, this.fxNow(), this._fxRemoteHit);
       if (this._miningBeamPool && this.miningBeamGfx) {
         this._miningBeamPool.setBeams(this._miningBeamCache, miningIdx);
         this.miningBeamGfx.visible = miningIdx > 0;
@@ -2042,7 +2063,7 @@ export class PixiRenderer implements IRenderer {
       // Sprite-pool driven render (matches remoteBeam path) — always re-set.
       this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx);
       this.liveBeamGfx!.visible = true;
-      this._fxLiveBeams?.setBeams(this._liveBeamCache, slotIdx, performance.now());
+      this._fxLiveBeams?.setBeams(this._liveBeamCache, slotIdx, this.fxNow());
       // E2E observable: publish the ACTUAL drawn beam origin (the sprite
       // transform), not a recompute — this is what catches the detach bug.
       this.feedback.liveBeamRenderedFromX = this._liveBeamPool.renderedFromX;
@@ -2065,6 +2086,7 @@ export class PixiRenderer implements IRenderer {
     if (this._director.isActive()) {
       // Cinematic script owns the camera — resolved from THIS frame's rendered
       // sprites (updated above), smoothed by the Camera's spring in tick().
+      // eslint-disable-next-line no-restricted-properties -- real time: the camera director (UI)
       const status = this._director.update(performance.now(), this._directorLookup, this._directorOut, mirror.frameTimeMs);
       if (status === 'active') {
         const d = this._directorOut;
@@ -2183,8 +2205,12 @@ export class PixiRenderer implements IRenderer {
       follow.x = followed.x - (mirror.travelJumpX ?? 0);
       follow.y = followed.y + (mirror.travelJumpY ?? 0);
     }
-    const speedSample = speedFxSampleInto(this._speedSample, followed ? follow : null, mirror.frameTimeMs, skyCam.center, performance.now());
-    const backdropOn = this._backdrop?.update(skyCam, performance.now(), speedFxFullSpeed(speedShip?.kind), speedSample) ?? false;
+    // Game time (time scale): the pose's wall frame time goes through the
+    // presentation clock, so speed effects follow the sector's speed like every
+    // other effect (at 1× `at(t)` is `t`).
+    const speedFrameMs = mirror.frameTimeMs !== undefined ? this.fxClock.at(mirror.frameTimeMs) : undefined;
+    const speedSample = speedFxSampleInto(this._speedSample, followed ? follow : null, speedFrameMs, skyCam.center, this.fxNow());
+    const backdropOn = this._backdrop?.update(skyCam, this.fxNow(), speedFxFullSpeed(speedShip?.kind), speedSample) ?? false;
     // Speed effects (C3): the backdrop's eased speed asks the camera to zoom
     // out a little; applied on the camera's next tick (none while it's baking).
     this.camera.setSpeedZoom(backdropOn ? this._backdrop!.speedZoom() : 1);
@@ -2216,7 +2242,7 @@ export class PixiRenderer implements IRenderer {
         if (ev.kind === 'wall-hit') {
           // A fence stopped a shot: a ripple on the wall (new look), else
           // shield-tinted sparks (today's look).
-          if (!this._fxFences?.hitAt(ev.worldX, ev.worldY, performance.now())) {
+          if (!this._fxFences?.hitAt(ev.worldX, ev.worldY, this.fxNow())) {
             this.effects.spawnBurst('impact', ev.worldX, ev.worldY, { tint: 0x88ddff });
           }
         } else if (ev.kind === 'shield-contact') {
@@ -2224,7 +2250,7 @@ export class PixiRenderer implements IRenderer {
           // facing the other body (drawn only if the shield is up).
           if (ev.entityId) {
             this.effects.pulseShield(ev.entityId);
-            if (this._fxShieldsOn) this._fxShields!.hitAt(ev.entityId, ev.worldX, ev.worldY, performance.now(), this._fxShieldPose);
+            if (this._fxShieldsOn) this._fxShields!.hitAt(ev.entityId, ev.worldX, ev.worldY, this.fxNow(), this._fxShieldPose);
           }
         } else if (ev.kind === 'destruction-shock' || ev.kind === 'shield-flash') {
           this.effects.triggerOneShotFilter(ev.kind, ev.worldX, ev.worldY);
@@ -2236,7 +2262,7 @@ export class PixiRenderer implements IRenderer {
           // Shield-hit impacts also pulse the target's shield ring.
           if (ev.kind === 'impact' && ev.tint === 0x88ddff && ev.entityId) {
             this.effects.pulseShield(ev.entityId);
-            if (this._fxShieldsOn) this._fxShields!.hitAt(ev.entityId, ev.worldX, ev.worldY, performance.now(), this._fxShieldPose);
+            if (this._fxShieldsOn) this._fxShields!.hitAt(ev.entityId, ev.worldX, ev.worldY, this.fxNow(), this._fxShieldPose);
           }
         }
       }
@@ -2251,7 +2277,7 @@ export class PixiRenderer implements IRenderer {
       }
       mirror.pendingDamageNumberCancels.length = 0;
     }
-    if (!this._dmgNumbersDisabled) this.damageNumbers?.update();
+    if (!this._dmgNumbersDisabled) this.damageNumbers?.update(mirror.timeScale ?? 1); // game-time lifetime
 
     // Phase 4 WS-B1 — drain the level-up icon queue and pop a pooled
     // screenspace icon over the named ship's CURRENT pose. The queue's
@@ -2350,7 +2376,8 @@ export class PixiRenderer implements IRenderer {
     // Halo arrows for off-screen POIs. Runs after moveCenter so the visibility
     // test uses this frame's viewport bounds, not last frame's. Incoming fire
     // first: the radar reads its groups for the off-screen chevron.
-    this.incomingFire.update(mirror, performance.now());
+    this.incomingFire.update(mirror, this.fxNow()); // countdowns are game seconds
+    // eslint-disable-next-line no-restricted-properties -- real time: the helm order marker is UI
     this.helmMarker.update(mirror, performance.now());
     this.halo.update(mirror);
 
@@ -2441,7 +2468,7 @@ export class PixiRenderer implements IRenderer {
       this.drawFxEngines(mirror);
       this.syncEngineContinuousEffects(mirror);
 
-      const nowMs = performance.now();
+      const nowMs = this.fxNow();
       const dtMs = this.lastEffectsTickNowMs > 0 ? nowMs - this.lastEffectsTickNowMs : 16.67;
       // M9: feed the budget the PREVIOUS frame's rendererUpdateMs
       // (current frame's value isn't set until line ~1062). Single-frame
@@ -2455,6 +2482,7 @@ export class PixiRenderer implements IRenderer {
       this.feedback.shieldRingVisibleCount = 0;
     }
 
+    // eslint-disable-next-line no-restricted-properties -- real time: cost measurement
     this.frameMarkers.rendererUpdateMs = performance.now() - updateStart;
     this._perfRing?.push(this.frameMarkers.rendererUpdateMs);
   }
@@ -2496,10 +2524,10 @@ export class PixiRenderer implements IRenderer {
   private noteBlastLight(x: number, y: number, r: number): void {
     if (!litPass.settings || litPass.settings.pointLights <= 0) return;
     const L = this._blastLights;
-    if (L.length < 24) { L.push({ x, y, r, t0: performance.now() }); return; }
+    if (L.length < 24) { L.push({ x, y, r, t0: this.fxNow() }); return; }
     const b = L[this._blastLightNext]!;
     this._blastLightNext = (this._blastLightNext + 1) % L.length;
-    b.x = x; b.y = y; b.r = r; b.t0 = performance.now();
+    b.x = x; b.y = y; b.r = r; b.t0 = this.fxNow();
   }
 
   /**
@@ -2511,7 +2539,7 @@ export class PixiRenderer implements IRenderer {
   private feedLitScene(mirror: RenderMirror): void {
     const ls = litPass.settings;
     if (!ls || ls.pointLights <= 0) return;
-    const sc = litPass.scene, now = performance.now();
+    const sc = litPass.scene, now = this.fxNow();
     for (const b of this._blastLights) {
       const age = (now - b.t0) / 900;
       if (age < 0 || age >= 1) continue;
@@ -2554,7 +2582,7 @@ export class PixiRenderer implements IRenderer {
         if (key) for (const mountId of perShooter.keys()) mv.noteBeam(key, mountId);
       }
     }
-    const now = performance.now();
+    const now = this.fxNow();
     if (mirror.projectiles) for (const [id, p] of mirror.projectiles) {
       if (p.beam) continue; // instant beam lines: handled as beams
       if (!this._turretShotSeen.has(id)) {
@@ -2588,8 +2616,8 @@ export class PixiRenderer implements IRenderer {
   /** Warp-to visuals for every visible ship (one resolved sprite pose each). */
   private drawWarpFx(mirror: RenderMirror): void {
     const fx = this._warpFx;
-    fx.beginFrame(performance.now(), this.world.scale.x);
-    this._spoolFx.beginFrame(performance.now(), this.world.scale.x);
+    fx.beginFrame(this.fxNow(), this.world.scale.x);
+    this._spoolFx.beginFrame(this.fxNow(), this.world.scale.x);
     const local = mirror.localPlayerId;
     const s = this._warpShipScratch;
     for (const [id, ship] of mirror.ships) {
@@ -2627,7 +2655,7 @@ export class PixiRenderer implements IRenderer {
 
   /** One ship's spool-up (progress-driven, sized from its own nozzles). */
   private drawSpoolFx(id: string, warp: number | undefined, kind: string | undefined, sp: Container, spoolMs: number | undefined): void {
-    const now = performance.now();
+    const now = this.fxNow();
     const phase = warp === 1 ? 1 : 0;
     if (phase !== (this._spoolPhase.get(id) ?? 0)) {
       if (phase === 1) { this._spoolPhase.set(id, 1); this._spoolStart.set(id, now); }
@@ -2654,7 +2682,7 @@ export class PixiRenderer implements IRenderer {
   private drawFxEngines(mirror: RenderMirror): void {
     const fx = this._fxEngines;
     if (!fx) return;
-    const now = performance.now();
+    const now = this.fxNow();
     const dt = this._fxEnginesLastMs > 0 ? Math.min(0.1, (now - this._fxEnginesLastMs) / 1000) : 1 / 60;
     this._fxEnginesLastMs = now;
     fx.beginFrame();
@@ -2801,7 +2829,7 @@ export class PixiRenderer implements IRenderer {
     this.effects.setShieldAuraHidden(this._fxShieldsOn);
     if (this._fxShieldsOn) {
       for (const id of this._activeShieldIds) this._fxShields!.shield(id, this._fxShieldRadius.get(id) ?? 38);
-      this._fxShields!.end(performance.now(), this._fxShieldPose);
+      this._fxShields!.end(this.fxNow(), this._fxShieldPose);
     }
   }
 
@@ -3168,6 +3196,7 @@ export class PixiRenderer implements IRenderer {
       this.halo.setCameraRelative(false);
       return;
     }
+    // eslint-disable-next-line no-restricted-properties -- real time: the camera director (UI)
     this._director.play(cues, performance.now());
     this.halo.setCameraRelative(true);
   }

@@ -403,6 +403,10 @@ export interface SnapshotMessage {
    *  (an empty array then means "no wrecks"); absent otherwise. A late joiner
    *  rebuilds every wreck from it (#16). */
   wrecks?: WreckDescriptor[];
+  /** Game time scale (per sector): this sector's speed and the server tick
+   *  it took effect from. Emitted only while the speed isn't 1 (#16: a late
+   *  joiner converges from the snapshot alone). Shared object, never copied. */
+  timeScale?: TimeScaleKeyframe;
 }
 
 /** Capital destruction S2b — the fracture inputs of one wreck. */
@@ -429,4 +433,16 @@ export interface WreckDescriptor {
    *  starts its molten cut-edge glow from it; absent ⇒ drawn already cool
    *  (as a late joiner sees it). Not a fracture input. */
   deathTick?: number;
+}
+
+/** A sector's game speed keyframe (time scale stream). */
+export interface TimeScaleKeyframe {
+  /** Speed, 0.25–4. */
+  s: number;
+  /** Server tick from which `s` applies. */
+  fromTick: number;
+  /** While the speed is gliding (the dimmer): where it is heading. The client
+   *  extrapolates the glide with the shared `glideToward` so its clock moves
+   *  in step with the server's. Absent = not gliding. */
+  t?: number;
 }

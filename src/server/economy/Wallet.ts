@@ -15,6 +15,7 @@
  */
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
+import { gameNow } from '../time/gameTime.js';
 
 export interface WalletDeps {
   persistence: () => IPersistenceSink | null;
@@ -26,7 +27,7 @@ export class Wallet {
   private readonly now: () => number;
 
   constructor(private readonly deps: WalletDeps) {
-    this.now = deps.now ?? Date.now;
+    this.now = deps.now ?? gameNow;
   }
 
   /** Boot hydrate (memory only). Duplicate keys (aliases mapped onto one

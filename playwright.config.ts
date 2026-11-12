@@ -81,6 +81,8 @@ const FEATURE_SPECS: string[] = [
   '**/fire-control-lock.spec.ts',
   // Lock-to-fire is universal: default join can't fire before a LOCK, fires after.
   '**/lock-to-fire-default.spec.ts',
+  // Game time scale (stream/time-scale): a sector's speed reaches the HUD chip.
+  '**/time-scale-chip.spec.ts',
   // Contacts overview: lock far targets from an EVE-style list (O / CONTACTS tab).
   '**/contacts-overview.spec.ts',
   '**/galaxy-map-no-warp-ripple.spec.ts',

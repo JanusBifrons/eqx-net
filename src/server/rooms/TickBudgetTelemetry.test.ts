@@ -141,3 +141,73 @@ describe('TickBudgetTelemetry', () => {
     expect(secondAvg['sabRead']).toBe(0);
   });
 });
+
+describe('TickBudgetTelemetry lateness (game time vs wall time)', () => {
+  const P = 1000 / 60;
+  let clockMs = 0;
+  beforeEach(() => {
+    mockedLog.mockClear();
+    clockMs = 1_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => clockMs);
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  function runWindow(t: TickBudgetTelemetry, workerTickAt: (i: number) => number, droppedAt: (i: number) => number): Record<string, unknown> {
+    for (let i = 0; i < SAMPLE_EMIT_CADENCE; i++) {
+      t.beginTick(performance.now());
+      clockMs += P; // each update spans one wall tick: the window is 1 s
+      t.endTick({
+        serverTick: i, workerTickMs: 1, playerCount: 1, swarmCount: 0, aiSize: 0,
+        liveProjectileCount: 0, workerTick: workerTickAt(i), workerDroppedTicks: droppedAt(i),
+      });
+    }
+    const calls = mockedLog.mock.calls.filter(([tag]) => tag === 'tick_budget');
+    return calls[calls.length - 1]![1] as Record<string, unknown>;
+  }
+
+  it('a worker keeping pace reports zero lateness', () => {
+    const t = new TickBudgetTelemetry();
+    const p = runWindow(t, (i) => 100 + i + 1, () => 0);
+    expect(p['wallTicks']).toBe(60);
+    expect(p['simTicks']).toBe(59); // anchored at the first update's tick
+    expect(p['droppedTicks']).toBe(0);
+    expect(t.lateness().latenessTicks).toBe(1);
+  });
+
+  it('a starved worker (half speed, ticks dropped) shows as lateness, not cost', () => {
+    const t = new TickBudgetTelemetry();
+    // 30 game ticks in 1 s of wall time, 25 of the missing ones dropped.
+    const p = runWindow(t, (i) => 100 + Math.floor((i + 1) / 2), (i) => (i === SAMPLE_EMIT_CADENCE - 1 ? 25 : 0));
+    expect(p['wallTicks']).toBe(60);
+    expect(p['simTicks']).toBe(30);
+    expect(p['latenessTicks']).toBe(30);
+    expect(p['droppedTicks']).toBe(25);
+    // Cheap ticks: cost alone (overBudgetCount) would never have seen this.
+    expect(p['overBudgetCount']).toBe(0);
+  });
+
+  it('at 2× a sector is on time when its worker runs 120 ticks a wall second', () => {
+    const t = new TickBudgetTelemetry();
+    for (let i = 0; i < SAMPLE_EMIT_CADENCE; i++) {
+      t.beginTick(performance.now());
+      clockMs += P / 2; // 2×: an update every half wall tick
+      t.endTick({
+        serverTick: i, workerTickMs: 1, playerCount: 1, swarmCount: 0, aiSize: 0,
+        liveProjectileCount: 0, workerTick: 100 + i + 1, workerDroppedTicks: 0, timeScale: 2,
+      });
+    }
+    const p = mockedLog.mock.calls.filter(([tag]) => tag === 'tick_budget').pop()![1] as Record<string, unknown>;
+    expect(p['wallTicks']).toBe(60); // 0.5 s of wall time at 2× allows 60 ticks
+    expect(p['simTicks']).toBe(59);
+  });
+
+  it('omits the lateness fields when the caller has no worker tick', () => {
+    const t = new TickBudgetTelemetry();
+    for (let i = 0; i < SAMPLE_EMIT_CADENCE; i++) {
+      t.beginTick(performance.now());
+      t.endTick({ serverTick: i, workerTickMs: 1, playerCount: 1, swarmCount: 0, aiSize: 0, liveProjectileCount: 0 });
+    }
+    const p = mockedLog.mock.calls.find(([tag]) => tag === 'tick_budget')![1] as Record<string, unknown>;
+    expect(p['latenessTicks']).toBeUndefined();
+  });
+});

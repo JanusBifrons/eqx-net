@@ -11,6 +11,7 @@
  */
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import type { Hold } from '../../shared-types/goods.js';
+import { gameNow } from '../time/gameTime.js';
 
 /** `bounty` (P4c-2): a player bounty's escrowed credits, keyed `bounty:<target>:<placer>`. */
 /** `fitted` (P5): the blueprints INSTALLED on a ship, keyed `fitted:<shipInstanceId>`. */
@@ -40,7 +41,7 @@ export class HoldStore {
   private readonly now: () => number;
 
   constructor(private readonly deps: HoldStoreDeps) {
-    this.now = deps.now ?? Date.now;
+    this.now = deps.now ?? gameNow;
   }
 
   get(uid: string): HoldRecord | undefined {

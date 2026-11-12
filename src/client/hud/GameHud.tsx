@@ -86,10 +86,11 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
 // ── Status ───────────────────────────────────────────────────────────────────
 
 /** Compact status capsule: segmented shield/hull ring + energy + credits. */
-function StatusCapsule({ scale }: { scale: number }): JSX.Element {
+export function StatusCapsule({ scale }: { scale: number }): JSX.Element {
   const shield = useUIStore((s) => s.shieldPct);
   const hull = useUIStore((s) => s.hullPct);
   const wallet = useUIStore((s) => s.wallet);
+  const timeScale = useUIStore((s) => s.timeScale);
   const energyRef = useEnergyFill();
   const d = Math.round(26 * scale);
   const r1 = d / 2 - 2;
@@ -100,6 +101,7 @@ function StatusCapsule({ scale }: { scale: number }): JSX.Element {
     <div
       data-testid="hud-status"
       data-hud-exclusion=""
+      data-time-scale={timeScale}
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -110,6 +112,7 @@ function StatusCapsule({ scale }: { scale: number }): JSX.Element {
         border: `1px solid ${HUD.color.panelEdge}`,
         backdropFilter: 'blur(3px)',
         pointerEvents: 'none',
+        position: 'relative',
       }}
     >
       <svg width={d} height={d} style={{ transform: 'rotate(-90deg)' }}>
@@ -135,8 +138,52 @@ function StatusCapsule({ scale }: { scale: number }): JSX.Element {
           <RollingCounter value={wallet} size={Math.round(10.5 * scale)} />
         </div>
       </div>
+      {timeScale !== 1 && <TimeScaleChip timeScale={timeScale} scale={scale} />}
     </div>
   );
+}
+
+/**
+ * The sector's game speed while it isn't 1× (time scale stream): amber when
+ * the game runs slow (the server is under load, not the player's connection),
+ * cyan when fast (a demo / test speed-up). Hidden at 1×.
+ */
+function TimeScaleChip({ timeScale, scale }: { timeScale: number; scale: number }): JSX.Element {
+  const slow = timeScale < 1;
+  return (
+    <div
+      data-testid="hud-time-scale"
+      title={slow ? 'Game speed is slowed (server load)' : 'Game speed is raised'}
+      style={{
+        // Outside the capsule's flow (just to its right), with a fixed width,
+        // so the capsule never reflows as the chip appears, disappears or
+        // changes text ("2×" vs "1.96×"): hostile review 2026-11-12.
+        position: 'absolute',
+        left: '100%',
+        top: '50%',
+        transform: 'translateY(-50%)',
+        marginLeft: 6,
+        minWidth: `${Math.round(30 * scale)}px`,
+        padding: '1px 6px',
+        borderRadius: 999,
+        background: HUD.color.panel,
+        border: `1px solid ${HUD.color.panelEdge}`,
+        textAlign: 'center',
+        whiteSpace: 'nowrap',
+        fontSize: Math.round(10 * scale),
+        fontWeight: 700,
+        fontVariantNumeric: 'tabular-nums',
+        color: slow ? '#ffb74d' : '#4dd0e1',
+      }}
+    >
+      {formatTimeScale(timeScale)}
+    </div>
+  );
+}
+
+/** "0.8×", "2×", "0.25×": up to two decimals, no trailing zeros. */
+export function formatTimeScale(s: number): string {
+  return `${Number(s.toFixed(2))}×`;
 }
 
 /** Dash pattern that shows `pct`% of a ring as 12 segments with gaps. */

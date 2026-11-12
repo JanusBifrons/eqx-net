@@ -30,6 +30,7 @@ import {
 import { liveEntrySectors, type Rng } from './population.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import type { LivingWorldRoom } from './LivingWorldRoom.js';
+import { gameNow } from '../time/gameTime.js';
 
 export const NEXUS_ID = 'rbot-nexus';
 /** A destroyed nexus returns after this long (a real win for the players). */
@@ -99,7 +100,7 @@ export class RobotTerritory {
     private readonly opts: RobotTerritoryOptions = {},
   ) {
     this.rng = opts.rng ?? Math.random;
-    this.now = opts.nowMs ?? Date.now;
+    this.now = opts.nowMs ?? gameNow;
     this.nexusRespawnMs = opts.nexusRespawnMs ?? NEXUS_RESPAWN_MS;
     this.harvesterRespawnMs = opts.harvesterRespawnMs ?? HARVESTER_RESPAWN_MS;
     this.lastTickMs = this.now();

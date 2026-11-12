@@ -205,7 +205,7 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
       },
       raw: { client, server: s },
     };
-    log(`  ${arm.name.padEnd(4)} ${scene.id}: tick p95 ${m.timing.serverTickP95} ms · frame p95 ${m.timing.clientFrameP95} / p99 ${m.timing.clientFrameP99} ms · render p95 ${m.timing.renderP95} ms · hitches ${(m.timing.clientHitchesPerMin ?? 0).toFixed(1)}/min · rx ${(m.counts.rxKBps ?? 0).toFixed(0)} KB/s${valid ? '' : ' · INVALID: ' + m.invalidReason}`);
+    log(`  ${arm.name.padEnd(4)} ${scene.id}: tick p95 ${m.timing.serverTickP95} ms · frame p95 ${m.timing.clientFrameP95} / p99 ${m.timing.clientFrameP99} ms · render p95 ${m.timing.renderP95} ms · hitches ${(m.timing.clientHitchesPerMin ?? 0).toFixed(1)}/min · rx ${(m.counts.rxKBps ?? 0).toFixed(0)} KB/s${s['simTime'] ? ` · sim behind ${s['simTime'].latenessTicks}/${s['simTime'].wallTicks} ticks (dropped ${s['simTime'].droppedTicks})` : ''}${valid ? '' : ' · INVALID: ' + m.invalidReason}`);
     return m;
   } finally {
     await ctx.close();

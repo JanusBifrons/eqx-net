@@ -248,7 +248,10 @@ export function resolveMissileDisplayPose(
     return { x: m.x, y: m.y, angle: m.angle, lifePct: m.lifePct };
   }
 
-  const targetMs = nowMs - MISSILE_DISPLAY_DELAY_MS;
+  // Game time scale: the delay is GAME ms (the ring depth is sized in
+  // snapshots, which arrive 1/speed as far apart in wall time).
+  const delayMs = MISSILE_DISPLAY_DELAY_MS / (mirror.timeScale ?? 1);
+  const targetMs = nowMs - delayMs;
   const newest = _populated[count - 1]!;
   const oldest = _populated[0]!;
 
@@ -263,7 +266,7 @@ export function resolveMissileDisplayPose(
   // sample still resolves to the sample point — the legacy behaviour).
   if (count === 1 || targetMs <= oldest.arrivalMs) {
     const rawDtMs = targetMs - oldest.arrivalMs;
-    const dtMs = Math.max(-MISSILE_DISPLAY_DELAY_MS, Math.min(MISSILE_EXTRAPOLATION_CAP_MS, rawDtMs));
+    const dtMs = Math.max(-delayMs, Math.min(MISSILE_EXTRAPOLATION_CAP_MS, rawDtMs));
     const c = curveDeadReckon(oldest.x, oldest.y, oldest.vx, oldest.vy, oldest.angle, oldest.angvel, dtMs / 1000);
     return { x: c.x, y: c.y, angle: c.angle, lifePct: m.lifePct };
   }

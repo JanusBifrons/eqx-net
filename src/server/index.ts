@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import 'dotenv/config';
 import { PERF_SCENES } from '../shared-types/perf/perfScenes.js';
 import { scenePerfViews, recordClientReading, clientPerfReadings } from './rooms/scene/scenePerfRegistry.js';
 import { Server, matchMaker } from 'colyseus';
@@ -286,6 +286,34 @@ if (process.env['NODE_ENV'] !== 'production') {
       return;
     }
     res.json({ ok: eventDirector.startEvent(kind as WorldEventKind, sector), event: eventDirector.activeEvent() });
+  });
+
+  // GET /dev/time-scale — every live sector's game speed (time scale stream).
+  // POST /dev/time-scale?room=<roomId|sectorKey>&scale=N — set one sector's
+  // speed (0.25–4), e.g. for a demo, a video or slow motion.
+  const timeScaleRooms = async (): Promise<SectorRoom[]> => {
+    const out: SectorRoom[] = [];
+    for (const l of await matchMaker.query({})) {
+      const r = matchMaker.getLocalRoomById(l.roomId) as unknown as SectorRoom | undefined;
+      if (r && typeof r.setTimeScale === 'function') out.push(r);
+    }
+    return out;
+  };
+  app.get('/dev/time-scale', (_req, res) => {
+    void timeScaleRooms().then((rooms) => res.json({
+      rooms: rooms.map((r) => ({ roomId: r.roomId, sectorKey: r.timeScaleSectorKey(), timeScale: r.gameClock.scale })),
+    })).catch((err: unknown) => res.status(500).json({ error: String(err) }));
+  });
+  app.post('/dev/time-scale', (req, res) => {
+    const target = String(req.query['room'] ?? '');
+    const scale = Number(req.query['scale']);
+    if (!target || !Number.isFinite(scale) || scale <= 0) { res.status(400).json({ ok: false }); return; }
+    void timeScaleRooms().then((rooms) => {
+      const r = rooms.find((x) => x.roomId === target || x.timeScaleSectorKey() === target);
+      if (!r) { res.status(404).json({ ok: false }); return; }
+      // Glides there like a dimmer; `&snap=1` jumps at once.
+      res.json({ ok: true, roomId: r.roomId, timeScale: r.setTimeScale(scale, req.query['snap'] !== '1') });
+    }).catch((err: unknown) => res.status(500).json({ error: String(err) }));
   });
 
   // GET /dev/audit?player=&owner=&sector=&event=&since=&until=&limit=&source=&format=

@@ -30,6 +30,7 @@ import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { FLAGSHIP_BOT_ID_PREFIX } from './directorBotIds.js';
 import type { LivingWorldRoom } from './LivingWorldRoom.js';
 import type { Rng } from './population.js';
+import { gameNow } from '../time/gameTime.js';
 
 export const FLEET_COUNT = 1;
 /** A destroyed fleet's replacement arrives this long after, elsewhere. */
@@ -168,7 +169,7 @@ export class FlagshipDirector {
     private readonly opts: FlagshipDirectorOptions = {},
   ) {
     this.rng = opts.rng ?? Math.random;
-    this.now = opts.nowMs ?? Date.now;
+    this.now = opts.nowMs ?? gameNow;
     this.respawnMs = opts.respawnMs ?? FLEET_RESPAWN_MS;
     this.dwellMs = opts.dwellMs ?? FLEET_DWELL_MS;
     const n = opts.fleetCount ?? FLEET_COUNT;

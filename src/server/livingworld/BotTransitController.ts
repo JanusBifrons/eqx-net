@@ -21,6 +21,7 @@
  */
 import { Bus } from '../../core/events/Bus.js';
 import { TransitStateMachine, SPOOL_DURATION_MS } from '../../core/transit/TransitStateMachine.js';
+import { gameNow, gameSetTimeout, gameClearTimer, type GameTimer } from '../time/gameTime.js';
 
 export type BotTransitOutcome = 'arrived' | 'failed' | 'destroyed';
 
@@ -45,7 +46,7 @@ export interface BotTransitOptions {
 
 export class BotTransitController {
   private machine: TransitStateMachine | null = null;
-  private commitTimer: ReturnType<typeof setTimeout> | null = null;
+  private commitTimer: GameTimer | null = null;
   private onDestroyed: ((e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void) | null = null;
   private settled = false;
 
@@ -65,7 +66,7 @@ export class BotTransitController {
    *  terminal outcome (mirrors `TransitStateMachine` single-use). */
   begin(opts: BotTransitOptions): void {
     if (this.machine) throw new Error(`BotTransitController(${this.botId}): already in flight`);
-    const now = opts.now ?? Date.now;
+    const now = opts.now ?? gameNow;
     this.settled = false;
     this.machine = new TransitStateMachine(this.botId, this.bus, this.spoolMs);
     this.machine.beginSpool(now());
@@ -83,7 +84,7 @@ export class BotTransitController {
     this.onDestroyed = onDestroyed;
     this.bus.on('ENTITY_DESTROYED', onDestroyed);
 
-    this.commitTimer = setTimeout(() => {
+    this.commitTimer = gameSetTimeout(() => {
       this.commitTimer = null;
       // Past the vulnerable window — a later kill is the death flow's
       // problem, not transit's.
@@ -114,7 +115,7 @@ export class BotTransitController {
    *  down anyway). */
   dispose(): void {
     if (this.commitTimer !== null) {
-      clearTimeout(this.commitTimer);
+      gameClearTimer(this.commitTimer);
       this.commitTimer = null;
     }
     this.teardownListeners();
