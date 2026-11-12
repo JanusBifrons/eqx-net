@@ -66,3 +66,9 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   `tick_budget` event now carries `wallTicks` / `simTicks` / `latenessTicks` /
   `droppedTicks`, and `/dev/perf` scenes carry `simTime`. Unit 4959 ✓,
   integration 359 ✓, boot ✓.
+- 2026-11-12: step 2a done. `core/clock/GameClock.ts` (continuous game time
+  at 0.25–4×, `after` / `every` timers re-armed on a speed change) and the
+  server's process-wide `server/time/gameTime.ts` (`gameClock`, `gameNow()`,
+  over `Date.now`, so 1× is unchanged). Lint wall in `eslint.config.js`
+  (warn): 74 wall-clock sites left in `src/server`, all listed by
+  `npx eslint src/server` — that list is the 2b/2c to-do.

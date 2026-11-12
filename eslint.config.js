@@ -189,6 +189,44 @@ export default [
       ],
     },
   },
+  // Game time is the default (game time scale stream; docs/architecture/
+  // game-time-scale.md). Gameplay reads `gameNow()` / `gameClock` (server)
+  // and follows the speed with no code of its own. Only the REAL-TIME files
+  // below may read the wall clock or use raw timers, each for a reason:
+  // persistence, networking, auth/identity, diagnostics and measurement, and
+  // the clocks themselves. A new wall-clock file must be added here on purpose.
+  {
+    files: ['src/core/**/*.ts', 'src/server/**/*.ts'],
+    ignores: [
+      '**/*.test.ts', '**/*.bench.ts', '**/__fixtures__/**',
+      // The clocks and the loops that drive game time.
+      'src/core/clock/Clock.ts', 'src/server/time/gameTime.ts',
+      'src/core/physics/worker.ts', 'src/server/rooms/PhysicsWorkerPool.ts',
+      // Measuring real cost (perf telemetry, perf scenes, GC).
+      'src/server/rooms/TickBudgetTelemetry.ts', 'src/server/rooms/scene/**',
+      'src/server/debug/**', 'src/server/stats/**',
+      // Real-time services: storage, network, accounts, logs, process boot.
+      'src/server/db/**', 'src/server/net/**', 'src/server/transport/**',
+      'src/server/auth/**', 'src/server/identity/**', 'src/server/push/**',
+      'src/server/routes/**', 'src/server/audit/**', 'src/server/index.ts',
+      'src/server/rooms/SectorPersistence.ts', 'src/server/rooms/RosterPersistence.ts',
+      'src/server/playerShips/PlayerShipStore.ts', 'src/server/livingworld/DirectorPersistence.ts',
+      // Client prediction's round-trip timing (real network time).
+      'src/core/prediction/Reconciler.ts',
+    ],
+    rules: {
+      'no-restricted-properties': [
+        'warn',
+        { object: 'Date', property: 'now', message: 'Game time is the default: use gameNow() (src/server/time/gameTime.ts) or an injected Clock. Wall time only in the real-time allowlist (eslint.config.js).' },
+        { object: 'performance', property: 'now', message: 'Game time is the default: use gameNow() or an injected Clock. Wall time only in the real-time allowlist (eslint.config.js).' },
+      ],
+      'no-restricted-globals': [
+        'warn',
+        { name: 'setTimeout', message: 'Use gameClock.after() so the timer follows the game speed. Real-time timers only in the allowlist (eslint.config.js).' },
+        { name: 'setInterval', message: 'Use gameClock.every() so the timer follows the game speed. Real-time timers only in the allowlist (eslint.config.js).' },
+      ],
+    },
+  },
   {
     files: ['src/client/**/*.{ts,tsx}'],
     rules: {
