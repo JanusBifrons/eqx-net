@@ -97,6 +97,8 @@ test('flying through 50 scrap pieces — corrections + drift stay playable (issu
 
   // Focus the canvas, then plow forward (thrust + boost) through the corridor.
   // Poll the peak rolling correction rate during the run.
+  // Count the page's animation frames over the flight (the host's real frame rate).
+  await page.evaluate(`(() => { const w = globalThis; w.__fpsFrames = 0; w.__fpsT0 = performance.now(); const f = () => { w.__fpsFrames++; if (!w.__fpsStop) requestAnimationFrame(f); }; requestAnimationFrame(f); })()`);
   await page.locator('[data-testid="game-surface"]').click();
   await page.keyboard.down('w');
   await page.keyboard.down('Shift');
@@ -113,6 +115,7 @@ test('flying through 50 scrap pieces — corrections + drift stay playable (issu
   await page.waitForTimeout(500);
 
   const after = await readStats(page);
+  const flightFps = await page.evaluate(`(() => { const w = globalThis; w.__fpsStop = true; return w.__fpsFrames / ((performance.now() - w.__fpsT0) / 1000); })()`) as number;
 
   const collisions = after.collisionEventsApplied - before.collisionEventsApplied;
   const corrections = after.significantCorrectionCount - before.significantCorrectionCount;
@@ -126,11 +129,19 @@ test('flying through 50 scrap pieces — corrections + drift stay playable (issu
   console.log(`peak rollingCorrRate    : ${peakCorrRate.toFixed(3)}`);
   console.log(`peak maxDriftUnits      : ${peakDrift.toFixed(2)} u   (final ${after.maxDriftUnits.toFixed(2)} u)`);
   console.log(`ticksAhead (final)      : ${after.ticksAhead}`);
+  console.log(`frames per second       : ${flightFps.toFixed(1)}`);
   console.log('=======================================================\n');
 
   // (a) The flythrough must actually collide — else the test isn't reproducing
   // anything (corridor missed / scrap colliders dead).
   expect(collisions, 'the ship must actually hit scrap (else the repro is invalid)').toBeGreaterThan(0);
+
+  // Below ~15 fps the client can't step its prediction in real time: it falls
+  // behind the server and jumps forward (`recoverInputTickFromStarvation`), a
+  // snap per jump (74-226 u at 20x CPU throttle). That is expected on a device
+  // that slow (owner, 2026-11-12), not a prediction bug, so this test can't
+  // judge prediction there. It ran red on CI's slow host for exactly this.
+  test.skip(flightFps < 15, `host below 15 fps (${flightFps.toFixed(1)} fps in flight): the client jumps to keep up, by design`);
 
   // (b) The GATE is peak prediction DRIFT — the stable, discriminating signal
   // (baseline ~16-18 u across runs; the falsified angvel experiment hit ~39 u; a
