@@ -22,6 +22,8 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { TURRET_FIRE_MISS } from '../../../src/core/combat/mountFireControl.js';
+import { navalTurret, navalBarrelOffset } from '../../../src/core/combat/muzzle.js';
+import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 
 const RANGE = 5_000;
 const OFF_BOW = (15 * Math.PI) / 180;
@@ -73,6 +75,12 @@ describe('SectorRoom integration — player naval turrets fire only on target', 
     }
 
     expect(salvos.length, 'the battery fired once it was on target').toBeGreaterThan(0);
+    // Each barrel fires parallel to the turret's aim from its own tip (#479),
+    // so a shell may also pass up to its barrel's sideways offset off the line.
+    const kind = getShipKind('battleship');
+    const turret = navalTurret(kind, kind.mounts.find((m) => m.id === 'main-1'))!;
+    let barrelSpread = 0;
+    for (let k = 0; k < turret.barrels; k++) barrelSpread = Math.max(barrelSpread, Math.abs(navalBarrelOffset(turret, k)));
     for (const s of salvos) {
       const dx = TX - s.x;
       const dy = TY - s.y;
@@ -80,7 +88,7 @@ describe('SectorRoom integration — player naval turrets fire only on target', 
       // Perpendicular miss distance of the shell's line from the target.
       const miss = Math.abs(dx * s.vy - dy * s.vx) / Math.hypot(s.vx, s.vy);
       expect(miss, `shell from (${s.x.toFixed(0)}, ${s.y.toFixed(0)}) passes ${miss.toFixed(0)} u from a target ${dist.toFixed(0)} u away`)
-        .toBeLessThanOrEqual(TURRET_FIRE_MISS * 2);
+        .toBeLessThanOrEqual(TURRET_FIRE_MISS * 2 + barrelSpread);
     }
   }, 30_000);
 });
