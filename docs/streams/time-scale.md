@@ -309,3 +309,14 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   4× take 1: QA flagged the server behind (55 per game s): a heavy capital
   battle at 4× is near this host's limit; live sectors would self-slow (test
   rooms don't). Take 2: 60 per game s, 0/671 corrected. Unit 5028 ✓.
+- 2026-11-12: **4× capitals clip, still open.** Takes saw 0 volleys at 4×. Measured: the
+  server fires at 4× in every integration setup (first volley ~6.6 s wall), but
+  spectating parks the pilot's hull and the battleship never fires at a parked hull
+  (1× and 4× alike), so the shot now films from the pilot's camera. The battleship
+  also wanders while the art bakes (~10 km off once). With it 4 km off and no
+  spectate, the take still saw 0 volleys: next, compare the browser take with the
+  integration setup (delay before test_aggro? the real client's AUTO fire?).
+  Owner note: capital-turrets also spectates, so it likely films no volley now.
+- 2026-11-12: CI: main (probe run 43274831696) fails 38 full-tier feature tests;
+  19 of the stream's 21 failures are among them; the other 2 (input-throttle-drift:57,
+  missile-frigate-homing:650) pass locally on the stream. Not a stream regression.

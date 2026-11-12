@@ -115,39 +115,82 @@ async function snapSpeed(ctx: ShotContext, id: string, scale: number): Promise<v
   ctx.log(`  [time-scale] speed set to ${scale}× before the take (${res.status})`);
 }
 
+/** Salvo ids the client currently knows (shells as events). */
+async function salvoIds(ctx: ShotContext): Promise<string[]> {
+  return ctx.page.evaluate(() => {
+    const m = (globalThis as { __eqxClient?: { mirror: { shellSalvos?: Map<string, unknown> } } }).__eqxClient?.mirror;
+    return m?.shellSalvos ? [...m.shellSalvos.keys()] : [];
+  }).catch(() => [] as string[]);
+}
+
+/** Distance from the pilot to the battleship (u), or Infinity. */
+async function battleshipDistance(ctx: ShotContext): Promise<number> {
+  return ctx.page.evaluate(() => {
+    const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId?: string; ships: Map<string, { x: number; y: number }>; swarm: Map<number, { kind: number; x: number; y: number; shipKind?: string }> } } }).__eqxClient?.mirror;
+    const me = m?.localPlayerId ? m.ships.get(m.localPlayerId) : undefined;
+    let d = Infinity;
+    m?.swarm.forEach((e) => { if (me && e.kind === 1 && e.shipKind === 'battleship') d = Math.hypot(e.x - me.x, e.y - me.y); });
+    return d;
+  }).catch(() => Infinity);
+}
+
+/** Turn the mouse wheel `n` notches (+ = out, each x0.9 / x1.1), as a player would. */
+async function wheelSteps(ctx: ShotContext, dy: number, n: number, gapMs: number): Promise<void> {
+  const c = ctx.px(960, 540);
+  await ctx.page.mouse.move(c.x, c.y);
+  for (let i = 0; i < n; i++) { await ctx.page.mouse.wheel(0, dy); await ctx.sleep(gapMs); }
+}
+
 /**
  * The full range (owner 2026-11-12: "Can't it go up to 4x? Show a battle at
  * 4x with a few broadsides, then slow to 0.25 and zoom in maybe?"). The
- * capital-broadside fight (same room, params and setup cue), spectated. The
- * sector goes to 4× right after the fight starts (setup), so the 16" turrets
- * train in ~7 s of wall time (they need ~25–28 game s) and the take opens on
- * batteries already firing at the top speed: the 30 s reload is 7.5 s of
- * wall time, so the first ~9 s hold several broadsides. The camera frames the
- * battleship and its target (the whole line is too spread out to see shells).
- * The pilot locks the battleship in setup (a live player lock keeps the NPCs
- * hostile at any speed). Then the dial goes to 0.25× (the dimmer halves the
- * speed once a second: ~4 s) while the camera closes in on the battleship:
- * deep slow motion, close up.
+ * capital duel as it plays (showcase-capital-duel: one battleship, the
+ * pilot's heavy cruiser 4,000 u off its beam, where only the 16" battery
+ * reaches), seen from the pilot's own camera.
  *
- * (Hostile review 2026-11-12 of a 0.4×/2× version: the turrets were still
- * training through 1× and 0.4×, and a frame on every ship made shells
- * invisible. Both fixed here; that shot was dropped.)
+ * Setup:
+ * - one `test_aggro` cue, as capital-turrets;
+ * - the pilot locks the battleship through the client's own `requestLock` (a
+ *   live player lock keeps an NPC hostile, owner rule 2026-11-10; otherwise
+ *   the cue's hostility lapses after 30 GAME seconds, 7.5 s at 4×);
+ * - the sector goes to 4×, and the player wheels out to their zoom floor;
+ * - the battleship wanders while the art bakes (a live brain), so setup waits
+ *   (at 4×) until it is back within 16" reach of the pilot before the take rolls.
+ *
+ * The take:
+ * - runs at 4× until it has SEEN two 16" volleys (salvo events), so the
+ *   broadsides are filmed whatever the training and reload timing;
+ * - then the dial goes to 0.25× while the second volley is in flight (the
+ *   dimmer halves the speed once a second), and the player zooms in on their
+ *   own ship with the wheel, so the shells crawl the last of the way and land
+ *   in slow motion.
+ *
+ * NOT a spectator take: spectating parks the pilot's hull, and the
+ * battleship never fires at a parked hull (measured 2026-11-12 at 1× and 4×
+ * alike), so a held spectator camera would film no broadsides. Earlier
+ * versions: the five-capital line-up held every gun (the pilot spawned among
+ * the ships, so line-of-fire and own-deck rules applied).
  */
 export const timeScaleCapitals4x: Shot = {
   id: 'time-scale-capitals-4x',
   section: 'mechanics',
   title: 'Game speed: 4× to 0.25×',
-  caption: 'The full range of the speed dial on a capital battle: broadsides at 4×, then a glide down to 0.25× while the camera closes in on the battleship.',
+  caption: 'The full range of the speed dial: a battleship’s 16-inch broadsides at 4×, then a glide down to 0.25× while the shells are in flight, as the pilot zooms in on where they land.',
   features: ['CAP', 'M19'],
   docs: ['game-speed'],
   reel: false,
   server: 'capitals',
-  target: { room: 'showcase-capitals-combat', params: { sectorScale: '4', shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
-  durationMs: 32_000,
+  target: { room: 'showcase-capital-duel', params: { shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
+  durationMs: 40_000,
   endsWithRun: true,
   async startWhen(ctx) {
     await artSettled(ctx);
-    await ctx.spectate();
+    await ctx.page.waitForFunction(() => {
+      const c = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number }> } } }).__eqxClient;
+      let n = 0;
+      c?.mirror.swarm.forEach((e) => { if (e.kind === 1) n++; });
+      return n > 0;
+    }, null, { timeout: 60_000, polling: 250 });
     await sendRoom(ctx, 'test_aggro', { type: 'test_aggro' });
     const id = await roomId(ctx);
     if (!id) throw new Error('time-scale-capitals-4x: no room id on the client');
@@ -155,20 +198,31 @@ export const timeScaleCapitals4x: Shot = {
     if (!bs) throw new Error('time-scale-capitals-4x: no battleship in view');
     ctx.log(`  [time-scale] pilot locks the battleship with ${await lockBattleship(ctx, bs)} group(s)`);
     await snapSpeed(ctx, id, 4);
-    // ~28 game s at 4×: the 16" turrets finish training and open fire.
-    await ctx.sleep(7500);
-    // Frame the battleship and its target, so shells cross a readable frame.
-    await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'frame', ids: [bs, 'local'], padding: 0.25, maxZoom: 2.5 } }]);
-    await ctx.sleep(1000);
+    await wheelSteps(ctx, 100, 20, 120); // out to the zoom floor
+    const t0 = Date.now();
+    let d = Infinity;
+    while (Date.now() - t0 < 90_000) {
+      d = await battleshipDistance(ctx);
+      if (d < 5200) break;
+      await ctx.sleep(500);
+    }
+    ctx.log(`  [time-scale] battleship ${Math.round(d)} u from the pilot after ${((Date.now() - t0) / 1000).toFixed(1)} s of setup`);
   },
   async run(ctx) {
     const id = await roomId(ctx);
     if (!id) throw new Error('time-scale-capitals-4x: no room id on the client');
-    await ctx.sleep(9000); // broadsides at 4×
-    await dial(ctx, id, 0.25); // glides down in ~7.5 s
-    const bs = await battleshipId(ctx);
-    // Close in tight on the battleship as it slows (fit the hull, higher cap).
-    if (bs) await ctx.cinema.play([{ atMs: 0, smoothMs: 4000, shot: { kind: 'frame', ids: [bs], padding: 0.08, maxZoom: 8 } }]);
-    await ctx.sleep(11_000); // the glide (~4 s), then ~7 s at 0.25×
+    // 4× until two volleys have been fired (or ~20 s).
+    const seen = new Set<string>();
+    const t0 = Date.now();
+    while (seen.size < 2 && Date.now() - t0 < 20_000) {
+      for (const s of await salvoIds(ctx)) seen.add(s);
+      await ctx.sleep(150);
+    }
+    ctx.log(`  [time-scale] ${seen.size} volley(s) at 4× in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+    await ctx.sleep(400); // the second volley clears the barrels
+    await dial(ctx, id, 0.25); // halves once a second: ~4 s to 0.25×
+    // The pilot zooms in on their own ship as the shells crawl in (x0.9 a notch).
+    await wheelSteps(ctx, -100, 12, 250);
+    await ctx.sleep(7_000); // ~6 s at 0.25×
   },
 };
