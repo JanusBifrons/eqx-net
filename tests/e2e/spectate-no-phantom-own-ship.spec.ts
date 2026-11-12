@@ -25,7 +25,7 @@ import { launchTestClient } from './helpers/gameScenario';
 const ROOM = 'showcase-capital-duel' as unknown as 'test-sector';
 
 test('after Spectate the client never re-predicts its own ship', async ({ browser }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(120_000);
   const { page } = await launchTestClient(browser, {
     room: ROOM, spawnX: 4000, spawnY: 0, shipKind: 'heavy-cruiser', initialHull: 1_000_000,
     extraParams: { worker: '0' }, joinTimeoutMs: 60_000,
@@ -44,8 +44,10 @@ test('after Spectate the client never re-predicts its own ship', async ({ browse
       __eqxClient: { mirror: { localPlayerId: string; ships: Map<string, { x: number; y: number }>; lingeringShips?: Map<string, { ownerPlayerId?: string }> }; predWorld?: { hasShip(id: string): boolean } };
       __eqxStore: { getState(): { pilotMode?: string } };
       __phantomLog: Array<{ spectating: boolean; body: boolean; entry: boolean }>;
+      __phantomStop?: boolean;
     };
     g.__phantomLog = [];
+    g.__phantomStop = false;
     const tick = (): void => {
       const c = g.__eqxClient;
       const id = c.mirror.localPlayerId;
@@ -54,7 +56,9 @@ test('after Spectate the client never re-predicts its own ship', async ({ browse
         body: c.predWorld?.hasShip(id) === true,
         entry: c.mirror.ships.has(id),
       });
-      if (g.__phantomLog.length < 600) requestAnimationFrame(tick);
+      // Until the test stops it: a fixed 600-frame cap ran out before Spectate
+      // on a slow CI runner (19 spectating frames sampled).
+      if (!g.__phantomStop) requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
   });
@@ -69,9 +73,20 @@ test('after Spectate the client never re-predicts its own ship', async ({ browse
     for (const e of c?.mirror.lingeringShips?.values() ?? []) if (e.ownerPlayerId === c?.mirror.localPlayerId) return true;
     return false;
   }, undefined, { timeout: 10_000 });
-  await page.waitForTimeout(3000);
+  // Sample a fixed number of spectating FRAMES, not a fixed time: the
+  // main-thread renderer in this capital room can run at a few fps on a busy
+  // host, so 3 s held only ~20 frames.
+  await page.waitForFunction(
+    () => (globalThis as unknown as { __phantomLog: Array<{ spectating: boolean }> }).__phantomLog
+      .filter((f) => f.spectating).length >= 60,
+    undefined, { timeout: 45_000 },
+  );
 
-  const log = await page.evaluate(() => (globalThis as unknown as { __phantomLog: Array<{ spectating: boolean; body: boolean; entry: boolean }> }).__phantomLog);
+  const log = await page.evaluate(() => {
+    const g = globalThis as unknown as { __phantomLog: Array<{ spectating: boolean; body: boolean; entry: boolean }>; __phantomStop?: boolean };
+    g.__phantomStop = true;
+    return g.__phantomLog;
+  });
   const spectatingFrames = log.filter((f) => f.spectating);
   expect(spectatingFrames.length, 'frames sampled while spectating').toBeGreaterThan(30);
   const withBody = spectatingFrames.filter((f) => f.body).length;
