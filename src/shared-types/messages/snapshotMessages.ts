@@ -407,4 +407,8 @@ export interface TimeScaleKeyframe {
   s: number;
   /** Server tick from which `s` applies. */
   fromTick: number;
+  /** While the speed is gliding (the dimmer): where it is heading. The client
+   *  extrapolates the glide with the shared `glideToward` so its clock moves
+   *  in step with the server's. Absent = not gliding. */
+  t?: number;
 }

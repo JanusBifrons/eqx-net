@@ -217,3 +217,20 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   (non-testMode) TiDi rooms keep it. swarm-tidi passed on retry: at the floor
   the room runs fewer ticks per wall second, so shedding takes longer
   (expected; noted, not retuned). Re-running the tier.
+- 2026-11-12: **the showcase found two real bugs, both fixed.**
+  1. Through a glide the client heard the speed only via snapshots, so it ran
+     behind the server. Fix: the keyframe carries the glide target `t`, and
+     both sides glide with the shared `glideToward`
+     (`shared-types/timeScale.ts`, #15); the client extrapolates the server's
+     speed every frame (last keyframe + time since wire arrival + RTT/2).
+  2. Above 1× the client under-led the server: `leadTicks` comes from the RTT
+     in wall time, but at speed s the same RTT spans s× the game ticks.
+     Inputs arrived late, giving 11–17 corrections per dial take. Fix:
+     `gameLeadTicks()` = leadTicks × speed, used for `targetTick`, the render
+     tick phase and starvation recovery (exact at 1×).
+  After both: the dial take had **0/510 snapshots corrected**, 0 pose
+  corrections, and passed QA on the first take. Re-films with the #487 encode
+  fix: fleet-melee 1× (0/247 corrected), 0.5× (0/299, 30 Hz wall = 60 per
+  game s). The fixed 2× take never starts (at 2× from join, the fight thins
+  the NPCs below the shot's setup threshold before the art bakes), so the
+  dial shot's 8 s at 2× stands in for it. Unit 5025 ✓.

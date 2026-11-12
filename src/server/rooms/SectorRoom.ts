@@ -398,6 +398,7 @@ import type { LockEntry } from '../../core/combat/lockState.js';
 import { createSectorClock, type GameTimer } from '../time/gameTime.js';
 import { MIN_TIME_SCALE, MAX_TIME_SCALE, clampTimeScale, type GameClock } from '../../core/clock/GameClock.js';
 import { LoadSpeedController } from '../../core/clock/LoadSpeedController.js';
+import { glideToward } from '../../shared-types/timeScale.js';
 import { advanceSchedule, tickPeriodMs, type CatchUpResult } from '../../core/physics/catchUp.js';
 
 /** Stamp the ship scale and the naval range mode onto a welcome (shared
@@ -484,8 +485,7 @@ const LockTimeCapSchema = z.number().finite().min(0).max(600);
  */
 const TimeScaleSchema = z.number().finite().min(MIN_TIME_SCALE).max(MAX_TIME_SCALE);
 
-/** The dimmer's rate: speed units per wall second (1× → 0.5× in 1 s). */
-export const TIME_SCALE_SLEW_PER_S = 0.5;
+
 
 const JoinOptionsSchema = z
   .object({
@@ -2176,7 +2176,7 @@ export class SectorRoom extends Room<SectorState> {
     // ships" digest. Extracted to SnapshotBroadcaster.ts.
     this.snapshotBroadcaster = new SnapshotBroadcaster({
       shellEvents: () => this.shellHub,
-      timeScale: () => (this.timeScaleKey.s === 1 ? undefined : this.timeScaleKey),
+      timeScale: () => (this.timeScaleKey.s === 1 && this.timeScaleKey.t === undefined ? undefined : this.timeScaleKey),
       serverTick: () => this.serverTick,
       sabU32: this.sabU32,
       clients: this.clients,
@@ -6522,9 +6522,9 @@ export class SectorRoom extends Room<SectorState> {
     this.lastSlewAtMs = nowMs;
     const tgt = this.targetTimeScale();
     const cur = this.gameClock.scale;
-    if (cur === tgt) return;
-    const step = (TIME_SCALE_SLEW_PER_S * dt) / 1000;
-    this.gameClock.setScale(Math.abs(tgt - cur) <= step ? tgt : cur + Math.sign(tgt - cur) * step);
+    if (cur !== tgt) this.gameClock.setScale(glideToward(cur, tgt, dt / 1000));
+    // The keyframe carries the glide's target so clients glide in step (#15).
+    this.timeScaleKey.t = this.gameClock.scale === tgt ? undefined : tgt;
   }
 
   /** The sector's chosen speed (1×, or a forced demo/test speed): the ceiling

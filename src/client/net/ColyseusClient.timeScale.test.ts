@@ -68,6 +68,21 @@ describe('client game time follows the sector speed (time scale 4a)', () => {
     expect(Math.floor((c.gameClock.now() - before) / (1000 / 60))).toBe(12);
   });
 
+  it('through a glide the client extrapolates the server speed (no lag)', () => {
+    const clock = new MockClock(1000);
+    const client = new ColyseusGameClient(clock);
+    const c = asInternals(client) as Internals & { followSpeedGlide(): void; _lastSnapshotRecvAtMs: number };
+    c._lastSnapshotRecvAtMs = 1000;
+    c.handleSnapshot({ ...snap(100), timeScale: { s: 1, fromTick: 100, t: 2 } } as SnapshotMessage);
+    expect(c.gameClock.scale).toBe(1);
+    clock.advance(1000); // 1 s later, no new snapshot: the server is at 1.5×
+    c.followSpeedGlide();
+    expect(c.gameClock.scale).toBeCloseTo(1.5, 5);
+    clock.advance(5000);
+    c.followSpeedGlide();
+    expect(c.gameClock.scale).toBe(2); // arrives, never overshoots
+  });
+
   it('a snapshot without a keyframe returns the speed to 1×', () => {
     const clock = new MockClock(0);
     const c = asInternals(new ColyseusGameClient(clock));

@@ -174,10 +174,14 @@ describe('SectorRoom integration — the speed dimmer', () => {
 
   it('a smooth change glides through the speeds between, then arrives', async () => {
     harness = await bootSectorTestServer({ asteroidConfig: [] });
-    await harness.connectAs('player-1');
+    const cRoom = await harness.connectAs('player-1');
     const r = harness.getServerRoom() as unknown as SectorRoom;
     expect(r.setTimeScale(2, true)).toBe(2); // returns the target
     expect(r.gameClock.scale).toBe(1); // not yet: it glides
+    // Mid-glide snapshots carry the target, so clients glide in step (#15).
+    harness.sendThrust(cRoom);
+    const mid = await harness.waitForSnapshot(cRoom, 3000);
+    expect(mid.timeScale?.t).toBe(2);
     const seen: number[] = [];
     const deadline = Date.now() + 6_000;
     while (r.gameClock.scale < 2 && Date.now() < deadline) {
