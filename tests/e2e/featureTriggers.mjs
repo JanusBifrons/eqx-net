@@ -91,10 +91,6 @@ export const QUARANTINE = new Set([
   'structure-placement-ghost',
   // :197 repeat builds across a placement (R2.6); new on train #399.
   'speed-dial',
-  // :28 / :105 tap-to-inspect; all passed locally 2026-11-10, so likely CI flake.
-  'entity-inspect',
-  // :95 inspector clears the app header; same cluster as entity-inspect.
-  'break-in',
   // :115 hands-off LOCK then CANCEL in the info box; the drain case is flaky.
   'fire-control-lock',
   // :106 hit beam; :77 is already fixme (no firing into empty space now).
