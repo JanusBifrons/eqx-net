@@ -162,6 +162,12 @@ export class SwarmEntityRegistry {
     return this.byId.size;
   }
 
+  /** Visit every record in registration order with no iterator allocation
+   *  (Map.forEach), for per-tick callers that pass a bound visitor (#14). */
+  forEachRecord(visit: (rec: SwarmEntityRecord) => void): void {
+    this.byId.forEach(visit);
+  }
+
   /** Iterate all registered records in registration order. */
   *all(): IterableIterator<SwarmEntityRecord> {
     for (const rec of this.byId.values()) yield rec;
