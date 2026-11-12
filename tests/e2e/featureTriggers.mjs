@@ -26,6 +26,12 @@ export const FEATURE_TRIGGERS = [
     specs: ['spectator-mode', 'build-hotbar-fits-viewport'],
   },
   {
+    // Capital helm orders + the green move marker at the course point.
+    area: 'capital helm',
+    paths: ['src/core/helm/', 'src/client/helm/', 'src/client/render/helm/', 'src/client/components/HelmPanel'],
+    specs: ['capital-helm'],
+  },
+  {
     area: 'energy and boost',
     paths: ['src/core/combat/Energy', 'src/client/hud/GameHud', 'src/client/hud/widgets', 'src/core/physics/applyShipInput'],
     specs: ['energy-bar', 'boost-facing'],
