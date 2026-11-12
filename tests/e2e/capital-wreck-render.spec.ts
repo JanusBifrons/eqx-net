@@ -115,3 +115,48 @@ test('wreck pieces wear the dead ship\'s art and their cut edges glow (S3)', asy
     expect(cool.wreckTextured, JSON.stringify(cool)).toBe(cool.wreckPieces);
   }
 });
+
+/**
+ * Money-shot review (2026-11-12): in the filmed take (the player's look,
+ * `shiplight=high` = GPU-lit art) the lit hull turned into flat dark-grey
+ * pieces with faint turret circles at the switch. The pieces reused the
+ * parent's art, but GPU-lit art is a data page of UNLIT maps (albedo,
+ * normals, emission) that only the lit shader turns into a lit hull; the
+ * pieces drew the raw albedo slice through Pixi's default shader (no sun, no
+ * normals) and then multiplied it by a dark burnt tint. The S3 case above runs
+ * the baked look (automation's default), so it never saw this. Here every
+ * piece must go through the lit shader.
+ */
+test('GPU-lit look: every wreck piece draws the dead ship\'s art through the lit shader', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto(`${BASE_URL}?room=wreck-test&testId=${randomUUID()}&worker=0&shipKind=fighter&initialHull=1000000&zoom=0.12&art=machined&fx=new&shiplight=high&spawnX=1800&spawnY=2500`);
+  type Stats = { machinedSprites: number; wreckPieces: number; wreckTextured: number; wreckLit: number; wreckRawMaps: number; litMeshes: number };
+  await page.waitForFunction(() => {
+    const s = (globalThis as unknown as { __eqxArtStats?: () => Stats }).__eqxArtStats?.();
+    return (s?.machinedSprites ?? 0) >= 2;
+  }, undefined, { timeout: 90_000 });
+  const pre = await page.evaluate(() => (globalThis as unknown as { __eqxArtStats: () => Stats }).__eqxArtStats());
+  expect(pre.litMeshes, `GPU lighting is on and the live hulls are lit meshes: ${JSON.stringify(pre)}`).toBeGreaterThan(0);
+  const dir = process.env['EQX_WRECK_SHOT_DIR'];
+  if (dir) await page.screenshot({ path: `${dir}/lit-before.png` });
+  await page.evaluate(() => {
+    const g = globalThis as unknown as { __eqxClient?: { getRoom?: () => { send: (ch: string, m: unknown) => void } | null } };
+    g.__eqxClient?.getRoom?.()?.send('test_kill_capitals', { type: 'test_kill_capitals' });
+  });
+  await page.waitForFunction(() => {
+    const s = (globalThis as unknown as { __eqxArtStats?: () => Stats }).__eqxArtStats?.();
+    return (s?.wreckPieces ?? 0) >= 2;
+  }, undefined, { timeout: 15_000 });
+  const t0 = Date.now();
+  const s = await page.evaluate(() => (globalThis as unknown as { __eqxArtStats: () => Stats }).__eqxArtStats());
+  if (dir) {
+    // Review frames at death + 0.3 s, + 2 s and + 5 s.
+    for (const [name, at] of [['lit-0.3s', 300], ['lit-2s', 2000], ['lit-5s', 5000]] as const) {
+      await page.waitForTimeout(Math.max(0, at - (Date.now() - t0)));
+      await page.screenshot({ path: `${dir}/${name}.png` });
+    }
+  }
+  expect(s.wreckTextured, JSON.stringify(s)).toBe(s.wreckPieces);
+  expect(s.wreckRawMaps, `pieces drawing raw lit maps (flat grey): ${JSON.stringify(s)}`).toBe(0);
+  expect(s.wreckLit, JSON.stringify(s)).toBe(s.wreckPieces);
+});
