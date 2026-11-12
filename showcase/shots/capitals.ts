@@ -80,6 +80,8 @@ export const capitalLineup: Shot = {
   durationMs: 10_000,
   async startWhen(ctx) {
     await artSettled(ctx);
+    // A framed camera needs a free camera: watch as a spectator (record as is).
+    await ctx.spectate();
   },
   camera: [
     { atMs: 0, smoothMs: 0, shot: { kind: 'frame', group: 'drones', padding: 0.15, maxZoom: 3 } },
@@ -99,11 +101,13 @@ export const capitalBroadside: Shot = {
   reel: false,
   server: 'capitals',
   // The fight starts on cue (test_aggro) once the art has baked, not at join.
-  target: { room: 'showcase-capitals-combat', params: { sectorScale: '4', shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
+  target: { room: 'showcase-capitals-combat', params: { sectorScale: '4', shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
   hud: 'none',
   durationMs: 14_000,
   async startWhen(ctx) {
     await artSettled(ctx);
+    // A framed camera needs a free camera: watch as a spectator (record as is).
+    await ctx.spectate();
   },
   camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'frame', group: 'all', padding: 0.2, maxZoom: 2.5 } }],
   async run(ctx) {
@@ -195,12 +199,11 @@ export const capitalPilot: Shot = {
   target: { room: 'showcase-capitals', params: { sectorScale: '4', shipKind: 'battleship', art: 'machined', fx: 'new', spawnX: 0, spawnY: -9000, initialHull: 1_000_000 } },
   hud: 'minimal',
   durationMs: 26_000,
-  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'track', target: 'local', zoom: 0.09, leadMs: 400 } }],
+  // The game's follow camera; the pilot zooms with the mouse wheel (record as is).
   async startWhen(ctx) {
     await artSettled(ctx);
   },
   async run(ctx) {
-    const k = ctx.viewport.width / 1920;
     await ctx.sleep(1500);
     // A real tap on empty space up and to the right: the helm takes the course.
     const pt = ctx.px(1500, 260);
@@ -210,10 +213,16 @@ export const capitalPilot: Shot = {
       if (on) break;
       await ctx.sleep(300);
     }
-    await ctx.sleep(7000);
-    await ctx.cinema.play([{ atMs: 0, smoothMs: 4000, shot: { kind: 'track', target: 'local', zoom: 0.032 * k, leadMs: 400 } }]);
-    await ctx.sleep(9000);
-    await ctx.cinema.play([{ atMs: 0, smoothMs: 3000, shot: { kind: 'track', target: 'local', zoom: 0.09 * k, leadMs: 400 } }]);
+    await ctx.sleep(6000);
+    // Pull right back to the capital pilot's zoom floor, then back in.
+    const c = ctx.px(960, 540);
+    await ctx.page.mouse.move(c.x, c.y);
+    // Each notch is x0.9 / x1.1; the battleship's floor sits ~3.5x out from
+    // the start, so 15 out reaches it and 12 back in returns to the start.
+    await wheelSteps(ctx, 100, 15, 200);
+    await ctx.sleep(6000);
+    await wheelSteps(ctx, -100, 12, 200);
+    await ctx.sleep(3000);
   },
 };
 
@@ -235,17 +244,23 @@ export const capitalEngines: Shot = {
   target: { room: 'showcase-capitals', params: { sectorScale: '4', shipKind: 'battleship', art: 'machined', fx: 'new', spawnX: 0, spawnY: -9000, initialHull: 1_000_000 } },
   hud: 'none',
   durationMs: 22_000,
-  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'track', target: 'local', zoom: 0.6, offsetY: -3000 } }],
+  // The game's follow camera (record as is): the pilot zooms out a little to
+  // see the engines, then further to the whole hull under way.
   async startWhen(ctx) {
     await artSettled(ctx);
   },
   async run(ctx) {
-    const k = ctx.viewport.width / 1920;
+    const c = ctx.px(960, 540);
+    await ctx.page.mouse.move(c.x, c.y);
     await ctx.page.keyboard.down('ArrowUp');
     try {
-      await ctx.sleep(9000);
-      await ctx.cinema.play([{ atMs: 0, smoothMs: 4000, shot: { kind: 'track', target: 'local', zoom: 0.08 * k } }]);
-      await ctx.sleep(12_500);
+      // The follow camera leads the ship forward, so zoomed in the stern is
+      // off screen (take 1, 2026-11-12). Zoom out until it clears the caption,
+      // watch the engines, then pull back to the whole hull under way.
+      await wheelSteps(ctx, 100, 4, 200);
+      await ctx.sleep(8000);
+      await wheelSteps(ctx, 100, 10, 200);
+      await ctx.sleep(7500);
     } finally {
       await ctx.page.keyboard.up('ArrowUp');
     }
@@ -263,16 +278,16 @@ export const capitalTurrets: Shot = {
   id: 'capital-turrets',
   section: 'mechanics',
   title: 'Capital turrets',
-  caption: 'The battleship turns its 16-inch guns onto a fighter 4,000 units off its beam and opens fire.',
+  caption: 'The battleship turns its 16-inch guns onto a heavy cruiser 4,000 units off its beam and opens fire.',
   features: ['CAP'],
   docs: ['ship-kinds'],
   reel: false,
   server: 'capitals',
   // One battleship, the pilot 4,000 u off its beam (showcase-capital-duel). No
   // startHostile: the fight starts on cue in run(), after the art has baked.
-  target: { room: 'showcase-capital-duel', params: { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
+  target: { room: 'showcase-capital-duel', params: { shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
   hud: 'none',
-  durationMs: 30_000,
+  durationMs: 15_000,
   async startWhen(ctx) {
     await artSettled(ctx);
     // The battleship must be in the client's view before the camera tracks it.
@@ -282,9 +297,14 @@ export const capitalTurrets: Shot = {
       c?.mirror.swarm.forEach((e) => { if (e.kind === 1) n++; });
       return n > 0;
     }, null, { timeout: 60_000, polling: 250 });
-    // Start the fight off camera: at the real 4°/s a 16" turret takes ~25 s to
-    // train onto the beam, so the take opens with the guns finishing the swing.
-    await keepHostile(ctx, 18_000);
+    // Start the fight off camera with ONE cue. Measured (2026-11-12): the lock
+    // completes ~2.6 s after the cue, the 16" turrets finish training onto the
+    // beam and fire at ~26-28 s, then reload for 30 s. So wait ~20 s and the
+    // take catches the volley ~6 s in, with no cue during it (record as is).
+    await sendRoom(ctx, 'test_aggro', { type: 'test_aggro' });
+    await ctx.sleep(20_000);
+    // A framed camera needs a free camera: watch as a spectator (record as is).
+    await ctx.spectate();
   },
   async run(ctx) {
     const k = ctx.viewport.width / 1920;
@@ -306,23 +326,19 @@ export const capitalTurrets: Shot = {
       return me ? { x: (me.x - bx) * 0.35, y: (me.y - by) * 0.35 } : { x: 1200, y: 0 };
     });
     await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'track', target: bs, zoom: 0.18 * k, offsetX: toward.x, offsetY: toward.y } }]);
-    await keepHostile(ctx, 13_000);
-    // Then the whole gap, so the salvos are seen crossing it.
-    await ctx.cinema.play([{ atMs: 0, smoothMs: 3500, shot: { kind: 'frame', ids: [bs, 'local'], padding: 0.2 } }]);
-    await keepHostile(ctx, 16_500);
+    // Close on the guns as they finish the swing and fire...
+    await ctx.sleep(5_000);
+    // ...then the whole gap, so the shells are seen crossing it and landing.
+    await ctx.cinema.play([{ atMs: 0, smoothMs: 2500, shot: { kind: 'frame', ids: [bs, 'local'], padding: 0.2 } }]);
+    await ctx.sleep(9_500);
   },
 };
 
-/** Hold the fight for `ms`: drone hostility decays after 30 s without a hit
- *  on the drone, so re-send the test cue every 9 s (a pilot that never shoots
- *  back would otherwise be forgotten mid-take). */
-async function keepHostile(ctx: ShotContext, ms: number): Promise<void> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    await sendRoom(ctx, 'test_aggro', { type: 'test_aggro' });
-    await ctx.sleep(Math.min(9000, end - Date.now()));
-  }
+/** Turn the mouse wheel `n` notches (+ = out), as a player would. */
+async function wheelSteps(ctx: ShotContext, dy: number, n: number, gapMs: number): Promise<void> {
+  for (let i = 0; i < n; i++) { await ctx.page.mouse.wheel(0, dy); await ctx.sleep(gapMs); }
 }
+
 
 /**
  * Review round (2026-11-07): "how does it look from a fighter at normal zoom
@@ -334,13 +350,13 @@ export const capitalGunsFighter: Shot = {
   id: 'capital-guns-fighter',
   section: 'mechanics',
   title: 'Capital guns, up close',
-  caption: 'A battleship\'s 16-inch and 5-inch guns firing at a fighter alongside, seen from the fighter at normal zoom.',
+  caption: 'A battleship\'s 16-inch and 5-inch guns firing at a heavy cruiser alongside, seen from the cruiser at normal zoom.',
   features: ['CAP'],
   docs: ['ship-kinds'],
   reel: false,
   server: 'capitals',
   // The pilot's own hull (2026-11-10: no survive params; the fight runs its course).
-  target: { room: 'showcase-capital-duel', params: { shipKind: 'fighter', art: 'machined', fx: 'new', spawnX: 1500, spawnY: -1800 } },
+  target: { room: 'showcase-capital-duel', params: { shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', spawnX: 1500, spawnY: -1800 } },
   hud: 'none',
   durationMs: 22_000,
   async startWhen(ctx) {
@@ -407,7 +423,7 @@ export const capitalGunsBystander: Shot = {
   id: 'capital-guns-bystander',
   section: 'mechanics',
   title: 'Capital guns, from beside them',
-  caption: 'A battleship firing at a fighter 4,000 units away, seen from another fighter parked beside its turrets.',
+  caption: 'A battleship firing at a heavy cruiser 4,000 units away, seen from a fighter parked beside its turrets.',
   features: ['CAP'],
   docs: ['ship-kinds'],
   reel: false,
@@ -434,15 +450,15 @@ export const capitalGunsBystander: Shot = {
     }, null, { timeout: 60_000, polling: 250 });
     const bs0 = await battleship(ctx.page);
     const tp = bs0 ? shipPoint(bs0, 0, TARGET_OFF) : { x: 4000, y: 0 };
-    await tpage.goto(targetUrl(ctx.baseUrl, { room: 'showcase-capital-duel', params: { shipKind: 'fighter', art: 'classic', initialHull: 1_000_000, noselfdmg: 1, spawnX: Math.round(tp.x), spawnY: Math.round(tp.y) } }, ctx.testId, 'none'));
+    await tpage.goto(targetUrl(ctx.baseUrl, { room: 'showcase-capital-duel', params: { shipKind: 'heavy-cruiser', art: 'classic', initialHull: 1_000_000, noselfdmg: 1, spawnX: Math.round(tp.x), spawnY: Math.round(tp.y) } }, ctx.testId, 'none'));
     await tpage.waitForSelector('[data-testid="warp-screen"][data-warp-visible="0"]', { state: 'attached', timeout: 60_000 });
     const aggro = (): Promise<void> => tpage.evaluate(() => {
       const c = (window as unknown as { __eqxClient?: { getRoom?: () => { send: (ch: string, x: unknown) => void } | null } }).__eqxClient;
       c?.getRoom?.()?.send('test_aggro', { type: 'test_aggro' });
     }).catch(() => undefined);
+    // One cue sets the scene; the battleship's lock keeps it hostile, so
+    // nothing re-arms it during the take (record as is).
     await aggro();
-    const timer = setInterval(() => { void aggro(); }, 9000);
-    targetPages.get(ctx.testId)!.timer = timer;
     await artSettled(ctx);
     // Fly the bystander to its spot while the turrets finish training round.
     await keepStation(ctx, 14_000);
@@ -493,6 +509,8 @@ export const capitalFleetWarp: Shot = {
   durationMs: 7_000,
   async startWhen(ctx) {
     await artSettled(ctx);
+    // A framed camera needs a free camera: watch as a spectator (record as is).
+    await ctx.spectate();
   },
   // A HELD camera: 'frame all' followed the fleet to its arrival point,
   // where the formation looks the same, so the jump didn't read (first take).
@@ -522,6 +540,8 @@ export const capitalFleetArrive: Shot = {
   // recording starts ~1.5 s before the drop (review: 5 s of empty sky).
   async startWhen(ctx) {
     await sendRoom(ctx, 'test_fleet_warp', { type: 'test_fleet_warp', x: -45_000, y: 0 });
+    // A framed camera needs a free camera: watch as a spectator (record as is).
+    await ctx.spectate();
     await ctx.sleep(1_800);
   },
   camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: -45_000, y: 0, zoom: 0.15 } }],
