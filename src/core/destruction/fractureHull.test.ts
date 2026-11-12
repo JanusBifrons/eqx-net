@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import {
   fractureHull,
   fracturePlan,
+  projectToOutline,
   FRACTURE_ALGO_VERSION,
   FRACTURE_MAX_PIECES,
   FRACTURE_SNAP_CHANCE,
@@ -178,7 +179,7 @@ describe('fractureHull', () => {
     for (const seed of [1, 2, 3, 4, 5]) {
       // A shatter property: a clean snap (v2, seeded chance) has no small pieces.
       const input = { ...battleshipInput(seed, 32), snapChance: 0 };
-      const k = input.killPoint;
+      const k = projectToOutline(input.hull, input.killPoint);
       const pieces = fractureHull(input)
         .map((p) => ({ a: p.area, d: Math.hypot(p.centroid.x - k.x, p.centroid.y - k.y) }))
         .sort((p, q) => p.d - q.d);
@@ -287,7 +288,8 @@ describe('fractureHull', () => {
         const plan = fracturePlan(input);
         expect(plan.primary).not.toBeNull();
         const { point, dir } = plan.primary!;
-        expect(Math.hypot(point.x - input.killPoint.x, point.y - input.killPoint.y)).toBeLessThanOrEqual(FRACTURE_QUANTUM);
+        const k = projectToOutline(input.hull, input.killPoint);
+        expect(Math.hypot(point.x - k.x, point.y - k.y)).toBeLessThanOrEqual(FRACTURE_QUANTUM);
         expect(Math.hypot(dir.x, dir.y)).toBeCloseTo(1, 12);
         // The battleship's keel is the y axis: the break runs mostly across x.
         expect(Math.abs(dir.x)).toBeGreaterThan(Math.abs(dir.y) * 2);
@@ -303,7 +305,7 @@ describe('fractureHull', () => {
     it.each([false, true])('a cut edge lies on the line within one quantum of the kill point (snap=%s)', (snap) => {
       for (let seed = 0; seed < 12; seed++) {
         const input = { ...battleshipInput(seed), snapChance: snap ? 1 : 0 };
-        const k = input.killPoint;
+        const k = projectToOutline(input.hull, input.killPoint);
         let best = Infinity;
         for (const p of fractureHull(input)) {
           for (let i = 0; i < p.outline.length; i++) {
@@ -325,7 +327,7 @@ describe('fractureHull', () => {
           const pos = p.outline.some((v) => side(v) > FRACTURE_QUANTUM);
           const neg = p.outline.some((v) => side(v) < -FRACTURE_QUANTUM);
           expect(pos && neg).toBe(false);
-          const touches = p.outline.some((v, i) => distToSeg(v, p.outline[(i + 1) % p.outline.length]!, input.killPoint) <= FRACTURE_QUANTUM);
+          const touches = p.outline.some((v, i) => distToSeg(v, p.outline[(i + 1) % p.outline.length]!, projectToOutline(input.hull, input.killPoint)) <= FRACTURE_QUANTUM);
           if (touches) sidesNearKill.add(Math.sign(side(p.centroid)));
         }
         expect(sidesNearKill).toEqual(new Set([-1, 1]));
@@ -454,6 +456,63 @@ describe('fractureHull', () => {
     });
   });
 
+  // ── v3: the kill point is ON the hull outline (owner: "Why isn't the red
+  // dot on the border of the ship?") ──
+  describe('kill point on the outline', () => {
+    const bs = hull('battleship');
+    const outline = bs.map(([x, y]) => ({ x, y }));
+
+    it('projectToOutline puts interior, exterior and edge points on the outline', () => {
+      const pts: V[] = [
+        { x: 120, y: -1500 }, { x: 0, y: 0 }, { x: 5000, y: 300 }, { x: -4000, y: -2000 },
+        { x: 0, y: -1e5 }, { x: 0, y: 1e5 },
+      ];
+      for (const p of pts) {
+        const k = projectToOutline(bs, p);
+        expect(distToOutline(outline, k)).toBeLessThanOrEqual(FRACTURE_QUANTUM);
+        expect(Number.isInteger(k.x / FRACTURE_QUANTUM) && Number.isInteger(k.y / FRACTURE_QUANTUM)).toBe(true);
+        // Nearest: no outline vertex is closer than the projection (within a quantum).
+        for (const v of outline) expect(Math.hypot(k.x - p.x, k.y - p.y)).toBeLessThanOrEqual(Math.hypot(v.x - p.x, v.y - p.y) + FRACTURE_QUANTUM);
+        // Deterministic and idempotent.
+        expect(projectToOutline(bs, p)).toEqual(k);
+        expect(Math.hypot(projectToOutline(bs, k).x - k.x, projectToOutline(bs, k).y - k.y)).toBeLessThanOrEqual(FRACTURE_QUANTUM);
+      }
+    });
+
+    it('the kill point the fracture uses is on the outline, for any input point', () => {
+      for (let seed = 0; seed < 20; seed++) {
+        const kp = { x: ((seed * 397) % 3000) - 1500, y: ((seed * 911) % 6000) - 3000 };
+        const plan = fracturePlan({ ...battleshipInput(seed), killPoint: kp, snapChance: 0 });
+        expect(distToOutline(outline, plan.primary!.point)).toBeLessThanOrEqual(FRACTURE_QUANTUM);
+      }
+    });
+
+    it('a hit on the hull edge: the shatter is densest there and the primary line runs through it', () => {
+      const edge = projectToOutline(bs, { x: 1e5, y: -900 }); // starboard side
+      for (const seed of [1, 2, 3, 4, 5]) {
+        const input: FractureInput = { hull: bs, seed, killPoint: edge, maxPieces: 32, snapChance: 0 };
+        const { point } = fracturePlan(input).primary!;
+        expect(Math.hypot(point.x - edge.x, point.y - edge.y)).toBeLessThanOrEqual(FRACTURE_QUANTUM);
+        const pieces = fractureHull(input)
+          .map((p) => ({ a: p.area, d: Math.hypot(p.centroid.x - edge.x, p.centroid.y - edge.y) }))
+          .sort((p, q) => p.d - q.d);
+        const third = Math.floor(pieces.length / 3);
+        const mean = (xs: typeof pieces): number => xs.reduce((s, p) => s + p.a, 0) / xs.length;
+        expect(mean(pieces.slice(0, third))).toBeLessThan(mean(pieces.slice(-third)));
+      }
+    });
+
+    it('a hit on a bow or stern tip still splits the hull in two big parts on a snap', () => {
+      const total = tupleArea(bs);
+      for (const far of [{ x: 0, y: -1e5 }, { x: 0, y: 1e5 }]) {
+        for (let seed = 0; seed < 10; seed++) {
+          const pieces = fractureHull({ hull: bs, seed, killPoint: far, maxPieces: FRACTURE_MAX_PIECES, snapChance: 1, killBlowDamage: 1, recentDamageRate: 1 });
+          expect(pieces.filter((p) => p.area >= 0.1 * total).length).toBe(2);
+        }
+      }
+    });
+  });
+
   it('golden: the battleship fracture output is locked (bump FRACTURE_ALGO_VERSION if this changes)', () => {
     const pieces = fractureHull(battleshipInput(20261112));
     expect({ version: FRACTURE_ALGO_VERSION, pieces: pieces.length, hash: hashPieces(pieces) }).toEqual(GOLDEN);
@@ -469,19 +528,31 @@ describe('fractureHull', () => {
     }).toEqual(GOLDEN_DAMAGE);
   });
 
-  it.runIf(!!process.env.EQX_FRACTURE_SVG)('prints review SVGs', () => {
+  it.runIf(!!process.env.EQX_FRACTURE_SVG)('prints review SVGs (kill points on the hull edge)', async () => {
+    // Real hits land on the hull's edge: bow, beam, quarter and the port bow.
+    const bs = hull('battleship');
+    const edge = (x: number, y: number): V => projectToOutline(bs, { x, y });
+    const base = (k: V): FractureInput => ({ hull: bs, seed: 20261112, killPoint: k, maxPieces: FRACTURE_MAX_PIECES });
     const cases: Array<[string, FractureInput]> = [
-      ['fixed 24 + section cut', { ...battleshipInput(20261112), sectionCuts: [{ a: { x: -1000, y: 900 }, b: { x: 1000, y: 900 } }] }],
-      ['slow grind', { ...battleshipInput(20261112, FRACTURE_MAX_PIECES), killBlowDamage: 0.02, recentDamageRate: 0.05, snapChance: 0 }],
-      ['heavy blow', { ...battleshipInput(20261112, FRACTURE_MAX_PIECES), killBlowDamage: 2, recentDamageRate: 2, snapChance: 0 }],
-      ['clean snap', { ...battleshipInput(20261112, FRACTURE_MAX_PIECES), killBlowDamage: 1, recentDamageRate: 1, snapChance: 1 }],
+      ['slow grind (bow)', { ...base(edge(0, -1e5)), killBlowDamage: 0.02, recentDamageRate: 0.05, snapChance: 0 }],
+      ['medium (beam)', { ...base(edge(1000, 0)), killBlowDamage: 0.4, recentDamageRate: 0.4, snapChance: 0 }],
+      ['heavy blow (quarter)', { ...base(edge(1000, 1800)), killBlowDamage: 2, recentDamageRate: 2, snapChance: 0 }],
+      ['clean snap (port bow)', { ...base(edge(-1000, -1200)), killBlowDamage: 1, recentDamageRate: 1, snapChance: 1 }],
     ];
+    const panels: string[] = [];
     for (const [name, input] of cases) {
       const t0 = performance.now();
       const pieces = fractureHull(input);
       const ms = performance.now() - t0;
       console.log(`fracture [${name}]: ${pieces.length} pieces in ${ms.toFixed(1)} ms`);
-      console.log(toSvg(input, pieces));
+      const svg = toSvg(input, pieces);
+      console.log(svg);
+      panels.push(`<div style="display:inline-block;margin:8px;color:#ddd;font:20px sans-serif;text-align:center">${name}: ${pieces.length} pieces<br/>${svg}</div>`);
+    }
+    const dir = process.env.EQX_FRACTURE_SVG_DIR;
+    if (dir) {
+      const { writeFileSync } = await import('node:fs');
+      writeFileSync(`${dir}/review-edge.html`, `<!doctype html><html><body style="background:#05070b;margin:0">${panels.join('')}</body></html>`);
     }
   });
 });
@@ -489,8 +560,12 @@ describe('fractureHull', () => {
 // v1 (#499): { pieces: 24, hash: 2002695480 }.
 // v2: the primary break line through the kill point + the seeded snap draw
 // changed every fracture (doc §6, "the last hit decides where it splits").
-const GOLDEN = { version: 2, pieces: 24, hash: 2495569367 };
-const GOLDEN_DAMAGE = { shatter: { pieces: 42, hash: 2123664143 }, snap: { pieces: 2, hash: 3881272329 } };
+// v2: { pieces: 24, hash: 2495569367 }; damage { shatter 42 / 2123664143, snap 2 / 3881272329 }.
+// v3: the kill point is projected onto the hull outline (owner: "Why isn't
+// the red dot on the border of the ship?"), the seed pair moves just inside
+// the edge, and a tip hit's primary line runs through the hull's middle.
+const GOLDEN = { version: 3, pieces: 24, hash: 4028792851 };
+const GOLDEN_DAMAGE = { shatter: { pieces: 42, hash: 797705088 }, snap: { pieces: 2, hash: 4043344841 } };
 
 function hashPieces(pieces: ReadonlyArray<FracturePiece>): number {
   let h = 0x811c9dc5;
@@ -568,7 +643,8 @@ function toSvg(input: FractureInput, pieces: ReadonlyArray<FracturePiece>): stri
     const { point: k, dir: d } = primary;
     out.push(`<line x1="${k.x - d.x * L}" y1="${k.y - d.y * L}" x2="${k.x + d.x * L}" y2="${k.y + d.y * L}" stroke="#3fd0ff" stroke-width="5" stroke-dasharray="40 24"/>`);
   }
-  out.push(`<circle cx="${input.killPoint.x}" cy="${input.killPoint.y}" r="22" fill="#fff" stroke="#ff2a2a" stroke-width="10"/>`);
+  const kp = projectToOutline(input.hull, input.killPoint);
+  out.push(`<circle cx="${kp.x}" cy="${kp.y}" r="22" fill="#fff" stroke="#ff2a2a" stroke-width="10"/>`);
   out.push('</svg>');
   return out.join('\n');
 }

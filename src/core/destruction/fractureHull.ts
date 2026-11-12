@@ -34,8 +34,12 @@ import type { Vec2 } from '../swarm/asteroidShape.js';
 
 /** Bump on ANY change to the produced geometry (rides the S2 descriptor).
  *  v2: primary break line through the kill point, seeded clean snap,
- *  damage-driven piece count. */
-export const FRACTURE_ALGO_VERSION = 2;
+ *  damage-driven piece count.
+ *  v3: the kill point is projected onto the hull outline first (a real hit
+ *  lands on the hull's edge, never inside it); the seed pair sits just inside
+ *  the edge; a primary line that would only clip a sliver off a bow or stern
+ *  tip turns to run through the hull's middle instead. */
+export const FRACTURE_ALGO_VERSION = 3;
 /** Default chance that a hull snaps cleanly in two along the primary line
  *  instead of shattering (owner: "just make it a chance"). */
 export const FRACTURE_SNAP_CHANCE = 0.2;
@@ -72,6 +76,10 @@ const DAMAGE_KNEE = 0.35;
 const COUNT_SPREAD = 0.5;
 /** Fewest pieces a (non-snap) damage-driven fracture aims for. */
 const MIN_TARGET = 3;
+/** v3: a primary line across the keel that leaves less than this fraction of
+ *  the hull on one side (a hit near a bow or stern tip) turns to run from the
+ *  kill point through the hull's middle instead. */
+const PRIMARY_MIN_SIDE = 0.03;
 
 const EDGE_HULL = 0;
 const EDGE_VORONOI = 1;
@@ -88,7 +96,9 @@ export interface FractureInput {
   readonly hull: ReadonlyArray<readonly [number, number]>;
   /** u32 seed (the server picks it; every client regenerates from it). */
   readonly seed: number;
-  /** Where the killing blow landed, in the hull's local frame. */
+  /** Where the killing blow landed, in the hull's local frame. Since v3 it
+   *  is projected onto the hull outline (`projectToOutline`) before use, so
+   *  a point inside the hull or out at the shield radius lands on the edge. */
   readonly killPoint: Vec2;
   /** Optional section boundaries; each is the infinite line through a→b.
    *  Section cuts are straight (bulkheads); only Voronoi cuts are jagged. */
@@ -116,8 +126,9 @@ export interface FracturePlan {
   readonly snap: boolean;
   /** Piece count aimed for (≤ the cap; 2 when snapping). */
   readonly targetPieces: number;
-  /** The primary break line: through `point` (the kill point) along unit
-   *  `dir`, roughly across the keel. Null when the cap is 1. */
+  /** The primary break line: through `point` (the kill point, on the hull
+   *  outline) along unit `dir`, roughly across the keel (through the hull's
+   *  middle for a hit on a bow or stern tip). Null when the cap is 1. */
   readonly primary: { readonly point: Vec2; readonly dir: Vec2 } | null;
 }
 
@@ -149,10 +160,11 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   const scale = Math.sqrt(hullArea);
   const cuts = plan.snap ? [] : (input.sectionCuts ?? []);
   const primary = plan.primary ? primaryCut(plan.primary) : null;
+  const kill = projectRing(hull, input.killPoint.x, input.killPoint.y);
 
   // Seeds: one prefix-stable stream, so fewer seeds = a prefix of more seeds.
   // A clean snap has none: the primary line alone splits the hull.
-  const allSeeds = plan.snap ? [] : sampleSeeds(hull, hullArea, input.seed >>> 0, input.killPoint, cap, plan.primary);
+  const allSeeds = plan.snap ? [] : sampleSeeds(hull, hullArea, input.seed >>> 0, kill, cap, plan.primary);
 
   // Retry with fewer seeds, then without section cuts, then without the
   // primary line, until the cap holds.
@@ -190,6 +202,19 @@ export function fracturePlan(input: FractureInput): FracturePlan {
   return planFor(input, normaliseHull(input.hull));
 }
 
+/**
+ * The nearest point to `p` on the hull OUTLINE (its edges), snapped to
+ * `FRACTURE_QUANTUM`. A real hit lands on the hull's edge: a point inside
+ * the hull, or out at the shield radius, moves to the closest edge point.
+ * Pure and deterministic (arithmetic only, edges in a fixed order, the
+ * first edge wins a tie). `fractureHull` applies it to every kill point.
+ */
+export function projectToOutline(hull: ReadonlyArray<readonly [number, number]>, p: Vec2): Vec2 {
+  const ring = normaliseHull(hull);
+  if (ring.length === 0) return { x: q(p.x), y: q(p.y) };
+  return projectRing(ring, p.x, p.y);
+}
+
 // ───────────────────────────── plan ─────────────────────────────
 
 function clampCap(maxPieces: number): number {
@@ -210,15 +235,45 @@ function planFor(input: FractureInput, hull: P[]): FracturePlan {
   const tiltDraw = (rng.u32() % 2001) - 1000; // integer in [-1000, 1000]
   const countDraw = rng.u32() / 4294967296;
 
-  // Primary line: across the keel, tilted by the seed.
+  // Primary line: through the kill point (on the outline, v3), across the
+  // keel, tilted by the seed.
   let primary: FracturePlan['primary'] = null;
   if (cap >= 2 && hull.length >= 3) {
+    const kill = projectRing(hull, input.killPoint.x, input.killPoint.y);
     const keel = keelAxis(hull);
     const t = (tiltDraw / 1000) * PRIMARY_TILT;
-    const dx = -keel.y + keel.x * t;
-    const dy = keel.x + keel.y * t;
-    const len = Math.sqrt(dx * dx + dy * dy);
-    primary = { point: { x: input.killPoint.x, y: input.killPoint.y }, dir: { x: dx / len, y: dy / len } };
+    let dx = -keel.y + keel.x * t;
+    let dy = keel.x + keel.y * t;
+    let len = Math.sqrt(dx * dx + dy * dy);
+    dx /= len;
+    dy /= len;
+    // A hit near a bow or stern tip: a line across the keel there clips
+    // only a sliver. Run it from the kill point through the hull's middle
+    // (vertex mean) instead, keeping the seeded tilt.
+    if (minSideFrac(hull, kill, dx, dy) < PRIMARY_MIN_SIDE) {
+      let mx = 0;
+      let my = 0;
+      for (const p of hull) {
+        mx += p.x;
+        my += p.y;
+      }
+      mx /= hull.length;
+      my /= hull.length;
+      let ux = mx - kill.x;
+      let uy = my - kill.y;
+      len = Math.sqrt(ux * ux + uy * uy);
+      if (len > 0) {
+        ux /= len;
+        uy /= len;
+        const h = t * 0.05;
+        dx = ux - uy * h;
+        dy = uy + ux * h;
+        len = Math.sqrt(dx * dx + dy * dy);
+        dx /= len;
+        dy /= len;
+      }
+    }
+    primary = { point: kill, dir: { x: dx, y: dy } };
   }
 
   const chance = input.snapChance ?? FRACTURE_SNAP_CHANCE;
@@ -243,6 +298,46 @@ function planFor(input: FractureInput, hull: P[]): FracturePlan {
     targetPieces = Math.max(1, Math.min(cap, want));
   }
   return { snap, targetPieces, primary };
+}
+
+/** Nearest point on the ring's edges to (x, y), snapped to the quantum. */
+function projectRing(hull: ReadonlyArray<{ x: number; y: number }>, x: number, y: number): Vec2 {
+  let bestD = Infinity;
+  let bx = x;
+  let by = y;
+  const n = hull.length;
+  for (let i = 0; i < n; i++) {
+    const a = hull[i]!;
+    const b = hull[(i + 1) % n]!;
+    const ex = b.x - a.x;
+    const ey = b.y - a.y;
+    const l2 = ex * ex + ey * ey;
+    let t = l2 > 0 ? ((x - a.x) * ex + (y - a.y) * ey) / l2 : 0;
+    if (t < 0) t = 0;
+    else if (t > 1) t = 1;
+    const px = a.x + ex * t;
+    const py = a.y + ey * t;
+    const d = (px - x) * (px - x) + (py - y) * (py - y);
+    if (d < bestD) {
+      bestD = d;
+      bx = px;
+      by = py;
+    }
+  }
+  return { x: q(bx), y: q(by) };
+}
+
+/** The smaller share (0..0.5) of the hull's area on either side of the line
+ *  through `p` along unit (dx, dy). */
+function minSideFrac(hull: P[], p: Vec2, dx: number, dy: number): number {
+  const total = ringArea(hull);
+  if (total <= 0) return 0;
+  const nx = -dy;
+  const ny = dx;
+  let a = 0;
+  for (const part of splitByLine(hull, nx, ny, nx * p.x + ny * p.y, EDGE_PRIMARY)) a += ringArea(part);
+  const f = a / total;
+  return f < 0.5 ? f : 1 - f;
 }
 
 /** Unit direction of the hull's long axis: the major eigenvector of the
@@ -337,12 +432,25 @@ function sampleSeeds(
   if (primary) {
     // A seed pair straddling the primary line at the kill point: their
     // bisector IS the line, so the smallest pieces meet there on both sides.
+    // v3: the kill point is on the outline, so centre the pair a little
+    // inside the hull along the line (the bisector stays on the line).
     const off = 0.5 * MIN_SEED_SEP_FRAC * s;
     const nx = -primary.dir.y * off;
     const ny = primary.dir.x * off;
+    let cx = kill.x;
+    let cy = kill.y;
     for (const sg of [1, -1]) {
-      const x = kill.x + sg * nx;
-      const y = kill.y + sg * ny;
+      const ix = kill.x + sg * primary.dir.x * 2 * off;
+      const iy = kill.y + sg * primary.dir.y * 2 * off;
+      if (pointInRing(hull, ix, iy)) {
+        cx = ix;
+        cy = iy;
+        break;
+      }
+    }
+    for (const sg of [1, -1]) {
+      const x = cx + sg * nx;
+      const y = cy + sg * ny;
       if (seeds.length < count && pointInRing(hull, x, y)) seeds.push({ x, y });
     }
   } else if (pointInRing(hull, kill.x, kill.y)) seeds.push({ x: kill.x, y: kill.y });

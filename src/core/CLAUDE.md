@@ -374,6 +374,7 @@ reintroduces the spiral the 500-target cannot afford. Full story:
   - The piece count comes from `hullRadius`, `killBlowDamage` and `recentDamageRate` plus a seeded draw. Leave all three out to use the fixed-count mode, where the cap is the target.
   - `fracturePlan(input)` returns these decisions without building any geometry.
   - All of the plan's draws come from one stream, in a fixed order. Adding a draw changes every fracture, so bump the version.
+- **v3: the kill point is on the hull outline** (owner: "Why isn't the red dot on the border of the ship?"). `projectToOutline(hull, p)` (nearest point on the edges, quantised) runs inside `fractureHull`/`fracturePlan`, so every caller gets an edge point. A hit at a bow or stern tip, where a line across the keel would clip less than 3 % of the hull, gets a primary line through the hull's middle instead.
 - Story: [docs/architecture/capital-destruction.md](../../docs/architecture/capital-destruction.md).
 
 ## Alien gates and the disabled input gate (plan soft-leaping-truffle v4, A)
