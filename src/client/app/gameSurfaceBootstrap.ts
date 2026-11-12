@@ -200,6 +200,9 @@ export function buildJoinSpec(
   // and structure turrets) takes longer than N s; 0 = the first step. Reaches
   // onCreate on the room-creating client and caps the room. testMode-gated.
   if (urlParams.has('lockTimeCapS')) extraJoinOptions['lockTimeCapS'] = parseFloat(urlParams.get('lockTimeCapS')!);
+  // Time scale — `?timeScale=N`: this sector's game speed (0.25–4; test and
+  // recording rooms). The client follows it from Phase 4 of the stream.
+  if (urlParams.has('timeScale')) extraJoinOptions['timeScale'] = parseFloat(urlParams.get('timeScale')!);
   // Fire control — `?anyTarget=1`: AUTO groups also pick non-hostile NPCs and
   // non-own structures in reach + arc (never players). testMode-gated server-side.
   if (urlParams.get('anyTarget') === '1') extraJoinOptions['anyTarget'] = true;

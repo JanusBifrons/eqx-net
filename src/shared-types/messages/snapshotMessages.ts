@@ -395,4 +395,16 @@ export interface SnapshotMessage {
    *  round-robin over what this recipient was sent, at most
    *  `SHELL_KEY_PER_SNAPSHOT`. Absent when nothing is due. */
   shellKey?: ShellKeyRecord[];
+  /** Game time scale (per sector): this sector's speed and the server tick
+   *  it took effect from. Emitted only while the speed isn't 1 (#16: a late
+   *  joiner converges from the snapshot alone). Shared object, never copied. */
+  timeScale?: TimeScaleKeyframe;
+}
+
+/** A sector's game speed keyframe (time scale stream). */
+export interface TimeScaleKeyframe {
+  /** Speed, 0.25–4. */
+  s: number;
+  /** Server tick from which `s` applies. */
+  fromTick: number;
 }

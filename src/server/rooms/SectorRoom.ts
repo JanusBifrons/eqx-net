@@ -223,7 +223,7 @@ import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
 import type { GridObstacle } from '../../core/structures/Grid.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
-import type { SnapshotMessage } from '../../shared-types/messages.js';
+import type { SnapshotMessage, TimeScaleKeyframe } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { isLatentSlot, resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
@@ -396,7 +396,7 @@ import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
 import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
 import type { LockEntry } from '../../core/combat/lockState.js';
 import { createSectorClock, type GameTimer } from '../time/gameTime.js';
-import type { GameClock } from '../../core/clock/GameClock.js';
+import { MIN_TIME_SCALE, MAX_TIME_SCALE, type GameClock } from '../../core/clock/GameClock.js';
 import { advanceSchedule, tickPeriodMs, type CatchUpResult } from '../../core/physics/catchUp.js';
 
 /** Stamp the ship scale and the naval range mode onto a welcome (shared
@@ -459,12 +459,29 @@ const WORKER_TS_PATH = fileURLToPath(
 // production; set via `EQX_ALLOW_DEV_OVERRIDES=1` for E2E only.
 const ALLOW_DEV_OVERRIDES = process.env['EQX_ALLOW_DEV_OVERRIDES'] === '1';
 
+/** `EQX_TIME_SCALE`: every sector's starting game speed (dev, demos, video).
+ *  Ignored in production unless `EQX_ALLOW_DEV_OVERRIDES=1`. */
+const ENV_TIME_SCALE: number | null = (() => {
+  const raw = process.env['EQX_TIME_SCALE'];
+  if (raw === undefined || raw === '') return null;
+  if (process.env['NODE_ENV'] === 'production' && !ALLOW_DEV_OVERRIDES) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+})();
+
 /**
  * testMode `lockTimeCapS` (room option, join option, URL `?lockTimeCapS=`):
  * the longest any NON-player lock may take, in seconds. 0 = the first step.
  * Applied by `capLockSeconds` (core/combat/lockTime.ts).
  */
 const LockTimeCapSchema = z.number().finite().min(0).max(600);
+
+/**
+ * Game speed override for a sector (time scale stream): testMode room option,
+ * join option and URL `?timeScale=`, or `EQX_TIME_SCALE` outside production.
+ * The automatic load controller (Phase 5) may still slow a sector below it.
+ */
+const TimeScaleSchema = z.number().finite().min(MIN_TIME_SCALE).max(MAX_TIME_SCALE);
 
 const JoinOptionsSchema = z
   .object({
@@ -550,6 +567,9 @@ const JoinOptionsSchema = z
      *  (room option, or the room-creating client's join option) and on any
      *  join that passes it. testMode-gated. */
     lockTimeCapS: LockTimeCapSchema.optional(),
+    /** Test/recording trigger (time scale): set this sector's game speed
+     *  (0.25–4). Room-wide. testMode-gated. */
+    timeScale: TimeScaleSchema.optional(),
     /** Test-only bespoke trigger (fire control): this pilot's AUTO groups
      *  also pick NON-hostile targets (NPC ships, structures not their own) in
      *  reach + arc. Never players. Usually paired with `instantLock`.
@@ -1723,6 +1743,8 @@ export class SectorRoom extends Room<SectorState> {
       /** Bespoke test/recording trigger: no NON-player lock takes longer than
        *  this (s); 0 = the first step. zod-checked; testMode-only. */
       lockTimeCapS?: unknown;
+      /** Game speed for this sector (0.25–4). zod-checked; testMode-only. */
+      timeScale?: unknown;
       /** Capital-ship R&D (round 3 D): a player may join flying a capital
        *  (capitals stay npcOnly everywhere else). testMode-only. */
       pilotCapitals?: boolean;
@@ -2143,6 +2165,7 @@ export class SectorRoom extends Room<SectorState> {
     // ships" digest. Extracted to SnapshotBroadcaster.ts.
     this.snapshotBroadcaster = new SnapshotBroadcaster({
       shellEvents: () => this.shellHub,
+      timeScale: () => (this.timeScaleKey.s === 1 ? undefined : this.timeScaleKey),
       serverTick: () => this.serverTick,
       sabU32: this.sabU32,
       clients: this.clients,
@@ -2940,6 +2963,13 @@ export class SectorRoom extends Room<SectorState> {
       const cap = LockTimeCapSchema.safeParse(roomOpts.lockTimeCapS);
       if (cap.success) this.setLockTimeCap(cap.data);
       else logger.warn({ value: roomOpts.lockTimeCapS }, 'lockTimeCapS: invalid room option, ignored');
+    }
+    if (this.testMode && roomOpts.timeScale !== undefined) {
+      const ts = TimeScaleSchema.safeParse(roomOpts.timeScale);
+      if (ts.success) this.setTimeScale(ts.data);
+      else logger.warn({ value: roomOpts.timeScale }, 'timeScale: invalid room option, ignored');
+    } else if (ENV_TIME_SCALE !== null) {
+      this.setTimeScale(ENV_TIME_SCALE);
     }
     this.testPilotCapitals = this.testMode && roomOpts.pilotCapitals === true;
     // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
@@ -4091,7 +4121,14 @@ export class SectorRoom extends Room<SectorState> {
     // 60 × scale per wall second. Every per-update system follows the speed
     // with no code of its own; the period is re-read each update.
     // This sector's physics world steps at the same game speed.
-    this.gameClock.onScaleChange((scale) => this.postToWorker({ type: 'SET_TIME_SCALE', scale }));
+    const applyTimeScale = (scale: number): void => {
+      this.postToWorker({ type: 'SET_TIME_SCALE', scale });
+      this.timeScaleKey.s = scale;
+      this.timeScaleKey.fromTick = this.serverTick;
+    };
+    this.gameClock.onScaleChange(applyTimeScale);
+    // A speed set earlier in onCreate (room option, EQX_TIME_SCALE) applies now.
+    if (this.gameClock.scale !== 1) applyTimeScale(this.gameClock.scale);
     // eslint-disable-next-line no-restricted-properties -- real time: this loop schedules the room ticks
     let nextTickAt = performance.now();
     const schedule: CatchUpResult = { nextTickAt, dropped: 0 };
@@ -6439,6 +6476,24 @@ export class SectorRoom extends Room<SectorState> {
     logger.info({ roomId: this.roomId, lockTimeCapS: capS }, 'lockTimeCapS on (test trigger)');
   }
 
+  /**
+   * Set this sector's game speed (time scale stream; clamped 0.25–4). Its
+   * clock re-anchors, the physics world and the room loop follow, and the
+   * snapshot carries the keyframe while the speed isn't 1. Returns the speed
+   * now in force. Test/recording triggers and `POST /dev/time-scale`.
+   */
+  setTimeScale(scale: number): number {
+    this.gameClock.setScale(scale);
+    logger.info({ roomId: this.roomId, sectorKey: this.sectorKey, timeScale: this.gameClock.scale }, 'time scale set');
+    return this.gameClock.scale;
+  }
+
+  /** `/dev/time-scale`: this room's sector key (null for engineering rooms). */
+  timeScaleSectorKey(): string | null { return this.sectorKey; }
+
+  /** This sector's speed keyframe (shared, mutated on change). */
+  private readonly timeScaleKey: TimeScaleKeyframe = { s: 1, fromTick: 0 };
+
   /** C2 — how long a break-in into `rec` takes. */
   private breakInMsFor(rec: StructureRecord): number {
     return this.testBreakInMs ?? breakInDurationMs(getStructureKind(rec.kind).holdCapacity ?? 0, rec.level ?? 1);
@@ -8613,6 +8668,10 @@ export class SectorRoom extends Room<SectorState> {
     // `lockTimeCapS` on a join caps every NON-player lock in this room.
     if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.lockTimeCapS !== undefined) {
       this.setLockTimeCap(parsed.data.lockTimeCapS);
+    }
+    // `timeScale` on a join sets this sector's game speed (test/recording).
+    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.timeScale !== undefined) {
+      this.setTimeScale(parsed.data.timeScale);
     }
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a

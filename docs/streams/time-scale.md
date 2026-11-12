@@ -38,12 +38,12 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
 | 2c | Migrate `SectorRoom` (46 sites) + the room's timers | ~1.5 h | ✅ 🛑 |
 | 2d | Lint wall to error; integration suite green; docs | ~45 min | ✅ 🛑 (end of Phase 2) |
 | 3a | Per-sector speed: each room owns a clock; room loop + its physics world run 60 × speed ticks per wall second | ~2 h | ✅ 🛑 |
-| 3b | Speed override per sector (env, dev endpoint, test/showcase join option); `testTimeScale` folded in; snapshot `timeScale` keyframe | ~2 h | next 🛑 |
-| 3c | Integration tests at 0.5× and 2×; netgate run by hand | ~1.5 h | 🛑 (end of Phase 3) |
+| 3b | Speed override per sector (env, dev endpoint, test/showcase join option); `testTimeScale` folded in; snapshot `timeScale` keyframe | ~2 h | ✅ 🛑 |
+| 3c | Integration tests at 0.5× and 2×; netgate run by hand | ~1.5 h | next 🛑 (end of Phase 3) |
 | 4a | Client game clock: prediction anchor + `fromTick` parity test | ~2 h | 🛑 |
 | 4b | Interpolation in ticks + pose ring sized for 4× | ~1.5 h | 🛑 |
 | 4c | Render frame dt at the source (Pixi ticker speed); client lint wall | ~2 h | 🛑 |
-| 4d | Speed chip + E2E + "follows automatically" test; netgate at 0.7× / 2× | ~2 h | 🛑 (end of Phase 4) |
+| 4d | Speed chip + E2E + "follows automatically" test; netgate at 0.7× / 2×; fold `testTimeScale` into the sector speed | ~2 h | 🛑 (end of Phase 4) |
 | 5a | Dynamic controller (lateness + cost, ramp, hysteresis, audit events) | ~2 h | 🛑 |
 | 5b | Burn-test verification (CI/laptop perf scene); docs; ready-to-land report | ~1.5 h | 🛑 (stream done; ask the owner how to land it) |
 
@@ -105,3 +105,13 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
 - 3b note: `testTimeScale` (per room, 10×, physics only) can now become the
   room's own speed, since speed is per sector; the 4× cap applies to the
   player-facing knob, and testMode rooms may go to 10×.
+- 2026-11-12: step 3b done. `SectorRoom.setTimeScale(s)` is the one entry
+  point. Ways to set it: the testMode room/join option `timeScale` (URL
+  `?timeScale=`, `TestClientOpts`, harness), `EQX_TIME_SCALE` (dev) and
+  `GET|POST /dev/time-scale`. Snapshots carry `timeScale: { s, fromTick }`
+  while the speed isn't 1. The new test failed first on a real ordering bug: a
+  speed set in `onCreate` came before the room subscribed to speed changes,
+  so neither the worker nor the keyframe saw it. Fixed. `testTimeScale` fold
+  moved to 4d (the client must follow the speed first). Unit 4972 ✓,
+  integration 363 ✓ + 1 port collision (`EADDRINUSE :2767`, another session's
+  showcase server; the file passes 3/3 alone), boot ✓.
