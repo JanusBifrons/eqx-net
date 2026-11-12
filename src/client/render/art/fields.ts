@@ -16,6 +16,7 @@ import { shipScrapGroups } from '../../../core/geometry/shipScrapGroups.js';
 import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
 import { generateAsteroidVertices } from '../../../core/swarm/asteroidShape.js';
 import { NAVAL_BARREL_SPAN } from '../../../core/combat/muzzle.js';
+import { planBowFeatures, type BowFeature } from './bowDetail.js';
 
 export const MAT = {
   NONE: 0,
@@ -51,6 +52,8 @@ export interface Fields {
   nozzles: Array<{ x: number; y: number; r: number; len?: number }>;
   /** Hull vent slits drawn (centre + half extents, local world units; ships). */
   vents?: Array<{ x: number; y: number; hw: number; hh: number }>;
+  /** Capital bow fittings stamped into the hull (bowDetail.ts; ships). */
+  bow?: BowFeature[];
 }
 
 /** sRGB hex → linear rgb. */
@@ -115,7 +118,7 @@ export function paintOf(hex: number): number {
 }
 
 /** World-space part polygons for a ship kind (same transform as the game). */
-export function shipParts(kind: ShipKind): Array<{ pts: Poly; color: number }> {
+export function shipParts(kind: ShipKind): Array<{ pts: Poly; color: number; role?: string }> {
   const s = kind.shape.scale;
   if (kind.shape.kind === 'polygon') {
     return [{ pts: kind.shape.points.map(([x, y]) => [x * s, y * s] as const), color: kind.shape.color }];
@@ -123,6 +126,7 @@ export function shipParts(kind: ShipKind): Array<{ pts: Poly; color: number }> {
   return kind.shape.parts.map((p) => ({
     pts: p.points.map(([x, y]) => [(x + p.offsetX) * s, (y + p.offsetY) * s] as const),
     color: p.color,
+    ...(p.role !== undefined ? { role: p.role } : {}),
   }));
 }
 
@@ -339,6 +343,17 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
           f.height[i] = f.height[i]! - 0.2;
         });
       }
+    }
+  }
+
+  // Capital bows: anchor gear, breakwater, deck fittings, seams and a forward
+  // director, planned from the hull and its turrets (bowDetail.ts). Stamped
+  // before the turret rings, which cut cleanly through anything they meet.
+  if (!opts.parts && !opts.scrap && kind.sizeClass === 'capital') {
+    const plan = planBowFeatures(kind.id, parts);
+    if (plan.features.length > 0) {
+      f.bow = plan.features;
+      stampBowFeatures(f, plan.features, plan.beam);
     }
   }
 
@@ -745,6 +760,111 @@ export function stampTurretRing(f: Fields, cx: number, cy: number, r: number): v
       } else {
         // Lip: a soft rise that fades into the existing plating.
         f.height[i] = f.height[i]! + r * 0.08 * (1 - Math.abs(k - 1) / 0.15);
+      }
+    }
+  }
+}
+
+/** Machined colours for bow fittings: the shared metal ramp, nothing new. */
+const BOW_DARK = 0x3b4148, BOW_MID = 0x5d6573, BOW_LIGHT = 0x8a93a1;
+
+/**
+ * Stamp planned bow fittings (bowDetail.ts) into a hull's fields: raised
+ * metal blocks, domes and walls, recessed hawse pipes and plating grooves.
+ * Heights scale with the beam `b`, the same way turret rings scale with
+ * their radius, so the light pass shades and shadows them like the rings;
+ * the GPU-lit maps take their normals from this height field.
+ */
+function stampBowFeatures(f: Fields, features: readonly BowFeature[], b: number): void {
+  const g = f.g;
+  const minHalf = 0.6 / g.ppu; // thin fittings stay at least about a texel wide
+  const dark = lin(BOW_DARK), mid = lin(BOW_MID), light = lin(BOW_LIGHT), trim = lin(PALETTE.trim);
+  const paint = lin(f.paint);
+  for (const ft of features) {
+    const hw = Math.max(ft.hw, minHalf), hh = Math.max(ft.hh, minHalf);
+    const c = Math.cos(ft.rot), s = Math.sin(ft.rot);
+    const ext = ft.shape === 'disc' ? hw : Math.abs(c) * hw + Math.abs(s) * hh;
+    const eyt = ft.shape === 'disc' ? hw : Math.abs(s) * hw + Math.abs(c) * hh;
+    const x0 = Math.floor((ft.x - ext) * g.ppu + g.ox), x1 = Math.ceil((ft.x + ext) * g.ppu + g.ox);
+    const y0 = Math.floor((ft.y - eyt) * g.ppu + g.oy), y1 = Math.ceil((ft.y + eyt) * g.ppu + g.oy);
+    const bwr = Math.max(0.5 / g.ppu, Math.min(hw, hh) * 0.4);
+    for (let ty = Math.max(0, y0); ty <= Math.min(g.h - 1, y1); ty++) {
+      for (let tx = Math.max(0, x0); tx <= Math.min(g.w - 1, x1); tx++) {
+        const i = ty * g.w + tx;
+        if (f.cov[i]! < 0.5) continue;
+        const dx = (tx + 0.5 - g.ox) / g.ppu - ft.x, dy = (ty + 0.5 - g.oy) / g.ppu - ft.y;
+        const lx = dx * c + dy * s, ly = -dx * s + dy * c;
+        let ed: number, k = 0;
+        if (ft.shape === 'disc') { k = Math.hypot(lx, ly) / hw; ed = hw - k * hw; } else ed = Math.min(hw - Math.abs(lx), hh - Math.abs(ly));
+        if (ed < 0) continue;
+        const bev = Math.min(1, ed / bwr);
+        const dome = Math.sqrt(Math.max(0, 1 - k * k));
+        const metal = (col: readonly number[], dh: number, kAlb = 1): void => {
+          f.height[i] = f.height[i]! + dh; f.mat[i] = MAT.METAL; f.key[i] = PALETTE.metal; setAlbedo(f, i, col, kAlb);
+        };
+        switch (ft.kind) {
+          case 'seam':
+            f.mat[i] = MAT.TRIM;
+            f.albedo[i * 3] = f.albedo[i * 3]! * 0.42; f.albedo[i * 3 + 1] = f.albedo[i * 3 + 1]! * 0.42; f.albedo[i * 3 + 2] = f.albedo[i * 3 + 2]! * 0.42;
+            f.height[i] = f.height[i]! - Math.min(0.6, b * 0.001);
+            break;
+          case 'hawse':
+            // A dark pipe mouth inside a raised lip.
+            if (k > 0.72) metal(mid, b * 0.004 * (1 - Math.abs(k - 0.86) / 0.14), 0.9);
+            else { f.height[i] = f.height[i]! - b * 0.008 * (1 - k); f.mat[i] = MAT.TRIM; f.key[i] = PALETTE.trim; setAlbedo(f, i, trim, 0.7); }
+            break;
+          case 'anchor':
+            metal(dark, b * 0.007 * bev, Math.abs(ly) > hh * 0.75 ? 0.75 : 1);
+            break;
+          case 'chain': {
+            // Links: a bump every ~1.6 widths along the run.
+            const link = 0.5 + 0.5 * Math.cos((ly / (hw * 1.6)) * Math.PI);
+            metal(dark, b * 0.003 * (0.4 + 0.6 * link) * bev, 0.75 + 0.35 * link);
+            break;
+          }
+          case 'windlass':
+            metal(bev < 0.4 ? dark : mid, b * 0.022 * bev);
+            break;
+          case 'wildcat':
+            metal(k < 0.35 ? dark : k > 0.85 ? dark : light, b * 0.018 * Math.max(0.35, dome));
+            break;
+          case 'breakwater':
+            // A painted plate wall standing off the deck, lit top edge.
+            f.height[i] = f.height[i]! + b * 0.028 * bev;
+            f.mat[i] = MAT.PAINT; f.key[i] = f.paint; setAlbedo(f, i, paint, bev < 0.5 ? 0.8 : 1.12);
+            break;
+          case 'bollard': {
+            // Twin posts on a base plate.
+            const post = Math.hypot(lx, Math.abs(ly) - hh * 0.55) / hw;
+            if (post < 0.9) metal(light, b * 0.016 * Math.sqrt(1 - post * post) + b * 0.004);
+            else metal(mid, b * 0.004 * bev, 0.85);
+            break;
+          }
+          case 'fairlead':
+            if (Math.abs(lx) < hw * 0.4 && Math.abs(ly) < hh * 0.6) { f.mat[i] = MAT.TRIM; f.key[i] = PALETTE.trim; setAlbedo(f, i, trim, 0.8); }
+            else metal(mid, b * 0.007 * bev);
+            break;
+          case 'ventilator':
+            // Mushroom head: a dome with a dark skirt.
+            metal(k > 0.82 ? dark : light, b * 0.016 * Math.max(0.25, dome), k > 0.82 ? 1 : 0.95);
+            break;
+          case 'hatch':
+            if (bev < 0.35) metal(mid, b * 0.01 * Math.max(0.5, bev / 0.35));
+            else { f.height[i] = f.height[i]! + b * 0.006; f.mat[i] = MAT.PAINT; f.key[i] = f.paint; setAlbedo(f, i, paint, 0.82); }
+            break;
+          case 'jackstaff':
+            metal(light, b * 0.012 * bev);
+            break;
+          case 'director':
+            // A boxy director, its forward face slotted.
+            if (ly < -hh * 0.45 && ly > -hh * 0.7 && Math.abs(lx) < hw * 0.7) { f.height[i] = f.height[i]! + b * 0.03; f.mat[i] = MAT.TRIM; f.key[i] = PALETTE.trim; setAlbedo(f, i, trim); }
+            else metal(bev < 0.3 ? mid : light, b * 0.04 * Math.max(0.3, bev));
+            break;
+          case 'rangefinder':
+            // The long rangefinder arms, dark lens hoods at each end.
+            metal(Math.abs(lx) > hw * 0.88 ? dark : mid, b * 0.05 * Math.max(0.4, bev));
+            break;
+        }
       }
     }
   }
