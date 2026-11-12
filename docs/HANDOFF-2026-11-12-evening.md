@@ -42,7 +42,7 @@ Picks up from [HANDOFF-2026-11-11.md](HANDOFF-2026-11-11.md). This session ran t
 | #513 → #518 → #521 | Destruction S2b (wire v5 + client), S3 (art, glow, burst), break-follows-hit + drift | Stacked; each includes the previous. Wrecks stay behind `capitalWrecks` / `EQX_CAPITAL_WRECKS=1`. |
 | #515 | Showcase caption sits above the spectator build bar | |
 | #517 | An attacking NPC stays hostile | |
-| #520, #522, #523 | Camera: `'local'` follows the parked hull; no phantom own ship after Spectate; `frame all` counts culled structures | |
+| #520, #522, #523, #526 | Camera: `'local'` follows the parked hull; no phantom own ship after Spectate (#522 includes #504); `frame all` counts culled structures; the line-up pull-back finishes (smoothMs 3500) | |
 | money-shot polish (helper in flight) | Explosion instead of a white disc, jagged cracks from the hit, hull art kept on pieces, 3–5× separation, faster cooling | Check whether it opened a PR. |
 | `showcase/capital-breakup` | The break-up shot (32 s, held on the cruiser) | |
 
