@@ -107,8 +107,13 @@ export function writeConcatList(
   const phase = keep.length ? ((Math.atan2(sn, cs) / (Math.PI * 2) + 1) % 1) * SLOT_MS : 0;
   const slots: Array<{ file: string; t: number; slot: number }> = [];
   for (const f of keep) {
-    const slot = Math.round((f.t - phase) / SLOT_MS);
+    let slot = Math.round((f.t - phase) / SLOT_MS);
     const prev = slots[slots.length - 1];
+    // A loaded host stamps frames in pairs (~4 ms then ~29 ms apart, review
+    // 2026-11-12): a pair snaps to one slot though each is its own refresh.
+    // Move the later frame into the next slot, at most one slot late, so no
+    // real frame is dropped and no hole is filled with a repeat.
+    if (prev && slot <= prev.slot && prev.slot + 1 - slot <= 1) slot = prev.slot + 1;
     if (prev && slot <= prev.slot) {
       // Two frames in one slot: the next slot is free when the following
       // frame is well past it, else keep the frame nearer this slot's centre.
