@@ -283,3 +283,14 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   - the perf scene spawns reinforcement waves (looks like a reset);
   - overlapping damage numbers merge into garbage values ("39648");
   - the caption box covers the hotbar.
+- 2026-11-12: hostile review #4 PASSES on purpose. Bolt displacement per frame
+  measured 0.40× at 0.4× and 1.97× at 2× (vs 1×); the chip is monotonic and
+  colour-correct; the capsule doesn't move; damage numbers and explosions
+  linger at 0.4×; action at every speed. Take: 0/466 corrected, 59.9 fps,
+  0 stalls. Clip sent to the owner. Notes for the owner (not time scale):
+  - a "LOCKING 34%" marker sits frozen on a drone, the parked pilot's
+    auto-lock on an out-of-reach target, drawn because spectating; it is
+    frozen at 1× too, and locks step on server ticks;
+  - the caption box prints over the hotbar;
+  - the scene's drones reinforce and its robots don't, so the battle is
+    one-sided by the end.
