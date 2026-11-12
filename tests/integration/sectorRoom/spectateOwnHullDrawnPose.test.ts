@@ -80,7 +80,7 @@ describe('spectate: the own parked hull is drawn where the server has it', () =>
   it('server: test_aggro then spectate never moves the parked cruiser off its spawn', { timeout: 40_000 }, async () => {
     harness = await bootSectorTestServer(structuredClone(SHOWCASE_CAPITAL_DUEL_OPTS) as never);
     const pid = randomUUID();
-    const cr = await harness.connectActive(pid, { shipKind: 'heavy-cruiser', initialHull: 1_000_000, noselfdmg: 1 });
+    const cr = await harness.connectActive(pid, { shipKind: 'heavy-cruiser', initialHull: 1_000_000, noselfdmg: 1, spawnX: 4000, spawnY: 0 });
     const room = roomOf(cr.roomId);
     const spawn = slotPose(room, hullSlot(room, pid));
     expect(Math.hypot(spawn.x - 4000, spawn.y), 'spawned at the room spawn').toBeLessThan(5);
@@ -97,7 +97,7 @@ describe('spectate: the own parked hull is drawn where the server has it', () =>
   it('client: after Spectate the own hull is not re-predicted at a pose-less schema seed', { timeout: 40_000 }, async () => {
     harness = await bootSectorTestServer(structuredClone(SHOWCASE_CAPITAL_DUEL_OPTS) as never);
     const pid = randomUUID();
-    const cr = await harness.connectActive(pid, { shipKind: 'heavy-cruiser', initialHull: 1_000_000, noselfdmg: 1 });
+    const cr = await harness.connectActive(pid, { shipKind: 'heavy-cruiser', initialHull: 1_000_000, noselfdmg: 1, spawnX: 4000, spawnY: 0 });
     const room = roomOf(cr.roomId);
 
     // The real client, bootstrapped the way the welcome + first snapshot do.
