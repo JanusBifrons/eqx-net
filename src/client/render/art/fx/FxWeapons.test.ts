@@ -109,6 +109,24 @@ describe('FxProjectiles', () => {
       expect(back, 'no part of the streak is behind the gun that fired it').toBeGreaterThanOrEqual(-flown - 1e-6);
     }
   });
+
+  it('a just-fired shell is a thin short streak, not a fat block (owner 2026-11-12)', () => {
+    // Capping only the LENGTH at the distance flown left the width at the
+    // gunnery-zoom minimum, so for the first second a shell drew as a short
+    // rectangle wider than long: "pixelated blocks" at the turrets. The
+    // streak keeps its proportions while it grows.
+    const p = new FxProjectiles(fakeArt());
+    p.beginFrame();
+    p.draw('s', 'shell', 0, 0, 2300, 0, 1, 90, 120); // 120 u out of the barrel
+    p.endFrame();
+    const kids = p.container.children as Array<{ visible: boolean; scale: { x: number; y: number }; texture: { width: number; height: number } }>;
+    for (const s of kids.slice(0, 5)) {
+      if (!s.visible) continue;
+      const len = s.scale.x * s.texture.width;
+      const wid = s.scale.y * s.texture.height;
+      expect(wid, `a ${len.toFixed(0)} u streak drawn ${wid.toFixed(0)} u wide`).toBeLessThanOrEqual(len * 0.5 + 1);
+    }
+  });
 });
 
 describe('FxBeams', () => {

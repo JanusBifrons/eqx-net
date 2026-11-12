@@ -149,7 +149,11 @@ export class FxProjectiles {
     const k0 = shell ? size : 1;
     const ax = shell ? 1 : 0.5; // shells: anchor on the streak's front end
     const maxLen = shell ? flown : Infinity;
-    const spLen = Math.min(base.len * k0, maxLen), spWid = base.width * k0;
+    const fullLen = base.len * k0;
+    const spLen = Math.min(fullLen, maxLen);
+    // A streak still growing (just fired) keeps its proportions, thin as well
+    // as short: capping only its length drew a fat block at the turret.
+    const spWid = base.width * k0 * (spLen / fullLen);
     v.head.anchor.x = ax; v.core.anchor.x = ax;
     const px = x, py = -y;
     const sl = Math.hypot(vx, vy) || 1;
