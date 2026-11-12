@@ -84,6 +84,10 @@ export type AuditEvent =
   | (AuditEventBase & { event: 'drone_destroyed'; attackerId?: string })
   | (AuditEventBase & { event: 'player_killed'; victim: string; killer: string })
   | (AuditEventBase & { event: 'shield_broken'; entityId: string; owner?: string })
+  // ── Game time scale (per sector) ─────────────────────────────────────
+  // Every change of a sector's speed: 'load' = the automatic slowdown
+  // (latenessPct = the window's deficit), 'forced' = a dev/test/demo speed.
+  | (AuditEventBase & { event: 'time_scale_changed'; from: number; to: number; reason: 'load' | 'forced'; latenessPct?: number })
   // ── Lifecycle ───────────────────────────────────────────────────────
   | (AuditEventBase & { event: 'player_joined'; playerId: string })
   | (AuditEventBase & { event: 'player_left'; playerId: string })

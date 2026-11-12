@@ -396,7 +396,8 @@ import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
 import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
 import type { LockEntry } from '../../core/combat/lockState.js';
 import { createSectorClock, type GameTimer } from '../time/gameTime.js';
-import { MIN_TIME_SCALE, MAX_TIME_SCALE, type GameClock } from '../../core/clock/GameClock.js';
+import { MIN_TIME_SCALE, MAX_TIME_SCALE, clampTimeScale, type GameClock } from '../../core/clock/GameClock.js';
+import { LoadSpeedController } from '../../core/clock/LoadSpeedController.js';
 import { advanceSchedule, tickPeriodMs, type CatchUpResult } from '../../core/physics/catchUp.js';
 
 /** Stamp the ship scale and the naval range mode onto a welcome (shared
@@ -1748,6 +1749,9 @@ export class SectorRoom extends Room<SectorState> {
       lockTimeCapS?: unknown;
       /** Game speed for this sector (0.25–4). zod-checked; testMode-only. */
       timeScale?: unknown;
+      /** testMode: let LATENESS drive the automatic slowdown here too (on by
+       *  default only in real sectors). */
+      autoTimeScale?: boolean;
       /** Capital-ship R&D (round 3 D): a player may join flying a capital
        *  (capitals stay npcOnly everywhere else). testMode-only. */
       pilotCapitals?: boolean;
@@ -2967,6 +2971,7 @@ export class SectorRoom extends Room<SectorState> {
       if (cap.success) this.setLockTimeCap(cap.data);
       else logger.warn({ value: roomOpts.lockTimeCapS }, 'lockTimeCapS: invalid room option, ignored');
     }
+    this.latenessSlowdown = !this.testMode || roomOpts.autoTimeScale === true;
     if (this.testMode && roomOpts.timeScale !== undefined) {
       const ts = TimeScaleSchema.safeParse(roomOpts.timeScale);
       if (ts.success) this.setTimeScale(ts.data);
@@ -6486,9 +6491,32 @@ export class SectorRoom extends Room<SectorState> {
    * now in force. Test/recording triggers and `POST /dev/time-scale`.
    */
   setTimeScale(scale: number): number {
-    this.gameClock.setScale(scale);
-    logger.info({ roomId: this.roomId, sectorKey: this.sectorKey, timeScale: this.gameClock.scale }, 'time scale set');
+    this.chosenTimeScale = clampTimeScale(scale);
+    this.applyEffectiveTimeScale('forced');
     return this.gameClock.scale;
+  }
+
+  /** The sector's chosen speed (1×, or a forced demo/test speed): the ceiling
+   *  the automatic slowdown works under. */
+  private chosenTimeScale = 1;
+  /** The automatic slowdown's factor, [0.7, 1] (Phase 5). */
+  private loadFactor = 1;
+  private readonly loadSpeed = new LoadSpeedController();
+  /** Whether LATENESS drives the slowdown (cost always does). On in real
+   *  sectors; test rooms opt in with `autoTimeScale: true`, since a contended
+   *  test host would otherwise slow every room and shift every test's timing. */
+  private latenessSlowdown = true;
+  private lastLoadWindowSeq = 0;
+
+  /** Apply chosen × load factor to the sector clock; log + audit a change. */
+  private applyEffectiveTimeScale(reason: 'load' | 'forced', latenessPct?: number): void {
+    const from = this.gameClock.scale;
+    this.gameClock.setScale(this.chosenTimeScale * this.loadFactor);
+    const to = this.gameClock.scale;
+    if (to === from) return;
+    const r2 = (v: number): number => Math.round(v * 100) / 100;
+    logger.info({ roomId: this.roomId, sectorKey: this.sectorKey, from: r2(from), to: r2(to), reason, latenessPct }, 'time scale changed');
+    auditEvent({ event: 'time_scale_changed', sector: this.sectorKey ?? undefined, from: r2(from), to: r2(to), reason, ...(latenessPct !== undefined ? { latenessPct } : {}) });
   }
 
   /** `/dev/time-scale`: this room's sector key (null for engineering rooms). */
@@ -11035,15 +11063,30 @@ export class SectorRoom extends Room<SectorState> {
     // turns into a slower clock and shed drones instead of slower ticks.
     if (!this.perfFixedLoad) this.simClock.report(busiestMs);
     const newRate = this.simClock.rate;
-    // testTimeScale lets testMode rooms run physics N× faster (default 1).
-    // state.clockRate stays at the UNMULTIPLIED simClock value so client
-    // audio pitch + TiDi UI don't show a fake anomaly under acceleration.
-    const outboundRate = newRate * this.testTimeScale;
+    // Game time scale, Phase 5: the automatic slowdown. Once per telemetry
+    // window, lateness (game time behind real time) + the cost rate set a
+    // load factor; the sector's whole game (its clock, loop, physics world and
+    // clients) runs at chosen × factor. This REPLACES the old TiDi path that
+    // slowed only the physics worker (CLOCK_RATE), which clients saw as
+    // jitter, not slow motion (docs/SHELF.md).
+    if (!this.perfFixedLoad && this.tickBudget.windowSeq !== this.lastLoadWindowSeq) {
+      this.lastLoadWindowSeq = this.tickBudget.windowSeq;
+      const l = this.tickBudget.lateness();
+      const f = this.loadSpeed.window(this.latenessSlowdown ? l.latenessTicks : 0, l.wallTicks, newRate);
+      if (f !== this.loadFactor) {
+        this.loadFactor = f;
+        this.applyEffectiveTimeScale('load', l.wallTicks > 0 ? Math.round((100 * Math.max(0, l.latenessTicks)) / l.wallTicks) : 0);
+      }
+    }
+    // CLOCK_RATE now carries only `testTimeScale` (testMode physics-only
+    // accelerator, default 1). `state.clockRate` mirrors the load factor for
+    // the client's audio pitch + TiDi readout.
+    const outboundRate = this.testTimeScale;
     if (Math.abs(outboundRate - this.lastSentClockRate) >= 1e-4) {
       this.lastSentClockRate = outboundRate;
-      this.state.clockRate = newRate;
       this.postToWorker({ type: 'CLOCK_RATE', rate: outboundRate });
     }
+    if (this.state.clockRate !== this.loadFactor) this.state.clockRate = this.loadFactor;
     // Phase 6 second-lever: if rate is at floor and we're still over budget,
     // shed far drones in batches. No-op when rate > 0.71 or budget healthy.
     if (!this.perfFixedLoad) this.shedder.consider(newRate, busiestMs);

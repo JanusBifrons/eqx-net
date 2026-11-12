@@ -115,6 +115,9 @@ export class TickBudgetTelemetry {
    *  Shared object, overwritten in place each window. */
   lateness(): Readonly<SimLateness> { return this.lastLateness; }
 
+  /** Bumps each time a lateness window closes (the load controller's cue). */
+  windowSeq = 0;
+
   /** Call at the very top of update(). */
   beginTick(tStart: number): void {
     this.tickStart = tStart;
@@ -225,6 +228,7 @@ export class TickBudgetTelemetry {
     out.simTicks = (ctx.workerTick - this.windowStartWorkerTick) >>> 0;
     out.droppedTicks = ((ctx.workerDroppedTicks ?? 0) - this.windowStartDropped) >>> 0;
     out.latenessTicks = out.wallTicks - out.simTicks;
+    this.windowSeq++;
     this.anchorLatenessWindow(nowMs, ctx);
     return out;
   }

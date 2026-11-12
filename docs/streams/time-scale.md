@@ -44,8 +44,8 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
 | 4b | Interpolation in ticks + pose ring sized for 4× | ~1.5 h | ✅ 🛑 |
 | 4c | Render frame dt at the source (Pixi ticker speed); client lint wall | ~2 h | ✅ 🛑 |
 | 4d | Speed chip + E2E + "follows automatically" test; netgate at 0.7× / 2×; fold `testTimeScale` into the sector speed | ~2 h | ✅ 🛑 (end of Phase 4) |
-| 5a | Dynamic controller (lateness + cost, ramp, hysteresis, audit events) | ~2 h | next 🛑 |
-| 5b | Burn-test verification (CI/laptop perf scene); docs; ready-to-land report | ~1.5 h | 🛑 (stream done; ask the owner how to land it) |
+| 5a | Dynamic controller (lateness + cost, ramp, hysteresis, audit events) | ~2 h | ✅ 🛑 |
+| 5b | Burn-test verification (CI/laptop perf scene); docs; ready-to-land report | ~1.5 h | next 🛑 (stream done; ask the owner how to land it) |
 
 ## Phases
 
@@ -161,3 +161,26 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   baseline arm is main at 1×. Player page `docs/features/game-speed.md`
   (SHOWCASE_PENDING). **`testTimeScale` NOT folded** (reasons in the design
   note §0; reversible; tell the owner). Unit 4983 ✓, lint 0 errors.
+- 2026-11-12: netgate (CI run 43251214222), GREEN. core gated: HEAD ≈
+  baseline. Print-only, HEAD medians: 0.7×: snaps 88 (fewer, expected),
+  corr 0.2, ahead 5.5, maxDrift 5.9 (baseline 15.9). 2×: snaps 191 (~2×,
+  expected), corr 0, ahead 15 (the same RTT is twice the game ticks),
+  maxDrift 34 (ships cover 2× the distance in the same delay), meanDrift
+  unchanged, dropped 1.5 (2× snapshot traffic).
+- 2026-11-12: synced main (35 commits, clean merge `cad7ad73`); lint wall clean
+  on the new code. Unit 4999 ✓, integration 366 ✓ + 1 port collision
+  (`:2767`, passes 3/3 alone).
+- 2026-11-12: step 5a done. `core/clock/LoadSpeedController` (pure): once per
+  telemetry window, lateness + the cost rate → a load factor in [0.7, 1].
+  It slows fast to the speed the deficit implies, recovers +0.05 after 3 calm
+  windows, holds in a dead band, and converges under a fixed overload (unit
+  test). The room speed is chosen × factor, so a forced speed is the ceiling.
+  It REPLACES the physics-only TiDi slowdown: `CLOCK_RATE` now carries only
+  `testTimeScale`, and `state.clockRate` mirrors the factor (audio pitch, TiDi
+  readout). Each change is an audit event `time_scale_changed` (reason
+  load/forced). The lateness input is on in real sectors and opt-in for test
+  rooms (`autoTimeScale`), so a contended test host doesn't slow every test
+  room; the cost input is always on. Perf rooms skip it (fixed load).
+  Integration: a burning sector slows its whole game and audits it; a 2×
+  sector is pulled down from 2×, never above. Unit 5006 ✓, integration 369 ✓,
+  boot ✓.

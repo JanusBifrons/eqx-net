@@ -116,3 +116,43 @@ describe('SectorRoom integration — ticks per game second follow the sector spe
     expect(ticks).toBeGreaterThan(45);
   }, 20_000);
 });
+
+/**
+ * Step 5a: the automatic slowdown. A sector whose ticks run over budget
+ * (`tickBurnMs`: real CPU spent each tick) slows ITSELF: its whole game speed
+ * drops (not just the physics worker, the old TiDi path that clients saw as
+ * jitter), `state.clockRate` mirrors the factor, and each change is a
+ * `time_scale_changed` audit event with reason 'load'. A forced speed is the
+ * ceiling: load pulls a 2× sector down from 2×, never past it.
+ */
+describe('SectorRoom integration — the automatic slowdown (time scale 5a)', () => {
+  let harness: SectorTestHarness | undefined;
+  afterEach(async () => {
+    if (harness) await harness.cleanup();
+    harness = undefined;
+  }, 10_000);
+
+  it('a sector over its tick budget slows its whole game, and audits it', async () => {
+    const { getRecentAudit } = await import('../../../src/server/audit/GameplayAuditLog.js');
+    harness = await bootSectorTestServer({ asteroidConfig: [], tickBurnMs: 18 });
+    await harness.connectAs('player-1');
+    const r = harness.getServerRoom() as unknown as SectorRoom & { state: { clockRate: number } };
+    const deadline = Date.now() + 15_000;
+    while (r.gameClock.scale >= 1 && Date.now() < deadline) await new Promise((res) => setTimeout(res, 100));
+    expect(r.gameClock.scale).toBeLessThan(1);
+    expect(r.gameClock.scale).toBeGreaterThanOrEqual(0.7);
+    expect(r.state.clockRate).toBe(r.gameClock.scale);
+    const ev = getRecentAudit().find((e) => e.event === 'time_scale_changed' && e.reason === 'load');
+    expect(ev).toBeDefined();
+  }, 20_000);
+
+  it('load pulls a forced 2× sector down from 2×, never above it', async () => {
+    harness = await bootSectorTestServer({ asteroidConfig: [], tickBurnMs: 18, timeScale: 2 });
+    await harness.connectAs('player-1');
+    const r = harness.getServerRoom() as unknown as SectorRoom;
+    const deadline = Date.now() + 15_000;
+    while (r.gameClock.scale >= 2 && Date.now() < deadline) await new Promise((res) => setTimeout(res, 100));
+    expect(r.gameClock.scale).toBeLessThan(2);
+    expect(r.gameClock.scale).toBeGreaterThanOrEqual(1.4);
+  }, 20_000);
+});
