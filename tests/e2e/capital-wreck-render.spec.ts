@@ -71,7 +71,7 @@ test('a killed capital breaks into wreck pieces the client draws', async ({ page
 test('wreck pieces wear the dead ship\'s art and their cut edges glow (S3)', async ({ page }) => {
   test.setTimeout(120_000);
   await page.goto(`${BASE_URL}?room=wreck-test&testId=${randomUUID()}&worker=0&shipKind=fighter&initialHull=1000000&zoom=0.12&art=machined&fx=new&spawnX=1800&spawnY=2500`);
-  type Stats = { machinedSprites: number; wreckPieces: number; wreckTextured: number; wreckGlowing: number; wreckBreaks: number };
+  type Stats = { machinedSprites: number; wreckPieces: number; wreckTextured: number; wreckGlowing: number; wreckBreaks: number; wreckEngines: number };
   // The battleship (and our ship) draw Machined: the parent art is baked.
   await page.waitForFunction(() => {
     const s = (globalThis as unknown as { __eqxArtStats?: () => Stats }).__eqxArtStats?.();
@@ -92,6 +92,19 @@ test('wreck pieces wear the dead ship\'s art and their cut edges glow (S3)', asy
   expect(hot.wreckTextured, JSON.stringify(hot)).toBe(hot.wreckPieces);
   expect(hot.wreckGlowing, JSON.stringify(hot)).toBeGreaterThan(0);
   expect(hot.wreckBreaks, JSON.stringify(hot)).toBe(1);
+  // A wreck has no engines. Each piece wears the dead ship's art handle, which
+  // carries the battleship's four nozzles; the engine pass used to draw a
+  // four-flame exhaust with ribbons at every drifting piece (orange four-line
+  // streaks around the stern, multiplying as pieces spread). Watch 30 frames.
+  const maxWreckEngines = await page.evaluate(() => new Promise<number>((resolve) => {
+    let n = 0, max = 0;
+    const step = (): void => {
+      max = Math.max(max, (globalThis as unknown as { __eqxArtStats: () => Stats }).__eqxArtStats().wreckEngines);
+      if (++n >= 30) resolve(max); else requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }));
+  expect(maxWreckEngines, 'wreck pieces draw no engine exhaust').toBe(0);
   const dir = process.env['EQX_WRECK_SHOT_DIR'];
   if (dir) {
     await page.waitForTimeout(Math.max(0, 500 - (Date.now() - t0)));
