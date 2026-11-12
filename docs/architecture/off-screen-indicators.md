@@ -201,3 +201,45 @@ At real-scale ranges a 16" shell flies up to ~30 s from a gun far off screen.
   per-frame allocation (#14); lives in `PixiRenderer.update`, so both render
   paths (main thread and worker) draw it. Locks: `incomingFire.test.ts`,
   `IncomingFireWarning.test.ts`.
+
+## 8. On-screen ships at far zoom (far-zoom ship icons)
+
+The radar marks contacts OFF screen; this section is its on-screen partner.
+A capital pilot can zoom out to ~0.03 (and lower in `?navalRange=real`), where
+a fighter is under 2 px wide. The first answer (capital R&D round 3 E1, "LOD
+dots") drew a 3 px square, which a filmed clip showed as barely visible yellow
+specks and which vanished on a phone. Owner decision (2026-11-12): small ships
+get a clear, constant-size icon at far zoom, like an RTS unit marker, so you
+can always see the fighters around you. It applies to every player.
+
+- **What.** `render/pixi/FarZoomIcons.ts`. Each player ship (`mirror.ships`)
+  and drone (swarm kind 1) has a 10 px chevron (`FAR_ICON.sizePx`) pointing
+  along its heading (the icon copies the sprite's rotation; nose = local −y,
+  the ship's forward). Asteroids, structures and scrap keep their art.
+- **When.** The decision is pure (`farIconAlpha`, `isIconOnly`) on the TRUE
+  sprite's on-screen diameter `2 · radius · zoom` in CSS px:
+  - above `fadeStartPx` (14): no icon, the sprite as normal;
+  - from 14 down to `solidPx` (8): the icon fades in linearly over the
+    still-drawn sprite, so nothing pops;
+  - below 8: the icon is solid and the sprite stops rendering
+    (`renderable = false`, its turrets with it); it comes back above
+    8 × `hysteresis` (1.25) = 10 px.
+  At the 2× ship scale a fighter or scout at the spawn zoom (~0.35) is 14–17 px:
+  no icon, so normal play looks the same. At the ordinary 0.15 floor a fighter
+  is ~7 px (icon solid); at a battleship's ~0.03 floor, ~1.4 px.
+- **Colour** is the relationship the radar and contacts list use, read from
+  the player's radar prefs (`setRadarPrefs` → `setColoursFromRadar`):
+  hostile drones (`isHostileToLocal`) red, other pilots green, trade haulers
+  teal, other drones amber; your own ship white.
+- **Cost.** One sprite per entity, made on first sight and swept by a
+  generation stamp; all icons share one canvas texture (`farIconTexture`, a
+  32 px white chevron with a dark rim that survives any tint), so they batch
+  into one draw call in one container above the ships. No per-frame
+  allocation (#14). It runs in `PixiRenderer.update`, so the worker and the
+  main-thread render paths both draw it. The display-object count is the same
+  as the old dots (one per ship or drone, visible only in the fade band or
+  below); the E2E counter is still `__eqxArtStats().lodDots` (icon-only count).
+- **Locks.** `FarZoomIcons.test.ts` (fade curve, hysteresis, no-pop ordering,
+  spawn zoom untouched, relationship colours, heading, constant screen size,
+  one texture) and `tests/e2e/capital-helm.spec.ts` ("fighters draw as
+  icons").

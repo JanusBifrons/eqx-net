@@ -60,6 +60,13 @@ test('idle prediction stays sub-pixel under no input in feel-test-25', async ({ 
     { timeout: 30_000 },
   );
 
+  // Count from the curtain lift. The client doesn't step prediction while the
+  // loading curtain is up (`skipStalledBacklog`, LESSONS 2026-11-05), so every
+  // snapshot behind it corrects (2026-11-12: 49 of 49 at the lift, up to
+  // ~1.5 u, none of it visible) and none after. Idle play is what this locks.
+  const atLift = await readStats(page);
+  expect(atLift, 'pred stats at the curtain lift').not.toBeNull();
+
   // Sample every 2 s for 20 s.
   const samples: PredStats[] = [];
   for (let i = 0; i < 10; i++) {
@@ -85,10 +92,10 @@ test('idle prediction stays sub-pixel under no input in feel-test-25', async ({ 
   expect(samples.length, 'must collect idle samples').toBeGreaterThan(5);
   const last = samples[samples.length - 1]!;
 
-  // Zero significant corrections (drift > 0.05 u) across the whole window.
+  // Zero significant corrections (drift > 0.05 u) across the idle window.
   // If this ever fails, idle physics has gone non-deterministic.
-  expect(last.significantCorrectionCount, 'idle must have ZERO significant corrections').toBe(0);
-  expect(last.maxDriftUnits, 'idle maxDriftUnits must stay < 0.1 u').toBeLessThan(0.1);
+  expect(last.significantCorrectionCount - atLift!.significantCorrectionCount, 'idle must have ZERO significant corrections after the curtain lifts').toBe(0);
+  for (const s of samples) expect(s.driftUnits, 'idle drift must stay < 0.1 u').toBeLessThan(0.1);
   expect(last.rollingCorrRate, 'idle rollingCorrRate must be 0').toBeLessThan(0.05);
 
   await ctx.close();

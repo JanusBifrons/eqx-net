@@ -17,7 +17,7 @@ import { LitScene, type LitShipMesh } from './litShipShader.js';
 import type { LightRig } from './shade.js';
 
 /** What makes a hull an occluder (capitals): its box and height, world u. */
-export interface OccluderInfo { hx: number; hy: number; h: number; color: number }
+export interface OccluderInfo { hx: number; hy: number; h: number; color: number; capital?: boolean }
 
 export class LitPass {
   readonly scene = new LitScene();
@@ -94,7 +94,7 @@ export class LitPass {
       const x = this.r.tx, y = this.r.ty, rot = Math.atan2(this.r.b, this.r.a);
       this.px[i] = x; this.py[i] = y; this.pr[i] = rot;
       const o = this.occ[i];
-      if (o && mesh.occluderId >= 0) this.scene.addOccluder(mesh.occluderId, x, y, rot, o.hx, o.hy, o.h, o.color, 0.8);
+      if (o && mesh.occluderId >= 0) this.scene.addOccluder(mesh.occluderId, x, y, rot, o.hx, o.hy, o.h, o.color, 0.8, o.capital === true);
     }
     let lit = 0;
     for (let i = 0; i < n; i++) {
