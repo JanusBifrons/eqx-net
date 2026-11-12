@@ -149,13 +149,17 @@ async function wheelSteps(ctx: ShotContext, dy: number, n: number, gapMs: number
  * reaches), seen from the pilot's own camera.
  *
  * Setup:
- * - one `test_aggro` cue, as capital-turrets;
+ * - the pilot spawns 3,000 u off the battleship (inside the heavy cruiser's own
+ *   main-battery lock reach, ~3,540 u), and one `test_aggro` cue goes in as soon
+ *   as the battleship is in view, so it comes to fight instead of wandering;
  * - the pilot locks the battleship through the client's own `requestLock` (a
  *   live player lock keeps an NPC hostile, owner rule 2026-11-10; otherwise
  *   the cue's hostility lapses after 30 GAME seconds, 7.5 s at 4×);
  * - the sector goes to 4×, and the player wheels out to their zoom floor;
- * - the battleship wanders while the art bakes (a live brain), so setup waits
- *   (at 4×) until it is back within 16" reach of the pilot before the take rolls.
+ * - setup waits for the art to bake and the battleship to be within the
+ *   cruiser's lock reach (the lock is what keeps the fight going: measured
+ *   2026-11-12, from 4,000 u the locks never complete and the battleship fires
+ *   one volley, then the cue's hostility lapses 30 game s later).
  *
  * The take:
  * - runs at 4× until it has SEEN two 16" volleys (salvo events), so the
@@ -180,49 +184,66 @@ export const timeScaleCapitals4x: Shot = {
   docs: ['game-speed'],
   reel: false,
   server: 'capitals',
-  target: { room: 'showcase-capital-duel', params: { shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
-  durationMs: 40_000,
+  target: { room: 'showcase-capital-duel', params: { shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1, spawnX: 3000, spawnY: 0 } },
+  durationMs: 60_000,
   endsWithRun: true,
   async startWhen(ctx) {
-    await artSettled(ctx);
+    // Start the fight as soon as the battleship is in view, so it comes to
+    // fight instead of wandering off while the art bakes.
     await ctx.page.waitForFunction(() => {
-      const c = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number }> } } }).__eqxClient;
+      const c = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number }> } }; __eqxStore?: { getState(): { fcGroups?: unknown[] } } }).__eqxClient;
+      const g = (globalThis as { __eqxStore?: { getState(): { fcGroups?: unknown[] } } }).__eqxStore?.getState().fcGroups ?? [];
       let n = 0;
       c?.mirror.swarm.forEach((e) => { if (e.kind === 1) n++; });
-      return n > 0;
+      return n > 0 && g.length > 0;
     }, null, { timeout: 60_000, polling: 250 });
     await sendRoom(ctx, 'test_aggro', { type: 'test_aggro' });
-    const id = await roomId(ctx);
-    if (!id) throw new Error('time-scale-capitals-4x: no room id on the client');
     const bs = await battleshipId(ctx);
     if (!bs) throw new Error('time-scale-capitals-4x: no battleship in view');
     ctx.log(`  [time-scale] pilot locks the battleship with ${await lockBattleship(ctx, bs)} group(s)`);
-    await snapSpeed(ctx, id, 4);
-    await wheelSteps(ctx, 100, 20, 120); // out to the zoom floor
+    await artSettled(ctx);
+    const id = await roomId(ctx);
+    if (!id) throw new Error('time-scale-capitals-4x: no room id on the client');
     const t0 = Date.now();
     let d = Infinity;
     while (Date.now() - t0 < 90_000) {
       d = await battleshipDistance(ctx);
-      if (d < 5200) break;
+      if (d < 3400) break;
       await ctx.sleep(500);
     }
     ctx.log(`  [time-scale] battleship ${Math.round(d)} u from the pilot after ${((Date.now() - t0) / 1000).toFixed(1)} s of setup`);
+    await snapSpeed(ctx, id, 4);
+    await wheelSteps(ctx, 100, 20, 120); // out to the zoom floor
   },
   async run(ctx) {
     const id = await roomId(ctx);
     if (!id) throw new Error('time-scale-capitals-4x: no room id on the client');
-    // 4× until two volleys have been fired (or ~20 s).
+    // 4× through two volleys. Each turret's firing is its own salvo; a volley
+    // is a cluster of them (a gap of over 2 s starts the next volley).
     const seen = new Set<string>();
     const t0 = Date.now();
-    while (seen.size < 2 && Date.now() - t0 < 20_000) {
-      for (const s of await salvoIds(ctx)) seen.add(s);
-      await ctx.sleep(150);
+    let volleys = 0;
+    let lastAt = -Infinity;
+    let volley2At = 0;
+    while (volleys < 2 && Date.now() - t0 < 30_000) {
+      for (const sid of await salvoIds(ctx)) {
+        if (seen.has(sid)) continue;
+        seen.add(sid);
+        const now = Date.now();
+        if (now - lastAt > 2000) { volleys++; if (volleys === 2) volley2At = now; }
+        lastAt = now;
+      }
+      await ctx.sleep(100);
     }
-    ctx.log(`  [time-scale] ${seen.size} volley(s) at 4× in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
-    await ctx.sleep(400); // the second volley clears the barrels
-    await dial(ctx, id, 0.25); // halves once a second: ~4 s to 0.25×
-    // The pilot zooms in on their own ship as the shells crawl in (x0.9 a notch).
-    await wheelSteps(ctx, -100, 12, 250);
-    await ctx.sleep(7_000); // ~6 s at 0.25×
+    ctx.log(`  [time-scale] ${volleys} volley(s) (${seen.size} turret salvos) at 4× in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+    // The next volley is ~7.5 s away at 4× (a 30-game-second reload). Turning the
+    // dial ~6 s after volley two puts it in the air as the speed nears 0.3×
+    // (the dimmer halves the speed once a second), so its shells crawl in.
+    if (volley2At > 0) await ctx.sleep(Math.max(0, volley2At + 6_000 - Date.now()));
+    await dial(ctx, id, 0.25);
+    // The pilot zooms in on their own ship as the shells crawl in (x1.1 a notch).
+    await ctx.sleep(1_500);
+    await wheelSteps(ctx, -100, 12, 300);
+    await ctx.sleep(8_000);
   },
 };
