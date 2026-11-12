@@ -80,6 +80,8 @@ export const capitalLineup: Shot = {
   durationMs: 10_000,
   async startWhen(ctx) {
     await artSettled(ctx);
+    // A framed camera needs a free camera: watch as a spectator (record as is).
+    await ctx.spectate();
   },
   camera: [
     { atMs: 0, smoothMs: 0, shot: { kind: 'frame', group: 'drones', padding: 0.15, maxZoom: 3 } },
@@ -104,6 +106,8 @@ export const capitalBroadside: Shot = {
   durationMs: 14_000,
   async startWhen(ctx) {
     await artSettled(ctx);
+    // A framed camera needs a free camera: watch as a spectator (record as is).
+    await ctx.spectate();
   },
   camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'frame', group: 'all', padding: 0.2, maxZoom: 2.5 } }],
   async run(ctx) {
@@ -293,6 +297,8 @@ export const capitalTurrets: Shot = {
     // Start the fight off camera: at the real 4°/s a 16" turret takes ~25 s to
     // train onto the beam, so the take opens with the guns finishing the swing.
     await keepHostile(ctx, 18_000);
+    // A framed camera needs a free camera: watch as a spectator (record as is).
+    await ctx.spectate();
   },
   async run(ctx) {
     const k = ctx.viewport.width / 1920;
@@ -314,10 +320,11 @@ export const capitalTurrets: Shot = {
       return me ? { x: (me.x - bx) * 0.35, y: (me.y - by) * 0.35 } : { x: 1200, y: 0 };
     });
     await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'track', target: bs, zoom: 0.18 * k, offsetX: toward.x, offsetY: toward.y } }]);
-    await keepHostile(ctx, 13_000);
+    // No cue during the take: the battleship's lock keeps it hostile.
+    await ctx.sleep(13_000);
     // Then the whole gap, so the salvos are seen crossing it.
     await ctx.cinema.play([{ atMs: 0, smoothMs: 3500, shot: { kind: 'frame', ids: [bs, 'local'], padding: 0.2 } }]);
-    await keepHostile(ctx, 16_500);
+    await ctx.sleep(16_500);
   },
 };
 
@@ -453,9 +460,9 @@ export const capitalGunsBystander: Shot = {
       const c = (window as unknown as { __eqxClient?: { getRoom?: () => { send: (ch: string, x: unknown) => void } | null } }).__eqxClient;
       c?.getRoom?.()?.send('test_aggro', { type: 'test_aggro' });
     }).catch(() => undefined);
+    // One cue sets the scene; the battleship's lock keeps it hostile, so
+    // nothing re-arms it during the take (record as is).
     await aggro();
-    const timer = setInterval(() => { void aggro(); }, 9000);
-    targetPages.get(ctx.testId)!.timer = timer;
     await artSettled(ctx);
     // Fly the bystander to its spot while the turrets finish training round.
     await keepStation(ctx, 14_000);
@@ -506,6 +513,8 @@ export const capitalFleetWarp: Shot = {
   durationMs: 7_000,
   async startWhen(ctx) {
     await artSettled(ctx);
+    // A framed camera needs a free camera: watch as a spectator (record as is).
+    await ctx.spectate();
   },
   // A HELD camera: 'frame all' followed the fleet to its arrival point,
   // where the formation looks the same, so the jump didn't read (first take).
@@ -535,6 +544,8 @@ export const capitalFleetArrive: Shot = {
   // recording starts ~1.5 s before the drop (review: 5 s of empty sky).
   async startWhen(ctx) {
     await sendRoom(ctx, 'test_fleet_warp', { type: 'test_fleet_warp', x: -45_000, y: 0 });
+    // A framed camera needs a free camera: watch as a spectator (record as is).
+    await ctx.spectate();
     await ctx.sleep(1_800);
   },
   camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: -45_000, y: 0, zoom: 0.15 } }],
