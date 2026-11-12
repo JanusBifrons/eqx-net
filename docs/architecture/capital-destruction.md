@@ -230,8 +230,18 @@ Every client must produce the same pieces as the server, bit for bit, from
 - **Smaller ships break up this way too** ("Yes"). Fighters, frigates and
   cruisers fracture dynamically like capitals, replacing today's hand-made
   scrap. This is a later slice, after the capital path works.
-- **Midships snaps are a chance** ("Yes, but it's dynamic and generated, just
-  make it a chance"). Usually the hull breaks around the killing blow; with
-  some probability it snaps in two at midships instead.
+- **The last hit decides where it splits** ("The impact location of the last
+  hit should play a huge role in where it splits").
+  - **Where the break runs:** the primary break line crosses the hull through
+    the impact point of the killing blow, and the small shattered pieces
+    cluster there.
+  - **What the kill point is:** the hit's real impact position in the hull's
+    local frame, sent by the server. It is never the ship's centre.
+  - **Follow-up for S1:** `fractureHull` gains this primary cut through the
+    kill point.
+- **A clean snap is a chance** ("Yes, but it's dynamic and generated, just
+  make it a chance"). Usually the hull shatters around the impact. With some
+  probability it instead snaps cleanly in two along that same line through
+  the impact point (not at a fixed midships).
 - **Catastrophic blasts will hurt nearby ships** ("Yes, but not now/yet"). For
   now the gas-store detonation is visual only; area damage comes later.
