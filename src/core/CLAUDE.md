@@ -368,6 +368,12 @@ reintroduces the spiral the 500-target cannot afford. Full story:
 - **Any change to its output bumps `FRACTURE_ALGO_VERSION`.** The golden test fails first.
 - **Concave hulls go through `splitByLine`,** which traces each disjoint part separately. Plain Sutherland–Hodgman bridges them; the U-hull test catches that.
 - **Jagged Voronoi cut edges** are seeded from the edge's own quantised endpoints, so both neighbours share the line. Section cuts stay straight.
+- **v2: the last hit decides where it splits.**
+  - A straight primary line runs through `killPoint`, across the keel, with a seeded tilt.
+  - A seeded `snapChance` (default 0.2) snaps the hull cleanly in two along that line.
+  - The piece count comes from `hullRadius`, `killBlowDamage` and `recentDamageRate` plus a seeded draw. Leave all three out to use the fixed-count mode, where the cap is the target.
+  - `fracturePlan(input)` returns these decisions without building any geometry.
+  - All of the plan's draws come from one stream, in a fixed order. Adding a draw changes every fracture, so bump the version.
 - Story: [docs/architecture/capital-destruction.md](../../docs/architecture/capital-destruction.md).
 
 ## Alien gates and the disabled input gate (plan soft-leaping-truffle v4, A)

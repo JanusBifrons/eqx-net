@@ -75,16 +75,54 @@ Each slice is one PR, about one agent session, tests first.
 
 - **Input:** hull polygon (local coordinates, either winding, concave
   allowed), seed (u32), kill point (local), optional section-boundary cut
-  lines, max piece count.
+  lines, max piece count (the cap, at most 64). Since `FRACTURE_ALGO_VERSION`
+  2, the owner's decisions in §6 add:
+  - `hullRadius`: the hull's size in local units. When it is left out, it is
+    the farthest outline vertex from the ship's centre.
+  - `killBlowDamage`: the killing blow's damage over max hull HP (0..1+).
+  - `recentDamageRate`: damage over the last few seconds, normalised the same
+    way (0..1+); a slow grind is near 0.
+  - `snapChance`: the chance of a clean snap (default
+    `FRACTURE_SNAP_CHANCE` = 0.2).
+
+  With none of the first three given, the cap is the exact target count
+  (fixed-count mode, used by the review tool). `fracturePlan(input)` returns
+  the seeded decisions (snap or shatter, target count, primary line) without
+  building any geometry.
 - **Output:** pieces, each with its outline (CCW, quantised), its convex
   decomposition, area, centroid, and a per-edge flag marking new cut edges.
+- **Piece count (random and earned).** These come from one seeded decision
+  stream:
+  - `size = sqrt(min(1, hullRadius / 3000))`;
+  - `violence = ½·f(killBlowDamage) + ½·f(recentDamageRate)`, with
+    `f(x) = x / (x + 0.35)`;
+  - `x = clamp01(0.1 + 0.9·violence + 0.5·(u − ½))`, where `u` is a seeded
+    draw;
+  - `target = 3 + floor(size · 61 · x²)`, at most the cap.
+
+  The result: a slow grind leaves 3–13 big hulks on a battleship (most
+  often 3), while a sudden heavy blow shatters it into 26–62 pieces. Bigger
+  hulls give more pieces, and both ends occur across seeds. With few seeds,
+  the seed falloff widens by `(12 / count)²`, so a grind leaves a few big
+  hulks instead of one hulk and slivers.
+- **Primary break line (the last hit decides where it splits).** A straight
+  line through the kill point, roughly square across the keel. The keel is the
+  major axis of the outline's vertex covariance, in closed form with sqrt
+  only. The seed tilts the line by up to about 19°: the direction is
+  `across + t·keel` with `t = (k / 1000) · 0.35`, where `k` is a seeded
+  integer in [−1000, 1000], normalised with sqrt. It is cut first, and every
+  other cut happens on either side of it. Two seeds straddle the line at the
+  kill point, so the smallest pieces meet there on both sides.
+- **Clean snap (a chance).** With probability `snapChance`, the hull splits
+  along the primary line alone: two halves, plus any small bits a concave
+  outline leaves at the cut. There are no Voronoi seeds and no section cuts.
 - **Algorithm:**
   1. Seeded integer PRNG (mulberry32, the existing `core/random/rng.ts`).
   2. Seeds by rejection sampling inside the hull, with acceptance
      `R² / (R² + d²)` (d = distance to the kill point; floored so the far end
      still gets a few big chunks).
-  3. Split the hull along each section line first; then, inside each section,
-     Voronoi cells of the seeds that fall in it.
+  3. Split the hull along the primary line, then along each section line;
+     then, inside each section, Voronoi cells of the seeds that fall in it.
   4. Each Voronoi cell is convex: a bounding box clipped by the bisector
      half-planes.
   5. Clip the (concave) hull by each cell edge with a robust line split that
@@ -96,8 +134,13 @@ Each slice is one PR, about one agent session, tests first.
      endpoints so both neighbours draw the same jagged line. Any edge that
      would make a piece self-intersect stays straight on both sides.
   8. `poly-decomp` convex decomposition per piece.
-- **Cap:** if clipping makes more pieces than the cap, retry with fewer seeds
+- **Cap:** if clipping makes more pieces than the cap (or the target), retry
+  with fewer seeds, then without section cuts, then without the primary line
   (deterministically).
+- **Review:** `EQX_FRACTURE_SVG=1 pnpm vitest run src/core/destruction` prints
+  four SVGs (fixed 24 + a section cut, slow grind, heavy blow, clean snap).
+  Each shows the kill point as a white dot with a red ring and the primary
+  line as a dashed cyan line.
 
 ### S2: server spawns wreck pieces
 
