@@ -119,29 +119,52 @@ Each slice is one PR, about one agent session, tests first.
 - **Clean snap (a chance).** With probability `snapChance`, the hull splits
   along the primary line alone: two halves, plus any small bits a concave
   outline leaves at the cut. There are no Voronoi seeds and no section cuts.
+- **Cracks (v6, money-shot review).** v5 seeded the far field at a floor
+  density with a least keel-wise spacing, which drew a comb of even, evenly
+  spaced square bands, and its near field was a ladder. v6 (`crackLines`, its
+  own seeded stream):
+  - a FAN of straight cracks through the kill point (1–4 besides the primary
+    line, more for a harder death), tilted up to ~44° either side of square
+    and at least `FAN_MIN_GAP` apart, so the hull splits into wedges meeting
+    at the kill point;
+  - a few FAR cracks (0–3) across the hull away from the fan, at seeded
+    uneven stations (≥ 1.6 beams apart, ≥ 1.1 beams from the ends) and
+    seeded tilts of 11–37° either way, so each end breaks into a few big
+    chunks;
+  - the Voronoi seeds stay inside the fan (no far floor), so the shatter is
+    only at the kill point; a tip hit gets no fan, its seeds stay on the
+    tip's side of the primary line.
+  The primary line and all cracks are jagged now (section cuts stay
+  straight), and T-junctions are welded first (`weldTJunctions`: a vertex of
+  one piece lying on another's cut edge is inserted into it) so a long crack
+  pairs up on both sides and jags. Over the kill-focus seed sweep (heavy
+  cruiser): far pieces 5.5 → 3.3, far crack tilt 4° → 24°, how radial the
+  cracks at the kill point are 0.70 → 0.85; the v5 locks still hold.
 - **Algorithm:**
   1. Seeded integer PRNG (mulberry32, the existing `core/random/rng.ts`).
-  2. Seeds by rejection sampling inside the hull, with acceptance
-     `R⁴ / (R⁴ + d⁴)` since v5 (d = distance to the kill point; floored so
-     the far end still gets a few big chunks).
-  3. Split the hull along the primary line, then along each section line;
-     then, inside each section, Voronoi cells of the seeds that fall in it
-     (since v5 under a metric stretched 2× along the keel, so cuts run
-     across a long hull).
+  2. Seeds by rejection sampling inside the hull (and, since v6, inside the
+     crack fan), with acceptance `R⁴ / (R⁴ + d⁴)` (d = distance to the kill
+     point; since v6 without a floor, drawn from a box 4 falloff radii round
+     the kill point).
+  3. Split the hull along the primary line, the fan and far cracks, then
+     along each section line; then, inside each section, Voronoi cells of
+     the seeds that fall in it (under a metric stretched along the keel:
+     2× in v5, 1.5× since v6).
   4. Each Voronoi cell is convex: a bounding box clipped by the bisector
      half-planes.
   5. Clip the (concave) hull by each cell edge with a robust line split that
      returns every disjoint part, instead of plain Sutherland–Hodgman, which
      leaves zero-width bridges when a cell cuts a concave hull in two.
   6. Quantise vertices to 1/64 u.
-  7. Jag every Voronoi cut edge shared by two pieces: recursive midpoint
+  7. Jag every Voronoi cut edge (since v6 also every crack and the primary
+     line) shared by two pieces: recursive midpoint
      displacement, perpendicular to the edge, seeded by the edge's own
      endpoints so both neighbours draw the same jagged line. Any edge that
      would make a piece self-intersect stays straight on both sides.
   8. `poly-decomp` convex decomposition per piece.
 - **Cap:** if clipping makes more pieces than the cap (or the target), retry
-  with fewer seeds, then without section cuts, then without the primary line
-  (deterministically).
+  with fewer seeds, then without section cuts, then with fewer far cracks,
+  then fewer fan cracks, then without the primary line (deterministically).
 - **Review:** `EQX_FRACTURE_SVG=1 pnpm vitest run src/core/destruction` prints
   four SVGs (fixed 24 + a section cut, slow grind, heavy blow, clean snap).
   Each shows the kill point as a white dot with a red ring and the primary
@@ -172,14 +195,18 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
 - **Bodies.** `buildWreckPieces` (`core/destruction/wreckPieces.ts`): one
   dynamic body per piece from its convex parts, at its centroid, mass ∝ area
   at the ship's density, velocity v + ω × r plus an outward push away from
-  the kill point, spin ω plus a seeded kick (±0.12 rad/s), light damping
-  (0.02 linear, 0.05 angular) so the field keeps opening for tens of
-  seconds. The push is fastest at the kill point and falls off with
-  distance: `wreckPushMin + (wreckPushMax − wreckPushMin)·r²/(r² + d²)`,
-  r = `WRECK_PUSH_FALLOFF_FRAC` (0.25) × hull radius, times 0.75–1.25 by how
+  the kill point, spin ω plus a seeded kick that falls off like the push
+  (`WRECK_SPIN_NEAR` 0.45 rad/s ≈ 26°/s at the kill point →
+  `WRECK_SPIN_FAR` 0.08 far away, 0.55–1× of it, either way round), damping
+  0.06 linear / 0.05 angular (the field opens for seconds, then a fast piece
+  comes to rest within a few km). The push is fastest at the kill point and
+  falls off with distance:
+  `wreckPushMin + (wreckPushMax − wreckPushMin)·r²/(r² + d²)`,
+  r = `WRECK_PUSH_FALLOFF_FRAC` (0.3) × hull radius, times 0.75–1.25 by how
   violent the death was. `wreckPushMax/Min` come from `shipTuning(kind)`
-  (#18: 0.055 / 0.014 × hull radius per second, so a 2× heavy cruiser's
-  pieces leave at ~120 / ~30 u/s). Collision groups `WRECK_COLLISION_GROUPS`
+  (#18: 0.17 / 0.08 × hull radius per second since the money-shot review,
+  so a 2× heavy cruiser's pieces leave at ~370 / ~175 u/s; #521 had
+  0.055 / 0.014). Collision groups `WRECK_COLLISION_GROUPS`
   (server spawn and the client twin): ships, rocks, scrap and structures
   collide with pieces, but pieces never collide with other wreck pieces.
   The pieces tile the hull exactly, so they spawn with no overlap; the dying body
@@ -235,6 +262,40 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
   - Locks: `fractureHull.killFocus.test.ts`,
     `tests/integration/sectorRoom/wreckBreakAndDrift.test.ts`,
     `tests/unit/collisionGroups.test.ts`.
+- **The money shot (hostile review of the v5 take, 2026-11-12).** The owner
+  wants "a capital visibly breaking apart where it was hit". The review of
+  the next filmed take found five faults; each fix has its lock:
+  - **Death flash.** A hull-wide flat white disc and grey halo (the
+    break-up's flash, 0.55 × the wreck radius) and, under it, #493's
+    hull-sized death blast at the hull centre. Now: a small 0.22 s core
+    flash (0.02 → 0.07 × the wreck radius), FxExplosions fireballs at the
+    kill point (`wreckBlasts`: 0.12 × the wreck radius plus two 0.065 ones
+    beside it, all within ~0.25 of it), thinner dust, the shards as before.
+    The welcome's `capitalWrecks` flag tells the client the room breaks
+    capitals, and it then leaves a dying capital's death blast to the
+    break-up (`hullDeathBlastReplaced`). Locks: `WreckBreakFx.test.ts`,
+    `wreckArt.test.ts`, the GPU-lit case in `capital-wreck-render.spec.ts`.
+  - **Procedural cracks** (a comb of even square far bands, a ladder at the
+    kill point): fracture v6, below (S1).
+  - **Hull art lost.** Root cause: the player's look (`shiplight=high`) is
+    GPU-lit art, whose frames are UNLIT data maps that only the lit shader
+    lights; the pieces drew the raw albedo slice through the default shader
+    under a 23–55 % burnt tint, so they read as flat dark-grey slabs. S3's
+    E2E ran the baked look (automation's default) and never saw it. Pieces
+    of lit art are now `LitShipMesh`es (below, S3) with a 60–82 % tint.
+  - **Separation** (5–20 px gaps at zoom 0.22 after 22 s): 3× the push, the
+    falling-off spin above. The drift test asserts a 300+ u/s piece at the
+    kill point and a field that opens 1,500+ u in 5 s (measured 395 u/s,
+    1,810 u, 18°/s).
+  - **Glow** still bright orange at 4.5 s: bright ~1 s, ember 3 s, dark 6 s.
+  - Found on the way: the client's snapshot coalescer kept only the newest
+    snapshot per frame, so a `wrecks[]` descriptor on a dropped snapshot was
+    lost until the 2 Hz repeat (1.2–3.6 s in the E2E, past the 1.5 s
+    break-up window). It now carries a dropped snapshot's list forward
+    (`snapshotCoalesce.test.ts`). The DataChannel path coalesces raw bytes
+    and still has this gap (follow-up).
+  - Frames for review: a GPU probe films the break-up (CDP screencast,
+    frames picked by timestamp at death + 0.3 s, + 2 s, + 5 s).
 - Locks: `wreckPieces.test.ts`, `CapitalWreckSubsystem.test.ts`,
   `tests/integration/sectorRoom/capitalWrecks.test.ts`.
 
@@ -351,20 +412,26 @@ pieces stay for ever and the glow ends dark. As built
   are frame-relative, so the same meshes follow the sun frames (the frame
   nearest the piece's rotation, swapped only on change). Every mesh sets
   `batchMode: 'batch'`, so a whole wreck batches over at most its parent's
-  tile textures. Pieces are tinted burnt, darkest near the kill point. GPU-lit
-  art (`?shiplight=gpu`) maps slice A (albedo) with the default shader: unlit
-  but correct. Before the art is ready (or in the classic look) the piece is
+  tile textures. Pieces are tinted burnt (slightly: 60–82 %), darkest near
+  the kill point. GPU-lit art (`?shiplight=gpu|high|medium|low`, the
+  player's default look) is a data page of UNLIT maps: each tile piece is a
+  `LitShipMesh` whose geometry is the piece in the HULL's frame (the shader
+  lights by hull-local position; offset back to the centroid) with UVs on
+  the atlas page, registered with `litPass` like the live hull (money-shot
+  review: slice A through the default shader gave flat grey slabs). Before
+  the art is ready (or in the classic look) the piece is
   today's plain polygon, swapped once the art arrives.
 - **Glowing cut edges.** One white stroke `Graphics` per piece over its runs
   of `cutEdges` (the original outline never glows), tinted and faded each
   frame by `wreckGlowAt`: molten white-orange at death, an ember at
-  `WRECK_GLOW_EMBER_S` (4 s), dark at `WRECK_GLOW_END_S` (9 s), when the stroke
+  `WRECK_GLOW_EMBER_S` (3 s), dark at `WRECK_GLOW_END_S` (6 s), when the stroke
   is destroyed. The clock is the descriptor's new `deathTick` against the
   piece's latest server tick, so a late joiner (or a descriptor without one)
   starts cool. Per-wreck state lives in the renderer's `WreckArtState`.
 - **Break-up.** The first piece of a wreck younger than 1.5 s fires
   `effects.spawnBurst('wreck-break', killPoint, { radius, flashScale })`: a
-  white flash (1.6× for a clean snap), dust and hot shards flung outward,
+  short small core flash (1.6× for a clean snap), dust and hot shards flung
+  outward, plus FxExplosions fireballs at the kill point (`wreckBlasts`),
   sized from the wreck radius, counts by effects tier (70+40 on high, 8+4 on
   minimal). The kill point comes from that piece's pose and its known
   centroid in the hull frame. The pool is built on the first break-up and
