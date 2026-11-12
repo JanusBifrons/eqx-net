@@ -1,6 +1,7 @@
 # Capital destruction: dynamic ship splitting (design, 2026-11-12)
 
-Status: **design + slice S1 (the core fracture module).** S2 onwards are not
+Status: **design + slice S1 (the core fracture module) + slice S2a (server
+wreck bodies, behind the `capitalWrecks` flag).** S2b (wire) onwards are not
 built. Owner direction (2026-11-12): "Implement the ship splitting
 dynamically", and "keep the damage model as an idea for now". The damage
 model (zones, armour, internal systems, the destruction sequence) is parked in
@@ -143,6 +144,59 @@ Each slice is one PR, about one agent session, tests first.
   line as a dashed cyan line.
 
 ### S2: server spawns wreck pieces
+
+**S2a: done (server only, behind a flag).** A capital's death, NPC or
+player-flown (active or parked), breaks it into wreck bodies on the server.
+
+- **Flag.** Room option `capitalWrecks` (or `EQX_CAPITAL_WRECKS=1`), off by
+  default: clients don't draw wrecks yet, and a playtest must never meet
+  invisible walls. Off ⇒ the room never builds the subsystem; behaviour is
+  identical to before. No room sets it today.
+- **Kill point.** `SectorRoom.applyDamage` records, per capital, the last
+  hit's world point (projectile / shell / missile impact, player beam hit,
+  NPC beam hit via `noteBeamImpact`). A hit with no point (ram, mining beam)
+  falls back to the attacker's position. At death it goes into the hull's 1×
+  Pixi-up frame and onto the outline (`hullLocalKillPoint` →
+  `projectToOutline`, fracture v3: "Why isn't the red dot on the border of
+  the ship?").
+- **Damage inputs.** `killBlowDamage` = the final hit ÷ max hull;
+  `recentDamageRate` = damage over the last ~3 s (a 6-bucket ring,
+  `WRECK_RECENT_DAMAGE_TICKS`) ÷ max hull. Entries are pooled per capital: no
+  per-hit allocation.
+- **Bodies.** `buildWreckPieces` (`core/destruction/wreckPieces.ts`): one
+  dynamic body per piece from its convex parts, at its centroid, mass ∝ area
+  at the ship's density, velocity v + ω × r plus an outward push from the kill
+  point (a fraction of the kind's `maxSpeed`, scaled by how violent the death
+  was), spin ω plus a seeded kick, light damping so they settle. Default
+  collision groups: ships, rocks and other pieces all collide with them. The
+  pieces tile the hull exactly, so they spawn with no overlap; the dying body
+  is despawned in the same worker batch (an active player hull's body too,
+  its slot kept for respawn).
+- **Entity class.** A wreck piece is swarm kind 4 (`SWARM_KIND_WRECK`,
+  server-only for now), predicate `isWreckPiece`. No health: `EntityResolver`
+  treats it as immune, so a shot stops on it and does nothing. Loops that
+  cover it: the projectile pipeline (bolts and shells), player beams, NPC and
+  turret beams (`nonPlayerRayHit`, `LineOfFireGate`), missile flight, spawn
+  clearance, the interest grid. Loops that skip it: the binary swarm encoder,
+  sector persistence, missile locks, blast damage, every drone/AI loop (kind
+  filters). Not on the lag-comp ring (its entity budget is the drones').
+- **Blocking shots.** `core/destruction/wreckHits.ts`: the bounding circle,
+  then the piece's convex parts (`wreckRayHit`, `wreckSweepHit`).
+- **Budget.** `MAX_LIVE_WRECK_PIECES` (768) per room; the oldest piece goes
+  first. Owner: wrecks stay for ever; this only guards the slot pool until
+  S2b persists them.
+- Locks: `wreckPieces.test.ts`, `CapitalWreckSubsystem.test.ts`,
+  `tests/integration/sectorRoom/capitalWrecks.test.ts`.
+
+**Left for S2b:** the wire (`SWARM_KIND_WRECK` on the binary swarm wire,
+stride 36, `SWARM_WIRE_VERSION` 5), the `wrecks[]` descriptor on the
+snapshot (`{ wreckId, parentKind, seed, killX, killY, killBlowDamage,
+recentDamageRate, algoVersion }`: the damage inputs must ride it, since they
+set the piece count), persistence, the client predWorld bodies (#12), client
+hit prediction against wrecks (#15), the lag-comp choice for pieces, and a
+lingering-capital integration test. Then the flag can default on with S3.
+
+The original S2 plan:
 
 On a capital's death the server:
 - picks the seed (u32) and kill point (the last hit's point in hull-local

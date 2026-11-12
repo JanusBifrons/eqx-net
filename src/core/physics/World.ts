@@ -794,6 +794,11 @@ export class PhysicsWorld {
    * swarm-mirror so reconciler replay doesn't drift swarm bodies between
    * authoritative wire packets.
    */
+  /** Set a body's angular damping (capital wreck pieces settle, S2a). */
+  setAngularDamping(id: string, damping: number): void {
+    this.bodies.get(id)?.body.setAngularDamping(damping);
+  }
+
   lockBody(id: string): void {
     const rec = this.bodies.get(id);
     if (!rec) return;

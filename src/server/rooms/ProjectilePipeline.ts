@@ -31,6 +31,7 @@
  */
 
 import { refineSweepHit } from '../../core/combat/capitalHits.js';
+import { wreckSweepHit } from '../../core/destruction/wreckHits.js';
 import { ProjectileBroadphase } from './ProjectileBroadphase.js';
 import { projectileSweepCircle, projectileSweepBox } from '../../core/combat/Weapons.js';
 import {
@@ -99,6 +100,8 @@ export interface ShipPose {
 export interface SwarmCandidate {
   id: string; slot: number; radius: number; kind?: number; shipKind?: string;
   halfW?: number; halfH?: number; boxes?: Float32Array;
+  /** Capital wreck pieces (kind 4): convex parts, body-local. */
+  wreckParts?: ReadonlyArray<ReadonlyArray<{ x: number; y: number }>>;
 }
 
 /** Narrow view of the swarm registry the pipeline iterates. */
@@ -403,6 +406,8 @@ export class ProjectilePipeline {
     proj: ProjectileRecord, rec: SwarmCandidate, stepX: number, stepY: number,
     cx: number, cy: number, angle: number,
   ): SweepHit | null {
+    // Capital wreck pieces (kind 4, S2a) block shots: circle, then their parts.
+    if (rec.kind === 4) return wreckSweepHit(rec.wreckParts, rec.radius, proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, angle);
     return rec.halfW !== undefined && rec.halfH !== undefined
       ? projectileSweepBox(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.halfW, rec.halfH, rec.boxes)
       : rec.kind === 1

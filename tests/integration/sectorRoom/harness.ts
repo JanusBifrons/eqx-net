@@ -198,6 +198,8 @@ export async function bootSectorTestServer(opts: {
   peacefulDrones?: boolean;
   /** Pilots may join flying a capital (`shipKind: 'battleship'`, …): the room option. */
   pilotCapitals?: boolean;
+  /** Capital destruction S2a: a dying capital breaks into wreck bodies. */
+  capitalWrecks?: boolean;
   /** P2c — sector features for the room (asteroid mix, nebula). */
   sectorFeatures?: string[];
   /** Room-level default spawn point (forwarded to `defaultSpawnX/Y`). */
@@ -278,6 +280,7 @@ export async function bootSectorTestServer(opts: {
     teleportFullCharge: opts.teleportFullCharge,
     peacefulDrones: opts.peacefulDrones,
     pilotCapitals: opts.pilotCapitals,
+    capitalWrecks: opts.capitalWrecks,
     tradeEnabled: opts.tradeEnabled,
     enforceHullGate: opts.enforceHullGate,
     seedStorageHold: opts.seedStorageHold,

@@ -81,6 +81,9 @@ export interface AiFireResolverDeps {
   ) => number | null;
   /** Damage sink — invoked on a confirmed hit. */
   applyDamage: (targetId: string, shooterId: string, damage: number) => void;
+  /** S2a: the beam's impact point, called just before `applyDamage` (feeds the
+   *  capital wreck hit tracker; the damage event is unchanged). */
+  noteBeamImpact?: (x: number, y: number) => void;
   /** Friendly fire (owner decision 2026-11-10) — the first non-player thing
    *  along the beam: every swarm entity (drones of ANY side, structures of ANY
    *  owner, asteroids, scrap) and lingering hulls, skipping only `skipId` (the
@@ -368,6 +371,8 @@ export class AiFireResolver implements WeaponFireSink {
       const effDamage = falloffMinDamageFrac !== undefined
         ? damage * hitscanFalloffFrac(hitDist, range, rayRange, falloffMinDamageFrac)
         : damage;
+      // S2a: the beam's impact point, for the capital wreck hit tracker only.
+      d.noteBeamImpact?.(rayFromX + ndx * hitDist, rayFromY + ndy * hitDist);
       d.applyDamage(hitId, this._shooterId, effDamage);
     }
 
