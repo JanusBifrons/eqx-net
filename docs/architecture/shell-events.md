@@ -1,6 +1,6 @@
 # Shells as events (design note)
 
-Status: **slices 0 and 1 built** (server emits events behind `EQX_SHELL_EVENTS=1`; the client doesn't consume them yet). See "Slice 1 as built" at the end. Handoff 2026-11-10, Next #3: "Shells as events (spawn/land on the wire). This fixes the false burst at the edge of the view and the incoming-fire countdown estimate, and it's needed before big fleets."
+Status: **built (slices 0–4, 2026-11-12).** Every naval shell travels only as events: there is no switch, and none rides `projectiles[]`. The "as built" sections at the end describe each slice. Handoff 2026-11-10, Next #3: "Shells as events (spawn/land on the wire). This fixes the false burst at the edge of the view and the incoming-fire countdown estimate, and it's needed before big fleets."
 
 A naval shell (`naval_*`) flies in a straight line at a constant speed until it hits something or runs out of flight. Today the server re-sends every live shell in every snapshot. This note replaces that with one message when a salvo is fired and one when a shell hits, with the client drawing the flight from a shared function. It keeps invariant #16 with a compact in-flight list in the join payload and a slow keyframe on the snapshot.
 
@@ -121,7 +121,7 @@ With `t`, `n` and the exact path, `predictShellPass` gets the exact time of each
 
 ## 7. Migration in slices
 
-Behind `EQX_SHELL_EVENTS=1` (per process, read once, like `EQX_NAVAL_RANGE`). The server stamps it on the welcome; the client consumes events only when its welcome says so, so the two sides can't disagree (#15) and no page flag is needed. Each slice is one PR (~10–20 min agent).
+Slices 1–3 ran behind `EQX_SHELL_EVENTS=1` (per process, read once, like `EQX_NAVAL_RANGE`); slice 4 removed the switch. The server stamps it on the welcome; the client consumes events only when its welcome says so, so the two sides can't disagree (#15) and no page flag is needed. Each slice is one PR (~10–20 min agent).
 
 | Slice | Change | Tests | Gates |
 |---|---|---|---|
@@ -183,3 +183,11 @@ These were settled on the owner's standing rule: record the game as it is and sh
 - With the room's hub on (`EQX_SHELL_EVENTS=1` or the testMode `shellEvents` option), every client's welcome says `shellEvents`, so `SnapshotBroadcaster` skips every naval shell in the per-tick `projectiles[]` loop (one check per recipient). Sub-capital bolts are unchanged. The shells reach a viewer only by the hub's rules (§3): salvo, 1 Hz re-test, join backlog, keyframe.
 - **Locks:** `SnapshotBroadcaster.navalShells.test.ts` ("events on: the 16\" shell is not in projectiles[]; a bolt in the box still is", failing first; "events off: unchanged"); `tests/integration/sectorRoom/shellEvents.test.ts` (no naval shell rides a snapshot in an events room).
 - **Measured (2026-11-12, `naval-broadside` perf scene).** Ten hostile battleships fire on a battleship pilot 15 km off at real range. NPC capital turrets engage pilots and structures, never other NPCs, and a main gun never locks a fighter, hence the capital pilot. Same commit, `--base-env EQX_NAVAL_RANGE=real` vs `--head-env "EQX_NAVAL_RANGE=real&EQX_SHELL_EVENTS=1"`, 4 reps per arm on the laptop: **GREEN, rx 254 → 67 KB/s per pilot (×0.26, p = 0.03)**. Entities per JSON snapshot went 100 → 1; frame p95, render p95 and server tick p95 are unchanged. The command is in `perf-scenes.md`. Slice 4 (default on, delete `navalShellInView`'s fall-point rule and the absence guess) follows it.
+
+## Slice 4 as built (2026-11-12): on everywhere, no switch
+
+- **Server:** every room builds a `ShellEventHub`. `EQX_SHELL_EVENTS`, the testMode `shellEvents` room option and `ProjectilePipeline`'s `shellEvents` dep are gone: every naval shell is quantised at spawn and follows `shellPoseAt` on the worker tick. `SnapshotBroadcaster` skips every naval shell in `projectiles[]`, so `navalShellInView` (the fall-point rule) is deleted. The hub's viewer rule still sizes the view with `shellViewHalfExtent` (#15 with the client zoom floor).
+- **Welcome:** it still says `shellEvents: true`, and the client still reads events only then (the handshake is kept as a version check; it is now always true).
+- **Client:** `NavalShellBursts` lost its absence guess (`shellEndedOnHit` is deleted): it bursts only the `[x, y, shellRadius]` triples `ShellSalvoStore.place()` queues when the display reaches a `shell_end`. A miss, or a shell leaving view, never bursts.
+- **Measured:** the `naval-broadside` perf scene (slice 3 row): rx per pilot 254 → 67 KB/s, ×0.26, p = 0.03, with no frame or tick regression.
+- **Locks:** `SnapshotBroadcaster.navalShells.test.ts` (no calibre ever in `projectiles[]`), `navalShellBursts.test.ts` (no `shell_end`, no burst; the burst lands on the drawn point), `tests/unit/navalShellMissParity.test.ts` (a miss expires with no `shell_end` and the client draws nothing, every naval gun), and the integration tests `capitalEngagement`, `coastalDefences`, `coastalDuel` and `shellEvents`, which now observe `shell_salvo`.

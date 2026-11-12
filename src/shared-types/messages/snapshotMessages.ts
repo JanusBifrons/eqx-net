@@ -37,7 +37,7 @@ export interface WelcomeMessage {
    *  `real`; absent ⇒ `legacy`. The client's must match (combat/navalRange.ts). */
   navalRange?: 'legacy' | 'real';
   /** Shells as events (shell-events.md §7): set only when the server sends
-   *  naval shells as `shell_salvo` / `shell_end` (`EQX_SHELL_EVENTS=1`). */
+   *  naval shells as `shell_salvo` / `shell_end` (always, since slice 4). */
   shellEvents?: true;
   /** The live shells this ship should see, in salvo form (§5, #16). */
   shellsInFlight?: ShellSalvo[];

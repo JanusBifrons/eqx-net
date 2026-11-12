@@ -2521,11 +2521,11 @@ export class PixiRenderer implements IRenderer {
       this._turretShotSeen.set(id, gen);
     }
     for (const [id, g] of this._turretShotSeen) if (g !== gen) this._turretShotSeen.delete(id);
-    // Naval shells: a shell gone this frame bursts where it was last seen if
-    // it HIT something; one that ran out of range just fades (review
-    // 2026-11-07). Game space in, game space to FxExplosions (review
-    // 2026-11-10: a Pixi-space -y here put the burst at the Y mirror).
-    this._navalShellBursts.frame(mirror.projectiles, this._fxExplosions, now, mirror.pendingShellEnds);
+    // Naval shells: burst only where a shell_end says a shell hit (slice 4;
+    // a miss or a shell leaving view never bursts). Game space in, game
+    // space to FxExplosions (review 2026-11-10: a Pixi-space -y here put
+    // the burst at the Y mirror).
+    this._navalShellBursts.frame(this._fxExplosions, now, mirror.pendingShellEnds);
     if (mirror.missiles) {
       for (const [id, m] of mirror.missiles) {
         if (!this._turretMissileSeen.has(id)) {
@@ -3256,7 +3256,6 @@ export class PixiRenderer implements IRenderer {
   resetEffectsForSectorHandoff(): void {
     this.effects?.resetForSectorHandoff();
     this._fxExplosions?.reset();
-    this._navalShellBursts.reset();
     this.incomingFire.reset();
     this._fxShields?.reset();
     this._fxFences?.reset();

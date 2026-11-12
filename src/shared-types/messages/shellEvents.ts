@@ -3,10 +3,9 @@
  * shapes for naval shells sent as one `shell_salvo` when fired and one
  * `shell_end` when they hit, instead of riding every 20 Hz snapshot.
  *
- * Slice 1 (this file's first user): the server emits these behind
- * `EQX_SHELL_EVENTS=1` while still sending shells per tick, so nothing on the
- * client changes yet. The client consumes events only when its welcome says
- * `shellEvents: true` (#15: the two sides can't disagree).
+ * Since slice 4 every naval shell travels this way and only this way (no
+ * switch). The welcome still says `shellEvents: true` and the client reads
+ * events only then (#15: the two sides can't disagree).
  *
  * Positions are 0.1 u, velocities 0.01 u/s (`quantiseShellSpawn`); the server
  * quantises the record at spawn so both sides integrate the same numbers.
@@ -87,21 +86,7 @@ export const SHELL_KEY_PERIOD_TICKS = 120;
 /** The server re-tests unsent shells against each viewer this often (1 Hz). */
 export const SHELL_RETEST_TICKS = 60;
 
-// ── The switch (per process, read once, like EQX_NAVAL_RANGE) ──────────────
-
-/** Resolve the switch from an env (exported for tests). Only `1`/`true`. */
-export function resolveShellEvents(env: Record<string, string | undefined> | undefined): boolean {
-  const raw = env?.['EQX_SHELL_EVENTS'];
-  return raw === '1' || raw === 'true';
-}
-
-const g = globalThis as unknown as { process?: { env?: Record<string, string | undefined> } };
-
-/** Whether this process sends shells as events. Only the server reads it; the
- *  client learns it from the welcome. */
-export const SHELL_EVENTS: boolean = resolveShellEvents(g.process?.env);
-
-/** The welcome fields (absent when off, so welcomes are byte-identical). */
+/** The welcome fields (always sent since slice 4). */
 export interface WelcomeShellEventFields {
   shellEvents?: true;
   /** Every live shell the joining ship should see, in salvo form (#16). */

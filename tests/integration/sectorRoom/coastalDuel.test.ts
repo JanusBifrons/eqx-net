@@ -26,7 +26,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { matchMaker } from 'colyseus';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { SHOWCASE_COASTAL_DUEL_OPTS, SHOWCASE_PILOT_ID } from '../../../src/server/rooms/showcaseRooms.js';
-import type { SnapshotMessage } from '../../../src/shared-types/messages.js';
+import type { ShellSalvo } from '../../../src/shared-types/messages/shellEvents.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 
 const BATTERY = ['coastal_casemate_8in', 'coastal_turret_11in', 'coastal_barbette_16in'] as const;
@@ -58,8 +58,9 @@ describe('SectorRoom integration — battleship vs coastal battery', () => {
     // The battleship's shells, and whether a turret of it is on a structure.
     const bsOwner = `swarm-${bs!.entityId}`;
     let bsShells = 0;
-    cr.onMessage('snapshot', (snap: SnapshotMessage) => {
-      for (const p of snap.projectiles ?? []) if (p.ownerId === bsOwner && p.weaponId?.startsWith('naval_')) bsShells++;
+    // Naval shells travel as events (shell-events.md slice 4).
+    cr.onMessage('shell_salvo', (m: ShellSalvo) => {
+      if (m.o === bsOwner) bsShells += m.sh.length;
     });
     const mountTargets = (room as unknown as { mountTicker: { droneMountTargetIds: Map<string, (string | null)[]> } })
       .mountTicker.droneMountTargetIds;

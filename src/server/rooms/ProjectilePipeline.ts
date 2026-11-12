@@ -149,12 +149,11 @@ export interface ProjectilePipelineDeps {
   /** Swarm pass broadphase (default on). `false` restores the full
    *  every-shell × every-entity scan — the parity oracle in tests. */
   broadphase?: boolean;
-  /** Shells as events (shell-events.md slice 1). When true, a naval shell is
-   *  an EVENT shell: its spawn is quantised to wire precision, it moves to the
-   *  closed-form pose at `serverTick + 1` each advance (so it follows the
-   *  worker tick even when room updates and ticks drift apart), and the hooks
-   *  below report its life. Absent/false ⇒ byte-identical to before. */
-  shellEvents?: boolean;
+  /** Shells as events (shell-events.md; always on since slice 4): every naval
+   *  shell is an EVENT shell: its spawn is quantised to wire precision, it
+   *  moves to the closed-form pose at `serverTick + 1` each advance (so it
+   *  follows the worker tick even when room updates and ticks drift apart),
+   *  and the hooks below report its life. */
   /** An event shell was spawned (after quantising). */
   onShellSpawn?: (projId: string, rec: ProjectileRecord) => void;
   /** An event shell hit something (or a shield wall: radius 0) at `tick`. */
@@ -215,7 +214,7 @@ export class ProjectilePipeline {
   ): void {
     const projId = `proj-${this.projectileCounter++}`;
     const d = this.deps;
-    if (d.shellEvents === true && NAVAL_SHELL_WEAPON_IDS.has(weaponId)) {
+    if (NAVAL_SHELL_WEAPON_IDS.has(weaponId)) {
       // Quantise BEFORE the first step so server and client integrate the
       // same numbers (shell-events.md §2).
       quantiseShellSpawn(x, y, vx, vy, spawnQ);

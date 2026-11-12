@@ -149,9 +149,3 @@ export function muzzleSmokePuff(t: number, k: number, barrelWid: number, out: Sm
   return out;
 }
 
-/** Did a shell end on a HIT (true) or run out of range (false)? It is first
- *  seen a little past the muzzle, so a spent shell has covered most of its
- *  travel from there; anything well short of that stopped on a target. */
-export function shellEndedOnHit(travelledSinceSeen: number, fullTravel: number): boolean {
-  return fullTravel <= 0 || travelledSinceSeen < fullTravel * 0.8;
-}

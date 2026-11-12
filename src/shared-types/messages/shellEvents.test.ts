@@ -1,7 +1,7 @@
-/** Shells as events: wire schemas, the switch and the welcome fields (§2, §7). */
+/** Shells as events: wire schemas and the welcome fields (§2, §7). */
 import { describe, expect, it } from 'vitest';
 import {
-  ShellEndSchema, ShellKeyRecordSchema, ShellSalvoSchema, resolveShellEvents,
+  ShellEndSchema, ShellKeyRecordSchema, ShellSalvoSchema,
 } from './shellEvents.js';
 import { WelcomeSchema } from './snapshotMessages.js';
 
@@ -25,14 +25,6 @@ describe('shell event schemas', () => {
     expect(ShellSalvoSchema.safeParse({ ...salvo, n: 0 }).success).toBe(false);
     expect(ShellEndSchema.safeParse({ type: 'shell_end', e: [['proj-1', 1, 2, 3, -1]] }).success).toBe(false);
     expect(ShellEndSchema.safeParse({ type: 'shell_end', e: [] }).success).toBe(false);
-  });
-
-  it('the switch reads only 1 / true', () => {
-    expect(resolveShellEvents({ EQX_SHELL_EVENTS: '1' })).toBe(true);
-    expect(resolveShellEvents({ EQX_SHELL_EVENTS: 'true' })).toBe(true);
-    expect(resolveShellEvents({ EQX_SHELL_EVENTS: '0' })).toBe(false);
-    expect(resolveShellEvents({})).toBe(false);
-    expect(resolveShellEvents(undefined)).toBe(false);
   });
 
   it('the welcome carries shellEvents + shellsInFlight, and stays valid without them', () => {
