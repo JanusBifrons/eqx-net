@@ -129,8 +129,15 @@ export class FxProjectiles {
   /** Start a frame: projectiles not drawn before `endFrame` are released. */
   beginFrame(): void { this.gen++; }
 
-  /** Draw projectile `id` at game-space (x, y) moving (vx, vy). */
-  draw(id: string, style: FxProjStyle, x: number, y: number, vx: number, vy: number, alpha: number, size = 1): void {
+  /**
+   * Draw projectile `id` at game-space (x, y) moving (vx, vy). A SHELL's
+   * streak trails it: its front is at (x, y) and it is no longer than
+   * `flown` (the distance since it was fired). At capital zoom the minimum
+   * screen width makes a 16" streak kilometres long; centred, its front ran
+   * through the target before the shell landed (owner 2026-11-12, "the shots
+   * fired show even after they hit"). Bolts and tracers stay centred.
+   */
+  draw(id: string, style: FxProjStyle, x: number, y: number, vx: number, vy: number, alpha: number, size = 1, flown = Infinity): void {
     let v = this.live.get(id);
     if (!v) {
       v = this.free.pop() ?? this.make();
@@ -138,8 +145,16 @@ export class FxProjectiles {
     }
     v.gen = this.gen;
     const base = style === 'bolt' ? BOLT : style === 'shell' ? SHELL : TRACER;
-    const k0 = style === 'shell' ? size : 1;
-    const spLen = base.len * k0, spWid = base.width * k0;
+    const shell = style === 'shell';
+    const k0 = shell ? size : 1;
+    const ax = shell ? 1 : 0.5; // shells: anchor on the streak's front end
+    const maxLen = shell ? flown : Infinity;
+    const fullLen = base.len * k0;
+    const spLen = Math.min(fullLen, maxLen);
+    // A streak still growing (just fired) keeps its proportions, thin as well
+    // as short: capping only its length drew a fat block at the turret.
+    const spWid = base.width * k0 * (spLen / fullLen);
+    v.head.anchor.x = ax; v.core.anchor.x = ax;
     const px = x, py = -y;
     const sl = Math.hypot(vx, vy) || 1;
     const ux = vx / sl, uy = -vy / sl;
@@ -152,11 +167,12 @@ export class FxProjectiles {
     v.core.scale.set((spLen * 0.6) / w, (spWid * 0.33 + 0.8) / h); v.core.alpha = alpha;
     for (let k = 0; k < v.trail.length; k++) {
       const tr = v.trail[k]!;
-      tr.visible = k < base.trail;
-      if (!tr.visible) continue;
       const back = (k + 1) * 12 * k0;
+      tr.visible = k < base.trail && back < maxLen;
+      if (!tr.visible) continue;
+      tr.anchor.x = ax;
       tr.position.set(px - ux * back, py - uy * back); tr.rotation = ang; tr.tint = base.tint;
-      tr.scale.set((spLen * (0.9 - k * 0.15)) / w, (spWid * (0.8 - k * 0.18)) / h);
+      tr.scale.set(Math.min(spLen * (0.9 - k * 0.15), maxLen - back) / w, (spWid * (0.8 - k * 0.18)) / h);
       tr.alpha = alpha * (0.42 - k * 0.12);
     }
   }
