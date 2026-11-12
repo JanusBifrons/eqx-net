@@ -152,6 +152,19 @@ describe('SectorRoom integration: capital wreck break and drift', () => {
     expect(near.v, 'a piece at the kill point flies out near the top push').toBeGreaterThan(0.6 * t.wreckPushMax);
     expect(far.v, 'a far piece still drifts').toBeGreaterThan(0.6 * t.wreckPushMin);
     expect(near.v, 'near pieces fly out faster than distant ones').toBeGreaterThan(1.5 * far.v);
+    // Money-shot review (2026-11-12): gaps of 5–20 px by 22 s at zoom ~0.22,
+    // bow and stern still in the outline. Target: ~300–500 u/s at the kill
+    // point for a heavy cruiser (scaled by hull size, #18).
+    expect(near.v, 'the piece at the kill point leaves at 300+ u/s (heavy cruiser)').toBeGreaterThan(300);
+    expect(near.v, '...but not absurdly fast').toBeLessThan(650);
+    // The field's extent: the largest distance between two piece centres.
+    const extent = (): number => {
+      const ps = ids.map((id) => internal.wreckState(id)!);
+      let m = 0;
+      for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) m = Math.max(m, Math.hypot(ps[i]!.x - ps[j]!.x, ps[i]!.y - ps[j]!.y));
+      return m;
+    };
+    const e0 = extent();
     const centroidSpread = (): number => {
       let cx = 0;
       let cy = 0;
@@ -165,12 +178,16 @@ describe('SectorRoom integration: capital wreck break and drift', () => {
     const r0 = centroidSpread();
     await harness.advance(5000);
     const r5 = centroidSpread();
+    const e5 = extent();
     let spin = 0;
     for (const id of ids) spin = Math.max(spin, Math.abs(internal.wreckState(id)!.angvel));
-    console.log(`[drift] pieces ${ids.length} spread ${r0.toFixed(1)} → ${r5.toFixed(1)}, max spin ${(spin * 180 / Math.PI).toFixed(2)} deg/s`);
-    // Before the fix the field opened 132 u in 5 s (a 2,184 u hull): pieces
-    // kept the outline with hairline gaps.
-    expect(r5 - r0, 'mean distance from the debris centre grows by a clear margin in 5 s').toBeGreaterThan(0.12 * kind.radius);
-    expect(spin * 180 / Math.PI, 'pieces spin at a few deg/s').toBeGreaterThan(1);
+    console.log(`[drift] pieces ${ids.length} spread ${r0.toFixed(1)} → ${r5.toFixed(1)}, extent ${e0.toFixed(0)} → ${e5.toFixed(0)}, max spin ${(spin * 180 / Math.PI).toFixed(2)} deg/s`);
+    // #521 opened the field 393 u in 5 s (mean radius) and the money-shot
+    // review still read it as "barely separating"; v6 targets ≥ ~1,500 u.
+    expect(e5 - e0, 'the debris field opens by 1,500 u or more in 5 s').toBeGreaterThan(1500);
+    expect(r5 - r0, 'mean distance from the debris centre grows by a clear margin in 5 s').toBeGreaterThan(0.3 * kind.radius);
+    // 10–30 deg/s near the impact, still turning after 5 s of damping.
+    expect(spin * 180 / Math.PI, 'pieces near the impact spin at 10+ deg/s').toBeGreaterThan(8);
+    expect(spin * 180 / Math.PI, '...not a blur').toBeLessThan(40);
   }, 30_000);
 });
