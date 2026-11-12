@@ -59,6 +59,8 @@ import type { ShipState } from './schema/SectorState.js';
 import { DT_SEC as PROJECTILE_DT_SEC, type ProjectileRecord } from './ProjectilePipeline.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shellViewHalfExtent } from '../../shared-types/shipScale/tuning.js';
+import { NAVAL_SHELL_WEAPON_IDS } from '../../core/combat/shellFlight.js';
+import type { ShellKeyRecord } from '../../shared-types/messages/shellEvents.js';
 import type { Hold } from '../../shared-types/goods.js';
 import { isHoldEmpty } from '../../core/cargo/hold.js';
 import type { SceneWorkCounters } from './scene/SceneWorkCounters.js';
@@ -86,9 +88,7 @@ function hasAnyStatAlloc(alloc: Record<string, number>): boolean {
 
 /** Naval shells: long-flight (up to ~30 s at real scale) gun rounds whose
  *  interest is the viewer's whole widest view, not the ±1.5-cell box. */
-const NAVAL_SHELL_IDS: ReadonlySet<string> = new Set([
-  'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege',
-]);
+const NAVAL_SHELL_IDS = NAVAL_SHELL_WEAPON_IDS;
 
 /**
  * Naval-shell interest (ranges slice 7): is the shell, or the point where it
@@ -235,6 +235,15 @@ export interface SnapshotBroadcasterDeps {
   getStructureMountAngles?: () => SnapshotMessage['structureMountAngles'];
   /** Perf scenes (WS3): snapshots + entities sent, counted while a scene runs. */
   work?: SceneWorkCounters;
+  /** Shells as events (shell-events.md §5): the room's hub, when on. Fills the
+   *  per-recipient `shellKey` keyframe and forgets a leaving viewer. */
+  shellEvents?: () => ShellKeyframeSource | null;
+}
+
+/** The part of `ShellEventHub` the broadcaster uses. */
+export interface ShellKeyframeSource {
+  keyframeFor(sessionId: string, out: ShellKeyRecord[]): number;
+  forgetViewer(sessionId: string): void;
 }
 
 interface AllShipEntry {
@@ -369,6 +378,7 @@ type MutableSnapshotMessage = {
   asteroids?: SnapshotMessage['asteroids'];
   structureTargets?: SnapshotMessage['structureTargets'];
   structureMountAngles?: SnapshotMessage['structureMountAngles'];
+  shellKey?: SnapshotMessage['shellKey'];
 };
 
 export class SnapshotBroadcaster {
@@ -439,7 +449,7 @@ export class SnapshotBroadcaster {
    *  the renderer never matched a drone's shot to its gun, so drone and capital
    *  turrets never recoiled or flashed (capitals review, 2026-11-07). Players
    *  and structures pass through. Alloc-free once each entity is cached. */
-  private wireOwnerId(ownerId: string): string {
+  wireOwnerId(ownerId: string): string {
     const rec = this.deps.swarmRegistry.get?.(ownerId);
     if (!rec) return ownerId;
     let w = this._wireOwnerIds.get(rec.entityId);
@@ -450,6 +460,18 @@ export class SnapshotBroadcaster {
     }
     return w;
   }
+  /**
+   * The wide-owner interest rule: a projectile's owner is a WIDE entity (a
+   * capital, seen from several cells away, or a structure) in this viewer's
+   * interest, so its shots are seen leaving the barrels. Shared by the
+   * per-tick projectiles and the shell-event hub (§3 rule 3).
+   */
+  ownerWideInInterest(ownerId: string, sessionId: string): boolean {
+    const owner = this.deps.swarmRegistry.get?.(ownerId);
+    if (!owner || (owner.radius <= CELL_SIZE / 2 && owner.kind !== SWARM_KIND_STRUCTURE)) return false;
+    return this.interestScratch.get(sessionId)?.has(owner.entityId) === true;
+  }
+  private readonly _shellKeyScratch: ShellKeyRecord[] = [];
   private readonly _missilesScratch: MutableMissileEntry[] = [];
   private readonly _dronesScratch: MutableDroneEntry[] = [];
   private readonly _asteroidsScratch: MutableAsteroidEntry[] = [];
@@ -648,6 +670,7 @@ export class SnapshotBroadcaster {
   onClientLeave(sessionId: string): void {
     this.lastInputCaches.delete(sessionId);
     this.interestScratch.delete(sessionId);
+    this.deps.shellEvents?.()?.forgetViewer(sessionId);
   }
 
   /**
@@ -874,7 +897,6 @@ export class SnapshotBroadcaster {
       const projectilesScratch = this._projectilesScratch;
       let projectilesCount = 0;
       if (d.liveProjectiles.size > 0) {
-        const projInterest = this.interestScratch.get(client.sessionId);
         // Naval shells: the viewer's widest camera view for the hull it flies
         // (shared with the client's zoom floor, #15). Once per recipient.
         const viewShip = d.getActiveShip(recipientPlayerId);
@@ -887,8 +909,7 @@ export class SnapshotBroadcaster {
             // snapshot and a far firer sees its own shell land. Else the wide-
             // owner rule below still applies.
             if (!navalShellInView(proj, recipientPose.x, recipientPose.y, shellHalf, tickNow)) {
-              const owner = d.swarmRegistry.get?.(proj.ownerId);
-              if (!owner || (owner.radius <= CELL_SIZE / 2 && owner.kind !== SWARM_KIND_STRUCTURE) || !projInterest?.has(owner.entityId)) continue;
+              if (!this.ownerWideInInterest(proj.ownerId, client.sessionId)) continue;
             }
           } else if (Math.abs(proj.x - recipientPose.x) > interestRadius || Math.abs(proj.y - recipientPose.y) > interestRadius) {
             // Out of the box: still send it if a WIDE owner (a capital, seen
@@ -896,8 +917,7 @@ export class SnapshotBroadcaster {
             // salvo is seen leaving the barrels. Coastal defences: the same for a
             // STRUCTURE in view (a coast gun's shells fly thousands of units).
             // Everything else is unchanged.
-            const owner = d.swarmRegistry.get?.(proj.ownerId);
-            if (!owner || (owner.radius <= CELL_SIZE / 2 && owner.kind !== SWARM_KIND_STRUCTURE) || !projInterest?.has(owner.entityId)) continue;
+            if (!this.ownerWideInInterest(proj.ownerId, client.sessionId)) continue;
           }
           SnapshotBroadcaster.writeProjectileSlot(
             projectilesScratch, projectilesCount,
@@ -1048,6 +1068,16 @@ export class SnapshotBroadcaster {
       // Undefined when no structures exist (zero cost).
       snap.structureTargets = this.deps.getStructuresSlice?.();
       snap.structureMountAngles = this.deps.getStructureMountAngles?.();
+      // Shells as events (§5): the keyframe of in-flight shells this recipient
+      // was sent (pooled records, alloc-free once warm).
+      const shellSrc = this.deps.shellEvents?.();
+      if (shellSrc) {
+        const keyN = shellSrc.keyframeFor(client.sessionId, this._shellKeyScratch);
+        this._shellKeyScratch.length = keyN;
+        snap.shellKey = keyN > 0 ? this._shellKeyScratch : undefined;
+      } else {
+        snap.shellKey = undefined;
+      }
       // plan: imperative-taco-r2 — stamp server-send time so the client
       // can separate network in-transit delay from server-side silence
       // during recv_gap_long events. `performance.now()` is a primitive

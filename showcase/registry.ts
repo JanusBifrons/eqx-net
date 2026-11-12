@@ -167,6 +167,7 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
   'cinematic-camera': 'The tool that films the video.',
   'showcase-pipeline': 'The pipeline itself.',
   'procedural-bases-research': 'Research record.',
+  'shell-events': 'Design note, no player-facing change yet; the shells and incoming-fire marker it changes are filmed by the real-scale-ranges shot once built.',
   'hud-variants': 'historical: HUD variants retired (fire control is the only HUD since 2026-11-09).',
 };
 

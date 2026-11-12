@@ -197,6 +197,15 @@ export interface IAiBehaviour {
   setMoveTarget?(x: number, y: number): void;
   clearMoveTarget?(): void;
   /**
+   * Optional GUARD POST (owner decision 2026-11-11): the area a director sent
+   * this NPC to defend. A broadside capital with a post fights from it and
+   * never leaves its guard radius to hold its gun stand-off or chase a target
+   * out of reach; with none it keeps the stand-off. SERVER-ONLY (no client
+   * brain ⇒ no lockstep surface / wire bump).
+   */
+  setGuardPost?(x: number, y: number, radius: number): void;
+  clearGuardPost?(): void;
+  /**
    * Leader-led flocking (non-combat herding): assign this drone the squad
    * LEADER's course. Like `setMoveTarget` but flags it a flock leader so the
    * brain THROTTLES its cruise — the leader travels slower than its full-cruise
