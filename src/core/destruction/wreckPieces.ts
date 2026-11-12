@@ -17,7 +17,7 @@
  *
  * Runs once per death (not hot-loop code); allocates freely.
  */
-import { fractureHull, projectToOutline, FRACTURE_MAX_PIECES } from './fractureHull.js';
+import { fractureHull, projectToOutline, FRACTURE_MAX_PIECES, FRACTURE_SNAP_CHANCE } from './fractureHull.js';
 import { Rng, fnvMixU32 } from '../random/rng.js';
 import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
@@ -80,8 +80,47 @@ export interface WreckPieceSpec {
   radius: number;
 }
 
+/**
+ * The fracture inputs of one wreck: everything `wreckPieceGeometry` needs.
+ * This is exactly what the S2b `wrecks[]` snapshot descriptor carries, so a
+ * client rebuilds the same pieces the server spawned (no vertex on the wire).
+ */
+export interface WreckFractureInputs {
+  kindId: ShipKindId;
+  seed: number;
+  /** Kill point in the hull's 1× Pixi-up frame, already on the outline. */
+  killX: number;
+  killY: number;
+  killBlowDamage: number;
+  recentDamageRate: number;
+  snapChance: number;
+}
+
+/** One piece's shape in its own body frame (math-up, centred on its
+ *  centroid). Shared by the server body, the client predWorld twin and the
+ *  client drawing (#15). */
+export interface WreckPieceGeometry {
+  index: number;
+  /** Centroid in the ship's scaled math-up frame (before the ship's turn). */
+  cx: number;
+  cy: number;
+  /** Convex parts, body-local math-up, CCW. */
+  parts: Vec2[][];
+  /** The piece outline, body-local math-up, CCW. */
+  outline: Vec2[];
+  /** `cutEdges[i]`: edge outline[i] → outline[i+1] is a new cut (S3 glow). */
+  cutEdges: boolean[];
+  /** World-unit area (scaled). */
+  area: number;
+  mass: number;
+  /** Farthest part vertex from the centre (bounding circle). */
+  radius: number;
+}
+
 export interface WreckBuild {
   pieces: WreckPieceSpec[];
+  /** The inputs the pieces were fractured from (the S2b descriptor). */
+  fracture: WreckFractureInputs;
   /** The kill point in the hull's 1× Pixi-up frame, on the outline (the
    *  S2b descriptor's killX/killY). */
   killLocal: Vec2;
@@ -118,42 +157,31 @@ function violence(kb: number, rate: number): number {
   return 0.5 * f(kb) + 0.5 * f(rate);
 }
 
-export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
+/**
+ * The deterministic piece shapes of one wreck. The server's `buildWreckPieces`
+ * and the client's rebuild (from the `wrecks[]` descriptor) both call this, so
+ * the client's predWorld bodies and drawn pieces match the server's bodies bit
+ * for bit (#15; locked by `tests/integration/wire/wreckGeometryParity.test.ts`).
+ * Runs once per wreck per side; allocates freely.
+ */
+export function wreckPieceGeometry(input: WreckFractureInputs): WreckPieceGeometry[] {
   const kind = getShipKind(input.kindId);
   const hull = shipHullOutline(kind);
   const s = shipShapeScale(kind);
-  const { pose } = input;
-  const c = Math.cos(pose.angle);
-  const sn = Math.sin(pose.angle);
-  const toWorld = (lx: number, ly: number): Vec2 => {
-    // Pixi-up 1× → math-up scaled → world.
-    const mx = lx * s;
-    const my = -ly * s;
-    return { x: pose.x + mx * c - my * sn, y: pose.y + mx * sn + my * c };
-  };
-
-  const target = input.killWorld ?? input.attackerWorld ?? { x: pose.x, y: pose.y };
-  const killLocal = hullLocalKillPoint(input.kindId, pose, target);
-  const killWorldOnHull = toWorld(killLocal.x, killLocal.y);
-
   const fractured = fractureHull({
     hull,
     seed: input.seed >>> 0,
-    killPoint: killLocal,
+    killPoint: { x: input.killX, y: input.killY },
     maxPieces: FRACTURE_MAX_PIECES,
     killBlowDamage: input.killBlowDamage,
     recentDamageRate: input.recentDamageRate,
+    snapChance: input.snapChance,
   });
-
   const hullAreaWorld = ringArea(hull) * s * s;
   const density = hullAreaWorld > 0 ? massOf(kind, 1) / hullAreaWorld : 0;
-  const push = WRECK_PUSH_SPEED_FRAC * kind.maxSpeed * (0.5 + violence(input.killBlowDamage, input.recentDamageRate));
-  const spinRng = new Rng(fnvMixU32((input.seed >>> 0) ^ 0x3ec7, 0x5));
-
-  const pieces: WreckPieceSpec[] = [];
+  const out: WreckPieceGeometry[] = [];
   for (let i = 0; i < fractured.length; i++) {
     const p = fractured[i]!;
-    const centre = toWorld(p.centroid.x, p.centroid.y);
     const cmx = p.centroid.x * s;
     const cmy = -p.centroid.y * s;
     let radius = 0;
@@ -171,7 +199,57 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
       }
       parts.push(ring);
     }
+    const n = p.outline.length;
+    const outline: Vec2[] = [];
+    const cutEdges: boolean[] = [];
+    for (let j = 0; j < n; j++) {
+      const v = p.outline[n - 1 - j]!;
+      outline.push({ x: v.x * s - cmx, y: -v.y * s - cmy });
+      // Reversed walk: new edge j is old edge (n - 2 - j) mod n.
+      cutEdges.push(p.cutEdges[(n - 2 - j + n) % n] ?? false);
+    }
     const area = p.area * s * s;
+    out.push({ index: i, cx: cmx, cy: cmy, parts, outline, cutEdges, area, mass: Math.max(1e-3, density * area), radius });
+  }
+  return out;
+}
+
+export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
+  const kind = getShipKind(input.kindId);
+  const s = shipShapeScale(kind);
+  const { pose } = input;
+  const c = Math.cos(pose.angle);
+  const sn = Math.sin(pose.angle);
+  const toWorld = (lx: number, ly: number): Vec2 => {
+    // Pixi-up 1× → math-up scaled → world.
+    const mx = lx * s;
+    const my = -ly * s;
+    return { x: pose.x + mx * c - my * sn, y: pose.y + mx * sn + my * c };
+  };
+
+  const target = input.killWorld ?? input.attackerWorld ?? { x: pose.x, y: pose.y };
+  const killLocal = hullLocalKillPoint(input.kindId, pose, target);
+  const killWorldOnHull = toWorld(killLocal.x, killLocal.y);
+
+  const fracture: WreckFractureInputs = {
+    kindId: input.kindId,
+    seed: input.seed >>> 0,
+    killX: killLocal.x,
+    killY: killLocal.y,
+    killBlowDamage: input.killBlowDamage,
+    recentDamageRate: input.recentDamageRate,
+    snapChance: FRACTURE_SNAP_CHANCE,
+  };
+  const geom = wreckPieceGeometry(fracture);
+
+  const push = WRECK_PUSH_SPEED_FRAC * kind.maxSpeed * (0.5 + violence(input.killBlowDamage, input.recentDamageRate));
+  const spinRng = new Rng(fnvMixU32((input.seed >>> 0) ^ 0x3ec7, 0x5));
+
+  const pieces: WreckPieceSpec[] = [];
+  for (let i = 0; i < geom.length; i++) {
+    const g = geom[i]!;
+    // Centroid: the ship's scaled math-up frame → rotate → world.
+    const centre = { x: pose.x + g.cx * c - g.cy * sn, y: pose.y + g.cx * sn + g.cy * c };
     const rx = centre.x - pose.x;
     const ry = centre.y - pose.y;
     let ox = centre.x - killWorldOnHull.x;
@@ -186,18 +264,18 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
     }
     const kick = (spinRng.u32() / 4294967296 - 0.5) * 2 * WRECK_SPIN_KICK;
     pieces.push({
-      index: i,
+      index: g.index,
       x: centre.x,
       y: centre.y,
       vx: pose.vx - pose.angvel * ry + ox * push,
       vy: pose.vy + pose.angvel * rx + oy * push,
       angle: pose.angle,
       angvel: pose.angvel + kick,
-      parts,
-      area,
-      mass: Math.max(1e-3, density * area),
-      radius,
+      parts: g.parts,
+      area: g.area,
+      mass: g.mass,
+      radius: g.radius,
     });
   }
-  return { pieces, killLocal, killWorldOnHull };
+  return { pieces, killLocal, killWorldOnHull, fracture };
 }

@@ -1,4 +1,5 @@
 import type { CameraCue } from './cameraScript.js';
+import type { WreckDescriptor } from '../../shared-types/messages/snapshotMessages.js';
 import type { RadarInsets, RadarPrefs } from '../../shared-types/settings/radar.js';
 
 export interface ShipRenderState {
@@ -142,7 +143,7 @@ export interface SwarmRenderState {
   ringHead: number;
   /** Collision radius. Renderer draws asteroids as circles of this size. */
   radius: number;
-  /** 0 = asteroid, 1 = drone, 2 = structure, 3 = scrap. */
+  /** 0 = asteroid, 1 = drone, 2 = structure, 3 = scrap, 4 = wreck piece. */
   kind: number;
   /** Ship-kind id when `kind === 1` (drone). Drives the drone silhouette +
    *  colour on the renderer; absent for asteroids. Resolved from the wire's
@@ -154,6 +155,10 @@ export interface SwarmRenderState {
    *  into `shipScrapGroups(shipKind)`. Decoded from the wire's trailing u8;
    *  absent for every other kind. */
   componentIndex?: number;
+  /** Capital wreck piece (`kind === 4`, wire v5): the wreck it belongs to — the
+   *  key of `RenderMirror.wrecks`. `componentIndex` is its piece index and
+   *  `shipKind` the parent capital. Absent for every other kind. */
+  wreckId?: number;
   /** P2c — an asteroid's resource ('ice' | 'crystal'; absent ⇒ rock). */
   asteroidResource?: string;
   /** Phase: shield — true while this drone's shield is down (hull
@@ -473,6 +478,12 @@ export interface RenderMirror {
    *  from `SnapshotMessage.structures[]`. The renderer joins by entityId to draw
    *  the connector web + scaffolding fill + dim unbuilt blueprints. */
   structures?: Map<number, StructureRenderState>;
+  /** Capital destruction S2b — each live wreck's fracture inputs, keyed by
+   *  wreckId, mirrored from the `wrecks[]` snapshot descriptor. Small plain
+   *  records: the renderer rebuilds each piece's shape from them with the
+   *  shared deterministic `wreckPieceGeometry` (no vertex crosses the worker
+   *  boundary). */
+  wrecks?: Map<number, WreckDescriptor>;
   /** Mine Layer — proximity mines, keyed by mine id (room state `mines`). */
   mines?: Map<string, MineRenderState>;
   /** Structures plan, Phase 3 — connection flash windows from the discrete

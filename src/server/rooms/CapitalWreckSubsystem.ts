@@ -14,6 +14,10 @@
  *  2. DEATH (once, from the capital's death hook): read the tracker, build the
  *     pieces (`buildWreckPieces`: the kill point on the hull edge, piece count
  *     from the final hit and the recent damage rate), spawn one body per piece.
+ *  3. DESCRIPTORS (S2b): each wreck gets a u16 `wreckId` (its pieces carry it
+ *     on the binary wire) and one `WreckDescriptor` (the fracture inputs) that
+ *     rides the snapshot while any of its pieces lives. A client, a late joiner
+ *     included, rebuilds the pieces from it (#16); no vertex is on the wire.
  *
  * Hand-rolled-mock testable: everything room-shaped comes in as hooks.
  */
@@ -21,6 +25,8 @@ import { buildWreckPieces, MAX_LIVE_WRECK_PIECES, WRECK_ANGULAR_DAMPING, WRECK_L
 import { fnv1a32, fnvMixU32 } from '../../core/random/rng.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { Vec2 } from '../../core/swarm/asteroidShape.js';
+import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
+import type { WreckDescriptor } from '../../shared-types/messages/snapshotMessages.js';
 
 const BUCKETS = 6;
 const BUCKET_TICKS = WRECK_RECENT_DAMAGE_TICKS / BUCKETS;
@@ -40,7 +46,15 @@ export interface WreckPieceSpawn {
   id: string;
   x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
   radius: number; mass: number; parentShipKind: ShipKindId; pieceIndex: number;
+  /** S2b: the wreck this piece belongs to (u16, on the binary wire). */
+  wreckId: number;
   parts: ReadonlyArray<ReadonlyArray<Vec2>>; linearDamping: number; angularDamping: number;
+}
+
+interface LiveWreck {
+  desc: WreckDescriptor;
+  /** Pieces of this wreck still alive. */
+  pieces: number;
 }
 
 export interface CapitalWreckDeps {
@@ -65,6 +79,14 @@ export class CapitalWreckSubsystem {
   private readonly live: string[] = [];
   private deaths = 0;
   private readonly lastDeathTick = new Map<string, number>();
+  /** S2b: live wrecks by wreckId, and the snapshot slice (one descriptor per
+   *  live wreck, rebuilt only when the set changes). */
+  private readonly wrecks = new Map<number, LiveWreck>();
+  private readonly pieceWreck = new Map<string, number>();
+  private readonly slice: WreckDescriptor[] = [];
+  private nextWreckId = 1;
+  /** Bumped whenever the set of live wrecks changes. */
+  version = 0;
   /** Test seam: a fixed fracture seed. */
   forcedSeed: number | null = null;
 
@@ -137,22 +159,70 @@ export class CapitalWreckSubsystem {
     const recentDamageRate = e !== undefined ? this.recentDamage(e) / hull : 0;
     this.forget(targetId);
     const seed = this.forcedSeed ?? fnvMixU32(fnv1a32(targetId), this.d.serverTick() >>> 0);
-    const { pieces } = buildWreckPieces({ kindId, pose, killWorld, attackerWorld, seed, killBlowDamage, recentDamageRate });
+    const { pieces, fracture } = buildWreckPieces({ kindId, pose, killWorld, attackerWorld, seed, killBlowDamage, recentDamageRate });
     const n = this.deaths++;
+    const wreckId = this.allocWreckId();
     let spawned = 0;
     for (const p of pieces) {
       const id = `wreck-${n}-${p.index}`;
       const ok = this.d.spawnPiece({
         id, x: p.x, y: p.y, vx: p.vx, vy: p.vy, angle: p.angle, angvel: p.angvel,
-        radius: p.radius, mass: p.mass, parentShipKind: kindId, pieceIndex: p.index,
+        radius: p.radius, mass: p.mass, parentShipKind: kindId, pieceIndex: p.index, wreckId,
         parts: p.parts, linearDamping: WRECK_LINEAR_DAMPING, angularDamping: WRECK_ANGULAR_DAMPING,
       });
       if (!ok) continue;
       spawned++;
       this.live.push(id);
+      this.pieceWreck.set(id, wreckId);
+    }
+    if (spawned > 0) {
+      this.wrecks.set(wreckId, {
+        desc: {
+          wreckId, parentKind: kindId, seed: fracture.seed, killX: fracture.killX, killY: fracture.killY,
+          killBlowDamage: fracture.killBlowDamage, recentDamageRate: fracture.recentDamageRate,
+          snapChance: fracture.snapChance, algoVersion: FRACTURE_ALGO_VERSION,
+        },
+        pieces: spawned,
+      });
+      this.setChanged();
     }
     this.enforceCap();
     return spawned;
+  }
+
+  /** A free u16 wreck id (never 0, never one still live). */
+  private allocWreckId(): number {
+    for (;;) {
+      const id = this.nextWreckId;
+      this.nextWreckId = id >= 0xffff ? 1 : id + 1;
+      if (!this.wrecks.has(id)) return id;
+    }
+  }
+
+  private setChanged(): void {
+    this.version++;
+    this.slice.length = 0;
+    for (const w of this.wrecks.values()) this.slice.push(w.desc);
+  }
+
+  /** A wreck piece left the world (cap, or any other removal). */
+  pieceGone(id: string): void {
+    const wreckId = this.pieceWreck.get(id);
+    if (wreckId === undefined) return;
+    this.pieceWreck.delete(id);
+    const w = this.wrecks.get(wreckId);
+    if (w === undefined) return;
+    w.pieces--;
+    if (w.pieces <= 0) {
+      this.wrecks.delete(wreckId);
+      this.setChanged();
+    }
+  }
+
+  /** The snapshot slice: one descriptor per live wreck (shared array, rebuilt
+   *  only on change; empty when there are none). */
+  descriptors(): readonly WreckDescriptor[] {
+    return this.slice;
   }
 
   /** Live wreck pieces this subsystem tracks. */
@@ -164,6 +234,7 @@ export class CapitalWreckSubsystem {
     while (this.live.length > MAX_LIVE_WRECK_PIECES) {
       const id = this.live.shift()!;
       if (this.d.isLive(id)) this.d.removePiece(id);
+      this.pieceGone(id);
     }
   }
 }

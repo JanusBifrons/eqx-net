@@ -1410,6 +1410,8 @@ export class SectorRoom extends Room<SectorState> {
     wreckParts: (id: string) => ReadonlyArray<ReadonlyArray<{ x: number; y: number }>> | null;
     /** S2a — fix the fracture seed (null = per death). */
     setWreckSeed: (seed: number | null) => void;
+    /** S2b — the live wreck descriptors (the snapshot's `wrecks[]`). */
+    wreckDescriptors: () => readonly import('../../shared-types/messages.js').WreckDescriptor[];
     /** The first non-player thing a ray meets (NPC / turret beam path). */
     rayHit: (fx: number, fy: number, dx: number, dy: number, maxDist: number, skipId: string) => { id: string; dist: number } | null;
   } {
@@ -1479,6 +1481,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       wreckParts: (id) => this.swarmRegistry.get(id)?.wreckParts ?? null,
       setWreckSeed: (seed) => { if (this.capitalWrecks) this.capitalWrecks.forcedSeed = seed; },
+      wreckDescriptors: () => this.capitalWrecks?.descriptors() ?? [],
       rayHit: (fx, fy, dx, dy, maxDist, skipId) => {
         const h = this.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId);
         return h ? { id: h.id, dist: h.dist } : null;
@@ -2251,6 +2254,9 @@ export class SectorRoom extends Room<SectorState> {
       // pulse / on placement), attached by reference to every recipient.
       getStructuresSlice: () => this.structuresSlice,
       getStructureMountAngles: () => this.structureMountAnglesSlice,
+      // Capital destruction S2b: the wreck descriptors (null when off).
+      getWrecks: () => this.capitalWrecks?.descriptors() ?? null,
+      wrecksVersion: () => this.capitalWrecks?.version ?? 0,
     });
 
     // Player onLeave handler. Three branches: shouldLinger / transit-
@@ -5064,6 +5070,8 @@ export class SectorRoom extends Room<SectorState> {
     // P3c — a removed shooter's pending charge never fires.
     this.aiFireResolver.forget(rec.id);
     this.capitalWrecks?.forget(rec.id);
+    // S2b: a wreck piece leaving the world may retire its wreck's descriptor.
+    if (isWreckPiece(rec)) this.capitalWrecks?.pieceGone(rec.id);
     this.npcLocks.forgetNpc(rec.id);
     // v4 A — its slot may be reused; a new ship must not inherit a disable.
     if (this.gateGuard.gateCount > 0) this.gateGuard.forget(rec.id);

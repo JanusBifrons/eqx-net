@@ -316,16 +316,16 @@ describe('BinarySwarmBroadcast — encoder', () => {
     expect(view.getUint8(SWARM_HEADER_BYTES + SWARM_REC_COMPONENT_INDEX_OFF)).toBe(0);
   });
 
-  it('header carries the bumped wire version (v4) and the 34-byte stride', () => {
-    expect(SWARM_WIRE_VERSION).toBe(4);
-    expect(SWARM_RECORD_BYTES).toBe(34);
+  it('header carries the bumped wire version (v5) and the 36-byte stride', () => {
+    expect(SWARM_WIRE_VERSION).toBe(5);
+    expect(SWARM_RECORD_BYTES).toBe(36);
     expect(SWARM_REC_COMPONENT_INDEX_OFF).toBe(33);
     registry.register('a', SLOT_A, 0, 32, 0, 0, 0);
     setSlotPose(f32, SLOT_A, 1, 0, 0, 0, 0);
     const packet = encoder.encode(registry, f32, u32, 60);
     expect(packet).not.toBeNull();
     const view = new DataView(packet!.buffer, packet!.byteOffset, packet!.byteLength);
-    expect(view.getUint8(0)).toBe(4);
+    expect(view.getUint8(0)).toBe(5);
     expect(packet!.byteLength).toBe(SWARM_HEADER_BYTES + SWARM_RECORD_BYTES);
   });
 

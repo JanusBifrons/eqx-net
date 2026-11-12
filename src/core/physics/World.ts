@@ -288,7 +288,15 @@ export class PhysicsWorld {
           .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
           .setContactForceEventThreshold(10);
         if (collisionGroups !== undefined) d.setCollisionGroups(collisionGroups);
-        this.world.createCollider(d, body);
+        // A thin sliver (a capital wreck piece can have one, height < 1 u) has
+        // no hull Rapier can build: createCollider throws before touching the
+        // world. Skip that part and keep the rest; the same code runs in the
+        // server worker and the client predWorld, so both twins skip it.
+        try {
+          this.world.createCollider(d, body);
+        } catch {
+          continue;
+        }
       }
       this.bodies.set(id, { body, kind: getShipKind(DEFAULT_SHIP_KIND), exposed: false });
       this.handleToId.set(body.handle, id);
