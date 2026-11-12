@@ -120,6 +120,7 @@ server-position ghost) and `noselfdmg=1` on invulnerable takes.
    - **target:** room / galaxy / landing, plus URL params.
    - **hud:** `full | minimal | none`.
    - **durationMs.**
+   - Optionally `endsWithRun`: the take ends when `run` resolves (`durationMs` is then the cap) and the clip is encoded at that length. For a subject that can end early in the game itself (fleet-melee ends ~3 s after the last robot dies). `run` decides it by reading game state, never by changing play.
    - Optionally a `camera` script, `run` actions, `prepare`, `startWhen` and
      `cuts`.
 2. Add it to `SHOTS` in `showcase/registry.ts` (order = reel order).
