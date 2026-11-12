@@ -98,4 +98,7 @@ export const QUARANTINE = new Set([
   'laser-falloff-probe', // :83 hit beam: timeout.
   'interceptor-beam-stays-connected', // :142 beam origin while coasting: 90 s timeout.
   'prediction-idle-bounded', // :117 sub-snapshot poses while coasting: timeout.
+  // Same pattern on shard 2 of the re-run (43253336850).
+  'speed-dial', // :197 dial stays open across a placement.
+  'structure-placement-ghost', // (A) :94, (C) :158, (G) :368 ghost tracking.
 ]);

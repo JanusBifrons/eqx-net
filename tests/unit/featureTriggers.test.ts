@@ -21,9 +21,9 @@ describe('path-triggered feature specs', () => {
     // 2026-11-12: missile-frigate-homing passed 6/6 on the desktop but timed
     // out on CI's host. Editing the list alone ran nothing, so a release was
     // only tested by the next PR that happened to touch its area.
-    const released = releasedFromQuarantine("QUARANTINE = new Set([\n  'speed-dial',\n  'fire-control-lock',\n]);", new Set(['fire-control-lock']));
-    expect(released).toEqual(['speed-dial']);
-    expect((selectFeatureSpecs as (c: string[], r: string[]) => string[])([], released)).toEqual(['speed-dial']);
+    const released = releasedFromQuarantine("QUARANTINE = new Set([\n  'hover-outline',\n  'fire-control-lock',\n]);", new Set(['fire-control-lock']));
+    expect(released).toEqual(['hover-outline']);
+    expect((selectFeatureSpecs as (c: string[], r: string[]) => string[])([], released)).toEqual(['hover-outline']);
   });
 
   it('a structures change runs the structure specs', () => {
