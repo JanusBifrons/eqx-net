@@ -2907,6 +2907,14 @@ Commit: perf/count-budgets (PR #356)
 - **Rule:** see "Smoothness gets its own check" in the root CLAUDE.md showcase section.
 - **Probe gotchas:** `page.evaluate` of a closure compiled by tsx fails with `__name is not defined` (pass a string). Returning a Pixi `ObservablePoint` from the page serialises its scene-graph links and hangs; return `.x`.
 
+## 2026-11-12 — Capitals passed through each other: Rapier loses big-hull contacts at depth, and caps push-out at ~10 u/s
+Commit: fix/capitals-collide-solidly
+
+Owner: "They absolutely should collide by design." In a clip a heavy cruiser under thrust stayed inside an NPC battleship for ~7 s, and a capital spawned inside another stayed there for a whole take.
+- **Two separate Rapier limits, both about scale.** (1) Between two multi-thousand-unit convex hulls (round or plain, shields up or down) the narrow phase reports a contact on the first step of a deep overlap and **no contact points** from the next step on, with nothing moved. A 100× smaller copy of the same hull resolves fine, and `lengthUnit` does not help, so it is a precision limit of the polygon contact at these coordinates, not the shape. Two heavy cruisers posed 350 u deep stayed 349 u deep for 6 s. (2) Where a contact survives, position correction is capped at `normalized max corrective velocity × lengthUnit` ≈ 10 u/s per contact (not exposed in the JS bindings), and the bodies fall asleep partway: a 350 u box overlap was still 332 u deep after 2 s.
+- **Why not raise `lengthUnit`:** it fixes only (2), and it is global: it also raises every body's sleep threshold (×100 ⇒ ~40 u/s), so slow fighters and drifting asteroids would freeze.
+- **Fix:** a capital-only pass after every fixed step (`physics/capitalOverlap.ts`, run by `PhysicsWorld.tick`, so the server worker and the client predWorld run it identically). Pairs of capital bodies whose real hulls overlap past a skin are moved apart along the SAT axis (bounded per tick by `shipTuning.overlapMaxStep`) and lose their closing speed along it. Non-capital bodies are never registered, so fighters are byte-identical (`World.capitalContact.test.ts` pins Rapier's global parameters and a fighter ram's exact trajectory recorded before the fix).
+- **Lesson:** at capital scale, check that Rapier still HAS a contact (`world.contactPair` → `numContacts()`), not only that collision is on. A contact on the first step proved nothing.
 ## 2026-11-12 — A flying capital "jittered": the speed zoom breathed
 
 - **Symptom:** the capital-guns-fighter clip (a heavy cruiser on the follow camera flying at a battleship) "jitters a bit". Take QA: ship wobble p99 0.99 px against 0.01 px on the other capital takes, with 0 prediction corrections. The pose trace showed both drawn poses smooth (< 0.06 px residual a frame), so it was not prediction, interpolation or the hulls' overlap.

@@ -19,6 +19,7 @@ import { castHitscan } from './hitscanRay.js';
 import { wallGeometry } from '../structures/ShieldWall.js';
 import { PAD_PUSH_ACCEL, padPushDir } from '../../shared-types/teleport.js';
 import { massOf, shipAngularInertia } from '../../shared-types/shipScale/tuning.js';
+import { CapitalOverlapResolver, newCapitalEntry } from './capitalOverlap.js';
 
 const FIXED_DT = 1 / 60;
 
@@ -123,6 +124,10 @@ export class PhysicsWorld {
    *  the values into native memory synchronously inside the call. */
   private readonly _setShipStateTranslationScratch = { x: 0, y: 0 };
   private readonly _setShipStateLinvelScratch = { x: 0, y: 0 };
+  /** Capital-vs-capital hull overlap pass, run after every fixed step (owner
+   *  2026-11-12: capitals collide solidly). Only capital bodies are ever
+   *  registered, so every other body is untouched. See capitalOverlap.ts. */
+  private readonly capitals = new CapitalOverlapResolver();
 
   private constructor(world: RAPIER.World) {
     this.world = world;
@@ -153,6 +158,7 @@ export class PhysicsWorld {
     while (this.accumulator >= FIXED_DT) {
       this.applyPadFields();
       this.world.step(eventQueue);
+      this.capitals.resolve();
       this.accumulator -= FIXED_DT;
     }
   }
@@ -225,8 +231,18 @@ export class PhysicsWorld {
     const m = massOf(kind, 1);
     body.setAdditionalMassProperties(m, { x: 0, y: 0 }, shipAngularInertia(m, kind.radius), true);
     body.recomputeMassPropertiesFromColliders();
-    this.bodies.set(id, { body, kind, exposed: false });
+    const rec: ShipBody = { body, kind, exposed: false };
+    this.bodies.set(id, rec);
     this.handleToId.set(body.handle, id);
+    this.registerCapital(rec, kind);
+  }
+
+  /** Capitals join the hull-overlap pass (capitalOverlap.ts); every other
+   *  kind is left to Rapier alone. A capital mid warp run (colliders off) is
+   *  out of the world, so the pass skips it. */
+  private registerCapital(rec: ShipBody, kind: ShipKind): void {
+    if (kind.sizeClass !== 'capital') return;
+    this.capitals.add(newCapitalEntry(rec.body, kind, () => rec.warp !== undefined && rec.warp.phase === 'cruise'));
   }
 
   /**
@@ -343,8 +359,11 @@ export class PhysicsWorld {
     }
     // Obstacles are tracked under the default kind purely so the bodies map
     // shape stays uniform; obstacle physics never reads this kind back.
-    this.bodies.set(id, { body, kind: getShipKind(DEFAULT_SHIP_KIND), exposed: false });
+    const rec: ShipBody = { body, kind: getShipKind(DEFAULT_SHIP_KIND), exposed: false };
+    this.bodies.set(id, rec);
     this.handleToId.set(body.handle, id);
+    // An NPC capital (a drone spawned with its capital kind's shield).
+    if (shieldKind) this.registerCapital(rec, shieldKind);
   }
 
   /** Spawn a fast-moving kinematic projectile body (sensor — no physics impulses). */
@@ -367,6 +386,7 @@ export class PhysicsWorld {
     const rec = this.bodies.get(id);
     if (!rec) return;
     this.handleToId.delete(rec.body.handle);
+    this.capitals.remove(rec.body);
     this.world.removeRigidBody(rec.body);
     this.bodies.delete(id);
   }
