@@ -184,3 +184,11 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   Integration: a burning sector slows its whole game and audits it; a 2×
   sector is pulled down from 2×, never above. Unit 5006 ✓, integration 369 ✓,
   boot ✓.
+- 2026-11-12: step 5b docs: root invariant #20 (game time is the default, a
+  speed per sector, the lint wall); SHELF entry removed so it leaves with the
+  landing; the TiDi notes in the core and server CLAUDE.md say what it became;
+  the design note lists what is still open. The browser burn scene can't run
+  here: perf scenes only run on PR/main CI, a new workflow can't be
+  dispatched from a branch, and the owner's rule keeps perf off this desktop.
+  It waits for a laptop session. Full `@feature` E2E tier dispatched on the
+  branch via the weekly workflow (CI run 43258183143).

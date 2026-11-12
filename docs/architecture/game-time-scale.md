@@ -1,6 +1,12 @@
 # Game-wide time scale (design note, 2026-11-12)
 
-Status: **IN PROGRESS on the parallel stream `stream/time-scale` (owner, 2026-11-12).** Never PR, merge, train or sync from that branch; it lands only on the owner's word. This file on `main` is the starting design; the stream's copy is the live one.
+Status: **BUILT on the parallel stream `stream/time-scale` (2026-11-12); lands only on the owner's word.** Never PR, merge, train or sync from that branch before then. §0 says what was built; §1–§7 are the original design, with superseded parts marked.
+
+**Still open when it lands:**
+- **The burn perf scene in a real browser** (step 5b) has not run. It needs the laptop or a CI perf route, never this desktop. What stands in for it: the integration burn test (a loaded sector slows its whole game and audits it) and the netgate at 0.7× / 2×.
+- **A hop between sectors at different speeds** (a player or bot warping from a 0.7× sector into a 1× one) is untested. The client re-anchors on the destination's first snapshot, so it should behave like any transit.
+- **Saved timestamps drift** from wall time while a sector isn't at 1× (§0).
+- **`testTimeScale` is not folded in** (§0, 4d).
 
 **Owner decisions (2026-11-12):**
 - **What it's for:** it's a **performance mechanism, not a gameplay mechanic**: "Why can't it be dynamic? It's designed as a performance thing". So the speed is **dynamic**, never a menu.
