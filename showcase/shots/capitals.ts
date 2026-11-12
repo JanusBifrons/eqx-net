@@ -287,7 +287,7 @@ export const capitalTurrets: Shot = {
   // startHostile: the fight starts on cue in run(), after the art has baked.
   target: { room: 'showcase-capital-duel', params: { shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
   hud: 'none',
-  durationMs: 30_000,
+  durationMs: 15_000,
   async startWhen(ctx) {
     await artSettled(ctx);
     // The battleship must be in the client's view before the camera tracks it.
@@ -297,9 +297,12 @@ export const capitalTurrets: Shot = {
       c?.mirror.swarm.forEach((e) => { if (e.kind === 1) n++; });
       return n > 0;
     }, null, { timeout: 60_000, polling: 250 });
-    // Start the fight off camera: at the real 4°/s a 16" turret takes ~25 s to
-    // train onto the beam, so the take opens with the guns finishing the swing.
-    await keepHostile(ctx, 18_000);
+    // Start the fight off camera with ONE cue. Measured (2026-11-12): the lock
+    // completes ~2.6 s after the cue, the 16" turrets finish training onto the
+    // beam and fire at ~26-28 s, then reload for 30 s. So wait ~20 s and the
+    // take catches the volley ~6 s in, with no cue during it (record as is).
+    await sendRoom(ctx, 'test_aggro', { type: 'test_aggro' });
+    await ctx.sleep(20_000);
     // A framed camera needs a free camera: watch as a spectator (record as is).
     await ctx.spectate();
   },
@@ -323,11 +326,11 @@ export const capitalTurrets: Shot = {
       return me ? { x: (me.x - bx) * 0.35, y: (me.y - by) * 0.35 } : { x: 1200, y: 0 };
     });
     await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'track', target: bs, zoom: 0.18 * k, offsetX: toward.x, offsetY: toward.y } }]);
-    // No cue during the take: the battleship's lock keeps it hostile.
-    await ctx.sleep(13_000);
-    // Then the whole gap, so the salvos are seen crossing it.
-    await ctx.cinema.play([{ atMs: 0, smoothMs: 3500, shot: { kind: 'frame', ids: [bs, 'local'], padding: 0.2 } }]);
-    await ctx.sleep(16_500);
+    // Close on the guns as they finish the swing and fire...
+    await ctx.sleep(5_000);
+    // ...then the whole gap, so the shells are seen crossing it and landing.
+    await ctx.cinema.play([{ atMs: 0, smoothMs: 2500, shot: { kind: 'frame', ids: [bs, 'local'], padding: 0.2 } }]);
+    await ctx.sleep(9_500);
   },
 };
 
@@ -336,16 +339,6 @@ async function wheelSteps(ctx: ShotContext, dy: number, n: number, gapMs: number
   for (let i = 0; i < n; i++) { await ctx.page.mouse.wheel(0, dy); await ctx.sleep(gapMs); }
 }
 
-/** Hold the fight for `ms`: drone hostility decays after 30 s without a hit
- *  on the drone, so re-send the test cue every 9 s (a pilot that never shoots
- *  back would otherwise be forgotten mid-take). */
-async function keepHostile(ctx: ShotContext, ms: number): Promise<void> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    await sendRoom(ctx, 'test_aggro', { type: 'test_aggro' });
-    await ctx.sleep(Math.min(9000, end - Date.now()));
-  }
-}
 
 /**
  * Review round (2026-11-07): "how does it look from a fighter at normal zoom
