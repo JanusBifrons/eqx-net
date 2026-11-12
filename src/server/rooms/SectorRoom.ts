@@ -431,6 +431,12 @@ function pushSolidBoxes(r: StructureRecord, out: SiteBox[]): void {
   out.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
 }
 
+/** A hull's extent for spawn clearance against other hulls: its radius plus
+ *  its shield pad (#18, both from the kind's size). */
+function hullExtent(kind: string): number {
+  return getShipKind(kind).radius + tuningFor(kind).shieldPad;
+}
+
 function o_level(r: { freightOrders?: Array<{ good: GoodId; level: number }> }, good: GoodId): number {
   return r.freightOrders?.find((o) => o.good === good)?.level ?? 0;
 }
@@ -8366,14 +8372,23 @@ export class SectorRoom extends Room<SectorState> {
       const clear = this.landingPoint(playerId, spawnX, spawnY, chosenKind);
       spawnX = clear.x;
       spawnY = clear.y;
-    } else if (this.structureRegistry.size > 0) {
+    } else {
       // T1 — never spawn inside a structure (an NPC base can fill much of a
       // sector): nudge to the nearest clear point. Join path, not the hot loop.
-      const boxes: SiteBox[] = [];
-      for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
-      const clear = nearestClearPoint(spawnX, spawnY, boxes, tuningFor(chosenKind).spawnClearance);
-      spawnX = clear.x;
-      spawnY = clear.y;
+      // A spawn without explicit coordinates also keeps the JOINING hull clear
+      // of every other hull (#18: its own size, not a fighter's). Owner clip
+      // 2026-11-12: a heavy cruiser joining the capital line-up was nudged off
+      // a structure straight into the NPC heavy cruiser. Explicit spawnX/Y keep
+      // their exact placement (tests set up collisions on purpose).
+      const explicit = parsed.success && (parsed.data.spawnX !== undefined || parsed.data.spawnY !== undefined);
+      const hulls = explicit ? [] : this.spawnHullCircles(playerId);
+      if (this.structureRegistry.size > 0 || hulls.length > 0) {
+        const boxes: SiteBox[] = [];
+        for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
+        const clear = nearestClearPoint(spawnX, spawnY, boxes, tuningFor(chosenKind).spawnClearance, 6000, hulls, hullExtent(chosenKind));
+        spawnX = clear.x;
+        spawnY = clear.y;
+      }
     }
 
     this.initialSpawnPositions.set(playerId, { x: spawnX, y: spawnY });
@@ -10031,6 +10046,31 @@ export class SectorRoom extends Room<SectorState> {
       circles.push({ x: pose.x, y: pose.y, r: hull?.kind ? tuningFor(hull.kind).spawnClearance : 60 });
     }
     return nearestClearPoint(x, y, boxes, kind ? tuningFor(kind).spawnClearance : 60, 6000, circles);
+  }
+
+  /** Every other hull in the sector as a circle of its own extent (hull
+   *  radius + shield pad, `hullExtent`): NPC ships, other pilots' ships and
+   *  parked hulls. The joining pilot's own hulls are not obstacles. Join path
+   *  only (allocates). */
+  private spawnHullCircles(playerId: string): SiteCircle[] {
+    const circles: SiteCircle[] = [];
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== 1) continue;
+      const b = slotBase(rec.slot);
+      const r = rec.shipKind && isShipKindId(rec.shipKind) ? hullExtent(rec.shipKind) : rec.radius;
+      circles.push({ x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, r });
+    }
+    for (const [pid, pose] of this.shipPoseCache) {
+      if (pid === playerId) continue;
+      const kind = this.getActiveShip(pid)?.kind;
+      if (kind) circles.push({ x: pose.x, y: pose.y, r: hullExtent(kind) });
+    }
+    for (const [shipId, pose] of this.lingeringPoseCache) {
+      const hull = this.state.ships.get(shipId);
+      if (!hull?.kind || hull.playerId === playerId) continue;
+      circles.push({ x: pose.x, y: pose.y, r: hullExtent(hull.kind) });
+    }
+    return circles;
   }
 
   /** T2 — the nearest point clear of every structure (convoy hauler spawns). */
