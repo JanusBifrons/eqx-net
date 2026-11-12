@@ -91,6 +91,24 @@ Hard ceiling that protects against runaway boost or post-collision overshoot. Se
 - **Drift on hard turns** — when you yaw 90° at speed, the velocity vector is now lateral relative to the new heading. The lateral filter bleeds it slowly enough that you see a clear curved trajectory before the ship "catches".
 - **Per-kind character** — Scout has high yaw + low max speed → twitchy, agile. Heavy has low yaw + high momentum + low grip → slides like a tank. Fighter is the middle.
 
+## Capital-vs-capital collision (2026-11-12)
+
+Capitals collide solidly with each other by design (owner: "They absolutely should collide by design"). Rapier alone can't hold that at capital scale:
+
+- between two multi-thousand-unit hulls its contact **disappears** once the overlap is deep (a precision limit at these coordinates; a 100× smaller copy of the same hull resolves), so nothing pushes and thrust drives the hulls deeper;
+- where the contact survives, push-out is capped at ~10 u/s per contact (`normalized max corrective velocity × lengthUnit`), and the bodies fall asleep partway.
+
+So `PhysicsWorld.tick` runs a capital-only pass after every fixed step ([capitalOverlap.ts](../../src/core/physics/capitalOverlap.ts)). For each pair of capital bodies whose real hulls (`shipCollisionParts`) overlap by more than `shipTuning(kind).overlapSkin` (a quarter of the shield pad), it:
+
+1. moves them apart along the SAT axis by `CAPITAL_OVERLAP_RATE` (10 %) of the depth per step, at most `overlapMaxStep` (0.3 % of the hull radius, ~390 u/s for a 2× heavy cruiser), split by inverse mass;
+2. removes their closing speed along that axis (inelastic, momentum kept), so held thrust can't keep a hull inside another.
+
+A forced 350 u overlap clears in about a second. Shallow contact (shield against shield) is still Rapier's; the pass only acts when hulls actually interpenetrate. Only bodies spawned as capitals (`spawnShip` with a capital kind, or an NPC drone spawned with a capital `shieldKind`) are registered, and a capital on a warp run is skipped, so **fighter, asteroid and structure physics is untouched** and Rapier's global parameters stay at their defaults. `PhysicsWorld` is the same class on the server worker and the client predWorld, so both run the pass (#15).
+
+Not chosen: raising `lengthUnit` (fixes only the cap, and raises every body's sleep threshold to ~40 u/s), a plain polygon instead of the rounded shield hull (loses its contact at depth just the same), full CCD (suppresses static-overlap contacts, see src/core/CLAUDE.md).
+
+Locks: [World.capitalContact.test.ts](../../src/core/physics/World.capitalContact.test.ts) (overlaps clear in 2 s shields up and down, bow-to-bow under thrust, Rapier globals unchanged, a fighter ram's exact pre-fix trajectory) and [capitalsCollideSolidly.test.ts](../../tests/integration/sectorRoom/capitalsCollideSolidly.test.ts) (real room: pilot vs NPC, parked hull, NPC vs NPC, cruiser thrusting into a battleship).
+
 ## Verification
 
 - **Unit**: [src/core/physics/ShipKindPhysics.test.ts](../../src/core/physics/ShipKindPhysics.test.ts) drives a real `PhysicsWorld` per kind and asserts the archetype ordering: top speed `heavy > fighter > scout`, yaw rate `scout > fighter > heavy`. The top-speed test runs 25 simulated seconds so Heavy's slow time-constant (5 s) has fully converged before the assertion.

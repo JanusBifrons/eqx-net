@@ -241,6 +241,13 @@ export interface ShipTuning {
    *  and the straight-line prediction over a long flight. The client adds a
    *  gun's splash radius per shot. Fighter (2x) 88 u; battleship ~5,790 u. */
   incomingFireRadius: number;
+  /** Capital hull overlap (capitalOverlap.ts): overlap below this is contact
+   *  skin left to Rapier, a quarter of the shield pad (5 u for a 2x capital). */
+  overlapSkin: number;
+  /** Capital hull overlap: the most a hull pair is moved apart per fixed step,
+   *  0.3 % of the hull radius (6.6 u/tick ≈ 390 u/s for a 2x heavy cruiser, so
+   *  a forced 350 u overlap clears in about a second). */
+  overlapMaxStep: number;
 }
 
 const CACHE = new WeakMap<object, ShipTuning>();
@@ -279,6 +286,8 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     bakeMaxSide: ct.bakeMaxSide,
     mountSize: ct.mountSize,
     incomingFireRadius: 2 * (kind.radius + BASE.shieldPad * g),
+    overlapSkin: (BASE.shieldPad * g) / 4,
+    overlapMaxStep: kind.radius * 0.003,
   };
   CACHE.set(kind, t);
   return t;
