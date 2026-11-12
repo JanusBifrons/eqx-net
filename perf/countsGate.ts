@@ -28,7 +28,12 @@ export function judgeCounts(r: ClientCountReading, b: ClientCountBudget): string
   };
   check('drawCallsP95', r.drawCallsP95);
   check('displayObjects', r.displayObjects);
-  check('uploadTexels', r.uploadTexels);
+  // uploadTexels is PRINT-ONLY (2026-11-12): it depends on how fast the host
+  // bakes art, not on the code. CI runners drawing 33-40 frames in the window
+  // uploaded 1-3 2048² pages (baking ran past the curtain); runners at 52-57
+  // uploaded 0-1 and the same PR locally 0, and three PRs went red on it. A
+  // count that differs between hosts is not host-independent (root CLAUDE.md,
+  // "Gate on counts"). run-counts.ts still prints it.
   check('atlasPages', r.atlasPages);
   return out;
 }
