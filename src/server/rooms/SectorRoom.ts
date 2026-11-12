@@ -387,7 +387,7 @@ import type { WeaponId, MissileWeaponDef } from '../../core/combat/WeaponCatalog
 import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat/Energy.js';
 import { massOf, shipTuning, shellViewHalfExtent } from '../../shared-types/shipScale/tuning.js';
 import { ShellEventHub, type ShellViewer } from './ShellEventHub.js';
-import { SHELL_EVENTS, type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
+import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { refineRayHit } from '../../core/combat/capitalHits.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
@@ -1203,9 +1203,7 @@ export class SectorRoom extends Room<SectorState> {
     },
   });
   private testMode = false;
-  /** Shells as events (shell-events.md): `EQX_SHELL_EVENTS=1`, or the
-   *  testMode `shellEvents` room option. */
-  private shellEventsOn = false;
+  /** Shells as events (shell-events.md): built in onCreate, in every room. */
   private shellHub: ShellEventHub | null = null;
   /** Reused viewer record the hub reads (alloc-free flush). */
   private readonly shellViewer: ShellViewer = { sessionId: '', playerId: '', x: 0, y: 0, half: 0 };
@@ -1773,15 +1771,11 @@ export class SectorRoom extends Room<SectorState> {
        *  active ship in the room, so a wave E2E draws its wave after it joins,
        *  however long the server ran before (waves otherwise ignore presence). */
       waveNeedsOwner?: boolean;
-      /** testMode — send naval shells as events in this room even when
-       *  `EQX_SHELL_EVENTS` is off (shell-events.md slice 1 tests). */
-      shellEvents?: boolean;
     };
     // Payload-DoS bound (S5): onCreate options are client-suppliable on room
     // create, so reject oversized seed arrays before they seed the sector.
     assertRoomSeedBounds(roomOpts as Record<string, unknown>);
     this.testMode = roomOpts.testMode ?? false;
-    this.shellEventsOn = SHELL_EVENTS || (this.testMode && roomOpts.shellEvents === true);
     this.enforceHullGate = !this.testMode || roomOpts.enforceHullGate === true;
     this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);
     // Default 1.0 (no acceleration). Only honoured when testMode is true,
@@ -2069,14 +2063,13 @@ export class SectorRoom extends Room<SectorState> {
         const msg: ShellBlast = { type: 'shell_blast', x, y, radius };
         this.broadcast('shell_blast', msg);
       },
-      // Shells as events (shell-events.md slice 1): naval shells also travel
-      // as shell_salvo / shell_end, beside the per-tick projectiles[].
-      shellEvents: this.shellEventsOn,
+      // Shells as events (shell-events.md; the only way since slice 4): naval
+      // shells travel as shell_salvo / shell_end, never in projectiles[].
       onShellSpawn: (id, rec) => this.shellHub?.onSpawn(id, rec),
       onShellEnd: (id, tick, x, y, r) => this.shellHub?.onEnd(id, tick, x, y, r),
       onShellExpire: (id) => this.shellHub?.onExpire(id),
     });
-    if (this.shellEventsOn) this.shellHub = this.createShellHub();
+    this.shellHub = this.createShellHub();
 
     // Missile subsystem — guidance, splash damage, impulse queue. The
     // queue is drained each tick and posted to the physics worker as
@@ -7746,8 +7739,8 @@ export class SectorRoom extends Room<SectorState> {
    *  bounding-circle (kind.radius + SHIELD_RADIUS_PAD), same shield-up /
    *  shield-down split. Projectiles now impact at the visible shield
    *  boundary on every ship kind, not just fighter. */
-  /** Shells as events (shell-events.md slice 1): the hub that routes event
-   *  shells to viewers. Built only when `shellEventsOn`. */
+  /** Shells as events (shell-events.md): the hub that routes event shells to
+   *  viewers. Every room builds one (slice 4). */
   private createShellHub(): ShellEventHub {
     let current: Client | null = null;
     const v = this.shellViewer;

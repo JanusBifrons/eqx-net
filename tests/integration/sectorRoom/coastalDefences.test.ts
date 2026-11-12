@@ -12,6 +12,7 @@ import { matchMaker } from 'colyseus';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { SHOWCASE_COASTAL_OPTS, SHOWCASE_PILOT_ID } from '../../../src/server/rooms/showcaseRooms.js';
 import type { SnapshotMessage } from '../../../src/shared-types/messages.js';
+import type { ShellSalvo } from '../../../src/shared-types/messages/shellEvents.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { COASTAL_DEFENCE_KINDS } from '../../../src/shared-types/structureKinds.js';
 
@@ -52,6 +53,12 @@ describe('SectorRoom integration — coastal defences', () => {
       }
       maxXl = Math.max(maxXl, xl);
       if ((snap.structureMountAngles?.length ?? 0) > 0) anglesSeen++;
+    });
+    // Naval shells travel as events (shell-events.md slice 4): one salvo per
+    // turret firing, one shell per barrel.
+    cr.onMessage('shell_salvo', (m: ShellSalvo) => {
+      seen.add(m.w);
+      if (m.w === 'naval_xl') maxXl = Math.max(maxXl, m.sh.length);
     });
     // Every battery fires, and the pilot sees every calibre's shells — the
     // super-guns' too, though they fly thousands of units beyond the

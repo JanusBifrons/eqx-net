@@ -41,7 +41,7 @@ Three rules make the numbers trustworthy:
 pnpm perf:scenes                                  # every scene, 8 reps, head vs origin/main
 pnpm perf:scenes --scenes fleet-fight --reps 4    # one scene, the fewest reps that can decide
 pnpm perf:scenes --base HEAD --head-params shiplight=gpu --noise-check   # one switch, with a noise floor
-pnpm perf:scenes --scenes naval-broadside --base HEAD --base-env "EQX_NAVAL_RANGE=real" --head-env "EQX_NAVAL_RANGE=real&EQX_SHELL_EVENTS=1" --base-params navalRange=real --head-params navalRange=real   # a process-wide server switch, same commit
+pnpm perf:scenes --scenes naval-broadside --base HEAD --base-env "EQX_NAVAL_RANGE=real" --head-env "EQX_NAVAL_RANGE=real&EQX_SHELL_EVENTS=1" --base-params navalRange=real --head-params navalRange=real   # a process-wide server switch, same commit (shells-as-events slice 3; that switch is gone since slice 4)
 pnpm perf:scenes --head-only --reps 1             # a quick look, no A/B
 pnpm perf:scenes --device phone-proxy --cpu-rate 2 --base HEAD --base-params shiplight=baked --head-params shiplight=medium   # phone-class, on the laptop
 pnpm perf:phone --base HEAD --base-params shiplight=baked --head-params shiplight=medium      # on a real phone over adb (below)

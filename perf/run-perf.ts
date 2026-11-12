@@ -80,8 +80,8 @@ function parseArgs(argv: string[]): Args {
     cpuRate: Number(get('--cpu-rate') ?? PHONE_PROXY.cpuRate),
     baseParams: get('--base-params') ?? '',
     headParams: get('--head-params') ?? '',
-    // Server env per arm, same `k=v&k=v` form (e.g. a process-wide switch such
-    // as EQX_SHELL_EVENTS=1 on one arm of a same-commit A/B).
+    // Server env per arm, same `k=v&k=v` form (a process-wide switch on one
+    // arm of a same-commit A/B, e.g. EQX_NAVAL_RANGE=real).
     baseEnv: get('--base-env') ?? '',
     headEnv: get('--head-env') ?? '',
     // undefined = decide from the arms (on for an A/A run).

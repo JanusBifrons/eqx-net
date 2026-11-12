@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { familyFor, flashFrameAt, heatAfter, muzzleFlashFlipbook, nearestMuzzle, recoilAt, NAVAL_FLASH_LIFE_S, shellImpactRadius, muzzleSmokePuff, MUZZLE_SMOKE_LIFE_S, shellEndedOnHit, muzzleLightAt, MUZZLE_LIGHT_TAIL_S, navalMuzzleLight } from './turretFx.js';
+import { familyFor, flashFrameAt, heatAfter, muzzleFlashFlipbook, nearestMuzzle, recoilAt, NAVAL_FLASH_LIFE_S, shellImpactRadius, muzzleSmokePuff, MUZZLE_SMOKE_LIFE_S, muzzleLightAt, MUZZLE_LIGHT_TAIL_S, navalMuzzleLight } from './turretFx.js';
 
 describe('turret bakes', () => {
   it('the flash shrinks frame by frame', () => {
@@ -71,12 +71,6 @@ describe('naval muzzle smoke is a directed cone (review 2026-11-07)', () => {
   });
 });
 
-describe('naval shell impacts (review 2026-11-07)', () => {
-  it('a shell that stopped short burst on a hit; one that ran its range just fades', () => {
-    expect(shellEndedOnHit(2000, 4200)).toBe(true);
-    expect(shellEndedOnHit(4000, 4200)).toBe(false);
-  });
-});
 describe('muzzle-flash light (gpu-lit review 2026-11-09)', () => {
   it('holds while the flash sprite shows, then eases out over a short tail', () => {
     expect(muzzleLightAt(-1, 0.07)).toBe(0);
