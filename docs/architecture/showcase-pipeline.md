@@ -69,6 +69,12 @@ Output (gitignored) lands in `showcase-out/`:
      arrivals, repeats included, so it alone said "60 fps" for clips that
      moved 25 times a second. All three, plus `longestRepeat`, are in
      `manifest.json` (`showcase/cadence.ts`);
+   - the WORLD froze mid-motion (`worldStalls`, from frame-to-frame PSNR of the
+     encoded clip): a run of 2–10 near-identical frames (> 55 dB) with mostly
+     moving frames on both sides counts as a stall; more than one stall per
+     two seconds of motion, or one of 6+ frames, flags the clip. Byte counts
+     can't see this when HUD text changes on a frozen frame (the long-guns
+     zoom "chug", 2026-11-12). A sparse scene at rest is not a stall;
    - it has ≥ 1 s of blank frames (judged by the brightest pixel, since space
      is dark);
    - it captured < 30 frames.
@@ -120,6 +126,7 @@ server-position ghost) and `noselfdmg=1` on invulnerable takes.
    - **target:** room / galaxy / landing, plus URL params.
    - **hud:** `full | minimal | none`.
    - **durationMs.**
+   - Optionally `endsWithRun`: the take ends when `run` resolves (`durationMs` is then the cap) and the clip is encoded at that length. For a subject that can end early in the game itself (fleet-melee ends ~3 s after the last robot dies). `run` decides it by reading game state, never by changing play.
    - Optionally a `camera` script, `run` actions, `prepare`, `startWhen` and
      `cuts`.
 2. Add it to `SHOTS` in `showcase/registry.ts` (order = reel order).

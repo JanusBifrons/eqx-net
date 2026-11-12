@@ -401,6 +401,9 @@ export interface ProjectileRenderState {
    *  (`ShellSalvoStore.place`), not from snapshots: snapshot sync and the
    *  per-frame advance leave it alone. */
   event?: boolean;
+  /** Event shells: world units flown since firing. The drawn streak trails the
+   *  shell and is never longer than this (absent = no limit). */
+  flown?: number;
 }
 
 /** One naval shell as its `shell_salvo` described it (game space). */

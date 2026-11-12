@@ -129,6 +129,11 @@ export interface Shot {
   camera?: CameraCue[];
   /** Actions during recording; must finish within `durationMs`. */
   run?(ctx: ShotContext): Promise<void>;
+  /** The take ends when `run()` resolves (`durationMs` becomes the cap): for
+   *  a take whose subject can end early in the game itself (a fight that is
+   *  over), so the clip doesn't idle after it. `run()` decides when the
+   *  moment is over by reading game state, never by changing play. */
+  endsWithRun?: boolean;
   /** Cut these windows out in the edit (e.g. the 30 s warp spool). */
   cuts?: Array<{ fromMs: number; toMs: number; label: string }>;
 }
@@ -147,6 +152,8 @@ export interface ClipRecord {
   longestRepeat?: number;
   /** DIFFERENT frames per second that reached the encoded clip (NaN when unmeasured). */
   encodedUniqueFps?: number;
+  /** Where the world froze mid-motion in the encoded clip (`cadence.worldStalls`). */
+  worldStalls?: { stalls: number; longest: number; motionPairs: number };
   gapP95Ms: number;
   gapMaxMs: number;
   /** QA verdict; failed clips are flagged for a re-take, never silently used. */

@@ -11,6 +11,16 @@ async function npcCount(ctx: ShotContext): Promise<number> {
   }).catch(() => 0);
 }
 
+/** Live robots in the pilot's mirror (works while spectating too). */
+async function robotCount(ctx: ShotContext): Promise<number> {
+  return ctx.page.evaluate(() => {
+    const m = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number; shipKind?: string }> } } }).__eqxClient?.mirror;
+    let n = 0;
+    m?.swarm.forEach((e) => { if (e.kind === 1 && e.shipKind?.startsWith('robot')) n++; });
+    return n;
+  }).catch(() => 0);
+}
+
 /** Is the pilot still flying (not spectating after a death)? */
 async function piloting(ctx: ShotContext): Promise<boolean> {
   return ctx.page.evaluate(() => {
@@ -47,7 +57,8 @@ async function nearestRobot(ctx: ShotContext): Promise<{ x: number; y: number } 
  * and hit their own side when one drifts in after the shot; shields meet as
  * bubbles. No test cues at all: no aggro, no survive params, no lock cues. If
  * the fighter dies, the take keeps rolling in the spectator view the game
- * switches to.
+ * switches to. The take ends ~3 s after the last robot dies (`endsWithRun`),
+ * so the clip doesn't idle after the fight (it used to run on ~35 s).
  */
 export const fleetMelee: Shot = {
   id: 'fleet-melee',
@@ -60,6 +71,7 @@ export const fleetMelee: Shot = {
   server: 'lean',
   target: { room: 'showcase-melee', params: { shipKind: 'fighter' } },
   durationMs: 45_000,
+  endsWithRun: true,
   async startWhen(ctx) {
     await ctx.page.waitForFunction(() => {
       const m = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number }> } } }).__eqxClient?.mirror;
@@ -83,7 +95,10 @@ export const fleetMelee: Shot = {
       if (r2 && left() > 1000) await face(ctx, r2.x, r2.y, 700);
     }
     ctx.log(`  [fleet-melee] t=${((Date.now() - t0) / 1000).toFixed(1)}s piloting=${await piloting(ctx)} NPCs=${await npcCount(ctx)}`);
-    if (left() > 0) await ctx.sleep(left());
+    // Watch the rest of the fight; once the last robot is gone, hold ~3 s on
+    // the aftermath and end the take (endsWithRun).
+    while (left() > 0 && (await robotCount(ctx)) > 0) await ctx.sleep(Math.min(500, left()));
+    if (left() > 0) await ctx.sleep(Math.min(3000, left()));
     ctx.log(`  [fleet-melee] end piloting=${await piloting(ctx)} NPCs=${await npcCount(ctx)}`);
   },
 };
