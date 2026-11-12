@@ -3,7 +3,7 @@
  *
  * Memory map (all offsets in 4-byte words; u32 and f32 share the same byte position):
  *
- * Header (words 0-4):
+ * Header (words 0-5):
  *   [0] seqlock      Uint32  — even = idle, odd = write in progress
  *   [1] tick         Uint32  — physics tick counter
  *   [2] count        Uint32  — active entity count
@@ -15,8 +15,13 @@
  *                              in microseconds. Single-writer (worker), single-
  *                              reader (server). Drives the SimulationClock when
  *                              the bottleneck is physics-side, not server-side.
+ *   [5] droppedTicks Uint32  — cumulative worker ticks skipped by the catch-up
+ *                              cap (a starved host: ticks arrive late, the
+ *                              lost time is dropped). Single-writer (worker),
+ *                              read by the room's tick telemetry. Game time
+ *                              scale stream, Phase 1.
  *
- * Per-entity slots (words 5 onwards, SLOT_WORDS = 9 per slot):
+ * Per-entity slots (words 6 onwards, SLOT_WORDS = 9 per slot):
  *   [base+0] slotId       Uint32   — slot index + 1; 0 means empty
  *   [base+1] x            Float32
  *   [base+2] y            Float32
@@ -35,7 +40,8 @@ export const TICK_IDX = 1;
 export const COUNT_IDX = 2;
 export const CLOCK_RATE_IDX = 3; // Phase 6 — TiDi rate × 1e6 (0 ↔ uninitialised)
 export const WORKER_TICK_US_IDX = 4; // Phase 6 — most recent worker step() wall-clock in µs
-export const HEADER_WORDS = 5; // header size in 4-byte words
+export const WORKER_DROPPED_TICKS_IDX = 5; // cumulative ticks dropped by the worker catch-up cap
+export const HEADER_WORDS = 6; // header size in 4-byte words
 
 /** Encode/decode constants for the SAB clockRate slot.
  *  Storing rate × 1e6 in a u32 gives 6 decimal digits of precision in [0, 4 294.97],

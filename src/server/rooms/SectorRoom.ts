@@ -258,7 +258,7 @@ import { guarded } from './guardedLoop.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
-import { registerScenePerfRoom, unregisterScenePerfRoom, type ScenePerfView } from './scene/scenePerfRegistry.js';
+import { registerScenePerfRoom, unregisterScenePerfRoom, sceneSimTime, type ScenePerfView } from './scene/scenePerfRegistry.js';
 import { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 import type { EventLoopUtilization } from 'node:perf_hooks';
 import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
@@ -277,6 +277,7 @@ import { makeInputHandler } from './InputHandler.js';
 import {
   TICK_IDX,
   WORKER_TICK_US_IDX,
+  WORKER_DROPPED_TICKS_IDX,
   COUNT_IDX,
   SLOT_X_OFF,
   SLOT_Y_OFF,
@@ -10107,6 +10108,14 @@ export class SectorRoom extends Room<SectorState> {
   /** Perf scenes (WS3): per-tick work counters, counted while the scene runs. */
   private readonly sceneWork = new SceneWorkCounters();
   private sceneEluStart: EventLoopUtilization | null = null;
+  /** Game time vs wall time over the scene (worker tick, dropped ticks, wall ms). */
+  private readonly sceneSimStart = { ms: 0, tick: 0, dropped: 0 };
+  private readonly sceneSimEnd = { ms: 0, tick: 0, dropped: 0 };
+  private markSceneSim(m: { ms: number; tick: number; dropped: number }): void {
+    m.ms = performance.now();
+    m.tick = this.sabU32[TICK_IDX] ?? 0;
+    m.dropped = this.sabU32[WORKER_DROPPED_TICKS_IDX] ?? 0;
+  }
 
   scenePerf(): ScenePerfView | null {
     if (!this.sceneRunner || !this.sceneTickRing || !this.sceneWorkerRing) return null;
@@ -10119,6 +10128,7 @@ export class SectorRoom extends Room<SectorState> {
       players: this.playerToSlot.size,
       structures: this.structureRegistry.size,
       work: this.sceneWork.view(this.sceneEluStart ? (this.physicsWorkerProxy?.elu(this.sceneEluStart)?.utilization ?? null) : null),
+      simTime: sceneSimTime(this.sceneSimStart, this.sceneSimEnd),
     };
   }
 
@@ -10918,13 +10928,16 @@ export class SectorRoom extends Room<SectorState> {
       swarmCount: this.swarmRegistry.size(),
       aiSize: this.aiController.size(),
       liveProjectileCount: this.liveProjectiles.size,
+      workerTick: this.sabU32[TICK_IDX] ?? 0,
+      workerDroppedTicks: this.sabU32[WORKER_DROPPED_TICKS_IDX] ?? 0,
     });
     if (this.sceneRunner) {
       const st = this.sceneRunner.getStatus();
       const running = st.started && !st.ended;
       if (running) {
         this.sceneTickRing!.push(totalMs); this.sceneWorkerRing!.push(workerTickMs);
-        if (!this.sceneWork.active) this.sceneEluStart = this.physicsWorkerProxy?.elu() ?? null;
+        if (!this.sceneWork.active) { this.sceneEluStart = this.physicsWorkerProxy?.elu() ?? null; this.markSceneSim(this.sceneSimStart); }
+        this.markSceneSim(this.sceneSimEnd);
         this.sceneWork.endTick(this.sabU32[COUNT_IDX] ?? 0, this.aiController.size());
         if (this.lineOfFireGate) this.sceneWork.lineOfFire(this.lineOfFireGate.checks, this.lineOfFireGate.narrow);
       }

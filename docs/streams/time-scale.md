@@ -23,17 +23,46 @@ owner says so. Registered on main in #473 (SHELF.md, handoff "Parallel streams")
 
 - 2026-11-12: branched from `1513f927`.
 
+## Steps and stopping points
+
+Each step ends in a **stopping point (🛑)**: the inner loop is green, the work is committed and pushed, and no server, browser or test run this session started is still going. The computer can be shut down at any 🛑 and the next session resumes from the first unticked step. Between stopping points the work is mid-change: finish the step, or reset its uncommitted changes, before shutting down.
+
+**When asked "when is the next stopping point?"**, answer with the step in progress, roughly how long it has left, and its 🛑.
+
+| Step | What | Size | Status |
+|---|---|---|---|
+| 0 | Register the stream on main (#473), stream log, memory | — | ✅ 🛑 |
+| 1 | Telemetry: worker dropped ticks + sim-time lateness in `tick_budget` and perf scenes | ~1 h | in progress 🛑 |
+| 2a | `GameClock` (core) + server `gameTime` + lint wall (warn) | ~45 min | 🛑 |
+| 2b | Migrate the directors, economy, transit and holds (`?? Date.now` defaults and their loops) | ~1 h | 🛑 |
+| 2c | Migrate `SectorRoom` (46 sites) + the room's timers | ~1.5 h | 🛑 |
+| 2d | Lint wall to error; integration suite green; docs | ~45 min | 🛑 (end of Phase 2) |
+| 3a | Worker counts real physics steps; the room runs `scale` steps per wall tick | ~2 h | 🛑 |
+| 3b | `GalaxyTimeScale` + dev override + `testTimeScale` folded in; snapshot `timeScale` keyframe | ~2 h | 🛑 |
+| 3c | Integration tests at 0.5× and 2×; netgate run by hand | ~1.5 h | 🛑 (end of Phase 3) |
+| 4a | Client game clock: prediction anchor + `fromTick` parity test | ~2 h | 🛑 |
+| 4b | Interpolation in ticks + pose ring sized for 4× | ~1.5 h | 🛑 |
+| 4c | Render frame dt at the source (Pixi ticker speed); client lint wall | ~2 h | 🛑 |
+| 4d | Speed chip + E2E + "follows automatically" test; netgate at 0.7× / 2× | ~2 h | 🛑 (end of Phase 4) |
+| 5a | Dynamic controller (lateness + cost, ramp, hysteresis, audit events) | ~2 h | 🛑 |
+| 5b | Burn-test verification (CI/laptop perf scene); docs; ready-to-land report | ~1.5 h | 🛑 (stream done; ask the owner how to land it) |
+
 ## Phases
 
-| # | Phase | Status |
+| # | Phase | Steps |
 |---|---|---|
-| 0 | Register the stream (#473), log, memory | done |
-| 1 | Telemetry: worker dropped ticks, sim-time lateness | next |
-| 2 | `GameClock` + lint wall + migration | |
-| 3 | Server scale + dev override (`testTimeScale` folds in) | |
-| 4 | Client: prediction anchor, interpolation, frame dt, speed chip | |
-| 5 | Dynamic controller (slows only, galaxy-wide) | |
+| 0 | Register the stream | 0 |
+| 1 | Telemetry | 1 |
+| 2 | `GameClock` + lint wall + migration | 2a–2d |
+| 3 | Server scale + dev override | 3a–3c |
+| 4 | Client: prediction, interpolation, frame dt, speed chip | 4a–4d |
+| 5 | Dynamic controller | 5a–5b |
 
 ## Log
 
 - 2026-11-12: stream started.
+- 2026-11-12: step 1 done. The worker counts the ticks its catch-up cap drops
+  (SAB header word 5, `WORKER_DROPPED_TICKS_IDX`; `HEADER_WORDS` 5 → 6). Each
+  `tick_budget` event now carries `wallTicks` / `simTicks` / `latenessTicks` /
+  `droppedTicks`, and `/dev/perf` scenes carry `simTime`. Unit 4959 ✓,
+  integration 359 ✓, boot ✓.

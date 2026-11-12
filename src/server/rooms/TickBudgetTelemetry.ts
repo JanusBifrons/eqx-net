@@ -45,6 +45,27 @@ export interface TickEndContext {
   swarmCount: number;
   aiSize: number;
   liveProjectileCount: number;
+  /** The physics worker's tick counter (SAB `TICK_IDX`): game time. Optional
+   *  so unit callers without a worker skip the lateness fields. */
+  workerTick?: number;
+  /** Cumulative ticks the worker's catch-up cap dropped (SAB
+   *  `WORKER_DROPPED_TICKS_IDX`). */
+  workerDroppedTicks?: number;
+}
+
+/**
+ * Game time against wall time over one `tick_budget` window (game time
+ * scale, Phase 1). `wallTicks` is how many 60 Hz ticks real time allowed;
+ * `simTicks` is how many the physics worker ran. `latenessTicks` =
+ * wall − sim: how far the game fell behind real time in the window, the
+ * starved-host signal tick COST misses (a late tick can be a cheap one).
+ * `droppedTicks` is the part the worker's catch-up cap threw away.
+ */
+export interface SimLateness {
+  wallTicks: number;
+  simTicks: number;
+  latenessTicks: number;
+  droppedTicks: number;
 }
 
 export class TickBudgetTelemetry {
@@ -79,6 +100,18 @@ export class TickBudgetTelemetry {
   private tickStart = 0;
   private phaseAnchor = 0;
 
+  // Lateness window (game time vs wall time), re-anchored at every emit.
+  private windowStartMs = Number.NaN;
+  private windowStartWorkerTick = 0;
+  private windowStartDropped = 0;
+  private readonly lastLateness: SimLateness = {
+    wallTicks: 0, simTicks: 0, latenessTicks: 0, droppedTicks: 0,
+  };
+
+  /** The most recent window's lateness (zeros until the first window ends).
+   *  Shared object, overwritten in place each window. */
+  lateness(): Readonly<SimLateness> { return this.lastLateness; }
+
   /** Call at the very top of update(). */
   beginTick(tStart: number): void {
     this.tickStart = tStart;
@@ -102,6 +135,7 @@ export class TickBudgetTelemetry {
    */
   endTick(ctx: TickEndContext): number {
     const totalMs = performance.now() - this.tickStart;
+    if (Number.isNaN(this.windowStartMs)) this.anchorLatenessWindow(this.tickStart, ctx);
     this.tickBudgetSums['total'] = (this.tickBudgetSums['total'] ?? 0) + totalMs;
     this.tickBudgetSampleCount++;
     if (totalMs > this.tickBudgetMaxTotalMs) this.tickBudgetMaxTotalMs = totalMs;
@@ -147,6 +181,7 @@ export class TickBudgetTelemetry {
       for (const k of Object.keys(this.tickBudgetSums)) {
         avg[k] = parseFloat((this.tickBudgetSums[k]! / this.tickBudgetSampleCount).toFixed(3));
       }
+      const late = this.closeLatenessWindow(nowMs, ctx);
       serverLogEvent('tick_budget', {
         serverTick: ctx.serverTick,
         sampleCount: this.tickBudgetSampleCount,
@@ -156,6 +191,12 @@ export class TickBudgetTelemetry {
         playerCount: ctx.playerCount,
         swarmCount: ctx.swarmCount,
         aiSize: ctx.aiSize,
+        ...(late ? {
+          wallTicks: late.wallTicks,
+          simTicks: late.simTicks,
+          latenessTicks: late.latenessTicks,
+          droppedTicks: late.droppedTicks,
+        } : {}),
       });
       for (const k of Object.keys(this.tickBudgetSums)) this.tickBudgetSums[k] = 0;
       this.tickBudgetSampleCount = 0;
@@ -163,5 +204,25 @@ export class TickBudgetTelemetry {
       this.tickBudgetOverBudgetCount = 0;
     }
     return totalMs;
+  }
+
+  private anchorLatenessWindow(nowMs: number, ctx: TickEndContext): void {
+    this.windowStartMs = nowMs;
+    this.windowStartWorkerTick = ctx.workerTick ?? 0;
+    this.windowStartDropped = ctx.workerDroppedTicks ?? 0;
+  }
+
+  /** Close the window at `nowMs`, store its lateness, re-anchor. Returns
+   *  null when the caller has no worker tick (unit callers). */
+  private closeLatenessWindow(nowMs: number, ctx: TickEndContext): SimLateness | null {
+    if (ctx.workerTick === undefined) return null;
+    const out = this.lastLateness;
+    out.wallTicks = Math.round(((nowMs - this.windowStartMs) * 60) / 1000);
+    // u32 counters: `>>> 0` keeps a wrap from going negative.
+    out.simTicks = (ctx.workerTick - this.windowStartWorkerTick) >>> 0;
+    out.droppedTicks = ((ctx.workerDroppedTicks ?? 0) - this.windowStartDropped) >>> 0;
+    out.latenessTicks = out.wallTicks - out.simTicks;
+    this.anchorLatenessWindow(nowMs, ctx);
+    return out;
   }
 }

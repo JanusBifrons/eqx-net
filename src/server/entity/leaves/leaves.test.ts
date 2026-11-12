@@ -29,6 +29,7 @@ import {
   type InteractionResultMut,
 } from '../../../core/contracts/IDamageable.js';
 import { DEFAULT_SHIP_KIND } from '../../../shared-types/shipKinds.js';
+import { slotBase } from '../../../shared-types/sabLayout.js';
 import { getDroneMaxHealth } from '../../rooms/droneKindHelpers.js';
 import {
   createActiveShipEntity,
@@ -307,7 +308,7 @@ describe('GEP B1 leaf identity / pose / descriptors', () => {
     const rec: SwarmLeafTarget = { id: 'drone-x', slot: 4, entityId: 42, kind: 1 };
     drone.target = rec;
     // Write a known pose into slot 4.
-    const base = 5 + 4 * 9; // HEADER_WORDS + slot*SLOT_WORDS
+    const base = slotBase(4);
     h.sabF32[base + 1] = 100; // x
     h.sabF32[base + 2] = 200; // y
     h.sabF32[base + 5] = 1.5; // angle

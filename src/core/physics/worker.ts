@@ -27,6 +27,7 @@ import { PhysicsWorld } from './World.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { tickInputQueue, type QueuedInput } from './inputQueue.js';
 import { drainContacts } from './contactDrain.js';
+import { advanceSchedule, type CatchUpResult } from './catchUp.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import {
   SEQLOCK_IDX,
@@ -35,6 +36,7 @@ import {
   CLOCK_RATE_IDX,
   CLOCK_RATE_SCALE,
   WORKER_TICK_US_IDX,
+  WORKER_DROPPED_TICKS_IDX,
   SLOT_ID_OFF,
   SLOT_X_OFF,
   SLOT_Y_OFF,
@@ -129,6 +131,8 @@ interface GcCmd          { type: 'GC' }
 interface WorldHandle {
   handle(cmd: WorkerCommand): void;
   step(): void;
+  /** Count ticks the catch-up cap dropped (SAB `WORKER_DROPPED_TICKS_IDX`). */
+  noteDropped(n: number): void;
   dispose(): void;
 }
 
@@ -540,6 +544,9 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
   return {
     handle,
     step,
+    noteDropped: (n: number) => {
+      u32[WORKER_DROPPED_TICKS_IDX] = ((u32[WORKER_DROPPED_TICKS_IDX] ?? 0) + n) >>> 0;
+    },
     dispose: () => {
       eventQueue.free();
       physics.dispose();
@@ -598,6 +605,7 @@ async function main(): Promise<void> {
   // Every hosted world steps once per tick, in insertion order.
   const TICK_MS_HR = 1000 / 60;
   let nextTickAt = performance.now();
+  const schedule: CatchUpResult = { nextTickAt, dropped: 0 };
   const step = (): void => { for (const w of worlds.values()) w.step(); };
 
   // The schedule pattern uses `setImmediate` only on tick-due frames so a
@@ -612,11 +620,13 @@ async function main(): Promise<void> {
     const now = performance.now();
     if (now >= nextTickAt) {
       step();
-      nextTickAt += TICK_MS_HR;
       // Catch-up cap: if we're more than 5 ticks behind (e.g. after a long GC
       // pause), jump forward to "now" so we don't spiral. The simulation
-      // re-syncs to wall-clock instead of trying to replay a backlog.
-      if (now > nextTickAt + 5 * TICK_MS_HR) nextTickAt = now + TICK_MS_HR;
+      // re-syncs to wall-clock instead of trying to replay a backlog; the
+      // ticks it skips are counted in every world's SAB header (telemetry).
+      advanceSchedule(now, nextTickAt, TICK_MS_HR, schedule);
+      nextTickAt = schedule.nextTickAt;
+      if (schedule.dropped > 0) for (const w of worlds.values()) w.noteDropped(schedule.dropped);
       // After stepping, drain any further backlog in the same event-loop
       // turn before yielding.
       setImmediate(loop);
