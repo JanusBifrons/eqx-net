@@ -75,9 +75,9 @@ describe('client game time follows the sector speed (time scale 4a)', () => {
     c._lastSnapshotRecvAtMs = 1000;
     c.handleSnapshot({ ...snap(100), timeScale: { s: 1, fromTick: 100, t: 2 } } as SnapshotMessage);
     expect(c.gameClock.scale).toBe(1);
-    clock.advance(1000); // 1 s later, no new snapshot: the server is at 1.5×
+    clock.advance(500); // 0.5 s later, no new snapshot: the server is at √2×
     c.followSpeedGlide();
-    expect(c.gameClock.scale).toBeCloseTo(1.5, 5);
+    expect(c.gameClock.scale).toBeCloseTo(Math.SQRT2, 5);
     clock.advance(5000);
     c.followSpeedGlide();
     expect(c.gameClock.scale).toBe(2); // arrives, never overshoots

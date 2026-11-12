@@ -161,8 +161,8 @@ describe('SectorRoom integration — the automatic slowdown (time scale 5a)', ()
 
 /**
  * The dimmer (owner 2026-11-12: "a dial like a dimmer so it transitions
- * smoothly"): a smooth speed change glides at TIME_SCALE_SLEW_PER_S instead
- * of jumping. 1× → 2× takes ~2 s of wall time, passing through the speeds in
+ * smoothly"): a smooth speed change glides at a steady ratio (glideToward) instead
+ * of jumping. 1× → 2× takes ~1 s of wall time, passing through the speeds in
  * between; a setup speed (snap) still applies at once.
  */
 describe('SectorRoom integration — the speed dimmer', () => {

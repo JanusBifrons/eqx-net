@@ -6512,7 +6512,8 @@ export class SectorRoom extends Room<SectorState> {
 
   /**
    * The dimmer: each update, glide the sector clock toward its target at
-   * `TIME_SCALE_SLEW_PER_S` (speed units per wall second), so a slowdown or a
+   * the shared `glideToward` (a steady ratio: one doubling or halving per wall
+   * second), so a slowdown or a
    * speed change eases in rather than lurching (owner 2026-11-12: "a dial like
    * a dimmer"). Clients follow each small step through the snapshot keyframe
    * on their eased anchor path.

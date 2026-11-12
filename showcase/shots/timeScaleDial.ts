@@ -92,6 +92,23 @@ async function battleshipId(ctx: ShotContext): Promise<string | null> {
   }).catch(() => null);
 }
 
+/**
+ * The pilot locks the battleship with every weapon group, as a player does
+ * from the contacts list (the client's own `requestLock`). A live player lock
+ * keeps an NPC hostile (owner rule 2026-11-10), so the capitals keep fighting
+ * at any speed instead of forgetting the aggro after 30 GAME seconds (which at
+ * 4× is 7.5 s of wall time).
+ */
+async function lockBattleship(ctx: ShotContext, camId: string): Promise<number> {
+  const eid = Number(camId.replace('swarm-', ''));
+  return ctx.page.evaluate((entityId) => {
+    const g = globalThis as { __eqxClient?: { requestLock(groupId: string, key: string): void }; __eqxStore?: { getState(): { fcGroups?: Array<{ id: string }> } } };
+    const groups = g.__eqxStore?.getState().fcGroups ?? [];
+    for (const grp of groups) g.__eqxClient?.requestLock(grp.id, `s:${entityId}`);
+    return groups.length;
+  }, eid).catch(() => 0);
+}
+
 /** Set the speed at once (setup only, before the take rolls). */
 async function snapSpeed(ctx: ShotContext, id: string, scale: number): Promise<void> {
   const res = await fetch(`${ctx.serverUrl}/dev/time-scale?room=${encodeURIComponent(id)}&scale=${scale}&snap=1`, { method: 'POST' });
@@ -107,8 +124,10 @@ async function snapSpeed(ctx: ShotContext, id: string, scale: number): Promise<v
  * batteries already firing at the top speed: the 30 s reload is 7.5 s of
  * wall time, so the first ~9 s hold several broadsides. The camera frames the
  * battleship and its target (the whole line is too spread out to see shells).
- * Then the dial goes to 0.25× (the dimmer glides there in ~7.5 s) while the
- * camera eases in on the battleship: deep slow motion, close up.
+ * The pilot locks the battleship in setup (a live player lock keeps the NPCs
+ * hostile at any speed). Then the dial goes to 0.25× (the dimmer halves the
+ * speed once a second: ~4 s) while the camera closes in on the battleship:
+ * deep slow motion, close up.
  *
  * (Hostile review 2026-11-12 of a 0.4×/2× version: the turrets were still
  * training through 1× and 0.4×, and a frame on every ship made shells
@@ -132,11 +151,12 @@ export const timeScaleCapitals4x: Shot = {
     await sendRoom(ctx, 'test_aggro', { type: 'test_aggro' });
     const id = await roomId(ctx);
     if (!id) throw new Error('time-scale-capitals-4x: no room id on the client');
+    const bs = await battleshipId(ctx);
+    if (!bs) throw new Error('time-scale-capitals-4x: no battleship in view');
+    ctx.log(`  [time-scale] pilot locks the battleship with ${await lockBattleship(ctx, bs)} group(s)`);
     await snapSpeed(ctx, id, 4);
     // ~28 game s at 4×: the 16" turrets finish training and open fire.
     await ctx.sleep(7500);
-    const bs = await battleshipId(ctx);
-    if (!bs) throw new Error('time-scale-capitals-4x: no battleship in view');
     // Frame the battleship and its target, so shells cross a readable frame.
     await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'frame', ids: [bs, 'local'], padding: 0.25, maxZoom: 2.5 } }]);
     await ctx.sleep(1000);
@@ -147,7 +167,8 @@ export const timeScaleCapitals4x: Shot = {
     await ctx.sleep(9000); // broadsides at 4×
     await dial(ctx, id, 0.25); // glides down in ~7.5 s
     const bs = await battleshipId(ctx);
-    if (bs) await ctx.cinema.play([{ atMs: 0, smoothMs: 6000, shot: { kind: 'frame', ids: [bs], padding: 0.6, maxZoom: 2.5 } }]);
-    await ctx.sleep(13_500); // the glide, then ~6 s at 0.25×
+    // Close in tight on the battleship as it slows (fit the hull, higher cap).
+    if (bs) await ctx.cinema.play([{ atMs: 0, smoothMs: 4000, shot: { kind: 'frame', ids: [bs], padding: 0.08, maxZoom: 8 } }]);
+    await ctx.sleep(11_000); // the glide (~4 s), then ~7 s at 0.25×
   },
 };

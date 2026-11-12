@@ -294,3 +294,18 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   - the caption box prints over the hotbar;
   - the scene's drones reinforce and its robots don't, so the battle is
     one-sided by the end.
+- 2026-11-12: capitals clips. Review of the 0.4×/2× version: the turrets were
+  still training through 1× and 0.4×, and a frame on every ship hid the
+  shells; the shot was dropped. Review of the first 4× version: no combat at
+  all. Cause (a game rule, not time scale): NPCs made hostile by a cue forget
+  after 30 GAME seconds unless hit or locked, which at 4× is 7.5 s, so the
+  whole engagement happened during setup. Fix: in setup, the pilot locks the
+  battleship with every group, through the client's own `requestLock` (a live
+  player lock keeps an NPC hostile, owner rule 2026-11-10); the zoom fits the
+  hull tightly.
+  **Dimmer now glides at a steady RATIO** (`glideToward`: one doubling or
+  halving per wall second, shared #15). The linear 0.5/s glide felt uneven
+  across 4×→0.25× (6 s to reach 1×, then 1.5 s to 0.25×).
+  4× take 1: QA flagged the server behind (55 per game s): a heavy capital
+  battle at 4× is near this host's limit; live sectors would self-slow (test
+  rooms don't). Take 2: 60 per game s, 0/671 corrected. Unit 5028 ✓.
