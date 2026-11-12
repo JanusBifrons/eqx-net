@@ -33,6 +33,7 @@ import { backdropXf, zoomWindow, type TileXf } from './fxMath.js';
 import { SOLAR_SECTORS } from '../../../../shared-types/sectorBounds.js';
 import { hashKey, landmarkScreen, SOLAR_SKY_SCALE, nebulaDensityAtSeed, newSpeedFxState, sectorSky, SKY_LAYERS, SPEED_FX, speedZoomFor, stepSpeedFx, visitNebulae, visitSkyLayer, type Landmark, type NebulaRegion, type SpeedFxLevel } from './depth.js';
 import { h01 } from './fxTextures.js';
+import type { SpeedFxSample } from '../../camera/speedFxSample.js';
 
 export interface BackdropCamera {
   readonly center: { x: number; y: number };
@@ -220,6 +221,8 @@ export class Backdrop {
   density = 0;
   /** Eased camera motion for the speed effects. */
   readonly speed = newSpeedFxState();
+  /** Source of the last speed sample (pose clock or renderer clock). */
+  private speedFromPose: boolean | null = null;
   private readonly visitNebula = (g: NebulaRegion): void => {
     if (this.nebSlot >= NEB_SLOTS) return;
     const slot = this.wisps[this.nebSlot++]!;
@@ -367,8 +370,10 @@ export class Backdrop {
    *  still baking (the caller draws today's starfield instead).
    *  `fullSpeed` is what counts as full speed for the speed effects: the
    *  pilot's own ship's top speed, so the effect follows ship size (a 2×
-   *  ship is slower, invariant 18). */
-  update(cam: BackdropCamera, nowMs: number, fullSpeed?: number): boolean {
+   *  ship is slower, invariant 18). `speedSample` is what the speed is
+   *  measured from (`speedFxSampleInto`); absent ⇒ the camera centre at
+   *  `nowMs`. */
+  update(cam: BackdropCamera, nowMs: number, fullSpeed?: number, speedSample?: SpeedFxSample): boolean {
     if (this.far.h?.state !== 'ready') { this.sky.visible = false; this.fore.visible = false; return false; }
     this.sky.visible = true;
     this.t = nowMs / 1000;
@@ -391,7 +396,11 @@ export class Backdrop {
     this.nebBack.alpha = skyKeep; this.nebFront.alpha = skyKeep;
     const cx = cam.center.x, cy = cam.center.y;
     const q = this.getQuality();
-    stepSpeedFx(this.speed, cx, cy, nowMs, fullSpeed);
+    // Two clocks never mix in one delta: a change of sample source re-primes.
+    const fromPose = speedSample ? speedSample.fromPose : false;
+    if (this.speedFromPose !== fromPose) { this.speed.primed = false; this.speedFromPose = fromPose; }
+    if (speedSample) stepSpeedFx(this.speed, speedSample.x, speedSample.y, speedSample.t, fullSpeed);
+    else stepSpeedFx(this.speed, cx, cy, nowMs, fullSpeed);
     // Nebulae live in GAME space (Y up); the camera centre is Pixi space (Y down).
     const d = nebulaDensityAtSeed(this.nebSeed, cx, -cy, this.scratchR);
     this.density = d;

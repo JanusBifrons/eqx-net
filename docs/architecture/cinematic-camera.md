@@ -78,6 +78,13 @@ keys).
    App pushes them when it creates the renderer and on every `__eqxCinema.setHud`.
    The `fc-*` shots use `hud=full`, so they still film fire control.
 
+8. **The zoom-in limit is not the pilot's (2026-11-12).** The gameplay zoom-in
+   cap follows the piloted hull so it always fits on screen
+   (`Camera.setMaxScale`, see [ship-scale.md](ship-scale.md) "Camera"). A
+   scripted shot keeps the constructor's limit (3), so it can still frame a
+   detail of a capital; on `clearDirector` the camera eases back inside the
+   pilot's cap.
+
 ## Interest-window caveat
 
 The client only receives full-fidelity entities inside the piloted ship's 3×3
