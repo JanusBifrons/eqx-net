@@ -152,6 +152,8 @@ export interface ClipRecord {
   longestRepeat?: number;
   /** DIFFERENT frames per second that reached the encoded clip (NaN when unmeasured). */
   encodedUniqueFps?: number;
+  /** Where the world froze mid-motion in the encoded clip (`cadence.worldStalls`). */
+  worldStalls?: { stalls: number; longest: number; motionPairs: number };
   gapP95Ms: number;
   gapMaxMs: number;
   /** QA verdict; failed clips are flagged for a re-take, never silently used. */

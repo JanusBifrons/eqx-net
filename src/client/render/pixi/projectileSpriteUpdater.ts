@@ -87,7 +87,7 @@ export function updateProjectileSprites(
     if (style) {
       let size = style === 'shell' && isWeaponId(proj.weaponId) ? shellSize(proj.weaponId) : 1;
       if (naval) size *= minScreenSizeMul(FX_SHELL_WIDTH * size, camScale, SHELL_MIN_SCREEN_PX);
-      fx!.draw(projId, style, proj.x, proj.y, proj.vx, proj.vy, proj.alpha ?? 1, size);
+      fx!.draw(projId, style, proj.x, proj.y, proj.vx, proj.vy, proj.alpha ?? 1, size, proj.flown);
     } else if (naval) {
       ps.scale.set(minScreenSizeMul(CLASSIC_DOT_DIAMETER, camScale, SHELL_MIN_SCREEN_PX));
     }

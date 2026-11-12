@@ -73,11 +73,9 @@ export const QUARANTINE = new Set([
   // 2026-11-09 6x re-run (lane 1000, lock-to-fire universal); machined-art
   // went 6/6 and left the list. Still red, each without a quick fix:
   //
-  // 2026-11-12: missiles and bolts now step by WORKER ticks; homing, swarm
-  // damage and held fire went 6/6. Still red: impact-only, from host load
-  // (:557, 0/6) waits lifetime + 3 s for the expiry, but the loaded server's
-  // physics worker ran at ~34 Hz (every room shares it), so the 6 s lifetime
-  // took 10.6 s (probe). The touch chip hold (:646, 1/6): not yet probed.
+  // 2026-11-12: homing, swarm damage, held fire (its rolled-ring read fixed)
+  // and impact-only all pass on CI now. Only the touch chip hold (:650)
+  // times out at 90 s on CI's host, though it went 6/6 on the desktop.
   'missile-frigate-homing',
   // 2026-11-12 desktop 3x re-run (lane 520): structure-placement-ghost,
   // speed-dial, fire-control-lock, laser-falloff-probe, multiple-lingering-pool

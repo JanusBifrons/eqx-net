@@ -456,7 +456,11 @@ test('held fire auto-refires heat-seeker every cooldown — no need to tap', asy
     // Collect every `missile_spawned` event from this shooter since the
     // hold began. Group by `missileId` so we count distinct missiles
     // (each fire produces 2 missiles per salvo = 2 mounts).
-    const res = await request.get(`${SERVER_URL}/dev/events?limit=500`);
+    // Filter on the server (`?tag=`): the shared event ring takes every room's
+    // events, and on a fast host more than 500 land during the hold, so an
+    // unfiltered "last 500" dropped the earlier salvos (0/6 on the desktop
+    // while the game fired 3 salvos 1.5 s apart, 2026-11-12).
+    const res = await request.get(`${SERVER_URL}/dev/events?limit=500&tag=missile_spawned`);
     const body = (await res.json()) as { events: ServerLogEntry[] };
     const ourMissiles = body.events.filter(
       (e) => e.tag === 'missile_spawned'
