@@ -389,7 +389,7 @@ import { massOf, shipTuning, shellViewHalfExtent } from '../../shared-types/ship
 import { ShellEventHub, type ShellViewer } from './ShellEventHub.js';
 import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
-import { refineRayHit } from '../../core/combat/capitalHits.js';
+import { isCapitalKindId, refineRayHit } from '../../core/combat/capitalHits.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
 import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
 import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
@@ -7664,7 +7664,10 @@ export class SectorRoom extends Room<SectorState> {
     const rk = getShipKind(ship.kind);
     const r = rk.radius + shipTuning(rk).shieldPad;
     const circle = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, r);
-    if (circle === null || ship.shield > 0) return circle;
+    // A capital's shield follows its hull (`shipShieldColliderDesc`), so its
+    // circle (half the hull's LENGTH) is only the cheap pre-test, as for an NPC
+    // capital (`refineRayHit`, #15): refine to the hull whatever the shield.
+    if (circle === null || (ship.shield > 0 && !isCapitalKindId(ship.kind))) return circle;
     return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, shipCollisionParts(ship.kind));
   }
 
@@ -7899,7 +7902,9 @@ export class SectorRoom extends Room<SectorState> {
     const rk = getShipKind(ship.kind);
     const r = rk.radius + shipTuning(rk).shieldPad;
     const circle = projectileSweepCircle(fromX, fromY, stepX, stepY, projRadius, cx, cy, r);
-    if (circle === null || ship.shield > 0) return circle;
+    // Capitals: the hull, shield up or down (see playerHitscanDist). Before
+    // 2026-11-12 a broadside shell burst ~2,000 u off a pilot's heavy cruiser.
+    if (circle === null || (ship.shield > 0 && !isCapitalKindId(ship.kind))) return circle;
     return sweptSegmentHitsShipPolygon(fromX, fromY, stepX, stepY, cx, cy, angle, shipCollisionParts(ship.kind));
   }
 

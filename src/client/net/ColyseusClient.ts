@@ -5560,7 +5560,10 @@ export class ColyseusGameClient {
     if (ship && ship.shieldDown !== true) {
       const sk = getShipKind(ship.kind ?? null);
       const r = sk.radius + shipTuning(sk).shieldPad;
-      const d = rayHitsSphere(fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, r);
+      const c = rayHitsSphere(fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, r);
+      // A capital pilot's shield follows its hull, as the server resolves it
+      // (`SectorRoom.playerHitscanDist`, #15).
+      const d = refineRayHit(ship.kind ?? null, c, fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, ship.angle);
       if (d !== null) return d;
     }
     return hit.dist;
