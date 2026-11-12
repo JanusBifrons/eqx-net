@@ -244,8 +244,8 @@ export const capitalEngines: Shot = {
   target: { room: 'showcase-capitals', params: { sectorScale: '4', shipKind: 'battleship', art: 'machined', fx: 'new', spawnX: 0, spawnY: -9000, initialHull: 1_000_000 } },
   hud: 'none',
   durationMs: 22_000,
-  // The game's follow camera (record as is): the pilot zooms in on the
-  // engines with the wheel, then back out to the whole hull under way.
+  // The game's follow camera (record as is): the pilot zooms out a little to
+  // see the engines, then further to the whole hull under way.
   async startWhen(ctx) {
     await artSettled(ctx);
   },
@@ -254,10 +254,13 @@ export const capitalEngines: Shot = {
     await ctx.page.mouse.move(c.x, c.y);
     await ctx.page.keyboard.down('ArrowUp');
     try {
-      await wheelSteps(ctx, -100, 12, 120);
-      await ctx.sleep(7000);
-      await wheelSteps(ctx, 100, 25, 160);
+      // The follow camera leads the ship forward, so zoomed in the stern is
+      // off screen (take 1, 2026-11-12). Zoom out until it clears the caption,
+      // watch the engines, then pull back to the whole hull under way.
+      await wheelSteps(ctx, 100, 4, 200);
       await ctx.sleep(8000);
+      await wheelSteps(ctx, 100, 10, 200);
+      await ctx.sleep(7500);
     } finally {
       await ctx.page.keyboard.up('ArrowUp');
     }
