@@ -124,6 +124,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   sectorName: '',
   hullPct: 100,
   shieldPct: 100,
+  timeScale: 1,
   ammo: 20,
   sectorAlert: null,
   warpWarnings: [],
@@ -223,6 +224,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setSectorName: (name) => set({ sectorName: name }),
   setHullPct: (pct) => set({ hullPct: pct }),
   setShieldPct: (pct) => set({ shieldPct: pct }),
+  setTimeScale: (scale) => set({ timeScale: scale }),
   setAmmo: (ammo) => set({ ammo }),
   setSectorAlert: (msg) => set({ sectorAlert: msg }),
   addWarpWarning: (w) =>

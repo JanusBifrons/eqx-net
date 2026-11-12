@@ -130,6 +130,31 @@ export const SCENARIOS: readonly NetgateScenario[] = [
     // so a structures/scrap change fires it (closing the path-filter hole).
     triggerGlobs: [...SHARED_LIVELOOP_GLOBS, ...STRUCTURE_GLOBS, ...SCRAP_GLOBS],
   },
+  // Game time scale (stream/time-scale): the core strafe in a sector forced
+  // to 0.7× and 2×. PRINT-ONLY by necessity: the baseline arm is origin/main,
+  // which ignores `timeScale` and runs at 1×, so a relative gate would compare
+  // different speeds. They report liveness + health at speed; dispatch with
+  // `scenarios=speed-0.7,speed-2`.
+  {
+    name: 'speed-0.7',
+    room: 'feel-test-25',
+    urlParams: '&instantLock=1&anyTarget=1&timeScale=0.7',
+    liveSelector: '[data-testid="ship-count"]',
+    interaction: 'strafe-fire',
+    reps: 4,
+    gating: 'print-only',
+    triggerGlobs: ['^src/core/clock/', '^src/server/time/'],
+  },
+  {
+    name: 'speed-2',
+    room: 'feel-test-25',
+    urlParams: '&instantLock=1&anyTarget=1&timeScale=2',
+    liveSelector: '[data-testid="ship-count"]',
+    interaction: 'strafe-fire',
+    reps: 4,
+    gating: 'print-only',
+    triggerGlobs: ['^src/core/clock/', '^src/server/time/'],
+  },
 ];
 
 /** Resolve a CSV of scenario names to descriptors, preserving catalogue

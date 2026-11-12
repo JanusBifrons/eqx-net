@@ -94,6 +94,8 @@ export function formatAuditLine(e: AuditEvent): string {
       return `${head}: ${e.victim} killed by ${e.killer}`;
     case 'shield_broken':
       return `${head}: ${e.entityId}${e.owner ? ` owner=${e.owner}` : ''}`;
+    case 'time_scale_changed':
+      return `${head}: ${e.from}× → ${e.to}× (${e.reason}${e.latenessPct !== undefined ? `, ${e.latenessPct}% late` : ''})`;
     case 'player_joined':
     case 'player_left':
       return `${head}: player=${e.playerId}`;

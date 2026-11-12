@@ -15,6 +15,7 @@ import path from 'node:path';
 import { SHOTS, SHOWCASE_EXEMPT, SHOWCASE_PENDING } from '../../showcase/registry.js';
 import { SHOWCASE_ROOMS } from '../../src/server/rooms/showcaseRooms.js';
 import { GALAXY_SECTORS } from '../../src/core/galaxy/galaxy.js';
+import { PERF_SCENES } from '../../src/shared-types/perf/perfScenes.js';
 
 const ROOT = path.resolve(__dirname, '../..');
 
@@ -60,6 +61,8 @@ describe('showcase coverage', () => {
     const index = readFileSync(path.join(ROOT, 'src/server/index.ts'), 'utf8');
     const defined = new Set([...index.matchAll(/define\(\s*'([a-z0-9-]+)'/g)].map((m) => m[1]!));
     for (const name of Object.keys(SHOWCASE_ROOMS)) defined.add(name);
+    // Perf-scene rooms are defined in a loop (`perf-${scene.id}`, index.ts).
+    for (const scene of PERF_SCENES) defined.add(`perf-${scene.id}`);
     const sectors = new Set(GALAXY_SECTORS.map((s) => s.key));
     for (const s of SHOTS) {
       if (s.target.room) expect(defined.has(s.target.room), `${s.id} → room '${s.target.room}'`).toBe(true);

@@ -129,6 +129,7 @@ function line(e) {
     case 'drone_destroyed': return `${head}: by ${e.attackerId ?? '?'}`;
     case 'player_killed': return `${head}: ${e.victim} killed by ${e.killer}`;
     case 'shield_broken': return `${head}: ${e.entityId}${e.owner ? ` owner=${e.owner}` : ''}`;
+    case 'time_scale_changed': return `${head}: ${e.from}× → ${e.to}× (${e.reason}${e.latenessPct !== undefined ? `, ${e.latenessPct}% late` : ''})`;
     case 'player_joined':
     case 'player_left': return `${head}: player=${e.playerId}`;
     case 'transit_started': return `${head}: player=${e.playerId} ${e.from ?? '?'} → ${e.to}`;

@@ -354,6 +354,21 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 - World notices (`world_notice`: elites, events, bounties) reuse the trade toast stack with the gold `world` tone, which is not tappable. They are accelerators; the truth is the snapshot (`drones[].elite`) and the galaxy snapshot (`SectorLiveState.elite` / `.event`).
 - Lock: `ContractsTab.test.tsx`.
 
+## Game time on the client (time scale stream)
+
+- `ColyseusClient.gameClock` (a core `GameClock` over the injected `clock`) is the sector's game time. Its speed is set ONLY from the snapshot's `timeScale` keyframe (absent = 1×, #16).
+- **Everything that turns time into TICKS uses it:** the clock anchor (`clockAnchorPerfNow` is GAME ms), `targetTick`, the render tick phase / dead-reckon (`_lastLocalTickAtMs`, game ms; a RAF wall timestamp goes through `gameClock.at(wallMs)`), and the shell display tick.
+- **Wall time stays for:** networking (wire-arrival intervals, RTT), stall detection (`_anchorFreshAtMs`), diagnostics and UI.
+- **A speed change keeps the anchor.** The game clock is continuous across a change, so the (serverTick ↔ game ms) anchor stays valid and the normal eased anchor update absorbs the small timing difference. The server GLIDES speed changes (the dimmer), so each step is small. No `fromTick` arithmetic; the shared contract is "60 ticks per GAME second" on both sides.
+- At 1× `gameClock.now()` / `.at(t)` return the wall value EXACTLY (byte-identical until the first speed change).
+- Lock: `ColyseusClient.timeScale.test.ts`.
+- **Display delays are GAME ms (4b).** The swarm floor/ceiling is 100/speed .. 280/speed wall ms (`setSwarmDisplaySpeed`); missiles use `MISSILE_DISPLAY_DELAY_MS / mirror.timeScale`. Arrival stamps stay wall. This keeps the window ~6 poses at every speed, inside `POSE_RING_DEPTH`. Lock: `swarmInterpolation.timeScale.test.ts`.
+- **World motion between snapshots uses GAME frame time.** A per-frame step that moves the world (projectile extrapolation, ghost bolts, the drawn turret slew) takes `gameFrameMs()` (`lastFrameMs` × speed), never `lastFrameMs`. Visual error smoothing (reconciler lerp, offset springs) stays on wall time. The lint wall cannot see a `dt` variable, so this is a review rule; it was missed once and slow motion looked ~25 % calmer instead of 2.5× (hostile review 2026-11-12). Lock: `ColyseusClient.timeScale.test.ts` "a projectile is extrapolated by GAME time".
+- **Presentation follows the speed from ONE source (4c).** `RenderMirror.timeScale` (absent = 1×) reaches the renderer on both paths. `PixiRenderer.fxNow()` (a `GameClock` over `performance.now()`, speed set at the top of `update`) is the time EVERY effect and animation reads: explosions, beams, recoil, connector pulses, shields, fences, lights, the backdrop, the effects service tick and the incoming-fire countdown (game seconds).
+  - A NEW effect must take its time from `fxNow()` (or the `now` it is handed). `src/client/render/**` and `src/client/effects/**` lint-ban `performance.now` / `Date.now` outside a real-time allowlist in `eslint.config.js`.
+  - Real time stays for pose interpolation against wall-stamped arrivals, the camera and UI (warp curtain, radar, lock marks, health-bar fades, selection) and cost measurement. Inline `-- real time: <why>` lines in PixiRenderer.
+  - Lock: `FxExplosions.timeScale.test.ts` (an unmodified effect driven by a 0.5×/2× clock lives 2× / 0.5× as long in wall time).
+
 ## Durable Identity
 
 - `playerId` is persisted in `localStorage` as `eqxPlayerId`. Read at bootstrap, sent in the `identify` handshake.

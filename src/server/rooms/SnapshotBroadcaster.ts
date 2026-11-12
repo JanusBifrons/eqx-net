@@ -232,6 +232,8 @@ export interface SnapshotBroadcasterDeps {
   /** Shells as events (shell-events.md §5): the room's hub, when on. Fills the
    *  per-recipient `shellKey` keyframe and forgets a leaving viewer. */
   shellEvents?: () => ShellKeyframeSource | null;
+  /** The sector's speed keyframe, or undefined at 1× (time scale stream). */
+  timeScale?: () => SnapshotMessage['timeScale'];
 }
 
 /** The part of `ShellEventHub` the broadcaster uses. */
@@ -373,6 +375,7 @@ type MutableSnapshotMessage = {
   structureTargets?: SnapshotMessage['structureTargets'];
   structureMountAngles?: SnapshotMessage['structureMountAngles'];
   shellKey?: SnapshotMessage['shellKey'];
+  timeScale?: SnapshotMessage['timeScale'];
 };
 
 export class SnapshotBroadcaster {
@@ -1091,10 +1094,12 @@ export class SnapshotBroadcaster {
       } else {
         snap.shellKey = undefined;
       }
+      snap.timeScale = this.deps.timeScale?.();
       // plan: imperative-taco-r2 — stamp server-send time so the client
       // can separate network in-transit delay from server-side silence
       // during recv_gap_long events. `performance.now()` is a primitive
       // number; notepack encodes it as 8 bytes. Zero per-tick alloc.
+      // eslint-disable-next-line no-restricted-properties -- real time: a network send stamp for latency, not game time
       snap.serverSendPerfNow = performance.now();
       // r2 evidence pass — read the underlying WebSocket bufferedAmount
       // BEFORE send and ship it ON the snapshot itself so the client's

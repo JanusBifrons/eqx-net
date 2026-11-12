@@ -22,6 +22,10 @@ export interface ScenePerfView {
   /** Work counters per tick (WS3; gated by perfSceneCounts.test.ts) plus
    *  print-only CPU time. */
   work: SceneWorkView;
+  /** Game time against wall time while the scene runs (game time scale,
+   *  Phase 1, print-only): 60 Hz ticks real time allowed, ticks the worker
+   *  ran, the difference, and how many the worker's catch-up cap dropped. */
+  simTime: { wallTicks: number; simTicks: number; latenessTicks: number; droppedTicks: number };
 }
 
 export interface ScenePerfSource { scenePerf(): ScenePerfView | null }
@@ -53,3 +57,21 @@ export function recordClientReading(r: unknown): string | null {
 }
 
 export function clientPerfReadings(): readonly unknown[] { return clientReadings; }
+
+/** Game time vs wall time between two marks (worker tick, dropped ticks,
+ *  wall ms). Pure, for `ScenePerfView.simTime`. */
+export function sceneSimTime(
+  start: { ms: number; tick: number; dropped: number },
+  end: { ms: number; tick: number; dropped: number },
+  /** The sector's game speed: real time allows 60 × this ticks per second. */
+  timeScale = 1,
+): ScenePerfView['simTime'] {
+  const wallTicks = Math.max(0, Math.round(((end.ms - start.ms) * 60 * timeScale) / 1000));
+  const simTicks = (end.tick - start.tick) >>> 0;
+  return {
+    wallTicks,
+    simTicks,
+    latenessTicks: wallTicks - simTicks,
+    droppedTicks: (end.dropped - start.dropped) >>> 0,
+  };
+}

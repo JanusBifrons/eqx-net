@@ -13,6 +13,8 @@ import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ShipRenderState, StructureRenderState, SwarmRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
 import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
+import { GameClock } from '@core/clock/GameClock';
+import { glideToward } from '@shared-types/timeScale';
 import { SPOOL_DURATION_MS } from '@core/transit/TransitStateMachine';
 import type { SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
 import { parseWelcome } from './parseWelcome';
@@ -180,6 +182,7 @@ import { lockLineScore } from '@core/combat/lockLine';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
   interpolateSwarmPose,
+  setSwarmDisplaySpeed,
   type InterpolatedPose,
   DISPLAY_DELAY_MS as SHELL_DISPLAY_DELAY_MS,
 } from './swarmInterpolation';
@@ -325,6 +328,61 @@ export class ColyseusGameClient {
    * been replaced with `this.clock.now()` for replay parity.
    */
   private readonly clock: Clock;
+  /**
+   * This sector's GAME time (time scale stream; speed is per sector). Built
+   * over `clock` (so the replay harness still drives it), its speed comes
+   * from the snapshot's `timeScale` keyframe. Everything that turns time into
+   * TICKS uses it (the clock anchor, `targetTick`, the render tick phase, the
+   * shell display tick), so prediction follows the sector's speed with no
+   * other code. Wall time stays for networking, stalls, RTT and UI. At 1× it
+   * IS `clock.now()`, exactly.
+   */
+  private readonly gameClock: GameClock;
+  /** Glide basis from the last snapshot keyframe (time scale dimmer). */
+  private _glideS = 1;
+  private _glideT: number | undefined = undefined;
+  private _glideAtMs = 0;
+
+  /**
+   * The input lead in GAME ticks. `leadTicks` comes from the round trip in
+   * WALL time (60 ticks a wall second); at speed s the same round trip spans
+   * s × as many game ticks, so the lead must scale or inputs reach a faster
+   * server late and every one is a prediction correction (measured: 11–17 per
+   * take at 2× before this). Exactly `leadTicks` at 1×.
+   */
+  /**
+   * This frame's length in GAME ms (time scale). Per-frame steps that move the
+   * WORLD (projectile extrapolation, ghost bolts, the drawn turret slew) take
+   * this, so they follow the sector's speed; visual error smoothing (the
+   * reconciler lerp, offset springs) stays on wall `lastFrameMs`. Exactly
+   * `lastFrameMs` at 1×.
+   */
+  private gameFrameMs(): number {
+    return this.lastFrameMs * this.gameClock.scale;
+  }
+
+  private gameLeadTicks(): number {
+    return this.leadTicks * this.gameClock.scale;
+  }
+
+  /** Set the client's speed (clock, display delay, render mirror) on change. */
+  private applyLocalSpeed(speed: number): void {
+    if (speed === this.gameClock.scale) return;
+    this.gameClock.setScale(speed);
+    setSwarmDisplaySpeed(speed);
+    this.mirror.timeScale = speed === 1 ? undefined : speed;
+  }
+
+  /**
+   * Through a glide, extrapolate the server's speed NOW with the shared
+   * `glideToward` (#15): from the last keyframe's speed toward its target, over
+   * the time since it arrived plus half the round trip. Alloc-free.
+   */
+  private followSpeedGlide(): void {
+    if (this._glideT === undefined) return;
+    const elapsedS = (this.clock.now() - this._glideAtMs + this.stats.rttMeanMs / 2) / 1000;
+    this.applyLocalSpeed(glideToward(this._glideS, this._glideT, elapsedS));
+  }
 
   /**
    * Default constructor uses real wall-clock — production behaviour is
@@ -333,6 +391,7 @@ export class ColyseusGameClient {
    */
   constructor(clock: Clock = REAL_CLOCK) {
     this.clock = clock;
+    this.gameClock = new GameClock(() => clock.now());
     ColyseusGameClient._liveInstanceN += 1;
     logEvent('client_constructed', { liveInstanceN: ColyseusGameClient._liveInstanceN });
     // Probe 6 — `?coalesce=0` disables snapshot coalescing for A/B
@@ -1505,7 +1564,7 @@ export class ColyseusGameClient {
       this.serverTickAtWelcome = msg.serverTick;
       this.welcomePerfNow = this.clock.now();
       this.clockAnchorServerTick = msg.serverTick;
-      this.clockAnchorPerfNow = this.welcomePerfNow;
+      this.clockAnchorPerfNow = this.gameClock.at(this.welcomePerfNow);
       // The welcome handshake gives us a perfect anchor; let the next
       // snapshot drop straight into EWMA-smoothing instead of snapping.
       this._anchorInitialised = true;
@@ -2880,7 +2939,7 @@ export class ColyseusGameClient {
     this.serverTickAtWelcome = msg.serverTick;
     this.welcomePerfNow = this.clock.now();
     this.clockAnchorServerTick = msg.serverTick;
-    this.clockAnchorPerfNow = this.welcomePerfNow;
+    this.clockAnchorPerfNow = this.gameClock.at(this.welcomePerfNow);
     this._anchorInitialised = true;
     this._anchorFreshAtMs = this.welcomePerfNow;
     // Reset the idle-input throttle so the first post-respawn input always sends.
@@ -3198,18 +3257,35 @@ export class ColyseusGameClient {
     // back and forth, blowing up the reconciler replay window into a 90 %
     // correction storm under server-clock skew. Logic lives in `clockAnchor.ts`
     // for unit-testability; see that module for the mechanic + thresholds.
+    // Game time scale: the sector's speed rides the snapshot (#16). The game
+    // clock stays continuous across a change, so the anchor (game ms) stays
+    // valid and the eased path below absorbs the small timing difference: the
+    // server glides speed changes (the dimmer), so each step is small.
+    const snapScale = snap.timeScale?.s ?? 1;
+    // The glide basis (the dimmer): the speed + target the server reported and
+    // when. `followSpeedGlide` extrapolates from it every frame so the client's
+    // clock moves in step with the server's (no lag through a glide).
+    this._glideS = snapScale;
+    this._glideT = snap.timeScale?.t;
+    this._glideAtMs = wireArrivalAtMs;
+    if (this._glideT === undefined) this.applyLocalSpeed(snapScale);
+    else this.followSpeedGlide();
+    if (useUIStore.getState().timeScale !== Math.round(this.gameClock.scale * 100) / 100) {
+      useUIStore.getState().setTimeScale(Math.round(this.gameClock.scale * 100) / 100);
+    }
+    const gameNowMs = this.gameClock.at(now);
     if (this._anchorInitialised) {
       const next = updateAnchor(
         { anchorServerTick: this.clockAnchorServerTick, anchorPerfNow: this.clockAnchorPerfNow },
         snap.serverTick,
-        now,
+        gameNowMs,
       );
       this.clockAnchorServerTick = next.anchorServerTick;
       this.clockAnchorPerfNow = next.anchorPerfNow;
       this._anchorFreshAtMs = now;
     } else {
       this.clockAnchorServerTick = snap.serverTick;
-      this.clockAnchorPerfNow = now;
+      this.clockAnchorPerfNow = gameNowMs;
       this._anchorInitialised = true;
       this._anchorFreshAtMs = now;
     }
@@ -3255,13 +3331,13 @@ export class ColyseusGameClient {
       // prediction window and producing a cascade of position corrections.
       // Detect and snap forward. See `inputTickRecovery.ts` for the full
       // mechanism and the 2026-05-08 diagnostic that motivated the fix.
-      const recovered = recoverInputTickFromStarvation(this.inputTick, ackedTick, this.leadTicks);
+      const recovered = recoverInputTickFromStarvation(this.inputTick, ackedTick, this.gameLeadTicks());
       if (recovered !== this.inputTick) {
         this.inputTick = recovered;
         // Re-anchor the wall-clock so subsequent rafTicks don't try to
         // catch up the gap we just skipped over.
         this.clockAnchorServerTick = snap.serverTick;
-        this.clockAnchorPerfNow = now;
+        this.clockAnchorPerfNow = gameNowMs;
       }
       this.stats.lastAckedTick = ackedTick;
       this.stats.ticksAhead = this.inputTick - ackedTick;
@@ -4072,7 +4148,7 @@ export class ColyseusGameClient {
         // started (during this frame's work) makes it slightly negative, i.e.
         // the pose a fraction of a tick before the state: still continuous.
         const tickElapsedMs = this._lastLocalTickAtMs >= 0
-          ? Math.max(-DEAD_RECKON_BACK_MS, Math.min(DEAD_RECKON_CAP_MS, (frameNowMs ?? this.clock.now()) - this._lastLocalTickAtMs))
+          ? Math.max(-DEAD_RECKON_BACK_MS, Math.min(DEAD_RECKON_CAP_MS, this.gameClock.at(frameNowMs ?? this.clock.now()) - this._lastLocalTickAtMs))
           : 0;
         const dtSec = tickElapsedMs / 1000;
         const drX = state.x + state.vx * dtSec;
@@ -4494,7 +4570,7 @@ export class ColyseusGameClient {
         // Turret angles: carried forward between 20 Hz snapshots, at the same
         // single per-frame resolve as the pose (displayMountAngles.ts).
         if (entry.kind === 1 && (entry.mountAngles || entry.displayMountAngles)) {
-          slewDisplayMountAngles(entry, entry.shipKind ? getShipKind(entry.shipKind).mounts : undefined, this.lastFrameMs / 1000);
+          slewDisplayMountAngles(entry, entry.shipKind ? getShipKind(entry.shipKind).mounts : undefined, this.gameFrameMs() / 1000);
         }
       }    }
 
@@ -4569,13 +4645,13 @@ export class ColyseusGameClient {
 
     // Ghost projectiles — advance and write to mirror.projectiles.
     if (this.mirror.projectiles) {
-      this.ghostManager.update(this.lastFrameMs, this.mirror.projectiles);
+      this.ghostManager.update(this.gameFrameMs(), this.mirror.projectiles);
       // Shells as events (slice 2b): draw salvo shells at the display tick
       // (server tick estimate minus the remote-entity display delay), and
       // burst them when the display reaches their hit.
       if (this._shellEvents) {
         const displayTick = this.clockAnchorServerTick
-          + (this.clock.now() - this.clockAnchorPerfNow) / SHELL_TICK_MS - SHELL_DISPLAY_DELAY_MS / SHELL_TICK_MS;
+          + (this.gameClock.now() - this.clockAnchorPerfNow) / SHELL_TICK_MS - SHELL_DISPLAY_DELAY_MS / SHELL_TICK_MS;
         this._shellStore.place(this.mirror.projectiles, displayTick, this.mirror.pendingShellEnds ??= []);
       }
 
@@ -4584,7 +4660,9 @@ export class ColyseusGameClient {
       // frozen between snapshots and visibly stutters. Server-side projectiles
       // are constant-velocity (no forces), so straight-line extrapolation is
       // exact between snapshots. Ghosts are advanced by GhostManager above.
-      const dtSec = this.lastFrameMs / 1000;
+      // GAME seconds (time scale): at 0.4× a bolt drawn on wall dt flew at full
+      // speed between snapshots and snapped back (hostile review 2026-11-12).
+      const dtSec = this.gameFrameMs() / 1000;
       for (const entry of this.mirror.projectiles.values()) {
         if (entry.isGhost || entry.event === true) continue;
         entry.x += entry.vx * dtSec;
@@ -4803,8 +4881,9 @@ export class ColyseusGameClient {
     // `keyboard.read()` hoisted out of the loop so cap-engaged RAFs still
     // emit a sentinel input + diagnostic log.
     const MAX_OVER_PREDICTION_TICKS = 60;
-    const ticksSinceAnchor = Math.floor((this.clock.now() - this.clockAnchorPerfNow) / FIXED_MS);
-    const targetTick = this.clockAnchorServerTick + ticksSinceAnchor + this.leadTicks;
+    this.followSpeedGlide();
+    const ticksSinceAnchor = Math.floor((this.gameClock.now() - this.clockAnchorPerfNow) / FIXED_MS);
+    const targetTick = this.clockAnchorServerTick + ticksSinceAnchor + this.gameLeadTicks();
     const tickDeficitBefore = targetTick - this.inputTick;
     // A stall (loading curtain, background tab) is skipped, not replayed at 4
     // ticks a frame, and only from a FRESH clock anchor: hold until a snapshot
@@ -5080,7 +5159,7 @@ export class ColyseusGameClient {
         // due time: the anchor follows snapshot arrival, and a late snapshot
         // moved it a whole tick, lurching the drawn ship (slewTickDue).
         const due = tickBoundaryDueMs(
-          this.clockAnchorPerfNow, this.clockAnchorServerTick, this.leadTicks, this.inputTick, FIXED_MS,
+          this.clockAnchorPerfNow, this.clockAnchorServerTick, this.gameLeadTicks(), this.inputTick, FIXED_MS,
         );
         this._lastLocalTickAtMs = this._lastLocalTickAtMs < 0
           ? due
@@ -6733,6 +6812,8 @@ export class ColyseusGameClient {
   }
 
   dispose(): void {
+    // Game time scale: the next session starts at 1× until its snapshots say otherwise.
+    useUIStore.getState().setTimeScale(1);
     this.disposed = true;
     this.localDead = false;
     this.diedAtMs = 0;

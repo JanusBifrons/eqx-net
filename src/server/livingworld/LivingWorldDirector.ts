@@ -67,6 +67,7 @@ import { WaveDirector, type WaveStep } from './director/WaveDirector.js';
 import { IncomingRegistry } from './IncomingRegistry.js';
 import type { WarpDisposition, WarpWarningEvent } from '../../shared-types/messages.js';
 import { DIRECTOR_STATE_VERSION, type DirectorPersistence } from './DirectorPersistence.js';
+import { gameNow, gameSetInterval, gameClearTimer, type GameTimer } from '../time/gameTime.js';
 
 // Re-export the room type so existing imports from this module keep working.
 export type { LivingWorldRoom } from './LivingWorldRoom.js';
@@ -412,7 +413,7 @@ export class LivingWorldDirector {
   private readonly directorPersistence: DirectorPersistence | null;
   private readonly hooks: LivingWorldHooks;
 
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: GameTimer | null = null;
   private lastShedAtMs = -Infinity;
   /** Campaign 4.2 — per-squad rally-hold window open time (squadId → nowMs).
    *  Entry exists only while a warping wave squad is actively held at the rally
@@ -456,7 +457,7 @@ export class LivingWorldDirector {
     this.sectorKeys = [...rooms.keys()];
     this.opts = { ...DEFAULT_LIVING_WORLD_OPTIONS, ...options };
     this.rng = options.rng ?? Math.random;
-    this.nowMs = options.nowMs ?? Date.now;
+    this.nowMs = options.nowMs ?? gameNow;
     this.directorPersistence = options.directorPersistence ?? null;
     this.hooks = { ...(options.hooks ?? {}) };
     this.pool = new HunterBotPool({
@@ -562,8 +563,7 @@ export class LivingWorldDirector {
     }
     // Error boundary (campaign 1.1): a throw escaping tick() was an uncaught
     // exception on the single-process host. Log-and-continue instead.
-    const timer = setInterval(guarded('director-tick', () => this.tick()), this.opts.controlIntervalMs);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    const timer = gameSetInterval(guarded('director-tick', () => this.tick()), this.opts.controlIntervalMs);
     this.timer = timer;
     // Populate the snapshot cache once so `/galaxy/snapshot` answers with live
     // counts before the first control tick fires.
@@ -599,7 +599,7 @@ export class LivingWorldDirector {
 
   stop(): void {
     if (this.timer) {
-      clearInterval(this.timer);
+      gameClearTimer(this.timer);
       this.timer = null;
     }
     for (const s of this.subs) {

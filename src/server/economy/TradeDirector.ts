@@ -70,6 +70,7 @@ import type { AcceptOfferMsg, SendGiftMsg, TradeSink, TradeVerdict } from './tra
 import type { Wallet } from './Wallet.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import type { FactionPolicy, PlayerPolicyWire } from '../../shared-types/factions.js';
+import { gameNow, gameSetInterval, gameClearTimer, type GameTimer } from '../time/gameTime.js';
 
 /** The room surface the trade director drives (SectorRoom implements it). */
 export interface TradeRoom {
@@ -171,7 +172,7 @@ export class TradeDirector implements TradeSink {
   private readonly robotHitAt = new Map<string, number>();
   private readonly underFireAt = new Map<string, number>();
   private readonly push: ((ownerPlayerId: string, title: string, body: string, tag: string) => void) | null;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: GameTimer | null = null;
   private readonly subs: Array<{ bus: Bus; fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void }> = [];
 
   /** Its OWN copy of the room map: `registerRoom` must never add a testMode
@@ -196,7 +197,7 @@ export class TradeDirector implements TradeSink {
     this.rooms = new Map(rooms);
     this.opts = { ...DEFAULT_TRADE_OPTIONS, ...options };
     this.rng = options.rng ?? Math.random;
-    this.now = options.nowMs ?? Date.now;
+    this.now = options.nowMs ?? gameNow;
     this.push = options.push ?? null;
     this.wallet = options.wallet ?? NO_WALLET;
     this.lastDriftAtMs = this.now();
@@ -224,13 +225,12 @@ export class TradeDirector implements TradeSink {
       bus.on('ENTITY_DESTROYED', fn);
       this.subs.push({ bus, fn });
     }
-    const timer = setInterval(guarded('trade-tick', () => this.tick()), this.opts.controlIntervalMs);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    const timer = gameSetInterval(guarded('trade-tick', () => this.tick()), this.opts.controlIntervalMs);
     this.timer = timer;
   }
 
   stop(): void {
-    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+    if (this.timer) { gameClearTimer(this.timer); this.timer = null; }
     for (const s of this.subs) s.bus.off('ENTITY_DESTROYED', s.fn);
     this.subs.length = 0;
   }

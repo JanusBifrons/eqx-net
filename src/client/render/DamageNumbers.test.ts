@@ -421,3 +421,21 @@ describe('DamageNumberManager — destroy cleanup', () => {
     expect(() => mgr.update()).not.toThrow();
   });
 });
+
+describe('damage numbers follow the game speed (time scale)', () => {
+  it('at 0.5× a number lives twice as many frames; at 2× half as many', async () => {
+    const { Container } = await import('pixi.js');
+    const { DamageNumberManager, LIFETIME_FRAMES } = await import('./DamageNumbers.js');
+    const life = (step: number): number => {
+      const cam = { scale: { x: 1 } } as unknown as ConstructorParameters<typeof DamageNumberManager>[1];
+      const m = new DamageNumberManager(new Container(), cam);
+      m.spawn('t', 0, 0, 10);
+      let frames = 0;
+      while (m.getActiveCount() > 0 && frames < 1000) { m.update(step); frames++; }
+      return frames;
+    };
+    expect(life(1)).toBe(LIFETIME_FRAMES);
+    expect(life(0.5)).toBe(LIFETIME_FRAMES * 2);
+    expect(life(2)).toBe(LIFETIME_FRAMES / 2);
+  });
+});
