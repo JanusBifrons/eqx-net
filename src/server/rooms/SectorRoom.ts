@@ -1887,6 +1887,7 @@ export class SectorRoom extends Room<SectorState> {
       playerToSlot: this.playerToSlot,
       lingeringSlots: this.lingeringSlots,
       lingeringPoseCache: this.lingeringPoseCache,
+      lingeringShip: (sid) => this.state.ships.get(sid),
       swarmRegistry: this.swarmRegistry,
       playerMountAngles: this.mountTicker.playerMountAngles,
       resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
