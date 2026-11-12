@@ -3,7 +3,7 @@
  *
  * A pilot joins the showcase fleet room flying a battleship (the room's
  * `pilotCapitals` test switch), taps empty space on the canvas, and the helm
- * takes over: the panel reads "on course" and the ship moves under its own
+ * takes over: the panel reads "course set" and the ship moves under its own
  * inputs (server-authoritative pose via `data-ship-x/y`). Pressing W cancels
  * the course (WASD overrides the helm). A fighter in the same room gets no
  * helm panel.
