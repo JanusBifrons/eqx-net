@@ -49,7 +49,7 @@ import { WarpFx, type WarpFxShip } from './pixi/WarpFx.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
 import { FarZoomIcons } from './pixi/FarZoomIcons';
 import { NAVAL_RANGE } from '@shared-types/combat/navalRange';
-import { GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldBubbleRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
+import { GAMEPLAY_MAX_ZOOM, GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldBubbleRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
 import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
 import { shieldBubbleRadiusForEntity } from './pixi/shieldBubbleRadius.js';
@@ -63,6 +63,7 @@ import {
   type MutableBounds,
   type MutablePoint,
 } from './camera/CameraDirector';
+import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
 import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
@@ -157,7 +158,7 @@ export class PixiRenderer implements IRenderer {
   private _viewW = 0;
   private _viewH = 0;
   private _zoomPinned = false;
-  private readonly _zoomRange = { minScale: GAMEPLAY_MIN_ZOOM, startZoom: 0 };
+  private readonly _zoomRange = { minScale: GAMEPLAY_MIN_ZOOM, startZoom: 0, maxScale: GAMEPLAY_MAX_ZOOM };
 
   /** FX kill switches handed in by the worker BOOT (resolved on the main
    *  thread — the worker has no `window`). Absent ⇒ read the URL at init. */
@@ -747,7 +748,10 @@ export class PixiRenderer implements IRenderer {
       // much further out to read the wider battlefield. maxScale (zoom-in)
       // unchanged.
       minScale: GAMEPLAY_MIN_ZOOM,
-      maxScale: 3,
+      // The gameplay zoom-in cap then follows the ship you fly so its whole
+      // hull fits (`applyZoomCap`); 3 stays the cap for ordinary hulls and
+      // the cinematic director's limit.
+      maxScale: GAMEPLAY_MAX_ZOOM,
       followLerpFactor: 1,
     });
     this.setViewSize(initialW, initialH);
@@ -1550,6 +1554,7 @@ export class PixiRenderer implements IRenderer {
     const kind = getShipKind(id);
     zoomRangeForKind(kind, DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, this._viewW, this._viewH);
     this.camera.setMinScale(this._zoomRange.minScale);
+    this.applyZoomCap();
     const f = hullZoomFactor(kind);
     if (f !== this._zoomFactor) {
       this._zoomFactor = f;
@@ -1567,6 +1572,14 @@ export class PixiRenderer implements IRenderer {
     if (this._zoomKindId === null) return;
     zoomRangeForKind(getShipKind(this._zoomKindId), DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, w, h);
     this.camera.setMinScale(this._zoomRange.minScale);
+    this.applyZoomCap();
+  }
+
+  /** The zoom-in cap: the hull you fly fits on screen (`zoomCeilingForView`,
+   *  owner decision 2026-11-12), eased down by the Camera, never snapped.
+   *  Spectator keeps the ordinary cap (there may be no ship to fit). */
+  private applyZoomCap(): void {
+    this.camera.setMaxScale(this._spectator || this._zoomKindId === null ? GAMEPLAY_MAX_ZOOM : this._zoomRange.maxScale);
   }
 
   update(mirror: RenderMirror): void {
@@ -2030,6 +2043,7 @@ export class PixiRenderer implements IRenderer {
     }
 
     const local = mirror.localPlayerId ? this.sprites.get(mirror.localPlayerId) : null;
+    this._speedFollowSprite = null;
     // Phase 4 WS-A1 — in spectator/construction mode the camera free-roams; do
     // NOT re-issue the local-ship follow (which would yank the view back / snap
     // to a ship that no longer exists). `setSpectator(true)` already detached
@@ -2053,6 +2067,7 @@ export class PixiRenderer implements IRenderer {
       // but runs at ticker speed not MIRROR_UPDATE speed. See Camera
       // construction in init() for the rationale.
       this.camera.follow({ x: local.x, y: local.y });
+      this._speedFollowSprite = local;
     }
 
     // Structure placement ghost + world→screen projection for the confirm
@@ -2146,7 +2161,16 @@ export class PixiRenderer implements IRenderer {
     skyCam.scale.x = this.camera.scale.x;
     skyCam.screenWidth = this.camera.screenWidth;
     skyCam.screenHeight = this.camera.screenHeight;
-    const backdropOn = this._backdrop?.update(skyCam, performance.now(), speedFxFullSpeed(speedShip?.kind)) ?? false;
+    // The speed is measured from the followed ship's drawn pose at the frame
+    // time it was drawn for, shifted like the sky (capital jitter, 2026-11-12).
+    const followed = this._speedFollowSprite;
+    const follow = this._speedFollowPose;
+    if (followed) {
+      follow.x = followed.x - (mirror.travelJumpX ?? 0);
+      follow.y = followed.y + (mirror.travelJumpY ?? 0);
+    }
+    const speedSample = speedFxSampleInto(this._speedSample, followed ? follow : null, mirror.frameTimeMs, skyCam.center, performance.now());
+    const backdropOn = this._backdrop?.update(skyCam, performance.now(), speedFxFullSpeed(speedShip?.kind), speedSample) ?? false;
     // Speed effects (C3): the backdrop's eased speed asks the camera to zoom
     // out a little; applied on the camera's next tick (none while it's baking).
     this.camera.setSpeedZoom(backdropOn ? this._backdrop!.speedZoom() : 1);
@@ -3017,6 +3041,11 @@ export class PixiRenderer implements IRenderer {
   /** Phase 4 travel state: the camera the sky is drawn from (shifted by the
    *  trip's approach jump). */
   private readonly _skyCam = { center: { x: 0, y: 0 }, scale: { x: 1 }, screenWidth: 0, screenHeight: 0 };
+  /** The sprite the camera follows this frame (null: spectator / script),
+   *  and the speed-effects sample built from it (`speedFxSampleInto`). */
+  private _speedFollowSprite: { readonly x: number; readonly y: number } | null = null;
+  private readonly _speedFollowPose = { x: 0, y: 0 };
+  private readonly _speedSample = newSpeedFxSample();
 
   private readonly _warpShipScratch: WarpFxShip = { x: 0, y: 0, rotation: 0, warp: undefined, stern: 0, isLocal: false };
   private readonly _warpStern = new Map<string, number>();
@@ -3065,6 +3094,7 @@ export class PixiRenderer implements IRenderer {
     this.halo.setSpectator(active);
     if (!this.initialized) return;
     if (active) this.camera.follow(null);
+    this.applyZoomCap();
   }
 
   /** See `IRenderer.setRadarPrefs`. */

@@ -31,9 +31,12 @@ interface Burst {
   flash: Sprite; fire: Sprite; subs: Sprite[]; ring: Sprite; embers: Sprite[]; smoke: Sprite[];
 }
 
-/** Blast radius for a dying entity whose sprite is `diameter` world units across. */
+/** Blast radius for a dying entity whose sprite is `diameter` world units across.
+ *  The 280 u cap holds for fighters, frigates and cruisers; past it the cap is
+ *  the hull's own radius, so a capital going up covers its hull (invariant #18:
+ *  a fixed 280 left a ~4,400 u cruiser a fighter-sized puff, review 2026-11-12). */
 export function blastRadiusFor(diameter: number): number {
-  return Math.max(34, Math.min(280, diameter * 1.1));
+  return Math.max(34, Math.min(Math.max(280, diameter / 2), diameter * 1.1));
 }
 
 /** Fireball play time for a blast of radius `r` (bigger blasts burn longer). */

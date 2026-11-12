@@ -129,6 +129,11 @@ export interface WeaponMountTickerDeps {
   /** Fire control: the lock target pose for one of the pilot's mounts (false =
    *  none: the mount slews home). Absent (aim-only unit harnesses) ⇒ none. */
   aimTargetFor?: (playerId: string, mountId: string, out: { x: number; y: number; vx: number; vy: number }) => boolean;
+  /** Owner decision 2026-11-12: visit every pilot's SPECTATE-PARKED hull
+   *  (LINGERING, no active hull) under the PILOT's id, so drone turrets and
+   *  capital turrets keep engaging it (their `hostileTo` and NPC locks are
+   *  keyed by pilot). Absent ⇒ ACTIVE hulls only (unit harnesses). */
+  visitParkedPilotHulls?: (visit: (pid: string, x: number, y: number, vx: number, vy: number, kindId: string) => void) => void;
   /** Fire ONE mount of a capital drone along its barrel (the resolver reads
    *  the slewed angle). Called only when that mount is on target, in reach
    *  and reloaded. */
@@ -192,6 +197,17 @@ export class WeaponMountTicker {
   readonly droneMountLastOk = new Map<string, Int32Array>();
   /** Capitals: each mount's current target id, keyed by drone id. */
   readonly droneMountTargetIds = new Map<string, (string | null)[]>();
+
+  /** tickDrone's candidate count while the parked-hull visitor appends. */
+  private targetCount = 0;
+  /** Append one spectate-parked pilot hull to this tick's candidates. Bound
+   *  once (#14). */
+  private readonly addParkedTarget = (pid: string, x: number, y: number, vx: number, vy: number, kindId: string): void => {
+    const n = this.targetCount;
+    WeaponMountTicker.writeTargetSlot(this.droneMountTargetsScratch, n, pid, x, y, vx, vy);
+    this.droneTargetKinds[n] = kindId;
+    this.targetCount = n + 1;
+  };
 
   /** Fire control: reused lock-target pose (alloc-free, #14). */
   private readonly _fcTarget = { x: 0, y: 0, vx: 0, vy: 0 };
@@ -325,6 +341,8 @@ export class WeaponMountTicker {
     // drones). Logical-length over physical slot as above.
     const targets = this.droneMountTargetsScratch;
     let count = 0;
+    // Liveness (#17): ENGAGEABLE pilot hulls (`isEngageablePilotHull`):
+    // ACTIVE alive hulls here, then the spectate-parked LINGERING hulls below.
     for (const [pid] of d.playerToSlot) {
       const ship = d.getActiveShip(pid);
       if (!ship?.alive) continue;
@@ -334,6 +352,9 @@ export class WeaponMountTicker {
       this.droneTargetKinds[count] = ship.kind;
       count++;
     }
+    this.targetCount = count;
+    d.visitParkedPilotHulls?.(this.addParkedTarget);
+    count = this.targetCount;
     targets.length = count;
 
     for (const rec of d.swarmRegistry.all()) {

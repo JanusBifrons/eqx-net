@@ -14,6 +14,7 @@ import { quarterTurns } from './bake.js';
 import { MachinedFlatSprite } from './MachinedFlatSprite.js';
 import { MachinedShipSprite } from './MachinedShipSprite.js';
 import { hasTurrets } from './turretLayout.js';
+import { isCapitalKindId } from './capitalKind.js';
 
 export interface ShipArtCtx {
   /** Null when the Machined look is off: everything draws today's look. */
@@ -90,7 +91,7 @@ export function shipArtSwap(actx: ShipArtCtx, sprite: Container | undefined, h: 
 /** A new sprite for a swap or a first build: Machined if its art is ready. */
 export function buildArtShipSprite(h: ArtHandle | null, classic: () => Container): Container {
   if (h && h.state === 'ready') {
-    if (h.ship) return new MachinedShipSprite(h.ship);
+    if (h.ship) return new MachinedShipSprite(h.ship, h.job.type === 'ship' && isCapitalKindId(h.job.id));
     if (h.struct) return new MachinedFlatSprite(h.struct);
   }
   return classic();
