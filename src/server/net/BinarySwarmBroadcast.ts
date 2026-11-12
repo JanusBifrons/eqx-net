@@ -106,6 +106,9 @@ export class BinarySwarmBroadcast {
     let writeOffset = SWARM_HEADER_BYTES;
 
     for (const rec of registry.all()) {
+      // Capital wreck pieces (kind 4) are server-only until S2b ships the
+      // wire kind + descriptor; clients never see them yet.
+      if (rec.kind === 4) continue;
       const base = slotBase(rec.slot);
       const x = sabF32[base + SLOT_X_OFF]!;
       const y = sabF32[base + SLOT_Y_OFF]!;

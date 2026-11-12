@@ -3225,6 +3225,23 @@ export class ColyseusGameClient {
     });
     this.stats.droppedSnapshotsRecent = this._dropDetector.dropCount;
 
+    // Drone snapshot slice (slim turret/shield slice; pose flows on the
+    // binary swarm wire). See snapshotRemoteSync.ts. Applied for EVERY
+    // recipient, before the own-ship gate below: a spectator (no active
+    // ship) or a pilot whose reconciler hasn't bootstrapped still watches
+    // NPC turrets train and fire. It used to sit inside the own-ship block,
+    // so spectating froze every NPC turret where it was while its shells
+    // (events, not the snapshot) kept leaving the real barrels: the
+    // capital-turrets clip, 2026-11-12 (ColyseusClient.spectatorTurrets.test).
+    // Campaign 2.1: the per-recipient `hostile` bit feeds the client
+    // hostility ledger, the snapshot backstop for the discrete `bot_aggro`
+    // accelerant (invariant #16). `_snapshotHostileMark` is a bound field,
+    // not a closure (handleSnapshot is a hot path, #14).
+    applyDroneMountAngles(snap, this.mirror, this._snapshotHostileMark);
+    // WS-4 Phase 6: slim MINED-asteroid resource slice → swarm mirror (R2.23
+    // enabler; feeds the WS-9 inspector). Pose stays on the binary channel.
+    applyAsteroidResources(snap, this.mirror);
+
     if (!localId || !this.reconciler) {
       if (this.predWorld) {
         // Sync remote ships — keep them at their latest server position until
@@ -3312,18 +3329,6 @@ export class ColyseusGameClient {
       // Fire control (#16): the pilot's groups + locks, always applied.
       this.applyFcGroups(serverState.groups);
       this.mirror.localLockedBy = serverState.lockedBy ?? NO_LOCKED_BY;
-
-      // Drone snapshot slice (slim turret/shield slice; pose flows on the
-      // binary swarm wire). See snapshotRemoteSync.ts. Campaign 2.1: the
-      // per-recipient `hostile` bit feeds the client hostility ledger — the
-      // snapshot backstop for the discrete `bot_aggro` accelerant (invariant
-      // #16), so a mid-wave joiner renders hostiles red from the FIRST
-      // snapshot. `_snapshotHostileMark` is a bound field, not a closure —
-      // handleSnapshot is a hot path (invariant #14, no per-call alloc).
-      applyDroneMountAngles(snap, this.mirror, this._snapshotHostileMark);
-      // WS-4 Phase 6 — slim MINED-asteroid resource slice → swarm mirror (R2.23
-      // enabler; feeds the WS-9 inspector). Pose stays on the binary channel.
-      applyAsteroidResources(snap, this.mirror);
 
       // Probe 5 (mobile-perf-investigation, 2026-05-24) — instrument
       // reconcile separately from the rest of handleSnapshot. The
@@ -3837,6 +3842,8 @@ export class ColyseusGameClient {
     // keyed) so they don't collide with the active hull's playerId in
     // `mirror.ships`.
     if (!this.mirror.lingeringShips) this.mirror.lingeringShips = new Map();
+    const spectating = useUIStore.getState().pilotMode === 'spectator';
+    const localShipInstanceId = this.mirror.localShipInstanceId ?? null;
     for (const [shipInstanceId, ship] of ships.entries()) {
       const sh = ship as Record<string, unknown>;
       // Skip all dead ships — killEntity handles immediate cleanup when the destroy
@@ -3850,9 +3857,18 @@ export class ColyseusGameClient {
       // Plan: crispy-kazoo, Commit 8 — local-self exemption.
       // Joiner's OWN ship MUST stay in `mirror.ships` during the
       // pending-join handshake. Matching exemption lives in
-      // `snapshotShipRouter.routeSnapshotShipStates`.
+      // `snapshotShipRouter.routeSnapshotShipStates`, and it has the same two
+      // limits: only the welcome ship (a displaced own hull is parked, not
+      // joining), and never while spectating, when our inactive entry is the
+      // hull we PARKED. Without them a Spectate re-seeded `mirror.ships[localId]`
+      // from this pose-less schema entry (x/y default 0) and respawned a
+      // predicted local ship at the world origin that no snapshot corrects
+      // (2026-11-12 capital-turrets take: the parked cruiser drawn frozen
+      // inside the battleship). Lock: spectateOwnHullDrawnPose.test.ts.
       const isOwnShip = playerId === this.mirror.localPlayerId;
-      if (!isActive && !isOwnShip) {
+      const isOwnPendingJoin = isOwnShip && !spectating
+        && (localShipInstanceId === null || shipInstanceId === localShipInstanceId);
+      if (!isActive && !isOwnPendingJoin) {
         // Phase 6b — populate identity for the lingering hull. Pose
         // arrives separately in the snapshot's `states` slice and is
         // mirrored in handleSnapshot. We only set kind / displayName /
@@ -5560,7 +5576,10 @@ export class ColyseusGameClient {
     if (ship && ship.shieldDown !== true) {
       const sk = getShipKind(ship.kind ?? null);
       const r = sk.radius + shipTuning(sk).shieldPad;
-      const d = rayHitsSphere(fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, r);
+      const c = rayHitsSphere(fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, r);
+      // A capital pilot's shield follows its hull, as the server resolves it
+      // (`SectorRoom.playerHitscanDist`, #15).
+      const d = refineRayHit(ship.kind ?? null, c, fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, ship.angle);
       if (d !== null) return d;
     }
     return hit.dist;

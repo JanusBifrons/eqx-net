@@ -288,9 +288,12 @@ export const capitalTurrets: Shot = {
   server: 'capitals',
   // One battleship, the pilot 4,000 u off its beam (showcase-capital-duel). No
   // startHostile: the fight starts on cue in run(), after the art has baked.
-  target: { room: 'showcase-capital-duel', params: { shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
+  // Explicit spawn at the room's 4,000 u beam position: without it the join
+  // clearance pushes a cruiser to 5,200 u, past the 16-inch reach (5,376)
+  // once the idle battleship drifts (measured 2026-11-12).
+  target: { room: 'showcase-capital-duel', params: { shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1, spawnX: 4000, spawnY: 0 } },
   hud: 'none',
-  durationMs: 15_000,
+  durationMs: 22_000,
   async startWhen(ctx) {
     await artSettled(ctx);
     // The battleship must be in the client's view before the camera tracks it.
@@ -300,12 +303,12 @@ export const capitalTurrets: Shot = {
       c?.mirror.swarm.forEach((e) => { if (e.kind === 1) n++; });
       return n > 0;
     }, null, { timeout: 60_000, polling: 250 });
-    // Start the fight off camera with ONE cue. Measured (2026-11-12): the lock
-    // completes ~2.6 s after the cue, the 16" turrets finish training onto the
-    // beam and fire at ~26-28 s, then reload for 30 s. So wait ~20 s and the
-    // take catches the volley ~6 s in, with no cue during it (record as is).
+    // Start the fight off camera with ONE cue. Measured in this browser flow
+    // (2026-11-12): the lock lands ~3 s after the cue and the first 16" salvo
+    // ~23 s; one cue keeps the battleship hostile ~30 s. Wait ~12 s so the take
+    // shows the turrets swinging and the salvo, with no cue during it.
     await sendRoom(ctx, 'test_aggro', { type: 'test_aggro' });
-    await ctx.sleep(20_000);
+    await ctx.sleep(12_000);
     // A framed camera needs a free camera: watch as a spectator (record as is).
     await ctx.spectate();
   },
@@ -333,7 +336,7 @@ export const capitalTurrets: Shot = {
     await ctx.sleep(5_000);
     // ...then the whole gap, so the shells are seen crossing it and landing.
     await ctx.cinema.play([{ atMs: 0, smoothMs: 2500, shot: { kind: 'frame', ids: [bs, 'local'], padding: 0.2 } }]);
-    await ctx.sleep(9_500);
+    await ctx.sleep(16_500); // the first salvo lands ~13-15 s in; hold for the impacts
   },
 };
 

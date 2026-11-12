@@ -71,7 +71,7 @@ const CONTACT_FORCE_FLOOR = 200;
 interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
 interface DespawnCmd       { type: 'DESPAWN';        slot: number; playerId: string }
 interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean; warpX?: number; warpY?: number }
-interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string }
+interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number }
 interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
 interface ClockRateCmd     { type: 'CLOCK_RATE';     rate: number }
 /** Authoritatively reposition a body in the physics world. Used by the
@@ -243,9 +243,11 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         // every existing caller (asteroids/drones/structures pass undefined)
         // on the legacy axis-aligned spawn. Apply when either velocity OR a
         // non-zero angle needs to be written.
-        if (cmd.vx !== 0 || cmd.vy !== 0 || (cmd.angle ?? 0) !== 0) {
-          physics.setShipState(cmd.obstacleId, { x: cmd.x, y: cmd.y, angle: cmd.angle ?? 0, vx: cmd.vx, vy: cmd.vy });
+        if (cmd.vx !== 0 || cmd.vy !== 0 || (cmd.angle ?? 0) !== 0 || (cmd.angvel ?? 0) !== 0) {
+          physics.setShipState(cmd.obstacleId, { x: cmd.x, y: cmd.y, angle: cmd.angle ?? 0, vx: cmd.vx, vy: cmd.vy, ...(cmd.angvel !== undefined ? { angvel: cmd.angvel } : {}) });
         }
+        // Capital wreck pieces (S2a) spin down and settle into terrain.
+        if (cmd.angularDamping !== undefined) physics.setAngularDamping(cmd.obstacleId, cmd.angularDamping);
         // P3.10 (P0) — STRUCTURES (kind 2) lock their body so a ram can't impart
         // velocity. Mirrors the client predWorld (`structureClientLeaf` does
         // `spawnObstacle` + `lockBody`); the server worker is where the

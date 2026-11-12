@@ -162,7 +162,7 @@ export async function bootSectorTestServer(opts: {
   /** Deterministic drone placement at hand-authored world poses (the root
    *  CLAUDE.md bespoke trigger). testMode-only; forwarded to the room's
    *  `dronePoses` option. */
-  dronePoses?: ReadonlyArray<{ kind: string; x: number; y: number; angle?: number; hullExposed?: boolean }>;
+  dronePoses?: ReadonlyArray<{ kind: string; x: number; y: number; angle?: number; vx?: number; vy?: number; hullExposed?: boolean }>;
   /** Structures plan (Phase 3-5) — pre-built, auto-connected scenario grid. */
   prebuiltStructures?: ReadonlyArray<{ kind: string; x: number; y: number; rot?: number; gateAccess?: 'allies' | 'owner' | 'open' }>;
   /** Owner the prebuilt scenario structures belong to (default `scenario`). Set
@@ -198,6 +198,8 @@ export async function bootSectorTestServer(opts: {
   peacefulDrones?: boolean;
   /** Pilots may join flying a capital (`shipKind: 'battleship'`, …): the room option. */
   pilotCapitals?: boolean;
+  /** Capital destruction S2a: a dying capital breaks into wreck bodies. */
+  capitalWrecks?: boolean;
   /** P2c — sector features for the room (asteroid mix, nebula). */
   sectorFeatures?: string[];
   /** Room-level default spawn point (forwarded to `defaultSpawnX/Y`). */
@@ -278,6 +280,7 @@ export async function bootSectorTestServer(opts: {
     teleportFullCharge: opts.teleportFullCharge,
     peacefulDrones: opts.peacefulDrones,
     pilotCapitals: opts.pilotCapitals,
+    capitalWrecks: opts.capitalWrecks,
     tradeEnabled: opts.tradeEnabled,
     enforceHullGate: opts.enforceHullGate,
     seedStorageHold: opts.seedStorageHold,
