@@ -89,4 +89,13 @@ export const QUARANTINE = new Set([
   // jumps to keep up (recoverInputTickFromStarvation), which the owner accepts
   // as expected on a device that slow (2026-11-12), so the spec now skips when
   // the host draws < 15 fps during the flight and gates prediction otherwise.
+  //
+  // Back on the list (CI run 43248949740, shard 1): these four pass on the
+  // desktop but time out on CI's software-GL runner, on all three tries.
+  // Not yet probed there; each needs a CI-host repro (failure traces now
+  // upload, #485) before it can leave again.
+  'fire-control-lock', // :115 hands-off LOCK then CANCEL: 60 s timeout.
+  'laser-falloff-probe', // :83 hit beam: timeout.
+  'interceptor-beam-stays-connected', // :142 beam origin while coasting: 90 s timeout.
+  'prediction-idle-bounded', // :117 sub-snapshot poses while coasting: timeout.
 ]);
