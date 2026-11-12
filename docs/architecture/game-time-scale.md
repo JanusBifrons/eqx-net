@@ -1,11 +1,11 @@
 # Game-wide time scale (design note, 2026-11-12)
 
-Status: **design only, SHELVED (owner 2026-11-12: "not essential for now", raise as a near-future item).** Handoff item 4. It is the shelved "time dilation for the whole game" (`docs/SHELF.md`). Start from §6 Phases when it is picked up.
+Status: **IN PROGRESS on the parallel stream `stream/time-scale` (owner, 2026-11-12).** Never PR, merge, train or sync from that branch; it lands only on the owner's word. This file on `main` is the starting design; the stream's copy is the live one.
 
 **Owner decisions (2026-11-12):**
 - **What it's for:** it's a **performance mechanism, not a gameplay mechanic**: "Why can't it be dynamic? It's designed as a performance thing". So the speed is **dynamic**, never a menu.
-- **Speed:** set automatically from server load and only ever slows, ≤ 1×. There are no player speed controls and no fast forward.
-- **Who else sets it:** dev/admin can force any speed, including faster than 1× for tests, demos and videos (today's `testTimeScale`, which only speeds up physics). Slowing down under load and speeding up for a demo are the same knob: one clock that the whole game follows.
+- **Speed goes both ways (amended 2026-11-12, owner: "It's supposed to be variable up or down").** One knob from 0.25× to 4×. The automatic load controller only ever slows (it recovers toward the chosen speed). Dev/admin, tests, demos and videos can set it faster or slower (today's `testTimeScale`, which only speeds up physics, folds into it).
+- **Game time is the default; nothing opts in (added 2026-11-12, owner: no "time dilation flags absolutely everywhere"; new gameplay and graphics must follow it automatically).** The scale enters at the few places time enters the game: the fixed-step count, one injected `GameClock` and the render frame's dt. A lint rule bans the wall clock in gameplay and render code, with a short real-time allowlist (persistence, network, UI, diagnostics), so new code gets game time without writing anything for it.
 - **Scope:** **galaxy-wide**: one speed for every sector.
 - **Indicator:** shows the current speed while it isn't 1×.
 
