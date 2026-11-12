@@ -77,15 +77,18 @@ export const capitalLineup: Shot = {
   server: 'capitals',
   target: { room: 'showcase-capitals', params: { sectorScale: '4', shipKind: 'fighter', art: 'machined', fx: 'new' } },
   hud: 'none',
-  durationMs: 10_000,
+  durationMs: 14_000,
   async startWhen(ctx) {
     await artSettled(ctx);
     // A framed camera needs a free camera: watch as a spectator (record as is).
     await ctx.spectate();
   },
+  // Owner (2026-11-12): "The shot should start from a fighter and zoom out."
+  // Open close on the pilot's own parked fighter at normal fighter zoom, hold,
+  // then pull slowly back until the whole line-up and the base are in frame.
   camera: [
-    { atMs: 0, smoothMs: 0, shot: { kind: 'frame', group: 'drones', padding: 0.15, maxZoom: 3 } },
-    { atMs: 6000, smoothMs: 2500, shot: { kind: 'frame', group: 'all', padding: 0.2, maxZoom: 3 } },
+    { atMs: 0, smoothMs: 0, shot: { kind: 'track', target: 'local', zoom: 1.0 } },
+    { atMs: 2000, smoothMs: 9000, shot: { kind: 'frame', group: 'all', padding: 0.2, maxZoom: 3 } },
   ],
 };
 
