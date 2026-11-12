@@ -91,6 +91,23 @@ space and the starfield coverage rule holds. The start zoom is
 `base / s^0.5`: at 2× ships draw about 1.4× bigger on screen while the spawn
 view still shows more space.
 
+**Zoom-in cap: the whole hull fits (owner decision 2026-11-12).** "You can't
+zoom in past the point where your whole hull fits on screen." The cap is
+`zoomCeilingForView(kind, viewW, viewH, floor)` =
+`min(3, (min(viewW, viewH) / 2) / (radius × 1.05))`, never below the zoom-out
+floor; `zoomRangeForKind` returns it as `maxScale` and clamps the start zoom to
+it. `PixiRenderer.applyZoomCap` pushes it to `Camera.setMaxScale` on a ship
+change, on every resize and on leaving spectator. A lowered cap eases the
+current zoom down through the wheel-zoom ease round the screen centre (no
+snap). Fighters keep 3 on every ordinary screen; a battleship (radius
+~2,876 u) caps at ~0.18 on 1920×1080, about 1/17 of a fighter's, and on a
+390-px phone its start zoom drops to the cap. Spectator (possibly no ship)
+keeps 3, the galaxy map's camera is a separate instance, and the cinematic
+director keeps the constructor's limit of 3. Why: the follow camera has no
+look-ahead and the hull is balanced fore and aft, so the "stern slides off the
+screen" report was the flat cap of 3 letting a capital's hull overflow the
+view. Lock: `tests/unit/hullZoomCeiling.test.ts`.
+
 ## Tests
 
 - `tests/unit/shipScaleInvariants.test.ts` builds every kind at 1/2/4× plus a

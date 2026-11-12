@@ -47,11 +47,18 @@ import type { EffectQuality } from '@core/contracts/IEffects';
 import { applySunBlend } from './art/machinedShipLight.js';
 import { LitShipMesh } from './art/litShipShader.js';
 import { litPass } from './art/litPass.js';
+import { MachinedShipSprite } from './art/MachinedShipSprite.js';
 import type { ShipArt } from './art/ArtService.js';
 
 /** A gun's (or AA barrel's) two layers: baked sun frames cross-faded, or
  *  (GPU-lit art) one lit mesh in `a`, lit by `litPass`, and `b` unused. */
 interface GunLayers { a: Sprite | LitShipMesh; b: Sprite; lit: boolean }
+
+/** True when `c` sits under a capital's hull sprite (checked once, at build). */
+function onCapitalHull(c: Container | null): boolean {
+  for (let p = c; p; p = p.parent) if (p instanceof MachinedShipSprite) return p.capital;
+  return false;
+}
 
 /** Build a gun's layers under `parent` at x. */
 function gunLayers(art: ShipArt, parent: Container, x: number): GunLayers {
@@ -61,6 +68,8 @@ function gunLayers(art: ShipArt, parent: Container, x: number): GunLayers {
     const mesh = new LitShipMesh({ tex, w: l.w, rows: tex.frame.height, y0: 0, hullH: l.h, ppu: l.ppu, maxH: l.maxH, emisMax: l.emisMax }, settings);
     mesh.x = x;
     parent.addChild(mesh);
+    // A gun on a capital's deck is part of the capital: other capitals don't shade it.
+    mesh.capitalHull = onCapitalHull(parent);
     litPass.register(mesh);
     return { a: mesh, b: new Sprite(), lit: true };
   }

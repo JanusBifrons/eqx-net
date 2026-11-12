@@ -133,6 +133,10 @@ export interface ProjectilePipelineDeps {
   swarmRegistry: SwarmCandidateSource;
   /** Phase 6b lingering hulls: shipInstanceId -> slot. */
   lingeringSlots: Map<string, number>;
+  /** A lingering hull's ship state, so its sweep uses the same per-kind
+   *  shield/hull shape as an active ship (`playerSweep`). Absent / undefined
+   *  ⇒ the fighter-sized `hitRadius` circle (unit harnesses). */
+  lingeringShip?: (shipInstanceId: string) => ShipState | undefined;
   /** Damage sink — invoked on a confirmed hit. */
   applyDamage: (
     targetId: string,
@@ -345,7 +349,13 @@ export class ProjectilePipeline {
         const cx = d.sabF32[b + SLOT_X_OFF]!;
         const cy = d.sabF32[b + SLOT_Y_OFF]!;
         checks++;
-        const sweep = projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, GLOBAL_SHIP_TUNING.hitRadius);
+        // A parked hull is the same ship it was when flown: its own size
+        // (#18), not a fighter-sized circle (a parked capital let shells
+        // within the aim tolerance of its centre fly straight through).
+        const lship = d.lingeringShip?.(shipInstanceId);
+        const sweep = lship !== undefined
+          ? d.playerSweep(lship, proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, d.sabF32[b + SLOT_ANGLE_OFF]!)
+          : projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, GLOBAL_SHIP_TUNING.hitRadius);
         if (sweep && sweep.entry < bestEntry) {
           bestEntry = sweep.entry;
           bestTargetId = shipInstanceId;
