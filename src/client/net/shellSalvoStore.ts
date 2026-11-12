@@ -100,6 +100,9 @@ export class ShellSalvoStore {
       p.x = r.x0 + r.vx * dt;
       p.y = r.y0 + r.vy * dt;
       p.vx = r.vx; p.vy = r.vy;
+      // How far it has flown: the drawn streak trails the shell and is never
+      // longer than this (FxProjectiles.draw).
+      p.flown = Math.sqrt(r.vx * r.vx + r.vy * r.vy) * dt;
       p.ownerId = r.o; p.weaponId = r.w;
       p.isGhost = false;
       p.event = true;

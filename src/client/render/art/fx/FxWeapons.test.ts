@@ -86,6 +86,29 @@ describe('FxProjectiles', () => {
     const bx = t0!.position.x - head!.position.x, by = t0!.position.y - head!.position.y;
     expect(Math.atan2(by, bx)).toBeCloseTo(screenHeading - Math.PI, 6);
   });
+
+  it('a shell streak never reaches ahead of the shell, nor back past where it was fired (owner 2026-11-12)', () => {
+    // Long-guns clip: "the shots fired show even after they hit". At a
+    // battleship's gunnery zoom the 3 px minimum width scales a 16" streak to
+    // ~3.5 km, and the streak was CENTRED on the shell, so ~1.7 km of it ran
+    // ahead: its front crossed a ~500 u hull and ran on before the shell
+    // landed. A tracer's streak trails its shell, and cannot be longer than
+    // the distance flown.
+    const p = new FxProjectiles(fakeArt());
+    const flown = 900;
+    p.beginFrame();
+    p.draw('s', 'shell', 0, 0, 2300, 0, 1, 90, flown); // moving +x, huge (gunnery zoom)
+    p.endFrame();
+    const kids = p.container.children as Array<{ visible: boolean; position: { x: number }; scale: { x: number }; anchor: { x: number }; texture: { width: number } }>;
+    for (const s of kids.slice(0, 5)) {
+      if (!s.visible) continue;
+      const len = s.scale.x * s.texture.width;
+      const front = s.position.x + (1 - s.anchor.x) * len;
+      const back = s.position.x - s.anchor.x * len;
+      expect(front, 'no part of the streak is ahead of the shell').toBeLessThanOrEqual(1e-6);
+      expect(back, 'no part of the streak is behind the gun that fired it').toBeGreaterThanOrEqual(-flown - 1e-6);
+    }
+  });
 });
 
 describe('FxBeams', () => {
