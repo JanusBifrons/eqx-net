@@ -225,16 +225,13 @@ Every client must produce the same pieces as the server, bit for bit, from
   real cover.
 - **Player capitals break up exactly like NPC capitals.** Anyone may salvage
   the wreck, including the former owner.
-
-## 7. Still open
-
-1. **Can pieces be broken further?** If you keep shooting a big wreck piece,
-   should it break again into smaller pieces, or only lose health and vanish?
-2. **Smaller ships.** Should fighters and cruisers also break up this way, or
-   keep today's hand-made scrap pieces?
-3. **Where it breaks.** Should a capital always break around where the
-   killing shot landed, or sometimes simply snap in two at midships however it
-   died?
-4. **Big explosions.** When a capital blows up catastrophically, should the
-   blast hurt ships nearby straight away, or wait until the damage model is
-   built? And how rare should it be: about one death in ten, or rarer?
+- **Wreck pieces don't break further** ("No for now"). Shooting a piece never
+  re-fractures it.
+- **Smaller ships break up this way too** ("Yes"). Fighters, frigates and
+  cruisers fracture dynamically like capitals, replacing today's hand-made
+  scrap. This is a later slice, after the capital path works.
+- **Midships snaps are a chance** ("Yes, but it's dynamic and generated, just
+  make it a chance"). Usually the hull breaks around the killing blow; with
+  some probability it snaps in two at midships instead.
+- **Catastrophic blasts will hurt nearby ships** ("Yes, but not now/yet"). For
+  now the gas-store detonation is visual only; area damage comes later.
