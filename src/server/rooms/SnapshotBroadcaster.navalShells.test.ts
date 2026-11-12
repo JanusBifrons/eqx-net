@@ -198,3 +198,36 @@ describe('SnapshotBroadcaster — naval shells reach viewers by their widest vie
     expect(perShell).toBeLessThan(96);
   });
 });
+
+// Shells as events slice 3 (docs/architecture/shell-events.md §7): with the
+// room's shell-event hub on, every client's welcome says `shellEvents` and it
+// draws naval shells from shell_salvo, so they leave projectiles[] (the
+// ~80 KB/s per viewer the design measured for a 10-battleship fleet).
+// Sub-capital bolts are unchanged.
+describe('SnapshotBroadcaster — shells as events take naval shells off the snapshot', () => {
+  const east: Viewer = { pid: 'east', kind: 'fighter', x: 25_000, y: 0 };
+  const hub = { keyframeFor: () => 0, forgetViewer: () => {} };
+
+  it('events on: the 16" shell is not in projectiles[]; a bolt in the box still is', () => {
+    const projectiles = new Map<string, ProjectileRecord>([
+      ['proj-1', shell('naval_xl', 0, 0, SHELL_SPEED, 0, FLIGHT_TICKS)],
+      ['bolt', shell('laser' as WeaponId, 25_000 - 300, 0, 400, 0, 600)],
+    ]);
+    const { deps, firstSnaps } = makeDeps([east], projectiles);
+    (deps as unknown as { shellEvents: () => typeof hub }).shellEvents = () => hub;
+    const b = new SnapshotBroadcaster(deps);
+    for (let i = 0; i < 60 && firstSnaps.size < 1; i++) b.broadcast(false);
+    expect((firstSnaps.get('s-east')!.projectiles ?? []).map((p) => p.id)).toEqual(['bolt']);
+  });
+
+  it('events off: unchanged, the shell rides projectiles[]', () => {
+    const projectiles = new Map<string, ProjectileRecord>([
+      ['proj-1', shell('naval_xl', 0, 0, SHELL_SPEED, 0, FLIGHT_TICKS)],
+    ]);
+    const { deps, firstSnaps } = makeDeps([east], projectiles);
+    (deps as unknown as { shellEvents: () => null }).shellEvents = () => null;
+    const b = new SnapshotBroadcaster(deps);
+    for (let i = 0; i < 60 && firstSnaps.size < 1; i++) b.broadcast(false);
+    expect((firstSnaps.get('s-east')!.projectiles ?? []).map((p) => p.id)).toEqual(['proj-1']);
+  });
+});

@@ -902,8 +902,13 @@ export class SnapshotBroadcaster {
         const viewShip = d.getActiveShip(recipientPlayerId);
         const shellHalf = shellViewHalfExtent(getShipKind(viewShip?.kind ?? null));
         const tickNow = d.serverTick();
+        // Shells as events (slice 3): with the hub on, every client was told
+        // `shellEvents` on its welcome and draws naval shells from shell_salvo,
+        // so they leave the per-tick list. One check per recipient.
+        const navalAsEvents = d.shellEvents?.() != null;
         for (const [projId, proj] of d.liveProjectiles) {
           if (NAVAL_SHELL_IDS.has(proj.weaponId)) {
+            if (navalAsEvents) continue;
             // Sent while the shell or its fall point is in the viewer's widest
             // view, so the target of a 30 km salvo sees it from the first
             // snapshot and a far firer sees its own shell land. Else the wide-

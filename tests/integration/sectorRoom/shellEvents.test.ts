@@ -50,6 +50,11 @@ describe('SectorRoom integration — naval shells as events (slice 1)', () => {
     cr.onMessage('damage', (e: DamageEvent) => {
       if (e.targetId === pid && e.damage === getWeapon('naval_xl').damage) hits.push(e);
     });
+    // Slice 3: the naval shells travel ONLY as events here, never per tick.
+    let navalInSnapshots = 0;
+    cr.onMessage('snapshot', (snap: { projectiles?: Array<{ weaponId?: string }> }) => {
+      for (const p of snap.projectiles ?? []) if (p.weaponId?.startsWith('naval_')) navalInSnapshots++;
+    });
 
     const deadline = Date.now() + 45_000;
     const endFor = (): { id: string; tick: number; x: number; y: number } | undefined => {
@@ -82,5 +87,6 @@ describe('SectorRoom integration — naval shells as events (slice 1)', () => {
     const u = Math.max(0, Math.min(1, ((end!.x - a.x) * dx + (end!.y - a.y) * dy) / (dx * dx + dy * dy)));
     const off = Math.hypot(a.x + u * dx - end!.x, a.y + u * dy - end!.y);
     expect(off, 'the hit point is on the swept step of the closed-form flight').toBeLessThan(1);
+    expect(navalInSnapshots, 'no naval shell rides the snapshot when shells are events (slice 3)').toBe(0);
   });
 });
