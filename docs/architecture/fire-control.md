@@ -128,6 +128,13 @@ Target keys: `s:<entityId>` (swarm) or `p:<playerId>`.
   zoom). The threat ring round your own ship is capped at 220 px
   (`threatRingRadius`). Before this a battleship's lock diamond was two screens
   wide: two stray red lines (showcase `capital-guns-fighter`, 2026-11-10).
+  A capped 1.2x diamond still boxed a random slice of the hull ("weird and
+  misplaced", owner 2026-11-12), so on a capital the threat diamond is now a
+  ~14 px pin on the keel point nearest you (`threatDiamondHalf`); fighters keep
+  the hull-framing one. When the threat's hull (a capsule: keel ± half beam,
+  `hullHalfBeam`) is closer than the ring, the threat arc and caret are pulled
+  in to the gap, caret tip clear of the hull, or hidden if under 40 px
+  (`threatPointerRadius`); the faint full ring stays.
   Lock: `lockMarkFrame.test.ts`.
 - HUD: `WeaponStrip`, `LockStatusBand` (polls the mirror at 10 Hz, re-renders on
   change), `TargetAction` (LOCK / CANCEL LOCK / UNLOCK), `MouseLock` (desktop).
