@@ -47,7 +47,7 @@ import { NavalShellBursts } from './art/fx/navalShellBursts.js';
 import { FxEngines } from './art/fx/FxEngines.js';
 import { WarpFx, type WarpFxShip } from './pixi/WarpFx.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
-import { LodDots } from './pixi/LodDots';
+import { FarZoomIcons } from './pixi/FarZoomIcons';
 import { NAVAL_RANGE } from '@shared-types/combat/navalRange';
 import { GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldBubbleRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
 import { FxFences, FxShields } from './art/fx/FxShields.js';
@@ -269,7 +269,7 @@ export class PixiRenderer implements IRenderer {
   private _healthBarsDisabled = false;
   private sprites = new Map<string, Container>();
   /** Screen-size LOD (capital-ship R&D round 3 E1): tiny ships draw as dots. */
-  private readonly _lodDots = new LodDots();
+  private readonly _farIcons = new FarZoomIcons();
   /** Machined art (plan iridescent-seeking-rainbow): shared by the ship,
    *  swarm and lingering updaters. `art` is set in `init` when `?art=machined`
    *  (or the default) asks for it; null ⇒ today's vector look everywhere. */
@@ -852,8 +852,8 @@ export class PixiRenderer implements IRenderer {
 
     this.shipContainer = new Container();
     this.camera.addChild(this.shipContainer);
-    // Round 3 E1: far-zoom dots above the ships they stand in for.
-    this.camera.addChild(this._lodDots.container);
+    // Far-zoom ship icons above the ships they stand in for (FarZoomIcons.ts).
+    this.camera.addChild(this._farIcons.container);
 
     // Structures plan, Phase 3 — the grid connector web. Added FIRST so the
     // lines render BEHIND the structure/ship sprites added later.
@@ -1717,7 +1717,7 @@ export class PixiRenderer implements IRenderer {
     this._lastSwarmUpdateNow = swarmNow;
     this._swarmUpdaterCtx.viewBounds = this.camera.visibleBoundsInto(this._swarmViewScratch);
     updateSwarmSprites(mirror, this._swarmUpdaterCtx);
-    this._lodDots.update(mirror, this.sprites, this.world.scale.x);
+    this._farIcons.update(mirror, this.sprites, this.world.scale.x);
     this.noteTurretShots(mirror);
     this.feedLitScene(mirror);
 
@@ -3070,6 +3070,8 @@ export class PixiRenderer implements IRenderer {
   /** See `IRenderer.setRadarPrefs`. */
   setRadarPrefs(prefs: RadarPrefs): void {
     this.halo.setPrefs(prefs);
+    // Far-zoom ship icons share the radar's relationship colours.
+    this._farIcons.setColoursFromRadar(prefs);
   }
 
   /** See `IRenderer.setRadarInsets`. */
@@ -3282,7 +3284,7 @@ export class PixiRenderer implements IRenderer {
       if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
     const art = this._artCtx.art;
-    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), lodDots: this._lodDots.dotCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), spoolFxDrawn: this._spoolFx.spooling, helmMarker: this.helmMarker.isVisible(),ownArt: this._lastMirror?.localPlayerId ? (this._artCtx.handles.get(this._lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
+    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), lodDots: this._farIcons.iconCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), spoolFxDrawn: this._spoolFx.spooling, helmMarker: this.helmMarker.isVisible(), ownArt: this._lastMirror?.localPlayerId ? (this._artCtx.handles.get(this._lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
   }
 
   dispose(): void {
