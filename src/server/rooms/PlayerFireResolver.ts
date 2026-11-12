@@ -133,6 +133,10 @@ export interface PlayerFireResolverDeps {
   lingeringSlots: Map<string, number>;
   /** Phase 6b lingering pose mirror (no lag-comp; slow-drifting). */
   lingeringPoseCache: Map<string, ShipPhysicsState>;
+  /** A lingering hull's ship state, so a beam tests it with the same per-kind
+   *  shield/hull shape as an active ship (`playerHitscanDist`). Absent /
+   *  undefined ⇒ the fighter-sized `hitRadius` circle (unit harnesses). */
+  lingeringShip?: (shipInstanceId: string) => ShipState | undefined;
   /** Swarm registry (sphere / convex-hull hit candidates). */
   swarmRegistry: SwarmHitSource;
   /** Per-player slewed mount angles. */
@@ -550,7 +554,13 @@ export class PlayerFireResolver implements WeaponFireSink {
     for (const [shipInstanceId] of d.lingeringSlots) {
       const lingeringPose = d.lingeringPoseCache.get(shipInstanceId);
       if (!lingeringPose) continue;
-      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, lingeringPose.x, lingeringPose.y, GLOBAL_SHIP_TUNING.hitRadius);
+      // A parked hull is the same ship it was when flown: its own size (#18),
+      // not a fighter-sized circle (a beam 60 u off a parked capital's centre
+      // went straight through it).
+      const lship = d.lingeringShip?.(shipInstanceId);
+      const dist = lship !== undefined
+        ? d.playerHitscanDist(lship, rayFromX, rayFromY, ndx, ndy, rayRange, lingeringPose.x, lingeringPose.y, lingeringPose.angle)
+        : rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, lingeringPose.x, lingeringPose.y, GLOBAL_SHIP_TUNING.hitRadius);
       if (dist !== null && dist < mountHitDist) {
         mountHitDist = dist;
         mountHitId = shipInstanceId;
