@@ -122,7 +122,7 @@ export interface PlayerFireResolverDeps {
   /** Fire control: does this mount's barrel (world origin + world angle) bear on
    *  its group's lock target? A turret parked at its arc limit never does, so it
    *  never fires out of its arc. Absent only in resolver unit harnesses. */
-  mountBearsOnLock?: (playerId: string, mountId: string, ox: number, oy: number, angle: number) => boolean;
+  mountBearsOnLock?: (playerId: string, mountId: string, ox: number, oy: number, angle: number, weaponId: string) => boolean;
   /** Lag-comp pose ring. */
   snapshotRing: SnapshotRingReader;
   /** Per-tick cached player poses (fallback when ring misses). */
@@ -302,7 +302,7 @@ export class PlayerFireResolver implements WeaponFireSink {
           for (let j = 0; j < inst.length; j++) if (inst[j]!.id === mount.id) { k = j; break; }
           const a = pose.angle + mount.baseAngle + (angles?.[k] ?? 0);
           const o = d.mountWorldOrigin(pose.x, pose.y, pose.angle, mount);
-          if (d.mountBearsOnLock(shooterId, mount.id, o.x, o.y, a)) bearMask |= 1 << mIdx;
+          if (d.mountBearsOnLock(shooterId, mount.id, o.x, o.y, a, mount.weaponId)) bearMask |= 1 << mIdx;
         }
       }
       if (bearMask === 0) {
