@@ -108,8 +108,15 @@ interface ResolvedOpts {
 /** Floor for scripted (cinematic) zoom, independent of the gameplay minScale. */
 export const DIRECTOR_MIN_SCALE = 0.01;
 
-/** Below this absolute scale-delta the zoom ease snaps to target + clears. */
-const ZOOM_SNAP_EPSILON = 0.001;
+/**
+ * The zoom ease snaps to its target and clears once within this FRACTION of
+ * the target (0.01 %, a fraction of a pixel). Relative, not absolute: an
+ * absolute 0.001 was ~12 % of a battleship's gunnery floor (~0.0085), so the
+ * end of every wheel notch landed in one frame and the camera then sat still
+ * until the next notch (the long-guns "chug", 2026-11-12). Lock:
+ * `Camera.zoomEase.test.ts`.
+ */
+const ZOOM_SNAP_FRACTION = 1e-4;
 
 const DEFAULTS: ResolvedOpts = {
   minScale: 0.4,
@@ -514,7 +521,7 @@ export class Camera {
       const current = this.target.scale.x;
       const k = 1 - Math.exp(-dtMs / this.opts.zoomSmoothTimeMs);
       let next = current + (this.targetScale - current) * k;
-      if (Math.abs(this.targetScale - next) < ZOOM_SNAP_EPSILON) {
+      if (Math.abs(this.targetScale - next) < ZOOM_SNAP_FRACTION * this.targetScale) {
         next = this.targetScale;
         this.hasZoomTarget = false;
       }
