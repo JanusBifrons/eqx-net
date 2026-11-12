@@ -31,7 +31,12 @@ flocks need spacing that keeps them out of each other's lines of fire
 (flocking separation radii, capital escort stations off the broadsides), and a
 held drone could side-step to clear its line.
 
-## Time dilation for the whole game (shelved 2026-11-07)
+## Time dilation for the whole game (shelved 2026-11-07; IN PROGRESS 2026-11-12)
+
+**IN PROGRESS on the parallel stream `stream/time-scale` (owner, 2026-11-12).**
+Do not open a PR for that branch, merge it, put it in a train or sync from it;
+it lands only on the owner's word. This entry is removed when it lands. See
+"Parallel streams" in the newest handoff.
 
 **Found:** time dilation (`SimulationClock`, rate 0.7 to 1.0) engages only
 when a server tick costs more than 14 ms of work. When the host starves the
