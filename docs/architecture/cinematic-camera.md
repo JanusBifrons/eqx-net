@@ -32,7 +32,7 @@ move every time the showcase is re-recorded (see
 |---|---|
 | `hold { x, y, zoom }` | Fixed framing. |
 | `track { target, zoom, offsetX?, offsetY?, leadMs? }` | Follow an entity; `leadMs` looks ahead along its measured velocity. |
-| `frame { group \| ids, padding?, minZoom?, maxZoom? }` | Fit a group (`ships`, `drones`, `structures`, `asteroids`, `scrap`, `all`) or explicit ids. |
+| `frame { group \| ids, padding?, minZoom?, maxZoom? }` | Fit a group (`ships`, `drones`, `structures`, `asteroids`, `scrap`, `all`) or explicit ids. A group counts structures the renderer hid off screen (view culling), so the framing never depends on what is already in view (`camera/groupBounds.ts`). |
 | `path { keys[{t,x,y,zoom}], easing? }` | Keyframed dolly; zoom interpolates geometrically. |
 | `orbit { x, y, radius, periodMs, zoom }` | Slow circular drift for establishing shots. |
 | `release` | Hand the camera back to gameplay follow. |
@@ -95,6 +95,7 @@ stay within that window.
 ## Tests
 
 - `CameraDirector.test.ts`: each shot type, cue ordering, lead, hold-on-missing, release.
+- `groupBounds.test.ts`: `frame` group membership, incl. off-screen (culled) structures.
 - `Camera.director.test.ts`: precedence over follow/glide/pan, spring convergence without overshoot, cut, zoom clamp, hand-back.
 - `CameraDirector.heapDelta.test.ts` (`pnpm test:gc`): zero per-frame allocation.
 - `protocol.test.ts`: `SET_CAMERA_SCRIPT` structured-clone round-trip.

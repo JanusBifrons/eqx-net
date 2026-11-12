@@ -64,6 +64,7 @@ import {
   type MutablePoint,
 } from './camera/CameraDirector';
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
+import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
 import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
@@ -3163,9 +3164,10 @@ export class PixiRenderer implements IRenderer {
 
   /** Lookup over the sprite map for the director (pixi space). Built once. */
   private createDirectorLookup(): CameraTargetLookup {
-    // Group-bounds accumulator state, shared by a single bound callback so the
-    // per-frame Map.forEach scan allocates nothing (invariant #14).
-    let group: CameraGroup = 'all';
+    // Group bounds: `GroupBoundsScanner` (alloc-free, #14), which also counts
+    // structures culled off screen (review 2026-11-12, capital-lineup).
+    const groupScanner = new GroupBoundsScanner(this._swarmSpriteKinds);
+    // Ids-bounds accumulator state.
     let count = 0;
     let acc: MutableBounds = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
     // A framed entity contributes its whole extent (radius `r`), not just its
@@ -3184,21 +3186,6 @@ export class PixiRenderer implements IRenderer {
     };
     // Half the sprite's longer side: covers any rotation. Cinematic-only path.
     const extentOf = (sprite: Container): number => Math.max(sprite.width, sprite.height) / 2;
-    const visit = (sprite: Container, key: string): void => {
-      if (!sprite.visible) return;
-      if (group !== 'all') {
-        const isSwarm = key.startsWith('swarm-');
-        if (group === 'ships') {
-          if (isSwarm) return;
-        } else {
-          if (!isSwarm) return;
-          const k = this._swarmSpriteKinds.get(key);
-          const want = group === 'asteroids' ? 0 : group === 'drones' ? 1 : group === 'structures' ? 2 : 3;
-          if (k !== want) return;
-        }
-      }
-      add(sprite.x, sprite.y, extentOf(sprite));
-    };
     return {
       pose: (id: string, out: MutablePoint): boolean => {
         const sp = this.cameraSprite(id);
@@ -3207,13 +3194,7 @@ export class PixiRenderer implements IRenderer {
         out.y = sp.y;
         return true;
       },
-      groupBounds: (g: CameraGroup, out: MutableBounds): number => {
-        group = g;
-        count = 0;
-        acc = out;
-        this.sprites.forEach(visit);
-        return count;
-      },
+      groupBounds: (g: CameraGroup, out: MutableBounds): number => groupScanner.scan(this.sprites, g, out),
       idsBounds: (ids: readonly string[], out: MutableBounds): number => {
         count = 0;
         acc = out;
