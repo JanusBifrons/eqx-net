@@ -2235,7 +2235,7 @@ export class PixiRenderer implements IRenderer {
       }
       mirror.pendingDamageNumberCancels.length = 0;
     }
-    if (!this._dmgNumbersDisabled) this.damageNumbers?.update();
+    if (!this._dmgNumbersDisabled) this.damageNumbers?.update(mirror.timeScale ?? 1); // game-time lifetime
 
     // Phase 4 WS-B1 — drain the level-up icon queue and pop a pooled
     // screenspace icon over the named ship's CURRENT pose. The queue's

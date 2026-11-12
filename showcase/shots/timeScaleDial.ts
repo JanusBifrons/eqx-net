@@ -1,6 +1,5 @@
 import type { Shot, ShotContext } from '../types.js';
-import { flyTo, face } from './_pilot.js';
-import { nearestRobot, npcCount, piloting, robotCount } from './fleetMelee.js';
+import { sendRoom } from './_helpers.js';
 
 /** The pilot's room id (the dev endpoint addresses a sector by room). */
 async function roomId(ctx: ShotContext): Promise<string | null> {
@@ -18,62 +17,58 @@ async function dial(ctx: ShotContext, id: string, scale: number): Promise<void> 
 
 /**
  * Game speed (docs/features/game-speed.md), filmed as a player sees it. The
- * same live drone-versus-robot fight as fleet-melee, with the fighter flying
- * in after the robots exactly as there. The ONE thing done by hand is the
- * feature itself: the sector's speed dial is turned during the take through
- * the dev endpoint a demo would use, so this is the dial, not staging (the
- * caption says so). Everything glides like a dimmer: 1× → 0.4× (slow motion:
- * shots, beams, explosions, shields and the AI all slow together) → 2× → 1×.
- * The HUD speed chip (amber when slow, cyan when fast) shows each value.
+ * pack-battle fight: a 25-drone pack turns on the pilot (one `test_aggro` as
+ * the last setup step, as pack-battle does), the follow camera on the pilot,
+ * real hull and lock times. The ONE thing done by hand during the take is the
+ * feature itself: the sector's speed dial is turned through the dev endpoint
+ * a demo would use (the caption says so). It glides like a dimmer, 1× → 0.4×
+ * (slow motion: shots, beams, explosions, shields and the AI all slow
+ * together) → 2× → 1×, and the HUD chip shows each value. If the pilot dies,
+ * the take keeps rolling in the spectator view the game switches to.
+ *
+ * (A first version used fleet-melee: its fight is over in ~8 game seconds,
+ * so the 2× part filmed an empty scene; hostile review 2026-11-12.)
  */
 export const timeScaleDial: Shot = {
   id: 'time-scale-dial',
   section: 'mechanics',
   title: 'Game speed',
   caption: 'Each sector has its own game speed. Here the dial is turned by hand mid-fight: the whole sector glides into slow motion (0.4×), then double speed (2×), then back to normal, and the HUD chip shows the speed whenever it isn\'t 1×.',
-  features: ['M19'],
+  features: ['M15', 'M19'],
   docs: ['game-speed', 'game-time-scale'],
   reel: false,
   server: 'lean',
-  target: { room: 'showcase-melee', params: { shipKind: 'fighter' } },
-  durationMs: 40_000,
+  target: { room: 'feel-test-25', params: { shipKind: 'interceptor' } },
+  durationMs: 26_000,
   endsWithRun: true,
   async startWhen(ctx) {
-    await ctx.page.waitForFunction(() => {
-      const m = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number }> } } }).__eqxClient?.mirror;
-      let n = 0;
-      m?.swarm.forEach((e) => { if (e.kind === 1) n++; });
-      return n >= 12;
-    }, undefined, { timeout: 60_000, polling: 250 });
-    await ctx.sleep(1000);
-    ctx.log(`  [time-scale-dial] NPCs at take start: ${await npcCount(ctx)}`);
+    await sendRoom(ctx, 'test_aggro', { type: 'test_aggro' });
   },
   async run(ctx) {
     const id = await roomId(ctx);
     if (!id) throw new Error('time-scale-dial: no room id on the client');
-    const t0 = Date.now();
-    const left = (): number => 38_000 - (Date.now() - t0);
-    // The dial, on its own timeline (wall seconds), alongside the flight.
+    let flying = true;
+    // The dial, on its own wall-clock timeline, alongside the flight.
     const dialing = (async () => {
-      await ctx.sleep(3000);
+      await ctx.sleep(2000);
       await dial(ctx, id, 0.4); // glides down in ~1.2 s
-      await ctx.sleep(9000); // slow motion
+      await ctx.sleep(6200); // ~5 s of slow motion
       await dial(ctx, id, 2); // glides up in ~3.2 s
-      await ctx.sleep(8000);
+      await ctx.sleep(8200); // ~5 s at 2×
       await dial(ctx, id, 1); // back to normal in ~2 s
       await ctx.sleep(4000);
+      flying = false;
     })();
-    // The fighter goes after the robots, as in fleet-melee.
-    const flying = (async () => {
-      while (left() > 1000 && (await piloting(ctx))) {
-        const r = await nearestRobot(ctx);
-        if (!r) break;
-        await flyTo(ctx, r.x, r.y, { arrive: 220, maxMs: Math.min(3000, left()), cruise: 260, passThrough: true });
-        const r2 = await nearestRobot(ctx);
-        if (r2 && left() > 1000) await face(ctx, r2.x, r2.y, 700);
+    // The pilot flies a steady weave through the pack (as pack-battle).
+    const weaving = (async () => {
+      while (flying) {
+        await ctx.hold(['w'], 1500);
+        if (!flying) break;
+        await ctx.hold(['w', 'a'], 2500);
+        if (!flying) break;
+        await ctx.hold(['w', 'd'], 2500);
       }
     })();
-    await Promise.all([dialing, flying]);
-    ctx.log(`  [time-scale-dial] end piloting=${await piloting(ctx)} robots=${await robotCount(ctx)} NPCs=${await npcCount(ctx)}`);
+    await Promise.all([dialing, weaving]);
   },
 };

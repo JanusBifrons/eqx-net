@@ -342,8 +342,12 @@ export class DamageNumberManager {
    * Tick every active bucket: glide toward the latest hit coord (no
    * snap), float up only while fading, counter-scale + total-scale,
    * advance the stay/fade countdown, destroy on expiry.
+   *
+   * `step` = frames of GAME time this frame (the sector's speed, time scale
+   * stream): at 0.5× a number lingers twice as long, at 2× half as long, like
+   * every other effect. 1 (the default) is the old integer countdown exactly.
    */
-  update(): void {
+  update(step = 1): void {
     const invScale = this.camera.scale.x > 0 ? 1 / this.camera.scale.x : 1;
     for (let i = this.liveCount - 1; i >= 0; i--) {
       const entry = this.live[i]!;
@@ -358,17 +362,17 @@ export class DamageNumberManager {
       entry.text.scale.set(visualScale);
 
       if (entry.stayLeft > 0) {
-        entry.stayLeft--;
+        entry.stayLeft = Math.max(0, entry.stayLeft - step);
         entry.text.alpha = 1;
         // Hold steady on the target while damage is landing — ease any
         // residual fade-rise back to zero so a renewed combo re-seats
         // the number on the target rather than leaving it drifted up.
         entry.riseY += (0 - entry.riseY) * POSITION_GLIDE;
       } else if (entry.fadeLeft > 0) {
-        entry.fadeLeft--;
+        entry.fadeLeft = Math.max(0, entry.fadeLeft - step);
         entry.text.alpha = entry.fadeLeft / FADE_FRAMES;
         // Now drift up as it fades out (the classic float-off).
-        entry.riseY -= invScale * FADE_RISE_RATE;
+        entry.riseY -= invScale * FADE_RISE_RATE * step;
       }
 
       entry.text.x = entry.curX;

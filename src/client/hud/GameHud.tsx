@@ -112,6 +112,7 @@ export function StatusCapsule({ scale }: { scale: number }): JSX.Element {
         border: `1px solid ${HUD.color.panelEdge}`,
         backdropFilter: 'blur(3px)',
         pointerEvents: 'none',
+        position: 'relative',
       }}
     >
       <svg width={d} height={d} style={{ transform: 'rotate(-90deg)' }}>
@@ -154,6 +155,17 @@ function TimeScaleChip({ timeScale, scale }: { timeScale: number; scale: number 
       data-testid="hud-time-scale"
       title={slow ? 'Game speed is slowed (server load)' : 'Game speed is raised'}
       style={{
+        // Outside the capsule's flow (just to its right), with a fixed width,
+        // so the capsule never reflows as the chip appears, disappears or
+        // changes text ("2×" vs "1.96×"): hostile review 2026-11-12.
+        position: 'absolute',
+        left: '100%',
+        top: '50%',
+        transform: 'translateY(-50%)',
+        marginLeft: 6,
+        width: `${Math.round(36 * scale)}px`,
+        textAlign: 'left',
+        whiteSpace: 'nowrap',
         fontSize: Math.round(10 * scale),
         fontWeight: 700,
         fontVariantNumeric: 'tabular-nums',

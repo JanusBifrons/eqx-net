@@ -234,3 +234,29 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   game s). The fixed 2× take never starts (at 2× from join, the fight thins
   the NPCs below the shot's setup threshold before the art bakes), so the
   dial shot's 8 s at 2× stands in for it. Unit 5025 ✓.
+- 2026-11-12: hostile review #1 of the dial clip (fleet-melee based).
+  Fixed:
+  (1) the fight ended at ~1.6×, so the 2× part was empty. The shot now uses
+      the pack-battle fight (25 drones, same `test_aggro` setup), which lasts
+      through every speed.
+  (2) the status capsule reflowed whenever the chip appeared or changed width;
+      the chip now sits outside the capsule's flow, at a fixed width.
+  (3) damage numbers didn't follow the speed (they counted render frames);
+      `DamageNumberManager.update(step)` now takes the game speed per frame.
+  Notes for the owner (on main, not this stream):
+  - the HUD lock % refreshes at half rate and lags the world label (≤ 11
+    points);
+  - the lock-warning name falls back to "Ship" for one frame after a kill;
+  - world labels are drawn under HUD panels;
+  - key-hint text looks garbled over effects;
+  - the fight often plays under the top HUD and the caption box (record as
+    is, not changed).
+  Re-take: 0/480 corrected, QA passed first take. Hostile review #2 running.
+- 2026-11-12: the CI feature failures (9 specs, all stream shard 5, all pass
+  locally, all pass on main) look like the shard partition. Adding
+  time-scale-chip moved heavy specs (scrap-collision-stress throttles the CPU;
+  ramming probe; mining beam) into the same single-worker shard ahead of the
+  timing-sensitive ones. Traces show uniform slowness (~4 s per click) and no
+  errors. Probe: throwaway branch `probe/time-scale-partition` (never
+  merge; delete after) drops the spec to restore main's partition; CI run
+  43274831696 alongside the stream rerun 43274788717.
