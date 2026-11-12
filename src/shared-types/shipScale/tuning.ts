@@ -395,20 +395,41 @@ export function zoomFloorForView(kind: ZoomKind, viewW: number, viewH: number, m
   return Math.min(GAMEPLAY_MIN_ZOOM / hullZoomFactor(kind), fitHalf / gun);
 }
 
+/** Gameplay camera zoom-in cap for a hull that fits the view at it (every
+ *  ordinary hull on an ordinary screen). */
+export const GAMEPLAY_MAX_ZOOM = 3;
+/** Head-room around the hull at the zoom-in cap (5 % of its length). */
+export const HULL_VIEW_MARGIN = 1.05;
+
+/** The live gameplay zoom-in cap for the ship you fly in a `viewW × viewH`
+ *  (CSS px) viewport: the closest zoom at which the whole hull (its radius ×
+ *  `HULL_VIEW_MARGIN`) still fits the view's SHORTER half (north-up camera,
+ *  so the hull may point any way). `GAMEPLAY_MAX_ZOOM` at most (a fighter
+ *  keeps 3), never below `floor` (the zoom-out floor). No viewport size ⇒
+ *  `GAMEPLAY_MAX_ZOOM`. Owner decision 2026-11-12: "You can't zoom in past the
+ *  point where your whole hull fits on screen." */
+export function zoomCeilingForView(kind: Pick<ShipKind, 'radius'>, viewW: number, viewH: number, floor: number): number {
+  if (!(viewW > 0) || !(viewH > 0) || !(kind.radius > 0)) return Math.max(GAMEPLAY_MAX_ZOOM, floor);
+  const fit = Math.min(viewW, viewH) / 2 / (kind.radius * HULL_VIEW_MARGIN);
+  return Math.max(floor, Math.min(GAMEPLAY_MAX_ZOOM, fit));
+}
+
 /** The gameplay zoom range for the ship you fly: the zoom-out floor is
  *  `zoomFloorForView` for the live `viewW × viewH` viewport (the reference
  *  `zoomFloorForKind` when no size is given), and the start zoom divides by
  *  `hullZoomFactor`, so a battleship pilot can pull back to see the ship and
  *  several kilometres around it (in `real` naval-range mode, its longest gun's
- *  reach), while a fighter's range is unchanged. `base` is the 1x start zoom.
- *  Writes into `out`. */
+ *  reach), while a fighter's range is unchanged. The zoom-in cap is
+ *  `zoomCeilingForView` (the whole hull fits), and the start zoom never
+ *  exceeds it. `base` is the 1x start zoom. Writes into `out`. */
 export function zoomRangeForKind(
-  kind: ZoomKind, base: number, out: { minScale: number; startZoom: number }, mode: NavalRangeMode = NAVAL_RANGE,
+  kind: ZoomKind, base: number, out: { minScale: number; startZoom: number; maxScale?: number }, mode: NavalRangeMode = NAVAL_RANGE,
   viewW = 0, viewH = 0,
-): { minScale: number; startZoom: number } {
+): { minScale: number; startZoom: number; maxScale: number } {
   out.minScale = zoomFloorForView(kind, viewW, viewH, mode);
-  out.startZoom = startZoomForScale(base) / hullZoomFactor(kind);
-  return out;
+  out.maxScale = zoomCeilingForView(kind, viewW, viewH, out.minScale);
+  out.startZoom = Math.min(startZoomForScale(base) / hullZoomFactor(kind), out.maxScale);
+  return out as { minScale: number; startZoom: number; maxScale: number };
 }
 
 const SHELL_VIEW_CACHE = new WeakMap<object, number>();
