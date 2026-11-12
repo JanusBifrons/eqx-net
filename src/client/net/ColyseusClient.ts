@@ -159,6 +159,7 @@ import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_T
 import { gateDisabledInput, type ControlBits } from '@core/combat/disable';
 import { DEAD_RECKON_BACK_MS, DEAD_RECKON_CAP_MS, RENDER_DUE_SLEW_MS, RENDER_DUE_SNAP_MS, slewTickDue, tickBoundaryDueMs } from './renderTickPhase';
 import { helmStep, makeHelmOutput, type HelmOrder, type HelmPose, type HelmSpeed } from '@core/helm/helm';
+import { makeHelmCourseMark, resolveHelmCourseMark, type HelmCourseMark } from '../helm/helmCourseMark.js';
 import { resolveSlotMounts, resolveInstanceMounts, resolveInstanceFireMounts } from '@shared-types/shipKinds/slots';
 import { HitPredictionLedger } from '@core/combat/HitPrediction';
 import {
@@ -805,6 +806,10 @@ export class ColyseusGameClient {
   private readonly _helmPose: HelmPose = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0 };
   private _helmKindId: string | null = null;
   private _helmAvailable = false;
+  /** Helm move marker: bumps per course tap; the marker record is written
+   *  into `mirror.helmCourse` (spatial ⇒ mirror, never Zustand, #2). */
+  private _helmCourseSeq = 0;
+  private readonly _helmMark: HelmCourseMark = makeHelmCourseMark();
   /** A3 — the local ship's pose for distance-streaming walls (NaN ⇒ none). */
   private _predWallShipX = NaN;
   private _predWallShipY = NaN;
@@ -4723,6 +4728,7 @@ export class ColyseusGameClient {
     this._helmOrder.tx = x;
     this._helmOrder.ty = y;
     this._helmOrder.active = true;
+    this._helmCourseSeq++;
     this.publishHelm();
   }
 
@@ -4745,6 +4751,16 @@ export class ColyseusGameClient {
 
   private publishHelm(): void {
     useUIStore.getState().setHelmState(this._helmAvailable, this._helmOrder.active, this._helmOrder.speed);
+    this.syncHelmMark();
+  }
+
+  /** Helm move marker: show the course point only for the pilot's own
+   *  capital under an active order, never while spectating. Alloc-free. */
+  private syncHelmMark(): void {
+    const spectating = useUIStore.getState().pilotMode === 'spectator';
+    const show = resolveHelmCourseMark(this._helmOrder, this._helmAvailable, spectating, this._helmCourseSeq, this._helmMark);
+    const next = show ? this._helmMark : null;
+    if (this.mirror.helmCourse !== next) this.mirror.helmCourse = next;
   }
 
   /** Helm availability follows the ship you fly (id compare; free when unchanged). */
@@ -4828,6 +4844,7 @@ export class ColyseusGameClient {
     // The loading curtain already skips tickPhysics.
     aimInput.setEnabled(useUIStore.getState().pilotMode !== 'spectator');
     this.updateHelmAvailability();
+    this.syncHelmMark(); // the spectator flip doesn't pass through publishHelm
     while (this.inputTick < targetTick && stepsThisFrame < MAX_CATCH_UP_TICKS) {
       // Over-prediction cap. `lastAckedTick > 0` excludes the
       // welcome-to-first-snapshot window (~50 ms; too short to spiral).

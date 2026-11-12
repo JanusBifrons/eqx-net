@@ -25,3 +25,11 @@ Somewhere in the galaxy there is always a **flagship fleet**: one capital ship w
 ## Hull styles (wrap-up W2b)
 
 Every capital class comes in three hull styles: A (Iowa line), B and C (user, 2026-11-08: keep all three for variety). Each ship in a fleet gets its own style, seeded from its id (`styledKind`), so a fleet never looks cloned and a ship keeps its look across a restart. Styles are separate kinds appended to the catalogue (`<class>-b`, `<class>-c`; the user chose this over threading a style through every system), so the collider, turrets, art, wrecks and the wire all work through the ordinary kind path. `?capStyle=` / `EQX_CAPITAL_STYLE` still sets the base kinds' style for R&D. Locks: `capitalShips.test.ts` (the variants are their class in another hull), `FlagshipDirector.test.ts` (`styledKind`).
+
+## Helm orders and the move marker
+
+Flying a capital, tap empty space and the helm sets a course there (`core/helm/helm.ts`; WASD or the stick cancels it). A green RTS-style move marker sits on the course point so you can see where you tapped (owner, 2026-11-12): a ring with a centre dot and four inward chevrons, in `#3ddc84`. Each new tap pops it (it starts 1.7× and fully bright, eases to its steady size in 0.32 s, and a ring ripples out and fades); then it holds steady at 75 % opacity until the ship arrives, the course is cancelled, or you switch to spectator.
+
+- Only the pilot sees it, only for their own capital under an active order: the order lives in `ColyseusClient`, and `helm/helmCourseMark.ts` decides visibility. The point rides `RenderMirror.helmCourse` to the renderer (spatial, so never Zustand, #2), so both render paths draw it.
+- `render/helm/HelmCourseMarker.ts` draws it in screen space, so it keeps one pixel size at any zoom (capitals zoom far out). Painted once; per frame only position, scale and alpha change (#14). Hidden during a trip.
+- Locks: `helmCourseMark.test.ts`, `HelmCourseMarker.test.ts`, `tests/e2e/capital-helm.spec.ts` (shown after a tap, gone after W, read via `__eqxArtStats().helmMarker`).

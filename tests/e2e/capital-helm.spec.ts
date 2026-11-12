@@ -4,7 +4,8 @@
  * A pilot joins the showcase fleet room flying a battleship (the room's
  * `pilotCapitals` test switch), taps empty space on the canvas, and the helm
  * takes over: the panel reads "course set" and the ship moves under its own
- * inputs (server-authoritative pose via `data-ship-x/y`). Pressing W cancels
+ * inputs (server-authoritative pose via `data-ship-x/y`), with the green
+ * move marker drawn at the course point. Pressing W cancels
  * the course (WASD overrides the helm). A fighter in the same room gets no
  * helm panel.
  */
@@ -19,6 +20,11 @@ async function shipPos(page: import('@playwright/test').Page): Promise<{ x: numb
     const el = document.querySelector('[data-ship-x]') as HTMLElement | null;
     return { x: Number(el?.dataset['shipX'] ?? NaN), y: Number(el?.dataset['shipY'] ?? NaN) };
   });
+}
+
+/** The helm move marker as the renderer drew it (`__eqxArtStats`, `?worker=0`). */
+async function helmMarkerShown(page: import('@playwright/test').Page): Promise<boolean> {
+  return page.evaluate(() => (globalThis as { __eqxArtStats?: () => { helmMarker?: boolean } }).__eqxArtStats?.().helmMarker === true);
 }
 
 test('a battleship pilot taps a course, the helm flies it, W cancels', async ({ browser }) => {
@@ -42,6 +48,10 @@ test('a battleship pilot taps a course, the helm flies it, W cancels', async ({ 
       return panel.getAttribute('data-helm-active');
     }, { timeout: 10_000, intervals: [300] }).toBe('1');
 
+    // Owner 2026-11-12: "no visible indicator of where and what was tapped".
+    // The green move marker is drawn at the course point while it's active.
+    await expect.poll(() => helmMarkerShown(page), { timeout: 5_000 }).toBe(true);
+
     // The ship gets under way by itself (a 5.8 km hull is slow: allow a few s).
     await expect.poll(async () => {
       const p = await shipPos(page);
@@ -52,6 +62,8 @@ test('a battleship pilot taps a course, the helm flies it, W cancels', async ({ 
     await page.keyboard.down('w');
     await expect(panel).toHaveAttribute('data-helm-active', '0', { timeout: 5_000 });
     await page.keyboard.up('w');
+    // ...and the move marker goes with the cancelled course.
+    await expect.poll(() => helmMarkerShown(page), { timeout: 5_000 }).toBe(false);
 
     // Speed buttons set the speed setting.
     await page.getByTestId('helm-speed-1').click();
