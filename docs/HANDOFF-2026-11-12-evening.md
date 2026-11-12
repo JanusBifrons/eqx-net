@@ -43,7 +43,7 @@ Picks up from [HANDOFF-2026-11-11.md](HANDOFF-2026-11-11.md). This session ran t
 | #515 | Showcase caption sits above the spectator build bar | |
 | #517 | An attacking NPC stays hostile | |
 | #520, #522, #523, #526 | Camera: `'local'` follows the parked hull; no phantom own ship after Spectate (#522 includes #504); `frame all` counts culled structures; the line-up pull-back finishes (smoothMs 3500) | |
-| money-shot polish (helper in flight) | Explosion instead of a white disc, jagged cracks from the hit, hull art kept on pieces, 3–5× separation, faster cooling | Check whether it opened a PR. |
+| `feat/wreck-money-shot` (helper was finishing its final test run at handoff) | Fracture v6 (cracks fan from the hit), pieces fly apart 3× faster and spin, glow cools in ~6 s, pieces keep hull art (GPU-lit), real explosion at the kill point, a wreck descriptor no longer dropped by snapshot coalescing, the explosion where it broke | If no PR exists, the commits are on the LOCAL branch `feat/wreck-money-shot` in worktree `.claude/worktrees/agent-a45a8d23f8a5f37ca`: push it and open a PR against main (it includes #521). |
 | `showcase/capital-breakup` | The break-up shot (32 s, held on the cruiser) | |
 
 If a PR goes `DIRTY`, it is almost always `docs/LESSONS.md` or a `CLAUDE.md` with two appended entries; keep both. Use a merge train when several are queued (see trains #501/#512).
@@ -62,7 +62,7 @@ Latest files are in the session scratchpad, not the repo.
 ## Next (in order)
 
 1. Land the open PRs (above). Then set `capitalWrecks` on in normal play only after the owner has seen the polished money shot.
-2. **Money shot v3:** film `capital-breakup` with the polish PR, `EQX_CAPITAL_WRECKS=1`. The local film branch was `film/breakup-art` in worktree `train-1112c`.
+2. **Money shot:** v3 was filmed at 22:40 with all the polish (`film/breakup-art` in worktree `train-1112c`, `EQX_CAPITAL_WRECKS=1`) and sent to the owner. It has not had a hostile review yet. Review it first, check the pieces don't fly too fast and far, then decide on switching wrecks on in play.
 3. **Line-up re-film:** after #520/#522/#523, check it opens on the fighter model and pulls back to the fleet and base.
 4. **Destruction next slices:**
    - S2c: persist wrecks with the sector and remove the temporary 768-piece cap (the owner wants wrecks forever);
