@@ -9,7 +9,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   fractureHull,
+  fracturePlan,
+  FRACTURE_ALGO_VERSION,
   FRACTURE_MAX_PIECES,
+  FRACTURE_SNAP_CHANCE,
   FRACTURE_QUANTUM,
   type FractureInput,
   type FracturePiece,
@@ -173,7 +176,8 @@ describe('fractureHull', () => {
 
   it('pieces near the kill point are smaller on average than far ones', () => {
     for (const seed of [1, 2, 3, 4, 5]) {
-      const input = battleshipInput(seed, 32);
+      // A shatter property: a clean snap (v2, seeded chance) has no small pieces.
+      const input = { ...battleshipInput(seed, 32), snapChance: 0 };
       const k = input.killPoint;
       const pieces = fractureHull(input)
         .map((p) => ({ a: p.area, d: Math.hypot(p.centroid.x - k.x, p.centroid.y - k.y) }))
@@ -274,22 +278,219 @@ describe('fractureHull', () => {
     }
   });
 
-  it('golden: the battleship fracture output is locked (bump FRACTURE_ALGO_VERSION if this changes)', () => {
-    const pieces = fractureHull(battleshipInput(20261112));
-    expect({ pieces: pieces.length, hash: hashPieces(pieces) }).toEqual(GOLDEN);
+  // ── v2: the last hit decides where it splits (owner decisions, doc §6) ──
+
+  describe('primary break line through the kill point', () => {
+    it('the plan line passes through the kill point and runs across the keel', () => {
+      for (let seed = 0; seed < 40; seed++) {
+        const input = { ...battleshipInput(seed), snapChance: 0 };
+        const plan = fracturePlan(input);
+        expect(plan.primary).not.toBeNull();
+        const { point, dir } = plan.primary!;
+        expect(Math.hypot(point.x - input.killPoint.x, point.y - input.killPoint.y)).toBeLessThanOrEqual(FRACTURE_QUANTUM);
+        expect(Math.hypot(dir.x, dir.y)).toBeCloseTo(1, 12);
+        // The battleship's keel is the y axis: the break runs mostly across x.
+        expect(Math.abs(dir.x)).toBeGreaterThan(Math.abs(dir.y) * 2);
+      }
+    });
+
+    it('the tilt of the line varies with the seed', () => {
+      const dirs = new Set<string>();
+      for (let seed = 0; seed < 20; seed++) dirs.add(fracturePlan(battleshipInput(seed)).primary!.dir.y.toFixed(6));
+      expect(dirs.size).toBeGreaterThan(10);
+    });
+
+    it.each([false, true])('a cut edge lies on the line within one quantum of the kill point (snap=%s)', (snap) => {
+      for (let seed = 0; seed < 12; seed++) {
+        const input = { ...battleshipInput(seed), snapChance: snap ? 1 : 0 };
+        const k = input.killPoint;
+        let best = Infinity;
+        for (const p of fractureHull(input)) {
+          for (let i = 0; i < p.outline.length; i++) {
+            if (!p.cutEdges[i]) continue;
+            best = Math.min(best, distToSeg(p.outline[i]!, p.outline[(i + 1) % p.outline.length]!, k));
+          }
+        }
+        expect(best).toBeLessThanOrEqual(FRACTURE_QUANTUM);
+      }
+    });
+
+    it('no piece crosses the primary line, and pieces touching the kill point sit on both sides', () => {
+      for (let seed = 0; seed < 20; seed++) {
+        const input = { ...battleshipInput(seed), snapChance: 0 };
+        const { point, dir } = fracturePlan(input).primary!;
+        const side = (v: V): number => (v.x - point.x) * dir.y - (v.y - point.y) * dir.x;
+        const sidesNearKill = new Set<number>();
+        for (const p of fractureHull(input)) {
+          const pos = p.outline.some((v) => side(v) > FRACTURE_QUANTUM);
+          const neg = p.outline.some((v) => side(v) < -FRACTURE_QUANTUM);
+          expect(pos && neg).toBe(false);
+          const touches = p.outline.some((v, i) => distToSeg(v, p.outline[(i + 1) % p.outline.length]!, input.killPoint) <= FRACTURE_QUANTUM);
+          if (touches) sidesNearKill.add(Math.sign(side(p.centroid)));
+        }
+        expect(sidesNearKill).toEqual(new Set([-1, 1]));
+      }
+    });
   });
 
-  it.runIf(!!process.env.EQX_FRACTURE_SVG)('prints a review SVG', () => {
-    const input = { ...battleshipInput(20261112), sectionCuts: [{ a: { x: -1000, y: 900 }, b: { x: 1000, y: 900 } }] };
-    const t0 = performance.now();
-    const pieces = fractureHull(input);
-    const ms = performance.now() - t0;
-    console.log(`fracture: ${pieces.length} pieces in ${ms.toFixed(1)} ms`);
-    console.log(toSvg(input, pieces));
+  describe('clean snap is a seeded chance', () => {
+    const violent = { killBlowDamage: 1.5, recentDamageRate: 1.5 };
+
+    /** Two big halves on opposite sides of the line, plus at most 3 small bits. */
+    function isCleanSnap(input: FractureInput, pieces: ReadonlyArray<FracturePiece>): boolean {
+      const { point, dir } = fracturePlan(input).primary!;
+      const total = tupleArea(input.hull);
+      const big = pieces.filter((p) => p.area >= 0.1 * total);
+      if (big.length !== 2 || pieces.length - big.length > 3) return false;
+      const side = (c: V): number => Math.sign((c.x - point.x) * dir.y - (c.y - point.y) * dir.x);
+      return side(big[0]!.centroid) === -side(big[1]!.centroid);
+    }
+
+    it('the default chance is a sensible minority', () => {
+      expect(FRACTURE_SNAP_CHANCE).toBeGreaterThan(0.05);
+      expect(FRACTURE_SNAP_CHANCE).toBeLessThan(0.5);
+    });
+
+    it.each([0.2, 0.5])('across 200 seeds, about p=%s snap clean in two', (p) => {
+      let snaps = 0;
+      for (let seed = 0; seed < 200; seed++) {
+        const input = { ...battleshipInput(seed), ...violent, snapChance: p };
+        const pieces = fractureHull(input);
+        const snapped = isCleanSnap(input, pieces);
+        expect(snapped).toBe(fracturePlan(input).snap);
+        if (snapped) snaps++;
+      }
+      expect(Math.abs(snaps / 200 - p)).toBeLessThan(0.08);
+    });
+
+    it('snapChance 0 never snaps; 1 always snaps', () => {
+      for (let seed = 0; seed < 30; seed++) {
+        const base = { ...battleshipInput(seed), ...violent };
+        expect(isCleanSnap(base, fractureHull({ ...base, snapChance: 0 }))).toBe(false);
+        expect(isCleanSnap(base, fractureHull({ ...base, snapChance: 1 }))).toBe(true);
+      }
+    });
+  });
+
+  describe('chunk count is random and earned', () => {
+    const SEEDS = 40;
+    function meanCount(extra: Partial<FractureInput>): number {
+      let s = 0;
+      for (let seed = 0; seed < SEEDS; seed++) {
+        s += fractureHull({ ...battleshipInput(seed, FRACTURE_MAX_PIECES), snapChance: 0, ...extra }).length;
+      }
+      return s / SEEDS;
+    }
+
+    it('rises with hullRadius', () => {
+      const xs = [300, 1200, 3000].map((hullRadius) => meanCount({ hullRadius, killBlowDamage: 0.6, recentDamageRate: 0.6 }));
+      expect(xs[0]).toBeLessThan(xs[1]!);
+      expect(xs[1]).toBeLessThan(xs[2]!);
+    });
+
+    it('rises with killBlowDamage', () => {
+      const xs = [0, 0.4, 1, 2].map((killBlowDamage) => meanCount({ killBlowDamage, recentDamageRate: 0.3 }));
+      for (let i = 1; i < xs.length; i++) expect(xs[i - 1]).toBeLessThan(xs[i]!);
+    });
+
+    it('rises with recentDamageRate', () => {
+      const xs = [0, 0.4, 1, 2].map((recentDamageRate) => meanCount({ killBlowDamage: 0.3, recentDamageRate }));
+      for (let i = 1; i < xs.length; i++) expect(xs[i - 1]).toBeLessThan(xs[i]!);
+    });
+
+    it('the target follows the same monotone rule per seed', () => {
+      for (let seed = 0; seed < 50; seed++) {
+        const t = (kb: number, r: number, hullRadius?: number): number =>
+          fracturePlan({ ...battleshipInput(seed, FRACTURE_MAX_PIECES), killBlowDamage: kb, recentDamageRate: r, hullRadius }).targetPieces;
+        expect(t(0, 0)).toBeLessThanOrEqual(t(1, 0));
+        expect(t(1, 0)).toBeLessThanOrEqual(t(1, 1));
+        expect(t(1, 1, 500)).toBeLessThanOrEqual(t(1, 1));
+        expect(t(2, 2)).toBeLessThanOrEqual(FRACTURE_MAX_PIECES);
+      }
+    });
+
+    it.each(['battleship', 'heavy-cruiser'] as const)('%s: both a few big hulks and a shatter into many occur', (kind) => {
+      const counts = (kb: number, r: number): number[] => {
+        const out: number[] = [];
+        for (let seed = 0; seed < SEEDS; seed++) {
+          out.push(fractureHull({
+            hull: hull(kind), seed, killPoint: { x: 40, y: -900 }, maxPieces: FRACTURE_MAX_PIECES,
+            killBlowDamage: kb, recentDamageRate: r, snapChance: 0,
+          }).length);
+        }
+        return out;
+      };
+      const grind = counts(0.02, 0.05);
+      const blow = counts(2, 2);
+      if (process.env.EQX_FRACTURE_SVG) console.log(kind, 'grind', grind.join(','), '| blow', blow.join(','));
+      expect(grind.filter((c) => c <= 5).length).toBeGreaterThan(SEEDS / 2);
+      expect(blow.filter((c) => c >= 20).length).toBeGreaterThan(SEEDS / 2);
+      for (const c of blow) expect(c).toBeLessThanOrEqual(FRACTURE_MAX_PIECES);
+      if (kind === 'battleship') {
+        expect(Math.min(...grind)).toBeLessThanOrEqual(5);
+        expect(Math.max(...blow)).toBeGreaterThanOrEqual(20);
+      }
+    });
+
+    it('the damage-driven pieces stay valid (area, simple, convex parts)', () => {
+      for (let seed = 0; seed < 30; seed++) {
+        const input: FractureInput = {
+          ...battleshipInput(seed, FRACTURE_MAX_PIECES),
+          killBlowDamage: (seed % 5) / 2, recentDamageRate: (seed % 3) / 1.5,
+        };
+        const pieces = fractureHull(input);
+        const want = tupleArea(input.hull);
+        expect(Math.abs(sumArea(pieces) - want) / want).toBeLessThan(0.005);
+        for (const p of pieces) {
+          expect(isSimple(p.outline)).toBe(true);
+          for (const part of p.convexParts) expect(isConvexCcw(part, 3000)).toBe(true);
+        }
+      }
+    });
+
+    it('is deterministic with the new inputs', () => {
+      const input = { ...battleshipInput(808), killBlowDamage: 0.9, recentDamageRate: 1.2, hullRadius: 2500 };
+      expect(fractureHull({ ...input })).toEqual(fractureHull({ ...input }));
+    });
+  });
+
+  it('golden: the battleship fracture output is locked (bump FRACTURE_ALGO_VERSION if this changes)', () => {
+    const pieces = fractureHull(battleshipInput(20261112));
+    expect({ version: FRACTURE_ALGO_VERSION, pieces: pieces.length, hash: hashPieces(pieces) }).toEqual(GOLDEN);
+  });
+
+  it('golden: a damage-driven snap and shatter are locked too', () => {
+    const base = { ...battleshipInput(20261112, FRACTURE_MAX_PIECES), killBlowDamage: 1.2, recentDamageRate: 0.8 };
+    const shatter = fractureHull({ ...base, snapChance: 0 });
+    const snap = fractureHull({ ...base, snapChance: 1 });
+    expect({
+      shatter: { pieces: shatter.length, hash: hashPieces(shatter) },
+      snap: { pieces: snap.length, hash: hashPieces(snap) },
+    }).toEqual(GOLDEN_DAMAGE);
+  });
+
+  it.runIf(!!process.env.EQX_FRACTURE_SVG)('prints review SVGs', () => {
+    const cases: Array<[string, FractureInput]> = [
+      ['fixed 24 + section cut', { ...battleshipInput(20261112), sectionCuts: [{ a: { x: -1000, y: 900 }, b: { x: 1000, y: 900 } }] }],
+      ['slow grind', { ...battleshipInput(20261112, FRACTURE_MAX_PIECES), killBlowDamage: 0.02, recentDamageRate: 0.05, snapChance: 0 }],
+      ['heavy blow', { ...battleshipInput(20261112, FRACTURE_MAX_PIECES), killBlowDamage: 2, recentDamageRate: 2, snapChance: 0 }],
+      ['clean snap', { ...battleshipInput(20261112, FRACTURE_MAX_PIECES), killBlowDamage: 1, recentDamageRate: 1, snapChance: 1 }],
+    ];
+    for (const [name, input] of cases) {
+      const t0 = performance.now();
+      const pieces = fractureHull(input);
+      const ms = performance.now() - t0;
+      console.log(`fracture [${name}]: ${pieces.length} pieces in ${ms.toFixed(1)} ms`);
+      console.log(toSvg(input, pieces));
+    }
   });
 });
 
-const GOLDEN = { pieces: 24, hash: 2002695480 };
+// v1 (#499): { pieces: 24, hash: 2002695480 }.
+// v2: the primary break line through the kill point + the seeded snap draw
+// changed every fracture (doc §6, "the last hit decides where it splits").
+const GOLDEN = { version: 2, pieces: 24, hash: 2495569367 };
+const GOLDEN_DAMAGE = { shatter: { pieces: 42, hash: 2123664143 }, snap: { pieces: 2, hash: 3881272329 } };
 
 function hashPieces(pieces: ReadonlyArray<FracturePiece>): number {
   let h = 0x811c9dc5;
@@ -307,6 +508,14 @@ function hashPieces(pieces: ReadonlyArray<FracturePiece>): number {
     mix(p.convexParts.length);
   }
   return h >>> 0;
+}
+
+function distToSeg(a: V, b: V, p: V): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const l2 = dx * dx + dy * dy;
+  const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+  return Math.hypot(a.x + t * dx - p.x, a.y + t * dy - p.y);
 }
 
 function pointIn(poly: ReadonlyArray<V>, p: V): boolean {
@@ -352,7 +561,14 @@ function toSvg(input: FractureInput, pieces: ReadonlyArray<FracturePiece>): stri
       out.push(`<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="#ff8a1f" stroke-width="7"/>`);
     }
   });
-  out.push(`<circle cx="${input.killPoint.x}" cy="${input.killPoint.y}" r="22" fill="#fff"/>`);
+  // Primary break line (dashed cyan) through the kill point (white dot, red ring).
+  const primary = fracturePlan(input).primary;
+  if (primary) {
+    const L = Math.max(w, h);
+    const { point: k, dir: d } = primary;
+    out.push(`<line x1="${k.x - d.x * L}" y1="${k.y - d.y * L}" x2="${k.x + d.x * L}" y2="${k.y + d.y * L}" stroke="#3fd0ff" stroke-width="5" stroke-dasharray="40 24"/>`);
+  }
+  out.push(`<circle cx="${input.killPoint.x}" cy="${input.killPoint.y}" r="22" fill="#fff" stroke="#ff2a2a" stroke-width="10"/>`);
   out.push('</svg>');
   return out.join('\n');
 }
