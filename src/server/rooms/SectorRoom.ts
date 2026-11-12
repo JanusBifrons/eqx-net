@@ -8379,9 +8379,10 @@ export class SectorRoom extends Room<SectorState> {
       // of every other hull (#18: its own size, not a fighter's). Owner clip
       // 2026-11-12: a heavy cruiser joining the capital line-up was nudged off
       // a structure straight into the NPC heavy cruiser. Explicit spawnX/Y keep
-      // their exact placement (tests set up collisions on purpose).
+      // their exact placement (tests set up collisions on purpose), and a
+      // resumed hull comes back where it really is.
       const explicit = parsed.success && (parsed.data.spawnX !== undefined || parsed.data.spawnY !== undefined);
-      const hulls = explicit ? [] : this.spawnHullCircles(playerId);
+      const hulls = explicit || resumedFromStore ? [] : this.spawnHullCircles(playerId);
       if (this.structureRegistry.size > 0 || hulls.length > 0) {
         const boxes: SiteBox[] = [];
         for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
@@ -10050,7 +10051,8 @@ export class SectorRoom extends Room<SectorState> {
 
   /** Every other hull in the sector as a circle of its own extent (hull
    *  radius + shield pad, `hullExtent`): NPC ships, other pilots' ships and
-   *  parked hulls. The joining pilot's own hulls are not obstacles. Join path
+   *  parked hulls. The joining pilot's own hulls and pilots still joining
+   *  (not in the world yet) are not obstacles. Join path
    *  only (allocates). */
   private spawnHullCircles(playerId: string): SiteCircle[] {
     const circles: SiteCircle[] = [];
@@ -10061,7 +10063,7 @@ export class SectorRoom extends Room<SectorState> {
       circles.push({ x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, r });
     }
     for (const [pid, pose] of this.shipPoseCache) {
-      if (pid === playerId) continue;
+      if (pid === playerId || this.pendingJoin.has(pid)) continue;
       const kind = this.getActiveShip(pid)?.kind;
       if (kind) circles.push({ x: pose.x, y: pose.y, r: hullExtent(kind) });
     }
