@@ -3215,6 +3215,7 @@ export class ColyseusGameClient {
       this.gameClock.setScale(snapScale);
       setSwarmDisplaySpeed(snapScale);
       this.mirror.timeScale = snapScale === 1 ? undefined : snapScale;
+      useUIStore.getState().setTimeScale(snapScale);
     }
     const gameNowMs = this.gameClock.at(now);
     if (this._anchorInitialised && !speedChanged) {
@@ -6736,6 +6737,8 @@ export class ColyseusGameClient {
   }
 
   dispose(): void {
+    // Game time scale: the next session starts at 1× until its snapshots say otherwise.
+    useUIStore.getState().setTimeScale(1);
     this.disposed = true;
     this.localDead = false;
     this.diedAtMs = 0;

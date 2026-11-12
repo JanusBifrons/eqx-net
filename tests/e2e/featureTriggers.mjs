@@ -26,6 +26,12 @@ export const FEATURE_TRIGGERS = [
     specs: ['spectator-mode', 'build-hotbar-fits-viewport'],
   },
   {
+    // Game time scale (stream/time-scale): per-sector speed, the snapshot keyframe and the HUD chip.
+    area: 'game time scale',
+    paths: ['src/core/clock/GameClock', 'src/server/time/', 'src/client/hud/GameHud', 'src/client/net/swarmInterpolation'],
+    specs: ['time-scale-chip'],
+  },
+  {
     area: 'energy and boost',
     paths: ['src/core/combat/Energy', 'src/client/hud/GameHud', 'src/client/hud/widgets', 'src/core/physics/applyShipInput'],
     specs: ['energy-bar', 'boost-facing'],

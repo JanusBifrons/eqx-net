@@ -43,8 +43,8 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
 | 4a | Client game clock: prediction anchor + `fromTick` parity test | ~2 h | ✅ 🛑 |
 | 4b | Interpolation in ticks + pose ring sized for 4× | ~1.5 h | ✅ 🛑 |
 | 4c | Render frame dt at the source (Pixi ticker speed); client lint wall | ~2 h | ✅ 🛑 |
-| 4d | Speed chip + E2E + "follows automatically" test; netgate at 0.7× / 2×; fold `testTimeScale` into the sector speed | ~2 h | next 🛑 (end of Phase 4) |
-| 5a | Dynamic controller (lateness + cost, ramp, hysteresis, audit events) | ~2 h | 🛑 |
+| 4d | Speed chip + E2E + "follows automatically" test; netgate at 0.7× / 2×; fold `testTimeScale` into the sector speed | ~2 h | ✅ 🛑 (end of Phase 4) |
+| 5a | Dynamic controller (lateness + cost, ramp, hysteresis, audit events) | ~2 h | next 🛑 |
 | 5b | Burn-test verification (CI/laptop perf scene); docs; ready-to-land report | ~1.5 h | 🛑 (stream done; ask the owner how to land it) |
 
 ## Phases
@@ -153,3 +153,11 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   incoming-fire countdown moved to game time (it is game seconds). Real time:
   wall-stamped pose interpolation, camera/UI, measurement, each marked
   inline. Lock: `FxExplosions.timeScale.test.ts`. Unit 4981 ✓, lint 0 errors.
+- 2026-11-12: step 4d done; **Phase 4 complete.** HUD speed chip in the
+  status capsule (amber slow / cyan fast, hidden at 1×; Zustand `timeScale`,
+  reset on dispose; `data-time-scale` on `hud-status`). E2E
+  `time-scale-chip.spec.ts` passes (16 s, lane 470, feature tier + trigger
+  area). Netgate scenarios `speed-0.7` / `speed-2` are print-only: the
+  baseline arm is main at 1×. Player page `docs/features/game-speed.md`
+  (SHOWCASE_PENDING). **`testTimeScale` NOT folded** (reasons in the design
+  note §0; reversible; tell the owner). Unit 4983 ✓, lint 0 errors.
