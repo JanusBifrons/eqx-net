@@ -2928,3 +2928,10 @@ Owner: "They absolutely should collide by design." In a clip a heavy cruiser und
 - **Cause:** the grid stroked `width: 1` in world units. At a capital zoom (0.01-0.15) that is a 0.01-0.15 px quad, and the GPU lights a pixel only when the quad covers its centre. So the lattice showed up as hard 1 px lines on some frames and dropped out on others as the camera moved by sub-pixel amounts. At the battleship floor the 500 u tier is ~6 px apart: a hatch whenever it drew.
 - **Fix:** grid strokes use `pixelLine: true` (one device pixel at any zoom). A tier fades out below 8 px screen spacing (`gridTierAlpha`). Lock: `BackgroundGrid.hairline.test.ts`.
 - **Rule:** any world-space stroke that must stay visible at the capital floors needs a screen-space width (`pixelLine`, or width ÷ scale). A fixed world width goes sub-pixel and flickers.
+## 2026-11-12 — Shells left barrels that weren't drawn there: spectating froze NPC turrets
+
+- **Symptom:** in the capital-turrets clip a battleship's 16" shells left points and flew directions ~45-60° away from its drawn barrels (forward turrets drawn toward the bow, shells aft of the beam).
+- **Measured:** the server is self-consistent (shell origin = server barrel tip, heading = server barrel angle, 0.0 error), and the snapshot `drones[].mountAngles` match it to 0.3° before and after the pilot spectates. In the browser, `mirror.swarm[..].mountAngles` froze at the moment of Spectate for 40 s while the hull kept moving.
+- **Cause:** `ColyseusClient.handleSnapshot` applied the drone slice (`applyDroneMountAngles`, also hostile / hp / charging / warp) only inside the own-active-ship branch, after the reconciler gate. A spectator has no own ship, so every NPC turret stopped where it was, while naval shells (events, not the snapshot) kept leaving the real barrels.
+- **Fix:** apply the drone and asteroid slices for every recipient, before the own-ship gate. Locks: `ColyseusClient.spectatorTurrets.test.ts`, `tests/e2e/spectator-npc-turrets.spec.ts`.
+- **Rule:** a snapshot slice about OTHER entities must not sit behind an own-ship gate. Spectators and not-yet-reconciled pilots still watch the world.

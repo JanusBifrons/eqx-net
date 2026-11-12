@@ -3225,6 +3225,23 @@ export class ColyseusGameClient {
     });
     this.stats.droppedSnapshotsRecent = this._dropDetector.dropCount;
 
+    // Drone snapshot slice (slim turret/shield slice; pose flows on the
+    // binary swarm wire). See snapshotRemoteSync.ts. Applied for EVERY
+    // recipient, before the own-ship gate below: a spectator (no active
+    // ship) or a pilot whose reconciler hasn't bootstrapped still watches
+    // NPC turrets train and fire. It used to sit inside the own-ship block,
+    // so spectating froze every NPC turret where it was while its shells
+    // (events, not the snapshot) kept leaving the real barrels: the
+    // capital-turrets clip, 2026-11-12 (ColyseusClient.spectatorTurrets.test).
+    // Campaign 2.1: the per-recipient `hostile` bit feeds the client
+    // hostility ledger, the snapshot backstop for the discrete `bot_aggro`
+    // accelerant (invariant #16). `_snapshotHostileMark` is a bound field,
+    // not a closure (handleSnapshot is a hot path, #14).
+    applyDroneMountAngles(snap, this.mirror, this._snapshotHostileMark);
+    // WS-4 Phase 6: slim MINED-asteroid resource slice → swarm mirror (R2.23
+    // enabler; feeds the WS-9 inspector). Pose stays on the binary channel.
+    applyAsteroidResources(snap, this.mirror);
+
     if (!localId || !this.reconciler) {
       if (this.predWorld) {
         // Sync remote ships — keep them at their latest server position until
@@ -3312,18 +3329,6 @@ export class ColyseusGameClient {
       // Fire control (#16): the pilot's groups + locks, always applied.
       this.applyFcGroups(serverState.groups);
       this.mirror.localLockedBy = serverState.lockedBy ?? NO_LOCKED_BY;
-
-      // Drone snapshot slice (slim turret/shield slice; pose flows on the
-      // binary swarm wire). See snapshotRemoteSync.ts. Campaign 2.1: the
-      // per-recipient `hostile` bit feeds the client hostility ledger — the
-      // snapshot backstop for the discrete `bot_aggro` accelerant (invariant
-      // #16), so a mid-wave joiner renders hostiles red from the FIRST
-      // snapshot. `_snapshotHostileMark` is a bound field, not a closure —
-      // handleSnapshot is a hot path (invariant #14, no per-call alloc).
-      applyDroneMountAngles(snap, this.mirror, this._snapshotHostileMark);
-      // WS-4 Phase 6 — slim MINED-asteroid resource slice → swarm mirror (R2.23
-      // enabler; feeds the WS-9 inspector). Pose stays on the binary channel.
-      applyAsteroidResources(snap, this.mirror);
 
       // Probe 5 (mobile-perf-investigation, 2026-05-24) — instrument
       // reconcile separately from the rest of handleSnapshot. The
