@@ -592,8 +592,13 @@ describe('fractureHull', () => {
 // v4: only a tip hit's primary line changed (across the hull, aft of the tip,
 // never along the keel); the new plan draw comes last, so side-hit outputs
 // (these goldens) are unchanged apart from the version.
-const GOLDEN = { version: 4, pieces: 24, hash: 4028792851 };
-const GOLDEN_DAMAGE = { shatter: { pieces: 42, hash: 797705088 }, snap: { pieces: 2, hash: 4043344841 } };
+// v4: { pieces: 24, hash: 4028792851 }; damage shatter 42 / 797705088.
+// v5: 4th-power seed falloff over a lower floor, a Voronoi metric stretched
+// along the keel and a least keel-wise seed spacing away from the kill point
+// (hostile review of a filmed heavy-cruiser death: cracks down 60 % of the
+// hull, a lengthwise "tuning fork" bow). The snap is unchanged (no seeds).
+const GOLDEN = { version: 5, pieces: 24, hash: 3528440158 };
+const GOLDEN_DAMAGE = { shatter: { pieces: 42, hash: 2120160719 }, snap: { pieces: 2, hash: 4043344841 } };
 
 function hashPieces(pieces: ReadonlyArray<FracturePiece>): number {
   let h = 0x811c9dc5;
