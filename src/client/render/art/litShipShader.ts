@@ -272,7 +272,17 @@ export function litMapsTexture(m: LitMaps): Texture {
 /** A light in the world (Pixi space): explosions, weapons fire. */
 export interface PointLight { x: number; y: number; z: number; r: number; g: number; b: number; intensity: number; reach: number; owner: number }
 /** A big hull that shades others (Pixi space): a box with a height. */
-export interface Occluder { id: number; x: number; y: number; rot: number; hx: number; hy: number; height: number; r: number; g: number; b: number; sunlit: number }
+export interface Occluder { id: number; x: number; y: number; rot: number; hx: number; hy: number; height: number; r: number; g: number; b: number; sunlit: number; capital: boolean }
+
+/**
+ * Does an occluder shade this hull? Capitals don't shade each other (owner,
+ * 2026-11-12: a cruiser's box shadow across a battleship's deck looked wrong);
+ * every other pair is unchanged. It covers the shadow, occlusion and bounce
+ * alike: they share the one occluder slot.
+ */
+export function occluderShades(receiverCapital: boolean, occluderCapital: boolean): boolean {
+  return !(receiverCapital && occluderCapital);
+}
 
 /** The lights and occluders around this frame (filled by the caller, reused). */
 export class LitScene {
@@ -289,9 +299,10 @@ export class LitScene {
     l.r = ((color >> 16) & 255) / 255; l.g = ((color >> 8) & 255) / 255; l.b = (color & 255) / 255;
     this.lightCount++;
   }
-  addOccluder(id: number, x: number, y: number, rot: number, hx: number, hy: number, height: number, color: number, sunlit: number): void {
+  addOccluder(id: number, x: number, y: number, rot: number, hx: number, hy: number, height: number, color: number, sunlit: number, capital = false): void {
     let o = this.occluders[this.occluderCount];
-    if (!o) { o = { id: 0, x: 0, y: 0, rot: 0, hx: 0, hy: 0, height: 0, r: 0, g: 0, b: 0, sunlit: 0 }; this.occluders.push(o); }
+    if (!o) { o = { id: 0, x: 0, y: 0, rot: 0, hx: 0, hy: 0, height: 0, r: 0, g: 0, b: 0, sunlit: 0, capital: false }; this.occluders.push(o); }
+    o.capital = capital;
     o.id = id; o.x = x; o.y = y; o.rot = rot; o.hx = hx; o.hy = hy; o.height = height; o.sunlit = sunlit;
     o.r = ((color >> 16) & 255) / 255; o.g = ((color >> 8) & 255) / 255; o.b = (color & 255) / 255;
     this.occluderCount++;
@@ -333,6 +344,8 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
   occluderId = -1;
   /** Owner id of this hull's own lights (its engines), -1 for none. */
   lightOwnerId = -1;
+  /** Part of a capital (a hull tile or a gun on one): other capitals don't shade it. */
+  capitalHull = false;
   /** How much of its own engines' light a hull takes (they point away from it). */
   static OWN_LIGHT = 0.15;
   /** Texels per screen pixel (litPass sets it each frame; 1 until then). */
@@ -442,7 +455,7 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
       }
     }
     if (s.capitalShadows || s.capitalOcclusion || s.capitalBounce) {
-      const k = nearestInto(scene.occluders, scene.occluderCount, x, y, MAX_OCCLUDERS, this.occluderId);
+      const k = nearestInto(scene.occluders, scene.occluderCount, x, y, MAX_OCCLUDERS, this.occluderId, this.capitalHull);
       const P = this.u['uOccPose']!, S = this.u['uOccSize']!, C = this.u['uOccCol']!;
       for (let i = 0; i < MAX_OCCLUDERS; i++) {
         if (i >= k) { S[i * 4 + 2] = 0; continue; }
@@ -492,12 +505,14 @@ export function strongestLightsInto(scene: LitScene, x: number, y: number, rot: 
 /** The scene index of the `i`th light `strongestLightsInto` picked. */
 export function pickedLight(i: number): number { return _pick[i]!; }
 
-/** The `n` items nearest (x, y) into `_pick` (skipping occluder `skipId`); returns how many. */
-function nearestInto(items: ReadonlyArray<{ x: number; y: number; id?: number }>, count: number, x: number, y: number, n: number, skipId: number): number {
+/** The `n` occluders nearest (x, y) into `_pick` (skipping occluder `skipId`,
+ *  and any `occluderShades` rules out for this receiver); returns how many. */
+function nearestInto(items: ReadonlyArray<Occluder>, count: number, x: number, y: number, n: number, skipId: number, receiverCapital: boolean): number {
   let k = 0;
   for (let i = 0; i < count; i++) {
     const it = items[i]!;
     if (skipId >= 0 && it.id === skipId) continue;
+    if (!occluderShades(receiverCapital, it.capital)) continue;
     const d = (it.x - x) * (it.x - x) + (it.y - y) * (it.y - y);
     let j: number;
     if (k < n) j = k++;
