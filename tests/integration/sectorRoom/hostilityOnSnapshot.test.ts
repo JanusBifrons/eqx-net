@@ -74,3 +74,46 @@ describe('SectorRoom integration — hostility rides the drone snapshot slice (c
     ).toBe(true);
   });
 });
+
+/**
+ * Far drones' slim slice (real-scale ranges known gap): a hostile drone far
+ * OUTSIDE the recipient's interest window still reports `hostile: true` (at
+ * 2 Hz, the far tier), so a drone hunting you from 16 km out doesn't draw as
+ * neutral. RED before the far tier: the slice covered interest only.
+ */
+describe('SectorRoom integration — far drones carry the hostile bit outside interest', () => {
+  let harness: SectorTestHarness;
+  beforeEach(async () => {
+    harness = await bootSectorTestServer({
+      sectorKey: null,
+      droneCount: 0,
+      testMode: true,
+      dronePoses: [{ kind: 'fighter', x: 8000, y: 0 }],
+    });
+  }, 15_000);
+  afterEach(async () => {
+    if (harness) await harness.cleanup();
+  }, 10_000);
+
+  it('a hostile drone 16 km away rides the recipient snapshot with hostile:true', { timeout: 15_000 }, async () => {
+    const p1 = randomUUID();
+    const cr = await harness.connectActive(p1, { startHostile: true });
+    const room = matchMaker.getLocalRoomById(cr.roomId) as unknown as SectorRoom;
+    room._internals.postToWorker({
+      type: 'SET_POSITION', entityId: p1, x: -8000, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0,
+    });
+    await harness.sendThrust(cr);
+
+    const deadline = Date.now() + 8_000;
+    let sawHostile = false;
+    while (Date.now() < deadline && !sawHostile) {
+      const snap: SnapshotMessage = await harness.waitForSnapshot(cr, 2_000);
+      const entry = snap.drones?.find((dr) => dr.hostile === true);
+      if (entry) {
+        sawHostile = true;
+        expect(entry.mountAngles, 'the far tier carries no turret angles').toBeUndefined();
+      }
+    }
+    expect(sawHostile, 'a far hostile drone never reported hostile:true (far tier missing)').toBe(true);
+  });
+});
