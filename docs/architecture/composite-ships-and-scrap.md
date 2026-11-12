@@ -105,6 +105,11 @@ free-floating scrap piece.
 
 ## Deferred
 
+Capital break-up (the "capitals leave no scrap yet" gap) is designed in
+[capital-destruction.md](capital-destruction.md): a capital fractures where
+it was hit into seeded Voronoi wreck pieces, instead of hand-authored scrap
+components.
+
 - Converting the other 7 kinds to composites; porting the rest of the Equinox
   component palette (RoundEngine, RectHull/HexHull, ShortPillar).
 - Optional scrap polish: spin, salvage/economy ties.
