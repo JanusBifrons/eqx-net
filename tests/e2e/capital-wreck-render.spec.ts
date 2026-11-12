@@ -70,7 +70,7 @@ test('a killed capital breaks into wreck pieces the client draws', async ({ page
  */
 test('wreck pieces wear the dead ship\'s art and their cut edges glow (S3)', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto(`${BASE_URL}?room=wreck-test&testId=${randomUUID()}&worker=0&shipKind=fighter&initialHull=1000000&zoom=0.12&art=machined&fx=new`);
+  await page.goto(`${BASE_URL}?room=wreck-test&testId=${randomUUID()}&worker=0&shipKind=fighter&initialHull=1000000&zoom=0.12&art=machined&fx=new&spawnX=1800&spawnY=2500`);
   type Stats = { machinedSprites: number; wreckPieces: number; wreckTextured: number; wreckGlowing: number; wreckBreaks: number };
   // The battleship (and our ship) draw Machined: the parent art is baked.
   await page.waitForFunction(() => {
