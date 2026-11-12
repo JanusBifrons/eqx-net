@@ -41,6 +41,7 @@ import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import type { LivingWorldRoom } from './LivingWorldRoom.js';
 import type { Rng } from './population.js';
+import { gameNow } from '../time/gameTime.js';
 
 /** The lull between one event ending and the next starting. */
 export const WORLD_EVENT_INTERVAL_MS = 9 * 60_000;
@@ -89,7 +90,7 @@ export class EventDirector {
     opts: EventDirectorOptions = {},
   ) {
     this.rng = opts.rng ?? Math.random;
-    this.now = opts.nowMs ?? Date.now;
+    this.now = opts.nowMs ?? gameNow;
     this.intervalMs = opts.intervalMs ?? WORLD_EVENT_INTERVAL_MS;
     this.nextAtMs = this.now() + (opts.firstDelayMs ?? this.intervalMs);
   }

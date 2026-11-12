@@ -25,6 +25,7 @@ import { auditEvent } from '../audit/GameplayAuditLog.js';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
 import type { Wallet } from './Wallet.js';
+import { gameNow } from '../time/gameTime.js';
 
 export const BOUNTIES_STATE_KEY = 'bounties';
 
@@ -75,7 +76,7 @@ export class BountyBoard {
     private readonly wallet: Pick<Wallet, 'debitDeferred' | 'creditDeferred'>,
     private readonly persistence: () => IPersistenceSink | null,
     private readonly players: BountyPlayers,
-    private readonly now: () => number = Date.now,
+    private readonly now: () => number = gameNow,
   ) {}
 
   /** Boot hydrate from the persisted `bounties` record JSON. */

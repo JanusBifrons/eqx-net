@@ -36,6 +36,7 @@ import {
   type PlayerPolicyWire,
 } from '../../shared-types/factions.js';
 import { isActiveDeal, type TradeDeal } from '../../core/economy/deals.js';
+import { gameNow } from '../time/gameTime.js';
 
 /** History entries kept per player (the Trade tab's History list). */
 export const HISTORY_CAP = 40;
@@ -87,7 +88,7 @@ export class EconomyStore {
   private readonly now: () => number;
 
   constructor(private readonly deps: EconomyStoreDeps) {
-    this.now = deps.now ?? Date.now;
+    this.now = deps.now ?? gameNow;
     this.market = createMarket(this.now());
   }
 
@@ -442,7 +443,7 @@ function freshPlayer(now: number): PlayerEconomy {
 function parsePlayer(json: string): PlayerEconomy | null {
   try {
     const raw = JSON.parse(json) as Partial<PlayerEconomy>;
-    const pe = freshPlayer(Date.now());
+    const pe = freshPlayer(gameNow());
     // Rows saved before factions F1 hold −1000..1000; rescale them once.
     const scale = raw.standingScale === STANDING_SCALE_VERSION ? 1 : 0.1;
     if (raw.rep) {

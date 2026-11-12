@@ -72,3 +72,12 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   over `Date.now`, so 1× is unchanged). Lint wall in `eslint.config.js`
   (warn): 74 wall-clock sites left in `src/server`, all listed by
   `npx eslint src/server` — that list is the 2b/2c to-do.
+- 2026-11-12: step 2b done. Directors (drone, robot, elite, event, flagship),
+  economy (trade, convoys, wallet, bounties, labs, market), transit, holds and
+  the incoming registry read `gameNow()`. Their loops and spool/hop timers are
+  game timers (`gameSetInterval` / `gameSetTimeout` / `gameClearTimer` in
+  `server/time/gameTime.ts`). Only `SectorRoom` is left on the lint list (46).
+  Note for docs: saved timestamps are now game time, which drifts from wall
+  time while the speed isn't 1×. Unit 4967 ✓, integration 359 ✓ (run with
+  `--maxWorkers=4`: a full run was stopped once for low memory while another
+  session recorded video), boot ✓.

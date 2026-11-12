@@ -12,6 +12,7 @@ import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersiste
 import { BlueprintItemSchema, type BlueprintItem } from '../../shared-types/items.js';
 import type { LabJobSpec } from '../../shared-types/research.js';
 import { LabJobSpecSchema } from '../../shared-types/messages/labMessages.js';
+import { gameNow } from '../time/gameTime.js';
 
 export const LAB_JOBS_STATE_KEY = 'lab_jobs';
 
@@ -37,7 +38,7 @@ export class LabBoard {
   constructor(private readonly deps: { persistence: () => IPersistenceSink | null; now?: () => number }) {}
 
   private now(): number {
-    return this.deps.now?.() ?? Date.now();
+    return this.deps.now?.() ?? gameNow();
   }
 
   /** Boot hydrate from the persisted JSON (corrupt rows are dropped). */

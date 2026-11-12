@@ -20,6 +20,7 @@
  * nothing unless it throws, and the throttle state lives in the closure.
  */
 import { pino } from 'pino';
+import { gameNow } from '../time/gameTime.js';
 
 const logger = pino({
   name: 'guarded-loop',
@@ -44,7 +45,7 @@ export function guarded(
   label: string,
   fn: () => void,
   onError: GuardedErrorSink = defaultSink,
-  nowMs: () => number = Date.now,
+  nowMs: () => number = gameNow,
 ): () => void {
   let lastLogAtMs = Number.NEGATIVE_INFINITY;
   let suppressed = 0;

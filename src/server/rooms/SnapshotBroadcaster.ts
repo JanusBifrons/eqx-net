@@ -1095,6 +1095,7 @@ export class SnapshotBroadcaster {
       // can separate network in-transit delay from server-side silence
       // during recv_gap_long events. `performance.now()` is a primitive
       // number; notepack encodes it as 8 bytes. Zero per-tick alloc.
+      // eslint-disable-next-line no-restricted-properties -- real time: a network send stamp for latency, not game time
       snap.serverSendPerfNow = performance.now();
       // r2 evidence pass — read the underlying WebSocket bufferedAmount
       // BEFORE send and ship it ON the snapshot itself so the client's

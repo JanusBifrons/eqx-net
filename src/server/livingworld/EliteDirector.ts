@@ -26,6 +26,7 @@ import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import type { LivingWorldRoom } from './LivingWorldRoom.js';
 import type { Rng } from './population.js';
+import { gameNow } from '../time/gameTime.js';
 
 export const MAX_ELITES = 2;
 /** A slain elite's replacement appears this long after (a real lull). */
@@ -77,7 +78,7 @@ export class EliteDirector {
     private readonly opts: EliteDirectorOptions = {},
   ) {
     this.rng = opts.rng ?? Math.random;
-    this.now = opts.nowMs ?? Date.now;
+    this.now = opts.nowMs ?? gameNow;
     this.respawnMs = opts.respawnMs ?? ELITE_RESPAWN_MS;
     const n = opts.maxElites ?? MAX_ELITES;
     for (let i = 0; i < n; i++) {

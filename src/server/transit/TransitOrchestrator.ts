@@ -9,7 +9,7 @@
  * orchestrator subscribes to SHIP_DESTROYED and cancels transit cleanly
  * (the death flow takes over). The player can also send `cancel_transit`.
  *
- * On commit (no abort fired by `setTimeout(spoolMs)`):
+ * On commit (no abort fired by `gameSetTimeout(spoolMs)`):
  *   1. Read SAB pose (NOT Colyseus schema — SAB is 60 Hz ground truth).
  *   2. Build a LimboPayload with `sectorKey: targetSectorKey`, 30 s TTL.
  *   3. `limboStore.put(playerId, payload, LIMBO_TRANSIT_TTL_MS)`.
@@ -41,6 +41,7 @@ import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import { SHIP_MAX_HEALTH } from '../../core/combat/Weapons.js';
 import { getIncomingPlayerSink } from '../livingworld/incomingPlayerSink.js';
 import { issueTransitIdentity } from '../identity/TransitIdentityTokens.js';
+import { gameNow, gameSetTimeout, gameClearTimer, type GameTimer } from '../time/gameTime.js';
 
 /**
  * Narrow interface the orchestrator needs from its host room. SectorRoom
@@ -101,7 +102,7 @@ interface InFlight {
    *  options bag so the destination's `onJoin` can pick it up. */
   shipId: string | null;
   /** Timer that fires the commit unless aborted earlier. */
-  commitTimer: ReturnType<typeof setTimeout>;
+  commitTimer: GameTimer;
   /** One-shot bus listener — must be unsubscribed on cancel + commit. */
   onShipDestroyed: (evt: { type: 'SHIP_DESTROYED'; targetId: string; shooterId: string }) => void;
 }
@@ -234,7 +235,7 @@ export class TransitOrchestrator {
     }
 
     const machine = new TransitStateMachine(playerId, this.room.bus, this.spoolMs);
-    machine.beginSpool(Date.now());
+    machine.beginSpool(gameNow());
 
     const transitToken = randomUUID();
     const onShipDestroyed: InFlight['onShipDestroyed'] = (evt) => {
@@ -242,7 +243,7 @@ export class TransitOrchestrator {
     };
     this.room.bus.on('SHIP_DESTROYED', onShipDestroyed);
 
-    const commitTimer = setTimeout(() => {
+    const commitTimer = gameSetTimeout(() => {
       void this.commitTransit(playerId);
     }, this.spoolMs);
 
@@ -288,7 +289,7 @@ export class TransitOrchestrator {
   teleportOut(playerId: string, targetSectorKey: string, arrival: { x: number; y: number }): boolean {
     if (this.room.sectorKey === null || this.inFlight.has(playerId) || !this.room.hasLiveHull(playerId)) return false;
     const machine = new TransitStateMachine(playerId, this.room.bus, 1);
-    machine.beginSpool(Date.now());
+    machine.beginSpool(gameNow());
     const onShipDestroyed: InFlight['onShipDestroyed'] = () => undefined;
     this.room.bus.on('SHIP_DESTROYED', onShipDestroyed);
     this.inFlight.set(playerId, {
@@ -297,7 +298,7 @@ export class TransitOrchestrator {
       transitToken: randomUUID(),
       arrival: { x: arrival.x, y: arrival.y },
       shipId: null,
-      commitTimer: setTimeout(() => undefined, 0),
+      commitTimer: gameSetTimeout(() => undefined, 0),
       onShipDestroyed,
     });
     void this.commitTransit(playerId);
@@ -310,7 +311,7 @@ export class TransitOrchestrator {
     const inFlight = this.inFlight.get(playerId);
     if (!inFlight) return;
     if (inFlight.machine.rawState !== 'SPOOLING') return;
-    clearTimeout(inFlight.commitTimer);
+    gameClearTimer(inFlight.commitTimer);
     this.room.bus.off('SHIP_DESTROYED', inFlight.onShipDestroyed);
     inFlight.machine.cancel();
     this.inFlight.delete(playerId);

@@ -21,6 +21,7 @@ import type { Hold } from '../../shared-types/goods.js';
 import type { BlueprintItem } from '../../shared-types/items.js';
 import { completeLabJob, planLabJob, type LabJobSpec } from '../../shared-types/research.js';
 import type { LabBlueprintView, LabJobView, LabState } from '../../shared-types/messages/labMessages.js';
+import { gameNow } from '../time/gameTime.js';
 
 export const RESEARCH_LAB_KIND = 'research_lab';
 /** Save job progress every this many powered pulses. */
@@ -50,7 +51,7 @@ export class ResearchLabSubsystem {
   constructor(private readonly d: ResearchLabDeps) {}
 
   private now(): number {
-    return this.d.now?.() ?? Date.now();
+    return this.d.now?.() ?? gameNow();
   }
 
   /** Can `owner` use this lab? Null when they can, else why not. */

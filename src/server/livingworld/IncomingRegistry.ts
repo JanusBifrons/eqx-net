@@ -22,6 +22,7 @@
 import type { LivingWorldRoom } from './LivingWorldRoom.js';
 import type { WarpDisposition, WarpWarningEvent } from '../../shared-types/messages.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
+import { gameNow } from '../time/gameTime.js';
 
 export interface IncomingEntry {
   /** Stable id — the `squadId` (bots) or `playerId` (players). The dedup + clear key. */
@@ -79,7 +80,7 @@ export class IncomingRegistry {
     private readonly rooms: Map<string, LivingWorldRoom>,
     opts: IncomingRegistryOpts = {},
   ) {
-    this.nowMs = opts.nowMs ?? Date.now;
+    this.nowMs = opts.nowMs ?? gameNow;
     this.onUnknownDest = opts.onUnknownDest;
   }
 

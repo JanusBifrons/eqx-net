@@ -28,3 +28,21 @@ export const gameClock = new GameClock(() => Date.now(), nodeTimers);
 export function gameNow(): number {
   return gameClock.now();
 }
+
+export type { GameTimer } from '../../core/clock/GameClock.js';
+import type { GameTimer } from '../../core/clock/GameClock.js';
+
+/** `setTimeout` on game time (fires after `ms` of GAME time). Unref'd. */
+export function gameSetTimeout(fn: () => void, ms: number): GameTimer {
+  return gameClock.after(ms, fn);
+}
+
+/** `setInterval` on game time. Unref'd. */
+export function gameSetInterval(fn: () => void, ms: number): GameTimer {
+  return gameClock.every(ms, fn);
+}
+
+/** `clearTimeout` / `clearInterval` for game timers (null-safe). */
+export function gameClearTimer(t: GameTimer | null | undefined): void {
+  t?.cancel();
+}
