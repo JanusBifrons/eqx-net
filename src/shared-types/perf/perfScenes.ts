@@ -17,6 +17,9 @@ export interface PerfScene {
   room: Record<string, unknown> & { sceneScript: SceneStep[] };
   /** Pilot spawn. The pilot is a near-invulnerable, idle fighter. */
   spawn: { x: number; y: number };
+  /** The pilot's ship kind, when not a fighter (e.g. a capital so NPC main
+   *  guns can lock it). */
+  pilotKind?: string;
   /** Camera for the whole window (game space, Y up). */
   camera: { x: number; y: number; zoom: number };
   /** Measurement window = scene start → its `end` step (ms). */
@@ -128,6 +131,33 @@ export const PERF_SCENES: readonly PerfScene[] = [
     camera: { x: 2000, y: 0, zoom: 0.2 },
     durationMs: 30_000,
     minSwarm: 1,
+  },
+  {
+    // Shells as events, slice 3 (docs/architecture/shell-events.md): ten
+    // battleships, hostile, open fire on a capital pilot 15 km off (NPC
+    // capital turrets engage pilots and structures, never other NPCs, and a
+    // main gun never locks a fighter, hence the battleship pilot). Locks are
+    // capped at 2 s so the guns open inside the window. Run it with
+    // EQX_NAVAL_RANGE=real on both arms (+ the client's navalRange=real) and
+    // EQX_SHELL_EVENTS=1 on the head arm only: the verdict's rx KB/s is what
+    // moving naval shells off the per-tick snapshot saves.
+    id: 'naval-broadside',
+    title: 'Ten battleships fire on a capital pilot 15 km off',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      lockTimeCapS: 2,
+      pilotCapitals: true,
+      sceneScript: [
+        { atMs: 0, action: 'spawn', tag: 'battleline', kind: 'battleship', count: 10, x: 0, y: 0, spread: 6000, hostile: true },
+        { atMs: 30_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: 15_000 },
+    pilotKind: 'battleship',
+    camera: { x: 0, y: 12_000, zoom: 0.05 },
+    durationMs: 30_000,
+    minSwarm: 10,
   },
 ];
 

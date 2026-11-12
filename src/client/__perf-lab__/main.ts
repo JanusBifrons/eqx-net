@@ -31,7 +31,7 @@ for (const scene of PERF_SCENES) {
     testId: `lab-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`,
     spawnX: String(scene.spawn.x),
     spawnY: String(scene.spawn.y),
-    shipKind: 'fighter',
+    shipKind: scene.pilotKind ?? 'fighter',
     initialHull: '1000000',
     art: 'machined',
     fx: 'new',
