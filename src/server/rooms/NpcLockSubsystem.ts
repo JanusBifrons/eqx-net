@@ -46,6 +46,11 @@ export interface NpcLockDeps {
   /** testMode `lockTimeCapS` (room option): no NPC lock takes longer than
    *  this many seconds while in reach (0 = the first step). Undefined = off. */
   lockTimeCapS?(): number | undefined;
+  /** "An NPC that is attacking stays hostile" (owner 2026-11-12): called every
+   *  lock step while `npcId` is locking or holds a lock on `pilotId` (in reach,
+   *  trackable). The room re-stamps that NPC's hostility to the pilot, so the
+   *  30 s decay runs from when its own lock drops. */
+  refreshHostility?(npcId: string, pilotId: string): void;
 }
 
 interface Entry {
@@ -79,6 +84,7 @@ export class NpcLockSubsystem {
   private gen = 0;
   // Per-step scratch for the visitor (no closure allocation per pilot).
   private curState: PilotState | null = null;
+  private curPilotId = '';
   private curSignature = 1;
   private curInstant = false;
   private curCap: number | undefined = undefined;
@@ -157,6 +163,7 @@ export class NpcLockSubsystem {
         continue;
       }
       this.curState = st;
+      this.curPilotId = pilotId;
       this.curSignature = signatureFor(kind);
       this.curInstant = this.deps.instantLock?.(pilotId) === true;
       this.curCap = this.deps.lockTimeCapS?.();
@@ -225,6 +232,9 @@ export class NpcLockSubsystem {
     }
     e.wire.s = e.locked ? 2 : 1;
     e.wire.p = Math.round(e.progress * 100);
+    // Its own live lock keeps it hostile. Out of reach (or unable to track)
+    // the NPC isn't visited, so the refresh stops and the 30 s decay starts.
+    this.deps.refreshHostility?.(npcId, this.curPilotId);
   };
 
   /** The pilot (this.inputs dx/dy) is within reach of any lock profile. */

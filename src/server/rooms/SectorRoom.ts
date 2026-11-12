@@ -4181,7 +4181,24 @@ export class SectorRoom extends Room<SectorState> {
       },
       instantLock: (pid) => this.locks.isInstant(pid),
       lockTimeCapS: () => this.testLockTimeCapS,
+      refreshHostility: (npcId, pid) => this.refreshNpcAttackHostility(npcId, pid),
     });
+  }
+
+  /**
+   * "An NPC that is attacking stays hostile" (owner 2026-11-12): its own lock
+   * on a pilot and its own hits on them re-stamp its hostility, so it forgets
+   * the pilot 30 s (`FORGET_TICKS`) after it last hit them or held a lock on
+   * them. Refresh only: the NPC must already hold the pilot in its hostility
+   * ledger (`truce` = ledger only), so on-sight stance (robots) never turns
+   * into ledger hostility and a truce still ends it. No `bot_aggro` (the
+   * snapshot `drones[].hostile` bit carries it, #16). Alloc-free (#14): a Map
+   * lookup, and `markHostile` only overwrites an existing entry.
+   */
+  private refreshNpcAttackHostility(npcId: string, pid: string): void {
+    if (this.aiController.isEntityHostileToPlayer(npcId, pid, true)) {
+      this.aiController.markHostile(npcId, pid, this.serverTick);
+    }
   }
 
   private buildLockSubsystem(): LockSubsystem {
@@ -4789,6 +4806,8 @@ export class SectorRoom extends Room<SectorState> {
     }
     if (damage > 0) this.noteEconomicHit(targetId, shooterId);
     if (damage > 0) this.noteStandingHit(targetId, shooterId);
+    // An NPC's own hit on a pilot keeps it hostile (owner 2026-11-12).
+    if (damage > 0 && this.playerToSlot.has(targetId)) this.refreshNpcAttackHostility(shooterId, targetId);
     // C2 — a hit ends the target's break-in (one Map lookup when none).
     if (damage > 0 && this.breakIns.activeCount() > 0) this.breakIns.onActorDamaged(targetId);
     // R2.18 — a Shield Pylon is undamageable while its wall is up: route the hit
