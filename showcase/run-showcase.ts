@@ -26,9 +26,9 @@ import { judgeLoad, sampleHostLoad } from './hostLoad.js';
 import { PHONE_LANDSCAPE, Recorder, type RecordResult } from './recorder.js';
 import { expandShotPatterns } from './shotFilter.js';
 import { SMOOTH, smoothnessProblems, smoothScore, type TakeStats } from './smoothness.js';
-import { cadenceProblem } from './cadence.js';
+import { cadenceProblem, stallProblem, worldStalls } from './cadence.js';
 import { measureWobble, wobbleProblem, wobbleSummary, netProblem, netSummary, poseHealth, poseProblem, poseSummary } from './wobble.js';
-import { encodeClip, encodeCard, assemble, qaClip, deviceLayout, encodedUniqueFps } from './compositor.js';
+import { encodeClip, encodeCard, assemble, qaClip, deviceLayout, encodedUniqueFps, clipFramePsnr } from './compositor.js';
 import { captionOverlay, deviceFrame, endCard, sectionCard, titleCard } from './cards.js';
 import { browserPid, clearTracked, gitSha, reapStale, resolveFfmpeg, trackPid } from './tools.js';
 
@@ -348,6 +348,13 @@ async function takeWithRetry(
   const ep = Number.isFinite(encUnique) ? cadenceProblem('encoded', encUnique, SMOOTH[fps]!.minFps) : 'encoded cadence not measured (ffprobe failed)';
   if (ep) problems.push(ep);
   log(`  encoded: ${encUnique} different frames/s (captured ${best.rec.uniqueFps})`);
+  // Where the WORLD froze mid-motion (2026-11-12): byte-level cadence misses
+  // it when HUD text changes on a frozen frame (the long-guns zoom chug).
+  const psnr = await clipFramePsnr(mp4).catch(() => null);
+  const stalls = psnr ? worldStalls(psnr) : null;
+  const sp = stalls ? stallProblem(stalls, fps) : 'world stalls not measured (ffmpeg psnr failed)';
+  if (sp) problems.push(sp);
+  if (stalls) log(`  world: ${stalls.stalls} stalls mid-motion, longest ${stalls.longest} frames (${stalls.motionPairs} moving frame pairs)`);
   return {
     id: shot.id,
     sha,
@@ -358,6 +365,7 @@ async function takeWithRetry(
     uniqueFps: best.rec.uniqueFps,
     longestRepeat: best.rec.longestRepeat,
     encodedUniqueFps: encUnique,
+    ...(stalls ? { worldStalls: stalls } : {}),
     gapP95Ms: best.rec.gapP95Ms,
     gapMaxMs: best.rec.gapMaxMs,
     qa: { ok: problems.length === 0, problems },
