@@ -58,6 +58,9 @@ export interface OneFrameTriggerSurface {
    *  consume-after-render contract: the renderer spawns the pooled screenspace
    *  icon, then this clears so the next frame doesn't re-spawn duplicates. */
   pendingLevelUps?: { length: number };
+  /** Shells as events (slice 2b): `shell_end` impact bursts, flat triples.
+   *  Same consume-after-render contract. */
+  pendingShellEnds?: { length: number };
 }
 
 /**
@@ -91,4 +94,7 @@ export function consumeOneFrameTriggers(
   // pendingLevelUps — Phase 4 WS-B1 level-up icon queue. SAME consume-after-
   // render gate: clearing on a skip frame silently drops the level-up icon.
   if (mirror.pendingLevelUps) mirror.pendingLevelUps.length = 0;
+  // pendingShellEnds — shells as events, slice 2b: clearing on a skip frame
+  // would drop a shell's only impact burst.
+  if (mirror.pendingShellEnds) mirror.pendingShellEnds.length = 0;
 }

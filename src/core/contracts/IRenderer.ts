@@ -397,6 +397,10 @@ export interface ProjectileRenderState {
   beam?: { toX: number; toY: number };
   /** Weapon catalogue id — drives visual style (e.g. 'laser' → bolt graphic). */
   weaponId?: string;
+  /** Shells as events (slice 2b): a naval shell drawn from its `shell_salvo`
+   *  (`ShellSalvoStore.place`), not from snapshots: snapshot sync and the
+   *  per-frame advance leave it alone. */
+  event?: boolean;
 }
 
 /** One naval shell as its `shell_salvo` described it (game space). */
@@ -409,6 +413,17 @@ export interface ShellSalvoRenderInfo {
   /** Origin (quantised spawn point). */
   x0: number;
   y0: number;
+  /** The shell's own radius (its gun's), for the impact burst size. */
+  wr: number;
+  /** Velocity (u/s), owner on the wire and gun, for drawing it. */
+  vx: number;
+  vy: number;
+  o: string;
+  w: string;
+  /** The hit (`shell_end`): its tick and point, or `endTick` -1 while flying. */
+  endTick: number;
+  ex: number;
+  ey: number;
 }
 
 export interface RenderMirror {
@@ -485,6 +500,10 @@ export interface RenderMirror {
    *  as its `projectiles` entry. Present only when the welcome said
    *  `shellEvents: true`. Pooled records, mutated in place. */
   shellSalvos?: Map<string, ShellSalvoRenderInfo>;
+  /** Shells as events (slice 2b): `shell_end` hits awaiting their impact
+   *  burst, flat `[x, y, shellRadius]` triples in game space. One-frame
+   *  queue: cleared by `consumeOneFrameTriggers` after a render. */
+  pendingShellEnds?: number[];
   /** In-flight heat-seeking missiles. Server-authoritative pose mirrored
    *  from `SnapshotMessage.missiles[]` (per-recipient AOI-filtered).
    *  Keyed by the stable per-sector missileId. The renderer draws the

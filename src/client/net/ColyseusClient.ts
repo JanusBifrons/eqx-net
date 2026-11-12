@@ -180,7 +180,10 @@ import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
   interpolateSwarmPose,
   type InterpolatedPose,
+  DISPLAY_DELAY_MS as SHELL_DISPLAY_DELAY_MS,
 } from './swarmInterpolation';
+/** One server tick in ms (shells as events: the display-tick estimate). */
+const SHELL_TICK_MS = 1000 / 60;
 import { updateAnchor } from './clockAnchor';
 import { getSector } from '@core/galaxy/galaxy';
 import { AiController, type AiIntentSink } from '@core/ai/AiController';
@@ -2044,7 +2047,7 @@ export class ColyseusGameClient {
     room.onMessage('shell_end', (raw: unknown) => {
       if (!this._shellEvents) return;
       const r = ShellEndSchema.safeParse(raw);
-      if (r.success) this._shellStore.applyEnd(r.data);
+      if (r.success) this._shellStore.applyEnd(r.data, this.mirror.pendingShellEnds ??= []);
     });
     room.onMessage('shell_blast', (raw: unknown) => {
       const result = ShellBlastSchema.safeParse(raw);
@@ -3130,7 +3133,7 @@ export class ColyseusGameClient {
     this.syncProjectiles(snap.projectiles);
     if (this._shellEvents) {
       this._shellStore.applyKeyframe(snap.shellKey);
-      this._shellStore.sweep(snap.serverTick);
+      this._shellStore.sweep(snap.serverTick - 120); // backstop; place() ends shells on the display clock
     }
 
     // Missiles: per-recipient AOI-filtered slice. Sliding-window apply
@@ -4562,6 +4565,14 @@ export class ColyseusGameClient {
     // Ghost projectiles — advance and write to mirror.projectiles.
     if (this.mirror.projectiles) {
       this.ghostManager.update(this.lastFrameMs, this.mirror.projectiles);
+      // Shells as events (slice 2b): draw salvo shells at the display tick
+      // (server tick estimate minus the remote-entity display delay), and
+      // burst them when the display reaches their hit.
+      if (this._shellEvents) {
+        const displayTick = this.clockAnchorServerTick
+          + (this.clock.now() - this.clockAnchorPerfNow) / SHELL_TICK_MS - SHELL_DISPLAY_DELAY_MS / SHELL_TICK_MS;
+        this._shellStore.place(this.mirror.projectiles, displayTick, this.mirror.pendingShellEnds ??= []);
+      }
 
       // Authoritative projectile extrapolation. Snapshots arrive at 20 Hz, but
       // we render at RAF cadence — without per-frame integration the bolt is
@@ -4570,7 +4581,7 @@ export class ColyseusGameClient {
       // exact between snapshots. Ghosts are advanced by GhostManager above.
       const dtSec = this.lastFrameMs / 1000;
       for (const entry of this.mirror.projectiles.values()) {
-        if (entry.isGhost) continue;
+        if (entry.isGhost || entry.event === true) continue;
         entry.x += entry.vx * dtSec;
         entry.y += entry.vy * dtSec;
       }

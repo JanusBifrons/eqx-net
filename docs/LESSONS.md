@@ -2883,3 +2883,9 @@ Commit: perf/count-budgets (PR #356)
 - **Cause:** headless Chrome draws the Machined scene at ~3 fps, so a 1,600 u/s bolt is first seen ~1,000 u past its muzzle, and `MountVisualManager.noteShotNear` only matched a shot within ~120 u of a gun tip. A player hits the same after any frame gap over ~75 ms: every shot fired in that gap loses its recoil, flash and heat.
 - **Fix:** when no tip is close, trace the shot back along its own velocity (up to 1.5 s of flight) and kick the gun whose tip lies on that line, nearest behind the shot. Lock: `MountVisualManager.reactions.test.ts`.
 - **Rule:** a renderer match keyed on "first seen near X" must survive a long frame. Measure the test page's real frame rate before blaming game timing (a 1 s rAF count in `page.evaluate` is enough).
+
+## 2026-11-12 — Some files have MIXED line endings; a small edit can rewrite hundreds of lines
+
+- **Symptom:** a 31-line edit to `src/client/net/ColyseusClient.ts` showed as 895 changed lines. `git ls-files --eol` reported `i/mixed`: the committed file has 432 CRLF lines out of 6,752. The Edit tool rewrote the whole file as LF; `git checkout` / `git show >` produce all-CRLF; either way the commit would churn every untouched CRLF line.
+- **Trap:** in Git Bash, `grep -c $'\r'` reported 0 CRs on these files, so "compare CR counts" (the 2026-11-11 handoff advice) says nothing is wrong. `tr -cd '\r' < f | wc -c` counts correctly. A shell `printf` of that advice wrote a real carriage return into this file once (git then called it binary): write such text from a script, not `printf`.
+- **Rule:** before every commit, compare `git diff --numstat` with `git diff -w --ignore-cr-at-eol --numstat`. If they differ, rebuild the file from `git cat-file -p HEAD:<path>`, keeping each unchanged line's original bytes, and only add your new lines. For a one-line change to a mixed file, edit it with an exact byte-level replace (read and write as latin1) instead of the Edit tool.
