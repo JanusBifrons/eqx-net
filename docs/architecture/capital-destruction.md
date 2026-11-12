@@ -158,7 +158,9 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
   falls back to the attacker's position. At death it goes into the hull's 1×
   Pixi-up frame and onto the outline (`hullLocalKillPoint` →
   `projectToOutline`, fracture v3: "Why isn't the red dot on the border of
-  the ship?").
+  the ship?"). Fracture v4: the primary line always crosses the hull; a hit
+  on a bow or stern tip breaks that end off a seeded 15–35 % of the hull
+  length aft of the tip, never along the keel.
 - **Damage inputs.** `killBlowDamage` = the final hit ÷ max hull;
   `recentDamageRate` = damage over the last ~3 s (a 6-bucket ring,
   `WRECK_RECENT_DAMAGE_TICKS`) ÷ max hull. Entries are pooled per capital: no

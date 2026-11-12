@@ -483,7 +483,7 @@ describe('fractureHull', () => {
       for (let seed = 0; seed < 20; seed++) {
         const kp = { x: ((seed * 397) % 3000) - 1500, y: ((seed * 911) % 6000) - 3000 };
         const plan = fracturePlan({ ...battleshipInput(seed), killPoint: kp, snapChance: 0 });
-        expect(distToOutline(outline, plan.primary!.point)).toBeLessThanOrEqual(FRACTURE_QUANTUM);
+        expect(distToOutline(outline, plan.killPoint)).toBeLessThanOrEqual(FRACTURE_QUANTUM);
       }
     });
 
@@ -502,12 +502,36 @@ describe('fractureHull', () => {
       }
     });
 
-    it('a hit on a bow or stern tip still splits the hull in two big parts on a snap', () => {
+    it('v4: the primary line always runs ACROSS the hull (±35° of square to the keel), tips included', () => {
+      // Owner review: a bow-tip hit split the ship along its keel. Both test
+      // hulls have their keel on the y axis.
+      const maxAlong = Math.sin((35 * Math.PI) / 180);
+      for (const h of [bs, hull('heavy-cruiser')]) {
+        const pts: V[] = [{ x: 0, y: -1e5 }, { x: 0, y: 1e5 }];
+        for (let i = 0; i < h.length; i++) {
+          const a = h[i]!;
+          const b = h[(i + 1) % h.length]!;
+          pts.push({ x: a[0], y: a[1] }, { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2 });
+        }
+        for (const kp of pts) {
+          for (let seed = 0; seed < 6; seed++) {
+            const { dir } = fracturePlan({ hull: h, seed, killPoint: kp, maxPieces: 24 }).primary!;
+            expect(Math.abs(dir.y), `kill ${kp.x},${kp.y} seed ${seed}`).toBeLessThanOrEqual(maxAlong);
+          }
+        }
+      }
+    });
+
+    it('a hit on a bow or stern tip breaks that end off across the hull; a snap gives two sizable pieces', () => {
       const total = tupleArea(bs);
       for (const far of [{ x: 0, y: -1e5 }, { x: 0, y: 1e5 }]) {
         for (let seed = 0; seed < 10; seed++) {
           const pieces = fractureHull({ hull: bs, seed, killPoint: far, maxPieces: FRACTURE_MAX_PIECES, snapChance: 1, killBlowDamage: 1, recentDamageRate: 1 });
-          expect(pieces.filter((p) => p.area >= 0.1 * total).length).toBe(2);
+          expect(pieces.length).toBe(2);
+          for (const p of pieces) expect(p.area).toBeGreaterThan(0.03 * total);
+          // Split across, not along: the halves sit fore and aft of each other.
+          const [a, b] = pieces;
+          expect(Math.abs(a!.centroid.y - b!.centroid.y)).toBeGreaterThan(5 * Math.abs(a!.centroid.x - b!.centroid.x));
         }
       }
     });
@@ -563,8 +587,12 @@ describe('fractureHull', () => {
 // v2: { pieces: 24, hash: 2495569367 }; damage { shatter 42 / 2123664143, snap 2 / 3881272329 }.
 // v3: the kill point is projected onto the hull outline (owner: "Why isn't
 // the red dot on the border of the ship?"), the seed pair moves just inside
-// the edge, and a tip hit's primary line runs through the hull's middle.
-const GOLDEN = { version: 3, pieces: 24, hash: 4028792851 };
+// the edge (a v3 tip hit ran its line through the hull's middle, along the
+// keel; v4 replaced that).
+// v4: only a tip hit's primary line changed (across the hull, aft of the tip,
+// never along the keel); the new plan draw comes last, so side-hit outputs
+// (these goldens) are unchanged apart from the version.
+const GOLDEN = { version: 4, pieces: 24, hash: 4028792851 };
 const GOLDEN_DAMAGE = { shatter: { pieces: 42, hash: 797705088 }, snap: { pieces: 2, hash: 4043344841 } };
 
 function hashPieces(pieces: ReadonlyArray<FracturePiece>): number {

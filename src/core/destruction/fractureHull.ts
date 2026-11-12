@@ -37,9 +37,12 @@ import type { Vec2 } from '../swarm/asteroidShape.js';
  *  damage-driven piece count.
  *  v3: the kill point is projected onto the hull outline first (a real hit
  *  lands on the hull's edge, never inside it); the seed pair sits just inside
- *  the edge; a primary line that would only clip a sliver off a bow or stern
- *  tip turns to run through the hull's middle instead. */
-export const FRACTURE_ALGO_VERSION = 3;
+ *  the edge.
+ *  v4: the primary line ALWAYS runs across the hull (owner review: a bow-tip
+ *  hit split the ship lengthwise down the keel). For a bow or stern tip hit
+ *  it crosses the hull a seeded 15–35 % of the hull's length aft of that tip,
+ *  so the end breaks off as a real piece; one more plan draw (`aftDraw`). */
+export const FRACTURE_ALGO_VERSION = 4;
 /** Default chance that a hull snaps cleanly in two along the primary line
  *  instead of shattering (owner: "just make it a chance"). */
 export const FRACTURE_SNAP_CHANCE = 0.2;
@@ -76,10 +79,13 @@ const DAMAGE_KNEE = 0.35;
 const COUNT_SPREAD = 0.5;
 /** Fewest pieces a (non-snap) damage-driven fracture aims for. */
 const MIN_TARGET = 3;
-/** v3: a primary line across the keel that leaves less than this fraction of
- *  the hull on one side (a hit near a bow or stern tip) turns to run from the
- *  kill point through the hull's middle instead. */
+/** A primary line through the kill point that leaves less than this fraction
+ *  of the hull on one side marks a bow or stern TIP hit. */
 const PRIMARY_MIN_SIDE = 0.03;
+/** v4: a tip hit's line crosses the hull this far (fraction of the hull's
+ *  length along the keel) aft of the tip: MIN + seeded × SPAN. */
+const TIP_SECTION_MIN = 0.15;
+const TIP_SECTION_SPAN = 0.2;
 
 const EDGE_HULL = 0;
 const EDGE_VORONOI = 1;
@@ -130,6 +136,10 @@ export interface FracturePlan {
    *  outline) along unit `dir`, roughly across the keel (through the hull's
    *  middle for a hit on a bow or stern tip). Null when the cap is 1. */
   readonly primary: { readonly point: Vec2; readonly dir: Vec2 } | null;
+  /** The kill point the fracture uses: the input projected onto the hull
+   *  outline (v3). For a side hit the primary line runs through it; for a
+   *  bow or stern tip hit the line crosses the hull aft of it (v4). */
+  readonly killPoint: Vec2;
 }
 
 export interface FracturePiece {
@@ -234,46 +244,39 @@ function planFor(input: FractureInput, hull: P[]): FracturePlan {
   const snapDraw = rng.u32() / 4294967296;
   const tiltDraw = (rng.u32() % 2001) - 1000; // integer in [-1000, 1000]
   const countDraw = rng.u32() / 4294967296;
+  const aftDraw = rng.u32() / 4294967296; // v4, always drawn (fixed order)
 
   // Primary line: through the kill point (on the outline, v3), across the
   // keel, tilted by the seed.
   let primary: FracturePlan['primary'] = null;
+  const kill = hull.length > 0 ? projectRing(hull, input.killPoint.x, input.killPoint.y) : { x: q(input.killPoint.x), y: q(input.killPoint.y) };
   if (cap >= 2 && hull.length >= 3) {
-    const kill = projectRing(hull, input.killPoint.x, input.killPoint.y);
     const keel = keelAxis(hull);
     const t = (tiltDraw / 1000) * PRIMARY_TILT;
     let dx = -keel.y + keel.x * t;
     let dy = keel.x + keel.y * t;
-    let len = Math.sqrt(dx * dx + dy * dy);
+    const len = Math.sqrt(dx * dx + dy * dy);
     dx /= len;
     dy /= len;
-    // A hit near a bow or stern tip: a line across the keel there clips
-    // only a sliver. Run it from the kill point through the hull's middle
-    // (vertex mean) instead, keeping the seeded tilt.
+    // A hit near a bow or stern tip: a line through it clips only a sliver.
+    // Keep the line ACROSS the hull (never along the keel, v4) and move it a
+    // seeded 15–35 % of the hull's length aft of that tip, so the end breaks
+    // off as a real piece.
+    let point: Vec2 = kill;
     if (minSideFrac(hull, kill, dx, dy) < PRIMARY_MIN_SIDE) {
-      let mx = 0;
-      let my = 0;
+      let lo = Infinity;
+      let hi = -Infinity;
       for (const p of hull) {
-        mx += p.x;
-        my += p.y;
+        const a = p.x * keel.x + p.y * keel.y;
+        if (a < lo) lo = a;
+        if (a > hi) hi = a;
       }
-      mx /= hull.length;
-      my /= hull.length;
-      let ux = mx - kill.x;
-      let uy = my - kill.y;
-      len = Math.sqrt(ux * ux + uy * uy);
-      if (len > 0) {
-        ux /= len;
-        uy /= len;
-        const h = t * 0.05;
-        dx = ux - uy * h;
-        dy = uy + ux * h;
-        len = Math.sqrt(dx * dx + dy * dy);
-        dx /= len;
-        dy /= len;
-      }
+      const kp = kill.x * keel.x + kill.y * keel.y;
+      const back = (TIP_SECTION_MIN + TIP_SECTION_SPAN * aftDraw) * (hi - lo);
+      const target = kp >= (lo + hi) / 2 ? hi - back : lo + back;
+      point = { x: q(kill.x + keel.x * (target - kp)), y: q(kill.y + keel.y * (target - kp)) };
     }
-    primary = { point: kill, dir: { x: dx, y: dy } };
+    primary = { point, dir: { x: dx, y: dy } };
   }
 
   const chance = input.snapChance ?? FRACTURE_SNAP_CHANCE;
@@ -297,7 +300,7 @@ function planFor(input: FractureInput, hull: P[]): FracturePlan {
     const want = MIN_TARGET + Math.floor(sizeF * (FRACTURE_MAX_PIECES - MIN_TARGET) * x * x);
     targetPieces = Math.max(1, Math.min(cap, want));
   }
-  return { snap, targetPieces, primary };
+  return { snap, targetPieces, primary, killPoint: kill };
 }
 
 /** Nearest point on the ring's edges to (x, y), snapped to the quantum. */
@@ -437,11 +440,12 @@ function sampleSeeds(
     const off = 0.5 * MIN_SEED_SEP_FRAC * s;
     const nx = -primary.dir.y * off;
     const ny = primary.dir.x * off;
-    let cx = kill.x;
-    let cy = kill.y;
+    const lp = primary.point;
+    let cx = lp.x;
+    let cy = lp.y;
     for (const sg of [1, -1]) {
-      const ix = kill.x + sg * primary.dir.x * 2 * off;
-      const iy = kill.y + sg * primary.dir.y * 2 * off;
+      const ix = lp.x + sg * primary.dir.x * 2 * off;
+      const iy = lp.y + sg * primary.dir.y * 2 * off;
       if (pointInRing(hull, ix, iy)) {
         cx = ix;
         cy = iy;
