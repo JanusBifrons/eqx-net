@@ -154,6 +154,16 @@ test('spectator input is pan, not thrust — the ship does NOT move on W', async
       return null;
     });
 
+  // The parked hull reaches the client a few patches after Spectate (later on
+  // a CI runner), so wait for it rather than read it at a fixed delay.
+  await page.waitForFunction(
+    () => {
+      const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; lingeringShips?: Map<string, { ownerPlayerId?: string }> } } }).__eqxClient?.mirror;
+      for (const e of m?.lingeringShips?.values() ?? []) if (e.ownerPlayerId === m?.localPlayerId) return true;
+      return false;
+    }, undefined,
+    { timeout: 10_000 },
+  );
   // Let the ship settle (any residual velocity decays), then sample.
   await page.waitForTimeout(600);
   const before = await parkedPos();

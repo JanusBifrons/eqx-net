@@ -44,8 +44,10 @@ test('after Spectate the client never re-predicts its own ship', async ({ browse
       __eqxClient: { mirror: { localPlayerId: string; ships: Map<string, { x: number; y: number }>; lingeringShips?: Map<string, { ownerPlayerId?: string }> }; predWorld?: { hasShip(id: string): boolean } };
       __eqxStore: { getState(): { pilotMode?: string } };
       __phantomLog: Array<{ spectating: boolean; body: boolean; entry: boolean }>;
+      __phantomStop?: boolean;
     };
     g.__phantomLog = [];
+    g.__phantomStop = false;
     const tick = (): void => {
       const c = g.__eqxClient;
       const id = c.mirror.localPlayerId;
@@ -54,7 +56,9 @@ test('after Spectate the client never re-predicts its own ship', async ({ browse
         body: c.predWorld?.hasShip(id) === true,
         entry: c.mirror.ships.has(id),
       });
-      if (g.__phantomLog.length < 600) requestAnimationFrame(tick);
+      // Until the test stops it: a fixed 600-frame cap ran out before Spectate
+      // on a slow CI runner (19 spectating frames sampled).
+      if (!g.__phantomStop) requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
   });
@@ -71,7 +75,11 @@ test('after Spectate the client never re-predicts its own ship', async ({ browse
   }, undefined, { timeout: 10_000 });
   await page.waitForTimeout(3000);
 
-  const log = await page.evaluate(() => (globalThis as unknown as { __phantomLog: Array<{ spectating: boolean; body: boolean; entry: boolean }> }).__phantomLog);
+  const log = await page.evaluate(() => {
+    const g = globalThis as unknown as { __phantomLog: Array<{ spectating: boolean; body: boolean; entry: boolean }>; __phantomStop?: boolean };
+    g.__phantomStop = true;
+    return g.__phantomLog;
+  });
   const spectatingFrames = log.filter((f) => f.spectating);
   expect(spectatingFrames.length, 'frames sampled while spectating').toBeGreaterThan(30);
   const withBody = spectatingFrames.filter((f) => f.body).length;
