@@ -86,9 +86,13 @@ export const capitalLineup: Shot = {
   // Owner (2026-11-12): "The shot should start from a fighter and zoom out."
   // Open close on the pilot's own parked fighter at normal fighter zoom, hold,
   // then pull slowly back until the whole line-up and the base are in frame.
+  // smoothMs is the camera spring's time constant, not the move's length: the
+  // move takes ~2.4x it. 9000 was still a quarter short when the take ended
+  // (hulls cropped, read as a zoom in; review 2026-11-12). 3500 lands it ~10 s
+  // in and holds on the whole fleet. Lock: showcase/cameraSettles.test.ts.
   camera: [
     { atMs: 0, smoothMs: 0, shot: { kind: 'track', target: 'local', zoom: 1.0 } },
-    { atMs: 2000, smoothMs: 9000, shot: { kind: 'frame', group: 'all', padding: 0.2, maxZoom: 3 } },
+    { atMs: 2000, smoothMs: 3500, shot: { kind: 'frame', group: 'all', padding: 0.2, maxZoom: 3 } },
   ],
 };
 
