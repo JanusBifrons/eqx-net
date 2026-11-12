@@ -71,9 +71,10 @@ export interface ProjectileRecord {
 
 /**
  * A projectile moves by the WORKER ticks that passed since its last step, not
- * one step per room update: under load the room loop can fall to ~25 Hz while
- * the physics worker keeps 60 Hz, and bolts then slowed down relative to the
- * ships (2026-11-12, `missile-frigate-homing` E2E). Each update steps
+ * one step per room update: under load the room loop can run slower than the
+ * physics worker (measured ~25 Hz vs ~34 Hz on a loaded E2E host), and bolts
+ * then slowed down relative to the ships (2026-11-12, `missile-frigate-homing`
+ * E2E). Each update steps
  * `max(1, ticks since the last step)`, so a room that keeps pace behaves as
  * before; the swept collision covers a long step (no tunnelling). Capped so a
  * hard stall doesn't teleport anything.

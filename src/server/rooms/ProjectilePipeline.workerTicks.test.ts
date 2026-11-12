@@ -3,8 +3,9 @@
  * (owner decision 2026-11-12, "game fix, small").
  *
  * Found by the quarantined `missile-frigate-homing` E2E (2026-11-12): on a
- * loaded host the E2E server's room loop fell to ~25 Hz while the physics
- * worker kept 60 Hz, so heat-seekers flew ~150-180 u/s instead of 400 and
+ * loaded host the E2E server's room loop ran at ~25 Hz, slower than the
+ * physics worker (~34 Hz, itself behind real time), so heat-seekers flew
+ * ~150-180 u/s instead of 400 and
  * never reached a target 1,000 u away in time. Each room `update()` moved a
  * missile or bolt ONE 1/60 s step however many worker ticks had passed, so
  * under load they slowed down relative to the ships. Naval shells already

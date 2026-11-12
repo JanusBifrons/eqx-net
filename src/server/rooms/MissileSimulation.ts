@@ -389,9 +389,9 @@ export class MissileSimulation {
    */
   advance(): void {
     // A missile steps once per WORKER tick that passed since its last step,
-    // not once per room update: under load the room loop can fall to ~25 Hz
-    // while the physics worker keeps 60 Hz, and missiles flew at a fraction of
-    // their speed (2026-11-12, missile-frigate-homing E2E). `max(1, …)` keeps
+    // not once per room update: under load the room loop can run slower than
+    // the physics worker (~25 Hz vs ~34 Hz on a loaded E2E host), so missiles
+    // fell behind the ships (2026-11-12, missile-frigate-homing E2E). `max(1, …)` keeps
     // a room that keeps pace exactly as before (see ProjectilePipeline
     // MAX_CATCH_UP_TICKS for the same rule on bolts).
     const serverTick = this.deps.serverTick();
