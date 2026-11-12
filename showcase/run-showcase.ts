@@ -30,6 +30,7 @@ import { cadenceProblem, stallProblem, worldStalls } from './cadence.js';
 import { measureWobble, wobbleProblem, wobbleSummary, netProblem, netSummary, poseHealth, poseProblem, poseSummary } from './wobble.js';
 import { encodeClip, encodeCard, assemble, qaClip, deviceLayout, encodedUniqueFps, clipFramePsnr } from './compositor.js';
 import { captionOverlay, deviceFrame, endCard, sectionCard, titleCard } from './cards.js';
+import { captionBottomPx } from './captionPlacement.js';
 import { browserPid, clearTracked, gitSha, reapStale, resolveFfmpeg, trackPid } from './tools.js';
 
 interface Args {
@@ -324,7 +325,9 @@ async function takeWithRetry(
   let caption: string | null = null;
   if (layout !== 'none') {
     caption = path.join(clipDir, 'caption.png');
-    await captionOverlay(capBrowser, caption, shot.title, shot.caption, layout);
+    // Spectator takes show the build bar along the bottom: the lower-third
+    // sits above it (review 2026-11-12). Phone layouts never sit there.
+    await captionOverlay(capBrowser, caption, shot.title, shot.caption, layout, captionBottomPx(best.rec.bottomHudTop));
   }
   const dl = deviceLayout(viewport, viewportAspect(shot));
   let device: { layout: NonNullable<typeof dl>; framePng: string } | null = null;
@@ -370,6 +373,7 @@ async function takeWithRetry(
     gapMaxMs: best.rec.gapMaxMs,
     qa: { ok: problems.length === 0, problems },
     hostLoad: best.hostLoad,
+    bottomHudTop: best.rec.bottomHudTop,
   };
 }
 
