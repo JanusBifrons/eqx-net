@@ -109,3 +109,20 @@ describe('client game time follows the sector speed (time scale 4a)', () => {
     expect(c.mirror.ships.get('p1')!.x).toBeCloseTo(100 + 60 * 0.008, 3);
   });
 });
+
+describe('world motion between snapshots follows the speed (time scale)', () => {
+  it('a projectile is extrapolated by GAME time: half as far per frame at 0.5×', async () => {
+    const clock = new MockClock(0);
+    const client = new ColyseusGameClient(clock);
+    const c = asInternals(client) as Internals & { mirror: { projectiles?: Map<string, { x: number; y: number; vx: number; vy: number }> } };
+    c.predWorld = await PhysicsWorld.create();
+    c.predWorld.spawnShip('p1', 0, 0, 'interceptor');
+    c.reconciler = { lerpOffset: { x: 0, y: 0 }, lerpAngleOffset: 0, isLerping: false, advanceLerp() {} };
+    c.mirror.localPlayerId = 'p1';
+    c.mirror.projectiles = new Map([['b1', { x: 0, y: 0, vx: 100, vy: 0 }]]);
+    c.lastFrameMs = 100;
+    c.gameClock.setScale(0.5);
+    c.updateMirror();
+    expect(c.mirror.projectiles.get('b1')!.x).toBeCloseTo(5, 5); // 100 u/s × 50 game ms
+  });
+});

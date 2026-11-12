@@ -267,3 +267,19 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   71 NPCs across the dial), spectated with a held camera on the battle (record
   as is: a held camera only in spectator mode). Take: 0/462 corrected, 60
   different fps, 0 stalls, QA passed. Hostile review #3 running.
+- 2026-11-12: hostile review #3 (fleet-fight dial): action on screen at every
+  speed, chip and capsule clean, nothing visibly kept its old speed.
+  Fixed (a real time-scale bug): the client advanced world motion between
+  snapshots with the WALL frame time (projectile extrapolation, ghost bolts,
+  the drawn turret slew). At 0.4× bolts flew at full speed between snapshots
+  and snapped back, so slow motion looked only ~25–30 % calmer.
+  `gameFrameMs()` (lastFrameMs × speed) now drives those steps; visual error
+  smoothing stays on wall time. The lint wall can't see a `dt` variable, so
+  this is now a CLAUDE.md rule. Also: the chip is a pill (it read as stray
+  text). Notes for the owner, not this stream's code:
+  - a "LOCKING 37%" overlay froze ~2.8 s in spectator view; locks step on
+    server ticks (game time), so this is the idle pilot's auto-lock holding,
+    and lock overlays in spectator view are existing behaviour;
+  - the perf scene spawns reinforcement waves (looks like a reset);
+  - overlapping damage numbers merge into garbage values ("39648");
+  - the caption box covers the hotbar.

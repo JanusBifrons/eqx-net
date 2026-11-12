@@ -350,6 +350,17 @@ export class ColyseusGameClient {
    * server late and every one is a prediction correction (measured: 11–17 per
    * take at 2× before this). Exactly `leadTicks` at 1×.
    */
+  /**
+   * This frame's length in GAME ms (time scale). Per-frame steps that move the
+   * WORLD (projectile extrapolation, ghost bolts, the drawn turret slew) take
+   * this, so they follow the sector's speed; visual error smoothing (the
+   * reconciler lerp, offset springs) stays on wall `lastFrameMs`. Exactly
+   * `lastFrameMs` at 1×.
+   */
+  private gameFrameMs(): number {
+    return this.lastFrameMs * this.gameClock.scale;
+  }
+
   private gameLeadTicks(): number {
     return this.leadTicks * this.gameClock.scale;
   }
@@ -4559,7 +4570,7 @@ export class ColyseusGameClient {
         // Turret angles: carried forward between 20 Hz snapshots, at the same
         // single per-frame resolve as the pose (displayMountAngles.ts).
         if (entry.kind === 1 && (entry.mountAngles || entry.displayMountAngles)) {
-          slewDisplayMountAngles(entry, entry.shipKind ? getShipKind(entry.shipKind).mounts : undefined, this.lastFrameMs / 1000);
+          slewDisplayMountAngles(entry, entry.shipKind ? getShipKind(entry.shipKind).mounts : undefined, this.gameFrameMs() / 1000);
         }
       }    }
 
@@ -4634,7 +4645,7 @@ export class ColyseusGameClient {
 
     // Ghost projectiles — advance and write to mirror.projectiles.
     if (this.mirror.projectiles) {
-      this.ghostManager.update(this.lastFrameMs, this.mirror.projectiles);
+      this.ghostManager.update(this.gameFrameMs(), this.mirror.projectiles);
       // Shells as events (slice 2b): draw salvo shells at the display tick
       // (server tick estimate minus the remote-entity display delay), and
       // burst them when the display reaches their hit.
@@ -4649,7 +4660,9 @@ export class ColyseusGameClient {
       // frozen between snapshots and visibly stutters. Server-side projectiles
       // are constant-velocity (no forces), so straight-line extrapolation is
       // exact between snapshots. Ghosts are advanced by GhostManager above.
-      const dtSec = this.lastFrameMs / 1000;
+      // GAME seconds (time scale): at 0.4× a bolt drawn on wall dt flew at full
+      // speed between snapshots and snapped back (hostile review 2026-11-12).
+      const dtSec = this.gameFrameMs() / 1000;
       for (const entry of this.mirror.projectiles.values()) {
         if (entry.isGhost || entry.event === true) continue;
         entry.x += entry.vx * dtSec;
