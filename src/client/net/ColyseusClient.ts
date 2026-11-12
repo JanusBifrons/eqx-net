@@ -3837,6 +3837,8 @@ export class ColyseusGameClient {
     // keyed) so they don't collide with the active hull's playerId in
     // `mirror.ships`.
     if (!this.mirror.lingeringShips) this.mirror.lingeringShips = new Map();
+    const spectating = useUIStore.getState().pilotMode === 'spectator';
+    const localShipInstanceId = this.mirror.localShipInstanceId ?? null;
     for (const [shipInstanceId, ship] of ships.entries()) {
       const sh = ship as Record<string, unknown>;
       // Skip all dead ships — killEntity handles immediate cleanup when the destroy
@@ -3850,9 +3852,18 @@ export class ColyseusGameClient {
       // Plan: crispy-kazoo, Commit 8 — local-self exemption.
       // Joiner's OWN ship MUST stay in `mirror.ships` during the
       // pending-join handshake. Matching exemption lives in
-      // `snapshotShipRouter.routeSnapshotShipStates`.
+      // `snapshotShipRouter.routeSnapshotShipStates`, and it has the same two
+      // limits: only the welcome ship (a displaced own hull is parked, not
+      // joining), and never while spectating, when our inactive entry is the
+      // hull we PARKED. Without them a Spectate re-seeded `mirror.ships[localId]`
+      // from this pose-less schema entry (x/y default 0) and respawned a
+      // predicted local ship at the world origin that no snapshot corrects
+      // (2026-11-12 capital-turrets take: the parked cruiser drawn frozen
+      // inside the battleship). Lock: spectateOwnHullDrawnPose.test.ts.
       const isOwnShip = playerId === this.mirror.localPlayerId;
-      if (!isActive && !isOwnShip) {
+      const isOwnPendingJoin = isOwnShip && !spectating
+        && (localShipInstanceId === null || shipInstanceId === localShipInstanceId);
+      if (!isActive && !isOwnPendingJoin) {
         // Phase 6b — populate identity for the lingering hull. Pose
         // arrives separately in the snapshot's `states` slice and is
         // mirrored in handleSnapshot. We only set kind / displayName /
