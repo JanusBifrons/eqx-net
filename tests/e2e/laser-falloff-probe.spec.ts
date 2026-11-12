@@ -77,31 +77,8 @@ async function fireAndShoot(page: Page, name: string): Promise<{ beamActive: boo
 }
 
 // Lock-to-fire (2026-11-09): a beam fires only at a COMPLETED lock, so there is
-// no empty-space shot to film any more — a fixed beam that is allowed to fire
-// is, by construction, on its target. The miss-beam taper (bounded length,
-// fade tail) stays locked deterministically by BeamSpritePool.solidTaper.test.ts.
-// Kept as fixme (not deleted) so the repro recipe survives if a miss path
-// (e.g. a target dodging mid-beam) is ever wanted again.
-test.fixme('no-hit beam (empty space) — bounded length with a visible fade tail', async ({ browser }) => {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-  const page = await ctx.newPage();
-  try {
-    await joinInterceptor(page, 'test-sector-fast');
-    const { beamActive, beams } = await fireAndShoot(page, 'nohit');
-    expect(beamActive, 'beam should be actively firing').toBe(true);
-    expect(beams.length, 'interceptor fires twin beams').toBeGreaterThanOrEqual(1);
-    for (const b of beams) {
-      // BOUNDED: the beam's drawn distance is the optimal × maxRangeMul (325) for
-      // a miss — NOT the ~19 000 u of the texture-width bug, NOT off to infinity.
-      expect(b.hitId, 'empty-space shot hits nothing').toBeUndefined();
-      expect(b.dist, `no-hit beam length ${b.dist} must stay bounded`).toBeLessThan(600);
-      // A FADE TAIL must exist: the solid core stops well short of the tip.
-      expect(b.solidDist, 'solid core must be shorter than the drawn length (fade tail)').toBeLessThan(b.dist - 1);
-    }
-  } finally {
-    await ctx.close();
-  }
-});
+// no empty-space shot any more; the miss-beam taper (bounded length, fade tail)
+// is locked deterministically by BeamSpritePool.solidTaper.test.ts.
 
 test('hit beam (target 150u ahead) — clips solid to the target, no tail', async ({ browser }) => {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
