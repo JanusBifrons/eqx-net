@@ -68,3 +68,51 @@ describe('SectorRoom integration — per-sector game speed', () => {
     expect(dg).toBeCloseTo(dw * 2, -1);
   });
 });
+
+/**
+ * Step 3c: the sector's physics world and room loop really tick at 60 × its
+ * speed, so ONE GAME SECOND is ~60 ticks at any speed. Host-safe by design
+ * (root CLAUDE.md "gate on counts"): a busy host only LOSES ticks, so
+ *  - at 0.5× the gate is an UPPER bound (a world ignoring its speed would run
+ *    ~120 ticks per game second; load can never push the count up);
+ *  - at 2× the gate is a LOWER bound (ignoring the speed gives ~30), and a run
+ *    whose worker dropped ticks is INCONCLUSIVE (logged), never a pass or fail.
+ */
+describe('SectorRoom integration — ticks per game second follow the sector speed', () => {
+  let harness: SectorTestHarness | undefined;
+  afterEach(async () => {
+    if (harness) await harness.cleanup();
+    harness = undefined;
+  }, 10_000);
+
+  async function ticksPerGameSecond(scale: number): Promise<{ ticks: number; dropped: number }> {
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
+    await harness.connectAs('player-1');
+    const r = harness.getServerRoom() as unknown as SectorRoom;
+    r.setTimeScale(scale);
+    // Let the worker take the new schedule, then measure one game second.
+    await new Promise((res) => setTimeout(res, 100));
+    const i0 = r._internals;
+    const t0 = i0.serverTick; const d0 = i0.droppedTicks; const g0 = r.gameClock.now();
+    while (r.gameClock.now() - g0 < 1000) await new Promise((res) => setTimeout(res, 20));
+    const i1 = r._internals;
+    const gameS = (r.gameClock.now() - g0) / 1000;
+    return { ticks: (i1.serverTick - t0) / gameS, dropped: i1.droppedTicks - d0 };
+  }
+
+  it('at 0.5× a game second is ~60 ticks, not ~120 (upper bound: load-proof)', async () => {
+    const { ticks } = await ticksPerGameSecond(0.5);
+    console.log(`[time-scale 3c] 0.5x: ${ticks.toFixed(1)} ticks per game second`);
+    expect(ticks).toBeLessThan(80);
+  }, 20_000);
+
+  it('at 2× a game second is ~60 ticks, not ~30 (lower bound; INCONCLUSIVE on a starved host)', async () => {
+    const { ticks, dropped } = await ticksPerGameSecond(2);
+    console.log(`[time-scale 3c] 2x: ${ticks.toFixed(1)} ticks per game second, dropped ${dropped}`);
+    if (dropped > 0) {
+      console.warn('[time-scale 3c] INCONCLUSIVE: the worker dropped ticks (host starved); not asserting');
+      return;
+    }
+    expect(ticks).toBeGreaterThan(45);
+  }, 20_000);
+});

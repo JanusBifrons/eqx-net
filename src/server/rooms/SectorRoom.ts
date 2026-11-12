@@ -1319,6 +1319,8 @@ export class SectorRoom extends Room<SectorState> {
 
   get _internals(): {
     serverTick: number;
+    /** Ticks the physics worker's catch-up cap dropped (a starved host). */
+    droppedTicks: number;
     /** The shield-wall beam block the player/AI fire resolvers call. */
     blockShotAtWall: (fx: number, fy: number, dx: number, dy: number, maxDist: number, damage: number) => number | null;
     /** PR 3a — which playerId each connected session was bound to (the
@@ -1414,6 +1416,7 @@ export class SectorRoom extends Room<SectorState> {
     return {
       loot: this.loot,
       serverTick: this.serverTick,
+      droppedTicks: this.sabU32[WORKER_DROPPED_TICKS_IDX] ?? 0,
       sessionToPlayer: this.sessionToPlayer,
       ownerlessShips: this.ownerlessShips,
       lingeringSlots: this.lingeringSlots,

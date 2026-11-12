@@ -39,8 +39,8 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
 | 2d | Lint wall to error; integration suite green; docs | ~45 min | ✅ 🛑 (end of Phase 2) |
 | 3a | Per-sector speed: each room owns a clock; room loop + its physics world run 60 × speed ticks per wall second | ~2 h | ✅ 🛑 |
 | 3b | Speed override per sector (env, dev endpoint, test/showcase join option); `testTimeScale` folded in; snapshot `timeScale` keyframe | ~2 h | ✅ 🛑 |
-| 3c | Integration tests at 0.5× and 2×; netgate run by hand | ~1.5 h | next 🛑 (end of Phase 3) |
-| 4a | Client game clock: prediction anchor + `fromTick` parity test | ~2 h | 🛑 |
+| 3c | Integration tests at 0.5× and 2×; netgate run by hand | ~1.5 h | ✅ 🛑 (end of Phase 3) |
+| 4a | Client game clock: prediction anchor + `fromTick` parity test | ~2 h | next 🛑 |
 | 4b | Interpolation in ticks + pose ring sized for 4× | ~1.5 h | 🛑 |
 | 4c | Render frame dt at the source (Pixi ticker speed); client lint wall | ~2 h | 🛑 |
 | 4d | Speed chip + E2E + "follows automatically" test; netgate at 0.7× / 2×; fold `testTimeScale` into the sector speed | ~2 h | 🛑 (end of Phase 4) |
@@ -115,3 +115,10 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   moved to 4d (the client must follow the speed first). Unit 4972 ✓,
   integration 363 ✓ + 1 port collision (`EADDRINUSE :2767`, another session's
   showcase server; the file passes 3/3 alone), boot ✓.
+- 2026-11-12: step 3c done; **Phase 3 complete.** Integration test: one game
+  second is 60.0 ticks at 0.5× and at 2×. With the worker ignoring its speed
+  the same test reads 119.2 / 30.9 and fails, so it can fail. Host-safe: 0.5×
+  is an upper bound, and 2× is a lower bound that is INCONCLUSIVE if the worker
+  dropped ticks. Spools run on the sector clock, so a 30 s spool is 1,800
+  ticks at any speed. Netgate by hand on the branch: run 43241425594, GREEN.
+  Unit 4972 ✓, integration 366 ✓, boot ✓.
