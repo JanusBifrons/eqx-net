@@ -87,10 +87,8 @@ export const QUARANTINE = new Set([
   // at ~0.85 s, so it now judges the beam-on frames), and
   // prediction-idle-bounded (a test bug: it counted the corrections made
   // behind the loading curtain, where prediction doesn't step; it now counts
-  // from the lift).
-  //
-  // Cause known (2026-11-09): below ~15 fps the client jumps inputTick ahead
-  // without stepping the ship (recoverInputTickFromStarvation), then snaps.
-  // Fix options a/b/c are in the consolidated handoff; they wait for a phone run.
-  'scrap-collision-stress',
+  // from the lift), and scrap-collision-stress: below ~15 fps the client
+  // jumps to keep up (recoverInputTickFromStarvation), which the owner accepts
+  // as expected on a device that slow (2026-11-12), so the spec now skips when
+  // the host draws < 15 fps during the flight and gates prediction otherwise.
 ]);
