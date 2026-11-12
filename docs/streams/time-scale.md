@@ -206,3 +206,14 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   (eqx-net-22). 0.5× was flagged "server behind 30 Hz", which was a QA bug
   (fixed above). 2× passed QA (server 120.4 Hz, 0 corrections). Re-film after
   #487 merges, with a dimmer take.
+- 2026-11-12: full `@feature` tier on the branch (CI 43258183143) vs a
+  same-day main run (CI 43262161460). 20 failures are shared. 12 failed on the
+  stream only: placement ×5, teleporter, turret-fence-hint, spectator, radar,
+  ring-indicator, capital fly-by, swarm-tidi (flaky). They were mostly
+  timeouts. Cause: on slow CI runners the COST path of the automatic slowdown
+  fired in test rooms and slowed their whole game (timers, pulses, spools),
+  where old TiDi slowed only physics. Fix: the automatic slowdown is OFF in
+  test rooms unless `autoTimeScale: true`; real sectors and the
+  (non-testMode) TiDi rooms keep it. swarm-tidi passed on retry: at the floor
+  the room runs fewer ticks per wall second, so shedding takes longer
+  (expected; noted, not retuned). Re-running the tier.

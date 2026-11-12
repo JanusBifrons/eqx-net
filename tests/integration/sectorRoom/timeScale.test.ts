@@ -134,7 +134,7 @@ describe('SectorRoom integration — the automatic slowdown (time scale 5a)', ()
 
   it('a sector over its tick budget slows its whole game, and audits it', async () => {
     const { getRecentAudit } = await import('../../../src/server/audit/GameplayAuditLog.js');
-    harness = await bootSectorTestServer({ asteroidConfig: [], tickBurnMs: 18 });
+    harness = await bootSectorTestServer({ asteroidConfig: [], tickBurnMs: 18, autoTimeScale: true });
     await harness.connectAs('player-1');
     const r = harness.getServerRoom() as unknown as SectorRoom & { state: { clockRate: number } };
     const deadline = Date.now() + 15_000;
@@ -149,7 +149,7 @@ describe('SectorRoom integration — the automatic slowdown (time scale 5a)', ()
   }, 20_000);
 
   it('load pulls a forced 2× sector down from 2×, never above it', async () => {
-    harness = await bootSectorTestServer({ asteroidConfig: [], tickBurnMs: 18, timeScale: 2 });
+    harness = await bootSectorTestServer({ asteroidConfig: [], tickBurnMs: 18, timeScale: 2, autoTimeScale: true });
     await harness.connectAs('player-1');
     const r = harness.getServerRoom() as unknown as SectorRoom;
     const deadline = Date.now() + 15_000;

@@ -1752,8 +1752,8 @@ export class SectorRoom extends Room<SectorState> {
       lockTimeCapS?: unknown;
       /** Game speed for this sector (0.25–4). zod-checked; testMode-only. */
       timeScale?: unknown;
-      /** testMode: let LATENESS drive the automatic slowdown here too (on by
-       *  default only in real sectors). */
+      /** testMode: run the automatic slowdown here too (on by default only in
+       *  real sectors). */
       autoTimeScale?: boolean;
       /** Capital-ship R&D (round 3 D): a player may join flying a capital
        *  (capitals stay npcOnly everywhere else). testMode-only. */
@@ -2974,7 +2974,7 @@ export class SectorRoom extends Room<SectorState> {
       if (cap.success) this.setLockTimeCap(cap.data);
       else logger.warn({ value: roomOpts.lockTimeCapS }, 'lockTimeCapS: invalid room option, ignored');
     }
-    this.latenessSlowdown = !this.testMode || roomOpts.autoTimeScale === true;
+    this.autoSlowdown = !this.testMode || roomOpts.autoTimeScale === true;
     if (this.testMode && roomOpts.timeScale !== undefined) {
       const ts = TimeScaleSchema.safeParse(roomOpts.timeScale);
       if (ts.success) this.setTimeScale(ts.data);
@@ -6532,10 +6532,12 @@ export class SectorRoom extends Room<SectorState> {
   /** The automatic slowdown's factor, [0.7, 1] (Phase 5). */
   private loadFactor = 1;
   private readonly loadSpeed = new LoadSpeedController();
-  /** Whether LATENESS drives the slowdown (cost always does). On in real
-   *  sectors; test rooms opt in with `autoTimeScale: true`, since a contended
-   *  test host would otherwise slow every room and shift every test's timing. */
-  private latenessSlowdown = true;
+  /** Whether the automatic slowdown runs here. On in real sectors; test rooms
+   *  opt in with `autoTimeScale: true`. A slow CI runner otherwise slows every
+   *  test room's WHOLE game (timers, pulses, spools), not just its physics as
+   *  the old TiDi did, and shifts every test's timing (12 feature specs timed
+   *  out on CI before this gate). */
+  private autoSlowdown = true;
   private lastLoadWindowSeq = 0;
 
   /** Log + audit a change of the sector's TARGET speed (not each slew step). */
@@ -11097,10 +11099,10 @@ export class SectorRoom extends Room<SectorState> {
     // clients) runs at chosen × factor. This REPLACES the old TiDi path that
     // slowed only the physics worker (CLOCK_RATE), which clients saw as
     // jitter, not slow motion (docs/SHELF.md).
-    if (!this.perfFixedLoad && this.tickBudget.windowSeq !== this.lastLoadWindowSeq) {
+    if (this.autoSlowdown && !this.perfFixedLoad && this.tickBudget.windowSeq !== this.lastLoadWindowSeq) {
       this.lastLoadWindowSeq = this.tickBudget.windowSeq;
       const l = this.tickBudget.lateness();
-      const f = this.loadSpeed.window(this.latenessSlowdown ? l.latenessTicks : 0, l.wallTicks, newRate);
+      const f = this.loadSpeed.window(l.latenessTicks, l.wallTicks, newRate);
       if (f !== this.loadFactor) {
         const from = this.targetTimeScale();
         this.loadFactor = f;
