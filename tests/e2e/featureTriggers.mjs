@@ -82,11 +82,10 @@ export const QUARANTINE = new Set([
   // 2026-11-12 desktop 3x re-run (lane 520): structure-placement-ghost,
   // speed-dial, fire-control-lock, laser-falloff-probe, multiple-lingering-pool
   // and spawn-swap-lingers went 3/3 and left the list (the PR that released
-  // them ran them on CI: a spec leaving the list runs itself). Still red 0/3:
+  // them ran them on CI: a spec leaving the list runs itself), as did
+  // interceptor-beam-stays-connected, a test bug: its beam destroys the drone
+  // at ~0.85 s, so it now judges the beam-on frames. Still red 0/3:
   //
-  // :142 beam origin while coasting: the beam was active in 15 of 40 coast
-  // samples on one run, 40 of 40 on another; wants > 20.
-  'interceptor-beam-stays-connected',
   // Idle prediction sub-pixel in feel-test-25.
   'prediction-idle-bounded',
   // Cause known (2026-11-09): below ~15 fps the client jumps inputTick ahead
