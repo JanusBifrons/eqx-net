@@ -82,15 +82,6 @@ export const QUARANTINE = new Set([
   // fence never ripples. Is AUTO fire held against a locked non-hostile
   // structure?
   'fence-hits',
-  // auto-fire test: FIXED 2026-11-11, still parked until 6/6. The cause was a
-  // real bug: headless Chrome draws this scene at ~3 fps, so a 1,600 u/s bolt was
-  // first seen ~1,000 u past its muzzle and never matched its gun (players hit
-  // the same after any >75 ms hitch). MountVisualManager.noteShotNear now traces
-  // a shot back along its velocity; the spec joins in MAN and goes AUTO once the
-  // guns are drawn. Local 6x run: 22/24 done before a low-memory stop, the one
-  // failure the cold first run hitting the 90 s cap after its check passed.
-  // Remove this entry after a clean 6/6 (EQX_E2E_PORT_OFFSET lane, quiet host).
-  'fx-turrets',
   // 2026-11-10: failing on CI's e2e-feature-affected since lock-to-fire went
   // universal (#385). Parked by the user for a pass next week: check each is
   // still relevant, then fix or retire it. CI runs 42674277690, 42694505833,
@@ -100,10 +91,6 @@ export const QUARANTINE = new Set([
   'structure-placement-ghost',
   // :197 repeat builds across a placement (R2.6); new on train #399.
   'speed-dial',
-  // :28 / :105 tap-to-inspect; all passed locally 2026-11-10, so likely CI flake.
-  'entity-inspect',
-  // :95 inspector clears the app header; same cluster as entity-inspect.
-  'break-in',
   // :115 hands-off LOCK then CANCEL in the info box; the drain case is flaky.
   'fire-control-lock',
   // :106 hit beam; :77 is already fixme (no firing into empty space now).
