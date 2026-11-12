@@ -86,9 +86,9 @@ test('a fighter gets no helm panel', async ({ browser }) => {
   }
 });
 
-/** Round 3 E1: a battleship pilot zooms right out and the fleet's fighter
- *  drone becomes a dot (read through `__eqxArtStats().lodDots`). */
-test('zoomed out from a battleship, fighters draw as dots', async ({ browser }) => {
+/** A battleship pilot zooms right out and the fleet's fighter drone gets its
+ *  far-zoom icon (FarZoomIcons; counted by `__eqxArtStats().lodDots`). */
+test('zoomed out from a battleship, fighters draw as icons', async ({ browser }) => {
   test.setTimeout(120_000);
   const { ctx, page } = await launchTestClient(browser, {
     room: ROOM, spawnX: 0, spawnY: -6000, shipKind: 'battleship', extraParams: { worker: '0' },

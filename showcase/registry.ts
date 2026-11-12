@@ -148,6 +148,7 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
   'pwa-and-push-notifications': 'Install prompt + push notification — not in-world footage.',
   'web-push': 'Server-side push delivery — not in-world footage.',
   security: 'Infrastructure — no visible surface.',
+  'capital-destruction': 'Design note + a pure core module (S1); nothing visible until wreck pieces spawn (S2/S3). Film a capital breaking up then.',
   'perf-scenes': 'Test tooling — the scenes are measured, not filmed (any can be played with the camera on).',
   relations: 'A shared rule (who is hostile to whom) with no visible surface of its own; gates, turrets and cargo show its effects.',
   'persistence-and-migrations': 'Covered by an end-card line until the persistence shot lands (SHOWCASE_PENDING).',

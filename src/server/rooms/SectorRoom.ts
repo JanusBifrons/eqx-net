@@ -252,7 +252,7 @@ import {
 } from '../../shared-types/messages/webrtcSignalingMessages.js';
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
 import { EntitySyncRouter } from './EntitySyncRouter.js';
-import { isPilotedActive } from './shipLiveness.js';
+import { isEngageablePilotHull, isPilotedActive } from './shipLiveness.js';
 import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
 import { SectorPersistence } from './SectorPersistence.js';
@@ -435,6 +435,12 @@ function pushSolidBoxes(r: StructureRecord, out: SiteBox[]): void {
     return;
   }
   out.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
+}
+
+/** A hull's extent for spawn clearance against other hulls: its radius plus
+ *  its shield pad (#18, both from the kind's size). */
+function hullExtent(kind: string): number {
+  return getShipKind(kind).radius + tuningFor(kind).shieldPad;
 }
 
 function o_level(r: { freightOrders?: Array<{ good: GoodId; level: number }> }, good: GoodId): number {
@@ -871,6 +877,12 @@ export class SectorRoom extends Room<SectorState> {
    *  but keyed by shipInstanceId. Updated once per `update()` from
    *  the SAB so the snapshot can include them. */
   private readonly lingeringPoseCache = new Map<string, ShipPhysicsState>();
+  /** playerId → shipInstanceId of the hull the pilot parked by toggling
+   *  Spectate (owner decision 2026-11-12: NPCs keep their locks and keep
+   *  firing at it). Set by the `spectate` handler; cleared when the pilot
+   *  reclaims a hull or leaves, and lazily once the hull is no longer parked.
+   *  Read through `engageablePilotHull`. */
+  private readonly spectateParkedHull = new Map<string, string>();
 
   // Wrecks RETIRED (Equinox P6.3 / C3) — an abandoned hull now shatters into
   // SCRAP (kind 3) and leaves the world. The former WreckLifecycleCoordinator
@@ -1904,6 +1916,7 @@ export class SectorRoom extends Room<SectorState> {
       lockTimeCapS: () => this.testLockTimeCapS,
       onClearPlayer: (pid) => this.locks.clearLocks(pid),
       aimTargetFor: (pid, mountId, out) => this.lockAimTarget(pid, mountId, out),
+      visitParkedPilotHulls: this._visitParkedPilotHulls,
     });
 
     // Player weapon-fire resolver. Owns the zod parse, cooldown gate,
@@ -2092,6 +2105,7 @@ export class SectorRoom extends Room<SectorState> {
         this.playerProjectileSweep(ship, fx, fy, sx, sy, r, cx, cy, ang),
       swarmRegistry: this.swarmRegistry,
       lingeringSlots: this.lingeringSlots,
+      lingeringShip: (sid) => this.state.ships.get(sid),
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
       wallBlocksProjectile: (x, y, sx, sy, damage) => {
@@ -2260,7 +2274,7 @@ export class SectorRoom extends Room<SectorState> {
       ownerlessShips: this.ownerlessShips,
       lingerMs: (pid) => this.playerToLingerMs.get(pid),
       clearLingerMs: (pid) => { this.playerToLingerMs.delete(pid); },
-      forgetLocks: (pid) => { this.locks.forget(pid); this.npcLocks.forget(pid); },
+      forgetLocks: (pid) => { this.locks.forget(pid); this.npcLocks.forget(pid); this.spectateParkedHull.delete(pid); },
       boostingPlayers: this.boostingPlayers,
       thrustingPlayers: this.thrustingPlayers,
       snapshotBroadcaster: this.snapshotBroadcaster,
@@ -3828,7 +3842,11 @@ export class SectorRoom extends Room<SectorState> {
       }
       const playerId = this.sessionToPlayer.get(client.sessionId);
       if (!playerId) return;
+      const parked = this.getActiveShip(playerId)?.shipInstanceId;
       this.displaceActiveHullToLingering(playerId);
+      // Owner decision 2026-11-12: the parked hull is still there. NPC fire
+      // control keeps engaging it on the pilot's behalf (their locks hold).
+      if (parked && this.lingeringSlots.has(parked)) this.spectateParkedHull.set(playerId, parked);
     });
 
     // ── Phase 4 WS-B2 — ship stat upgrades (free allocation + respec) ──────
@@ -4203,12 +4221,15 @@ export class SectorRoom extends Room<SectorState> {
   private buildNpcLockSubsystem(): NpcLockSubsystem {
     return new NpcLockSubsystem({
       pilots: () => this.locks.enabledPlayers(),
+      // Liveness (#17): `engageablePilotHull`, ACTIVE + the spectate-parked
+      // LINGERING hull, so a pilot who toggles Spectate keeps every NPC lock
+      // on them (owner decision 2026-11-12). Hostility decay is unchanged.
       pilotPose: (pid, out) => {
-        const p = this.shipPoseCache.get(pid);
-        const ship = this.getActiveShip(pid);
-        if (!p || !ship || !ship.alive) return null;
+        const h = this.engageablePilotHull(pid);
+        if (!h) return null;
+        const p = h.pose;
         out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
-        return getShipKind(ship.kind);
+        return getShipKind(h.ship.kind);
       },
       forEachHostileNpc: (pid, visit) => {
         for (const rec of this.swarmRegistry.all()) {
@@ -4365,6 +4386,56 @@ export class SectorRoom extends Room<SectorState> {
     if (shipKey === undefined) return undefined;
     return this.state.ships.get(shipKey);
   }
+
+  /** Reused result of `engageablePilotHull` (#14). */
+  private readonly _engageable: { ship: ShipState; pose: ShipPhysicsState } = {
+    ship: undefined as unknown as ShipState, pose: undefined as unknown as ShipPhysicsState,
+  };
+
+  /**
+   * The hull NPC fire control engages on pilot `playerId`'s behalf, with its
+   * pose: liveness classes per `isEngageablePilotHull` (ACTIVE, or the
+   * LINGERING hull they parked by Spectate). TRAVELLING is not excluded (as
+   * before for these callers). Null when there is none. The result object is
+   * shared: read it before the next call.
+   */
+  private engageablePilotHull(playerId: string): { ship: ShipState; pose: ShipPhysicsState } | null {
+    const out = this._engageable;
+    const active = this.getActiveShip(playerId);
+    if (active !== undefined) {
+      // Flying a hull again (respawn, rejoin, reclaim): no longer spectating.
+      if (this.spectateParkedHull.size > 0) this.spectateParkedHull.delete(playerId);
+      const pose = this.shipPoseCache.get(playerId);
+      if (!pose || !isEngageablePilotHull(active, false)) return null;
+      out.ship = active; out.pose = pose;
+      return out;
+    }
+    const sid = this.spectateParkedHull.get(playerId);
+    if (sid === undefined) return null;
+    const ship = this.state.ships.get(sid);
+    const pose = this.lingeringPoseCache.get(sid);
+    if (!ship || !pose || !this.lingeringSlots.has(sid) || ship.playerId !== playerId) {
+      this.spectateParkedHull.delete(playerId);
+      return null;
+    }
+    if (!isEngageablePilotHull(ship, true)) return null;
+    out.ship = ship; out.pose = pose;
+    return out;
+  }
+
+  /** WeaponMountTicker dep: visit every connected pilot's spectate-parked
+   *  hull under the PILOT's id (so the capital's per-pilot NPC lock and the
+   *  drone's `hostileTo` both key it). Bound once (#14). */
+  private readonly _visitParkedPilotHulls = (
+    visit: (pid: string, x: number, y: number, vx: number, vy: number, kindId: string) => void,
+  ): void => {
+    if (this.spectateParkedHull.size === 0) return;
+    for (const pid of this.spectateParkedHull.keys()) {
+      if (this.getActiveShip(pid) !== undefined) continue; // covered by the ACTIVE pass
+      const h = this.engageablePilotHull(pid);
+      if (h) visit(pid, h.pose.x, h.pose.y, h.pose.vx, h.pose.vy, h.ship.kind);
+    }
+  };
 
   // ── Combat ──────────────────────────────────────────────────────────────
 
@@ -5914,6 +5985,12 @@ export class SectorRoom extends Room<SectorState> {
   private readonly _npcTargetAccept = (i: number): boolean =>
     relationOf(this.npcTargetParty[i]!, this.npcTurretOwner, this.relationCtx) === 'hostile';
 
+  private readonly _addParkedNpcTarget = (pid: string, x: number, y: number): void => {
+    const i = this.npcTargetGrid.add(x, y);
+    this.npcTargetParty[i] = pid;
+    this.npcTargetRecs[i] = null;
+  };
+
   private buildNpcTargetGrid(): void {
     const g = this.npcTargetGrid;
     g.reset();
@@ -5933,6 +6010,9 @@ export class SectorRoom extends Room<SectorState> {
       this.npcTargetParty[i] = playerId;
       this.npcTargetRecs[i] = null;
     }
+    // ...plus the spectate-parked LINGERING hulls (#17: the ENGAGEABLE pilot
+    // hull class; owner decision 2026-11-12), under the pilot's id.
+    this._visitParkedPilotHulls(this._addParkedNpcTarget);
     g.build();
     this.npcTargetGridFresh = true;
   }
@@ -5961,7 +6041,7 @@ export class SectorRoom extends Room<SectorState> {
       const playerId = this.npcTargetParty[i]!;
       out.id = playerId;
       out.entityId = -1;
-      out.radius = getShipKind(this.getActiveShip(playerId)?.kind).radius;
+      out.radius = getShipKind(this.engageablePilotHull(playerId)?.ship.kind).radius;
       out.playerId = playerId;
     }
     return out;
@@ -6009,12 +6089,14 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private writePilotTurretView(n: number, playerId: string): TurretTargetView | null {
-    const pose = this.shipPoseCache.get(playerId);
-    if (!pose) return null;
+    // #17: the ENGAGEABLE pilot hull (ACTIVE, or parked by Spectate).
+    const h = this.engageablePilotHull(playerId);
+    if (!h) return null;
+    const pose = h.pose;
     const v = this.turretView(n);
     v.id = playerId; v.entityId = -1; v.playerId = playerId;
     v.x = pose.x; v.y = pose.y; v.vx = pose.vx; v.vy = pose.vy;
-    const kind = getShipKind(this.getActiveShip(playerId)?.kind);
+    const kind = getShipKind(h.ship.kind);
     v.cls = targetClass(kind);
     v.signature = kind.radius;
     return v;
@@ -6063,6 +6145,16 @@ export class SectorRoom extends Room<SectorState> {
         const v = this.writePilotTurretView(n, pid);
         if (v) out[n++] = v;
       }
+      // #17 ENGAGEABLE pilot hulls: the spectate-parked LINGERING ones too.
+      for (const pid of this.spectateParkedHull.keys()) {
+        if (pid === owner) continue;
+        const h = this.engageablePilotHull(pid);
+        if (!h || h.ship.isActive) continue; // ACTIVE: covered above
+        if ((h.pose.x - x) ** 2 + (h.pose.y - y) ** 2 > r2) continue;
+        if (relationOf(pid, owner, this.relationCtx) !== 'hostile') continue;
+        const v = this.writePilotTurretView(n, pid);
+        if (v) out[n++] = v;
+      }
     }
     return n;
   }
@@ -6093,7 +6185,7 @@ export class SectorRoom extends Room<SectorState> {
         out.entityId = -1;
         out.x = pilot.x;
         out.y = pilot.y;
-        out.radius = getShipKind(this.getActiveShip(pilot.playerId)?.kind).radius;
+        out.radius = getShipKind(this.engageablePilotHull(pilot.playerId)?.ship.kind).radius;
         out.playerId = pilot.playerId;
         return out;
       }
@@ -6142,8 +6234,9 @@ export class SectorRoom extends Room<SectorState> {
     this.broadcast('mine_detonated', msg);
   }
 
-  /** C2 — the nearest ACTIVE, alive pilot (#17) within range who is hostile
-   *  to `owner` (an act in the ledger). Few players: a plain scan. */
+  /** C2 — the nearest ENGAGEABLE pilot hull (#17: ACTIVE alive, or parked by
+   *  Spectate) within range whose pilot is hostile to `owner` (an act in the
+   *  ledger). Few players: a plain scan. */
   private nearestHostilePilot(x: number, y: number, range: number, owner: string): { playerId: string; x: number; y: number; d2: number } | null {
     const out = this._hostilePilotOut;
     let best = range * range;
@@ -6159,6 +6252,18 @@ export class SectorRoom extends Room<SectorState> {
       if (relationOf(pid, owner, this.relationCtx) !== 'hostile') continue;
       best = d2;
       out.playerId = pid; out.x = pose.x; out.y = pose.y; out.d2 = d2;
+      found = true;
+    }
+    // #17 ENGAGEABLE pilot hulls: the spectate-parked LINGERING ones too.
+    for (const pid of this.spectateParkedHull.keys()) {
+      if (pid === owner) continue;
+      const h = this.engageablePilotHull(pid);
+      if (!h || h.ship.isActive) continue; // ACTIVE: covered above
+      const d2 = (h.pose.x - x) ** 2 + (h.pose.y - y) ** 2;
+      if (d2 > best) continue;
+      if (relationOf(pid, owner, this.relationCtx) !== 'hostile') continue;
+      best = d2;
+      out.playerId = pid; out.x = h.pose.x; out.y = h.pose.y; out.d2 = d2;
       found = true;
     }
     return found ? out : null;
@@ -8500,14 +8605,24 @@ export class SectorRoom extends Room<SectorState> {
       const clear = this.landingPoint(playerId, spawnX, spawnY, chosenKind);
       spawnX = clear.x;
       spawnY = clear.y;
-    } else if (this.structureRegistry.size > 0) {
+    } else {
       // T1 — never spawn inside a structure (an NPC base can fill much of a
       // sector): nudge to the nearest clear point. Join path, not the hot loop.
-      const boxes: SiteBox[] = [];
-      for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
-      const clear = nearestClearPoint(spawnX, spawnY, boxes, tuningFor(chosenKind).spawnClearance);
-      spawnX = clear.x;
-      spawnY = clear.y;
+      // A spawn without explicit coordinates also keeps the JOINING hull clear
+      // of every other hull (#18: its own size, not a fighter's). Owner clip
+      // 2026-11-12: a heavy cruiser joining the capital line-up was nudged off
+      // a structure straight into the NPC heavy cruiser. Explicit spawnX/Y keep
+      // their exact placement (tests set up collisions on purpose), and a
+      // resumed hull comes back where it really is.
+      const explicit = parsed.success && (parsed.data.spawnX !== undefined || parsed.data.spawnY !== undefined);
+      const hulls = explicit || resumedFromStore ? [] : this.spawnHullCircles(playerId);
+      if (this.structureRegistry.size > 0 || hulls.length > 0) {
+        const boxes: SiteBox[] = [];
+        for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
+        const clear = nearestClearPoint(spawnX, spawnY, boxes, tuningFor(chosenKind).spawnClearance, 6000, hulls, hullExtent(chosenKind));
+        spawnX = clear.x;
+        spawnY = clear.y;
+      }
     }
 
     this.initialSpawnPositions.set(playerId, { x: spawnX, y: spawnY });
@@ -9153,6 +9268,8 @@ export class SectorRoom extends Room<SectorState> {
     // Displace the player's current active hull (if they were piloting one) into
     // a lingering hull, so they don't keep two active hulls.
     this.displaceActiveHullToLingering(playerId);
+    // Piloting again: they are no longer spectating a parked hull.
+    this.spectateParkedHull.delete(playerId);
 
     // Reclaim the target's slot from the lingering maps back into the active maps.
     const b = slotBase(slot);
@@ -10169,6 +10286,32 @@ export class SectorRoom extends Room<SectorState> {
       circles.push({ x: pose.x, y: pose.y, r: hull?.kind ? tuningFor(hull.kind).spawnClearance : 60 });
     }
     return nearestClearPoint(x, y, boxes, kind ? tuningFor(kind).spawnClearance : 60, 6000, circles);
+  }
+
+  /** Every other hull in the sector as a circle of its own extent (hull
+   *  radius + shield pad, `hullExtent`): NPC ships, other pilots' ships and
+   *  parked hulls. The joining pilot's own hulls and pilots still joining
+   *  (not in the world yet) are not obstacles. Join path
+   *  only (allocates). */
+  private spawnHullCircles(playerId: string): SiteCircle[] {
+    const circles: SiteCircle[] = [];
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== 1) continue;
+      const b = slotBase(rec.slot);
+      const r = rec.shipKind && isShipKindId(rec.shipKind) ? hullExtent(rec.shipKind) : rec.radius;
+      circles.push({ x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, r });
+    }
+    for (const [pid, pose] of this.shipPoseCache) {
+      if (pid === playerId || this.pendingJoin.has(pid)) continue;
+      const kind = this.getActiveShip(pid)?.kind;
+      if (kind) circles.push({ x: pose.x, y: pose.y, r: hullExtent(kind) });
+    }
+    for (const [shipId, pose] of this.lingeringPoseCache) {
+      const hull = this.state.ships.get(shipId);
+      if (!hull?.kind || hull.playerId === playerId) continue;
+      circles.push({ x: pose.x, y: pose.y, r: hullExtent(hull.kind) });
+    }
+    return circles;
   }
 
   /** T2 — the nearest point clear of every structure (convoy hauler spawns). */

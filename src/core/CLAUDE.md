@@ -364,6 +364,26 @@ reintroduces the spiral the 500-target cannot afford. Full story:
   holds the tuning (burst/damping/HP/MAX_LIVE_SCRAP). Full story:
   [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).
 
+## Capital fracture (`src/core/destruction/fractureHull.ts`, capital destruction S1, 2026-11-12)
+
+- **`fractureHull({ hull, seed, killPoint, sectionCuts?, maxPieces })`** splits a hull outline into wreck pieces. Each piece has a CCW outline, `cutEdges` flags, convex parts, area and centroid. Server and clients run it from the same inputs (#15), and no geometry goes on the wire.
+- **Deterministic by construction. Keep it that way:**
+  - arithmetic and `Math.sqrt`/`round` only, never sin/cos/atan2/pow;
+  - the mulberry32 `Rng`;
+  - fixed loop order;
+  - vertices quantised to `FRACTURE_QUANTUM` (1/64 u);
+  - from poly-decomp, only `quickDecomp`/`makeCCW`.
+- **Any change to its output bumps `FRACTURE_ALGO_VERSION`.** The golden test fails first.
+- **Concave hulls go through `splitByLine`,** which traces each disjoint part separately. Plain Sutherland–Hodgman bridges them; the U-hull test catches that.
+- **Jagged Voronoi cut edges** are seeded from the edge's own quantised endpoints, so both neighbours share the line. Section cuts stay straight.
+- **v2: the last hit decides where it splits.**
+  - A straight primary line runs through `killPoint`, across the keel, with a seeded tilt.
+  - A seeded `snapChance` (default 0.2) snaps the hull cleanly in two along that line.
+  - The piece count comes from `hullRadius`, `killBlowDamage` and `recentDamageRate` plus a seeded draw. Leave all three out to use the fixed-count mode, where the cap is the target.
+  - `fracturePlan(input)` returns these decisions without building any geometry.
+  - All of the plan's draws come from one stream, in a fixed order. Adding a draw changes every fracture, so bump the version.
+- Story: [docs/architecture/capital-destruction.md](../../docs/architecture/capital-destruction.md).
+
 ## Alien gates and the disabled input gate (plan soft-leaping-truffle v4, A)
 
 - `galaxy/alienGates.ts` is the one source for where the Ancients' gates go (`alienGateSites`, `alienGateCandidates`) and who owns them (`ALIEN_GATE_OWNER`). Server seeding and the client inspector both read it.

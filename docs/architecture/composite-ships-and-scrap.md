@@ -105,6 +105,17 @@ free-floating scrap piece.
 
 ## Deferred
 
+Capital break-up (the "capitals leave no scrap yet" gap) is designed in
+[capital-destruction.md](capital-destruction.md): a capital fractures where
+it was hit into seeded Voronoi wreck pieces, instead of hand-authored scrap
+components.
+
 - Converting the other 7 kinds to composites; porting the rest of the Equinox
   component palette (RoundEngine, RectHull/HexHull, ShortPillar).
 - Optional scrap polish: spin, salvage/economy ties.
+- **Capitals leave no scrap yet.** The capital kinds are composite, but
+  `warshipDesign` marks no part `canScrap`, so `shipScrapGroups` is empty and a
+  dying capital (player or NPC) only explodes. How a kilometre-long hull breaks
+  up (which sections, their mass and HP; `SCRAP_DEFAULT_MASS` 1 and `SCRAP_HP`
+  30 are fighter-sized) is an open owner decision (found 2026-11-12). Its death
+  blast does follow the hull (`blastRadiusFor`).

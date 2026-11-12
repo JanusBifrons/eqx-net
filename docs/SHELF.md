@@ -4,6 +4,46 @@ Design work deliberately parked, to revisit. Each entry says what we found,
 why it waits, and what doing it properly involves. Remove an entry in the PR
 that picks it up.
 
+## Capital damage model: zones, armour, systems (parked 2026-11-12)
+
+**Owner (2026-11-12):** "keep the damage model as an idea for now", while the
+ship splitting itself is built ([capital-destruction.md](architecture/capital-destruction.md)).
+The owner's idea, given "with a pinch of salt":
+
+- **Zones.** Hulls have zones/sections with armour that must be breached
+  before internal systems take damage: engines, steering, turrets, fire
+  control/sensors, gas stores.
+- **Gas.** Gas powers teleportation; a breached gas store is a magazine hit.
+- **Shape stays.** The collision shape never changes while the ship is alive.
+- **Visible damage.** Damage shows through decals, venting, fire and system
+  effects; repairs clear them.
+- **Destruction is a sequence:**
+  1. mission kill;
+  2. crippled hulk (adrift, salvage);
+  3. broken in two (midships);
+  4. catastrophic (gas-store detonation, rare, damages nearby ships).
+- **Wrecks.** Most capitals end as wrecks that become terrain (cover,
+  blocking, salvage) rather than vanishing.
+
+**Today:** a capital has one hull pool and one shield; it dies at 0 and
+explodes. The fracture work (S1 onwards) gives it wreck pieces; it does not add
+zones or systems.
+
+**Why it waits:** it is a combat-balance pass on its own: per-zone armour and
+HP, which weapons breach what, what each lost system does, and how the
+client shows it (decals, vents, fire). Damage stats and balance are out of
+scope for the fracture work.
+
+**To revive:**
+- Zones as hull-local regions; the section lines the fracture already accepts
+  are a natural fit.
+- A per-zone armour/HP record in the ship catalogue.
+- Server hit resolution maps a hit point to a zone.
+- System effects on the existing subsystems (thrust, turn rate, mounts,
+  lock range).
+- The destruction sequence drives which fracture runs (midships cut vs
+  catastrophic).
+
 ## Friendly fire for every shot (STARTED 2026-11-10)
 
 **Done (slice 1, owner decision 2026-11-10: "Fire hits all, but we need NPCs

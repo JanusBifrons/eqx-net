@@ -48,9 +48,9 @@ import { NavalShellBursts } from './art/fx/navalShellBursts.js';
 import { FxEngines } from './art/fx/FxEngines.js';
 import { WarpFx, type WarpFxShip } from './pixi/WarpFx.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
-import { LodDots } from './pixi/LodDots';
+import { FarZoomIcons } from './pixi/FarZoomIcons';
 import { NAVAL_RANGE } from '@shared-types/combat/navalRange';
-import { GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldBubbleRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
+import { GAMEPLAY_MAX_ZOOM, GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldBubbleRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
 import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
 import { shieldBubbleRadiusForEntity } from './pixi/shieldBubbleRadius.js';
@@ -64,6 +64,7 @@ import {
   type MutableBounds,
   type MutablePoint,
 } from './camera/CameraDirector';
+import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
 import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
@@ -158,7 +159,7 @@ export class PixiRenderer implements IRenderer {
   private _viewW = 0;
   private _viewH = 0;
   private _zoomPinned = false;
-  private readonly _zoomRange = { minScale: GAMEPLAY_MIN_ZOOM, startZoom: 0 };
+  private readonly _zoomRange = { minScale: GAMEPLAY_MIN_ZOOM, startZoom: 0, maxScale: GAMEPLAY_MAX_ZOOM };
 
   /** FX kill switches handed in by the worker BOOT (resolved on the main
    *  thread — the worker has no `window`). Absent ⇒ read the URL at init. */
@@ -270,7 +271,7 @@ export class PixiRenderer implements IRenderer {
   private _healthBarsDisabled = false;
   private sprites = new Map<string, Container>();
   /** Screen-size LOD (capital-ship R&D round 3 E1): tiny ships draw as dots. */
-  private readonly _lodDots = new LodDots();
+  private readonly _farIcons = new FarZoomIcons();
   /** Machined art (plan iridescent-seeking-rainbow): shared by the ship,
    *  swarm and lingering updaters. `art` is set in `init` when `?art=machined`
    *  (or the default) asks for it; null ⇒ today's vector look everywhere. */
@@ -748,7 +749,10 @@ export class PixiRenderer implements IRenderer {
       // much further out to read the wider battlefield. maxScale (zoom-in)
       // unchanged.
       minScale: GAMEPLAY_MIN_ZOOM,
-      maxScale: 3,
+      // The gameplay zoom-in cap then follows the ship you fly so its whole
+      // hull fits (`applyZoomCap`); 3 stays the cap for ordinary hulls and
+      // the cinematic director's limit.
+      maxScale: GAMEPLAY_MAX_ZOOM,
       followLerpFactor: 1,
     });
     this.setViewSize(initialW, initialH);
@@ -853,8 +857,8 @@ export class PixiRenderer implements IRenderer {
 
     this.shipContainer = new Container();
     this.camera.addChild(this.shipContainer);
-    // Round 3 E1: far-zoom dots above the ships they stand in for.
-    this.camera.addChild(this._lodDots.container);
+    // Far-zoom ship icons above the ships they stand in for (FarZoomIcons.ts).
+    this.camera.addChild(this._farIcons.container);
 
     // Structures plan, Phase 3 — the grid connector web. Added FIRST so the
     // lines render BEHIND the structure/ship sprites added later.
@@ -1552,6 +1556,7 @@ export class PixiRenderer implements IRenderer {
     const kind = getShipKind(id);
     zoomRangeForKind(kind, DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, this._viewW, this._viewH);
     this.camera.setMinScale(this._zoomRange.minScale);
+    this.applyZoomCap();
     const f = hullZoomFactor(kind);
     if (f !== this._zoomFactor) {
       this._zoomFactor = f;
@@ -1569,6 +1574,14 @@ export class PixiRenderer implements IRenderer {
     if (this._zoomKindId === null) return;
     zoomRangeForKind(getShipKind(this._zoomKindId), DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, w, h);
     this.camera.setMinScale(this._zoomRange.minScale);
+    this.applyZoomCap();
+  }
+
+  /** The zoom-in cap: the hull you fly fits on screen (`zoomCeilingForView`,
+   *  owner decision 2026-11-12), eased down by the Camera, never snapped.
+   *  Spectator keeps the ordinary cap (there may be no ship to fit). */
+  private applyZoomCap(): void {
+    this.camera.setMaxScale(this._spectator || this._zoomKindId === null ? GAMEPLAY_MAX_ZOOM : this._zoomRange.maxScale);
   }
 
   /**
@@ -1737,7 +1750,7 @@ export class PixiRenderer implements IRenderer {
     this._lastSwarmUpdateNow = swarmNow;
     this._swarmUpdaterCtx.viewBounds = this.camera.visibleBoundsInto(this._swarmViewScratch);
     updateSwarmSprites(mirror, this._swarmUpdaterCtx);
-    this._lodDots.update(mirror, this.sprites, this.world.scale.x);
+    this._farIcons.update(mirror, this.sprites, this.world.scale.x);
     this.noteTurretShots(mirror);
     this.feedLitScene(mirror);
 
@@ -2051,6 +2064,7 @@ export class PixiRenderer implements IRenderer {
     }
 
     const local = mirror.localPlayerId ? this.sprites.get(mirror.localPlayerId) : null;
+    this._speedFollowSprite = null;
     // Phase 4 WS-A1 — in spectator/construction mode the camera free-roams; do
     // NOT re-issue the local-ship follow (which would yank the view back / snap
     // to a ship that no longer exists). `setSpectator(true)` already detached
@@ -2075,6 +2089,7 @@ export class PixiRenderer implements IRenderer {
       // but runs at ticker speed not MIRROR_UPDATE speed. See Camera
       // construction in init() for the rationale.
       this.camera.follow({ x: local.x, y: local.y });
+      this._speedFollowSprite = local;
     }
 
     // Structure placement ghost + world→screen projection for the confirm
@@ -2168,7 +2183,20 @@ export class PixiRenderer implements IRenderer {
     skyCam.scale.x = this.camera.scale.x;
     skyCam.screenWidth = this.camera.screenWidth;
     skyCam.screenHeight = this.camera.screenHeight;
-    const backdropOn = this._backdrop?.update(skyCam, this.fxNow(), speedFxFullSpeed(speedShip?.kind)) ?? false;
+    // The speed is measured from the followed ship's drawn pose at the frame
+    // time it was drawn for, shifted like the sky (capital jitter, 2026-11-12).
+    const followed = this._speedFollowSprite;
+    const follow = this._speedFollowPose;
+    if (followed) {
+      follow.x = followed.x - (mirror.travelJumpX ?? 0);
+      follow.y = followed.y + (mirror.travelJumpY ?? 0);
+    }
+    // Game time (time scale): the pose's wall frame time goes through the
+    // presentation clock, so speed effects follow the sector's speed like every
+    // other effect (at 1× `at(t)` is `t`).
+    const speedFrameMs = mirror.frameTimeMs !== undefined ? this.fxClock.at(mirror.frameTimeMs) : undefined;
+    const speedSample = speedFxSampleInto(this._speedSample, followed ? follow : null, speedFrameMs, skyCam.center, this.fxNow());
+    const backdropOn = this._backdrop?.update(skyCam, this.fxNow(), speedFxFullSpeed(speedShip?.kind), speedSample) ?? false;
     // Speed effects (C3): the backdrop's eased speed asks the camera to zoom
     // out a little; applied on the camera's next tick (none while it's baking).
     this.camera.setSpeedZoom(backdropOn ? this._backdrop!.speedZoom() : 1);
@@ -3041,6 +3069,11 @@ export class PixiRenderer implements IRenderer {
   /** Phase 4 travel state: the camera the sky is drawn from (shifted by the
    *  trip's approach jump). */
   private readonly _skyCam = { center: { x: 0, y: 0 }, scale: { x: 1 }, screenWidth: 0, screenHeight: 0 };
+  /** The sprite the camera follows this frame (null: spectator / script),
+   *  and the speed-effects sample built from it (`speedFxSampleInto`). */
+  private _speedFollowSprite: { readonly x: number; readonly y: number } | null = null;
+  private readonly _speedFollowPose = { x: 0, y: 0 };
+  private readonly _speedSample = newSpeedFxSample();
 
   private readonly _warpShipScratch: WarpFxShip = { x: 0, y: 0, rotation: 0, warp: undefined, stern: 0, isLocal: false };
   private readonly _warpStern = new Map<string, number>();
@@ -3089,11 +3122,14 @@ export class PixiRenderer implements IRenderer {
     this.halo.setSpectator(active);
     if (!this.initialized) return;
     if (active) this.camera.follow(null);
+    this.applyZoomCap();
   }
 
   /** See `IRenderer.setRadarPrefs`. */
   setRadarPrefs(prefs: RadarPrefs): void {
     this.halo.setPrefs(prefs);
+    // Far-zoom ship icons share the radar's relationship colours.
+    this._farIcons.setColoursFromRadar(prefs);
   }
 
   /** See `IRenderer.setRadarInsets`. */
@@ -3307,7 +3343,7 @@ export class PixiRenderer implements IRenderer {
       if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
     const art = this._artCtx.art;
-    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), lodDots: this._lodDots.dotCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), spoolFxDrawn: this._spoolFx.spooling, helmMarker: this.helmMarker.isVisible(),ownArt: this._lastMirror?.localPlayerId ? (this._artCtx.handles.get(this._lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
+    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), lodDots: this._farIcons.iconCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), spoolFxDrawn: this._spoolFx.spooling, helmMarker: this.helmMarker.isVisible(), ownArt: this._lastMirror?.localPlayerId ? (this._artCtx.handles.get(this._lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
   }
 
   dispose(): void {

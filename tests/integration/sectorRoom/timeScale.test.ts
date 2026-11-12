@@ -11,6 +11,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { gameClock } from '../../../src/server/time/gameTime.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
+import type { SnapshotMessage } from '../../../src/shared-types/messages.js';
 
 describe('SectorRoom integration — per-sector game speed', () => {
   let harness: SectorTestHarness | undefined;
@@ -176,21 +177,27 @@ describe('SectorRoom integration — the speed dimmer', () => {
     harness = await bootSectorTestServer({ asteroidConfig: [] });
     const cRoom = await harness.connectAs('player-1');
     const r = harness.getServerRoom() as unknown as SectorRoom;
-    expect(r.setTimeScale(2, true)).toBe(2); // returns the target
+    // Every snapshot sent mid-glide carries the target, so clients glide in
+    // step (#15). Collect them all rather than trusting the first one to land
+    // mid-glide: on a loaded host the first can arrive after the glide ends.
+    const keys: Array<{ s: number; t?: number }> = [];
+    cRoom.onMessage('snapshot', (snap: SnapshotMessage) => { if (snap.timeScale) keys.push(snap.timeScale); });
+    expect(r.setTimeScale(4, true)).toBe(4); // returns the target (1× → 4× glides for ~2 s)
     expect(r.gameClock.scale).toBe(1); // not yet: it glides
-    // Mid-glide snapshots carry the target, so clients glide in step (#15).
     harness.sendThrust(cRoom);
-    const mid = await harness.waitForSnapshot(cRoom, 3000);
-    expect(mid.timeScale?.t).toBe(2);
     const seen: number[] = [];
-    const deadline = Date.now() + 6_000;
-    while (r.gameClock.scale < 2 && Date.now() < deadline) {
+    const deadline = Date.now() + 8_000;
+    while (r.gameClock.scale < 4 && Date.now() < deadline) {
       seen.push(r.gameClock.scale);
+      harness.sendThrust(cRoom); // keep the sector broadcasting
       await new Promise((res) => setTimeout(res, 100));
     }
-    expect(r.gameClock.scale).toBe(2);
+    expect(r.gameClock.scale).toBe(4);
+    const midGlide = keys.filter((k) => k.s < 4);
+    expect(midGlide.length, 'no snapshot arrived mid-glide').toBeGreaterThan(0);
+    for (const k of midGlide) expect(k.t).toBe(4);
     // It passed through intermediate speeds, rising monotonically.
-    const between = seen.filter((s) => s > 1.05 && s < 1.95);
+    const between = seen.filter((s) => s > 1.05 && s < 3.9);
     expect(between.length).toBeGreaterThan(3);
     for (let i = 1; i < seen.length; i++) expect(seen[i]!).toBeGreaterThanOrEqual(seen[i - 1]!);
   }, 15_000);

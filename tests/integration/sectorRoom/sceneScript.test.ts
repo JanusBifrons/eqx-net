@@ -66,7 +66,9 @@ describe('SectorRoom integration — scene script', () => {
     // (the first injected-slowdown run, 2026-11-06).
     for (const fixed of [false, true]) {
       harness = await bootSectorTestServer({
-        sectorKey: null, droneCount: 0, asteroidConfig: [], tickBurnMs: 20, perfFixedLoad: fixed,
+        // autoTimeScale: test rooms run the automatic slowdown only on request
+        // (time scale); the control arm needs it to show the protection.
+        sectorKey: null, droneCount: 0, asteroidConfig: [], tickBurnMs: 20, perfFixedLoad: fixed, autoTimeScale: true,
         sceneScript: [{ atMs: 0, action: 'spawn', tag: 'a', kind: 'fighter', count: 4, x: 0, y: 2000 }],
       });
       await harness.connectActive(randomUUID());

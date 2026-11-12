@@ -1,9 +1,16 @@
 # Stream: game-wide time scale (`stream/time-scale`)
 
-**A parallel stream. Never open a PR for this branch, merge it, put it in a train,
-cherry-pick from it or merge it into another branch.** It pulls `main` into
-itself (merge, never rebase), and nothing flows back. It lands only when the
-owner says so. Registered on main in #473 (SHELF.md, handoff "Parallel streams").
+**LANDED (2026-11-12, owner: "I think we should PR this now, it's ready").** It was a
+parallel stream: no PR, main flowed in, nothing flowed back, until the owner
+gave the word. Registered on main in #473. This file is now the history.
+
+**Still open after landing:**
+- the hit-flash lead in slow motion (2026-11-12 entry below);
+- step 5b's browser burn scene (a perf scene with `--inject-server-burn`, on CI
+  or the laptop, never this desktop);
+- the owner decisions to confirm: `testTimeScale` is not folded into the speed
+  dial (reversible); the automatic slowdown is off in test rooms unless
+  `autoTimeScale` is set.
 
 - Plan: `C:\Users\alecv\.claude\plans\i-d-like-you-to-deep-elephant.md` (desktop).
 - Design: `docs/architecture/game-time-scale.md`, amended by the owner on
@@ -45,7 +52,7 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
 | 4c | Render frame dt at the source (Pixi ticker speed); client lint wall | ~2 h | ✅ 🛑 |
 | 4d | Speed chip + E2E + "follows automatically" test; netgate at 0.7× / 2×; fold `testTimeScale` into the sector speed | ~2 h | ✅ 🛑 (end of Phase 4) |
 | 5a | Dynamic controller (lateness + cost, ramp, hysteresis, audit events) | ~2 h | ✅ 🛑 |
-| 5b | Burn-test verification (CI/laptop perf scene); docs; ready-to-land report | ~1.5 h | next 🛑 (stream done; ask the owner how to land it) |
+| 5b | Burn-test verification (CI/laptop perf scene); docs; ready-to-land report | ~1.5 h | landed on the owner's word; burn scene still open |
 
 ## Phases
 

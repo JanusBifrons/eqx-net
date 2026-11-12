@@ -89,28 +89,28 @@ export const QUARANTINE = new Set([
   // and impact-only all pass on CI now. Only the touch chip hold (:650)
   // times out at 90 s on CI's host, though it went 6/6 on the desktop.
   'missile-frigate-homing',
-  // 2026-11-10: failing on CI's e2e-feature-affected since lock-to-fire went
-  // universal (#385). Parked by the user for a pass next week: check each is
-  // still relevant, then fix or retire it. CI runs 42674277690, 42694505833,
-  // 42694522168. Notes from a first look:
+  // 2026-11-12 desktop 3x re-run (lane 520): structure-placement-ghost,
+  // speed-dial, fire-control-lock, laser-falloff-probe, multiple-lingering-pool
+  // and spawn-swap-lingers went 3/3 and left the list (the PR that released
+  // them ran them on CI: a spec leaving the list runs itself), as did
+  // interceptor-beam-stays-connected, a test bug: its beam destroys the drone
+  // at ~0.85 s, so it now judges the beam-on frames), and
+  // prediction-idle-bounded (a test bug: it counted the corrections made
+  // behind the loading curtain, where prediction doesn't step; it now counts
+  // from the lift), and scrap-collision-stress: below ~15 fps the client
+  // jumps to keep up (recoverInputTickFromStarvation), which the owner accepts
+  // as expected on a device that slow (2026-11-12), so the spec now skips when
+  // the host draws < 15 fps during the flight and gates prediction otherwise.
   //
-  // A-K time out or the worker drag stalls; #398 didn't cure it on CI.
-  'structure-placement-ghost',
-  // :197 repeat builds across a placement (R2.6); new on train #399.
-  'speed-dial',
-  // :115 hands-off LOCK then CANCEL in the info box; the drain case is flaky.
-  'fire-control-lock',
-  // :106 hit beam; :77 is already fixme (no firing into empty space now).
-  'laser-falloff-probe',
-  // :142 beam origin while coasting: 16 of 40 coast frames active, wants > 20.
-  'interceptor-beam-stays-connected',
-  // An observer sees lingering hulls; flaky on #399 and #402.
-  'multiple-lingering-pool',
-  'spawn-swap-lingers',
-  // Idle prediction sub-pixel in feel-test-25; flaky on #399 and #402.
-  'prediction-idle-bounded',
-  // Cause known (2026-11-09): below ~15 fps the client jumps inputTick ahead
-  // without stepping the ship (recoverInputTickFromStarvation), then snaps.
-  // Fix options a/b/c are in the consolidated handoff; they wait for a phone run.
-  'scrap-collision-stress',
+  // Back on the list (CI run 43248949740, shard 1): these four pass on the
+  // desktop but time out on CI's software-GL runner, on all three tries.
+  // Not yet probed there; each needs a CI-host repro (failure traces now
+  // upload, #485) before it can leave again.
+  'fire-control-lock', // :115 hands-off LOCK then CANCEL: 60 s timeout.
+  'laser-falloff-probe', // :83 hit beam: timeout.
+  'interceptor-beam-stays-connected', // :142 beam origin while coasting: 90 s timeout.
+  'prediction-idle-bounded', // :117 sub-snapshot poses while coasting: timeout.
+  // Same pattern on shard 2 of the re-run (43253336850).
+  'speed-dial', // :197 dial stays open across a placement.
+  'structure-placement-ghost', // (A) :94, (C) :158, (G) :368 ghost tracking.
 ]);

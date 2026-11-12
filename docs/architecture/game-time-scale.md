@@ -1,6 +1,6 @@
 # Game-wide time scale (design note, 2026-11-12)
 
-Status: **BUILT on the parallel stream `stream/time-scale` (2026-11-12); lands only on the owner's word.** Never PR, merge, train or sync from that branch before then. §0 says what was built; §1–§7 are the original design, with superseded parts marked.
+Status: **LANDED (2026-11-12, owner's go-ahead), built on the parallel stream `stream/time-scale`.** §0 says what was built; §1–§7 are the original design, with superseded parts marked.
 
 **Still open when it lands:**
 - **The burn perf scene in a real browser** (step 5b) has not run. It needs the laptop or a CI perf route, never this desktop. What stands in for it: the integration burn test (a loaded sector slows its whole game and audits it) and the netgate at 0.7× / 2×.

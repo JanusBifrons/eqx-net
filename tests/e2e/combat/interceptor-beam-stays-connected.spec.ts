@@ -167,7 +167,11 @@ test('drawn beam origin tracks the ship while coasting (no render-cache freeze)'
         s.detach !== null &&
         Number.isFinite(s.shipX) && Number.isFinite(s.shipY),
     );
-    expect(active.length, 'beam should be active for most coast frames').toBeGreaterThan(20);
+    // The beam destroys the parked drone after ~0.85 s (2026-11-12: 17 of 40
+    // samples active, then `mirror.swarm` held no drone), and with no target
+    // it rightly stops. The freeze under test shows in the coasting frames
+    // the beam IS drawn, so judge those: enough of them to exercise it.
+    expect(active.length, 'beam should be active for a stretch of the coast').toBeGreaterThanOrEqual(10);
 
     // The DRAWN beam origin must sit on its mount's 20 u muzzle circle every
     // frame. A few units of tolerance covers the toFixed rounding; the bug
