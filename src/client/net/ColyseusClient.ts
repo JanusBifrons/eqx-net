@@ -144,7 +144,7 @@ import { installPageLifecycleObserver } from '../debug/pageLifecycleObserver';
 import { recordServerGcPause, startHealthStatsPublisher } from '../debug/healthStats';
 import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE, rayHitsSphere } from '@core/combat/Weapons';
-import { shipShotMuzzle } from '@core/combat/muzzle';
+import { shipShotMuzzle, navalTurret, navalBarrelOffset } from '@core/combat/muzzle';
 import { shipTuning } from '@shared-types/shipScale/tuning';
 import { tuningFor } from '@shared-types/shipScale/lookup';
 
@@ -6505,18 +6505,27 @@ export class ColyseusGameClient {
         const fromX = mountWorldX + fwdX * muzzleD;
         const fromY = mountWorldY + fwdY * muzzleD;
         if (spawnGhost) {
-          this.ghostManager.spawn(
-            shotId,
-            localId,
-            fromX,
-            fromY,
-            fwdX,
-            fwdY,
-            mount.weaponId,
-            state.vx,
-            state.vy,
-            mount.id,
-          );
+          // A naval turret's server salvo is one shell per barrel, each from
+          // its own drawn tip (PlayerFireResolver / AiFireResolver, shared
+          // core/combat/muzzle.ts); predict the same (#15). Quad AA fires its
+          // barrels in turn on the server, so it keeps one ghost.
+          const naval = navalTurret(getShipKind(localShip?.kind ?? null), mount);
+          const barrels = naval !== null && mount.size !== 'AA' ? naval.barrels : 1;
+          for (let k = 0; k < barrels; k++) {
+            const off = barrels > 1 ? navalBarrelOffset(naval!, k) : 0;
+            this.ghostManager.spawn(
+              shotId,
+              localId,
+              fromX + fwdY * off,
+              fromY - fwdX * off,
+              fwdX,
+              fwdY,
+              mount.weaponId,
+              state.vx,
+              state.vy,
+              k === 0 ? mount.id : `${mount.id}#${k}`,
+            );
+          }
         }
         mountGeom.push({ fromX, fromY, fwdX, fwdY });
       }

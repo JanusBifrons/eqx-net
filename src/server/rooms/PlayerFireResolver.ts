@@ -39,7 +39,7 @@ import {
   rayHitsBox,
   rayHitsConvexPolygon,
 } from '../../core/combat/Weapons.js';
-import { shipShotMuzzle } from '../../core/combat/muzzle.js';
+import { shipShotMuzzle, navalTurret, navalBarrelOffset } from '../../core/combat/muzzle.js';
 import { hasTurretFireControl } from '../../core/combat/mountReach.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { getWeaponObject } from '../../core/combat/weapons/index.js';
@@ -215,6 +215,8 @@ export class PlayerFireResolver implements WeaponFireSink {
   private readonly _lastFireByGroup = new Map<string, Map<string, number>>();
   /** Per-(shooter, mount) fire tick: capital turrets reload one by one. */
   private readonly _lastFireByMount = new Map<string, Map<string, number>>();
+  /** Quad AA: which barrel of each mount fires next (per shooter). */
+  private readonly aaBarrel = new Map<string, Uint8Array>();
   private _shooterId = '';
   private _effTick = 0;
   // Review must-fix #1 — the shooter's per-instance outgoing-DAMAGE multiplier
@@ -323,6 +325,7 @@ export class PlayerFireResolver implements WeaponFireSink {
     if (!d.lastFireClientTick.has(shooterId)) {
       groupTicks?.clear();
       mountTicks?.clear();
+      this.aaBarrel.delete(shooterId);
     }
     let slotEnergyCost = resolveSlotEnergyCost(shipKind, slotId);
     if (perMount) {
@@ -465,7 +468,34 @@ export class PlayerFireResolver implements WeaponFireSink {
       ctx.shooterVx = shooterVx;
       ctx.shooterVy = shooterVy;
       ctx.mountId = mount.id;
-      getWeaponObject(weaponId).resolveFire(ctx, this);
+      // A naval turret fires every barrel, each from its own drawn tip, like
+      // an NPC's (`AiFireResolver.fireMount`, shared offsets in
+      // core/combat/muzzle.ts). It fired one shell per mount from the
+      // centreline (owner 2026-11-12: "isn't firing 9 shells?").
+      const naval = navalTurret(shipKind, mount);
+      if (naval === null || naval.barrels <= 1) {
+        getWeaponObject(weaponId).resolveFire(ctx, this);
+        continue;
+      }
+      const rightX = ndy, rightY = -ndx;
+      if (mount.size === 'AA') {
+        // Quad AA: the barrels fire in turn, one per trigger (a stream).
+        let cyc = this.aaBarrel.get(shooterId);
+        if (cyc === undefined || cyc.length < slotMounts.length) { cyc = new Uint8Array(slotMounts.length); this.aaBarrel.set(shooterId, cyc); }
+        const k = cyc[mIdx]! % naval.barrels;
+        cyc[mIdx] = k + 1;
+        const off = navalBarrelOffset(naval, k);
+        ctx.fromX = rayFromX + rightX * off;
+        ctx.fromY = rayFromY + rightY * off;
+        getWeaponObject(weaponId).resolveFire(ctx, this);
+        continue;
+      }
+      for (let k = 0; k < naval.barrels; k++) {
+        const off = navalBarrelOffset(naval, k);
+        ctx.fromX = rayFromX + rightX * off;
+        ctx.fromY = rayFromY + rightY * off;
+        getWeaponObject(weaponId).resolveFire(ctx, this);
+      }
     }
 
     // Aggregate hit_ack (from the sink's best-hit accumulator).
