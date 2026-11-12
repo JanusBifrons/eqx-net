@@ -12,6 +12,8 @@ import { getShipKind } from '@shared-types/shipKinds';
 import {
   LOCK_KEEL_FRAC, LOCK_MARK_MAX_SCREEN_HALF, LOCK_MIN_HALF, LOCK_PAD,
   lockMarkFrame, threatRingRadius, type LockMarkFrame,
+  threatDiamondHalf, threatPointerRadius, hullHalfBeam,
+  THREAT_PIN_HALF_PX, THREAT_TIP_PX,
 } from './lockMarkFrame';
 
 const out = (): LockMarkFrame => ({ x: 0, y: 0, half: 0, capped: false });
@@ -82,5 +84,74 @@ describe('threatRingRadius', () => {
 
   it('stays on screen round a capital at normal zoom', () => {
     expect(threatRingRadius(getShipKind('battleship').radius, NORMAL_PX)).toBeLessThanOrEqual(220);
+  });
+});
+
+/**
+ * Showcase review (2026-11-12, `capital-guns-fighter`), owner: "the lock icon
+ * needs adjusting I think, it's weird and misplaced. As in the diamond." The
+ * threat diamond on the battleship locking the player was a ~290 px square
+ * framing a random slice of its stern, and the threat ring's red arc + caret
+ * round the player's heavy cruiser lay across the battleship's deck. Owner's
+ * choice: on a capital, a small (~14 px) red diamond pinned on the keel point
+ * nearest the player; and keep the arc and caret off a hull inside the ring.
+ */
+describe('threat marks on a capital', () => {
+  const bs = getShipKind('battleship');
+  const ca = getShipKind('heavy-cruiser');
+  const fighter = getShipKind('fighter');
+
+  it('a capped (capital) threat gets a small constant-size pin, at every zoom', () => {
+    for (const px of [1, 4, 20]) {
+      const f = lockMarkFrame(0, 0, 0, bs.radius, 900, -400, px, out());
+      expect(f.capped).toBe(true);
+      const screenAcross = (threatDiamondHalf(f, px) * 2) / px;
+      expect(screenAcross).toBeCloseTo(THREAT_PIN_HALF_PX * 2, 6);
+      expect(screenAcross).toBeLessThanOrEqual(16);
+    }
+  });
+
+  it("a fighter threat keeps today's hull-framing diamond (1.2x the frame)", () => {
+    for (const zoom of [0.15, 1, 3]) {
+      const f = lockMarkFrame(40, 70, 0.7, fighter.radius, 900, -400, 1 / zoom, out());
+      expect(threatDiamondHalf(f, 1 / zoom)).toBe(f.half * 1.2);
+    }
+  });
+
+  it("a capital's half beam comes from its hull, a fighter's from its radius", () => {
+    expect(hullHalfBeam(bs)).toBeGreaterThan(0);
+    expect(hullHalfBeam(bs)).toBeLessThan(bs.radius * 0.3);
+    expect(hullHalfBeam(fighter)).toBe(fighter.radius);
+  });
+
+  // The clip: the heavy cruiser (player) alongside the battleship's quarter,
+  // its hull edge well inside the cruiser's capped threat ring.
+  const px = 4;
+  const R = threatRingRadius(ca.radius, px);
+  const hb = hullHalfBeam(bs);
+  const ringAt = (ox: number, oy: number): number => threatPointerRadius(R, ox, oy, 0, 0, 0, bs.radius, hb, px);
+
+  it('pulls the arc and caret inside the gap when the hull is closer than the ring', () => {
+    const edge = 100 * px; // hull edge 100 px off the player; the ring is 220 px
+    const r = ringAt(hb + edge, -1000);
+    expect(r).toBeGreaterThan(0);
+    expect(r).toBeLessThan(R);
+    // The caret tip (r + tip) stays clear of the hull edge.
+    expect(r + THREAT_TIP_PX * px).toBeLessThan(edge);
+  });
+
+  it('hides them when there is no room between the ship and the hull', () => {
+    expect(ringAt(hb + 10 * px, -1000)).toBe(0);
+  });
+
+  it('measures to the hull, not its centre: abeam of the stern counts', () => {
+    // Far aft of the battleship's centre, but beside its stern.
+    expect(ringAt(hb + 100 * px, -bs.radius * 0.8)).toBeLessThan(R);
+  });
+
+  it('leaves the ring alone when the hull is beyond it, and for fighters at fighting range', () => {
+    expect(ringAt(hb + R + 200 * px, 0)).toBe(R);
+    const fr = threatRingRadius(fighter.radius, 1);
+    expect(threatPointerRadius(fr, 0, 0, 300, 0, 0.3, fighter.radius, hullHalfBeam(fighter), 1)).toBe(fr);
   });
 });
