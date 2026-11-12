@@ -106,6 +106,8 @@ const FEATURE_SPECS: string[] = [
   '**/fleet-warp-client.spec.ts',
   // Round 3 smoke bug: the fly-by fighter jittered alongside the battleship.
   '**/capital-flyby-smooth.spec.ts',
+  // Spectate leaves no predicted phantom of the own ship (capital-breakup take, 2026-11-12).
+  '**/spectate-no-phantom-own-ship.spec.ts',
   // Prediction backlog after a long loading hold is skipped, not replayed (2026-11-05).
   '**/loading-catchup.spec.ts',
   // Fence-hit fix (2026-11-04).

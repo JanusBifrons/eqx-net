@@ -609,6 +609,9 @@ export class ColyseusGameClient {
       this.predWorld.despawnShip(localId);
       this.reconciler = null;
     }
+    // And its drawn entry: the hull is parked now and comes back as a
+    // lingering hull (syncMirror skips the own ship while spectating).
+    if (localId) this.mirror.ships.delete(localId);
     logEvent('spectate_requested', {});
     return true;
   }
@@ -3907,6 +3910,15 @@ export class ColyseusGameClient {
         continue;
       }
 
+      // Spectating, the pilot flies nothing. An own ACTIVE entry here is the
+      // hull just parked: `sendSpectate` despawns the local body at once, but
+      // the server's `isActive=false` patch lands a tick or more later, and
+      // this pose-less entry (x/y 0) re-predicted a local ship that no
+      // snapshot corrects. The renderer then drew it as the pilot's ship and a
+      // 'local' camera cue followed it, not the parked hull (capital-breakup
+      // take, 2026-11-12). Locks: ColyseusClient.spectateRace.test.ts,
+      // tests/e2e/spectate-no-phantom-own-ship.spec.ts.
+      if (isOwnShip && spectating) continue;
       const parsed: ShipPhysicsState = {
         x: Number(sh['x'] ?? 0),
         y: Number(sh['y'] ?? 0),
