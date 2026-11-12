@@ -29,7 +29,7 @@
 import type { SnapshotMessage } from '@shared-types/messages';
 import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '@core/contracts/IRenderer';
 import type { PhysicsWorld, ShipPhysicsState } from '@core/physics/World';
-import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP } from '@shared-types/swarmWireFormat';
+import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
 
 type RemoteInput = {
   thrust: boolean;
@@ -136,10 +136,11 @@ export function preResetRemoteShips(
 }
 
 /** True for the swarm kinds that MOVE and get a dynamic predWorld body that
- *  follows the remote-entity anchor: drones (1) and scrap (3). Asteroids (0)
+ *  follows the remote-entity anchor: drones (1), scrap (3) and capital wreck
+ *  pieces (4, S2b). Asteroids (0)
  *  and structures (2) keep their own static/locked handling. */
 export function isRemoteMovingSwarmKind(kind: number): boolean {
-  return kind === SWARM_KIND_DRONE || kind === SWARM_KIND_SCRAP;
+  return kind === SWARM_KIND_DRONE || kind === SWARM_KIND_SCRAP || kind === SWARM_KIND_WRECK;
 }
 
 /**

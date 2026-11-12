@@ -395,4 +395,38 @@ export interface SnapshotMessage {
    *  round-robin over what this recipient was sent, at most
    *  `SHELL_KEY_PER_SNAPSHOT`. Absent when nothing is due. */
   shellKey?: ShellKeyRecord[];
+  /** Capital destruction S2b — one fracture descriptor per live capital wreck
+   *  (docs/architecture/capital-destruction.md §S2). The client rebuilds every
+   *  piece's geometry from it with the shared deterministic
+   *  `wreckPieceGeometry`; no vertex is on the wire. Sent at 2 Hz to each
+   *  recipient and on every snapshot for 3 broadcasts after the set changes
+   *  (an empty array then means "no wrecks"); absent otherwise. A late joiner
+   *  rebuilds every wreck from it (#16). */
+  wrecks?: WreckDescriptor[];
+}
+
+/** Capital destruction S2b — the fracture inputs of one wreck. */
+export interface WreckDescriptor {
+  /** u16, the `wreckId` its pieces carry on the binary wire (v5). */
+  wreckId: number;
+  /** The capital ship kind that broke up. */
+  parentKind: string;
+  /** u32 fracture seed. */
+  seed: number;
+  /** The kill point in the hull's 1× Pixi-up frame, on the outline. */
+  killX: number;
+  killY: number;
+  /** Final hit ÷ max hull. */
+  killBlowDamage: number;
+  /** Damage over the last ~3 s ÷ max hull. */
+  recentDamageRate: number;
+  /** Clean-snap chance the fracture used. */
+  snapChance: number;
+  /** `FRACTURE_ALGO_VERSION` the server fractured with; a client on another
+   *  version drops the wreck instead of guessing. */
+  algoVersion: number;
+  /** S3: the server tick the capital broke up on. The client's wreck art
+   *  starts its molten cut-edge glow from it; absent ⇒ drawn already cool
+   *  (as a late joiner sees it). Not a fracture input. */
+  deathTick?: number;
 }

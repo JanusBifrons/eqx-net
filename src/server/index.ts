@@ -407,6 +407,21 @@ gameServer
 // the cooldown/regen cadence. `dronePoses` is a hardcoded room option (NOT a URL
 // param), so the drone must live in a dedicated room like this — `test-sector-
 // fast` has no drones. filterBy(testId) isolates parallel specs.
+// Capital destruction S2b — a peaceful battleship 2.5 km north of the spawn,
+// with capital wrecks on. A spec sends `test_kill_capitals` and checks the
+// client draws the wreck pieces. filterBy(testId) isolates parallel specs.
+gameServer
+  .define('wreck-test', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    capitalWrecks: true,
+    dronePoses: [{ kind: 'battleship', x: 0, y: 2500, angle: 0 }],
+    defaultSpawnX: 0,
+    defaultSpawnY: -1500,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
 gameServer
   .define('auto-fire-test', SectorRoom, {
     testMode: true,

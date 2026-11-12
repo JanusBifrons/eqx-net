@@ -2943,3 +2943,11 @@ Owner: "They absolutely should collide by design." In a clip a heavy cruiser und
 - **Cause:** `ColyseusClient.handleSnapshot` applied the drone slice (`applyDroneMountAngles`, also hostile / hp / charging / warp) only inside the own-active-ship branch, after the reconciler gate. A spectator has no own ship, so every NPC turret stopped where it was, while naval shells (events, not the snapshot) kept leaving the real barrels.
 - **Fix:** apply the drone and asteroid slices for every recipient, before the own-ship gate. Locks: `ColyseusClient.spectatorTurrets.test.ts`, `tests/e2e/spectator-npc-turrets.spec.ts`.
 - **Rule:** a snapshot slice about OTHER entities must not sit behind an own-ship gate. Spectators and not-yet-reconciled pilots still watch the world.
+
+## 2026-11-12 — Wreck pieces "barely drifted": the tiled pieces cancelled their own push
+
+- **Symptom:** a filmed heavy-cruiser break-up kept the hull's outline with hairline gaps for 6 s; cracks spread over ~60 % of the hull; the bow split lengthwise.
+- **Cause (drift):** the push was ~20–60 u/s away from the kill point, and the pieces tile the hull exactly with default collision groups. A piece pushed from the kill point drove into its slower neighbour; the contacts traded the push away (nearest piece 60 u/s, farthest 76 u/s after 2 s). The kill point itself was right (a real-shell integration test matches the impact to the float).
+- **Cause (spread):** a 1/d² seed falloff has a long tail on a long thin hull, and a Voronoi bisector between two seeds at the same station across a narrow beam runs down the keel to the hull's end.
+- **Fix:** `WRECK_COLLISION_GROUPS` (pieces never collide with each other), a push fastest at the kill point from `shipTuning` (#18); fracture v5 (1/d⁴ falloff, a metric stretched along the keel, a keel-wise seed spacing away from the kill point).
+- **Rule:** bodies spawned touching each other with diverging but unequal velocities will collide; give a break-up's pieces their own collision group, as scrap has.

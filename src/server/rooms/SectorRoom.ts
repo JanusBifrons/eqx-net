@@ -341,6 +341,7 @@ import {
   CancelTransitSchema,
   TestAggroSchema,
   TestReloadTurretsSchema,
+  TestKillCapitalsSchema,
   TestFleetWarpSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
@@ -1391,7 +1392,7 @@ export class SectorRoom extends Room<SectorState> {
     /** The authoritative SAB pose of a swarm entity (null ⇒ unknown id). */
     swarmPose: (id: string) => { x: number; y: number; angle: number } | null;
     /** v4 T2 — an active player's SAB pose and teleport epoch. */
-    playerPose: (playerId: string) => { x: number; y: number; poseEpoch: number } | null;
+    playerPose: (playerId: string) => { x: number; y: number; angle: number; poseEpoch: number } | null;
     /** Gates: open bits for a gate structure id. */
     gateMask: (id: string) => number;
     /** Unified-hull plan, Phase 4 — assert a structure resolves its OWN
@@ -1410,6 +1411,8 @@ export class SectorRoom extends Room<SectorState> {
     wreckParts: (id: string) => ReadonlyArray<ReadonlyArray<{ x: number; y: number }>> | null;
     /** S2a — fix the fracture seed (null = per death). */
     setWreckSeed: (seed: number | null) => void;
+    /** S2b — the live wreck descriptors (the snapshot's `wrecks[]`). */
+    wreckDescriptors: () => readonly import('../../shared-types/messages.js').WreckDescriptor[];
     /** The first non-player thing a ray meets (NPC / turret beam path). */
     rayHit: (fx: number, fy: number, dx: number, dy: number, maxDist: number, skipId: string) => { id: string; dist: number } | null;
   } {
@@ -1461,7 +1464,7 @@ export class SectorRoom extends Room<SectorState> {
         const slot = this.playerToSlot.get(pid);
         if (slot === undefined) return null;
         const b = slotBase(slot);
-        return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, poseEpoch: this.getActiveShip(pid)?.poseEpoch ?? 0 };
+        return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, angle: this.sabF32[b + SLOT_ANGLE_OFF]!, poseEpoch:this.getActiveShip(pid)?.poseEpoch ?? 0 };
       },
       swarmPose: (id) => {
         const rec = this.swarmRegistry.get(id);
@@ -1479,6 +1482,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       wreckParts: (id) => this.swarmRegistry.get(id)?.wreckParts ?? null,
       setWreckSeed: (seed) => { if (this.capitalWrecks) this.capitalWrecks.forcedSeed = seed; },
+      wreckDescriptors: () => this.capitalWrecks?.descriptors() ?? [],
       rayHit: (fx, fy, dx, dy, maxDist, skipId) => {
         const h = this.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId);
         return h ? { id: h.id, dist: h.dist } : null;
@@ -1765,7 +1769,7 @@ export class SectorRoom extends Room<SectorState> {
        *  (capitals stay npcOnly everywhere else). testMode-only. */
       pilotCapitals?: boolean;
       /** Capital destruction S2a: a dying capital breaks into wreck bodies
-       *  (server-only until S2b/S3, so off by default). */
+       *  (drawn plainly since S2b; off by default until S3 art). */
       capitalWrecks?: boolean;
       /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
        *  Set to the joining test player's id so the seeded base is a real
@@ -2254,6 +2258,9 @@ export class SectorRoom extends Room<SectorState> {
       // pulse / on placement), attached by reference to every recipient.
       getStructuresSlice: () => this.structuresSlice,
       getStructureMountAngles: () => this.structureMountAnglesSlice,
+      // Capital destruction S2b: the wreck descriptors (null when off).
+      getWrecks: () => this.capitalWrecks?.descriptors() ?? null,
+      wrecksVersion: () => this.capitalWrecks?.version ?? 0,
     });
 
     // Player onLeave handler. Three branches: shouldLinger / transit-
@@ -3087,6 +3094,24 @@ export class SectorRoom extends Room<SectorState> {
         return;
       }
       this.structureGrid.reloadAllTurrets();
+    });
+
+    // Capital destruction S2b — testMode only: every capital NPC takes a lethal
+    // hit now (at its own pose; the kill point lands on the hull edge), so an
+    // E2E sees its wreck without a long gun duel.
+    this.onMessage('test_kill_capitals', (client: Client, raw: unknown) => {
+      if (!(this.testMode || ALLOW_DEV_OVERRIDES)) return;
+      if (!TestKillCapitalsSchema.safeParse(raw).success) {
+        this.malformed.record(client.sessionId, 'test_kill_capitals');
+        return;
+      }
+      for (const rec of [...this.swarmRegistry.all()]) { // TODO: alloc-debt (test cue only)
+        if (rec.kind !== SWARM_KIND_DRONE || !isCapitalKindId(rec.shipKind)) continue;
+        const b = slotBase(rec.slot);
+        const x = this.sabF32[b + SLOT_X_OFF]!, y = this.sabF32[b + SLOT_Y_OFF]!;
+        // A shield takes the first hit whole: hit again until the hull goes.
+        for (let i = 0; i < 4 && this.swarmRegistry.get(rec.id) === rec; i++) this.applyDamage(rec.id, 'test-kill', 1e9, x, y);
+      }
     });
 
     // W2c showcase: warp the room's ships to (x, y), keeping the formation
@@ -5088,6 +5113,8 @@ export class SectorRoom extends Room<SectorState> {
     // P3c — a removed shooter's pending charge never fires.
     this.aiFireResolver.forget(rec.id);
     this.capitalWrecks?.forget(rec.id);
+    // S2b: a wreck piece leaving the world may retire its wreck's descriptor.
+    if (isWreckPiece(rec)) this.capitalWrecks?.pieceGone(rec.id);
     this.npcLocks.forgetNpc(rec.id);
     // v4 A — its slot may be reused; a new ship must not inherit a disable.
     if (this.gateGuard.gateCount > 0) this.gateGuard.forget(rec.id);

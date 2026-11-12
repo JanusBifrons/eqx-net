@@ -9,9 +9,9 @@
  *   [2]  u16  count     (number of records)
  *   [4]  u32  serverTick
  *
- * Per-entity record (34 bytes — v4):
+ * Per-entity record (36 bytes — v5):
  *   [+0]  u16  entityId      (dense 0..65535)
- *   [+2]  u8   kind          (0=asteroid, 1=drone, 2=structure, 3=scrap)
+ *   [+2]  u8   kind          (0=asteroid, 1=drone, 2=structure, 3=scrap, 4=wreck piece)
  *   [+3]  u8   recordFlags   (bit 0 = SLEEPING, bit 1 = SHIELD_DOWN)
  *   [+4]  f32  x
  *   [+8]  f32  y
@@ -31,23 +31,27 @@
  *                             APPEND-ONLY — reordering invalidates this for in-flight packets.)
  *   [+33] u8   componentIndex (v4: scrap-component index — meaningful ONLY when kind=scrap,
  *                             0 otherwise. Selects WHICH scrap group of the parent ship-kind
- *                             this piece is — the index into `shipScrapGroups(parentKind)`.)
+ *                             this piece is — the index into `shipScrapGroups(parentKind)`.
+ *                             v5: kind=wreck → the PIECE index within its wreck.)
+ *   [+34] u16  wreckId       (v5: kind=wreck → which wreck this piece belongs to, the key
+ *                             of its `wrecks[]` snapshot descriptor; 0 for every other kind.)
  *
  * Sleeping entities ship one packet on the sleep-transition tick (recordFlags
  * bit 0 set, vx/vy = 0, angvel = 0), then drop out entirely until they wake.
  *
  * **Version contract**: a decoder that sees `version !== SWARM_WIRE_VERSION`
  * MUST drop the packet (and ideally surface a "please refresh" banner). Older
- * clients reading v4 with the v3 stride mis-attribute every byte after the
- * first record — never silently fall back. v3 had a 33-byte record without the
+ * clients reading v5 with the v4 stride mis-attribute every byte after the
+ * first record — never silently fall back. v4 had a 34-byte record without the
+ * trailing wreckId u16 (capital destruction S2b, 2026-11-12); v3 had a 33-byte record without the
  * trailing componentIndex byte; v2 had a 29-byte record without the embedded
  * angvel field; v1 had 28 bytes without shipKind.
  */
 
-export const SWARM_WIRE_VERSION = 4;
+export const SWARM_WIRE_VERSION = 5;
 
 export const SWARM_HEADER_BYTES = 8;
-export const SWARM_RECORD_BYTES = 34;
+export const SWARM_RECORD_BYTES = 36;
 /** Offset of the angvel f32 within a record (v3). */
 export const SWARM_REC_ANGVEL_OFF = 24;
 /** Offset of the radius f32 within a record (v3 — shifted from v2's +24). */
@@ -58,6 +62,9 @@ export const SWARM_REC_SHIP_KIND_OFF = 32;
  *  Meaningful ONLY when `kind === SWARM_KIND_SCRAP`; 0 for every other kind.
  *  Selects which `shipScrapGroups(parentKind)` group this scrap piece is. */
 export const SWARM_REC_COMPONENT_INDEX_OFF = 33;
+/** Offset of the `wreckId` u16 within a record (v5 — NEW trailing field).
+ *  Meaningful ONLY when `kind === SWARM_KIND_WRECK`; 0 for every other kind. */
+export const SWARM_REC_WRECK_ID_OFF = 34;
 
 export const SWARM_FLAG_FULL = 1 << 0;
 export const SWARM_FLAG_DECIMATED = 1 << 1;
@@ -84,6 +91,12 @@ export const SWARM_KIND_STRUCTURE = 2;
  *  at +33 selects which `shipScrapGroups(parentKind)` group this piece is.
  *  Kinds are append-only (invariant #11). */
 export const SWARM_KIND_SCRAP = 3;
+/** Capital destruction S2b — one solid piece of a capital's wreck. The shared
+ *  `shipKind` byte carries the PARENT ship-kind, `componentIndex` the piece
+ *  index and the v5 `wreckId` u16 its wreck. The geometry is never on the
+ *  wire: the client rebuilds it from the wreck's `wrecks[]` descriptor with the
+ *  same deterministic `wreckPieceGeometry`. No health (immune terrain). */
+export const SWARM_KIND_WRECK = 4;
 
 /** Maximum number of records that fit in a buffer of `bufBytes` total bytes. */
 export function swarmRecordCapacity(bufBytes: number): number {

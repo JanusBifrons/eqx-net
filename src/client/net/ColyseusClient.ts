@@ -89,6 +89,8 @@ import { recoverInputTickFromStarvation, skipStalledBacklog, stallResumeAction }
 import { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { ClientEntityFactory } from './entity/ClientEntityFactory.js';
+import { WreckGeometryStore } from './wreckGeometryStore.js';
+import { SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
 import type { ClientSpawnCtx } from './entity/IClientEntityLeaf.js';
 import { DataChannelTransport } from './dataChannelTransport.js';
 import { webrtcEnabledFromSearch } from './webrtcEnable.js';
@@ -450,12 +452,16 @@ export class ColyseusGameClient {
    *  the leaves only read the reused `_clientSpawnCtx` + call predWorld /
    *  aiController (so `updateMirror`'s per-frame follower stays untouched). */
   private readonly _entityFactory = new ClientEntityFactory();
+  /** Capital destruction S2b: wreck geometry rebuilt from the snapshot's
+   *  `wrecks[]` descriptors. Its `descriptors` map IS `mirror.wrecks`. */
+  private readonly _wrecks = new WreckGeometryStore();
   /** Reused construction context — one instance mutated in place per entity, so
    *  swarm spawn allocates nothing (invariant #14). `predWorld` / `entry` are
    *  filled per use; `aiController` is the (constant) hostility ledger. */
   private readonly _clientSpawnCtx: ClientSpawnCtx = {
     predWorld: null as unknown as ClientSpawnCtx['predWorld'],
     aiController: this._aiController,
+    wrecks: this._wrecks,
     entityId: 0,
     key: '',
     entry: null as unknown as ClientSpawnCtx['entry'],
@@ -1277,6 +1283,8 @@ export class ColyseusGameClient {
   private readonly _shellStore = new ShellSalvoStore();
 
   private resetPredictionState(): void {
+    // S2b: wrecks belong to the old sector (clears mirror.wrecks too).
+    this._wrecks.clear();
     // Fire control: NPC locks belong to the old sector.
     this.mirror.localLockedBy = NO_LOCKED_BY;
     // A new sector / ship: seed the energy pool again from the new ship.
@@ -3152,6 +3160,14 @@ export class ColyseusGameClient {
     // construction). Pose lives in `mirror.swarm` (kind=2); joined by entityId.
     this.syncStructures(snap.structureTargets, snap.structureMountAngles);
 
+    // Capital destruction S2b: the wreck descriptors (the full live list when
+    // present; absent = not this snapshot). Pieces whose wreck is known get
+    // their predWorld body in syncSwarmIntoPredWorld and a sprite.
+    if (snap.wrecks !== undefined) {
+      this._wrecks.apply(snap.wrecks);
+      this.mirror.wrecks = this._wrecks.descriptors;
+    }
+
     // Server-authoritative boost + thrust sets — exhaust-trail renderer.
     applyBoostingThrustingSets(snap, this.mirror);
 
@@ -3572,6 +3588,9 @@ export class ColyseusGameClient {
         key = `swarm-${entityId}`;
         keyCache.set(entityId, key);
       }
+      // S2b: a wreck piece needs its wreck's descriptor for its geometry; until
+      // it arrives (≤ 0.5 s for a late joiner) the piece has no body yet.
+      if (entry.kind === SWARM_KIND_WRECK && (entry.wreckId === undefined || !this._wrecks.has(entry.wreckId))) continue;
       if (entry.kind === 2 && me) {
         const edge = Math.hypot(entry.x - me.x, entry.y - me.y) - entry.radius;
         if (!wantPredBody(this.predWorld.hasShip(key), edge)) continue; // unseen ⇒ swept below
@@ -5456,6 +5475,7 @@ export class ColyseusGameClient {
     const h = this._displayHitscan;
     h.world = this.predWorld;
     h.swarm = this.mirror.swarm;
+    h.wrecks = this._wrecks;
     return h;
   }
 

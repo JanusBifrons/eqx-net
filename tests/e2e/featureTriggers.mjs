@@ -32,6 +32,13 @@ export const FEATURE_TRIGGERS = [
     specs: ['capital-helm'],
   },
   {
+    // Capital destruction: wreck pieces on the wire, rebuilt + drawn on the client.
+    area: 'capital wrecks',
+    paths: ['src/core/destruction/', 'src/server/rooms/CapitalWreckSubsystem', 'src/client/net/wreckGeometryStore',
+      'src/client/net/entity/leaves/wreckClientLeaf', 'src/shared-types/swarmWireFormat'],
+    specs: ['capital-wreck-render'],
+  },
+  {
     area: 'energy and boost',
     paths: ['src/core/combat/Energy', 'src/client/hud/GameHud', 'src/client/hud/widgets', 'src/core/physics/applyShipInput'],
     specs: ['energy-bar', 'boost-facing'],

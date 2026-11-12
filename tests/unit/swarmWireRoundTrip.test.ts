@@ -37,6 +37,10 @@ import {
 import {
   SWARM_KIND_STRUCTURE,
   SWARM_KIND_SCRAP,
+  SWARM_KIND_WRECK,
+  SWARM_HEADER_BYTES,
+  SWARM_RECORD_BYTES,
+  SWARM_WIRE_VERSION,
 } from '../../src/shared-types/swarmWireFormat.js';
 
 function makeSab(): { f32: Float32Array; u32: Uint32Array } {
@@ -144,5 +148,60 @@ describe('binary swarm wire — asteroid resource kind (P2c)', () => {
     expect(mirror.swarm!.get(rock.entityId)!.asteroidResource).toBeUndefined();
     expect(mirror.swarm!.get(ice.entityId)!.asteroidResource).toBe('ice');
     expect(mirror.swarm!.get(crystal.entityId)!.asteroidResource).toBe('crystal');
+  });
+});
+
+describe('binary swarm wire — capital wreck pieces (kind 4, v5)', () => {
+  it('a wreck piece round-trips its parent kind, piece index and u16 wreckId', () => {
+    const registry = new SwarmEntityRegistry();
+    const encoder = new BinarySwarmBroadcast();
+    const { f32, u32 } = makeSab();
+    const piece = registry.register('wreck-3-11', 12, 4, 420, 1500, -2500, 0.3);
+    piece.shipKind = 'battleship';
+    piece.componentIndex = 11;
+    piece.wreckId = 40_001; // > 255: needs the u16
+    setSlotPose(f32, 12, 1500, -2500, 0.3);
+    const drone = registry.register('drone-0', 13, 1, 14, 0, 0, 0);
+    drone.shipKind = 'fighter';
+    setSlotPose(f32, 13, 0, 0, 0);
+
+    const packet = encoder.encode(registry, f32, u32, 60);
+    expect(packet, 'the wreck piece rides the wire').not.toBeNull();
+    expect(SWARM_WIRE_VERSION).toBe(5);
+    expect(SWARM_RECORD_BYTES).toBe(36);
+    expect(packet!.byteLength).toBe(SWARM_HEADER_BYTES + 2 * SWARM_RECORD_BYTES);
+    const mirror: RenderMirror = { ships: new Map(), localPlayerId: null };
+    decodeSwarmPacket(packet!, mirror);
+    const w = mirror.swarm!.get(piece.entityId)!;
+    expect(w, 'wreck piece decoded').toBeTruthy();
+    expect(w.kind).toBe(SWARM_KIND_WRECK);
+    expect(w.shipKind).toBe('battleship');
+    expect(w.componentIndex).toBe(11);
+    expect(w.wreckId).toBe(40_001);
+    expect(w.x).toBeCloseTo(1500, 1);
+    expect(w.y).toBeCloseTo(-2500, 1);
+    expect(w.radius).toBeCloseTo(420, 3);
+    // The record after the wreck still decodes (the stride is right).
+    const d = mirror.swarm!.get(drone.entityId)!;
+    expect(d.shipKind).toBe('fighter');
+    expect(d.wreckId).toBeUndefined();
+  });
+
+  it('the decoder hard-fails a v4 packet (invariant #11)', () => {
+    const registry = new SwarmEntityRegistry();
+    const encoder = new BinarySwarmBroadcast();
+    const { f32, u32 } = makeSab();
+    const drone = registry.register('drone-0', 13, 1, 14, 0, 0, 0);
+    drone.shipKind = 'fighter';
+    setSlotPose(f32, 13, 0, 0, 0);
+    const old = new Uint8Array(encoder.encode(registry, f32, u32, 60)!); // a copy
+    old[0] = 4; // the previous version's header
+    const mirror: RenderMirror = { ships: new Map(), localPlayerId: null };
+    decodeSwarmPacket(old, mirror);
+    expect(mirror.swarm?.size ?? 0).toBe(0);
+    // The current version decodes the same bytes.
+    old[0] = SWARM_WIRE_VERSION;
+    decodeSwarmPacket(old, mirror);
+    expect(mirror.swarm?.size ?? 0).toBe(1);
   });
 });

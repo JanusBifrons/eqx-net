@@ -793,12 +793,14 @@ is EXCLUDED from `SectorPersistence` (transient debris). Wire: `SWARM_KIND_SCRAP
 (invariant #8). Locks: `ScrapSpawner.test.ts` + `scrapOnDeath.test.ts`
 (integration). See [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).
 
-## Capital wrecks (capital destruction S2a, 2026-11-12)
+## Capital wrecks (capital destruction S2a + S2b, 2026-11-12)
 
 - **Behind `capitalWrecks`** (room option / `EQX_CAPITAL_WRECKS=1`), off by default. Off ⇒ `SectorRoom.capitalWrecks` is null and nothing changes.
 - **Hit tracking** is `CapitalWreckSubsystem.noteHit`, called from `applyDamage` before the router; pooled entries, no per-hit allocation (#14). Pass a hit point wherever a weapon knows one; the AI beam uses `noteBeamImpact` so its `DamageEvent` stays unchanged.
 - **Death hooks** (all before the dying body is despawned): drone capitals in `spawnScrapFromDrone`, active hulls in the `SHIP_DESTROYED` handler (which also despawns the dead body, slot kept), lingering hulls via the `spawnScrapFromLingeringHull` seam. Abandon is not a death: no wreck.
-- **Wreck pieces are swarm kind 4** (`isWreckPiece`): immune, solid, block every weapon (`core/destruction/wreckHits.ts`), skipped by the binary encoder and persistence until S2b. A new weapon or hit path must handle kind 4 (or the shot passes through a wall the server simulates).
+- **Wreck pieces are swarm kind 4** (`isWreckPiece`): immune, solid, block every weapon (`core/destruction/wreckHits.ts`). A new weapon or hit path must handle kind 4 (or the shot passes through a wall the server simulates). Persistence still skips them (S2c).
+- **S2b — on the wire.** Kind 4 rides the binary swarm wire (v5, `wreckId` u16 at +34). Each wreck has one `WreckDescriptor` (fracture inputs) in `CapitalWreckSubsystem.descriptors()`; it rides `SnapshotMessage.wrecks[]` for `WRECKS_CHANGE_WINDOW` counters after the set changes and at 2 Hz otherwise (`SnapshotBroadcaster`). Any path that removes a wreck piece must reach `pieceGone` (`evictSwarmEntity` does), or its descriptor outlives it. Never put vertices on the wire: the client rebuilds them with `wreckPieceGeometry` (#15). The 768-piece cap stays until S2c. (This `wrecks[]` is new: the old abandon-wreck `SnapshotMessage.wrecks` was removed in C3.)
+- **Test trigger:** testMode `test_kill_capitals` (every capital NPC takes a lethal hit, re-hit through a shield); room `wreck-test`.
 - Story: [docs/architecture/capital-destruction.md](../../docs/architecture/capital-destruction.md) §S2.
 
 ## Solar-system sectors are on by default (wrap-up W1c, 2026-11-08)

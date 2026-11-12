@@ -11,6 +11,8 @@ import { entityPoseFromSprite, type EntityPose } from './pixi/entityPoseFromSpri
 import { decidePlacementPointer, shouldCentreGhostOnActivate } from './placementPointerDecision.js';
 import { engineProfileForKind } from './pixi/engineGeometry.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdater.js';
+import { WreckGeometryStore } from '../net/wreckGeometryStore.js';
+import { WreckArtState, WreckPieceSprite } from './pixi/wreckArt.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
@@ -459,6 +461,8 @@ export class PixiRenderer implements IRenderer {
    *  the constructor after `this.shipContainer` is assigned. */
   private _shipUpdaterCtx!: ShipSpriteCtx;
   private _swarmUpdaterCtx!: SwarmSpriteCtx;
+  /** S3: wreck break-ups played (test hook via `artStats`). */
+  private _wreckBreaks = 0;
   private _projectileUpdaterCtx!: ProjectileSpriteCtx;
   /** Off-screen ring/edge indicator. Constructed in the constructor body
    *  (NOT a field initializer) so it sees the assigned `_isTouch` — field
@@ -904,6 +908,14 @@ export class PixiRenderer implements IRenderer {
       spriteBuildSigs: this._swarmSpriteSigs,
       slewDtSec: 1 / 60, // overwritten per frame before updateSwarmSprites
       art: this._artCtx,
+      // Capital destruction S2b: wreck piece geometry rebuilt from mirror.wrecks.
+      wrecks: new WreckGeometryStore(),
+      // S3: each wreck's death clock; a fresh wreck's break-up (dust, shards,
+      // flash at the kill point) goes through the effects system, tier-capped.
+      wreckArt: new WreckArtState((x, y, radius, snap) => {
+        this._wreckBreaks++;
+        this.effects?.spawnBurst('wreck-break', x, y, { radius, ...(snap ? { flashScale: 1.6 } : {}) });
+      }),
     };
     this._projectileUpdaterCtx = {
       shipContainer: this.shipContainer,
@@ -2654,7 +2666,10 @@ export class PixiRenderer implements IRenderer {
       if (mirror.ships.has(key)) {
         thrust = mirror.thrustingShips?.has(key) ? 1 : 0;
         boost = mirror.boostingShips?.has(key) ? 1 : 0;
-      } else if (key.startsWith('swarm-')) {
+      } else if (key.startsWith('swarm-') && this._swarmSpriteKinds.get(key) === 1) {
+        // Drones only. A capital wreck piece (kind 4) holds its dead ship's
+        // art handle, nozzles and all, so without this gate every drifting
+        // piece drew the battleship's four-flame exhaust and ribbons.
         thrust = -1; boost = -1;
       } else continue;
       let top = this._fxTopSpeed.get(h.job.id), trail = this._fxTrailS.get(h.job.id);
@@ -3298,7 +3313,7 @@ export class PixiRenderer implements IRenderer {
 
   /** Machined art status: the service's counts plus how many ship sprites
    *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; lodDots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']>; warpBursts: number; warpSpooling: number; spoolFxDrawn: number; ownArt: string | null; helmMarker: boolean } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; lodDots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']>; warpBursts: number; warpSpooling: number; spoolFxDrawn: number; ownArt: string | null; helmMarker: boolean; wreckPieces: number; wreckTextured: number; wreckGlowing: number; wreckBreaks: number; wreckEngines: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;
@@ -3307,8 +3322,27 @@ export class PixiRenderer implements IRenderer {
     for (const e of this.lingeringSprites.values()) {
       if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
+    // Capital destruction S2b: drawn wreck pieces (visible sprites of kind 4).
+    // S3: textured pieces (parent art), pieces whose cut edges still glow,
+    // and break-ups played.
+    // wreckEngines: pieces drawing engine exhaust this frame. Must stay 0: a
+    // piece wears the dead ship's art handle (nozzles and all), but a wreck
+    // has no engines.
+    let wreckPieces = 0, wreckTextured = 0, wreckGlowing = 0, wreckEngines = 0;
+    for (const [id, k] of this._swarmSpriteKinds) {
+      if (k !== 4) continue;
+      if (this._fxEngines?.drew(id) === true) wreckEngines++;
+      const sp = this.sprites.get(id);
+      if (sp?.visible !== true) continue;
+      wreckPieces++;
+      if (sp instanceof WreckPieceSprite) {
+        if (sp.art !== null) wreckTextured++;
+        if (sp.glowAlpha() > 0) wreckGlowing++;
+      }
+    }
+    const wreckBreaks = this._wreckBreaks;
     const art = this._artCtx.art;
-    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), lodDots: this._farIcons.iconCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), spoolFxDrawn: this._spoolFx.spooling, helmMarker: this.helmMarker.isVisible(), ownArt: this._lastMirror?.localPlayerId ? (this._artCtx.handles.get(this._lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
+    return { wreckPieces, wreckTextured, wreckGlowing, wreckBreaks, wreckEngines, mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), lodDots: this._farIcons.iconCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), spoolFxDrawn: this._spoolFx.spooling, helmMarker: this.helmMarker.isVisible(), ownArt: this._lastMirror?.localPlayerId ? (this._artCtx.handles.get(this._lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
   }
 
   dispose(): void {

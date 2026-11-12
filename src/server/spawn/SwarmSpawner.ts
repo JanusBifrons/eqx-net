@@ -7,7 +7,7 @@ import { generateAsteroidVertices, asteroidResources, type Vec2 } from '../../co
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
 import { STRUCTURE_DEFAULT_MASS } from '../../core/swarm/structureConstants.js';
 import { SCRAP_DEFAULT_MASS, SCRAP_LINEAR_DAMPING } from '../../core/swarm/scrapConstants.js';
-import { SCRAP_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
+import { SCRAP_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
@@ -294,14 +294,14 @@ export class SwarmSpawner {
    *  built from the piece's convex parts (mass spread over their area, so mass
    *  ∝ area), at the dying hull's pose, velocity and spin, with the default
    *  collision groups (it collides with ships, drones, rocks AND other wreck
-   *  pieces). Kind 4 is server-only until S2b: it is in the interest grid
-   *  (spawn clearance, queries) but the binary encoder skips it. Not
+   *  pieces). Kind 4 rides the binary wire since S2b (with its `wreckId`) and
+   *  is in the interest grid (spawn clearance, queries). Not
    *  registered for lag-comp (the ring has a fixed entity budget the drones
    *  need; a slow wreck is hit at its live SAB pose). No health: shots stop
    *  on it and do nothing (EntityResolver treats kind 4 as immune). */
   spawnWreck(spec: {
     id: string; x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
-    radius: number; mass: number; parentShipKind: ShipKindId; pieceIndex: number;
+    radius: number; mass: number; parentShipKind: ShipKindId; pieceIndex: number; wreckId: number;
     parts: ReadonlyArray<ReadonlyArray<Vec2>>; linearDamping: number; angularDamping: number;
   }): boolean {
     const slot = this.hooks.takeSlot();
@@ -318,10 +318,11 @@ export class SwarmSpawner {
     const rec = this.registry.register(spec.id, slot, SWARM_KIND_WRECK, spec.radius, spec.x, spec.y, spec.angle);
     rec.shipKind = spec.parentShipKind;
     rec.componentIndex = spec.pieceIndex;
+    rec.wreckId = spec.wreckId;
     rec.wreckParts = spec.parts;
     this.hooks.postSpawnObstacle(
       slot, spec.id, spec.x, spec.y, spec.vx, spec.vy, spec.radius, spec.mass, undefined,
-      spec.linearDamping, false, undefined, spec.angle, spec.parts, undefined,
+      spec.linearDamping, false, WRECK_COLLISION_GROUPS, spec.angle, spec.parts, undefined,
       { angvel: spec.angvel, angularDamping: spec.angularDamping },
     );
     this.hooks.interestGrid?.insert(rec.entityId, spec.x, spec.y, spec.radius);

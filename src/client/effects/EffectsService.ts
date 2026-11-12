@@ -34,6 +34,7 @@ import { buildLaserGlowFactories } from './perEffect/laserGlowFactories';
 import { ImpactSparks } from './perEffect/ImpactSparks';
 import { buildImpactFactories } from './perEffect/impactFactories';
 import { ShieldAura } from './perEffect/ShieldAura';
+import { WreckBreakFx } from './perEffect/WreckBreakFx';
 import { buildShieldFactories } from './perEffect/shieldFactories';
 import type { FxKillSwitches } from '../render/fxKillSwitches';
 import type { Application, Container } from 'pixi.js';
@@ -98,6 +99,8 @@ export class EffectsService implements IEffects {
   private readonly laserGlow: LaserGlow | null;
   private readonly impactSparks: ImpactSparks;
   private readonly shieldAura: ShieldAura;
+  /** Capital destruction S3: the break-up of a capital into wreck pieces. */
+  private readonly wreckBreak: WreckBreakFx;
   /** Tier currently applied to per-effect modules — updated each tick
    *  when getQuality changes so M3 (warp) + M6 (laser glow) + M8 (shield
    *  aura) propagate. Initialised to 'minimal' (sentinel — ALWAYS
@@ -144,6 +147,7 @@ export class EffectsService implements IEffects {
       buildShieldFactories(),
       { filtersDisabled },
     );
+    this.wreckBreak = new WreckBreakFx(refs.world, () => this.getQuality(), particlesDisabled);
   }
 
   // ── IParticleEffects ────────────────────────────────────────────────
@@ -165,6 +169,8 @@ export class EffectsService implements IEffects {
       // a cyan/white tint to distinguish. M8 may layer a dedicated shield
       // pulse on top.
       this.impactSparks.spawnBurst(worldX, worldY, opts);
+    } else if (kind === 'wreck-break') {
+      this.wreckBreak.spawnBurst(worldX, worldY, opts);
     }
     // 'warp-arrive' — wired in M8 / M11.
     this.refreshCounters();
@@ -235,6 +241,7 @@ export class EffectsService implements IEffects {
     const dtSec = dtMs / 1000;
     this.destruction.tick(dtSec);
     this.impactSparks.tick(dtSec);
+    this.wreckBreak.tick(dtSec);
     if (this.refs.getEntityPose) {
       this.engines.tick(dtSec, this.refs.getEntityPose);
       this.shieldAura.tick(dtMs, this.refs.getEntityPose);
@@ -250,7 +257,7 @@ export class EffectsService implements IEffects {
     const d = this.destruction.activeCount();
     const e = this.engines.activeCount();
     const s = this.impactSparks.activeCount();
-    this.counters.activeBursts = d.bursts + e.particles + s;
+    this.counters.activeBursts = d.bursts + e.particles + s + this.wreckBreak.activeCount();
     this.counters.activeFilters = d.filters;
     this.counters.activeContinuous = this.continuous.size;
     this.budget.recordCounts(this.counters);
@@ -268,6 +275,7 @@ export class EffectsService implements IEffects {
     this.engines.resetForSectorHandoff();
     this.impactSparks.resetForSectorHandoff();
     this.shieldAura.resetForSectorHandoff();
+    this.wreckBreak.resetForSectorHandoff();
     this.counters.activeBursts = 0;
     this.counters.activeContinuous = 0;
     this.counters.activeFilters = 0;

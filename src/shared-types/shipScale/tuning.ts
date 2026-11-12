@@ -230,6 +230,12 @@ export interface ShipTuning {
   /** Smallest guard radius round an NPC's guard post (`HostileDroneBehaviour.setGuardPost`):
    *  a post smaller than this would leave a big hull no room to turn. */
   guardRadiusMin: number;
+  /** Capital wreck break-up (capital-destruction.md): the outward push of a
+   *  piece at the kill point and far from it (u/s). Proportional to the hull
+   *  radius, so a bigger hull's debris field opens at the same rate relative
+   *  to its size: heavy cruiser (2×) ~120 / ~30 u/s, battleship ~158 / ~40. */
+  wreckPushMax: number;
+  wreckPushMin: number;
   /** Art bake pixels per world unit, and the texture side cap. */
   bakePpu: number;
   bakeMaxSide: number;
@@ -251,6 +257,11 @@ export interface ShipTuning {
 }
 
 const CACHE = new WeakMap<object, ShipTuning>();
+
+/** Wreck push at the kill point / far from it, per unit of hull radius per
+ *  second (`wreckPushMax` / `wreckPushMin`). */
+const WRECK_PUSH_MAX_PER_RADIUS = 0.055;
+const WRECK_PUSH_MIN_PER_RADIUS = 0.014;
 
 /** The size-dependent numbers for a (scaled) kind. */
 export function shipTuning(kind: ShipKind): ShipTuning {
@@ -280,6 +291,8 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     flockFollow: ct.clearHull ? Math.max(BASE.flockFollow * sp, kind.radius * 3.3) : BASE.flockFollow * sp,
     flockSeparation: ct.clearHull ? Math.max(BASE.flockSeparation * sp, kind.radius * 2.2) : BASE.flockSeparation * sp,
     guardRadiusMin: ct.clearHull ? Math.max(BASE.guardRadiusMin * sp, kind.radius * 2) : BASE.guardRadiusMin * sp,
+    wreckPushMax: WRECK_PUSH_MAX_PER_RADIUS * kind.radius,
+    wreckPushMin: WRECK_PUSH_MIN_PER_RADIUS * kind.radius,
     // Pixel density by the UNSCALED hull (so a 2× fighter stays as sharp per
     // world unit as today's), within the class's side budget.
     bakePpu: unscaledR >= BASE.ppuBigRadius ? BASE.ppuBig : BASE.ppuSmall,
