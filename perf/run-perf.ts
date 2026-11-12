@@ -151,6 +151,7 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
     const p = new URLSearchParams({
       room: `perf-${scene.id}`, testId: randomUUID(), spawnX: String(scene.spawn.x), spawnY: String(scene.spawn.y),
       ...BASE_CLIENT_PARAMS,
+      ...(scene.pilotKind ? { shipKind: scene.pilotKind } : {}),
       ...arm.clientParams,
     });
     await page.goto(`${arm.servers.baseUrl}/?${p}`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
