@@ -83,6 +83,7 @@ import {
 import { getStructureKind } from '@shared-types/structureKinds';
 import { setCanvasPointerCapture } from './pointerCapture.js';
 import { FrameTimeRing } from '@core/perf/FrameTimeRing';
+import { localCameraKey } from './camera/localCameraKey';
 import type { RenderPerfReading, PerfProbeOp, RenderCountReading } from '@core/contracts/IRenderer';
 
 // Most colour + builder constants moved to pixi/spriteBuilders.ts;
@@ -3200,9 +3201,7 @@ export class PixiRenderer implements IRenderer {
     };
     return {
       pose: (id: string, out: MutablePoint): boolean => {
-        const key = id === 'local' ? this._lastMirror?.localPlayerId ?? null : id;
-        if (key === null) return false;
-        const sp = this.sprites.get(key);
+        const sp = this.cameraSprite(id);
         if (!sp || !sp.visible) return false;
         out.x = sp.x;
         out.y = sp.y;
@@ -3218,10 +3217,9 @@ export class PixiRenderer implements IRenderer {
       idsBounds: (ids: readonly string[], out: MutableBounds): number => {
         count = 0;
         acc = out;
-        const localId = this._lastMirror?.localPlayerId ?? null;
         for (let i = 0; i < ids.length; i++) {
           const id = ids[i]!;
-          const sp = this.sprites.get(id === 'local' && localId !== null ? localId : id);
+          const sp = this.cameraSprite(id);
           if (sp && sp.visible) add(sp.x, sp.y, extentOf(sp));
         }
         return count;
@@ -3232,6 +3230,21 @@ export class PixiRenderer implements IRenderer {
       },
     };
   }
+
+  /** The sprite a camera cue follows. `'local'` resolves through
+   *  `localCameraKey`: the pilot's ship, or their parked hull while spectating
+   *  (review 2026-11-12: a 'local' cue did nothing once spectating). */
+  private cameraSprite(id: string): Container | undefined {
+    if (id !== 'local') return this.sprites.get(id);
+    const m = this._lastMirror;
+    const lk = localCameraKey(m?.localPlayerId ?? null, this._isDrawnSprite, m?.lingeringShips);
+    if (lk === null) return undefined;
+    return lk.parked ? this.lingeringSprites.get(lk.key)?.sprite : this.sprites.get(lk.key);
+  }
+  private readonly _isDrawnSprite = (key: string): boolean => {
+    const sp = this.sprites.get(key);
+    return sp !== undefined && sp.visible;
+  };
 
   /** Phase 5 — set the spectator WASD free-pan velocity (SCREEN px/sec). */
   setPanVelocity(vx: number, vy: number): void {
