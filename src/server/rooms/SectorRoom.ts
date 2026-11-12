@@ -7792,7 +7792,10 @@ export class SectorRoom extends Room<SectorState> {
     const rk = getShipKind(ship.kind);
     const r = rk.radius + shipTuning(rk).shieldPad;
     const circle = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, r);
-    if (circle === null || ship.shield > 0) return circle;
+    // A capital's shield follows its hull (`shipShieldColliderDesc`), so its
+    // circle (half the hull's LENGTH) is only the cheap pre-test, as for an NPC
+    // capital (`refineRayHit`, #15): refine to the hull whatever the shield.
+    if (circle === null || (ship.shield > 0 && !isCapitalKindId(ship.kind))) return circle;
     return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, shipCollisionParts(ship.kind));
   }
 
@@ -8028,7 +8031,9 @@ export class SectorRoom extends Room<SectorState> {
     const rk = getShipKind(ship.kind);
     const r = rk.radius + shipTuning(rk).shieldPad;
     const circle = projectileSweepCircle(fromX, fromY, stepX, stepY, projRadius, cx, cy, r);
-    if (circle === null || ship.shield > 0) return circle;
+    // Capitals: the hull, shield up or down (see playerHitscanDist). Before
+    // 2026-11-12 a broadside shell burst ~2,000 u off a pilot's heavy cruiser.
+    if (circle === null || (ship.shield > 0 && !isCapitalKindId(ship.kind))) return circle;
     return sweptSegmentHitsShipPolygon(fromX, fromY, stepX, stepY, cx, cy, angle, shipCollisionParts(ship.kind));
   }
 

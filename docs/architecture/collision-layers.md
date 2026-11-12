@@ -97,6 +97,16 @@ precomputed triangles via `rayHitsConvexPolygon` / a swept-segment
 wrapper). `benchmarks/weapon-hittest.bench.ts` measures it: shield-up ≈
 baseline, clear-miss ≈ baseline, shield-down ~2.5× **only on a near-pass**.
 
+**Capitals are the exception: they always pay the hull refinement.** A
+capital's shield follows its hull, and its circle is half the hull's
+LENGTH (heavy cruiser 2,184 u vs a 227 u half beam). Until 2026-11-12 a
+capital PILOT's ship (active, or parked by Spectate) with its shield up
+returned the circle, so a broadside 16" shell burst ~2,000 u off its
+side, in empty space. Pilot capitals now refine to the hull outline like
+NPC capitals (`capitalHits.ts`, the pad not modelled), shield up or down;
+the client's beam-end snap (`ColyseusClient.shieldEdgeDist`) does the
+same (#15). Lock: `tests/integration/sectorRoom/capitalShieldHugsHull.test.ts`.
+
 ## Ramming aggregation (load-bearing)
 
 A shield-down hull is N triangle colliders, so one physical ram emits up
