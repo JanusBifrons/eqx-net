@@ -129,6 +129,29 @@ export const PERF_SCENES: readonly PerfScene[] = [
     durationMs: 30_000,
     minSwarm: 1,
   },
+  {
+    // Shells as events, slice 3 (docs/architecture/shell-events.md): ten
+    // battleships firing on reinforced robots 12 km off, the pilot beside the
+    // robots so the shells' fall points are in its view. Run it with
+    // EQX_NAVAL_RANGE=real on both arms (+ the client's navalRange=real) and
+    // EQX_SHELL_EVENTS=1 on the head arm only: the verdict's rx KB/s is what
+    // moving naval shells off the per-tick snapshot saves.
+    id: 'naval-broadside',
+    title: 'Ten battleships fire on robots 12 km off; the pilot watches the fall',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      sceneScript: [
+        { atMs: 0, action: 'spawn', tag: 'battleline', kind: 'battleship', count: 10, x: 0, y: 0, spread: 6000 },
+        ...[0, 10_000, 20_000].map((t, i) => fight(`robots${i}`, 'robot-square', 0, 12_000, 12, t)),
+        { atMs: 30_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: 10_500 },
+    camera: { x: 0, y: 9000, zoom: 0.1 },
+    durationMs: 30_000,
+    minSwarm: 10,
+  },
 ];
 
 export function perfSceneById(id: string): PerfScene | undefined {

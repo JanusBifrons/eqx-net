@@ -6,6 +6,7 @@
  *   pnpm perf:scenes [--scenes fleet-fight,teleport-raid] [--reps 8]
  *                    [--base origin/main] [--head-only] [--headed]
  *                    [--base-params k=v&k=v] [--head-params k=v&k=v]
+ *                    [--base-env K=V&K=V] [--head-env K=V&K=V]   (server env per arm)
  *                    [--noise-check | --no-noise-check]
  *   (extra URL flags per arm: e.g. `--base HEAD --head-params shiplight=gpu`
  *   measures one switch on the same build)
@@ -58,7 +59,7 @@ import { armOrder, evenReps } from './order.js';
 
 const GPU_ARGS = ['--use-angle=d3d11', '--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'];
 
-interface Args { scenes: string[]; reps: number; base: string; headOnly: boolean; headed: boolean; out: string; burnServerMs: number; burnClientMs: number; append: string | undefined; baseParams: string; headParams: string; device: 'desktop' | 'phone-proxy'; cpuRate: number; noiseCheck: boolean | undefined; ignorePorts: number[]; loadGate: boolean; limits: LoadLimits }
+interface Args { scenes: string[]; reps: number; base: string; headOnly: boolean; headed: boolean; out: string; burnServerMs: number; burnClientMs: number; append: string | undefined; baseParams: string; headParams: string; baseEnv: string; headEnv: string; device: 'desktop' | 'phone-proxy'; cpuRate: number; noiseCheck: boolean | undefined; ignorePorts: number[]; loadGate: boolean; limits: LoadLimits }
 
 function parseArgs(argv: string[]): Args {
   const get = (k: string): string | undefined => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
@@ -79,6 +80,10 @@ function parseArgs(argv: string[]): Args {
     cpuRate: Number(get('--cpu-rate') ?? PHONE_PROXY.cpuRate),
     baseParams: get('--base-params') ?? '',
     headParams: get('--head-params') ?? '',
+    // Server env per arm, same `k=v&k=v` form (e.g. a process-wide switch such
+    // as EQX_SHELL_EVENTS=1 on one arm of a same-commit A/B).
+    baseEnv: get('--base-env') ?? '',
+    headEnv: get('--head-env') ?? '',
     // undefined = decide from the arms (on for an A/A run).
     noiseCheck: argv.includes('--noise-check') ? true : argv.includes('--no-noise-check') ? false : undefined,
     ignorePorts: (get('--ignore-ports') ?? '').split(',').filter(Boolean).map(Number),
@@ -258,6 +263,7 @@ async function main(): Promise<void> {
     const serverEnv: Record<string, string> = head && args.burnServerMs > 0 ? { EQX_PERF_BURN_MS: String(args.burnServerMs) } : {};
     const clientParams: Record<string, string> = head && args.burnClientMs > 0 ? { perfburn: String(args.burnClientMs) } : {};
     for (const [k, v] of new URLSearchParams(head ? args.headParams : args.baseParams)) clientParams[k] = v;
+    for (const [k, v] of new URLSearchParams(head ? args.headEnv : args.baseEnv)) serverEnv[k] = v;
     return { name, dir, ports, servers: new CaptureServers(dir, rd, ports, serverEnv), sha: gitSha(dir), clientParams, serverEnv };
   };
   const basePorts: ServerPorts = defaultPorts();
