@@ -105,7 +105,9 @@ test('the inspector stays clear of the app header when its target is high on scr
   const box = await panel.boundingBox();
   expect(box, 'the panel is laid out').not.toBeNull();
   expect(box!.y, `panel top ${box!.y} vs header bottom ${(header?.y ?? 0) + (header?.height ?? 0)}`).toBeGreaterThanOrEqual((header?.y ?? 0) + (header?.height ?? 0));
-  // And its button is clickable (nothing intercepts it).
-  await page.getByTestId('cargo-open-toggle').click({ timeout: 5_000 });
+  // And its button is clickable (nothing intercepts it). Default action
+  // timeout, as the other tests here: on the main-thread renderer in headless
+  // Chrome a click can take > 5 s to be handled (a 5 s cap failed 6/6).
+  await page.getByTestId('cargo-open-toggle').click();
   await expect(page.getByTestId('cargo-panel')).toBeVisible({ timeout: 5_000 });
 });
