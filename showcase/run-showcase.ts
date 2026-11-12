@@ -333,7 +333,7 @@ async function takeWithRetry(
     await deviceFrame(capBrowser, framePng, dl);
     device = { layout: dl, framePng };
   }
-  const mp4 = await encodeClip(clipDir, best.rec.index, shot.durationMs, caption, {
+  const mp4 = await encodeClip(clipDir, best.rec.index, best.rec.takeMs, caption, {
     fps,
     cuts: shot.cuts,
     device,
