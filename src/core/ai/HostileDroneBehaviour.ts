@@ -752,7 +752,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    */
   /**
    * Capital engagement (plan prancy-squishing-donut Phase 3). Out of reach:
-   * close bow-first at full thrust. In reach: turn the beam toward the target
+   * close bow-first at full thrust (backing engines while the target is
+   * abaft the beam, so the range never keeps opening). In reach: turn the beam toward the target
    * (whichever side is nearer the current heading) so fore AND aft turrets
    * bear, biased in or out to hold `fireRange × BROADSIDE_STANDOFF`, at reduced
    * thrust, so the hull circles its target. Never fires: the turrets do, under
@@ -766,7 +767,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     if (dist > this.fireRange) {
       // Closing: turn first. A capital turns slowly, so full thrust while
       // facing away steams it further from the target it can't yet shoot.
-      thrust *= Math.max(0, Math.cos(wrapPi(bearing - self.angle)));
+      // With the target abaft the beam it backs its engines (the kind's own
+      // reverse power, as a pilot's reverse): that brakes the way it carries
+      // AWAY from the target at once, then backs it toward the target while
+      // the bow comes round. Ahead-only thrust here let a hull that aggroed
+      // mid-patrol coast out of its own reach for the whole ~150 s turn
+      // (showcase-capital-duel, 2026-11-12).
+      const c = Math.cos(wrapPi(bearing - self.angle));
+      thrust *= c >= 0 ? c : c * this.kind.reverseFactor;
     } else {
       const port = wrapPi(bearing + Math.PI / 2);
       const stbd = wrapPi(bearing - Math.PI / 2);

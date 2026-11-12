@@ -162,7 +162,7 @@ export async function bootSectorTestServer(opts: {
   /** Deterministic drone placement at hand-authored world poses (the root
    *  CLAUDE.md bespoke trigger). testMode-only; forwarded to the room's
    *  `dronePoses` option. */
-  dronePoses?: ReadonlyArray<{ kind: string; x: number; y: number; angle?: number; hullExposed?: boolean }>;
+  dronePoses?: ReadonlyArray<{ kind: string; x: number; y: number; angle?: number; vx?: number; vy?: number; hullExposed?: boolean }>;
   /** Structures plan (Phase 3-5) — pre-built, auto-connected scenario grid. */
   prebuiltStructures?: ReadonlyArray<{ kind: string; x: number; y: number; rot?: number; gateAccess?: 'allies' | 'owner' | 'open' }>;
   /** Owner the prebuilt scenario structures belong to (default `scenario`). Set

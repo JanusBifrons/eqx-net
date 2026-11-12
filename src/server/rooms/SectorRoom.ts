@@ -1677,6 +1677,9 @@ export class SectorRoom extends Room<SectorState> {
         x: number;
         y: number;
         angle?: number;
+        /** Initial velocity (u/s), e.g. a capital already under way. */
+        vx?: number;
+        vy?: number;
         hullExposed?: boolean;
         /** Radar sandbox (plan sparkling-wondering-rose) — fly a scripted
          *  straight line from the pose to `(toX, toY)` at `speed` u/s,
@@ -2885,10 +2888,12 @@ export class SectorRoom extends Room<SectorState> {
         // Also seed the registry's lastBroadcast.angle so the very first
         // delta-detector decision uses the correct reference.
         const angle = pose.angle ?? 0;
-        if (angle !== 0) {
+        const vx = pose.vx ?? 0;
+        const vy = pose.vy ?? 0;
+        if (angle !== 0 || vx !== 0 || vy !== 0) {
           this.postToWorker({
             type: 'SET_POSITION',
-            entityId: droneId, x: pose.x, y: pose.y, angle, vx: 0, vy: 0, angvel: 0,
+            entityId: droneId, x: pose.x, y: pose.y, angle, vx, vy, angvel: 0,
           });
           rec.lastBroadcast.angle = angle;
         }
