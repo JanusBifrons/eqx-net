@@ -128,3 +128,10 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   time. A speed change re-anchors hard on that snapshot's own `serverTick`.
   `GameClock` is exact at 1× (`now()` / `at()` return the wall value until
   the first change). Unit 4976 ✓, integration ✓.
+- 2026-11-12: 4a integration run: 364 ✓, 2 ✗ under the 6-worker parallel
+  run, both passing alone. `galaxyBases`: `EADDRINUSE :3087`, a port
+  collision. `teleporter` "loads a pad": the test waits a fixed 150 ms wall
+  for a message round trip and the loaded run took longer; it passes 3/3
+  alone, and the message path doesn't touch game timers. This fragile wait was
+  already on main; left as is (main's test). Also restored
+  `ColyseusClient.ts` to CRLF as on main.
