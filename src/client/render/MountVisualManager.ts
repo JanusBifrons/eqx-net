@@ -132,6 +132,9 @@ const MUZZLE_TINT = { bolt: 0xffc060, beam: 0x6fd0ff, missile: 0xffa050, charge:
 const SHOT_MATCH_DIST = 60;
 /** A shot is first seen up to ~1.5 snapshots (20 Hz) after it leaves. */
 const SHOT_FIRST_SEEN_S = 0.075;
+/** Longest frame gap the trace-back covers: after a hitch, a shot first seen
+ *  this long after it left is still matched to its gun along its own line. */
+const SHOT_TRACE_BACK_S = 1.5;
 
 /** Bookkeeping per ship — one cluster of mount graphics parented to the
  *  ship's sprite. The cluster `Container` rotates with the ship (because
@@ -224,7 +227,7 @@ export class MountVisualManager {
    *  flash, heat). Without the weapon filter a capital's big-reach main
    *  turrets claimed its AA and 5" shots and fired "like a gatling"
    *  (smoke report 2026-11-07). */
-  noteShotNear(shipId: string, x: number, y: number, weaponId?: string): void {
+  noteShotNear(shipId: string, x: number, y: number, weaponId?: string, vx?: number, vy?: number): void {
     this._lastShotMountId = null;
     this._lastShotBarrel = -1;
     const cluster = this.clusters.get(shipId);
@@ -246,6 +249,30 @@ export class MountVisualManager {
       // invariant #18). Fighter guns keep SHOT_MATCH_DIST.
       const lim = g.matchDist;
       if (d <= lim * lim && d < bd) { bd = d; best = g; bestId = mountId; }
+    }
+    // No tip close enough: after a frame hitch (or on a slow device) the shot
+    // is first seen far down its path. Trace it back along its own velocity
+    // (Pixi space) and take the gun whose tip lies on that line, nearest
+    // behind the shot, within SHOT_TRACE_BACK_S of flight.
+    if (!best && vx !== undefined && vy !== undefined) {
+      const sp = Math.hypot(vx, vy);
+      if (sp > 1e-6) {
+        const ux = vx / sp, uy = vy / sp;
+        const maxAlong = sp * SHOT_TRACE_BACK_S;
+        let bestAlong = Infinity;
+        for (const [mountId, m] of cluster.perMount) {
+          const g = m.gun;
+          if (!g?.layers) continue;
+          if (weaponId !== undefined && g.place.mount.weaponId !== weaponId) continue;
+          const r = g.pivot.rotation;
+          const lx = g.pivot.x + Math.sin(r) * g.reach, ly = g.pivot.y - Math.cos(r) * g.reach;
+          const rx = x - (parent.x + lx * c - ly * s), ry = y - (parent.y + lx * s + ly * c);
+          const along = rx * ux + ry * uy; // how far the shot flew from this tip
+          if (along < 0 || along > maxAlong) continue;
+          const lateral = Math.abs(rx * uy - ry * ux);
+          if (lateral <= g.matchDist && along < bestAlong) { bestAlong = along; best = g; bestId = mountId; }
+        }
+      }
     }
     if (!best) return;
     this._lastShotMountId = bestId;

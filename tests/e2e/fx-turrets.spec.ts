@@ -8,8 +8,8 @@
  *    drone's chin gun) draw Machined.
  *  - `structure-scenario-test`: the seeded Turret structure gets a gun too,
  *    on top of the pilot's own chin gun.
- *  - Firing (T2): with `startHostile=1` (+ `instantLock=1`) the gunship's AUTO
- *    groups lock the drone and fire;
+ *  - Firing (T2): with `startHostile=1` + `instantLock=1` + `groupMode=manual`,
+ *    once the guns are drawn both groups go AUTO, lock the drone and fire;
  *    each new bolt is matched to the gun it left (recoil, flash, heat), so
  *    `turretShots` counts up.
  *  - Without the flag nothing new draws.
@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { test, expect, type Browser, type Page } from '@playwright/test';
 import { waitForInPlay } from './helpers/gameScenario';
+import { toAuto } from './helpers/fireControl';
 import { DEFAULT_BASE_URL } from './helpers/ports';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
@@ -66,16 +67,18 @@ test('a defence turret structure gets a Machined gun too', async ({ browser }) =
 });
 
 test('auto-fire kicks the gunship\'s guns (recoil, flash, heat)', async ({ browser }) => {
-  // Warm the bakes first: a hostile drone dies to a gunship in a second or two,
-  // before a cold bake finishes, so it would be dead before the guns are
-  // Machined. Finished bakes are cached in the context's IndexedDB, so the
-  // second join (a fresh room with a fresh hostile drone) has them at once.
-  const { ctx, page } = await join(browser, 'auto-fire-test', 'gunship', true);
-  await turretsAtLeast(page, 3);
-  const params = new URLSearchParams({ room: 'auto-fire-test', shipKind: 'gunship', testId: randomUUID(), worker: '0', art: 'machined', fx: 'new', zoom: '2.5', initialHull: '5000', startHostile: '1', instantLock: '1' });
-  await page.goto(`${BASE_URL}?${params}`);
-  await turretsAtLeast(page, 2);
-  await waitForInPlay(page);
+  // The hostile drone dies to a gunship in ~3 s, sooner than a cold bake draws
+  // the Machined guns (quarantined 2026-11-10: turretShots never counted). So
+  // every group starts in MAN (`groupMode=manual`: nothing fires), we wait
+  // until the guns are drawn, then switch both groups to AUTO; `instantLock`
+  // completes their locks within ~100 ms. Headless Chrome draws this scene at
+  // ~3 fps, so a bolt is first seen ~1,000 u past its muzzle: the renderer's
+  // trace-back match (MountVisualManager.noteShotNear) is what this locks.
+  const { ctx, page } = await join(browser, 'auto-fire-test', 'gunship', true, { startHostile: '1', instantLock: '1', groupMode: 'manual' });
+  await turretsAtLeast(page, 3); // two gunship turrets + the drone's chin gun
+  expect((await stats(page)).turretShots ?? 0, 'nothing fires while every group is MAN').toBe(0);
+  await toAuto(page, 'fore');
+  await toAuto(page, 'aft');
   await page.waitForFunction(() => ((window as unknown as { __eqxArtStats?: () => Stats }).__eqxArtStats?.().turretShots ?? -1) > 0, undefined, { timeout: 20_000 });
   await page.screenshot({ path: 'diag/e2e-screenshots/fx-turrets/firing.png' });
   await ctx.close();
