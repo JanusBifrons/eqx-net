@@ -26,3 +26,14 @@ describe('advanceSchedule (worker catch-up cap)', () => {
     expect(out.dropped).toBeGreaterThanOrEqual(58);
   });
 });
+
+describe('tickPeriodMs (ticks per wall second follow the game speed)', () => {
+  it('1× is 60 Hz, 2× is 120 Hz, 0.5× is 30 Hz', async () => {
+    const { tickPeriodMs } = await import('./catchUp.js');
+    expect(tickPeriodMs(1)).toBeCloseTo(1000 / 60);
+    expect(tickPeriodMs(2)).toBeCloseTo(1000 / 120);
+    expect(tickPeriodMs(0.5)).toBeCloseTo(1000 / 30);
+    expect(tickPeriodMs(0)).toBeCloseTo(1000 / 60);
+    expect(tickPeriodMs(Number.NaN)).toBeCloseTo(1000 / 60);
+  });
+});

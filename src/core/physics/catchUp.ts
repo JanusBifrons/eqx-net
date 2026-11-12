@@ -40,3 +40,11 @@ export function advanceSchedule(
   }
   return out;
 }
+
+/** Wall ms between fixed ticks at a game speed: 60 ticks per GAME second, so
+ *  60 × scale per wall second. Each tick is still one fixed 1/60 s step
+ *  (invariant #4); only how often it runs changes. Non-finite or ≤ 0 ⇒ 1×. */
+export function tickPeriodMs(scale: number): number {
+  const s = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  return 1000 / 60 / s;
+}

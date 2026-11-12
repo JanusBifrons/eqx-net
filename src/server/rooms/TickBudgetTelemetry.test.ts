@@ -186,6 +186,21 @@ describe('TickBudgetTelemetry lateness (game time vs wall time)', () => {
     expect(p['overBudgetCount']).toBe(0);
   });
 
+  it('at 2× a sector is on time when its worker runs 120 ticks a wall second', () => {
+    const t = new TickBudgetTelemetry();
+    for (let i = 0; i < SAMPLE_EMIT_CADENCE; i++) {
+      t.beginTick(performance.now());
+      clockMs += P / 2; // 2×: an update every half wall tick
+      t.endTick({
+        serverTick: i, workerTickMs: 1, playerCount: 1, swarmCount: 0, aiSize: 0,
+        liveProjectileCount: 0, workerTick: 100 + i + 1, workerDroppedTicks: 0, timeScale: 2,
+      });
+    }
+    const p = mockedLog.mock.calls.filter(([tag]) => tag === 'tick_budget').pop()![1] as Record<string, unknown>;
+    expect(p['wallTicks']).toBe(60); // 0.5 s of wall time at 2× allows 60 ticks
+    expect(p['simTicks']).toBe(59);
+  });
+
   it('omits the lateness fields when the caller has no worker tick', () => {
     const t = new TickBudgetTelemetry();
     for (let i = 0; i < SAMPLE_EMIT_CADENCE; i++) {

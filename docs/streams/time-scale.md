@@ -37,8 +37,8 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
 | 2b | Migrate the directors, economy, transit and holds (`?? Date.now` defaults and their loops) | ~1 h | ✅ 🛑 |
 | 2c | Migrate `SectorRoom` (46 sites) + the room's timers | ~1.5 h | ✅ 🛑 |
 | 2d | Lint wall to error; integration suite green; docs | ~45 min | ✅ 🛑 (end of Phase 2) |
-| 3a | Worker counts real physics steps; the room runs `scale` steps per wall tick | ~2 h | next 🛑 |
-| 3b | `GalaxyTimeScale` + dev override + `testTimeScale` folded in; snapshot `timeScale` keyframe | ~2 h | 🛑 |
+| 3a | Per-sector speed: each room owns a clock; room loop + its physics world run 60 × speed ticks per wall second | ~2 h | ✅ 🛑 |
+| 3b | Speed override per sector (env, dev endpoint, test/showcase join option); `testTimeScale` folded in; snapshot `timeScale` keyframe | ~2 h | next 🛑 |
 | 3c | Integration tests at 0.5× and 2×; netgate run by hand | ~1.5 h | 🛑 (end of Phase 3) |
 | 4a | Client game clock: prediction anchor + `fromTick` parity test | ~2 h | 🛑 |
 | 4b | Interpolation in ticks + pose ring sized for 4× | ~1.5 h | 🛑 |
@@ -90,3 +90,18 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   ERROR in core and server (0 sites outside the allowlist). Docs: design note
   §0, `src/core/CLAUDE.md`, `src/server/CLAUDE.md`. Unit 4969 ✓, integration
   360 ✓, lint 0 errors, boot ✓.
+- 2026-11-12: **owner: speed is PER SECTOR** ("It's fine to be per sector…
+  It will ultimately be per sector"; galaxy-wide was only meant to make it
+  easier). Cross-sector world time (directors, economy, convoys, wallets,
+  holds) keeps the process clock.
+- 2026-11-12: step 3a done. Each `SectorRoom` owns `this.gameClock`
+  (`createSectorClock()`); the room's gameplay reads, grid/turret timers,
+  transit spools and research labs use it. The room loop runs 60 × speed
+  updates per wall second; the physics worker keeps a schedule PER WORLD
+  (`SET_TIME_SCALE`, posted on every speed change), so sectors on one worker
+  can differ. Lateness telemetry counts against 60 × speed. Unit 4972 ✓,
+  integration 360 ✓, boot ✓. Wall-rate checks at 0.5×/2× come in 3c
+  (measured against lateness, so a busy host is INCONCLUSIVE, not a pass).
+- 3b note: `testTimeScale` (per room, 10×, physics only) can now become the
+  room's own speed, since speed is per sector; the 4× cap applies to the
+  player-facing knob, and testMode rooms may go to 10×.

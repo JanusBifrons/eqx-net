@@ -377,7 +377,8 @@ Update this section when a threshold is set.
 
 ## Game time is the default (time scale stream)
 
-- **One game clock per process** (`time/gameTime.ts`), so the whole galaxy runs at one speed. Gameplay reads `gameNow()` and schedules with `gameSetTimeout` / `gameSetInterval` / `gameClearTimer` (unref'd), never `Date.now()` / `setTimeout` / `setInterval`. At 1× `gameNow()` IS `Date.now()`.
+- **Game speed is per sector.** Each `SectorRoom` owns `this.gameClock` (`createSectorClock()`): inside the room, read `this.gameClock.now()` and schedule with `this.gameClock.after` / `.every`, and hand room-owned subsystems `now: () => this.gameClock.now()` (never the process clock: it would not follow the sector's speed). The room tick loop and its physics world run 60 × speed ticks per wall second (`SET_TIME_SCALE` to the worker on every change).
+- **The process clock** (`time/gameTime.ts`) is for cross-sector world time (directors, economy, convoys, wallets, holds). Outside a room, gameplay reads `gameNow()` and schedules with `gameSetTimeout` / `gameSetInterval` / `gameClearTimer` (unref'd), never `Date.now()` / `setTimeout` / `setInterval`. At 1× `gameNow()` IS `Date.now()`.
 - **The rule is a lint error** in `src/server` and `src/core` outside the real-time allowlist in `eslint.config.js`. Real time covers persistence, networking, auth/identity, push, routes, logs/audit, perf measurement, the room tick scheduler and boot.
   - A new real-time FILE goes on that list.
   - A one-off real-time line in a gameplay file gets `// eslint-disable-next-line no-restricted-properties -- real time: <why>`.

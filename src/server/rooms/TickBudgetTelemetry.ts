@@ -51,11 +51,14 @@ export interface TickEndContext {
   /** Cumulative ticks the worker's catch-up cap dropped (SAB
    *  `WORKER_DROPPED_TICKS_IDX`). */
   workerDroppedTicks?: number;
+  /** The sector's game speed: real time allows 60 × this ticks per second.
+   *  Default 1. */
+  timeScale?: number;
 }
 
 /**
  * Game time against wall time over one `tick_budget` window (game time
- * scale, Phase 1). `wallTicks` is how many 60 Hz ticks real time allowed;
+ * scale, Phase 1). `wallTicks` is how many ticks real time allowed at the sector's game speed (60 × speed per second);
  * `simTicks` is how many the physics worker ran. `latenessTicks` =
  * wall − sim: how far the game fell behind real time in the window, the
  * starved-host signal tick COST misses (a late tick can be a cheap one).
@@ -217,7 +220,7 @@ export class TickBudgetTelemetry {
   private closeLatenessWindow(nowMs: number, ctx: TickEndContext): SimLateness | null {
     if (ctx.workerTick === undefined) return null;
     const out = this.lastLateness;
-    out.wallTicks = Math.round(((nowMs - this.windowStartMs) * 60) / 1000);
+    out.wallTicks = Math.round(((nowMs - this.windowStartMs) * 60 * (ctx.timeScale ?? 1)) / 1000);
     // u32 counters: `>>> 0` keeps a wrap from going negative.
     out.simTicks = (ctx.workerTick - this.windowStartWorkerTick) >>> 0;
     out.droppedTicks = ((ctx.workerDroppedTicks ?? 0) - this.windowStartDropped) >>> 0;

@@ -46,3 +46,13 @@ export function gameSetInterval(fn: () => void, ms: number): GameTimer {
 export function gameClearTimer(t: GameTimer | null | undefined): void {
   t?.cancel();
 }
+
+/**
+ * A SECTOR's game clock (game speed is per sector). Each `SectorRoom` owns one:
+ * its gameplay, subsystems and timers follow that sector's speed. The process
+ * clock above stays for cross-sector world time (directors, economy, convoys,
+ * wallets, holds). Both start equal to `Date.now()`; at 1× they never diverge.
+ */
+export function createSectorClock(): GameClock {
+  return new GameClock(() => Date.now(), nodeTimers);
+}

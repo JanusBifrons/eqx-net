@@ -11,3 +11,9 @@ describe('sceneSimTime (perf-scene game time vs wall time)', () => {
       .toEqual({ wallTicks: 60, simTicks: 25, latenessTicks: 35, droppedTicks: 30 });
   });
 });
+
+describe('sceneSimTime at a game speed', () => {
+  it('a 2× scene that ran 120 ticks in one wall second kept pace', () => {
+    expect(sceneSimTime({ ms: 0, tick: 0, dropped: 0 }, { ms: 1000, tick: 120, dropped: 0 }, 2).latenessTicks).toBe(0);
+  });
+});

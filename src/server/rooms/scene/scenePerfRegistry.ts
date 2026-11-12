@@ -63,8 +63,10 @@ export function clientPerfReadings(): readonly unknown[] { return clientReadings
 export function sceneSimTime(
   start: { ms: number; tick: number; dropped: number },
   end: { ms: number; tick: number; dropped: number },
+  /** The sector's game speed: real time allows 60 × this ticks per second. */
+  timeScale = 1,
 ): ScenePerfView['simTime'] {
-  const wallTicks = Math.max(0, Math.round(((end.ms - start.ms) * 60) / 1000));
+  const wallTicks = Math.max(0, Math.round(((end.ms - start.ms) * 60 * timeScale) / 1000));
   const simTicks = (end.tick - start.tick) >>> 0;
   return {
     wallTicks,
