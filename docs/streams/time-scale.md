@@ -260,3 +260,10 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   errors. Probe: throwaway branch `probe/time-scale-partition` (never
   merge; delete after) drops the spec to restore main's partition; CI run
   43274831696 alongside the stream rerun 43274788717.
+- 2026-11-12: hostile review #2 (pack-battle version): the interceptor died in
+  ~2 s and the spectator camera drifted off the fight, so every speed section
+  showed empty space; the chip and capsule were clean. The shot now films the
+  `perf-fleet-fight` scene: a sustained drone-vs-robot battle (52 → 31 → 82 →
+  71 NPCs across the dial), spectated with a held camera on the battle (record
+  as is: a held camera only in spectator mode). Take: 0/462 corrected, 60
+  different fps, 0 stalls, QA passed. Hostile review #3 running.
