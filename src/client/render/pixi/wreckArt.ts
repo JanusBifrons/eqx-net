@@ -15,7 +15,7 @@
  *
  * **Glowing cut edges.** Edges flagged as new cuts (`cutEdges`) get one white
  * stroke `Graphics` whose tint and alpha follow `wreckGlowAt` (molten at
- * death, an ember at ~4 s, dark at `WRECK_GLOW_END_S`, then destroyed). The
+ * death, an ember at ~3 s, dark at `WRECK_GLOW_END_S` (6 s), then destroyed). The
  * original hull outline never glows. The clock is the wreck's death tick
  * from its descriptor (`deathTick`), so a late joiner sees it cool.
  *
@@ -34,10 +34,11 @@ import type { WreckDescriptor } from '../../../shared-types/messages/snapshotMes
 /** Container + meshes (≤ 6 tiles) + one glow stroke. */
 export const WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX = 8;
 
-/** The cut edges are a dull ember here (s)... */
-export const WRECK_GLOW_EMBER_S = 4;
+/** The cut edges are a dull ember here (s)... (money-shot review: bright for
+ *  ~1 s, an ember by ~3 s, dark by ~6 s; it was still bright orange at 4.5 s) */
+export const WRECK_GLOW_EMBER_S = 3;
 /** ...and dark from here on (s); the glow stroke is then destroyed. */
-export const WRECK_GLOW_END_S = 9;
+export const WRECK_GLOW_END_S = 6;
 /** A wreck first seen younger than this plays its break-up (dust, shards,
  *  flash); older ones (late joiners, a returning viewer) do not. */
 export const WRECK_BREAK_FX_MAX_AGE_MS = 1500;
@@ -53,9 +54,9 @@ const BURNT_FAR = 0x8c7e74;
 export interface WreckGlow { color: number; alpha: number }
 
 /** Keyframes: time (s), colour, alpha. Colour and alpha only ever fall. */
-const GLOW_T = [0, 0.5, 1.5, WRECK_GLOW_EMBER_S, 6.5, WRECK_GLOW_END_S];
+const GLOW_T = [0, 0.5, 1.1, WRECK_GLOW_EMBER_S, 4.4, WRECK_GLOW_END_S];
 const GLOW_C = [0xfff2c8, 0xffa040, 0xff6a18, 0xa82c08, 0x501404, 0x200804];
-const GLOW_A = [1, 1, 0.95, 0.6, 0.25, 0];
+const GLOW_A = [1, 1, 0.9, 0.55, 0.2, 0];
 
 function lerpColor(a: number, b: number, t: number): number {
   const r = ((a >> 16) & 255) + (((b >> 16) & 255) - ((a >> 16) & 255)) * t;

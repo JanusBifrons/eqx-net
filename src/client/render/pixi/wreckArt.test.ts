@@ -134,9 +134,25 @@ describe('wreckGlowAt — molten cut edges cool to dark (S3)', () => {
     expect(r).toBeGreaterThan(b);
   });
 
-  it('a dull ember at ~4 s: red, dimmer, still showing', () => {
-    expect(WRECK_GLOW_EMBER_S).toBeGreaterThanOrEqual(3);
-    expect(WRECK_GLOW_EMBER_S).toBeLessThanOrEqual(5);
+  it('bright for about a second (money-shot review timing)', () => {
+    wreckGlowAt(0.9, g);
+    const [r, gg] = rgb(g.color);
+    expect(g.alpha).toBeGreaterThan(0.85);
+    expect(r).toBeGreaterThan(0xe0);
+    expect(gg).toBeGreaterThan(0x60);
+  });
+
+  it('no longer bright orange at 4.5 s (review: "still bright orange at 4.5 s")', () => {
+    wreckGlowAt(4.5, g);
+    const [r, gg] = rgb(g.color);
+    expect(g.alpha * r, 'faint, dark red').toBeLessThan(0.3 * 255);
+    expect(gg).toBeLessThan(0x30);
+  });
+
+  it('a dull ember at ~3 s: red, dimmer, still showing', () => {
+    expect(WRECK_GLOW_EMBER_S).toBeGreaterThanOrEqual(2.5);
+    expect(WRECK_GLOW_EMBER_S).toBeLessThanOrEqual(3.5);
+    expect(WRECK_GLOW_END_S, 'dark by ~6 s').toBeLessThanOrEqual(6.5);
     wreckGlowAt(WRECK_GLOW_EMBER_S, g);
     const [r, gg, b] = rgb(g.color);
     expect(g.alpha).toBeGreaterThan(0.2);
