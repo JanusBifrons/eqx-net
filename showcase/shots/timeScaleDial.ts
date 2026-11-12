@@ -238,12 +238,13 @@ export const timeScaleCapitals4x: Shot = {
     }
     ctx.log(`  [time-scale] ${volleys} volley(s) (${seen.size} turret salvos) at 4× in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
     // The next volley comes one reload after volley two (30 game s; at 4× the
-    // measured gap between the first two volleys, ~7.5–10 s with retraining).
-    // Turning the dial 2.5 s before it is due puts that volley in the air at
-    // about 0.7× (the dimmer halves the speed once a second), so its shells
-    // slow down in flight and land at about 0.25×.
+    // measured gap between the first two volleys). The glide from 4× to 0.7×
+    // takes 2.5 s and covers ~4.75 game s (the dimmer halves the speed once a
+    // second), which is ~1.2 s at 4×. So turning the dial 1.2 s before the
+    // volley is due puts it in the air at about 0.7×, and its shells slow down
+    // in flight and land at about 0.25×.
     const period = volley2At > volley1At && volley1At > 0 ? volley2At - volley1At : 7_500;
-    if (volley2At > 0) await ctx.sleep(Math.max(0, volley2At + period - 2_500 - Date.now()));
+    if (volley2At > 0) await ctx.sleep(Math.max(0, volley2At + period - 1_200 - Date.now()));
     ctx.log(`  [time-scale] volley gap ${(period / 1000).toFixed(1)} s at 4×; dial turned ${((Date.now() - volley2At) / 1000).toFixed(1)} s after volley two`);
     await dial(ctx, id, 0.25);
     // The pilot zooms in on their own ship as the shells crawl in (x1.1 a notch).
