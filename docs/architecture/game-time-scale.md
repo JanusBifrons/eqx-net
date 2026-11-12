@@ -5,7 +5,7 @@ Status: **design only, nothing built.** Handoff item 4. It is the shelved "time 
 **Owner decisions (2026-11-12):**
 - **What it's for:** it's a **performance mechanism, not a gameplay mechanic**: "Why can't it be dynamic? It's designed as a performance thing". So the speed is **dynamic**, never a menu.
 - **Speed:** set automatically from server load and only ever slows, ≤ 1×. There are no player speed controls and no fast forward.
-- **Who else sets it:** dev/admin can force it, for tests and for diagnosing a slow server.
+- **Who else sets it:** dev/admin can force any speed, including faster than 1× for tests, demos and videos (today's `testTimeScale`, which only speeds up physics). Slowing down under load and speeding up for a demo are the same knob: one clock that the whole game follows.
 - **Scope:** **galaxy-wide**: one speed for every sector.
 - **Indicator:** shows the current speed while it isn't 1×.
 
