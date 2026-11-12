@@ -18,6 +18,7 @@ import {
   WRECK_GLOW_EMBER_S,
   WRECK_GLOW_END_S,
   wreckBlasts,
+  hullDeathBlastReplaced,
   type WreckBlast,
   type WreckTexLayout,
 } from './wreckArt.js';
@@ -217,6 +218,13 @@ describe('wreckBlasts: the break-up explosion at the kill point (money-shot revi
         expect(b.r, 'scales with the hull (#18)').toBeGreaterThan(0.05 * R);
       }
     }
+  });
+
+  it('a dying capital in a wreck room leaves its blast to the break-up; everything else keeps #493', () => {
+    expect(hullDeathBlastReplaced(true, true)).toBe(true);
+    expect(hullDeathBlastReplaced(true, false), 'a fighter still explodes').toBe(false);
+    expect(hullDeathBlastReplaced(false, true), 'wrecks off: the hull-sized blast stays').toBe(false);
+    expect(hullDeathBlastReplaced(undefined, true)).toBe(false);
   });
 
   it('deterministic per seed; directions differ between seeds', () => {

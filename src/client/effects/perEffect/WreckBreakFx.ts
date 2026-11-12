@@ -40,6 +40,10 @@ const FLASH_LIFE_S = 0.22;
 const FLASH_R0 = 0.02;
 const FLASH_R1 = 0.07;
 const DUST_TINT = 0x7a6c62;
+/** Dust puffs: thinner and smaller than #518 (money-shot review: opaque flat
+ *  discs sat over the fireballs and the break), still billowing out. */
+const DUST_ALPHA = 0.32;
+const DUST_GROW = 0.035;
 const SHARD_HOT = 0xffc070;
 const SHARD_COLD = 0x3a2a22;
 
@@ -128,7 +132,7 @@ export class WreckBreakFx {
         const a = this.rnd() * Math.PI * 2, sp = R * (0.08 + this.rnd() * 0.35);
         const j = R * 0.06 * this.rnd();
         this.arm(p, px + Math.cos(a) * j, py + Math.sin(a) * j, Math.cos(a) * sp, Math.sin(a) * sp, 0,
-          R * (0.02 + this.rnd() * 0.04), R * 0.06, 2.4 + this.rnd() * 1.8);
+          R * (0.012 + this.rnd() * 0.025), R * DUST_GROW, 2.4 + this.rnd() * 1.8);
       }
       for (let i = 0; i < dial.shards; i++) {
         const p = this.take(1);
@@ -177,7 +181,7 @@ export class WreckBreakFx {
       g.position.set(p.x, p.y);
       if (p.kind === 0) {
         g.scale.set(p.size + p.grow * u);
-        g.alpha = 0.55 * (1 - u);
+        g.alpha = DUST_ALPHA * (1 - u);
         g.tint = DUST_TINT;
       } else {
         g.rotation += p.spin * dtSec;

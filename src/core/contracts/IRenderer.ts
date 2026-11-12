@@ -484,6 +484,10 @@ export interface RenderMirror {
    *  shared deterministic `wreckPieceGeometry` (no vertex crosses the worker
    *  boundary). */
   wrecks?: Map<number, WreckDescriptor>;
+  /** The room breaks dying capitals into wrecks (welcome `capitalWrecks`):
+   *  a dying capital then gets the break-up explosion at its kill point, not
+   *  the hull-sized death blast. */
+  capitalWrecks?: boolean;
   /** Mine Layer — proximity mines, keyed by mine id (room state `mines`). */
   mines?: Map<string, MineRenderState>;
   /** Structures plan, Phase 3 — connection flash windows from the discrete

@@ -255,6 +255,17 @@ export function wreckBlasts(x: number, y: number, radius: number, seed: number, 
   return 3;
 }
 
+/**
+ * True when a dying ship's own death blast is left to the wreck break-up:
+ * the room breaks capitals into wrecks (welcome `capitalWrecks`) and the
+ * dying sprite is a capital. #493's hull-sized blast (radius ≈ the hull)
+ * otherwise covers the whole hull exactly when it breaks (money-shot
+ * review); the break-up's fireballs at the kill point replace it.
+ */
+export function hullDeathBlastReplaced(capitalWrecks: boolean | undefined, dyingIsCapital: boolean): boolean {
+  return capitalWrecks === true && dyingIsCapital;
+}
+
 /** Break-up sink: kill point (game space), wreck radius, clean snap, seed. */
 export type WreckBreakSink = (x: number, y: number, radius: number, snap: boolean, seed: number) => void;
 

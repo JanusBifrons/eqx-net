@@ -130,7 +130,7 @@ test('wreck pieces wear the dead ship\'s art and their cut edges glow (S3)', asy
 test('GPU-lit look: every wreck piece draws the dead ship\'s art through the lit shader', async ({ page }) => {
   test.setTimeout(120_000);
   await page.goto(`${BASE_URL}?room=wreck-test&testId=${randomUUID()}&worker=0&shipKind=fighter&initialHull=1000000&zoom=0.12&art=machined&fx=new&shiplight=high&spawnX=1800&spawnY=2500`);
-  type Stats = { machinedSprites: number; wreckPieces: number; wreckTextured: number; wreckLit: number; wreckRawMaps: number; wreckBlasts: number; litMeshes: number };
+  type Stats = { machinedSprites: number; wreckPieces: number; wreckTextured: number; wreckLit: number; wreckRawMaps: number; wreckBlasts: number; hullBlastsReplaced: number; litMeshes: number };
   await page.waitForFunction(() => {
     const s = (globalThis as unknown as { __eqxArtStats?: () => Stats }).__eqxArtStats?.();
     return (s?.machinedSprites ?? 0) >= 2;
@@ -150,11 +150,14 @@ test('GPU-lit look: every wreck piece draws the dead ship\'s art through the lit
     return (s?.wreckPieces ?? 0) >= 2;
   }, undefined, { timeout: 15_000 });
   console.log(`[wreck] pieces drawn ${Date.now() - t0} ms after the kill`);
+  // On screen, death is the frame the hull turns into pieces.
+  const tDeath = Date.now();
   const s = await page.evaluate(() => (globalThis as unknown as { __eqxArtStats: () => Stats }).__eqxArtStats());
+  console.log(`[wreck] ${s.wreckPieces} pieces`);
   if (dir) {
-    // Review frames at death + 0.3 s, + 2 s and + 5 s.
+    // Review frames at death + 0.3 s, + 2 s and + 5 s (death: the switch to pieces).
     for (const [name, at] of [['lit-0.3s', 300], ['lit-2s', 2000], ['lit-5s', 5000]] as const) {
-      await page.waitForTimeout(Math.max(0, at - (Date.now() - t0)));
+      await page.waitForTimeout(Math.max(0, at - (Date.now() - tDeath)));
       await page.screenshot({ path: `${dir}/${name}.png` });
     }
   }
@@ -163,4 +166,6 @@ test('GPU-lit look: every wreck piece draws the dead ship\'s art through the lit
   expect(s.wreckLit, JSON.stringify(s)).toBe(s.wreckPieces);
   // The break-up explosion: fireballs at the kill point (FxExplosions).
   expect(s.wreckBlasts, JSON.stringify(s)).toBeGreaterThanOrEqual(2);
+  // ...instead of the hull-sized death blast over the whole hull (#493).
+  expect(s.hullBlastsReplaced, JSON.stringify(s)).toBe(1);
 });

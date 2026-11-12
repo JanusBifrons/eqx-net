@@ -41,6 +41,11 @@ export interface WelcomeMessage {
   shellEvents?: true;
   /** The live shells this ship should see, in salvo form (§5, #16). */
   shellsInFlight?: ShellSalvo[];
+  /** Capital destruction: set when this room breaks a dying capital into
+   *  wreck pieces (`capitalWrecks`). The client then plays the break-up
+   *  explosion at the kill point instead of the hull-sized death blast
+   *  (money-shot review). Absent = no wrecks. */
+  capitalWrecks?: true;
 }
 
 /** PR 3a (account-bound identity) — sent to a session immediately before the
@@ -79,6 +84,7 @@ export const WelcomeSchema = z
     navalRange: z.enum(['legacy', 'real']).optional(),
     shellEvents: z.literal(true).optional(),
     shellsInFlight: z.array(ShellSalvoSchema).max(256).optional(),
+    capitalWrecks: z.literal(true).optional(),
   })
   .strict();
 
