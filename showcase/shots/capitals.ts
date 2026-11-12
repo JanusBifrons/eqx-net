@@ -574,3 +574,44 @@ export const gpuLitShips: Shot = {
   // edge and the caption over the stern; two scripted track cameras framed it
   // worse. Flash light shows for 1-2 frames and 5" turrets cast none (game-side).
 };
+
+/**
+ * Capital destruction (owner, 2026-11-12): a capital breaks up along the hit
+ * that killed it. Real play, no cue during the take: the pilot's heavy cruiser
+ * sits off the battleship's beam with little hull and no shield, the
+ * battleship's 16-inch salvo kills it on camera, and the hull fractures where
+ * the shells struck. Needs capital wrecks on (EQX_CAPITAL_WRECKS=1 on the
+ * showcase server) until the feature ships.
+ */
+export const capitalBreakup: Shot = {
+  id: 'capital-breakup',
+  section: 'mechanics',
+  title: 'A capital breaks up',
+  caption: 'A battleship salvo kills a heavy cruiser, and the hull breaks apart along where the shells struck.',
+  features: ['CAP'],
+  docs: ['capital-destruction'],
+  reel: false,
+  server: 'capitals',
+  target: { room: 'showcase-capital-duel', params: { shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', initialHull: 6000, initialShield: 0, spawnX: 4000, spawnY: 0 } },
+  hud: 'none',
+  durationMs: 32_000,
+  async startWhen(ctx) {
+    await artSettled(ctx);
+    await ctx.page.waitForFunction(() => {
+      let n = 0;
+      (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number }> } } }).__eqxClient?.mirror.swarm.forEach((e) => { if (e.kind === 1) n++; });
+      return n > 0;
+    }, null, { timeout: 60_000, polling: 250 });
+    // One cue in setup; the first salvo lands ~23-27 s after it.
+    await sendRoom(ctx, 'test_aggro', { type: 'test_aggro' });
+    await ctx.sleep(10_000);
+    // A free camera needs spectator mode (record as is).
+    await ctx.spectate();
+  },
+  async run(ctx) {
+    const k = ctx.viewport.width / 1920;
+    // Hold on the cruiser so the break-up fills the frame.
+    await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 4000, y: -350, zoom: 0.17 * k } }]); // the cruiser is parked at its explicit spawn
+    await ctx.sleep(31_500); // ~14 s after the kill for the pieces to drift apart
+  },
+};
