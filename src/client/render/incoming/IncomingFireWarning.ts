@@ -25,7 +25,7 @@ import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import { tuningFor } from '../../../shared-types/shipScale/lookup.js';
 import type { Camera } from '../worker/Camera';
 import {
-  countdownLabel,
+  groupLabel,
   groupShellPasses,
   isShellDangerous,
   makeFallGroup,
@@ -48,6 +48,9 @@ const RING_MAX_PX = 320;
 export const INCOMING_COLOR = 0xff4a3a;
 
 interface ShellRec { sx: number; sy: number; maxTicks: number; splash: number; gen: number }
+
+/** A salvo's countdown target (renderer clock, ms), held across frames. */
+interface SalvoDeadline { atMs: number; gen: number }
 
 interface Marker { root: Container; ring: Graphics; text: Text; ringPx: number; label: string }
 
@@ -92,6 +95,9 @@ export class IncomingFireWarning implements IncomingGroups {
   private readonly sy = new Float64Array(MAX_SHELLS);
   private readonly ts = new Float64Array(MAX_SHELLS);
   private readonly rs = new Float64Array(MAX_SHELLS);
+  private readonly ss = new Float64Array(MAX_SHELLS);
+  private readonly deadlines = new Map<number, SalvoDeadline>();
+  private readonly freeDeadlines: SalvoDeadline[] = [];
   readonly groups: FallGroup[] = [];
   groupCount = 0;
   private readonly markers: Marker[] = [];
@@ -136,13 +142,20 @@ export class IncomingFireWarning implements IncomingGroups {
       if (!local || n >= MAX_SHELLS || p.isGhost || p.ownerId === localId) continue;
       if (p.alpha !== undefined && p.alpha < 1) continue;
       const speed = Math.hypot(p.vx, p.vy);
-      const rem = shellRemainingS(rec.maxTicks, Math.hypot(p.x - rec.sx, p.y - rec.sy), speed);
+      // Shells as events: the salvo gives the shell's true origin and flight,
+      // so its remaining flight is exact; without it, it is measured from
+      // where the shell was first seen (an estimate).
+      const info = mirror.shellSalvos?.get(id);
+      const rem = info !== undefined
+        ? shellRemainingS(info.n + 1, Math.hypot(p.x - info.x0, p.y - info.y0), speed)
+        : shellRemainingS(rec.maxTicks, Math.hypot(p.x - rec.sx, p.y - rec.sy), speed);
       const pass = predictShellPass(p.x, p.y, p.vx, p.vy, rem, local.x, local.y, local.vx, local.vy, this.pass);
       const R = shellDangerRadius(shipR, rec.splash);
       if (!isShellDangerous(pass, R)) continue;
       this.fx[n] = pass.x; this.fy[n] = pass.y;
       this.sx[n] = p.x; this.sy[n] = p.y;
       this.ts[n] = pass.t; this.rs[n] = R;
+      this.ss[n] = info !== undefined ? info.s : -1;
       n++;
     }
     for (const [id, rec] of this.shells) {
@@ -152,8 +165,43 @@ export class IncomingFireWarning implements IncomingGroups {
     }
     this.groupCount = this.suppressed || !local || n === 0
       ? 0
-      : groupShellPasses(this.fx, this.fy, this.sx, this.sy, this.ts, this.rs, n, 2 * shipR, JOIN_DT_S, this.groups);
+      : groupShellPasses(this.fx, this.fy, this.sx, this.sy, this.ts, this.rs, n, 2 * shipR, JOIN_DT_S, this.groups, this.ss);
+    this.holdSalvoCountdowns(nowMs, gen);
     this.draw(nowMs);
+  }
+
+  /**
+   * Shells as events (shell-events.md §6): a salvo's countdown never goes up.
+   * Each salvo group keeps a deadline on the renderer clock: it may move
+   * EARLIER (a correction), but when the soonest shell passes and the next one
+   * is due later, it only moves on if that shell is more than `JOIN_DT_S`
+   * after the deadline and the deadline has passed; otherwise the marker
+   * reads "now" until the salvo is done. Before this, the marker counted down
+   * to whichever shell was soonest, so it reset up every time one passed.
+   * Groups without a salvo (events off) keep the plain soonest-arrival count.
+   */
+  private holdSalvoCountdowns(nowMs: number, gen: number): void {
+    for (let i = 0; i < this.groupCount; i++) {
+      const G = this.groups[i]!;
+      if (G.salvo < 0) continue;
+      const due = nowMs + G.t * 1000;
+      let d = this.deadlines.get(G.salvo);
+      if (d === undefined) {
+        d = this.freeDeadlines.pop() ?? { atMs: 0, gen: 0 };
+        d.atMs = due;
+        this.deadlines.set(G.salvo, d);
+      } else if (due < d.atMs || (d.atMs <= nowMs && due - d.atMs > JOIN_DT_S * 1000)) {
+        d.atMs = due;
+      }
+      d.gen = gen;
+      const left = (d.atMs - nowMs) / 1000;
+      G.t = left > 0 ? left : 0;
+    }
+    for (const [s, d] of this.deadlines) {
+      if (d.gen === gen) continue;
+      this.deadlines.delete(s);
+      this.freeDeadlines.push(d);
+    }
   }
 
   private draw(nowMs: number): void {
@@ -174,7 +222,7 @@ export class IncomingFireWarning implements IncomingGroups {
         paintRing(m.ring, ringPx);
         m.text.y = ringPx + 2;
       }
-      const label = countdownLabel(G.t);
+      const label = groupLabel(G);
       if (label !== m.label) { m.label = label; m.text.text = label; }
       m.root.x = this.pt.x;
       m.root.y = this.pt.y;
@@ -219,6 +267,8 @@ export class IncomingFireWarning implements IncomingGroups {
   reset(): void {
     for (const rec of this.shells.values()) this.free.push(rec);
     this.shells.clear();
+    for (const d of this.deadlines.values()) this.freeDeadlines.push(d);
+    this.deadlines.clear();
     this.groupCount = 0;
     for (const m of this.markers) m.root.visible = false;
   }

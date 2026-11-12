@@ -126,6 +126,64 @@ describe('IncomingFireWarning', () => {
     expect(warn.markerCount()).toBe(0);
   });
 
+  // Shells as events slice 2a (docs/architecture/shell-events.md §6). The
+  // owner saw the countdown reset per shell: each shell of a salvo is first
+  // seen on a different snapshot and arrives a little after the one before,
+  // so when the first one passes, the group's "soonest arrival" jumps to the
+  // next shell and the number goes UP. With the salvo known (shell_salvo:
+  // `mirror.shellSalvos`), the marker counts down to the salvo's first shell
+  // and then reads "now" until the salvo has passed: it never goes up.
+  it('a 9-shell salvo whose shells are first seen on different snapshots: the countdown never goes up', () => {
+    const cam = fakeCamera();
+    const warn = new IncomingFireWarning();
+    warn.init(cam);
+    const m = mirrorWith([]);
+    const salvos = new Map<string, { s: number; t: number; n: number; x0: number; y0: number }>();
+    (m as unknown as { shellSalvos: typeof salvos }).shellSalvos = salvos;
+    // Shell k starts 0.15k s of flight further back on the same line, so it
+    // arrives 0.15k s after shell 0 (1.2 s across the salvo, one marker).
+    const start = (k: number): number => -D - XL.speed * 0.15 * k;
+    for (let k = 0; k < 9; k++) salvos.set(`proj-${k}`, { s: 7, t: 0, n: XL.maxTicks, x0: start(k), y0: 5 * k - 20 });
+    const shown: number[] = [];
+    const FRAME_MS = 16;
+    for (let f = 0; f * FRAME_MS < (HALF_S + 2) * 1000; f++) {
+      const ts = (f * FRAME_MS) / 1000;
+      m.projectiles!.clear();
+      for (let k = 0; k < 9; k++) {
+        if (f < 3 * k) continue; // first seen on a later snapshot
+        m.projectiles!.set(`proj-${k}`, shell(start(k) + XL.speed * ts, 5 * k - 20, XL.speed, 0));
+      }
+      warn.update(m, f * FRAME_MS);
+      const mk = warn.getDebugMarkers();
+      if (mk.length === 0) continue;
+      expect(mk).toHaveLength(1); // one salvo, one marker
+      shown.push(mk[0]!.label === 'now' ? 0 : Number.parseFloat(mk[0]!.label));
+    }
+    expect(shown.length).toBeGreaterThan(30);
+    for (let i = 1; i < shown.length; i++) {
+      expect(shown[i]!, `frame ${i}: ${shown[i - 1]} → ${shown[i]}`).toBeLessThanOrEqual(shown[i - 1]!);
+    }
+    expect(shown[shown.length - 1]).toBe(0); // "now" while the rest of the salvo passes
+  });
+
+  it('a later salvo from the same gun gets its own countdown', () => {
+    const cam = fakeCamera();
+    const warn = new IncomingFireWarning();
+    warn.init(cam);
+    // Both just fired (origin = where they are), arriving 0.3 s and 2.6 s out:
+    // 2.3 s apart, past the 2 s window that would merge two salvos' markers.
+    const a = -XL.speed * 0.3, b = -XL.speed * 2.6;
+    expect(2.6).toBeLessThan(XL.maxTicks / 60); // both within flight
+    const m = mirrorWith([['proj-1', shell(a, 0, XL.speed, 0)], ['proj-2', shell(b, 0, XL.speed, 0)]]);
+    (m as unknown as { shellSalvos: Map<string, unknown> }).shellSalvos = new Map<string, unknown>([
+      ['proj-1', { s: 1, t: 0, n: XL.maxTicks, x0: a, y0: 0 }],
+      ['proj-2', { s: 2, t: 0, n: XL.maxTicks, x0: b, y0: 0 }],
+    ]);
+    warn.update(m, 0);
+    const labels = warn.getDebugMarkers().map((k) => k.label).sort();
+    expect(labels).toEqual([countdownLabel(0.3), countdownLabel(2.6)].sort());
+  });
+
   it('does not warn about a shell that will run out of flight first', () => {
     const cam = fakeCamera();
     const warn = new IncomingFireWarning();

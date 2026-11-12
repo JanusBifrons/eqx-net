@@ -40,6 +40,8 @@ import {
 import { pushCollisionShieldContacts } from './collisionShieldContacts';
 import { MineDetonatedSchema } from '@shared-types/mines';
 import { ShellBlastSchema } from '@shared-types/shellBlast';
+import { ShellEndSchema, ShellSalvoSchema } from '@shared-types/messages/shellEvents';
+import { ShellSalvoStore } from './shellSalvoStore';
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, WallHitEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
 import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
@@ -1259,6 +1261,10 @@ export class ColyseusGameClient {
    * path (Invariant #12 philosophy). Locked by
    * `ColyseusClient.transitArrivalDrift.test.ts`.
    */
+  /** Shells as events: on when the welcome says so (shell-events.md §7). */
+  private _shellEvents = false;
+  private readonly _shellStore = new ShellSalvoStore();
+
   private resetPredictionState(): void {
     // Fire control: NPC locks belong to the old sector.
     this.mirror.localLockedBy = NO_LOCKED_BY;
@@ -1472,6 +1478,16 @@ export class ColyseusGameClient {
       // catalogue, the server fires from its own (invariant #15).
       const navalMismatch = navalRangeMismatch(msg);
       if (navalMismatch) logEvent('naval_range_mismatch', navalMismatch);
+      // Shells as events: read shell_salvo / shell_end only when the server
+      // says it sends them (#15), and take the shells already in flight (#16).
+      this._shellEvents = msg.shellEvents === true;
+      this._shellStore.clear();
+      if (this._shellEvents) {
+        this.mirror.shellSalvos = this._shellStore.map;
+        for (const s of msg.shellsInFlight ?? []) this._shellStore.applySalvo(s);
+      } else {
+        this.mirror.shellSalvos = undefined;
+      }
       const idChanged = storedPlayerId && msg.playerId !== storedPlayerId;
       logEvent('cc_welcome', {
         playerId: msg.playerId,
@@ -2019,6 +2035,17 @@ export class ColyseusGameClient {
 
     // Coastal defences — a siege shell burst: the same explosion visual, at
     // the size of its blast (the damage arrives as damage events).
+    // Shells as events (shell-events.md slice 2a): salvo + hit records.
+    room.onMessage('shell_salvo', (raw: unknown) => {
+      if (!this._shellEvents) return;
+      const r = ShellSalvoSchema.safeParse(raw);
+      if (r.success) this._shellStore.applySalvo(r.data);
+    });
+    room.onMessage('shell_end', (raw: unknown) => {
+      if (!this._shellEvents) return;
+      const r = ShellEndSchema.safeParse(raw);
+      if (r.success) this._shellStore.applyEnd(r.data);
+    });
     room.onMessage('shell_blast', (raw: unknown) => {
       const result = ShellBlastSchema.safeParse(raw);
       if (!result.success) return;
@@ -3101,6 +3128,10 @@ export class ColyseusGameClient {
     // per recipient. Sync into the mirror first so the rest of this handler can
     // assume the projectile map matches the snapshot's tick.
     this.syncProjectiles(snap.projectiles);
+    if (this._shellEvents) {
+      this._shellStore.applyKeyframe(snap.shellKey);
+      this._shellStore.sweep(snap.serverTick);
+    }
 
     // Missiles: per-recipient AOI-filtered slice. Sliding-window apply
     // for interpolation; stale-eviction backstop covers AOI exits.
