@@ -41,8 +41,8 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
 | 3b | Speed override per sector (env, dev endpoint, test/showcase join option); `testTimeScale` folded in; snapshot `timeScale` keyframe | ~2 h | ✅ 🛑 |
 | 3c | Integration tests at 0.5× and 2×; netgate run by hand | ~1.5 h | ✅ 🛑 (end of Phase 3) |
 | 4a | Client game clock: prediction anchor + `fromTick` parity test | ~2 h | ✅ 🛑 |
-| 4b | Interpolation in ticks + pose ring sized for 4× | ~1.5 h | next 🛑 |
-| 4c | Render frame dt at the source (Pixi ticker speed); client lint wall | ~2 h | 🛑 |
+| 4b | Interpolation in ticks + pose ring sized for 4× | ~1.5 h | ✅ 🛑 |
+| 4c | Render frame dt at the source (Pixi ticker speed); client lint wall | ~2 h | next 🛑 |
 | 4d | Speed chip + E2E + "follows automatically" test; netgate at 0.7× / 2×; fold `testTimeScale` into the sector speed | ~2 h | 🛑 (end of Phase 4) |
 | 5a | Dynamic controller (lateness + cost, ramp, hysteresis, audit events) | ~2 h | 🛑 |
 | 5b | Burn-test verification (CI/laptop perf scene); docs; ready-to-land report | ~1.5 h | 🛑 (stream done; ask the owner how to land it) |
@@ -135,3 +135,12 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   alone, and the message path doesn't touch game timers. This fragile wait was
   already on main; left as is (main's test). Also restored
   `ColyseusClient.ts` to CRLF as on main.
+- 2026-11-12: step 4b done. The display-delay windows are GAME ms. Swarm:
+  the adaptive delay's floor and ceiling are 100/speed and 280/speed wall ms
+  (`setSwarmDisplaySpeed`). Missiles: `MISSILE_DISPLAY_DELAY_MS /
+  mirror.timeScale`. Arrival stamps stay wall: interpolating wall-stamped
+  game-time poses already shows slow motion, and the worker renderer has no
+  client clock. `POSE_RING_DEPTH` (10) needs no resize: the window is ~6
+  poses at every speed, locked by `swarmInterpolation.timeScale.test.ts`.
+  `RenderMirror.timeScale` (absent = 1×) carries the speed to the renderer
+  (and 4c). Unit 4980 ✓.

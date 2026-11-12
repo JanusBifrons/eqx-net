@@ -180,6 +180,7 @@ import { lockLineScore } from '@core/combat/lockLine';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
   interpolateSwarmPose,
+  setSwarmDisplaySpeed,
   type InterpolatedPose,
   DISPLAY_DELAY_MS as SHELL_DISPLAY_DELAY_MS,
 } from './swarmInterpolation';
@@ -3210,7 +3211,11 @@ export class ColyseusGameClient {
     // after the change are each counted at their own speed.
     const snapScale = snap.timeScale?.s ?? 1;
     const speedChanged = snapScale !== this.gameClock.scale;
-    if (speedChanged) this.gameClock.setScale(snapScale);
+    if (speedChanged) {
+      this.gameClock.setScale(snapScale);
+      setSwarmDisplaySpeed(snapScale);
+      this.mirror.timeScale = snapScale === 1 ? undefined : snapScale;
+    }
     const gameNowMs = this.gameClock.at(now);
     if (this._anchorInitialised && !speedChanged) {
       const next = updateAnchor(

@@ -427,6 +427,10 @@ export interface ShellSalvoRenderInfo {
 }
 
 export interface RenderMirror {
+  /** The sector's game speed (time scale stream), from the snapshot keyframe.
+   *  Absent = 1×. Renderers read it for the display-delay window and the
+   *  presentation frame dt, so every effect follows the speed on its own. */
+  timeScale?: number;
   /** Phase 4 travel state: a sector-to-sector trip is under way (the backdrop
    *  fades to deep space; the local ship flies on). Absent = no trip. */
   travelling?: boolean;
