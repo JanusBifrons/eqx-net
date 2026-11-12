@@ -44,3 +44,18 @@ export const DEFAULT_COLLISION_GROUPS = 0xffffffff;
  *     ⇒ COLLIDE. Scrap still bumps off everything that isn't scrap.
  */
 export const SCRAP_COLLISION_GROUPS = 0x0002fffd;
+
+/**
+ * Collision groups for capital WRECK pieces (membership bit 2, filter every
+ * bit except 2): pieces never collide with other wreck pieces, and collide
+ * with everything else (ships, rocks, scrap, structures).
+ *
+ * Why (hostile review 2026-11-12): a break-up pushes pieces away from the
+ * kill point, fastest there. Pieces tile the hull exactly, so a fast piece
+ * at the kill point ran straight into the slower neighbour beyond it; the
+ * contacts traded the push away and the field kept the hull's outline with
+ * hairline gaps. Like scrap, wreck pieces pass through one another.
+ *
+ *   packed u32 = (0x0004 << 16) | 0xFFFB = 0x0004FFFB
+ */
+export const WRECK_COLLISION_GROUPS = 0x0004fffb;

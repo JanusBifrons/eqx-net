@@ -21,17 +21,20 @@ import { fractureHull, projectToOutline, FRACTURE_MAX_PIECES, FRACTURE_SNAP_CHAN
 import { Rng, fnvMixU32 } from '../random/rng.js';
 import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
-import { massOf } from '../../shared-types/shipScale/tuning.js';
+import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 
-/** Outward push at the kill point, as a fraction of the kind's top speed
- *  (scaled by how violent the death was), so it follows ship size (#18). */
-export const WRECK_PUSH_SPEED_FRAC = 0.25;
-/** Largest seeded extra spin per piece (rad/s), before the size falloff. */
+/** Outward push falloff radius, as a fraction of the hull radius: a piece
+ *  this far from the kill point gets half the extra push. The speeds
+ *  themselves are `shipTuning(kind).wreckPushMax/Min` (#18). */
+export const WRECK_PUSH_FALLOFF_FRAC = 0.25;
+/** Largest seeded extra spin per piece (rad/s, ~7°/s). */
 export const WRECK_SPIN_KICK = 0.12;
-/** Wreck pieces coast, then settle into terrain. */
-export const WRECK_LINEAR_DAMPING = 0.05;
-export const WRECK_ANGULAR_DAMPING = 0.1;
+/** Wreck pieces coast, then settle into terrain. Light enough that the
+ *  debris field keeps opening for tens of seconds (review 2026-11-12: at
+ *  0.05 / 0.1 with a ~10 u/s push the pieces barely moved in 6 s). */
+export const WRECK_LINEAR_DAMPING = 0.02;
+export const WRECK_ANGULAR_DAMPING = 0.05;
 /** Room-wide cap on live wreck bodies (each takes a physics slot). Owner:
  *  wrecks stay for ever; this is only a budget guard (the oldest wreck piece
  *  goes first, S2b revisits it with persistence). */
@@ -242,7 +245,14 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
   };
   const geom = wreckPieceGeometry(fracture);
 
-  const push = WRECK_PUSH_SPEED_FRAC * kind.maxSpeed * (0.5 + violence(input.killBlowDamage, input.recentDamageRate));
+  // Outward push away from the kill point: fastest there, falling off with
+  // distance, scaled by hull size (#18) and by how violent the death was.
+  const tuning = shipTuning(kind);
+  const harder = 0.75 + 0.5 * violence(input.killBlowDamage, input.recentDamageRate);
+  const pushFar = tuning.wreckPushMin * harder;
+  const pushExtra = (tuning.wreckPushMax - tuning.wreckPushMin) * harder;
+  const rf = WRECK_PUSH_FALLOFF_FRAC * kind.radius;
+  const rf2 = rf * rf;
   const spinRng = new Rng(fnvMixU32((input.seed >>> 0) ^ 0x3ec7, 0x5));
 
   const pieces: WreckPieceSpec[] = [];
@@ -254,7 +264,9 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
     const ry = centre.y - pose.y;
     let ox = centre.x - killWorldOnHull.x;
     let oy = centre.y - killWorldOnHull.y;
-    const ol = Math.sqrt(ox * ox + oy * oy);
+    const ol2 = ox * ox + oy * oy;
+    const ol = Math.sqrt(ol2);
+    const push = pushFar + (pushExtra * rf2) / (rf2 + ol2);
     if (ol > 1e-6) {
       ox /= ol;
       oy /= ol;

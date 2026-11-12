@@ -7,7 +7,7 @@ import { generateAsteroidVertices, asteroidResources, type Vec2 } from '../../co
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
 import { STRUCTURE_DEFAULT_MASS } from '../../core/swarm/structureConstants.js';
 import { SCRAP_DEFAULT_MASS, SCRAP_LINEAR_DAMPING } from '../../core/swarm/scrapConstants.js';
-import { SCRAP_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
+import { SCRAP_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
@@ -322,7 +322,7 @@ export class SwarmSpawner {
     rec.wreckParts = spec.parts;
     this.hooks.postSpawnObstacle(
       slot, spec.id, spec.x, spec.y, spec.vx, spec.vy, spec.radius, spec.mass, undefined,
-      spec.linearDamping, false, undefined, spec.angle, spec.parts, undefined,
+      spec.linearDamping, false, WRECK_COLLISION_GROUPS, spec.angle, spec.parts, undefined,
       { angvel: spec.angvel, angularDamping: spec.angularDamping },
     );
     this.hooks.interestGrid?.insert(rec.entityId, spec.x, spec.y, spec.radius);

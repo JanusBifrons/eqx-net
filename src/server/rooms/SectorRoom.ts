@@ -1392,7 +1392,7 @@ export class SectorRoom extends Room<SectorState> {
     /** The authoritative SAB pose of a swarm entity (null ⇒ unknown id). */
     swarmPose: (id: string) => { x: number; y: number; angle: number } | null;
     /** v4 T2 — an active player's SAB pose and teleport epoch. */
-    playerPose: (playerId: string) => { x: number; y: number; poseEpoch: number } | null;
+    playerPose: (playerId: string) => { x: number; y: number; angle: number; poseEpoch: number } | null;
     /** Gates: open bits for a gate structure id. */
     gateMask: (id: string) => number;
     /** Unified-hull plan, Phase 4 — assert a structure resolves its OWN
@@ -1464,7 +1464,7 @@ export class SectorRoom extends Room<SectorState> {
         const slot = this.playerToSlot.get(pid);
         if (slot === undefined) return null;
         const b = slotBase(slot);
-        return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, poseEpoch: this.getActiveShip(pid)?.poseEpoch ?? 0 };
+        return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, angle: this.sabF32[b + SLOT_ANGLE_OFF]!, poseEpoch:this.getActiveShip(pid)?.poseEpoch ?? 0 };
       },
       swarmPose: (id) => {
         const rec = this.swarmRegistry.get(id);

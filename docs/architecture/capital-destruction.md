@@ -122,10 +122,12 @@ Each slice is one PR, about one agent session, tests first.
 - **Algorithm:**
   1. Seeded integer PRNG (mulberry32, the existing `core/random/rng.ts`).
   2. Seeds by rejection sampling inside the hull, with acceptance
-     `R² / (R² + d²)` (d = distance to the kill point; floored so the far end
-     still gets a few big chunks).
+     `R⁴ / (R⁴ + d⁴)` since v5 (d = distance to the kill point; floored so
+     the far end still gets a few big chunks).
   3. Split the hull along the primary line, then along each section line;
-     then, inside each section, Voronoi cells of the seeds that fall in it.
+     then, inside each section, Voronoi cells of the seeds that fall in it
+     (since v5 under a metric stretched 2× along the keel, so cuts run
+     across a long hull).
   4. Each Voronoi cell is convex: a bounding box clipped by the bisector
      half-planes.
   5. Clip the (concave) hull by each cell edge with a robust line split that
@@ -169,11 +171,18 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
   per-hit allocation.
 - **Bodies.** `buildWreckPieces` (`core/destruction/wreckPieces.ts`): one
   dynamic body per piece from its convex parts, at its centroid, mass ∝ area
-  at the ship's density, velocity v + ω × r plus an outward push from the kill
-  point (a fraction of the kind's `maxSpeed`, scaled by how violent the death
-  was), spin ω plus a seeded kick, light damping so they settle. Default
-  collision groups: ships, rocks and other pieces all collide with them. The
-  pieces tile the hull exactly, so they spawn with no overlap; the dying body
+  at the ship's density, velocity v + ω × r plus an outward push away from
+  the kill point, spin ω plus a seeded kick (±0.12 rad/s), light damping
+  (0.02 linear, 0.05 angular) so the field keeps opening for tens of
+  seconds. The push is fastest at the kill point and falls off with
+  distance: `wreckPushMin + (wreckPushMax − wreckPushMin)·r²/(r² + d²)`,
+  r = `WRECK_PUSH_FALLOFF_FRAC` (0.25) × hull radius, times 0.75–1.25 by how
+  violent the death was. `wreckPushMax/Min` come from `shipTuning(kind)`
+  (#18: 0.055 / 0.014 × hull radius per second, so a 2× heavy cruiser's
+  pieces leave at ~120 / ~30 u/s). Collision groups `WRECK_COLLISION_GROUPS`
+  (server spawn and the client twin): ships, rocks, scrap and structures
+  collide with pieces, but pieces never collide with other wreck pieces.
+  The pieces tile the hull exactly, so they spawn with no overlap; the dying body
   is despawned in the same worker batch (an active player hull's body too,
   its slot kept for respawn).
 - **Entity class.** A wreck piece is swarm kind 4 (`SWARM_KIND_WRECK`,
@@ -189,6 +198,43 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
 - **Budget.** `MAX_LIVE_WRECK_PIECES` (768) per room; the oldest piece goes
   first. Owner: wrecks stay for ever; this only guards the slot pool until
   S2c persists them. S2b keeps it.
+- **Kill point and drift fixes (hostile review, 2026-11-12).** A filmed
+  death (a battleship's 16" salvo kills a player heavy cruiser in
+  `showcase-capital-duel`) showed cracks over ~60 % of the hull, a
+  lengthwise "tuning fork" at the bow, and pieces that kept the outline with
+  hairline gaps for 6 s. Findings:
+  - **The kill point was right.** An integration test reproduces the death
+    with a real 16" shell through the projectile pipeline at three hull
+    angles: the recorded kill point is the shell's impact to the float, the
+    transform (rotation sign, Pixi y-down vs math y-up) is correct, and the
+    attacker fallback is not used. The primary line passes through it.
+  - **The spread came from the fracture.** The seed density fell off as
+    1/d² (a long tail down a long hull) over a 3.5 % floor, and Voronoi
+    cells between seeds at the same station across the narrow beam ran down
+    the keel. Fracture v5 (`FRACTURE_ALGO_VERSION` 5): a 1/d⁴ falloff over a
+    0.4 % floor, a Voronoi metric stretched 2× along the keel, and, beyond
+    one falloff radius from the kill point, a least keel-wise seed spacing.
+    Over a seed sweep of heavy-cruiser side hits the share of new cut length
+    within 20 % of the length of the kill point went 77–88 % → 86–94 %, cut
+    length running along the keel 20–22 % → ≤ 4 %, and the worst long piece
+    misses ≤ 15 % of its beam (was 64–79 %).
+  - **The drift was cancelled by the pieces themselves.** The push was a
+    flat ~20–60 u/s away from the kill point, and the pieces tile the hull
+    exactly, so a piece at the kill point ran into its slower neighbour; the
+    contacts (restitution 0.8) traded the push away (the piece nearest the
+    kill point coasted at 60 u/s, the farthest at 76). Pieces now never
+    collide with each other, and the push follows the falloff above. In the
+    reproduced death the debris field's mean radius grows 393 u in 5 s (was
+    132 u), the nearest piece leaves at ~134 u/s, the farthest at ~41 u/s.
+    (#502's capital overlap pass is not on this branch, so it was not the
+    cause.)
+  - **The client does not ease the cracks in.** The "cracks fading in over
+    ~1 s" were the slow real separation: the client draws each piece at its
+    interpolated server pose, and the pieces start tiling the hull exactly.
+    With the faster push the gaps open within a few frames.
+  - Locks: `fractureHull.killFocus.test.ts`,
+    `tests/integration/sectorRoom/wreckBreakAndDrift.test.ts`,
+    `tests/unit/collisionGroups.test.ts`.
 - Locks: `wreckPieces.test.ts`, `CapitalWreckSubsystem.test.ts`,
   `tests/integration/sectorRoom/capitalWrecks.test.ts`.
 

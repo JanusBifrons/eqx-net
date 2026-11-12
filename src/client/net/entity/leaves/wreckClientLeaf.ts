@@ -18,6 +18,7 @@
 import { ClientEntityLeafBase } from '../ClientEntityLeafBase.js';
 import type { ClientSpawnCtx, ClientSyncCtx } from '../IClientEntityLeaf.js';
 import { WRECK_ANGULAR_DAMPING, WRECK_LINEAR_DAMPING } from '@core/destruction/wreckPieces';
+import { WRECK_COLLISION_GROUPS } from '@core/physics/collisionGroups';
 
 export class WreckClientLeaf extends ClientEntityLeafBase {
   constructor() {
@@ -30,7 +31,7 @@ export class WreckClientLeaf extends ClientEntityLeafBase {
       ? ctx.wrecks.piece(e.wreckId, e.componentIndex ?? 0)
       : null;
     if (g === null) return; // no geometry yet: the caller retries next sync
-    ctx.predWorld.spawnObstacle(ctx.key, e.x, e.y, g.radius, g.mass, undefined, WRECK_LINEAR_DAMPING, undefined, g.parts);
+    ctx.predWorld.spawnObstacle(ctx.key, e.x, e.y, g.radius, g.mass, undefined, WRECK_LINEAR_DAMPING, WRECK_COLLISION_GROUPS, g.parts);
     ctx.predWorld.setAngularDamping(ctx.key, WRECK_ANGULAR_DAMPING);
   }
 
