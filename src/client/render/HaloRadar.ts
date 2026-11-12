@@ -21,7 +21,7 @@
  * (scratch arrays/points are class fields; key strings are cached per id).
  */
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
-import { countdownLabel } from './incoming/incomingFire.js';
+import { groupLabel } from './incoming/incomingFire.js';
 import { INCOMING_COLOR, type IncomingGroups } from './incoming/IncomingFireWarning.js';
 import type { Camera } from './worker/Camera';
 import type { RenderMirror } from '@core/contracts/IRenderer';
@@ -584,7 +584,7 @@ export class HaloRadar {
     // Bearing from the screen centre to the shells; the label sits inward.
     const ang = Math.atan2(this.pt.y - H * 0.5, this.pt.x - W * 0.5);
     g.x = this.pt2.x; g.y = this.pt2.y; g.rotation = ang; g.visible = true;
-    const label = countdownLabel(G.t);
+    const label = groupLabel(G);
     if (label !== this.incomingLabel) { this.incomingLabel = label; text.text = label; }
     text.x = this.pt2.x - Math.cos(ang) * 20;
     text.y = this.pt2.y - Math.sin(ang) * 14;

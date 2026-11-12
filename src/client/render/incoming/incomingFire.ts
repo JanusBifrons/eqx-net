@@ -90,10 +90,13 @@ export interface FallGroup {
   /** Largest danger radius in the group (drawn ring). */
   r: number;
   count: number;
+  /** Salvo id of the shell that opened the group (shell_salvo), or -1 when
+   *  its shells came with no salvo (events off). */
+  salvo: number;
 }
 
 export function makeFallGroup(): FallGroup {
-  return { x: 0, y: 0, sx: 0, sy: 0, t: 0, r: 0, count: 0 };
+  return { x: 0, y: 0, sx: 0, sy: 0, t: 0, r: 0, count: 0, salvo: -1 };
 }
 
 /**
@@ -102,17 +105,25 @@ export function makeFallGroup(): FallGroup {
  * else it opens a new group (up to `groups.length`; overflow joins nothing
  * and is dropped). Inputs are parallel arrays of `n` passes. Returns the
  * group count. Allocation-free: `groups` is a caller-owned pool.
+ *
+ * With `salvo` (shells as events, shell-events.md §6): a pass whose salvo id
+ * is known (>= 0) always joins its own salvo's group, wherever it falls, so
+ * one broadside is one marker; passes from other salvos or with none still
+ * join by fall area and arrival as above.
  */
 export function groupShellPasses(
   fx: Float64Array, fy: Float64Array, sx: Float64Array, sy: Float64Array,
   t: Float64Array, r: Float64Array, n: number,
   joinDist: number, joinDt: number, groups: FallGroup[],
+  salvo: Float64Array | null = null,
 ): number {
   let g = 0;
   const jd2 = joinDist * joinDist;
   for (let i = 0; i < n; i++) {
     let into = -1;
-    for (let k = 0; k < g; k++) {
+    const s = salvo !== null ? salvo[i]! : -1;
+    if (s >= 0) for (let k = 0; k < g; k++) if (groups[k]!.salvo === s) { into = k; break; }
+    if (into < 0) for (let k = 0; k < g; k++) {
       const G = groups[k]!;
       const dx = G.x - fx[i]!, dy = G.y - fy[i]!;
       if (dx * dx + dy * dy <= jd2 && Math.abs(G.t - t[i]!) <= joinDt) { into = k; break; }
@@ -121,7 +132,7 @@ export function groupShellPasses(
       if (g >= groups.length) continue;
       const G = groups[g++]!;
       G.x = fx[i]!; G.y = fy[i]!; G.sx = sx[i]!; G.sy = sy[i]!;
-      G.t = t[i]!; G.r = r[i]!; G.count = 1;
+      G.t = t[i]!; G.r = r[i]!; G.count = 1; G.salvo = s;
       continue;
     }
     const G = groups[into]!;
@@ -159,4 +170,10 @@ export function countdownLabel(seconds: number): string {
   let s = LABELS[i];
   if (s === undefined) { s = `${(i / 10).toFixed(1)}s`; LABELS[i] = s; }
   return s;
+}
+
+/** The label a marker shows: a salvo whose first shell is due reads "now"
+*  until the salvo has passed (shell-events.md §6); otherwise the countdown. */
+export function groupLabel(G: FallGroup): string {
+  return G.salvo >= 0 && !(G.t > 0) ? 'now' : countdownLabel(G.t);
 }

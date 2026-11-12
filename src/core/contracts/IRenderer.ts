@@ -399,6 +399,18 @@ export interface ProjectileRenderState {
   weaponId?: string;
 }
 
+/** One naval shell as its `shell_salvo` described it (game space). */
+export interface ShellSalvoRenderInfo {
+  /** Salvo id: every shell one firer fired with one gun in one tick. */
+  s: number;
+  /** Fire tick and flight length in ticks (`shellPathEndTick` = t + n + 1). */
+  t: number;
+  n: number;
+  /** Origin (quantised spawn point). */
+  x0: number;
+  y0: number;
+}
+
 export interface RenderMirror {
   /** Phase 4 travel state: a sector-to-sector trip is under way (the backdrop
    *  fades to deep space; the local ship flies on). Absent = no trip. */
@@ -468,6 +480,11 @@ export interface RenderMirror {
   gridFlowMaterial?: Map<number, number>;
   /** Projectiles: both server-authoritative and client ghost entries. */
   projectiles?: Map<string, ProjectileRenderState>;
+  /** Shells as events (docs/architecture/shell-events.md): what the
+   *  `shell_salvo` messages said about each naval shell, keyed by the same id
+   *  as its `projectiles` entry. Present only when the welcome said
+   *  `shellEvents: true`. Pooled records, mutated in place. */
+  shellSalvos?: Map<string, ShellSalvoRenderInfo>;
   /** In-flight heat-seeking missiles. Server-authoritative pose mirrored
    *  from `SnapshotMessage.missiles[]` (per-recipient AOI-filtered).
    *  Keyed by the stable per-sector missileId. The renderer draws the
