@@ -1,18 +1,19 @@
 /**
- * Capital destruction S2b — wreck pieces are drawn plainly: each piece a
- * filled polygon in the parent hull's base colour, darkened, with a thin dark
- * outline, built ONCE from the geometry the renderer rebuilds off
- * `mirror.wrecks` (the same `wreckPieceGeometry` the server's bodies use).
+ * Capital destruction S2b — without Machined art (the classic look, or while
+ * the parent's art bakes) a wreck piece is drawn plainly: a filled polygon in
+ * the parent hull's base colour, darkened, with a thin dark outline, built
+ * ONCE from the geometry the renderer rebuilds off `mirror.wrecks` (the same
+ * `wreckPieceGeometry` the server's bodies use). The S3 textured look and the
+ * cut-edge glow are locked in `swarmSpriteUpdater.wreckArt.test.ts`.
  *
- * Count budget: ONE display object per piece (a plain Graphics: no children,
- * no texture, no filter), so the batcher draws a whole wreck in one call and
- * a 768-piece cap adds at most 768 objects to CLIENT_COUNT_BUDGETS'
- * thousands.
+ * Count budget: a `WreckPieceSprite` holding the plain polygon (no texture,
+ * no filter); with no wreck clock the piece is drawn cool (no glow stroke).
  */
 import { describe, it, expect } from 'vitest';
 import { Container, Graphics } from 'pixi.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js';
-import { WRECK_DISPLAY_OBJECTS_PER_PIECE, wreckPieceColors } from './spriteBuilders.js';
+import { wreckPieceColors } from './spriteBuilders.js';
+import { WreckPieceSprite } from './wreckArt.js';
 import { MountVisualManager } from '../MountVisualManager.js';
 import { WreckGeometryStore, rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
 import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../../core/contracts/IRenderer.js';
@@ -62,7 +63,7 @@ function piece(index: number, x: number, y: number, radius: number): SwarmRender
 }
 
 describe('updateSwarmSprites — capital wreck pieces (S2b)', () => {
-  it('draws every piece once, as one plain Graphics each, within the count budget', () => {
+  it('draws every piece once, as one plain polygon each, within the count budget', () => {
     const geom = rebuildWreckPieces(DESC);
     expect(geom.length).toBeGreaterThanOrEqual(3);
     const swarm = new Map<number, SwarmRenderState>();
@@ -71,14 +72,16 @@ describe('updateSwarmSprites — capital wreck pieces (S2b)', () => {
     const ctx = makeCtx();
     updateSwarmSprites(mirror, ctx);
 
-    expect(ctx.shipContainer.children.length).toBe(geom.length * WRECK_DISPLAY_OBJECTS_PER_PIECE);
+    expect(ctx.shipContainer.children.length).toBe(geom.length);
     for (let i = 0; i < geom.length; i++) {
       const s = ctx.sprites.get(`swarm-${100 + i}`)!;
-      expect(s, `piece ${i} drawn`).toBeInstanceOf(Graphics);
-      expect(s.children.length, 'no child objects per piece').toBe(0);
+      expect(s, `piece ${i} drawn`).toBeInstanceOf(WreckPieceSprite);
+      expect(s.children.length, 'just the polygon (cool: no glow)').toBe(1);
+      const poly = s.children[0]!;
+      expect(poly).toBeInstanceOf(Graphics);
       expect(s.filters ?? null).toBeNull();
       // Its drawn extent is the piece's own (body-local, Y flipped).
-      const b = (s as Graphics).getLocalBounds();
+      const b = (poly as Graphics).getLocalBounds();
       const r = geom[i]!.radius;
       expect(Math.max(-b.minX, b.maxX, -b.minY, b.maxY)).toBeLessThanOrEqual(r + 10); // + the outline's miter
       expect(Math.max(-b.minX, b.maxX, -b.minY, b.maxY)).toBeGreaterThan(r * 0.5);

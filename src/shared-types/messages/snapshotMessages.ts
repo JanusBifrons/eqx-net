@@ -425,4 +425,8 @@ export interface WreckDescriptor {
   /** `FRACTURE_ALGO_VERSION` the server fractured with; a client on another
    *  version drops the wreck instead of guessing. */
   algoVersion: number;
+  /** S3: the server tick the capital broke up on. The client's wreck art
+   *  starts its molten cut-edge glow from it; absent ⇒ drawn already cool
+   *  (as a late joiner sees it). Not a fracture input. */
+  deathTick?: number;
 }

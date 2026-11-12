@@ -181,6 +181,7 @@ export class CapitalWreckSubsystem {
           wreckId, parentKind: kindId, seed: fracture.seed, killX: fracture.killX, killY: fracture.killY,
           killBlowDamage: fracture.killBlowDamage, recentDamageRate: fracture.recentDamageRate,
           snapChance: fracture.snapChance, algoVersion: FRACTURE_ALGO_VERSION,
+          deathTick: tick,
         },
         pieces: spawned,
       });

@@ -185,10 +185,8 @@ export function buildScrapGfx(
   return g;
 }
 
-/** Capital wreck pieces (S2b): one plain Graphics each — no child, texture or
- *  filter — so the batcher draws a whole wreck in one call. */
-export const WRECK_DISPLAY_OBJECTS_PER_PIECE = 1;
-/** A piece's fill is its hull's base colour at this brightness. */
+/** A capital wreck piece's plain look (S2b; S3 draws it textured once the
+ *  parent's art is ready, `wreckArt.ts`). A piece's fill is its hull's base colour at this brightness. */
 const WRECK_FILL_SHADE = 0.45;
 /** Its outline is the base colour at this brightness. */
 const WRECK_STROKE_SHADE = 0.18;
