@@ -231,7 +231,7 @@ import { ROSTER_CAP, type ActivatedMount } from '../playerShips/PlayerShipStore.
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { LockSubsystem, type LockTargetView } from './LockSubsystem.js';
 import { NpcLockSubsystem } from './NpcLockSubsystem.js';
-import { barrelBearsOn } from '../../core/combat/fireControlBearing.js';
+import { mountBearsOn } from '../../core/combat/fireControlBearing.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { MissileSimulation } from './MissileSimulation.js';
@@ -1903,7 +1903,7 @@ export class SectorRoom extends Room<SectorState> {
       logger,
       malformed: this.malformed,
       fireAllowed: (pid, slotId) => this.locks.hasLocked(pid, slotId),
-      mountBearsOnLock: (pid, mountId, ox, oy, angle) => this.mountBearsOnLock(pid, mountId, ox, oy, angle),
+      mountBearsOnLock: (pid, mountId, ox, oy, angle, weaponId) => this.mountBearsOnLock(pid, mountId, ox, oy, angle, weaponId),
     });
 
     // AI drone weapon-fire resolver. Composes the per-mount hitscan +
@@ -4281,10 +4281,10 @@ export class SectorRoom extends Room<SectorState> {
    * `FC_MOUNT_FIRE_TOLERANCE`. A turret clamped at its arc limit with the
    * target outside the arc fails, so it can't fire.
    */
-  private mountBearsOnLock(pid: string, mountId: string, ox: number, oy: number, angle: number): boolean {
+  private mountBearsOnLock(pid: string, mountId: string, ox: number, oy: number, angle: number, weaponId: string): boolean {
     if (!this.lockAimTarget(pid, mountId, this._fcBearPose)) return false;
     // Shared with the client's ghost-bolt pass (#15).
-    return barrelBearsOn(ox, oy, angle, this._fcBearPose.x, this._fcBearPose.y);
+    return mountBearsOn(weaponId, ox, oy, angle, this._fcBearPose.x, this._fcBearPose.y);
   }
   private readonly _fcBearPose = { x: 0, y: 0, vx: 0, vy: 0 };
 
