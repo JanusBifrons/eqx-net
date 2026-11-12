@@ -24,6 +24,9 @@ export interface FrameIndex {
 export interface RecordResult {
   clipDir: string;
   index: FrameIndex;
+  /** The recorded length: `shot.durationMs`, or shorter when an
+   *  `endsWithRun` shot's `run()` resolved first. */
+  takeMs: number;
   deliveredFps: number;
   gapP95Ms: number;
   gapMaxMs: number;
@@ -213,7 +216,11 @@ export class Recorder {
           actionError = e;
         })
       : null;
-    await sleep(shot.durationMs);
+    // `endsWithRun`: stop when run() is done (capped at durationMs).
+    const takeStart = Date.now();
+    if (shot.endsWithRun && actions) await Promise.race([actions, sleep(shot.durationMs)]);
+    else await sleep(shot.durationMs);
+    const takeMs = Math.min(shot.durationMs, Date.now() - takeStart);
     const net1 = await readNet(page);
     const longFrames = await takeLongFrames(page);
     const trace = await takePoseTrace(page);
@@ -232,7 +239,7 @@ export class Recorder {
       for (const f of index.frames) f.t -= t0;
     }
     writeFileSync(path.join(clipDir, 'frames.json'), JSON.stringify(index));
-    return { clipDir, index, ...frameStats(index, shot.durationMs), ...captureCadence(clipDir, index, shot.durationMs), net: netDelta(net0, net1), longFrames };
+    return { clipDir, index, takeMs, ...frameStats(index, takeMs), ...captureCadence(clipDir, index, takeMs), net: netDelta(net0, net1), longFrames };
   }
 
   private makeContext(page: Page, hud: HudMode, viewport: { width: number; height: number }): ShotContext {
