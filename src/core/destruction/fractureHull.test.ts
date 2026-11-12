@@ -322,10 +322,13 @@ describe('fractureHull', () => {
         const input = { ...battleshipInput(seed), snapChance: 0 };
         const { point, dir } = fracturePlan(input).primary!;
         const side = (v: V): number => (v.x - point.x) * dir.y - (v.y - point.y) * dir.x;
+        // v6 jags the primary crack too: a piece may stray across the straight
+        // line by the jag's reach (≤ 0.22 × the crack's length, a beam here).
+        const jag = 0.22 * 1000;
         const sidesNearKill = new Set<number>();
         for (const p of fractureHull(input)) {
-          const pos = p.outline.some((v) => side(v) > FRACTURE_QUANTUM);
-          const neg = p.outline.some((v) => side(v) < -FRACTURE_QUANTUM);
+          const pos = p.outline.some((v) => side(v) > jag);
+          const neg = p.outline.some((v) => side(v) < -jag);
           expect(pos && neg).toBe(false);
           const touches = p.outline.some((v, i) => distToSeg(v, p.outline[(i + 1) % p.outline.length]!, projectToOutline(input.hull, input.killPoint)) <= FRACTURE_QUANTUM);
           if (touches) sidesNearKill.add(Math.sign(side(p.centroid)));
@@ -597,8 +600,13 @@ describe('fractureHull', () => {
 // along the keel and a least keel-wise seed spacing away from the kill point
 // (hostile review of a filmed heavy-cruiser death: cracks down 60 % of the
 // hull, a lengthwise "tuning fork" bow). The snap is unchanged (no seeds).
-const GOLDEN = { version: 5, pieces: 24, hash: 3528440158 };
-const GOLDEN_DAMAGE = { shatter: { pieces: 42, hash: 2120160719 }, snap: { pieces: 2, hash: 4043344841 } };
+// v5: { pieces: 24, hash: 3528440158 }; damage shatter 42 / 2120160719, snap 2 / 4043344841.
+// v6 (money-shot review: a comb of even square far bands, a ladder at the
+// kill point): seeds only inside a fan of jagged cracks from the kill point,
+// a few far cracks at uneven stations and tilts, the primary crack jagged
+// (so the snap's hash moved too), T-junctions welded before jagging.
+const GOLDEN = { version: 6, pieces: 21, hash: 2720809071 };
+const GOLDEN_DAMAGE = { shatter: { pieces: 24, hash: 3500738541 }, snap: { pieces: 2, hash: 2389120540 } };
 
 function hashPieces(pieces: ReadonlyArray<FracturePiece>): number {
   let h = 0x811c9dc5;
