@@ -373,6 +373,17 @@ jobs:
         env:
           CI: 'true'
           PLAYWRIGHT_RETRIES: '2'
+      # A spec that fails only on CI can't be debugged without its trace
+      # (2026-11-12: missile-frigate-homing's touch chip timed out here and
+      # passed at 8x CPU throttle on the desktop, with nothing to read).
+      - name: Upload failure traces
+        if: failure() && steps.select.outputs.specs != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-feature-traces-${{ matrix.shard }}
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
   # NOTE: the auto-retry for failed jobs is NOT here — `rerun-failed-jobs` is
   # rejected (HTTP 403 "workflow is already running") when called from a job
   # INSIDE the still-running run. The bounded one-shot retry lives in the
