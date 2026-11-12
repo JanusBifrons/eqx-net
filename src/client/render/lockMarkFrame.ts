@@ -19,6 +19,9 @@
  * Coordinates are game space (Y-up); `angle` is the target's heading
  * (forward = (-sin a, cos a)).
  */
+import type { ShipKind } from '@shared-types/shipKinds';
+import { shieldVisualRadius } from '@shared-types/shipScale/tuning';
+
 export const LOCK_PAD = 10;
 export const LOCK_MIN_HALF = 16;
 /** Largest on-screen half-size of a lock mark, in screen pixels. A 2x fighter
@@ -70,4 +73,57 @@ export const THREAT_RING_MAX_SCREEN_R = 220;
 /** Threat-ring radius round the local ship: 1.9x hull + 10 px, capped on screen. */
 export function threatRingRadius(localR: number, px: number): number {
   return Math.min(localR * 1.9 + 10 * px, THREAT_RING_MAX_SCREEN_R * px);
+}
+
+/** Half-size (screen px) of the pinned threat diamond on a capital: ~14 px across. */
+export const THREAT_PIN_HALF_PX = 7;
+
+/**
+ * Half-size (world u) of the pulsing diamond on a ship that has you locked.
+ * Uncapped (fighters): 1.2x the frame, round the hull as before. Capped (a
+ * capital): a small pin of constant screen size on the keel point nearest
+ * you. A frame-sized one boxed a random slice of the hull (owner, 2026-11-12:
+ * "weird and misplaced").
+ */
+export function threatDiamondHalf(f: LockMarkFrame, px: number): number {
+  return f.capped ? THREAT_PIN_HALF_PX * px : f.half * 1.2;
+}
+
+/** How far the locked caret's tip stands out past the threat ring (screen px). */
+export const THREAT_TIP_PX = 14;
+/** Clear space kept between the caret tip and a hull inside the ring (px). */
+export const THREAT_HULL_GAP_PX = 6;
+/** Smallest radius the arc + caret are pulled in to; less and they're hidden (px). */
+export const THREAT_POINTER_MIN_PX = 40;
+
+const BEAM = new WeakMap<ShipKind, number>();
+/** A hull's half beam (world u): the capital hull's half width, else its
+ *  radius. Follows the ship-scale knob through the kind (#18). Cached. */
+export function hullHalfBeam(kind: ShipKind): number {
+  let b = BEAM.get(kind);
+  if (b === undefined) { b = shieldVisualRadius(kind); BEAM.set(kind, b); }
+  return b;
+}
+
+/**
+ * Radius to draw a threat's arc + caret at on the ring round the local ship
+ * (at `ox, oy`). The threat's hull is a capsule along its keel (`tx, ty`,
+ * heading `angle`, hull radius `r`, half beam `hb`). When that hull is closer
+ * than the ring, the arc and caret would lie across its deck (showcase
+ * `capital-guns-fighter`, 2026-11-12), so they are pulled in to the gap,
+ * caret tip clear of the hull; with no room left, 0 (don't draw them; the
+ * pin on the ship and the banner still show the threat). Pure, alloc-free.
+ */
+export function threatPointerRadius(
+  R: number, ox: number, oy: number,
+  tx: number, ty: number, angle: number, r: number, hb: number, px: number,
+): number {
+  const fx = -Math.sin(angle), fy = Math.cos(angle);
+  const seg = Math.max(0, r - hb);
+  const t = Math.max(-seg, Math.min(seg, (ox - tx) * fx + (oy - ty) * fy));
+  const edge = Math.hypot(ox - (tx + fx * t), oy - (ty + fy * t)) - hb;
+  const need = (THREAT_TIP_PX + THREAT_HULL_GAP_PX) * px;
+  if (edge >= R + need) return R;
+  const e = edge - need;
+  return e >= THREAT_POINTER_MIN_PX * px ? Math.min(R, e) : 0;
 }
