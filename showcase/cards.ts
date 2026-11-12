@@ -5,6 +5,7 @@
  * background for overlay.
  */
 import type { Browser } from '@playwright/test';
+import { CAPTION_DEFAULT_BOTTOM } from './captionPlacement.js';
 
 const W = 1920;
 const H = 1080;
@@ -80,6 +81,9 @@ export async function captionOverlay(
   title: string,
   caption: string,
   layout: 'lower-third' | 'side' | 'top' = 'lower-third',
+  /** Lower-third only: CSS `bottom` of the box, from `captionPlacement`
+   *  (above the game's bottom HUD in a spectator take). */
+  bottomPx: number = CAPTION_DEFAULT_BOTTOM,
 ): Promise<void> {
   // `top`: a compact one-block caption in the band above a landscape phone
   // frame (`compositor.deviceLayout` leaves ~150 px there).
@@ -88,7 +92,7 @@ export async function captionOverlay(
       ? 'left:96px;top:50%;transform:translateY(-50%);max-width:540px;'
       : layout === 'top'
         ? 'left:50%;top:22px;transform:translateX(-50%);max-width:1500px;padding:12px 24px 14px !important;'
-        : 'left:72px;bottom:72px;max-width:1150px;';
+        : `left:72px;bottom:${bottomPx}px;max-width:1150px;`;
   const compact = layout === 'top' ? '.t{font-size:18px;margin-bottom:4px}.c{font-size:24px;white-space:nowrap}' : '';
   await shoot(
     browser,

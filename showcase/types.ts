@@ -160,6 +160,9 @@ export interface ClipRecord {
   qa: { ok: boolean; problems: string[] };
   /** Host load around the kept take (record only; `flags` say why it may be untrustworthy). */
   hostLoad?: TakeHostLoad;
+  /** Top edge (output px) of the game's bottom HUD during the take, null when
+   *  none showed; the lower-third caption sits above it (`captionPlacement`). */
+  bottomHudTop?: number | null;
 }
 
 export interface TakeHostLoad {
