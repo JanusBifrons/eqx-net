@@ -13,6 +13,7 @@ import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ShipRenderState, StructureRenderState, SwarmRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
 import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
+import { GameClock } from '@core/clock/GameClock';
 import { SPOOL_DURATION_MS } from '@core/transit/TransitStateMachine';
 import type { SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
 import { parseWelcome } from './parseWelcome';
@@ -324,6 +325,16 @@ export class ColyseusGameClient {
    * been replaced with `this.clock.now()` for replay parity.
    */
   private readonly clock: Clock;
+  /**
+   * This sector's GAME time (time scale stream; speed is per sector). Built
+   * over `clock` (so the replay harness still drives it), its speed comes
+   * from the snapshot's `timeScale` keyframe. Everything that turns time into
+   * TICKS uses it (the clock anchor, `targetTick`, the render tick phase, the
+   * shell display tick), so prediction follows the sector's speed with no
+   * other code. Wall time stays for networking, stalls, RTT and UI. At 1× it
+   * IS `clock.now()`, exactly.
+   */
+  private readonly gameClock: GameClock;
 
   /**
    * Default constructor uses real wall-clock — production behaviour is
@@ -332,6 +343,7 @@ export class ColyseusGameClient {
    */
   constructor(clock: Clock = REAL_CLOCK) {
     this.clock = clock;
+    this.gameClock = new GameClock(() => clock.now());
     ColyseusGameClient._liveInstanceN += 1;
     logEvent('client_constructed', { liveInstanceN: ColyseusGameClient._liveInstanceN });
     // Probe 6 — `?coalesce=0` disables snapshot coalescing for A/B
@@ -1500,7 +1512,7 @@ export class ColyseusGameClient {
       this.serverTickAtWelcome = msg.serverTick;
       this.welcomePerfNow = this.clock.now();
       this.clockAnchorServerTick = msg.serverTick;
-      this.clockAnchorPerfNow = this.welcomePerfNow;
+      this.clockAnchorPerfNow = this.gameClock.at(this.welcomePerfNow);
       // The welcome handshake gives us a perfect anchor; let the next
       // snapshot drop straight into EWMA-smoothing instead of snapping.
       this._anchorInitialised = true;
@@ -2875,7 +2887,7 @@ export class ColyseusGameClient {
     this.serverTickAtWelcome = msg.serverTick;
     this.welcomePerfNow = this.clock.now();
     this.clockAnchorServerTick = msg.serverTick;
-    this.clockAnchorPerfNow = this.welcomePerfNow;
+    this.clockAnchorPerfNow = this.gameClock.at(this.welcomePerfNow);
     this._anchorInitialised = true;
     this._anchorFreshAtMs = this.welcomePerfNow;
     // Reset the idle-input throttle so the first post-respawn input always sends.
@@ -3193,18 +3205,25 @@ export class ColyseusGameClient {
     // back and forth, blowing up the reconciler replay window into a 90 %
     // correction storm under server-clock skew. Logic lives in `clockAnchor.ts`
     // for unit-testability; see that module for the mechanic + thresholds.
-    if (this._anchorInitialised) {
+    // Game time scale: the sector's speed rides the snapshot (#16). A change
+    // re-anchors hard on this snapshot instead of easing, so ticks before and
+    // after the change are each counted at their own speed.
+    const snapScale = snap.timeScale?.s ?? 1;
+    const speedChanged = snapScale !== this.gameClock.scale;
+    if (speedChanged) this.gameClock.setScale(snapScale);
+    const gameNowMs = this.gameClock.at(now);
+    if (this._anchorInitialised && !speedChanged) {
       const next = updateAnchor(
         { anchorServerTick: this.clockAnchorServerTick, anchorPerfNow: this.clockAnchorPerfNow },
         snap.serverTick,
-        now,
+        gameNowMs,
       );
       this.clockAnchorServerTick = next.anchorServerTick;
       this.clockAnchorPerfNow = next.anchorPerfNow;
       this._anchorFreshAtMs = now;
     } else {
       this.clockAnchorServerTick = snap.serverTick;
-      this.clockAnchorPerfNow = now;
+      this.clockAnchorPerfNow = gameNowMs;
       this._anchorInitialised = true;
       this._anchorFreshAtMs = now;
     }
@@ -3256,7 +3275,7 @@ export class ColyseusGameClient {
         // Re-anchor the wall-clock so subsequent rafTicks don't try to
         // catch up the gap we just skipped over.
         this.clockAnchorServerTick = snap.serverTick;
-        this.clockAnchorPerfNow = now;
+        this.clockAnchorPerfNow = gameNowMs;
       }
       this.stats.lastAckedTick = ackedTick;
       this.stats.ticksAhead = this.inputTick - ackedTick;
@@ -4067,7 +4086,7 @@ export class ColyseusGameClient {
         // started (during this frame's work) makes it slightly negative, i.e.
         // the pose a fraction of a tick before the state: still continuous.
         const tickElapsedMs = this._lastLocalTickAtMs >= 0
-          ? Math.max(-DEAD_RECKON_BACK_MS, Math.min(DEAD_RECKON_CAP_MS, (frameNowMs ?? this.clock.now()) - this._lastLocalTickAtMs))
+          ? Math.max(-DEAD_RECKON_BACK_MS, Math.min(DEAD_RECKON_CAP_MS, this.gameClock.at(frameNowMs ?? this.clock.now()) - this._lastLocalTickAtMs))
           : 0;
         const dtSec = tickElapsedMs / 1000;
         const drX = state.x + state.vx * dtSec;
@@ -4570,7 +4589,7 @@ export class ColyseusGameClient {
       // burst them when the display reaches their hit.
       if (this._shellEvents) {
         const displayTick = this.clockAnchorServerTick
-          + (this.clock.now() - this.clockAnchorPerfNow) / SHELL_TICK_MS - SHELL_DISPLAY_DELAY_MS / SHELL_TICK_MS;
+          + (this.gameClock.now() - this.clockAnchorPerfNow) / SHELL_TICK_MS - SHELL_DISPLAY_DELAY_MS / SHELL_TICK_MS;
         this._shellStore.place(this.mirror.projectiles, displayTick, this.mirror.pendingShellEnds ??= []);
       }
 
@@ -4787,7 +4806,7 @@ export class ColyseusGameClient {
     // `keyboard.read()` hoisted out of the loop so cap-engaged RAFs still
     // emit a sentinel input + diagnostic log.
     const MAX_OVER_PREDICTION_TICKS = 60;
-    const ticksSinceAnchor = Math.floor((this.clock.now() - this.clockAnchorPerfNow) / FIXED_MS);
+    const ticksSinceAnchor = Math.floor((this.gameClock.now() - this.clockAnchorPerfNow) / FIXED_MS);
     const targetTick = this.clockAnchorServerTick + ticksSinceAnchor + this.leadTicks;
     const tickDeficitBefore = targetTick - this.inputTick;
     // A stall (loading curtain, background tab) is skipped, not replayed at 4

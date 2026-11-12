@@ -40,8 +40,8 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
 | 3a | Per-sector speed: each room owns a clock; room loop + its physics world run 60 × speed ticks per wall second | ~2 h | ✅ 🛑 |
 | 3b | Speed override per sector (env, dev endpoint, test/showcase join option); `testTimeScale` folded in; snapshot `timeScale` keyframe | ~2 h | ✅ 🛑 |
 | 3c | Integration tests at 0.5× and 2×; netgate run by hand | ~1.5 h | ✅ 🛑 (end of Phase 3) |
-| 4a | Client game clock: prediction anchor + `fromTick` parity test | ~2 h | next 🛑 |
-| 4b | Interpolation in ticks + pose ring sized for 4× | ~1.5 h | 🛑 |
+| 4a | Client game clock: prediction anchor + `fromTick` parity test | ~2 h | ✅ 🛑 |
+| 4b | Interpolation in ticks + pose ring sized for 4× | ~1.5 h | next 🛑 |
 | 4c | Render frame dt at the source (Pixi ticker speed); client lint wall | ~2 h | 🛑 |
 | 4d | Speed chip + E2E + "follows automatically" test; netgate at 0.7× / 2×; fold `testTimeScale` into the sector speed | ~2 h | 🛑 (end of Phase 4) |
 | 5a | Dynamic controller (lateness + cost, ramp, hysteresis, audit events) | ~2 h | 🛑 |
@@ -122,3 +122,9 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   dropped ticks. Spools run on the sector clock, so a 30 s spool is 1,800
   ticks at any speed. Netgate by hand on the branch: run 43241425594, GREEN.
   Unit 4972 ✓, integration 366 ✓, boot ✓.
+- 2026-11-12: step 4a done. The client has a game clock over its injected
+  clock, with its speed set from the snapshot keyframe. The tick anchor,
+  `targetTick`, the render dead-reckon and the shell display tick run on game
+  time. A speed change re-anchors hard on that snapshot's own `serverTick`.
+  `GameClock` is exact at 1× (`now()` / `at()` return the wall value until
+  the first change). Unit 4976 ✓, integration ✓.

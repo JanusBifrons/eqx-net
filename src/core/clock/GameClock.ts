@@ -49,6 +49,8 @@ interface Pending {
 
 export class GameClock implements Clock {
   private _scale = 1;
+  /** True until the first speed change: `now()` is then the wall clock itself. */
+  private exact = true;
   private anchorWall: number;
   private anchorGame: number;
   private readonly pending = new Set<Pending>();
@@ -64,7 +66,17 @@ export class GameClock implements Clock {
 
   /** Current game time, ms. */
   now(): number {
+    // Exact at 1× until the first speed change: `a + (b − a)` is not always
+    // exactly `b` in floating point, and 1× must be byte-identical.
+    if (this.exact) return this.wall();
     return this.anchorGame + (this.wall() - this.anchorWall) * this._scale;
+  }
+
+  /** Game time at a given WALL time (e.g. a RAF timestamp). Exact at 1× until
+   *  the first speed change. */
+  at(wallMs: number): number {
+    if (this.exact) return wallMs;
+    return this.anchorGame + (wallMs - this.anchorWall) * this._scale;
   }
 
   get scale(): number { return this._scale; }
@@ -77,6 +89,7 @@ export class GameClock implements Clock {
     const wallNow = this.wall();
     this.anchorGame = this.anchorGame + (wallNow - this.anchorWall) * this._scale;
     this.anchorWall = wallNow;
+    this.exact = false;
     this._scale = next;
     for (const p of this.pending) this.arm(p);
     for (const l of this.listeners) l(next);

@@ -348,6 +348,15 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 - World notices (`world_notice`: elites, events, bounties) reuse the trade toast stack with the gold `world` tone, which is not tappable. They are accelerators; the truth is the snapshot (`drones[].elite`) and the galaxy snapshot (`SectorLiveState.elite` / `.event`).
 - Lock: `ContractsTab.test.tsx`.
 
+## Game time on the client (time scale stream)
+
+- `ColyseusClient.gameClock` (a core `GameClock` over the injected `clock`) is the sector's game time. Its speed is set ONLY from the snapshot's `timeScale` keyframe (absent = 1×, #16).
+- **Everything that turns time into TICKS uses it:** the clock anchor (`clockAnchorPerfNow` is GAME ms), `targetTick`, the render tick phase / dead-reckon (`_lastLocalTickAtMs`, game ms; a RAF wall timestamp goes through `gameClock.at(wallMs)`), and the shell display tick.
+- **Wall time stays for:** networking (wire-arrival intervals, RTT), stall detection (`_anchorFreshAtMs`), diagnostics and UI.
+- **A speed change re-anchors HARD** on the snapshot that carries it (no EWMA). That snapshot's own `serverTick` is the anchor, so the client needs no `fromTick` arithmetic. The shared contract is "60 ticks per GAME second" on both sides.
+- At 1× `gameClock.now()` / `.at(t)` return the wall value EXACTLY (byte-identical until the first speed change).
+- Lock: `ColyseusClient.timeScale.test.ts`.
+
 ## Durable Identity
 
 - `playerId` is persisted in `localStorage` as `eqxPlayerId`. Read at bootstrap, sent in the `identify` handshake.
