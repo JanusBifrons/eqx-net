@@ -187,8 +187,6 @@ export async function bootSectorTestServer(opts: {
   breakInMs?: number;
   /** Bespoke test trigger: no NON-player lock takes longer than this (s); 0 = the first step. */
   lockTimeCapS?: number;
-  /** Shells as events (shell-events.md slice 1): send naval shells as events in this room. */
-  shellEvents?: boolean;
   /** P2d — stock the prebuilt Capital's hold. */
   prebuiltStorageGoods?: Record<string, number>;
   /** v4 T1 — teleporter cycle speed, and pair the seeded teleporters. */
@@ -273,7 +271,6 @@ export async function bootSectorTestServer(opts: {
     pocketPads: opts.pocketPads,
     breakInMs: opts.breakInMs,
     lockTimeCapS: opts.lockTimeCapS,
-    shellEvents: opts.shellEvents,
     prebuiltStorageGoods: opts.prebuiltStorageGoods,
     teleportCycleScale: opts.teleportCycleScale,
     pairTeleporters: opts.pairTeleporters,

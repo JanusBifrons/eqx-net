@@ -67,7 +67,7 @@ export function shellPathEndTick(fireTick: number, maxTicks: number): number {
 }
 
 /** The naval guns whose shells fly long, straight flights (and travel as
- *  events when `EQX_SHELL_EVENTS=1`). One list for both sides. */
+ *  events). One list for both sides. */
 export const NAVAL_SHELL_WEAPON_IDS: ReadonlySet<string> = new Set([
   'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege',
 ]);

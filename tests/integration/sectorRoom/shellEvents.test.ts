@@ -6,8 +6,8 @@
  * the hit on the shell's closed-form path (`shellPoseAt`), so the client can
  * draw the flight from the salvo alone and end it where the server did.
  *
- * Room option `shellEvents` (testMode) stands in for `EQX_SHELL_EVENTS=1`.
- * The per-tick `projectiles[]` path still runs beside it in slice 1.
+ * Every room sends shells as events since slice 4 (no switch), and no naval
+ * shell rides the per-tick `projectiles[]`.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -28,7 +28,7 @@ describe('SectorRoom integration — naval shells as events (slice 1)', () => {
 
   it('a 16" hit: the salvo reaches the target, and shell_end matches the DamageEvent', { timeout: 60_000 }, async () => {
     harness = await bootSectorTestServer({
-      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], shellEvents: true,
+      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [],
       // Same layout as capitalEngagement: the pilot 40° off the bow, 5,000 u.
       dronePoses: [{ kind: 'battleship', x: 5000, y: 0, angle: (50 * Math.PI) / 180 }],
     });

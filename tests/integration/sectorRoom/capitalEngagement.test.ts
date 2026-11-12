@@ -20,6 +20,7 @@ import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { DamageEvent, SnapshotMessage } from '../../../src/shared-types/messages.js';
 import { getWeapon } from '../../../src/core/combat/WeaponCatalogue.js';
+import type { ShellSalvo } from '../../../src/shared-types/messages/shellEvents.js';
 
 describe('SectorRoom integration — capital main battery (Phase 3)', () => {
   let harness: SectorTestHarness;
@@ -59,10 +60,12 @@ describe('SectorRoom integration — capital main battery (Phase 3)', () => {
     const cr = await harness.connectActive(pid, { initialHull: 1_000_000, initialShield: 0, startHostile: true, instantLock: true });
     let maxXl = 0;
     const owners = new Set<string>();
-    cr.onMessage('snapshot', (snap: SnapshotMessage) => {
-      let n = 0;
-      for (const p of snap.projectiles ?? []) if (p.weaponId === 'naval_xl') { n++; owners.add(p.ownerId); }
-      maxXl = Math.max(maxXl, n);
+    // Naval shells travel as events (shell-events.md slice 4): one salvo per
+    // turret firing, one shell per barrel.
+    cr.onMessage('shell_salvo', (m: ShellSalvo) => {
+      if (m.w !== 'naval_xl') return;
+      owners.add(m.o);
+      maxXl = Math.max(maxXl, m.sh.length);
     });
     const deadline = Date.now() + 40_000;
     while (Date.now() < deadline && maxXl < 3) await new Promise((r) => setTimeout(r, 100));
@@ -80,8 +83,11 @@ describe('SectorRoom integration — capital main battery (Phase 3)', () => {
     const pid = randomUUID();
     const cr = await harness.connectActive(pid, { initialHull: 1_000_000, initialShield: 0, startHostile: true, instantLock: true });
     let farthest = 0;
-    cr.onMessage('snapshot', (snap: SnapshotMessage) => {
-      for (const p of snap.projectiles ?? []) if (p.weaponId === 'naval_xl') farthest = Math.max(farthest, Math.abs(p.x));
+    // The salvo reaches the pilot when it is fired, with each shell's muzzle
+    // origin (shell-events.md slice 4: naval shells travel only as events).
+    cr.onMessage('shell_salvo', (m: ShellSalvo) => {
+      if (m.w !== 'naval_xl') return;
+      for (const sh of m.sh) farthest = Math.max(farthest, Math.abs(sh[1]));
     });
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline && farthest < 3300) await new Promise((r) => setTimeout(r, 100));

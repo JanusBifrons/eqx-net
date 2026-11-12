@@ -1,12 +1,11 @@
 /**
- * Naval-shell interest (real-scale ranges, slice 7).
- *
- * A 16" shell flies up to ~38.7 km for ~30 s. The old projectile interest was
- * a ±3,072 u box around the viewer (plus "a wide owner in your interest"), so
- * the ship being shot at from 25 km saw nothing until the shell was 3 km out.
- * Now a `naval_*` shell rides a viewer's snapshot while the shell OR its fall
- * point is inside the viewer's widest camera view for the hull it flies
- * (`shellViewHalfExtent`). Sub-capital projectiles keep the box rule.
+ * Naval shells and the snapshot (real-scale ranges slice 7, shells as events
+ * slice 4). Naval shells travel only as `shell_salvo` / `shell_end` /
+ * keyframes (ShellEventHub, docs/architecture/shell-events.md), so no
+ * `naval_*` shell ever rides `projectiles[]`, wherever it is. The hub sizes
+ * its viewer rule with `shellViewHalfExtent` (the widest camera view for the
+ * hull a viewer flies, #15 with the client zoom floor), locked here too.
+ * Sub-capital projectiles keep the ±3,072 u box.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -14,7 +13,7 @@ import type { Client, ClientArray } from 'colyseus';
 import type { Logger } from 'pino';
 import type { MapSchema } from '@colyseus/schema';
 import { Packr } from '@colyseus/msgpackr';
-import { SnapshotBroadcaster, navalShellInView, type SnapshotBroadcasterDeps } from './SnapshotBroadcaster.js';
+import { SnapshotBroadcaster, type SnapshotBroadcasterDeps } from './SnapshotBroadcaster.js';
 import type { ProjectileRecord } from './ProjectilePipeline.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import type { ShipState } from './schema/SectorState.js';
@@ -125,44 +124,18 @@ describe('shellViewHalfExtent — the widest view per hull (#15: the client came
   });
 });
 
-describe('navalShellInView', () => {
-  it('is true for the shell itself in view, or for its fall point in view, else false', () => {
-    const p = shell('naval_xl', 0, 0, SHELL_SPEED, 0, FLIGHT_TICKS);
-    expect(navalShellInView(p, 1000, 0, 6400, TICK)).toBe(true); // the shell
-    expect(navalShellInView(p, 25_000, 0, 6400, TICK)).toBe(true); // its fall point
-    expect(navalShellInView(p, 12_500, 20_000, 6400, TICK)).toBe(false); // neither
-    // Once its flight is spent, only the shell itself counts.
-    expect(navalShellInView(p, 25_000, 0, 6400, TICK + FLIGHT_TICKS)).toBe(false);
-  });
-});
+describe('SnapshotBroadcaster — naval shells never ride projectiles[] (slice 4)', () => {
+  const east: Viewer = { pid: 'east', kind: 'fighter', x: 25_000, y: 0 };
 
-describe('SnapshotBroadcaster — naval shells reach viewers by their widest view', () => {
-  const viewers: Viewer[] = [
-    { pid: 'east', kind: 'fighter', x: 25_000, y: 0 }, // where the salvo falls
-    { pid: 'north', kind: 'fighter', x: 0, y: 40_000 }, // far from path and fall
-    { pid: 'bbview', kind: 'battleship', x: 0, y: 28_000 }, // wide view: fall point inside
-    { pid: 'ftview', kind: 'fighter', x: 0, y: 28_000 }, // same spot, fighter view: outside
-  ];
-
-  it('the target 25 km from a firing battleship gets the shell from its FIRST snapshot; a far viewer does not', () => {
-    const projectiles = new Map<string, ProjectileRecord>([
-      ['proj-1', shell('naval_xl', 0, 0, SHELL_SPEED, 0, FLIGHT_TICKS)],
-    ]);
-    const ids = firstSnapIds(viewers, projectiles);
-    expect(ids.get('east')).toEqual(['proj-1']);
-    expect(ids.get('north')).toEqual([]);
-    // Radius follows the viewer's hull: a battleship sees the fall point from
-    // 28 km away, a fighter in the same place does not.
-    expect(ids.get('bbview')).toEqual(['proj-1']);
-    expect(ids.get('ftview')).toEqual([]);
-  });
-
-  it('every naval calibre is covered (naval_s … naval_siege)', () => {
+  it('no calibre is sent, near or far; a bolt in the box still is', () => {
     const projectiles = new Map<string, ProjectileRecord>();
     const calibres: WeaponId[] = ['naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege'];
-    calibres.forEach((w, i) => projectiles.set(`proj-${i}`, shell(w, 0, 0, SHELL_SPEED, 0, FLIGHT_TICKS)));
-    const ids = firstSnapIds([viewers[0]!], projectiles);
-    expect(ids.get('east')!.length).toBe(calibres.length);
+    calibres.forEach((w, i) => {
+      projectiles.set(`far-${i}`, shell(w, 0, 0, SHELL_SPEED, 0, FLIGHT_TICKS));
+      projectiles.set(`near-${i}`, shell(w, 25_000 - 100, 0, SHELL_SPEED, 0, FLIGHT_TICKS));
+    });
+    projectiles.set('bolt', shell('laser' as WeaponId, 25_000 - 300, 0, 400, 0, 600));
+    expect(firstSnapIds([east], projectiles).get('east')).toEqual(['bolt']);
   });
 
   it('sub-capital projectiles keep the ±3,072 u box (a fall point in view does not send them)', () => {
@@ -172,62 +145,6 @@ describe('SnapshotBroadcaster — naval shells reach viewers by their widest vie
       // Outside the box, ending right on the viewer: NOT sent.
       ['far', shell('laser' as WeaponId, 25_000 - 3200, 0, 3200 / 10, 0, 600)],
     ]);
-    const ids = firstSnapIds([viewers[0]!], projectiles);
-    expect(ids.get('east')).toEqual(['near']);
-  });
-
-  it('byte cost: one battleship broadside (9 × 16") on a far target', () => {
-    const salvo = new Map<string, ProjectileRecord>();
-    for (let i = 0; i < 9; i++) {
-      salvo.set(`proj-${1000 + i}`, shell('naval_xl', (i % 3) * 30, Math.floor(i / 3) * 40, SHELL_SPEED, 0, FLIGHT_TICKS));
-    }
-    const target = [viewers[0]!];
-    const withShells = makeDeps(target, salvo);
-    const empty = makeDeps(target, new Map());
-    for (const run of [withShells, empty]) {
-      const b = new SnapshotBroadcaster(run.deps);
-      for (let i = 0; i < 60 && run.firstSnaps.size === 0; i++) b.broadcast(false);
-    }
-    const full = withShells.bytes.get('s-east')!;
-    const base = empty.bytes.get('s-east')!;
-    const perShell = (full - base) / 9;
-    // Visible cost: printed for the PR, bounded so a wire bloat is caught.
-    console.log(`[naval-shell bytes] snapshot ${base} B → ${full} B with a 9-shell salvo `
-      + `(+${full - base} B, ${perShell.toFixed(1)} B/shell; ×20 Hz = ${((full - base) * 20 / 1024).toFixed(2)} KB/s per viewer while in flight)`);
-    expect(withShells.firstSnaps.get('s-east')!.projectiles!.length).toBe(9);
-    expect(perShell).toBeLessThan(96);
-  });
-});
-
-// Shells as events slice 3 (docs/architecture/shell-events.md §7): with the
-// room's shell-event hub on, every client's welcome says `shellEvents` and it
-// draws naval shells from shell_salvo, so they leave projectiles[] (the
-// ~80 KB/s per viewer the design measured for a 10-battleship fleet).
-// Sub-capital bolts are unchanged.
-describe('SnapshotBroadcaster — shells as events take naval shells off the snapshot', () => {
-  const east: Viewer = { pid: 'east', kind: 'fighter', x: 25_000, y: 0 };
-  const hub = { keyframeFor: () => 0, forgetViewer: () => {} };
-
-  it('events on: the 16" shell is not in projectiles[]; a bolt in the box still is', () => {
-    const projectiles = new Map<string, ProjectileRecord>([
-      ['proj-1', shell('naval_xl', 0, 0, SHELL_SPEED, 0, FLIGHT_TICKS)],
-      ['bolt', shell('laser' as WeaponId, 25_000 - 300, 0, 400, 0, 600)],
-    ]);
-    const { deps, firstSnaps } = makeDeps([east], projectiles);
-    (deps as unknown as { shellEvents: () => typeof hub }).shellEvents = () => hub;
-    const b = new SnapshotBroadcaster(deps);
-    for (let i = 0; i < 60 && firstSnaps.size < 1; i++) b.broadcast(false);
-    expect((firstSnaps.get('s-east')!.projectiles ?? []).map((p) => p.id)).toEqual(['bolt']);
-  });
-
-  it('events off: unchanged, the shell rides projectiles[]', () => {
-    const projectiles = new Map<string, ProjectileRecord>([
-      ['proj-1', shell('naval_xl', 0, 0, SHELL_SPEED, 0, FLIGHT_TICKS)],
-    ]);
-    const { deps, firstSnaps } = makeDeps([east], projectiles);
-    (deps as unknown as { shellEvents: () => null }).shellEvents = () => null;
-    const b = new SnapshotBroadcaster(deps);
-    for (let i = 0; i < 60 && firstSnaps.size < 1; i++) b.broadcast(false);
-    expect((firstSnaps.get('s-east')!.projectiles ?? []).map((p) => p.id)).toEqual(['proj-1']);
+    expect(firstSnapIds([east], projectiles).get('east')).toEqual(['near']);
   });
 });
