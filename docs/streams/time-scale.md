@@ -34,10 +34,10 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
 | 0 | Register the stream on main (#473), stream log, memory | — | ✅ 🛑 |
 | 1 | Telemetry: worker dropped ticks + sim-time lateness in `tick_budget` and perf scenes | ~1 h | in progress 🛑 |
 | 2a | `GameClock` (core) + server `gameTime` + lint wall (warn) | ~45 min | 🛑 |
-| 2b | Migrate the directors, economy, transit and holds (`?? Date.now` defaults and their loops) | ~1 h | 🛑 |
-| 2c | Migrate `SectorRoom` (46 sites) + the room's timers | ~1.5 h | 🛑 |
-| 2d | Lint wall to error; integration suite green; docs | ~45 min | 🛑 (end of Phase 2) |
-| 3a | Worker counts real physics steps; the room runs `scale` steps per wall tick | ~2 h | 🛑 |
+| 2b | Migrate the directors, economy, transit and holds (`?? Date.now` defaults and their loops) | ~1 h | ✅ 🛑 |
+| 2c | Migrate `SectorRoom` (46 sites) + the room's timers | ~1.5 h | ✅ 🛑 |
+| 2d | Lint wall to error; integration suite green; docs | ~45 min | ✅ 🛑 (end of Phase 2) |
+| 3a | Worker counts real physics steps; the room runs `scale` steps per wall tick | ~2 h | next 🛑 |
 | 3b | `GalaxyTimeScale` + dev override + `testTimeScale` folded in; snapshot `timeScale` keyframe | ~2 h | 🛑 |
 | 3c | Integration tests at 0.5× and 2×; netgate run by hand | ~1.5 h | 🛑 (end of Phase 3) |
 | 4a | Client game clock: prediction anchor + `fromTick` parity test | ~2 h | 🛑 |
@@ -81,3 +81,12 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   time while the speed isn't 1×. Unit 4967 ✓, integration 359 ✓ (run with
   `--maxWorkers=4`: a full run was stopped once for low memory while another
   session recorded video), boot ✓.
+- 2026-11-12: synced main (6 commits, clean merge `53af4e97`).
+- 2026-11-12: step 2c done. `SectorRoom`'s 46 sites: gameplay reads use
+  `gameNow()`; the structure grid pulse and turret tick are game timers. Real
+  time, marked inline: the room tick scheduler, cost measurement, the perf burn,
+  perf-scene marks, and the inspector's selection-stats refresh (UI rate).
+- 2026-11-12: step 2d done; **Phase 2 complete.** The wall-clock lint is an
+  ERROR in core and server (0 sites outside the allowlist). Docs: design note
+  §0, `src/core/CLAUDE.md`, `src/server/CLAUDE.md`. Unit 4969 ✓, integration
+  360 ✓, lint 0 errors, boot ✓.

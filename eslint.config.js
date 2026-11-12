@@ -216,12 +216,12 @@ export default [
     ],
     rules: {
       'no-restricted-properties': [
-        'warn',
+        'error',
         { object: 'Date', property: 'now', message: 'Game time is the default: use gameNow() (src/server/time/gameTime.ts) or an injected Clock. Wall time only in the real-time allowlist (eslint.config.js).' },
         { object: 'performance', property: 'now', message: 'Game time is the default: use gameNow() or an injected Clock. Wall time only in the real-time allowlist (eslint.config.js).' },
       ],
       'no-restricted-globals': [
-        'warn',
+        'error',
         { name: 'setTimeout', message: 'Use gameClock.after() so the timer follows the game speed. Real-time timers only in the allowlist (eslint.config.js).' },
         { name: 'setInterval', message: 'Use gameClock.every() so the timer follows the game speed. Real-time timers only in the allowlist (eslint.config.js).' },
       ],

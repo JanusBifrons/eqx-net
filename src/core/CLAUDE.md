@@ -103,6 +103,13 @@ Test coverage at [physics/inputQueue.test.ts](physics/inputQueue.test.ts) locks 
 
 ---
 
+## GameClock: game time is the default (time scale stream)
+
+- `clock/GameClock.ts` is THE time source for gameplay and presentation: continuous game time at 0.25–4× (`MIN_TIME_SCALE` / `MAX_TIME_SCALE`), with `after` / `every` timers that are re-armed on a speed change. It implements `Clock`, so anything that takes a `Clock` can run on game time.
+- Pure: the wall source and the timer host are injected; `src/core` never builds one (each zone owns its own, e.g. `server/time/gameTime.ts`).
+- In core, `Date.now` / `performance.now` / `setTimeout` / `setInterval` are a LINT ERROR outside the real-time allowlist in `eslint.config.js` (the clocks, the physics worker's tick loop, prediction RTT). Take an injected `Clock` or a `nowMs` argument instead.
+- Story: [docs/architecture/game-time-scale.md](../../docs/architecture/game-time-scale.md).
+
 ## SimulationClock (Phase 6 — TiDi)
 
 - Lives at `src/core/clock/SimulationClock.ts`. Pure: no I/O, takes only an optional `Bus` for `TIDI_RATE_CHANGED` emits.

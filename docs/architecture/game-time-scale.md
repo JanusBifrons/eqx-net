@@ -9,6 +9,18 @@ Status: **IN PROGRESS on the parallel stream `stream/time-scale` (owner, 2026-11
 - **Scope:** **galaxy-wide**: one speed for every sector.
 - **Indicator:** shows the current speed while it isn't 1×.
 
+## 0. Built so far (stream log: `docs/streams/time-scale.md`)
+
+- **Telemetry (step 1).** Two counters:
+  - The physics worker counts the ticks its catch-up cap drops (SAB header word 5, `WORKER_DROPPED_TICKS_IDX`).
+  - Every `tick_budget` event reports `wallTicks` / `simTicks` / `latenessTicks` / `droppedTicks`, the room's game time against wall time over that window. Perf scenes report the same as `simTime`.
+- **Game time is the default on the server (steps 2a–2d).**
+  - **The clock.** `GameClock` (`src/core/clock/GameClock.ts`) is continuous game time at 0.25–4× real time. Its `after` / `every` timers are re-armed when the speed changes. The server has ONE per process (`src/server/time/gameTime.ts`: `gameClock`, `gameNow()`, `gameSetTimeout` / `gameSetInterval` / `gameClearTimer`), built over `Date.now`, so at 1× every value is exactly the old one.
+  - **What uses it.** Every gameplay read and timer in `src/server` and `src/core` uses it: the room, the structure grid and turret ticks, break-ins, gates, walls, teleporters, the directors, the economy, transit and holds.
+  - **The lint wall.** `eslint.config.js` makes `Date.now`, `performance.now`, `setTimeout` and `setInterval` an ERROR in core and server outside a named real-time allowlist. The allowlist covers: the clocks and tick schedulers, cost measurement, persistence, networking, auth/identity, logs, process boot and client RTT. A one-off real-time line inside a gameplay file carries an inline `eslint-disable-next-line … -- real time: <why>`.
+  - **Result.** A new feature written the obvious way follows the speed with no code of its own.
+- **Saved timestamps are game time.** Economy deals, holds, wallets and bounties now stamp game time, which drifts from wall time while the speed isn't 1×. After a restart the clock re-anchors to wall time, so a long slowdown shifts saved deadlines by the accumulated drift. This is accepted while the automatic slowdown has a 0.7 floor; revisit if a long forced slow-motion is ever used in live play.
+
 ## 1. What exists today
 
 | Piece | Where | What it does |

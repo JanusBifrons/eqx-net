@@ -375,6 +375,17 @@ Update this section when a threshold is set.
 
 ---
 
+## Game time is the default (time scale stream)
+
+- **One game clock per process** (`time/gameTime.ts`), so the whole galaxy runs at one speed. Gameplay reads `gameNow()` and schedules with `gameSetTimeout` / `gameSetInterval` / `gameClearTimer` (unref'd), never `Date.now()` / `setTimeout` / `setInterval`. At 1× `gameNow()` IS `Date.now()`.
+- **The rule is a lint error** in `src/server` and `src/core` outside the real-time allowlist in `eslint.config.js`. Real time covers persistence, networking, auth/identity, push, routes, logs/audit, perf measurement, the room tick scheduler and boot.
+  - A new real-time FILE goes on that list.
+  - A one-off real-time line in a gameplay file gets `// eslint-disable-next-line no-restricted-properties -- real time: <why>`.
+  - Never use real time just to dodge the rule. A timer that should follow the game speed but runs on wall time desyncs the moment the speed isn't 1×.
+- **Subsystems take `now` / `nowMs` deps** (break-ins, holds, directors, economy). Their DEFAULT is `gameNow`; tests inject their own.
+- **Saved timestamps are game time** (drift from wall time while the speed isn't 1×; see the design note §0).
+- Story: [docs/architecture/game-time-scale.md](../../docs/architecture/game-time-scale.md).
+
 ## Pino Sampling Policy
 
 - Dev: `pino-pretty` transport.
