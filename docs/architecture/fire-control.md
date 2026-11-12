@@ -40,10 +40,41 @@ dropped its lock between salvos and stopped firing.
 - **Client (#16):** nothing new on the wire. The NPC's hostility to the viewer
   rides the snapshot `drones[].hostile` bit, so radar colours follow.
 - **AUTO keeps it going:** an AUTO group re-picks the nearest hostile NPC, so a
-  pilot who stays in reach with AUTO groups keeps that NPC hostile; MAN or
-  leaving reach lets it forget 30 s later.
+  pilot who stays in reach with AUTO groups keeps that NPC hostile. Since
+  2026-11-12 the NPC's own lock does too (below), so only leaving its reach
+  lets it forget, 30 s later.
 - Lock: `LockSubsystem.test.ts` "locks keep it hostile",
   `tests/integration/sectorRoom/lockKeepsHostile.test.ts`.
+
+**An attacking NPC stays hostile** (owner decision 2026-11-12: "Its own lock
+and its own hits on you also keep it hostile; it forgets you 30 s after it last
+hit or held a lock on you"). Hostility to a pilot now decays 30 s after the
+LATEST of four things: the pilot's last hit on the NPC, the pilot's last lock
+on it, the NPC's last hit on the pilot, and the NPC's last held lock on the
+pilot. Before this, a battleship cued by one `test_aggro` against a passive
+pilot forgot them 30 s after the cue, partway through its 30 s 16" reload: one
+volley, then its turrets went home.
+- **Its own lock:** every NPC lock step (`NpcLockSubsystem`, drones and NPC
+  capitals alike, robots too since they share it), an NPC that is LOCKING or
+  LOCKED on a pilot in reach calls the `refreshHostility` dep →
+  `SectorRoom.refreshNpcAttackHostility` → `aiController.markHostile`.
+- **Its own hits:** `SectorRoom.applyDamage` calls the same method when the
+  target is a pilot (`playerToSlot`) and the damage is > 0, with the shooter as
+  the NPC (a capital's shells carry the drone id as owner internally).
+- **Refresh only, never a new grudge:** both paths re-stamp only when the NPC
+  already holds the pilot in its hostility LEDGER (`isEntityHostileToPlayer(…,
+  truce = true)`), so on-sight stance (robots) never becomes ledger hostility
+  and a truce still ends it. No `bot_aggro`, no faction escalation (#16: the
+  `drones[].hostile` bit carries it).
+- **No feedback loop:** an NPC is only visited by the lock step while the pilot
+  is in reach and trackable; out of reach its lock drops after the 1.5 s grace
+  and it forgets the pilot 30 s later. A dead or departed pilot has no pose, so
+  every lock on them clears at once.
+- Structures and structure turrets keep their own rules (hostile acts).
+- Locks: `NpcLockSubsystem.test.ts` "its own lock keeps the NPC hostile",
+  `tests/integration/sectorRoom/npcStaysHostileWhileAttacking.test.ts` (second
+  16" volley after the reload; leaves reach ⇒ forgets, turrets home; no aggro ⇒
+  never targeted).
 
 **Trust.** The server never takes the client's word for a lock:
 - `lock_track` carries the lock line's bearing (`b`, `encodeAim`); the server

@@ -59,6 +59,12 @@ Output (gitignored) lands in `showcase-out/`:
      dropping their frames.
    - **Phone shots** are pillarboxed into the 16:9 frame.
    - **Captions:** a lower-third, rendered from HTML, fades in and out.
+     In a spectator take the game shows its build bar along the bottom, so
+     the recorder reads the bar's top edge (`bottom-control-panel`, after
+     setup, after each `ctx.spectate()` and at the end; `bottomHudTop` in
+     `manifest.json`) and the caption's box ends 16 px above it
+     (`captionPlacement.ts`). Without the bar (pilot mode) it keeps its
+     default place. The game UI is never moved or hidden (record as is).
 6. **QA.** Each shot gets up to 3 takes and keeps the smoothest (see "Frame
    rate" below). A clip is flagged, never silently used, if its best take:
    - delivered < 55 fps or had a frame gap > 100 ms (at 60 fps output);

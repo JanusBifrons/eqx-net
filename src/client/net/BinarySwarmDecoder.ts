@@ -18,6 +18,7 @@ import {
   SWARM_REC_RADIUS_OFF,
   SWARM_REC_SHIP_KIND_OFF,
   SWARM_REC_COMPONENT_INDEX_OFF,
+  SWARM_REC_WRECK_ID_OFF,
   SWARM_FLAG_FULL,
   SWARM_RECORD_FLAG_SLEEPING,
   SWARM_RECORD_FLAG_SHIELD_DOWN,
@@ -25,6 +26,7 @@ import {
   SWARM_KIND_DRONE,
   SWARM_KIND_STRUCTURE,
   SWARM_KIND_SCRAP,
+  SWARM_KIND_WRECK,
 } from '../../shared-types/swarmWireFormat.js';
 import { shipKindFromIndex } from '../../shared-types/shipKinds.js';
 import { structureKindFromIndex } from '../../shared-types/structureKinds.js';
@@ -114,6 +116,8 @@ export function decodeSwarmPacket(
     const shipKindByte = view.getUint8(off + SWARM_REC_SHIP_KIND_OFF);
     // v4: componentIndex — meaningful only for scrap records, 0 otherwise.
     const componentIndex = view.getUint8(off + SWARM_REC_COMPONENT_INDEX_OFF);
+    // v5: wreckId — meaningful only for wreck pieces (kind 4), 0 otherwise.
+    const wreckIdRaw = view.getUint16(off + SWARM_REC_WRECK_ID_OFF, true);
     off += SWARM_RECORD_BYTES;
 
     const sleeping = (recFlags & SWARM_RECORD_FLAG_SLEEPING) !== 0;
@@ -127,13 +131,14 @@ export function decodeSwarmPacket(
         ? shipKindFromIndex(shipKindByte)
         : kind === SWARM_KIND_STRUCTURE
           ? structureKindFromIndex(shipKindByte)
-          : kind === SWARM_KIND_SCRAP
+          : kind === SWARM_KIND_SCRAP || kind === SWARM_KIND_WRECK
             ? shipKindFromIndex(shipKindByte)
             : undefined;
     // Only scrap records carry a meaningful componentIndex; leave it undefined
     // for every other kind so the render-state entry stays minimal.
     const componentIndexForEntry =
-      kind === SWARM_KIND_SCRAP ? componentIndex : undefined;
+      kind === SWARM_KIND_SCRAP || kind === SWARM_KIND_WRECK ? componentIndex : undefined;
+    const wreckId = kind === SWARM_KIND_WRECK ? wreckIdRaw : undefined;
     // P2c — an asteroid's resource kind rides the same byte (0 = rock).
     const asteroidResource = kind === 0 && shipKindByte !== 0 ? asteroidResourceFromIndex(shipKindByte) : undefined;
 
@@ -152,6 +157,7 @@ export function decodeSwarmPacket(
         x, y, vx, vy, angle, angvel, radius, kind, sleeping, shieldDown, lastUpdateTick: tick,
         ...(shipKindId ? { shipKind: shipKindId } : {}),
         ...(componentIndexForEntry !== undefined ? { componentIndex: componentIndexForEntry } : {}),
+        ...(wreckId !== undefined ? { wreckId } : {}),
         ...(asteroidResource !== undefined ? { asteroidResource } : {}),
         prevX: x, prevY: y, prevAngle: angle,
         prevArrivalMs: nowMs, latestArrivalMs: nowMs,
@@ -179,6 +185,7 @@ export function decodeSwarmPacket(
       entry.kind = kind;
       if (shipKindId) entry.shipKind = shipKindId;
       if (componentIndexForEntry !== undefined) entry.componentIndex = componentIndexForEntry;
+      if (wreckId !== undefined) entry.wreckId = wreckId;
       if (asteroidResource !== undefined) entry.asteroidResource = asteroidResource;
       entry.sleeping = sleeping;
       entry.shieldDown = shieldDown;

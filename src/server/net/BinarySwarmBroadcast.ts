@@ -21,6 +21,7 @@ import {
   SWARM_REC_RADIUS_OFF,
   SWARM_REC_SHIP_KIND_OFF,
   SWARM_REC_COMPONENT_INDEX_OFF,
+  SWARM_REC_WRECK_ID_OFF,
   SWARM_FLAG_FULL,
   SWARM_RECORD_FLAG_SLEEPING,
   SWARM_RECORD_FLAG_SHIELD_DOWN,
@@ -30,7 +31,7 @@ import {
 import { shipKindToIndex, isShipKindId } from '../../shared-types/shipKinds.js';
 import { asteroidResourceIndex } from '../../shared-types/asteroidResources.js';
 import { structureKindToIndex, isStructureKindId } from '../../shared-types/structureKinds.js';
-import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE, SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
+import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '../../shared-types/swarmWireFormat.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from './SwarmEntityRegistry.js';
 import { STRUCTURE_OUT_OF_INTEREST_FULL_EVERY } from '../../shared-types/structureStateWire.js';
 
@@ -183,7 +184,7 @@ export class BinarySwarmBroadcast {
         shipKindIdx = shipKindToIndex(rec.shipKind);
       } else if (rec.kind === SWARM_KIND_STRUCTURE && rec.shipKind && isStructureKindId(rec.shipKind)) {
         shipKindIdx = structureKindToIndex(rec.shipKind);
-      } else if (rec.kind === SWARM_KIND_SCRAP && rec.shipKind && isShipKindId(rec.shipKind)) {
+      } else if ((rec.kind === SWARM_KIND_SCRAP || rec.kind === SWARM_KIND_WRECK) && rec.shipKind && isShipKindId(rec.shipKind)) {
         shipKindIdx = shipKindToIndex(rec.shipKind);
       } else if (rec.kind === 0 && rec.asteroidResource !== undefined) {
         // P2c — an asteroid's resource kind (rock = 0 is the default byte).
@@ -193,6 +194,8 @@ export class BinarySwarmBroadcast {
       // v4: componentIndex — which scrap group of the parent ship-kind this
       // piece is. Meaningful ONLY for kind=scrap; 0 for every other record.
       this.view.setUint8(writeOffset + SWARM_REC_COMPONENT_INDEX_OFF, rec.componentIndex ?? 0);
+      // v5: the wreck a wreck piece belongs to (capital destruction S2b); 0 otherwise.
+      this.view.setUint16(writeOffset + SWARM_REC_WRECK_ID_OFF, rec.kind === SWARM_KIND_WRECK ? (rec.wreckId ?? 0) : 0, true);
       writeOffset += SWARM_RECORD_BYTES;
 
       // Update bookkeeping so future deltas are computed against this pose.

@@ -124,6 +124,15 @@ export const TestReloadTurretsSchema = z
   })
   .strict();
 
+/** testMode only (capital destruction S2b E2E): every capital NPC in the room
+ *  takes a lethal hit NOW, at a point on its hull, so a test sees the wreck
+ *  without a minutes-long gun duel. */
+export const TestKillCapitalsSchema = z
+  .object({
+    type: z.literal('test_kill_capitals'),
+  })
+  .strict();
+
 /** Fire control (exp/fire-control): a lock target key — `s:<entityId>` for a
  *  swarm entity (drone, robot, structure…), `p:<playerId>` for an active ship. */
 export const LockTargetKeySchema = z.string().regex(/^(s:\d{1,10}|p:[A-Za-z0-9_-]{1,64})$/);
@@ -415,6 +424,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   CancelTransitSchema,
   TestAggroSchema,
   TestReloadTurretsSchema,
+  TestKillCapitalsSchema,
   LockRequestSchema,
   LockCancelSchema,
   LockTrackSchema,

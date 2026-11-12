@@ -1,7 +1,10 @@
 # Capital destruction: dynamic ship splitting (design, 2026-11-12)
 
-Status: **design + slice S1 (the core fracture module).** S2 onwards are not
-built. Owner direction (2026-11-12): "Implement the ship splitting
+Status: **design + slice S1 (the core fracture module) + slice S2a (server
+wreck bodies, behind the `capitalWrecks` flag) + slice S2b (wrecks reach the
+client and are drawn plainly) + slice S3 (the dead ship's own art on every
+piece, glowing cut edges, the break-up burst).** S2c (persistence, lifting the
+cap) is not built. Owner direction (2026-11-12): "Implement the ship splitting
 dynamically", and "keep the damage model as an idea for now". The damage
 model (zones, armour, internal systems, the destruction sequence) is parked in
 [docs/SHELF.md](../SHELF.md) "Capital damage model".
@@ -119,10 +122,12 @@ Each slice is one PR, about one agent session, tests first.
 - **Algorithm:**
   1. Seeded integer PRNG (mulberry32, the existing `core/random/rng.ts`).
   2. Seeds by rejection sampling inside the hull, with acceptance
-     `R² / (R² + d²)` (d = distance to the kill point; floored so the far end
-     still gets a few big chunks).
+     `R⁴ / (R⁴ + d⁴)` since v5 (d = distance to the kill point; floored so
+     the far end still gets a few big chunks).
   3. Split the hull along the primary line, then along each section line;
-     then, inside each section, Voronoi cells of the seeds that fall in it.
+     then, inside each section, Voronoi cells of the seeds that fall in it
+     (since v5 under a metric stretched 2× along the keel, so cuts run
+     across a long hull).
   4. Each Voronoi cell is convex: a bounding box clipped by the bisector
      half-planes.
   5. Clip the (concave) hull by each cell edge with a robust line split that
@@ -143,6 +148,155 @@ Each slice is one PR, about one agent session, tests first.
   line as a dashed cyan line.
 
 ### S2: server spawns wreck pieces
+
+**S2a: done (server only, behind a flag).** A capital's death, NPC or
+player-flown (active or parked), breaks it into wreck bodies on the server.
+
+- **Flag.** Room option `capitalWrecks` (or `EQX_CAPITAL_WRECKS=1`), off by
+  default: clients don't draw wrecks yet, and a playtest must never meet
+  invisible walls. Off ⇒ the room never builds the subsystem; behaviour is
+  identical to before. No room sets it today.
+- **Kill point.** `SectorRoom.applyDamage` records, per capital, the last
+  hit's world point (projectile / shell / missile impact, player beam hit,
+  NPC beam hit via `noteBeamImpact`). A hit with no point (ram, mining beam)
+  falls back to the attacker's position. At death it goes into the hull's 1×
+  Pixi-up frame and onto the outline (`hullLocalKillPoint` →
+  `projectToOutline`, fracture v3: "Why isn't the red dot on the border of
+  the ship?"). Fracture v4: the primary line always crosses the hull; a hit
+  on a bow or stern tip breaks that end off a seeded 15–35 % of the hull
+  length aft of the tip, never along the keel.
+- **Damage inputs.** `killBlowDamage` = the final hit ÷ max hull;
+  `recentDamageRate` = damage over the last ~3 s (a 6-bucket ring,
+  `WRECK_RECENT_DAMAGE_TICKS`) ÷ max hull. Entries are pooled per capital: no
+  per-hit allocation.
+- **Bodies.** `buildWreckPieces` (`core/destruction/wreckPieces.ts`): one
+  dynamic body per piece from its convex parts, at its centroid, mass ∝ area
+  at the ship's density, velocity v + ω × r plus an outward push away from
+  the kill point, spin ω plus a seeded kick (±0.12 rad/s), light damping
+  (0.02 linear, 0.05 angular) so the field keeps opening for tens of
+  seconds. The push is fastest at the kill point and falls off with
+  distance: `wreckPushMin + (wreckPushMax − wreckPushMin)·r²/(r² + d²)`,
+  r = `WRECK_PUSH_FALLOFF_FRAC` (0.25) × hull radius, times 0.75–1.25 by how
+  violent the death was. `wreckPushMax/Min` come from `shipTuning(kind)`
+  (#18: 0.055 / 0.014 × hull radius per second, so a 2× heavy cruiser's
+  pieces leave at ~120 / ~30 u/s). Collision groups `WRECK_COLLISION_GROUPS`
+  (server spawn and the client twin): ships, rocks, scrap and structures
+  collide with pieces, but pieces never collide with other wreck pieces.
+  The pieces tile the hull exactly, so they spawn with no overlap; the dying body
+  is despawned in the same worker batch (an active player hull's body too,
+  its slot kept for respawn).
+- **Entity class.** A wreck piece is swarm kind 4 (`SWARM_KIND_WRECK`,
+  server-only for now), predicate `isWreckPiece`. No health: `EntityResolver`
+  treats it as immune, so a shot stops on it and does nothing. Loops that
+  cover it: the projectile pipeline (bolts and shells), player beams, NPC and
+  turret beams (`nonPlayerRayHit`, `LineOfFireGate`), missile flight, spawn
+  clearance, the interest grid. Loops that skip it: the binary swarm encoder,
+  sector persistence, missile locks, blast damage, every drone/AI loop (kind
+  filters). Not on the lag-comp ring (its entity budget is the drones').
+- **Blocking shots.** `core/destruction/wreckHits.ts`: the bounding circle,
+  then the piece's convex parts (`wreckRayHit`, `wreckSweepHit`).
+- **Budget.** `MAX_LIVE_WRECK_PIECES` (768) per room; the oldest piece goes
+  first. Owner: wrecks stay for ever; this only guards the slot pool until
+  S2c persists them. S2b keeps it.
+- **Kill point and drift fixes (hostile review, 2026-11-12).** A filmed
+  death (a battleship's 16" salvo kills a player heavy cruiser in
+  `showcase-capital-duel`) showed cracks over ~60 % of the hull, a
+  lengthwise "tuning fork" at the bow, and pieces that kept the outline with
+  hairline gaps for 6 s. Findings:
+  - **The kill point was right.** An integration test reproduces the death
+    with a real 16" shell through the projectile pipeline at three hull
+    angles: the recorded kill point is the shell's impact to the float, the
+    transform (rotation sign, Pixi y-down vs math y-up) is correct, and the
+    attacker fallback is not used. The primary line passes through it.
+  - **The spread came from the fracture.** The seed density fell off as
+    1/d² (a long tail down a long hull) over a 3.5 % floor, and Voronoi
+    cells between seeds at the same station across the narrow beam ran down
+    the keel. Fracture v5 (`FRACTURE_ALGO_VERSION` 5): a 1/d⁴ falloff over a
+    0.4 % floor, a Voronoi metric stretched 2× along the keel, and, beyond
+    one falloff radius from the kill point, a least keel-wise seed spacing.
+    Over a seed sweep of heavy-cruiser side hits the share of new cut length
+    within 20 % of the length of the kill point went 77–88 % → 86–94 %, cut
+    length running along the keel 20–22 % → ≤ 4 %, and the worst long piece
+    misses ≤ 15 % of its beam (was 64–79 %).
+  - **The drift was cancelled by the pieces themselves.** The push was a
+    flat ~20–60 u/s away from the kill point, and the pieces tile the hull
+    exactly, so a piece at the kill point ran into its slower neighbour; the
+    contacts (restitution 0.8) traded the push away (the piece nearest the
+    kill point coasted at 60 u/s, the farthest at 76). Pieces now never
+    collide with each other, and the push follows the falloff above. In the
+    reproduced death the debris field's mean radius grows 393 u in 5 s (was
+    132 u), the nearest piece leaves at ~134 u/s, the farthest at ~41 u/s.
+    (#502's capital overlap pass is not on this branch, so it was not the
+    cause.)
+  - **The client does not ease the cracks in.** The "cracks fading in over
+    ~1 s" were the slow real separation: the client draws each piece at its
+    interpolated server pose, and the pieces start tiling the hull exactly.
+    With the faster push the gaps open within a few frames.
+  - Locks: `fractureHull.killFocus.test.ts`,
+    `tests/integration/sectorRoom/wreckBreakAndDrift.test.ts`,
+    `tests/unit/collisionGroups.test.ts`.
+- Locks: `wreckPieces.test.ts`, `CapitalWreckSubsystem.test.ts`,
+  `tests/integration/sectorRoom/capitalWrecks.test.ts`.
+
+**S2b: done (wrecks reach the client, drawn plainly; still behind the flag).**
+
+- **Wire.** `SWARM_KIND_WRECK = 4` rides the binary swarm wire. Each record
+  gains a `u16 wreckId` at +34 (stride 34 → 36), so `SWARM_WIRE_VERSION` went
+  4 → 5 and the decoder drops a v4 packet (invariant #11). The shared
+  `shipKind` byte is the parent capital, `componentIndex` the piece index.
+  Poses ride the pose channel like scrap: the display-delay interpolation and
+  teleport guard for drawing, the remote-entity anchor for the body.
+- **Descriptor.** `SnapshotMessage.wrecks[]`: one `WreckDescriptor` per live
+  wreck (`{ wreckId, parentKind, seed, killX, killY, killBlowDamage,
+  recentDamageRate, snapChance, algoVersion }`; the kill point is hull-local,
+  1× Pixi-up, already on the outline). `CapitalWreckSubsystem` hands out a
+  free u16 `wreckId` per wreck and keeps the list (a shared array rebuilt only
+  when the set changes). `SnapshotBroadcaster` attaches it on every snapshot
+  for `WRECKS_CHANGE_WINDOW` (3) broadcast counters after a change (so every
+  recipient gets a new wreck at once; an empty list then means "none left")
+  and otherwise at the far-drone 2 Hz cadence while any wreck lives. A late
+  joiner rebuilds every wreck within half a second (#16).
+- **Geometry.** `wreckPieceGeometry(inputs)` (`core/destruction/wreckPieces.ts`)
+  is the one source of a piece's shape: convex parts, outline, cut flags, mass,
+  radius, all body-local. The server's `buildWreckPieces` places its output;
+  the client's `WreckGeometryStore` (`client/net/wreckGeometryStore.ts`)
+  rebuilds it from the descriptor, cached per wreck. A descriptor from another
+  `FRACTURE_ALGO_VERSION` is dropped (no body, no sprite), never guessed at.
+- **Client collision.** `WreckClientLeaf` builds the predWorld twin from the
+  same parts, mass and damping (unlocked, default collision groups). Kind 4
+  is an `isRemoteMovingSwarmKind`, so the body follows the remote-entity
+  anchor like scrap (#12, no second paradigm). A piece gets its body only once
+  its wreck's descriptor is known. The local beam and hit prediction test
+  pieces at the drawn pose with the server's `wreckRayHit` (#15).
+- **Drawing.** One plain `Graphics` per piece, built once: the outline filled
+  with the parent hull's base colour at 45 % and a 2 u outline at 18 %
+  (`buildWreckPieceGfx`). No child, texture or filter, so Pixi batches a
+  whole wreck; the cap adds at most 768 display objects. Works on both
+  renderer paths (the worker rebuilds the geometry from `mirror.wrecks`).
+- **A worker crash fixed on the way.** A piece can contain a sliver part
+  (< 1 u thick) that Rapier cannot hull; `createCollider` threw inside the
+  physics worker and killed the pool. `World.spawnObstacle` now skips such a
+  part (same code on both sides, so the twins still match).
+- **Test trigger.** testMode `test_kill_capitals` kills every capital NPC in
+  the room; room `wreck-test` (a peaceful battleship 2.5 km north of the
+  spawn, capital wrecks on).
+- Locks: `tests/unit/swarmWireRoundTrip.test.ts` (kind 4 + v4 hard-fail),
+  `tests/integration/wire/wreckGeometryParity.test.ts` (server bodies ==
+  client rebuild, bit for bit), `tests/integration/sectorRoom/wreckLateJoiner.test.ts`
+  (a late joiner gets `wrecks[]` and rebuilds every piece),
+  `tests/unit/wreckPredWorld.test.ts` (ramming a piece: no corrections),
+  `swarmSpriteUpdater.wreck.test.ts` (one plain sprite per piece),
+  `World.slivers.test.ts`, `tests/e2e/capital-wreck-render.spec.ts`.
+
+**Left for S2c:** persistence (the sector snapshot stores each descriptor
+plus every piece's drifted pose; geometry re-derives on hydrate) and lifting
+the 768-piece cap (owner: wrecks stay for ever). Also open: the lag-comp
+choice for pieces and a lingering-capital integration test.
+
+**S3 is built** (see "S3: client draws the pieces" below). The flag can
+default on once S2c lands.
+
+The original S2 plan:
 
 On a capital's death the server:
 - picks the seed (u32) and kill point (the last hit's point in hull-local
@@ -179,16 +333,50 @@ follows the remote-entity anchor (invariant #12), the same path as scrap.
 descriptor plus each piece's drifted pose and health; geometry re-derives on
 hydrate.
 
-### S3: client draws the pieces
+### S3: client draws the pieces (built)
 
-- **Texture continuity.** Each piece is drawn as a mesh (or a mask over the
-  baked hull sprite) with UVs taken from its local outline, which is still the
-  ship's frame. Laid side by side the pieces show the intact ship.
-- **Glowing cut edges.** The `cut` edge flags become a per-vertex attribute.
-  A small shader glows those edges molten orange at the death and cools them
-  to dark over a few seconds.
-- **Particles.** Dust and shards at the death are particles (the existing FX
-  layer), never bodies.
+The owner's look spec: each piece shows its own part of the dead ship's art,
+so the pieces fit like a jigsaw; new cut edges glow molten and cool to dark;
+dust and shards are particles; a big white flash at the kill point; the
+pieces stay for ever and the glow ends dark. As built
+(`src/client/render/pixi/wreckArt.ts`, `effects/perEffect/WreckBreakFx.ts`):
+
+- **Texture continuity.** A piece reuses its parent kind's EXISTING baked art
+  (`shipHandleFor(kind)`, the handle the live hull drew; no re-bake, no new
+  texture page). Capital art is tiled along the hull (`TILE_MAX_SIDE` rows per
+  texture), so `wreckPieceMeshes` clips each convex part to every tile's row
+  band and fans it: one `Mesh` per tile the piece covers. A vertex's UV is its
+  hull-local position (outline + centroid, the ship's own frame) mapped into
+  the tile's frame, so a point two pieces share gets the same UV in both. UVs
+  are frame-relative, so the same meshes follow the sun frames (the frame
+  nearest the piece's rotation, swapped only on change). Every mesh sets
+  `batchMode: 'batch'`, so a whole wreck batches over at most its parent's
+  tile textures. Pieces are tinted burnt, darkest near the kill point. GPU-lit
+  art (`?shiplight=gpu`) maps slice A (albedo) with the default shader: unlit
+  but correct. Before the art is ready (or in the classic look) the piece is
+  today's plain polygon, swapped once the art arrives.
+- **Glowing cut edges.** One white stroke `Graphics` per piece over its runs
+  of `cutEdges` (the original outline never glows), tinted and faded each
+  frame by `wreckGlowAt`: molten white-orange at death, an ember at
+  `WRECK_GLOW_EMBER_S` (4 s), dark at `WRECK_GLOW_END_S` (9 s), when the stroke
+  is destroyed. The clock is the descriptor's new `deathTick` against the
+  piece's latest server tick, so a late joiner (or a descriptor without one)
+  starts cool. Per-wreck state lives in the renderer's `WreckArtState`.
+- **Break-up.** The first piece of a wreck younger than 1.5 s fires
+  `effects.spawnBurst('wreck-break', killPoint, { radius, flashScale })`: a
+  white flash (1.6× for a clean snap), dust and hot shards flung outward,
+  sized from the wreck radius, counts by effects tier (70+40 on high, 8+4 on
+  minimal). The kill point comes from that piece's pose and its known
+  centroid in the hull frame. The pool is built on the first break-up and
+  leaves the stage when idle.
+- **Counts.** A piece is a container, ≤ 6 meshes and one glow stroke
+  (`WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX` = 8), the stroke gone once cool.
+  Both render paths (worker and main thread) run the same updater.
+- Locks: `wreckArt.test.ts` (UVs are the hull-local mapping, tile meshes tile
+  the piece, neighbours share edge UVs; the glow curve; cut edges only),
+  `swarmSpriteUpdater.wreckArt.test.ts` (parent textures only, count budget,
+  hot vs late-joiner cool, one break-up), `WreckBreakFx.test.ts`, and the S3
+  case in `tests/e2e/capital-wreck-render.spec.ts`.
 
 ### S4: secondary breaks and the catastrophic flash
 

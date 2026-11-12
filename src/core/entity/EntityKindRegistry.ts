@@ -105,6 +105,19 @@ const SEED: readonly EntityKindDescriptor[] = [
     sync: { transport: 'pose-core', poseCoreKind: 3, interpolated: true },
     render: { bucket: 'swarm', preservedFields: ['kind', 'shipKind', 'componentIndex'], interpolated: true },
   },
+  {
+    // Capital destruction S2b: one solid piece of a capital's wreck. Pose-core
+    // kind byte 4 (wire v5 adds its u16 `wreckId`). Terrain, not a target: no
+    // health (the server's EntityResolver treats it as immune). INTERPOLATED
+    // like scrap: the server simulates it as a dynamic body, so the client
+    // follows the remote-entity anchor with an unlocked body (#12). The
+    // parent kind, piece index and wreckId pick its geometry (rebuilt from the
+    // `wrecks[]` descriptor). Appended, never reordered (invariant #11).
+    tag: 'wreck',
+    damageable: false,
+    sync: { transport: 'pose-core', poseCoreKind: 4, interpolated: true },
+    render: { bucket: 'swarm', preservedFields: ['kind', 'shipKind', 'componentIndex', 'wreckId'], interpolated: true },
+  },
 ];
 
 const BY_TAG = new Map<EntityKindTag, EntityKindDescriptor>();

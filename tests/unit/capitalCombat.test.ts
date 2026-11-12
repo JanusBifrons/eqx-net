@@ -149,6 +149,18 @@ describe('broadside steering', () => {
     expect(Math.hypot(intent.fx, intent.fy)).toBeLessThan(0.01 * getShipKind('battleship').ai.thrust);
   });
 
+  it('out of reach, target astern: backs its engines (brakes the way away, never thrusts ahead)', () => {
+    // showcase-capital-duel 2026-11-12: a battleship that aggroed while making
+    // way ahead, its target astern, coasted out of its own reach for the whole
+    // turn. It must back toward the target at its own reverse power.
+    const kind = getShipKind('battleship');
+    const b = new HostileDroneBehaviour('battleship');
+    b.markHostile('p', 100);
+    const intent = b.tick({ ...self, vy: 40 }, view(0, -mainReach() * 1.1));
+    expect(intent.fy, 'thrust must point astern, toward the target').toBeLessThan(0);
+    expect(Math.hypot(intent.fx, intent.fy)).toBeCloseTo(kind.reverseFactor * kind.ai.thrust, 3);
+  });
+
   it('out of reach, target ahead: closes at full thrust', () => {
     const b = new HostileDroneBehaviour('battleship');
     b.markHostile('p', 100);

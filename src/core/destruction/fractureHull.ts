@@ -34,8 +34,24 @@ import type { Vec2 } from '../swarm/asteroidShape.js';
 
 /** Bump on ANY change to the produced geometry (rides the S2 descriptor).
  *  v2: primary break line through the kill point, seeded clean snap,
- *  damage-driven piece count. */
-export const FRACTURE_ALGO_VERSION = 2;
+ *  damage-driven piece count.
+ *  v3: the kill point is projected onto the hull outline first (a real hit
+ *  lands on the hull's edge, never inside it); the seed pair sits just inside
+ *  the edge.
+ *  v4: the primary line ALWAYS runs across the hull (owner review: a bow-tip
+ *  hit split the ship lengthwise down the keel). For a bow or stern tip hit
+ *  it crosses the hull a seeded 15–35 % of the hull's length aft of that tip,
+ *  so the end breaks off as a real piece; one more plan draw (`aftDraw`).
+ *  v5 (hostile review of a filmed heavy-cruiser death: cracks over ~60 % of
+ *  the hull, a lengthwise "tuning fork" at the bow): the seed density falls
+ *  off with the 4th power of the distance from the kill point (was the 2nd,
+ *  whose long tail spread cracks down the hull) over a lower floor, and the
+ *  Voronoi cells use a metric stretched ALONG the keel
+ *  (`VORONOI_KEEL_STRETCH`), so cuts run across a long hull, not along it;
+ *  away from the kill point seeds also keep a least keel-wise spacing
+ *  (`SEED_ALONG_SEP`), so no bisector runs down the keel to the hull's end.
+ *  Lock: `fractureHull.killFocus.test.ts`. */
+export const FRACTURE_ALGO_VERSION = 5;
 /** Default chance that a hull snaps cleanly in two along the primary line
  *  instead of shattering (owner: "just make it a chance"). */
 export const FRACTURE_SNAP_CHANCE = 0.2;
@@ -46,8 +62,18 @@ export const FRACTURE_MAX_PIECES = 64;
 
 /** Seed-density falloff radius as a fraction of sqrt(hull area). */
 const FALLOFF_FRAC = 0.18;
-/** Minimum acceptance far from the blast, so the far end still splits. */
-const ACCEPT_FLOOR = 0.035;
+/** Minimum acceptance far from the blast, so the far end still splits
+ *  (into a few big chunks). */
+const ACCEPT_FLOOR = 0.004;
+/** Voronoi distance ALONG the keel counts this many times its length (the
+ *  metric is stretched along the long axis), so on a long thin hull the
+ *  cells are slabs across the beam: cuts run across it, no lengthwise
+ *  slivers (v5). */
+const VORONOI_KEEL_STRETCH = 2;
+/** Least keel-wise seed spacing, in units of beam / stretch² (v5), ramping
+ *  in from one falloff radius to two from the kill point (the shatter at
+ *  the kill point stays chunky). */
+const SEED_ALONG_SEP = 2;
 /** Below this many seeds the falloff radius widens by (FEW_SEEDS / count)². */
 const FEW_SEEDS = 12;
 /** Minimum seed spacing as a fraction of sqrt(hull area). */
@@ -72,6 +98,13 @@ const DAMAGE_KNEE = 0.35;
 const COUNT_SPREAD = 0.5;
 /** Fewest pieces a (non-snap) damage-driven fracture aims for. */
 const MIN_TARGET = 3;
+/** A primary line through the kill point that leaves less than this fraction
+ *  of the hull on one side marks a bow or stern TIP hit. */
+const PRIMARY_MIN_SIDE = 0.03;
+/** v4: a tip hit's line crosses the hull this far (fraction of the hull's
+ *  length along the keel) aft of the tip: MIN + seeded × SPAN. */
+const TIP_SECTION_MIN = 0.15;
+const TIP_SECTION_SPAN = 0.2;
 
 const EDGE_HULL = 0;
 const EDGE_VORONOI = 1;
@@ -88,7 +121,9 @@ export interface FractureInput {
   readonly hull: ReadonlyArray<readonly [number, number]>;
   /** u32 seed (the server picks it; every client regenerates from it). */
   readonly seed: number;
-  /** Where the killing blow landed, in the hull's local frame. */
+  /** Where the killing blow landed, in the hull's local frame. Since v3 it
+   *  is projected onto the hull outline (`projectToOutline`) before use, so
+   *  a point inside the hull or out at the shield radius lands on the edge. */
   readonly killPoint: Vec2;
   /** Optional section boundaries; each is the infinite line through a→b.
    *  Section cuts are straight (bulkheads); only Voronoi cuts are jagged. */
@@ -116,9 +151,14 @@ export interface FracturePlan {
   readonly snap: boolean;
   /** Piece count aimed for (≤ the cap; 2 when snapping). */
   readonly targetPieces: number;
-  /** The primary break line: through `point` (the kill point) along unit
-   *  `dir`, roughly across the keel. Null when the cap is 1. */
+  /** The primary break line: through `point` (the kill point, on the hull
+   *  outline) along unit `dir`, roughly across the keel (through the hull's
+   *  middle for a hit on a bow or stern tip). Null when the cap is 1. */
   readonly primary: { readonly point: Vec2; readonly dir: Vec2 } | null;
+  /** The kill point the fracture uses: the input projected onto the hull
+   *  outline (v3). For a side hit the primary line runs through it; for a
+   *  bow or stern tip hit the line crosses the hull aft of it (v4). */
+  readonly killPoint: Vec2;
 }
 
 export interface FracturePiece {
@@ -149,10 +189,12 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   const scale = Math.sqrt(hullArea);
   const cuts = plan.snap ? [] : (input.sectionCuts ?? []);
   const primary = plan.primary ? primaryCut(plan.primary) : null;
+  const kill = projectRing(hull, input.killPoint.x, input.killPoint.y);
+  const keel = keelAxis(hull);
 
   // Seeds: one prefix-stable stream, so fewer seeds = a prefix of more seeds.
   // A clean snap has none: the primary line alone splits the hull.
-  const allSeeds = plan.snap ? [] : sampleSeeds(hull, hullArea, input.seed >>> 0, input.killPoint, cap, plan.primary);
+  const allSeeds = plan.snap ? [] : sampleSeeds(hull, hullArea, input.seed >>> 0, kill, cap, plan.primary, keel);
 
   // Retry with fewer seeds, then without section cuts, then without the
   // primary line, until the cap holds.
@@ -163,7 +205,7 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
     const lines: FractureLine[] = [];
     if (usePrimary) lines.push(primary!);
     if (useCuts) for (const c of cuts) lines.push(sectionLine(c));
-    const rings = splitIntoPieces(hull, lines, allSeeds, n);
+    const rings = splitIntoPieces(hull, lines, allSeeds, n, keel);
     const minArea = Math.max(4 * FRACTURE_QUANTUM * FRACTURE_QUANTUM, hullArea * 1e-6);
     const quantised = quantiseRings(rings, minArea);
     if (quantised.length <= cap) {
@@ -190,6 +232,19 @@ export function fracturePlan(input: FractureInput): FracturePlan {
   return planFor(input, normaliseHull(input.hull));
 }
 
+/**
+ * The nearest point to `p` on the hull OUTLINE (its edges), snapped to
+ * `FRACTURE_QUANTUM`. A real hit lands on the hull's edge: a point inside
+ * the hull, or out at the shield radius, moves to the closest edge point.
+ * Pure and deterministic (arithmetic only, edges in a fixed order, the
+ * first edge wins a tie). `fractureHull` applies it to every kill point.
+ */
+export function projectToOutline(hull: ReadonlyArray<readonly [number, number]>, p: Vec2): Vec2 {
+  const ring = normaliseHull(hull);
+  if (ring.length === 0) return { x: q(p.x), y: q(p.y) };
+  return projectRing(ring, p.x, p.y);
+}
+
 // ───────────────────────────── plan ─────────────────────────────
 
 function clampCap(maxPieces: number): number {
@@ -209,16 +264,39 @@ function planFor(input: FractureInput, hull: P[]): FracturePlan {
   const snapDraw = rng.u32() / 4294967296;
   const tiltDraw = (rng.u32() % 2001) - 1000; // integer in [-1000, 1000]
   const countDraw = rng.u32() / 4294967296;
+  const aftDraw = rng.u32() / 4294967296; // v4, always drawn (fixed order)
 
-  // Primary line: across the keel, tilted by the seed.
+  // Primary line: through the kill point (on the outline, v3), across the
+  // keel, tilted by the seed.
   let primary: FracturePlan['primary'] = null;
+  const kill = hull.length > 0 ? projectRing(hull, input.killPoint.x, input.killPoint.y) : { x: q(input.killPoint.x), y: q(input.killPoint.y) };
   if (cap >= 2 && hull.length >= 3) {
     const keel = keelAxis(hull);
     const t = (tiltDraw / 1000) * PRIMARY_TILT;
-    const dx = -keel.y + keel.x * t;
-    const dy = keel.x + keel.y * t;
+    let dx = -keel.y + keel.x * t;
+    let dy = keel.x + keel.y * t;
     const len = Math.sqrt(dx * dx + dy * dy);
-    primary = { point: { x: input.killPoint.x, y: input.killPoint.y }, dir: { x: dx / len, y: dy / len } };
+    dx /= len;
+    dy /= len;
+    // A hit near a bow or stern tip: a line through it clips only a sliver.
+    // Keep the line ACROSS the hull (never along the keel, v4) and move it a
+    // seeded 15–35 % of the hull's length aft of that tip, so the end breaks
+    // off as a real piece.
+    let point: Vec2 = kill;
+    if (minSideFrac(hull, kill, dx, dy) < PRIMARY_MIN_SIDE) {
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (const p of hull) {
+        const a = p.x * keel.x + p.y * keel.y;
+        if (a < lo) lo = a;
+        if (a > hi) hi = a;
+      }
+      const kp = kill.x * keel.x + kill.y * keel.y;
+      const back = (TIP_SECTION_MIN + TIP_SECTION_SPAN * aftDraw) * (hi - lo);
+      const target = kp >= (lo + hi) / 2 ? hi - back : lo + back;
+      point = { x: q(kill.x + keel.x * (target - kp)), y: q(kill.y + keel.y * (target - kp)) };
+    }
+    primary = { point, dir: { x: dx, y: dy } };
   }
 
   const chance = input.snapChance ?? FRACTURE_SNAP_CHANCE;
@@ -242,7 +320,47 @@ function planFor(input: FractureInput, hull: P[]): FracturePlan {
     const want = MIN_TARGET + Math.floor(sizeF * (FRACTURE_MAX_PIECES - MIN_TARGET) * x * x);
     targetPieces = Math.max(1, Math.min(cap, want));
   }
-  return { snap, targetPieces, primary };
+  return { snap, targetPieces, primary, killPoint: kill };
+}
+
+/** Nearest point on the ring's edges to (x, y), snapped to the quantum. */
+function projectRing(hull: ReadonlyArray<{ x: number; y: number }>, x: number, y: number): Vec2 {
+  let bestD = Infinity;
+  let bx = x;
+  let by = y;
+  const n = hull.length;
+  for (let i = 0; i < n; i++) {
+    const a = hull[i]!;
+    const b = hull[(i + 1) % n]!;
+    const ex = b.x - a.x;
+    const ey = b.y - a.y;
+    const l2 = ex * ex + ey * ey;
+    let t = l2 > 0 ? ((x - a.x) * ex + (y - a.y) * ey) / l2 : 0;
+    if (t < 0) t = 0;
+    else if (t > 1) t = 1;
+    const px = a.x + ex * t;
+    const py = a.y + ey * t;
+    const d = (px - x) * (px - x) + (py - y) * (py - y);
+    if (d < bestD) {
+      bestD = d;
+      bx = px;
+      by = py;
+    }
+  }
+  return { x: q(bx), y: q(by) };
+}
+
+/** The smaller share (0..0.5) of the hull's area on either side of the line
+ *  through `p` along unit (dx, dy). */
+function minSideFrac(hull: P[], p: Vec2, dx: number, dy: number): number {
+  const total = ringArea(hull);
+  if (total <= 0) return 0;
+  const nx = -dy;
+  const ny = dx;
+  let a = 0;
+  for (const part of splitByLine(hull, nx, ny, nx * p.x + ny * p.y, EDGE_PRIMARY)) a += ringArea(part);
+  const f = a / total;
+  return f < 0.5 ? f : 1 - f;
 }
 
 /** Unit direction of the hull's long axis: the major eigenvector of the
@@ -313,6 +431,7 @@ function sampleSeeds(
   kill: Vec2,
   count: number,
   primary: FracturePlan['primary'],
+  keel: Vec2,
 ): Vec2[] {
   const rng = new Rng(seed ^ 0x5eed5eed);
   const f01 = (): number => rng.u32() / 4294967296;
@@ -330,19 +449,46 @@ function sampleSeeds(
   // Few seeds spread wider (a few big hulks, not one hulk and slivers);
   // the density still peaks at the kill point.
   const widen = Math.max(1, FEW_SEEDS / count);
-  const fall = FALLOFF_FRAC * s * widen * widen;
+  const fall0 = FALLOFF_FRAC * s;
+  const fall = fall0 * widen * widen;
   const r2 = fall * fall;
   const sep2 = MIN_SEED_SEP_FRAC * s * (MIN_SEED_SEP_FRAC * s);
+  // v5: two seeds at nearly the same station along the keel would draw a
+  // bisector down the keel (a lengthwise sliver to the hull's end). Away
+  // from the kill point, keep every pair at least `sepAlong` apart along the
+  // keel, so under the stretched metric no far cut leans far off square.
+  let acrossLo = Infinity;
+  let acrossHi = -Infinity;
+  for (const p of hull) {
+    const a = p.y * keel.x - p.x * keel.y;
+    if (a < acrossLo) acrossLo = a;
+    if (a > acrossHi) acrossHi = a;
+  }
+  const sepAlong = (SEED_ALONG_SEP * (acrossHi - acrossLo)) / (VORONOI_KEEL_STRETCH * VORONOI_KEEL_STRETCH);
   const seeds: Vec2[] = [];
   if (primary) {
     // A seed pair straddling the primary line at the kill point: their
     // bisector IS the line, so the smallest pieces meet there on both sides.
+    // v3: the kill point is on the outline, so centre the pair a little
+    // inside the hull along the line (the bisector stays on the line).
     const off = 0.5 * MIN_SEED_SEP_FRAC * s;
     const nx = -primary.dir.y * off;
     const ny = primary.dir.x * off;
+    const lp = primary.point;
+    let cx = lp.x;
+    let cy = lp.y;
     for (const sg of [1, -1]) {
-      const x = kill.x + sg * nx;
-      const y = kill.y + sg * ny;
+      const ix = lp.x + sg * primary.dir.x * 2 * off;
+      const iy = lp.y + sg * primary.dir.y * 2 * off;
+      if (pointInRing(hull, ix, iy)) {
+        cx = ix;
+        cy = iy;
+        break;
+      }
+    }
+    for (const sg of [1, -1]) {
+      const x = cx + sg * nx;
+      const y = cy + sg * ny;
       if (seeds.length < count && pointInRing(hull, x, y)) seeds.push({ x, y });
     }
   } else if (pointInRing(hull, kill.x, kill.y)) seeds.push({ x: kill.x, y: kill.y });
@@ -354,13 +500,20 @@ function sampleSeeds(
     if (!pointInRing(hull, x, y)) continue;
     const dx = x - kill.x;
     const dy = y - kill.y;
-    const accept = Math.max(ACCEPT_FLOOR, r2 / (r2 + dx * dx + dy * dy));
+    // v5: 4th-power falloff (no long tail down the hull).
+    const d2 = dx * dx + dy * dy;
+    const accept = Math.max(ACCEPT_FLOOR, (r2 * r2) / (r2 * r2 + d2 * d2));
     if (u >= accept) continue;
+    // Near the kill point the shatter stays chunky (no keel-wise rule); from
+    // one falloff radius out it ramps up to the full keel-wise spacing.
+    const ramp = (Math.sqrt(d2) - fall0) / fall0;
+    const sepHere = sepAlong * (ramp <= 0 ? 0 : ramp >= 1 ? 1 : ramp);
     let ok = true;
     for (const q of seeds) {
       const ex = q.x - x;
       const ey = q.y - y;
-      if (ex * ex + ey * ey < sep2) {
+      const along = ex * keel.x + ey * keel.y;
+      if (ex * ex + ey * ey < sep2 || (along < sepHere && along > -sepHere)) {
         ok = false;
         break;
       }
@@ -373,7 +526,21 @@ function sampleSeeds(
 
 // ──────────────────────── sections + Voronoi ────────────────────────
 
-function splitIntoPieces(hull: P[], lines: ReadonlyArray<FractureLine>, seeds: Vec2[], n: number): P[][] {
+/** The bisector of seeds a, b under the metric M = I + (k² − 1)·u uᵀ (u the
+ *  unit keel direction, k = `VORONOI_KEEL_STRETCH`): the points p
+ *  with (p − m)·M(b − a) = 0, m the midpoint. M is symmetric positive
+ *  definite, so every cell is still convex and the cells still tile the
+ *  plane. Arithmetic only (#determinism). */
+function bisector(a: Vec2, b: Vec2, keel: Vec2): { nx: number; ny: number; c: number } {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const w = (VORONOI_KEEL_STRETCH * VORONOI_KEEL_STRETCH - 1) * (dx * keel.x + dy * keel.y);
+  const nx = dx + w * keel.x;
+  const ny = dy + w * keel.y;
+  return { nx, ny, c: nx * ((a.x + b.x) / 2) + ny * ((a.y + b.y) / 2) };
+}
+
+function splitIntoPieces(hull: P[], lines: ReadonlyArray<FractureLine>, seeds: Vec2[], n: number, keel: Vec2): P[][] {
   let sections: P[][] = [hull];
   for (const { nx, ny, c, kind } of lines) {
     if (nx === 0 && ny === 0) continue;
@@ -399,16 +566,13 @@ function splitIntoPieces(hull: P[], lines: ReadonlyArray<FractureLine>, seeds: V
     const box = ringBox(section);
     for (let i = 0; i < local.length; i++) {
       const si = local[i]!;
-      const neighbours = voronoiNeighbours(local, i, box);
+      const neighbours = voronoiNeighbours(local, i, box, keel);
       let pieces: P[][] = [section];
       for (const j of neighbours) {
         const sj = local[j]!;
-        // Keep the side closer to si: (p − m)·(sj − si) < 0.
-        const nx = sj.x - si.x;
-        const ny = sj.y - si.y;
-        const mx = (si.x + sj.x) / 2;
-        const my = (si.y + sj.y) / 2;
-        const c = nx * mx + ny * my;
+        // Keep the side closer to si in the stretched metric:
+        // (p − m)·M(sj − si) < 0.
+        const { nx, ny, c } = bisector(si, sj, keel);
         const next: P[][] = [];
         for (const p of pieces) for (const q of splitByLine(p, nx, ny, c, EDGE_VORONOI)) next.push(q);
         pieces = next;
@@ -423,7 +587,7 @@ function splitIntoPieces(hull: P[], lines: ReadonlyArray<FractureLine>, seeds: V
 /** Indices j whose bisector with seed i bounds i's (convex) Voronoi cell,
  *  in ascending order. The cell starts as `box` and is clipped by every
  *  bisector half-plane (convex Sutherland–Hodgman is exact for this). */
-function voronoiNeighbours(seeds: Vec2[], i: number, box: [number, number, number, number]): number[] {
+function voronoiNeighbours(seeds: Vec2[], i: number, box: [number, number, number, number], keel: Vec2): number[] {
   const si = seeds[i]!;
   const [x0, y0, x1, y1] = box;
   const padX = (x1 - x0) * 0.5 + 1;
@@ -437,10 +601,7 @@ function voronoiNeighbours(seeds: Vec2[], i: number, box: [number, number, numbe
   ];
   for (let j = 0; j < seeds.length && cell.length > 0; j++) {
     if (j === i) continue;
-    const sj = seeds[j]!;
-    const nx = sj.x - si.x;
-    const ny = sj.y - si.y;
-    const c = nx * ((si.x + sj.x) / 2) + ny * ((si.y + sj.y) / 2);
+    const { nx, ny, c } = bisector(si, seeds[j]!, keel);
     const next: typeof cell = [];
     for (let v = 0; v < cell.length; v++) {
       const a = cell[v]!;

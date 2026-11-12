@@ -14,7 +14,7 @@
 import { Graphics, Text, TextStyle } from 'pixi.js';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
 import { shipScrapGroups } from '@core/geometry/shipScrapGroups';
-import { shipShapeScale } from '@core/geometry/shipHullOutline';
+import { shipShapeScale, shipPrimaryColor } from '@core/geometry/shipHullOutline';
 import {
   getShipKind,
   type ShipShape,
@@ -182,6 +182,45 @@ export function buildScrapGfx(
       g.stroke({ color: part.stroke, width: part.strokeWidth ?? 1 });
     }
   }
+  return g;
+}
+
+/** A capital wreck piece's plain look (S2b; S3 draws it textured once the
+ *  parent's art is ready, `wreckArt.ts`). A piece's fill is its hull's base colour at this brightness. */
+const WRECK_FILL_SHADE = 0.45;
+/** Its outline is the base colour at this brightness. */
+const WRECK_STROKE_SHADE = 0.18;
+/** Outline width in world units (thin beside a several-hundred-unit piece). */
+const WRECK_STROKE_WIDTH = 2;
+
+function shade(c: number, k: number): number {
+  const r = Math.round(((c >> 16) & 255) * k);
+  const g = Math.round(((c >> 8) & 255) * k);
+  const b = Math.round((c & 255) * k);
+  return (r << 16) | (g << 8) | b;
+}
+
+/** A wreck piece's colours: its parent hull's base colour, darkened, and a
+ *  darker outline. Pure. */
+export function wreckPieceColors(parentKindId: string): { fill: number; stroke: number } {
+  const base = shipPrimaryColor(getShipKind(parentKindId));
+  return { fill: shade(base, WRECK_FILL_SHADE), stroke: shade(base, WRECK_STROKE_SHADE) };
+}
+
+/**
+ * Capital wreck piece (S2b): the piece's outline (body-local, math-up, from
+ * `wreckPieceGeometry`) as one filled polygon with a thin dark outline. Built
+ * once per piece; the sprite's pose does the rest (`pixiY = -gameY`, so the
+ * outline is Y-flipped here like every other body-local shape). Plain art:
+ * textures and the molten cut edges are S3.
+ */
+export function buildWreckPieceGfx(outline: ReadonlyArray<{ x: number; y: number }>, parentKindId: string): Graphics {
+  const g = new Graphics();
+  const { fill, stroke } = wreckPieceColors(parentKindId);
+  const pts = outline.map((v) => ({ x: v.x, y: -v.y })); // once per piece
+  g.poly(pts);
+  g.fill({ color: fill });
+  g.stroke({ color: stroke, width: WRECK_STROKE_WIDTH, alignment: 0.5 });
   return g;
 }
 

@@ -63,3 +63,31 @@ describe('NpcLockSubsystem — drones fire only with a completed lock on their t
     expect(s.fireBlocked('n1', 'struct-3')).toBe(false);
   });
 });
+
+describe('NpcLockSubsystem — its own lock keeps the NPC hostile (owner 2026-11-12)', () => {
+  it('refreshes hostility every step while locking or locked in reach, and stops once the pilot leaves reach', () => {
+    const pilots: Record<string, Body> = { p1: { x: 0, y: 0, kind: 'interceptor' } };
+    const npcs: Record<string, Body> = { n1: { x: 0, y: 160, kind: 'fighter' } };
+    const calls: string[] = [];
+    const write = (b: Body, out: NpcPose) => { out.x = b.x; out.y = b.y; out.vx = 0; out.vy = 0; return getShipKind(b.kind); };
+    const s = new NpcLockSubsystem({
+      pilots: () => ['p1'],
+      pilotPose: (id, out) => (pilots[id] ? write(pilots[id]!, out) : null),
+      forEachHostileNpc: (_pid, visit) => visit('n1', 1),
+      npcPose: (id, out) => (npcs[id] ? write(npcs[id]!, out) : null),
+      refreshHostility: (npcId, pid) => { calls.push(`${npcId}>${pid}`); },
+    });
+    s.step();
+    expect(s.isLocked('n1', 'p1')).toBe(false);
+    expect(calls).toEqual(['n1>p1']); // acquiring counts
+    stepUntilLocked(s, 'n1', 'p1');
+    const n = calls.length;
+    s.step();
+    expect(calls.length).toBe(n + 1); // locked counts
+    pilots.p1!.y = 50_000; // out of reach: no lock, no refresh
+    calls.length = 0;
+    for (let i = 0; i < 30; i++) s.step();
+    expect(calls).toEqual([]);
+    expect(s.wireFor('p1')).toBeUndefined();
+  });
+});

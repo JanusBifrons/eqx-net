@@ -22,8 +22,8 @@ export const FEATURE_TRIGGERS = [
   {
     area: 'spectator and ship switching',
     paths: ['src/client/spectator/', 'src/client/components/PilotSpectatorToggle', 'src/client/net/snapshotShipRouter', 'src/client/ships/',
-      'src/client/components/BottomControlPanel'],
-    specs: ['spectator-mode', 'build-hotbar-fits-viewport'],
+      'src/client/components/BottomControlPanel', 'src/client/net/snapshotRemoteSync', 'src/client/net/displayMountAngles'],
+    specs: ['spectator-mode', 'build-hotbar-fits-viewport', 'spectator-npc-turrets', 'spectate-no-phantom-own-ship'],
   },
   {
     // Game time scale (stream/time-scale): per-sector speed, the snapshot keyframe and the HUD chip.
@@ -36,6 +36,13 @@ export const FEATURE_TRIGGERS = [
     area: 'capital helm',
     paths: ['src/core/helm/', 'src/client/helm/', 'src/client/render/helm/', 'src/client/components/HelmPanel'],
     specs: ['capital-helm'],
+  },
+  {
+    // Capital destruction: wreck pieces on the wire, rebuilt + drawn on the client.
+    area: 'capital wrecks',
+    paths: ['src/core/destruction/', 'src/server/rooms/CapitalWreckSubsystem', 'src/client/net/wreckGeometryStore',
+      'src/client/net/entity/leaves/wreckClientLeaf', 'src/shared-types/swarmWireFormat'],
+    specs: ['capital-wreck-render'],
   },
   {
     area: 'energy and boost',

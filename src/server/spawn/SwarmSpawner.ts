@@ -1,13 +1,13 @@
 import type { AsteroidResourceId } from '../../shared-types/asteroidResources.js';
-import { SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_FLAGS_OFF, FLAG_IS_SWARM, FLAG_KIND_DRONE, slotBase } from '../../shared-types/sabLayout.js';
-import { SwarmEntityRegistry, type SwarmKind } from '../net/SwarmEntityRegistry.js';
+import { SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_ANGVEL_OFF, SLOT_FLAGS_OFF, FLAG_IS_SWARM, FLAG_KIND_DRONE, slotBase } from '../../shared-types/sabLayout.js';
+import { SwarmEntityRegistry, SWARM_KIND_WRECK, type SwarmKind } from '../net/SwarmEntityRegistry.js';
 import type { IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
 import type { SpatialGrid } from '../interest/SpatialGrid.js';
 import { generateAsteroidVertices, asteroidResources, type Vec2 } from '../../core/swarm/asteroidShape.js';
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
 import { STRUCTURE_DEFAULT_MASS } from '../../core/swarm/structureConstants.js';
 import { SCRAP_DEFAULT_MASS, SCRAP_LINEAR_DAMPING } from '../../core/swarm/scrapConstants.js';
-import { SCRAP_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
+import { SCRAP_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
@@ -57,7 +57,7 @@ export interface SpawnerHooks {
    *  `angle` (scrap, kind=3) rotates the body at spawn so a recentred scrap
    *  collider is oriented to match the dying ship; every other caller passes 0
    *  / undefined (legacy axis-aligned spawn). */
-  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string) => void;
+  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number }) => void;
   /** Direct write into the SAB so the first update() tick reads a sane pose. */
   sabF32: Float32Array;
   sabU32: Uint32Array;
@@ -288,6 +288,45 @@ export class SwarmSpawner {
       }
     }
     return ok;
+  }
+
+  /** Spawn one capital WRECK PIECE (capital destruction S2a): a dynamic body
+   *  built from the piece's convex parts (mass spread over their area, so mass
+   *  ∝ area), at the dying hull's pose, velocity and spin, with the default
+   *  collision groups (it collides with ships, drones, rocks AND other wreck
+   *  pieces). Kind 4 rides the binary wire since S2b (with its `wreckId`) and
+   *  is in the interest grid (spawn clearance, queries). Not
+   *  registered for lag-comp (the ring has a fixed entity budget the drones
+   *  need; a slow wreck is hit at its live SAB pose). No health: shots stop
+   *  on it and do nothing (EntityResolver treats kind 4 as immune). */
+  spawnWreck(spec: {
+    id: string; x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
+    radius: number; mass: number; parentShipKind: ShipKindId; pieceIndex: number; wreckId: number;
+    parts: ReadonlyArray<ReadonlyArray<Vec2>>; linearDamping: number; angularDamping: number;
+  }): boolean {
+    const slot = this.hooks.takeSlot();
+    if (slot === undefined) return false;
+    const base = slotBase(slot);
+    const f = this.hooks.sabF32;
+    f[base + SLOT_X_OFF] = spec.x;
+    f[base + SLOT_Y_OFF] = spec.y;
+    f[base + SLOT_VX_OFF] = spec.vx;
+    f[base + SLOT_VY_OFF] = spec.vy;
+    f[base + SLOT_ANGLE_OFF] = spec.angle;
+    f[base + SLOT_ANGVEL_OFF] = spec.angvel;
+    this.hooks.sabU32[base + SLOT_FLAGS_OFF] = FLAG_IS_SWARM;
+    const rec = this.registry.register(spec.id, slot, SWARM_KIND_WRECK, spec.radius, spec.x, spec.y, spec.angle);
+    rec.shipKind = spec.parentShipKind;
+    rec.componentIndex = spec.pieceIndex;
+    rec.wreckId = spec.wreckId;
+    rec.wreckParts = spec.parts;
+    this.hooks.postSpawnObstacle(
+      slot, spec.id, spec.x, spec.y, spec.vx, spec.vy, spec.radius, spec.mass, undefined,
+      spec.linearDamping, false, WRECK_COLLISION_GROUPS, spec.angle, spec.parts, undefined,
+      { angvel: spec.angvel, angularDamping: spec.angularDamping },
+    );
+    this.hooks.interestGrid?.insert(rec.entityId, spec.x, spec.y, spec.radius);
+    return true;
   }
 
   private spawnOne(

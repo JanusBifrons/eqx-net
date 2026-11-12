@@ -144,17 +144,28 @@ test('spectator input is pan, not thrust — the ship does NOT move on W', async
     { timeout: 5_000 },
   );
 
+  // Spectate PARKS the hull: it comes back as our own lingering hull (keyed
+  // by its ship id), not as the pilot ship under our player id (that was a
+  // predicted phantom, fixed 2026-11-12; spectate-no-phantom-own-ship.spec.ts).
+  const parkedPos = (): Promise<{ x: number; y: number } | null> =>
+    page.evaluate(() => {
+      const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; lingeringShips?: Map<string, { ownerPlayerId?: string; x: number; y: number }> } } }).__eqxClient?.mirror;
+      for (const e of m?.lingeringShips?.values() ?? []) if (e.ownerPlayerId === m?.localPlayerId) return { x: e.x, y: e.y };
+      return null;
+    });
+
   // Let the ship settle (any residual velocity decays), then sample.
   await page.waitForTimeout(600);
-  const before = await localPos();
-  expect(before, 'the ship should still exist server-side while spectating').not.toBeNull();
+  const before = await parkedPos();
+  expect(before, 'the ship should still exist server-side (parked) while spectating').not.toBeNull();
+  expect(await localPos(), 'no pilot ship is drawn under our player id while spectating').toBeNull();
 
   // Press W: in spectator this is gated, so it must NOT thrust the ship.
   await page.keyboard.down('w');
   await page.waitForTimeout(700);
   await page.keyboard.up('w');
   await page.waitForTimeout(300);
-  const after = await localPos();
+  const after = await parkedPos();
   expect(after).not.toBeNull();
   const moved = Math.hypot(after!.x - before!.x, after!.y - before!.y);
   expect(moved, `W must NOT thrust the ship while spectating (moved ${moved.toFixed(1)}u)`).toBeLessThan(15);

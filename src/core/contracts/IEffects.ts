@@ -40,7 +40,10 @@ export type ParticleBurstKind =
   | 'impact'
   | 'destruction'
   | 'shield-hit'
-  | 'warp-arrive';
+  | 'warp-arrive'
+  /** Capital destruction S3: a capital breaking into wreck pieces (dust,
+   *  shards and a white flash at the kill point, sized by `radius`). */
+  | 'wreck-break';
 
 /** Continuous emitter kinds, keyed by entity id. */
 export type ContinuousEffectKind = 'thrust' | 'boost' | 'shield';
@@ -53,6 +56,11 @@ export interface ParticleBurstOpts {
   intensity?: number;
   /** Override default tint. RGB hex like 0xff66aa. */
   tint?: number;
+  /** World-unit size of the thing breaking up (`wreck-break`: the wreck's
+   *  radius; particles, speeds and the flash scale with it). */
+  radius?: number;
+  /** Flash size multiplier (`wreck-break`: > 1 for a clean snap). */
+  flashScale?: number;
 }
 
 /**

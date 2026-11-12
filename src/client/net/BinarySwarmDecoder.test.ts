@@ -154,6 +154,19 @@ describe('decodeSwarmPacket', () => {
     expect(mirror.swarm).toBeUndefined();
   });
 
+  it('rejects a v4 packet (capital destruction S2b bumped the stride to 36)', () => {
+    const mirror = makeMirror();
+    const V4_RECORD_BYTES = 34;
+    const buf = new ArrayBuffer(SWARM_HEADER_BYTES + V4_RECORD_BYTES);
+    const view = new DataView(buf);
+    view.setUint8(0, 4); // v4 — the decoder hard-fails this
+    view.setUint8(1, SWARM_FLAG_FULL);
+    view.setUint16(2, 1, true);
+    view.setUint32(4, 60, true);
+    decodeSwarmPacket(buf, mirror);
+    expect(mirror.swarm).toBeUndefined();
+  });
+
   it('mirrors a full snapshot into mirror.swarm', () => {
     const mirror = makeMirror();
     const packet = buildPacket(60, true, [

@@ -13,6 +13,7 @@ import { chromium, devices, type Browser, type BrowserContext, type BrowserConte
 import type { CameraCue } from '../src/core/contracts/cameraScript.js';
 import type { HudMode, Shot, ShotContext, ShotTarget, ShotViewport } from './types.js';
 import { browserPid, sleep, trackPid } from './tools.js';
+import { hudTopInFrame } from './captionPlacement.js';
 
 export interface FrameIndex {
   /** Frame files relative to the clip dir, with capture time (ms, monotonic). */
@@ -40,6 +41,10 @@ export interface RecordResult {
   /** The longest frames of the take with what ran in them (Chrome's
    *  long-animation-frame API), worst first. Empty when none ran long. */
   longFrames: LongFrame[];
+  /** Top edge (output-frame px, 1920x1080) of the game's bottom HUD (the
+   *  spectator build bar) at its highest during the take; null when none
+   *  showed (pilot mode). The caption sits above it (`captionPlacement`). */
+  bottomHudTop: number | null;
 }
 
 /** One long frame: its time into the take, length, and the scripts it ran. */
@@ -157,12 +162,21 @@ export class Recorder {
     const page = await context.newPage();
     page.on('pageerror', (e) => this.log(`  [pageerror] ${e.message}`));
 
-    const ctx = this.makeContext(page, shot.hud ?? 'minimal', page.viewportSize() ?? this.capture);
+    // The bottom HUD's highest top edge (CSS px) seen during the take: after
+    // setup, after every spectate, and at the end (review 2026-11-12: the
+    // caption covered the spectator build bar).
+    let hudTopCss: number | null = null;
+    const noteHud = async (): Promise<void> => {
+      const top = await measureBottomHudTop(page).catch(() => null);
+      if (top !== null && (hudTopCss === null || top < hudTopCss)) hudTopCss = top;
+    };
+    const ctx = this.makeContext(page, shot.hud ?? 'minimal', page.viewportSize() ?? this.capture, noteHud);
     await ctx.enter(shot.target);
     await assertProductionPath(page, shot.target);
     if (shot.prepare) await shot.prepare(ctx);
     if (shot.startWhen) await shot.startWhen(ctx);
     await waitForSteadyPrediction(page, this.log);
+    await noteHud();
 
     // ---- record ----
     const cdp = await context.newCDPSession(page);
@@ -227,6 +241,7 @@ export class Recorder {
     if (shot.endsWithRun && actions) await Promise.race([actions, sleep(shot.durationMs)]);
     else await sleep(shot.durationMs);
     const takeMs = Math.min(shot.durationMs, Date.now() - takeStart);
+    await noteHud();
     const net1 = await readNet(page);
     const longFrames = await takeLongFrames(page);
     const trace = await takePoseTrace(page);
@@ -245,10 +260,10 @@ export class Recorder {
       for (const f of index.frames) f.t -= t0;
     }
     writeFileSync(path.join(clipDir, 'frames.json'), JSON.stringify(index));
-    return { clipDir, index, takeMs, ...frameStats(index, takeMs), ...captureCadence(clipDir, index, takeMs), net: netDelta(net0, net1), longFrames };
+    return { clipDir, index, takeMs, ...frameStats(index, takeMs), ...captureCadence(clipDir, index, takeMs), net: netDelta(net0, net1), longFrames, bottomHudTop: hudTopCss === null ? null : Math.round(hudTopInFrame(hudTopCss, ctx.viewport)) };
   }
 
-  private makeContext(page: Page, hud: HudMode, viewport: { width: number; height: number }): ShotContext {
+  private makeContext(page: Page, hud: HudMode, viewport: { width: number; height: number }, onSpectate: () => Promise<void>): ShotContext {
     const testId = `showcase-${randomUUID()}`;
     const baseUrl = this.baseUrl;
     const ctx: ShotContext = {
@@ -265,7 +280,10 @@ export class Recorder {
         await sleep(ms);
         for (const k of keys) await page.keyboard.up(k);
       },
-      spectate: () => enterSpectator(page),
+      spectate: async () => {
+        await enterSpectator(page);
+        await onSpectate();
+      },
       cinema: {
         play: (cues: CameraCue[]) => playCameraScript(page, cues),
         stop: () => page.evaluate(() => (window as unknown as CinemaWindow).__eqxCinema.stop()),
@@ -312,6 +330,20 @@ async function readPilotMode(page: Pick<Page, 'evaluate'>): Promise<string | nul
   return page.evaluate(() => {
     const s = (window as unknown as { __eqxStore?: { getState(): { pilotMode?: string } } }).__eqxStore?.getState();
     return s?.pilotMode ?? null;
+  });
+}
+
+/**
+ * Top edge (CSS px) of the game's bottom HUD that is showing: the spectator
+ * build bar (`bottom-control-panel` in `build` mode). Null when hidden (pilot
+ * mode, touch). Read only; the game UI is filmed as it is.
+ */
+export async function measureBottomHudTop(page: Pick<Page, 'evaluate'>): Promise<number | null> {
+  return page.evaluate(() => {
+    const el = document.querySelector('[data-testid="bottom-control-panel"][data-panel-mode="build"]');
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return r.height > 0 && r.width > 0 && r.top < window.innerHeight ? r.top : null;
   });
 }
 

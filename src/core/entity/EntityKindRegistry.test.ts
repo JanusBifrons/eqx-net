@@ -19,6 +19,7 @@ const ALL_TAGS: readonly EntityKindTag[] = [
   'missile',
   'structure',
   'scrap',
+  'wreck',
 ];
 
 describe('EntityKindRegistry', () => {

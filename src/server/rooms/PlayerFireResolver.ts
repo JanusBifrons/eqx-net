@@ -26,6 +26,7 @@
  */
 
 import { refineRayHit } from '../../core/combat/capitalHits.js';
+import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import type { Client } from 'colyseus';
 import type { Logger } from 'pino';
 import {
@@ -83,6 +84,8 @@ export interface SwarmHitTarget {
   halfH?: number;
   /** Gates: the solid parts' world-axis boxes (see SwarmEntityRecord.boxes). */
   boxes?: Float32Array;
+  /** Capital wreck pieces (kind 4): convex parts, body-local. */
+  wreckParts?: ReadonlyArray<ReadonlyArray<Vec2>>;
   /** Drone ship kind (capitals refine hits to the hull). */
   shipKind?: string;
 }
@@ -578,6 +581,9 @@ export class PlayerFireResolver implements WeaponFireSink {
       let dist: number | null;
       if (rec.kind === 0 && rec.vertices) {
         dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, rec.vertices);
+      } else if (rec.kind === 4) {
+        // A capital wreck piece (S2a) stops the beam: its convex parts.
+        dist = wreckRayHit(rec.wreckParts, rec.radius, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca);
       } else if (rec.halfW !== undefined && rec.halfH !== undefined) {
         // Structures (phase V): the footprint box, not the bounding circle.
         dist = rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.halfW, rec.halfH, rec.boxes);

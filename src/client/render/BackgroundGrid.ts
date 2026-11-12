@@ -58,6 +58,40 @@ const MICRO_ALPHA = 0.34;
 const MACRO_COLOR = 0x3a4a80;
 const MACRO_ALPHA = 0.55;
 
+/**
+ * Screen spacing (CSS px) below which a grid tier is hidden, and at which
+ * it is fully shown. Between the two it fades in linearly.
+ *
+ * 2026-11-12 (fullscreen hairlines): at a capital zoom the 500 u tier sits
+ * ~6 px apart (battleship floor 0.0127), a near-solid hatch. A tier that
+ * close carries no navigation information, so it fades out instead.
+ */
+export const GRID_HIDE_SPACING_PX = 8;
+export const GRID_FULL_SPACING_PX = 24;
+
+/**
+ * Pure: the visibility factor (0..1) of a grid tier whose cells are
+ * `cellWorld` units wide at camera `scale`. 0 hides the tier.
+ */
+export function gridTierAlpha(cellWorld: number, scale: number): number {
+  const px = cellWorld * scale;
+  if (!(px > GRID_HIDE_SPACING_PX)) return 0;
+  if (px >= GRID_FULL_SPACING_PX) return 1;
+  return (px - GRID_HIDE_SPACING_PX) / (GRID_FULL_SPACING_PX - GRID_HIDE_SPACING_PX);
+}
+
+/**
+ * Stroke styles, built once. `pixelLine` draws each line exactly one
+ * device pixel wide at ANY zoom. A `width: 1` stroke is one WORLD unit:
+ * at a capital zoom (scale 0.01-0.15) that is a 0.01-0.15 px quad, which
+ * the GPU only lights when it happens to cover a pixel centre, so the
+ * whole lattice flashed in as hard 1 px lines on some frames and dropped
+ * out on others as the camera moved (the "full-screen hairlines" the
+ * 2026-11-12 showcase reviews flagged). Lock: BackgroundGrid.hairline.test.ts.
+ */
+const MICRO_STROKE = { color: MICRO_COLOR, width: 1, alpha: MICRO_ALPHA, pixelLine: true } as const;
+const MACRO_STROKE = { color: MACRO_COLOR, width: 1, alpha: MACRO_ALPHA, pixelLine: true } as const;
+
 /** One coordinate label: where to draw it (Pixi space) + the
  *  game-space grid numbers to show. */
 export interface GridLabelSpec {
@@ -182,6 +216,19 @@ export class BackgroundGrid {
     const yMinMicro = Math.floor((cy - halfH) / CELL_SIZE) * CELL_SIZE;
     const yMaxMicro = Math.ceil ((cy + halfH) / CELL_SIZE) * CELL_SIZE;
 
+    // Fade a tier out when its lines crowd together on screen. A hidden
+    // tier is not rebuilt; its bounds cache resets so it repaints when it
+    // comes back into view.
+    const scale = camera.scale.x;
+    const microAlpha = gridTierAlpha(CELL_SIZE, scale);
+    const macroAlpha = gridTierAlpha(MACRO_SIZE, scale);
+    this.microLines.visible = microAlpha > 0;
+    this.microLines.alpha = microAlpha;
+    this.macroLines.visible = macroAlpha > 0;
+    this.macroLines.alpha = macroAlpha;
+    if (microAlpha <= 0) this.prevMicroXMin = Number.NaN;
+    if (macroAlpha <= 0) this.prevMacroXMin = Number.NaN;
+
     // Pixi v8 Graphics: stroke per segment, NOT once at end. A trailing
     // single `stroke()` after many chained moveTo+lineTo strokes only
     // the most-recently-built subpath — earlier subpaths get pushed to
@@ -201,19 +248,19 @@ export class BackgroundGrid {
       || xMaxMicro !== this.prevMicroXMax
       || yMinMicro !== this.prevMicroYMin
       || yMaxMicro !== this.prevMicroYMax;
-    if (microBoundsChanged) {
+    if (microAlpha > 0 && microBoundsChanged) {
       this.microLines.clear();
       for (let x = xMinMicro; x <= xMaxMicro; x += CELL_SIZE) {
         this.microLines
           .moveTo(x, yMinMicro)
           .lineTo(x, yMaxMicro)
-          .stroke({ color: MICRO_COLOR, width: 1, alpha: MICRO_ALPHA });
+          .stroke(MICRO_STROKE);
       }
       for (let y = yMinMicro; y <= yMaxMicro; y += CELL_SIZE) {
         this.microLines
           .moveTo(xMinMicro, y)
           .lineTo(xMaxMicro, y)
-          .stroke({ color: MICRO_COLOR, width: 1, alpha: MICRO_ALPHA });
+          .stroke(MICRO_STROKE);
       }
       this.prevMicroXMin = xMinMicro;
       this.prevMicroXMax = xMaxMicro;
@@ -231,19 +278,19 @@ export class BackgroundGrid {
       || xMaxMacro !== this.prevMacroXMax
       || yMinMacro !== this.prevMacroYMin
       || yMaxMacro !== this.prevMacroYMax;
-    if (macroBoundsChanged) {
+    if (macroAlpha > 0 && macroBoundsChanged) {
       this.macroLines.clear();
       for (let x = xMinMacro; x <= xMaxMacro; x += MACRO_SIZE) {
         this.macroLines
           .moveTo(x, yMinMacro)
           .lineTo(x, yMaxMacro)
-          .stroke({ color: MACRO_COLOR, width: 1, alpha: MACRO_ALPHA });
+          .stroke(MACRO_STROKE);
       }
       for (let y = yMinMacro; y <= yMaxMacro; y += MACRO_SIZE) {
         this.macroLines
           .moveTo(xMinMacro, y)
           .lineTo(xMaxMacro, y)
-          .stroke({ color: MACRO_COLOR, width: 1, alpha: MACRO_ALPHA });
+          .stroke(MACRO_STROKE);
       }
       this.prevMacroXMin = xMinMacro;
       this.prevMacroXMax = xMaxMacro;

@@ -13,6 +13,7 @@ import { describe, it, expect } from 'vitest';
 import {
   SCRAP_COLLISION_GROUPS,
   DEFAULT_COLLISION_GROUPS,
+  WRECK_COLLISION_GROUPS,
 } from '../../src/core/physics/collisionGroups.js';
 
 /** Split a packed Rapier u32 into its 16-bit membership + filter halves. */
@@ -59,5 +60,19 @@ describe('collisionGroups constants', () => {
 
   it('default vs default collides (sanity — the unchanged baseline)', () => {
     expect(collide(DEFAULT_COLLISION_GROUPS, DEFAULT_COLLISION_GROUPS)).toBe(true);
+  });
+});
+
+describe('WRECK_COLLISION_GROUPS (capital wreck pieces)', () => {
+  it('packs membership 0x0004, filter 0xFFFB', () => {
+    expect(WRECK_COLLISION_GROUPS).toBe(0x0004fffb);
+  });
+  it('wreck vs wreck does NOT collide (pieces fly apart freely)', () => {
+    expect(collide(WRECK_COLLISION_GROUPS, WRECK_COLLISION_GROUPS)).toBe(false);
+  });
+  it('wreck vs default body and vs scrap DOES collide', () => {
+    expect(collide(WRECK_COLLISION_GROUPS, DEFAULT_COLLISION_GROUPS)).toBe(true);
+    expect(collide(DEFAULT_COLLISION_GROUPS, WRECK_COLLISION_GROUPS)).toBe(true);
+    expect(collide(WRECK_COLLISION_GROUPS, SCRAP_COLLISION_GROUPS)).toBe(true);
   });
 });

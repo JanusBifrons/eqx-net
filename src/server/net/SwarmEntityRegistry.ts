@@ -16,7 +16,21 @@ export type SwarmKind =
   | 0 /* asteroid */
   | 1 /* drone */
   | 2 /* structure (GEP P4) */
-  | 3 /* scrap (scrap-on-death Phase 2a) */;
+  | 3 /* scrap (scrap-on-death Phase 2a) */
+  | 4 /* capital wreck piece (capital destruction S2a; on the wire since S2b) */;
+
+/** A capital wreck piece (capital destruction S2a). Since S2b it rides the
+ *  binary swarm wire (`SWARM_KIND_WRECK`, wire v5) with its `wreckId`; the
+ *  geometry travels as the `wrecks[]` snapshot descriptor. Persistence still
+ *  skips it (S2c). */
+export const SWARM_KIND_WRECK = 4 as const;
+
+/** Liveness predicate for wreck pieces (invariant #17 analogue): a swarm
+ *  record that is a capital's wreck piece — terrain, not a ship. Loops that
+ *  must skip or special-case it name this. */
+export function isWreckPiece(rec: { kind: number }): boolean {
+  return rec.kind === SWARM_KIND_WRECK;
+}
 
 export interface SwarmEntityRecord {
   id: string;
@@ -53,6 +67,13 @@ export interface SwarmEntityRecord {
    *  `shipScrapGroups(parentKind)`. Encoded on the wire as the trailing u8 at
    *  `SWARM_REC_COMPONENT_INDEX_OFF`; absent / 0 for every other kind. */
   componentIndex?: number;
+  /** Wreck pieces (kind 4): the wreck this piece belongs to (u16, the key of
+   *  its `wrecks[]` snapshot descriptor). Encoded at `SWARM_REC_WRECK_ID_OFF`. */
+  wreckId?: number;
+  /** Wreck pieces (kind 4): the convex parts, body-local math-up, CCW. Weapon
+   *  hits refine the bounding circle to these (the same parts the physics
+   *  body is built from). */
+  wreckParts?: ReadonlyArray<ReadonlyArray<Vec2>>;
   /** Finite mineable resource pool (WS-4 / R2.27), only set for `kind === 0`
    *  asteroids — seeded from the silhouette area at spawn (`asteroidResources`).
    *  A Miner draws this down via `drawAsteroidResources`; an exhausted asteroid

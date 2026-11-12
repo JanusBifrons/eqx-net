@@ -230,6 +230,12 @@ export interface ShipTuning {
   /** Smallest guard radius round an NPC's guard post (`HostileDroneBehaviour.setGuardPost`):
    *  a post smaller than this would leave a big hull no room to turn. */
   guardRadiusMin: number;
+  /** Capital wreck break-up (capital-destruction.md): the outward push of a
+   *  piece at the kill point and far from it (u/s). Proportional to the hull
+   *  radius, so a bigger hull's debris field opens at the same rate relative
+   *  to its size: heavy cruiser (2×) ~120 / ~30 u/s, battleship ~158 / ~40. */
+  wreckPushMax: number;
+  wreckPushMin: number;
   /** Art bake pixels per world unit, and the texture side cap. */
   bakePpu: number;
   bakeMaxSide: number;
@@ -241,9 +247,21 @@ export interface ShipTuning {
    *  and the straight-line prediction over a long flight. The client adds a
    *  gun's splash radius per shot. Fighter (2x) 88 u; battleship ~5,790 u. */
   incomingFireRadius: number;
+  /** Capital hull overlap (capitalOverlap.ts): overlap below this is contact
+   *  skin left to Rapier, a quarter of the shield pad (5 u for a 2x capital). */
+  overlapSkin: number;
+  /** Capital hull overlap: the most a hull pair is moved apart per fixed step,
+   *  0.3 % of the hull radius (6.6 u/tick ≈ 390 u/s for a 2x heavy cruiser, so
+   *  a forced 350 u overlap clears in about a second). */
+  overlapMaxStep: number;
 }
 
 const CACHE = new WeakMap<object, ShipTuning>();
+
+/** Wreck push at the kill point / far from it, per unit of hull radius per
+ *  second (`wreckPushMax` / `wreckPushMin`). */
+const WRECK_PUSH_MAX_PER_RADIUS = 0.055;
+const WRECK_PUSH_MIN_PER_RADIUS = 0.014;
 
 /** The size-dependent numbers for a (scaled) kind. */
 export function shipTuning(kind: ShipKind): ShipTuning {
@@ -273,12 +291,16 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     flockFollow: ct.clearHull ? Math.max(BASE.flockFollow * sp, kind.radius * 3.3) : BASE.flockFollow * sp,
     flockSeparation: ct.clearHull ? Math.max(BASE.flockSeparation * sp, kind.radius * 2.2) : BASE.flockSeparation * sp,
     guardRadiusMin: ct.clearHull ? Math.max(BASE.guardRadiusMin * sp, kind.radius * 2) : BASE.guardRadiusMin * sp,
+    wreckPushMax: WRECK_PUSH_MAX_PER_RADIUS * kind.radius,
+    wreckPushMin: WRECK_PUSH_MIN_PER_RADIUS * kind.radius,
     // Pixel density by the UNSCALED hull (so a 2× fighter stays as sharp per
     // world unit as today's), within the class's side budget.
     bakePpu: unscaledR >= BASE.ppuBigRadius ? BASE.ppuBig : BASE.ppuSmall,
     bakeMaxSide: ct.bakeMaxSide,
     mountSize: ct.mountSize,
     incomingFireRadius: 2 * (kind.radius + BASE.shieldPad * g),
+    overlapSkin: (BASE.shieldPad * g) / 4,
+    overlapMaxStep: kind.radius * 0.003,
   };
   CACHE.set(kind, t);
   return t;
