@@ -42,8 +42,8 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
 | 3c | Integration tests at 0.5× and 2×; netgate run by hand | ~1.5 h | ✅ 🛑 (end of Phase 3) |
 | 4a | Client game clock: prediction anchor + `fromTick` parity test | ~2 h | ✅ 🛑 |
 | 4b | Interpolation in ticks + pose ring sized for 4× | ~1.5 h | ✅ 🛑 |
-| 4c | Render frame dt at the source (Pixi ticker speed); client lint wall | ~2 h | next 🛑 |
-| 4d | Speed chip + E2E + "follows automatically" test; netgate at 0.7× / 2×; fold `testTimeScale` into the sector speed | ~2 h | 🛑 (end of Phase 4) |
+| 4c | Render frame dt at the source (Pixi ticker speed); client lint wall | ~2 h | ✅ 🛑 |
+| 4d | Speed chip + E2E + "follows automatically" test; netgate at 0.7× / 2×; fold `testTimeScale` into the sector speed | ~2 h | next 🛑 (end of Phase 4) |
 | 5a | Dynamic controller (lateness + cost, ramp, hysteresis, audit events) | ~2 h | 🛑 |
 | 5b | Burn-test verification (CI/laptop perf scene); docs; ready-to-land report | ~1.5 h | 🛑 (stream done; ask the owner how to land it) |
 
@@ -144,3 +144,12 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   poses at every speed, locked by `swarmInterpolation.timeScale.test.ts`.
   `RenderMirror.timeScale` (absent = 1×) carries the speed to the renderer
   (and 4c). Unit 4980 ✓.
+- 2026-11-12: step 4c done. `PixiRenderer.fxNow()` is the one presentation
+  clock (GameClock over `performance.now()`, speed from `mirror.timeScale`
+  each frame). Every effect and animation reads it. A lint wall over
+  `src/client/render/**` + `src/client/effects/**` keeps new effects on it,
+  and on its first run it caught four sites (shield hits ×2, a light's t0, the
+  spool fx) that would have desynced from their game-time partners. The
+  incoming-fire countdown moved to game time (it is game seconds). Real time:
+  wall-stamped pose interpolation, camera/UI, measurement, each marked
+  inline. Lock: `FxExplosions.timeScale.test.ts`. Unit 4981 ✓, lint 0 errors.

@@ -356,6 +356,11 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 - **A speed change re-anchors HARD** on the snapshot that carries it (no EWMA). That snapshot's own `serverTick` is the anchor, so the client needs no `fromTick` arithmetic. The shared contract is "60 ticks per GAME second" on both sides.
 - At 1× `gameClock.now()` / `.at(t)` return the wall value EXACTLY (byte-identical until the first speed change).
 - Lock: `ColyseusClient.timeScale.test.ts`.
+- **Display delays are GAME ms (4b).** The swarm floor/ceiling is 100/speed .. 280/speed wall ms (`setSwarmDisplaySpeed`); missiles use `MISSILE_DISPLAY_DELAY_MS / mirror.timeScale`. Arrival stamps stay wall. This keeps the window ~6 poses at every speed, inside `POSE_RING_DEPTH`. Lock: `swarmInterpolation.timeScale.test.ts`.
+- **Presentation follows the speed from ONE source (4c).** `RenderMirror.timeScale` (absent = 1×) reaches the renderer on both paths. `PixiRenderer.fxNow()` (a `GameClock` over `performance.now()`, speed set at the top of `update`) is the time EVERY effect and animation reads: explosions, beams, recoil, connector pulses, shields, fences, lights, the backdrop, the effects service tick and the incoming-fire countdown (game seconds).
+  - A NEW effect must take its time from `fxNow()` (or the `now` it is handed). `src/client/render/**` and `src/client/effects/**` lint-ban `performance.now` / `Date.now` outside a real-time allowlist in `eslint.config.js`.
+  - Real time stays for pose interpolation against wall-stamped arrivals, the camera and UI (warp curtain, radar, lock marks, health-bar fades, selection) and cost measurement. Inline `-- real time: <why>` lines in PixiRenderer.
+  - Lock: `FxExplosions.timeScale.test.ts` (an unmodified effect driven by a 0.5×/2× clock lives 2× / 0.5× as long in wall time).
 
 ## Durable Identity
 

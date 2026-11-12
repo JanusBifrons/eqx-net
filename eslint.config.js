@@ -227,6 +227,29 @@ export default [
       ],
     },
   },
+  // Presentation follows the game speed too (time scale stream, step 4c):
+  // render and effects code takes its time from `fxNow()` in PixiRenderer (or
+  // the `now` it is handed), so a new effect slows and speeds with the sector.
+  // Real time only in the files below: pose interpolation against wall-stamped
+  // arrivals, UI timing (warp curtain, radar, lock marks, health-bar fades,
+  // selection), the worker plumbing and art bakes.
+  {
+    files: ['src/client/render/**/*.ts', 'src/client/effects/**/*.ts'],
+    ignores: [
+      '**/*.test.ts', 'src/client/render/worker/**', 'src/client/render/art/**',
+      'src/client/render/pixi/WarpFilterChain.ts', 'src/client/render/HaloRadar.ts',
+      'src/client/render/AimFeedbackRenderer.ts', 'src/client/render/HealthBars.ts',
+      'src/client/render/SelectionBracket.ts', 'src/client/render/HoverBracket.ts',
+      'src/client/render/pixi/swarmSpriteUpdater.ts',
+    ],
+    rules: {
+      'no-restricted-properties': [
+        'error',
+        { object: 'Date', property: 'now', message: 'Presentation follows the game speed: use the renderer\'s fxNow() or the `now` you are handed. Real time only in the allowlist (eslint.config.js).' },
+        { object: 'performance', property: 'now', message: 'Presentation follows the game speed: use the renderer\'s fxNow() or the `now` you are handed. Real time only in the allowlist (eslint.config.js).' },
+      ],
+    },
+  },
   {
     files: ['src/client/**/*.{ts,tsx}'],
     rules: {
