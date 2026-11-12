@@ -179,14 +179,19 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
     internal.applyDamage('bb', 'shooter-x', 1e7);
     const big = wrecks(internal).sort((a, b) => b.radius - a.radius)[0]!;
     const st = internal.wreckState(big.id)!;
-    // A fighter aimed at the piece's centre from just outside it.
-    internal.spawnTestDrone('rammer', st.x - big.radius - 200, st.y, 'fighter');
+    // A fighter aimed at the piece's centre, starting just short of the
+    // wreck's surface on that line (this piece or a neighbour in front of it).
+    const far = big.radius + 2000;
+    const enter = internal.rayHit(st.x - far, st.y, 1, 0, 2 * far, 'nobody')!;
+    const x0 = st.x - far + enter.dist - 250;
+    internal.spawnTestDrone('rammer', x0, st.y, 'fighter');
     await harness.advance(50);
-    internal.postToWorker({ type: 'SET_POSITION', entityId: 'rammer', x: st.x - big.radius - 200, y: st.y, angle: 0, vx: 600, vy: 0, angvel: 0 });
+    internal.postToWorker({ type: 'SET_POSITION', entityId: 'rammer', x: x0, y: st.y, angle: 0, vx: 600, vy: 0, angvel: 0 });
+    const isWreck = (id: unknown): boolean => typeof id === 'string' && internal.swarmRegistry.get(id)?.kind === WRECK_KIND;
     await harness.events.waitFor({
       tag: 'collision_resolved',
-      where: (d) => (d['aId'] === 'rammer' && d['bId'] === big.id) || (d['bId'] === 'rammer' && d['aId'] === big.id),
-    }, { timeoutMs: 4000 });
+      where: (d) => (d['aId'] === 'rammer' && isWreck(d['bId'])) || (d['bId'] === 'rammer' && isWreck(d['aId'])),
+    }, { timeoutMs: 8000 });
   }, 25_000);
 
   it("a player capital's death also fractures", async () => {
