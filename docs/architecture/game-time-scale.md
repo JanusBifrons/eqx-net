@@ -1,6 +1,6 @@
 # Game-wide time scale (design note, 2026-11-12)
 
-Status: **design only, nothing built.** Handoff item 4. It is the shelved "time dilation for the whole game" (`docs/SHELF.md`).
+Status: **design only, SHELVED (owner 2026-11-12: "not essential for now", raise as a near-future item).** Handoff item 4. It is the shelved "time dilation for the whole game" (`docs/SHELF.md`). Start from §6 Phases when it is picked up.
 
 **Owner decisions (2026-11-12):**
 - **What it's for:** it's a **performance mechanism, not a gameplay mechanic**: "Why can't it be dynamic? It's designed as a performance thing". So the speed is **dynamic**, never a menu.
