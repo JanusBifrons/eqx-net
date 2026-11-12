@@ -23,7 +23,7 @@ import { missiles } from './shots/missiles.js';
 import { packBattle } from './shots/packBattle.js';
 import { longGuns } from './shots/longGuns.js';
 import { fleetMelee } from './shots/fleetMelee.js';
-import { timeScaleDial } from './shots/timeScaleDial.js';
+import { timeScaleDial, timeScaleCapitals } from './shots/timeScaleDial.js';
 import { scrap } from './shots/scrap.js';
 import { buildBase } from './shots/buildBase.js';
 import { gridAlive } from './shots/gridAlive.js';
@@ -80,6 +80,7 @@ export const SHOTS: readonly Shot[] = [
   packBattle,
   fleetMelee,
   timeScaleDial,
+  timeScaleCapitals,
   newEffects,
   crossingSector,
   machinedTurrets,

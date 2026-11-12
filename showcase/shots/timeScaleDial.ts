@@ -1,4 +1,6 @@
 import type { Shot, ShotContext } from '../types.js';
+import { sendRoom } from './_helpers.js';
+import { artSettled } from './capitals.js';
 
 /** The pilot's room id (the dev endpoint addresses a sector by room). */
 async function roomId(ctx: ShotContext): Promise<string | null> {
@@ -76,6 +78,50 @@ export const timeScaleDial: Shot = {
     await dial(ctx, id, 2); // glides up in ~3.2 s
     await ctx.sleep(8200); // ~5 s at 2×
     await dial(ctx, id, 1); // back to normal in ~2 s
+    await ctx.sleep(4000);
+  },
+};
+
+/**
+ * Game speed with capitals (owner 2026-11-12: "a couple more clips just to
+ * prove the point. Capitals fighting for example"). The capital-broadside
+ * fight as it plays: five capitals (destroyer to battleship) turn their
+ * batteries on the pilot's heavy cruiser once their art has baked (the same
+ * room, params and `test_aggro` cue as capital-broadside), watched from the
+ * spectator view framed on the whole group. The dial is turned by hand, the
+ * feature being filmed: 1× → 0.4× (shells crawl, turrets slew slowly) → 2×
+ * (salvos come fast) → 1×.
+ */
+export const timeScaleCapitals: Shot = {
+  id: 'time-scale-capitals',
+  section: 'mechanics',
+  title: 'Game speed: capitals',
+  caption: 'The same speed dial on a capital-ship battle: main batteries, secondaries and anti-aircraft fire glide into slow motion (0.4×), then double speed (2×), then back to normal.',
+  features: ['CAP', 'M19'],
+  docs: ['game-speed'],
+  reel: false,
+  server: 'capitals',
+  target: { room: 'showcase-capitals-combat', params: { sectorScale: '4', shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
+  durationMs: 30_000,
+  endsWithRun: true,
+  async startWhen(ctx) {
+    await artSettled(ctx);
+    await ctx.spectate();
+    // The fight starts as the last setup step (as capital-broadside), and the
+    // batteries get a moment to train before the take rolls.
+    await sendRoom(ctx, 'test_aggro', { type: 'test_aggro' });
+    await ctx.sleep(4000);
+  },
+  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'frame', group: 'all', padding: 0.2, maxZoom: 2.5 } }],
+  async run(ctx) {
+    const id = await roomId(ctx);
+    if (!id) throw new Error('time-scale-capitals: no room id on the client');
+    await ctx.sleep(3000);
+    await dial(ctx, id, 0.4); // ~1.2 s glide
+    await ctx.sleep(7200); // ~6 s of slow motion
+    await dial(ctx, id, 2); // ~3.2 s glide
+    await ctx.sleep(10_200); // ~7 s at 2×
+    await dial(ctx, id, 1); // ~2 s glide
     await ctx.sleep(4000);
   },
 };
