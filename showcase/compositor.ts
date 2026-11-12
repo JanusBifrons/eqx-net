@@ -10,7 +10,7 @@
  *   writes a 720p preview.
  * - `qaClip`: contact sheet + blank-frame check.
  */
-import { writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { FrameIndex } from './recorder.js';
 import type { ShotViewport } from './types.js';
@@ -201,6 +201,29 @@ export async function encodedUniqueFps(clipDir: string, fps: number, durationMs:
   const pts = out.split('\n').map((l) => parseFloat(l)).filter((x) => Number.isFinite(x));
   // The last list entry repeats the final frame (concat's end marker).
   return perSecond(slotsKept(pts.slice(0, -1), fps), durationMs);
+}
+
+/**
+ * Frame-to-frame PSNR of an encoded clip (`psnr[i]`: frame i vs i + 1;
+ * Infinity = identical), for `worldStalls`. Run from the clip's folder: a
+ * Windows drive colon in the filter's stats_file path breaks the filter.
+ */
+export async function clipFramePsnr(clipMp4: string): Promise<number[]> {
+  const dir = path.dirname(clipMp4);
+  const stats = 'framepsnr.log';
+  await run(resolveFfmpeg('ffmpeg'), [
+    '-hide_banner', '-loglevel', 'error', '-y', '-i', path.basename(clipMp4),
+    '-lavfi', `[0:v]split[a][b];[b]trim=start_frame=1,setpts=PTS-STARTPTS[c];[a][c]psnr=stats_file=${stats}`,
+    '-f', 'null', '-',
+  ], { cwd: dir });
+  const text = readFileSync(path.join(dir, stats), 'utf8');
+  rmSync(path.join(dir, stats), { force: true });
+  const out: number[] = [];
+  for (const line of text.split('\n')) {
+    const m = /psnr_avg:(\S+)/.exec(line);
+    if (m) out.push(m[1] === 'inf' ? Infinity : parseFloat(m[1]!));
+  }
+  return out;
 }
 
 export async function encodeCard(png: string, out: string, seconds: number, opts: EncodeOpts): Promise<string> {

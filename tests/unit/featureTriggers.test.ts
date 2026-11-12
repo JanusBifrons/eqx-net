@@ -25,11 +25,11 @@ describe('path-triggered feature specs', () => {
 
   it('a changed feature spec runs itself; quarantined specs never run', () => {
     expect(select(['tests/e2e/hover-outline.spec.ts'])).toEqual(['hover-outline']);
-    expect(select(['tests/e2e/missile-frigate-homing.spec.ts'])).toEqual([]);
+    expect(select(['tests/e2e/speed-dial.spec.ts'])).toEqual([]);
   });
 
   it('smoke specs (already run on every PR) and quarantined specs are skipped', () => {
-    expect(select(['tests/e2e/boot.spec.ts', 'tests/e2e/missile-frigate-homing.spec.ts'])).toEqual([]);
+    expect(select(['tests/e2e/boot.spec.ts', 'tests/e2e/speed-dial.spec.ts'])).toEqual([]);
   });
 
   it('an unrelated change runs nothing extra', () => {
