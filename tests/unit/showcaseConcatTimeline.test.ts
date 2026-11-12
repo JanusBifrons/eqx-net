@@ -57,6 +57,24 @@ describe('showcase encode timeline', () => {
     expect(t.map((x) => Math.round(x.d / SLOT))).toEqual([1, 2, 1, 1]);
   });
 
+  it('keeps every frame when the capture stamps them in pairs (4 ms, then 29 ms apart)', () => {
+    // Review 2026-11-12 (capital-pilot): one frame per refresh, but on a loaded
+    // host the screencast stamps them in pairs, each frame ±6 ms off its
+    // refresh. Snapping to the nearest slot put each pair in one slot: one real
+    // frame dropped, the next slot a held repeat (60 captured -> 48 encoded).
+    const n = 24;
+    const t = timeline(Array.from({ length: n }, (_, i) => ({ file: `f${i}`, t: i * SLOT + (i % 2 === 0 ? 6 : -6) + 10 })), n * SLOT + 10);
+    expect(t.map((x) => x.file)).toEqual(Array.from({ length: n }, (_, i) => `f${i}`));
+    for (const x of t.slice(0, -1)) expect(Math.round(x.d / SLOT)).toBe(1);
+  });
+
+  it('never lets a fast burst push frames more than one slot late', () => {
+    // Three frames stamped in one slot: two fit (this slot and the next), the
+    // third would sit two slots late, so it is dropped rather than drift.
+    const t = timeline([{ file: 'f0', t: 0 }, { file: 'a', t: SLOT }, { file: 'b', t: SLOT + 1 }, { file: 'c', t: SLOT + 2 }, { file: 'f3', t: 3 * SLOT }], 4 * SLOT);
+    expect(t.map((x) => x.file)).toEqual(['f0', 'a', 'b', 'f3']);
+  });
+
   it('ignores frames stamped outside the take (a late frame with an epoch time)', () => {
     const t = timeline([{ file: 'f0', t: 0 }, { file: 'f1', t: SLOT }, { file: 'late', t: 1.79e12 }], 2 * SLOT);
     expect(t.map((x) => x.file)).toEqual(['f0', 'f1']);
