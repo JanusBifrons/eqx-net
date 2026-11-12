@@ -2,7 +2,7 @@ import { Container, Graphics, Text } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '@shared-types/shipKinds';
 import { ACQUIRE_COLOUR, FAILSAFE_COLOUR, THREAT_COLOUR, groupColour } from '../hud/groupColours';
-import { lockMarkFrame, threatRingRadius, type LockMarkFrame } from './lockMarkFrame';
+import { hullHalfBeam, lockMarkFrame, threatDiamondHalf, threatPointerRadius, threatRingRadius, THREAT_TIP_PX, type LockMarkFrame } from './lockMarkFrame';
 import { acquiringPct } from '../hud/lockPct';
 
 /**
@@ -32,7 +32,8 @@ export class AimFeedbackRenderer {
   private readonly fc = new Graphics();
   /** Parsed lock keys → swarm entityId (or -1 + player id), so per-frame draws never slice. */
   private readonly keyCache = new Map<string, { swarm: number; player: string | null }>();
-  private readonly tp = { x: 0, y: 0, a: 0, r: 16 };
+  /** Last resolved target: pose, hull radius and half beam (`hb`). */
+  private readonly tp = { x: 0, y: 0, a: 0, r: 16, hb: 16 };
   /** Where + how big the current mark is (reused, #14). */
   private readonly mf: LockMarkFrame = { x: 0, y: 0, half: 0, capped: false };
   /** "LOCKING 62%" tags over targets being locked (pooled; text set only on change). */
@@ -91,12 +92,14 @@ export class AimFeedbackRenderer {
     if (v.player !== null) {
       const s = mirror.ships.get(v.player);
       if (!s) return false;
-      this.tp.x = s.x; this.tp.y = s.y; this.tp.a = s.angle; this.tp.r = getShipKind(s.kind ?? null).radius;
+      const kind = getShipKind(s.kind ?? null);
+      this.tp.x = s.x; this.tp.y = s.y; this.tp.a = s.angle; this.tp.r = kind.radius; this.tp.hb = hullHalfBeam(kind);
       return true;
     }
     const e = mirror.swarm?.get(v.swarm);
     if (!e) return false;
     this.tp.x = e.x; this.tp.y = e.y; this.tp.a = e.angle; this.tp.r = e.radius ?? 16;
+    this.tp.hb = e.kind === 1 && e.shipKind ? hullHalfBeam(getShipKind(e.shipKind)) : this.tp.r;
     return true;
   }
 
@@ -229,30 +232,36 @@ export class AimFeedbackRenderer {
         const nx = mf.x, ny = -mf.y;
         const th = Math.atan2(ny + sy, nx - sx);
         const cx = sx, cy = -sy;
+        // Arc + caret radius: the ring, pulled in (or 0 = not drawn) when the
+        // NPC's hull is closer than the ring, so they never lie across its deck.
+        const t = this.tp;
+        const Rp = threatPointerRadius(R, sx, sy, t.x, t.y, t.a, t.r, t.hb, px);
         if (l.s === 2) {
-          // Solid caret on the ring pointing at the NPC.
-          const tipR = R + 14 * px;
-          const w = 0.16;
-          g.moveTo(cx + Math.cos(th) * tipR, cy + Math.sin(th) * tipR)
-            .lineTo(cx + Math.cos(th - w) * R, cy + Math.sin(th - w) * R)
-            .lineTo(cx + Math.cos(th + w) * R, cy + Math.sin(th + w) * R)
-            .closePath()
-            .fill({ color: THREAT_COLOUR, alpha: 0.95 });
-          g.moveTo(cx + Math.cos(th - 0.5) * R, cy + Math.sin(th - 0.5) * R);
-          g.arc(cx, cy, R, th - 0.5, th + 0.5).stroke({ width: 3 * px, color: THREAT_COLOUR, alpha: 0.9 });
-          // Pulsing diamond on the NPC.
-          const dr = mf.half * 1.2;
+          if (Rp > 0) {
+            // Solid caret on the ring pointing at the NPC.
+            const tipR = Rp + THREAT_TIP_PX * px;
+            const w = 0.16;
+            g.moveTo(cx + Math.cos(th) * tipR, cy + Math.sin(th) * tipR)
+              .lineTo(cx + Math.cos(th - w) * Rp, cy + Math.sin(th - w) * Rp)
+              .lineTo(cx + Math.cos(th + w) * Rp, cy + Math.sin(th + w) * Rp)
+              .closePath()
+              .fill({ color: THREAT_COLOUR, alpha: 0.95 });
+            g.moveTo(cx + Math.cos(th - 0.5) * Rp, cy + Math.sin(th - 0.5) * Rp);
+            g.arc(cx, cy, Rp, th - 0.5, th + 0.5).stroke({ width: 3 * px, color: THREAT_COLOUR, alpha: 0.9 });
+          }
+          // Pulsing diamond on the NPC: round a fighter, a small pin on a capital.
+          const dr = threatDiamondHalf(mf, px);
           g.moveTo(nx, ny - dr).lineTo(nx + dr, ny).lineTo(nx, ny + dr).lineTo(nx - dr, ny).closePath()
             .stroke({ width: 2.5 * px, color: THREAT_COLOUR, alpha: pulse });
-        } else {
+        } else if (Rp > 0) {
           // Acquiring: an arc facing the NPC that narrows as its lock builds.
           const frac = Math.max(0, Math.min(1, l.p / 100));
           const half = 0.15 + 0.85 * (1 - frac);
-          g.moveTo(cx + Math.cos(th - half) * R, cy + Math.sin(th - half) * R);
-          g.arc(cx, cy, R, th - half, th + half).stroke({ width: 3 * px, color: THREAT_COLOUR, alpha: 0.35 + 0.5 * pulse });
+          g.moveTo(cx + Math.cos(th - half) * Rp, cy + Math.sin(th - half) * Rp);
+          g.arc(cx, cy, Rp, th - half, th + half).stroke({ width: 3 * px, color: THREAT_COLOUR, alpha: 0.35 + 0.5 * pulse });
           // Small notch at the exact bearing.
-          g.moveTo(cx + Math.cos(th) * (R - 5 * px), cy + Math.sin(th) * (R - 5 * px))
-            .lineTo(cx + Math.cos(th) * (R + 7 * px), cy + Math.sin(th) * (R + 7 * px))
+          g.moveTo(cx + Math.cos(th) * (Rp - 5 * px), cy + Math.sin(th) * (Rp - 5 * px))
+            .lineTo(cx + Math.cos(th) * (Rp + 7 * px), cy + Math.sin(th) * (Rp + 7 * px))
             .stroke({ width: 2.5 * px, color: THREAT_COLOUR, alpha: 0.9 });
         }
       }
