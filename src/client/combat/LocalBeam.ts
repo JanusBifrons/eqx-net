@@ -10,6 +10,7 @@
  * the frozen layer detached from the ship under lag/reconcile correction.
  */
 import type { WeaponMode } from '@core/combat/WeaponCatalogue';
+import { NAVAL_SHELL_WEAPON_IDS } from '@core/combat/shellFlight';
 import type { SwarmRenderState } from '@core/contracts/IRenderer';
 import type { InterpolatedPose } from '../net/swarmInterpolation';
 import { resolveEntityDisplayPose } from '../net/swarmDisplayPose';
@@ -30,6 +31,19 @@ import { resolveEntityDisplayPose } from '../net/swarmDisplayPose';
  */
 export function localFireSpawnsGhost(mode: WeaponMode): boolean {
   return mode !== 'hitscan';
+}
+
+/**
+ * Does the client predict this weapon's shot at all (a ghost and an instant
+ * hit number)? Not for naval shells: they fly for tens of seconds and reach
+ * the client as `shell_salvo` events, so a prediction only showed damage
+ * ~25 s before the shells landed and a ghost that flickered at the turrets
+ * until the real shells replaced it (owner 2026-11-12, "It instantly hit the
+ * other ship and still flew? And had graphical glitches"). Lock:
+ * `navalFirePrediction.test.ts`.
+ */
+export function localFirePredicts(weaponId: string): boolean {
+  return !NAVAL_SHELL_WEAPON_IDS.has(weaponId);
 }
 
 /**

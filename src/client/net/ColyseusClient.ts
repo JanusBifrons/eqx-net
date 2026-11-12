@@ -169,7 +169,7 @@ import {
   type ReconcileFeedbackSink,
   type MountFireGeom,
 } from '../combat/HitPrediction.client';
-import { localFireSpawnsGhost, liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../combat/LocalBeam';
+import { localFireSpawnsGhost, localFirePredicts, liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../combat/LocalBeam';
 import { flowMaterialToCode } from '../render/pixi/connectorVisual';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
@@ -6469,7 +6469,9 @@ export class ColyseusGameClient {
     // detached from the ship under lag. Projectiles still ghost — the
     // bolt actually travels. `mountGeom` is collected regardless (the
     // predicted-hit resolver still needs every mount's ray).
-    const spawnGhost = localFireSpawnsGhost(getWeapon(slotWeapon).mode);
+    // Naval shells are not predicted (no ghost, no instant hit): they reach
+    // the client as shell_salvo events and fly for tens of seconds.
+    const spawnGhost = localFireSpawnsGhost(getWeapon(slotWeapon).mode) && localFirePredicts(slotWeapon);
     if (mounts.length === 0) {
       // Defensive fallback: no mounts → (projectile only) spawn the
       // legacy single ghost at ship centre. Should not happen for any
@@ -6636,6 +6638,7 @@ export class ColyseusGameClient {
         this._damageFlashFrames.set(id, 6);
       },
     };
+    if (localFirePredicts(slotWeapon)) {
     predictShotOutcome({
       ledger: this._hitLedger,
       sink: predSink,
@@ -6648,6 +6651,7 @@ export class ColyseusGameClient {
       excludeId: localId,
       nowMs: this.clock.now(),
     });
+    }
     // Diagnostic — captures the three reference points needed to debug
     // "lasers firing from the wrong place". `spawnPos` is the legacy
     // ship-centre+20-u-forward reference (NOT per-mount post-Phase-3, so
