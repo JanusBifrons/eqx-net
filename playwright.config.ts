@@ -306,6 +306,11 @@ export default defineConfig({
             EQX_E2E_WAVE: '1',
             EQX_BOT_SPOOL_MS: '5000',
             EQX_BOT_HOP_MS: '500',
+            // The /dev/events ring is shared by every room, galaxy included:
+            // at its default 500 entries it held only ~2-3 s on a loaded host,
+            // so a spec polling for a lone event (a missile's expiry) could
+            // miss it (2026-11-12). Specs filter with `?tag=` server-side.
+            EQX_DEV_EVENTS_MAX: '5000',
             ...(IS_OFFSET_LANE ? { PORT: String(E2E_SERVER_PORT) } : {}),
           },
         },

@@ -73,9 +73,12 @@ export const QUARANTINE = new Set([
   // 2026-11-09 6x re-run (lane 1000, lock-to-fire universal); machined-art
   // went 6/6 and left the list. Still red, each without a quick fix:
   //
-  // held-fire test (:415) 0/5: one salvo per hold, never a cooldown
-  // rollover (heat-seeker cooldown 90 ticks; energy is not the limit). The
-  // other five tests in the file pass 5/5.
+  // 2026-11-12: missiles and bolts now step by WORKER ticks (the loaded E2E
+  // server ran its rooms at ~25 Hz, so heat-seekers flew ~150 u/s); homing,
+  // swarm damage and held fire went 6/6. Still red: impact-only (:557, 0/6,
+  // no missile_expired seen even with /dev/events?tag=) and the touch chip
+  // hold (:646, 1/6). Next: probe whether the missile detonates on something
+  // instead of expiring, and whether the touch lock completes in MAN.
   'missile-frigate-homing',
   // 0/6: the fighter's AUTO group locks the gate (chip data-locked=1 with
   // instantLock) but fires no bolts (fxProjectiles stays 0 for 10 s), so the

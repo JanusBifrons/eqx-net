@@ -64,7 +64,21 @@ export interface ProjectileRecord {
    *  `shellPoseAt(ox, oy, vx, vy, birthTick, tick)`, never an Euler sum. */
   ox?: number;
   oy?: number;
+  /** The worker tick this (non-event) projectile last stepped at; unset until
+   *  its first step (treated as `birthTick - 1`). See `MAX_CATCH_UP_TICKS`. */
+  lastTick?: number;
 }
+
+/**
+ * A projectile moves by the WORKER ticks that passed since its last step, not
+ * one step per room update: under load the room loop can fall to ~25 Hz while
+ * the physics worker keeps 60 Hz, and bolts then slowed down relative to the
+ * ships (2026-11-12, `missile-frigate-homing` E2E). Each update steps
+ * `max(1, ticks since the last step)`, so a room that keeps pace behaves as
+ * before; the swept collision covers a long step (no tunnelling). Capped so a
+ * hard stall doesn't teleport anything.
+ */
+export const MAX_CATCH_UP_TICKS = 30;
 
 /** A successful projectile-sweep result. */
 export interface SweepHit {
@@ -249,8 +263,14 @@ export class ProjectilePipeline {
         stepX = poseQ.x - proj.x;
         stepY = poseQ.y - proj.y;
       } else {
-        stepX = proj.vx * DT_SEC;
-        stepY = proj.vy * DT_SEC;
+        // Elapsed worker ticks since the last step (MAX_CATCH_UP_TICKS).
+        const last = proj.lastTick ?? proj.birthTick - 1;
+        let n = serverTick - last;
+        if (n < 1) n = 1;
+        else if (n > MAX_CATCH_UP_TICKS) n = MAX_CATCH_UP_TICKS;
+        if (serverTick > last) proj.lastTick = serverTick;
+        stepX = proj.vx * DT_SEC * n;
+        stepY = proj.vy * DT_SEC * n;
       }
 
       let bestEntry = Infinity;

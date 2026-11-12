@@ -108,12 +108,15 @@ async function joinShip(
 async function fetchEvents(
   request: APIRequestContext,
   predicate: (e: ServerLogEntry) => boolean,
-  opts: { timeoutMs: number; pollMs?: number },
+  opts: { timeoutMs: number; pollMs?: number; tag?: string },
 ): Promise<ServerLogEntry | null> {
   const deadline = Date.now() + opts.timeoutMs;
   const pollMs = opts.pollMs ?? 50;
   while (Date.now() < deadline) {
-    const res = await request.get(`${SERVER_URL}/dev/events?limit=500`);
+    // `tag` filters server-side over the whole ring (GET /dev/events?tag=), so
+    // a lone event isn't cut off by every room's recent noise.
+    const tagQ = opts.tag ? `&tag=${encodeURIComponent(opts.tag)}` : '';
+    const res = await request.get(`${SERVER_URL}/dev/events?limit=500${tagQ}`);
     if (res.ok()) {
       const body = (await res.json()) as { events: ServerLogEntry[] };
       // Scan newest-first so we get the most recent match. The ring
@@ -180,7 +183,7 @@ test('heat-seeker locks onto in-range player and detonates via homing — not li
       (e) => e.tag === 'missile_spawned'
         && e.data['ownerId'] === shooter.playerId
         && e.ts >= fireTs,
-      { timeoutMs: 4000 },
+      { tag: 'missile_spawned', timeoutMs: 4000 },
     );
     if (spawned === null) {
       // Diagnostic on failure — what tags ARE in the ring right now?
@@ -227,7 +230,7 @@ test('heat-seeker locks onto in-range player and detonates via homing — not li
       (e) => e.tag === 'missile_detonated'
         && e.data['ownerId'] === shooter.playerId
         && e.ts >= fireTs,
-      { timeoutMs: 7000 },
+      { tag: 'missile_detonated', timeoutMs: 7000 },
     );
     if (detonated === null) {
       // Diagnostic on failure — dump every missile event from this
@@ -344,7 +347,7 @@ test('heat-seeker damages a drone (swarm target) — not just other players', as
         && e.data['ownerId'] === shooter.playerId
         && e.ts >= fireTs,
       // instantLock: the AUTO group locks within ~100 ms of the switch.
-      { timeoutMs: 4000 },
+      { tag: 'missile_spawned', timeoutMs: 4000 },
     );
     expect(spawned, 'no missile_spawned event for shooter').not.toBeNull();
     const lockedTargetId = spawned!.data['lockedTargetId'] as string | null;
@@ -365,7 +368,7 @@ test('heat-seeker damages a drone (swarm target) — not just other players', as
       (e) => e.tag === 'missile_detonated'
         && e.data['ownerId'] === shooter.playerId
         && e.ts >= fireTs,
-      { timeoutMs: 8000 },
+      { tag: 'missile_detonated', timeoutMs: 8000 },
     );
     expect(detonated, 'no missile_detonated from shooter within 8 s').not.toBeNull();
     const cause = detonated!.data['cause'] as string;
@@ -385,7 +388,7 @@ test('heat-seeker damages a drone (swarm target) — not just other players', as
         && e.data['shooterId'] === shooter.playerId
         && e.data['kind'] === 'swarm'
         && Number(e.data['damage'] ?? 0) > 0,
-      { timeoutMs: 2000 },
+      { tag: 'damage_applied', timeoutMs: 2000 },
     );
     if (damageApplied === null) {
       const res = await request.get(`${SERVER_URL}/dev/events?limit=500`);
@@ -587,24 +590,28 @@ test('impact-only: a missile with no target FIZZLES on expiry — no lifetime/fu
     const spawned = await fetchEvents(
       request,
       (e) => e.tag === 'missile_spawned' && e.data['ownerId'] === shooter.playerId && e.ts >= fireTs,
-      { timeoutMs: 4000 },
+      { tag: 'missile_spawned', timeoutMs: 4000 },
     );
     expect(spawned, 'no missile_spawned — fire never reached the simulation').not.toBeNull();
     // Take the only target out of the world: the missile is now a miss.
-    await target.ctx.close();
-    targetOpen = false;
-
-    // The missile must EXPIRE. Missiles step once per server update, which
+    // The missile must EXPIRE. Missiles step once per WORKER tick, which
     // `testTimeScale` does not speed up, so the lifetime is the catalogue's
     // `lifetimeTicks` in real time (6 s), not "~600 ms at 10×" as this spec
     // once assumed (it waited 1.5 s + 2 s and never saw the expiry,
     // 2026-11-08). Poll with the lifetime as a deadline, not a pace.
+    // Start watching BEFORE closing the target: /dev/events holds only a few
+    // seconds of history (every galaxy room logs into it), and closing a
+    // context can take seconds on a loaded host, long enough for the expiry
+    // to roll out of the ring before polling began (2026-11-12 probe).
     const lifetimeMs = (getWeapon('heat-seeker') as { lifetimeTicks: number }).lifetimeTicks * (1000 / 60);
-    const expired = await fetchEvents(
+    const expiredP = fetchEvents(
       request,
       (e) => e.tag === 'missile_expired' && e.data['ownerId'] === shooter.playerId && e.ts >= fireTs,
-      { timeoutMs: lifetimeMs + 3000 },
+      { tag: 'missile_expired', timeoutMs: lifetimeMs + 3000 },
     );
+    await target.ctx.close();
+    targetOpen = false;
+    const expired = await expiredP;
     expect(expired, 'missile never logged missile_expired — the impact-only despawn path did not run').not.toBeNull();
 
     // No IMPACT detonation from this shooter. Since WS-C #14 an expiring
@@ -616,7 +623,7 @@ test('impact-only: a missile with no target FIZZLES on expiry — no lifetime/fu
       request,
       (e) => e.tag === 'missile_detonated' && e.data['ownerId'] === shooter.playerId && e.ts >= fireTs
         && e.data['cause'] !== 'lifetime',
-      { timeoutMs: 500 },
+      { tag: 'missile_detonated', timeoutMs: 500 },
     );
     expect(
       impact,
@@ -628,7 +635,7 @@ test('impact-only: a missile with no target FIZZLES on expiry — no lifetime/fu
     const damageApplied = await fetchEvents(
       request,
       (e) => e.tag === 'damage_applied' && e.data['shooterId'] === shooter.playerId,
-      { timeoutMs: 500 },
+      { tag: 'damage_applied', timeoutMs: 500 },
     );
     expect(damageApplied, 'a missed missile dealt damage — impact-only violated').toBeNull();
   } finally {
@@ -663,19 +670,17 @@ test("touch fire path: holding a MAN group's chip dispatches a missile", async (
     const cdp = await shooter.ctx.newCDPSession(shooter.page);
     const fireTs = Date.now();
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
-    // Hold for one salvo (≥ 1 RAF + 1 server tick); the cooldown means
-    // only ONE fire happens.
-    await shooter.page.waitForTimeout(300);
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-
-    // Touch fire must produce a missile_spawned event server-side.
+    // Hold until the missile spawns (deadline 3 s). A fixed 300 ms hold could
+    // end before one client frame on the main-thread renderer touch devices
+    // use, so the fire tick never saw the chip held (2026-11-12).
     const spawned = await fetchEvents(
       request,
       (e) => e.tag === 'missile_spawned'
         && e.data['ownerId'] === shooter.playerId
         && e.ts >= fireTs,
-      { timeoutMs: 3000 },
+      { tag: 'missile_spawned', timeoutMs: 3000 },
     );
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     expect(
       spawned,
       'holding the MAN missiles chip did not produce a missile_spawned — the chip-hold fire path is broken',
