@@ -36,8 +36,20 @@ export class NavalShellBursts {
 
   /** One frame: note every naval shell in `projectiles` (the render mirror's
    *  map, game space), then burst each shell gone since last frame that ended
-   *  before its full range. */
-  frame(projectiles: ReadonlyMap<string, ShellView> | undefined, sink: ShellBurstSink | null, nowMs: number): void {
+   *  before its full range.
+   *
+   *  Shells as events (`eventsOn`, the welcome said `shellEvents`): the server
+   *  reports every hit, so a shell's disappearance means nothing (it may only
+   *  have left this viewer's interest: the false edge burst). Bursts then come
+   *  ONLY from `ends`, flat `[x, y, shellRadius]` triples in game space from
+   *  `shell_end` (`mirror.pendingShellEnds`). */
+  frame(
+    projectiles: ReadonlyMap<string, ShellView> | undefined, sink: ShellBurstSink | null, nowMs: number,
+    ends?: readonly number[], eventsOn = false,
+  ): void {
+    if (ends) for (let i = 0; i + 2 < ends.length; i += 3) {
+      sink?.spawn(ends[i]!, ends[i + 1]!, shellImpactRadius(ends[i + 2]!), nowMs);
+    }
     const gen = ++this.gen;
     if (projectiles) for (const [id, p] of projectiles) {
       if (p.beam || p.weaponId === undefined || !p.weaponId.startsWith('naval_')) continue;
@@ -54,7 +66,7 @@ export class NavalShellBursts {
     }
     for (const [id, rec] of this.shells) {
       if (rec.gen === gen) continue;
-      if (shellEndedOnHit(Math.hypot(rec.x - rec.sx, rec.y - rec.sy), rec.reach)) sink?.spawn(rec.x, rec.y, rec.r, nowMs);
+      if (!eventsOn && shellEndedOnHit(Math.hypot(rec.x - rec.sx, rec.y - rec.sy), rec.reach)) sink?.spawn(rec.x, rec.y, rec.r, nowMs);
       this.shells.delete(id);
       this.free.push(rec);
     }

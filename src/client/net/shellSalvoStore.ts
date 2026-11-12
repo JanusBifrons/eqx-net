@@ -14,34 +14,52 @@
 import type { ShellSalvoRenderInfo } from '@core/contracts/IRenderer';
 import { shellPathEndTick } from '@core/combat/shellFlight';
 import type { ShellEnd, ShellKeyRecord, ShellSalvo } from '@shared-types/messages/shellEvents';
+import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
+
+/** A shell's own radius when its gun is unknown (a burst still shows). */
+const DEFAULT_SHELL_RADIUS = 3;
+
+function shellRadiusOf(w: string): number {
+  const def = isWeaponId(w) ? getWeapon(w) : null;
+  return def && def.mode !== 'hitscan' ? def.radius : DEFAULT_SHELL_RADIUS;
+}
 
 export class ShellSalvoStore {
   readonly map = new Map<string, ShellSalvoRenderInfo>();
   private readonly free: ShellSalvoRenderInfo[] = [];
 
-  private put(id: string, s: number, t: number, n: number, x0: number, y0: number): void {
+  private put(id: string, s: number, t: number, n: number, x0: number, y0: number, w: string): void {
     let r = this.map.get(id);
     if (r === undefined) {
-      r = this.free.pop() ?? { s: 0, t: 0, n: 1, x0: 0, y0: 0 };
+      r = this.free.pop() ?? { s: 0, t: 0, n: 1, x0: 0, y0: 0, wr: 0 };
       this.map.set(id, r);
     }
     r.s = s; r.t = t; r.n = n; r.x0 = x0; r.y0 = y0;
+    r.wr = shellRadiusOf(w);
   }
 
   /** A `shell_salvo` (or one entry of the welcome's `shellsInFlight`). */
   applySalvo(msg: ShellSalvo): void {
-    for (const sh of msg.sh) this.put(sh[0], msg.s, msg.t, msg.n, sh[1], sh[2]);
+    for (const sh of msg.sh) this.put(sh[0], msg.s, msg.t, msg.n, sh[1], sh[2], msg.w);
   }
 
   /** A snapshot keyframe: adopt shells we don't know; ignore known ones. */
   applyKeyframe(recs: readonly ShellKeyRecord[] | undefined): void {
     if (!recs) return;
-    for (const r of recs) if (!this.map.has(r[0])) this.put(r[0], r[1], r[4], r[5], r[6], r[7]);
+    for (const r of recs) if (!this.map.has(r[0])) this.put(r[0], r[1], r[4], r[5], r[6], r[7], r[3]);
   }
 
-  /** A `shell_end`: those shells hit something. */
-  applyEnd(msg: ShellEnd): void {
-    for (const e of msg.e) this.drop(e[0]);
+  /**
+   * A `shell_end`: those shells hit something. With `bursts`, each hit is
+   * queued as `[x, y, shellRadius]` (game space) for the renderer's impact
+   * burst (`mirror.pendingShellEnds`, slice 2b); the only burst a shell gets
+   * when events are on.
+   */
+  applyEnd(msg: ShellEnd, bursts?: number[]): void {
+    for (const e of msg.e) {
+      if (bursts) bursts.push(e[2], e[3], this.map.get(e[0])?.wr ?? DEFAULT_SHELL_RADIUS);
+      this.drop(e[0]);
+    }
   }
 
   /** Forget shells whose path has ended by `serverTick` (misses send nothing). */

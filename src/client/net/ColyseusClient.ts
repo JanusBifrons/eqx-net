@@ -2044,7 +2044,7 @@ export class ColyseusGameClient {
     room.onMessage('shell_end', (raw: unknown) => {
       if (!this._shellEvents) return;
       const r = ShellEndSchema.safeParse(raw);
-      if (r.success) this._shellStore.applyEnd(r.data);
+      if (r.success) this._shellStore.applyEnd(r.data, this.mirror.pendingShellEnds ??= []);
     });
     room.onMessage('shell_blast', (raw: unknown) => {
       const result = ShellBlastSchema.safeParse(raw);

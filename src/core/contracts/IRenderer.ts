@@ -409,6 +409,8 @@ export interface ShellSalvoRenderInfo {
   /** Origin (quantised spawn point). */
   x0: number;
   y0: number;
+  /** The shell's own radius (its gun's), for the impact burst size. */
+  wr: number;
 }
 
 export interface RenderMirror {
@@ -485,6 +487,10 @@ export interface RenderMirror {
    *  as its `projectiles` entry. Present only when the welcome said
    *  `shellEvents: true`. Pooled records, mutated in place. */
   shellSalvos?: Map<string, ShellSalvoRenderInfo>;
+  /** Shells as events (slice 2b): `shell_end` hits awaiting their impact
+   *  burst, flat `[x, y, shellRadius]` triples in game space. One-frame
+   *  queue: cleared by `consumeOneFrameTriggers` after a render. */
+  pendingShellEnds?: number[];
   /** In-flight heat-seeking missiles. Server-authoritative pose mirrored
    *  from `SnapshotMessage.missiles[]` (per-recipient AOI-filtered).
    *  Keyed by the stable per-sector missileId. The renderer draws the

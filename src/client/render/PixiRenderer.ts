@@ -2525,7 +2525,7 @@ export class PixiRenderer implements IRenderer {
     // it HIT something; one that ran out of range just fades (review
     // 2026-11-07). Game space in, game space to FxExplosions (review
     // 2026-11-10: a Pixi-space -y here put the burst at the Y mirror).
-    this._navalShellBursts.frame(mirror.projectiles, this._fxExplosions, now);
+    this._navalShellBursts.frame(mirror.projectiles, this._fxExplosions, now, mirror.pendingShellEnds, mirror.shellSalvos !== undefined);
     if (mirror.missiles) {
       for (const [id, m] of mirror.missiles) {
         if (!this._turretMissileSeen.has(id)) {
