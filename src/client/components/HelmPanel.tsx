@@ -41,7 +41,7 @@ export function HelmPanel(): JSX.Element | null {
   if (!show || !available) return null;
   return (
     <Box sx={ROOT_SX} data-testid="helm-panel" data-helm-active={active ? '1' : '0'} data-helm-speed={speed}>
-      <Box component="span" sx={LABEL_SX}>{active ? 'Helm: on course' : 'Helm: tap to set course'}</Box>
+      <Box component="span" sx={LABEL_SX}>{active ? 'Helm: course set' : 'Helm: tap to set course'}</Box>
       {LABELS.map((label, i) => (
         <ButtonBase
           key={label}

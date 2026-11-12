@@ -18,6 +18,7 @@ import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSprit
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar, type RadarDebugIcon } from './HaloRadar';
 import { IncomingFireWarning } from './incoming/IncomingFireWarning.js';
+import { HelmCourseMarker } from './helm/HelmCourseMarker.js';
 import type { RadarInsets, RadarPrefs } from '../../shared-types/settings/radar.js';
 import { DamageNumberManager } from './DamageNumbers';
 import { LevelUpIconManager } from './LevelUpIcons';
@@ -465,6 +466,8 @@ export class PixiRenderer implements IRenderer {
   /** Naval shells on course for the local ship: fall-point markers + the
    *  radar's incoming chevron (`render/incoming/`). */
   private readonly incomingFire = new IncomingFireWarning();
+  /** Helm move marker: the green RTS icon at the pilot's course point. */
+  private readonly helmMarker = new HelmCourseMarker();
   private damageNumbers: DamageNumberManager | null = null;
   /** Phase 4 WS-B1 — pooled screenspace level-up icon (own ship). */
   private levelUpIcons: LevelUpIconManager | null = null;
@@ -1006,6 +1009,7 @@ export class PixiRenderer implements IRenderer {
 
     // Incoming-fire markers sit under the radar's edge icons.
     this.incomingFire.init(this.camera);
+    this.helmMarker.init(this.camera);
     this.halo.init(this.camera);
     this.halo.setIncoming(this.incomingFire);
     // Damage numbers attach to the world (pan with camera, anchored at
@@ -2331,6 +2335,8 @@ export class PixiRenderer implements IRenderer {
     // test uses this frame's viewport bounds, not last frame's. Incoming fire
     // first: the radar reads its groups for the off-screen chevron.
     this.incomingFire.update(mirror, this.fxNow()); // countdowns are game seconds
+    // eslint-disable-next-line no-restricted-properties -- real time: the helm order marker is UI
+    this.helmMarker.update(mirror, performance.now());
     this.halo.update(mirror);
 
     // ---------- RendererFeedback (end-of-frame, main-thread readable) ----------
@@ -3281,6 +3287,7 @@ export class PixiRenderer implements IRenderer {
     this.effects?.resetForSectorHandoff();
     this._fxExplosions?.reset();
     this.incomingFire.reset();
+    this.helmMarker.reset();
     this._fxShields?.reset();
     this._fxFences?.reset();
     this._activeThrustIds.clear();
@@ -3290,7 +3297,7 @@ export class PixiRenderer implements IRenderer {
 
   /** Machined art status: the service's counts plus how many ship sprites
    *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; lodDots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']>; warpBursts: number; warpSpooling: number; spoolFxDrawn: number; ownArt: string | null } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; lodDots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']>; warpBursts: number; warpSpooling: number; spoolFxDrawn: number; ownArt: string | null; helmMarker: boolean } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;
@@ -3300,7 +3307,7 @@ export class PixiRenderer implements IRenderer {
       if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
     const art = this._artCtx.art;
-    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), lodDots: this._lodDots.dotCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), spoolFxDrawn: this._spoolFx.spooling, ownArt: this._lastMirror?.localPlayerId ? (this._artCtx.handles.get(this._lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
+    return { mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), lodDots: this._lodDots.dotCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), spoolFxDrawn: this._spoolFx.spooling, helmMarker: this.helmMarker.isVisible(),ownArt: this._lastMirror?.localPlayerId ? (this._artCtx.handles.get(this._lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
   }
 
   dispose(): void {
@@ -3356,6 +3363,7 @@ export class PixiRenderer implements IRenderer {
     this.mountVisuals.disposeAll();
     this.halo.destroy();
     this.incomingFire.destroy();
+    this.helmMarker.destroy();
     this.backgroundGrid?.destroy();
     this.starfield?.destroy();
     // Warp stage + filters live on app.stage so `app.destroy({ children: true })`

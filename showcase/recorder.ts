@@ -186,6 +186,10 @@ export class Recorder {
     // EQX_CAPTURE_QUALITY: JPEG quality of the screencast. A frame full of bright,
     // detailed hulls costs Chrome more to encode, and fewer frames arrive.
     const quality = Number(process.env['EQX_CAPTURE_QUALITY'] ?? 80);
+    // Frame the opening shot before capture starts, so frame 0 is already the
+    // shot (review 2026-11-12: broadside opened on the spectator's default view).
+    const opening = openingCues(shot.camera);
+    if (opening.length > 0) await ctx.cinema.play(scaleCues(opening, phone ? 1 : ctx.viewport.width / 1920));
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality, everyNthFrame: 1, ...size });
     // Starting the screencast stalls the page for a few hundred ms (long
     // frames of 125-760 ms at 0.1-0.6 s in every take, no script: the
@@ -372,6 +376,12 @@ interface CinemaWindow {
  * Shot zooms are authored against a 1920-wide frame. Scale them by the capture
  * width so a take frames the same world area at any capture resolution.
  */
+/** The cues at the very start of a take, landing at once: applied before the
+ *  screencast starts so the first frame is already framed. */
+export function openingCues(cues: readonly CameraCue[] | undefined): CameraCue[] {
+  return (cues ?? []).filter((c) => c.atMs <= 0).map((c) => ({ ...c, smoothMs: 0 }));
+}
+
 export function scaleCues(cues: readonly CameraCue[], k: number): CameraCue[] {
   if (k === 1) return [...cues];
   return cues.map((c) => {

@@ -623,6 +623,14 @@ export interface RenderMirror {
    * Structured-cloneable (plain object) so it crosses the worker boundary.
    */
   pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number; pending?: boolean } | null;
+  /**
+   * Helm move marker (owner 2026-11-12): the local pilot's active helm course
+   * point, GAME-space, while they fly a capital under a helm order (never for
+   * other ships, never while spectating). `seq` bumps on each new course tap
+   * so the renderer replays its pop. Spatial ⇒ here, never Zustand (#2).
+   * A reused plain object (structured-cloneable); `null`/absent ⇒ no marker.
+   */
+  helmCourse?: { x: number; y: number; seq: number } | null;
   /** Ships currently flashing due to recent damage (set of player IDs). */
   damagedShips?: Set<string>;
   /** Ships that just exploded (single-frame trigger). */
