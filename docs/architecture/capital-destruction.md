@@ -2,8 +2,9 @@
 
 Status: **design + slice S1 (the core fracture module) + slice S2a (server
 wreck bodies, behind the `capitalWrecks` flag) + slice S2b (wrecks reach the
-client and are drawn plainly).** S2c (persistence, lifting the cap) and S3
-(art and glowing cut edges) are not built. Owner direction (2026-11-12): "Implement the ship splitting
+client and are drawn plainly) + slice S3 (the dead ship's own art on every
+piece, glowing cut edges, the break-up burst).** S2c (persistence, lifting the
+cap) is not built. Owner direction (2026-11-12): "Implement the ship splitting
 dynamically", and "keep the damage model as an idea for now". The damage
 model (zones, armour, internal systems, the destruction sequence) is parked in
 [docs/SHELF.md](../SHELF.md) "Capital damage model".
@@ -246,8 +247,8 @@ plus every piece's drifted pose; geometry re-derives on hydrate) and lifting
 the 768-piece cap (owner: wrecks stay for ever). Also open: the lag-comp
 choice for pieces and a lingering-capital integration test.
 
-**Left for S3:** art and glow (textured pieces, molten cut edges from the
-`cutEdges` flags, particles). Then the flag can default on.
+**S3 is built** (see "S3: client draws the pieces" below). The flag can
+default on once S2c lands.
 
 The original S2 plan:
 
@@ -286,16 +287,50 @@ follows the remote-entity anchor (invariant #12), the same path as scrap.
 descriptor plus each piece's drifted pose and health; geometry re-derives on
 hydrate.
 
-### S3: client draws the pieces
+### S3: client draws the pieces (built)
 
-- **Texture continuity.** Each piece is drawn as a mesh (or a mask over the
-  baked hull sprite) with UVs taken from its local outline, which is still the
-  ship's frame. Laid side by side the pieces show the intact ship.
-- **Glowing cut edges.** The `cut` edge flags become a per-vertex attribute.
-  A small shader glows those edges molten orange at the death and cools them
-  to dark over a few seconds.
-- **Particles.** Dust and shards at the death are particles (the existing FX
-  layer), never bodies.
+The owner's look spec: each piece shows its own part of the dead ship's art,
+so the pieces fit like a jigsaw; new cut edges glow molten and cool to dark;
+dust and shards are particles; a big white flash at the kill point; the
+pieces stay for ever and the glow ends dark. As built
+(`src/client/render/pixi/wreckArt.ts`, `effects/perEffect/WreckBreakFx.ts`):
+
+- **Texture continuity.** A piece reuses its parent kind's EXISTING baked art
+  (`shipHandleFor(kind)`, the handle the live hull drew; no re-bake, no new
+  texture page). Capital art is tiled along the hull (`TILE_MAX_SIDE` rows per
+  texture), so `wreckPieceMeshes` clips each convex part to every tile's row
+  band and fans it: one `Mesh` per tile the piece covers. A vertex's UV is its
+  hull-local position (outline + centroid, the ship's own frame) mapped into
+  the tile's frame, so a point two pieces share gets the same UV in both. UVs
+  are frame-relative, so the same meshes follow the sun frames (the frame
+  nearest the piece's rotation, swapped only on change). Every mesh sets
+  `batchMode: 'batch'`, so a whole wreck batches over at most its parent's
+  tile textures. Pieces are tinted burnt, darkest near the kill point. GPU-lit
+  art (`?shiplight=gpu`) maps slice A (albedo) with the default shader: unlit
+  but correct. Before the art is ready (or in the classic look) the piece is
+  today's plain polygon, swapped once the art arrives.
+- **Glowing cut edges.** One white stroke `Graphics` per piece over its runs
+  of `cutEdges` (the original outline never glows), tinted and faded each
+  frame by `wreckGlowAt`: molten white-orange at death, an ember at
+  `WRECK_GLOW_EMBER_S` (4 s), dark at `WRECK_GLOW_END_S` (9 s), when the stroke
+  is destroyed. The clock is the descriptor's new `deathTick` against the
+  piece's latest server tick, so a late joiner (or a descriptor without one)
+  starts cool. Per-wreck state lives in the renderer's `WreckArtState`.
+- **Break-up.** The first piece of a wreck younger than 1.5 s fires
+  `effects.spawnBurst('wreck-break', killPoint, { radius, flashScale })`: a
+  white flash (1.6× for a clean snap), dust and hot shards flung outward,
+  sized from the wreck radius, counts by effects tier (70+40 on high, 8+4 on
+  minimal). The kill point comes from that piece's pose and its known
+  centroid in the hull frame. The pool is built on the first break-up and
+  leaves the stage when idle.
+- **Counts.** A piece is a container, ≤ 6 meshes and one glow stroke
+  (`WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX` = 8), the stroke gone once cool.
+  Both render paths (worker and main thread) run the same updater.
+- Locks: `wreckArt.test.ts` (UVs are the hull-local mapping, tile meshes tile
+  the piece, neighbours share edge UVs; the glow curve; cut edges only),
+  `swarmSpriteUpdater.wreckArt.test.ts` (parent textures only, count budget,
+  hot vs late-joiner cool, one break-up), `WreckBreakFx.test.ts`, and the S3
+  case in `tests/e2e/capital-wreck-render.spec.ts`.
 
 ### S4: secondary breaks and the catastrophic flash
 
