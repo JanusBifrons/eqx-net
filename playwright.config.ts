@@ -108,6 +108,9 @@ const FEATURE_SPECS: string[] = [
   '**/capital-flyby-smooth.spec.ts',
   // Spectating keeps applying the NPC turret slice (capital-turrets clip, 2026-11-12).
   '**/spectator-npc-turrets.spec.ts',
+
+  // Spectate leaves no predicted phantom of the own ship (capital-breakup take, 2026-11-12).
+  '**/spectate-no-phantom-own-ship.spec.ts',
   // Prediction backlog after a long loading hold is skipped, not replayed (2026-11-05).
   '**/loading-catchup.spec.ts',
   // Fence-hit fix (2026-11-04).
