@@ -144,6 +144,9 @@ interface PointerState {
 
 export class Camera {
   private readonly opts: ResolvedOpts;
+  /** The constructor's zoom-in limit. The gameplay cap (`opts.maxScale`)
+   *  follows the hull you fly (`setMaxScale`); a scripted shot keeps this. */
+  private readonly directorMaxScale: number;
   private readonly pointers = new Map<number, PointerState>();
   /** True once a gesture has had ≥2 simultaneous pointers (a pinch). Latches for
    *  the WHOLE gesture and only clears when the last finger lifts, so the final
@@ -221,6 +224,7 @@ export class Camera {
     opts: CameraOptions = {},
   ) {
     this.opts = { ...DEFAULTS, ...opts };
+    this.directorMaxScale = this.opts.maxScale;
     this.momentum = new MomentumDecay({
       decelFactor: this.opts.decelFactor,
       epsilon: this.opts.momentumEpsilon,
@@ -310,7 +314,7 @@ export class Camera {
     this.dirY = worldY;
     // A scripted shot may pull back past the pilot's gameplay floor (a
     // fighter's 0.15 can't fit a 10x capital fleet); it keeps the zoom-in cap.
-    this.dirZoom = Math.max(DIRECTOR_MIN_SCALE, Math.min(this.opts.maxScale, zoom));
+    this.dirZoom = Math.max(DIRECTOR_MIN_SCALE, Math.min(this.directorMaxScale, zoom));
     this.dirSmoothMs = smoothMs;
   }
 
@@ -319,6 +323,8 @@ export class Camera {
     if (!this.directed) return;
     this.directed = false;
     this.targetScale = this.target.scale.x;
+    // A shot may have zoomed past the gameplay cap: ease back inside it.
+    this.easeUnderCap();
   }
 
   /** True while a cinematic director target owns the camera. */
@@ -745,6 +751,36 @@ export class Camera {
   /** The zoom-out floor (it follows the ship you fly: capital-ship round 3 D). */
   setMinScale(min: number): void {
     this.opts.minScale = min;
+  }
+
+  /**
+   * The zoom-in cap (it follows the ship you fly so the whole hull fits:
+   * `zoomCeilingForView`, owner decision 2026-11-12). A lowered cap EASES the
+   * player's zoom down through the wheel-zoom ease round the screen centre
+   * (the followed ship stays centred), never a snap. The cinematic director
+   * keeps the constructor's limit.
+   */
+  setMaxScale(max: number): void {
+    this.opts.maxScale = max;
+    this.easeUnderCap();
+  }
+
+  /** Player zoom (or its pending ease target) past the cap ⇒ ease it to the
+   *  cap round the screen centre. Alloc-free. */
+  private easeUnderCap(): void {
+    if (this.directed) return;
+    const max = this.opts.maxScale;
+    if (this.targetScale > max) {
+      this.targetScale = max;
+      this.zoomAnchorX = this.screenW / 2;
+      this.zoomAnchorY = this.screenH / 2;
+      this.hasZoomTarget = true;
+    } else if (!this.hasZoomTarget && this.playerScale() > max) {
+      this.targetScale = max;
+      this.zoomAnchorX = this.screenW / 2;
+      this.zoomAnchorY = this.screenH / 2;
+      this.hasZoomTarget = true;
+    }
   }
 
   // ---------- Internal ----------

@@ -48,7 +48,7 @@ import { WarpFx, type WarpFxShip } from './pixi/WarpFx.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
 import { LodDots } from './pixi/LodDots';
 import { NAVAL_RANGE } from '@shared-types/combat/navalRange';
-import { GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldBubbleRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
+import { GAMEPLAY_MAX_ZOOM, GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldBubbleRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
 import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
 import { shieldBubbleRadiusForEntity } from './pixi/shieldBubbleRadius.js';
@@ -156,7 +156,7 @@ export class PixiRenderer implements IRenderer {
   private _viewW = 0;
   private _viewH = 0;
   private _zoomPinned = false;
-  private readonly _zoomRange = { minScale: GAMEPLAY_MIN_ZOOM, startZoom: 0 };
+  private readonly _zoomRange = { minScale: GAMEPLAY_MIN_ZOOM, startZoom: 0, maxScale: GAMEPLAY_MAX_ZOOM };
 
   /** FX kill switches handed in by the worker BOOT (resolved on the main
    *  thread — the worker has no `window`). Absent ⇒ read the URL at init. */
@@ -744,7 +744,10 @@ export class PixiRenderer implements IRenderer {
       // much further out to read the wider battlefield. maxScale (zoom-in)
       // unchanged.
       minScale: GAMEPLAY_MIN_ZOOM,
-      maxScale: 3,
+      // The gameplay zoom-in cap then follows the ship you fly so its whole
+      // hull fits (`applyZoomCap`); 3 stays the cap for ordinary hulls and
+      // the cinematic director's limit.
+      maxScale: GAMEPLAY_MAX_ZOOM,
       followLerpFactor: 1,
     });
     this.setViewSize(initialW, initialH);
@@ -1546,6 +1549,7 @@ export class PixiRenderer implements IRenderer {
     const kind = getShipKind(id);
     zoomRangeForKind(kind, DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, this._viewW, this._viewH);
     this.camera.setMinScale(this._zoomRange.minScale);
+    this.applyZoomCap();
     const f = hullZoomFactor(kind);
     if (f !== this._zoomFactor) {
       this._zoomFactor = f;
@@ -1563,6 +1567,14 @@ export class PixiRenderer implements IRenderer {
     if (this._zoomKindId === null) return;
     zoomRangeForKind(getShipKind(this._zoomKindId), DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, w, h);
     this.camera.setMinScale(this._zoomRange.minScale);
+    this.applyZoomCap();
+  }
+
+  /** The zoom-in cap: the hull you fly fits on screen (`zoomCeilingForView`,
+   *  owner decision 2026-11-12), eased down by the Camera, never snapped.
+   *  Spectator keeps the ordinary cap (there may be no ship to fit). */
+  private applyZoomCap(): void {
+    this.camera.setMaxScale(this._spectator || this._zoomKindId === null ? GAMEPLAY_MAX_ZOOM : this._zoomRange.maxScale);
   }
 
   update(mirror: RenderMirror): void {
@@ -3060,6 +3072,7 @@ export class PixiRenderer implements IRenderer {
     this.halo.setSpectator(active);
     if (!this.initialized) return;
     if (active) this.camera.follow(null);
+    this.applyZoomCap();
   }
 
   /** See `IRenderer.setRadarPrefs`. */
