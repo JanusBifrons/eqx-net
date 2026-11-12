@@ -74,6 +74,8 @@ import { GLOBAL_SHIP_TUNING, tuningFor } from '../../shared-types/shipScale/look
 const POOL_CAPACITY = 256;
 
 const DT_SEC = 1 / 60;
+/** A hard stall moves a missile at most this many ticks in one update. */
+const MISSILE_MAX_CATCH_UP_TICKS = 30;
 
 /** Re-acquisition cadence for an unlocked missile (playtest 2026-06-10 Issue
  *  10). ~6 Hz at 60 Hz tick — responsive enough to chase a freshly-appeared
@@ -117,6 +119,9 @@ export interface MissileRecord {
   lockedKind: SplashKind | null;
   /** Ticks remaining before lifetime detonation. Decrements each tick. */
   ticksRemaining: number;
+  /** The worker tick this missile last stepped at (`advance` steps it once
+   *  per elapsed worker tick; MISSILE_MAX_CATCH_UP_TICKS). */
+  lastTick: number;
   /** Per-owner hostility predicate, captured at launch so `advance()` can
    *  RE-ACQUIRE a lost lock onto the nearest remaining hostile (playtest
    *  2026-06-10 Issue 10). null on a free-list record. */
@@ -251,6 +256,7 @@ export class MissileSimulation {
       lockedTargetId: null,
       lockedKind: null,
       ticksRemaining: 0,
+      lastTick: -1,
       isHostile: null,
       alive: false,
       poolIndex: index,
@@ -321,6 +327,7 @@ export class MissileSimulation {
     // Pixi-up: angle 0 → forward (-y). dir=(-sin θ, cos θ) ⇒ θ = atan2(-dx, dy).
     rec.angle = Math.atan2(-ndx, ndy);
     rec.angvel = 0; // fresh missile hasn't turned yet
+    rec.lastTick = this.deps.serverTick() - 1; // the first advance steps once
 
     // Lock-at-launch: build candidate set (players + swarm) and pickTarget.
     const lockResult = this.lockOnTarget(spawnX, spawnY, ownerId, isHostile, weaponDef);
@@ -381,6 +388,13 @@ export class MissileSimulation {
    * proximity-fuse → guide → integrate → sweep → lifetime → release.
    */
   advance(): void {
+    // A missile steps once per WORKER tick that passed since its last step,
+    // not once per room update: under load the room loop can run slower than
+    // the physics worker (~25 Hz vs ~34 Hz on a loaded E2E host), so missiles
+    // fell behind the ships (2026-11-12, missile-frigate-homing E2E). `max(1, …)` keeps
+    // a room that keeps pace exactly as before (see ProjectilePipeline
+    // MAX_CATCH_UP_TICKS for the same rule on bolts).
+    const serverTick = this.deps.serverTick();
     // Iterate by index so we can swap-pop releases without restarting.
     let i = 0;
     while (i < this.liveIndices.length) {
@@ -391,130 +405,145 @@ export class MissileSimulation {
         this.releaseAtPos(i);
         continue;
       }
-      const def = m.weaponDef;
-
-      // 1. Verify lock still resolves.
-      let target: { x: number; y: number; vx: number; vy: number } | null = null;
-      if (m.lockedTargetId !== null) {
-        target = this.resolveLockPose(m.lockedTargetId, m.lockedKind!);
-        if (target === null) {
-          // Diag — lock dropped mid-flight (target died, despawned,
-          // or became inactive).
-          this.deps.serverLogEvent?.('missile_lock_lost', {
-            missileId: m.id,
-            previousTargetId: m.lockedTargetId,
-            previousKind: m.lockedKind,
-            ageTicks: def.lifetimeTicks - m.ticksRemaining,
-          });
-          m.lockedTargetId = null;
-          m.lockedKind = null;
-        }
+      let n = serverTick - m.lastTick;
+      if (n < 1) n = 1;
+      else if (n > MISSILE_MAX_CATCH_UP_TICKS) n = MISSILE_MAX_CATCH_UP_TICKS;
+      if (serverTick > m.lastTick) m.lastTick = serverTick;
+      let released = false;
+      for (let k = 0; k < n; k++) {
+        if (this.stepMissile(m, i)) { released = true; break; }
       }
-
-      // 1b. Re-acquire a lost / never-acquired lock (playtest 2026-06-10
-      // Issue 10 — "missiles should bias tracking the closest enemy a lot
-      // more"). Before this a missile whose target died flew straight forever.
-      // Re-run the SAME closest-hostile selection (pickTarget with no previous
-      // target = pure nearest, no sticky/health bias) from the missile's
-      // CURRENT position, throttled to every MISSILE_REACQUIRE_INTERVAL_TICKS
-      // so the per-missile candidate scan isn't paid every tick.
-      if (target === null && m.isHostile !== null) {
-        const ageTicks = def.lifetimeTicks - m.ticksRemaining;
-        if (ageTicks % MISSILE_REACQUIRE_INTERVAL_TICKS === 0) {
-          const reacq = this.lockOnTarget(m.x, m.y, m.ownerId, m.isHostile, def);
-          if (reacq.lock !== null) {
-            m.lockedTargetId = reacq.lock.id;
-            m.lockedKind = reacq.lock.kind;
-            target = this.resolveLockPose(m.lockedTargetId, m.lockedKind);
-            this.deps.serverLogEvent?.('missile_reacquired', {
-              missileId: m.id,
-              targetId: m.lockedTargetId,
-              targetKind: m.lockedKind,
-              ageTicks,
-            });
-          }
-        }
-      }
-
-      // 2. Proximity-fuse check (only when locked + def opts in).
-      if (target !== null && def.proximityFuseRadius > 0) {
-        const dxp = target.x - m.x;
-        const dyp = target.y - m.y;
-        const d2p = dxp * dxp + dyp * dyp;
-        if (d2p <= def.proximityFuseRadius * def.proximityFuseRadius) {
-          this.detonate(m, m.x, m.y, m.lockedTargetId, m.lockedKind, 'fuse');
-          this.releaseAtPos(i);
-          continue;
-        }
-      }
-
-      // 3. Guidance: yaw toward target by at most turnRate * dt per tick.
-      // Track the signed turn this tick as angvel so the client can integrate
-      // the homing CURVE between 20 Hz snapshots (WS-C #5) instead of
-      // dead-reckoning a straight line. Computed from the actual applied step
-      // (wrapped) — never the raw desired delta, so it matches the integration.
-      const angleBefore = m.angle;
-      if (target !== null) {
-        const desired = Math.atan2(-(target.x - m.x), (target.y - m.y));
-        const delta = wrapPi(desired - m.angle);
-        const maxStep = def.turnRate * DT_SEC;
-        const step = Math.abs(delta) <= maxStep ? delta : (delta > 0 ? maxStep : -maxStep);
-        m.angle = wrapPi(m.angle + step);
-        m.vx = -Math.sin(m.angle) * def.speed;
-        m.vy = Math.cos(m.angle) * def.speed;
-      }
-      m.angvel = wrapPi(m.angle - angleBefore) / DT_SEC;
-
-      // 4+5. SWEPT integrate (campaign 5.1a) — test the FULL step segment
-      // against every collider BEFORE moving, so a fast missile can never
-      // jump across a target between samples (the "missiles pass through
-      // lingering ships" tunnelling hole; the projectile pipeline has used
-      // the same swept-circle since its own tunnelling fix). On hit the
-      // missile detonates at the parametric ENTRY point, not the tunnelled
-      // post-step position.
-      const stepX = m.vx * DT_SEC;
-      const stepY = m.vy * DT_SEC;
-      const hit = this.sweepCollision(m, stepX, stepY);
-      if (hit !== null) {
-        this.detonate(m, hit.x, hit.y, hit.id, hit.kind, 'sweep');
-        this.releaseAtPos(i);
-        continue;
-      }
-      // A shield wall in the way takes the missile (no splash past it).
-      if (this.deps.wallBlocksMissile?.(m.x, m.y, stepX, stepY, def.damage)) {
-        this.detonate(m, m.x, m.y, null, null, 'wall');
-        this.releaseAtPos(i);
-        continue;
-      }
-      m.x += stepX;
-      m.y += stepY;
-
-      // 6. Lifetime decrement / expiry. Impact-only DAMAGE is preserved (smoke
-      // handoff 2026-06-06, Issue 2): a missile that never lands a direct hit
-      // deals NO splash damage — `detonate()` skips its splash loops on
-      // cause==='lifetime'. But it MUST still DETONATE with a `missile_detonated`
-      // broadcast (WS-C #14): the old silent `releaseAtPos` left the client
-      // extrapolation to cap-then-FREEZE while the stale lifePct fade played over
-      // the frozen sprite (the "missile stops, then fades" report). Detonating
-      // (null primary, no splash) fires the broadcast so the client
-      // removeMissile()s immediately and plays the explosion VFX instead of a
-      // frozen ghost. The TTL still caps a never-hitting missile.
-      m.ticksRemaining -= 1;
-      if (m.ticksRemaining <= 0) {
-        this.deps.serverLogEvent?.('missile_expired', {
-          missileId: m.id,
-          ownerId: m.ownerId,
-          x: m.x,
-          y: m.y,
-          lockedTargetId: m.lockedTargetId,
-        });
-        this.detonate(m, m.x, m.y, null, null, 'lifetime');
-        this.releaseAtPos(i);
-        continue;
-      }
-
-      i++;
+      if (!released) i++;
     }
+  }
+
+  /** One worker tick of one missile (lock check, re-acquire, fuse, guidance,
+   *  swept move, lifetime). Returns true when it released the missile (the
+   *  slot at `i` now holds another live missile). */
+  private stepMissile(m: MissileRecord, i: number): boolean {
+    const def = m.weaponDef;
+
+    // 1. Verify lock still resolves.
+    let target: { x: number; y: number; vx: number; vy: number } | null = null;
+    if (m.lockedTargetId !== null) {
+      target = this.resolveLockPose(m.lockedTargetId, m.lockedKind!);
+      if (target === null) {
+        // Diag — lock dropped mid-flight (target died, despawned,
+        // or became inactive).
+        this.deps.serverLogEvent?.('missile_lock_lost', {
+          missileId: m.id,
+          previousTargetId: m.lockedTargetId,
+          previousKind: m.lockedKind,
+          ageTicks: def.lifetimeTicks - m.ticksRemaining,
+        });
+        m.lockedTargetId = null;
+        m.lockedKind = null;
+      }
+    }
+
+    // 1b. Re-acquire a lost / never-acquired lock (playtest 2026-06-10
+    // Issue 10 — "missiles should bias tracking the closest enemy a lot
+    // more"). Before this a missile whose target died flew straight forever.
+    // Re-run the SAME closest-hostile selection (pickTarget with no previous
+    // target = pure nearest, no sticky/health bias) from the missile's
+    // CURRENT position, throttled to every MISSILE_REACQUIRE_INTERVAL_TICKS
+    // so the per-missile candidate scan isn't paid every tick.
+    if (target === null && m.isHostile !== null) {
+      const ageTicks = def.lifetimeTicks - m.ticksRemaining;
+      if (ageTicks % MISSILE_REACQUIRE_INTERVAL_TICKS === 0) {
+        const reacq = this.lockOnTarget(m.x, m.y, m.ownerId, m.isHostile, def);
+        if (reacq.lock !== null) {
+          m.lockedTargetId = reacq.lock.id;
+          m.lockedKind = reacq.lock.kind;
+          target = this.resolveLockPose(m.lockedTargetId, m.lockedKind);
+          this.deps.serverLogEvent?.('missile_reacquired', {
+            missileId: m.id,
+            targetId: m.lockedTargetId,
+            targetKind: m.lockedKind,
+            ageTicks,
+          });
+        }
+      }
+    }
+
+    // 2. Proximity-fuse check (only when locked + def opts in).
+    if (target !== null && def.proximityFuseRadius > 0) {
+      const dxp = target.x - m.x;
+      const dyp = target.y - m.y;
+      const d2p = dxp * dxp + dyp * dyp;
+      if (d2p <= def.proximityFuseRadius * def.proximityFuseRadius) {
+        this.detonate(m, m.x, m.y, m.lockedTargetId, m.lockedKind, 'fuse');
+        this.releaseAtPos(i);
+        return true;
+      }
+    }
+
+    // 3. Guidance: yaw toward target by at most turnRate * dt per tick.
+    // Track the signed turn this tick as angvel so the client can integrate
+    // the homing CURVE between 20 Hz snapshots (WS-C #5) instead of
+    // dead-reckoning a straight line. Computed from the actual applied step
+    // (wrapped) — never the raw desired delta, so it matches the integration.
+    const angleBefore = m.angle;
+    if (target !== null) {
+      const desired = Math.atan2(-(target.x - m.x), (target.y - m.y));
+      const delta = wrapPi(desired - m.angle);
+      const maxStep = def.turnRate * DT_SEC;
+      const step = Math.abs(delta) <= maxStep ? delta : (delta > 0 ? maxStep : -maxStep);
+      m.angle = wrapPi(m.angle + step);
+      m.vx = -Math.sin(m.angle) * def.speed;
+      m.vy = Math.cos(m.angle) * def.speed;
+    }
+    m.angvel = wrapPi(m.angle - angleBefore) / DT_SEC;
+
+    // 4+5. SWEPT integrate (campaign 5.1a) — test the FULL step segment
+    // against every collider BEFORE moving, so a fast missile can never
+    // jump across a target between samples (the "missiles pass through
+    // lingering ships" tunnelling hole; the projectile pipeline has used
+    // the same swept-circle since its own tunnelling fix). On hit the
+    // missile detonates at the parametric ENTRY point, not the tunnelled
+    // post-step position.
+    const stepX = m.vx * DT_SEC;
+    const stepY = m.vy * DT_SEC;
+    const hit = this.sweepCollision(m, stepX, stepY);
+    if (hit !== null) {
+      this.detonate(m, hit.x, hit.y, hit.id, hit.kind, 'sweep');
+      this.releaseAtPos(i);
+      return true;
+    }
+    // A shield wall in the way takes the missile (no splash past it).
+    if (this.deps.wallBlocksMissile?.(m.x, m.y, stepX, stepY, def.damage)) {
+      this.detonate(m, m.x, m.y, null, null, 'wall');
+      this.releaseAtPos(i);
+      return true;
+    }
+    m.x += stepX;
+    m.y += stepY;
+
+    // 6. Lifetime decrement / expiry. Impact-only DAMAGE is preserved (smoke
+    // handoff 2026-06-06, Issue 2): a missile that never lands a direct hit
+    // deals NO splash damage — `detonate()` skips its splash loops on
+    // cause==='lifetime'. But it MUST still DETONATE with a `missile_detonated`
+    // broadcast (WS-C #14): the old silent `releaseAtPos` left the client
+    // extrapolation to cap-then-FREEZE while the stale lifePct fade played over
+    // the frozen sprite (the "missile stops, then fades" report). Detonating
+    // (null primary, no splash) fires the broadcast so the client
+    // removeMissile()s immediately and plays the explosion VFX instead of a
+    // frozen ghost. The TTL still caps a never-hitting missile.
+    m.ticksRemaining -= 1;
+    if (m.ticksRemaining <= 0) {
+      this.deps.serverLogEvent?.('missile_expired', {
+        missileId: m.id,
+        ownerId: m.ownerId,
+        x: m.x,
+        y: m.y,
+        lockedTargetId: m.lockedTargetId,
+      });
+      this.detonate(m, m.x, m.y, null, null, 'lifetime');
+      this.releaseAtPos(i);
+      return true;
+    }
+
+    return false;
   }
 
   /**

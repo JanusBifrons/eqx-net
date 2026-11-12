@@ -31,6 +31,17 @@ export function getRecentEvents(limit = 200): ServerLogEntry[] {
   return entries.slice(-limit);
 }
 
+/** The newest `limit` entries with this tag, from the WHOLE ring (oldest
+ *  first), so a test polling for one rare event isn't cut off by the
+ *  `limit` most recent entries of every room (GET /dev/events?tag=). */
+export function getRecentEventsByTag(tag: string, limit = 200): ServerLogEntry[] {
+  const out: ServerLogEntry[] = [];
+  for (let i = entries.length - 1; i >= 0 && out.length < limit; i--) {
+    if (entries[i]!.tag === tag) out.push(entries[i]!);
+  }
+  return out.reverse();
+}
+
 export function clearEvents(): void {
   entries.splice(0);
 }

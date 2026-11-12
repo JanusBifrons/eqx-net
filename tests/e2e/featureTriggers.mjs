@@ -73,9 +73,11 @@ export const QUARANTINE = new Set([
   // 2026-11-09 6x re-run (lane 1000, lock-to-fire universal); machined-art
   // went 6/6 and left the list. Still red, each without a quick fix:
   //
-  // held-fire test (:415) 0/5: one salvo per hold, never a cooldown
-  // rollover (heat-seeker cooldown 90 ticks; energy is not the limit). The
-  // other five tests in the file pass 5/5.
+  // 2026-11-12: missiles and bolts now step by WORKER ticks; homing, swarm
+  // damage and held fire went 6/6. Still red: impact-only, from host load
+  // (:557, 0/6) waits lifetime + 3 s for the expiry, but the loaded server's
+  // physics worker ran at ~34 Hz (every room shares it), so the 6 s lifetime
+  // took 10.6 s (probe). The touch chip hold (:646, 1/6): not yet probed.
   'missile-frigate-homing',
   // 2026-11-10: failing on CI's e2e-feature-affected since lock-to-fire went
   // universal (#385). Parked by the user for a pass next week: check each is

@@ -11,7 +11,7 @@ import { SectorRoom } from './rooms/SectorRoom.js';
 import { galaxySectorsToBoot } from './rooms/galaxyBoot.js';
 import { GATE_TEST_PREBUILT, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './rooms/scenarioLayouts.js';
 import { SHOWCASE_ROOMS } from './rooms/showcaseRooms.js';
-import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
+import { getRecentEvents, getRecentEventsByTag, clearEvents } from './debug/ServerEventLog.js';
 import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
 import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devPlayerShipsAbandonHandler, devResetSectorHandler, devResetRosterHandler, devWebrtcCountersHandler } from './routes/diagRouter.js';
@@ -199,7 +199,9 @@ if (process.env['NODE_ENV'] !== 'production') {
   // GET /dev/events?limit=N — recent server events (snapshots, joins, leaves).
   app.get('/dev/events', (req, res) => {
     const limit = Math.min(Number(req.query['limit'] ?? 200), MAX_DEV_EVENTS);
-    res.json({ events: getRecentEvents(limit) });
+    // ?tag= returns the newest matching entries from the whole ring.
+    const tag = typeof req.query['tag'] === 'string' ? req.query['tag'] : undefined;
+    res.json({ events: tag ? getRecentEventsByTag(tag, limit) : getRecentEvents(limit) });
   });
 
   // POST /dev/events/clear — reset the ring buffer between test runs.
