@@ -375,6 +375,9 @@ reintroduces the spiral the 500-target cannot afford. Full story:
   - The piece count comes from `hullRadius`, `killBlowDamage` and `recentDamageRate` plus a seeded draw. Leave all three out to use the fixed-count mode, where the cap is the target.
   - `fracturePlan(input)` returns these decisions without building any geometry.
   - All of the plan's draws come from one stream, in a fixed order. Adding a draw changes every fracture, so bump the version.
+- **v3: the kill point is on the hull outline** (owner: "Why isn't the red dot on the border of the ship?"). `projectToOutline(hull, p)` (nearest point on the edges, quantised) runs inside `fractureHull`/`fracturePlan`, so every caller gets an edge point (`fracturePlan(...).killPoint`).
+- **v4: the primary line always runs ACROSS the hull** (owner review: a bow-tip hit split the ship along its keel). A bow or stern tip hit (a line through it would clip < 3 % of the hull) moves the line a seeded 15–35 % of the hull length aft of that tip, so that end breaks off as a real piece. Lock: the ±35°-of-square test over tips and every outline point.
+- **S2a: `wreckPieces.ts` / `wreckHits.ts`.** `buildWreckPieces` turns a death (kind, pose, kill point, damage inputs, seed) into rigid-body specs: the fracture on the 1× Pixi-up outline, pieces mapped like `shipShapeToPolygon` (x·s, −y·s, rings reversed to stay CCW), mass ∝ area, v + ω × r plus an outward push. `wreckRayHit` / `wreckSweepHit` are the one weapon-vs-wreck test (circle, then convex parts).
 - Story: [docs/architecture/capital-destruction.md](../../docs/architecture/capital-destruction.md).
 
 ## Alien gates and the disabled input gate (plan soft-leaping-truffle v4, A)

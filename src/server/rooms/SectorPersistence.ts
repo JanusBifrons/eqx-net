@@ -163,6 +163,8 @@ export class SectorPersistence {
       if (rec.kind === 1) continue;
       if (rec.kind === SWARM_KIND_SCRAP) continue;
       if (rec.kind === 2) continue;
+      // Capital wreck pieces (S2a): persisted as a descriptor in S2b, not here.
+      if (rec.kind === 4) continue;
       // Asteroids (kind 0): pose + health. Position isn't restored (deterministic
       // from the seed) but is recorded for diagnostics.
       const health = d.swarmHealth.get(rec.id) ?? 0;

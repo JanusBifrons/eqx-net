@@ -389,7 +389,10 @@ import { massOf, shipTuning, shellViewHalfExtent } from '../../shared-types/ship
 import { ShellEventHub, type ShellViewer } from './ShellEventHub.js';
 import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
-import { refineRayHit } from '../../core/combat/capitalHits.js';
+import { refineRayHit, isCapitalKindId } from '../../core/combat/capitalHits.js';
+import { CapitalWreckSubsystem } from './CapitalWreckSubsystem.js';
+import { wreckRayHit } from '../../core/destruction/wreckHits.js';
+import { isWreckPiece } from '../net/SwarmEntityRegistry.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
 import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
 import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
@@ -934,6 +937,13 @@ export class SectorRoom extends Room<SectorState> {
   private testLockTimeCapS: number | undefined = undefined;
   /** Round 3 D test switch (testMode `pilotCapitals`). */
   private testPilotCapitals = false;
+  /** Capital destruction S2a (`capitalWrecks` room option / EQX_CAPITAL_WRECKS=1):
+   *  a dying capital breaks into wreck bodies. Null = off (today's behaviour). */
+  private capitalWrecks: CapitalWreckSubsystem | null = null;
+  /** A beam's impact point for the NEXT applyDamage call only (the AI beam
+   *  path has no hitX/hitY on its damage call); cleared by applyDamage. */
+  private pendingImpactX: number | undefined = undefined;
+  private pendingImpactY: number | undefined = undefined;
   /** C1 — pilots who moved cargo by hand. Auto-deposit stays off for them
    *  until they fly out of deposit range of their storage, so a withdrawal
    *  from your own storage isn't banked straight back 2 s later. */
@@ -1394,6 +1404,14 @@ export class SectorRoom extends Room<SectorState> {
     ) => { newShield: number; shieldMax: number; hullMax: number; hitLayer: 'shield' | 'hull' } | null;
     /** Living World P1a — the loot subsystem (seed pods, read holds, drive pickup). */
     loot: LootSubsystem;
+    /** S2a — a swarm entity's full SAB state (pose, velocity, spin). */
+    wreckState: (id: string) => { x: number; y: number; vx: number; vy: number; angle: number; angvel: number } | null;
+    /** S2a — a wreck piece's convex parts (body-local), or null. */
+    wreckParts: (id: string) => ReadonlyArray<ReadonlyArray<{ x: number; y: number }>> | null;
+    /** S2a — fix the fracture seed (null = per death). */
+    setWreckSeed: (seed: number | null) => void;
+    /** The first non-player thing a ray meets (NPC / turret beam path). */
+    rayHit: (fx: number, fy: number, dx: number, dy: number, maxDist: number, skipId: string) => { id: string; dist: number } | null;
   } {
     return {
       loot: this.loot,
@@ -1452,6 +1470,19 @@ export class SectorRoom extends Room<SectorState> {
         return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, angle: this.sabF32[b + SLOT_ANGLE_OFF]! };
       },
       damageSwarmLayered: (rec, damage) => this.damageSwarmLayered(rec, damage),
+      wreckState: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        if (!rec) return null;
+        const b = slotBase(rec.slot);
+        const f = this.sabF32;
+        return { x: f[b + SLOT_X_OFF]!, y: f[b + SLOT_Y_OFF]!, vx: f[b + SLOT_VX_OFF]!, vy: f[b + SLOT_VY_OFF]!, angle: f[b + SLOT_ANGLE_OFF]!, angvel: f[b + SLOT_ANGVEL_OFF]! };
+      },
+      wreckParts: (id) => this.swarmRegistry.get(id)?.wreckParts ?? null,
+      setWreckSeed: (seed) => { if (this.capitalWrecks) this.capitalWrecks.forcedSeed = seed; },
+      rayHit: (fx, fy, dx, dy, maxDist, skipId) => {
+        const h = this.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId);
+        return h ? { id: h.id, dist: h.dist } : null;
+      },
     };
   }
 
@@ -1730,6 +1761,9 @@ export class SectorRoom extends Room<SectorState> {
       /** Capital-ship R&D (round 3 D): a player may join flying a capital
        *  (capitals stay npcOnly everywhere else). testMode-only. */
       pilotCapitals?: boolean;
+      /** Capital destruction S2a: a dying capital breaks into wreck bodies
+       *  (server-only until S2b/S3, so off by default). */
+      capitalWrecks?: boolean;
       /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
@@ -1938,6 +1972,7 @@ export class SectorRoom extends Room<SectorState> {
         this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang),
       applyDamage: (targetId, shooterId, damage) =>
         this.applyDamage(targetId, shooterId, damage),
+      noteBeamImpact: (x, y) => this.noteBeamImpact(x, y),
       // Friendly fire (owner decision 2026-11-10): the beam meets whatever is
       // in its path, its own side and neutral structures included.
       nonPlayerRayHit: (fx, fy, dx, dy, maxDist, skipId) =>
@@ -1992,8 +2027,13 @@ export class SectorRoom extends Room<SectorState> {
       // too. The lingering death policy reads the dying pose from
       // lingeringPoseCache (before its own teardown) and hands it here; we guard
       // polygon kinds + spawn, mirroring the active-hull SHIP_DESTROYED path.
-      spawnScrapFromLingeringHull: (kind, pose, shipInstanceId) =>
-        this.spawnHullScrap(kind, pose, shipInstanceId),
+      spawnScrapFromLingeringHull: (kind, pose, shipInstanceId) => {
+        // S2a — a parked capital breaks into wreck bodies too (its
+        // linger-<id> body is despawned by the death policy right after).
+        const ship = this.state.ships.get(shipInstanceId);
+        this.spawnCapitalWreck(shipInstanceId, kind, pose, ship?.maxHealth ?? getShipKind(kind).maxHealth);
+        this.spawnHullScrap(kind, pose, shipInstanceId);
+      },
       // A1 — a lingering hull died in combat: the SHIP_DESTROYED handler can't
       // find it (already out of shipsMap), so the roster wipe + XP happen here.
       onLingeringHullDeath: (ship, pose, sourceId) => this.onLingeringHullDeath(ship, pose, sourceId),
@@ -2366,8 +2406,8 @@ export class SectorRoom extends Room<SectorState> {
       : undefined;
     this.swarmSpawner = new SwarmSpawner(this.swarmRegistry, {
       takeSlot: () => this.freeSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, shieldKindId) =>
-        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}) }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, shieldKindId, spin) =>
+        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}), ...(spin ? { angvel: spin.angvel, angularDamping: spin.angularDamping } : {}) }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
@@ -2949,6 +2989,7 @@ export class SectorRoom extends Room<SectorState> {
       else logger.warn({ value: roomOpts.lockTimeCapS }, 'lockTimeCapS: invalid room option, ignored');
     }
     this.testPilotCapitals = this.testMode && roomOpts.pilotCapitals === true;
+    if (roomOpts.capitalWrecks === true || process.env['EQX_CAPITAL_WRECKS'] === '1') this.initCapitalWrecks();
     // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
     if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {
       this.seedGalaxyBase(this.sectorKey);
@@ -4065,6 +4106,23 @@ export class SectorRoom extends Room<SectorState> {
         this.evictOwnerlessShip(destroyedShip.shipInstanceId);
       }
 
+      // S2a — a dying ACTIVE capital breaks into wreck bodies (flag on). The
+      // dead hull stops being a ship: its worker body is despawned (the slot
+      // stays allocated for respawn / pilot swap, which re-spawn the body),
+      // so the pieces never overlap a corpse collider.
+      if (activeHull !== undefined && activeHull.alive === false && this.capitalWrecks !== null && isCapitalKindId(activeHull.kind)) {
+        const slot = this.playerToSlot.get(evt.targetId);
+        if (slot !== undefined) {
+          const b = slotBase(slot);
+          const n = this.spawnCapitalWreck(evt.targetId, activeHull.kind, {
+            x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!,
+            vx: this.sabF32[b + SLOT_VX_OFF]!, vy: this.sabF32[b + SLOT_VY_OFF]!,
+            angle: this.sabF32[b + SLOT_ANGLE_OFF]!, angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
+          }, activeHull.maxHealth > 0 ? activeHull.maxHealth : getShipKind(activeHull.kind).maxHealth);
+          if (n > 0) this.postToWorker({ type: 'DESPAWN', slot, playerId: evt.targetId });
+        }
+      }
+
       // Scrap-on-death (Phase 2b-ii) — break a dying ACTIVE composite hull into
       // floating scrap. Only the active-hull case (we have a playerId-keyed slot
       // + pose); lingering hulls are skipped (their slot bookkeeping is already
@@ -4779,6 +4837,11 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
+    // S2a: a beam impact noted for THIS call only (never leaks to a later one).
+    const impactX = hitX ?? this.pendingImpactX;
+    const impactY = hitY ?? this.pendingImpactY;
+    this.pendingImpactX = undefined;
+    this.pendingImpactY = undefined;
     // Phase 4 warp travel: a ship on its run is out of the world (an NPC's too, W2a).
     if (this.warpTravel.isTravelling(targetId)) return;
     if (this.npcWarps.size > 0 && this.botWarpPhase(targetId) === 2) return;
@@ -4849,7 +4912,61 @@ export class SectorRoom extends Room<SectorState> {
         }
       }
     }
+    // S2a — remember the last hit on a capital (point, damage, recent rate)
+    // before it lands, so its death knows where and how hard it was hit.
+    if (this.capitalWrecks !== null && damage > 0) {
+      this.capitalWrecks.noteHit(targetId, shooterId, damage, impactX, impactY);
+    }
     this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY);
+  }
+
+  /** The AI beam's impact point, for the wreck hit tracker only (the damage
+   *  event keeps its legacy pose fallback, so the wire is unchanged). */
+  private noteBeamImpact(x: number, y: number): void {
+    if (this.capitalWrecks === null) return;
+    this.pendingImpactX = x;
+    this.pendingImpactY = y;
+  }
+
+  /** Capital destruction S2a: build the wreck subsystem (flag on only). */
+  private initCapitalWrecks(): void {
+    this.capitalWrecks = new CapitalWreckSubsystem({
+      serverTick: () => this.serverTick,
+      capitalKindOf: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        if (rec) return rec.kind === SWARM_KIND_DRONE && isCapitalKindId(rec.shipKind) ? (rec.shipKind as ShipKindId) : null;
+        const ship = this.getActiveShip(id) ?? this.state.ships.get(id);
+        return ship !== undefined && isCapitalKindId(ship.kind) ? (ship.kind as ShipKindId) : null;
+      },
+      positionOf: (id) => {
+        const p = this.shipPoseCache.get(id) ?? this.lingeringPoseCache.get(id);
+        if (p) return { x: p.x, y: p.y };
+        const rec = this.swarmRegistry.get(id);
+        if (!rec) return null;
+        const b = slotBase(rec.slot);
+        return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]! };
+      },
+      spawnPiece: (spec) => (this.swarmRegistry.has(spec.id) ? false : this.swarmSpawner.spawnWreck(spec)),
+      removePiece: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        if (rec) this.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false });
+      },
+      isLive: (id) => this.swarmRegistry.has(id),
+    });
+  }
+
+  /** S2a: a dying capital (any liveness class) breaks into wreck bodies.
+   *  `targetId` is the id its hits were tracked under. Returns pieces spawned;
+   *  0 when the flag is off or the kind isn't a capital. Call before the
+   *  dying body is despawned. */
+  private spawnCapitalWreck(
+    targetId: string, kindId: string,
+    pose: { x: number; y: number; vx: number; vy: number; angle: number; angvel?: number },
+    maxHull: number,
+  ): number {
+    if (this.capitalWrecks === null || !isCapitalKindId(kindId)) return 0;
+    return this.capitalWrecks.onDeath(targetId, kindId as ShipKindId,
+      { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle, angvel: pose.angvel ?? 0 }, maxHull);
   }
 
   /** Iterates positions of currently-alive players, for the LoadShedder.
@@ -4883,6 +5000,16 @@ export class SectorRoom extends Room<SectorState> {
     // piece would shatter into more scrap forever. Only a DRONE (kind 1) death
     // spawns scrap here.
     if (rec.kind === SWARM_KIND_SCRAP) return;
+    // S2a — a capital drone breaks into wreck bodies (flag on). Pose from the
+    // SAB: the drone's body is still live here (evicted right after).
+    if (this.capitalWrecks !== null && rec.kind === SWARM_KIND_DRONE && isCapitalKindId(rec.shipKind)) {
+      const wb = slotBase(rec.slot);
+      this.spawnCapitalWreck(rec.id, rec.shipKind!, {
+        x: this.sabF32[wb + SLOT_X_OFF]!, y: this.sabF32[wb + SLOT_Y_OFF]!,
+        vx: this.sabF32[wb + SLOT_VX_OFF]!, vy: this.sabF32[wb + SLOT_VY_OFF]!,
+        angle: this.sabF32[wb + SLOT_ANGLE_OFF]!, angvel: this.sabF32[wb + SLOT_ANGVEL_OFF]!,
+      }, droneMaxHealthOf(rec) ?? 1);
+    }
     const kind = getShipKind(rec.shipKind);
     if (shipScrapGroups(kind.id).length === 0) return; // polygon kind ⇒ no scrap
     const b = slotBase(rec.slot);
@@ -4936,6 +5063,7 @@ export class SectorRoom extends Room<SectorState> {
     this.npcTargetGridFresh = false;
     // P3c — a removed shooter's pending charge never fires.
     this.aiFireResolver.forget(rec.id);
+    this.capitalWrecks?.forget(rec.id);
     this.npcLocks.forgetNpc(rec.id);
     // v4 A — its slot may be reused; a new ship must not inherit a disable.
     if (this.gateGuard.gateCount > 0) this.gateGuard.forget(rec.id);
@@ -7716,6 +7844,7 @@ export class SectorRoom extends Room<SectorState> {
     cx: number, cy: number, ca: number,
   ): number | null {
     if (rec.kind === 0 && rec.vertices) return rayHitsConvexPolygon(fx, fy, dx, dy, maxDist, cx, cy, ca, rec.vertices);
+    if (isWreckPiece(rec)) return wreckRayHit(rec.wreckParts, rec.radius, fx, fy, dx, dy, maxDist, cx, cy, ca);
     if (rec.halfW !== undefined && rec.halfH !== undefined) return rayHitsBox(fx, fy, dx, dy, maxDist, cx, cy, rec.halfW, rec.halfH, rec.boxes);
     const d = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, rec.radius);
     return rec.kind === 1 ? refineRayHit(rec.shipKind, d, fx, fy, dx, dy, maxDist, cx, cy, ca) : d;

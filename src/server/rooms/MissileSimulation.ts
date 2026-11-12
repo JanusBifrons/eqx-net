@@ -52,9 +52,11 @@ import { pickTarget, type MountTargetView } from '../../core/ai/WeaponMountContr
 import { isDirectorBotId } from '../livingworld/directorBotIds.js';
 import { projectileSweepCircle, projectileSweepBox } from '../../core/combat/Weapons.js';
 import {
-  SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF,
+  SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF,
   slotBase,
 } from '../../shared-types/sabLayout.js';
+import { wreckSweepHit } from '../../core/destruction/wreckHits.js';
+import type { Vec2 } from '../../core/swarm/asteroidShape.js';
 import { wrapPi } from '../../core/ai/WeaponMountController.js';
 import type { MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipState } from './schema/SectorState.js';
@@ -168,7 +170,7 @@ export interface PendingImpulse {
  *  based filter is a leaky abstraction). */
 interface SwarmRecLookup {
   get(id: string): { entityId: number; radius: number; kind: number } | null | undefined;
-  all(): Iterable<{ id: string; slot: number; radius: number; kind: number; halfW?: number; halfH?: number; boxes?: Float32Array }>;
+  all(): Iterable<{ id: string; slot: number; radius: number; kind: number; halfW?: number; halfH?: number; boxes?: Float32Array; wreckParts?: ReadonlyArray<ReadonlyArray<Vec2>> }>;
 }
 
 export interface MissileSimulationDeps {
@@ -621,6 +623,7 @@ export class MissileSimulation {
     for (const rec of this.deps.swarmRegistry.all()) {
       if (rec.id === ownerId) continue;
       if (rec.kind === 0) continue;
+      if (rec.kind === 4) continue; // wreck pieces are terrain, never a lock
       const b = slotBase(rec.slot);
       const cx = this.deps.sabF32[b + SLOT_X_OFF]!;
       const cy = this.deps.sabF32[b + SLOT_Y_OFF]!;
@@ -753,9 +756,11 @@ export class MissileSimulation {
       const b = slotBase(rec.slot);
       const cx = this.deps.sabF32[b + SLOT_X_OFF]!;
       const cy = this.deps.sabF32[b + SLOT_Y_OFF]!;
-      const sweep = rec.halfW !== undefined && rec.halfH !== undefined
-        ? projectileSweepBox(m.x, m.y, stepX, stepY, mr, cx, cy, rec.halfW, rec.halfH, rec.boxes)
-        : projectileSweepCircle(m.x, m.y, stepX, stepY, mr, cx, cy, rec.radius);
+      const sweep = rec.kind === 4
+        ? wreckSweepHit(rec.wreckParts, rec.radius, m.x, m.y, stepX, stepY, mr, cx, cy, this.deps.sabF32[b + SLOT_ANGLE_OFF]!)
+        : rec.halfW !== undefined && rec.halfH !== undefined
+          ? projectileSweepBox(m.x, m.y, stepX, stepY, mr, cx, cy, rec.halfW, rec.halfH, rec.boxes)
+          : projectileSweepCircle(m.x, m.y, stepX, stepY, mr, cx, cy, rec.radius);
       if (sweep && sweep.entry < bestEntry) {
         bestEntry = sweep.entry;
         bestId = rec.id;
