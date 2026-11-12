@@ -126,7 +126,20 @@ export interface SwarmLookupByEid {
   /** By internal id: a projectile owner's entity id + radius (wide owners'
    *  shells reach viewers beyond the projectile box). Optional for fakes. */
   get?(id: string): { entityId: number; radius: number; kind?: number } | null | undefined;
+  /** Visit every record without allocating (the far drone tier). Optional
+   *  for fakes: absent ⇒ no far tier. */
+  forEachRecord?(visit: (rec: SwarmDroneRec & { entityId: number }) => void): void;
 }
+
+/**
+ * Far drones' slim slice: a drone OUTSIDE the recipient's interest rides
+ * `drones[]` with only `hostile` / `hp`, on one recipient snapshot in this
+ * many (20 Hz / 10 = 2 Hz). Hostility is forgotten over tens of seconds and
+ * hp moves slowly, so the full rate would only cost bytes. Each recipient gets
+ * exactly one broadcast per 3-counter window, so a window of 3 × this many
+ * counters hands every recipient the far tier exactly once.
+ */
+export const FAR_DRONE_SLICE_EVERY = 10;
 
 /** Narrow view of MissileSimulation the broadcaster uses. */
 export interface MissileBroadcasterView {
@@ -474,6 +487,33 @@ export class SnapshotBroadcaster {
   private readonly _shellKeyScratch: ShellKeyRecord[] = [];
   private readonly _missilesScratch: MutableMissileEntry[] = [];
   private readonly _dronesScratch: MutableDroneEntry[] = [];
+  /** Far-tier visitor context (set per recipient, read by the bound visitor). */
+  private _farInterest: Set<number> | undefined = undefined;
+  private _farPlayerId = '';
+  private _farCount = 0;
+  /** Bound once: the far drone tier's per-record visitor (alloc-free, #14). */
+  private readonly _visitFarDrone = (rec: SwarmDroneRec & { entityId: number }): void => {
+    if (rec.kind !== 1) return;
+    if (this._farInterest !== undefined && this._farInterest.has(rec.entityId)) return;
+    const d = this.deps;
+    const hostile = d.isDroneHostileTo(rec.id, this._farPlayerId);
+    const hpPct = this.droneHpPct(rec);
+    if (!hostile && hpPct === undefined) return;
+    SnapshotBroadcaster.writeDroneSlot(this._dronesScratch, this._farCount, rec.entityId, undefined, false, hpPct, hostile);
+    this._farCount++;
+  };
+
+  /** Hull percent for the slice: only when DAMAGED (absent ⇒ 100 % client-side). */
+  private droneHpPct(rec: SwarmDroneRec): number | undefined {
+    const maxHp = droneMaxHealthOf(rec);
+    if (!maxHp || maxHp <= 0) return undefined;
+    const cur = this.deps.swarmHealth.get(rec.id);
+    if (cur === undefined || cur >= maxHp) return undefined;
+    let pct = Math.round((cur / maxHp) * 100);
+    if (pct < 0) pct = 0;
+    else if (pct > 99) pct = 99; // <100 by construction (cur < maxHp)
+    return pct;
+  }
   private readonly _asteroidsScratch: MutableAsteroidEntry[] = [];
   private readonly _mountAnglesPool = new Map<number, number[]>();
   /** Fresh Record per recipient is unavoidable — notepack.io would
@@ -984,17 +1024,7 @@ export class SnapshotBroadcaster {
           }
           // Hull health percent (Part C) — emitted only when DAMAGED so
           // undamaged drones add zero bytes (client treats absent as 100 %).
-          let hpPct: number | undefined;
-          const maxHp = droneMaxHealthOf(rec);
-          if (maxHp && maxHp > 0) {
-            const cur = d.swarmHealth.get(rec.id);
-            if (cur !== undefined && cur < maxHp) {
-              let pct = Math.round((cur / maxHp) * 100);
-              if (pct < 0) pct = 0;
-              else if (pct > 99) pct = 99; // <100 by construction (cur < maxHp)
-              hpPct = pct;
-            }
-          }
+          const hpPct = this.droneHpPct(rec);
           // Campaign 2.1 — per-recipient hostility bit (invariant #16: the
           // snapshot backstop for the bot_aggro accelerant). Emit-when-true.
           const hostile = d.isDroneHostileTo(rec.id, recipientPlayerId);
@@ -1024,6 +1054,18 @@ export class SnapshotBroadcaster {
           SnapshotBroadcaster.writeDroneSlot(dronesScratch, dronesCount, w.entityId, undefined, false, undefined, false, false, undefined, undefined, warp);
           dronesCount++;
         }
+      }
+      // Far tier: drones outside interest report hostile / hp at 2 Hz
+      // (FAR_DRONE_SLICE_EVERY). A warping far drone was already written
+      // above with its phase only; it may appear once more here, which the
+      // client applies harmlessly (same id, the later entry adds hostile/hp).
+      if (d.swarmRegistry.forEachRecord && this.broadcastCounter % (3 * FAR_DRONE_SLICE_EVERY) < 3) {
+        this._farInterest = interest;
+        this._farPlayerId = recipientPlayerId;
+        this._farCount = dronesCount;
+        d.swarmRegistry.forEachRecord(this._visitFarDrone);
+        dronesCount = this._farCount;
+        this._farInterest = undefined;
       }
       dronesScratch.length = dronesCount;
 
