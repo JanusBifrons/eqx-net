@@ -31,7 +31,9 @@ export class MachinedShipSprite extends Container {
   /** GPU-lit art (`?shiplight=gpu`): one mesh per tile, lit by `litPass`. */
   readonly lit: LitShipMesh[] = [];
 
-  constructor(readonly art: ShipArt) {
+  /** `capital`: the ship kind is a capital (`isCapitalKindId`), so other
+   *  capitals don't shade it and it doesn't shade them. */
+  constructor(readonly art: ShipArt, readonly capital = false) {
     super();
     const tiles = art.tiles;
     const settings = litPass.settings;
@@ -46,10 +48,11 @@ export class MachinedShipSprite extends Container {
         const tex = art.frames[t]!;
         const mesh = new LitShipMesh({ tex, w: lit.w, rows: tex.frame.height, y0: t * art.tileH, hullH: lit.h, ppu: lit.ppu, maxH: lit.maxH, emisMax: lit.emisMax }, settings);
         mesh.lightOwnerId = owner;
+        mesh.capitalHull = capital;
         if (occluder) mesh.occluderId = owner;
         this.addChild(mesh);
         this.lit.push(mesh);
-        litPass.register(mesh, occluder && t === 0 ? { hx: lit.w / lit.ppu / 2, hy: halfLen, h: halfLen * 2 * OCCLUDER_HEIGHT_FRAC, color: 0x9aa4b0 } : null);
+        litPass.register(mesh, occluder && t === 0 ? { hx: lit.w / lit.ppu / 2, hy: halfLen, h: halfLen * 2 * OCCLUDER_HEIGHT_FRAC, color: 0x9aa4b0, capital } : null);
       }
       return;
     }
