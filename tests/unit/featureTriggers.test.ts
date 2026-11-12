@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 // @ts-expect-error plain-JS module (the CI job runs it without a TS toolchain)
 import { FEATURE_TRIGGERS, QUARANTINE } from '../e2e/featureTriggers.mjs';
 // @ts-expect-error plain-JS module
-import { selectFeatureSpecs } from '../e2e/select-feature-specs.mjs';
+import { selectFeatureSpecs, releasedFromQuarantine } from '../e2e/select-feature-specs.mjs';
 
 type Trigger = { area: string; paths: string[]; specs: string[] };
 const triggers = FEATURE_TRIGGERS as Trigger[];
@@ -15,6 +15,15 @@ describe('path-triggered feature specs', () => {
     const missing = named.filter((s) => !existsSync(`tests/e2e/${s}.spec.ts`) && !existsSync(`tests/e2e/combat/${s}.spec.ts`)
       && !existsSync(`tests/e2e/linger/${s}.spec.ts`));
     expect(missing).toEqual([]);
+  });
+
+  it('a spec leaving the quarantine list runs itself (CI proves it before it counts)', () => {
+    // 2026-11-12: missile-frigate-homing passed 6/6 on the desktop but timed
+    // out on CI's host. Editing the list alone ran nothing, so a release was
+    // only tested by the next PR that happened to touch its area.
+    const released = releasedFromQuarantine("QUARANTINE = new Set([\n  'speed-dial',\n  'fire-control-lock',\n]);", new Set(['fire-control-lock']));
+    expect(released).toEqual(['speed-dial']);
+    expect((selectFeatureSpecs as (c: string[], r: string[]) => string[])([], released)).toEqual(['speed-dial']);
   });
 
   it('a structures change runs the structure specs', () => {

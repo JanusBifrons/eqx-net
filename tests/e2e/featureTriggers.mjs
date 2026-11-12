@@ -79,25 +79,15 @@ export const QUARANTINE = new Set([
   // physics worker ran at ~34 Hz (every room shares it), so the 6 s lifetime
   // took 10.6 s (probe). The touch chip hold (:646, 1/6): not yet probed.
   'missile-frigate-homing',
-  // 2026-11-10: failing on CI's e2e-feature-affected since lock-to-fire went
-  // universal (#385). Parked by the user for a pass next week: check each is
-  // still relevant, then fix or retire it. CI runs 42674277690, 42694505833,
-  // 42694522168. Notes from a first look:
+  // 2026-11-12 desktop 3x re-run (lane 520): structure-placement-ghost,
+  // speed-dial, fire-control-lock, laser-falloff-probe, multiple-lingering-pool
+  // and spawn-swap-lingers went 3/3 and left the list (the PR that released
+  // them ran them on CI: a spec leaving the list runs itself). Still red 0/3:
   //
-  // A-K time out or the worker drag stalls; #398 didn't cure it on CI.
-  'structure-placement-ghost',
-  // :197 repeat builds across a placement (R2.6); new on train #399.
-  'speed-dial',
-  // :115 hands-off LOCK then CANCEL in the info box; the drain case is flaky.
-  'fire-control-lock',
-  // :106 hit beam; :77 is already fixme (no firing into empty space now).
-  'laser-falloff-probe',
-  // :142 beam origin while coasting: 16 of 40 coast frames active, wants > 20.
+  // :142 beam origin while coasting: the beam was active in 15 of 40 coast
+  // samples on one run, 40 of 40 on another; wants > 20.
   'interceptor-beam-stays-connected',
-  // An observer sees lingering hulls; flaky on #399 and #402.
-  'multiple-lingering-pool',
-  'spawn-swap-lingers',
-  // Idle prediction sub-pixel in feel-test-25; flaky on #399 and #402.
+  // Idle prediction sub-pixel in feel-test-25.
   'prediction-idle-bounded',
   // Cause known (2026-11-09): below ~15 fps the client jumps inputTick ahead
   // without stepping the ship (recoverInputTickFromStarvation), then snaps.
