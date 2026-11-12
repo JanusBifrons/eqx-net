@@ -205,25 +205,33 @@ Every client must produce the same pieces as the server, bit for bit, from
 - **No per-frame cost.** The output is computed once and then read; nothing
   is allocated per frame afterwards (invariant #14).
 
-## 6. Open questions for the owner
+## 6. Owner decisions (2026-11-12)
 
-1. **How many pieces?** When a battleship dies, roughly how many real chunks
-   should drift away: about 8, about 16, or more? The rest would be dust and
-   sparks.
-2. **Can pieces be broken further?** If you keep shooting a big wreck piece,
-   should it break again into smaller pieces, or only lose health and vanish?
-3. **How long do wrecks stay?** For ever, as part of the sector, or do they
-   fade after a while? If they stay for ever, should old ones be cleared once
-   a sector has too many?
-4. **Cover.** Should a wreck stop bullets and shells as well as ships, so
-   players can hide behind one?
-5. **Smaller ships.** Should fighters and cruisers also break up this way, or
-   keep today's hand-made scrap pieces?
-6. **Where it breaks.** Should a capital always break around where the
-   killing shot landed, or sometimes simply snap in two at midships however it
-   died?
-7. **Big explosions.** When a capital blows up catastrophically, should the
-   blast hurt ships nearby straight away, or wait until the damage model is
-   built? And how rare should it be: about one death in ten, or rarer?
-8. **Your own capital.** When a player's capital dies, should it leave a
-   wreck like an NPC's? Can its owner salvage it?
+- **How many pieces: random, and earned.** "I want to see both. It should be
+  random, and I guess informed by the strength of the final hit and how quick
+  the damage happened and the size of the ship." So the chunk count is drawn
+  from the seed within a range set by:
+  - hull size;
+  - the killing blow's strength;
+  - the recent damage rate (damage over the last few seconds).
+
+  A slow grind leaves a few big hulks; a sudden heavy blow shatters the ship
+  into many. Both ends must occur. Pieces cost little: "I don't see how
+  you're saying like 25 scrap in an area is expensive to render or
+  simulate." The game already runs 50-piece scrap stress tests. The module's
+  hard cap stays 64.
+- **Wrecks stay for ever.** They are saved with the sector, with no fade-out.
+- **Wrecks block shots.** Shells, bolts and beams hit wreck pieces; they are
+  real cover.
+- **Player capitals break up exactly like NPC capitals.** Anyone may salvage
+  the wreck, including the former owner.
+- **Wreck pieces don't break further** ("No for now"). Shooting a piece never
+  re-fractures it.
+- **Smaller ships break up this way too** ("Yes"). Fighters, frigates and
+  cruisers fracture dynamically like capitals, replacing today's hand-made
+  scrap. This is a later slice, after the capital path works.
+- **Midships snaps are a chance** ("Yes, but it's dynamic and generated, just
+  make it a chance"). Usually the hull breaks around the killing blow; with
+  some probability it snaps in two at midships instead.
+- **Catastrophic blasts will hurt nearby ships** ("Yes, but not now/yet"). For
+  now the gas-store detonation is visual only; area damage comes later.
