@@ -77,4 +77,20 @@ describe('SectorRoom integration — late joiner rebuilds capital wrecks (S2b)',
       expect(Math.fround(g!.radius)).toBe(Math.fround(r.radius));
     }
   }, 20_000);
+
+  it('the test_kill_capitals trigger kills a shielded capital and leaves its wreck', async () => {
+    harness = await bootSectorTestServer({
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [],
+      capitalWrecks: true,
+    });
+    const room = await harness.connectActive(randomUUID(), { shipKind: 'fighter', spawnX: 0, spawnY: -1500 });
+    const internal = (harness.getServerRoom() as unknown as SectorRoom)._internals;
+    expect(internal.spawnTestDrone('bb', 0, 2500, 'battleship')).toBe(true);
+    await harness.advance(100);
+    room.send('test_kill_capitals', { type: 'test_kill_capitals' });
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline && internal.swarmRegistry.get('bb')) await harness.advance(50);
+    expect(internal.swarmRegistry.get('bb')).toBeFalsy();
+    expect(internal.wreckDescriptors()).toHaveLength(1);
+  }, 20_000);
 });

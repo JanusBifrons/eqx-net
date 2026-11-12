@@ -41,6 +41,7 @@ import {
   buildDroneGfx,
   buildStructureGfx,
   buildScrapGfx,
+  buildWreckPieceGfx,
   buildMinerRangeRingGfx,
   buildCapitalResourceText,
   buildBatteryChargeText,
@@ -64,6 +65,10 @@ import {
   type InterpolatedPose,
 } from '../../net/swarmInterpolation';
 import { resolveEntityDisplayPose } from '../../net/swarmDisplayPose';
+import type { WreckGeometryStore } from '../../net/wreckGeometryStore';
+
+/** S2b: an empty wreck map for frames whose mirror carries none. */
+const NO_WRECKS: ReadonlyMap<number, unknown> = new Map();
 
 /** Campaign 3.2 — everything (besides the pose-core kind, tracked separately
  *  in `spriteKinds` for #20 back-compat) that a swarm sprite's VISUAL is built
@@ -73,6 +78,8 @@ export interface SpriteBuildSig {
   shipKind: string | null;
   componentIndex: number;
   radius: number;
+  /** S2b: a wreck piece's wreck (0 for every other kind). */
+  wreckId: number;
 }
 
 export interface SwarmSpriteCtx {
@@ -117,6 +124,10 @@ export interface SwarmSpriteCtx {
    *  renderer computes it (clamped) from wall-clock; tests inject a fixed value
    *  for a deterministic slew. */
   slewDtSec: number;
+  /** Capital destruction S2b: the renderer's wreck geometry, rebuilt from
+   *  `mirror.wrecks` (the worker has its own heap). Absent ⇒ wreck pieces are
+   *  not drawn. */
+  wrecks?: WreckGeometryStore;
 }
 
 /** Module-scope scratch for a structure's per-mount arc-local angles passed
@@ -178,7 +189,12 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
   if (!mirror.swarm) return;
   const now = performance.now();
   const slewDtSec = ctx.slewDtSec; // P3.8 — structure-mount slew rate input
+  const wreckDescs = mirror.wrecks;
+  ctx.wrecks?.retain(wreckDescs ?? NO_WRECKS);
   for (const [entityId, entry] of mirror.swarm) {
+    // S2b: a wreck piece is drawn only once its wreck's descriptor is known
+    // (its geometry comes from it); until then it has no sprite at all.
+    if (entry.kind === 4 && (entry.wreckId === undefined || wreckDescs === undefined || !wreckDescs.has(entry.wreckId) || ctx.wrecks === undefined)) continue;
     const spriteKey = `swarm-${entityId}`;
     ctx.seenScratch.add(spriteKey);
     let sprite = ctx.sprites.get(spriteKey);
@@ -199,7 +215,8 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         sig === undefined ||
         sig.shipKind !== (entry.shipKind ?? null) ||
         sig.componentIndex !== (entry.componentIndex ?? 0) ||
-        sig.radius !== entry.radius)
+        sig.radius !== entry.radius ||
+        sig.wreckId !== (entry.wreckId ?? 0))
     ) {
       ctx.shipContainer.removeChild(sprite);
       ctx.mountVisuals.removeShip(spriteKey);
@@ -282,6 +299,14 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         sprite = buildArtShipSprite(artHandle, () => buildScrapGfx(parentKind, component));
         // A6 — wreckage starts hot (loot pods ride this channel too: they don't).
         if (parentKind !== 'cargo-pod') scrapBorn.set(sprite, now);
+      } else if (entry.kind === 4) {
+        // Capital wreck piece (S2b): its outline from the shared deterministic
+        // geometry (the server's body is built from the same), drawn plainly
+        // in the parent hull's darkened colour. Built once per piece.
+        const desc = wreckDescs!.get(entry.wreckId!)!;
+        const g = ctx.wrecks!.geometryFor(desc)?.[entry.componentIndex ?? 0];
+        if (g === undefined) continue; // unusable descriptor / bad index: not drawn
+        sprite = buildWreckPieceGfx(g.outline, entry.shipKind ?? desc.parentKind);
       } else {
         const rockRadius = entry.radius;
         sprite = buildArtShipSprite(artHandle, () => buildAsteroidGfx(entityId, rockRadius));
@@ -297,6 +322,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         shipKind: entry.shipKind ?? null,
         componentIndex: entry.componentIndex ?? 0,
         radius: entry.radius,
+        wreckId: entry.wreckId ?? 0,
       });
     }
     // Drones (kind 1) AND scrap (kind 3): read the already-resolved
@@ -305,7 +331,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // body, one-pose-per-frame). Asteroids (0) + structures (2): render-now
     // interpolation off the poseRing (they are static server-side — see the
     // file docstring).
-    const lerped = entry.kind === 1 || entry.kind === 3
+    const lerped = entry.kind === 1 || entry.kind === 3 || entry.kind === 4
       ? resolveEntityDisplayPose(entry, ctx.swarmPoseScratch)
       : interpolateSwarmPose(entry, now, ctx.swarmPoseScratch);
     sprite.x = lerped.x;

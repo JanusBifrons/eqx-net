@@ -341,6 +341,7 @@ import {
   CancelTransitSchema,
   TestAggroSchema,
   TestReloadTurretsSchema,
+  TestKillCapitalsSchema,
   TestFleetWarpSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
@@ -1765,7 +1766,7 @@ export class SectorRoom extends Room<SectorState> {
        *  (capitals stay npcOnly everywhere else). testMode-only. */
       pilotCapitals?: boolean;
       /** Capital destruction S2a: a dying capital breaks into wreck bodies
-       *  (server-only until S2b/S3, so off by default). */
+       *  (drawn plainly since S2b; off by default until S3 art). */
       capitalWrecks?: boolean;
       /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
        *  Set to the joining test player's id so the seeded base is a real
@@ -3088,6 +3089,24 @@ export class SectorRoom extends Room<SectorState> {
         return;
       }
       this.structureGrid.reloadAllTurrets();
+    });
+
+    // Capital destruction S2b — testMode only: every capital NPC takes a lethal
+    // hit now (at its own pose; the kill point lands on the hull edge), so an
+    // E2E sees its wreck without a long gun duel.
+    this.onMessage('test_kill_capitals', (client: Client, raw: unknown) => {
+      if (!(this.testMode || ALLOW_DEV_OVERRIDES)) return;
+      if (!TestKillCapitalsSchema.safeParse(raw).success) {
+        this.malformed.record(client.sessionId, 'test_kill_capitals');
+        return;
+      }
+      for (const rec of [...this.swarmRegistry.all()]) { // TODO: alloc-debt (test cue only)
+        if (rec.kind !== SWARM_KIND_DRONE || !isCapitalKindId(rec.shipKind)) continue;
+        const b = slotBase(rec.slot);
+        const x = this.sabF32[b + SLOT_X_OFF]!, y = this.sabF32[b + SLOT_Y_OFF]!;
+        // A shield takes the first hit whole: hit again until the hull goes.
+        for (let i = 0; i < 4 && this.swarmRegistry.get(rec.id) === rec; i++) this.applyDamage(rec.id, 'test-kill', 1e9, x, y);
+      }
     });
 
     // W2c showcase: warp the room's ships to (x, y), keeping the formation

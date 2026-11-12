@@ -1,8 +1,9 @@
 # Capital destruction: dynamic ship splitting (design, 2026-11-12)
 
 Status: **design + slice S1 (the core fracture module) + slice S2a (server
-wreck bodies, behind the `capitalWrecks` flag).** S2b (wire) onwards are not
-built. Owner direction (2026-11-12): "Implement the ship splitting
+wreck bodies, behind the `capitalWrecks` flag) + slice S2b (wrecks reach the
+client and are drawn plainly).** S2c (persistence, lifting the cap) and S3
+(art and glowing cut edges) are not built. Owner direction (2026-11-12): "Implement the ship splitting
 dynamically", and "keep the damage model as an idea for now". The damage
 model (zones, armour, internal systems, the destruction sequence) is parked in
 [docs/SHELF.md](../SHELF.md) "Capital damage model".
@@ -186,17 +187,67 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
   then the piece's convex parts (`wreckRayHit`, `wreckSweepHit`).
 - **Budget.** `MAX_LIVE_WRECK_PIECES` (768) per room; the oldest piece goes
   first. Owner: wrecks stay for ever; this only guards the slot pool until
-  S2b persists them.
+  S2c persists them. S2b keeps it.
 - Locks: `wreckPieces.test.ts`, `CapitalWreckSubsystem.test.ts`,
   `tests/integration/sectorRoom/capitalWrecks.test.ts`.
 
-**Left for S2b:** the wire (`SWARM_KIND_WRECK` on the binary swarm wire,
-stride 36, `SWARM_WIRE_VERSION` 5), the `wrecks[]` descriptor on the
-snapshot (`{ wreckId, parentKind, seed, killX, killY, killBlowDamage,
-recentDamageRate, algoVersion }`: the damage inputs must ride it, since they
-set the piece count), persistence, the client predWorld bodies (#12), client
-hit prediction against wrecks (#15), the lag-comp choice for pieces, and a
-lingering-capital integration test. Then the flag can default on with S3.
+**S2b: done (wrecks reach the client, drawn plainly; still behind the flag).**
+
+- **Wire.** `SWARM_KIND_WRECK = 4` rides the binary swarm wire. Each record
+  gains a `u16 wreckId` at +34 (stride 34 → 36), so `SWARM_WIRE_VERSION` went
+  4 → 5 and the decoder drops a v4 packet (invariant #11). The shared
+  `shipKind` byte is the parent capital, `componentIndex` the piece index.
+  Poses ride the pose channel like scrap: the display-delay interpolation and
+  teleport guard for drawing, the remote-entity anchor for the body.
+- **Descriptor.** `SnapshotMessage.wrecks[]`: one `WreckDescriptor` per live
+  wreck (`{ wreckId, parentKind, seed, killX, killY, killBlowDamage,
+  recentDamageRate, snapChance, algoVersion }`; the kill point is hull-local,
+  1× Pixi-up, already on the outline). `CapitalWreckSubsystem` hands out a
+  free u16 `wreckId` per wreck and keeps the list (a shared array rebuilt only
+  when the set changes). `SnapshotBroadcaster` attaches it on every snapshot
+  for `WRECKS_CHANGE_WINDOW` (3) broadcast counters after a change (so every
+  recipient gets a new wreck at once; an empty list then means "none left")
+  and otherwise at the far-drone 2 Hz cadence while any wreck lives. A late
+  joiner rebuilds every wreck within half a second (#16).
+- **Geometry.** `wreckPieceGeometry(inputs)` (`core/destruction/wreckPieces.ts`)
+  is the one source of a piece's shape: convex parts, outline, cut flags, mass,
+  radius, all body-local. The server's `buildWreckPieces` places its output;
+  the client's `WreckGeometryStore` (`client/net/wreckGeometryStore.ts`)
+  rebuilds it from the descriptor, cached per wreck. A descriptor from another
+  `FRACTURE_ALGO_VERSION` is dropped (no body, no sprite), never guessed at.
+- **Client collision.** `WreckClientLeaf` builds the predWorld twin from the
+  same parts, mass and damping (unlocked, default collision groups). Kind 4
+  is an `isRemoteMovingSwarmKind`, so the body follows the remote-entity
+  anchor like scrap (#12, no second paradigm). A piece gets its body only once
+  its wreck's descriptor is known. The local beam and hit prediction test
+  pieces at the drawn pose with the server's `wreckRayHit` (#15).
+- **Drawing.** One plain `Graphics` per piece, built once: the outline filled
+  with the parent hull's base colour at 45 % and a 2 u outline at 18 %
+  (`buildWreckPieceGfx`). No child, texture or filter, so Pixi batches a
+  whole wreck; the cap adds at most 768 display objects. Works on both
+  renderer paths (the worker rebuilds the geometry from `mirror.wrecks`).
+- **A worker crash fixed on the way.** A piece can contain a sliver part
+  (< 1 u thick) that Rapier cannot hull; `createCollider` threw inside the
+  physics worker and killed the pool. `World.spawnObstacle` now skips such a
+  part (same code on both sides, so the twins still match).
+- **Test trigger.** testMode `test_kill_capitals` kills every capital NPC in
+  the room; room `wreck-test` (a peaceful battleship 2.5 km north of the
+  spawn, capital wrecks on).
+- Locks: `tests/unit/swarmWireRoundTrip.test.ts` (kind 4 + v4 hard-fail),
+  `tests/integration/wire/wreckGeometryParity.test.ts` (server bodies ==
+  client rebuild, bit for bit), `tests/integration/sectorRoom/wreckLateJoiner.test.ts`
+  (a late joiner gets `wrecks[]` and rebuilds every piece),
+  `tests/unit/wreckPredWorld.test.ts` (ramming a piece: no corrections),
+  `swarmSpriteUpdater.wreck.test.ts` (one plain sprite per piece),
+  `World.slivers.test.ts`, `tests/e2e/capital-wreck-render.spec.ts`.
+
+**Left for S2c:** persistence (the sector snapshot stores each descriptor
+plus every piece's drifted pose; geometry re-derives on hydrate) and lifting
+the 768-piece cap (owner: wrecks stay for ever). Also open: the lag-comp
+choice for pieces and a lingering-capital integration test.
+
+**Left for S3:** art and glow (textured pieces, molten cut edges from the
+`cutEdges` flags, particles). Then the flag can default on.
 
 The original S2 plan:
 

@@ -19,14 +19,22 @@
 import type { PhysicsWorld } from '@core/physics/World';
 import type { AiController } from '@core/ai/AiController';
 import type { SwarmRenderState } from '@core/contracts/IRenderer';
+import type { WreckPieceGeometry } from '@core/destruction/wreckPieces';
 
 /** The exact predWorld surface a leaf touches — a structural subset of
  *  `PhysicsWorld`, so the real world satisfies it and a unit-test fake can
  *  record calls without a Rapier world. */
 export type PredWorldHandle = Pick<
   PhysicsWorld,
-  'hasShip' | 'spawnObstacle' | 'lockBody' | 'setHullExposed' | 'setShipState'
+  'hasShip' | 'spawnObstacle' | 'lockBody' | 'setHullExposed' | 'setShipState' | 'setAngularDamping'
 >;
+
+/** Capital wreck geometry (S2b): the pieces rebuilt from the `wrecks[]`
+ *  descriptor. A structural subset of `WreckGeometryStore`. */
+export interface WreckGeometrySource {
+  has(wreckId: number): boolean;
+  piece(wreckId: number, index: number): WreckPieceGeometry | null;
+}
 
 /** The hostility-ledger surface a drone leaf touches (register / unregister). */
 export type AiLedgerHandle = Pick<AiController, 'register' | 'unregister'>;
@@ -42,6 +50,8 @@ export interface ClientSpawnCtx {
   predWorld: PredWorldHandle;
   /** Hostility ledger (the drone leaf registers + sets `registeredAiId`). */
   aiController: AiLedgerHandle;
+  /** Capital wreck geometry (the wreck leaf reads its piece from it). */
+  wrecks?: WreckGeometrySource;
   /** Numeric wire entityId. */
   entityId: number;
   /** Pre-cached `swarm-${entityId}` predWorld body key. */

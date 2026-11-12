@@ -35,7 +35,9 @@ import { refineRayHit } from '@core/combat/capitalHits';
 import { shipCollisionParts } from '@core/geometry/shipHullDecomp';
 import { scrapColliderFor } from '@core/geometry/scrapCollider';
 import { tuningFor } from '@shared-types/shipScale/lookup';
-import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP } from '@shared-types/swarmWireFormat';
+import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
+import { wreckRayHit } from '@core/destruction/wreckHits';
+import type { WreckGeometrySource } from '../net/entity/IClientEntityLeaf.js';
 import type { ShipKindId } from '@shared-types/shipKinds';
 import type { PredHitscanWorld } from './HitPrediction.client.js';
 
@@ -64,6 +66,7 @@ function scrapVertices(parentKind: string, componentIndex: number): Vec2[] | nul
 export function rayHitsDrawnSwarmEntity(
   e: SwarmRenderState,
   fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number,
+  wrecks?: WreckGeometrySource,
 ): number | null {
   if (e.kind === SWARM_KIND_DRONE) {
     if (e.shieldDown !== true) {
@@ -83,6 +86,13 @@ export function rayHitsDrawnSwarmEntity(
     if (v === null) return c;
     return rayHitsConvexPolygon(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.angle, v);
   }
+  if (e.kind === SWARM_KIND_WRECK) {
+    // Capital wreck piece (S2b): the same circle-then-convex-parts test the
+    // server's weapons use (`wreckRayHit`, #15), on the rebuilt geometry.
+    const g = wrecks !== undefined && e.wreckId !== undefined ? wrecks.piece(e.wreckId, e.componentIndex ?? 0) : null;
+    if (g === null) return null;
+    return wreckRayHit(g.parts, g.radius, fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.angle);
+  }
   return null;
 }
 
@@ -90,6 +100,8 @@ export class DisplayPoseHitscan implements PredHitscanWorld {
   /** Set by the owner before use (the predWorld is created after join). */
   world: PhysicsWorld | null = null;
   swarm: ReadonlyMap<number, SwarmRenderState> | undefined = undefined;
+  /** Capital wreck geometry (S2b), for wreck pieces' drawn-pose test. */
+  wrecks: WreckGeometrySource | undefined = undefined;
 
   private readonly result = { hitId: '', dist: 0 };
   private readonly skip = (id: string): boolean => this.movingKeys.has(id);
@@ -117,11 +129,11 @@ export class DisplayPoseHitscan implements PredHitscanWorld {
     const swarm = this.swarm;
     if (swarm !== undefined && this.movingKeys.size > 0) {
       for (const [entityId, e] of swarm) {
-        if (e.kind !== SWARM_KIND_DRONE && e.kind !== SWARM_KIND_SCRAP) continue;
+        if (e.kind !== SWARM_KIND_DRONE && e.kind !== SWARM_KIND_SCRAP && e.kind !== SWARM_KIND_WRECK) continue;
         const key = this.keyCache.get(entityId);
         // Only entities that have a collision body count (as before).
         if (key === undefined || key === excludeId || !this.movingKeys.has(key)) continue;
-        const d = rayHitsDrawnSwarmEntity(e, fromX, fromY, dirX, dirY, bestDist);
+        const d = rayHitsDrawnSwarmEntity(e, fromX, fromY, dirX, dirY, bestDist, this.wrecks);
         if (d !== null && (bestId === null || d < bestDist)) {
           bestDist = d;
           bestId = key;

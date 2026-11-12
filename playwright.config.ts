@@ -104,6 +104,8 @@ const FEATURE_SPECS: string[] = [
   // Capital-ship R&D round 3 D — helm orders (tap a course, speed, WASD override).
   '**/capital-helm.spec.ts',
   '**/fleet-warp-client.spec.ts',
+  // Capital destruction S2b: a killed capital's wreck pieces reach the client and are drawn.
+  '**/capital-wreck-render.spec.ts',
   // Round 3 smoke bug: the fly-by fighter jittered alongside the battleship.
   '**/capital-flyby-smooth.spec.ts',
   // Prediction backlog after a long loading hold is skipped, not replayed (2026-11-05).
