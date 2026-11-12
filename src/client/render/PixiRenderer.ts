@@ -63,6 +63,7 @@ import {
   type MutableBounds,
   type MutablePoint,
 } from './camera/CameraDirector';
+import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
 import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
@@ -2030,6 +2031,7 @@ export class PixiRenderer implements IRenderer {
     }
 
     const local = mirror.localPlayerId ? this.sprites.get(mirror.localPlayerId) : null;
+    this._speedFollowSprite = null;
     // Phase 4 WS-A1 — in spectator/construction mode the camera free-roams; do
     // NOT re-issue the local-ship follow (which would yank the view back / snap
     // to a ship that no longer exists). `setSpectator(true)` already detached
@@ -2053,6 +2055,7 @@ export class PixiRenderer implements IRenderer {
       // but runs at ticker speed not MIRROR_UPDATE speed. See Camera
       // construction in init() for the rationale.
       this.camera.follow({ x: local.x, y: local.y });
+      this._speedFollowSprite = local;
     }
 
     // Structure placement ghost + world→screen projection for the confirm
@@ -2146,7 +2149,16 @@ export class PixiRenderer implements IRenderer {
     skyCam.scale.x = this.camera.scale.x;
     skyCam.screenWidth = this.camera.screenWidth;
     skyCam.screenHeight = this.camera.screenHeight;
-    const backdropOn = this._backdrop?.update(skyCam, performance.now(), speedFxFullSpeed(speedShip?.kind)) ?? false;
+    // The speed is measured from the followed ship's drawn pose at the frame
+    // time it was drawn for, shifted like the sky (capital jitter, 2026-11-12).
+    const followed = this._speedFollowSprite;
+    const follow = this._speedFollowPose;
+    if (followed) {
+      follow.x = followed.x - (mirror.travelJumpX ?? 0);
+      follow.y = followed.y + (mirror.travelJumpY ?? 0);
+    }
+    const speedSample = speedFxSampleInto(this._speedSample, followed ? follow : null, mirror.frameTimeMs, skyCam.center, performance.now());
+    const backdropOn = this._backdrop?.update(skyCam, performance.now(), speedFxFullSpeed(speedShip?.kind), speedSample) ?? false;
     // Speed effects (C3): the backdrop's eased speed asks the camera to zoom
     // out a little; applied on the camera's next tick (none while it's baking).
     this.camera.setSpeedZoom(backdropOn ? this._backdrop!.speedZoom() : 1);
@@ -3017,6 +3029,11 @@ export class PixiRenderer implements IRenderer {
   /** Phase 4 travel state: the camera the sky is drawn from (shifted by the
    *  trip's approach jump). */
   private readonly _skyCam = { center: { x: 0, y: 0 }, scale: { x: 1 }, screenWidth: 0, screenHeight: 0 };
+  /** The sprite the camera follows this frame (null: spectator / script),
+   *  and the speed-effects sample built from it (`speedFxSampleInto`). */
+  private _speedFollowSprite: { readonly x: number; readonly y: number } | null = null;
+  private readonly _speedFollowPose = { x: 0, y: 0 };
+  private readonly _speedSample = newSpeedFxSample();
 
   private readonly _warpShipScratch: WarpFxShip = { x: 0, y: 0, rotation: 0, warp: undefined, stern: 0, isLocal: false };
   private readonly _warpStern = new Map<string, number>();
