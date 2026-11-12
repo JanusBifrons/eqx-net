@@ -2933,3 +2933,10 @@ Commit: perf/count-budgets (PR #356)
 - **Symptom:** wreck pieces appeared 1.2–3.6 s after a kill under slow frames, too late for the break-up explosion (an intermittent `wreckBreaks: 0`).
 - **Cause:** `wrecks[]` is not full-state on every snapshot (it rides a few after a change, then 2 Hz). Coalescing keeps only the newest snapshot per frame, so the one carrying it was dropped.
 - **Fix + rule:** the coalescer carries a dropped snapshot's `wrecks` forward. Any snapshot field that is absent-means-no-change must be carried forward the same way (the DataChannel byte coalescer still has this gap).
+
+## 2026-11-12 — "Turrets home while reloading" was hostility decaying mid-reload
+
+- **Report (integration probe, showcase-capital-duel):** after its first 16" volley the battleship's turrets slewed back toward home at 4°/s during the 30 s reload, "although the target is still there, still locked and still hostile".
+- **Cause:** not the reload. The fight was started by ONE `test_aggro` and the pilot never fought back, so the battleship's hostility expired 30 s after the cue (`FORGET_TICKS`, the owner's rule: 30 s after the last hit on the drone or the end of the pilot's last lock on it). The volley lands at ~18-28 s, so the decay falls inside the reload; the NPC lock drops on the next lock step, and the turret, now with no target, goes home. Sampled per second: tracking held through the reload until the tick `hostileTo` emptied, then homed. The aim path (`tickCapitalMounts`, `tickPlayer`, the client's `fcTickMountAngles`) never reads a reload.
+- **Locks:** `tests/integration/sectorRoom/turretsTrackWhileReloading.test.ts` (keeps hostility alive and checks it on every sample, so the test can't pass vacuously) and `tests/unit/turretsTrackWhileReloading.test.ts` (NPC capital + player turret). Both fail with a mutation that homes a reloading turret.
+- **Rule:** before calling a turret's homing a bug, log hostility and the lock per sample. A one-shot `test_aggro` lasts 30 s, which is shorter than a 16" train-and-reload cycle.
