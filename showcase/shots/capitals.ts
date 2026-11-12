@@ -594,7 +594,7 @@ export const capitalBreakup: Shot = {
   server: 'capitals',
   target: { room: 'showcase-capital-duel', params: { shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', initialHull: 6000, initialShield: 0, spawnX: 4000, spawnY: 0 } },
   hud: 'none',
-  durationMs: 24_000,
+  durationMs: 32_000,
   async startWhen(ctx) {
     await artSettled(ctx);
     await ctx.page.waitForFunction(() => {
@@ -611,7 +611,7 @@ export const capitalBreakup: Shot = {
   async run(ctx) {
     const k = ctx.viewport.width / 1920;
     // Hold on the cruiser so the break-up fills the frame.
-    await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 4000, y: 0, zoom: 0.22 * k } }]); // the cruiser is parked at its explicit spawn
-    await ctx.sleep(23_500);
+    await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 4000, y: -350, zoom: 0.17 * k } }]); // the cruiser is parked at its explicit spawn
+    await ctx.sleep(31_500); // ~14 s after the kill for the pieces to drift apart
   },
 };
