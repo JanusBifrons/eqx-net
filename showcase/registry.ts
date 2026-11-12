@@ -23,6 +23,7 @@ import { missiles } from './shots/missiles.js';
 import { packBattle } from './shots/packBattle.js';
 import { longGuns } from './shots/longGuns.js';
 import { fleetMelee } from './shots/fleetMelee.js';
+import { timeScaleDial } from './shots/timeScaleDial.js';
 import { scrap } from './shots/scrap.js';
 import { buildBase } from './shots/buildBase.js';
 import { gridAlive } from './shots/gridAlive.js';
@@ -78,6 +79,7 @@ export const SHOTS: readonly Shot[] = [
   missiles,
   packBattle,
   fleetMelee,
+  timeScaleDial,
   newEffects,
   crossingSector,
   machinedTurrets,
@@ -145,7 +147,6 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
   'pwa-and-push-notifications': 'Install prompt + push notification — not in-world footage.',
   'web-push': 'Server-side push delivery — not in-world footage.',
   security: 'Infrastructure — no visible surface.',
-  'game-time-scale': 'System internals; the visible part is docs/features/game-speed.md (pending).',
   'perf-scenes': 'Test tooling — the scenes are measured, not filmed (any can be played with the camera on).',
   relations: 'A shared rule (who is hostile to whom) with no visible surface of its own; gates, turrets and cargo show its effects.',
   'persistence-and-migrations': 'Covered by an end-card line until the persistence shot lands (SHOWCASE_PENDING).',
@@ -174,7 +175,6 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 
 /** Docs whose feature exists but cannot be staged on main yet — with what unblocks it. */
 export const SHOWCASE_PENDING: Record<string, string> = {
-  'game-speed': 'Stream-only (stream/time-scale) until it lands; then film an existing combat shot at ?timeScale=0.5 and 2 (the chip and the slowed fight) beside a 1× take.',
   'real-scale-ranges': 'Off by default (EQX_NAVAL_RANGE=real); filmed with the coastal-duel shot once the camera can show a 30 km shot (follow-up slice).',
   'contacts-overview':
     'The list earns its place on a capital at real-scale range (16" at 30 km); film it beside the real-scale-ranges shot once that 30 km camera lands, opening the list and locking a far fighter from it.',

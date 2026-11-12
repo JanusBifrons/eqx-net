@@ -2,7 +2,7 @@ import type { Shot, ShotContext } from '../types.js';
 import { flyTo, face } from './_pilot.js';
 
 /** Live NPC ships in the pilot's mirror. */
-async function npcCount(ctx: ShotContext): Promise<number> {
+export async function npcCount(ctx: ShotContext): Promise<number> {
   return ctx.page.evaluate(() => {
     const m = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number }> } } }).__eqxClient?.mirror;
     let n = 0;
@@ -12,7 +12,7 @@ async function npcCount(ctx: ShotContext): Promise<number> {
 }
 
 /** Live robots in the pilot's mirror (works while spectating too). */
-async function robotCount(ctx: ShotContext): Promise<number> {
+export async function robotCount(ctx: ShotContext): Promise<number> {
   return ctx.page.evaluate(() => {
     const m = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number; shipKind?: string }> } } }).__eqxClient?.mirror;
     let n = 0;
@@ -22,7 +22,7 @@ async function robotCount(ctx: ShotContext): Promise<number> {
 }
 
 /** Is the pilot still flying (not spectating after a death)? */
-async function piloting(ctx: ShotContext): Promise<boolean> {
+export async function piloting(ctx: ShotContext): Promise<boolean> {
   return ctx.page.evaluate(() => {
     const s = (globalThis as { __eqxStore?: { getState(): { pilotMode?: string } } }).__eqxStore?.getState();
     return s?.pilotMode !== 'spectator';
@@ -30,7 +30,7 @@ async function piloting(ctx: ShotContext): Promise<boolean> {
 }
 
 /** The nearest robot (the side hostile to the pilot), as a player picks a foe. */
-async function nearestRobot(ctx: ShotContext): Promise<{ x: number; y: number } | null> {
+export async function nearestRobot(ctx: ShotContext): Promise<{ x: number; y: number } | null> {
   return ctx.page.evaluate(() => {
     const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId?: string | null; ships: Map<string, { x: number; y: number }>; swarm: Map<number, { kind: number; shipKind?: string; x: number; y: number }> } } }).__eqxClient?.mirror;
     const me = m?.localPlayerId ? m.ships.get(m.localPlayerId) : undefined;
