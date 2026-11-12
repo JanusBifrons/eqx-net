@@ -224,26 +224,31 @@ export const timeScaleCapitals4x: Shot = {
     const t0 = Date.now();
     let volleys = 0;
     let lastAt = -Infinity;
+    let volley1At = 0;
     let volley2At = 0;
     while (volleys < 2 && Date.now() - t0 < 30_000) {
       for (const sid of await salvoIds(ctx)) {
         if (seen.has(sid)) continue;
         seen.add(sid);
         const now = Date.now();
-        if (now - lastAt > 2000) { volleys++; if (volleys === 2) volley2At = now; }
+        if (now - lastAt > 2000) { volleys++; if (volleys === 1) volley1At = now; if (volleys === 2) volley2At = now; }
         lastAt = now;
       }
       await ctx.sleep(100);
     }
     ctx.log(`  [time-scale] ${volleys} volley(s) (${seen.size} turret salvos) at 4× in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
-    // The next volley is ~7.5 s away at 4× (a 30-game-second reload). Turning the
-    // dial ~6 s after volley two puts it in the air as the speed nears 0.3×
-    // (the dimmer halves the speed once a second), so its shells crawl in.
-    if (volley2At > 0) await ctx.sleep(Math.max(0, volley2At + 6_000 - Date.now()));
+    // The next volley comes one reload after volley two (30 game s; at 4× the
+    // measured gap between the first two volleys, ~7.5–10 s with retraining).
+    // Turning the dial 2.5 s before it is due puts that volley in the air at
+    // about 0.7× (the dimmer halves the speed once a second), so its shells
+    // slow down in flight and land at about 0.25×.
+    const period = volley2At > volley1At && volley1At > 0 ? volley2At - volley1At : 7_500;
+    if (volley2At > 0) await ctx.sleep(Math.max(0, volley2At + period - 2_500 - Date.now()));
+    ctx.log(`  [time-scale] volley gap ${(period / 1000).toFixed(1)} s at 4×; dial turned ${((Date.now() - volley2At) / 1000).toFixed(1)} s after volley two`);
     await dial(ctx, id, 0.25);
     // The pilot zooms in on their own ship as the shells crawl in (x1.1 a notch).
     await ctx.sleep(1_500);
     await wheelSteps(ctx, -100, 12, 300);
-    await ctx.sleep(8_000);
+    await ctx.sleep(12_000); // the shells land at ~0.25×, then a few seconds after
   },
 };
