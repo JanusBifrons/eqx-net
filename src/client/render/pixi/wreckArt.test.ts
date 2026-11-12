@@ -17,6 +17,8 @@ import {
   cutEdgeRuns,
   WRECK_GLOW_EMBER_S,
   WRECK_GLOW_END_S,
+  wreckBlasts,
+  type WreckBlast,
   type WreckTexLayout,
 } from './wreckArt.js';
 import { rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
@@ -194,5 +196,37 @@ describe('wreckGlowAt — molten cut edges cool to dark (S3)', () => {
       const n = cutEdgeRuns(p.cutEdges).reduce((s, [, len]) => s + len, 0);
       expect(n).toBe(p.cutEdges.filter(Boolean).length);
     }
+  });
+});
+
+describe('wreckBlasts: the break-up explosion at the kill point (money-shot review)', () => {
+  it('fireballs at the kill point, sized by the hull, never covering the hull', () => {
+    // Review: "a large flat white translucent disc plus a grey halo covers
+    // the mid-hull". FxExplosions draws radius r as a 2r fireball under a
+    // soft 3.4r glow: everything stays within 0.25 of the wreck radius.
+    for (const R of [2200, 2900, 600]) {
+      const out: WreckBlast[] = [];
+      const n = wreckBlasts(1000, -500, R, 12345, out);
+      expect(n).toBeGreaterThanOrEqual(2);
+      expect(out[0]!.x).toBe(1000);
+      expect(out[0]!.y).toBe(-500);
+      for (let i = 0; i < n; i++) {
+        const b = out[i]!;
+        const reach = Math.hypot(b.x - 1000, b.y + 500) + 1.7 * b.r;
+        expect(reach, `blast ${i} at R=${R}`).toBeLessThan(0.25 * R);
+        expect(b.r, 'scales with the hull (#18)').toBeGreaterThan(0.05 * R);
+      }
+    }
+  });
+
+  it('deterministic per seed; directions differ between seeds', () => {
+    const a: WreckBlast[] = [];
+    const b: WreckBlast[] = [];
+    const c: WreckBlast[] = [];
+    wreckBlasts(0, 0, 2000, 7, a);
+    wreckBlasts(0, 0, 2000, 7, b);
+    wreckBlasts(0, 0, 2000, 99999, c);
+    expect(a).toEqual(b);
+    expect(a[1]!.x).not.toBeCloseTo(c[1]!.x);
   });
 });

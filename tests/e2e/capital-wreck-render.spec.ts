@@ -130,7 +130,7 @@ test('wreck pieces wear the dead ship\'s art and their cut edges glow (S3)', asy
 test('GPU-lit look: every wreck piece draws the dead ship\'s art through the lit shader', async ({ page }) => {
   test.setTimeout(120_000);
   await page.goto(`${BASE_URL}?room=wreck-test&testId=${randomUUID()}&worker=0&shipKind=fighter&initialHull=1000000&zoom=0.12&art=machined&fx=new&shiplight=high&spawnX=1800&spawnY=2500`);
-  type Stats = { machinedSprites: number; wreckPieces: number; wreckTextured: number; wreckLit: number; wreckRawMaps: number; litMeshes: number };
+  type Stats = { machinedSprites: number; wreckPieces: number; wreckTextured: number; wreckLit: number; wreckRawMaps: number; wreckBlasts: number; litMeshes: number };
   await page.waitForFunction(() => {
     const s = (globalThis as unknown as { __eqxArtStats?: () => Stats }).__eqxArtStats?.();
     return (s?.machinedSprites ?? 0) >= 2;
@@ -139,6 +139,8 @@ test('GPU-lit look: every wreck piece draws the dead ship\'s art through the lit
   expect(pre.litMeshes, `GPU lighting is on and the live hulls are lit meshes: ${JSON.stringify(pre)}`).toBeGreaterThan(0);
   const dir = process.env['EQX_WRECK_SHOT_DIR'];
   if (dir) await page.screenshot({ path: `${dir}/lit-before.png` });
+  // Death = the kill command (the server kills on receipt).
+  const t0 = Date.now();
   await page.evaluate(() => {
     const g = globalThis as unknown as { __eqxClient?: { getRoom?: () => { send: (ch: string, m: unknown) => void } | null } };
     g.__eqxClient?.getRoom?.()?.send('test_kill_capitals', { type: 'test_kill_capitals' });
@@ -147,7 +149,7 @@ test('GPU-lit look: every wreck piece draws the dead ship\'s art through the lit
     const s = (globalThis as unknown as { __eqxArtStats?: () => Stats }).__eqxArtStats?.();
     return (s?.wreckPieces ?? 0) >= 2;
   }, undefined, { timeout: 15_000 });
-  const t0 = Date.now();
+  console.log(`[wreck] pieces drawn ${Date.now() - t0} ms after the kill`);
   const s = await page.evaluate(() => (globalThis as unknown as { __eqxArtStats: () => Stats }).__eqxArtStats());
   if (dir) {
     // Review frames at death + 0.3 s, + 2 s and + 5 s.
@@ -159,4 +161,6 @@ test('GPU-lit look: every wreck piece draws the dead ship\'s art through the lit
   expect(s.wreckTextured, JSON.stringify(s)).toBe(s.wreckPieces);
   expect(s.wreckRawMaps, `pieces drawing raw lit maps (flat grey): ${JSON.stringify(s)}`).toBe(0);
   expect(s.wreckLit, JSON.stringify(s)).toBe(s.wreckPieces);
+  // The break-up explosion: fireballs at the kill point (FxExplosions).
+  expect(s.wreckBlasts, JSON.stringify(s)).toBeGreaterThanOrEqual(2);
 });

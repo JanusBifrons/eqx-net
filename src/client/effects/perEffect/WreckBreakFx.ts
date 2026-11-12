@@ -2,7 +2,8 @@
  * `WreckBreakFx` — capital destruction S3: the break-up of a capital into
  * wreck pieces (docs/architecture/capital-destruction.md "S3").
  *
- * One burst at the kill point: a white flash (larger for a clean snap), dust
+ * One burst at the kill point: a short, small white core flash (larger for a
+ * clean snap; the renderer adds FxExplosions fireballs there too), dust
  * that billows out and fades, and hot shards flung outward that spin, cool and
  * fade. Particles, never bodies: purely visual, nothing collides.
  *
@@ -31,7 +32,13 @@ export const WRECK_BREAK_DIAL: Record<EffectQuality, { dust: number; shards: num
   minimal: { dust: 8, shards: 4 },
 };
 
-const FLASH_LIFE_S = 0.45;
+/** The core flash: short and small (money-shot review: a hull-wide white disc
+ *  and grey halo read as a UI overlay and hid the break). The fireballs
+ *  (FxExplosions, spawned by the renderer at the same point) carry the blast. */
+const FLASH_LIFE_S = 0.22;
+/** Core flash start / end radius, as a share of the wreck radius. */
+const FLASH_R0 = 0.02;
+const FLASH_R1 = 0.07;
 const DUST_TINT = 0x7a6c62;
 const SHARD_HOT = 0xffc070;
 const SHARD_COLD = 0x3a2a22;
@@ -80,7 +87,6 @@ export class WreckBreakFx {
       if (kind === 0) g.circle(0, 0, 1).fill({ color: 0xffffff, alpha: 1 });
       else if (kind === 1) g.poly([0, -1.6, 0.7, 1, -0.7, 1]).fill({ color: 0xffffff });
       else {
-        g.circle(0, 0, 2.4).fill({ color: 0xffffff, alpha: 0.12 });
         g.circle(0, 0, 1.6).fill({ color: 0xffffff, alpha: 0.3 });
         g.circle(0, 0, 1).fill({ color: 0xffffff, alpha: 1 });
       }
@@ -113,7 +119,7 @@ export class WreckBreakFx {
     const px = worldX, py = -worldY; // Pixi space
     // The flash: always, even with particles off.
     const f = this.take(2);
-    if (f !== null) this.arm(f, px, py, 0, 0, 0, R * 0.12, R * 0.55 * (opts?.flashScale ?? 1), FLASH_LIFE_S);
+    if (f !== null) this.arm(f, px, py, 0, 0, 0, R * FLASH_R0, R * FLASH_R1 * (opts?.flashScale ?? 1), FLASH_LIFE_S);
     if (!this.particlesDisabled) {
       const dial = WRECK_BREAK_DIAL[this.getQuality()];
       for (let i = 0; i < dial.dust; i++) {

@@ -220,8 +220,43 @@ export interface WreckInfo {
   desc: WreckDescriptor;
 }
 
-/** Break-up sink: kill point (game space), wreck radius, clean snap. */
-export type WreckBreakSink = (x: number, y: number, radius: number, snap: boolean) => void;
+// ── The break-up blast ────────────────────────────────────────────────────
+
+/** One FxExplosions blast: game-space centre and blast radius. */
+export interface WreckBlast { x: number; y: number; r: number }
+
+/** The main fireball's radius as a share of the wreck radius (#18: a heavy
+ *  cruiser's ~260 u, a battleship's ~350 u), and the two smaller ones beside
+ *  it. FxExplosions draws a blast of radius r as a 2r fireball under a soft
+ *  3.4r glow, so every blast stays within ~0.25 of the wreck radius of the
+ *  kill point: a fireball where the hull broke, never one over the hull. */
+export const WRECK_BLAST_MAIN = 0.12;
+export const WRECK_BLAST_SUB = 0.065;
+export const WRECK_BLAST_SUB_OFFSET = 0.09;
+
+/**
+ * The fireballs of a break-up at the kill point (game space): one main blast
+ * and two smaller ones a little off it, their directions from the wreck's
+ * seed (deterministic, so every client sees the same). Writes into `out`
+ * (grown once); returns how many. Runs once per wreck.
+ */
+export function wreckBlasts(x: number, y: number, radius: number, seed: number, out: WreckBlast[]): number {
+  const R = Math.max(20, radius);
+  while (out.length < 3) out.push({ x: 0, y: 0, r: 0 });
+  out[0]!.x = x; out[0]!.y = y; out[0]!.r = R * WRECK_BLAST_MAIN;
+  const a0 = ((seed >>> 0) % 6283) / 1000;
+  for (let i = 1; i < 3; i++) {
+    const a = a0 + i * 2.4;
+    const b = out[i]!;
+    b.x = x + Math.cos(a) * R * WRECK_BLAST_SUB_OFFSET;
+    b.y = y + Math.sin(a) * R * WRECK_BLAST_SUB_OFFSET;
+    b.r = R * WRECK_BLAST_SUB;
+  }
+  return 3;
+}
+
+/** Break-up sink: kill point (game space), wreck radius, clean snap, seed. */
+export type WreckBreakSink = (x: number, y: number, radius: number, snap: boolean, seed: number) => void;
 
 /**
  * Renderer-side state of each wreck in view: when it died (on this
@@ -258,7 +293,7 @@ export class WreckArtState {
     if (ageMs < WRECK_BREAK_FX_MAX_AGE_MS && g !== undefined && this.onBreak !== null) {
       const dx = info.killX - g.cx, dy = info.killY - g.cy;
       const c = Math.cos(pose.angle), sn = Math.sin(pose.angle);
-      this.onBreak(pose.x + dx * c - dy * sn, pose.y + dx * sn + dy * c, hullR, info.snap);
+      this.onBreak(pose.x + dx * c - dy * sn, pose.y + dx * sn + dy * c, hullR, info.snap, desc.seed);
     }
     return info;
   }
