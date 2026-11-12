@@ -4,9 +4,12 @@
  * `fractureHull` splits a hull outline into wreck pieces: seeded Voronoi cells
  * clustered around the killing blow, clipped to the (possibly concave) hull,
  * optional straight section cuts, jagged cut edges and a convex decomposition
- * per piece for Rapier. Pure and DETERMINISTIC: the server and every client
- * run it from the same `(hull, seed, killPoint, sectionCuts, maxPieces)` and
- * get bit-identical pieces, so no geometry ever goes on the wire.
+ * per piece for Rapier. Since v2 a straight primary break line runs through
+ * the kill point across the keel, a seeded chance snaps the hull cleanly in
+ * two along it, and the piece count is earned from hull size, the killing
+ * blow and the recent damage rate (doc §6). Pure and DETERMINISTIC: the
+ * server and every client run it from the same `FractureInput` and get
+ * bit-identical pieces, so no geometry ever goes on the wire.
  *
  * Determinism rules (keep them when editing):
  *  - only + − × ÷ and `Math.sqrt` / `Math.round` / `Math.abs` / min / max in
@@ -29,8 +32,13 @@ import decomp from 'poly-decomp';
 import { Rng, fnvMixU32 } from '../random/rng.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 
-/** Bump on ANY change to the produced geometry (rides the S2 descriptor). */
-export const FRACTURE_ALGO_VERSION = 1;
+/** Bump on ANY change to the produced geometry (rides the S2 descriptor).
+ *  v2: primary break line through the kill point, seeded clean snap,
+ *  damage-driven piece count. */
+export const FRACTURE_ALGO_VERSION = 2;
+/** Default chance that a hull snaps cleanly in two along the primary line
+ *  instead of shattering (owner: "just make it a chance"). */
+export const FRACTURE_SNAP_CHANCE = 0.2;
 /** Output grid: every vertex is a multiple of this. */
 export const FRACTURE_QUANTUM = 1 / 64;
 /** Hard ceiling on pieces (the S2 wire carries the piece index in a u8). */
@@ -40,6 +48,8 @@ export const FRACTURE_MAX_PIECES = 64;
 const FALLOFF_FRAC = 0.18;
 /** Minimum acceptance far from the blast, so the far end still splits. */
 const ACCEPT_FLOOR = 0.035;
+/** Below this many seeds the falloff radius widens by (FEW_SEEDS / count)². */
+const FEW_SEEDS = 12;
 /** Minimum seed spacing as a fraction of sqrt(hull area). */
 const MIN_SEED_SEP_FRAC = 0.03;
 /** Rejection-sampling attempts per requested seed. */
@@ -51,9 +61,22 @@ const JAG_MAX_DEPTH = 4;
 /** Midpoint displacement amplitude per level, as a fraction of the sub-segment length. */
 const JAG_ROUGHNESS = 0.22;
 
+/** Largest tilt of the primary line off square-across-the-keel, as the
+ *  keel-wise component of its (unnormalised) direction: 0.35 ≈ 19°. */
+const PRIMARY_TILT = 0.35;
+/** Hull radius at which the size factor saturates (a battleship is ~2900 u). */
+const SIZE_FULL_RADIUS = 3000;
+/** Half-saturation of the damage inputs: f(x) = x / (x + DAMAGE_KNEE). */
+const DAMAGE_KNEE = 0.35;
+/** How far the seeded draw can move the shatter amount either way. */
+const COUNT_SPREAD = 0.5;
+/** Fewest pieces a (non-snap) damage-driven fracture aims for. */
+const MIN_TARGET = 3;
+
 const EDGE_HULL = 0;
 const EDGE_VORONOI = 1;
 const EDGE_SECTION = 2;
+const EDGE_PRIMARY = 3;
 
 export interface FractureCut {
   readonly a: Vec2;
@@ -70,8 +93,32 @@ export interface FractureInput {
   /** Optional section boundaries; each is the infinite line through a→b.
    *  Section cuts are straight (bulkheads); only Voronoi cuts are jagged. */
   readonly sectionCuts?: ReadonlyArray<FractureCut>;
-  /** Cap on real fragments (clamped to 1..FRACTURE_MAX_PIECES). */
+  /** Cap on real fragments (clamped to 1..FRACTURE_MAX_PIECES). In
+   *  fixed-count mode (none of the three damage inputs below given) it is
+   *  also the target count. */
   readonly maxPieces: number;
+  /** Hull size in local units. Default: the farthest outline vertex from the
+   *  local origin (the ship's centre). Bigger hulls break into more pieces. */
+  readonly hullRadius?: number;
+  /** The killing blow's damage over the ship's max hull HP, 0..1+. */
+  readonly killBlowDamage?: number;
+  /** Damage over the last few seconds, normalised (1 ≈ max hull HP in that
+   *  window), 0..1+. A slow grind is near 0. */
+  readonly recentDamageRate?: number;
+  /** Chance (0..1) of a clean snap in two along the primary line instead of
+   *  a shatter. Default `FRACTURE_SNAP_CHANCE`. */
+  readonly snapChance?: number;
+}
+
+/** The seeded decisions taken before any geometry (exposed for S2 and tests). */
+export interface FracturePlan {
+  /** True: the hull snaps cleanly in two along the primary line. */
+  readonly snap: boolean;
+  /** Piece count aimed for (≤ the cap; 2 when snapping). */
+  readonly targetPieces: number;
+  /** The primary break line: through `point` (the kill point) along unit
+   *  `dir`, roughly across the keel. Null when the cap is 1. */
+  readonly primary: { readonly point: Vec2; readonly dir: Vec2 } | null;
 }
 
 export interface FracturePiece {
@@ -94,21 +141,29 @@ interface P {
 }
 
 export function fractureHull(input: FractureInput): FracturePiece[] {
-  const cap = Math.max(1, Math.min(FRACTURE_MAX_PIECES, Math.floor(input.maxPieces)));
   const hull = normaliseHull(input.hull);
   if (hull.length < 3) return [];
+  const plan = planFor(input, hull);
+  const cap = plan.snap ? clampCap(input.maxPieces) : plan.targetPieces;
   const hullArea = ringArea(hull);
   const scale = Math.sqrt(hullArea);
-  const cuts = input.sectionCuts ?? [];
+  const cuts = plan.snap ? [] : (input.sectionCuts ?? []);
+  const primary = plan.primary ? primaryCut(plan.primary) : null;
 
   // Seeds: one prefix-stable stream, so fewer seeds = a prefix of more seeds.
-  const allSeeds = sampleSeeds(hull, hullArea, input.seed >>> 0, input.killPoint, cap);
+  // A clean snap has none: the primary line alone splits the hull.
+  const allSeeds = plan.snap ? [] : sampleSeeds(hull, hullArea, input.seed >>> 0, input.killPoint, cap, plan.primary);
 
-  // Retry with fewer seeds (then without section cuts) until the cap holds.
+  // Retry with fewer seeds, then without section cuts, then without the
+  // primary line, until the cap holds.
   let useCuts = cuts.length > 0;
+  let usePrimary = primary !== null;
   let n = allSeeds.length;
   for (;;) {
-    const rings = splitIntoPieces(hull, useCuts ? cuts : [], allSeeds, n);
+    const lines: FractureLine[] = [];
+    if (usePrimary) lines.push(primary!);
+    if (useCuts) for (const c of cuts) lines.push(sectionLine(c));
+    const rings = splitIntoPieces(hull, lines, allSeeds, n);
     const minArea = Math.max(4 * FRACTURE_QUANTUM * FRACTURE_QUANTUM, hullArea * 1e-6);
     const quantised = quantiseRings(rings, minArea);
     if (quantised.length <= cap) {
@@ -119,16 +174,146 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
     else if (useCuts) {
       useCuts = false;
       n = allSeeds.length;
+    } else if (usePrimary) {
+      usePrimary = false;
+      n = allSeeds.length;
     } else {
-      // Unreachable for a simple hull (one seed, no cuts = the hull itself).
+      // Unreachable for a simple hull (≤ one seed, no lines = the hull itself).
       return [toPiece(quantiseRings([hull], 0)[0]!)];
     }
   }
 }
 
+/** The seeded decisions `fractureHull` takes for `input`: snap or shatter,
+ *  target piece count and the primary break line. */
+export function fracturePlan(input: FractureInput): FracturePlan {
+  return planFor(input, normaliseHull(input.hull));
+}
+
+// ───────────────────────────── plan ─────────────────────────────
+
+function clampCap(maxPieces: number): number {
+  return Math.max(1, Math.min(FRACTURE_MAX_PIECES, Math.floor(maxPieces)));
+}
+
+/** Saturating 0..1 response to a 0..1+ damage input. */
+function damageResponse(x: number | undefined): number {
+  const v = x !== undefined && x > 0 ? x : 0;
+  return v / (v + DAMAGE_KNEE);
+}
+
+function planFor(input: FractureInput, hull: P[]): FracturePlan {
+  const cap = clampCap(input.maxPieces);
+  // One decision stream, drawn in a fixed order whatever the mode.
+  const rng = new Rng(fnvMixU32((input.seed >>> 0) ^ 0xb4ea7, 0x2));
+  const snapDraw = rng.u32() / 4294967296;
+  const tiltDraw = (rng.u32() % 2001) - 1000; // integer in [-1000, 1000]
+  const countDraw = rng.u32() / 4294967296;
+
+  // Primary line: across the keel, tilted by the seed.
+  let primary: FracturePlan['primary'] = null;
+  if (cap >= 2 && hull.length >= 3) {
+    const keel = keelAxis(hull);
+    const t = (tiltDraw / 1000) * PRIMARY_TILT;
+    const dx = -keel.y + keel.x * t;
+    const dy = keel.x + keel.y * t;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    primary = { point: { x: input.killPoint.x, y: input.killPoint.y }, dir: { x: dx / len, y: dy / len } };
+  }
+
+  const chance = input.snapChance ?? FRACTURE_SNAP_CHANCE;
+  const snap = primary !== null && snapDraw < chance;
+
+  let targetPieces = cap;
+  const damageDriven =
+    input.hullRadius !== undefined || input.killBlowDamage !== undefined || input.recentDamageRate !== undefined;
+  if (snap) targetPieces = Math.min(cap, 2);
+  else if (damageDriven) {
+    let r = input.hullRadius;
+    if (r === undefined) {
+      let r2 = 0;
+      for (const p of hull) r2 = Math.max(r2, p.x * p.x + p.y * p.y);
+      r = Math.sqrt(r2);
+    }
+    const sizeF = Math.sqrt(Math.min(1, Math.max(0, r) / SIZE_FULL_RADIUS));
+    // Violence: how hard and how fast the ship died, 0..1.
+    const violence = 0.5 * damageResponse(input.killBlowDamage) + 0.5 * damageResponse(input.recentDamageRate);
+    const x = Math.min(1, Math.max(0, 0.1 + 0.9 * violence + (countDraw - 0.5) * COUNT_SPREAD));
+    const want = MIN_TARGET + Math.floor(sizeF * (FRACTURE_MAX_PIECES - MIN_TARGET) * x * x);
+    targetPieces = Math.max(1, Math.min(cap, want));
+  }
+  return { snap, targetPieces, primary };
+}
+
+/** Unit direction of the hull's long axis: the major eigenvector of the
+ *  vertex covariance (closed form, sqrt only). */
+function keelAxis(hull: P[]): Vec2 {
+  let mx = 0;
+  let my = 0;
+  for (const p of hull) {
+    mx += p.x;
+    my += p.y;
+  }
+  mx /= hull.length;
+  my /= hull.length;
+  let a = 0;
+  let b = 0;
+  let c = 0;
+  for (const p of hull) {
+    const dx = p.x - mx;
+    const dy = p.y - my;
+    a += dx * dx;
+    b += dx * dy;
+    c += dy * dy;
+  }
+  const h = (a - c) / 2;
+  const lam = (a + c) / 2 + Math.sqrt(h * h + b * b);
+  // Two candidate eigenvectors; take the better-conditioned one.
+  const v1x = b;
+  const v1y = lam - a;
+  const v2x = lam - c;
+  const v2y = b;
+  const n1 = v1x * v1x + v1y * v1y;
+  const n2 = v2x * v2x + v2y * v2y;
+  if (n1 === 0 && n2 === 0) return { x: 0, y: 1 };
+  if (n1 >= n2) {
+    const l = Math.sqrt(n1);
+    return { x: v1x / l, y: v1y / l };
+  }
+  const l = Math.sqrt(n2);
+  return { x: v2x / l, y: v2y / l };
+}
+
+/** A splitting line `nx·x + ny·y = c`; both sides are kept. */
+interface FractureLine {
+  nx: number;
+  ny: number;
+  c: number;
+  kind: number;
+}
+
+function primaryCut(p: NonNullable<FracturePlan['primary']>): FractureLine {
+  const nx = -p.dir.y;
+  const ny = p.dir.x;
+  return { nx, ny, c: nx * p.point.x + ny * p.point.y, kind: EDGE_PRIMARY };
+}
+
+function sectionLine(cut: FractureCut): FractureLine {
+  const nx = -(cut.b.y - cut.a.y);
+  const ny = cut.b.x - cut.a.x;
+  return { nx, ny, c: nx * cut.a.x + ny * cut.a.y, kind: EDGE_SECTION };
+}
+
 // ───────────────────────────── seeds ─────────────────────────────
 
-function sampleSeeds(hull: P[], hullArea: number, seed: number, kill: Vec2, count: number): Vec2[] {
+function sampleSeeds(
+  hull: P[],
+  hullArea: number,
+  seed: number,
+  kill: Vec2,
+  count: number,
+  primary: FracturePlan['primary'],
+): Vec2[] {
   const rng = new Rng(seed ^ 0x5eed5eed);
   const f01 = (): number => rng.u32() / 4294967296;
   let minX = Infinity;
@@ -142,10 +327,25 @@ function sampleSeeds(hull: P[], hullArea: number, seed: number, kill: Vec2, coun
     if (p.y > maxY) maxY = p.y;
   }
   const s = Math.sqrt(hullArea);
-  const r2 = FALLOFF_FRAC * s * (FALLOFF_FRAC * s);
+  // Few seeds spread wider (a few big hulks, not one hulk and slivers);
+  // the density still peaks at the kill point.
+  const widen = Math.max(1, FEW_SEEDS / count);
+  const fall = FALLOFF_FRAC * s * widen * widen;
+  const r2 = fall * fall;
   const sep2 = MIN_SEED_SEP_FRAC * s * (MIN_SEED_SEP_FRAC * s);
   const seeds: Vec2[] = [];
-  if (pointInRing(hull, kill.x, kill.y)) seeds.push({ x: kill.x, y: kill.y });
+  if (primary) {
+    // A seed pair straddling the primary line at the kill point: their
+    // bisector IS the line, so the smallest pieces meet there on both sides.
+    const off = 0.5 * MIN_SEED_SEP_FRAC * s;
+    const nx = -primary.dir.y * off;
+    const ny = primary.dir.x * off;
+    for (const sg of [1, -1]) {
+      const x = kill.x + sg * nx;
+      const y = kill.y + sg * ny;
+      if (seeds.length < count && pointInRing(hull, x, y)) seeds.push({ x, y });
+    }
+  } else if (pointInRing(hull, kill.x, kill.y)) seeds.push({ x: kill.x, y: kill.y });
   const attempts = ATTEMPTS_PER_SEED * count;
   for (let a = 0; a < attempts && seeds.length < count; a++) {
     const x = minX + (maxX - minX) * f01();
@@ -173,17 +373,14 @@ function sampleSeeds(hull: P[], hullArea: number, seed: number, kill: Vec2, coun
 
 // ──────────────────────── sections + Voronoi ────────────────────────
 
-function splitIntoPieces(hull: P[], cuts: ReadonlyArray<FractureCut>, seeds: Vec2[], n: number): P[][] {
+function splitIntoPieces(hull: P[], lines: ReadonlyArray<FractureLine>, seeds: Vec2[], n: number): P[][] {
   let sections: P[][] = [hull];
-  for (const cut of cuts) {
-    const nx = -(cut.b.y - cut.a.y);
-    const ny = cut.b.x - cut.a.x;
+  for (const { nx, ny, c, kind } of lines) {
     if (nx === 0 && ny === 0) continue;
-    const c = nx * cut.a.x + ny * cut.a.y;
     const next: P[][] = [];
     for (const s of sections) {
-      for (const part of splitByLine(s, nx, ny, c, EDGE_SECTION)) next.push(part);
-      for (const part of splitByLine(s, -nx, -ny, -c, EDGE_SECTION)) next.push(part);
+      for (const part of splitByLine(s, nx, ny, c, kind)) next.push(part);
+      for (const part of splitByLine(s, -nx, -ny, -c, kind)) next.push(part);
     }
     sections = next;
   }
