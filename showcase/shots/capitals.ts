@@ -101,7 +101,7 @@ export const capitalBroadside: Shot = {
   reel: false,
   server: 'capitals',
   // The fight starts on cue (test_aggro) once the art has baked, not at join.
-  target: { room: 'showcase-capitals-combat', params: { sectorScale: '4', shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
+  target: { room: 'showcase-capitals-combat', params: { sectorScale: '4', shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
   hud: 'none',
   durationMs: 14_000,
   async startWhen(ctx) {
@@ -278,14 +278,14 @@ export const capitalTurrets: Shot = {
   id: 'capital-turrets',
   section: 'mechanics',
   title: 'Capital turrets',
-  caption: 'The battleship turns its 16-inch guns onto a fighter 4,000 units off its beam and opens fire.',
+  caption: 'The battleship turns its 16-inch guns onto a heavy cruiser 4,000 units off its beam and opens fire.',
   features: ['CAP'],
   docs: ['ship-kinds'],
   reel: false,
   server: 'capitals',
   // One battleship, the pilot 4,000 u off its beam (showcase-capital-duel). No
   // startHostile: the fight starts on cue in run(), after the art has baked.
-  target: { room: 'showcase-capital-duel', params: { shipKind: 'fighter', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
+  target: { room: 'showcase-capital-duel', params: { shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1 } },
   hud: 'none',
   durationMs: 30_000,
   async startWhen(ctx) {
@@ -357,13 +357,13 @@ export const capitalGunsFighter: Shot = {
   id: 'capital-guns-fighter',
   section: 'mechanics',
   title: 'Capital guns, up close',
-  caption: 'A battleship\'s 16-inch and 5-inch guns firing at a fighter alongside, seen from the fighter at normal zoom.',
+  caption: 'A battleship\'s 16-inch and 5-inch guns firing at a heavy cruiser alongside, seen from the cruiser at normal zoom.',
   features: ['CAP'],
   docs: ['ship-kinds'],
   reel: false,
   server: 'capitals',
   // The pilot's own hull (2026-11-10: no survive params; the fight runs its course).
-  target: { room: 'showcase-capital-duel', params: { shipKind: 'fighter', art: 'machined', fx: 'new', spawnX: 1500, spawnY: -1800 } },
+  target: { room: 'showcase-capital-duel', params: { shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', spawnX: 1500, spawnY: -1800 } },
   hud: 'none',
   durationMs: 22_000,
   async startWhen(ctx) {
@@ -430,7 +430,7 @@ export const capitalGunsBystander: Shot = {
   id: 'capital-guns-bystander',
   section: 'mechanics',
   title: 'Capital guns, from beside them',
-  caption: 'A battleship firing at a fighter 4,000 units away, seen from another fighter parked beside its turrets.',
+  caption: 'A battleship firing at a heavy cruiser 4,000 units away, seen from a fighter parked beside its turrets.',
   features: ['CAP'],
   docs: ['ship-kinds'],
   reel: false,
@@ -457,7 +457,7 @@ export const capitalGunsBystander: Shot = {
     }, null, { timeout: 60_000, polling: 250 });
     const bs0 = await battleship(ctx.page);
     const tp = bs0 ? shipPoint(bs0, 0, TARGET_OFF) : { x: 4000, y: 0 };
-    await tpage.goto(targetUrl(ctx.baseUrl, { room: 'showcase-capital-duel', params: { shipKind: 'fighter', art: 'classic', initialHull: 1_000_000, noselfdmg: 1, spawnX: Math.round(tp.x), spawnY: Math.round(tp.y) } }, ctx.testId, 'none'));
+    await tpage.goto(targetUrl(ctx.baseUrl, { room: 'showcase-capital-duel', params: { shipKind: 'heavy-cruiser', art: 'classic', initialHull: 1_000_000, noselfdmg: 1, spawnX: Math.round(tp.x), spawnY: Math.round(tp.y) } }, ctx.testId, 'none'));
     await tpage.waitForSelector('[data-testid="warp-screen"][data-warp-visible="0"]', { state: 'attached', timeout: 60_000 });
     const aggro = (): Promise<void> => tpage.evaluate(() => {
       const c = (window as unknown as { __eqxClient?: { getRoom?: () => { send: (ch: string, x: unknown) => void } | null } }).__eqxClient;
