@@ -19,6 +19,13 @@ describe('client count gate', () => {
     expect(judgeCounts({ ...ok, displayObjects: 2001, atlasPages: 7 }, budget)).toHaveLength(2);
   });
 
+  it('texture uploads are print-only: they depend on host speed, not the code', () => {
+    // 2026-11-12: CI runners that drew 33-40 frames in the window uploaded 1-3
+    // 2048² pages (art still baking after the curtain); runners at 52-57
+    // uploaded 0-1, and the same PR locally 0. Three PRs went red on it.
+    expect(judgeCounts({ ...ok, uploadTexels: 12_582_912 }, budget)).toEqual([]);
+  });
+
   it('too few rendered frames is an invalid run, never a pass', () => {
     expect(judgeCounts({ ...ok, frames: MIN_COUNT_FRAMES - 1 }, budget)[0]).toMatch(/invalid/);
   });
