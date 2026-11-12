@@ -320,3 +320,16 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
 - 2026-11-12: CI: main (probe run 43274831696) fails 38 full-tier feature tests;
   19 of the stream's 21 failures are among them; the other 2 (input-throttle-drift:57,
   missile-frigate-homing:650) pass locally on the stream. Not a stream regression.
+- 2026-11-12: **4× capitals clip, take 3 PASSED hostile review** (apart from the main
+  shield-circle bug, fixed by the other session in #509; re-take once it merges).
+  Shot fixes: pilot spawns 3,000 u off, inside the cruiser's own lock reach (a
+  completed pilot lock keeps the NPC hostile; from 4,000 u the battleship fires one
+  volley and the cue's hostility lapses 30 game s later); the cue goes in as soon as
+  the battleship is visible (it wandered ~10 km while the art baked); dial turned
+  1.2 s (at 4×) before the next volley is due (the reload is GAME time: the glide to
+  0.7× covers ~4.75 game s = 1.2 s at 4×).
+  **Open (presentation, slow motion amplifies it):** the hit flash / damage tint
+  fires when the `damage` event ARRIVES, but shells are drawn at the display tick
+  (100 game ms behind), so the flash leads the drawn hit by ~6 ticks + RTT/2: ~0.1 s
+  at 1×, ~0.5 s at 0.25×. Next: hold a naval hit's damage visuals until the shell's
+  `shell_end` reaches the display tick (the burst already waits for it).
