@@ -126,7 +126,7 @@ describe('capitals collide solidly (owner: "They absolutely should collide by de
     let worst = 0;
     let moved = 0;
     const y0 = slotPose(room, slotOf()).y;
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 160; i++) {
       cr.send('input', { type: 'input', tick: 0, thrust: true, boost: true, turnLeft: false, turnRight: false });
       await harness.advance(50);
       const p = slotPose(room, slotOf());
