@@ -84,10 +84,11 @@ export const QUARANTINE = new Set([
   // and spawn-swap-lingers went 3/3 and left the list (the PR that released
   // them ran them on CI: a spec leaving the list runs itself), as did
   // interceptor-beam-stays-connected, a test bug: its beam destroys the drone
-  // at ~0.85 s, so it now judges the beam-on frames. Still red 0/3:
+  // at ~0.85 s, so it now judges the beam-on frames), and
+  // prediction-idle-bounded (a test bug: it counted the corrections made
+  // behind the loading curtain, where prediction doesn't step; it now counts
+  // from the lift).
   //
-  // Idle prediction sub-pixel in feel-test-25.
-  'prediction-idle-bounded',
   // Cause known (2026-11-09): below ~15 fps the client jumps inputTick ahead
   // without stepping the ship (recoverInputTickFromStarvation), then snaps.
   // Fix options a/b/c are in the consolidated handoff; they wait for a phone run.
