@@ -19,10 +19,10 @@
 import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import { shellEndedOnHit, shellImpactRadius } from './turretFx.js';
 
-interface ShellRec { x: number; y: number; r: number; sx: number; sy: number; reach: number; gen: number }
+interface ShellRec { x: number; y: number; r: number; sx: number; sy: number; reach: number; gen: number; ev: boolean }
 
 /** The fields of a `mirror.projectiles` entry this reads (game space). */
-export interface ShellView { x: number; y: number; weaponId?: string; beam?: unknown }
+export interface ShellView { x: number; y: number; weaponId?: string; beam?: unknown; event?: boolean }
 
 /** Where a burst goes: `FxExplosions` (game-space input). */
 export interface ShellBurstSink {
@@ -38,14 +38,15 @@ export class NavalShellBursts {
    *  map, game space), then burst each shell gone since last frame that ended
    *  before its full range.
    *
-   *  Shells as events (`eventsOn`, the welcome said `shellEvents`): the server
-   *  reports every hit, so a shell's disappearance means nothing (it may only
-   *  have left this viewer's interest: the false edge burst). Bursts then come
-   *  ONLY from `ends`, flat `[x, y, shellRadius]` triples in game space from
-   *  `shell_end` (`mirror.pendingShellEnds`). */
+   *  Shells as events: a shell drawn from its salvo (`event`) never bursts
+   *  because it disappeared (it may only have left this viewer's interest:
+   *  the false edge burst). Its burst comes from `ends`, flat
+   *  `[x, y, shellRadius]` triples in game space, queued when the display
+   *  clock reaches its `shell_end` (`mirror.pendingShellEnds`). A shell this
+   *  viewer only got per tick keeps the old guess. */
   frame(
     projectiles: ReadonlyMap<string, ShellView> | undefined, sink: ShellBurstSink | null, nowMs: number,
-    ends?: readonly number[], eventsOn = false,
+    ends?: readonly number[],
   ): void {
     if (ends) for (let i = 0; i + 2 < ends.length; i += 3) {
       sink?.spawn(ends[i]!, ends[i + 1]!, shellImpactRadius(ends[i + 2]!), nowMs);
@@ -55,18 +56,18 @@ export class NavalShellBursts {
       if (p.beam || p.weaponId === undefined || !p.weaponId.startsWith('naval_')) continue;
       let rec = this.shells.get(id);
       if (rec === undefined) {
-        rec = this.free.pop() ?? { x: 0, y: 0, r: 0, sx: 0, sy: 0, reach: 0, gen: 0 };
+        rec = this.free.pop() ?? { x: 0, y: 0, r: 0, sx: 0, sy: 0, reach: 0, gen: 0, ev: false };
         const w = isWeaponId(p.weaponId) ? getWeapon(p.weaponId) : null;
         rec.r = shellImpactRadius(w && w.mode !== 'hitscan' ? w.radius : 3);
         rec.reach = w && w.mode !== 'hitscan' ? (w.speed * (w.mode === 'projectile' ? w.maxTicks : w.lifetimeTicks)) / 60 : 0;
         rec.sx = p.x; rec.sy = p.y;
         this.shells.set(id, rec);
       }
-      rec.x = p.x; rec.y = p.y; rec.gen = gen;
+      rec.x = p.x; rec.y = p.y; rec.gen = gen; rec.ev = p.event === true;
     }
     for (const [id, rec] of this.shells) {
       if (rec.gen === gen) continue;
-      if (!eventsOn && shellEndedOnHit(Math.hypot(rec.x - rec.sx, rec.y - rec.sy), rec.reach)) sink?.spawn(rec.x, rec.y, rec.r, nowMs);
+      if (!rec.ev && shellEndedOnHit(Math.hypot(rec.x - rec.sx, rec.y - rec.sy), rec.reach)) sink?.spawn(rec.x, rec.y, rec.r, nowMs);
       this.shells.delete(id);
       this.free.push(rec);
     }

@@ -92,7 +92,7 @@ describe('NavalShellBursts', () => {
   // vanishes from the snapshots exactly like one that hit something, so the
   // absence guess burst it in empty space. With events on (the welcome said
   // shellEvents), only a shell_end bursts a shell.
-  it('events on: a shell that leaves the view at half travel does not burst; a shell_end bursts at the hit', () => {
+  it('a shell drawn from events that leaves the view at half travel does not burst; a shell_end bursts at the hit', () => {
     const fx = new FxExplosions(fakeArt(), () => 'high');
     const at: Array<{ x: number; y: number }> = [];
     fx.onSpawn = (x, y): void => { at.push({ x, y }); };
@@ -101,21 +101,21 @@ describe('NavalShellBursts', () => {
     const ends: number[] = [];
     // A 16" shell crosses the view and leaves it at half its reach.
     for (let i = 0; i <= 10; i++) {
-      projectiles.set('proj-7', { x: i * 300, y: 0, weaponId: 'naval_xl' });
-      bursts.frame(projectiles, fx, i * 16, ends, true);
+      projectiles.set('proj-7', { x: i * 300, y: 0, weaponId: 'naval_xl', event: true });
+      bursts.frame(projectiles, fx, i * 16, ends);
     }
     projectiles.delete('proj-7'); // out of interest: no more snapshots carry it
-    bursts.frame(projectiles, fx, 200, ends, true);
+    bursts.frame(projectiles, fx, 200, ends);
     expect(at).toHaveLength(0);
     // Another shell is reported hit (shell_end): it bursts at the hit point.
     ends.push(4200, -50, 6);
-    bursts.frame(projectiles, fx, 216, ends, true);
+    bursts.frame(projectiles, fx, 216, ends);
     expect(at).toHaveLength(1);
     expect(at[0]!.x).toBeCloseTo(4200, 6);
     expect(at[0]!.y).toBeCloseTo(50, 6); // FxExplosions draws in Pixi space (y flipped)
   });
 
-  it('events off: unchanged (a shell gone early still bursts where it was last seen)', () => {
+  it('a per-tick shell keeps the old rule (gone early: bursts where it was last seen)', () => {
     const fx = new FxExplosions(fakeArt(), () => 'high');
     let n = 0;
     fx.onSpawn = (): void => { n++; };

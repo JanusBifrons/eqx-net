@@ -397,6 +397,10 @@ export interface ProjectileRenderState {
   beam?: { toX: number; toY: number };
   /** Weapon catalogue id — drives visual style (e.g. 'laser' → bolt graphic). */
   weaponId?: string;
+  /** Shells as events (slice 2b): a naval shell drawn from its `shell_salvo`
+   *  (`ShellSalvoStore.place`), not from snapshots: snapshot sync and the
+   *  per-frame advance leave it alone. */
+  event?: boolean;
 }
 
 /** One naval shell as its `shell_salvo` described it (game space). */
@@ -411,6 +415,15 @@ export interface ShellSalvoRenderInfo {
   y0: number;
   /** The shell's own radius (its gun's), for the impact burst size. */
   wr: number;
+  /** Velocity (u/s), owner on the wire and gun, for drawing it. */
+  vx: number;
+  vy: number;
+  o: string;
+  w: string;
+  /** The hit (`shell_end`): its tick and point, or `endTick` -1 while flying. */
+  endTick: number;
+  ex: number;
+  ey: number;
 }
 
 export interface RenderMirror {

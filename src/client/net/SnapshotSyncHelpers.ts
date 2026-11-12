@@ -44,6 +44,9 @@ export function syncProjectiles(
     for (const p of projectiles) {
       seen.add(p.id);
       const prev = mirror.projectiles.get(p.id);
+      // Shells as events: a shell drawn from its salvo keeps the closed-form
+      // pose on the display clock; the per-tick copy would yank it forward.
+      if (prev?.event === true) continue;
       const isNew = !prev || prev.isGhost;
       if (isNew) {
         mirror.projectiles.set(p.id, {
@@ -65,7 +68,7 @@ export function syncProjectiles(
     }
   }
   for (const [id, entry] of mirror.projectiles) {
-    if (entry.isGhost) continue;
+    if (entry.isGhost || entry.event === true) continue; // event shells: ShellSalvoStore.place owns them
     if (!seen.has(id)) mirror.projectiles.delete(id);
   }
 }
