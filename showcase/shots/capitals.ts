@@ -290,7 +290,7 @@ export const capitalTurrets: Shot = {
   // once the idle battleship drifts (measured 2026-11-12).
   target: { room: 'showcase-capital-duel', params: { shipKind: 'heavy-cruiser', art: 'machined', fx: 'new', initialHull: 1_000_000, noselfdmg: 1, spawnX: 4000, spawnY: 0 } },
   hud: 'none',
-  durationMs: 15_000,
+  durationMs: 22_000,
   async startWhen(ctx) {
     await artSettled(ctx);
     // The battleship must be in the client's view before the camera tracks it.
@@ -333,7 +333,7 @@ export const capitalTurrets: Shot = {
     await ctx.sleep(5_000);
     // ...then the whole gap, so the shells are seen crossing it and landing.
     await ctx.cinema.play([{ atMs: 0, smoothMs: 2500, shot: { kind: 'frame', ids: [bs, 'local'], padding: 0.2 } }]);
-    await ctx.sleep(9_500);
+    await ctx.sleep(16_500); // the first salvo lands ~13-15 s in; hold for the impacts
   },
 };
 
