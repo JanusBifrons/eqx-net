@@ -22,8 +22,8 @@ export const FEATURE_TRIGGERS = [
   {
     area: 'spectator and ship switching',
     paths: ['src/client/spectator/', 'src/client/components/PilotSpectatorToggle', 'src/client/net/snapshotShipRouter', 'src/client/ships/',
-      'src/client/components/BottomControlPanel'],
-    specs: ['spectator-mode', 'build-hotbar-fits-viewport'],
+      'src/client/components/BottomControlPanel', 'src/client/net/snapshotRemoteSync', 'src/client/net/displayMountAngles'],
+    specs: ['spectator-mode', 'build-hotbar-fits-viewport', 'spectator-npc-turrets'],
   },
   {
     // Capital helm orders + the green move marker at the course point.
