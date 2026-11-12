@@ -195,12 +195,11 @@ export const capitalPilot: Shot = {
   target: { room: 'showcase-capitals', params: { sectorScale: '4', shipKind: 'battleship', art: 'machined', fx: 'new', spawnX: 0, spawnY: -9000, initialHull: 1_000_000 } },
   hud: 'minimal',
   durationMs: 26_000,
-  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'track', target: 'local', zoom: 0.09, leadMs: 400 } }],
+  // The game's follow camera; the pilot zooms with the mouse wheel (record as is).
   async startWhen(ctx) {
     await artSettled(ctx);
   },
   async run(ctx) {
-    const k = ctx.viewport.width / 1920;
     await ctx.sleep(1500);
     // A real tap on empty space up and to the right: the helm takes the course.
     const pt = ctx.px(1500, 260);
@@ -210,10 +209,16 @@ export const capitalPilot: Shot = {
       if (on) break;
       await ctx.sleep(300);
     }
-    await ctx.sleep(7000);
-    await ctx.cinema.play([{ atMs: 0, smoothMs: 4000, shot: { kind: 'track', target: 'local', zoom: 0.032 * k, leadMs: 400 } }]);
-    await ctx.sleep(9000);
-    await ctx.cinema.play([{ atMs: 0, smoothMs: 3000, shot: { kind: 'track', target: 'local', zoom: 0.09 * k, leadMs: 400 } }]);
+    await ctx.sleep(6000);
+    // Pull right back to the capital pilot's zoom floor, then back in.
+    const c = ctx.px(960, 540);
+    await ctx.page.mouse.move(c.x, c.y);
+    // Each notch is x0.9 / x1.1; the battleship's floor sits ~3.5x out from
+    // the start, so 15 out reaches it and 12 back in returns to the start.
+    await wheelSteps(ctx, 100, 15, 200);
+    await ctx.sleep(6000);
+    await wheelSteps(ctx, -100, 12, 200);
+    await ctx.sleep(3000);
   },
 };
 
@@ -235,17 +240,20 @@ export const capitalEngines: Shot = {
   target: { room: 'showcase-capitals', params: { sectorScale: '4', shipKind: 'battleship', art: 'machined', fx: 'new', spawnX: 0, spawnY: -9000, initialHull: 1_000_000 } },
   hud: 'none',
   durationMs: 22_000,
-  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'track', target: 'local', zoom: 0.6, offsetY: -3000 } }],
+  // The game's follow camera (record as is): the pilot zooms in on the
+  // engines with the wheel, then back out to the whole hull under way.
   async startWhen(ctx) {
     await artSettled(ctx);
   },
   async run(ctx) {
-    const k = ctx.viewport.width / 1920;
+    const c = ctx.px(960, 540);
+    await ctx.page.mouse.move(c.x, c.y);
     await ctx.page.keyboard.down('ArrowUp');
     try {
-      await ctx.sleep(9000);
-      await ctx.cinema.play([{ atMs: 0, smoothMs: 4000, shot: { kind: 'track', target: 'local', zoom: 0.08 * k } }]);
-      await ctx.sleep(12_500);
+      await wheelSteps(ctx, -100, 12, 120);
+      await ctx.sleep(7000);
+      await wheelSteps(ctx, 100, 25, 160);
+      await ctx.sleep(8000);
     } finally {
       await ctx.page.keyboard.up('ArrowUp');
     }
@@ -312,6 +320,11 @@ export const capitalTurrets: Shot = {
     await keepHostile(ctx, 16_500);
   },
 };
+
+/** Turn the mouse wheel `n` notches (+ = out), as a player would. */
+async function wheelSteps(ctx: ShotContext, dy: number, n: number, gapMs: number): Promise<void> {
+  for (let i = 0; i < n; i++) { await ctx.page.mouse.wheel(0, dy); await ctx.sleep(gapMs); }
+}
 
 /** Hold the fight for `ms`: drone hostility decays after 30 s without a hit
  *  on the drone, so re-send the test cue every 9 s (a pilot that never shoots
