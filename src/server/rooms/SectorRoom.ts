@@ -484,6 +484,9 @@ const LockTimeCapSchema = z.number().finite().min(0).max(600);
  */
 const TimeScaleSchema = z.number().finite().min(MIN_TIME_SCALE).max(MAX_TIME_SCALE);
 
+/** The dimmer's rate: speed units per wall second (1× → 0.5× in 1 s). */
+export const TIME_SCALE_SLEW_PER_S = 0.5;
+
 const JoinOptionsSchema = z
   .object({
     playerId: z.string().nullable().optional(),
@@ -6490,10 +6493,37 @@ export class SectorRoom extends Room<SectorState> {
    * snapshot carries the keyframe while the speed isn't 1. Returns the speed
    * now in force. Test/recording triggers and `POST /dev/time-scale`.
    */
-  setTimeScale(scale: number): number {
+  setTimeScale(scale: number, smooth = false): number {
+    const from = this.targetTimeScale();
     this.chosenTimeScale = clampTimeScale(scale);
-    this.applyEffectiveTimeScale('forced');
-    return this.gameClock.scale;
+    this.noteTimeScaleTarget('forced', from);
+    // Setup speeds (room/join option, env, tests) apply at once; `smooth`
+    // glides there like a dimmer (the dev endpoint's default).
+    if (!smooth) this.gameClock.setScale(this.targetTimeScale());
+    return this.targetTimeScale();
+  }
+
+  /** Where the sector's speed is heading: chosen × the load factor. */
+  private targetTimeScale(): number {
+    return clampTimeScale(this.chosenTimeScale * this.loadFactor);
+  }
+  private lastSlewAtMs = -1;
+
+  /**
+   * The dimmer: each update, glide the sector clock toward its target at
+   * `TIME_SCALE_SLEW_PER_S` (speed units per wall second), so a slowdown or a
+   * speed change eases in rather than lurching (owner 2026-11-12: "a dial like
+   * a dimmer"). Clients follow each small step through the snapshot keyframe
+   * on their eased anchor path.
+   */
+  private slewTimeScale(nowMs: number): void {
+    const dt = this.lastSlewAtMs < 0 ? 0 : Math.min(100, nowMs - this.lastSlewAtMs);
+    this.lastSlewAtMs = nowMs;
+    const tgt = this.targetTimeScale();
+    const cur = this.gameClock.scale;
+    if (cur === tgt) return;
+    const step = (TIME_SCALE_SLEW_PER_S * dt) / 1000;
+    this.gameClock.setScale(Math.abs(tgt - cur) <= step ? tgt : cur + Math.sign(tgt - cur) * step);
   }
 
   /** The sector's chosen speed (1×, or a forced demo/test speed): the ceiling
@@ -6508,11 +6538,9 @@ export class SectorRoom extends Room<SectorState> {
   private latenessSlowdown = true;
   private lastLoadWindowSeq = 0;
 
-  /** Apply chosen × load factor to the sector clock; log + audit a change. */
-  private applyEffectiveTimeScale(reason: 'load' | 'forced', latenessPct?: number): void {
-    const from = this.gameClock.scale;
-    this.gameClock.setScale(this.chosenTimeScale * this.loadFactor);
-    const to = this.gameClock.scale;
+  /** Log + audit a change of the sector's TARGET speed (not each slew step). */
+  private noteTimeScaleTarget(reason: 'load' | 'forced', from: number, latenessPct?: number): void {
+    const to = this.targetTimeScale();
     if (to === from) return;
     const r2 = (v: number): number => Math.round(v * 100) / 100;
     logger.info({ roomId: this.roomId, sectorKey: this.sectorKey, from: r2(from), to: r2(to), reason, latenessPct }, 'time scale changed');
@@ -11074,10 +11102,12 @@ export class SectorRoom extends Room<SectorState> {
       const l = this.tickBudget.lateness();
       const f = this.loadSpeed.window(this.latenessSlowdown ? l.latenessTicks : 0, l.wallTicks, newRate);
       if (f !== this.loadFactor) {
+        const from = this.targetTimeScale();
         this.loadFactor = f;
-        this.applyEffectiveTimeScale('load', l.wallTicks > 0 ? Math.round((100 * Math.max(0, l.latenessTicks)) / l.wallTicks) : 0);
+        this.noteTimeScaleTarget('load', from, l.wallTicks > 0 ? Math.round((100 * Math.max(0, l.latenessTicks)) / l.wallTicks) : 0);
       }
     }
+    this.slewTimeScale(tStart);
     // CLOCK_RATE now carries only `testTimeScale` (testMode physics-only
     // accelerator, default 1). `state.clockRate` mirrors the load factor for
     // the client's audio pitch + TiDi readout.

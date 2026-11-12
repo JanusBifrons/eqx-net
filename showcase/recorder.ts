@@ -48,8 +48,10 @@ export interface LongFrame { atMs: number; ms: number; blockingMs: number; scrip
 
 /** How the server and the local prediction behaved while a take recorded. */
 export interface NetStats {
-  /** Server ticks per wall-clock second (60 when it keeps pace). */
+  /** Server ticks per wall-clock second (60 × the sector's speed when it keeps pace). */
   serverHz: number;
+  /** Server ticks per GAME second (60 at any speed when it keeps pace). */
+  serverGameHz?: number;
   /** Snapshots whose prediction drift exceeded the noise floor. */
   corrections: number;
   snapshots: number;
@@ -521,7 +523,7 @@ async function takeLongFrames(page: Page): Promise<LongFrame[]> {
   })()`).catch(() => []);
 }
 
-interface NetSample { t: number; serverTick: number; corrections: number; snapshots: number }
+interface NetSample { t: number; g: number; serverTick: number; corrections: number; snapshots: number }
 
 /** The local client's prediction counters (null with no local pilot). */
 async function readNet(page: Page): Promise<NetSample | null> {
@@ -529,7 +531,8 @@ async function readNet(page: Page): Promise<NetSample | null> {
   return page.evaluate<NetSample | null>(`(() => {
     const c = globalThis.__eqxClient;
     if (!c || !c.stats || !c.mirror || !c.mirror.localPlayerId) return null;
-    return { t: performance.now(), serverTick: c.stats.lastServerTick, corrections: c.stats.significantCorrectionCount, snapshots: c.stats.snapshotCount };
+    const now = performance.now();
+    return { t: now, g: c.gameClock ? c.gameClock.now() : now, serverTick: c.stats.lastServerTick, corrections: c.stats.significantCorrectionCount, snapshots: c.stats.snapshotCount };
   })()`).catch(() => null);
 }
 
@@ -537,6 +540,8 @@ export function netDelta(a: NetSample | null, b: NetSample | null): NetStats | n
   if (!a || !b || b.t <= a.t || b.snapshots <= a.snapshots) return null;
   return {
     serverHz: Math.round(((b.serverTick - a.serverTick) / ((b.t - a.t) / 1000)) * 10) / 10,
+    // Per GAME second (time scale): 60 at any sector speed when the server keeps pace.
+    serverGameHz: b.g > a.g ? Math.round(((b.serverTick - a.serverTick) / ((b.g - a.g) / 1000)) * 10) / 10 : undefined,
     corrections: b.corrections - a.corrections,
     snapshots: b.snapshots - a.snapshots,
   };

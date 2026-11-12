@@ -2,9 +2,10 @@
  * Game time scale (stream step 4a): the client turns time into TICKS on the
  * sector's game clock, so its prediction follows the sector's speed with no
  * other code. Two seams:
- *  - `handleSnapshot` reads the `timeScale` keyframe (#16), sets the client's
- *    game speed and re-anchors the tick clock HARD on that snapshot (not the
- *    EWMA ease), in game time;
+ *  - `handleSnapshot` reads the `timeScale` keyframe (#16) and sets the client's
+ *    game speed; the tick anchor (game ms) stays valid across the change and
+ *    the usual eased path absorbs the timing difference (the server glides
+ *    speed changes, the dimmer);
  *  - the render dead-reckon between ticks measures elapsed GAME time, so at
  *    0.5× a ship is drawn moving half as far per wall ms.
  * And at 1× nothing changes: the game clock IS the injected clock, exactly.
@@ -48,16 +49,19 @@ describe('client game time follows the sector speed (time scale 4a)', () => {
     expect(c.gameClock.at(99.3)).toBe(99.3);
   });
 
-  it('a snapshot keyframe sets the speed and re-anchors hard, in game time', () => {
+  it('a snapshot keyframe sets the speed; the anchor stays continuous in game time', () => {
     const clock = new MockClock(1000);
     const c = asInternals(new ColyseusGameClient(clock));
     c.handleSnapshot(snap(100)); // 1×: first anchor
     expect(c._anchorInitialised).toBe(true);
     clock.advance(50);
-    c.handleSnapshot(snap(103, 2)); // the sector goes 2×
+    const gameBefore = c.gameClock.now();
+    c.handleSnapshot(snap(103, 2)); // the sector glides to 2× (dimmer step)
     expect(c.gameClock.scale).toBe(2);
-    expect(c.clockAnchorServerTick).toBe(103);
-    expect(c.clockAnchorPerfNow).toBe(c.gameClock.now());
+    // No jump in game time at the change, and the anchor stays a valid
+    // (serverTick ↔ game ms) pair: the eased path moved it, no hard snap.
+    expect(c.gameClock.now()).toBe(gameBefore);
+    expect(Math.abs(c.clockAnchorPerfNow - c.gameClock.now())).toBeLessThan(100);
     // From here 100 wall ms are 200 game ms: 12 ticks, not 6.
     const before = c.gameClock.now();
     clock.advance(100);

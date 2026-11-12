@@ -141,7 +141,9 @@ describe('SectorRoom integration — the automatic slowdown (time scale 5a)', ()
     while (r.gameClock.scale >= 1 && Date.now() < deadline) await new Promise((res) => setTimeout(res, 100));
     expect(r.gameClock.scale).toBeLessThan(1);
     expect(r.gameClock.scale).toBeGreaterThanOrEqual(0.7);
-    expect(r.state.clockRate).toBe(r.gameClock.scale);
+    // clockRate mirrors the TARGET load factor; the speed glides down to it (dimmer).
+    expect(r.state.clockRate).toBeLessThan(1);
+    expect(r.gameClock.scale).toBeGreaterThanOrEqual(r.state.clockRate);
     const ev = getRecentAudit().find((e) => e.event === 'time_scale_changed' && e.reason === 'load');
     expect(ev).toBeDefined();
   }, 20_000);
@@ -155,4 +157,45 @@ describe('SectorRoom integration — the automatic slowdown (time scale 5a)', ()
     expect(r.gameClock.scale).toBeLessThan(2);
     expect(r.gameClock.scale).toBeGreaterThanOrEqual(1.4);
   }, 20_000);
+});
+
+/**
+ * The dimmer (owner 2026-11-12: "a dial like a dimmer so it transitions
+ * smoothly"): a smooth speed change glides at TIME_SCALE_SLEW_PER_S instead
+ * of jumping. 1× → 2× takes ~2 s of wall time, passing through the speeds in
+ * between; a setup speed (snap) still applies at once.
+ */
+describe('SectorRoom integration — the speed dimmer', () => {
+  let harness: SectorTestHarness | undefined;
+  afterEach(async () => {
+    if (harness) await harness.cleanup();
+    harness = undefined;
+  }, 10_000);
+
+  it('a smooth change glides through the speeds between, then arrives', async () => {
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
+    await harness.connectAs('player-1');
+    const r = harness.getServerRoom() as unknown as SectorRoom;
+    expect(r.setTimeScale(2, true)).toBe(2); // returns the target
+    expect(r.gameClock.scale).toBe(1); // not yet: it glides
+    const seen: number[] = [];
+    const deadline = Date.now() + 6_000;
+    while (r.gameClock.scale < 2 && Date.now() < deadline) {
+      seen.push(r.gameClock.scale);
+      await new Promise((res) => setTimeout(res, 100));
+    }
+    expect(r.gameClock.scale).toBe(2);
+    // It passed through intermediate speeds, rising monotonically.
+    const between = seen.filter((s) => s > 1.05 && s < 1.95);
+    expect(between.length).toBeGreaterThan(3);
+    for (let i = 1; i < seen.length; i++) expect(seen[i]!).toBeGreaterThanOrEqual(seen[i - 1]!);
+  }, 15_000);
+
+  it('a setup speed (snap) applies at once', async () => {
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
+    await harness.connectAs('player-1');
+    const r = harness.getServerRoom() as unknown as SectorRoom;
+    r.setTimeScale(0.5);
+    expect(r.gameClock.scale).toBe(0.5);
+  });
 });

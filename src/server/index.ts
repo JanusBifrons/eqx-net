@@ -311,7 +311,8 @@ if (process.env['NODE_ENV'] !== 'production') {
     void timeScaleRooms().then((rooms) => {
       const r = rooms.find((x) => x.roomId === target || x.timeScaleSectorKey() === target);
       if (!r) { res.status(404).json({ ok: false }); return; }
-      res.json({ ok: true, roomId: r.roomId, timeScale: r.setTimeScale(scale) });
+      // Glides there like a dimmer; `&snap=1` jumps at once.
+      res.json({ ok: true, roomId: r.roomId, timeScale: r.setTimeScale(scale, req.query['snap'] !== '1') });
     }).catch((err: unknown) => res.status(500).json({ error: String(err) }));
   });
 

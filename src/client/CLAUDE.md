@@ -353,7 +353,7 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 - `ColyseusClient.gameClock` (a core `GameClock` over the injected `clock`) is the sector's game time. Its speed is set ONLY from the snapshot's `timeScale` keyframe (absent = 1×, #16).
 - **Everything that turns time into TICKS uses it:** the clock anchor (`clockAnchorPerfNow` is GAME ms), `targetTick`, the render tick phase / dead-reckon (`_lastLocalTickAtMs`, game ms; a RAF wall timestamp goes through `gameClock.at(wallMs)`), and the shell display tick.
 - **Wall time stays for:** networking (wire-arrival intervals, RTT), stall detection (`_anchorFreshAtMs`), diagnostics and UI.
-- **A speed change re-anchors HARD** on the snapshot that carries it (no EWMA). That snapshot's own `serverTick` is the anchor, so the client needs no `fromTick` arithmetic. The shared contract is "60 ticks per GAME second" on both sides.
+- **A speed change keeps the anchor.** The game clock is continuous across a change, so the (serverTick ↔ game ms) anchor stays valid and the normal eased anchor update absorbs the small timing difference. The server GLIDES speed changes (the dimmer), so each step is small. No `fromTick` arithmetic; the shared contract is "60 ticks per GAME second" on both sides.
 - At 1× `gameClock.now()` / `.at(t)` return the wall value EXACTLY (byte-identical until the first speed change).
 - Lock: `ColyseusClient.timeScale.test.ts`.
 - **Display delays are GAME ms (4b).** The swarm floor/ceiling is 100/speed .. 280/speed wall ms (`setSwarmDisplaySpeed`); missiles use `MISSILE_DISPLAY_DELAY_MS / mirror.timeScale`. Arrival stamps stay wall. This keeps the window ~6 poses at every speed, inside `POSE_RING_DEPTH`. Lock: `swarmInterpolation.timeScale.test.ts`.

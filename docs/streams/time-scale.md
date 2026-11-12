@@ -192,3 +192,17 @@ Each step ends in a **stopping point (🛑)**: the inner loop is green, the work
   dispatched from a branch, and the owner's rule keeps perf off this desktop.
   It waits for a laptop session. Full `@feature` E2E tier dispatched on the
   branch via the weekly workflow (CI run 43258183143).
+- 2026-11-12: **the dimmer** (owner: "a dial like a dimmer so it transitions
+  smoothly"). The room glides its clock toward chosen × load factor at
+  0.5 speed units per wall second (1×→0.5× in 1 s, 1×→2× in 2 s); setup speeds
+  snap; the dev endpoint glides (`&snap=1` jumps). Audit and `clockRate` follow
+  the target. Client: no hard re-anchor (the game clock is continuous, the
+  eased anchor absorbs small steps). Showcase QA gates server pace per GAME
+  second. Integration: a smooth 1×→2× rises monotonically through >3
+  intermediate samples. Unit 5008 ✓, integration 370 ✓ + 1 port collision
+  (`:2585`, 3/3 alone).
+- 2026-11-12: showcase takes of fleet-melee: 1× ×2 (stream) and 1× (main)
+  were all flagged "encoded < 55 fps". That's the encode bug fixed in #487
+  (eqx-net-22). 0.5× was flagged "server behind 30 Hz", which was a QA bug
+  (fixed above). 2× passed QA (server 120.4 Hz, 0 corrections). Re-film after
+  #487 merges, with a dimmer take.

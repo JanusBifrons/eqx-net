@@ -3206,9 +3206,10 @@ export class ColyseusGameClient {
     // back and forth, blowing up the reconciler replay window into a 90 %
     // correction storm under server-clock skew. Logic lives in `clockAnchor.ts`
     // for unit-testability; see that module for the mechanic + thresholds.
-    // Game time scale: the sector's speed rides the snapshot (#16). A change
-    // re-anchors hard on this snapshot instead of easing, so ticks before and
-    // after the change are each counted at their own speed.
+    // Game time scale: the sector's speed rides the snapshot (#16). The game
+    // clock stays continuous across a change, so the anchor (game ms) stays
+    // valid and the eased path below absorbs the small timing difference: the
+    // server glides speed changes (the dimmer), so each step is small.
     const snapScale = snap.timeScale?.s ?? 1;
     const speedChanged = snapScale !== this.gameClock.scale;
     if (speedChanged) {
@@ -3218,7 +3219,7 @@ export class ColyseusGameClient {
       useUIStore.getState().setTimeScale(snapScale);
     }
     const gameNowMs = this.gameClock.at(now);
-    if (this._anchorInitialised && !speedChanged) {
+    if (this._anchorInitialised) {
       const next = updateAnchor(
         { anchorServerTick: this.clockAnchorServerTick, anchorPerfNow: this.clockAnchorPerfNow },
         snap.serverTick,
