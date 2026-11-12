@@ -77,11 +77,6 @@ export const QUARANTINE = new Set([
   // rollover (heat-seeker cooldown 90 ticks; energy is not the limit). The
   // other five tests in the file pass 5/5.
   'missile-frigate-homing',
-  // 0/6: the fighter's AUTO group locks the gate (chip data-locked=1 with
-  // instantLock) but fires no bolts (fxProjectiles stays 0 for 10 s), so the
-  // fence never ripples. Is AUTO fire held against a locked non-hostile
-  // structure?
-  'fence-hits',
   // 2026-11-10: failing on CI's e2e-feature-affected since lock-to-fire went
   // universal (#385). Parked by the user for a pass next week: check each is
   // still relevant, then fix or retire it. CI runs 42674277690, 42694505833,
