@@ -51,6 +51,7 @@
 import { pickTarget, type MountTargetView } from '../../core/ai/WeaponMountController.js';
 import { isDirectorBotId } from '../livingworld/directorBotIds.js';
 import { projectileSweepCircle, projectileSweepBox } from '../../core/combat/Weapons.js';
+import { shipSweepHit } from '../../core/combat/shipHitShape.js';
 import {
   SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF,
   slotBase,
@@ -66,7 +67,7 @@ import type {
   MissileFiredEvent,
   MissileDetonatedEvent,
 } from '../../shared-types/messages/missileMessages.js';
-import { GLOBAL_SHIP_TUNING, tuningFor } from '../../shared-types/shipScale/lookup.js';
+import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 
 /** Maximum simultaneous in-flight missiles per sector. 256 = ~4× the
  *  steady-state ceiling under saturation (8 frigates × 3 mounts ×
@@ -170,7 +171,7 @@ export interface PendingImpulse {
  *  based filter is a leaky abstraction). */
 interface SwarmRecLookup {
   get(id: string): { entityId: number; radius: number; kind: number } | null | undefined;
-  all(): Iterable<{ id: string; slot: number; radius: number; kind: number; halfW?: number; halfH?: number; boxes?: Float32Array; wreckParts?: ReadonlyArray<ReadonlyArray<Vec2>> }>;
+  all(): Iterable<{ id: string; slot: number; radius: number; kind: number; halfW?: number; halfH?: number; boxes?: Float32Array; wreckParts?: ReadonlyArray<ReadonlyArray<Vec2>>; shipKind?: string | null; shieldDown?: boolean }>;
 }
 
 export interface MissileSimulationDeps {
@@ -180,7 +181,7 @@ export interface MissileSimulationDeps {
   /** Iterable of `[playerId, _]` for player target candidates. */
   playerToSlot: Iterable<[string, number]>;
   getActiveShip: (playerId: string) => ShipState | undefined;
-  shipPoseCache: Map<string, { x: number; y: number; vx: number; vy: number }>;
+  shipPoseCache: Map<string, { x: number; y: number; vx: number; vy: number; angle?: number }>;
   /** Phase 6b lingering hulls (R2.22 symptom 3). `lingeringSlots` is the
    *  authoritative set of lingering hulls (`shipInstanceId` → SAB slot);
    *  `lingeringPoseCache` carries each one's live mirror pose (lazily written
@@ -190,6 +191,9 @@ export interface MissileSimulationDeps {
    *  (skip if not yet mirrored), mirroring `PlayerFireResolver`. */
   lingeringSlots: Map<string, number>;
   lingeringPoseCache: Map<string, ShipPhysicsState>;
+  /** A lingering hull's ship (its kind and shield set its hit shape, as when
+   *  flown). Absent ⇒ the fighter-sized `hitRadius` circle (unit harnesses). */
+  lingeringShip?: (shipInstanceId: string) => ShipState | undefined;
   swarmRegistry: SwarmRecLookup;
   /** Damage sink — same one ProjectilePipeline + handleFire use. Routes
    *  through `damageRouter` to shield/hull layered application. */
@@ -708,14 +712,15 @@ export class MissileSimulation {
     let bestX = 0;
     let bestY = 0;
 
-    // Players (sphere-only; missiles don't refine to hull polygons today).
+    // Players: the ship's own hit shape (`shipHitShape.ts`), the same as an
+    // NPC of that kind (owner's rule 2026-11-13).
     for (const [playerId] of this.deps.playerToSlot) {
       if (playerId === m.ownerId) continue;
       const ship = this.deps.getActiveShip(playerId);
       if (!ship || !ship.alive || !ship.isActive) continue;
       const pose = this.deps.shipPoseCache.get(playerId);
       if (!pose) continue;
-      const sweep = projectileSweepCircle(m.x, m.y, stepX, stepY, mr, pose.x, pose.y, tuningFor(ship.kind).hitRadius);
+      const sweep = shipSweepHit(ship.kind, ship.shield > 0, m.x, m.y, stepX, stepY, mr, pose.x, pose.y, pose.angle ?? 0);
       if (sweep && sweep.entry < bestEntry) {
         bestEntry = sweep.entry;
         bestId = playerId;
@@ -734,7 +739,10 @@ export class MissileSimulation {
     for (const [shipInstanceId] of this.deps.lingeringSlots) {
       const pose = this.deps.lingeringPoseCache.get(shipInstanceId);
       if (!pose) continue;
-      const sweep = projectileSweepCircle(m.x, m.y, stepX, stepY, mr, pose.x, pose.y, GLOBAL_SHIP_TUNING.hitRadius);
+      const lship = this.deps.lingeringShip?.(shipInstanceId);
+      const sweep = lship !== undefined
+        ? shipSweepHit(lship.kind, lship.shield > 0, m.x, m.y, stepX, stepY, mr, pose.x, pose.y, pose.angle)
+        : projectileSweepCircle(m.x, m.y, stepX, stepY, mr, pose.x, pose.y, GLOBAL_SHIP_TUNING.hitRadius);
       if (sweep && sweep.entry < bestEntry) {
         bestEntry = sweep.entry;
         bestId = shipInstanceId;
@@ -760,7 +768,9 @@ export class MissileSimulation {
         ? wreckSweepHit(rec.wreckParts, rec.radius, m.x, m.y, stepX, stepY, mr, cx, cy, this.deps.sabF32[b + SLOT_ANGLE_OFF]!)
         : rec.halfW !== undefined && rec.halfH !== undefined
           ? projectileSweepBox(m.x, m.y, stepX, stepY, mr, cx, cy, rec.halfW, rec.halfH, rec.boxes)
-          : projectileSweepCircle(m.x, m.y, stepX, stepY, mr, cx, cy, rec.radius);
+          : rec.kind === 1 && rec.shipKind
+            ? shipSweepHit(rec.shipKind, !rec.shieldDown, m.x, m.y, stepX, stepY, mr, cx, cy, this.deps.sabF32[b + SLOT_ANGLE_OFF]!)
+            : projectileSweepCircle(m.x, m.y, stepX, stepY, mr, cx, cy, rec.radius);
       if (sweep && sweep.entry < bestEntry) {
         bestEntry = sweep.entry;
         bestId = rec.id;

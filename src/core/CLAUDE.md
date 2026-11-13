@@ -340,6 +340,12 @@ reintroduces the spiral the 500-target cannot afford. Full story:
   a misnomer — see rapier2d-compat rigid_body.d.ts:377/395). The new
   geometry lags one `world.step()` for queries — never `updateScene-
   Queries()` (diverges from client predWorld).
+- **A ship's WEAPON hit shape is `combat/shipHitShape.ts`, by kind and shield
+  state, never by pilot (owner's rule 2026-11-13):** bubble while the shield is
+  up, hull once down, a capital's hull either way; splash measures to the kind's
+  radius. Every server weapon path and the client beam-end / hit prediction call
+  it (#15); never hit-test a ship on `rec.radius` or a tuning `hitRadius`.
+  Lock: `tests/integration/sectorRoom/shipHitShapeParity.test.ts`.
 - Full internals + the feel-test-lockstep env-noise caveat:
   [docs/architecture/collision-layers.md](../../docs/architecture/collision-layers.md).
 
