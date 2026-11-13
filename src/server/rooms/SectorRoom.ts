@@ -9804,7 +9804,9 @@ export class SectorRoom extends Room<SectorState> {
     if (pose !== undefined) {
       // Living World P1a-2 — an ABANDONED hull becomes a salvageable derelict
       // (fly alongside to salvage over time); a death spills an instant pod.
-      this.loot.spillShipHold(shipInstanceId, pose.x, pose.y, pose.vx, pose.vy, cause, cause === 'abandoned');
+      this.loot.spillShipHold(shipInstanceId, pose.x, pose.y, pose.vx, pose.vy, cause, {
+        player: true, derelict: cause === 'abandoned',
+      });
     } else {
       getHoldStore().delete(shipInstanceId, this.sectorKey !== null);
     }
@@ -10750,7 +10752,11 @@ export class SectorRoom extends Room<SectorState> {
     // break-in that already took some leaves less to drop), and a trade
     // hauler's hold is its cargo. Anything with a hold spills where it died.
     const hold = this.npcHold(rec);
-    if (!isHoldEmpty(hold)) this.loot.spillShipHold(rec.id, x, y, vx, vy, isHaulerId(rec.id) ? 'hauler-raided' : 'kill');
+    // An NPC drop is an ordinary pod (its contents' tier), never the bright
+    // dead-player spill tier (owner 2026-11-13).
+    if (!isHoldEmpty(hold)) {
+      this.loot.spillShipHold(rec.id, x, y, vx, vy, isHaulerId(rec.id) ? 'hauler-raided' : 'kill', { player: false });
+    }
     else getHoldStore().delete(rec.id, false);
   }
 

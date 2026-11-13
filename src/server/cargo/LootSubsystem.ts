@@ -185,13 +185,19 @@ export class LootSubsystem {
   }
 
   /** Spill a ship's carried hold where it died. Pod creation + the ship-hold
-   *  delete are ONE atomic group. No-op for an empty / absent hold. */
+   *  delete are ONE atomic group. No-op for an empty / absent hold.
+   *  `player`: only a dead PLAYER's cargo is the bright spill tier (a
+   *  scramble); an NPC's drop is an ordinary pod coloured by its contents
+   *  (owner 2026-11-13: bright NPC pods read as live ships among the wreckage). */
   spillShipHold(
-    shipInstanceId: string, x: number, y: number, vx: number, vy: number, cause: string, derelict = false,
+    shipInstanceId: string, x: number, y: number, vx: number, vy: number, cause: string,
+    opts: { player: boolean; derelict?: boolean },
   ): string | null {
     const rec = this.d.holdStore.get(shipInstanceId);
     if (rec === undefined) return null;
-    return this.drop(cloneHold(rec.hold), x, y, vx, vy, { spill: true, derelict, cause, extraDeletes: [shipInstanceId] });
+    return this.drop(cloneHold(rec.hold), x, y, vx, vy, {
+      spill: opts.player, derelict: opts.derelict === true, cause, extraDeletes: [shipInstanceId],
+    });
   }
 
   isDerelict(id: string): boolean {

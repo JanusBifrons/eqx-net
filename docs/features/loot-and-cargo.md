@@ -40,7 +40,9 @@ Part 2 (P1a-2) adds base storage, auto-deposit, derelicts and credit sinks.
 | Robot Core | 5 | gold |
 | Credits, blueprints | 0 | gold (blueprint) |
 
-A dead player's spilled cargo glows bright magenta. Cargo capacity is derived
+A dead player's spilled cargo glows bright magenta. An NPC's drop is an
+ordinary pod coloured by its contents (owner 2026-11-13: bright NPC pods read
+as live ships among the wreckage). Cargo capacity is derived
 from the ship's toughness (`maxHealth × 2`), so heavier hulls haul more.
 
 ## How it works

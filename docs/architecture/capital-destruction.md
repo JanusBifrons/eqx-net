@@ -773,13 +773,17 @@ break-up:
   the normal blast's radius by `fx.deathBlastScale` (0.5) and its smoke by
   `fx.deathBlastLinger` (0.5), so the break-up and the fight stay readable
   and capitals feel bigger. Flag off, or any other profile: unchanged.
-- **A simple glow.** `glowStyle: 'simple'`: one quad (a band 0.4 × the
-  wreck radius deep, kept inside the piece; the core width alone was "a thin
-  orange line on one edge" at fleet zoom, round-2 review) per cut segment on the piece's own side, full length
+- **A simple glow.** `glowStyle: 'simple'`: one quad (a band 0.1 × the
+  wreck radius deep, at least 4.5 u so it is ≥ 2 px at fleet zoom, kept
+  inside the piece; the core width alone was "a thin orange line on one
+  edge" at fleet zoom, round-2 review, and 0.4 × radius filmed as an opaque
+  orange crescent over each piece, round 3) per cut segment on the piece's own side, full length
   from the first frame (no front, no halo, no white-hot head), positions
   written once; per frame only one shared U changes (uploaded only when it
   moves), on its own curve (`simpleGlowAt` / `wreckSimpleGlowTexture`): one
-  warm orange held, then red to dark at `fx.glowSeconds` (1 s), the same
+  warm orange held, then a clear bright red mid-fade (~0.55–0.7 of its life;
+  round 3 saw no red stage in the old dim orange-red), then dark at
+  `fx.glowSeconds` (1 s), the same
   for every kind. (The first cut squeezed the capital curve into 1 s: a
   white flash, ~0.4 s of orange, colour reading differently on different
   art; hostile review 2026-11-13.) The glow is destroyed when
@@ -802,9 +806,13 @@ break-up:
   flashes, baked / GPU-lit / plain art, a piece with no cut edges).
   (The bright pink diamonds in the round-2 crops, one per dead robot, are
   loot pods, swarm kind 3: an NPC kill spills its hold through
-  `LootSubsystem.spillShipHold`, which always uses the bright magenta
+  `LootSubsystem.spillShipHold`, which then always used the bright magenta
   "player spill" tier. They take damage numbers by design and explode when
-  shot down. Not wreck pieces.)
+  shot down. Not wreck pieces. Owner decision 2026-11-13, "make them normal
+  loot colour": an NPC's drop is now an ordinary pod coloured by its
+  contents; only a dead player's cargo is magenta. Lock:
+  `tests/integration/sectorRoom/lootLoop.test.ts`. A proper cargo-container
+  visual among the scrap is on the shelf, docs/SHELF.md.)
 - **No damage numbers on debris.** A hit on any wreck piece (swarm kind 4,
   capital or sub-cap) shows its spark and hit flash, but no floating number
   and no health bar (`isWreckPieceTarget`, both the authoritative and the
