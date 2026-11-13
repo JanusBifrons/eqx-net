@@ -39,7 +39,8 @@ export const HEAVY: ShipKind = defineShipKind({
   energyMax: 180,
   energyRegenRate: 0.3,
   // Phase-1 agility uplift (2026-05-10): match player `maxAngvel = 1.4`.
-  ai: { thrust: 0.68, turnKp: 4.0, maxTorque: 2.1 }, // P3.11b: ≈0.45× player thrust (was 0.175)
+  ai: { thrust: 0.68 }, // P3.11b: ≈0.45× player thrust (was 0.175)
+  aiRole: 'gunship',
   shape: {
     kind: 'polygon',
     color: 0xff7733,
@@ -107,8 +108,8 @@ export const INTERCEPTOR: ShipKind = defineShipKind({
   // (180 / (5 × 6 Hz)), and the fastest regen. (plan §3.3)
   energyMax: 180,
   energyRegenRate: 0.4,
-  // AI tuning sized to the new maxAngvel: maxTorque = maxAngvel * 1.5 = 3.75.
-  ai: { thrust: 1.13, turnKp: 7.0, maxTorque: 3.75 }, // P3.11b: ≈0.45× player thrust (was 0.3)
+  ai: { thrust: 1.13 }, // P3.11b: ≈0.45× player thrust (was 0.3)
+  aiRole: 'interceptor',
   shape: {
     kind: 'polygon',
     color: 0xb066ff,
@@ -182,7 +183,8 @@ export const GUNSHIP: ShipKind = defineShipKind({
   // expressed as a per-slot `energyCost` override below. (plan §3.3)
   energyMax: 150,
   energyRegenRate: 0.3,
-  ai: { thrust: 0.79, turnKp: 5.0, maxTorque: 2.4 }, // P3.11b: ≈0.45× player thrust (was 0.2)
+  ai: { thrust: 0.79 }, // P3.11b: ≈0.45× player thrust (was 0.2)
+  aiRole: 'gunship',
   shape: {
     kind: 'polygon',
     color: 0xff7722,

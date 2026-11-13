@@ -80,7 +80,8 @@ export const CROSSGUARD: ShipKind = defineShipKind({
   // under `peacefulDrones: true` (the AI is `PassiveDroneBehaviour`,
   // which ignores the tuning entirely). The numbers below are only
   // touched if a future room uses Crossguard as a hostile drone.
-  ai: { thrust: 5.0, turnKp: 4.0, maxTorque: 12.0 },
+  ai: { thrust: 5.0 },
+  aiRole: 'gunship',
   shape: {
     kind: 'polygon',
     color: 0xffcc33,

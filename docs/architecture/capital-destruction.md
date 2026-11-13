@@ -140,7 +140,48 @@ Each slice is one PR, about one agent session, tests first.
   pairs up on both sides and jags. Over the kill-focus seed sweep (heavy
   cruiser): far pieces 5.5 → 3.3, far crack tilt 4° → 24°, how radial the
   cracks at the kill point are 0.70 → 0.85; the v5 locks still hold.
-- **Algorithm:**
+- **Chunks at the impact (v7, owner review 2026-11-13: "Tune it").** A
+  filmed heavy-cruiser death still read as procedural: v6's far cracks cut
+  full-width slices where no shell hit, and its fan plus Voronoi seeds cut
+  the struck midsection into a comb of 6–10 thin glowing slivers. Owner:
+  "The last hit's impact sets the split", chunks ENORMOUS and heavy. v7
+  drops the Voronoi seeds and the far cracks (steps 2–4 below no longer
+  run). `crackLines` now makes, on its own seeded stream:
+  - two ZONE cracks, one either side of the primary line, 0.75–1.2 beams
+    from it at the struck edge (wider for a harder death), tilted like the
+    primary within ±0.25; a crack that would chip less than 0.6 beam off
+    the hull's end is dropped;
+  - 0–2 FAN cracks (more for a harder death), each from the kill point to
+    its zone crack 70–95 % of the way across the hull, so a zone half
+    breaks into a wide triangle and a quad. A fan crack splits only the
+    sections inside its zone half (`LocalLine` regions), and only where
+    every part it leaves is chunky: at least `FAN_MIN_WIDTH_BEAMS` (0.45)
+    of the beam wide and at most `FAN_MAX_ASPECT` (2.6) times longer than
+    that width (rotating calipers); otherwise that section stays whole
+    (filmed take 2026-11-13: a fan crack left a long thin triangle, 4 %+
+    of the hull, along the port edge). Lock: "no long thin piece of any
+    size" in `fractureHull.killFocus.test.ts` (no piece under 0.45 beams
+    wide, none under 0.9 beams wide more than 3× longer than wide; the bow
+    and stern sections keep the hull's own shape and are exempt). No two
+    cracks run near-parallel closer than 0.45 beams either (each crack as a
+    chord between junctions; closest over 1,200 seeds a level: 0.56 beams;
+    the zone cracks keep ≥ 0.5 beams keel-wise from the primary by
+    construction). Lock: "no two cracks run near-parallel" (filmed take
+    2026-11-13 asked whether a zone crack and the primary could leave a
+    40–50 u sliver: they cannot; that strip was the cut-edge glow spilling
+    over one crack as it opened, a renderer fix in S3);
+  - rarely ONE far crack: only for a killing blow ≥ max hull on a hull
+    ≥ 4.5 beams long, with a 12 % seeded chance, well clear of the zone.
+  A tip hit has no zone; one fan draw may crack the broken-off end once.
+  The result: 2–4 chunky pieces at the kill point and one big section each
+  side (3–7 pieces in all; the piece count still rises with hull size and
+  violence, as more chunks and a wider zone, within the cap). Over 60 seeds
+  of heavy-cruiser side hits: pieces under 4 % of the hull and over 4× longer
+  than wide 129 → 0 (filmed salvo), fractures with a cut over 2 beams from
+  the kill point 60/60 → 8/60 (heavy blow only, one crack each), pieces
+  centred within 1.5 beams of the kill point 14–32 → 2–4. Locks: the v7
+  describe in `fractureHull.killFocus.test.ts`.
+- **Algorithm (v6; since v7 steps 2–4 are replaced by the cracks above):**
   1. Seeded integer PRNG (mulberry32, the existing `core/random/rng.ts`).
   2. Seeds by rejection sampling inside the hull (and, since v6, inside the
      crack fan), with acceptance `R⁴ / (R⁴ + d⁴)` (d = distance to the kill
@@ -163,8 +204,9 @@ Each slice is one PR, about one agent session, tests first.
      would make a piece self-intersect stays straight on both sides.
   8. `poly-decomp` convex decomposition per piece.
 - **Cap:** if clipping makes more pieces than the cap (or the target), retry
-  with fewer seeds, then without section cuts, then with fewer far cracks,
-  then fewer fan cracks, then without the primary line (deterministically).
+  (deterministically, v7) with fewer fan cracks, then without the far crack,
+  then without section cuts, then with fewer zone cracks (which side keeps
+  its crack is seeded), then without the primary line.
 - **Review:** `EQX_FRACTURE_SVG=1 pnpm vitest run src/core/destruction` prints
   four SVGs (fixed 24 + a section cut, slow grind, heavy blow, clean snap).
   Each shows the kill point as a white dot with a red ring and the primary
@@ -208,29 +250,43 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
   - **The kick.** A slow push away from the kill point,
     `wreckPushMin + (wreckPushMax − wreckPushMin)·r²/(r² + d²)`,
     r = `WRECK_PUSH_FALLOFF_FRAC` (0.3) × hull radius, × 0.75–1.25 by how
-    violent the death was; `wreckPushMax/Min` = 0.012 / 0.004 × hull radius
-    per second (`shipTuning`, #18; ~26 / ~9 u/s for a 2× heavy cruiser; the
-    2026-11-12 money-shot push was 0.17 / 0.08). A slow seeded spin given as
-    a RIM speed (`WRECK_SPIN_RIM_NEAR/FAR` 0.75 / 0.3 × `wreckSeparate`,
-    0.55–1× of it, either way round, divided by the piece's radius, at least
+    violent the death was; `wreckPushMax/Min` = 0.010 / 0.004 × hull radius
+    per second (`shipTuning`, #18; ~22 / ~9 u/s for a 2× heavy cruiser; the
+    2026-11-12 money-shot push was 0.17 / 0.08, the first heavy tune
+    0.012 / 0.004). A slow seeded spin given as a RIM speed
+    (`WRECK_SPIN_RIM_NEAR/FAR` 0.13 / 0.05 × `wreckSeparate`, 0.55–1× of it,
+    either way round, divided by the piece's radius, at least
     `WRECK_SPIN_MIN_RADIUS_FRAC` 0.06 × hull radius), so a big piece turns
-    slower than a small one (≤ ~3°/s).
+    slower than a small one (≤ ~3°/s; measured < 1°/s on a heavy cruiser).
   - **Neighbours always part.** The push is fastest at the kill point, so a
     piece nearer it chased the slower neighbour beyond it along the same
     line, and the spins turned long pieces into each other: pieces slid over
     each other and two stern pieces folded into a "V" (owner review
     2026-11-13). Every shared cut between two pieces (`findSeams`: cut edges
-    on one line) must open at `shipTuning(kind).wreckSeparate` (0.0025 ×
-    hull radius per second, ~5 u/s for a 2× heavy cruiser) or more at BOTH
+    on one line, plus cut edges that only touch, as at the T-junction where
+    a fan crack ends on a zone crack, whose two sides are jagged
+    differently) must open at `shipTuning(kind).wreckSeparate` (0.014 ×
+    hull radius per second, ~31 u/s for a 2× heavy cruiser) or more at BOTH
     ends of the shared stretch, spin included, and the two centres must part
     at half that. Where they don't, an equal and opposite push (momentum
     kept) along the cut's normal / the centre line makes up the difference
     (Gauss–Seidel, at most 400 passes, aiming 10 % past the target). The cut
     line separates the two pieces, so parting along its normal never
     overlaps them. Side effect: momentum moves outward along the chain, so
-    the pieces at the ends of the hull drift fastest (~50 u/s for a heavy
+    the pieces at the ends of the hull drift fastest (~75 u/s for a heavy
     cruiser), and the piece at the kill point is slow; the knock-back from
     later shells (a follow-up) supplies the violence.
+    Tuning (owner review of a filmed take, 2026-11-13: at 0.0025 the gaps
+    were 5–15 px after 8 s at the capital zoom ~0.17 and the hull read as
+    "cracked but intact" for 3–4 s; "heavy and weighty, but the break must
+    be SEEN"): measured on a heavy cruiser killed by a shell, the narrowest
+    cut is ~31 u open 1 s after the kick (≥ 5 px at 0.17) and ~170–215 u
+    8 s after, with no piece over ~75 u/s. The separation speed is
+    multiplied along a chain of neighbours, so it is tuned for v7's 3–7
+    chunks: v6's ~30-piece shatter flung its small pieces at ~250 u/s at
+    this speed. Lock: `tests/integration/sectorRoom/wreckPiecesSeparate.test.ts`
+    (gap ≥ 0.012 × radius 1 s after the kick and ≥ 0.065 × radius 8 s
+    after, speed < 0.037 × radius).
   - **Pieces collide with each other** (`WRECK_COLLISION_GROUPS` =
     0x0004FFFF, server spawn and client twin): heavy chunks bump instead of
     passing through. The physics collider is `colliderParts`, each drawn
@@ -535,6 +591,48 @@ slows in slow motion and speeds up at 4×.
 - **Salvage.** Ties into the scrap economy.
 - **Lifetime.** A per-sector cap instead of today's global `MAX_LIVE_SCRAP`
   FIFO.
+
+### Sub-capital profile (sub-capital break-up, slice 1, 2026-11-13)
+
+The owner wants every other ship to break up too, but quietly: "use the same
+systems, just make it use less effects, the glow simpler, only a few parts".
+Capitals stay "a rare and very large spectacle". So there is one wreck
+system with three **destruction profiles**, and every difference is a field
+on the profile, not a branch in the code.
+
+- **`destructionProfile(entity)`** (`src/shared-types/shipScale/destructionProfile.ts`)
+  returns `capital` (authored `sizeClass: 'capital'`), `none` (engineering
+  kinds and the cargo pod, which keep their scrap) or `subcap` (every other
+  ship, fighters included). Ships read it through `shipTuning(kind).destruction`
+  (#18). It takes an entity (`{ type: 'ship' | 'structure', kindId }`), so a
+  structure kind can get a profile later; structures are `none` for now.
+- **`DESTRUCTION_PROFILES`** (`destruction.ts`) is plain data: the fracture
+  options, the crack hold, push and damping scales, whether pieces collide,
+  and the FX flags (break burst, kill blasts, crack front, ripples, whether
+  the wreck replaces the death blast, glow style and seconds). The capital
+  entry holds the capital stack's values, and its fracture options are the
+  fracture defaults. Today only the fracture reads the profile
+  (`wreckPieceGeometry`); slice 2 (server) and slice 4 (client look) swap
+  their constants for these fields.
+- **The sub-capital fracture** (same `fractureHull`, v7, with options): at
+  most 3 pieces, no fan or far cracks, and `chunkyPieces`. The primary crack
+  must be sound: it splits the hull into exactly two pieces of at least 15 %
+  each, both chunky. A line across a small concave hull (a fighter's notched
+  tail, a delta's swept wings) would clip wingtips off as slivers, so it moves
+  toward the centroid, then tries the diagonals and the keel through the
+  centroid. The beam-wide zone cracks are replaced by at most one extra crack
+  on the longer side, sized to that side (chance 0.4, more for a violent
+  death). Every piece passes v7's chunky guard at 0.3 beam (a fighter is
+  barely longer than its beam, so 0.45 would never allow a third piece), and
+  the jag is shorter and gentler (depth 2, roughness 0.12), so a piece is a
+  handful of convex parts.
+- **Result** over 1,200 deaths per kind (seeds × bearings × violence): 2
+  pieces mostly; 3 in about 20–33 % on fighters, gunships, frigates and the
+  hauler, and rarely on the round robots; the interceptor always 2. No piece
+  under ~10 % of the hull or under ~0.3 of its least width; at most 6 convex
+  parts. Lock: `src/core/destruction/fractureHull.subcap.test.ts`.
+- **Capitals are byte-identical:** every new option defaults to the old
+  behaviour, the goldens are unchanged and `FRACTURE_ALGO_VERSION` stays 7.
 
 ## 4. Determinism strategy
 

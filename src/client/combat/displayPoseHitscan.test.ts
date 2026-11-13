@@ -10,7 +10,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import RAPIER from '@dimforge/rapier2d-compat';
 import { PhysicsWorld } from '../../core/physics/World.js';
 import type { SwarmRenderState } from '../../core/contracts/IRenderer.js';
-import { DisplayPoseHitscan } from './displayPoseHitscan.js';
+import { DisplayPoseHitscan, rayHitsDrawnSwarmEntity } from './displayPoseHitscan.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 
 beforeAll(async () => {
   await RAPIER.init();
@@ -80,6 +81,23 @@ describe('DisplayPoseHitscan', () => {
     expect(down!.dist).toBeGreaterThan(up);
     w.dispose();
   });
+
+  // 2026-11-13: the circle gate was `rayHitsSphere`, null once the ray starts
+  // inside the circle past the centre, so a beam fired from beside a capital
+  // (its circle is half the hull's length) across the far half missed. Same
+  // gate as the server's `refineRayHit` (#15).
+  for (const shieldDown of [false, true]) {
+    it(`a beam from beside a ${shieldDown ? 'shield-down' : 'shield-up'} capital, away from its centre, hits the far half`, () => {
+      const R = getShipKind('battleship').radius;
+      const bb = { ...drone(0, 0, shieldDown), radius: R, shipKind: 'battleship' } as SwarmRenderState;
+      const fx = R * 0.2;
+      const fy = -R * 0.5;
+      const d = -Math.SQRT1_2;
+      expect(rayHitsDrawnSwarmEntity(bb, fx, fy, d, d, R)).not.toBeNull();
+      // Beside the hull and heading away from it: still a miss.
+      expect(rayHitsDrawnSwarmEntity(bb, fx, fy, 1, 0, R)).toBeNull();
+    });
+  }
 
   it('the closest of predWorld and drawn hits wins', async () => {
     const { w, h, swarm } = await setup();

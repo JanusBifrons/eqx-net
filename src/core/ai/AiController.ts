@@ -6,6 +6,7 @@ import type {
   AiStructureView,
   AiSwarmView,
   AiWorldView,
+  IAiNeighbourQuery,
 } from '../contracts/IAiBehaviour.js';
 
 /**
@@ -128,6 +129,15 @@ export class AiController {
   }
 
   /**
+   * Line-of-fire feedback: tell `entityId`'s brain a friendly body at
+   * (blockerX, blockerY) held its shot this tick. No-op for unregistered ids
+   * or behaviours without the optional hook. Alloc-free (#14).
+   */
+  noteBlocked(entityId: string, tick: number, blockerX: number, blockerY: number): void {
+    this.entities.get(entityId)?.behaviour.noteBlocked?.(tick, blockerX, blockerY);
+  }
+
+  /**
    * Purge `playerId` from every registered behaviour's hostility set.
    * Called when a player leaves the sector (transit out, disconnect) — the
    * threat is gone from this sector's perspective. O(N) over registered
@@ -196,6 +206,9 @@ export class AiController {
     /** Allegiances P0 — other-allegiance swarm combatants (server-only; built
      *  once per tick, absent in a single-allegiance sector ⇒ byte-identical). */
     swarms?: ReadonlyArray<AiSwarmView>,
+    /** AI steering 2a — this tick's neighbour index (server-only; absent ⇒
+     *  `view.neighbours` undefined, byte-identical). */
+    neighbours?: IAiNeighbourQuery,
   ): void {
     if (this.entities.size === 0) return;
     // NOTE: this `{ players, tick, dtSec }` literal is the ONE remaining
@@ -207,7 +220,7 @@ export class AiController {
     // every behaviour. The 60/sec rate is negligible vs the rest of
     // the engine; leave as-is. See `swarmEntitySnapshot` doc for the
     // full GC-pressure story.
-    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto };
+    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours };
     for (const [id, reg] of this.entities) {
       this.runEntity(id, reg, view, tick, entitySnapshot);
     }
