@@ -11,6 +11,7 @@ import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { shellBlastDamage } from '../../shared-types/shellBlast.js';
+import { shipBubbleRadius } from '../../core/combat/shipHitShape.js';
 
 interface Ent { id: string; slot: number; x: number; y: number; kind: number }
 
@@ -97,7 +98,10 @@ describe('siege shell blast (coastal defences)', () => {
     expect(hits.some((h) => h.target === 'beyond')).toBe(false);
     expect(hits.find((h) => h.target === 'beside')?.damage).toBeGreaterThan(0);
     expect(blasts).toHaveLength(1);
-    expect(blasts[0]!.x).toBeGreaterThan(560);
+    // The ship in the way is hit on its fighter shield bubble (its kind's
+    // radius + pad, `shipHitShape.ts`), as a player fighter would be, not on
+    // the record's 12 u circle (owner's rule 2026-11-13).
+    expect(blasts[0]!.x).toBeGreaterThan(600 - shipBubbleRadius('fighter') - 12 - 20);
     expect(blasts[0]!.x).toBeLessThan(600);
     expect(blasts[0]!.r).toBe(splash.radius);
   });
