@@ -66,6 +66,7 @@ import {
 import { resolveEntityDisplayPose } from '../../net/swarmDisplayPose';
 import type { WreckGeometryStore } from '../../net/wreckGeometryStore';
 import { WreckPieceSprite, coolWreckInfo, type WreckArtState } from './wreckArt.js';
+import type { DyingHullHold } from './dyingHullHold.js';
 
 /** S2b: an empty wreck map for frames whose mirror carries none. */
 const NO_WRECKS: ReadonlyMap<number, unknown> = new Map();
@@ -136,6 +137,9 @@ export interface SwarmSpriteCtx {
    *  down in slow motion and speed up at 4x. Absent: the wall `now` (tests).
    *  Pose interpolation stays on the wall clock (wall-stamped arrivals). */
   fxNowMs?: number;
+  /** Dying capitals held on screen until their wreck pieces are drawn; told
+   *  of every piece drawn this frame. Absent ⇒ no hold. */
+  dyingHulls?: DyingHullHold;
 }
 
 /** Module-scope scratch for a structure's per-mount arc-local angles passed
@@ -378,7 +382,18 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     else if (entry.kind === 1) sprite.visible = entry.warp !== 2;
     sprite.rotation = -lerped.angle;
     if (entry.kind === 1 || entry.kind === 3) updateArtShipLight(ctx.art, sprite); // ships + tumbling scrap
-    else if (entry.kind === 4 && sprite instanceof WreckPieceSprite) sprite.update(fxNow, ctx.art.sunAz); // S3 light frame + cut-edge glow (game clock)
+    else if (entry.kind === 4 && sprite instanceof WreckPieceSprite) {
+      sprite.update(fxNow, ctx.art.sunAz); // S3 light frame + cut-edge glow (game clock)
+      // A held dying hull hands over to its pieces the frame ALL of them are
+      // drawn; until then the hold hides the ones that have arrived (so it is
+      // shown again here every frame).
+      sprite.visible = true;
+      if (ctx.dyingHulls !== undefined) {
+        const desc = wreckDescs!.get(entry.wreckId!)!;
+        const total = ctx.wrecks!.geometryFor(desc)?.length ?? 0;
+        ctx.dyingHulls.notePiece(entry.shipKind ?? desc.parentKind, entry.wreckId!, total, sprite);
+      }
+    }
     if (entry.kind === 1) {
       // P3c — charge-weapon wind-up telegraph (pulses while charging).
       const tele = chargeTelegraphs.get(sprite);
