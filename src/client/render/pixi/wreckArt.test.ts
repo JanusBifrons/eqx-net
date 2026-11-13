@@ -221,7 +221,7 @@ describe('wreckBlasts: the break-up explosion at the kill point (money-shot revi
         const b = out[i]!;
         const reach = Math.hypot(b.x - 1000, b.y + 500) + 1.7 * b.r;
         expect(reach, `blast ${i} at R=${R}`).toBeLessThan(0.25 * R);
-        expect(b.r, 'scales with the hull (#18)').toBeGreaterThan(0.05 * R);
+        expect(b.r, 'scales with the hull (#18)').toBeGreaterThan(0.04 * R);
       }
     }
   });

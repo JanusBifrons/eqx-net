@@ -66,8 +66,8 @@ export const WRECK_CRACK_FRONT_MS = Math.round(WRECK_CRACK_MS * 0.8);
 /** Most ripple blasts one wreck gets (the `high` effects tier). */
 export const WRECK_RIPPLE_MAX = 7;
 /** A ripple blast's radius as a share of the wreck radius: clearly visible
- *  at capital zoom (review 2026-11-13: 0.022–0.04 were lost), still well
- *  below the kill-point blast (`WRECK_BLAST_MAIN`, 0.12). */
+ *  at capital zoom (review 2026-11-13: 0.022–0.04 were lost), still below
+ *  the kill-point blast (`WRECK_BLAST_MAIN`, 0.09). */
 export const WRECK_RIPPLE_R_MIN = 0.05;
 export const WRECK_RIPPLE_R_MAX = 0.07;
 /** Least game time between two ripples, so they read as a sequence along the
@@ -122,10 +122,17 @@ export interface WreckGlow { color: number; alpha: number }
 /** Keyframes: time (s), colour, alpha. Colour and alpha only ever fall. The
  *  white-hot stage is short (0.12 s), so a crack is orange a stretch behind
  *  its tip and the white-hot head racing along it stands out (review
- *  2026-11-13: no visible head: the crack behind it was as white). */
-const GLOW_T = [0, 0.12, 0.6, WRECK_GLOW_EMBER_S, 3, WRECK_GLOW_END_S];
-const GLOW_C = [0xfff2c8, 0xffa040, 0xff6a18, 0xa82c08, 0x501404, 0x200804];
-const GLOW_A = [1, 1, 0.92, 0.55, 0.2, 0];
+ *  2026-11-13: no visible head: the crack behind it was as white). Past the
+ *  ember it is a faint dark grey-brown scorch, never black (filmed v3 takes
+ *  2026-11-13: the old near-black 0x501404 / 0x200804 tail read as a black
+ *  "char" band across every opening gap). */
+const GLOW_T = [0, 0.12, 0.6, WRECK_GLOW_EMBER_S, 2.2, 3, WRECK_GLOW_END_S];
+const GLOW_C = [0xfff2c8, 0xffa040, 0xff6a18, 0xa82c08, 0x5a4a40, 0x4a3c34, 0x3a2f2a];
+const GLOW_A = [1, 1, 0.92, 0.55, 0.25, 0.14, 0];
+/** The soft halo (3× the core) only while the edge glows: gone by this age
+ *  (s), so a cooled edge keeps just the thin core as its scorch. */
+const HALO_FADE_FROM_S = 0.6;
+const HALO_GONE_S = WRECK_GLOW_EMBER_S + 0.2;
 
 function lerpColor(a: number, b: number, t: number): number {
   const r = ((a >> 16) & 255) + (((b >> 16) & 255) - ((a >> 16) & 255)) * t;
@@ -168,13 +175,15 @@ export function wreckGlowTexture(): Texture {
   const data = new Uint8Array(GLOW_TEX_W * 2 * 4);
   const g: WreckGlow = { color: 0, alpha: 0 };
   for (let i = 0; i < GLOW_TEX_W; i++) {
-    wreckGlowAt((i / (GLOW_TEX_W - 1)) * WRECK_GLOW_END_S, g);
+    const ageS = (i / (GLOW_TEX_W - 1)) * WRECK_GLOW_END_S;
+    wreckGlowAt(ageS, g);
+    const halo = 0.3 * Math.max(0, Math.min(1, (HALO_GONE_S - ageS) / (HALO_GONE_S - HALO_FADE_FROM_S)));
     for (let row = 0; row < 2; row++) {
       const o = (row * GLOW_TEX_W + i) * 4;
       data[o] = (g.color >> 16) & 255;
       data[o + 1] = (g.color >> 8) & 255;
       data[o + 2] = g.color & 255;
-      data[o + 3] = Math.round(255 * g.alpha * (row === 0 ? 1 : 0.3));
+      data[o + 3] = Math.round(255 * g.alpha * (row === 0 ? 1 : halo));
     }
   }
   _glowTex = new Texture({ source: new BufferImageSource({
@@ -691,16 +700,25 @@ export interface WreckBlast { x: number; y: number; r: number }
  *  cruiser's ~260 u, a battleship's ~350 u), and the two smaller ones beside
  *  it. FxExplosions draws a blast of radius r as a 2r fireball under a soft
  *  3.4r glow, so every blast stays within ~0.25 of the wreck radius of the
- *  kill point: a fireball where the hull broke, never one over the hull. */
-export const WRECK_BLAST_MAIN = 0.12;
-export const WRECK_BLAST_SUB = 0.065;
-export const WRECK_BLAST_SUB_OFFSET = 0.09;
-/** How far the kill blast's fireballs cover the hull for their ~1.5 s
- *  (share of the wreck radius): the two side blasts reach 0.09 + 1.15 ×
- *  0.065, past the main fireball and its secondary fireballs (1.15 × 0.12;
- *  FxExplosions draws a blast of radius r as a 2r flipbook with secondaries
- *  0.55r out). Its flash reaches further but is gone in 0.3 s. Cracks inside
- *  are hidden while the front would run there; ripples go outside it. */
+ *  kill point: a fireball where the hull broke, never one over the hull.
+ *  Owner decision 2026-11-13 ("smaller kill blast"): the cracks and the
+ *  ripples hid under the old 0.12 / 0.065 at 0.09 (reach 0.165), so the
+ *  fireballs shrank to about half the area they cover (reach 0.112); the
+ *  flash at the hit stays bright. */
+export const WRECK_BLAST_MAIN = 0.09;
+export const WRECK_BLAST_SUB = 0.045;
+export const WRECK_BLAST_SUB_OFFSET = 0.06;
+/** How long the kill blast's smoke hangs, as a share of an ordinary death's
+ *  (FxExplosions `linger`): it lifts by ~1.1 s instead of ~2.1 s, so the
+ *  cracks are not under it for long. */
+export const WRECK_BLAST_LINGER = 0.5;
+/** How far the kill blast's fireballs and smoke cover the hull (share of the
+ *  wreck radius): the two side blasts reach 0.06 + 1.15 × 0.045, past the
+ *  main fireball and its secondary fireballs (1.15 × 0.09; FxExplosions
+ *  draws a blast of radius r as a 2r flipbook with secondaries 0.55r out,
+ *  and the shortened smoke stays within ~1.1r). The break-up's dust stays
+ *  inside it too (`WreckBreakFx`). Its flash reaches further but is gone in
+ *  0.3 s. The crack front hurries through this stretch; ripples go outside. */
 export const WRECK_BLAST_REACH = Math.max(1.15 * WRECK_BLAST_MAIN, WRECK_BLAST_SUB_OFFSET + 1.15 * WRECK_BLAST_SUB);
 
 /**
@@ -978,6 +996,13 @@ export class WreckPieceSprite extends Container {
       // sharp corner, e.g. the wedge at the kill point, would poke it out).
       s[q + 12] = insideWidth(o, nx, ny, mx, my, this.halfHalo);
       s[q + 13] = insideWidth(o, fx, fy, mx, my, this.halfHalo);
+      // Both ends inside is not enough on a concave piece (the bow): the
+      // strip's far side can still cross the outline between them (filmed
+      // v3 takes: the scorch stuck out past the hull). Narrow until it fits.
+      for (let tries = 0; tries < 6 && !stripInside(o, nx, ny, fx, fy, mx, my, s[q + 12]!, s[q + 13]!); tries++) {
+        s[q + 12] = s[q + 12]! * 0.5; s[q + 13] = s[q + 13]! * 0.5;
+      }
+      if (!stripInside(o, nx, ny, fx, fy, mx, my, s[q + 12]!, s[q + 13]!)) { s[q + 12] = 0; s[q + 13] = 0; }
       this.glowEndMs = Math.max(this.glowEndMs, s[q + 9]! + WRECK_GLOW_END_S * 1000);
       this.edgeSeg[edge] = k++;
     });
@@ -1018,7 +1043,6 @@ export class WreckPieceSprite extends Container {
       for (let k = 0; k < S; k++) {
         const q = k * SEG_STRIDE;
         const nx = s[q]!, ny = s[q + 1]!, dn = s[q + 4]!, df = s[q + 5]!;
-        const ux = s[q + 7]!, uy = s[q + 8]!;
         const inx = s[q + 10]!, iny = s[q + 11]!;
         const lit = F >= dn;
         const frac = !lit ? 0 : df > dn ? Math.min(1, (F - dn) / (df - dn)) : 1;
@@ -1031,16 +1055,19 @@ export class WreckPieceSprite extends Container {
         writeStrip(pos, (S + k) * 4, nx, ny, ex, ey, inx, iny, lit ? Math.min(hc, wn) : 0, lit ? Math.min(hc, we) : 0);
         // The white-hot head: the last stretch behind the tip of a crack the
         // front is still running along, wider than the crack it leaves.
+        // On this piece's side only, like the stroke (it was a quad centred
+        // on the crack, so half of it lay in the neighbour or past the hull).
         const growing = lit && frac < 1;
-        let hx = ex, hy = ey;
+        let hx = ex, hy = ey, wh = we;
         if (growing) {
           heads++;
           const segLen = Math.hypot(fx - nx, fy - ny);
           const back = Math.min(frac, this.headLen / Math.max(1e-6, segLen));
           hx = ex - (fx - nx) * back; hy = ey - (fy - ny) * back;
+          wh = wn + (s[q + 13]! - wn) * (frac - back);
         }
-        writeQuad(pos, (2 * S + k) * 4, hx, hy, ex, ey, ux, uy, growing ? this.halfHeadHalo : 0, growing ? this.halfHead : 0);
-        writeQuad(pos, (3 * S + k) * 4, hx, hy, ex, ey, ux, uy, growing ? this.halfHead : 0, growing ? this.halfHead * 0.5 : 0);
+        writeStrip(pos, (2 * S + k) * 4, hx, hy, ex, ey, inx, iny, growing ? Math.min(this.halfHeadHalo, wh) : 0, growing ? Math.min(this.halfHeadHalo, we) : 0);
+        writeStrip(pos, (3 * S + k) * 4, hx, hy, ex, ey, inx, iny, growing ? Math.min(this.halfHead, wh) : 0, growing ? Math.min(this.halfHead, we) : 0);
       }
       this.heads = heads;
       geom.getBuffer('aPosition').update();
@@ -1202,17 +1229,19 @@ function pointInRing(ring: ReadonlyArray<{ x: number; y: number }>, x: number, y
   return inside;
 }
 
-/** Four corners of a quad from (px,py) to (qx,qy), half-width `h`, ends
- *  pushed out by `ext` along the unit direction (ux,uy). In place. */
-function writeQuad(
-  pos: Float32Array, v0: number, px: number, py: number, qx: number, qy: number,
-  ux: number, uy: number, h: number, ext: number,
-): void {
-  const ax = px - ux * ext, ay = py - uy * ext, bx = qx + ux * ext, by = qy + uy * ext;
-  const nx = -uy * h, ny = ux * h;
-  const o = v0 * 2;
-  pos[o] = ax + nx; pos[o + 1] = ay + ny;
-  pos[o + 2] = bx + nx; pos[o + 3] = by + ny;
-  pos[o + 4] = bx - nx; pos[o + 5] = by - ny;
-  pos[o + 6] = ax - nx; pos[o + 7] = ay - ny;
+/** Whether the strip from edge (ax,ay) → (bx,by) out to `wa` / `wb` along
+ *  the inward normal (mx, my) lies inside the ring (math-up): its far side
+ *  and its middle, sampled along the edge. Build-time. */
+function stripInside(
+  ring: ReadonlyArray<{ x: number; y: number }>, ax: number, ay: number, bx: number, by: number,
+  mx: number, my: number, wa: number, wb: number,
+): boolean {
+  for (let i = 0; i <= STRIP_SAMPLES; i++) {
+    const f = i / STRIP_SAMPLES, w = wa + (wb - wa) * f;
+    if (!(w > 0)) continue;
+    const x = ax + (bx - ax) * f, y = ay + (by - ay) * f;
+    if (!pointInRing(ring, x + mx * w, y + my * w) || !pointInRing(ring, x + mx * w * 0.5, y + my * w * 0.5)) return false;
+  }
+  return true;
 }
+const STRIP_SAMPLES = 16;
