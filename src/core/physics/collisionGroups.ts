@@ -47,15 +47,18 @@ export const SCRAP_COLLISION_GROUPS = 0x0002fffd;
 
 /**
  * Collision groups for capital WRECK pieces (membership bit 2, filter every
- * bit except 2): pieces never collide with other wreck pieces, and collide
- * with everything else (ships, rocks, scrap, structures).
+ * bit): pieces collide with each other and with everything else (ships,
+ * rocks, scrap, structures). They are solid, heavy bodies that bump.
  *
- * Why (hostile review 2026-11-12): a break-up pushes pieces away from the
- * kill point, fastest there. Pieces tile the hull exactly, so a fast piece
- * at the kill point ran straight into the slower neighbour beyond it; the
- * contacts traded the push away and the field kept the hull's outline with
- * hairline gaps. Like scrap, wreck pieces pass through one another.
+ * History: 2026-11-12 they ignored each other (filter 0xFFFB), because a fast
+ * push from the kill point drove pieces into their slower neighbours and the
+ * contacts traded the push away. The owner review of 2026-11-13 found pieces
+ * sliding over each other instead, and asked for heavy, fully simulated
+ * chunks. Now the push is slow, every pair of neighbours is given a parting
+ * velocity along its shared cut (`buildWreckPieces`), and each collider is
+ * inset a hair (`wreckColliderInset`) so neighbours don't start touching.
+ * The membership bit stays so a rule can single wreck pieces out.
  *
- *   packed u32 = (0x0004 << 16) | 0xFFFB = 0x0004FFFB
+ *   packed u32 = (0x0004 << 16) | 0xFFFF = 0x0004FFFF
  */
-export const WRECK_COLLISION_GROUPS = 0x0004fffb;
+export const WRECK_COLLISION_GROUPS = 0x0004ffff;

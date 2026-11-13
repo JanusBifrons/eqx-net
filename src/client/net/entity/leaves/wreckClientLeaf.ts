@@ -31,7 +31,7 @@ export class WreckClientLeaf extends ClientEntityLeafBase {
       ? ctx.wrecks.piece(e.wreckId, e.componentIndex ?? 0)
       : null;
     if (g === null) return; // no geometry yet: the caller retries next sync
-    ctx.predWorld.spawnObstacle(ctx.key, e.x, e.y, g.radius, g.mass, undefined, WRECK_LINEAR_DAMPING, WRECK_COLLISION_GROUPS, g.parts);
+    ctx.predWorld.spawnObstacle(ctx.key, e.x, e.y, g.radius, g.mass, undefined, WRECK_LINEAR_DAMPING, WRECK_COLLISION_GROUPS, g.colliderParts);
     ctx.predWorld.setAngularDamping(ctx.key, WRECK_ANGULAR_DAMPING);
   }
 
