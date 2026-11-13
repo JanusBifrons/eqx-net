@@ -140,7 +140,41 @@ Each slice is one PR, about one agent session, tests first.
   pairs up on both sides and jags. Over the kill-focus seed sweep (heavy
   cruiser): far pieces 5.5 → 3.3, far crack tilt 4° → 24°, how radial the
   cracks at the kill point are 0.70 → 0.85; the v5 locks still hold.
-- **Algorithm:**
+- **Chunks at the impact (v7, owner review 2026-11-13: "Tune it").** A
+  filmed heavy-cruiser death still read as procedural: v6's far cracks cut
+  full-width slices where no shell hit, and its fan plus Voronoi seeds cut
+  the struck midsection into a comb of 6–10 thin glowing slivers. Owner:
+  "The last hit's impact sets the split", chunks ENORMOUS and heavy. v7
+  drops the Voronoi seeds and the far cracks (steps 2–4 below no longer
+  run). `crackLines` now makes, on its own seeded stream:
+  - two ZONE cracks, one either side of the primary line, 0.75–1.2 beams
+    from it at the struck edge (wider for a harder death), tilted like the
+    primary within ±0.25; a crack that would chip less than 0.6 beam off
+    the hull's end is dropped;
+  - 0–2 FAN cracks (more for a harder death), each from the kill point to
+    its zone crack 70–95 % of the way across the hull, so a zone half
+    breaks into a wide triangle and a quad. A fan crack splits only the
+    sections inside its zone half (`LocalLine` regions), and only where
+    every part it leaves is chunky: at least `FAN_MIN_WIDTH_BEAMS` (0.45)
+    of the beam wide and at most `FAN_MAX_ASPECT` (2.6) times longer than
+    that width (rotating calipers); otherwise that section stays whole
+    (filmed take 2026-11-13: a fan crack left a long thin triangle, 4 %+
+    of the hull, along the port edge). Lock: "no long thin piece of any
+    size" in `fractureHull.killFocus.test.ts` (no piece under 0.45 beams
+    wide, none under 0.9 beams wide more than 3× longer than wide; the bow
+    and stern sections keep the hull's own shape and are exempt);
+  - rarely ONE far crack: only for a killing blow ≥ max hull on a hull
+    ≥ 4.5 beams long, with a 12 % seeded chance, well clear of the zone.
+  A tip hit has no zone; one fan draw may crack the broken-off end once.
+  The result: 2–4 chunky pieces at the kill point and one big section each
+  side (3–7 pieces in all; the piece count still rises with hull size and
+  violence, as more chunks and a wider zone, within the cap). Over 60 seeds
+  of heavy-cruiser side hits: pieces under 4 % of the hull and over 4× longer
+  than wide 129 → 0 (filmed salvo), fractures with a cut over 2 beams from
+  the kill point 60/60 → 8/60 (heavy blow only, one crack each), pieces
+  centred within 1.5 beams of the kill point 14–32 → 2–4. Locks: the v7
+  describe in `fractureHull.killFocus.test.ts`.
+- **Algorithm (v6; since v7 steps 2–4 are replaced by the cracks above):**
   1. Seeded integer PRNG (mulberry32, the existing `core/random/rng.ts`).
   2. Seeds by rejection sampling inside the hull (and, since v6, inside the
      crack fan), with acceptance `R⁴ / (R⁴ + d⁴)` (d = distance to the kill
@@ -163,8 +197,9 @@ Each slice is one PR, about one agent session, tests first.
      would make a piece self-intersect stays straight on both sides.
   8. `poly-decomp` convex decomposition per piece.
 - **Cap:** if clipping makes more pieces than the cap (or the target), retry
-  with fewer seeds, then without section cuts, then with fewer far cracks,
-  then fewer fan cracks, then without the primary line (deterministically).
+  (deterministically, v7) with fewer fan cracks, then without the far crack,
+  then without section cuts, then with fewer zone cracks (which side keeps
+  its crack is seeded), then without the primary line.
 - **Review:** `EQX_FRACTURE_SVG=1 pnpm vitest run src/core/destruction` prints
   four SVGs (fixed 24 + a section cut, slow grind, heavy blow, clean snap).
   Each shows the kill point as a white dot with a red ring and the primary
