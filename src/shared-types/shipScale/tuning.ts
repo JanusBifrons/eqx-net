@@ -59,6 +59,10 @@ export const BASE = {
   /** Combat spacing: same-side ships inside it steer apart while fighting
    *  (context-steering danger in `HostileDroneBehaviour.tickCombat`). */
   combatSeparation: 160,
+  /** Dogfight attack run: how far a diving ship carries on past its target
+   *  before it extends away; the dive aims a quarter of it to one side, so it
+   *  passes beside the target, not into it. */
+  attackRunOvershoot: 220,
   /** Smallest guard area an NPC holds round its post (a 1x fighter's). */
   guardRadiusMin: 600,
   /** Art bake: ppu for small / big hulls, the radius between them, the side cap. */
@@ -238,6 +242,9 @@ export interface ShipTuning {
   flockSeparation: number;
   /** Same-side spacing held in combat (AI steering 2c): 160 u for a 1x fighter. */
   combatSeparation: number;
+  /** Dogfight attack run overshoot past the target (AI decision layer):
+   *  220 u for a 1x fighter, at least 4 × radius. */
+  attackRunOvershoot: number;
   /** Smallest guard radius round an NPC's guard post (`HostileDroneBehaviour.setGuardPost`):
    *  a post smaller than this would leave a big hull no room to turn. */
   guardRadiusMin: number;
@@ -324,6 +331,7 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     flockFollow: ct.clearHull ? Math.max(BASE.flockFollow * sp, kind.radius * 3.3) : BASE.flockFollow * sp,
     flockSeparation: ct.clearHull ? Math.max(BASE.flockSeparation * sp, kind.radius * 2.2) : BASE.flockSeparation * sp,
     combatSeparation: ct.clearHull ? Math.max(BASE.combatSeparation * sp, kind.radius * 2.4) : BASE.combatSeparation * sp,
+    attackRunOvershoot: Math.max(BASE.attackRunOvershoot * sp, kind.radius * 4),
     guardRadiusMin: ct.clearHull ? Math.max(BASE.guardRadiusMin * sp, kind.radius * 2) : BASE.guardRadiusMin * sp,
     wreckPushMax: WRECK_PUSH_MAX_PER_RADIUS * kind.radius,
     wreckPushMin: WRECK_PUSH_MIN_PER_RADIUS * kind.radius,

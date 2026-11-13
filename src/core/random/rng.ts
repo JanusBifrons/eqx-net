@@ -42,6 +42,12 @@ export class Rng {
     this.s = seed >>> 0;
   }
 
+  /** Restart the stream from `seed` in place (no allocation): for an owner that
+   *  learns its seed after construction, e.g. an AI brain keyed by entity id. */
+  reseed(seed: number): void {
+    this.s = seed >>> 0;
+  }
+
   /** Next uniformly distributed unsigned 32-bit integer (mulberry32). */
   u32(): number {
     this.s = (this.s + 0x6d2b79f5) >>> 0;

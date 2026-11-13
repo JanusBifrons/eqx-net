@@ -4705,6 +4705,7 @@ export class SectorRoom extends Room<SectorState> {
     s.vy = this.sabF32[b + SLOT_VY_OFF]!;
     s.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
     s.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
+    s.health = this.swarmHealth.get(id);
     return s;
   }
 
@@ -11478,6 +11479,7 @@ export class SectorRoom extends Room<SectorState> {
         this.sceneWork.endTick(this.sabU32[COUNT_IDX] ?? 0, this.aiController.size());
         if (this.lineOfFireGate) this.sceneWork.lineOfFire(this.lineOfFireGate.checks, this.lineOfFireGate.narrow);
         this.sceneWork.aiNeighbours(this.aiNeighbourGrid.queriesTotal);
+        this.sceneWork.aiDecisions(this.aiController.stats.decisions);
       }
       this.sceneWork.active = running;
     }

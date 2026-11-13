@@ -8,6 +8,7 @@ import type {
   AiWorldView,
   AiInputBits,
   IAiNeighbourQuery,
+  AiTickStats,
 } from '../contracts/IAiBehaviour.js';
 
 /**
@@ -63,6 +64,9 @@ interface AiRegistration {
  */
 export class AiController {
   private readonly entities = new Map<string, AiRegistration>();
+  /** Work counters behaviours bump through `view.stats` (running totals,
+   *  print-only: the scene counters read `decisions`). */
+  readonly stats: AiTickStats = { decisions: 0 };
   private readonly fireQueue: AiFireRequest[] = [];
   /**
    * Hostility marked for an entity that is not yet registered, buffered so it
@@ -221,7 +225,7 @@ export class AiController {
     // every behaviour. The 60/sec rate is negligible vs the rest of
     // the engine; leave as-is. See `swarmEntitySnapshot` doc for the
     // full GC-pressure story.
-    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours };
+    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours, stats: this.stats };
     this.inputsQueued = 0;
     for (const [id, reg] of this.entities) {
       this.runEntity(id, reg, view, tick, entitySnapshot);
