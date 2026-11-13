@@ -4,6 +4,28 @@ Design work deliberately parked, to revisit. Each entry says what we found,
 why it waits, and what doing it properly involves. Remove an entry in the PR
 that picks it up.
 
+## How violently a capital breaks: a weighted roll (parked 2026-11-13)
+
+**Owner (2026-11-13), after the v3 break-up films** (both normal-speed takes of
+one shot snapped cleanly in two): "It should take into account the factors I
+said. Speed of damage, violence of last shot and whatever the third one was. So
+a quick violent death breaks the ship more. But it's a dice roll regardless,
+just weighted. So it's dynamic but informed by the situation. But this is too
+much detail for this feature ... shelve this as a note to pick up later as
+polish."
+
+- **The rule (2026-11-12, [capital-destruction.md](architecture/capital-destruction.md) §6):**
+  the piece count and the clean-snap chance follow hull size, the killing blow
+  and the recent damage rate.
+- **What to check when picking it up:** whether fracture v7 actually responds
+  to those inputs as the owner means. A quick, violent death should break the
+  ship into more chunks; a slow grind should usually leave a few big pieces.
+  The clean snap (`FRACTURE_SNAP_CHANCE`, a flat 0.2 today) should be a
+  weighted roll that a violent death makes rarer.
+- **Film more than one seed:** the `capital-breakup` shot appears to land on
+  the same fracture each run. Film a spread of kills, e.g. through
+  `setWreckSeed`, so the owner judges the variety, not one roll.
+
 ## Capital damage model: zones, armour, systems (parked 2026-11-12)
 
 **Owner (2026-11-12):** "keep the damage model as an idea for now", while the
