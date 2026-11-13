@@ -65,7 +65,7 @@ import {
 } from '../../net/swarmInterpolation';
 import { resolveEntityDisplayPose } from '../../net/swarmDisplayPose';
 import type { WreckGeometryStore } from '../../net/wreckGeometryStore';
-import { WreckPieceSprite, type WreckArtState } from './wreckArt.js';
+import { WreckPieceSprite, coolWreckInfo, type WreckArtState } from './wreckArt.js';
 
 /** S2b: an empty wreck map for frames whose mirror carries none. */
 const NO_WRECKS: ReadonlyMap<number, unknown> = new Map();
@@ -338,9 +338,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         const pose = resolveEntityDisplayPose(entry, ctx.swarmPoseScratch);
         const info = ctx.wreckArt !== undefined
           ? ctx.wreckArt.infoFor(desc, pieces, index, pose, entry.lastUpdateTick, fxNow)
-          : { deathMs: -Infinity, hullR: 0, killX: 0, killY: 0, snap: false, desc };
+          : coolWreckInfo(desc);
         const shipArt = wreckArtHandle !== null && wreckArtHandle.state === 'ready' ? wreckArtHandle.ship : null;
-        sprite = new WreckPieceSprite(g, entry.shipKind ?? desc.parentKind, shipArt, info);
+        sprite = new WreckPieceSprite(g, entry.shipKind ?? desc.parentKind, shipArt, info, index);
       } else {
         const rockRadius = entry.radius;
         sprite = buildArtShipSprite(artHandle, () => buildAsteroidGfx(entityId, rockRadius));
