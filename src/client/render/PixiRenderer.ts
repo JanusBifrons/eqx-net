@@ -7,11 +7,13 @@ import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/pr
 import { WarpFilterChain } from './pixi/WarpFilterChain.js';
 import { shouldFireRemoteWarpVisual, remoteWarpEventFires } from './pixi/warpHelpers.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
-import { updateShipSprites, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
+import { updateShipSprites, shipSpriteKinds, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
 import { entityPoseFromSprite, type EntityPose } from './pixi/entityPoseFromSprite.js';
 import { decidePlacementPointer, shouldCentreGhostOnActivate } from './placementPointerDecision.js';
 import { engineProfileForKind } from './pixi/engineGeometry.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdater.js';
+import { DyingHullHold, noteDyingHulls } from './pixi/dyingHullHold.js';
+import { sweepUnseenSprites } from './pixi/spriteSweep.js';
 import { WreckGeometryStore } from '../net/wreckGeometryStore.js';
 import { WreckArtState, WreckPieceSprite, hullDeathBlastReplaced, wreckBlasts, wreckRippleCap, type WreckBlast } from './pixi/wreckArt.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
@@ -415,6 +417,26 @@ export class PixiRenderer implements IRenderer {
    *  Pre-fix: 5 containers + N{x,y} entries per frame = real allocator
    *  pressure under combat (see capture lnnkkh, 2026-05-25). */
   private readonly _updateSeenScratch = new Set<string>();
+  /** Dying capitals drawn at their last pose until their wreck pieces are
+   *  (capital-breakup take B, 2026-11-13: the hull vanished ~0.5 s first). */
+  private readonly _dyingHulls = new DyingHullHold();
+  /** Sprite key → the ship kind it was built for (active, swarm, parked).
+   *  Bound once (no per-frame closure, #14). */
+  private readonly _spriteShipKind = (id: string): string | null | undefined => {
+    const sp = this.sprites.get(id);
+    if (sp !== undefined) return shipSpriteKinds.get(sp) ?? this._swarmSpriteSigs.get(id)?.shipKind;
+    return this.lingeringSprites.get(id)?.kind;
+  };
+  /** The sweep's per-id cleanup; `held` keeps the turret cluster on the
+   *  still-drawn sprite. Bound once (#14). */
+  private readonly _forgetSprite = (id: string, held: boolean): void => {
+    if (held) this.mountVisuals.detachShip(id);
+    else this.mountVisuals.removeShip(id);
+    this._structureMountSlew.delete(id); // P3.8 — drop slew state with the sprite
+    this._swarmSpriteKinds.delete(id); // #20 — drop kind tracker with the sprite
+    this._swarmSpriteSigs.delete(id); // campaign 3.2 — drop build signature with the sprite
+    this._artCtx.handles.delete(id); // Machined art — drop the handle with the sprite
+  };
   /** P3.8 — per-structure slewed mount (barrel/drill) arc-local angles, keyed by
    *  `swarm-<entityId>`. Persists across frames so the structure barrel SLEWS
    *  toward its target (rotateMountToward) instead of SNAPPING in one frame (the
@@ -941,6 +963,7 @@ export class PixiRenderer implements IRenderer {
         // FxExplosions bursts; how many per wreck follows the effects tier.
         if (this._fxExplosions?.spawn(x, y, r, this.fxNow())) this._wreckRipplesSpawned++;
       }, () => wreckRippleCap(this.effects?.getQuality() ?? 'medium')),
+      dyingHulls: this._dyingHulls,
     };
     this._projectileUpdaterCtx = {
       shipContainer: this.shipContainer,
@@ -1677,6 +1700,9 @@ export class PixiRenderer implements IRenderer {
     // defaulted to (0,0) when a lingering hull was destroyed — the
     // user's "explosion appeared at zero zero" bug. Helper is in
     // `spriteUpdateDecisions.ts` and is unit-tested there.
+    // A capital dying into a wreck stays drawn until its pieces are (marked
+    // here while its sprite is still mapped; the sweeps below hand it over).
+    noteDyingHulls(mirror.explodingShips, mirror.capitalWrecks, this._spriteShipKind, this._dyingHulls, this.fxNow());
     if (mirror.explodingShips) {
       // Wrap the lingering-sprite cache to expose just the {x, y}
       // pose the helper expects. The cache value also carries `kind`
@@ -1800,21 +1826,11 @@ export class PixiRenderer implements IRenderer {
     this.noteTurretShots(mirror);
     this.feedLitScene(mirror);
 
-    for (const [id, sprite] of this.sprites) {
-      if (!seen.has(id)) {
-        this.shipContainer.removeChild(sprite);
-        // Boost flame and mount-visual cluster are children — destroy({
-        // children: true }) frees them too, but we still drop the map
-        // entries so a respawn rebuilds cleanly.
-        this.mountVisuals.removeShip(id);
-        sprite.destroy({ children: true });
-        this.sprites.delete(id);
-        this._structureMountSlew.delete(id); // P3.8 — drop slew state with the sprite
-        this._swarmSpriteKinds.delete(id); // #20 — drop kind tracker with the sprite
-        this._swarmSpriteSigs.delete(id); // campaign 3.2 — drop build signature with the sprite
-        this._artCtx.handles.delete(id); // Machined art — drop the handle with the sprite
-      }
-    }
+    // Sprites whose entity left the mirror this frame. Boost flame and
+    // mount-visual cluster are children — destroy({ children: true }) frees
+    // them too, but the map entries go so a respawn rebuilds cleanly. A
+    // capital that died leaving a wreck is held (drawn) until its pieces are.
+    sweepUnseenSprites(this.sprites, seen, this._forgetSprite, this._dyingHulls, this.fxNow());
 
     // Projectile + ghost-projectile sprites — see pixi/projectileSpriteUpdater.ts.
     // Ctx pooled to `this._projectileUpdaterCtx`.
@@ -2404,6 +2420,10 @@ export class PixiRenderer implements IRenderer {
     this.labels?.update(mirror);
 
     this.updateLingeringShips(mirror);
+    // Dying capitals: hand over to wreck pieces drawn this frame, or give up
+    // at the deadline; the rest keep their light frame at the last pose.
+    this._dyingHulls.settle(this.fxNow());
+    for (let i = 0; i < this._dyingHulls.heldCountNow(); i++) updateArtShipLight(this._artCtx, this._dyingHulls.heldSprite(i));
 
     // Halo arrows for off-screen POIs. Runs after moveCenter so the visibility
     // test uses this frame's viewport bounds, not last frame's. Incoming fire
@@ -2893,6 +2913,11 @@ export class PixiRenderer implements IRenderer {
     if (!mirror.lingeringShips || mirror.lingeringShips.size === 0) {
       if (this.lingeringSprites.size > 0) {
         for (const [id, entry] of this.lingeringSprites) {
+          // A parked capital that died into a wreck stays drawn until its pieces are.
+          if (this._dyingHulls.tryHold(id, entry.sprite, this.fxNow())) {
+            this.mountVisuals.detachShip(id);
+            continue;
+          }
           this.mountVisuals.removeShip(id); // R2.32 — free the weapon-barrel cluster
           entry.sprite.destroy();
         }
@@ -2947,8 +2972,13 @@ export class PixiRenderer implements IRenderer {
     }
     for (const [id, entry] of this.lingeringSprites) {
       if (entry.stamp !== frameId) {
-        this.mountVisuals.removeShip(id); // R2.32 — free the weapon-barrel cluster
-        entry.sprite.destroy();
+        // A parked capital that died into a wreck stays drawn until its
+        // pieces are (the capital-breakup take's cruiser was one).
+        if (this._dyingHulls.tryHold(id, entry.sprite, this.fxNow())) this.mountVisuals.detachShip(id);
+        else {
+          this.mountVisuals.removeShip(id); // R2.32 — free the weapon-barrel cluster
+          entry.sprite.destroy();
+        }
         this.lingeringSprites.delete(id);
         this._artCtx.handles.delete(`linger-${id}`);
       }

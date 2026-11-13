@@ -327,6 +327,17 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
     break-up window). It now carries a dropped snapshot's list forward
     (`snapshotCoalesce.test.ts`). The DataChannel path coalesces raw bytes
     and still has this gap (follow-up).
+  - **The hull vanished before its pieces appeared** (take B, 2026-11-13:
+    ~0.5 s of empty space under the kill blast). The renderer swept the hull
+    sprite the frame its entity left the mirror, but a piece is drawn only
+    once its binary pose and its `wrecks[]` descriptor have both arrived (two
+    channels; out-of-interest pieces ride the binary wire every 6 ticks, and
+    a spectator has no interest window). Now a capital that dies in a
+    `capitalWrecks` room (marked from `explodingShips`) is held by
+    `DyingHullHold` (`render/pixi/dyingHullHold.ts`): drawn at its last pose
+    until a piece of its kind is drawn within its hull, then removed in that
+    same frame, or after 1.5 s of game time if the wreck never shows. Active,
+    NPC and parked hulls alike. Lock: `dyingHullHold.test.ts`.
   - Frames for review: a GPU probe films the break-up (CDP screencast,
     frames picked by timestamp at death + 0.3 s, + 2 s, + 5 s).
 - Locks: `wreckPieces.test.ts`, `CapitalWreckSubsystem.test.ts`,
