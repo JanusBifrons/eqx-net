@@ -23,6 +23,7 @@ import type { ShipKind, WeaponMount } from '../shipKinds/types.js';
 import { SHIP_SCALE, SHIP_TUNING, type ShipTuningProfile } from './config.js';
 import { NAVAL_RANGE, type NavalRangeMode } from '../combat/navalRange.js';
 import { REAL_NAVAL_GUNS, navalGunEngageReach, type NavalGunId } from '../combat/navalGuns.js';
+import { destructionProfileIdForKind, type DestructionProfileId } from './destruction.js';
 
 export type SizeClass = 'fighter' | 'frigate' | 'cruiser' | 'capital';
 export const SIZE_CLASSES: readonly SizeClass[] = ['fighter', 'frigate', 'cruiser', 'capital'];
@@ -260,6 +261,9 @@ export interface ShipTuning {
   /** The most one hit may change a wreck piece's speed (u/s), so small arms
    *  on a sliver never fling it. Heavy cruiser (2×) ~55 u/s. */
   wreckKnockMax: number;
+  /** How this kind breaks up when it dies (`destruction.ts`): `capital`,
+   *  `subcap` or `none`. The numbers are `DESTRUCTION_PROFILES[id]`. */
+  destruction: DestructionProfileId;
   /** Art bake pixels per world unit, and the texture side cap. */
   bakePpu: number;
   bakeMaxSide: number;
@@ -330,6 +334,7 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     wreckColliderInset: WRECK_COLLIDER_INSET_PER_RADIUS * kind.radius,
     wreckKnockSpeed: WRECK_KNOCK_PER_RADIUS * kind.radius,
     wreckKnockMax: WRECK_KNOCK_MAX_PER_RADIUS * kind.radius,
+    destruction: destructionProfileIdForKind(kind),
     // Pixel density by the UNSCALED hull (so a 2× fighter stays as sharp per
     // world unit as today's), within the class's side budget.
     bakePpu: unscaledR >= BASE.ppuBigRadius ? BASE.ppuBig : BASE.ppuSmall,
