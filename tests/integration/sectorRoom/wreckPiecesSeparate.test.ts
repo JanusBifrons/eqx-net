@@ -243,17 +243,28 @@ describe('SectorRoom integration: capital wreck pieces separate', () => {
     const struckV0 = ss.vx * ux + ss.vy * uy;
     internal.postToWorker({ type: 'WRECK_KICK', entityId: mover, dvx: ux * shove, dvy: uy * shove, dw: 0 });
     let shoveOverlap = -Infinity;
+    // The struck piece's best gain along the shove line over the window (its
+    // own damping only ever lowers it, so the peak is the bump itself).
+    let struckGain = -Infinity;
     for (let k = 0; k < 40; k++) {
       await harness.advance(STEP_MS);
       shoveOverlap = Math.max(shoveOverlap, pieceDepth(worldParts(mover), worldParts(struck)));
+      const st = internal.wreckState(struck)!;
+      struckGain = Math.max(struckGain, st.vx * ux + st.vy * uy - struckV0);
     }
-    const st1 = internal.wreckState(struck)!;
-    const struckGain = st1.vx * ux + st1.vy * uy - struckV0;
-    // Knocked along: the struck piece takes at least a tenth of the mover's
-    // closing momentum.
+    // What a real contact guarantees: two bodies closing at `closing` that
+    // collide end up no faster apart than they meet, so at the least (a
+    // perfectly inelastic, head-on hit) the struck piece gains
+    // closing × m_mover / (m_mover + m_struck). An off-centre hit loses some
+    // to spin and the contact normal is not the centre line: allow a quarter
+    // of it. A pass-through (the pre-2026-11-13 non-colliding groups) leaves
+    // the struck piece's velocity alone, gain <= 0 (damping only), and its
+    // parts overlap the mover's by tens of units.
     const closing = 0.05 * kind.radius;
-    console.log(`[wreck separate] ${_name}: shove ${mover} → ${struck} at ${shove.toFixed(0)} u/s: worst overlap ${shoveOverlap.toFixed(1)} u, struck piece gained ${struckGain.toFixed(1)} u/s (mass ratio ${(massOf(mover) / massOf(struck)).toFixed(2)})`);
+    const mM = massOf(mover), mS = massOf(struck);
+    const inelasticGain = closing * mM / (mM + mS);
+    console.log(`[wreck separate] ${_name}: shove ${mover} → ${struck} closing at ${closing.toFixed(0)} u/s (kick ${shove.toFixed(0)} u/s): worst overlap ${shoveOverlap.toFixed(1)} u, struck piece gained ${struckGain.toFixed(1)} u/s (inelastic head-on ${inelasticGain.toFixed(1)}; mass ratio ${(mM / mS).toFixed(2)})`);
     expect(shoveOverlap, 'a shoved piece does not pass into its neighbour (u)').toBeLessThan(0.005 * kind.radius);
-    expect(struckGain * massOf(struck), 'the struck neighbour is knocked along (momentum)').toBeGreaterThan(0.1 * closing * massOf(mover));
+    expect(struckGain, 'the struck neighbour is knocked along (u/s)').toBeGreaterThan(0.25 * inelasticGain);
   }, 60_000);
 });
