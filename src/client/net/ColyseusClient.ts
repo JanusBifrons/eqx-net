@@ -3741,7 +3741,10 @@ export class ColyseusGameClient {
       // S2b: a wreck piece needs its wreck's descriptor for its geometry; until
       // it arrives (≤ 0.5 s for a late joiner) the piece has no body yet.
       if (entry.kind === SWARM_KIND_WRECK && (entry.wreckId === undefined || !this._wrecks.has(entry.wreckId))) continue;
-      if (entry.kind === 2 && me) {
+      // Wreck pieces stream in the same way (soak 2026-11-13: ~700 pieces in
+      // the predWorld put 56 % of the client main thread into Rapier's step).
+      // A piece only matters to prediction where the local ship can touch it.
+      if ((entry.kind === 2 || entry.kind === SWARM_KIND_WRECK) && me) {
         const edge = Math.hypot(entry.x - me.x, entry.y - me.y) - entry.radius;
         if (!wantPredBody(this.predWorld.hasShip(key), edge)) continue; // unseen ⇒ swept below
       }

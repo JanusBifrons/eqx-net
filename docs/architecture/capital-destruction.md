@@ -1223,6 +1223,81 @@ take on a shared host and are print-only.
    1–3 land, the practical limit is ~600 live pieces near one pilot.
    Re-measure after each fix with `fleet-fight-soak-lite`.
 
+#### Client cost per wreck piece: profiled and cut (2026-11-13)
+
+**Profile.** One lite-soak take with a CDP CPU profile of the client's main
+thread, 15 s from ~480 pieces (`pnpm perf:scenes --scenes
+fleet-fight-soak-lite --head-only --reps 1 --sample-ms 15000 --head-params
+perfcounts=1 --no-load-gate --cpu-profile <file> --cpu-profile-at-pieces 450`,
+port offset 600). The renderer worker is not in it.
+
+| Main thread, 15 s at ~480 pieces | Before | After |
+|---|---|---|
+| Rapier `step` (wasm folded into its caller) | **56 %** | 10 % |
+| of which the reconcile replay (`handleSnapshot` → `reconcile`) | 36 % | 6 % |
+| of which `tickPhysics` | 23 % | 7 % |
+| `WorkerRendererClient.post` (the mirror's structured clone) | 8 % | 10 % |
+| idle | 13 % | 58 % |
+
+So suspect 1 was the cost: every piece was an AWAKE predWorld body in every
+replayed and predicted step. Two causes:
+- the anchor woke every piece on every snapshot (`setShipState(…, wake)`),
+  so a piece the server had put to sleep never slept on the client;
+- every piece in the mirror had a body, however far from the pilot.
+
+Decoding (`decodeSwarmPacket` < 1 %) and the `wrecks` map are not the cost.
+
+**Fixes.**
+1. A piece the server reports asleep stays asleep in the predWorld
+   (`anchorRemoteSwarmBodies` → `World.setShipStateAsleep`: pose written
+   without waking, then `sleep()`). Matches the server body (#15). Rapier
+   still wakes it when the local ship touches it, so collision is unchanged.
+2. Wreck pieces stream into the predWorld by edge distance from the local
+   ship, like structures (`syncSwarmIntoPredWorld`, `wantPredBody`,
+   `PREDWORLD_STRUCTURE_RADIUS` 1500 u + 300 u hysteresis). Still one body
+   path (#12); a far piece has no body, so the local beam's drawn-pose test
+   skips it (beams reach ≤ 325 u).
+
+Locks (counts): `tests/unit/wreckPredCost.test.ts`: bodies = the pieces in
+range (10 of 210 with the pile 4 km away, then the pile's 200 beside it);
+awake bodies after the anchor and the steps = the server-awake ones (20 of
+40); the ship ramming a sleeping piece still shoves it.
+
+**Before / after** (same session, same host; another session's lite soaks
+ran on the box throughout, host CPU 31 % before and 60 % after at the start,
+`--no-load-gate`; compare within this table only):
+
+| pieces | frame p95 before (ms) | frame p95 after (ms) |
+|---|---|---|
+| ~180 | 16.8 | 16.7 |
+| ~380 | 16.8 | 16.8 |
+| ~430 | 33.4 | 16.7 |
+| ~480 | 116.7 (profiling) | 16.7 (profiling) |
+| ~555 | 83.4 | 16.8 |
+| ~650 | 66.7 | 16.7 |
+| ~730 | 133.3 | 16.8 (33.3 at 746, 50 at 776) |
+| ~870–1,050 | — | 16.7–16.8 |
+| ~1,080 | — | 100 |
+| ~1,150–1,340 | — | 100–117 |
+| client | dropped at ~293 s, 785 pieces | dropped at ~460 s, ~1,340 pieces |
+
+The wall moved from ~430 pieces (first 33 ms p95) to ~1,080. Not profiled
+past it yet; the renderer p95 there was 9–11 ms and the server tick p95
+13–14 ms.
+
+**Caveat.** In this scene the pilot idles ~1,600 u from the melee, so the
+streaming fix removes most pieces from the predWorld. A pilot inside the
+pile keeps the bodies in range; for them fix 1 (sleep) is what helps, and it
+only helps the pieces the server has put to sleep.
+
+**Next.** The mirror's structured clone to the renderer worker is now the
+largest single cost (10 %): it copies every swarm entry with its 10-pose
+ring every frame, whatever changed. A wreck-only version stamp would not
+touch that; candidates are to stop sending the pose rings of
+entities whose sprite reads the resolved pose (per src/client/CLAUDE.md only
+asteroids still interpolate off the ring in the renderer; check before
+cutting) or to send swarm deltas.
+
 ## 4. Determinism strategy
 
 Every client must produce the same pieces as the server, bit for bit, from
