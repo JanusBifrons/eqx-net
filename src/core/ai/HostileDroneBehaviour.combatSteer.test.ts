@@ -34,6 +34,7 @@ function query(list: Nb[]): IAiNeighbourQuery {
     radiusAt: () => DRONE.radius,
     sideAt: (i) => list[i]!.side,
     isPilotAt: (i) => list[i]!.pilot === true,
+    isCapitalAt: () => false,
   };
 }
 

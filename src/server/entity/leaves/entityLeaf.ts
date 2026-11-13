@@ -119,6 +119,8 @@ export interface SwarmLeafTarget {
 /** Hostility-ledger surface for the markHostile flip on a swarm hit. */
 export interface HostilityLedger {
   markHostile(droneId: string, playerId: string, tick: number): void;
+  /** Morale (AI slice 6b): damage a drone took. Optional for fakes. */
+  noteDamage?(droneId: string, amount: number, tick: number): void;
 }
 
 /**

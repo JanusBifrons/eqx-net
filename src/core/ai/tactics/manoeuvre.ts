@@ -20,8 +20,15 @@ export const MANOEUVRE_HOLD = 0;
 export const MANOEUVRE_TAIL = 1;
 export const MANOEUVRE_ATTACK_RUN = 2;
 export const MANOEUVRE_BREAK = 3;
-export const MANOEUVRE_COUNT = 4;
-export type ManoeuvreId = 0 | 1 | 2 | 3;
+/** Slice 6b: circle at the band edge (gunships, robots), hold the band nose
+ *  on (missile boats), and the two morale outcomes. FallBack and Flee are
+ *  never scored: only a morale roll starts them. */
+export const MANOEUVRE_ORBIT = 4;
+export const MANOEUVRE_KITE = 5;
+export const MANOEUVRE_FALL_BACK = 6;
+export const MANOEUVRE_FLEE = 7;
+export const MANOEUVRE_COUNT = 8;
+export type ManoeuvreId = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 /** Facing mode of a goal: nose on the lead point, nose along the move, or the
  *  brain's own rule (lead in range, move when repositioning). */
@@ -88,6 +95,24 @@ export interface TacticalContext {
   /** Same-side / enemy ships near me (grid count at decision time). */
   allies: number;
   enemies: number;
+  // Slice 6b: band, turret arcs and the sensor picture.
+  /** The role's preferred band in world units (`rangeBand × fireRange`). */
+  bandMin: number;
+  bandMax: number;
+  /** Widest rotating mount's half-arc (rad; 0 for fixed-forward guns). */
+  turretHalfArc: number;
+  /** `roleSensorRange` (world units). */
+  sensorRange: number;
+  /** Refreshed at decision time from the neighbour grid within sensor range:
+   *  enemies seen, their centroid weighted by hull radius, and the fall-back
+   *  anchor (nearest friendly capital, else the centroid of same-side ships;
+   *  `hasAnchor` false when alone). */
+  sensorEnemies: number;
+  threatX: number;
+  threatY: number;
+  hasAnchor: boolean;
+  anchorX: number;
+  anchorY: number;
   /** Today's stand-off decision (the Hold goal): wanted speed along the
    *  target line (+ closing) and whether it may boost. */
   holdAlong: number;
@@ -105,6 +130,8 @@ export function makeTacticalContext(): TacticalContext {
     closing: 0, targetAspectCos: 0, threatBearingCos: 0,
     fireRange: 1, cruiseSpeed: 1, maxSpeed: 1, overshoot: 1,
     hullFrac: 1, recentHits: 0, allies: 0, enemies: 0,
+    bandMin: 0, bandMax: 1, turretHalfArc: 0, sensorRange: 1,
+    sensorEnemies: 0, threatX: 0, threatY: 0, hasAnchor: false, anchorX: 0, anchorY: 0,
     holdAlong: 0, holdBoost: false,
     rng: new Rng(1),
   };

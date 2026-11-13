@@ -144,6 +144,9 @@ export interface IAiNeighbourQuery {
   /** NPC allegiance id, or `'players'` for a pilot hull. */
   sideAt(i: number): string;
   isPilotAt(i: number): boolean;
+  /** A capital-role NPC (`aiRole === 'capital'`): what a damaged ship falls
+   *  back on (AI slice 6b). Always false for a pilot hull. */
+  isCapitalAt(i: number): boolean;
 }
 
 /** Mutable pose buffer for `AiWorldView.resolveEntityInto` (caller-owned, so
@@ -213,6 +216,11 @@ export interface AiIntent {
   /** `targetId`: the entity the shot is aimed at (the fire gate checks the
    *  shooter holds a lock on it when it is a pilot). */
   fire?: { dirX: number; dirY: number; targetId: string };
+  /** Morale `Flee` (AI slice 6b): the ship asks to warp out to (x, y), far
+   *  along its escape heading. Server-only: `AiController` queues it and the
+   *  room sends the bot on an NPC warp (`BOT_WARP`), the same spool → run →
+   *  drop a pilot's warp uses. Set on one tick only. */
+  warpOut?: { x: number; y: number };
 }
 
 /**
@@ -266,6 +274,12 @@ export interface IAiBehaviour {
    */
   markHostile?(shooterId: string, atTick: number): void;
   purgeHostility?(playerId: string): void;
+  /** Damage this entity took (morale, AI slice 6b). Server-only: the room's
+   *  damage path calls it through `AiController.noteDamage`. Plain-field
+   *  write, alloc-free. */
+  noteDamage?(amount: number, atTick: number): void;
+  /** The squad's capital died (a morale trigger, AI slice 6b). */
+  noteCapitalLost?(): void;
   /**
    * Optional read-only query: is the behaviour currently hostile to the
    * given player? Used by render-side surfaces (e.g. the halo radar) that

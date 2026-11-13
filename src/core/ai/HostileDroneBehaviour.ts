@@ -50,12 +50,26 @@ import {
   FACE_MOVE,
   makeManoeuvreGoal,
   makeTacticalContext,
+  MANOEUVRE_FALL_BACK,
+  MANOEUVRE_FLEE,
+  MANOEUVRE_HOLD,
   type IManoeuvre,
   type ManoeuvreGoal,
   type ManoeuvreId,
   type TacticalContext,
 } from './tactics/manoeuvre.js';
 import { AttackRunManoeuvre, BreakManoeuvre, HoldManoeuvre, TailManoeuvre } from './tactics/manoeuvres.js';
+import { FallBackManoeuvre, FleeManoeuvre, KiteManoeuvre, OrbitManoeuvre } from './tactics/stanceManoeuvres.js';
+import {
+  MORALE_LOCK_TICKS,
+  MORALE_OUTCOME,
+  MoraleTracker,
+  moraleSeed,
+  rollMorale,
+  type MoraleInputs,
+  type MoraleOutcome,
+  type MoraleWeights,
+} from './tactics/morale.js';
 import { decisionDue, LOD_PILOT_RANGE_MUL, ManoeuvrePicker } from './tactics/utility.js';
 import { fnv1a32 } from '../random/rng.js';
 import {
@@ -178,6 +192,27 @@ const HIT_HALF_LIFE_TICKS = 60;
 const COUNT_RANGE_MUL = 1.5;
 /** A target counts as moving (it has a heading) above this share of our cruise. */
 const ASPECT_MIN_SPEED_FRAC = 0.1;
+/** A fleeing ship warps out this many × its sensor range along its escape
+ *  heading (well clear of the fight it ran from; #18: sensor range follows
+ *  the ship's fire range). */
+const WARP_OUT_SENSOR_MUL = 4;
+/** A FallBack runs at least `MORALE_LOCK_TICKS`, and on until it reaches its
+ *  friends, but never longer than this (15 s). */
+const FALLBACK_MAX_TICKS = 3 * MORALE_LOCK_TICKS;
+
+/** The morale die (test seam: `setMoraleRoll`). */
+export type MoraleRollFn = (inputs: MoraleInputs, base: MoraleWeights, seed: number) => MoraleOutcome;
+
+/** Mutable twin of `MoraleInputs` (one scratch per brain, #14). */
+interface MoraleInputsScratch {
+  hullFrac: number;
+  recentDamageRate: number;
+  alliesNear: number;
+  enemiesNear: number;
+  ownSize: number;
+  enemySize: number;
+  isCapitalNearbyFriendly: boolean;
+}
 
 /**
  * Hostile drone: steers toward nearest player and fires hitscan when in range
@@ -347,8 +382,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  across every `tick` call is safe. `fire` sub-object is its own
    *  pooled slot; we re-attach by reference each tick when firing. */
   private readonly _intentScratch: AiIntent = {
-    fx: 0, fy: 0, torque: 0, setAngvel: undefined, fire: undefined,
+    fx: 0, fy: 0, torque: 0, setAngvel: undefined, fire: undefined, warpOut: undefined,
   };
+  /** Reused warp-out request (attached on the one tick it is asked). */
+  private readonly _warpScratch = { x: 0, y: 0 };
   private readonly _fireScratch: { dirX: number; dirY: number; targetId: string } = { dirX: 0, dirY: 0, targetId: '' };
   /** The kind's handling as the virtual pilot sees it (body mass as spawned). */
   private readonly handling: PilotHandling;
@@ -380,9 +417,33 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly _tac: TacticalContext = makeTacticalContext();
   private readonly _goal: ManoeuvreGoal = makeManoeuvreGoal();
   /** Preallocated manoeuvres, indexed by `ManoeuvreId`. */
+  private readonly _flee = new FleeManoeuvre();
+  private readonly _fallBack = new FallBackManoeuvre();
   private readonly _manoeuvres: readonly IManoeuvre[] = [
     new HoldManoeuvre(), new TailManoeuvre(), new AttackRunManoeuvre(), new BreakManoeuvre(),
+    new OrbitManoeuvre(), new KiteManoeuvre(), this._fallBack, this._flee,
   ];
+  // ── Morale (slice 6b, owner's "roll a dice") ──────────────────────────
+  private readonly _morale = new MoraleTracker();
+  private readonly _moraleIn: MoraleInputsScratch = {
+    hullFrac: 1, recentDamageRate: 0, alliesNear: 0, enemiesNear: 0, ownSize: 1, enemySize: 0, isCapitalNearbyFriendly: false,
+  };
+  private _moraleRoll: MoraleRollFn = rollMorale;
+  /** A forced FallBack holds until this tick (Flee holds until the warp). */
+  private _moraleLockUntil = -1;
+  /** A FallBack still on its way to its friends gives up at this tick. */
+  private _fallBackCapUntil = -1;
+  /** Last roll's outcome (-1 = never rolled). */
+  private _lastMorale: MoraleOutcome | -1 = -1;
+  /** fnv1a32 of the entity id (seeds the picker and the morale die). */
+  private _idHash = 0;
+  /** Sensor scan (decision time): allies within sensor range, the enemies'
+   *  summed radii, a friendly capital seen. */
+  private _sensorAllies = 0;
+  private _enemySize = 0;
+  private _capitalNear = false;
+  /** Warp-outs requested (test-visible). */
+  private _warpOuts = 0;
   private readonly _picker = new ManoeuvrePicker();
   /** Seeded from the entity id on the first combat tick. */
   private _seeded = false;
@@ -467,6 +528,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     tac.cruiseSpeed = this.handling.cruiseSpeed;
     tac.maxSpeed = this.handling.maxSpeed;
     tac.overshoot = shipTuning(this.kind).attackRunOvershoot;
+    tac.bandMin = this.role.rangeBand.min * this.fireRange;
+    tac.bandMax = this.role.rangeBand.max * this.fireRange;
+    tac.turretHalfArc = this.maxTurretHalfArc;
+    tac.sensorRange = this.sensorRange;
     this._pickOpts = {
       healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
       dwellTicks: DRONE_TARGET_DWELL_TICKS,
@@ -514,6 +579,23 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this._hitsVal = this.recentHitsAt(atTick) + 1;
     this._hitsTick = atTick;
   }
+
+  /** Morale: damage this ship took (server damage path → AiController). */
+  noteDamage(amount: number, atTick: number): void {
+    this._morale.noteDamage(atTick, amount, this.kind.maxHealth);
+  }
+
+  /** Morale: the squad's capital died (the next decision rolls). */
+  noteCapitalLost(): void {
+    this._morale.noteCapitalLost();
+  }
+
+  /** Test seam: replace the morale die (deterministic outcomes in tests). */
+  setMoraleRoll(fn: MoraleRollFn): void { this._moraleRoll = fn; }
+  /** Test-visible: the last morale roll's outcome (-1 = none yet). */
+  getLastMoraleOutcome(): MoraleOutcome | -1 { return this._lastMorale; }
+  /** Test-visible: how many times this ship asked to warp out. */
+  getWarpOutCount(): number { return this._warpOuts; }
 
   /** The decaying recent-hit count at `tick`. */
   private recentHitsAt(tick: number): number {
@@ -838,6 +920,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       clearContextMaps(this._ctxMaps);
       this._manoeuvres[this._picker.current]!.writeGoal(this._tac, this._ctxMaps, this._goal);
       intent = this.flyCombatContext(self, nb, ux, uy, desiredAngle, dist <= this.fireRange, this._goal);
+      if (this._picker.current === MANOEUVRE_FLEE && this._flee.wantsWarpOut(view.tick)) {
+        this.requestWarpOut(self, intent);
+        return intent;
+      }
     }
 
     // Fire gating: standard 14° cone at normal distance widens to 26° at
@@ -1029,6 +1115,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const tick = view.tick;
     if (!this._seeded) {
       const h = fnv1a32(self.id);
+      this._idHash = h;
       c.rng.reseed(h);
       p.seed(c.rng);
       this._slot = h % 60;
@@ -1039,7 +1126,35 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this._lod = !this.pilotNear(self, view);
       c.recentHits = this.recentHitsAt(tick);
       this.countSides(self, nb);
+      this.scanSensors(self, nb);
       if (view.stats !== undefined) view.stats.decisions++;
+      // Morale: a trigger (hull 50 / 25 %, burst, capital lost, outnumbered)
+      // rolls the die; FallBack / Flee then run locked. A fleeing ship keeps
+      // fleeing.
+      const trig = this._morale.update(tick, c.hullFrac, c.allies, c.enemies);
+      if (trig !== -1 && p.current !== MANOEUVRE_FLEE) {
+        const outcome = this.rollMoraleNow(tick, c.hullFrac);
+        this._lastMorale = outcome;
+        if (outcome === MORALE_OUTCOME.FallBack) {
+          this.switchManoeuvre(MANOEUVRE_FALL_BACK, tick);
+          this._moraleLockUntil = tick + MORALE_LOCK_TICKS;
+          this._fallBackCapUntil = tick + FALLBACK_MAX_TICKS;
+          return;
+        }
+        if (outcome === MORALE_OUTCOME.Flee) {
+          this.switchManoeuvre(MANOEUVRE_FLEE, tick);
+          return;
+        }
+        // Fight on: normal scoring below.
+      }
+      if (p.current === MANOEUVRE_FLEE) return;
+      if (p.current === MANOEUVRE_FALL_BACK) {
+        // Held through the lock, and on until it reaches its friends (capped).
+        if (tick < this._moraleLockUntil || (!this._fallBack.arrived && tick < this._fallBackCapUntil)) return;
+        // The lock ran out: choose afresh.
+        this.switchManoeuvre(p.decide(c, this.role, true), tick);
+        return;
+      }
       const want = p.decide(c, this.role, done);
       if (done) {
         this.switchManoeuvre(want, tick);
@@ -1059,6 +1174,83 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this._picker.switchTo(id, tick);
     this._manoeuvres[id]!.begin(this._tac);
     this._pendingId = -1;
+  }
+
+  /**
+   * Sensor picture at decision time (one K ≤ 8 grid query within sensor
+   * range): same-side ships (their centroid, the nearest friendly capital:
+   * the fall-back anchor) and enemies (count, summed radii, radius-weighted
+   * centroid: what Flee runs from). Plain writes into the context (#14).
+   */
+  private scanSensors(self: AiEntity, nb: IAiNeighbourQuery): void {
+    const c = this._tac;
+    const idx = this._nbIdx;
+    const n = nb.queryNeighbours(self.x, self.y, this.sensorRange, COMBAT_NEIGHBOUR_K, idx, self.id);
+    let allies = 0, ax = 0, ay = 0;
+    let enemies = 0, ew = 0, ex = 0, ey = 0;
+    let capD2 = Infinity, capX = 0, capY = 0;
+    for (let k = 0; k < n; k++) {
+      const i = idx[k]!;
+      const x = nb.xAt(i), y = nb.yAt(i);
+      const pilot = nb.isPilotAt(i);
+      const side = nb.sideAt(i);
+      if (pilot ? this.friendlyToPilots : side === this.allegiance) {
+        allies++;
+        ax += x; ay += y;
+        if (!pilot && nb.isCapitalAt(i)) {
+          const d2 = (x - self.x) * (x - self.x) + (y - self.y) * (y - self.y);
+          if (d2 < capD2) { capD2 = d2; capX = x; capY = y; }
+        }
+      } else if (pilot ? !this.friendlyToPilots : !isNpcAllegianceId(side) || !isFriendly(this.allegiance, side)) {
+        const r = nb.radiusAt(i) > 1 ? nb.radiusAt(i) : 1;
+        enemies++;
+        ew += r; ex += x * r; ey += y * r;
+      }
+    }
+    this._sensorAllies = allies;
+    this._enemySize = ew;
+    this._capitalNear = capD2 < Infinity;
+    c.sensorEnemies = enemies;
+    if (enemies > 0) { c.threatX = ex / ew; c.threatY = ey / ew; }
+    if (this._capitalNear) { c.hasAnchor = true; c.anchorX = capX; c.anchorY = capY; }
+    else if (allies > 0) { c.hasAnchor = true; c.anchorX = ax / allies; c.anchorY = ay / allies; }
+    else c.hasAnchor = false;
+  }
+
+  /** Roll the morale die from the current sensor picture (alloc-free). */
+  private rollMoraleNow(tick: number, hullFrac: number): MoraleOutcome {
+    const m = this._moraleIn;
+    m.hullFrac = hullFrac;
+    m.recentDamageRate = this._morale.windowDamageFrac(tick);
+    m.alliesNear = this._sensorAllies;
+    m.enemiesNear = this._tac.sensorEnemies;
+    m.ownSize = this.kind.radius;
+    m.enemySize = this._enemySize;
+    m.isCapitalNearbyFriendly = this._capitalNear;
+    return this._moraleRoll(m, this.role.moraleWeights, moraleSeed(this._idHash, this._morale.triggerCount));
+  }
+
+  /**
+   * Flee's end: ask the server to warp out along the escape heading
+   * (`intent.warpOut`), then stand down: forget every hostility, leave the
+   * squad's flock and hold at the drop point (the same move-to a director
+   * order uses). A server without the hook leaves the ship disengaged.
+   */
+  private requestWarpOut(self: AiEntity, intent: AiIntent): void {
+    const d = WARP_OUT_SENSOR_MUL * this.sensorRange;
+    const w = this._warpScratch;
+    w.x = self.x + this._flee.dirX * d;
+    w.y = self.y + this._flee.dirY * d;
+    intent.warpOut = w;
+    intent.fire = undefined;
+    this._warpOuts++;
+    this.hostileTo.clear();
+    this.lastHitByPlayer.clear();
+    this.state = 'IDLE';
+    this.prevTargetId = null;
+    this._moraleLockUntil = -1;
+    this.switchManoeuvre(MANOEUVRE_HOLD, this._tac.tick);
+    this.setMoveTarget(w.x, w.y);
   }
 
   /** Any pilot hull within `LOD_PILOT_RANGE_MUL` × sensor range? */
@@ -1339,6 +1531,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     out.setAngvel = undefined;
     out.input = bits;
     out.fire = undefined;
+    out.warpOut = undefined;
     return out;
   }
 

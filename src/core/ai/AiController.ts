@@ -68,6 +68,12 @@ export class AiController {
    *  print-only: the scene counters read `decisions`). */
   readonly stats: AiTickStats = { decisions: 0 };
   private readonly fireQueue: AiFireRequest[] = [];
+  /** Morale warp-out requests this tick (AI slice 6b): parallel arrays,
+   *  reused (rare; amortised growth only). */
+  private readonly warpOutIds: string[] = [];
+  private readonly warpOutXs: number[] = [];
+  private readonly warpOutYs: number[] = [];
+  private warpOutCount = 0;
   /**
    * Hostility marked for an entity that is not yet registered, buffered so it
    * is APPLIED when the entity registers. Without this a `markHostile` /
@@ -140,6 +146,29 @@ export class AiController {
     }
     const prev = pending.get(shooterId);
     if (prev === undefined || atTick > prev) pending.set(shooterId, atTick);
+  }
+
+  /** Damage an entity took (morale, AI slice 6b). Server-only; a no-op for an
+   *  unregistered id or a behaviour without the hook. Alloc-free. */
+  noteDamage(entityId: string, amount: number, atTick: number): void {
+    this.entities.get(entityId)?.behaviour.noteDamage?.(amount, atTick);
+  }
+
+  /** The squad's capital died: a morale trigger for this entity. */
+  noteCapitalLost(entityId: string): void {
+    this.entities.get(entityId)?.behaviour.noteCapitalLost?.();
+  }
+
+  /**
+   * Hand this tick's morale warp-out requests (`AiIntent.warpOut`) to `cb`
+   * and clear them. The caller passes a long-lived bound method (no closure
+   * per tick).
+   */
+  drainWarpOuts(cb: (entityId: string, x: number, y: number) => void): void {
+    const n = this.warpOutCount;
+    if (n === 0) return;
+    this.warpOutCount = 0;
+    for (let i = 0; i < n; i++) cb(this.warpOutIds[i]!, this.warpOutXs[i]!, this.warpOutYs[i]!);
   }
 
   /**
@@ -264,6 +293,13 @@ export class AiController {
       intent.setAngvel !== undefined
     ) {
       this.sink.postIntent(reg.slot, intent.fx, intent.fy, intent.torque, intent.setAngvel);
+    }
+
+    if (intent.warpOut !== undefined) {
+      const k = this.warpOutCount++;
+      this.warpOutIds[k] = id;
+      this.warpOutXs[k] = intent.warpOut.x;
+      this.warpOutYs[k] = intent.warpOut.y;
     }
 
     if (intent.fire) {

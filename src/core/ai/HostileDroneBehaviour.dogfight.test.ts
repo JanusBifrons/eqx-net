@@ -19,7 +19,7 @@ const KB = getShipKind('patrol-fighter');
 /** An empty neighbour index: the decision layer runs only with one. */
 const NO_NB: IAiNeighbourQuery = {
   count: 0, queryNeighbours: () => 0, idAt: () => '', xAt: () => 0, yAt: () => 0,
-  vxAt: () => 0, vyAt: () => 0, radiusAt: () => 0, sideAt: () => '', isPilotAt: () => false,
+  vxAt: () => 0, vyAt: () => 0, radiusAt: () => 0, sideAt: () => '', isPilotAt: () => false, isCapitalAt: () => false,
 };
 
 function sw(o: KinematicBody, id: string, allegiance: string): AiSwarmView {

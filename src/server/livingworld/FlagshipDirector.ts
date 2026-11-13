@@ -470,6 +470,9 @@ export class FlagshipDirector {
       if (!f.alive) continue;
       if (f.leadId === id) {
         // The flagship is down: the escorts break off and jump out.
+        // TODO(AI slice 6b): once escorts stay in the world here, call
+        // `aiController.noteCapitalLost(escortId)` instead so each escort
+        // rolls its morale die (fight on / fall back / flee and warp out).
         const room = f.sectorKey !== null ? this.rooms.get(f.sectorKey) : undefined;
         for (const e of f.escorts) room?.despawnLivingWorldBot(e.id);
         f.escorts = [];

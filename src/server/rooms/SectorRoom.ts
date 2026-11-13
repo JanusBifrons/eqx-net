@@ -4788,7 +4788,7 @@ export class SectorRoom extends Room<SectorState> {
       rec.id,
       this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!,
       this.sabF32[b + SLOT_VX_OFF]!, this.sabF32[b + SLOT_VY_OFF]!,
-      rec.radius, allegianceOfKind(rec.shipKind),
+      rec.radius, allegianceOfKind(rec.shipKind), getShipKind(rec.shipKind ?? null).aiRole === 'capital',
     );
   };
 
@@ -7608,6 +7608,14 @@ export class SectorRoom extends Room<SectorState> {
     if (!this.npcWarps.has(botId)) this.npcWarps.set(botId, { entityId: rec.entityId, lastPhase: 0, arrivedUntil: -1, started: false, idleTicks: 0 });
     return true;
   }
+
+  /** Morale flee (AI slice 6b): a fleeing NPC asked to warp out to (x, y)
+   *  (`AiIntent.warpOut`, drained by `runAiTick`). The same NPC warp as a
+   *  flagship fleet's (`warpBot`): spool, run, drop. Rare; a bound field so
+   *  the per-tick ctx carries no new closure. */
+  private readonly _handleAiWarpOut = (botId: string, x: number, y: number): void => {
+    if (this.warpBot(botId, x, y)) serverLogEvent('npc_morale_warp_out', { botId, sectorKey: this.sectorKey ?? '' });
+  };
 
   /** Drop a bot's warp request (cancels a spool; a run can't be stopped). */
   cancelBotWarp(botId: string): void {
@@ -11425,6 +11433,7 @@ export class SectorRoom extends Room<SectorState> {
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       resolveEntityInto: (id, out) => this.swarmEntityPoseInto(id, out),
       handleAiFire: (shooterId, dirX, dirY, tick, targetId) => this.handleAiFire(shooterId, dirX, dirY, tick, targetId),
+      handleAiWarpOut: this._handleAiWarpOut,
       phaseTime,
     });
     // Living World P3c — fire every NPC charge weapon whose wind-up elapsed.

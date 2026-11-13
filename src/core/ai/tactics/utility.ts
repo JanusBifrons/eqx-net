@@ -17,7 +17,11 @@ import {
   MANOEUVRE_ATTACK_RUN,
   MANOEUVRE_BREAK,
   MANOEUVRE_COUNT,
+  MANOEUVRE_FALL_BACK,
+  MANOEUVRE_FLEE,
   MANOEUVRE_HOLD,
+  MANOEUVRE_KITE,
+  MANOEUVRE_ORBIT,
   MANOEUVRE_TAIL,
   type ManoeuvreId,
   type TacticalContext,
@@ -52,9 +56,15 @@ export const TAILED_ASPECT_COS = -0.2;
  *  it fights. */
 export const HEAVY_HITS = 4;
 export const HEAVY_FIRE_BOW_COS = 0.5;
-/** Hold's share of the role's stand-off weights (orbit / kite, which slice 6
- *  will fly as their own manoeuvres; until then they hold). */
+/** Hold's share of the role's stand-off weights (orbit / kite). Orbit and
+ *  Kite score their full weight (slice 6b), so a stand-off role prefers them
+ *  and Hold stays the fallback a pack piles into. */
 const HOLD_STANDOFF_SHARE = 0.5;
+/** Orbit is a turret manoeuvre: its weight × clamp(turret half-arc / this,
+ *  ORBIT_FIXED_GUN_SHARE, 1). A fixed-forward gun can't bear while it turns
+ *  the nose off the target, so it barely orbits. */
+const ORBIT_FULL_ARC = Math.PI / 4;
+const ORBIT_FIXED_GUN_SHARE = 0.25;
 /** Wingmen near me (same side within 1.5 × fire range) damp the solo
  *  manoeuvres by 1 / (1 + this × allies) and add this share each to Hold:
  *  a pair dogfights, a pack surrounds its target and keeps its spacing
@@ -83,6 +93,10 @@ export function scoreManoeuvres(ctx: TacticalContext, role: RoleProfile, out: Fl
     out[MANOEUVRE_TAIL] = 0;
     out[MANOEUVRE_ATTACK_RUN] = 0;
     out[MANOEUVRE_BREAK] = 0;
+    out[MANOEUVRE_ORBIT] = 0;
+    out[MANOEUVRE_KITE] = 0;
+    out[MANOEUVRE_FALL_BACK] = 0;
+    out[MANOEUVRE_FLEE] = 0;
     return;
   }
   const dN = ctx.dist / ctx.fireRange;
@@ -110,6 +124,16 @@ export function scoreManoeuvres(ctx: TacticalContext, role: RoleProfile, out: Fl
   // Heavy fire from a ship I can't shoot back at (off my bow).
   else if (ctx.recentHits >= HEAVY_HITS && ctx.threatBearingCos < HEAVY_FIRE_BOW_COS) brk = 1.2 * w.break;
   out[MANOEUVRE_BREAK] = brk;
+
+  // Orbit (gunships, robots): turret arcs let them circle with guns bearing.
+  let arc = ctx.turretHalfArc / ORBIT_FULL_ARC;
+  arc = arc < ORBIT_FIXED_GUN_SHARE ? ORBIT_FIXED_GUN_SHARE : arc > 1 ? 1 : arc;
+  out[MANOEUVRE_ORBIT] = w.orbit * arc;
+  // Kite (missile boats): hold the band, nose on.
+  out[MANOEUVRE_KITE] = w.kite;
+  // Morale outcomes are never scored: only the die starts them.
+  out[MANOEUVRE_FALL_BACK] = 0;
+  out[MANOEUVRE_FLEE] = 0;
 }
 
 export class ManoeuvrePicker {
