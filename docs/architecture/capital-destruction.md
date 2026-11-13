@@ -1163,6 +1163,60 @@ entities whose sprite reads the resolved pose (per src/client/CLAUDE.md only
 asteroids still interpolate off the ring in the renderer; check before
 cutting) or to send swarm deltas.
 
+#### The mirror post as a change set (2026-11-13)
+
+**Fix.** The swarm no longer rides the per-frame `MIRROR_UPDATE` clone.
+The renderer worker keeps its own copy (`SwarmMirrorReplica`,
+`render/worker/swarmMirrorDelta.ts`); `WorkerRendererClient` posts the
+mirror without `swarm` plus a change set built by `SwarmDeltaEncoder`:
+- entries that are new or whose non-pose fields changed (a flag, a
+  mount-angle array, a key added or dropped) are sent whole;
+- entries whose only change is the pose fields go as float64 records with
+  only the pose-ring slots written since the last post, in a buffer that
+  is transferred and handed back on `FEEDBACK` (no per-frame allocation);
+- removed ids; a new swarm Map (sector handoff) resets the worker copy.
+An entry that did not change (a resting piece) is not sent. Change
+detection compares each entry's own keys with a shadow of the last post,
+so a field added to `SwarmRenderState` later is synced with no edit here.
+The `?worker=0` path is untouched (the renderer reads the mirror directly).
+
+**Locks** (`swarmMirrorDelta.test.ts`, through the real
+`WorkerRendererClient.update` and a structured-clone fake worker; both
+fail on the previous client): COUNT, 1,000 sleeping pieces + 12 moving
+ships post ≤ 12 swarm entries per frame (was 1,012); PARITY (#15), the
+worker's swarm equals the main thread's after every post across moves,
+sleeps, wakes, more than a ring of packets between posts, adds, removes,
+key changes and a Map swap.
+
+**Profile** (head, same command as above, ~476 pieces, 15 s): the whole
+post (`postMirror`: encode + clone + postMessage) is **3.4 %** of the main
+thread (10 % before, previous table; a different session), of which the
+change scan (`encode`) is 2.2 %. Main thread 81 % idle (58 % before).
+
+**Soak** (same session, base `e4adef90` then head, one take each, port
+offset 600, `--no-load-gate`, host CPU 15 % at the start):
+
+| pieces | frame p95 base (ms) | frame p95 head (ms) |
+|---|---|---|
+| ~180–830 | 16.7–16.8 | 16.7–16.8 |
+| ~850–940 | 16.7 | 83–167 (server worker p95 58–103 ms) |
+| ~960–1,020 | 16.7–33.3 | 16.8–67 (recovering) |
+| ~1,050–1,150 | 16.8 | 16.7–16.8 |
+| ~1,160–1,200 | 50–100 | 16.8–33.4 |
+| ~1,200–1,290 | 100–117, back to 33 at ~1,290 | 100–133 (~1,210–1,230) |
+| client | no drop; the take hit the runner's limit at 511 s (~1,290 pieces) | dropped at ~478 s, ~1,231 pieces |
+
+Each wall coincides with the SERVER's physics worker p95 passing ~20 ms
+(base 21–35 ms from 1,157 pieces; head 25–60 ms from 1,209, and the head's
+dip at ~850 with a 60–100 ms server burst); the renderer p95 stayed 6–12 ms.
+So with the post cut, the client's frame p95 past ~1,000 pieces follows the
+server tick, not the client. One take per arm: the drop/no-drop difference
+is inside what a single take can tell.
+
+**Next.** The remaining client-side swarm cost is the O(entries) change
+scan (2.2 %); a dirty stamp written by the decoder and `updateMirror`
+would make it O(changed) too, at the price of a stamp at every writer.
+
 ## 4. Determinism strategy
 
 Every client must produce the same pieces as the server, bit for bit, from
