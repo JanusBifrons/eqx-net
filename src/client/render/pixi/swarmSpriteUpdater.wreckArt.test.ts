@@ -19,7 +19,11 @@ import {
   WreckArtState, WreckPieceSprite, WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX, WRECK_RIPPLE_MAX, WRECK_BLAST_MAIN,
   WRECK_RIPPLE_R_MIN, WRECK_RIPPLE_R_MAX, WRECK_CRACK_FRONT_MS, WRECK_GLOW_END_S, wreckGlowTexture,
   WRECK_BLAST_REACH, WRECK_RIPPLE_GAP_MS, wreckGlowAt, type WreckGlow,
+  WRECK_BLAST_LINGER, wreckBlasts, type WreckBlast,
 } from './wreckArt.js';
+import { FxExplosions } from '../art/fx/FxExplosions.js';
+import { WreckBreakFx } from '../../effects/perEffect/WreckBreakFx.js';
+import type { Sprite } from 'pixi.js';
 import { projectToOutline } from '../../../core/destruction/fractureHull.js';
 import { shipHullOutline, shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
@@ -491,12 +495,13 @@ describe('updateSwarmSprites — cracks spread, then it breaks', () => {
       }
       expect(best, 'ripple on a cut edge').toBeLessThan(1);
       // Clearly visible (review: "no visible ripple explosions" at 0.022–0.04),
-      // but well below the kill blast (0.12).
+      // but below the kill blast's main fireball (0.09 since the owner's
+      // "smaller kill blast", 2026-11-13; was 0.12).
       expect(r! / hullR).toBeGreaterThanOrEqual(WRECK_RIPPLE_R_MIN - 1e-9);
       expect(r! / hullR).toBeLessThanOrEqual(WRECK_RIPPLE_R_MAX + 1e-9);
       expect(WRECK_RIPPLE_R_MIN).toBeGreaterThanOrEqual(0.05);
       expect(WRECK_RIPPLE_R_MAX).toBeLessThanOrEqual(0.07);
-      expect(WRECK_RIPPLE_R_MAX).toBeLessThan(WRECK_BLAST_MAIN * 0.6);
+      expect(WRECK_RIPPLE_R_MAX).toBeLessThan(WRECK_BLAST_MAIN * 0.8);
     }
   });
 
@@ -702,8 +707,9 @@ describe('updateSwarmSprites — the filmed v7 break-up (heavy cruiser, 16" salv
       expect(all, `seed ${seed}: every crack lit by 1 s after first sight`).toBeLessThanOrEqual(1000);
       expect(all, `seed ${seed}: ... not before 0.8 s`).toBeGreaterThanOrEqual(800);
       // Before: the front was paced evenly over crack distance and only
-      // ~0.5 s of it ran outside the kill blast.
-      expect(all - seen, `seed ${seed}: the front runs visibly (outside the kill blast) for most of its time`).toBeGreaterThanOrEqual(650);
+      // ~0.5 s of it ran outside the kill blast. Hurried through the blast's
+      // reach (now the smaller kill blast's, owner 2026-11-13), ~0.74 s.
+      expect(all - seen, `seed ${seed}: the front runs visibly (outside the kill blast) for most of its time`).toBeGreaterThanOrEqual(720);
       expect(headFrames / frames, `seed ${seed}: a head is running while the front is visible`).toBeGreaterThan(0.9);
     }
     // The head reads: white-hot at the tip, the crack behind it already
@@ -799,6 +805,122 @@ describe('updateSwarmSprites — the filmed v7 break-up (heavy cruiser, 16" salv
     }
   });
 
+  // Filmed v3 takes (2026-11-13): each cut edge carried a black scalloped
+  // "char" strip; across an opening gap the two strips read as a near-black
+  // band blocking the stars, and on the bow piece it stuck out PAST the hull
+  // outline. Every point a piece's glow mesh covers (not only its corners:
+  // the white-hot head is a quad centred on the crack, and a strip between
+  // two inside corners can still cross a concave outline) must lie inside
+  // or on the piece's own polygon, at every moment of the crack and cooling.
+  it('char strip: nothing a piece draws on its cut edges reaches past its outline, at any time', () => {
+    for (const seed of SEEDS) {
+      const r = film(seed);
+      for (let t = 0; t <= 4600; t += t < 1300 ? 48 : 400) {
+        r.to(t);
+        r.geom.forEach((g, i) => {
+          const pos = sprite(r, i)?.glowPositions() ?? null;
+          if (pos === null) return;
+          for (let q = 0; q < pos.length; q += 8) {
+            for (let a = 0; a <= 4; a++) for (let b = 0; b <= 4; b++) {
+              const u = a / 4, v = b / 4;
+              // Bilinear over the quad's corners 0,1,2,3 (Pixi-down).
+              const x = (1 - v) * ((1 - u) * pos[q]! + u * pos[q + 2]!) + v * ((1 - u) * pos[q + 6]! + u * pos[q + 4]!);
+              const y = (1 - v) * ((1 - u) * pos[q + 1]! + u * pos[q + 3]!) + v * ((1 - u) * pos[q + 7]! + u * pos[q + 5]!);
+              const out = distOutside(g.outline, x, -y);
+              expect(out, `seed ${seed} t ${t}: piece ${i} glow ${out.toFixed(1)} u past its outline`).toBeLessThan(1);
+            }
+          }
+        });
+      }
+    }
+  });
+
+  it('char strip: a cooled cut edge is a thin, subtle dark grey-brown scorch, never a black band', () => {
+    const g: WreckGlow = { color: 0, alpha: 0 };
+    for (let s = 2.2; s < WRECK_GLOW_END_S; s += 0.1) {
+      wreckGlowAt(s, g);
+      const rr = (g.color >> 16) & 255, gg = (g.color >> 8) & 255, bb = g.color & 255;
+      expect(Math.min(rr, gg, bb), `${s.toFixed(1)} s: not near-black (0x${g.color.toString(16)})`).toBeGreaterThanOrEqual(0x28);
+      expect(rr - bb, `${s.toFixed(1)} s: grey-brown, not red`).toBeLessThanOrEqual(0x30);
+      expect(g.alpha, `${s.toFixed(1)} s: subtle`).toBeLessThanOrEqual(0.3);
+    }
+    // Thin: the wide soft halo is gone once the edge is no longer glowing
+    // (only the core stays as the scorch).
+    const data = (wreckGlowTexture().source as unknown as { resource: Uint8Array }).resource;
+    const W = data.length / 8;
+    for (let i = 0; i < W; i++) {
+      const ageS = (i / (W - 1)) * WRECK_GLOW_END_S;
+      if (ageS < 2.2) continue;
+      expect(data[(W + i) * 4 + 3], `${ageS.toFixed(2)} s: no halo on a cooled edge`).toBe(0);
+    }
+  });
+
+  // Owner decision 2026-11-13 ("smaller kill blast"): the cracks and ripples
+  // hid under the kill fireball and smoke. The blast must cover at most
+  // WRECK_BLAST_REACH (now ≤ 0.12 of the wreck radius, about half the old
+  // 0.165's area), and only briefly, so the front and the ripples show.
+  it('the kill blast is small and brief: fireballs, smoke and dust stay within WRECK_BLAST_REACH', () => {
+    expect(WRECK_BLAST_REACH, 'about half the old 0.165 reach by area').toBeLessThanOrEqual(0.12);
+    for (const seed of SEEDS) {
+      const r = film(seed);
+      const kx = r.d.killX * shipShapeScale(getShipKind('heavy-cruiser')), ky = -r.d.killY * shipShapeScale(getShipKind('heavy-cruiser'));
+      const reach = WRECK_BLAST_REACH * r.hullR;
+      // The fireballs, exactly as the renderer spawns them.
+      const fx = new FxExplosions(fakeFxArt(), () => 'high');
+      const blasts: WreckBlast[] = [];
+      const n = wreckBlasts(kx, ky, r.hullR, seed, blasts);
+      for (let k = 0; k < n; k++) fx.spawn(blasts[k]!.x, blasts[k]!.y, blasts[k]!.r, 0, WRECK_BLAST_LINGER);
+      // The break-up burst (dust; shards are flung debris, the flash is gone in 0.22 s).
+      const world = new Container();
+      const brk = new WreckBreakFx(world, () => 'high');
+      brk.spawnBurst(kx, ky, { radius: r.hullR });
+      let cover = 0, lastCovered = 0;
+      for (let ms = 0; ms <= 4000; ms += 50) {
+        fx.tick(ms);
+        if (ms > 0) brk.tick(0.05);
+        if (ms < 600) continue; // the punchy flash and shock ring (≤ 0.55 s) may reach further
+        let any = false;
+        for (const layer of [fx.fireLayer, fx.smokeLayer]) {
+          for (const c of layer.children as Sprite[]) {
+            if (!c.visible || c.alpha < 0.1 || c.anchor.x === 1) continue; // embers: thin sparks
+            any = true;
+            cover = Math.max(cover, Math.hypot(c.x - kx, -c.y - ky) + Math.abs(c.scale.x) / 2);
+          }
+        }
+        const dust = world.children[0] as Container | undefined;
+        dust?.children.forEach((c, idx) => {
+          if (idx >= 140 || !c.visible || c.alpha < 0.1) return; // the pool's dust comes first
+          any = true;
+          cover = Math.max(cover, Math.hypot(c.x - kx, -c.y - ky) + Math.abs(c.scale.x));
+        });
+        if (any) lastCovered = ms;
+      }
+      expect(cover / r.hullR, `seed ${seed}: the kill blast's covered radius (share of the wreck radius)`).toBeLessThanOrEqual(WRECK_BLAST_REACH + 1e-6);
+      expect(cover, `seed ${seed}`).toBeLessThanOrEqual(reach + 1e-6);
+      expect(lastCovered, `seed ${seed}: the smoke and dust clear within ~1.3 s (was ~3 s)`).toBeLessThanOrEqual(1300);
+    }
+  });
+
+  /** The kill blast's reach before the "smaller kill blast" decision. */
+  const OLD_BLAST_REACH = 0.165;
+  it('with the smaller blast, at least 4 ripples go off along the cracks outside it', () => {
+    for (const seed of SEEDS) {
+      const r = film(seed);
+      r.to(1300);
+      const kx = r.d.killX * shipShapeScale(getShipKind('heavy-cruiser')), ky = -r.d.killY * shipShapeScale(getShipKind('heavy-cruiser'));
+      let outside = 0, closer = 0;
+      for (const [x, y, rr] of r.ripples) {
+        const clear = Math.hypot(x! - kx, y! - ky) - rr!;
+        if (clear >= WRECK_BLAST_REACH * r.hullR - 1e-6) outside++;
+        // In the stretch the old blast (0.165 of the radius) hid: the ripples
+        // now follow the smaller blast in, closer along the cracks.
+        if (clear < OLD_BLAST_REACH * r.hullR) closer++;
+      }
+      expect(outside, `seed ${seed}: ripples outside the kill blast`).toBeGreaterThanOrEqual(4);
+      expect(closer, `seed ${seed}: ripples closer in, where the old blast hid them`).toBeGreaterThanOrEqual(1);
+    }
+  });
+
   it('B: a wreck piece never fades or vanishes: its hull art stays drawn, at full alpha, long after the glow', () => {
     const art = battleshipArt();
     const { svc } = stubArt(art);
@@ -817,6 +939,13 @@ describe('updateSwarmSprites — the filmed v7 break-up (heavy cruiser, 16" salv
     }
   });
 });
+
+/** FxExplosions' textures, ready (1×1 white: a sprite's scale is its world size). */
+function fakeFxArt(): ArtService {
+  const h = (): ArtHandle => ({ key: 'k', job: { type: 'fx', id: 'x' }, rig: undefined as never, state: 'ready', ship: null, struct: null,
+    fx: { tex: Texture.WHITE, frames: Array.from({ length: 16 }, () => Texture.WHITE), w: 1, h: 1 } });
+  return { fx: () => h() } as unknown as ArtService;
+}
 
 /** How far (x, y) lies outside the polygon (0 when inside or on it). */
 function distOutside(poly: ReadonlyArray<{ x: number; y: number }>, x: number, y: number): number {

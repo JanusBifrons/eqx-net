@@ -537,6 +537,18 @@ pieces stay for ever and the glow ends dark. As built
   minimal). The kill point comes from that piece's pose and its known
   centroid in the hull frame. The pool is built on the first break-up and
   leaves the stage when idle.
+- **A smaller kill blast (owner decision 2026-11-13, after filmed reviews).**
+  The spreading cracks and the ripples mostly hid under the kill fireball
+  and smoke. The fireballs shrank to about half the area they cover:
+  `WRECK_BLAST_MAIN` 0.12 → 0.09, `WRECK_BLAST_SUB` 0.065 → 0.045 at
+  `WRECK_BLAST_SUB_OFFSET` 0.09 → 0.06, so `WRECK_BLAST_REACH` is 0.112 of
+  the wreck radius (was 0.165). Their smoke lifts twice as fast
+  (`WRECK_BLAST_LINGER` 0.5, FxExplosions' `linger` argument; ordinary
+  deaths keep 1): visible to ~1.1 s instead of ~2.1 s. The break-up dust
+  stays inside the reach (was flung to ~0.4 of the radius) and lifts in
+  ~1.2 s (was ~3 s). The flash at the hit stays (FxExplosions' 0.3 s glow,
+  `WreckBreakFx`'s core flash now to 0.08). The crack front's pacing and the
+  ripple placement follow `WRECK_BLAST_REACH`, so both moved in with it.
 - **Counts.** A piece is a container, ≤ 6 meshes and one glow stroke
   (`WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX` = 8), the stroke gone once cool.
   Both render paths (worker and main thread) run the same updater.
@@ -572,13 +584,13 @@ slows in slow motion and speeds up at 4×.
 - **The front is paced to be seen (review of the v7 takes, 2026-11-13).**
   Fracture v7 puts every crack within a beam or two of the kill point, and
   the kill blast's fireballs cover the hull out to `WRECK_BLAST_REACH`
-  (0.165 × the wreck radius: the side blasts; the main fireball and its
-  secondaries reach 0.14) for ~1.5 s. Paced evenly over distance, the front
+  (0.112 × the wreck radius since the smaller kill blast, was 0.165) for
+  ~1.1 s. Paced evenly over distance, the front
   spent about half its run under them: the take showed the first crack
   ~0.8 s after the kill and the rest "spanning the hull in ~0.1 s". The
   front now crosses the covered stretch (`crackHidden`) in
   `WRECK_FRONT_HIDDEN_SHARE` (20 %) of its time and spends the rest outside
-  it (≥ 0.65 s visible on the filmed heavy cruiser, was ~0.5 s). The
+  it (≥ 0.72 s visible on the filmed heavy cruiser, was ~0.5 s). The
   white-hot stage of the glow curve is 0.12 s, so the crack behind the head
   is already orange and the head reads (it was as white as the head).
 - **First sight, not the death (review 2026-11-13).** The client first draws
@@ -611,9 +623,23 @@ slows in slow motion and speeds up at 4×.
   `WRECK_RIPPLE_GAP_MS` (110) apart, so they fire in sequence as it passes.
   Each is a pooled `FxExplosions` burst of
   radius 0.05–0.07 × the wreck radius (review: 0.022–0.04 were lost; the
-  kill blast is 0.12). A late joiner gets none; one whose moment passed
+  kill blast is 0.09). With the smaller kill blast they sit closer in along
+  the cracks (5–6 outside it on the filmed heavy cruiser). A late joiner gets none; one whose moment passed
   before its piece was drawn is dropped. `artStats().wreckRipples` counts
   them.
+- **No black "char" strip (filmed v3 takes, 2026-11-13).** Each cut edge
+  carried a black scalloped strip: across an opening gap the two read as a
+  near-black band over the stars, and on the bow piece it stuck out past
+  the hull. It was the glow mesh's cooling end: the curve faded to
+  near-black (0x501404 → 0x200804 at up to 0.55 alpha) over a halo 3× the
+  core's width, narrowed per segment end (the scallops); the white-hot head
+  was a quad CENTRED on the crack (half of it in the neighbour or past the
+  outline), and on a concave piece a strip with both ends inside could
+  still cross the outline between them. Now the curve ends in a faint dark
+  grey-brown (0x5a4a40 at 0.25 alpha by 2.2 s, to 0x3a2f2a at 0), the halo
+  fades out by 2.0 s so a cooled edge keeps only the thin core, the head is
+  a one-sided strip like the stroke, and each strip is narrowed until its
+  far side is inside the piece (`stripInside`).
 - **The burnt tint stays close to the art (review 2026-11-13).** The tint is
   per piece, so a wide near/far spread puts a hard brightness step at every
   cut. With the old near tint (0x9a8a80) a mid-hull kill turned every middle
@@ -630,9 +656,14 @@ slows in slow motion and speeds up at 4×.
   clock drives both) and "after cooling, no glow draws and every piece keeps
   the hull art at about the same brightness"; "the filmed v7 break-up" (the
   heavy cruiser amidships, pieces arriving 300–400 ms late: front over
-  0.8–1 s with ≥ 0.65 s outside the kill blast and a head running, both
+  0.8–1 s with ≥ 0.72 s outside the kill blast and a head running, both
   sides of a crack together, 3+ ripples outside the blast in sequence, glow
-  under 0.6 alpha by 3 s, no glow outside its piece, pieces never fade).
+  under 0.6 alpha by 3 s, no glow outside its piece, pieces never fade;
+  "char strip": every point of every glow quad inside its piece at every
+  moment, the cooled scorch grey-brown, faint and halo-free; "the kill
+  blast is small and brief": the real FxExplosions + WreckBreakFx bursts
+  cover ≤ `WRECK_BLAST_REACH` ≤ 0.12 after the first 0.6 s and clear by
+  1.3 s; ≥ 4 ripples outside it, some where the old blast hid them).
 - **The "thin sliver that faded" (v7 take, 2026-11-13) was no piece.** Two
   bright lines ~40–50 u apart with a dark streaky strip between them, gone
   by ~4 s: one crack opening at ~31 u/s after the hold, with each piece's
