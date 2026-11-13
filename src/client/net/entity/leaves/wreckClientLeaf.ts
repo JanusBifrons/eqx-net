@@ -37,6 +37,8 @@ export class WreckClientLeaf extends ClientEntityLeafBase {
     const body = wreckBodyParams(getShipKind(e.shipKind ?? null).id);
     ctx.predWorld.spawnObstacle(ctx.key, e.x, e.y, g.radius, g.mass, undefined, body.linearDamping, body.collisionGroups, g.colliderParts);
     ctx.predWorld.setAngularDamping(ctx.key, body.angularDamping);
+    // The same settle-to-sleep rule as the server body (#15).
+    if (body.settleSpeed > 0) ctx.predWorld.setSleepSettle(ctx.key, body.settleSpeed, body.settleSpin);
   }
 
   onSync(_ctx: ClientSyncCtx): void {

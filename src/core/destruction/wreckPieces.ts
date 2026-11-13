@@ -85,6 +85,11 @@ export interface WreckBodyParams {
   collisionGroups: number;
   linearDamping: number;
   angularDamping: number;
+  /** Settle-to-sleep thresholds (`World.setSleepSettle`): u/s from the
+   *  profile's `settlePerRadius` × the kind's radius (#18), rad/s from its
+   *  `settleSpin`. 0 = off (capitals). */
+  settleSpeed: number;
+  settleSpin: number;
 }
 
 const wreckBodyParamsCache = new Map<string, WreckBodyParams>();
@@ -94,11 +99,14 @@ const wreckBodyParamsCache = new Map<string, WreckBodyParams>();
 export function wreckBodyParams(kindId: ShipKindId): WreckBodyParams {
   let p = wreckBodyParamsCache.get(kindId);
   if (p === undefined) {
-    const prof = DESTRUCTION_PROFILES[shipTuning(getShipKind(kindId)).destruction];
+    const kind = getShipKind(kindId);
+    const prof = DESTRUCTION_PROFILES[shipTuning(kind).destruction];
     p = {
       collisionGroups: prof.piecesCollide ? WRECK_COLLISION_GROUPS : SUBCAP_WRECK_COLLISION_GROUPS,
       linearDamping: WRECK_LINEAR_DAMPING * prof.dampingScale,
       angularDamping: WRECK_ANGULAR_DAMPING * prof.dampingScale,
+      settleSpeed: prof.settlePerRadius * kind.radius,
+      settleSpin: prof.settleSpin,
     };
     wreckBodyParamsCache.set(kindId, p);
   }

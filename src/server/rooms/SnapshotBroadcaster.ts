@@ -1162,6 +1162,7 @@ export class SnapshotBroadcaster {
       if (work !== undefined && work.active) {
         work.snapshots++;
         work.snapshotEntities += projectilesCount + missilesCount + dronesCount + asteroidsCount;
+        work.wreckDescriptors += snap.wrecks?.length ?? 0;
       }
     }
 

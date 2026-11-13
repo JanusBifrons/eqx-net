@@ -71,6 +71,9 @@ export interface WreckPieceSpawn {
   /** Collision groups from the profile (`wreckBodyParams`): capital pieces
    *  collide with each other, sub-cap pieces don't. */
   collisionGroups: number;
+  /** Settle-to-sleep thresholds from the profile (`wreckBodyParams`); 0 = off. */
+  settleSpeed: number;
+  settleSpin: number;
 }
 
 interface LiveWreck {
@@ -116,6 +119,9 @@ export interface CapitalWreckDeps {
    *  keep their relative poses: a hit during the crack hold. Optional: absent
    *  ⇒ hold hits shove single pieces like later ones. */
   impulseWreck?: (ids: readonly string[], jx: number, jy: number, px: number, py: number) => void;
+  /** Is this live piece asleep (FLAG_SLEEPING)? Optional: absent ⇒ every
+   *  hit shoves (no resting-piece knock gate). */
+  pieceAsleep?: (id: string) => boolean;
 }
 
 /** How hard a hit knocks one piece (fixed at spawn; read per hit, #14). */
@@ -129,6 +135,9 @@ interface PieceKnock {
   /** The profile's `spinScale`: the share of the hit's lever arm that turns
    *  the piece (1: all of it). */
   spin: number;
+  /** Least uncapped speed change (u/s) that wakes a RESTING piece: the
+   *  profile's `knockWakeScale` × `wreckKnockMax`. 0 = every hit shoves. */
+  wakeDv: number;
 }
 
 /** Scratch for a piece's centre in `onWreckHit` (#14). */
@@ -270,12 +279,13 @@ export class CapitalWreckSubsystem {
         parts: p.parts, colliderParts: p.colliderParts,
         linearDamping: body.linearDamping, angularDamping: body.angularDamping,
         collisionGroups: body.collisionGroups,
+        settleSpeed: body.settleSpeed, settleSpin: body.settleSpin,
       });
       if (!ok) continue;
       spawned++;
       spawnedMass += p.mass;
       spawnedIds.push(id);
-      this.knock.set(id, { mass: p.mass, impulsePerDamage, maxDv: tuning.wreckKnockMax, spin: profile.spinScale });
+      this.knock.set(id, { mass: p.mass, impulsePerDamage, maxDv: tuning.wreckKnockMax, spin: profile.spinScale, wakeDv: profile.knockWakeScale * tuning.wreckKnockMax });
       // The hull holds together for the crack delay, then parts (game ticks).
       if (held) this.kicks.push({ id, dueTick: tick + crackTicks, vx: p.kickVx, vy: p.kickVy, w: p.kickAngvel, angle0: pose.angle });
       fifo.push(id);
@@ -343,6 +353,11 @@ export class CapitalWreckSubsystem {
    * wreck's mass, Δω = (r × J) ÷ its moment of inertia, every piece set to
    * v_com + ω × r_i, so the hull reads as one cracked body until it splits.
    * The speed cap is then on the whole wreck (`wreckKnockMax` × its mass).
+   *
+   * A piece ASLEEP (settled debris) is shoved only by a hit whose uncapped
+   * speed change is at least the profile's `knockWakeScale` × `wreckKnockMax`
+   * (sub-caps: twice the cap, so small arms leave it asleep; capitals: 0,
+   * every hit). A lighter hit returns true (the shot stops) and does nothing.
    */
   onWreckHit(id: string, hitX: number, hitY: number, dirX: number, dirY: number, damage: number): boolean {
     const k = this.knock.get(id);
@@ -359,6 +374,9 @@ export class CapitalWreckSubsystem {
       this.d.impulseWreck(w.ids, dirX * s, dirY * s, hitX, hitY);
       return true;
     }
+    // A resting piece ignores a light hit (wreck sleep fix, 2026-11-13): the
+    // shot still stops on it, but small arms no longer wake settled debris.
+    if (k.wakeDv > 0 && j < k.wakeDv * k.mass && this.d.pieceAsleep?.(id) === true) return true;
     const jMax = k.maxDv * k.mass;
     if (j > jMax) j = jMax;
     const s = j / len;

@@ -50,6 +50,21 @@ export function scenePoint(i: number, count: number, spread: number, out: { x: n
   out.y = Math.sin(a) * r;
 }
 
+/** A spawn step with `repeatEveryMs` becomes one step per repeat (built once,
+ *  at room creation): repeat k is due at `atMs + k * repeatEveryMs`, while
+ *  that is before `repeatUntilMs`, tagged `<tag>-r<k>`. */
+export function expandRepeats(script: readonly SceneStep[]): SceneStep[] {
+  const out: SceneStep[] = [];
+  for (const s of script) {
+    out.push(s);
+    if (s.action !== 'spawn' || s.repeatEveryMs === undefined || s.repeatUntilMs === undefined) continue;
+    for (let k = 1, t = s.atMs + s.repeatEveryMs; t < s.repeatUntilMs; k++, t += s.repeatEveryMs) {
+      out.push({ ...s, atMs: t, tag: `${s.tag}-r${k}`, repeatEveryMs: undefined, repeatUntilMs: undefined });
+    }
+  }
+  return out;
+}
+
 export class SceneScriptRunner {
   private readonly steps: SceneStep[];
   private startTick = -1;
@@ -58,7 +73,7 @@ export class SceneScriptRunner {
   private readonly pt = { x: 0, y: 0 };
 
   constructor(script: readonly SceneStep[], private readonly hooks: SceneHooks) {
-    this.steps = [...script].sort((a, b) => a.atMs - b.atMs);
+    this.steps = expandRepeats(script).sort((a, b) => a.atMs - b.atMs);
   }
 
   /** Start the clock (first pilot ready). Idempotent. */

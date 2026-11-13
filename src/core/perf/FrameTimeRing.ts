@@ -40,8 +40,9 @@ export class FrameTimeRing {
 
   get count(): number { return this.n; }
 
-  summary(): FrameTimeSummary {
-    const n = this.n;
+  /** Percentiles over every frame held, or only the newest `last` of them. */
+  summary(last?: number): FrameTimeSummary {
+    const n = last === undefined ? this.n : Math.max(0, Math.min(this.n, Math.floor(last)));
     if (n === 0) return { frames: 0, p50: 0, p95: 0, p99: 0, max: 0, hitches: 0 };
     const start = (this.head - n + this.buf.length) % this.buf.length;
     const v = new Float64Array(n);
