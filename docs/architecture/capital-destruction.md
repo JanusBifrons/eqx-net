@@ -456,9 +456,10 @@ pieces stay for ever and the glow ends dark. As built
   today's plain polygon, swapped once the art arrives.
 - **Glowing cut edges.** One glow per piece over its `cutEdges` (the
   original outline never glows; since 2026-11-13 a mesh lit by a crack front,
-  see "Cracks spread" below), coloured by `wreckGlowAt`: molten white-orange, an ember at
-  `WRECK_GLOW_EMBER_S` (3 s), dark at `WRECK_GLOW_END_S` (6 s), when the stroke
-  is destroyed. The clock is the descriptor's new `deathTick` against the
+  see "Cracks spread" below), coloured by `wreckGlowAt`: white-hot for
+  0.12 s, bright orange to ~0.6 s, an ember at `WRECK_GLOW_EMBER_S` (1.8 s),
+  dark at `WRECK_GLOW_END_S` (4.5 s), when the stroke is destroyed (was
+  3 s / 6 s; review 2026-11-13: "saturated orange for ~3 s"). The clock is the descriptor's new `deathTick` against the
   piece's latest server tick, so a late joiner (or a descriptor without one)
   starts cool. Per-wreck state lives in the renderer's `WreckArtState`.
 - **Break-up.** The first piece of a wreck younger than 1.5 s fires
@@ -488,16 +489,31 @@ before the server pushes them apart; this is what the client shows in that
 window. Everything runs on the renderer's game clock (`ctx.fxNowMs`), so it
 slows in slow motion and speeds up at 4×.
 
-- **The crack front.** Each crack (a run of cut edges on a piece) is reached
-  at its end nearer the kill point, at the straight-line distance, and the
-  front then runs ALONG it (`forEachCut`: each end's crack distance). The
-  front's clock (`crackFrontAt` / `crackIgniteMs`) runs over the crack
-  distances that hold a crack only (`crackIntervals`, merged), from the
-  nearest to the farthest in `WRECK_CRACK_FRONT_MS` (0.8 × the window), so it
-  never idles across a stretch of the hull with nothing to light. Each cut
-  segment grows from its near end to its far end; each END ages from the
-  moment the front reached it, so a crack is white-hot at the tip and cools
-  orange to red behind it, on the old `wreckGlowAt` curve.
+- **The crack front.** Each crack system (the cut edges of every piece,
+  joined where pieces share a vertex: `CrackDistances`) is entered once, at
+  its outline vertex nearest the kill point (the kill point itself for the
+  primary line and the fan cracks), and the front runs ALONG the cracks from
+  there, through T-junctions. Both sides of a crack therefore light
+  together (per-piece runs lit one side of a zone crack ~0.5 s after the
+  other when a fan crack ended on it). The front's clock (`crackFrontAt` /
+  `crackIgniteMs`) runs over the crack distances that hold a crack only
+  (`crackIntervals`, merged), from the nearest to the farthest in
+  `WRECK_CRACK_FRONT_MS` (0.8 × the window), so it never idles across a
+  stretch of the hull with nothing to light. Each cut segment grows from its
+  near end to its far end; each END ages from the moment the front reached
+  it, so a crack is white-hot at the tip and cools orange to red behind it.
+- **The front is paced to be seen (review of the v7 takes, 2026-11-13).**
+  Fracture v7 puts every crack within a beam or two of the kill point, and
+  the kill blast's fireballs cover the hull out to `WRECK_BLAST_REACH`
+  (0.165 × the wreck radius: the side blasts; the main fireball and its
+  secondaries reach 0.14) for ~1.5 s. Paced evenly over distance, the front
+  spent about half its run under them: the take showed the first crack
+  ~0.8 s after the kill and the rest "spanning the hull in ~0.1 s". The
+  front now crosses the covered stretch (`crackHidden`) in
+  `WRECK_FRONT_HIDDEN_SHARE` (20 %) of its time and spends the rest outside
+  it (≥ 0.65 s visible on the filmed heavy cruiser, was ~0.5 s). The
+  white-hot stage of the glow curve is 0.12 s, so the crack behind the head
+  is already orange and the head reads (it was as white as the head).
 - **First sight, not the death (review 2026-11-13).** The client first draws
   a wreck 0.1–0.5 s after the death (its descriptor arrives late). Anchored
   at the death, most of the front had already run and every crack lit at
@@ -506,9 +522,13 @@ slows in slow motion and speeds up at 4×.
   sight); the break-up burst still uses the real age. A late joiner keeps the
   true age: cool, no front.
 - **One glow mesh, not a stroke.** The glow is one `Mesh` per piece on a
-  64×2 texture holding the glow curve (`wreckGlowTexture`: row 0 core, row 1
-  halo at 0.3 alpha; U = age / 6 s). Four quads per cut segment: a halo and a
-  core (per-vertex U: the age at each end), then the white-hot head's halo
+  128×2 texture holding the glow curve (`wreckGlowTexture`: row 0 core, row 1
+  halo at 0.3 alpha; U = age / 4.5 s). Four quads per cut segment: a halo and a
+  core (per-vertex U: the age at each end) on the piece's OWN side of the
+  edge only, each half the stroke's width and narrowed where a sharp corner
+  would poke it out (`insideWidth`), so the two pieces' halves make the
+  whole stroke while the hull holds and nothing is drawn in the gap once
+  they part; then the white-hot head's halo
   and core (`GLOW_HEAD_MUL` wider, `GLOW_HEAD_LEN_R` × the wreck radius
   long) on the stretch behind the tip of a crack still growing. Widths are a
   share of the wreck radius (`GLOW_CORE_R`, #18), so they read at capital
@@ -517,10 +537,12 @@ slows in slow motion and speeds up at 4×.
   per piece (budget 8). `frontHeads()` counts the heads drawn.
 - **Ripple blasts.** At first sight of a fresh wreck `wreckRipples` picks up
   to `wreckRippleCap(tier)` points (7 high, 5 medium, 3 low, none minimal) on
-  the cut edges at least `WRECK_RIPPLE_FAR_FROM` (0.35) of the farthest
-  crack's distance from the kill point, clear of the kill blast's fireball
-  and smoke: one per equal band in the order the front reaches them, so they
-  fire in sequence as it passes. Each is a pooled `FxExplosions` burst of
+  the cut edges whose whole ripple fireball lies outside `WRECK_BLAST_REACH`
+  (v7 review: the old "far 65 % of the cracks" rule put every ripple 409–528
+  u out, under a kill blast reaching ~360 u, and fired two 30 ms apart), one
+  per equal stretch of the front's run there, at least
+  `WRECK_RIPPLE_GAP_MS` (110) apart, so they fire in sequence as it passes.
+  Each is a pooled `FxExplosions` burst of
   radius 0.05–0.07 × the wreck radius (review: 0.022–0.04 were lost; the
   kill blast is 0.12). A late joiner gets none; one whose moment passed
   before its piece was drawn is dropped. `artStats().wreckRipples` counts
@@ -539,7 +561,19 @@ slows in slow motion and speeds up at 4×.
   ignition; ripples on the cuts, 0.05–0.07 × the radius, away from the kill
   point, under the cap, spread in time, none for a late joiner; the game
   clock drives both) and "after cooling, no glow draws and every piece keeps
-  the hull art at about the same brightness".
+  the hull art at about the same brightness"; "the filmed v7 break-up" (the
+  heavy cruiser amidships, pieces arriving 300–400 ms late: front over
+  0.8–1 s with ≥ 0.65 s outside the kill blast and a head running, both
+  sides of a crack together, 3+ ripples outside the blast in sequence, glow
+  under 0.6 alpha by 3 s, no glow outside its piece, pieces never fade).
+- **The "thin sliver that faded" (v7 take, 2026-11-13) was no piece.** Two
+  bright lines ~40–50 u apart with a dark streaky strip between them, gone
+  by ~4 s: one crack opening at ~31 u/s after the hold, with each piece's
+  glow centred on its edge, so both halos and cores spilled over the gap
+  and read as a strip that "faded" with the glow. v7 never cuts two
+  near-parallel cracks closer than ~0.56 beams (`fractureHull.killFocus.test.ts`
+  "no two cracks run near-parallel"), and every piece keeps its art. Fixed
+  by drawing each piece's glow on its own side only (above).
 
 ### S4: secondary breaks and the catastrophic flash
 
