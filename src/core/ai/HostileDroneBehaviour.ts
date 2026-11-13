@@ -14,7 +14,7 @@ import {
   PLAYERS_SIDE,
   type NpcAllegianceId,
 } from '../../shared-types/allegiances.js';
-import { pickTarget, type MountTargetView } from './WeaponMountController.js';
+import { pickTarget, type MountTargetView, type PickTargetOptions } from './WeaponMountController.js';
 import { arrive, makeSteerOutput, type SteerOutput } from './steering.js';
 import {
   type FlockAccumulator,
@@ -28,7 +28,22 @@ import {
   resolveFlock,
 } from './flocking.js';
 import type { AiEntityPoseOut } from '../contracts/IAiBehaviour.js';
-import { shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { massOf, NPC_MASS_FALLBACK, shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { AI_INPUT_BOOST } from '../contracts/IAiBehaviour.js';
+import { BOOST_TICK_COST, canAfford, regenEnergyStep, spendEnergy } from '../combat/Energy.js';
+import {
+  brakingSpeed,
+  DEFAULT_PILOT_PARAMS,
+  facingOf,
+  makePilotHandling,
+  makePilotState,
+  pilotInputs,
+  wrapAngle,
+  type PilotHandling,
+  type PilotParams,
+  type PilotState,
+} from './virtualPilot.js';
+import { roleSensorRange } from './tactics/roleProfiles.js';
 
 /** Aim cone (radians). Drones won't fire unless their nose is within this many radians of the target. */
 const DRONE_AIM_TOLERANCE = 0.25; // ~14°
@@ -47,8 +62,8 @@ const ENGAGE_DISTANCE_RATIO = 1.5;
 export const BROADSIDE_STANDOFF = 0.75;
 /** Max heading bias (rad) toward / away from the target to keep the stand-off. */
 const BROADSIDE_RANGE_STEER = 0.6;
-/** Thrust while broadside, per unit of range error (fraction of cruise). */
-const BROADSIDE_THRUST = 0.6;
+/** Speed while broadside, per unit of range error (fraction of cruise). */
+const BROADSIDE_SPEED = 0.6;
 /** Guard post (owner decision 2026-11-11): a guarding capital fights from its
  *  post. Inside this share of its guard radius it holds station with its beam
  *  to the target; beyond it, it closes on the post. */
@@ -59,23 +74,9 @@ const GUARD_RETURN_FRAC = 0.8;
 /** Station-keeping: the most a guarding capital steams toward its post, as a
  *  share of the kind's max speed (it must stop again inside the radius). */
 const GUARD_RETURN_SPEED = 0.5;
-/** Station-keeping: velocity error (share of max speed) that gets full thrust. */
-const GUARD_SPEED_GAIN = 0.25;
-/** Multiplier applied to forward thrust when the drone is engaging from
- *  beyond `ENGAGE_DISTANCE_RATIO * DRONE_FIRE_RANGE`. Rapier damping +
- *  per-kind `maxSpeed` keep this from running away. */
-const ENGAGE_BOOST = 1.6;
-/** Bearing-error magnitude (radians) below which the drone snaps to
- *  zero angular velocity instead of pegging at `±maxAngvel`. ~3° dead
- *  zone — wide enough that a finished turn doesn't oscillate around
- *  zero, narrow enough that fine aim corrections still land. */
-const TURN_DEADZONE = 0.05;
-/** Window (radians) over which the AI ramps its target angvel from 0 to
- *  `maxAngvel` linearly. Outside this window the drone turns at full
- *  speed; inside, it slows in so it doesn't blow through the bearing
- *  and immediately reverse. Wider = smoother, narrower = sharper.
- *  ~0.25 rad ≈ 14° feels both decisive and clean. */
-const TURN_RAMP_WINDOW = 0.25;
+/** Station-keeping pilot: a capital's thrust is the only brake it has on a
+ *  course across its axis, so it may thrust with any nose (no thrust cone). */
+const GUARD_PILOT_PARAMS: Readonly<PilotParams> = { ...DEFAULT_PILOT_PARAMS, thrustConeCos: -1 };
 /** Forget a hostile player after this many ticks of no fresh damage from
  *  them. 1800 ticks @ 60 Hz = 30 s. Mirrors the player's own intuition that
  *  if they've been clean for half a minute, the drone has lost interest. */
@@ -101,10 +102,15 @@ const STRUCTURE_PRIORITY_BIAS = 3;
  *  this is comfortably outside the spawn zone without being so far that
  *  drones are off-screen most of the session. */
 const PATROL_RADIUS = 1800;
-/** Patrol thrust scaler. Drones cruise at 50 % of combat thrust when
- *  idle so the orbit stays slow and readable, and so they don't burn
- *  ahead of the inward bias when they need to spiral back. */
-const PATROL_THRUST_SCALE = 0.5;
+/** Calm (non-combat) travel speed as a share of the kind's thrust cruise
+ *  speed: patrols, squad courses and flock followers fly at it. The pilot
+ *  layer (2026-11-13) gave NPCs their full player handling; out of combat they
+ *  CHOOSE to cruise slower, at the pace the retired `ai.thrust` (≈0.45× the
+ *  player thrust) used to give, so roaming squads keep their readable pace. */
+const CALM_CRUISE_FRAC = 0.45;
+/** Patrol speed as a share of the calm cruise, so the orbit stays slow and
+ *  readable and the inward bias wins when a drone spirals back. */
+const PATROL_SPEED_FRAC = 0.5;
 /** Strength of the inward bias applied when the drone is outside
  *  `PATROL_RADIUS`. Blends from 0 at the radius to 1 at 2 × radius. */
 const PATROL_INWARD_GAIN = 1.0;
@@ -113,7 +119,7 @@ const PATROL_INWARD_GAIN = 1.0;
  *  (the "slow down and come to a stop in formation, don't float past" feel). */
 const MOVE_ARRIVE_SLOW_RADIUS = 300;
 /** Non-combat herding: a flock LEADER cruises its course at this fraction of the
- *  drone's normal `ai.thrust`, so its FOLLOWERS — moving at the full calm cruise
+ *  calm cruise, so its FOLLOWERS — moving at the full calm cruise
  *  — actually outrun it and tighten into the herd. Without the throttle the
  *  leader and followers share the same slow max-speed and the herd can never
  *  close the gap (the boost the old scheme used to paper over this is gone; the
@@ -126,11 +132,11 @@ const LEADER_CRUISE_THROTTLE = 0.55;
  * Hostile drone: steers toward nearest player and fires hitscan when in range
  * and roughly aimed. Cooldown matches the player weapon (10 ticks @ 60 Hz).
  *
- * Per-kind tuning (`thrust`, `turnKp`, `maxTorque`) is read from the
- * `ShipKind.ai` block of the kind the drone spawned with — each drone in a
- * sector can be a different kind and steer with that kind's character. The
- * forward-vector convention matches `World.applyInput`: nose points
- * `(-sin θ, cos θ)` at angle θ.
+ * It flies with a player's controls only (owner rule 2026-11-13): every
+ * movement mode picks a facing and a wanted velocity and the virtual pilot
+ * (`virtualPilot.ts`) turns them into thrust / reverse / turn / boost keys,
+ * which the worker runs through `applyShipInput` with the drone's own kind —
+ * so each kind flies with its own handling. Forward is `(-sin θ, cos θ)`.
  */
 /** Phase 1 state machine: drones either patrol idle (orbit origin) or
  *  pursue & shoot a hostile player. Future phases may add more states
@@ -262,6 +268,19 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  need no lead). 2026-06-03 — replaces the single hardcoded
    *  LEAD_AIM_MUZZLE_SPEED, which 2×-over-led the 1600 u/s bolt. */
   private readonly leadMuzzleSpeed: number;
+  /** Sensor range (world units): NEW body-target picks are capped here
+   *  (`roleSensorRange(kind.aiRole, fireRange)`, AI overhaul slice 3). A held
+   *  target is kept beyond it, and a known (ledger) hostile beyond it is still
+   *  picked when nothing is in range, so director-ordered hunters still go. */
+  private readonly sensorRange: number;
+  /** Reused body-pick options (alloc-free, #14); `ticksSincePrevTarget` is
+   *  written each tick. */
+  private readonly _pickOpts: PickTargetOptions;
+  /** Same options without the sensor cap: the out-of-sensor fallback pick. */
+  private readonly _pickOptsUncapped: PickTargetOptions;
+  /** Bound once (no per-tick closure). Unused while every candidate carries
+   *  its own `hostile` flag, kept for the pickTarget signature. */
+  private readonly _isHostile = (id: string): boolean => this.hostileTo.has(id);
 
   /** 2026-05-31 — pooled per-instance scratches (Invariant #14). Pre-fix
    *  this class returned a fresh AiIntent literal per tick (~15 drones ×
@@ -278,6 +297,15 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     fx: 0, fy: 0, torque: 0, setAngvel: undefined, fire: undefined,
   };
   private readonly _fireScratch: { dirX: number; dirY: number; targetId: string } = { dirX: 0, dirY: 0, targetId: '' };
+  /** The kind's handling as the virtual pilot sees it (body mass as spawned). */
+  private readonly handling: PilotHandling;
+  /** Virtual-pilot state (reaction latch), owned per drone. */
+  private readonly _pilot: PilotState = makePilotState();
+  /** Boost energy (server-only): the kind's pool, regenerated each tick and
+   *  spent per boosted tick with the shared `Energy.ts` helpers, as a pilot's. */
+  private energy: number;
+  private readonly energyMax: number;
+  private readonly energyRegen: number;
 
   constructor(kind?: ShipKind | string) {
     // Accept the kind as either a `ShipKind` record or a kind id (string), so
@@ -289,6 +317,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const a = this.kind.allegiance;
     this.allegiance = a !== undefined && isNpcAllegianceId(a) ? a : 'drones';
     this.onSightPlayers = isOnSightHostile(this.allegiance, PLAYERS_SIDE);
+    // The body's mass is SwarmSpawner's: the kind's own, else NPC_MASS_FALLBACK.
+    this.handling = makePilotHandling(this.kind, massOf(this.kind, NPC_MASS_FALLBACK));
+    this.energyMax = this.kind.energyMax ?? 100;
+    this.energyRegen = this.kind.energyRegenRate ?? 0.25;
+    this.energy = this.energyMax;
     // Compute the half-arc of the widest rotating mount across the kind's
     // mounts. `arcMax - arcMin` is the FULL arc; halving it gives the
     // distance the mount can swing from `baseAngle` in either direction.
@@ -335,10 +368,28 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this.stopDistFactor = BROADSIDE_STANDOFF;
       this.backoffInsideFactor = 0;
     }
+    this.sensorRange = roleSensorRange(this.kind.aiRole, this.fireRange);
+    this._pickOpts = {
+      healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
+      dwellTicks: DRONE_TARGET_DWELL_TICKS,
+      ticksSincePrevTarget: 0,
+      priorityBias: STRUCTURE_PRIORITY_BIAS,
+      maxDistance: this.sensorRange,
+      prevMaxDistance: Infinity,
+    };
+    this._pickOptsUncapped = {
+      healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
+      dwellTicks: DRONE_TARGET_DWELL_TICKS,
+      ticksSincePrevTarget: 0,
+      priorityBias: STRUCTURE_PRIORITY_BIAS,
+    };
   }
 
   /** Test-visible engagement profile. */
   getFireRange(): number { return this.fireRange; }
+  getSensorRange(): number { return this.sensorRange; }
+  /** Test-visible: the body target currently held (null = none). */
+  getTargetId(): string | null { return this.prevTargetId; }
   getWeaponMode(): WeaponMode { return this.weaponMode; }
 
   /** Test-visible peek at the current state. */
@@ -389,6 +440,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   }
 
   tick(self: AiEntity, view: AiWorldView): AiIntent {
+    // Boost energy regenerates every tick, as a pilot's pool does.
+    this.energy = regenEnergyStep(this.energy, this.energyMax, this.energyRegen);
     // 1) Time-decay: drop hostiles whose last hit aged past FORGET_TICKS.
     //    `view.tick` is `serverTick` on the server and `inputTick` on the
     //    client; same tolerance as the existing `lastFireTick` cooldown.
@@ -525,15 +578,20 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
     }
 
-    const target = pickTarget(
-      self.x, self.y, cand, this.prevTargetId, (id) => this.hostileTo.has(id),
-      {
-        healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
-        dwellTicks: DRONE_TARGET_DWELL_TICKS,
-        ticksSincePrevTarget: view.tick - this.prevTargetSinceTick,
-        priorityBias: STRUCTURE_PRIORITY_BIAS,
-      },
-    );
+    // Sensor cap (AI overhaul slice 3): NEW picks only within the role's
+    // sensor range; the held target stays eligible at any range
+    // (`prevMaxDistance: Infinity`). Nothing in range and nothing held ⇒ fall
+    // back to the uncapped pick, so a director-ordered / retaliation contact
+    // (`hostileTo`, set via markHostile) across the sector is still hunted.
+    // On-sight candidates never reach the fallback beyond ON_SIGHT_ENGAGE_RANGE
+    // (they aren't hostile there), and the sensor range is floored at it.
+    const sinceTicks = view.tick - this.prevTargetSinceTick;
+    this._pickOpts.ticksSincePrevTarget = sinceTicks;
+    let target = pickTarget(self.x, self.y, cand, this.prevTargetId, this._isHostile, this._pickOpts);
+    if (target === null && anyHostile) {
+      this._pickOptsUncapped.ticksSincePrevTarget = sinceTicks;
+      target = pickTarget(self.x, self.y, cand, this.prevTargetId, this._isHostile, this._pickOptsUncapped);
+    }
     const newId = target?.id ?? null;
     if (newId !== this.prevTargetId) this.prevTargetSinceTick = view.tick;
     this.prevTargetId = newId;
@@ -549,6 +607,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * inward bias into the desired heading so drones spiral back toward the
    * orbit instead of diverging — this is also the structural fix for the
    * "drone drifted to (4 133 782, -1 093 669) over a long session" bug.
+   * Flown through the virtual pilot at a slow patrol speed.
    */
   private tickPatrol(self: AiEntity): AiIntent {
     // Roaming-formation (Phase 5): when the director has assigned a move target
@@ -576,55 +635,31 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       if (len > 1e-6) { dirX /= len; dirY /= len; }
     }
 
-    const desiredAngle = Math.atan2(-dirX, dirY);
-    const setAngvel = this.angvelTarget(desiredAngle - self.angle);
-
-    // Gentle forward thrust along current facing — once the heading has
-    // settled, this drives the orbital motion.
-    const fwdX = -Math.sin(self.angle);
-    const fwdY = Math.cos(self.angle);
-    const thrustMag = this.kind.ai.thrust * PATROL_THRUST_SCALE;
-    const out = this._intentScratch;
-    out.fx = fwdX * thrustMag;
-    out.fy = fwdY * thrustMag;
-    out.torque = 0;
-    out.setAngvel = setAngvel;
-    out.fire = undefined;
-    return out;
+    const speed = this.handling.cruiseSpeed * CALM_CRUISE_FRAC * PATROL_SPEED_FRAC;
+    return this.fly(self, facingOf(dirX, dirY), dirX * speed, dirY * speed, false);
   }
 
   // ── Combat ──────────────────────────────────────────────────────────
   /**
-   * Existing pursue-and-fire behaviour. Refactored out of `tick` so that
-   * Step 3 of the AI plan can layer lead-aim, distance-based boost, and
-   * a wider point-blank fire arc on top without mangling the IDLE branch.
+   * Pursue-and-fire. The decision (target, lead point, stand-off, fire gate)
+   * is unchanged from the impulse era; the actuation is the virtual pilot:
+   * face the lead point, and fly a wanted velocity along the target line —
+   * the target's own speed along that line plus a closing speed the pilot
+   * can still brake from by the stop distance (missile kites back off).
    */
   private tickCombat(self: AiEntity, view: AiWorldView, target: MountTargetView): AiIntent {
     // Raw geometry to the live target — used for distance-based gating.
     const rawDx = target.x - self.x;
     const rawDy = target.y - self.y;
     const dist = Math.hypot(rawDx, rawDy);
-    if (dist < 1e-3) {
-      const zero = this._intentScratch;
-      zero.fx = 0;
-      zero.fy = 0;
-      zero.torque = 0;
-      zero.setAngvel = undefined;
-      zero.fire = undefined;
-      return zero;
-    }
-    if (this.broadside) return this.tickBroadside(self, rawDx, rawDy, dist);
+    if (dist < 1e-3) return this.fly(self, self.angle, target.vx, target.vy, false);
+    if (this.broadside) return this.tickBroadside(self, target, rawDx, rawDy, dist);
 
-    // Lead-aim: estimate where the target will be when our shot lands.
-    // For hitscan `t` is tiny so this barely shifts the aim; for moving
-    // targets it lets the drone aim ahead of them. Using a constant
-    // muzzle speed (rather than per-weapon) so the same code path covers
-    // both projectile and hitscan modes — the worst case is a small
-    // over-lead on hitscan, well within the aim tolerance.
-    // First-order intercept in the SHOOTER's frame. The bolt inherits the
-    // shooter's velocity at spawn (self.v + dir·speed), so the lead must
-    // use the target's velocity RELATIVE to the shooter and the weapon's
-    // real muzzle speed (hitscan → leadMuzzleSpeed huge → t≈0 → no lead).
+    // Lead-aim: first-order intercept in the SHOOTER's frame. The bolt
+    // inherits the shooter's velocity at spawn (self.v + dir·speed), so the
+    // lead uses the target's velocity RELATIVE to the shooter and the
+    // weapon's real muzzle speed (hitscan → leadMuzzleSpeed huge → t≈0 →
+    // no lead).
     const t = dist / this.leadMuzzleSpeed;
     const aimX = target.x + (target.vx - self.vx) * t;
     const aimY = target.y + (target.vy - self.vy) * t;
@@ -632,62 +667,42 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const aimDy = aimY - self.y;
 
     // Bearing toward the lead-aim point, not the target's current pose.
-    const desiredAngle = Math.atan2(-aimDx, aimDy);
-    const bearingError = wrapPi(desiredAngle - self.angle);
+    const desiredAngle = facingOf(aimDx, aimDy);
+    const bearingError = wrapAngle(desiredAngle - self.angle);
 
-    // Player-equivalent snap turn: target angvel = ±maxAngvel (or zero
-    // inside the dead zone), to be applied via `body.setAngvel` rather
-    // than fought with damping. See `angvelTarget` for the ramp.
-    const setAngvel = this.angvelTarget(bearingError);
-
-    // 2026-06-01 — arrival-style standoff. Before this change, the drone
-    // thrusted forward at `baseThrust` whenever it was within fire range,
-    // which meant a fast-closing drone would sail through the target and
-    // overshoot by hundreds of units before turning around — the
-    // user-reported "flies past way too quickly… never approaches"
-    // behaviour. The drone now targets a stopping distance of ~60 % of
-    // fire range and BRAKES (reverse thrust along its forward axis) when
-    // it's closing too fast for that distance. Inside the stopping
-    // distance, it idles or backpedals to maintain spacing.
-    //
-    // The closing speed = (self.vel · dir_to_target). Positive = drone
-    // is approaching; the cap scales with remaining distance so the
-    // drone arrives at near-zero relative speed.
-    // Weapon-aware standoff (weapons/energy/AI overhaul §4). STOP_DIST and
-    // the engagement profile are derived per-weapon in the constructor:
-    // beam bores to ~50 % of its (short) fire range, bolt keeps the mid-range
-    // dogfight, missile kites at ~90 % of its (long) fire range and actively
-    // backs off if the target closes inside `fireRange × backoffInsideFactor`.
-    const baseThrust = this.kind.ai.thrust;
+    // Weapon-aware stand-off (weapons/energy/AI overhaul §4): beam bores to
+    // ~50 % of its short reach, bolt holds the mid-range dogfight, missile
+    // kites at ~90 % of its long reach and backs off when the target closes
+    // inside `fireRange × backoffInsideFactor`. Expressed as a wanted speed
+    // along the target line (+ = closing), on top of the target's own speed
+    // along it, so a moving target is matched rather than chased past.
+    const ux = rawDx / dist;
+    const uy = rawDy / dist;
+    const h = this.handling;
     const STOP_DIST = this.fireRange * this.stopDistFactor;
-    const closingSpeed = (self.vx * rawDx + self.vy * rawDy) / dist;
-
-    let thrustMag: number;
+    const targetAlong = target.vx * ux + target.vy * uy;
+    let closing: number;
+    let boostOk = false;
     if (this.backoffInsideFactor > 0 && dist < this.fireRange * this.backoffInsideFactor) {
-      // Missile kite — the target is too close for comfortable artillery
-      // fire; thrust AWAY (reverse along the forward axis, which currently
-      // points at the target) to re-open the gap.
-      thrustMag = -baseThrust;
+      // Missile kite — too close for artillery: open the gap.
+      closing = -h.cruiseSpeed;
     } else if (dist > this.fireRange * ENGAGE_DISTANCE_RATIO) {
-      // Far engagement — boost in.
-      thrustMag = baseThrust * ENGAGE_BOOST;
+      // Far engagement — close at full speed, boosting while it can.
+      closing = Math.min(h.maxSpeed, brakingSpeed(h, dist - STOP_DIST));
+      boostOk = true;
     } else if (dist > STOP_DIST) {
-      // Approach window. Cap closing speed so we can arrive at near-
-      // zero relative velocity. The cap grows linearly with the gap to
-      // the stopping distance; 1.5× the gap (units/sec per unit) gives
-      // ~1 s to bleed off speed for typical maxSpeed values.
-      const maxClosing = Math.min(120, (dist - STOP_DIST) * 1.5 + 20);
-      thrustMag = closingSpeed > maxClosing ? -baseThrust * 0.7 : baseThrust;
+      // Approach window: never faster than it can brake from by STOP_DIST
+      // (the "flies past way too quickly… never approaches" fix, now by the
+      // pilot's own reverse instead of an AI-only brake impulse).
+      closing = Math.min(h.cruiseSpeed, brakingSpeed(h, dist - STOP_DIST));
     } else {
-      // Inside stopping distance — actively decelerate. If we're still
-      // closing, hard brake; otherwise hover (let damping settle).
-      thrustMag = closingSpeed > 5 ? -baseThrust : 0;
+      // Inside the stop distance — hold the range (brake any closing speed).
+      closing = 0;
     }
-
-    const fwdX = -Math.sin(self.angle);
-    const fwdY = Math.cos(self.angle);
-    const fx = fwdX * thrustMag;
-    const fy = fwdY * thrustMag;
+    let along = targetAlong + closing;
+    if (along > h.maxSpeed) along = h.maxSpeed;
+    else if (along < -h.maxSpeed) along = -h.maxSpeed;
+    const intent = this.fly(self, desiredAngle, ux * along, uy * along, boostOk);
 
     // Fire gating: standard 14° cone at normal distance widens to 26° at
     // point-blank so brawls actually trade fire instead of dancing
@@ -696,11 +711,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // Phase 4c (2026-05-11): kinds with rotating mounts add the widest
     // mount's half-arc to the body-aim tolerance, so a drone fires when
     // a turret can reach the target even when the body itself is off.
-    // Interceptor wings (±π/6 = ±30°) → tolerance ~44°. Gunship rear
-    // (±π/2 = ±90°) → tolerance ~104° (drone fires even when target is
-    // almost directly behind). Without this, the drone's body-aim gate
-    // suppressed fires that the turret AI would otherwise resolve as
-    // hits — the "AI doesn't shoot sometimes when I'm in range" symptom.
     const baseTolerance = dist < this.fireRange * POINT_BLANK_RATIO
       ? DRONE_AIM_TOLERANCE_CLOSE
       : DRONE_AIM_TOLERANCE;
@@ -710,105 +720,78 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const inRange = dist <= this.fireRange;
     const offCooldown = view.tick - this.lastFireTick >= this.fireCooldownTicks;
     const willFire = aimed && inRange && offCooldown;
-    if (willFire) this.lastFireTick = view.tick;
-
-    const intent = this._intentScratch;
-    intent.fx = fx;
-    intent.fy = fy;
-    intent.torque = 0;
-    intent.setAngvel = setAngvel;
     if (willFire) {
+      this.lastFireTick = view.tick;
       const f = this._fireScratch;
       // Fire along the EXACT lead vector, NOT the body-forward axis. The
       // body only turns toward the lead at a rate-limited angvel and is
       // allowed to fire anywhere inside the (wide) aim cone, so body-forward
       // ≈ lead but off by up to the tolerance — enough to miss a moving
       // target at range. Aiming the shot itself at the intercept point
-      // decouples accuracy from the imperfect body aim. The fix that makes
-      // bolts actually connect (2026-06-03). Hitscan: leadMuzzleSpeed huge
-      // → aim ≈ straight at the target, so beams are unchanged.
+      // decouples accuracy from the imperfect body aim (2026-06-03).
       const aimLen = Math.hypot(aimDx, aimDy);
       if (aimLen > 1e-6) {
         f.dirX = aimDx / aimLen;
         f.dirY = aimDy / aimLen;
       } else {
-        f.dirX = fwdX;
-        f.dirY = fwdY;
+        f.dirX = -Math.sin(self.angle);
+        f.dirY = Math.cos(self.angle);
       }
       f.targetId = target.id;
       intent.fire = f;
-    } else {
-      intent.fire = undefined;
     }
     return intent;
   }
 
   /**
-   * Map a (wrapped) bearing-error to the angular velocity the drone
-   * wants this tick. Mirrors the player's input behaviour: snap to
-   * `±kind.maxAngvel` while turning, snap to zero when aimed.
-   * Linear ramp inside `±TURN_RAMP_WINDOW` so the drone slows into
-   * the bearing instead of overshooting.
-   */
-  /**
    * Capital engagement (plan prancy-squishing-donut Phase 3). Out of reach:
-   * close bow-first at full thrust (backing engines while the target is
-   * abaft the beam, so the range never keeps opening). In reach: turn the beam toward the target
-   * (whichever side is nearer the current heading) so fore AND aft turrets
-   * bear, biased in or out to hold `fireRange × BROADSIDE_STANDOFF`, at reduced
-   * thrust, so the hull circles its target. Never fires: the turrets do, under
-   * WeaponMountTicker fire control. Allocation-free.
+   * close bow-first (the wanted velocity points at the target, so while the
+   * target is abaft the beam the pilot backs its engines: reverse brakes the
+   * way it carries AWAY and backs it toward the target while the bow comes
+   * round — showcase-capital-duel, 2026-11-12). In reach: turn the beam toward
+   * the target (whichever side is nearer the current heading) so fore AND aft
+   * turrets bear, biased in or out to hold `fireRange × BROADSIDE_STANDOFF`,
+   * steaming along that heading at a speed that grows with the range error, so
+   * the hull circles its target. Turning is the kind's own torque turn (slow
+   * to start and stop). Never fires: the turrets do, under WeaponMountTicker
+   * fire control. Allocation-free.
    */
-  private tickBroadside(self: AiEntity, dx: number, dy: number, dist: number): AiIntent {
+  private tickBroadside(self: AiEntity, target: MountTargetView, dx: number, dy: number, dist: number): AiIntent {
     if (this.guardOn) return this.tickGuardBroadside(self, dx, dy);
-    const bearing = Math.atan2(-dx, dy);
-    let desired = bearing;
-    let thrust = this.kind.ai.thrust;
+    const bearing = facingOf(dx, dy);
+    const cruise = this.handling.cruiseSpeed;
     if (dist > this.fireRange) {
-      // Closing: turn first. A capital turns slowly, so full thrust while
-      // facing away steams it further from the target it can't yet shoot.
-      // With the target abaft the beam it backs its engines (the kind's own
-      // reverse power, as a pilot's reverse): that brakes the way it carries
-      // AWAY from the target at once, then backs it toward the target while
-      // the bow comes round. Ahead-only thrust here let a hull that aggroed
-      // mid-patrol coast out of its own reach for the whole ~150 s turn
-      // (showcase-capital-duel, 2026-11-12).
-      const c = Math.cos(wrapPi(bearing - self.angle));
-      thrust *= c >= 0 ? c : c * this.kind.reverseFactor;
-    } else {
-      const port = wrapPi(bearing + Math.PI / 2);
-      const stbd = wrapPi(bearing - Math.PI / 2);
-      const usePort = Math.abs(wrapPi(port - self.angle)) <= Math.abs(wrapPi(stbd - self.angle));
-      const standoff = this.fireRange * BROADSIDE_STANDOFF;
-      // + when too far (turn in toward the target), − when too close.
-      const err = Math.max(-1, Math.min(1, (dist - standoff) / standoff));
-      const bias = err * BROADSIDE_RANGE_STEER;
-      desired = usePort ? wrapPi(port - bias) : wrapPi(stbd + bias);
-      // Hold station: thrust only to correct range (none at the stand-off),
-      // or the hull steams out of its own guns' reach.
-      thrust *= BROADSIDE_THRUST * Math.abs(err);
+      const s = cruise / dist;
+      return this.fly(self, bearing, dx * s, dy * s, dist > this.fireRange * ENGAGE_DISTANCE_RATIO);
     }
-    const intent = this._intentScratch;
-    intent.fx = -Math.sin(self.angle) * thrust;
-    intent.fy = Math.cos(self.angle) * thrust;
-    intent.torque = 0;
-    intent.setAngvel = this.angvelTarget(wrapPi(desired - self.angle));
-    intent.fire = undefined;
-    return intent;
+    const port = wrapAngle(bearing + Math.PI / 2);
+    const stbd = wrapAngle(bearing - Math.PI / 2);
+    const usePort = Math.abs(wrapAngle(port - self.angle)) <= Math.abs(wrapAngle(stbd - self.angle));
+    const standoff = this.fireRange * BROADSIDE_STANDOFF;
+    // + when too far (turn in toward the target), − when too close.
+    const err = Math.max(-1, Math.min(1, (dist - standoff) / standoff));
+    const bias = err * BROADSIDE_RANGE_STEER;
+    const desired = usePort ? wrapAngle(port - bias) : wrapAngle(stbd + bias);
+    // Hold station: steam only to correct range (none at the stand-off), or
+    // the hull carries itself out of its own guns' reach. The target's own
+    // motion is matched so a moving target stays in reach.
+    const speed = cruise * BROADSIDE_SPEED * Math.abs(err);
+    const hx = -Math.sin(desired);
+    const hy = Math.cos(desired);
+    return this.fly(self, desired, hx * speed + target.vx, hy * speed + target.vy, false);
   }
 
   /**
    * A guarding capital in combat (owner decision 2026-11-11: "It should stay
    * close to the thing it's defending, obviously"). It never chases the
    * stand-off or a target out of reach: it keeps station at its post and lets
-   * the turrets do the fighting. Station-keeping is a velocity controller: the
-   * wanted velocity is zero inside `GUARD_HOLD_FRAC` of the radius and grows
-   * toward the post beyond it; thrust (along the hull axis, the only axis a
-   * ship thrusts on) closes the gap between wanted and actual velocity. Inside
-   * `GUARD_RETURN_FRAC` of the radius the hull turns its beam to the target so
-   * fore and aft turrets bear; beyond it, it turns its axis (bow or stern,
-   * whichever is nearer) to the correction so thrust can bring it back. Never
-   * fires itself. Allocation-free.
+   * the turrets do the fighting. Station-keeping: the wanted velocity is zero
+   * inside `GUARD_HOLD_FRAC` of the radius and grows toward the post beyond it;
+   * the pilot thrusts or reverses along the hull axis (the only axis a ship
+   * thrusts on) to close the gap. Inside `GUARD_RETURN_FRAC` of the radius the
+   * hull turns its beam to the target so fore and aft turrets bear; beyond it,
+   * it turns its axis (bow or stern, whichever is nearer) to the correction so
+   * thrust or reverse can bring it back. Never fires itself. Allocation-free.
    */
   private tickGuardBroadside(self: AiEntity, dx: number, dy: number): AiIntent {
     const px = this.guardX - self.x;
@@ -821,30 +804,22 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     if (dPost > hold) want = vMax * GUARD_RETURN_SPEED * Math.min(1, (dPost - hold) / (r - hold));
     const ux = dPost > 1e-6 ? px / dPost : 0;
     const uy = dPost > 1e-6 ? py / dPost : 0;
-    const ex = ux * want - self.vx;
-    const ey = uy * want - self.vy;
-    const fwdX = -Math.sin(self.angle);
-    const fwdY = Math.cos(self.angle);
-    const along = ex * fwdX + ey * fwdY;
-    const thrust = this.kind.ai.thrust * Math.max(-1, Math.min(1, along / (vMax * GUARD_SPEED_GAIN)));
+    const wvx = ux * want;
+    const wvy = uy * want;
+    const ex = wvx - self.vx;
+    const ey = wvy - self.vy;
     let desired: number;
     if (dPost > r * GUARD_RETURN_FRAC && Math.hypot(ex, ey) > 1e-6) {
-      const ahead = Math.atan2(-ex, ey);
-      const astern = wrapPi(ahead + Math.PI);
-      desired = Math.abs(wrapPi(ahead - self.angle)) <= Math.abs(wrapPi(astern - self.angle)) ? ahead : astern;
+      const ahead = facingOf(ex, ey);
+      const astern = wrapAngle(ahead + Math.PI);
+      desired = Math.abs(wrapAngle(ahead - self.angle)) <= Math.abs(wrapAngle(astern - self.angle)) ? ahead : astern;
     } else {
-      const bearing = Math.atan2(-dx, dy);
-      const port = wrapPi(bearing + Math.PI / 2);
-      const stbd = wrapPi(bearing - Math.PI / 2);
-      desired = Math.abs(wrapPi(port - self.angle)) <= Math.abs(wrapPi(stbd - self.angle)) ? port : stbd;
+      const bearing = facingOf(dx, dy);
+      const port = wrapAngle(bearing + Math.PI / 2);
+      const stbd = wrapAngle(bearing - Math.PI / 2);
+      desired = Math.abs(wrapAngle(port - self.angle)) <= Math.abs(wrapAngle(stbd - self.angle)) ? port : stbd;
     }
-    const intent = this._intentScratch;
-    intent.fx = fwdX * thrust;
-    intent.fy = fwdY * thrust;
-    intent.torque = 0;
-    intent.setAngvel = this.angvelTarget(wrapPi(desired - self.angle));
-    intent.fire = undefined;
-    return intent;
+    return this.fly(self, desired, wvx, wvy, false, GUARD_PILOT_PARAMS);
   }
 
   /** Give this drone a GUARD POST: the area (centre + radius) it was sent to
@@ -912,35 +887,22 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     for (let i = 0; i < memberIds.length; i++) this._flockMemberIds.push(memberIds[i]!);
   }
 
-  /** Steer to (tx, ty) with an arrive ramp: turn toward it, thrust forward
-   *  scaled down within the slow radius so damping brakes the drone to a stop at
-   *  the slot. Reuses the per-kind turn (`angvelTarget`) + thrust the orbit uses.
+  /** Fly to (tx, ty) and stop there: face the slot and ask the pilot for a
+   *  speed it can still brake from (the arrive ramp), capped at the calm
+   *  cruise. At the slot the wanted velocity is zero and the nose stays put, so
+   *  the pilot brakes to a stop with reverse instead of turning around.
    */
   private tickMoveTo(self: AiEntity, tx: number, ty: number): AiIntent {
     const steer = arrive(self.x, self.y, tx, ty, MOVE_ARRIVE_SLOW_RADIUS, this._steerScratch);
-    const out = this._intentScratch;
-    out.torque = 0;
-    out.fire = undefined;
-    if (steer.thrustScale <= 0) {
-      // At the slot — hold position (let damping settle), no turn.
-      out.fx = 0;
-      out.fy = 0;
-      out.setAngvel = 0;
-      return out;
-    }
-    // Desired facing toward the slot (same convention as tickPatrol: a ship at
-    // angle θ noses along (-sin θ, cos θ)).
-    const desiredAngle = Math.atan2(-steer.dirX, steer.dirY);
-    out.setAngvel = this.angvelTarget(desiredAngle - self.angle);
-    const fwdX = -Math.sin(self.angle);
-    const fwdY = Math.cos(self.angle);
+    if (steer.thrustScale <= 0) return this.fly(self, self.angle, 0, 0, false);
     // A flock leader cruises SLOWER than its full-cruise followers so they
     // tighten into the herd around it (the "make the leader wait" lever).
-    const cruise = this._flockLeaderCruise ? LEADER_CRUISE_THROTTLE : 1;
-    const thrustMag = this.kind.ai.thrust * steer.thrustScale * cruise;
-    out.fx = fwdX * thrustMag;
-    out.fy = fwdY * thrustMag;
-    return out;
+    const cruise = this.handling.cruiseSpeed * CALM_CRUISE_FRAC * (this._flockLeaderCruise ? LEADER_CRUISE_THROTTLE : 1);
+    const speed = Math.min(cruise, brakingSpeed(this.handling, steer.dist));
+    // Close in: keep the nose where it is and just brake (no turn-around for
+    // an overshoot of a few lengths).
+    const facing = steer.dist > shipTuning(this.kind).flockFollow ? facingOf(steer.dirX, steer.dirY) : self.angle;
+    return this.fly(self, facing, steer.dirX * speed, steer.dirY * speed, false);
   }
 
   /**
@@ -949,18 +911,15 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * COHESION toward the leader with an ARRIVAL ramp (slows as it nears the
    * follow-distance — "slow down once close"), ALIGNMENT with the leader's
    * heading (the herd flies as one along the leader's course), and SEPARATION
-   * from squad neighbours (holds spacing, spreads the blob into a herd). Forward
-   * thrust is the calm `ai.thrust` cruise scaled by the boids magnitude — NO
-   * boost: the arrival ramp + per-kind damping settle the follower into the
+   * from squad neighbours (holds spacing, spreads the blob into a herd). The
+   * wanted velocity is the calm cruise scaled by the boids magnitude — NO
+   * boost: the arrival ramp + the pilot's braking settle the follower into the
    * cluster with no overshoot/fling, and the LEADER is throttled / waits (see
    * `LEADER_CRUISE_THROTTLE` + the director) so a full-cruise follower can catch
    * it. Falls back to orbit when the leader / resolver is gone.
    */
   private tickFlock(self: AiEntity, view: AiWorldView): AiIntent {
     const resolve = view.resolveEntityInto;
-    const out = this._intentScratch;
-    out.torque = 0;
-    out.fire = undefined;
     // Need the leader's live pose; without it (gone / no resolver) → orbit.
     if (!resolve || this.leaderId === null || !resolve(this.leaderId, this._leaderScratch)) {
       return this.tickPatrol(self);
@@ -985,42 +944,52 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     }
     addAlignment(acc, this._leaderScratch.angle);
     const flock = resolveFlock(acc, this._flockOut);
-    if (flock.thrustScale <= 1e-4) {
-      out.fx = 0;
-      out.fy = 0;
-      out.setAngvel = 0;
-      return out;
-    }
-    const desiredAngle = Math.atan2(-flock.dirX, flock.dirY);
-    out.setAngvel = this.angvelTarget(desiredAngle - self.angle);
-    const fwdX = -Math.sin(self.angle);
-    const fwdY = Math.cos(self.angle);
+    if (flock.thrustScale <= 1e-4) return this.fly(self, self.angle, 0, 0, false);
     // Calm cruise scaled by the boids desired-velocity magnitude. As the follower
     // settles at the follow-radius, cohesion ramps to ~0 and separation cancels
-    // it, so the magnitude shrinks toward the alignment term alone → it eases off
-    // thrust without any boost (and damping brakes the residual).
-    const thrustMag = this.kind.ai.thrust * flock.thrustScale;
-    out.fx = fwdX * thrustMag;
-    out.fy = fwdY * thrustMag;
+    // it, so the magnitude shrinks toward the alignment term alone → the pilot
+    // eases off (and brakes the residual).
+    const speed = this.handling.cruiseSpeed * CALM_CRUISE_FRAC * flock.thrustScale;
+    return this.fly(self, facingOf(flock.dirX, flock.dirY), flock.dirX * speed, flock.dirY * speed, false);
+  }
+
+  /**
+   * Actuate through the virtual pilot: the control keys that face `facing`
+   * and bring the velocity to (`wantVx`, `wantVy`), boosting when `boostOk`
+   * and the NPC's energy pool can pay for the tick (same `BOOST_TICK_COST` a
+   * pilot pays). Fills the pooled intent (input set, impulse fields zero, no
+   * fire); the caller may attach `fire` afterwards.
+   */
+  private fly(
+    self: AiEntity,
+    facing: number,
+    wantVx: number,
+    wantVy: number,
+    boostOk: boolean,
+    params: Readonly<PilotParams> = DEFAULT_PILOT_PARAMS,
+  ): AiIntent {
+    const canBoost = boostOk && canAfford(this.energy, BOOST_TICK_COST);
+    let bits = pilotInputs(
+      this.handling, this._pilot, params,
+      self.angle, self.angvel ?? 0, self.vx, self.vy,
+      facing, wantVx, wantVy, canBoost,
+    );
+    // A latched decision may still hold boost the pool can no longer pay for.
+    if ((bits & AI_INPUT_BOOST) !== 0) {
+      if (canAfford(this.energy, BOOST_TICK_COST)) this.energy = spendEnergy(this.energy, BOOST_TICK_COST);
+      else bits &= ~AI_INPUT_BOOST;
+    }
+    const out = this._intentScratch;
+    out.fx = 0;
+    out.fy = 0;
+    out.torque = 0;
+    out.setAngvel = undefined;
+    out.input = bits;
+    out.fire = undefined;
     return out;
   }
 
-  private angvelTarget(rawError: number): number {
-    const err = wrapPi(rawError);
-    if (Math.abs(err) <= TURN_DEADZONE) return 0;
-    const sign = err > 0 ? 1 : -1;
-    const ramp = Math.min(1, Math.abs(err) / TURN_RAMP_WINDOW);
-    return sign * ramp * this.kind.maxAngvel;
-  }
+  /** Test-visible: the NPC's boost energy pool. */
+  getEnergy(): number { return this.energy; }
 
-}
-
-/** Wrap an angle into [-π, π]. Standalone so both `tickPatrol` and
- *  `tickCombat` can share the same wrapping logic without each
- *  open-coding the while-loops. */
-function wrapPi(rad: number): number {
-  let r = rad;
-  while (r > Math.PI) r -= 2 * Math.PI;
-  while (r < -Math.PI) r += 2 * Math.PI;
-  return r;
 }

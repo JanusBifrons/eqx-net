@@ -12,7 +12,7 @@ import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, shipKindToIndex, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
 import { gateColliderPolygons, gateWorldAxisBoxes } from '../../core/structures/gateGeometry.js';
-import { massOf } from '../../shared-types/shipScale/tuning.js';
+import { massOf, NPC_MASS_FALLBACK } from '../../shared-types/shipScale/tuning.js';
 
 export interface AsteroidSpec {
   id: string;
@@ -68,7 +68,7 @@ export interface SpawnerHooks {
   /** Per-entity AI behaviour factory. The spawner does not import concrete behaviours. */
   asteroidBehaviour?: () => IAiBehaviour;
   /** Drone AI factory. Takes the chosen `ShipKind` so per-kind tuning
-   *  (`kind.ai.thrust`, `turnKp`, `maxTorque`) flows into the behaviour
+   *  (`kind.ai.thrust`) flows into the behaviour
    *  without the spawner needing to import `HostileDroneBehaviour`. */
   droneBehaviour?: (kind: ShipKind) => IAiBehaviour;
   /** Optional drone-kind chooser. Defaults to "uniform random across the
@@ -84,7 +84,7 @@ export interface SpawnerHooks {
 }
 
 const DRONE_DEFAULT_RADIUS = 14;
-export const DRONE_DEFAULT_MASS = 2;
+export const DRONE_DEFAULT_MASS = NPC_MASS_FALLBACK;
 
 /**
  * Owns swarm entity creation. Allocates a slot, primes the SAB, posts a
