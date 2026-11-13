@@ -167,7 +167,22 @@ test('spectator input is pan, not thrust — the ship does NOT move on W', async
   // Let the ship settle (any residual velocity decays), then sample.
   await page.waitForTimeout(600);
   const before = await parkedPos();
-  expect(before, 'the ship should still exist server-side (parked) while spectating').not.toBeNull();
+  // CI-only failure (train #528/#529): the parked hull arrived, then left
+  // lingeringShips. Dump the client's view so the next CI run names the cause.
+  const view = before !== null ? '' : await page.evaluate(() => {
+    const c = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; localShipInstanceId?: string | null; ships: Map<string, unknown>; lingeringShips?: Map<string, { ownerPlayerId?: string }> }; room?: { state?: { ships?: Map<string, { playerId: string; isActive: boolean; alive: boolean }> } } } }).__eqxClient;
+    const st = (globalThis as { __eqxStore?: { getState(): { pilotMode?: string; phase?: string } } }).__eqxStore?.getState();
+    const schema: unknown[] = [];
+    c?.room?.state?.ships?.forEach((s, k) => { if (s.playerId === c.mirror.localPlayerId) schema.push({ k, isActive: s.isActive, alive: s.alive }); });
+    return JSON.stringify({
+      pilotMode: st?.pilotMode, phase: st?.phase,
+      localId: c?.mirror.localPlayerId, localInstance: c?.mirror.localShipInstanceId,
+      ships: [...(c?.mirror.ships.keys() ?? [])],
+      lingering: [...(c?.mirror.lingeringShips?.entries() ?? [])].map(([k, e]) => [k, e.ownerPlayerId]),
+      schema,
+    });
+  });
+  expect(before, `the ship should still exist server-side (parked) while spectating ${view}`).not.toBeNull();
   expect(await localPos(), 'no pilot ship is drawn under our player id while spectating').toBeNull();
 
   // Press W: in spectator this is gated, so it must NOT thrust the ship.
