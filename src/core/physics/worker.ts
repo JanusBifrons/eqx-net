@@ -111,6 +111,9 @@ interface MissileImpulseCmd { type: 'MISSILE_IMPULSE'; entityId: string; fx: num
 /** Capital wreck: add a velocity (u/s) and spin (rad/s) to a piece's body (its
  *  separating kick once the crack delay is over). Silent no-op when gone. */
 interface WreckKickCmd { type: 'WRECK_KICK'; entityId: string; dvx: number; dvy: number; dw: number }
+/** Capital wreck: an overkill hit's impulse (jx, jy) at world point (px, py)
+ *  on a piece, so an off-centre hit also turns it. Silent no-op when gone. */
+interface WreckImpulseCmd { type: 'WRECK_IMPULSE'; entityId: string; jx: number; jy: number; px: number; py: number }
 /** Shield-fence plan — spawn / toggle / remove a shield-wall span. A static
  *  cuboid between two pylon poses that blocks ships; toggled on stun / power
  *  loss without churning the body. See PhysicsWorld.spawnWall. */
@@ -120,7 +123,7 @@ interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
 /** v4 T2 — a teleporter pad's closing-iris push (PhysicsWorld.setPadField). */
 interface SetPadFieldCmd    { type: 'SET_PAD_FIELD';   id: string; cx: number; cy: number; half: number; active: boolean }
 interface RemovePadFieldCmd { type: 'REMOVE_PAD_FIELD'; id: string }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd | BotWarpCmd | SetTimeScaleCmd;
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | WreckImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd | BotWarpCmd | SetTimeScaleCmd;
 
 /** Pool commands (main → pooled worker): host / free one sector's world. */
 interface AddWorldCmd    { type: 'ADD_WORLD'; worldId: number; sab: SharedArrayBuffer }
@@ -341,6 +344,10 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
       }
       case 'WRECK_KICK': {
         physics.addVelocity(cmd.entityId, cmd.dvx, cmd.dvy, cmd.dw);
+        break;
+      }
+      case 'WRECK_IMPULSE': {
+        physics.applyImpulseAtPoint(cmd.entityId, cmd.jx, cmd.jy, cmd.px, cmd.py);
         break;
       }
       case 'SPAWN_WALL': {

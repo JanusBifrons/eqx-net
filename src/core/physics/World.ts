@@ -817,6 +817,22 @@ export class PhysicsWorld {
 
   private readonly _kickVel = { x: 0, y: 0 };
 
+  /** Apply a linear impulse (jx, jy) at world point (px, py), so an
+   *  off-centre blow also turns the body (a capital wreck piece knocked by an
+   *  overkill shell). Wakes it. Unknown id ⇒ no-op. Alloc-free. */
+  applyImpulseAtPoint(id: string, jx: number, jy: number, px: number, py: number): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    this._impJ.x = jx;
+    this._impJ.y = jy;
+    this._impP.x = px;
+    this._impP.y = py;
+    rec.body.applyImpulseAtPoint(this._impJ, this._impP, true);
+  }
+
+  private readonly _impJ = { x: 0, y: 0 };
+  private readonly _impP = { x: 0, y: 0 };
+
   /** True when Rapier reports the body as sleeping (motion below its threshold). */
   isSleeping(id: string): boolean {
     const rec = this.bodies.get(id);

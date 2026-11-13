@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { CapitalWreckSubsystem, type WreckPieceSpawn } from './CapitalWreckSubsystem.js';
 import { buildWreckPieces, WRECK_RECENT_DAMAGE_TICKS } from '../../core/destruction/wreckPieces.js';
 import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
+import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 
 function make(kinds: Record<string, string> = { cap: 'battleship' }) {
   let tick = 1000;
@@ -14,6 +16,7 @@ function make(kinds: Record<string, string> = { cap: 'battleship' }) {
   const removed: string[] = [];
   const angles = new Map<string, number>();
   const kicks: Array<{ id: string; dvx: number; dvy: number; dw: number; tick: number }> = [];
+  const impulses: Array<{ id: string; jx: number; jy: number; px: number; py: number }> = [];
   const sys = new CapitalWreckSubsystem({
     serverTick: () => tick,
     capitalKindOf: (id) => (kinds[id] as 'battleship' | undefined) ?? null,
@@ -23,8 +26,9 @@ function make(kinds: Record<string, string> = { cap: 'battleship' }) {
     isLive: (id) => live.has(id),
     pieceAngle: (id) => (live.has(id) ? angles.get(id) ?? 0 : null),
     kickPiece: (id, dvx, dvy, dw) => { kicks.push({ id, dvx, dvy, dw, tick }); },
+    impulsePiece: (id, jx, jy, px, py) => { impulses.push({ id, jx, jy, px, py }); },
   });
-  return { sys, spawned, removed, kicks, angles, live, setTick: (t: number) => { tick = t; } };
+  return { sys, spawned, removed, kicks, impulses, angles, live, setTick: (t: number) => { tick = t; } };
 }
 
 const pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
@@ -99,5 +103,37 @@ describe('CapitalWreckSubsystem', () => {
     expect(k1.dw).toBe(p1.kickAngvel);
     sys.tick();
     expect(kicks).toHaveLength(n - 1); // once only
+  });
+
+  it('an overkill hit on a piece posts an impulse along the shot at the hit point, capped at wreckKnockMax', () => {
+    const { sys, spawned: pieces, impulses } = make();
+    sys.forcedSeed = 9;
+    const maxHull = 10_000;
+    sys.onDeath('cap', 'battleship', pose, maxHull);
+    const hullMass = pieces.reduce((s, p) => s + p.mass, 0);
+    const t = shipTuning(getShipKind('battleship'));
+    const big = pieces.reduce((a, b) => (b.mass > a.mass ? b : a));
+    const small = pieces.reduce((a, b) => (b.mass < a.mass ? b : a));
+
+    // A 16" shell on the biggest piece: J = damage × hull mass × knock ÷ max hull, along the shot.
+    expect(sys.onWreckHit(big.id, 10, 20, 3, 4, 1400)).toBe(true);
+    const j = 1400 * hullMass * t.wreckKnockSpeed / maxHull;
+    expect(impulses[0]!.id).toBe(big.id);
+    expect(impulses[0]!.jx).toBeCloseTo(j * 0.6, 6);
+    expect(impulses[0]!.jy).toBeCloseTo(j * 0.8, 6);
+    expect([impulses[0]!.px, impulses[0]!.py]).toEqual([10, 20]);
+    expect(j / big.mass).toBeLessThan(t.wreckKnockMax);
+
+    // A huge blow on the smallest piece is capped: its speed change is wreckKnockMax.
+    expect(sys.onWreckHit(small.id, 0, 0, 1, 0, 1e7)).toBe(true);
+    expect(impulses[1]!.jx / small.mass).toBeCloseTo(t.wreckKnockMax, 6);
+
+    // Not a piece, no damage, no direction, or gone: nothing.
+    expect(sys.onWreckHit('cap', 0, 0, 1, 0, 1400)).toBe(false);
+    expect(sys.onWreckHit(big.id, 0, 0, 1, 0, 0)).toBe(false);
+    expect(sys.onWreckHit(big.id, 0, 0, 0, 0, 1400)).toBe(false);
+    sys.pieceGone(big.id);
+    expect(sys.onWreckHit(big.id, 0, 0, 1, 0, 1400)).toBe(false);
+    expect(impulses).toHaveLength(2);
   });
 });
