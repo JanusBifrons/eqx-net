@@ -25,10 +25,6 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { ColyseusGameClient } from './ColyseusClient.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
-import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
-
-/** The shield pad at this scale (10 at 1×). */
-const SHIELD_RADIUS_PAD = GLOBAL_SHIP_TUNING.shieldPad;
 
 interface SwarmLike {
   x: number; y: number; vx: number; vy: number; radius: number; kind: number; shieldDown?: boolean;
@@ -59,8 +55,6 @@ describe('live-beam endpoint snaps to the shield ring for shield-up targets', ()
   const DRONE_R = 30;
   // The predWorld collider (lagged) reports the BARE-radius hit: 100-30=70.
   const COLLIDER_HIT_DIST = DRONE_DIST - DRONE_R; // 70
-  // The shield ring is radius+pad: ray enters it at 100-(30+10)=60.
-  const SHIELD_EDGE_DIST = DRONE_DIST - (DRONE_R + SHIELD_RADIUS_PAD); // 60
 
   beforeEach(() => {
     client = new ColyseusGameClient();
@@ -68,10 +62,13 @@ describe('live-beam endpoint snaps to the shield ring for shield-up targets', ()
     internals.mirror.swarm = new Map<number, SwarmLike>();
   });
 
-  it('snaps a shield-UP drone hit to the shield ring (radius + SHIELD_RADIUS_PAD)', () => {
-    internals.mirror.swarm!.set(5, { x: 0, y: DRONE_DIST, vx: 0, vy: 0, radius: DRONE_R, kind: 1, shieldDown: false });
+  it('snaps a shield-UP drone hit to its kind shield ring, the same as a player ship of that kind', () => {
+    // Since 2026-11-13 the ring is the ship kind's own bubble (`shipHitShape.ts`),
+    // not the record radius + pad: an NPC fighter is the same target as a player one.
+    internals.mirror.swarm!.set(5, { x: 0, y: DRONE_DIST, vx: 0, vy: 0, radius: DRONE_R, kind: 1, shipKind: 'fighter', shieldDown: false });
     const got = internals.shieldEdgeDist({ hitId: 'swarm-5', dist: COLLIDER_HIT_DIST }, FROM_X, FROM_Y, FWD_X, FWD_Y);
-    expect(got).toBeCloseTo(SHIELD_EDGE_DIST, 5);
+    const fk = getShipKind('fighter');
+    expect(got).toBeCloseTo(DRONE_DIST - (fk.radius + shipTuning(fk).shieldPad), 5);
     expect(got).toBeLessThan(COLLIDER_HIT_DIST); // ring is `pad` closer to shooter
   });
 
