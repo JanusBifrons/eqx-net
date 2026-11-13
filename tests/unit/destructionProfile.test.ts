@@ -82,6 +82,10 @@ describe('DESTRUCTION_PROFILES', () => {
    * pieces to rest within ~10-20 s (so they can sleep). Model: two pieces
    * driven apart at least at `wreckPushMin × pushScale` each, exponential
    * linear damping d: gap(t) = 2·v0·(1 − e^(−d·t)) / d.
+   * (Round 2: that model was wrong. The push runs away from the kill point,
+   * so a hit at one end moves every piece the same way; the cracks are
+   * opened by `separateScale`. The real kicks are measured in
+   * `src/core/destruction/wreckPieces.subcapParting.test.ts`.)
    */
   it('sub-cap pieces visibly part within ~1 s and come to rest within ~10-20 s', () => {
     const s = DESTRUCTION_PROFILES.subcap;
@@ -94,6 +98,9 @@ describe('DESTRUCTION_PROFILES', () => {
       // Not flung across the fight: the fastest piece drifts under ~1.5 radii in all.
       expect((t.wreckPushMax * s.pushScale * 1.25) / d / kind.radius, `${kind.id}: total drift`).toBeLessThan(1.5);
     }
+    // Capitals keep the capital seam speed (byte-identical kicks).
+    expect(DESTRUCTION_PROFILES.capital.separateScale).toBe(1);
+    expect(s.separateScale).toBeGreaterThan(1);
     // Speed under 1 % of the kick by 20 s; still visibly moving at 1 s.
     expect(Math.exp(-d * 20)).toBeLessThan(0.01);
     expect(Math.exp(-d * 1)).toBeGreaterThan(0.5);

@@ -105,6 +105,11 @@ export interface DestructionProfile {
   readonly holdMs: number;
   /** Multiplier on `shipTuning(kind).wreckPushMax/Min`. */
   readonly pushScale: number;
+  /** Multiplier on `shipTuning(kind).wreckSeparate`, the least speed at
+   *  which every shared cut opens (`buildWreckPieces`' seam pass). The push
+   *  runs away from the kill point, so it moves the pieces off TOGETHER; this
+   *  is what opens the cracks. */
+  readonly separateScale: number;
   /** Multiplier on the wreck pieces' linear and angular damping. */
   readonly dampingScale: number;
   /** Multipliers on the overkill knock-back (`shipTuning(kind)
@@ -125,6 +130,7 @@ const CAPITAL: DestructionProfile = {
   fracture: { maxPieces: 64, snapChance: 0.2, fanCracks: true, farCrack: true, chunkyPieces: false },
   holdMs: 1200,
   pushScale: 1,
+  separateScale: 1,
   dampingScale: 1,
   knockScale: 1,
   knockMaxScale: 1,
@@ -171,6 +177,14 @@ const SUBCAP: DestructionProfile = {
   // linear 0.6/s, sleep in ~14 game s) brings them to rest; a piece drifts
   // ~1 radius in all. Lock: `destructionProfile.test.ts`. Slice 5 re-tunes.
   pushScale: 50,
+  // ...but that push runs away from the kill point, so on a hit at one end
+  // every piece goes the SAME way and the cracks stayed shut (round-2 review:
+  // robot pieces still touching ~1 s after the break; the seam pass only
+  // opened each cut at 1.4 % of the radius a second). ×32: every shared cut
+  // opens at >= ~0.45 radius/s, a gap of ~1/3 of the radius 1 s after the
+  // break under the damping below. Lock: `wreckPieces.subcapParting.test.ts`
+  // + `subcapWrecks.test.ts` (the real server at 1 s).
+  separateScale: 32,
   dampingScale: 10,
   // Shots on debris shove it a little (owner, slice 2 report): a small-arms
   // hit moves half a fighter wreck ~10-25 u/s, a naval shell at most ~18
@@ -202,6 +216,7 @@ const NONE: DestructionProfile = {
   fracture: null,
   holdMs: 0,
   pushScale: 0,
+  separateScale: 1,
   dampingScale: 1,
   knockScale: 1,
   knockMaxScale: 1,

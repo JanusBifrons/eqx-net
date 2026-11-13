@@ -331,7 +331,7 @@ function insetRing(ring: ReadonlyArray<Vec2>, inset: number): Vec2[] {
 
 /** A shared cut between two neighbouring pieces: endpoints and the unit
  *  normal from piece `i` to piece `j`, in the ship's scaled math-up frame. */
-interface Seam {
+export interface Seam {
   i: number;
   j: number;
   ax: number;
@@ -351,7 +351,7 @@ const SEAM_TOUCH_EPS = 0.5;
 /** Every shared cut between pieces (cut edges of two pieces that lie on one
  *  line and overlap). The cut line separates the two pieces, so parting
  *  along its normal never overlaps them. */
-function findSeams(geom: ReadonlyArray<WreckPieceGeometry>): Seam[] {
+export function findSeams(geom: ReadonlyArray<WreckPieceGeometry>): Seam[] {
   const seams: Seam[] = [];
   for (let i = 0; i < geom.length; i++) {
     const gi = geom[i]!;
@@ -536,7 +536,10 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
   // push along the cut's normal (momentum kept) makes up the difference.
   // Gauss–Seidel over the seams; a uniform expansion satisfies every seam at
   // once, so the passes converge.
-  const sep = tuning.wreckSeparate;
+  // The profile's seam scale (capital 1: byte-identical; a sub-cap's cracks
+  // open wide enough to read at fleet zoom). The spin above keeps the raw
+  // `wreckSeparate`.
+  const sep = tuning.wreckSeparate * DESTRUCTION_PROFILES[tuning.destruction].separateScale;
   const seams = findSeams(geom);
   for (let it = 0; it < SEPARATE_ITERATIONS; it++) {
     let worst = 0;

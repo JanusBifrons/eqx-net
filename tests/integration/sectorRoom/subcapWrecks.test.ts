@@ -117,6 +117,91 @@ describe('SectorRoom integration — sub-capital wrecks (sub-cap break-up slice 
     expect(woke, 'the hit piece woke and moved along the shot').toBeGreaterThanOrEqual(0);
   }, 30_000);
 
+  /** World polygons of a piece (its body-local convex parts at its SAB pose). */
+  function piecePolys(int: Internals, id: string): Array<Array<{ x: number; y: number }>> {
+    const st = int.wreckState(id)!;
+    const c = Math.cos(st.angle);
+    const s = Math.sin(st.angle);
+    return int.wreckParts(id)!.map((part) => part.map((p) => ({ x: st.x + p.x * c - p.y * s, y: st.y + p.x * s + p.y * c })));
+  }
+
+  function segDist(p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const l2 = dx * dx + dy * dy;
+    const t = l2 > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2)) : 0;
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  }
+
+  /** Least distance between two pieces' outlines (0 if they touch or overlap). */
+  function pieceGap(a: Array<Array<{ x: number; y: number }>>, b: Array<Array<{ x: number; y: number }>>): number {
+    const inside = (p: { x: number; y: number }, poly: Array<{ x: number; y: number }>): boolean => {
+      let sign = 0;
+      for (let i = 0; i < poly.length; i++) {
+        const q = poly[i]!, r = poly[(i + 1) % poly.length]!;
+        const cr = (r.x - q.x) * (p.y - q.y) - (r.y - q.y) * (p.x - q.x);
+        if (cr === 0) continue;
+        const sg = cr > 0 ? 1 : -1;
+        if (sign === 0) sign = sg; else if (sg !== sign) return false;
+      }
+      return true;
+    };
+    let best = Infinity;
+    for (const pa of a) for (const pb of b) {
+      for (const [x, y] of [[pa, pb], [pb, pa]] as const) {
+        for (const p of x) {
+          if (inside(p, y)) return 0;
+          for (let i = 0; i < y.length; i++) best = Math.min(best, segDist(p, y[i]!, y[(i + 1) % y.length]!));
+        }
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Round-2 hostile review (2026-11-13): "robot pieces touching about 1 s
+   * after the break; fighter wreckage still reads as a whole fighter". The
+   * profile's push runs away from the kill point, so it moved the pieces off
+   * together; the cracks only opened at the capital seam speed (1.4 % of the
+   * radius a second). On the real server, killed at rest by hits round the
+   * hull (one ship per hit point, killed on the same tick), every pair of a
+   * wreck's pieces must stand clearly apart 1 game s later (~1/3 of the hull
+   * radius), and still come to rest and sleep (tests below). With the old
+   * seam speed a missile frigate's narrowest gap was ~0.08 radii.
+   */
+  for (const kind of ['fighter', 'robot-hexagon', 'missile-frigate'] as const) {
+    it(`a ${kind}'s pieces stand clearly apart 1 s after the break, wherever it was hit`, async () => {
+      const int = await boot({ subcapWrecks: true });
+      const outline = shipShapeToPolygon(getShipKind(kind));
+      const HITS = 4;
+      for (let h = 0; h < HITS; h++) expect(int().spawnTestDrone(`g${h}`, 3000 + h * 2000, 0, kind)).toBe(true);
+      await harness.advance(100);
+      const wrecks: string[][] = [];
+      for (let h = 0; h < HITS; h++) {
+        const at = int().wreckState(`g${h}`)!;
+        const v = outline[Math.floor((h * outline.length) / HITS)]!;
+        const c = Math.cos(at.angle), s = Math.sin(at.angle);
+        const before = new Set(byKind(int(), WRECK_KIND).map((p) => p.id));
+        int().applyDamage(`g${h}`, 'shooter-x', 1e7, at.x + v.x * c - v.y * s, at.y + v.x * s + v.y * c);
+        const ids = byKind(int(), WRECK_KIND).map((p) => p.id).filter((id) => !before.has(id));
+        expect(ids.length).toBeGreaterThanOrEqual(2);
+        wrecks.push(ids);
+      }
+      const deathTick = int().serverTick;
+      while (int().serverTick - deathTick < 60) await harness.advance(20);
+      const elapsed = (int().serverTick - deathTick) / 60;
+      const r = getShipKind(kind).radius;
+      let least = Infinity;
+      for (const ids of wrecks) {
+        for (let i = 0; i < ids.length; i++) {
+          for (let j = i + 1; j < ids.length; j++) least = Math.min(least, pieceGap(piecePolys(int(), ids[i]!), piecePolys(int(), ids[j]!)));
+        }
+      }
+      console.log(`[subcap-gap] ${kind}: narrowest gap over ${HITS} hit points ${least.toFixed(1)} u = ${(least / r).toFixed(2)} radii after ${elapsed.toFixed(2)} game s`);
+      expect(elapsed).toBeLessThan(1.3);
+      expect(least / r, `${kind}: narrowest gap after ~1 s, in hull radii`).toBeGreaterThanOrEqual(0.25);
+    }, 20_000);
+  }
+
   // A ship killed at speed and turning: the pieces inherit its motion and
   // must drift to a stop under the profile's damping, then sleep.
   for (const kind of ['fighter', 'missile-frigate', 'robot-hexagon'] as const) {
