@@ -22,6 +22,8 @@
  * (doubling) only when the entity count passes the high-water mark.
  */
 
+import { shipHitBound } from '../../core/combat/shipHitShape.js';
+
 /** Cell edge (world units). A shell step is ~30–45 u at 60 Hz, so most
  *  queries touch one to four cells. */
 export const BROADPHASE_CELL = 512;
@@ -44,6 +46,10 @@ function bucketOf(cx: number, cy: number): number {
 /** The record fields the bound needs. */
 export interface BroadphaseShape {
   radius: number;
+  /** Ships (kind 1 with a `shipKind`) are binned by `shipHitBound`: their
+   *  shield bubble (radius + pad) and hull both reach past `radius`. */
+  kind?: number;
+  shipKind?: string | null;
   halfW?: number;
   halfH?: number;
   boxes?: Float32Array;
@@ -91,6 +97,10 @@ export class ProjectileBroadphase<R extends BroadphaseShape> {
     this.recs[i] = rec;
     this.x[i] = cx; this.y[i] = cy; this.angle[i] = ang;
     let ex = rec.radius, ey = rec.radius;
+    if (rec.kind === 1 && rec.shipKind) {
+      const hb = shipHitBound(rec.shipKind);
+      if (hb > ex) { ex = hb; ey = hb; }
+    }
     if (rec.halfW !== undefined && rec.halfH !== undefined) {
       ex = Math.max(ex, rec.halfW); ey = Math.max(ey, rec.halfH);
       const b = rec.boxes;
