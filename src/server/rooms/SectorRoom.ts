@@ -276,6 +276,7 @@ import {
   findAbandonedShips,
 } from './sectorIdleEvaluator.js';
 import { runAiTick } from './aiTickRunner.js';
+import { AiNeighbourGrid } from './AiNeighbourGrid.js';
 import { makeInputHandler } from './InputHandler.js';
 import {
   TICK_IDX,
@@ -4750,6 +4751,25 @@ export class SectorRoom extends Room<SectorState> {
     allegiance: string; health?: number; maxHealth?: number; radius: number;
   }> = [];
   private readonly aiSwarmScratch: AiSwarmView[] = [];
+
+  /** AI steering 2a — per-tick neighbour index over combat drones + pilot
+   *  hulls, rebuilt once per tick in `runAiTick` (alloc-free, #14). */
+  private readonly aiNeighbourGrid = new AiNeighbourGrid();
+  /** Add every kind-1 swarm combatant (all allegiances) with its SAB pose.
+   *  Same set `fillSwarmTargets` covers; bound once (#14). */
+  private readonly _visitAiNeighbourDrones = (_grid: AiNeighbourGrid): void => {
+    this.swarmRegistry.forEachRecord(this._addAiNeighbourDrone);
+  };
+  private readonly _addAiNeighbourDrone = (rec: SwarmEntityRecord): void => {
+    if (rec.kind !== SWARM_KIND_DRONE) return;
+    const b = slotBase(rec.slot);
+    this.aiNeighbourGrid.addDrone(
+      rec.id,
+      this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!,
+      this.sabF32[b + SLOT_VX_OFF]!, this.sabF32[b + SLOT_VY_OFF]!,
+      rec.radius, allegianceOfKind(rec.shipKind),
+    );
+  };
 
   /**
    * Allegiances P0 — rebuild this tick's swarm-combatant set (kind-1 entities),
@@ -11381,6 +11401,8 @@ export class SectorRoom extends Room<SectorState> {
       fillStructureTargets: (out) => this.fillStructureTargets(out),
       aiSwarmScratch: this.aiSwarmScratch,
       fillSwarmTargets: (out) => this.fillSwarmTargets(out),
+      aiNeighbourGrid: this.aiNeighbourGrid,
+      visitAiNeighbourDrones: this._visitAiNeighbourDrones,
       hasTruce: (pid) => this.playerTruce(pid),
       // Living World P1a-2 (decision 7) — offline hulls are fair game.
       isPlayerConnected: this._isPlayerConnected,
@@ -11441,6 +11463,7 @@ export class SectorRoom extends Room<SectorState> {
         this.markSceneSim(this.sceneSimEnd);
         this.sceneWork.endTick(this.sabU32[COUNT_IDX] ?? 0, this.aiController.size());
         if (this.lineOfFireGate) this.sceneWork.lineOfFire(this.lineOfFireGate.checks, this.lineOfFireGate.narrow);
+        this.sceneWork.aiNeighbours(this.aiNeighbourGrid.queriesTotal);
       }
       this.sceneWork.active = running;
     }
