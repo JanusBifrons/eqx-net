@@ -426,7 +426,7 @@ export class ProjectilePipeline {
       ? projectileSweepBox(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.halfW, rec.halfH, rec.boxes)
       : rec.kind === 1
         // A capital's circle is half its hull's length: refine to the hull (#15).
-        ? refineSweepHit(rec.shipKind, projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius), proj.x, proj.y, stepX, stepY, cx, cy, angle)
+        ? refineSweepHit(rec.shipKind, projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius), proj.x, proj.y, stepX, stepY, cx, cy, angle, rec.radius + proj.radius)
         : projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius);
   }
 

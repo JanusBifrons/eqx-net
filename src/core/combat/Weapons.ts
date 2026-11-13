@@ -89,6 +89,30 @@ export function rayHitsSphere(
 }
 
 /**
+ * Does the segment (fx, fy) → (fx + sx, fy + sy) come within `r` of
+ * (cx, cy)? True when it starts inside the circle too. Pure, allocation-free.
+ *
+ * Use THIS, never `rayHitsSphere`, as the cheap bounding-circle gate in front
+ * of a polygon / compound refinement: `rayHitsSphere` returns null once the
+ * origin is inside the circle and past its closest approach to the centre, so
+ * a shell stepping through a long capital (or a beam fired from beside one)
+ * passed straight through the FAR half of the hull (2026-11-13). The same
+ * helper is added to `destruction/wreckHits.ts` by PR #542; dedupe onto this
+ * one when both have landed.
+ */
+export function segmentNearCircle(
+  fx: number, fy: number, sx: number, sy: number, cx: number, cy: number, r: number,
+): boolean {
+  const l2 = sx * sx + sy * sy;
+  let t = l2 > 0 ? ((cx - fx) * sx + (cy - fy) * sy) / l2 : 0;
+  if (t < 0) t = 0;
+  else if (t > 1) t = 1;
+  const px = fx + sx * t - cx;
+  const py = fy + sy * t - cy;
+  return px * px + py * py <= r * r;
+}
+
+/**
  * Ray vs an axis-aligned box centred on (cx, cy) with half extents (hw, hh) —
  * structure footprints (phase V; rotations are quarter turns, so a structure
  * is an axis-aligned box in world space). Slab clip. Returns the distance to
