@@ -386,8 +386,10 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       sprite.update(fxNow, ctx.art.sunAz); // S3 light frame + cut-edge glow (game clock)
       // A held dying hull hands over to its pieces the frame ALL of them are
       // drawn; until then the hold hides the ones that have arrived (so it is
-      // shown again here every frame).
-      sprite.visible = true;
+      // shown again here every frame). Sub-capital debris (permanent, ~100×
+      // as many) is not drawn off screen; a capital wreck keeps today's
+      // behaviour (every piece drawn).
+      sprite.visible = sprite.info.profile === 'capital' || isSpriteInView(sprite.x, sprite.y, entry.radius, ctx.viewBounds);
       if (ctx.dyingHulls !== undefined) {
         const desc = wreckDescs!.get(entry.wreckId!)!;
         const total = ctx.wrecks!.geometryFor(desc)?.length ?? 0;
@@ -523,7 +525,10 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
           : entry.kind === 3
             ? scrapHeatTint(now - (scrapBorn.get(sprite) ?? -Infinity))
             : undefined;
-      sprite.tint = fc ?? 0xffffff;
+      const tint = fc ?? 0xffffff;
+      // A wreck piece's tint is white unless hit: write it only on a change,
+      // so settled debris does no per-frame tint work (sub-cap slice 4).
+      if (entry.kind !== 4 || sprite.tint !== tint) sprite.tint = tint;
     }
     // Structures plan, Phase 3 — blueprints (not yet built) render dimmed
     // ("scaffolding"); the fill-bar (ConnectorRenderer) shows build progress.

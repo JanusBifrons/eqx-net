@@ -1569,6 +1569,8 @@ export class ColyseusGameClient {
       // Capital wrecks on: a dying capital explodes at its kill point (the
       // wreck break-up), not as a hull-sized blast (money-shot review).
       this.mirror.capitalWrecks = msg.capitalWrecks === true;
+      // Sub-cap wrecks on: a dying sub-cap's hull is held until its pieces draw.
+      this.mirror.subcapWrecks = msg.subcapWrecks === true;
       this._shellStore.clear();
       this._navalHitHold.flush(this._heldDamageSink);
       if (this._shellEvents) {

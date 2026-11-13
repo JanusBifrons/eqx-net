@@ -46,6 +46,11 @@ export interface WelcomeMessage {
    *  explosion at the kill point instead of the hull-sized death blast
    *  (money-shot review). Absent = no wrecks. */
   capitalWrecks?: true;
+  /** Sub-capital break-up: set when this room breaks dying sub-capitals into
+   *  wreck pieces (`subcapWrecks` / `EQX_SUBCAP_WRECKS`). The client then
+   *  holds the dying hull briefly until its pieces are drawn; the ship's
+   *  normal death explosion still plays. Absent = no sub-cap wrecks. */
+  subcapWrecks?: true;
 }
 
 /** PR 3a (account-bound identity) — sent to a session immediately before the
@@ -85,6 +90,7 @@ export const WelcomeSchema = z
     shellEvents: z.literal(true).optional(),
     shellsInFlight: z.array(ShellSalvoSchema).max(256).optional(),
     capitalWrecks: z.literal(true).optional(),
+    subcapWrecks: z.literal(true).optional(),
   })
   .strict();
 

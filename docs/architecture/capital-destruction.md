@@ -709,9 +709,9 @@ on the profile, not a branch in the code.
   and the FX flags (break burst, kill blasts, crack front, ripples, whether
   the wreck replaces the death blast, glow style and seconds). The capital
   entry holds the capital stack's values, and its fracture options are the
-  fracture defaults. Today only the fracture reads the profile
-  (`wreckPieceGeometry`); slice 2 (server) and slice 4 (client look) swap
-  their constants for these fields.
+  fracture defaults. The fracture reads the profile (`wreckPieceGeometry`)
+  and so does the client look (slice 4, below, plus `fx.dyingHoldMs`);
+  slice 2 (server) swaps its constants for these fields.
 - **The sub-capital fracture** (same `fractureHull`, v7, with options): at
   most 3 pieces, no fan or far cracks, and `chunkyPieces`. The primary crack
   must be sound: it splits the hull into exactly two pieces of at least 15 %
@@ -731,6 +731,60 @@ on the profile, not a branch in the code.
   parts. Lock: `src/core/destruction/fractureHull.subcap.test.ts`.
 - **Capitals are byte-identical:** every new option defaults to the old
   behaviour, the goldens are unchanged and `FRACTURE_ALGO_VERSION` stays 7.
+
+#### The client's quiet look (slice 4, built 2026-11-13)
+
+The renderer reads the profile of the wreck's `parentKind`
+(`destructionProfileOf`, once per wreck in `WreckArtState.infoFor`) and its
+`fx` block picks the look. Capitals are unchanged; a sub-cap wreck, which
+happens about 100× as often, is quiet so it never competes with a capital's
+break-up:
+
+- **No extra effects.** The break-up sink is called only when `fx.breakBurst`
+  or `fx.killBlasts` is set, and `PixiRenderer` plays each part only when its
+  flag is (so no `WreckBreakFx` burst and no `wreckBlasts` for a sub-cap). No
+  crack distances, no crack front, no ripples (`fx.crackFront`,
+  `fx.ripples`).
+- **The ship's normal death explosion stays.** `hullDeathBlastReplaced` takes
+  the dying kind and also asks its profile (`fx.hullDeathBlastReplaced`,
+  capital only).
+- **A simple glow.** `glowStyle: 'simple'`: one core quad per cut segment on
+  the piece's own side, full length from the first frame (no front, no halo,
+  no white-hot head), positions written once; per frame only one shared U
+  changes (uploaded only when it moves), on the same glow-curve texture
+  scaled so it is dark by `fx.glowSeconds` (1 s). The glow is destroyed when
+  dark. At the `minimal` effects tier a simple glow is not built at all
+  (a capital's full glow always is). A descriptor seen up to `glowSeconds`
+  late starts its glow at first sight, like the capital front.
+- **The dying-hull hold applies, briefly.** In a room that breaks sub-caps
+  (welcome `subcapWrecks`, mirrored to `RenderMirror.subcapWrecks`; slice 2
+  sets it), a dying sub-cap's sprite is held until all its pieces draw, with
+  the profile's deadline `fx.dyingHoldMs` (600 ms; capitals 1500 ms). The
+  hold ends the frame every piece is drawn.
+- **Cost per piece.** A small ship's art is one tile, so a piece is its
+  container + 1 art mesh (baked `Mesh`, GPU-lit `LitShipMesh`, or the plain
+  polygon before the art is ready) + 1 glow mesh while glowing: 3 scene
+  nodes, 2 drawn. Settled: 2 nodes (container + mesh), 1 drawn, batched over
+  its parent's one tile texture. In `perf:counts` terms (every node counts,
+  culled or not) a few hundred settled pieces cost 2 nodes each: 300 pieces
+  = 600, against ~1,400 of headroom on `fleet-fight/baked` (budget 6,990,
+  measured max 5,592), so the budget holds to ~700 settled pieces in that
+  scene; slice 5 measures the real soak and re-calibrates from it.
+- **A settled piece does nothing per frame.** `WreckPieceSprite.update`
+  returns at once when the glow is gone, its ripples are done and its
+  rotation and the sun azimuth are unchanged (no light-frame pick, no glow
+  write). The updater writes a wreck piece's container tint only on a change
+  (a hit flash and its end). Sub-cap pieces off screen are culled
+  (`isSpriteInView`; capital pieces stay drawn as before). Wreck pieces get
+  no far-zoom icon (`FarZoomIcons` draws drones and ships only) and no radar
+  contact (`radarCategoryForSwarm(4)` is null).
+- Locks: `swarmSpriteUpdater.subcapWreck.test.ts` (no burst, blasts,
+  ripples or front; a simple core glow gone by `glowSeconds`; ≤ 2 drawables
+  per piece while glowing and 1 after; none at the minimal tier, the capital
+  glow kept there; a settled piece writes no tint, texture or glow; culling;
+  the normal death blast kept; no icon or radar contact),
+  `dyingHullHold.test.ts` (the brief sub-cap hold), and the capital wreck-art
+  tests unchanged.
 
 ## 4. Determinism strategy
 

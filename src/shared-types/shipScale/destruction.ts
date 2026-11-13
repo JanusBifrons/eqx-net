@@ -77,6 +77,11 @@ export interface DestructionFx {
   readonly glowStyle: WreckGlowStyle;
   /** How long the cut-edge glow lasts (s). */
   readonly glowSeconds: number;
+  /** The longest the client holds the dying hull on screen while it waits
+   *  for its wreck pieces to be drawable (game ms; `dyingHullHold.ts`). The
+   *  hold ends the frame every piece is drawn, so this is only the deadline
+   *  for a lost or late wreck. 0: no hold. */
+  readonly dyingHoldMs: number;
 }
 
 export interface DestructionProfile {
@@ -112,6 +117,7 @@ const CAPITAL: DestructionProfile = {
     hullDeathBlastReplaced: true,
     glowStyle: 'full',
     glowSeconds: 4.5,
+    dyingHoldMs: 1500,
   },
 };
 
@@ -146,6 +152,8 @@ const SUBCAP: DestructionProfile = {
     hullDeathBlastReplaced: false,
     glowStyle: 'simple',
     glowSeconds: 1,
+    // Brief: no crack hold, so a sub-cap's pieces are drawable at once.
+    dyingHoldMs: 600,
   },
 };
 
@@ -164,6 +172,7 @@ const NONE: DestructionProfile = {
     hullDeathBlastReplaced: false,
     glowStyle: 'none',
     glowSeconds: 0,
+    dyingHoldMs: 0,
   },
 };
 

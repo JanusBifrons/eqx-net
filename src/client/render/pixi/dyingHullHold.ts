@@ -27,12 +27,17 @@
  *
  * Every per-frame path is alloc-free (#14): records and the per-frame piece
  * list are pooled and grow once.
+ *
+ * Sub-capitals (sub-capital break-up, slice 4): in a room that breaks them
+ * (`subcapWrecks`) a dying sub-cap is held the same way, with the profile's
+ * brief deadline (`fx.dyingHoldMs`, 600 ms: no crack hold, so its pieces
+ * are drawable at once).
  */
 import type { Container } from 'pixi.js';
 import { getShipKind, isShipKindId } from '@shared-types/shipKinds';
-import { isCapitalKindId } from '../art/capitalKind.js';
+import { destructionProfileOf } from '@shared-types/shipScale/destructionProfile';
 
-/** The longest a dying hull waits for its wreck pieces (game ms). */
+/** The longest a dying capital waits for its wreck pieces (game ms). */
 export const DYING_HULL_HOLD_MS = 1500;
 
 /** A piece counts as this hull's when it is drawn within the hull's radius
@@ -40,16 +45,27 @@ export const DYING_HULL_HOLD_MS = 1500;
  *  crack delay, so a generous margin never reaches a neighbouring hull). */
 const MATCH_RADIUS_MUL = 1.25;
 
-interface DyingMark { id: string; kind: string; atMs: number }
+interface DyingMark { id: string; kind: string; atMs: number; holdMs: number }
 interface Held {
   sprite: Container | null; kind: string; x: number; y: number; r2: number; untilMs: number;
   /** The wreck this hull became (-1 until a piece of it is drawn) and its piece count. */
   wreckId: number; total: number;
 }
 
+/** How long a death of a ship of `kind` holds its hull for its wreck (game
+ *  ms; 0: it leaves no wreck the client will draw). Capitals in a
+ *  `capitalWrecks` room, sub-capitals in a `subcapWrecks` room; each its
+ *  profile's `fx.dyingHoldMs`. */
+export function dyingHoldMsFor(capitalWrecks: boolean | undefined, kind: string | null | undefined, subcapWrecks?: boolean): number {
+  if (typeof kind !== 'string' || !isShipKindId(kind)) return 0;
+  const p = destructionProfileOf({ type: 'ship', kindId: kind });
+  const on = p.id === 'capital' ? capitalWrecks === true : p.id === 'subcap' ? subcapWrecks === true : false;
+  return on ? p.fx.dyingHoldMs : 0;
+}
+
 /** Does a death of a ship of `kind` leave a wreck the client will draw? */
-export function deathLeavesWreck(capitalWrecks: boolean | undefined, kind: string | null | undefined): boolean {
-  return capitalWrecks === true && typeof kind === 'string' && isCapitalKindId(kind);
+export function deathLeavesWreck(capitalWrecks: boolean | undefined, kind: string | null | undefined, subcapWrecks?: boolean): boolean {
+  return dyingHoldMsFor(capitalWrecks, kind, subcapWrecks) > 0;
 }
 
 /**
@@ -63,11 +79,13 @@ export function noteDyingHulls(
   kindOf: (id: string) => string | null | undefined,
   hold: DyingHullHold,
   nowMs: number,
+  subcapWrecks?: boolean,
 ): void {
-  if (exploding === undefined || exploding.size === 0 || capitalWrecks !== true) return;
+  if (exploding === undefined || exploding.size === 0 || (capitalWrecks !== true && subcapWrecks !== true)) return;
   for (const id of exploding) {
     const kind = kindOf(id);
-    if (deathLeavesWreck(capitalWrecks, kind)) hold.markDying(id, kind!, nowMs);
+    const holdMs = dyingHoldMsFor(capitalWrecks, kind, subcapWrecks);
+    if (holdMs > 0) hold.markDying(id, kind!, nowMs, holdMs);
   }
 }
 
@@ -85,13 +103,14 @@ export class DyingHullHold {
 
   /** A ship died this frame (its id as the sprite maps key it). Only deaths
    *  that leave a wreck are held; see `deathLeavesWreck`. */
-  markDying(id: string, kind: string, nowMs: number): void {
+  markDying(id: string, kind: string, nowMs: number, holdMs = DYING_HULL_HOLD_MS): void {
     for (let i = 0; i < this.markCount; i++) {
-      if (this.marks[i]!.id === id) { this.marks[i]!.kind = kind; this.marks[i]!.atMs = nowMs; return; }
+      const m = this.marks[i]!;
+      if (m.id === id) { m.kind = kind; m.atMs = nowMs; m.holdMs = holdMs; return; }
     }
     let m = this.marks[this.markCount];
-    if (m === undefined) { m = { id, kind, atMs: nowMs }; this.marks[this.markCount] = m; }
-    else { m.id = id; m.kind = kind; m.atMs = nowMs; }
+    if (m === undefined) { m = { id, kind, atMs: nowMs, holdMs }; this.marks[this.markCount] = m; }
+    else { m.id = id; m.kind = kind; m.atMs = nowMs; m.holdMs = holdMs; }
     this.markCount++;
   }
 
@@ -105,6 +124,7 @@ export class DyingHullHold {
     for (let i = 0; i < this.markCount; i++) if (this.marks[i]!.id === id) { mark = i; break; }
     if (mark < 0) return false;
     const kind = this.marks[mark]!.kind;
+    const holdMs = this.marks[mark]!.holdMs;
     this.dropMark(mark);
     const r = isShipKindId(kind) ? getShipKind(kind).radius * MATCH_RADIUS_MUL : 0;
     let h = this.held[this.heldCount];
@@ -117,7 +137,7 @@ export class DyingHullHold {
     h.x = sprite.x;
     h.y = sprite.y;
     h.r2 = r * r;
-    h.untilMs = nowMs + DYING_HULL_HOLD_MS;
+    h.untilMs = nowMs + holdMs;
     h.wreckId = -1;
     h.total = 0;
     this.heldCount++;
@@ -155,7 +175,7 @@ export class DyingHullHold {
     for (let i = 0; i < this.pieceCount; i++) this.pieceSprite[i] = null; // no stale sprite refs
     this.pieceCount = 0;
     for (let i = this.markCount - 1; i >= 0; i--) {
-      if (nowMs - this.marks[i]!.atMs >= DYING_HULL_HOLD_MS) this.dropMark(i);
+      if (nowMs - this.marks[i]!.atMs >= this.marks[i]!.holdMs) this.dropMark(i);
     }
   }
 
