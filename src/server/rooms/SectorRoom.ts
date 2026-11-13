@@ -8149,7 +8149,13 @@ export class SectorRoom extends Room<SectorState> {
     if (rec == null || rec.kind !== SWARM_KIND_DRONE) return false;
     this.lofShooterKind = 1;
     this.lofSide = allegianceOfKind(rec.shipKind);
-    return this.lofGate().blocked(fx, fy, dx, dy, maxDist, shooterId, targetId, this.lofFriendly);
+    const gate = this.lofGate();
+    if (!gate.blocked(fx, fy, dx, dy, maxDist, shooterId, targetId, this.lofFriendly)) return false;
+    // Line-of-fire feedback: tell the brain which ally held its shot (drone
+    // slots via AiFireResolver AND capital turret barrels via the mount ticker
+    // both come through here; the behaviour counts at most once per tick).
+    this.aiController.noteBlocked(shooterId, this.serverTick, gate.lastBlockerX, gate.lastBlockerY);
+    return true;
   }
 
   /** A drone's slot shot: the distance is to its target's live pose. */
@@ -8374,10 +8380,9 @@ export class SectorRoom extends Room<SectorState> {
             impulse: parseFloat(p.force.toFixed(3)),
             tick,
           });
-          // Ramming damage (Phase 4; WS-1/R2.31 mass-differential model).
-          // ASYMMETRIC: each side takes its OWN damage (the lighter body in a
-          // high-speed collision is crushed, the heavier takes ~0, equal masses
-          // take nothing); the OTHER id is the "shooter" (kill-feed + hostility
+          // Ramming damage (impact-based model, 2026-11-13; see Ramming.ts).
+          // Each side takes its OWN damage (normal-impact energy shared by
+          // weight: equal ships equally, the lighter more); the OTHER id is the "shooter" (kill-feed + hostility
           // attribution). applyDamage already no-ops on asteroids (immune - no
           // swarmHealth entry), so "asteroids deal but do not take" still holds.
           // Applied once per pair per tick.
@@ -8397,6 +8402,7 @@ export class SectorRoom extends Room<SectorState> {
               bId: p.bId,
               force: parseFloat(p.force.toFixed(1)),
               impactSpeed: parseFloat(p.impactSpeed.toFixed(1)),
+              normalSpeed: parseFloat(p.normalSpeed.toFixed(1)),
               damageA,
               damageB,
               tick,
