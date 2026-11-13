@@ -62,10 +62,23 @@ export const WRECK_BREAK_FX_MAX_AGE_MS = 1500;
 export const WRECK_CRACK_FRONT_MS = Math.round(WRECK_CRACK_MS * 0.8);
 /** Most ripple blasts one wreck gets (the `high` effects tier). */
 export const WRECK_RIPPLE_MAX = 7;
-/** A ripple blast's radius as a share of the wreck radius: well below the
- *  kill-point blast (`WRECK_BLAST_MAIN`, 0.12). */
-export const WRECK_RIPPLE_R_MIN = 0.022;
-export const WRECK_RIPPLE_R_MAX = 0.04;
+/** A ripple blast's radius as a share of the wreck radius: clearly visible
+ *  at capital zoom (review 2026-11-13: 0.022–0.04 were lost), still well
+ *  below the kill-point blast (`WRECK_BLAST_MAIN`, 0.12). */
+export const WRECK_RIPPLE_R_MIN = 0.05;
+export const WRECK_RIPPLE_R_MAX = 0.07;
+/** Ripples go on the far part of the cracks: at least this share of the
+ *  farthest crack's distance from the kill point, clear of the kill blast's
+ *  fireball and smoke. */
+export const WRECK_RIPPLE_FAR_FROM = 0.35;
+/** Glow widths as a share of the wreck radius (#18: a capital is drawn at
+ *  ~0.17 zoom, so a fixed few units is under a pixel): the core, its soft
+ *  halo, and the white-hot head racing along a growing crack. */
+const GLOW_CORE_R = 0.018;
+const GLOW_HALO_MUL = 3;
+const GLOW_HEAD_MUL = 1.8;
+/** The head's length along the crack (share of the wreck radius). */
+const GLOW_HEAD_LEN_R = 0.06;
 /** A ripple whose moment passed this long before its piece was drawn is
  *  dropped (a piece built late, e.g. once its art is ready). */
 const RIPPLE_LATE_MS = 250;
@@ -79,8 +92,12 @@ const TICK_MS = 1000 / 60;
 
 /** Burnt tint: near the kill point / far from it. Money-shot review: the old
  *  0x3a2c26 / 0x8c7e74 (23–55 % brightness) read as flat dark-grey slabs;
- *  the pieces should carry the hull art, slightly darkened. */
-const BURNT_NEAR = 0x9a8a80;
+ *  the pieces should carry the hull art, slightly darkened. Hostile review
+ *  2026-11-13: a NEAR of 0x9a8a80 still turned every middle piece of a
+ *  mid-hull kill into a dark brown slab beside a normal bow and stern (a
+ *  hard step at each cut, "lost their hull art"). The tint is per piece, so
+ *  the near/far spread must stay small: the scorch is the glow's job. */
+const BURNT_NEAR = 0xc4bab2;
 const BURNT_FAR = 0xd2cac4;
 
 // ── The glow curve ────────────────────────────────────────────────────────
@@ -121,6 +138,8 @@ const V_CORE = 0.25;
 const V_HALO = 0.75;
 /** U of the last texel: dark (an unlit or cooled segment). */
 const U_DARK = (GLOW_TEX_W - 0.5) / GLOW_TEX_W;
+/** U of the first texel: white-hot (the crack front itself). */
+const U_HOT = 0.5 / GLOW_TEX_W;
 
 let _glowTex: Texture | null = null;
 
@@ -159,17 +178,60 @@ export function glowU(ageS: number): number {
  *  GAME ms after death: the nearest cut at 0, the farthest at
  *  `WRECK_CRACK_FRONT_MS`. Distance is straight-line from the kill point, so
  *  the front is a ring spreading from the hit, lighting the cuts it crosses. */
-export function crackFrontAt(info: Pick<WreckInfo, 'crackMin' | 'crackReach'>, tMs: number): number {
+export function crackFrontAt(info: CrackSpan, tMs: number): number {
   if (!(tMs >= 0)) return -Infinity;
   const k = Math.min(1, tMs / WRECK_CRACK_FRONT_MS);
-  return info.crackMin + (info.crackReach - info.crackMin) * k;
+  const iv = info.crackIv, C = info.crackCover ?? 0;
+  if (iv === undefined || iv.length === 0 || !(C > 1e-6)) return info.crackMin + (info.crackReach - info.crackMin) * k;
+  // Over the crack distances that hold a crack only: the front never idles
+  // across a stretch with nothing to light (review 2026-11-13).
+  const want = k * C;
+  for (let i = 0; i < iv.length; i += 3) {
+    const len = iv[i + 1]! - iv[i]!;
+    if (iv[i + 2]! + len >= want) return iv[i]! + (want - iv[i + 2]!);
+  }
+  return info.crackReach;
 }
 
-/** When (game ms after death) the front reaches distance `d`. */
-export function crackIgniteMs(info: Pick<WreckInfo, 'crackMin' | 'crackReach'>, d: number): number {
+/** When (game ms after the front started) the front reaches distance `d`. */
+export function crackIgniteMs(info: CrackSpan, d: number): number {
+  const iv = info.crackIv, C = info.crackCover ?? 0;
+  if (iv !== undefined && iv.length > 0 && C > 1e-6) {
+    let covered = 0;
+    for (let i = 0; i < iv.length; i += 3) {
+      if (d <= iv[i]!) break;
+      covered = iv[i + 2]! + Math.min(d, iv[i + 1]!) - iv[i]!;
+    }
+    return Math.min(1, covered / C) * WRECK_CRACK_FRONT_MS;
+  }
   const span = info.crackReach - info.crackMin;
   if (!(span > 1e-6)) return 0;
   return Math.max(0, Math.min(1, (d - info.crackMin) / span)) * WRECK_CRACK_FRONT_MS;
+}
+
+/** What the front's clock needs: the crack distance range and, optionally,
+ *  the merged intervals of crack distance that hold a crack. */
+export type CrackSpan = Pick<WreckInfo, 'crackMin' | 'crackReach'> & Partial<Pick<WreckInfo, 'crackIv' | 'crackCover'>>;
+
+/** The union of every cut segment's crack-distance interval, as triples
+ *  (start, end, covered length before it), and the total covered length.
+ *  Build-time only. */
+export function crackIntervals(pieces: readonly WreckPieceGeometry[], kill: Pick<WreckInfo, 'killX' | 'killY'>): { iv: Float64Array; cover: number } {
+  const raw: Array<[number, number]> = [];
+  for (const p of pieces) forEachCut(p, kill, (_ax, _ay, _bx, _by, da, db) => { raw.push([Math.min(da, db), Math.max(da, db)]); });
+  raw.sort((a, b) => a[0] - b[0]);
+  const out: number[] = [];
+  let cover = 0;
+  for (const [s, e] of raw) {
+    const n = out.length;
+    if (n > 0 && s <= out[n - 2]!) {
+      if (e > out[n - 2]!) { cover += e - out[n - 2]!; out[n - 2] = e; }
+      continue;
+    }
+    out.push(s, e, cover);
+    cover += e - s;
+  }
+  return { iv: new Float64Array(out), cover };
 }
 
 /** Runs of consecutive cut edges as `[start, length]` (edge i runs outline[i]
@@ -298,7 +360,9 @@ export function wreckPieceMeshes(piece: WreckPieceGeometry, L: WreckTexLayout): 
 
 /** What every piece of one wreck shares. */
 export interface WreckInfo {
-  /** Death time on this renderer's clock (−Infinity ⇒ drawn cool). */
+  /** When the crack front started, on this renderer's clock: the death, or
+   *  first sight for a wreck first seen inside its crack window
+   *  (−Infinity ⇒ drawn cool). */
   deathMs: number;
   /** Bounding radius of the whole wreck about the old hull centre (world u). */
   hullR: number;
@@ -312,6 +376,10 @@ export interface WreckInfo {
    *  the crack front starts and where it ends. */
   crackMin: number;
   crackReach: number;
+  /** Crack distances that hold a crack (`crackIntervals`) and their total:
+   *  the front's clock runs over these, skipping the empty stretches. */
+  crackIv: Float64Array;
+  crackCover: number;
   /** The ripple blasts along the cracks (empty for a late joiner), each
    *  fired once by its piece's sprite (`rippleFired`). */
   ripples: WreckRipple[];
@@ -328,12 +396,13 @@ export type WreckRippleSink = (x: number, y: number, r: number) => void;
 
 const NO_RIPPLES: WreckRipple[] = [];
 const NO_FIRED = new Uint8Array(0);
+const NO_IV = new Float64Array(0);
 
 /** The info of a wreck drawn without a death clock: cool, no cracks running. */
 export function coolWreckInfo(desc: WreckDescriptor): WreckInfo {
   return {
     deathMs: -Infinity, hullR: 0, killX: 0, killY: 0, snap: false, desc,
-    crackMin: 0, crackReach: 0, ripples: NO_RIPPLES, rippleFired: NO_FIRED, onRipple: null,
+    crackMin: 0, crackReach: 0, crackIv: NO_IV, crackCover: 0, ripples: NO_RIPPLES, rippleFired: NO_FIRED, onRipple: null,
   };
 }
 
@@ -350,59 +419,82 @@ function seededRandom(seed: number): () => number {
 }
 
 /**
- * The ripple blasts of a fresh wreck: `count` points on the cut edges,
- * spaced along the crack front (one per equal band of front distance,
- * jittered), each on a cut segment the front crosses at that distance,
- * chosen from the wreck seed (every client sees the same). Runs once per
- * wreck, at first sight.
+ * The ripple blasts of a fresh wreck: `count` points on the far part of the
+ * cut edges (clear of the kill blast), one per equal band in the order the
+ * front reaches them, chosen from the wreck seed (every client sees the
+ * same). Runs once per wreck, at first sight.
  */
 export function wreckRipples(
-  pieces: readonly WreckPieceGeometry[], info: Pick<WreckInfo, 'killX' | 'killY' | 'hullR' | 'crackMin' | 'crackReach'>,
+  pieces: readonly WreckPieceGeometry[],
+  info: Pick<WreckInfo, 'killX' | 'killY' | 'hullR' | 'crackMin' | 'crackReach'> & Partial<Pick<WreckInfo, 'crackIv' | 'crackCover'>>,
   seed: number, count: number,
 ): WreckRipple[] {
   const out: WreckRipple[] = [];
   if (count <= 0 || !(info.crackReach > info.crackMin)) return out;
   const rnd = seededRandom(seed);
-  for (let k = 0; k < count; k++) {
-    const target = info.crackMin + (info.crackReach - info.crackMin) * ((k + 0.2 + 0.6 * rnd()) / count);
-    // Count the cut segments the front crosses at `target`, then pick one.
-    let n = 0;
-    for (const p of pieces) forEachCut(p, info, (_ax, _ay, _bx, _by, da, db) => {
-      if (Math.min(da, db) <= target && target <= Math.max(da, db)) n++;
+  // Candidate sites: the middle stretch of every cut segment, with its
+  // straight-line distance from the kill point and its crack distance.
+  interface Site { piece: number; ax: number; ay: number; bx: number; by: number; da: number; db: number; sd: number }
+  const all: Site[] = [];
+  let maxSd = 0;
+  pieces.forEach((p, pi) => forEachCut(p, info, (ax, ay, bx, by, da, db) => {
+    const sd = Math.hypot((ax + bx) / 2 - info.killX, (ay + by) / 2 - info.killY);
+    maxSd = Math.max(maxSd, sd);
+    all.push({ piece: pi, ax, ay, bx, by, da, db, sd });
+  }));
+  // Clear of the kill blast's fireball and smoke: the far part of the cracks
+  // (from WRECK_RIPPLE_FAR_FROM of the farthest crack out).
+  const sites = all.filter((s) => s.sd >= WRECK_RIPPLE_FAR_FROM * maxSd);
+  if (sites.length === 0) return out;
+  // In the order the front reaches them; one per equal band, so they fire
+  // in sequence as it passes.
+  sites.sort((a, b) => (a.da + a.db) - (b.da + b.db));
+  const n = Math.min(count, sites.length);
+  for (let k = 0; k < n; k++) {
+    const lo = Math.floor((k * sites.length) / n), hi = Math.floor(((k + 1) * sites.length) / n);
+    const s = sites[lo + Math.min(hi - lo - 1, Math.floor(rnd() * (hi - lo)))]!;
+    const f = 0.25 + 0.5 * rnd();
+    const p = pieces[s.piece]!;
+    out.push({
+      piece: s.piece, lx: s.ax + (s.bx - s.ax) * f - p.cx, ly: s.ay + (s.by - s.ay) * f - p.cy,
+      atMs: crackIgniteMs(info, s.da + (s.db - s.da) * f),
+      r: Math.max(6, info.hullR * (WRECK_RIPPLE_R_MIN + (WRECK_RIPPLE_R_MAX - WRECK_RIPPLE_R_MIN) * rnd())),
     });
-    if (n === 0) continue;
-    let pick = Math.floor(rnd() * n);
-    const rr = rnd();
-    for (let pi = 0; pi < pieces.length && pick >= 0; pi++) {
-      const p = pieces[pi]!;
-      forEachCut(p, info, (ax, ay, bx, by, da, db) => {
-        if (pick < 0 || !(Math.min(da, db) <= target && target <= Math.max(da, db))) return;
-        if (pick-- > 0) return;
-        const s = db !== da ? (target - da) / (db - da) : 0.5;
-        out.push({
-          piece: pi, lx: ax + (bx - ax) * s - p.cx, ly: ay + (by - ay) * s - p.cy,
-          atMs: crackIgniteMs(info, target),
-          r: Math.max(6, info.hullR * (WRECK_RIPPLE_R_MIN + (WRECK_RIPPLE_R_MAX - WRECK_RIPPLE_R_MIN) * rr)),
-        });
-        pick = -1;
-      });
-    }
   }
   return out;
 }
 
-/** Each cut edge of a piece in the hull frame, with each end's distance from
- *  the kill point. Build-time only. */
+/**
+ * Each cut edge of a piece in the hull frame (edge `i` runs outline[i] →
+ * outline[i+1]), with each end's CRACK distance: how far the front has
+ * run when it gets there. The front reaches a crack (a run of cut edges) at
+ * its end nearer the kill point, at the straight-line distance, then runs
+ * ALONG the crack, so a crack across the hull is crossed by a travelling
+ * head rather than lit all at once (review 2026-11-13: "no visible moving
+ * front"). Build-time only.
+ */
 function forEachCut(
   p: WreckPieceGeometry, kill: Pick<WreckInfo, 'killX' | 'killY'>,
-  fn: (ax: number, ay: number, bx: number, by: number, da: number, db: number) => void,
+  fn: (ax: number, ay: number, bx: number, by: number, da: number, db: number, edge: number) => void,
 ): void {
   const o = p.outline, n = o.length;
-  for (let i = 0; i < n; i++) {
-    if (!p.cutEdges[i]) continue;
-    const a = o[i]!, b = o[(i + 1) % n]!;
-    const ax = a.x + p.cx, ay = a.y + p.cy, bx = b.x + p.cx, by = b.y + p.cy;
-    fn(ax, ay, bx, by, Math.hypot(ax - kill.killX, ay - kill.killY), Math.hypot(bx - kill.killX, by - kill.killY));
+  const X = (i: number): number => o[i % n]!.x + p.cx;
+  const Y = (i: number): number => o[i % n]!.y + p.cy;
+  for (const [start, len] of cutEdgeRuns(p.cutEdges)) {
+    const d0 = Math.hypot(X(start) - kill.killX, Y(start) - kill.killY);
+    const d1 = Math.hypot(X(start + len) - kill.killX, Y(start + len) - kill.killY);
+    let total = 0;
+    for (let k = 0; k < len; k++) total += Math.hypot(X(start + k + 1) - X(start + k), Y(start + k + 1) - Y(start + k));
+    // Path distance from the run's start; reversed when the far end is nearer.
+    let acc = 0;
+    for (let k = 0; k < len; k++) {
+      const i = start + k;
+      const seg = Math.hypot(X(i + 1) - X(i), Y(i + 1) - Y(i));
+      const da = d0 <= d1 ? d0 + acc : d1 + (total - acc);
+      const db = d0 <= d1 ? d0 + acc + seg : d1 + (total - acc - seg);
+      fn(X(i), Y(i), X(i + 1), Y(i + 1), da, db, i % n);
+      acc += seg;
+    }
   }
 }
 
@@ -491,21 +583,33 @@ export class WreckArtState {
     let hullR = 0;
     for (const p of pieces) hullR = Math.max(hullR, Math.hypot(p.cx, p.cy) + p.radius);
     const ageMs = desc.deathTick !== undefined ? Math.max(0, serverTick - desc.deathTick) * TICK_MS : Infinity;
+    // The client first draws a wreck 0.1–0.5 s after the death (its
+    // descriptor arrives late): anchored at the death, most of the crack
+    // front had already run and every crack lit at once (review 2026-11-13).
+    // A wreck first seen inside its crack window starts the front (and the
+    // glow's clock) at first sight, so the whole spread is always seen. Late
+    // joiners keep their true age (cool, no front).
+    const crackAgeMs = ageMs < WRECK_CRACK_MS ? 0 : ageMs;
     const info: WreckInfo = {
-      deathMs: nowMs - ageMs, hullR, killX: desc.killX * s, killY: -desc.killY * s, snap: pieces.length <= 2, desc,
-      crackMin: Infinity, crackReach: 0, ripples: NO_RIPPLES, rippleFired: NO_FIRED, onRipple: this.onRipple,
+      deathMs: nowMs - crackAgeMs, hullR, killX: desc.killX * s, killY: -desc.killY * s, snap: pieces.length <= 2, desc,
+      crackMin: Infinity, crackReach: 0, crackIv: NO_IV, crackCover: 0,
+      ripples: NO_RIPPLES, rippleFired: NO_FIRED, onRipple: this.onRipple,
     };
     for (const p of pieces) forEachCut(p, info, (_ax, _ay, _bx, _by, da, db) => {
       info.crackMin = Math.min(info.crackMin, da, db);
       info.crackReach = Math.max(info.crackReach, da, db);
     });
     if (!(info.crackMin <= info.crackReach)) { info.crackMin = 0; info.crackReach = 0; }
+    else {
+      const { iv, cover } = crackIntervals(pieces, info);
+      info.crackIv = iv;
+      info.crackCover = cover;
+    }
     // Ripples only for a wreck seen inside its crack window (late joiners:
-    // none); one whose moment already passed is marked fired.
+    // none); they fire as the front (from first sight) passes them.
     if (ageMs < WRECK_CRACK_MS && this.onRipple !== null) {
       info.ripples = wreckRipples(pieces, info, desc.seed, Math.min(WRECK_RIPPLE_MAX, this.rippleCap()));
       info.rippleFired = new Uint8Array(info.ripples.length);
-      for (let i = 0; i < info.ripples.length; i++) if (info.ripples[i]!.atMs < ageMs) info.rippleFired[i] = 1;
     }
     this.byId.set(desc.wreckId, info);
     const g = pieces[pieceIndex];
@@ -577,6 +681,11 @@ export class WreckPieceSprite extends Container {
   private segN = 0;
   private halfCore = 0;
   private halfHalo = 0;
+  private halfHead = 0;
+  private halfHeadHalo = 0;
+  private headLen = 0;
+  /** White-hot heads drawn at the last update (cracks still growing). */
+  private heads = 0;
   /** The front has passed every cut: positions are final. */
   private grown = false;
   /** Game ms after death when the last crack is dark. */
@@ -646,34 +755,43 @@ export class WreckPieceSprite extends Container {
     this.edgeSeg = new Int32Array(n).fill(-1);
     this.seg = new Float64Array(S * SEG_STRIDE);
     let k = 0;
-    for (let i = 0; i < n; i++) {
-      if (!piece.cutEdges[i]) continue;
-      const a = o[i]!, b = o[(i + 1) % n]!;
-      const da = Math.hypot(a.x + piece.cx - info.killX, a.y + piece.cy - info.killY);
-      const db = Math.hypot(b.x + piece.cx - info.killX, b.y + piece.cy - info.killY);
-      const [near, far, dn, df] = da <= db ? [a, b, da, db] : [b, a, db, da];
-      const len = Math.hypot(far.x - near.x, far.y - near.y);
+    forEachCut(piece, info, (hax, hay, hbx, hby, da, db, edge) => {
+      // Body-local, math-up; then stored Pixi-down.
+      const ax = hax - piece.cx, ay = hay - piece.cy, bx = hbx - piece.cx, by = hby - piece.cy;
+      const fwd = da <= db;
+      const nx = fwd ? ax : bx, ny = fwd ? ay : by, fx = fwd ? bx : ax, fy = fwd ? by : ay;
+      const dn = fwd ? da : db, df = fwd ? db : da;
+      const len = Math.hypot(fx - nx, fy - ny);
       const s = this.seg, q = k * SEG_STRIDE;
-      s[q] = near.x; s[q + 1] = -near.y; s[q + 2] = far.x; s[q + 3] = -far.y;
+      s[q] = nx; s[q + 1] = -ny; s[q + 2] = fx; s[q + 3] = -fy;
       s[q + 4] = dn; s[q + 5] = df; s[q + 6] = crackIgniteMs(info, dn);
-      s[q + 7] = len > 1e-6 ? (far.x - near.x) / len : 1;
-      s[q + 8] = len > 1e-6 ? -(far.y - near.y) / len : 0;
-      this.glowEndMs = Math.max(this.glowEndMs, s[q + 6]! + WRECK_GLOW_END_S * 1000);
-      this.edgeSeg[i] = k++;
-    }
+      s[q + 7] = len > 1e-6 ? (fx - nx) / len : 1;
+      s[q + 8] = len > 1e-6 ? -(fy - ny) / len : 0;
+      s[q + 9] = crackIgniteMs(info, df);
+      this.glowEndMs = Math.max(this.glowEndMs, s[q + 9]! + WRECK_GLOW_END_S * 1000);
+      this.edgeSeg[edge] = k++;
+    });
     this.segN = S;
-    const core = Math.min(40, Math.max(3, info.hullR * 0.006));
+    // Widths follow the wreck's size (#18), so the cracks read at capital zoom.
+    const core = Math.min(120, Math.max(4, info.hullR * GLOW_CORE_R));
     this.halfCore = core / 2;
-    this.halfHalo = (core * 3.5) / 2;
-    // Halo quads first (drawn under), then the core quads.
-    const positions = new Float32Array(S * 16);
-    const uvs = new Float32Array(S * 16);
-    const indices = new Uint32Array(S * 12);
-    for (let j = 0; j < 2 * S; j++) {
+    this.halfHalo = (core * GLOW_HALO_MUL) / 2;
+    this.halfHead = (core * GLOW_HEAD_MUL) / 2;
+    this.halfHeadHalo = (core * GLOW_HEAD_MUL * GLOW_HALO_MUL) / 2;
+    this.headLen = Math.max(core * 2, info.hullR * GLOW_HEAD_LEN_R);
+    // Per segment, in draw order: halo quads, core quads, then the head's
+    // halo and core on top (all four blocks S quads long).
+    const Q = GLOW_QUADS_PER_SEG * S;
+    const positions = new Float32Array(Q * 8);
+    const uvs = new Float32Array(Q * 8);
+    const indices = new Uint32Array(Q * 6);
+    for (let j = 0; j < Q; j++) {
       const v0 = j * 4, ii = j * 6;
       indices[ii] = v0; indices[ii + 1] = v0 + 1; indices[ii + 2] = v0 + 2;
       indices[ii + 3] = v0; indices[ii + 4] = v0 + 2; indices[ii + 5] = v0 + 3;
-      for (let v = 0; v < 4; v++) { uvs[(v0 + v) * 2] = U_DARK; uvs[(v0 + v) * 2 + 1] = j < S ? V_HALO : V_CORE; }
+      const block = Math.floor(j / S);
+      const v = block === 1 || block === 3 ? V_CORE : V_HALO;
+      for (let c = 0; c < 4; c++) { uvs[(v0 + c) * 2] = block >= 2 ? U_HOT : U_DARK; uvs[(v0 + c) * 2 + 1] = v; }
     }
     const geometry = new MeshGeometry({ positions, uvs, indices });
     geometry.batchMode = 'batch';
@@ -687,34 +805,66 @@ export class WreckPieceSprite extends Container {
    *  as far as the front has run, and age it from its own ignition. In-place
    *  writes only (invariant #14). */
   private writeGlow(t: number): void {
-    const geom = this.glowGeom!, s = this.seg, S = this.segN;
-    const F = crackFrontAt(this.info, t);
+    const geom = this.glowGeom!, s = this.seg, S = this.segN, info = this.info;
+    const F = crackFrontAt(info, t);
+    const uv = geom.uvs;
     if (!this.grown) {
       const pos = geom.positions;
       const hc = this.halfCore, hh = this.halfHalo;
+      let heads = 0;
       for (let k = 0; k < S; k++) {
         const q = k * SEG_STRIDE;
         const nx = s[q]!, ny = s[q + 1]!, dn = s[q + 4]!, df = s[q + 5]!;
         const ux = s[q + 7]!, uy = s[q + 8]!;
         const lit = F >= dn;
         const frac = !lit ? 0 : df > dn ? Math.min(1, (F - dn) / (df - dn)) : 1;
-        const ex = nx + (s[q + 2]! - nx) * frac, ey = ny + (s[q + 3]! - ny) * frac;
+        const fx = s[q + 2]!, fy = s[q + 3]!;
+        const ex = nx + (fx - nx) * frac, ey = ny + (fy - ny) * frac;
         const ext = lit ? hc : 0; // the core runs a little past both ends: closed joints
         writeQuad(pos, k * 4, nx, ny, ex, ey, ux, uy, lit ? hh : 0, 0);
         writeQuad(pos, (S + k) * 4, nx, ny, ex, ey, ux, uy, lit ? hc : 0, ext);
+        // The white-hot head: the last stretch behind the tip of a crack the
+        // front is still running along, wider than the crack it leaves.
+        const growing = lit && frac < 1;
+        let hx = ex, hy = ey;
+        if (growing) {
+          heads++;
+          const segLen = Math.hypot(fx - nx, fy - ny);
+          const back = Math.min(frac, this.headLen / Math.max(1e-6, segLen));
+          hx = ex - (fx - nx) * back; hy = ey - (fy - ny) * back;
+        }
+        writeQuad(pos, (2 * S + k) * 4, hx, hy, ex, ey, ux, uy, growing ? this.halfHeadHalo : 0, growing ? this.halfHead : 0);
+        writeQuad(pos, (3 * S + k) * 4, hx, hy, ex, ey, ux, uy, growing ? this.halfHead : 0, growing ? this.halfHead * 0.5 : 0);
       }
+      this.heads = heads;
       geom.getBuffer('aPosition').update();
-      if (F >= this.info.crackReach) this.grown = true;
+      if (F >= info.crackReach) {
+        this.grown = true;
+        this.heads = 0;
+      }
     }
-    const uv = geom.uvs;
+    // Each end of a crack ages from the moment the front reached it, so the
+    // crack runs white-hot at the tip, cooling orange to red behind it.
     for (let k = 0; k < S; k++) {
       const q = k * SEG_STRIDE;
-      const u = F >= s[q + 4]! ? glowU((t - s[q + 6]!) / 1000) : U_DARK;
+      const dn = s[q + 4]!, df = s[q + 5]!;
+      let ua = U_DARK, ub = U_DARK;
+      if (F >= dn) {
+        ua = glowU((t - s[q + 6]!) / 1000);
+        ub = F >= df ? glowU((t - s[q + 9]!) / 1000) : U_HOT;
+      }
+      // writeQuad's corners: 0 and 3 at the near end, 1 and 2 at the tip.
       const h = k * 8, c = (S + k) * 8;
-      uv[h] = u; uv[h + 2] = u; uv[h + 4] = u; uv[h + 6] = u;
-      uv[c] = u; uv[c + 2] = u; uv[c + 4] = u; uv[c + 6] = u;
+      uv[h] = ua; uv[h + 2] = ub; uv[h + 4] = ub; uv[h + 6] = ua;
+      uv[c] = ua; uv[c + 2] = ub; uv[c + 4] = ub; uv[c + 6] = ua;
     }
     geom.getBuffer('aUV').update();
+  }
+
+  /** White-hot heads drawn at the last update (0 once the front has passed
+   *  every crack). Tests/diagnostics. */
+  frontHeads(): number {
+    return this.glow === null ? 0 : this.heads;
   }
 
   /** Fire this piece's ripple blasts whose moment has come (once each). */
@@ -798,8 +948,11 @@ export class WreckPieceSprite extends Container {
 }
 
 /** Floats per cut segment: near x,y and far x,y (Pixi-down), near/far crack
- *  distance, ignition (game ms after death), unit direction x,y. */
-const SEG_STRIDE = 9;
+ *  distance, near-end ignition (game ms after the front started), unit
+ *  direction x,y, far-end ignition. */
+const SEG_STRIDE = 10;
+/** Glow quads per cut segment: halo, core, head halo, head core. */
+const GLOW_QUADS_PER_SEG = 4;
 
 /** Four corners of a quad from (px,py) to (qx,qy), half-width `h`, ends
  *  pushed out by `ext` along the unit direction (ux,uy). In place. */

@@ -488,36 +488,58 @@ before the server pushes them apart; this is what the client shows in that
 window. Everything runs on the renderer's game clock (`ctx.fxNowMs`), so it
 slows in slow motion and speeds up at 4×.
 
-- **The crack front.** `WreckArtState.infoFor` finds the nearest and farthest
-  cut vertex from the kill point over the whole wreck (`crackMin`,
-  `crackReach`, hull frame). The front (`crackFrontAt`) runs from the first to
-  the second in `WRECK_CRACK_FRONT_MS` (0.8 × the window, so the last cracks
-  are still white-hot at the split). Distance is straight-line from the kill
-  point: the front is a ring spreading from the hit, lighting the cuts it
-  crosses. Each cut segment ignites when the front reaches its near end, grows
-  to its far end, then cools on the old `wreckGlowAt` curve from its OWN
-  ignition. A late joiner's front is already past everything: the cracks just
-  show their current cooling state.
-- **One glow mesh, not a stroke.** The glow is one `Mesh` per piece (a halo
-  quad and a core quad per cut segment) on a 64×2 texture holding the glow
-  curve (`wreckGlowTexture`: row 0 core, row 1 halo at 0.3 alpha; U = age /
-  6 s). Each frame rewrites only the quads' U coordinates (each segment's age)
-  and, until the front has passed every cut, their positions, in place. So
-  the count is unchanged (still one glow object per piece, budget 8) and the
-  per-segment colour costs no extra draw objects. The segment table (ends,
-  crack distances, ignition time) is built once with the sprite.
-- **Ripple blasts.** At first sight of a fresh wreck (younger than the crack
-  window) `wreckRipples` picks up to `wreckRippleCap(tier)` points on the cut
-  edges (7 high, 5 medium, 3 low, none minimal), one per equal band of front
-  distance with seeded jitter, so they ripple outward with the front. Each
-  fires once, from its piece's sprite, when the front reaches it: a pooled
-  `FxExplosions` burst of radius 0.022–0.04 × the wreck radius (the kill
-  blast is 0.12). A late joiner gets none; one whose moment passed before its
-  piece was drawn is dropped. `artStats().wreckRipples` counts them.
+- **The crack front.** Each crack (a run of cut edges on a piece) is reached
+  at its end nearer the kill point, at the straight-line distance, and the
+  front then runs ALONG it (`forEachCut`: each end's crack distance). The
+  front's clock (`crackFrontAt` / `crackIgniteMs`) runs over the crack
+  distances that hold a crack only (`crackIntervals`, merged), from the
+  nearest to the farthest in `WRECK_CRACK_FRONT_MS` (0.8 × the window), so it
+  never idles across a stretch of the hull with nothing to light. Each cut
+  segment grows from its near end to its far end; each END ages from the
+  moment the front reached it, so a crack is white-hot at the tip and cools
+  orange to red behind it, on the old `wreckGlowAt` curve.
+- **First sight, not the death (review 2026-11-13).** The client first draws
+  a wreck 0.1–0.5 s after the death (its descriptor arrives late). Anchored
+  at the death, most of the front had already run and every crack lit at
+  once. A wreck first seen inside its crack window starts the front, the
+  glow's clock and the ripples at first sight (`deathMs` is then first
+  sight); the break-up burst still uses the real age. A late joiner keeps the
+  true age: cool, no front.
+- **One glow mesh, not a stroke.** The glow is one `Mesh` per piece on a
+  64×2 texture holding the glow curve (`wreckGlowTexture`: row 0 core, row 1
+  halo at 0.3 alpha; U = age / 6 s). Four quads per cut segment: a halo and a
+  core (per-vertex U: the age at each end), then the white-hot head's halo
+  and core (`GLOW_HEAD_MUL` wider, `GLOW_HEAD_LEN_R` × the wreck radius
+  long) on the stretch behind the tip of a crack still growing. Widths are a
+  share of the wreck radius (`GLOW_CORE_R`, #18), so they read at capital
+  zoom (~0.17). Each frame rewrites only the U coordinates and, until the
+  front has passed every cut, the positions, in place. Still one glow object
+  per piece (budget 8). `frontHeads()` counts the heads drawn.
+- **Ripple blasts.** At first sight of a fresh wreck `wreckRipples` picks up
+  to `wreckRippleCap(tier)` points (7 high, 5 medium, 3 low, none minimal) on
+  the cut edges at least `WRECK_RIPPLE_FAR_FROM` (0.35) of the farthest
+  crack's distance from the kill point, clear of the kill blast's fireball
+  and smoke: one per equal band in the order the front reaches them, so they
+  fire in sequence as it passes. Each is a pooled `FxExplosions` burst of
+  radius 0.05–0.07 × the wreck radius (review: 0.022–0.04 were lost; the
+  kill blast is 0.12). A late joiner gets none; one whose moment passed
+  before its piece was drawn is dropped. `artStats().wreckRipples` counts
+  them.
+- **The burnt tint stays close to the art (review 2026-11-13).** The tint is
+  per piece, so a wide near/far spread puts a hard brightness step at every
+  cut. With the old near tint (0x9a8a80) a mid-hull kill turned every middle
+  piece into a dark brown slab beside a normal bow and stern once the blast's
+  light faded ("the middle chunks lose their hull art", measured on the take
+  at 0.69 / 0.66 / 0.65 of the stern's R/G/B, matching the tint ratio). Near
+  is now 0xc4bab2 against 0xd2cac4 far (≥ 0.9 per channel); the scorch is
+  the glow's job.
 - Locks: `swarmSpriteUpdater.wreckArt.test.ts` "cracks spread, then it
-  breaks" (front from the kill point, all lit by the split, each cools from
-  its own ignition; ripples on the cuts, small, under the cap, spread in
-  time, none for a late joiner; the game clock drives both).
+  breaks" (front from the kill point, also when first seen 300 ms late; a
+  head runs while cracks grow; all lit by the split; each cools from its own
+  ignition; ripples on the cuts, 0.05–0.07 × the radius, away from the kill
+  point, under the cap, spread in time, none for a late joiner; the game
+  clock drives both) and "after cooling, no glow draws and every piece keeps
+  the hull art at about the same brightness".
 
 ### S4: secondary breaks and the catastrophic flash
 

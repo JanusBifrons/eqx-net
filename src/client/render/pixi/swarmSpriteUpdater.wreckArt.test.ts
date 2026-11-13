@@ -17,6 +17,7 @@ import { MountVisualManager } from '../MountVisualManager.js';
 import { WreckGeometryStore, rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
 import {
   WreckArtState, WreckPieceSprite, WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX, WRECK_RIPPLE_MAX, WRECK_BLAST_MAIN,
+  WRECK_RIPPLE_R_MIN, WRECK_RIPPLE_R_MAX, WRECK_CRACK_FRONT_MS, WRECK_GLOW_END_S, wreckGlowTexture,
 } from './wreckArt.js';
 import { WRECK_CRACK_MS } from '../../../shared-types/wreckTiming.js';
 import type { ArtHandle, ArtService, ShipArt } from '../art/ArtService.js';
@@ -182,6 +183,42 @@ describe('updateSwarmSprites — capital wreck art (S3)', () => {
     updateSwarmSprites(mirror, ctx);
     expect(ctx.shipContainer.children).toEqual(before);
     expect(breaks.length).toBe(1);
+  });
+
+  // Hostile review 2026-11-13 (both reviewers, ~25–30 s of the take): the
+  // MIDDLE chunks lost their hull art, darker with a streaky look, while
+  // bow and stern looked normal. Measured on the frames: the middle pieces
+  // were 0.69 / 0.66 / 0.65 (R/G/B) of the stern's brightness, long after
+  // the glow mesh was gone: exactly the old per-piece burnt tint (near the
+  // kill point 0x9a8a80 vs 0xd2cac4 far, 0.73 / 0.68 / 0.65). A mid-hull
+  // kill put every middle piece at the near end, a dark brown slab with a
+  // hard step at each cut once the blast's light had faded.
+  it('after cooling, no glow draws and every piece keeps the hull art at about the same brightness', () => {
+    const art = battleshipArt();
+    const { svc } = stubArt(art);
+    const ctx = makeCtx(svc, []);
+    const m = mirrorFor(desc(DEATH_TICK), DEATH_TICK);
+    ctx.fxNowMs = 10_000;
+    updateSwarmSprites(m, ctx);
+    ctx.fxNowMs = 10_000 + WRECK_CRACK_MS + WRECK_GLOW_END_S * 1000 + 100;
+    updateSwarmSprites(m, ctx);
+    const glowTex = wreckGlowTexture();
+    const own = new Set(art.frames);
+    const tints: number[] = [];
+    for (const s of ctx.sprites.values()) {
+      expect((s as WreckPieceSprite).glowAlpha()).toBe(0);
+      for (const c of s.children) {
+        expect(c instanceof Mesh && c.texture === glowTex, 'no glow mesh left over the art').toBe(false);
+        if (c instanceof Mesh) { expect(own.has(c.texture)).toBe(true); tints.push(c.tint); }
+      }
+    }
+    expect(tints.length).toBeGreaterThan(3);
+    const ch = (t: number, k: number): number => (t >> (16 - 8 * k)) & 255;
+    for (let k = 0; k < 3; k++) {
+      let lo = 255, hi = 0;
+      for (const t of tints) { lo = Math.min(lo, ch(t, k)); hi = Math.max(hi, ch(t, k)); }
+      expect(lo / hi, `channel ${k}: no dark slab next to a normal piece`).toBeGreaterThanOrEqual(0.88);
+    }
   });
 
   it('a late joiner sees the wreck cool: no burst, no glow (from the descriptor\'s death tick)', () => {
@@ -369,6 +406,54 @@ describe('updateSwarmSprites — cracks spread, then it breaks', () => {
     expect(heat(ctx, nearest.p, nearest.i)).toBeLessThan(heat(ctx, farthest.p, farthest.i));
   });
 
+  // Hostile review 2026-11-13: the cracks appeared almost at once, with no
+  // visible front. The client first draws a wreck 0.1–0.5 s after the death
+  // (the descriptor arrives late), and the front was anchored at the death
+  // time, so most of it had already run. A wreck first seen young starts its
+  // front from first sight.
+  it('a wreck first seen 300 ms after death still shows the front starting at the kill point', () => {
+    const ctx = makeCtx(null, []);
+    const m = mirrorFor(d, DEATH_TICK + 18); // 18 ticks = 300 ms
+    ctx.fxNowMs = T0;
+    updateSwarmSprites(m, ctx);
+    const edges = cutEdges(ctx);
+    let lo = Infinity, hi = 0;
+    for (const e of edges) { lo = Math.min(lo, e.near); hi = Math.max(hi, e.near); }
+    ctx.fxNowMs = T0 + 50;
+    updateSwarmSprites(m, ctx);
+    let lit = 0;
+    for (const e of edges) {
+      const h = heat(ctx, e.p, e.i);
+      if (e.near > lo + 0.2 * (hi - lo)) expect(h, `far edge p${e.p}/e${e.i} still dark`).toBe(0);
+      if (h > 0) lit++;
+    }
+    expect(lit, 'the front has started at the kill point').toBeGreaterThan(0);
+    // The whole spread is still to come: the farthest crack is dark just
+    // before the front's full run (from first sight) ends.
+    ctx.fxNowMs = T0 + WRECK_CRACK_FRONT_MS * 0.85;
+    updateSwarmSprites(m, ctx);
+    let farthest = edges[0]!;
+    for (const e of edges) if (e.near > farthest.near) farthest = e;
+    expect(heat(ctx, farthest.p, farthest.i), 'the farthest crack is not reached yet').toBe(0);
+  });
+
+  it('the front reads: a white-hot head runs along each growing crack, gone once every crack is reached', () => {
+    const ctx = makeCtx(null, []);
+    const m = mirrorFor(d, DEATH_TICK);
+    ctx.fxNowMs = T0;
+    updateSwarmSprites(m, ctx);
+    ctx.fxNowMs = T0 + WRECK_CRACK_FRONT_MS * 0.5;
+    updateSwarmSprites(m, ctx);
+    let heads = 0;
+    for (const s of ctx.sprites.values()) heads += (s as WreckPieceSprite).frontHeads();
+    expect(heads, 'heads on the cracks the front is crossing').toBeGreaterThan(0);
+    ctx.fxNowMs = T0 + WRECK_CRACK_FRONT_MS + 50;
+    updateSwarmSprites(m, ctx);
+    heads = 0;
+    for (const s of ctx.sprites.values()) heads += (s as WreckPieceSprite).frontHeads();
+    expect(heads, 'no head once the front has passed everything').toBe(0);
+  });
+
   it('small blasts ripple along the cracks during the window, under the cap', () => {
     const ripples: number[][] = [];
     const breaks: number[][] = [];
@@ -397,9 +482,33 @@ describe('updateSwarmSprites — cracks spread, then it breaks', () => {
         best = Math.min(best, Math.hypot(x! - (e.ax + ex * t), y! - (e.ay + ey * t)));
       }
       expect(best, 'ripple on a cut edge').toBeLessThan(1);
-      // Small: well below the kill blast.
-      expect(r!).toBeGreaterThan(0);
-      expect(r!).toBeLessThan(hullR * WRECK_BLAST_MAIN * 0.5);
+      // Clearly visible (review: "no visible ripple explosions" at 0.022–0.04),
+      // but well below the kill blast (0.12).
+      expect(r! / hullR).toBeGreaterThanOrEqual(WRECK_RIPPLE_R_MIN - 1e-9);
+      expect(r! / hullR).toBeLessThanOrEqual(WRECK_RIPPLE_R_MAX + 1e-9);
+      expect(WRECK_RIPPLE_R_MIN).toBeGreaterThanOrEqual(0.05);
+      expect(WRECK_RIPPLE_R_MAX).toBeLessThanOrEqual(0.07);
+      expect(WRECK_RIPPLE_R_MAX).toBeLessThan(WRECK_BLAST_MAIN * 0.6);
+    }
+  });
+
+  it('the ripples sit on the far parts of the cracks, away from the kill-blast smoke', () => {
+    const ripples: number[][] = [];
+    const ctx = makeCtx(null, [], ripples);
+    const m = mirrorFor(d, DEATH_TICK);
+    for (let t = 0; t <= WRECK_CRACK_MS; t += 16) { ctx.fxNowMs = T0 + t; updateSwarmSprites(m, ctx); }
+    const geom = rebuildWreckPieces(d)!;
+    const info = ctx.wreckArt!.infoFor(d, geom, 0, { x: 0, y: 0, angle: 0 }, DEATH_TICK, T0);
+    let farthest = 0;
+    for (const e of cutEdges(ctx)) {
+      farthest = Math.max(farthest, Math.hypot(e.ax - info.killX, e.ay - info.killY), Math.hypot(e.bx - info.killX, e.by - info.killY));
+    }
+    expect(ripples.length).toBeGreaterThanOrEqual(3);
+    for (const [x, y, r] of ripples) {
+      const dk = Math.hypot(x! - info.killX, y! - info.killY);
+      expect(dk, 'ripple away from the kill point').toBeGreaterThanOrEqual(0.3 * farthest);
+      // Clear of the kill blast's fireball (2 × its radius).
+      expect(dk - r!, 'ripple clear of the kill fireball').toBeGreaterThan(2 * WRECK_BLAST_MAIN * info.hullR);
     }
   });
 
