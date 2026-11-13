@@ -44,6 +44,12 @@ export class SnapshotCoalescer {
     if (!this.enabled) return;
     if (this.pending !== null) {
       this.droppedSinceLastDrain++;
+      // `wrecks[]` is NOT full-state on every snapshot: it rides only a few
+      // after a change, then 2 Hz (absent = no change). A dropped snapshot's
+      // list rides on with a newer one that has none, or a wreck's pieces
+      // wait seconds for the next copy and miss their break-up (money-shot
+      // review, capital-destruction.md). No allocation: the array moves.
+      if (this.pending.wrecks !== undefined && snap.wrecks === undefined) snap.wrecks = this.pending.wrecks;
     }
     this.pending = snap;
   }

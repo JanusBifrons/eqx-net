@@ -40,6 +40,28 @@ describe('WreckBreakFx', () => {
     expect(world.children.length).toBe(0);
   });
 
+  it('the flash is a short, small bright core, not a hull-covering disc (money-shot review)', () => {
+    // The review: "a large flat white translucent disc plus a grey halo
+    // covers the mid-hull for ~3 frames". The core flash must stay a small
+    // fraction of the wreck's radius and be gone in about a quarter second.
+    const R = 2200; // heavy cruiser (2×) wreck radius
+    const { world, f } = fx('high', true);
+    f.spawnBurst(0, 0, { radius: R });
+    const layer = world.children[0] as Container;
+    let maxExtent = 0;
+    let frames = 0;
+    for (let i = 0; i < 60; i++) {
+      f.tick(1 / 60);
+      for (const c of layer.children) {
+        if (!c.visible || c.alpha <= 0.02) continue;
+        maxExtent = Math.max(maxExtent, c.getLocalBounds().maxX * c.scale.x);
+      }
+      if (f.activeCount() > 0) frames++;
+    }
+    expect(maxExtent, 'flash radius (world u)').toBeLessThan(0.15 * R);
+    expect(frames, 'flash frames at 60 Hz').toBeLessThanOrEqual(16);
+  });
+
   it('many bursts reuse one bounded pool', () => {
     const { world, f } = fx('high');
     for (let i = 0; i < 10; i++) f.spawnBurst(i * 10, 0, { radius: 1500 });
