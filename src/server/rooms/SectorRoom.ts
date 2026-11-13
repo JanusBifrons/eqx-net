@@ -89,7 +89,7 @@ import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiv
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipCollisionParts } from '../../core/geometry/shipHullDecomp.js';
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
-import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE, SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
+import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '../../shared-types/swarmWireFormat.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { pushNotifier } from '../push/PushNotifier.js';
 import { registerConnectedPlayer, unregisterConnectedPlayer } from '../push/connectedPlayers.js';
@@ -264,7 +264,7 @@ import { guarded } from './guardedLoop.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
-import { registerScenePerfRoom, unregisterScenePerfRoom, sceneSimTime, type ScenePerfView } from './scene/scenePerfRegistry.js';
+import { registerScenePerfRoom, unregisterScenePerfRoom, sceneSimTime, SCENE_RECENT_TICKS, type ScenePerfView } from './scene/scenePerfRegistry.js';
 import { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 import type { EventLoopUtilization } from 'node:perf_hooks';
 import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
@@ -3092,7 +3092,10 @@ export class SectorRoom extends Room<SectorState> {
     }
     this.testPilotCapitals = this.testMode && roomOpts.pilotCapitals === true;
     this.capitalWrecksOn = roomOpts.capitalWrecks === true || process.env['EQX_CAPITAL_WRECKS'] === '1';
-    this.subcapWrecksOn = roomOpts.subcapWrecks === true || process.env['EQX_SUBCAP_WRECKS'] === '1';
+    // `EQX_SUBCAP_WRECKS=0` forces it off even where the room asks for it: the
+    // off arm of the debris soak (perf scene `fleet-fight-soak`, slice 5).
+    const subcapEnv = process.env['EQX_SUBCAP_WRECKS'];
+    this.subcapWrecksOn = subcapEnv !== '0' && (roomOpts.subcapWrecks === true || subcapEnv === '1');
     if (this.capitalWrecksOn || this.subcapWrecksOn) this.initCapitalWrecks();
     // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
     if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {
@@ -10692,11 +10695,31 @@ export class SectorRoom extends Room<SectorState> {
       scene: { ...this.sceneRunner.getStatus() },
       tick: this.sceneTickRing.summary(),
       workerTick: this.sceneWorkerRing.summary(),
+      tickRecent: this.sceneTickRing.summary(SCENE_RECENT_TICKS),
+      workerTickRecent: this.sceneWorkerRing.summary(SCENE_RECENT_TICKS),
+      bodies: this.sceneBodyCensus(),
       swarm: this.swarmRegistry.size(),
       players: this.playerToSlot.size,
       structures: this.structureRegistry.size,
       work: this.sceneWork.view(this.sceneEluStart ? (this.physicsWorkerProxy?.elu(this.sceneEluStart)?.utilization ?? null) : null),
       simTime: sceneSimTime(this.sceneSimStart, this.sceneSimEnd, this.gameClock.scale),
+    };
+  }
+
+  /** Perf-scene census (read on a `/dev/perf` poll, never on the tick):
+   *  swarm bodies by kind and how many the worker flags SLEEPING, plus the
+   *  live wreck pieces (debris soak, sub-cap break-up slice 5). */
+  private sceneBodyCensus(): ScenePerfView['bodies'] {
+    let sleeping = 0, wreckPieces = 0, wreckSleeping = 0;
+    for (const rec of this.swarmRegistry.all()) {
+      const asleep = ((this.sabU32[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0) & FLAG_SLEEPING) !== 0;
+      if (asleep) sleeping++;
+      if (rec.kind === SWARM_KIND_WRECK) { wreckPieces++; if (asleep) wreckSleeping++; }
+    }
+    return {
+      swarm: this.swarmRegistry.size(), sleeping, wreckPieces, wreckSleeping,
+      wreckSubcapLive: this.capitalWrecks?.liveSubcapCount() ?? 0,
+      wreckDescriptors: this.capitalWrecks?.descriptors().length ?? 0,
     };
   }
 

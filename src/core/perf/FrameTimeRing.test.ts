@@ -22,4 +22,13 @@ describe('FrameTimeRing', () => {
     r.reset();
     expect(r.summary().frames).toBe(0);
   });
+
+  it('summary(last) covers only the newest frames (a soak recent window)', () => {
+    const r = new FrameTimeRing(8);
+    for (let i = 0; i < 6; i++) r.push(100);
+    for (let i = 0; i < 4; i++) r.push(10); // wraps: ring holds 100,100,100,100,10,10,10,10
+    expect(r.summary(4)).toEqual({ frames: 4, p50: 10, p95: 10, p99: 10, max: 10, hitches: 0 });
+    expect(r.summary(100).frames).toBe(8);
+    expect(r.summary().max).toBe(100);
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SceneScriptRunner, SceneScriptSchema, scenePoint, type SceneHooks } from './SceneScriptRunner';
+import { SceneScriptRunner, SceneScriptSchema, scenePoint, expandRepeats, type SceneHooks } from './SceneScriptRunner';
 
 function harness(capacity = Infinity): { hooks: SceneHooks; spawned: Array<{ id: string; x: number; y: number; warpIn: boolean }>; hostile: string[] } {
   const spawned: Array<{ id: string; x: number; y: number; warpIn: boolean }> = [];
@@ -77,5 +77,28 @@ describe('SceneScriptRunner', () => {
     const p = { x: 9, y: 9 };
     scenePoint(0, 1, 500, p);
     expect(p).toEqual({ x: 0, y: 0 });
+  });
+
+  it('a repeating spawn plays every repeatEveryMs until repeatUntilMs, each with its own tag', () => {
+    const script = SceneScriptSchema.parse([
+      { atMs: 0, action: 'spawn', tag: 'blue', kind: 'fighter', count: 2, x: 0, y: 0, repeatEveryMs: 10_000, repeatUntilMs: 30_000 },
+      { atMs: 40_000, action: 'end' },
+    ]);
+    expect(expandRepeats(script).map((s) => [s.atMs, s.action === 'spawn' ? s.tag : 'end'])).toEqual([[0, 'blue'], [10_000, 'blue-r1'], [20_000, 'blue-r2'], [40_000, 'end']]);
+    const h = harness();
+    const r = new SceneScriptRunner(script, h.hooks);
+    r.start(0);
+    r.tick(ticksFor(25_000));
+    expect(h.spawned.map((s) => s.id)).toEqual(['scene-blue-0', 'scene-blue-1', 'scene-blue-r1-0', 'scene-blue-r1-1', 'scene-blue-r2-0', 'scene-blue-r2-1']);
+  });
+
+  it('the soak scene stays inside the 64-entry seed guard and reinforces for its whole 10 minutes', async () => {
+    const { perfSceneById } = await import('../../../shared-types/perf/perfScenes.js');
+    const soak = perfSceneById('fleet-fight-soak')!;
+    expect(soak.room.sceneScript.length).toBeLessThanOrEqual(64);
+    const steps = expandRepeats(SceneScriptSchema.parse(soak.room.sceneScript));
+    expect(steps.filter((s) => s.action === 'spawn')).toHaveLength(120);
+    expect(soak.soak).toBe(true);
+    expect(soak.room['subcapWrecks']).toBe(true);
   });
 });

@@ -26,9 +26,12 @@ export interface PerfScene {
   durationMs: number;
   /** A run is valid only if at least this many swarm entities are live at the end. */
   minSwarm: number;
+  /** A long soak: left out of a default `pnpm perf:scenes` run (name it
+   *  with `--scenes`). */
+  soak?: boolean;
 }
 
-const fight = (tag: string, kind: string, x: number, y: number, count: number, atMs = 0): SceneStep =>
+const fight = (tag: string, kind: string, x: number, y: number, count: number, atMs = 0): Extract<SceneStep, { action: 'spawn' }> =>
   ({ atMs, action: 'spawn', tag, kind, count, x, y, spread: 260 });
 
 /** Both sides, reinforced every 10 s: a 30-ship clash is over in ~10 s, so
@@ -61,6 +64,32 @@ export const PERF_SCENES: readonly PerfScene[] = [
     camera: { x: 0, y: 1200, zoom: 0.45 },
     durationMs: 30_000,
     minSwarm: 30,
+  },
+  {
+    // Sub-capital break-up slice 5 (plan subcapital-breakup.md): the
+    // fleet-fight setup played for ten minutes with `subcapWrecks` on, so
+    // every kill leaves permanent pieces that drift to a stop and sleep. Run
+    // with `--sample-ms 30000` for the over-time curve (pieces alive, sleeping
+    // share, tick cost, wire, frame time); `--base-env EQX_SUBCAP_WRECKS=0`
+    // is the same scene with the flag forced off. Results:
+    // docs/architecture/capital-destruction.md "Soak results".
+    id: 'fleet-fight-soak',
+    title: 'The fleet fight for 10 minutes with sub-cap wrecks on (debris soak)',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      subcapWrecks: true,
+      sceneScript: [
+        { ...fight('blue', 'fighter', -300, 1200, 30), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { ...fight('red', 'robot-square', 300, 1200, 30), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { atMs: 600_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: -400 },
+    camera: { x: 0, y: 1200, zoom: 0.45 },
+    durationMs: 600_000,
+    minSwarm: 30,
+    soak: true,
   },
   {
     id: 'teleport-raid',

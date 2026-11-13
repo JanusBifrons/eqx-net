@@ -16,6 +16,14 @@ export interface ScenePerfView {
   tick: FrameTimeSummary;
   /** Physics-worker step time per tick while the scene runs. */
   workerTick: FrameTimeSummary;
+  /** The same over the last `SCENE_RECENT_TICKS` ticks only: a soak's
+   *  over-time curve (`perf:scenes --sample-ms`). */
+  tickRecent: FrameTimeSummary;
+  workerTickRecent: FrameTimeSummary;
+  /** Census at read time: swarm bodies, how many the worker flags SLEEPING,
+   *  live wreck pieces (and asleep), the sub-cap FIFO and live wreck
+   *  descriptors (sub-cap break-up slice 5). */
+  bodies: { swarm: number; sleeping: number; wreckPieces: number; wreckSleeping: number; wreckSubcapLive: number; wreckDescriptors: number };
   swarm: number;
   players: number;
   structures: number;
@@ -29,6 +37,9 @@ export interface ScenePerfView {
 }
 
 export interface ScenePerfSource { scenePerf(): ScenePerfView | null }
+
+/** `tickRecent` window: the last 30 s of 60 Hz ticks. */
+export const SCENE_RECENT_TICKS = 1800;
 
 const rooms = new Set<ScenePerfSource>();
 

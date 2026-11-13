@@ -59,12 +59,17 @@ import { armOrder, evenReps } from './order.js';
 
 const GPU_ARGS = ['--use-angle=d3d11', '--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'];
 
-interface Args { scenes: string[]; reps: number; base: string; headOnly: boolean; headed: boolean; out: string; burnServerMs: number; burnClientMs: number; append: string | undefined; baseParams: string; headParams: string; baseEnv: string; headEnv: string; device: 'desktop' | 'phone-proxy'; cpuRate: number; noiseCheck: boolean | undefined; ignorePorts: number[]; loadGate: boolean; limits: LoadLimits }
+interface Args { sampleMs: number; scenes: string[]; reps: number; base: string; headOnly: boolean; headed: boolean; out: string; burnServerMs: number; burnClientMs: number; append: string | undefined; baseParams: string; headParams: string; baseEnv: string; headEnv: string; device: 'desktop' | 'phone-proxy'; cpuRate: number; noiseCheck: boolean | undefined; ignorePorts: number[]; loadGate: boolean; limits: LoadLimits }
 
 function parseArgs(argv: string[]): Args {
   const get = (k: string): string | undefined => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
   return {
-    scenes: (get('--scenes') ?? PERF_SCENES.map((s) => s.id).join(',')).split(',').filter(Boolean),
+    // A soak (`PerfScene.soak`) runs only when named.
+    scenes: (get('--scenes') ?? PERF_SCENES.filter((s) => !s.soak).map((s) => s.id).join(',')).split(',').filter(Boolean),
+    // Over-time samples (a soak's curve): every N ms read the server and the
+    // client window, then reset the client window. 0 = off. With it on, the
+    // run's client timings cover only the LAST sample interval.
+    sampleMs: Number(get('--sample-ms') ?? 0),
     reps: Number(get('--reps') ?? 8),
     base: get('--base') ?? 'origin/main',
     headOnly: argv.includes('--head-only'),
@@ -125,13 +130,16 @@ async function devPerf(serverUrl: string): Promise<{ rooms: Array<Record<string,
   return fetch(`${serverUrl}/dev/perf`).then((r) => r.json() as Promise<{ rooms: Array<Record<string, any>> }>);
 }
 
+/** Colyseus ROOM_DATA (13) + msgpack fixstr 'swarm' (SwarmBroadcaster's client.send('swarm', …)). */
+const SWARM_FRAME_HEAD = Buffer.from([13, 0xa5, 0x73, 0x77, 0x61, 0x72, 0x6d]);
+
 /** Phone-class proxy: a mid phone's CPU (Chrome throttle) and screen. */
 const PHONE_PROXY = { viewport: { width: 915, height: 412 }, deviceScaleFactor: 2.625, isMobile: true, hasTouch: true, cpuRate: 4 };
 
 /** Client URL flags every arm gets; an arm's own params override them. */
 const BASE_CLIENT_PARAMS: Record<string, string> = { shipKind: 'fighter', initialHull: '1000000', art: 'machined', fx: 'new', diag: '0', perfprobe: '1' };
 
-async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: string) => void, device: Args['device'] = 'desktop', cpuRate = PHONE_PROXY.cpuRate): Promise<RunMetrics> {
+async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: string) => void, device: Args['device'] = 'desktop', cpuRate = PHONE_PROXY.cpuRate, sampleMs = 0): Promise<RunMetrics> {
   const phone = device === 'phone-proxy';
   const ctx = await browser.newContext(phone
     ? { viewport: PHONE_PROXY.viewport, deviceScaleFactor: PHONE_PROXY.deviceScaleFactor, isMobile: true, hasTouch: true }
@@ -141,11 +149,16 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
   // Bytes received over the game socket, from DevTools network events: exact,
   // and no app instrumentation (works the same on a phone over adb).
   let rxBytes = 0;
+  // Split out the binary swarm channel: a Colyseus ROOM_DATA frame (13) whose
+  // message type is the msgpack fixstr 'swarm'; the rest = snapshots, events.
+  let rxSwarmBytes = 0;
   const cdp = await ctx.newCDPSession(page);
   await cdp.send('Network.enable');
   cdp.on('Network.webSocketFrameReceived', (e: { response: { opcode: number; payloadData: string } }) => {
     const d = e.response.payloadData;
-    rxBytes += e.response.opcode === 1 ? d.length : Math.floor((d.length * 3) / 4);
+    const n = e.response.opcode === 1 ? d.length : Math.floor((d.length * 3) / 4);
+    rxBytes += n;
+    if (e.response.opcode !== 1 && Buffer.from(d.slice(0, 12), 'base64').subarray(0, 7).equals(SWARM_FRAME_HEAD)) rxSwarmBytes += n;
   });
   try {
     const p = new URLSearchParams({
@@ -160,13 +173,30 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
     await page.waitForSelector('[data-testid="warp-screen"][data-warp-visible="0"]', { state: 'attached', timeout: 180_000 });
     await page.evaluate((c) => (globalThis as unknown as { __eqxCinema?: { play(c: unknown[]): void } }).__eqxCinema?.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: c.x, y: c.y, zoom: c.zoom * (c.vw / 1920) } }]), { ...scene.camera, vw: phone ? PHONE_PROXY.viewport.width : 1280 });
     await page.evaluate(() => (globalThis as unknown as { __eqxPerf: { reset(): Promise<void> } }).__eqxPerf.reset());
-    rxBytes = 0;
+    rxBytes = 0; rxSwarmBytes = 0;
+    const series: SoakSample[] = [];
+    let last: SampleMark = { atMs: Date.now(), rx: 0, rxSwarm: 0, work: null };
+    let nextSample = Date.now() + sampleMs;
     // Wait for the scene to end (server side).
     const deadline = Date.now() + scene.durationMs + 60_000;
     let room: Record<string, any> | undefined;
     for (;;) {
       room = (await devPerf(arm.servers.serverUrl)).rooms.find((r) => r['players'] > 0);
       if (room?.['scene']?.ended) break;
+      if (sampleMs > 0 && room && Date.now() >= nextSample) {
+        nextSample += sampleMs;
+        const c = await page.evaluate(async () => {
+          const probe = (globalThis as unknown as { __eqxPerf: { read(): Promise<any>; reset(): Promise<void> } }).__eqxPerf;
+          const r = await probe.read();
+          await probe.reset();
+          return r;
+        });
+        const now = Date.now();
+        const smp = soakSample(room, c, last, now, rxBytes, rxSwarmBytes);
+        series.push(smp);
+        last = { atMs: now, rx: rxBytes, rxSwarm: rxSwarmBytes, work: room['work'] ?? null };
+        log(`    t=${smp.sceneS.toFixed(0)}s pieces ${smp.wreckPieces} (asleep ${smp.wreckSleepingPct}%) swarm ${smp.swarm} (asleep ${smp.sleepingPct}%) · tick p50/p95/p99 ${smp.tickP50}/${smp.tickP95}/${smp.tickP99} ms · worker p95 ${smp.workerP95} · bodies/tick ${smp.bodiesPerTick} · swarm rec/tick ${smp.swarmRecordsPerTick} B/tick ${smp.swarmBytesPerTick} · rx ${smp.rxKBps} KB/s (swarm ${smp.rxSwarmKBps}, msgs ${smp.rxMsgKBps}) · wreck desc/snap ${smp.wreckDescPerSnapshot} · frame p50/p95/p99 ${smp.frameP50}/${smp.frameP95}/${smp.frameP99} · hitches ${smp.hitches} · render p95 ${smp.renderP95} · draws p95 ${smp.drawCallsP95} · objects ${smp.displayObjects}`);
+      }
       if (Date.now() > deadline) throw new Error(`scene ${scene.id} never ended (${JSON.stringify(room?.['scene'])})`);
       await new Promise((r) => setTimeout(r, 500));
     }
@@ -204,12 +234,55 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
         } : {}),
       },
       raw: { client, server: s },
+      ...(series.length ? { series } : {}),
     };
     log(`  ${arm.name.padEnd(4)} ${scene.id}: tick p95 ${m.timing.serverTickP95} ms · frame p95 ${m.timing.clientFrameP95} / p99 ${m.timing.clientFrameP99} ms · render p95 ${m.timing.renderP95} ms · hitches ${(m.timing.clientHitchesPerMin ?? 0).toFixed(1)}/min · rx ${(m.counts.rxKBps ?? 0).toFixed(0)} KB/s${s['simTime'] ? ` · sim behind ${s['simTime'].latenessTicks}/${s['simTime'].wallTicks} ticks (dropped ${s['simTime'].droppedTicks})` : ''}${valid ? '' : ' · INVALID: ' + m.invalidReason}`);
     return m;
   } finally {
     await ctx.close();
   }
+}
+
+/** One over-time sample of a soak (`--sample-ms`): rates over the window
+ *  since the previous sample, server tick percentiles over its last
+ *  SCENE_RECENT_TICKS, and the census at read time. */
+export interface SoakSample {
+  sceneS: number; swarm: number; sleepingPct: number; wreckPieces: number; wreckSleepingPct: number; wreckDescriptors: number;
+  tickP50: number; tickP95: number; tickP99: number; workerP95: number;
+  bodiesPerTick: number; swarmRecordsPerTick: number; swarmBytesPerTick: number; wreckDescPerSnapshot: number;
+  rxKBps: number; rxSwarmKBps: number; rxMsgKBps: number;
+  frameP50: number; frameP95: number; frameP99: number; hitches: number; renderP95: number; drawCallsP95: number | null; displayObjects: number;
+}
+
+interface SampleMark { atMs: number; rx: number; rxSwarm: number; work: Record<string, any> | null }
+
+/** Window rate from two running per-tick averages (avg × ticks = total). */
+function perTickDelta(cur: Record<string, any>, prev: Record<string, any> | null, key: string): number {
+  const t1 = cur['ticks'] ?? 0, t0 = prev?.['ticks'] ?? 0;
+  if (t1 <= t0) return 0;
+  return Math.round((((cur[key] ?? 0) * t1 - (prev?.[key] ?? 0) * t0) / (t1 - t0)) * 10) / 10;
+}
+
+function soakSample(room: Record<string, any>, c: any, last: SampleMark, now: number, rx: number, rxSwarm: number): SoakSample {
+  const b = room['bodies'] ?? {};
+  const w = room['work'] ?? {};
+  const pw = last.work;
+  const sec = Math.max(1e-3, (now - last.atMs) / 1000);
+  const kb = (v: number): number => Math.round((v / 1024 / sec) * 10) / 10;
+  const pct = (a: number, n: number): number => (n > 0 ? Math.round((a / n) * 1000) / 10 : 0);
+  const snaps = (w['snapshotsSent'] ?? 0) - (pw?.['snapshotsSent'] ?? 0);
+  const descs = (w['wreckDescriptorsSent'] ?? 0) - (pw?.['wreckDescriptorsSent'] ?? 0);
+  return {
+    sceneS: (room['scene']?.elapsedMs ?? 0) / 1000,
+    swarm: b.swarm ?? room['swarm'], sleepingPct: pct(b.sleeping ?? 0, b.swarm ?? 0),
+    wreckPieces: b.wreckPieces ?? 0, wreckSleepingPct: pct(b.wreckSleeping ?? 0, b.wreckPieces ?? 0), wreckDescriptors: b.wreckDescriptors ?? 0,
+    tickP50: room['tickRecent']?.p50 ?? 0, tickP95: room['tickRecent']?.p95 ?? 0, tickP99: room['tickRecent']?.p99 ?? 0, workerP95: room['workerTickRecent']?.p95 ?? 0,
+    bodiesPerTick: perTickDelta(w, pw, 'bodiesPerTick'), swarmRecordsPerTick: perTickDelta(w, pw, 'swarmRecordsPerTick'), swarmBytesPerTick: perTickDelta(w, pw, 'swarmBytesPerTick'),
+    wreckDescPerSnapshot: snaps > 0 ? Math.round((descs / snaps) * 10) / 10 : 0,
+    rxKBps: kb(rx - last.rx), rxSwarmKBps: kb(rxSwarm - last.rxSwarm), rxMsgKBps: kb(rx - last.rx - (rxSwarm - last.rxSwarm)),
+    frameP50: c.main.p50, frameP95: c.main.p95, frameP99: c.main.p99, hitches: c.main.hitches,
+    renderP95: c.render?.render?.p95 ?? 0, drawCallsP95: c.render?.counts?.drawCalls?.p95 ?? null, displayObjects: c.render?.displayObjects ?? 0,
+  };
 }
 
 /** The GPU the browser really renders with (UNMASKED_RENDERER_WEBGL). */
@@ -324,7 +397,7 @@ async function main(): Promise<void> {
               // Don't spend a scene on a host already known to be busy.
               m = { valid: false, invalidReason: `host busy: ${pre.join('; ')}`, timing: {}, counts: {}, raw: null };
             } else {
-              try { m = await runOnce(browser, a, scene, log, args.device, args.cpuRate); } catch (e) {
+              try { m = await runOnce(browser, a, scene, log, args.device, args.cpuRate, args.sampleMs); } catch (e) {
                 log(`  ${a.name} ${scene.id}: FAILED ${(e as Error).message}`);
                 m = { valid: false, invalidReason: (e as Error).message, timing: {}, counts: {}, raw: null };
               }

@@ -45,6 +45,10 @@ export interface SceneWorkView {
   snapshotsPerTick: number;
   /** Entities (drones + projectiles + missiles + asteroids) per JSON snapshot sent. */
   entitiesPerSnapshot: number;
+  /** Running totals (print-only): wreck descriptors attached to sent
+   *  snapshots and snapshots sent, so a sampler can diff two reads. */
+  wreckDescriptorsSent: number;
+  snapshotsSent: number;
   /** Print-only: process CPU ms per tick (null until one batch completed). */
   cpuMsPerTick: number | null;
   /** Print-only: main-thread CPU ms inside update(), sampled (null when the runtime can't tell). */
@@ -73,6 +77,9 @@ export class SceneWorkCounters {
   swarmBytes = 0;
   snapshots = 0;
   snapshotEntities = 0;
+  /** Wreck descriptors attached to sent snapshots (all recipients;
+   *  sub-cap break-up slice 5: the descriptor wire cost as debris piles up). */
+  wreckDescriptors = 0;
   /** Line-of-fire running totals at the first counted tick, and the latest. */
   private lofBase = -1;
   private lofNarrowBase = 0;
@@ -138,6 +145,8 @@ export class SceneWorkCounters {
       swarmBytesPerTick: r(this.swarmBytes / t, 0),
       snapshotsPerTick: r(this.snapshots / t, 3),
       entitiesPerSnapshot: r(this.snapshotEntities / Math.max(1, this.snapshots)),
+      wreckDescriptorsSent: this.wreckDescriptors,
+      snapshotsSent: this.snapshots,
       cpuMsPerTick: c > 0 ? r(this.cpuUs / 1000 / c, 3) : null,
       updateCpuMsPerTick: this.updateSamples > 0 ? r(this.updateUs / 1000 / this.updateSamples, 3) : null,
       wallMsPerTick: c > 0 ? r(this.wallMs / c, 3) : null,
