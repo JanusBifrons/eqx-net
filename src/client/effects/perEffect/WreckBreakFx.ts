@@ -38,12 +38,20 @@ export const WRECK_BREAK_DIAL: Record<EffectQuality, { dust: number; shards: num
 const FLASH_LIFE_S = 0.22;
 /** Core flash start / end radius, as a share of the wreck radius. */
 const FLASH_R0 = 0.02;
-const FLASH_R1 = 0.07;
+const FLASH_R1 = 0.08;
 const DUST_TINT = 0x7a6c62;
 /** Dust puffs: thinner and smaller than #518 (money-shot review: opaque flat
  *  discs sat over the fireballs and the break), still billowing out. */
 const DUST_ALPHA = 0.32;
-const DUST_GROW = 0.035;
+/** Owner decision 2026-11-13 ("smaller kill blast"): the dust hid the
+ *  cracks spreading from the kill point. It now stays within the kill
+ *  blast's reach (`WRECK_BLAST_REACH`, ~0.11 of the wreck radius; was
+ *  flung out to ~0.4) and lifts in ~1.2 s (was ~3 s). */
+const DUST_GROW = 0.018;
+const DUST_SPEED_MIN = 0.02;
+const DUST_SPEED_VAR = 0.06;
+const DUST_LIFE_S = 1.0;
+const DUST_LIFE_VAR_S = 0.7;
 const SHARD_HOT = 0xffc070;
 const SHARD_COLD = 0x3a2a22;
 
@@ -129,10 +137,10 @@ export class WreckBreakFx {
       for (let i = 0; i < dial.dust; i++) {
         const p = this.take(0);
         if (p === null) break;
-        const a = this.rnd() * Math.PI * 2, sp = R * (0.08 + this.rnd() * 0.35);
-        const j = R * 0.06 * this.rnd();
+        const a = this.rnd() * Math.PI * 2, sp = R * (DUST_SPEED_MIN + this.rnd() * DUST_SPEED_VAR);
+        const j = R * 0.02 * this.rnd();
         this.arm(p, px + Math.cos(a) * j, py + Math.sin(a) * j, Math.cos(a) * sp, Math.sin(a) * sp, 0,
-          R * (0.012 + this.rnd() * 0.025), R * DUST_GROW, 2.4 + this.rnd() * 1.8);
+          R * (0.006 + this.rnd() * 0.012), R * DUST_GROW, DUST_LIFE_S + this.rnd() * DUST_LIFE_VAR_S);
       }
       for (let i = 0; i < dial.shards; i++) {
         const p = this.take(1);

@@ -15,7 +15,7 @@ import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdat
 import { DyingHullHold, noteDyingHulls } from './pixi/dyingHullHold.js';
 import { sweepUnseenSprites } from './pixi/spriteSweep.js';
 import { WreckGeometryStore } from '../net/wreckGeometryStore.js';
-import { WreckArtState, WreckPieceSprite, hullDeathBlastReplaced, wreckBlasts, wreckRippleCap, type WreckBlast } from './pixi/wreckArt.js';
+import { WreckArtState, WreckPieceSprite, hullDeathBlastReplaced, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
@@ -954,7 +954,7 @@ export class PixiRenderer implements IRenderer {
           const now = this.fxNow();
           for (let i = 0; i < n; i++) {
             const b = this._wreckBlastScratch[i]!;
-            if (fx.spawn(b.x, b.y, b.r, now)) this._wreckBlastsSpawned++;
+            if (fx.spawn(b.x, b.y, b.r, now, WRECK_BLAST_LINGER)) this._wreckBlastsSpawned++;
           }
         }
       }, (x, y, r) => {
