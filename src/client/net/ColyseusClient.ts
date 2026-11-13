@@ -42,8 +42,9 @@ import {
 import { pushCollisionShieldContacts } from './collisionShieldContacts';
 import { MineDetonatedSchema } from '@shared-types/mines';
 import { ShellBlastSchema } from '@shared-types/shellBlast';
-import { ShellEndSchema, ShellSalvoSchema } from '@shared-types/messages/shellEvents';
+import { ShellEndSchema, ShellSalvoSchema, type ShellEnd } from '@shared-types/messages/shellEvents';
 import { ShellSalvoStore } from './shellSalvoStore';
+import { NavalHitHold, type HeldDamage } from './navalHitHold';
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, WallHitEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
 import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
@@ -1340,6 +1341,12 @@ export class ColyseusGameClient {
   /** Shells as events: on when the welcome says so (shell-events.md §7). */
   private _shellEvents = false;
   private readonly _shellStore = new ShellSalvoStore();
+  /** A naval shell hit's FX wait for its drawn burst (navalHitHold.ts). */
+  private readonly _navalHitHold = new NavalHitHold();
+  /** The sink `_navalHitHold.release` calls (built once, #14). */
+  private readonly _heldDamageSink = {
+    applyHeldDamage: (h: HeldDamage): void => this.applyDamageFx(h.evt, h.suppressNumber),
+  };
 
   private resetPredictionState(): void {
     // S2b: wrecks belong to the old sector (clears mirror.wrecks too).
@@ -1563,6 +1570,7 @@ export class ColyseusGameClient {
       // wreck break-up), not as a hull-sized blast (money-shot review).
       this.mirror.capitalWrecks = msg.capitalWrecks === true;
       this._shellStore.clear();
+      this._navalHitHold.flush(this._heldDamageSink);
       if (this._shellEvents) {
         this.mirror.shellSalvos = this._shellStore.map;
         for (const s of msg.shellsInFlight ?? []) this._shellStore.applySalvo(s);
@@ -2125,7 +2133,7 @@ export class ColyseusGameClient {
     room.onMessage('shell_end', (raw: unknown) => {
       if (!this._shellEvents) return;
       const r = ShellEndSchema.safeParse(raw);
-      if (r.success) this._shellStore.applyEnd(r.data, this.mirror.pendingShellEnds ??= []);
+      if (r.success) this.applyShellEnd(r.data);
     });
     room.onMessage('shell_blast', (raw: unknown) => {
       const result = ShellBlastSchema.safeParse(raw);
@@ -2748,62 +2756,6 @@ export class ColyseusGameClient {
         this.predWorld.setHullExposed(localId, true, getShipKind(this.mirror.ships.get(localId)?.kind ?? null));
       }
     }
-    // Flash the damaged ship for 6 frames.
-    if (showFx) this._damageFlashFrames.set(evt.targetId, 6);
-
-    // Floating damage number at hit location. weapon-hit-prediction
-    // Phase 3 — suppressed when a confirmed/settled prediction already
-    // showed this number (de-dupe: exactly one number per confirmed hit).
-    // Everything else in handleDamage stays unconditional — this remains
-    // the SOLE HP/HUD/flash/healthbar/hostility authority.
-    if (showFx && !suppressNumber && this.mirror.pendingDamageNumbers) {
-      const targetShip = this.mirror.ships.get(evt.targetId);
-      const x = evt.hitX ?? targetShip?.x ?? 0;
-      const y = evt.hitY ?? targetShip?.y ?? 0;
-      this.mirror.pendingDamageNumbers.push({ targetId: evt.targetId, x, y, damage: evt.damage });
-    }
-
-    // Health bar on hit — only show for targets the local player is shooting.
-    // Push BOTH hull% AND shield% so HealthBarManager can render a
-    // two-segment bar. Without the shield half, shield damage on drones
-    // looks like zero damage: the hull bar stays at 100% while shield
-    // absorbs (no-spillover) the first N hits, and drones have no other
-    // shield-feedback surface (only player ships have a HUD ShieldHullBar).
-    if (showFx && evt.shooterId === localId && this.mirror.pendingHealthBarHits) {
-      const healthPct = evt.hullMax > 0 ? Math.max(0, evt.newHealth / evt.hullMax) : 0;
-      const shieldPct = evt.shieldMax > 0 ? Math.max(0, evt.newShield / evt.shieldMax) : 0;
-      // Pre-hit HULL fraction for the chip-damage band: a HULL hit removed
-      // `damage` from hull, so health was `newHealth + damage` before it. A
-      // SHIELD hit left hull untouched ⇒ pre == post (no chip). All
-      // client-derived from the already-received DamageEvent — no wire cost.
-      const preHealthPct =
-        evt.hullMax > 0 && evt.hitLayer === 'hull'
-          ? Math.min(1, (evt.newHealth + evt.damage) / evt.hullMax)
-          : healthPct;
-      this.mirror.pendingHealthBarHits.push({ entityId: evt.targetId, healthPct, shieldPct, preHealthPct });
-    }
-
-    // Impact sparks — visual-effects subsystem M7 (plan wiggly-puppy).
-    // Push to the pending queue; the renderer drains it inside update()
-    // on shouldRender frames (perFrameTriggers gate). Authoritative-only
-    // on first pass per the plan's asymmetry with damage numbers
-    // (predicted hits get the number immediately but sparks follow the
-    // server's DamageEvent — RTT/2 lag is acceptable for the decorative
-    // spark vs the load-bearing damage number).
-    if (showFx && this.mirror.pendingEffectTriggers) {
-      const targetShipForFallback = this.mirror.ships.get(evt.targetId);
-      const sparkX = evt.hitX ?? targetShipForFallback?.x ?? 0;
-      const sparkY = evt.hitY ?? targetShipForFallback?.y ?? 0;
-      const tint = evt.hitLayer === 'shield' ? 0x88ddff : 0xff8844;
-      this.mirror.pendingEffectTriggers.push({
-        kind: 'impact',
-        worldX: sparkX,
-        worldY: sparkY,
-        tint,
-        entityId: evt.targetId, // for shield-ring pulse on shield-layer hits
-      });
-    }
-
     // Shield-layer hit → flag the target's shield-down state in the
     // mirror (M8 wiggly-puppy). The handleShield event is local-only
     // (line 1479 returns when targetId !== localPlayerId), but every
@@ -2830,6 +2782,96 @@ export class ColyseusGameClient {
     if (evt.targetId.startsWith('swarm-') && evt.shooterId) {
       const numeric = evt.targetId.slice('swarm-'.length);
       this._aiController.markHostile(numeric, evt.shooterId, this.inputTick);
+    }
+
+    // Visuals (flash / number / health bar / spark). A naval shell hit waits
+    // for the frame its shell's burst is drawn at the display tick, so the
+    // flash coincides with the drawn impact instead of leading it by the
+    // display delay + RTT/2 (navalHitHold.ts). State above is never held.
+    if (!showFx) return;
+    if (this._shellEvents && this._navalHitHold.maybeHold(
+      evt, suppressNumber, this._shellStore.map, this.gameClock.now(),
+    )) return;
+    this.applyDamageFx(evt, suppressNumber);
+  }
+
+  /** A `shell_end`: mark the shells, and match held naval hits to it. */
+  private applyShellEnd(msg: ShellEnd): void {
+    this._shellStore.applyEnd(msg, this.mirror.pendingShellEnds ??= []);
+    if (this._navalHitHold.size === 0) return;
+    const now = this.gameClock.now();
+    for (const e of msg.e) this._navalHitHold.onShellEnd(e[1], e[2], e[3], now);
+  }
+
+  /** One frame of event shells at `displayTick`: draw, burst, and release
+   *  the held hits whose burst is now drawn (or whose safety ran out). */
+  private placeShells(displayTick: number): void {
+    if (this.mirror.projectiles) {
+      this._shellStore.place(this.mirror.projectiles, displayTick, this.mirror.pendingShellEnds ??= []);
+    }
+    if (this._navalHitHold.size > 0) {
+      this._navalHitHold.release(displayTick, this.gameClock.now(), this._heldDamageSink);
+    }
+  }
+
+  /** The FX half of a damage event with positive damage: hull flash,
+   *  floating number, health-bar hit, impact spark. */
+  private applyDamageFx(evt: DamageEvent, suppressNumber: boolean): void {
+    const localId = this.mirror.localPlayerId;
+    // Flash the damaged ship for 6 frames.
+    this._damageFlashFrames.set(evt.targetId, 6);
+
+    // Floating damage number at hit location. weapon-hit-prediction
+    // Phase 3 — suppressed when a confirmed/settled prediction already
+    // showed this number (de-dupe: exactly one number per confirmed hit).
+    // Everything else in handleDamage stays unconditional — this remains
+    // the SOLE HP/HUD/flash/healthbar/hostility authority.
+    if (!suppressNumber && this.mirror.pendingDamageNumbers) {
+      const targetShip = this.mirror.ships.get(evt.targetId);
+      const x = evt.hitX ?? targetShip?.x ?? 0;
+      const y = evt.hitY ?? targetShip?.y ?? 0;
+      this.mirror.pendingDamageNumbers.push({ targetId: evt.targetId, x, y, damage: evt.damage });
+    }
+
+    // Health bar on hit — only show for targets the local player is shooting.
+    // Push BOTH hull% AND shield% so HealthBarManager can render a
+    // two-segment bar. Without the shield half, shield damage on drones
+    // looks like zero damage: the hull bar stays at 100% while shield
+    // absorbs (no-spillover) the first N hits, and drones have no other
+    // shield-feedback surface (only player ships have a HUD ShieldHullBar).
+    if (evt.shooterId === localId && this.mirror.pendingHealthBarHits) {
+      const healthPct = evt.hullMax > 0 ? Math.max(0, evt.newHealth / evt.hullMax) : 0;
+      const shieldPct = evt.shieldMax > 0 ? Math.max(0, evt.newShield / evt.shieldMax) : 0;
+      // Pre-hit HULL fraction for the chip-damage band: a HULL hit removed
+      // `damage` from hull, so health was `newHealth + damage` before it. A
+      // SHIELD hit left hull untouched ⇒ pre == post (no chip). All
+      // client-derived from the already-received DamageEvent — no wire cost.
+      const preHealthPct =
+        evt.hullMax > 0 && evt.hitLayer === 'hull'
+          ? Math.min(1, (evt.newHealth + evt.damage) / evt.hullMax)
+          : healthPct;
+      this.mirror.pendingHealthBarHits.push({ entityId: evt.targetId, healthPct, shieldPct, preHealthPct });
+    }
+
+    // Impact sparks — visual-effects subsystem M7 (plan wiggly-puppy).
+    // Push to the pending queue; the renderer drains it inside update()
+    // on shouldRender frames (perFrameTriggers gate). Authoritative-only
+    // on first pass per the plan's asymmetry with damage numbers
+    // (predicted hits get the number immediately but sparks follow the
+    // server's DamageEvent — RTT/2 lag is acceptable for the decorative
+    // spark vs the load-bearing damage number).
+    if (this.mirror.pendingEffectTriggers) {
+      const targetShipForFallback = this.mirror.ships.get(evt.targetId);
+      const sparkX = evt.hitX ?? targetShipForFallback?.x ?? 0;
+      const sparkY = evt.hitY ?? targetShipForFallback?.y ?? 0;
+      const tint = evt.hitLayer === 'shield' ? 0x88ddff : 0xff8844;
+      this.mirror.pendingEffectTriggers.push({
+        kind: 'impact',
+        worldX: sparkX,
+        worldY: sparkY,
+        tint,
+        entityId: evt.targetId, // for shield-ring pulse on shield-layer hits
+      });
     }
   }
 
@@ -4702,7 +4744,7 @@ export class ColyseusGameClient {
       if (this._shellEvents) {
         const displayTick = this.clockAnchorServerTick
           + (this.gameClock.now() - this.clockAnchorPerfNow) / SHELL_TICK_MS - SHELL_DISPLAY_DELAY_MS / SHELL_TICK_MS;
-        this._shellStore.place(this.mirror.projectiles, displayTick, this.mirror.pendingShellEnds ??= []);
+        this.placeShells(displayTick);
       }
 
       // Authoritative projectile extrapolation. Snapshots arrive at 20 Hz, but
