@@ -33,7 +33,7 @@ function oneWreck(): { piece: WreckPieceSpawn; desc: WreckDescriptor } {
   const spawned: WreckPieceSpawn[] = [];
   const sys = new CapitalWreckSubsystem({
     serverTick: () => 1,
-    capitalKindOf: () => 'battleship',
+    wreckKindOf: () => 'battleship',
     positionOf: () => null,
     spawnPiece: (s) => { spawned.push(s); return true; },
     removePiece: () => {},
@@ -126,4 +126,36 @@ describe('wreck piece in predWorld (S2b)', () => {
     const cp = client.getShipState('swarm-77')!;
     expect(Math.hypot(cp.x - sp.x, cp.y - sp.y)).toBeLessThan(CORRECTION_U);
   });
+
+  // #15 (sub-capital break-up slice 2): the client twin's collision groups
+  // and damping are the server body's, for a capital AND a sub-capital (whose
+  // pieces ignore each other and are damped harder).
+  for (const kind of ['battleship', 'fighter', 'missile-frigate', 'robot-hexagon'] as const) {
+    it(`the client twin of a ${kind} piece uses the server body's groups and damping`, () => {
+      const spawned: WreckPieceSpawn[] = [];
+      const sys = new CapitalWreckSubsystem({
+        serverTick: () => 1, wreckKindOf: () => kind, positionOf: () => null,
+        spawnPiece: (s) => { spawned.push(s); return true; }, removePiece: () => {},
+        isLive: () => true, pieceAngle: () => 0, kickPiece: () => {},
+      });
+      sys.forcedSeed = 3;
+      sys.onDeath('v', kind, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }, 1e4);
+      const desc = sys.descriptors()[0]!;
+      const piece = spawned[0]!;
+      const store = new WreckGeometryStore();
+      store.apply([desc]);
+      const calls: Array<{ damping: number; groups: number | undefined; angular?: number }> = [];
+      const fake = {
+        spawnObstacle: (_id: string, _x: number, _y: number, _r: number, _m: number, _v: unknown, damping: number, groups?: number) => { calls.push({ damping, groups }); },
+        setAngularDamping: (_id: string, d: number) => { calls[calls.length - 1]!.angular = d; },
+      } as unknown as ClientSpawnCtx['predWorld'];
+      new ClientEntityFactory().leafFor(SWARM_KIND_WRECK)!.spawnBody({
+        predWorld: fake,
+        aiController: { register: () => undefined, unregister: () => undefined } as unknown as ClientSpawnCtx['aiController'],
+        wrecks: store, entityId: 1, key: 'swarm-1', registeredAiId: null,
+        entry: { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0, radius: piece.radius, kind: SWARM_KIND_WRECK, shipKind: kind, componentIndex: piece.pieceIndex, wreckId: desc.wreckId } as SwarmRenderState,
+      });
+      expect(calls).toEqual([{ damping: piece.linearDamping, groups: piece.collisionGroups, angular: piece.angularDamping }]);
+    });
+  }
 });

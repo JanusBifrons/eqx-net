@@ -133,10 +133,13 @@ const SUBCAP: DestructionProfile = {
     jag: { depth: 2, roughness: 0.12 },
   },
   holdMs: 0,
-  // A gentle push, and enough damping that pieces settle (and can sleep in
-  // the physics engine) within ~10-20 s. Slice 5 tunes both from measurement.
+  // A gentle push, and enough damping that pieces settle (and sleep in the
+  // physics engine) within ~10-20 s. Measured (slice 2, integration
+  // `subcapWrecks.test.ts`): ×10 (linear 0.6/s, angular 0.5/s) puts a fighter
+  // killed at full speed (~600 u/s) and turning to sleep in ~14 game s after
+  // ~1,000 u of drift; ×5 took ~27 s. Slice 5 re-tunes from the soak.
   pushScale: 0.5,
-  dampingScale: 5,
+  dampingScale: 10,
   piecesCollide: false,
   fx: {
     breakBurst: false,

@@ -997,9 +997,14 @@ export class PhysicsWorld {
     return rec.body.mass();
   }
 
-  getAllShipStates(): Map<string, ShipPhysicsState> {
+  getAllShipStates(skip?: ReadonlySet<string>): Map<string, ShipPhysicsState> {
     const result = new Map<string, ShipPhysicsState>();
     for (const [id, rec] of this.bodies) {
+      // Sub-cap break-up slice 2: the worker passes the bodies that have been
+      // asleep (and flagged so in the SAB) since before this tick; their SAB
+      // record is already their resting pose, so they cost no Rapier read and
+      // no allocation here (permanent debris that has settled is near free).
+      if (skip !== undefined && skip.has(id)) continue;
       const t = rec.body.translation();
       const v = rec.body.linvel();
       result.set(id, { x: t.x, y: t.y, angle: rec.body.rotation(), vx: v.x, vy: v.y, angvel: rec.body.angvel() });

@@ -9,16 +9,16 @@
  * The body is built from the SAME geometry the server's body is: the convex
  * parts and mass from `wreckPieceGeometry`, rebuilt off the wreck's `wrecks[]`
  * descriptor by the client's `WreckGeometryStore` (#15, no vertex on the
- * wire), with the server's linear and angular damping and the default
- * collision groups. The caller (`syncSwarmIntoPredWorld`) only spawns a piece
+ * wire), with the server's damping and collision groups (`wreckBodyParams`,
+ * from the parent kind's destruction profile). The caller (`syncSwarmIntoPredWorld`) only spawns a piece
  * once its wreck's descriptor is known.
  *
  * Wreck pieces have no health: shots stop on them server-side and do nothing.
  */
 import { ClientEntityLeafBase } from '../ClientEntityLeafBase.js';
 import type { ClientSpawnCtx, ClientSyncCtx } from '../IClientEntityLeaf.js';
-import { WRECK_ANGULAR_DAMPING, WRECK_LINEAR_DAMPING } from '@core/destruction/wreckPieces';
-import { WRECK_COLLISION_GROUPS } from '@core/physics/collisionGroups';
+import { wreckBodyParams } from '@core/destruction/wreckPieces';
+import { getShipKind } from '@shared-types/shipKinds';
 
 export class WreckClientLeaf extends ClientEntityLeafBase {
   constructor() {
@@ -31,8 +31,12 @@ export class WreckClientLeaf extends ClientEntityLeafBase {
       ? ctx.wrecks.piece(e.wreckId, e.componentIndex ?? 0)
       : null;
     if (g === null) return; // no geometry yet: the caller retries next sync
-    ctx.predWorld.spawnObstacle(ctx.key, e.x, e.y, g.radius, g.mass, undefined, WRECK_LINEAR_DAMPING, WRECK_COLLISION_GROUPS, g.colliderParts);
-    ctx.predWorld.setAngularDamping(ctx.key, WRECK_ANGULAR_DAMPING);
+    // The parent kind's profile picks the groups and damping, the same
+    // `wreckBodyParams` the server body uses (#15): a sub-capital's pieces
+    // don't collide with each other and settle faster.
+    const body = wreckBodyParams(getShipKind(e.shipKind ?? null).id);
+    ctx.predWorld.spawnObstacle(ctx.key, e.x, e.y, g.radius, g.mass, undefined, body.linearDamping, body.collisionGroups, g.colliderParts);
+    ctx.predWorld.setAngularDamping(ctx.key, body.angularDamping);
   }
 
   onSync(_ctx: ClientSyncCtx): void {

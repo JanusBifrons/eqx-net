@@ -199,6 +199,11 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
    *  contact's impact (closing) speed. Repopulated from `allStates` at the tail
    *  of every tick; value objects are reused (no per-tick allocation, #14). */
   const prevVel = new Map<string, { vx: number; vy: number }>();
+  /** Bodies asleep since before this tick and already flagged so in the SAB
+   *  (sub-capital break-up slice 2: settled permanent debris). Rebuilt each
+   *  tick in the sleep poll; `getAllShipStates` skips them, so a resting
+   *  body costs one `isSleeping` call a tick and nothing else. */
+  const quietIds = new Set<string>();
   let tick = 0;
 
   const handle = (cmd: WorkerCommand): void => {
@@ -459,6 +464,7 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
     // Compute sleep transitions before SAB write so the flag word is current.
     // SLEEP_TRANSITION messages buffer here; flushed after the seqlock window.
     transitionCount = 0;
+    quietIds.clear();
     for (const [slot, id] of slotToPlayer) {
       const sleeping = physics.isSleeping(id);
       const prev = sleepCount.get(slot) ?? 0;
@@ -467,6 +473,10 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
 
       const effectiveSleeping = next >= SLEEP_HYSTERESIS_TICKS;
       const lastReported = sleepState.get(slot) ?? false;
+      // Still asleep, already flagged FLAG_SLEEPING in the SAB on an earlier
+      // tick, and no pilot input on the slot (a player's ack must advance
+      // every tick): its SAB record is current, skip the read and write below.
+      if (effectiveSleeping && lastReported && !appliedTicks.has(slot)) quietIds.add(id);
       if (effectiveSleeping !== lastReported) {
         sleepState.set(slot, effectiveSleeping);
         let rec = transitionScratch[transitionCount];
@@ -483,7 +493,7 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
     // Write all entity states to SAB under seqlock.
     Atomics.add(u32, SEQLOCK_IDX, 1); // lock — value becomes odd
 
-    const allStates = physics.getAllShipStates();
+    const allStates = physics.getAllShipStates(quietIds);
     for (const [playerId, s] of allStates) {
       const slot = playerToSlot.get(playerId);
       if (slot === undefined) continue;
@@ -564,9 +574,11 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
     }
     // Prune despawned entities so prevVel stays bounded. Only scans when stale
     // entries exist — in steady state the sizes match and this is a no-op.
-    if (prevVel.size > allStates.size) {
+    // A quiet (still-asleep) body keeps its entry (velocity 0 from when it
+    // fell asleep), so waking costs no allocation.
+    if (prevVel.size > allStates.size + quietIds.size) {
       for (const id of prevVel.keys()) {
-        if (!allStates.has(id)) prevVel.delete(id);
+        if (!allStates.has(id) && !quietIds.has(id)) prevVel.delete(id);
       }
     }
 

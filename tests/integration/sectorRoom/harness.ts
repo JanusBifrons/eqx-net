@@ -206,6 +206,7 @@ export async function bootSectorTestServer(opts: {
   pilotCapitals?: boolean;
   /** Capital destruction S2a: a dying capital breaks into wreck bodies. */
   capitalWrecks?: boolean;
+  subcapWrecks?: boolean;
   /** P2c — sector features for the room (asteroid mix, nebula). */
   sectorFeatures?: string[];
   /** Room-level default spawn point (forwarded to `defaultSpawnX/Y`). */
@@ -290,6 +291,7 @@ export async function bootSectorTestServer(opts: {
     peacefulDrones: opts.peacefulDrones,
     pilotCapitals: opts.pilotCapitals,
     capitalWrecks: opts.capitalWrecks,
+    subcapWrecks: opts.subcapWrecks,
     tradeEnabled: opts.tradeEnabled,
     enforceHullGate: opts.enforceHullGate,
     seedStorageHold: opts.seedStorageHold,
