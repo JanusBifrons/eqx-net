@@ -1352,6 +1352,176 @@ is inside what a single take can tell.
 scan (2.2 %); a dirty stamp written by the decoder and `updateMirror`
 would make it O(changed) too, at the price of a stamp at every writer.
 
+#### The decisive soak on the combined branch (2026-11-13)
+
+**Question:** can debris be switched on in play? This is the branch
+`subcap-combined` (`a01f30ab`), which has all the cost fixes above: the
+prediction world keeps sleeping pieces asleep and streams pieces by
+distance, light hits don't wake resting pieces, pieces settle after 0.5 s
+near-still, and the mirror post is a change set. It does NOT have slice 3
+(#547, wreck descriptors as deltas; still only on `feat/wreck-wire-deltas`).
+
+**Answer: not yet. It does not hold for 10 minutes.** In both takes the client
+dropped before the end (~500 s and ~545 s). Frame p95 stays flat at 16.7 ms
+up to ~1,050–1,470 pieces, then breaks.
+
+**How it was measured.**
+- Command: `pnpm perf:scenes --scenes fleet-fight-soak-lite --head-only
+  --reps 1 --sample-ms 30000 --head-params perfcounts=1 --head-env
+  EQX_WAKE_CENSUS=1 --no-load-gate`, port offset 700.
+- Two takes. Take 2 adds `--cpu-profile … --cpu-profile-at-pieces 1100`.
+- The ">20 s" column is new on this branch (`perf:scenes` reads the wake
+  census): it is the asleep share of pieces older than 20 s.
+- Host: desktop (RTX 5070 Ti, 16 threads). Other sessions were running
+  test suites throughout, so this is not a quiet host. Before take 1: CPU
+  27 %, 11 GB free, 9 other node processes. Before take 2: CPU 100 %,
+  6.8 GB free, 38 other node processes.
+- Timings compare within this section only.
+
+**Take 1 (flag on).**
+
+| t | pieces | asleep (all / >20 s) | server tick p95 | worker p95 | rx KB/s (swarm / other) | frame p95 | draws p95 | display objects |
+|---|---|---|---|---|---|---|---|---|
+| 30 s | 65 | 23 % / 84 % | 0.9 | 0.6 | 169 (104 / 66) | 16.7 | 62 | 3,479 |
+| 60 s | 129 | 43 % / 65 % | 3.6 | 1.9 | 398 (233 / 165) | 16.8 | 79 | 5,010 |
+| 90 s | 205 | 34 % / 75 % | 7.6 | 2.6 | 579 (307 / 272) | 16.7 | 103 | 6,044 |
+| 120 s | 309 | 52 % / 68 % | 10.3 | 3.8 | 783 (441 / 342) | 16.7 | 104 | 6,607 |
+| 150 s | 392 | 41 % / 67 % | 15.6 | 4.3 | 934 (495 / 440) | 16.8 | 110 | 8,032 |
+| 180 s | 478 | 50 % / 84 % | **17.4** | 4.6 | 1,105 (511 / 594) | 16.8 | 112 | 8,992 |
+| 210 s | 586 | 58 % / 81 % | **22.6** | 5.7 | 1,348 (664 / 683) | 16.8 | 119 | 9,560 |
+| 240 s | 664 | 66 % / 56 % | 6.9 | 7.5 | 1,674 (797 / 877) | 16.7 | 122 | 10,772 |
+| 270 s | 753 | 65 % / 82 % | 5.1 | 8.0 | 1,705 (764 / 941) | 16.7 | 128 | 11,680 |
+| 300 s | 844 | 63 % / 81 % | 6.1 | 10.1 | 2,026 (883 / 1,143) | 16.7 | 130 | 12,077 |
+| 330 s | 951 | 75 % / 67 % | 6.0 | 12.5 | 2,592 (1,073 / 1,518) | 16.8 | 125 | 12,953 |
+| 359 s | 1,048 | 62 % / 78 % | 6.1 | 14.5 | 2,820 (1,132 / 1,688) | 16.7 | 109 | 13,622 |
+| 385 s | 1,134 | 65 % / 70 % | 9.5 | **34.2** | 2,851 (1,130 / 1,721) | **66.6** | 104 | 14,289 |
+| 402 s | 1,195 | 66 % / 62 % | **19.9** | **49.2** | 1,589 (865 / 725) | **133** | 95 | 14,498 |
+| 426–489 s | 1,273–1,443 | 55–77 % / 64–82 % | 7.6–16.7 | **38.6–40.2** | 1,659–1,850 | **117** | 92–104 | 14,753–15,744 |
+| ~500 s | client dropped | | | | | | | |
+
+**Take 2 (flag on, client profile at ~1,140 pieces).**
+
+| t | pieces | asleep (all / >20 s) | server tick p95 | worker p95 | rx KB/s (swarm / other) | frame p95 | draws p95 | display objects |
+|---|---|---|---|---|---|---|---|---|
+| 61 s | 115 | 23 % / 54 % | 4.3 | 1.8 | 444 (266 / 179) | 16.8 | 90 | 5,196 |
+| 121 s | 288 | 46 % / 71 % | 3.2 | 3.0 | 795 (418 / 377) | 16.7 | 105 | 7,164 |
+| 181 s | 439 | 49 % / 80 % | 3.2 | 3.4 | 1,297 (621 / 676) | 16.7 | 126 | 9,495 |
+| 241 s | 626 | 59 % / 77 % | 3.9 | 3.8 | 1,638 (757 / 881) | 16.8 | 145 | 11,090 |
+| 301 s | 816 | 62 % / 74 % | **20.3** | 10.4 | 1,928 (901 / 1,027) | 16.7 | 178 | 12,865 |
+| 360 s | 1,034 | 62 % / 70 % | 8.6 | 11.1 | 2,428 (1,061 / 1,367) | 16.8 | 182 | 13,944 |
+| 390 s | 1,142 | 68 % / 87 % | 6.3 | 8.0 | 2,380 (1,066 / 1,315) | 16.8 | 183 | 14,493 |
+| 450 s | 1,361 | 66 % / 80 % | 7.4 | 9.0 | 2,866 (1,221 / 1,645) | 16.8 | 192 | 15,651 |
+| 481 s | 1,470 | 68 % / 81 % | 7.7 | 12.7 | 3,009 (1,291 / 1,718) | 16.8 | 188 | 16,076 |
+| 511 s | 1,592 | 62 % / 82 % | 7.3 | 13.9 | 2,182 (977 / 1,205) | **100** | 171 | 16,336 |
+| 540 s | 1,710 | 64 % / 74 % | 6.9 | **16.3** | 1,810 (733 / 1,077) | **117** | 171 | 16,505 |
+| ~545 s | client dropped | | | | | | | |
+
+All times are in ms. "Other" rx is the msgpack messages, mostly `wrecks[]`
+descriptors: 90–150 per snapshot past 1,000 pieces.
+
+**Against the target.**
+
+| Target | Result |
+|---|---|
+| 10 min without dropping the client | **No.** It dropped at ~500 s (~1,440 pieces) and ~545 s (~1,710 pieces). |
+| Client frame p95 flat at ~16.7 ms | **Yes until it breaks**: up to ~1,050 pieces in take 1 and ~1,470 in take 2. Then 66–133 ms and it never recovers. |
+| Server tick p95 under ~16 ms | **Mostly.** Bursts of 17–23 ms at 400–600 pieces in take 1 and at ~800 in take 2, and 20 ms at the take-1 wall. Otherwise 3–10 ms. |
+| Physics worker p95 under ~16 ms | **Until ~1,100–1,700 pieces.** Take 1 crossed at ~1,130 pieces (34–49 ms after that). Take 2 crossed at ~1,710. The headless run (no browser) stayed ≤ 10 ms up to 1,434. |
+| Wire rx sane | **No.** 1.0 MB/s at ~400 pieces, 2.4–3.0 MB/s at 1,000–1,500 pieces. More than half is the repeated descriptor lists, which slice 3 removes. |
+| Asleep, pieces older than 20 s, ≥ 80 % | **Close, not met.** Mean from 150 s on: 73 % (take 1) and 77 % (take 2), ranging 56–88 %. The headless soak said ~83 %. |
+| Draw calls / display objects | Bounded: 60–190 draws; ~10 display objects per piece. |
+| How far the cap fills | **It never fills.** Pieces came at ~150–200 a minute, so the 2,000 cap would fill at ~10.5 min. The client dropped at 1,440–1,710. |
+
+**The first wall: the client's main thread.**
+- In take 2 the client broke at ~1,590 pieces while the server was healthy
+  (tick p95 7 ms, worker p95 14 ms).
+- In take 1 it broke at ~1,130 pieces in the same 30 s as a burst in the
+  server's physics worker (p95 34–49 ms). One take can't tell whether that
+  burst triggered it.
+- The break is a one-way switch: frame p95 jumps from 16.7 to 66–133 ms and
+  never comes back. That fits a catch-up spiral: a frame over budget makes
+  the next one run more fixed steps, and each step is dearer with more
+  pieces.
+
+**Client profile** (take 2, main thread, 15 s from 1,142 pieces, while frame
+p95 was still 16.8 ms; wasm folded into its JS caller):
+
+| Main thread, 15 s at ~1,140 pieces | Share |
+|---|---|
+| idle | 42 % (81 % at ~480 pieces, previous section) |
+| Rapier `step` in the predWorld | **23 %** (10 % at ~480) |
+| of which the reconcile replay (`handleSnapshot` → `reconcile`) | 10 % |
+| of which `tickPhysics` | 16 % (whole function, Rapier included) |
+| the mirror post (`postMirror`: change scan `encode` 4 %) | 6 % |
+| snapshot decode + `onMessage` (msgpack, zod) | ~6 % |
+| `writeE2EDataset` | 3 % (webdriver-only: players don't pay it) |
+
+So the predWorld step is again the biggest cost, and it more than doubled
+between ~480 and ~1,140 pieces even with distance streaming and sleep. In
+this scene the pilot idles ~1,600 u from the melee, and the debris spreads
+inside the 1,500 u + 300 u streaming radius. So most pieces get a body, and
+each one costs in every replayed and predicted step.
+
+**Server worker profile** (the headless soak at 1,450 pieces, 15 s, through
+the inspector's `NodeWorker` domain; one-off scratch script, not committed).
+- Rapier's `stepWithEvents` takes **65 %** of the worker.
+- The JS around it is small: `getAllShipStates` 3.6 %, `drainContacts`
+  0.9 %, `settleStep` 1 %.
+- The cost is inside Rapier's step: ~410 bodies stepped a tick (~35 % of the
+  pieces awake, plus ~300 ships) and ~56 contacts a tick.
+- The profiler's own cost made this window's timings meaningless (p95
+  365 ms). Only the shares count.
+
+**Count gates with the flag on** (`EQX_SUBCAP_WRECKS=1 pnpm vitest run
+--config vitest.integration.config.ts tests/integration/sectorRoom/perfSceneCounts.test.ts`,
+one run each, not widened):
+
+| Budget | fleet-fight on / budget | wide-view on / budget |
+|---|---|---|
+| rx KB/s | **405** / 334 | **524** / 418 |
+| bodies per tick | **78.1** / 63 | **100.0** / 98 |
+| swarm records per tick | **77.5** / 62 | **99.4** / 93 |
+| swarm bytes per tick | **2,797** / 2,088 | **3,587** / 3,142 |
+
+These are about the same as before the fixes (415 / 80.8 and 507 / 98.9).
+The gate window is the first 12.6 s, and in that window every piece is fresh
+and still drifting. Settle-to-sleep can't help there.
+
+**The full soak (30 a side)** was not run. The lite soak didn't hold, and the
+full soak's ship pile-up drops its client earlier whatever the debris does.
+
+**What to fix next (in order).**
+1. **Client predWorld: give far pieces no body, or a smaller radius for
+   sleeping ones.**
+   - Wreck pieces stream at the structure radius (1,500 u + 300 u). The
+     pilot's collisions only need pieces it can reach within the replay
+     window, and its beams reach ≤ 325 u.
+   - Stream kind 4 at its own, much smaller radius (e.g. ~600 u, from the
+     fastest ship's speed × the replay window + beam reach). Lock the count
+     in `wreckPredCost.test.ts`.
+   - Second step: a sleeping piece needs no body in the reconcile replay
+     unless the local ship's swept path reaches it.
+   - Re-profile at ~1,100 pieces with the pilot inside the pile as well as
+     at the spawn: inside the pile, streaming can't help.
+2. **Wire: merge slice 3 (#547, `feat/wreck-wire-deltas`)** into the combined
+   branch, then take sleeping pieces out of the 1 Hz full refresh ("What to
+   fix", item 1). The descriptor lists are ~55 % of rx past 1,000 pieces.
+3. **Server worker: fewer awake bodies in the pile.**
+   - About a third of the pieces are awake at any time, and the Rapier step
+     itself is the cost.
+   - Measure first: the island count, the piece-piece contact pairs and the
+     share of the step spent on sleeping colliders (broad phase). Only then
+     choose between piece-vs-piece collision filtering for sub-cap debris
+     and a lower cap.
+   - Today the worker holds ≤ 16 ms up to ~1,400–1,700 pieces on a quiet
+     host, and only ~1,100 under load.
+4. **Sleep share:** at 73–77 % in the browser takes, it is close to 80 %. Look
+   at it again after 1–3; it is not what breaks first.
+
+A take that drops writes no series to its JSON ledger, so the tables above
+(from the runner's per-sample log lines) are the record. Timings come from
+a shared host and compare within this section only.
+
 ## 4. Determinism strategy
 
 Every client must produce the same pieces as the server, bit for bit, from
