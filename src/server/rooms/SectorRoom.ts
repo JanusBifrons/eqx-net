@@ -2022,6 +2022,11 @@ export class SectorRoom extends Room<SectorState> {
     // laser_fired broadcast path that mirrors the player handleFire.
     this.aiFireResolver = new AiFireResolver({
       fireBlocked: (id, targetId) => this.npcLocks.fireBlocked(id, targetId),
+      // One energy pool per NPC ship, shared by boost and guns, on its brain.
+      trySpendEnergy: (id, cost) => {
+        const b = this.aiController.getBehaviour(id);
+        return b?.trySpendEnergy === undefined ? true : b.trySpendEnergy(cost);
+      },
       // Friendly fire slice 2: a drone holds while an ally is in the way.
       lineOfFireBlocked: (id, targetId, fx, fy, dx, dy) => this.droneLineBlocked(id, targetId, fx, fy, dx, dy),
       lastFireClientTick: this.lastFireClientTick,

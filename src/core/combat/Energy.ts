@@ -19,8 +19,10 @@
  *    delay (unlike shield) — so the bar always feels alive.
  *  - A fire/boost action is gated: it only happens if the ship `canAfford`
  *    it. Spending never drives the pool negative (clamped at 0).
- *  - Energy is TRANSIENT: respawns full, never persisted. Drones are NOT
- *    energy-gated — these helpers are called only on the player path.
+ *  - Energy is TRANSIENT: respawns full, never persisted.
+ *  - NPC ships run the SAME rules (owner rule 2026-11-13): one server-only
+ *    pool per NPC on its brain (`HostileDroneBehaviour.trySpendEnergy`),
+ *    shared by boost and every slot trigger (`AiFireResolver`).
  *
  * Allocation-free: every function is scalar-in / scalar-out (no objects, no
  * mutation of a passed wrapper), safe to call from the per-tick hot loop

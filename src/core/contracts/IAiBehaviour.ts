@@ -264,6 +264,18 @@ export interface IAiBehaviour {
    */
   isHostileToPlayer?(playerId: string, truce?: boolean): boolean;
   /**
+   * Optional SERVER-ONLY ship energy pool (owner rule 2026-11-13: an NPC ship
+   * runs a player's ship rules). One pool per NPC ship, shared by boost and
+   * weapons. `trySpendEnergy(cost)` spends `cost` when the pool can afford it
+   * (`canAfford` / `spendEnergy`, `combat/Energy.ts`) and returns true, else
+   * spends nothing and returns false. The fire resolvers call it per slot
+   * trigger with `resolveSlotEnergyCost`, as `PlayerFireResolver` does for a
+   * player. `getEnergyFrac()` is the pool as 0..1 (for the brain's tactics).
+   * Absent ⇒ free fire (non-ship behaviours, unit harnesses).
+   */
+  trySpendEnergy?(cost: number): boolean;
+  getEnergyFrac?(): number;
+  /**
    * Optional in-sector MOVE target (roaming-formation system, Phase 5).
    * SERVER-ONLY: the `LivingWorldDirector` assigns each squad member a
    * formation-slot world point each control tick; while IDLE (neutral/roaming)

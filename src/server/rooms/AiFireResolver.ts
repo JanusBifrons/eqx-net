@@ -31,6 +31,7 @@ import type { LaserFiredEvent } from '../../shared-types/messages.js';
 import type { ShipState } from './schema/SectorState.js';
 import { shipShotMuzzle, navalTurret, navalBarrelOffset } from '../../core/combat/muzzle.js';
 import { NEVER_FIRED } from '../../core/combat/fireTemporal.js';
+import { resolveSlotEnergyCost } from '../../core/combat/Energy.js';
 
 /** Per-player pose the resolver reads to test target hits. */
 export interface ShipPose {
@@ -53,6 +54,12 @@ export interface AiFireResolverDeps {
    *  the drone holds fire this tick (no cooldown spent). The room resolves the
    *  target's distance. Absent ⇒ never blocked (unit harnesses). */
   lineOfFireBlocked?: (shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number) => boolean;
+  /** The ship's energy pool (owner rule 2026-11-13: an NPC ship pays a
+   *  player's energy per slot trigger). Spends `cost` and returns true when
+   *  the pool can pay; false ⇒ the shot is refused and nothing is spent. The
+   *  room routes it to the NPC brain's pool (`IAiBehaviour.trySpendEnergy`),
+   *  the same pool boost draws on. Absent ⇒ free fire (unit harnesses). */
+  trySpendEnergy?: (shooterId: string, cost: number) => boolean;
   /** Cooldown ledger — keyed by shooter id (drone). */
   lastFireClientTick: Map<string, number>;
   /** Pose snapshot for the firing drone (SAB read). */
@@ -178,6 +185,10 @@ export class AiFireResolver implements WeaponFireSink {
     }
     const lastFireCt = d.lastFireClientTick.get(shooterId) ?? NEVER_FIRED;
     if (tick - lastFireCt < slotCooldown) return;
+    // Energy gate, the player's rule (PlayerFireResolver): the slot trigger
+    // costs `resolveSlotEnergyCost` once; a short pool refuses the shot
+    // WITHOUT spending the cooldown, so it fires the moment it can pay.
+    if (d.trySpendEnergy !== undefined && !d.trySpendEnergy(shooterId, resolveSlotEnergyCost(droneKind))) return;
     d.lastFireClientTick.set(shooterId, tick);
 
     // Living World P3c — a CHARGE weapon winds up instead of firing: lock the
@@ -206,11 +217,22 @@ export class AiFireResolver implements WeaponFireSink {
 
   /** Capital fire control: fire ONE mount along its barrel (hull angle +
    *  base angle + the slewed mount angle). Reload, reach and on-target checks
-   *  are the caller's (WeaponMountTicker.tickDrone). */
-  fireMount(shooterId: string, mountIdx: number): void {
-    const self = this.deps.swarmEntitySnapshot(shooterId);
-    if (!self) return;
+   *  are the caller's (WeaponMountTicker.tickDrone). Pays energy as a player
+   *  capital's turret does (PlayerFireResolver per-mount path: a partial
+   *  salvo pays its share), i.e. slot cost / mounts per mount. Returns false
+   *  when refused (no pose, or the pool can't pay) so the caller keeps the
+   *  reload. */
+  fireMount(shooterId: string, mountIdx: number): boolean {
+    const d = this.deps;
+    const self = d.swarmEntitySnapshot(shooterId);
+    if (!self) return false;
+    if (d.trySpendEnergy !== undefined) {
+      const kind = getShipKind(d.swarmRegistry.get(shooterId)?.shipKind ?? DEFAULT_SHIP_KIND);
+      const n = Math.min(d.resolveSlotMounts(kind).length, 31);
+      if (n > 0 && !d.trySpendEnergy(shooterId, resolveSlotEnergyCost(kind) / n)) return false;
+    }
     this.fireNow(shooterId, -Math.sin(self.angle), Math.cos(self.angle), mountIdx);
+    return true;
   }
   /** Quad AA: the next barrel to fire, per shooter and mount index. */
   private readonly aaBarrel = new Map<string, Uint8Array>();
