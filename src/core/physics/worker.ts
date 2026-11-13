@@ -28,6 +28,7 @@ import { getShipKind } from '../../shared-types/shipKinds.js';
 import { tickInputQueue, type QueuedInput } from './inputQueue.js';
 import { drainContacts } from './contactDrain.js';
 import { advanceSchedule, tickPeriodMs, type CatchUpResult } from './catchUp.js';
+import { WakeCensus, WAKE_CENSUS_EVERY_TICKS } from './wakeCensus.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import {
   SEQLOCK_IDX,
@@ -73,7 +74,7 @@ const CONTACT_FORCE_FLOOR = 200;
 interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
 interface DespawnCmd       { type: 'DESPAWN';        slot: number; playerId: string }
 interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean; warpX?: number; warpY?: number }
-interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number }
+interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; settleSpeed?: number; settleSpin?: number }
 interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
 interface ClockRateCmd     { type: 'CLOCK_RATE';     rate: number }
 /** Authoritatively reposition a body in the physics world. Used by the
@@ -204,6 +205,8 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
    *  tick in the sleep poll; `getAllShipStates` skips them, so a resting
    *  body costs one `isSleeping` call a tick and nothing else. */
   const quietIds = new Set<string>();
+  /** Dev-only wreck wake census (`EQX_WAKE_CENSUS=1`; see wakeCensus.ts). */
+  const wakeCensus = process.env['EQX_WAKE_CENSUS'] === '1' ? new WakeCensus() : null;
   let tick = 0;
 
   const handle = (cmd: WorkerCommand): void => {
@@ -216,6 +219,7 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
       }
       case 'DESPAWN': {
         physics.despawnShip(cmd.playerId);
+        wakeCensus?.forget(cmd.playerId);
         playerToSlot.delete(cmd.playerId);
         slotToPlayer.delete(cmd.slot);
         inputQueues.delete(cmd.slot);
@@ -276,6 +280,8 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         }
         // Capital wreck pieces (S2a) spin down and settle into terrain.
         if (cmd.angularDamping !== undefined) physics.setAngularDamping(cmd.obstacleId, cmd.angularDamping);
+        // Sub-cap wreck pieces settle to sleep (`World.setSleepSettle`).
+        if (cmd.settleSpeed !== undefined) physics.setSleepSettle(cmd.obstacleId, cmd.settleSpeed, cmd.settleSpin ?? 0);
         // P3.10 (P0) — STRUCTURES (kind 2) lock their body so a ram can't impart
         // velocity. Mirrors the client predWorld (`structureClientLeaf` does
         // `spawnObstacle` + `lockBody`); the server worker is where the
@@ -350,18 +356,22 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         // `applyImpulse` silently skips unknown ids — safe for the race
         // where a drone died between detonate and apply.
         physics.applyImpulse(cmd.entityId, cmd.fx, cmd.fy, 0);
+        wakeCensus?.noteImpulse(cmd.entityId, 'missile');
         break;
       }
       case 'WRECK_KICK': {
         physics.addVelocity(cmd.entityId, cmd.dvx, cmd.dvy, cmd.dw);
+        wakeCensus?.noteImpulse(cmd.entityId, 'kick');
         break;
       }
       case 'WRECK_IMPULSE': {
         physics.applyImpulseAtPoint(cmd.entityId, cmd.jx, cmd.jy, cmd.px, cmd.py);
+        wakeCensus?.noteImpulse(cmd.entityId, 'knock');
         break;
       }
       case 'WRECK_RIGID_IMPULSE': {
         physics.applyRigidGroupImpulse(cmd.entityIds, cmd.jx, cmd.jy, cmd.px, cmd.py);
+        if (wakeCensus) for (const id of cmd.entityIds) wakeCensus.noteImpulse(id, 'knock');
         break;
       }
       case 'SPAWN_WALL': {
@@ -473,6 +483,7 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
 
       const effectiveSleeping = next >= SLEEP_HYSTERESIS_TICKS;
       const lastReported = sleepState.get(slot) ?? false;
+      if (wakeCensus && id.startsWith('wreck-')) wakeCensus.poll(physics, id, tick, prev > 0, lastReported, sleeping);
       // Still asleep, already flagged FLAG_SLEEPING in the SAB on an earlier
       // tick, and no pilot input on the slot (a player's ack must advance
       // every tick): its SAB record is current, skip the read and write below.
@@ -488,6 +499,11 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         rec.sleeping = effectiveSleeping;
         transitionCount++;
       }
+    }
+
+    if (wakeCensus) {
+      wakeCensus.endTick();
+      if (tick % WAKE_CENSUS_EVERY_TICKS === 0) post({ type: 'WAKE_CENSUS', census: wakeCensus.sample(physics, slotToPlayer.values(), tick) });
     }
 
     // Write all entity states to SAB under seqlock.

@@ -26,7 +26,7 @@ import type { WreckPieceGeometry } from '@core/destruction/wreckPieces';
  *  record calls without a Rapier world. */
 export type PredWorldHandle = Pick<
   PhysicsWorld,
-  'hasShip' | 'spawnObstacle' | 'lockBody' | 'setHullExposed' | 'setShipState' | 'setAngularDamping'
+  'hasShip' | 'spawnObstacle' | 'lockBody' | 'setHullExposed' | 'setShipState' | 'setAngularDamping' | 'setSleepSettle'
 >;
 
 /** Capital wreck geometry (S2b): the pieces rebuilt from the `wrecks[]`

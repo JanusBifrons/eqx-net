@@ -44,6 +44,11 @@ export { BOOST_MULTIPLIER } from '../../shared-types/shipKinds.js';
  */
 export const SOFT_CCD_PREDICTION = 48;
 
+/** Fixed steps a settle body (`setSleepSettle`) must stay under its
+ *  thresholds before it is put to sleep: half a second (Rapier's own timer
+ *  is 2 s, at a 0.4 u/s threshold). */
+export const WRECK_SETTLE_STEPS = 30;
+
 export interface ShipPhysicsState {
   x: number;
   y: number;
@@ -159,6 +164,7 @@ export class PhysicsWorld {
       this.applyPadFields();
       this.world.step(eventQueue);
       this.capitals.resolve();
+      if (this.settle.size > 0) this.settleStep();
       this.accumulator -= FIXED_DT;
     }
   }
@@ -395,6 +401,7 @@ export class PhysicsWorld {
     if (!rec) return;
     this.handleToId.delete(rec.body.handle);
     this.capitals.remove(rec.body);
+    this.settle.delete(id);
     this.world.removeRigidBody(rec.body);
     this.bodies.delete(id);
   }
@@ -894,6 +901,72 @@ export class PhysicsWorld {
     const rec = this.bodies.get(id);
     if (!rec) return false;
     return rec.body.isSleeping();
+  }
+
+  /**
+   * Settle-to-sleep (wreck sleep fix, 2026-11-13): once body `id` has moved
+   * slower than `speed` (u/s) and spun slower than `spin` (rad/s) for
+   * `WRECK_SETTLE_STEPS` fixed steps in a row, it is put to sleep, instead of
+   * drifting on down to Rapier's global 0.4 u/s threshold (which must stay:
+   * a `lengthUnit` change would move every body's). Rapier's JS API has no
+   * per-body sleep thresholds, so this is the per-body one. A sleeping body
+   * still wakes on a contact or impulse like any other. Deterministic (pure
+   * function of the body's state per step), so the server worker and the
+   * client predWorld twin run the same rule from `wreckBodyParams` (#15).
+   * `speed <= 0` removes it. Unknown id ⇒ no-op.
+   */
+  setSleepSettle(id: string, speed: number, spin: number): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    if (!(speed > 0)) { this.settle.delete(id); return; }
+    const s = this.settle.get(id);
+    if (s) { s.speed2 = speed * speed; s.spin = spin; s.count = 0; return; }
+    this.settle.set(id, { body: rec.body, speed2: speed * speed, spin, count: 0 });
+  }
+
+  private readonly settle = new Map<string, { body: RAPIER.RigidBody; speed2: number; spin: number; count: number }>();
+
+  /** One settle pass after a fixed step (alloc-free apart from Rapier's own
+   *  `linvel()` getter, as in `getAllShipStates`). */
+  private settleStep(): void {
+    for (const s of this.settle.values()) {
+      const b = s.body;
+      if (b.isSleeping()) { s.count = 0; continue; }
+      const v = b.linvel();
+      if (v.x * v.x + v.y * v.y < s.speed2 && Math.abs(b.angvel()) < s.spin) {
+        if (++s.count >= WRECK_SETTLE_STEPS) { b.sleep(); s.count = 0; }
+      } else {
+        s.count = 0;
+      }
+    }
+  }
+
+  /** Dev-only (the worker's wake census, `EQX_WAKE_CENSUS`): the entity id
+   *  and speed of the fastest body `id` has a live contact point with, or
+   *  null when it touches nothing. Not on any hot path. */
+  fastestContact(id: string): { otherId: string; speed: number } | null {
+    const rec = this.bodies.get(id);
+    if (!rec) return null;
+    const np = this.world.narrowPhase;
+    let best: { otherId: string; speed: number } | null = null;
+    const numCol = rec.body.numColliders();
+    for (let ci = 0; ci < numCol; ci++) {
+      const col = rec.body.collider(ci);
+      if (!col) continue;
+      np.contactPairsWith(col.handle, (otherHandle) => {
+        let live = false;
+        np.contactPair(col.handle, otherHandle, (manifold) => { if (manifold.numContacts() > 0) live = true; });
+        if (!live) return;
+        const parent = this.world.getCollider(otherHandle)?.parent();
+        if (!parent) return;
+        const otherId = this.handleToId.get(parent.handle);
+        if (otherId === undefined) return;
+        const v = parent.linvel();
+        const speed = Math.hypot(v.x, v.y);
+        if (best === null || speed > best.speed) best = { otherId, speed };
+      });
+    }
+    return best;
   }
 
   /** Force-wake a body. Safe no-op if already awake or unknown. */

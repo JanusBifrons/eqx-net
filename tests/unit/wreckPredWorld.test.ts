@@ -144,10 +144,12 @@ describe('wreck piece in predWorld (S2b)', () => {
       const piece = spawned[0]!;
       const store = new WreckGeometryStore();
       store.apply([desc]);
-      const calls: Array<{ damping: number; groups: number | undefined; angular?: number }> = [];
+      const calls: Array<{ damping: number; groups: number | undefined; angular?: number; settle?: [number, number] }> = [];
       const fake = {
         spawnObstacle: (_id: string, _x: number, _y: number, _r: number, _m: number, _v: unknown, damping: number, groups?: number) => { calls.push({ damping, groups }); },
         setAngularDamping: (_id: string, d: number) => { calls[calls.length - 1]!.angular = d; },
+        // Wreck sleep fix: the same settle-to-sleep rule as the server body.
+        setSleepSettle: (_id: string, speed: number, spin: number) => { calls[calls.length - 1]!.settle = [speed, spin]; },
       } as unknown as ClientSpawnCtx['predWorld'];
       new ClientEntityFactory().leafFor(SWARM_KIND_WRECK)!.spawnBody({
         predWorld: fake,
@@ -155,7 +157,10 @@ describe('wreck piece in predWorld (S2b)', () => {
         wrecks: store, entityId: 1, key: 'swarm-1', registeredAiId: null,
         entry: { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0, radius: piece.radius, kind: SWARM_KIND_WRECK, shipKind: kind, componentIndex: piece.pieceIndex, wreckId: desc.wreckId } as SwarmRenderState,
       });
-      expect(calls).toEqual([{ damping: piece.linearDamping, groups: piece.collisionGroups, angular: piece.angularDamping }]);
+      expect(calls).toEqual([{
+        damping: piece.linearDamping, groups: piece.collisionGroups, angular: piece.angularDamping,
+        ...(piece.settleSpeed > 0 ? { settle: [piece.settleSpeed, piece.settleSpin] } : {}),
+      }]);
     });
   }
 });

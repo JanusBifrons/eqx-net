@@ -117,6 +117,17 @@ export interface DestructionProfile {
    *  gets the profile's value). */
   readonly knockScale: number;
   readonly knockMaxScale: number;
+  /** A hit on a RESTING (asleep) piece wakes and shoves it only when its
+   *  uncapped knock (J ÷ piece mass) is at least this × `wreckKnockMax`;
+   *  a lighter hit still stops the shot but leaves the piece asleep. 0 =
+   *  every hit shoves (capitals). Wreck sleep fix, 2026-11-13. */
+  readonly knockWakeScale: number;
+  /** Settle-to-sleep (wreck sleep fix, 2026-11-13): a piece slower than this
+   *  × its kind's radius (u/s) and spinning slower than `settleSpin` (rad/s)
+   *  for `WRECK_SETTLE_STEPS` steps is put to sleep (`World.setSleepSettle`),
+   *  instead of drifting on down to Rapier's own 0.4 u/s. 0 = off. */
+  readonly settlePerRadius: number;
+  readonly settleSpin: number;
   /** Pieces of one wreck collide with each other. */
   readonly piecesCollide: boolean;
   readonly fx: DestructionFx;
@@ -134,6 +145,10 @@ const CAPITAL: DestructionProfile = {
   dampingScale: 1,
   knockScale: 1,
   knockMaxScale: 1,
+  // Heavy chunks are knocked by every hit and drift on (owner, 2026-11-13).
+  knockWakeScale: 0,
+  settlePerRadius: 0,
+  settleSpin: 0,
   piecesCollide: true,
   fx: {
     breakBurst: true,
@@ -192,6 +207,17 @@ const SUBCAP: DestructionProfile = {
   // fighter size.
   knockScale: 320,
   knockMaxScale: 30,
+  // Wreck sleep fix (2026-11-13; soak census in capital-destruction.md "Soak
+  // results"): in a live fight ~40 % of wake-ups were small-arms knocks and
+  // ~45 % slow ships brushing a resting piece, and each wake cost ~9 s of
+  // drift down to Rapier's 0.4 u/s. A laser (12 dmg) on half a fighter is
+  // ~15 u/s uncapped, a 5" shell ~75 u/s, so at 2× the 18 u/s cap small arms
+  // leave a resting piece asleep and real hits still shove it. A piece under
+  // 1/8 of a radius a second (fighter 3 u/s) and 0.3 rad/s for half a second
+  // goes to sleep. Locks: `World.sleepSettle.test.ts`, `subcapWreckSleep.test.ts`.
+  knockWakeScale: 2,
+  settlePerRadius: 0.125,
+  settleSpin: 0.3,
   piecesCollide: false,
   fx: {
     breakBurst: false,
@@ -222,6 +248,9 @@ const NONE: DestructionProfile = {
   dampingScale: 1,
   knockScale: 1,
   knockMaxScale: 1,
+  knockWakeScale: 0,
+  settlePerRadius: 0,
+  settleSpin: 0,
   piecesCollide: false,
   fx: {
     breakBurst: false,

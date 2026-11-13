@@ -2499,7 +2499,7 @@ export class SectorRoom extends Room<SectorState> {
     this.swarmSpawner = new SwarmSpawner(this.swarmRegistry, {
       takeSlot: () => this.freeSlots.pop(),
       postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, shieldKindId, spin) =>
-        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}), ...(spin ? { angvel: spin.angvel, angularDamping: spin.angularDamping } : {}) }),
+        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}), ...(spin ? { angvel: spin.angvel, angularDamping: spin.angularDamping } : {}), ...(spin?.settleSpeed ? { settleSpeed: spin.settleSpeed, settleSpin: spin.settleSpin ?? 0 } : {}) }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
@@ -5145,6 +5145,10 @@ export class SectorRoom extends Room<SectorState> {
         const c = this._wreckRigidImpulseCmd;
         c.entityIds = ids; c.jx = jx; c.jy = jy; c.px = px; c.py = py;
         this.postToWorker(c);
+      },
+      pieceAsleep: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        return rec != null && ((this.sabU32[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0) & FLAG_SLEEPING) !== 0;
       },
     });
   }
@@ -10703,6 +10707,7 @@ export class SectorRoom extends Room<SectorState> {
       structures: this.structureRegistry.size,
       work: this.sceneWork.view(this.sceneEluStart ? (this.physicsWorkerProxy?.elu(this.sceneEluStart)?.utilization ?? null) : null),
       simTime: sceneSimTime(this.sceneSimStart, this.sceneSimEnd, this.gameClock.scale),
+      wakeCensus: this.physicsWorkerProxy?.lastWakeCensus ?? null,
     };
   }
 

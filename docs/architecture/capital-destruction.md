@@ -1058,6 +1058,107 @@ Print-only counts:
 
 The on arm keeps more ships alive: debris absorbs shots.
 
+#### Why pieces stayed awake, and the fix (2026-11-13, follow-up)
+
+**Measured with a wake census.** `EQX_WAKE_CENSUS=1` turns on a dev-only
+census in the physics worker (`core/physics/wakeCensus.ts`). Every 5 s it
+posts a sample, which `/dev/perf` carries as `wakeCensus`. It records:
+
+- each asleep → awake flip of a wreck piece, with its cause that tick:
+  - an impulse command: `knock`, `missile` or `kick`;
+  - else the fastest body the piece touches: `shipSlow` or `shipFast`
+    (split at 20 u/s), `piece` or `scrap`;
+  - else `none` (woken with no contact of its own: a contact over within
+    the step, or island coupling);
+- why each awake piece is awake at the sample: touching something,
+  `drifting` (over Rapier's sleep thresholds) or `settling` (under them,
+  with Rapier's 2 s timer running);
+- the share of pieces older than 20 s that are asleep.
+
+The headless soak `tests/integration/sectorRoom/wreckSleepSoak.test.ts`
+(`EQX_WRECK_SOAK_S=210`) plays `fleet-fight-soak-lite` on a real server
+with no browser. The pilot is only a body at the spawn, so its sleep
+numbers match the browser take (~30 % asleep at 3 min in both).
+
+**Cause breakdown, before (210 s, 614 pieces).** Wakes of a piece that was
+resting (asleep ≥ 12 ticks):
+
+| Cause | Wakes | Share |
+|---|---|---|
+| knock (`onWreckHit`) | 964 | 40 % |
+| slow ship (< 20 u/s) touching it | 1,012 | 42 % |
+| no contact of its own (`none`) | 394 | 16 % |
+| fast ship | 38 | 2 % |
+| piece, scrap, missile, kick | 0 | 0 % |
+
+- At any sample, ~85 % of the awake pieces were **drifting**, ~10 %
+  settling and ≤ 5 % touching a ship. So contact itself costs little; the
+  drift after each wake costs a lot.
+- A laser hit (12 damage) on half a fighter wreck is ~15 u/s, near the
+  18 u/s knock cap. At damping 0.6/s that is ~7 s down to Rapier's
+  0.4 u/s, then its 2 s timer: ~9 s awake per small-arms hit.
+- Rapier's thresholds are global (`lengthUnit`) and the JS API has no
+  per-body ones, so they can't simply be raised for wreck pieces.
+
+**The fix** (shared numbers in the sub-cap profile, `destruction.ts`; the
+capital profile is unchanged, so its pieces are knocked by every hit as
+before):
+
+- **Knock floor on resting pieces** (`knockWakeScale` 2). Server only: the
+  knock is server-authoritative and the client never predicts it.
+  - A hit on a piece that is ASLEEP shoves it only when its uncapped knock
+    is at least 2 × `wreckKnockMax` (fighter: 36 u/s, i.e. ≥ ~30 damage
+    on a big piece).
+  - Small arms still stop on the piece but leave it asleep. A 5" shell or
+    anything heavier wakes and shoves it as before.
+  - Awake pieces are knocked by every hit, as before.
+- **Settle-to-sleep** (`settlePerRadius` 0.125, `settleSpin` 0.3).
+  - `World.setSleepSettle` puts a piece to sleep after it has moved slower
+    than 1/8 of its kind's radius a second (fighter 3 u/s) and spun slower
+    than 0.3 rad/s for `WRECK_SETTLE_STEPS` (30) fixed steps.
+  - Rapier's own rule is 0.4 u/s for 2 s.
+  - It is deterministic and set from `wreckBodyParams`, so the server
+    worker and the client predWorld twin run the same rule (#15).
+  - A contact or a heavy hit still wakes the piece. It then re-settles in
+    a few seconds instead of ~9.
+- No damping change and no shorter lifetime.
+
+Locks:
+
+- `World.sleepSettle.test.ts`: the settle rule, determinism, and the
+  profile wiring.
+- `tests/integration/sectorRoom/subcapWreckSleep.test.ts`: a resting piece
+  stays asleep and still under three laser bolts, and a 400-damage hit
+  wakes and shoves it. A ship passing close by never wakes it. After a
+  slow nudge it is asleep again in ~4 s (~7 s before the fix). A hard ram
+  still shoves it. Both tests fail with the fix's two profile numbers set
+  to 0.
+
+**After (same headless soak, same session):**
+
+| t | pieces | asleep (all) before / after | asleep, pieces older than 20 s, before / after | worker p95 before / after (ms) |
+|---|---|---|---|---|
+| 60 s | 132 / 126 | 14 % / 28 % | 35 % / 74 % | 2.4 / 1.8 |
+| 90 s | 210 / 188 | 17 % / 47 % | 44 % / 69 % | 4.5 / 1.3 |
+| 120 s | 315 / 281 | 29 % / 54 % | 43 % / 79 % | 10.4 / (49.7)* |
+| 150 s | 407 / 380 | 30 % / 66 % | 46 % / 75 % | 7.6 / 5.9 |
+| 180 s | 509 / 466 | 19 % / 81 % | 29 % / 90 % | 14.5 / 5.6 |
+| 210 s | 614 / 573 | 11 % / 72 % | 37 % / 87 % | 13.6 / 6.9 |
+
+\* A one-off host spike (also at 135 s, 40.7 ms). Timings come from one
+take on a shared host and are print-only.
+
+- From 135 s on, 75–90 % of pieces older than 20 s are asleep (mean
+  ~83 %), against 26–46 % before. The target was ≥ 80 %.
+- Resting pieces woken by a knock: 964 → 15.
+- The slow-ship wake count rises (2,347 by 210 s). Pieces now re-settle
+  quickly, so the same pass wakes them again later. Each such wake now
+  costs ~4 s of drift instead of ~9.
+- The remaining awake pieces are mostly fresh debris still drifting from
+  its death (`neverSleptAwake` ~30) and pieces in the melee being brushed.
+- Wire and client costs still need a browser take: `pnpm perf:scenes
+  --scenes fleet-fight-soak-lite --head-only --sample-ms 30000`.
+
 #### What to fix (in order)
 
 1. **Wire: sleeping pieces leave the 1 Hz full refresh.** Treat them like
@@ -1078,12 +1179,9 @@ The on arm keeps more ships alive: debris absorbs shots.
      pilot's collisions inside its own interest window.
    - Expected second fix: send the `wrecks` map to the renderer worker only
      when its version changes, not inside every frame's mirror.
-4. **Let pieces actually settle in a fight.**
-   - Measure `wreckAwakeSlow` first.
-   - If contacts or knocks keep the pieces awake: put a floor under the knock
-     so small-arms hits on a resting piece don't wake it.
-   - Or raise the sleep thresholds for kind 4 only. Never shorten the
-     lifetime (plan: "the fix goes there, not into a shorter lifetime").
+4. **Let pieces actually settle in a fight.** DONE (2026-11-13): the knock
+   floor and settle-to-sleep above. Never shorten the lifetime (plan: "the
+   fix goes there, not into a shorter lifetime").
 5. **Cap.** Keep 2,000 as the server's ceiling, but it never binds today. Until
    1–3 land, the practical limit is ~600 live pieces near one pilot.
    Re-measure after each fix with `fleet-fight-soak-lite`.

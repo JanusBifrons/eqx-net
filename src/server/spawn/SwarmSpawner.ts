@@ -57,7 +57,7 @@ export interface SpawnerHooks {
    *  `angle` (scrap, kind=3) rotates the body at spawn so a recentred scrap
    *  collider is oriented to match the dying ship; every other caller passes 0
    *  / undefined (legacy axis-aligned spawn). */
-  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number }) => void;
+  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number; settleSpeed?: number; settleSpin?: number }) => void;
   /** Direct write into the SAB so the first update() tick reads a sane pose. */
   sabF32: Float32Array;
   sabU32: Uint32Array;
@@ -306,6 +306,9 @@ export class SwarmSpawner {
     linearDamping: number; angularDamping: number;
     /** `wreckBodyParams(kind).collisionGroups`; absent ⇒ the capital groups. */
     collisionGroups?: number;
+    /** `wreckBodyParams(kind).settleSpeed/settleSpin`; absent ⇒ no settle. */
+    settleSpeed?: number;
+    settleSpin?: number;
   }): boolean {
     const slot = this.hooks.takeSlot();
     if (slot === undefined) return false;
@@ -326,7 +329,7 @@ export class SwarmSpawner {
     this.hooks.postSpawnObstacle(
       slot, spec.id, spec.x, spec.y, spec.vx, spec.vy, spec.radius, spec.mass, undefined,
       spec.linearDamping, false, spec.collisionGroups ?? WRECK_COLLISION_GROUPS, spec.angle, spec.colliderParts, undefined,
-      { angvel: spec.angvel, angularDamping: spec.angularDamping },
+      { angvel: spec.angvel, angularDamping: spec.angularDamping, ...(spec.settleSpeed ? { settleSpeed: spec.settleSpeed, settleSpin: spec.settleSpin ?? 0 } : {}) },
     );
     this.hooks.interestGrid?.insert(rec.entityId, spec.x, spec.y, spec.radius);
     return true;
