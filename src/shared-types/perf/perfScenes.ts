@@ -92,6 +92,29 @@ export const PERF_SCENES: readonly PerfScene[] = [
     soak: true,
   },
   {
+    // The same soak at 10 ships a side a wave. The full soak's 30-a-side
+    // waves outrun the killing (~250 more ships alive a minute), so its client
+    // falls over within ~2.5 min whatever the debris does; at 10 a side the
+    // fight stays bounded and the debris is what grows (slice 5 soak results).
+    id: 'fleet-fight-soak-lite',
+    title: 'A bounded 10-a-side fleet fight for 10 minutes with sub-cap wrecks on (debris soak)',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      subcapWrecks: true,
+      sceneScript: [
+        { ...fight('blue', 'fighter', -300, 1200, 10), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { ...fight('red', 'robot-square', 300, 1200, 10), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { atMs: 600_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: -400 },
+    camera: { x: 0, y: 1200, zoom: 0.45 },
+    durationMs: 600_000,
+    minSwarm: 10,
+    soak: true,
+  },
+  {
     id: 'teleport-raid',
     title: '40 ships warp in beside an NPC citadel at t = 5 s',
     room: {

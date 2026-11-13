@@ -183,14 +183,21 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
     for (;;) {
       room = (await devPerf(arm.servers.serverUrl)).rooms.find((r) => r['players'] > 0);
       if (room?.['scene']?.ended) break;
+      // The pilot's client left (crashed, hung, or was dropped): the room is
+      // gone, so the scene can never end. Fail now instead of at the deadline.
+      if (room === undefined && series.length > 0) throw new Error(`scene ${scene.id}: the pilot's room is gone after ${series.length} samples (client dropped)`);
       if (sampleMs > 0 && room && Date.now() >= nextSample) {
         nextSample += sampleMs;
-        const c = await page.evaluate(async () => {
-          const probe = (globalThis as unknown as { __eqxPerf: { read(): Promise<any>; reset(): Promise<void> } }).__eqxPerf;
-          const r = await probe.read();
-          await probe.reset();
-          return r;
-        });
+        // A hung page must not hang the run (the 2026-11-13 soak's first take).
+        const c = await Promise.race([
+          page.evaluate(async () => {
+            const probe = (globalThis as unknown as { __eqxPerf: { read(): Promise<any>; reset(): Promise<void> } }).__eqxPerf;
+            const r = await probe.read();
+            await probe.reset();
+            return r;
+          }),
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`scene ${scene.id}: client probe unresponsive for 20 s after ${series.length} samples`)), 20_000)),
+        ]);
         const now = Date.now();
         const smp = soakSample(room, c, last, now, rxBytes, rxSwarmBytes);
         series.push(smp);
