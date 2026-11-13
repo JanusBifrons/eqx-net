@@ -985,6 +985,9 @@ export class SectorRoom extends Room<SectorState> {
   private pendingDirY: number | undefined = undefined;
   /** Reused `WRECK_IMPULSE` command (overkill knock-back, #14). */
   private readonly _wreckImpulseCmd = { type: 'WRECK_IMPULSE' as const, entityId: '', jx: 0, jy: 0, px: 0, py: 0 };
+  /** Reused `WRECK_RIGID_IMPULSE` command (a hit during the crack hold, #14). */
+  private readonly _wreckRigidImpulseCmd: { type: 'WRECK_RIGID_IMPULSE'; entityIds: readonly string[]; jx: number; jy: number; px: number; py: number } =
+    { type: 'WRECK_RIGID_IMPULSE', entityIds: [], jx: 0, jy: 0, px: 0, py: 0 };
   /** C1 — pilots who moved cargo by hand. Auto-deposit stays off for them
    *  until they fly out of deposit range of their storage, so a withdrawal
    *  from your own storage isn't banked straight back 2 s later. */
@@ -5099,6 +5102,12 @@ export class SectorRoom extends Room<SectorState> {
       impulsePiece: (id, jx, jy, px, py) => {
         const c = this._wreckImpulseCmd;
         c.entityId = id; c.jx = jx; c.jy = jy; c.px = px; c.py = py;
+        this.postToWorker(c);
+      },
+      // During the crack hold: the whole wreck as one rigid body (#14 as above).
+      impulseWreck: (ids, jx, jy, px, py) => {
+        const c = this._wreckRigidImpulseCmd;
+        c.entityIds = ids; c.jx = jx; c.jy = jy; c.px = px; c.py = py;
         this.postToWorker(c);
       },
     });

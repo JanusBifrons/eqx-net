@@ -833,6 +833,62 @@ export class PhysicsWorld {
   private readonly _impJ = { x: 0, y: 0 };
   private readonly _impP = { x: 0, y: 0 };
 
+  /**
+   * Apply a linear impulse (jx, jy) at world point (px, py) to a GROUP of
+   * bodies as if they were one rigid body (a capital wreck still inside its
+   * crack hold, hit by the rest of a salvo). The group's motion is first made
+   * exactly rigid from its momentum (centre-of-mass velocity from the linear
+   * momentum, spin from the angular momentum about the centre of mass over
+   * the group's moment of inertia, parallel-axis theorem), then
+   *   Δv = J ÷ M,  Δω = (r × J) ÷ I,
+   * and every body gets v_com + ω × r_i and spin ω, so the pieces keep their
+   * relative poses. Unknown ids are skipped (pieces already gone). Wakes the
+   * bodies. Alloc-free apart from Rapier's own vector getters.
+   */
+  applyRigidGroupImpulse(ids: readonly string[], jx: number, jy: number, px: number, py: number): void {
+    let m = 0, cx = 0, cy = 0, momX = 0, momY = 0;
+    for (let i = 0; i < ids.length; i++) {
+      const rec = this.bodies.get(ids[i]!);
+      if (!rec) continue;
+      const b = rec.body;
+      const mi = b.mass();
+      const c = b.worldCom();
+      const v = b.linvel();
+      m += mi; cx += c.x * mi; cy += c.y * mi; momX += v.x * mi; momY += v.y * mi;
+    }
+    if (!(m > 0)) return;
+    cx /= m; cy /= m;
+    let vx = momX / m, vy = momY / m;
+    // Angular momentum and inertia about the group's centre of mass.
+    let l = 0, inertia = 0;
+    for (let i = 0; i < ids.length; i++) {
+      const rec = this.bodies.get(ids[i]!);
+      if (!rec) continue;
+      const b = rec.body;
+      const mi = b.mass();
+      const c = b.worldCom();
+      const v = b.linvel();
+      const rx = c.x - cx, ry = c.y - cy;
+      const ii = b.principalInertia();
+      inertia += ii + mi * (rx * rx + ry * ry);
+      l += ii * b.angvel() + mi * (rx * (v.y - vy) - ry * (v.x - vx));
+    }
+    let w = inertia > 0 ? l / inertia : 0;
+    vx += jx / m;
+    vy += jy / m;
+    if (inertia > 0) w += ((px - cx) * jy - (py - cy) * jx) / inertia;
+    for (let i = 0; i < ids.length; i++) {
+      const rec = this.bodies.get(ids[i]!);
+      if (!rec) continue;
+      const b = rec.body;
+      const c = b.worldCom();
+      this._kickVel.x = vx - w * (c.y - cy);
+      this._kickVel.y = vy + w * (c.x - cx);
+      b.setLinvel(this._kickVel, true);
+      b.setAngvel(w, true);
+    }
+  }
+
   /** True when Rapier reports the body as sleeping (motion below its threshold). */
   isSleeping(id: string): boolean {
     const rec = this.bodies.get(id);

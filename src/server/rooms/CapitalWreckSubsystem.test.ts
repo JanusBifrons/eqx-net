@@ -9,7 +9,8 @@ import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 
-function make(kinds: Record<string, string> = { cap: 'battleship' }) {
+function make(kinds: Record<string, string> = { cap: 'battleship' }, withRigid = false) {
+  const rigid: Array<{ ids: readonly string[]; jx: number; jy: number; px: number; py: number }> = [];
   let tick = 1000;
   const spawned: WreckPieceSpawn[] = [];
   const live = new Set<string>();
@@ -27,8 +28,9 @@ function make(kinds: Record<string, string> = { cap: 'battleship' }) {
     pieceAngle: (id) => (live.has(id) ? angles.get(id) ?? 0 : null),
     kickPiece: (id, dvx, dvy, dw) => { kicks.push({ id, dvx, dvy, dw, tick }); },
     impulsePiece: (id, jx, jy, px, py) => { impulses.push({ id, jx, jy, px, py }); },
+    ...(withRigid ? { impulseWreck: (ids: readonly string[], jx: number, jy: number, px: number, py: number) => { rigid.push({ ids, jx, jy, px, py }); } } : {}),
   });
-  return { sys, spawned, removed, kicks, impulses, angles, live, setTick: (t: number) => { tick = t; } };
+  return { sys, spawned, removed, kicks, impulses, rigid, angles, live, setTick: (t: number) => { tick = t; } };
 }
 
 const pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
@@ -135,5 +137,37 @@ describe('CapitalWreckSubsystem', () => {
     sys.pieceGone(big.id);
     expect(sys.onWreckHit(big.id, 0, 0, 1, 0, 1400)).toBe(false);
     expect(impulses).toHaveLength(2);
+  });
+
+  it('during the crack hold a hit shoves the WHOLE wreck as one body; after it, only the piece hit', () => {
+    const { sys, spawned: pieces, impulses, rigid, setTick } = make({ cap: 'battleship' }, true);
+    sys.forcedSeed = 9;
+    const maxHull = 10_000;
+    setTick(5000);
+    sys.onDeath('cap', 'battleship', pose, maxHull);
+    const hullMass = pieces.reduce((s, p) => s + p.mass, 0);
+    const t = shipTuning(getShipKind('battleship'));
+    const small = pieces.reduce((a, b) => (b.mass < a.mass ? b : a));
+    const j = 1400 * hullMass * t.wreckKnockSpeed / maxHull;
+
+    // Inside the hold: every piece of the wreck, the same impulse, nothing single.
+    setTick(5000 + wreckCrackTicks() - 1);
+    expect(sys.onWreckHit(small.id, 10, 20, 3, 4, 1400)).toBe(true);
+    expect(impulses).toHaveLength(0);
+    expect(rigid).toHaveLength(1);
+    expect([...rigid[0]!.ids].sort()).toEqual(pieces.map((p) => p.id).sort());
+    expect(rigid[0]!.jx).toBeCloseTo(j * 0.6, 6);
+    expect(rigid[0]!.jy).toBeCloseTo(j * 0.8, 6);
+    expect([rigid[0]!.px, rigid[0]!.py]).toEqual([10, 20]);
+    // The cap is on the whole wreck's speed change.
+    expect(sys.onWreckHit(small.id, 0, 0, 1, 0, 1e9)).toBe(true);
+    expect(rigid[1]!.jx / hullMass).toBeCloseTo(t.wreckKnockMax, 6);
+
+    // From the split on: the piece alone (#542).
+    setTick(5000 + wreckCrackTicks());
+    expect(sys.onWreckHit(small.id, 0, 0, 1, 0, 1400)).toBe(true);
+    expect(rigid).toHaveLength(2);
+    expect(impulses).toHaveLength(1);
+    expect(impulses[0]!.id).toBe(small.id);
   });
 });

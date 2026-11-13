@@ -259,6 +259,27 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
     moves ~30–33 u/s and turns ~3°/s on a hit 0.3 radius off centre, a
     mid-size piece (~80) hits the cap, and a 10-damage bolt moves the big
     piece ~0.2 u/s (a sliver can still reach the cap: it is tiny).
+    - **During the crack hold the whole wreck takes the hit (owner review
+      2026-11-13).** A battleship salvo lands over ~0.5 s: the first shell
+      breaks the hull and the rest arrive during the `WRECK_CRACK_MS` hold.
+      Shoving only the piece hit made one chunk slide and turn out of line
+      while the others held, so the hull bent like a banana before it split.
+      Now, while `serverTick < deathTick + wreckCrackTicks()`, `onWreckHit`
+      posts `WRECK_RIGID_IMPULSE { entityIds, jx, jy, px, py }` with the
+      wreck's piece ids (built once at death) instead. The worker
+      (`World.applyRigidGroupImpulse`) treats the live pieces as ONE rigid
+      body: it makes their motion exactly rigid from their momentum (centre
+      of mass velocity = Σmv ÷ M, spin = angular momentum about the centre
+      of mass ÷ the group's moment of inertia, each piece's
+      `principalInertia` plus m r²), adds Δv = J ÷ M and Δω = (r × J) ÷ I,
+      and sets every piece to v_com + ω × r_i, spin ω. The pieces keep their
+      relative poses; the hull moves and turns as one. The speed cap is on
+      the whole wreck (`wreckKnockMax` × its mass). The same 16" shell moves
+      a heavy cruiser's wreck ~9 u/s and turns it ~0.8°/s from near one end.
+      At the end of the hold the separating kick (`WRECK_KICK`) ADDS to that
+      motion, turned by how far each piece has turned since the death; the
+      pieces turned together, so the kick stays radial to the hull. After
+      the hold a hit shoves the single piece, as above.
     - **Paths.** Shells and bolts (`ProjectilePipeline` direct hit, the
       shell's velocity), player beams (`PlayerFireResolver`, the beam
       direction), NPC beams (`AiFireResolver` → `noteBeamImpact(x, y, dx,
@@ -286,7 +307,11 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
     seam opens at both ends), `CapitalWreckSubsystem.test.ts` (crack delay,
     knock-back formula and cap), `wreckOverkillKnockback.test.ts` (a real
     16" shell on a piece after the kill: Δv along the shot ≈ expected, spin
-    the way the off-centre hit turns it), `wreckHits.test.ts` (the gate).
+    the way the off-centre hit turns it), `wreckRigidHold.test.ts` (a real
+    16" shell during the hold: every pair of pieces keeps its relative pose
+    within 1 u / 0.1° and the wreck moves along the shot; 52 u / 0.44° of
+    bending before the fix), `World.rigidGroup.test.ts` (one spin, v_com +
+    ω × r, momentum + J), `wreckHits.test.ts` (the gate).
 - **Entity class.** A wreck piece is swarm kind 4 (`SWARM_KIND_WRECK`,
   server-only for now), predicate `isWreckPiece`. No health: `EntityResolver`
   treats it as immune, so a shot stops on it and does no damage (it knocks

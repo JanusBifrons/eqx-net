@@ -61,6 +61,13 @@ interface LiveWreck {
   desc: WreckDescriptor;
   /** Pieces of this wreck still alive. */
   pieces: number;
+  /** Every piece id spawned for it (built once at death; the worker skips
+   *  the ones already gone). */
+  ids: string[];
+  /** Total mass of the spawned pieces. */
+  mass: number;
+  /** Server tick the crack hold ends (the separating kicks are due). */
+  holdUntil: number;
 }
 
 export interface CapitalWreckDeps {
@@ -83,6 +90,11 @@ export interface CapitalWreckDeps {
   /** Apply impulse (jx, jy) at world point (px, py) to a live piece's body
    *  (overkill knock-back). Optional: absent ⇒ hits never shove pieces. */
   impulsePiece?: (id: string, jx: number, jy: number, px: number, py: number) => void;
+  /** Apply impulse (jx, jy) at world point (px, py) to the WHOLE wreck as one
+   *  rigid body (every piece in `ids`; gone ones are skipped), so the pieces
+   *  keep their relative poses: a hit during the crack hold. Optional: absent
+   *  ⇒ hold hits shove single pieces like later ones. */
+  impulseWreck?: (ids: readonly string[], jx: number, jy: number, px: number, py: number) => void;
 }
 
 /** How hard a hit knocks one piece (fixed at spawn; read per hit, #14). */
@@ -208,6 +220,8 @@ export class CapitalWreckSubsystem {
     for (const p of pieces) hullMass += p.mass;
     const impulsePerDamage = (hullMass * tuning.wreckKnockSpeed) / hull;
     let spawned = 0;
+    let spawnedMass = 0;
+    const spawnedIds: string[] = [];
     for (const p of pieces) {
       const id = `wreck-${n}-${p.index}`;
       const ok = this.d.spawnPiece({
@@ -218,6 +232,8 @@ export class CapitalWreckSubsystem {
       });
       if (!ok) continue;
       spawned++;
+      spawnedMass += p.mass;
+      spawnedIds.push(id);
       this.knock.set(id, { mass: p.mass, impulsePerDamage, maxDv: tuning.wreckKnockMax });
       // The hull holds together for the crack delay, then parts (game ticks).
       this.kicks.push({ id, dueTick: tick + crackTicks, vx: p.kickVx, vy: p.kickVy, w: p.kickAngvel, angle0: pose.angle });
@@ -233,6 +249,9 @@ export class CapitalWreckSubsystem {
           deathTick: tick,
         },
         pieces: spawned,
+        ids: spawnedIds,
+        mass: spawnedMass,
+        holdUntil: tick + crackTicks,
       });
       this.setChanged();
     }
@@ -276,6 +295,13 @@ export class CapitalWreckSubsystem {
    * false (and does nothing) when `id` is not a live wreck piece or the
    * direction is degenerate. Scalars only, alloc-free (#14): it runs in the
    * projectile and beam hit paths.
+   *
+   * During the crack hold (the rest of a salvo landing right after the kill,
+   * owner review 2026-11-13: the hull bent like a banana) the same impulse
+   * goes to the WHOLE wreck as one rigid body (`impulseWreck`): Δv = J ÷ the
+   * wreck's mass, Δω = (r × J) ÷ its moment of inertia, every piece set to
+   * v_com + ω × r_i, so the hull reads as one cracked body until it splits.
+   * The speed cap is then on the whole wreck (`wreckKnockMax` × its mass).
    */
   onWreckHit(id: string, hitX: number, hitY: number, dirX: number, dirY: number, damage: number): boolean {
     const k = this.knock.get(id);
@@ -283,6 +309,15 @@ export class CapitalWreckSubsystem {
     const len = Math.hypot(dirX, dirY);
     if (!(len > 1e-9) || !Number.isFinite(hitX) || !Number.isFinite(hitY)) return false;
     let j = damage * k.impulsePerDamage;
+    const wreckId = this.pieceWreck.get(id);
+    const w = wreckId !== undefined ? this.wrecks.get(wreckId) : undefined;
+    if (w !== undefined && this.d.impulseWreck !== undefined && this.d.serverTick() < w.holdUntil) {
+      const jMax = k.maxDv * w.mass;
+      if (j > jMax) j = jMax;
+      const s = j / len;
+      this.d.impulseWreck(w.ids, dirX * s, dirY * s, hitX, hitY);
+      return true;
+    }
     const jMax = k.maxDv * k.mass;
     if (j > jMax) j = jMax;
     const s = j / len;
