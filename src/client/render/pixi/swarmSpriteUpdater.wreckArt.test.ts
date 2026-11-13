@@ -7,8 +7,11 @@
  * on its cut edges while they are hot. The break-up fires once per fresh
  * wreck (dust, shards, flash); a late joiner sees it already cool.
  */
-import { describe, it, expect } from 'vitest';
-import { Container, Mesh, Texture, TextureSource } from 'pixi.js';
+import { describe, it, expect, vi } from 'vitest';
+import { Container, GlProgram, Mesh, Rectangle, Texture, TextureSource } from 'pixi.js';
+import { LitShipMesh } from '../art/litShipShader.js';
+import { litPass } from '../art/litPass.js';
+import { LOOK_NIGHT } from '../art/lightingSettings.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js';
 import { MountVisualManager } from '../MountVisualManager.js';
 import { WreckGeometryStore, rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
@@ -19,6 +22,9 @@ import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
 import { FRACTURE_ALGO_VERSION } from '../../../core/destruction/fractureHull.js';
 import { CLIENT_COUNT_BUDGETS } from '../../../shared-types/perf/perfBudgets.js';
 import type { WreckDescriptor } from '../../../shared-types/messages/snapshotMessages.js';
+
+// Compiling the lit GLSL needs a WebGL context (none under Node).
+vi.spyOn(GlProgram, 'from').mockImplementation(() => ({}) as GlProgram);
 
 function emptyPoseRing(): PoseRingEntry[] {
   const ring: PoseRingEntry[] = [];
@@ -131,9 +137,12 @@ describe('updateSwarmSprites — capital wreck art (S3)', () => {
       for (const m of meshes) {
         expect(own.has(m.texture), 'mesh uses one of the parent\'s frames').toBe(true);
         used.add(m.texture);
-        // Burnt: darker than the art.
+        // Burnt: slightly darker than the art, never the old near-black slab
+        // (money-shot review: 23–55 % read as flat dark grey).
         const t = m.tint;
-        expect(((t >> 16) & 255) + ((t >> 8) & 255) + (t & 255)).toBeLessThan(3 * 0xc0);
+        const sum = ((t >> 16) & 255) + ((t >> 8) & 255) + (t & 255);
+        expect(sum).toBeLessThan(3 * 0xe0);
+        expect(sum).toBeGreaterThan(3 * 0x88);
       }
       const objs = countDisplayObjects(s!);
       expect(objs).toBeLessThanOrEqual(WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX);
@@ -176,6 +185,61 @@ describe('updateSwarmSprites — capital wreck art (S3)', () => {
     updateSwarmSprites(mirrorFor(desc(undefined), DEATH_TICK), ctx);
     expect(breaks.length).toBe(0);
     for (const s of ctx.sprites.values()) expect((s as WreckPieceSprite).glowAlpha()).toBe(0);
+  });
+
+  it('GPU-lit art (the player look): every piece is lit by the lit shader, mapped in the hull frame', () => {
+    // Money-shot review: with `shiplight=high` the pieces drew the raw albedo
+    // slice of the lit maps through the default shader (no sun, no normals)
+    // under a dark burnt tint: flat dark-grey slabs. A lit piece must be a
+    // LitShipMesh registered with the light pass.
+    const PW = 2048, PH = 2048;
+    const page = new TextureSource({ width: PW, height: PH });
+    const frames: Texture[] = [];
+    for (let t = 0; t < TILES; t++) {
+      const rows = Math.min(TILE_H, H - t * TILE_H);
+      frames.push(new Texture({ source: page, frame: new Rectangle(64 + t * 40, 100 + t * TILE_H, W, rows) }));
+    }
+    const art: ShipArt = { frames, w: W, h: H, tiles: TILES, tileH: TILE_H, density: 0.2, nozzles: [], navLights: [], lit: { w: W, h: H, ppu: 0.2, maxH: 30, emisMax: 1 } };
+    const prev = litPass.settings;
+    const before = litPass.count;
+    litPass.settings = LOOK_NIGHT;
+    try {
+      const { svc } = stubArt(art);
+      const ctx = makeCtx(svc, []);
+      const d = desc(DEATH_TICK);
+      const mirror = mirrorFor(d, DEATH_TICK + 3);
+      updateSwarmSprites(mirror, ctx);
+      const geom = rebuildWreckPieces(d)!;
+      let lit = 0;
+      for (let i = 0; i < geom.length; i++) {
+        const s = ctx.sprites.get(`swarm-${100 + i}`) as WreckPieceSprite;
+        expect(s.artMode(), `piece ${i}`).toBe('lit');
+        const meshes = s.children.filter((c): c is LitShipMesh => c instanceof LitShipMesh);
+        expect(meshes.length).toBeGreaterThan(0);
+        for (const m of meshes) {
+          lit++;
+          // The mesh sits in the HULL's frame: offset back to the centroid.
+          expect(m.position.x).toBeCloseTo(-geom[i]!.cx);
+          expect(m.position.y).toBeCloseTo(geom[i]!.cy);
+          // UVs land inside the tile's slice-A rectangle on the page.
+          const f = m.tile.tex.frame;
+          const uv = m.geometry.getBuffer('aUV').data as Float32Array;
+          for (let k = 0; k < uv.length; k += 2) {
+            expect(uv[k]! * PW).toBeGreaterThanOrEqual(f.x - 1e-3);
+            expect(uv[k]! * PW).toBeLessThanOrEqual(f.x + f.width + 1e-3);
+            expect(uv[k + 1]! * PH).toBeGreaterThanOrEqual(f.y - 1e-3);
+            expect(uv[k + 1]! * PH).toBeLessThanOrEqual(f.y + f.height + 1e-3);
+          }
+          const sum = ((m.tint >> 16) & 255) + ((m.tint >> 8) & 255) + (m.tint & 255);
+          expect(sum, 'slightly darkened, not black').toBeGreaterThan(3 * 0x88);
+        }
+      }
+      expect(litPass.count - before, 'every lit piece mesh is registered with the light pass').toBe(lit);
+      for (const s of ctx.sprites.values()) s.destroy({ children: true });
+      expect(litPass.count, 'destroyed pieces leave the light pass').toBe(before);
+    } finally {
+      litPass.settings = prev;
+    }
   });
 
   it('classic look (no art): plain pieces still glow on their cut edges', () => {

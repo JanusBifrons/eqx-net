@@ -15,14 +15,16 @@
  *
  * **Glowing cut edges.** Edges flagged as new cuts (`cutEdges`) get one white
  * stroke `Graphics` whose tint and alpha follow `wreckGlowAt` (molten at
- * death, an ember at ~4 s, dark at `WRECK_GLOW_END_S`, then destroyed). The
+ * death, an ember at ~3 s, dark at `WRECK_GLOW_END_S` (6 s), then destroyed). The
  * original hull outline never glows. The clock is the wreck's death tick
  * from its descriptor (`deathTick`), so a late joiner sees it cool.
  *
  * Everything here is built ONCE per piece; the per-frame work is a texture
  * pick and a tint/alpha write (invariant #14).
  */
-import { Container, Graphics, Mesh, MeshGeometry, type Texture } from 'pixi.js';
+import { Container, Geometry, Graphics, Mesh, MeshGeometry, type Texture } from 'pixi.js';
+import { LitShipMesh } from '../art/litShipShader.js';
+import { litPass } from '../art/litPass.js';
 import type { ShipArt } from '../art/ArtService.js';
 import { sunFrameBlend, type SunBlend } from '../art/machinedShipLight.js';
 import { buildWreckPieceGfx } from './spriteBuilders.js';
@@ -34,28 +36,31 @@ import type { WreckDescriptor } from '../../../shared-types/messages/snapshotMes
 /** Container + meshes (≤ 6 tiles) + one glow stroke. */
 export const WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX = 8;
 
-/** The cut edges are a dull ember here (s)... */
-export const WRECK_GLOW_EMBER_S = 4;
+/** The cut edges are a dull ember here (s)... (money-shot review: bright for
+ *  ~1 s, an ember by ~3 s, dark by ~6 s; it was still bright orange at 4.5 s) */
+export const WRECK_GLOW_EMBER_S = 3;
 /** ...and dark from here on (s); the glow stroke is then destroyed. */
-export const WRECK_GLOW_END_S = 9;
+export const WRECK_GLOW_END_S = 6;
 /** A wreck first seen younger than this plays its break-up (dust, shards,
  *  flash); older ones (late joiners, a returning viewer) do not. */
 export const WRECK_BREAK_FX_MAX_AGE_MS = 1500;
 /** Server ticks per second (the descriptor's `deathTick` clock). */
 const TICK_MS = 1000 / 60;
 
-/** Burnt tint: near the kill point / far from it. */
-const BURNT_NEAR = 0x3a2c26;
-const BURNT_FAR = 0x8c7e74;
+/** Burnt tint: near the kill point / far from it. Money-shot review: the old
+ *  0x3a2c26 / 0x8c7e74 (23–55 % brightness) read as flat dark-grey slabs;
+ *  the pieces should carry the hull art, slightly darkened. */
+const BURNT_NEAR = 0x9a8a80;
+const BURNT_FAR = 0xd2cac4;
 
 // ── The glow curve ────────────────────────────────────────────────────────
 
 export interface WreckGlow { color: number; alpha: number }
 
 /** Keyframes: time (s), colour, alpha. Colour and alpha only ever fall. */
-const GLOW_T = [0, 0.5, 1.5, WRECK_GLOW_EMBER_S, 6.5, WRECK_GLOW_END_S];
+const GLOW_T = [0, 0.5, 1.1, WRECK_GLOW_EMBER_S, 4.4, WRECK_GLOW_END_S];
 const GLOW_C = [0xfff2c8, 0xffa040, 0xff6a18, 0xa82c08, 0x501404, 0x200804];
-const GLOW_A = [1, 1, 0.95, 0.6, 0.25, 0];
+const GLOW_A = [1, 1, 0.9, 0.55, 0.2, 0];
 
 function lerpColor(a: number, b: number, t: number): number {
   const r = ((a >> 16) & 255) + (((b >> 16) & 255) - ((a >> 16) & 255)) * t;
@@ -215,8 +220,54 @@ export interface WreckInfo {
   desc: WreckDescriptor;
 }
 
-/** Break-up sink: kill point (game space), wreck radius, clean snap. */
-export type WreckBreakSink = (x: number, y: number, radius: number, snap: boolean) => void;
+// ── The break-up blast ────────────────────────────────────────────────────
+
+/** One FxExplosions blast: game-space centre and blast radius. */
+export interface WreckBlast { x: number; y: number; r: number }
+
+/** The main fireball's radius as a share of the wreck radius (#18: a heavy
+ *  cruiser's ~260 u, a battleship's ~350 u), and the two smaller ones beside
+ *  it. FxExplosions draws a blast of radius r as a 2r fireball under a soft
+ *  3.4r glow, so every blast stays within ~0.25 of the wreck radius of the
+ *  kill point: a fireball where the hull broke, never one over the hull. */
+export const WRECK_BLAST_MAIN = 0.12;
+export const WRECK_BLAST_SUB = 0.065;
+export const WRECK_BLAST_SUB_OFFSET = 0.09;
+
+/**
+ * The fireballs of a break-up at the kill point (game space): one main blast
+ * and two smaller ones a little off it, their directions from the wreck's
+ * seed (deterministic, so every client sees the same). Writes into `out`
+ * (grown once); returns how many. Runs once per wreck.
+ */
+export function wreckBlasts(x: number, y: number, radius: number, seed: number, out: WreckBlast[]): number {
+  const R = Math.max(20, radius);
+  while (out.length < 3) out.push({ x: 0, y: 0, r: 0 });
+  out[0]!.x = x; out[0]!.y = y; out[0]!.r = R * WRECK_BLAST_MAIN;
+  const a0 = ((seed >>> 0) % 6283) / 1000;
+  for (let i = 1; i < 3; i++) {
+    const a = a0 + i * 2.4;
+    const b = out[i]!;
+    b.x = x + Math.cos(a) * R * WRECK_BLAST_SUB_OFFSET;
+    b.y = y + Math.sin(a) * R * WRECK_BLAST_SUB_OFFSET;
+    b.r = R * WRECK_BLAST_SUB;
+  }
+  return 3;
+}
+
+/**
+ * True when a dying ship's own death blast is left to the wreck break-up:
+ * the room breaks capitals into wrecks (welcome `capitalWrecks`) and the
+ * dying sprite is a capital. #493's hull-sized blast (radius ≈ the hull)
+ * otherwise covers the whole hull exactly when it breaks (money-shot
+ * review); the break-up's fireballs at the kill point replace it.
+ */
+export function hullDeathBlastReplaced(capitalWrecks: boolean | undefined, dyingIsCapital: boolean): boolean {
+  return capitalWrecks === true && dyingIsCapital;
+}
+
+/** Break-up sink: kill point (game space), wreck radius, clean snap, seed. */
+export type WreckBreakSink = (x: number, y: number, radius: number, snap: boolean, seed: number) => void;
 
 /**
  * Renderer-side state of each wreck in view: when it died (on this
@@ -253,7 +304,7 @@ export class WreckArtState {
     if (ageMs < WRECK_BREAK_FX_MAX_AGE_MS && g !== undefined && this.onBreak !== null) {
       const dx = info.killX - g.cx, dy = info.killY - g.cy;
       const c = Math.cos(pose.angle), sn = Math.sin(pose.angle);
-      this.onBreak(pose.x + dx * c - dy * sn, pose.y + dx * sn + dy * c, hullR, info.snap);
+      this.onBreak(pose.x + dx * c - dy * sn, pose.y + dx * sn + dy * c, hullR, info.snap, desc.seed);
     }
     return info;
   }
@@ -271,6 +322,33 @@ export class WreckArtState {
 
 // ── The piece sprite ──────────────────────────────────────────────────────
 
+/** A piece's burnt tint: slightly darker than the live hull, darkest where
+ *  the killing blow landed. */
+export function burntTint(piece: Pick<WreckPieceGeometry, 'cx' | 'cy'>, info: Pick<WreckInfo, 'killX' | 'killY' | 'hullR'>): number {
+  const near = Math.hypot(info.killX - piece.cx, info.killY - piece.cy) / Math.max(1, info.hullR);
+  return lerpColor(BURNT_NEAR, BURNT_FAR, Math.min(1, near * 1.6));
+}
+
+/**
+ * A lit tile piece's geometry for `LitShipMesh`: positions in the hull's
+ * frame (Pixi-down, world units, hull centre at 0: the frame the lit shader
+ * lights in), UVs on the tile texture's atlas page (the lit shader samples
+ * the page directly, slice A at these UVs and slices B/C beside it).
+ */
+export function litPieceGeometry(m: WreckTileMesh, tex: Texture, piece: Pick<WreckPieceGeometry, 'cx' | 'cy'>): Geometry {
+  const f = tex.frame;
+  const PW = tex.source.width, PH = tex.source.height;
+  const pos = new Float32Array(m.positions.length);
+  const uv = new Float32Array(m.uvs.length);
+  for (let i = 0; i < pos.length; i += 2) {
+    pos[i] = m.positions[i]! + piece.cx;
+    pos[i + 1] = m.positions[i + 1]! - piece.cy;
+    uv[i] = (f.x + m.uvs[i]! * f.width) / PW;
+    uv[i + 1] = (f.y + m.uvs[i + 1]! * f.height) / PH;
+  }
+  return new Geometry({ attributes: { aPosition: pos, aUV: uv }, indexBuffer: m.indices });
+}
+
 const _glow: WreckGlow = { color: 0, alpha: 0 };
 const _blend: SunBlend = { j0: 0, j1: 0, t: 0 };
 
@@ -285,14 +363,35 @@ export class WreckPieceSprite extends Container {
   private readonly meshTile: number[] = [];
   private glow: Graphics | null = null;
   private sunFrame = -1;
+  /** GPU-lit meshes (lit art only). */
+  private litMeshes = 0;
 
   constructor(piece: WreckPieceGeometry, parentKind: string, readonly art: ShipArt | null, private readonly info: WreckInfo) {
     super();
-    if (art !== null) {
+    const settings = litPass.settings;
+    if (art !== null && art.lit !== undefined && settings !== null) {
+      // GPU-lit art (the player's default look): the frames are data pages
+      // of UNLIT maps (albedo, normals, emission). Only the lit shader turns
+      // them into a lit hull, so each tile piece is a LitShipMesh carrying
+      // this piece's geometry in the HULL's frame (the shader lights by
+      // hull-local position), offset back to the piece's centroid.
       const L = wreckTexLayout(art);
-      // Burnt: darker overall, darkest where the killing blow landed.
-      const near = Math.hypot(info.killX - piece.cx, info.killY - piece.cy) / Math.max(1, info.hullR);
-      const tint = lerpColor(BURNT_NEAR, BURNT_FAR, Math.min(1, near * 1.6));
+      const lit = art.lit;
+      const tint = burntTint(piece, info);
+      for (const m of wreckPieceMeshes(piece, L)) {
+        const tex = art.frames[m.tile]!;
+        const mesh = new LitShipMesh({ tex, w: lit.w, rows: tex.frame.height, y0: m.tile * art.tileH, hullH: lit.h, ppu: lit.ppu, maxH: lit.maxH, emisMax: lit.emisMax }, settings);
+        mesh.geometry = litPieceGeometry(m, tex, piece);
+        mesh.position.set(-piece.cx, piece.cy);
+        mesh.capitalHull = true;
+        mesh.tint = tint;
+        this.addChild(mesh);
+        litPass.register(mesh);
+        this.litMeshes++;
+      }
+    } else if (art !== null && art.lit === undefined) {
+      const L = wreckTexLayout(art);
+      const tint = burntTint(piece, info);
       for (const m of wreckPieceMeshes(piece, L)) {
         const geometry = new MeshGeometry({ positions: m.positions, uvs: m.uvs, indices: m.indices });
         geometry.batchMode = 'batch'; // > 100 vertices still joins the batch
@@ -356,6 +455,16 @@ export class WreckPieceSprite extends Container {
     }
     g.tint = _glow.color;
     g.alpha = _glow.alpha;
+  }
+
+  /** How the piece draws the dead ship's art: `baked` (lit sun frames),
+   *  `lit` (GPU-lit maps through the lit shader), `raw-maps` (GPU-lit maps
+   *  through the default shader: unlit albedo, the money-shot bug) or
+   *  `plain` (no art: the flat polygon). */
+  artMode(): 'baked' | 'lit' | 'raw-maps' | 'plain' {
+    if (this.art === null) return 'plain';
+    if (this.art.lit === undefined) return 'baked';
+    return this.litMeshes > 0 ? 'lit' : 'raw-maps';
   }
 
   /** The glow's current alpha (0 once cool). */

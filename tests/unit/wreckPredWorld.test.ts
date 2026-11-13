@@ -42,9 +42,10 @@ function oneWreck(): { piece: WreckPieceSpawn; desc: WreckDescriptor } {
   sys.noteHit('cap', 'x', 1e6, 0, -2000);
   // At rest, unturned, far from the origin; the test moves the piece's pose.
   sys.onDeath('cap', 'battleship', { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }, 1e5);
-  // The biggest piece is the easiest target.
+  // A mid-sized piece (v6: the biggest is half a battleship, too heavy for a
+  // fighter to shove measurably).
   spawned.sort((a, b) => b.mass - a.mass);
-  return { piece: spawned[0]!, desc: JSON.parse(JSON.stringify(sys.descriptors()))[0] };
+  return { piece: spawned[Math.floor(spawned.length / 3)]!, desc: JSON.parse(JSON.stringify(sys.descriptors()))[0] };
 }
 
 describe('wreck piece in predWorld (S2b)', () => {

@@ -5,7 +5,7 @@
  * from the kill point, and the kill point used is on the hull outline.
  */
 import { describe, expect, it } from 'vitest';
-import { buildWreckPieces, hullLocalKillPoint, type WreckBuildInput } from './wreckPieces.js';
+import { buildWreckPieces, hullLocalKillPoint, WRECK_SPIN_FAR, WRECK_SPIN_NEAR, type WreckBuildInput } from './wreckPieces.js';
 import { shipShapeToPolygon } from '../geometry/shipHullDecomp.js';
 import { shipHullOutline } from '../geometry/shipHullOutline.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
@@ -121,7 +121,9 @@ describe('buildWreckPieces', () => {
       // The extra velocity points straight away from the kill point.
       expect((ex * ox + ey * oy) / ol).toBeGreaterThan(0);
       expect(Math.abs(ex * oy - ey * ox) / ol).toBeLessThan(1e-6);
-      expect(Math.abs(p.angvel - pose.angvel)).toBeLessThanOrEqual(0.12 + 1e-9);
+      // The seeded spin kick: at most WRECK_SPIN_NEAR (fastest at the kill point).
+      expect(Math.abs(p.angvel - pose.angvel)).toBeLessThanOrEqual(WRECK_SPIN_NEAR + 1e-9);
+      expect(Math.abs(p.angvel - pose.angvel)).toBeGreaterThanOrEqual(0.55 * WRECK_SPIN_FAR - 1e-9);
       expect(p.angle).toBe(pose.angle);
     }
   });
