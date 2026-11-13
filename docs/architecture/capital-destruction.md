@@ -523,7 +523,9 @@ slows in slow motion and speeds up at 4×.
   ~0.8 s after the kill and the rest "spanning the hull in ~0.1 s". The
   front now crosses the covered stretch (`crackHidden`) in
   `WRECK_FRONT_HIDDEN_SHARE` (20 %) of its time and spends the rest outside
-  it (≥ 0.72 s visible on the filmed heavy cruiser, was ~0.5 s). The
+  it (0.8 × 0.96 s ≈ 0.77 s visible, was ~0.5 s; the edge-granular test
+  measure reads 0.70–0.75 s on the filmed heavy cruiser and floors at 0.7 of
+  the front's run). The
   white-hot stage of the glow curve is 0.12 s, so the crack behind the head
   is already orange and the head reads (it was as white as the head).
 - **First sight, not the death (review 2026-11-13).** The client first draws

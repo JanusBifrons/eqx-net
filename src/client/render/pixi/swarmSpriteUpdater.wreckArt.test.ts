@@ -708,8 +708,16 @@ describe('updateSwarmSprites — the filmed v7 break-up (heavy cruiser, 16" salv
       expect(all, `seed ${seed}: ... not before 0.8 s`).toBeGreaterThanOrEqual(800);
       // Before: the front was paced evenly over crack distance and only
       // ~0.5 s of it ran outside the kill blast. Hurried through the blast's
-      // reach (now the smaller kill blast's, owner 2026-11-13), ~0.74 s.
-      expect(all - seen, `seed ${seed}: the front runs visibly (outside the kill blast) for most of its time`).toBeGreaterThanOrEqual(720);
+      // reach (now the smaller kill blast's, owner 2026-11-13), the front
+      // runs (1 − WRECK_FRONT_HIDDEN_SHARE) × WRECK_CRACK_FRONT_MS = 0.77 s
+      // outside it. This measure is edge-granular and loses up to one cut
+      // edge at each end (the first edge wholly outside the reach starts a
+      // little past it; the last edge is "lit" when its head starts, and
+      // still grows to the end) plus a frame at each end: 0.70–0.75 s over
+      // the filmed seeds and fracture revisions (seed 3 is 0.704 s on the
+      // sub-cap fracture). The floor is 0.7 of the front's run, still well
+      // clear of the ~0.5 s before.
+      expect(all - seen, `seed ${seed}: the front runs visibly (outside the kill blast) for most of its time`).toBeGreaterThanOrEqual(0.7 * WRECK_CRACK_FRONT_MS);
       expect(headFrames / frames, `seed ${seed}: a head is running while the front is visible`).toBeGreaterThan(0.9);
     }
     // The head reads: white-hot at the tip, the crack behind it already
