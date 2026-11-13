@@ -151,18 +151,14 @@ const COMBAT_SEP_CORE = 0.5;
 const COMBAT_GOAL_SHAPE = 2;
 /** Speed a crowded ship drifts apart at, × cruise, at full crowding. */
 const COMBAT_CROWD_SPEED = 0.6;
-/** Facing switches to the move heading when the move is this far off the
- *  target bearing (radians; 100°), and back below `FACE_MOVE_EXIT` (80°). */
+/** Out of fire range, facing switches to the move heading when the move is
+ *  this far off the GOAL heading (radians; 100°), and back below
+ *  `FACE_MOVE_EXIT` (80°): a detour forced by wingmen. */
 const FACE_MOVE_ENTER = (100 * Math.PI) / 180;
 const FACE_MOVE_EXIT = (80 * Math.PI) / 180;
 /** Below this wanted speed (× cruise) the nose stays on the lead point:
  *  the pilot's reverse handles a slow back-off without turning away. */
 const FACE_MOVE_MIN_SPEED = 0.25;
-/** Crowding (0..1, 1 = touching) above which a ship holding range turns out
- *  of the crowd at the lower `CROWD_FACE_*` angles (60° in, 40° back). */
-const COMBAT_CROWD_TURN = 0.3;
-const CROWD_FACE_ENTER = (60 * Math.PI) / 180;
-const CROWD_FACE_EXIT = (40 * Math.PI) / 180;
 
 /**
  * Hostile drone: steers toward nearest player and fires hitscan when in range
@@ -755,6 +751,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     else if (along < -h.maxSpeed) along = -h.maxSpeed;
     const nb = view.neighbours;
     this._ctxUsed = false;
+    if (nb === undefined) this._faceMove = false;
     const intent = nb === undefined
       ? this.fly(self, desiredAngle, ux * along, uy * along, boostOk)
       : this.flyCombatContext(self, nb, ux, uy, along, desiredAngle, dist <= this.fireRange, boostOk);
@@ -872,17 +869,20 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     }
     const moveAngle = wv > 1e-6 ? facingOf(wvx, wvy) : out.angle;
 
-    // Facing (one nose). Holding range while crowded, the opening move is
-    // mostly sideways, which a nose on the target cannot fly: turn out at a
-    // lower angle so the ship actually leaves the crowd, then comes back.
-    let off = wrapAngle(moveAngle - facingOf(ux, uy));
+    // Facing (one nose). In fire range the nose stays on the lead point, so
+    // the ship keeps shooting; the separation still acts through thrust and
+    // reverse along it. Out of range it points along the move while closing,
+    // or when wingmen force a detour > 100° off the GOAL heading (the turn
+    // away and come back). A ship matching a target that closes on it, or a
+    // missile kite backing off, keeps its nose on the target and reverses, as
+    // before 2c. (perf:counts fleet-fight, 2026-11-13: turning the nose to
+    // the move in range — on every closing target, and in dense packs — had
+    // ships facing away ~60 % of in-range ticks and halved the hits.)
+    let off = wrapAngle(moveAngle - facingOf(ux * sgn, uy * sgn));
     if (off < 0) off = -off;
     const moving = wv > FACE_MOVE_MIN_SPEED * h.cruiseSpeed;
-    const crowdedHold = crowd > COMBAT_CROWD_TURN && goalSpeed < FACE_MOVE_MIN_SPEED * h.cruiseSpeed;
-    const thresh = crowdedHold
-      ? (this._faceMove ? CROWD_FACE_EXIT : CROWD_FACE_ENTER)
-      : (this._faceMove ? FACE_MOVE_EXIT : FACE_MOVE_ENTER);
-    this._faceMove = moving && (!inRange || off > thresh);
+    const thresh = this._faceMove ? FACE_MOVE_EXIT : FACE_MOVE_ENTER;
+    this._faceMove = moving && !inRange && (along > 0 || off > thresh);
     const facing = this._faceMove ? moveAngle : leadAngle;
     return this.fly(self, facing, wvx, wvy, boostOk);
   }
