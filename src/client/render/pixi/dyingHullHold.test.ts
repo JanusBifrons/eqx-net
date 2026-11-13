@@ -13,8 +13,8 @@
  * pieces ride the binary wire every 6 ticks). This drives the renderer's own
  * frame steps (death marks from `explodingShips`, `updateSwarmSprites`, the
  * sprite sweep, the hold's settle) through that sequence and asserts that
- * every frame draws either the hull or its pieces, and the hand-over happens
- * in one frame.
+ * every frame draws either the whole hull or the whole wreck, and the
+ * hand-over happens in one frame.
  */
 import { describe, it, expect } from 'vitest';
 import { Container } from 'pixi.js';
@@ -87,7 +87,7 @@ class Harness {
   }
   piecesDrawn(): number {
     let n = 0;
-    for (const c of this.container.children) if (c instanceof WreckPieceSprite) n++;
+    for (const c of this.container.children) if (c instanceof WreckPieceSprite && c.visible && !c.destroyed) n++;
     return n;
   }
   /** What ColyseusClient.killSwarmEntity does on a `destroy` event. */
@@ -126,6 +126,54 @@ describe('a dying capital stays drawn until its wreck pieces are', () => {
     // Same-frame hand-over: once the pieces are drawn the hull is gone.
     expect(timeline[timeline.length - 1]).toBe(`descriptor: hull 0, pieces ${n}`);
     for (const line of timeline.slice(0, -1)) expect(line).toMatch(/hull 1, pieces 0/);
+  });
+
+  // Filmed 2026-11-13 (after #540): the hold ended on the FIRST piece drawn,
+  // but out-of-interest pieces (and every piece, for a spectator) reach the
+  // binary wire at different ticks, so the middle chunk was drawn alone, then
+  // the stern, then the bow. No frame may show a partial wreck.
+  it('pieces arriving one per frame: every frame draws the full hull or ALL pieces, never a subset', () => {
+    const h = new Harness(true);
+    h.swarm.set(50, entry(1, 'battleship', HULL_X, HULL_Y, 300));
+    let t = 1000;
+    h.frame(t);
+    h.kill(50);
+    h.mirror.wrecks = new Map([[DESC.wreckId, DESC]]); // the descriptor is already known
+    const geom = rebuildWreckPieces(DESC);
+    const n = geom.length;
+    expect(n, 'the fixture wreck breaks into several pieces').toBeGreaterThan(1);
+    const timeline: string[] = [];
+    const record = (label: string): void => { timeline.push(`${label}: hull ${h.hullsDrawn()}, pieces ${h.piecesDrawn()}`); };
+    h.frame(t += 16); record('kill');
+    // Middle chunk first, then the rest one per frame (out of index order).
+    const order = geom.map((_, i) => i).sort((a, b) => Math.abs(a - (n >> 1)) - Math.abs(b - (n >> 1)));
+    for (const i of order) {
+      const g = geom[i]!;
+      h.swarm.set(200 + i, entry(4, 'battleship', HULL_X + g.cx, HULL_Y + g.cy, g.radius, { componentIndex: i, wreckId: DESC.wreckId }));
+      h.frame(t += 16); record(`piece ${i}`);
+    }
+    h.frame(t += 16); record('after');
+    const ok = new RegExp(`^[^:]+: (hull 1, pieces 0|hull 0, pieces ${n})$`);
+    for (const line of timeline) expect(line, `full hull or all ${n} pieces in every frame:\n${timeline.join('\n')}`).toMatch(ok);
+    expect(timeline[timeline.length - 1]).toBe(`after: hull 0, pieces ${n}`);
+    expect(timeline[timeline.length - 2]).toBe(`piece ${order[n - 1]}: hull 0, pieces ${n}`);
+  });
+
+  it('pieces still missing at the deadline: the hull goes and the pieces that arrived show', () => {
+    const h = new Harness(true);
+    h.swarm.set(50, entry(1, 'battleship', HULL_X, HULL_Y, 300));
+    let t = 1000;
+    h.frame(t);
+    h.kill(50);
+    h.mirror.wrecks = new Map([[DESC.wreckId, DESC]]);
+    const g = rebuildWreckPieces(DESC)[0]!;
+    h.swarm.set(200, entry(4, 'battleship', HULL_X + g.cx, HULL_Y + g.cy, g.radius, { componentIndex: 0, wreckId: DESC.wreckId }));
+    h.frame(t += 16);
+    expect(h.hullsDrawn()).toBe(1);
+    expect(h.piecesDrawn(), 'a lone piece waits under the held hull').toBe(0);
+    h.frame(t += DYING_HULL_HOLD_MS);
+    expect(h.hullsDrawn()).toBe(0);
+    expect(h.piecesDrawn()).toBe(1);
   });
 
   it('a lost wreck never leaves a ghost hull: the hold ends after the deadline', () => {

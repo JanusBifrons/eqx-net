@@ -384,9 +384,14 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     if (entry.kind === 1 || entry.kind === 3) updateArtShipLight(ctx.art, sprite); // ships + tumbling scrap
     else if (entry.kind === 4 && sprite instanceof WreckPieceSprite) {
       sprite.update(fxNow, ctx.art.sunAz); // S3 light frame + cut-edge glow (game clock)
-      // A held dying hull hands over to its pieces the frame they are drawn.
+      // A held dying hull hands over to its pieces the frame ALL of them are
+      // drawn; until then the hold hides the ones that have arrived (so it is
+      // shown again here every frame).
+      sprite.visible = true;
       if (ctx.dyingHulls !== undefined) {
-        ctx.dyingHulls.notePiece(entry.shipKind ?? wreckDescs!.get(entry.wreckId!)!.parentKind, sprite.x, sprite.y);
+        const desc = wreckDescs!.get(entry.wreckId!)!;
+        const total = ctx.wrecks!.geometryFor(desc)?.length ?? 0;
+        ctx.dyingHulls.notePiece(entry.shipKind ?? desc.parentKind, entry.wreckId!, total, sprite);
       }
     }
     if (entry.kind === 1) {
