@@ -144,7 +144,9 @@ export class TailManoeuvre implements IManoeuvre {
     // course round to the six and the nose comes back on as it gets there.
     out.facing = ctx.dist <= R && speed > 1e-6
       && (wvx * ctx.ux + wvy * ctx.uy) / speed > TAIL_AIM_COS ? FACE_AIM_LEAD : FACE_MOVE;
-    out.boost = ctx.dist > TAIL_BOOST_RANGE * R;
+    // Afterburner to catch up: far off, or the target is pulling away and
+    // we are short of the station.
+    out.boost = ctx.dist > TAIL_BOOST_RANGE * R || (ctx.closing < 0 && d > TAIL_ARRIVE * R);
   }
   isDone(): boolean { return false; }
 
@@ -242,7 +244,8 @@ export class AttackRunManoeuvre implements IManoeuvre {
     addInterestToward(maps, this.passX, this.passY, 1, GOAL_SHAPE);
     out.speed = ctx.maxSpeed;
     out.facing = FACE_MOVE;
-    out.boost = this.phase === RUN_EXTEND;
+    // Zoom through the pass and away on the extend.
+    out.boost = true;
   }
 
   isDone(ctx: TacticalContext): boolean {

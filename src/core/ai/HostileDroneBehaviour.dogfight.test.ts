@@ -52,7 +52,9 @@ function duel(ticks: number, players: AiPlayerView[] = []): Duel {
     if (m !== lastA) { trace += `${t}:${m} `; if (m === MANOEUVRE_ATTACK_RUN) runs++; lastA = m; }
     const d = Math.hypot(A.x - B.x, A.y - B.y);
     if (d < 0.7 * R && Math.hypot(A.vx, A.vy) < 0.25 * bA.getCruiseSpeed() && Math.hypot(B.vx, B.vy) < 0.25 * bB.getCruiseSpeed()) toe++;
-    if (armed && d < 0.5 * R) { passes++; armed = false; } else if (!armed && d > R) armed = true;
+    // A merge: inside 0.15 R, out past 0.25 R, in again (a turning fight
+    // re-merges inside gun range; only a joust opens past R, 2026-11-13).
+    if (armed && d < 0.15 * R) { passes++; armed = false; } else if (!armed && d > 0.25 * R) armed = true;
   }
   return { passes, toeFrac: toe / ticks, shotsA, shotsB, runs, trace };
 }
