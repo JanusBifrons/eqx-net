@@ -6,7 +6,7 @@
   "swarmTotal": 500,
   "inInterest": 0,
   "ticks": 180,
-  "tickMedianMs": 0.588,
-  "tickP95Ms": 0.763,
-  "bytesPerSec": 147677
+  "tickMedianMs": 1.262,
+  "tickP95Ms": 3.262,
+  "bytesPerSec": 140503
 }
