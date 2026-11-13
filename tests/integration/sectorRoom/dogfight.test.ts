@@ -27,6 +27,7 @@ import {
   MANOEUVRE_ATTACK_RUN,
   MANOEUVRE_BREAK,
 } from '../../../src/core/ai/tactics/manoeuvre.js';
+import { MORALE_OUTCOME } from '../../../src/core/ai/tactics/morale.js';
 
 const KIND_A = 'fighter';
 const KIND_B = 'patrol-fighter';
@@ -70,6 +71,11 @@ async function boot(poses: Array<{ kind: string; x: number; y: number; angle: nu
   room.aiController.markHostile(b, a, room.serverTick);
   const brainA = room.aiController.getBehaviour(a) as HostileDroneBehaviour;
   const brainB = room.aiController.getBehaviour(b) as HostileDroneBehaviour;
+  // Endless nerve too (slice 6b): a burst of hits would roll the morale die
+  // and a fleeing ship would warp out of the duel. Morale has its own suite
+  // (moraleManoeuvres.test.ts).
+  brainA.setMoraleRoll(() => MORALE_OUTCOME.FightOn);
+  brainB.setMoraleRoll(() => MORALE_OUTCOME.FightOn);
   return { harness, room, a, b, brainA, brainB };
 }
 
