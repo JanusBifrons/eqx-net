@@ -252,4 +252,32 @@ describe('updateSwarmSprites — capital wreck art (S3)', () => {
     expect(s.glowAlpha()).toBeGreaterThan(0.9);
     expect(breaks.length).toBe(1);
   });
+
+  // Robustness check 2026-11-13 (speed × destruction): the cut-edge glow is
+  // presentation, so it follows the GAME speed (the renderer's fxNow, handed in
+  // as ctx.fxNowMs), not the wall clock. In slow motion it must cool slowly; at
+  // 4× it must cool fast. Before the fix the updater aged it on performance.now().
+  it('the cut-edge glow cools on the game clock (ctx.fxNowMs), not the wall clock', () => {
+    const wall = vi.spyOn(performance, 'now');
+    try {
+      // Slow motion: 10 s of wall time is only 0.5 s of game time ⇒ still hot.
+      const slow = makeCtx(null, []);
+      const m = mirrorFor(desc(DEATH_TICK), DEATH_TICK);
+      wall.mockReturnValue(1_000); slow.fxNowMs = 50_000;
+      updateSwarmSprites(m, slow);
+      wall.mockReturnValue(11_000); slow.fxNowMs = 50_500;
+      updateSwarmSprites(m, slow);
+      expect((slow.sprites.get('swarm-100') as WreckPieceSprite).glowAlpha(), 'slow motion: still hot').toBeGreaterThan(0.5);
+
+      // Fast: 0.5 s of wall time is 10 s of game time ⇒ dark.
+      const fast = makeCtx(null, []);
+      wall.mockReturnValue(1_000); fast.fxNowMs = 50_000;
+      updateSwarmSprites(m, fast);
+      wall.mockReturnValue(1_500); fast.fxNowMs = 60_000;
+      updateSwarmSprites(m, fast);
+      expect((fast.sprites.get('swarm-100') as WreckPieceSprite).glowAlpha(), 'fast: cooled').toBe(0);
+    } finally {
+      wall.mockRestore();
+    }
+  });
 });

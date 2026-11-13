@@ -1788,6 +1788,7 @@ export class PixiRenderer implements IRenderer {
         : 1 / 60;
     this._lastSwarmUpdateNow = swarmNow;
     this._swarmUpdaterCtx.viewBounds = this.camera.visibleBoundsInto(this._swarmViewScratch);
+    this._swarmUpdaterCtx.fxNowMs = this.fxNow(); // wreck glow follows the game speed
     updateSwarmSprites(mirror, this._swarmUpdaterCtx);
     this._farIcons.update(mirror, this.sprites, this.world.scale.x);
     this.noteTurretShots(mirror);
