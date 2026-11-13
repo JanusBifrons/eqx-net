@@ -32,6 +32,7 @@ function padFieldId(id: number): string {
   return s;
 }
 import { pointSegmentDistance, wantPredBody } from '../structures/predStructureStreaming.js';
+import { PREDWORLD_STRUCTURE_RADIUS, PREDWORLD_WRECK_RADIUS } from '../../shared-types/structureBudgets.js';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import {
@@ -3746,7 +3747,8 @@ export class ColyseusGameClient {
       // A piece only matters to prediction where the local ship can touch it.
       if ((entry.kind === 2 || entry.kind === SWARM_KIND_WRECK) && me) {
         const edge = Math.hypot(entry.x - me.x, entry.y - me.y) - entry.radius;
-        if (!wantPredBody(this.predWorld.hasShip(key), edge)) continue; // unseen ⇒ swept below
+        const radius = entry.kind === SWARM_KIND_WRECK ? PREDWORLD_WRECK_RADIUS : PREDWORLD_STRUCTURE_RADIUS;
+        if (!wantPredBody(this.predWorld.hasShip(key), edge, radius)) continue; // unseen ⇒ swept below
       }
       seen.add(key);
       ctx.entityId = entityId;

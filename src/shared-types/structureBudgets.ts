@@ -97,6 +97,11 @@ export const PREDWORLD_STRUCTURE_RADIUS = 1500;
 /** Extra distance before a streamed-in structure body is released again, so
  *  a ship hovering at the edge doesn't churn bodies. */
 export const PREDWORLD_STRUCTURE_HYSTERESIS = 300;
+/** WIP (perf/subcap-final): wreck pieces get their own, smaller prediction
+ *  radius. A piece only matters to prediction where the local ship can touch
+ *  it within a replay window or a predicted weapon can reach it (<= 325 u).
+ *  The speed x replay-window justification and its test are still to come. */
+export const PREDWORLD_WRECK_RADIUS = 600;
 
 /** Frame-time p99 regression allowed with a citadel on screen. */
 export const STRUCTURE_CLIENT_FRAME_P99_REL_MAX = 0.1;
