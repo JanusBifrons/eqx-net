@@ -112,6 +112,36 @@ export interface AiWorldView {
    * never a shared scratch the caller's `self` aliases. Absent ⇒ no flocking
    * data (the behaviour falls back to patrol). */
   resolveEntityInto?(id: string, out: AiEntityPoseOut): boolean;
+  /** Per-tick "who is near me" index over combat drones (all allegiances) and
+   *  engageable pilot hulls, rebuilt once per tick by the server. SERVER-ONLY,
+   *  no wire surface (same rationale as `structures`). Absent ⇒ no index. */
+  readonly neighbours?: IAiNeighbourQuery;
+}
+
+/**
+ * Narrow nearest-neighbour query over this tick's combatants (AI steering
+ * plan, slice 2a). Entries are dense indices `0..count-1`, valid for the
+ * current tick only. Allocation-free: results go into a caller-owned buffer.
+ */
+export interface IAiNeighbourQuery {
+  /** Entries in this tick's index. */
+  readonly count: number;
+  /**
+   * Fill `outIdx[0..n)` with the (at most `maxK`, and at most `outIdx.length`)
+   * entries whose centre lies within `r` of (x, y), nearest first (ties by
+   * lower index). `excludeId` skips that entry (pass the caller's own id).
+   * Returns n.
+   */
+  queryNeighbours(x: number, y: number, r: number, maxK: number, outIdx: Int32Array, excludeId?: string): number;
+  idAt(i: number): string;
+  xAt(i: number): number;
+  yAt(i: number): number;
+  vxAt(i: number): number;
+  vyAt(i: number): number;
+  radiusAt(i: number): number;
+  /** NPC allegiance id, or `'players'` for a pilot hull. */
+  sideAt(i: number): string;
+  isPilotAt(i: number): boolean;
 }
 
 /** Mutable pose buffer for `AiWorldView.resolveEntityInto` (caller-owned, so
