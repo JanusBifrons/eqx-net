@@ -16,6 +16,9 @@ export interface ReadyMsg { type: 'READY' }
 export interface FeedbackMsg {
   type: 'FEEDBACK';
   feedback: RendererFeedback;
+  /** The swarm delta's pose buffer handed back (transferred) for reuse, so
+   *  the main thread allocates none per frame. */
+  swarmBuf?: ArrayBuffer;
 }
 
 /**
