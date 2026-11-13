@@ -341,12 +341,14 @@ describe('fractureHull', () => {
   describe('clean snap is a seeded chance', () => {
     const violent = { killBlowDamage: 1.5, recentDamageRate: 1.5 };
 
-    /** Two big halves on opposite sides of the line, plus at most 3 small bits. */
+    /** Exactly two big halves on opposite sides of the line (v7: a shatter
+     *  is itself only a few big pieces, so "two big plus a few small bits"
+     *  no longer tells a snap apart; a shatter always has 3+ pieces). */
     function isCleanSnap(input: FractureInput, pieces: ReadonlyArray<FracturePiece>): boolean {
       const { point, dir } = fracturePlan(input).primary!;
       const total = tupleArea(input.hull);
       const big = pieces.filter((p) => p.area >= 0.1 * total);
-      if (big.length !== 2 || pieces.length - big.length > 3) return false;
+      if (big.length !== 2 || pieces.length !== 2) return false;
       const side = (c: V): number => Math.sign((c.x - point.x) * dir.y - (c.y - point.y) * dir.x);
       return side(big[0]!.centroid) === -side(big[1]!.centroid);
     }
@@ -428,12 +430,17 @@ describe('fractureHull', () => {
       const grind = counts(0.02, 0.05);
       const blow = counts(2, 2);
       if (process.env.EQX_FRACTURE_SVG) console.log(kind, 'grind', grind.join(','), '| blow', blow.join(','));
+      // v7 (owner, 2026-11-13: chunks ENORMOUS, a few chunky pieces at the
+      // hit): a heavy blow means MORE chunks at the impact and a wider zone,
+      // not a 20+ piece shatter. Grind ≈ 3–4 pieces, a heavy blow ≈ 5–7.
+      const mean = (xs: number[]): number => xs.reduce((s, x) => s + x, 0) / xs.length;
       expect(grind.filter((c) => c <= 5).length).toBeGreaterThan(SEEDS / 2);
-      expect(blow.filter((c) => c >= 20).length).toBeGreaterThan(SEEDS / 2);
+      expect(blow.filter((c) => c >= 5).length).toBeGreaterThan(SEEDS / 2);
+      expect(mean(blow)).toBeGreaterThan(mean(grind) + 1);
       for (const c of blow) expect(c).toBeLessThanOrEqual(FRACTURE_MAX_PIECES);
       if (kind === 'battleship') {
-        expect(Math.min(...grind)).toBeLessThanOrEqual(5);
-        expect(Math.max(...blow)).toBeGreaterThanOrEqual(20);
+        expect(Math.min(...grind)).toBeLessThanOrEqual(4);
+        expect(Math.max(...blow)).toBeGreaterThanOrEqual(6);
       }
     });
 
@@ -605,8 +612,13 @@ describe('fractureHull', () => {
 // kill point): seeds only inside a fan of jagged cracks from the kill point,
 // a few far cracks at uneven stations and tilts, the primary crack jagged
 // (so the snap's hash moved too), T-junctions welded before jagging.
-const GOLDEN = { version: 6, pieces: 21, hash: 2720809071 };
-const GOLDEN_DAMAGE = { shatter: { pieces: 24, hash: 3500738541 }, snap: { pieces: 2, hash: 2389120540 } };
+// v6: { pieces: 21, hash: 2720809071 }; damage shatter 24 / 3500738541, snap 2 / 2389120540.
+// v7 (owner review 2026-11-13, "The last hit's impact sets the split"): no
+// Voronoi seeds and no far cracks; zone cracks either side of the primary and
+// up to two fan cracks from the kill point leave 2–4 chunky pieces at the
+// impact and one big section each side. The snap is unchanged.
+const GOLDEN = { version: 7, pieces: 4, hash: 1220196282 };
+const GOLDEN_DAMAGE = { shatter: { pieces: 5, hash: 443402828 }, snap: { pieces: 2, hash: 2389120540 } };
 
 function hashPieces(pieces: ReadonlyArray<FracturePiece>): number {
   let h = 0x811c9dc5;
