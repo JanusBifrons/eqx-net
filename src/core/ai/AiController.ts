@@ -6,6 +6,7 @@ import type {
   AiStructureView,
   AiSwarmView,
   AiWorldView,
+  AiInputBits,
 } from '../contracts/IAiBehaviour.js';
 
 /**
@@ -33,6 +34,15 @@ export interface AiIntentSink {
    *  physics layer it owns (server: worker postMessage; client:
    *  `predWorld.setShipAngvel`). */
   postIntent(slot: number, fx: number, fy: number, torque: number, setAngvel?: number): void;
+  /** Pilot layer: queue this tick's control keys for a slot (an intent with
+   *  `input` set). The sink BATCHES them (server: `AiInputBatch`) and sends
+   *  the whole tick at {@link flushInputs}; never one post per call. Optional:
+   *  a sink without it drops input intents (no brain emits them in that zone). */
+  postInput?(slot: number, bits: AiInputBits): void;
+  /** Send every input queued since the last flush as ONE worker message
+   *  (`AI_INPUTS`). Called once at the end of `AiController.tick` when at least
+   *  one input was queued. */
+  flushInputs?(): void;
 }
 
 interface AiRegistration {
@@ -208,10 +218,16 @@ export class AiController {
     // the engine; leave as-is. See `swarmEntitySnapshot` doc for the
     // full GC-pressure story.
     const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto };
+    this.inputsQueued = 0;
     for (const [id, reg] of this.entities) {
       this.runEntity(id, reg, view, tick, entitySnapshot);
     }
+    // Pilot layer: every input-bit intent of this tick goes out as ONE message.
+    if (this.inputsQueued > 0) this.sink.flushInputs?.();
   }
+
+  /** Input-bit intents queued to the sink during the current `tick`. */
+  private inputsQueued = 0;
 
   /** Snapshot → behaviour.tick → post intent / queue fire for one entity.
    *  Used by {@link tick} (all registered entities, the server's
@@ -227,7 +243,13 @@ export class AiController {
     if (!self) return;
     const intent = reg.behaviour.tick(self, view);
 
-    if (
+    if (intent.input !== undefined) {
+      // Pilot layer: control keys replace the impulse for this tick.
+      if (this.sink.postInput) {
+        this.sink.postInput(reg.slot, intent.input);
+        this.inputsQueued++;
+      }
+    } else if (
       intent.fx !== 0 ||
       intent.fy !== 0 ||
       intent.torque !== 0 ||

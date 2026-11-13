@@ -72,6 +72,7 @@ import { ScrapSpawner } from '../spawn/ScrapSpawner.js';
 // Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import { AiController } from '../../core/ai/AiController.js';
+import { AiInputBatch } from '../../core/ai/AiInputBatch.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // pickTarget / rotateMountToward / wrapPi / MountTargetView now used
@@ -1101,6 +1102,8 @@ export class SectorRoom extends Room<SectorState> {
   /** Interned index keys ("0", "1", …), cached so syncing never allocates. */
   private readonly structureOwnerKeys: string[] = [];
   private aiController!: AiController;
+  /** Pilot layer: this tick's AI control keys, posted as ONE AI_INPUTS. */
+  private readonly aiInputBatch = new AiInputBatch();
   /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
   private aiPlayerScratch: AiPlayerView[] = [];
   /** Wave-system Phase 1 — per-room faction hostility/peace ledger, membership
@@ -1930,6 +1933,17 @@ export class SectorRoom extends Room<SectorState> {
           ...(setAngvel !== undefined ? { setAngvel } : {}),
         });
       },
+      // Pilot layer: AI ships flown by control keys, batched into ONE
+      // AI_INPUTS message a tick (no brain emits keys yet).
+      postInput: (slot, bits) => {
+        // v4 A — a disabled NPC ship's engines are off (no keys held).
+        this.aiInputBatch.push(slot, this.gateGuard.isSlotDisabled(slot, this.gameClock.now()) ? 0 : bits);
+      },
+      flushInputs: () => {
+        if (this.aiInputBatch.count === 0) return;
+        this.postToWorker(this.aiInputBatch.cmd);
+        this.aiInputBatch.clear();
+      },
     });
 
     // Per-tick weapon-mount aim updater. Owns playerMountAngles +
@@ -2460,8 +2474,8 @@ export class SectorRoom extends Room<SectorState> {
       : undefined;
     this.swarmSpawner = new SwarmSpawner(this.swarmRegistry, {
       takeSlot: () => this.freeSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, shieldKindId, spin) =>
-        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}), ...(spin ? { angvel: spin.angvel, angularDamping: spin.angularDamping } : {}) }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, shieldKindId, spin, shipKindId) =>
+        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}), ...(spin ? { angvel: spin.angvel, angularDamping: spin.angularDamping } : {}), ...(shipKindId !== undefined ? { shipKindId } : {}) }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
