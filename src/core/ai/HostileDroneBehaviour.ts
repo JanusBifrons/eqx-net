@@ -992,4 +992,41 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Test-visible: the NPC's boost energy pool. */
   getEnergy(): number { return this.energy; }
 
+  // ── Line-of-fire feedback (friendly fire; plan composed-harbor §4) ──────
+  // The room's LineOfFireGate held this NPC's shot because a friendly body
+  // was on the line. Plain fields only (#14); game ticks, never wall time
+  // (#20). Read by later slices (the blocked-fire nudge + utility scoring).
+  private _blockScore = 0;
+  private _blockScoreTick = 0;
+  private _lastBlockedTick = -1_000_000;
+  private _blockerX = 0;
+  private _blockerY = 0;
+
+  /** At most one count per tick (a capital's barrels may each report). */
+  noteBlocked(tick: number, blockerX: number, blockerY: number): void {
+    this._blockerX = blockerX;
+    this._blockerY = blockerY;
+    if (tick === this._lastBlockedTick) return;
+    this._blockScore = this.getRecentBlocks(tick) + 1;
+    this._blockScoreTick = tick;
+    this._lastBlockedTick = tick;
+  }
+
+  /** Decaying count of recent blocks: halves every `BLOCK_HALF_LIFE_TICKS`. */
+  getRecentBlocks(tick: number): number {
+    if (this._blockScore === 0) return 0;
+    const age = tick - this._blockScoreTick;
+    if (age <= 0) return this._blockScore;
+    return this._blockScore * Math.pow(0.5, age / BLOCK_HALF_LIFE_TICKS);
+  }
+
+  /** Tick of the latest block (-1_000_000 when never blocked). */
+  getLastBlockedTick(): number { return this._lastBlockedTick; }
+  /** World position of the latest blocking ally. */
+  getLastBlockerX(): number { return this._blockerX; }
+  getLastBlockerY(): number { return this._blockerY; }
 }
+
+/** Line-of-fire feedback: the recent-block count halves every this many game
+ *  ticks (0.5 s at 60 Hz). */
+export const BLOCK_HALF_LIFE_TICKS = 30;

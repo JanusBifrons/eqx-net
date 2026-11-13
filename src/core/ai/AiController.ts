@@ -139,6 +139,15 @@ export class AiController {
   }
 
   /**
+   * Line-of-fire feedback: tell `entityId`'s brain a friendly body at
+   * (blockerX, blockerY) held its shot this tick. No-op for unregistered ids
+   * or behaviours without the optional hook. Alloc-free (#14).
+   */
+  noteBlocked(entityId: string, tick: number, blockerX: number, blockerY: number): void {
+    this.entities.get(entityId)?.behaviour.noteBlocked?.(tick, blockerX, blockerY);
+  }
+
+  /**
    * Purge `playerId` from every registered behaviour's hostility set.
    * Called when a player leaves the sector (transit out, disconnect) — the
    * threat is gone from this sector's perspective. O(N) over registered
