@@ -150,8 +150,8 @@ export class AiController {
 
   /** Damage an entity took (morale, AI slice 6b). Server-only; a no-op for an
    *  unregistered id or a behaviour without the hook. Alloc-free. */
-  noteDamage(entityId: string, amount: number, atTick: number): void {
-    this.entities.get(entityId)?.behaviour.noteDamage?.(amount, atTick);
+  noteDamage(entityId: string, amount: number, atTick: number, maxHull?: number): void {
+    this.entities.get(entityId)?.behaviour.noteDamage?.(amount, atTick, maxHull);
   }
 
   /** The squad's capital died: a morale trigger for this entity. */

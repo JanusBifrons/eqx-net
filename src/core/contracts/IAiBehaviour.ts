@@ -275,9 +275,10 @@ export interface IAiBehaviour {
   markHostile?(shooterId: string, atTick: number): void;
   purgeHostility?(playerId: string): void;
   /** Damage this entity took (morale, AI slice 6b). Server-only: the room's
-   *  damage path calls it through `AiController.noteDamage`. Plain-field
-   *  write, alloc-free. */
-  noteDamage?(amount: number, atTick: number): void;
+   *  damage path calls it through `AiController.noteDamage` with the
+   *  entity's own max hull (an elite's is 4× its kind's). Plain-field write,
+   *  alloc-free. */
+  noteDamage?(amount: number, atTick: number, maxHull?: number): void;
   /** The squad's capital died (a morale trigger, AI slice 6b). */
   noteCapitalLost?(): void;
   /**

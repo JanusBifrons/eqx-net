@@ -581,8 +581,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   }
 
   /** Morale: damage this ship took (server damage path → AiController). */
-  noteDamage(amount: number, atTick: number): void {
-    this._morale.noteDamage(atTick, amount, this.kind.maxHealth);
+  noteDamage(amount: number, atTick: number, maxHull?: number): void {
+    this._morale.noteDamage(atTick, amount, maxHull !== undefined && maxHull > 0 ? maxHull : this.kind.maxHealth);
   }
 
   /** Morale: the squad's capital died (the next decision rolls). */
