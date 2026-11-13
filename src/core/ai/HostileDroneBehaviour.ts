@@ -1573,16 +1573,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   getLastBlockerY(): number { return this._blockerY; }
 }
 
-/** Wrap an angle into [-π, π]. Standalone so both `tickPatrol` and
- *  `tickCombat` can share the same wrapping logic without each
- *  open-coding the while-loops. */
-function wrapPi(rad: number): number {
-  let r = rad;
-  while (r > Math.PI) r -= 2 * Math.PI;
-  while (r < -Math.PI) r += 2 * Math.PI;
-  return r;
-}
-
 /** Line-of-fire feedback: the recent-block count halves every this many game
  *  ticks (0.5 s at 60 Hz). */
 export const BLOCK_HALF_LIFE_TICKS = 30;
