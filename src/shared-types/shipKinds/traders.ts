@@ -34,7 +34,8 @@ export const TRADER_HAULER: ShipKind = defineShipKind({
   shieldRegenRate: 500 / 240,
   energyMax: 200,
   energyRegenRate: 0.25,
-  ai: { thrust: 0.6, turnKp: 4.0, maxTorque: 8.0 },
+  ai: { thrust: 0.6 },
+  aiRole: 'civilian',
   shape: {
     kind: 'polygon',
     color: TRADER_COLOR,

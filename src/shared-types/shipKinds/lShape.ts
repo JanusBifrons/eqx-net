@@ -79,7 +79,8 @@ export const L_SHAPE: ShipKind = defineShipKind({
   // fire-locked; never tuned for live play.
   energyMax: 1000,
   energyRegenRate: 5,
-  ai: { thrust: 3.0, turnKp: 3.0, maxTorque: 8.0 },
+  ai: { thrust: 3.0 },
+  aiRole: 'fighter',
   shape: {
     kind: 'polygon',
     color: 0xff8844,
