@@ -9,6 +9,7 @@ import { hasTurretFireControl, mountWeaponReach } from '../combat/mountReach.js'
 import { getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
 import {
   isOnSightHostile,
+  isFriendly,
   isNpcAllegianceId,
   ON_SIGHT_ENGAGE_RANGE,
   PLAYERS_SIDE,
@@ -44,6 +45,17 @@ import {
   type PilotState,
 } from './virtualPilot.js';
 import { roleSensorRange } from './tactics/roleProfiles.js';
+import {
+  addDangerFromPoint,
+  addInterestToward,
+  clearContextMaps,
+  createContextMaps,
+  makeContextOutput,
+  resolveContext,
+  type ContextMaps,
+  type ContextSteerOutput,
+} from './contextSteering.js';
+import type { IAiNeighbourQuery } from '../contracts/IAiBehaviour.js';
 
 /** Aim cone (radians). Drones won't fire unless their nose is within this many radians of the target. */
 const DRONE_AIM_TOLERANCE = 0.25; // ~14°
@@ -127,6 +139,30 @@ const MOVE_ARRIVE_SLOW_RADIUS = 300;
  *  the flock but still genuinely travelling. The director ALSO holds the leader
  *  outright when the squad is badly spread (course = its own pose). */
 const LEADER_CRUISE_THROTTLE = 0.55;
+
+// ── Combat context steering (AI steering plan slice 2c) ─────────────────
+/** Neighbours read per combat tick (nearest first). */
+const COMBAT_NEIGHBOUR_K = 8;
+/** Query reach, × `combatSeparation`: danger fades out by here. */
+const COMBAT_SEP_REACH = 1.25;
+/** Full-strength neighbour danger inside this fraction of `combatSeparation`. */
+const COMBAT_SEP_CORE = 0.5;
+/** Interest lobe sharpness toward the stand-off goal (2 = moderately broad). */
+const COMBAT_GOAL_SHAPE = 2;
+/** Speed a crowded ship drifts apart at, × cruise, at full crowding. */
+const COMBAT_CROWD_SPEED = 0.6;
+/** Facing switches to the move heading when the move is this far off the
+ *  target bearing (radians; 100°), and back below `FACE_MOVE_EXIT` (80°). */
+const FACE_MOVE_ENTER = (100 * Math.PI) / 180;
+const FACE_MOVE_EXIT = (80 * Math.PI) / 180;
+/** Below this wanted speed (× cruise) the nose stays on the lead point:
+ *  the pilot's reverse handles a slow back-off without turning away. */
+const FACE_MOVE_MIN_SPEED = 0.25;
+/** Crowding (0..1, 1 = touching) above which a ship holding range turns out
+ *  of the crowd at the lower `CROWD_FACE_*` angles (60° in, 40° back). */
+const COMBAT_CROWD_TURN = 0.3;
+const CROWD_FACE_ENTER = (60 * Math.PI) / 180;
+const CROWD_FACE_EXIT = (40 * Math.PI) / 180;
 
 /**
  * Hostile drone: steers toward nearest player and fires hitscan when in range
@@ -306,6 +342,19 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private energy: number;
   private readonly energyMax: number;
   private readonly energyRegen: number;
+  /** Combat context steering (slice 2c): maps, output and neighbour buffer,
+   *  allocated once (#14). */
+  private readonly _ctxMaps: ContextMaps = createContextMaps();
+  private readonly _ctxOut: ContextSteerOutput = makeContextOutput();
+  private readonly _nbIdx = new Int32Array(COMBAT_NEIGHBOUR_K);
+  /** `shipTuning(kind).combatSeparation`, cached. */
+  private readonly combatSeparation: number;
+  /** Pilot hulls count as same-side neighbours only for a side friendly to players. */
+  private readonly friendlyToPilots: boolean;
+  /** Facing latch: true while the nose follows the move heading, not the lead. */
+  private _faceMove = false;
+  /** Test-visible: did the last combat tick resolve through context steering? */
+  private _ctxUsed = false;
 
   constructor(kind?: ShipKind | string) {
     // Accept the kind as either a `ShipKind` record or a kind id (string), so
@@ -317,6 +366,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const a = this.kind.allegiance;
     this.allegiance = a !== undefined && isNpcAllegianceId(a) ? a : 'drones';
     this.onSightPlayers = isOnSightHostile(this.allegiance, PLAYERS_SIDE);
+    this.friendlyToPilots = isFriendly(this.allegiance, PLAYERS_SIDE);
+    this.combatSeparation = shipTuning(this.kind).combatSeparation;
     // The body's mass is SwarmSpawner's: the kind's own, else NPC_MASS_FALLBACK.
     this.handling = makePilotHandling(this.kind, massOf(this.kind, NPC_MASS_FALLBACK));
     this.energyMax = this.kind.energyMax ?? 100;
@@ -702,7 +753,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     let along = targetAlong + closing;
     if (along > h.maxSpeed) along = h.maxSpeed;
     else if (along < -h.maxSpeed) along = -h.maxSpeed;
-    const intent = this.fly(self, desiredAngle, ux * along, uy * along, boostOk);
+    const nb = view.neighbours;
+    this._ctxUsed = false;
+    const intent = nb === undefined
+      ? this.fly(self, desiredAngle, ux * along, uy * along, boostOk)
+      : this.flyCombatContext(self, nb, ux, uy, along, desiredAngle, dist <= this.fireRange, boostOk);
 
     // Fire gating: standard 14° cone at normal distance widens to 26° at
     // point-blank so brawls actually trade fire instead of dancing
@@ -742,6 +797,104 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     }
     return intent;
   }
+
+  /**
+   * Combat movement through context steering (AI steering plan slice 2c).
+   * The stand-off decision above is unchanged; it becomes an INTEREST lobe
+   * along the target line (+ = closing, − = backing off) at speed `|along|`.
+   * Same-side neighbours inside `combatSeparation × COMBAT_SEP_REACH` add
+   * DANGER toward themselves (full inside `COMBAT_SEP_CORE`), so a ship whose
+   * approach line runs through a wingman picks the nearest clear heading
+   * instead. Crowded ships also get interest straight away from the crowd and
+   * a floor speed, so a pack holding range drifts apart rather than sitting
+   * nose to tail. Obstacles are not written yet (no cheap per-tick query).
+   *
+   * Facing (one nose): the lead point while in fire range, so it still
+   * shoots; the move heading when out of range, or when the move runs more
+   * than ~90° off the target bearing at a real speed (with hysteresis) —
+   * the ship turns away to reposition and comes back round. Allocation-free.
+   */
+  private flyCombatContext(
+    self: AiEntity,
+    nb: IAiNeighbourQuery,
+    ux: number,
+    uy: number,
+    along: number,
+    leadAngle: number,
+    inRange: boolean,
+    boostOk: boolean,
+  ): AiIntent {
+    const m = this._ctxMaps;
+    clearContextMaps(m);
+    const goalSpeed = along < 0 ? -along : along;
+    const sgn = along < 0 ? -1 : 1;
+    addInterestToward(m, ux * sgn, uy * sgn, 1, COMBAT_GOAL_SHAPE);
+
+    const sep = this.combatSeparation;
+    const reach = sep * COMBAT_SEP_REACH;
+    const core = sep * COMBAT_SEP_CORE;
+    const idx = this._nbIdx;
+    const n = nb.queryNeighbours(self.x, self.y, reach, COMBAT_NEIGHBOUR_K, idx, self.id);
+    let pushX = 0;
+    let pushY = 0;
+    let crowd = 0;
+    for (let k = 0; k < n; k++) {
+      const i = idx[k]!;
+      if (nb.isPilotAt(i) ? !this.friendlyToPilots : nb.sideAt(i) !== this.allegiance) continue;
+      const dx = nb.xAt(i) - self.x;
+      const dy = nb.yAt(i) - self.y;
+      const d = Math.hypot(dx, dy);
+      addDangerFromPoint(m, dx, dy, d, core, reach - core, 1);
+      if (d < sep && d > 1e-6) {
+        const c = 1 - d / sep;
+        pushX -= (dx / d) * c;
+        pushY -= (dy / d) * c;
+        if (c > crowd) crowd = c;
+      }
+    }
+    if (crowd > 0) addInterestToward(m, pushX, pushY, crowd, 1);
+
+    const out = resolveContext(m, this._ctxOut);
+    this._ctxUsed = true;
+    const h = this.handling;
+    const crowdSpeed = crowd * COMBAT_CROWD_SPEED * h.cruiseSpeed;
+    const speed = goalSpeed > crowdSpeed ? goalSpeed : crowdSpeed;
+    // The resolved heading carries the speed; the crowd push adds an opening
+    // velocity on top (a lateral wingman masks no forward slot, so the
+    // heading alone would never open a side-by-side gap).
+    const pushGain = COMBAT_CROWD_SPEED * h.cruiseSpeed;
+    let wvx = out.dirX * speed + pushX * pushGain;
+    let wvy = out.dirY * speed + pushY * pushGain;
+    const wv = Math.hypot(wvx, wvy);
+    if (wv > h.maxSpeed) {
+      wvx *= h.maxSpeed / wv;
+      wvy *= h.maxSpeed / wv;
+    }
+    const moveAngle = wv > 1e-6 ? facingOf(wvx, wvy) : out.angle;
+
+    // Facing (one nose). Holding range while crowded, the opening move is
+    // mostly sideways, which a nose on the target cannot fly: turn out at a
+    // lower angle so the ship actually leaves the crowd, then comes back.
+    let off = wrapAngle(moveAngle - facingOf(ux, uy));
+    if (off < 0) off = -off;
+    const moving = wv > FACE_MOVE_MIN_SPEED * h.cruiseSpeed;
+    const crowdedHold = crowd > COMBAT_CROWD_TURN && goalSpeed < FACE_MOVE_MIN_SPEED * h.cruiseSpeed;
+    const thresh = crowdedHold
+      ? (this._faceMove ? CROWD_FACE_EXIT : CROWD_FACE_ENTER)
+      : (this._faceMove ? FACE_MOVE_EXIT : FACE_MOVE_ENTER);
+    this._faceMove = moving && (!inRange || off > thresh);
+    const facing = this._faceMove ? moveAngle : leadAngle;
+    return this.fly(self, facing, wvx, wvy, boostOk);
+  }
+
+  /** Test-visible: the last combat context-steering resolve (null if the
+   *  last combat tick had no neighbour query). */
+  lastCombatSteer(): Readonly<ContextSteerOutput> | null {
+    return this._ctxUsed ? this._ctxOut : null;
+  }
+
+  /** Test-visible: is the nose following the move heading (not the lead)? */
+  isFacingMove(): boolean { return this._faceMove; }
 
   /**
    * Capital engagement (plan prancy-squishing-donut Phase 3). Out of reach:

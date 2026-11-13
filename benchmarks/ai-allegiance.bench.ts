@@ -61,6 +61,15 @@ const MIXED = makeAgents(56, 24);
 const MIXED_VIEW = makeView(MIXED);
 const DRONES_ONLY = makeAgents(56, 0);
 const DRONES_ONLY_VIEW: AiWorldView = { ...makeView(DRONES_ONLY), swarms: undefined };
+// AI steering 2c — the same 80 bots with the neighbour grid on the view, so
+// every combat tick runs the context-steering resolve + K≤8 separation query.
+const MIXED_GRID = new AiNeighbourGrid();
+MIXED_GRID.begin();
+for (const a of MIXED) {
+  MIXED_GRID.addDrone(a.self.id, a.self.x, a.self.y, 0, 0, 24, a.allegiance);
+}
+MIXED_GRID.end();
+const MIXED_NB_VIEW: AiWorldView = { ...makeView(MIXED), neighbours: MIXED_GRID };
 
 let tick = 100;
 function runTick(agents: Agent[], view: AiWorldView): void {
@@ -74,6 +83,9 @@ describe('AI brain tick — one sector, all bots', () => {
   });
   bench('56 drones + 4 players (drones only, pre-P1b shape)', () => {
     runTick(DRONES_ONLY, DRONES_ONLY_VIEW);
+  });
+  bench('56 drones + 24 robots + 4 players + neighbour grid (combat context steering, 2c)', () => {
+    runTick(MIXED, MIXED_NB_VIEW);
   });
 });
 
