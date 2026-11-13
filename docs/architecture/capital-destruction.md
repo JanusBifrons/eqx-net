@@ -898,6 +898,196 @@ profile instead of assuming a capital.
   transport, not this). The welcome carries `subcapWrecks: true` so the
   client (slice 4) holds the dying hull briefly.
 
+### Soak results (sub-capital break-up, slice 5, 2026-11-13)
+
+**Question:** is permanent, sleeping debris cheap in a real battle? The
+owner's words: "they'll go to sleep in the physics engine and shouldn't be too
+expensive. But let's start big and see what happens."
+
+**Answer: not yet.** In a live fight most pieces never fall asleep, and the
+client, not the server, is what falls over first.
+
+#### How it was measured
+
+- **Scenes.** `fleet-fight-soak`: the fleet fight (30 fighters vs 30 robot
+  squares a wave), reinforced every 10 s for 10 min, `subcapWrecks` on in the
+  room. `fleet-fight-soak-lite` is the same at 10 a side.
+  - Both arms of the full soak pile up ships, debris or not: reinforcement
+    outruns the killing by ~250 ships a minute.
+  - The lite soak is the one that isolates the debris.
+  - Spawn steps can repeat (`repeatEveryMs` / `repeatUntilMs`), so a 10-minute
+    script stays inside the 64-entry seed guard.
+- **Arms.** Flag on vs `EQX_SUBCAP_WRECKS=0` (forces it off even where the
+  room asks for it). Same machine, same session, one 10-minute take per arm
+  (`pnpm perf:scenes --head-only --reps 1 --sample-ms 30000
+  --head-params perfcounts=1`, port offset 500). This gives the over-time
+  curve. It is NOT a verdict: a single take can't be one.
+- **Samples.** Every 30 s, `--sample-ms` reads:
+  - the server: tick and worker p50/p95/p99 over the last 30 s of ticks
+    (`tickRecent`), and the body census (swarm, sleeping, wreck pieces asleep,
+    awake-but-still, descriptors);
+  - the wire: rx split into the binary swarm channel and msgpack messages;
+  - wreck descriptors per snapshot;
+  - the client window, then reset: frame p50/p95/p99, hitches, renderer p95,
+    draw calls (`perfcounts=1`) and display objects.
+- **The gate.** The standard 30 s `fleet-fight` A/B: 4 reps, base flag off,
+  head `EQX_SUBCAP_WRECKS=1`. The server count gate is `perfSceneCounts`
+  with the flag on and off.
+- **Host.** Desktop (RTX 5070 Ti, 16 threads), with another session's servers
+  running. `--no-load-gate` was used and the load is in the ledgers. Timings
+  are comparable only within this session. Counts don't depend on it.
+- **Wire caveat.** Slice 3 (#547, wreck descriptors as adds and removes) did
+  not merge cleanly onto this base (6 conflicts). The wire numbers below are
+  the CURRENT transport: the whole `wrecks[]` list for 3 broadcasts after any
+  change, and 2 Hz otherwise.
+
+#### Lite soak over time (10 a side; on vs off at the same scene time)
+
+| t | pieces (on) | asleep | ships on / off | server tick p95 on / off (ms) | worker p95 on / off | rx on / off (KB/s) | of which swarm (on) | client frame p95 on / off | draws p95 on / off | display objects on / off |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 30 s | 57 | 0 % | 34 / 32 | 8.1 / 0.6 | 2.4 / 0.2 | 184 / 79 | 120 | 16.7 / 16.7 | 69 / 53 | 3,140 / 2,743 |
+| 60 s | 128 | 1 % | 85 / 48 | 14.8 / 0.6 | 4.8 / 0.3 | 471 / 109 | 301 | 16.8 / 16.8 | 87 / 58 | 5,010 / 3,445 |
+| 90 s | 200 | 17 % | 111 / 62 | 1.6 / 1.3 | 1.7 / 0.6 | 778 / 167 | 464 | 16.8 / 16.7 | 94 / 63 | 6,198 / 4,225 |
+| 120 s | 306 | 8 % | 122 / 81 | 6.5 / 2.5 | 4.7 / 0.8 | 1,077 / 230 | 595 | 16.7 / 16.7 | 108 / 71 | 7,010 / 5,021 |
+| 150 s | 413 | 9 % | 128 / 98 | 5.6 / 1.5 | 5.9 / 0.8 | 1,335 / 314 | 760 | 16.7 / 16.8 | 110 / 80 | 7,870 / 5,828 |
+| 180 s | 491 | 32 % | 156 / 97 | 2.9 / 1.4 | 6.3 / 0.7 | 1,228 / 401 | 783 | 16.8 / 16.7 | 102 / 80 | 8,232 / 6,272 |
+| 210 s | 555 | 39 % | 188 / 120 | 2.6 / 1.4 | 5.9 / 0.7 | 1,428 / 494 | 869 | 16.8 / 16.7 | 77 / 79 | 9,616 / 7,246 |
+| 240 s | 626 | 44 % | 206 / 142 | 3.3 / 1.6 | 9.1 / 0.9 | 1,820 / 590 | 857 | **100** / 16.8 | 94 / 90 | 10,790 / 8,448 |
+| 270 s | 691 | 47 % | 237 / 164 | 3.5 / 3.1 | 10.4 / 1.5 | 1,756 / 697 | 1,020 | **117** / 16.7 | 79 / 89 | 12,279 / 9,430 |
+| ~290 s | client dropped | | | | | | | | | |
+
+- **Flag on.** The pilot's page left the room at ~290 s. There was no server
+  backpressure warning, so the page itself gave out.
+- **Flag off.** The same scene ran all 10 minutes: 472 ships at 570 s,
+  1.7 MB/s, frame p95 33 ms, server tick p95 25 ms.
+- **Full soak (30 a side).** On: the client dropped at ~150 s (602 pieces,
+  ~500 ships, 3.5 MB/s, frame p95 83 ms). Off: it dropped at ~500 s (~1,000
+  ships, 3.4 MB/s). In both arms the ship pile-up dominates that scene, so
+  only the lite soak answers the debris question.
+
+#### Verdicts
+
+- **Do pieces sleep?** Mostly not while the fight goes on around them.
+  - 0–17 % were asleep in the first 2.5 min and ~45 % by 4.5 min. In
+    isolation a piece sleeps in 6–15 s (`subcapWrecks.test.ts`).
+  - Likely causes:
+    - the pieces block every weapon, and each hit knocks a piece (`knockScale`
+      320) and wakes it;
+    - ships fly into the pile, and the contact wakes the pieces;
+    - every death drops new pieces into the same 600 u melee.
+  - The census now counts awake-but-still pieces (`wreckAwakeSlow`: awake
+    but under 1 u/s), so the next take can tell "kept awake by contact or
+    knock" from "still drifting".
+- **Does server tick cost grow once pieces sleep?** The sleep path works:
+  - bodies stepped per tick track the AWAKE count, not the total (e.g. 606
+    awake of 928 at 270 s);
+  - swarm records per tick are ~ the awake count;
+  - so a sleeping piece is nearly free, as designed (`quietIds`).
+
+  But the worker's p95 grows with the awake pieces (1.5 → 10.4 ms against
+  0.2 → 1.5 ms off). The main tick p95 stayed 3–4 ms after the first minute,
+  apart from spikes in the first two minutes (8–15 ms). Cost follows awake
+  pieces, and in a fight most pieces are awake.
+- **Does the wire stay flat?** No. It grows ~2.5 KB/s per live piece, ~3×
+  the off arm at the same time:
+  - the swarm channel (awake pieces ship every tick they move; sleeping
+    pieces still ride every 1 Hz full refresh, 36 B each);
+  - the `wrecks[]` descriptors (~175 B each, ~50 a snapshot by 270 s).
+- **Client: do frame time or draw calls grow?**
+  - Draw calls: no (≈ 80–110, the same as off).
+  - Display objects: barely (~4 per piece; ships cost far more).
+  - Renderer p95: stays 2–6 ms.
+  - But the main thread's frame p95 went from 16.7 to 100+ ms at ~620
+    pieces, and the page then dropped. Renderer cost stayed low, so the
+    main-thread cost per piece is what breaks the client.
+  - Candidates, in likely order (not yet profiled):
+    1. every piece is a predWorld body, anchored each snapshot and replayed
+       on reconcile (O(ticks ahead × pieces));
+    2. the `wrecks` map in `RenderMirror` is structured-cloned to the
+       renderer worker every frame (O(wrecks));
+    3. decoding ~1 MB/s of swarm records plus the repeated descriptor lists.
+- **When does the 2,000 cap fill?** Not before something else breaks.
+  - Full soak: ~300 pieces a minute (cap in ~7 min), but its client dropped
+    at 600 pieces.
+  - Lite soak: ~150 a minute (cap in ~13 min), but its client dropped at ~700.
+  - The cap is not the binding limit today: the client is, at ~600–700 live
+    pieces in view.
+- **What dominates?**
+  1. Client main thread per piece.
+  2. Wire per piece.
+  3. Physics worker per awake piece.
+
+  The server main tick is the cheapest of the four.
+
+#### Count budgets with the flag on (not widened)
+
+| Budget | fleet-fight on / off / budget | wide-view on / off / budget |
+|---|---|---|
+| rx KB/s | **415** / 260 / 334 | **507** / 330 / 418 |
+| bodies per tick | **80.8** / 48.2 / 63 | **98.9** / 75.7 / 98 |
+| swarm records per tick | **80.3** / 47.9 / 62 | **98.5** / 75.2 / 93 |
+| swarm bytes per tick | **2,898** / 1,732 / 2,088 | **3,552** / 2,715 / 3,142 |
+
+Source: `perfSceneCounts.test.ts`, first 12.6 s, one run each. With the flag
+on, both scenes break their server budgets, because every piece is still
+awake 0–12 s after its kill. They were NOT widened: the fixes below are the
+way back under.
+
+**30 s `fleet-fight` A/B, 4 reps** (`pnpm perf:scenes --scenes fleet-fight
+--base HEAD --reps 4 --head-env EQX_SUBCAP_WRECKS=1`, both arms
+`perfcounts=1`, offset 500). Verdict: **RED**.
+
+| Metric | Verdict | Off | On | Ratio |
+|---|---|---|---|---|
+| rx KB/s | RED | 319 | 735 | ×2.31 |
+| display objects | RED | 5,036 | 7,520 | ×1.49 |
+| server tick p95 | INCONCLUSIVE (p 0.34) | 2.04 ms | 3.17 ms | ×1.55 |
+| server tick p99 | GREEN | 5.27 ms | 5.96 ms | ×1.13 |
+| client frame p95 / hitches / renderer p95 | GREEN | 16.75 / 0 / 2.0 | 16.7 / 0 / 2.25 | ×1 |
+
+Print-only counts:
+
+| Count | Off | On | Ratio |
+|---|---|---|---|
+| bodies per tick | 58.4 | 147 | ×2.5 |
+| swarm records per tick | 57.3 | 145 | ×2.5 |
+| contacts per tick | 10 | 32 | ×3.2 |
+| worker tick p95 | 0.73 ms | 1.57 ms | ×2.2 |
+| AI agents per tick | 57 | 94 | ×1.7 |
+| swarm at the end | 50 | 236 | ×4.7 |
+
+The on arm keeps more ships alive: debris absorbs shots.
+
+#### What to fix (in order)
+
+1. **Wire: sleeping pieces leave the 1 Hz full refresh.** Treat them like
+   sleeping structures (in interest, or every 5th refresh). This is
+   two-sided (#15): the client decoder deletes any swarm entity missing from
+   a full refresh (`BinarySwarmDecoder`, structures exempt), so a kind-4
+   piece must be exempt too while its wreck's descriptor is live. Its
+   lifetime then comes from the descriptor set, which slice 3 sends as adds
+   and removes. Do it on top of slice 3. Saves 36 B × sleeping pieces per
+   second per client (~70 KB/s at the cap).
+2. **Slice 3 (#547)** removes the repeated `wrecks[]` lists (~50 descriptors
+   a snapshot by 270 s here).
+3. **Client main thread.**
+   - Profile one lite-soak take at ~500 pieces (`?perfprobe=1` + a CDP CPU
+     profile).
+   - Expected first fix: don't keep a predWorld body for a SLEEPING piece
+     that is far from the pilot. A sleeping piece only matters to the
+     pilot's collisions inside its own interest window.
+   - Expected second fix: send the `wrecks` map to the renderer worker only
+     when its version changes, not inside every frame's mirror.
+4. **Let pieces actually settle in a fight.**
+   - Measure `wreckAwakeSlow` first.
+   - If contacts or knocks keep the pieces awake: put a floor under the knock
+     so small-arms hits on a resting piece don't wake it.
+   - Or raise the sleep thresholds for kind 4 only. Never shorten the
+     lifetime (plan: "the fix goes there, not into a shorter lifetime").
+5. **Cap.** Keep 2,000 as the server's ceiling, but it never binds today. Until
+   1–3 land, the practical limit is ~600 live pieces near one pilot.
+   Re-measure after each fix with `fleet-fight-soak-lite`.
+
 ## 4. Determinism strategy
 
 Every client must produce the same pieces as the server, bit for bit, from
