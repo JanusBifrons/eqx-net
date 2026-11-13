@@ -31,13 +31,13 @@ function recordHits(room: unknown): Hit[] {
   return hits;
 }
 
-async function bootDrones(): Promise<SectorTestHarness> {
+async function bootDrones(peacefulDrones = true): Promise<SectorTestHarness> {
   return bootSectorTestServer({
     sectorKey: null,
     droneCount: 0,
     asteroidConfig: [],
     testMode: true,
-    peacefulDrones: true,
+    peacefulDrones,
     defaultSpawnX: -4000,
     defaultSpawnY: -4000,
   });
@@ -75,7 +75,36 @@ describe('SectorRoom integration — NPC line of fire', () => {
     expect(mine.every((h) => h.target === 'lof-target'), 'the bolt reached the target: ' + JSON.stringify(mine)).toBe(true);
   });
 
-  it('a hostile in the way does not block: the drone shoots it', { timeout: 30_000 }, async () => {
+  it('a blocked drone tells its brain which ally was in the way (line-of-fire feedback)', { timeout: 30_000 }, async () => {
+    harness = await bootDrones(false);
+    await harness.connectAs(randomUUID());
+    const room = harness.getServerRoom()!;
+    const internals = room._internals;
+    expect(internals.spawnTestDrone('lof-shooter', 0, 0, 'fighter')).toBe(true);
+    expect(internals.spawnTestDrone('lof-ally', 0, 150, 'fighter')).toBe(true);
+    expect(internals.spawnTestDrone('lof-target', 0, 300, 'heavy')).toBe(true);
+    await harness.advance(100);
+    const brain = (room as unknown as {
+      aiController: { getBehaviour(id: string): unknown };
+    }).aiController.getBehaviour('lof-shooter') as {
+      getRecentBlocks(tick: number): number;
+      getLastBlockedTick(): number;
+      getLastBlockerX(): number;
+      getLastBlockerY(): number;
+    };
+    expect(typeof brain.getRecentBlocks, 'the drone runs a brain with the hook').toBe('function');
+    expect(brain.getLastBlockedTick(), 'never blocked yet').toBe(-1_000_000);
+
+    internals.aiFire('lof-shooter', 0, 1, 'lof-target');
+    await harness.advance(100);
+    const at = brain.getLastBlockedTick();
+    expect(at, 'the brain heard about the block').toBeGreaterThanOrEqual(0);
+    expect(brain.getRecentBlocks(at)).toBeGreaterThan(0);
+    expect(Math.abs(brain.getLastBlockerX()), 'blocker x is the ally').toBeLessThan(40);
+    expect(Math.abs(brain.getLastBlockerY() - 150), 'blocker y is the ally').toBeLessThan(40);
+  });
+
+  it('a hostile in the way does not block: the drone shoots it',{ timeout: 30_000 }, async () => {
     harness = await bootDrones();
     await harness.connectAs(randomUUID());
     const room = harness.getServerRoom()!;
