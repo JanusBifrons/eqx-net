@@ -202,8 +202,11 @@ const SUBCAP: DestructionProfile = {
     hullDeathBlastReplaced: false,
     glowStyle: 'simple',
     glowSeconds: 1,
-    // Brief: no crack hold, so a sub-cap's pieces are drawable at once.
-    dyingHoldMs: 600,
+    // Brief: no crack hold, so a sub-cap's pieces are drawable at once. The
+    // held hull is drawn dead (deadTint, `dyingHullHold.ts`) under its death
+    // explosion; 600 ms of it still read as "dead ship sits there, then pops"
+    // (round-2 review), so the pieces take over within 250 ms or the hull goes.
+    dyingHoldMs: 250,
     // ~35 % brightness and warm (cuts the art's blue and purple most): burnt.
     deadTint: 0x5e5249,
     deathBlastScale: 0.5,

@@ -61,6 +61,29 @@ describe('a hit on a wreck piece: spark only, no damage number or health bar', (
     expect(internals._damageFlashFrames.has('swarm-101')).toBe(true);
   });
 
+  /**
+   * Round-2 review: "12" and "36" seen over unlabelled wreckage at 30 s / 40 s
+   * of the fleet-fight take. Every server damage path (player and NPC bolts,
+   * NPC beams, missile splash, rams, the killing blow) reaches the client
+   * through the ONE `damage` broadcast (`DamageRouter.applyInteraction`) and
+   * this one handler, so the guard covers each of them; one case per shape.
+   * (The numbers in the frames sat on loot pods: scrap, kind 3, numbered by
+   * design, see the positive control below.)
+   */
+  for (const [what, evt] of [
+    ['an NPC bolt', { ...hit('swarm-101'), shooterId: 'swarm-102' }],
+    ['an NPC beam (impact point from the beam)', { ...hit('swarm-101'), shooterId: 'swarm-102', hitX: 4.5, hitY: 6.5 }],
+    ['missile splash (no hit point)', { ...hit('swarm-101'), hitX: undefined, hitY: undefined }],
+    ['a shield-layer hit', { ...hit('swarm-101'), hitLayer: 'shield', newShield: 3, shieldMax: 10 }],
+    ['the killing blow', { ...hit('swarm-101'), newHealth: 0 }],
+  ] as const) {
+    it(`wreck piece, ${what}: no number, no health bar`, () => {
+      internals.handleDamage(evt as DamageEvent);
+      expect(internals.mirror.pendingDamageNumbers).toHaveLength(0);
+      expect(internals.mirror.pendingHealthBarHits).toHaveLength(0);
+    });
+  }
+
   it('a live drone and scrap keep their numbers (positive control)', () => {
     internals.handleDamage(hit('swarm-102'));
     internals.handleDamage(hit('swarm-103'));

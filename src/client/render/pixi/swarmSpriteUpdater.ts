@@ -507,12 +507,15 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // A capital never washes its whole hull red: a fighter's bolt on a 5,000 u
     // battleship read as the battleship itself flashing (review 2026-11-07).
     const capital = entry.kind === 1 && entry.shipKind !== undefined && getShipKind(entry.shipKind).sizeClass === 'capital';
-    if (
-      !capital && (
-        mirror.damagedShips?.has(spriteKey) ||
-        ctx.localHitTargets.has(spriteKey) ||
-        ctx.remoteHitTargets.has(spriteKey))
-    ) {
+    const flashing = !capital && (
+      mirror.damagedShips?.has(spriteKey) ||
+      ctx.localHitTargets.has(spriteKey) ||
+      ctx.remoteHitTargets.has(spriteKey));
+    if (sprite instanceof WreckPieceSprite && sprite.artFlash) {
+      // Sub-cap debris: the flash goes on the dead art only (never brighter
+      // than dead, and the warm glow keeps its own colour; round-2 review).
+      sprite.setHitTint(flashing ? DAMAGE_FLASH_COLOR : 0xffffff);
+    } else if (flashing) {
       sprite.tint = DAMAGE_FLASH_COLOR;
     } else {
       // v4 M2 — a patrol ship wears its faction's colour (set here, the one

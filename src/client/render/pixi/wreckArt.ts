@@ -100,6 +100,10 @@ export const WRECK_FRONT_HIDDEN_SHARE = 0.2;
  *  2026-11-13: the glow over an opening gap read as a thin dark sliver
  *  piece that then "faded away"). */
 const GLOW_CORE_R = 0.018;
+/** The simple (sub-capital) glow's band into the piece, share of the wreck
+ *  radius: ~3.3 px on a robot cube at fleet-fight zoom (0.45), up from a
+ *  1.8 px core (round-2 review: "a thin orange line"). */
+const SIMPLE_GLOW_W_R = 0.4;
 const GLOW_HALO_MUL = 3;
 const GLOW_HEAD_MUL = 1.8;
 /** The head's length along the crack (share of the wreck radius). */
@@ -1031,6 +1035,14 @@ export class WreckPieceSprite extends Container {
   private lastU = -1;
   /** The art (meshes, or the plain polygon) the dead tint goes on. */
   private readonly artParts: Container[] = [];
+  /** A profile with a dead look (sub-capitals, `fx.deadTint`): the art's
+   *  base tint and the hit flash, multiplied onto the ART only (never the
+   *  container, which would tint the glow too; round-2 review: the glow read
+   *  pink under fire). Written only when either changes. */
+  private artTint = 0xffffff;
+  private hitTint = 0xffffff;
+  /** Simple glow strip width (world u, into the piece). */
+  private simpleW = 0;
   /** The pose and sun at the last update that did any work: a piece with no
    *  glow and no pending ripple skips the frame while both hold. */
   private lastRot = NaN;
@@ -1083,15 +1095,19 @@ export class WreckPieceSprite extends Container {
     } else {
       this.artParts.push(this.addChild(buildWreckPieceGfx(piece.outline, parentKind)));
     }
+    // A profile with a dead look (sub-capitals) is dead from its first frame,
+    // whatever path built it (late piece, art arriving late, no cut edge):
+    // the warm glow on its cuts is the only bright part (round-2 review: one
+    // or two pieces per wreck read as live ships while they glowed).
+    this.applyDeadTint();
     // The glow: cut edges only, one Mesh of quads (a soft halo under a bright
     // core per cut segment) on the glow-curve texture. A wreck already cool
     // when first seen never gets one, nor one whose profile (or tier) has none.
+    // Added after the art, so it draws over it.
     if (info.deathMs > -Infinity && info.glow !== 'none') {
       this.simple = info.glow === 'simple';
       this.buildGlow(piece);
     }
-    // No glow (late joiner, minimal tier, no cut on this piece): dead at once.
-    if (this.glow === null) this.applyDeadTint();
     let pending = 0;
     for (const r of info.ripples) if (r.piece === pieceIndex) pending++;
     this.ripplesDone = pending === 0;
@@ -1114,6 +1130,11 @@ export class WreckPieceSprite extends Container {
     this.halfHead = (core * GLOW_HEAD_MUL) / 2;
     this.halfHeadHalo = (core * GLOW_HEAD_MUL * GLOW_HALO_MUL) / 2;
     this.headLen = Math.max(core * 2, info.hullR * GLOW_HEAD_LEN_R);
+    // The simple glow's band is a share of the hull (a small hull's core
+    // alone is a hairline at fleet-fight zoom: round-2 review, "a thin orange
+    // line on one edge"); `insideWidth` keeps it inside the piece.
+    this.simpleW = Math.max(core, info.hullR * SIMPLE_GLOW_W_R);
+    const reach = this.simple ? Math.max(this.halfHalo, this.simpleW) : this.halfHalo;
     let k = 0;
     forEachCut(piece, info, (hax, hay, hbx, hby, da, db, edge) => {
       // Body-local, math-up; then stored Pixi-down.
@@ -1136,8 +1157,8 @@ export class WreckPieceSprite extends Container {
       s[q + 11] = -my;
       // How wide the strip may be at each end and stay inside the piece (a
       // sharp corner, e.g. the wedge at the kill point, would poke it out).
-      s[q + 12] = insideWidth(o, nx, ny, mx, my, this.halfHalo);
-      s[q + 13] = insideWidth(o, fx, fy, mx, my, this.halfHalo);
+      s[q + 12] = insideWidth(o, nx, ny, mx, my, reach);
+      s[q + 13] = insideWidth(o, fx, fy, mx, my, reach);
       // Both ends inside is not enough on a concave piece (the bow): the
       // strip's far side can still cross the outline between them (filmed
       // v3 takes: the scorch stuck out past the hull). Narrow until it fits.
@@ -1176,10 +1197,11 @@ export class WreckPieceSprite extends Container {
    *  piece's side, full length from the start (no front), never moved
    *  again; only its one shared U changes as it fades (`writeSimpleGlow`). */
   private buildSimpleGlow(): void {
-    // Twice the core (still inside the piece): a small hull's core alone is
-    // a hairline at fleet-fight zoom (review 2026-11-13: "the glow lasted
-    // only ~0.4-0.6 s" was partly a glow too thin to see).
-    const S = this.segN, s = this.seg, hc = this.halfCore * 2;
+    // A band a share of the hull wide (still inside the piece): a small
+    // hull's core alone is a hairline at fleet-fight zoom (reviews
+    // 2026-11-13: "the glow lasted only ~0.4-0.6 s", then "only a thin
+    // orange line on one edge").
+    const S = this.segN, s = this.seg, hc = this.simpleW;
     const positions = new Float32Array(S * 8);
     const uvs = new Float32Array(S * 8);
     const indices = new Uint32Array(S * 6);
@@ -1343,12 +1365,37 @@ export class WreckPieceSprite extends Container {
     else this.writeGlow(t);
   }
 
-  /** The dead look (profile `fx.deadTint`), written once on the art when the
-   *  glow ends (or at build, with no glow); null keeps the burnt tint. */
+  /** The dead look (profile `fx.deadTint`), on the art from the piece's
+   *  first frame (and again, idempotently, when the glow ends); null keeps
+   *  the burnt tint (capitals). */
   private applyDeadTint(): void {
     const t = this.info.fx.deadTint;
     if (t === null) return;
-    for (let i = 0; i < this.artParts.length; i++) this.artParts[i]!.tint = t;
+    this.artTint = t;
+    this.writeArtTint();
+  }
+
+  /** Does the hit flash go on this piece's art (`setHitTint`) rather than
+   *  its container? True for a profile with a dead look (sub-capitals). */
+  get artFlash(): boolean {
+    return this.info.fx.deadTint !== null;
+  }
+
+  /** The hit flash (white: none), multiplied onto the dead art only, so a
+   *  shot piece never brightens and the glow keeps its own colour. Writes
+   *  only on a change (a settled piece does no per-frame tint work). */
+  setHitTint(t: number): void {
+    if (t === this.hitTint) return;
+    this.hitTint = t;
+    this.writeArtTint();
+  }
+
+  private writeArtTint(): void {
+    const a = this.artTint, h = this.hitTint;
+    const c = ((((a >> 16) & 255) * ((h >> 16) & 255) / 255) << 16)
+      | ((((a >> 8) & 255) * ((h >> 8) & 255) / 255) << 8)
+      | (((a & 255) * (h & 255)) / 255);
+    for (let i = 0; i < this.artParts.length; i++) this.artParts[i]!.tint = c;
   }
 
   /** The glow's colour at the last update (the simple glow's curve; the full

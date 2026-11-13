@@ -728,8 +728,16 @@ on the profile, not a branch in the code.
 - **Parting and knock-back** are per unit of hull radius (`shipTuning`), tuned
   for capitals, and invisible at fighter size (a fighter's pieces parted at
   ~0.1 u/s and read as one hull with a crack). The sub-cap profile scales
-  them: `pushScale` 50 (a gap of ~1/3 of the radius in the first second),
-  `dampingScale` 10 (slice 2's measured value: at rest and asleep in ~15 s,
+  them: `pushScale` 50, `separateScale` 32, `dampingScale` 10. The push runs
+  away from the kill point, so on a hit at one end it moves every piece the
+  same way and alone left robot pieces touching ~1 s after the break
+  (round-2 review); `separateScale` raises the seam pass's least opening
+  speed (`wreckSeparate`, 1.4 % of the radius a second) so every shared cut
+  opens at >= ~0.45 radius/s: a gap of ~1/3 of the radius 1 s after the
+  break (measured on the server, 4 hit points per kind: fighter 0.45,
+  robot hexagon 0.38, missile frigate 0.27 radii; 0.02-0.17 before). Locks:
+  `src/core/destruction/wreckPieces.subcapParting.test.ts` and
+  `subcapWrecks.test.ts` "stand clearly apart". `dampingScale` 10 (slice 2's measured value: at rest and asleep in ~15 s,
   ~1 radius of drift), and `knockScale` 320 / `knockMaxScale` 30 (applied in
   `shipTuning`'s `wreckKnockSpeed/Max`: a small-arms hit shoves half a
   fighter wreck ~10-25 u/s, no hit more than ~25 u/s). Capitals ×1. Lock:
@@ -764,8 +772,9 @@ break-up:
   the normal blast's radius by `fx.deathBlastScale` (0.5) and its smoke by
   `fx.deathBlastLinger` (0.5), so the break-up and the fight stay readable
   and capitals feel bigger. Flag off, or any other profile: unchanged.
-- **A simple glow.** `glowStyle: 'simple'`: one quad (twice the core width,
-  inside the piece) per cut segment on the piece's own side, full length
+- **A simple glow.** `glowStyle: 'simple'`: one quad (a band 0.4 × the
+  wreck radius deep, kept inside the piece; the core width alone was "a thin
+  orange line on one edge" at fleet zoom, round-2 review) per cut segment on the piece's own side, full length
   from the first frame (no front, no halo, no white-hot head), positions
   written once; per frame only one shared U changes (uploaded only when it
   moves), on its own curve (`simpleGlowAt` / `wreckSimpleGlowTexture`): one
@@ -776,11 +785,25 @@ break-up:
   dark. At the `minimal` effects tier a simple glow is not built at all
   (a capital's full glow always is). A descriptor seen up to `glowSeconds`
   late starts its glow at first sight, like the capital front.
-- **Dead pieces look dead.** When the glow ends (or at build, with no glow)
-  the piece's art takes `fx.deadTint` (a warm ~35 % multiply), written once:
-  debris is clearly dimmer than any live ship but still shows the art (the
-  first fleet-fight clip's front line was "a solid purple wall" of
-  live-looking wreckage). Capitals keep their light `burntTint` (null).
+- **Dead pieces look dead, from their first frame.** The piece's art takes
+  `fx.deadTint` (a warm ~35 % multiply) when it is built, whatever path built
+  it (a late piece, a rebuild when the art arrives, no cut edge): debris is
+  clearly dimmer than any live ship but still shows the art (the first
+  fleet-fight clip's front line was "a solid purple wall" of live-looking
+  wreckage; round 2: pieces "bright lilac with no warm edge" while they
+  glowed). The glow is added after the art (drawn over it) and nothing tints
+  it: a hit flash multiplies onto the dead art only
+  (`WreckPieceSprite.setHitTint`, written on change), never the container,
+  so a shot piece never brightens and the glow stays warm orange. Capitals
+  keep their light `burntTint` (null) and the container flash. Lock:
+  `swarmSpriteUpdater.subcapDeadTint.test.ts` (every piece of six wrecks,
+  pieces and descriptors arriving out of step, the art arriving late, hit
+  flashes, baked / GPU-lit / plain art, a piece with no cut edges).
+  (The bright pink diamonds in the round-2 crops, one per dead robot, are
+  loot pods, swarm kind 3: an NPC kill spills its hold through
+  `LootSubsystem.spillShipHold`, which always uses the bright magenta
+  "player spill" tier. They take damage numbers by design and explode when
+  shot down. Not wreck pieces.)
 - **No damage numbers on debris.** A hit on any wreck piece (swarm kind 4,
   capital or sub-cap) shows its spark and hit flash, but no floating number
   and no health bar (`isWreckPieceTarget`, both the authoritative and the
@@ -791,8 +814,12 @@ break-up:
 - **The dying-hull hold applies, briefly.** In a room that breaks sub-caps
   (welcome `subcapWrecks`, mirrored to `RenderMirror.subcapWrecks`; slice 2
   sets it), a dying sub-cap's sprite is held until all its pieces draw, with
-  the profile's deadline `fx.dyingHoldMs` (600 ms; capitals 1500 ms). The
-  hold ends the frame every piece is drawn.
+  the profile's deadline `fx.dyingHoldMs` (250 ms; capitals 1500 ms). The
+  hold ends the frame every piece is drawn. The held sub-cap hull is drawn
+  at `fx.deadTint` from the frame it is held (round 2: 600 ms of a
+  full-brightness hull, often frozen mid hit-flash, "looked alive, then
+  popped into pieces"); the explosion over a dark hull reads as dead until
+  the pieces take over. Capitals' held hulls are unchanged.
 - **Cost per piece.** A small ship's art is one tile, so a piece is its
   container + 1 art mesh (baked `Mesh`, GPU-lit `LitShipMesh`, or the plain
   polygon before the art is ready) + 1 glow mesh while glowing: 3 scene
@@ -839,7 +866,8 @@ profile instead of assuming a capital.
   so no kick waits in `tick()` and a hit right after the kill shoves the
   single piece (overkill knock-back, the same hook as capitals, sized by the
   kind's radius).
-- **Gentle and cheap.** `pushScale` 0.5 on the outward push. The body comes
+- **Gentle and cheap.** The parting comes from the profile (`pushScale` /
+  `separateScale`, see "Sub-capital profile" above; slice 2 started at 0.5). The body comes
   from `wreckBodyParams(kind)` (core; the client twin uses the same, #15):
   damping × `dampingScale` (10: linear 0.6/s, angular 0.5/s) and, because
   `piecesCollide` is false, `SUBCAP_WRECK_COLLISION_GROUPS` (membership bit 3,

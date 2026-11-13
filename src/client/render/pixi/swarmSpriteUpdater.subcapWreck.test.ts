@@ -251,13 +251,69 @@ describe('sub-capital wrecks: the quiet look (slice 4)', () => {
     }
     for (const c of counters) expect(c.n, c.what).toBe(0);
     expect(pieces(ctx).map((p) => p.frameWrites()), 'no light-frame or glow work').toEqual(writesBefore);
-    // A hit still flashes it (and the flash clears once).
+    // A hit still flashes it (on the art, darker than dead, so a shot piece
+    // never brightens) and the flash clears once.
+    const hitP = ctx.sprites.get('swarm-100') as WreckPieceSprite;
     ctx.localHitTargets.add('swarm-100');
     updateSwarmSprites(m, ctx);
-    expect(ctx.sprites.get('swarm-100')!.tint).not.toBe(0xffffff);
+    for (const t of artTints(hitP)) {
+      expect(t).not.toBe(SUB.deadTint);
+      expect(tintLevel(t)).toBeLessThanOrEqual(tintLevel(SUB.deadTint!));
+    }
     ctx.localHitTargets.clear();
     updateSwarmSprites(m, ctx);
-    expect(ctx.sprites.get('swarm-100')!.tint).toBe(0xffffff);
+    for (const t of artTints(hitP)) expect(t).toBe(SUB.deadTint);
+    expect(hitP.tint, 'the piece container stays untinted').toBe(0xffffff);
+  });
+
+  /** The colour a node is drawn with: its own tint times every ancestor's
+   *  (Pixi v8 multiplies a container's tint into its children). */
+  const chainTint = (n: Container): number => {
+    let r = 255, g = 255, b = 255;
+    for (let c: Container | null = n; c !== null; c = c.parent) {
+      const t = c.tint as number;
+      r = (r * ((t >> 16) & 255)) / 255; g = (g * ((t >> 8) & 255)) / 255; b = (b * (t & 255)) / 255;
+    }
+    return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b);
+  };
+
+  /**
+   * Round-2 review: "in the first frames only a thin orange line shows on one
+   * edge; then the pieces look bright lilac with no warm edge". The glow is
+   * drawn ON TOP of the dark art, in its own warm colour (nothing tints it: not
+   * the art, not a hit flash), on every cut edge, and wide enough to read at
+   * fleet-fight zoom (a few px at 0.45×).
+   */
+  it('the glow is drawn over the art, untinted (warm orange whatever the ship or a hit), on every cut, wide enough to see', () => {
+    for (const kind of ['fighter', 'robot-square', 'robot-hexagon', 'gunship']) {
+      const ctx = makeCtx(stubArt(fighterArt()), { breaks: 0, blasts: 0, ripples: 0 });
+      const m = mirrorFor(desc(kind, 31), DEATH_TICK);
+      const T0 = 10_000;
+      ctx.fxNowMs = T0;
+      updateSwarmSprites(m, ctx);
+      for (const id of m.swarm!.keys()) ctx.localHitTargets.add(`swarm-${id}`); // under fire
+      ctx.fxNowMs = T0 + 0.25 * GLOW_MS;
+      updateSwarmSprites(m, ctx);
+      for (const p of pieces(ctx)) {
+        const glow = p.children.find((c) => c instanceof Mesh && (c as Mesh).texture === p.glowTexture());
+        expect(glow, `${kind}: a glow`).toBeDefined();
+        const gi = p.children.indexOf(glow!);
+        for (const c of p.children) if (c !== glow) expect(p.children.indexOf(c), `${kind}: the glow draws after the art`).toBeLessThan(gi);
+        expect(chainTint(glow!), `${kind}: nothing tints the glow`).toBe(0xffffff);
+        expect(glow!.blendMode === 'normal' || glow!.blendMode === 'add' || glow!.blendMode === 'inherit').toBe(true);
+        // Its texel at this moment: warm orange (the curve), so the drawn colour is.
+        const c = p.glowColor();
+        expect((c >> 16) & 255, kind).toBeGreaterThan(((c >> 8) & 255) * 1.4);
+        expect(((c >> 8) & 255), kind).toBeGreaterThanOrEqual(c & 255);
+        // Every cut segment has a quad, and they are wide: >= 3 px at the
+        // fleet-fight zoom (0.45) on the smallest hull (the 1.8 px core before).
+        const pos = p.glowPositions()!;
+        expect(pos.length / 8).toBe(p.glowSegments());
+        let widest = 0;
+        for (let q = 0; q < pos.length; q += 8) widest = Math.max(widest, Math.hypot(pos[q]! - pos[q + 6]!, pos[q + 1]! - pos[q + 7]!));
+        expect(widest * 0.45, `${kind}: glow width on screen (px)`).toBeGreaterThanOrEqual(3);
+      }
+    }
   });
 
   it('off-screen sub-cap pieces are culled (not drawn)', () => {
@@ -295,13 +351,15 @@ describe('sub-capital wrecks: the quiet look (slice 4)', () => {
    * glow ends, the art is darkened and warm (burnt), clearly dimmer than any
    * live ship (which draws untinted), still showing the art. Set once.
    */
-  it('dead pieces go dark and burnt once the glow ends (profile fx.deadTint), set once', () => {
+  it('dead pieces are dark and burnt from the first frame (profile fx.deadTint): the warm glow is the only bright part', () => {
     const ctx = makeCtx(stubArt(fighterArt()), { breaks: 0, blasts: 0, ripples: 0 });
     const m = mirrorFor(desc('robot-square', 31), DEATH_TICK);
     const T0 = 10_000;
     ctx.fxNowMs = T0;
     updateSwarmSprites(m, ctx);
-    for (const p of pieces(ctx)) for (const t of artTints(p)) expect(tintLevel(t), 'still bright while it glows').toBeGreaterThan(0.6);
+    // Round-2 review: during the glow the pieces read "bright lilac with no
+    // warm edge" (the art kept its light burnt tint until the glow ended).
+    for (const p of pieces(ctx)) for (const t of artTints(p)) expect(t, 'dead while it glows').toBe(SUB.deadTint);
     ctx.fxNowMs = T0 + GLOW_MS + 50;
     updateSwarmSprites(m, ctx);
     const dead = SUB.deadTint!;

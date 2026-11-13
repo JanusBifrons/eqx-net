@@ -30,7 +30,7 @@
  *
  * Sub-capitals (sub-capital break-up, slice 4): in a room that breaks them
  * (`subcapWrecks`) a dying sub-cap is held the same way, with the profile's
- * brief deadline (`fx.dyingHoldMs`, 600 ms: no crack hold, so its pieces
+ * brief deadline (`fx.dyingHoldMs`, 250 ms: no crack hold, so its pieces
  * are drawable at once).
  */
 import type { Container } from 'pixi.js';
@@ -132,6 +132,12 @@ export class DyingHullHold {
       h = { sprite: null, kind: '', x: 0, y: 0, r2: 0, untilMs: 0, wreckId: -1, total: 0 };
       this.held[this.heldCount] = h;
     }
+    // A profile with a dead look (sub-capitals) draws the held hull dead from
+    // this frame on: under its death explosion it reads as a dead ship until
+    // the pieces take over, never as a live one frozen mid hit-flash (round-2
+    // review). Capitals (deadTint null) keep their look.
+    const dead = isShipKindId(kind) ? destructionProfileOf({ type: 'ship', kindId: kind }).fx.deadTint : null;
+    if (dead !== null) sprite.tint = dead;
     h.sprite = sprite;
     h.kind = kind;
     h.x = sprite.x;

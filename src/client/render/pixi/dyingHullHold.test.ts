@@ -268,6 +268,41 @@ describe('a dying sub-capital (subcapWrecks): the same hold, brief', () => {
     expect(h.hullsDrawn(), 'gone at the sub-cap deadline').toBe(0);
   });
 
+  /**
+   * Round-2 hostile review (fleet-fight take, 2026-11-13): "a dead ship looks
+   * alive for ~0.6 s": the held hull kept its full-brightness live look
+   * (often frozen mid hit-flash) until its pieces trickled in, then popped
+   * into pieces. A held sub-cap hull is visibly dead from the frame it is
+   * held: drawn at the profile's dead tint (with the explosion over it), and
+   * the hold is brief. A capital's hold is unchanged.
+   */
+  it('a held sub-cap hull is drawn dead (fx.deadTint) from the death frame, and briefly', () => {
+    const dead = DESTRUCTION_PROFILES.subcap.fx.deadTint!;
+    expect(DESTRUCTION_PROFILES.subcap.fx.dyingHoldMs, 'brief: pieces take over fast').toBeLessThanOrEqual(250);
+    const h = new Harness(false, true);
+    h.swarm.set(60, entry(1, 'fighter', FX, FY, 12));
+    let t = 1000;
+    h.frame(t);
+    // It was being hit as it died: the live sprite wears the flash.
+    h.ctx.localHitTargets.add('swarm-60');
+    h.frame(t += 16);
+    h.ctx.localHitTargets.clear();
+    h.kill(60);
+    h.frame(t += 16);
+    const held = h.container.children.filter((c) => !(c instanceof WreckPieceSprite) && c.visible && !c.destroyed);
+    expect(held).toHaveLength(1);
+    expect(held[0]!.tint, 'dead from the death frame').toBe(dead);
+    // A capital's held hull keeps its look (unchanged).
+    const c = new Harness(true);
+    c.swarm.set(50, entry(1, 'battleship', HULL_X, HULL_Y, 300));
+    c.frame(1000);
+    c.kill(50);
+    c.frame(1016);
+    const cap = c.container.children.filter((x) => !(x instanceof WreckPieceSprite) && x.visible && !x.destroyed);
+    expect(cap).toHaveLength(1);
+    expect(cap[0]!.tint).toBe(0xffffff);
+  });
+
   it('subcapWrecks alone does not hold a capital, and capitalWrecks alone does not hold a fighter', () => {
     expect(dyingHoldMsFor(false, 'battleship', true)).toBe(0);
     expect(dyingHoldMsFor(true, 'fighter', false)).toBe(0);
