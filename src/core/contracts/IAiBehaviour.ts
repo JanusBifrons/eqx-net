@@ -303,6 +303,14 @@ export interface IAiBehaviour {
    * lockstep surface / wire bump). `setMoveTarget` clears the follower role
    * (you're a leader/independent mover); `clearMoveTarget` reverts to orbit. */
   setFlockFollow?(leaderId: string, memberIds: readonly string[]): void;
+  /**
+   * Line-of-fire feedback (friendly fire): the room's `LineOfFireGate` held
+   * this NPC's shot because a friendly body at (blockerX, blockerY) was on
+   * the line to its target. Plain-field writes only (#14; called on the fire
+   * path, possibly once per barrel per tick). SERVER-ONLY (no client brain ⇒
+   * no lockstep surface / wire bump).
+   */
+  noteBlocked?(tick: number, blockerX: number, blockerY: number): void;
 }
 
 /** Returns the nearest player to (x, y), or null when no players are present. */

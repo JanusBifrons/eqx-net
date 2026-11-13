@@ -51,6 +51,11 @@ export class LineOfFireGate<R extends LineOfFireBody> {
   narrow = 0;
   /** Grid builds (at most one per tick unless membership changes). */
   builds = 0;
+  /** The body that blocked the latest check that returned true (its pose at
+   *  the grid build). Scratch fields, overwritten per block (#14). */
+  lastBlockerId = '';
+  lastBlockerX = 0;
+  lastBlockerY = 0;
 
   private readonly bp = new ProjectileBroadphase<R>();
   private builtTick = -1;
@@ -84,7 +89,12 @@ export class LineOfFireGate<R extends LineOfFireBody> {
       const rec = bp.recs[i]!;
       if (rec.id === shooterId || rec.id === targetId || !friendly(rec)) continue;
       this.narrow++;
-      if (d.rayHit(rec, fx, fy, dx, dy, maxDist, bp.x[i]!, bp.y[i]!, bp.angle[i]!) !== null) return true;
+      if (d.rayHit(rec, fx, fy, dx, dy, maxDist, bp.x[i]!, bp.y[i]!, bp.angle[i]!) !== null) {
+        this.lastBlockerId = rec.id;
+        this.lastBlockerX = bp.x[i]!;
+        this.lastBlockerY = bp.y[i]!;
+        return true;
+      }
     }
     return false;
   }
