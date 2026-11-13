@@ -30,7 +30,12 @@ shield-down ship means hitting the *hull you can see*.
 
 This applies to weapons (hitscan + projectiles) **and** physical ramming.
 Ramming now deals damage: a hard collision chips shield then hull on both
-ships; asteroids deal ramming damage but take none. Drones are 1:1 with
+ships; asteroids deal ramming damage but take none. How much depends on how
+hard the hit really is (2026-11-13): a head-on ram at full speed takes a big
+chunk off both ships (two fighters each lose their whole shield), a glancing
+scrape barely scratches, a slow bump is free, and the lighter ship always
+takes more (a fighter into a capital takes nearly all of it). See
+[collision-layers.md](../architecture/collision-layers.md) for the formula. Drones are 1:1 with
 players — same shield, hull, regen, no-spillover, and exact-hull collision
 when their shield is down.
 

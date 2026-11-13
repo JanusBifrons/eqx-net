@@ -759,14 +759,17 @@ no curtain**. Message `pilot_ship { shipId }` (zod `.strict()`, `clientMessages.
   on the snapshot. `SwarmEntityRecord.shieldDown` maintained event-driven.
 - Ramming (`src/core/combat/Ramming.ts`): CONTACT_BATCH aggregated per
   unordered {aId,bId} per tick BEFORE floor/damage/broadcast (a
-  shield-down hull is N triangle colliders → N sub-events). **WS-1/R2.31
-  (2026-06-12) replaced the old symmetric-linear curve with an ASYMMETRIC
-  mass-differential model:** `damageTo(self) = RAM_DAMAGE_MAX ×
-  ramSpeedFactor(closing)² × ramMassDifferentialFactor(mSelf, mOther)`. A ram
-  only hurts with BOTH a huge closing speed AND a large mass gap; the LIGHTER
-  body takes the damage, the heavier ~0, and EQUAL-mass ships deal nothing at
-  any speed (the per-side `RamPair.damageA`/`damageB` are applied independently
-  in `onContactBatch`). Masses are the folded Rapier body masses threaded via
+  shield-down hull is N triangle colliders → N sub-events). **Impact-based
+  model (owner decision 2026-11-13, "ramming as a weapon"; replaced the
+  2026-06-12 WS-1/R2.31 mass-differential model):** damage comes from the
+  closing speed ALONG THE CONTACT NORMAL (`Contact.normalSpeed`), as the
+  reduced-mass impact energy `½·μ·(vN − floor)²` × `RAM_DAMAGE_PER_ENERGY`,
+  shared by weight (`mOther/(mSelf+mOther)`), capped at `RAM_DAMAGE_MAX` per
+  side. Head-on hurts, a glancing scrape barely does, equal ships are both
+  hurt, the lighter more (the per-side `RamPair.damageA`/`damageB` are applied
+  independently in `onContactBatch`; `ram_damage` logs `normalSpeed`).
+  Behaviour change: allied ships (e.g. squadmates) that collide hard now damage
+  each other, with the other id as the "shooter". Masses are the folded Rapier body masses threaded via
   `Contact.aMass`/`bMass` (`World.getBodyMass`); asteroids still deal but don't
   take (no `swarmHealth`). **P3.3 (2026-06-13): damage is `Math.round`ed BEFORE
   the emit guard in `onContactBatch`** — a sub-0.5 collision emits NO `ram_damage`
