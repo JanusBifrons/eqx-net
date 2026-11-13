@@ -192,26 +192,59 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
   `recentDamageRate` = damage over the last ~3 s (a 6-bucket ring,
   `WRECK_RECENT_DAMAGE_TICKS`) ÷ max hull. Entries are pooled per capital: no
   per-hit allocation.
-- **Bodies.** `buildWreckPieces` (`core/destruction/wreckPieces.ts`): one
-  dynamic body per piece from its convex parts, at its centroid, mass ∝ area
-  at the ship's density, velocity v + ω × r plus an outward push away from
-  the kill point, spin ω plus a seeded kick that falls off like the push
-  (`WRECK_SPIN_NEAR` 0.45 rad/s ≈ 26°/s at the kill point →
-  `WRECK_SPIN_FAR` 0.08 far away, 0.55–1× of it, either way round), damping
-  0.06 linear / 0.05 angular (the field opens for seconds, then a fast piece
-  comes to rest within a few km). The push is fastest at the kill point and
-  falls off with distance:
-  `wreckPushMin + (wreckPushMax − wreckPushMin)·r²/(r² + d²)`,
-  r = `WRECK_PUSH_FALLOFF_FRAC` (0.3) × hull radius, times 0.75–1.25 by how
-  violent the death was. `wreckPushMax/Min` come from `shipTuning(kind)`
-  (#18: 0.17 / 0.08 × hull radius per second since the money-shot review,
-  so a 2× heavy cruiser's pieces leave at ~370 / ~175 u/s; #521 had
-  0.055 / 0.014). Collision groups `WRECK_COLLISION_GROUPS`
-  (server spawn and the client twin): ships, rocks, scrap and structures
-  collide with pieces, but pieces never collide with other wreck pieces.
-  The pieces tile the hull exactly, so they spawn with no overlap; the dying body
-  is despawned in the same worker batch (an active player hull's body too,
-  its slot kept for respawn).
+- **Bodies (heavy break-up, owner review 2026-11-13).** `buildWreckPieces`
+  (`core/destruction/wreckPieces.ts`): one dynamic body per piece from its
+  convex parts, at its centroid, mass ∝ area at the ship's density (Rapier
+  derives each piece's inertia from its parts at that density), damping
+  0.06 linear / 0.05 angular.
+  - **Crack delay.** A piece spawns with the dead hull's rigid motion
+    (v + ω × r, spin ω), so the hull holds its shape for `WRECK_CRACK_MS`
+    (1200 game ms, `shared-types/wreckTiming.ts`; `wreckCrackTicks()` = 72
+    server ticks). Then `CapitalWreckSubsystem.tick()` gives each piece its
+    kick (`WRECK_KICK` worker command → `World.addVelocity`), turned by how
+    far the piece has turned since the death. Game ticks, so it follows the
+    sector's speed (#20). A client effect (the crack-and-ripple before the
+    split) times itself from the descriptor's `deathTick + wreckCrackTicks()`.
+  - **The kick.** A slow push away from the kill point,
+    `wreckPushMin + (wreckPushMax − wreckPushMin)·r²/(r² + d²)`,
+    r = `WRECK_PUSH_FALLOFF_FRAC` (0.3) × hull radius, × 0.75–1.25 by how
+    violent the death was; `wreckPushMax/Min` = 0.012 / 0.004 × hull radius
+    per second (`shipTuning`, #18; ~26 / ~9 u/s for a 2× heavy cruiser; the
+    2026-11-12 money-shot push was 0.17 / 0.08). A slow seeded spin given as
+    a RIM speed (`WRECK_SPIN_RIM_NEAR/FAR` 0.75 / 0.3 × `wreckSeparate`,
+    0.55–1× of it, either way round, divided by the piece's radius, at least
+    `WRECK_SPIN_MIN_RADIUS_FRAC` 0.06 × hull radius), so a big piece turns
+    slower than a small one (≤ ~3°/s).
+  - **Neighbours always part.** The push is fastest at the kill point, so a
+    piece nearer it chased the slower neighbour beyond it along the same
+    line, and the spins turned long pieces into each other: pieces slid over
+    each other and two stern pieces folded into a "V" (owner review
+    2026-11-13). Every shared cut between two pieces (`findSeams`: cut edges
+    on one line) must open at `shipTuning(kind).wreckSeparate` (0.0025 ×
+    hull radius per second, ~5 u/s for a 2× heavy cruiser) or more at BOTH
+    ends of the shared stretch, spin included, and the two centres must part
+    at half that. Where they don't, an equal and opposite push (momentum
+    kept) along the cut's normal / the centre line makes up the difference
+    (Gauss–Seidel, at most 400 passes, aiming 10 % past the target). The cut
+    line separates the two pieces, so parting along its normal never
+    overlaps them. Side effect: momentum moves outward along the chain, so
+    the pieces at the ends of the hull drift fastest (~50 u/s for a heavy
+    cruiser), and the piece at the kill point is slow; the knock-back from
+    later shells (a follow-up) supplies the violence.
+  - **Pieces collide with each other** (`WRECK_COLLISION_GROUPS` =
+    0x0004FFFF, server spawn and client twin): heavy chunks bump instead of
+    passing through. The physics collider is `colliderParts`, each drawn
+    part shrunk by `shipTuning(kind).wreckColliderInset` (0.0005 × hull
+    radius, ~1 u) toward its centre, so neighbours sharing a cut edge spawn a
+    hair apart; drawing and weapon hits keep the full `parts`. Both sides
+    read `colliderParts` from `wreckPieceGeometry` (#15). Ships, rocks, scrap
+    and structures collide with pieces as before. The dying body is
+    despawned in the same worker batch (an active player hull's body too,
+    its slot kept for respawn).
+  - Locks: `tests/integration/sectorRoom/wreckPiecesSeparate.test.ts` (no
+    overlap, neighbours never approach, crack delay holds, slow speed and
+    spin, a shoved piece bumps its neighbour), `wreckPieces.test.ts` (every
+    seam opens at both ends), `CapitalWreckSubsystem.test.ts` (crack delay).
 - **Entity class.** A wreck piece is swarm kind 4 (`SWARM_KIND_WRECK`,
   server-only for now), predicate `isWreckPiece`. No health: `EntityResolver`
   treats it as immune, so a shot stops on it and does nothing. Loops that

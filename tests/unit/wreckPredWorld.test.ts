@@ -17,6 +17,7 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { PhysicsWorld } from '../../src/core/physics/World.js';
+import { WRECK_COLLISION_GROUPS } from '../../src/core/physics/collisionGroups.js';
 import type { SwarmRenderState } from '../../src/core/contracts/IRenderer.js';
 import { SWARM_KIND_WRECK } from '../../src/shared-types/swarmWireFormat.js';
 import type { WreckDescriptor } from '../../src/shared-types/messages/snapshotMessages.js';
@@ -37,6 +38,8 @@ function oneWreck(): { piece: WreckPieceSpawn; desc: WreckDescriptor } {
     spawnPiece: (s) => { spawned.push(s); return true; },
     removePiece: () => {},
     isLive: () => true,
+    pieceAngle: () => 0,
+    kickPiece: () => {},
   });
   sys.forcedSeed = 5;
   sys.noteHit('cap', 'x', 1e6, 0, -2000);
@@ -71,7 +74,7 @@ describe('wreck piece in predWorld (S2b)', () => {
     const shipX = px + lowX * 0.9;
 
     // SERVER: what the worker does for SPAWN_OBSTACLE (+ spin + angular damping).
-    server.spawnObstacle('wreck-0', px, py, piece.radius, piece.mass, undefined, piece.linearDamping, undefined, piece.parts);
+    server.spawnObstacle('wreck-0', px, py, piece.radius, piece.mass, undefined, piece.linearDamping, WRECK_COLLISION_GROUPS, piece.colliderParts);
     server.setShipState('wreck-0', { x: px, y: py, vx: 0, vy: 0, angle: pa, angvel: 0 });
     server.setAngularDamping('wreck-0', piece.angularDamping);
 

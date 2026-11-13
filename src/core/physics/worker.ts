@@ -108,6 +108,9 @@ interface SetStatMulCmd     { type: 'SET_STAT_MUL'; id: string; topSpeed?: numbe
  *  entityId to a Rapier body and applies the linear impulse. Silent no-op
  *  on despawned entities (drones killed before the impulse lands). */
 interface MissileImpulseCmd { type: 'MISSILE_IMPULSE'; entityId: string; fx: number; fy: number }
+/** Capital wreck: add a velocity (u/s) and spin (rad/s) to a piece's body (its
+ *  separating kick once the crack delay is over). Silent no-op when gone. */
+interface WreckKickCmd { type: 'WRECK_KICK'; entityId: string; dvx: number; dvy: number; dw: number }
 /** Shield-fence plan — spawn / toggle / remove a shield-wall span. A static
  *  cuboid between two pylon poses that blocks ships; toggled on stun / power
  *  loss without churning the body. See PhysicsWorld.spawnWall. */
@@ -117,7 +120,7 @@ interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
 /** v4 T2 — a teleporter pad's closing-iris push (PhysicsWorld.setPadField). */
 interface SetPadFieldCmd    { type: 'SET_PAD_FIELD';   id: string; cx: number; cy: number; half: number; active: boolean }
 interface RemovePadFieldCmd { type: 'REMOVE_PAD_FIELD'; id: string }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd | BotWarpCmd | SetTimeScaleCmd;
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd | BotWarpCmd | SetTimeScaleCmd;
 
 /** Pool commands (main → pooled worker): host / free one sector's world. */
 interface AddWorldCmd    { type: 'ADD_WORLD'; worldId: number; sab: SharedArrayBuffer }
@@ -334,6 +337,10 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         // `applyImpulse` silently skips unknown ids — safe for the race
         // where a drone died between detonate and apply.
         physics.applyImpulse(cmd.entityId, cmd.fx, cmd.fy, 0);
+        break;
+      }
+      case 'WRECK_KICK': {
+        physics.addVelocity(cmd.entityId, cmd.dvx, cmd.dvy, cmd.dw);
         break;
       }
       case 'SPAWN_WALL': {

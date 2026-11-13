@@ -122,7 +122,7 @@ describe('SectorRoom integration: capital wreck break and drift', () => {
     expect(off, 'primary line distance from the impact (1× hull-local u)').toBeLessThan(10);
   }, 30_000);
 
-  it('the pieces visibly separate: near ones fly faster, spread grows and they spin', async () => {
+  it('the pieces part slowly and heavily: every piece drifts, the field keeps opening, slow spin', async () => {
     // A seed that shatters (no clean snap) for this hull and kill.
     const kind = getShipKind(KIND);
     let seed = 1;
@@ -136,27 +136,29 @@ describe('SectorRoom integration: capital wreck break and drift', () => {
     const s = Math.sin(pose.angle);
     const kx = pose.x + d.killX * sc * c + d.killY * sc * s;
     const ky = pose.y + d.killX * sc * s - d.killY * sc * c;
-    // Speed (the hull was at rest) of the piece nearest the kill point and of
-    // the farthest one.
-    let near = { d: Infinity, v: 0 };
-    let far = { d: -Infinity, v: 0 };
+    // Past the crack delay (the hull holds together WRECK_CRACK_MS first).
+    await harness.advance(1500);
+    // Speed (the hull was at rest) of every piece, and whether the piece
+    // nearest the kill point moves away from it.
+    let near = { d: Infinity, v: 0, out: 0 };
+    let slowest = Infinity;
+    let fastest = 0;
     for (const id of ids) {
       const st = internal.wreckState(id)!;
       const dist = Math.hypot(st.x - kx, st.y - ky);
       const v = Math.hypot(st.vx, st.vy);
-      if (dist < near.d) near = { d: dist, v };
-      if (dist > far.d) far = { d: dist, v };
+      slowest = Math.min(slowest, v);
+      fastest = Math.max(fastest, v);
+      if (dist < near.d) near = { d: dist, v, out: ((st.x - kx) * st.vx + (st.y - ky) * st.vy) / Math.max(dist, 1e-6) };
     }
-    console.log(`[drift] near piece ${near.v.toFixed(1)} u/s at ${near.d.toFixed(0)} u, far piece ${far.v.toFixed(1)} u/s at ${far.d.toFixed(0)} u`);
+    console.log(`[drift] near piece ${near.v.toFixed(1)} u/s (${near.out.toFixed(1)} u/s outward) at ${near.d.toFixed(0)} u; speeds ${slowest.toFixed(1)}–${fastest.toFixed(1)} u/s`);
     const t = shipTuning(kind);
-    expect(near.v, 'a piece at the kill point flies out near the top push').toBeGreaterThan(0.6 * t.wreckPushMax);
-    expect(far.v, 'a far piece still drifts').toBeGreaterThan(0.6 * t.wreckPushMin);
-    expect(near.v, 'near pieces fly out faster than distant ones').toBeGreaterThan(1.5 * far.v);
-    // Money-shot review (2026-11-12): gaps of 5–20 px by 22 s at zoom ~0.22,
-    // bow and stern still in the outline. Target: ~300–500 u/s at the kill
-    // point for a heavy cruiser (scaled by hull size, #18).
-    expect(near.v, 'the piece at the kill point leaves at 300+ u/s (heavy cruiser)').toBeGreaterThan(300);
-    expect(near.v, '...but not absurdly fast').toBeLessThan(650);
+    // Owner review 2026-11-13: "they should break apart slower and have more
+    // inertia and weight". Every piece parts, slowly (the 2026-11-12 push
+    // was ~370 u/s at the kill point for this hull).
+    expect(near.out, 'the piece at the kill point moves away from it').toBeGreaterThan(0);
+    expect(slowest, 'every piece drifts').toBeGreaterThan(0.2 * t.wreckSeparate);
+    expect(fastest, '...slowly, like a heavy body').toBeLessThan(0.03 * kind.radius);
     // The field's extent: the largest distance between two piece centres.
     const extent = (): number => {
       const ps = ids.map((id) => internal.wreckState(id)!);
@@ -182,12 +184,14 @@ describe('SectorRoom integration: capital wreck break and drift', () => {
     let spin = 0;
     for (const id of ids) spin = Math.max(spin, Math.abs(internal.wreckState(id)!.angvel));
     console.log(`[drift] pieces ${ids.length} spread ${r0.toFixed(1)} → ${r5.toFixed(1)}, extent ${e0.toFixed(0)} → ${e5.toFixed(0)}, max spin ${(spin * 180 / Math.PI).toFixed(2)} deg/s`);
-    // #521 opened the field 393 u in 5 s (mean radius) and the money-shot
-    // review still read it as "barely separating"; v6 targets ≥ ~1,500 u.
-    expect(e5 - e0, 'the debris field opens by 1,500 u or more in 5 s').toBeGreaterThan(1500);
-    expect(r5 - r0, 'mean distance from the debris centre grows by a clear margin in 5 s').toBeGreaterThan(0.3 * kind.radius);
-    // 10–30 deg/s near the impact, still turning after 5 s of damping.
-    expect(spin * 180 / Math.PI, 'pieces near the impact spin at 10+ deg/s').toBeGreaterThan(8);
-    expect(spin * 180 / Math.PI, '...not a blur').toBeLessThan(40);
+    // A slow, steady opening: the field grows by at least the neighbour
+    // parting speed over 5 s, and by far less than the 2026-11-12 fly-off
+    // (which opened ~1,500 u in 5 s).
+    expect(e5 - e0, 'the debris field keeps opening').toBeGreaterThan(5 * t.wreckSeparate);
+    expect(e5 - e0, '...slowly').toBeLessThan(0.3 * kind.radius);
+    expect(r5 - r0, 'mean distance from the debris centre grows').toBeGreaterThan(0);
+    // Slow, heavy turning, still turning after 5 s of damping.
+    expect(spin * 180 / Math.PI, 'pieces still turn').toBeGreaterThan(0.2);
+    expect(spin * 180 / Math.PI, '...slowly').toBeLessThan(4);
   }, 30_000);
 });

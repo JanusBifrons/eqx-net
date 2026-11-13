@@ -14,6 +14,8 @@
  *  2. DEATH (once, from the capital's death hook): read the tracker, build the
  *     pieces (`buildWreckPieces`: the kill point on the hull edge, piece count
  *     from the final hit and the recent damage rate), spawn one body per piece.
+ *     The pieces move with the dead hull for `WRECK_CRACK_MS` (game ticks),
+ *     then `tick()` gives each its slow separating kick.
  *  3. DESCRIPTORS (S2b): each wreck gets a u16 `wreckId` (its pieces carry it
  *     on the binary wire) and one `WreckDescriptor` (the fracture inputs) that
  *     rides the snapshot while any of its pieces lives. A client, a late joiner
@@ -27,6 +29,7 @@ import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { Vec2 } from '../../core/swarm/asteroidShape.js';
 import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
 import type { WreckDescriptor } from '../../shared-types/messages/snapshotMessages.js';
+import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
 
 const BUCKETS = 6;
 const BUCKET_TICKS = WRECK_RECENT_DAMAGE_TICKS / BUCKETS;
@@ -48,7 +51,9 @@ export interface WreckPieceSpawn {
   radius: number; mass: number; parentShipKind: ShipKindId; pieceIndex: number;
   /** S2b: the wreck this piece belongs to (u16, on the binary wire). */
   wreckId: number;
-  parts: ReadonlyArray<ReadonlyArray<Vec2>>; linearDamping: number; angularDamping: number;
+  parts: ReadonlyArray<ReadonlyArray<Vec2>>;
+  /** The physics collider (`WreckPieceGeometry.colliderParts`). */
+  colliderParts: ReadonlyArray<ReadonlyArray<Vec2>>; linearDamping: number; angularDamping: number;
 }
 
 interface LiveWreck {
@@ -70,9 +75,26 @@ export interface CapitalWreckDeps {
   removePiece: (id: string) => void;
   /** Is this wreck id still live? (The FIFO skips pieces gone otherwise.) */
   isLive: (id: string) => boolean;
+  /** A live piece's current angle (rad), or null when it is gone. */
+  pieceAngle: (id: string) => number | null;
+  /** Add this velocity (world u/s) and spin (rad/s) to a live piece's body. */
+  kickPiece: (id: string, dvx: number, dvy: number, dw: number) => void;
+}
+
+/** A piece's separating kick, held until the wreck's crack delay ends. */
+interface PendingKick {
+  id: string;
+  dueTick: number;
+  /** Kick in the world frame at the death angle. */
+  vx: number;
+  vy: number;
+  w: number;
+  angle0: number;
 }
 
 export class CapitalWreckSubsystem {
+  /** Kicks waiting for `WRECK_CRACK_MS` (oldest first; compacted in place). */
+  private readonly kicks: PendingKick[] = [];
   private readonly entries = new Map<string, HitEntry>();
   private readonly pool: HitEntry[] = [];
   /** Live wreck piece ids, oldest first (budget FIFO). */
@@ -162,16 +184,20 @@ export class CapitalWreckSubsystem {
     const { pieces, fracture } = buildWreckPieces({ kindId, pose, killWorld, attackerWorld, seed, killBlowDamage, recentDamageRate });
     const n = this.deaths++;
     const wreckId = this.allocWreckId();
+    const crackTicks = wreckCrackTicks();
     let spawned = 0;
     for (const p of pieces) {
       const id = `wreck-${n}-${p.index}`;
       const ok = this.d.spawnPiece({
         id, x: p.x, y: p.y, vx: p.vx, vy: p.vy, angle: p.angle, angvel: p.angvel,
         radius: p.radius, mass: p.mass, parentShipKind: kindId, pieceIndex: p.index, wreckId,
-        parts: p.parts, linearDamping: WRECK_LINEAR_DAMPING, angularDamping: WRECK_ANGULAR_DAMPING,
+        parts: p.parts, colliderParts: p.colliderParts,
+        linearDamping: WRECK_LINEAR_DAMPING, angularDamping: WRECK_ANGULAR_DAMPING,
       });
       if (!ok) continue;
       spawned++;
+      // The hull holds together for the crack delay, then parts (game ticks).
+      this.kicks.push({ id, dueTick: tick + crackTicks, vx: p.kickVx, vy: p.kickVy, w: p.kickAngvel, angle0: pose.angle });
       this.live.push(id);
       this.pieceWreck.set(id, wreckId);
     }
@@ -189,6 +215,38 @@ export class CapitalWreckSubsystem {
     }
     this.enforceCap();
     return spawned;
+  }
+
+  /**
+   * Per server tick: give each piece whose wreck's crack delay is over its
+   * separating kick. The kick was built at the death angle; the piece has
+   * turned with the hull since, so it is turned by the same amount. Kicks for
+   * pieces already gone are dropped. Alloc-free (#14): compacts in place.
+   */
+  tick(): void {
+    const k = this.kicks;
+    if (k.length === 0) return;
+    const now = this.d.serverTick();
+    let w = 0;
+    for (let r = 0; r < k.length; r++) {
+      const e = k[r]!;
+      if (e.dueTick > now) {
+        k[w++] = e;
+        continue;
+      }
+      const angle = this.d.pieceAngle(e.id);
+      if (angle === null) continue;
+      const da = angle - e.angle0;
+      const c = Math.cos(da);
+      const s = Math.sin(da);
+      this.d.kickPiece(e.id, e.vx * c - e.vy * s, e.vx * s + e.vy * c, e.w);
+    }
+    k.length = w;
+  }
+
+  /** Pieces still holding together (waiting for their kick). */
+  pendingKicks(): number {
+    return this.kicks.length;
   }
 
   /** A free u16 wreck id (never 0, never one still live). */

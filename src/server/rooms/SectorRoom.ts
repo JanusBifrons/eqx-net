@@ -5068,6 +5068,11 @@ export class SectorRoom extends Room<SectorState> {
         if (rec) this.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false });
       },
       isLive: (id) => this.swarmRegistry.has(id),
+      pieceAngle: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        return rec ? this.sabF32[slotBase(rec.slot) + SLOT_ANGLE_OFF]! : null;
+      },
+      kickPiece: (id, dvx, dvy, dw) => this.postToWorker({ type: 'WRECK_KICK', entityId: id, dvx, dvy, dw }),
     });
   }
 
@@ -11393,6 +11398,9 @@ export class SectorRoom extends Room<SectorState> {
     // Shells as events: this tick's salvos (players, drones, turrets since the
     // last update) and hits, plus the 1 Hz re-test.
     this.shellHub?.flush();
+    // Capital wrecks: pieces whose crack delay is over get their slow
+    // separating kick (no-op with no wreck holding together).
+    this.capitalWrecks?.tick();
 
     // Tick-budget telemetry. Cumulative phase totals across the last ~60 ticks
     // are emitted as one server event per second. The first capture told us

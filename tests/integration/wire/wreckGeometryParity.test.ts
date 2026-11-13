@@ -25,6 +25,8 @@ function serverWreck(kind: string, seed: number, hit: { x: number; y: number }, 
     spawnPiece: (s) => { spawned.push(s); return true; },
     removePiece: () => {},
     isLive: () => true,
+    pieceAngle: () => 0,
+    kickPiece: () => {},
   });
   sys.forcedSeed = seed;
   sys.noteHit('cap', 'shooter', damage, hit.x, hit.y);
@@ -58,6 +60,7 @@ describe('wreck geometry: server bodies == client rebuild (S2b)', () => {
         expect(g, `piece ${s.pieceIndex} rebuilt`).not.toBeNull();
         // toStrictEqual on numbers is Object.is: bit-for-bit, not "close".
         expect(g!.parts).toStrictEqual(s.parts);
+        expect(g!.colliderParts).toStrictEqual(s.colliderParts);
         expect(Object.is(g!.mass, s.mass)).toBe(true);
         expect(Object.is(g!.radius, s.radius)).toBe(true);
       }
