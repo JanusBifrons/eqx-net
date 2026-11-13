@@ -30,7 +30,7 @@ Each AI drone picks a **random ship kind on spawn** ([src/server/spawn/SwarmSpaw
 
 - The drone's collider radius (from `kind.radius`)
 - The drone's hull (from `kind.maxHealth`)
-- The AI behaviour's `thrust / turnKp / maxTorque` (from `kind.ai.*`)
+- The AI behaviour's `thrust` (from `kind.ai.thrust`) and tactical role (`kind.aiRole`, keys `roleProfile` in `src/core/ai/tactics/roleProfiles.ts`)
 - The drone's silhouette + colour on the client renderer
 
 Distribution is uniform random; override with `SpawnerHooks.pickDroneKind` for biased mixes (e.g. 60/30/10). Drone bodies still use `spawnObstacle` (damping=0, no lateral grip) — they don't share the player car-physics model.

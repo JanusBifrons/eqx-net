@@ -14,7 +14,7 @@ import {
   PLAYERS_SIDE,
   type NpcAllegianceId,
 } from '../../shared-types/allegiances.js';
-import { pickTarget, type MountTargetView } from './WeaponMountController.js';
+import { pickTarget, type MountTargetView, type PickTargetOptions } from './WeaponMountController.js';
 import { arrive, makeSteerOutput, type SteerOutput } from './steering.js';
 import {
   type FlockAccumulator,
@@ -43,6 +43,7 @@ import {
   type PilotParams,
   type PilotState,
 } from './virtualPilot.js';
+import { roleSensorRange } from './tactics/roleProfiles.js';
 
 /** Aim cone (radians). Drones won't fire unless their nose is within this many radians of the target. */
 const DRONE_AIM_TOLERANCE = 0.25; // ~14°
@@ -267,6 +268,19 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  need no lead). 2026-06-03 — replaces the single hardcoded
    *  LEAD_AIM_MUZZLE_SPEED, which 2×-over-led the 1600 u/s bolt. */
   private readonly leadMuzzleSpeed: number;
+  /** Sensor range (world units): NEW body-target picks are capped here
+   *  (`roleSensorRange(kind.aiRole, fireRange)`, AI overhaul slice 3). A held
+   *  target is kept beyond it, and a known (ledger) hostile beyond it is still
+   *  picked when nothing is in range, so director-ordered hunters still go. */
+  private readonly sensorRange: number;
+  /** Reused body-pick options (alloc-free, #14); `ticksSincePrevTarget` is
+   *  written each tick. */
+  private readonly _pickOpts: PickTargetOptions;
+  /** Same options without the sensor cap: the out-of-sensor fallback pick. */
+  private readonly _pickOptsUncapped: PickTargetOptions;
+  /** Bound once (no per-tick closure). Unused while every candidate carries
+   *  its own `hostile` flag, kept for the pickTarget signature. */
+  private readonly _isHostile = (id: string): boolean => this.hostileTo.has(id);
 
   /** 2026-05-31 — pooled per-instance scratches (Invariant #14). Pre-fix
    *  this class returned a fresh AiIntent literal per tick (~15 drones ×
@@ -354,10 +368,28 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this.stopDistFactor = BROADSIDE_STANDOFF;
       this.backoffInsideFactor = 0;
     }
+    this.sensorRange = roleSensorRange(this.kind.aiRole, this.fireRange);
+    this._pickOpts = {
+      healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
+      dwellTicks: DRONE_TARGET_DWELL_TICKS,
+      ticksSincePrevTarget: 0,
+      priorityBias: STRUCTURE_PRIORITY_BIAS,
+      maxDistance: this.sensorRange,
+      prevMaxDistance: Infinity,
+    };
+    this._pickOptsUncapped = {
+      healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
+      dwellTicks: DRONE_TARGET_DWELL_TICKS,
+      ticksSincePrevTarget: 0,
+      priorityBias: STRUCTURE_PRIORITY_BIAS,
+    };
   }
 
   /** Test-visible engagement profile. */
   getFireRange(): number { return this.fireRange; }
+  getSensorRange(): number { return this.sensorRange; }
+  /** Test-visible: the body target currently held (null = none). */
+  getTargetId(): string | null { return this.prevTargetId; }
   getWeaponMode(): WeaponMode { return this.weaponMode; }
 
   /** Test-visible peek at the current state. */
@@ -546,15 +578,20 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
     }
 
-    const target = pickTarget(
-      self.x, self.y, cand, this.prevTargetId, (id) => this.hostileTo.has(id),
-      {
-        healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
-        dwellTicks: DRONE_TARGET_DWELL_TICKS,
-        ticksSincePrevTarget: view.tick - this.prevTargetSinceTick,
-        priorityBias: STRUCTURE_PRIORITY_BIAS,
-      },
-    );
+    // Sensor cap (AI overhaul slice 3): NEW picks only within the role's
+    // sensor range; the held target stays eligible at any range
+    // (`prevMaxDistance: Infinity`). Nothing in range and nothing held ⇒ fall
+    // back to the uncapped pick, so a director-ordered / retaliation contact
+    // (`hostileTo`, set via markHostile) across the sector is still hunted.
+    // On-sight candidates never reach the fallback beyond ON_SIGHT_ENGAGE_RANGE
+    // (they aren't hostile there), and the sensor range is floored at it.
+    const sinceTicks = view.tick - this.prevTargetSinceTick;
+    this._pickOpts.ticksSincePrevTarget = sinceTicks;
+    let target = pickTarget(self.x, self.y, cand, this.prevTargetId, this._isHostile, this._pickOpts);
+    if (target === null && anyHostile) {
+      this._pickOptsUncapped.ticksSincePrevTarget = sinceTicks;
+      target = pickTarget(self.x, self.y, cand, this.prevTargetId, this._isHostile, this._pickOptsUncapped);
+    }
     const newId = target?.id ?? null;
     if (newId !== this.prevTargetId) this.prevTargetSinceTick = view.tick;
     this.prevTargetId = newId;

@@ -68,7 +68,7 @@ export interface SpawnerHooks {
   /** Per-entity AI behaviour factory. The spawner does not import concrete behaviours. */
   asteroidBehaviour?: () => IAiBehaviour;
   /** Drone AI factory. Takes the chosen `ShipKind` so per-kind tuning
-   *  (`kind.ai.thrust`, `turnKp`, `maxTorque`) flows into the behaviour
+   *  (`kind.ai.thrust`) flows into the behaviour
    *  without the spawner needing to import `HostileDroneBehaviour`. */
   droneBehaviour?: (kind: ShipKind) => IAiBehaviour;
   /** Optional drone-kind chooser. Defaults to "uniform random across the

@@ -108,6 +108,12 @@ export interface PickTargetOptions {
    *  (e.g. hitscan vs longer-range projectile). Omit (or pass `Infinity`)
    *  to disable the range gate. */
   maxDistance?: number;
+  /** Range (world units) within which the CURRENTLY HELD target (`prevTargetId`)
+   *  stays eligible. Defaults to `maxDistance` (legacy: a held target past it
+   *  is dropped). A larger value caps only NEW picks: the body AI passes
+   *  `Infinity` so a drone keeps chasing a contact it already holds after it
+   *  leaves sensor range, while fresh acquisitions stay within sensors. */
+  prevMaxDistance?: number;
   /** Bias toward LOW-health targets. Each candidate's effective score is
    *  `distance² * (1 + healthWeight * health/maxHealth)`, so a full-health
    *  target is penalised by up to `healthWeight×` its distance² while a
@@ -184,6 +190,8 @@ export function pickTarget(
   const priorityBias = options?.priorityBias ?? 0;
   // Pre-square the gate so the hot loop stays sqrt-free.
   const maxD2 = maxDistance === Infinity ? Infinity : maxDistance * maxDistance;
+  const prevMaxDistance = options?.prevMaxDistance ?? maxDistance;
+  const prevMaxD2 = prevMaxDistance === Infinity ? Infinity : prevMaxDistance * prevMaxDistance;
   let best: MountTargetView | null = null;
   let bestScore = Infinity;
   let prev: MountTargetView | null = null;
@@ -200,7 +208,10 @@ export function pickTarget(
     // sticky pin's renewal. A target that drifts past `maxDistance` is dropped
     // from `prev` as well, so the next call returns the best in-range candidate
     // (or null, slewing mounts back to forward).
-    if (d2 > maxD2) continue;
+    // The held target may stay eligible further out (`prevMaxDistance`); it
+    // then competes only as `prev`, never as a fresh `best`.
+    const inRange = d2 <= maxD2;
+    if (!inRange && !(prevTargetId !== null && t.id === prevTargetId && d2 <= prevMaxD2)) continue;
     // Score = distance² biased toward low health (lower score = preferred).
     // healthWeight 0 (or missing health) ⇒ score === d² ⇒ pure nearest.
     let score = d2;
@@ -216,7 +227,7 @@ export function pickTarget(
     if (priorityBias > 0 && t.priority !== undefined && t.priority > 0) {
       score /= 1 + priorityBias * t.priority;
     }
-    if (score < bestScore) {
+    if (inRange && score < bestScore) {
       bestScore = score;
       best = t;
     }
@@ -228,7 +239,9 @@ export function pickTarget(
 
   // No hostiles in view: drop the slot's target. The caller's next-tick
   // call sees `prevTargetId = null` and starts fresh.
-  if (!best) return null;
+  // (With `prevMaxDistance > maxDistance` the held target may be the only
+  // candidate left: keep it.)
+  if (!best) return prev;
 
   // No previous target (first frame, or it died / left): take the best.
   if (!prev) return best;
