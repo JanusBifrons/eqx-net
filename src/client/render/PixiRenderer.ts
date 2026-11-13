@@ -928,7 +928,7 @@ export class PixiRenderer implements IRenderer {
         const fx = this._fxExplosions;
         if (fx !== null) {
           const n = wreckBlasts(x, y, radius, seed, this._wreckBlastScratch);
-          const now = performance.now();
+          const now = this.fxNow();
           for (let i = 0; i < n; i++) {
             const b = this._wreckBlastScratch[i]!;
             if (fx.spawn(b.x, b.y, b.r, now)) this._wreckBlastsSpawned++;
