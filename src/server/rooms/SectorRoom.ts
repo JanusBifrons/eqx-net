@@ -8149,7 +8149,13 @@ export class SectorRoom extends Room<SectorState> {
     if (rec == null || rec.kind !== SWARM_KIND_DRONE) return false;
     this.lofShooterKind = 1;
     this.lofSide = allegianceOfKind(rec.shipKind);
-    return this.lofGate().blocked(fx, fy, dx, dy, maxDist, shooterId, targetId, this.lofFriendly);
+    const gate = this.lofGate();
+    if (!gate.blocked(fx, fy, dx, dy, maxDist, shooterId, targetId, this.lofFriendly)) return false;
+    // Line-of-fire feedback: tell the brain which ally held its shot (drone
+    // slots via AiFireResolver AND capital turret barrels via the mount ticker
+    // both come through here; the behaviour counts at most once per tick).
+    this.aiController.noteBlocked(shooterId, this.serverTick, gate.lastBlockerX, gate.lastBlockerY);
+    return true;
   }
 
   /** A drone's slot shot: the distance is to its target's live pose. */
