@@ -1,6 +1,6 @@
 import type { Shot, ShotContext } from '../types.js';
 import { sendRoom } from './_helpers.js';
-import { artSettled } from './capitals.js';
+import { artSettled, capitalBreakup } from './capitals.js';
 
 /** The pilot's room id (the dev endpoint addresses a sector by room). */
 async function roomId(ctx: ShotContext): Promise<string | null> {
@@ -251,5 +251,106 @@ export const timeScaleCapitals4x: Shot = {
     await ctx.sleep(1_500);
     await wheelSteps(ctx, -100, 12, 300);
     await ctx.sleep(12_000); // the shells land at ~0.25×, then a few seconds after
+  },
+};
+
+/** The renderer's wreck counters (`__eqxArtStats`), for the take log. */
+async function wreckStats(ctx: ShotContext): Promise<{ breaks: number; pieces: number; glowing: number; blasts: number }> {
+  return ctx.page.evaluate(() => {
+    const s = (globalThis as { __eqxArtStats?: () => { wreckBreaks?: number; wreckPieces?: number; wreckGlowing?: number; wreckBlasts?: number } }).__eqxArtStats?.();
+    return { breaks: s?.wreckBreaks ?? -1, pieces: s?.wreckPieces ?? -1, glowing: s?.wreckGlowing ?? -1, blasts: s?.wreckBlasts ?? -1 };
+  }).catch(() => ({ breaks: -1, pieces: -1, glowing: -1, blasts: -1 }));
+}
+
+/** Wait (wall time) until the client has drawn a break-up, logging the counters. Returns whether it did. */
+async function waitForBreak(ctx: ShotContext, tag: string, deadlineMs: number): Promise<boolean> {
+  const t0 = Date.now();
+  while (Date.now() - t0 < deadlineMs) {
+    const w = await wreckStats(ctx);
+    if (w.breaks >= 1) {
+      ctx.log(`  [${tag}] break-up drawn ${((Date.now() - t0) / 1000).toFixed(1)} s after the wait began: ${JSON.stringify(w)}`);
+      return true;
+    }
+    await ctx.sleep(100);
+  }
+  ctx.log(`  [${tag}] NO break-up within ${(deadlineMs / 1000).toFixed(0)} s: ${JSON.stringify(await wreckStats(ctx))}`);
+  return false;
+}
+
+/** Hold for `ms` of wall time, logging the wreck counters every `everyMs`. */
+async function holdLogging(ctx: ShotContext, tag: string, ms: number, everyMs: number): Promise<void> {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    await ctx.sleep(Math.min(everyMs, ms - (Date.now() - t0)));
+    ctx.log(`  [${tag}] +${((Date.now() - t0) / 1000).toFixed(1)} s ${JSON.stringify(await wreckStats(ctx))}`);
+  }
+}
+
+/**
+ * Speed × destruction, slow (robustness check 2026-11-13). The capital-breakup
+ * scene as it plays (a battleship's 16" salvo kills a heavy cruiser with little
+ * hull and no shield), with the sector's speed dial turned by hand to 0.25× as
+ * soon as the killing salvo is in the air. The shells, the blast at the kill
+ * point, the pieces' push and spin and the cooling glow on the cut edges should
+ * all run four times slower; anything still on the wall clock shows up as NOT
+ * slowing. Then back to 1× while the pieces drift. Needs EQX_CAPITAL_WRECKS=1.
+ */
+export const capitalBreakupSlowmo: Shot = {
+  ...capitalBreakup,
+  id: 'capital-breakup-slowmo',
+  title: 'A capital breaks up, in slow motion',
+  caption: 'The sector\'s speed dial goes to 0.25× while a battleship\'s salvo is in flight: the shells, the blast and the break-up of the heavy cruiser all play at a quarter speed, then the dial goes back to 1× as the pieces drift.',
+  features: ['CAP', 'M19'],
+  docs: ['capital-destruction', 'game-speed'],
+  durationMs: 100_000,
+  endsWithRun: true,
+  async run(ctx) {
+    const id = await roomId(ctx);
+    if (!id) throw new Error('capital-breakup-slowmo: no room id on the client');
+    const k = ctx.viewport.width / 1920;
+    await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 4000, y: -350, zoom: 0.17 * k } }]);
+    // Turn the dial the moment the first salvo is seen (shells as events).
+    const t0 = Date.now();
+    let fired = false;
+    while (Date.now() - t0 < 40_000) {
+      if ((await salvoIds(ctx)).length > 0) { fired = true; break; }
+      await ctx.sleep(100);
+    }
+    ctx.log(`  [breakup-slowmo] salvo ${fired ? 'seen' : 'NOT seen'} ${((Date.now() - t0) / 1000).toFixed(1)} s into the take`);
+    await dial(ctx, id, 0.25);
+    await waitForBreak(ctx, 'breakup-slowmo', 45_000);
+    await holdLogging(ctx, 'breakup-slowmo 0.25x', 20_000, 2_000);
+    await dial(ctx, id, 1);
+    await holdLogging(ctx, 'breakup-slowmo 1x', 10_000, 2_000);
+  },
+};
+
+/**
+ * Speed × destruction, fast (robustness check 2026-11-13). The same scene: the
+ * cruiser breaks up at 1×, then the dial goes to 4× while the pieces drift.
+ * The drift, spin and glow cooling should run four times faster, with no
+ * jitter, teleporting or lost pieces at the faster tick rate. Then back to 1×.
+ * Needs EQX_CAPITAL_WRECKS=1.
+ */
+export const capitalBreakupFast: Shot = {
+  ...capitalBreakup,
+  id: 'capital-breakup-fast',
+  title: 'A capital breaks up, then 4×',
+  caption: 'A battleship\'s salvo breaks up a heavy cruiser at normal speed; then the sector\'s speed dial goes to 4× and the pieces drift apart and their glowing edges cool four times as fast, before the dial returns to 1×.',
+  features: ['CAP', 'M19'],
+  docs: ['capital-destruction', 'game-speed'],
+  durationMs: 80_000,
+  endsWithRun: true,
+  async run(ctx) {
+    const id = await roomId(ctx);
+    if (!id) throw new Error('capital-breakup-fast: no room id on the client');
+    const k = ctx.viewport.width / 1920;
+    await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 4000, y: -350, zoom: 0.17 * k } }]);
+    await waitForBreak(ctx, 'breakup-fast', 45_000);
+    await holdLogging(ctx, 'breakup-fast 1x', 3_000, 1_000);
+    await dial(ctx, id, 4);
+    await holdLogging(ctx, 'breakup-fast 4x', 12_000, 2_000);
+    await dial(ctx, id, 1);
+    await holdLogging(ctx, 'breakup-fast back to 1x', 6_000, 2_000);
   },
 };
