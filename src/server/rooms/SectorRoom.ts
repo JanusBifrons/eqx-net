@@ -5137,6 +5137,15 @@ export class SectorRoom extends Room<SectorState> {
         c.entityId = id; c.jx = jx; c.jy = jy; c.px = px; c.py = py;
         this.postToWorker(c);
       },
+      // A piece's body sits on its centroid: its SAB pose is the centre (#14).
+      pieceCentreInto: (id, out) => {
+        const rec = this.swarmRegistry.get(id);
+        if (!rec) return false;
+        const b = slotBase(rec.slot);
+        out.x = this.sabF32[b + SLOT_X_OFF]!;
+        out.y = this.sabF32[b + SLOT_Y_OFF]!;
+        return true;
+      },
       // During the crack hold: the whole wreck as one rigid body (#14 as above).
       impulseWreck: (ids, jx, jy, px, py) => {
         const c = this._wreckRigidImpulseCmd;

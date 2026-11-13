@@ -135,11 +135,12 @@ export interface WreckPieceSpec {
   index: number;
   x: number;
   y: number;
-  /** Spawn velocity: the dead hull's rigid motion at this point (v + ω × r). */
+  /** Spawn velocity: the dead hull's rigid motion at this point (v + ω × r),
+   *  ω scaled by the profile's `spinScale`. */
   vx: number;
   vy: number;
   angle: number;
-  /** Spawn spin: the dead hull's ω. */
+  /** Spawn spin: the dead hull's ω × the profile's `spinScale`. */
   angvel: number;
   /** Added after `WRECK_CRACK_MS`: the separating push (world frame at the
    *  death angle; rotate by how far the piece has turned since) and spin. */
@@ -489,6 +490,12 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
   const rf2 = rf * rf;
   const spinRng = new Rng(fnvMixU32((input.seed >>> 0) ^ 0x3ec7, 0x5));
   const spinMinR = WRECK_SPIN_MIN_RADIUS_FRAC * kind.radius;
+  // The profile's spin scale (capital 1: byte-identical; a sub-cap's pieces
+  // keep only a lazy tumble, owner on the v5 film 2026-11-13: "they spin too
+  // much when destroyed"). It scales the kick spin below (so the seam pass
+  // sees it) and the dying hull's ω the pieces inherit, with its ω × r.
+  const spinScale = DESTRUCTION_PROFILES[tuning.destruction].spinScale;
+  const hullW = pose.angvel * spinScale;
 
   // The kicks are built in the ship's scaled math-up frame (the frame the
   // geometry is in), then turned into the world by the ship's angle. The
@@ -523,7 +530,7 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
     // (0.55–1×) and direction; a bigger piece turns slower.
     const u = spinRng.u32() / 4294967296;
     const rim = tuning.wreckSeparate * (WRECK_SPIN_RIM_FAR + (WRECK_SPIN_RIM_NEAR - WRECK_SPIN_RIM_FAR) * near) * (0.55 + 0.9 * Math.abs(u - 0.5));
-    const mag = rim / Math.max(g.radius, spinMinR);
+    const mag = (rim / Math.max(g.radius, spinMinR)) * spinScale;
     kw[i] = u < 0.5 ? -mag : mag;
   }
 
@@ -597,10 +604,10 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
       index: g.index,
       x: centre.x,
       y: centre.y,
-      vx: pose.vx - pose.angvel * ry,
-      vy: pose.vy + pose.angvel * rx,
+      vx: pose.vx - hullW * ry,
+      vy: pose.vy + hullW * rx,
       angle: pose.angle,
-      angvel: pose.angvel,
+      angvel: hullW,
       kickVx: kvx[i]! * c - kvy[i]! * sn,
       kickVy: kvx[i]! * sn + kvy[i]! * c,
       kickAngvel: kw[i]!,

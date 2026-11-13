@@ -30,6 +30,12 @@ function make(kinds: Record<string, string> = { cap: 'battleship' }, withRigid =
     pieceAngle: (id) => (live.has(id) ? angles.get(id) ?? 0 : null),
     kickPiece: (id, dvx, dvy, dw) => { kicks.push({ id, dvx, dvy, dw, tick }); },
     impulsePiece: (id, jx, jy, px, py) => { impulses.push({ id, jx, jy, px, py }); },
+    pieceCentreInto: (id, out) => {
+      const s = spawned.find((p) => p.id === id);
+      if (s === undefined || !live.has(id)) return false;
+      out.x = s.x; out.y = s.y;
+      return true;
+    },
     ...(withRigid ? { impulseWreck: (ids: readonly string[], jx: number, jy: number, px: number, py: number) => { rigid.push({ ids, jx, jy, px, py }); } } : {}),
   });
   return { sys, spawned, removed, kicks, impulses, rigid, angles, live, setTick: (t: number) => { tick = t; } };
@@ -171,6 +177,28 @@ describe('CapitalWreckSubsystem', () => {
     expect(rigid).toHaveLength(2);
     expect(impulses).toHaveLength(1);
     expect(impulses[0]!.id).toBe(small.id);
+  });
+
+  it('a hit on a sub-cap piece turns it by the profile spinScale of the lever arm; a capital piece by all of it', () => {
+    // Owner on the v5 film (2026-11-13): "they spin too much when destroyed".
+    // The rest of a salvo lands on the fresh pieces, and an off-centre shove
+    // at full lever arm set a fighter's half spinning at ~100 °/s a hit.
+    const { sys, spawned, impulses } = make({ f: 'fighter', cap: 'battleship' });
+    sys.forcedSeed = 3;
+    sys.onDeath('f', 'fighter', pose, 300);
+    const piece = spawned[0]!;
+    expect(sys.onWreckHit(piece.id, piece.x + 10, piece.y - 4, 0, 1, 50)).toBe(true);
+    const s = DESTRUCTION_PROFILES.subcap.spinScale;
+    expect(s).toBeLessThan(1);
+    expect(impulses[0]!.px).toBeCloseTo(piece.x + 10 * s, 9);
+    expect(impulses[0]!.py).toBeCloseTo(piece.y - 4 * s, 9);
+
+    const before = spawned.length;
+    sys.onDeath('cap', 'battleship', pose, 10_000);
+    const cp = spawned[before]!;
+    sys.onWreckHit(cp.id, cp.x + 10, cp.y - 4, 0, 1, 50);
+    // Capital: in its crack hold with no rigid hook, the piece takes it at the hit point.
+    expect([impulses[1]!.px, impulses[1]!.py]).toEqual([cp.x + 10, cp.y - 4]);
   });
 });
 

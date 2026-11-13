@@ -114,6 +114,10 @@ export interface DestructionProfile {
    *  runs away from the kill point, so it moves the pieces off TOGETHER; this
    *  is what opens the cracks. */
   readonly separateScale: number;
+  /** Multiplier on the pieces' spin at the break: the dying hull's turn
+   *  (ω, and the ω × r it gives each piece) and the seeded kick spin
+   *  (`buildWreckPieces`). 1: the hull's full spin carries on. */
+  readonly spinScale: number;
   /** Multiplier on the wreck pieces' linear and angular damping. */
   readonly dampingScale: number;
   /** Multipliers on the overkill knock-back (`shipTuning(kind)
@@ -135,6 +139,7 @@ const CAPITAL: DestructionProfile = {
   holdMs: 1200,
   pushScale: 1,
   separateScale: 1,
+  spinScale: 1,
   dampingScale: 1,
   knockScale: 1,
   knockMaxScale: 1,
@@ -189,6 +194,11 @@ const SUBCAP: DestructionProfile = {
   // after the break. Locks: `wreckPieces.subcapParting.test.ts` (the kicks)
   // + `subcapWrecks.test.ts` (the real server at 1 s). Slice 5 re-tunes.
   separateScale: 40,
+  // Owner on the v5 film (2026-11-13): "they spin too much when destroyed".
+  // The pieces carried the dying hull's whole turn (a fighter hard over at
+  // 2 rad/s threw them at ~115 °/s); ×0.3 keeps a lazy tumble (≤ ~35 °/s
+  // from a 2 rad/s turn). Lock: `wreckPieces.subcapParting.test.ts`.
+  spinScale: 0.3,
   dampingScale: 10,
   // Shots on debris shove it a little (owner, slice 2 report): a small-arms
   // hit moves half a fighter wreck ~10-25 u/s, a naval shell at most ~18
@@ -226,6 +236,7 @@ const NONE: DestructionProfile = {
   holdMs: 0,
   pushScale: 0,
   separateScale: 1,
+  spinScale: 1,
   dampingScale: 1,
   knockScale: 1,
   knockMaxScale: 1,

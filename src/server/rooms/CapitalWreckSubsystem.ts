@@ -108,6 +108,9 @@ export interface CapitalWreckDeps {
   /** Apply impulse (jx, jy) at world point (px, py) to a live piece's body
    *  (overkill knock-back). Optional: absent ⇒ hits never shove pieces. */
   impulsePiece?: (id: string, jx: number, jy: number, px: number, py: number) => void;
+  /** Write a live piece's centre (world) into `out`; false when it is gone.
+   *  Optional: absent ⇒ a hit always turns a piece by its full lever arm. */
+  pieceCentreInto?: (id: string, out: { x: number; y: number }) => boolean;
   /** Apply impulse (jx, jy) at world point (px, py) to the WHOLE wreck as one
    *  rigid body (every piece in `ids`; gone ones are skipped), so the pieces
    *  keep their relative poses: a hit during the crack hold. Optional: absent
@@ -123,7 +126,13 @@ interface PieceKnock {
   impulsePerDamage: number;
   /** The most one hit may change its speed (`wreckKnockMax`, u/s). */
   maxDv: number;
+  /** The profile's `spinScale`: the share of the hit's lever arm that turns
+   *  the piece (1: all of it). */
+  spin: number;
 }
+
+/** Scratch for a piece's centre in `onWreckHit` (#14). */
+const CENTRE_SCRATCH = { x: 0, y: 0 };
 
 /** A piece's separating kick, held until the wreck's crack delay ends. */
 interface PendingKick {
@@ -266,7 +275,7 @@ export class CapitalWreckSubsystem {
       spawned++;
       spawnedMass += p.mass;
       spawnedIds.push(id);
-      this.knock.set(id, { mass: p.mass, impulsePerDamage, maxDv: tuning.wreckKnockMax });
+      this.knock.set(id, { mass: p.mass, impulsePerDamage, maxDv: tuning.wreckKnockMax, spin: profile.spinScale });
       // The hull holds together for the crack delay, then parts (game ticks).
       if (held) this.kicks.push({ id, dueTick: tick + crackTicks, vx: p.kickVx, vy: p.kickVy, w: p.kickAngvel, angle0: pose.angle });
       fifo.push(id);
@@ -353,7 +362,16 @@ export class CapitalWreckSubsystem {
     const jMax = k.maxDv * k.mass;
     if (j > jMax) j = jMax;
     const s = j / len;
-    this.d.impulsePiece(id, dirX * s, dirY * s, hitX, hitY);
+    // The profile's spin scale shortens the lever arm (capital 1: the hit
+    // point as is). A sub-cap piece still takes the whole shove, but only a
+    // lazy turn (owner on the v5 film 2026-11-13: "they spin too much").
+    let px = hitX;
+    let py = hitY;
+    if (k.spin !== 1 && this.d.pieceCentreInto !== undefined && this.d.pieceCentreInto(id, CENTRE_SCRATCH)) {
+      px = CENTRE_SCRATCH.x + (hitX - CENTRE_SCRATCH.x) * k.spin;
+      py = CENTRE_SCRATCH.y + (hitY - CENTRE_SCRATCH.y) * k.spin;
+    }
+    this.d.impulsePiece(id, dirX * s, dirY * s, px, py);
     return true;
   }
 
