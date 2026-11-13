@@ -30,7 +30,7 @@
 import type { PhysicsWorld } from '@core/physics/World';
 import type { SwarmRenderState } from '@core/contracts/IRenderer';
 import type { Vec2 } from '@core/swarm/asteroidShape';
-import { rayHitsSphere, rayHitsConvexPolygon, rayHitsShipPolygon } from '@core/combat/Weapons';
+import { rayHitsSphere, rayHitsConvexPolygon, rayHitsShipPolygon, segmentNearCircle } from '@core/combat/Weapons';
 import { refineRayHit } from '@core/combat/capitalHits';
 import { shipCollisionParts } from '@core/geometry/shipHullDecomp';
 import { scrapColliderFor } from '@core/geometry/scrapCollider';
@@ -70,11 +70,14 @@ export function rayHitsDrawnSwarmEntity(
 ): number | null {
   if (e.kind === SWARM_KIND_DRONE) {
     if (e.shieldDown !== true) {
-      const c = rayHitsSphere(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.radius + tuningFor(e.shipKind).shieldPad);
-      return refineRayHit(e.shipKind, c, fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.angle);
+      const r = e.radius + tuningFor(e.shipKind).shieldPad;
+      const c = rayHitsSphere(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, r);
+      return refineRayHit(e.shipKind, c, fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.angle, r);
     }
-    // Broad phase on a generous circle, then the hull parts.
-    if (rayHitsSphere(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.radius * 2) === null) return null;
+    // Broad phase on a generous circle, then the hull parts. "Does the ray
+    // come near?", never `rayHitsSphere`: that misses once the origin is
+    // inside the circle past the centre (the far half of a long hull).
+    if (!segmentNearCircle(fromX, fromY, dirX * maxDist, dirY * maxDist, e.x, e.y, e.radius * 2)) return null;
     const parts = shipCollisionParts(e.shipKind);
     if (parts.length === 0) return rayHitsSphere(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.radius);
     return rayHitsShipPolygon(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.angle, parts);
