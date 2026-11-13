@@ -43,7 +43,8 @@ export const MISSILE_FRIGATE: ShipKind = defineShipKind({
   // temporarily starves missile output (the intended tradeoff).
   energyMax: 240,
   energyRegenRate: 0.67,
-  ai: { thrust: 0.45, turnKp: 3.0, maxTorque: 1.2 }, // P3.11b: ≈0.45× player thrust (was 0.12)
+  ai: { thrust: 0.45 }, // P3.11b: ≈0.45× player thrust (was 0.12)
+  aiRole: 'missileBoat',
   shape: {
     kind: 'polygon',
     color: 0x66bbff,
