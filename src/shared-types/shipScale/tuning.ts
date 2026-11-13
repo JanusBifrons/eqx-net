@@ -233,11 +233,23 @@ export interface ShipTuning {
   /** Capital wreck break-up (capital-destruction.md): the outward push of a
    *  piece at the kill point and far from it (u/s). Proportional to the hull
    *  radius, so a bigger hull's debris field opens at the same rate relative
-   *  to its size: heavy cruiser (2×) ~370 / ~175 u/s, battleship ~490 / ~230
-   *  (money-shot review 2026-11-12: 3× #521, whose ~120 / ~30 barely opened
-   *  the outline). */
+   *  to its size: heavy cruiser (2×) ~22 / ~9 u/s, battleship ~29 / ~12.
+   *  Owner review 2026-11-13: "they should break apart slower and have more
+   *  inertia and weight" (the 2026-11-12 money-shot push was ~10× this). */
   wreckPushMax: number;
   wreckPushMin: number;
+  /** Capital wreck break-up: the least speed (u/s) at which two neighbouring
+   *  pieces part along their shared cut, at every point of it (spin
+   *  included), so no seam hinges or slides shut (owner review 2026-11-13).
+   *  Heavy cruiser (2×) ~31 u/s: fast enough that every cut is visibly open
+   *  1 s after the crack (owner, same day: at ~5 u/s the hull read as
+   *  "cracked but intact"), slow enough that no piece passes ~80 u/s. */
+  wreckSeparate: number;
+  /** Capital wreck pieces collide with each other: each convex collider part
+   *  is shrunk this far (u, toward the part's centre) so neighbours that
+   *  share a cut edge start a hair apart instead of touching. ~1 u for a 2×
+   *  heavy cruiser. */
+  wreckColliderInset: number;
   /** Art bake pixels per world unit, and the texture side cap. */
   bakePpu: number;
   bakeMaxSide: number;
@@ -262,8 +274,13 @@ const CACHE = new WeakMap<object, ShipTuning>();
 
 /** Wreck push at the kill point / far from it, per unit of hull radius per
  *  second (`wreckPushMax` / `wreckPushMin`). */
-const WRECK_PUSH_MAX_PER_RADIUS = 0.17;
-const WRECK_PUSH_MIN_PER_RADIUS = 0.08;
+const WRECK_PUSH_MAX_PER_RADIUS = 0.01;
+const WRECK_PUSH_MIN_PER_RADIUS = 0.004;
+/** Least parting speed of two neighbouring wreck pieces, per unit of hull
+ *  radius per second (`wreckSeparate`). */
+const WRECK_SEPARATE_PER_RADIUS = 0.014;
+/** Wreck collider inset, per unit of hull radius (`wreckColliderInset`). */
+const WRECK_COLLIDER_INSET_PER_RADIUS = 0.0005;
 
 /** The size-dependent numbers for a (scaled) kind. */
 export function shipTuning(kind: ShipKind): ShipTuning {
@@ -295,6 +312,8 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     guardRadiusMin: ct.clearHull ? Math.max(BASE.guardRadiusMin * sp, kind.radius * 2) : BASE.guardRadiusMin * sp,
     wreckPushMax: WRECK_PUSH_MAX_PER_RADIUS * kind.radius,
     wreckPushMin: WRECK_PUSH_MIN_PER_RADIUS * kind.radius,
+    wreckSeparate: WRECK_SEPARATE_PER_RADIUS * kind.radius,
+    wreckColliderInset: WRECK_COLLIDER_INSET_PER_RADIUS * kind.radius,
     // Pixel density by the UNSCALED hull (so a 2× fighter stays as sharp per
     // world unit as today's), within the class's side budget.
     bakePpu: unscaledR >= BASE.ppuBigRadius ? BASE.ppuBig : BASE.ppuSmall,

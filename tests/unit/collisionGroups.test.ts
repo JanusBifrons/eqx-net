@@ -64,11 +64,11 @@ describe('collisionGroups constants', () => {
 });
 
 describe('WRECK_COLLISION_GROUPS (capital wreck pieces)', () => {
-  it('packs membership 0x0004, filter 0xFFFB', () => {
-    expect(WRECK_COLLISION_GROUPS).toBe(0x0004fffb);
+  it('packs membership 0x0004, filter 0xFFFF', () => {
+    expect(WRECK_COLLISION_GROUPS).toBe(0x0004ffff);
   });
-  it('wreck vs wreck does NOT collide (pieces fly apart freely)', () => {
-    expect(collide(WRECK_COLLISION_GROUPS, WRECK_COLLISION_GROUPS)).toBe(false);
+  it('wreck vs wreck DOES collide (heavy pieces bump; owner review 2026-11-13)', () => {
+    expect(collide(WRECK_COLLISION_GROUPS, WRECK_COLLISION_GROUPS)).toBe(true);
   });
   it('wreck vs default body and vs scrap DOES collide', () => {
     expect(collide(WRECK_COLLISION_GROUPS, DEFAULT_COLLISION_GROUPS)).toBe(true);

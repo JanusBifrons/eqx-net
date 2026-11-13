@@ -59,6 +59,7 @@ export type WorkerCmd =
    *  impulse via `physics.applyImpulse(id, fx, fy, 0)`. Cleanly no-ops on
    *  despawned entities. See docs/architecture/missile-simulation.md. */
   | { type: 'MISSILE_IMPULSE'; entityId: string; fx: number; fy: number }
+  | { type: 'WRECK_KICK'; entityId: string; dvx: number; dvy: number; dw: number }
   /** Shield-fence plan — manage a shield-wall span (a static cuboid between two
    *  pylon poses that blocks ships). `SET_WALL_ACTIVE` toggles its collider on
    *  stun / power loss without churning the body. See PhysicsWorld.spawnWall. */

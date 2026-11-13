@@ -302,7 +302,8 @@ export class SwarmSpawner {
   spawnWreck(spec: {
     id: string; x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
     radius: number; mass: number; parentShipKind: ShipKindId; pieceIndex: number; wreckId: number;
-    parts: ReadonlyArray<ReadonlyArray<Vec2>>; linearDamping: number; angularDamping: number;
+    parts: ReadonlyArray<ReadonlyArray<Vec2>>; colliderParts: ReadonlyArray<ReadonlyArray<Vec2>>;
+    linearDamping: number; angularDamping: number;
   }): boolean {
     const slot = this.hooks.takeSlot();
     if (slot === undefined) return false;
@@ -322,7 +323,7 @@ export class SwarmSpawner {
     rec.wreckParts = spec.parts;
     this.hooks.postSpawnObstacle(
       slot, spec.id, spec.x, spec.y, spec.vx, spec.vy, spec.radius, spec.mass, undefined,
-      spec.linearDamping, false, WRECK_COLLISION_GROUPS, spec.angle, spec.parts, undefined,
+      spec.linearDamping, false, WRECK_COLLISION_GROUPS, spec.angle, spec.colliderParts, undefined,
       { angvel: spec.angvel, angularDamping: spec.angularDamping },
     );
     this.hooks.interestGrid?.insert(rec.entityId, spec.x, spec.y, spec.radius);
