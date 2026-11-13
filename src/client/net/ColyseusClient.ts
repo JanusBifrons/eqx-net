@@ -295,6 +295,8 @@ function _pa5(n: number): number { return parseFloat(n.toFixed(5)); }
 
 /** Shared empty `lockedBy` (no allocation per snapshot). */
 const NO_LOCKED_BY: ReadonlyArray<{ t: string; s: number; p: number }> = [];
+/** A welcome from a wreck room with no live wreck (slice 3). */
+const NO_WRECK_LIST: readonly import('@shared-types/messages/snapshotMessages').WreckDescriptor[] = [];
 
 export class ColyseusGameClient {
   /**
@@ -1569,6 +1571,12 @@ export class ColyseusGameClient {
       // Capital wrecks on: a dying capital explodes at its kill point (the
       // wreck break-up), not as a hull-sized blast (money-shot review).
       this.mirror.capitalWrecks = msg.capitalWrecks === true;
+      // Sub-capital break-up slice 3: the welcome carries the FULL live wreck
+      // set (#16); snapshots then carry only adds, removes and a slow resync.
+      if (msg.capitalWrecks === true) {
+        this._wrecks.apply(msg.wrecks ?? NO_WRECK_LIST);
+        this.mirror.wrecks = this._wrecks.descriptors;
+      }
       this._shellStore.clear();
       this._navalHitHold.flush(this._heldDamageSink);
       if (this._shellEvents) {
@@ -3264,13 +3272,11 @@ export class ColyseusGameClient {
     // construction). Pose lives in `mirror.swarm` (kind=2); joined by entityId.
     this.syncStructures(snap.structureTargets, snap.structureMountAngles);
 
-    // Capital destruction S2b: the wreck descriptors (the full live list when
-    // present; absent = not this snapshot). Pieces whose wreck is known get
-    // their predWorld body in syncSwarmIntoPredWorld and a sprite.
-    if (snap.wrecks !== undefined) {
-      this._wrecks.apply(snap.wrecks);
-      this.mirror.wrecks = this._wrecks.descriptors;
-    }
+    // Capital destruction S2b / sub-capital break-up slice 3: the wreck
+    // descriptor deltas (adds, removes, resync chunk; the full set came with
+    // the welcome). Pieces whose wreck is known get their predWorld body in
+    // syncSwarmIntoPredWorld and a sprite.
+    if (this._wrecks.applySnapshot(snap)) this.mirror.wrecks = this._wrecks.descriptors;
 
     // Server-authoritative boost + thrust sets — exhaust-trail renderer.
     applyBoostingThrustingSets(snap, this.mirror);
