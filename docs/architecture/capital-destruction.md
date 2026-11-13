@@ -331,7 +331,7 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
       and sets every piece to v_com + ω × r_i, spin ω. The pieces keep their
       relative poses; the hull moves and turns as one. The speed cap is on
       the whole wreck (`wreckKnockMax` × its mass). The same 16" shell moves
-      a heavy cruiser's wreck ~9 u/s and turns it ~0.8°/s from near one end.
+      a heavy cruiser's wreck ~9 u/s and turns it ~0.6°/s from near one end.
       At the end of the hold the separating kick (`WRECK_KICK`) ADDS to that
       motion, turned by how far each piece has turned since the death; the
       pieces turned together, so the kick stays radial to the hull. After
@@ -365,8 +365,8 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
     16" shell on a piece after the kill: Δv along the shot ≈ expected, spin
     the way the off-centre hit turns it), `wreckRigidHold.test.ts` (a real
     16" shell during the hold: every pair of pieces keeps its relative pose
-    within 1 u / 0.1° and the wreck moves along the shot; 52 u / 0.44° of
-    bending before the fix), `World.rigidGroup.test.ts` (one spin, v_com +
+    within 1 u / 0.1° and the wreck moves along the shot; with fracture v7's
+    5 pieces, 32 u / 1.16° of bending without the fix, 0.16 u / 0° with it), `World.rigidGroup.test.ts` (one spin, v_com +
     ω × r, momentum + J), `wreckHits.test.ts` (the gate).
 - **Entity class.** A wreck piece is swarm kind 4 (`SWARM_KIND_WRECK`,
   server-only for now), predicate `isWreckPiece`. No health: `EntityResolver`
