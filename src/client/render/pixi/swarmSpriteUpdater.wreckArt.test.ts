@@ -15,7 +15,10 @@ import { LOOK_NIGHT } from '../art/lightingSettings.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js';
 import { MountVisualManager } from '../MountVisualManager.js';
 import { WreckGeometryStore, rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
-import { WreckArtState, WreckPieceSprite, WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX } from './wreckArt.js';
+import {
+  WreckArtState, WreckPieceSprite, WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX, WRECK_RIPPLE_MAX, WRECK_BLAST_MAIN,
+} from './wreckArt.js';
+import { WRECK_CRACK_MS } from '../../../shared-types/wreckTiming.js';
 import type { ArtHandle, ArtService, ShipArt } from '../art/ArtService.js';
 import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
@@ -66,7 +69,7 @@ function stubArt(art: ShipArt): { svc: ArtService; asked: string[] } {
   return { svc, asked };
 }
 
-function makeCtx(art: ArtService | null, breaks: number[][]): SwarmSpriteCtx {
+function makeCtx(art: ArtService | null, breaks: number[][], ripples: number[][] = [], rippleCap?: () => number): SwarmSpriteCtx {
   return {
     shipContainer: new Container(),
     sprites: new Map<string, Container>(),
@@ -81,7 +84,11 @@ function makeCtx(art: ArtService | null, breaks: number[][]): SwarmSpriteCtx {
     art: { art, handles: new Map(), sunAz: 0.4 },
     slewDtSec: 1 / 60,
     wrecks: new WreckGeometryStore(),
-    wreckArt: new WreckArtState((x, y, r, snap) => breaks.push([x, y, r, snap ? 1 : 0])),
+    wreckArt: new WreckArtState(
+      (x, y, r, snap) => breaks.push([x, y, r, snap ? 1 : 0]),
+      (x, y, r) => ripples.push([x, y, r]),
+      rippleCap,
+    ),
   } as SwarmSpriteCtx;
 }
 
@@ -109,6 +116,12 @@ function mirrorFor(d: WreckDescriptor, tick: number): RenderMirror {
   return { swarm, wrecks: new Map([[d.wreckId, d]]) } as unknown as RenderMirror;
 }
 
+function maxGlow(ctx: SwarmSpriteCtx): number {
+  let m = 0;
+  for (const s of ctx.sprites.values()) m = Math.max(m, (s as WreckPieceSprite).glowAlpha());
+  return m;
+}
+
 function countDisplayObjects(c: Container): number {
   let n = 1;
   for (const ch of c.children) n += countDisplayObjects(ch);
@@ -132,7 +145,9 @@ describe('updateSwarmSprites — capital wreck art (S3)', () => {
     for (let i = 0; i < n; i++) {
       const s = ctx.sprites.get(`swarm-${100 + i}`);
       expect(s, `piece ${i} drawn`).toBeInstanceOf(WreckPieceSprite);
-      const meshes = s!.children.filter((c): c is Mesh => c instanceof Mesh);
+      // The hull-art meshes (the cut-edge glow is a mesh on its own small texture).
+      const glowTex = (s as WreckPieceSprite).glowTexture();
+      const meshes = s!.children.filter((c): c is Mesh => c instanceof Mesh && c.texture !== glowTex);
       expect(meshes.length, `piece ${i} has textured meshes`).toBeGreaterThan(0);
       for (const m of meshes) {
         expect(own.has(m.texture), 'mesh uses one of the parent\'s frames').toBe(true);
@@ -157,10 +172,10 @@ describe('updateSwarmSprites — capital wreck art (S3)', () => {
     const measuredMax = 5592; // `measured` above: desktop objects 4920–5592
     expect(measuredMax + objects).toBeLessThanOrEqual(b.displayObjects);
 
-    // A fresh wreck: exactly one break-up burst, near the hull, glow hot.
+    // A fresh wreck: exactly one break-up burst, near the hull; the cracks
+    // nearest the kill point are already hot.
     expect(breaks.length).toBe(1);
-    const glow = (ctx.sprites.get('swarm-100') as WreckPieceSprite).glowAlpha();
-    expect(glow).toBeGreaterThan(0.9);
+    expect(maxGlow(ctx)).toBeGreaterThan(0.9);
 
     // A second frame builds nothing and fires nothing.
     const before = ctx.shipContainer.children.slice();
@@ -248,8 +263,9 @@ describe('updateSwarmSprites — capital wreck art (S3)', () => {
     updateSwarmSprites(mirrorFor(desc(DEATH_TICK), DEATH_TICK), ctx);
     const s = ctx.sprites.get('swarm-100') as WreckPieceSprite;
     expect(s).toBeInstanceOf(WreckPieceSprite);
-    expect(s.children.some((c) => c instanceof Mesh)).toBe(false);
-    expect(s.glowAlpha()).toBeGreaterThan(0.9);
+    // No hull-art meshes (the glow strip is a mesh on its own small texture).
+    expect(s.children.some((c) => c instanceof Mesh && c.texture !== s.glowTexture())).toBe(false);
+    expect(maxGlow(ctx)).toBeGreaterThan(0.9);
     expect(breaks.length).toBe(1);
   });
 
@@ -267,7 +283,7 @@ describe('updateSwarmSprites — capital wreck art (S3)', () => {
       updateSwarmSprites(m, slow);
       wall.mockReturnValue(11_000); slow.fxNowMs = 50_500;
       updateSwarmSprites(m, slow);
-      expect((slow.sprites.get('swarm-100') as WreckPieceSprite).glowAlpha(), 'slow motion: still hot').toBeGreaterThan(0.5);
+      expect(maxGlow(slow), 'slow motion: still hot').toBeGreaterThan(0.5);
 
       // Fast: 0.5 s of wall time is 10 s of game time ⇒ dark.
       const fast = makeCtx(null, []);
@@ -275,7 +291,168 @@ describe('updateSwarmSprites — capital wreck art (S3)', () => {
       updateSwarmSprites(m, fast);
       wall.mockReturnValue(1_500); fast.fxNowMs = 60_000;
       updateSwarmSprites(m, fast);
-      expect((fast.sprites.get('swarm-100') as WreckPieceSprite).glowAlpha(), 'fast: cooled').toBe(0);
+      expect(maxGlow(fast), 'fast: cooled').toBe(0);
+    } finally {
+      wall.mockRestore();
+    }
+  });
+});
+
+// Owner request 2026-11-13, on the filmed break-up: "The instant split feels a
+// bit off. Perhaps some propagating cracks ... and explosions across the
+// hull, small and rippling showing internal damage, then it breaks up."
+// During the WRECK_CRACK_MS hold the cut edges light up as a crack front runs
+// out from the kill point, and small blasts ripple along the cracks.
+describe('updateSwarmSprites — cracks spread, then it breaks', () => {
+  const T0 = 50_000; // the game clock (fxNow) at death
+  const d = desc(DEATH_TICK);
+
+  interface CutEdge { p: number; i: number; near: number; ax: number; ay: number; bx: number; by: number }
+
+  /** Every cut edge of the wreck: piece, edge, its near-end distance from the
+   *  kill point and its ends (hull frame; the test pieces sit at their
+   *  centroids, unturned, so the hull frame is world space here). */
+  function cutEdges(ctx: SwarmSpriteCtx): CutEdge[] {
+    const geom = rebuildWreckPieces(d)!;
+    const info = ctx.wreckArt!.infoFor(d, geom, 0, { x: 0, y: 0, angle: 0 }, DEATH_TICK, T0);
+    const out: CutEdge[] = [];
+    geom.forEach((g, p) => {
+      const n = g.outline.length;
+      for (let i = 0; i < n; i++) {
+        if (!g.cutEdges[i]) continue;
+        const a = g.outline[i]!, b = g.outline[(i + 1) % n]!;
+        const ax = a.x + g.cx, ay = a.y + g.cy, bx = b.x + g.cx, by = b.y + g.cy;
+        const near = Math.min(Math.hypot(ax - info.killX, ay - info.killY), Math.hypot(bx - info.killX, by - info.killY));
+        out.push({ p, i, near, ax, ay, bx, by });
+      }
+    });
+    return out;
+  }
+
+  const heat = (ctx: SwarmSpriteCtx, p: number, i: number): number =>
+    (ctx.sprites.get(`swarm-${100 + p}`) as WreckPieceSprite).edgeHeat(i);
+
+  it('cut edges near the kill point glow first; by WRECK_CRACK_MS every cut edge has ignited', () => {
+    const ctx = makeCtx(null, []);
+    const m = mirrorFor(d, DEATH_TICK);
+    ctx.fxNowMs = T0;
+    updateSwarmSprites(m, ctx);
+    const edges = cutEdges(ctx);
+    expect(edges.length).toBeGreaterThan(4);
+    let lo = Infinity, hi = 0;
+    for (const e of edges) { lo = Math.min(lo, e.near); hi = Math.max(hi, e.near); }
+    expect(hi - lo, 'the cracks span the hull').toBeGreaterThan(100);
+
+    // Just after death: only edges near the kill point glow; the far half is dark.
+    ctx.fxNowMs = T0 + 100;
+    updateSwarmSprites(m, ctx);
+    let lit = 0, dark = 0;
+    for (const e of edges) {
+      const h = heat(ctx, e.p, e.i);
+      if (e.near > lo + 0.5 * (hi - lo)) expect(h, `far edge p${e.p}/e${e.i} still dark`).toBe(0);
+      if (h > 0.9) lit++;
+      if (h === 0) dark++;
+    }
+    expect(lit, 'the edges at the kill point are hot').toBeGreaterThan(0);
+    expect(dark, 'most of the hull has not cracked yet').toBeGreaterThan(0);
+
+    // By the split every cut edge has ignited.
+    ctx.fxNowMs = T0 + WRECK_CRACK_MS;
+    updateSwarmSprites(m, ctx);
+    for (const e of edges) expect(heat(ctx, e.p, e.i), `edge p${e.p}/e${e.i} lit by the split`).toBeGreaterThan(0);
+
+    // Each edge cools from its own ignition: the kill-point edges cool first.
+    let nearest = edges[0]!, farthest = edges[0]!;
+    for (const e of edges) { if (e.near < nearest.near) nearest = e; if (e.near > farthest.near) farthest = e; }
+    ctx.fxNowMs = T0 + 2_000;
+    updateSwarmSprites(m, ctx);
+    expect(heat(ctx, nearest.p, nearest.i)).toBeLessThan(heat(ctx, farthest.p, farthest.i));
+  });
+
+  it('small blasts ripple along the cracks during the window, under the cap', () => {
+    const ripples: number[][] = [];
+    const breaks: number[][] = [];
+    const ctx = makeCtx(null, breaks, ripples);
+    const m = mirrorFor(d, DEATH_TICK);
+    let atSplit = -1;
+    for (let t = 0; t <= WRECK_CRACK_MS + 600; t += 16) {
+      ctx.fxNowMs = T0 + t;
+      updateSwarmSprites(m, ctx);
+      if (t <= WRECK_CRACK_MS) atSplit = ripples.length;
+    }
+    expect(ripples.length, 'ripples spawned').toBeGreaterThanOrEqual(3);
+    expect(ripples.length).toBeLessThanOrEqual(WRECK_RIPPLE_MAX);
+    expect(atSplit, 'all of them before the split').toBe(ripples.length);
+    expect(breaks.length, 'still one break-up burst').toBe(1);
+    const edges = cutEdges(ctx);
+    const geom = rebuildWreckPieces(d)!;
+    let hullR = 0;
+    for (const g of geom) hullR = Math.max(hullR, Math.hypot(g.cx, g.cy) + g.radius);
+    for (const [x, y, r] of ripples) {
+      // On a crack (a cut edge), not anywhere over the hull.
+      let best = Infinity;
+      for (const e of edges) {
+        const ex = e.bx - e.ax, ey = e.by - e.ay;
+        const t = Math.max(0, Math.min(1, ((x! - e.ax) * ex + (y! - e.ay) * ey) / (ex * ex + ey * ey || 1)));
+        best = Math.min(best, Math.hypot(x! - (e.ax + ex * t), y! - (e.ay + ey * t)));
+      }
+      expect(best, 'ripple on a cut edge').toBeLessThan(1);
+      // Small: well below the kill blast.
+      expect(r!).toBeGreaterThan(0);
+      expect(r!).toBeLessThan(hullR * WRECK_BLAST_MAIN * 0.5);
+    }
+  });
+
+  it('the ripples spread over the window as the front passes, not all at once', () => {
+    const ripples: number[][] = [];
+    const ctx = makeCtx(null, [], ripples);
+    const m = mirrorFor(d, DEATH_TICK);
+    ctx.fxNowMs = T0;
+    updateSwarmSprites(m, ctx);
+    const first = ripples.length;
+    for (let t = 16; t <= WRECK_CRACK_MS; t += 16) { ctx.fxNowMs = T0 + t; updateSwarmSprites(m, ctx); }
+    expect(ripples.length).toBeGreaterThan(first + 1);
+  });
+
+  it('the effects tier caps the ripples (minimal: none)', () => {
+    for (const cap of [2, 0]) {
+      const ripples: number[][] = [];
+      const ctx = makeCtx(null, [], ripples, () => cap);
+      const m = mirrorFor(d, DEATH_TICK);
+      for (let t = 0; t <= WRECK_CRACK_MS; t += 16) { ctx.fxNowMs = T0 + t; updateSwarmSprites(m, ctx); }
+      expect(ripples.length, `cap ${cap}`).toBeLessThanOrEqual(cap);
+    }
+  });
+
+  it('a late joiner (wreck older than the window) sees no propagation and no ripples', () => {
+    const ripples: number[][] = [];
+    const ctx = makeCtx(null, [], ripples);
+    // First seen 1.5 s after death (90 ticks), past the crack window.
+    const m = mirrorFor(d, DEATH_TICK + 90);
+    for (let t = 0; t <= 600; t += 16) { ctx.fxNowMs = T0 + t; updateSwarmSprites(m, ctx); }
+    expect(ripples.length).toBe(0);
+    // Every cut edge shows its current state: already cracked, cooling.
+    for (const e of cutEdges(ctx)) expect(heat(ctx, e.p, e.i)).toBeGreaterThan(0);
+  });
+
+  it('the front and the ripples run on the game clock (ctx.fxNowMs), not the wall clock', () => {
+    const wall = vi.spyOn(performance, 'now');
+    try {
+      const ripples: number[][] = [];
+      const ctx = makeCtx(null, [], ripples);
+      const m = mirrorFor(d, DEATH_TICK);
+      wall.mockReturnValue(1_000); ctx.fxNowMs = T0;
+      updateSwarmSprites(m, ctx);
+      wall.mockReturnValue(2_000); ctx.fxNowMs = T0 + 100;
+      updateSwarmSprites(m, ctx);
+      const edges = cutEdges(ctx);
+      const before = edges.map((e) => heat(ctx, e.p, e.i));
+      const n = ripples.length;
+      // Slow motion: 20 s of wall time pass while the game clock stands still.
+      for (let w = 2_000; w <= 22_000; w += 1_000) { wall.mockReturnValue(w); updateSwarmSprites(m, ctx); }
+      expect(edges.map((e) => heat(ctx, e.p, e.i))).toEqual(before);
+      expect(ripples.length).toBe(n);
+      expect(before.some((h) => h === 0), 'the front has not reached the far edges').toBe(true);
     } finally {
       wall.mockRestore();
     }

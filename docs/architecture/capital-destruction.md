@@ -503,9 +503,9 @@ pieces stay for ever and the glow ends dark. As built
   review: slice A through the default shader gave flat grey slabs). Before
   the art is ready (or in the classic look) the piece is
   today's plain polygon, swapped once the art arrives.
-- **Glowing cut edges.** One white stroke `Graphics` per piece over its runs
-  of `cutEdges` (the original outline never glows), tinted and faded each
-  frame by `wreckGlowAt`: molten white-orange at death, an ember at
+- **Glowing cut edges.** One glow per piece over its `cutEdges` (the
+  original outline never glows; since 2026-11-13 a mesh lit by a crack front,
+  see "Cracks spread" below), coloured by `wreckGlowAt`: molten white-orange, an ember at
   `WRECK_GLOW_EMBER_S` (3 s), dark at `WRECK_GLOW_END_S` (6 s), when the stroke
   is destroyed. The clock is the descriptor's new `deathTick` against the
   piece's latest server tick, so a late joiner (or a descriptor without one)
@@ -526,6 +526,47 @@ pieces stay for ever and the glow ends dark. As built
   `swarmSpriteUpdater.wreckArt.test.ts` (parent textures only, count budget,
   hot vs late-joiner cool, one break-up), `WreckBreakFx.test.ts`, and the S3
   case in `tests/e2e/capital-wreck-render.spec.ts`.
+
+#### Cracks spread, then it breaks (built 2026-11-13)
+
+Owner, on the filmed break-up: "The instant split feels a bit off. Slightly.
+Perhaps some propagating cracks ... and explosions across the hull, small and
+rippling showing internal damage, then it breaks up." The pieces already hold
+together for `WRECK_CRACK_MS` (1200 game ms, `shared-types/wreckTiming.ts`)
+before the server pushes them apart; this is what the client shows in that
+window. Everything runs on the renderer's game clock (`ctx.fxNowMs`), so it
+slows in slow motion and speeds up at 4×.
+
+- **The crack front.** `WreckArtState.infoFor` finds the nearest and farthest
+  cut vertex from the kill point over the whole wreck (`crackMin`,
+  `crackReach`, hull frame). The front (`crackFrontAt`) runs from the first to
+  the second in `WRECK_CRACK_FRONT_MS` (0.8 × the window, so the last cracks
+  are still white-hot at the split). Distance is straight-line from the kill
+  point: the front is a ring spreading from the hit, lighting the cuts it
+  crosses. Each cut segment ignites when the front reaches its near end, grows
+  to its far end, then cools on the old `wreckGlowAt` curve from its OWN
+  ignition. A late joiner's front is already past everything: the cracks just
+  show their current cooling state.
+- **One glow mesh, not a stroke.** The glow is one `Mesh` per piece (a halo
+  quad and a core quad per cut segment) on a 64×2 texture holding the glow
+  curve (`wreckGlowTexture`: row 0 core, row 1 halo at 0.3 alpha; U = age /
+  6 s). Each frame rewrites only the quads' U coordinates (each segment's age)
+  and, until the front has passed every cut, their positions, in place. So
+  the count is unchanged (still one glow object per piece, budget 8) and the
+  per-segment colour costs no extra draw objects. The segment table (ends,
+  crack distances, ignition time) is built once with the sprite.
+- **Ripple blasts.** At first sight of a fresh wreck (younger than the crack
+  window) `wreckRipples` picks up to `wreckRippleCap(tier)` points on the cut
+  edges (7 high, 5 medium, 3 low, none minimal), one per equal band of front
+  distance with seeded jitter, so they ripple outward with the front. Each
+  fires once, from its piece's sprite, when the front reaches it: a pooled
+  `FxExplosions` burst of radius 0.022–0.04 × the wreck radius (the kill
+  blast is 0.12). A late joiner gets none; one whose moment passed before its
+  piece was drawn is dropped. `artStats().wreckRipples` counts them.
+- Locks: `swarmSpriteUpdater.wreckArt.test.ts` "cracks spread, then it
+  breaks" (front from the kill point, all lit by the split, each cools from
+  its own ignition; ripples on the cuts, small, under the cap, spread in
+  time, none for a late joiner; the game clock drives both).
 
 ### S4: secondary breaks and the catastrophic flash
 
