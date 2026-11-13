@@ -222,7 +222,7 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
           profileStopAt = Date.now() + cpuProfile.ms;
           log(`    cpu profile started at ${smp.wreckPieces} pieces (${cpuProfile.ms} ms)`);
         }
-        log(`    t=${smp.sceneS.toFixed(0)}s pieces ${smp.wreckPieces} (asleep ${smp.wreckSleepingPct}%, awake-but-still ${smp.wreckAwakeSlowPct}%) swarm ${smp.swarm} (asleep ${smp.sleepingPct}%) · tick p50/p95/p99 ${smp.tickP50}/${smp.tickP95}/${smp.tickP99} ms · worker p95 ${smp.workerP95} · bodies/tick ${smp.bodiesPerTick} · swarm rec/tick ${smp.swarmRecordsPerTick} B/tick ${smp.swarmBytesPerTick} · rx ${smp.rxKBps} KB/s (swarm ${smp.rxSwarmKBps}, msgs ${smp.rxMsgKBps}) · wreck desc/snap ${smp.wreckDescPerSnapshot} · frame p50/p95/p99 ${smp.frameP50}/${smp.frameP95}/${smp.frameP99} · hitches ${smp.hitches} · render p95 ${smp.renderP95} · draws p95 ${smp.drawCallsP95} · objects ${smp.displayObjects}`);
+        log(`    t=${smp.sceneS.toFixed(0)}s pieces ${smp.wreckPieces} (asleep ${smp.wreckSleepingPct}%${smp.oldAsleepPct !== null ? `, >20 s old ${smp.oldAsleepPct}% of ${smp.oldPieces}` : ''}, awake-but-still ${smp.wreckAwakeSlowPct}%) swarm ${smp.swarm} (asleep ${smp.sleepingPct}%) · tick p50/p95/p99 ${smp.tickP50}/${smp.tickP95}/${smp.tickP99} ms · worker p95 ${smp.workerP95} · bodies/tick ${smp.bodiesPerTick} · swarm rec/tick ${smp.swarmRecordsPerTick} B/tick ${smp.swarmBytesPerTick} · rx ${smp.rxKBps} KB/s (swarm ${smp.rxSwarmKBps}, msgs ${smp.rxMsgKBps}) · wreck desc/snap ${smp.wreckDescPerSnapshot} · frame p50/p95/p99 ${smp.frameP50}/${smp.frameP95}/${smp.frameP99} · hitches ${smp.hitches} · render p95 ${smp.renderP95} · draws p95 ${smp.drawCallsP95} · objects ${smp.displayObjects}`);
       }
       if (cpuProfile && profileState === 'running' && Date.now() >= profileStopAt) {
         const { profile } = await cdp.send('Profiler.stop');
@@ -286,6 +286,9 @@ export interface SoakSample {
   bodiesPerTick: number; swarmRecordsPerTick: number; swarmBytesPerTick: number; wreckDescPerSnapshot: number;
   rxKBps: number; rxSwarmKBps: number; rxMsgKBps: number;
   frameP50: number; frameP95: number; frameP99: number; hitches: number; renderP95: number; drawCallsP95: number | null; displayObjects: number;
+  /** Asleep share of pieces older than 20 s, from the wake census (server
+   *  `EQX_WAKE_CENSUS=1`; null without it). Latest census, up to 5 s old. */
+  oldAsleepPct: number | null; oldPieces: number | null;
 }
 
 interface SampleMark { atMs: number; rx: number; rxSwarm: number; work: Record<string, any> | null }
@@ -316,6 +319,8 @@ function soakSample(room: Record<string, any>, c: any, last: SampleMark, now: nu
     rxKBps: kb(rx - last.rx), rxSwarmKBps: kb(rxSwarm - last.rxSwarm), rxMsgKBps: kb(rx - last.rx - (rxSwarm - last.rxSwarm)),
     frameP50: c.main.p50, frameP95: c.main.p95, frameP99: c.main.p99, hitches: c.main.hitches,
     renderP95: c.render?.render?.p95 ?? 0, drawCallsP95: c.render?.counts?.drawCalls?.p95 ?? null, displayObjects: c.render?.displayObjects ?? 0,
+    oldAsleepPct: room['wakeCensus'] ? pct(room['wakeCensus'].oldAsleep ?? 0, room['wakeCensus'].oldPieces ?? 0) : null,
+    oldPieces: room['wakeCensus']?.oldPieces ?? null,
   };
 }
 
