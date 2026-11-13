@@ -154,7 +154,15 @@ Each slice is one PR, about one agent session, tests first.
   - 0–2 FAN cracks (more for a harder death), each from the kill point to
     its zone crack 70–95 % of the way across the hull, so a zone half
     breaks into a wide triangle and a quad. A fan crack splits only the
-    sections inside its zone half (`LocalLine` regions);
+    sections inside its zone half (`LocalLine` regions), and only where
+    every part it leaves is chunky: at least `FAN_MIN_WIDTH_BEAMS` (0.45)
+    of the beam wide and at most `FAN_MAX_ASPECT` (2.6) times longer than
+    that width (rotating calipers); otherwise that section stays whole
+    (filmed take 2026-11-13: a fan crack left a long thin triangle, 4 %+
+    of the hull, along the port edge). Lock: "no long thin piece of any
+    size" in `fractureHull.killFocus.test.ts` (no piece under 0.45 beams
+    wide, none under 0.9 beams wide more than 3× longer than wide; the bow
+    and stern sections keep the hull's own shape and are exempt);
   - rarely ONE far crack: only for a killing blow ≥ max hull on a hull
     ≥ 4.5 beams long, with a 12 % seeded chance, well clear of the zone.
   A tip hit has no zone; one fan draw may crack the broken-off end once.

@@ -129,7 +129,9 @@ describe('SectorRoom integration: capital wreck break and drift', () => {
     while (fracturePlan({ hull: shipHullOutline(kind), seed, killPoint: { x: -220, y: -200 }, maxPieces: FRACTURE_MAX_PIECES, killBlowDamage: 1.2, recentDamageRate: 1.2 }).snap) seed++;
     const { internal, pose } = await killByShell(0.7, 0.1, seed);
     const ids = [...internal.swarmRegistry.all()].filter((r) => r.kind === WRECK_KIND).map((r) => r.id);
-    expect(ids.length).toBeGreaterThanOrEqual(6);
+    // v7 breaks a hull into 3–7 chunks; this kill keeps 5 once a fan crack
+    // that would leave a thin wedge is dropped (the v7 sliver rule).
+    expect(ids.length).toBeGreaterThanOrEqual(5);
     const d = internal.wreckDescriptors()[0]!;
     const sc = shipShapeScale(kind);
     const c = Math.cos(pose.angle);

@@ -190,6 +190,57 @@ function thinness(o: ReadonlyArray<V>): number {
   return maxL / minW;
 }
 
+/** A piece's length (its longest extent, over 180 directions) over its width
+ *  across that direction. */
+function lengthOverWidth(o: ReadonlyArray<V>): number {
+  const N = 180;
+  const ext = (a: number): number => {
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const v of o) {
+      const p = v.x * c + v.y * s;
+      lo = Math.min(lo, p);
+      hi = Math.max(hi, p);
+    }
+    return hi - lo;
+  };
+  let best = 0;
+  let bestA = 0;
+  for (let k = 0; k < N; k++) {
+    const a = (k * Math.PI) / N;
+    const e = ext(a);
+    if (e > best) { best = e; bestA = a; }
+  }
+  return best / ext(bestA + Math.PI / 2);
+}
+
+/** Width of a piece across its long axis (see `lengthOverWidth`). */
+function widthAcross(o: ReadonlyArray<V>): number {
+  const N = 180;
+  const ext = (a: number): number => {
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const v of o) {
+      const p = v.x * c + v.y * s;
+      lo = Math.min(lo, p);
+      hi = Math.max(hi, p);
+    }
+    return hi - lo;
+  };
+  let best = 0;
+  let bestA = 0;
+  for (let k = 0; k < N; k++) {
+    const a = (k * Math.PI) / N;
+    const e = ext(a);
+    if (e > best) { best = e; bestA = a; }
+  }
+  return ext(bestA + Math.PI / 2);
+}
+
 const V7_SEEDS = 60;
 /** Side hits over the middle 40 % of the hull, alternating port/starboard. */
 function v7Shatter(seed: number, kb: number, rr: number): { pieces: FracturePiece[]; kill: V } {
@@ -221,6 +272,39 @@ describe('fracture v7: chunky pieces at the impact, big sections elsewhere', () 
     }
     console.log(`[v7 sliver] ${_name}: worst small-piece length/width ${worst.toFixed(1)}`);
     expect(slivers, `pieces under ${SLIVER_AREA * 100} % of the hull and over ${SLIVER_THIN}× longer than wide; v6 had 14–129 over this sweep`).toBe(0);
+  });
+
+  // Filmed take 2026-11-13 (heavy cruiser, port-side hit amidships): a fan
+  // crack left a long thin triangle along the port edge. It was bigger than
+  // 4 % of the hull, so the small-sliver test above let it through. So for
+  // pieces of ANY size: none narrower than MIN_BEAMS (across its long
+  // axis), and none narrower than a hull section (HULL_SECTION_BEAMS) more
+  // than LONG_THIN× longer than it is wide. Before the fix the sweep had
+  // pieces 3.5× long and 0.41 beams wide. Exempt: the bow and stern
+  // sections (the pieces holding a hull tip), which keep the hull's own
+  // shape (this hull is ~9.6 beams long, so a whole end section is 4–6×
+  // longer than wide), and a section a full beam wide, which is not thin.
+  const LONG_THIN = 3;
+  const MIN_BEAMS = 0.45;
+  const HULL_SECTION_BEAMS = 0.9;
+  const holdsTip = (o: ReadonlyArray<V>): boolean => o.some((v) => v.y <= minY + 0.005 * L || v.y >= maxY - 0.005 * L);
+  it.each(LEVELS)('%s: no long thin piece of any size', (_name, kb, rr) => {
+    const bad: string[] = [];
+    let worst = 0;
+    let narrowest = Infinity;
+    for (let seed = 1; seed <= V7_SEEDS; seed++) {
+      for (const p of v7Shatter(seed, kb, rr).pieces) {
+        if (holdsTip(p.outline)) continue;
+        const t = lengthOverWidth(p.outline);
+        const w = widthAcross(p.outline) / B;
+        narrowest = Math.min(narrowest, w);
+        if (w >= HULL_SECTION_BEAMS) continue;
+        worst = Math.max(worst, t);
+        if (t > LONG_THIN || w < MIN_BEAMS) bad.push(`seed ${seed}: ${t.toFixed(1)}× longer than wide, ${w.toFixed(2)} beams wide (${(100 * p.area / HULL_AREA).toFixed(1)} % of the hull)`);
+      }
+    }
+    console.log(`[v7 long thin] ${_name}: worst length/width (under a hull section wide) ${worst.toFixed(2)}, narrowest ${narrowest.toFixed(2)} beams`);
+    expect(bad, `pieces over ${LONG_THIN}× longer than wide or under ${MIN_BEAMS} beams wide`).toEqual([]);
   });
 
   it.each(LEVELS)('%s: no cut far from the kill point (a far crack only rarely, on a very heavy blow, and one at most)', (_name, kb, rr) => {

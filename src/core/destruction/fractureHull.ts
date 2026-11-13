@@ -94,6 +94,11 @@ const FAN_DEPTH_MIN = 0.7;
 const FAN_DEPTH_SPAN = 0.25;
 /** v7: most fan cracks (one per zone half). */
 const FAN_MAX = 2;
+/** v7: a fan crack is dropped where it would leave a part narrower than
+ *  this (beams) or longer than FAN_MAX_ASPECT × its width (filmed take
+ *  2026-11-13: a long thin triangle along the hull's edge). */
+const FAN_MIN_WIDTH_BEAMS = 0.45;
+const FAN_MAX_ASPECT = 2.6;
 /** v7 rare far crack: only when the killing blow is at least FAR_MIN_BLOW
  *  of max hull and the hull is at least FAR_MIN_LENGTH_BEAMS long, with this
  *  seeded chance; at most one, FAR_CLEAR_BEAMS past the zone and
@@ -249,7 +254,7 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
     for (let i = 0; i < nZone; i++) lines.push(cracks.zone[i]!);
     if (useFar) for (const f of cracks.far) lines.push(f);
     if (useCuts) for (const c of cuts) lines.push(sectionLine(c));
-    const rings = splitIntoPieces(hull, lines, cracks.fan, nFan);
+    const rings = splitIntoPieces(hull, lines, cracks.fan, nFan, hullBeam(hull, keel));
     const quantised = quantiseRings(rings, minArea);
     if (quantised.length <= cap) {
       const jagged = jagCutEdges(weldTJunctions(quantised), input.seed >>> 0, scale);
@@ -647,7 +652,7 @@ function splitBoth(sections: P[][], l: FractureLine): P[][] {
 
 /** Split by every global line, then each of the first `nLocal` local lines
  *  splits only the sections whose centroid lies in its region. */
-function splitIntoPieces(hull: P[], lines: ReadonlyArray<FractureLine>, local: ReadonlyArray<LocalLine>, nLocal: number): P[][] {
+function splitIntoPieces(hull: P[], lines: ReadonlyArray<FractureLine>, local: ReadonlyArray<LocalLine>, nLocal: number, beam: number): P[][] {
   let sections: P[][] = [hull];
   for (const l of lines) {
     if (l.nx === 0 && l.ny === 0) continue;
@@ -660,12 +665,96 @@ function splitIntoPieces(hull: P[], lines: ReadonlyArray<FractureLine>, local: R
       const c = ringCentroid(s);
       let inside = true;
       for (const h of region) if (h.sign * (h.nx * c.x + h.ny * c.y - h.c) <= 0) { inside = false; break; }
-      if (inside) for (const part of splitBoth([s], line)) next.push(part);
+      if (!inside) {
+        next.push(s);
+        continue;
+      }
+      // v7 (filmed take 2026-11-13: a fan crack left a long thin triangle
+      // along the hull's edge): a fan crack that would leave a part narrower
+      // than FAN_MIN_WIDTH_BEAMS or longer than FAN_MAX_ASPECT × its width
+      // is dropped for this section, which stays whole.
+      const parts = splitBoth([s], line);
+      let chunky = true;
+      for (const part of parts) {
+        if (!isChunky(part, beam)) {
+          chunky = false;
+          break;
+        }
+      }
+      if (chunky) for (const part of parts) next.push(part);
       else next.push(s);
     }
     sections = next;
   }
   return sections;
+}
+
+/** Full beam of the hull: its extent across the keel. */
+function hullBeam(hull: P[], keel: Vec2): number {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const p of hull) {
+    const c = p.y * keel.x - p.x * keel.y;
+    if (c < lo) lo = c;
+    if (c > hi) hi = c;
+  }
+  return hi - lo;
+}
+
+/** A fan crack's part is chunky when its least width (rotating calipers over
+ *  its convex hull's edges) is at least FAN_MIN_WIDTH_BEAMS of the beam and
+ *  its length along that edge is at most FAN_MAX_ASPECT × the width.
+ *  Arithmetic and sqrt only, fixed order (deterministic). */
+function isChunky(ring: ReadonlyArray<{ x: number; y: number }>, beam: number): boolean {
+  const ch = convexHullOf(ring);
+  if (ch.length < 3) return false;
+  let bestW = Infinity;
+  let bestL = 0;
+  for (let i = 0; i < ch.length; i++) {
+    const a = ch[i]!;
+    const b = ch[(i + 1) % ch.length]!;
+    const ex = b.x - a.x;
+    const ey = b.y - a.y;
+    const el = Math.sqrt(ex * ex + ey * ey);
+    if (el <= 0) continue;
+    let w = 0;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const v of ch) {
+      const d = Math.abs(ex * (v.y - a.y) - ey * (v.x - a.x)) / el;
+      if (d > w) w = d;
+      const t = (ex * (v.x - a.x) + ey * (v.y - a.y)) / el;
+      if (t < lo) lo = t;
+      if (t > hi) hi = t;
+    }
+    if (w < bestW) {
+      bestW = w;
+      bestL = hi - lo;
+    }
+  }
+  return bestW >= FAN_MIN_WIDTH_BEAMS * beam && bestL <= FAN_MAX_ASPECT * bestW;
+}
+
+/** Convex hull (Andrew's monotone chain), CCW, collinear points dropped. */
+function convexHullOf(ring: ReadonlyArray<{ x: number; y: number }>): Array<{ x: number; y: number }> {
+  const pts = ring.map((p) => ({ x: p.x, y: p.y })).sort((a, b) => (a.x !== b.x ? a.x - b.x : a.y - b.y));
+  if (pts.length < 3) return pts;
+  const cross = (o: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number =>
+    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lower: Array<{ x: number; y: number }> = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2]!, lower[lower.length - 1]!, p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper: Array<{ x: number; y: number }> = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i]!;
+    while (upper.length >= 2 && cross(upper[upper.length - 2]!, upper[upper.length - 1]!, p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
 }
 
 // ───────────────────── robust split of a simple polygon by a line ─────────────────────

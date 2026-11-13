@@ -134,7 +134,9 @@ describe('fractureHull', () => {
 
   it.each(cases)('%s: piece areas sum to the hull area', (_n, input) => {
     const pieces = fractureHull(input);
-    expect(pieces.length).toBeGreaterThan(3);
+    // The U's arms are a third of its width, so no fan crack into them is
+    // chunky enough (v7 sliver rule): its fracture is the three zone pieces.
+    expect(pieces.length).toBeGreaterThan(_n === 'concave U' ? 2 : 3);
     const want = tupleArea(input.hull);
     expect(Math.abs(sumArea(pieces) - want) / want).toBeLessThan(0.005);
     for (const p of pieces) expect(p.area).toBeCloseTo(area(p.outline), 6);
