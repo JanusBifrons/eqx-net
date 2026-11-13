@@ -293,7 +293,8 @@ export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: Capi
     shieldRegenRate: (health * 0.5) / 600,
     energyMax: 600,
     energyRegenRate: 2,
-    ai: { thrust: p.thrustImpulse, turnKp: 2, maxTorque: p.turnTorque },
+    ai: { thrust: p.thrustImpulse },
+    aiRole: 'capital',
     shape: { kind: 'composite', scale: 1, hull, parts },
     mounts,
     // exp/fire-control: three weapon groups (3 locks each, the capital default):
