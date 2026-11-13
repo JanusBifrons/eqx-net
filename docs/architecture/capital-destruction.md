@@ -790,20 +790,23 @@ break-up:
   dark. At the `minimal` effects tier a simple glow is not built at all
   (a capital's full glow always is). A descriptor seen up to `glowSeconds`
   late starts its glow at first sight, like the capital front.
-- **Dead pieces look dead, from their first frame.** The piece's art takes
-  `fx.deadTint` (a warm ~35 % multiply) when it is built, whatever path built
-  it (a late piece, a rebuild when the art arrives, no cut edge): debris is
-  clearly dimmer than any live ship but still shows the art (the first
-  fleet-fight clip's front line was "a solid purple wall" of live-looking
-  wreckage; round 2: pieces "bright lilac with no warm edge" while they
-  glowed). The glow is added after the art (drawn over it) and nothing tints
-  it: a hit flash multiplies onto the dead art only
-  (`WreckPieceSprite.setHitTint`, written on change), never the container,
-  so a shot piece never brightens and the glow stays warm orange. Capitals
-  keep their light `burntTint` (null) and the container flash. Lock:
-  `swarmSpriteUpdater.subcapDeadTint.test.ts` (every piece of six wrecks,
-  pieces and descriptors arriving out of step, the art arriving late, hit
-  flashes, baked / GPU-lit / plain art, a piece with no cut edges).
+- **Pieces keep the ship's normal brightness: broken, not darkened.** The
+  owner's call (2026-11-13, after the v4 debris film): "The darkened scrap
+  just doesn't look right, what's the logic? Why would it darken when
+  destroyed? It should just be broken, same brightness?" So a sub-cap
+  piece's art is untinted (white multiply) from its first frame, whatever
+  path built it (a late piece, a rebuild when the art arrives, no cut edge):
+  the profile's `fx.deadTint` is null and `fx.burntArt` false. (Rounds 1–4
+  darkened it with a warm ~35 % `deadTint` after the "solid purple wall"
+  review; the owner rejected the look.) The glow is added after the art
+  (drawn over it) and nothing tints it: a hit flash multiplies onto the art
+  only (`WreckPieceSprite.setHitTint`, written on change), never the
+  container, so the glow stays warm orange, and clears back to the normal
+  tint. Capitals keep their light per-piece `burntTint` (`fx.burntArt`) and
+  the container flash. Lock: `swarmSpriteUpdater.subcapDeadTint.test.ts`
+  (every piece of six wrecks drawn at the normal tint apart from a live
+  flash, pieces and descriptors arriving out of step, the art arriving late,
+  hit flashes, baked / GPU-lit / plain art, a piece with no cut edges).
   (The bright pink diamonds in the round-2 crops, one per dead robot, are
   loot pods, swarm kind 3: an NPC kill spills its hold through
   `LootSubsystem.spillShipHold`, which then always used the bright magenta
@@ -824,11 +827,12 @@ break-up:
   (welcome `subcapWrecks`, mirrored to `RenderMirror.subcapWrecks`; slice 2
   sets it), a dying sub-cap's sprite is held until all its pieces draw, with
   the profile's deadline `fx.dyingHoldMs` (250 ms; capitals 1500 ms). The
-  hold ends the frame every piece is drawn. The held sub-cap hull is drawn
-  at `fx.deadTint` from the frame it is held (round 2: 600 ms of a
-  full-brightness hull, often frozen mid hit-flash, "looked alive, then
-  popped into pieces"); the explosion over a dark hull reads as dead until
-  the pieces take over. Capitals' held hulls are unchanged.
+  hold ends the frame every piece is drawn. The held sub-cap hull keeps its
+  normal brightness (no dead tint, the owner's "same brightness" call) but
+  never freezes mid hit-flash: no sweep updates a held sprite, so
+  `DyingHullHold.tryHold` clears a flash it died wearing (round 2: 600 ms of
+  a hull "frozen mid hit-flash" looked alive; the hold is now 250 ms under
+  the shrunk death explosion). Capitals' held hulls are unchanged.
 - **Cost per piece.** A small ship's art is one tile, so a piece is its
   container + 1 art mesh (baked `Mesh`, GPU-lit `LitShipMesh`, or the plain
   polygon before the art is ready) + 1 glow mesh while glowing: 3 scene
@@ -850,7 +854,7 @@ break-up:
   ripples or front; a simple core glow gone by `glowSeconds`; ≤ 2 drawables
   per piece while glowing and 1 after; none at the minimal tier, the capital
   glow kept there; a settled piece writes no tint, texture or glow; culling;
-  the normal death blast kept and shrunk; the dead tint; the warm 1 s glow;
+  the normal death blast kept and shrunk; no dead tint; the warm 1 s glow;
   no icon or radar contact), `ColyseusClient.wreckDamageFx.test.ts` (no
   number on debris), `ColyseusClient.deadDroneLabel.test.ts` (no tag on a
   dead NPC), `dyingHullHold.test.ts` (the brief sub-cap hold), and the

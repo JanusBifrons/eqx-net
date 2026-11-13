@@ -1,18 +1,19 @@
 /**
- * Sub-cap break-up, round-2 hostile review (2026-11-13, fleet-fight take
- * `film/subcap-2`, crop f00588): "most robot wreckage turns dark maroon, but
- * nearly every dead robot leaves one or two BRIGHT full-colour pink pieces
- * (unlabelled, no turret) that stay bright for seconds and read as live
- * ships". EVERY sub-cap piece must look dead from the first frame it is drawn (its warm cut-edge glow the only bright part), at the latest within `glowSeconds` of its
- * death, whatever path it takes to the screen: pieces of a wreck arriving at
- * different times (out-of-interest binary cadence, the descriptor on another
- * channel), a piece first drawn plain and rebuilt when the art is ready, a
- * piece with no cut edges (no glow), a hit flash during and after the glow,
- * baked and GPU-lit art.
+ * Sub-cap debris keeps the ship's NORMAL brightness (owner decision
+ * 2026-11-13, after the v4 debris film): "The darkened scrap just doesn't look
+ * right, what's the logic? Why would it darken when destroyed? It should just
+ * be broken, same brightness?" This replaces the round-2 "dead tint" rule.
  *
- * "Looks dead" = the colour the art is drawn with (its own tint times every
- * ancestor's, the way Pixi multiplies a container's tint down) is no brighter
- * than the profile's `deadTint`, measured channel by channel.
+ * EVERY sub-cap piece is drawn at the art's normal tint (white multiply)
+ * from its first frame, apart from a live hit flash (which shows, on the art
+ * only, and clears), whatever path it takes to the screen: pieces of a wreck
+ * arriving at different times (out-of-interest binary cadence, the
+ * descriptor on another channel), a piece first drawn plain and rebuilt when
+ * the art is ready, a piece with no cut edges (no glow), a hit flash during
+ * and after the glow, baked and GPU-lit art.
+ *
+ * "Drawn colour" = the art's own tint times every ancestor's, the way Pixi
+ * multiplies a container's tint down.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { Container, GlProgram, Mesh, Rectangle, Texture, TextureSource } from 'pixi.js';
@@ -24,6 +25,7 @@ import { litPass } from '../art/litPass.js';
 import { LitShipMesh } from '../art/litShipShader.js';
 import { LOOK_NIGHT } from '../art/lightingSettings.js';
 import { DESTRUCTION_PROFILES } from '../../../shared-types/shipScale/destruction.js';
+import { DAMAGE_FLASH_COLOR } from './spriteBuilders.js';
 import type { ArtHandle, ArtService, ShipArt } from '../art/ArtService.js';
 import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
@@ -35,7 +37,7 @@ import type { WreckPieceGeometry } from '../../../core/destruction/wreckPieces.j
 vi.spyOn(GlProgram, 'from').mockImplementation(() => ({}) as GlProgram);
 
 const SUB = DESTRUCTION_PROFILES.subcap.fx;
-const DEAD = SUB.deadTint!;
+const NORMAL = 0xffffff;
 const GLOW_MS = SUB.glowSeconds * 1000;
 const TICK_MS = 1000 / 60;
 const FRAME_MS = 16;
@@ -123,9 +125,9 @@ function drawnTint(node: Container): number {
   return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b);
 }
 
-/** No channel brighter than the dead tint (+1 for rounding). */
-function looksDead(t: number): boolean {
-  return ((t >> 16) & 255) <= ((DEAD >> 16) & 255) + 1 && ((t >> 8) & 255) <= ((DEAD >> 8) & 255) + 1 && (t & 255) <= (DEAD & 255) + 1;
+/** The art's normal tint, or the hit flash while one is live. */
+function expectedTint(flashing: boolean): number {
+  return flashing ? DAMAGE_FLASH_COLOR : NORMAL;
 }
 
 /** Every art node of a piece (not its glow): the meshes or the plain polygon. */
@@ -143,7 +145,7 @@ interface Plan {
 
 /** Plays a fleet-fight-like stream for `durMs` and returns every
  *  (piece, time) where a piece `graceMs` or more past its first sight
- *  was drawn brighter than the dead look. */
+ *  was not drawn at the normal tint (or the live flash). */
 function play(ctx: SwarmSpriteCtx, plan: Plan, durMs: number, T0: number, deathMsOf: (d: WreckDescriptor) => number, graceMs: number): string[] {
   const bad: string[] = [];
   const swarm = new Map<number, SwarmRenderState>();
@@ -181,9 +183,10 @@ function play(ctx: SwarmSpriteCtx, plan: Plan, durMs: number, T0: number, deathM
         if (T0 + t < deathMsOf(d) + graceMs) continue;
         const nodes = artNodes(p);
         if (nodes.length === 0) bad.push(`${key} at ${t} ms: no art`);
+        const want = expectedTint(ctx.localHitTargets.has(key));
         for (const n of nodes) {
           const c = drawnTint(n);
-          if (!looksDead(c)) bad.push(`${key} (${d.parentKind}, ${p.artMode()}) at ${t} ms: drawn #${c.toString(16)}, mesh #${(n.tint as number).toString(16)}, container #${(p.tint as number).toString(16)}`);
+          if (c !== want) bad.push(`${key} (${d.parentKind}, ${p.artMode()}) at ${t} ms: drawn #${c.toString(16)}, mesh #${(n.tint as number).toString(16)}, container #${(p.tint as number).toString(16)}`);
         }
       }
       w++;
@@ -192,7 +195,7 @@ function play(ctx: SwarmSpriteCtx, plan: Plan, durMs: number, T0: number, deathM
   return bad;
 }
 
-describe('every sub-cap piece looks dead from its first frame (round-2 review)', () => {
+describe('every sub-cap piece keeps its normal brightness from its first frame (owner 2026-11-13)', () => {
   const T0 = 100_000;
   const tick0 = Math.floor(T0 / TICK_MS);
   // Several robot and drone wrecks dying at different times; pieces and
@@ -229,9 +232,9 @@ describe('every sub-cap piece looks dead from its first frame (round-2 review)',
         const p = plan();
         const origFlash = p.flash;
         p.flash = (k, t) => { if (t >= p.artReadyAtMs) ready.on = true; return origFlash(k, t); };
-        // Dead from the first frame drawn (grace 0): the glow is the only bright part.
+        // Normal from the first frame drawn (grace 0): never darkened, a flash shows and clears.
         const bad = play(ctx, p, 3500, T0, firstSight(p), 0);
-        expect(bad.slice(0, 12), `${bad.length} bright frames`).toEqual([]);
+        expect(bad.slice(0, 12), `${bad.length} darkened or wrong frames`).toEqual([]);
         if (look === 'lit') {
           const meshes = [...ctx.sprites.values()].flatMap((s) => s.children).filter((c) => c instanceof LitShipMesh);
           expect(meshes.length, 'the lit path ran').toBeGreaterThan(0);
@@ -242,7 +245,7 @@ describe('every sub-cap piece looks dead from its first frame (round-2 review)',
     });
   }
 
-  it('a piece with no cut edges (no glow at all) is dead from the first frame', () => {
+  it('a piece with no cut edges (no glow at all) keeps its normal brightness from the first frame', () => {
     const d = desc(9, 'robot-square', 31, tick0);
     const g = rebuildWreckPieces(d)![0]!;
     const noCuts: WreckPieceGeometry = { ...g, cutEdges: g.cutEdges.map(() => false) };
@@ -251,9 +254,9 @@ describe('every sub-cap piece looks dead from its first frame (round-2 review)',
     const p = new WreckPieceSprite(noCuts, 'robot-square', bakedArt(), info, 0);
     p.update(T0, 0.4);
     expect(p.glowPositions()).toBeNull();
-    for (const n of artNodes(p)) expect(looksDead(drawnTint(n)), `#${(n.tint as number).toString(16)}`).toBe(true);
+    for (const n of artNodes(p)) expect(drawnTint(n), `#${(n.tint as number).toString(16)}`).toBe(NORMAL);
     // And a late joiner's (cool) piece likewise.
     const cool = new WreckPieceSprite(g, 'robot-square', bakedArt(), coolWreckInfo(d), 0);
-    for (const n of artNodes(cool)) expect(looksDead(drawnTint(n))).toBe(true);
+    for (const n of artNodes(cool)) expect(drawnTint(n)).toBe(NORMAL);
   });
 });

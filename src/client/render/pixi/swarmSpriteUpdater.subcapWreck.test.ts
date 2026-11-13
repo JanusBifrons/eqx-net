@@ -26,6 +26,7 @@ import { WreckArtState, WreckPieceSprite, deathBlastFor, hullDeathBlastReplaced 
 import { radarCategoryForSwarm } from '../halo/arrowGraphics.js';
 import { FarZoomIcons } from './FarZoomIcons.js';
 import { DESTRUCTION_PROFILES } from '../../../shared-types/shipScale/destruction.js';
+import { DAMAGE_FLASH_COLOR } from './spriteBuilders.js';
 import type { ArtHandle, ArtService, ShipArt } from '../art/ArtService.js';
 import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
@@ -251,18 +252,15 @@ describe('sub-capital wrecks: the quiet look (slice 4)', () => {
     }
     for (const c of counters) expect(c.n, c.what).toBe(0);
     expect(pieces(ctx).map((p) => p.frameWrites()), 'no light-frame or glow work').toEqual(writesBefore);
-    // A hit still flashes it (on the art, darker than dead, so a shot piece
-    // never brightens) and the flash clears once.
+    // A hit still flashes it (on the art only) and the flash clears once,
+    // back to the art's normal tint.
     const hitP = ctx.sprites.get('swarm-100') as WreckPieceSprite;
     ctx.localHitTargets.add('swarm-100');
     updateSwarmSprites(m, ctx);
-    for (const t of artTints(hitP)) {
-      expect(t).not.toBe(SUB.deadTint);
-      expect(tintLevel(t)).toBeLessThanOrEqual(tintLevel(SUB.deadTint!));
-    }
+    for (const t of artTints(hitP)) expect(t).toBe(DAMAGE_FLASH_COLOR);
     ctx.localHitTargets.clear();
     updateSwarmSprites(m, ctx);
-    for (const t of artTints(hitP)) expect(t).toBe(SUB.deadTint);
+    for (const t of artTints(hitP)) expect(t).toBe(0xffffff);
     expect(hitP.tint, 'the piece container stays untinted').toBe(0xffffff);
   });
 
@@ -342,48 +340,41 @@ describe('sub-capital wrecks: the quiet look (slice 4)', () => {
     expect(SUB.hullDeathBlastReplaced).toBe(false);
   });
 
-  /** Brightness of a 0xRRGGBB multiply tint (its largest channel, 0..1). */
-  const tintLevel = (t: number): number => Math.max((t >> 16) & 255, (t >> 8) & 255, t & 255) / 255;
   /** Every art mesh's tint under a piece (not the glow). */
   const artTints = (p: WreckPieceSprite): number[] => p.children
     .filter((c) => c instanceof Mesh && c.texture !== p.glowTexture())
     .map((c) => (c as Mesh).tint as number);
 
   /**
-   * Hostile review 2026-11-13 (30-v-30 fleet fight, sub-cap wrecks on): "by
-   * 40 s the front line was a solid purple wall of robot wreckage,
-   * indistinguishable from live robots". Dead pieces read as DEAD: once the
-   * glow ends, the art is darkened and warm (burnt), clearly dimmer than any
-   * live ship (which draws untinted), still showing the art. Set once.
+   * Owner 2026-11-13, after the v4 debris film: "The darkened scrap just
+   * doesn't look right, what's the logic? Why would it darken when destroyed?
+   * It should just be broken, same brightness?" Sub-cap pieces keep the
+   * ship's normal art brightness and colour (untinted), during the glow and
+   * after it; the thin glow on the cuts is the only change.
    */
-  it('dead pieces are dark and burnt from the first frame (profile fx.deadTint): the warm glow is the only bright part', () => {
+  it('sub-cap pieces keep the ship\'s normal brightness: no dead tint, during or after the glow', () => {
+    expect(SUB.deadTint, 'no dead tint on the profile').toBeNull();
     const ctx = makeCtx(stubArt(fighterArt()), { breaks: 0, blasts: 0, ripples: 0 });
     const m = mirrorFor(desc('robot-square', 31), DEATH_TICK);
     const T0 = 10_000;
     ctx.fxNowMs = T0;
     updateSwarmSprites(m, ctx);
-    // Round-2 review: during the glow the pieces read "bright lilac with no
-    // warm edge" (the art kept its light burnt tint until the glow ended).
-    for (const p of pieces(ctx)) for (const t of artTints(p)) expect(t, 'dead while it glows').toBe(SUB.deadTint);
+    for (const p of pieces(ctx)) for (const t of artTints(p)) expect(t, 'normal while it glows').toBe(0xffffff);
     ctx.fxNowMs = T0 + GLOW_MS + 50;
     updateSwarmSprites(m, ctx);
-    const dead = SUB.deadTint!;
-    expect(tintLevel(dead), 'clearly dimmer than a live ship (untinted)').toBeLessThanOrEqual(0.45);
-    const r = (dead >> 16) & 255, b = dead & 255;
-    expect(r, 'warm (burnt), not blue/purple').toBeGreaterThan(b);
     for (const p of pieces(ctx)) {
       const ts = artTints(p);
       expect(ts.length, 'still showing the art').toBeGreaterThan(0);
-      for (const t of ts) expect(t).toBe(dead);
+      for (const t of ts) expect(t, 'normal after the glow').toBe(0xffffff);
     }
   });
 
-  it('a wreck with no glow (minimal tier) is dead-tinted from the start', () => {
+  it('a wreck with no glow (minimal tier) keeps its normal brightness from the start', () => {
     const ctx = makeCtx(stubArt(fighterArt()), { breaks: 0, blasts: 0, ripples: 0 }, 'minimal');
     const m = mirrorFor(desc('robot-square', 31), DEATH_TICK);
     ctx.fxNowMs = 10_000;
     updateSwarmSprites(m, ctx);
-    for (const p of pieces(ctx)) for (const t of artTints(p)) expect(t).toBe(SUB.deadTint);
+    for (const p of pieces(ctx)) for (const t of artTints(p)) expect(t).toBe(0xffffff);
   });
 
   /**

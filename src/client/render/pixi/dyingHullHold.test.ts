@@ -269,29 +269,34 @@ describe('a dying sub-capital (subcapWrecks): the same hold, brief', () => {
   });
 
   /**
-   * Round-2 hostile review (fleet-fight take, 2026-11-13): "a dead ship looks
-   * alive for ~0.6 s": the held hull kept its full-brightness live look
-   * (often frozen mid hit-flash) until its pieces trickled in, then popped
-   * into pieces. A held sub-cap hull is visibly dead from the frame it is
-   * held: drawn at the profile's dead tint (with the explosion over it), and
-   * the hold is brief. A capital's hold is unchanged.
+   * Owner 2026-11-13, after the v4 debris film: "The darkened scrap just
+   * doesn't look right, what's the logic? Why would it darken when destroyed?
+   * It should just be broken, same brightness?" A held sub-cap hull is drawn
+   * at the art's normal tint (white multiply) for the whole (brief) hold:
+   * never darkened, and never frozen mid hit-flash (round-2 review: no sweep
+   * updates a held sprite, so a flash it died wearing would stick). A
+   * capital's hold is unchanged.
    */
-  it('a held sub-cap hull is drawn dead (fx.deadTint) from the death frame, and briefly', () => {
-    const dead = DESTRUCTION_PROFILES.subcap.fx.deadTint!;
+  it('a held sub-cap hull keeps its normal brightness (no dead tint, no frozen flash), and is brief', () => {
+    expect(DESTRUCTION_PROFILES.subcap.fx.deadTint, 'no dead tint').toBeNull();
     expect(DESTRUCTION_PROFILES.subcap.fx.dyingHoldMs, 'brief: pieces take over fast').toBeLessThanOrEqual(250);
-    const h = new Harness(false, true);
-    h.swarm.set(60, entry(1, 'fighter', FX, FY, 12));
-    let t = 1000;
-    h.frame(t);
-    // It was being hit as it died: the live sprite wears the flash.
-    h.ctx.localHitTargets.add('swarm-60');
-    h.frame(t += 16);
-    h.ctx.localHitTargets.clear();
-    h.kill(60);
-    h.frame(t += 16);
-    const held = h.container.children.filter((c) => !(c instanceof WreckPieceSprite) && c.visible && !c.destroyed);
-    expect(held).toHaveLength(1);
-    expect(held[0]!.tint, 'dead from the death frame').toBe(dead);
+    for (const flashedAtDeath of [true, false]) {
+      const h = new Harness(false, true);
+      h.swarm.set(60, entry(1, 'fighter', FX, FY, 12));
+      let t = 1000;
+      h.frame(t);
+      // It was being hit as it died: the live sprite wears the flash.
+      if (flashedAtDeath) h.ctx.localHitTargets.add('swarm-60');
+      h.frame(t += 16);
+      h.ctx.localHitTargets.clear();
+      h.kill(60);
+      for (let f = 0; f < 3; f++) {
+        h.frame(t += 16);
+        const held = h.container.children.filter((c) => !(c instanceof WreckPieceSprite) && c.visible && !c.destroyed);
+        expect(held).toHaveLength(1);
+        expect(held[0]!.tint, `normal tint while held (flashed at death: ${flashedAtDeath})`).toBe(0xffffff);
+      }
+    }
     // A capital's held hull keeps its look (unchanged).
     const c = new Harness(true);
     c.swarm.set(50, entry(1, 'battleship', HULL_X, HULL_Y, 300));

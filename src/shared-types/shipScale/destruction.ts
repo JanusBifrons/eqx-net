@@ -82,13 +82,17 @@ export interface DestructionFx {
    *  hold ends the frame every piece is drawn, so this is only the deadline
    *  for a lost or late wreck. 0: no hold. */
   readonly dyingHoldMs: number;
-  /** The dead pieces' art tint once the glow has ended (set once, never
-   *  written again): a dark, warm burnt multiply so debris reads as DEAD,
-   *  clearly dimmer than any live ship while still showing the ship's art.
-   *  Null: the pieces keep their per-piece `burntTint` (the capital look).
-   *  Hostile review 2026-11-13: sub-cap debris at full colour made the front
-   *  line "a solid purple wall" of live-looking wreckage. */
+  /** A dead tint multiplied onto the pieces' art (and the held hull) from
+   *  their first frame. Null: no dead tint. Null for every profile since the
+   *  owner's call (2026-11-13, after the v4 debris film): "The darkened scrap
+   *  just doesn't look right, what's the logic? Why would it darken when
+   *  destroyed? It should just be broken, same brightness?" */
   readonly deadTint: number | null;
+  /** The pieces' art wears the per-piece `burntTint` (slightly darker,
+   *  darkest at the kill point: the capital look). False: the art keeps the
+   *  ship's normal brightness and colour (sub-capitals), and a hit flash goes
+   *  on the art only, never the glow. */
+  readonly burntArt: boolean;
   /** The ship's normal death explosion, scaled (radius / smoke linger), while
    *  the room breaks this profile into wrecks (welcome `subcapWrecks` for a
    *  sub-capital). 1: unchanged. Owner 2026-11-13: "Shrink it", so the
@@ -145,6 +149,7 @@ const CAPITAL: DestructionProfile = {
     glowSeconds: 4.5,
     dyingHoldMs: 1500,
     deadTint: null,
+    burntArt: true,
     deathBlastScale: 1,
     deathBlastLinger: 1,
   },
@@ -202,12 +207,14 @@ const SUBCAP: DestructionProfile = {
     glowStyle: 'simple',
     glowSeconds: 1,
     // Brief: no crack hold, so a sub-cap's pieces are drawable at once. The
-    // held hull is drawn dead (deadTint, `dyingHullHold.ts`) under its death
-    // explosion; 600 ms of it still read as "dead ship sits there, then pops"
-    // (round-2 review), so the pieces take over within 250 ms or the hull goes.
+    // held hull sits under its death explosion; 600 ms of it read as "dead
+    // ship sits there, then pops" (round-2 review), so the pieces take over
+    // within 250 ms or the hull goes.
     dyingHoldMs: 250,
-    // ~35 % brightness and warm (cuts the art's blue and purple most): burnt.
-    deadTint: 0x5e5249,
+    // No darkening (owner 2026-11-13: "It should just be broken, same
+    // brightness"): pieces and held hull keep the ship's normal art.
+    deadTint: null,
+    burntArt: false,
     deathBlastScale: 0.5,
     deathBlastLinger: 0.5,
   },
@@ -233,6 +240,7 @@ const NONE: DestructionProfile = {
     glowSeconds: 0,
     dyingHoldMs: 0,
     deadTint: null,
+    burntArt: false,
     deathBlastScale: 1,
     deathBlastLinger: 1,
   },

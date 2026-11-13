@@ -1039,12 +1039,13 @@ export class WreckPieceSprite extends Container {
    *  `fx.glowSeconds`. */
   private simple = false;
   private lastU = -1;
-  /** The art (meshes, or the plain polygon) the dead tint goes on. */
+  /** The art (meshes, or the plain polygon) the art tint and flash go on. */
   private readonly artParts: Container[] = [];
-  /** A profile with a dead look (sub-capitals, `fx.deadTint`): the art's
-   *  base tint and the hit flash, multiplied onto the ART only (never the
-   *  container, which would tint the glow too; round-2 review: the glow read
-   *  pink under fire). Written only when either changes. */
+  /** Art that is not burnt (sub-capitals, `!fx.burntArt`): the art's base
+   *  tint (white, or a profile `fx.deadTint`) and the hit flash, multiplied
+   *  onto the ART only (never the container, which would tint the glow too;
+   *  round-2 review: the glow read pink under fire). Written only when
+   *  either changes. */
   private artTint = 0xffffff;
   private hitTint = 0xffffff;
   /** Simple glow strip width (world u, into the piece). */
@@ -1072,7 +1073,7 @@ export class WreckPieceSprite extends Container {
       // hull-local position), offset back to the piece's centroid.
       const L = wreckTexLayout(art);
       const lit = art.lit;
-      const tint = burntTint(piece, info);
+      const tint = info.fx.burntArt ? burntTint(piece, info) : 0xffffff;
       for (const m of wreckPieceMeshes(piece, L)) {
         const tex = art.frames[m.tile]!;
         const mesh = new LitShipMesh({ tex, w: lit.w, rows: tex.frame.height, y0: m.tile * art.tileH, hullH: lit.h, ppu: lit.ppu, maxH: lit.maxH, emisMax: lit.emisMax }, settings);
@@ -1087,7 +1088,7 @@ export class WreckPieceSprite extends Container {
       }
     } else if (art !== null && art.lit === undefined) {
       const L = wreckTexLayout(art);
-      const tint = burntTint(piece, info);
+      const tint = info.fx.burntArt ? burntTint(piece, info) : 0xffffff;
       for (const m of wreckPieceMeshes(piece, L)) {
         const geometry = new MeshGeometry({ positions: m.positions, uvs: m.uvs, indices: m.indices });
         geometry.batchMode = 'batch'; // > 100 vertices still joins the batch
@@ -1101,10 +1102,10 @@ export class WreckPieceSprite extends Container {
     } else {
       this.artParts.push(this.addChild(buildWreckPieceGfx(piece.outline, parentKind)));
     }
-    // A profile with a dead look (sub-capitals) is dead from its first frame,
-    // whatever path built it (late piece, art arriving late, no cut edge):
-    // the warm glow on its cuts is the only bright part (round-2 review: one
-    // or two pieces per wreck read as live ships while they glowed).
+    // A profile dead tint, if any, from the first frame whatever path built
+    // the piece. None today: a sub-cap piece keeps its ship's normal art
+    // (owner 2026-11-13: "Why would it darken when destroyed? It should just
+    // be broken, same brightness?"); a capital's stays burnt (`fx.burntArt`).
     this.applyDeadTint();
     // The glow: cut edges only, one Mesh of quads (a soft halo under a bright
     // core per cut segment) on the glow-curve texture. A wreck already cool
@@ -1371,9 +1372,9 @@ export class WreckPieceSprite extends Container {
     else this.writeGlow(t);
   }
 
-  /** The dead look (profile `fx.deadTint`), on the art from the piece's
-   *  first frame (and again, idempotently, when the glow ends); null keeps
-   *  the burnt tint (capitals). */
+  /** A profile `fx.deadTint`, on the art from the piece's first frame (and
+   *  again, idempotently, when the glow ends). Null (every profile today)
+   *  leaves the art as built: burnt for capitals, untinted for sub-caps. */
   private applyDeadTint(): void {
     const t = this.info.fx.deadTint;
     if (t === null) return;
@@ -1382,14 +1383,15 @@ export class WreckPieceSprite extends Container {
   }
 
   /** Does the hit flash go on this piece's art (`setHitTint`) rather than
-   *  its container? True for a profile with a dead look (sub-capitals). */
+   *  its container? True when the art has one uniform tint (not burnt per
+   *  piece: sub-capitals), so the glow keeps its own colour. */
   get artFlash(): boolean {
-    return this.info.fx.deadTint !== null;
+    return !this.info.fx.burntArt;
   }
 
-  /** The hit flash (white: none), multiplied onto the dead art only, so a
-   *  shot piece never brightens and the glow keeps its own colour. Writes
-   *  only on a change (a settled piece does no per-frame tint work). */
+  /** The hit flash (white: none), multiplied onto the art only, so the glow
+   *  keeps its own colour. Writes only on a change (a settled piece does no
+   *  per-frame tint work). */
   setHitTint(t: number): void {
     if (t === this.hitTint) return;
     this.hitTint = t;

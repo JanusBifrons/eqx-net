@@ -136,12 +136,14 @@ describe('DESTRUCTION_PROFILES', () => {
     }
   });
 
-  it('death blast and dead tint: shrunk + burnt for sub-caps, untouched for capitals', () => {
+  it('death blast shrunk for sub-caps; no dead tint anywhere; burnt art for capitals only', () => {
     const c = DESTRUCTION_PROFILES.capital.fx;
     const s = DESTRUCTION_PROFILES.subcap.fx;
-    expect([c.deathBlastScale, c.deathBlastLinger, c.deadTint]).toEqual([1, 1, null]);
+    expect([c.deathBlastScale, c.deathBlastLinger, c.deadTint, c.burntArt]).toEqual([1, 1, null, true]);
     expect(s.deathBlastScale).toBeCloseTo(0.5, 5);
     expect(s.deathBlastLinger).toBeCloseTo(0.5, 5);
-    expect(s.deadTint).not.toBeNull();
+    // Owner 2026-11-13: "Why would it darken when destroyed? It should just
+    // be broken, same brightness?"
+    expect([s.deadTint, s.burntArt]).toEqual([null, false]);
   });
 });

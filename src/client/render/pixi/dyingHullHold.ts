@@ -36,6 +36,7 @@
 import type { Container } from 'pixi.js';
 import { getShipKind, isShipKindId } from '@shared-types/shipKinds';
 import { destructionProfileOf } from '@shared-types/shipScale/destructionProfile';
+import { DAMAGE_FLASH_COLOR } from './spriteBuilders.js';
 
 /** The longest a dying capital waits for its wreck pieces (game ms). */
 export const DYING_HULL_HOLD_MS = 1500;
@@ -132,12 +133,12 @@ export class DyingHullHold {
       h = { sprite: null, kind: '', x: 0, y: 0, r2: 0, untilMs: 0, wreckId: -1, total: 0 };
       this.held[this.heldCount] = h;
     }
-    // A profile with a dead look (sub-capitals) draws the held hull dead from
-    // this frame on: under its death explosion it reads as a dead ship until
-    // the pieces take over, never as a live one frozen mid hit-flash (round-2
-    // review). Capitals (deadTint null) keep their look.
-    const dead = isShipKindId(kind) ? destructionProfileOf({ type: 'ship', kindId: kind }).fx.deadTint : null;
-    if (dead !== null) sprite.tint = dead;
+    // The held hull keeps its normal brightness (no dead darkening; owner
+    // 2026-11-13: "Why would it darken when destroyed? It should just be
+    // broken, same brightness?"), but never freezes mid hit-flash: no sweep
+    // updates a held sprite, so a flash it died wearing would stay on it
+    // (round-2 review). Capital hulls never flash, so they are unchanged.
+    if (sprite.tint === DAMAGE_FLASH_COLOR) sprite.tint = 0xffffff;
     h.sprite = sprite;
     h.kind = kind;
     h.x = sprite.x;
