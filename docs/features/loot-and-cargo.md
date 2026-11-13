@@ -13,7 +13,9 @@ Part 2 (P1a-2) adds base storage, auto-deposit, derelicts and credit sinks.
 ## What the player sees
 
 - **Every kill drops loot.** A destroyed NPC ship leaves a small glowing
-  diamond, a *loot pod*, where it died. AI-vs-AI kills drop loot too, so a
+  diamond, a *loot pod*, just beside where it died (off to the side of the
+  shot that killed it, so the rest of the volley doesn't blow it up).
+  AI-vs-AI kills drop loot too, so a
   battlefield you stumble onto is worth picking over.
 - **Fly over a pod to collect it.** No button: touching a pod with free cargo
   space moves its contents into your ship's hold. A popup confirms what you

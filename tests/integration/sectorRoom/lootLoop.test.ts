@@ -140,6 +140,32 @@ describe('SectorRoom integration — loot loop (P1a-1)', () => {
       .toBe(POD_TIER_SPILL);
   });
 
+  it('an NPC kill drops its pod BESIDE the wreck, clear of the hull and out of the line of fire (owner v5 film 2026-11-13)', { timeout: 40_000 }, async () => {
+    // Review of the v5 sub-cap film: the pod spawned at the dying hull's
+    // centre, so the rest of the salvo hit it at once (a second explosion and
+    // a climbing damage number ~1 s after each death) and it hid the break-up.
+    const pid = randomUUID();
+    const cr = await harness.connectActive(pid, { spawnX: 500, spawnY: 500 });
+    const internal = room(cr.roomId)._internals;
+
+    // A killer due south of the victim: its line of fire runs along +y.
+    expect(internal.spawnTestDrone('beside-victim', -2500, 2500)).toBe(true);
+    expect(internal.spawnTestDrone('beside-killer', -2500, 1700)).toBe(true);
+    const hullR = internal.swarmRegistry.get('beside-victim')!.radius;
+    expect(hullR).toBeGreaterThan(0);
+    for (let i = 0; i < 10 && internal.swarmRegistry.get('beside-victim'); i++) {
+      internal.applyDamage('beside-victim', 'beside-killer', 9999);
+    }
+    const pods = [...internal.loot.podIds()];
+    expect(pods).toHaveLength(1);
+    const pod = getHoldStore().get(pods[0]!)!;
+    const dx = pod.x! - -2500;
+    const dy = pod.y! - 2500;
+    expect(Math.hypot(dx, dy), 'the pod spawns outside the hull radius').toBeGreaterThanOrEqual(hullR);
+    // Off the shot line (killer → victim is +y): mostly sideways.
+    expect(Math.abs(dx), 'the pod sits to the side of the line of fire').toBeGreaterThanOrEqual(hullR);
+  });
+
   it('P1a-2: abandoning a ship carrying cargo leaves a salvageable DERELICT', { timeout: 40_000 }, async () => {
     const pid = randomUUID();
     const cr = await harness.connectActive(pid, {

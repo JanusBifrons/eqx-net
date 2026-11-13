@@ -180,6 +180,9 @@ import { usesAmmo } from '../../shared-types/ammo.js';
 
 /** P2d — one unit of munitions (a turret's magazine reload). */
 const ONE_MUNITION = Object.freeze({ munitions: 1 });
+/** An NPC kill's loot pod spawns this many hull radii (plus its own radius)
+ *  from the dead ship's centre: beside the wreck, not in it (`dropKillLoot`). */
+const KILL_POD_CLEAR_RADII = 1.2;
 /** Welcome extras for a room that breaks capitals into wrecks (shared, frozen). */
 type WreckWelcome = { capitalWrecks?: true; subcapWrecks?: true };
 const WRECK_WELCOME: WreckWelcome = Object.freeze({ capitalWrecks: true as const });
@@ -5329,7 +5332,7 @@ export class SectorRoom extends Room<SectorState> {
     // destroyed in combat loses its contents. A pod the LootSubsystem despawns
     // itself (pickup / TTL) is already off its books, so `isPod` is false then.
     if (opts.emitDestroyed && rec.kind === SWARM_KIND_DRONE) {
-      this.dropKillLoot(rec);
+      this.dropKillLoot(rec, opts.shooterId);
     }
     // C3 — an NPC loot hold (memory only) goes with its ship. Trade and convoy
     // haulers keep theirs: their cargo travels with them between sectors.
@@ -10751,12 +10754,13 @@ export class SectorRoom extends Room<SectorState> {
     return this.aiController.isEntityHostileToPlayer(entityId, playerId, this.playerTruce(playerId));
   }
 
-  private dropKillLoot(rec: SwarmEntityRecord): void {
+  private dropKillLoot(rec: SwarmEntityRecord, shooterId?: string): void {
     const b = slotBase(rec.slot);
-    const x = this.sabF32[b + SLOT_X_OFF]!;
-    const y = this.sabF32[b + SLOT_Y_OFF]!;
-    const vx = this.sabF32[b + SLOT_VX_OFF]! * 0.3;
-    const vy = this.sabF32[b + SLOT_VY_OFF]! * 0.3;
+    const cx = this.sabF32[b + SLOT_X_OFF]!;
+    const cy = this.sabF32[b + SLOT_Y_OFF]!;
+    // The pod keeps the ship's velocity, so it drifts with the wreck.
+    const vx = this.sabF32[b + SLOT_VX_OFF]!;
+    const vy = this.sabF32[b + SLOT_VY_OFF]!;
     // C3 — an NPC ship's loot IS its hold: rolled once from a seed (so a
     // break-in that already took some leaves less to drop), and a trade
     // hauler's hold is its cargo. Anything with a hold spills where it died.
@@ -10764,7 +10768,43 @@ export class SectorRoom extends Room<SectorState> {
     // An NPC drop is an ordinary pod (its contents' tier), never the bright
     // dead-player spill tier (owner 2026-11-13).
     if (!isHoldEmpty(hold)) {
-      this.loot.spillShipHold(rec.id, x, y, vx, vy, isHaulerId(rec.id) ? 'hauler-raided' : 'kill', { player: false });
+      // Beside the wreck, not in it (owner's v5 film, 2026-11-13): a pod at
+      // the hull's centre took the rest of the salvo at once (a second blast
+      // and a damage number ~1 s after each death) and hid the break-up. It
+      // spawns just outside the hull, to the SIDE of the killer's line of
+      // fire (the far side is where the misses go); side and, with no known
+      // killer, direction are seeded from the ship's id (deterministic).
+      const h = hashString(`${rec.id}:${rec.entityId}`);
+      let ux = 0;
+      let uy = 0;
+      let sx = Number.NaN;
+      let sy = Number.NaN;
+      if (shooterId !== undefined && shooterId !== '') {
+        const p = this.shipPoseCache.get(shooterId) ?? this.lingeringPoseCache.get(shooterId);
+        if (p !== undefined) { sx = p.x; sy = p.y; }
+        else {
+          const srec = this.swarmRegistry.get(shooterId);
+          if (srec) {
+            const sb = slotBase(srec.slot);
+            sx = this.sabF32[sb + SLOT_X_OFF]!;
+            sy = this.sabF32[sb + SLOT_Y_OFF]!;
+          }
+        }
+      }
+      const lx = cx - sx;
+      const ly = cy - sy;
+      const ll = Math.hypot(lx, ly);
+      if (ll > 1e-6) {
+        const side = (h & 1) === 0 ? 1 : -1;
+        ux = (-ly / ll) * side;
+        uy = (lx / ll) * side;
+      } else {
+        const a = (h / 4294967296) * 2 * Math.PI;
+        ux = Math.cos(a);
+        uy = Math.sin(a);
+      }
+      const off = rec.radius * KILL_POD_CLEAR_RADII + getShipKind('cargo-pod').radius;
+      this.loot.spillShipHold(rec.id, cx + ux * off, cy + uy * off, vx, vy, isHaulerId(rec.id) ? 'hauler-raided' : 'kill', { player: false });
     }
     else getHoldStore().delete(rec.id, false);
   }
