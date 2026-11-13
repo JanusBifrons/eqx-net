@@ -158,6 +158,55 @@ function cutChords(p: FracturePiece): Array<[V, V]> {
   return out;
 }
 
+/** Each crack of a fracture as a chord: the cut edges of every piece joined
+ *  into chains (both sides of a crack are one chain), split wherever cracks
+ *  meet or a crack meets the hull's own outline (the kill point, where the
+ *  primary line and the fan cracks start). */
+function crackChords(pieces: ReadonlyArray<FracturePiece>): Array<[V, V]> {
+  const key = (v: V): string => `${v.x},${v.y}`;
+  const at = new Map<string, V>();
+  const adj = new Map<string, Set<string>>();
+  const onOutline = new Set<string>();
+  for (const p of pieces) {
+    const o = p.outline;
+    for (let i = 0; i < o.length; i++) {
+      const a = o[i]!;
+      const b = o[(i + 1) % o.length]!;
+      const ka = key(a);
+      const kb = key(b);
+      if (!p.cutEdges[i]) { onOutline.add(ka); onOutline.add(kb); continue; }
+      at.set(ka, a);
+      at.set(kb, b);
+      if (!adj.has(ka)) adj.set(ka, new Set());
+      if (!adj.has(kb)) adj.set(kb, new Set());
+      adj.get(ka)!.add(kb);
+      adj.get(kb)!.add(ka);
+    }
+  }
+  const stop = (k: string): boolean => adj.get(k)!.size !== 2 || onOutline.has(k);
+  const used = new Set<string>();
+  const out: Array<[V, V]> = [];
+  const edgeKey = (a: string, b: string): string => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  for (const [k0, nbrs] of adj) {
+    if (!stop(k0)) continue;
+    for (const k1 of nbrs) {
+      if (used.has(edgeKey(k0, k1))) continue;
+      let prev = k0;
+      let cur = k1;
+      used.add(edgeKey(prev, cur));
+      while (!stop(cur)) {
+        let next = '';
+        for (const n of adj.get(cur)!) if (n !== prev) next = n;
+        prev = cur;
+        cur = next;
+        used.add(edgeKey(prev, cur));
+      }
+      out.push([at.get(k0)!, at.get(cur)!]);
+    }
+  }
+  return out;
+}
+
 // ── v7 (owner review of a filmed heavy-cruiser death, 2026-11-13: "Tune
 // it"). v6 cut full-width far cracks where no shell hit ("random slicing")
 // and a comb of thin glowing slivers at the impact. Owner: "The last hit's
@@ -305,6 +354,54 @@ describe('fracture v7: chunky pieces at the impact, big sections elsewhere', () 
     }
     console.log(`[v7 long thin] ${_name}: worst length/width (under a hull section wide) ${worst.toFixed(2)}, narrowest ${narrowest.toFixed(2)} beams`);
     expect(bad, `pieces over ${LONG_THIN}× longer than wide or under ${MIN_BEAMS} beams wide`).toEqual([]);
+  });
+
+  // Filmed take 2026-11-13 (heavy cruiser, 16" salvo amidships): two cracks
+  // seemed to run side by side ~40–50 u apart with a thin strip between
+  // them. That strip was the glow over one crack's opening gap (see
+  // `swarmSpriteUpdater.wreckArt.test.ts`), but the geometry rule it asked
+  // about must hold too: no two distinct cracks run near-parallel closer
+  // than MIN_BEAMS over any real stretch. Before the fix, the primary line
+  // and a zone crack could come to 0.43 beams (zone 0.75 beams off at the
+  // kill point's edge, tilted 0.25 more than a primary already tilted 0.35:
+  // 0.5 beams keel-wise at the far edge, 0.43 across the cracks).
+  const PARALLEL_DEG = 12;
+  it.each(LEVELS)('%s: no two cracks run near-parallel closer than 0.45 beams', (_name, kb, rr) => {
+    const sinMax = Math.sin((PARALLEL_DEG * Math.PI) / 180);
+    let worst = Infinity;
+    const bad: string[] = [];
+    for (let seed = 1; seed <= 2 * V7_SEEDS; seed++) {
+      const chords = crackChords(v7Shatter(seed, kb, rr).pieces);
+      for (const [a, b] of chords) {
+        const el = Math.hypot(b.x - a.x, b.y - a.y);
+        if (el < 0.25 * B) continue;
+        const ux = (b.x - a.x) / el;
+        const uy = (b.y - a.y) / el;
+        for (const [c, d] of chords) {
+          if (c === a) continue;
+          const fl = Math.hypot(d.x - c.x, d.y - c.y);
+          if (fl < 1e-9 || Math.abs((ux * (d.y - c.y) - uy * (d.x - c.x)) / fl) > sinMax) continue;
+          // Over the stretch where the two run side by side (projected on
+          // this crack), the least distance between them.
+          const t0 = (c.x - a.x) * ux + (c.y - a.y) * uy;
+          const t1 = (d.x - a.x) * ux + (d.y - a.y) * uy;
+          const lo = Math.max(0, Math.min(t0, t1));
+          const hi = Math.min(el, Math.max(t0, t1));
+          if (hi - lo < 0.25 * B) continue;
+          const off = (t: number): number => {
+            const k = (t - t0) / (t1 - t0);
+            const px = c.x + (d.x - c.x) * k - a.x;
+            const py = c.y + (d.y - c.y) * k - a.y;
+            return Math.abs(px * -uy + py * ux);
+          };
+          const dist = Math.min(off(lo), off(hi));
+          worst = Math.min(worst, dist / B);
+          if (dist < MIN_BEAMS * B) bad.push(`seed ${seed}: two cracks ${(dist / B).toFixed(2)} beams apart over ${((hi - lo) / B).toFixed(2)} beams`);
+        }
+      }
+    }
+    console.log(`[v7 parallel] ${_name}: closest near-parallel cracks ${worst.toFixed(2)} beams`);
+    expect(bad, 'near-parallel cracks under 0.45 beams apart').toEqual([]);
   });
 
   it.each(LEVELS)('%s: no cut far from the kill point (a far crack only rarely, on a very heavy blow, and one at most)', (_name, kb, rr) => {
