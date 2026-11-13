@@ -85,16 +85,21 @@ export interface PilotState {
   bits: AiInputBits;
   /** Ticks left before the pilot decides again. */
   latch: number;
+  /** Snap turn: settled on the heading last tick. Resuming the turn then
+   *  needs a full tick's turn more error (hysteresis), so a tick of command
+   *  lag cannot set up a ±1-step hunt about the heading. */
+  onHeading: boolean;
 }
 
 export function makePilotState(): PilotState {
-  return { bits: 0, latch: 0 };
+  return { bits: 0, latch: 0, onHeading: false };
 }
 
 /** Tunables of one call; plain numbers so a caller can keep one const record. */
 export interface PilotParams {
   /** Facing error (rad) accepted as on-heading. Snap kinds never use less than
-   *  half a tick's turn (the turn cannot be finer than one tick). */
+   *  half a tick's turn (the turn cannot be finer than one tick), and once on
+   *  the heading resume only past this plus one tick's turn. */
   deadzone: number;
   /** The pilot's view of its own pose lags the body by this many ticks (the
    *  server reads the last physics step, keys land on the next): it predicts
@@ -151,7 +156,7 @@ export function brakingSpeed(h: PilotHandling, dist: number, safety = 0.8): numb
 }
 
 /** Turn keys toward `desired` (one of AI_INPUT_TURN_LEFT/RIGHT, or 0). */
-function turnBits(h: PilotHandling, p: PilotParams, angle: number, angvel: number, desired: number): number {
+function turnBits(h: PilotHandling, st: PilotState, p: PilotParams, angle: number, angvel: number, desired: number): number {
   const lead = angvel * TICK_DT * p.leadTicks;
   const err = wrapAngle(desired - (angle + lead));
   const sign = err >= 0 ? 1 : -1;
@@ -162,7 +167,13 @@ function turnBits(h: PilotHandling, p: PilotParams, angle: number, angvel: numbe
     // Snap turn: a held key moves the nose one tick's turn, release stops it.
     const step = h.maxAngvel * TICK_DT;
     const dz = Math.max(p.deadzone, step * 0.5);
-    return absErr > dz ? toward : 0;
+    const resume = st.onHeading ? dz + step : dz;
+    if (absErr > resume) {
+      st.onHeading = false;
+      return toward;
+    }
+    st.onHeading = true;
+    return 0;
   }
   // Torque turn: plan around the coast a release leaves.
   const c = h.angularDamping;
@@ -211,7 +222,7 @@ export function pilotInputs(
     st.latch--;
     return st.bits;
   }
-  let bits = turnBits(h, p, angle, angvel, facing);
+  let bits = turnBits(h, st, p, angle, angvel, facing);
 
   const fx = -Math.sin(angle);
   const fy = Math.cos(angle);

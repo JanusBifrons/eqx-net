@@ -84,7 +84,12 @@ describe('virtualPilot — turning', () => {
     const lagged = { ...DEFAULT_PILOT_PARAMS }; // leadTicks: 1
     const w = await npcWorld(fighter);
     const r = fly(w, fighter, 240, () => ({ facing: 2.0, vx: 0, vy: 0, boost: false }), lagged, 1);
-    for (const a of r.angles.slice(-60)) expect(Math.abs(wrapAngle(a - 2.0))).toBeLessThan(0.03);
+    // With lag it may stop one tick of turn short (a snap turn moves maxAngvel/60
+    // per tick, 0.033 rad at 1× scale); it must still hold still, not hunt.
+    const lagTol = DEFAULT_PILOT_PARAMS.deadzone + fighter.maxAngvel / 60 + 1e-3;
+    const settled = r.angles.slice(-60);
+    for (const a of settled) expect(Math.abs(wrapAngle(a - 2.0))).toBeLessThan(lagTol);
+    expect(Math.abs(settled[0]! - settled[settled.length - 1]!)).toBeLessThan(1e-6);
     expect(r.turnFlips).toBe(0);
     const capital = SHIP_KINDS_LIST.find((k) => (k.turnTorque ?? 0) > 0)!;
     const wc = await npcWorld(capital);
