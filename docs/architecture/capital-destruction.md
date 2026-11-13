@@ -162,7 +162,14 @@ Each slice is one PR, about one agent session, tests first.
     of the hull, along the port edge). Lock: "no long thin piece of any
     size" in `fractureHull.killFocus.test.ts` (no piece under 0.45 beams
     wide, none under 0.9 beams wide more than 3× longer than wide; the bow
-    and stern sections keep the hull's own shape and are exempt);
+    and stern sections keep the hull's own shape and are exempt). No two
+    cracks run near-parallel closer than 0.45 beams either (each crack as a
+    chord between junctions; closest over 1,200 seeds a level: 0.56 beams;
+    the zone cracks keep ≥ 0.5 beams keel-wise from the primary by
+    construction). Lock: "no two cracks run near-parallel" (filmed take
+    2026-11-13 asked whether a zone crack and the primary could leave a
+    40–50 u sliver: they cannot; that strip was the cut-edge glow spilling
+    over one crack as it opened, a renderer fix in S3);
   - rarely ONE far crack: only for a killing blow ≥ max hull on a hull
     ≥ 4.5 beams long, with a 12 % seeded chance, well clear of the zone.
   A tip hit has no zone; one fan draw may crack the broken-off end once.
