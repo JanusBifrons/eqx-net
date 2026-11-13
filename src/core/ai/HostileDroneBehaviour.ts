@@ -48,6 +48,9 @@ import { roleProfile, roleSensorRange, type RoleProfile } from './tactics/rolePr
 import {
   FACE_AIM_LEAD,
   FACE_MOVE,
+  MANOEUVRE_ATTACK_RUN,
+  MANOEUVRE_HOLD,
+  MANOEUVRE_TAIL,
   makeManoeuvreGoal,
   makeTacticalContext,
   type IManoeuvre,
@@ -68,7 +71,22 @@ import {
   type ContextMaps,
   type ContextSteerOutput,
 } from './contextSteering.js';
-import type { IAiNeighbourQuery } from '../contracts/IAiBehaviour.js';
+import type { IAiAimBoard, IAiNeighbourQuery } from '../contracts/IAiBehaviour.js';
+import {
+  addAllyLaneDanger,
+  ALLY_LANE_K,
+  ALLY_LANE_LOOKAHEAD_S,
+  ALLY_LANE_RADIUS_MUL,
+  ALLY_LANE_WEIGHT,
+  blockedNudgeSide,
+  fireLaneAvoidanceOn,
+  insideAllyLane,
+  NUDGE_MAX_OFF,
+  NUDGE_MIN_BLOCKS,
+  NUDGE_SPEED_FRAC,
+  NUDGE_TICKS,
+  NUDGE_WEIGHT,
+} from './tactics/fireLanes.js';
 
 /** Aim cone (radians). Drones won't fire unless their nose is within this many radians of the target. */
 const DRONE_AIM_TOLERANCE = 0.25; // ~14°
@@ -162,6 +180,10 @@ const COMBAT_SEP_REACH = 1.25;
 const COMBAT_SEP_CORE = 0.5;
 /** Speed a crowded ship drifts apart at, × cruise, at full crowding. */
 const COMBAT_CROWD_SPEED = 0.6;
+/** Blocked-fire nudge: done once within this share of `combatSeparation`
+ *  of its reposition point; interest lobe sharpness. */
+const NUDGE_ARRIVED = 0.2;
+const NUDGE_SHAPE = 2;
 /** Out of fire range, facing switches to the move heading when the move is
  *  this far off the GOAL heading (radians; 100°), and back below
  *  `FACE_MOVE_EXIT` (80°): a detour forced by wingmen. */
@@ -383,6 +405,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly _manoeuvres: readonly IManoeuvre[] = [
     new HoldManoeuvre(), new TailManoeuvre(), new AttackRunManoeuvre(), new BreakManoeuvre(),
   ];
+  /** The attack run (its dive phase takes the fire-lane nudge, slice 5b). */
+  private readonly _attackRun = this._manoeuvres[MANOEUVRE_ATTACK_RUN] as AttackRunManoeuvre;
   private readonly _picker = new ManoeuvrePicker();
   /** Seeded from the entity id on the first combat tick. */
   private _seeded = false;
@@ -786,6 +810,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const aimY = target.y + (target.vy - self.vy) * t;
     const aimDx = aimX - self.x;
     const aimDy = aimY - self.y;
+    // Fire-lane awareness (slice 5b): publish where this gun points while it
+    // can shoot, so wingmen keep out of the lane.
+    if (dist <= this.fireRange) view.aims?.write(self.id, aimX, aimY, view.tick);
 
     // Bearing toward the lead-aim point, not the target's current pose.
     const desiredAngle = facingOf(aimDx, aimDy);
@@ -837,7 +864,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this.runDecision(self, view, nb);
       clearContextMaps(this._ctxMaps);
       this._manoeuvres[this._picker.current]!.writeGoal(this._tac, this._ctxMaps, this._goal);
-      intent = this.flyCombatContext(self, nb, ux, uy, desiredAngle, dist <= this.fireRange, this._goal);
+      intent = this.flyCombatContext(self, nb, view.aims, ux, uy, desiredAngle, dist <= this.fireRange, this._goal);
     }
 
     // Fire gating: standard 14° cone at normal distance widens to 26° at
@@ -900,6 +927,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private flyCombatContext(
     self: AiEntity,
     nb: IAiNeighbourQuery,
+    aims: IAiAimBoard | undefined,
     ux: number,
     uy: number,
     leadAngle: number,
@@ -934,11 +962,23 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     }
     if (crowd > 0) addInterestToward(m, pushX, pushY, crowd, 1);
 
+    // Fire lanes (slice 5b, `tactics/fireLanes.ts`): keep out of wingmen's
+    // lines of fire, and side-step off a line the gate keeps holding.
+    // `nudging`: a short reposition (blocked, or sitting in a wingman's
+    // lane): the nose may swing off the lead so the ship can actually move
+    // sideways (a ship only thrusts along its nose).
+    let nudging = false;
+    if (fireLaneAvoidanceOn()) {
+      if (aims !== undefined && this.addAllyLanes(self, nb, aims)) nudging = true;
+      if (this.writeBlockedNudge(self, ux, uy)) nudging = true;
+    }
+
     const out = resolveContext(m, this._ctxOut);
     this._ctxUsed = true;
     const h = this.handling;
     const crowdSpeed = crowd * COMBAT_CROWD_SPEED * h.cruiseSpeed;
-    const speed = goalSpeed > crowdSpeed ? goalSpeed : crowdSpeed;
+    let speed = goalSpeed > crowdSpeed ? goalSpeed : crowdSpeed;
+    if (nudging && speed < NUDGE_SPEED_FRAC * h.cruiseSpeed) speed = NUDGE_SPEED_FRAC * h.cruiseSpeed;
     // The resolved heading carries the speed; the crowd push adds an opening
     // velocity on top (a lateral wingman masks no forward slot, so the
     // heading alone would never open a side-by-side gap).
@@ -974,9 +1014,83 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       const thresh = this._faceMove ? FACE_MOVE_EXIT : FACE_MOVE_ENTER;
       this._faceMove = moving && !inRange && (along > 0 || off > thresh);
     }
-    const facing = this._faceMove ? moveAngle : leadAngle;
+    let facing = this._faceMove ? moveAngle : leadAngle;
+    if (nudging) {
+      // The gate holds the shot anyway, so the nose may swing toward the
+      // side-step (a ship flies along its nose), but no further than
+      // NUDGE_MAX_OFF off the lead: it comes straight back to shoot.
+      const off = wrapAngle(moveAngle - leadAngle);
+      facing = leadAngle + (off > NUDGE_MAX_OFF ? NUDGE_MAX_OFF : off < -NUDGE_MAX_OFF ? -NUDGE_MAX_OFF : off);
+    }
     return this.fly(self, facing, wvx, wvy, goal.boost);
   }
+
+  /**
+   * Ally fire lanes (slice 5b): for up to `ALLY_LANE_K` same-side NPC
+   * wingmen within fire range that aimed this tick or the last few, danger
+   * along wingman → its aim point (lane half-width = own radius ×
+   * `ALLY_LANE_RADIUS_MUL` + the wingman's radius; look-ahead 1 s at
+   * max(cruise, own speed)). Pilots are skipped: a player is never steered round (and has no
+   * aim on the board). Returns true when this ship sits INSIDE a lane (it
+   * must get out: the caller lets the nose swing toward the exit). Alloc-free
+   * (reuses `_nbIdx`).
+   */
+  private addAllyLanes(self: AiEntity, nb: IAiNeighbourQuery, aims: IAiAimBoard): boolean {
+    const idx = this._nbIdx;
+    const n = nb.queryNeighbours(self.x, self.y, this.fireRange, COMBAT_NEIGHBOUR_K, idx, self.id);
+    const tick = this._tac.tick;
+    const sp = Math.hypot(self.vx, self.vy);
+    const lookahead = ALLY_LANE_LOOKAHEAD_S * (sp > this.handling.cruiseSpeed ? sp : this.handling.cruiseSpeed);
+    let used = 0;
+    let inside = false;
+    for (let k = 0; k < n && used < ALLY_LANE_K; k++) {
+      const i = idx[k]!;
+      if (nb.isPilotAt(i) || nb.sideAt(i) !== this.allegiance) continue;
+      if (!aims.read(nb.idAt(i), tick)) continue;
+      used++;
+      const hw = ALLY_LANE_RADIUS_MUL * this.kind.radius + nb.radiusAt(i);
+      const ax = nb.xAt(i);
+      const ay = nb.yAt(i);
+      addAllyLaneDanger(this._ctxMaps, self.x, self.y, ax, ay, aims.readX, aims.readY, hw, lookahead, ALLY_LANE_WEIGHT);
+      if (!inside && insideAllyLane(self.x, self.y, ax, ay, aims.readX, aims.readY, hw)) inside = true;
+    }
+    if (inside) this._laneExitCount++;
+    return inside;
+  }
+
+  /** Test-visible: combat ticks spent inside a wingman's fire lane. */
+  getLaneExitTicks(): number { return this._laneExitCount; }
+
+  /**
+   * Blocked-fire nudge (slice 5b): while the line-of-fire gate held a shot in
+   * the last `NUDGE_TICKS` (and the decayed count is at least
+   * `NUDGE_MIN_BLOCKS`), Hold, Tail and an attack run's dive add interest toward a point one
+   * `combatSeparation` aside of the target line, on the side away from the
+   * ally in the way (latched per block). Ends early once there. Returns
+   * whether it is nudging. A run's pull-off / extend and a break fly their own course.
+   */
+  private writeBlockedNudge(self: AiEntity, ux: number, uy: number): boolean {
+    const cur = this._picker.current;
+    if (cur !== MANOEUVRE_HOLD && cur !== MANOEUVRE_TAIL && !(cur === MANOEUVRE_ATTACK_RUN && this._attackRun.diving)) return false;
+    const tick = this._tac.tick;
+    if (tick - this._lastBlockedTick > NUDGE_TICKS || this.getRecentBlocks(tick) < NUDGE_MIN_BLOCKS) return false;
+    if (this._nudgeFromTick !== this._lastBlockedTick) {
+      // A fresh block: pick the side and the reposition point.
+      const side = blockedNudgeSide(self.x, self.y, ux, uy, this._blockerX, this._blockerY, self.vx, self.vy);
+      this._nudgeFromTick = this._lastBlockedTick;
+      this._nudgeGoalX = self.x - uy * side * this.combatSeparation;
+      this._nudgeGoalY = self.y + ux * side * this.combatSeparation;
+    }
+    const gx = this._nudgeGoalX - self.x;
+    const gy = this._nudgeGoalY - self.y;
+    if (gx * gx + gy * gy < NUDGE_ARRIVED * NUDGE_ARRIVED * this.combatSeparation * this.combatSeparation) return false;
+    addInterestToward(this._ctxMaps, gx, gy, NUDGE_WEIGHT, NUDGE_SHAPE);
+    this._nudgeCount++;
+    return true;
+  }
+
+  /** Test-visible: combat ticks spent side-stepping a blocked line. */
+  getNudgeTicks(): number { return this._nudgeCount; }
 
   /** Refresh the tactical context for this combat tick (plain writes, #14). */
   private fillTactical(
@@ -1038,6 +1152,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     if (done || decisionDue(tick, this._slot, this._lod)) {
       this._lod = !this.pilotNear(self, view);
       c.recentHits = this.recentHitsAt(tick);
+      c.recentBlocks = this.getRecentBlocks(tick);
       this.countSides(self, nb);
       if (view.stats !== undefined) view.stats.decisions++;
       const want = p.decide(c, this.role, done);
@@ -1354,6 +1469,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private _lastBlockedTick = -1_000_000;
   private _blockerX = 0;
   private _blockerY = 0;
+  /** Blocked-fire nudge (slice 5b): the block it was planned for and its
+   *  reposition point. */
+  private _nudgeFromTick = -1_000_000;
+  private _nudgeGoalX = 0;
+  private _nudgeGoalY = 0;
+  private _nudgeCount = 0;
+  private _laneExitCount = 0;
 
   /** At most one count per tick (a capital's barrels may each report). */
   noteBlocked(tick: number, blockerX: number, blockerY: number): void {

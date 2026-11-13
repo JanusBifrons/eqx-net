@@ -176,6 +176,8 @@ export class AttackRunManoeuvre implements IManoeuvre {
   private passX = 0;
   private passY = 1;
   private phaseEnd = 0;
+  /** Diving at the target, guns on it (the fire-lane nudge may side-step it). */
+  get diving(): boolean { return this.phase === RUN_DIVE; }
 
   begin(ctx: TacticalContext): void {
     this.phase = RUN_DIVE;

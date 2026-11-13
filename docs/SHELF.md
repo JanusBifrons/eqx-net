@@ -87,11 +87,17 @@ tick, keeps aiming and keeps its lock. Players are never gated. A player's
 turret holds on its owner's own ship and structures. Cost is gated as a COUNT
 (`LINE_OF_FIRE_BUDGET`). See docs/architecture/allegiances.md "Line of fire".
 
-**Still to do: formations.** NPCs now hold rather than shoot through an ally,
-but a pack that flies in a clump still spends fire time holding. Escorts and
-flocks need spacing that keeps them out of each other's lines of fire
-(flocking separation radii, capital escort stations off the broadsides), and a
-held drone could side-step to clear its line.
+**Done (slice 5b, 2026-11-13): side-step when blocked, keep out of wingmen's
+lanes.** A drone the gate keeps holding side-steps off the line (away from the
+ally in the way), and drones keep out of their wingmen's lines of fire
+(`src/core/ai/tactics/fireLanes.ts`). In a 4-drone column on one pilot over
+20 s: held shots 214 → 0, and with the gate off, friendly hits 214 → 2
+(`tests/integration/sectorRoom/npcFireLanes.test.ts`).
+
+**Still to do: formations.** Out of combat, escorts and flocks still need
+spacing that keeps them out of each other's lines of fire (flocking separation
+radii, capital escort stations off the broadsides). Capital turrets report
+blocks but have no movement answer yet.
 
 ## Radar settings saved per account, and a radar settings window (dropped 2026-11-08)
 
