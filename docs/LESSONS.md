@@ -2951,3 +2951,10 @@ Owner: "They absolutely should collide by design." In a clip a heavy cruiser und
 - **Cause (spread):** a 1/d² seed falloff has a long tail on a long thin hull, and a Voronoi bisector between two seeds at the same station across a narrow beam runs down the keel to the hull's end.
 - **Fix:** `WRECK_COLLISION_GROUPS` (pieces never collide with each other), a push fastest at the kill point from `shipTuning` (#18); fracture v5 (1/d⁴ falloff, a metric stretched along the keel, a keel-wise seed spacing away from the kill point).
 - **Rule:** bodies spawned touching each other with diverging but unequal velocities will collide; give a break-up's pieces their own collision group, as scrap has.
+
+## 2026-11-13 — Naval hit flash led the drawn shell: an event's FX must wait for the clock its object is drawn on
+
+- **Symptom:** in the 4× capitals clip at 0.25×, a heavy cruiser's whole-hull red hit flash came ~0.3–0.5 s before the battleship's 16" shells were drawn arriving.
+- **Cause:** `handleDamage` fired the flash, number, health-bar hit and spark when the `damage` message ARRIVED, but event shells are drawn at the display tick (`SHELL_DISPLAY_DELAY_MS` behind the server, plus RTT/2) and their burst waits for the display to reach the `shell_end`. Slow motion stretches that lead (it is game time).
+- **Fix:** `net/navalHitHold.ts`. The damage event names no shell, so it is matched by position: a hit point on a live, unended shell's path is held; the `shell_end` (same server flush, same `bestHitX/Y`) gives it the hit tick, splash victims included; it is released the frame the display reaches that tick. Safety timeouts (300 game ms unmatched, 1.5 game s matched) so a lost `shell_end` never swallows the flash. State (HP, shield bit, hostility) is never held.
+- **Rule:** when an object is drawn on a delayed clock (display tick, interpolation buffer), any one-shot visual about it must be released on that same clock, not on message arrival.
