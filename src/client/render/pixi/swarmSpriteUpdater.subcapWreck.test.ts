@@ -138,6 +138,18 @@ function countSets(obj: object, prop: string, what: string): { what: string; n: 
 
 /** Drawn display objects under a piece (its meshes; the piece's own
  *  container is counted separately). */
+/** Is (x, y) inside the convex quad c = [x0, y0, … x3, y3] (either winding)? */
+function inQuad(c: number[], x: number, y: number): boolean {
+  let pos = false, neg = false;
+  for (let i = 0; i < 4; i++) {
+    const ax = c[i * 2]!, ay = c[i * 2 + 1]!, bx = c[((i + 1) % 4) * 2]!, by = c[((i + 1) % 4) * 2 + 1]!;
+    const cr = (bx - ax) * (y - ay) - (by - ay) * (x - ax);
+    if (cr > 1e-9) pos = true;
+    else if (cr < -1e-9) neg = true;
+  }
+  return !(pos && neg);
+}
+
 function drawables(c: Container): number {
   let n = 0;
   for (const ch of c.children) n += 1 + drawables(ch);
@@ -292,7 +304,9 @@ describe('sub-capital wrecks: the quiet look (slice 4)', () => {
       ctx.fxNowMs = T0;
       updateSwarmSprites(m, ctx);
       for (const id of m.swarm!.keys()) ctx.localHitTargets.add(`swarm-${id}`); // under fire
-      ctx.fxNowMs = T0 + 0.25 * GLOW_MS;
+      // From the first frame on (v5 film: a filled bar for ~0.2 s, then a line).
+      for (const tMs of [0, 100, 200, 0.25 * GLOW_MS]) {
+      ctx.fxNowMs = T0 + tMs;
       updateSwarmSprites(m, ctx);
       for (const p of pieces(ctx)) {
         const glow = p.children.find((c) => c instanceof Mesh && (c as Mesh).texture === p.glowTexture());
@@ -313,8 +327,62 @@ describe('sub-capital wrecks: the quiet look (slice 4)', () => {
         expect(pos.length / 8).toBe(p.glowSegments());
         let widest = 0;
         for (let q = 0; q < pos.length; q += 8) widest = Math.max(widest, Math.hypot(pos[q]! - pos[q + 6]!, pos[q + 1]! - pos[q + 7]!));
-        expect(widest * 0.45, `${kind}: glow width on screen (px)`).toBeGreaterThanOrEqual(2);
-        expect(widest, `${kind}: glow band vs wreck radius ${hullR.toFixed(1)}`).toBeLessThanOrEqual(0.15 * hullR);
+        expect(widest * 0.45, `${kind} @${tMs} ms: glow width on screen (px)`).toBeGreaterThanOrEqual(2);
+        expect(widest, `${kind} @${tMs} ms: glow band vs wreck radius ${hullR.toFixed(1)}`).toBeLessThanOrEqual(0.15 * hullR);
+      }
+      }
+    }
+  });
+
+  /**
+   * Owner's v5 film review (2026-11-13): the cut glow showed as a filled
+   * 3–4 px bar for its first ~0.2 s, then thinned to a line. Each piece drew
+   * its band INSIDE its own outline, so while the pieces still touched the
+   * two bands lay side by side across the cut: one stroke twice as wide,
+   * which split into two thin lines as they parted. The stroke across a cut
+   * must be one band wide from the first frame (the pieces at rest here, as
+   * at the break).
+   */
+  it('the cut glow is one thin line from the first frame: the bands either side of a cut overlap, not abut', () => {
+    for (const kind of ['fighter', 'robot-square', 'gunship', 'missile-frigate']) {
+      const ctx = makeCtx(stubArt(fighterArt()), { breaks: 0, blasts: 0, ripples: 0 });
+      const m = mirrorFor(desc(kind, 31), DEATH_TICK);
+      const T0 = 10_000;
+      for (const tMs of [0, 100, 200]) {
+        ctx.fxNowMs = T0 + tMs;
+        updateSwarmSprites(m, ctx);
+        // Every glow quad in world (Pixi) space: piece position + local corners.
+        const quads: number[][] = [];
+        let widest = 0;
+        for (const p of pieces(ctx)) {
+          const pos = p.glowPositions();
+          if (pos === null) continue;
+          for (let q = 0; q < pos.length; q += 8) {
+            const c: number[] = [];
+            for (let v = 0; v < 4; v++) c.push(p.x + pos[q + v * 2]!, p.y + pos[q + v * 2 + 1]!);
+            quads.push(c);
+            widest = Math.max(widest, Math.hypot(pos[q]! - pos[q + 6]!, pos[q + 1]! - pos[q + 7]!));
+          }
+        }
+        expect(quads.length, kind).toBeGreaterThan(0);
+        // Across the middle of each quad, along its own normal: how thick is
+        // the glow from every piece together?
+        let thickest = 0;
+        for (const c of quads) {
+          const w = Math.hypot(c[0]! - c[6]!, c[1]! - c[7]!);
+          if (w < 1e-6) continue;
+          const nx = (c[0]! - c[6]!) / w, ny = (c[1]! - c[7]!) / w;
+          const mx = (c[0]! + c[2]! + c[4]! + c[6]!) / 4, my = (c[1]! + c[3]! + c[5]! + c[7]!) / 4;
+          const step = widest / 40;
+          let covered = 0;
+          for (let t = -3 * widest; t <= 3 * widest; t += step) {
+            const x = mx + nx * t, y = my + ny * t;
+            if (quads.some((o) => inQuad(o, x, y))) covered++;
+          }
+          thickest = Math.max(thickest, covered * step);
+        }
+        expect(thickest, `${kind} @${tMs} ms: glow across a cut vs one band ${widest.toFixed(2)} u`)
+          .toBeLessThanOrEqual(widest * 1.25);
       }
     }
   });

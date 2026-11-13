@@ -743,6 +743,18 @@ on the profile, not a branch in the code.
   `shipTuning`'s `wreckKnockSpeed/Max`: a small-arms hit shoves half a
   fighter wreck ~10-25 u/s, no hit more than ~25 u/s). Capitals ×1. Lock:
   `tests/unit/destructionProfile.test.ts`.
+  `spinScale` 0.3 (owner on the v5 film, 2026-11-13: "they spin too much
+  when destroyed"): the pieces keep 0.3 of the dying hull's turn (its ω and
+  the ω × r it gives each piece) and of the seeded kick spin, and a hit on a
+  piece turns it with 0.3 of its lever arm (`CapitalWreckSubsystem.onWreckHit`
+  moves the impulse point toward the piece's centre; the shove is unchanged).
+  A fighter killed hard over at 2 rad/s threw its pieces at ~115 °/s; now
+  ≤ ~35 °/s, and an off-centre small-arms hit no longer sets half a fighter
+  spinning at ~100 °/s. The cuts still open as before (narrowest gap 1 s
+  after the break 0.40-0.43 radii, asleep in ~14 s). Capitals 1
+  (byte-identical). Locks: `wreckPieces.subcapParting.test.ts` "a fighter
+  killed mid-turn", `CapitalWreckSubsystem.test.ts` "turns it by the
+  profile spinScale".
 - **Result** over 1,200 deaths per kind (seeds × bearings × violence): 2
   pieces mostly; 3 in about 20–33 % on fighters, gunships, frigates and the
   hauler, and rarely on the round robots; the interceptor always 2. No piece
@@ -774,10 +786,17 @@ break-up:
   `fx.deathBlastLinger` (0.5), so the break-up and the fight stay readable
   and capitals feel bigger. Flag off, or any other profile: unchanged.
 - **A simple glow.** `glowStyle: 'simple'`: one quad (a band 0.1 × the
-  wreck radius deep, at least 4.5 u so it is ≥ 2 px at fleet zoom, kept
-  inside the piece; the core width alone was "a thin orange line on one
-  edge" at fleet zoom, round-2 review, and 0.4 × radius filmed as an opaque
-  orange crescent over each piece, round 3) per cut segment on the piece's own side, full length
+  wreck radius deep, at least 4.5 u so it is ≥ 2 px at fleet zoom; the core
+  width alone was "a thin orange line on one edge" at fleet zoom, round-2
+  review, and 0.4 × radius filmed as an opaque orange crescent over each
+  piece, round 3) per cut segment, STRADDLING the cut: half outside the
+  piece's face, the inner half kept inside the piece. The neighbour's band
+  lies on the same line, so while the pieces touch the two read as one line;
+  each used to sit wholly inside its own piece, so the two lay side by side
+  as one stroke twice as wide, "a filled 3-4 px bar for ~0.2 s, then a
+  line" (owner's v5 film, 2026-11-13). Lock:
+  `swarmSpriteUpdater.subcapWreck.test.ts` "one thin line from the first
+  frame". Full length
   from the first frame (no front, no halo, no white-hot head), positions
   written once; per frame only one shared U changes (uploaded only when it
   moves), on its own curve (`simpleGlowAt` / `wreckSimpleGlowTexture`): one
@@ -814,7 +833,13 @@ break-up:
   shot down. Not wreck pieces. Owner decision 2026-11-13, "make them normal
   loot colour": an NPC's drop is now an ordinary pod coloured by its
   contents; only a dead player's cargo is magenta. Lock:
-  `tests/integration/sectorRoom/lootLoop.test.ts`. A proper cargo-container
+  `tests/integration/sectorRoom/lootLoop.test.ts`. The NPC kill pod spawns
+  BESIDE the wreck, 1.2 hull radii plus its own radius from the centre, to
+  the side of the killer's line of fire (seeded side; seeded direction with
+  no known killer), at the ship's velocity (`SectorRoom.dropKillLoot`).
+  At the centre it took the rest of the salvo at once, a second blast and a
+  climbing damage number ~1 s after each death, and hid the break-up
+  (owner's v5 film, 2026-11-13). A proper cargo-container
   visual among the scrap is on the shelf, docs/SHELF.md.)
 - **No damage numbers on debris.** A hit on any wreck piece (swarm kind 4,
   capital or sub-cap) shows its spark and hit flash, but no floating number

@@ -1208,7 +1208,12 @@ export class WreckPieceSprite extends Container {
     // hull's core alone is a hairline at fleet-fight zoom (reviews
     // 2026-11-13: "the glow lasted only ~0.4-0.6 s", then "only a thin
     // orange line on one edge").
-    const S = this.segN, s = this.seg, hc = this.simpleW;
+    // The band STRADDLES the cut (half outside the piece's face, half
+    // inside): the neighbour's band lies on the same line, so while the
+    // pieces still touch the two read as ONE line, not a stroke twice as
+    // wide (owner's v5 film 2026-11-13: "a filled 3-4 px bar for ~0.2 s,
+    // then a line"). As they part, each face keeps the same thin line.
+    const S = this.segN, s = this.seg, half = this.simpleW / 2;
     const positions = new Float32Array(S * 8);
     const uvs = new Float32Array(S * 8);
     const indices = new Uint32Array(S * 6);
@@ -1218,7 +1223,12 @@ export class WreckPieceSprite extends Container {
       indices[ii] = v0; indices[ii + 1] = v0 + 1; indices[ii + 2] = v0 + 2;
       indices[ii + 3] = v0; indices[ii + 4] = v0 + 2; indices[ii + 5] = v0 + 3;
       for (let c = 0; c < 4; c++) { uvs[(v0 + c) * 2] = u0; uvs[(v0 + c) * 2 + 1] = 0.5; }
-      writeStrip(positions, v0, s[q]!, s[q + 1]!, s[q + 2]!, s[q + 3]!, s[q + 10]!, s[q + 11]!, Math.min(hc, s[q + 12]!), Math.min(hc, s[q + 13]!));
+      const mx = s[q + 10]!, my = s[q + 11]!;
+      writeStrip(
+        positions, v0,
+        s[q]! - mx * half, s[q + 1]! - my * half, s[q + 2]! - mx * half, s[q + 3]! - my * half,
+        mx, my, half + Math.min(half, s[q + 12]!), half + Math.min(half, s[q + 13]!),
+      );
     }
     this.grown = true;
     this.glowEndMs = this.info.fx.glowSeconds * 1000;
