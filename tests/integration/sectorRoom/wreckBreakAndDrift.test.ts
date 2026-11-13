@@ -155,10 +155,12 @@ describe('SectorRoom integration: capital wreck break and drift', () => {
     const t = shipTuning(kind);
     // Owner review 2026-11-13: "they should break apart slower and have more
     // inertia and weight". Every piece parts, slowly (the 2026-11-12 push
-    // was ~370 u/s at the kill point for this hull).
+    // was ~370 u/s at the kill point for this hull). Owner, same day: the
+    // break must be SEEN, so the cuts part at ~30 u/s, but still no piece
+    // over ~80 u/s (0.037 x radius).
     expect(near.out, 'the piece at the kill point moves away from it').toBeGreaterThan(0);
     expect(slowest, 'every piece drifts').toBeGreaterThan(0.2 * t.wreckSeparate);
-    expect(fastest, '...slowly, like a heavy body').toBeLessThan(0.03 * kind.radius);
+    expect(fastest, '...slowly, like a heavy body').toBeLessThan(0.037 * kind.radius);
     // The field's extent: the largest distance between two piece centres.
     const extent = (): number => {
       const ps = ids.map((id) => internal.wreckState(id)!);

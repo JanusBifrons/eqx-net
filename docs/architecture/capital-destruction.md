@@ -208,29 +208,43 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
   - **The kick.** A slow push away from the kill point,
     `wreckPushMin + (wreckPushMax − wreckPushMin)·r²/(r² + d²)`,
     r = `WRECK_PUSH_FALLOFF_FRAC` (0.3) × hull radius, × 0.75–1.25 by how
-    violent the death was; `wreckPushMax/Min` = 0.012 / 0.004 × hull radius
-    per second (`shipTuning`, #18; ~26 / ~9 u/s for a 2× heavy cruiser; the
-    2026-11-12 money-shot push was 0.17 / 0.08). A slow seeded spin given as
-    a RIM speed (`WRECK_SPIN_RIM_NEAR/FAR` 0.75 / 0.3 × `wreckSeparate`,
-    0.55–1× of it, either way round, divided by the piece's radius, at least
+    violent the death was; `wreckPushMax/Min` = 0.010 / 0.004 × hull radius
+    per second (`shipTuning`, #18; ~22 / ~9 u/s for a 2× heavy cruiser; the
+    2026-11-12 money-shot push was 0.17 / 0.08, the first heavy tune
+    0.012 / 0.004). A slow seeded spin given as a RIM speed
+    (`WRECK_SPIN_RIM_NEAR/FAR` 0.13 / 0.05 × `wreckSeparate`, 0.55–1× of it,
+    either way round, divided by the piece's radius, at least
     `WRECK_SPIN_MIN_RADIUS_FRAC` 0.06 × hull radius), so a big piece turns
-    slower than a small one (≤ ~3°/s).
+    slower than a small one (≤ ~3°/s; measured < 1°/s on a heavy cruiser).
   - **Neighbours always part.** The push is fastest at the kill point, so a
     piece nearer it chased the slower neighbour beyond it along the same
     line, and the spins turned long pieces into each other: pieces slid over
     each other and two stern pieces folded into a "V" (owner review
     2026-11-13). Every shared cut between two pieces (`findSeams`: cut edges
-    on one line) must open at `shipTuning(kind).wreckSeparate` (0.0025 ×
-    hull radius per second, ~5 u/s for a 2× heavy cruiser) or more at BOTH
+    on one line, plus cut edges that only touch, as at the T-junction where
+    a fan crack ends on a zone crack, whose two sides are jagged
+    differently) must open at `shipTuning(kind).wreckSeparate` (0.014 ×
+    hull radius per second, ~31 u/s for a 2× heavy cruiser) or more at BOTH
     ends of the shared stretch, spin included, and the two centres must part
     at half that. Where they don't, an equal and opposite push (momentum
     kept) along the cut's normal / the centre line makes up the difference
     (Gauss–Seidel, at most 400 passes, aiming 10 % past the target). The cut
     line separates the two pieces, so parting along its normal never
     overlaps them. Side effect: momentum moves outward along the chain, so
-    the pieces at the ends of the hull drift fastest (~50 u/s for a heavy
+    the pieces at the ends of the hull drift fastest (~75 u/s for a heavy
     cruiser), and the piece at the kill point is slow; the knock-back from
     later shells (a follow-up) supplies the violence.
+    Tuning (owner review of a filmed take, 2026-11-13: at 0.0025 the gaps
+    were 5–15 px after 8 s at the capital zoom ~0.17 and the hull read as
+    "cracked but intact" for 3–4 s; "heavy and weighty, but the break must
+    be SEEN"): measured on a heavy cruiser killed by a shell, the narrowest
+    cut is ~31 u open 1 s after the kick (≥ 5 px at 0.17) and ~170–215 u
+    8 s after, with no piece over ~75 u/s. The separation speed is
+    multiplied along a chain of neighbours, so it is tuned for v7's 3–7
+    chunks: v6's ~30-piece shatter flung its small pieces at ~250 u/s at
+    this speed. Lock: `tests/integration/sectorRoom/wreckPiecesSeparate.test.ts`
+    (gap ≥ 0.012 × radius 1 s after the kick and ≥ 0.065 × radius 8 s
+    after, speed < 0.037 × radius).
   - **Pieces collide with each other** (`WRECK_COLLISION_GROUPS` =
     0x0004FFFF, server spawn and client twin): heavy chunks bump instead of
     passing through. The physics collider is `colliderParts`, each drawn
