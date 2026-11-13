@@ -233,7 +233,7 @@ export interface ShipTuning {
   /** Capital wreck break-up (capital-destruction.md): the outward push of a
    *  piece at the kill point and far from it (u/s). Proportional to the hull
    *  radius, so a bigger hull's debris field opens at the same rate relative
-   *  to its size: heavy cruiser (2×) ~26 / ~9 u/s, battleship ~35 / ~12.
+   *  to its size: heavy cruiser (2×) ~22 / ~9 u/s, battleship ~29 / ~12.
    *  Owner review 2026-11-13: "they should break apart slower and have more
    *  inertia and weight" (the 2026-11-12 money-shot push was ~10× this). */
   wreckPushMax: number;
@@ -241,7 +241,9 @@ export interface ShipTuning {
   /** Capital wreck break-up: the least speed (u/s) at which two neighbouring
    *  pieces part along their shared cut, at every point of it (spin
    *  included), so no seam hinges or slides shut (owner review 2026-11-13).
-   *  Heavy cruiser (2×) ~5 u/s. */
+   *  Heavy cruiser (2×) ~31 u/s: fast enough that every cut is visibly open
+   *  1 s after the crack (owner, same day: at ~5 u/s the hull read as
+   *  "cracked but intact"), slow enough that no piece passes ~80 u/s. */
   wreckSeparate: number;
   /** Capital wreck pieces collide with each other: each convex collider part
    *  is shrunk this far (u, toward the part's centre) so neighbours that
@@ -282,11 +284,11 @@ const CACHE = new WeakMap<object, ShipTuning>();
 
 /** Wreck push at the kill point / far from it, per unit of hull radius per
  *  second (`wreckPushMax` / `wreckPushMin`). */
-const WRECK_PUSH_MAX_PER_RADIUS = 0.012;
+const WRECK_PUSH_MAX_PER_RADIUS = 0.01;
 const WRECK_PUSH_MIN_PER_RADIUS = 0.004;
 /** Least parting speed of two neighbouring wreck pieces, per unit of hull
  *  radius per second (`wreckSeparate`). */
-const WRECK_SEPARATE_PER_RADIUS = 0.0025;
+const WRECK_SEPARATE_PER_RADIUS = 0.014;
 /** Wreck collider inset, per unit of hull radius (`wreckColliderInset`). */
 const WRECK_COLLIDER_INSET_PER_RADIUS = 0.0005;
 /** Wreck overkill knock speed / per-hit speed ceiling, per unit of hull

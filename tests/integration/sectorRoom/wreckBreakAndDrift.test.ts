@@ -129,7 +129,9 @@ describe('SectorRoom integration: capital wreck break and drift', () => {
     while (fracturePlan({ hull: shipHullOutline(kind), seed, killPoint: { x: -220, y: -200 }, maxPieces: FRACTURE_MAX_PIECES, killBlowDamage: 1.2, recentDamageRate: 1.2 }).snap) seed++;
     const { internal, pose } = await killByShell(0.7, 0.1, seed);
     const ids = [...internal.swarmRegistry.all()].filter((r) => r.kind === WRECK_KIND).map((r) => r.id);
-    expect(ids.length).toBeGreaterThanOrEqual(6);
+    // v7 breaks a hull into 3–7 chunks; this kill keeps 5 once a fan crack
+    // that would leave a thin wedge is dropped (the v7 sliver rule).
+    expect(ids.length).toBeGreaterThanOrEqual(5);
     const d = internal.wreckDescriptors()[0]!;
     const sc = shipShapeScale(kind);
     const c = Math.cos(pose.angle);
@@ -155,10 +157,12 @@ describe('SectorRoom integration: capital wreck break and drift', () => {
     const t = shipTuning(kind);
     // Owner review 2026-11-13: "they should break apart slower and have more
     // inertia and weight". Every piece parts, slowly (the 2026-11-12 push
-    // was ~370 u/s at the kill point for this hull).
+    // was ~370 u/s at the kill point for this hull). Owner, same day: the
+    // break must be SEEN, so the cuts part at ~30 u/s, but still no piece
+    // over ~80 u/s (0.037 x radius).
     expect(near.out, 'the piece at the kill point moves away from it').toBeGreaterThan(0);
     expect(slowest, 'every piece drifts').toBeGreaterThan(0.2 * t.wreckSeparate);
-    expect(fastest, '...slowly, like a heavy body').toBeLessThan(0.03 * kind.radius);
+    expect(fastest, '...slowly, like a heavy body').toBeLessThan(0.037 * kind.radius);
     // The field's extent: the largest distance between two piece centres.
     const extent = (): number => {
       const ps = ids.map((id) => internal.wreckState(id)!);

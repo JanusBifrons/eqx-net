@@ -120,7 +120,7 @@ describe('SectorRoom integration: capital wreck pieces separate', () => {
       killBlowDamage: d!.killBlowDamage, recentDamageRate: d!.recentDamageRate, snapChance: d!.snapChance,
     });
     const ids = [...internal.swarmRegistry.all()].filter((r) => r.kind === WRECK_KIND).map((r) => r.id);
-    expect(ids.length).toBeGreaterThanOrEqual(6);
+    expect(ids.length).toBeGreaterThanOrEqual(5);
     const idByIndex = new Map<number, string>();
     for (const id of ids) idByIndex.set(Number(id.slice(id.lastIndexOf('-') + 1)), id);
     const pairs: Array<[string, string]> = [];
@@ -167,7 +167,10 @@ describe('SectorRoom integration: capital wreck pieces separate', () => {
     let maxSpeed = 0;
     let maxSpin = 0;
     const STEP_MS = 100;
-    const SAMPLES = 70; // 7 game s
+    const SAMPLES = Math.round((WRECK_CRACK_MS + 8000) / STEP_MS); // the crack delay + 8 game s
+    // The sample 1 game s after the kick (the hull cracks WRECK_CRACK_MS after death).
+    const K_SEEN = Math.round((WRECK_CRACK_MS + 1000) / STEP_MS);
+    let gapSeen = Infinity;
     for (let k = 1; k <= SAMPLES; k++) {
       await harness.advance(STEP_MS);
       for (const id of ids) {
@@ -189,21 +192,31 @@ describe('SectorRoom integration: capital wreck pieces separate', () => {
         if (!firstDist.has(key)) firstDist.set(key, dist);
         if (k * STEP_MS <= WRECK_CRACK_MS - 300) crackDrift = Math.max(crackDrift, Math.abs(dist - firstDist.get(key)!));
         lastDist.set(key, dist);
+        if (k === K_SEEN) gapSeen = Math.min(gapSeen, -pieceDepth(worldParts(a), worldParts(b)));
       }
     }
     let minEndGap = Infinity;
     for (const [a, b] of pairs) minEndGap = Math.min(minEndGap, -pieceDepth(worldParts(a), worldParts(b)));
-    console.log(`[wreck separate] ${_name}: ${ids.length} pieces, ${pairs.length} neighbour pairs; worst overlap ${worstOverlap.depth.toFixed(1)} u at ${worstOverlap.at} ms (${worstOverlap.pair}); worst neighbour approach ${worstShrink.by.toFixed(2)} u at ${worstShrink.at} ms (${worstShrink.pair}); smallest neighbour gap at 7 s ${minEndGap.toFixed(1)} u; crack drift ${crackDrift.toFixed(2)} u; max speed ${maxSpeed.toFixed(1)} u/s, max spin ${(maxSpin * 180 / Math.PI).toFixed(2)} deg/s`);
+    console.log(`[wreck separate] ${_name}: ${ids.length} pieces, ${pairs.length} neighbour pairs; worst overlap ${worstOverlap.depth.toFixed(1)} u at ${worstOverlap.at} ms (${worstOverlap.pair}); worst neighbour approach ${worstShrink.by.toFixed(2)} u at ${worstShrink.at} ms (${worstShrink.pair}); hull radius ${kind.radius.toFixed(0)} u; smallest neighbour gap 1 s after the kick ${gapSeen.toFixed(1)} u, 8 s after ${minEndGap.toFixed(1)} u; crack drift ${crackDrift.toFixed(2)} u; max speed ${maxSpeed.toFixed(1)} u/s, max spin ${(maxSpin * 180 / Math.PI).toFixed(2)} deg/s`);
 
     expect(worstOverlap.depth, 'no two wreck pieces overlap (SAT penetration, u)').toBeLessThan(1);
     expect(worstShrink.by, 'no neighbouring pair moves closer between samples (u)').toBeLessThan(0.5);
     // Crack delay: the hull holds its shape (pieces move as one) before it parts.
     expect(crackDrift, 'neighbours keep their spacing during the crack delay (u)').toBeLessThan(0.5);
     // Parting at wreckSeparate or more from the end of the crack delay, less damping and spin.
-    expect(minEndGap, 'every neighbouring pair has a clear gap after 7 s (u)').toBeGreaterThan(0.5 * t.wreckSeparate * (SAMPLES * STEP_MS - WRECK_CRACK_MS) / 1000);
+    expect(minEndGap, 'every neighbouring pair has a clear gap 8 s after the kick (u)').toBeGreaterThan(0.5 * t.wreckSeparate * (SAMPLES * STEP_MS - WRECK_CRACK_MS) / 1000);
+    // The break must be SEEN (owner review of a filmed take, 2026-11-13: gaps
+    // of 5-15 px after 8 s at the capital zoom ~0.17, "cracked but intact"
+    // for 3-4 s; the old numbers gave ~5 u at 1 s). 1 s after the kick every
+    // cut is open by >= 0.012 x radius (~26 u for the 2x heavy cruiser,
+    // >= 4.5 px at 0.17; measured ~31 u), and 8 s after by >= 0.065 x radius
+    // (~140 u; measured ~170-215 u).
+    expect(gapSeen, 'every cut has visibly opened 1 s after the kick (u)').toBeGreaterThan(0.012 * kind.radius);
+    expect(minEndGap, 'every cut is wide open 8 s after the kick (u)').toBeGreaterThan(0.065 * kind.radius);
     // Heavy: a slow parting, not a fly-off (the old push was 175–370 u/s for
-    // this hull), and slow turning.
-    expect(maxSpeed, 'pieces drift slowly (u/s)').toBeLessThan(0.03 * kind.radius);
+    // this hull): no piece over 0.037 x radius (~80 u/s for a heavy cruiser;
+    // measured ~75), and slow turning.
+    expect(maxSpeed, 'pieces drift slowly (u/s)').toBeLessThan(0.037 * kind.radius);
     expect(maxSpeed, '...but they do move apart').toBeGreaterThan(0.25 * t.wreckPushMin);
     expect(maxSpin * 180 / Math.PI, 'pieces turn slowly (deg/s)').toBeLessThan(4);
 
@@ -216,22 +229,42 @@ describe('SectorRoom integration: capital wreck pieces separate', () => {
       const m = Math.min(internal.swarmRegistry.get(pr[0])!.radius, internal.swarmRegistry.get(pr[1])!.radius);
       if (m > bestMass) { bestMass = m; pick = pr; }
     }
-    const [mover, struck] = pick;
+    const massOf = (id: string): number => geom.find((g) => g.index === Number(id.slice(id.lastIndexOf('-') + 1)))!.mass;
+    // Shove the heavier piece into the lighter (v7's chunks differ up to ~8×
+    // in mass; a light piece glancing off a heavy one barely moves it).
+    const [mover, struck] = massOf(pick[0]) >= massOf(pick[1]) ? pick : [pick[1], pick[0]];
     const sm = internal.wreckState(mover)!, ss = internal.wreckState(struck)!;
     const dl = Math.hypot(ss.x - sm.x, ss.y - sm.y);
     const ux = (ss.x - sm.x) / dl, uy = (ss.y - sm.y) / dl;
-    const shove = 0.05 * kind.radius; // ~110 u/s for a heavy cruiser
+    // Close at ~110 u/s for a heavy cruiser: on top of the speed the pair is
+    // already parting at (~30+ u/s since the 2026-11-13 "seen" tuning).
+    const parting = Math.max(0, (ss.vx - sm.vx) * ux + (ss.vy - sm.vy) * uy);
+    const shove = 0.05 * kind.radius + parting;
     const struckV0 = ss.vx * ux + ss.vy * uy;
     internal.postToWorker({ type: 'WRECK_KICK', entityId: mover, dvx: ux * shove, dvy: uy * shove, dw: 0 });
     let shoveOverlap = -Infinity;
+    // The struck piece's best gain along the shove line over the window (its
+    // own damping only ever lowers it, so the peak is the bump itself).
+    let struckGain = -Infinity;
     for (let k = 0; k < 40; k++) {
       await harness.advance(STEP_MS);
       shoveOverlap = Math.max(shoveOverlap, pieceDepth(worldParts(mover), worldParts(struck)));
+      const st = internal.wreckState(struck)!;
+      struckGain = Math.max(struckGain, st.vx * ux + st.vy * uy - struckV0);
     }
-    const st1 = internal.wreckState(struck)!;
-    const struckGain = st1.vx * ux + st1.vy * uy - struckV0;
-    console.log(`[wreck separate] ${_name}: shove ${mover} → ${struck} at ${shove.toFixed(0)} u/s: worst overlap ${shoveOverlap.toFixed(1)} u, struck piece gained ${struckGain.toFixed(1)} u/s`);
+    // What a real contact guarantees: two bodies closing at `closing` that
+    // collide end up no faster apart than they meet, so at the least (a
+    // perfectly inelastic, head-on hit) the struck piece gains
+    // closing × m_mover / (m_mover + m_struck). An off-centre hit loses some
+    // to spin and the contact normal is not the centre line: allow a quarter
+    // of it. A pass-through (the pre-2026-11-13 non-colliding groups) leaves
+    // the struck piece's velocity alone, gain <= 0 (damping only), and its
+    // parts overlap the mover's by tens of units.
+    const closing = 0.05 * kind.radius;
+    const mM = massOf(mover), mS = massOf(struck);
+    const inelasticGain = closing * mM / (mM + mS);
+    console.log(`[wreck separate] ${_name}: shove ${mover} → ${struck} closing at ${closing.toFixed(0)} u/s (kick ${shove.toFixed(0)} u/s): worst overlap ${shoveOverlap.toFixed(1)} u, struck piece gained ${struckGain.toFixed(1)} u/s (inelastic head-on ${inelasticGain.toFixed(1)}; mass ratio ${(mM / mS).toFixed(2)})`);
     expect(shoveOverlap, 'a shoved piece does not pass into its neighbour (u)').toBeLessThan(0.005 * kind.radius);
-    expect(struckGain, 'the struck neighbour is knocked along').toBeGreaterThan(0.1 * shove);
+    expect(struckGain, 'the struck neighbour is knocked along (u/s)').toBeGreaterThan(0.25 * inelasticGain);
   }, 60_000);
 });

@@ -38,9 +38,10 @@ export const WRECK_PUSH_FALLOFF_FRAC = 0.3;
  *  from it; falls off with distance like the push, and each piece gets
  *  0.55–1× of it, either way round. A rim speed (not a fixed rad/s) so a big
  *  piece turns slower than a small one, like a heavy body (owner review
- *  2026-11-13: "more inertia and weight"). */
-export const WRECK_SPIN_RIM_NEAR = 0.75;
-export const WRECK_SPIN_RIM_FAR = 0.3;
+ *  2026-11-13: "more inertia and weight"). Scaled down when `wreckSeparate`
+ *  went up 5.6× (the break must be seen), so the spin stayed as slow. */
+export const WRECK_SPIN_RIM_NEAR = 0.13;
+export const WRECK_SPIN_RIM_FAR = 0.05;
 /** A piece smaller than this fraction of the hull radius spins like one this
  *  size, so a sliver doesn't whirl (~3°/s at most at the kill point). */
 export const WRECK_SPIN_MIN_RADIUS_FRAC = 0.06;
@@ -294,6 +295,8 @@ interface Seam {
 /** Collinearity / overlap tolerances for matching cut edges (ship frame, u). */
 const SEAM_LINE_EPS = 0.05;
 const SEAM_MIN_LEN = 0.5;
+/** Cut edges of two pieces this close (u) touch (see `findSeams`). */
+const SEAM_TOUCH_EPS = 0.5;
 
 /** Every shared cut between pieces (cut edges of two pieces that lie on one
  *  line and overlap). The cut line separates the two pieces, so parting
@@ -332,7 +335,68 @@ function findSeams(geom: ReadonlyArray<WreckPieceGeometry>): Seam[] {
       }
     }
   }
+  // Neighbours whose cut edges touch without lying on one line: a fan crack
+  // that ends on a zone crack leaves a T-junction, and the two sides of the
+  // zone crack are jagged from different endpoints, so the pass above never
+  // matches them (tuning 2026-11-13: such a pair parted only at the push
+  // speed, the narrowest gap on screen). Each gets one seam at the closest
+  // touch, along the outward normal of the longer of the two edges.
+  const n = geom.length;
+  const paired = new Uint8Array(n * n);
+  for (const sm of seams) paired[sm.i * n + sm.j] = 1;
+  for (let i = 0; i < n; i++) {
+    const gi = geom[i]!;
+    for (let j = i + 1; j < n; j++) {
+      if (paired[i * n + j]) continue;
+      const gj = geom[j]!;
+      let best: Seam | null = null;
+      let bestD = SEAM_TOUCH_EPS;
+      for (let ea = 0; ea < gi.outline.length; ea++) {
+        if (!gi.cutEdges[ea]) continue;
+        const a0 = gi.outline[ea]!, a1 = gi.outline[(ea + 1) % gi.outline.length]!;
+        const ax0 = a0.x + gi.cx, ay0 = a0.y + gi.cy, ax1 = a1.x + gi.cx, ay1 = a1.y + gi.cy;
+        for (let eb = 0; eb < gj.outline.length; eb++) {
+          if (!gj.cutEdges[eb]) continue;
+          const b0 = gj.outline[eb]!, b1 = gj.outline[(eb + 1) % gj.outline.length]!;
+          const bx0 = b0.x + gj.cx, by0 = b0.y + gj.cy, bx1 = b1.x + gj.cx, by1 = b1.y + gj.cy;
+          const touch = closestTouch(ax0, ay0, ax1, ay1, bx0, by0, bx1, by1);
+          if (touch.d >= bestD) continue;
+          const la = Math.sqrt((ax1 - ax0) ** 2 + (ay1 - ay0) ** 2);
+          const lb = Math.sqrt((bx1 - bx0) ** 2 + (by1 - by0) ** 2);
+          if (Math.max(la, lb) < SEAM_MIN_LEN) continue;
+          // Outward normal of the longer edge, turned to point from i to j.
+          const nx = la >= lb ? (ay1 - ay0) / la : -(by1 - by0) / lb;
+          const ny = la >= lb ? -(ax1 - ax0) / la : (bx1 - bx0) / lb;
+          bestD = touch.d;
+          best = { i, j, ax: touch.x, ay: touch.y, bx: touch.x, by: touch.y, nx, ny };
+        }
+      }
+      if (best) seams.push(best);
+    }
+  }
   return seams;
+}
+
+/** Distance between segments a and b, and the midpoint of their closest
+ *  points (the touch), from the four endpoint-to-segment candidates. */
+function closestTouch(
+  ax0: number, ay0: number, ax1: number, ay1: number,
+  bx0: number, by0: number, bx1: number, by1: number,
+): { d: number; x: number; y: number } {
+  let best = { d: Infinity, x: 0, y: 0 };
+  const cand = (px: number, py: number, s0x: number, s0y: number, s1x: number, s1y: number): void => {
+    const dx = s1x - s0x, dy = s1y - s0y;
+    const l2 = dx * dx + dy * dy;
+    const t = l2 > 0 ? Math.max(0, Math.min(1, ((px - s0x) * dx + (py - s0y) * dy) / l2)) : 0;
+    const qx = s0x + t * dx, qy = s0y + t * dy;
+    const d = Math.sqrt((px - qx) ** 2 + (py - qy) ** 2);
+    if (d < best.d) best = { d, x: (px + qx) / 2, y: (py + qy) / 2 };
+  };
+  cand(ax0, ay0, bx0, by0, bx1, by1);
+  cand(ax1, ay1, bx0, by0, bx1, by1);
+  cand(bx0, by0, ax0, ay0, ax1, ay1);
+  cand(bx1, by1, ax0, ay0, ax1, ay1);
+  return best;
 }
 
 export function buildWreckPieces(input: WreckBuildInput): WreckBuild {

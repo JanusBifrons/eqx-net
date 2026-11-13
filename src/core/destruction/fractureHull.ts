@@ -1,8 +1,9 @@
 /**
  * Capital fracture, slice S1 (docs/architecture/capital-destruction.md).
  *
- * `fractureHull` splits a hull outline into wreck pieces: seeded Voronoi cells
- * clustered around the killing blow, clipped to the (possibly concave) hull,
+ * `fractureHull` splits a hull outline into wreck pieces: since v7 a few
+ * seeded jagged cracks at the killing blow (a zone either side of it and a
+ * fan from it, see `crackLines`), cut through the (possibly concave) hull,
  * optional straight section cuts, jagged cut edges and a convex decomposition
  * per piece for Rapier. Since v2 a straight primary break line runs through
  * the kill point across the keel, a seeded chance snaps the hull cleanly in
@@ -56,8 +57,17 @@ import type { Vec2 } from '../swarm/asteroidShape.js';
  *  the Voronoi seeds stay inside a FAN of jagged cracks that radiate from
  *  the kill point (`fanLines`, the primary line among them, now jagged too);
  *  the rest of the hull breaks along a few far cracks at seeded, uneven
- *  stations and seeded tilts (`farLines`), so it leaves a few big chunks. */
-export const FRACTURE_ALGO_VERSION = 6;
+ *  stations and seeded tilts (`farLines`), so it leaves a few big chunks.
+ *  v7 (owner review of a filmed heavy-cruiser death, 2026-11-13: "Tune it";
+ *  "The last hit's impact sets the split"; chunks ENORMOUS and heavy): no
+ *  Voronoi seeds and no far cracks. The hull breaks only at the kill point:
+ *  the primary crack, two jagged ZONE cracks about a beam either side of it
+ *  (`ZONE_*`) and up to two cracks from the kill point into the zone
+ *  (`zoneFan`), so the impact leaves 2–4 chunky fragments and the rest of
+ *  the hull stays as one big section each side. A very heavy blow on a long
+ *  hull rarely (`FAR_CHANCE`) adds ONE far crack. The piece count still
+ *  rises with size and violence, as more chunks and a wider zone. */
+export const FRACTURE_ALGO_VERSION = 7;
 /** Default chance that a hull snaps cleanly in two along the primary line
  *  instead of shattering (owner: "just make it a chance"). */
 export const FRACTURE_SNAP_CHANCE = 0.2;
@@ -66,37 +76,39 @@ export const FRACTURE_QUANTUM = 1 / 64;
 /** Hard ceiling on pieces (the S2 wire carries the piece index in a u8). */
 export const FRACTURE_MAX_PIECES = 64;
 
-/** Seed-density falloff radius as a fraction of sqrt(hull area). */
-const FALLOFF_FRAC = 0.18;
-/** Voronoi distance ALONG the keel counts this many times its length (the
- *  metric is stretched along the long axis), so on a long thin hull the
- *  cells lean across the beam: no lengthwise slivers (v5; v6 relaxed it,
- *  since the seeds now stay inside the crack fan). */
-const VORONOI_KEEL_STRETCH = 1.5;
-/** v6 crack fan: the steepest crack's keel-wise run per unit of depth across
- *  the hull (tan ≈ 44° off square). */
-const FAN_MAX_TILT = 0.95;
-/** v6: least tilt difference between two cracks of the fan (tan units). */
-const FAN_MIN_GAP = 0.26;
-/** v6 far cracks: tilt off square, seeded in [MIN, MAX] (tan ≈ 11°–37°). */
-const FAR_TILT_MIN = 0.2;
-const FAR_TILT_MAX = 0.75;
-/** v6: least room (in beams) between far cracks, and from the hull's ends. */
-const FAR_SEP_BEAMS = 1.6;
-const FAR_END_BEAMS = 1.1;
-/** Least keel-wise seed spacing, in units of beam / stretch² (v5), ramping
- *  in from one falloff radius to two from the kill point (the shatter at
- *  the kill point stays chunky). */
-const SEED_ALONG_SEP = 0.5;
-/** Below this many seeds the falloff radius widens by (FEW_SEEDS / count)². */
-const FEW_SEEDS = 12;
-/** Minimum seed spacing as a fraction of sqrt(hull area). */
-const MIN_SEED_SEP_FRAC = 0.03;
-/** v6: seed candidates come from a box this many falloff radii round the
- *  kill point. */
-const SEED_BOX_FALLOFFS = 4;
-/** Rejection-sampling attempts per requested seed. */
-const ATTEMPTS_PER_SEED = 400;
+/** v7 zone: each zone crack sits this far (in beams, at the kill point's
+ *  edge) from the primary crack: MIN + seeded × SPAN + SIZE × the shatter
+ *  amount (0..1, from the target piece count). */
+const ZONE_MIN_BEAMS = 0.75;
+const ZONE_SPAN_BEAMS = 0.3;
+const ZONE_SIZE_BEAMS = 0.15;
+/** v7: a zone crack's tilt differs from the primary's by at most this (tan
+ *  units), so the zone half never pinches to a sliver across the beam. */
+const ZONE_TILT = 0.25;
+/** v7: a zone crack leaving less than this (beams) to the hull's end is
+ *  dropped (that end joins the zone half instead of breaking off as a chip). */
+const ZONE_END_BEAMS = 0.6;
+/** v7 fan: a crack from the kill point meets its zone crack this far across
+ *  the hull (fraction of the beam): MIN + seeded × SPAN. */
+const FAN_DEPTH_MIN = 0.7;
+const FAN_DEPTH_SPAN = 0.25;
+/** v7: most fan cracks (one per zone half). */
+const FAN_MAX = 2;
+/** v7: a fan crack is dropped where it would leave a part narrower than
+ *  this (beams) or longer than FAN_MAX_ASPECT × its width (filmed take
+ *  2026-11-13: a long thin triangle along the hull's edge). */
+const FAN_MIN_WIDTH_BEAMS = 0.45;
+const FAN_MAX_ASPECT = 2.6;
+/** v7 rare far crack: only when the killing blow is at least FAR_MIN_BLOW
+ *  of max hull and the hull is at least FAR_MIN_LENGTH_BEAMS long, with this
+ *  seeded chance; at most one, FAR_CLEAR_BEAMS past the zone and
+ *  FAR_END_CLEAR_BEAMS from the hull's end. */
+const FAR_CHANCE = 0.12;
+const FAR_MIN_BLOW = 1;
+const FAR_MIN_LENGTH_BEAMS = 4.5;
+const FAR_CLEAR_BEAMS = 1.2;
+const FAR_END_CLEAR_BEAMS = 1.2;
+const FAR_TILT = 0.4;
 /** Jag sub-segment target length as a fraction of sqrt(hull area). */
 const JAG_SEG_FRAC = 0.02;
 /** Maximum midpoint-subdivision depth (2^depth segments per cut edge). */
@@ -221,52 +233,40 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   const kill = projectRing(hull, input.killPoint.x, input.killPoint.y);
   const keel = keelAxis(hull);
 
-  // v6 cracks: a fan radiating from the kill point and a few far cracks.
+  // v7 cracks: zone cracks either side of the primary, a fan into the zone
+  // and (rarely) one far crack. A clean snap has none.
   const cracks = plan.snap || plan.primary === null
-    ? { fan: [] as FractureLine[], far: [] as FractureLine[], region: null }
-    : crackLines(hull, input.seed >>> 0, kill, cap, plan.primary, keel);
+    ? { zone: [] as FractureLine[], fan: [] as LocalLine[], far: [] as FractureLine[] }
+    : crackLines(hull, input.seed >>> 0, kill, plan.primary, keel, plan.targetPieces, input.killBlowDamage);
 
-  // Seeds: one prefix-stable stream, so fewer seeds = a prefix of more seeds.
-  // A clean snap has none: the primary line alone splits the hull. Since v6
-  // they stay inside the crack fan.
-  const allSeeds = plan.snap ? [] : sampleSeeds(hull, hullArea, input.seed >>> 0, kill, cap, plan.primary, keel, cracks.region);
-
-  // Retry with fewer seeds, then without section cuts, then fewer far
-  // cracks, then fewer fan cracks, then without the primary line, until the
-  // cap holds.
+  // Retry without fan cracks (one by one), then the far crack, the section
+  // cuts, the zone cracks (one by one) and the primary line, until the cap
+  // holds.
   let useCuts = cuts.length > 0;
   let usePrimary = primary !== null;
-  let nFar = cracks.far.length;
+  let useFar = cracks.far.length > 0;
+  let nZone = cracks.zone.length;
   let nFan = cracks.fan.length;
-  let n = allSeeds.length;
+  const minArea = Math.max(4 * FRACTURE_QUANTUM * FRACTURE_QUANTUM, hullArea * 1e-6);
   for (;;) {
     const lines: FractureLine[] = [];
     if (usePrimary) lines.push(primary!);
-    for (let i = 0; i < nFan; i++) lines.push(cracks.fan[i]!);
-    for (let i = 0; i < nFar; i++) lines.push(cracks.far[i]!);
+    for (let i = 0; i < nZone; i++) lines.push(cracks.zone[i]!);
+    if (useFar) for (const f of cracks.far) lines.push(f);
     if (useCuts) for (const c of cuts) lines.push(sectionLine(c));
-    const rings = splitIntoPieces(hull, lines, allSeeds, n, keel);
-    const minArea = Math.max(4 * FRACTURE_QUANTUM * FRACTURE_QUANTUM, hullArea * 1e-6);
+    const rings = splitIntoPieces(hull, lines, cracks.fan, nFan, hullBeam(hull, keel));
     const quantised = quantiseRings(rings, minArea);
     if (quantised.length <= cap) {
       const jagged = jagCutEdges(weldTJunctions(quantised), input.seed >>> 0, scale);
       return jagged.map(toPiece);
     }
-    if (n > 1) n = Math.max(1, n - (quantised.length - cap));
-    else if (useCuts) {
-      useCuts = false;
-      n = allSeeds.length;
-    } else if (nFar > 0) {
-      nFar--;
-      n = allSeeds.length;
-    } else if (nFan > 0) {
-      nFan--;
-      n = allSeeds.length;
-    } else if (usePrimary) {
-      usePrimary = false;
-      n = allSeeds.length;
-    } else {
-      // Unreachable for a simple hull (≤ one seed, no lines = the hull itself).
+    if (nFan > 0) nFan--;
+    else if (useFar) useFar = false;
+    else if (useCuts) useCuts = false;
+    else if (nZone > 0) nZone--;
+    else if (usePrimary) usePrimary = false;
+    else {
+      // Unreachable for a simple hull (no lines = the hull itself).
       return [toPiece(quantiseRings([hull], 0)[0]!)];
     }
   }
@@ -462,29 +462,6 @@ function primaryCut(p: NonNullable<FracturePlan['primary']>): FractureLine {
   return { nx, ny, c: nx * p.point.x + ny * p.point.y, kind: EDGE_PRIMARY };
 }
 
-/**
- * Where the v6 Voronoi seeds may go. `fan`: between the steepest cracks of
- * the fan, i.e. points whose keel-wise run from the apex per unit of depth
- * across the hull lies in [tLo, tHi]. `side`: the kill point's side of the
- * primary line (a bow or stern tip hit, whose line is moved aft of the tip).
- */
-type SeedRegion =
-  | { kind: 'fan'; ax: number; ay: number; tLo: number; tHi: number; keel: Vec2 }
-  | { kind: 'side'; nx: number; ny: number; c: number; sign: number };
-
-function inRegion(r: SeedRegion | null, x: number, y: number): boolean {
-  if (r === null) return true;
-  if (r.kind === 'side') return (r.nx * x + r.ny * y - r.c) * r.sign > 0;
-  const dx = x - r.ax;
-  const dy = y - r.ay;
-  const along = dx * r.keel.x + dy * r.keel.y;
-  const across = dx * -r.keel.y + dy * r.keel.x;
-  // Along the line `across + t·keel` from the apex: along = t · across.
-  if (across === 0) return along === 0;
-  const t = along / across;
-  return t >= r.tLo && t <= r.tHi;
-}
-
 function crackLine(px: number, py: number, t: number, keel: Vec2): FractureLine {
   let dx = -keel.y + keel.x * t;
   let dy = keel.x + keel.y * t;
@@ -496,26 +473,62 @@ function crackLine(px: number, py: number, t: number, keel: Vec2): FractureLine 
   return { nx, ny, c: nx * px + ny * py, kind: EDGE_CRACK };
 }
 
+/** Inside when `sign · (nx·x + ny·y − c) > 0`. */
+interface HalfPlane {
+  nx: number;
+  ny: number;
+  c: number;
+  sign: number;
+}
+
+/** A crack that splits only the sections whose centroid lies in `region`
+ *  (every half-plane holds): a fan crack stays inside its zone half. */
+interface LocalLine {
+  line: FractureLine;
+  region: HalfPlane[];
+}
+
+function halfPlane(l: FractureLine, x: number, y: number): HalfPlane {
+  return { nx: l.nx, ny: l.ny, c: l.c, sign: l.nx * x + l.ny * y - l.c >= 0 ? 1 : -1 };
+}
+
 /**
- * v6: the cracks besides the primary line, from their own seeded stream.
+ * v7: the cracks besides the primary line, from their own seeded stream
+ * (every draw is taken, in a fixed order, whatever is used).
  *
- *  - The FAN: a few straight lines through the kill point (jagged later)
- *    at seeded tilts up to `FAN_MAX_TILT` either side of square, at least
- *    `FAN_MIN_GAP` apart and from the primary line, so the hull splits into
- *    wedges meeting at the kill point. More for a harder death (`target`).
- *  - FAR cracks: a few lines across the hull away from the fan, at seeded,
- *    uneven stations (at least `FAR_SEP_BEAMS` beams apart) and seeded tilts
- *    of `FAR_TILT_MIN`–`FAR_TILT_MAX` either way, so each end breaks into a
- *    few big chunks, never a comb of even square bands.
+ *  - ZONE cracks: one either side of the primary line, about a beam away at
+ *    the kill point's edge (`ZONE_*`, wider for a harder death), tilted like
+ *    the primary within `ZONE_TILT`. They bound the impact zone; the hull
+ *    beyond each stays one big section. A crack that would chip off less
+ *    than `ZONE_END_BEAMS` at the hull's end is dropped.
+ *  - FAN cracks (local, 0..`FAN_MAX`, more for a harder death): from the
+ *    kill point to a seeded depth across its zone crack, so each zone half
+ *    breaks into a triangle and a quad, both chunky.
+ *  - A FAR crack: one at most, only for a very heavy blow on a long hull,
+ *    with a small seeded chance.
  *
- * A tip hit (the primary line moved aft of the tip) gets no fan; its seeds
- * stay on the tip's side of the line.
+ * A tip hit (the primary line moved aft of the tip) has no zone; one fan
+ * draw may add a crack across the broken-off end.
  */
 function crackLines(
-  hull: P[], seed: number, kill: Vec2, target: number, primary: NonNullable<FracturePlan['primary']>, keel: Vec2,
-): { fan: FractureLine[]; far: FractureLine[]; region: SeedRegion | null } {
-  const rng = new Rng(fnvMixU32(seed ^ 0xc7ac4, 0x6));
+  hull: P[], seed: number, kill: Vec2, primary: NonNullable<FracturePlan['primary']>, keel: Vec2,
+  target: number, killBlowDamage: number | undefined,
+): { zone: FractureLine[]; fan: LocalLine[]; far: FractureLine[] } {
+  const rng = new Rng(fnvMixU32(seed ^ 0xc7ac4, 0x7));
   const f01 = (): number => rng.u32() / 4294967296;
+  const dZoneF = f01();
+  const dZoneA = f01();
+  const dTiltF = f01();
+  const dTiltA = f01();
+  const dFanN = f01();
+  const dFanSide = f01();
+  const dDepthF = f01();
+  const dDepthA = f01();
+  const dFar = f01();
+  const dFarStation = f01();
+  const dFarTilt = f01();
+  const dZoneOrder = f01();
+
   let lo = Infinity;
   let hi = -Infinity;
   let acLo = Infinity;
@@ -529,57 +542,80 @@ function crackLines(
     if (c > acHi) acHi = c;
   }
   const beam = acHi - acLo;
+  const cMid = (acLo + acHi) / 2;
+  const at = (al: number, ac: number): Vec2 => ({ x: keel.x * al - keel.y * ac, y: keel.y * al + keel.x * ac });
   // The primary line's own tilt (its direction is across + t·keel, normalised).
   const pAcross = primary.dir.y * keel.x - primary.dir.x * keel.y;
   const pAlong = primary.dir.x * keel.x + primary.dir.y * keel.y;
   const tP = pAcross !== 0 ? pAlong / pAcross : 0;
-  const tip = primary.point.x !== kill.x || primary.point.y !== kill.y;
+  const pl = primaryCut(primary);
+  const s = Math.min(1, Math.max(0, (target - MIN_TARGET) / (FRACTURE_MAX_PIECES - MIN_TARGET)));
+  const nFan = Math.min(FAN_MAX, Math.floor(2.5 * s + dFanN));
 
-  // Fan: how many cracks besides the primary line.
-  const fan: FractureLine[] = [];
-  const tilts: number[] = [tP];
-  let region: SeedRegion | null;
-  if (tip) {
-    const pl = primaryCut(primary);
-    region = { kind: 'side', nx: pl.nx, ny: pl.ny, c: pl.c, sign: pl.nx * kill.x + pl.ny * kill.y - pl.c >= 0 ? 1 : -1 };
-  } else {
-    const want = target >= 30 ? 4 : target >= 14 ? 3 : target >= 7 ? 2 : target >= 3 ? 1 : 0;
-    for (let k = 0, tries = 0; k < want && tries < 64; tries++) {
-      const t = (f01() * 2 - 1) * FAN_MAX_TILT;
-      let ok = true;
-      for (const u of tilts) if (Math.abs(t - u) < FAN_MIN_GAP) { ok = false; break; }
-      if (!ok) continue;
-      tilts.push(t);
-      fan.push(crackLine(kill.x, kill.y, t, keel));
-      k++;
-    }
-    let tLo = tP;
-    let tHi = tP;
-    for (const t of tilts) { if (t < tLo) tLo = t; if (t > tHi) tHi = t; }
-    region = { kind: 'fan', ax: kill.x, ay: kill.y, tLo, tHi, keel };
-  }
-
-  // Far cracks: stations outside the fan's reach, uneven, tilted.
-  let reach = 0;
-  for (const t of tilts) reach = Math.max(reach, Math.abs(t));
-  const kp = (tip ? primary.point.x : kill.x) * keel.x + (tip ? primary.point.y : kill.y) * keel.y;
-  const cMid = (acLo + acHi) / 2;
-  const nFar = Math.min(3, Math.floor(target / 12) + (target >= 8 && f01() < 0.5 ? 1 : 0));
+  const zone: FractureLine[] = [];
+  const fan: LocalLine[] = [];
   const far: FractureLine[] = [];
-  const stations: number[] = [];
-  const clear = (reach + FAR_TILT_MAX / 2 + 0.6) * beam;
-  for (let tries = 0; far.length < nFar && tries < 48; tries++) {
-    const s = lo + FAR_END_BEAMS * beam + f01() * (hi - lo - 2 * FAR_END_BEAMS * beam);
-    const t = (FAR_TILT_MIN + f01() * (FAR_TILT_MAX - FAR_TILT_MIN)) * (f01() < 0.5 ? -1 : 1);
-    if (Math.abs(s - kp) < clear) continue;
-    let ok = true;
-    for (const u of stations) if (Math.abs(s - u) < FAR_SEP_BEAMS * beam) { ok = false; break; }
-    if (!ok) continue;
-    stations.push(s);
-    // The point on the keel line at station s, mid-beam.
-    far.push(crackLine(keel.x * s - keel.y * cMid, keel.y * s + keel.x * cMid, t, keel));
+  const alK = kill.x * keel.x + kill.y * keel.y;
+  const acK = kill.y * keel.x - kill.x * keel.y;
+
+  if (primary.point.x !== kill.x || primary.point.y !== kill.y) {
+    // Tip hit: the end beyond the primary line broke off; maybe crack it once.
+    const alP = primary.point.x * keel.x + primary.point.y * keel.y;
+    const len = Math.abs(alK - alP);
+    if (nFan >= 1 && len >= 1.2 * beam) {
+      const sg = alK > alP ? 1 : -1;
+      const st = alP + sg * (0.4 + 0.2 * dDepthF) * len;
+      const c = at(st, cMid);
+      fan.push({ line: crackLine(c.x, c.y, tP + (2 * dTiltF - 1) * ZONE_TILT, keel), region: [halfPlane(pl, kill.x, kill.y)] });
+    }
+    return { zone, fan, far };
   }
-  return { fan, far, region };
+
+  // Inward across the hull from the kill point's edge.
+  const sIn = acK <= cMid ? 1 : -1;
+  const side = (sg: number, dZ: number, dT: number, dD: number): number => {
+    const a = beam * (ZONE_MIN_BEAMS + ZONE_SPAN_BEAMS * dZ + ZONE_SIZE_BEAMS * s);
+    const tZ = tP + (2 * dT - 1) * ZONE_TILT;
+    // Station of the crack at the kill point's edge and at the far edge.
+    const st0 = alK + sg * a;
+    const st1 = st0 + tZ * sIn * beam;
+    const end = sg > 0 ? hi - Math.max(st0, st1) : Math.min(st0, st1) - lo;
+    const c0 = at(st0, acK);
+    const zl = end >= ZONE_END_BEAMS * beam ? crackLine(c0.x, c0.y, tZ, keel) : null;
+    if (zl) zone.push(zl);
+    const want = nFan === 2 || (nFan === 1 && (dFanSide < 0.5) === (sg < 0));
+    if (want) {
+      // Fan crack: kill point → the zone crack at depth g across the hull.
+      const g = (FAN_DEPTH_MIN + FAN_DEPTH_SPAN * dD) * beam;
+      const tgt = at(st0 + tZ * sIn * g, acK + sIn * g);
+      const tF = (sg * a + tZ * sIn * g) / (sIn * g);
+      const region = [halfPlane(pl, tgt.x, tgt.y)];
+      if (zl) region.push(halfPlane(zl, kill.x, kill.y));
+      fan.push({ line: crackLine(kill.x, kill.y, tF, keel), region });
+    }
+    return a;
+  };
+  const aF = side(-1, dZoneF, dTiltF, dDepthF);
+  const aA = side(1, dZoneA, dTiltA, dDepthA);
+  // Under a tight cap the retry drops the LAST zone crack first: which side
+  // keeps its crack is seeded.
+  if (dZoneOrder < 0.5) zone.reverse();
+
+  // Rare far crack: one, on the longer side, well clear of the zone.
+  if ((killBlowDamage ?? 0) >= FAR_MIN_BLOW && hi - lo >= FAR_MIN_LENGTH_BEAMS * beam && dFar < FAR_CHANCE) {
+    const reach = (ZONE_TILT + Math.abs(tP) + FAR_TILT) * beam;
+    const roomF = alK - aF - FAR_CLEAR_BEAMS * beam - reach - (lo + FAR_END_CLEAR_BEAMS * beam);
+    const roomA = hi - FAR_END_CLEAR_BEAMS * beam - (alK + aA + FAR_CLEAR_BEAMS * beam + reach);
+    const room = Math.max(roomF, roomA);
+    if (room > 0) {
+      const st = roomA >= roomF
+        ? alK + aA + FAR_CLEAR_BEAMS * beam + reach + (0.3 + 0.4 * dFarStation) * room
+        : lo + FAR_END_CLEAR_BEAMS * beam + (0.3 + 0.4 * dFarStation) * room;
+      const c = at(st, cMid);
+      far.push(crackLine(c.x, c.y, (2 * dFarTilt - 1) * FAR_TILT, keel));
+    }
+  }
+  return { zone, fan, far };
 }
 
 function sectionLine(cut: FractureCut): FractureLine {
@@ -588,214 +624,137 @@ function sectionLine(cut: FractureCut): FractureLine {
   return { nx, ny, c: nx * cut.a.x + ny * cut.a.y, kind: EDGE_SECTION };
 }
 
-// ───────────────────────────── seeds ─────────────────────────────
+// ───────────────────────────── pieces ─────────────────────────────
 
-function sampleSeeds(
-  hull: P[],
-  hullArea: number,
-  seed: number,
-  kill: Vec2,
-  count: number,
-  primary: FracturePlan['primary'],
-  keel: Vec2,
-  region: SeedRegion | null,
-): Vec2[] {
-  const rng = new Rng(seed ^ 0x5eed5eed);
-  const f01 = (): number => rng.u32() / 4294967296;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const p of hull) {
-    if (p.x < minX) minX = p.x;
-    if (p.y < minY) minY = p.y;
-    if (p.x > maxX) maxX = p.x;
-    if (p.y > maxY) maxY = p.y;
+function ringCentroid(r: ReadonlyArray<{ x: number; y: number }>): Vec2 {
+  let a = 0;
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0; i < r.length; i++) {
+    const p = r[i]!;
+    const q2 = r[(i + 1) % r.length]!;
+    const w = p.x * q2.y - q2.x * p.y;
+    a += w;
+    cx += (p.x + q2.x) * w;
+    cy += (p.y + q2.y) * w;
   }
-  const s = Math.sqrt(hullArea);
-  // Few seeds spread wider (a few big hulks, not one hulk and slivers);
-  // the density still peaks at the kill point.
-  const widen = Math.max(1, FEW_SEEDS / count);
-  const fall0 = FALLOFF_FRAC * s;
-  const fall = fall0 * widen * widen;
-  const r2 = fall * fall;
-  // v6: draw candidates from a box round the kill point (the falloff makes
-  // anything beyond ~4 radii a near-certain reject anyway).
-  const box = SEED_BOX_FALLOFFS * fall;
-  const bx0 = Math.max(minX, kill.x - box);
-  const bx1 = Math.min(maxX, kill.x + box);
-  const by0 = Math.max(minY, kill.y - box);
-  const by1 = Math.min(maxY, kill.y + box);
-  const sep2 = MIN_SEED_SEP_FRAC * s * (MIN_SEED_SEP_FRAC * s);
-  // v5: two seeds at nearly the same station along the keel would draw a
-  // bisector down the keel (a lengthwise sliver to the hull's end). Away
-  // from the kill point, keep every pair at least `sepAlong` apart along the
-  // keel, so under the stretched metric no far cut leans far off square.
-  let acrossLo = Infinity;
-  let acrossHi = -Infinity;
-  for (const p of hull) {
-    const a = p.y * keel.x - p.x * keel.y;
-    if (a < acrossLo) acrossLo = a;
-    if (a > acrossHi) acrossHi = a;
-  }
-  const sepAlong = (SEED_ALONG_SEP * (acrossHi - acrossLo)) / (VORONOI_KEEL_STRETCH * VORONOI_KEEL_STRETCH);
-  const seeds: Vec2[] = [];
-  if (primary) {
-    // A seed pair straddling the primary line at the kill point: their
-    // bisector IS the line, so the smallest pieces meet there on both sides.
-    // v3: the kill point is on the outline, so centre the pair a little
-    // inside the hull along the line (the bisector stays on the line).
-    const off = 0.5 * MIN_SEED_SEP_FRAC * s;
-    const nx = -primary.dir.y * off;
-    const ny = primary.dir.x * off;
-    const lp = primary.point;
-    let cx = lp.x;
-    let cy = lp.y;
-    for (const sg of [1, -1]) {
-      const ix = lp.x + sg * primary.dir.x * 2 * off;
-      const iy = lp.y + sg * primary.dir.y * 2 * off;
-      if (pointInRing(hull, ix, iy)) {
-        cx = ix;
-        cy = iy;
-        break;
-      }
-    }
-    for (const sg of [1, -1]) {
-      const x = cx + sg * nx;
-      const y = cy + sg * ny;
-      if (seeds.length < count && pointInRing(hull, x, y)) seeds.push({ x, y });
-    }
-  } else if (pointInRing(hull, kill.x, kill.y)) seeds.push({ x: kill.x, y: kill.y });
-  const attempts = ATTEMPTS_PER_SEED * count;
-  for (let a = 0; a < attempts && seeds.length < count; a++) {
-    const x = bx0 + (bx1 - bx0) * f01();
-    const y = by0 + (by1 - by0) * f01();
-    const u = f01();
-    if (!pointInRing(hull, x, y) || !inRegion(region, x, y)) continue;
-    const dx = x - kill.x;
-    const dy = y - kill.y;
-    // v5: 4th-power falloff (no long tail down the hull); v6: no floor (the
-    // far field breaks along the far cracks instead).
-    const d2 = dx * dx + dy * dy;
-    const accept = (r2 * r2) / (r2 * r2 + d2 * d2);
-    if (u >= accept) continue;
-    // Near the kill point the shatter stays chunky (no keel-wise rule); from
-    // one falloff radius out it ramps up to the full keel-wise spacing.
-    const ramp = (Math.sqrt(d2) - fall0) / fall0;
-    const sepHere = sepAlong * (ramp <= 0 ? 0 : ramp >= 1 ? 1 : ramp);
-    let ok = true;
-    for (const q of seeds) {
-      const ex = q.x - x;
-      const ey = q.y - y;
-      const along = ex * keel.x + ey * keel.y;
-      if (ex * ex + ey * ey < sep2 || (along < sepHere && along > -sepHere)) {
-        ok = false;
-        break;
-      }
-    }
-    if (ok) seeds.push({ x, y });
-  }
-  if (seeds.length === 0) seeds.push({ x: hull[0]!.x, y: hull[0]!.y });
-  return seeds;
+  return a === 0 ? { x: r[0]!.x, y: r[0]!.y } : { x: cx / (3 * a), y: cy / (3 * a) };
 }
 
-// ──────────────────────── sections + Voronoi ────────────────────────
-
-/** The bisector of seeds a, b under the metric M = I + (k² − 1)·u uᵀ (u the
- *  unit keel direction, k = `VORONOI_KEEL_STRETCH`): the points p
- *  with (p − m)·M(b − a) = 0, m the midpoint. M is symmetric positive
- *  definite, so every cell is still convex and the cells still tile the
- *  plane. Arithmetic only (#determinism). */
-function bisector(a: Vec2, b: Vec2, keel: Vec2): { nx: number; ny: number; c: number } {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const w = (VORONOI_KEEL_STRETCH * VORONOI_KEEL_STRETCH - 1) * (dx * keel.x + dy * keel.y);
-  const nx = dx + w * keel.x;
-  const ny = dy + w * keel.y;
-  return { nx, ny, c: nx * ((a.x + b.x) / 2) + ny * ((a.y + b.y) / 2) };
+function splitBoth(sections: P[][], l: FractureLine): P[][] {
+  const next: P[][] = [];
+  for (const s of sections) {
+    for (const part of splitByLine(s, l.nx, l.ny, l.c, l.kind)) next.push(part);
+    for (const part of splitByLine(s, -l.nx, -l.ny, -l.c, l.kind)) next.push(part);
+  }
+  return next;
 }
 
-function splitIntoPieces(hull: P[], lines: ReadonlyArray<FractureLine>, seeds: Vec2[], n: number, keel: Vec2): P[][] {
+/** Split by every global line, then each of the first `nLocal` local lines
+ *  splits only the sections whose centroid lies in its region. */
+function splitIntoPieces(hull: P[], lines: ReadonlyArray<FractureLine>, local: ReadonlyArray<LocalLine>, nLocal: number, beam: number): P[][] {
   let sections: P[][] = [hull];
-  for (const { nx, ny, c, kind } of lines) {
-    if (nx === 0 && ny === 0) continue;
+  for (const l of lines) {
+    if (l.nx === 0 && l.ny === 0) continue;
+    sections = splitBoth(sections, l);
+  }
+  for (let i = 0; i < nLocal; i++) {
+    const { line, region } = local[i]!;
     const next: P[][] = [];
     for (const s of sections) {
-      for (const part of splitByLine(s, nx, ny, c, kind)) next.push(part);
-      for (const part of splitByLine(s, -nx, -ny, -c, kind)) next.push(part);
+      const c = ringCentroid(s);
+      let inside = true;
+      for (const h of region) if (h.sign * (h.nx * c.x + h.ny * c.y - h.c) <= 0) { inside = false; break; }
+      if (!inside) {
+        next.push(s);
+        continue;
+      }
+      // v7 (filmed take 2026-11-13: a fan crack left a long thin triangle
+      // along the hull's edge): a fan crack that would leave a part narrower
+      // than FAN_MIN_WIDTH_BEAMS or longer than FAN_MAX_ASPECT × its width
+      // is dropped for this section, which stays whole.
+      const parts = splitBoth([s], line);
+      let chunky = true;
+      for (const part of parts) {
+        if (!isChunky(part, beam)) {
+          chunky = false;
+          break;
+        }
+      }
+      if (chunky) for (const part of parts) next.push(part);
+      else next.push(s);
     }
     sections = next;
   }
-
-  const out: P[][] = [];
-  for (const section of sections) {
-    const local: Vec2[] = [];
-    for (let i = 0; i < n; i++) {
-      const sd = seeds[i]!;
-      if (pointInRing(section, sd.x, sd.y)) local.push(sd);
-    }
-    if (local.length <= 1) {
-      out.push(section);
-      continue;
-    }
-    const box = ringBox(section);
-    for (let i = 0; i < local.length; i++) {
-      const si = local[i]!;
-      const neighbours = voronoiNeighbours(local, i, box, keel);
-      let pieces: P[][] = [section];
-      for (const j of neighbours) {
-        const sj = local[j]!;
-        // Keep the side closer to si in the stretched metric:
-        // (p − m)·M(sj − si) < 0.
-        const { nx, ny, c } = bisector(si, sj, keel);
-        const next: P[][] = [];
-        for (const p of pieces) for (const q of splitByLine(p, nx, ny, c, EDGE_VORONOI)) next.push(q);
-        pieces = next;
-        if (pieces.length === 0) break;
-      }
-      for (const p of pieces) out.push(p);
-    }
-  }
-  return out;
+  return sections;
 }
 
-/** Indices j whose bisector with seed i bounds i's (convex) Voronoi cell,
- *  in ascending order. The cell starts as `box` and is clipped by every
- *  bisector half-plane (convex Sutherland–Hodgman is exact for this). */
-function voronoiNeighbours(seeds: Vec2[], i: number, box: [number, number, number, number], keel: Vec2): number[] {
-  const si = seeds[i]!;
-  const [x0, y0, x1, y1] = box;
-  const padX = (x1 - x0) * 0.5 + 1;
-  const padY = (y1 - y0) * 0.5 + 1;
-  // cell vertices with the index of the bisector that made the edge starting there (-1 = box)
-  let cell: Array<{ x: number; y: number; j: number }> = [
-    { x: x0 - padX, y: y0 - padY, j: -1 },
-    { x: x1 + padX, y: y0 - padY, j: -1 },
-    { x: x1 + padX, y: y1 + padY, j: -1 },
-    { x: x0 - padX, y: y1 + padY, j: -1 },
-  ];
-  for (let j = 0; j < seeds.length && cell.length > 0; j++) {
-    if (j === i) continue;
-    const { nx, ny, c } = bisector(si, seeds[j]!, keel);
-    const next: typeof cell = [];
-    for (let v = 0; v < cell.length; v++) {
-      const a = cell[v]!;
-      const b = cell[(v + 1) % cell.length]!;
-      const da = nx * a.x + ny * a.y - c;
-      const db = nx * b.x + ny * b.y - c;
-      if (da <= 0) next.push(a);
-      if ((da <= 0) !== (db <= 0)) {
-        const t = da / (da - db);
-        // Entering (a out): the edge from here continues a's edge; leaving: bisector j.
-        next.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, j: da <= 0 ? j : a.j });
-      }
-    }
-    cell = next;
+/** Full beam of the hull: its extent across the keel. */
+function hullBeam(hull: P[], keel: Vec2): number {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const p of hull) {
+    const c = p.y * keel.x - p.x * keel.y;
+    if (c < lo) lo = c;
+    if (c > hi) hi = c;
   }
-  const js: number[] = [];
-  for (const v of cell) if (v.j >= 0 && js.indexOf(v.j) < 0) js.push(v.j);
-  js.sort((a, b) => a - b);
-  return js;
+  return hi - lo;
+}
+
+/** A fan crack's part is chunky when its least width (rotating calipers over
+ *  its convex hull's edges) is at least FAN_MIN_WIDTH_BEAMS of the beam and
+ *  its length along that edge is at most FAN_MAX_ASPECT × the width.
+ *  Arithmetic and sqrt only, fixed order (deterministic). */
+function isChunky(ring: ReadonlyArray<{ x: number; y: number }>, beam: number): boolean {
+  const ch = convexHullOf(ring);
+  if (ch.length < 3) return false;
+  let bestW = Infinity;
+  let bestL = 0;
+  for (let i = 0; i < ch.length; i++) {
+    const a = ch[i]!;
+    const b = ch[(i + 1) % ch.length]!;
+    const ex = b.x - a.x;
+    const ey = b.y - a.y;
+    const el = Math.sqrt(ex * ex + ey * ey);
+    if (el <= 0) continue;
+    let w = 0;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const v of ch) {
+      const d = Math.abs(ex * (v.y - a.y) - ey * (v.x - a.x)) / el;
+      if (d > w) w = d;
+      const t = (ex * (v.x - a.x) + ey * (v.y - a.y)) / el;
+      if (t < lo) lo = t;
+      if (t > hi) hi = t;
+    }
+    if (w < bestW) {
+      bestW = w;
+      bestL = hi - lo;
+    }
+  }
+  return bestW >= FAN_MIN_WIDTH_BEAMS * beam && bestL <= FAN_MAX_ASPECT * bestW;
+}
+
+/** Convex hull (Andrew's monotone chain), CCW, collinear points dropped. */
+function convexHullOf(ring: ReadonlyArray<{ x: number; y: number }>): Array<{ x: number; y: number }> {
+  const pts = ring.map((p) => ({ x: p.x, y: p.y })).sort((a, b) => (a.x !== b.x ? a.x - b.x : a.y - b.y));
+  if (pts.length < 3) return pts;
+  const cross = (o: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number =>
+    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lower: Array<{ x: number; y: number }> = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2]!, lower[lower.length - 1]!, p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper: Array<{ x: number; y: number }> = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i]!;
+    while (upper.length >= 2 && cross(upper[upper.length - 2]!, upper[upper.length - 1]!, p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
 }
 
 // ───────────────────── robust split of a simple polygon by a line ─────────────────────
@@ -1273,16 +1232,6 @@ function ringBox(r: P[]): [number, number, number, number] {
     if (p.y > y1) y1 = p.y;
   }
   return [x0, y0, x1, y1];
-}
-
-function pointInRing(r: ReadonlyArray<{ x: number; y: number }>, x: number, y: number): boolean {
-  let inside = false;
-  for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
-    const a = r[i]!;
-    const b = r[j]!;
-    if (a.y > y !== b.y > y && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
-  }
-  return inside;
 }
 
 function orient(a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }): number {
