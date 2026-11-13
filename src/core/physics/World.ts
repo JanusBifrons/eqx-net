@@ -889,6 +889,27 @@ export class PhysicsWorld {
     }
   }
 
+  /**
+   * `setShipState` for a body the authority reports ASLEEP: pose and velocity
+   * are written WITHOUT waking it, then it is put to sleep. A sleeping body
+   * costs the step almost nothing, and Rapier still wakes it the moment an
+   * awake body (the local ship) touches it, so collision is unchanged.
+   */
+  setShipStateAsleep(id: string, state: ShipPhysicsState): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    const body = rec.body;
+    const t = this._setShipStateTranslationScratch;
+    t.x = state.x; t.y = state.y;
+    body.setTranslation(t, false);
+    const v = this._setShipStateLinvelScratch;
+    v.x = state.vx; v.y = state.vy;
+    body.setLinvel(v, false);
+    body.setRotation(state.angle, false);
+    if (state.angvel !== undefined) body.setAngvel(state.angvel, false);
+    body.sleep();
+  }
+
   /** True when Rapier reports the body as sleeping (motion below its threshold). */
   isSleeping(id: string): boolean {
     const rec = this.bodies.get(id);

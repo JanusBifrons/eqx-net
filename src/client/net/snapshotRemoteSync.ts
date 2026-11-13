@@ -208,7 +208,14 @@ export function anchorRemoteSwarmBodies(
     const key = keyCache.get(entityId);
     if (key === undefined || !predWorld.hasShip(key)) continue;
     if (!authoritativeSwarmStateAt(entry, anchorTick, scratch)) continue;
-    predWorld.setShipState(key, scratch);
+    // A body the server reports asleep stays asleep here too (#15: the client
+    // twin matches the server body). Waking every piece on every snapshot made
+    // each one an awake body in every replayed and predicted step: the soak's
+    // client CPU profile at ~500 wreck pieces spent 56 % of the main thread in
+    // Rapier's step (capital-destruction.md "Client cost per wreck piece").
+    // The local ship touching it still wakes it (Rapier wakes on contact).
+    if (entry.sleeping) predWorld.setShipStateAsleep(key, scratch);
+    else predWorld.setShipState(key, scratch);
   }
 }
 
