@@ -85,6 +85,47 @@ describe('drainContacts', () => {
     world.dispose();
   });
 
+  it('tags normalSpeed = closing speed ALONG the contact normal: head-on ≈ impactSpeed (impact-based ramming)', async () => {
+    const world = await PhysicsWorld.create();
+    const eventQueue = new RAPIER.EventQueue(true);
+    world.spawnShip('a', -20, 0);
+    world.spawnShip('b', 20, 0);
+    world.setShipState('a', { x: -20, y: 0, angle: 0, vx: 40, vy: 0 });
+    world.setShipState('b', { x: 20, y: 0, angle: 0, vx: -40, vy: 0 });
+    for (let i = 0; i < 60; i++) world.tick(1 / 60, eventQueue);
+    const preVel = new Map<string, { vx: number; vy: number }>([
+      ['a', { vx: 40, vy: 0 }],
+      ['b', { vx: -40, vy: 0 }],
+    ]);
+    const contacts = drainContacts(eventQueue, world, 50, preVel);
+    expect(contacts.length).toBeGreaterThan(0);
+    // The normal is along x, so the whole closing speed is normal. Positive
+    // proves the sign convention (n points from a to b; approach > 0).
+    for (const c of contacts) expect(c.normalSpeed!).toBeCloseTo(80, 0);
+    world.dispose();
+  });
+
+  it('a GLANCING contact has a normalSpeed well below its impactSpeed', async () => {
+    const world = await PhysicsWorld.create();
+    const eventQueue = new RAPIER.EventQueue(true);
+    // b sits off a's path by most of the combined collider radius (~90 u), so a clips its edge:
+    // the contact normal is mostly sideways to a's motion.
+    world.spawnShip('a', -150, 0);
+    world.spawnShip('b', 0, 80);
+    world.setShipState('a', { x: -150, y: 0, angle: 0, vx: 300, vy: 0 });
+    let contacts: ReturnType<typeof drainContacts> = [];
+    for (let i = 0; i < 90 && contacts.length === 0; i++) {
+      world.tick(1 / 60, eventQueue);
+      contacts = drainContacts(eventQueue, world, 1, new Map([['a', { vx: 300, vy: 0 }]]));
+    }
+    expect(contacts.length).toBeGreaterThan(0);
+    const c = contacts[0]!;
+    expect(c.impactSpeed).toBeCloseTo(300, 6);
+    expect(c.normalSpeed!).toBeGreaterThan(0);
+    expect(c.normalSpeed!).toBeLessThan(0.6 * c.impactSpeed!);
+    world.dispose();
+  });
+
   it('treats an entity missing from preVel as at rest (correct for a static structure)', async () => {
     const world = await PhysicsWorld.create();
     const eventQueue = new RAPIER.EventQueue(true);

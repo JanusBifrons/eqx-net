@@ -44,12 +44,20 @@ export interface Contact {
    *  model (`aggregateRamming`) gates on this. Undefined when no `preVel` was
    *  passed — damage then falls back to a force-derived estimate. */
   impactSpeed?: number;
+  /** NORMAL closing speed (game u/s, >= 0): the pre-step relative velocity
+   *  projected onto the contact normal (2026-11-13, impact-based ramming).
+   *  The normal is Rapier's `maxForceDirection()`, the world-space manifold
+   *  normal of the strongest manifold, pointing from collider 1 (body `a`)
+   *  toward collider 2 (body `b`), so `(vA − vB)·n > 0` is approach. A head-on
+   *  hit has normalSpeed ≈ impactSpeed; a glancing scrape a small one
+   *  (|v|·sin(grazing angle)). Separating motion clamps to 0. Undefined when
+   *  no `preVel` was passed. The damage model keys off THIS. */
+  normalSpeed?: number;
   /** FOLDED total mass (Rapier `RigidBody.mass()`) of bodies `a` / `b`, read
-   *  from the world at drain time. The ramming model (`Ramming.ts`) keys its
-   *  ASYMMETRIC, mass-differential damage off these: the lighter body in a
-   *  high-speed collision takes the damage, the heavier takes ~0, and an
-   *  equal-mass pair takes nothing (R2.31). Undefined for an unregistered body
-   *  (the damage model then treats the pair as having no differential ⇒ 0). */
+   *  from the world at drain time. The ramming model (`Ramming.ts`) uses them
+   *  for the impact energy (reduced mass) and the weight split (the lighter
+   *  body takes more). Undefined for an unregistered body (the damage model
+   *  then deals nothing for the pair). */
   aMass?: number;
   bMass?: number;
 }
@@ -118,6 +126,13 @@ export function drainContacts(
       const rvx = (preA?.vx ?? 0) - (preB?.vx ?? 0);
       const rvy = (preA?.vy ?? 0) - (preB?.vy ?? 0);
       contact.impactSpeed = Math.hypot(rvx, rvy);
+      // Normal component of the closing velocity (impact-based ramming). One
+      // small {x,y} per contact EVENT, not per body per tick: the same order as
+      // the Contact record itself. Rapier's JS API has no scalar normal
+      // accessor. TODO: alloc-debt (bounded by contact count, #14).
+      const n = event.maxForceDirection();
+      const vn = rvx * n.x + rvy * n.y;
+      contact.normalSpeed = vn > 0 ? vn : 0;
     }
     contacts.push(contact);
   });
