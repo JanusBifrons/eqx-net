@@ -75,4 +75,10 @@ Latest files are in the session scratchpad, not the repo.
 - `teleporter.test.ts`: port collision on a busy box.
 - `missileLifecycle` "detonates on an asteroid": fails about 1 in 3.
 - The capital-wreck E2E `wreckBreaks === 1` check: 2 of 4.
+- `spectator-mode.spec.ts` ("W does not move the ship", "pilot/spectate round trip") on CI only, when its shard also runs the capital-duel phantom spec (#528, #529; passed in #530). After Spectate the own parked hull reaches `lingeringShips` and is gone ~0.6 s later, so going back to pilot finds no hull. Not reproduced locally, even with the same spec order. Already ruled out:
+  - The server keeps sending the parked hull, and the client keeps it, in a live room (`spectateParkedHullKept.test.ts`).
+  - The abandon sweep only runs in galaxy rooms.
+  - No broadcaster filter drops it.
+
+  On the next failure the assertion message carries the client's view (pilot mode, mirror ships, lingering entries, own schema entries); start there. Separately, in the integration harness an empty room (no drones, no rocks) ticks ~45 times in 4 s and sends no snapshots, also before #527.
 - `asteroidShape.test.ts.snap` shows as modified after test runs on this box. That is CRLF noise, not a real change: revert it, never commit it.
