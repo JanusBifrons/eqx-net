@@ -131,6 +131,11 @@ export interface SwarmSpriteCtx {
   /** Capital destruction S3: per-wreck death clock + break-up sink. Absent ⇒
    *  pieces draw cool and no break-up plays. */
   wreckArt?: WreckArtState;
+  /** The renderer's presentation clock (fxNow, ms), which follows the game
+   *  speed: wreck death clocks and the cut-edge glow age on it, so they slow
+   *  down in slow motion and speed up at 4x. Absent: the wall `now` (tests).
+   *  Pose interpolation stays on the wall clock (wall-stamped arrivals). */
+  fxNowMs?: number;
 }
 
 /** Module-scope scratch for a structure's per-mount arc-local angles passed
@@ -191,6 +196,7 @@ function classicRockTint(resource: string | undefined): number | undefined {
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
   if (!mirror.swarm) return;
   const now = performance.now();
+  const fxNow = ctx.fxNowMs ?? now; // game-speed presentation clock (wreck glow / death clock)
   const slewDtSec = ctx.slewDtSec; // P3.8 — structure-mount slew rate input
   const wreckDescs = mirror.wrecks;
   ctx.wrecks?.retain(wreckDescs ?? NO_WRECKS);
@@ -331,7 +337,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         if (pieces == null || g === undefined) continue; // unusable descriptor / bad index: not drawn
         const pose = resolveEntityDisplayPose(entry, ctx.swarmPoseScratch);
         const info = ctx.wreckArt !== undefined
-          ? ctx.wreckArt.infoFor(desc, pieces, index, pose, entry.lastUpdateTick, now)
+          ? ctx.wreckArt.infoFor(desc, pieces, index, pose, entry.lastUpdateTick, fxNow)
           : { deathMs: -Infinity, hullR: 0, killX: 0, killY: 0, snap: false, desc };
         const shipArt = wreckArtHandle !== null && wreckArtHandle.state === 'ready' ? wreckArtHandle.ship : null;
         sprite = new WreckPieceSprite(g, entry.shipKind ?? desc.parentKind, shipArt, info);
@@ -372,7 +378,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     else if (entry.kind === 1) sprite.visible = entry.warp !== 2;
     sprite.rotation = -lerped.angle;
     if (entry.kind === 1 || entry.kind === 3) updateArtShipLight(ctx.art, sprite); // ships + tumbling scrap
-    else if (entry.kind === 4 && sprite instanceof WreckPieceSprite) sprite.update(now, ctx.art.sunAz); // S3 light frame + cut-edge glow
+    else if (entry.kind === 4 && sprite instanceof WreckPieceSprite) sprite.update(fxNow, ctx.art.sunAz); // S3 light frame + cut-edge glow (game clock)
     if (entry.kind === 1) {
       // P3c — charge-weapon wind-up telegraph (pulses while charging).
       const tele = chargeTelegraphs.get(sprite);

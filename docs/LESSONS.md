@@ -2963,3 +2963,9 @@ Owner: "They absolutely should collide by design." In a clip a heavy cruiser und
 - **Symptom:** wreck pieces appeared 1.2–3.6 s after a kill under slow frames, too late for the break-up explosion (an intermittent `wreckBreaks: 0`).
 - **Cause:** `wrecks[]` is not full-state on every snapshot (it rides a few after a change, then 2 Hz). Coalescing keeps only the newest snapshot per frame, so the one carrying it was dropped.
 - **Fix + rule:** the coalescer carries a dropped snapshot's `wrecks` forward. Any snapshot field that is absent-means-no-change must be carried forward the same way (the DataChannel byte coalescer still has this gap).
+
+## 2026-11-13 — Two features built in parallel: wreck glow and blasts ran on the wall clock
+
+- **Symptom (code review while landing the money-shot polish onto time scale):** the polish branch predated the time-scale lint wall. Its break-up blasts were spawned with `performance.now()` while `FxExplosions` ticks on `fxNow()` (lint caught it), and the cut-edge glow aged on the `now` of `updateSwarmSprites`, which is allowlisted as wall time because swarm poses interpolate on wall-stamped arrivals (lint could not catch it). In slow motion the glow would cool at full speed; at 4× it would linger.
+- **Fix:** the renderer hands the updater its presentation clock (`ctx.fxNowMs = fxNow()`); wreck death clocks and the glow age on it, poses stay on the wall clock. Lock: `swarmSpriteUpdater.wreckArt.test.ts` "cools on the game clock".
+- **Rule:** an allowlisted wall-clock file can still hold presentation timers. When a file is on the real-time allowlist for one reason (pose interpolation), anything else in it that animates must take the game clock explicitly. Scrap fade (`scrapBorn` in the same file) still uses the wall `now`.
