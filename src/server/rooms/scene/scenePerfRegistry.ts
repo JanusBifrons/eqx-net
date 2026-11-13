@@ -23,7 +23,7 @@ export interface ScenePerfView {
   /** Census at read time: swarm bodies, how many the worker flags SLEEPING,
    *  live wreck pieces (and asleep), the sub-cap FIFO and live wreck
    *  descriptors (sub-cap break-up slice 5). */
-  bodies: { swarm: number; sleeping: number; wreckPieces: number; wreckSleeping: number; wreckSubcapLive: number; wreckDescriptors: number };
+  bodies: { swarm: number; sleeping: number; wreckPieces: number; wreckSleeping: number; wreckAwakeSlow: number; wreckSubcapLive: number; wreckDescriptors: number };
   swarm: number;
   players: number;
   structures: number;

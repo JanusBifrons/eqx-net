@@ -202,7 +202,7 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
         const smp = soakSample(room, c, last, now, rxBytes, rxSwarmBytes);
         series.push(smp);
         last = { atMs: now, rx: rxBytes, rxSwarm: rxSwarmBytes, work: room['work'] ?? null };
-        log(`    t=${smp.sceneS.toFixed(0)}s pieces ${smp.wreckPieces} (asleep ${smp.wreckSleepingPct}%) swarm ${smp.swarm} (asleep ${smp.sleepingPct}%) · tick p50/p95/p99 ${smp.tickP50}/${smp.tickP95}/${smp.tickP99} ms · worker p95 ${smp.workerP95} · bodies/tick ${smp.bodiesPerTick} · swarm rec/tick ${smp.swarmRecordsPerTick} B/tick ${smp.swarmBytesPerTick} · rx ${smp.rxKBps} KB/s (swarm ${smp.rxSwarmKBps}, msgs ${smp.rxMsgKBps}) · wreck desc/snap ${smp.wreckDescPerSnapshot} · frame p50/p95/p99 ${smp.frameP50}/${smp.frameP95}/${smp.frameP99} · hitches ${smp.hitches} · render p95 ${smp.renderP95} · draws p95 ${smp.drawCallsP95} · objects ${smp.displayObjects}`);
+        log(`    t=${smp.sceneS.toFixed(0)}s pieces ${smp.wreckPieces} (asleep ${smp.wreckSleepingPct}%, awake-but-still ${smp.wreckAwakeSlowPct}%) swarm ${smp.swarm} (asleep ${smp.sleepingPct}%) · tick p50/p95/p99 ${smp.tickP50}/${smp.tickP95}/${smp.tickP99} ms · worker p95 ${smp.workerP95} · bodies/tick ${smp.bodiesPerTick} · swarm rec/tick ${smp.swarmRecordsPerTick} B/tick ${smp.swarmBytesPerTick} · rx ${smp.rxKBps} KB/s (swarm ${smp.rxSwarmKBps}, msgs ${smp.rxMsgKBps}) · wreck desc/snap ${smp.wreckDescPerSnapshot} · frame p50/p95/p99 ${smp.frameP50}/${smp.frameP95}/${smp.frameP99} · hitches ${smp.hitches} · render p95 ${smp.renderP95} · draws p95 ${smp.drawCallsP95} · objects ${smp.displayObjects}`);
       }
       if (Date.now() > deadline) throw new Error(`scene ${scene.id} never ended (${JSON.stringify(room?.['scene'])})`);
       await new Promise((r) => setTimeout(r, 500));
@@ -254,7 +254,7 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
  *  since the previous sample, server tick percentiles over its last
  *  SCENE_RECENT_TICKS, and the census at read time. */
 export interface SoakSample {
-  sceneS: number; swarm: number; sleepingPct: number; wreckPieces: number; wreckSleepingPct: number; wreckDescriptors: number;
+  sceneS: number; swarm: number; sleepingPct: number; wreckPieces: number; wreckSleepingPct: number; wreckAwakeSlowPct: number; wreckDescriptors: number;
   tickP50: number; tickP95: number; tickP99: number; workerP95: number;
   bodiesPerTick: number; swarmRecordsPerTick: number; swarmBytesPerTick: number; wreckDescPerSnapshot: number;
   rxKBps: number; rxSwarmKBps: number; rxMsgKBps: number;
@@ -282,7 +282,7 @@ function soakSample(room: Record<string, any>, c: any, last: SampleMark, now: nu
   return {
     sceneS: (room['scene']?.elapsedMs ?? 0) / 1000,
     swarm: b.swarm ?? room['swarm'], sleepingPct: pct(b.sleeping ?? 0, b.swarm ?? 0),
-    wreckPieces: b.wreckPieces ?? 0, wreckSleepingPct: pct(b.wreckSleeping ?? 0, b.wreckPieces ?? 0), wreckDescriptors: b.wreckDescriptors ?? 0,
+    wreckPieces: b.wreckPieces ?? 0, wreckSleepingPct: pct(b.wreckSleeping ?? 0, b.wreckPieces ?? 0), wreckAwakeSlowPct: pct(b.wreckAwakeSlow ?? 0, b.wreckPieces ?? 0), wreckDescriptors: b.wreckDescriptors ?? 0,
     tickP50: room['tickRecent']?.p50 ?? 0, tickP95: room['tickRecent']?.p95 ?? 0, tickP99: room['tickRecent']?.p99 ?? 0, workerP95: room['workerTickRecent']?.p95 ?? 0,
     bodiesPerTick: perTickDelta(w, pw, 'bodiesPerTick'), swarmRecordsPerTick: perTickDelta(w, pw, 'swarmRecordsPerTick'), swarmBytesPerTick: perTickDelta(w, pw, 'swarmBytesPerTick'),
     wreckDescPerSnapshot: snaps > 0 ? Math.round((descs / snaps) * 10) / 10 : 0,

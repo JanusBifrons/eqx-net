@@ -10710,14 +10710,21 @@ export class SectorRoom extends Room<SectorState> {
    *  swarm bodies by kind and how many the worker flags SLEEPING, plus the
    *  live wreck pieces (debris soak, sub-cap break-up slice 5). */
   private sceneBodyCensus(): ScenePerfView['bodies'] {
-    let sleeping = 0, wreckPieces = 0, wreckSleeping = 0;
+    let sleeping = 0, wreckPieces = 0, wreckSleeping = 0, wreckAwakeSlow = 0;
     for (const rec of this.swarmRegistry.all()) {
-      const asleep = ((this.sabU32[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0) & FLAG_SLEEPING) !== 0;
+      const b = slotBase(rec.slot);
+      const asleep = ((this.sabU32[b + SLOT_FLAGS_OFF] ?? 0) & FLAG_SLEEPING) !== 0;
       if (asleep) sleeping++;
-      if (rec.kind === SWARM_KIND_WRECK) { wreckPieces++; if (asleep) wreckSleeping++; }
+      if (rec.kind !== SWARM_KIND_WRECK) continue;
+      wreckPieces++;
+      if (asleep) { wreckSleeping++; continue; }
+      // Awake but all but still (< 1 u/s, < 0.1 rad/s): kept awake by
+      // something else (contacts, knocks), not by its own drift.
+      const vx = this.sabF32[b + SLOT_VX_OFF] ?? 0, vy = this.sabF32[b + SLOT_VY_OFF] ?? 0;
+      if (vx * vx + vy * vy < 1 && Math.abs(this.sabF32[b + SLOT_ANGVEL_OFF] ?? 0) < 0.1) wreckAwakeSlow++;
     }
     return {
-      swarm: this.swarmRegistry.size(), sleeping, wreckPieces, wreckSleeping,
+      swarm: this.swarmRegistry.size(), sleeping, wreckPieces, wreckSleeping, wreckAwakeSlow,
       wreckSubcapLive: this.capitalWrecks?.liveSubcapCount() ?? 0,
       wreckDescriptors: this.capitalWrecks?.descriptors().length ?? 0,
     };
