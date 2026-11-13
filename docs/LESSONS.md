@@ -2952,6 +2952,18 @@ Owner: "They absolutely should collide by design." In a clip a heavy cruiser und
 - **Fix:** `WRECK_COLLISION_GROUPS` (pieces never collide with each other), a push fastest at the kill point from `shipTuning` (#18); fracture v5 (1/d⁴ falloff, a metric stretched along the keel, a keel-wise seed spacing away from the kill point).
 - **Rule:** bodies spawned touching each other with diverging but unequal velocities will collide; give a break-up's pieces their own collision group, as scrap has.
 
+## 2026-11-12 — Wreck pieces lost the hull art only in the player's look
+
+- **Symptom:** in a filmed take the lit hull turned into flat dark-grey pieces at the break; the S3 E2E said every piece was textured.
+- **Cause:** the player look is GPU-lit art (`shiplight=high`), whose frames are data pages of UNLIT maps that only the lit shader turns into a hull. The pieces drew the raw albedo slice through the default shader. Automated browsers default to the BAKED look, so the E2E never ran the path players see.
+- **Rule:** a renderer feature that draws ship art must have a case with `shiplight=high` (and assert what draws, e.g. `artStats().wreckLit`), not only the automation default.
+
+## 2026-11-12 — The newest-wins snapshot coalescer dropped a wreck descriptor
+
+- **Symptom:** wreck pieces appeared 1.2–3.6 s after a kill under slow frames, too late for the break-up explosion (an intermittent `wreckBreaks: 0`).
+- **Cause:** `wrecks[]` is not full-state on every snapshot (it rides a few after a change, then 2 Hz). Coalescing keeps only the newest snapshot per frame, so the one carrying it was dropped.
+- **Fix + rule:** the coalescer carries a dropped snapshot's `wrecks` forward. Any snapshot field that is absent-means-no-change must be carried forward the same way (the DataChannel byte coalescer still has this gap).
+
 ## 2026-11-13 — Naval hit flash led the drawn shell: an event's FX must wait for the clock its object is drawn on
 
 - **Symptom:** in the 4× capitals clip at 0.25×, a heavy cruiser's whole-hull red hit flash came ~0.3–0.5 s before the battleship's 16" shells were drawn arriving.

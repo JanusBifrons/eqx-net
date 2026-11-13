@@ -233,7 +233,9 @@ export interface ShipTuning {
   /** Capital wreck break-up (capital-destruction.md): the outward push of a
    *  piece at the kill point and far from it (u/s). Proportional to the hull
    *  radius, so a bigger hull's debris field opens at the same rate relative
-   *  to its size: heavy cruiser (2×) ~120 / ~30 u/s, battleship ~158 / ~40. */
+   *  to its size: heavy cruiser (2×) ~370 / ~175 u/s, battleship ~490 / ~230
+   *  (money-shot review 2026-11-12: 3× #521, whose ~120 / ~30 barely opened
+   *  the outline). */
   wreckPushMax: number;
   wreckPushMin: number;
   /** Art bake pixels per world unit, and the texture side cap. */
@@ -260,8 +262,8 @@ const CACHE = new WeakMap<object, ShipTuning>();
 
 /** Wreck push at the kill point / far from it, per unit of hull radius per
  *  second (`wreckPushMax` / `wreckPushMin`). */
-const WRECK_PUSH_MAX_PER_RADIUS = 0.055;
-const WRECK_PUSH_MIN_PER_RADIUS = 0.014;
+const WRECK_PUSH_MAX_PER_RADIUS = 0.17;
+const WRECK_PUSH_MIN_PER_RADIUS = 0.08;
 
 /** The size-dependent numbers for a (scaled) kind. */
 export function shipTuning(kind: ShipKind): ShipTuning {

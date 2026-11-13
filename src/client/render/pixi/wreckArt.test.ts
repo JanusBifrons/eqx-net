@@ -17,6 +17,9 @@ import {
   cutEdgeRuns,
   WRECK_GLOW_EMBER_S,
   WRECK_GLOW_END_S,
+  wreckBlasts,
+  hullDeathBlastReplaced,
+  type WreckBlast,
   type WreckTexLayout,
 } from './wreckArt.js';
 import { rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
@@ -134,9 +137,25 @@ describe('wreckGlowAt — molten cut edges cool to dark (S3)', () => {
     expect(r).toBeGreaterThan(b);
   });
 
-  it('a dull ember at ~4 s: red, dimmer, still showing', () => {
-    expect(WRECK_GLOW_EMBER_S).toBeGreaterThanOrEqual(3);
-    expect(WRECK_GLOW_EMBER_S).toBeLessThanOrEqual(5);
+  it('bright for about a second (money-shot review timing)', () => {
+    wreckGlowAt(0.9, g);
+    const [r, gg] = rgb(g.color);
+    expect(g.alpha).toBeGreaterThan(0.85);
+    expect(r).toBeGreaterThan(0xe0);
+    expect(gg).toBeGreaterThan(0x60);
+  });
+
+  it('no longer bright orange at 4.5 s (review: "still bright orange at 4.5 s")', () => {
+    wreckGlowAt(4.5, g);
+    const [r, gg] = rgb(g.color);
+    expect(g.alpha * r, 'faint, dark red').toBeLessThan(0.3 * 255);
+    expect(gg).toBeLessThan(0x30);
+  });
+
+  it('a dull ember at ~3 s: red, dimmer, still showing', () => {
+    expect(WRECK_GLOW_EMBER_S).toBeGreaterThanOrEqual(2.5);
+    expect(WRECK_GLOW_EMBER_S).toBeLessThanOrEqual(3.5);
+    expect(WRECK_GLOW_END_S, 'dark by ~6 s').toBeLessThanOrEqual(6.5);
     wreckGlowAt(WRECK_GLOW_EMBER_S, g);
     const [r, gg, b] = rgb(g.color);
     expect(g.alpha).toBeGreaterThan(0.2);
@@ -178,5 +197,44 @@ describe('wreckGlowAt — molten cut edges cool to dark (S3)', () => {
       const n = cutEdgeRuns(p.cutEdges).reduce((s, [, len]) => s + len, 0);
       expect(n).toBe(p.cutEdges.filter(Boolean).length);
     }
+  });
+});
+
+describe('wreckBlasts: the break-up explosion at the kill point (money-shot review)', () => {
+  it('fireballs at the kill point, sized by the hull, never covering the hull', () => {
+    // Review: "a large flat white translucent disc plus a grey halo covers
+    // the mid-hull". FxExplosions draws radius r as a 2r fireball under a
+    // soft 3.4r glow: everything stays within 0.25 of the wreck radius.
+    for (const R of [2200, 2900, 600]) {
+      const out: WreckBlast[] = [];
+      const n = wreckBlasts(1000, -500, R, 12345, out);
+      expect(n).toBeGreaterThanOrEqual(2);
+      expect(out[0]!.x).toBe(1000);
+      expect(out[0]!.y).toBe(-500);
+      for (let i = 0; i < n; i++) {
+        const b = out[i]!;
+        const reach = Math.hypot(b.x - 1000, b.y + 500) + 1.7 * b.r;
+        expect(reach, `blast ${i} at R=${R}`).toBeLessThan(0.25 * R);
+        expect(b.r, 'scales with the hull (#18)').toBeGreaterThan(0.05 * R);
+      }
+    }
+  });
+
+  it('a dying capital in a wreck room leaves its blast to the break-up; everything else keeps #493', () => {
+    expect(hullDeathBlastReplaced(true, true)).toBe(true);
+    expect(hullDeathBlastReplaced(true, false), 'a fighter still explodes').toBe(false);
+    expect(hullDeathBlastReplaced(false, true), 'wrecks off: the hull-sized blast stays').toBe(false);
+    expect(hullDeathBlastReplaced(undefined, true)).toBe(false);
+  });
+
+  it('deterministic per seed; directions differ between seeds', () => {
+    const a: WreckBlast[] = [];
+    const b: WreckBlast[] = [];
+    const c: WreckBlast[] = [];
+    wreckBlasts(0, 0, 2000, 7, a);
+    wreckBlasts(0, 0, 2000, 7, b);
+    wreckBlasts(0, 0, 2000, 99999, c);
+    expect(a).toEqual(b);
+    expect(a[1]!.x).not.toBeCloseTo(c[1]!.x);
   });
 });

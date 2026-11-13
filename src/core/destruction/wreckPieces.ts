@@ -27,13 +27,19 @@ import type { Vec2 } from '../swarm/asteroidShape.js';
 /** Outward push falloff radius, as a fraction of the hull radius: a piece
  *  this far from the kill point gets half the extra push. The speeds
  *  themselves are `shipTuning(kind).wreckPushMax/Min` (#18). */
-export const WRECK_PUSH_FALLOFF_FRAC = 0.25;
-/** Largest seeded extra spin per piece (rad/s, ~7°/s). */
-export const WRECK_SPIN_KICK = 0.12;
+export const WRECK_PUSH_FALLOFF_FRAC = 0.3;
+/** Seeded spin kick of a piece at the kill point and far from it (rad/s:
+ *  ~26°/s and ~5°/s), falling off with distance like the push; each piece
+ *  gets 0.55–1× of it, either way round (money-shot review 2026-11-12: the
+ *  old ±7°/s kick read as no spin at all). */
+export const WRECK_SPIN_NEAR = 0.45;
+export const WRECK_SPIN_FAR = 0.08;
 /** Wreck pieces coast, then settle into terrain. Light enough that the
- *  debris field keeps opening for tens of seconds (review 2026-11-12: at
- *  0.05 / 0.1 with a ~10 u/s push the pieces barely moved in 6 s). */
-export const WRECK_LINEAR_DAMPING = 0.02;
+ *  debris field keeps opening for seconds (review 2026-11-12: at 0.05 / 0.1
+ *  with a ~10 u/s push the pieces barely moved in 6 s), heavy enough that a
+ *  piece flung at ~400 u/s comes to rest within a few kilometres instead of
+ *  leaving the sector (money-shot review: the push went up 3×). */
+export const WRECK_LINEAR_DAMPING = 0.06;
 export const WRECK_ANGULAR_DAMPING = 0.05;
 /** Room-wide cap on live wreck bodies (each takes a physics slot). Owner:
  *  wrecks stay for ever; this is only a budget guard (the oldest wreck piece
@@ -266,7 +272,8 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
     let oy = centre.y - killWorldOnHull.y;
     const ol2 = ox * ox + oy * oy;
     const ol = Math.sqrt(ol2);
-    const push = pushFar + (pushExtra * rf2) / (rf2 + ol2);
+    const near = rf2 / (rf2 + ol2); // 1 at the kill point → 0 far away
+    const push = pushFar + pushExtra * near;
     if (ol > 1e-6) {
       ox /= ol;
       oy /= ol;
@@ -274,7 +281,10 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
       ox = 0;
       oy = 0;
     }
-    const kick = (spinRng.u32() / 4294967296 - 0.5) * 2 * WRECK_SPIN_KICK;
+    // Spin: fastest near the kill point, seeded size (0.55–1×) and direction.
+    const u = spinRng.u32() / 4294967296;
+    const mag = (WRECK_SPIN_FAR + (WRECK_SPIN_NEAR - WRECK_SPIN_FAR) * near) * (0.55 + 0.9 * Math.abs(u - 0.5));
+    const kick = u < 0.5 ? -mag : mag;
     pieces.push({
       index: g.index,
       x: centre.x,

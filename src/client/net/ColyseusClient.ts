@@ -1566,6 +1566,9 @@ export class ColyseusGameClient {
       // Shells as events: read shell_salvo / shell_end only when the server
       // says it sends them (#15), and take the shells already in flight (#16).
       this._shellEvents = msg.shellEvents === true;
+      // Capital wrecks on: a dying capital explodes at its kill point (the
+      // wreck break-up), not as a hull-sized blast (money-shot review).
+      this.mirror.capitalWrecks = msg.capitalWrecks === true;
       this._shellStore.clear();
       this._navalHitHold.flush(this._heldDamageSink);
       if (this._shellEvents) {
