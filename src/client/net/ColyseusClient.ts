@@ -296,6 +296,31 @@ function _pa5(n: number): number { return parseFloat(n.toFixed(5)); }
 /** Shared empty `lockedBy` (no allocation per snapshot). */
 const NO_LOCKED_BY: ReadonlyArray<{ t: string; s: number; p: number }> = [];
 
+const SWARM_ID_PREFIX = 'swarm-';
+
+/**
+ * Is `targetId` (`swarm-<entityId>`) a wreck piece (swarm kind 4)? A hit on
+ * debris shows its impact spark and flash but NO floating damage number or
+ * health bar, for every wreck profile, capitals included (hostile review
+ * 2026-11-13: numbers coalesce by screen spot, so hits on a dead ship's
+ * pieces kept climbing its floating number after the explosion). Parses the
+ * id in place (no substring; called per damage event, #14).
+ */
+export function isWreckPieceTarget(
+  targetId: string, swarm: ReadonlyMap<number, Pick<SwarmRenderState, 'kind'>> | undefined,
+): boolean {
+  if (swarm === undefined || !targetId.startsWith(SWARM_ID_PREFIX)) return false;
+  const n = targetId.length;
+  if (n === SWARM_ID_PREFIX.length) return false;
+  let id = 0;
+  for (let i = SWARM_ID_PREFIX.length; i < n; i++) {
+    const c = targetId.charCodeAt(i) - 48;
+    if (c < 0 || c > 9) return false;
+    id = id * 10 + c;
+  }
+  return swarm.get(id)?.kind === SWARM_KIND_WRECK;
+}
+
 export class ColyseusGameClient {
   /**
    * Plan: crispy-kazoo, Commit 6 — live-instance counter. Bumped in
@@ -2822,13 +2847,15 @@ export class ColyseusGameClient {
     const localId = this.mirror.localPlayerId;
     // Flash the damaged ship for 6 frames.
     this._damageFlashFrames.set(evt.targetId, 6);
+    // Debris (a wreck piece): spark and flash only, no number or health bar.
+    const debris = isWreckPieceTarget(evt.targetId, this.mirror.swarm);
 
     // Floating damage number at hit location. weapon-hit-prediction
     // Phase 3 — suppressed when a confirmed/settled prediction already
     // showed this number (de-dupe: exactly one number per confirmed hit).
     // Everything else in handleDamage stays unconditional — this remains
     // the SOLE HP/HUD/flash/healthbar/hostility authority.
-    if (!suppressNumber && this.mirror.pendingDamageNumbers) {
+    if (!suppressNumber && !debris && this.mirror.pendingDamageNumbers) {
       const targetShip = this.mirror.ships.get(evt.targetId);
       const x = evt.hitX ?? targetShip?.x ?? 0;
       const y = evt.hitY ?? targetShip?.y ?? 0;
@@ -2841,7 +2868,7 @@ export class ColyseusGameClient {
     // looks like zero damage: the hull bar stays at 100% while shield
     // absorbs (no-spillover) the first N hits, and drones have no other
     // shield-feedback surface (only player ships have a HUD ShieldHullBar).
-    if (evt.shooterId === localId && this.mirror.pendingHealthBarHits) {
+    if (evt.shooterId === localId && !debris && this.mirror.pendingHealthBarHits) {
       const healthPct = evt.hullMax > 0 ? Math.max(0, evt.newHealth / evt.hullMax) : 0;
       const shieldPct = evt.shieldMax > 0 ? Math.max(0, evt.newShield / evt.shieldMax) : 0;
       // Pre-hit HULL fraction for the chip-damage band: a HULL hit removed
@@ -6774,6 +6801,8 @@ export class ColyseusGameClient {
     const clockNow = this.clock.now();
     const predSink: PredictedFeedbackSink = {
       pushDamageNumber: (targetId, x, y, damage, tag) => {
+        // Debris: never a number (the authoritative path skips it too).
+        if (isWreckPieceTarget(targetId, this.mirror.swarm)) return;
         if (!isHitscan || damage <= 0) {
           this.mirror.pendingDamageNumbers?.push({ targetId, x, y, damage, tag });
           // Probe 4 (mobile-perf-investigation, 2026-05-24) — replaced the

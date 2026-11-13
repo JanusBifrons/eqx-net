@@ -15,7 +15,7 @@ import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdat
 import { DyingHullHold, noteDyingHulls } from './pixi/dyingHullHold.js';
 import { sweepUnseenSprites } from './pixi/spriteSweep.js';
 import { WreckGeometryStore } from '../net/wreckGeometryStore.js';
-import { WreckArtState, WreckPieceSprite, hullDeathBlastReplaced, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
+import { WreckArtState, WreckPieceSprite, deathBlastFor, hullDeathBlastReplaced, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
@@ -492,6 +492,8 @@ export class PixiRenderer implements IRenderer {
   /** Capital death blasts left to the wreck break-up (test hook). */
   private _hullBlastsReplaced = 0;
   private readonly _wreckBlastScratch: WreckBlast[] = [];
+  /** `deathBlastFor` out (reused, #14). */
+  private readonly _deathBlastScratch = { scale: 1, linger: 1 };
   private _projectileUpdaterCtx!: ProjectileSpriteCtx;
   /** Off-screen ring/edge indicator. Constructed in the constructor body
    *  (NOT a field initializer) so it sees the assigned `_isTouch` — field
@@ -1757,7 +1759,10 @@ export class PixiRenderer implements IRenderer {
           continue;
         }
         const diameter = dying ? Math.max(dying.width, dying.height) : 40;
-        if (this._fxExplosions?.spawn(pose.x, -pose.y, blastRadiusFor(diameter), this.fxNow())) {
+        // A sub-cap breaking into wreck pieces (welcome `subcapWrecks`) gets a
+        // smaller blast with shorter smoke (profile fx.deathBlastScale/Linger).
+        const db = deathBlastFor(mirror.subcapWrecks, mirror.capitalWrecks, this._spriteShipKind(targetId), this._deathBlastScratch);
+        if (this._fxExplosions?.spawn(pose.x, -pose.y, blastRadiusFor(diameter) * db.scale, this.fxNow(), db.linger)) {
           // drawn by FxExplosions
         } else if (this.effects) {
           this.effects.spawnBurst('destruction', pose.x, -pose.y);

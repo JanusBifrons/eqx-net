@@ -23,7 +23,7 @@ import type { ShipKind, WeaponMount } from '../shipKinds/types.js';
 import { SHIP_SCALE, SHIP_TUNING, type ShipTuningProfile } from './config.js';
 import { NAVAL_RANGE, type NavalRangeMode } from '../combat/navalRange.js';
 import { REAL_NAVAL_GUNS, navalGunEngageReach, type NavalGunId } from '../combat/navalGuns.js';
-import { destructionProfileIdForKind, type DestructionProfileId } from './destruction.js';
+import { DESTRUCTION_PROFILES, destructionProfileIdForKind, type DestructionProfileId } from './destruction.js';
 
 export type SizeClass = 'fighter' | 'frigate' | 'cruiser' | 'capital';
 export const SIZE_CLASSES: readonly SizeClass[] = ['fighter', 'frigate', 'cruiser', 'capital'];
@@ -259,7 +259,9 @@ export interface ShipTuning {
    *  (1400 dmg) moves its biggest piece (~30 % of the hull) ~30 u/s. */
   wreckKnockSpeed: number;
   /** The most one hit may change a wreck piece's speed (u/s), so small arms
-   *  on a sliver never fling it. Heavy cruiser (2×) ~55 u/s. */
+   *  on a sliver never fling it. Heavy cruiser (2×) ~55 u/s. Both knock
+   *  numbers carry the destruction profile's `knockScale` / `knockMaxScale`
+   *  (sub-caps: fighter ~92 u/s / ~18 u/s, so a hit visibly shoves debris). */
   wreckKnockMax: number;
   /** How this kind breaks up when it dies (`destruction.ts`): `capital`,
    *  `subcap` or `none`. The numbers are `DESTRUCTION_PROFILES[id]`. */
@@ -309,6 +311,8 @@ export function shipTuning(kind: ShipKind): ShipTuning {
   const ct = CLASS_TUNING[cls];
   const g = s * ct.geometry, sp = s * ct.spacing;
   const unscaledR = kind.radius / s;
+  const destruction = destructionProfileIdForKind(kind);
+  const knockProfile = DESTRUCTION_PROFILES[destruction];
   t = {
     sizeClass: cls,
     appliedScale: s,
@@ -332,9 +336,11 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     wreckPushMin: WRECK_PUSH_MIN_PER_RADIUS * kind.radius,
     wreckSeparate: WRECK_SEPARATE_PER_RADIUS * kind.radius,
     wreckColliderInset: WRECK_COLLIDER_INSET_PER_RADIUS * kind.radius,
-    wreckKnockSpeed: WRECK_KNOCK_PER_RADIUS * kind.radius,
-    wreckKnockMax: WRECK_KNOCK_MAX_PER_RADIUS * kind.radius,
-    destruction: destructionProfileIdForKind(kind),
+    // Scaled by the destruction profile (capital ×1: unchanged; a sub-cap's
+    // debris is visibly shoved by small arms, `destruction.ts`).
+    wreckKnockSpeed: WRECK_KNOCK_PER_RADIUS * kind.radius * knockProfile.knockScale,
+    wreckKnockMax: WRECK_KNOCK_MAX_PER_RADIUS * kind.radius * knockProfile.knockMaxScale,
+    destruction,
     // Pixel density by the UNSCALED hull (so a 2× fighter stays as sharp per
     // world unit as today's), within the class's side budget.
     bakePpu: unscaledR >= BASE.ppuBigRadius ? BASE.ppuBig : BASE.ppuSmall,

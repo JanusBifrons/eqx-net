@@ -22,7 +22,7 @@ import { Container, Mesh, Texture, TextureSource } from 'pixi.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js';
 import { MountVisualManager } from '../MountVisualManager.js';
 import { WreckGeometryStore, rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
-import { WreckArtState, WreckPieceSprite, hullDeathBlastReplaced } from './wreckArt.js';
+import { WreckArtState, WreckPieceSprite, deathBlastFor, hullDeathBlastReplaced } from './wreckArt.js';
 import { radarCategoryForSwarm } from '../halo/arrowGraphics.js';
 import { FarZoomIcons } from './FarZoomIcons.js';
 import { DESTRUCTION_PROFILES } from '../../../shared-types/shipScale/destruction.js';
@@ -279,6 +279,107 @@ describe('sub-capital wrecks: the quiet look (slice 4)', () => {
     expect(hullDeathBlastReplaced(true, true, 'fighter'), 'even if flagged capital, the profile says no').toBe(false);
     expect(hullDeathBlastReplaced(true, true, 'battleship')).toBe(true);
     expect(SUB.hullDeathBlastReplaced).toBe(false);
+  });
+
+  /** Brightness of a 0xRRGGBB multiply tint (its largest channel, 0..1). */
+  const tintLevel = (t: number): number => Math.max((t >> 16) & 255, (t >> 8) & 255, t & 255) / 255;
+  /** Every art mesh's tint under a piece (not the glow). */
+  const artTints = (p: WreckPieceSprite): number[] => p.children
+    .filter((c) => c instanceof Mesh && c.texture !== p.glowTexture())
+    .map((c) => (c as Mesh).tint as number);
+
+  /**
+   * Hostile review 2026-11-13 (30-v-30 fleet fight, sub-cap wrecks on): "by
+   * 40 s the front line was a solid purple wall of robot wreckage,
+   * indistinguishable from live robots". Dead pieces read as DEAD: once the
+   * glow ends, the art is darkened and warm (burnt), clearly dimmer than any
+   * live ship (which draws untinted), still showing the art. Set once.
+   */
+  it('dead pieces go dark and burnt once the glow ends (profile fx.deadTint), set once', () => {
+    const ctx = makeCtx(stubArt(fighterArt()), { breaks: 0, blasts: 0, ripples: 0 });
+    const m = mirrorFor(desc('robot-square', 31), DEATH_TICK);
+    const T0 = 10_000;
+    ctx.fxNowMs = T0;
+    updateSwarmSprites(m, ctx);
+    for (const p of pieces(ctx)) for (const t of artTints(p)) expect(tintLevel(t), 'still bright while it glows').toBeGreaterThan(0.6);
+    ctx.fxNowMs = T0 + GLOW_MS + 50;
+    updateSwarmSprites(m, ctx);
+    const dead = SUB.deadTint!;
+    expect(tintLevel(dead), 'clearly dimmer than a live ship (untinted)').toBeLessThanOrEqual(0.45);
+    const r = (dead >> 16) & 255, b = dead & 255;
+    expect(r, 'warm (burnt), not blue/purple').toBeGreaterThan(b);
+    for (const p of pieces(ctx)) {
+      const ts = artTints(p);
+      expect(ts.length, 'still showing the art').toBeGreaterThan(0);
+      for (const t of ts) expect(t).toBe(dead);
+    }
+  });
+
+  it('a wreck with no glow (minimal tier) is dead-tinted from the start', () => {
+    const ctx = makeCtx(stubArt(fighterArt()), { breaks: 0, blasts: 0, ripples: 0 }, 'minimal');
+    const m = mirrorFor(desc('robot-square', 31), DEATH_TICK);
+    ctx.fxNowMs = 10_000;
+    updateSwarmSprites(m, ctx);
+    for (const p of pieces(ctx)) for (const t of artTints(p)) expect(t).toBe(SUB.deadTint);
+  });
+
+  /**
+   * Hostile review 2026-11-13: "the glow lasted only ~0.4-0.6 s (the intent
+   * is ~1 s), and its colour varies by ship type (orange on robots, magenta
+   * or white on drones)". One consistent warm orange → dark fade over
+   * `glowSeconds`, the same for every sub-cap kind.
+   */
+  it('the simple glow is a warm orange fade that lasts glowSeconds, the same for every kind', () => {
+    const samples: Array<{ kind: string; t: number; a: number; c: number }> = [];
+    for (const kind of ['fighter', 'robot-square', 'gunship']) {
+      const ctx = makeCtx(stubArt(fighterArt()), { breaks: 0, blasts: 0, ripples: 0 });
+      const m = mirrorFor(desc(kind, 31), DEATH_TICK);
+      const T0 = 10_000;
+      for (const f of [0, 0.25, 0.5, 0.75, 0.9]) {
+        ctx.fxNowMs = T0 + f * GLOW_MS;
+        updateSwarmSprites(m, ctx);
+        const p = pieces(ctx)[0]!;
+        samples.push({ kind, t: f, a: p.glowAlpha(), c: p.glowColor() });
+      }
+    }
+    for (const s of samples) {
+      const r = (s.c >> 16) & 255, g = (s.c >> 8) & 255, b = s.c & 255;
+      const tag = `${s.kind} at ${s.t} of glowSeconds`;
+      expect(r, `${tag}: warm (red over green)`).toBeGreaterThan(g * 1.4);
+      expect(g, `${tag}: orange, not magenta (green over blue)`).toBeGreaterThanOrEqual(b);
+      expect(g, `${tag}: never white-hot`).toBeLessThan(200);
+      if (s.t <= 0.5) expect(s.a, `${tag}: glowing strongly`).toBeGreaterThanOrEqual(0.75);
+    }
+    // Still clearly visible three-quarters of the way through (~1 s total).
+    for (const s of samples.filter((x) => x.t === 0.75)) expect(s.a, s.kind).toBeGreaterThanOrEqual(0.3);
+    // The same curve on every kind.
+    for (const f of [0, 0.25, 0.5, 0.75, 0.9]) {
+      const at = samples.filter((s) => s.t === f);
+      for (const s of at) {
+        expect(s.c).toBe(at[0]!.c);
+        expect(s.a).toBeCloseTo(at[0]!.a, 9);
+      }
+    }
+  });
+
+  /** Owner decision 2026-11-13: "Shrink it": a sub-cap's death explosion
+   *  about half the size with shorter smoke, while the room breaks
+   *  sub-caps into wrecks; unchanged when off; capitals unchanged. */
+  it('the death blast is shrunk for sub-caps when subcapWrecks is on, unchanged otherwise', () => {
+    const out = { scale: 0, linger: 0 };
+    deathBlastFor(true, false, 'robot-square', out);
+    expect(out).toEqual({ scale: SUB.deathBlastScale, linger: SUB.deathBlastLinger });
+    expect(out.scale).toBeCloseTo(0.5, 5);
+    expect(out.linger).toBeCloseTo(0.5, 5);
+    deathBlastFor(true, false, 'fighter', out);
+    expect(out.scale).toBeCloseTo(0.5, 5);
+    for (const [sub, cap, kind] of [
+      [false, false, 'fighter'], [undefined, true, 'fighter'], [true, true, 'battleship'], [true, false, 'battleship'],
+      [true, false, 'cargo-pod'], [true, false, null], [true, false, 'no-such-kind'],
+    ] as const) {
+      deathBlastFor(sub, cap, kind, out);
+      expect(out, `${String(sub)} ${String(cap)} ${String(kind)}`).toEqual({ scale: 1, linger: 1 });
+    }
   });
 
   it('debris stays off the radar and the far-zoom icons', () => {

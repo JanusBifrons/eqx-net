@@ -82,6 +82,19 @@ export interface DestructionFx {
    *  hold ends the frame every piece is drawn, so this is only the deadline
    *  for a lost or late wreck. 0: no hold. */
   readonly dyingHoldMs: number;
+  /** The dead pieces' art tint once the glow has ended (set once, never
+   *  written again): a dark, warm burnt multiply so debris reads as DEAD,
+   *  clearly dimmer than any live ship while still showing the ship's art.
+   *  Null: the pieces keep their per-piece `burntTint` (the capital look).
+   *  Hostile review 2026-11-13: sub-cap debris at full colour made the front
+   *  line "a solid purple wall" of live-looking wreckage. */
+  readonly deadTint: number | null;
+  /** The ship's normal death explosion, scaled (radius / smoke linger), while
+   *  the room breaks this profile into wrecks (welcome `subcapWrecks` for a
+   *  sub-capital). 1: unchanged. Owner 2026-11-13: "Shrink it", so the
+   *  break-up and the fight stay readable and capitals feel bigger. */
+  readonly deathBlastScale: number;
+  readonly deathBlastLinger: number;
 }
 
 export interface DestructionProfile {
@@ -94,6 +107,11 @@ export interface DestructionProfile {
   readonly pushScale: number;
   /** Multiplier on the wreck pieces' linear and angular damping. */
   readonly dampingScale: number;
+  /** Multipliers on the overkill knock-back (`shipTuning(kind)
+   *  .wreckKnockSpeed` / `.wreckKnockMax`, applied there so every reader
+   *  gets the profile's value). */
+  readonly knockScale: number;
+  readonly knockMaxScale: number;
   /** Pieces of one wreck collide with each other. */
   readonly piecesCollide: boolean;
   readonly fx: DestructionFx;
@@ -108,6 +126,8 @@ const CAPITAL: DestructionProfile = {
   holdMs: 1200,
   pushScale: 1,
   dampingScale: 1,
+  knockScale: 1,
+  knockMaxScale: 1,
   piecesCollide: true,
   fx: {
     breakBurst: true,
@@ -118,6 +138,9 @@ const CAPITAL: DestructionProfile = {
     glowStyle: 'full',
     glowSeconds: 4.5,
     dyingHoldMs: 1500,
+    deadTint: null,
+    deathBlastScale: 1,
+    deathBlastLinger: 1,
   },
 };
 
@@ -125,24 +148,37 @@ const SUBCAP: DestructionProfile = {
   id: 'subcap',
   // 2-3 pieces: the primary crack through the hit (moved toward the middle
   // only where it would clip a sliver), and sometimes one more chunk. Chunky
-  // at 0.3 beam (a fighter is barely longer than its beam, so v7's 0.45
-  // would never allow a third piece) with v7's aspect guard; a short, gentle
-  // jag so a piece is at most ~6 convex parts.
+  // at 0.36 beam (a fighter is barely longer than its beam, so v7's 0.45
+  // would never allow a third piece; 0.3 left thin strips, hostile review
+  // 2026-11-13) with v7's aspect guard. One shallow kink per cut, not a
+  // saw-tooth (depth 2 gave the drone pieces shard outlines): clean chunks.
   fracture: {
     maxPieces: 3,
     snapChance: 0.2,
     fanCracks: false,
     farCrack: false,
     chunkyPieces: true,
-    chunkyMinWidthBeams: 0.3,
+    chunkyMinWidthBeams: 0.36,
     extraChunkChance: 0.4,
-    jag: { depth: 2, roughness: 0.12 },
+    jag: { depth: 1, roughness: 0.06 },
   },
   holdMs: 0,
-  // A gentle push, and enough damping that pieces settle (and can sleep in
-  // the physics engine) within ~10-20 s. Slice 5 tunes both from measurement.
-  pushScale: 0.5,
-  dampingScale: 5,
+  // The parting push is per unit of hull radius (`wreckPushMax/Min`: 1 % /
+  // 0.4 % of the radius per second), which reads at capital scale but left a
+  // fighter's pieces as one hull with a crack (~0.1 u/s; hostile review
+  // 2026-11-13). ×50 opens a gap of ~1/3 of the radius in the first second
+  // (fighter: ~5-12 u/s each way). Damping ×10 (slice 2's measured value:
+  // linear 0.6/s, sleep in ~14 game s) brings them to rest; a piece drifts
+  // ~1 radius in all. Lock: `destructionProfile.test.ts`. Slice 5 re-tunes.
+  pushScale: 50,
+  dampingScale: 10,
+  // Shots on debris shove it a little (owner, slice 2 report): a small-arms
+  // hit moves half a fighter wreck ~10-25 u/s, a naval shell at most ~18
+  // u/s (fighter), then the damping slows it. The capital rule ("a blow
+  // worth the whole hull moves it at wreckKnockSpeed") is < 1 u/s at
+  // fighter size.
+  knockScale: 320,
+  knockMaxScale: 30,
   piecesCollide: false,
   fx: {
     breakBurst: false,
@@ -154,6 +190,10 @@ const SUBCAP: DestructionProfile = {
     glowSeconds: 1,
     // Brief: no crack hold, so a sub-cap's pieces are drawable at once.
     dyingHoldMs: 600,
+    // ~35 % brightness and warm (cuts the art's blue and purple most): burnt.
+    deadTint: 0x5e5249,
+    deathBlastScale: 0.5,
+    deathBlastLinger: 0.5,
   },
 };
 
@@ -163,6 +203,8 @@ const NONE: DestructionProfile = {
   holdMs: 0,
   pushScale: 0,
   dampingScale: 1,
+  knockScale: 1,
+  knockMaxScale: 1,
   piecesCollide: false,
   fx: {
     breakBurst: false,
@@ -173,6 +215,9 @@ const NONE: DestructionProfile = {
     glowStyle: 'none',
     glowSeconds: 0,
     dyingHoldMs: 0,
+    deadTint: null,
+    deathBlastScale: 1,
+    deathBlastLinger: 1,
   },
 };
 

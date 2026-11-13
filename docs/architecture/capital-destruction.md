@@ -720,15 +720,26 @@ on the profile, not a branch in the code.
   toward the centroid, then tries the diagonals and the keel through the
   centroid. The beam-wide zone cracks are replaced by at most one extra crack
   on the longer side, sized to that side (chance 0.4, more for a violent
-  death). Every piece passes v7's chunky guard at 0.3 beam (a fighter is
-  barely longer than its beam, so 0.45 would never allow a third piece), and
-  the jag is shorter and gentler (depth 2, roughness 0.12), so a piece is a
-  handful of convex parts.
+  death). Every piece passes v7's chunky guard at 0.36 beam (a fighter is
+  barely longer than its beam, so 0.45 would never allow a third piece; 0.3
+  left thin strips), and a cut has one shallow kink (jag depth 1, roughness
+  0.06; depth 2 gave the drone pieces saw-toothed shard outlines, hostile
+  review 2026-11-13), so a piece is a handful of convex parts.
+- **Parting and knock-back** are per unit of hull radius (`shipTuning`), tuned
+  for capitals, and invisible at fighter size (a fighter's pieces parted at
+  ~0.1 u/s and read as one hull with a crack). The sub-cap profile scales
+  them: `pushScale` 50 (a gap of ~1/3 of the radius in the first second),
+  `dampingScale` 10 (slice 2's measured value: at rest and asleep in ~15 s,
+  ~1 radius of drift), and `knockScale` 320 / `knockMaxScale` 30 (applied in
+  `shipTuning`'s `wreckKnockSpeed/Max`: a small-arms hit shoves half a
+  fighter wreck ~10-25 u/s, no hit more than ~25 u/s). Capitals ×1. Lock:
+  `tests/unit/destructionProfile.test.ts`.
 - **Result** over 1,200 deaths per kind (seeds × bearings × violence): 2
   pieces mostly; 3 in about 20–33 % on fighters, gunships, frigates and the
   hauler, and rarely on the round robots; the interceptor always 2. No piece
-  under ~10 % of the hull or under ~0.3 of its least width; at most 6 convex
-  parts. Lock: `src/core/destruction/fractureHull.subcap.test.ts`.
+  under ~10 % of the hull or under 0.3 of its least width; at most 6 convex
+  parts; a clean break has at most 2 jag points per piece, none more than
+  5 % of the cut off its chord. Lock: `src/core/destruction/fractureHull.subcap.test.ts`.
 - **Capitals are byte-identical:** every new option defaults to the old
   behaviour, the goldens are unchanged and `FRACTURE_ALGO_VERSION` stays 7.
 
@@ -748,14 +759,35 @@ break-up:
 - **The ship's normal death explosion stays.** `hullDeathBlastReplaced` takes
   the dying kind and also asks its profile (`fx.hullDeathBlastReplaced`,
   capital only).
-- **A simple glow.** `glowStyle: 'simple'`: one core quad per cut segment on
-  the piece's own side, full length from the first frame (no front, no halo,
-  no white-hot head), positions written once; per frame only one shared U
-  changes (uploaded only when it moves), on the same glow-curve texture
-  scaled so it is dark by `fx.glowSeconds` (1 s). The glow is destroyed when
+- **The ship's death explosion is smaller (owner 2026-11-13, "Shrink it").**
+  While sub-caps break into wrecks (`subcapWrecks`), `deathBlastFor` scales
+  the normal blast's radius by `fx.deathBlastScale` (0.5) and its smoke by
+  `fx.deathBlastLinger` (0.5), so the break-up and the fight stay readable
+  and capitals feel bigger. Flag off, or any other profile: unchanged.
+- **A simple glow.** `glowStyle: 'simple'`: one quad (twice the core width,
+  inside the piece) per cut segment on the piece's own side, full length
+  from the first frame (no front, no halo, no white-hot head), positions
+  written once; per frame only one shared U changes (uploaded only when it
+  moves), on its own curve (`simpleGlowAt` / `wreckSimpleGlowTexture`): one
+  warm orange held, then red to dark at `fx.glowSeconds` (1 s), the same
+  for every kind. (The first cut squeezed the capital curve into 1 s: a
+  white flash, ~0.4 s of orange, colour reading differently on different
+  art; hostile review 2026-11-13.) The glow is destroyed when
   dark. At the `minimal` effects tier a simple glow is not built at all
   (a capital's full glow always is). A descriptor seen up to `glowSeconds`
   late starts its glow at first sight, like the capital front.
+- **Dead pieces look dead.** When the glow ends (or at build, with no glow)
+  the piece's art takes `fx.deadTint` (a warm ~35 % multiply), written once:
+  debris is clearly dimmer than any live ship but still shows the art (the
+  first fleet-fight clip's front line was "a solid purple wall" of
+  live-looking wreckage). Capitals keep their light `burntTint` (null).
+- **No damage numbers on debris.** A hit on any wreck piece (swarm kind 4,
+  capital or sub-cap) shows its spark and hit flash, but no floating number
+  and no health bar (`isWreckPieceTarget`, both the authoritative and the
+  predicted path): numbers merge by screen spot, so hits on a dead ship's
+  pieces kept climbing its number after the explosion. A dead NPC's name tag
+  goes the frame it dies (the hold keeps the sprite, not the mirror entry
+  the label reads); a tag seen on debris is a live neighbour's.
 - **The dying-hull hold applies, briefly.** In a room that breaks sub-caps
   (welcome `subcapWrecks`, mirrored to `RenderMirror.subcapWrecks`; slice 2
   sets it), a dying sub-cap's sprite is held until all its pieces draw, with
@@ -782,9 +814,11 @@ break-up:
   ripples or front; a simple core glow gone by `glowSeconds`; ≤ 2 drawables
   per piece while glowing and 1 after; none at the minimal tier, the capital
   glow kept there; a settled piece writes no tint, texture or glow; culling;
-  the normal death blast kept; no icon or radar contact),
-  `dyingHullHold.test.ts` (the brief sub-cap hold), and the capital wreck-art
-  tests unchanged.
+  the normal death blast kept and shrunk; the dead tint; the warm 1 s glow;
+  no icon or radar contact), `ColyseusClient.wreckDamageFx.test.ts` (no
+  number on debris), `ColyseusClient.deadDroneLabel.test.ts` (no tag on a
+  dead NPC), `dyingHullHold.test.ts` (the brief sub-cap hold), and the
+  capital wreck-art tests unchanged.
 
 ## 4. Determinism strategy
 
