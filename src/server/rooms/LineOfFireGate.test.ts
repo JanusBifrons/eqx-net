@@ -73,7 +73,18 @@ describe('LineOfFireGate', () => {
       }
       const got = gate.blocked(fx, fy, dx, dy, len, sh.id, tg.id, friendly);
       expect(got).toBe(oracle);
-      if (got) blocked++;
+      if (got) {
+        blocked++;
+        // Line-of-fire feedback: the reported blocker is a friendly body on
+        // the line, at its own pose.
+        const bl = recs.find((b) => b.id === gate.lastBlockerId)!;
+        expect(bl, 'blocker reported').toBeDefined();
+        expect(friendly(bl) && bl !== sh && bl !== tg).toBe(true);
+        const bb = slotBase(bl.slot);
+        expect(gate.lastBlockerX).toBe(sab[bb + SLOT_X_OFF]!);
+        expect(gate.lastBlockerY).toBe(sab[bb + SLOT_Y_OFF]!);
+        expect(hit(bl, fx, fy, dx, dy, len, gate.lastBlockerX, gate.lastBlockerY)).not.toBeNull();
+      }
     }
     expect(blocked, 'the scene must actually block some shots').toBeGreaterThan(20);
     expect(blocked, 'and clear others').toBeLessThan(380);
