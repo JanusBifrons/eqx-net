@@ -197,10 +197,23 @@ export function massOf(kind: { mass?: number; massScale?: number }, fallback: nu
   return (kind.mass ?? fallback) * (kind.massScale ?? 1);
 }
 
-/** An NPC (swarm drone) body's mass when its kind authors none. One source for
- *  the spawner (`SwarmSpawner.DRONE_DEFAULT_MASS`) and the AI pilot, which needs
- *  the body's mass to know how hard a tick of thrust pushes it. */
-export const NPC_MASS_FALLBACK = 2;
+/** A ship body's mass: the kind's authored mass (1 when it authors none)
+ *  times the motion model's multiplier. THE one source for every body of a
+ *  ship kind, whoever flies it: the pilot ship (`World.spawnShip`), the NPC
+ *  drone (`World.spawnObstacle` with its kind, server worker and client
+ *  predWorld) and the AI pilot's handling model. Ship stats belong to the
+ *  ship, never the pilot (owner 2026-11-13): before this an NPC flew an
+ *  unauthored kind at mass 2 (server) / 3 (client predWorld) against a
+ *  pilot's 1. */
+export function shipBodyMass(kind: ShipKind): number {
+  return massOf(kind, 1);
+}
+
+/** A ship body's rotational inertia, from `shipBodyMass` and the bare
+ *  `kind.radius` (the shield pad does not change handling). */
+export function shipBodyInertia(kind: ShipKind): number {
+  return shipAngularInertia(shipBodyMass(kind), kind.radius);
+}
 
 /** A ship body's rotational inertia: the disc formula the physics world
  *  sets (`World.spawnShip`, density-0 colliders), shared with the capital

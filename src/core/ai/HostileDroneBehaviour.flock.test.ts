@@ -5,11 +5,11 @@ import { getShipKind } from '../../shared-types/shipKinds.js';
 import { FLOCK_FOLLOW_DISTANCE } from './flocking.js';
 import { boostOf, stepKinematic, throttleOf, turnOf } from './pilotTestKit.js';
 import { makePilotHandling } from './virtualPilot.js';
-import { massOf, NPC_MASS_FALLBACK } from '../../shared-types/shipScale/tuning.js';
+import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 
 const KIND = getShipKind('fighter');
 /** The fighter's thrust cruise speed as an NPC body (virtual pilot handling). */
-const CRUISE = makePilotHandling(KIND, massOf(KIND, NPC_MASS_FALLBACK)).cruiseSpeed;
+const CRUISE = makePilotHandling(KIND, shipBodyMass(KIND)).cruiseSpeed;
 /** Non-combat travel flies at this share of cruise (CALM_CRUISE_FRAC). */
 const CALM = CRUISE * 0.45;
 
@@ -87,7 +87,7 @@ describe('HostileDroneBehaviour — leader-led flocking (non-combat herding)', (
       expect(r.boosted).toBe(false);
       expect(r.top).toBeGreaterThan(0);
       // Bang-bang throttle may overshoot the wanted speed by about one tick of thrust.
-      expect(r.top).toBeLessThanOrEqual(CALM + KIND.thrustImpulse / massOf(KIND, NPC_MASS_FALLBACK) + 1e-6);
+      expect(r.top).toBeLessThanOrEqual(CALM + KIND.thrustImpulse / shipBodyMass(KIND) + 1e-6);
     }
   });
 

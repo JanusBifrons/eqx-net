@@ -66,7 +66,7 @@ import {
   type LastInputCache,
   type IdleTracker,
 } from '../net/snapshotScheduler.js';
-import { SwarmSpawner, DRONE_DEFAULT_MASS, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
+import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
 import { ScriptedPathBehaviour } from '../../core/ai/ScriptedPathBehaviour.js';
 import { ScrapSpawner } from '../spawn/ScrapSpawner.js';
 // Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
@@ -392,7 +392,7 @@ import {
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
 import type { WeaponId, MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat/Energy.js';
-import { massOf, shipTuning, shellViewHalfExtent } from '../../shared-types/shipScale/tuning.js';
+import { shipBodyMass, shipTuning, shellViewHalfExtent } from '../../shared-types/shipScale/tuning.js';
 import { ShellEventHub, type ShellViewer } from './ShellEventHub.js';
 import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
@@ -2936,7 +2936,7 @@ export class SectorRoom extends Room<SectorState> {
         if (!rec) continue;
         if (pose.path) {
           // Radar sandbox — scripted fly-in / fly-out / tangential pass.
-          const mass = massOf(getShipKind(pose.kind), DRONE_DEFAULT_MASS);
+          const mass = shipBodyMass(getShipKind(pose.kind));
           this.aiController.register(droneId, rec.slot, new ScriptedPathBehaviour({
             from: { x: pose.x, y: pose.y },
             to: { x: pose.path.toX, y: pose.path.toY },

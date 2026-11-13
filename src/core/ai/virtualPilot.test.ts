@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { PhysicsWorld } from '../physics/World.js';
 import { SHIP_KINDS_LIST, getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
-import { massOf, NPC_MASS_FALLBACK } from '../../shared-types/shipScale/tuning.js';
+import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { AI_INPUT_BOOST, AI_INPUT_REVERSE, AI_INPUT_THRUST, AI_INPUT_TURN_LEFT, AI_INPUT_TURN_RIGHT, decodeAiInputBits } from '../contracts/IAiBehaviour.js';
 import {
   brakingSpeed,
@@ -27,7 +27,7 @@ const SYNC: PilotParams = { ...DEFAULT_PILOT_PARAMS, leadTicks: 0 };
 
 async function npcWorld(kind: ShipKind, angle = 0): Promise<PhysicsWorld> {
   const w = await PhysicsWorld.create();
-  const mass = massOf(kind, NPC_MASS_FALLBACK);
+  const mass = shipBodyMass(kind);
   w.spawnObstacle('npc', 0, 0, kind.radius, mass, undefined, kind.linearDamping, undefined, undefined, kind);
   w.setShipState('npc', { x: 0, y: 0, angle, vx: 0, vy: 0, angvel: 0 });
   w.setPilotKind('npc', kind);
@@ -43,7 +43,7 @@ type Goal = (s: { x: number; y: number; vx: number; vy: number; angle: number })
 function fly(w: PhysicsWorld, kind: ShipKind, ticks: number, goal: Goal, params = SYNC, delay = 0): { angles: number[]; turnFlips: number; last: number } {
   const queue: number[] = [];
   for (let i = 0; i < delay; i++) queue.push(0);
-  const h = makePilotHandling(kind, massOf(kind, NPC_MASS_FALLBACK));
+  const h = makePilotHandling(kind, shipBodyMass(kind));
   const st = makePilotState();
   const angles: number[] = [];
   let lastTurn = 0;
@@ -123,7 +123,7 @@ describe('virtualPilot — turning', () => {
 
 describe('virtualPilot — flying to a point', () => {
   const goalAt = (gx: number, gy: number, kind: ShipKind): Goal => (s) => {
-    const h = makePilotHandling(kind, massOf(kind, NPC_MASS_FALLBACK));
+    const h = makePilotHandling(kind, shipBodyMass(kind));
     const dx = gx - s.x, dy = gy - s.y;
     const d = Math.hypot(dx, dy);
     if (d < 1e-6) return { facing: s.angle, vx: 0, vy: 0, boost: false };
@@ -147,7 +147,7 @@ describe('virtualPilot — flying to a point', () => {
   it('never overshoots the goal by more than a hull length on the way in', async () => {
     const kind = getShipKind('fighter');
     const w = await npcWorld(kind, 0);
-    const h = makePilotHandling(kind, massOf(kind, NPC_MASS_FALLBACK));
+    const h = makePilotHandling(kind, shipBodyMass(kind));
     const st = makePilotState();
     let maxPast = -Infinity;
     for (let i = 0; i < 60 * 20; i++) {
@@ -164,7 +164,7 @@ describe('virtualPilot — flying to a point', () => {
 
   it('boosts only when allowed and on course; brakes with reverse', () => {
     const kind = getShipKind('fighter');
-    const h = makePilotHandling(kind, massOf(kind, NPC_MASS_FALLBACK));
+    const h = makePilotHandling(kind, shipBodyMass(kind));
     const st = makePilotState();
     // At rest, nose on course (+y), wants full speed: thrust + boost.
     const go = pilotInputs(h, st, SYNC, 0, 0, 0, 0, 0, 0, h.maxSpeed, true);
@@ -181,7 +181,7 @@ describe('virtualPilot — flying to a point', () => {
 
   it('a reaction latch holds the decision for N ticks', () => {
     const kind = getShipKind('fighter');
-    const h = makePilotHandling(kind, massOf(kind, NPC_MASS_FALLBACK));
+    const h = makePilotHandling(kind, shipBodyMass(kind));
     const st = makePilotState();
     const p: PilotParams = { ...SYNC, reactionTicks: 3 };
     const first = pilotInputs(h, st, p, 0, 0, 0, 0, 1, 0, 0, false);

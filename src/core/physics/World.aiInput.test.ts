@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { PhysicsWorld } from './World.js';
 import { SHIP_KINDS_LIST, getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
-import { massOf } from '../../shared-types/shipScale/tuning.js';
+import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { decodeAiInputBits, packAiInputBits } from '../contracts/IAiBehaviour.js';
 
 const KEYS = { thrust: false, reverse: false, turnLeft: false, turnRight: false, boost: false };
@@ -18,7 +18,7 @@ const KEYS = { thrust: false, reverse: false, turnLeft: false, turnRight: false,
 async function pair(kind: ShipKind): Promise<PhysicsWorld> {
   const w = await PhysicsWorld.create();
   w.spawnShip('pilot', -100_000, 0, kind.id);
-  w.spawnObstacle('npc', 100_000, 0, kind.radius, massOf(kind, 1), undefined, kind.linearDamping, undefined, undefined, kind);
+  w.spawnObstacle('npc', 100_000, 0, kind.radius, shipBodyMass(kind), undefined, kind.linearDamping, undefined, undefined, kind);
   w.setPilotKind('npc', kind);
   return w;
 }
