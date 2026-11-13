@@ -394,7 +394,7 @@ import { massOf, shipTuning, shellViewHalfExtent } from '../../shared-types/ship
 import { ShellEventHub, type ShellViewer } from './ShellEventHub.js';
 import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
-import { refineRayHit, isCapitalKindId } from '../../core/combat/capitalHits.js';
+import { refineRayHit, refineSweepHit, isCapitalKindId } from '../../core/combat/capitalHits.js';
 import { CapitalWreckSubsystem } from './CapitalWreckSubsystem.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import { isWreckPiece } from '../net/SwarmEntityRegistry.js';
@@ -7983,11 +7983,14 @@ export class SectorRoom extends Room<SectorState> {
     // radius 16 had ~4 u of visible hull where lasers passed through.
     const rk = getShipKind(ship.kind);
     const r = rk.radius + shipTuning(rk).shieldPad;
-    const circle = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, r);
     // A capital's shield follows its hull (`shipShieldColliderDesc`), so its
     // circle (half the hull's LENGTH) is only the cheap pre-test, as for an NPC
     // capital (`refineRayHit`, #15): refine to the hull whatever the shield.
-    if (circle === null || (ship.shield > 0 && !isCapitalKindId(ship.kind))) return circle;
+    // The shared helper gates on `segmentNearCircle`, not the circle hit: a
+    // ray from beside the hull, past its centre, still crosses the far half.
+    if (isCapitalKindId(ship.kind)) return refineRayHit(ship.kind, null, fx, fy, dx, dy, maxDist, cx, cy, angle, r);
+    const circle = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, r);
+    if (circle === null || ship.shield > 0) return circle;
     return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, shipCollisionParts(ship.kind));
   }
 
@@ -8042,7 +8045,7 @@ export class SectorRoom extends Room<SectorState> {
     if (isWreckPiece(rec)) return wreckRayHit(rec.wreckParts, rec.radius, fx, fy, dx, dy, maxDist, cx, cy, ca);
     if (rec.halfW !== undefined && rec.halfH !== undefined) return rayHitsBox(fx, fy, dx, dy, maxDist, cx, cy, rec.halfW, rec.halfH, rec.boxes);
     const d = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, rec.radius);
-    return rec.kind === 1 ? refineRayHit(rec.shipKind, d, fx, fy, dx, dy, maxDist, cx, cy, ca) : d;
+    return rec.kind === 1 ? refineRayHit(rec.shipKind, d, fx, fy, dx, dy, maxDist, cx, cy, ca, rec.radius) : d;
   }
 
   // ─── NPC line of fire (friendly fire slice 2) ────────────────────────────
@@ -8228,10 +8231,15 @@ export class SectorRoom extends Room<SectorState> {
   ): { entry: number; hitX: number; hitY: number } | null {
     const rk = getShipKind(ship.kind);
     const r = rk.radius + shipTuning(rk).shieldPad;
-    const circle = projectileSweepCircle(fromX, fromY, stepX, stepY, projRadius, cx, cy, r);
     // Capitals: the hull, shield up or down (see playerHitscanDist). Before
     // 2026-11-12 a broadside shell burst ~2,000 u off a pilot's heavy cruiser.
-    if (circle === null || (ship.shield > 0 && !isCapitalKindId(ship.kind))) return circle;
+    // The shared helper gates on `segmentNearCircle`: a step that starts
+    // inside the circle past the centre still crosses the far half (2026-11-13).
+    if (isCapitalKindId(ship.kind)) {
+      return refineSweepHit(ship.kind, null, fromX, fromY, stepX, stepY, cx, cy, angle, r + projRadius);
+    }
+    const circle = projectileSweepCircle(fromX, fromY, stepX, stepY, projRadius, cx, cy, r);
+    if (circle === null || ship.shield > 0) return circle;
     return sweptSegmentHitsShipPolygon(fromX, fromY, stepX, stepY, cx, cy, angle, shipCollisionParts(ship.kind));
   }
 

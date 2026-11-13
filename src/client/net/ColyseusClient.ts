@@ -5723,7 +5723,7 @@ export class ColyseusGameClient {
       if (sw && sw.kind === 1 && sw.shieldDown !== true) {
         const c = rayHitsSphere(fromX, fromY, fwdX, fwdY, maxRange, sw.x, sw.y, sw.radius + tuningFor(sw.shipKind).shieldPad);
         // Capitals: the hull, as the server resolves it (#15).
-        const d = refineRayHit(sw.shipKind, c, fromX, fromY, fwdX, fwdY, maxRange, sw.x, sw.y, sw.angle);
+        const d = refineRayHit(sw.shipKind, c, fromX, fromY, fwdX, fwdY, maxRange, sw.x, sw.y, sw.angle, sw.radius + tuningFor(sw.shipKind).shieldPad);
         if (d !== null) return d;
       }
       return hit.dist;
@@ -5735,7 +5735,7 @@ export class ColyseusGameClient {
       const c = rayHitsSphere(fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, r);
       // A capital pilot's shield follows its hull, as the server resolves it
       // (`SectorRoom.playerHitscanDist`, #15).
-      const d = refineRayHit(ship.kind ?? null, c, fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, ship.angle);
+      const d = refineRayHit(ship.kind ?? null, c, fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, ship.angle, r);
       if (d !== null) return d;
     }
     return hit.dist;
