@@ -23,6 +23,7 @@ import type { ShipKind, WeaponMount } from '../shipKinds/types.js';
 import { SHIP_SCALE, SHIP_TUNING, type ShipTuningProfile } from './config.js';
 import { NAVAL_RANGE, type NavalRangeMode } from '../combat/navalRange.js';
 import { REAL_NAVAL_GUNS, navalGunEngageReach, type NavalGunId } from '../combat/navalGuns.js';
+import { destructionProfileIdForKind, type DestructionProfileId } from './destruction.js';
 
 export type SizeClass = 'fighter' | 'frigate' | 'cruiser' | 'capital';
 export const SIZE_CLASSES: readonly SizeClass[] = ['fighter', 'frigate', 'cruiser', 'capital'];
@@ -238,6 +239,9 @@ export interface ShipTuning {
    *  the outline). */
   wreckPushMax: number;
   wreckPushMin: number;
+  /** How this kind breaks up when it dies (`destruction.ts`): `capital`,
+   *  `subcap` or `none`. The numbers are `DESTRUCTION_PROFILES[id]`. */
+  destruction: DestructionProfileId;
   /** Art bake pixels per world unit, and the texture side cap. */
   bakePpu: number;
   bakeMaxSide: number;
@@ -295,6 +299,7 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     guardRadiusMin: ct.clearHull ? Math.max(BASE.guardRadiusMin * sp, kind.radius * 2) : BASE.guardRadiusMin * sp,
     wreckPushMax: WRECK_PUSH_MAX_PER_RADIUS * kind.radius,
     wreckPushMin: WRECK_PUSH_MIN_PER_RADIUS * kind.radius,
+    destruction: destructionProfileIdForKind(kind),
     // Pixel density by the UNSCALED hull (so a 2× fighter stays as sharp per
     // world unit as today's), within the class's side budget.
     bakePpu: unscaledR >= BASE.ppuBigRadius ? BASE.ppuBig : BASE.ppuSmall,

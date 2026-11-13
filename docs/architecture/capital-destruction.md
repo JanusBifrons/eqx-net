@@ -504,6 +504,48 @@ pieces stay for ever and the glow ends dark. As built
 - **Lifetime.** A per-sector cap instead of today's global `MAX_LIVE_SCRAP`
   FIFO.
 
+### Sub-capital profile (sub-capital break-up, slice 1, 2026-11-13)
+
+The owner wants every other ship to break up too, but quietly: "use the same
+systems, just make it use less effects, the glow simpler, only a few parts".
+Capitals stay "a rare and very large spectacle". So there is one wreck
+system with three **destruction profiles**, and every difference is a field
+on the profile, not a branch in the code.
+
+- **`destructionProfile(entity)`** (`src/shared-types/shipScale/destructionProfile.ts`)
+  returns `capital` (authored `sizeClass: 'capital'`), `none` (engineering
+  kinds and the cargo pod, which keep their scrap) or `subcap` (every other
+  ship, fighters included). Ships read it through `shipTuning(kind).destruction`
+  (#18). It takes an entity (`{ type: 'ship' | 'structure', kindId }`), so a
+  structure kind can get a profile later; structures are `none` for now.
+- **`DESTRUCTION_PROFILES`** (`destruction.ts`) is plain data: the fracture
+  options, the crack hold, push and damping scales, whether pieces collide,
+  and the FX flags (break burst, kill blasts, crack front, ripples, whether
+  the wreck replaces the death blast, glow style and seconds). The capital
+  entry holds the capital stack's values, and its fracture options are the
+  fracture defaults. Today only the fracture reads the profile
+  (`wreckPieceGeometry`); slice 2 (server) and slice 4 (client look) swap
+  their constants for these fields.
+- **The sub-capital fracture** (same `fractureHull`, v7, with options): at
+  most 3 pieces, no fan or far cracks, and `chunkyPieces`. The primary crack
+  must be sound: it splits the hull into exactly two pieces of at least 15 %
+  each, both chunky. A line across a small concave hull (a fighter's notched
+  tail, a delta's swept wings) would clip wingtips off as slivers, so it moves
+  toward the centroid, then tries the diagonals and the keel through the
+  centroid. The beam-wide zone cracks are replaced by at most one extra crack
+  on the longer side, sized to that side (chance 0.4, more for a violent
+  death). Every piece passes v7's chunky guard at 0.3 beam (a fighter is
+  barely longer than its beam, so 0.45 would never allow a third piece), and
+  the jag is shorter and gentler (depth 2, roughness 0.12), so a piece is a
+  handful of convex parts.
+- **Result** over 1,200 deaths per kind (seeds × bearings × violence): 2
+  pieces mostly; 3 in about 20–33 % on fighters, gunships, frigates and the
+  hauler, and rarely on the round robots; the interceptor always 2. No piece
+  under ~10 % of the hull or under ~0.3 of its least width; at most 6 convex
+  parts. Lock: `src/core/destruction/fractureHull.subcap.test.ts`.
+- **Capitals are byte-identical:** every new option defaults to the old
+  behaviour, the goldens are unchanged and `FRACTURE_ALGO_VERSION` stays 7.
+
 ## 4. Determinism strategy
 
 Every client must produce the same pieces as the server, bit for bit, from
