@@ -101,9 +101,13 @@ export const WRECK_FRONT_HIDDEN_SHARE = 0.2;
  *  piece that then "faded away"). */
 const GLOW_CORE_R = 0.018;
 /** The simple (sub-capital) glow's band into the piece, share of the wreck
- *  radius: ~3.3 px on a robot cube at fleet-fight zoom (0.45), up from a
- *  1.8 px core (round-2 review: "a thin orange line"). */
-const SIMPLE_GLOW_W_R = 0.4;
+ *  radius. Round 3 (2026-11-13): at 0.4 it filmed as an opaque orange
+ *  crescent over much of each piece, not a line along the cut; 0.1 reads as
+ *  an edge line (~2–3 px at fleet-fight zoom, 0.45). */
+const SIMPLE_GLOW_W_R = 0.1;
+/** ...but never under 2 px at fleet-fight zoom (2 / 0.45 ≈ 4.4 u), so the
+ *  smallest hulls still show it (round 2: "a thin orange line"). */
+const SIMPLE_GLOW_MIN_W = 4.5;
 const GLOW_HALO_MUL = 3;
 const GLOW_HEAD_MUL = 1.8;
 /** The head's length along the crack (share of the wreck radius). */
@@ -220,10 +224,12 @@ export function glowU(ageS: number): number {
  *  kind. Hostile review 2026-11-13: squeezing the capital curve into 1 s
  *  gave a white flash, ~0.4 s of orange and a faint ember, and read as a
  *  different colour on different art. No white stage: the ship's own death
- *  explosion is the flash. */
-const SIMPLE_T = [0, 0.4, 0.75, 1];
-const SIMPLE_C = [0xff8a2a, 0xff7a20, 0xc8400c, 0x6a1c06];
-const SIMPLE_A = [1, 0.95, 0.55, 0];
+ *  explosion is the flash. Round 3 (2026-11-13): the review saw no red
+ *  stage (0xc8400c read as dim orange), so the middle is now a clear red,
+ *  still bright, before it cools to dark. */
+const SIMPLE_T = [0, 0.3, 0.55, 0.7, 1];
+const SIMPLE_C = [0xff8a2a, 0xff7a20, 0xe8200c, 0xb01808, 0x300804];
+const SIMPLE_A = [1, 1, 0.9, 0.7, 0];
 
 /** The simple glow at `frac` of its life (pure, alloc-free). */
 export function simpleGlowAt(frac: number, out: WreckGlow): WreckGlow {
@@ -1133,7 +1139,7 @@ export class WreckPieceSprite extends Container {
     // The simple glow's band is a share of the hull (a small hull's core
     // alone is a hairline at fleet-fight zoom: round-2 review, "a thin orange
     // line on one edge"); `insideWidth` keeps it inside the piece.
-    this.simpleW = Math.max(core, info.hullR * SIMPLE_GLOW_W_R);
+    this.simpleW = Math.max(SIMPLE_GLOW_MIN_W, info.hullR * SIMPLE_GLOW_W_R);
     const reach = this.simple ? Math.max(this.halfHalo, this.simpleW) : this.halfHalo;
     let k = 0;
     forEachCut(piece, info, (hax, hay, hbx, hby, da, db, edge) => {

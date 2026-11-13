@@ -288,6 +288,8 @@ describe('sub-capital wrecks: the quiet look (slice 4)', () => {
     for (const kind of ['fighter', 'robot-square', 'robot-hexagon', 'gunship']) {
       const ctx = makeCtx(stubArt(fighterArt()), { breaks: 0, blasts: 0, ripples: 0 });
       const m = mirrorFor(desc(kind, 31), DEATH_TICK);
+      let hullR = 0;
+      for (const g of rebuildWreckPieces(desc(kind, 31))) hullR = Math.max(hullR, Math.hypot(g.cx, g.cy) + g.radius);
       const T0 = 10_000;
       ctx.fxNowMs = T0;
       updateSwarmSprites(m, ctx);
@@ -305,13 +307,16 @@ describe('sub-capital wrecks: the quiet look (slice 4)', () => {
         const c = p.glowColor();
         expect((c >> 16) & 255, kind).toBeGreaterThan(((c >> 8) & 255) * 1.4);
         expect(((c >> 8) & 255), kind).toBeGreaterThanOrEqual(c & 255);
-        // Every cut segment has a quad, and they are wide: >= 3 px at the
-        // fleet-fight zoom (0.45) on the smallest hull (the 1.8 px core before).
+        // Every cut segment has a quad. The band reads as a LINE along the
+        // cut: still >= 2 px at the fleet-fight zoom (0.45), but no wider than
+        // ~0.15 x the wreck radius. Round-3 film: at 0.4 x radius it was an
+        // opaque orange crescent covering much of each piece.
         const pos = p.glowPositions()!;
         expect(pos.length / 8).toBe(p.glowSegments());
         let widest = 0;
         for (let q = 0; q < pos.length; q += 8) widest = Math.max(widest, Math.hypot(pos[q]! - pos[q + 6]!, pos[q + 1]! - pos[q + 7]!));
-        expect(widest * 0.45, `${kind}: glow width on screen (px)`).toBeGreaterThanOrEqual(3);
+        expect(widest * 0.45, `${kind}: glow width on screen (px)`).toBeGreaterThanOrEqual(2);
+        expect(widest, `${kind}: glow band vs wreck radius ${hullR.toFixed(1)}`).toBeLessThanOrEqual(0.15 * hullR);
       }
     }
   });
@@ -418,6 +423,31 @@ describe('sub-capital wrecks: the quiet look (slice 4)', () => {
         expect(s.a).toBeCloseTo(at[0]!.a, 9);
       }
     }
+  });
+
+  /** Round-3 review 2026-11-13: "no red stage". The glow goes orange, then
+   *  clearly red mid-fade (still well visible), then dark, over the 1 s. */
+  it('the simple glow goes orange -> red -> dark over glowSeconds', () => {
+    expect(SUB.glowSeconds).toBe(1);
+    const ctx = makeCtx(stubArt(fighterArt()), { breaks: 0, blasts: 0, ripples: 0 });
+    const m = mirrorFor(desc('robot-square', 31), DEATH_TICK);
+    const T0 = 10_000;
+    const at = (f: number): { r: number; g: number; a: number } => {
+      ctx.fxNowMs = T0 + f * GLOW_MS;
+      updateSwarmSprites(m, ctx);
+      const p = pieces(ctx)[0]!;
+      const c = p.glowColor();
+      return { r: (c >> 16) & 255, g: (c >> 8) & 255, a: p.glowAlpha() };
+    };
+    at(0); // first sight starts the glow's clock
+    const orange = at(0.2);
+    expect(orange.g / orange.r, 'orange early (green well up)').toBeGreaterThanOrEqual(0.4);
+    const red = at(0.6);
+    expect(red.r, 'red mid-fade: bright red channel').toBeGreaterThanOrEqual(0xb0);
+    expect(red.g / red.r, 'red mid-fade: little green (not orange)').toBeLessThanOrEqual(0.25);
+    expect(red.a, 'red stage still clearly visible').toBeGreaterThanOrEqual(0.5);
+    const dark = at(0.95);
+    expect(dark.r, 'dark at the end').toBeLessThan(0x80);
   });
 
   /** Owner decision 2026-11-13: "Shrink it": a sub-cap's death explosion
