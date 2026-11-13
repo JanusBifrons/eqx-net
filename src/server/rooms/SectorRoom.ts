@@ -180,6 +180,9 @@ import { usesAmmo } from '../../shared-types/ammo.js';
 
 /** P2d — one unit of munitions (a turret's magazine reload). */
 const ONE_MUNITION = Object.freeze({ munitions: 1 });
+/** Welcome extras for a room that breaks capitals into wrecks (shared, frozen). */
+const WRECK_WELCOME: { capitalWrecks?: true } = Object.freeze({ capitalWrecks: true as const });
+const NO_WELCOME_FIELDS: { capitalWrecks?: true } = Object.freeze({});
 
 /** P2c — give each asteroid in a roster its resource kind, rolled from the
  *  sector's features and seeded by the asteroid's id (stable across restarts). */
@@ -8193,6 +8196,12 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /** The welcome's shell-event fields for a joining client (§5, #16). */
+  /** Capital destruction: tell the client this room breaks dying capitals
+   *  into wrecks, so it explodes them at the kill point (money-shot review). */
+  private wreckWelcomeFields(): { capitalWrecks?: true } {
+    return this.capitalWrecks !== null ? WRECK_WELCOME : NO_WELCOME_FIELDS;
+  }
+
   private shellWelcomeFields(client: Client, playerId: string): { shellEvents?: true; shellsInFlight?: ShellSalvo[] } {
     if (!this.shellHub) return {};
     const pose = this.shipPoseCache.get(playerId);
@@ -8589,7 +8598,7 @@ export class SectorRoom extends Room<SectorState> {
           sectorKey: this.sectorKey,
           shipInstanceId: existingShip?.shipInstanceId ?? '',
         };
-        client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId) }));
+        client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields() }));
 
         setSession(client.sessionId, {
           roomId: this.roomId,
@@ -9083,7 +9092,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: ship.shipInstanceId,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId) }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields() }));
 
     // Prefer the auth-validated userId from this connect; fall back to the
     // Limbo-resumed value when this connect was anonymous (covers the
@@ -9205,7 +9214,7 @@ export class SectorRoom extends Room<SectorState> {
       shipInstanceId: '',
       spectator: true,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId) }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields() }));
 
     setSession(client.sessionId, {
       roomId: this.roomId,
@@ -9520,7 +9529,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: shipId,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId) }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields() }));
     this.pendingJoin.set(playerId, {
       joinTick: tick,
       watchdogTick: tick + CLIENT_READY_TIMEOUT_TICKS,
