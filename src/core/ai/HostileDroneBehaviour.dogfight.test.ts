@@ -58,10 +58,13 @@ function duel(ticks: number, players: AiPlayerView[] = []): Duel {
 }
 
 describe('HostileDroneBehaviour — dogfight decision layer (slice 4)', () => {
-  it('two fighters make attack runs, pass, extend and come back; never toe to toe', () => {
+  it('two fighters make an attack run, pass and turn back into the fight; never toe to toe', () => {
     const r = duel(20 * 60);
     expect(r.passes, r.trace).toBeGreaterThanOrEqual(2);
-    expect(r.runs, r.trace).toBeGreaterThanOrEqual(2);
+    // After the first pass the close fight is a turning fight (Tail), not a
+    // second joust (2026-11-13 on-sight fix: repeated head-on runs were the
+    // filmed "dead straight lines, trade head-on").
+    expect(r.runs, r.trace).toBeGreaterThanOrEqual(1);
     expect(r.toeFrac).toBeLessThan(0.05);
     expect(r.shotsA).toBeGreaterThan(0);
     expect(r.shotsB).toBeGreaterThan(0);

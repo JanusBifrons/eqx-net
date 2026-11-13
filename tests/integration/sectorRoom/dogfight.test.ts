@@ -7,8 +7,12 @@
  * nose. This drives two NPC fighters of opposing sides (a drone `fighter` and
  * a Traders `patrol-fighter`, both role `fighter`, marked hostile to each
  * other) in a real room and requires a dogfight:
- *  - attack runs: the gap closes, the ships pass, open out past gun range and
- *    come back (≥ 2 separate close passes over the 20 s duel; at the 2× ship
+ *  - merges: the gap closes, the ships pass, open out and come back round
+ *    (≥ 2 separate close passes over the 20 s duel: inside 0.15 × fire range,
+ *    out past 0.25 ×, in again. Until 2026-11-13 a pass had to open past the
+ *    whole fire range, which only a straight-line joust does; the filmed fights
+ *    showed that joust as "dead straight lines, trading head-on", and a
+ *    turning fight re-merges inside gun range; at the 2× ship
  *    scale a fighter cruises at ~140 u/s, so the first merge from 1500 u alone
  *    takes ~6 s and one run → extend → re-attack cycle ~11 s);
  *  - their speeds vary (stddev > 0.15 × cruise) and both land hits;
@@ -131,12 +135,12 @@ describe('SectorRoom integration — NPC dogfight (AI slice 4)', () => {
       if (d < 0.7 * fireRange && va < 0.25 * cruiseA && vb < 0.25 * cruiseB) toeToToe++;
     }
 
-    // Close passes: dip inside half the fire range, open out past it, dip again.
+    // Close passes: dip inside 0.15 × fire range, open past 0.25 ×, dip again.
     let passes = 0;
     let armed = true;
     for (let i = 0; i < dists.length; i++) {
-      if (armed && dists[i]! < 0.5 * fireRange) { passes++; armed = false; }
-      else if (!armed && dists[i]! > fireRange) armed = true;
+      if (armed && dists[i]! < 0.15 * fireRange) { passes++; armed = false; }
+      else if (!armed && dists[i]! > 0.25 * fireRange) armed = true;
     }
     const sdA = stddev(speedA);
     const sdB = stddev(speedB);
@@ -145,7 +149,7 @@ describe('SectorRoom integration — NPC dogfight (AI slice 4)', () => {
 
     expect(samples).toBeGreaterThan(100);
     expect(seen.has(MANOEUVRE_ATTACK_RUN), 'an attack run was flown').toBe(true);
-    expect(passes, 'attack run → overshoot → re-attack: ≥ 2 separate close passes').toBeGreaterThanOrEqual(2);
+    expect(passes, 'pass → open out → re-merge: ≥ 2 separate close passes').toBeGreaterThanOrEqual(2);
     expect(sdA, 'A is not hovering').toBeGreaterThan(0.15 * cruiseA);
     expect(sdB, 'B is not hovering').toBeGreaterThan(0.15 * cruiseB);
     expect(hits.a, 'A lands hits').toBeGreaterThan(0);

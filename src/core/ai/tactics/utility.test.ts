@@ -86,6 +86,25 @@ describe('scoreManoeuvres', () => {
     scoreManoeuvres(ctx(1.4, 0, 1, { allies: 5 }), FIGHTER, s);
     expect(argmax(s)).toBe(MANOEUVRE_HOLD);
   });
+  it('an even group fight breaks into duels; only surplus wingmen hold', () => {
+    // 3v3 on sight (the filmed scene): two wingmen and three enemies near me.
+    scoreManoeuvres(ctx(1.4, 0, 1, { allies: 2, enemies: 3 }), FIGHTER, s);
+    expect(argmax(s)).toBe(MANOEUVRE_ATTACK_RUN);
+    // Six on one pilot: five surplus wingmen hold the ring.
+    scoreManoeuvres(ctx(1.4, 0, 1, { allies: 5, enemies: 1 }), FIGHTER, s);
+    expect(argmax(s)).toBe(MANOEUVRE_HOLD);
+  });
+  it('a robot (orbit-weighted, reckless) does not park in a stand-off', () => {
+    const ROBOT = roleProfile('robot');
+    for (const dN of [0.4, 0.8, 1.2, 2]) {
+      scoreManoeuvres(ctx(dN, 0, 1, { allies: 2, enemies: 3 }), ROBOT, s);
+      expect(argmax(s), `dN=${dN}`).not.toBe(MANOEUVRE_HOLD);
+    }
+  });
+  it('a fighter in a close turning fight tails even a target facing it', () => {
+    scoreManoeuvres(ctx(0.8, 1, 1), FIGHTER, s);
+    expect(argmax(s)).toBe(MANOEUVRE_TAIL);
+  });
   it('against a structure everyone holds', () => {
     scoreManoeuvres(ctx(2, 0, 1, { targetIsShip: false }), FIGHTER, s);
     expect(argmax(s)).toBe(MANOEUVRE_HOLD);
