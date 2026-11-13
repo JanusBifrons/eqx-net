@@ -7,6 +7,8 @@
  * for 56 drones + 24 robots + 4 players stays ≤ 1.5 ms per tick. Compare the
  * drones-only row (the pre-P1b shape) to see what the robot side costs.
  *
+ * Also: the per-tick AI neighbour grid (steering slice 2a), rebuild + queries.
+ *
  * Module-level setup only (vitest 2.1 bench skips beforeAll — README).
  */
 import { bench, describe } from 'vitest';
@@ -14,6 +16,8 @@ import { HostileDroneBehaviour } from '../src/core/ai/HostileDroneBehaviour.js';
 import type { AiEntity, AiSwarmView, AiWorldView } from '../src/core/contracts/IAiBehaviour.js';
 import { getShipKind, type ShipKindId } from '../src/shared-types/shipKinds.js';
 import { robotMemberKind } from '../src/server/livingworld/robotDirector.js';
+import { AiNeighbourGrid } from '../src/server/rooms/AiNeighbourGrid.js';
+import { GLOBAL_SHIP_TUNING } from '../src/shared-types/shipScale/lookup.js';
 
 interface Agent {
   self: AiEntity;
@@ -70,5 +74,33 @@ describe('AI brain tick — one sector, all bots', () => {
   });
   bench('56 drones + 4 players (drones only, pre-P1b shape)', () => {
     runTick(DRONES_ONLY, DRONES_ONLY_VIEW);
+  });
+});
+
+// AI steering 2a — the per-tick neighbour grid: rebuild over 200 combatants
+// (spread over a ~6000 u box, sides mixed) + 200 K=8 queries at a combat
+// separation radius. Plan target: the whole AI pass stays < 1.5 ms at 200 bots.
+const NB_N = 200;
+const NB_GRID = new AiNeighbourGrid();
+const NB_X = new Float64Array(NB_N);
+const NB_Y = new Float64Array(NB_N);
+const NB_IDS: string[] = [];
+for (let n = 0; n < NB_N; n++) {
+  NB_X[n] = ((n * 7919) % 6000) - 3000;
+  NB_Y[n] = ((n * 104729) % 6000) - 3000;
+  NB_IDS.push(`nb-${n}`);
+}
+const NB_OUT = new Int32Array(8);
+const NB_R = 2 * GLOBAL_SHIP_TUNING.flockSeparation;
+
+describe('AI neighbour grid — 200 combatants', () => {
+  bench('rebuild + 200 K=8 queries', () => {
+    NB_GRID.begin();
+    for (let n = 0; n < NB_N; n++) {
+      if (n % 10 === 0) NB_GRID.addPilot(NB_IDS[n]!, NB_X[n]!, NB_Y[n]!, 0, 0, 12);
+      else NB_GRID.addDrone(NB_IDS[n]!, NB_X[n]!, NB_Y[n]!, 0, 0, 12, n % 3 === 0 ? 'robots' : 'drones');
+    }
+    NB_GRID.end();
+    for (let n = 0; n < NB_N; n++) NB_GRID.queryNeighbours(NB_X[n]!, NB_Y[n]!, NB_R, 8, NB_OUT, NB_IDS[n]);
   });
 });
