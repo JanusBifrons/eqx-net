@@ -15,6 +15,7 @@ import { AT_AUTHORED_SHIP_SCALE, DEFAULT_SHIP_SCALE, DEFAULT_SHIP_TUNING, resolv
 import { GATE_GAP, AIRLOCK_GAP } from '../../src/core/structures/gateGeometry.js';
 import type { ShipKind } from '../../src/shared-types/shipKinds/types.js';
 import { isChinMount } from '../../src/core/combat/muzzle.js';
+import { ARCADE_HANDLING, classifyHandling } from '../../src/shared-types/shipScale/arcadeHandling.js';
 
 /** NPC kinds whose chin gun's drone clearance (16 u at 1×) is INSIDE their own
  *  hull today (their shots start inside the ship; harmless, the shooter is
@@ -40,7 +41,12 @@ describe('ship scale — the catalogue', () => {
     for (const raw of RAW) {
       const k = SHIP_KINDS_LIST.find((x) => x.id === raw.id)!;
       expect(effectiveScale(raw), raw.id).toBe(1);
-      for (const f of ['radius', 'thrustImpulse', 'maxAngvel', 'maxSpeed', 'mass'] as const) expect(k[f], `${raw.id}.${f}`).toBe(raw[f]);
+      for (const f of ['radius', 'maxSpeed', 'mass'] as const) expect(k[f], `${raw.id}.${f}`).toBe(raw[f]);
+      // The arcade handling layer (owner 2026-11-13: "make it more like micro
+      // machines") retunes thrust + turn per handling class on top of the scale.
+      const a = ARCADE_HANDLING[classifyHandling(raw)];
+      expect(k.thrustImpulse, `${raw.id}.thrustImpulse`).toBeCloseTo(raw.thrustImpulse * a.damping, 9);
+      expect(k.maxAngvel, `${raw.id}.maxAngvel`).toBeCloseTo(raw.maxAngvel * a.turn, 9);
       expect(k.mounts, raw.id).toEqual(raw.mounts);
     }
   });

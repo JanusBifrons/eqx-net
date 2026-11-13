@@ -2992,3 +2992,15 @@ Owner: "They absolutely should collide by design." In a clip a heavy cruiser und
 - **Fix.** Damage is now the impact energy along the contact normal, `½·μ·(vN − floor)²` (μ the reduced mass, vN the pre-step relative velocity projected on Rapier's `maxForceDirection()`), shared by weight. Head-on hurts, a scrape barely does, both ships are hurt and the lighter more.
 - **Lesson.** A "too high" complaint is a tuning problem; answer it by scaling the constant, not by changing which inputs matter. A model whose inputs drop the physical cause (speed, angle) reads as broken the first time someone rams on purpose. Lock the SHAPE of the dependence (monotone in angle and speed, equal masses equal), not the numbers.
 - **Physics to remember.** Two equal ships head-on at v each take what one takes hitting an immovable wall at v, so "a fighter into a parked capital" is not worse than a fighter head-on; only an oncoming capital is.
+
+## 2026-11-13 — Arcade handling: re-solve thrust from Rapier's damping, and lock feel with a measuring harness
+Commit: feat/arcade-handling (PR TBD)
+
+Owner: "make it more like micro machines and make fights a bit longer. Also don't forget the afterburner to gain speed fast". At the 2× default a fighter took ~11 s to reach 90 % of cruise (τ = 1/d ≈ 4.7 s) and 3.2 s to turn round, so in a fight it never reached its own top speed and filmed fights looked floaty.
+
+- **Raise damping and thrust by the same factor, never thrust alone.** Rapier damps velocity by `1 / (1 + d·dt)` a step, so a per-tick impulse `a` settles at `a / (d·dt)`: thrust × k with damping × k keeps cruise to the unit while the rise time drops by k. Re-solving with the old `1 − e^(−d/60)` formula left cruise 3 % low at the new dampings (the ShipKindPhysics closed-form check also drifts at a 1× scout's damping 8; it is a 10 % typo guard now, the literals live in the tuning lock).
+- **A per-class multiplier layer beats editing records.** `shipScale/arcadeHandling.ts` runs inside `defineShipKind`, so the 1× authored records stay as written, every consumer (player input, prediction, drone `ai.thrust` + `maxAngvel` turn) reads the same numbers (#15), and capitals (solver-authored, locked to WW2 reference turn times) are simply a row of 1s.
+- **Halving lateral grip was wrong once turns got 4× faster:** a held 90° turn at cruise then left 0.6 of cruise sideways. Grip unchanged leaves ~0.55, bled by the high damping within ~0.3 s.
+- **Fast turns wrap angles.** Any test that holds a turn for a second and reads `rotation()` now passes ±π (a 1× scout turns 12.6 rad/s); the harness unwraps per tick.
+- **Tests that coast a ship with no input assumed near-zero damping** (a 150 u run-up to a glancing contact stopped after ~80 u). Start such probes close, or drive the body.
+- **Measure, then lock bands.** `ShipHandling.arcade.test.ts` drives every kind through the real `PhysicsWorld` and prints t90, cruise, boost, 180°, brake, slide and TTK (`EQX_HANDLING_REPORT=1`); its per-class bands are the regression lock. Before/after table: docs/architecture/ship-physics-handling.md "Arcade (Micro Machines) tuning, 2026-11-13".
