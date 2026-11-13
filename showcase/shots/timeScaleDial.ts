@@ -348,6 +348,10 @@ export const capitalBreakupFast: Shot = {
     await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 4000, y: -350, zoom: 0.17 * k } }]);
     await waitForBreak(ctx, 'breakup-fast', 45_000);
     await holdLogging(ctx, 'breakup-fast 1x', 3_000, 1_000);
+    // Pull the spectator camera back as the dial turns, so the faster drift
+    // stays in frame (review 2026-11-13: at the close hold the pieces had left
+    // the frame before 4x began).
+    await ctx.cinema.play([{ atMs: 0, smoothMs: 1200, shot: { kind: 'hold', x: 4000, y: -350, zoom: 0.07 * k } }]);
     await dial(ctx, id, 4);
     await holdLogging(ctx, 'breakup-fast 4x', 12_000, 2_000);
     await dial(ctx, id, 1);
