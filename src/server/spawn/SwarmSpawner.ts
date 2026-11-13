@@ -12,7 +12,7 @@ import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, shipKindToIndex, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
 import { gateColliderPolygons, gateWorldAxisBoxes } from '../../core/structures/gateGeometry.js';
-import { massOf } from '../../shared-types/shipScale/tuning.js';
+import { massOf, NPC_MASS_FALLBACK } from '../../shared-types/shipScale/tuning.js';
 
 export interface AsteroidSpec {
   id: string;
@@ -84,7 +84,7 @@ export interface SpawnerHooks {
 }
 
 const DRONE_DEFAULT_RADIUS = 14;
-export const DRONE_DEFAULT_MASS = 2;
+export const DRONE_DEFAULT_MASS = NPC_MASS_FALLBACK;
 
 /**
  * Owns swarm entity creation. Allocates a slot, primes the SAB, posts a
