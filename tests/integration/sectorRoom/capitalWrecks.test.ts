@@ -17,6 +17,7 @@ import { shipShapeToPolygon } from '../../../src/core/geometry/shipHullDecomp.js
 import { shipHullOutline } from '../../../src/core/geometry/shipHullOutline.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { fracturePlan } from '../../../src/core/destruction/fractureHull.js';
+import { WRECK_CRACK_MS } from '../../../src/shared-types/wreckTiming.js';
 
 type V = { x: number; y: number };
 const WRECK_KIND = 4;
@@ -85,7 +86,7 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
     return [...internal.swarmRegistry.all()].filter((r) => r.kind === WRECK_KIND);
   }
 
-  it('an NPC capital killed with the flag on leaves N ≥ 2 wreck bodies tiling its hull, pushed outward', async () => {
+  it('an NPC capital killed with the flag on leaves N ≥ 2 wreck bodies tiling its hull, holding together, then parting outward', async () => {
     const internal = await boot(true);
     expect(internal.spawnTestDrone('bb', 6000, 0, 'battleship')).toBe(true);
     await harness.advance(100);
@@ -114,15 +115,19 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
           expect(pointIn(hull, w) || distToOutline(hull, w) < 5, `${w.x},${w.y} off by ${distToOutline(hull, w)}; ship ${JSON.stringify(at)} piece ${JSON.stringify(st)}`).toBe(true);
         }
       }
-      // Inherits the hull's velocity (at rest + ω×r ≈ 0) plus a push AWAY
-      // from the kill point.
-      const ex = st.vx - at.vx + at.angvel * (st.y - at.y);
-      const ey = st.vy - at.vy - at.angvel * (st.x - at.x);
-      const ox = st.x - hit.x;
-      const oy = st.y - hit.y;
-      expect(ex * ox + ey * oy).toBeGreaterThan(0);
+      // Holds together for the crack delay: the hull's own velocity (at rest
+      // + ω×r ≈ 0), no push yet.
+      expect(Math.hypot(st.vx - at.vx, st.vy - at.vy)).toBeLessThan(1);
     }
     expect(Math.abs(total - want) / want).toBeLessThan(0.005);
+    // After WRECK_CRACK_MS the pieces part, on the whole AWAY from the kill point.
+    await harness.advance(WRECK_CRACK_MS + 300);
+    let outward = 0;
+    for (const r of ps) {
+      const st = internal.wreckState(r.id)!;
+      if ((st.vx - at.vx) * (st.x - hit.x) + (st.vy - at.vy) * (st.y - hit.y) > 0) outward++;
+    }
+    expect(outward / ps.length).toBeGreaterThan(0.75);
   }, 25_000);
 
   it('a single huge final hit breaks into more pieces than a slow grind (same seed)', async () => {
