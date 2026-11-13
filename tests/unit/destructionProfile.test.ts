@@ -92,9 +92,10 @@ describe('DESTRUCTION_PROFILES', () => {
     const d = WRECK_LINEAR_DAMPING * s.dampingScale;
     for (const kind of SHIP_KINDS_LIST.filter((k) => shipTuning(k).destruction === 'subcap')) {
       const t = shipTuning(kind);
-      const v0 = t.wreckPushMin * s.pushScale;
-      const gap1s = (2 * v0 * (1 - Math.exp(-d))) / d;
-      expect(gap1s / kind.radius, `${kind.id}: gap after 1 s, in hull radii`).toBeGreaterThanOrEqual(0.3);
+      // The cuts open at `wreckSeparate × separateScale` (the gap on the real
+      // kicks is measured in wreckPieces.subcapParting.test.ts).
+      const seam = t.wreckSeparate * s.separateScale;
+      expect((seam * (1 - Math.exp(-d))) / d / kind.radius, `${kind.id}: seam gap after 1 s, in hull radii`).toBeGreaterThanOrEqual(0.3);
       // Not flung across the fight: the fastest piece drifts under ~1.5 radii in all.
       expect((t.wreckPushMax * s.pushScale * 1.25) / d / kind.radius, `${kind.id}: total drift`).toBeLessThan(1.5);
     }

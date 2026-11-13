@@ -728,14 +728,15 @@ on the profile, not a branch in the code.
 - **Parting and knock-back** are per unit of hull radius (`shipTuning`), tuned
   for capitals, and invisible at fighter size (a fighter's pieces parted at
   ~0.1 u/s and read as one hull with a crack). The sub-cap profile scales
-  them: `pushScale` 50, `separateScale` 32, `dampingScale` 10. The push runs
+  them: `pushScale` 30, `separateScale` 40, `dampingScale` 10. The push runs
   away from the kill point, so on a hit at one end it moves every piece the
-  same way and alone left robot pieces touching ~1 s after the break
-  (round-2 review); `separateScale` raises the seam pass's least opening
+  same way: at ×50 alone it left robot pieces touching ~1 s after the break
+  (round-2 review). `separateScale` raises the seam pass's least opening
   speed (`wreckSeparate`, 1.4 % of the radius a second) so every shared cut
-  opens at >= ~0.45 radius/s: a gap of ~1/3 of the radius 1 s after the
-  break (measured on the server, 4 hit points per kind: fighter 0.45,
-  robot hexagon 0.38, missile frigate 0.27 radii; 0.02-0.17 before). Locks:
+  opens at >= ~0.56 radius/s: a gap of ~1/3 of the radius or more 1 s after
+  the break (narrowest gap measured on the server over 4 hit points per
+  kind, two runs: fighter 0.42-0.44, robot hexagon 0.46-0.61, missile
+  frigate 0.30-0.39 radii; 0.02-0.17 before), still asleep in ~14 s. Locks:
   `src/core/destruction/wreckPieces.subcapParting.test.ts` and
   `subcapWrecks.test.ts` "stand clearly apart". `dampingScale` 10 (slice 2's measured value: at rest and asleep in ~15 s,
   ~1 radius of drift), and `knockScale` 320 / `knockMaxScale` 30 (applied in
