@@ -189,6 +189,8 @@ export async function bootSectorTestServer(opts: {
   lockTimeCapS?: number;
   /** Time scale trigger: this sector's game speed (0.25–4). */
   timeScale?: number;
+  /** The `test-sector-fast` physics speed-up (room option `testTimeScale`). */
+  testTimeScale?: number;
   /** testMode: run the automatic slowdown (off in test rooms by default). */
   autoTimeScale?: boolean;
   /** P2d — stock the prebuilt Capital's hold. */
@@ -278,6 +280,7 @@ export async function bootSectorTestServer(opts: {
     breakInMs: opts.breakInMs,
     lockTimeCapS: opts.lockTimeCapS,
     timeScale: opts.timeScale,
+    testTimeScale: opts.testTimeScale,
     autoTimeScale: opts.autoTimeScale,
     prebuiltStorageGoods: opts.prebuiltStorageGoods,
     teleportCycleScale: opts.teleportCycleScale,
