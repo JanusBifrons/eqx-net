@@ -137,13 +137,17 @@ export interface ProjectilePipelineDeps {
    *  shield/hull shape as an active ship (`playerSweep`). Absent / undefined
    *  ⇒ the fighter-sized `hitRadius` circle (unit harnesses). */
   lingeringShip?: (shipInstanceId: string) => ShipState | undefined;
-  /** Damage sink — invoked on a confirmed hit. */
+  /** Damage sink — invoked on a confirmed hit. (dirX, dirY) is the shot's
+   *  direction of travel (any length) on a direct hit: a capital wreck piece
+   *  it lands on is knocked along it (overkill knock-back). */
   applyDamage: (
     targetId: string,
     shooterId: string,
     damage: number,
     hitX?: number,
     hitY?: number,
+    dirX?: number,
+    dirY?: number,
   ) => void;
   /** Shield-fence plan — if this tick's step crosses an ACTIVE shield wall,
    *  absorb the projectile (apply the wall's grid-power damage) and return true
@@ -365,7 +369,7 @@ export class ProjectilePipeline {
       }
 
       if (bestTargetId !== null) {
-        d.applyDamage(bestTargetId, proj.ownerId, proj.damage, bestHitX, bestHitY);
+        d.applyDamage(bestTargetId, proj.ownerId, proj.damage, bestHitX, bestHitY, proj.vx, proj.vy);
         const blastR = this.blast(proj, bestHitX, bestHitY, bestTargetId);
         this.liveProjectiles.delete(projId);
         if (event) d.onShellEnd?.(projId, serverTick, bestHitX, bestHitY, blastR);
