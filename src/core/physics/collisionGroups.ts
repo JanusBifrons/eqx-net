@@ -62,3 +62,21 @@ export const SCRAP_COLLISION_GROUPS = 0x0002fffd;
  *   packed u32 = (0x0004 << 16) | 0xFFFF = 0x0004FFFF
  */
 export const WRECK_COLLISION_GROUPS = 0x0004ffff;
+
+/**
+ * Collision groups for SUB-CAPITAL wreck pieces (sub-capital break-up slice
+ * 2; the `subcap` profile's `piecesCollide: false`). Membership bit 3, filter
+ * every bit EXCEPT bit 3, the scrap pattern on its own bit:
+ *
+ *   sub-cap piece vs sub-cap piece: (0x0008 & 0xFFF7) = 0 ⇒ NO collision
+ *     (pieces of a fighter never fight each other, and resting debris never
+ *     piles up and keeps itself awake: cheap).
+ *   sub-cap piece vs a capital piece (0x0004FFFF): (0x0008 & 0xFFFF) ≠ 0 and
+ *     (0x0004 & 0xFFF7) ≠ 0 ⇒ collide (capital pieces stay solid to all).
+ *   sub-cap piece vs a default body (ships, drones, rocks, structures): collide.
+ *   sub-cap piece vs scrap (0x0002FFFD): (0x0008 & 0xFFFD) ≠ 0 and
+ *     (0x0002 & 0xFFF7) ≠ 0 ⇒ collide.
+ *
+ *   packed u32 = (0x0008 << 16) | 0xFFF7 = 0x0008FFF7
+ */
+export const SUBCAP_WRECK_COLLISION_GROUPS = 0x0008fff7;

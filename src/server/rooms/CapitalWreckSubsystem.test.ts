@@ -4,7 +4,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import { CapitalWreckSubsystem, type WreckPieceSpawn } from './CapitalWreckSubsystem.js';
-import { buildWreckPieces, WRECK_RECENT_DAMAGE_TICKS } from '../../core/destruction/wreckPieces.js';
+import { buildWreckPieces, WRECK_ANGULAR_DAMPING, WRECK_LINEAR_DAMPING, WRECK_RECENT_DAMAGE_TICKS } from '../../core/destruction/wreckPieces.js';
+import { SUBCAP_WRECK_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
+import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
 import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
@@ -20,7 +22,7 @@ function make(kinds: Record<string, string> = { cap: 'battleship' }, withRigid =
   const impulses: Array<{ id: string; jx: number; jy: number; px: number; py: number }> = [];
   const sys = new CapitalWreckSubsystem({
     serverTick: () => tick,
-    capitalKindOf: (id) => (kinds[id] as 'battleship' | undefined) ?? null,
+    wreckKindOf: (id) => (kinds[id] as 'battleship' | undefined) ?? null,
     positionOf: (id) => (id === 'attacker' ? { x: 5000, y: 0 } : null),
     spawnPiece: (s) => { spawned.push(s); live.add(s.id); return true; },
     removePiece: (id) => { live.delete(id); removed.push(id); },
@@ -169,5 +171,68 @@ describe('CapitalWreckSubsystem', () => {
     expect(rigid).toHaveLength(2);
     expect(impulses).toHaveLength(1);
     expect(impulses[0]!.id).toBe(small.id);
+  });
+});
+
+describe('CapitalWreckSubsystem — sub-capital profile (sub-cap break-up slice 2)', () => {
+  it('a sub-capital parts at once: the kick is in the spawn motion, no pending kick, no rigid hold', () => {
+    const { sys, spawned, kicks, rigid, impulses } = make({ f: 'fighter' }, true);
+    sys.forcedSeed = 11;
+    const at = { x: 100, y: -50, vx: 30, vy: -10, angle: 0.4, angvel: 0.5 };
+    const n = sys.onDeath('f', 'fighter', at, 1000);
+    const want = buildWreckPieces({ kindId: 'fighter', pose: at, killWorld: null, attackerWorld: null, seed: 11, killBlowDamage: 0, recentDamageRate: 0 }).pieces;
+    expect(n).toBe(want.length);
+    expect(n).toBeGreaterThanOrEqual(2);
+    expect(n).toBeLessThanOrEqual(3);
+    expect(sys.pendingKicks()).toBe(0);
+    for (let i = 0; i < n; i++) {
+      expect(spawned[i]!.vx).toBeCloseTo(want[i]!.vx + want[i]!.kickVx, 9);
+      expect(spawned[i]!.vy).toBeCloseTo(want[i]!.vy + want[i]!.kickVy, 9);
+      expect(spawned[i]!.angvel).toBeCloseTo(want[i]!.angvel + want[i]!.kickAngvel, 9);
+      // The profile's body: damped ×10, pieces ignore each other.
+      expect(spawned[i]!.collisionGroups).toBe(SUBCAP_WRECK_COLLISION_GROUPS);
+      expect(spawned[i]!.linearDamping).toBeCloseTo(WRECK_LINEAR_DAMPING * DESTRUCTION_PROFILES.subcap.dampingScale, 12);
+    }
+    sys.tick();
+    expect(kicks).toHaveLength(0);
+    // A hit right after the kill shoves the single piece (overkill knock-back),
+    // never the whole wreck: there is no hold.
+    expect(sys.onWreckHit(spawned[0]!.id, 0, 0, 1, 0, 500)).toBe(true);
+    expect(rigid).toHaveLength(0);
+    expect(impulses).toHaveLength(1);
+  });
+
+  it('a capital keeps its hold, collides and is damped as before', () => {
+    const { sys, spawned } = make();
+    sys.onDeath('cap', 'battleship', pose, 10_000);
+    expect(sys.pendingKicks()).toBe(spawned.length);
+    for (const s of spawned) {
+      expect(s.collisionGroups).toBe(WRECK_COLLISION_GROUPS);
+      expect(s.linearDamping).toBe(WRECK_LINEAR_DAMPING);
+      expect(s.angularDamping).toBe(WRECK_ANGULAR_DAMPING);
+    }
+  });
+
+  it('the sub-cap FIFO evicts its own oldest pieces and never a capital piece', () => {
+    const kinds: Record<string, string> = { cap: 'battleship' };
+    for (let i = 0; i < 6; i++) kinds[`f${i}`] = 'fighter';
+    const { sys, spawned, removed, setTick } = make(kinds);
+    sys.subcapCapOverride = 5;
+    sys.onDeath('cap', 'battleship', pose, 10_000);
+    const capital = spawned.map((s) => s.id);
+    const perDeath: string[][] = [];
+    for (let i = 0; i < 6; i++) {
+      setTick(2000 + i);
+      const before = spawned.length;
+      sys.onDeath(`f${i}`, 'fighter', { ...pose, x: i * 500 }, 1000);
+      perDeath.push(spawned.slice(before).map((s) => s.id));
+    }
+    expect(sys.liveSubcapCount()).toBe(5);
+    expect(sys.liveCount()).toBe(capital.length + 5);
+    for (const id of capital) expect(removed).not.toContain(id);
+    // Oldest first: the evicted ids are a prefix of the sub-cap spawn order.
+    const order = perDeath.flat();
+    expect(removed).toEqual(order.slice(0, removed.length));
+    expect(removed.length).toBe(order.length - 5);
   });
 });

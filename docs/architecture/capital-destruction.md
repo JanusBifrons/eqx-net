@@ -820,6 +820,55 @@ break-up:
   dead NPC), `dyingHullHold.test.ts` (the brief sub-cap hold), and the
   capital wreck-art tests unchanged.
 
+### Sub-capital wrecks on the server (sub-capital break-up, slice 2, 2026-11-13)
+
+Behind the `subcapWrecks` room option (`EQX_SUBCAP_WRECKS=1`), off by
+default. There is still one wreck system: the capitals' subsystem
+(`CapitalWreckSubsystem`, alias `WreckSubsystem`) now reads the dying kind's
+profile instead of assuming a capital.
+
+- **Who breaks.** `SectorRoom.wreckKindAllowed`: a `capital` with
+  `capitalWrecks`, a `subcap` with `subcapWrecks`, unless the kind is
+  composite (the havok keeps its per-component scrap; the cargo pod is
+  `none`). The same three death hooks as capitals: a drone
+  (`spawnScrapFromDrone`), an active hull (`SHIP_DESTROYED`, whose dead body
+  is despawned so the pieces don't hit a corpse) and a killed lingering hull.
+  Abandoning a hull is still not a death.
+- **No hold.** `holdMs` 0: each piece's separating kick is added to its spawn
+  velocity and spin (the pieces spawn at the death angle, the kick's frame),
+  so no kick waits in `tick()` and a hit right after the kill shoves the
+  single piece (overkill knock-back, the same hook as capitals, sized by the
+  kind's radius).
+- **Gentle and cheap.** `pushScale` 0.5 on the outward push. The body comes
+  from `wreckBodyParams(kind)` (core; the client twin uses the same, #15):
+  damping × `dampingScale` (10: linear 0.6/s, angular 0.5/s) and, because
+  `piecesCollide` is false, `SUBCAP_WRECK_COLLISION_GROUPS` (membership bit 3,
+  filter all but bit 3): sub-cap pieces never touch each other, but block
+  ships, shots, scrap and capital pieces.
+- **They go to sleep.** Measured in `subcapWrecks.test.ts` (game seconds from
+  the kill until Rapier has slept every piece and the worker has set
+  `FLAG_SLEEPING`): a fighter at rest killed by a bolt ~6–10 s; killed at full
+  speed (~600 u/s) and turning at 2 rad/s ~15 s after ~1,000 u of drift; a
+  missile frigate (~424 u/s) ~14.5 s; a robot hexagon (~368 u/s) ~14.5 s.
+  With `dampingScale` 5 the same fighter took ~27 s.
+- **Sleeping is cheap.** The physics worker keeps the bodies that are still
+  asleep and already flagged in the SAB in `quietIds`; `getAllShipStates`
+  skips them, so a resting piece costs one `isSleeping` call a tick, no
+  Rapier reads, no allocation and no SAB write (its record already holds the
+  resting pose). Rapier itself doesn't integrate or test contacts for a
+  sleeping island. Anything that moves a body wakes it, and it is written
+  again from the next tick. The swarm wire already skips unchanged records.
+- **Permanent, with a separate cap.** `MAX_LIVE_SUBCAP_WRECK_PIECES` (2000) is
+  its own FIFO: the oldest sub-cap piece goes first and a capital piece is
+  never evicted by debris. The slot pool is `MAX_ENTITIES` 5120, so 2000 +
+  768 capital pieces leave ~2,350 slots for ships, rocks, structures and
+  scrap; the real ceiling is that pool (a refused spawn simply leaves no
+  piece). Slice 5 sizes the cap from a soak.
+- **On the wire** exactly like a capital wreck: swarm kind 4 with its
+  `wreckId`, one `wrecks[]` descriptor per wreck (slice 3 changes that
+  transport, not this). The welcome carries `subcapWrecks: true` so the
+  client (slice 4) holds the dying hull briefly.
+
 ## 4. Determinism strategy
 
 Every client must produce the same pieces as the server, bit for bit, from

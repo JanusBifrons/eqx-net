@@ -181,8 +181,11 @@ import { usesAmmo } from '../../shared-types/ammo.js';
 /** P2d — one unit of munitions (a turret's magazine reload). */
 const ONE_MUNITION = Object.freeze({ munitions: 1 });
 /** Welcome extras for a room that breaks capitals into wrecks (shared, frozen). */
-const WRECK_WELCOME: { capitalWrecks?: true } = Object.freeze({ capitalWrecks: true as const });
-const NO_WELCOME_FIELDS: { capitalWrecks?: true } = Object.freeze({});
+type WreckWelcome = { capitalWrecks?: true; subcapWrecks?: true };
+const WRECK_WELCOME: WreckWelcome = Object.freeze({ capitalWrecks: true as const });
+const SUBCAP_WRECK_WELCOME: WreckWelcome = Object.freeze({ subcapWrecks: true as const });
+const BOTH_WRECK_WELCOME: WreckWelcome = Object.freeze({ capitalWrecks: true as const, subcapWrecks: true as const });
+const NO_WELCOME_FIELDS: WreckWelcome = Object.freeze({});
 
 /** P2c — give each asteroid in a roster its resource kind, rolled from the
  *  sector's features and seeded by the asteroid's id (stable across restarts). */
@@ -293,6 +296,7 @@ import {
   SLOT_FLAGS_OFF,
   FLAG_WARP_SPOOL,
   FLAG_WARP_CRUISE,
+  FLAG_SLEEPING,
   // SEQLOCK_IDX + SLOT_APPLIED_TICK_OFF moved into SabPoseMirror.ts
   slotBase,
   SAB_TOTAL_BYTES,
@@ -974,8 +978,15 @@ export class SectorRoom extends Room<SectorState> {
   /** Round 3 D test switch (testMode `pilotCapitals`). */
   private testPilotCapitals = false;
   /** Capital destruction S2a (`capitalWrecks` room option / EQX_CAPITAL_WRECKS=1):
-   *  a dying capital breaks into wreck bodies. Null = off (today's behaviour). */
+   *  a dying capital breaks into wreck bodies. Null = off (today's behaviour).
+   *  Sub-capital break-up slice 2: the same subsystem (the generalised wreck
+   *  system) also breaks sub-capitals when `subcapWrecks` is on; it exists
+   *  when EITHER flag is on, and `capitalWrecksOn` / `subcapWrecksOn` say
+   *  which kinds break (`wreckKindAllowed`). Field name kept for the
+   *  in-flight descriptor-transport slice. */
   private capitalWrecks: CapitalWreckSubsystem | null = null;
+  private capitalWrecksOn = false;
+  private subcapWrecksOn = false;
   /** A beam's impact point for the NEXT applyDamage call only (the AI beam
    *  path has no hitX/hitY on its damage call); cleared by applyDamage. */
   private pendingImpactX: number | undefined = undefined;
@@ -1456,6 +1467,13 @@ export class SectorRoom extends Room<SectorState> {
     wreckParts: (id: string) => ReadonlyArray<ReadonlyArray<{ x: number; y: number }>> | null;
     /** S2a — fix the fracture seed (null = per death). */
     setWreckSeed: (seed: number | null) => void;
+    /** Sub-cap break-up slice 2 — the worker's FLAG_SLEEPING for a swarm
+     *  entity (its body has slept SLEEP_HYSTERESIS_TICKS in Rapier), or null. */
+    swarmSleeping: (id: string) => boolean | null;
+    /** Sub-cap break-up slice 2 — live wreck piece counts (capital FIFO +
+     *  sub-cap FIFO) and a smaller sub-cap cap for the eviction test. */
+    wreckCounts: () => { total: number; subcap: number };
+    setSubcapWreckCap: (cap: number | null) => void;
     /** S2b — the live wreck descriptors (the snapshot's `wrecks[]`). */
     wreckDescriptors: () => readonly import('../../shared-types/messages.js').WreckDescriptor[];
     /** The first non-player thing a ray meets (NPC / turret beam path). */
@@ -1528,6 +1546,13 @@ export class SectorRoom extends Room<SectorState> {
       },
       wreckParts: (id) => this.swarmRegistry.get(id)?.wreckParts ?? null,
       setWreckSeed: (seed) => { if (this.capitalWrecks) this.capitalWrecks.forcedSeed = seed; },
+      swarmSleeping: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        if (!rec) return null;
+        return ((this.sabU32[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0) & FLAG_SLEEPING) !== 0;
+      },
+      wreckCounts: () => ({ total: this.capitalWrecks?.liveCount() ?? 0, subcap: this.capitalWrecks?.liveSubcapCount() ?? 0 }),
+      setSubcapWreckCap: (cap) => { if (this.capitalWrecks) this.capitalWrecks.subcapCapOverride = cap; },
       wreckDescriptors: () => this.capitalWrecks?.descriptors() ?? [],
       rayHit: (fx, fy, dx, dy, maxDist, skipId) => {
         const h = this.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId);
@@ -1822,6 +1847,11 @@ export class SectorRoom extends Room<SectorState> {
       /** Capital destruction S2a: a dying capital breaks into wreck bodies
        *  (drawn plainly since S2b; off by default until S3 art). */
       capitalWrecks?: boolean;
+      /** Sub-capital break-up slice 2: every other ship (polygon kinds; the
+       *  composite havok keeps its scrap) breaks into 2-3 quiet wreck pieces
+       *  that settle and sleep. Off by default (clients draw them plainly
+       *  until slice 4). `EQX_SUBCAP_WRECKS=1` turns it on for every room. */
+      subcapWrecks?: boolean;
       /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
@@ -3061,7 +3091,9 @@ export class SectorRoom extends Room<SectorState> {
       this.setTimeScale(ENV_TIME_SCALE);
     }
     this.testPilotCapitals = this.testMode && roomOpts.pilotCapitals === true;
-    if (roomOpts.capitalWrecks === true || process.env['EQX_CAPITAL_WRECKS'] === '1') this.initCapitalWrecks();
+    this.capitalWrecksOn = roomOpts.capitalWrecks === true || process.env['EQX_CAPITAL_WRECKS'] === '1';
+    this.subcapWrecksOn = roomOpts.subcapWrecks === true || process.env['EQX_SUBCAP_WRECKS'] === '1';
+    if (this.capitalWrecksOn || this.subcapWrecksOn) this.initCapitalWrecks();
     // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
     if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {
       this.seedGalaxyBase(this.sectorKey);
@@ -4201,7 +4233,8 @@ export class SectorRoom extends Room<SectorState> {
       // dead hull stops being a ship: its worker body is despawned (the slot
       // stays allocated for respawn / pilot swap, which re-spawn the body),
       // so the pieces never overlap a corpse collider.
-      if (activeHull !== undefined && activeHull.alive === false && this.capitalWrecks !== null && isCapitalKindId(activeHull.kind)) {
+      // Sub-capital break-up slice 2: the same for a breaking sub-capital.
+      if (activeHull !== undefined && activeHull.alive === false && this.capitalWrecks !== null && this.wreckKindAllowed(activeHull.kind)) {
         const slot = this.playerToSlot.get(evt.targetId);
         if (slot !== undefined) {
           const b = slotBase(slot);
@@ -5073,11 +5106,11 @@ export class SectorRoom extends Room<SectorState> {
   private initCapitalWrecks(): void {
     this.capitalWrecks = new CapitalWreckSubsystem({
       serverTick: () => this.serverTick,
-      capitalKindOf: (id) => {
+      wreckKindOf: (id) => {
         const rec = this.swarmRegistry.get(id);
-        if (rec) return rec.kind === SWARM_KIND_DRONE && isCapitalKindId(rec.shipKind) ? (rec.shipKind as ShipKindId) : null;
+        if (rec) return rec.kind === SWARM_KIND_DRONE && rec.shipKind && this.wreckKindAllowed(rec.shipKind) ? (rec.shipKind as ShipKindId) : null;
         const ship = this.getActiveShip(id) ?? this.state.ships.get(id);
-        return ship !== undefined && isCapitalKindId(ship.kind) ? (ship.kind as ShipKindId) : null;
+        return ship !== undefined && this.wreckKindAllowed(ship.kind) ? (ship.kind as ShipKindId) : null;
       },
       positionOf: (id) => {
         const p = this.shipPoseCache.get(id) ?? this.lingeringPoseCache.get(id);
@@ -5113,6 +5146,20 @@ export class SectorRoom extends Room<SectorState> {
     });
   }
 
+  /** Does a ship of `kindId` break into wreck pieces in this room? Read from
+   *  its destruction profile (#18): `capital` with `capitalWrecks`; `subcap`
+   *  with `subcapWrecks`, except composite kinds (havok), which keep their
+   *  per-component scrap; `none` never. */
+  private wreckKindAllowed(kindId: string): boolean {
+    // Per hit (noteHit): read the tuning directly, no entity literal (#14).
+    if (!isShipKindId(kindId)) return false;
+    switch (shipTuning(getShipKind(kindId)).destruction) {
+      case 'capital': return this.capitalWrecksOn;
+      case 'subcap': return this.subcapWrecksOn && shipScrapGroups(kindId).length === 0;
+      case 'none': return false;
+    }
+  }
+
   /** S2a: a dying capital (any liveness class) breaks into wreck bodies.
    *  `targetId` is the id its hits were tracked under. Returns pieces spawned;
    *  0 when the flag is off or the kind isn't a capital. Call before the
@@ -5122,7 +5169,7 @@ export class SectorRoom extends Room<SectorState> {
     pose: { x: number; y: number; vx: number; vy: number; angle: number; angvel?: number },
     maxHull: number,
   ): number {
-    if (this.capitalWrecks === null || !isCapitalKindId(kindId)) return 0;
+    if (this.capitalWrecks === null || !this.wreckKindAllowed(kindId)) return 0;
     return this.capitalWrecks.onDeath(targetId, kindId as ShipKindId,
       { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle, angvel: pose.angvel ?? 0 }, maxHull);
   }
@@ -5160,7 +5207,8 @@ export class SectorRoom extends Room<SectorState> {
     if (rec.kind === SWARM_KIND_SCRAP) return;
     // S2a — a capital drone breaks into wreck bodies (flag on). Pose from the
     // SAB: the drone's body is still live here (evicted right after).
-    if (this.capitalWrecks !== null && rec.kind === SWARM_KIND_DRONE && isCapitalKindId(rec.shipKind)) {
+    // Sub-capital break-up slice 2: any kind whose profile breaks (flags).
+    if (this.capitalWrecks !== null && rec.kind === SWARM_KIND_DRONE && rec.shipKind && this.wreckKindAllowed(rec.shipKind)) {
       const wb = slotBase(rec.slot);
       this.spawnCapitalWreck(rec.id, rec.shipKind!, {
         x: this.sabF32[wb + SLOT_X_OFF]!, y: this.sabF32[wb + SLOT_Y_OFF]!,
@@ -8240,8 +8288,11 @@ export class SectorRoom extends Room<SectorState> {
   /** The welcome's shell-event fields for a joining client (§5, #16). */
   /** Capital destruction: tell the client this room breaks dying capitals
    *  into wrecks, so it explodes them at the kill point (money-shot review). */
-  private wreckWelcomeFields(): { capitalWrecks?: true } {
-    return this.capitalWrecks !== null ? WRECK_WELCOME : NO_WELCOME_FIELDS;
+  private wreckWelcomeFields(): WreckWelcome {
+    // Each flag on its own: the client holds a dying hull for its pieces only
+    // for the profiles this room breaks (sub-cap break-up slices 2 and 4).
+    if (this.capitalWrecksOn) return this.subcapWrecksOn ? BOTH_WRECK_WELCOME : WRECK_WELCOME;
+    return this.subcapWrecksOn ? SUBCAP_WRECK_WELCOME : NO_WELCOME_FIELDS;
   }
 
   private shellWelcomeFields(client: Client, playerId: string): { shellEvents?: true; shellsInFlight?: ShellSalvo[] } {
