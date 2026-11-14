@@ -88,3 +88,9 @@ is back.
 
 - Filters (hostiles only, ships only) and a column for the lock time estimate.
 - A shot in the showcase reel alongside the real-scale ranges shot.
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- **Contacts overview (lock list, 2026-11-10).** `components/ContactsOverview.tsx` + pure `contactRows.ts`: the far-target picker (O / CONTACTS tab), a fixed dock on the LEFT edge at 30 % height (z 18, the weapon strip's mirror; above the floating-stick zones so rows take taps, height-capped to end above the move stick's home). Polls the mirror at 4 Hz only while open; only `contactsOpen` is in Zustand. Rows lock through `requestLock` / `cancelLock` for the active group, the same messages as the info box. Don't name a file `contactsOverview.ts` next to it: Windows is case-insensitive and tsc refuses the pair. See [docs/features/contacts-overview.md](contacts-overview.md).
