@@ -46,8 +46,8 @@ export const COUNT_BUDGETS: Record<string, CountBudget> = {
   // check itself is ~3.5 per tick here (print-only `lineOfFire*`).
   'fleet-fight': {
     rxKBps: 334, minSwarm: 30,
-    measured: 'rx 216–218 KB/s laptop 2026-11-06. Work, desktop 4 runs 2026-11-08: bodies 38.4–39.9, ai 37.1–38.1, swarm recs 33.4–35.8, bytes 1141–1226, ents/snap 61.9–68.5; CI (ubuntu, PR #356): 38.6 / 37.5 / 35.8 / 1224 / 66.2, rx 211.9. With NPC line of fire, laptop 3 runs 2026-11-10: bodies 49.6–50.2, ai 48.0–48.7, swarm recs 48.3–48.9, bytes 1649–1670, ents/snap 45.7–47.0, rx 256–267 (check off, same session: 38.6 / 36.8 / 37.5 / 1281 / 46.0, rx 199)',
-    work: { bodiesPerTick: 63, aiAgentsPerTick: 61, swarmRecordsPerTick: 62, swarmBytesPerTick: 2088, entitiesPerSnapshot: 86 },
+    measured: 'rx 216–218 KB/s laptop 2026-11-06. Work, desktop 4 runs 2026-11-08: bodies 38.4–39.9, ai 37.1–38.1, swarm recs 33.4–35.8, bytes 1141–1226, ents/snap 61.9–68.5; CI (ubuntu, PR #356): 38.6 / 37.5 / 35.8 / 1224 / 66.2, rx 211.9. With NPC line of fire, laptop 3 runs 2026-11-10: bodies 49.6–50.2, ai 48.0–48.7, swarm recs 48.3–48.9, bytes 1649–1670, ents/snap 45.7–47.0, rx 256–267 (check off, same session: 38.6 / 36.8 / 37.5 / 1281 / 46.0, rx 199). Re-measured laptop 2026-11-14, feat/ai-fight-feel 4 runs: bodies 67.4–67.7, ai 65.9–66.6, swarm recs 63.2–63.8, bytes 2282–2303, ents/snap 36.3–36.8, rx 209–213; origin/main same session 2 runs: 57.7–57.9 / 56.3–56.6 / 55.7–55.8 / 2013–2017. Raised because fights last longer by the owner’s spread-targets decision (2026-11-14: each AI pilot prefers an unengaged enemy, so more ships stay alive in the window); per-ship cost unchanged: bytes/record 36.1 both, bodies/record 1.06 vs 1.03, ai/record 1.04 vs 1.01; contacts 4–5 vs 47–50 per tick and line-of-fire checks 1.2 vs 5.3 fell',
+    work: { bodiesPerTick: 85, aiAgentsPerTick: 84, swarmRecordsPerTick: 80, swarmBytesPerTick: 2879, entitiesPerSnapshot: 86 },
   },
   // 2026-11-06, laptop, two runs: 67.8 / 67.8 KB/s (174 entities: citadel + raid).
   'teleport-raid': {
