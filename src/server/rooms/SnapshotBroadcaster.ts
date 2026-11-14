@@ -1207,6 +1207,8 @@ export class SnapshotBroadcaster {
       if (work !== undefined && work.active) {
         work.snapshots++;
         work.snapshotEntities += projectilesCount + missilesCount + dronesCount + asteroidsCount;
+        // Slice 3 wire: descriptors ride as deltas plus a rolling resync chunk.
+        work.wreckDescriptors += (snap.wreckAdds?.length ?? 0) + (snap.wreckSync?.d.length ?? 0);
       }
     }
 

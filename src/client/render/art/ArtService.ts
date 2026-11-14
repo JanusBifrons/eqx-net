@@ -353,9 +353,10 @@ export class ArtService {
 
   get lightRig(): LightRig { return this.rig; }
 
-  /** `rings`: cut turret rings into the hull at its mounts (new effects). */
-  ship(id: string, paint?: number, urgent = true, rings = false): ArtHandle {
-    return this.acquire(rings ? { type: 'ship', id, paint, rings } : { type: 'ship', id, paint }, urgent);
+  /** `rings`: cut turret rings into the hull at its mounts (new effects).
+   *  `dead`: a wreck piece's art (no canopy, core, engines or running lights). */
+  ship(id: string, paint?: number, urgent = true, rings = false, dead = false): ArtHandle {
+    return this.acquire({ type: 'ship', id, paint, ...(rings ? { rings } : {}), ...(dead ? { dead } : {}) }, urgent);
   }
 
   struct(id: string, seed: number, rot = 0, accent?: number, urgent = true, rings = false): ArtHandle {

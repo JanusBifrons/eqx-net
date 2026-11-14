@@ -30,10 +30,18 @@ import { PixiRenderer } from '../PixiRenderer';
 import { GalaxyMapLayer } from '../galaxy/GalaxyMapLayer';
 import type { MainToWorkerMsg, WorkerToMainMsg } from './protocol';
 import { rendererArgsFromBoot } from './bootRenderer';
+import { SwarmMirrorReplica } from './swarmMirrorDelta';
 
-function post(msg: WorkerToMainMsg): void {
-  self.postMessage(msg);
+function post(msg: WorkerToMainMsg, transfer?: Transferable[]): void {
+  // `self` is typed as Window here (DOM lib); the worker overload takes a
+  // transfer list as its second argument.
+  if (transfer) self.postMessage(msg, { transfer });
+  else self.postMessage(msg);
 }
+
+/** The worker's own copy of the swarm map, fed by MIRROR_UPDATE deltas. */
+const swarmReplica = new SwarmMirrorReplica();
+const swarmBufTransfer: Transferable[] = [new ArrayBuffer(0)];
 
 let renderer: PixiRenderer | null = null;
 let galaxyLayer: GalaxyMapLayer | null = null;
@@ -102,6 +110,10 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
       }
 
       case 'MIRROR_UPDATE': {
+        // Apply the swarm delta even before the renderer exists: the main
+        // thread's encoder assumes every post it made was applied.
+        const delta = msg.swarmDelta;
+        if (delta) msg.mirror.swarm = swarmReplica.apply(delta);
         if (!renderer) return;
         renderer.update(msg.mirror);
         // PixiRenderer's update() populates `feedback` at its tail.
@@ -109,6 +121,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         // structured-clone copies the Map by value so the main side
         // owns its own instance.
         const fb = renderer.getFeedback();
+        if (delta?.pose) swarmBufTransfer[0] = delta.pose;
         post({
           type: 'FEEDBACK',
           feedback: {
@@ -137,7 +150,9 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             hoveredPickId: fb.hoveredPickId,
             miningBeamCount: fb.miningBeamCount,
           },
-        });
+          // Hand the pose buffer back (transferred) for the next post.
+          ...(delta?.pose ? { swarmBuf: delta.pose } : {}),
+        }, delta?.pose ? swarmBufTransfer : undefined);
         // F1 — per-frame sub-cost markers. GATED: only post when
         // diagnostics are enabled, so production pays zero extra IPC
         // (the `performance.now()` brackets in PixiRenderer always run

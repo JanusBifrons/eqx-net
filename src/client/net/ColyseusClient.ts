@@ -32,6 +32,7 @@ function padFieldId(id: number): string {
   return s;
 }
 import { pointSegmentDistance, wantPredBody } from '../structures/predStructureStreaming.js';
+import { PREDWORLD_STRUCTURE_RADIUS, PREDWORLD_WRECK_RADIUS } from '../../shared-types/structureBudgets.js';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import {
@@ -296,6 +297,31 @@ function _pa5(n: number): number { return parseFloat(n.toFixed(5)); }
 const NO_LOCKED_BY: ReadonlyArray<{ t: string; s: number; p: number }> = [];
 /** A welcome from a wreck room with no live wreck (slice 3). */
 const NO_WRECK_LIST: readonly import('@shared-types/messages/snapshotMessages').WreckDescriptor[] = [];
+
+const SWARM_ID_PREFIX = 'swarm-';
+
+/**
+ * Is `targetId` (`swarm-<entityId>`) a wreck piece (swarm kind 4)? A hit on
+ * debris shows its impact spark and flash but NO floating damage number or
+ * health bar, for every wreck profile, capitals included (hostile review
+ * 2026-11-13: numbers coalesce by screen spot, so hits on a dead ship's
+ * pieces kept climbing its floating number after the explosion). Parses the
+ * id in place (no substring; called per damage event, #14).
+ */
+export function isWreckPieceTarget(
+  targetId: string, swarm: ReadonlyMap<number, Pick<SwarmRenderState, 'kind'>> | undefined,
+): boolean {
+  if (swarm === undefined || !targetId.startsWith(SWARM_ID_PREFIX)) return false;
+  const n = targetId.length;
+  if (n === SWARM_ID_PREFIX.length) return false;
+  let id = 0;
+  for (let i = SWARM_ID_PREFIX.length; i < n; i++) {
+    const c = targetId.charCodeAt(i) - 48;
+    if (c < 0 || c > 9) return false;
+    id = id * 10 + c;
+  }
+  return swarm.get(id)?.kind === SWARM_KIND_WRECK;
+}
 
 export class ColyseusGameClient {
   /**
@@ -1570,9 +1596,11 @@ export class ColyseusGameClient {
       // Capital wrecks on: a dying capital explodes at its kill point (the
       // wreck break-up), not as a hull-sized blast (money-shot review).
       this.mirror.capitalWrecks = msg.capitalWrecks === true;
+      // Sub-cap wrecks on: a dying sub-cap's hull is held until its pieces draw.
+      this.mirror.subcapWrecks = msg.subcapWrecks === true;
       // Sub-capital break-up slice 3: the welcome carries the FULL live wreck
       // set (#16); snapshots then carry only adds, removes and a slow resync.
-      if (msg.capitalWrecks === true) {
+      if (msg.capitalWrecks === true || msg.subcapWrecks === true) {
         this._wrecks.apply(msg.wrecks ?? NO_WRECK_LIST);
         this.mirror.wrecks = this._wrecks.descriptors;
       }
@@ -2827,13 +2855,15 @@ export class ColyseusGameClient {
     const localId = this.mirror.localPlayerId;
     // Flash the damaged ship for 6 frames.
     this._damageFlashFrames.set(evt.targetId, 6);
+    // Debris (a wreck piece): spark and flash only, no number or health bar.
+    const debris = isWreckPieceTarget(evt.targetId, this.mirror.swarm);
 
     // Floating damage number at hit location. weapon-hit-prediction
     // Phase 3 — suppressed when a confirmed/settled prediction already
     // showed this number (de-dupe: exactly one number per confirmed hit).
     // Everything else in handleDamage stays unconditional — this remains
     // the SOLE HP/HUD/flash/healthbar/hostility authority.
-    if (!suppressNumber && this.mirror.pendingDamageNumbers) {
+    if (!suppressNumber && !debris && this.mirror.pendingDamageNumbers) {
       const targetShip = this.mirror.ships.get(evt.targetId);
       const x = evt.hitX ?? targetShip?.x ?? 0;
       const y = evt.hitY ?? targetShip?.y ?? 0;
@@ -2846,7 +2876,7 @@ export class ColyseusGameClient {
     // looks like zero damage: the hull bar stays at 100% while shield
     // absorbs (no-spillover) the first N hits, and drones have no other
     // shield-feedback surface (only player ships have a HUD ShieldHullBar).
-    if (evt.shooterId === localId && this.mirror.pendingHealthBarHits) {
+    if (evt.shooterId === localId && !debris && this.mirror.pendingHealthBarHits) {
       const healthPct = evt.hullMax > 0 ? Math.max(0, evt.newHealth / evt.hullMax) : 0;
       const shieldPct = evt.shieldMax > 0 ? Math.max(0, evt.newShield / evt.shieldMax) : 0;
       // Pre-hit HULL fraction for the chip-damage band: a HULL hit removed
@@ -3737,6 +3767,10 @@ export class ColyseusGameClient {
     // correction replays the whole prediction world). No local ship ⇒ keep all.
     const localId = this.mirror.localPlayerId;
     const me = localId ? this.mirror.ships.get(localId) : undefined;
+    // Wreck pieces stream by the GAP between hulls: the local hull's radius
+    // (213 u for a 2× crossguard) is not part of the PREDWORLD_WRECK_RADIUS
+    // travel budget.
+    const myHull = me ? getShipKind(me.kind ?? null).radius : 0;
     for (const [entityId, entry] of this.mirror.swarm) {
       // HC#2: an unrecognised pose-core kind resolves to `null` and is SKIPPED —
       // it never falls through to the drone path (the old `else`-is-drone branch
@@ -3751,9 +3785,14 @@ export class ColyseusGameClient {
       // S2b: a wreck piece needs its wreck's descriptor for its geometry; until
       // it arrives (≤ 0.5 s for a late joiner) the piece has no body yet.
       if (entry.kind === SWARM_KIND_WRECK && (entry.wreckId === undefined || !this._wrecks.has(entry.wreckId))) continue;
-      if (entry.kind === 2 && me) {
-        const edge = Math.hypot(entry.x - me.x, entry.y - me.y) - entry.radius;
-        if (!wantPredBody(this.predWorld.hasShip(key), edge)) continue; // unseen ⇒ swept below
+      // Wreck pieces stream in the same way (soak 2026-11-13: ~700 pieces in
+      // the predWorld put 56 % of the client main thread into Rapier's step).
+      // A piece only matters to prediction where the local ship can touch it.
+      if ((entry.kind === 2 || entry.kind === SWARM_KIND_WRECK) && me) {
+        const wreck = entry.kind === SWARM_KIND_WRECK;
+        const edge = Math.hypot(entry.x - me.x, entry.y - me.y) - entry.radius - (wreck ? myHull : 0);
+        const radius = wreck ? PREDWORLD_WRECK_RADIUS : PREDWORLD_STRUCTURE_RADIUS;
+        if (!wantPredBody(this.predWorld.hasShip(key), edge, radius)) continue; // unseen ⇒ swept below
       }
       seen.add(key);
       ctx.entityId = entityId;
@@ -6831,6 +6870,8 @@ export class ColyseusGameClient {
     const clockNow = this.clock.now();
     const predSink: PredictedFeedbackSink = {
       pushDamageNumber: (targetId, x, y, damage, tag) => {
+        // Debris: never a number (the authoritative path skips it too).
+        if (isWreckPieceTarget(targetId, this.mirror.swarm)) return;
         if (!isHitscan || damage <= 0) {
           this.mirror.pendingDamageNumbers?.push({ targetId, x, y, damage, tag });
           // Probe 4 (mobile-perf-investigation, 2026-05-24) — replaced the

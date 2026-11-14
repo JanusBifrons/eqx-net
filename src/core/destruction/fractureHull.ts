@@ -66,8 +66,11 @@ import type { Vec2 } from '../swarm/asteroidShape.js';
  *  (`zoneFan`), so the impact leaves 2–4 chunky fragments and the rest of
  *  the hull stays as one big section each side. A very heavy blow on a long
  *  hull rarely (`FAR_CHANCE`) adds ONE far crack. The piece count still
- *  rises with size and violence, as more chunks and a wider zone. */
-export const FRACTURE_ALGO_VERSION = 7;
+ *  rises with size and violence, as more chunks and a wider zone.
+ *  v8 (take 9 review, 2026-11-14): the `soundMinShare` option; the
+ *  sub-capital profile sets 0.33, so its sound primary crack leaves no piece
+ *  over ~70 % of the hull. Capital output is unchanged (default 0.15). */
+export const FRACTURE_ALGO_VERSION = 8;
 /** Default chance that a hull snaps cleanly in two along the primary line
  *  instead of shattering (owner: "just make it a chance"). */
 export const FRACTURE_SNAP_CHANCE = 0.2;
@@ -214,6 +217,10 @@ export interface FractureInput {
   /** With `chunkyPieces`: the least piece width, in beams (default
    *  `FAN_MIN_WIDTH_BEAMS`, 0.45). The aspect guard is v7's `FAN_MAX_ASPECT`. */
   readonly chunkyMinWidthBeams?: number;
+  /** With `chunkyPieces`: the least share of the hull each side of the
+   *  sound primary crack must hold (default `SOUND_MIN_SHARE`, 0.15).
+   *  Sub-capitals raise it so no piece is nearly the whole hull. */
+  readonly soundMinShare?: number;
   /** Jagged cut edges: most midpoint-subdivision levels per edge and the
    *  displacement per level as a fraction of the sub-segment (defaults
    *  `JAG_MAX_DEPTH` 4, `JAG_ROUGHNESS` 0.22). Sub-capitals use a shorter,
@@ -275,7 +282,7 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   const jagRoughness = input.jag?.roughness ?? JAG_ROUGHNESS;
   const primary = plan.primary
     ? chunkyOnly
-      ? soundPrimary(hull, plan.primary, keel, hullArea, minArea, beam, chunkyWidth)
+      ? soundPrimary(hull, plan.primary, keel, hullArea, minArea, beam, chunkyWidth, input.soundMinShare ?? SOUND_MIN_SHARE)
       : primaryCut(plan.primary)
     : null;
 
@@ -528,7 +535,7 @@ function primaryCut(p: NonNullable<FracturePlan['primary']>): FractureLine {
  */
 function soundPrimary(
   hull: P[], p: NonNullable<FracturePlan['primary']>, keel: Vec2, hullArea: number, minArea: number,
-  beam: number, minWidthBeams: number,
+  beam: number, minWidthBeams: number, minShare: number,
 ): FractureLine {
   const base = primaryCut(p);
   const cen = ringCentroid(hull);
@@ -536,7 +543,7 @@ function soundPrimary(
     const parts = quantiseRings(splitBoth([hull], l), minArea);
     if (parts.length !== 2) return false;
     for (const r of parts) {
-      if (ringArea(r) < SOUND_MIN_SHARE * hullArea) return false;
+      if (ringArea(r) < minShare * hullArea) return false;
       if (strict && !isChunky(r, beam, minWidthBeams)) return false;
     }
     return true;

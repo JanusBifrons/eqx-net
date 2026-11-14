@@ -29,6 +29,7 @@ import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js'
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
+import { SUBCAP_WRECK_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../physics/collisionGroups.js';
 
 /** Outward push falloff radius, as a fraction of the hull radius: a piece
  *  this far from the kill point gets half the extra push. The speeds
@@ -66,6 +67,51 @@ export const WRECK_ANGULAR_DAMPING = 0.05;
  *  wrecks stay for ever; this is only a budget guard (the oldest wreck piece
  *  goes first, S2b revisits it with persistence). */
 export const MAX_LIVE_WRECK_PIECES = 768;
+/** Room-wide cap on live SUB-CAPITAL wreck pieces (sub-capital break-up slice
+ *  2). A separate FIFO from the capitals' (`MAX_LIVE_WRECK_PIECES`), so
+ *  fighter debris never evicts a capital wreck piece. Owner 2026-11-13: "For
+ *  now scrap is permanent ... let's start big and see what happens": settled
+ *  pieces sleep in the physics engine, so this is a generous budget guard,
+ *  not a lifetime. Slice 5 sizes it from a soak. Slot pool: `MAX_ENTITIES`
+ *  (5120) = this + the 768 capital pieces + drones, rocks, structures, scrap. */
+export const MAX_LIVE_SUBCAP_WRECK_PIECES = 2000;
+
+/** How a wreck piece's physics body is built, from its parent kind's
+ *  destruction profile: collision groups (`piecesCollide`) and damping
+ *  (`dampingScale`). The ONE source for the server body (`SwarmSpawner
+ *  .spawnWreck`) and the client predWorld twin (`WreckClientLeaf`), #15.
+ *  A capital's is exactly the S2 values (byte-identical). */
+export interface WreckBodyParams {
+  collisionGroups: number;
+  linearDamping: number;
+  angularDamping: number;
+  /** Settle-to-sleep thresholds (`World.setSleepSettle`): u/s from the
+   *  profile's `settlePerRadius` × the kind's radius (#18), rad/s from its
+   *  `settleSpin`. 0 = off (capitals). */
+  settleSpeed: number;
+  settleSpin: number;
+}
+
+const wreckBodyParamsCache = new Map<string, WreckBodyParams>();
+
+/** The body parameters of a wreck piece of `kindId` (cached per kind: read
+ *  at spawn, never allocates after the first call). */
+export function wreckBodyParams(kindId: ShipKindId): WreckBodyParams {
+  let p = wreckBodyParamsCache.get(kindId);
+  if (p === undefined) {
+    const kind = getShipKind(kindId);
+    const prof = DESTRUCTION_PROFILES[shipTuning(kind).destruction];
+    p = {
+      collisionGroups: prof.piecesCollide ? WRECK_COLLISION_GROUPS : SUBCAP_WRECK_COLLISION_GROUPS,
+      linearDamping: WRECK_LINEAR_DAMPING * prof.dampingScale,
+      angularDamping: WRECK_ANGULAR_DAMPING * prof.dampingScale,
+      settleSpeed: prof.settlePerRadius * kind.radius,
+      settleSpin: prof.settleSpin,
+    };
+    wreckBodyParamsCache.set(kindId, p);
+  }
+  return p;
+}
 /** The recent-damage window: damage over this many ticks (~3 s at 60 Hz). */
 export const WRECK_RECENT_DAMAGE_TICKS = 180;
 
@@ -97,11 +143,12 @@ export interface WreckPieceSpec {
   index: number;
   x: number;
   y: number;
-  /** Spawn velocity: the dead hull's rigid motion at this point (v + ω × r). */
+  /** Spawn velocity: the dead hull's rigid motion at this point (v + ω × r),
+   *  ω scaled by the profile's `spinScale`. */
   vx: number;
   vy: number;
   angle: number;
-  /** Spawn spin: the dead hull's ω. */
+  /** Spawn spin: the dead hull's ω × the profile's `spinScale`. */
   angvel: number;
   /** Added after `WRECK_CRACK_MS`: the separating push (world frame at the
    *  death angle; rotate by how far the piece has turned since) and spin. */
@@ -229,6 +276,7 @@ export function wreckPieceGeometry(input: WreckFractureInputs): WreckPieceGeomet
     farCrack: opts.farCrack,
     chunkyPieces: opts.chunkyPieces,
     chunkyMinWidthBeams: opts.chunkyMinWidthBeams,
+    soundMinShare: opts.soundMinShare,
     extraChunkChance: opts.extraChunkChance,
     jag: opts.jag,
   });
@@ -293,7 +341,7 @@ function insetRing(ring: ReadonlyArray<Vec2>, inset: number): Vec2[] {
 
 /** A shared cut between two neighbouring pieces: endpoints and the unit
  *  normal from piece `i` to piece `j`, in the ship's scaled math-up frame. */
-interface Seam {
+export interface Seam {
   i: number;
   j: number;
   ax: number;
@@ -313,7 +361,7 @@ const SEAM_TOUCH_EPS = 0.5;
 /** Every shared cut between pieces (cut edges of two pieces that lie on one
  *  line and overlap). The cut line separates the two pieces, so parting
  *  along its normal never overlaps them. */
-function findSeams(geom: ReadonlyArray<WreckPieceGeometry>): Seam[] {
+export function findSeams(geom: ReadonlyArray<WreckPieceGeometry>): Seam[] {
   const seams: Seam[] = [];
   for (let i = 0; i < geom.length; i++) {
     const gi = geom[i]!;
@@ -443,12 +491,20 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
   // distance, scaled by hull size (#18) and by how violent the death was.
   const tuning = shipTuning(kind);
   const harder = 0.75 + 0.5 * violence(input.killBlowDamage, input.recentDamageRate);
-  const pushFar = tuning.wreckPushMin * harder;
-  const pushExtra = (tuning.wreckPushMax - tuning.wreckPushMin) * harder;
+  // The profile's push scale (capital 1: byte-identical; sub-cap gentle).
+  const pushScale = DESTRUCTION_PROFILES[tuning.destruction].pushScale;
+  const pushFar = tuning.wreckPushMin * harder * pushScale;
+  const pushExtra = (tuning.wreckPushMax - tuning.wreckPushMin) * harder * pushScale;
   const rf = WRECK_PUSH_FALLOFF_FRAC * kind.radius;
   const rf2 = rf * rf;
   const spinRng = new Rng(fnvMixU32((input.seed >>> 0) ^ 0x3ec7, 0x5));
   const spinMinR = WRECK_SPIN_MIN_RADIUS_FRAC * kind.radius;
+  // The profile's spin scale (capital 1: byte-identical; a sub-cap's pieces
+  // keep only a lazy tumble, owner on the v5 film 2026-11-13: "they spin too
+  // much when destroyed"). It scales the kick spin below (so the seam pass
+  // sees it) and the dying hull's ω the pieces inherit, with its ω × r.
+  const spinScale = DESTRUCTION_PROFILES[tuning.destruction].spinScale;
+  const hullW = pose.angvel * spinScale;
 
   // The kicks are built in the ship's scaled math-up frame (the frame the
   // geometry is in), then turned into the world by the ship's angle. The
@@ -483,7 +539,7 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
     // (0.55–1×) and direction; a bigger piece turns slower.
     const u = spinRng.u32() / 4294967296;
     const rim = tuning.wreckSeparate * (WRECK_SPIN_RIM_FAR + (WRECK_SPIN_RIM_NEAR - WRECK_SPIN_RIM_FAR) * near) * (0.55 + 0.9 * Math.abs(u - 0.5));
-    const mag = rim / Math.max(g.radius, spinMinR);
+    const mag = (rim / Math.max(g.radius, spinMinR)) * spinScale;
     kw[i] = u < 0.5 ? -mag : mag;
   }
 
@@ -496,7 +552,10 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
   // push along the cut's normal (momentum kept) makes up the difference.
   // Gauss–Seidel over the seams; a uniform expansion satisfies every seam at
   // once, so the passes converge.
-  const sep = tuning.wreckSeparate;
+  // The profile's seam scale (capital 1: byte-identical; a sub-cap's cracks
+  // open wide enough to read at fleet zoom). The spin above keeps the raw
+  // `wreckSeparate`.
+  const sep = tuning.wreckSeparate * DESTRUCTION_PROFILES[tuning.destruction].separateScale;
   const seams = findSeams(geom);
   for (let it = 0; it < SEPARATE_ITERATIONS; it++) {
     let worst = 0;
@@ -554,10 +613,10 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
       index: g.index,
       x: centre.x,
       y: centre.y,
-      vx: pose.vx - pose.angvel * ry,
-      vy: pose.vy + pose.angvel * rx,
+      vx: pose.vx - hullW * ry,
+      vy: pose.vy + hullW * rx,
       angle: pose.angle,
-      angvel: pose.angvel,
+      angvel: hullW,
       kickVx: kvx[i]! * c - kvy[i]! * sn,
       kickVy: kvx[i]! * sn + kvy[i]! * c,
       kickAngvel: kw[i]!,

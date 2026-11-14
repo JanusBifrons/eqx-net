@@ -4,6 +4,32 @@ Design work deliberately parked, to revisit. Each entry says what we found,
 why it waits, and what doing it properly involves. Remove an entry in the PR
 that picks it up.
 
+## Cargo holds that drop as cargo among the scrap (parked 2026-11-13)
+
+**Owner (2026-11-13),** reviewing the sub-capital break-up (plan
+`subcapital-breakup.md`, [capital-destruction.md](architecture/capital-destruction.md)):
+"The cargo holds ideally would drop as an identifiable item which looks like
+cargo and live amongst the scrap. But this is scope creep I think."
+
+- **Where it stands:** a dead NPC's hold drops as a loot pod (a scrap-kind
+  swarm entity, `parentShipKind 'cargo-pod'`) beside its wreck pieces. Since
+  2026-11-13 an NPC pod is the ordinary loot colour of its contents; only a
+  dead player's cargo keeps the bright magenta spill tier (in big fights the
+  magenta pods read as live ships among the dark wreckage).
+- **Why it waits:** the break-up is about how ships die; a new loot item is
+  its own feature.
+- **What doing it properly involves:**
+  - **A cargo-container visual** that reads as cargo among the debris (crate
+    or container art in the wreck's palette, sized to the hull it came out
+    of), not a diamond pod.
+  - **Its pickup:** fly-over collection as today, or something that suits a
+    container (a tractor or a short dwell), and what the HUD says.
+  - **Whether it lives as a wreck-like body:** a wreck piece (swarm kind 4,
+    collides, drifts with the debris, rebuilt client-side from the wreck
+    descriptor) or stays a pod (kind 3, its own hold row, persisted, TTL). A
+    wreck-like body needs the hold to move with it and a rule for who can
+    take it.
+
 ## How violently a capital breaks: a weighted roll (parked 2026-11-13)
 
 **Owner (2026-11-13), after the v3 break-up films** (both normal-speed takes of

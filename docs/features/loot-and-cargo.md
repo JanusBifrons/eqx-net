@@ -13,7 +13,9 @@ Part 2 (P1a-2) adds base storage, auto-deposit, derelicts and credit sinks.
 ## What the player sees
 
 - **Every kill drops loot.** A destroyed NPC ship leaves a small glowing
-  diamond, a *loot pod*, where it died. AI-vs-AI kills drop loot too, so a
+  diamond, a *loot pod*, just beside where it died (off to the side of the
+  shot that killed it, so the rest of the volley doesn't blow it up).
+  AI-vs-AI kills drop loot too, so a
   battlefield you stumble onto is worth picking over.
 - **Fly over a pod to collect it.** No button: touching a pod with free cargo
   space moves its contents into your ship's hold. A popup confirms what you
@@ -40,7 +42,9 @@ Part 2 (P1a-2) adds base storage, auto-deposit, derelicts and credit sinks.
 | Robot Core | 5 | gold |
 | Credits, blueprints | 0 | gold (blueprint) |
 
-A dead player's spilled cargo glows bright magenta. Cargo capacity is derived
+A dead player's spilled cargo glows bright magenta. An NPC's drop is an
+ordinary pod coloured by its contents (owner 2026-11-13: bright NPC pods read
+as live ships among the wreckage). Cargo capacity is derived
 from the ship's toughness (`maxHealth × 2`), so heavier hulls haul more.
 
 ## How it works

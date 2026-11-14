@@ -23,7 +23,8 @@ import type { ShipKind, WeaponMount } from '../shipKinds/types.js';
 import { SHIP_SCALE, SHIP_TUNING, type ShipTuningProfile } from './config.js';
 import { NAVAL_RANGE, type NavalRangeMode } from '../combat/navalRange.js';
 import { REAL_NAVAL_GUNS, navalGunEngageReach, type NavalGunId } from '../combat/navalGuns.js';
-import { destructionProfileIdForKind, type DestructionProfileId } from './destruction.js';
+import { DESTRUCTION_PROFILES, destructionProfileIdForKind, type DestructionProfileId } from './destruction.js';
+import { ARCADE_HANDLING, handlingClassOf } from './arcadeHandling.js';
 
 export type SizeClass = 'fighter' | 'frigate' | 'cruiser' | 'capital';
 export const SIZE_CLASSES: readonly SizeClass[] = ['fighter', 'frigate', 'cruiser', 'capital'];
@@ -244,9 +245,6 @@ export interface ShipTuning {
    *  inertia and weight" (the 2026-11-12 money-shot push was ~10× this). */
   wreckPushMax: number;
   wreckPushMin: number;
-  /** How this kind breaks up when it dies (`destruction.ts`): `capital`,
-   *  `subcap` or `none`. The numbers are `DESTRUCTION_PROFILES[id]`. */
-  destruction: DestructionProfileId;
   /** Capital wreck break-up: the least speed (u/s) at which two neighbouring
    *  pieces part along their shared cut, at every point of it (spin
    *  included), so no seam hinges or slides shut (owner review 2026-11-13).
@@ -267,8 +265,13 @@ export interface ShipTuning {
    *  (1400 dmg) moves its biggest piece (~30 % of the hull) ~30 u/s. */
   wreckKnockSpeed: number;
   /** The most one hit may change a wreck piece's speed (u/s), so small arms
-   *  on a sliver never fling it. Heavy cruiser (2×) ~55 u/s. */
+   *  on a sliver never fling it. Heavy cruiser (2×) ~55 u/s. Both knock
+   *  numbers carry the destruction profile's `knockScale` / `knockMaxScale`
+   *  (sub-caps: fighter ~92 u/s / ~18 u/s, so a hit visibly shoves debris). */
   wreckKnockMax: number;
+  /** How this kind breaks up when it dies (`destruction.ts`): `capital`,
+   *  `subcap` or `none`. The numbers are `DESTRUCTION_PROFILES[id]`. */
+  destruction: DestructionProfileId;
   /** Art bake pixels per world unit, and the texture side cap. */
   bakePpu: number;
   bakeMaxSide: number;
@@ -314,6 +317,8 @@ export function shipTuning(kind: ShipKind): ShipTuning {
   const ct = CLASS_TUNING[cls];
   const g = s * ct.geometry, sp = s * ct.spacing;
   const unscaledR = kind.radius / s;
+  const destruction = destructionProfileIdForKind(kind);
+  const knockProfile = DESTRUCTION_PROFILES[destruction];
   t = {
     sizeClass: cls,
     appliedScale: s,
@@ -335,11 +340,16 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     guardRadiusMin: ct.clearHull ? Math.max(BASE.guardRadiusMin * sp, kind.radius * 2) : BASE.guardRadiusMin * sp,
     wreckPushMax: WRECK_PUSH_MAX_PER_RADIUS * kind.radius,
     wreckPushMin: WRECK_PUSH_MIN_PER_RADIUS * kind.radius,
-    destruction: destructionProfileIdForKind(kind),
     wreckSeparate: WRECK_SEPARATE_PER_RADIUS * kind.radius,
     wreckColliderInset: WRECK_COLLIDER_INSET_PER_RADIUS * kind.radius,
-    wreckKnockSpeed: WRECK_KNOCK_PER_RADIUS * kind.radius,
-    wreckKnockMax: WRECK_KNOCK_MAX_PER_RADIUS * kind.radius,
+    // Scaled by the destruction profile (capital ×1: unchanged; a sub-cap's
+    // debris is visibly shoved by small arms, `destruction.ts`). The knock
+    // reads damage ÷ max hull, so it also carries the arcade layer's `tough`
+    // (×1.6–1.75 hull, capitals ×1): a tougher hull makes the fight longer,
+    // not its debris heavier (the knock the owner approved, pre-arcade).
+    wreckKnockSpeed: WRECK_KNOCK_PER_RADIUS * kind.radius * knockProfile.knockScale * ARCADE_HANDLING[handlingClassOf(kind)].tough,
+    wreckKnockMax: WRECK_KNOCK_MAX_PER_RADIUS * kind.radius * knockProfile.knockMaxScale,
+    destruction,
     // Pixel density by the UNSCALED hull (so a 2× fighter stays as sharp per
     // world unit as today's), within the class's side budget.
     bakePpu: unscaledR >= BASE.ppuBigRadius ? BASE.ppuBig : BASE.ppuSmall,
