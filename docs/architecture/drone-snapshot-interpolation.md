@@ -203,6 +203,16 @@ speed change keeps the newest stamp in place. Lock:
 `src/client/net/swarmInterpolation.tickStamp.test.ts` (drain-time stamps step
 error 3.1 u, tick stamps 0.16 u).
 
+**The packet's tick must be the tick of its poses.** The room and the physics
+worker run separate 60 Hz loops. The room reads the SAB tick at the top of its
+update, and the worker can publish the next step before the swarm encoder reads
+the poses; such a packet carried tick T+1 poses labelled T, and with tick stamps
+the drone popped one step forward for a frame or two (~every 14 frames in the
+fleet-melee take 11). `SwarmBroadcaster` now passes `sabPoseTick(sabU32)`, the
+SAB tick read under the seqlock right before each encode, as the header tick;
+the room's `serverTick` still drives the full-snapshot and decimation cadence.
+Lock: `src/server/rooms/SwarmBroadcaster.poseTick.test.ts`.
+
 ## The Step-4 regression (read this before touching ring/delay constants)
 
 Raising `DISPLAY_DELAY_MS` to 100 with `POSE_RING_DEPTH` left at **4** was a

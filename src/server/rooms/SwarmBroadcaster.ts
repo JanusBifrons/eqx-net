@@ -25,7 +25,7 @@ import {
 import { checkBackpressure } from '../net/Backpressure.js';
 import { SpatialGrid } from '../interest/SpatialGrid.js';
 import type { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
-import type { BinarySwarmBroadcast } from '../net/BinarySwarmBroadcast.js';
+import { sabPoseTick, type BinarySwarmBroadcast } from '../net/BinarySwarmBroadcast.js';
 import type { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
 import type { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 
@@ -85,7 +85,9 @@ export class SwarmBroadcaster {
         d.interestGrid.query9(cx, cy, scratch, reach);
         inInterest = scratch;
       }
-      const swarmPacket = d.swarmEncoder.encode(d.swarmRegistry, d.sabF32, d.sabU32, serverTick, inInterest);
+      // The packet names the tick its poses stand for, read right before the
+      // encode: the worker may have stepped since the room read `serverTick`.
+      const swarmPacket = d.swarmEncoder.encode(d.swarmRegistry, d.sabF32, d.sabU32, serverTick, inInterest, sabPoseTick(d.sabU32, serverTick));
       if (swarmPacket) {
         const w = d.work;
         if (w !== undefined && w.active) {
