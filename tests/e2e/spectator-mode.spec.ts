@@ -74,6 +74,25 @@ test('death → instant spectator, NO death modal', async ({ page }) => {
   await expect(page.locator('[data-testid="death-overlay"]')).toHaveCount(0);
 });
 
+// Showcase review 2026-11-13: the SPECTATING chip had a 14%-alpha green wash
+// for a background, so ships, fireballs and damage numbers showed straight
+// through it and its text ran into a world number beside it ("SPECTATING64").
+// A HUD label sits on the same dark backing as the other top-centre chips.
+test('spectating chip sits on an opaque dark HUD backing, not a see-through wash', async ({ page }) => {
+  test.setTimeout(45_000);
+  await join(page);
+  await killLocalShip(page);
+  const chip = page.locator('[data-testid="spectator-indicator"]');
+  await chip.waitFor({ timeout: 5_000 });
+  const bg = await chip.evaluate((el) => getComputedStyle(el).backgroundColor);
+  const m = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/.exec(bg);
+  expect(m, `unparsed background ${bg}`).not.toBeNull();
+  const [r, g, b] = [Number(m![1]), Number(m![2]), Number(m![3])];
+  const a = m![4] === undefined ? 1 : Number(m![4]);
+  expect(a, `chip background ${bg} lets the world show through`).toBeGreaterThanOrEqual(0.7);
+  expect(Math.max(r, g, b), `chip background ${bg} is not a dark HUD panel`).toBeLessThanOrEqual(40);
+});
+
 test('spectator camera free-roams (drag pans, no follow snap-back)', async ({ page }) => {
   test.setTimeout(45_000);
   await join(page, { worker0: true });
