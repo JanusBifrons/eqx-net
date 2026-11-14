@@ -227,3 +227,52 @@ Pixi shield-bubble visual + break/restore SFX were scoped out by the
 user brief ("small but obvious for now, expand later"). Hooks exist
 (`SHIELD_BROKEN`/`SHIELD_RESTORED` bus events, `shield_broken`/
 `shield_restored` diagnostics, `entry.shieldDown` on the render mirror).
+
+## Rapier castRay API
+
+Read before calling `world.castRay` (moved from `src/core/CLAUDE.md`; do not look these up again).
+
+- `world.castRay(ray, maxDist, solid, filter, filterMask, filterGroups, filterExcludeRigidBody)` — the exclude parameter takes a `RigidBody` object (from `bodies.get(id)`), not a handle number.
+- `hit.collider` is already a `Collider` object; do NOT wrap it in `world.getCollider()` (that takes a number).
+- `hit.timeOfImpact` — there is no `hit.toi` property.
+- **Query pipeline lag**: `castRay` queries the Rapier broadphase/narrowphase, which is only updated inside `world.step()`. Bodies spawned after the last `step()` are invisible to `castRay`. In unit tests, call `world.tick(1/60)` in `beforeEach` after spawning bodies, before any hitscan calls.
+
+## Core rules reference
+
+Moved from `src/core/CLAUDE.md` (section "Shield/Hull collider model").
+
+- `src/core/combat/ShieldHull.ts` is **SERVER-AUTHORITY-ONLY** — unlike
+  the shared `HostileDroneBehaviour` brain, the client must NEVER run
+  its damage/regen functions (predicting the 0-cross flaps the collider
+  every RTT). It lives in core only for testability; a banner says so.
+- `src/core/geometry/shipHullDecomp.ts` decomposes each ship polygon
+  into convex parts via `poly-decomp` (Bayazit's algorithm; MIT, ~3 KB,
+  deterministic). Replaced the in-house ear-clipper (`triangulate.ts`)
+  on 2026-05-28. Each part is convex by construction so `rayHitsConvex-
+  Polygon` consumers (hitscan / projectile sweep) loop them directly.
+  Per-kind parts precomputed once at module load — never per-tick.
+- **`World.setHullExposed` emits `RAPIER.ColliderDesc.triangle` (NOT
+  `convexHull`)** colliders, fan-triangulating each convex part from
+  vertex 0. Why: in Rapier 2D, `convexHull` and `cuboid` shapes DO NOT
+  fire `CONTACT_FORCE_EVENTS` for two interpenetrating bodies at zero
+  closing velocity (positional-correction impulse ≠ contact force, even
+  with threshold 0). Only `triangle` shapes emit events for static
+  overlap. Stationary-ship collision telemetry and the
+  `hull-collision-test` regression spec depend on this. The per-shape
+  contact-event comparison is locked in
+  `src/core/physics/hullCollisionNoTouch.test.ts` DIAGNOSTIC. If a
+  future PR replaces triangles with `convexHull`, the diagnostic + the
+  E2E positive-control will fail loudly.
+- `World.setHullExposed`: ALL ship/drone colliders are density 0; mass
+  is a pinned `setAdditionalMassProperties`. `recomputeMassProperties-
+  FromColliders()` IS called after every collider change and is
+  REQUIRED + safe (it folds in the additional props; "FromColliders" is
+  a misnomer — see rapier2d-compat rigid_body.d.ts:377/395). The new
+  geometry lags one `world.step()` for queries — never `updateScene-
+  Queries()` (diverges from client predWorld).
+- **A ship's WEAPON hit shape is `combat/shipHitShape.ts`, by kind and shield
+  state, never by pilot (owner's rule 2026-11-13):** bubble while the shield is
+  up, hull once down, a capital's hull either way; splash measures to the kind's
+  radius. Every server weapon path and the client beam-end / hit prediction call
+  it (#15); never hit-test a ship on `rec.radius` or a tuning `hitRadius`.
+  Lock: `tests/integration/sectorRoom/shipHitShapeParity.test.ts`.
