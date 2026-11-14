@@ -22,7 +22,9 @@
  *
  * Runs once per death (not hot-loop code); allocates freely.
  */
-import { fractureHull, projectToOutline, FRACTURE_SNAP_CHANCE } from './fractureHull.js';
+import {
+  fractureHull, projectToOutline, cutDirFromAngle, CUT_ANGLE_STEPS, FRACTURE_SNAP_CHANCE, type FractureKillCut,
+} from './fractureHull.js';
 import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
 import { Rng, fnvMixU32 } from '../random/rng.js';
 import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js';
@@ -180,6 +182,16 @@ export interface WreckFractureInputs {
   killBlowDamage: number;
   recentDamageRate: number;
   snapChance: number;
+  /** v9 kill cut (the killing weapon's `killCut`; absent = the normal
+   *  break-up). The descriptor carries these three fields as they are, so
+   *  both sides feed the fracture the same numbers. */
+  cutKind?: 'slice' | 'channel';
+  /** The cut line's direction as a u16 angle in the hull's 1× Pixi-up frame
+   *  (`hullLocalCutAngle`; decoded by the shared `cutDirFromAngle`). */
+  cutAng?: number;
+  /** A channel's width in the hull's 1× frame (world width ÷
+   *  `shipShapeScale`). */
+  cutW?: number;
 }
 
 /** One piece's shape in its own body frame (math-up, centred on its
@@ -232,6 +244,27 @@ export function hullLocalKillPoint(kindId: ShipKindId, pose: WreckDeathPose, wor
   return projectToOutline(shipHullOutline(kind), { x: mx / s, y: -my / s });
 }
 
+/** A world direction → the u16 cut angle in the hull's 1× Pixi-up frame
+ *  (`WreckFractureInputs.cutAng`). Server side, once per death: only the
+ *  integer it returns reaches the fracture, so its trig never has to agree
+ *  across engines. */
+export function hullLocalCutAngle(pose: WreckDeathPose, dirWorld: Vec2): number {
+  const c = Math.cos(pose.angle);
+  const sn = Math.sin(pose.angle);
+  const mx = dirWorld.x * c + dirWorld.y * sn;
+  const my = -dirWorld.x * sn + dirWorld.y * c;
+  // Math-up → Pixi-up flips y.
+  const t = Math.atan2(-my, mx) / (2 * Math.PI);
+  return ((Math.round(t * CUT_ANGLE_STEPS) % CUT_ANGLE_STEPS) + CUT_ANGLE_STEPS) % CUT_ANGLE_STEPS;
+}
+
+/** The fracture's `cut` from the wreck inputs (undefined without a cut). */
+function wreckFractureCut(input: WreckFractureInputs): FractureKillCut | undefined {
+  if (input.cutKind === undefined || input.cutAng === undefined) return undefined;
+  const d = cutDirFromAngle(input.cutAng);
+  return { kind: input.cutKind, dirX: d.x, dirY: d.y, width: input.cutW ?? 0 };
+}
+
 function ringArea(r: ReadonlyArray<readonly [number, number]>): number {
   let a = 0;
   for (let i = 0; i < r.length; i++) {
@@ -279,6 +312,7 @@ export function wreckPieceGeometry(input: WreckFractureInputs): WreckPieceGeomet
     soundMinShare: opts.soundMinShare,
     extraChunkChance: opts.extraChunkChance,
     jag: opts.jag,
+    cut: wreckFractureCut(input),
   });
   const hullAreaWorld = ringArea(hull) * s * s;
   const density = hullAreaWorld > 0 ? massOf(kind, 1) / hullAreaWorld : 0;

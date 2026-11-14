@@ -90,6 +90,9 @@ export const WreckDescriptorSchema = z
     snapChance: z.number().finite(),
     algoVersion: z.number().int(),
     deathTick: z.number().int().optional(),
+    cutKind: z.enum(['slice', 'channel']).optional(),
+    cutAng: z.number().int().min(0).max(0xffff).optional(),
+    cutW: z.number().finite().min(0).optional(),
   })
   .strict();
 
@@ -128,7 +131,10 @@ export function isWreckDescriptor(v: unknown): v is WreckDescriptor {
     && finite(d['killX']) && finite(d['killY']) && finite(d['killBlowDamage'])
     && finite(d['recentDamageRate']) && finite(d['snapChance'])
     && typeof d['algoVersion'] === 'number' && Number.isInteger(d['algoVersion'])
-    && (d['deathTick'] === undefined || (typeof d['deathTick'] === 'number' && Number.isInteger(d['deathTick'])));
+    && (d['deathTick'] === undefined || (typeof d['deathTick'] === 'number' && Number.isInteger(d['deathTick'])))
+    && (d['cutKind'] === undefined || d['cutKind'] === 'slice' || d['cutKind'] === 'channel')
+    && (d['cutAng'] === undefined || (typeof d['cutAng'] === 'number' && Number.isInteger(d['cutAng']) && d['cutAng'] >= 0 && d['cutAng'] <= 0xffff))
+    && (d['cutW'] === undefined || (finite(d['cutW']) && (d['cutW'] as number) >= 0));
 }
 
 /** Campaign 6.1 (anti-patterns review C-core 3) — defensive ingest schema for
@@ -526,6 +532,15 @@ export interface WreckDescriptor {
    *  starts its molten cut-edge glow from it; absent ⇒ drawn already cool
    *  (as a late joiner sees it). Not a fracture input. */
   deathTick?: number;
+  /** Fracture v9 kill cut, from the killing weapon's `killCut` (absent =
+   *  the normal break-up): `slice` cuts dead straight along the shot,
+   *  `channel` erases a strip `cutW` wide along it. */
+  cutKind?: 'slice' | 'channel';
+  /** The cut line's direction, a u16 angle (65536 per turn) in the hull's
+   *  1× Pixi-up frame; decoded by the shared trig-free `cutDirFromAngle`. */
+  cutAng?: number;
+  /** A channel's width in the hull's 1× frame. */
+  cutW?: number;
 }
 
 /** A rolling-resync chunk of the live wreck set (`SnapshotMessage.wreckSync`). */
