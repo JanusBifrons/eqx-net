@@ -92,8 +92,8 @@ test('spectating chip sits on an opaque dark HUD backing, not a see-through wash
   expect(a, `chip background ${bg} lets the world show through`).toBeGreaterThanOrEqual(0.7);
   expect(Math.max(r, g, b), `chip background ${bg} is not a dark HUD panel`).toBeLessThanOrEqual(40);
 });
-test('spectator camera free-roams (middle-drag pans, no follow snap-back)', async ({ page }) => {t
 
+test('spectator camera free-roams (middle-drag pans, no follow snap-back)', async ({ page }) => {
   test.setTimeout(45_000);
   await join(page, { worker0: true });
   await killLocalShip(page);
