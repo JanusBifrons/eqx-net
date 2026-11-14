@@ -3053,3 +3053,8 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding (nose turrets, showcase take 9):** the snapshot broadcaster pooled `mountAngles` arrays by length. The message is encoded only when sent, so every one-turret ship in a recipient's snapshot pointed at the same array and the wire carried the last ship's angle for all of them. It stayed hidden while almost no drone had exactly one turning mount; once six kinds got nose turrets, every AI pilot's gun was drawn at some other ship's angle. Renderer, art path and display follower were all correct.
 - **Rule:** a pooled buffer that ends up inside an outgoing message is pooled per ENTRY (a cursor reset per message, or keyed by entity), never per size. A test of a broadcaster copies its arrays at send time, as the encoder reads them, with two entities of the same shape.
+
+## 2026-11-14 — Streaming capture: a one-shot fail-stop turns a transient blip into a silent, permanent stop
+
+- **Finding (capture `2026-11-14T17-46-29Z-qrspcq`):** `streamingDiag.ts` disabled streaming for the tab on the FIRST 404 and had no fetch timeout, so one 404 or one never-settling POST while the dev backend restarted stopped the capture for good, with only a console warning. The `_flushedFinal` latch also never re-armed, so only the first tab-hide got a final beacon (fetch streaming itself carried on after a hide, as the capture shows).
+- **Rule:** a client diag/telemetry loop treats every failure as transient: abort hung requests (10 s), and fail-stop only on a sustained signal (5+ consecutive 404s spanning > 30 s). Latches tied to a lifecycle event re-arm on the opposite event. Lock: `streamingDiag.resilience.test.ts`.
