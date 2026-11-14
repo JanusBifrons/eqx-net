@@ -50,6 +50,7 @@ import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
 import { NavalShellBursts } from './art/fx/navalShellBursts.js';
 import { FxEngines } from './art/fx/FxEngines.js';
+import { droneBoostInput } from './pixi/droneEngineInput.js';
 import { WarpFx, type WarpFxShip } from './pixi/WarpFx.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
 import { FarZoomIcons } from './pixi/FarZoomIcons';
@@ -2759,7 +2760,10 @@ export class PixiRenderer implements IRenderer {
         // Drones only. A capital wreck piece (kind 4) holds its dead ship's
         // art handle, nozzles and all, so without this gate every drifting
         // piece drew the battleship's four-flame exhaust and ribbons.
-        thrust = -1; boost = -1;
+        // Thrust follows speed (no key on the wire); boost is the AI pilot's
+        // real boost key from the snapshot, the same flame a pilot's gets.
+        thrust = -1;
+        boost = droneBoostInput(mirror.swarm?.get(this.droneEidOf(key)));
       } else continue;
       let top = this._fxTopSpeed.get(h.job.id), trail = this._fxTrailS.get(h.job.id);
       if (top === undefined || trail === undefined) {
@@ -3169,6 +3173,17 @@ export class PixiRenderer implements IRenderer {
   private readonly _droneWarpFed = new Set<string>();
   /** W2a — `swarm-<id>` keys, built once per drone (no per-frame string). */
   private readonly _droneWarpKeys = new Map<number, string>();
+  /** Sprite key `swarm-<eid>` → eid, parsed once per key (#14). */
+  private readonly _droneEidOfKey = new Map<string, number>();
+  private droneEidOf(key: string): number {
+    let eid = this._droneEidOfKey.get(key);
+    if (eid === undefined) {
+      if (this._droneEidOfKey.size > 4096) this._droneEidOfKey.clear(); // bound it; rebuilt on demand
+      eid = parseInt(key.slice(6), 10);
+      this._droneEidOfKey.set(key, eid);
+    }
+    return eid;
+  }
   private droneWarpKey(eid: number): string {
     let k = this._droneWarpKeys.get(eid);
     if (k === undefined) {

@@ -9,6 +9,7 @@ import type {
   AiInputBits,
   IAiNeighbourQuery,
 } from '../contracts/IAiBehaviour.js';
+import { AI_INPUT_BOOST } from '../contracts/IAiBehaviour.js';
 
 /**
  * Per-tick fire request emitted by a behaviour. The controller buffers these
@@ -49,6 +50,8 @@ export interface AiIntentSink {
 interface AiRegistration {
   slot: number;
   behaviour: IAiBehaviour;
+  /** This tick's control keys held boost (the snapshot shows the flame, #16). */
+  boost: boolean;
 }
 
 /**
@@ -80,7 +83,7 @@ export class AiController {
   constructor(private readonly sink: AiIntentSink) {}
 
   register(entityId: string, slot: number, behaviour: IAiBehaviour): void {
-    this.entities.set(entityId, { slot, behaviour });
+    this.entities.set(entityId, { slot, behaviour, boost: false });
     // Apply any hostility that arrived before this entity registered.
     const pending = this.pendingHostile.get(entityId);
     if (pending) {
@@ -100,6 +103,13 @@ export class AiController {
 
   size(): number {
     return this.entities.size;
+  }
+
+  /** The slot of an AI ship whose control keys held boost this tick, else -1.
+   *  The room still applies its own gates (a disabled ship holds no keys). */
+  boostingSlot(entityId: string): number {
+    const reg = this.entities.get(entityId);
+    return reg !== undefined && reg.boost ? reg.slot : -1;
   }
 
   /** Phase 4c (2026-05-11) — read access to the registered behaviour for
@@ -252,6 +262,7 @@ export class AiController {
     tick: number,
     entitySnapshot: (id: string) => AiEntity | null,
   ): void {
+    reg.boost = false;
     const self = entitySnapshot(id);
     if (!self) return;
     const intent = reg.behaviour.tick(self, view);
@@ -261,6 +272,7 @@ export class AiController {
       if (this.sink.postInput) {
         this.sink.postInput(reg.slot, intent.input);
         this.inputsQueued++;
+        reg.boost = (intent.input & AI_INPUT_BOOST) !== 0;
       }
     } else if (
       intent.fx !== 0 ||

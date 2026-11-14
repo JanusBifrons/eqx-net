@@ -376,6 +376,10 @@ export interface SnapshotMessage {
      *  robot orb's charge laser): the client draws the telegraph. Emit-when-
      *  true; absence means "not charging" (the wind-up is ~1.2 s). */
     charging?: boolean;
+    /** Take 12 — true while this AI ship's pilot holds the boost key: the
+     *  client draws the same boost flame a pilot's ship gets (#16).
+     *  Emit-when-true; absence means "not boosting". */
+    boost?: boolean;
     /** Living World P4a — a named ELITE's display name (sent every snapshot
      *  while the elite is in interest; absent for ordinary NPCs). */
     elite?: string;
