@@ -766,10 +766,12 @@ export class SnapshotBroadcaster {
     }
     // Phase 6b — append lingering hulls. Pose from lingeringPoseCache;
     // owner from state.ships entry's playerId; isActive=false. lastInput
-    // is all-false. (Since RTS slice 4 a wingman flies the hull with INPUT
-    // bits, so its thrust flame doesn't show yet; its pose still rides every
-    // snapshot from the per-tick SAB mirror.)
-    for (const [shipInstanceId] of d.lingeringSlots) {
+    // comes from the hull's slot FLAGS word, like an active ship's: since RTS
+    // slice 4 a wingman flies the hull with INPUT commands and the worker
+    // mirrors the last-applied bits there (all-false for a hull nobody
+    // flies). Observers forward-predict the hull with them and draw its
+    // thrust flame (RTS slice 4c). Same idle-bits dedupe as active ships.
+    for (const [shipInstanceId, slot] of d.lingeringSlots) {
       const ship = d.shipsMap.get(shipInstanceId);
       if (!ship || !ship.alive) continue;
       const pose = d.lingeringPoseCache.get(shipInstanceId);
@@ -779,11 +781,12 @@ export class SnapshotBroadcaster {
       entry.shipInstanceId = shipInstanceId;
       entry.isActive = false;
       entry.pose = pose;
-      entry.lastInput.thrust = false;
-      entry.lastInput.turnLeft = false;
-      entry.lastInput.turnRight = false;
-      entry.lastInput.boost = false;
-      entry.lastInput.reverse = false;
+      const lflags = d.sabU32[slotBase(slot) + SLOT_FLAGS_OFF] ?? 0;
+      entry.lastInput.thrust    = !!(lflags & FLAG_INPUT_THRUST);
+      entry.lastInput.turnLeft  = !!(lflags & FLAG_INPUT_TURN_LEFT);
+      entry.lastInput.turnRight = !!(lflags & FLAG_INPUT_TURN_RIGHT);
+      entry.lastInput.boost     = !!(lflags & FLAG_INPUT_BOOST);
+      entry.lastInput.reverse   = !!(lflags & FLAG_INPUT_REVERSE);
       entry.energy = 0;
       // R2.32 — a lingering hull keeps its at-disconnect shield state so a
       // parked hull whose shield was broken still renders hull-exposed.
@@ -853,7 +856,10 @@ export class SnapshotBroadcaster {
       for (const ship of allShips) {
         // A ship still joining is its own pilot's business until it arrives.
         if (ship.joining && ship.playerId !== recipientPlayerId) continue;
-        const includeLastInput = shouldIncludeLastInput(lastInputCache, ship.playerId, ship.lastInput);
+        // Keyed by HULL, not pilot: a player's active ship and lingering
+        // hulls share one playerId, and a shared key made each look
+        // "changed" on every snapshot (RTS slice 4c).
+        const includeLastInput = shouldIncludeLastInput(lastInputCache, ship.shipInstanceId, ship.lastInput);
         const angles = d.playerMountAngles.get(ship.playerId);
         let mountAnglesArr: number[] | undefined;
         if (angles && angles.length > 0) {

@@ -468,8 +468,10 @@ export interface RenderMirror {
    *  this map separately and draws with a grey-ish tint
    *  to signal "this hull is parked but still belongs to a real player".
    *  Pose fields populated from `SnapshotMessage.states[*]` entries whose
-   *  `isActive === false`; identity (kind, displayName) carried alongside. */
-  lingeringShips?: Map<string, ShipRenderState & { ownerPlayerId: string }>;
+   *  `isActive === false`; identity (kind, displayName) carried alongside.
+   *  `thrusting` (RTS slice 4c): the hull's wingman holds thrust, from the
+   *  snapshot's `lastInput` (absent ⇒ off); the renderer draws its flame. */
+  lingeringShips?: Map<string, ShipRenderState & { ownerPlayerId: string; thrusting?: boolean }>;
   /**
    * Swarm entities (asteroids + drones) shipped via the binary swarm channel.
    * Keyed by the server's dense u16 entityId. Sleeping entries remain in the

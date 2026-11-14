@@ -2952,25 +2952,54 @@ export class PixiRenderer implements IRenderer {
         // piece drew the battleship's four-flame exhaust and ribbons.
         thrust = -1; boost = -1;
       } else continue;
-      let top = this._fxTopSpeed.get(h.job.id), trail = this._fxTrailS.get(h.job.id);
-      if (top === undefined || trail === undefined) {
-        const k = getShipKind(h.job.id);
-        top = k.maxSpeed; trail = shipTuning(k).exhaustTrailS;
-        this._fxTopSpeed.set(h.job.id, top); this._fxTrailS.set(h.job.id, trail);
-      }
-      fx.draw(key, h.ship.nozzles, sp.x, sp.y, sp.rotation, thrust, boost, top, dt, now, trail);
-      // GPU-lit art: each engine is a light in its plume (its own hull takes little).
-      const ls = litPass.settings;
-      if (ls && ls.engineLights && ls.pointLights > 0) {
-        const owner = sp instanceof MachinedShipSprite && sp.lit.length > 0 ? sp.lit[0]!.lightOwnerId : -1;
-        const th = fx.thrustOf(key), c = Math.cos(sp.rotation), s = Math.sin(sp.rotation);
-        for (const nz of h.ship.nozzles) {
-          const ly = nz.y + engineLightAstern(nz.r);
-          litPass.scene.addLight(sp.x + nz.x * c - ly * s, sp.y + nz.x * s + ly * c, engineLightHeight(nz.r), 0xffa24a, engineLightIntensity(nz.r, th), engineLightReach(nz.r), owner);
-        }
+      this.drawFxEngineFor(fx, key, sp, h, thrust, boost, dt, now);
+    }
+    // RTS slice 4c — lingering hulls flown by a wingman: their sprites live
+    // in `lingeringSprites` (art key `linger-<id>`), the thrust bit rides the
+    // lingering mirror entry (snapshot `lastInput`). No boost yet (wingmen
+    // don't boost, slice 4b).
+    if (mirror.lingeringShips) {
+      for (const [id, entry] of this.lingeringSprites) {
+        const sp = entry.sprite;
+        if (!sp.visible) continue;
+        const h = this._artCtx.handles.get(entry.artKey);
+        if (!h || h.job.type !== 'ship' || !h.ship) continue;
+        const thrust: -1 | 0 | 1 = mirror.lingeringShips.get(id)?.thrusting === true ? 1 : 0;
+        this.drawFxEngineFor(fx, entry.artKey, sp, h, thrust, 0, dt, now);
       }
     }
     fx.endFrame();
+  }
+
+  /** One hull's exhaust (+ GPU-lit engine lights) for `drawFxEngines`. */
+  private drawFxEngineFor(
+    fx: FxEngines,
+    key: string,
+    sp: Container,
+    h: NonNullable<ReturnType<ShipArtCtx['handles']['get']>>,
+    thrust: -1 | 0 | 1,
+    boost: -1 | 0 | 1,
+    dt: number,
+    now: number,
+  ): void {
+    if (h.job.type !== 'ship' || !h.ship) return;
+    let top = this._fxTopSpeed.get(h.job.id), trail = this._fxTrailS.get(h.job.id);
+    if (top === undefined || trail === undefined) {
+      const k = getShipKind(h.job.id);
+      top = k.maxSpeed; trail = shipTuning(k).exhaustTrailS;
+      this._fxTopSpeed.set(h.job.id, top); this._fxTrailS.set(h.job.id, trail);
+    }
+    fx.draw(key, h.ship.nozzles, sp.x, sp.y, sp.rotation, thrust, boost, top, dt, now, trail);
+    // GPU-lit art: each engine is a light in its plume (its own hull takes little).
+    const ls = litPass.settings;
+    if (ls && ls.engineLights && ls.pointLights > 0) {
+      const owner = sp instanceof MachinedShipSprite && sp.lit.length > 0 ? sp.lit[0]!.lightOwnerId : -1;
+      const th = fx.thrustOf(key), c = Math.cos(sp.rotation), s = Math.sin(sp.rotation);
+      for (const nz of h.ship.nozzles) {
+        const ly = nz.y + engineLightAstern(nz.r);
+        litPass.scene.addLight(sp.x + nz.x * c - ly * s, sp.y + nz.x * s + ly * c, engineLightHeight(nz.r), 0xffa24a, engineLightIntensity(nz.r, th), engineLightReach(nz.r), owner);
+      }
+    }
   }
 
   private syncEngineContinuousEffects(mirror: RenderMirror): void {
@@ -3107,7 +3136,7 @@ export class PixiRenderer implements IRenderer {
    *  `_lingeringFrameId` at the top of `updateLingeringShips`, stamp
    *  every touched entry, sweep entries whose stamp lags. Replaces the
    *  per-frame `new Set<string>()` the audit identified at this site. */
-  private readonly lingeringSprites = new Map<string, { sprite: Container; kind: string; stamp: number }>();
+  private readonly lingeringSprites = new Map<string, { sprite: Container; kind: string; stamp: number; artKey: string }>();
   private _lingeringFrameId = 0;
   private updateLingeringShips(mirror: RenderMirror): void {
     if (!mirror.lingeringShips || mirror.lingeringShips.size === 0) {
@@ -3133,7 +3162,7 @@ export class PixiRenderer implements IRenderer {
       });
       let entry = this.lingeringSprites.get(shipInstanceId);
       // Machined art: a parked hull swaps to its Machined sprite once ready.
-      const artKey = `linger-${shipInstanceId}`; // TODO: alloc-debt (one key string per lingering hull per frame)
+      const artKey = this.lingeringSprites.get(shipInstanceId)?.artKey ?? `linger-${shipInstanceId}`; // built once per hull (cached on the entry)
       const kind = 'kind' in decision ? decision.kind : (entry?.kind ?? 'fighter');
       const lingerHandle = shipHandleFor(this._artCtx, artKey, kind, undefined);
       let action: SpriteDecision['action'] = decision.action;
@@ -3153,7 +3182,7 @@ export class PixiRenderer implements IRenderer {
         // sprite so they inherit its pose; frozen at baseAngle (no
         // applyMountAngles call — an abandoned hull isn't aiming).
         this.mountVisuals.ensureForShip(shipInstanceId, kind, sprite);
-        entry = { sprite, kind, stamp: frameId };
+        entry = { sprite, kind, stamp: frameId, artKey };
         this.lingeringSprites.set(shipInstanceId, entry);
       }
       // 'skip' is not produced by the lingering decision today. Be
@@ -3170,7 +3199,7 @@ export class PixiRenderer implements IRenderer {
         this.mountVisuals.removeShip(id); // R2.32 — free the weapon-barrel cluster
         entry.sprite.destroy();
         this.lingeringSprites.delete(id);
-        this._artCtx.handles.delete(`linger-${id}`);
+        this._artCtx.handles.delete(entry.artKey);
       }
     }
   }

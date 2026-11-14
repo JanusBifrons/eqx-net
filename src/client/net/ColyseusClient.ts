@@ -5571,6 +5571,9 @@ export class ColyseusGameClient {
       this.predWorld.applyInput(remoteId, lastInput);
       this._remoteForwardTicks.set(remoteId, ticks + 1);
     }
+    // RTS slice 4c — lingering hulls flown by a server wingman forward-
+    // predict the same way (their own bounded lookahead).
+    this.lingerBodies.applyInputs(this.predWorld);
   }
 
   /**
