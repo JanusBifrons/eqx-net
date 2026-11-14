@@ -247,3 +247,37 @@ Ships have cargo you can open too. Select one and use **Open cargo**:
   fly-over → hold in the own-ship snapshot, death spills and keeps nothing),
   `lingeringDeathDeletesRoster.test.ts` (A1, failing-first).
 - Test trigger: the `initialCargo` join option (testMode) seeds a hold.
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+- **Gate:** `SectorRoom.cargoAccess` opens a structure's cargo only when ALL of these hold. Every `cargo_query` / `cargo_move` re-checks it.
+  - `cargoOpensFor(relationOf(…))` passes: own and friendly; neutral and hostile are locked until the C2 break-in.
+  - The pilot has a live ship: ACTIVE, alive, with a roster row (#17).
+  - The ship is within `CARGO_ACCESS_RANGE` of the footprint edge.
+- **Moves:** `StorageService.cargoTake` / `cargoPut`, each ONE hold group with the ship row. Never move items between a ship and a structure any other way.
+- **A manual move switches auto-deposit off for that pilot** (`manualCargo`) until they leave deposit range. Without it, a withdrawal from your own storage is banked straight back.
+- **`entity_stats` holds** show to anyone the cargo opens for (`ownerGateStats`).
+- **Market mode (T4):** an NPC `freight_dock` opens as a market for a non-hostile pilot (`dockMarket`): Take buys, Put sells.
+  - **Prices:** the trade sink's `dockQuote`, the same quote as the board.
+  - **Clamped** to stock, space, wallet and volume.
+  - **Atomic:** one group per good, with the wallet op passed as `extraOps` to `StorageService.marketBuy` / `marketSell`.
+  - Never let a market fill skip `recordDockFill`: the galaxy market and volume must see it.
+- **Break-ins (C2):** `break_in` / `break_in_cancel` → `BreakInSubsystem` (ticked in `structureTurretTick`).
+  - **Starting is a hostile act.** `onBreakInStart` records it in `hostileActs` and alarms the owner, or aggros the NPC side's nearby ships.
+  - **Hits cancel it.** `applyDamage` calls `onActorDamaged` for any hit.
+  - **A grant opens `cargoAccess`** for 60 s.
+  - **Player turrets** also engage pilots hostile to their owner (`nearestHostilePilot`). The scan only runs while `hostileActs.size() > 0`.
+- **Ship cargo (C3):** cargo messages target an `entityId` OR a `ship` (playerId of an ACTIVE ship / shipInstanceId of a LINGERING hull). `npcHold` rolls an NPC's loot table ONCE per spawn (seeded, memory-only, merged onto any stash it carries) and `dropKillLoot` spills that same hold, so stolen loot never drops twice. Break-ins tick BEFORE `structureTurretTick`'s no-structures early return (a sector with no structures can still have a ship break-in).
+- **Standing orders (T4b):** `set_freight_orders` (owner, built `freight_dock`) → `rec.freightOrders` (persisted). The dock joins convoy planning as a `player` base.
+  - **Who trades with whom:** the ConvoyDirector pairs it with NPC bases only.
+  - **When money moves:** it prices and clamps the order at planning. The wallet op lands in the SAME group as the goods: a credit at pickup via `extraOpsFor(taken)`, a debit at delivery with the release.
+- Lock: `tests/integration/sectorRoom/cargoAccess.test.ts`. Story: [docs/features/loot-and-cargo.md](../features/loot-and-cargo.md) Part 3.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](../architecture/server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Holds, loot pods, cargo (plan peppy-jumping-pinwheel P1a-1, 2026-10-31)**: every unit of value lives in exactly ONE hold (ship / pod / later storage / hauler) in the unified `holds` table, keyed by holder id. **Rules:** (1) value only MOVES (`core/cargo/hold.ts` `transferInto`), never copied; (2) every transfer is ONE atomic `GROUP` op of ABSOLUTE `HOLD_PUT`/`HOLD_DELETE` (SAVEPOINT in BOTH writers via `db/holdsSql.ts`; a failing group rolls back alone — hostile-review A5); `HoldStore` (memory) is the authority; (3) loot pods are scrap-kind swarm entities (`parentShipKind 'cargo-pod'`, `componentIndex` = glow tier) spawned DIRECTLY — never via the `ScrapSpawner` FIFO and never in the sector snapshot (`scrapEntitiesForSnapshot` skips them; A3) — and restored on hydrate from `holds`; (4) `LootCollector` liveness = ACTIVE + alive + roster row (lingering never collects; no roster row ⇒ no pickup, A2); (5) EVERY death seam spills the hold — active `SHIP_DESTROYED`, lingering `LeafDeps.onLingeringHullDeath` (which ALSO fixed A1: a killed lingering hull never deleted its roster row), and both abandon paths; (6) the own active hull's hold rides `states[].cargo` (#16, emit-when-non-empty, shared ref). Per-sector pod cap 64 (merge, never evict value), TTL 15 min, pickup radius 80 u, collect every 6 ticks / sweep ~1 Hz. Test trigger `initialCargo`; the integration harness resets `HoldStore` per boot. Locks: `hold.test.ts`, `LootSubsystem.test.ts`, `holdsGroup.test.ts`, `tests/integration/sectorRoom/{lootLoop,lingeringDeathDeletesRoster}.test.ts`. 🔴 netgate (snapshot slice + kill path). Story: [docs/features/loot-and-cargo.md](loot-and-cargo.md).
+- **Base storage, auto-deposit, derelicts, credit sinks (plan peppy-jumping-pinwheel P1a-2, 2026-10-31)**: storage kinds have `StructureKind.holdCapacity` (Capital 5000, Cargo Bay 2000; structure catalogue v8). **Rules:** (1) a structure's `uid` is a DETERMINISTIC hash of (sector, owner, kind, rounded pose) — all persisted — so a restore recomputes it; it keys the structure's `holds` row (entity ids are re-minted on restore, never key on them); (2) `StorageService` = the ONE store of value for storage: player transfers (deposit / refine / credit spend) are ONE atomic group with the ship side; mining/hauling/construction mutate `rec.minerals` directly and are dirty-flushed on the 1 Hz grid pulse (A4); hydrate overlays the holds row AFTER the snapshot restore; (3) auto-deposit = active + roster-row hull, own OPERATIONAL storage (built OR mid-upgrade) within `DEPOSIT_RANGE` 400 for `DEPOSIT_DWELL_TICKS` 120; minerals → a Capital's bank, goods by weight, overflow across the same-owner grid component, leftovers stay aboard; progress rides own-ship `states[].depositing`; (4) any storage leaving the world spills its payload; (5) a storage hold is OWNER-ONLY on `entity_stats` (`ownerGateStats` strips it at send); (6) credit sinks `repair_ship` / respec are paid from the WALLET (economy v2 W1 — superseded the "credits banked in this sector" rule), all-or-nothing, constants in `shared-types/goods.ts` (#15); (7) abandoned hulls become `derelict` pods (salvaged over time, never merge targets, 1 h TTL); (8) **#17 AI targeting liveness**: ACTIVE hulls + DISCONNECTED hulls (session gone) + displaced lingering hulls (`ownerId`) — a CONNECTED inactive hull is a pending join and stays untargetable. Locks: `StorageService.test.ts`, `tests/integration/sectorRoom/{storageDeposit,lingeringAiTargetable,lootLoop}.test.ts`, `bankSeed.ts` test helper. 🔴 netgate (AI view + snapshot slice). Story: [docs/features/loot-and-cargo.md](loot-and-cargo.md) Part 2.

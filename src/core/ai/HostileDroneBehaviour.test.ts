@@ -428,15 +428,15 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
     expect(b1.getEnergy()).toBeLessThan(b2.getEnergy());
   });
 
-  it('uses the wider point-blank fire arc when the target is very close', () => {
-    // Point-blank threshold is 0.4 × DRONE_FIRE_RANGE. After the
-    // weapons/energy/AI overhaul (2026-06-01) the beam range dropped to 250
-    // ⇒ DRONE_FIRE_RANGE = 150 ⇒ point-blank threshold = 60. At normal
-    // distance and a 0.3 rad bearing error the drone would be off-cone
-    // (tolerance 0.25); at point-blank (tolerance 0.45) it fires.
-    // Drone at (0,0,0): forward = +y. Player at distance 40 (< 60) along an
-    // angle ~0.3 off the nose.
-    const b = new HostileDroneBehaviour();
+  it('uses the wider point-blank fire arc when the target is very close (turret kinds)', () => {
+    // Point-blank threshold is 0.4 × DRONE_FIRE_RANGE. At normal distance and
+    // a 0.3 rad bearing error the cone is 0.25 + the turret half-arc; at
+    // point-blank 0.45 + it. A FIXED gun no longer gets either cone: it fires
+    // only inside the pilot's bearing window (aiTurretFacesShot.test.ts),
+    // because its shot leaves down the drawn nose gun (owner 2026-11-14).
+    // Drone at (0,0,0): forward = +y. Player at distance 40 along an angle
+    // ~0.3 off the nose; the interceptor's wings (±30°) can reach it.
+    const b = new HostileDroneBehaviour('interceptor');
     b.markHostile('p', 0);
     const angle = 0.3; // bearing error
     const dist = 40;

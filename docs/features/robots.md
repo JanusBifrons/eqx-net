@@ -71,3 +71,13 @@ cross-side view entirely.
 
 Robot territory, a nexus that spawns reinforcements, harvesters that collect
 loot pods, merge clusters (shipped: [robot-territory.md](robot-territory.md)), and robot-only weapons (`pulse-orb`, `charge-laser`).
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](../architecture/server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Robot director (plan peppy-jumping-pinwheel P1b)**: the robot side is a SECOND `LivingWorldDirector` built with `ROBOT_DIRECTOR_OPTIONS` (`livingworld/robotDirector.ts`): `rbot-` bots in `rsquad-` mixed-tier squads (4 × 6: hexagon lead, 2 circles, 3 cubes via `SquadLayout.memberKind`), `wavesEnabled: false` (hostility comes from the P0 stance table — the director only roams them). **Rules:** (1) classify an NPC bot id with `isDirectorBotId` (`livingworld/directorBotIds.ts`), never a `lwbot-` literal — a new director's prefix must be added there; (2) the robot director persists to `allegiance_director_state` (row `robots`, op `ALLEGIANCE_DIRECTOR_STATE_PUT`) — the drone `director_state` row is `CHECK (id = 1)`; (3) the drone director remains the ONLY `/galaxy/snapshot` provider + incoming-player sink; robots reach the map via `hooks.extraEnemyCounts`. Kill switch `EQX_DISABLE_ROBOTS`. Cost: `benchmarks/ai-allegiance.bench.ts` (all 80 bots in one sector ≈ 0.35 ms/tick). Locks: `robotDirector.test.ts` (unit + integration). 🔴 netgate (new bots on the swarm wire + AI tick). Story: [docs/features/robots.md](robots.md).

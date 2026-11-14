@@ -321,3 +321,38 @@ Then the real systems run: power, batteries, fence, turrets, production. NPC str
 - Every structure is placed, NPC-owned, built and reachable from the Capital through the live grid, with zero rejected placements or edges.
 - After pulses, Reactors are fuelled and processors run.
 - Gates are open, and manufactory blueprints are bound originals.
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+- **`ProductionSubsystem` (`structures/`) runs on the 1 Hz grid pulse,** after the grid pulse and BEFORE `storage.flushDirty()`. It mutates storage holds and Capital banks in place; the flush persists them.
+- **Inputs are taken when a cycle starts (all or nothing), outputs are put when it ends (all or nothing).** A processor never makes value from nothing, and a partial put changes nothing.
+- **Status rides room state:** `recipe` / `prodState` / `prodMissing` bytes, assigned only on change (A2 rules). `set_recipe` is owner-gated.
+- **Allocation-free steady state:** reused processor/network arrays, and one network lookup per component per pulse. Keep it that way: the budget is 0.3 ms per pulse at 60 processors.
+- **Blueprints:** a processor's slot is `rec.blueprint`, persisted as the hold `bpslot:<structure uid>` (holder type `fitted`).
+  - **Moves:** `StorageService.loadBlueprint` / `unloadBlueprint` / `takeSlotForSpill` each make ONE hold group. Never move a blueprint between a storage hold and a slot any other way.
+  - **Runs:** spent runs persist through `onBlueprintSpent` → `persistSlot`.
+- **Packed placement:** `StructurePlacementSubsystem.place(…, { requirePacked: true })` is passed ONLY by the player's `place_structure`.
+  - **Generated builds never pass it:** scenario seeding, restore, lattices and NPC bases.
+  - **The hook:** `packedGateForBuild` is optional; Living World injects it when packed structures can be bought.
+- **Extraction (P2c):**
+  - Drilling is data-driven: any built kind with a `miningRate` mines (Miner, Deep Core Rig).
+  - The asteroid's `asteroidResource` (swarm record + wire byte) splits the yield via `ASTEROID_YIELD`. Minerals go to the drill buffer; other goods go to network storage through `ProductionSubsystem.deposit`.
+  - Gas Collectors work only when `sectorFeatures` include `nebula`.
+  - **A drill never mines into a full network.** Before drawing from a non-rock asteroid it asks `canDepositGoods` (`ProductionSubsystem.canDeposit`, the whole yield together); if it would not fit, the drill idles and the rock keeps its finite ore.
+  - Lock: `tests/integration/sectorRoom/extraction.test.ts`.
+- **Ammo (P2d):**
+  - `tickTurrets` calls `spendAmmo` before every projectile / missile shot. An empty magazine reloads `AMMO_SHOTS_PER_UNIT[kind]` shots from one munition, through the `takeMunition` hook (`ProductionSubsystem.takeGoods`).
+  - With none, `rec.noAmmo` is set (the room-state flag bit) and the turret holds fire.
+  - Beam turrets never reach it: lasers are power-only.
+  - No hook ⇒ unlimited (unit harnesses).
+  - Test rooms with ammo turrets stock munitions via `prebuiltStorageGoods`.
+- **Active power (2026-11-01):** a structure draws its full consumption only while working, else `IDLE_DRAW_FRAC` (0.2) of it (`shared-types/structurePower.ts`, used by both sides).
+  - **The one switch** is `StructureGridSubsystem.setActive(rec, active)`, which adjusts the component's net power in O(1) via `Grid.adjustDraw`. Never write `rec.drawFull` directly, or the component's power goes stale until the next rebuild.
+  - **Callers:** drills and gas (StructureGridSubsystem), turrets (target or not), processors (`ProductionSubsystem` dep, running or not), Research Labs (`ResearchLabSubsystem` dep, job advancing or not). A new power consumer that "works" must call it too, or it draws idle forever.
+  - **Wire:** `STRUCTURE_FLAG_DRAW_FULL` (64) in the room-state flags byte.
+- **A fence blocks its owner's own fire (user ruling 2026-11-02).** Every structure weapon asks the walls: beam turrets via `blockBeamAtWall` (the hit lands on the wall and the beam ends there); bolts and missiles are refused at the launcher when a wall lies between the turret and its muzzle; missiles in flight check `wallBlocksMissile` each step (detonate cause `'wall'`, no splash). Lock: `tests/integration/sectorRoom/turretVsOwnFence.test.ts`.
+- **Mine Layers:** `MineFieldSubsystem` (`structures/`) is ticked with the 10 Hz structure tick, after the turrets, and reuses their target grids, magazine (`rec.ammo`) and `setActive`. Mines are static and live in ROOM STATE (`SectorState.mines`, #16); `mine_detonated` is only an accelerator. Mines whose layer is gone are swept even when the sector has no structures left. Not persisted. Story: [docs/features/mine-layer.md](../features/mine-layer.md).
+- **Station taxes (D3):** a recipe output `{ credits: n }` takes no storage space. When the cycle ends, `payCredits` pays it to a PLAYER owner's wallet (`station_taxes`); an NPC owner gets nothing. Never put credits in a hold.
+- Locks: `ProductionSubsystem.test.ts` and `tests/integration/sectorRoom/production.test.ts`. Story: [docs/architecture/production-chains.md](../architecture/production-chains.md).
