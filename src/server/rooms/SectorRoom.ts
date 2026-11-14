@@ -72,6 +72,7 @@ import { ScrapSpawner } from '../spawn/ScrapSpawner.js';
 // Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import { AiController } from '../../core/ai/AiController.js';
+import { AiInputBatch } from '../../core/ai/AiInputBatch.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // pickTarget / rotateMountToward / wrapPi / MountTargetView now used
@@ -1099,6 +1100,8 @@ export class SectorRoom extends Room<SectorState> {
   /** Interned index keys ("0", "1", …), cached so syncing never allocates. */
   private readonly structureOwnerKeys: string[] = [];
   private aiController!: AiController;
+  /** Pilot layer: this tick's AI control keys, posted as ONE AI_INPUTS. */
+  private readonly aiInputBatch = new AiInputBatch();
   /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
   private aiPlayerScratch: AiPlayerView[] = [];
   /** Wave-system Phase 1 — per-room faction hostility/peace ledger, membership
@@ -1418,6 +1421,8 @@ export class SectorRoom extends Room<SectorState> {
     lineOfFireCounts: () => { checks: number; candidates: number; narrow: number };
     /** NPC line of fire on/off (the slice-1 friendly fire tests turn it off). */
     setNpcLineOfFire: (on: boolean) => void;
+    /** AI steering 2c: hand brains the neighbour grid (default on). */
+    setAiNeighbours: (on: boolean) => void;
     /** Does NPC `id`'s brain treat `otherId` as hostile (stance or ledger)? */
     npcHostileTo: (id: string, otherId: string) => boolean;
     /** Mine Layers' live mines (integration tests). */
@@ -1492,6 +1497,7 @@ export class SectorRoom extends Room<SectorState> {
         return { checks: g?.checks ?? 0, candidates: g?.candidates ?? 0, narrow: g?.narrow ?? 0 };
       },
       setNpcLineOfFire: (on) => { this.npcLineOfFire = on; },
+      setAiNeighbours: (on) => { this.aiNeighboursOn = on; },
       npcHostileTo: (id, otherId) => this.aiController.isEntityHostileToPlayer(id, otherId),
       mineField: this.mineField,
       rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
@@ -1927,6 +1933,17 @@ export class SectorRoom extends Room<SectorState> {
           slot, fx, fy, torque,
           ...(setAngvel !== undefined ? { setAngvel } : {}),
         });
+      },
+      // Pilot layer: AI ships flown by control keys, batched into ONE
+      // AI_INPUTS message a tick (no brain emits keys yet).
+      postInput: (slot, bits) => {
+        // v4 A — a disabled NPC ship's engines are off (no keys held).
+        this.aiInputBatch.push(slot, this.gateGuard.isSlotDisabled(slot, this.gameClock.now()) ? 0 : bits);
+      },
+      flushInputs: () => {
+        if (this.aiInputBatch.count === 0) return;
+        this.postToWorker(this.aiInputBatch.cmd);
+        this.aiInputBatch.clear();
       },
     });
 
@@ -2459,8 +2476,8 @@ export class SectorRoom extends Room<SectorState> {
       : undefined;
     this.swarmSpawner = new SwarmSpawner(this.swarmRegistry, {
       takeSlot: () => this.freeSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, shieldKindId, spin) =>
-        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}), ...(spin ? { angvel: spin.angvel, angularDamping: spin.angularDamping } : {}) }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, shieldKindId, spin, shipKindId) =>
+        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}), ...(spin ? { angvel: spin.angvel, angularDamping: spin.angularDamping } : {}), ...(shipKindId !== undefined ? { shipKindId } : {}) }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
@@ -4753,6 +4770,9 @@ export class SectorRoom extends Room<SectorState> {
   /** AI steering 2a — per-tick neighbour index over combat drones + pilot
    *  hulls, rebuilt once per tick in `runAiTick` (alloc-free, #14). */
   private readonly aiNeighbourGrid = new AiNeighbourGrid();
+  /** Tests (`_internals.setAiNeighbours`): off ⇒ brains get no `view.neighbours`
+   *  (no combat separation), the A/B control for slice 2c. */
+  private aiNeighboursOn = true;
   /** Add every kind-1 swarm combatant (all allegiances) with its SAB pose.
    *  Same set `fillSwarmTargets` covers; bound once (#14). */
   private readonly _visitAiNeighbourDrones = (_grid: AiNeighbourGrid): void => {
@@ -11384,7 +11404,7 @@ export class SectorRoom extends Room<SectorState> {
       fillStructureTargets: (out) => this.fillStructureTargets(out),
       aiSwarmScratch: this.aiSwarmScratch,
       fillSwarmTargets: (out) => this.fillSwarmTargets(out),
-      aiNeighbourGrid: this.aiNeighbourGrid,
+      aiNeighbourGrid: this.aiNeighboursOn ? this.aiNeighbourGrid : undefined,
       visitAiNeighbourDrones: this._visitAiNeighbourDrones,
       hasTruce: (pid) => this.playerTruce(pid),
       // Living World P1a-2 (decision 7) — offline hulls are fair game.
