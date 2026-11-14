@@ -2711,6 +2711,11 @@ export class PixiRenderer implements IRenderer {
       this.drawSpoolFx(key, e.warp, e.shipKind, sp, undefined);
       if (e.warp === undefined) fed.delete(key); else fed.add(key);
     }
+    // A ship that died this frame left the mirror because it died, not because
+    // it warped out: no departure (same keys as the sprite maps).
+    if (mirror.explodingShips && mirror.explodingShips.size > 0) {
+      for (const id of mirror.explodingShips) { fx.died(id); fed.delete(id); }
+    }
     fx.endFrame();
     this._spoolFx.endFrame();
   }

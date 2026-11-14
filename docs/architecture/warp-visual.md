@@ -249,6 +249,8 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 - **Load curtain (WS-14/R2.26-curtain):** `setLoadCurtain(active)` drives the dark overlay via the pure `curtainAlphaAt` — the RISE is now INSTANT (opaque before the destination sector renders, so it never flashes through) while the FADE-OUT (arrival reveal) keeps the 380 ms tween.
 - The single-flash arrival-only policy (2026-05-16 Phase G3) is unchanged. The `pendingWarpEvents` drain still calls `renderer.triggerWarpIn`. M3 only changes the FILTERS attached during the active warp envelope; it does NOT change which events fire bursts.
 
+- **A ship killed mid-spool draws no departure.** `WarpFx` reads "a spooling ship left the mirror" as a warp-out to another sector; a death also removes it. `drawWarpFx` calls `WarpFx.died(id)` for every `mirror.explodingShips` id before `endFrame`, so a death never leaves burning warp trails over the wreck (take 12 fleet-melee). Lock: `PixiRenderer.warpDeath.test.ts`.
+
 **Do not re-disable the chain wholesale** if a mobile regression appears post-M3 — first instrument the budget to confirm which tier is active during the regression, and dial `minimal` per-device if needed via the touch-default pin. The 2026-05-21 disable was a hammer; the budget tier dial is the surgical replacement.
 
 ## History
