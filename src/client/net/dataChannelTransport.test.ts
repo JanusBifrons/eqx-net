@@ -212,4 +212,45 @@ describe('DataChannelSnapshotReceiver', () => {
       expect(dropOld.length, 'drained-then-stale 11 logged as snap_dropped_old').toBe(1);
     });
   });
+
+  describe('raw-bytes coalescer never drops a wreck delta (sub-capital break-up slice 3)', () => {
+    // `wreckAdds` / `wreckRemoves` ride only a few snapshots (absent = no
+    // change). The byte coalescer used to discard a superseded frame without
+    // decoding it, losing its wreck deltas (LESSONS 2026-11-12, "the
+    // DataChannel byte coalescer still has this gap"). A superseded frame that
+    // carries wreck deltas is now decoded and dispatched first, in order, so
+    // the snapshot coalescer carries its deltas forward.
+    const wreck = { wreckId: 3, parentKind: 'battleship', seed: 1, killX: 0, killY: 0, killBlowDamage: 0.5, recentDamageRate: 0.5, snapChance: 0, algoVersion: 6 };
+    const packWith = (serverTick: number, extra: Partial<SnapshotMessage>): Uint8Array =>
+      new Packr({ encodeUndefinedAsNil: false }).pack({ type: 'snapshot', serverTick, states: {}, ackedTick: 0, ...extra });
+
+    it('a superseded frame carrying wreckAdds is dispatched before the newest', () => {
+      const onSnapshot = vi.fn();
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot });
+      receiver.enqueueBinary(packWith(10, { wreckAdds: [wreck] }));
+      receiver.enqueueBinary(packSnap(11));
+      receiver.drain();
+      const ticks = onSnapshot.mock.calls.map((c) => (c[0] as SnapshotMessage).serverTick);
+      expect(ticks).toEqual([10, 11]);
+      expect((onSnapshot.mock.calls[0]![0] as SnapshotMessage).wreckAdds?.[0]?.wreckId).toBe(3);
+    });
+
+    it('a superseded frame carrying wreckRemoves is dispatched too', () => {
+      const onSnapshot = vi.fn();
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot });
+      receiver.enqueueBinary(packWith(10, { wreckRemoves: [3] }));
+      receiver.enqueueBinary(packSnap(11));
+      receiver.drain();
+      expect(onSnapshot).toHaveBeenCalledTimes(2);
+    });
+
+    it('a superseded frame with no wreck delta is still dropped undecoded', () => {
+      const onSnapshot = vi.fn();
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot });
+      receiver.enqueueBinary(packSnap(10));
+      receiver.enqueueBinary(packSnap(11));
+      receiver.drain();
+      expect(onSnapshot).toHaveBeenCalledTimes(1);
+    });
+  });
 });

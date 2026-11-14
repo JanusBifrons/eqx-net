@@ -181,8 +181,9 @@ import { usesAmmo } from '../../shared-types/ammo.js';
 /** P2d — one unit of munitions (a turret's magazine reload). */
 const ONE_MUNITION = Object.freeze({ munitions: 1 });
 /** Welcome extras for a room that breaks capitals into wrecks (shared, frozen). */
-const WRECK_WELCOME: { capitalWrecks?: true } = Object.freeze({ capitalWrecks: true as const });
-const NO_WELCOME_FIELDS: { capitalWrecks?: true } = Object.freeze({});
+const WRECK_WELCOME: WreckWelcomeFields = Object.freeze({ capitalWrecks: true as const });
+const NO_WELCOME_FIELDS: WreckWelcomeFields = Object.freeze({});
+type WreckWelcomeFields = { capitalWrecks?: true; wrecks?: import('../../shared-types/messages.js').WreckDescriptor[] };
 
 /** P2c — give each asteroid in a roster its resource kind, rolled from the
  *  sector's features and seeded by the asteroid's id (stable across restarts). */
@@ -1451,6 +1452,9 @@ export class SectorRoom extends Room<SectorState> {
     setWreckSeed: (seed: number | null) => void;
     /** S2b — the live wreck descriptors (the snapshot's `wrecks[]`). */
     wreckDescriptors: () => readonly import('../../shared-types/messages.js').WreckDescriptor[];
+    /** Slice 3 — remove a swarm entity the normal way (a wreck piece reaches
+     *  `pieceGone`, so its wreck's descriptor retires once all are gone). */
+    evictSwarm: (id: string) => void;
     /** The first non-player thing a ray meets (NPC / turret beam path). */
     rayHit: (fx: number, fy: number, dx: number, dy: number, maxDist: number, skipId: string) => { id: string; dist: number } | null;
   } {
@@ -1522,6 +1526,10 @@ export class SectorRoom extends Room<SectorState> {
       wreckParts: (id) => this.swarmRegistry.get(id)?.wreckParts ?? null,
       setWreckSeed: (seed) => { if (this.capitalWrecks) this.capitalWrecks.forcedSeed = seed; },
       wreckDescriptors: () => this.capitalWrecks?.descriptors() ?? [],
+      evictSwarm: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        if (rec) this.evictSwarmEntity(rec, { broadcast: true, emitDestroyed: false });
+      },
       rayHit: (fx, fy, dx, dy, maxDist, skipId) => {
         const h = this.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId);
         return h ? { id: h.id, dist: h.dist } : null;
@@ -8237,8 +8245,14 @@ export class SectorRoom extends Room<SectorState> {
   /** The welcome's shell-event fields for a joining client (§5, #16). */
   /** Capital destruction: tell the client this room breaks dying capitals
    *  into wrecks, so it explodes them at the kill point (money-shot review). */
-  private wreckWelcomeFields(): { capitalWrecks?: true } {
-    return this.capitalWrecks !== null ? WRECK_WELCOME : NO_WELCOME_FIELDS;
+  private wreckWelcomeFields(): WreckWelcomeFields {
+    if (this.capitalWrecks === null) return NO_WELCOME_FIELDS;
+    // Sub-capital break-up slice 3: the FULL live wreck set rides the join
+    // payload (#16); snapshots carry only adds, removes and a slow resync.
+    // `client.send` encodes at once, so the shared slice is safe to attach.
+    const live = this.capitalWrecks.descriptors();
+    if (live.length === 0) return WRECK_WELCOME;
+    return { capitalWrecks: true, wrecks: live as import('../../shared-types/messages.js').WreckDescriptor[] };
   }
 
   private shellWelcomeFields(client: Client, playerId: string): { shellEvents?: true; shellsInFlight?: ShellSalvo[] } {
