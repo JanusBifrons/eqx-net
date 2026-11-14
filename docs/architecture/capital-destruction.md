@@ -223,7 +223,7 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
   the subsystem; behaviour is identical to before.
 - **Kill point.** `SectorRoom.applyDamage` records, per capital, the last
   hit's world point (projectile / shell / missile impact, player beam hit,
-  NPC beam hit via `noteBeamImpact`). A hit with no point (ram, mining beam)
+  NPC beam hit, passed as real `applyDamage` args). A hit with no point (ram, mining beam)
   falls back to the attacker's position. At death it goes into the hull's 1×
   Pixi-up frame and onto the outline (`hullLocalKillPoint` →
   `projectToOutline`, fracture v3: "Why isn't the red dot on the border of
@@ -338,8 +338,8 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
       the hold a hit shoves the single piece, as above.
     - **Paths.** Shells and bolts (`ProjectilePipeline` direct hit, the
       shell's velocity), player beams (`PlayerFireResolver`, the beam
-      direction), NPC beams (`AiFireResolver` → `noteBeamImpact(x, y, dx,
-      dy)`). Missiles already push through their splash impulse
+      direction), NPC beams (`AiFireResolver`, impact point and beam
+      direction as `applyDamage` args). Missiles already push through their splash impulse
       (`MISSILE_IMPULSE`); rams push through the contact. Not yet: structure
       turret beams (they call `applyDamage` with no hit point) and shell blast
       splash.
@@ -2107,7 +2107,8 @@ Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
 ### Capital wrecks (capital destruction S2a + S2b, 2026-11-12)
 
 - **Switch `capitalWrecks`: ON by default since 2026-11-14** (owner: "land it switched on"). `wreckSwitchOn` (`rooms/wreckSwitch.ts`): env `EQX_CAPITAL_WRECKS=0|1` forces it for every room; otherwise room option `false` opts out. Both switches off ⇒ `SectorRoom.capitalWrecks` is null and nothing changes.
-- **Hit tracking** is `CapitalWreckSubsystem.noteHit`, called from `applyDamage` before the router; pooled entries, no per-hit allocation (#14). Pass a hit point wherever a weapon knows one; the AI beam uses `noteBeamImpact` so its `DamageEvent` stays unchanged.
+- **Hit tracking** is `CapitalWreckSubsystem.noteHit`, called from `applyDamage` before the router; pooled entries, no per-hit allocation (#14). Each entry keeps the last hit's point, direction (`dirX`, `dirY`, `hasDir`) and `weaponId` (null when unknown: ram, mine, structure turret); read it with `lastHit(id)`. Pass the hit point, direction and weapon wherever a path knows them: player beams (`PlayerFireResolver`), NPC beams (`AiFireResolver`) and projectiles (`ProjectilePipeline`, splash with no direction) all do, as plain `applyDamage` args; there is no side channel. The NPC beam's `DamageEvent` therefore reports its true impact point, like a player beam's. The fracture does not read direction or weapon yet (plan step 2).
+- **`applyDamage` returns true iff that call destroyed the target** (`DamageRouter.apply` threads `out.destroyed` back; nothing recomputes it). Lock: `capitalWrecks.test.ts` "applyDamage returns true only on the call…".
 - **Death hooks** (all before the dying body is despawned): drone capitals in `spawnScrapFromDrone`, active hulls in the `SHIP_DESTROYED` handler (which also despawns the dead body, slot kept), lingering hulls via the `spawnScrapFromLingeringHull` seam. Abandon is not a death: no wreck. **The dying body's DESPAWN is posted BEFORE the first piece spawn** (`onDeath(…, despawnDyingBody)`, all three hooks pass the body's slot and id): the worker handles each command as its own message and may step between two of them, so a despawn posted after the spawns left the pieces inside the old hull for a step and the push-out shoved them (2026-11-14, `subcapWrecks.test.ts` "never touch their own dying hull"). Never post a dying body's despawn after its pieces.
 - **Wreck pieces are swarm kind 4** (`isWreckPiece`): immune, solid, block every weapon (`core/destruction/wreckHits.ts`). A new weapon or hit path must handle kind 4 (or the shot passes through a wall the server simulates). Persistence still skips them (S2c).
 - **Heavy break-up (owner review 2026-11-13).** Pieces spawn with the dead hull's rigid motion and hold together for `WRECK_CRACK_MS` (`shared-types/wreckTiming.ts`, counted in server ticks so it follows the sector's speed); `CapitalWreckSubsystem.tick()` (every `update()`, alloc-free) then posts each live piece's slow separating kick as `WRECK_KICK`, turned by how far the piece has turned since the death. Pieces collide with each other (inset colliders); the kick guarantees every pair of neighbours parts along its shared cut. Story: capital-destruction.md "Bodies (heavy break-up)".

@@ -61,6 +61,25 @@ describe('CapitalWreckSubsystem', () => {
     expect(spawned.map((s) => [s.x, s.y, s.vx, s.vy])).toEqual(want.map((p) => [p.x, p.y, p.vx, p.vy]));
   });
 
+  it('keeps the last hit\'s direction and weapon, reusing the pooled entry', () => {
+    const { sys } = make();
+    expect(sys.lastHit('cap')).toBeNull();
+    sys.noteHit('cap', 'attacker', 100, 10, 20, 0.6, -0.8, 'naval_l');
+    const first = sys.lastHit('cap')!;
+    expect(first).toMatchObject({ hasPoint: true, x: 10, y: 20, hasDir: true, dirX: 0.6, dirY: -0.8, weaponId: 'naval_l', shooterId: 'attacker' });
+    // A later hit with no direction or weapon (a ram, a mine) overwrites both.
+    sys.noteHit('cap', 'rammer', 50, undefined, undefined);
+    const second = sys.lastHit('cap')!;
+    expect(second).toBe(first); // same pooled object: no allocation per hit
+    expect(second).toMatchObject({ hasPoint: false, hasDir: false, dirX: 0, dirY: 0, weaponId: null, shooterId: 'rammer' });
+    // A zero direction is no direction.
+    sys.noteHit('cap', 'attacker', 50, 1, 1, 0, 0, 'laser');
+    expect(sys.lastHit('cap')).toMatchObject({ hasDir: false, weaponId: 'laser' });
+    // Non-capitals are not tracked.
+    sys.noteHit('fighter', 'attacker', 50, 0, 0, 1, 0, 'laser');
+    expect(sys.lastHit('fighter')).toBeNull();
+  });
+
   it('ignores hits on non-capitals and breaks a hull once per death tick', () => {
     const { sys, spawned } = make();
     sys.noteHit('fighter', 'attacker', 50, 0, 0);
