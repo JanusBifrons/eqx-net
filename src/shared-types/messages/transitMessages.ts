@@ -10,7 +10,10 @@ export type TransitCancelReason =
   | 'manual'
   | 'destination_unavailable'
   | 'token_expired'
-  | 'not_neighbour';
+  | 'not_neighbour'
+  /** RTS fleet warp: none of the named ships can warp (foreign, unknown,
+   *  dead, not parked in this sector, or already in another fleet warp). */
+  | 'no_ships';
 
 export interface TransitStateMessage {
   type: 'transit_state';

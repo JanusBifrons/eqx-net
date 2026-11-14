@@ -1397,13 +1397,14 @@ export class LivingWorldDirector {
     sourceSectorKey: string;
     label: string;
     etaMs: number;
+    count?: number;
   }): void {
     this.incoming.register({
       id: spec.playerId,
       destSectorKey: spec.destSectorKey,
       sourceSectorKey: spec.sourceSectorKey,
       label: spec.label,
-      count: 1,
+      count: spec.count ?? 1,
       disposition: 'friendly',
       etaMs: spec.etaMs,
       player: true,

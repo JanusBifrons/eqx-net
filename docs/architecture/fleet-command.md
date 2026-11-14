@@ -235,6 +235,78 @@ target, so follow takes over without a jump.
 Still rebuilt: the radar icon (its category changes anyway). A reconnect onto a
 lingering hull (`onJoin` rebind) still hides the hull from others while it joins.
 
+## 4b. Fleet warp (in progress: slices S1–S2 built)
+
+In Command view, "Warp here" warps the SELECTED ships together and the
+commander's view follows them (plan `rts-fleet-warp`). It is a branch of the
+existing `TransitOrchestrator`, not a fleet order: `FleetCommandSubsystem` is
+in-sector and never touches another room.
+
+- **Wire.** `engage_transit` carries optional `shipIds` (1–64 ids, each 1–64
+  chars), mutually exclusive with `shipId`. A group with no valid ship answers
+  DOCKED `no_ships`. Client: `transitClient.engageTransit(room, key, arrival?,
+  shipId?, shipIds?)`.
+- **One record per group.** The in-flight map holds pilot warps under the
+  playerId and fleet warps under `fleet:<commander>:<n>`, so several fleet
+  warps run at once; a ship is in at most one (`hullToGroup`). Same
+  `TransitStateMachine`, timer, `transit_state` (to the commander) and incoming
+  banner ("N × ships", count rides `registerIncomingPlayer`).
+- **No live hull needed.** The commander usually has no ship (Command view), so
+  the branch skips `hasLiveHull` and the `playerToSlot` early stop. Each id is
+  checked through `canFleetWarp` (a LINGERING hull in this room's
+  `lingeringSlots`, alive, owned by the commander); others drop silently.
+- **Hold.** Spooling ships get the existing fleet `stop` order and stay
+  damageable; a cancel clears the order so each ship goes back to its mode.
+  The commander's `cancel_transit` cancels their fleet warps too; a disconnect
+  does not (the ships still go).
+- **Drops.** `SectorRoom.detachWingman` → `dropHull` is the only drop point
+  (ignored while the group's own commit runs). An emptied group cancels
+  (`destroyed`). A new order / mode / stance to a spooling ship takes it out
+  (`fleetCommandIssued`; a mode or stance also lets go of its hold).
+- **Taking the controls of a spooling ship** keeps it in the group: the reclaim
+  calls `noteTakeControls` first, so its detach marks it `pilotedId` instead of
+  dropping it. At the jump that ship travels by the PILOT path (the
+  commander's own seat with `shipId`, roster `markStored`, `warp_out`), the
+  others as hulls, in the same commit. A commander flying a ship OUTSIDE the
+  group stays with it (only the hulls go).
+- **Commit order.** Seat first, hulls second: `issueTransitIdentity` +
+  `reserveByName` (pilot seat when they fly a member, else `spectator: true`
+  with `spawnX/spawnY` = the arrival anchor: the picked point, clamped, else a
+  hull's pose), then `handOffHulls(ids, dest, anchor)`. No client ⇒ no seat,
+  the hulls still go. A failed seat aborts the jump (`destination_unavailable`)
+  and releases the ships. Hulls the hand-off did not move are released. Each
+  moved hull gets a `sector_change` audit (`entityKind: 'hull'`).
+- **No destination capacity check** (owner: time dilation handles a crowd).
+  The physics slot pool is a separate limit: see below.
+- **Not yet:** `handOffHulls` is a stub (S3 extracts the teleporter's hand-off),
+  arrival poses (S4), brains carried (S5), the client view switch (S7).
+
+### The physics slot pool (a hard limit today)
+
+Each `SectorRoom` owns ONE fixed `SharedArrayBuffer` of `MAX_ENTITIES` = 5120
+slots (`sabLayout.ts`, 36 B each, ~184 KB), shared by players, parked hulls and
+every swarm entity (asteroids, drones, structures, scrap, wreck pieces). Slots
+come from the room's `freeSlots` stack (filled once in `onCreate`). The worker
+and other per-room tables are sized to it (`aiInputPending`, the swarm packet
+cap), and the lag-comp `SnapshotRing` has its own smaller fixed capacity (a
+full ring silently skips `registerEntity`). When the pool is empty:
+
+- a fresh join is refused (`client.leave(1001)`);
+- `restoreLingeringHullsFromSnapshot` (also `receiveLingeringHull`, the
+  teleporter's far side) logs `no free slot for lingering-hull reconstruction`
+  and skips the row. The teleporter has already removed the hull from the
+  source and `markStored` its roster row at the destination, so the ship
+  vanishes from the world (its roster row survives, so it is not deleted, but
+  it is nowhere in space until respawned from the roster).
+
+Making it not lose ships, smallest first: (1) check `hasFreeSlot()` on the far
+room BEFORE removing a hull at the source (the plan's capacity fix; a hull
+that can't fit stays put); (2) let load-shedding free slots (it already sheds
+out-of-view drones); (3) make the pool grow: a growable `SharedArrayBuffer`
+(`maxByteLength`, length-tracking views) plus resizing every table sized to
+`MAX_ENTITIES` in the worker and broadcaster, a bigger change touching the
+physics worker.
+
 ## 5. Tests
 
 - Brain: `WingmanBehaviour*.test.ts`, `intentToControlBits.test.ts`.

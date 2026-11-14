@@ -102,8 +102,16 @@ export const EngageTransitSchema = z
      *  ship's pose hydrates into the destination room. Min-length 1 so an
      *  empty string can't sneak past validation as "absent". */
     shipId: z.string().min(1).max(64).optional(),
+    /** RTS fleet warp — the SELECTED ships (Command view) warp together and
+     *  the sender's seat follows them. 1..64 roster shipInstanceIds, each 1–64
+     *  chars; owner-checked per id server-side (foreign / unknown drop; none
+     *  valid ⇒ DOCKED `no_ships`). Mutually exclusive with `shipId`. */
+    shipIds: z.array(z.string().min(1).max(64)).min(1).max(64).optional(),
   })
-  .strict();
+  .strict()
+  .refine((m) => m.shipId === undefined || m.shipIds === undefined, {
+    message: 'shipId and shipIds are mutually exclusive',
+  });
 
 /** testMode only (showcase / tests): turn every drone in the room hostile to
  *  the sender NOW, the same as joining with `startHostile`. Lets a shot start

@@ -187,6 +187,33 @@ describe('EngageTransitSchema', () => {
     );
   });
 
+  // RTS fleet warp — `shipIds` (the selected ships warp together).
+  it('accepts shipIds (1..64 ids)', () => {
+    const one = EngageTransitSchema.safeParse({ type: 'engage_transit', targetSectorKey: 'orion-belt', shipIds: ['a'] });
+    expect(one.success).toBe(true);
+    const ids = Array.from({ length: 64 }, (_, i) => `s${i}`);
+    const max = EngageTransitSchema.safeParse({
+      type: 'engage_transit', targetSectorKey: 'orion-belt', shipIds: ids, arrival: { x: 1, y: 2 },
+    });
+    expect(max.success).toBe(true);
+  });
+
+  it('rejects an empty shipIds list, more than 64 ids, or a bad id', () => {
+    const base = { type: 'engage_transit', targetSectorKey: 'orion-belt' };
+    expect(EngageTransitSchema.safeParse({ ...base, shipIds: [] }).success).toBe(false);
+    expect(EngageTransitSchema.safeParse({ ...base, shipIds: Array.from({ length: 65 }, (_, i) => `s${i}`) }).success).toBe(false);
+    expect(EngageTransitSchema.safeParse({ ...base, shipIds: [''] }).success).toBe(false);
+    expect(EngageTransitSchema.safeParse({ ...base, shipIds: ['x'.repeat(65)] }).success).toBe(false);
+    expect(EngageTransitSchema.safeParse({ ...base, shipIds: [42] }).success).toBe(false);
+  });
+
+  it('rejects shipId and shipIds together (XOR)', () => {
+    const r = EngageTransitSchema.safeParse({
+      type: 'engage_transit', targetSectorKey: 'orion-belt', shipId: 'a', shipIds: ['b'],
+    });
+    expect(r.success).toBe(false);
+  });
+
   it('property: the empty string is always rejected as shipId', () => {
     // Sanity-check the boundary case — zod min(1) rejects ''. fast-check
     // here is overkill (single value) but documents the contract.

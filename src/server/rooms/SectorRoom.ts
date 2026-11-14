@@ -668,6 +668,8 @@ export const MAX_LOCK_MSGS_PER_TICK = 3;
 export const MAX_FLEET_MSGS_PER_TICK = 4;
 /** The one `stop` order object (the brain only reads it). */
 const FLEET_STOP_ORDER = { kind: 'stop' } as const;
+/** RTS fleet warp: `handOffHulls` until slice S3 moves hulls. */
+const NO_HULLS_MOVED: readonly string[] = [];
 // LAG_COMP_WINDOW now used inside PlayerFireResolver.ts
 
 /** Click-to-inspect live-stats emit cadence (Item B5). ~5 Hz on its OWN
@@ -3316,6 +3318,16 @@ export class SectorRoom extends Room<SectorState> {
         this.malformed.record(client.sessionId, 'engage_transit');
         return;
       }
+      // RTS fleet warp: the selected ships warp together (Command view).
+      if (parsed.data.shipIds !== undefined) {
+        this.transitOrchestrator.beginFleetTransit(
+          playerId,
+          parsed.data.targetSectorKey,
+          parsed.data.shipIds,
+          parsed.data.arrival,
+        );
+        return;
+      }
       this.transitOrchestrator.beginTransit(
         playerId,
         parsed.data.targetSectorKey,
@@ -3395,6 +3407,8 @@ export class SectorRoom extends Room<SectorState> {
         return;
       }
       this.transitOrchestrator.cancelTransit(playerId, 'manual');
+      // …and any fleet warp they ordered (a disconnect does not cancel those).
+      this.transitOrchestrator.cancelFleetTransits(playerId, 'manual');
     });
 
     this.onMessage('input', makeInputHandler({
@@ -4140,9 +4154,12 @@ export class SectorRoom extends Room<SectorState> {
       if (pid === undefined) return;
       const d = p.data;
       // One order object per accepted command: the brain keeps it as its order.
-      if (d.kind === 'move') this.fleet.applyOrder(pid, d.shipIds, { kind: 'move', x: d.x!, y: d.y! });
-      else if (d.kind === 'attack') this.fleet.applyOrder(pid, d.shipIds, { kind: 'attack', targetId: d.targetId! });
-      else this.fleet.applyOrder(pid, d.shipIds, FLEET_STOP_ORDER);
+      let accepted: readonly string[];
+      if (d.kind === 'move') accepted = this.fleet.applyOrder(pid, d.shipIds, { kind: 'move', x: d.x!, y: d.y! });
+      else if (d.kind === 'attack') accepted = this.fleet.applyOrder(pid, d.shipIds, { kind: 'attack', targetId: d.targetId! });
+      else accepted = this.fleet.applyOrder(pid, d.shipIds, FLEET_STOP_ORDER);
+      // RTS fleet warp: a new order to a spooling ship takes it out of the warp.
+      this.transitOrchestrator?.fleetCommandIssued(pid, accepted, false);
       this.fleetStatusSoon.request(client.sessionId, this.serverTick);
     });
     this.onMessage('set_mode', (client: Client, raw: unknown) => {
@@ -4161,8 +4178,10 @@ export class SectorRoom extends Room<SectorState> {
       // by shipInstanceId (`pilotShipOf`, slice 4b).
       const esc = p.data.escortId;
       md.escortId = esc === pid ? (this.playerToActiveShipInstance.get(pid) ?? esc) : esc;
-      this.fleet.setMode(pid, p.data.shipIds, p.data.mode, md);
+      const accepted = this.fleet.setMode(pid, p.data.shipIds, p.data.mode, md);
       md.route = undefined; md.escortId = undefined; md.x = undefined; md.y = undefined;
+      // RTS fleet warp: the ship drops out and obeys (its hold is let go).
+      this.transitOrchestrator?.fleetCommandIssued(pid, accepted, true);
       this.fleetStatusSoon.request(client.sessionId, this.serverTick);
     });
     this.onMessage('set_stance', (client: Client, raw: unknown) => {
@@ -4171,7 +4190,9 @@ export class SectorRoom extends Room<SectorState> {
       if (!p.success) { this.malformed.record(client.sessionId, 'set_stance'); return; }
       const pid = this.sessionToPlayer.get(client.sessionId);
       if (pid === undefined) return;
-      this.fleet.setStance(pid, p.data.shipIds, p.data.stance);
+      const accepted = this.fleet.setStance(pid, p.data.shipIds, p.data.stance);
+      // RTS fleet warp: the ship drops out and obeys (its hold is let go).
+      this.transitOrchestrator?.fleetCommandIssued(pid, accepted, true);
       this.fleetStatusSoon.request(client.sessionId, this.serverTick);
     });
     this.onMessage('form_squad', (client: Client, raw: unknown) => {
@@ -9950,6 +9971,10 @@ export class SectorRoom extends Room<SectorState> {
    *  in the worker can't become the reclaimed hull's held input (the worker
    *  holds the last input until the pilot's first arrives). Idempotent. */
   private detachWingman(shipInstanceId: string, keepSquad = false): void {
+    // RTS fleet warp: the ONE drop point. A hull leaving lingering leaves any
+    // fleet warp it is spooling in (the orchestrator ignores its own commit's
+    // removals and a reclaim it was told about via `noteTakeControls`).
+    this.transitOrchestrator?.dropHull(shipInstanceId);
     this.boostingPlayers.delete(shipInstanceId);
     if (!this.fleet.isAttached(shipInstanceId)) return;
     this.fleet.detach(shipInstanceId, keepSquad ? KEEP_SQUAD : undefined);
@@ -10377,6 +10402,10 @@ export class SectorRoom extends Room<SectorState> {
     // AI pilots' locks on this pilot name the pilot, not a ship: they hold on
     // only if the pilot stays with the ship they were on.
     if (engagedBefore !== shipId) this.npcLocks.forget(playerId);
+    // RTS fleet warp (owner rule): taking the controls of a spooling ship keeps
+    // it in the warp and the pilot goes with them; tell the orchestrator before
+    // the detach below reaches its drop point.
+    this.transitOrchestrator?.noteTakeControls(playerId, shipId);
     // The owner takes the helm: a squad member stays in its squad, which forms
     // up on it (pilot-led) and gets it back as AI leader on release (4b).
     this.detachWingman(shipId, true);
@@ -12105,7 +12134,51 @@ export class SectorRoom extends Room<SectorState> {
       broadcast: (type: string, message: unknown, options?: { except?: Client | Client[] }): void => {
         this.broadcast(type, message, options);
       },
+      // ── RTS fleet warp hooks ──────────────────────────────────────────
+      // A parked (LINGERING, #17) hull in this room, owned by the commander.
+      canFleetWarp: (commanderId: string, shipId: string): boolean => {
+        if (!this.lingeringSlots.has(shipId)) return false;
+        const ship = this.state.ships.get(shipId);
+        return ship !== undefined && isLingeringHull(ship)
+          && ship.playerId === commanderId && ship.shipInstanceId === shipId;
+      },
+      // The existing fleet `stop` order holds them while they spool.
+      holdFleetShips: (commanderId: string, shipIds: readonly string[]): void => {
+        this.fleet.applyOrder(commanderId, shipIds, FLEET_STOP_ORDER);
+        this.fleetStatusSoonFor(commanderId);
+      },
+      // Clear the hold: each ship goes back to its mode (a squad's leader to
+      // the squad mode; members follow it).
+      releaseFleetShips: (commanderId: string, shipIds: readonly string[]): void => {
+        for (let i = 0; i < shipIds.length; i++) {
+          const id = shipIds[i]!;
+          if (this.fleet.ownerOfAttached(id) !== commanderId) continue;
+          this.fleet.brainOf(id)?.clearOrder();
+        }
+        this.fleetStatusSoonFor(commanderId);
+      },
+      // The first hull with a live pose. TODO(RTS fleet warp S4): the largest
+      // hull, via the shared `fleetArrivalPoses`.
+      fleetAnchor: (shipIds: readonly string[]): { x: number; y: number } | null => {
+        for (let i = 0; i < shipIds.length; i++) {
+          const slot = this.lingeringSlots.get(shipIds[i]!);
+          if (slot === undefined) continue;
+          const b = slotBase(slot);
+          return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]! };
+        }
+        return null;
+      },
+      // TODO(RTS fleet warp S3): the cross-sector hull hand-off shared with the
+      // teleporter. Until then nothing moves; the orchestrator releases the
+      // hulls that stayed.
+      handOffHulls: (): readonly string[] => NO_HULLS_MOVED,
     };
+  }
+
+  /** Send the commander's fleet status soon (after a warp hold / release). */
+  private fleetStatusSoonFor(playerId: string): void {
+    const sessionId = this.playerToSession.get(playerId);
+    if (sessionId !== undefined) this.fleetStatusSoon.request(sessionId, this.serverTick);
   }
 
   // ── Phase 8 — sector snapshot persistence ───────────────────────────────

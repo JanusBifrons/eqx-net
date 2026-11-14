@@ -86,9 +86,48 @@ export interface TransitHostRoom {
    *  player who's leaving (the leaver gets their own local-warp visual
    *  from the `transit_state` machinery). */
   broadcast(type: string, message: unknown, options?: { except?: Client | Client[] }): void;
+
+  // ── RTS fleet warp (the selected ships warp together) ─────────────────
+  /** May `shipId` join a fleet warp ordered by `commanderId`? True only for a
+   *  LINGERING hull parked in this room (`lingeringSlots`), alive
+   *  (`isLingeringHull`), owned by the commander. The orchestrator itself
+   *  checks "not already in another fleet warp". */
+  canFleetWarp(commanderId: string, shipId: string): boolean;
+  /** Hold the ships still while they spool: the existing fleet `stop` order. */
+  holdFleetShips(commanderId: string, shipIds: readonly string[]): void;
+  /** Let go of the hold (cancel / drop-out): clear the order so each ship
+   *  goes back to its mode. */
+  releaseFleetShips(commanderId: string, shipIds: readonly string[]): void;
+  /** The point the group arrives round when no arrival point was picked
+   *  (a hull's live pose). Null ⇒ none of the ids has a pose. */
+  fleetAnchor(shipIds: readonly string[]): { x: number; y: number } | null;
+  /** Move the parked hulls to `destSectorKey`, round `anchor`. Returns the
+   *  ids that moved; the rest stay here (and are released). Removing a hull
+   *  here runs `detachWingman` → `dropHull`, which the commit ignores. */
+  handOffHulls(shipIds: readonly string[], destSectorKey: string, anchor: { x: number; y: number }): readonly string[];
+}
+
+/** RTS fleet warp — the group part of an in-flight record. */
+interface FleetGroup {
+  /** Members: parked hulls, plus the one the commander took the controls of. */
+  hullIds: Set<string>;
+  /** A member the commander is flying ("you go with them"): it travels by the
+   *  pilot path (the commander's seat), the others by `handOffHulls`. */
+  pilotedId: string | null;
+  /** A reclaim of this member is under way: its `detachWingman` → `dropHull`
+   *  is the hull leaving lingering to be flown, not leaving the group. */
+  takingId: string | null;
+  /** The commit is running: removals it makes itself are not drops. */
+  committing: boolean;
+  /** When the spool began (the clock's ms), for the banner's countdown left. */
+  startedAtMs: number;
 }
 
 interface InFlight {
+  /** Who gets `transit_state` (the pilot, or the fleet's commander). */
+  commanderId: string;
+  /** Non-null for a fleet warp (key `fleet:<commander>:<n>`). */
+  fleet: FleetGroup | null;
   machine: TransitStateMachine;
   targetSectorKey: string;
   transitToken: string;
@@ -131,10 +170,26 @@ function incomingPlayerLabel(userId: string | null | undefined): string {
  * bind a specific roster entry on arrival; absent ⇒ destination uses the
  * Limbo entry's source-ship pose (today's behaviour).
  */
+export interface ReserveOptions {
+  playerId: string;
+  transitToken: string;
+  shipId?: string;
+  /** RTS fleet warp: the commander arrives with no ship (join-as-spectator)
+   *  at (spawnX, spawnY), the fleet's arrival anchor. */
+  spectator?: boolean;
+  spawnX?: number;
+  spawnY?: number;
+}
+
 export type ReserveByName = (
   roomName: string,
-  options: { playerId: string; transitToken: string; shipId?: string },
+  options: ReserveOptions,
 ) => Promise<unknown>;
+
+/** Most ids a fleet warp reads (the wire allows the same). */
+const FLEET_WARP_MAX_IDS = 64;
+/** The incoming banner's label for a fleet: "3 × ships warping in". */
+const FLEET_INCOMING_LABEL = 'ship';
 
 const defaultReserveByName: ReserveByName = async (roomName, options) => {
   const rooms = await matchMaker.query({ name: roomName });
@@ -143,7 +198,12 @@ const defaultReserveByName: ReserveByName = async (roomName, options) => {
 };
 
 export class TransitOrchestrator {
+  /** Keyed by playerId for a pilot warp, `fleet:<commander>:<n>` for a fleet
+   *  warp (several fleet warps may run at once, each its own record). */
   private inFlight = new Map<string, InFlight>();
+  /** Fleet warp: member ship id → its group's key. */
+  private hullToGroup = new Map<string, string>();
+  private fleetSeq = 0;
   /** Override for tests. Production is the live colyseus matchMaker. */
   private reserveByNameFn: ReserveByName = defaultReserveByName;
 
@@ -220,6 +280,10 @@ export class TransitOrchestrator {
       // Already spooling — second request is a no-op.
       return false;
     }
+    // RTS fleet warp: the ship they fly is in a spooling fleet warp (they took
+    // its controls), so it already goes with the fleet. No second warp.
+    const flying = this.room.playerToActiveShipInstance.get(playerId);
+    if (flying !== undefined && this.hullToGroup.has(flying)) return false;
 
     // Phase 5 — ownership validation. A client can pass any roster shipId
     // they like; we reject foreign / unknown ids before spinning up the
@@ -252,6 +316,8 @@ export class TransitOrchestrator {
     });
 
     this.inFlight.set(playerId, {
+      commanderId: playerId,
+      fleet: null,
       machine,
       targetSectorKey,
       transitToken,
@@ -297,6 +363,8 @@ export class TransitOrchestrator {
     const onShipDestroyed: InFlight['onShipDestroyed'] = () => undefined;
     this.room.bus.on('SHIP_DESTROYED', onShipDestroyed);
     this.inFlight.set(playerId, {
+      commanderId: playerId,
+      fleet: null,
       machine,
       targetSectorKey,
       transitToken: randomUUID(),
@@ -315,18 +383,355 @@ export class TransitOrchestrator {
     const inFlight = this.inFlight.get(playerId);
     if (!inFlight) return;
     if (inFlight.machine.rawState !== 'SPOOLING') return;
+    // A fleet commit in progress owns the record (its seat may be reserved).
+    if (inFlight.fleet?.committing) return;
     inFlight.commitTimer.cancel();
     this.room.bus.off('SHIP_DESTROYED', inFlight.onShipDestroyed);
     inFlight.machine.cancel();
     this.inFlight.delete(playerId);
-    // Phase-4 P0 — the spool aborted; clear the friendly inbound banner.
+    // RTS fleet warp: let go of the ships still in the group (they go back to
+    // their modes) and forget the membership.
+    if (inFlight.fleet !== null) this.releaseGroup(inFlight);
+    // Phase-4 P0 — the spool aborted; clear the friendly inbound banner. A
+    // fleet's banner is registered under its group key (= `playerId` here).
     getIncomingPlayerSink()?.clearIncomingPlayer(playerId, inFlight.targetSectorKey);
-    this.sendState(playerId, {
+    this.sendState(inFlight.commanderId, {
       type: 'transit_state',
       state: 'DOCKED',
       targetSectorKey: inFlight.targetSectorKey,
       reason,
     });
+  }
+
+  // ── RTS fleet warp ─────────────────────────────────────────────────────
+  //
+  // "Warp here" in Command view warps the SELECTED ships together; the
+  // commander's seat follows them. Same state machine, timer, `transit_state`
+  // and incoming banner as a pilot warp; one in-flight record per GROUP
+  // (key `fleet:<commander>:<n>`), so several fleet warps can run at once.
+  // The commander may have no ship at all, so this branch never asks for a
+  // live hull or a player slot. See docs/architecture/fleet-command.md.
+
+  /**
+   * Begin a fleet warp of `shipIds` to `targetSectorKey`. Each id is checked
+   * (`canFleetWarp`: parked here, alive, owned by the commander) and must not
+   * already be in a fleet warp; others drop silently. None valid ⇒ DOCKED
+   * `no_ships`. The valid ships hold still (fleet `stop`) while they spool and
+   * stay damageable. Returns the group key, or null on a reject.
+   */
+  beginFleetTransit(
+    commanderId: string,
+    targetSectorKey: string,
+    shipIds: readonly string[],
+    arrival?: { x: number; y: number },
+  ): string | null {
+    const src = this.room.sectorKey;
+    if (src === null) {
+      this.sendState(commanderId, { type: 'transit_state', state: 'DOCKED', reason: 'manual' });
+      return null;
+    }
+    if (!isNeighbour(src, targetSectorKey)) {
+      this.sendState(commanderId, { type: 'transit_state', state: 'DOCKED', reason: 'not_neighbour' });
+      return null;
+    }
+    const ids = new Set<string>(); // off the tick: one message per Warp click
+    const n = Math.min(shipIds.length, FLEET_WARP_MAX_IDS);
+    for (let i = 0; i < n; i++) {
+      const id = shipIds[i]!;
+      if (ids.has(id) || this.hullToGroup.has(id)) continue;
+      if (!this.room.canFleetWarp(commanderId, id)) continue;
+      ids.add(id);
+    }
+    if (ids.size === 0) {
+      this.sendState(commanderId, {
+        type: 'transit_state', state: 'DOCKED', targetSectorKey, reason: 'no_ships',
+      });
+      return null;
+    }
+
+    const key = `fleet:${commanderId}:${++this.fleetSeq}`;
+    const machine = new TransitStateMachine(commanderId, this.room.bus, this.spoolMs);
+    const nowMs = this.clock.now();
+    machine.beginSpool(nowMs);
+    const group: FleetGroup = {
+      hullIds: ids, pilotedId: null, takingId: null, committing: false, startedAtMs: nowMs,
+    };
+    // The commander's own ship dying matters only when it is the member they
+    // took the controls of (a parked member's death comes in via `dropHull`).
+    const onShipDestroyed: InFlight['onShipDestroyed'] = (evt) => {
+      if (evt.targetId !== commanderId || group.pilotedId === null) return;
+      const piloted = group.pilotedId;
+      // Parked again (they let go of it) ⇒ it is a hull, not the dead ship.
+      if (this.room.canFleetWarp(commanderId, piloted)) { group.pilotedId = null; return; }
+      this.dropHull(piloted);
+    };
+    this.room.bus.on('SHIP_DESTROYED', onShipDestroyed);
+    const commitTimer = this.clock.after(this.spoolMs, () => {
+      void this.commitTransit(key);
+    });
+    this.inFlight.set(key, {
+      commanderId,
+      fleet: group,
+      machine,
+      targetSectorKey,
+      transitToken: randomUUID(),
+      arrival: arrival ? { x: arrival.x, y: arrival.y } : null,
+      shipId: null,
+      commitTimer,
+      onShipDestroyed,
+    });
+    for (const id of ids) this.hullToGroup.set(id, key);
+
+    // Hold them still (they stay damageable) until the jump.
+    this.room.holdFleetShips(commanderId, [...ids]);
+    this.sendState(commanderId, {
+      type: 'transit_state', state: 'SPOOLING', spoolMs: this.spoolMs, targetSectorKey,
+    });
+    this.announceGroup(key, src, targetSectorKey, ids.size, this.spoolMs);
+    return key;
+  }
+
+  /** The group key a ship is spooling with, or null. */
+  fleetGroupOf(shipId: string): string | null {
+    return this.hullToGroup.get(shipId) ?? null;
+  }
+
+  /** The members of a spooling fleet warp (test / diag read). */
+  fleetMembers(groupKey: string): readonly string[] {
+    const g = this.inFlight.get(groupKey)?.fleet;
+    return g ? [...g.hullIds] : [];
+  }
+
+  /**
+   * The ONE drop point: a member left the world or stopped being a parked hull
+   * (`SectorRoom.detachWingman` calls this for every lingering exit). Ignored
+   * during the group's own commit and for the member the commander is taking
+   * the controls of. A group left empty cancels (`destroyed`).
+   */
+  dropHull(shipId: string): void {
+    const key = this.hullToGroup.get(shipId);
+    if (key === undefined) return;
+    const inFlight = this.inFlight.get(key);
+    const g = inFlight?.fleet;
+    if (!inFlight || !g) { this.hullToGroup.delete(shipId); return; }
+    if (g.committing) return;
+    if (g.takingId === shipId) {
+      // The reclaim's own detach: the commander now flies it and goes with them.
+      g.takingId = null;
+      g.pilotedId = shipId;
+      return;
+    }
+    this.removeMember(key, inFlight, shipId, 'destroyed');
+  }
+
+  /**
+   * The commander is taking the controls of `shipId` (the room calls this just
+   * before the reclaim detaches the hull). If it is spooling in one of their
+   * fleet warps, it STAYS in the group and the commander goes with them: at the
+   * jump it travels by the pilot path (their seat), the rest as hulls.
+   */
+  noteTakeControls(commanderId: string, shipId: string): void {
+    const key = this.hullToGroup.get(shipId);
+    if (key === undefined) return;
+    const inFlight = this.inFlight.get(key);
+    if (!inFlight?.fleet || inFlight.commanderId !== commanderId) return;
+    inFlight.fleet.takingId = shipId;
+  }
+
+  /**
+   * A new order / mode / stance reached these ships (the fleet command
+   * handlers call this with the ids the command named). Those spooling in one
+   * of the caller's fleet warps drop out and obey. An order replaces the hold
+   * by itself; a mode or stance does not, so `releaseHold` lets go of it.
+   */
+  fleetCommandIssued(commanderId: string, shipIds: readonly string[], releaseHold: boolean): void {
+    for (let i = 0; i < shipIds.length; i++) {
+      const id = shipIds[i]!;
+      const key = this.hullToGroup.get(id);
+      if (key === undefined) continue;
+      const inFlight = this.inFlight.get(key);
+      if (!inFlight?.fleet || inFlight.commanderId !== commanderId) continue;
+      if (inFlight.fleet.committing || inFlight.fleet.pilotedId === id) continue;
+      if (releaseHold) this.room.releaseFleetShips(commanderId, [id]);
+      this.removeMember(key, inFlight, id, 'manual');
+    }
+  }
+
+  /** Cancel every spooling fleet warp the commander ordered (their
+   *  `cancel_transit`). A disconnect does NOT call this: the ships still go. */
+  cancelFleetTransits(commanderId: string, reason: TransitCancelReason): void {
+    for (const [key, f] of [...this.inFlight]) {
+      if (f.fleet !== null && f.commanderId === commanderId) this.cancelTransit(key, reason);
+    }
+  }
+
+  /** Take one member out of its group; an emptied group cancels. */
+  private removeMember(key: string, inFlight: InFlight, shipId: string, emptyReason: TransitCancelReason): void {
+    const g = inFlight.fleet!;
+    g.hullIds.delete(shipId);
+    this.hullToGroup.delete(shipId);
+    if (g.pilotedId === shipId) g.pilotedId = null;
+    if (g.takingId === shipId) g.takingId = null;
+    if (g.hullIds.size === 0) { this.cancelTransit(key, emptyReason); return; }
+    const src = this.room.sectorKey;
+    const left = Math.max(1, this.spoolMs - (this.clock.now() - g.startedAtMs));
+    if (src !== null) this.announceGroup(key, src, inFlight.targetSectorKey, g.hullIds.size, left);
+  }
+
+  /** Release the hold on the group's remaining ships and forget them. */
+  private releaseGroup(inFlight: InFlight): void {
+    const g = inFlight.fleet!;
+    const ids = [...g.hullIds];
+    if (g.pilotedId !== null) {
+      // The ship the commander flies has no hold to release.
+      const at = ids.indexOf(g.pilotedId);
+      if (at >= 0) ids.splice(at, 1);
+    }
+    if (ids.length > 0) this.room.releaseFleetShips(inFlight.commanderId, ids);
+    for (const id of g.hullIds) this.hullToGroup.delete(id);
+    g.hullIds.clear();
+  }
+
+  /** The friendly "N × ships warping in" banner at the destination. */
+  private announceGroup(key: string, src: string, dest: string, count: number, etaMs: number): void {
+    getIncomingPlayerSink()?.registerIncomingPlayer({
+      playerId: key,
+      destSectorKey: dest,
+      sourceSectorKey: src,
+      label: FLEET_INCOMING_LABEL,
+      etaMs,
+      count,
+    });
+  }
+
+  /**
+   * Fleet commit. Order: (1) work out who goes (the flown member by the pilot
+   * path, parked members as hulls; each re-checked now); (2) reserve the
+   * commander's seat FIRST — the pilot seat when they fly a member, else a
+   * shipless spectator seat at the arrival anchor — skipped when the
+   * commander is not connected; (3) hand the hulls off. A seat that can't be
+   * reserved aborts the whole jump (`destination_unavailable`).
+   */
+  private async commitFleet(key: string, inFlight: InFlight): Promise<void> {
+    const g = inFlight.fleet!;
+    const cmd = inFlight.commanderId;
+    const dest = inFlight.targetSectorKey;
+    this.room.bus.off('SHIP_DESTROYED', inFlight.onShipDestroyed);
+    g.committing = true;
+
+    const piloted = g.pilotedId !== null
+      && this.room.playerToActiveShipInstance.get(cmd) === g.pilotedId
+      && this.room.hasLiveHull(cmd)
+      && this.room.playerToSlot.has(cmd)
+      ? g.pilotedId : null;
+    const hulls: string[] = [];
+    for (const id of g.hullIds) if (id !== piloted && this.room.canFleetWarp(cmd, id)) hulls.push(id);
+
+    const finish = (): void => {
+      for (const id of g.hullIds) this.hullToGroup.delete(id);
+      this.inFlight.delete(key);
+      getIncomingPlayerSink()?.clearIncomingPlayer(key, dest);
+    };
+
+    if (hulls.length === 0 && piloted === null) {
+      // Everyone was lost between the last drop and the jump.
+      inFlight.machine.cancel();
+      finish();
+      this.sendState(cmd, { type: 'transit_state', state: 'DOCKED', targetSectorKey: dest, reason: 'destroyed' });
+      return;
+    }
+
+    // The flown member's live pose (the commander's slot).
+    let pilotX = 0, pilotY = 0, b = 0;
+    if (piloted !== null) {
+      b = slotBase(this.room.playerToSlot.get(cmd)!);
+      pilotX = this.room.sabF32[b + SLOT_X_OFF]!;
+      pilotY = this.room.sabF32[b + SLOT_Y_OFF]!;
+    }
+    const anchor = inFlight.arrival
+      ? clampToSectorBounds(inFlight.arrival.x, inFlight.arrival.y)
+      : (hulls.length > 0 ? this.room.fleetAnchor(hulls) : null) ?? { x: pilotX, y: pilotY };
+
+    // (2) The commander's seat, BEFORE any hull moves. A commander flying a
+    // ship OUTSIDE the group stays with that ship (a spectator seat would
+    // leave it behind unparked), so only the hulls go.
+    const followsFleet = piloted !== null || !this.room.hasLiveHull(cmd);
+    const client = followsFleet ? this.room.clientForPlayer(cmd) : null;
+    let reservation: unknown = null;
+    if (client) {
+      const opts: ReserveOptions = piloted !== null
+        ? { playerId: cmd, transitToken: inFlight.transitToken, shipId: piloted }
+        : { playerId: cmd, transitToken: inFlight.transitToken, spectator: true, spawnX: anchor.x, spawnY: anchor.y };
+      try {
+        issueTransitIdentity(inFlight.transitToken, cmd);
+        reservation = await this.reserveByNameFn(`galaxy-${dest}`, opts);
+      } catch {
+        // No seat ⇒ nobody goes: the ships stay and go back to their modes.
+        inFlight.machine.cancel();
+        g.committing = false;
+        this.releaseGroup(inFlight);
+        finish();
+        this.sendState(cmd, {
+          type: 'transit_state', state: 'DOCKED', targetSectorKey: dest, reason: 'destination_unavailable',
+        });
+        return;
+      }
+      if (piloted !== null) {
+        // The flown member re-homes exactly like a pilot warp (shipId restore).
+        this.playerShipStore?.markStored(piloted, {
+          x:      inFlight.arrival ? anchor.x : pilotX,
+          y:      inFlight.arrival ? anchor.y : pilotY,
+          vx:     this.room.sabF32[b + SLOT_VX_OFF]!,
+          vy:     this.room.sabF32[b + SLOT_VY_OFF]!,
+          angle:  this.room.sabF32[b + SLOT_ANGLE_OFF]!,
+          angvel: this.room.sabF32[b + SLOT_ANGVEL_OFF]!,
+          health: this.room.getShipHealth(cmd) ?? SHIP_MAX_HEALTH,
+          lastFireClientTick: this.room.lastFireClientTick.get(cmd) ?? 0,
+          sectorKey: dest,
+        });
+      }
+      this.room.playerToTransitInFlight.add(cmd);
+      auditEvent({
+        event: 'transit_started', sector: this.room.sectorKey ?? undefined, playerId: cmd,
+        from: this.room.sectorKey ?? undefined, to: dest,
+      });
+    }
+
+    // (3) The parked hulls.
+    const moved = hulls.length > 0 ? this.room.handOffHulls(hulls, dest, anchor) : [];
+    const from = this.room.sectorKey ?? undefined;
+    const adjacent = from ? isNeighbour(from, dest) : undefined;
+    for (const id of moved) {
+      auditEvent({ event: 'sector_change', entityKind: 'hull', id, sector: from, from, to: dest, adjacent });
+    }
+    if (piloted !== null && client) {
+      auditEvent({ event: 'sector_change', entityKind: 'player', id: cmd, sector: from, from, to: dest, adjacent });
+    }
+    // Hulls that did not move stay here: let go of their hold.
+    if (moved.length < hulls.length) {
+      const movedSet = new Set(moved);
+      const stayed = hulls.filter((id) => !movedSet.has(id));
+      if (stayed.length > 0) this.room.releaseFleetShips(cmd, stayed);
+    }
+
+    inFlight.machine.beginTransit();
+    if (client) {
+      client.send('transit_state', {
+        type: 'transit_state', state: 'IN_TRANSIT', targetSectorKey: dest,
+      } satisfies TransitStateMessage);
+      client.send('transit_ready', {
+        type: 'transit_ready', reservation, transitToken: inFlight.transitToken, targetSectorKey: dest,
+      });
+      if (piloted !== null) {
+        this.room.broadcast('warp_out', { type: 'warp_out', playerId: cmd, x: pilotX, y: pilotY }, { except: client });
+      }
+    } else {
+      // The commander stays here (flying another ship): end their spool UI.
+      this.sendState(cmd, { type: 'transit_state', state: 'DOCKED', targetSectorKey: dest });
+    }
+    inFlight.machine.arrive();
+    inFlight.machine.reset();
+    finish();
   }
 
   /** Internal — fired by the spool timer. Reserves the destination seat,
@@ -336,6 +741,7 @@ export class TransitOrchestrator {
   async commitTransit(playerId: string): Promise<void> {
     const inFlight = this.inFlight.get(playerId);
     if (!inFlight) return;
+    if (inFlight.fleet !== null) return this.commitFleet(playerId, inFlight);
     // From this point forward, a SHIP_DESTROYED is the death flow's problem,
     // not transit's — the seat is reserved and the pilot is out the door.
     this.room.bus.off('SHIP_DESTROYED', inFlight.onShipDestroyed);
