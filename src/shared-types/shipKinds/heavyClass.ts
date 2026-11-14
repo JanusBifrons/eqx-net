@@ -7,7 +7,8 @@
 
 import { defineShipKind } from '../shipScale/defineShipKind.js';
 import {
-  LEGACY_FORWARD_MOUNT,
+  NOSE_TURRET_SLEW_HEAVY,
+  noseTurretMount,
   LEGACY_PRIMARY_SLOT,
   type ShipKind,
 } from './types.js';
@@ -56,7 +57,7 @@ export const HEAVY: ShipKind = defineShipKind({
   },
   // Bolts (weapons/energy/AI overhaul §2) — inline clone, see SCOUT note
   // in fighters.ts.
-  mounts: [{ ...LEGACY_FORWARD_MOUNT, weaponId: 'laser' }],
+  mounts: [noseTurretMount('laser', NOSE_TURRET_SLEW_HEAVY)],
   slots: [LEGACY_PRIMARY_SLOT],
 });
 
