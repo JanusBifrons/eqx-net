@@ -251,6 +251,31 @@ See [docs/architecture/weapon-mounts.md](weapon-mounts.md) for the call-graph an
 
 `BeamSpritePool` draws each beam segment as a stretched `Sprite`. A Pixi sprite renders `worldLen = scale.x × texture.width`, so the world length must be set as **`scale.x = worldLen / texture.width`**. The solid core uses the 1×1 `Texture.WHITE` (÷1, fine), but the **gradient + fade textures are 256 px WIDE** (they have to be — that's where the horizontal fade lives). Setting `scale.x = worldLen` on those rendered the fade tail **256× too long** (a 75 u tail → ~19 200 u): the "fade" stretched off any screen at any zoom, so in empty space the beam looked SOLID to infinity and "never tapered" — the long-standing "laser renders infinitely / flies off the screen" bug. **Headless unit tests fall back to `Texture.WHITE` (1×1) for the canvas textures, so they could NEVER see this** — the fix had "passed" four rounds of screenshots while staying broken on-device. Lock: `BeamSpritePool.solidTaper.test.ts` now injects a genuine 256-px `Texture` and asserts the DRAWN world length (`scale.x × texture.width`, exposed by `solidLenAt`/`fadeTailAt`) equals the intended length. **The damage falloff is LINEAR + bounded at `range × maxRangeMul` (interceptor 250 → 325); the matching visual is solid to `optimalRange × VISUAL_BEAM_SOLID_FRAC` (`ColyseusClient`, default 0.4 = inner 100 u) then a long gradual fade to nothing at maxRange — purely visual, `solidDist` never feeds damage.** Verified end-to-end (no-hit empty-space + hit cases) by `tests/e2e/laser-falloff-probe.spec.ts`, which forces `?zoom=` for a deterministic capture (the spawn camera-zoom ease otherwise lands before/after screenshots at different scales — a real comparison trap that masked the bug, see `docs/LESSONS.md` 2026-06-14).
 
+## Core contract reference
+
+Moved from `src/core/CLAUDE.md` (section "WeaponMountController contract").
+
+**Exports:**
+
+- `pickTarget(shipX, shipY, targets, prevTargetId, isHostile, options?)` — sticky target picking. Iterates `targets`; nearest hostile within `options.maxDistance` wins UNLESS the previous target is within `STICKY_HYSTERESIS_FACTOR * d(nearest)`. Returns `MountTargetView | null`.
+- `rotateMountToward(currentMountAngle, desiredBearing, mount, dtSec)` — clamp the target into `[arcMin, arcMax]`, then slew toward it by at most `rotationSpeed * dtSec` per call. Returns the new mount angle, ship-relative, arc-local (`0` = barrel at rest).
+- `wrapPi`, `clampToArc` — primitives exposed for tests / future composition.
+
+**Lockstep determinism rules:**
+
+1. **Tie-break by iteration order.** When two hostiles are exactly equidistant, the one appearing first in `targets` wins (`<` comparison rejects ties). Server and client MUST iterate `targets` in the same order. The upstream AI controller is responsible.
+2. **Per-instance state owned by the caller.** `prevTargetId` lives on the caller (drone behaviour, player slot). Not in the controller. Reset purely by `markHostile`/`purgeHostility`/time-decay — both sides fire these symmetrically.
+3. **Hostility filter is `(id) => boolean`.** Drone callers pass `id => hostileTo.has(id)`. Player turret callers pass `id => id.startsWith('swarm-')` (any drone hostile to the player). Same filter semantics on both sides; never read from a per-side data source that diverges.
+
+**Sticky hysteresis factor** (`STICKY_HYSTERESIS_FACTOR = 1.1`) — keep the previous target while it's within 10 % distance of the nearest alternative. Below this, swarm-density edges cause flapping; above, the player feels the turret "miss obvious closer targets". 1.1 is the empirical sweet spot from drone-AI sticky-targeting smoke tests.
+
+If you find yourself adding a "smarter" target-pick policy (lead-aim, predicted closing rate, threat tier), do it BY EXTENDING `MountTargetView` and `PickTargetOptions` — not by reaching into the call sites. The pure-module contract is what makes lockstep auditable.
+
+**Smarter selection (Part C, weapon-autofire-boost-mechanics).** `pickTarget` was extended (per the rule above — fields, not call-site branches) with: `healthWeight` (score `= d²·(1 + w·health/maxHealth)`, biasing toward low-HP targets — "finish the wounded"), `switchMargin` (commitment in score space — resists target-flapping; default `stickyHysteresisFactor²` ⇒ byte-identical to the old squared-distance hysteresis), `dwellTicks`/`ticksSincePrevTarget` (hard switch-DELAY, server-AI only — deterministic server tick), and a per-target `hostile?` field that, when defined, OVERRIDES the `isHostile(id)` callback. **The `hostile` flag is the single-viewer alloc-free path** (the client's local player carries hostility on each `LocalAimTarget`); the per-viewer callback stays for the server (hostility is per-player). Both yield the same boolean for the same (target, viewer), so client/server picks stay in lockstep. **Absent options ⇒ behaviour is byte-identical to pre-Part-C** (locked by `WeaponMountController.test.ts`). Shared player-aim tuning lives in `PLAYER_AIM_HEALTH_WEIGHT` / `PLAYER_AIM_SWITCH_MARGIN` (exported) — the client `tickLocalMountAim` and the server `WeaponMountTicker.tickPlayer` MUST pass identical options (mount-angle lockstep, Invariant #12). The drone-AI body target (`HostileDroneBehaviour`) uses `healthWeight` + a real `dwellTicks` (server-only). Player health-weighting needs drone HP on the client — synced via the slim `SnapshotMessage.drones[].hp` percent (Part C3).
+
+**`AiController` pending-hostility buffer (Part C).** `markHostile` for a not-yet-registered entity is now BUFFERED and applied on `register` (cleared by `unregister`/`purgeHostility`/`clear`). Fixes the `startHostile`-at-join / aggro-before-interest race where client hostility was silently dropped (the `bot_aggro` arrived before the client's first swarm packet registered the drone). Server-side it's inert (drones register at spawn before any `markHostile`), so the live loop is byte-identical.
+
+See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.md) for the full call-graph and the "do not add a second correction path" rule, and [docs/features/auto-fire-and-boost.md](../../docs/features/auto-fire-and-boost.md) for the player-facing behaviour.
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.

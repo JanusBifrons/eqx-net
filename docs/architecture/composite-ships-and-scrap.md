@@ -155,6 +155,29 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
   driven into a scrap fragment must shove it, not bounce). See
   [docs/architecture/composite-ships-and-scrap.md](composite-ships-and-scrap.md).
 
+## Core reference
+
+Moved from `src/core/CLAUDE.md` (section "Composite ships + scrap geometry").
+
+- `ShipShape` is a discriminated union (`polygon | composite`). The
+  `shipHullOutline(kind)` seam (`geometry/shipHullOutline.ts`) returns the
+  composite `hull` or the polygon `points` — **every collision/physics reader
+  goes through it**, so polygon kinds are byte-identical. The
+  "silhouette == collider" invariant is RELAXED for composites: the collider is
+  the authored gross `hull`; the visual `parts[]` are detail (per-part live
+  collision is intentionally NOT modelled). `shipShapeScale` / `shipPrimaryColor`
+  are the sibling accessors.
+- `geometry/shipScrapGroups.ts` precomputes ONCE at module load (like
+  `shipHullDecomp`) one scrap GROUP per composite component — a silhouette
+  (`canScrap:true`) + its detail parts (role-prefix), each recentred on the
+  component centroid, with a convex-hull collider. Polygon kinds → empty. The
+  death→scrap path (server) and `buildScrapGfx` (client) both read it.
+- `physics/collisionGroups.ts` `SCRAP_COLLISION_GROUPS` (membership bit 1 /
+  filter ~bit 1) makes scrap NOT collide with other scrap but collide with
+  everything else. Threaded through `World.spawnObstacle`'s optional
+  `collisionGroups` param (→ worker `SPAWN_OBSTACLE`). `swarm/scrapConstants.ts`
+  holds the tuning (burst/damping/HP/MAX_LIVE_SCRAP). Full story:
+  [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
