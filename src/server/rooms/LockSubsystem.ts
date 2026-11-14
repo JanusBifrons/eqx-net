@@ -14,14 +14,14 @@ import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
 import { lockLineHolds } from '../../core/combat/lockLine.js';
 import { pickTurretLock } from '../../core/combat/turretLockPick.js';
-import { mountWeaponReach, type MountRangeTarget } from '../../core/combat/mountReach.js';
-import { mountReachesTarget, type FireTargetShape } from '../../core/combat/fireControlBearing.js';
+import { mountInReach, mountWeaponReach, type MountRangeTarget } from '../../core/combat/mountReach.js';
+import type { FireTargetShape } from '../../core/combat/fireControlBearing.js';
 import { getWeapon, weaponAutoFireRange } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind, WeaponMount, WeaponSlot } from '../../shared-types/shipKinds/types.js';
 
 /** A lockable target, resolved each lock step. Its `FireTargetShape` half
- *  (pose, heading, hit shape; `signature` = lock signature, u) is what the
- *  fire gate measures range against (`mountReachesTarget`). */
+ *  (pose, heading, hit shape; `radius` = lock signature, u) is what the
+ *  fire gate measures range against (`mountInReach`). */
 export interface LockTargetView extends FireTargetShape {
   vx: number;
   vy: number;
@@ -31,7 +31,7 @@ export interface LockTargetView extends FireTargetShape {
 
 /** A blank `LockTargetView` (scratch; allocate once, fill per call). */
 export function newLockTargetView(): LockTargetView {
-  return { x: 0, y: 0, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, signature: 1, hostile: false };
+  return { x: 0, y: 0, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 1, hostile: false };
 }
 
 export interface LockShooterView {
@@ -169,7 +169,7 @@ export class LockSubsystem {
   private bearGroup: GroupState | null = null;
   /**
    * AUTO pick: some mount of the group has the target inside its ARC and
-   * reaches its hit shape from where the mount sits (`mountReachesTarget`,
+   * reaches its hit shape from where the mount sits (`mountInReach`,
    * the range half of the shared fire gate `mountFiresOn`, the same function
    * the client's `fcGroupBears` calls, #15). The angular half is the arc, not
    * the barrel: a turret trains onto what AUTO picks, then the fire gate
@@ -193,7 +193,7 @@ export class LockSubsystem {
       const m = g.mounts[i >> 1]!;
       const ox = s.x + (m.localX * cosA - m.localY * sinA);
       const oy = s.y + (m.localX * sinA + m.localY * cosA);
-      if (mountReachesTarget(ox, oy, mountWeaponReach(m), t)) return true;
+      if (mountInReach(t.x - ox, t.y - oy, mountWeaponReach(m), t)) return true;
     }
     return false;
   };
@@ -340,7 +340,7 @@ export class LockSubsystem {
     if (bearing === undefined || !Number.isFinite(bearing)) return false;
     if (!this.deps.shooterPose(playerId, this.shooter)) return false;
     if (!this.deps.resolveTarget(playerId, key, this.target)) return false;
-    return lockLineHolds(this.target.x - this.shooter.x, this.target.y - this.shooter.y, bearing, this.target.signature, g.reach);
+    return lockLineHolds(this.target.x - this.shooter.x, this.target.y - this.shooter.y, bearing, this.target.radius, g.reach);
   }
 
   /**
@@ -475,7 +475,7 @@ export class LockSubsystem {
       sh.kindId = this.target.ship ? this.target.kindId : null;
       sh.angle = this.target.angle;
       sh.shieldUp = this.target.shieldUp;
-      sh.radius = this.target.ship ? 0 : this.target.signature;
+      sh.radius = this.target.ship ? 0 : this.target.radius;
       keys.push(e.target);
     }
     if (keys.length === 0) return null;
@@ -507,7 +507,7 @@ export class LockSubsystem {
 
   /** `this.target` is inside the group's FIRE range: some mount reaches its
    *  hit shape within its reach × `slack`, by the player fire gate's own
-   *  range test (`mountReachesTarget`). `this.shooter` must be current. */
+   *  range test (`mountInReach`). `this.shooter` must be current. */
   private inFireRange(g: GroupState, slack: number): boolean {
     const s = this.shooter;
     const cosA = Math.cos(s.angle);
@@ -516,7 +516,7 @@ export class LockSubsystem {
       const m = g.mounts[i]!;
       const ox = s.x + (m.localX * cosA - m.localY * sinA);
       const oy = s.y + (m.localX * sinA + m.localY * cosA);
-      if (mountReachesTarget(ox, oy, mountWeaponReach(m) * slack, this.target)) return true;
+      if (mountInReach(this.target.x - ox, this.target.y - oy, mountWeaponReach(m) * slack, this.target)) return true;
     }
     return false;
   }
@@ -560,7 +560,7 @@ export class LockSubsystem {
         inp.reach = g.reach;
         inp.sensor = p.sensor;
         inp.pilotSpeed = 1;
-        inp.signature = this.target.signature;
+        inp.signature = this.target.radius;
         inp.dx = this.target.x - this.shooter.x;
         inp.dy = this.target.y - this.shooter.y;
         inp.dvx = this.target.vx - this.shooter.vx;
