@@ -6,6 +6,18 @@ no death modal, no curtain — and the player free-roams the whole sector as an
 invulnerable, un-networked local camera with **full construction** (place /
 manage / upgrade / deconstruct structures). This *is* "construction mode."
 
+> **Spectator is now Command view (RTS command layer, 2026-11-14).** The same
+> `pilotMode === 'spectator'` state is the player's **Command view**: normal
+> galaxy play joins in it, the indicator reads "Command view", the toggle's
+> buttons are Command / Fly, and every ship you are not flying is parked and
+> AI-flown by a wingman you give orders to. In Command view a LEFT drag draws
+> a fleet selection box and a right-click gives an order, so the camera pans
+> with WASD / arrow keys, a MIDDLE drag, or a one-finger touch drag (a touch
+> held still for 500 ms arms a box instead). Everything below about the
+> free-roam camera, the input swap and construction still holds. See
+> [fleet-command.md](fleet-command.md) and
+> [../features/rts-command.md](../features/rts-command.md).
+
 This document covers the WS-A1 deliverable: the spectator state machine, the
 free-roam camera, the input swap, and construction without a ship. Re-entering a
 ship by clicking an owned ship's in-world overlay (the "Pilot" action) + the

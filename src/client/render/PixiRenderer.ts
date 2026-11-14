@@ -3692,6 +3692,16 @@ export class PixiRenderer implements IRenderer {
   }
 
   /**
+   * Test-only (RTS fleet-command E2E): the canvas-relative screen point of a
+   * GAME-space world point (Y-up → pixi `-y`), so a spec can box-select or
+   * click a ship where it is drawn. Read by the `__eqxWorldToScreen` DEV hook
+   * (main-thread renderer path, `?worker=0`). Not consumed by gameplay logic.
+   */
+  worldToScreenGame(x: number, y: number): { x: number; y: number } {
+    return this.camera.toScreen(x, -y);
+  }
+
+  /**
    * Read the most recent feedback the renderer wrote at the tail of its
    * last `update()` call. See `IRenderer.getFeedback` / `RendererFeedback`
    * — the contract surface for both today (sync mutate) and the future

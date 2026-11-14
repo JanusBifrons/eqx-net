@@ -1,0 +1,201 @@
+# Fleet command (the RTS command layer): internals
+
+The player-facing story is [docs/features/rts-command.md](../features/rts-command.md).
+This page is how it is built: which pieces own what, and why each boundary is
+where it is. The zone CLAUDE.md files carry the rules in short
+(`src/server/CLAUDE.md` "Fleet command / wingmen", `src/client/CLAUDE.md`
+"RTS command view", `src/core/CLAUDE.md` "Wingman brain").
+
+## 1. A parked ship is a lingering hull with a wingman brain
+
+There is no new entity type. A ship you are not flying is the existing
+**LINGERING** hull (the third liveness class of root invariant #17, beside
+ACTIVE and DEAD): the body that Spectate / Command, a pilot swap, a fresh-ship
+join, a snapshot restore or a cross-sector hand-off leaves in `lingeringSlots`.
+Lingering hulls already collide, take damage, persist and render for everyone;
+the RTS layer only gives each one a pilot.
+
+That pilot is `WingmanBehaviour` (`src/core/ai/WingmanBehaviour.ts`), a pure,
+zone-blind, allocation-free brain:
+
+- **Mode** (`defend`, `patrol`, `escort`, `hunt`, `retreat`): what it does with
+  no order.
+- **Order** (`move`, `stop`, `attack`): a one-off on top of the mode; when it
+  completes the mode resumes from where the ship is now.
+- **Stance** (`aggressive`, `defensive`, `holdFire`): read by the server's fire
+  target pick; in the brain it only stops a hold-fire hunter from chasing.
+- **Formation role** (squads): hold a `formation.ts` slot round the leader.
+- **Morale:** `reportDamage` → `MoraleTracker` → a seeded die (`rollMorale`);
+  fall back or flee, then resume.
+
+### The owner rule: player controls only
+
+The brain outputs **player control bits** (`WingmanControls`: thrust, reverse,
+turn, boost), never an impulse or an AI intent. `wingman/intentToControlBits.ts`
+is the one adapter from desired velocity to keys. So a wingman-flown fighter has
+exactly the speed, turn rate and energy of the same fighter flown by hand
+(upgrades included): it flies through `applyShipInput`, the seam every pilot
+uses. Boost goes through the hull's own energy gate (`canBoost`), re-checked
+every tick while held.
+
+## 2. FleetCommandSubsystem (server)
+
+`src/server/fleet/FleetCommandSubsystem.ts` holds one brain per AI-flown owned
+ship, keyed by `shipInstanceId`, over injected hooks (`ownerOf`, `readPose`,
+`postInput`, `canBoost`, `resolvePoseInto`, `pilotShipOf`, `nearestHostile`).
+It never touches the room directly, which keeps it unit-testable against a real
+`PhysicsWorld`.
+
+- **Attach / detach at every lingering entry and exit.** `SectorRoom` calls
+  `attachWingman(id)` next to every `lingeringSlots.set` and `detachWingman(id)`
+  next to every `.delete`. Detach posts neutral controls so a queued wingman
+  input can't become the reclaimed hull's held input.
+- **Owner-checked per id.** Every command names ship ids; each is checked
+  through `ownerOf`, and foreign or unknown ids drop silently. A selection that
+  includes the caller's own ACTIVE ship (named by playerId) drops that id: the
+  pilot flies it.
+- **Re-plan at ~10 Hz** (`FLEET_REPLAN_EVERY_TICKS` = 6, staggered by attach
+  order). Between re-plans the physics worker holds the last INPUT (input queue
+  rule #3 in `src/core/CLAUDE.md`), exactly as for a human whose keys are held.
+  The wingman's INPUT goes to the hull's slot at `inputTick = serverTick`.
+- **Squads** are 2–24 ships. A command that covers every AI-flown member is
+  squad-wide (an order goes to the leader, a mode becomes the squad's mode); a
+  subset command peels those ships off. If the owner flies a member, that ship
+  leads (pilot-led squad) and the others form up on it.
+
+### Fire goes through PlayerFireResolver
+
+A parked hull is a player's ship, so it has a pilot's powers and no more. It
+does not use `AiFireResolver`. A separate `LockSubsystem` instance
+(`wingmanLocks`, keyed by shipInstanceId, groups in MAN) gives it locks;
+`WeaponMountTicker.tickHull` aims its mounts with the pilot's rule;
+`PlayerFireResolver.fireHull` fires with the full lock-to-fire gate (#19),
+mount bearing, cooldown, energy and damage upgrades. Target choice
+(`fleet/wingmanFireTarget.ts`, ~10 Hz) is where the stance applies. A hit from
+a hull counts as its owner's hostile act (standing, faction escalation, NPC
+base reactions), so commanding a fleet is never a way to dodge consequences.
+
+## 3. Messages
+
+Client → server (strict zod schemas, `malformed.record` on failure,
+rate-limited per session per tick by `fleetMsgAllowed`):
+
+| Message | Use |
+|---|---|
+| `command` | Leave the ship you fly (alias of `spectate`: it parks and gets a wingman). |
+| `pilot_ship { shipId }` | Take a parked ship's controls (same-sector instant swap). |
+| `fleet_order { shipIds, kind, x?, y?, targetId? }` | `move` / `stop` / `attack`. |
+| `set_mode { shipIds, mode, x?, y?, route?, escortId? }` | Mode, with the picked route / escort / retreat point. |
+| `set_stance`, `form_squad`, `disband_squad` | As named. |
+
+A join can carry `startMode: 'command' | 'fly'` (galaxy rooms only; absent is
+`fly`). `command` parks the hull at the arrival flip and sends
+`control_mode { mode: 'command' }`, so the client lands in Command view through
+the normal ship handshake.
+
+### Why `fleet_status` is a message, not a snapshot field (invariant #16)
+
+Root invariant #16 says client-visible state must be reconstructible from the
+snapshot and join payload, and that a discrete event must never be the only
+carrier. `fleet_status` looks like it breaks that, and it does not:
+
+- The snapshot goes to **everyone** in interest. A wingman's mode, orders,
+  patrol route, squad and morale are **private** to its owner; putting them on
+  the snapshot would leak another player's plans.
+- So `FleetStatusStream` (`src/server/fleet/FleetStatusStream.ts`) sends each
+  session **only its own ships**, as compact tuples, every other fire of the
+  selection-stats timer (~2.5 Hz), off the physics tick.
+- Every send is the **whole** owned list and the client **replaces** its copy.
+  It is a state stream, not an event: a dropped message is healed by the next
+  one, and a late joiner converges within one period. Only a repeat empty send
+  is skipped.
+
+Everyone still sees the ships themselves (pose, hull, thrust, boost and mount
+angles) on the normal snapshot and binary channels; only the orders are private.
+
+## 4. Client
+
+### Command view and the pointer router
+
+Command view is `pilotMode === 'spectator'` (the stored field keeps its name;
+the player-facing `ControlMode` is the selector `selectControlMode`, never
+stored twice). While it is on, both pointer paths (main-thread
+`PixiRenderer` and the worker) go through the pure `CommandPointerRouter`
+(`render/input/commandPointerRouter.ts`):
+
+- left tap → select (own ship) or inspect; left drag → selection box;
+- right click → order (attack an attackable entity under the cursor, else move);
+- middle button, wheel and hover → camera;
+- touch: moving before `HOLD_THRESHOLD_MS` (500 ms) pans; holding still past it
+  arms a box (FleetOverlay draws the growing ring); a tap with a selection is an
+  order per the `fleetOrderMode` toggle (`render/input/tapAction.ts`).
+
+### Selection, overlay and feedback sequence numbers
+
+The renderer owns the selection (`_fleetSel`, pure helpers in
+`render/fleetSelection.ts`), because only it can hit-test ships where they are
+drawn, and it may be in a worker. Results reach the main thread through
+`RendererFeedback`, as **monotonic sequence numbers** plus payload, never
+one-shot booleans (a feedback frame can be read by several RAFs):
+
+| Feedback | Main-thread consumer (`gameRafLoop`) |
+|---|---|
+| `fleetSelSeq` / `fleetSelIds` | Mirror the ids into Zustand `fleetSelection` (ids only, #2). |
+| `orderSeq` / `orderKind` / `orderX/Y` / `orderTargetId` | Send each new order once (`sendFleetOrder`). |
+| `fleetPickSeq` / `fleetPickResult` / `fleetPickPoints` | Send the picked patrol / escort / retreat via `setMode`. |
+| `takeControlsSeq` / `takeControlsId` | Double-click on an own parked ship → `takeControls`. |
+
+The other direction goes through `IRenderer` methods, each a worker protocol
+message: `setFleetOrderMode`, `setFleetPick` / `commitFleetPick`, and
+`setFleetOverlayModel`. The overlay model is a compact per-ship list (squad,
+order, destination, target, escort, route) built by
+`fleet/fleetOverlayModel.ts` from the status, posted only when the status
+version moves; the renderer can't read `fleet/fleetStatus.ts` because it may be
+in another thread.
+
+`render/FleetOverlay.ts` is **one** screen-space `Graphics`: selection rings,
+drag box, order flash, hold cue, order lines (capped at `MAX_ORDER_SEGMENTS`),
+patrol pick loop. One draw call, nothing per ship (the fleet-fight scene sits
+near the draw-call budget).
+
+### Status and the panel
+
+`fleet/fleetStatus.ts` is a module singleton with a version counter, written
+only by the `fleet_status` handler (`fleet/fleetStatusIngest.ts`: zod parse,
+decode tuples, replace). `FleetPanel` (desktop) and `FleetStrip` (phone) poll it
+at ~3 Hz, like the selection stats; nothing about it is in Zustand. Commands go
+through `fleet/fleetCommands.ts`, whose network senders are plugged in at boot
+by `fleet/installFleetCommandSenders.ts`.
+
+### Parked hulls on screen
+
+A wingman-flown hull is a remote moving ship (root invariant #12): its
+prediction body is reset from each snapshot WITH the snapshot's angular
+velocity and forward-predicted with the wingman's last input bits
+(`LingeringPredBodyManager`), and its exhaust and boost flame come from those
+bits.
+
+## 5. Tests
+
+- Brain: `WingmanBehaviour*.test.ts`, `intentToControlBits.test.ts`.
+- Subsystem: `FleetCommandSubsystem*.test.ts`, `FleetStatusStream.test.ts`,
+  `wingmanFireTarget.test.ts`.
+- Room: `tests/integration/sectorRoom/` `fleetCommandMessages`,
+  `wingmanMovesParkedHull`, `wingmanFights`, `wingmanBoost`, `pilotLedSquad`,
+  `commandDefaultJoin`.
+- Client units: `commandPointerRouter`, `tapAction`, `fleetSelection*`,
+  `FleetOverlay*`, `fleetPick`, `FleetPanel`, `fleetStatusIngest`,
+  `gameRafLoop.orders`, `protocol`.
+- E2E: `tests/e2e/fleet-command.spec.ts` drives the whole loop in a browser
+  (two parked hulls via a `newShip=1` rejoin; box-select, right-click move,
+  hold fire, squad, patrol pick, Stop, Fly). It projects hulls to the screen
+  with the DEV hook `__eqxWorldToScreen` (main-thread renderer, `?worker=0`).
+  `tests/e2e/spectator-mode.spec.ts` covers the command-view join and the
+  middle-drag camera pan.
+
+## 6. Not done yet
+
+- A phone-viewport E2E of hold-then-drag (the router and tap logic are unit
+  tested).
+- Fleet persistence across restarts is a separate slice
+  (`SectorPersistence` / `FleetCommandSubsystem`).

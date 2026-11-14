@@ -59,6 +59,14 @@ export const FEATURE_TRIGGERS = [
     specs: ['lock-to-fire-default', 'fire-control-lock', 'contacts-overview', 'auto-fire', 'auto-fire-multitouch', 'fx-weapons', 'drone-destruction'],
   },
   {
+    // RTS command layer: Command view selection, orders, the fleet panel, wingman brains.
+    area: 'fleet command',
+    paths: ['src/client/fleet/', 'src/client/render/input/', 'src/client/render/fleetSelection', 'src/client/render/FleetOverlay',
+      'src/client/components/FleetPanel', 'src/client/components/FleetStrip', 'src/client/components/FleetPickBar',
+      'src/server/fleet/', 'src/core/ai/WingmanBehaviour', 'src/core/ai/wingman/', 'src/shared-types/messages/fleetStatusMessages'],
+    specs: ['fleet-command', 'spectator-mode'],
+  },
+  {
     area: 'beams',
     paths: ['src/client/render/BeamSpritePool', 'src/client/combat/'],
     specs: ['laser-smoothness', 'laser-falloff-probe'],

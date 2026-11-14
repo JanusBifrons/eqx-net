@@ -74,7 +74,7 @@ test('death → instant spectator, NO death modal', async ({ page }) => {
   await expect(page.locator('[data-testid="death-overlay"]')).toHaveCount(0);
 });
 
-test('spectator camera free-roams (drag pans, no follow snap-back)', async ({ page }) => {
+test('spectator camera free-roams (middle-drag pans, no follow snap-back)', async ({ page }) => {
   test.setTimeout(45_000);
   await join(page, { worker0: true });
   await killLocalShip(page);
@@ -96,12 +96,15 @@ test('spectator camera free-roams (drag pans, no follow snap-back)', async ({ pa
 
   const before = await readCenter();
 
-  // Drag the canvas — in spectator the camera pans and STAYS (no follow yanks
-  // it back to a ship that no longer exists).
+  // MIDDLE-drag the canvas — in spectator (Command view) the camera pans and
+  // STAYS (no follow yanks it back to a ship that no longer exists). A LEFT
+  // drag draws a fleet selection box in Command view by design (RTS slice
+  // 13a, owner decision); the command router passes the middle button to the
+  // camera.
   await page.mouse.move(cx, cy);
-  await page.mouse.down();
+  await page.mouse.down({ button: 'middle' });
   await page.mouse.move(cx - 220, cy - 160, { steps: 8 });
-  await page.mouse.up();
+  await page.mouse.up({ button: 'middle' });
   await page.waitForTimeout(400); // let momentum settle
 
   const after = await readCenter();

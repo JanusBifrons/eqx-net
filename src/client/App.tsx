@@ -611,6 +611,16 @@ function GameSurface({
           };
           return r?.getCameraCenterGame ? r.getCameraCenterGame() : { x: NaN, y: NaN };
         };
+      // RTS fleet-command E2E — project a GAME-space point to canvas pixels so
+      // the spec can box-select / click own ships where they are drawn.
+      // Main-thread renderer only (`?worker=0`).
+      (window as unknown as { __eqxWorldToScreen?: (x: number, y: number) => { x: number; y: number } })
+        .__eqxWorldToScreen = (x, y) => {
+          const r = rendererRef.current as unknown as {
+            worldToScreenGame?: (x: number, y: number) => { x: number; y: number };
+          };
+          return r?.worldToScreenGame ? r.worldToScreenGame(x, y) : { x: NaN, y: NaN };
+        };
       // Cinematic camera + HUD control for the showcase capture pipeline
       // (docs/architecture/showcase-pipeline.md). Calls the renderer DIRECTLY —
       // shot keyframes carry x/y and must never touch Zustand (invariant #2).

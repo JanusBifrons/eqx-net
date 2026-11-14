@@ -151,6 +151,8 @@ const FEATURE_SPECS: string[] = [
   '**/spectator-mode.spec.ts',
   // Spectator build hotbar stays inside the viewport (frame review 2026-11-10).
   '**/build-hotbar-fits-viewport.spec.ts',
+  // RTS command layer: box-select, orders, stance, squads, patrol pick, Fly.
+  '**/fleet-command.spec.ts',
   '**/cinematic-camera.spec.ts',
   '**/respawn-cascade-input-routing.spec.ts',
   '**/drawer-galaxy.spec.ts',
