@@ -141,7 +141,10 @@ callsigns) are filmed too ("Show everything", 2026-11-10; `showcase/recorder.ts`
 3. Run `pnpm showcase --shot <id>` and check the contact sheet.
 4. `tests/unit/showcaseCoverage.test.ts` fails CI if any `docs/features` or
    `docs/architecture` page is neither filmed (`shot.docs`), nor in
-   `SHOWCASE_EXEMPT`, nor in `SHOWCASE_PENDING`, each with a reason. It also
+   `SHOWCASE_EXEMPT`, nor in `SHOWCASE_PENDING`, nor exempt in the doc itself
+   (a `<!-- showcase-exempt: <reason> -->` line in its first 20 lines), each
+   with a reason. Prefer the in-doc line for a page that will never be filmed
+   (internals): it keeps a docs PR markdown-only, so CI skips the suites. It also
    fails if a shot names a room or sector the server doesn't define. **A new
    feature doc therefore forces a decision about the video.**
 

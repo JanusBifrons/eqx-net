@@ -527,7 +527,9 @@ export class SnapshotBroadcaster {
     return pct;
   }
   private readonly _asteroidsScratch: MutableAsteroidEntry[] = [];
-  private readonly _mountAnglesPool = new Map<number, number[]>();
+  /** Per-recipient mountAngles buffers, one per ship entry (`acquireMountAngles`). */
+  private readonly _mountAnglesPool: number[][] = [];
+  private _mountAnglesCursor = 0;
   /** Fresh Record per recipient is unavoidable — notepack.io would
    *  encode stale keys from a reused Record into the wire. The VALUES
    *  inside are pooled via `_stateEntryPool` though, which is the
@@ -578,16 +580,22 @@ export class SnapshotBroadcaster {
     return entry;
   }
 
-  /** Acquire a number[] of the requested length from `_mountAnglesPool`.
-   *  The same instance is reused across broadcasts; consumers must
-   *  treat the array as ephemeral (good only until the next acquire
-   *  for the same length). */
+  /** Acquire a number[] of the requested length for ONE ship's entry in
+   *  the snapshot being built. Each call within a recipient's snapshot
+   *  returns a DIFFERENT array (a cursor over `_mountAnglesPool`, reset per
+   *  recipient), because the snapshot is encoded only when it is sent: a
+   *  pool keyed by length handed every one-turret ship the same array, so
+   *  the wire carried the last ship's angle for all of them (every nose
+   *  turret drawn at another ship's angle). Reused across recipients and
+   *  broadcasts (the send encodes synchronously), so alloc-free once grown. */
   private acquireMountAngles(len: number): number[] {
-    let arr = this._mountAnglesPool.get(len);
+    const i = this._mountAnglesCursor++;
+    let arr = this._mountAnglesPool[i];
     if (!arr) {
       arr = new Array<number>(len);
-      this._mountAnglesPool.set(len, arr);
+      this._mountAnglesPool[i] = arr;
     }
+    arr.length = len;
     return arr;
   }
 
@@ -841,6 +849,9 @@ export class SnapshotBroadcaster {
       const bp = checkBackpressure(client, d.logger);
       if (bp === 'close') { client.leave(4002); continue; }
       if (bp === 'drop') continue;
+      // The previous recipient's snapshot is encoded (sent): its turret
+      // angle buffers are free for this one.
+      this._mountAnglesCursor = 0;
 
       const recipientPlayerId = d.sessionToPlayer.get(client.sessionId);
       if (!recipientPlayerId) continue;

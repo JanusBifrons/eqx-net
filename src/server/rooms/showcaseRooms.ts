@@ -103,7 +103,8 @@ export const SHOWCASE_CAPITAL_DUEL_OPTS = {
 /** Real-scale ranges (docs/architecture/real-scale-ranges.md): the pilot
  *  (join `shipKind=battleship`) at the origin, nose +y, and an NPC battleship
  *  30 km off its starboard beam with a live brain. Needs a server and a page at
- *  `EQX_NAVAL_RANGE=real` / `?navalRange=real` (the showcase `naval` profile). */
+ *  real naval ranges (the default; the showcase `naval` profile also sets
+ *  `EQX_NAVAL_RANGE=real` / `?navalRange=real` explicitly). */
 export const SHOWCASE_LONG_GUNS_OPTS = {
   ...SHOWCASE_CAPITALS_COMBAT_OPTS,
   dronePoses: [{ kind: 'battleship', x: 30_000, y: 0, angle: 0 }],

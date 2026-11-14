@@ -79,3 +79,18 @@ Plan `peppy-jumping-pinwheel`, economy v2, phase W1. This follows Eve Online:
 - `storageDeposit.test.ts`: repair is paid from the wallet, and a short
   wallet is refused.
 - `WalletChip.test.tsx`.
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- **Economy v2 W1 — the wallet.** Credits are virtual: never cargo. the GameHud status capsule (testid `wallet-chip` / `data-wallet`) shows the one balance from the Zustand `wallet`, written ONLY from the own-ship snapshot `states[].wallet` field when it changes (#16). Bounty and repair UIs check and pay from the wallet; no storage picker for payment.
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](../architecture/server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **The wallet — credits are VIRTUAL (economy v2 W1, plan peppy-jumping-pinwheel)**: `economy/Wallet.ts` holds ONE balance per canonical playerId (memory authority; absolute `WALLET_PUT` op; table `player_wallets`; boot `initWallet` AFTER the account merge, then `migrateLegacyHoldCredits`). **Rules:** (1) credits NEVER live in a `Hold` — no pod, ship, storage, escrow or bounty hold carries them, so death / abandon / raze / raids can't touch them; (2) every source pays the wallet (`credit`) and every sink debits it (`debit`, all-or-nothing) — NPC kill bounty (`rollKillBounty`, loot-table `bounty` ranges), elite/mothership bounties, trade sells, PvP bounties; repair/respec/trade buys+gifts/bounty placement; (3) when a credit move must be atomic with goods (trade), use `creditDeferred`/`debitDeferred` and fold the op into the SAME `HoldStore.commit(…, extraOps)` group — on a failed commit, `flush` the restored balance; (4) trade holds wallet-paid credits on the run (`run.paid`) and refunds them on every unwind (raid, abort, reconcile); (5) the own player's balance rides the own active ship's snapshot entry (`wallet`, #16); (6) guests are full players — no sign-in gate on wallet features; (7) testMode `initialWallet` / room `seedStorageHold.credits` seed wallets (never holds). The structures agent's payouts (colonies, Freight Dock) call the same API. Locks: `Wallet.test.ts`, `tests/integration/sectorRoom/walletKillBounty.test.ts`, `TradeDirector.test.ts`. Story: [docs/features/economy-wallet.md](economy-wallet.md).

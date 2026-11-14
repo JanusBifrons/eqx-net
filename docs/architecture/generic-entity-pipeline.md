@@ -59,6 +59,15 @@ rendering / damage come for free.
    once; the dispatch/sync/render seams read the descriptor instead of branching
    on id-string shape.
 
+## Zone split
+
+`src/core/entity/` + the `IDamageable` / `INetworkSynced` / `IRenderContributor` contracts make a new world-object type "a leaf + a descriptor".
+
+- **Core (zone-pure).** The append-only `EntityKindRegistry` ([src/core/entity/EntityKindRegistry.ts](../../src/core/entity/EntityKindRegistry.ts)) maps each `EntityKindTag` to its sync, render and damageable descriptors. `IDamageable` declares the damage surface: `HealthBinding`, a stateless per-kind accessor over the live store (never a value copy), plus the reused `Interaction` / `InteractionResultMut`. Core stays blind to the wire.
+- **Server.** The kind-specific orchestration (broadcast, bus and worker side-effects) is a server concern. The leaf classes in `src/server/entity/leaves/` (`ShipEntity` / `DroneEntity` / `StructureEntity`) implement `Entity` and compose these contracts as data. `DamageRouter` routes a hit via `EntityResolver` to the leaf and one monomorphic `applyInteraction` (HC#5: never a per-class virtual `receiveInteraction`).
+- **Two different types.** `Entity` is a separate type from `AiEntity` (`IAiBehaviour.ts`); don't conflate them.
+- **Append-only.** Kinds and pose-core bytes are append-only (mirrors invariant #11).
+
 ## What each phase delivered
 
 | Phase | Deliverable | Key files |
@@ -277,6 +286,26 @@ is free either way.
 **Rule of thumb:** *cosmetic/static variety lives in a catalogue (data);
 behavioural variety lives in a leaf hook (small code); a new client routing shape
 earns a new kind byte.*
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- **Binary-swarm (pose-core) entities construct through the client `EntityFactory` (Generic Entity Pipeline B4, 2026-06-04).** `ColyseusClient.syncSwarmIntoPredWorld` no longer branches `kind===0 ? asteroid : else-is-drone` (that mis-registered any future kind as a `HostileDroneBehaviour` — HC#2), nor reads the old `swarmKindProfile` data table (DELETED). It calls [`net/entity/ClientEntityFactory.ts`](../../src/client/net/entity/ClientEntityFactory.ts) `leafFor(kind)` → a per-kind client leaf ([`net/entity/leaves/`](../../src/client/net/entity/leaves/): asteroid/drone/structure), the **OOP peer of the server leaves** in `src/server/entity/leaves/`. An **unrecognised kind returns `null` and is SKIPPED** (never the drone path — HC#2). Each leaf reads the SIDE-NEUTRAL facts from the shared core `EntityKindRegistry` (`staticBody = !descriptor.sync.interpolated`) and holds only the client-specific construction (collider shape, catalogue mass, AI-ledger registration, shield-collider swap). Adding a pose-core kind = a registry row + a leaf + a factory `case` (+ a sprite arm). A static structure (kind 2) is asteroid-like client-side but damageable server-side. The wire (`swarmWireFormat.ts`) gains only a new `kind` byte value — no stride/`SWARM_WIRE_VERSION` bump.
+  - **Cache ownership stays in `ColyseusClient`, NOT the factory (load-bearing).** `predSwarmKeys` / `_movingSwarmKeys` / `_swarmBodyKeyCache` / `_aiRegisteredIds` are read across `syncSwarmIntoPredWorld` (spawn + teardown sweep), the per-snapshot remote-entity anchor (`anchorRemoteSwarmBodies` reads `_swarmBodyKeyCache`), the local beam ray (`DisplayPoseHitscan` reads `_movingSwarmKeys` + `_swarmBodyKeyCache`), and `resetPredictionState`/`dispose` (clear-by-name on sector handoff). The factory takes a REUSED `_clientSpawnCtx` (one class-field instance mutated per entity — zero per-entity alloc, invariant #14); a leaf that registers AI sets `ctx.registeredAiId` and the client folds it into `_aiRegisteredIds`. **Do NOT move these caches into the factory** — the anchor and the beam ray read them directly, and the sector-handoff teardown contract clears them by name. Teardown of the AI-ledger entry stays caller-owned via `_aiRegisteredIds` (the kind is unavailable at sweep time; that set is the precise drone marker). Full story: [docs/architecture/generic-entity-pipeline.md](../../docs/architecture/generic-entity-pipeline.md).
+
+### Phase A3 — Renderer decision logic extraction (2026-05-13)
+
+Per-entity sprite-update decisions (create / rebuild / reposition / skip) live in `src/client/render/spriteUpdateDecisions.ts` as pure functions, NOT inlined inside `PixiRenderer.ts`. The Pixi calls (Graphics instantiation, `addChild`, `tint`, `alpha`, `destroy`) stay in the renderer; only the branching lives in the pure module.
+
+**Why**: the Phase 6b "lingering hull permanently invisible" bug was a too-aggressive `if (!ship.kind) continue;` skip in the renderer that left the sprite uncreated forever when the schema diff with `kind` arrived late. A unit test on a pure decision helper would have failed loudly: "no cache + unknown kind should `create` with the fallback kind, not `skip`." The extraction makes that contract explicit and testable.
+
+**The rule**: when you add a new entity-update method on the renderer (`updateXxx` taking `RenderMirror`), the per-entity decision logic MUST live in `spriteUpdateDecisions.ts` with unit tests covering every branch + a property-based test (fast-check, already installed). Don't inline new decision branches in `PixiRenderer.ts`.
+
+Current functions:
+- `decideLingeringSpriteAction({ cached, currentKind, fallbackKind })` — Phase 6b lingering hulls. Falls back to `fallbackKind` when `currentKind` is undefined and there's no cache hit (don't lock in the wrong silhouette but also don't go invisible).
+
+Tests: `src/client/render/spriteUpdateDecisions.test.ts` (12 cases incl. fast-check properties).
 
 ## Server implementation notes
 

@@ -5,9 +5,9 @@
  * built unscaled, so their guns are too.
  *
  * Two tables, picked by the naval range switch (`navalRange.ts`,
- * `EQX_NAVAL_RANGE` / `?navalRange=`): `legacy` (default) is what the shipped
- * game (2× B, reach ×1.5) always used; `real` is the real maximum range in the
- * game's km with time of flight real ÷ 3 (slice 14).
+ * `EQX_NAVAL_RANGE` / `?navalRange=`): `real` (default since 2026-11-14) is
+ * the real maximum range in the game's km with time of flight real ÷ 3 (slice
+ * 14); `legacy` (opt-in) is what the game (2× B, reach ×1.5) used before.
  *
  * Lives in shared-types (pure, leaf zone) so both the weapon catalogue
  * (`core/combat/WeaponCatalogue.ts`) and the coastal-defence structure records
@@ -31,8 +31,8 @@ export interface NavalGunBallistics {
   readonly maxTicks: number;
 }
 
-/** LEGACY shell speed and flight time per naval gun (`EQX_NAVAL_RANGE` unset
- *  or `legacy`): the shipped 2× B numbers, absolute. */
+/** LEGACY shell speed and flight time per naval gun (`EQX_NAVAL_RANGE=legacy`):
+ *  the pre-2026-11-14 shipped 2× B numbers, absolute. */
 export const LEGACY_NAVAL_GUN_BALLISTICS = {
   naval_s: { speed: 1800, maxTicks: 90 },
   naval_m: { speed: 2000, maxTicks: 125 },

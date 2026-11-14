@@ -9,7 +9,7 @@
  *     in a ship-vs-ship fight (drones vs robots) the turrets sat at rest while
  *     the pilot fired: its fire gate was the hull cone PLUS the turret's arc,
  *     and since #572 the shot leaves down the barrel, so it went off at rest.
- *  2. A FIXED nose gun (fighter, scout, heavy, every robot) fired along the
+ *  2. A FIXED nose gun (then fighter, scout, heavy, every robot) fired along the
  *     AI's exact lead vector, anywhere inside a 14°-26° hull cone, while the
  *     drawn nose gun points straight ahead.
  *
@@ -149,16 +149,30 @@ describe('an AI pilot trains its turrets on the fight it is in', () => {
     expect(Math.hypot(out.x - 50, out.y - 120)).toBeLessThan(1);
   });
 
+  // A genuinely fixed nose gun (the patrol fighter, trader hauler, robot
+  // harvester / nexus): fighter, scout, heavy and robot-square/-circle/-hexagon
+  // carry small-arc nose turrets since 2026-11-14 (`noseTurretMount`).
+  const fireAt = (kind: ShipKindId, bearing: number): boolean => {
+    const brain = new HostileDroneBehaviour(kind);
+    brain.markHostile('p', 0);
+    const d = 40; // point-blank: the old cone was 0.45 rad here
+    const p = { id: 'p', x: -Math.sin(bearing) * d, y: Math.cos(bearing) * d, vx: 0, vy: 0 };
+    const intent = brain.tick({ id: 'd', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }, { players: [p], tick: 100, dtSec: 1 / 60 });
+    return intent.fire !== undefined;
+  };
+
   it('a fixed-gun AI pilot pulls the trigger only when its nose bears (the pilot window)', () => {
-    const at = (bearing: number): boolean => {
-      const brain = new HostileDroneBehaviour('fighter');
-      brain.markHostile('p', 0);
-      const d = 40; // point-blank: the old cone was 0.45 rad here
-      const p = { id: 'p', x: -Math.sin(bearing) * d, y: Math.cos(bearing) * d, vx: 0, vy: 0 };
-      const intent = brain.tick({ id: 'd', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }, { players: [p], tick: 100, dtSec: 1 / 60 });
-      return intent.fire !== undefined;
-    };
-    expect(at(FC_MOUNT_FIRE_TOLERANCE * 0.5)).toBe(true);
-    expect(at(0.3)).toBe(false);
+    expect(getShipKind('patrol-fighter').mounts![0]!.rotationSpeed).toBe(0);
+    expect(fireAt('patrol-fighter', FC_MOUNT_FIRE_TOLERANCE * 0.5)).toBe(true);
+    expect(fireAt('patrol-fighter', 0.3)).toBe(false);
+  });
+
+  it('a nose-turret AI pilot (fighter) keeps the wide turret request: hull cone + the turret half-arc', () => {
+    const half = getShipKind('fighter').mounts![0]!.arcMax;
+    expect(half).toBeGreaterThan(0);
+    // 0.3 rad is past the fixed-gun window but inside the turret's reach;
+    // the resolver then fires only a barrel that bears.
+    expect(fireAt('fighter', 0.3)).toBe(true);
+    expect(fireAt('fighter', 1.2)).toBe(false);
   });
 });

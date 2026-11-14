@@ -141,6 +141,20 @@ Every NPC convoy now has a **carrier** as well as an owner (`core/economy/freigh
 
 Locks: `src/core/economy/freight.test.ts` (who carries, cut range), `ConvoyDirector.test.ts` (a contracted carrier is recorded and paid its cut; the Traders carry their own for free), `tests/integration/sectorRoom/factionStanding.test.ts` (raiding a contracted convoy costs standing with both).
 
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### Trade UI (Living World P2b, plan peppy-jumping-pinwheel)
+
+- The **Trade tab** (`layout/Drawer/tabs/TradeTab.tsx`) rebuilds from `GET /trade/economy` + `/trade/offers` ONLY (#16). It polls only while on screen (`drawerTab === 'trade' && isDrawerOpen`, the drawer-perf rule) and refetches at once when `tradeNoticeSeq` bumps.
+- `trade_notice` (zod `TradeNoticeSchema`) is an ACCELERATOR. It pushes `tradeToasts` (`TradeToasts`, top-centre; red = under fire / raided = the escort prompt, tap opens the Trade tab) and bumps `tradeUnread` (the rail badge). Never derive deal state from it.
+- The base picker reads own storage from the render mirror via `getGameClient()` at poll cadence (`net/tradeView.ts` `ownStorages`). The structure subtype comes from the swarm entry's `shipKind`. Messages send the storage **entityId**; the server resolves the owned uid.
+- **No raw ids in trade text.** Storage labels are numbered ("Cargo Bay 2"), never `#entityId`. Sector names go through `sectorName`, and the server strips testMode `#roomId` keys (`tradeSectorKey`).
+- `WhileAwayDialog` summarises history newer than the localStorage watermark (`eqxTradeLastSeenMs`).
+- **Never add a top-level `src/client/trade/` dir:** it collides with the `/trade` Vite proxy. Trade client code lives in `net/trade*.ts`. The `clientDirProxyCollision.test.ts` guard locks this.
+- Locks: `tradeView.test.ts`, `TradeToasts.test.tsx`, `tests/e2e/trade-tab.spec.ts` (feature tier).
+
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
@@ -153,3 +167,9 @@ Locks: `src/core/economy/freight.test.ts` (who carries, cut range), `ConvoyDirec
 - **Regional prices (T3).** The planning pass also publishes per-region price factors (`economy/regionalPrices.ts`).
   - Every trade quote goes through `TradeDirector.quote(kind, good, rep, sectorKey)`, so the board, the accept and the re-quote agree. Never quote around it.
   - The offers route takes `?sector=`.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Economy + trade deals (plan peppy-jumping-pinwheel P2)**: no trader stations — a `trader-hauler` (npcOnly, shedImmune, `hauler-` ids) physically carries each deal visit; the process-global `TradeDirector` (`economy/`, ~1 s unref'd loop) owns it, `EconomyStore` is the in-memory authority (tables `player_economy` / `trade_deals` / `economy_state`). **Rules:** (1) every value move of a visit is ONE `StorageService.tradeTransfer` → one `HoldStore.commit` GROUP, with the deal's `TRADE_DEAL_PUT` riding the SAME group (`commit(..., extraOps)`) — never write escrow and deal state separately; (2) any NPC that carries a hold spills it on death (`dropKillLoot`), so a hauler's loot table is empty — value is never minted by a kill; (3) value changes hands only on safe departure; a raid refunds the player's escrow unless the owner damaged their own hauler (forfeit); (4) the ONE NPC→player hostility query is `SectorRoom.npcHostileTo` (robot truce via the trade sink) — snapshot hostility, live counts and missile homing must all go through it (#15/#16); (5) haulers are not persisted — `TradeDirector.reconcile()` runs at boot BEFORE `start()` and unwinds in-flight runs; (6) **reputation is faction STANDING since v4 F1**: −100..100 in 0.1 steps (rows saved before F1 are divided by 10 once, `STANDING_SCALE_VERSION`), and `EconomyStore.standing(from, to)` / `adjustStanding` hold the whole directional web (NPC→player in `rep`, player→anyone in `views`, NPC→NPC in the `standings` economy_state record). Rooms read it via `TradeSink.standing`; see [docs/architecture/factions.md](factions.md). Room → director via the nullable `economy/tradeSink.ts` singleton. Reads: `GET /trade/offers`, `GET /trade/economy`. 🔴 netgate (haulers on the swarm wire, AI truce, the kill path). Story: [docs/architecture/economy-and-trade.md](economy-and-trade.md).
