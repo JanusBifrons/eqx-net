@@ -13,10 +13,13 @@ import { AI_INPUT_BOOST, AI_INPUT_REVERSE, AI_INPUT_THRUST, AI_INPUT_TURN_LEFT, 
 import {
   brakingSpeed,
   DEFAULT_PILOT_PARAMS,
+  easedSnapTurn,
   facingOf,
   makePilotHandling,
   makePilotState,
+  makeSnapTurnState,
   pilotInputs,
+  SNAP_TURN_EASE,
   wrapAngle,
   type PilotParams,
 } from './virtualPilot.js';
@@ -187,6 +190,151 @@ describe('virtualPilot — flying to a point', () => {
     const first = pilotInputs(h, st, p, 0, 0, 0, 0, 1, 0, 0, false);
     expect(first & AI_INPUT_TURN_LEFT).toBeTruthy();
     for (let i = 0; i < 3; i++) expect(pilotInputs(h, st, p, 0, 0, 0, 0, -1, 0, 0, false)).toBe(first);
-    expect(pilotInputs(h, st, p, 0, 0, 0, 0, -1, 0, 0, false) & AI_INPUT_TURN_RIGHT).toBeTruthy();
+    // The next decision lets go of left (it never reverses at once: no
+    // left / right hunting), then turns right.
+    expect(pilotInputs(h, st, p, 0, 0, 0, 0, -1, 0, 0, false) & AI_INPUT_TURN_LEFT).toBe(0);
+    let right = false;
+    for (let i = 0; i < 40 && !right; i++) right = (pilotInputs(h, st, p, 0, 0, 0, 0, -1, 0, 0, false) & AI_INPUT_TURN_RIGHT) !== 0;
+    expect(right).toBe(true);
+  });
+});
+
+/**
+ * Key discipline (owner 2026-11-14: the NPC turn was "sort of jerky and abrupt
+ * rather than a smooth turn"; measured on the 1v1 on-sight duel: median turn
+ * press 1–2 ticks, left / right swapped every tick for ~50-tick bursts).
+ * A snap turner is flown kinematically here (a held key turns maxAngvel·dt a
+ * tick, release stops it), exactly as `applyShipInput` does.
+ */
+describe('virtualPilot — key discipline (no flicking)', () => {
+  const fighter = getShipKind('fighter');
+  const h = makePilotHandling(fighter, massOf(fighter, NPC_MASS_FALLBACK));
+  const step = h.maxAngvel / 60;
+
+  interface Trace { presses: number[]; swapsWithin6: number; tapsInBand: number; maxErr: number }
+  /** Fly `ticks` ticks after `desired(t)`; collect press lengths, quick
+   *  reversals (a press the other way within 6 ticks of letting go) and presses
+   *  started with the error inside the dead-band. */
+  function track(ticks: number, desired: (t: number) => number, settle = 60): Trace {
+    const st = makePilotState();
+    let angle = 0;
+    let angvel = 0;
+    const presses: number[] = [];
+    let cur = 0, len = 0, lastDir = 0, sinceEnd = 1e9, swapsWithin6 = 0, tapsInBand = 0, maxErr = 0;
+    const band = SNAP_TURN_EASE.deadbandSteps * step;
+    for (let t = 0; t < ticks; t++) {
+      const want = desired(t);
+      const err = wrapAngle(want - angle);
+      const bits = pilotInputs(h, st, SYNC, angle, angvel, 0, 0, want, 0, 0, false);
+      const k = bits & AI_INPUT_TURN_LEFT ? 1 : bits & AI_INPUT_TURN_RIGHT ? -1 : 0;
+      if (k !== cur) {
+        if (cur !== 0) { presses.push(len); lastDir = cur; sinceEnd = 0; }
+        if (k !== 0) {
+          // sinceEnd = idle ticks before this one.
+          if (lastDir !== 0 && k !== lastDir && sinceEnd < 6) swapsWithin6++;
+          if (Math.abs(err) < band - 1e-6) tapsInBand++;
+        }
+        cur = k; len = 0;
+      }
+      if (k !== 0) len++; else sinceEnd++;
+      angvel = k * h.maxAngvel;
+      angle += k * step;
+      if (t >= settle) maxErr = Math.max(maxErr, Math.abs(wrapAngle(want - angle)));
+    }
+    return { presses, swapsWithin6, tapsInBand, maxErr };
+  }
+  const median = (xs: number[]): number => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] ?? 0;
+
+  it('tracking a target that crosses at half the turn rate: presses of ≥ 4 ticks, no taps, no quick reversals', () => {
+    const r = track(720, (t) => 0.3 + 0.5 * h.maxAngvel * (t / 60));
+    expect(r.presses.length).toBeGreaterThan(5);
+    expect(median(r.presses)).toBeGreaterThanOrEqual(4);
+    expect(r.tapsInBand).toBe(0);
+    expect(r.swapsWithin6).toBe(0);
+    // Still on the target: inside a dead-band (+ a tick) all along.
+    expect(r.maxErr).toBeLessThan((SNAP_TURN_EASE.deadbandSteps + 1) * step);
+  });
+
+  it('a heading that jitters ±4° every tick (the measured hunt) never sets up a left / right swap', () => {
+    const r = track(720, (t) => 0.4 * Math.sin(t / 90) + (t % 2 === 0 ? 1 : -1) * 0.07);
+    expect(r.swapsWithin6).toBe(0);
+    expect(r.tapsInBand).toBe(0);
+  });
+
+  it('a big turn still lands on the heading (released about a tick early, not past it)', () => {
+    const r = track(240, () => 1.5, 200);
+    expect(r.presses.length).toBe(1);
+    expect(r.maxErr).toBeLessThanOrEqual(0.5 * step + 1e-9);
+  });
+
+  it('easedSnapTurn is usable on its own (exported for other pilots)', () => {
+    const st = makeSnapTurnState();
+    // Inside the dead-band: left alone however long it lasts.
+    for (let i = 0; i < 10; i++) expect(easedSnapTurn(st, 2 * step, step)).toBe(0);
+    // Just past it: a press starts within a couple of ticks (smoothed error).
+    let started = false;
+    for (let i = 0; i < 4 && !started; i++) started = easedSnapTurn(st, 3 * step, step) === 1;
+    expect(started).toBe(true);
+    // A short correction is one deliberate press, not a tap.
+    let held = 1;
+    let err = 2 * step;
+    while (easedSnapTurn(st, err, step) === 1) { held++; err -= step; }
+    expect(held).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe('virtualPilot — combat throttle (thrust held by default)', () => {
+  const fighter = getShipKind('fighter');
+  const h = makePilotHandling(fighter, massOf(fighter, NPC_MASS_FALLBACK));
+  const COMBAT: PilotParams = { ...SYNC, combatThrust: true, throttleHoldTicks: 8 };
+
+  it('keeps thrust held when the wanted speed is a little under the actual (speed is managed by turning)', () => {
+    const st = makePilotState();
+    const v = h.cruiseSpeed;
+    const want = v * 0.95; // within the slack
+    const bits = pilotInputs(h, st, COMBAT, 0, 0, 0, v, 0, 0, want, false);
+    expect(bits & AI_INPUT_THRUST).toBeTruthy();
+    // The pre-combat rule would have let go here (wanted < actual along the nose).
+    expect(pilotInputs(h, makePilotState(), SYNC, 0, 0, 0, v, 0, 0, want, false) & AI_INPUT_THRUST).toBe(0);
+  });
+
+  it('a course well off a nose held on the target does not brake a slow ship (the Tail-slow robot)', () => {
+    // Measured 2026-11-14: a robot in Tail, nose on the target, wingman fire
+    // lanes resolving its course ~80° off the nose at 158 u/s, flying 40 u/s:
+    // the along-the-nose rule read "too fast along the nose" and REVERSED it
+    // down to 22 u/s for ~3 s.
+    const off = 1.4;
+    const want = 158;
+    const fwdX = 0, fwdY = 40; // angle 0: nose +y
+    const wvx = -Math.sin(off) * want, wvy = Math.cos(off) * want;
+    const old = pilotInputs(h, makePilotState(), SYNC, 0, 0, fwdX, fwdY, 0, wvx, wvy, false);
+    expect(old & AI_INPUT_REVERSE).toBeTruthy();
+    const now = pilotInputs(h, makePilotState(), COMBAT, 0, 0, fwdX, fwdY, 0, wvx, wvy, false);
+    expect(now & AI_INPUT_REVERSE).toBe(0);
+    expect(now & AI_INPUT_THRUST).toBeTruthy();
+  });
+
+  it('lets go, then reverses, only when the wanted speed is clearly below the actual', () => {
+    const v = h.cruiseSpeed;
+    expect(pilotInputs(h, makePilotState(), COMBAT, 0, 0, 0, v, 0, 0, v * 0.85, false) & (AI_INPUT_THRUST | AI_INPUT_REVERSE)).toBe(0);
+    expect(pilotInputs(h, makePilotState(), COMBAT, 0, 0, 0, v, 0, 0, v * 0.5, false) & AI_INPUT_REVERSE).toBeTruthy();
+  });
+
+  it('no on/off chatter: a wanted speed that flickers about the actual changes the throttle at most once per hold', () => {
+    const st = makePilotState();
+    const v = h.cruiseSpeed;
+    let prev = -1, changes = 0, run = 0, minRun = Infinity;
+    for (let t = 0; t < 240; t++) {
+      const want = t % 2 === 0 ? v * 1.2 : v * 0.5;
+      const bits = pilotInputs(h, st, COMBAT, 0, 0, 0, v, 0, 0, want, false);
+      const k = bits & AI_INPUT_THRUST ? 1 : bits & AI_INPUT_REVERSE ? -1 : 0;
+      if (k !== prev) {
+        if (prev !== -1) { changes++; minRun = Math.min(minRun, run); }
+        prev = k; run = 0;
+      }
+      run++;
+    }
+    expect(changes).toBeGreaterThan(0);
+    expect(minRun).toBeGreaterThanOrEqual(8);
   });
 });

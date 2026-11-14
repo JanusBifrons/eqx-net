@@ -355,8 +355,11 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
       tick: 100,
       dtSec: 1 / 60,
     };
-    const intent = b.tick(droneAt(0, 0, 0, 0), moving);
-    expect(turnOf(intent)).toBe(-1); // leads to the right (+x)
+    // The pilot reads a smoothed error (no taps on a jittering heading), so
+    // a small lead offset may take a tick or two to start the turn.
+    let turn = 0;
+    for (let i = 0; i < 4 && turn === 0; i++) turn = turnOf(b.tick(droneAt(0, 0, 0, 0), { ...moving, tick: 100 + i }));
+    expect(turn).toBe(-1); // leads to the right (+x)
   });
 
   it('FIRES along the lead vector (intercept point), not straight at the target', () => {

@@ -142,8 +142,17 @@ const GUARD_PILOT_PARAMS: Readonly<PilotParams> = { ...DEFAULT_PILOT_PARAMS, thr
  *  player uses it (owner 2026-11-13: "don't forget the afterburner to gain
  *  speed fast"): with the nose within ~37° of the course (not 18°), and as
  *  soon as the wanted speed along the nose beats the actual by 15 % of the
- *  kind's top speed. Whether a manoeuvre wants it is its own call. */
-const COMBAT_PILOT_PARAMS: Readonly<PilotParams> = { ...DEFAULT_PILOT_PARAMS, boostConeCos: 0.8, boostSpeedGap: 0.15 };
+ *  kind's top speed. Whether a manoeuvre wants it is its own call.
+ *  Thrust is held by default in combat (owner 2026-11-14: "everyone
+ *  accelerates all the time in combat, unless they've got a reason not to"):
+ *  speed is managed by turning; the pilot lets go only when the manoeuvre
+ *  wants clearly less speed than it has, and each throttle choice stands for
+ *  `COMBAT_THROTTLE_HOLD_TICKS` (no on/off chatter). */
+const COMBAT_THROTTLE_HOLD_TICKS = 8;
+const COMBAT_PILOT_PARAMS: Readonly<PilotParams> = {
+  ...DEFAULT_PILOT_PARAMS, boostConeCos: 0.8, boostSpeedGap: 0.15,
+  combatThrust: true, throttleHoldTicks: COMBAT_THROTTLE_HOLD_TICKS,
+};
 /** A ship running from a pursuer (`ManoeuvreGoal.spendReserve`) boosts with
  *  its nose anywhere within 90° of its course: a weave keeps the nose turning,
  *  and under the combat cone it would hardly ever light the afterburner while

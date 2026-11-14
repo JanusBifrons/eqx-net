@@ -9,6 +9,13 @@
  * Model (mirrors `physics/applyShipInput.ts`):
  * - Turning. Snap kinds: a held turn key sets angvel to ±maxAngvel, release
  *   stops the turn at once, so each tick held moves the nose maxAngvel·dt.
+ *   The pilot presses like a player, not a servo ({@link easedSnapTurn}): it
+ *   lets a small error ride (a dead-band of a few turn steps), holds a press
+ *   for several ticks, lets go about a tick early so the nose stops on the
+ *   heading, and never reverses within a few ticks of letting go (owner
+ *   2026-11-14: the NPC turn was "sort of jerky and abrupt rather than a
+ *   smooth turn": it tapped the key 1 tick on, 1–2 off, and hunted ±4°
+ *   swapping left / right every tick).
  *   Torque kinds (capitals, `turnTorque`): a held key adds turnTorque/I of
  *   angvel per tick, angular damping bleeds it (ω ← ω/(1+c·dt) per step), so a
  *   released turn coasts ω/c further. The pilot stops early on that coast and
@@ -16,7 +23,10 @@
  * - Throttle: thrust pushes along the nose, reverse against it. The pilot
  *   presses whichever reduces the error between the wanted and actual velocity
  *   along the nose (bang-bang with a half-tick deadband); boost on top when the
- *   caller allows it and the nose is on the wanted course.
+ *   caller allows it and the nose is on the wanted course. Combat flying
+ *   (`PilotParams.combatThrust`) holds thrust by default instead (owner
+ *   2026-11-14: "everyone accelerates all the time in combat, unless they've
+ *   got a reason not to"): see {@link pilotInputs}.
  *
  * Ship angle convention: forward = (-sin θ, cos θ); a direction (dx, dy) is the
  * facing atan2(-dx, dy).
@@ -85,14 +95,89 @@ export interface PilotState {
   bits: AiInputBits;
   /** Ticks left before the pilot decides again. */
   latch: number;
-  /** Snap turn: settled on the heading last tick. Resuming the turn then
-   *  needs a full tick's turn more error (hysteresis), so a tick of command
-   *  lag cannot set up a ±1-step hunt about the heading. */
-  onHeading: boolean;
+  /** Snap turn: the turn-key discipline's state ({@link easedSnapTurn}). */
+  turn: SnapTurnState;
+  /** Throttle key held now: 1 thrust, -1 reverse, 0 none. */
+  throttle: number;
+  /** Ticks the current throttle choice has been held. */
+  throttleHeld: number;
 }
 
 export function makePilotState(): PilotState {
-  return { bits: 0, latch: 0, onHeading: false };
+  return { bits: 0, latch: 0, turn: makeSnapTurnState(), throttle: 0, throttleHeld: 0 };
+}
+
+/** One snap turner's turn-key state (caller-owned). */
+export interface SnapTurnState {
+  /** Key held now: 1 left, -1 right, 0 none. */
+  dir: number;
+  /** Ticks the current press has lasted. */
+  held: number;
+  /** Ticks since the last press ended. */
+  idle: number;
+  /** Direction of the last press (0 before the first). */
+  lastDir: number;
+  /** The error smoothed over a couple of ticks (rad): what starts a press and
+   *  bounds the minimum hold, so a heading that jitters a few steps tick to
+   *  tick cannot set up a hunt. */
+  smooth: number;
+}
+
+export function makeSnapTurnState(): SnapTurnState {
+  return { dir: 0, held: 0, idle: 0, lastDir: 0, smooth: 0 };
+}
+
+/**
+ * The turn-key discipline of a snap turner, in turn steps (one tick held =
+ * maxAngvel·dt of turn) and ticks, so it follows any kind's turn rate:
+ * - `deadbandSteps`: an error under this many steps is left alone (no taps);
+ * - `minHoldTicks`: a press lasts at least this long, as long as the swing
+ *   past the heading stays inside the dead-band (a short correction becomes
+ *   one deliberate press that stops a little past, then rests);
+ * - `noReverseTicks`: no press the other way within this many ticks of
+ *   letting go (no left / right hunting).
+ * A press ends about a tick early, once less than half a step is left (the
+ * error the pilot sees already includes its lead), so the nose stops on the
+ * heading rather than past it. Starting a press and the minimum hold read the
+ * error smoothed over ~2 ticks (`smoothKeep`; a jump of more than 90° is taken
+ * at once), so a heading that jitters tick to tick (measured: ±4° every tick
+ * for ~50 ticks) sets up no taps and no left / right swaps.
+ */
+export const SNAP_TURN_EASE = { deadbandSteps: 2.5, minHoldTicks: 5, noReverseTicks: 6, smoothKeep: 0.5 } as const;
+
+/**
+ * The turn key a snap turner presses this tick: 1 left, -1 right, 0 none.
+ * `err` is the facing error the pilot acts on (rad, positive = turn left;
+ * the caller adds its own lead), `step` one tick's turn (maxAngvel·dt) and
+ * `minDeadband` a floor on the dead-band (rad). Writes `st`. Pure and
+ * allocation-free, so any pilot (an NPC brain, a wingman) can use it.
+ */
+export function easedSnapTurn(st: SnapTurnState, err: number, step: number, minDeadband = 0): number {
+  const ease = SNAP_TURN_EASE;
+  let band = ease.deadbandSteps * step;
+  if (band < minDeadband) band = minDeadband;
+  const jump = err - st.smooth;
+  st.smooth = jump > Math.PI / 2 || jump < -Math.PI / 2 ? err : st.smooth * ease.smoothKeep + err * (1 - ease.smoothKeep);
+  const sm = st.smooth;
+  if (st.dir !== 0) {
+    st.held++;
+    // Turn still to go along the press (negative: already past the heading).
+    const togo = err * st.dir;
+    // Keep pressing while at least half a step is left; inside the minimum
+    // hold, while this tick's turn leaves the nose less than a dead-band past.
+    if (togo >= 0.5 * step || (st.held <= ease.minHoldTicks && sm * st.dir - step > -band)) return st.dir;
+    st.lastDir = st.dir;
+    st.dir = 0;
+    st.idle = 0;
+  }
+  st.idle++;
+  const absErr = sm < 0 ? -sm : sm;
+  if (absErr <= band) return 0;
+  const want = sm > 0 ? 1 : -1;
+  if (want !== st.lastDir && st.lastDir !== 0 && st.idle <= ease.noReverseTicks) return 0;
+  st.dir = want;
+  st.held = 1;
+  return want;
 }
 
 /** Tunables of one call; plain numbers so a caller can keep one const record. */
@@ -117,6 +202,17 @@ export interface PilotParams {
   /** Reaction latch: hold each decision this many extra ticks (0 = decide
    *  every tick). A per-role difficulty knob. */
   reactionTicks: number;
+  /** Combat throttle: thrust is held by default and speed is managed by
+   *  turning. Let go only when the wanted speed is below the actual by
+   *  `combatSlackFrac` × cruise (the manoeuvre's named reason: a pass about to
+   *  overshoot, a station to arrive at, a stand-off to hold); reverse only
+   *  when it is below by twice that and the velocity runs along the nose. */
+  combatThrust: boolean;
+  /** Combat throttle slack, as a share of the kind's cruise speed. */
+  combatSlackFrac: number;
+  /** A throttle choice (thrust / none / reverse) is held at least this many
+   *  ticks before it may change (0 = free): no on/off chatter. */
+  throttleHoldTicks: number;
 }
 
 export const DEFAULT_PILOT_PARAMS: Readonly<PilotParams> = {
@@ -126,6 +222,9 @@ export const DEFAULT_PILOT_PARAMS: Readonly<PilotParams> = {
   boostConeCos: 0.95,
   boostSpeedGap: 0.25,
   reactionTicks: 0,
+  combatThrust: false,
+  combatSlackFrac: 0.1,
+  throttleHoldTicks: 0,
 };
 
 /** Wrap an angle into [-π, π]. */
@@ -165,16 +264,12 @@ function turnBits(h: PilotHandling, st: PilotState, p: PilotParams, angle: numbe
   const absErr = Math.abs(err);
   if (!h.torqueTurn) {
     // Snap turn: a held key moves the nose one tick's turn, release stops it.
-    const step = h.maxAngvel * TICK_DT;
-    const dz = Math.max(p.deadzone, step * 0.5);
-    const resume = st.onHeading ? dz + step : dz;
-    if (absErr > resume) {
-      st.onHeading = false;
-      return toward;
-    }
-    st.onHeading = true;
-    return 0;
+    const k = easedSnapTurn(st.turn, err, h.maxAngvel * TICK_DT, p.deadzone);
+    return k > 0 ? AI_INPUT_TURN_LEFT : k < 0 ? AI_INPUT_TURN_RIGHT : 0;
   }
+  // Torque turners (capitals) keep the coast planner below: a released key
+  // coasts on under angular damping, so the turn is smooth on screen already
+  // and a tap only nudges the spin; the snap-turn discipline would add lag.
   // Torque turn: plan around the coast a release leaves.
   const c = h.angularDamping;
   const dw = h.turnAccel;
@@ -232,12 +327,41 @@ export function pilotInputs(
   const wantSpeed = Math.hypot(wantVx, wantVy);
   // cos(nose, wanted course); 1 when no course is wanted (hold / brake).
   const cosCourse = wantSpeed > 1e-6 ? (wantVx * fx + wantVy * fy) / wantSpeed : 1;
-  if (along > h.thrustAccel * 0.5 && cosCourse >= p.thrustConeCos) {
+  let throttle: number;
+  if (p.combatThrust) {
+    // Combat: thrust held by default; speed is managed by turning. Let go
+    // only when the wanted speed is clearly below the actual (the
+    // manoeuvre's reason: a pass about to overshoot, a station, a
+    // stand-off); reverse only when well below with the velocity along the
+    // nose; never thrust with the nose off the course (it would push the
+    // wrong way).
+    const speed = Math.hypot(vx, vy);
+    const slack = p.combatSlackFrac * h.cruiseSpeed;
+    const brake = h.reverseAccel > 0 && along < -h.reverseAccel * 0.5;
+    if (cosCourse < p.thrustConeCos) throttle = brake ? -1 : 0;
+    else if (wantSpeed >= speed - slack) throttle = 1;
+    else if (brake && wantSpeed < speed - 2 * slack) throttle = -1;
+    else throttle = 0;
+  } else if (along > h.thrustAccel * 0.5 && cosCourse >= p.thrustConeCos) {
+    throttle = 1;
+  } else if (h.reverseAccel > 0 && along < -h.reverseAccel * 0.5) {
+    throttle = -1;
+  } else {
+    throttle = 0;
+  }
+  // No chatter: a throttle choice stands for `throttleHoldTicks`.
+  if (throttle !== st.throttle && st.throttleHeld > 0 && st.throttleHeld < p.throttleHoldTicks) throttle = st.throttle;
+  if (throttle === st.throttle) st.throttleHeld++;
+  else {
+    st.throttle = throttle;
+    st.throttleHeld = 1;
+  }
+  if (throttle > 0) {
     bits |= AI_INPUT_THRUST;
     if (boostOk && cosCourse >= p.boostConeCos && along >= h.maxSpeed * p.boostSpeedGap) {
       bits |= AI_INPUT_BOOST;
     }
-  } else if (h.reverseAccel > 0 && along < -h.reverseAccel * 0.5) {
+  } else if (throttle < 0) {
     bits |= AI_INPUT_REVERSE;
   }
 
