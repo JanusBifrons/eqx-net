@@ -650,7 +650,7 @@ export class WeaponMountTicker {
     inp.dy = t.y - my;
     inp.dvx = t.vx - selfVx;
     inp.dvy = t.vy - selfVy;
-    return capLockSeconds(lockSeconds(inp, LOCK_TUNING), inp, LOCK_TUNING, this.deps.lockTimeCapS?.());
+    return capLockSeconds(lockSeconds(inp, LOCK_TUNING), inp, this.deps.lockTimeCapS?.());
   }
 
   /** Cleanup hook: drop all per-drone state on eviction/destroy/shed. */

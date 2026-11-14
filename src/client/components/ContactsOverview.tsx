@@ -186,7 +186,7 @@ function Row({ r, groups, activeIdx, onTap }: {
   const lockCol = lock ? (lock.stage === 0 ? FAILSAFE_HEX : groupColourHex(lockIdx)) : undefined;
   const reachCol = activeIdx >= 0 ? groupColourHex(activeIdx) : HUD.color.inkDim;
   const reachMark = r.inActiveReach ? '●' : r.inAnyReach ? '○' : '·';
-  const reachTitle = r.inActiveReach ? 'in reach of the active group' : r.inAnyReach ? 'in reach of another group' : 'out of reach';
+  const reachTitle = r.inActiveReach ? 'in fire range of the active group' : r.inAnyReach ? 'in fire range of another group' : 'out of fire range (still lockable)';
   const lockState = lock === null ? 'none' : lock.stage === 2 ? 'locked' : 'acquiring';
   return (
     <button

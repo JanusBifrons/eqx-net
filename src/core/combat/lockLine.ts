@@ -5,9 +5,11 @@
  *
  * The line runs from the pilot's ship along a world bearing (ship-angle
  * convention: forward = (-sin b, cos b)). A target is on it when it is ahead
- * of the ship, within the group's reach (with slack) and inside a cone that
- * widens with distance. The target the line already holds keeps it inside a
- * wider (sticky) cone, so a ship drifting across the line doesn't steal it.
+ * of the ship and inside a cone that widens with distance. The line has no
+ * length cap: locks work at any distance (owner 2026-11-14); only firing is
+ * range-limited. The group's reach only scales the near-first tie-break. The
+ * target the line already holds keeps it inside a wider (sticky) cone, so a
+ * ship drifting across the line doesn't steal it.
  */
 
 export const LOCK_LINE = {
@@ -19,8 +21,6 @@ export const LOCK_LINE = {
   perAlong: 0.12,
   /** The held target's cone is this much wider. */
   stickyMul: 1.6,
-  /** The line reaches this far past the group's reach. */
-  reachSlack: 1.1,
   /** Tie-break weight: nearer targets win among equally centred ones. */
   alongWeight: 0.3,
 } as const;
@@ -34,7 +34,7 @@ export function lockLineScore(
   dx: number, dy: number, dirX: number, dirY: number, radius: number, reach: number, held: boolean,
 ): number {
   const along = dx * dirX + dy * dirY;
-  if (along < 0 || along > reach * LOCK_LINE.reachSlack) return Infinity;
+  if (along < 0) return Infinity;
   const perp = Math.abs(dx * dirY - dy * dirX);
   const tol = (Math.max(LOCK_LINE.minTol, radius * LOCK_LINE.radiusMul) + along * LOCK_LINE.perAlong) * (held ? LOCK_LINE.stickyMul : 1);
   if (perp > tol) return Infinity;

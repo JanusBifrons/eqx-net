@@ -396,6 +396,10 @@ import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { isCapitalKindId } from '../../core/combat/capitalHits.js';
 import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
+import { mountsReachTarget, type FireRangeTarget } from '../../core/combat/mountReach.js';
+
+/** Empty mount list for a kind with none (fire-range test; #14). */
+const NO_FIRE_MOUNTS: ReadonlyArray<WeaponMount> = [];
 import { CapitalWreckSubsystem } from './CapitalWreckSubsystem.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import { isWreckPiece } from '../net/SwarmEntityRegistry.js';
@@ -4356,7 +4360,7 @@ export class SectorRoom extends Room<SectorState> {
         const h = this.engageablePilotHull(pid);
         if (!h) return null;
         const p = h.pose;
-        out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
+        out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle;
         return getShipKind(h.ship.kind);
       },
       forEachHostileNpc: (pid, visit) => {
@@ -4369,6 +4373,7 @@ export class SectorRoom extends Room<SectorState> {
         const rec = this.swarmRegistry.get(id);
         if (!rec || !this.swarmEntityPoseInto(id, this._lockPose)) return null;
         out.x = this._lockPose.x; out.y = this._lockPose.y; out.vx = this._lockPose.vx; out.vy = this._lockPose.vy;
+        out.angle = this._lockPose.angle;
         return getShipKind(rec.shipKind ?? null);
       },
       instantLock: (pid) => this.locks.isInstant(pid),
@@ -4456,7 +4461,15 @@ export class SectorRoom extends Room<SectorState> {
       }
       if (!this.swarmEntityPoseInto(rec.id, this._lockPose)) return false;
       out.x = this._lockPose.x; out.y = this._lockPose.y; out.vx = this._lockPose.vx; out.vy = this._lockPose.vy;
-      out.signature = rec.kind === 1 ? getShipKind(rec.shipKind ?? null).radius : rec.radius;
+      out.angle = this._lockPose.angle;
+      if (rec.kind === 1) {
+        const k = getShipKind(rec.shipKind ?? null);
+        out.signature = k.radius;
+        out.kindId = k.id;
+      } else {
+        out.signature = rec.radius;
+        out.kindId = null; // a structure: a circle for the fire-range test
+      }
       return true;
     }
     if (key.startsWith('p:')) {
@@ -4465,8 +4478,10 @@ export class SectorRoom extends Room<SectorState> {
       const ship = this.getActiveShip(other);
       const p = this.shipPoseCache.get(other);
       if (!ship || !ship.alive || !p) return false;
-      out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
-      out.signature = getShipKind(ship.kind).radius;
+      out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle;
+      const k = getShipKind(ship.kind);
+      out.signature = k.radius;
+      out.kindId = k.id;
       out.hostile = false; // PvP always runs the failsafe first
       return true;
     }
@@ -4498,12 +4513,33 @@ export class SectorRoom extends Room<SectorState> {
    * escalation, no `bot_aggro` (the client's hostility rides the snapshot
    * `drones[].hostile` bit, #16). Structures keep their own hostile-act rules.
    * Called per lock per lock step (~10 Hz); no allocation (#14).
+   *
+   * Locks work at any distance (owner 2026-11-14), so only a lock held while
+   * the pilot is inside the NPC's FIRE range refreshes (lead call): out of
+   * its fire range the NPC forgets the pilot 30 s later, lock or no lock.
    */
   private refreshLockHostility(pid: string, key: string): void {
     if (!key.startsWith('s:')) return;
     const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
     if (rec?.kind !== 1) return;
+    if (!this.pilotInNpcFireRange(rec.id, pid)) return;
     this.aiController.markHostile(rec.id, pid, this.serverTick);
+  }
+
+  /** Fire-range target scratch for `pilotInNpcFireRange` (#14). */
+  private readonly _fireRangeTarget: FireRangeTarget = { x: 0, y: 0, angle: 0, kindId: null, radius: 0 };
+
+  /** The pilot's engageable hull is inside NPC `npcId`'s FIRE range (any of
+   *  its mounts reaches the hull, shared `mountsReachTarget`). */
+  private pilotInNpcFireRange(npcId: string, pid: string): boolean {
+    const h = this.engageablePilotHull(pid);
+    const rec = this.swarmRegistry.get(npcId);
+    if (!h || !rec || !this.swarmEntityPoseInto(npcId, this._lockPose)) return false;
+    const pk = getShipKind(h.ship.kind);
+    const t = this._fireRangeTarget;
+    t.x = h.pose.x; t.y = h.pose.y; t.angle = h.pose.angle; t.kindId = pk.id; t.radius = pk.radius;
+    const nk = getShipKind(rec.shipKind ?? null);
+    return mountsReachTarget(nk.mounts ?? NO_FIRE_MOUNTS, this._lockPose.x, this._lockPose.y, this._lockPose.angle, t);
   }
 
   /**

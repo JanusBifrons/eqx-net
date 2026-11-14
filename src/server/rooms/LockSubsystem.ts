@@ -14,7 +14,7 @@ import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
 import { lockLineHolds } from '../../core/combat/lockLine.js';
 import { pickTurretLock } from '../../core/combat/turretLockPick.js';
-import { mountWeaponReach } from '../../core/combat/mountReach.js';
+import { mountWeaponReach, mountsReachTarget, type FireRangeTarget } from '../../core/combat/mountReach.js';
 import { getWeapon, weaponAutoFireRange } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind, WeaponMount, WeaponSlot } from '../../shared-types/shipKinds/types.js';
 
@@ -28,6 +28,11 @@ export interface LockTargetView {
   signature: number;
   /** Already hostile to the locking player (skips the failsafe ring). */
   hostile: boolean;
+  /** Ship kind (its hit shape for the AUTO fire-range release); absent or
+   *  null = a circle of `signature` (structures). */
+  kindId?: string | null;
+  /** Hull heading (ship-angle convention); absent = 0. */
+  angle?: number;
 }
 
 export interface LockShooterView {
@@ -63,7 +68,8 @@ export type GroupMode = 'auto' | 'manual';
 
 /** Wire shape of one group in the own-ship snapshot (`states[].groups`).
  *  `r: 1` = released (draining back to 0); absent otherwise. */
-/** `r`: released (draining). `c`: can't lock right now (out of reach / untrackable); the HUD shows OUT OF RANGE. */
+/** `r`: released (draining). `c`: can't lock right now (untrackable: too small
+ *  or fast for the group's guns; locks work at any distance); the HUD shows CAN'T TRACK. */
 export interface WireLock { t: string; s: number; p: number; r?: 1; c?: 1 }
 export interface WireGroup { id: string; m: 0 | 1; l: WireLock[] }
 
@@ -476,7 +482,35 @@ export class LockSubsystem {
     }
   }
 
+  /** Fire-range target scratch (#14). */
+  private readonly fireTarget: FireRangeTarget = { x: 0, y: 0, angle: 0, kindId: null, radius: 0 };
+
+  /** `this.target` is inside the group's FIRE range (any mount reaches its
+   *  hull, × `slack`); `this.shooter` must be current. */
+  private inFireRange(g: GroupState, slack: number): boolean {
+    const t = this.fireTarget;
+    t.x = this.target.x; t.y = this.target.y;
+    t.angle = this.target.angle ?? 0;
+    t.kindId = this.target.kindId ?? null;
+    t.radius = this.target.signature;
+    return mountsReachTarget(g.mounts, this.shooter.x, this.shooter.y, this.shooter.angle, t, slack);
+  }
+
   private stepGroup(playerId: string, p: PlayerLocks, g: GroupState): void {
+    // Locks work at any distance (owner 2026-11-14). An AUTO group's own pick
+    // is released once its target leaves the group's FIRE range (reach ×
+    // `reachSlack`, the hysteresis over the in-reach pick), so AUTO re-picks
+    // instead of sitting on a target it can't shoot. A lock the pilot asked
+    // for (manual, or a lock line) persists at any distance.
+    if (g.mode === 'auto') {
+      for (let i = g.locks.length - 1; i >= 0; i--) {
+        const e = g.locks[i]!;
+        if (!e.auto) continue;
+        if (this.deps.resolveTarget(playerId, e.target, this.target) && this.inFireRange(g, LOCK_TUNING.reachSlack)) continue;
+        g.locks.splice(i, 1);
+        this.syncWireShape(g);
+      }
+    }
     // Auto groups acquire their own target when idle.
     if (g.locks.length === 0 && g.mode === 'auto') {
       this.bearGroup = g;

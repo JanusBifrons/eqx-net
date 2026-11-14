@@ -271,7 +271,7 @@ export class StructureMountTicker {
     // Heavy guns then stretch it for absolute distance (uncapped, see
     // `lockSeconds`). Out of reach stays unlockable (Infinity). testMode
     // `lockTimeCapS` still caps the result.
-    const secs = capLockSeconds(lockSeconds(inp, STRUCTURE_LOCK_TUNING), inp, LOCK_TUNING, this.lockTimeCapS);
+    const secs = capLockSeconds(lockSeconds(inp, STRUCTURE_LOCK_TUNING), inp, this.lockTimeCapS);
     const ev = stepLock(e, dtSec, secs, secs * LOCK_TUNING.failsafeMul, LOCK_TUNING.lostGraceSeconds, LOCK_TUNING.decayMul);
     // Unlockable past the grace: start over on the same target (it stays the
     // mount's target; targeting is the arc/tracking rules', not the lock's).

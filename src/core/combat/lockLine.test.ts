@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { lockLineScore, lockLineHolds, LOCK_LINE } from './lockLine.js';
+import { lockLineScore, lockLineHolds } from './lockLine.js';
 
 /** The shared lock-line rule (client pick + server `lock_track` check, #15). */
 describe('lockLine', () => {
@@ -12,10 +12,19 @@ describe('lockLine', () => {
     expect(Number.isFinite(score(60, 300))).toBe(true); // inside the 70 + 0.12·300 cone
   });
 
-  it('rejects targets behind, past reach × slack, or outside the cone', () => {
+  it('rejects targets behind or outside the cone', () => {
     expect(score(0, -10)).toBe(Infinity);
-    expect(score(0, 600 * LOCK_LINE.reachSlack + 1)).toBe(Infinity);
     expect(score(200, 300)).toBe(Infinity);
+  });
+
+  // Owner decision 2026-11-14: locks work at any distance, so the line has no
+  // length cap; only firing is range-limited.
+  it('holds a target on the line far past reach (no length cap)', () => {
+    expect(Number.isFinite(score(0, 600 * 1.1 + 1))).toBe(true);
+    expect(Number.isFinite(score(0, 50_000))).toBe(true);
+    expect(lockLineHolds(0, 50_000, 0, 20, 600)).toBe(true);
+    // Still nearer first among equally centred targets.
+    expect(score(0, 900)).toBeLessThan(score(0, 5000));
   });
 
   it('the held target keeps a wider (sticky) cone and always wins', () => {
