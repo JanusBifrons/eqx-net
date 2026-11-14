@@ -154,164 +154,43 @@ Update this section when a threshold is set.
 
 ---
 
-## Structure network at base scale (plan soft-leaping-truffle v2)
+## Structure network at base scale
 
-- **Generated structures use the real rules.** `StructurePlacementSubsystem.place(…, { skipAutoConnect: true })` + `structureGridView.connectExplicit` (re-checks `canConnect` against the live adjacency) let a generated base supply its INTENDED graph — greedy auto-connect would e.g. link gate pylons and close a gate. Players never pass `skipAutoConnect`.
-- **Measured cost today (A0, citadel ≈ 448 structures):** the `structures[]` snapshot slice is ~79 B/row sent to EVERY client in EVERY 20 Hz snapshot → 35 KB/snapshot, ~689 KB/s per client (a 46-structure outpost already adds 69 KB/s, more than the whole per-client baseline). The turret tick is O(turrets × all swarm entities): 5 ms median / 12.6 ms max per 10 Hz call. A route recompute after any topology change costs ~0.94 ms PER ROUTE. Budgets: `src/shared-types/structureBudgets.ts`; ledger + fixes (A1/A2): [docs/architecture/structure-network-scale.md](../../docs/architecture/structure-network-scale.md). **Don't add structure-heavy content (NPC bases) before A1/A2 land.**
-- **Phase V (large footprints):**
-  - **Structure rotation.** `place_structure` carries an optional `rot`, which the server snaps to 0/90/180/270. It is stored on `StructureRecord.rot` and the cached `halfW/halfH`, persisted in the sector snapshot, and becomes the body angle at spawn.
-  - **Weapon paths.** They use the swarm record's `halfW/halfH` box for kind 2.
-  - **Test and scenario layouts** live in ONE place: `rooms/scenarioLayouts.ts` (`SCENARIO`, `STRUCTURE_SCENARIO_PREBUILT`), shared by `index.ts`, `showcaseRooms.ts` and the integration tests. Footprints are 3–6× the old radii, so a hand-placed layout must be re-derived against the real boxes, not guessed.
-- **Gates:**
-  - `GateController` (`structures/GateController.ts`) steps every built gate on the 10 Hz structure tick, BEFORE `ShieldWallManager.update`. Only ACTIVE player ships open gates (#17).
-  - `ShieldWallManager` forms walls between ANY two connected emitters (`isShieldEmitterKind`: pylons + gates) plus each gate's spans; `wallsUpFor(id)` is the per-emitter WALL_ACTIVE flag.
-  - Room state `gateOpen` / `gateAccess`; `set_gate_access` is owner-gated. Test room `gate-test` (open gate + owner-only gate).
-- **Structure rotation reaches the physics body.** `SwarmSpawner` forwards the spawn angle for structures (kind 2) as well as scrap, and primes the SAB angle. (It used to forward it for scrap only, so rotated structures collided and drew at 0° — locked by `structureRotation.test.ts`.)
-- **A2 (structure state → ROOM STATE):** structure grid state is `SectorState.structures` (MapSchema keyed by the decimal entityId; `StructureState` in `schema/SectorState.ts`), synced by `SectorRoom.rebuildStructuresSlice` (name kept; same 1 Hz pulse / 10 Hz turret tick / placement call sites). **Rules:**
-  - **Assign only on change, and only away from the default.** Fields have NO initialisers: Colyseus schema v3 encodes every ASSIGNED field on join, and initialisers count as assignments. Unset means `STRUCTURE_DEFAULTS` (`shared-types/structureStateWire.ts`); compare `(st.f ?? DEFAULT) !== value` before writing.
-  - **Owners are interned** (`structureOwners` / `structureOwnerNames` + `ownerIdx`).
-  - **The snapshot carries only `structureTargets`** (flat triples).
-  - **Binary channel:** a sleeping out-of-interest structure rides only every `STRUCTURE_OUT_OF_INTEREST_FULL_EVERY` (5th) full refresh. Room state owns structure lifetime on the client.
-  - **Test view:** `_internals.getStructuresSlice()` is the pre-A2 row shape rebuilt from room state.
-- **A1 (turret targeting + routes):** turret targets come from `findNearestTurretTarget`, a per-turret-tick `NearestPointGrid` of turret-targetable drones (rebuilt lazily on first query; any `evictSwarmEntity` marks it stale; same winner as the old scan, including ties). `Grid.route` reads a per-source BFS tree, cached until the next topology change. After A1 the dominant turret-tick cost is the 10 Hz `rebuildStructuresSlice` (allocation-heavy; GC spikes), which A2 removes.
+- **Generated structures use the real rules:** a generated base places with `place(…, { skipAutoConnect: true, rot })` and links with `connectExplicit` (re-checks `canConnect`); never auto-connect one (it would close gates). Players never pass `skipAutoConnect`.
+- **Structure room state (A2 rules):** a `StructureState` field has no initialiser and is assigned only on change and only away from `STRUCTURE_DEFAULTS` (compare `(st.f ?? DEFAULT) !== value`). Production and teleporter fields follow the same rule.
+- **Budgets and layouts:** structure-heavy content stays inside `src/shared-types/structureBudgets.ts`. Test layouts live only in `rooms/scenarioLayouts.ts`; re-derive hand-placed ones against the real footprint boxes. Only ACTIVE player ships open gates (#17). Lock: `structureRotation.test.ts`.
+- Detail: [structures guide](../../docs/architecture/structures-and-power-grid.md#structure-network-at-base-scale), [scale ledger](../../docs/architecture/structure-network-scale.md).
 
-## Production (plan soft-leaping-truffle v3, P2b)
+## Production
 
-- **`ProductionSubsystem` (`structures/`) runs on the 1 Hz grid pulse,** after the grid pulse and BEFORE `storage.flushDirty()`. It mutates storage holds and Capital banks in place; the flush persists them.
-- **Inputs are taken when a cycle starts (all or nothing), outputs are put when it ends (all or nothing).** A processor never makes value from nothing, and a partial put changes nothing.
-- **Status rides room state:** `recipe` / `prodState` / `prodMissing` bytes, assigned only on change (A2 rules). `set_recipe` is owner-gated.
-- **Allocation-free steady state:** reused processor/network arrays, and one network lookup per component per pulse. Keep it that way: the budget is 0.3 ms per pulse at 60 processors.
-- **Blueprints:** a processor's slot is `rec.blueprint`, persisted as the hold `bpslot:<structure uid>` (holder type `fitted`).
-  - **Moves:** `StorageService.loadBlueprint` / `unloadBlueprint` / `takeSlotForSpill` each make ONE hold group. Never move a blueprint between a storage hold and a slot any other way.
-  - **Runs:** spent runs persist through `onBlueprintSpent` → `persistSlot`.
-- **Packed placement:** `StructurePlacementSubsystem.place(…, { requirePacked: true })` is passed ONLY by the player's `place_structure`.
-  - **Generated builds never pass it:** scenario seeding, restore, lattices and NPC bases.
-  - **The hook:** `packedGateForBuild` is optional; Living World injects it when packed structures can be bought.
-- **Extraction (P2c):**
-  - Drilling is data-driven: any built kind with a `miningRate` mines (Miner, Deep Core Rig).
-  - The asteroid's `asteroidResource` (swarm record + wire byte) splits the yield via `ASTEROID_YIELD`. Minerals go to the drill buffer; other goods go to network storage through `ProductionSubsystem.deposit`.
-  - Gas Collectors work only when `sectorFeatures` include `nebula`.
-  - **A drill never mines into a full network.** Before drawing from a non-rock asteroid it asks `canDepositGoods` (`ProductionSubsystem.canDeposit`, the whole yield together); if it would not fit, the drill idles and the rock keeps its finite ore.
-  - Lock: `tests/integration/sectorRoom/extraction.test.ts`.
-- **Ammo (P2d):**
-  - `tickTurrets` calls `spendAmmo` before every projectile / missile shot. An empty magazine reloads `AMMO_SHOTS_PER_UNIT[kind]` shots from one munition, through the `takeMunition` hook (`ProductionSubsystem.takeGoods`).
-  - With none, `rec.noAmmo` is set (the room-state flag bit) and the turret holds fire.
-  - Beam turrets never reach it: lasers are power-only.
-  - No hook ⇒ unlimited (unit harnesses).
-  - Test rooms with ammo turrets stock munitions via `prebuiltStorageGoods`.
-- **Active power (2026-11-01):** a structure draws its full consumption only while working, else `IDLE_DRAW_FRAC` (0.2) of it (`shared-types/structurePower.ts`, used by both sides).
-  - **The one switch** is `StructureGridSubsystem.setActive(rec, active)`, which adjusts the component's net power in O(1) via `Grid.adjustDraw`. Never write `rec.drawFull` directly, or the component's power goes stale until the next rebuild.
-  - **Callers:** drills and gas (StructureGridSubsystem), turrets (target or not), processors (`ProductionSubsystem` dep, running or not), Research Labs (`ResearchLabSubsystem` dep, job advancing or not). A new power consumer that "works" must call it too, or it draws idle forever.
-  - **Wire:** `STRUCTURE_FLAG_DRAW_FULL` (64) in the room-state flags byte.
-- **A fence blocks its owner's own fire (user ruling 2026-11-02).** Every structure weapon asks the walls: beam turrets via `blockBeamAtWall` (the hit lands on the wall and the beam ends there); bolts and missiles are refused at the launcher when a wall lies between the turret and its muzzle; missiles in flight check `wallBlocksMissile` each step (detonate cause `'wall'`, no splash). Lock: `tests/integration/sectorRoom/turretVsOwnFence.test.ts`.
-- **Mine Layers:** `MineFieldSubsystem` (`structures/`) is ticked with the 10 Hz structure tick, after the turrets, and reuses their target grids, magazine (`rec.ammo`) and `setActive`. Mines are static and live in ROOM STATE (`SectorState.mines`, #16); `mine_detonated` is only an accelerator. Mines whose layer is gone are swept even when the sector has no structures left. Not persisted. Story: [docs/features/mine-layer.md](../../docs/features/mine-layer.md).
-- **Station taxes (D3):** a recipe output `{ credits: n }` takes no storage space. When the cycle ends, `payCredits` pays it to a PLAYER owner's wallet (`station_taxes`); an NPC owner gets nothing. Never put credits in a hold.
-- Locks: `ProductionSubsystem.test.ts` and `tests/integration/sectorRoom/production.test.ts`. Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).
+- **Production:** `ProductionSubsystem` runs on the 1 Hz pulse before `storage.flushDirty()`; inputs are taken all-or-nothing at cycle start, outputs put all-or-nothing at the end; it stays allocation-free (0.3 ms per pulse at 60 processors). `set_recipe` is owner-gated.
+- **Blueprint slots:** move a blueprint only via `StorageService.loadBlueprint` / `unloadBlueprint` / `takeSlotForSpill` (one hold group each). Only the player's `place_structure` passes `requirePacked: true`.
+- **Drills and ammo:** a drill never mines into a full network (`canDepositGoods`); a turret calls `spendAmmo` before every shot and holds fire with none (`rec.noAmmo`). Locks: `extraction.test.ts`, `ProductionSubsystem.test.ts`, `production.test.ts`.
+- **Active power:** `StructureGridSubsystem.setActive(rec, active)` is the one switch; never write `rec.drawFull`. A new power consumer that works must call it.
+- **A fence blocks its owner's own fire.** Lock: `turretVsOwnFence.test.ts`. Mines live in room state (#16); `mine_detonated` is only an accelerator ([mine-layer](../../docs/features/mine-layer.md)).
+- **Credits outputs** pay a PLAYER owner's wallet via `payCredits`; never put credits in a hold.
+- Detail: [production-chains.md](../../docs/architecture/production-chains.md#server-implementation-notes).
 
-## Cargo access (plan soft-leaping-truffle v3, C1)
+## Cargo access
 
-- **Gate:** `SectorRoom.cargoAccess` opens a structure's cargo only when ALL of these hold. Every `cargo_query` / `cargo_move` re-checks it.
-  - `cargoOpensFor(relationOf(…))` passes: own and friendly; neutral and hostile are locked until the C2 break-in.
-  - The pilot has a live ship: ACTIVE, alive, with a roster row (#17).
-  - The ship is within `CARGO_ACCESS_RANGE` of the footprint edge.
-- **Moves:** `StorageService.cargoTake` / `cargoPut`, each ONE hold group with the ship row. Never move items between a ship and a structure any other way.
-- **A manual move switches auto-deposit off for that pilot** (`manualCargo`) until they leave deposit range. Without it, a withdrawal from your own storage is banked straight back.
-- **`entity_stats` holds** show to anyone the cargo opens for (`ownerGateStats`).
-- **Market mode (T4):** an NPC `freight_dock` opens as a market for a non-hostile pilot (`dockMarket`): Take buys, Put sells.
-  - **Prices:** the trade sink's `dockQuote`, the same quote as the board.
-  - **Clamped** to stock, space, wallet and volume.
-  - **Atomic:** one group per good, with the wallet op passed as `extraOps` to `StorageService.marketBuy` / `marketSell`.
-  - Never let a market fill skip `recordDockFill`: the galaxy market and volume must see it.
-- **Break-ins (C2):** `break_in` / `break_in_cancel` → `BreakInSubsystem` (ticked in `structureTurretTick`).
-  - **Starting is a hostile act.** `onBreakInStart` records it in `hostileActs` and alarms the owner, or aggros the NPC side's nearby ships.
-  - **Hits cancel it.** `applyDamage` calls `onActorDamaged` for any hit.
-  - **A grant opens `cargoAccess`** for 60 s.
-  - **Player turrets** also engage pilots hostile to their owner (`nearestHostilePilot`). The scan only runs while `hostileActs.size() > 0`.
-- **Ship cargo (C3):** cargo messages target an `entityId` OR a `ship` (playerId of an ACTIVE ship / shipInstanceId of a LINGERING hull). `npcHold` rolls an NPC's loot table ONCE per spawn (seeded, memory-only, merged onto any stash it carries) and `dropKillLoot` spills that same hold, so stolen loot never drops twice. Break-ins tick BEFORE `structureTurretTick`'s no-structures early return (a sector with no structures can still have a ship break-in).
-- **Standing orders (T4b):** `set_freight_orders` (owner, built `freight_dock`) → `rec.freightOrders` (persisted). The dock joins convoy planning as a `player` base.
-  - **Who trades with whom:** the ConvoyDirector pairs it with NPC bases only.
-  - **When money moves:** it prices and clamps the order at planning. The wallet op lands in the SAME group as the goods: a credit at pickup via `extraOpsFor(taken)`, a debit at delivery with the release.
-- Lock: `tests/integration/sectorRoom/cargoAccess.test.ts`. Story: [docs/features/loot-and-cargo.md](../../docs/features/loot-and-cargo.md) Part 3.
+- **Gate:** `SectorRoom.cargoAccess` (relation, live ACTIVE ship #17, `CARGO_ACCESS_RANGE`) is re-checked on every `cargo_query` / `cargo_move`.
+- **Moves:** only via `StorageService.cargoTake` / `cargoPut` / `marketBuy` / `marketSell` (one hold group each, wallet ops as `extraOps`); never let a market fill skip `recordDockFill`. A manual move sets `manualCargo` (auto-deposit off).
+- **Break-ins and ship cargo:** starting a break-in is a hostile act and any hit cancels it; an NPC's loot is rolled once per spawn (`npcHold`), so stolen loot never drops twice. Standing-order wallet ops land in the same group as the goods. Lock: `cargoAccess.test.ts`.
+- Detail: [loot-and-cargo.md](../../docs/features/loot-and-cargo.md#server-implementation-notes).
 
-## NPC bases from the generator (plan soft-leaping-truffle v3, D2)
+## NPC bases, convoys and transit links
 
-- **Seeding:** the `npcBases` room option → `seedNpcBases` → `NpcBaseSubsystem.seed`.
-- **Place and link:** placements go through `structurePlacement.place(…, { skipAutoConnect: true, rot })`, edges through `connectExplicit`. Never auto-connect a generated base, because it would close gates and link the wrong things.
-- **Built and set up:** structures spawn built at their level. Processors get recipes and BOUND originals (`rec.blueprint.bound`, which `unloadBlueprint` refuses). Gates open for anyone not hostile.
-- **Stocked:** storage starts with an hour of fuel, munitions, and 20 cycles of inputs.
-- **Not persisted:** NPC structures aren't saved (B2); a restart regenerates them from the seed.
-- **Galaxy sectors (T1):** `galaxyBases` (set by `resolveSectorConfig`) → `seedGalaxyBase`, run AFTER `hydrateFromSnapshot`.
-  - **Order matters.** Seeding before the restore would make saved player structures fail their overlap check and be lost. Keep it after.
-  - **Site.** The site comes from `chooseBaseSite`: player structures and parked hulls are hard blockers. Asteroids under the footprint are evicted quietly.
-  - **Spawns** are nudged out of every structure box (`nearestClearPoint` in `onJoin`).
-  - **Several bases:** `galaxyBasePlan` gives a sector one to three bases (each its own owner, a different role, big bases alone, within `NPC_STRUCTURES_PER_SECTOR_MAX`), each seeded with `NPC_BASE_GAP` from the earlier ones. A base that finds no site is skipped and logged.
-  - **Kill switch:** `EQX_DISABLE_NPC_BASES=1`. Lock: `galaxyBases.test.ts`.
+- **Order:** galaxy bases seed AFTER `hydrateFromSnapshot`, and alien gates AFTER the bases; keep it. NPC structures are not persisted (regenerated from the seed). Kill switches `EQX_DISABLE_NPC_BASES=1`, `EQX_DISABLE_CONVOYS`. Lock: `galaxyBases.test.ts`.
+- **Convoys:** `ConvoyDirector` runs on its 1 s unref'd loop, never the 60 Hz tick; every value move is ONE `tradeTransfer`; every trade quote goes through `TradeDirector.quote(kind, good, rep, sectorKey)`.
+- **Link teleporters** pair at run time through `findLinkTwin`, never by position; NPC-owned teleporters refuse pairing requests. Military bases' gates are owner + allies; patrol ids start `patrol-` (in `isDirectorBotId`). Lock: `transitHubs.test.ts`.
+- Detail: [procedural-bases.md](../../docs/architecture/procedural-bases.md#server-implementation-notes), [economy-and-trade.md](../../docs/architecture/economy-and-trade.md#server-implementation-notes), [transit-hubs.md](../../docs/features/transit-hubs.md#server-implementation-notes), [military-bases.md](../../docs/features/military-bases.md#server-implementation-notes).
 
-## Convoys between NPC bases (plan soft-leaping-truffle v3, T2)
+## Teleporters and alien gates
 
-- **`ConvoyDirector` (`economy/`)** is process-global (built in `index.ts` from the galaxy rooms only) on a 1 s unref'd loop; never the 60 Hz tick. Planning is the pure `core/economy/convoys.ts`.
-- **Room surface:** `npcBaseTrade()` (stock, rates, footprint box per NPC base), `clearPointNear`, plus the existing `tradeTransfer` / `spawnLivingWorldBot` / `setBotMoveTarget`.
-- **Every value move** is ONE `tradeTransfer` (take into the hauler's hold at pickup, release into the importer at delivery). Convoy haulers use `CONVOY_HAULER_ID_PREFIX` (`hauler-convoy-`), so a kill spills the hold.
-- **Haulers dock OUTSIDE a base's footprint** (fences block ships; gates open only for player ships) and enter and leave at the edge on the base's own side.
-- **Not persisted.** Crash leftovers (`hauler-convoy-*` holds) are discarded on `start()`. Kill switch `EQX_DISABLE_CONVOYS`; diagnostics `GET /dev/convoys`.
-- **Regional prices (T3).** The planning pass also publishes per-region price factors (`economy/regionalPrices.ts`).
-  - Every trade quote goes through `TradeDirector.quote(kind, good, rep, sectorKey)`, so the board, the accept and the re-quote agree. Never quote around it.
-  - The offers route takes `?sector=`.
-
-## Teleporters (plan soft-leaping-truffle v4, T1)
-
-- **`TeleporterSubsystem` (`structures/`)** owns capacitors, pairing, firing rules and the jump cycle:
-  - `update` runs at 10 Hz (`structureTurretTick`);
-  - `pulse` runs at 1 Hz, after production: arrivals unload, then "keep loaded".
-- **Charge:** the battery pass hands surplus left after batteries to `chargeCapacitors` (a `StructureGridHooks` hook). It never discharges batteries.
-- **The cycle:** both pads of a pair run ONE cycle, driven by the initiator, which spends its charge at the swap.
-- **The pad hold** is its own hold row (`tppad:<uid>`, holder type 'fitted'), never base storage. Move it only through `StorageService.padLoad` / `padUnload` / `padSwap` / `takePadForSpill`, each ONE group.
-- **Room state:** `tp*` / `padWeight` fields are assigned on change (A2). `tpPhaseMs` rides along only when the phase changes.
-- **Persisted:** partner, rules and charge go in the sector snapshot `teleport` block (rules re-validated on restore).
-- **Pairing (T1):** same sector, same owner.
-- **T2 — the doors and the ride:**
-  - **Phase effects:** `applyPhaseEffects` turns the pad field on while CLOSING (`SET_PAD_FIELD`) and the iris walls solid while SEALED (`tpiris-<id>-<i>`, spawned once, inactive).
-  - **The swap:** `SectorRoom.swapPadShips` collects riders by liveness class (#17: ACTIVE alive players, LINGERING hulls, swarm kinds 1 and 3), then moves them all (SAB + `SET_POSITION` + pose caches).
-  - **Riders' clients:** an active rider's `ShipState.poseEpoch` bumps and rides the own-ship snapshot entry (#16), and the broadcast grace is extended.
-  - **Spawn clearance** treats a pad as its posts (`pushSolidBoxes`).
-- **T3 — across sectors.**
-  - **Links:** a partner is a `PartnerLink` (local, or remote via `TeleportBroker.find`). The initiator drives both rooms' phases (`setPhase` on the far subsystem). Charge counts hops (`hopsToSector`; test rooms outside the galaxy graph count 1).
-  - **The swap:** `swapAcross` trades the pad holds (`padSwapAcross`, one group), then collects BOTH pads' riders before dispatching either:
-    - pilots go via `TransitOrchestrator.teleportOut` (instant, any sector);
-    - parked hulls, a disconnected pilot's included, are displaced if needed, removed quietly (`removeLingeringHullQuietly`) and rebuilt via the far room's `receiveLingeringHull`, with the roster row `markStored` to the new sector;
-    - NPC bots go via `TeleportBroker.moveBot` → `LivingWorldDirector.teleportBot` (registered for both directors in `index.ts`). Never move a director bot any other way, or the director's sector record goes stale.
-  - **Rooms register** with the broker on create and unregister on dispose.
-- **T4 — tolls and consent pairing.**
-  - **Toll:** `rec.tpToll` (`set_teleport_toll`, owner-gated, persisted in the `teleport` block, room state `tpToll` + the `TP_RULE_TOLL_HOSTILE` bit).
-  - **When it is asked and settled:** the subsystem's `onArmed` hook → `offerToll` (prompts riders on that pad, skipping friends and allies; a remembered Always/Never answers at once); `answerToll` pays at once; the swap calls `onTollSettle` for both ends → `settleToll` costs non-payers standing or records a hostile act. A late answer is ignored and logged.
-  - **Payment** goes wallet → wallet for a player owner, or into the owner faction's treasury (`EconomyStore.creditTreasury`, persisted). Remembered answers are `EconomyStore.tollPref`.
-  - **Pairing with another owner:** `teleport_pair_request` → `TeleportBroker.addRequest` + a prompt to the owner (`sendToPlayer` reaches them in any room) → `teleport_pair_answer`; only the owner of the asked teleporter can accept. `pair(…, consented=true)` skips the same-owner check.
-- Lock: `tests/integration/sectorRoom/teleporter.test.ts`. Story: [docs/features/teleporters.md](../../docs/features/teleporters.md).
-
-## Alien gates and the disable status (plan soft-leaping-truffle v4, A)
-
-- **What they are.** `alien_gate` is a teleporter kind (`isTeleporterKind` includes it; `isAlienGateKind` picks it out). It is unbuildable (`UNBUILDABLE_STRUCTURE_KINDS`: no blueprint, no pack recipe, no build menu, and `place_structure` refuses it), owned by `ALIEN_GATE_OWNER` (`npc:ancients:gates`), and never joins a grid (`maxConnections: 0`).
-- **Seeding.** `seedAlienGates` runs for galaxy rooms (`alienGates` room option, set by `resolveSectorConfig`) AFTER the snapshot restore and AFTER the NPC bases. Each gate takes the free spot nearest its ideal site (`alienGateCandidates`). Seeding gates before the bases pushed 5 bases out of their sectors; keep the order.
-- **Pairing.** A gate stores `alienNeighbour`. `TeleporterSubsystem.alienTimetable` resolves the twin through the broker on first use (`findAlienTwin`: the gate in that room whose `alienNeighbour` is here). Never pair gates by a pre-computed uid: a gate may sit off its ideal spot.
-- **The subsystem.** `required()` is 0 and `isCharged()` true (free), `scaleFor` runs the cycle at `ALIEN_GATE_CYCLE_SCALE`, the pulse skips them (no pad hold), and only the end in the lower sector key fires the timetable. `teleportCycleScale` also shortens the minute (the test trigger).
-- **Invulnerable + disable.** `applyDamage` returns early for a gate and calls `AlienGateGuard.onGateAttacked`; `handleFire` / `handleAiFire` call `onFired` (2500 u zone) and drop a disabled shooter's fire. The input handler strips movement bits through the SHARED `gateDisabledInput` (#15), and `postIntent` zeroes a disabled NPC's AI intent by slot. `evictSwarmEntity` must `forget` the ship (slots are reused). The own-ship snapshot carries `disabledMs` (#16).
-- **Steady state** with no gates is one `gateCount` check per fire/damage call.
-- Locks: `AlienGateGuard.test.ts`, `tests/unit/disableParity.test.ts`, `tests/integration/sectorRoom/alienGates.test.ts`, `galaxyBases.test.ts` (gates fit around the bases). Story: [docs/features/alien-gates.md](../../docs/features/alien-gates.md).
-
-## NPC transit hubs (plan soft-leaping-truffle v4, H1)
-
-- **The network is pure core** (`core/bases/transitNetwork.ts`, `transitNetwork()`): one `transit` hub per region at a chokepoint, linked to its heart's base, up to two trade bases and (frontier hubs) the core hub. `galaxyBasePlan` adds the hub base and each base's `profile.links`; `growBase` adds one teleporter per link, tagged `GrownPlacement.link`.
-- **Seeding.** `NpcBaseSubsystem.seed` sets `rec.npcLink`, the "when a ship boards" rule and `NPC_LINK_TOLL`. The ends pair at run time in `TeleporterSubsystem.update` through `findLinkTwin` (the teleporter in the other end's room with the same `npcLink`), like the alien gates. Never pair them by position.
-- **No pairing requests** to an NPC-owned teleporter (`teleport_pair_request` refuses them).
-- **v4 C — freight contracting.** `ConvoyDirector.launch` picks the carrier (`chooseCarrier`, `core/economy/freight.ts`), records owner + carrier in `economy/convoyCarriers.ts` (forgotten on every convoy end), and pays a contracted carrier's treasury its cut on delivery. `noteStandingHit` charges a raider standing with both. See docs/architecture/economy-and-trade.md.
-- **H2 — convoys ride the links.** `ConvoyDirector` routes by `transitRouteHops` (a link is `LINK_HOP_COST` = half a hop) for planning and transit time; the `routeHops` option injects another. Transit stays abstract (haulers don't physically ride a pad). The drone/robot directors still use plain `hopDistance`.
-- Lock: `tests/integration/sectorRoom/transitHubs.test.ts`. Story: [docs/features/transit-hubs.md](../../docs/features/transit-hubs.md).
-
-## Military bases (plan soft-leaping-truffle v4, M1)
-
-- Placed by `galaxyBasePlan` (`militarySites`); seeded like any NPC base. `NpcBaseSubsystem.seed` sets a military base's gates to **owner + allies** (`'allies'`); every other NPC base's stay **open**.
-- **Patrols (M2).** `PatrolSubsystem` (`bases/`, room-owned, 1 Hz on the structure pulse): `patrol-fighter`s (Traders allegiance, so never hostile on sight) fly the base's corners outside its fence and are marked hostile (`markBotHostileToFaction`, quiet refresh once already hostile) to any pilot near the base whose `relationOf` to the owner is hostile. `drones[].fac` is emitted for every patrol in interest (it is in the slice's "anything to report" check). Ids start `patrol-` (in `isDirectorBotId`).
-- Story: [docs/features/military-bases.md](../../docs/features/military-bases.md).
+- **Pad holds** move only via `StorageService.padLoad` / `padUnload` / `padSwap` / `padSwapAcross` / `takePadForSpill` (one group each). Capacitor charge never discharges batteries.
+- **Director bots** cross only via `TeleportBroker.moveBot` → `LivingWorldDirector.teleportBot`. Rooms register with the broker on create and unregister on dispose. Lock: `teleporter.test.ts`.
+- **Alien gates** are unbuildable and invulnerable; pair a gate only through `findAlienTwin`, never a pre-computed uid. `evictSwarmEntity` must `forget` the ship; the disable runs through the shared `gateDisabledInput` (#15). Locks: `AlienGateGuard.test.ts`, `disableParity.test.ts`, `alienGates.test.ts`.
+- Detail: [teleporters.md](../../docs/features/teleporters.md#server-implementation-notes), [alien-gates.md](../../docs/features/alien-gates.md#server-implementation-notes).
 
 ## Fire control: lock-to-fire is universal (root invariant #19)
 
@@ -334,54 +213,20 @@ Update this section when a threshold is set.
 - **A shell that hits nothing ends silently:** no burst, no splash, no `shell_end`. Lock: `tests/unit/navalShellMissParity.test.ts`.
 - Detail: [coastal-defences.md](../../docs/features/coastal-defences.md#server-implementation-notes).
 
-## Faction standing events and policies (plan soft-leaping-truffle v4, F3)
+## Faction standing and NPC ownership
 
-- **One rule for hits:** `applyDamage` → `noteStandingHit` lowers the victim faction's view of the attacker's faction once per pair per window (`STANDING_HIT_*`). Victims are structures (their owner) and player ships, with at least one player side. Steady state is nested Map lookups only (#14). Break-ins cost `STANDING_BREAK_IN_DELTA`. Don't add standing deltas elsewhere without a reason; trade keeps its own (`REP_*`).
-- **Player policy:** `set_faction_policy` → `TradeSink.setPlayerPolicy` → `EconomyStore` (persisted on the player row, cached as a `FactionPolicy`). The room's `relationCtx.policyOf` reads it.
-- **Player turrets** scan pilots when there are hostile acts OR their owner's policy can act on standing (`policyActsOnStanding`).
-- Lock: `tests/integration/sectorRoom/factionStanding.test.ts`. Story: [docs/architecture/factions.md](../../docs/architecture/factions.md).
+- **Standing hits:** `applyDamage` → `noteStandingHit` is the one path; don't add standing deltas elsewhere without a reason (trade keeps its own `REP_*`). Lock: `factionStanding.test.ts`. Detail: [factions.md](../../docs/architecture/factions.md#server-implementation-notes).
+- **Hostility:** every "is this hostile?" decision about a structure goes through `relationOf` with the room's ONE `relationCtx`; never compare owner strings inline. NPC owners (`npc:<allegiance>:<baseId>`) are excluded from player-faction systems. Lock: `npcOwnership.test.ts`. Detail: [relations.md](../../docs/architecture/relations.md#server-implementation-notes).
 
-## NPC ownership (plan soft-leaping-truffle v3, B2)
+## Player identity is account-bound
 
-- **Owners like `npc:<allegiance>:<baseId>` are NPC bases.** Every "is this hostile?" decision about a structure goes through `relationOf`, using the room's ONE `relationCtx` (which holds the hostile-act ledger). Don't compare owner strings inline.
-- **Turrets:**
-  - A player-owned turret keeps the A1 drone grid, unchanged.
-  - An NPC-owned turret uses a second per-tick grid of every NPC ship plus every ACTIVE player ship (#17), filtered by `relationOf(target, owner) === 'hostile'` (`NearestPointGrid.nearestWhere`).
-  - Missiles from an NPC turret home on the same rule.
-- **Hostile acts:** `applyDamage` records one when a player, or a player's turret, hits an NPC structure. They expire on the 1 Hz grid pulse.
-- **NPC owners are excluded from player-faction systems:**
-  - `factionBaseReadiness`: no waves;
-  - `FactionLedger.factionOf`: no escalation;
-  - `SectorPersistence`: NPC bases regenerate from their seed.
-- **Display names:** `resolveOwnerName` gives "<Side> base", never a raw id.
-- **A turret aiming at a player** rides `structureTargets` as an owner-table index (`encodePlayerTurretTarget`).
-- Lock: `tests/integration/sectorRoom/npcOwnership.test.ts`. Story: [docs/architecture/relations.md](../../docs/architecture/relations.md).
+- **Never trust a client-claimed `playerId` for a logged-in session** (`resolveForUser`). A new server-side seat reservation uses `issueTransitIdentity` / `consumeTransitIdentity`; a new persisted playerId goes through `canonicalPlayerId()` on load. E2E fixture accounts keep per-browser ids.
+- Locks: `accountBoundPlayerId.test.ts`, `account-bound-identity.spec.ts`, `accountIdentity.test.ts`. Detail: [player-identity.md](../../docs/architecture/player-identity.md#server-implementation-notes).
 
-## Player identity is ACCOUNT-bound (PR 3a, 2026-10-31)
+## Game time is the default
 
-`playerId` (owner of ships / structures / hulls / wave targets) belongs to the **account**, not the browser. Rules (full story: [docs/architecture/player-identity.md](../../docs/architecture/player-identity.md)):
-
-- **Logged-in join** → `getAccountPlayerRegistry().resolveForUser(userId, claimedId)` — the account's canonical id; the client's claim is ignored once bound (first join adopts the browser's id). **Never** trust a client-claimed `playerId` for a logged-in session.
-- **Anonymous join** may not claim an account-bound id (canonical or alias) → fresh id.
-- **Transit arrival** carries no auth token → the source `TransitOrchestrator` issues a single-use `issueTransitIdentity(transitToken, playerId)`; the destination honours the id only via `consumeTransitIdentity`. Any NEW server-side seat reservation for a player must do the same.
-- **Second session, same account** → takeover via `PlayerSessionRegistry` (`session_replaced` + close 4002, awaits the old `onLeave`, bounded 3 s). Anonymous duplicates still get a fresh id.
-- **Test-fixture accounts** (`provider='e2e'`, the shared `/auth/dev/test-token` login) are EXEMPT and keep per-browser ids — otherwise every parallel E2E / netgate client would be the same player. Tests of binding use `/auth/register` or a directly signed token.
-- **Persisted playerIds** loaded from JSON snapshots (structure `owner`, lingering `playerId`, director `targetFactionId`) go through `canonicalPlayerId()`; the boot `mergeAccountPlayerIds` re-keys roster rows. Adding a new place that persists a playerId? Map it through `canonicalPlayerId()` on load.
-- Locks: `accountBoundPlayerId.test.ts` (integration), `account-bound-identity.spec.ts` (E2E), `identity/accountIdentity.test.ts`.
-
----
-
-## Game time is the default (time scale stream)
-
-- **Game speed is per sector.** Each `SectorRoom` owns `this.gameClock` (`createSectorClock()`): inside the room, read `this.gameClock.now()` and schedule with `this.gameClock.after` / `.every`, and hand room-owned subsystems `now: () => this.gameClock.now()` (never the process clock: it would not follow the sector's speed). The room tick loop and its physics world run 60 × speed ticks per wall second (`SET_TIME_SCALE` to the worker on every change).
-- **The process clock** (`time/gameTime.ts`) is for cross-sector world time (directors, economy, convoys, wallets, holds). Outside a room, gameplay reads `gameNow()` and schedules with `gameSetTimeout` / `gameSetInterval` / `gameClearTimer` (unref'd), never `Date.now()` / `setTimeout` / `setInterval`. At 1× `gameNow()` IS `Date.now()`.
-- **The rule is a lint error** in `src/server` and `src/core` outside the real-time allowlist in `eslint.config.js`. Real time covers persistence, networking, auth/identity, push, routes, logs/audit, perf measurement, the room tick scheduler and boot.
-  - A new real-time FILE goes on that list.
-  - A one-off real-time line in a gameplay file gets `// eslint-disable-next-line no-restricted-properties -- real time: <why>`.
-  - Never use real time just to dodge the rule. A timer that should follow the game speed but runs on wall time desyncs the moment the speed isn't 1×.
-- **Subsystems take `now` / `nowMs` deps** (break-ins, holds, directors, economy). Their DEFAULT is `gameNow`; tests inject their own.
-- **Saved timestamps are game time** (drift from wall time while the speed isn't 1×; see the design note §0).
-- Story: [docs/architecture/game-time-scale.md](../../docs/architecture/game-time-scale.md).
+- **Inside a room** read `this.gameClock.now()` and schedule with `this.gameClock.after` / `.every`; outside, use `gameNow()` / `gameSetTimeout` / `gameSetInterval`. Subsystems take `now` deps defaulting to `gameNow`.
+- **Real time** only for a file on the `eslint.config.js` allowlist or a line with `// eslint-disable-next-line no-restricted-properties -- real time: <why>`; never to dodge the rule. Detail: [game-time-scale.md](../../docs/architecture/game-time-scale.md#server-implementation-notes).
 
 ## Pino Sampling Policy
 
@@ -391,44 +236,11 @@ Update this section when a threshold is set.
 - Discrete lifecycle events (join/leave, transit state changes, sector spin-up/-down): **full fidelity**.
 - Never log position/velocity data.
 
----
-
 ## Gameplay audit log (`src/server/audit/`)
 
-A persistent, queryable NDJSON record of **discrete semantic gameplay events** —
-the durable trail that answers "what happened to my base?" (incl. events that
-fire while no player is connected: a base attacked + razed by an offline wave).
-Distinct from `serverLogEvent` (a 500-entry RAM ring that dies on restart) and
-from diag captures (client-driven, sporadic). Full story:
-[docs/architecture/gameplay-audit-log.md](../../docs/architecture/gameplay-audit-log.md).
-
-- **One API:** `auditEvent(evt)` (module singleton, like `serverLogEvent`). `evt`
-  is a variant of the `AuditEvent` discriminated union (`GameplayAuditLog.ts`).
-  It stamps `ts`/`iso`, pushes to an in-memory ring (for `/dev/audit`), and writes
-  one JSON line via a `pino-roll` rolling-NDJSON sink under `audit-logs/`
-  (gitignored; daily, 20 MB, 30-file retention; `EQX_AUDIT_DIR` override).
-- **The write path is NOT dev-gated** — it runs in normal play (that's the point).
-  Only the `GET /dev/audit` *read* endpoint is gated, like `/dev/events`.
-- **Discrete events ONLY** (the Event Bus rule applies): never stream positions/
-  velocities/per-tick/per-hit data. "Under attack" is a THROTTLED first-hit signal
-  (`SectorRoom.applyDamage`, one per structure per 15 s) — steady-state
-  allocation-free (invariant #14). Every `auditEvent` call site is a discrete
-  boundary (destruction, dispatch, shield 0-cross, join), never the hot loop;
-  the file write itself is off-thread (pino's `thread-stream` worker). **No netgate.**
-- **Under vitest** the durable sink is a no-op (the ring still records) so no test
-  spawns a worker or writes files; tests opt into capture via `setAuditSink`.
-- **Hook inventory** (add new events here, never in a per-tick loop): destruction
-  (`evictSwarmEntity`, gated on `emitDestroyed` so load-shed/quiet-despawn/abandon
-  are excluded), waves (`WaveDirector`/`IncomingRegistry`/`LivingWorldDirector`
-  retreat), base-ready (`factionBaseReadiness`), structure place/remove/build
-  (handlers + `StructureGridSubsystem.onConstructed`), ships (`SHIP_DESTROYED`
-  handler, abandon paths), lifecycle (`onJoin`, `LeaveHandler`,
-  `TransitOrchestrator.commitTransit`), `shield_broken` (player path only).
-- **Querying:** `scripts/query-audit.mjs` (`pnpm audit:query`) for offline full
-  history; `GET /dev/audit?player=&sector=&event=&since=&format=text` live. The
-  two filter implementations are kept aligned (the script is plain JS, can't
-  import the TS `auditQuery.ts`). Lock: `structureDestroyedAudit.test.ts`
-  (failing-first, invariant #13) + `auditQuery`/`GameplayAuditLog` unit tests.
+- **`auditEvent(evt)` only at discrete boundaries** (destruction, dispatch, shield 0-cross, join), never in a per-tick / per-hit loop; throttle a rapid boundary. Add new events to the hook inventory in the guide.
+- **The write path is not dev-gated** (only `GET /dev/audit` is). Under vitest the sink is a no-op; tests capture via `setAuditSink`. Keep `scripts/query-audit.mjs` filters aligned with `auditQuery.ts`. Lock: `structureDestroyedAudit.test.ts`.
+- Detail: [gameplay-audit-log.md](../../docs/architecture/gameplay-audit-log.md#server-implementation-notes).
 
 ---
 

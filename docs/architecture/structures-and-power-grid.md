@@ -604,3 +604,25 @@ wall-clock (`Date.now`), matching every other `shieldWalls` call site.
 **Root-cause fix shipped alongside:** the swarm shield-regen pass borrowed a
 fighter shield for damaged structures + posted `SET_HULL_EXPOSED` (collider
 corruption); now gated on `rec.kind === 1`. See [docs/architecture/structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md) + [docs/features/shield-fence.md](../../docs/features/shield-fence.md).
+
+### Structure network at base scale
+
+- **Generated structures use the real rules.** `StructurePlacementSubsystem.place(…, { skipAutoConnect: true })` + `structureGridView.connectExplicit` (re-checks `canConnect` against the live adjacency) let a generated base supply its INTENDED graph — greedy auto-connect would e.g. link gate pylons and close a gate. Players never pass `skipAutoConnect`.
+- **Phase V (large footprints):**
+  - **Structure rotation.** `place_structure` carries an optional `rot`, which the server snaps to 0/90/180/270. It is stored on `StructureRecord.rot` and the cached `halfW/halfH`, persisted in the sector snapshot, and becomes the body angle at spawn.
+  - **Weapon paths.** They use the swarm record's `halfW/halfH` box for kind 2.
+  - **Test and scenario layouts** live in ONE place: `rooms/scenarioLayouts.ts` (`SCENARIO`, `STRUCTURE_SCENARIO_PREBUILT`), shared by `index.ts`, `showcaseRooms.ts` and the integration tests. Footprints are 3–6× the old radii, so a hand-placed layout must be re-derived against the real boxes, not guessed.
+- **Gates:**
+  - `GateController` (`structures/GateController.ts`) steps every built gate on the 10 Hz structure tick, BEFORE `ShieldWallManager.update`. Only ACTIVE player ships open gates (#17).
+  - `ShieldWallManager` forms walls between ANY two connected emitters (`isShieldEmitterKind`: pylons + gates) plus each gate's spans; `wallsUpFor(id)` is the per-emitter WALL_ACTIVE flag.
+  - Room state `gateOpen` / `gateAccess`; `set_gate_access` is owner-gated. Test room `gate-test` (open gate + owner-only gate).
+- **A2 (structure state → ROOM STATE):** structure grid state is `SectorState.structures` (MapSchema keyed by the decimal entityId; `StructureState` in `schema/SectorState.ts`), synced by `SectorRoom.rebuildStructuresSlice` (name kept; same 1 Hz pulse / 10 Hz turret tick / placement call sites). **Rules:**
+  - **Assign only on change, and only away from the default.** Fields have NO initialisers: Colyseus schema v3 encodes every ASSIGNED field on join, and initialisers count as assignments. Unset means `STRUCTURE_DEFAULTS` (`shared-types/structureStateWire.ts`); compare `(st.f ?? DEFAULT) !== value` before writing.
+  - **Owners are interned** (`structureOwners` / `structureOwnerNames` + `ownerIdx`).
+  - **The snapshot carries only `structureTargets`** (flat triples).
+  - **Binary channel:** a sleeping out-of-interest structure rides only every `STRUCTURE_OUT_OF_INTEREST_FULL_EVERY` (5th) full refresh. Room state owns structure lifetime on the client.
+  - **Test view:** `_internals.getStructuresSlice()` is the pre-A2 row shape rebuilt from room state.
+
+## History
+
+- **Structure rotation reaches the physics body.** `SwarmSpawner` forwards the spawn angle for structures (kind 2) as well as scrap, and primes the SAB angle. (It used to forward it for scrap only, so rotated structures collided and drew at 0° — locked by `structureRotation.test.ts`.)

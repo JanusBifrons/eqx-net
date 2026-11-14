@@ -247,3 +247,30 @@ Ships have cargo you can open too. Select one and use **Open cargo**:
   fly-over → hold in the own-ship snapshot, death spills and keeps nothing),
   `lingeringDeathDeletesRoster.test.ts` (A1, failing-first).
 - Test trigger: the `initialCargo` join option (testMode) seeds a hold.
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+- **Gate:** `SectorRoom.cargoAccess` opens a structure's cargo only when ALL of these hold. Every `cargo_query` / `cargo_move` re-checks it.
+  - `cargoOpensFor(relationOf(…))` passes: own and friendly; neutral and hostile are locked until the C2 break-in.
+  - The pilot has a live ship: ACTIVE, alive, with a roster row (#17).
+  - The ship is within `CARGO_ACCESS_RANGE` of the footprint edge.
+- **Moves:** `StorageService.cargoTake` / `cargoPut`, each ONE hold group with the ship row. Never move items between a ship and a structure any other way.
+- **A manual move switches auto-deposit off for that pilot** (`manualCargo`) until they leave deposit range. Without it, a withdrawal from your own storage is banked straight back.
+- **`entity_stats` holds** show to anyone the cargo opens for (`ownerGateStats`).
+- **Market mode (T4):** an NPC `freight_dock` opens as a market for a non-hostile pilot (`dockMarket`): Take buys, Put sells.
+  - **Prices:** the trade sink's `dockQuote`, the same quote as the board.
+  - **Clamped** to stock, space, wallet and volume.
+  - **Atomic:** one group per good, with the wallet op passed as `extraOps` to `StorageService.marketBuy` / `marketSell`.
+  - Never let a market fill skip `recordDockFill`: the galaxy market and volume must see it.
+- **Break-ins (C2):** `break_in` / `break_in_cancel` → `BreakInSubsystem` (ticked in `structureTurretTick`).
+  - **Starting is a hostile act.** `onBreakInStart` records it in `hostileActs` and alarms the owner, or aggros the NPC side's nearby ships.
+  - **Hits cancel it.** `applyDamage` calls `onActorDamaged` for any hit.
+  - **A grant opens `cargoAccess`** for 60 s.
+  - **Player turrets** also engage pilots hostile to their owner (`nearestHostilePilot`). The scan only runs while `hostileActs.size() > 0`.
+- **Ship cargo (C3):** cargo messages target an `entityId` OR a `ship` (playerId of an ACTIVE ship / shipInstanceId of a LINGERING hull). `npcHold` rolls an NPC's loot table ONCE per spawn (seeded, memory-only, merged onto any stash it carries) and `dropKillLoot` spills that same hold, so stolen loot never drops twice. Break-ins tick BEFORE `structureTurretTick`'s no-structures early return (a sector with no structures can still have a ship break-in).
+- **Standing orders (T4b):** `set_freight_orders` (owner, built `freight_dock`) → `rec.freightOrders` (persisted). The dock joins convoy planning as a `player` base.
+  - **Who trades with whom:** the ConvoyDirector pairs it with NPC bases only.
+  - **When money moves:** it prices and clamps the order at planning. The wallet op lands in the SAME group as the goods: a credit at pickup via `extraOpsFor(taken)`, a debit at delivery with the release.
+- Lock: `tests/integration/sectorRoom/cargoAccess.test.ts`. Story: [docs/features/loot-and-cargo.md](../features/loot-and-cargo.md) Part 3.
