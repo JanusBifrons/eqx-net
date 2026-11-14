@@ -77,6 +77,11 @@ export const FEATURE_TRIGGERS = [
     specs: ['radar-sandbox', 'ring-indicator-dead-zone', 'ring-indicator-mobile-scaling'],
   },
   {
+    area: 'turret angles on the wire and on screen',
+    paths: ['src/server/rooms/SnapshotBroadcaster', 'src/server/rooms/WeaponMountTicker', 'src/client/render/MountVisualManager', 'src/client/net/displayMountAngles'],
+    specs: ['nose-turret-drawn', 'fx-turrets'],
+  },
+  {
     area: 'teleporters and trade',
     paths: ['src/server/structures/TeleporterSubsystem', 'src/client/components/TeleporterPanel', 'src/server/economy/', 'src/client/layout/Drawer/tabs/TradeTab'],
     specs: ['teleporter', 'trade-tab', 'break-in'],

@@ -103,6 +103,8 @@ const FEATURE_SPECS: string[] = [
   '**/fx-engines.spec.ts',
   // Machined turrets (plan T1, 2026-11-05).
   '**/fx-turrets.spec.ts',
+  // Nose turrets: the drawn nose gun turns with its mount angle (GPU-lit).
+  '**/nose-turret-drawn.spec.ts',
   // Capital-ship R&D round 3 D — helm orders (tap a course, speed, WASD override).
   '**/capital-helm.spec.ts',
   '**/fleet-warp-client.spec.ts',
