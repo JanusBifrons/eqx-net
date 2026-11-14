@@ -439,3 +439,60 @@ describe('damage numbers follow the game speed (time scale)', () => {
     expect(life(2)).toBe(LIFETIME_FRAMES / 2);
   });
 });
+
+/**
+ * Numbers after death (hostile review of filmed fight clips, 2026-11-13):
+ * "floating damage numbers keep CLIMBING over a ship AFTER it has exploded."
+ * A number spawned before the death may finish its short float, but once the
+ * target is dead its number is CLOSED: no late hit on the dead id, and no hit
+ * on something else at the same screen spot (scrap, a neighbour in the melee,
+ * via the coalesce), may add to it or keep it alive.
+ */
+describe('DamageNumberManager — a dead target\'s number is closed', () => {
+  let parent: Container;
+  let mgr: DamageNumberManager;
+
+  beforeEach(() => {
+    parent = new Container();
+    mgr = new DamageNumberManager(parent, makeMockCamera(1));
+  });
+
+  it('a late hit on the dead id neither climbs the number nor extends its life', () => {
+    mgr.spawn('drone-1', 0, 0, 40);
+    mgr.markDead('drone-1');
+    const text = innerContainer(parent).children[0] as Text;
+    let frames = 0;
+    while (mgr.getActiveCount() > 0 && frames < 500) {
+      mgr.spawn('drone-1', 0, 0, 5); // in-flight hits keep landing
+      mgr.update();
+      frames++;
+      if (mgr.getActiveCount() > 0) expect(text.text).toBe('40');
+    }
+    expect(frames).toBe(LIFETIME_FRAMES);
+  });
+
+  it('a hit on another target at the same spot opens its own number', () => {
+    mgr.spawn('drone-1', 0, 0, 40);
+    mgr.markDead('drone-1');
+    mgr.spawn('scrap-9', 1, 1, 7);
+    expect(mgr.getActiveCount()).toBe(2);
+    const texts = innerContainer(parent).children.map((c) => (c as Text).text);
+    expect(texts).toEqual(['40', '7']);
+  });
+
+  it('marking a target with no live number is a no-op; a later number for it shows', () => {
+    mgr.markDead('ghost');
+    mgr.spawn('ghost', 0, 0, 3);
+    expect(mgr.getActiveCount()).toBe(1);
+  });
+
+  it('the closed number expires on its normal lifetime', () => {
+    mgr.spawn('drone-1', 0, 0, 40);
+    mgr.markDead('drone-1');
+    for (let i = 0; i < LIFETIME_FRAMES; i++) mgr.update();
+    expect(mgr.getActiveCount()).toBe(0);
+    // A respawned ship reusing the id gets fresh numbers again.
+    mgr.spawn('drone-1', 0, 0, 2);
+    expect(mgr.getActiveCount()).toBe(1);
+  });
+});

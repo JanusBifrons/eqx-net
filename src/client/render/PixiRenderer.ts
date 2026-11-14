@@ -2275,6 +2275,13 @@ export class PixiRenderer implements IRenderer {
         this.damageNumbers.spawn(dn.targetId, dn.x, dn.y, dn.damage, dn.tag);
       }
       mirror.pendingDamageNumbers.length = 0;
+      // A ship that exploded this frame closes its number AFTER the drain,
+      // so the killing blow still lands in it but nothing later does (late
+      // hits climbed it over the wreck: fight-clip review 2026-11-13). The
+      // set is a one-frame trigger, empty on almost every frame.
+      if (mirror.explodingShips && mirror.explodingShips.size > 0) {
+        for (const id of mirror.explodingShips) this.damageNumbers.markDead(id);
+      }
     } else if (this._dmgNumbersDisabled && mirror.pendingDamageNumbers) {
       // Drain even when disabled — don't let the queue grow unbounded.
       mirror.pendingDamageNumbers.length = 0;
